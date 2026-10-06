@@ -199,11 +199,30 @@ static uint32_t tide_run_stats_frames;
 // display, and how many frames that's of: the ones the drawer was open for
 static uint64_t tide_run_stats_work;
 static uint32_t tide_run_stats_worked;
+static uint64_t tide_run_stats_render;
+static uint32_t tide_run_stats_rendered, tide_run_stats_gpu_samples;
+static double tide_run_stats_gpu, tide_run_timing_span;
+static bool tide_run_timing;
+static uint32_t tide_run_timing_epoch;
 static uint64_t tide_run_stats_sent, tide_run_stats_received;
 static bool tide_run_stats_known;                       // There's a frame rate to show: the drawer shows from then
 static double tide_run_fps, tide_run_up, tide_run_down; // A second, over the last one
-static double tide_run_work_ms;                         // A frame's work, over the last second; under 0 until it's known
+static double tide_run_work_ms;                         // A frame's work, over the last half second; under 0 until known
+static double tide_run_render_ms, tide_run_gpu_ms;       // Rendering on the CPU and GPU, over the last half second
 static uint64_t tide_run_memory;                        // tide_platform_memory, as of then
+
+static inline void tide_run_reset_timing(const bool active)
+{
+    tide_run_stats_work = tide_run_stats_render = 0;
+    tide_run_stats_worked = tide_run_stats_rendered = tide_run_stats_gpu_samples = 0;
+    tide_run_stats_gpu = tide_run_timing_span = 0.0;
+    tide_run_work_ms = tide_run_render_ms = tide_run_gpu_ms = -1.0;
+    tide_platform_gpu_timing(false);
+    tide_stats_collect(&tide_run_drawer, NULL, 0.0);
+    // F7 may have kept measuring while the drawer was closed, or across a reload.
+    if (active) tide_stats_collect(&tide_run_drawer, &tide_run_profiler.profile, 0.0);
+    tide_run_timing_epoch = tide_run_draw.epoch;
+}
 
 // Whether the stats show: the host asked for them (--stats, STATS), or the
 // game's `stats` setting does.
@@ -224,8 +243,7 @@ static inline void tide_run_drawer_input(const bool stats)
         tide_stats_off(&tide_run_drawer);
         tide_run_stats_known = false; // Counted from nothing when they're back
         tide_run_stats_since = tide_run_now;
-        tide_run_stats_frames = tide_run_stats_worked = 0;
-        tide_run_stats_work = 0;
+        tide_run_stats_frames = 0;
         return;
     }
     const bool f8 = tide_run_devices.keyboard.f8.held;
@@ -590,6 +608,11 @@ static inline void tide_run_begin(void)
 // Ends what tide_run_begin started: the match, if any, and the local state.
 static inline void tide_run_end(void)
 {
+    const bool open = tide_run_drawer.open;
+    tide_stats_free(&tide_run_drawer);
+    tide_run_drawer.open = open;
+    tide_platform_gpu_timing(false);
+    tide_run_timing = false;
     tide_session_destroy(tide_run_session);
     tide_run_session = NULL;
     if (tide_run_local) tide_run_game->local_free(tide_run_local);
@@ -656,6 +679,17 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_profiler_begin(profiler, seconds);
     tide_platform_poll(&tide_run_devices);
     tide_run_drawer_input(stats);
+    const bool timing = stats && tide_run_drawer.open;
+    if (timing != tide_run_timing) {
+        tide_run_reset_timing(timing);
+        tide_run_timing = timing;
+    }
+    tide_platform_gpu_timing(timing);
+    // F8 may have changed the drawer after debug_views selected a profile.
+    // Bind it before ticks, so a closing press stops measuring at once.
+    tide_profile *measured = timing || tide_run_profiling ? &tide_run_profiler.profile : NULL;
+    tide_platform_jobs_profile(measured);
+    tide_run_alone.profile = measured;
     tide_run_now += seconds;
     tide_profiler_mark(profiler, TIDE_FRAME_INPUT);
 
@@ -711,28 +745,54 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_profiler_draw(profiler, &tide_run_draw, tide_platform_screen_size(), tide_platform_measure_text);
     tide_platform_typing(tide_gui_typing(&tide_run_gui));
     tide_platform_cursor_lock(tide_gui_cursor_lock(&tide_run_gui)); // The next poll says whether the window holds it
+    if (timing && tide_run_draw.epoch != tide_run_timing_epoch) {
+        // A retained native reload keeps the host, but the samples are the old build's.
+        tide_run_reset_timing(true);
+        tide_platform_gpu_timing(true);
+    }
+    const uint64_t render_began = timing ? tide_time_now_ns() : 0;
     tide_platform_draw(&tide_run_draw);
+    const uint64_t rendered = timing ? tide_time_now_ns() : 0;
     tide_profiler_mark(profiler, TIDE_FRAME_RENDER);
+
+    if (timing) {
+        if (began) {
+            tide_run_stats_work += rendered - began;
+            tide_run_stats_worked++;
+        }
+        tide_run_stats_render += rendered - render_began;
+        tide_run_stats_rendered++;
+        for (uint32_t i = 0; i < 4; i++) {
+            const double ms = tide_platform_gpu_ms();
+            if (ms < 0.0) break;
+            tide_run_stats_gpu += ms;
+            tide_run_stats_gpu_samples++;
+        }
+        tide_stats_collect(&tide_run_drawer, match ? &tide_run_profiler.profile : NULL, seconds);
+        tide_run_timing_span += seconds;
+        if (tide_run_timing_span >= 0.5) {
+            if (tide_run_stats_worked) tide_run_work_ms = (double)tide_run_stats_work * 1e-6 / tide_run_stats_worked;
+            tide_run_render_ms = (double)tide_run_stats_render * 1e-6 / tide_run_stats_rendered;
+            tide_run_gpu_ms = tide_run_stats_gpu_samples ? tide_run_stats_gpu / tide_run_stats_gpu_samples : -1.0;
+            tide_run_stats_work = tide_run_stats_render = 0;
+            tide_run_stats_worked = tide_run_stats_rendered = tide_run_stats_gpu_samples = 0;
+            tide_run_stats_gpu = tide_run_timing_span = 0.0;
+        }
+    }
 
     if (stats) {
         tide_run_stats_frames++;
-        if (began) {
-            tide_run_stats_work += tide_time_now_ns() - began;
-            tide_run_stats_worked++;
-        }
         const double span = tide_run_now - tide_run_stats_since;
         // Once a second, and the first time sooner, so the stats aren't long in showing
         if (span >= (tide_run_stats_known ? 1.0 : 0.25)) {
             const uint64_t sent = status.sent_bytes, received = status.received_bytes;
             tide_run_fps = tide_run_stats_frames / span;
-            if (tide_run_stats_worked) tide_run_work_ms = (double)tide_run_stats_work * 1e-6 / tide_run_stats_worked;
             tide_run_up = sent >= tide_run_stats_sent ? (double)(sent - tide_run_stats_sent) / span : 0.0;
             tide_run_down = received >= tide_run_stats_received ? (double)(received - tide_run_stats_received) / span : 0.0;
             if (tide_run_drawer.open) tide_run_memory = tide_platform_memory();
             tide_run_stats_known = true;
             tide_run_stats_since = tide_run_now;
-            tide_run_stats_frames = tide_run_stats_worked = 0;
-            tide_run_stats_work = 0;
+            tide_run_stats_frames = 0;
             tide_run_stats_sent = sent;
             tide_run_stats_received = received;
         }
@@ -747,6 +807,10 @@ static inline int tide_run_frame(void *user, const float seconds)
         const tide_stats_values values = {
             .fps = tide_run_fps,
             .work_ms = tide_run_work_ms,
+            .render_ms = tide_run_render_ms,
+            .gpu_ms = tide_run_gpu_ms,
+            .render_known = tide_run_render_ms >= 0.0,
+            .gpu_known = tide_run_gpu_ms >= 0.0,
             .threads = jobs ? jobs->threads : 1u,
             .memory = tide_run_memory,
             .renderer = tide_platform_renderer(),

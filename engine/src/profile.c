@@ -54,9 +54,13 @@ void tide_profile_add(tide_profile_times *times, const uint32_t index, const cha
     if (memcmp(copy, t->name, sizeof copy) != 0) {
         memcpy(t->name, copy, sizeof copy);
         t->total = 0.0;
+        t->measured_ms = 0.0;
+        t->measurements = 0;
     }
     t->ms = ms_between(from_ns, to_ns);
     t->total += t->ms;
+    t->measured_ms += t->ms;
+    t->measurements++;
 }
 
 void tide_profile_tick(tide_profile *p, const uint64_t began_ns, const uint64_t systems_done_ns)

@@ -1315,13 +1315,26 @@
     async function findDevice(again) {
         if (wantedBackend === 'webgl' || !navigator.gpu) return;
         try {
-            const adapter = await navigator.gpu.requestAdapter();
+            let adapter = await navigator.gpu.requestAdapter();
             if (!adapter) return;
             // The browser's software device is slower than WebGL on a GPU
             const software = adapter.info && 'isFallbackAdapter' in adapter.info ? adapter.info.isFallbackAdapter
                 : adapter.isFallbackAdapter;
             if (software && wantedBackend !== 'webgpu' && !again) return;
-            const found = await adapter.requestDevice();
+            let found;
+            if (adapter.features.has('timestamp-query')) {
+                try {
+                    found = await adapter.requestDevice({ requiredFeatures: ['timestamp-query'] });
+                } catch {
+                    // Timing is optional. Ask anew: a request can consume its adapter.
+                    adapter = await navigator.gpu.requestAdapter();
+                    if (!adapter) return;
+                    const fallback = adapter.info && 'isFallbackAdapter' in adapter.info ? adapter.info.isFallbackAdapter
+                        : adapter.isFallbackAdapter;
+                    if (fallback && wantedBackend !== 'webgpu' && !again) return;
+                    found = await adapter.requestDevice();
+                }
+            } else found = await adapter.requestDevice();
             // A mistake in how the program uses it: test pages stop at one, as for GL's
             found.onuncapturederror = event => {
                 if (config.checkGL) fail(new Error('WebGPU: ' + event.error.message));
@@ -1345,6 +1358,7 @@
     let devices = 0; // How many the program has drawn with, this one included
     async function deviceLost(info) {
         printErr('tide: the GPU went away (' + (info.message || info.reason) + '): asking for it again');
+        gpuTimeReset();
         device = null;
         for (const kind in gpuTables) {
             gpuTables[kind] = [null];
@@ -1369,6 +1383,7 @@
     // For tests: loses the device as a GPU going away would, and says how many there have been.
     config.loseDevice = () => { if (device) device.destroy(); };
     config.gpuDevices = () => devices;
+    config.gpuTimingSupported = () => !!device && device.features.has('timestamp-query');
 
     // Whether the device takes bytes straight from memory shared with workers,
     // which the program's is when it runs on threads. Copied out first if not.
@@ -1483,6 +1498,83 @@
         'sint32', 'sint32x2', 'sint32x3', 'sint32x4']; // tide_gpu_attribute_format
     let building = null; // The pipeline being described
     let pass = null, commands = null;
+
+    // Only the game's draws are timed, between gpu_time_begin and gpu_time_end.
+    // Three readbacks can be pending; when all are busy, a frame goes untimed.
+    // Each pass resolves its own two timestamps before the next overwrites
+    // them. The padded resolve buffers grow with the number of passes, so
+    // targets count too, with no pass limit and no CPU gaps between them.
+    const TIME_PASSES = 64, TIME_STRIDE = 256; // Query resolves need a 256-byte offset
+    let timeSlots = [], timeActive = null, timePass = null;
+    let timeGeneration = 0, timeOrder = 0, timeResultOrder = 0, timeResult = -1;
+    function gpuTimeReset() {
+        timeGeneration++;
+        timeActive = timePass = null;
+        timeResult = -1;
+        timeOrder = timeResultOrder = 0;
+        for (const slot of timeSlots) {
+            slot.query.destroy();
+            for (const buffer of slot.resolved) buffer.destroy();
+            if (slot.readback) slot.readback.destroy(); // Cancels its pending map
+        }
+        timeSlots = [];
+    }
+    function gpuTimeBegin() {
+        if (!device || !device.features.has('timestamp-query')) return;
+        let slot = timeSlots.find(slot => !slot.busy);
+        if (!slot && timeSlots.length < 3) {
+            slot = { query: device.createQuerySet({ type: 'timestamp', count: 2 }), resolved: [],
+                readback: null, bytes: 0, busy: false, passes: 0 };
+            timeSlots.push(slot);
+        }
+        if (!slot) return;
+        slot.busy = true;
+        slot.passes = 0;
+        timeActive = slot;
+    }
+    function gpuTimeEnd() {
+        const slot = timeActive;
+        timeActive = null;
+        if (!slot) return;
+        if (!slot.passes) {
+            slot.busy = false;
+            return;
+        }
+        const bytes = slot.passes * TIME_STRIDE;
+        if (slot.bytes < bytes) {
+            if (slot.readback) slot.readback.destroy();
+            slot.bytes = Math.ceil(slot.passes / TIME_PASSES) * TIME_PASSES * TIME_STRIDE;
+            slot.readback = device.createBuffer({ size: slot.bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+        }
+        const copy = device.createCommandEncoder();
+        const chunkBytes = TIME_PASSES * TIME_STRIDE;
+        for (let at = 0; at < bytes; at += chunkBytes) {
+            copy.copyBufferToBuffer(slot.resolved[at / chunkBytes], 0, slot.readback, at, Math.min(chunkBytes, bytes - at));
+        }
+        device.queue.submit([copy.finish()]);
+        const generation = timeGeneration, order = ++timeOrder;
+        const count = slot.passes, readback = slot.readback;
+        readback.mapAsync(GPUMapMode.READ, 0, bytes).then(() => {
+            if (generation !== timeGeneration) return;
+            try {
+                const values = new BigUint64Array(readback.getMappedRange(0, bytes));
+                let total = 0n;
+                for (let i = 0; i < count; i++) {
+                    const begin = values[i * TIME_STRIDE / 8], end = values[i * TIME_STRIDE / 8 + 1];
+                    if (end < begin) return; // A counter reset invalidates the whole sample
+                    total += end - begin;
+                }
+                // Promises can settle out of order: keep the newest completed frame.
+                if (order > timeResultOrder) {
+                    timeResult = Number(total) / 1000000; // WebGPU timestamps are nanoseconds
+                    timeResultOrder = order;
+                }
+            } finally {
+                readback.unmap();
+                slot.busy = false;
+            }
+        }, () => { slot.busy = false; }); // A reset or device loss cancelled it
+    }
     // What the next draw draws with: its pipeline, and each texture it samples, by its slot
     const drawing = { pipeline: null, textures: new Array(MAX_TEXTURES).fill(0), blended: new Array(MAX_TEXTURES).fill(0),
         bound: false };
@@ -1515,6 +1607,14 @@
     Object.assign(platform, {
         // Which device the program draws with, counted from 1: another once one was lost, and 0 while there's none
         gpu_epoch: () => device && groupLayouts ? devices : 0,
+        gpu_time_begin: gpuTimeBegin,
+        gpu_time_end: gpuTimeEnd,
+        gpu_time_read() {
+            const result = timeResult;
+            timeResult = -1;
+            return result;
+        },
+        gpu_time_reset: gpuTimeReset,
         gpu_buffer(kind, size, ptr) {
             const buffer = device.createBuffer({ size,
                 usage: (kind === 0 ? GPUBufferUsage.VERTEX : GPUBufferUsage.INDEX) | GPUBufferUsage.COPY_DST });
@@ -1617,18 +1717,30 @@
             if (!uniformBuffer) growUniforms();
             uniformsUsed = 0;
             commands = device.createCommandEncoder();
-            pass = commands.beginRenderPass({
+            const descriptor = {
                 colorAttachments: [{ view: id ? gpuTables.texture[t.color].view : t.context.getCurrentTexture().createView(),
                     loadOp: clear ? 'clear' : 'load',
                     storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
                 depthStencilAttachment: { view: t.depth.createView(), depthLoadOp: clear ? 'clear' : 'load',
                     depthStoreOp: 'store', depthClearValue: 1 },
-            });
+            };
+            timePass = timeActive;
+            if (timePass) descriptor.timestampWrites = { querySet: timePass.query,
+                beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1 };
+            pass = commands.beginRenderPass(descriptor);
             drawing.pipeline = null;
             drawing.bound = false;
         },
         gpu_end() {
             pass.end();
+            if (timePass) {
+                const chunk = Math.floor(timePass.passes / TIME_PASSES);
+                if (!timePass.resolved[chunk]) timePass.resolved[chunk] = device.createBuffer({ size: TIME_PASSES * TIME_STRIDE,
+                    usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
+                commands.resolveQuerySet(timePass.query, 0, 2, timePass.resolved[chunk],
+                    (timePass.passes++ % TIME_PASSES) * TIME_STRIDE);
+                timePass = null;
+            }
             device.queue.submit([commands.finish()]);
             pass = commands = null;
             for (const buffer of retired.splice(0)) buffer.destroy();
@@ -2298,6 +2410,7 @@
 
     // ...and what it made in WebGPU.
     function forgetGPU() {
+        gpuTimeReset();
         for (const buffer of gpuTables.buffer) if (buffer) buffer.destroy();
         for (const t of gpuTables.texture) if (t) t.texture.destroy();
         for (const t of gpuTables.target) if (t) t.depth.destroy();
