@@ -1,6 +1,7 @@
-// The PNG reader (tide/png.h): against the platform layer's writer, and
-// against PNGs made here by hand, of every color type, bit depth and filter,
-// interlaced too, with every corruption a reader has to refuse.
+// The PNG reader (tide/png.h), as the pack's builder and grid.Decode read with
+// it: against the platform layer's writer, and against PNGs made here by hand,
+// of every color type, bit depth and filter, interlaced too, with every
+// corruption a reader has to refuse.
 
 #include <stdint.h>
 #include <stdio.h>
@@ -150,7 +151,7 @@ TIDE_TEST(png_reads_what_the_writer_wrote)
     TIDE_REQUIRE(png != NULL);
     tide_png_image image;
     TIDE_REQUIRE(tide_png_decode(png, size, &image));
-    TIDE_CHECK(image.width == W && image.height == H);
+    TIDE_CHECK(image.width == (uint32_t)W && image.height == (uint32_t)H);
     for (int i = 0; i < W * H; i++) {
         const tide_color want = {(float)rgba[4 * i] / 255.0f, (float)rgba[4 * i + 1] / 255.0f, (float)rgba[4 * i + 2] / 255.0f, 1.0f};
         if (!same_color(image.pixels[i], want)) {
@@ -158,8 +159,6 @@ TIDE_TEST(png_reads_what_the_writer_wrote)
             break;
         }
     }
-    int32_t w, h;
-    TIDE_CHECK(tide_png_size(png, size, &w, &h) && w == W && h == H);
     free(image.pixels);
     free(png);
 }
@@ -168,6 +167,21 @@ TIDE_TEST(png_reads_what_the_writer_wrote)
 // 3000 bytes made by the generator below, at level 9.
 static const char dynamic_hex[] =
     "2d560b909665196540c0191895bc20a14044248d403916a01b0408bab3b080826208cbb978036f01a1c444208528ca2548142460bcc0a8b84a121390b8ca1881895c04d259726445ae0d1630cbb2643ccfc7ecb7f3effedffbbddf73ce73ce795e80625c9516c4b82cc0af8a7ed6a6da8aabe511ae3f4c52d6f8629d41491a17dfdd005f2c830dbdc0f1ff9d4de005b6644f9037c20d2ce32fa6fdeddd1f6af13cd1b6ef320078b069089e115fc2934e7a97096ae5473be12df2fd8648b242f43d51a1e5e92fcaebbc0ca20f598e62464176d6f6a5c85a9fc7e2ca4e6a289035b10d48d4f196a310ab05d7b5516e6ecf428b7f12fa92a45bbabf4ba362c124f461d020bb9b61c4f5db1ac4cddfc82fd844f0b0a9a3b14ca2b0c888cf9a28b484b6f297e82b7a52d4aee008516d1b37106e94ac68811f72bcd4aa282da39b052beee2d85c101eb076ce6412d726e0e636689424dbf4d040de4f1bbb70a9fe1078e3b5c7e28fefb4e6f4de51e470528769ff8ad67f199b1ca0baf1280072bfac4065badee801e8c16046f04937b0193df24f9c1cffbb1d4d4bb7472fa421f085e67de21a76fd1c2871a90eccbaf7d1a8118254b067ee270402beddf8535b1ba30237e59b450c72340bcbb1f58b25b2e6c93a1a6fc1eb24b08fed442b74dadb7b455c0f3f8e553f3f6baf3d156d6627fb74d0c73952eb4d410e15ef254f94c13efd89556bc4dbfc06385957191a198db94ee8ec7f984ff4b2dcb8f149d0e651f2d8453af5300b4dc177ae15022beccb201ee789e6506994e60b5ee1b5b4a1b9012088a619c2ee2fff54bdccd7a5a7d1986dac5ba89e15970c826e721346896f867c78f0fdd077784a0ded21d02a947e57d0279f5a03389c8aed6267bf5b6eae827aee9dc220c72a8f464bf83a5facced6d432f9a4c0dfdf165ae3cca8de65584eb85e7eb2f6e054a3b74a4ccf56089b94fa07b205739cde129a5266277c4f535c68b386eebc2eee5d3352b756a3b0855d197c5baa92dde4c4185903ddcdb3604fd4567b0cbf4a071ec62ba936b7b4fa8618467fcc111c0b7f66713b435361d6d45ef2213d079fa23569015d1b9a6790aa7d63430103c25212ae0849164f08b7ad08ee43a6f6da414ac781dd494e3c24d49a5c226f4a7ffd4df3d366f4cb2a6b7ef7b9903a1196cdf0512abdc2e9c700f716ef8dc60c02dcea8a10e079fb8adcc8ee110651ff3e3f4ca3e568b869c8a57113a1d9186a5aa465a6c876d0db203709c0843bd08b220422904c57b91f8dd3482b070d424907a09cf2fc91c4957f5d968603750afe359038c04411f62ae00853b895d66e6676058fe18cb1b12053c474ff738cd5dcfd8c07cf87bf3057a39555c309e3427c80b7b59e2cfe822363a95e83b534828aa0dbe30721d17a8bcd1e14da13fc65c49dd97d354b2e7ed745b83e1b3dd0bf82cbcfbe1a94ed0955d546243219edff88b026456b7b07e9e6309f8aa9637d9ea5bec499ce28fc8f8b86aa43f5f9f5d67c7bc923b1fa8feee3012c3a96f7e6fe7d8785dda1b43003305f660b597ba5aa04c419494a7855a84cb796df145a515b38157866e08b1971211e4acfa4c7aa5806797223ee7166b5ccdda1b5c47401d155d72d624baf63028cd869975a0a8fe0bc60c285c458e310a0ba7856d6bef6eea281b40643d9d485e67d4537415fc202feb442d7913fb8662be8895ba2e978de9db2d6234ac42c317b8459bd6737bf717a2a4d95bc47b6fbf16cd8ec00657e90824a1cbc34ca71bb1cd99c25eb656c10351ce7a4bf8d9bb5276340abc495c4d2703dddb1ba6f01031f39d4d991cbb558e692646857dfc7688cb1d608bdc691079869e48ac8818033aa8af4919df18629074d5d1d64f5c9f04578c8e4e58f11c40778358f1146ab4cc96c41d714ca30c09716d305619c5d818fd321d7db673c22d7de1c987e28ed29b4d2f1a8e54f5d5043eabdb7f705ead993747591441e1fe7843ea2af64a69bb0c02afa73d68beb50f0faa468f45321d015398243e1478ea42c366b7c24088b734e3ca019c59cf70ef405bd3a1f58194308c2712f93b1d8db8b0430dce6a1f87c431fa7c101f51c98bac5e2716ffac7e73cb5dff086705ce6df3d12572847b80bdb3be790947cbfe501bc9f4562fc4e3d4b0bcb68a6465f9b827e29e77043d2d356b82d73343dc03c0299fe3acce35b733ee50ff18df6ab3ab68815d18b770ee589702dcbe9e7438f77840a26009e659df05ae64ef819e7b25ae74d8b3f878ee20c958624a75e6fcc01eb8a48c37a7358c6878a93a9cdba58e750f1ff324cb04176857c397bc83ef6ad800fae4fd2aa79873209733b45745c161c10ba116cf4363332b18bdf27757c6171da3b18ce1fa22da49ae2b5e0ef2915e788a7adb3f811bbc09531513d1bd6f4eea0ef92de99579ca1e3c60b7b42c3c328bf9f154278b4e84a361615e6454a41c1ef41de1c3344f60a7a68520ee106e289147b5a55436df436d5f5aaf5678c160b4357ff07";
+
+// What tide_inflate gives, gathered.
+typedef struct sink {
+    uint8_t *data;
+    size_t size;
+} sink;
+
+static bool take_inflated(void *user, const uint8_t *bytes, const size_t count)
+{
+    sink *s = user;
+    s->data = realloc(s->data, s->size + count);
+    memcpy(s->data + s->size, bytes, count);
+    s->size += count;
+    return true;
+}
 
 TIDE_TEST(png_inflates_dynamic_codes)
 {
@@ -185,14 +199,15 @@ TIDE_TEST(png_inflates_dynamic_codes)
         const uint32_t r = (x >> 16) & 0xFFFFu;
         want[i] = r % 7 == 0 ? 97 : r % 5 == 0 ? 98 : r % 3 == 0 ? 99 : r % 2 == 0 ? 100 : (uint8_t)(r >> 8);
     }
-    uint8_t out[3000];
-    size_t produced;
-    TIDE_REQUIRE(tide_inflate(deflated, n, out, sizeof out, &produced));
-    TIDE_CHECK(produced == 3000 && memcmp(out, want, 3000) == 0);
-    // Too little room: refused, not written past
-    TIDE_CHECK(!tide_inflate(deflated, n, out, 2999, &produced));
+    sink out = {0};
+    size_t consumed;
+    TIDE_REQUIRE(tide_inflate(deflated, n, take_inflated, &out, &consumed));
+    TIDE_CHECK(out.size == 3000 && memcmp(out.data, want, 3000) == 0 && consumed == n);
     // Cut short: refused
-    TIDE_CHECK(!tide_inflate(deflated, n / 2, out, sizeof out, &produced));
+    sink cut = {0};
+    TIDE_CHECK(!tide_inflate(deflated, n / 2, take_inflated, &cut, &consumed));
+    free(out.data);
+    free(cut.data);
     free(deflated);
 }
 
@@ -213,6 +228,7 @@ TIDE_TEST(png_reads_every_color_type_and_depth)
         const uint8_t color = cases[k].color, depth = cases[k].depth;
         const uint32_t channels = color == 0 || color == 3 ? 1u : color == 2 ? 3u : color == 4 ? 2u : 4u;
         const uint32_t most = (1u << depth) - 1u;
+        const uint32_t entries = depth < 4 ? 1u << depth : 16u; // A palette has no more entries than its depth can name
         const size_t row = ((size_t)W * depth * channels + 7u) / 8u;
         uint8_t raw[(row + 1) * H];
         memset(raw, 0, sizeof raw);
@@ -222,7 +238,7 @@ TIDE_TEST(png_reads_every_color_type_and_depth)
             for (int x = 0; x < W; x++) {
                 uint32_t s[4];
                 for (uint32_t c = 0; c < channels; c++) s[c] = ((uint32_t)(x * 7 + y * 3 + c * 5) * 2654435761u >> 7) & most;
-                if (color == 3 && s[0] >= 16u && (x + y) % 2 == 0) s[0] %= 16u; // Mostly indices the palette has, and some it hasn't
+                if (color == 3) s[0] %= entries; // An index the palette has
                 for (uint32_t c = 0; c < channels; c++) { // Samples packed from the high bits
                     const size_t i = (size_t)x * channels + c;
                     if (depth == 16) {
@@ -241,25 +257,26 @@ TIDE_TEST(png_reads_every_color_type_and_depth)
                 case 0: *w = (tide_color){(float)s[0] / m, (float)s[0] / m, (float)s[0] / m, 1.0f}; break;
                 case 2: *w = (tide_color){(float)s[0] / m, (float)s[1] / m, (float)s[2] / m, 1.0f}; break;
                 case 3:
-                    if (s[0] >= 16u) *w = (tide_color){0.0f, 0.0f, 0.0f, 0.0f}; // An index the palette hasn't got
-                    else *w = (tide_color){(float)palette[3 * s[0]] / 255.0f, (float)palette[3 * s[0] + 1] / 255.0f,
-                                           (float)palette[3 * s[0] + 2] / 255.0f, s[0] < 3 ? (float)trns_palette[s[0]] / 255.0f : 1.0f};
+                    *w = (tide_color){(float)palette[3 * s[0]] / 255.0f, (float)palette[3 * s[0] + 1] / 255.0f,
+                                      (float)palette[3 * s[0] + 2] / 255.0f, s[0] < 3 && s[0] < entries ? (float)trns_palette[s[0]] / 255.0f : 1.0f};
                     break;
                 case 4: *w = (tide_color){(float)s[0] / m, (float)s[0] / m, (float)s[0] / m, (float)s[1] / m}; break;
                 default: *w = (tide_color){(float)s[0] / m, (float)s[1] / m, (float)s[2] / m, (float)s[3] / m}; break;
                 }
             }
         }
-        const made m = {W, H, depth, color, 0, color == 3 ? palette : NULL, 16, color == 3 ? trns_palette : NULL, 3};
+        const made m = {W, H, depth, color, 0, color == 3 ? palette : NULL, entries, color == 3 ? trns_palette : NULL,
+                        entries < 3 ? entries : 3};
         bytes png = make_png(&m, raw, sizeof raw, 7); // IDAT in several small chunks
         tide_png_image image;
         const bool ok = tide_png_decode(png.data, png.size, &image);
+        if (!ok) printf("    color type %d at %d bits didn't decode\n", color, depth);
         TIDE_CHECK(ok);
         if (!ok) {
             free(png.data);
             continue;
         }
-        TIDE_CHECK(image.width == W && image.height == H);
+        TIDE_CHECK(image.width == (uint32_t)W && image.height == (uint32_t)H);
         bool same = true;
         for (int i = 0; i < W * H; i++) same = same && same_color(image.pixels[i], want[i]);
         TIDE_CHECK(same);
@@ -409,19 +426,17 @@ TIDE_TEST(png_refuses_what_is_wrong)
     TIDE_REQUIRE(tide_png_decode(png.data, png.size, &image));
     free(image.pixels);
 
-    TIDE_CHECK(!tide_png_decode(png.data, 0, &image) && strcmp(tide_png_why(), "it isn't a PNG") == 0);
+    TIDE_CHECK(!tide_png_decode(png.data, 0, &image));
     TIDE_CHECK(!tide_png_decode((const uint8_t *)"not a png at all, not a png at all, not", 40, &image));
     for (size_t cut = 1; cut < png.size; cut += 3) TIDE_CHECK(!tide_png_decode(png.data, cut, &image)); // Truncated anywhere
-    int32_t w, h;
-    TIDE_CHECK(tide_png_size(png.data, 40, &w, &h) && w == 3 && h == 2);
 
     bytes bad = {0};
     put(&bad, png.data, png.size);
     bad.data[8 + 8 + 13] ^= 1; // A bit of the header's CRC
-    TIDE_CHECK(!tide_png_decode(bad.data, bad.size, &image) && strcmp(tide_png_why(), "its header is corrupt") == 0);
+    TIDE_CHECK(!tide_png_decode(bad.data, bad.size, &image));
     memcpy(bad.data, png.data, png.size);
     bad.data[bad.size - 1 - 4 - 4 - 4 - 1] ^= 1; // The zlib checksum's last byte, in the IDAT before IEND... its CRC then fails first
-    TIDE_CHECK(!tide_png_decode(bad.data, bad.size, &image) && strcmp(tide_png_why(), "a chunk is corrupt") == 0);
+    TIDE_CHECK(!tide_png_decode(bad.data, bad.size, &image));
     free(bad.data);
 
     // A filter type no PNG has, with the chunks' CRCs right
@@ -429,12 +444,12 @@ TIDE_TEST(png_refuses_what_is_wrong)
     memcpy(filtered, raw, sizeof raw);
     filtered[0] = 7;
     bytes f = make_png(&m, filtered, sizeof filtered, 1000);
-    TIDE_CHECK(!tide_png_decode(f.data, f.size, &image) && strcmp(tide_png_why(), "a row's filter isn't a PNG's") == 0);
+    TIDE_CHECK(!tide_png_decode(f.data, f.size, &image));
     free(f.data);
 
     // Too little image data for the size: the stream ends early
     bytes s = make_png(&m, raw, sizeof raw - 2, 1000);
-    TIDE_CHECK(!tide_png_decode(s.data, s.size, &image) && strcmp(tide_png_why(), "its image data is corrupt") == 0);
+    TIDE_CHECK(!tide_png_decode(s.data, s.size, &image));
     free(s.data);
 
     // A palette picture with no palette
@@ -452,7 +467,7 @@ TIDE_TEST(png_refuses_what_is_wrong)
     // A zero size
     const made z = {0, 2, 8, 0, 0, NULL, 0, NULL, 0};
     bytes bz = make_png(&z, raw, sizeof raw, 1000);
-    TIDE_CHECK(!tide_png_decode(bz.data, bz.size, &image) && strcmp(tide_png_why(), "it has no pixels") == 0);
+    TIDE_CHECK(!tide_png_decode(bz.data, bz.size, &image));
     free(bz.data);
     free(png.data);
 }

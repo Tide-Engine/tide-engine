@@ -2701,6 +2701,7 @@ static void describe(const occurrence *o, sb *out)
                       : str_eq_c(o->name, "File") || str_eq_c(o->name, "Directory") ? "\n\nThis machine's filesystem, accessible from local code and its helpers. Fallible operations use IOError."
                       : str_eq_c(o->name, "Application") ? "\n\nPersistent save and temporary cache directories, selected by the game's stable appId."
                       : str_eq_c(o->name, "Storage") ? "\n\nAwait Storage.Flush() to confirm that preceding changes reached persistent storage."
+                      : str_eq_c(o->name, "Web") ? "\n\nThis machine's network: `await Web.Fetch(url)` gives a URL's bytes, from local code, failing with IOError."
                       : str_eq_c(o->name, "Path") ? "\n\nPure lexical path operations, without accessing the filesystem."
                       : str_eq_c(o->name, "Cursor")    ? "\n\nThe mouse's cursor. `Cursor.Lock()` hides it and keeps it in "
                                                          "place, for a camera that looks around: a view calls it every "
@@ -2863,6 +2864,13 @@ static void describe(const occurrence *o, sb *out)
             {"Rotation", "[Rotation]", "Provisional: float radians or a quaternion presented through the shortest rotation, with accumulated visual correction error."},
             {"NativeName", "[NativeName(\"c_function\")]",
              "The C function the extern function after it calls, or the extern system after it is, when its name isn't the declaration's own."},
+            {"Channel", "[Channel(Channels.Uploads)]",
+             "Puts the command after it in a channel of the game's, an enum member: a player's commands are handled in the "
+             "order sent within a channel, and in no order against another channel's, so a chat line never waits behind an "
+             "upload. Without it a command is in the default channel."},
+            {"Unordered", "[Unordered]",
+             "The command after it has no order at all: the server handles it in whichever tick it arrives, before or after "
+             "commands sent earlier, exactly once."},
         };
         for (size_t i = 0; i < sizeof attributes / sizeof attributes[0]; i++) {
             if (!str_eq_c(o->name, attributes[i].name)) continue;
@@ -3866,7 +3874,7 @@ static bool write_c_definition(const occurrence *o, jbuf *out)
         return cdefs_find_header(builtin_draw_owner(o->owner)                                         ? "draw.h"
                                  : str_eq_c(o->owner, "File") || str_eq_c(o->owner, "Directory")
                                        || str_eq_c(o->owner, "Path") || str_eq_c(o->owner, "Application")
-                                       || str_eq_c(o->owner, "Storage") ? "io.h"
+                                       || str_eq_c(o->owner, "Storage") || str_eq_c(o->owner, "Web") ? "io.h"
                                  : str_eq_c(o->owner, "GUI") || str_eq_c(o->owner, "GUILayout")
                                        || str_eq_c(o->owner, "Screen") || str_eq_c(o->owner, "Cursor") ? "gui.h"
                                                                                                     : "math.h",
@@ -5722,7 +5730,8 @@ static void complete_members(completion *c, const int dot, const loc at, const o
         if (n == 1 && builtin_owner(base)) {
             // This machine's files and its frame's length: local code's, and its functions'
             const bool local_owner = str_eq_c(base, "File") || str_eq_c(base, "Directory")
-                               || str_eq_c(base, "Application") || str_eq_c(base, "Storage") || str_eq_c(base, "Frame");
+                               || str_eq_c(base, "Application") || str_eq_c(base, "Storage") || str_eq_c(base, "Web")
+                               || str_eq_c(base, "Frame");
             if (local_owner && (!sc.decl || (!sc.decl->is_view && !sc.decl->is_local && sc.decl->kind != DECL_FUNCTION))) return;
             const bool frame_owner = builtin_draw_owner(base) || str_eq_c(base, "Draw") || str_eq_c(base, "GUI") || str_eq_c(base, "GUILayout")
                                   || str_eq_c(base, "Screen");
@@ -6217,6 +6226,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
         item(c, "Application", CK_MODULE, "Persistent save and temporary cache paths", NULL, NULL);
         item(c, "Frame", CK_MODULE, "This machine's frame: how long it is, for what isn't the match's", NULL, NULL);
         if (sc.decl->is_async) item(c, "Storage", CK_MODULE, "Await persistent storage commits", NULL, NULL);
+        if (sc.decl->is_async) item(c, "Web", CK_MODULE, "Await a URL's bytes, fetched by this machine", NULL, NULL);
     }
     complete_value_types(c, !statement ? VT_VALUES : local_code ? VT_LOCALS | VT_LOCAL_ENTITY : VT_LOCALS);
     complete_structs(c);
@@ -7265,6 +7275,12 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "NativeName", CK_FUNCTION, "[NativeName(\"c_function\")]",
                  "The C function the extern function after it calls, or the extern system after it is, when its name isn't the declaration's own.",
                  "NativeName(\"$1\")");
+            item(&c, "Channel", CK_FUNCTION, "[Channel(Channels.Uploads)]",
+                 "Puts the command in a channel of the game's: in order among that channel's commands, and in no order against the others.",
+                 "Channel($1)");
+            item(&c, "Unordered", CK_FUNCTION, "[Unordered]",
+                 "The command has no order at all: handled in the tick it arrives, before or after commands sent earlier, once.",
+                 "Unordered");
         }
         break;
 

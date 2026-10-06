@@ -129,13 +129,26 @@ typedef struct tide_game {
     // inputs, and a confirmed tick's, are what was sent. NULL: nothing is let
     // go, and a guess is the last input for as far as the client runs ahead.
     bool (*let_go_inputs)(void *world, const tide_player_set *keep);
-    // Commands are bounded, copied wire values. Checking only decodes them;
-    // dispatch records them for this tick, with the connection's sender, and
-    // advances its sequence. Sequences are world state: snapshots, hashes and
-    // migration keep them, even when the game's handler chooses to do nothing.
-    bool (*check_command)(const uint8_t *data, uint32_t size);
-    uint32_t (*command_sequence)(const void *world, tide_player_id player);
-    bool (*command)(void *world, tide_player_id sender, uint32_t sequence, const uint8_t *data, uint32_t size);
+    // Commands are bounded, copied wire values. Checking only decodes them,
+    // and says which channel the command's type is in: 0, the default, one
+    // of the game's own (1 to command_channels - 1), or
+    // TIDE_COMMAND_UNORDERED. Dispatch records one for this tick, with the
+    // connection's sender, and advances its channel's sequence; `channel` has
+    // to be the bytes' own. Sequences are world state, a player's per
+    // channel: snapshots, hashes and migration keep them, even when the
+    // game's handler chooses to do nothing. An unordered command has an id
+    // of its own in place of a sequence, which the world keeps a window of
+    // (TIDE_COMMAND_WINDOW, the last ids applied) to apply each exactly once:
+    // command_sequence gives the highest applied, and command_applied
+    // whether an id was, or is too old to tell. NULL where the game has no
+    // unordered command.
+    bool (*check_command)(const uint8_t *data, uint32_t size, uint32_t *channel);
+    uint32_t (*command_sequence)(const void *world, tide_player_id player, uint32_t channel);
+    bool (*command)(void *world, tide_player_id sender, uint32_t channel, uint32_t sequence, const uint8_t *data,
+                    uint32_t size);
+    bool (*command_applied)(const void *world, tide_player_id player, uint32_t id);
+    // How many channels its commands are in, the default counted: 0 for 1
+    uint32_t command_channels;
     // Whether the match is over: its last scene unloaded, and Main is local,
     // so it can't come back. The server ends it then. NULL: it never is.
     bool (*ended)(const void *world);
@@ -163,15 +176,31 @@ typedef struct tide_game {
     uint32_t max_players;
 } tide_game;
 
+// A command of up to TIDE_COMMAND_BYTES goes in one datagram, as commands
+// always did. A bigger one, up to TIDE_COMMAND_LIMIT (a command with a
+// List<byte> field, a file's bytes), goes as a numbered transfer in chunks,
+// the way worlds go, paced under the input traffic, and lands in a later
+// tick: the server sends its bytes to every player first, and puts it in a
+// tick once they all have them, so no tick waits for a transfer.
 #define TIDE_COMMAND_BYTES 1024u
-#define TIDE_COMMAND_PENDING 32u
+#define TIDE_COMMAND_LIMIT (4u << 20)
+#define TIDE_COMMAND_PENDING 32u // Pending per player, in each channel
 #define TIDE_COMMANDS_PER_TICK 16u
+#define TIDE_COMMAND_CHANNELS_MOST 64u // Channels a game's commands can be in, the default counted
+#define TIDE_COMMAND_UNORDERED UINT32_MAX // The channel of a command with no order
+#define TIDE_COMMAND_WINDOW 64u // Unordered ids a world remembers applying, per player
 
 // How many players a game's matches take. The server's input is the slot after
 // the last player's.
 static inline uint32_t tide_game_players(const tide_game *g)
 {
     return g->max_players ? g->max_players : TIDE_PLAYERS_DEFAULT;
+}
+
+// How many channels a game's commands are in: the default, and its own.
+static inline uint32_t tide_game_command_channels(const tide_game *g)
+{
+    return g->command_channels ? g->command_channels : 1u;
 }
 
 typedef enum tide_session_state {
@@ -361,10 +390,13 @@ tide_client *tide_client_create(const tide_client_desc *desc, double now);
 // Tells the server it's leaving, and closes the transport.
 void tide_client_destroy(tide_client *c);
 void tide_client_update(tide_client *c, double now);
-// Copies a command to resend until its sequence is in a verified world.
-// False outside a connected match, for invalid bytes, a full queue, or when
-// its 32-bit sequence is exhausted. After a layout change a remote client
-// waits for a fresh authoritative world. Commands never predict by repeating.
+// Copies a command to resend until its sequence is in a verified world (or,
+// unordered, its id was applied). Its channel is its type's, which the bytes
+// say (tide_game.check_command). False outside a connected match, for invalid
+// bytes, a full queue (TIDE_COMMAND_PENDING in its channel), or when its
+// 32-bit sequence is exhausted. After a layout change a remote client waits
+// for a fresh authoritative world. Commands never predict by repeating. One
+// bigger than TIDE_COMMAND_BYTES goes in chunks (see TIDE_COMMAND_LIMIT).
 bool tide_client_send_command(tide_client *c, const uint8_t *data, uint32_t size);
 tide_client_status tide_client_status_of(const tide_client *c);
 // What views read: the world as predicted, up to predicted_tick. NULL until connected.

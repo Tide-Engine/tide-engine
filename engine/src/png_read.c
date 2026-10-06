@@ -1,14 +1,13 @@
-// PNG files read into pixels (see tide/png.h), from RFC 2083 (PNG), RFC 1950
-// (zlib) and RFC 1951 (deflate), with no code of anyone else's: the writer in
-// platform/src/png.c is the other half.
+// PNG files read, from the PNG specification (RFC 2083) and the formats under
+// it, zlib's (RFC 1950) and deflate's (RFC 1951), with no code of anyone
+// else's (see tide/png.h). The platform's writer (platform/src/png.c) is the
+// other half, for what a headless window captures; this reads anything.
 //
-// Inflating goes through a table of the codes up to 9 bits long, looked up by
-// the next 9 bits of the stream (a code reads from its highest bit, so the
-// table is by the bits reversed), and the rare longer codes a bit at a time
-// through the counts of each length, as the fixed and dynamic codes are
-// canonical. Every read of the input and every write of the output is
-// bounded: a stream that's wrong gives false, never a read or write outside
-// its buffers.
+// The stream is inflated into a window of 32 KiB, which is all deflate ever
+// reaches back into, and handed on in runs as it's made; the PNG side puts
+// the runs together into scanlines, unfilters each against the one before,
+// turns it into colors and hands it to whoever asked. So what's made for a
+// picture is a few rows of it, whatever its size.
 
 #include "tide/png.h"
 
@@ -20,115 +19,136 @@
 // ---------------------------------------------------------------------------
 // Inflate (RFC 1951)
 
-enum { FAST_BITS = 9, MAX_BITS = 15, MAX_SYMBOLS = 288 };
+enum {
+    WINDOW = 32768,
+    FLUSH_AT = 16384, // Output goes on once this much has gathered: a symbol adds 258 at most, so the ring is never overrun
+    MAX_BITS = 15,
+    MAX_LIT = 288,
+    MAX_DIST = 32,
+    FAST_BITS = 9, // Codes this short are decoded by one table lookup
+};
 
-typedef struct huffman {
-    uint16_t fast[1 << FAST_BITS]; // By the next 9 bits, reversed: symbol | length << 9; 0 for a longer code
-    uint16_t count[MAX_BITS + 1];  // Codes of each length
-    uint16_t symbol[MAX_SYMBOLS];  // Symbols in canonical order
-} huffman;
+typedef struct huff {
+    uint16_t count[MAX_BITS + 1]; // Codes of each length
+    uint16_t symbol[MAX_LIT];     // Symbols in canonical order
+    uint16_t fast[1 << FAST_BITS]; // symbol << 4 | length, by the next FAST_BITS bits as the stream has them; 0 for a longer code
+} huff;
 
 typedef struct inflater {
     const uint8_t *in;
     size_t size, at;
-    uint64_t bits; // The next bits of the stream, lowest first
-    int have;      // How many of them are there
-    uint8_t *out;
-    size_t out_size, done;
+    uint32_t bits;
+    uint32_t bit_count;
+    uint8_t win[WINDOW];
+    size_t pos, flushed;
+    tide_inflate_fn out;
+    void *user;
 } inflater;
 
-// Fills the bit buffer as far as the input goes: past its end, zeros, which
-// a well-formed stream never reads.
-static void fill(inflater *f)
-{
-    while (f->have <= 56) {
-        const uint64_t byte = f->at < f->size ? f->in[f->at] : 0u;
-        f->at++;
-        f->bits |= byte << f->have;
-        f->have += 8;
-    }
-}
+static const uint16_t length_base[29] = {3,  4,  5,  6,  7,  8,  9,  10, 11,  13,  15,  17,  19,  23, 27,
+                                         31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
+static const uint8_t length_extra[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
+static const uint16_t distance_base[30] = {1,   2,   3,   4,   5,   7,    9,    13,   17,   25,   33,   49,   65,    97,    129,
+                                           193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
+static const uint8_t distance_extra[30] = {0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
 
-static uint32_t take(inflater *f, const int n)
+// Bytes into the bit buffer, as far as there are: false once the input is out
+// and fewer than `want` bits are there.
+static bool fill(inflater *f, const uint32_t want)
 {
-    if (f->have < n) fill(f);
-    const uint32_t v = (uint32_t)(f->bits & ((1ull << n) - 1u));
-    f->bits >>= n;
-    f->have -= n;
-    return v;
-}
-
-// Whether the stream read past its end: `at` counts the bytes taken into the
-// buffer, less what's still unread in it.
-static bool overran(const inflater *f)
-{
-    return f->at - (size_t)(f->have / 8) > f->size;
-}
-
-// The table for `n` codes of these lengths (0 for a symbol with no code).
-// False for lengths no prefix code has: over-subscribed, or incomplete with
-// more than one code.
-static bool build(huffman *h, const uint8_t *lengths, const int n)
-{
-    memset(h->count, 0, sizeof h->count);
-    memset(h->fast, 0, sizeof h->fast);
-    for (int i = 0; i < n; i++) h->count[lengths[i]]++;
-    h->count[0] = 0;
-    int left = 1;
-    for (int len = 1; len <= MAX_BITS; len++) {
-        left <<= 1;
-        left -= h->count[len];
-        if (left < 0) return false; // More codes of a length than there are
-    }
-    uint16_t offset[MAX_BITS + 2];
-    offset[1] = 0;
-    for (int len = 1; len <= MAX_BITS; len++) offset[len + 1] = (uint16_t)(offset[len] + h->count[len]);
-    uint16_t next[MAX_BITS + 1]; // The next canonical code of each length
-    uint32_t code = 0;
-    for (int len = 1; len <= MAX_BITS; len++) {
-        code = (code + h->count[len - 1]) << 1;
-        next[len] = (uint16_t)code;
-    }
-    next[1] = 0;
-    for (int i = 0; i < n; i++) {
-        const int len = lengths[i];
-        if (!len) continue;
-        h->symbol[offset[len]++] = (uint16_t)i;
-        const uint32_t c = next[len]++;
-        if (len > FAST_BITS) continue;
-        uint32_t reversed = 0; // The table is by the bits as they come, lowest first
-        for (int b = 0; b < len; b++) reversed |= ((c >> b) & 1u) << (len - 1 - b);
-        for (uint32_t k = reversed; k < (1u << FAST_BITS); k += 1u << len) h->fast[k] = (uint16_t)(i | len << FAST_BITS);
-    }
-    // An incomplete code is only allowed where there's one code (a distance
-    // code of one symbol), as the RFC says
-    if (left > 0) {
-        int codes = 0;
-        for (int len = 1; len <= MAX_BITS; len++) codes += h->count[len];
-        if (codes > 1) return false;
+    while (f->bit_count < want) {
+        if (f->at >= f->size) return false;
+        f->bits |= (uint32_t)f->in[f->at++] << f->bit_count;
+        f->bit_count += 8;
     }
     return true;
 }
 
-// The next symbol, or -1 for bits no code has.
-static int decode(inflater *f, const huffman *h)
+// The next `count` bits (16 at most), lowest first: -1 past the input's end.
+static int32_t take(inflater *f, const uint32_t count)
 {
-    if (f->have < MAX_BITS) fill(f);
-    const uint16_t e = h->fast[f->bits & ((1u << FAST_BITS) - 1u)];
-    if (e) {
-        const int len = e >> FAST_BITS;
-        f->bits >>= len;
-        f->have -= len;
-        return e & ((1 << FAST_BITS) - 1);
+    if (!fill(f, count)) return -1;
+    const uint32_t v = f->bits & ((1u << count) - 1u);
+    f->bits >>= count;
+    f->bit_count -= count;
+    return (int32_t)v;
+}
+
+static bool flush(inflater *f)
+{
+    while (f->flushed < f->pos) {
+        const size_t from = f->flushed & (WINDOW - 1u);
+        size_t n = f->pos - f->flushed;
+        if (n > WINDOW - from) n = WINDOW - from;
+        if (!f->out(f->user, f->win + from, n)) return false;
+        f->flushed += n;
     }
-    // A longer code, a bit at a time from its first: canonical codes of a
-    // length are consecutive, so the symbol is how far into them it is
-    int code = 0, first = 0, index = 0;
-    for (int len = 1; len <= MAX_BITS; len++) {
-        code |= (int)(f->bits & 1u);
-        f->bits >>= 1;
-        f->have--;
-        const int count = h->count[len];
+    return true;
+}
+
+static inline void put(inflater *f, const uint8_t byte)
+{
+    f->win[f->pos & (WINDOW - 1u)] = byte;
+    f->pos++;
+}
+
+// A set of codes from their lengths, canonical (RFC 1951, 3.2.2): how many
+// codes are over-subscribed (under 0), complete (0) or left unused (over 0).
+static int construct(huff *h, const uint8_t *lengths, const uint32_t n)
+{
+    memset(h, 0, sizeof *h);
+    for (uint32_t i = 0; i < n; i++) h->count[lengths[i]]++;
+    if (h->count[0] == n) return 0; // No codes at all
+    int left = 1;
+    for (uint32_t len = 1; len <= MAX_BITS; len++) {
+        left <<= 1;
+        left -= h->count[len];
+        if (left < 0) return left;
+    }
+    uint16_t offsets[MAX_BITS + 1];
+    offsets[1] = 0;
+    for (uint32_t len = 1; len < MAX_BITS; len++) offsets[len + 1] = (uint16_t)(offsets[len] + h->count[len]);
+    uint16_t next_code[MAX_BITS + 2] = {0};
+    for (uint32_t len = 1, code = 0; len <= MAX_BITS; len++) {
+        code = (code + h->count[len - 1]) << 1;
+        next_code[len] = (uint16_t)code;
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        const uint32_t len = lengths[i];
+        if (!len) continue;
+        h->symbol[offsets[len]++] = (uint16_t)i;
+        if (len <= FAST_BITS) {
+            // The stream delivers a code's bits from its first, so the table's
+            // index is the code reversed, with every setting of the bits after it
+            const uint32_t code = next_code[len];
+            uint32_t reversed = 0;
+            for (uint32_t b = 0; b < len; b++) reversed |= ((code >> b) & 1u) << (len - 1u - b);
+            for (uint32_t rest = 0; rest < (1u << (FAST_BITS - len)); rest++) {
+                h->fast[reversed | rest << len] = (uint16_t)(i << 4 | len);
+            }
+        }
+        next_code[len]++;
+    }
+    return left;
+}
+
+// The next symbol: -1 for a code that's in no set, or an input that ends.
+static int32_t decode(inflater *f, const huff *h)
+{
+    fill(f, FAST_BITS); // Near the end there may be fewer: the entry says how many it needs
+    const uint16_t entry = h->fast[f->bits & ((1u << FAST_BITS) - 1u)];
+    if (entry && (entry & 15u) <= f->bit_count) {
+        f->bits >>= entry & 15u;
+        f->bit_count -= entry & 15u;
+        return entry >> 4;
+    }
+    // A longer code, a bit at a time
+    int32_t code = 0, first = 0, index = 0;
+    for (uint32_t len = 1; len <= MAX_BITS; len++) {
+        const int32_t bit = take(f, 1);
+        if (bit < 0) return -1;
+        code |= bit;
+        const int32_t count = h->count[len];
         if (code - count < first) return h->symbol[index + (code - first)];
         index += count;
         first += count;
@@ -138,153 +158,145 @@ static int decode(inflater *f, const huffman *h)
     return -1;
 }
 
-static const uint16_t length_base[29] = {3,  4,  5,  6,  7,  8,  9,  10, 11,  13,  15,  17,  19,  23, 27,
-                                         31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
-static const uint8_t length_extra[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
-static const uint16_t distance_base[30] = {1,   2,   3,   4,   5,   7,    9,    13,   17,   25,   33,   49,   65,    97,    129,
-                                           193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
-static const uint8_t distance_extra[30] = {0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
-
-// A block's symbols, literals and matches, until its end.
-static bool codes(inflater *f, const huffman *lit, const huffman *dist)
+// A block's literals, lengths and distances, through `lit` and `dist`, to
+// the block's end.
+static bool codes(inflater *f, const huff *lit, const huff *dist)
 {
     for (;;) {
-        const int sym = decode(f, lit);
-        if (sym < 0 || overran(f)) return false;
-        if (sym < 256) {
-            if (f->done >= f->out_size) return false;
-            f->out[f->done++] = (uint8_t)sym;
-            continue;
+        int32_t symbol = decode(f, lit);
+        if (symbol < 0) return false;
+        if (symbol < 256) {
+            put(f, (uint8_t)symbol);
+        } else if (symbol == 256) {
+            return true;
+        } else {
+            symbol -= 257;
+            if (symbol >= 29) return false;
+            const int32_t extra = take(f, length_extra[symbol]);
+            if (extra < 0) return false;
+            const uint32_t length = length_base[symbol] + (uint32_t)extra;
+            const int32_t d = decode(f, dist);
+            if (d < 0 || d >= 30) return false;
+            const int32_t more = take(f, distance_extra[d]);
+            if (more < 0) return false;
+            const size_t distance = distance_base[d] + (uint32_t)more;
+            if (distance > f->pos) return false; // Before the stream's start
+            for (uint32_t i = 0; i < length; i++) put(f, f->win[(f->pos - distance) & (WINDOW - 1u)]);
         }
-        if (sym == 256) return true;
-        if (sym > 285) return false;
-        const uint32_t len = length_base[sym - 257] + take(f, length_extra[sym - 257]);
-        const int d = decode(f, dist);
-        if (d < 0 || d > 29) return false;
-        const uint32_t distance = distance_base[d] + take(f, distance_extra[d]);
-        if (overran(f) || distance > f->done || len > f->out_size - f->done) return false;
-        uint8_t *to = f->out + f->done;
-        const uint8_t *from = to - distance;
-        for (uint32_t i = 0; i < len; i++) to[i] = from[i]; // Overlapping: byte by byte, as the RFC means it
-        f->done += len;
+        if (f->pos - f->flushed >= FLUSH_AT && !flush(f)) return false;
     }
 }
 
 static bool stored(inflater *f)
 {
-    take(f, f->have & 7); // To a whole byte
-    const uint32_t len = take(f, 16);
-    const uint32_t nlen = take(f, 16);
-    if ((len ^ 0xFFFFu) != nlen || overran(f)) return false;
-    // The bytes themselves are what the bit buffer holds and then the input
-    for (uint32_t i = 0; i < len; i++) {
-        if (f->done >= f->out_size) return false;
-        f->out[f->done++] = (uint8_t)take(f, 8);
+    f->bits = 0; // To a whole byte
+    f->bit_count = 0;
+    if (f->size - f->at < 4) return false;
+    const uint32_t n = f->in[f->at] | (uint32_t)f->in[f->at + 1] << 8;
+    const uint32_t check = f->in[f->at + 2] | (uint32_t)f->in[f->at + 3] << 8;
+    f->at += 4;
+    if (n != (~check & 0xFFFFu) || f->size - f->at < n) return false;
+    for (uint32_t i = 0; i < n; i++) {
+        put(f, f->in[f->at++]);
+        if (f->pos - f->flushed >= FLUSH_AT && !flush(f)) return false;
     }
-    return !overran(f);
+    return true;
 }
 
-static bool fixed_codes(inflater *f)
+static bool fixed(inflater *f, huff *lit, huff *dist)
 {
-    static huffman lit, dist;
-    static bool made;
-    if (!made) {
-        uint8_t lengths[MAX_SYMBOLS];
-        int i = 0;
-        for (; i < 144; i++) lengths[i] = 8;
-        for (; i < 256; i++) lengths[i] = 9;
-        for (; i < 280; i++) lengths[i] = 7;
-        for (; i < 288; i++) lengths[i] = 8;
-        build(&lit, lengths, 288);
-        for (i = 0; i < 30; i++) lengths[i] = 5;
-        build(&dist, lengths, 30);
-        made = true;
-    }
-    return codes(f, &lit, &dist);
+    uint8_t lengths[MAX_LIT];
+    uint32_t i = 0;
+    for (; i < 144; i++) lengths[i] = 8;
+    for (; i < 256; i++) lengths[i] = 9;
+    for (; i < 280; i++) lengths[i] = 7;
+    for (; i < MAX_LIT; i++) lengths[i] = 8;
+    construct(lit, lengths, MAX_LIT);
+    for (i = 0; i < 30; i++) lengths[i] = 5;
+    construct(dist, lengths, 30);
+    return codes(f, lit, dist);
 }
 
-static bool dynamic_codes(inflater *f)
+static bool dynamic(inflater *f, huff *lit, huff *dist)
 {
     static const uint8_t order[19] = {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15};
-    const int nlen = (int)take(f, 5) + 257;
-    const int ndist = (int)take(f, 5) + 1;
-    const int ncode = (int)take(f, 4) + 4;
-    if (nlen > 286 || ndist > 30) return false;
-    uint8_t lengths[MAX_SYMBOLS + 32];
-    memset(lengths, 0, 19);
-    for (int i = 0; i < ncode; i++) lengths[order[i]] = (uint8_t)take(f, 3);
-    huffman lencode;
-    if (!build(&lencode, lengths, 19)) return false;
-    for (int i = 0; i < nlen + ndist;) {
-        int sym = decode(f, &lencode);
-        if (sym < 0 || overran(f)) return false;
-        if (sym < 16) {
-            lengths[i++] = (uint8_t)sym;
+    const int32_t nlen = take(f, 5), ndist = take(f, 5), ncode = take(f, 4);
+    if (nlen < 0 || ndist < 0 || ncode < 0) return false;
+    const uint32_t lits = (uint32_t)nlen + 257u, dists = (uint32_t)ndist + 1u, codes_given = (uint32_t)ncode + 4u;
+    if (lits > 286 || dists > 30) return false;
+    uint8_t lengths[MAX_LIT + MAX_DIST] = {0};
+    for (uint32_t i = 0; i < codes_given; i++) {
+        const int32_t v = take(f, 3);
+        if (v < 0) return false;
+        lengths[order[i]] = (uint8_t)v;
+    }
+    huff *lencode = lit; // Borrowed for the code lengths' own codes
+    if (construct(lencode, lengths, 19) != 0) return false;
+    for (uint32_t i = 0; i < lits + dists;) {
+        int32_t symbol = decode(f, lencode);
+        if (symbol < 0) return false;
+        if (symbol < 16) {
+            lengths[i++] = (uint8_t)symbol;
             continue;
         }
-        uint8_t len = 0;
-        int repeat;
-        if (sym == 16) {
-            if (i == 0) return false; // Nothing to repeat
-            len = lengths[i - 1];
-            repeat = 3 + (int)take(f, 2);
-        } else if (sym == 17) {
-            repeat = 3 + (int)take(f, 3);
+        uint8_t value = 0;
+        int32_t repeat;
+        if (symbol == 16) {
+            if (!i) return false; // Nothing to repeat
+            value = lengths[i - 1];
+            repeat = take(f, 2);
+            if (repeat < 0) return false;
+            repeat += 3;
+        } else if (symbol == 17) {
+            repeat = take(f, 3);
+            if (repeat < 0) return false;
+            repeat += 3;
         } else {
-            repeat = 11 + (int)take(f, 7);
+            repeat = take(f, 7);
+            if (repeat < 0) return false;
+            repeat += 11;
         }
-        if (i + repeat > nlen + ndist) return false;
-        while (repeat--) lengths[i++] = len;
+        if (i + (uint32_t)repeat > lits + dists) return false;
+        while (repeat--) lengths[i++] = value;
     }
-    if (lengths[256] == 0) return false; // No end-of-block code
-    huffman lit, dist;
-    if (!build(&lit, lengths, nlen) || !build(&dist, lengths + nlen, ndist)) return false;
-    return codes(f, &lit, &dist);
+    if (!lengths[256]) return false; // No end-of-block code
+    int left = construct(lit, lengths, lits);
+    if (left < 0 || (left > 0 && lits != lit->count[0] + 1u)) return false; // Incomplete, unless it's one code
+    left = construct(dist, lengths + lits, dists);
+    if (left < 0 || (left > 0 && dists != dist->count[0] + 1u)) return false;
+    return codes(f, lit, dist);
 }
 
-bool tide_inflate(const uint8_t *in, const size_t in_size, uint8_t *out, const size_t out_size, size_t *produced)
+bool tide_inflate(const uint8_t *in, const size_t size, const tide_inflate_fn out, void *user, size_t *consumed)
 {
-    inflater f = {.in = in, .size = in_size, .out = out, .out_size = out_size};
-    *produced = 0;
-    bool last;
-    do {
-        last = take(&f, 1);
-        const uint32_t type = take(&f, 2);
-        bool ok;
-        if (type == 0) ok = stored(&f);
-        else if (type == 1) ok = fixed_codes(&f);
-        else if (type == 2) ok = dynamic_codes(&f);
+    inflater *f = tide_alloc_zeroed(1, sizeof *f);
+    huff *tables = tide_alloc(2 * sizeof *tables);
+    f->in = in;
+    f->size = size;
+    f->out = out;
+    f->user = user;
+    bool ok = true;
+    for (int32_t last = 0; ok && !last;) {
+        last = take(f, 1);
+        const int32_t kind = take(f, 2);
+        if (last < 0 || kind < 0) { ok = false; break; }
+        if (kind == 0) ok = stored(f);
+        else if (kind == 1) ok = fixed(f, tables, tables + 1);
+        else if (kind == 2) ok = dynamic(f, tables, tables + 1);
         else ok = false;
-        if (!ok || overran(&f)) return false;
-    } while (!last);
-    *produced = f.done;
-    return true;
+    }
+    if (ok) ok = flush(f);
+    // Whole bytes the bit buffer took but the stream didn't use go back
+    if (consumed) *consumed = f->at - f->bit_count / 8u;
+    free(tables);
+    free(f);
+    return ok;
 }
 
 // ---------------------------------------------------------------------------
 // PNG (RFC 2083)
 
-static TIDE_THREAD_LOCAL const char *why;
-
-const char *tide_png_why(void)
-{
-    return why ? why : "";
-}
-
-static bool wrong(const char *what)
-{
-    why = what;
-    return false;
-}
-
-static uint32_t read32(const uint8_t *p)
-{
-    return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3];
-}
-
-// PNG's check of a chunk: CRC-32, a bit at a time into a table the first
-// time, then a byte at a time (the writer's twin).
-static uint32_t crc32(const uint8_t *data, const size_t size)
+static uint32_t crc32_of(const uint8_t *data, const size_t size)
 {
     static uint32_t table[256];
     if (!table[1]) {
@@ -299,347 +311,385 @@ static uint32_t crc32(const uint8_t *data, const size_t size)
     return ~crc;
 }
 
-static uint32_t adler32(const uint8_t *data, size_t size)
+static uint32_t get32(const uint8_t *p)
 {
-    uint32_t a = 1, b = 0;
-    while (size) {
-        size_t n = size < 5552u ? size : 5552u;
-        size -= n;
-        while (n--) {
-            a += *data++;
+    return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3];
+}
+
+enum { GRAY = 0, RGB = 2, PALETTE = 3, GRAY_ALPHA = 4, RGBA = 6 };
+
+// Adam7's passes: where each starts and how far apart its pixels are. One
+// pass stands for a picture that isn't interlaced.
+static const uint8_t pass_x0[7] = {0, 4, 0, 2, 0, 1, 0}, pass_dx[7] = {8, 8, 4, 4, 2, 2, 1};
+static const uint8_t pass_y0[7] = {0, 0, 4, 0, 2, 0, 1}, pass_dy[7] = {8, 8, 8, 4, 4, 2, 2};
+
+typedef struct reader {
+    uint32_t width, height;
+    uint32_t depth, color, channels, bits_per_pixel, filter_unit; // The filter unit is a whole pixel's bytes, 1 at least
+    bool interlaced;
+    uint8_t palette[256][4];
+    uint32_t palette_count;
+    bool keyed; // A transparent color (tRNS of gray or RGB)
+    uint16_t key[3];
+    float sample_max;
+    // Scanlines, as the inflated bytes gather into them
+    uint8_t *prev, *cur; // The row before and this one, without their filter byte
+    uint32_t row_bytes, row_fill;
+    uint8_t filter;
+    uint32_t pass, pass_width, pass_height, pass_y, passes;
+    tide_color *colors;
+    bool done;
+    // zlib's checksum of the inflated bytes
+    uint32_t adler_a, adler_b;
+    tide_png_row_fn row;
+    void *user;
+} reader;
+
+static bool begin_pass(reader *r)
+{
+    for (; r->pass < r->passes; r->pass++) {
+        const uint32_t x0 = r->interlaced ? pass_x0[r->pass] : 0, dx = r->interlaced ? pass_dx[r->pass] : 1;
+        const uint32_t y0 = r->interlaced ? pass_y0[r->pass] : 0, dy = r->interlaced ? pass_dy[r->pass] : 1;
+        r->pass_width = r->width > x0 ? (r->width - x0 + dx - 1u) / dx : 0;
+        r->pass_height = r->height > y0 ? (r->height - y0 + dy - 1u) / dy : 0;
+        if (!r->pass_width || !r->pass_height) continue; // A pass with no pixels has no scanlines
+        r->row_bytes = (uint32_t)(((uint64_t)r->pass_width * r->bits_per_pixel + 7u) / 8u);
+        r->row_fill = 0;
+        r->pass_y = 0;
+        memset(r->prev, 0, r->row_bytes);
+        return true;
+    }
+    r->done = true;
+    return false;
+}
+
+static uint8_t paeth(const uint8_t a, const uint8_t b, const uint8_t c)
+{
+    const int p = (int)a + b - c;
+    const int pa = abs(p - a), pb = abs(p - b), pc = abs(p - c);
+    return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+}
+
+static bool unfilter(reader *r)
+{
+    uint8_t *cur = r->cur;
+    const uint8_t *prev = r->prev;
+    const uint32_t n = r->row_bytes, unit = r->filter_unit;
+    switch (r->filter) {
+    case 0: break;
+    case 1: for (uint32_t i = unit; i < n; i++) cur[i] += cur[i - unit]; break;
+    case 2: for (uint32_t i = 0; i < n; i++) cur[i] += prev[i]; break;
+    case 3:
+        for (uint32_t i = 0; i < unit; i++) cur[i] += prev[i] / 2;
+        for (uint32_t i = unit; i < n; i++) cur[i] += (uint8_t)(((uint32_t)cur[i - unit] + prev[i]) / 2u);
+        break;
+    case 4:
+        for (uint32_t i = 0; i < unit; i++) cur[i] += prev[i];
+        for (uint32_t i = unit; i < n; i++) cur[i] += paeth(cur[i - unit], prev[i], prev[i - unit]);
+        break;
+    default: return false;
+    }
+    return true;
+}
+
+// Sample `i` of a row, at the row's depth: 1 to 16 bits.
+static inline uint32_t sample(const uint8_t *row, const uint32_t i, const uint32_t depth)
+{
+    switch (depth) {
+    case 8: return row[i];
+    case 16: return (uint32_t)row[2 * i] << 8 | row[2 * i + 1];
+    case 4: return (row[i / 2] >> (4 - 4 * (i % 2))) & 15u;
+    case 2: return (row[i / 4] >> (6 - 2 * (i % 4))) & 3u;
+    default: return (row[i / 8] >> (7 - i % 8)) & 1u;
+    }
+}
+
+static bool row_done(reader *r)
+{
+    if (!unfilter(r)) return false;
+    const uint32_t n = r->pass_width, depth = r->depth;
+    const float max = r->sample_max;
+    const uint8_t *cur = r->cur;
+    tide_color *out = r->colors;
+    switch (r->color) {
+    case GRAY:
+        for (uint32_t x = 0; x < n; x++) {
+            const uint32_t v = sample(cur, x, depth);
+            const float g = (float)v / max;
+            out[x] = (tide_color){g, g, g, r->keyed && v == r->key[0] ? 0.0f : 1.0f};
+        }
+        break;
+    case RGB:
+        for (uint32_t x = 0; x < n; x++) {
+            const uint32_t red = sample(cur, 3 * x, depth), green = sample(cur, 3 * x + 1, depth), blue = sample(cur, 3 * x + 2, depth);
+            const bool clear = r->keyed && red == r->key[0] && green == r->key[1] && blue == r->key[2];
+            out[x] = (tide_color){(float)red / max, (float)green / max, (float)blue / max, clear ? 0.0f : 1.0f};
+        }
+        break;
+    case PALETTE:
+        for (uint32_t x = 0; x < n; x++) {
+            const uint32_t i = sample(cur, x, depth);
+            if (i >= r->palette_count) return false; // No such entry
+            const uint8_t *p = r->palette[i];
+            out[x] = (tide_color){(float)p[0] / 255.0f, (float)p[1] / 255.0f, (float)p[2] / 255.0f, (float)p[3] / 255.0f};
+        }
+        break;
+    case GRAY_ALPHA:
+        for (uint32_t x = 0; x < n; x++) {
+            const float g = (float)sample(cur, 2 * x, depth) / max;
+            out[x] = (tide_color){g, g, g, (float)sample(cur, 2 * x + 1, depth) / max};
+        }
+        break;
+    default: // RGBA
+        for (uint32_t x = 0; x < n; x++) {
+            out[x] = (tide_color){(float)sample(cur, 4 * x, depth) / max, (float)sample(cur, 4 * x + 1, depth) / max,
+                                  (float)sample(cur, 4 * x + 2, depth) / max, (float)sample(cur, 4 * x + 3, depth) / max};
+        }
+        break;
+    }
+    const tide_png_row row = {
+        .y = r->interlaced ? pass_y0[r->pass] + r->pass_y * pass_dy[r->pass] : r->pass_y,
+        .x0 = r->interlaced ? pass_x0[r->pass] : 0,
+        .dx = r->interlaced ? pass_dx[r->pass] : 1,
+        .count = n,
+        .pixels = out,
+    };
+    if (!r->row(r->user, &row)) return false;
+    // This row is the next one's `prev`
+    uint8_t *swap = r->prev;
+    r->prev = r->cur;
+    r->cur = swap;
+    r->row_fill = 0;
+    if (++r->pass_y == r->pass_height) {
+        r->pass++;
+        begin_pass(r);
+    }
+    return true;
+}
+
+// Inflated bytes, into scanlines. Bytes past the last scanline are ignored.
+static bool inflated(void *user, const uint8_t *bytes, size_t count)
+{
+    reader *r = user;
+    // zlib's checksum, over everything, in runs that add up within 32 bits
+    uint32_t a = r->adler_a, b = r->adler_b;
+    for (size_t i = 0; i < count;) {
+        size_t n = count - i < 5552u ? count - i : 5552u;
+        const size_t end = i + n;
+        for (; i < end; i++) {
+            a += bytes[i];
             b += a;
         }
         a %= 65521u;
         b %= 65521u;
     }
-    return b << 16 | a;
-}
-
-typedef struct png_header {
-    uint32_t width, height;
-    uint8_t depth;      // Bits a sample: 1, 2, 4, 8 or 16
-    uint8_t color;      // 0 gray, 2 RGB, 3 palette, 4 gray + alpha, 6 RGBA
-    uint8_t interlaced; // Adam7
-    uint32_t channels;  // Samples a pixel
-    uint32_t bpp;       // Bytes a pixel, 1 at the least (for the filters)
-} png_header;
-
-static bool read_header(const uint8_t *bytes, const size_t size, png_header *h, size_t *after)
-{
-    static const uint8_t signature[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
-    if (size < 8u + 25u || memcmp(bytes, signature, 8) != 0) return wrong("it isn't a PNG");
-    if (read32(bytes + 8) != 13u || memcmp(bytes + 12, "IHDR", 4) != 0) return wrong("its header isn't a PNG's");
-    const uint8_t *d = bytes + 16;
-    if (crc32(bytes + 12, 17) != read32(bytes + 29)) return wrong("its header is corrupt");
-    h->width = read32(d);
-    h->height = read32(d + 4);
-    h->depth = d[8];
-    h->color = d[9];
-    h->interlaced = d[12];
-    if (h->width == 0 || h->height == 0 || h->width > TIDE_PNG_READ_MAX_SIDE || h->height > TIDE_PNG_READ_MAX_SIDE) {
-        return wrong(h->width == 0 || h->height == 0 ? "it has no pixels" : "it's bigger than 32768 pixels a side");
+    r->adler_a = a;
+    r->adler_b = b;
+    while (count && !r->done) {
+        if (!r->row_fill) { // A scanline starts with its filter's byte
+            r->filter = *bytes++;
+            count--;
+            r->row_fill = 1;
+            if (r->filter > 4) return false;
+            continue;
+        }
+        size_t n = r->row_bytes + 1u - r->row_fill;
+        if (n > count) n = count;
+        memcpy(r->cur + r->row_fill - 1u, bytes, n);
+        r->row_fill += (uint32_t)n;
+        bytes += n;
+        count -= n;
+        if (r->row_fill == r->row_bytes + 1u && !row_done(r)) return false;
     }
-    if (d[10] != 0 || d[11] != 0 || h->interlaced > 1) return wrong("its compression, filter or interlace method isn't a PNG's");
-    switch (h->color) {
-    case 0: h->channels = 1; break;
-    case 2: h->channels = 3; break;
-    case 3: h->channels = 1; break;
-    case 4: h->channels = 2; break;
-    case 6: h->channels = 4; break;
-    default: return wrong("its color type isn't a PNG's");
-    }
-    const bool depth_ok = h->depth == 8 || h->depth == 16 || ((h->depth == 1 || h->depth == 2 || h->depth == 4) && (h->color == 0 || h->color == 3));
-    if (!depth_ok || (h->color == 3 && h->depth == 16)) return wrong("its bit depth doesn't go with its color type");
-    const uint32_t bits = h->depth * h->channels;
-    h->bpp = bits < 8u ? 1u : bits / 8u;
-    *after = 8u + 25u;
     return true;
 }
 
-bool tide_png_size(const uint8_t *bytes, const size_t size, int32_t *width, int32_t *height)
+typedef struct chunk {
+    const uint8_t *data;
+    uint32_t size;
+    char type[5];
+} chunk;
+
+// The next chunk, its check verified: false at the end or for anything wrong.
+static bool next_chunk(const uint8_t *bytes, const size_t size, size_t *at, chunk *c)
 {
-    png_header h;
-    size_t after;
-    if (!read_header(bytes, size, &h, &after)) return false;
-    *width = (int32_t)h.width;
-    *height = (int32_t)h.height;
+    if (size - *at < 12) return false;
+    const uint8_t *p = bytes + *at;
+    c->size = get32(p);
+    if (c->size > 0x7FFFFFFFu || c->size > size - *at - 12u) return false;
+    memcpy(c->type, p + 4, 4);
+    c->type[4] = 0;
+    c->data = p + 8;
+    if (crc32_of(p + 4, 4u + c->size) != get32(p + 8 + c->size)) return false;
+    *at += 12u + c->size;
     return true;
 }
 
-// Bytes a row of `width` pixels takes, before its filter byte.
-static size_t row_bytes(const png_header *h, const uint32_t width)
+static bool read_header(reader *r, const chunk *c)
 {
-    return ((size_t)width * h->depth * h->channels + 7u) / 8u;
-}
-
-static uint8_t paeth(const int a, const int b, const int c)
-{
-    const int p = a + b - c;
-    const int pa = p > a ? p - a : a - p;
-    const int pb = p > b ? p - b : b - p;
-    const int pc = p > c ? p - c : c - p;
-    if (pa <= pb && pa <= pc) return (uint8_t)a;
-    return pb <= pc ? (uint8_t)b : (uint8_t)c;
-}
-
-// Undoes a row's filter in place, given the row above (NULL for the first).
-static bool unfilter(uint8_t *row, const uint8_t *above, const size_t n, const uint32_t bpp, const uint8_t filter)
-{
-    switch (filter) {
-    case 0: return true;
-    case 1:
-        for (size_t i = bpp; i < n; i++) row[i] = (uint8_t)(row[i] + row[i - bpp]);
-        return true;
-    case 2:
-        if (above) for (size_t i = 0; i < n; i++) row[i] = (uint8_t)(row[i] + above[i]);
-        return true;
-    case 3:
-        for (size_t i = 0; i < n; i++) {
-            const int left = i >= bpp ? row[i - bpp] : 0, up = above ? above[i] : 0;
-            row[i] = (uint8_t)(row[i] + (left + up) / 2);
-        }
-        return true;
-    case 4:
-        for (size_t i = 0; i < n; i++) {
-            const int left = i >= bpp ? row[i - bpp] : 0, up = above ? above[i] : 0, corner = above && i >= bpp ? above[i - bpp] : 0;
-            row[i] = (uint8_t)(row[i] + paeth(left, up, corner));
-        }
-        return true;
+    if (c->size != 13) return false;
+    r->width = get32(c->data);
+    r->height = get32(c->data + 4);
+    r->depth = c->data[8];
+    r->color = c->data[9];
+    if (!r->width || !r->height || r->width > TIDE_PNG_MAX_SIDE || r->height > TIDE_PNG_MAX_SIDE) return false;
+    if (c->data[10] != 0 || c->data[11] != 0 || c->data[12] > 1) return false; // Compression, filter, interlace methods
+    r->interlaced = c->data[12] == 1;
+    switch (r->color) {
+    case GRAY: r->channels = 1; if (r->depth != 1 && r->depth != 2 && r->depth != 4 && r->depth != 8 && r->depth != 16) return false; break;
+    case PALETTE: r->channels = 1; if (r->depth != 1 && r->depth != 2 && r->depth != 4 && r->depth != 8) return false; break;
+    case RGB: r->channels = 3; if (r->depth != 8 && r->depth != 16) return false; break;
+    case GRAY_ALPHA: r->channels = 2; if (r->depth != 8 && r->depth != 16) return false; break;
+    case RGBA: r->channels = 4; if (r->depth != 8 && r->depth != 16) return false; break;
     default: return false;
     }
+    r->bits_per_pixel = r->channels * r->depth;
+    r->filter_unit = r->bits_per_pixel < 8 ? 1 : r->bits_per_pixel / 8;
+    r->sample_max = (float)((1u << r->depth) - 1u);
+    r->passes = r->interlaced ? 7 : 1;
+    return true;
 }
 
-typedef struct palette {
-    uint32_t count;
-    uint8_t rgb[256][3];
-    uint8_t alpha[256];
-    bool has_key;     // tRNS for gray or RGB: one color is clear
-    uint16_t key[3];
-} palette;
-
-// Sample `i` of a row at `depth` bits each, as it's stored (0 to 2^depth - 1).
-static uint32_t sample(const uint8_t *row, const size_t i, const uint32_t depth)
+static bool read_palette(reader *r, const chunk *c)
 {
-    switch (depth) {
-    case 1: return (row[i >> 3] >> (7u - (i & 7u))) & 1u;
-    case 2: return (row[i >> 2] >> (6u - 2u * (i & 3u))) & 3u;
-    case 4: return (row[i >> 1] >> (4u - 4u * (i & 1u))) & 15u;
-    case 8: return row[i];
-    default: return (uint32_t)row[2u * i] << 8 | row[2u * i + 1u];
+    if (r->color == GRAY || r->color == GRAY_ALPHA) return false; // No palette for gray
+    if (r->palette_count || !c->size || c->size % 3 || c->size / 3 > 256) return false;
+    r->palette_count = c->size / 3;
+    if (r->color == PALETTE && r->palette_count > (1u << r->depth)) return false;
+    for (uint32_t i = 0; i < r->palette_count; i++) {
+        r->palette[i][0] = c->data[3 * i];
+        r->palette[i][1] = c->data[3 * i + 1];
+        r->palette[i][2] = c->data[3 * i + 2];
+        r->palette[i][3] = 255;
+    }
+    return true;
+}
+
+static bool read_transparency(reader *r, const chunk *c)
+{
+    if (r->keyed) return false;
+    switch (r->color) {
+    case PALETTE:
+        if (!r->palette_count || c->size > r->palette_count) return false;
+        for (uint32_t i = 0; i < c->size; i++) r->palette[i][3] = c->data[i];
+        r->keyed = true;
+        return true;
+    case GRAY:
+        if (c->size != 2) return false;
+        r->key[0] = (uint16_t)(c->data[0] << 8 | c->data[1]);
+        r->keyed = true;
+        return true;
+    case RGB:
+        if (c->size != 6) return false;
+        for (int i = 0; i < 3; i++) r->key[i] = (uint16_t)(c->data[2 * i] << 8 | c->data[2 * i + 1]);
+        r->keyed = true;
+        return true;
+    default: return false; // Alpha is in the pixels
     }
 }
 
-// A row's pixels into `out`, `count` of them, from a row that's unfiltered.
-static void convert(const png_header *h, const palette *p, const uint8_t *row, tide_color *out, const uint32_t count)
+bool tide_png_decode_rows(const uint8_t *bytes, const size_t size, const tide_png_began_fn began, const tide_png_row_fn row,
+                          void *user)
 {
-    const float most = (float)((1u << h->depth) - 1u);
-    for (uint32_t x = 0; x < count; x++) {
-        tide_color c;
-        switch (h->color) {
-        case 0: {
-            const uint32_t v = sample(row, x, h->depth);
-            c.r = c.g = c.b = (float)v / most;
-            c.a = p->has_key && v == p->key[0] ? 0.0f : 1.0f;
-            break;
-        }
-        case 2: {
-            const uint32_t r = sample(row, 3u * x, h->depth), g = sample(row, 3u * x + 1u, h->depth), b = sample(row, 3u * x + 2u, h->depth);
-            c.r = (float)r / most;
-            c.g = (float)g / most;
-            c.b = (float)b / most;
-            c.a = p->has_key && r == p->key[0] && g == p->key[1] && b == p->key[2] ? 0.0f : 1.0f;
-            break;
-        }
-        case 3: {
-            const uint32_t i = sample(row, x, h->depth);
-            if (i < p->count) {
-                c.r = (float)p->rgb[i][0] / 255.0f;
-                c.g = (float)p->rgb[i][1] / 255.0f;
-                c.b = (float)p->rgb[i][2] / 255.0f;
-                c.a = (float)p->alpha[i] / 255.0f;
-            } else {
-                c = (tide_color){0.0f, 0.0f, 0.0f, 0.0f}; // An index the palette hasn't got: the RFC leaves it to the reader
+    static const uint8_t signature[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+    if (!bytes || size < 8 + 12 || memcmp(bytes, signature, 8) != 0) return false;
+    reader *r = tide_alloc_zeroed(1, sizeof *r);
+    r->row = row;
+    r->user = user;
+    bool ok = false;
+    uint8_t *idat = NULL;
+    size_t at = 8, idat_size = 0, idat_capacity = 0;
+    chunk c;
+    bool header = false, ended = false, seen_idat = false;
+    while (!ended && next_chunk(bytes, size, &at, &c)) {
+        if (!header) {
+            if (strcmp(c.type, "IHDR") != 0 || !read_header(r, &c)) goto done;
+            header = true;
+        } else if (strcmp(c.type, "IHDR") == 0) {
+            goto done;
+        } else if (strcmp(c.type, "PLTE") == 0) {
+            if (seen_idat || !read_palette(r, &c)) goto done;
+        } else if (strcmp(c.type, "tRNS") == 0) {
+            if (seen_idat || !read_transparency(r, &c)) goto done;
+        } else if (strcmp(c.type, "IDAT") == 0) {
+            seen_idat = true;
+            if (c.size > idat_capacity - idat_size) {
+                size_t capacity = idat_capacity ? idat_capacity : 4096u;
+                while (capacity - idat_size < c.size) capacity *= 2u;
+                idat = tide_realloc(idat, idat_capacity, capacity);
+                idat_capacity = capacity;
             }
-            break;
+            memcpy(idat + idat_size, c.data, c.size);
+            idat_size += c.size;
+        } else if (strcmp(c.type, "IEND") == 0) {
+            if (c.size) goto done;
+            ended = true;
+        } else if (!(c.type[0] & 0x20)) {
+            goto done; // A critical chunk this reader doesn't know
         }
-        case 4: {
-            const uint32_t v = sample(row, 2u * x, h->depth), a = sample(row, 2u * x + 1u, h->depth);
-            c.r = c.g = c.b = (float)v / most;
-            c.a = (float)a / most;
-            break;
-        }
-        default: {
-            c.r = (float)sample(row, 4u * x, h->depth) / most;
-            c.g = (float)sample(row, 4u * x + 1u, h->depth) / most;
-            c.b = (float)sample(row, 4u * x + 2u, h->depth) / most;
-            c.a = (float)sample(row, 4u * x + 3u, h->depth) / most;
-            break;
-        }
-        }
-        out[x] = c;
     }
+    if (!ended || !seen_idat || (r->color == PALETTE && !r->palette_count)) goto done;
+    // zlib's wrapper: deflate with a window of 32 KiB at most, no preset
+    // dictionary, and its header's check
+    if (idat_size < 6 || (idat[0] & 15u) != 8 || (idat[0] >> 4) > 7 || (idat[1] & 0x20u) || ((uint32_t)idat[0] << 8 | idat[1]) % 31u) goto done;
+    if (!began(user, r->width, r->height)) goto done;
+    const uint32_t widest = (uint32_t)(((uint64_t)r->width * r->bits_per_pixel + 7u) / 8u);
+    r->prev = tide_alloc_zeroed(1, widest);
+    r->cur = tide_alloc_zeroed(1, widest);
+    r->colors = tide_alloc((size_t)r->width * sizeof *r->colors);
+    r->adler_a = 1;
+    r->pass = 0;
+    if (!begin_pass(r)) goto done;
+    size_t consumed = 0;
+    if (!tide_inflate(idat + 2, idat_size - 2, inflated, r, &consumed)) goto done;
+    if (!r->done) goto done; // The stream ended before the picture did
+    if (idat_size - 2 - consumed < 4) goto done;
+    const uint8_t *trailer = idat + 2 + consumed;
+    if (get32(trailer) != (r->adler_b << 16 | r->adler_a)) goto done;
+    ok = true;
+done:
+    free(idat);
+    free(r->prev);
+    free(r->cur);
+    free(r->colors);
+    free(r);
+    return ok;
 }
 
-// The passes of Adam7: where each starts and how far apart its pixels are.
-static const uint8_t adam7[7][4] = {{0, 0, 8, 8}, {4, 0, 8, 8}, {0, 4, 4, 8}, {2, 0, 4, 4}, {0, 2, 2, 4}, {1, 0, 2, 2}, {0, 1, 1, 2}};
+// ---------------------------------------------------------------------------
+// Whole pictures
 
-// Unfilters and converts the rows of one image, or one pass of an interlaced
-// one: `raw` is its rows, each after a filter byte; `across` and `down` its
-// size; a pixel at (x, y) of it lands at (x0 + x * dx, y0 + y * dy).
-static bool pass(const png_header *h, const palette *p, uint8_t *raw, const uint32_t across, const uint32_t down,
-                 tide_color *pixels, const uint32_t x0, const uint32_t y0, const uint32_t dx, const uint32_t dy, tide_color *row_out)
+typedef struct image_rows {
+    tide_png_image *out;
+} image_rows;
+
+static bool image_began(void *user, const uint32_t width, const uint32_t height)
 {
-    const size_t n = row_bytes(h, across);
-    const uint8_t *above = NULL;
-    for (uint32_t y = 0; y < down; y++) {
-        uint8_t *row = raw + (size_t)y * (n + 1u);
-        if (!unfilter(row + 1, above, n, h->bpp, row[0])) return wrong("a row's filter isn't a PNG's");
-        convert(h, p, row + 1, row_out, across);
-        tide_color *to = pixels + (size_t)(y0 + y * dy) * h->width + x0;
-        for (uint32_t x = 0; x < across; x++) to[(size_t)x * dx] = row_out[x];
-        above = row + 1;
-    }
+    tide_png_image *out = ((image_rows *)user)->out;
+    const uint64_t bytes = (uint64_t)width * height * sizeof(tide_color);
+    if (bytes > SIZE_MAX) return false;
+    out->width = width;
+    out->height = height;
+    out->pixels = tide_alloc((size_t)bytes);
+    return true;
+}
+
+static bool image_row(void *user, const tide_png_row *row)
+{
+    tide_png_image *out = ((image_rows *)user)->out;
+    tide_color *to = out->pixels + (size_t)row->y * out->width + row->x0;
+    if (row->dx == 1) memcpy(to, row->pixels, (size_t)row->count * sizeof *to);
+    else for (uint32_t i = 0; i < row->count; i++) to[(size_t)i * row->dx] = row->pixels[i];
     return true;
 }
 
 bool tide_png_decode(const uint8_t *bytes, const size_t size, tide_png_image *out)
 {
-    why = NULL;
     *out = (tide_png_image){0};
-    png_header h;
-    size_t at;
-    if (!read_header(bytes, size, &h, &at)) return false;
-
-    // The chunks: the palette and its alpha, and the image data, which is the
-    // IDAT chunks' bytes one after another
-    palette p = {0};
-    uint8_t *data = NULL;
-    size_t data_size = 0, data_room = 0;
-    bool ended = false, seen_idat = false;
-    while (!ended) {
-        if (size - at < 12u) {
-            free(data);
-            return wrong("it ends before its IEND chunk");
-        }
-        const uint32_t length = read32(bytes + at);
-        const uint8_t *type = bytes + at + 4;
-        if (length > size - at - 12u) {
-            free(data);
-            return wrong("a chunk says it's longer than the file");
-        }
-        const uint8_t *d = bytes + at + 8;
-        if (crc32(type, 4u + length) != read32(d + length)) {
-            free(data);
-            return wrong("a chunk is corrupt");
-        }
-        if (memcmp(type, "PLTE", 4) == 0) {
-            if (length % 3u != 0 || length > 768u || length == 0) {
-                free(data);
-                return wrong("its palette isn't a PNG's");
-            }
-            p.count = length / 3u;
-            memcpy(p.rgb, d, length);
-            memset(p.alpha, 255, sizeof p.alpha);
-        } else if (memcmp(type, "tRNS", 4) == 0) {
-            if (h.color == 3) {
-                if (length > p.count) {
-                    free(data);
-                    return wrong("its transparency names colors its palette hasn't got");
-                }
-                for (uint32_t i = 0; i < length; i++) p.alpha[i] = d[i];
-            } else if (h.color == 0 && length == 2u) {
-                p.has_key = true;
-                p.key[0] = (uint16_t)(d[0] << 8 | d[1]);
-            } else if (h.color == 2 && length == 6u) {
-                p.has_key = true;
-                for (int i = 0; i < 3; i++) p.key[i] = (uint16_t)(d[2 * i] << 8 | d[2 * i + 1]);
-            } else {
-                free(data);
-                return wrong("its transparency chunk isn't a PNG's");
-            }
-        } else if (memcmp(type, "IDAT", 4) == 0) {
-            seen_idat = true;
-            if (data_size + length > data_room) {
-                size_t room = data_room ? data_room : 4096u;
-                while (room < data_size + length) room *= 2u;
-                data = tide_realloc(data, data_room, room);
-                data_room = room;
-            }
-            memcpy(data + data_size, d, length);
-            data_size += length;
-        } else if (memcmp(type, "IEND", 4) == 0) {
-            ended = true;
-        } else if (!(type[0] & 0x20) && memcmp(type, "IHDR", 4) != 0) {
-            // A critical chunk this reader doesn't know: the RFC says to stop
-            free(data);
-            return wrong("it has a chunk this reader doesn't know and can't skip");
-        }
-        at += 12u + length;
-    }
-    if (!seen_idat) return wrong("it has no image data");
-    if (h.color == 3 && p.count == 0) {
-        free(data);
-        return wrong("it has no palette, and its color type needs one");
-    }
-    if (p.has_key) {
-        const uint32_t most = (1u << h.depth) - 1u;
-        for (int i = 0; i < 3; i++) p.key[i] = (uint16_t)(p.key[i] > most ? most + 1u : p.key[i]); // Past the depth: matches nothing
-    }
-
-    // How many bytes the rows take unpacked: each pass's rows, each after a filter byte
-    size_t raw_size = 0;
-    if (h.interlaced) {
-        for (int i = 0; i < 7; i++) {
-            const uint32_t across = h.width > adam7[i][0] ? (h.width - adam7[i][0] + adam7[i][2] - 1u) / adam7[i][2] : 0u;
-            const uint32_t down = h.height > adam7[i][1] ? (h.height - adam7[i][1] + adam7[i][3] - 1u) / adam7[i][3] : 0u;
-            if (across && down) raw_size += (row_bytes(&h, across) + 1u) * down;
-        }
-    } else {
-        raw_size = (row_bytes(&h, h.width) + 1u) * h.height;
-    }
-
-    // zlib: two bytes that say deflate with a window, the stream, and the
-    // checksum of what it holds
-    if (data_size < 6u || (data[0] & 0x0Fu) != 8u || (data[0] & 0xF0u) > 0x70u || ((uint32_t)data[0] << 8 | data[1]) % 31u != 0 || (data[1] & 0x20u)) {
-        free(data);
-        return wrong("its image data isn't zlib's");
-    }
-    uint8_t *raw = tide_alloc(raw_size);
-    size_t produced = 0;
-    const bool inflated = tide_inflate(data + 2, data_size - 6u, raw, raw_size, &produced) && produced == raw_size;
-    const bool checked = inflated && adler32(raw, raw_size) == read32(data + data_size - 4u);
-    free(data);
-    if (!inflated || !checked) {
-        free(raw);
-        return wrong(inflated ? "its image data's checksum is wrong" : "its image data is corrupt");
-    }
-
-    const uint64_t count = (uint64_t)h.width * h.height;
-    tide_color *pixels = tide_alloc((size_t)count * sizeof(tide_color));
-    tide_color *row_out = tide_alloc((size_t)h.width * sizeof(tide_color));
-    bool ok;
-    if (h.interlaced) {
-        memset(pixels, 0, (size_t)count * sizeof(tide_color));
-        size_t offset = 0;
-        ok = true;
-        for (int i = 0; i < 7 && ok; i++) {
-            const uint32_t across = h.width > adam7[i][0] ? (h.width - adam7[i][0] + adam7[i][2] - 1u) / adam7[i][2] : 0u;
-            const uint32_t down = h.height > adam7[i][1] ? (h.height - adam7[i][1] + adam7[i][3] - 1u) / adam7[i][3] : 0u;
-            if (!across || !down) continue;
-            ok = pass(&h, &p, raw + offset, across, down, pixels, adam7[i][0], adam7[i][1], adam7[i][2], adam7[i][3], row_out);
-            offset += (row_bytes(&h, across) + 1u) * down;
-        }
-    } else {
-        ok = pass(&h, &p, raw, h.width, h.height, pixels, 0, 0, 1, 1, row_out);
-    }
-    free(row_out);
-    free(raw);
-    if (!ok) {
-        free(pixels);
-        return false;
-    }
-    out->width = (int32_t)h.width;
-    out->height = (int32_t)h.height;
-    out->pixels = pixels;
-    return true;
+    image_rows rows = {out};
+    if (tide_png_decode_rows(bytes, size, image_began, image_row, &rows)) return true;
+    free(out->pixels);
+    *out = (tide_png_image){0};
+    return false;
 }
+

@@ -1,0 +1,5 @@
+// expect: 'Save' reaches the network, which only local code can use
+scene Main { }
+async void Load() { var bytes = await Web.Fetch("http://example.com/file")!; }
+async void Save() { await Load(); }
+async event(Spawned) Setup(with Main) { await Save(); }

@@ -31,7 +31,6 @@ typedef struct read_file {
     uint8_t hash[32];
     bool decoded;          // Tried as a PNG...
     tide_png_image image;  // ...and what it gave (pixels NULL when it isn't one)
-    char why[128];         // ...or why not
     bool utf8_known, utf8; // Whether its bytes are UTF-8 text
 } read_file;
 
@@ -522,13 +521,10 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
     if (kind == ASSET_GRID) {
         if (!f->decoded) {
             f->decoded = true;
-            if (!tide_png_decode(f->data, f->len, &f->image)) {
-                snprintf(f->why, sizeof f->why, "%s", tide_png_why());
-                f->image = (tide_png_image){0};
-            }
+            if (!tide_png_decode(f->data, f->len, &f->image)) f->image = (tide_png_image){0};
         }
         if (!f->image.pixels) {
-            diag_error(at, "'%s' isn't a PNG that decodes: %s", key, f->why);
+            diag_error(at, "'%s' isn't a PNG that decodes", key);
             diag_note("a Grid2<Color> asset is a PNG; for the file's bytes as they are, read it as a List<byte>");
             return false;
         }

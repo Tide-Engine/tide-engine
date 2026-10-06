@@ -71,10 +71,12 @@ typedef struct tide_host_game {
     // How long this frame is, before `frame`: local tasks' Wait.Seconds counts it down
     void (*frame_time)(void *local, float seconds);
     bool (*take_request)(void *local, tide_session_request *request, void *start);
-    // The oldest packed command, without removing it; 0 when none. Remove it
-    // only once the session has copied it into its pending queue.
-    uint32_t (*command)(const void *local, uint8_t *out, uint32_t capacity);
-    void (*command_sent)(void *local);
+    // The oldest packed command waiting in `channel` (0, the default, up to
+    // the game's tide_game.command_channels, and TIDE_COMMAND_UNORDERED),
+    // with its size, without removing it; NULL when none. Remove it only
+    // once the session has copied it into its pending queue.
+    const uint8_t *(*command)(const void *local, uint32_t channel, uint32_t *size);
+    void (*command_sent)(void *local, uint32_t channel);
     // `room`: the code of the room the match is in, "" if none
     void (*set_session)(void *local, uint32_t state, tide_player_id player, uint32_t ping, bool server, bool open,
                         const char *room);
@@ -260,12 +262,22 @@ static inline void tide_run_refresh_view_corrector(void)
 
 // Local commands waiting for transport capacity belong to the match whose
 // views sent them. Explicit match changes discard them; migration keeps them.
+// The channels a game's commands are in, to go through them: the default and
+// the game's own, then the unordered ones as a channel of their own
+static inline uint32_t tide_run_command_channel(const uint32_t index)
+{
+    return index < tide_game_command_channels(tide_run_game->game) ? index : TIDE_COMMAND_UNORDERED;
+}
+
 static inline void tide_run_discard_commands(void)
 {
     const tide_host_game *game = tide_run_game;
     if (!game->command || !game->command_sent) return;
-    uint8_t bytes[TIDE_COMMAND_BYTES];
-    while (game->command(tide_run_local, bytes, sizeof bytes)) game->command_sent(tide_run_local);
+    uint32_t size;
+    for (uint32_t i = 0; i <= tide_game_command_channels(game->game); i++) {
+        const uint32_t channel = tide_run_command_channel(i);
+        while (game->command(tide_run_local, channel, &size)) game->command_sent(tide_run_local, channel);
+    }
 }
 
 // Starts, joins or leaves a match, as local code or the command line asked,
@@ -762,12 +774,17 @@ static inline int tide_run_frame(void *user, const float seconds)
     // held as it starts, never what was pressed before it.
     if (!game->sample_input || status.client.state != TIDE_SESSION_CONNECTED) tide_devices_consume(&tide_run_devices);
 
+    // Each channel's commands into the session, in order, until a channel is
+    // full there: the others go on, as a channel waits for nothing else
     if (game->command && game->command_sent) {
-        uint8_t bytes[TIDE_COMMAND_BYTES];
-        uint32_t size;
-        while ((size = game->command(tide_run_local, bytes, sizeof bytes)) != 0) {
-            if (!tide_session_send_command(s, bytes, size)) break;
-            game->command_sent(tide_run_local);
+        for (uint32_t i = 0; i <= tide_game_command_channels(game->game); i++) {
+            const uint32_t channel = tide_run_command_channel(i);
+            const uint8_t *bytes;
+            uint32_t size;
+            while ((bytes = game->command(tide_run_local, channel, &size)) != NULL) {
+                if (!tide_session_send_command(s, bytes, size)) break;
+                game->command_sent(tide_run_local, channel);
+            }
         }
     }
     tide_session_request request;

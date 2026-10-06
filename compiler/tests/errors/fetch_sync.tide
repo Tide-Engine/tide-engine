@@ -1,0 +1,3 @@
+// expect: Web.Fetch is awaited
+local scene Main { }
+local event(Spawned) Setup(with Main) { var bytes = Web.Fetch("http://example.com/file")!; }

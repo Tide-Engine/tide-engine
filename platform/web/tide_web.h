@@ -95,6 +95,14 @@ TIDE_WEB_IMPORT(io_list) int32_t tide_web_io_list(const char *path, bool directo
 TIDE_WEB_IMPORT(io_flush_begin) uint32_t tide_web_io_flush_begin(void);
 TIDE_WEB_IMPORT(io_flush_poll) bool tide_web_io_flush_poll(uint32_t ticket, tide_io_error *error);
 TIDE_WEB_IMPORT(io_flush_forget) void tide_web_io_flush_forget(uint32_t ticket);
+// Web.Fetch, as the page's fetch: begin starts a GET of `url` and gives a
+// ticket; poll is -1 while it's going, and else the tide_io_error it ended
+// with (0 for none), with the body's size; read copies the body out, and
+// forget drops the ticket, stopping a fetch still going.
+TIDE_WEB_IMPORT(io_fetch_begin) uint32_t tide_web_io_fetch_begin(const char *url);
+TIDE_WEB_IMPORT(io_fetch_poll) int32_t tide_web_io_fetch_poll(uint32_t ticket, uint32_t *size);
+TIDE_WEB_IMPORT(io_fetch_read) int32_t tide_web_io_fetch_read(uint32_t ticket, void *out, uint32_t capacity);
+TIDE_WEB_IMPORT(io_fetch_forget) void tide_web_io_fetch_forget(uint32_t ticket);
 
 // Gamepads in the browser's standard mapping: axes -1 to 1 (y down), buttons
 // 0 to 1 (triggers are analog buttons 6 and 7).

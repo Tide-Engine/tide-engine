@@ -1807,8 +1807,9 @@ static void ex(emit *em, const expr *e)
         return;
     case E_CALL:
     case E_METHOD:
-        if (e->io_operation || e->path_operation || e->storage_flush) {
-            refuse(em, e->at, "file and directory access belongs to local CPU code: read it before drawing");
+        if (e->io_operation || e->path_operation || e->storage_flush || e->web_fetch) {
+            refuse(em, e->at, e->web_fetch ? "the network belongs to local CPU code: fetch before drawing"
+                                           : "file and directory access belongs to local CPU code: read it before drawing");
             return;
         }
         if (e->type.kind != TY_VOID && !type_fits(em, e->type, e->at)) return;

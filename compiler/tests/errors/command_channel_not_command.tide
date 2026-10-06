@@ -1,0 +1,5 @@
+// expect: Channel orders a command's delivery, and 'Hit' isn't a command
+enum Channels { Chat }
+[Channel(Channels.Chat)]
+event Hit { int damage; }
+scene Main { }
