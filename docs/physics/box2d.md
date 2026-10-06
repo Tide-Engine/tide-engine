@@ -224,7 +224,7 @@ So does a body beside it that's destroyed, and [a new gravity](#the-world). Afte
 
 That's for a body that was awake. Writing `asleep = true` into one that's asleep already writes nothing, so a sleeping body that code moves wakes like any other: `asleep` is false after that tick, and code that wants it asleep where it put it says so then.
 
-A body that's **spawned asleep** starts where it's spawned, with none of the speed or the push it was spawned with. Bodies spawned asleep on each other are each asleep by themselves, as no step has seen them touch: one that's hit wakes, and the ones resting on it a step after each other.
+A body that's **spawned asleep** starts where it's spawned, with none of the speed or the push it was spawned with. Bodies spawned asleep on each other are each asleep by themselves, as no step has seen them touch: one that's hit wakes, and the ones resting on it a step after each other. That's fine for a few. For a great many stacked on each other it's better to spawn them awake and put them to sleep a tick later, once they have had a step: they then sleep and wake a stack at a time.
 
 A world where everything is asleep and nothing was written isn't stepped at all (see [What it costs](#what-it-costs)), and a body that's put to sleep costs what one that fell asleep does: nothing.
 
