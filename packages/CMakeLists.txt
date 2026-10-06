@@ -60,7 +60,11 @@ if(TIDE_SANITIZE)
     target_compile_options(tide_box2d PRIVATE -fno-sanitize=nonnull-attribute)
 endif()
 
-tide_add_game(tide_box2d_stack SOURCES box2d/box2d.tide box2d/bridge.c box2d/test/stack.tide NAME game
+# Each of its games is built with the package as tide builds one that lists it,
+# the package's file before the game's own: a package's systems that a game has
+# no entities for (parts, in a game with none) say nothing, where a game's own
+# would be warned about.
+tide_add_game(tide_box2d_stack SOURCES box2d/bridge.c box2d/test/stack.tide NAME game PACKAGES Box2D box2d/box2d.tide
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box2d/test/stack_test.c)
 target_include_directories(tide_box2d_stack PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_link_libraries(tide_box2d_stack PRIVATE tide_box2d)
@@ -84,6 +88,21 @@ target_link_libraries(tide_box2d_course PRIVATE tide_box2d)
 add_test(NAME tide_box2d_course COMMAND tide_box2d_course)
 set_tests_properties(tide_box2d_course PROPERTIES TIMEOUT 120)
 
+# What a body is made of and what code asks of the world: parts, bodies that
+# change what they are, rays, shapes cast and looked into, what's in a sensor,
+# hits, and how the world is tuned.
+tide_add_game(tide_box2d_kit SOURCES box2d/bridge.c box2d/test/kit.tide NAME kit PACKAGES Box2D box2d/box2d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box2d/test/kit_test.c)
+target_include_directories(tide_box2d_kit PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box2d_kit PRIVATE tide_box2d)
+if(TARGET tide_platform)
+    # What a system asks on the tick's threads
+    target_compile_definitions(tide_box2d_kit PRIVATE BOX2D_TEST_JOBS)
+    target_link_libraries(tide_box2d_kit PRIVATE tide_platform)
+endif()
+add_test(NAME tide_box2d_kit COMMAND tide_box2d_kit)
+set_tests_properties(tide_box2d_kit PROPERTIES TIMEOUT 120)
+
 # Box3D's, the same way, and with the same flags for the same reason. Its tests'
 # games are each built with the package as tide builds a game that lists it,
 # the package's files before their own: a game needn't use all of a package.
@@ -106,7 +125,7 @@ if(TARGET tide_platform)
     target_link_libraries(tide_box3d_stack PRIVATE tide_platform)
 endif()
 add_test(NAME tide_box3d_stack COMMAND tide_box3d_stack)
-# A step in 3D is several of Box2D's, and a web build has no SIMD for it
+# A step in 3D is several of Box2D's
 set_tests_properties(tide_box3d_stack PROPERTIES TIMEOUT 300)
 
 tide_package_order_test(tide_box3d_order Box3D "${CMAKE_CURRENT_SOURCE_DIR}/box3d/box3d.tide" "${CMAKE_CURRENT_SOURCE_DIR}/box3d/test")

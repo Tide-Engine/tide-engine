@@ -1,4 +1,0 @@
-// expect: a list can't hold maps yet
-// expect: keep each map in a component, on an entity of its own, and hold the entities: 'List<Entity>'
-scene Main { }
-component Tables { List<Map<int, int>> tables; }

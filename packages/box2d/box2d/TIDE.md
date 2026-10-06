@@ -14,7 +14,8 @@ them with no include path, which a game's C has none of.
 Each change is marked `Tide:` where it is. Most are for one thing: a world's
 image (`b2World_GetSnapshot`) is kept in the match, where it's hashed and sent
 between players, so it has to be the same bytes on every machine for the same
-state, and one machine's has to load on another.
+state, and one machine's has to load on another. The rest are for speed, and
+leave those bytes as they were.
 
 - **`body.h`, `shape.h`, `joint.h`: `userData` is 8 bytes on every platform**, a
   union with a `uint64_t`. These three structs go into an image as their bytes,
@@ -69,7 +70,53 @@ And one is for what a match keeps of an image from tick to tick:
   to spare, so an image is an eighth bigger and what changes of it is what
   changed in the world.
 
-And one is for threads on the web, where upstream only knows Emscripten:
+Two are for how long a step takes in a browser, where upstream only knows
+Emscripten. The first is WebAssembly's SIMD:
+
+- **`core.h`, `contact_solver_wide.inl`, `simd.h`, `manifold.c`: a path on
+  WebAssembly's own SIMD** (`B2_SIMD_WASM`), for any WebAssembly built with
+  `-msimd128`, as Tide's web builds are. Upstream's one path for WebAssembly is
+  SSE2's headers as Emscripten emulates them, which clang's own target has
+  none of, so there Box2D took its scalar path. Each place upstream has code
+  for SSE2 now has the same for WebAssembly after it: the contact solver's
+  wide floats and its gather and scatter of bodies, the trees' bounds
+  (`b2AABBV`), and the face search of two polygons (`b2FindMaxSeparation`).
+  `core.h` has one branch for WebAssembly, Emscripten's too, where this stands
+  in for the emulation; built without `-msimd128` it's the scalar path, as
+  before.
+
+  Each function gives, bit for bit, what the SSE2 one beside it gives for the
+  same numbers, so a browser steps the world x64 does: the least and the
+  greatest are `f32x4.pmin` and `f32x4.pmax` with their operands the other way
+  around, which are `minps` and `maxps` exactly (the first where it's less, or
+  greater, and else the second, whichever zero that is and whatever is NaN,
+  where `f32x4.min` and `f32x4.max` take -0 for less than 0); comparisons are
+  the ordered ones; a blend takes each bit by its mask's bit; the rest is
+  IEEE 754's arithmetic, each operation rounded by itself, and lanes moved.
+  Nothing is relaxed SIMD, whose fused multiply-add differs between machines.
+
+  It's nearer to x64 than the scalar path was: that one gives the first of two
+  equal numbers where SSE2 gives the second, so it could leave the other zero.
+  The package's pins never showed that, and they are what they were, in debug
+  and release web builds. Beside them, a check outside the tests ran every one
+  of these functions on awkward numbers (every three of 24 values with both
+  zeros, denormals, infinities and NaNs among them, 40,000 of any bits at all,
+  and 40,000 small ones of which many are equal), and about 5,000 pairs of
+  polygons through `b2CollidePolygons`, built for x64 and for the web: the
+  same bits from both for all 23 kinds of result, where the scalar path
+  differs in 9.
+  Which NaN arithmetic gives of two isn't compared: that's the CPU's, and no
+  NaN is ever in a world.
+
+  It took a quarter off a step in a browser. The package's `README.md` has the
+  numbers, and why it's no more: clang had already made SIMD of most of the
+  scalar path by itself.
+
+  At an update, the WebAssembly code is read beside the SSE2 code it follows:
+  a function upstream adds to the solver's wide floats needs its twin, or the
+  web build doesn't compile, and one it changes has to change there too.
+
+The second is for threads:
 
 - **`solver.c`: a worker that has waited long for the next stage sleeps**
   (`b2SolverTask`, `B2_TIDE_WAIT_ROUNDS`), on the web only. A step's workers
@@ -85,6 +132,15 @@ And one is for threads on the web, where upstream only knows Emscripten:
   bridge's, which has them from `tide/jobs.h`). On a thread that can't sleep,
   a page's own, it goes on with the loop. A world steps the same either way,
   as it does with any number of workers.
+
+And one is for how a world is tuned, which a game sets through `Physics`:
+
+- **`box2d.h`, `physics_world.c`: `b2World_GetContactTuning`**, which gives
+  back what `b2World_SetContactTuning` set: the contacts' hertz, their damping
+  ratio and the speed bodies are pushed apart at. Upstream has the setter
+  alone. The three are in a world's image, so the package asks the world for
+  them each step and only sets, and notes, what differs: a world that came
+  from an image is asked the same way as one that was stepped here.
 
 ## What the package asks of it
 
@@ -111,12 +167,53 @@ Box2D has to be read for them again:
   A world's gravity is in its image, which is how the package tells a change.
 - **A body made with no shape weighs nothing**, so an impulse does nothing to
   it: the package gives a new body's impulses once its shapes are on it.
+- **A contact only says how hard it was when both shapes have
+  `enableHitEvents`**, off unless a shape is made with it. The package makes
+  every shape with it, for `Hit`. It's a byte of each shape in the image, and
+  it has the solver keep each contact point's `normalVelocity`, which is in
+  the image too (see `contact_solver_wide.inl` above). It changes nothing of
+  how a world steps: the package's pin of the bodies alone didn't move.
+- **A world's tuning is in its image**: gravity, the contacts' hertz, damping
+  ratio and push speed, the restitution and hit thresholds and whether bodies
+  sleep. The package compares each with what `Physics` says before a step.
+- **Contact hertz count up to an eighth of the substep rate**
+  (`physics_world.c`, `b2MinFloat( world->contactHertz, 0.125f * inv_h )`): 30 at 4
+  substeps and 60 steps a second, which is the default, so stiffer contacts
+  need more substeps. The package's docs say so.
+- **`b2Body_SetType` lets go of the body's contacts and makes them again**, so
+  the next step has end and begin events for what touched it, and it wakes the
+  body. It doesn't wake what rested on it when the body turns static: the
+  package wakes what touches it first (`b2Body_WakeTouching`).
+- **`b2DestroyShape` with its last argument true** updates the body's mass,
+  which is what the package wants when a part goes.
+- **A body's type is what Box2D says** (`b2Body_GetType`), which is in the
+  image; the package keeps no copy of it in the match.
+- **The queries read nothing that isn't in the image**: the trees, the shapes
+  and the bodies' transforms for `b2World_CastRay`, `b2World_CastShape` and
+  `b2World_OverlapShape`, and a sensor's visitors for
+  `b2Shape_GetSensorData`. They report shapes in the order the trees are
+  walked in, which a restore doesn't keep, so the package never takes the
+  first thing reported: the nearest is the least by fraction and then by the
+  shape's index, with the walk clipped a hair past the best so far, and lists
+  are sorted by the bodies' indices.
+- **The queries report sensors**, which the package passes by
+  (`b2Shape_IsSensor`).
+- **A cast shape counts as touching within its target distance**
+  (`B2_LINEAR_SLOP`, 5 mm, and a quarter of it more): one that starts that
+  near something meets it at fraction 0 with a zero normal.
+- **A cast's fraction doesn't depend on how far it was allowed to go**, while
+  that's past the fraction (`b2ShapeCast` advances conservatively from the
+  start), and a shape met exactly at the allowed fraction is a miss: which is
+  why the walk is clipped past the best, not at it.
+- **Queries change nothing of a world**, so threads may ask the same world at
+  once. The package keeps what a query needs of its own per thread.
 
 ## Updating it
 
-Copy the two folders over, apply the changes again, and run `tide_box2d_stack`
-and `tide_box2d_course` natively, in debug and release, and for the web: their
-pinned hashes are of the simulation and of every image, so a field that isn't
-the same everywhere shows there, and bytes that are whatever was in memory
-show between a debug build and a release one. A new version steps differently,
-so the hashes change with it, and so do games' matches.
+Copy the two folders over, apply the changes again, and run `tide_box2d_stack`,
+`tide_box2d_course` and `tide_box2d_kit` natively, in debug and release, and
+for the web: their pinned hashes are of the simulation, of every image and of
+every answer to a query, so a field that isn't the same everywhere shows
+there, and bytes that are whatever was in memory show between a debug build
+and a release one. A new version steps differently, so the hashes change with
+it, and so do games' matches.

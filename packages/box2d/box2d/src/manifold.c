@@ -13,6 +13,9 @@
 
 #if defined( B2_SIMD_SSE2 ) || defined( B2_SIMD_AVX2 )
 	#include <emmintrin.h>
+// Tide: WebAssembly's own SIMD (see ../TIDE.md)
+#elif defined( B2_SIMD_WASM )
+	#include <wasm_simd128.h>
 #endif
 
 #define B2_MAKE_ID( A, B ) ( (uint8_t)( A ) << 8 | (uint8_t)( B ) )
@@ -715,6 +718,69 @@ static float b2FindMaxSeparation( int* edgeIndex, const b2Polygon* poly1, const 
 
 		*edgeIndex = index;
 		return _mm_cvtss_f32( m );
+	}
+#elif defined( B2_SIMD_WASM )
+	// Tide: the SSE2 code above on WebAssembly's own SIMD, which gives what it gives, bit for bit: the least and
+	// the greatest are minps and maxps, the second of two that are equal (f32x4.pmin and f32x4.pmax with their
+	// operands the other way around).
+	if ( count1 <= 4 )
+	{
+		// [n1x n1y n2x n2y]
+		v128_t na = wasm_v128_load( &n1s[0].x );
+		// [n3x n3y n4x n4y]
+		v128_t nb = wasm_v128_load( &n1s[2].x );
+		// [v1x v1y v2x v2y]
+		v128_t va = wasm_v128_load( &v1s[0].x );
+		// [v3x v3y v4x v4y]
+		v128_t vb = wasm_v128_load( &v1s[2].x );
+
+		// [n1x n2x n3x n4x]
+		v128_t nx = wasm_i32x4_shuffle( na, nb, 0, 2, 4, 6 );
+		// [n1y n2y n3y n4y]
+		v128_t ny = wasm_i32x4_shuffle( na, nb, 1, 3, 5, 7 );
+		// [v1x v2x v3x v4x]
+		v128_t px = wasm_i32x4_shuffle( va, vb, 0, 2, 4, 6 );
+		// [v1y v2y v3y v4y]
+		v128_t py = wasm_i32x4_shuffle( va, vb, 1, 3, 5, 7 );
+
+		v128_t s = wasm_f32x4_splat( FLT_MAX );
+		for ( int j = 0; j < count2; ++j )
+		{
+			v128_t qx = wasm_f32x4_splat( v2s[j].x );
+			v128_t qy = wasm_f32x4_splat( v2s[j].y );
+
+			// Four separation values at once, four faces of poly1 for one vertex of poly2.
+			v128_t sj = wasm_f32x4_add( wasm_f32x4_mul( nx, wasm_f32x4_sub( qx, px ) ), wasm_f32x4_mul( ny, wasm_f32x4_sub( qy, py ) ) );
+
+			// [min(s1,sj1) min(s2,sj2) min(s3,sj3) min(s4,sj4)]
+			s = wasm_f32x4_pmin( sj, s );
+		}
+
+		// [(0 < count1) (1 < count1) (2 < count1) (3 < count1)]
+		v128_t valid = wasm_i32x4_lt( wasm_i32x4_const( 0, 1, 2, 3 ), wasm_i32x4_splat( count1 ) );
+
+		// Invalid lanes become -FLT_MAX
+		s = wasm_v128_bitselect( s, wasm_f32x4_splat( -FLT_MAX ), valid );
+
+		// [max(s1,s3) max(s2,s4) max(s3,s1) max(s4,s2)]
+		v128_t m = wasm_f32x4_pmax( wasm_i32x4_shuffle( s, s, 2, 3, 0, 1 ), s );
+
+		// Maximum separation splatted
+		m = wasm_f32x4_pmax( wasm_i32x4_shuffle( m, m, 1, 0, 3, 2 ), m );
+
+		// Set the bit in the lane holding the maximum. Can be multiple lanes in a tie.
+		int bits = wasm_i32x4_bitmask( wasm_f32x4_eq( s, m ) );
+
+		// Get the lane index of the maximum. Lowest index wins a tie.
+		int index = 0;
+		while ( ( bits & 1 ) == 0 )
+		{
+			bits >>= 1;
+			index += 1;
+		}
+
+		*edgeIndex = index;
+		return wasm_f32x4_extract_lane( m, 0 );
 	}
 #endif
 
