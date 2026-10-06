@@ -857,8 +857,10 @@ button {
     aspect-ratio: 4 / 3;
 }
 
-/* Duel's stacked upgrade cards need room at narrow widths. */
-.prose .demo-frame.duel {
+/* Duel's stacked upgrade cards need room at narrow widths, and so does a game
+   that opens on a lobby. */
+.prose .demo-frame.duel,
+.prose .demo-frame.roomy {
     min-height: 440px;
 }
 

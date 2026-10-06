@@ -1,4 +1,5 @@
-// Siege with no window: what the game promises, on one world, and three
+// Siege with no window: what the game promises, on one world; what a machine
+// shows of it and where its lobby leaves it, a frame at a time; and three
 // players in a match on the loopback network, one of whom joins after shots
 // were fired, whose server's world is pinned.
 
@@ -415,6 +416,200 @@ TIDE_TEST(siege_cannons_nobody_has_play_by_themselves)
     tick(400);
     TIDE_CHECK(!world.Siege.bots && count(&world, tide_has_Ball) == 0);
     tide_world_free(&built);
+    tide_world_free(&world);
+}
+
+// ---------------------------------------------------------------------------
+// What one machine shows of the match, and which match it's in: its views and
+// local handlers, as a host runs a frame, with no window
+
+static tide_local local;
+static tide_draw_list draw;
+static tide_gui gui;
+static tide_devices devices;
+
+static void frame(const tide_world *w)
+{
+    tide_local_frame_time(&local, 1.0f / 60.0f);
+    tide_draw_reset(&draw);
+    tide_gui_begin(&gui, &devices, tide_f2(376, 400), NULL);
+    tide_frame(w, NULL, 1.0f, w, &local, &draw, &gui);
+    tide_gui_end(&gui, &draw);
+}
+
+// A machine as it starts: its local state, and where the host says it stands.
+static void machine(const uint32_t state, const int who, const bool server, const bool open, const char *room)
+{
+    tide_local_init(&local);
+    memset(&gui, 0, sizeof gui);
+    memset(&devices, 0, sizeof devices);
+    tide_local_set_session(&local, state, who < 0 ? (tide_player_id){0} : player(who), 0, server, open, room);
+}
+
+// Whether this machine's player fires, holding the button down with the pointer on the map.
+static bool fires(void)
+{
+    tide_devices held = devices;
+    held.pointer.press.pressed = true;
+    return tide_input_sample(&held, &local).fire;
+}
+
+static bool says_something(void)
+{
+    return tide_text_read(&local.heap, local.Lobby.message).bytes > 0;
+}
+
+// What local code asked of the session since it was last asked
+static uint32_t asked(void)
+{
+    tide_session_request request = {0};
+    tide_start from;
+    return tide_local_take_request(&local, &request, &from) ? request.kind : (uint32_t)TIDE_REQUEST_NONE;
+}
+
+TIDE_TEST(siege_opens_on_its_lobby_unless_it_was_told_which_match)
+{
+    start(true);
+    // Started with nothing said: a match of its own, closed, behind the title.
+    // The player's cannon does nothing while the lobby is up
+    machine(TIDE_SESSION_CONNECTED, 0, true, false, "");
+    frame(&world);
+    frame(&world);
+    TIDE_CHECK(local.Lobby.page == Page_Title && !local.Pointer.playing && !fires());
+    TIDE_CHECK(local.Lobby.players == 2 && local.Lobby.mine == 0 && local.Lobby.manned == 3);
+    TIDE_CHECK(asked() == TIDE_REQUEST_NONE);
+    tide_local_free(&local);
+
+    // --host, or a page's ?host: the match is open by the first frame, and no lobby is in the way
+    machine(TIDE_SESSION_CONNECTED, 0, true, true, "K7QF2M");
+    frame(&world);
+    frame(&world);
+    TIDE_CHECK(local.Lobby.page == Page_None && local.Pointer.playing && fires());
+    // The button is held as the menu closes: nothing fires until it's let go
+    local.Lobby.page = Page_Room;
+    frame(&world);
+    TIDE_CHECK(!fires());
+    local.Lobby.page = Page_None;
+    devices.pointer.press.pressed = devices.pointer.press.held = true;
+    frame(&world);
+    TIDE_CHECK(!fires());
+    devices.pointer.press.pressed = devices.pointer.press.held = false;
+    frame(&world);
+    TIDE_CHECK(fires());
+    tide_local_free(&local);
+
+    // --join <code>, or ?join=<code>: joining by the first frame. The page says so until the match's world is here
+    machine(TIDE_SESSION_CONNECTING, -1, false, false, "K7QF2M");
+    frame(NULL);
+    TIDE_CHECK(local.Lobby.page == Page_Join && local.Lobby.joining && !fires());
+    tide_local_connected(&local);
+    tide_local_set_session(&local, TIDE_SESSION_CONNECTED, player(1), 30, false, false, "K7QF2M");
+    frame(&world);
+    frame(&world);
+    TIDE_CHECK(local.Lobby.page == Page_None && !local.Lobby.joining && fires());
+    TIDE_CHECK(local.Lobby.mine == 1);
+    // That match ends: back on the title, with a line that says so, and a match of its own asked for
+    tide_local_disconnected(&local, TIDE_DISCONNECT_ENDED, "");
+    tide_local_set_session(&local, TIDE_SESSION_OFFLINE, (tide_player_id){0}, 0, false, false, "");
+    frame(NULL);
+    frame(NULL);
+    TIDE_CHECK(local.Lobby.page == Page_Title && says_something() && !fires());
+    TIDE_CHECK(asked() == TIDE_REQUEST_START);
+    tide_local_free(&local);
+
+    // A code nobody has: the page it was typed on stays, to try again from
+    machine(TIDE_SESSION_CONNECTING, -1, false, false, "");
+    frame(NULL);
+    tide_local_disconnected(&local, TIDE_DISCONNECT_FAILED, "");
+    tide_local_set_session(&local, TIDE_SESSION_OFFLINE, (tide_player_id){0}, 0, false, false, "");
+    frame(NULL);
+    frame(NULL);
+    TIDE_CHECK(local.Lobby.page == Page_Join && !local.Lobby.joining && says_something());
+    TIDE_CHECK(asked() == TIDE_REQUEST_START);
+    // This machine leaving a match, as when it starts or joins another, says nothing
+    tide_local_disconnected(&local, TIDE_DISCONNECT_LEFT, "");
+    frame(NULL);
+    frame(NULL);
+    TIDE_CHECK(local.Lobby.page == Page_Join && asked() == TIDE_REQUEST_NONE);
+    tide_local_free(&local);
+    tide_draw_free(&draw);
+    tide_world_free(&world);
+}
+
+// The sparks, the numbers and the words come from what the match sends: a
+// tick that tells this machine what it sent, and the frame that shows it.
+static tide_event_log heard;
+
+static void tick_and_show(void)
+{
+    tide_world_tick_events(&world, NULL, &heard);
+    tide_local_events(&local, &heard);
+    frame(&world);
+}
+
+TIDE_TEST(siege_effects_come_from_what_the_match_sends)
+{
+    start(false);
+    machine(TIDE_SESSION_CONNECTED, 0, true, true, "K7QF2M");
+    frame(&world);
+    frame(&world);
+    TIDE_CHECK(tide_list_read_count(&local.heap, local.Fx.bits) == 0 && local.Fx.seat == 0);
+
+    // A shot leaves the first seat's cannon: sparks at its muzzle, and this machine's camera feels it
+    hold(0, 6, 3.5f, true);
+    tick_and_show();
+    hold(0, 6, 3.5f, false);
+    TIDE_CHECK(count(&world, tide_has_Ball) == 1);
+    TIDE_CHECK(tide_list_read_count(&local.heap, local.Fx.bits) > 0 && local.Fx.trauma > 0.0f);
+    // It lands on a crate, which flashes
+    bool flashed = false;
+    for (int i = 0; i < 90 && !flashed; i++) {
+        tick_and_show();
+        for (uint32_t j = 0; j < world.entities.next_unused; j++) {
+            const tide_entity e = tide_entity_in_slot(&world.entities, j);
+            if (tide_has_Crate(&world, e) && tide_get_Crate_local(&local, e).hit > 0.0f) flashed = true;
+        }
+    }
+    TIDE_CHECK(flashed);
+
+    // A king the first seat painted leaves the map: what it was worth floats up, and the seat's score jumps
+    for (uint32_t i = 0; i < world.entities.next_unused; i++) {
+        const tide_entity e = tide_entity_in_slot(&world.entities, i);
+        if (!tide_has_Crate(&world, e) || tide_get_Crate(&world, e).worth != 5) continue;
+        Crate king = tide_get_Crate(&world, e);
+        king.last = 0;
+        tide_set_Crate(&world, e, king);
+        Box2D_Body body = tide_get_Box2D_Body(&world, e);
+        body.position = tide_f2(0.0f, -2.0f);
+        tide_set_Box2D_Body(&world, e, body);
+        break;
+    }
+    bool labelled = false;
+    for (int i = 0; i < 120 && !labelled; i++) {
+        tick_and_show();
+        labelled = tide_list_read_count(&local.heap, local.Fx.labels) > 0;
+    }
+    TIDE_CHECK(labelled && local.Fx.pops.x > 0.5f && cannon(&world, 0).score == 5);
+
+    // A round ends, and the next is built: the words over the map know who took it
+    Cannon ahead = cannon(&world, 2);
+    ahead.round = 7;
+    tide_set_Cannon(&world, cannon_at(&world, 2), ahead);
+    world.Siege.standing = 12;
+    tick_and_show();
+    TIDE_CHECK(local.Flow.winner == 2 && local.Flow.best == 7 && local.Flow.round == 1 && local.Flow.since < 0.1f);
+    for (int i = 0; i < 200 && world.Siege.round == 1; i++) tick_and_show();
+    TIDE_CHECK(world.Siege.round == 2 && local.Flow.built == 2 && local.Flow.begun < 0.1f);
+
+    // A tick nobody listens to shows nothing, and the match goes the same
+    const float since = local.Flow.begun;
+    world.Siege.standing = 12;
+    tide_world_tick(&world);
+    frame(&world);
+    TIDE_CHECK(world.Siege.phase == Phase_Over && local.Flow.round == 1 && local.Flow.begun > since);
+    tide_event_log_free(&heard);
+    tide_local_free(&local);
+    tide_draw_free(&draw);
     tide_world_free(&world);
 }
 
