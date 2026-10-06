@@ -2008,10 +2008,16 @@
         } catch (error) { filesError = storageError(error); }
     }
     let filesReady = null;
+    // Saves what's changed, after the saves asked for before it. What that is,
+    // it takes when its turn comes, not when it's asked: a change queues a
+    // save and a flush in the same turn is another, and the second, which
+    // comes once the first committed, then finds nothing left to write. What
+    // a save that failed left dirty, and what changed while one was on its
+    // way, the next one takes the same way.
     function saveFiles(tree) {
-        const changes = [...tree.dirty];
         tree.chain = tree.chain.then(() => {
             if (!filesDB || filesError) return filesError || ioError.unavailable;
+            const changes = [...tree.dirty];
             if (!changes.length) return 0;
             return new Promise(resolve => {
                 let transaction;

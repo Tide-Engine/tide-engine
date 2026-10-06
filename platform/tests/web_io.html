@@ -4,7 +4,7 @@
 <canvas id="canvas"></canvas>
 <pre id="log"></pre>
 <script>
-  const phases = ['write', 'other', 'read', 'denied', 'read-denied', 'quota'];
+  const phases = ['write', 'other', 'busy', 'read', 'denied', 'read-denied', 'quota'];
   const phase = new URLSearchParams(location.search).get('phase') || 'write';
   // How far this page got, which the test's runner asks a page that gives no
   // result (cmake/run_web_served_test.mjs). The program starts once its files
@@ -23,11 +23,24 @@
       request.addEventListener(name, () => step(`files: the database's ${name}`));
     return request;
   };
+  // How many transactions that write this page made, which the program asks
+  // about (web_io.c): changes saved once are one. While the program has
+  // tideHold set, one that writes doesn't finish: it asks its store something
+  // more each time it's answered, and a transaction with a request out stays
+  // open. So the program changes files while a save is on its way for
+  // certain, however fast the browser commits.
+  window.tideWrites = 0;
+  window.tideHold = false;
   const begin = IDBDatabase.prototype.transaction;
   IDBDatabase.prototype.transaction = function(names, mode, options) {
     const made = begin.call(this, names, mode, options);
     const kind = mode || 'readonly';
     step(`files: a ${kind} transaction`);
+    if (kind === 'readwrite') {
+      tideWrites++;
+      const hold = () => { if (tideHold) made.objectStore('files').count().onsuccess = hold; };
+      hold();
+    }
     for (const name of ['complete', 'abort']) made.addEventListener(name, () => step(`files: the ${kind} transaction's ${name}`));
     return made;
   };
