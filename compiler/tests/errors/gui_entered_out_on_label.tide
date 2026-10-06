@@ -1,0 +1,5 @@
+// expect: 'GUILayout.FloatField' takes a value for 'label', which isn't an 'out' parameter
+// expect: declare the variable before the call, with a value, and pass it as it is: 'var label = ...;'
+scene Main { }
+local singleton Lobby { string code; int count; float ratio; bool entered; }
+view Join(mut Lobby lobby) { GUILayout.FloatField(out var label, lobby.ratio); }

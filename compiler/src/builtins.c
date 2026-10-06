@@ -38,6 +38,10 @@ static const decl *shape_decl;
 static decl blend_enum;
 static const type T_BLEND = {TY_ENUM, &blend_enum};
 static const decl *blend_decl;
+// ...and the Depth enum, which Draw.Depth does.
+static decl depth_enum;
+static const type T_DEPTH = {TY_ENUM, &depth_enum};
+static const decl *depth_decl;
 // And the Font enum, which Draw2D.Text and Draw2D.MeasureText take.
 static decl text_font;
 static const type T_FONT = {TY_ENUM, &text_font};
@@ -67,11 +71,12 @@ void builtins_use_io(const decl *bytes, const decl *paths)
     paths_decl = paths;
 }
 
-void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *font)
+void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *font)
 {
     anchor_decl = anchor;
     shape_decl = shape;
     blend_decl = blend;
+    depth_decl = depth;
     font_decl = font;
     // Another program's: this one's come with its first mesh draw
     vertices_decl = vertices3_decl = indices_decl = pixels_decl = filter_decl = transforms_decl = NULL;
@@ -119,6 +124,7 @@ static type real_type(const type t)
     if (t.kind == TY_ENUM && !t.decl) return (type){TY_ENUM, (decl *)anchor_decl};
     if (t.decl == &shape_struct && shape_decl) return (type){TY_STRUCT, (decl *)shape_decl};
     if (t.decl == &blend_enum && blend_decl) return (type){TY_ENUM, (decl *)blend_decl};
+    if (t.decl == &depth_enum && depth_decl) return (type){TY_ENUM, (decl *)depth_decl};
     if (t.decl == &text_font && font_decl) return (type){TY_ENUM, (decl *)font_decl};
     if (t.decl == &theme_struct && theme_decl) return (type){TY_STRUCT, (decl *)theme_decl};
     if (t.decl == &control_struct && control_decl) return (type){TY_STRUCT, (decl *)control_decl};
@@ -144,6 +150,7 @@ static const char *signature_type_name(const type t)
     if (t.decl == &mesh_instances) return "List<T>";
     if (t.decl == &shape_struct) return "Shape";
     if (t.decl == &blend_enum) return "Blend";
+    if (t.decl == &depth_enum) return "Depth";
     if (t.decl == &text_font) return "Font";
     if (t.decl == &theme_struct) return "GUITheme";
     if (t.decl == &control_struct) return "GUIControl";
@@ -195,6 +202,7 @@ typedef struct signature {
     // default as Tide writes it ("false"), which its C function is passed then
     int optional;
     const char *defaults[MAX_PARAMS];
+    unsigned out;            // A bit per `out` parameter, which the call makes: its bit in `mut` is set too
 } signature;
 
 #define MAX_SIGNATURES 384
@@ -234,7 +242,7 @@ static signature *add(const char *owner, const char *name, const type result, co
         exit(1);
     }
     signature *s = &signatures[signature_count++];
-    *s = (signature){owner, name, result, argc, {p0, p1, p2, T_NONE, T_NONE, T_NONE}, permanent(c_name), NULL, NULL, 0, 0, NULL, 0, {NULL}};
+    *s = (signature){owner, name, result, argc, {p0, p1, p2, T_NONE, T_NONE, T_NONE}, permanent(c_name), NULL, NULL, 0, 0, NULL, 0, {NULL}, 0};
     return s;
 }
 
@@ -248,7 +256,8 @@ static signature *defaulted(signature *s, const char *text)
 }
 
 // A GUI function from its parameters as Tide writes them:
-// "string label, mut float value, float min, float max".
+// "string label, mut float value, float min, float max", or with one the call
+// makes, "string label, mut string value, out bool entered".
 static void add_gui(const char *owner, const char *name, const type result, const char *c_name, const char *params,
                     const int gui, const char *doc)
 {
@@ -261,7 +270,8 @@ static void add_gui(const char *owner, const char *name, const type result, cons
         const size_t n = end ? (size_t)(end - p) : strlen(p);
         char buf[64];
         snprintf(buf, sizeof buf, "%.*s", (int)n, p);
-        const bool mut = strncmp(buf, "mut ", 4) == 0;
+        const bool out = strncmp(buf, "out ", 4) == 0;
+        const bool mut = out || strncmp(buf, "mut ", 4) == 0; // An out one goes by address too
         char *type_text = buf + (mut ? 4 : 0);
         char *space = strchr(type_text, ' ');
         *space = '\0';
@@ -270,6 +280,7 @@ static void add_gui(const char *owner, const char *name, const type result, cons
         else if (strcmp(type_text, "Anchor") == 0) t = T_ANCHOR;
         else if (strcmp(type_text, "GUITheme") == 0) t = T_THEME;
         else builtin_type_named(str_from(type_text), &t);
+        if (out) s->out |= 1u << s->argc;
         if (mut) s->mut |= 1u << s->argc;
         s->params[s->argc++] = t;
         sb_printf(&names, "%s%s", names.len ? ", " : "", space + 1);
@@ -488,6 +499,14 @@ static void build_signatures(void)
                 "Wherever it's drawn. In a block, it multiplies the tint there is.",
                 1, &T_COLOR);
     add_unset("Draw", "SetTint", "tide_draw_unset_tint", "No tint, as each frame starts.");
+    add_setting("Draw", "Depth", "tide_draw_push_depth", "tide_draw_set_depth", NULL, "mode",
+                "What 3D meshes do with depth: `Depth.ReadWrite` (each frame's first: a mesh is hidden behind what's nearer "
+                "and hides what's drawn behind it later, whatever the order), `Depth.Read` (hidden behind what's nearer, and "
+                "hides nothing: what's see-through, drawn after what's solid, like decals, glass and smoke) or `Depth.None` "
+                "(drawn over whatever is there). Wherever it's drawn: the window or a target. The Draw2D calls have no "
+                "depth, whatever it says.",
+                1, &T_DEPTH);
+    add_unset("Draw", "SetDepth", "tide_draw_unset_depth", "Back to `Depth.ReadWrite`, as each frame starts.");
     static const char transform_doc[] =
         "Moves, turns and scales the Draw2D calls, in the units they're in, about (0, 0): scaled, then turned by "
         "`rotation` (radians, from +x towards +y), then moved by `offset`. Shapes stay shapes; text that's only moved "
@@ -775,6 +794,16 @@ static void build_signatures(void)
                "A color's swatch, and fields for its r, g, b and a. Returns whether they changed `value`.");
     add_widget("TextField", T_BOOL, "text_field", "string label, mut string value", GUI_ID,
                "A field to type text into. It changes `value` as the player types, and returns whether it did.");
+    // ...and the ones that say whether the player entered what they typed: tide_gui_<field>_entered
+    add_widget("TextField", T_BOOL, "text_field_entered", "string label, mut string value, out bool entered", GUI_ID,
+               "With `out entered`, it also says whether the player entered the text: true in the frame Enter ends "
+               "the typing in this field, like `GUILayout.TextField(\"Code\", lobby.code, out var entered);`.");
+    add_widget("IntField", T_BOOL, "int_field_entered", "string label, mut int value, out bool entered", GUI_ID,
+               "With `out entered`, it also says whether the player entered the number: true in the frame Enter, or "
+               "a gamepad's south button, ends the typing in this field.");
+    add_widget("FloatField", T_BOOL, "float_field_entered", "string label, mut float value, out bool entered", GUI_ID,
+               "With `out entered`, it also says whether the player entered the number: true in the frame Enter, or "
+               "a gamepad's south button, ends the typing in this field.");
     add_gui("GUILayout", "Space", T_NONE, "tide_gui_layout_space", "float size", 0,
             "Empty space: down in a vertical container, across in a horizontal one.");
     add_gui("GUILayout", "Vertical", T_NONE, "tide_gui_begin_vertical", "", GUI_ID | GUI_CONTAINER,
@@ -985,13 +1014,22 @@ static bool unify_long(const expr *e, type *out)
     return any_long;
 }
 
+// Whether an argument written `out var entered` or `out _` waits for its
+// parameter to say its type.
+static bool out_untyped(const expr *arg)
+{
+    return arg->is_out && arg->out_local && arg->out_local->type_name.len == 0;
+}
+
 static void arg_list(const expr *e, char *buf, const size_t size)
 {
     size_t len = 0;
     buf[0] = '\0';
     for (int i = 0; i < e->args.count && len + 1 < size; i++) {
         const expr *arg = e->args.items[i];
-        const int n = snprintf(buf + len, size - len, "%s%s", i ? ", " : "", arg->kind == E_DEFAULT ? "default" : type_name(arg->type));
+        const char *what = arg->kind == E_DEFAULT ? "default" : !out_untyped(arg) ? type_name(arg->type)
+                         : arg->out_local->discard ? "_" : "var";
+        const int n = snprintf(buf + len, size - len, "%s%s%s", i ? ", " : "", arg->is_out ? "out " : "", what);
         if (n > 0) len += (size_t)n;
     }
 }
@@ -1002,7 +1040,8 @@ static void format_signature(const signature *s, sb *out)
     sb_printf(out, "%s.%s(", s->owner, s->name);
     const char *names = s->param_names;
     for (int a = 0; a < s->argc; a++) {
-        sb_printf(out, "%s%s%s", a ? ", " : "", s->mut & (1u << a) ? "mut " : "", signature_type_name(s->params[a]));
+        sb_printf(out, "%s%s%s", a ? ", " : "", s->out & (1u << a) ? "out " : s->mut & (1u << a) ? "mut " : "",
+                  signature_type_name(s->params[a]));
         if (names) {
             const char *end = strchr(names, ',');
             const size_t n = end ? (size_t)(end - names) : strlen(names);
@@ -1070,7 +1109,10 @@ static bool bind(const signature *s, const expr *e, int *param_of)
 }
 
 // Whether signature `s` takes the call's arguments. `default`, unchecked yet,
-// fits any parameter but a mut one, which changes a variable.
+// fits any parameter but a mut one, which changes a variable. An argument
+// written `out` goes where it's written, whatever the parameter there is and
+// whatever type it declares: what's wrong with it is said once the version is
+// picked, as for a function of the game's (check_out_param).
 static bool fits(const signature *s, const expr *e)
 {
     int param_of[MAX_PARAMS];
@@ -1080,6 +1122,7 @@ static bool fits(const signature *s, const expr *e)
         const type want = real_type(s->params[a]);
         const expr *arg = e->args.items[i];
         const bool mut = s->mut & (1u << a);
+        if (arg->is_out && (out_untyped(arg) || (s->out & (1u << a)))) continue;
         // A type the program doesn't have, like Grid2<Color> where no grid is one: nothing is it
         if (mesh_type(want)) return false;
         if (arg->kind == E_DEFAULT) {
@@ -1149,8 +1192,11 @@ type resolve_builtin_call(const str owner, expr *e)
 {
     int defaults = 0; // `default` arguments take the type of the version the others pick
     for (int i = 0; i < e->args.count; i++) {
-        if (e->args.items[i]->kind == E_DEFAULT) defaults++;
-        else if (e->args.items[i]->type.kind == TY_ERROR) return (type){TY_ERROR, NULL};
+        const expr *arg = e->args.items[i];
+        if (arg->kind == E_DEFAULT) defaults++;
+        // `out var entered` takes its parameter's type, where a version has an `out` parameter
+        else if (out_untyped(arg) && builtin_takes_out(owner, e->name)) continue;
+        else if (arg->type.kind == TY_ERROR) return (type){TY_ERROR, NULL};
     }
     e->call = CALL_BUILTIN;
     e->arg_want.count = 0;
@@ -1221,6 +1267,7 @@ type resolve_builtin_call(const str owner, expr *e)
         e->c_callee = s->c_name;
         e->c_pack = s->pack;
         e->arg_mut = s->mut;
+        e->arg_out = s->out;
         e->gui = s->gui;
         return real_type(s->result);
     }
@@ -1244,11 +1291,20 @@ type resolve_builtin_call(const str owner, expr *e)
                 if (drawing && str_eq_c(e->name, signatures[i].name)) theirs = signatures[i].owner;
             }
             if (theirs) {
-                diag_note("it's %s's: '%s." STR_FMT "(...)'. Draw has what Draw2D and Draw3D share: Blend, Tint, Blit and "
-                          "window", theirs, theirs, STR_ARG(e->name));
+                diag_note("it's %s's: '%s." STR_FMT "(...)'. Draw has what Draw2D and Draw3D share: Blend, Tint, Depth, Blit "
+                          "and window", theirs, theirs, STR_ARG(e->name));
             } else {
-                diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Blit and window. Shapes, text and meshes "
-                          "are theirs");
+                diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Depth, Blit and window. Shapes, text and "
+                          "meshes are theirs");
+            }
+        } else if (str_eq_c(owner, "Draw2D") || str_eq_c(owner, "Draw3D")) {
+            // A setting of Draw's own, asked of a destination: Draw3D.Depth, target.SetBlend
+            for (int i = 0; i < signature_count; i++) {
+                const signature *s = &signatures[i];
+                if (strcmp(s->owner, "Draw") != 0 || !str_eq_c(e->name, s->name)) continue;
+                diag_note("it's Draw's, the same wherever it's drawn, the window or a target: 'Draw." STR_FMT "(...)%s'",
+                          STR_ARG(e->name), s->gui & DRAW_BLOCK ? " { ... }" : ";");
+                break;
             }
         }
         suggestion s = suggest_start(e->name);
@@ -1319,6 +1375,31 @@ type resolve_builtin_member(const str owner, expr *e)
     }
     suggest_note(&s);
     return (type){TY_ERROR, NULL};
+}
+
+bool builtin_takes_out(const str owner, const str name)
+{
+    build_signatures();
+    for (int i = 0; i < signature_count; i++) {
+        const signature *s = &signatures[i];
+        if (s->out && str_eq_c(owner, s->owner) && str_eq_c(name, s->name)) return true;
+    }
+    return false;
+}
+
+str builtin_param_name(const expr *e, const int index)
+{
+    for (int i = 0; i < signature_count; i++) {
+        const signature *s = &signatures[i];
+        if (s->c_name != e->c_callee) continue; // Each version has its own
+        const char *p = s->param_names;
+        for (int k = 0; p && *p; k++) {
+            const char *end = strchr(p, ',');
+            if (k == index) return (str){p, (int)(end ? (size_t)(end - p) : strlen(p))};
+            p = end ? end + 2 : NULL;
+        }
+    }
+    return str_from("value");
 }
 
 const char *builtin_function_owner(const str name)
@@ -1419,11 +1500,34 @@ void builtin_list_members(const str owner, void (*visit)(void *user, const built
         if (seen) continue;
         sb detail = {0};
         format_signature(s, &detail);
+        // Its other versions: how many, after the first one's signature, and each under the first one's doc,
+        // with what it says of its own
+        sb doc = {0};
+        const char *said[MAX_SIGNATURES];
+        int said_count = 0;
+        int others = 0;
+        for (int j = i + 1; j < signature_count; j++) {
+            const signature *o = &signatures[j];
+            if (strcmp(o->owner, s->owner) != 0 || strcmp(o->name, s->name) != 0) continue;
+            if (others++ == 0 && s->doc) {
+                sb_put(&doc, s->doc);
+                said[said_count++] = s->doc;
+            }
+            sb_put(&doc, "\n\n```tide\n");
+            format_signature(o, &doc);
+            sb_put(&doc, "\n```");
+            bool repeats = !o->doc;
+            for (int k = 0; k < said_count && !repeats; k++) repeats = strcmp(said[k], o->doc) == 0;
+            if (repeats) continue;
+            sb_printf(&doc, "\n%s", o->doc);
+            said[said_count++] = o->doc;
+        }
+        if (others) sb_printf(&detail, " (+%d version%s)", others, others == 1 ? "" : "s");
         sb snippet = {0};
         if (s->param_names) format_snippet(s->name, s->param_names, s->argc - s->optional, &snippet);
         else sb_printf(&snippet, "%s($1)", s->name);
         if (s->gui & (GUI_CONTAINER | DRAW_BLOCK)) sb_put(&snippet, "\n{\n\t$0\n}");
-        const builtin_member m = {s->name, true, detail.data, s->doc, snippet.data};
+        const builtin_member m = {s->name, true, detail.data, others ? doc.data : s->doc, snippet.data};
         visit(user, &m);
     }
 

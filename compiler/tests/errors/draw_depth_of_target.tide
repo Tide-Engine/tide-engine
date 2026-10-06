@@ -1,0 +1,13 @@
+// expect: Draw2D has no function 'SetDepth'
+// expect: it's Draw's, the same wherever it's drawn, the window or a target: 'Draw.SetDepth(...);'
+scene Main { }
+
+local singleton Look
+{
+    RenderTarget target;
+}
+
+view Show(Look look)
+{
+    look.target.SetDepth(Depth.None);
+}

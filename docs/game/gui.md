@@ -48,6 +48,7 @@ Widgets have no IDs to write. They're told apart by where they're called from an
 | `IntSlider(label, mut int value, min, max)` | A slider for ints |
 | `TextField(label, mut string text)` | A field the player types into |
 | `IntField`, `FloatField`, `Float2Field`, `Float3Field`, `Float4Field` | Number fields: a label and a `mut` value |
+| `TextField`, `IntField` and `FloatField` with `out bool entered` last | The same fields, which also say [when the player entered what they typed](#when-a-field-is-entered) |
 | `ColorField(label, mut Color value)` | A swatch, and fields for r, g, b and a |
 | `GUILayout.Space(size)` | Empty space |
 
@@ -88,6 +89,36 @@ view Hud(mut Look look)
 When the screen is too narrow for them, laid out widgets shrink to fit: fields, sliders and buttons get narrower, and a label's column gives up its spare room first. Labels and toggles keep their size.
 
 The engine builds nothing a game couldn't build itself: containers are functions with an `Action`, and you can write your own the same way. A widget that looks nothing like these is a [control](#widgets-of-your-own): you draw it, and the GUI handles its input.
+
+## When a field is entered
+
+A field the player types into can say when they pressed Enter in it. `TextField`, `IntField` and `FloatField` each have a second version that takes one more argument, an [`out`](../language/functions.md#out-parameters) one after the value, which is true in the frame Enter ends the typing in that field. So a room's code is joined from the keyboard, with no button to reach for:
+
+```csharp
+local singleton Lobby
+{
+    string code;
+}
+
+view Join(mut Lobby lobby)
+{
+    GUILayout.Area(Anchor.MiddleCenter)
+    {
+        GUILayout.TextField("Room", lobby.code, out var entered);
+        if ((GUILayout.Button("Join") || entered) && lobby.code != "") Session.Join(lobby.code);
+    }
+}
+```
+
+- **What the field returns is as ever:** whether it changed its value. A number field keeps its number as it's entered, so it can change and be entered in the same frame.
+- **It's true for one frame, and false in every other:** while the player types, when Enter starts the typing in a field that already has the focus, and when the typing ends another way, with Escape, with Tab, with a click elsewhere, or because the field was disabled.
+- **The numpad's Enter is Enter,** and so is the one on a phone's keyboard, whatever it's labelled. A gamepad's south button enters a number field, as it ends its typing; it doesn't end a text field's.
+- **The button comes first** in `GUILayout.Button("Join") || entered`. A widget is called every frame, so it can't be on the right of `||`, which only runs when the left is false.
+- **It's an `out` argument like any other.** `out var entered` declares the variable there, `out` before a variable or a field of local state assigns it, and `out _` leaves it out. Without the argument, the field is the one that doesn't say.
+
+The fields with several numbers, the sliders and the toggle have no such version. With `GUI`, the argument is last too: `GUI.TextField(rect, "Room", lobby.code, out var entered)`.
+
+A call passes its other arguments as they are: `lobby.code` goes to the field's `mut` parameter with no word before it.
 
 ## Screen units
 
@@ -223,7 +254,7 @@ view Paused(Pause pause)
 
 Once a widget has the focus, the keyboard and the gamepad are the GUI's, and the input's `Sample` reads neither. A key or a button that goes down then stays the GUI's until it's let go, even if the widget is gone by the next frame: Space that clicks a menu's Play, and closes the menu, isn't also the game's Space while it's still held.
 
-Typing into a field uses the characters the player types, which follow their keyboard layout, not keys by position. Clicking a number field, or pressing Enter on it, starts typing into it; Enter or leaving the field keeps a valid number, and Escape keeps the old one. On a phone, and in a phone's browser, the system's keyboard shows while the player types into a field, and goes when they stop.
+Typing into a field uses the characters the player types, which follow their keyboard layout, not keys by position. Clicking a number field, or pressing Enter on it, starts typing into it; Enter or leaving the field keeps a valid number, and Escape keeps the old one. A view can ask a field [whether Enter ended the typing in it](#when-a-field-is-entered). On a phone, and in a phone's browser, the system's keyboard shows while the player types into a field, and goes when they stop.
 
 ## Copy and paste
 
