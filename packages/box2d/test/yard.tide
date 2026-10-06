@@ -1,0 +1,166 @@
+// A match for the tests of Box2D's image in parts (parts_test.c): stacks of
+// crates that fall asleep, and then what's hard for an image that only writes
+// what changed, each at its tick. Most of it is done to bodies that are asleep
+// or static, which the step doesn't write.
+
+using Box2D;
+
+scene Main { }
+
+component Crate
+{
+    int stack;
+    int row;
+}
+
+// A ball that nothing pulls down, which hops along just over the stacks and
+// comes to rest between hops: it comes near sleeping crates and leaves them,
+// without ever touching one, and sleeps over them
+component Glider { }
+
+// A floor that comes late, and goes again
+component Shelf { }
+
+// A body that's moved by its speed, whatever is in its way
+component Paddle
+{
+    int ticks;
+}
+
+// A sensor that never moves, around a stack that sleeps in it
+component Gate
+{
+    int until; // The tick it goes at, or 0
+}
+
+singleton Script
+{
+    int tick;
+    bool quiet; // Nothing more is done: what's there comes to rest
+}
+
+singleton Tally
+{
+    int touched;
+    int parted;
+}
+
+event(Spawned) Build(with Main)
+{
+    Spawn(Body { type = BodyType.Static, position = float2(0, -0.5) }, Box { size = float2(200, 1) });
+    for (int stack = 0; stack < 10; stack++)
+    {
+        for (int row = 0; row < 3; row++)
+        {
+            Spawn(Body { position = float2(-9 + 2 * stack, 0.5 + row) }, Box, Crate { stack = stack, row = row });
+        }
+    }
+    Spawn(Body { position = float2(-11, 3.56), gravityScale = 0, linearDamping = 4, fixedRotation = true }, Circle, Glider);
+    Spawn(Body { type = BodyType.Static, position = float2(-7, 1.5) }, Box { size = float2(1.6, 3.4), sensor = true }, Gate { until = 250 });
+    Spawn(Body { type = BodyType.Static, position = float2(-3, 1.5) }, Box { size = float2(1.6, 3.4), sensor = true }, Gate);
+}
+
+system Count(mut Script script)
+{
+    if (!script.quiet) script.tick += 1;
+}
+
+// The ball hops from over one stack to over the next, and rests there
+system Glide(mut Body body, Script script, with Glider)
+{
+    if (script.quiet) return;
+    if (script.tick % 150 == 20) body.impulse = float2(6.3, 0);
+    // Asleep, and put back at the start
+    if (script.tick == 480)
+    {
+        body.position = float2(-11, 3.56);
+        body.velocity = float2(0, 0);
+    }
+    // Gone, while it's moving
+    if (script.tick == 630) this.Destroy();
+}
+
+system Tease(mut Body body, Crate crate, Script script)
+{
+    if (script.quiet) return;
+    // Asleep, and moved: onto another stack, which it wakes with it
+    if (script.tick == 150 && crate.stack == 2 && crate.row == 2) body.position = float2(-9 + 2 * 7, 3.5);
+    // Asleep, and gone: from under the rest of its stack
+    if (script.tick == 200 && crate.stack == 4 && crate.row == 0) this.Destroy();
+    // Asleep, with another shape on it, out to its side
+    if (script.tick == 300 && crate.stack == 8 && crate.row == 1) this.Add(Circle { radius = 0.3, offset = float2(0.8, 0) });
+    // Asleep, with a sensor on it: what sleeps beside it is in it
+    if (script.tick == 304 && crate.stack == 9 && crate.row == 0) this.Add(Circle { radius = 1.4, sensor = true, density = 0 });
+    // Asleep, and given a speed
+    if (script.tick == 380 && crate.stack == 0 && crate.row == 2) body.velocity = float2(1, 4);
+    // Asleep, and turned where it is
+    if (script.tick == 430 && crate.stack == 1 && crate.row == 2) body.angle = 0.4;
+    // Asleep and gone, with nothing on it: the top of a stack
+    if (script.tick == 470 && crate.stack == 6 && crate.row == 2) this.Destroy();
+    // Moved while it's falling
+    if (script.tick == 345 && crate.stack == 20) body.position = float2(8.4, 6);
+    // ...and gone while it's awake
+    if (script.tick == 474 && crate.stack == 21) this.Destroy();
+}
+
+// The sensor around a stack goes while the stack sleeps in it: the other
+// sensor takes its place in Box2D's list
+system Ungate(Script script, Gate gate)
+{
+    if (!script.quiet && gate.until != 0 && script.tick == gate.until) this.Destroy();
+}
+
+// What pulls on the world changes, while most of it sleeps: everything wakes
+system Tune(mut Physics physics, Script script)
+{
+    if (script.quiet) return;
+    if (script.tick == 590) physics.gravity = float2(0, -9);
+    if (script.tick == 596) physics.gravity = float2(0, -10);
+}
+
+system Stage(Script script)
+{
+    if (script.quiet) return;
+    // A static body that comes late, over the sixth stack, and a crate onto it
+    if (script.tick == 260) Spawn(Body { type = BodyType.Static, position = float2(1, 4.2) }, Box { size = float2(3, 0.4) }, Shelf);
+    if (script.tick == 262) Spawn(Body { position = float2(1, 5) }, Box, Crate { stack = 21, row = 0 });
+    // A crate thrown at the stacks: one island wakes another
+    if (script.tick == 340) Spawn(Body { position = float2(4, 5), velocity = float2(9, 1) }, Box, Crate { stack = 20, row = 0 });
+    // A ball and a crate that come to rest by themselves, away from the rest
+    if (script.tick == 100) Spawn(Body { position = float2(-20, 1.5), angularDamping = 0.6 }, Circle { bounce = 0.5 }, Crate { stack = 22, row = 0 });
+    if (script.tick == 110) Spawn(Body { position = float2(-24, 2), linearDamping = 0.4 }, Box { size = float2(0.6, 1.4) }, Crate { stack = 23, row = 0 });
+    // A body that's moved through the first stacks
+    if (script.tick == 500)
+    {
+        Spawn(Body { type = BodyType.Kinematic, position = float2(-12, 0.6), velocity = float2(3, 0) }, Box { size = float2(0.5, 1) }, Paddle);
+    }
+}
+
+// The static body is moved, under a crate that's asleep on it, which wakes
+system Shift(mut Body body, Script script, with Shelf)
+{
+    if (!script.quiet && script.tick == 330) body.position = float2(1.4, 4.2);
+}
+
+// ...and goes, from under what's on it
+system Unshelve(Script script, with Shelf)
+{
+    if (!script.quiet && script.tick == 420) this.Destroy();
+}
+
+system Sweep(mut Body body, mut Paddle paddle)
+{
+    paddle.ticks += 1;
+    if (paddle.ticks == 70) body.velocity = float2(0, 0);
+    if (paddle.ticks == 130) this.Destroy();
+}
+
+event(Touched touched) Meet(mut Tally tally, with Crate)
+{
+    if (touched.other != this) tally.touched += 1;
+}
+
+event(Parted) Part(mut Tally tally, with Crate)
+{
+    tally.parted += 1;
+}

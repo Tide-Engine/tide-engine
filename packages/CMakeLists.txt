@@ -84,6 +84,20 @@ target_link_libraries(tide_box2d_course PRIVATE tide_box2d)
 add_test(NAME tide_box2d_course COMMAND tide_box2d_course)
 set_tests_properties(tide_box2d_course PROPERTIES TIMEOUT 120)
 
+# Its image written as what changed of the last one, against the image written
+# whole: a match of its own, so that the one above keeps its pinned hashes, and
+# Box2D by itself.
+tide_add_game(tide_box2d_parts SOURCES box2d/bridge.c box2d/test/yard.tide NAME yard PACKAGES Box2D box2d/box2d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box2d/test/parts_test.c)
+target_include_directories(tide_box2d_parts PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box2d_parts PRIVATE tide_box2d)
+if(TARGET tide_platform)
+    target_compile_definitions(tide_box2d_parts PRIVATE BOX2D_TEST_JOBS)
+    target_link_libraries(tide_box2d_parts PRIVATE tide_platform)
+endif()
+add_test(NAME tide_box2d_parts COMMAND tide_box2d_parts)
+set_tests_properties(tide_box2d_parts PROPERTIES TIMEOUT 300)
+
 # Box3D's, the same way, and with the same flags for the same reason. Its tests'
 # games are each built with the package as tide builds a game that lists it,
 # the package's files before their own: a game needn't use all of a package.

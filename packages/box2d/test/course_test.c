@@ -2,6 +2,10 @@
 // against the step, what a view sees of a body, an impulse given where a body
 // is spawned, bodies at rest that code moves, gravity that changes, and
 // sensors.
+//
+// Every image that's written as what changed of the last one is compared with
+// the image written whole (b2t_check), as in the package's other tests: what
+// a game does here is done to bodies that sleep, too.
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -16,6 +20,8 @@
 // bridge.c
 void b2t_forget(void);
 int32_t b2t_restores(void);
+void b2t_check(bool on, bool whenever);
+void b2t_images(int32_t *whole, int32_t *in_parts);
 
 #define DT (1.0f / 60.0f)
 
@@ -24,6 +30,7 @@ static tide_world a;
 static void start(tide_world *w, const Case which)
 {
     b2t_forget();
+    b2t_check(true, true);
     tide_world_init(w, DT);
     w->Course.which = which;
 }

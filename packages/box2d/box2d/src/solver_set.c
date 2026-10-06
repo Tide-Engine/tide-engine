@@ -15,6 +15,8 @@
 
 void b2DestroySolverSet( b2World* world, int setIndex )
 {
+	// Tide: a set that goes (see b2SnapTrack)
+	b2SnapTouchSet( world, setIndex );
 	b2SolverSet* set = b2Array_Get( world->solverSets, setIndex );
 	b2Array_Destroy( set->bodySims );
 	b2Array_Destroy( set->bodyStates );
@@ -48,6 +50,11 @@ void b2WakeSolverSet( b2World* world, int setIndex )
 
 		b2Body* body = bodies + simSrc->bodyId;
 		B2_ASSERT( body->setIndex == setIndex );
+
+		// Tide: a body that wakes, with its shapes and its contacts: one that's awake between two images and
+		// at neither is written (see b2SnapTrack)
+		b2SnapTouchBodyDeep( world, body );
+
 		body->setIndex = b2_awakeSet;
 		body->localIndex = awakeSet->bodySims.count;
 
@@ -114,6 +121,9 @@ void b2WakeSolverSet( b2World* world, int setIndex )
 				awakeContactSim->encodedBodySimB = encodedBodySimIndex;
 			}
 
+			// Tide: the disabled set, and another contact of it, which is any contact between two sleeping
+			// bodies, anywhere in the world (see b2SnapTrack)
+			b2SnapTouchSet( world, b2_disabledSet );
 			int movedLocalIndex = b2Array_RemoveSwap( disabledSet->contactSims, localIndex );
 			if ( movedLocalIndex != B2_NULL_INDEX )
 			{
@@ -122,6 +132,7 @@ void b2WakeSolverSet( b2World* world, int setIndex )
 				b2Contact* movedContact = b2Array_Get( world->contacts, movedContactSim->contactId );
 				B2_ASSERT( movedContact->localIndex == movedLocalIndex );
 				movedContact->localIndex = localIndex;
+				b2SnapTouchContact( world, movedContactSim->contactId );
 			}
 		}
 	}
@@ -206,6 +217,9 @@ void b2TrySleepIsland( b2World* world, int islandId )
 	b2SolverSet* sleepSet = b2Array_Get( world->solverSets, sleepSetId );
 	*sleepSet = (b2SolverSet){ 0 };
 
+	// Tide: a set that comes (see b2SnapTrack)
+	b2SnapTouchSet( world, sleepSetId );
+
 	// grab awake set after creating the sleep set because the solver set array may have been resized
 	b2SolverSet* awakeSet = b2Array_Get( world->solverSets, b2_awakeSet );
 	B2_ASSERT( 0 <= island->localIndex && island->localIndex < awakeSet->islandSims.count );
@@ -226,6 +240,10 @@ void b2TrySleepIsland( b2World* world, int islandId )
 			B2_ASSERT( body->setIndex == b2_awakeSet );
 			B2_ASSERT( body->islandId == islandId );
 			B2_ASSERT( body->islandIndex == i );
+
+			// Tide: a body that falls asleep, with its shapes and its contacts: one that's awake between two
+			// images and at neither is written (see b2SnapTrack)
+			b2SnapTouchBodyDeep( world, body );
 
 			body->flags &= ~b2_bodyTransientFlags;
 
@@ -309,6 +327,8 @@ void b2TrySleepIsland( b2World* world, int islandId )
 				B2_ASSERT( ( contact->flags & b2_contactTouchingFlag ) == 0 );
 
 				// move the non-touching contact to the disabled set
+				// Tide: which is written then (see b2SnapTrack)
+				b2SnapTouchSet( world, b2_disabledSet );
 				contact->setIndex = b2_disabledSet;
 				contact->localIndex = disabledSet->contactSims.count;
 				b2ContactSim* disabledContactSim = b2Array_Emplace( disabledSet->contactSims );
@@ -322,6 +342,8 @@ void b2TrySleepIsland( b2World* world, int islandId )
 					b2Contact* movedContact = b2Array_Get( world->contacts, movedContactSim->contactId );
 					B2_ASSERT( movedContact->localIndex == movedLocalIndex );
 					movedContact->localIndex = localIndex;
+					// Tide: another contact of the awake set
+					b2SnapTouchContact( world, movedContactSim->contactId );
 				}
 			}
 		}
@@ -367,6 +389,8 @@ void b2TrySleepIsland( b2World* world, int islandId )
 				b2Contact* movedContact = b2Array_Get( world->contacts, movedContactSim->contactId );
 				B2_ASSERT( movedContact->localIndex == movedLocalIndex );
 				movedContact->localIndex = localIndex;
+				// Tide: another contact of the color (see b2SnapTrack)
+				b2SnapTouchContact( world, movedContactSim->contactId );
 			}
 
 			contact->setIndex = sleepSetId;
@@ -459,6 +483,10 @@ void b2MergeSolverSets( b2World* world, int setId1, int setId2 )
 {
 	B2_ASSERT( setId1 >= b2_firstSleepingSet );
 	B2_ASSERT( setId2 >= b2_firstSleepingSet );
+
+	// Tide: every body, contact and joint of a set is moved: not followed one at a time (see b2SnapTrack)
+	b2SnapTouchAll( world );
+
 	b2SolverSet* set1 = b2Array_Get( world->solverSets, setId1 );
 	b2SolverSet* set2 = b2Array_Get( world->solverSets, setId2 );
 
@@ -557,6 +585,9 @@ b2Body* b2RemoveBodySim( b2World* world, b2SolverSet* set, int localIndex )
 	int lastIndex = bodySims->count - 1;
 	bodySims->count -= 1;
 
+	// Tide: the set a body is taken out of (see b2SnapTrack)
+	b2SnapTouchSet( world, set->setIndex );
+
 	if ( localIndex == lastIndex )
 	{
 		return NULL;
@@ -566,6 +597,8 @@ b2Body* b2RemoveBodySim( b2World* world, b2SolverSet* set, int localIndex )
 	b2Body* movedBody = b2Array_Get( world->bodies, bodySims->data[localIndex].bodyId );
 	B2_ASSERT( movedBody->localIndex == lastIndex );
 	movedBody->localIndex = localIndex;
+	// Tide: and another body of that set, which is told where it is now
+	b2SnapTouchBody( world, movedBody->id );
 
 	return movedBody;
 }
@@ -573,6 +606,9 @@ b2Body* b2RemoveBodySim( b2World* world, b2SolverSet* set, int localIndex )
 void b2TransferBody( b2World* world, b2SolverSet* targetSet, b2SolverSet* sourceSet, b2Body* body )
 {
 	B2_ASSERT( body->headContactKey == B2_NULL_INDEX );
+
+	// Tide: not followed (see b2SnapTrack): the calls that come here write the next image whole anyway
+	b2SnapTouchAll( world );
 
 	if ( targetSet == sourceSet )
 	{
@@ -623,6 +659,9 @@ void b2TransferJoint( b2World* world, b2SolverSet* targetSet, b2SolverSet* sourc
 	{
 		return;
 	}
+
+	// Tide: not followed (see b2SnapTrack)
+	b2SnapTouchAll( world );
 
 	int localIndex = joint->localIndex;
 	int colorIndex = joint->colorIndex;
