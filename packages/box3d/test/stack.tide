@@ -31,6 +31,7 @@ singleton Size
     int crates = 12;
     int made;
     bool calm; // Nothing is pushed any more: what's there comes to rest
+    bool flip; // The pushed crate is another type every tick, for what that costs
 }
 
 system Stack(mut Size size)
@@ -73,6 +74,12 @@ system Push(mut Body body, mut Pushed pushed, Size size)
         body.rotation = quaternion.Euler(float3(0, 0.5, 0));
         body.velocity = float3(0, 0, 0);
     }
+}
+
+// A body's type is the one thing here that has Box3D's image written whole
+system Flip(mut Body body, Size size, with Pushed)
+{
+    if (size.flip) body.type = body.type == BodyType.Dynamic ? BodyType.Kinematic : BodyType.Dynamic;
 }
 
 system Doom(mut Doomed doomed)
