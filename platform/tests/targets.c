@@ -255,9 +255,9 @@ static void check_render_depth_alpha(void)
     for (int i = 0; i < WIDTH * HEIGHT * 4; i++) expected[i] = 0x00ff00ffu;
     render_expect(expected, "target clear resets depth");
 
-    // What a mesh does with depth is the same in a target as in the window.
-    // One that only reads it writes none: the far mesh, drawn after the near
-    // one, shows where it would have been hidden.
+    // A target's meshes do with its depth what its own setting says, as the
+    // window's do with the window's. One that only reads it writes none: the
+    // far mesh, drawn after the near one, shows where it would have been hidden.
     tide_draw_reset(&render_list);
     tide_draw_to(&render_list, TARGET_A, WIDTH, HEIGHT);
     tide_draw_clear(&render_list, TIDE_COLOR_BLACK);

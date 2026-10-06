@@ -937,15 +937,26 @@ local event(verified Died died) ShowDeath(Body body, mut Fx fx) { ... }
 
 ### Decided
 
-- `command Name { ... }` declares a typed player action entering the match. Commands hold plain scalar values, vectors, enums, entity and player IDs, strings, and structs of those. Lists, grids, components and device records are not command payloads.
+- `command Name { ... }` declares a typed player action entering the match. Commands hold plain scalar values, vectors, enums, entity and player IDs, strings, `List<byte>` (a file's bytes, for user content: see Assets), and structs of those. Other lists, grids, components and device records are not command payloads.
 - Local views and handlers send commands with `entity.Send(value)` or `Send(value)`, while connected to a match. The compiler distinguishes commands from events by their declaration. An entity target is required when the command handler takes components.
 - Each command has one void handler: `command(Rename rename, PlayerID sender) RenamePlayer(Owner owner, mut Name name)`. The first parentheses contain the read-only payload and connection-derived sender. The second take the same match state as event handlers. Components and `this` come from the target.
 - Guard clauses return normally. Match writes take effect normally. There is no acceptance operation, boolean result or transaction. The handler checks permissions and game rules, and can send events after acting.
 - Sending copies the packed payload into a bounded local queue. Commands are independent of input ticks; repeated packets are identified by a per-player sequence. The server selects their tick and order, and handlers run in the existing deferred queue at tick end. Snapshots, hashes and migration include processed sequences, and replay executes recorded commands again in the same order.
 - Initial limits are 1024 packed bytes per command, 32 pending per player and 16 commands scheduled per authoritative tick. Wire structure, UTF-8, finite values, enum values and declared bounds are checked before the match reads the payload. The handler remains responsible for authorization and game-specific rules.
+- A command's ordering is its type's, per player (agreed 2026-10-06). Without an attribute a command is in the default channel: handled in the order sent, after every earlier command of that channel. `[Channel(Channels.Uploads)]`, with an enum of the game's, puts it in a channel of its own, ordered among that channel's commands and against nothing else, so a chat line never waits behind an upload. `[Unordered]` gives it no order at all: the server handles it in whichever tick it arrives, before or after commands sent earlier, still exactly once. Whatever the ordering, the server picks the tick and every handler runs in the tick's end queue in the server's order, so ordering only decides what the server holds back waiting for an earlier command.
+- A command holds `List<byte>` too, so a player's file goes to the match as it is. One that doesn't fit a datagram goes as a numbered transfer in chunks, the way worlds go, paced under the input traffic so a transfer never delays a tick. It lands in a later tick, as any command may; a command was never tied to the tick it was sent in. What goes through the match goes player to server to everyone, so a host sends it once per player: a few megabytes is fine, and big media is a URL in the match, fetched by each machine (see Assets).
 
 ```csharp
+enum Channels { Uploads }
+
 command Rename { string name; }
+
+[Channel(Channels.Uploads)]
+command SetBackground { List<byte> png; }
+
+[Unordered]
+command Ping { int at; }
+
 
 command(Rename rename, PlayerID sender) RenamePlayer(
     Owner owner, mut Name name)
@@ -955,6 +966,10 @@ command(Rename rename, PlayerID sender) RenamePlayer(
     name.value = rename.name;
 }
 ```
+
+### Provisional
+
+- Sequence state is per player per channel, in the world as today's is; an unordered command has an id of its own, and the world keeps a window of the last 64 ids applied per player to drop resends. The 32 pending per player is per channel. The chunked transfer's size limit and pacing are the session's picks.
 
 ## Enums and switch
 
@@ -1260,6 +1275,62 @@ system Score(mut Board board)
 - `Application.persistentDataPath` and `Application.temporaryCachePath` are read-only runtime strings. The standard host selects save locations using the stable `appId` setting, or its game name as the development fallback. Relative paths resolve under the persistent root. Native absolute paths follow OS permissions; web paths stay in this game's virtual persistent and temporary roots.
 - File/directory calls and application paths are local only, including helpers that reach them. They cannot run in match code, input sampling, GPU code, sort comparisons or parallel steps. Pure `Path.Combine(a, b)`, `Path.GetFileName(path)`, `Path.GetDirectoryName(path)` and `Path.GetExtension(path)` work on text, recognize both path separators and can run in match code.
 - `await Storage.Flush()` is a local async operation returning void and failing with `IOError`. It confirms that changes preceding the call have committed, without blocking the frame loop. Browser files are preloaded from IndexedDB before the game starts, and mutations commit in the background. Files and pending commits belong to the page across hot reloads; failures retain dirty changes for a later flush to retry. Unavailable persistence is an error, while temporary files remain usable. Browser saves are scoped to the origin/profile and may be cleared or evicted. Flush during play, never rely on page shutdown. Native flushes affected OS files and directories.
+
+## Assets
+
+### Decided
+
+Agreed 2026-10-06. An asset is a file a game is built with: an image, a text, some bytes. The language names it, the compiler checks it, and the build packs what's named and nothing else.
+
+- `asset` declares a file's contents under a name, at the top level like a constant, resolving to an ordinary type: `asset Grid2<Color> hero = "art/hero.png";`, `asset string rules = "rules.txt";`, `asset List<byte> table = "data/table.bin";`. Code reads `hero` wherever it reads a value of that type. It's read-only, and never assigned.
+- The path is relative to the `.tide` file that names it. There's no assets folder and no root: files are wherever the game keeps them, a package's beside its own code, and the path says where from here.
+- A path can be a URL. tidec fetches it and packs what it was at build time, so it's a file kept elsewhere and nothing else: match code reads it, nothing is fetched when the game runs, and the game plays offline.
+- A path can be a glob, which resolves to every file it matches, in order of their paths: `asset List<Grid2<Color>> run = "art/run/*.png";` gives the contents, and `asset Map<string, Grid2<Color>> run = "art/run/*.png";` the path of each with its contents, for a game that needs the names. A single file resolves to its contents alone: its path is on the line that declares it, and a `const string` can be that path where a game wants it twice.
+- Anything wrong that can be known at compile time is an error at the declaration: a file that isn't there, a glob that matches nothing, a URL that can't be fetched, bytes that aren't what the type says (a PNG that doesn't decode, text that isn't UTF-8). The editor says the same as the game is written, with no build.
+- A game ships the closure of its declarations: `tide build` packs the files `asset` names, and nothing else in the folder. A file in the pack is there once however many declarations name it or files have its bytes, and all of them are the same value.
+- Match code reads packed assets, since every machine has them. What a machine loads as the game runs (a file of the player's, a URL) is local: it reaches the match as match data, through a command, as a game's own state, which the netcode sends like any other, to those in the match and to whoever joins.
+- A user's content enters the match as the file's bytes, in the format it came in: a `Grid2<Color>` field decodes a PNG with `grid.Decode(bytes)`, with the engine's own decoder, so it's the same pixels on every machine.
+- No GUIDs and no meta files: the engine owns none of a game's files and writes into none. References are in text, in the source, and all of them are constant, so moving a file is a refactor: the language server rewrites the references when a file is moved in the editor, and a file moved outside it is found again by its bytes, which the error names with a quick fix.
+
+```csharp
+asset Grid2<Color> hero = "art/hero.png";
+asset Map<string, Grid2<Color>> tiles = "art/tiles/*.png";
+asset string credits = "https://example.com/credits.txt";
+
+view Hero(Body body)
+{
+    Draw2D.Mesh(Quad(body.position), QuadIndices, hero);
+}
+
+command SetBackground { List<byte> png; }
+
+command(SetBackground value, PlayerID sender) Apply(mut Arena arena)
+{
+    if (sender != arena.host) return;
+    arena.background.Decode(value.png)!;
+}
+```
+
+### Provisional
+
+Picks made to build it, awaiting the owner.
+
+- **The types** an asset resolves to: `string` (UTF-8), `List<byte>` (any file) and `Grid2<Color>` (a PNG, decoded at build time into pixels), each alone, as a `List<T>` of a glob's matches, or as a `Map<string, T>` of their paths. The grid is sized as the image is, and read-only: a system takes it as it takes any read-only value, and a frag or vert samples it by name, as it samples a singleton's grid. Other formats (JPEG, audio, meshes, fonts) join as their types do.
+- **Globs:** `*` matches within a name, `**` across folders, and `?` a character; matches are sorted by the UTF-8 bytes of their paths, relative to the declaring file; a map's keys are those paths. Matching nothing is an error.
+- **URLs** are `http://` and `https://`. tidec keeps what it fetched in `.tide/` by URL with the server's ETag, asks whether it changed at each build and at each `tide run`'s start, and builds from the cache when the server can't be reached, so offline builds and reloads work; a run picks up a changed URL when it's started again. Pinning a URL to a hash is open, below.
+- **Where the pack is:** in a file beside the program on desktop (`<game>.pack`), inside the self-contained page on the web, and in the APK's assets on Android. Under `tide run` there's no pack: the game reads the source files, and tide watches them, so a saved image is in the running game at once, with no rebuild, as it's data. A web build can keep the pack beside the page rather than inside it, so the page stays small and the pack is fetched from wherever it's hosted; the option's name is open.
+- **Sharing** is by SHA-256 of the bytes. A `Grid2<Color>` of the pack lives in a read-only region every world can name, outside every heap, so no world copies, hashes or sends it, and it's the same memory to every reference.
+- **Decoding:** `grid.Decode(bytes)` reads a PNG into a `Grid2<Color>` field of a component, singleton or scene, sizing the grid as the image is, and fails with `IOError.InvalidData`. It's pure, so it runs in match code, and it runs where it's called, which in a tick is on every machine. **Fetching:** `await Web.Fetch(url)` is a local async operation giving `List<byte>` and failing with `IOError`, like `File.ReadAllBytes`, which is the other way bytes come in at runtime; so loading a player's image is `grid.Decode(File.ReadAllBytes(path))`, and there's no asset handle type beside the plain ones. On the web it's `fetch`, so the server's CORS applies; on desktop it's the HTTPS the relay's connection uses; on Android, Java's.
+- **Finding a moved file:** tide keeps the SHA-256 of every file an `asset` named in `.tide/`; when one is missing, the error says where a file with the same bytes is now in the game's folder (or packages), with a quick fix to the new path, and else lists files of the same name. The language server takes the editor's rename of a file or folder (`workspace/willRenameFiles`) and rewrites every reference to it.
+- **An `asset` is a declaration** of its file's namespace, named like a constant, usable in every kind of code (match, local, GPU, C through a `List<byte>` or a grid as any value is passed), and never `mut`, assigned, or a parameter's default. A path has to be a constant expression; anything else is an error that says why: the dependency tree is static.
+
+### Open
+
+- Audio, meshes, fonts and JPEG as assets, each with its type; a pixel of a byte a channel in the pack, a quarter of a `Color`'s memory.
+- Load order, streaming and lazy loading within the pack, and what a web page fetches first.
+- Decoding off the frame's thread for what a machine loads at runtime (a 4K PNG takes a frame).
+- Pinning a URL to a hash of its contents, so a build is reproducible when the server changes the file.
+- Big media through the match: it goes player to server to everyone, so a host's upload is the file once per player. The docs say the number; a game with big files keeps a URL in the match and each machine fetches. Whether the engine should do more than say so.
 
 ## Tasks
 
@@ -1649,7 +1720,7 @@ Draw.SetBlend(Blend.Add);          // For the views that follow, as a camera is 
 - The settings, all with the same two forms:
   - `Blend` and `SetBlend`: how colors go over what's there. `Blend.Alpha` (the default: by their alpha), `Blend.Add`, `Blend.Multiply` and `Blend.Replace`.
   - `Tint` and `SetTint`: fades or colors everything inside, multiplying its color and its alpha.
-  - `Depth` and `SetDepth`: what 3D meshes do with depth: whether they're hidden behind what's nearer, and whether they hide what's drawn behind them. That depth is a setting of this family is decided; its name, its modes and what each means aren't yet (see Provisional).
+  - `Depth` and `SetDepth`: what 3D meshes do with depth: whether they're hidden behind what's nearer, and whether they hide what's drawn behind them. It's `Draw3D`'s, as nothing in 2D has depth: a setting is in the namespace of what it changes. Its modes' names and what each means aren't decided yet (see Provisional).
   - `Transform` and `SetTransform`: moves, turns and scales everything inside.
   - `Clip` and `SetClip`: only what's inside a rectangle draws.
   - `Camera` and `SetCamera`: the camera the draws go through.
@@ -1678,19 +1749,19 @@ view Sparks(Spark spark, Hud hud)
 ### Provisional
 
 - Draw settings, where the decided rules above leave a choice (to confirm):
-  - **Where each lives.** What says how a draw comes out is the same wherever it's drawn, and is `Draw`'s: `Draw.Blend` and `Draw.Tint`, which `Draw2D` and `Draw3D` share, and `Draw.Depth` (below). What says where a draw lands belongs to its destination, as cameras and clips already did: `Draw2D.Transform`, `Draw2D.Clip`, `Draw2D.Camera`, `Draw2D.Screen`, `Draw3D.Transform` and `Draw3D.Camera` are the window's, and a render target has each as a method, in both forms (`target.Clip(rect) { ... }`, `target.SetCamera(...)`), its own for the frame. A target's 2D and 3D forms are told apart by their arguments. So a blend or a tint around draws into a target applies to them, and the window's clip or transform doesn't.
-  - **Putting a `Set` back.** A `Set` with no arguments sets what each frame starts with: `Draw.SetBlend()` is `Blend.Alpha`, `Draw.SetTint()` no tint, `Draw.SetDepth()` is `Depth.ReadWrite`, `Draw2D.SetTransform()` and `Draw3D.SetTransform()` no transform, `Draw2D.SetClip()` no clip, `Draw2D.SetCamera()` the first camera (the origin at the middle of the screen, a world unit a pixel, which is also how to leave the screen's pixels) and `Draw3D.SetCamera()` the first 3D one. On a target, `target.SetCamera()` and `target.SetTransform()` put back both the 2D and the 3D one. `Draw2D.NoClip()` is gone: it's `Draw2D.SetClip()`.
+  - **Where each lives.** What says how a draw comes out is the same wherever it's drawn, and is `Draw`'s: `Draw.Blend` and `Draw.Tint`, which `Draw2D` and `Draw3D` share. What says where a draw lands belongs to its destination, as cameras and clips already did: `Draw2D.Transform`, `Draw2D.Clip`, `Draw2D.Camera`, `Draw2D.Screen`, `Draw3D.Transform` and `Draw3D.Camera` are the window's, and so is `Draw3D.Depth`, which is `Draw3D`'s because only 3D meshes have depth (below), and a render target has each as a method, in both forms (`target.Clip(rect) { ... }`, `target.SetCamera(...)`), its own for the frame. A target's 2D and 3D forms are told apart by their arguments. So a blend or a tint around draws into a target applies to them, and the window's clip or transform doesn't.
+  - **Putting a `Set` back.** A `Set` with no arguments sets what each frame starts with: `Draw.SetBlend()` is `Blend.Alpha`, `Draw.SetTint()` no tint, `Draw3D.SetDepth()` is `Depth.ReadWrite`, `Draw2D.SetTransform()` and `Draw3D.SetTransform()` no transform, `Draw2D.SetClip()` no clip, `Draw2D.SetCamera()` the first camera (the origin at the middle of the screen, a world unit a pixel, which is also how to leave the screen's pixels) and `Draw3D.SetCamera()` the first 3D one. On a target, `target.SetCamera()` and `target.SetTransform()` put back both the 2D and the 3D one, and `target.SetDepth()` the target's own depth setting. `Draw2D.NoClip()` is gone: it's `Draw2D.SetClip()`.
   - **Nesting.** A block's setting is inside the one it found, where that means something: a clip in a clip is what of its rect is inside the outer one, a tint multiplies the tint there is, and a transform is inside the transform there is. A blend, a depth, a camera and the screen have nothing to be inside, and replace what's there. A `Set` sets outright, in a block too: `Draw2D.SetClip(rect)` inside a `Draw2D.Clip` block isn't inside its clip, and the block still puts back what it found when it ends.
   - **`Blend`** is a built-in enum: `Alpha`, `Add`, `Multiply`, `Replace`. A game can't declare the name outside a namespace. In each, a color's alpha is how much of it there is: `Add` adds the color times its alpha, as light adds, and `Multiply` multiplies what's there by the color, by less as its alpha goes to 0, so what's clear (a shape's smooth edge, the gaps in text) changes nothing. `Replace` writes the color and its alpha as they are. In a render target, `Add` also adds its alpha to the one there, and `Multiply` leaves that one alone.
   - **`Tint`** takes a `Color`. It multiplies shapes' and text's colors, a mesh's corners', a 3D mesh's, and what a `frag` wrote, alpha included.
-  - **`Depth`** (all of it to confirm: the setting's name, the enum's and its members', and each rule here). `Draw.Depth(mode) { ... }` and `Draw.SetDepth(mode);` say what the 3D meshes drawn inside, or after, do with depth. `Depth` is a built-in enum with three members, and a game can't declare the name outside a namespace:
-    - `Depth.ReadWrite`: a mesh is hidden behind what's nearer, and hides what's drawn behind it later, whatever the order. It's what each frame starts with, what `Draw.SetDepth()` puts back, and what 3D meshes always did.
+  - **`Depth`** (to confirm: the enum's name and its members', and each rule here; that it's `Draw3D`'s is decided). `Draw3D.Depth(mode) { ... }` and `Draw3D.SetDepth(mode);` say what the 3D meshes drawn inside, or after, do with depth. `Depth` is a built-in enum with three members, and a game can't declare the name outside a namespace:
+    - `Depth.ReadWrite`: a mesh is hidden behind what's nearer, and hides what's drawn behind it later, whatever the order. It's what each frame starts with, what `Draw3D.SetDepth()` puts back, and what 3D meshes always did.
     - `Depth.Read`: a mesh is hidden behind what's nearer and already drawn, and writes no depth, so it hides nothing: for what's see-through (glass, smoke, a shadow or a mark lying on a surface). Meshes drawn so go over each other in the order they're drawn, as 2D calls do, and are drawn after what's solid.
     - `Depth.None`: a mesh neither reads nor writes depth: it draws over whatever is there, and hides nothing drawn after it.
     - There's no mode that writes depth without reading it.
-    - **It's `Draw`'s**, like `Blend` and `Tint`: it says how a draw comes out, and is the same wherever the mesh is drawn, the window or a render target. A target has no `Depth` method: `Draw.Depth(Depth.Read) { target.Mesh(...); }`. Each target has its own depth, as before, which a mesh drawn into it reads and writes as the setting says.
-    - **It's for 3D meshes of every kind**: `Draw3D.Mesh`, the primitives, a mesh through a `frag` or a `vert` whose vertex has a `float3 position`, and `Draw3D.Instanced`, on the window or a target.
-    - **The 2D calls have no depth**, whatever is set: shapes, text, 2D meshes, and 2D meshes through a `frag` neither read nor write it, and draw over what's there in order. Nothing gives a 2D call a depth; that would come with layers (see Open).
+    - **It's a destination's own**, as every setting of `Draw3D`'s is: `Draw3D.Depth` and `Draw3D.SetDepth` are the window's, and a render target has `target.Depth(mode) { ... }` and `target.SetDepth(mode);` for its meshes, each target's its own for the frame. So `Draw3D.Depth(Depth.Read) { target.Mesh(...); }` leaves the target's mesh as the target has it, and `target.SetDepth()` puts the target's back. Each target has its own depth, as before, which a mesh drawn into it reads and writes as its setting says.
+    - **It's for 3D meshes of every kind**: `Draw3D.Mesh`, the primitives, a mesh through a `frag` or a `vert` whose vertex has a `float3 position`, and `Draw3D.Instanced`, and a target's.
+    - **The 2D calls have no depth**, whatever is set: shapes, text, 2D meshes, and 2D meshes through a `frag` neither read nor write it, and draw over what's there in order. Nothing gives a 2D call a depth; that would come with layers (see Open). `Draw.Depth` and `Draw2D.Depth` are errors that say it's `Draw3D`'s.
     - **`Draw2D.Clear` and `Draw3D.Clear`** clear depth whatever is set, within the clip. **`Draw.Blit`** leaves depth as it is, whatever is set.
     - A block's depth replaces the one it found, and puts it back when it ends.
     - Instances drawn in a row with the same depth are still one draw, with the setting around each or around them all; another depth is another draw.
@@ -1757,14 +1828,14 @@ view Sparks(Spark spark, Hud hud)
     - Measuring takes no anchor: a text is as big at every one.
   - `Draw2D.MeasureText(text, size)` and `Draw2D.MeasureText(text, size, font)` draw nothing, and return a `float2`: how big `Draw2D.Text` would draw `text` at `size` where the call is, in the weight `font` (`Font.Regular` without one), with the width of its widest line in `x` and the height of its lines in `y`. Both are positive and in the units the Draw calls are in: the screen's pixels on the screen, and world units under the 2D camera. It's the text's box, which an anchor names a place of: without one, the text reaches `x` to the right of its `position` and `y` below it on the screen. One line is `size` high, and each newline adds the distance from one line to the next; an empty text is still one line high. A `size` that isn't above 0 gives zero, as nothing is drawn. Text is fitted to the display's pixels, so the answer is the one for this display, this camera and this frame, to the pixel: it's measured where it's drawn rather than kept. `target.MeasureText(text, size)` and `target.MeasureText(text, size, font)` measure for a render target, through its own camera: in the units its calls are in, as the text is fitted to its image's own pixels. The name, and that it returns one `float2` rather than a width alone, are the implementation's picks, not yet confirmed.
   - `Draw2D.Mesh(vertices, indices)`, `Draw2D.Mesh(vertices, indices, texture)` and `Draw2D.Mesh(vertices, indices, texture, filter)`: a `List<Vertex>`, a `List<int>`, a `Grid2<Color>` and a `Filter`.
-  - The other settings (see Draw settings): `Draw.Blend(mode)`, `Draw.Tint(color)`, `Draw.Depth(mode)`, `Draw2D.Transform(...)`, `Draw3D.Transform(transform)`, `Draw2D.Clip(rect)` and `Draw2D.Screen()`, each around a block, and each with its `Set` form.
+  - The other settings (see Draw settings): `Draw.Blend(mode)`, `Draw.Tint(color)`, `Draw2D.Transform(...)`, `Draw3D.Transform(transform)`, `Draw3D.Depth(mode)`, `Draw2D.Clip(rect)` and `Draw2D.Screen()`, each around a block, and each with its `Set` form.
   - In 3D: `Draw3D.SetCamera(position, rotation, fieldOfView)` and `Draw3D.SetCamera(transform, projection)`, or `Draw3D.Camera` with either around a block, and `Draw3D.Mesh(vertices, indices, transform)`, `Draw3D.Mesh(vertices, indices, transform, texture)` and `Draw3D.Mesh(vertices, indices, transform, texture, filter)`: a `List<Vertex3>`, a `List<int>`, a `float4x4`, a `Grid2<Color>` and a `Filter`.
   - Both `Draw2D.Mesh` and `Draw3D.Mesh` take a list of a vertex struct of the game's instead, and after their other arguments, a vert and a frag by name (GPU code, below). `Draw2D` requires a `float2 position`, and `Draw3D` a `float3 position`.
   - `Draw3D.Clear(color)` clears the same target and depth as `Draw2D.Clear(color)`; clipping is shared and controlled by `Draw2D.Clip` and `Draw2D.SetClip`.
   - `Draw3D.Cube(center, size[, rotation], color)`, `Draw3D.Sphere(center, radius, color)`, `Draw3D.Cylinder(center, radius, height[, rotation], color)` and `Draw3D.Plane(center, size[, rotation], color)` draw solid unlit meshes. Sizes and heights are full extents. A cylinder's axis is local `y`; a plane spans local `xz`. Nonpositive dimensions draw nothing. Geometry is cached by shape and color, and consecutive matching instances draw together.
   - `Draw2D.WorldToScreen(float2)` and `Draw2D.ScreenToWorld(float2)` convert with the currently selected 2D camera; on the screen (`Draw2D.Screen`, `Draw2D.SetScreen`) they are identity mappings. `Draw3D.WorldToScreen(float3)` and `Draw3D.ScreenToWorld(float3)` use the currently selected 3D camera, including custom projections. Screen `x` and `y` are top-left logical pixels, with `y` down; 3D `z` is normalized depth, 0 at the near plane and 1 at the far limit. Depth 1 for the standard infinite perspective camera has no finite world position.
   - `Draw3D.ScreenRayOrigin(float2)` and `Draw3D.ScreenRayDirection(float2)` give a picking ray from the near plane, with normalized world direction, for perspective and orthographic cameras. Device positions count from the bottom left, so they go through `Screen.Flip` first (see GUI, Provisional): `Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position))`. Conversion helpers use the current frame's viewport and return zero for a viewport with no size, a singular camera matrix or an undefined projection.
-  - `Draw2D` and `Draw3D` replace the former drawing functions; `Draw` has what the two share: `Blend`, `Tint`, `Depth`, `Blit` and `window`. Their `list` members both hand the frame's same draw list to an extern function.
+  - `Draw2D` and `Draw3D` replace the former drawing functions; `Draw` has what the two share: `Blend`, `Tint`, `Blit` and `window`. Their `list` members both hand the frame's same draw list to an extern function.
   - `Draw2D.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])` and `Draw3D.Instanced` draw one mesh for each item in an instance list, without entities for its items. Meshes, textures and shaders follow their namespace's `Mesh` forms. See GPU code below for how a list item is supplied to a shader.
 - A render target's size (above), in what the agreed design leaves open. These are the implementation's picks, not yet confirmed:
   - Sizes are numbers, not only ints, as `Screen.width` and `Screen.height` are floats: `RenderTarget(Screen.width / 4, 90.5)`. `Resize` takes them the same way.
@@ -1774,7 +1845,7 @@ view Sparks(Spark spark, Hud hud)
   - No image is bigger than the GPU's largest texture a side. A target that would be, after its scale, keeps its shape with fewer pixels, the most that fit, with a diagnostic when its image is made: what's drawn into it lands where it would, less sharp.
   - A target at the display's scale takes the scale of what its frame is drawn into: the window's or, in a run with no window, the run's `--scale`. A host's C that reads pixels back from a frame of its own (`tide_platform_read_pixels`) draws it at a scale of 1, whatever the display's.
   - A target that follows the window has no pixels per unit of its own: `RenderTarget.Screen(factor)` is at the display's scale. A pass that wants the same number of pixels on every display, whatever the window's size, has no form yet.
-- Later Draw calls draw over earlier ones, but for 3D meshes among themselves (below), unless `Draw.Depth` says otherwise.
+- Later Draw calls draw over earlier ones, but for 3D meshes among themselves (below), unless `Draw3D.Depth` says otherwise.
 - `Rect`, `WireRect` and the `Line` with no width fill whole pixels, so rects side by side leave no seam and a line is a pixel wide wherever it is. `Circle` and `WireCircle` have a smooth edge, the outline a pixel wide. The other shapes are the smooth ones: a pixel is in one by how far it is from the shape's edge, which is smooth over one pixel of the screen at any size, turned any way.
   - Their lengths (sizes, radii, widths) are in the units the calls are in, as positions are: the world's under a camera, pixels on the screen. A size, radius or width that isn't above 0 draws nothing.
   - Angles are in radians, from `+x` towards `+y`: counterclockwise under a camera, where `y` goes up, and clockwise on the screen, where it goes down. A `rotation` turns a shape about its center.
@@ -1832,7 +1903,7 @@ view Sparks(Spark spark, Hud hud)
 - `Draw3D.SetCamera(position, rotation, fieldOfView)` (and `Draw3D.Camera` with the same, around a block) is a perspective camera: at `position`, looking along `rotation`'s `+z` with its `+x` to the right of the screen and `+y` up, as Unity's, and seeing `fieldOfView` degrees up and down (clamped to 0.00001 to 179, as Unity does), as much across as the screen's shape gives. It sees from 0.3 units in front of it on, as Unity's cameras, and has no far side, which costs depth precision next to nothing. Each frame starts with one at the origin, looking along `+z`, with 60 degrees.
 - `Draw3D.SetCamera(transform, projection)` is any camera: `transform` places it in the world, looking along its `+z`, and `projection` takes what it sees, looking down `-z` (OpenGL's and Unity's view space), to clip space, the screen's shape included. `Screen.width / Screen.height` is the shape.
 - `Vertex3` is a built-in struct: `float3 position`, `float2 uv` and `Color color = Color.white`. A game can't declare the name outside a namespace.
-- 3D meshes are the only calls that have depth. Unless `Draw.Depth` says otherwise (see Draw settings), they read and write it: they hide each other by how far they are, whatever their order, and a see-through one blends with what's behind it and writes depth like any other. Every other call draws over what's there, in order. `Draw2D.Clear` clears depth too, within the clip. Triangles, textures and filters are as a mesh's: either side draws, and there's no lighting.
+- 3D meshes are the only calls that have depth. Unless `Draw3D.Depth` says otherwise (see Draw settings), they read and write it: they hide each other by how far they are, whatever their order, and a see-through one blends with what's behind it and writes depth like any other. Every other call draws over what's there, in order. `Draw2D.Clear` clears depth too, within the clip. Triangles, textures and filters are as a mesh's: either side draws, and there's no lighting.
 - A 3D mesh is its two lists. The engine keeps a copy of each it draws, on the GPU too, and only copies it again when it changed: a world's list tells from the hashes its heap keeps of its pages (a list in chunks, of each chunk's), so drawing one that didn't change costs a hash for each of its pages; a list made along the way is read. A mesh no call of a frame draws is let go. A mesh that changed is another copy, so what a frame drew before it changed stays as it was.
 - Instances of one 3D mesh drawn in a row, with the same texture and filter and nothing between them, are one draw: a view that runs for each entity and draws one mesh draws them all at once. Lists made along the way are the same mesh when they hold the same.
 - `Color` is a built-in value type with `r`, `g`, `b` and `a`, floats from 0 to 1, as in Unity. It's built with `Color(r, g, b)` (alpha 1) or `Color(r, g, b, a)`. The constants are `Color.white`, `black`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta`, `gray` and `clear`, with Unity's values and names, and `Color.none`, Tide's own: no color, where one can be left out (see the smooth shapes, above). Components and singletons can hold colors, and colors add, subtract, multiply and scale (below).
@@ -1878,7 +1949,7 @@ view DrawHud(Arena arena)
 - 3D: meshes in the grid's chunks, for voxels.
 - The cursor: hiding it without locking it, keeping it in the window without hiding it, and images for it; its lock on Android.
 - Layers, and a sprite in one call (a textured rectangle is a mesh of four corners for now).
-- Textures: mipmaps and how `uv` wraps, chosen like the filter; a pixel of a byte a channel, a quarter of a `Color`'s memory; pixels from image files; sending only the part that changed.
+- Textures: mipmaps and how `uv` wraps, chosen like the filter; a pixel of a byte a channel, a quarter of a `Color`'s memory; sending only the part that changed. Pixels from image files are assets (see Assets).
 
 ## GUI
 
