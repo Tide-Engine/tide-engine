@@ -28,6 +28,7 @@ void b3t_forget(void);
 void b3t_images(int32_t *whole, int32_t *in_parts);
 int32_t b3t_restores(void);
 void b3t_measure(uint64_t *step, uint64_t *image);
+void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took);
 
 #define DT (1.0f / 60.0f)
 #define TILES 113      // The floor's, as a round starts
@@ -1235,10 +1236,24 @@ TIDE_TEST(sumo_a_player_joins_a_whole_ring_that_bots_are_bringing_down)
     tide_loopback_destroy(m.net);
 }
 
+// What the bridge spent, since this was last asked, on what only a measured
+// run does: a copy of each image, to count how much of it the next changes.
+// It's inside the ticks, and no match's to pay, so what's timed has it taken
+// off.
+static uint64_t counted(void)
+{
+    uint64_t blocks, of, took;
+    b3t_measure_blocks(&blocks, &of, &took);
+    return took;
+}
+
 // What things cost, for whoever reads this test's output: timings aren't
 // checked, as machines differ too much. A tick with the world kept and hashed
 // after it, as a client's is: with a fresh ring at rest, while four bots are
-// at it, and at the worst, a shock beside the middle's pyramid.
+// at it, and at the worst, a shock beside the middle's pyramid. How much of
+// Box3D's image a tick changes is counted too, in the 16 KiB blocks a match
+// keeps it in: those are what a tick copies and what's hashed after it. The
+// counting is inside the tick and no match's to pay, so it's taken off.
 static void spend(const int ticks, const char *what, const bool away)
 {
     tide_world kept = {0};
@@ -1247,8 +1262,12 @@ static void spend(const int ticks, const char *what, const bool away)
     uint64_t keeping = 0;
     uint64_t slowest = 0;
     uint64_t step_ns, image_ns;
+    uint64_t changed = 0;
+    uint64_t in_all = 0;
+    uint64_t blocks, of, counting;
     int32_t whole0, parts0, whole, parts;
     b3t_measure(&step_ns, &image_ns);
+    b3t_measure_blocks(&blocks, &of, &counting);
     b3t_images(&whole0, &parts0);
     for (int i = 0; i < ticks; i++) {
         tide_world_set_input(&world, player(0), (Controls){.away = away});
@@ -1257,16 +1276,22 @@ static void spend(const int ticks, const char *what, const bool away)
         const uint64_t ticked = tide_time_now_ns();
         tide_world_copy(&kept, &world);
         (void)tide_world_hash(&world);
-        ticking += ticked - began;
         keeping += tide_time_now_ns() - ticked;
-        if (ticked - began > slowest) slowest = ticked - began;
+        b3t_measure_blocks(&blocks, &of, &counting);
+        changed += blocks;
+        in_all += of;
+        const uint64_t took = ticked - began - counting;
+        ticking += took;
+        if (took > slowest) slowest = took;
     }
     b3t_measure(&step_ns, &image_ns);
     b3t_images(&whole, &parts);
+    const int images = whole - whole0 + parts - parts0;
     printf("    %s: %.3f ms a tick (Box3D's step %.3f, its image %.3f), %.2f at the most, and %.3f to keep and hash the world; %d images"
-           " written whole and %d in parts\n",
+           " written whole and %d in parts, %.0f of an image's %.0f blocks changed\n",
            what, (double)ticking / ticks / 1e6, (double)step_ns / ticks / 1e6, (double)image_ns / ticks / 1e6, (double)slowest / 1e6,
-           (double)keeping / ticks / 1e6, whole - whole0, parts - parts0);
+           (double)keeping / ticks / 1e6, whole - whole0, parts - parts0, images ? (double)changed / images : 0.0,
+           images ? (double)in_all / images : 0.0);
     tide_world_free(&kept);
 }
 
@@ -1289,16 +1314,18 @@ static void rerun(const int ahead, const int times, const char *what)
         tide_world_copy(&then, &world);
         for (int k = 0; k < ahead; k++) {
             tide_world_set_input(&world, player(0), (Controls){.away = true});
+            (void)counted();
             const uint64_t began = tide_time_now_ns();
             tide_world_tick(&world);
             tide_world_copy(&kept, &world);
             (void)tide_world_hash(&world);
-            const uint64_t took = tide_time_now_ns() - began;
+            const uint64_t took = tide_time_now_ns() - began - counted();
             if (took < forward) forward = took;
         }
-        const uint64_t began = tide_time_now_ns();
+        (void)counted();
+        uint64_t took = 0;
+        uint64_t last = tide_time_now_ns();
         tide_world_copy(&redo, &then);
-        uint64_t last = began;
         for (int k = 0; k < ahead; k++) {
             // Another input than the match had: these ticks go another way, as a wrong guess put right does,
             // and C has no world waiting at any state they pass through
@@ -1307,10 +1334,11 @@ static void rerun(const int ahead, const int times, const char *what)
             tide_world_copy(&kept, &redo);
             (void)tide_world_hash(&redo);
             const uint64_t now = tide_time_now_ns();
-            if (now - last < each[k]) each[k] = now - last;
-            last = now;
+            const uint64_t tick_took = now - last - counted();
+            if (tick_took < each[k]) each[k] = tick_took;
+            took += tick_took;
+            last = tide_time_now_ns();
         }
-        const uint64_t took = last - began;
         spent += took;
         if (took < least) least = took;
     }
@@ -1349,9 +1377,10 @@ TIDE_TEST(sumo_costs)
     double again = 1e9;
     for (int i = 0; i < 5; i++) {
         b3t_forget();
+        (void)counted();
         began = tide_time_now_ns();
         tide_world_tick(&world);
-        const double took = (double)(tide_time_now_ns() - began) / 1e6;
+        const double took = (double)(tide_time_now_ns() - began - counted()) / 1e6;
         if (took < again) again = took;
     }
     printf("    a tick that makes Box3D's world again from the match's image (%d bytes): %.2f ms\n", world.Box3D_Physics.size, again);
