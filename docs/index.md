@@ -13,8 +13,8 @@ hero:
       text: Get started
       link: /guide
     - theme: alt
-      text: Try the demo
-      link: /guide/sand
+      text: Browse samples
+      link: /guide/samples
     - theme: alt
       text: GitHub
       link: https://github.com/BlenMiner/tide-engine

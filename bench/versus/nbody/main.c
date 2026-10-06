@@ -9,8 +9,8 @@
 extern const versus_way nbody_c, nbody_c_simd;
 
 static versus_flag flags[] = {
-    {"count", "bodies, each pulled by every other", 2000, 100, 0},
-    {"kept", "1 to keep each tick's world before the tick, as a client keeps every tick it predicts", 0, 0, 0},
+    {"count", "bodies, each pulled by every other", 2000, 100, 0, 1},
+    {"kept", "1 to keep each tick's world before the tick, as a client keeps every tick it predicts", 0, 0, 0, 0},
 };
 
 // With --kept 1, each tick's world is kept first, as a client keeps every tick

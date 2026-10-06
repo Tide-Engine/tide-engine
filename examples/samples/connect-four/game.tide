@@ -1,0 +1,869 @@
+const string SampleTitle = "Connect Four";
+
+// Connect Four, for everyone who has the link.
+//
+// Red against yellow. Each player who joins goes to the smaller team, teammates take
+// their team's turns one after another, and a team nobody is on is played by a bot,
+// so one player waiting for the others has a game too.
+
+const int RATE = 30;             // Ticks a second
+const int COLS = 7;
+const int ROWS = 6;
+const int RED = 0;
+const int YELLOW = 1;
+const int TIED = 2;
+const int PLAYING = -1;
+const int BOT_PLANS = 9;         // Ticks into its turn that the bot picks a column...
+const int BOT_MOVES = 30;        // ...and that its disc drops
+const int TURN = RATE * 30;      // A player who takes longer has the move made for them
+const int HURRY = RATE * 10;     // The turn's last ticks, which the screen counts down
+const int SETTLE = 16;           // The ticks a disc takes to land
+const int REST = RATE * 5;       // A finished game stays up this long
+const float GRAVITY = 60;        // Cells a second, each second
+
+const Color BACK = Color(0.055, 0.065, 0.12);
+const Color HOLE = Color(0.04, 0.05, 0.13);
+const Color QUIET = Color(0.6, 0.64, 0.75);
+
+settings
+{
+    title = "Connect Four";
+    tickRate = RATE;
+    maxPlayers = 8;
+    hostMigration = true;
+}
+
+scene Main { }
+
+// ---------------------------------------------------------------- The match
+
+// What a player has of their own: the disc that hovers over the column they aim at.
+component Hand
+{
+    float x = 3;
+    int number;     // "Player 3"
+}
+
+singleton Board
+{
+    long red;               // A bit for each cell with a red disc: column * 7 + row, rows from the bottom
+    long yellow;
+    long winning;           // The cells of the four in a row
+    int turn;               // RED or YELLOW
+    int starter;            // Who starts the game that's on, or the next one while `fresh`
+    int winner = PLAYING;   // PLAYING, RED, YELLOW or TIED
+    int moves;
+    int clock;              // Ticks since the last move, or since the game ended
+    int request = -1;       // The column the player whose turn it is asked for
+    int plan = -1;          // The column the bot goes for
+    float botX = 3;         // Where the bot's disc hovers
+    bool fresh;             // A new game starts next tick
+    int redTurns;           // Moves each team made: whose turn it is among teammates
+    int yellowTurns;
+    int redWins;
+    int yellowWins;
+}
+
+singleton Roster
+{
+    List<PlayerID> reds;
+    List<PlayerID> yellows;
+    Map<PlayerID, int> numbers;   // "Player 3"
+    Map<PlayerID, Entity> hands;
+    int arrivals;
+}
+
+input Controls
+{
+    // A place, not something a player does: what another machine guesses of it stays
+    [Absolute, Clamp(0, 6)] int column = 3;
+
+    Sample(Devices devices, Aim aim)
+    {
+        column = aim.column;
+    }
+}
+
+command Drop { int column; int move; }
+
+// Sent for what's shown: nothing in the match handles them.
+event Dropped { int column; int row; int team; }
+event GameOver { int winner; long line; }
+event Cleared { long red; long yellow; }
+
+long Bit(int column, int row)
+{
+    long one = 1;
+    return one << (column * 7 + row);
+}
+
+// How many discs are in a column.
+int Height(long filled, int column)
+{
+    mut var row = 0;
+    while (row < ROWS && (filled & Bit(column, row)) != 0) row += 1;
+    return row;
+}
+
+// The cells of every four in a row that goes `step` bits from cell to cell.
+long Fours(long discs, int step)
+{
+    var pairs = discs & (discs >> step);
+    var fours = pairs & (pairs >> (step * 2));
+    return fours | (fours << step) | (fours << (step * 2)) | (fours << (step * 3));
+}
+
+// The cells of every four in a row: up, across and both diagonals. Each column has
+// a seventh bit that's never set, so no line goes round from one column to the next.
+long Lines(long discs)
+{
+    return Fours(discs, 1) | Fours(discs, 7) | Fours(discs, 6) | Fours(discs, 8);
+}
+
+// In how many columns `mine` would win with one more disc.
+int Threats(long mine, long filled)
+{
+    mut var count = 0;
+    for (var column = 0; column < COLS; column++)
+    {
+        var row = Height(filled, column);
+        if (row < ROWS && Lines(mine | Bit(column, row)) != 0) count += 1;
+    }
+    return count;
+}
+
+// The bot's move: win, or block, or keep to the middle without handing the game over.
+// Now and then it misses what the other side is up to, so it can be beaten.
+int Think(long mine, long theirs, int salt)
+{
+    var filled = mine | theirs;
+    var careless = Math.Hash(int2(salt, 9)) % 7 == 0;
+    mut var best = -1;
+    mut var bestScore = -1000000;
+    for (var column = 0; column < COLS; column++)
+    {
+        var row = Height(filled, column);
+        if (row >= ROWS) continue;
+        var bit = Bit(column, row);
+        var after = filled | bit;
+        var off = column > 3 ? column - 3 : 3 - column;
+        mut var score = 24 - off * 7 + Math.Hash(int3(column, salt, 4)) % 10;
+        if (Lines(mine | bit) != 0) score += 100000;
+        else if (!careless && Lines(theirs | bit) != 0) score += 50000;
+        else
+        {
+            if (row + 1 < ROWS)
+            {
+                var above = Bit(column, row + 1);
+                if (Lines(theirs | above) != 0) score -= 20000; // They'd win on top of it
+                if (Lines(mine | above) != 0) score -= 300;     // And they'd take a cell it wins with
+            }
+            var threats = Threats(mine | bit, after);
+            score += threats >= 2 ? 8000 : threats * 250;
+            if (!careless && Threats(theirs | bit, after) >= 2) score += 3000; // The cell they'd fork from
+        }
+        if (score > bestScore)
+        {
+            bestScore = score;
+            best = column;
+        }
+    }
+    return best;
+}
+
+int TeamOf(Roster roster, PlayerID player)
+{
+    if (roster.reds.Contains(player)) return RED;
+    if (roster.yellows.Contains(player)) return YELLOW;
+    return -1;
+}
+
+// Whose move it is: teammates go one after another. No player is the bot.
+PlayerID Mover(Board board, Roster roster)
+{
+    if (board.turn == RED)
+    {
+        if (roster.reds.count == 0) return default;
+        return roster.reds[board.redTurns % roster.reds.count];
+    }
+    if (roster.yellows.count == 0) return default;
+    return roster.yellows[board.yellowTurns % roster.yellows.count];
+}
+
+// A team with two players more than the other gives its newest one away.
+void Balance(mut Roster roster)
+{
+    while (roster.reds.count > roster.yellows.count + 1)
+    {
+        var last = roster.reds.count - 1;
+        roster.yellows.Add(roster.reds[last]);
+        roster.reds.RemoveAt(last);
+    }
+    while (roster.yellows.count > roster.reds.count + 1)
+    {
+        var last = roster.yellows.count - 1;
+        roster.reds.Add(roster.yellows[last]);
+        roster.yellows.RemoveAt(last);
+    }
+}
+
+event(PlayerJoined joined) Arrive(mut Board board, mut Roster roster)
+{
+    var player = joined.player;
+    if (!roster.numbers.Has(player))
+    {
+        roster.arrivals += 1;
+        roster.numbers[player] = roster.arrivals;
+    }
+    roster.hands[player] = Spawn(Hand { number = roster.numbers[player] }, Owner { player = player });
+    if (TeamOf(roster, player) >= 0) return;
+
+    var team = roster.reds.count <= roster.yellows.count ? RED : YELLOW;
+    var first = team == RED ? roster.reds.count == 0 : roster.yellows.count == 0;
+    if (team == RED) roster.reds.Add(player);
+    else roster.yellows.Add(player);
+    if (!first) return;
+    // They take the bot's place, and a new game starts with their move.
+    board.starter = team;
+    board.fresh = true;
+}
+
+event(PlayerLeft left) Depart(mut Board board, mut Roster roster)
+{
+    var player = left.player;
+    roster.hands[player].Destroy();
+    roster.hands.Remove(player);
+    roster.reds.Remove(player);
+    roster.yellows.Remove(player);
+    // The bot plays on for a team with nobody left, from a turn of its own.
+    if (board.winner != PLAYING || Mover(board, roster) != default) return;
+    board.clock = 0;
+    board.plan = -1;
+}
+
+// The handler looks at who sent it: only the player whose turn it is drops a disc.
+command(Drop drop, PlayerID sender) AskDrop(mut Board board, Roster roster)
+{
+    if (board.winner != PLAYING || board.fresh || board.request >= 0) return;
+    if (Mover(board, roster) != sender || drop.move != board.moves) return;
+    if (drop.column < 0 || drop.column >= COLS) return;
+    if (Height(board.red | board.yellow, drop.column) >= ROWS) return;
+    board.request = drop.column;
+}
+
+system Reach(Controls controls, mut Hand hand, with Owner)
+{
+    hand.x += (controls.column - hand.x) * 0.4;
+}
+
+system Referee(mut Board board, mut Roster roster, Time time)
+{
+    if (board.fresh)
+    {
+        if (board.moves > 0) Send(Cleared { red = board.red, yellow = board.yellow });
+        Balance(roster);
+        board.fresh = false;
+        board.red = 0;
+        board.yellow = 0;
+        board.winning = 0;
+        board.moves = 0;
+        board.winner = PLAYING;
+        board.turn = board.starter;
+        board.clock = 0;
+        board.request = -1;
+        board.plan = -1;
+        return;
+    }
+    board.clock += 1;
+
+    if (board.winner != PLAYING)
+    {
+        if (board.clock < REST) return;
+        // Whoever lost starts the next game.
+        board.starter = board.winner == TIED ? 1 - board.starter : 1 - board.winner;
+        board.fresh = true;
+        return;
+    }
+
+    mut var column = board.request;
+    board.request = -1;
+    var mine = board.turn == RED ? board.red : board.yellow;
+    var theirs = board.turn == RED ? board.yellow : board.red;
+    var salt = Math.Hash(int3(board.moves, board.redTurns + board.yellowTurns, time.seed));
+    if (Mover(board, roster) == default)
+    {
+        if (board.plan < 0 && board.clock >= BOT_PLANS) board.plan = Think(mine, theirs, salt);
+        if (board.plan >= 0) board.botX += (board.plan - board.botX) * 0.3;
+        column = board.clock >= BOT_MOVES ? board.plan : -1;
+    }
+    // Nobody waits for a player who plays the bot. Another player does: the move is made for them.
+    else if (column < 0 && board.clock >= TURN && roster.reds.count > 0 && roster.yellows.count > 0)
+        column = Think(mine, theirs, salt);
+    if (column < 0) return;
+
+    var row = Height(mine | theirs, column);
+    if (row >= ROWS) return;
+    var discs = mine | Bit(column, row);
+    if (board.turn == RED)
+    {
+        board.red = discs;
+        board.redTurns += 1;
+    }
+    else
+    {
+        board.yellow = discs;
+        board.yellowTurns += 1;
+    }
+    board.moves += 1;
+    board.clock = 0;
+    board.plan = -1;
+    Send(Dropped { column = column, row = row, team = board.turn });
+
+    var line = Lines(discs);
+    if (line != 0)
+    {
+        board.winner = board.turn;
+        board.winning = line;
+        if (board.turn == RED) board.redWins += 1;
+        else board.yellowWins += 1;
+    }
+    else if (board.moves == COLS * ROWS) board.winner = TIED;
+
+    if (board.winner == PLAYING) board.turn = 1 - board.turn;
+    else Send(GameOver { winner = board.winner, line = line });
+}
+
+// ---------------------------------------------------------------- This machine
+
+// Where this machine's player aims, and what its pointer and keys did last frame.
+local singleton Aim
+{
+    int column = 3;
+    float x = 3;        // Where their disc is drawn: it glides to the column
+    bool pressed;       // The pointer was down last frame...
+    bool began;         // ...in a press that began on the board...
+    bool inside;        // ...and was still on it
+    bool left;          // The keys, as they were last frame
+    bool right;
+    bool drop;
+    int digit = -1;
+    float wait;         // Seconds until another drop can be asked for
+}
+
+struct Fall
+{
+    int column;
+    int row;
+    float age;
+}
+
+struct Loose
+{
+    float column;
+    float row;
+    float speed;
+    float wait;
+    int team;
+}
+
+struct Fleck
+{
+    float2 at;          // In cells, like a disc's column and row
+    float2 velocity;
+    float age;
+    float life = 1;
+    float size = 0.14;
+    float turn;
+    int team;
+}
+
+local singleton Fx
+{
+    Random random;
+    List<Fall> falls;       // Discs on their way down
+    List<Loose> loose;      // A finished game's discs, falling out of the board
+    List<Fleck> flecks;
+    float clock;
+    float burst;            // Seconds until the winning line bursts
+    long line;
+    int winner = PLAYING;
+    string news;            // Who came or went...
+    float newsLeft;         // ...and for how many seconds more it shows
+}
+
+local event(Dropped dropped) ShowDrop(mut Fx fx)
+{
+    fx.falls.Add(Fall { column = dropped.column, row = dropped.row });
+}
+
+// Once the server has confirmed it: a win is never shown and then taken back.
+local event(verified GameOver over) ShowOver(mut Fx fx)
+{
+    if (over.winner == TIED) return;
+    fx.winner = over.winner;
+    fx.line = over.line;
+    fx.burst = 0.55;
+}
+
+// A player's hand comes and goes with them.
+local event(Spawned) ShowArrival(Hand hand, Owner owner, Session session, mut Fx fx)
+{
+    if (owner.player == session.player) return;
+    fx.news = $"Player {hand.number} joined the game";
+    fx.newsLeft = 4;
+}
+
+local event(Destroyed) ShowLeaving(Hand hand, mut Fx fx)
+{
+    fx.news = $"Player {hand.number} left";
+    fx.newsLeft = 4;
+}
+
+local event(Cleared cleared) Sweep(mut Fx fx)
+{
+    fx.falls.Clear();
+    for (var column = 0; column < COLS; column++)
+    {
+        for (var row = 0; row < ROWS; row++)
+        {
+            var bit = Bit(column, row);
+            if (((cleared.red | cleared.yellow) & bit) == 0) continue;
+            fx.loose.Add(Loose { column = column, row = row, wait = column * 0.03 + row * 0.015,
+                                 team = (cleared.red & bit) != 0 ? RED : YELLOW });
+        }
+    }
+}
+
+// Where everything goes, from the screen's size.
+struct Fit
+{
+    float scale;    // 1 in a small frame, and bigger in a big window
+    float cell;     // A cell's side
+    float left;     // The board's left edge...
+    float top;      // ...and its top one
+    float hud;      // Where the scores end
+}
+
+Fit Measure()
+{
+    float w = Screen.width;
+    float h = Screen.height;
+    var scale = Math.Clamp(Math.Min(w / 376, h / 400), 0.75, 2.2);
+    var hud = 66 * scale + 52;
+    var foot = 40 * scale;
+    var room = h - hud - foot - 8 * scale;
+    var cell = Math.Min((w - 28 * scale) / COLS, room / (ROWS + 1));
+    return Fit { scale = scale, cell = cell, left = (w - cell * COLS) * 0.5,
+                 top = hud + cell + (room - cell * (ROWS + 1)) * 0.4, hud = hud };
+}
+
+// The middle of a cell. Row ROWS is where a disc hovers, over the board.
+float2 Spot(Fit fit, float column, float row)
+{
+    return float2(fit.left + (column + 0.5) * fit.cell, fit.top + (ROWS - 0.5 - row) * fit.cell);
+}
+
+Color Paint(int team)
+{
+    if (team == RED) return Color(0.95, 0.25, 0.28);
+    if (team == YELLOW) return Color(1, 0.8, 0.16);
+    return Color.white;
+}
+
+Color Shade(Color color, float light)
+{
+    return Color(color.r * light, color.g * light, color.b * light, color.a);
+}
+
+void Disc(float2 at, float radius, int team)
+{
+    var paint = Paint(team);
+    Draw2D.Shape(Shape { center = at, size = float2(radius * 2), ellipse = true,
+                         color = paint, color2 = Shade(paint, 0.78),
+                         outline = radius * 0.13, outlineColor = Shade(paint, 0.62) });
+    Draw2D.WireCircle(at, radius * 0.66, radius * 0.08, Shade(paint, 0.7));
+}
+
+// How far over its cell a disc still is, `age` seconds after it was let go.
+float Above(float age, float height)
+{
+    var land = Math.Sqrt(2 * height / GRAVITY);
+    if (age < land) return height - 0.5 * GRAVITY * age * age;
+    var since = age - land;
+    return Math.Max(GRAVITY * land * 0.22 * since - 0.5 * GRAVITY * since * since, 0);
+}
+
+bool Went(bool now, mut bool was)
+{
+    var went = now && !was;
+    was = now;
+    return went;
+}
+
+int Digit(Keyboard keys)
+{
+    if (keys.digit1.pressed) return 0;
+    if (keys.digit2.pressed) return 1;
+    if (keys.digit3.pressed) return 2;
+    if (keys.digit4.pressed) return 3;
+    if (keys.digit5.pressed) return 4;
+    if (keys.digit6.pressed) return 5;
+    if (keys.digit7.pressed) return 6;
+    return -1;
+}
+
+// Who plays a color, in a few letters.
+string Who(Roster roster, int team, PlayerID me)
+{
+    var members = team == RED ? roster.reds : roster.yellows;
+    if (members.count == 0) return "Bot";
+    var first = members.Contains(me) ? "You" : $"Player {roster.numbers[members[0]]}";
+    return members.count == 1 ? first : $"{first} +{members.count - 1}";
+}
+
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Backdrop(Session session)
+{
+    Draw2D.Clear(BACK);
+    Draw2D.SetScreen();
+    if (session.state == SessionState.Connected) return;
+    var words = session.state == SessionState.Connecting ? "Joining the game..." : "The game is over. Reload to play again.";
+    Draw2D.Text(words, float2(Screen.width, Screen.height) * 0.5, 16, Color.white, Anchor.MiddleCenter);
+}
+
+// The pointer and the keys: where this player aims, and when they let a disc go.
+// It asks for a drop by the board the server has confirmed, so the server, which is
+// never behind that, doesn't get a move for a turn it hasn't come to yet.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Point(Devices devices, verified Board board, verified Roster roster, Session session, mut Aim aim, SampleLobby lobby)
+{
+    if (!lobby.playing)
+    {
+        aim.pressed = false;
+        aim.left = false;
+        aim.right = false;
+        aim.drop = false;
+        aim.digit = -1;
+        return;
+    }
+    var fit = Measure();
+    var dt = Math.Min(Frame.dt, 0.05);
+    aim.wait = Math.Max(aim.wait - dt, 0);
+
+    var keys = devices.keyboard;
+    var left = Went(keys.leftArrow.pressed || keys.a.pressed, aim.left);
+    var right = Went(keys.rightArrow.pressed || keys.d.pressed, aim.right);
+    mut var drop = Went(keys.space.pressed || keys.enter.pressed || keys.downArrow.pressed || keys.s.pressed, aim.drop);
+    if (left) aim.column = Math.Max(aim.column - 1, 0);
+    if (right) aim.column = Math.Min(aim.column + 1, COLS - 1);
+    var digit = Digit(keys);
+    if (digit >= 0 && digit != aim.digit)
+    {
+        aim.column = digit;
+        drop = true;
+    }
+    aim.digit = digit;
+
+    // A press on the board aims, and letting go on it drops: a finger can slide first.
+    var pointer = devices.pointer;
+    var at = Screen.Flip(pointer.position);
+    var over = Math.Clamp(int(Math.Floor((at.x - fit.left) / fit.cell)), 0, COLS - 1);
+    var inside = at.x > fit.left - fit.cell * 0.5 && at.x < fit.left + fit.cell * (COLS + 0.5)
+              && at.y > fit.hud && at.y < fit.top + fit.cell * (ROWS + 0.6);
+    if (pointer.press.pressed)
+    {
+        if (!aim.pressed) aim.began = inside;
+        aim.inside = inside;
+        if (aim.began && inside) aim.column = over;
+        aim.pressed = true;
+    }
+    else
+    {
+        if (aim.pressed && aim.began && aim.inside) drop = true;
+        else if (inside && Math.LengthSq(pointer.delta) > 0) aim.column = over;
+        aim.pressed = false;
+    }
+    aim.x += (aim.column - aim.x) * Math.Min(dt * 22, 1);
+
+    if (!drop || aim.wait > 0) return;
+    if (board.winner != PLAYING || board.fresh) return;
+    if (Mover(board, roster) != session.player) return;
+    if (Height(board.red | board.yellow, aim.column) >= ROWS) return;
+    Send(Drop { column = aim.column, move = board.moves });
+    aim.wait = 0.35;
+}
+
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view DrawBoard(Board board, Roster roster, Session session, Fx fx, Aim aim)
+{
+    var fit = Measure();
+    var cell = fit.cell;
+    var radius = cell * 0.41;
+    var middle = float2(fit.left + cell * COLS * 0.5, fit.top + cell * ROWS * 0.5);
+    var size = float2(cell * COLS + cell * 0.26, cell * ROWS + cell * 0.26);
+    var playing = board.winner == PLAYING && !board.fresh;
+    var mover = Mover(board, roster);
+    var mine = playing && mover == session.player;
+    var filled = board.red | board.yellow;
+
+    Draw2D.Shape(Shape { center = middle + float2(0, cell * 0.14), size = size, radius = cell * 0.32,
+                         color = Color(0, 0, 0, 0.5), soft = cell * 0.3 });
+    Draw2D.Shape(Shape { center = middle, size = size, radius = cell * 0.32,
+                         color = Color(0.17, 0.4, 0.95), color2 = Color(0.1, 0.24, 0.7),
+                         outline = cell * 0.045, outlineColor = Color(0.3, 0.55, 1) });
+    // The column this player aims at
+    if (mine)
+        Draw2D.RoundRect(float2(fit.left + (aim.column + 0.5) * cell, middle.y), float2(cell * 0.96, cell * ROWS),
+                         cell * 0.48, Color(1, 1, 1, 0.13));
+    for (var column = 0; column < COLS; column++)
+    {
+        for (var row = 0; row < ROWS; row++)
+        {
+            var at = Spot(fit, column, row);
+            Draw2D.Circle(at, radius, HOLE);
+            Draw2D.WireCircle(at, radius, cell * 0.035, Color(0.07, 0.17, 0.52));
+        }
+    }
+
+    // Where their disc would land, and the disc itself, over the board
+    var bob = float2(0, Math.Sin(fx.clock * 5) * cell * 0.04);
+    if (mine)
+    {
+        // Over a full column there's nowhere to land, and the disc is faint.
+        var landing = Height(filled, aim.column);
+        Draw.Tint(Color(1, 1, 1, 0.3))
+        {
+            if (landing < ROWS) Disc(Spot(fit, aim.column, landing), radius, board.turn);
+            else Disc(Spot(fit, aim.x, ROWS), radius, board.turn);
+        }
+        if (landing < ROWS) Disc(Spot(fit, aim.x, ROWS) + bob, radius, board.turn);
+    }
+    else if (playing && mover == default) Disc(Spot(fit, board.botX, ROWS) + bob, radius, board.turn);
+
+    var over = board.winner != PLAYING && board.winner != TIED && board.clock >= SETTLE;
+    var pulse = 0.5 + 0.5 * Math.Sin(fx.clock * 7);
+    for (var column = 0; column < COLS; column++)
+    {
+        for (var row = 0; row < ROWS; row++)
+        {
+            var bit = Bit(column, row);
+            if ((filled & bit) == 0) continue;
+            var team = (board.red & bit) != 0 ? RED : YELLOW;
+            var rest = Spot(fit, column, row);
+            mut var lift = 0.0;
+            mut var ring = -1.0;
+            foreach (var fall in fx.falls)
+            {
+                if (fall.column != column || fall.row != row) continue;
+                float height = ROWS - row;
+                lift = Above(fall.age, height);
+                ring = (fall.age - Math.Sqrt(2 * height / GRAVITY)) / 0.3;
+            }
+            var at = rest - float2(0, lift * cell);
+            if (over && (board.winning & bit) == 0)
+            {
+                Draw.Tint(Color(1, 1, 1, 0.3))
+                {
+                    Disc(at, radius, team);
+                }
+                continue;
+            }
+            Disc(at, radius, team);
+            if (over) Draw2D.WireCircle(at, radius * (1.04 + pulse * 0.08), radius * 0.16, Color(1, 1, 1, 0.6 + pulse * 0.4));
+            // A ring where a disc just landed
+            if (ring >= 0 && ring < 1)
+                Draw2D.WireCircle(rest, radius * (1 + ring * 0.45), radius * 0.14 * (1 - ring), Color(1, 1, 1, 0.8 * (1 - ring)));
+        }
+    }
+}
+
+// The disc of another player whose turn it is, over the column they aim at.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Hands(Hand hand, Owner owner, Board board, Roster roster, Fx fx, without ownership)
+{
+    if (board.winner != PLAYING || board.fresh) return;
+    if (owner.player != Mover(board, roster)) return;
+    var fit = Measure();
+    var bob = float2(0, Math.Sin(fx.clock * 5) * fit.cell * 0.04);
+    Disc(Spot(fit, hand.x, ROWS) + bob, fit.cell * 0.41, board.turn);
+}
+
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Effects(mut Fx fx)
+{
+    var fit = Measure();
+    var cell = fit.cell;
+    var dt = Math.Min(Frame.dt, 0.05);
+    fx.clock += dt;
+    if (fx.clock > 600) fx.clock -= 600;
+    fx.newsLeft = Math.Max(fx.newsLeft - dt, 0);
+
+    mut var i = 0;
+    while (i < fx.falls.count)
+    {
+        mut var fall = fx.falls[i];
+        fall.age += dt;
+        if (fall.age > 1.5)
+        {
+            fx.falls.RemoveAt(i);
+            continue;
+        }
+        fx.falls[i] = fall;
+        i++;
+    }
+
+    // The last game's discs fall out of the bottom of the board.
+    Draw2D.Clip(Rect(fit.left - cell * 0.13, fit.top - cell, cell * COLS + cell * 0.26, cell * (ROWS + 1) + cell * 0.13))
+    {
+        i = 0;
+        while (i < fx.loose.count)
+        {
+            mut var disc = fx.loose[i];
+            if (disc.wait > 0) disc.wait -= dt;
+            else
+            {
+                disc.speed += GRAVITY * dt;
+                disc.row -= disc.speed * dt;
+            }
+            if (disc.row < -1.5)
+            {
+                fx.loose.RemoveAt(i);
+                continue;
+            }
+            fx.loose[i] = disc;
+            Disc(Spot(fit, disc.column, disc.row), cell * 0.41, disc.team);
+            i++;
+        }
+    }
+
+    // The winning four burst once the last disc has landed.
+    if (fx.burst > 0)
+    {
+        fx.burst -= dt;
+        if (fx.burst <= 0)
+        {
+            for (var column = 0; column < COLS; column++)
+            {
+                for (var row = 0; row < ROWS; row++)
+                {
+                    if ((fx.line & Bit(column, row)) == 0) continue;
+                    for (var n = 0; n < 14; n++)
+                    {
+                        var way = fx.random.NextFloat2Direction();
+                        fx.flecks.Add(Fleck { at = float2(column, row) + way * 0.3,
+                                              velocity = way * fx.random.NextFloat(2, 9) + float2(0, 3),
+                                              life = fx.random.NextFloat(0.8, 1.7), size = fx.random.NextFloat(0.1, 0.22),
+                                              turn = fx.random.NextFloat(6.28),
+                                              team = fx.random.NextInt(3) == 0 ? TIED : fx.winner });
+                    }
+                }
+            }
+        }
+    }
+    i = 0;
+    while (i < fx.flecks.count)
+    {
+        mut var fleck = fx.flecks[i];
+        fleck.age += dt;
+        if (fleck.age >= fleck.life)
+        {
+            fx.flecks.RemoveAt(i);
+            continue;
+        }
+        fleck.velocity = fleck.velocity * Math.Max(0, 1 - 1.5 * dt) - float2(0, 13 * dt);
+        fleck.at += fleck.velocity * dt;
+        fx.flecks[i] = fleck;
+        var paint = Paint(fleck.team);
+        var fade = Math.Min(1, (fleck.life - fleck.age) * 3);
+        Draw2D.Rect(Spot(fit, fleck.at.x, fleck.at.y), float2(fleck.size, fleck.size * 0.6) * cell,
+                    fleck.turn + fleck.age * 9, Color(paint.r, paint.g, paint.b, fade));
+        i++;
+    }
+}
+
+// A team's corner of the scores: its color, who plays it and the games it won.
+void Plate(Fit fit, int team, string name, int wins, bool active, bool mine)
+{
+    var s = fit.scale;
+    float half = Screen.width * 0.5;
+    var side = team == RED ? -1.0 : 1.0;
+    var y = 24 * s + 52;
+    var paint = Paint(team);
+    var center = float2(half + side * (half * 0.5 + 7 * s), y);
+    var size = float2(half - 30 * s, 36 * s);
+    Draw2D.RoundRect(center, size, 18 * s, active ? Color(paint.r, paint.g, paint.b, 0.2) : Color(1, 1, 1, 0.05));
+    if (active) Draw2D.WireRoundRect(center, size, 18 * s, 1.5 * s, paint);
+    Disc(float2(half + side * (half - 26 * s), y), 11 * s, team);
+    Draw2D.Text(name, float2(half + side * (half - 44 * s), y), 15 * s, mine ? Color.white : QUIET,
+                team == RED ? Anchor.MiddleLeft : Anchor.MiddleRight, mine ? Font.Bold : Font.Regular);
+    Draw2D.Text($"{wins}", float2(half + side * 36 * s, y), 22 * s, Color.white,
+                team == RED ? Anchor.MiddleRight : Anchor.MiddleLeft, Font.Bold);
+}
+
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Hud(Board board, Roster roster, Session session, Fx fx)
+{
+    var fit = Measure();
+    var s = fit.scale;
+    float w = Screen.width;
+    float h = Screen.height;
+    var me = session.player;
+    var team = TeamOf(roster, me);
+    var playing = board.winner == PLAYING && !board.fresh;
+    var mover = Mover(board, roster);
+    var alone = roster.reds.count == 0 || roster.yellows.count == 0;
+
+    // A game that was just won shows once its last disc has landed.
+    var landed = board.clock >= SETTLE;
+    var lit = playing ? board.turn : landed ? board.winner : PLAYING;
+    Plate(fit, RED, Who(roster, RED, me), board.redWins - (board.winner == RED && !landed ? 1 : 0), lit == RED, team == RED);
+    Plate(fit, YELLOW, Who(roster, YELLOW, me), board.yellowWins - (board.winner == YELLOW && !landed ? 1 : 0), lit == YELLOW, team == YELLOW);
+    Draw2D.Text("-", float2(w * 0.5, 24 * s + 52), 18 * s, QUIET, Anchor.MiddleCenter);
+
+    mut var status = "";
+    mut var tone = Color.white;
+    mut var hint = "Tap a column, or arrows + Space, to drop a disc";
+    if (playing)
+    {
+        tone = Paint(board.turn);
+        if (mover == me) status = "Your turn";
+        else if (mover == default) status = "The bot is thinking...";
+        else if (team == board.turn) status = $"Your teammate Player {roster.numbers[mover]}'s turn";
+        else status = $"Player {roster.numbers[mover]}'s turn";
+        // With another player waiting, a turn's last seconds count down.
+        var left = TURN - board.clock;
+        if (!alone && left < HURRY)
+        {
+            status += $" ({left / RATE + 1})";
+            float part = left;
+            Draw2D.RoundRect(float2(w * 0.5, 63 * s + 52), float2(w * 0.5 * part / HURRY, 3 * s), 1.5 * s, tone);
+        }
+    }
+    else if (board.winner != PLAYING)
+    {
+        if (landed)
+        {
+            tone = Paint(board.winner);
+            var bots = board.winner == RED ? roster.reds.count == 0 : roster.yellows.count == 0;
+            if (board.winner == TIED) status = "A draw!";
+            else if (board.winner == team) status = "You win!";
+            else if (bots) status = "The bot wins!";
+            else status = board.winner == RED ? "Red wins!" : "Yellow wins!";
+        }
+        hint = $"Next game in {(REST - board.clock) / RATE + 1}";
+    }
+    // The match is changing hands: whoever ran it left, and another machine takes it over.
+    if (session.state != SessionState.Connected)
+    {
+        status = "Reconnecting...";
+        tone = Color.white;
+    }
+    Draw2D.Text(status, float2(w * 0.5, 51 * s + 52), 16 * s, tone, Anchor.MiddleCenter, Font.Bold);
+
+    Draw2D.Text(hint, float2(w * 0.5, h - 27 * s), 13 * s, Color.white, Anchor.MiddleCenter);
+    if (fx.newsLeft > 0)
+        Draw2D.Text(fx.news, float2(w * 0.5, h - 11 * s), 12 * s, Color(0.45, 0.9, 0.8, Math.Min(fx.newsLeft, 1)), Anchor.MiddleCenter);
+    else
+        Draw2D.Text(alone ? "Four in a row wins. Host a room to play a friend!" : "Four in a row wins: across, up or diagonal",
+                    float2(w * 0.5, h - 11 * s), 12 * s, QUIET, Anchor.MiddleCenter);
+}

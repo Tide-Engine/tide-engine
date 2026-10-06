@@ -1,0 +1,901 @@
+const string SampleTitle = "Ricochet Tanks";
+
+// When whoever opened the link first goes, another player's machine carries the match on.
+settings { title = "Ricochet Tanks"; maxPlayers = 8; hostMigration = true; }
+
+const int SEATS = 8;              // As many as maxPlayers: a color and a place on the scoreboard each
+const int WIN_SCORE = 10;
+const float ARENA_X = 9;          // Half the arena's width, and half its height
+const float ARENA_Y = 7.5;
+const int WALLS = 9;
+const int SPAWNS = 8;
+const float TANK_R = 0.55;
+const float TANK_SPEED = 4.2;
+const float TANK_TURN = 10;       // Radians a second
+const float RELOAD = 0.5;
+const float RESPAWN = 2;
+const float SHIELD = 1.5;
+const float BULLET_R = 0.17;
+const float BULLET_SPEED = 9;
+const float BULLET_LIFE = 6;
+const float BULLET_SAFE = 1;      // Seconds a bullet can't hurt the tank that fired it: time to get out of its way back
+const int BOUNCES = 3;
+const float TICK = 1.0 / 60;      // A tick's length, for working out where a shot would go
+const float HUD_TOP = 104;         // Pixels the scoreboard takes, and the hints under the arena
+const float HUD_BOTTOM = 38;
+
+scene Main { }
+
+// ---------------------------------------------------------------- the arena
+
+struct Block
+{
+    float2 center;
+    float2 half;
+}
+
+// The walls are the same every match, so they're code: nothing to send, and any function can ask.
+Block WallAt(int index)
+{
+    switch (index)
+    {
+        case 0: return Block { center = float2(0, 0), half = float2(1.1, 1.1) };
+        case 1: return Block { center = float2(-4.8, 3.4), half = float2(1.7, 0.4) };
+        case 2: return Block { center = float2(4.8, 3.4), half = float2(1.7, 0.4) };
+        case 3: return Block { center = float2(-4.8, -3.4), half = float2(1.7, 0.4) };
+        case 4: return Block { center = float2(4.8, -3.4), half = float2(1.7, 0.4) };
+        case 5: return Block { center = float2(0, 4.9), half = float2(0.4, 1.2) };
+        case 6: return Block { center = float2(0, -4.9), half = float2(0.4, 1.2) };
+        case 7: return Block { center = float2(-6.4, 0), half = float2(0.4, 1.2) };
+    }
+    return Block { center = float2(6.4, 0), half = float2(0.4, 1.2) };
+}
+
+float2 SpawnPoint(int index)
+{
+    switch (index)
+    {
+        case 0: return float2(-7.6, 6.2);
+        case 1: return float2(7.6, -6.2);
+        case 2: return float2(7.6, 6.2);
+        case 3: return float2(-7.6, -6.2);
+        case 4: return float2(-3.4, 0);
+        case 5: return float2(3.4, 0);
+        case 6: return float2(0, 2.4);
+    }
+    return float2(0, -2.4);
+}
+
+// Whether a bullet there is in a wall, or out of the arena.
+bool Blocked(float2 point)
+{
+    if (Math.Abs(point.x) > ARENA_X - BULLET_R || Math.Abs(point.y) > ARENA_Y - BULLET_R) return true;
+    for (var i = 0; i < WALLS; i++)
+    {
+        var wall = WallAt(i);
+        if (Math.Abs(point.x - wall.center.x) < wall.half.x + BULLET_R
+            && Math.Abs(point.y - wall.center.y) < wall.half.y + BULLET_R) return true;
+    }
+    return false;
+}
+
+// A bullet's step, one axis at a time, so a wall turns it back squarely. Says whether it bounced.
+bool StepShot(mut float2 position, mut float2 velocity, float dt)
+{
+    mut var bounced = false;
+    if (Blocked(position + float2(velocity.x * dt, 0)))
+    {
+        velocity.x = -velocity.x;
+        bounced = true;
+    }
+    else
+    {
+        position.x += velocity.x * dt;
+    }
+    if (Blocked(position + float2(0, velocity.y * dt)))
+    {
+        velocity.y = -velocity.y;
+        bounced = true;
+    }
+    else
+    {
+        position.y += velocity.y * dt;
+    }
+    return bounced;
+}
+
+// Whether a shot from there would be back where it was fired, once it can hurt its own tank.
+bool Backfires(float2 from, float2 way)
+{
+    mut var at = from;
+    mut var speed = way * BULLET_SPEED;
+    for (var i = 0; i < 120; i++)
+    {
+        StepShot(at, speed, TICK);
+        if (i * TICK > BULLET_SAFE && Math.DistanceSq(at, from) < 1.5) return true;
+    }
+    return false;
+}
+
+// A tank pushed out of the walls and kept in the arena.
+float2 KeepClear(float2 point)
+{
+    mut var clear = point;
+    for (var i = 0; i < WALLS; i++)
+    {
+        var wall = WallAt(i);
+        var nearest = Math.Clamp(clear, wall.center - wall.half, wall.center + wall.half);
+        var away = clear - nearest;
+        var gap = Math.Length(away);
+        if (gap >= TANK_R) continue;
+        if (gap > 0.0001)
+        {
+            clear = nearest + away / gap * TANK_R;
+            continue;
+        }
+        var inside = clear - wall.center;
+        if (wall.half.x - Math.Abs(inside.x) < wall.half.y - Math.Abs(inside.y))
+            clear.x = wall.center.x + (inside.x < 0 ? -1 : 1) * (wall.half.x + TANK_R);
+        else
+            clear.y = wall.center.y + (inside.y < 0 ? -1 : 1) * (wall.half.y + TANK_R);
+    }
+    return Math.Clamp(clear, float2(TANK_R - ARENA_X, TANK_R - ARENA_Y), float2(ARENA_X - TANK_R, ARENA_Y - TANK_R));
+}
+
+// An angle turned towards another by a step at most, the short way round.
+float Turn(float from, float to, float step)
+{
+    mut var turn = to - from;
+    turn -= Math.Round(turn / Math.TAU) * Math.TAU;
+    if (Math.Abs(turn) <= step) return to;
+    return from + Math.Sign(turn) * step;
+}
+
+// ---------------------------------------------------------------- the match
+
+component Tank
+{
+    [Position] float2 position;
+    [Rotation] float heading;     // Where the hull points, in radians
+    [Rotation] float turret;
+    float2 move;                  // What its driver wants: a player's input, or a bot's mind
+    float2 aim;                   // Zero: along the hull
+    bool fire;
+    int slot;                     // Its seat: its color, and its place on the scoreboard
+    int score;
+    bool bot;
+    bool alive;
+    float respawn = 0.05;         // Seconds until it's (back) in the arena
+    float shield;                 // Seconds nothing can hurt it
+    float reload;
+    local float kick;             // This machine's: how long its last shot still shows
+}
+
+component Bot
+{
+    Random random;
+    float2 goal;
+    float think;
+    float trigger = 1.5;
+}
+
+component Bullet
+{
+    [Position] float2 position;
+    float2 velocity;
+    Entity shooter;
+    int slot;                     // The shooter's seat
+    int bounces;
+    float age;
+}
+
+singleton Roster
+{
+    Map<PlayerID, Entity> tanks;
+    int seats;                    // A bit for each seat that's taken
+}
+
+singleton Round
+{
+    int celebrate;                // Ticks the winner's banner still shows
+    int winner = -1;              // The seat that won
+    bool fresh;                   // True for the one tick a new round starts in
+}
+
+event Hit { Entity shooter; int seat; } // Sent to the tank a bullet reached, with whose bullet it was
+event Scored { }                  // Sent to the tank whose bullet wrecked another
+event Wrecked { int culprit; }    // Sent to a tank as it goes, with the seat that did it: only for what's shown
+event Fired { }                   // Sent to a tank as it shoots: only for what's shown
+event Shrugged { }                // Sent to a tank whose shield took a bullet: only for what's shown
+event Bounced { float2 at; }      // A bullet met a wall: only for what's shown
+event Fizzled { float2 at; }      // A bullet ran out of bounces: only for what's shown
+
+// What a player does in a tick.
+input Controls
+{
+    [Clamp(-1, 1)] float2 move;
+    [Absolute, Clamp(-1, 1)] float2 aim; // A direction, which another machine's guess keeps
+    bool fire;
+
+    Sample(Devices devices, Pad pad, SampleLobby lobby)
+    {
+        if (!lobby.playing) return;
+        var keys = devices.keyboard;
+        if (keys.d.pressed || keys.rightArrow.pressed) move.x += 1;
+        if (keys.a.pressed || keys.leftArrow.pressed) move.x -= 1;
+        if (keys.w.pressed || keys.upArrow.pressed) move.y += 1;
+        if (keys.s.pressed || keys.downArrow.pressed) move.y -= 1;
+        move += pad.stick + devices.gamepad.leftStick;
+        aim = pad.aim;
+        if (Math.LengthSq(devices.gamepad.rightStick) > 0.25) aim = Math.Normalize(devices.gamepad.rightStick);
+        fire = keys.space.pressed || keys.enter.pressed || devices.mouse.left.pressed || pad.fire > 0
+            || devices.gamepad.rightTrigger > 0.5 || devices.gamepad.buttonSouth.pressed;
+    }
+}
+
+// Everyone who joins gets a tank, in the first seat nobody has.
+event(PlayerJoined joined) Arrive(mut Roster roster)
+{
+    var seat = FreeSeat(roster.seats);
+    roster.seats |= 1 << seat;
+    roster.tanks[joined.player] = Spawn(Tank { slot = seat }, Owner { player = joined.player });
+}
+
+event(PlayerLeft left) Depart(mut Roster roster)
+{
+    roster.tanks[left.player].Destroy();
+    roster.tanks.Remove(left.player);
+}
+
+event(Destroyed) GiveSeatBack(Tank tank, mut Roster roster)
+{
+    roster.seats &= ~(1 << tank.slot);
+}
+
+int FreeSeat(int taken)
+{
+    for (var i = 0; i < SEATS; i++)
+    {
+        if ((taken & (1 << i)) == 0) return i;
+    }
+    return SEATS - 1;
+}
+
+// A round that was won shows its winner for a while, then everything starts over.
+system RoundClock(mut Round round)
+{
+    round.fresh = false;
+    if (round.celebrate <= 0) return;
+    round.celebrate -= 1;
+    if (round.celebrate == 0) round.fresh = true;
+}
+
+system NewRound(mut Tank tank, Round round)
+{
+    if (!round.fresh) return;
+    tank.score = 0;
+    tank.alive = false;
+    tank.respawn = 0.3;
+}
+
+system ClearShots(Round round, with Bullet)
+{
+    if (round.fresh) this.Destroy();
+}
+
+// Bots keep a lone player company: three tanks in the arena at least.
+system Staff(mut Roster roster, query (Tank tank) tanks)
+{
+    mut var humans = 0;
+    mut var bots = 0;
+    mut Entity spare = default;
+    foreach (var row in tanks)
+    {
+        if (row.tank.bot)
+        {
+            bots += 1;
+            spare = row.entity;
+        }
+        else
+        {
+            humans += 1;
+        }
+    }
+    var wanted = humans == 0 ? 0 : Math.Max(0, 3 - humans);
+    if (bots < wanted)
+    {
+        var seat = FreeSeat(roster.seats);
+        roster.seats |= 1 << seat;
+        Spawn(Tank { slot = seat, bot = true, respawn = 0.6 }, Bot);
+    }
+    else if (bots > wanted)
+    {
+        spare.Destroy();
+    }
+}
+
+// A player's tank does what its owner's input says.
+system Steer(Controls controls, mut Tank tank, with Owner)
+{
+    tank.move = controls.move;
+    tank.aim = controls.aim;
+    tank.fire = controls.fire;
+}
+
+// A bot wanders from place to place, and shoots at whoever is nearest.
+system Think(mut Bot bot, mut Tank tank, Time time, query (Tank other) others)
+{
+    tank.fire = false;
+    tank.move = float2(0);
+    if (!tank.alive) return;
+    bot.think -= time.dt;
+    if (bot.think <= 0 || Math.Distance(bot.goal, tank.position) < 0.8)
+    {
+        bot.goal = SpawnPoint(bot.random.NextInt(SPAWNS)) + bot.random.NextFloat2Direction() * bot.random.NextFloat(2.5);
+        bot.think = bot.random.NextFloat(1.2, 2.8);
+    }
+    tank.move = Math.Normalize(bot.goal - tank.position) * 0.8;
+
+    mut var nearest = 1000.0;
+    mut var mark = tank.position;
+    foreach (var row in others)
+    {
+        if (row.entity == this || !row.other.alive) continue;
+        var far = Math.Distance(row.other.position, tank.position);
+        if (far < nearest)
+        {
+            nearest = far;
+            mark = row.other.position;
+        }
+    }
+    if (nearest > 900)
+    {
+        tank.aim = float2(0);
+        return;
+    }
+    // Its aim sways, so it misses now and then
+    var angle = Math.Atan2(mark.y - tank.position.y, mark.x - tank.position.x) + Math.Sin(time.t * 1.7 + tank.slot) * 0.28;
+    tank.aim = float2(Math.Cos(angle), Math.Sin(angle));
+    bot.trigger -= time.dt;
+    if (bot.trigger > 0) return;
+    if (Backfires(tank.position, tank.aim)) return; // It waits for a shot that won't come straight back
+    tank.fire = true;
+    bot.trigger = bot.random.NextFloat(1.1, 2.6);
+}
+
+system Drive(mut Tank tank, Time time, query (Tank other) others)
+{
+    if (!tank.alive)
+    {
+        tank.respawn -= time.dt;
+        if (tank.respawn > 0) return;
+        // Back in, at the spawn point furthest from everyone
+        mut var best = 0;
+        mut var bestSpace = -1.0;
+        for (var i = 0; i < SPAWNS; i++)
+        {
+            var index = (i + tank.slot) % SPAWNS;
+            var point = SpawnPoint(index);
+            mut var space = 1000.0;
+            foreach (var row in others)
+            {
+                if (row.entity == this || !row.other.alive) continue;
+                space = Math.Min(space, Math.Distance(point, row.other.position));
+            }
+            if (space > bestSpace)
+            {
+                bestSpace = space;
+                best = index;
+            }
+        }
+        tank.position = SpawnPoint(best);
+        tank.heading = Math.Atan2(-tank.position.y, -tank.position.x);
+        tank.turret = tank.heading;
+        tank.alive = true;
+        tank.shield = SHIELD;
+        tank.reload = 0.3;
+        this.Snap();
+        return;
+    }
+    tank.shield = Math.Max(0, tank.shield - time.dt);
+    tank.reload = Math.Max(0, tank.reload - time.dt);
+
+    mut var move = tank.move;
+    if (Math.LengthSq(move) > 1) move = Math.Normalize(move);
+    if (Math.LengthSq(move) > 0.01)
+    {
+        tank.heading = Turn(tank.heading, Math.Atan2(move.y, move.x), TANK_TURN * time.dt);
+        tank.position += move * TANK_SPEED * time.dt;
+    }
+    tank.turret = Math.LengthSq(tank.aim) > 0.01 ? Math.Atan2(tank.aim.y, tank.aim.x) : tank.heading;
+
+    // Tanks shoulder each other aside
+    foreach (var row in others)
+    {
+        if (row.entity == this || !row.other.alive) continue;
+        var away = tank.position - row.other.position;
+        var gap = Math.Length(away);
+        if (gap < TANK_R * 2 && gap > 0.001) tank.position += away / gap * (TANK_R * 2 - gap) * 0.5;
+    }
+    tank.position = KeepClear(tank.position);
+
+    if (tank.fire && tank.reload <= 0)
+    {
+        var way = float2(Math.Cos(tank.turret), Math.Sin(tank.turret));
+        Spawn(Bullet { position = tank.position, velocity = way * BULLET_SPEED, shooter = this, slot = tank.slot });
+        tank.reload = RELOAD;
+        tank.shield = 0;
+        this.Send(Fired { });
+    }
+}
+
+system Fly(mut Bullet bullet, Time time, query (Tank tank) tanks)
+{
+    bullet.age += time.dt;
+    if (bullet.age > BULLET_LIFE)
+    {
+        Send(Fizzled { at = bullet.position });
+        this.Destroy();
+        return;
+    }
+    if (StepShot(bullet.position, bullet.velocity, time.dt))
+    {
+        bullet.bounces += 1;
+        if (bullet.bounces > BOUNCES)
+        {
+            Send(Fizzled { at = bullet.position });
+            this.Destroy();
+            return;
+        }
+        Send(Bounced { at = bullet.position });
+    }
+
+    var reach = TANK_R + BULLET_R;
+    foreach (var row in tanks)
+    {
+        if (!row.tank.alive) continue;
+        if (row.entity == bullet.shooter && bullet.age < BULLET_SAFE) continue;
+        if (Math.DistanceSq(row.tank.position, bullet.position) > reach * reach) continue;
+        row.entity.Send(Hit { shooter = bullet.shooter, seat = bullet.slot });
+        this.Destroy();
+        return;
+    }
+}
+
+event(Hit hit) TakeHit(mut Tank tank)
+{
+    if (!tank.alive) return;
+    if (tank.shield > 0)
+    {
+        this.Send(Shrugged { });
+        return;
+    }
+    tank.alive = false;
+    tank.respawn = RESPAWN;
+    this.Send(Wrecked { culprit = hit.seat });
+    if (hit.shooter != this) hit.shooter.Send(Scored { });
+}
+
+event(Scored) AddScore(mut Tank tank, mut Round round, Time time)
+{
+    if (round.celebrate > 0) return; // The round is over
+    tank.score += 1;
+    if (tank.score < WIN_SCORE) return;
+    round.celebrate = time.tickRate * 4;
+    round.winner = tank.slot;
+}
+
+// ---------------------------------------------------------------- this machine
+
+struct Spark
+{
+    float2 position;
+    float2 velocity;
+    float age;
+    float life = 0.4;
+    float size = 0.1;
+    Color color;
+}
+
+struct Popup
+{
+    float2 position;
+    float age;
+    Color color;
+}
+
+local singleton Fx
+{
+    Random random;
+    List<Spark> sparks;
+    List<Popup> popups;
+    float shake;
+    int culprit = -1;             // The seat whose shot wrecked this machine's tank last
+    float top;                    // Where the arena's top and bottom edges are on the screen, in pixels
+    float bottom;
+}
+
+// What this machine's hands are doing, which Sample turns into the input.
+local singleton Pad
+{
+    float2 stick;                 // A finger's drag: where to drive
+    float2 aim;                   // Where to shoot: zero until something aimed
+    float fire;                   // Seconds a tap still holds the trigger
+    bool held;                    // The first finger is down
+    int finger;                   // Its id
+    bool dragged;                 // It went far enough to be a drag
+    float2 start;                 // Where it went down, in the window's pixels
+    float2 last;                  // Where it was last seen
+    bool mouse;                   // The mouse aims
+    bool touch;                   // Fingers do
+    bool fingers;                 // There's a touchscreen
+    int seat = -1;                // This machine's tank's
+}
+
+Color Paint(int seat)
+{
+    switch (seat)
+    {
+        case 0: return Color(0.98, 0.75, 0.14);
+        case 1: return Color(0.18, 0.83, 0.75);
+        case 2: return Color(0.98, 0.44, 0.52);
+        case 3: return Color(0.4, 0.64, 1);
+        case 4: return Color(0.56, 0.86, 0.36);
+        case 5: return Color(0.74, 0.54, 0.98);
+        case 6: return Color(1, 0.56, 0.22);
+    }
+    return Color(0.9, 0.9, 0.95);
+}
+
+string Name(int seat)
+{
+    switch (seat)
+    {
+        case 0: return "AMBER";
+        case 1: return "TEAL";
+        case 2: return "ROSE";
+        case 3: return "BLUE";
+        case 4: return "GREEN";
+        case 5: return "VIOLET";
+        case 6: return "ORANGE";
+    }
+    return "WHITE";
+}
+
+Color Shade(Color color, float light)
+{
+    return Color(color.r * light, color.g * light, color.b * light, color.a);
+}
+
+Color Fade(Color color, float alpha)
+{
+    return Color(color.r, color.g, color.b, alpha);
+}
+
+float2 Toward(float2 way, float2 otherwise)
+{
+    if (Math.LengthSq(way) < 0.04) return otherwise;
+    return Math.Normalize(way);
+}
+
+void Burst(mut Fx fx, float2 at, Color color, int count, float speed, float life, float size)
+{
+    for (var i = 0; i < count; i++)
+    {
+        fx.sparks.Add(Spark { position = at, velocity = fx.random.NextFloat2Direction() * fx.random.NextFloat(speed * 0.25, speed),
+                              life = life * fx.random.NextFloat(0.5, 1), size = size, color = color });
+    }
+}
+
+local event(Bounced bounced) ShowBounce(mut Fx fx)
+{
+    Burst(fx, bounced.at, Color(1, 0.9, 0.6), 5, 5, 0.3, 0.09);
+}
+
+local event(Fizzled fizzled) ShowFizzle(mut Fx fx)
+{
+    Burst(fx, fizzled.at, Color(0.7, 0.7, 0.75), 8, 3, 0.35, 0.08);
+}
+
+local event(Fired) ShowShot(mut Tank tank)
+{
+    tank.kick = 0.14;
+}
+
+local event(Shrugged) ShowShield(Tank tank, mut Fx fx)
+{
+    Burst(fx, tank.position, Color(0.9, 0.95, 1), 10, 6, 0.3, 0.1);
+}
+
+local event(Wrecked) ShowWreck(Tank tank, mut Fx fx)
+{
+    Burst(fx, tank.position, Paint(tank.slot), 26, 9, 0.7, 0.2);
+    Burst(fx, tank.position, Color(1, 0.85, 0.5), 14, 5, 0.5, 0.14);
+}
+
+// This machine's own tank going shakes its screen.
+local event(Wrecked wrecked) FeelWreck(Owner owner, Session session, mut Fx fx)
+{
+    if (owner.player != session.player) return;
+    fx.shake = 0.45;
+    fx.culprit = wrecked.culprit;
+}
+
+// A tank that leaves the match while it's in the arena goes in a puff: a player who left, or a bot
+// that made room for one.
+local event(Destroyed) ShowGone(Tank tank, mut Fx fx)
+{
+    if (tank.alive) Burst(fx, tank.position, Color(0.7, 0.7, 0.75), 18, 5, 0.5, 0.14);
+}
+
+local event(Scored) ShowScore(Tank tank, mut Fx fx)
+{
+    fx.popups.Add(Popup { position = tank.position + float2(0, 0.9), color = Paint(tank.slot) });
+}
+
+// The arena, fitted between the scoreboard and the hints whatever the window's shape.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Backdrop(mut Fx fx)
+{
+    fx.shake = Math.Max(0, fx.shake - Math.Min(Frame.dt, 0.05));
+    Draw2D.Clear(Color(0.086, 0.086, 0.094));
+    var scale = Math.Min(Screen.width / (ARENA_X * 2 + 1), (Screen.height - HUD_TOP - HUD_BOTTOM) / (ARENA_Y * 2 + 1));
+    var jolt = float2(Math.Sin(fx.shake * 80), Math.Cos(fx.shake * 63)) * fx.shake * 0.6;
+    Draw2D.SetCamera(float2(0, (HUD_TOP - HUD_BOTTOM) / (2 * scale)) + jolt, Screen.height / (2 * scale));
+    var middle = (Screen.height + HUD_TOP - HUD_BOTTOM) * 0.5;
+    fx.top = middle - (ARENA_Y + 0.25) * scale;
+    fx.bottom = middle + (ARENA_Y + 0.25) * scale;
+
+    Draw2D.RoundRect(float2(0), float2(ARENA_X * 2 + 0.5, ARENA_Y * 2 + 0.5), 0.3, Color(0.36, 0.37, 0.42));
+    Draw2D.Rect(float2(0), float2(ARENA_X * 2, ARENA_Y * 2), Color(0.125, 0.125, 0.14));
+    for (var i = -5; i <= 5; i++)
+        Draw2D.Line(float2(i * 1.5, -ARENA_Y), float2(i * 1.5, ARENA_Y), Color(0.15, 0.15, 0.17));
+    for (var j = -4; j <= 4; j++)
+        Draw2D.Line(float2(-ARENA_X, j * 1.5), float2(ARENA_X, j * 1.5), Color(0.15, 0.15, 0.17));
+    Draw2D.Text("BULLETS BOUNCE", float2(0, 6.8), 0.7, Color(1, 1, 1, 0.09), Anchor.MiddleCenter, Font.Bold);
+    Draw2D.Text($"FIRST TO {WIN_SCORE} WINS", float2(0, -6.8), 0.7, Color(1, 1, 1, 0.09), Anchor.MiddleCenter, Font.Bold);
+
+    for (var w = 0; w < WALLS; w++)
+    {
+        var wall = WallAt(w);
+        Draw2D.RoundRect(wall.center - float2(0, 0.14), wall.half * 2, 0.15, Color(0.05, 0.05, 0.06));
+        Draw2D.RoundRect(wall.center, wall.half * 2, 0.15, Color(0.36, 0.37, 0.42));
+        Draw2D.WireRoundRect(wall.center, wall.half * 2, 0.15, 0.07, Color(0.5, 0.52, 0.58));
+    }
+}
+
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Bullets(Bullet bullet)
+{
+    var paint = Paint(bullet.slot);
+    var tail = Math.Normalize(bullet.velocity) * 0.6;
+    Draw2D.Line(bullet.position - tail, bullet.position, 0.2, Fade(paint, 0.4));
+    Draw2D.Circle(bullet.position, BULLET_R + 0.05, paint);
+    Draw2D.Circle(bullet.position, BULLET_R - 0.05, Color.white);
+}
+
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Tanks(mut Tank tank)
+{
+    tank.kick = Math.Max(0, tank.kick - Frame.dt);
+    if (!tank.alive)
+    {
+        if (tank.respawn > 0.4) Draw2D.Circle(tank.position, 0.5, Color(0, 0, 0, 0.3)); // Where it went
+        return;
+    }
+    var paint = Paint(tank.slot);
+    Draw2D.Transform(tank.position, tank.heading)
+    {
+        Draw2D.RoundRect(float2(0, 0.42), float2(1.2, 0.28), 0.09, Color(0.03, 0.03, 0.04));
+        Draw2D.RoundRect(float2(0, -0.42), float2(1.2, 0.28), 0.09, Color(0.03, 0.03, 0.04));
+        Draw2D.RoundRect(float2(0), float2(1.02, 0.76), 0.16, Shade(paint, 0.62));
+        Draw2D.RoundRect(float2(0.36, 0), float2(0.14, 0.5), 0.06, Shade(paint, 0.45));
+    }
+    Draw2D.Transform(tank.position, tank.turret)
+    {
+        var recoil = tank.kick * 1.4;
+        if (tank.kick > 0.07) Draw2D.Circle(float2(1.08, 0), 0.3, Color(1, 0.9, 0.55));
+        Draw2D.RoundRect(float2(0.52 - recoil, 0), float2(0.8, 0.22), 0.07, Color(0.86, 0.87, 0.9));
+        Draw2D.Circle(float2(0), 0.33, paint);
+        Draw2D.Circle(float2(0), 0.15, Shade(paint, 0.62));
+    }
+    if (tank.shield > 0)
+        Draw2D.WireCircle(tank.position, 0.9, 0.07, Color(1, 1, 1, 0.45 + 0.35 * Math.Sin(tank.shield * 22)));
+}
+
+// This machine's own tank: where its hands point it, and the marks that say it's yours.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Mine(Devices devices, Tank tank, mut Pad pad, Fx fx, SampleLobby lobby, with ownership)
+{
+    pad.seat = tank.slot;
+    if (!lobby.playing)
+    {
+        pad.fire = 0;
+        pad.held = false;
+        pad.dragged = false;
+        pad.stick = float2(0);
+        return;
+    }
+    pad.fire = Math.Max(0, pad.fire - Frame.dt);
+    pad.fingers = devices.touchscreen.connected;
+
+    var mouse = devices.mouse;
+    if (Math.LengthSq(mouse.delta) > 0 || mouse.left.down)
+    {
+        pad.mouse = true;
+        pad.touch = false;
+    }
+    if (pad.mouse) pad.aim = Toward(Draw2D.ScreenToWorld(Screen.Flip(mouse.position)) - tank.position, pad.aim);
+
+    // The first finger drives when it drags, and shoots where it tapped when it doesn't.
+    // A finger that lifted is out of its slot by the frame, so the view keeps what it last saw of it.
+    var first = devices.touchscreen.primaryTouch;
+    if (first.press.pressed)
+    {
+        if (!pad.held || first.id != pad.finger)
+        {
+            pad.dragged = false;
+            pad.touch = true;
+            pad.mouse = false;
+        }
+        pad.held = true;
+        pad.finger = first.id;
+        pad.last = first.position;
+        var pull = first.position - first.startPosition; // The devices count y up, as the arena does
+        if (Math.Length(pull) > 12) pad.dragged = true;
+        if (pad.dragged)
+        {
+            var push = pull / 44;
+            pad.stick = Math.LengthSq(push) > 1 ? Math.Normalize(push) : push;
+            pad.start = first.startPosition;
+        }
+    }
+    else if (pad.held)
+    {
+        if (!pad.dragged)
+        {
+            pad.aim = Toward(Draw2D.ScreenToWorld(Screen.Flip(pad.last)) - tank.position, pad.aim);
+            pad.fire = 0.12;
+        }
+        pad.held = false;
+        pad.dragged = false;
+        pad.stick = float2(0);
+    }
+    // Any other finger shoots where it is, for as long as it's down.
+    foreach (var touch in devices.touchscreen.touches)
+    {
+        if (!touch.press.pressed || touch.id == pad.finger) continue;
+        pad.touch = true;
+        pad.mouse = false;
+        pad.aim = Toward(Draw2D.ScreenToWorld(Screen.Flip(touch.position)) - tank.position, pad.aim);
+        pad.fire = 0.12;
+    }
+
+    if (tank.alive)
+    {
+        Draw2D.WireCircle(tank.position, 0.82, 0.05, Color(1, 1, 1, 0.55));
+        // Its name over it, or under it where the scoreboard is right above
+        if (tank.position.y < ARENA_Y - 1.8)
+            Draw2D.Text("YOU", tank.position + float2(0, 0.95), 0.46, Color.white, Anchor.LowerCenter, Font.Bold);
+        else
+            Draw2D.Text("YOU", tank.position - float2(0, 0.95), 0.46, Color.white, Anchor.UpperCenter, Font.Bold);
+        // Where a shot would go, past its first bounce: a bullet's own steps, a dot every few
+        mut var at = tank.position;
+        mut var speed = float2(Math.Cos(tank.turret), Math.Sin(tank.turret)) * BULLET_SPEED;
+        mut var turns = 0;
+        for (var i = 1; i <= 88 && turns < 2; i++)
+        {
+            if (StepShot(at, speed, TICK)) turns += 1;
+            if (i > 6 && i % 4 == 0) Draw2D.Circle(at, 0.055, Color(1, 1, 1, 0.6 * (1 - i / 92.0)));
+        }
+    }
+    Draw2D.Screen()
+    {
+        if (!tank.alive && tank.respawn > 0.4)
+        {
+            var middle = float2(Screen.width, fx.top + fx.bottom) * 0.5;
+            var who = fx.culprit == tank.slot ? "by your own shot" : $"by {Name(fx.culprit)}";
+            Draw2D.RoundRect(middle, float2(210, 64), 12, Color(0, 0, 0, 0.6));
+            Draw2D.Text("WRECKED!", middle - float2(0, 2), 28, Color(0.98, 0.44, 0.52), Anchor.LowerCenter, Font.Bold);
+            Draw2D.Text(who, middle + float2(0, 4), 14, Color.white, Anchor.UpperCenter);
+        }
+        if (pad.dragged)
+        {
+            var from = Screen.Flip(pad.start);
+            Draw2D.WireCircle(from, 44, 2, Color(1, 1, 1, 0.3));
+            Draw2D.Circle(from + float2(pad.stick.x, -pad.stick.y) * 44, 16, Color(1, 1, 1, 0.35));
+        }
+    }
+}
+
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Sparks(mut Fx fx)
+{
+    var dt = Math.Min(Frame.dt, 0.05);
+    Draw.Blend(Blend.Add)
+    {
+        mut var i = 0;
+        while (i < fx.sparks.count)
+        {
+            mut var spark = fx.sparks[i];
+            spark.age += dt;
+            if (spark.age >= spark.life)
+            {
+                fx.sparks.RemoveAt(i);
+                continue;
+            }
+            spark.velocity = spark.velocity * Math.Max(0, 1 - 3 * dt);
+            spark.position += spark.velocity * dt;
+            fx.sparks[i] = spark;
+            var left = 1 - spark.age / spark.life;
+            Draw2D.Circle(spark.position, spark.size * (0.4 + 0.6 * left), Fade(spark.color, left));
+            i++;
+        }
+    }
+    mut var p = 0;
+    while (p < fx.popups.count)
+    {
+        mut var popup = fx.popups[p];
+        popup.age += dt;
+        if (popup.age >= 0.9)
+        {
+            fx.popups.RemoveAt(p);
+            continue;
+        }
+        popup.position.y += 1.6 * dt;
+        fx.popups[p] = popup;
+        Draw2D.Text("+1", popup.position, 0.75, Fade(popup.color, 1 - popup.age / 0.9), Anchor.LowerCenter, Font.Bold);
+        p++;
+    }
+}
+
+// The scoreboard has a place for every seat, and the scores are what the server confirmed.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Hud(Round round, Pad pad, Fx fx, query (verified Tank tank) tanks)
+{
+    Draw2D.SetScreen();
+    var pitch = Math.Min(60.0, (Screen.width - 12) / float(SEATS));
+    var left = (Screen.width - pitch * SEATS) * 0.5;
+    var line = fx.top - 34; // Right over the arena, wherever the window's shape left it
+    for (var i = 0; i < SEATS; i++)
+        Draw2D.WireRoundRect(float2(left + (i + 0.5) * pitch, line), float2(pitch - 6, 28), 8, 1.5, Color(0.2, 0.2, 0.23));
+
+    mut var humans = 0;
+    foreach (var row in tanks)
+    {
+        var seat = row.tank.slot;
+        var paint = Paint(seat);
+        var at = float2(left + (seat + 0.5) * pitch, line);
+        Draw2D.RoundRect(at, float2(pitch - 6, 28), 8, Shade(paint, row.tank.alive ? 1 : 0.45));
+        Draw2D.Text($"{row.tank.score}", at, 20, Color(0.06, 0.06, 0.07), Anchor.MiddleCenter, Font.Bold);
+        if (seat == pad.seat)
+        {
+            Draw2D.WireRoundRect(at, float2(pitch - 2, 32), 10, 2, Color.white);
+            Draw2D.Text("YOU", at + float2(0, 18), 11, Color.white, Anchor.UpperCenter, Font.Bold);
+        }
+        else
+        {
+            Draw2D.Text(row.tank.bot ? "bot" : "player", at + float2(0, 18), 10, Color(0.64, 0.64, 0.68), Anchor.UpperCenter);
+        }
+        if (!row.tank.bot) humans += 1;
+    }
+
+    var keys = !pad.touch && (pad.mouse || !pad.fingers);
+    var how = keys ? "WASD or arrows drive. Mouse aims, click or space shoots."
+                   : "Drag to drive. Tap where to shoot.";
+    var under = fx.bottom + 5;
+    Draw2D.Text(how, float2(Screen.width * 0.5, under), 13, Color.white, Anchor.UpperCenter);
+    if (humans < 2)
+        Draw2D.Text("Bots fill in until friends join your room.", float2(Screen.width * 0.5, under + 16), 12, Color(0.64, 0.64, 0.68), Anchor.UpperCenter);
+
+    if (round.celebrate > 0)
+    {
+        var middle = float2(Screen.width, fx.top + fx.bottom) * 0.5;
+        var word = round.winner == pad.seat ? "YOU WIN!" : $"{Name(round.winner)} WINS!";
+        var size = Math.Min(54.0, Screen.width * 0.12);
+        var box = Draw2D.MeasureText(word, size, Font.Bold);
+        Draw2D.RoundRect(middle, box + float2(44, 28), 14, Color(0, 0, 0, 0.75));
+        Draw2D.Text(word, middle, size, Paint(round.winner), Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text("Next round in a moment", middle + float2(0, box.y * 0.5 + 22), 13, Color.white, Anchor.UpperCenter);
+    }
+}

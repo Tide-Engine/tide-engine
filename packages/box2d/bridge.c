@@ -13,6 +13,11 @@
 // since, hashed: Box2D's next state is its last and what's done to it, and
 // nothing else. So it costs what was done, and the image is never read to
 // name it.
+//
+// The image goes into the match's list as what changed of the list's last
+// one, where Box2D can say (b2t_image): the match's list keeps the rest, and
+// what the package adds to a tick goes by what's awake, where an image
+// written whole goes by how big the world is.
 
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -53,7 +58,9 @@ typedef struct body {
     float step_spin;
     bool fixed_rotation;
     bool bullet;
-    uint8_t unused[6];
+    bool asleep;
+    bool step_asleep; // What the last step left `asleep` as
+    uint8_t unused[4];
 } body;
 
 typedef struct box {
@@ -140,6 +147,34 @@ _Static_assert(sizeof(body) == 96 && offsetof(body, sleep_speed) == 60 && offset
                    && sizeof(physics) == 120 && offsetof(physics, moved) == 60,
                "box2d.tide's types changed: these are theirs");
 
+// A body's four bools are side by side in its component: one field of four
+// bytes to the systems written in C (tide/rows.h), which read whether it's
+// asleep, and what the last step left that as, out of it.
+#define FLAGS offsetof(body, fixed_rotation)
+
+_Static_assert(FLAGS % 4 == 0 && offsetof(body, asleep) == FLAGS + 2 && offsetof(body, step_asleep) == FLAGS + 3
+                   && offsetof(body, unused) == FLAGS + 4,
+               "a Body's flags aren't where the systems written in C look for them any more");
+
+// Whether a body is asleep, as the four bytes its flags are in read, and what
+// the last step left that as. The first byte of the four is the number's low
+// one on every platform Tide builds for.
+static inline bool flags_asleep(const int32_t flags)
+{
+    return ((uint32_t)flags >> 16 & 0xffu) != 0;
+}
+
+static inline bool flags_step_asleep(const int32_t flags)
+{
+    return ((uint32_t)flags >> 24 & 0xffu) != 0;
+}
+
+// The same four bytes with both of those saying `asleep`.
+static inline int32_t flags_left(const int32_t flags, const bool asleep)
+{
+    return (int32_t)(((uint32_t)flags & 0xffffu) | (asleep ? 0x01010000u : 0u));
+}
+
 // A step with fewer bodies awake than this runs on its own thread: sharing it
 // out would cost more than it saves. The step itself is quicker shared from a
 // few hundred bodies, but a tick whose C starts jobs runs its systems on
@@ -166,8 +201,13 @@ typedef struct world {
     uint64_t used;  // When a tick last had it
     int bases[B2_SNAPSHOT_SECTIONS]; // Where each section of its image goes: part of its state, as the image says them
     int image_size;                  // Its last image's, which is about the next one's: how much room to ask for
-    uint8_t *before; // Measuring: the last image, to count what changed of it
+    // Measuring and checking only: a copy of the last image, to count what changed of it and to see that
+    // what Box2D said changed is all that did. A match keeps none: its image is in its list.
+    uint8_t *before;
     int before_size;
+    bool before_good; // It's the world's last image
+    uint8_t *whole;   // Checking: the image written whole, to compare
+    int whole_size;
     // What each body is, by its index, as Box2D was last asked or told: one more than its b2BodyType, or 0 for
     // one not asked about yet. It's Box2D's own answer remembered, so that looking at every body every tick
     // for a `type` that code wrote is a comparison and not a call (see retyped)
@@ -265,6 +305,18 @@ static int32_t made_count;
 static int32_t made_room;
 static int32_t made_taken;
 
+// The bodies code put to sleep this tick (sync_body), in the order Enter came
+// to them. The step puts each to sleep right before it steps (put_to_sleep),
+// after everything else the tick wrote has gone to Box2D: a body's own move
+// or push, and those of the bodies it touches, would wake it again.
+static int64_t *lulls;
+static int32_t lull_count;
+static int32_t lull_room;
+// The running tick's step put bodies to sleep that way. Box2D takes the bodies
+// that touch one with it, and says nothing of which those were: b2t_leave then
+// asks, of each body that was awake and that the step says nothing of.
+static bool slept;
+
 // Where the running tick's step left a body it moved: what b2t_leave writes
 // into the body's component, found by the body's index. The step says which
 // bodies those are (its move events), so Leave asks Box2D nothing for them,
@@ -287,6 +339,10 @@ static uint32_t stepped; // Steps taken, by any world: the last one's number
 static int32_t shared_steps;
 static int32_t restores;
 static bool measuring; // No clock is read otherwise
+static bool checking;  // Every image written in parts is compared with the image written whole
+static bool always;    // ...and images are written in parts whatever is awake
+static int32_t images_whole;
+static int32_t images_in_parts;
 static uint64_t step_ns;
 static uint64_t image_ns;
 static uint64_t blocks_changed; // Of the images taken while measuring: their 16 KiB blocks that weren't as the image before had them
@@ -368,12 +424,14 @@ static void make(world *w, const int workers)
     def.enqueueTask = enqueue;
     def.finishTask = finish;
     w->id = b2CreateWorld(&def);
+    if (always) b2World_SetSnapshotAwakeShare(w->id, 1);
     w->made = true;
     w->workers = workers;
     w->stamp = 0;
     w->chain = 0;
     memset(w->bases, 0, sizeof w->bases);
     w->image_size = 0;
+    w->before_good = false;
     if (w->kinds) memset(w->kinds, 0, w->kinds_room);
 }
 
@@ -444,6 +502,7 @@ bool b2t_open(const int64_t stamp)
         abort();
     }
     made_count = made_taken = 0;
+    lull_count = 0;
     shed_count = 0;
     const int workers = workers_now();
     for (int i = 0; i < WORLDS; i++) {
@@ -484,6 +543,7 @@ static world *restore(const uint8_t *image, const int32_t size, const int64_t st
     if (size == 0 || !b2GetSnapshotBases(image, size, w->bases)) memset(w->bases, 0, sizeof w->bases);
     if (w->kinds) memset(w->kinds, 0, w->kinds_room); // Its bodies are the image's now: none is known
     w->image_size = size;
+    w->before_good = false; // Its next image is written whole
     w->stamp = stamp;
     w->chain = (uint64_t)stamp;
     w->used = ++uses;
@@ -531,12 +591,15 @@ void b2t_forget(void)
     for (int i = 0; i < WORLDS; i++) {
         unmake(&worlds[i]);
         free(worlds[i].before);
+        free(worlds[i].whole);
         free(worlds[i].kinds);
         worlds[i] = (world){0};
     }
     active = NULL;
     asked = NULL;
     made_count = made_taken = 0;
+    lull_count = 0;
+    slept = false;
     shed_count = 0;
 }
 
@@ -545,6 +608,26 @@ void b2t_forget(void)
 void b2t_share_from(const int32_t bodies)
 {
     share_from = bodies > 0 ? bodies : SHARED_BODIES;
+}
+
+// For tests: every image that's written as what changed of the last one is
+// also taken whole, and the two compared. One byte apart ends the program,
+// saying where: the image is in the match's hash, and a player who joins makes
+// their world from it. With `whenever`, the worlds made from here on write
+// their images in parts whenever they can, where they'd write them whole
+// while most of their bodies are awake: more for the check to see.
+void b2t_check(const bool on, const bool whenever)
+{
+    checking = on;
+    always = on && whenever;
+}
+
+// How many images were written whole, and how many as what changed of the
+// last one, since the program started: tests read it to see they test both.
+void b2t_images(int32_t *whole, int32_t *in_parts)
+{
+    *whole = images_whole;
+    *in_parts = images_in_parts;
 }
 
 // How many steps were shared out over threads, and how many times a world was
@@ -618,6 +701,10 @@ static bool sync_body(body *b)
         def.sleepThreshold = b->sleep_speed >= 0 ? b->sleep_speed : 0; // And 0 for what's no number
         def.motionLocks.angularZ = b->fixed_rotation;
         def.isBullet = b->bullet;
+        // Spawned asleep: it's made so, by itself, and is there for the others to rest on or run into. A
+        // static body is neither asleep nor awake
+        if (def.type == b2_staticBody) b->asleep = false;
+        def.isAwake = !b->asleep;
         id = b2CreateBody(w->id, &def);
         b->id = handle(id.index1, id.generation);
         if (b->id != 0) know(w, id.index1, (uint8_t)(def.type + 1));
@@ -657,11 +744,31 @@ static bool sync_body(body *b)
             b2Body_SetAngularVelocity(id, b->spin);
             did |= 8u;
         }
+        // Asleep or awake, where code wrote another than the last step left. Waking is done here, and
+        // Box2D wakes all of what the body fell asleep with. Sleeping waits for the step (put_to_sleep).
+        // A static body is neither, and reads so: one that was asleep and was just made static, too
+        if (b2Body_GetType(id) == b2_staticBody) {
+            b->asleep = false;
+        } else if (b->asleep != b->step_asleep) {
+            if (!b->asleep) b2Body_SetAwake(id, true);
+            did |= 128u;
+        }
     }
+    const bool is_new = did & 1u;
+    // A new sleeping body must go last too: changing the world's sleeping setting or gravity below
+    // wakes it after creation, just as those changes wake a body code put to sleep this tick.
+    if (b->asleep && (is_new || b->asleep != b->step_asleep)) {
+        if (lull_count == lull_room) {
+            const int32_t room = lull_room ? lull_room * 2 : 64;
+            lulls = tide_realloc(lulls, (size_t)lull_room * sizeof *lulls, (size_t)room * sizeof *lulls);
+            lull_room = room;
+        }
+        lulls[lull_count++] = b->id;
+    }
+    b->step_asleep = b->asleep; // What Leave makes of both, once the step has had its say
     // A body that was just made has no shape yet, so no weight, and an impulse would do nothing to it: the
     // ones it was spawned with wait for the step, which gives them once its shapes are on it (push_new).
     // Either way they're given once, and noted here
-    const bool is_new = did & 1u;
     if (b->impulse.x != 0 || b->impulse.y != 0) {
         if (!is_new) b2Body_ApplyLinearImpulseToCenter(id, (b2Vec2){b->impulse.x, b->impulse.y}, true);
         b->impulse = (tide_float2){0, 0};
@@ -701,6 +808,7 @@ typedef struct body_fields {
     const float *step_vx;
     const float *step_vy;
     const float *step_spin;
+    const int32_t *flags; // Its four bools, of which two say whether it's asleep (flags_asleep)
 } body_fields;
 
 static body_fields fields_of(const tide_rows *rows)
@@ -724,6 +832,7 @@ static body_fields fields_of(const tide_rows *rows)
         .step_vx = tide_rows_floats(rows, 0, offsetof(body, step_velocity.x)),
         .step_vy = tide_rows_floats(rows, 0, offsetof(body, step_velocity.y)),
         .step_spin = tide_rows_floats(rows, 0, offsetof(body, step_spin)),
+        .flags = tide_rows_ints(rows, 0, FLAGS),
     };
 }
 
@@ -771,7 +880,8 @@ void b2t_enter(tide_rows *rows, physics *p)
         const bool pushed = f.vx[i] != f.step_vx[i] || f.vy[i] != f.step_vy[i] || f.spin[i] != f.step_spin[i];
         const bool nudged = f.impulse_x[i] != 0 || f.impulse_y[i] != 0 || f.turn[i] != 0;
         const bool is_new = f.id[i] == 0 && f.id_high[i] == 0;
-        if (!is_new && !moved && !pushed && !nudged && !retyped(w, f.id[i], f.id_high[i], f.type[i])) continue;
+        const bool lulled = flags_asleep(f.flags[i]) != flags_step_asleep(f.flags[i]); // Put to sleep, or woken
+        if (!is_new && !moved && !pushed && !nudged && !lulled && !retyped(w, f.id[i], f.id_high[i], f.type[i])) continue;
         body b;
         tide_rows_get(rows, 0, i, &b);
         const tide_float2 impulse = b.impulse;
@@ -782,7 +892,8 @@ void b2t_enter(tide_rows *rows, physics *p)
                 made = tide_realloc(made, (size_t)made_room * sizeof *made, (size_t)room * sizeof *made);
                 made_room = room;
             }
-            made[made_count++] = (new_body){b.id, entities[i], impulse, turn};
+            // One that's made asleep stays so: the impulses it was spawned with would wake it
+            made[made_count++] = b.asleep ? (new_body){b.id, entities[i], {0, 0}, 0} : (new_body){b.id, entities[i], impulse, turn};
         }
         tide_rows_set(rows, 0, i, &b); // Its id, and the impulses it was given, which are gone
         f = fields_of(rows);
@@ -907,6 +1018,25 @@ static void push_new(const world *w)
     }
 }
 
+// The bodies code put to sleep this tick go to sleep, now that everything else
+// the tick wrote is Box2D's: last, so that each is asleep as the step starts.
+// Box2D puts a body's island to sleep with it, the bodies that touch it and
+// the ones those touch, wherever they are and however fast: what they have of
+// speed is gone, and each stays where it is until something wakes it. In the
+// order Enter came to them, and noted with them (sync_body), so nothing is
+// noted here. Whether any was.
+static bool put_to_sleep(const world *w)
+{
+    const bool any = lull_count > 0;
+    for (int32_t i = 0; i < lull_count; i++) {
+        const b2BodyId id = body_of(w, lulls[i]);
+        // One that's asleep already went with a body before it in the list
+        if (b2Body_IsValid(id) && b2Body_GetType(id) != b2_staticBody && b2Body_IsAwake(id)) b2Body_SetAwake(id, false);
+    }
+    lull_count = 0;
+    return any;
+}
+
 // A number the world is tuned by, as Box2D takes it: none under 0, and none that isn't one.
 static float tuned(const float value)
 {
@@ -961,13 +1091,16 @@ int64_t b2t_step(const float dt, const int32_t substeps, const tide_float2 gravi
     note('s', &gravity, sizeof gravity);
     push_new(w);
     b2World_SetGravity(w->id, (b2Vec2){gravity.x, gravity.y});
-    if (turned && sleeping) {
+    if (turned) {
         // Everything is awake to feel it: a body at rest would stay where the old gravity left it. Box2D
-        // wakes every body when sleeping is turned off, and has no other call for it. It follows from the
-        // gravity, which every step notes. A world whose bodies never sleep has none to wake.
-        b2World_EnableSleeping(w->id, false);
-        b2World_EnableSleeping(w->id, true);
+        // wakes every body when sleeping changes to off, and has no other call for it. Code can put a
+        // body to sleep with automatic sleeping off too, so turn it on first in that case, then off again.
+        // Either way leave the setting as the match says. It follows from the gravity, which every step
+        // notes, and bodies code put to sleep this tick still go last (put_to_sleep).
+        b2World_EnableSleeping(w->id, !sleeping);
+        b2World_EnableSleeping(w->id, sleeping);
     }
+    slept = put_to_sleep(w);
     shared = w->workers > 1 && b2World_GetAwakeBodyCount(w->id) >= share_from;
     shared_steps += shared;
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
@@ -1003,44 +1136,158 @@ static int place(world *w, const int *sizes, bool *moved)
     return end;
 }
 
-// The world's state into the match's list, which is then exactly it, and how
-// many bytes that is. Box2D writes it once, into room for a little more than
-// the last one took; a second time when it's more than that, or when a section
-// has to move.
+enum { BLOCK = 16384 }; // What a measured run counts the image's changes by
+
+// Which part of an image a byte is in, for what a failed check says: Box2D's
+// sections, in its order (snapshot.c).
+static const char *const sections[B2_SNAPSHOT_SECTIONS] = {
+    "settings and ids", "static and disabled sets", "awake set", "sleeping sets", "bodies",      "shapes",
+    "fat bounds",       "contacts",                 "joints",    "chains",        "sensors",     "islands",
+    "static tree",      "kinematic tree",           "dynamic tree", "pairs",      "graph",
+};
+
+// A copy of the image a match's list is about to hold, which measuring and
+// checking go by.
+static void remember(world *w, const uint8_t *image, const int size)
+{
+    w->before = tide_realloc(w->before, (size_t)w->before_size, (size_t)size);
+    memcpy(w->before, image, (size_t)size);
+    w->before_size = size;
+    w->before_good = true;
+}
+
+// The parts Box2D says changed, over the copy of the last image: what the
+// match's list becomes. While measuring, the image's blocks that a part made
+// otherwise are counted.
+static void remember_parts(world *w, const b2SnapshotPart *parts, const int count, const int size)
+{
+    w->before = tide_realloc(w->before, (size_t)w->before_size, (size_t)size);
+    if (size > w->before_size) memset(w->before + w->before_size, 0, (size_t)(size - w->before_size)); // As a list grows
+    const int blocks = (size + BLOCK - 1) / BLOCK;
+    uint8_t *changed = measuring ? tide_alloc_zeroed((size_t)blocks, 1) : NULL;
+    if (changed) {
+        for (int at = w->before_size / BLOCK; at < blocks; at++) changed[at] = at * BLOCK + BLOCK > w->before_size;
+    }
+    for (int i = 0; i < count; i++) {
+        const b2SnapshotPart *part = &parts[i];
+        if (part->offset < 0 || part->offset + part->size > size) {
+            fprintf(stderr, "Box2D gave a part of its image that's outside it: %d bytes at %d of %d\n", part->size, part->offset, size);
+            abort();
+        }
+        for (int at = part->offset; changed && at < part->offset + part->size;) {
+            const int end = (at / BLOCK + 1) * BLOCK < part->offset + part->size ? (at / BLOCK + 1) * BLOCK : part->offset + part->size;
+            if (memcmp(w->before + at, part->bytes + (at - part->offset), (size_t)(end - at)) != 0) changed[at / BLOCK] = 1;
+            at = end;
+        }
+        memcpy(w->before + part->offset, part->bytes, (size_t)part->size);
+    }
+    for (int at = 0; changed && at < blocks; at++) blocks_changed += changed[at];
+    if (changed) blocks_in_all += (uint64_t)blocks;
+    free(changed);
+    w->before_size = size;
+}
+
+// The image written whole, against the one its parts made: the same bytes, or
+// the program ends, saying where the first one that isn't is.
+static void check(world *w, const int size)
+{
+    w->whole = tide_realloc(w->whole, (size_t)w->whole_size, (size_t)size);
+    w->whole_size = size;
+    int sizes[B2_SNAPSHOT_SECTIONS];
+    const int whole = b2World_CheckSnapshotAt(w->id, w->whole, size, w->bases, sizes);
+    if (whole == size && memcmp(w->whole, w->before, (size_t)size) == 0) return;
+    if (whole != size) {
+        fprintf(stderr, "Box2D's image in parts is %d bytes, and its image written whole %d\n", size, whole);
+        abort();
+    }
+    int first = 0;
+    int apart = 0;
+    for (int at = size - 1; at >= 0; at--) {
+        if (w->whole[at] == w->before[at]) continue;
+        first = at;
+        apart++;
+    }
+    int section = -1;
+    for (int i = 0; i < B2_SNAPSHOT_SECTIONS; i++) {
+        if (w->bases[i] <= first) section = i;
+    }
+    const int in = section < 0 ? first : first - w->bases[section];
+    fprintf(stderr, "Box2D's image in parts isn't its image written whole: %d bytes apart, the first at %d, which is byte %d of %s", apart,
+            first, in, section < 0 ? "its header" : sections[section]);
+    // The sections of things that each take the same room start with how many there are
+    int32_t count = 0;
+    if (section >= 0) memcpy(&count, w->whole + w->bases[section], sizeof count);
+    const int record = section < 0 ? 0 : b2GetSnapshotRecordSize(section);
+    if (record && in >= 4 && in < 4 + count * record) fprintf(stderr, ": byte %d of number %d", (in - 4) % record, (in - 4) / record);
+    fprintf(stderr, " (%d of them). Written whole it's %02x, and in parts %02x\n", (int)count, w->whole[first], w->before[first]);
+    abort();
+}
+
+// The world's state into the match's list, and how many bytes that is.
+//
+// Where Box2D can say what changed of its last image, which the list holds,
+// the list keeps the rest: only what changed is written, and nothing is
+// compared but that (b2World_GetSnapshotParts, tide_list_out_keep). The image
+// is, byte for byte, the one written whole.
+//
+// Otherwise Box2D writes all of it into room for a little more than the last
+// one took, and the list is then exactly it; a second time when it's more
+// than that, or when a section has to move.
 int32_t b2t_image(tide_list_out *out)
 {
-    world *placed = active;
+    world *w = active;
     int sizes[B2_SNAPSHOT_SECTIONS] = {0};
     const uint64_t began = measuring ? tide_time_now_ns() : 0;
-    int room = placed->image_size ? placed->image_size + placed->image_size / 16 + 4096 : 0;
+    const bool remembers = measuring || checking;
+    // The copy a measured or checked run goes by has to be the last image
+    if (w->image_size > 0 && (!remembers || w->before_good)) {
+        const b2SnapshotPart *parts;
+        int count;
+        const int size = b2World_GetSnapshotParts(w->id, w->bases, sizes, &parts, &count);
+        bool moved = false;
+        if (size != 0) place(w, sizes, &moved); // A section outgrew its place, or left too much of it: all of it again
+        if (size > 0 && !moved) {
+            tide_list_out_keep(out, (uint32_t)size);
+            for (int i = 0; i < count; i++) tide_list_out_part(out, (uint32_t)parts[i].offset, parts[i].bytes, (uint32_t)parts[i].size);
+            w->image_size = size;
+            images_in_parts++;
+            const uint64_t counting = measuring ? tide_time_now_ns() : 0;
+            if (measuring) image_ns += counting - began;
+            if (remembers) remember_parts(w, parts, count, size);
+            if (checking) check(w, size);
+            if (measuring) counting_ns += tide_time_now_ns() - counting;
+            return size;
+        }
+    }
+
+    int room = w->image_size ? w->image_size + w->image_size / 16 + 4096 : 0;
     uint8_t *image = room ? tide_list_out_room(out, (uint32_t)room) : NULL;
-    int size = b2World_GetSnapshotAt(placed->id, image, room, placed->bases, sizes);
+    int size = b2World_GetSnapshotAt(w->id, image, room, w->bases, sizes);
     bool moved;
-    const int after = place(placed, sizes, &moved);
+    const int after = place(w, sizes, &moved);
     if (moved || size > room) { // A section outgrew its place or left too much of it, or the image its room
         if (moved) size = after;
         if (size > room) {
             room = size;
             image = tide_list_out_room(out, (uint32_t)room);
         }
-        size = b2World_GetSnapshotAt(placed->id, image, room, placed->bases, sizes);
+        size = b2World_GetSnapshotAt(w->id, image, room, w->bases, sizes);
     }
     tide_list_out_count(out, (uint32_t)size);
-    placed->image_size = size;
+    w->image_size = size;
+    images_whole++;
     if (measuring) {
         const uint64_t counting = tide_time_now_ns();
         image_ns += counting - began;
-        world *w = active;
-        enum { BLOCK = 16384 };
         for (int at = 0; at < size; at += BLOCK) {
             const int n = size - at < BLOCK ? size - at : BLOCK;
             blocks_changed += at + n > w->before_size || memcmp(w->before + at, image + at, (size_t)n) != 0;
             blocks_in_all++;
         }
-        w->before = tide_realloc(w->before, (size_t)w->before_size, (size_t)size);
-        memcpy(w->before, image, (size_t)size);
-        w->before_size = size;
+        remember(w, image, size);
         counting_ns += tide_time_now_ns() - counting;
+    } else if (checking) {
+        remember(w, image, size);
     }
     return size;
 }
@@ -1091,6 +1338,14 @@ static body_places places_of(tide_rows *rows)
 // it and the step left it there, or it just came to rest: its component gets
 // what Box2D has, so that the next tick's Enter finds nothing written.
 //
+// Whether it's asleep is written the same way, where its component doesn't say
+// so already: awake for a body the step moved, asleep for one that fell asleep
+// in it. Any other is as its component says, as nothing else puts a body to
+// sleep or wakes one without the step moving it, but in a tick whose step put
+// bodies to sleep for code (`slept`): Box2D took the bodies that touched them
+// along, so each body that was awake and that the step says nothing of is
+// asked whether it still is.
+//
 // The fields are only asked for to write once a body has something to write,
 // so a run of bodies at rest leaves every one of them shared with the match's
 // snapshots. Runs go to several threads at once: each reads what the step
@@ -1101,19 +1356,26 @@ void b2t_leave(tide_rows *rows, const physics *p)
     const uint32_t count = tide_rows_count(rows);
     body_fields f = fields_of(rows);
     body_places to = {0};
+    int32_t *flags_to = NULL;
     bool writing = false;
     for (uint32_t i = 0; i < count; i++) {
         const int64_t id = (int64_t)((uint64_t)(uint32_t)f.id[i] | (uint64_t)(uint32_t)f.id_high[i] << 32);
         if (id == 0) continue;
         const uint32_t index = (uint32_t)f.id[i];
-        const left *l = index < left_room ? &lefts[index] : NULL;
-        float x;
-        float y;
-        float angle;
-        float vx;
-        float vy;
-        float spin;
-        if (l && l->step == stepped && l->id == id && l->awake) {
+        const left *l = index < left_room && lefts[index].step == stepped && lefts[index].id == id ? &lefts[index] : NULL;
+        // Whether it's asleep, where that can be other than its component says: a body the step says
+        // something of, and any body in a tick whose step put bodies to sleep for code
+        const bool looked = l || slept;
+        const int32_t flags = looked ? f.flags[i] : 0;
+        bool asleep = l ? !l->awake : flags_step_asleep(flags);
+        bool placed = true; // Its place and speeds are to be written
+        float x = 0;
+        float y = 0;
+        float angle = 0;
+        float vx = 0;
+        float vy = 0;
+        float spin = 0;
+        if (l && l->awake) {
             x = l->x;
             y = l->y;
             angle = l->angle;
@@ -1121,22 +1383,34 @@ void b2t_leave(tide_rows *rows, const physics *p)
             vy = l->vy;
             spin = l->spin;
         } else {
+            const b2BodyId asked = body_of(active, id);
+            // Put to sleep by code this tick, with a body it touched
+            if (!l && slept && !asleep && type_of(f.type[i]) != b2_staticBody && b2Body_IsValid(asked)) asleep = !b2Body_IsAwake(asked);
             const bool still = f.vx[i] == 0 && f.vy[i] == 0 && f.spin[i] == 0 && f.step_vx[i] == 0 && f.step_vy[i] == 0
                                && f.step_spin[i] == 0;
             const bool there = f.x[i] == f.step_x[i] && f.y[i] == f.step_y[i] && f.angle[i] == f.step_angle[i];
-            if (still && there) continue;
-            const b2BodyId asked = body_of(active, id);
-            if (!b2Body_IsValid(asked)) continue;
-            const b2Pos at = b2Body_GetPosition(asked);
-            const b2Vec2 velocity = b2Body_GetLinearVelocity(asked);
-            x = (float)at.x;
-            y = (float)at.y;
-            angle = b2Rot_GetAngle(b2Body_GetRotation(asked));
-            vx = velocity.x;
-            vy = velocity.y;
-            spin = b2Body_GetAngularVelocity(asked);
+            placed = !(still && there) && b2Body_IsValid(asked);
+            if (placed) {
+                const b2Pos at = b2Body_GetPosition(asked);
+                const b2Vec2 velocity = b2Body_GetLinearVelocity(asked);
+                x = (float)at.x;
+                y = (float)at.y;
+                angle = b2Rot_GetAngle(b2Body_GetRotation(asked));
+                vx = velocity.x;
+                vy = velocity.y;
+                spin = b2Body_GetAngularVelocity(asked);
+            }
         }
-        if (!writing) { // What's written is what's read from here on
+        const int32_t left_as = flags_left(flags, asleep);
+        if (looked && left_as != flags) {
+            if (!flags_to) { // What's written is what's read from here on
+                flags_to = tide_rows_ints_mut(rows, 0, FLAGS);
+                f = fields_of(rows);
+            }
+            flags_to[i] = left_as;
+        }
+        if (!placed) continue;
+        if (!writing) {
             to = places_of(rows);
             f = fields_of(rows);
             writing = true;

@@ -9,10 +9,10 @@
 extern const versus_way wide_c;
 
 static versus_flag flags[] = {
-    {"count", "bodies", 1000000, 10000, 0},
-    {"kept", "1 to keep each tick's world before the tick, as a client keeps every tick it predicts", 0, 0, 0},
-    {"tagged", "1 for crates, which a system moves unless they're frozen", 0, 0, 0},
-    {"frozen", "of a hundred crates, how many are frozen", 0, 0, 0},
+    {"count", "bodies", 1000000, 10000, 0, 0},
+    {"kept", "1 to keep each tick's world before the tick, as a client keeps every tick it predicts", 0, 0, 0, 0},
+    {"tagged", "1 for crates, which a system moves unless they're frozen", 0, 0, 0, 0},
+    {"frozen", "of a hundred crates, how many are frozen", 0, 0, 0, 0},
 };
 
 // With --kept 1, each tick's world is kept first, as a client keeps every tick

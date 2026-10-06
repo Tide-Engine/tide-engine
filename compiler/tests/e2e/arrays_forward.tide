@@ -1,0 +1,29 @@
+// Array elements can be structs declared later, including through another
+// struct's nested arrays. Their C types must precede every holder.
+
+struct Shelf
+{
+    Bag[2] bags;
+}
+
+struct Bag
+{
+    Item[2][3] items;
+}
+
+struct Item
+{
+    bool used;
+    int value;
+}
+
+singleton Rack { Shelf shelf; }
+singleton Seen { int total; }
+scene Main { }
+
+system Fill(mut Rack rack, mut Seen seen)
+{
+    rack.shelf.bags[0].items[0][1] = Item { used = true, value = 5 };
+    rack.shelf.bags[1].items[1][2] = Item { used = true, value = 19 };
+    seen.total = rack.shelf.bags[0].items[0][1].value + rack.shelf.bags[1].items[1][2].value;
+}

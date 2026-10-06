@@ -6,9 +6,47 @@
 <script>
   const phases = ['write', 'other', 'read', 'denied', 'read-denied', 'quota'];
   const phase = new URLSearchParams(location.search).get('phase') || 'write';
-  let sent = Promise.resolve();
-  const post = (path, body) => sent = sent.then(() => fetch(path, { method: 'POST', body }));
-  const show = line => { document.getElementById('log').textContent += line + '\n'; post('/log', phase + ': ' + line); };
+  // How far this page got, which the test's runner asks a page that gives no
+  // result (cmake/run_web_served_test.mjs). The program starts once its files
+  // are read from IndexedDB, so a page that waits there prints nothing: what
+  // IndexedDB was asked and what it answered are steps too.
+  window.tideSteps = [];
+  const step = what => tideSteps.push(`${Math.round(performance.now())} ms: ${what}`);
+  step(`the ${phase} phase's page started`);
+  for (const name of ['visibilitychange', 'freeze', 'resume'])
+    document.addEventListener(name, () => step(`${name}: the page is ${document.visibilityState}`));
+  const open = IDBFactory.prototype.open;
+  IDBFactory.prototype.open = function(...given) {
+    step('files: the database is asked for');
+    const request = open.apply(this, given);
+    for (const name of ['upgradeneeded', 'blocked', 'error', 'success'])
+      request.addEventListener(name, () => step(`files: the database's ${name}`));
+    return request;
+  };
+  const begin = IDBDatabase.prototype.transaction;
+  IDBDatabase.prototype.transaction = function(names, mode, options) {
+    const made = begin.call(this, names, mode, options);
+    const kind = mode || 'readonly';
+    step(`files: a ${kind} transaction`);
+    for (const name of ['complete', 'abort']) made.addEventListener(name, () => step(`files: the ${kind} transaction's ${name}`));
+    return made;
+  };
+  // What the program prints goes to the test's server, in order. A line that
+  // can't be sent doesn't stop the ones after it, the next phase or the
+  // result, which would leave the page with nothing said: it's the result.
+  // Each answer is read to its end, which is when the browser has the request
+  // as done: unread, they'd all be cut off as the page goes to the next phase.
+  let sent = Promise.resolve(), lost = '', said = false;
+  const post = (path, body) => sent = sent.then(() => fetch(path, { method: 'POST', body })).then(answer => answer.arrayBuffer()).catch(error => {
+    lost = lost || `${path} (${body}): ${error}`;
+    step(`${path} couldn't be sent: ${error}`);
+  });
+  const show = line => {
+    if (!said) step('the program printed its first line');
+    said = true;
+    document.getElementById('log').textContent += line + '\n';
+    post('/log', phase + ': ' + line);
+  };
   if (phase === 'denied') Object.defineProperty(window, 'indexedDB', {
     get() { throw new DOMException('refused', 'SecurityError'); }, configurable: true,
   });
@@ -23,12 +61,15 @@
     canvas: document.getElementById('canvas'), backend: 'webgl', checkGL: true,
     arguments: ['--' + phase], print: show, printErr: show,
     onExit(code) {
-      if (code) post('/result', String(code));
-      else if (phases.indexOf(phase) + 1 < phases.length)
-        sent.then(() => location.replace('/?phase=' + phases[phases.indexOf(phase) + 1]));
-      else post('/result', '0');
+      step(`the program exited with ${code}`);
+      const next = phases[phases.indexOf(phase) + 1];
+      sent.then(() => {
+        if (lost) post('/result', `couldn't send ${lost}`);
+        else if (code || !next) post('/result', String(code));
+        else location.replace('/?phase=' + next);
+      });
     },
-    onAbort(reason) { show('abort: ' + reason); post('/result', 'abort'); },
+    onAbort(reason) { step('the program stopped: ' + reason); show('abort: ' + reason); post('/result', 'abort'); },
   };
 </script>
 {{{ SCRIPT }}}

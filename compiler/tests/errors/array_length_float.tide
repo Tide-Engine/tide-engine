@@ -1,0 +1,4 @@
+// expect: an array's length is a constant int, like 'int[32] cells' or 'int[CAP] cells'
+scene Main { }
+singleton Size { int n = 4; }
+component Bad { int[2.5] cells; }

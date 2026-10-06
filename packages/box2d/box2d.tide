@@ -37,6 +37,15 @@ enum BodyType
 // What it is can be written too: a body that's `Dynamic` and is made
 // `Kinematic` is that from the next step on, with the shapes it had.
 //
+// Whether it's asleep is Box2D's after each step too: at rest, and stepped no
+// more until something wakes it. A system that writes `asleep` puts the body
+// to sleep or wakes it, at the next step, and one spawned with it starts
+// asleep. Box2D sleeps and wakes bodies an island at a time, the bodies that
+// touch each other, so a body that's put to sleep takes what it touches with
+// it, and one that's woken wakes what it fell asleep with. What code puts to
+// sleep in a tick is asleep as that tick's step starts, whatever else it wrote
+// into it or into the others that tick.
+//
 // Where it is and how it's turned are said to be that, for views: they see a
 // body turn the short way between two ticks, as its angle goes from pi to -pi
 // at half a turn, and when the server corrects where this machine had it, they
@@ -63,6 +72,10 @@ component Body
     float stepSpin;
     bool fixedRotation;
     bool bullet;
+    bool asleep; // At rest, and not stepped until something wakes it: never so for a static body
+    // The package's own: whether the last step left it asleep, which is how
+    // an `asleep` that code wrote since is told
+    bool stepAsleep;
 }
 
 // A box on the entity's body, `size` wide and high around `offset`.

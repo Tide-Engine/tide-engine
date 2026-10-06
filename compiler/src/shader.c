@@ -224,6 +224,7 @@ static bool type_fits(emit *em, const type t, const loc at)
     case TY_MAP:
     case TY_SET: why = "the GPU has no lists, maps or sets: it reads fields of numbers, and samples grids of colors"; break;
     case TY_GRID: why = "a grid on the GPU is a texture, read with 'grid.Sample(uv)' where it's a field of a parameter"; break;
+    case TY_ARRAY: why = "arrays can't go to the GPU yet: pass the elements it reads as fields of their own"; break;
     case TY_TEXTURE: why = "a texture is sampled with 'texture.Sample(uv)', not kept as a GPU value"; break;
     case TY_RENDER_TARGET: why = "a render target belongs to the CPU: sample its color as a Texture"; break;
     case TY_ENTITY:
@@ -1902,7 +1903,7 @@ static void ex(emit *em, const expr *e)
         return;
     case E_INDEX:
     case E_LIST:
-        refuse(em, e->at, "the GPU has no lists, maps or grids to index or make: it reads fields of numbers, and samples a "
+        refuse(em, e->at, "the GPU has no lists, maps, arrays or grids to index or make: it reads fields of numbers, and samples a "
                           "grid of colors with 'grid.Sample(uv)'");
         return;
     case E_THIS:

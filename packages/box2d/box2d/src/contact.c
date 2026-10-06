@@ -271,6 +271,17 @@ void b2CreateContact( b2World* world, b2Shape* shapeA, b2Shape* shapeB )
 	int shapeIdA = shapeA->id;
 	int shapeIdB = shapeB->id;
 
+	// Tide: the contact, both its bodies, whose lists it heads now, the contacts that headed them, the set it's
+	// put in and the pairs (see b2SnapTrack). Either body may be asleep or static: the ground is in a list
+	// with everything that's on it.
+	b2SnapTouchContact( world, contactId );
+	b2SnapTouchBody( world, shapeA->bodyId );
+	b2SnapTouchBody( world, shapeB->bodyId );
+	b2SnapTouchContactKey( world, bodyA->headContactKey );
+	b2SnapTouchContactKey( world, bodyB->headContactKey );
+	b2SnapTouchSet( world, setIndex );
+	b2SnapTouchPairs( world );
+
 	b2Contact* contact = b2Array_Get( world->contacts, contactId );
 	contact->contactId = contactId;
 	contact->generation += 1;
@@ -406,6 +417,17 @@ void b2DestroyContact( b2World* world, b2Contact* contact )
 	b2Body* bodyA = b2Array_Get( world->bodies, bodyIdA );
 	b2Body* bodyB = b2Array_Get( world->bodies, bodyIdB );
 
+	// Tide: the contact, both its bodies, its neighbors in their lists, whose links change, and the pairs
+	// (see b2SnapTrack)
+	b2SnapTouchContact( world, contact->contactId );
+	b2SnapTouchBody( world, bodyIdA );
+	b2SnapTouchBody( world, bodyIdB );
+	b2SnapTouchContactKey( world, edgeA->prevKey );
+	b2SnapTouchContactKey( world, edgeA->nextKey );
+	b2SnapTouchContactKey( world, edgeB->prevKey );
+	b2SnapTouchContactKey( world, edgeB->nextKey );
+	b2SnapTouchPairs( world );
+
 	uint32_t flags = contact->flags;
 	bool touching = ( flags & b2_contactTouchingFlag ) != 0;
 
@@ -500,12 +522,16 @@ void b2DestroyContact( b2World* world, b2Contact* contact )
 		B2_ASSERT( contact->setIndex != b2_awakeSet || ( contact->flags & b2_contactTouchingFlag ) == 0 );
 		b2SolverSet* set = b2Array_Get( world->solverSets, contact->setIndex );
 
+		// Tide: the set it's taken out of, and another contact of that set, which is any contact between
+		// two sleeping bodies when the set is the disabled one (see b2SnapTrack)
+		b2SnapTouchSet( world, contact->setIndex );
 		int movedIndex = b2Array_RemoveSwap( set->contactSims, contact->localIndex );
 		if ( movedIndex != B2_NULL_INDEX )
 		{
 			b2ContactSim* movedContactSim = set->contactSims.data + contact->localIndex;
 			b2Contact* movedContact = b2Array_Get( world->contacts, movedContactSim->contactId );
 			movedContact->localIndex = contact->localIndex;
+			b2SnapTouchContact( world, movedContactSim->contactId );
 		}
 	}
 

@@ -267,7 +267,10 @@ function objects(folder) {
             if (entry.isDirectory()) visit(path);
             else if (/\.(o|obj)$/.test(entry.name)) {
                 const stat = statSync(path, { bigint: true });
-                found.set(relative(folder, path).replaceAll("\\", "/"), `${stat.mtimeNs}:${stat.ctimeNs}:${stat.size}`);
+                found.set(relative(folder, path).replaceAll("\\", "/"), {
+                    stamp: `${stat.mtimeNs}:${stat.ctimeNs}:${stat.size}`,
+                    digest: digest(path),
+                });
             }
         }
     }
@@ -277,6 +280,17 @@ function objects(folder) {
 
 function digest(path) {
     return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+// A successful build must compile the edited calculation. File timestamps
+// alone only show that something was written, not that its contents changed.
+export function verifyObjects(scenario, before, after) {
+    const changed = [...after].filter(([path, object]) => before.get(path)?.digest !== object.digest).map(([path]) => path);
+    const expected = scenario === "tide-body" ? "game.o"
+        : scenario === "c-body" || scenario === "header" ? "c/a.c.o" : null;
+    if (expected && !changed.includes(expected)) throw new Error(`${scenario} edit did not change ${expected}`);
+    if (scenario === "cold" && !after.size) throw new Error("cold build produced no cached objects");
+    return changed;
 }
 
 function statistics(values) {
@@ -322,10 +336,11 @@ async function benchmark(opts, record, ownedRoot) {
                     console.log(`${target} ${config}, ${count} functions / ${tideFiles} Tide files, sample ${repeat + 1}/${opts.repeat}: ${scenario}`);
                     const result = await run(opts.tide, args, folder);
                     const after = objects(cache);
-                    const changed = [...after].filter(([path, stamp]) => before.get(path) !== stamp).map(([path]) => path);
+                    const changed = [...after].filter(([path, object]) => before.get(path)?.stamp !== object.stamp).map(([path]) => path);
+                    const changedContents = verifyObjects(scenario, before, after);
                     const code = digest(join(cache, "gen", "game.c"));
                     if (scenario === "tide-body" && code === previousCode) throw new Error("Tide body edit did not change generated C");
-                    record.samples.push({ target, config, functions: count, files: tideFiles, repetition: repeat + 1, scenario, wall_ms: result.wall_ms, changed_objects: changed, total_objects: after.size, generated_code_changed: previousCode === null ? null : code !== previousCode });
+                    record.samples.push({ target, config, functions: count, files: tideFiles, repetition: repeat + 1, scenario, wall_ms: result.wall_ms, changed_objects: changed, changed_object_contents: changedContents, total_objects: after.size, generated_code_changed: previousCode === null ? null : code !== previousCode });
                     previousCode = code;
                     console.log(`  ${result.wall_ms.toFixed(2)} ms; ${changed.length}/${after.size} object files written`);
                 }
@@ -375,4 +390,6 @@ async function main() {
     }
 }
 
-main().catch((error) => { console.error(error.message); process.exitCode = 1; });
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+    main().catch((error) => { console.error(error.message); process.exitCode = 1; });
+}

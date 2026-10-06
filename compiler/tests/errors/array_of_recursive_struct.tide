@@ -1,0 +1,6 @@
+// expect: struct 'B' can't contain 'A': 'A' already contains 'B'
+// expect: it would be infinitely big
+struct A { B child; }
+struct B { A parent; }
+component Shelf { A[2] entries; }
+scene Main { }
