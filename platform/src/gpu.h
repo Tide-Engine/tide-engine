@@ -26,6 +26,17 @@ typedef enum tide_gpu_buffer_kind { TIDE_GPU_VERTICES, TIDE_GPU_INDICES } tide_g
 // A texture's pixels: 4 bytes each (red, green, blue, alpha), or 1 (red).
 typedef enum tide_gpu_format { TIDE_GPU_RGBA8, TIDE_GPU_R8 } tide_gpu_format;
 
+// What a target holds beside its depth, which every target has: a color
+// image, 4 bytes a pixel, or none.
+typedef enum tide_gpu_target_format { TIDE_GPU_TARGET_COLOR, TIDE_GPU_TARGET_DEPTH } tide_gpu_target_format;
+
+// How a pipeline reads one of its textures. A color is read as it is. A
+// target's depth is read as a number, 0 at the near plane to 1 at the far
+// limit, the nearest pixel's; or compared with a number of the shader's,
+// which gives how much of the depth stored around there isn't nearer than it,
+// from 0 to 1, as the GPU filters it.
+typedef enum tide_gpu_read { TIDE_GPU_READ_COLOR, TIDE_GPU_READ_DEPTH, TIDE_GPU_READ_COMPARE } tide_gpu_read;
+
 // What a vertex attribute is in its buffer: floats, 4 bytes read as 0 to 1, or
 // ints of 32 bits, which a shader reads as ints.
 typedef enum tide_gpu_attribute_format {
@@ -72,6 +83,9 @@ typedef struct tide_gpu_pipeline_desc {
     // their textures `pixels0`, `pixels1`... WebGPU's: both in one, `vertex`
     // and `fragment`, their uniforms at binding 0 of group 0, and texture i
     // and its sampler at bindings 1 + 2i and 2 + 2i. Either stage may sample.
+    // A texture read as depth is a `sampler2D` whose red is the depth, and a
+    // `texture_depth_2d` with a `sampler`; one that's compared is a
+    // `sampler2DShadow`, and a `texture_depth_2d` with a `sampler_comparison`.
     const char *glsl_vertex, *glsl_fragment;
     const char *wgsl;
     // The vertex buffers it reads, by slot: how far apart their elements are,
@@ -90,8 +104,12 @@ typedef struct tide_gpu_pipeline_desc {
     uint32_t attribute_count;
     uint32_t uniform_size;  // Its uniform block's, in bytes: every pipeline has one
     uint32_t texture_count; // The textures it samples
+    uint8_t reads[TIDE_GPU_MAX_TEXTURES]; // ...and how it reads each: tide_gpu_read
     tide_gpu_blend blend;
     tide_gpu_depth depth;
+    // What the targets it draws into hold: a pipeline is for one kind. One for
+    // targets of depth alone writes no color, and its blend isn't read.
+    tide_gpu_target_format into;
 } tide_gpu_pipeline_desc;
 
 typedef struct tide_gpu {
@@ -128,12 +146,17 @@ typedef struct tide_gpu {
 
     // Pixels of its own to draw into, with depth, and to read back: 4 bytes
     // each, rows from the top. Its color is also a texture, with the same UVs
-    // as an uploaded image: (0, 0) is its top left. The target owns that
-    // texture; only target_free frees it. It can't be sampled in a pass that
-    // draws into it, or written with texture_write.
-    tide_gpu_id (*target)(int width, int height);
+    // as an uploaded image: (0, 0) is its top left. So is its depth, which a
+    // pipeline reads as depth or compares (tide_gpu_read), never as a color.
+    // The target owns both textures; only target_free frees them. Neither can
+    // be sampled in a pass that draws into it, or written with texture_write.
+    // A target of depth alone (TIDE_GPU_TARGET_DEPTH) has no color: its
+    // texture is 0, nothing is read back from it, and the pipelines that draw
+    // into it are made for that (tide_gpu_pipeline_desc.into).
+    tide_gpu_id (*target)(tide_gpu_target_format format, int width, int height);
     int (*target_limit)(void); // The most pixels a side one has, on this device
     tide_gpu_id (*target_texture)(tide_gpu_id target);
+    tide_gpu_id (*target_depth)(tide_gpu_id target);
     void (*target_free)(tide_gpu_id target);
     // The browser's synchronous canvas readback reports opaque alpha; the
     // sampleable color texture itself retains its original alpha.
@@ -150,7 +173,10 @@ typedef struct tide_gpu {
     void (*use)(tide_gpu_id pipeline);
     void (*uniforms)(const void *data, size_t size);
     // Its texture `slot`, and how it's sampled between pixels: blended with
-    // its neighbors, or the nearest. Each of a pipeline's is set before it draws.
+    // its neighbors, or the nearest. Each of a pipeline's is set before it
+    // draws, after the pipeline is. One the pipeline reads as depth is a
+    // target's depth, and `blended` isn't read: its nearest pixel is, and
+    // where it's compared, the GPU blends what the comparisons give.
     void (*sample)(uint32_t slot, tide_gpu_id texture, bool blended);
     void (*vertices)(uint32_t slot, tide_gpu_id buffer, size_t offset);
     void (*indices)(tide_gpu_id buffer, bool wide); // 32 bits each, or 16

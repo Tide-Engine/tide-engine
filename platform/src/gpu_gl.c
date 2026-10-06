@@ -32,7 +32,7 @@ typedef struct gl_pipeline {
 } gl_pipeline;
 
 typedef struct gl_target {
-    GLuint framebuffer, color, depth; // No framebuffer: a place that's free
+    GLuint framebuffer, color, depth; // No framebuffer: a place that's free. No color: a target of depth alone
     int width, height;
 } gl_target;
 
@@ -57,9 +57,11 @@ static uint32_t texture_names;
 
 static GLuint upload_vao;     // What index buffers are bound in while they're written, in no pipeline's place
 static GLuint uniform_buffer; // Every pipeline's uniform block, as the last draw's was set
-// How a unit samples the texture it has: the nearest pixel, or blended. A
+// How a unit samples the texture it has: the nearest pixel, blended, or, for
+// a target's depth, compared with the shader's number and those blended. A
 // texture's own way would be the same in every unit that has it.
-static GLuint samplers[2];
+enum { SAMPLE_NEAREST, SAMPLE_BLENDED, SAMPLE_COMPARED, SAMPLERS };
+static GLuint samplers[SAMPLERS];
 static const gl_pipeline *current;
 static GLenum index_type;
 static int pass_height; // The pass's target's, in its pixels
@@ -332,7 +334,7 @@ static void gl_pipeline_free(const tide_gpu_id pipeline)
     current = NULL;
 }
 
-static tide_gpu_id gl_target_make(const int width, const int height)
+static tide_gpu_id gl_target_make(const tide_gpu_target_format format, const int width, const int height)
 {
     uint32_t place = 0;
     while (place < target_count && targets[place].framebuffer) place++;
@@ -344,12 +346,22 @@ static tide_gpu_id gl_target_make(const int width, const int height)
     *t = (gl_target){.width = width, .height = height};
     glGenFramebuffers(1, &t->framebuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, t->framebuffer);
-    t->color = gl_texture_make(TIDE_GPU_RGBA8, width, height, NULL);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t->color, 0);
-    glGenRenderbuffers(1, &t->depth);
-    glBindRenderbuffer(GL_RENDERBUFFER, t->depth);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, t->depth);
+    if (format == TIDE_GPU_TARGET_COLOR) {
+        t->color = gl_texture_make(TIDE_GPU_RGBA8, width, height, NULL);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t->color, 0);
+    } else { // Nothing to draw colors into, or to read them from: OpenGL 3.3 wants that said
+        glDrawBuffers(1, (const GLenum[]){GL_NONE});
+        glReadBuffer(GL_NONE);
+    }
+    // Its depth is a texture too, which shaders read, with 8 bits of stencil beside it
+    glGenTextures(1, &t->depth);
+    bind_texture(t->depth);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, width, height, 0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, t->depth, 0);
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
         fprintf(stderr, "tide: no framebuffer to render offscreen in\n");
         abort();
@@ -358,13 +370,11 @@ static tide_gpu_id gl_target_make(const int width, const int height)
     return place + 1u;
 }
 
-// A target is a texture and a renderbuffer of its size: the smaller of the two limits.
+// A target is textures of its size.
 static int gl_target_limit(void)
 {
-    GLint texture = 0, renderbuffer = 0;
-    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &texture);
-    glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &renderbuffer);
-    const GLint limit = texture < renderbuffer ? texture : renderbuffer;
+    GLint limit = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &limit);
     return limit > 0 ? limit : 2048; // What every OpenGL ES 3 has, at least
 }
 
@@ -372,8 +382,8 @@ static void gl_target_free(const tide_gpu_id target)
 {
     gl_target *t = &targets[target - 1u];
     glDeleteFramebuffers(1, &t->framebuffer);
-    gl_texture_free(t->color);
-    glDeleteRenderbuffers(1, &t->depth);
+    if (t->color) gl_texture_free(t->color);
+    glDeleteTextures(1, &t->depth);
     *t = (gl_target){0};
 }
 
@@ -382,9 +392,18 @@ static tide_gpu_id gl_target_texture(const tide_gpu_id target)
     return targets[target - 1u].color;
 }
 
+static tide_gpu_id gl_target_depth(const tide_gpu_id target)
+{
+    return targets[target - 1u].depth;
+}
+
 static void gl_target_read(const tide_gpu_id target, uint8_t *rgba)
 {
     const gl_target *t = &targets[target - 1u];
+    if (!t->color) { // Depth alone: no pixels to read
+        memset(rgba, 0, (size_t)t->width * (size_t)t->height * 4u);
+        return;
+    }
     glBindFramebuffer(GL_FRAMEBUFFER, t->framebuffer);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, t->width, t->height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
@@ -395,10 +414,12 @@ static void gl_target_read(const tide_gpu_id target, uint8_t *rgba)
 static void gl_begin(const tide_gpu_id target, const bool clear)
 {
     int width, height;
+    bool color = true;
     if (target) {
         const gl_target *t = &targets[target - 1u];
         glBindFramebuffer(GL_FRAMEBUFFER, t->framebuffer);
         width = t->width, height = t->height;
+        color = t->color != 0;
     } else {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         tide_window_pixel_size(&width, &height);
@@ -415,21 +436,24 @@ static void gl_begin(const tide_gpu_id target, const bool clear)
         glGenBuffers(1, &uniform_buffer);
         glBindBuffer(GL_UNIFORM_BUFFER, uniform_buffer);
         glBufferData(GL_UNIFORM_BUFFER, TIDE_GPU_MAX_UNIFORMS, NULL, GL_DYNAMIC_DRAW);
-        glGenSamplers(2, samplers);
-        for (int blended = 0; blended < 2; blended++) {
-            const GLint filter = blended ? GL_LINEAR : GL_NEAREST;
-            glSamplerParameteri(samplers[blended], GL_TEXTURE_MIN_FILTER, filter);
-            glSamplerParameteri(samplers[blended], GL_TEXTURE_MAG_FILTER, filter);
-            glSamplerParameteri(samplers[blended], GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glSamplerParameteri(samplers[blended], GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glGenSamplers(SAMPLERS, samplers);
+        for (int how = 0; how < SAMPLERS; how++) {
+            const GLint filter = how == SAMPLE_NEAREST ? GL_NEAREST : GL_LINEAR;
+            glSamplerParameteri(samplers[how], GL_TEXTURE_MIN_FILTER, filter);
+            glSamplerParameteri(samplers[how], GL_TEXTURE_MAG_FILTER, filter);
+            glSamplerParameteri(samplers[how], GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glSamplerParameteri(samplers[how], GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         }
+        // 1 where the depth that's stored isn't nearer than the shader's number: the test a mesh passes to draw there
+        glSamplerParameteri(samplers[SAMPLE_COMPARED], GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+        glSamplerParameteri(samplers[SAMPLE_COMPARED], GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
     }
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, uniform_buffer);
     current = NULL;
     if (clear) {
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glDepthMask(GL_TRUE); // A clear only reaches the depth that's written: the last pipeline may have read it alone
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glClear(color ? GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT : GL_DEPTH_BUFFER_BIT);
     }
 }
 
@@ -484,9 +508,12 @@ static void gl_uniforms(const void *data, const size_t size)
 
 static void gl_sample(const uint32_t slot, const tide_gpu_id texture, const bool blended)
 {
+    // A target's depth is whole only where its nearest pixel is read, unless it's compared
+    const uint8_t read = current->desc.reads[slot];
     glActiveTexture(GL_TEXTURE0 + slot);
     glBindTexture(GL_TEXTURE_2D, texture);
-    glBindSampler(slot, samplers[blended]);
+    glBindSampler(slot, samplers[read == TIDE_GPU_READ_COMPARE ? SAMPLE_COMPARED :
+                                 read == TIDE_GPU_READ_DEPTH || !blended ? SAMPLE_NEAREST : SAMPLE_BLENDED]);
 }
 
 static void gl_vertices(const uint32_t slot, const tide_gpu_id buffer, const size_t offset)
@@ -552,6 +579,7 @@ const tide_gpu tide_gpu_gl = {
     .target = gl_target_make,
     .target_limit = gl_target_limit,
     .target_texture = gl_target_texture,
+    .target_depth = gl_target_depth,
     .target_free = gl_target_free,
     .target_read = gl_target_read,
     .begin = gl_begin,

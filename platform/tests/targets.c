@@ -1,5 +1,8 @@
 // Sample an uploaded image, then the targets it was drawn into. The same
 // top-left UVs, preserved color/depth, clip and ping-pong passes on every GPU.
+// Then targets of depth alone, and a target's depth as a shader reads it: as
+// a number, and compared.
+#include <math.h>
 #include <stdio.h>
 #include <stddef.h>
 #include <string.h>
@@ -51,6 +54,48 @@ static const char wgsl[] =
     "    return sampled;\n"
     "}\n";
 
+// A target's depth, read as a number: 0 at the near plane to 1 at the far limit.
+static const char depth_fragment[] =
+    "layout(std140) uniform uniforms { vec4 settings; };\n"
+    "uniform highp sampler2D pixels0;\n"
+    "in vec2 uv;\n"
+    "out vec4 color;\n"
+    "void main() {\n"
+    "    float depth = textureLod(pixels0, uv, 0.0).r;\n"
+    "    color = vec4(depth, depth, depth, 1);\n"
+    "}\n";
+
+// ...and compared with `settings.x`: how much of what's stored isn't nearer.
+static const char compare_fragment[] =
+    "layout(std140) uniform uniforms { vec4 settings; };\n"
+    "uniform highp sampler2DShadow pixels0;\n"
+    "in vec2 uv;\n"
+    "out vec4 color;\n"
+    "void main() {\n"
+    "    float lit = textureLod(pixels0, vec3(uv, clamp(settings.x, 0.0, 1.0)), 0.0);\n"
+    "    color = vec4(lit, lit, lit, 1);\n"
+    "}\n";
+
+#define DEPTH_WGSL(sampler_type, read)                                                                                 \
+    "struct Uniforms { settings: vec4f }\n"                                                                            \
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"                                                                \
+    "@group(0) @binding(1) var pixels0: texture_depth_2d;\n"                                                           \
+    "@group(0) @binding(2) var how0: " sampler_type ";\n"                                                              \
+    "struct Vertex { @builtin(position) at: vec4f, @location(0) uv: vec2f }\n"                                         \
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> Vertex {\n"                                                   \
+    "    var points = array<vec2f, 3>(vec2f(-1, -1), vec2f(3, -1), vec2f(-1, 3));\n"                                   \
+    "    let at = points[i];\n"                                                                                        \
+    "    return Vertex(vec4f(at, (u.settings.z + 1.0) * 0.5, 1), at * vec2f(0.5, -0.5) + vec2f(0.5));\n"               \
+    "}\n"                                                                                                              \
+    "@fragment fn fragment(v: Vertex) -> @location(0) vec4f {\n"                                                       \
+    "    let depth = " read ";\n"                                                                                      \
+    "    return vec4f(depth, depth, depth, 1);\n"                                                                      \
+    "}\n"
+
+static const char depth_wgsl[] = DEPTH_WGSL("sampler", "textureSampleLevel(pixels0, how0, v.uv, 0)");
+static const char compare_wgsl[] =
+    DEPTH_WGSL("sampler_comparison", "textureSampleCompareLevel(pixels0, how0, v.uv, clamp(u.settings.x, 0.0, 1.0))");
+
 static int failures;
 
 // Exercise the renderer as well as the backend: different target sizes,
@@ -95,6 +140,111 @@ static const tide_shader list_shader = {
         "  if (u.settings.x > 0.0) { return vec4f(v.at.x / u.screen.x / u.settings.y,\n"
         "      v.at.y / u.screen.y / u.settings.z, u.screen.z / u.settings.z, 1); }\n"
         "  return sampled;\n"
+        "}\n",
+};
+
+// A blit that shows a depth: the texture it's given, read as a number.
+static const tide_shader depth_shader = {
+    .name = "render-list depth read", .id = 0x6465707468u, .dims = 2,
+    .vertex_size = sizeof(tide_vertex), .attribute_count = 3,
+    .attributes = {{TIDE_SHADER_FLOAT2, offsetof(tide_vertex, position)},
+                   {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)},
+                   {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
+    .uniform_floats = 1, .texture_count = 1, .texture_reads = {TIDE_SHADER_READ_DEPTH},
+    .glsl_vertex =
+        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 settings; };\n"
+        "layout(location=0) in vec2 position;\n"
+        "layout(location=1) in vec2 coords;\n"
+        "out vec2 uv;\n"
+        "void main() { gl_Position = camera * vec4(position, 0, 1); uv = coords; }\n",
+    .glsl_fragment =
+        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 settings; };\n"
+        "uniform highp sampler2D pixels0;\n"
+        "in vec2 uv; out vec4 color;\n"
+        "void main() { float depth = textureLod(pixels0, uv, 0.0).r; color = vec4(depth, depth, depth, 1); }\n",
+    .wgsl =
+        "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f, settings: vec4f }\n"
+        "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+        "@group(0) @binding(1) var pixels0: texture_depth_2d;\n"
+        "@group(0) @binding(2) var how0: sampler;\n"
+        "struct Vertex { @builtin(position) at: vec4f, @location(0) uv: vec2f }\n"
+        "@vertex fn vertex(@location(0) position: vec2f, @location(1) coords: vec2f) -> Vertex {\n"
+        "  return Vertex(u.camera * vec4f(position, 0, 1), coords);\n"
+        "}\n"
+        "@fragment fn fragment(v: Vertex) -> @location(0) vec4f {\n"
+        "  let depth = textureSampleLevel(pixels0, how0, v.uv, 0);\n"
+        "  return vec4f(depth, depth, depth, 1);\n"
+        "}\n",
+};
+
+// ...and one that compares it with `settings.x`.
+static const tide_shader compare_shader = {
+    .name = "render-list depth compare", .id = 0x636f6d70617265u, .dims = 2,
+    .vertex_size = sizeof(tide_vertex), .attribute_count = 3,
+    .attributes = {{TIDE_SHADER_FLOAT2, offsetof(tide_vertex, position)},
+                   {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)},
+                   {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
+    .uniform_floats = 1, .texture_count = 1, .texture_reads = {TIDE_SHADER_READ_COMPARE},
+    .glsl_vertex =
+        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 settings; };\n"
+        "layout(location=0) in vec2 position;\n"
+        "layout(location=1) in vec2 coords;\n"
+        "out vec2 uv;\n"
+        "void main() { gl_Position = camera * vec4(position, 0, 1); uv = coords; }\n",
+    .glsl_fragment =
+        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; vec4 settings; };\n"
+        "uniform highp sampler2DShadow pixels0;\n"
+        "in vec2 uv; out vec4 color;\n"
+        "void main() {\n"
+        "  float lit = textureLod(pixels0, vec3(uv, clamp(settings.x, 0.0, 1.0)), 0.0);\n"
+        "  color = vec4(lit, lit, lit, 1);\n"
+        "}\n",
+    .wgsl =
+        "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f, settings: vec4f }\n"
+        "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+        "@group(0) @binding(1) var pixels0: texture_depth_2d;\n"
+        "@group(0) @binding(2) var how0: sampler_comparison;\n"
+        "struct Vertex { @builtin(position) at: vec4f, @location(0) uv: vec2f }\n"
+        "@vertex fn vertex(@location(0) position: vec2f, @location(1) coords: vec2f) -> Vertex {\n"
+        "  return Vertex(u.camera * vec4f(position, 0, 1), coords);\n"
+        "}\n"
+        "@fragment fn fragment(v: Vertex) -> @location(0) vec4f {\n"
+        "  let lit = textureSampleCompareLevel(pixels0, how0, v.uv, clamp(u.settings.x, 0.0, 1.0));\n"
+        "  return vec4f(lit, lit, lit, 1);\n"
+        "}\n",
+};
+
+// A 3D mesh through a shader, which leaves out every pixel past the second
+// column: what a caster with holes in it does.
+static const tide_shader caster_shader = {
+    .name = "render-list caster", .id = 0x636173746572u, .dims = 3,
+    .vertex_size = sizeof(tide_vertex3), .attribute_count = 3,
+    .attributes = {{TIDE_SHADER_FLOAT3, offsetof(tide_vertex3, position)},
+                   {TIDE_SHADER_FLOAT2, offsetof(tide_vertex3, uv)},
+                   {TIDE_SHADER_FLOAT4, offsetof(tide_vertex3, color)}},
+    .instance_floats = 4,
+    .glsl_vertex =
+        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; };\n"
+        "layout(location=0) in vec3 position;\n"
+        "layout(location=3) in vec4 m0;\n"
+        "layout(location=4) in vec4 m1;\n"
+        "layout(location=5) in vec4 m2;\n"
+        "layout(location=6) in vec4 m3;\n"
+        "void main() { gl_Position = camera * (mat4(m0, m1, m2, m3) * vec4(position, 1)); }\n",
+    .glsl_fragment =
+        "out vec4 color;\n"
+        "void main() { if (gl_FragCoord.x > 2.0) discard; color = vec4(1); }\n",
+    .wgsl =
+        "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f }\n"
+        "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+        "@vertex fn vertex(@location(0) position: vec3f, @location(3) m0: vec4f, @location(4) m1: vec4f,\n"
+        "                  @location(5) m2: vec4f, @location(6) m3: vec4f) -> @builtin(position) vec4f {\n"
+        "  let clip = u.camera * (mat4x4f(m0, m1, m2, m3) * vec4f(position, 1));\n"
+        "  return vec4f(clip.xy, (clip.z + clip.w) * 0.5, clip.w);\n"
+        "}\n"
+        "@fragment fn fragment(@builtin(position) at: vec4f) -> @location(0) vec4f {\n"
+        "  if (at.x > 2.0) { discard; }\n"
+        "  return vec4f(1);\n"
         "}\n",
 };
 
@@ -699,6 +849,232 @@ static void check_scales_and_window(void)
     tide_render_targets_free();
 }
 
+// ---------------------------------------------------------------------------
+// Depth: targets of depth alone, and a target's depth as a texture, through
+// the renderer. Each scene is a window of 8 by 12 pixels.
+
+// What a depth shows as through depth_shader: gray, that many 255ths.
+static uint32_t gray(const float depth)
+{
+    const uint32_t v = byte_of(depth);
+    return v << 24 | v << 16 | v << 8 | 0xffu;
+}
+
+static void blit_depth(const tide_depth_ref depth)
+{
+    const uint32_t texture = tide_draw_depth_source(&render_list, depth);
+    const float settings[4] = {0};
+    tide_draw_blit(&render_list, &depth_shader, TIDE_BLEND_REPLACE, NULL, settings, &texture, 0);
+}
+
+static void blit_compared(const tide_depth_ref depth, const float with)
+{
+    const uint32_t texture = tide_draw_depth_source(&render_list, depth);
+    const float settings[4] = {with};
+    tide_draw_blit(&render_list, &compare_shader, TIDE_BLEND_REPLACE, NULL, settings, &texture, 0);
+}
+
+// The window's left half is `left` and its right half `right`.
+static void expect_halves(const uint32_t left, const uint32_t right, const char *what)
+{
+    for (int y = 0; y < window_high; y++) {
+        for (int x = 0; x < window_wide; x++) expect_pixel(x, y, x < window_wide / 2 ? left : right, what);
+    }
+}
+
+static void check_depth_targets(void)
+{
+    enum { WIDE = WIDTH * 2, HIGH = HEIGHT * 2 };
+    const uint32_t indices[6] = {0, 1, 2, 0, 2, 3};
+    // The camera looks along +z: z = 0.5 is a depth of 0.25, and z = -0.5 one of 0.75
+    const tide_vertex3 left_vertices[4] = {{{-1, 1, 0.5f}, {0, 0}, TIDE_COLOR_RED}, {{0, 1, 0.5f}, {1, 0}, TIDE_COLOR_RED},
+                                          {{0, -1, 0.5f}, {1, 1}, TIDE_COLOR_RED}, {{-1, -1, 0.5f}, {0, 1}, TIDE_COLOR_RED}};
+    const tide_vertex3 all_vertices[4] = {{{-1, 1, 0.9f}, {0, 0}, TIDE_COLOR_GREEN}, {{1, 1, 0.9f}, {1, 0}, TIDE_COLOR_GREEN},
+                                         {{1, -1, 0.9f}, {1, 1}, TIDE_COLOR_GREEN}, {{-1, -1, 0.9f}, {0, 1}, TIDE_COLOR_GREEN}};
+    const tide_mesh left_mesh = {left_vertices, 4, indices, 6, 1}, all_mesh = {all_vertices, 4, indices, 6, 1};
+    const tide_float4x4 identity = tide_identity_f4x4();
+    const tide_render_target shadow = tide_render_target_make_scaled_as(WIDE, HIGH, 1, TIDE_TARGET_DEPTH_ONLY);
+    const tide_render_target scene = tide_render_target_make_scaled(WIDE, HIGH, 1);
+    const tide_depth_ref shadow_depth = tide_render_target_depth(shadow), scene_depth = tide_render_target_depth(scene);
+    if (tide_render_target_format(shadow.id) != TIDE_TARGET_DEPTH_ONLY || tide_render_target_format(scene.id) != TIDE_TARGET_COLOR
+        || tide_render_target_format(TARGET_A) != TIDE_TARGET_COLOR) {
+        failures++;
+        fprintf(stderr, "a target's id doesn't say what it holds\n");
+    }
+
+    // Into depth alone: a clear sets depth back, a 3D mesh writes its own, and what only has a
+    // color (a rect, a mesh that writes no depth) leaves nothing
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, shadow);
+    tide_draw_clear(&render_list, TIDE_COLOR_RED);
+    tide_draw_set_camera_matrices(&render_list, identity, identity);
+    tide_draw_mesh_3d(&render_list, &left_mesh, identity, NULL, TIDE_FILTER_POINT);
+    tide_draw_set_depth(&render_list, TIDE_DEPTH_READ);
+    tide_draw_mesh_3d(&render_list, &all_mesh, identity, NULL, TIDE_FILTER_POINT);
+    tide_draw_set_depth(&render_list, TIDE_DEPTH_NONE);
+    tide_draw_mesh_3d(&render_list, &all_mesh, identity, NULL, TIDE_FILTER_POINT);
+    tide_draw_unset_depth(&render_list);
+    tide_draw_set_screen(&render_list);
+    tide_draw_rect(&render_list, tide_f2(WIDE * 0.5f, HIGH * 0.5f), tide_f2(WIDE, HIGH), TIDE_COLOR_BLUE);
+    tide_draw_text(&render_list, "Tide", tide_f2(0, 0), 10.0f, TIDE_COLOR_WHITE);
+    blit_image(TARGET_B, WIDTH * 2, HEIGHT * 2, 0);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_depth(shadow_depth);
+    read_window(WIDE, HIGH, 1.0f);
+    expect_halves(gray(0.25f), gray(1.0f), "a target of depth alone keeps what its 3D meshes write, and nothing of a color");
+
+    // It stays from frame to frame, and it's compared with a number: 1 where what's stored isn't nearer
+    tide_draw_reset(&render_list);
+    blit_compared(shadow_depth, 0.5f);
+    read_window(WIDE, HIGH, 1.0f);
+    expect_halves(0x000000ffu, 0xffffffffu, "a depth compared with a number farther than what's stored on the left");
+    tide_draw_reset(&render_list);
+    blit_compared(shadow_depth, 0.2f);
+    read_window(WIDE, HIGH, 1.0f);
+    expect_all(0xffffffffu, "a depth compared with a number nearer than everything stored");
+    tide_draw_reset(&render_list);
+    blit_compared(shadow_depth, 7.0f); // Past the far limit is the far limit: what a clear left isn't nearer than that
+    read_window(WIDE, HIGH, 1.0f);
+    expect_halves(0x000000ffu, 0xffffffffu, "a depth compared with a number past the far limit");
+
+    // Through a shader of the game's, a mesh's color goes nowhere, and its frag still runs:
+    // the pixels it discards keep the depth they had
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, shadow);
+    tide_draw_clear(&render_list, TIDE_COLOR_BLACK);
+    tide_draw_set_camera_matrices(&render_list, identity, identity);
+    bool fill;
+    const uint32_t caster = tide_draw_mesh_slot(&render_list, TIDE_MESH_BYTES, 704, 0, 1, &fill);
+    if (fill) tide_draw_mesh_fill_bytes(&render_list, caster, all_vertices, sizeof(tide_vertex3), 4, indices, 6);
+    tide_draw_shaded(&render_list, &caster_shader, caster, &identity, NULL, NULL, 0);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_depth(shadow_depth);
+    read_window(WIDE, HIGH, 1.0f);
+    for (int y = 0; y < window_high; y++) {
+        for (int x = 0; x < window_wide; x++) {
+            expect_pixel(x, y, x < 2 ? gray(0.05f) : gray(1.0f), "a frag discards into a target of depth alone");
+        }
+    }
+
+    // A target with color has depth to read too, the same way up as its color: the mesh is
+    // in its upper half
+    const tide_vertex3 upper_vertices[4] = {{{-1, 1, 0.5f}, {0, 0}, TIDE_COLOR_RED}, {{1, 1, 0.5f}, {1, 0}, TIDE_COLOR_RED},
+                                           {{1, 0, 0.5f}, {1, 1}, TIDE_COLOR_RED}, {{-1, 0, 0.5f}, {0, 1}, TIDE_COLOR_RED}};
+    const tide_mesh upper_mesh = {upper_vertices, 4, indices, 6, 1};
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, scene);
+    tide_draw_clear(&render_list, TIDE_COLOR_BLUE);
+    tide_draw_set_camera_matrices(&render_list, identity, identity);
+    tide_draw_mesh_3d(&render_list, &upper_mesh, identity, NULL, TIDE_FILTER_POINT);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_target(scene, 0);
+    read_window(WIDE, HIGH, 1.0f);
+    for (int y = 0; y < window_high; y++) {
+        for (int x = 0; x < window_wide; x++) expect_pixel(x, y, y < HIGH / 2 ? 0xff0000ffu : 0x0000ffffu, "a target's color");
+    }
+    tide_draw_reset(&render_list);
+    blit_depth(scene_depth);
+    read_window(WIDE, HIGH, 1.0f);
+    for (int y = 0; y < window_high; y++) {
+        for (int x = 0; x < window_wide; x++) {
+            expect_pixel(x, y, y < HIGH / 2 ? gray(0.25f) : gray(1.0f), "a target's depth is the same way up as its color");
+        }
+    }
+
+    // A draw into a target can't read that target's depth, any more than its color: it's
+    // passed by, as a mesh and as a blit
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, scene);
+    tide_draw_set_screen(&render_list);
+    const tide_vertex corners[4] = {{{0, 0}, {0, 0}, TIDE_COLOR_WHITE}, {{WIDE, 0}, {1, 0}, TIDE_COLOR_WHITE},
+                                    {{WIDE, HIGH}, {1, 1}, TIDE_COLOR_WHITE}, {{0, HIGH}, {0, 1}, TIDE_COLOR_WHITE}};
+    const uint32_t quad = tide_draw_mesh_slot(&render_list, TIDE_MESH_BYTES, 705, 0, 1, &fill);
+    if (fill) tide_draw_mesh_fill_bytes(&render_list, quad, corners, sizeof(tide_vertex), 4, indices, 6);
+    const uint32_t own = tide_draw_depth_source(&render_list, scene_depth);
+    const float none[4] = {0};
+    tide_draw_shaded(&render_list, &depth_shader, quad, NULL, none, &own, 0);
+    blit_depth(scene_depth);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_target(scene, 0);
+    read_window(WIDE, HIGH, 1.0f);
+    for (int y = 0; y < window_high; y++) {
+        for (int x = 0; x < window_wide; x++) {
+            expect_pixel(x, y, y < HIGH / 2 ? 0xff0000ffu : 0x0000ffffu, "a target's own depth isn't read while it's drawn into");
+        }
+    }
+
+    // The color of a target of depth alone is nothing to sample: the draw is passed by
+    tide_draw_reset(&render_list);
+    tide_draw_clear(&render_list, TIDE_COLOR_GREEN);
+    blit_target(shadow, 0);
+    read_window(WIDE, HIGH, 1.0f);
+    expect_all(0x00ff00ffu, "a target of depth alone has no color to sample");
+
+    // A shader that reads a depth it isn't given, or is given a color there, reads the far
+    // limit; one that reads a color and is given a depth reads white
+    tide_draw_reset(&render_list);
+    tide_draw_blit(&render_list, &depth_shader, TIDE_BLEND_REPLACE, NULL, none, NULL, 0);
+    read_window(WIDE, HIGH, 1.0f);
+    expect_all(0xffffffffu, "no depth to read is the far limit");
+    tide_draw_reset(&render_list);
+    blit_depth((tide_depth_ref){0});
+    read_window(WIDE, HIGH, 1.0f);
+    expect_all(0xffffffffu, "a depth that's no target's is the far limit");
+    tide_draw_reset(&render_list);
+    const uint32_t color = tide_draw_texture_source(&render_list, tide_render_target_color(scene));
+    tide_draw_blit(&render_list, &depth_shader, TIDE_BLEND_REPLACE, NULL, none, &color, 0);
+    read_window(WIDE, HIGH, 1.0f);
+    expect_all(0xffffffffu, "a color where a depth is read is the far limit");
+    tide_draw_reset(&render_list);
+    const uint32_t depth = tide_draw_depth_source(&render_list, scene_depth);
+    const float copy_settings[4] = {0, WIDTH * 2, HEIGHT * 2, 0};
+    tide_draw_blit(&render_list, &list_shader, TIDE_BLEND_REPLACE, NULL, copy_settings, &depth, 0);
+    read_window(WIDE, HIGH, 1.0f);
+    expect_all(0xffffffffu, "a depth where a color is read is white");
+
+    // Another size empties it, as it does a target with color
+    tide_render_target_resize(shadow, WIDE, HIGH);
+    tide_draw_reset(&render_list);
+    blit_depth(shadow_depth);
+    read_window(WIDE, HIGH, 1.0f);
+    expect_all(0xffffffffu, "a resized target of depth alone starts as far as a clear leaves it");
+
+    // One that follows the window has the display's pixels, whatever its scale
+    static const float scales[] = {1.0f, 2.0f, 1.5f};
+    const tide_render_target screen = tide_render_target_window_as(TIDE_TARGET_DEPTH_ONLY);
+    for (size_t i = 0; i < sizeof scales / sizeof scales[0]; i++) {
+        char what[96];
+        tide_draw_reset(&render_list);
+        tide_draw_render_target(&render_list, screen);
+        tide_draw_clear(&render_list, TIDE_COLOR_BLACK);
+        tide_draw_set_camera_matrices(&render_list, identity, identity);
+        tide_draw_mesh_3d(&render_list, &left_mesh, identity, NULL, TIDE_FILTER_POINT);
+        tide_draw_to(&render_list, 0, 0, 0);
+        blit_depth(tide_render_target_depth(screen));
+        read_window(WIDE, HIGH, scales[i]);
+        snprintf(what, sizeof what, "a screen target of depth alone, at scale %g", (double)scales[i]);
+        expect_halves(gray(0.25f), gray(1.0f), what);
+    }
+
+    // Another build's list starts its targets over, whatever they hold
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, shadow);
+    tide_draw_set_camera_matrices(&render_list, identity, identity);
+    tide_draw_mesh_3d(&render_list, &left_mesh, identity, NULL, TIDE_FILTER_POINT);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_depth(shadow_depth);
+    read_window(WIDE, HIGH, 1.0f);
+    expect_halves(gray(0.25f), gray(1.0f), "a target of depth alone drawn into again");
+    tide_draw_forget(&render_list);
+    tide_draw_reset(&render_list);
+    blit_depth(shadow_depth);
+    read_window(WIDE, HIGH, 1.0f);
+    expect_all(0xffffffffu, "hot reload discards a target's depth");
+
+    tide_draw_forget(&render_list);
+    tide_render_targets_free();
+}
+
 static void expect(const uint8_t *actual, const uint8_t *source, const int scale, const char *what)
 {
     const int width = WIDTH * scale, height = HEIGHT * scale;
@@ -724,6 +1100,144 @@ static void copy(const tide_gpu *gpu, const tide_gpu_id pipeline, const tide_gpu
     gpu->draw(0, 3, 1);
 }
 
+// The backend's part of it: a target of depth alone drawn into, and depth
+// read back through a shader, each pixel's own and compared.
+static void expect_depth(const uint8_t *actual, const int width, const int x, const int y, const float depth,
+                         const float within, const char *what)
+{
+    const uint8_t *got = actual + (y * width + x) * 4;
+    if (fabsf((float)got[0] - depth * 255.0f) <= within && got[0] == got[1] && got[1] == got[2]) return;
+    if (failures++ < 6) {
+        fprintf(stderr, "%s (%d, %d): %u,%u,%u instead of %g\n", what, x, y, got[0], got[1], got[2], (double)(depth * 255.0f));
+    }
+}
+
+static void show(const tide_gpu *gpu, const tide_gpu_id pipeline, const tide_gpu_id depth, const float with)
+{
+    const float settings[4] = {with, 0, 0, 0};
+    gpu->use(pipeline);
+    gpu->uniforms(settings, sizeof settings);
+    gpu->sample(0, depth, false);
+    gpu->draw(0, 3, 1);
+}
+
+static void check_depth(void)
+{
+    const tide_gpu *gpu = tide_window_gpu();
+    static const float depths[WIDTH] = {0.2f, 0.4f, 0.6f, 0.8f};
+    uint8_t actual[WIDTH * HEIGHT * 4 * 4];
+    const tide_gpu_id solid = gpu->texture(TIDE_GPU_RGBA8, 1, 1, (const uint8_t[4]){255, 0, 255, 255});
+    tide_gpu_pipeline_desc fill = {.name = "depth fill", .glsl_vertex = vertex, .glsl_fragment = fragment, .wgsl = wgsl,
+                                   .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE,
+                                   .depth = TIDE_GPU_DEPTH_TEST, .into = TIDE_GPU_TARGET_DEPTH};
+    const tide_gpu_id into_depth = gpu->pipeline(&fill);
+    fill.into = TIDE_GPU_TARGET_COLOR;
+    const tide_gpu_id into_color = gpu->pipeline(&fill);
+    const tide_gpu_id read = gpu->pipeline(&(tide_gpu_pipeline_desc){
+        .name = "depth read", .glsl_vertex = vertex, .glsl_fragment = depth_fragment, .wgsl = depth_wgsl,
+        .uniform_size = 16, .texture_count = 1, .reads = {TIDE_GPU_READ_DEPTH}, .blend = TIDE_GPU_BLEND_REPLACE,
+    });
+    const tide_gpu_id compare = gpu->pipeline(&(tide_gpu_pipeline_desc){
+        .name = "depth compare", .glsl_vertex = vertex, .glsl_fragment = compare_fragment, .wgsl = compare_wgsl,
+        .uniform_size = 16, .texture_count = 1, .reads = {TIDE_GPU_READ_COMPARE}, .blend = TIDE_GPU_BLEND_REPLACE,
+    });
+    const tide_gpu_id shadow = gpu->target(TIDE_GPU_TARGET_DEPTH, WIDTH, HEIGHT);
+    const tide_gpu_id scene = gpu->target(TIDE_GPU_TARGET_COLOR, WIDTH, HEIGHT);
+    const tide_gpu_id scaled = gpu->target(TIDE_GPU_TARGET_COLOR, WIDTH * 2, HEIGHT * 2);
+    if (gpu->target_texture(shadow) || !gpu->target_depth(shadow) || !gpu->target_depth(scene)) {
+        failures++;
+        fprintf(stderr, "a target of depth alone has a color, or a target has no depth to read\n");
+    }
+
+    // Each column at a depth of its own, under a top row that stays as far as the clear left it
+    gpu->begin(shadow, true);
+    for (int x = 0; x < WIDTH; x++) {
+        gpu->scissor(x, 1, 1, HEIGHT - 1);
+        copy(gpu, into_depth, solid, depths[x] * 2.0f - 1.0f);
+    }
+    gpu->end();
+    gpu->begin(scene, true);
+    show(gpu, read, gpu->target_depth(shadow), 0);
+    gpu->end();
+    gpu->target_read(scene, actual);
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            expect_depth(actual, WIDTH, x, y, y ? depths[x] : 1.0f, 1.0f, "depth read, top row first");
+        }
+    }
+
+    // Compared with a number between the second and third columns' depths: 1 where what's stored isn't nearer
+    gpu->begin(scene, true);
+    show(gpu, compare, gpu->target_depth(shadow), 0.5f);
+    gpu->end();
+    gpu->target_read(scene, actual);
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            expect_depth(actual, WIDTH, x, y, !y || depths[x] > 0.5f ? 1.0f : 0.0f, 0.0f, "depth compared");
+        }
+    }
+    // ...and between pixels, what the comparisons around give, blended: a quarter and three
+    // quarters of the way from the second column to the third
+    gpu->begin(scaled, true);
+    show(gpu, compare, gpu->target_depth(shadow), 0.5f);
+    gpu->end();
+    gpu->target_read(scaled, actual);
+    for (int x = 0; x < WIDTH * 2; x++) {
+        const float lit = x < 3 ? 0.0f : x == 3 ? 0.25f : x == 4 ? 0.75f : 1.0f;
+        expect_depth(actual, WIDTH * 2, x, HEIGHT, lit, 3.0f, "depth compared between pixels");
+    }
+
+    // A later pass keeps what's there, and tests against it: farther is hidden, nearer isn't
+    gpu->begin(shadow, false);
+    copy(gpu, into_depth, solid, 0.9f * 2.0f - 1.0f);
+    gpu->scissor(0, 0, 1, 1);
+    copy(gpu, into_depth, solid, 0.1f * 2.0f - 1.0f);
+    gpu->end();
+    gpu->begin(scene, true);
+    show(gpu, read, gpu->target_depth(shadow), 0);
+    gpu->end();
+    gpu->target_read(scene, actual);
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            const float depth = !x && !y ? 0.1f : y ? depths[x] : 0.9f;
+            expect_depth(actual, WIDTH, x, y, depth, 1.0f, "depth kept and tested across passes");
+        }
+    }
+
+    // A target with color has its depth to read too
+    gpu->begin(scene, true);
+    gpu->scissor(0, 0, 2, HEIGHT);
+    copy(gpu, into_color, solid, 0.6f * 2.0f - 1.0f);
+    gpu->end();
+    gpu->begin(scaled, true);
+    show(gpu, read, gpu->target_depth(scene), 0);
+    gpu->end();
+    gpu->target_read(scaled, actual);
+    for (int y = 0; y < HEIGHT * 2; y++) {
+        for (int x = 0; x < WIDTH * 2; x++) {
+            expect_depth(actual, WIDTH * 2, x, y, x < 4 ? 0.6f : 1.0f, 1.0f, "a color target's depth");
+        }
+    }
+
+    // A pass that starts cleared sets all of it back
+    gpu->begin(shadow, true);
+    gpu->end();
+    gpu->begin(scene, true);
+    show(gpu, read, gpu->target_depth(shadow), 0);
+    gpu->end();
+    gpu->target_read(scene, actual);
+    for (int i = 0; i < WIDTH * HEIGHT; i++) expect_depth(actual, WIDTH, i % WIDTH, i / WIDTH, 1.0f, 0.0f, "depth cleared");
+
+    gpu->target_free(shadow);
+    gpu->target_free(scene);
+    gpu->target_free(scaled);
+    gpu->texture_free(solid);
+    gpu->pipeline_free(into_depth);
+    gpu->pipeline_free(into_color);
+    gpu->pipeline_free(read);
+    gpu->pipeline_free(compare);
+}
+
 static void check_targets(void)
 {
     const tide_gpu *gpu = tide_window_gpu();
@@ -743,7 +1257,8 @@ static void check_targets(void)
         .name = "target copy", .glsl_vertex = vertex, .glsl_fragment = fragment, .wgsl = wgsl,
         .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE, .depth = TIDE_GPU_DEPTH_TEST,
     });
-    const tide_gpu_id scene = gpu->target(WIDTH, HEIGHT), scaled = gpu->target(WIDTH * 2, HEIGHT * 2);
+    const tide_gpu_id scene = gpu->target(TIDE_GPU_TARGET_COLOR, WIDTH, HEIGHT);
+    const tide_gpu_id scaled = gpu->target(TIDE_GPU_TARGET_COLOR, WIDTH * 2, HEIGHT * 2);
     const tide_gpu_id scene_color = gpu->target_texture(scene), scaled_color = gpu->target_texture(scaled);
 
     gpu->begin(scene, true);
@@ -860,6 +1375,9 @@ static int frame(void *user, const float seconds)
     check_targets();
     check_targets(); // Reused backend ids must not find a freed texture's bind group.
     checked("the backend's targets");
+    check_depth();
+    check_depth();
+    checked("the backend's depth");
     check_render_list();
     check_render_depth_alpha();
     check_owned_targets();
@@ -872,6 +1390,8 @@ static int frame(void *user, const float seconds)
     checked("targets on scaled displays");
     check_scales_and_window();
     checked("targets under a window and a display that change");
+    check_depth_targets();
+    checked("the renderer's depth");
     if (failures) return 1;
 #ifdef __wasm__
     if (!lost && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
