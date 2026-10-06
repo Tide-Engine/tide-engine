@@ -74,12 +74,6 @@ static void dtls_out(void *user, const void *data, const size_t size)
     rtc_ice_send(&p->ice, data, size);
 }
 
-static void dtls_in(void *user, const void *data, const size_t size)
-{
-    rtc_peer *p = user;
-    if (p->sctp_started) rtc_sctp_receive(&p->sctp, data, size, p->now);
-}
-
 static void sctp_out(void *user, const void *data, const size_t size)
 {
     rtc_peer *p = user;
@@ -94,6 +88,28 @@ static void sctp_in(void *user, const void *data, const size_t size)
     p->inbox[at].size = (uint16_t)size;
     p->inbox[at].arrived = p->reading;
     memcpy(p->inbox[at].data, data, size);
+}
+
+// SCTP, once DTLS is open: the DTLS client starts the association, and whoever
+// joined opens the channel.
+static void start_sctp(rtc_peer *p)
+{
+    if (p->sctp_started) return;
+    rtc_sctp_start(&p->sctp, p->dtls_client, p->remote.sctp_port, sctp_out, sctp_in, p, p->now);
+    if (p->offerer) rtc_sctp_open_channel(&p->sctp, p->dtls_client ? 0 : 1, p->now);
+    p->sctp_started = true;
+}
+
+// DTLS only has data for us once it's open, and their first packet can be the
+// next thing read after the flight that opened it, in the same update or the
+// same datagram: a DTLS server is open as it answers their last flight, with
+// more of theirs to read. So SCTP starts here at the latest, or their INIT
+// would be dropped, and each side would start an association a second later.
+static void dtls_in(void *user, const void *data, const size_t size)
+{
+    rtc_peer *p = user;
+    start_sctp(p);
+    rtc_sctp_receive(&p->sctp, data, size, p->now);
 }
 
 rtc_peer *rtc_peer_new(const bool offerer, const rtc_ice_config *config)
@@ -180,12 +196,8 @@ void rtc_peer_update(rtc_peer *p, const double now)
     }
     if (p->dtls_started) rtc_dtls_update(&p->dtls, now);
 
-    // Then SCTP: the DTLS client starts the association, and whoever joined opens the channel
-    if (p->dtls_started && p->dtls.state == RTC_DTLS_OPEN && !p->sctp_started) {
-        rtc_sctp_start(&p->sctp, p->dtls_client, p->remote.sctp_port, sctp_out, sctp_in, p, now);
-        if (p->offerer) rtc_sctp_open_channel(&p->sctp, p->dtls_client ? 0 : 1, now);
-        p->sctp_started = true;
-    }
+    // Then SCTP, if nothing of theirs started it already (dtls_in)
+    if (p->dtls_started && p->dtls.state == RTC_DTLS_OPEN) start_sctp(p);
     if (p->sctp_started) rtc_sctp_update(&p->sctp, now);
 
     const bool open = p->sctp_started && p->sctp.state == RTC_SCTP_OPEN && p->sctp.channel;
