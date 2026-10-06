@@ -1,0 +1,396 @@
+// Alley: bowling with far too many pins, for up to eight players at once. A
+// ball paints what it knocks its player's color, and whatever goes off the
+// lane's far end, through the goal, scores for whoever painted it last. This
+// file is the match, which every machine runs the same way. What a machine
+// shows of it, and what it asks of it, is in play.tide.
+//
+// Everything that moves is Box3D's (the box3d package): the game spawns
+// bodies, pushes them and reads where they are, and never moves one itself.
+using Box3D;
+
+settings { title = "Alley"; appId = "dev.tide.alley"; maxPlayers = 8; hostMigration = true; stats = true; }
+
+// The lane, in meters: along z, from the players at z = 0 to its end, with
+// its top at y = 0. Nothing is at its sides or past its end but the drop.
+const int SEATS = 8;             // The most players
+const float LANE_WIDTH = 6;
+const float LANE_START = -1.6;
+const float LANE_END = 16.5;
+const float WALL = 13.4;         // Where the crates stand, behind the pins
+const float PARK = -2.8;         // Where the bar waits, behind the players and out of sight
+const float DROP = -9;           // What's under it has fallen off
+
+const float BALL = 0.34;         // A ball's radius
+const float BALL_DENSITY = 1500;
+const float BALL_MASS = 246.9;   // Its volume, 4/3 pi r^3, times its density
+const float BALL_INERTIA = 11.4; // 2/5 of its mass times its radius squared: what a spin takes
+const float BALL_SPEED = 18;
+const float HOOK = 26;           // The spin a ball is thrown with at most, in radians a second
+const int BALL_TICKS = 420;      // How long a ball lasts: seven seconds
+const int RELOAD = 22;           // Ticks between a player's balls
+
+const float PIN_RADIUS = 0.16;
+const float PIN_HEIGHT = 0.9;
+const float PIN_MASS = 25;
+const float CRATE = 0.8;
+const float CRATE_MASS = 128;
+const int TARGETS = 72;          // 55 pins, 14 crates and 3 kingpins
+const int LEFTOVERS = 6;         // A round is over once no more than these are left
+const int OVER_TICKS = 150;
+
+const float SWEEP_SPEED = 9;
+const int SWEEP_REST = 240;      // Ticks before the bar sweeps again
+
+enum Phase { Play, Over, Clear }
+
+// A player: where they stand, what they've scored, and where they point.
+component Bowler
+{
+    int seat;
+    int score;
+    int reload;
+    float2 aim = float2(0, 1); // Along the lane: x across it, y down it
+    float spin;
+}
+
+// What there is to knock over: a pin, a crate or a kingpin. `last` is the seat
+// whose ball painted it, -1 for nobody's yet.
+component Target
+{
+    int last = -1;
+    int worth = 1;
+    bool counted; // It went through the goal
+    // How this machine shows a ball just hit it: set by a local handler, and
+    // let go of by the view that draws it. Nothing of it is in the match.
+    local float hit;
+}
+
+// What hops when gravity lets go: its weight, so that the hop is as high for
+// a pin as for a crate.
+component Loose { float mass = 1; }
+
+component Ball
+{
+    int seat;
+    int ticks;
+}
+
+// The bar that clears the lane: up out of the way, or on its way down it.
+component Sweeper
+{
+    bool sweeping;
+    int rest;
+}
+
+// The goal is a sensor past the lane's end: things fall through it, and it
+// hears of each.
+component Goal { int inside; }
+
+component Ground { }
+
+singleton Lane
+{
+    Phase phase = Phase.Clear; // The first tick sets the first round up
+    int round;
+    int timer;
+    int standing;     // Targets still on the lane, or in the air over it
+    int through;      // What went through the goal this round
+    bool low;         // Gravity is the moon's
+    bool hop;         // ...as of this tick: everything gets a push up
+    bool sweep;       // Someone asked for the bar
+    bool fresh;       // The round being set up is the first of a new game
+    Map<PlayerID, Entity> players; // Each player's bowler
+    Map<int, Entity> bowlers;      // ...and by seat
+}
+
+scene Main { }
+
+input Controls
+{
+    // Where the player points is a place, not something they do: what
+    // another machine guesses of it stays where it was last. So does the spin
+    // they've set.
+    [Absolute, Clamp(-60, 60)] float2 target;
+    [Absolute, Clamp(-1, 1)] float spin;
+    [Absolute] bool aiming;
+    bool fire;
+
+    Sample(Devices devices, Hand hand)
+    {
+        target = hand.target;
+        spin = hand.spin;
+        aiming = hand.known;
+        fire = devices.pointer.press.pressed || devices.keyboard.space.pressed;
+    }
+}
+
+// Sent to a target a ball hit: each machine flashes it (play.tide).
+event Struck { }
+
+// Sent to a bowler when a target their ball painted goes through the goal.
+event Scored { int worth; }
+
+// What the buttons ask of the match.
+command Float { }
+command Sweep { }
+command Rebuild { }
+
+// Where a seat's player stands on the line.
+float3 Stand(int seat)
+{
+    return float3((seat - (SEATS - 1) * 0.5) * 0.72, BALL + 0.02, 0);
+}
+
+// The way a ball goes from there to where its player points, along the lane.
+float3 Way(int seat, float2 target)
+{
+    var from = Stand(seat);
+    return Math.Normalize(float3(target.x - from.x, 0, Math.Max(target.y, 3) - from.z));
+}
+
+// What stays from round to round. The lane is static: it never moves. The
+// goal is static too, and a sensor. The bar is kinematic: it goes where its
+// velocity takes it, whatever is in its way.
+event(Spawned) Build(with Main)
+{
+    Spawn(Body { type = BodyType.Static, position = float3(0, -0.5, (LANE_START + LANE_END) / 2) },
+          Box { size = float3(LANE_WIDTH, 1, LANE_END - LANE_START), friction = 0.8 }, Ground);
+    Spawn(Body { type = BodyType.Static, position = float3(0, -4, LANE_END + 5) },
+          Box { size = float3(LANE_WIDTH + 10, 4, 10), sensor = true }, Goal);
+    Spawn(Body { type = BodyType.Kinematic, position = float3(0, 0.38, PARK) },
+          Box { size = float3(LANE_WIDTH + 0.6, 0.7, 0.3) }, Sweeper);
+}
+
+// A player gets a bowler of their own, in the first seat nobody has. Owner
+// ties it to them: the Throw system then reads their input for it.
+event(PlayerJoined joined) Arrive(mut Lane lane)
+{
+    if (lane.players.Has(joined.player)) return;
+    for (var seat = 0; seat < SEATS; seat++)
+    {
+        if (lane.bowlers.Has(seat)) continue;
+        var bowler = Spawn(Bowler { seat = seat }, Owner { player = joined.player });
+        lane.players[joined.player] = bowler;
+        lane.bowlers[seat] = bowler;
+        return;
+    }
+}
+
+event(PlayerLeft left) Depart(mut Lane lane)
+{
+    if (!lane.players.TryGet(left.player, out var bowler)) return;
+    mut var seat = -1;
+    foreach (var entry in lane.bowlers)
+    {
+        if (entry.value == bowler) seat = entry.key;
+    }
+    lane.bowlers.Remove(seat);
+    lane.players.Remove(left.player);
+    bowler.Destroy();
+}
+
+// When gravity lets go, everything loose hops: an impulse, which Box3D gives
+// the body at its next step, once. This runs before the package's systems, so
+// that step is this tick's.
+[Before(PhysicsStages.Step)]
+system Hop(mut Body body, Loose loose, Lane lane)
+{
+    if (!lane.hop) return;
+    body.impulse += float3(0, 2.6 * loose.mass, 0);
+    body.angularImpulse += float3(0.02, 0, 0.03) * loose.mass;
+}
+
+// The bar goes the lane's length from behind the players, pushing what's on
+// the lane off its far end, and then it's back where it waits, at once:
+// writing a body's position puts it there. Snap has views draw it there too,
+// rather than slide it back up the lane.
+[Before(PhysicsStages.Step)]
+system Drive(mut Body body, mut Sweeper sweeper, Lane lane)
+{
+    if (sweeper.sweeping)
+    {
+        if (body.position.z < LANE_END + 0.5) return;
+        sweeper.sweeping = false;
+        sweeper.rest = SWEEP_REST;
+        body.position = float3(0, 0.38, PARK);
+        body.velocity = float3(0);
+        this.Snap();
+        return;
+    }
+    if (sweeper.rest > 0) sweeper.rest -= 1;
+    if (!lane.sweep || sweeper.rest > 0) return;
+    sweeper.sweeping = true;
+    body.velocity = float3(0, 0, SWEEP_SPEED);
+}
+
+// A player's bowler follows their pointer, and throws while they hold the
+// button. `controls` is the input of the player who owns the bowler.
+//
+// A ball is a body spawned with an impulse down the lane and an angular one:
+// the roll it would have by then, and the spin its player set, around the way
+// it goes, which the lane's grip turns into a curve. Box3D gives it both at
+// its first step. It's heavy and fast, so it's a bullet: checked against the
+// pins all along its way, not only where each step leaves it.
+[After(PhysicsStages.Step)]
+system Throw(Controls controls, mut Bowler bowler, Lane lane)
+{
+    if (bowler.reload > 0) bowler.reload -= 1;
+    if (!controls.aiming) return;
+    var way = Way(bowler.seat, controls.target);
+    bowler.aim = float2(way.x, way.z);
+    bowler.spin = controls.spin;
+    if (!controls.fire || bowler.reload > 0 || lane.phase != Phase.Play) return;
+    bowler.reload = RELOAD;
+    var roll = Math.Cross(float3(0, 1, 0), way) * (BALL_SPEED / BALL);
+    var hook = way * (-controls.spin * HOOK);
+    Spawn(Body { position = Stand(bowler.seat) + way * 0.7, impulse = way * (BALL_SPEED * BALL_MASS),
+                 angularImpulse = (roll + hook) * BALL_INERTIA, gravityScale = 1.5, angularDamping = 0.05,
+                 bullet = true },
+          Sphere { radius = BALL, density = BALL_DENSITY, friction = 0.9, bounce = 0.1 }, Ball { seat = bowler.seat });
+}
+
+[After(PhysicsStages.Step)]
+system Roll(mut Ball ball, Body body)
+{
+    ball.ticks += 1;
+    if (ball.ticks > BALL_TICKS || body.position.y < DROP) this.Destroy();
+}
+
+// What falls far enough is gone. An entity that's destroyed takes its body
+// with it.
+[After(PhysicsStages.Step)]
+system Fall(Body body, mut Lane lane, with Target)
+{
+    if (body.position.y > DROP) return;
+    lane.standing -= 1;
+    this.Destroy();
+}
+
+// Touched comes to a body's entity when it starts touching another. A ball
+// paints what it hits its player's color, and what a painted thing knocks
+// into takes the color on, if nobody's ball got to it first. The goal is a
+// sensor: the same event says a target went into it.
+event(Touched touched) Paint(mut Target target, mut Lane lane, World world)
+{
+    if (world.Has<Goal>(touched.other))
+    {
+        if (target.counted) return;
+        target.counted = true;
+        lane.through += 1;
+        if (lane.bowlers.TryGet(target.last, out var bowler)) bowler.Send(Scored { worth = target.worth });
+        return;
+    }
+    if (world.Has<Ball>(touched.other))
+    {
+        target.last = world.Get<Ball>(touched.other).seat;
+        this.Send(Struck { });
+    }
+    else if (target.last < 0 && world.Has<Target>(touched.other)) target.last = world.Get<Target>(touched.other).last;
+}
+
+event(Scored scored) Count(mut Bowler bowler)
+{
+    bowler.score += scored.worth;
+}
+
+// The goal counts what's in it: Touched as a body comes in, and Parted as it
+// leaves, or is destroyed inside.
+event(Touched) Enter(mut Goal goal)
+{
+    goal.inside += 1;
+}
+
+event(Parted) Leave(mut Goal goal)
+{
+    goal.inside -= 1;
+}
+
+// Gravity is the world's, in the package's Physics: the next step uses what
+// it says. A new one wakes every body that had come to rest.
+[After(PhysicsStages.Step)]
+system Weigh(mut Lane lane, mut Physics physics)
+{
+    var wanted = lane.low ? -1.6 : -10.0;
+    if (physics.gravity.y != wanted) physics.gravity = float3(0, wanted, 0);
+    lane.hop = false;
+    lane.sweep = false;
+}
+
+// Between rounds, everything a round made goes, and the next one is set up.
+[After(PhysicsStages.Step)]
+system Wipe(Lane lane, with Target)
+{
+    if (lane.phase == Phase.Clear) this.Destroy();
+}
+
+[After(PhysicsStages.Step)]
+system WipeBalls(Lane lane, with Ball)
+{
+    if (lane.phase == Phase.Clear) this.Destroy();
+}
+
+[After(PhysicsStages.Step)]
+system Recount(mut Bowler bowler, Lane lane)
+{
+    if (lane.phase == Phase.Clear && lane.fresh) bowler.score = 0;
+}
+
+// A round: ten rows of pins, each a capsule on a small flat foot so that it
+// stands; a wall of crates behind them; and three kingpins on the wall, with a
+// round head, worth five each.
+[After(PhysicsStages.Step)]
+system Rounds(mut Lane lane)
+{
+    if (lane.phase == Phase.Play)
+    {
+        if (lane.standing > LEFTOVERS) return;
+        lane.phase = Phase.Over;
+        lane.timer = OVER_TICKS;
+        return;
+    }
+    if (lane.phase == Phase.Over)
+    {
+        lane.timer -= 1;
+        if (lane.timer <= 0) lane.phase = Phase.Clear;
+        return;
+    }
+    for (var row = 0; row < 10; row++)
+        for (var i = 0; i <= row; i++)
+            Spawn(Body { position = float3((i - row * 0.5) * 0.54, PIN_HEIGHT / 2, 5.6 + row * 0.62), angularDamping = 0.3 },
+                  Capsule { radius = PIN_RADIUS, height = PIN_HEIGHT, density = 330 },
+                  Box { size = float3(0.3, 0.06, 0.3), offset = float3(0, 0.03 - PIN_HEIGHT / 2, 0), density = 600 },
+                  Target, Loose { mass = PIN_MASS });
+    for (var i = 0; i < 14; i++)
+        Spawn(Body { position = float3((i % 7 - 3) * (CRATE + 0.02), CRATE / 2 + i / 7 * CRATE, WALL) },
+              Box { size = float3(CRATE), density = 250 }, Target, Loose { mass = CRATE_MASS });
+    for (var i = 0; i < 3; i++)
+        Spawn(Body { position = float3((i - 1) * 1.64, 2 * CRATE + PIN_HEIGHT / 2, WALL), angularDamping = 0.3 },
+              Capsule { radius = PIN_RADIUS, height = PIN_HEIGHT, density = 330 },
+              Box { size = float3(0.3, 0.06, 0.3), offset = float3(0, 0.03 - PIN_HEIGHT / 2, 0), density = 600 },
+              Sphere { radius = 0.21, offset = float3(0, PIN_HEIGHT / 2 + 0.1, 0), density = 200 },
+              Target { worth = 5 }, Loose { mass = PIN_MASS + 8 });
+    lane.standing = TARGETS;
+    lane.through = 0;
+    lane.round += 1;
+    lane.phase = Phase.Play;
+    lane.fresh = false;
+}
+
+// The buttons. Gravity that lets go gives everything a hop, at the next tick.
+command(Float lift, PlayerID sender) Lighten(mut Lane lane)
+{
+    lane.low = !lane.low;
+    lane.hop = lane.low;
+}
+
+command(Sweep sweep, PlayerID sender) Clean(mut Lane lane)
+{
+    lane.sweep = true;
+}
+
+command(Rebuild rebuild, PlayerID sender) Reset(mut Lane lane)
+{
+    lane.phase = Phase.Clear;
+    lane.round = 0;
+    lane.fresh = true;
+}

@@ -12,4 +12,6 @@ docs/.svelte-kit/
 docs/build/
 docs/static/sand/
 docs/static/duel/
+docs/static/siege/
+docs/static/alley/
 docs/static/examples/

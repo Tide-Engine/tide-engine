@@ -43,6 +43,8 @@ A floor, two walls and three stacks of crates. Tap a crate to kick it, and anywh
 - `Expire` destroys a ball after ten seconds, and its body goes with it.
 - `Count` hears `Touched`, which the package sends to a body's entity when it starts touching another.
 
+[Siege](../guide/siege.md) is a whole game made with the package, for up to four players in a match: two towers of crates, cannons, a bridge that moves, a sensor that turns gravity over, and most of what this page describes.
+
 ## Bodies
 
 `Body` is a rigid body. An entity that has one is in the physics world from the next tick on. These are the fields a game uses:
