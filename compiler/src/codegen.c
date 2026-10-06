@@ -327,6 +327,57 @@ static bool decl_has_text(const decl *d)
     return false;
 }
 
+// Whether a value of type `t` is or holds a List<byte>: a file's bytes in a
+// command, which goes over TIDE_COMMAND_BYTES, in chunks
+static bool type_has_bytes(const type t)
+{
+    if (t.kind == TY_LIST) return t.decl->fields.items[0].type.kind == TY_BYTE;
+    if (t.kind != TY_STRUCT) return false;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        if (type_has_bytes(t.decl->fields.items[i].type)) return true;
+    }
+    return false;
+}
+
+static bool decl_has_bytes(const decl *d)
+{
+    for (int i = 0; i < d->fields.count; i++) {
+        if (type_has_bytes(d->fields.items[i].type)) return true;
+    }
+    return false;
+}
+
+// Whether any of the game's commands holds a List<byte>, or is [Unordered]
+static bool commands_have_bytes(const program *prog)
+{
+    for (int k = 0; k < prog->command_types.count; k++) {
+        if (decl_has_bytes(prog->command_types.items[k])) return true;
+    }
+    return false;
+}
+
+static bool commands_unordered(const program *prog)
+{
+    for (int k = 0; k < prog->command_types.count; k++) {
+        if (prog->command_types.items[k]->unordered) return true;
+    }
+    return false;
+}
+
+// The limit a command's packed bytes are checked against: one that holds a
+// file's bytes goes in chunks, up to TIDE_COMMAND_LIMIT
+static const char *command_limit(const decl *d)
+{
+    return decl_has_bytes(d) ? "TIDE_COMMAND_LIMIT" : "TIDE_COMMAND_BYTES";
+}
+
+// A command's channel, as generated C names it (see tide/session.h)
+static void put_channel(sb *o, const decl *d)
+{
+    if (d->unordered) sb_put(o, "TIDE_COMMAND_UNORDERED");
+    else sb_printf(o, "%uu", (unsigned)d->channel);
+}
+
 // Whether a value of type `t` is or holds text, a list or a grid, its own or
 // in its fields (components, events and the like too).
 static bool value_has_text(const type t)
@@ -5724,6 +5775,15 @@ static void gen_header(gen *g)
     if (program_corrects(prog)) sb_put(o, "\n");
     sb_put(o, "// This machine's own state, outside every world: never sent, rolled back or hashed.\n");
     sb_put(o, "// Like a world, it starts zeroed and tide_local_free lets it go.\n\n");
+    if (prog->command_types.count) {
+        sb_printf(o, "// The channels its commands are in, the default counted (tide/session.h)\n"
+                     "#define TIDE_COMMAND_CHANNELS %uu\n"
+                     "// Room in the local state for commands sent and not yet the session's: a channel's worth\n"
+                     "// for each, and one for the unordered ones\n"
+                     "#define TIDE_COMMAND_OUTBOX (TIDE_COMMAND_PENDING * (TIDE_COMMAND_CHANNELS + 1u))\n"
+                     "typedef struct tide_outgoing_item {\n    uint8_t *data;\n    uint32_t size;\n    uint32_t channel;\n} tide_outgoing_item;\n\n",
+                  (unsigned)prog->channels.count + 1u);
+    }
     sb_put(o, "typedef struct tide_local {\n");
     sb_put(o, "    const tide_io *tide_io; // Host-owned storage provider; excluded from saved state\n");
     for (int i = 0; i < prog->components.count; i++) {
@@ -5776,9 +5836,9 @@ static void gen_header(gen *g)
     sb_put(o, "    char tide_message[TIDE_MESSAGE_BYTES]; // Disconnected's message: a kick's, or \"\"\n");
     sb_put(o, "    char tide_room[8]; // Session.room: the code of the room the match is in, or \"\"\n");
     if (prog->command_types.count) {
-        sb_put(o, "    uint32_t tide_outgoing_from, tide_outgoing_count;\n"
-                  "    uint32_t tide_outgoing_sizes[TIDE_COMMAND_PENDING];\n"
-                  "    uint8_t tide_outgoing[TIDE_COMMAND_PENDING][TIDE_COMMAND_BYTES];\n");
+        sb_put(o, "    // Commands sent and not yet the session's, in order, TIDE_COMMAND_PENDING a channel\n"
+                  "    tide_outgoing_item tide_outgoing[TIDE_COMMAND_OUTBOX];\n"
+                  "    uint32_t tide_outgoing_count;\n");
     }
     sb_put(o, "} tide_local;\n\n");
 
@@ -5904,9 +5964,10 @@ static void gen_header(gen *g)
     sb_put(o, "void tide_local_frame_time(tide_local *local, float seconds);\n\n");
     if (prog->command_types.count) {
         sb_put(o, "#define TIDE_HAS_COMMANDS 1\n"
-                  "// Peek the oldest submitted command; remove it only once the session accepted it.\n"
-                  "uint32_t tide_local_command(const tide_local *local, uint8_t *out, uint32_t capacity);\n"
-                  "void tide_local_command_sent(tide_local *local);\n\n");
+                  "// The oldest command sent in `channel` (0 to TIDE_COMMAND_CHANNELS - 1, or TIDE_COMMAND_UNORDERED)\n"
+                  "// and not yet the session's, with its size, or NULL; remove it only once the session accepted it.\n"
+                  "const uint8_t *tide_local_command(const tide_local *local, uint32_t channel, uint32_t *size);\n"
+                  "void tide_local_command_sent(tide_local *local, uint32_t channel);\n\n");
     }
     sb_put(o, "// The game, as sessions run it (tide/session.h).\n");
     sb_put(o, "extern const tide_game tide_game_api;\n\n");
@@ -7267,7 +7328,11 @@ static void gen_command_recorders(gen *g)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
-    if (prog->command_types.count) sb_put(o, "static bool tide_game_check_command(const uint8_t *data, uint32_t size);\n\n");
+    if (prog->command_types.count) sb_put(o, "static bool tide_game_check_command(const uint8_t *data, uint32_t size, uint32_t *channel);\n"
+                                           "static void tide_local_clear_outgoing(tide_local *local);\n"
+                                           "// Bytes a varint of `v` takes (tide_write_varint), to size the local state's bytes\n"
+                                           "TIDE_HELPER uint32_t tide_varint_bytes(const uint32_t v)\n{\n"
+                                           "    return v < 128u ? 1u : v < 16384u ? 2u : v < 2097152u ? 3u : v < 268435456u ? 4u : 5u;\n}\n\n");
 
     sb_put(o, "enum { TIDE_CMD_SPAWN, TIDE_CMD_ADD, TIDE_CMD_REMOVE, TIDE_CMD_DESTROY, TIDE_CMD_EVENT, TIDE_CMD_UNLOAD,\n"
               "       TIDE_CMD_SCENE_PLAYER, TIDE_CMD_SNAP };\n\n");
@@ -12648,7 +12713,26 @@ static void gen_bits(gen *g, const char *at, const type t, const bits_mode mode,
     // Bits it can take, with whether it changed and, for a float, which way it went
     const uint32_t most = (varint ? (width == 64 ? 80u : 40u) : (uint32_t)width) + (delta ? 1u : 0u)
                         + (delta && t.kind == TY_FLOAT ? 1u : 0u);
-    if (t.kind == TY_STRING) {
+    if (t.kind == TY_LIST && mode == BITS_WRITE) { // A List<byte>: its count, then its bytes on a whole byte
+        line(g, o, "{ tide_command_align(&b);");
+        line(g, o, "  const int32_t n = tide_list_count(in->%s);", at);
+        line(g, o, "  if (n < 0 || (uint32_t)n > TIDE_COMMAND_LIMIT) return 0;");
+        line(g, o, "  tide_bits_put_varint(&b, (uint32_t)n);");
+        line(g, o, "  tide_command_align(&b);");
+        line(g, o, "  if (b.overflow || b.capacity - b.bit / 8u < (uint32_t)n) return 0;");
+        line(g, o, "  bool copied = false;");
+        line(g, o, "  void *flat = tide_list_flatten(in->%s, 1, false, &copied);", at);
+        line(g, o, "  if (n) memcpy(b.data + b.bit / 8u, flat, (size_t)n);");
+        line(g, o, "  tide_list_unflatten(in->%s, flat, 1, false, copied);", at);
+        line(g, o, "  b.bit += 8u * (uint32_t)n; }");
+    } else if (t.kind == TY_LIST) {
+        line(g, o, "{ tide_command_align(&b);");
+        line(g, o, "  const uint32_t n = tide_bits_get_varint(&b);");
+        line(g, o, "  tide_command_align(&b);");
+        line(g, o, "  if (b.overflow || n > TIDE_COMMAND_LIMIT || b.capacity - b.bit / 8u < n) return false;");
+        line(g, o, "  in->%s = tide_list_from(data + b.bit / 8u, (int32_t)n, 1);", at);
+        line(g, o, "  b.bit += 8u * n; }");
+    } else if (t.kind == TY_STRING) {
         if (mode == BITS_WRITE) {
             line(g, o, "{ const tide_str text = tide_text_view(in->%s);", at);
             line(g, o, "  if (text.bytes < 0 || (uint32_t)text.bytes > TIDE_COMMAND_BYTES) return 0;");
@@ -12768,6 +12852,7 @@ static void gen_world_bytes(gen *g, const bool local)
     const char *prefix = local ? "tide_local_" : "tide_world_";
     sb_printf(o, "void %sfree(%s *w)\n{\n    tide_entities_free(&w->entities);\n", prefix, world);
     if (local && program_corrects(prog)) sb_put(o, "    tide_corrections_reset(w);\n");
+    if (local && prog->command_types.count) sb_put(o, "    tide_local_clear_outgoing(w);\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a) == local) sb_printf(o, "    tide_table_free(&w->%s, %s);\n", arch_name(g, a), arch_columns(g, a));
     }
@@ -12812,10 +12897,16 @@ static void gen_world_bytes(gen *g, const bool local)
         sb_printf(o, "    size += tide_attached_packed_size(&w->%s, %s);\n", fields_table(fields.items[i]), fields_columns(fields.items[i]));
     }
     if (world_heap(prog, local)) sb_put(o, "    size += tide_heap_packed_size(&w->heap);\n");
+    if (local && prog->command_types.count) { // The commands waiting: each its channel, size and bytes
+        sb_put(o, "    size += tide_varint_bytes(w->tide_outgoing_count);\n"
+                  "    for (uint32_t i = 0; i < w->tide_outgoing_count; i++) {\n"
+                  "        size += tide_varint_bytes(w->tide_outgoing[i].channel) + tide_varint_bytes(w->tide_outgoing[i].size) + w->tide_outgoing[i].size;\n    }\n");
+    }
     sb_put(o, "    if (size > UINT32_MAX) tide_out_of_memory();\n");
     sb_put(o, "    if (!out || size > capacity) return (uint32_t)size;\n");
     sb_printf(o, "    %s header; // The struct, with its storage's pointers left out\n    memcpy(&header, w, sizeof header);\n", world);
     if (local) sb_put(o, "    header.tide_io = NULL;\n");
+    if (local && prog->command_types.count) sb_put(o, "    memset(header.tide_outgoing, 0, sizeof header.tide_outgoing);\n    header.tide_outgoing_count = 0;\n");
     // What the match sent is a frame's: none of it is the local state's to keep
     if (local && program_hears(prog)) sb_put(o, "    memset(&header.tide_heard, 0, sizeof header.tide_heard);\n");
     sb_put(o, "    memset(&header.entities, 0, sizeof header.entities);\n");
@@ -12844,6 +12935,13 @@ static void gen_world_bytes(gen *g, const bool local)
     }
     sb_put(o, "    tide_writer bytes = {out, capacity, 0, false, false};\n");
     sb_put(o, "    tide_write_bytes(&bytes, &header, sizeof header);\n");
+    if (local && prog->command_types.count) {
+        sb_put(o, "    tide_write_varint(&bytes, w->tide_outgoing_count);\n"
+                  "    for (uint32_t i = 0; i < w->tide_outgoing_count; i++) {\n"
+                  "        tide_write_varint(&bytes, w->tide_outgoing[i].channel);\n"
+                  "        tide_write_varint(&bytes, w->tide_outgoing[i].size);\n"
+                  "        tide_write_bytes(&bytes, w->tide_outgoing[i].data, w->tide_outgoing[i].size);\n    }\n");
+    }
     sb_put(o, "    tide_entities_pack(&w->entities, &bytes);\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a) == local) sb_printf(o, "    tide_table_pack(&w->%s, %s, &bytes);\n", arch_name(g, a), arch_columns(g, a));
@@ -12910,13 +13008,27 @@ static void gen_world_bytes(gen *g, const bool local)
     }
     if (world_heap(prog, local)) sb_put(o, "    memset(&w->heap, 0, sizeof w->heap);\n");
     sb_put(o, "    tide_reader bytes = {data, size, sizeof *w, false};\n");
-    sb_put(o, "    bool ok = tide_entities_unpack(&w->entities, &bytes);\n");
-    if (local && prog->command_types.count) {
-        sb_put(o, "    ok = ok && w->tide_outgoing_from < TIDE_COMMAND_PENDING && w->tide_outgoing_count <= TIDE_COMMAND_PENDING;\n"
-                  "    for (uint32_t i = 0; ok && i < w->tide_outgoing_count; i++) {\n"
-                  "        const uint32_t at = (w->tide_outgoing_from + i) % TIDE_COMMAND_PENDING;\n"
-                  "        ok = tide_game_check_command(w->tide_outgoing[at], w->tide_outgoing_sizes[at]);\n"
-                  "    }\n");
+    if (local && prog->command_types.count) { // The commands waiting, each checked as the session would
+        sb_put(o, "    memset(w->tide_outgoing, 0, sizeof w->tide_outgoing);\n    w->tide_outgoing_count = 0;\n"
+                  "    bool ok;\n"
+                  "    const uint32_t outgoing = tide_read_varint(&bytes);\n"
+                  "    ok = outgoing <= TIDE_COMMAND_OUTBOX;\n"
+                  "    for (uint32_t i = 0; ok && i < outgoing; i++) {\n"
+                  "        const uint32_t channel = tide_read_varint(&bytes);\n"
+                  "        const uint32_t n = tide_read_varint(&bytes);\n"
+                  "        const uint8_t *item = tide_read_bytes(&bytes, n);\n"
+                  "        uint32_t own = 0;\n"
+                  "        uint32_t waiting = 0;\n"
+                  "        for (uint32_t k = 0; k < w->tide_outgoing_count; k++) waiting += w->tide_outgoing[k].channel == channel ? 1u : 0u;\n"
+                  "        ok = item && waiting < TIDE_COMMAND_PENDING && tide_game_check_command(item, n, &own) && own == channel;\n"
+                  "        if (!ok) break;\n"
+                  "        uint8_t *copy = malloc(n);\n"
+                  "        if (!copy) tide_out_of_memory();\n"
+                  "        memcpy(copy, item, n);\n"
+                  "        w->tide_outgoing[w->tide_outgoing_count++] = (tide_outgoing_item){copy, n, channel};\n    }\n"
+                  "    ok = ok && tide_entities_unpack(&w->entities, &bytes);\n");
+    } else {
+        sb_put(o, "    bool ok = tide_entities_unpack(&w->entities, &bytes);\n");
     }
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a) == local) sb_printf(o, "    ok = ok && tide_table_unpack(&w->%s, %s, &bytes);\n", arch_name(g, a), arch_columns(g, a));
@@ -13111,8 +13223,15 @@ static void gen_commands_api(gen *g)
     const program *prog = g->prog;
     if (!prog->command_types.count) return;
     sb *o = &g->c;
-    const bool text = prog->uses_heap || prog->uses_text;
-    sb_put(o, "static bool tide_game_check_command(const uint8_t *data, uint32_t size);\n\n");
+    const bool bytes = commands_have_bytes(prog);
+    const bool unordered = commands_unordered(prog);
+    const bool text = prog->uses_heap || prog->uses_text || bytes;
+    const char *most = bytes ? "TIDE_COMMAND_LIMIT" : "TIDE_COMMAND_BYTES";
+    sb_put(o, "static bool tide_game_check_command(const uint8_t *data, uint32_t size, uint32_t *channel);\n\n");
+    if (bytes) {
+        sb_put(o, "// A file's bytes go on whole bytes of the wire: the bits before them are padded\n"
+                  "TIDE_HELPER void tide_command_align(tide_bits *b)\n{\n    b->bit = (b->bit + 7u) & ~7u;\n}\n\n");
+    }
     sb_put(o, "// Command strings must be bounded, well-formed UTF-8, without embedded NULs.\n"
               "TIDE_HELPER bool tide_command_utf8(const uint8_t *s, uint32_t size)\n{\n"
               "    for (uint32_t i = 0; i < size;) {\n"
@@ -13140,11 +13259,11 @@ static void gen_commands_api(gen *g)
         for (int i = 0; i < d->fields.count; i++) gen_bits(g, field_cname(&d->fields.items[i]), d->fields.items[i].type, BITS_WRITE, &ignored);
         sb_put(o, "    return tide_bits_end(&b);\n}\n\n");
         sb_printf(o, "static bool tide_read_command_%s(const uint8_t *data, uint32_t size, tide_entity *target, %s *in)\n{\n"
-                     "    if (!data || size < 10u || size > TIDE_COMMAND_BYTES) return false;\n"
+                     "    if (!data || size < 10u || size > %s) return false;\n"
                      "    *in = (%s){0};\n    (void)in;\n    tide_bits b = {(uint8_t *)data, size, 0, false};\n"
                      "    if (tide_bits_get(&b, 16) != %du) return false;\n"
                      "    target->index = tide_bits_get(&b, 32);\n    target->generation = tide_bits_get(&b, 32);\n",
-                  name, name, name, d->index);
+                  name, name, command_limit(d), name, d->index);
         for (int i = 0; i < d->fields.count; i++) gen_bits(g, field_cname(&d->fields.items[i]), d->fields.items[i].type, BITS_READ, &ignored);
         sb_put(o, "    return !b.overflow && (b.bit + 7u) / 8u == size\n"
                   "        && (!(b.bit & 7u) || (data[size - 1u] >> (b.bit & 7u)) == 0);\n}\n\n");
@@ -13152,46 +13271,113 @@ static void gen_commands_api(gen *g)
         const decl *session = prog->session;
         sb_printf(o, "    if (local->%s.%s != TIDE_SESSION_CONNECTED) return;\n",
                   type_cname(session), field_cname(&session->fields.items[0]));
-        sb_printf(o, "    if (local->tide_outgoing_count >= TIDE_COMMAND_PENDING) { fputs(\"tide: too many unsent commands (" STR_FMT "); wait for the session to send them\\n\", stderr); abort(); }\n", STR_ARG(d->qualified));
-        sb_put(o, "    const uint32_t at = (local->tide_outgoing_from + local->tide_outgoing_count) % TIDE_COMMAND_PENDING;\n");
-        sb_printf(o, "    const uint32_t size = tide_write_command_%s(target, value, local->tide_outgoing[at], TIDE_COMMAND_BYTES);\n", name);
-        sb_printf(o, "    if (!size || !tide_game_check_command(local->tide_outgoing[at], size)) { fputs(\"tide: command " STR_FMT " exceeds TIDE_COMMAND_BYTES or contains invalid text\\n\", stderr); abort(); }\n", STR_ARG(d->qualified));
-        sb_put(o, "    local->tide_outgoing_sizes[at] = size;\n    local->tide_outgoing_count++;\n}\n\n");
+        sb_put(o, "    const uint32_t channel = ");
+        put_channel(o, d);
+        sb_put(o, ";\n    uint32_t waiting = 0;\n"
+                  "    for (uint32_t i = 0; i < local->tide_outgoing_count; i++) waiting += local->tide_outgoing[i].channel == channel ? 1u : 0u;\n");
+        sb_printf(o, "    if (waiting >= TIDE_COMMAND_PENDING) { fputs(\"tide: too many unsent commands (" STR_FMT "); wait for the session to send them\\n\", stderr); abort(); }\n", STR_ARG(d->qualified));
+        // Room for it: a datagram's worth, and the bytes of its lists
+        sb_put(o, "    uint32_t room = TIDE_COMMAND_BYTES;\n");
+        path_list paths = {0};
+        text_paths(d, "", &paths);
+        for (int k = 0; k < paths.count; k++) {
+            const heap_path *hp = &paths.items[k];
+            if (hp->list && type_has_bytes((type){TY_LIST, (decl *)hp->list})) {
+                sb_printf(o, "    room += 8u + (uint32_t)tide_list_count(value.%s);\n", hp->path);
+            }
+        }
+        sb_put(o, "    uint8_t *bytes = malloc(room);\n    if (!bytes) tide_out_of_memory();\n");
+        sb_printf(o, "    const uint32_t size = tide_write_command_%s(target, value, bytes, room);\n", name);
+        sb_printf(o, "    if (!size || !tide_game_check_command(bytes, size, NULL)) { fputs(\"tide: command " STR_FMT " exceeds %s or contains invalid text\\n\", stderr); abort(); }\n", STR_ARG(d->qualified), command_limit(d));
+        sb_put(o, "    local->tide_outgoing[local->tide_outgoing_count++] = (tide_outgoing_item){bytes, size, channel};\n}\n\n");
     }
     g->indent = 0;
-    sb_put(o, "uint32_t tide_local_command(const tide_local *local, uint8_t *out, uint32_t capacity)\n{\n"
-              "    if (!local->tide_outgoing_count) return 0;\n"
-              "    const uint32_t size = local->tide_outgoing_sizes[local->tide_outgoing_from];\n"
-              "    if (!out || capacity < size) return 0;\n"
-              "    memcpy(out, local->tide_outgoing[local->tide_outgoing_from], size);\n"
-              "    return size;\n}\n\n"
-              "void tide_local_command_sent(tide_local *local)\n{\n"
-              "    if (!local->tide_outgoing_count) return;\n"
-              "    local->tide_outgoing_sizes[local->tide_outgoing_from] = 0;\n"
-              "    memset(local->tide_outgoing[local->tide_outgoing_from], 0, TIDE_COMMAND_BYTES);\n"
-              "    local->tide_outgoing_from = (local->tide_outgoing_from + 1u) % TIDE_COMMAND_PENDING;\n"
-              "    if (--local->tide_outgoing_count == 0) local->tide_outgoing_from = 0;\n}\n\n");
-    sb_put(o, "static bool tide_game_check_command(const uint8_t *data, uint32_t size)\n{\n"
-              "    if (!data || size < 10u || size > TIDE_COMMAND_BYTES) return false;\n");
+    sb_put(o, "const uint8_t *tide_local_command(const tide_local *local, uint32_t channel, uint32_t *size)\n{\n"
+              "    for (uint32_t i = 0; i < local->tide_outgoing_count; i++) {\n"
+              "        if (local->tide_outgoing[i].channel != channel) continue;\n"
+              "        if (size) *size = local->tide_outgoing[i].size;\n"
+              "        return local->tide_outgoing[i].data;\n    }\n"
+              "    if (size) *size = 0;\n    return NULL;\n}\n\n"
+              "void tide_local_command_sent(tide_local *local, uint32_t channel)\n{\n"
+              "    for (uint32_t i = 0; i < local->tide_outgoing_count; i++) {\n"
+              "        if (local->tide_outgoing[i].channel != channel) continue;\n"
+              "        free(local->tide_outgoing[i].data);\n"
+              "        memmove(local->tide_outgoing + i, local->tide_outgoing + i + 1u, (size_t)(--local->tide_outgoing_count - i) * sizeof *local->tide_outgoing);\n"
+              "        return;\n    }\n}\n\n"
+              "// Lets go of every command waiting: as the match goes, and before the local state's memory\n"
+              "static void tide_local_clear_outgoing(tide_local *local)\n{\n"
+              "    for (uint32_t i = 0; i < local->tide_outgoing_count; i++) free(local->tide_outgoing[i].data);\n"
+              "    local->tide_outgoing_count = 0;\n}\n\n");
+    sb_printf(o, "static bool tide_game_check_command(const uint8_t *data, uint32_t size, uint32_t *channel)\n{\n"
+                 "    if (!data || size < 10u || size > %s) return false;\n", most);
     if (text) sb_put(o, "    const uint32_t mark = tide_scratch_mark();\n");
     sb_put(o, "    bool ok = false;\n    tide_entity target;\n    switch ((uint32_t)data[0] | ((uint32_t)data[1] << 8u)) {\n");
     for (int k = 0; k < prog->command_types.count; k++) {
         const decl *d = prog->command_types.items[k];
-        sb_printf(o, "    case %d: { %s value; ok = tide_read_command_%s(data, size, &target, &value); break; }\n", d->index, type_cname(d), type_cname(d));
+        sb_printf(o, "    case %d: { %s value; ok = tide_read_command_%s(data, size, &target, &value); if (ok && channel) *channel = ",
+                  d->index, type_cname(d), type_cname(d));
+        put_channel(o, d);
+        sb_put(o, "; break; }\n");
     }
     sb_put(o, "    default: break;\n    }\n");
     if (text) sb_put(o, "    tide_scratch_reset(mark);\n");
     sb_put(o, "    return ok;\n}\n\n"
-              "static uint32_t tide_game_command_sequence(const void *world, tide_player_id player)\n{\n"
-              "    const tide_world *w = world;\n    switch (tide_player_index(player)) {\n");
+              "static uint32_t tide_game_command_sequence(const void *world, tide_player_id player, uint32_t channel)\n{\n"
+              "    const tide_world *w = world;\n    const int32_t index = tide_player_index(player);\n"
+              "    if (index < 0 || (uint32_t)index >= TIDE_GAME_PLAYERS) return 0;\n"
+              "    switch (channel) {\n");
     const uint32_t players = prog->max_players ? prog->max_players : TIDE_PLAYERS_DEFAULT;
-    for (uint32_t i = 0; i < players; i++) sb_printf(o, "    case %u: return (uint32_t)w->tide_command_state.seq%u;\n", i, i);
-    sb_put(o, "    default: return 0;\n    }\n}\n\n"
-              "static bool tide_game_command(void *world, tide_player_id sender, uint32_t sequence, const uint8_t *data, uint32_t size)\n{\n"
+    for (uint32_t k = 0; k <= (uint32_t)prog->channels.count; k++) {
+        sb_printf(o, "    case %uu:\n        switch (index) {\n", k);
+        for (uint32_t i = 0; i < players; i++) {
+            if (k) sb_printf(o, "        case %u: return (uint32_t)w->tide_command_state.seq%u_%u;\n", i, i, k);
+            else sb_printf(o, "        case %u: return (uint32_t)w->tide_command_state.seq%u;\n", i, i);
+        }
+        sb_put(o, "        default: return 0;\n        }\n");
+    }
+    if (unordered) {
+        sb_put(o, "    case TIDE_COMMAND_UNORDERED:\n        switch (index) {\n");
+        for (uint32_t i = 0; i < players; i++) sb_printf(o, "        case %u: return (uint32_t)w->tide_command_state.top%u;\n", i, i);
+        sb_put(o, "        default: return 0;\n        }\n");
+    }
+    sb_put(o, "    default: return 0;\n    }\n}\n\n");
+    if (unordered) {
+        // The window: the highest id applied, and a bit for each of the
+        // TIDE_COMMAND_WINDOW ids down from it (bit 0 the highest's own)
+        sb_put(o, "static uint64_t tide_game_command_seen(const tide_world *w, const int32_t index)\n{\n    switch (index) {\n");
+        for (uint32_t i = 0; i < players; i++) sb_printf(o, "    case %u: return (uint64_t)w->tide_command_state.seen%u;\n", i, i);
+        sb_put(o, "    default: return 0;\n    }\n}\n\n"
+                  "static bool tide_game_command_applied(const void *world, tide_player_id player, uint32_t id)\n{\n"
+                  "    const tide_world *w = world;\n"
+                  "    const uint32_t top = tide_game_command_sequence(w, player, TIDE_COMMAND_UNORDERED);\n"
+                  "    if (!id || id > top) return false;\n"
+                  "    if (top - id >= TIDE_COMMAND_WINDOW) return true;\n"
+                  "    return (tide_game_command_seen(w, tide_player_index(player)) >> (top - id) & 1u) != 0;\n}\n\n"
+                  "static void tide_game_command_note(tide_world *w, const int32_t index, const uint32_t id)\n{\n"
+                  "    uint32_t top = tide_game_command_sequence(w, tide_player_from_index(index), TIDE_COMMAND_UNORDERED);\n"
+                  "    uint64_t seen = tide_game_command_seen(w, index);\n"
+                  "    if (id > top) {\n        seen = id - top >= TIDE_COMMAND_WINDOW ? 0u : seen << (id - top);\n"
+                  "        seen |= 1u;\n        top = id;\n    } else {\n        seen |= (uint64_t)1 << (top - id);\n    }\n"
+                  "    switch (index) {\n");
+        for (uint32_t i = 0; i < players; i++) {
+            sb_printf(o, "    case %u: memcpy(&w->tide_command_state.top%u, &top, sizeof top); memcpy(&w->tide_command_state.seen%u, &seen, sizeof seen); break;\n", i, i, i);
+        }
+        sb_put(o, "    default: break;\n    }\n}\n\n");
+    }
+    sb_put(o, "static bool tide_game_command(void *world, tide_player_id sender, uint32_t channel, uint32_t sequence, const uint8_t *data, uint32_t size)\n{\n"
               "    tide_world *w = world;\n"
               "    if (tide_player_index(sender) < 0 || (uint32_t)tide_player_index(sender) >= TIDE_GAME_PLAYERS) return false;\n"
-              "    const uint32_t was = tide_game_command_sequence(w, sender);\n"
-              "    if (was == UINT32_MAX || sequence != was + 1u || !tide_game_check_command(data, size)) return false;\n");
+              "    uint32_t own = 0;\n"
+              "    if (!tide_game_check_command(data, size, &own) || own != channel) return false;\n");
+    if (unordered) {
+        sb_put(o, "    if (channel == TIDE_COMMAND_UNORDERED) {\n"
+                  "        if (!sequence || tide_game_command_applied(w, sender, sequence)) return false;\n    } else {\n"
+                  "        const uint32_t was = tide_game_command_sequence(w, sender, channel);\n"
+                  "        if (was == UINT32_MAX || sequence != was + 1u) return false;\n    }\n");
+    } else {
+        sb_put(o, "    const uint32_t was = tide_game_command_sequence(w, sender, channel);\n"
+                  "    if (was == UINT32_MAX || sequence != was + 1u) return false;\n");
+    }
     if (text) sb_put(o, "    const uint32_t mark = tide_scratch_mark();\n");
     if (prog->uses_heap) sb_put(o, "    tide_text_use(&w->heap, NULL);\n");
     sb_put(o, "    tide_entity target;\n    bool ok = false;\n"
@@ -13218,8 +13404,17 @@ static void gen_commands_api(gen *g)
         sb_put(o, "        ok = true;\n        break;\n    }\n");
     }
     g->indent = 0;
-    sb_put(o, "    default: break;\n    }\n    if (ok) {\n        switch (tide_player_index(sender)) {\n");
-    for (uint32_t i = 0; i < players; i++) sb_printf(o, "        case %u: memcpy(&w->tide_command_state.seq%u, &sequence, sizeof sequence); break;\n", i, i);
+    sb_put(o, "    default: break;\n    }\n    if (ok) {\n");
+    if (unordered) sb_put(o, "        if (channel == TIDE_COMMAND_UNORDERED) tide_game_command_note(w, tide_player_index(sender), sequence);\n        else\n");
+    sb_put(o, "        switch (channel) {\n");
+    for (uint32_t k = 0; k <= (uint32_t)prog->channels.count; k++) {
+        sb_printf(o, "        case %uu:\n            switch (tide_player_index(sender)) {\n", k);
+        for (uint32_t i = 0; i < players; i++) {
+            if (k) sb_printf(o, "            case %u: memcpy(&w->tide_command_state.seq%u_%u, &sequence, sizeof sequence); break;\n", i, i, k);
+            else sb_printf(o, "            case %u: memcpy(&w->tide_command_state.seq%u, &sequence, sizeof sequence); break;\n", i, i);
+        }
+        sb_put(o, "            default: break;\n            }\n            break;\n");
+    }
     sb_put(o, "        default: break;\n        }\n    }\n");
     if (prog->uses_heap) sb_put(o, "    tide_heap_flush(&w->heap);\n");
     if (text) sb_put(o, "    tide_scratch_reset(mark);\n");
@@ -13426,9 +13621,7 @@ static void gen_game_api(gen *g)
               connected, connected);
     sb_put(o, "void tide_local_disconnected(tide_local *local, uint32_t reason, const char *message)\n{\n");
     if (program_corrects(prog)) sb_put(o, "    tide_corrections_reset(local);\n");
-    if (prog->command_types.count) sb_put(o, "    local->tide_outgoing_from = local->tide_outgoing_count = 0;\n"
-                                           "    memset(local->tide_outgoing_sizes, 0, sizeof local->tide_outgoing_sizes);\n"
-                                           "    memset(local->tide_outgoing, 0, sizeof local->tide_outgoing);\n");
+    if (prog->command_types.count) sb_put(o, "    tide_local_clear_outgoing(local);\n");
     sb_put(o, "    size_t n = message ? strlen(message) : 0u;\n");
     sb_put(o, "    if (n >= sizeof local->tide_message) n = sizeof local->tide_message - 1u;\n");
     sb_put(o, "    memcpy(local->tide_message, message ? message : \"\", n);\n");
@@ -13570,6 +13763,8 @@ static void gen_game_api(gen *g)
     if (prog->command_types.count) sb_put(o, "    .check_command = tide_game_check_command,\n"
                                            "    .command_sequence = tide_game_command_sequence,\n"
                                            "    .command = tide_game_command,\n");
+    if (commands_unordered(prog)) sb_put(o, "    .command_applied = tide_game_command_applied,\n");
+    if (prog->channels.count) sb_printf(o, "    .command_channels = %uu,\n", (unsigned)prog->channels.count + 1u);
     // Its settings: here rather than in the header, so they don't change the game's hash
     if (prog->tick_rate) sb_printf(o, "    .tick_rate = %uu,\n", (unsigned)prog->tick_rate);
     if (prog->host_migration) sb_put(o, "    .host_migration = true,\n");
@@ -14149,6 +14344,35 @@ bool codegen(program *prog, const codegen_options *opts)
             f.type = (type){TY_INT, NULL};
             f.hidden = true;
             vec_push(state->fields, f);
+        }
+        // The game's own channels, a sequence each after the default's, so a
+        // game with none has the state it had; then the unordered window
+        for (uint32_t k = 1; k <= (uint32_t)prog->channels.count; k++) {
+            for (uint32_t i = 0; i < players; i++) {
+                field f = {0};
+                sb name = {0};
+                sb_printf(&name, "seq%u_%u", i, k);
+                f.name = str_from(name.data);
+                f.type = (type){TY_INT, NULL};
+                f.hidden = true;
+                vec_push(state->fields, f);
+            }
+        }
+        for (uint32_t i = 0; commands_unordered(prog) && i < players; i++) {
+            field top = {0};
+            sb name = {0};
+            sb_printf(&name, "top%u", i);
+            top.name = str_from(name.data);
+            top.type = (type){TY_INT, NULL};
+            top.hidden = true;
+            vec_push(state->fields, top);
+            field seen = {0};
+            sb seen_name = {0};
+            sb_printf(&seen_name, "seen%u", i);
+            seen.name = str_from(seen_name.data);
+            seen.type = (type){TY_LONG, NULL};
+            seen.hidden = true;
+            vec_push(state->fields, seen);
         }
         vec_push(prog->singletons, state);
     }

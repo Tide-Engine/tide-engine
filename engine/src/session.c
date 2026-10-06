@@ -25,10 +25,17 @@
 //            it from), the chunks it has of what's being sent, the ticks it
 //            has, what its world lacks of the one whose hashes it was sent,
 //            and its inputs from the first the server lacks
-//   COMMAND client: its connection attempt, command sequence and copied bytes
+//   COMMAND  client: its connection attempt, command sequence and copied bytes
+//   UPLOAD   client: a chunk of a command too big for a datagram: its
+//            attempt, the upload's number, the command's sequence and size,
+//            the chunk's index and bytes
+//   DOWNLOAD server: a chunk of such a command, on its way to every player
+//            before it goes in a tick: its number, size, the chunk's index
+//            and bytes
 //   SERVER   server: times, its tick, the newest input it has of the player's
 //            (from its tick), how long their inputs waited for the ticks it
-//            last ran, and pieces of the ticks the player lacks, each by how
+//            last ran, what it has of the player's upload (in a game with
+//            commands), and pieces of the ticks the player lacks, each by how
 //            many ticks back it is
 //
 // Times are milliseconds, kept to 16 bits: they only measure round trips and
@@ -55,7 +62,25 @@
 // change or didn't arrive in time; a second set of bits says which ones were
 // late, so a client knows whether its prediction held.
 // Commands follow in the server's selected order, each with its authenticated
-// sender, sequence and bytes. They are never guessed by repeating an input.
+// sender, sequence and bytes, or, for one too big for a datagram, the number
+// of the download every player was sent it as. They are never guessed by
+// repeating an input.
+//
+// A command's channel is its type's (tide_game.check_command): the default,
+// one of the game's own, or none (TIDE_COMMAND_UNORDERED). Each player's
+// commands are in order within a channel, by a sequence of their own, and
+// in no order against another channel's: the server holds one back only for
+// an earlier command of its channel. An unordered command goes in whichever
+// tick it arrives, once: the world keeps a window of the ids it applied.
+//
+// A big command (over TIDE_COMMAND_BYTES) goes up in chunks (UPLOAD), which
+// the server acknowledges in its SERVER datagrams, as a CLIENT does a world's.
+// Whole, it waits in the player's queue like any other. When its turn comes,
+// the server first sends its bytes down to every player in the match
+// (DOWNLOAD, acknowledged in CLIENTs), paced under the frames, and puts it in
+// a tick once they all have them: the tick's frame names the download, so a
+// tick is never held up by a transfer, and a player who joins later with a
+// world from before that tick is sent the download with the ticks it lacks.
 //
 // The world goes as a delta (tide/delta.h), in chunks. A player with no world
 // gets all of it. One with a world to build it from (its own, gone wrong, or
@@ -63,9 +88,13 @@
 // the world's pages, says which of them its world lacks, and gets those.
 
 #define MAGIC 0x5449u // "TI"
-#define PROTOCOL 11u
+#define PROTOCOL 12u
 
-enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_CHUNK, MSG_CLIENT, MSG_SERVER, MSG_BYE, MSG_HANDOVER, MSG_COMMAND };
+enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_CHUNK, MSG_CLIENT, MSG_SERVER, MSG_BYE, MSG_HANDOVER, MSG_COMMAND,
+       MSG_UPLOAD, MSG_DOWNLOAD };
+// What a SERVER says of the player's upload: nothing, the chunks it has of
+// one on its way, or that one is whole (and the number of its download)
+enum { UPLOAD_NONE = 0, UPLOAD_PART = 1, UPLOAD_WHOLE = 2 };
 enum { REFUSE_OTHER_GAME = 1, REFUSE_FULL = 2, REFUSE_CLOSED = 3 };
 enum { EVENT_JOIN = 1, EVENT_LEAVE = 2 };
 // KICKED: then the message's length and bytes. HANDOVER: the server left, and
@@ -106,6 +135,11 @@ enum { START_UNKNOWN = 0, START_MAIN = 1, START_GIVEN = 2 };
 #define PIECE 1000u                  // Bytes of a tick per piece: a tick takes as many as its inputs make, up to 256
 #define CHUNK 1000u                  // Bytes of a packed world per chunk
 #define CHUNKS_PER_UPDATE 64u
+// Chunks of a big command an update sends, up and down: 16 KB, under the
+// inputs and frames, so about a megabyte a second at 60 updates a second
+#define COMMAND_CHUNKS_PER_UPDATE 16u
+#define PUBLISHED_MOST 64u // Big commands a server keeps, dispatched or on their way to the players
+#define DOWNLOADS_MOST 64u // ...and a client keeps, whole or coming, for the ticks that name them: as many
 #define PACKETS_PER_UPDATE 8u
 #define EVENTS_PER_PLAYER 4u    // Joins and leaves kept before a tick, for each player the game takes
 #define PLAYER_SET_BYTES 46u    // The most a set of players takes, as a varint: 7 of its 320 bits a byte
@@ -270,16 +304,28 @@ static uint32_t frame_capacity(const tide_game *g)
            + (g->command ? 5u + TIDE_COMMANDS_PER_TICK * (15u + TIDE_COMMAND_BYTES) : 0u);
 }
 
+// A command waiting: at the server, for its turn in a tick; at a client, to
+// be sent, until a verified world has it. `sequence` is its channel's, or an
+// unordered command's id. One bigger than a datagram goes in chunks:
+// `published` is its download's number, once the server gave it one (which
+// the client learns when its upload is whole), and `uploaded` whether the
+// server has all of it.
 typedef struct pending_command {
+    uint32_t channel;
     uint32_t sequence;
     uint32_t size;
     uint8_t *data;
     double sent;
+    uint32_t published;
+    bool uploaded;
 } pending_command;
 
+// A player's, in the order they came: TIDE_COMMAND_PENDING in each channel
+// at most, the unordered ones counted as a channel of their own.
 typedef struct command_queue {
-    pending_command items[TIDE_COMMAND_PENDING];
+    pending_command *items;
     uint32_t count;
+    uint32_t capacity;
 } command_queue;
 
 static void remove_command(command_queue *q, const uint32_t index)
@@ -293,14 +339,102 @@ static void clear_commands(command_queue *q)
     while (q->count) remove_command(q, q->count - 1u);
 }
 
-static bool append_command(command_queue *q, const uint32_t sequence, const uint8_t *data, const uint32_t size)
+static void free_commands(command_queue *q)
 {
-    if (q->count >= TIDE_COMMAND_PENDING || !size || size > TIDE_COMMAND_BYTES) return false;
+    clear_commands(q);
+    free(q->items);
+    *q = (command_queue){0};
+}
+
+static uint32_t channel_count(const command_queue *q, const uint32_t channel)
+{
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < q->count; i++) n += q->items[i].channel == channel ? 1u : 0u;
+    return n;
+}
+
+static bool big_command(const uint32_t size)
+{
+    return size > TIDE_COMMAND_BYTES;
+}
+
+// Takes `data` (to free()) as the queue's, in its channel, which has room
+// for it; else frees it.
+static bool append_owned(command_queue *q, const uint32_t channel, const uint32_t sequence, uint8_t *data,
+                         const uint32_t size)
+{
+    if (!data || !size || size > TIDE_COMMAND_LIMIT || channel_count(q, channel) >= TIDE_COMMAND_PENDING) {
+        free(data);
+        return false;
+    }
+    if (q->count == q->capacity) {
+        const uint32_t capacity = q->capacity ? 2u * q->capacity : 8u;
+        pending_command *items = realloc(q->items, (size_t)capacity * sizeof *items);
+        if (!items) {
+            free(data);
+            return false;
+        }
+        q->items = items;
+        q->capacity = capacity;
+    }
+    q->items[q->count++] = (pending_command){channel, sequence, size, data, 0, 0, false};
+    return true;
+}
+
+static bool append_command(command_queue *q, const uint32_t channel, const uint32_t sequence, const uint8_t *data,
+                           const uint32_t size)
+{
+    if (!data || !size || size > TIDE_COMMAND_LIMIT) return false;
     uint8_t *copy = malloc(size);
     if (!copy) return false;
     memcpy(copy, data, size);
-    q->items[q->count++] = (pending_command){sequence, size, copy, 0};
-    return true;
+    return append_owned(q, channel, sequence, copy, size);
+}
+
+// Whether a command of `sequence` can still come in `channel` of a world
+// where `previous` is the last: unordered ones can at any time, and an
+// ordered one's sequence is within a queue's worth after the last.
+static bool sequence_pending(const uint32_t channel, const uint32_t sequence, const uint32_t previous)
+{
+    if (channel == TIDE_COMMAND_UNORDERED) return true;
+    return sequence > previous && sequence - previous <= TIDE_COMMAND_PENDING;
+}
+
+// Whether the queue has one of this channel and sequence already
+static bool queued(const command_queue *q, const uint32_t channel, const uint32_t sequence)
+{
+    for (uint32_t i = 0; i < q->count; i++) {
+        if (q->items[i].channel == channel && q->items[i].sequence == sequence) return true;
+    }
+    return false;
+}
+
+// Whether a world applied `sequence` in `channel` for `player`: an ordered
+// one's sequence is behind the channel's, and an unordered one's id is in
+// the window the world keeps.
+static bool command_done(const tide_game *g, const void *world, const tide_player_id player, const uint32_t channel,
+                         const uint32_t sequence)
+{
+    if (channel == TIDE_COMMAND_UNORDERED) return g->command_applied && g->command_applied(world, player, sequence);
+    return sequence <= g->command_sequence(world, player, channel);
+}
+
+// Chunks of a big command: as a world's, CHUNK bytes each
+static uint32_t chunks_of(const uint32_t size)
+{
+    return (size + CHUNK - 1u) / CHUNK;
+}
+
+// A transfer's bitmap of chunks: which it has from the first (`ack`), and of
+// the 64 after those, as the CLIENT and SERVER say them
+static void chunks_had(const uint8_t *have, const uint32_t count, uint32_t *ack, uint64_t *mask)
+{
+    *ack = 0;
+    *mask = 0;
+    while (*ack < count && have[*ack]) (*ack)++;
+    for (uint32_t i = 0; i < 64u && *ack + 1u + i < count; i++) {
+        if (have[*ack + 1u + i]) *mask |= (uint64_t)1 << i;
+    }
 }
 
 // A set of players (and the server's slot after them) as a varint of as many
@@ -461,7 +595,45 @@ typedef struct connection {
     uint8_t *inputs; // `inputs` of max_input_bytes, then the last one set
     uint32_t last_size;
     command_queue commands;
+    // A big command on its way up, one at a time: the upload's number (0:
+    // none), the command's sequence and size, its chunks and the bytes so
+    // far. `upload_done` is the last upload that came whole, and which
+    // command it was: the player is told so, with the number of its download
+    // once it's published, until its next upload.
+    uint32_t upload_number;
+    uint32_t upload_sequence;
+    uint32_t upload_size;
+    uint32_t upload_chunks;
+    uint32_t upload_had;
+    uint8_t *upload;
+    uint8_t *upload_have;
+    uint32_t upload_done;
+    uint32_t upload_done_channel;
+    uint32_t upload_done_sequence;
+    // A big command on its way down, one at a time (published.number): what
+    // the player said it has of it (as of a world's chunks), when each chunk
+    // was sent, and the last it said it had whole.
+    uint32_t download_number;
+    uint32_t download_ack;
+    uint64_t download_mask;
+    double *download_sent;
+    uint32_t download_done;
 } connection;
+
+// A big command the server took from a player, kept while it goes to every
+// player and, once it's in a tick, for as long as the tick's frame is: a
+// player sent a world from before it gets it with the ticks it lacks.
+typedef struct published {
+    uint32_t number;   // Its download's, from 1
+    uint32_t player;   // Whose it is
+    uint32_t channel;  // ...and its channel, and its sequence in it
+    uint32_t sequence;
+    uint32_t size;
+    uint8_t *data;
+    bool dispatched;   // In a tick already...
+    uint32_t tick;     // ...this one
+    tide_player_set acked; // The players who have all of it
+} published;
 
 // splitmix64
 static uint64_t next_random(uint64_t *state)
@@ -523,6 +695,9 @@ struct tide_server {
     uint8_t (*events)[2];    // Joins and leaves before the next tick: EVENTS_PER_PLAYER for each player
     uint32_t event_count;
     uint32_t command_player; // Next sender considered, so a busy player cannot starve the others
+    published *published;    // Big commands, by number (see `published`): PUBLISHED_MOST at most
+    uint32_t published_count;
+    uint32_t next_published;
     windows w;
     stored_frame *frames; // history
     // The whole world as last packed to send, which every player joining in
@@ -711,16 +886,74 @@ static void send_lacking(tide_server *s, connection *c, const uint8_t *lacks, co
     send_in_chunks(s, c, SEND_WORLD, delta, delta_size, NULL);
 }
 
+static void stop_upload(connection *c)
+{
+    free(c->upload);
+    free(c->upload_have);
+    c->upload = NULL;
+    c->upload_have = NULL;
+    c->upload_number = 0;
+    c->upload_had = 0;
+}
+
+static void stop_download(connection *c)
+{
+    free(c->download_sent);
+    c->download_sent = NULL;
+    c->download_number = 0;
+}
+
 static void free_connection(tide_server *s, connection *c)
 {
     stop_sending(s, c);
+    stop_upload(c);
+    stop_download(c);
     free(c->inputs);
     free(c->input_tick);
     free(c->input_size);
     free(c->input_arrived);
     free(c->frame_sent);
-    clear_commands(&c->commands);
+    free_commands(&c->commands);
     memset(c, 0, sizeof *c);
+}
+
+static void free_published(tide_server *s)
+{
+    for (uint32_t i = 0; i < s->published_count; i++) free(s->published[i].data);
+    s->published_count = 0;
+}
+
+static published *published_by_number(tide_server *s, const uint32_t number)
+{
+    for (uint32_t i = 0; i < s->published_count; i++) {
+        if (s->published[i].number == number) return &s->published[i];
+    }
+    return NULL;
+}
+
+// Whether `c` needs the published command: one not in a tick yet, or in a
+// tick from the world it was sent on, whose frame it's sent
+static bool needs_published(const connection *c, const published *p)
+{
+    return !p->dispatched || p->tick >= c->snapshot_tick;
+}
+
+// Whether the published command is the player's own last upload, whose
+// bytes it still has: told its number, it says it has the download
+static bool own_upload(const connection *c, const uint32_t player, const published *p)
+{
+    return p->player == player && c->upload_done && p->channel == c->upload_done_channel
+        && p->sequence == c->upload_done_sequence;
+}
+
+// The download's number of the player's last upload, once it's published
+static uint32_t upload_done_published(const tide_server *s, const connection *c)
+{
+    const uint32_t player = (uint32_t)(c - s->connections);
+    for (uint32_t i = 0; i < s->published_count; i++) {
+        if (own_upload(c, player, &s->published[i])) return s->published[i].number;
+    }
+    return 0;
 }
 
 // A player that was in the match leaves it. One that only said hello never
@@ -943,9 +1176,34 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
         lacks_size = tide_read_varint(r);
         lacks = tide_read_bytes(r, lacks_size);
     }
+    // What it has of the big command on its way down (see send_client), in a
+    // game with commands: its number (0: none), then 0 for all of it, or the
+    // chunks it has from the first, plus one, and which it has after those
+    uint32_t download_number = 0;
+    uint32_t download_ack = 0;
+    uint64_t download_mask = 0;
+    if (s->game->command) {
+        download_number = tide_read_varint(r);
+        const uint32_t has = download_number ? tide_read_varint(r) : 0u;
+        download_ack = !download_number ? 0u : has == 0 ? UINT32_MAX : has - 1u;
+        download_mask = download_number && has ? tide_read_u64(r) : 0u;
+    }
     const uint32_t first_input = frame_ack + tide_read_varint(r);
     const uint8_t input_count = tide_read_u8(r);
     if (r->failed) return;
+    if (download_number) {
+        published *p = published_by_number(s, download_number);
+        if (p && download_ack == UINT32_MAX) { // It has all of it
+            tide_players_add(&p->acked, (uint32_t)(c - s->connections));
+            if (c->download_number == download_number) stop_download(c);
+            if (download_number > c->download_done) c->download_done = download_number;
+        } else if (p && c->download_number == download_number) {
+            if (download_ack > c->download_ack) {
+                c->download_ack = download_ack < chunks_of(p->size) ? download_ack : chunks_of(p->size);
+            }
+            if (download_ack == c->download_ack) c->download_mask = download_mask;
+        }
+    }
     // Whether it wants the world goes by the newest it sent: an older one can come late
     const bool newest = (int16_t)(uint16_t)(their_time - c->their_time) >= 0;
     const bool wants = (flags & CLIENT_WANTS_WORLD) != 0;
@@ -1015,6 +1273,32 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
 // Separate from sampled inputs: a command that arrives after its original
 // frame still needs a turn. The connection supplies its sender and attempt,
 // and the world supplies the last dispatched sequence.
+// Takes a command that came whole, in a datagram or as an upload, into the
+// player's queue: once its bytes decode, its channel (the bytes' own) has
+// room, and the world hasn't applied its sequence, nor the queue got it
+// already. `data` is to free(): the queue's if it's taken.
+static void take_command(tide_server *s, connection *c, const uint32_t sequence, uint8_t *data, const uint32_t size)
+{
+    const tide_game *g = s->game;
+    const tide_player_id sender = tide_player_from_index((int32_t)(c - s->connections));
+    uint32_t channel = 0;
+    if (!g->check_command(data, size, &channel)
+        || (channel == TIDE_COMMAND_UNORDERED ? !g->command_applied : channel >= tide_game_command_channels(g))) {
+        free(data);
+        return;
+    }
+    const uint32_t previous = channel == TIDE_COMMAND_UNORDERED ? 0u : g->command_sequence(s->world, sender, channel);
+    if (!sequence_pending(channel, sequence, previous) || command_done(g, s->world, sender, channel, sequence)
+        || queued(&c->commands, channel, sequence)) {
+        free(data);
+        return;
+    }
+    (void)append_owned(&c->commands, channel, sequence, data, size);
+}
+
+// Separate from sampled inputs: a command that arrives after its original
+// frame still needs a turn. The connection supplies its sender and attempt,
+// and the world supplies the last dispatched sequence.
 static void on_command(tide_server *s, connection *c, tide_reader *r)
 {
     const tide_game *g = s->game;
@@ -1025,15 +1309,58 @@ static void on_command(tide_server *s, connection *c, tide_reader *r)
         || !size || size > TIDE_COMMAND_BYTES) return;
     const uint8_t *data = tide_read_bytes(r, size);
     if (!data || r->at != r->size) return;
-    const tide_player_id sender = tide_player_from_index((int32_t)(c - s->connections));
-    const uint32_t previous = g->command_sequence(s->world, sender);
-    if (sequence <= previous || sequence - previous > TIDE_COMMAND_PENDING) return;
-    for (uint32_t i = 0; i < c->commands.count; i++) {
-        if (c->commands.items[i].sequence == sequence) return;
+    uint8_t *copy = malloc(size);
+    if (!copy) return;
+    memcpy(copy, data, size);
+    take_command(s, c, sequence, copy, size);
+}
+
+// A chunk of a command too big for a datagram. The player sends one upload
+// at a time: a new number replaces one on its way, and one that came whole
+// is acknowledged, by its number, until the next.
+static void on_upload(tide_server *s, connection *c, tide_reader *r)
+{
+    const tide_game *g = s->game;
+    const uint32_t nonce = tide_read_u32(r);
+    const uint32_t number = tide_read_varint(r);
+    const uint32_t sequence = tide_read_varint(r);
+    const uint32_t size = tide_read_varint(r);
+    const uint32_t index = tide_read_varint(r);
+    const uint16_t bytes = tide_read_u16(r);
+    const uint8_t *data = tide_read_bytes(r, bytes);
+    if (r->failed || !data || r->at != r->size || !c->greeted || nonce != c->nonce || !g->command
+        || !g->command_sequence || !g->check_command || !number || !big_command(size) || size > TIDE_COMMAND_LIMIT
+        || number == c->upload_done) return;
+    const uint32_t chunks = chunks_of(size);
+    if (index >= chunks || (uint32_t)index * CHUNK + bytes > size
+        || bytes != (size - index * CHUNK < CHUNK ? size - index * CHUNK : CHUNK)) return;
+    if (number != c->upload_number) {
+        stop_upload(c);
+        c->upload = malloc(size);
+        c->upload_have = calloc(chunks, 1);
+        if (!c->upload || !c->upload_have) {
+            stop_upload(c);
+            return;
+        }
+        c->upload_number = number;
+        c->upload_sequence = sequence;
+        c->upload_size = size;
+        c->upload_chunks = chunks;
     }
-    if (c->commands.count < TIDE_COMMAND_PENDING && g->check_command(data, size)) {
-        (void)append_command(&c->commands, sequence, data, size);
-    }
+    if (c->upload_have[index]) return;
+    memcpy(c->upload + (size_t)index * CHUNK, data, bytes);
+    c->upload_have[index] = 1;
+    if (++c->upload_had < c->upload_chunks) return;
+    // Whole: the queue's now, or dropped; either way it's done, so the
+    // player stops sending it
+    uint8_t *whole = c->upload;
+    c->upload = NULL;
+    c->upload_done = number;
+    c->upload_done_sequence = c->upload_sequence;
+    c->upload_done_channel = 0;
+    if (!g->check_command(whole, c->upload_size, &c->upload_done_channel)) c->upload_done_channel = 0;
+    take_command(s, c, c->upload_sequence, whole, c->upload_size);
+    stop_upload(c);
 }
 
 static void server_receive(tide_server *s, const uint32_t transport)
@@ -1063,6 +1390,7 @@ static void server_receive(tide_server *s, const uint32_t transport)
         if (!c) continue;
         if (type == MSG_CLIENT) on_client(s, c, &r);
         else if (type == MSG_COMMAND) on_command(s, c, &r);
+        else if (type == MSG_UPLOAD) on_upload(s, c, &r);
         else if (type == MSG_BYE) drop_connection(s, c);
     }
 }
@@ -1145,6 +1473,56 @@ static void keep_needed(tide_server *s, const uint32_t tick)
     }
 }
 
+// A big command's turn has come: it's sent to every player in the match
+// before it goes in a tick, so it's published, under a number, and the
+// pending command remembers which. Full, nothing is published: it waits.
+static void publish_command(tide_server *s, const uint32_t player, pending_command *cmd)
+{
+    if (cmd->published || s->published_count >= PUBLISHED_MOST) return;
+    uint8_t *copy = malloc(cmd->size);
+    if (!copy) return;
+    memcpy(copy, cmd->data, cmd->size);
+    const uint32_t number = ++s->next_published;
+    s->published[s->published_count++] = (published){number, player, cmd->channel, cmd->sequence, cmd->size, copy, false, 0, {{0}}};
+    cmd->published = number;
+}
+
+// Whether every player in the match has the published command (its sender
+// too, who keeps its bytes and says so once told its number): those who are
+// being sent a world, or catching up with one, get it with the ticks they
+// lack, and don't hold it up
+static bool everyone_has(const tide_server *s, const published *p)
+{
+    for (uint32_t i = 0; i < s->players; i++) {
+        const connection *c = &s->connections[i];
+        if (!c->used || !c->greeted || c->sending || c->catching_up) continue;
+        if (!tide_players_has(&p->acked, i)) return false;
+    }
+    return true;
+}
+
+// Published commands nobody can need any more: in a tick whose frame has
+// gone (frames are kept for the history, and longer for a player catching
+// up: keep_needed), or from a player who left before it was dispatched
+static void forget_published(tide_server *s)
+{
+    for (uint32_t i = 0; i < s->published_count; i++) {
+        published *p = &s->published[i];
+        const bool stale = p->dispatched ? s->tick - p->tick > s->w.history * HISTORY_MOST
+                                         : !s->connections[p->player].used || !s->connections[p->player].greeted;
+        if (!stale) continue;
+        for (uint32_t k = 0; k < s->players; k++) {
+            if (s->connections[k].download_number == p->number) stop_download(&s->connections[k]);
+        }
+        free(p->data);
+        s->published[i--] = s->published[--s->published_count];
+    }
+}
+
+// Commands into this tick, from each player in turn, in the server's order:
+// a player's next in a channel, or an unordered one. A big one goes once
+// every player has its bytes (publish_command): the frame names its
+// download rather than carrying it.
 static uint32_t dispatch_commands(tide_server *s, tide_writer *w)
 {
     const tide_game *g = s->game;
@@ -1158,22 +1536,37 @@ static uint32_t dispatch_commands(tide_server *s, tide_writer *w)
         connection *c = &s->connections[player];
         if (!c->used || !c->greeted) continue;
         const tide_player_id sender = tide_player_from_index((int32_t)player);
-        const uint32_t previous = g->command_sequence(s->world, sender);
         for (uint32_t i = 0; i < c->commands.count; i++) {
-            const pending_command *cmd = &c->commands.items[i];
-            if (cmd->sequence <= previous) {
+            pending_command *cmd = &c->commands.items[i];
+            if (command_done(g, s->world, sender, cmd->channel, cmd->sequence)) {
                 remove_command(&c->commands, i--);
                 continue;
             }
-            if (previous == UINT32_MAX || cmd->sequence != previous + 1u) continue;
-            if (!g->command(s->world, sender, cmd->sequence, cmd->data, cmd->size)) {
+            if (cmd->channel != TIDE_COMMAND_UNORDERED) {
+                const uint32_t previous = g->command_sequence(s->world, sender, cmd->channel);
+                if (previous == UINT32_MAX || cmd->sequence != previous + 1u) continue;
+            }
+            const published *p = NULL;
+            if (big_command(cmd->size)) {
+                publish_command(s, player, cmd);
+                p = cmd->published ? published_by_number(s, cmd->published) : NULL;
+                if (!p || !everyone_has(s, p)) continue;
+            }
+            if (!g->command(s->world, sender, cmd->channel, cmd->sequence, cmd->data, cmd->size)) {
                 remove_command(&c->commands, i);
                 break;
             }
             tide_write_varint(w, player);
             tide_write_varint(w, cmd->sequence);
             tide_write_varint(w, cmd->size);
-            tide_write_bytes(w, cmd->data, cmd->size);
+            if (p) {
+                published *mine = published_by_number(s, p->number);
+                mine->dispatched = true;
+                mine->tick = s->tick;
+                tide_write_varint(w, p->number);
+            } else {
+                tide_write_bytes(w, cmd->data, cmd->size);
+            }
             remove_command(&c->commands, i);
             count++;
             examined = 0;
@@ -1369,8 +1762,76 @@ static void start_server_packet(const tide_server *s, const connection *c, tide_
     tide_write_varint(w, s->tick);
     write_signed(w, (int32_t)(c->newest_input - s->tick)); // The newest input it has
     write_signed(w, c->waited_known ? c->waited : WAIT_UNKNOWN); // ...and how long they waited for the ticks it last ran (note_wait)
+    // What it has of the player's upload, in a game with commands: the
+    // chunks of one on its way (as a CLIENT says a world's), or that the
+    // last came whole, and its download's number once it's published
+    if (s->game->command) {
+        if (c->upload_number) {
+            uint32_t ack;
+            uint64_t mask;
+            chunks_had(c->upload_have, c->upload_chunks, &ack, &mask);
+            tide_write_u8(w, UPLOAD_PART);
+            tide_write_varint(w, c->upload_number);
+            tide_write_varint(w, ack);
+            tide_write_u64(w, mask);
+        } else if (c->upload_done) {
+            tide_write_u8(w, UPLOAD_WHOLE);
+            tide_write_varint(w, c->upload_done);
+            tide_write_varint(w, upload_done_published(s, c));
+        } else {
+            tide_write_u8(w, UPLOAD_NONE);
+        }
+    }
     *count_at = w->size;
     tide_write_u8(w, 0);
+}
+
+// Chunks of the big command on its way down to `c`: the lowest published one
+// it needs and hasn't said it has all of, paced (COMMAND_CHUNKS_PER_UPDATE),
+// each again once it should have been acknowledged. Its own waits until it's
+// been told its number, as it has the bytes already.
+static void send_downloads(tide_server *s, connection *c)
+{
+    if (!c->download_number) {
+        const published *next = NULL;
+        for (uint32_t i = 0; i < s->published_count; i++) {
+            const published *p = &s->published[i];
+            const uint32_t player = (uint32_t)(c - s->connections);
+            if (p->number <= c->download_done || !needs_published(c, p) || tide_players_has(&p->acked, player)) continue;
+            if (own_upload(c, player, p)) continue; // It has the bytes: told the number, it says so
+            if (!next || p->number < next->number) next = p;
+        }
+        if (!next) return;
+        c->download_sent = calloc(chunks_of(next->size), sizeof *c->download_sent);
+        if (!c->download_sent) return;
+        c->download_number = next->number;
+        c->download_ack = 0;
+        c->download_mask = 0;
+    }
+    const published *p = published_by_number(s, c->download_number);
+    if (!p) {
+        stop_download(c);
+        return;
+    }
+    const double again = resend_after(c->rtt_ms);
+    const uint32_t chunks = chunks_of(p->size);
+    uint32_t sent = 0;
+    for (uint32_t i = c->download_ack; i < chunks && sent < COMMAND_CHUNKS_PER_UPDATE; i++) {
+        if (i > c->download_ack && i - c->download_ack <= 64u && (c->download_mask >> (i - c->download_ack - 1u) & 1u)) continue;
+        if (c->download_sent[i] > 0.0 && s->now - c->download_sent[i] < again) continue;
+        const uint32_t from = i * CHUNK;
+        const uint32_t size = p->size - from < CHUNK ? p->size - from : CHUNK;
+        tide_writer w = {s->packet, TIDE_NET_MTU, 0, false, false};
+        header(&w, MSG_DOWNLOAD);
+        tide_write_varint(&w, p->number);
+        tide_write_varint(&w, p->size);
+        tide_write_varint(&w, i);
+        tide_write_u16(&w, (uint16_t)size);
+        tide_write_bytes(&w, p->data + from, size);
+        send_packet(&s->desc.transports[c->transport], c->address, &w, &s->traffic);
+        c->download_sent[i] = s->now > 0.0 ? s->now : 1e-9;
+        sent++;
+    }
 }
 
 // A piece's own bytes in a SERVER: how many ticks before the packet's its
@@ -1454,6 +1915,7 @@ tide_server *tide_server_create(const tide_server_desc *desc, const double now)
     s->kicks = calloc(s->players, sizeof *s->kicks);
     s->handover = malloc(handover_capacity(s->players));
     s->frames = calloc(s->w.history, sizeof *s->frames);
+    s->published = calloc(PUBLISHED_MOST, sizeof *s->published);
     s->world = calloc(1, g->world_size);
     s->frame = malloc(2u * (size_t)frame_capacity(g));
     s->packet = malloc(TIDE_NET_MTU);
@@ -1462,7 +1924,8 @@ tide_server *tide_server_create(const tide_server_desc *desc, const double now)
     s->server_last = malloc((size_t)g->max_input_bytes + 1u);
     s->scratch = calloc(1, scratch_size(g));
     if (!s->connections || !s->events || !s->cookies || !s->digests || !s->away_since || !s->kicks || !s->handover
-        || !s->frames || !s->world || !s->frame || !s->packet || !s->input || !s->packed || !s->server_last || !s->scratch) {
+        || !s->frames || !s->published || !s->world || !s->frame || !s->packet || !s->input || !s->packed
+        || !s->server_last || !s->scratch) {
         tide_server_destroy(s);
         return NULL;
     }
@@ -1522,6 +1985,8 @@ void tide_server_destroy(tide_server *s)
     }
     for (uint32_t i = 0; s->frames && i < s->w.history; i++) free(s->frames[i].data);
     free(s->frames);
+    if (s->published) free_published(s);
+    free(s->published);
     free_world(s->game, s->world);
     free(s->world);
     free(s->frame);
@@ -1634,8 +2099,10 @@ void tide_server_update(tide_server *s, const double now)
             send_chunks(s, c);
         } else {
             send_frames(s, c);
+            if (s->published_count) send_downloads(s, c);
         }
     }
+    if (s->published_count) forget_published(s);
     if (!s->ended) send_handover(s);
 }
 
@@ -1694,12 +2161,40 @@ typedef struct pending_frame {
     uint32_t pieces;
     uint32_t had;   // Pieces it has so far
     uint8_t *data;  // `size` bytes, then a byte per piece: 1 once it came
+    // The downloads its commands name (big ones, see DOWNLOAD), read once
+    // its pieces are all there: it's complete once it has those too
+    uint32_t names[TIDE_COMMANDS_PER_TICK];
+    uint8_t name_count;
+    bool read;
 } pending_frame;
 
 static void drop_frame(pending_frame *f)
 {
     free(f->data);
     *f = (pending_frame){0};
+}
+
+// A big command on its way down from the server, or whole, kept until the
+// tick that names it is run (DOWNLOADS_MOST of them at most)
+typedef struct download {
+    uint32_t number;
+    uint32_t size;
+    uint32_t chunks;
+    uint32_t had;
+    uint8_t *data;
+    uint8_t *have;
+} download;
+
+static void free_download(download *d)
+{
+    free(d->data);
+    free(d->have);
+    *d = (download){0};
+}
+
+static bool download_whole(const download *d)
+{
+    return d->number && d->had == d->chunks;
 }
 
 struct tide_client {
@@ -1732,6 +2227,23 @@ struct tide_client {
     command_queue commands;
     bool commands_rebase; // Pending intent carried to another server's authoritative snapshot
     bool commands_need_world; // A changed layout needs the remote server's current sequence first
+    // A big command on its way up, one at a time: the upload's number (its
+    // count of them, from 1), which pending command (by channel and
+    // sequence), its chunks as the server last said it has them, and when
+    // each was sent
+    uint32_t upload_number;
+    uint32_t upload_count; // Uploads so far: the next's number
+    uint32_t upload_channel;
+    uint32_t upload_sequence;
+    uint32_t upload_ack;
+    uint64_t upload_mask;
+    double *upload_sent;
+    uint32_t upload_chunks;
+    // Big commands on their way down, or whole, for the ticks that name them
+    // (see `download`), and the last it had whole, which it says until the
+    // next comes
+    download downloads[DOWNLOADS_MOST];
+    uint32_t download_done;
 
     // What's being received: the world, or the hashes of its pages
     bool receiving;
@@ -1869,6 +2381,55 @@ static void stop_receiving(tide_client *c)
 }
 
 static void *world_at(const tide_client *c, uint32_t tick);
+
+static download *download_by_number(tide_client *c, const uint32_t number)
+{
+    for (uint32_t i = 0; number && i < DOWNLOADS_MOST; i++) {
+        if (c->downloads[i].number == number) return &c->downloads[i];
+    }
+    return NULL;
+}
+
+// Room for a download: a free slot, or else the oldest whole one's
+static download *download_slot(tide_client *c)
+{
+    download *oldest = NULL;
+    for (uint32_t i = 0; i < DOWNLOADS_MOST; i++) {
+        download *d = &c->downloads[i];
+        if (!d->number) return d;
+        if (download_whole(d) && (!oldest || d->number < oldest->number)) oldest = d;
+    }
+    if (oldest) free_download(oldest);
+    return oldest;
+}
+
+static void free_downloads(tide_client *c)
+{
+    for (uint32_t i = 0; i < DOWNLOADS_MOST; i++) free_download(&c->downloads[i]);
+    c->download_done = 0;
+}
+
+static void stop_upload_client(tide_client *c)
+{
+    free(c->upload_sent);
+    c->upload_sent = NULL;
+    c->upload_number = 0;
+    c->upload_chunks = 0;
+}
+
+// A download that's whole already: the bytes of this machine's own big
+// command, once the server said which number it published it under
+static void note_download(tide_client *c, const uint32_t number, const uint8_t *data, const uint32_t size)
+{
+    if (!number || download_by_number(c, number)) return;
+    download *d = download_slot(c);
+    if (!d) return;
+    uint8_t *copy = malloc(size);
+    if (!copy) return;
+    memcpy(copy, data, size);
+    *d = (download){number, size, chunks_of(size), chunks_of(size), copy, NULL};
+}
+
 
 static void discard_view_correction(tide_client *c)
 {
@@ -2157,10 +2718,44 @@ static void on_server(tide_client *c, tide_reader *r)
     const uint32_t server_tick = tide_read_varint(r);
     const int32_t early = read_signed(r); // Its newest input, from the server's tick
     const int32_t waited = read_signed(r); // How long its inputs waited for the ticks the server last ran
+    // What the server has of this machine's upload (see start_server_packet)
+    uint8_t upload_state = UPLOAD_NONE;
+    uint32_t upload_number = 0;
+    uint32_t upload_ack = 0;
+    uint64_t upload_mask = 0;
+    uint32_t upload_published = 0;
+    if (c->game->command) {
+        upload_state = tide_read_u8(r);
+        if (upload_state == UPLOAD_PART) {
+            upload_number = tide_read_varint(r);
+            upload_ack = tide_read_varint(r);
+            upload_mask = tide_read_u64(r);
+        } else if (upload_state == UPLOAD_WHOLE) {
+            upload_number = tide_read_varint(r);
+            upload_published = tide_read_varint(r);
+        } else if (upload_state != UPLOAD_NONE) {
+            return;
+        }
+    }
     const uint8_t pieces = tide_read_u8(r);
     if (r->failed) return;
     c->their_time = their_time;
     measure(c, echo, held);
+    if (upload_number && upload_number == c->upload_number) {
+        if (upload_state == UPLOAD_PART) {
+            if (upload_ack > c->upload_ack) c->upload_ack = upload_ack < c->upload_chunks ? upload_ack : c->upload_chunks;
+            if (upload_ack == c->upload_ack) c->upload_mask = upload_mask;
+        } else { // Whole: its pending command waits for a verified world now, like any other
+            for (uint32_t i = 0; i < c->commands.count; i++) {
+                pending_command *cmd = &c->commands.items[i];
+                if (cmd->channel != c->upload_channel || cmd->sequence != c->upload_sequence) continue;
+                cmd->uploaded = true;
+                cmd->published = upload_published;
+                if (upload_published) note_download(c, upload_published, cmd->data, cmd->size);
+            }
+            if (upload_published) stop_upload_client(c);
+        }
+    }
     // The newest it said, as datagrams come in any order. An older one still
     // counts for the least, if it's about the clock as it is (keep_early).
     const bool known = waited != WAIT_UNKNOWN;
@@ -2192,7 +2787,7 @@ static void on_server(tide_client *c, tide_reader *r)
         pending_frame *f = &c->frames[tick % c->w.history];
         if (f->tick != tick || !f->data) {
             free(f->data);
-            *f = (pending_frame){tick, total, count, 0, calloc((size_t)total + count, 1)};
+            *f = (pending_frame){.tick = tick, .size = total, .pieces = count, .data = calloc((size_t)total + count, 1)};
             if (!f->data) continue;
         }
         if (f->size != total || f->data[total + index]) continue;
@@ -2200,6 +2795,37 @@ static void on_server(tide_client *c, tide_reader *r)
         f->data[total + index] = 1;
         f->had++;
     }
+}
+
+// A chunk of a big command on its way down (see DOWNLOAD): kept by its
+// number until the tick that names it is run. The server sends one at a
+// time, so one that doesn't fit takes the oldest whole one's place.
+static void on_download(tide_client *c, tide_reader *r)
+{
+    const uint32_t number = tide_read_varint(r);
+    const uint32_t size = tide_read_varint(r);
+    const uint32_t index = tide_read_varint(r);
+    const uint16_t bytes = tide_read_u16(r);
+    const uint8_t *data = tide_read_bytes(r, bytes);
+    if (r->failed || !data || !number || !c->loaded || !big_command(size) || size > TIDE_COMMAND_LIMIT) return;
+    const uint32_t chunks = chunks_of(size);
+    if (index >= chunks || bytes != (size - index * CHUNK < CHUNK ? size - index * CHUNK : CHUNK)) return;
+    download *d = download_by_number(c, number);
+    if (!d) {
+        if (number <= c->download_done) return; // Had, and run
+        d = download_slot(c);
+        if (!d) return;
+        *d = (download){number, size, chunks, 0, malloc(size), calloc(chunks, 1)};
+        if (!d->data || !d->have) {
+            free_download(d);
+            return;
+        }
+    }
+    if (d->size != size || d->have[index]) return;
+    memcpy(d->data + (size_t)index * CHUNK, data, bytes);
+    d->have[index] = 1;
+    d->had++;
+    c->world_bytes += bytes;
 }
 
 // A part of a handover record (see send_handover). Parts of a newer record
@@ -2287,6 +2913,7 @@ static void client_receive(tide_client *c)
         switch (type) {
         case MSG_WELCOME: on_welcome(c, &r); break;
         case MSG_CHUNK: on_chunk(c, &r); break;
+        case MSG_DOWNLOAD: on_download(c, &r); break;
         case MSG_SERVER: on_server(c, &r); break;
         case MSG_HANDOVER: on_handover(c, &r); break;
         case MSG_REFUSE: go_offline(c, TIDE_DISCONNECT_REFUSED); break;
@@ -2309,9 +2936,48 @@ static void client_receive(tide_client *c)
     }
 }
 
-static bool frame_complete(const pending_frame *f, const uint32_t tick)
+// The downloads a frame's commands name (see dispatch_commands): read once
+// its pieces are all there, by the same steps apply_frame takes
+static void read_frame_names(const tide_client *c, pending_frame *f)
 {
-    return f->tick == tick && f->data && f->had == f->pieces;
+    f->read = true;
+    f->name_count = 0;
+    tide_reader r = {f->data, f->size, 0, false};
+    tide_read_u64(&r);
+    const uint8_t parts = tide_read_u8(&r);
+    if (!(parts & FRAME_COMMANDS)) return;
+    const uint32_t events = parts & FRAME_EVENTS ? tide_read_varint(&r) : 0u;
+    for (uint32_t i = 0; i < events; i++) tide_read_u16(&r);
+    const tide_player_set none = {{0}};
+    const tide_player_set mask = parts & FRAME_INPUTS ? read_players(&r) : none;
+    if (parts & FRAME_LATE) read_players(&r);
+    for (uint32_t slot = 0; slot <= c->players; slot++) {
+        if (tide_players_has(&mask, slot)) tide_read_bytes(&r, tide_read_varint(&r));
+    }
+    const uint32_t count = tide_read_varint(&r);
+    for (uint32_t i = 0; i < count && i < TIDE_COMMANDS_PER_TICK && !r.failed; i++) {
+        tide_read_varint(&r);
+        tide_read_varint(&r);
+        const uint32_t size = tide_read_varint(&r);
+        if (!big_command(size)) {
+            tide_read_bytes(&r, size);
+            continue;
+        }
+        f->names[f->name_count++] = tide_read_varint(&r);
+    }
+}
+
+// A frame is complete once every piece of it came, and every download its
+// commands name is whole
+static bool frame_complete(tide_client *c, pending_frame *f, const uint32_t tick)
+{
+    if (f->tick != tick || !f->data || f->had != f->pieces) return false;
+    if (!f->read) read_frame_names(c, f);
+    for (uint32_t i = 0; i < f->name_count; i++) {
+        const download *d = download_by_number(c, f->names[i]);
+        if (!d || !download_whole(d)) return false;
+    }
+    return true;
 }
 
 static const uint8_t *own_input(const tide_client *c, const uint32_t tick, uint32_t *size)
@@ -2490,12 +3156,24 @@ static bool apply_frame(tide_client *c, void *world, const pending_frame *f)
         const uint32_t player = tide_read_varint(&r);
         const uint32_t sequence = tide_read_varint(&r);
         const uint32_t size = tide_read_varint(&r);
-        if (r.failed || player >= c->players || !size || size > TIDE_COMMAND_BYTES) return false;
-        const uint8_t *data = tide_read_bytes(&r, size);
+        if (r.failed || player >= c->players || !size || size > TIDE_COMMAND_LIMIT) return false;
+        const uint8_t *data;
+        if (big_command(size)) { // Its bytes came apart, as a download the frame names
+            download *d = download_by_number(c, tide_read_varint(&r));
+            if (!d || !download_whole(d) || d->size != size) return false;
+            data = d->data;
+            if (d->number > c->download_done) c->download_done = d->number;
+        } else {
+            data = tide_read_bytes(&r, size);
+        }
         const tide_player_id sender = tide_player_from_index((int32_t)player);
-        const uint32_t previous = g->command_sequence(world, sender);
-        if (!data || previous == UINT32_MAX || sequence != previous + 1u
-            || !g->command(world, sender, sequence, data, size)) return false;
+        uint32_t channel = 0;
+        if (!data || !g->check_command(data, size, &channel)) return false;
+        if (channel != TIDE_COMMAND_UNORDERED) {
+            const uint32_t previous = g->command_sequence(world, sender, channel);
+            if (previous == UINT32_MAX || sequence != previous + 1u) return false;
+        }
+        if (!g->command(world, sender, channel, sequence, data, size)) return false;
     }
     if (r.failed || r.at != r.size) return false;
     run_tick(c, world, f->tick);
@@ -2782,7 +3460,7 @@ static void play(tide_client *c)
     while (!c->need_snapshot && !c->receiving) {
         const uint32_t tick = c->verified;
         pending_frame *f = &c->frames[tick % c->w.history];
-        if (!frame_complete(f, tick)) break;
+        if (!frame_complete(c, f, tick)) break;
         if (tick >= c->ahead && (int64_t)tick >= due) break;
         if (own_late(c, f)) c->late++;
         bool ok;
@@ -2842,7 +3520,7 @@ static void adjust_delay(tide_client *c)
     } else {
         const int64_t due = due_tick(c);
         uint32_t has = 0; // Ticks from `verified` whose frames have come
-        while (has < 32u && frame_complete(&c->frames[(c->verified + has) % c->w.history], c->verified + has)) has++;
+        while (has < 32u && frame_complete(c, &c->frames[(c->verified + has) % c->w.history], c->verified + has)) has++;
         const bool late = (int64_t)c->verified < due && has == 0;
         const bool early = (int64_t)(c->verified + has) > due + SLACK_TICKS;
         if (late) change = 1;
@@ -2873,6 +3551,7 @@ static void send_hello(tide_client *c)
 
 static void send_client(tide_client *c)
 {
+    const tide_game *g = c->game;
     tide_writer w = {c->packet, TIDE_NET_MTU, 0, false, false};
     header(&w, MSG_CLIENT);
     tide_write_u16(&w, said_time(c));
@@ -2905,7 +3584,7 @@ static void send_client(tide_client *c)
     uint64_t frame_mask = 0;
     for (uint32_t i = 0; i < 64u && i < c->w.history; i++) {
         const uint32_t tick = c->verified + 1u + i;
-        if (frame_complete(&c->frames[tick % c->w.history], tick)) frame_mask |= 1ull << i;
+        if (frame_complete(c, &c->frames[tick % c->w.history], tick)) frame_mask |= 1ull << i;
     }
     tide_write_varint(&w, c->verified);
     tide_write_varint64(&w, frame_mask);
@@ -2914,11 +3593,37 @@ static void send_client(tide_client *c)
         tide_write_varint(&w, c->lacks_size);
         tide_write_bytes(&w, c->lacks, c->lacks_size);
     }
+    // The big command on its way down, in a game with commands: the chunks it
+    // has of the lowest one coming, or that it has all of the last, as for a
+    // world's chunks above
+    if (g->command) {
+        const download *coming = NULL;
+        uint32_t whole = c->download_done;
+        for (uint32_t i = 0; i < DOWNLOADS_MOST; i++) {
+            const download *d = &c->downloads[i];
+            if (!d->number) continue;
+            if (download_whole(d)) {
+                if (d->number > whole) whole = d->number;
+            } else if (!coming || d->number < coming->number) {
+                coming = d;
+            }
+        }
+        if (coming) {
+            uint32_t ack;
+            uint64_t mask;
+            chunks_had(coming->have, coming->chunks, &ack, &mask);
+            tide_write_varint(&w, coming->number);
+            tide_write_varint(&w, ack + 1u);
+            tide_write_u64(&w, mask);
+        } else {
+            tide_write_varint(&w, whole);
+            if (whole) tide_write_varint(&w, 0);
+        }
+    }
 
     // Inputs from the first the server lacks, as many as fit: after the
     // first, each as what differs from the one before, when the game packs
     // them that way
-    const tide_game *g = c->game;
     const bool deltas = g->read_input && g->write_input_delta;
     uint8_t *previous = c->scratch;
     uint8_t *current = c->scratch + g->input_size;
@@ -2954,20 +3659,52 @@ static void send_client(tide_client *c)
 
 // Confirmation comes from a verified world, rather than packet receipt, so
 // intent survives a host disappearing before its tick has been verified.
+// The last pending command's sequence in `channel`, or the verified world's
+// if none is pending there: what the next takes its sequence after. For
+// unordered commands, the highest id of either.
+static uint32_t last_sequence(const tide_client *c, const uint32_t channel)
+{
+    const tide_player_id player = tide_player_from_index(c->player);
+    uint32_t last = c->game->command_sequence(world_at(c, c->verified), player, channel);
+    for (uint32_t i = 0; i < c->commands.count; i++) {
+        const pending_command *cmd = &c->commands.items[i];
+        if (cmd->channel == channel && cmd->sequence > last) last = cmd->sequence;
+    }
+    return last;
+}
+
 static void confirm_commands(tide_client *c)
 {
-    if (!c->loaded || !c->game->command_sequence) return;
-    const uint32_t previous = c->game->command_sequence(world_at(c, c->verified), tide_player_from_index(c->player));
+    const tide_game *g = c->game;
+    if (!c->loaded || !g->command_sequence) return;
+    const void *world = world_at(c, c->verified);
+    const tide_player_id player = tide_player_from_index(c->player);
     for (uint32_t i = 0; i < c->commands.count; i++) {
-        if (c->commands.items[i].sequence <= previous) remove_command(&c->commands, i--);
+        const pending_command *cmd = &c->commands.items[i];
+        if (!command_done(g, world, player, cmd->channel, cmd->sequence)) continue;
+        if (c->upload_number && cmd->channel == c->upload_channel && cmd->sequence == c->upload_sequence) stop_upload_client(c);
+        remove_command(&c->commands, i--);
     }
     if (c->commands_rebase) {
         // The next host can have verified less than this sender. Retained
-        // intent starts contiguously in that selected authoritative world.
-        while (c->commands.count > UINT32_MAX - previous) remove_command(&c->commands, c->commands.count - 1u);
+        // intent starts contiguously in that selected authoritative world,
+        // channel by channel, and a big one goes up to the new host again.
+        stop_upload_client(c);
         for (uint32_t i = 0; i < c->commands.count; i++) {
-            c->commands.items[i].sequence = previous + i + 1u;
-            c->commands.items[i].sent = 0;
+            pending_command *cmd = &c->commands.items[i];
+            uint32_t previous = g->command_sequence(world, player, cmd->channel);
+            for (uint32_t k = 0; k < i; k++) {
+                const pending_command *before = &c->commands.items[k];
+                if (before->channel == cmd->channel && before->sequence > previous) previous = before->sequence;
+            }
+            if (previous == UINT32_MAX) {
+                remove_command(&c->commands, i--);
+                continue;
+            }
+            cmd->sequence = previous + 1u;
+            cmd->sent = 0;
+            cmd->uploaded = false;
+            cmd->published = 0;
         }
         c->commands_rebase = false;
     }
@@ -2976,14 +3713,69 @@ static void confirm_commands(tide_client *c)
 bool tide_client_send_command(tide_client *c, const uint8_t *data, const uint32_t size)
 {
     if (!c || c->state != TIDE_SESSION_CONNECTED || !c->loaded || c->commands_need_world
-        || !data || !size || size > TIDE_COMMAND_BYTES
+        || !data || !size || size > TIDE_COMMAND_LIMIT
         || !c->game->check_command || !c->game->command_sequence || !c->game->command) return false;
     confirm_commands(c);
-    if (c->commands.count >= TIDE_COMMAND_PENDING || !c->game->check_command(data, size)) return false;
-    const uint32_t previous = c->commands.count ? c->commands.items[c->commands.count - 1u].sequence
-                                               : c->game->command_sequence(world_at(c, c->verified),
-                                                                            tide_player_from_index(c->player));
-    return previous != UINT32_MAX && append_command(&c->commands, previous + 1u, data, size);
+    uint32_t channel = 0;
+    if (!c->game->check_command(data, size, &channel)) return false;
+    if (channel == TIDE_COMMAND_UNORDERED ? !c->game->command_applied : channel >= tide_game_command_channels(c->game)) return false;
+    if (channel_count(&c->commands, channel) >= TIDE_COMMAND_PENDING) return false;
+    const uint32_t previous = last_sequence(c, channel);
+    return previous != UINT32_MAX && append_command(&c->commands, channel, previous + 1u, data, size);
+}
+
+// Chunks of the big command on its way up: the first pending one the server
+// doesn't have whole, paced (COMMAND_CHUNKS_PER_UPDATE), each again once it
+// should have been acknowledged (on_server). The next starts once this one's
+// download has a number, which the server says until the next upload.
+static void send_upload(tide_client *c)
+{
+    if (!c->upload_number) {
+        for (uint32_t i = 0; i < c->commands.count; i++) {
+            const pending_command *cmd = &c->commands.items[i];
+            if (!big_command(cmd->size) || cmd->uploaded) continue;
+            c->upload_sent = calloc(chunks_of(cmd->size), sizeof *c->upload_sent);
+            if (!c->upload_sent) return;
+            c->upload_number = ++c->upload_count;
+            c->upload_channel = cmd->channel;
+            c->upload_sequence = cmd->sequence;
+            c->upload_chunks = chunks_of(cmd->size);
+            c->upload_ack = 0;
+            c->upload_mask = 0;
+            break;
+        }
+        if (!c->upload_number) return;
+    }
+    const pending_command *cmd = NULL;
+    for (uint32_t i = 0; i < c->commands.count; i++) {
+        const pending_command *each = &c->commands.items[i];
+        if (each->channel == c->upload_channel && each->sequence == c->upload_sequence) cmd = each;
+    }
+    if (!cmd) {
+        stop_upload_client(c);
+        return;
+    }
+    if (cmd->uploaded) return; // Whole at the server: waiting to be told its download's number
+    const double again = resend_after(c->rtt_ms);
+    uint32_t sent = 0;
+    for (uint32_t i = c->upload_ack; i < c->upload_chunks && sent < COMMAND_CHUNKS_PER_UPDATE; i++) {
+        if (i > c->upload_ack && i - c->upload_ack <= 64u && (c->upload_mask >> (i - c->upload_ack - 1u) & 1u)) continue;
+        if (c->upload_sent[i] > 0.0 && c->now - c->upload_sent[i] < again) continue;
+        const uint32_t from = i * CHUNK;
+        const uint32_t size = cmd->size - from < CHUNK ? cmd->size - from : CHUNK;
+        tide_writer w = {c->packet, TIDE_NET_MTU, 0, false, false};
+        header(&w, MSG_UPLOAD);
+        tide_write_u32(&w, c->nonce);
+        tide_write_varint(&w, c->upload_number);
+        tide_write_varint(&w, cmd->sequence);
+        tide_write_varint(&w, cmd->size);
+        tide_write_varint(&w, i);
+        tide_write_u16(&w, (uint16_t)size);
+        tide_write_bytes(&w, cmd->data + from, size);
+        send_packet(&c->desc.transport, c->desc.server, &w, &c->traffic);
+        c->upload_sent[i] = c->now > 0 ? c->now : 1e-9;
+        sent++;
+    }
 }
 
 static void send_commands(tide_client *c)
@@ -2994,7 +3786,7 @@ static void send_commands(tide_client *c)
     const double again = resend_after(c->rtt_ms);
     for (uint32_t i = 0; i < c->commands.count && sent < PACKETS_PER_UPDATE; i++) {
         pending_command *cmd = &c->commands.items[i];
-        if (cmd->sent > 0 && c->now - cmd->sent < again) continue;
+        if (big_command(cmd->size) || (cmd->sent > 0 && c->now - cmd->sent < again)) continue;
         tide_writer w = {c->packet, TIDE_NET_MTU, 0, false, false};
         header(&w, MSG_COMMAND);
         tide_write_u32(&w, c->nonce);
@@ -3005,6 +3797,7 @@ static void send_commands(tide_client *c)
         cmd->sent = c->now > 0 ? c->now : 1e-9;
         sent++;
     }
+    send_upload(c);
 }
 
 tide_client *tide_client_create(const tide_client_desc *desc, const double now)
@@ -3056,7 +3849,9 @@ void tide_client_destroy(tide_client *c)
     tide_hearing_free(&c->hearing);
     drop_base(c);
     free(c->handover_bytes);
-    clear_commands(&c->commands);
+    free_commands(&c->commands);
+    stop_upload_client(c);
+    free_downloads(c);
     for (uint32_t i = 0; c->frames && i < c->w.history; i++) free(c->frames[i].data);
     free(c->frames);
     free(c->input_tick);
@@ -3775,7 +4570,12 @@ static void commit_server(tide_server *s, const tide_game *g, server_migration *
         sending[i] = s->connections[i].used && s->connections[i].sending;
         if (sending[i]) stop_sending(s, &s->connections[i]);
         clear_commands(&s->connections[i].commands); // Wire bytes describe the old layout
+        stop_upload(&s->connections[i]);
+        stop_download(&s->connections[i]);
+        s->connections[i].upload_done = 0;
+        s->connections[i].download_done = 0;
     }
+    free_published(s);
     free_world(s->game, s->world);
     free(s->world);
     free(s->frame);
@@ -3839,6 +4639,8 @@ static void commit_client(tide_client *c, const tide_game *g, client_migration *
     finish_view_correction(c);
     const bool changed = c->game->hash != g->hash;
     clear_commands(&c->commands); // Another layout has no translation of pending wire values
+    stop_upload_client(c);
+    free_downloads(c);
     for (uint32_t i = 0; i < c->ring; i++) {
         free_world(c->game, c->worlds[i]);
         free(c->worlds[i]);
