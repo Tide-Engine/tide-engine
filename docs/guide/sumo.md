@@ -188,15 +188,15 @@ Measured on a release build, on one thread, with the world kept and hashed after
 | A tick, in milliseconds | Desktop | Browser |
 |---|---|---|
 | A fresh ring at rest | 0.03 | 0.04 |
-| Four bots at a full ring | 0.5 to 0.8 | 1.1 |
-| The worst: a shock beside the middle's pyramid | 1.3 to 1.6 | 2.5 |
+| Four bots at a full ring | 0.4 to 0.8 | 1.1 |
+| The worst: a shock beside the middle's pyramid | 1.2 to 1.6 | 2.3 |
 | Keeping and hashing the world, after each | 0.2 to 0.45 | 0.2 to 0.45 |
-| Raising a ring: the tick that makes its 2,460 bodies | 9 | 24 |
-| ...and each tick of the second it takes to come to rest | 1.5 | 3.2 |
+| Raising a ring: the tick that makes its 2,460 bodies | 9 | 25 |
+| ...and each tick of the second it takes to come to rest | 1.5 | 3.1 |
 
 - **Box3D's state is 3.8 megabytes** as a round starts, a kilobyte and a half a body, and all of it is in the match. Most ticks write only the part of it that changed: four in five while four bots bring a full ring down, and nine in ten after.
 - **A player who joins downloads it:** 2.4 megabytes as the match packs it, with the rest of the world.
-- **A client that guessed wrong runs ticks again,** from the last one the server confirmed: Box3D's world is made again from the state in the match, and the ticks since run again. Five ticks take 5.5 ms on a desktop and 10 in a browser, and ten take 7.5 and 14. Where the ticks a client is ahead by would take more than 4 ms to run again, the engine [delays the player's input](../multiplayer/matches.md#input-delay) a tick at a time instead. With four bots at a full ring that's past about six ticks ahead on a desktop and four in a browser, which is where a client is at a ping of about 60 milliseconds, and of about 40. Later in a round, with less in the ring, it's twice that.
+- **A client that guessed wrong runs ticks again,** from the last one the server confirmed: Box3D's world is made again from the state in the match, and the ticks since run again. Five ticks take 5.5 ms on a desktop and 10 in a browser, and ten take 6.6 and 14. Where the ticks a client is ahead by would take more than 4 ms to run again, by what its ticks took of late, the engine [delays the player's input](../multiplayer/matches.md#input-delay) a tick at a time instead. With four bots at a full ring that's past about six ticks ahead on a desktop, which is where a client is at a ping of about 60 milliseconds, and past three in a browser, which is at nearly any ping. Later in a round, with less in the ring, there's room for more.
 - **A frame's views** take 0.2 ms with a full ring standing, for under thirty draw calls.
 
 That's about as much as a match takes, with the package as it is: a ring twice the size is twice the state to hold, to send and to read again for every wrong guess.
