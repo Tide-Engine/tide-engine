@@ -76,7 +76,7 @@ view Glare(Fx fx, Flow flow)
         }
         // A brick of this machine's player's tower is on the move: the screen's edges say so
         if (fx.alarm > 0)
-            Draw2D.Shape(Shape { center = screen * 0.5, size = screen, color = Fade(ROSE, 0.22 * fx.alarm), soft = -Math.Min(screen.x, screen.y) * 0.22 });
+            Draw2D.Shape(Shape { center = screen * 0.5, size = screen, color = Fade(ROSE, 0.13 * fx.alarm), soft = -Math.Min(screen.x, screen.y) * 0.2 });
         if (fx.flash > 0) Draw2D.Rect(screen * 0.5, screen, Fade(fx.flashColor, fx.flash));
     }
 }

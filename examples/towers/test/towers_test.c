@@ -36,7 +36,7 @@ void b2t_forget(void);
 #define PAUSE 14
 #define STUN 40
 #define STANDS 170
-#define RUBBLE 360
+#define RUBBLE 600
 #define GUST 8
 #define QUAKE 80
 #define EASE 1.2f
@@ -46,8 +46,8 @@ void b2t_forget(void);
 // The server's world in the match below, on every platform and in every
 // configuration: Box2D's math, its image and the netcode, byte for byte.
 // Once in the middle of the first round, and once after a new game.
-#define RACING_HASH UINT64_C(0x5fe11995159f8808)
-#define MATCH_HASH UINT64_C(0x671a3f782ba09a4c)
+#define RACING_HASH UINT64_C(0x989919e1794dff8c)
+#define MATCH_HASH UINT64_C(0x357865c5c0b85e46)
 
 static tide_world world;
 
@@ -1216,20 +1216,56 @@ static void cost(const char *what, const int ticks)
     tide_world_free(&kept);
 }
 
+// What a guess that was wrong costs: ten ticks run again from the world as it
+// was, each kept and hashed, with Box2D's world made again from the match's
+// image of it first. The least of twenty goes.
+static void again(const char *what)
+{
+    tide_world was = {0};
+    tide_world replay = {0};
+    tide_world kept = {0};
+    uint64_t least = UINT64_MAX;
+    for (int round = 0; round < 20; round++) {
+        tide_world_copy(&was, &world);
+        for (int i = 0; i < 10; i++) tide_world_tick(&world);
+        const uint64_t began = tide_time_now_ns();
+        tide_world_copy(&replay, &was);
+        for (int i = 0; i < 10; i++) {
+            tide_world_tick(&replay);
+            tide_world_copy(&kept, &replay);
+            (void)tide_world_hash(&replay);
+        }
+        const uint64_t took = tide_time_now_ns() - began;
+        if (took < least) least = took;
+    }
+    printf("    %s: ten ticks run again take %.2f ms\n", what, (double)least / 1e6);
+    tide_world_free(&kept);
+    tide_world_free(&replay);
+    tide_world_free(&was);
+}
+
 TIDE_TEST(towers_costs)
 {
     start(true, 0);
-    // Until a tower is nearly at the line
+    // Until a tower is most of the way to the line
     int ticks = 0;
     float tallest = 0;
-    while (tallest < FINISH - 2 && ticks < 30000 && world.Towers.phase == Phase_Play) {
+    while (tallest < FINISH - 8 && ticks < 30000 && world.Towers.phase == Phase_Play) {
         tide_world_tick(&world);
         ticks++;
         for (int seat = 0; seat < SEATS; seat++) {
             if (seat_of(&world, seat).top > tallest) tallest = seat_of(&world, seat).top;
         }
     }
+    int set = 0;
+    for (uint32_t i = 0; i < world.entities.next_unused; i++) {
+        const tide_entity e = tide_entity_in_slot(&world.entities, i);
+        if (tide_has_Brick(&world, e) && tide_get_Brick(&world, e).set) set++;
+    }
+    printf("    %.0f seconds into a round, %d bricks are on the towers, %d of them set solid\n", ticks / 60.0,
+           standing(&world, 0) + standing(&world, 1) + standing(&world, 2) + standing(&world, 3), set);
     cost("late in a round, the towers building", 300);
+    again("the towers building");
     // The same world with the bots off: what's falling lands, and everything comes to rest
     tide_world playing = {0};
     tide_world_copy(&playing, &world);
@@ -1249,7 +1285,25 @@ TIDE_TEST(towers_costs)
     body.position.y += FINISH;
     tide_set_Box2D_Body(&world, plinth(&world, 0), body);
     for (int i = 0; i < HOLD + 30 && world.Towers.phase == Phase_Play; i++) tide_world_tick(&world);
-    cost("the round over, every tower coming down", 300);
+    cost("the round over, every tower coming down", 150);
+    again("every tower coming down");
     tide_world_free(&playing);
     tide_world_free(&world);
+
+    // And what a player who joins late in a round is sent: the world, with Box2D's state in it
+    b2t_forget();
+    static match m;
+    m = (match){.net = tide_loopback_create(77)};
+    m.server = tide_server_create(&(tide_server_desc){.game = &tide_game_api, .tick_rate = 60,
+                                    .transports = {tide_loopback_endpoint(m.net, 1)}}, m.now);
+    while (tide_server_tick(m.server) < 4500) advance(&m);
+    const int physics = ((const tide_world *)tide_server_world(m.server))->Box2D_Physics.size;
+    join(&m, 0);
+    for (int i = 0; i < 600 && tide_client_status_of(m.players[0]).state != TIDE_SESSION_CONNECTED; i++) advance(&m);
+    TIDE_CHECK(tide_client_status_of(m.players[0]).state == TIDE_SESSION_CONNECTED);
+    printf("    a player who joins 75 seconds into a round is sent %llu bytes of the world, whose physics are %d of them\n",
+           (unsigned long long)tide_client_status_of(m.players[0]).world_bytes, physics);
+    tide_client_destroy(m.players[0]);
+    tide_server_destroy(m.server);
+    tide_loopback_destroy(m.net);
 }

@@ -42,7 +42,7 @@ const float SET_DEPTH = 10;    // A brick this far under its tower's top is set 
 const int PAUSE = 14;          // Ticks from a brick landing to the next
 const int STUN = 40;           // ...and more for each brick that fell off the tower
 const int STUN_MOST = 180;
-const int RUBBLE = 360;        // A fallen brick lies on the ground for six seconds
+const int RUBBLE = 600;        // A fallen brick lies where it fell for ten seconds
 
 const int GUST = 8;            // Ticks a gust blows
 const float WIND = 1.3;        // What it gives a brick at the top of its tower each tick: an impulse

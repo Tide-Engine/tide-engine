@@ -1,6 +1,6 @@
 # Towers
 
-Four plinths side by side, bricks that come down one at a time, and a race to build the tallest tower, with [Box2D](../physics/box2d.md) under all of it. A game made with Tide to show its 2D physics in a match: a brick that has landed is a body like any other, so towers lean, slide and come down, the same on every machine, whatever their pings. Play it alone against three towers that build themselves, or with friends in a room.
+Four plinths side by side, bricks that come down one at a time, and a race to build the tallest tower, with [Box2D](../physics/box2d.md) under all of it. A game made with Tide to show its 2D physics in a match: a brick that has landed is a body like any other, so towers lean, slide and come down, the same on every machine, whatever their pings. Play it alone against three towers that build themselves, or with friends in a room. The idea is Tricky Towers', the party game of stacking falling bricks.
 
 <iframe class="demo-frame roomy" src="/towers/?embedded" title="Towers" allow="fullscreen"></iframe>
 
@@ -22,7 +22,7 @@ Your tower is the one on the plinth that says **YOU**, your brick is the one wit
 
 - **A brick falls where you steer it,** half a cell at a time, and turns by quarters. The moment it touches anything it eases down the last of its way and is a real brick: it has weight, it leans and it slides. Then the next one comes. **NEXT** shows which.
 - **The first tower to stand over the finish line for three seconds takes the round.** The line is 40 meters up. Everything then comes down at once, and the next round starts from nothing. Rounds won are the dots under a plinth's name.
-- **A brick that falls off your tower costs you time:** your next brick waits longer, up to three seconds when a lot of them go at once. Bricks lie on the ground for a few seconds, and are cleared.
+- **A brick that falls off your tower costs you time:** your next brick waits longer, up to three seconds when a lot of them go at once. What fell lies where it landed for ten seconds, and is cleared.
 - **The lower part of a tower sets solid.** A brick that's at rest ten meters under its tower's top turns gray: its mortar has set, and it won't move again this round. So a tower only ever leans and comes down from its top part, which is where you're building.
 - **A tower earns something at 10, 20 and 30 meters,** which the dotted lines across your plinth mark. A **gust** shoves the top of the tallest of the other towers away from yours. **Cement** sets every brick of your tower solid at once, the loose top too. A **quake** shakes every plinth but yours. You hold one at a time, so use it before the next line.
 - **A round that goes on long ends anyway:** after a minute and a half the finish line starts coming down, a meter every four seconds, until a tower is over it.
@@ -225,7 +225,11 @@ Its buttons are [controls](../game/gui.md#widgets-of-your-own): the game draws t
 
 ### What it costs
 
-Late in a round there are about 180 bodies, most of them set solid. On a desktop a tick takes around 0.06 ms while the towers build, with half as much again to keep and hash its world, 0.01 ms with everything at rest, and 0.13 ms while every tower comes down at once. In a browser it's about twice that. A machine that predicts runs a few ticks again each frame at a high ping, ten of them at the worst, which this leaves plenty of room for. Box2D's whole state is in the match, between 230 and 370 KB here, so a rollback, a player who joins and a new host all go on from it (see [Multiplayer](../physics/box2d.md#multiplayer)): a player who joins in the middle of a round is sent about 45 KB.
+Late in a round there are about 170 bodies: 150 bricks on the towers, three quarters of them set solid, and the rest falling or on the ground. On a desktop a tick takes around 0.07 ms while the towers build, with 0.03 more to keep and hash its world, 0.01 ms with everything at rest, and 0.1 ms while every tower comes down at once. In a browser those are 0.12, 0.03, 0.015 and 0.17.
+
+A machine that predicts runs ticks again when it guessed another player wrong, as many as it's ahead of the host by: ten of them, with Box2D's world made again from the match first and each tick's world kept and hashed, take 0.8 ms on a desktop and 1.2 ms in a browser, and 1.2 and 1.8 while everything comes down. That's a tenth of a frame at the worst, so there's room for a good deal more physics than the game asks for: what sets its size is how many bricks a player can place in a round, and how much of four towers fits in a small window.
+
+Box2D's whole state is in the match, between 220 and 300 KB here, so a rollback, a player who joins and a new host all go on from it (see [Multiplayer](../physics/box2d.md#multiplayer)). A player who joins 75 seconds into a round is sent about 130 KB.
 
 ### The match, whole
 
