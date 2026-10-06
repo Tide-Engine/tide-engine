@@ -2159,6 +2159,26 @@ TIDE_TEST(lsp_nested_types_are_placed_from_the_tree)
     TIDE_CHECK(has(hover_at(1, 7), "Values by key"));
 }
 
+// An array's type names its element before the [N]: the name is placed as
+// the element's, and the array's own members complete.
+TIDE_TEST(lsp_arrays_hover_and_count)
+{
+    start();
+    open_document("const int CAP = 4;\n"
+                  "component Ring { int[CAP] cells; float[2][3] grid; }\n"
+                  "scene Main { }\n"
+                  "event(Spawned) Setup(with Main) { Spawn(Ring); }\n"
+                  "system Spin(mut Ring ring) { ring.cells[0] = ring.cells.cou$nt; ring.grid[1][2] = 1; }\n");
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "How many elements the array holds: its length, a constant."));
+    TIDE_CHECK(has(hover_at(1, 17), "A 32-bit integer"));
+    TIDE_CHECK(has(hover_at(1, 36), "32-bit float"));
+    const char *members = complete("const int CAP = 4;\ncomponent Ring { int[CAP] cells; }\nscene Main { }\n"
+                                   "system S(Ring r) { var n = r.cells.$; }\n");
+    TIDE_CHECK(offers(members, "count"));
+    TIDE_CHECK(has(members, "How many elements the array holds: its length, a constant."));
+}
+
 TIDE_TEST(lsp_byte_scalar_hover_and_completion)
 {
     start();

@@ -15,6 +15,7 @@
 
 typedef struct checker {
     program *prog;
+    bool fields_ordered;      // Every struct's fields are resolved, and infinitely big containment was refused.
     const unit *unit;         // The file being checked: its namespace and `using`s decide what names mean.
     decl *system;             // Whose parameters are in scope: a system or view, a method, or the input when checking its Sample.
     decl *method;             // The method or function being checked: a method's type's fields are in scope.
@@ -1612,7 +1613,7 @@ static type array_element(const type t)
 
 // T[N] for element type `element` and length `n`: one declaration for each,
 // so two int[32]s are the same type.
-static type array_of(program *prog, const type element, const int n)
+static type array_of(program *prog, const type element, const int n, const loc at)
 {
     for (int i = 0; i < prog->arrays.count; i++) {
         const decl *a = prog->arrays.items[i];
@@ -1622,6 +1623,7 @@ static type array_of(program *prog, const type element, const int n)
     decl *d = NEW(decl);
     d->kind = DECL_ARRAY;
     d->builtin = true;
+    d->at = at;
     d->array_length = n;
     sb name = {0};
     sb_printf(&name, "%s[%d]", type_name(element), n);
@@ -1694,8 +1696,10 @@ static type array_type(checker *c, const type element, expr *size, const loc at)
         diag_note("an array is its holder's own bytes: for more, a list, 'List<%s>'", type_name(element));
         return T_ERR;
     }
-    if (!array_element_ok(element, at)) return T_ERR;
-    return array_of(c->prog, element, (int)n);
+    // A forward struct's fields may not be known yet, or still contain a
+    // cycle. Check it once all structs are ordered, before walking its fields.
+    if ((element.kind != TY_STRUCT || c->fields_ordered) && !array_element_ok(element, at)) return T_ERR;
+    return array_of(c->prog, element, (int)n, at);
 }
 
 // Whether `e`, or what it's a member of, is a list's element, an array's or
@@ -9841,8 +9845,10 @@ static void order_struct(program *prog, decl *d)
     d->index = 1;
     for (int i = 0; i < d->fields.count; i++) {
         field *f = &d->fields.items[i];
-        if (f->type.kind != TY_STRUCT) continue;
-        decl *const inner = f->type.decl;
+        type contained = f->type;
+        while (contained.kind == TY_ARRAY) contained = array_element(contained);
+        if (contained.kind != TY_STRUCT) continue;
+        decl *const inner = contained.decl;
         if (inner->index == 1) {
             if (inner == d) {
                 diag_error(f->type_at, "struct '" STR_FMT "' can't contain itself", STR_ARG(d->name));
@@ -14818,6 +14824,13 @@ bool check(program *prog)
             c.unit = prog->decls.items[i]->unit;
             check_enum(&c, prog->decls.items[i]);
         }
+    }
+    c.fields_ordered = true;
+    // Arrays made while resolving fields, including those in a container's
+    // arguments, now see every forward struct's fields and no containment cycle.
+    for (int i = 0; i < prog->arrays.count; i++) {
+        decl *const a = prog->arrays.items[i];
+        if (!array_element_ok(a->fields.items[0].type, a->at)) a->fields.items[0].type = T_ERR;
     }
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];

@@ -133,3 +133,29 @@ TIDE_TEST(arrays_in_local_state_and_views)
     TIDE_CHECK(local.Mirror.copy.at[0] == 4 && local.Mirror.copy.at[7] == 3);
     tide_local_free(&local);
 }
+
+// Two arrays separated by a struct: every inner field is bounded, and every
+// element's padding cleared. Different lengths catch shadowed loop indices
+// that would use the inner index for both arrays, past the outer array's end.
+TIDE_TEST(arrays_of_structs_repair_inner_bounds_and_padding)
+{
+    Hand bad = {0};
+    Hand clean = {0};
+    for (int b = 0; b < 2; b++) {
+        for (int d = 0; d < 3; d++) {
+            InputDial *dial = &bad.banks.at[b].dials.at[d];
+            dial->enabled = (b + d) % 2 == 0;
+            dial->value = d == 0 ? -5 : d == 1 ? 20 : 7;
+            memset(dial->tide_pad0, 0xa5, sizeof dial->tide_pad0);
+            clean.banks.at[b].dials.at[d].enabled = dial->enabled;
+            clean.banks.at[b].dials.at[d].value = d == 0 ? 0 : d == 1 ? 10 : 7;
+        }
+    }
+    tide_world_init(&world, 1.0f);
+    tide_world_init(&copy, 1.0f);
+    tide_world_set_server_input(&world, bad);
+    tide_world_set_server_input(&copy, clean);
+    TIDE_CHECK(memcmp(&world.inputs[TIDE_SERVER_INPUT], &clean, sizeof clean) == 0);
+    TIDE_CHECK(same(&world, &copy));
+    tide_world_free(&copy);
+}
