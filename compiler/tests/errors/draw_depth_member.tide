@@ -4,5 +4,5 @@ scene Main { }
 
 view Show()
 {
-    Draw.SetDepth(Depth.Test);
+    Draw3D.SetDepth(Depth.Test);
 }

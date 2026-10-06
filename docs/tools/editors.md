@@ -8,6 +8,7 @@ Tide's language server, `tidels`, comes with `tide`. Open your game's folder, th
 - Formatting, of a file or a selection, parameter hints and inlay hints. Parameter hints list every function that shares the name being called, with each parameter's default, and follow an argument written by name; where an argument starts, completion offers the names the other parameters go by.
 - The outline, symbols across the game, folding, growing a selection, and semantic highlighting.
 - Moving a declaration to a file of its own.
+- [Assets](../spec.md#assets) kept in step with their files: renaming a file an `asset` names, or a folder above it, in the editor rewrites every path to it, in every file of the game and its packages, each relative to its own file (a glob isn't rewritten: a file it stops matching gets an error instead). A file moved outside the editor is found again by its bytes, which `tidels` and `tide` keep the SHA-256 of in the game's `.tide/`: the error says where it is now, with a quick fix that writes the path, or else lists the files of that name, a fix each. Inside an `asset`'s path, completion offers the folders and files it can lead to, the type's own files (`.png` for a `Grid2<Color>`), and `*` and `**` for a list or a map.
 - Each system's place in [the schedule](../game/schedule.md) above it: its stage, what it reaches through its `World`, and why it waits.
 - Above a declaration a package replaced, which package did, and above an [override](../language/overrides.md), what it replaces.
 
@@ -20,6 +21,8 @@ tide editors
 ```
 
 An editor window that's open gets a newer extension once it's reloaded: **Developer: Reload Window**.
+
+Renaming a file or a folder in the Explorer asks `tidels` first, so the paths of the assets it holds follow it; the extension asks only about the files assets name, and the folders above them.
 
 The extension runs `tidels` from your `PATH`, or from where `tide` is installed; in a folder with a `build/tools/tidels`, like Tide's own repo once it's built, it runs that one. The `tide.server.path` setting runs another one: in it, `~` is your home folder, and `${workspaceFolder}` and relative paths are the folder whose settings set it. After updating the server, run **Tide: Restart Language Server**. The `tide.trace.server` setting shows what the editor and the server say to each other, in the **Tide Trace** output.
 
@@ -42,6 +45,8 @@ On the web, each reload says what it did in the page's console: **Tide: Game Dev
 CLion, Rider, IntelliJ and the others, 2024.2 or later: install the Tide plugin from **Settings > Plugins > Marketplace**. It brings the LSP4IJ plugin it needs.
 
 The plugin runs the `tidels` chosen under **Settings > Languages & Frameworks > Tide**, if any; else the project's own `build/tools/tidels`, like Tide's repo once it's built, once you trust the project; else the one on your `PATH`, or where `tide` is installed. When there's none, `.tide` files say so above the code, with links to install `tide`, choose a `tidels`, or try again. The **Language Servers** tool window restarts the server, after an update, and shows what it and the IDE say to each other.
+
+Renaming a file or a folder (Refactor > Rename, or in the Project view) asks `tidels` first, so the paths of the assets it holds follow it. LSP4IJ asks about every file, and `tidels` answers from the game's assets.
 
 JetBrains' dark color schemes draw type names like plain text, so Tide's types stay uncolored until you pick colors. Each kind of type has its own color under **Settings > Editor > Color Scheme > Language Server**:
 

@@ -49,6 +49,13 @@ type resolve_builtin_call(str owner, expr *e);
 // `out`.
 bool builtin_takes_out(str owner, str name);
 
+// For owner.name with no such version: the functions of `owner` that have one,
+// as a sentence lists them ("TextField, IntField and FloatField"), and a call
+// of the first with its parameters' names ("GUILayout.TextField(label, value,
+// out var entered)"). False, adding nothing, when `owner` has no function
+// named `name`, or none with an `out` parameter.
+bool builtin_out_versions(str owner, str name, sb *names, sb *example);
+
 // The name of parameter `index` of the function a call was resolved to.
 str builtin_param_name(const expr *e, int index);
 

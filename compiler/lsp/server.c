@@ -54,6 +54,9 @@ void lsp_free(lsp_server *s)
     s->roots = NULL;
     s->root_count = 0;
     free_kept(s);
+    free(s->rename_filters);
+    free(s->asset_watchers);
+    s->rename_filters = s->asset_watchers = NULL;
     s->analyzed = false;
 }
 
@@ -180,7 +183,17 @@ typedef struct path_list {
     char **items;
     char **packages;
     int count;
+    char *game_folder; // The folder the game is, for a game that's one (ending in '/'); NULL for a manifest's
+    char **roots;      // Its folder and its packages', where a moved asset is looked for
+    int root_count;
 } path_list;
+
+static void add_root_folder(path_list *list, const char *folder)
+{
+    list->roots = realloc(list->roots, sizeof(char *) * (size_t)(list->root_count + 1));
+    if (!list->roots) abort();
+    list->roots[list->root_count++] = copy_string(folder, strlen(folder));
+}
 
 static void add_path_in(path_list *list, const char *path, const char *package)
 {
@@ -198,6 +211,16 @@ static void add_path(void *user, const char *path)
     add_path_in(user, path, NULL);
 }
 
+static void free_roots(path_list *list)
+{
+    for (int i = 0; i < list->root_count; i++) free(list->roots[i]);
+    free(list->roots);
+    free(list->game_folder);
+    list->roots = NULL;
+    list->game_folder = NULL;
+    list->root_count = 0;
+}
+
 static void free_paths(path_list *list)
 {
     for (int i = 0; i < list->count; i++) {
@@ -206,6 +229,7 @@ static void free_paths(path_list *list)
     }
     free(list->items);
     free(list->packages);
+    free_roots(list);
     *list = (path_list){0};
 }
 
@@ -315,8 +339,14 @@ static void add_game(const lsp_server *s, path_list *list, const char *folder)
 {
     game_packages g;
     packages_resolve(folder, &g, NULL, NULL, NULL);
-    for (int i = 0; i < g.count; i++) add_folder(s, list, g.items[i].folder, g.items[i].name, true);
+    for (int i = 0; i < g.count; i++) {
+        add_folder(s, list, g.items[i].folder, g.items[i].name, true);
+        add_root_folder(list, g.items[i].folder);
+    }
     add_folder(s, list, g.file.folder, g.file.name, true);
+    free(list->game_folder);
+    list->game_folder = copy_string(g.file.folder, strlen(g.file.folder));
+    add_root_folder(list, g.file.folder);
     packages_free(&g);
 }
 
@@ -511,6 +541,8 @@ static void keep(lsp_server *s, char *text)
     s->kept[s->kept_count++] = text;
 }
 
+static void register_assets_of(lsp_server *s, const path_list *list);
+
 // Analyses the files in `list` (as game_of gives them) together, or with
 // none, the file at `alone` by itself. Files open in the editor use its text;
 // the others are read from disk. The analysis points to the paths, so they're
@@ -542,9 +574,11 @@ static void run_game(lsp_server *s, path_list *list, char *alone)
             files[i] = (analysis_file){uris[i], path, text ? text : "", text ? len : 0, package};
         }
     }
+    analysis_set_game_folders(list->game_folder, (const char *const *)list->roots, list->root_count);
     analysis_run(files, n);
     s->analyzed = true;
     s->analyzed_changes = s->changes;
+    register_assets_of(s, list);
 
     // The analysis copied the texts; the URIs and paths must outlive it, so
     // they're kept with the disk texts.
@@ -557,6 +591,7 @@ static void run_game(lsp_server *s, path_list *list, char *alone)
     }
     free(list->items);
     free(list->packages);
+    free_roots(list);
     *list = (path_list){0};
     if (alone) keep(s, alone);
     free(uris);
@@ -743,6 +778,223 @@ static void register_watchers(lsp_server *s)
     jb_free(&b);
 }
 
+// ---------------------------------------------------------------------------
+// Assets: the editor asks before renaming a file an asset names (the paths are
+// rewritten: analysis_rename_files), and says when one changes on disk.
+
+// `path` as a glob that means just itself: what a glob reads as more is put
+// in a class of one.
+static void put_glob_escaped(jbuf *b, const char *path)
+{
+    for (const char *p = path; *p; p++) {
+        if (*p == '[') jb_put(b, "[[]");
+        else if (strchr("*?{}()!@+", *p)) jb_printf(b, "[%c]", *p);
+        else jb_putn(b, p, 1);
+    }
+}
+
+typedef struct folder_set {
+    char **items;
+    int count;
+} folder_set;
+
+// Whether `folder` (or a file) was seen, noting it.
+static bool folder_seen(folder_set *set, const char *folder)
+{
+    for (int i = 0; i < set->count; i++) {
+        if (same_path(set->items[i], folder)) return true;
+    }
+    set->items = realloc(set->items, sizeof(char *) * (size_t)(set->count + 1));
+    if (!set->items) abort();
+    set->items[set->count++] = copy_string(folder, strlen(folder));
+    return false;
+}
+
+static void free_folder_set(folder_set *set)
+{
+    for (int i = 0; i < set->count; i++) free(set->items[i]);
+    free(set->items);
+}
+
+static void put_rename_filter(jbuf *b, int *written, const char *path, const bool folder)
+{
+    if ((*written)++) jb_put(b, ",");
+    jb_put(b, "{\"scheme\":\"file\",\"pattern\":{\"glob\":\"");
+    put_glob_escaped(b, path);
+    jb_printf(b, "\",\"matches\":\"%s\",\"options\":{\"ignoreCase\":true}}}", folder ? "folder" : "file");
+}
+
+// The filters of the renames that can move a file an asset names: the file,
+// and each folder above it up to the folder of the game or package it is in.
+// A glob's matches aren't among them: a glob isn't rewritten.
+static void rename_filters(jbuf *b, const path_list *list)
+{
+    jb_put(b, "[");
+    int written = 0;
+    folder_set folders = {0};
+    for (int i = 0; i < analysis_asset_count(); i++) {
+        const char *path = analysis_asset_path(i);
+        if (!path || analysis_asset_is_glob(i) || folder_seen(&folders, path)) continue; // One filter a file
+        put_rename_filter(b, &written, path, false);
+        for (char *folder = parent_folder(path); folder;) {
+            bool in_root = false;
+            for (int r = 0; r < list->root_count && !in_root; r++) {
+                in_root = same_path(folder, list->roots[r]) || under(folder, list->roots[r]);
+            }
+            if (!in_root || folder_seen(&folders, folder)) {
+                free(folder);
+                break;
+            }
+            const size_t n = strlen(folder);
+            folder[n - 1] = '\0'; // Without its '/', as the editor names a folder
+            put_rename_filter(b, &written, folder, true);
+            folder[n - 1] = '/';
+            char *up = parent_folder(folder);
+            free(folder);
+            folder = up;
+        }
+    }
+    free_folder_set(&folders);
+    jb_put(b, "]");
+}
+
+// A watcher for each file or glob an asset names, so a file that moves, goes
+// or arrives is seen: relative to the folder the path's fixed part leads to,
+// where the editor takes that, else by the rest of the path anywhere.
+static void asset_watchers(jbuf *b, const bool relative)
+{
+    jb_put(b, "[");
+    int written = 0;
+    for (int i = 0; i < analysis_asset_count(); i++) {
+        const char *path = analysis_asset_path(i);
+        if (!path) continue;
+        size_t fixed = 0; // Through the last '/' before a wildcard
+        for (size_t k = 0; path[k] && path[k] != '*' && path[k] != '?'; k++) {
+            if (path[k] == '/') fixed = k + 1;
+        }
+        if (fixed == 0) continue;
+        if (written++) jb_put(b, ",");
+        if (relative) {
+            char *folder = copy_string(path, fixed - 1);
+            char *uri = path_to_uri(folder);
+            jb_put(b, "{\"globPattern\":{\"baseUri\":");
+            jb_string(b, uri);
+            jb_put(b, ",\"pattern\":");
+            jb_string(b, path + fixed);
+            jb_put(b, "}}");
+            free(uri);
+            free(folder);
+        } else {
+            jbuf pattern = {0};
+            jb_printf(&pattern, "**/%s", path + fixed);
+            jb_put(b, "{\"globPattern\":");
+            jb_string(b, pattern.data);
+            jb_put(b, "}");
+            jb_free(&pattern);
+        }
+    }
+    jb_put(b, "]");
+}
+
+// Registers `registrations` (the items of the request's array) in place of
+// what `last` says was registered, when they differ: that is taken back
+// first (`unregistrations`, the same way). Nothing when nothing changed.
+static void reregister(lsp_server *s, char **last, const char *registrations, const char *unregistrations, const char *id)
+{
+    if (*last && strcmp(*last, registrations) == 0) return;
+    if (*last && (*last)[0]) {
+        jbuf b = {0};
+        jb_printf(&b, "{\"jsonrpc\":\"2.0\",\"id\":\"tidels-un%s\",\"method\":\"client/unregisterCapability\","
+                      "\"params\":{\"unregisterations\":[%s]}}", id, unregistrations);
+        send_buf(s, &b);
+        jb_free(&b);
+    }
+    if (registrations[0]) {
+        jbuf b = {0};
+        jb_printf(&b, "{\"jsonrpc\":\"2.0\",\"id\":\"tidels-%s\",\"method\":\"client/registerCapability\","
+                      "\"params\":{\"registrations\":[%s]}}", id, registrations);
+        send_buf(s, &b);
+        jb_free(&b);
+    }
+    free(*last);
+    *last = copy_string(registrations, strlen(registrations));
+}
+
+// After an analysis: the filters for the renames to ask about, and the
+// watchers for the assets' files, as the game names them now.
+static void register_assets_of(lsp_server *s, const path_list *list)
+{
+    const bool any = analysis_asset_count() > 0;
+    if (s->rename_dynamic) {
+        jbuf filters = {0};
+        jbuf b = {0};
+        if (any) {
+            rename_filters(&filters, list);
+            jb_printf(&b, "{\"id\":\"tide-rename\",\"method\":\"workspace/willRenameFiles\",\"registerOptions\":{\"filters\":%s}},"
+                          "{\"id\":\"tide-renamed\",\"method\":\"workspace/didRenameFiles\",\"registerOptions\":{\"filters\":%s}}",
+                       filters.data, filters.data);
+        }
+        reregister(s, &s->rename_filters, b.data ? b.data : "",
+                   "{\"id\":\"tide-rename\",\"method\":\"workspace/willRenameFiles\"},"
+                   "{\"id\":\"tide-renamed\",\"method\":\"workspace/didRenameFiles\"}", "rename");
+        jb_free(&filters);
+        jb_free(&b);
+    }
+    if (s->watch_files) {
+        jbuf watchers = {0};
+        jbuf b = {0};
+        if (any) {
+            asset_watchers(&watchers, s->relative_patterns);
+            jb_printf(&b, "{\"id\":\"tide-assets\",\"method\":\"workspace/didChangeWatchedFiles\",\"registerOptions\":{\"watchers\":%s}}",
+                       watchers.data);
+        }
+        reregister(s, &s->asset_watchers, b.data ? b.data : "",
+                   "{\"id\":\"tide-assets\",\"method\":\"workspace/didChangeWatchedFiles\"}", "assets");
+        jb_free(&watchers);
+        jb_free(&b);
+    }
+}
+
+// workspace/willRenameFiles: the edits that keep every asset path at its
+// file, in the game of the first file renamed (the files of one rename are
+// in one place).
+static void will_rename_files(lsp_server *s, const json *id, const json *params)
+{
+    const json *files = json_get(params, "files");
+    asset_rename renames[64];
+    char *paths[128];
+    int count = 0;
+    for (int i = 0; files && files->kind == JSON_ARRAY && i < files->count && count < 64; i++) {
+        const char *old_uri = json_str(json_get(files->items[i], "oldUri"));
+        const char *new_uri = json_str(json_get(files->items[i], "newUri"));
+        if (!old_uri || !new_uri) continue;
+        char *pair[2] = {uri_to_path(old_uri), uri_to_path(new_uri)};
+        for (int k = 0; k < 2; k++) {
+            const size_t n = strlen(pair[k]);
+            if (n > 1 && pair[k][n - 1] == '/') pair[k][n - 1] = '\0';
+            paths[count * 2 + k] = pair[k];
+        }
+        renames[count++] = (asset_rename){pair[0], pair[1]};
+    }
+    jbuf b = {0};
+    reply_start(&b, id);
+    if (count == 0) {
+        jb_put(&b, "null}");
+    } else {
+        // The game it's in, found as for a Tide file there
+        jbuf there = {0};
+        jb_printf(&there, "%s/x.tide", renames[0].old_path);
+        path_list list;
+        game_of(s, there.data, &list);
+        run_game(s, &list, there.data);
+        analysis_rename_files(renames, count, &b);
+        jb_put(&b, "}");
+    }
+    send_buf(s, &b);
+    jb_free(&b);
+    for (int i = 0; i < count * 2; i++) free(paths[i]);
+}
+
 // Whether the editor applies edits that create files.
 static bool client_creates_files(const json *params)
 {
@@ -767,6 +1019,10 @@ static void initialize(lsp_server *s, const json *id, const json *params)
     const json *relative = json_get(watch, "relativePatternSupport");
     s->watch_files = dynamic && dynamic->kind == JSON_TRUE;
     s->relative_patterns = relative && relative->kind == JSON_TRUE;
+    const json *operations = json_path(params, "capabilities", "workspace", "fileOperations", NULL);
+    const json *will_rename = json_get(operations, "willRename");
+    const json *rename_dynamic = json_get(operations, "dynamicRegistration");
+    s->rename_dynamic = will_rename && will_rename->kind == JSON_TRUE && rename_dynamic && rename_dynamic->kind == JSON_TRUE;
     const json *folders = json_get(params, "workspaceFolders");
     if (folders && folders->kind == JSON_ARRAY && folders->count > 0) {
         for (int i = 0; i < folders->count; i++) {
@@ -781,7 +1037,14 @@ static void initialize(lsp_server *s, const json *id, const json *params)
     reply_start(&b, id);
     jb_put(&b, "{\"capabilities\":{"
                "\"textDocumentSync\":{\"openClose\":true,\"change\":1,\"save\":{\"includeText\":false}},"
-               "\"workspace\":{\"workspaceFolders\":{\"supported\":true,\"changeNotifications\":true}},"
+               "\"workspace\":{\"workspaceFolders\":{\"supported\":true,\"changeNotifications\":true}");
+    // An editor that takes no registration (LSP4IJ reads only these) is asked about every rename, and
+    // answered from the game's assets; one that asks about no renames ignores it
+    if (!s->rename_dynamic) {
+        jb_put(&b, ",\"fileOperations\":{\"willRename\":{\"filters\":[{\"scheme\":\"file\",\"pattern\":{\"glob\":\"**/*\"}}]},"
+                   "\"didRename\":{\"filters\":[{\"scheme\":\"file\",\"pattern\":{\"glob\":\"**/*\"}}]}}");
+    }
+    jb_put(&b, "},"
                "\"completionProvider\":{\"triggerCharacters\":[\".\"]},"
                "\"hoverProvider\":true,"
                "\"definitionProvider\":true,"
@@ -1087,6 +1350,10 @@ void lsp_handle(lsp_server *s, const char *message, const size_t len)
         refresh(s); // Which files make up a game depends on the open folders
     } else if (is_document_request(method)) {
         document_request(s, method, id, params);
+    } else if (strcmp(method, "workspace/willRenameFiles") == 0) {
+        will_rename_files(s, id, params);
+    } else if (strcmp(method, "workspace/didRenameFiles") == 0) {
+        refresh(s); // The files moved: what's missing, and what's found, changed
     } else if (strcmp(method, "workspace/symbol") == 0) {
         const char *query = json_str(json_get(params, "query"));
         workspace_symbols(s, id, query ? query : "");
