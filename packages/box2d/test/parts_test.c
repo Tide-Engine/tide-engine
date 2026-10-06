@@ -786,8 +786,16 @@ TIDE_TEST(box2d_parts_where_only_one_line_says_so)
 {
     b2SetAssertFcn(stopped);
     static lab l;
-    enum { RESTLESS = 10, LONER = 60, LONERS = 8 };
+    enum { RESTLESS = 10, LONER = 60, LONERS = 8, NEAR = 70, NEARS = 4 };
     begin(&l, 7u, 1);
+    // Bodies that never move, with nothing on them, far off: with these the static set has room in the image
+    // for one more or one less, where a shelf that goes would otherwise move the section after it, and the
+    // image is then written whole whatever else is so
+    for (int i = 0; i < 40; i++) {
+        b2BodyDef def = b2DefaultBodyDef();
+        def.position = b2ToPos((b2Vec2){300.0f + (float)i, 0.0f});
+        b2CreateBody(l.world, &def);
+    }
     // Crates by themselves on the floor, away from the stacks: one that goes, or is moved, wakes no other.
     // Box2D wakes what a body touched when the body goes, and a stack that wakes moves a section of the image
     for (int i = 0; i < LONERS; i++) {
@@ -804,7 +812,20 @@ TIDE_TEST(box2d_parts_where_only_one_line_says_so)
     sensing.isSensor = true;
     sensing.enableSensorEvents = true;
     const b2Circle ball = {{0.0f, 1.0f}, 0.5f};
-    for (int i = 0; i < 3; i++) b2CreateCircleShape(l.bodies[SHELF + i], &sensing, &ball);
+    b2ShapeId gates[3];
+    for (int i = 0; i < 3; i++) gates[i] = b2CreateCircleShape(l.bodies[SHELF + i], &sensing, &ball);
+    // Crates side by side, a little apart: near enough for Box2D to keep a contact between each two, which
+    // touch nothing. Once they sleep those contacts are the disabled set's, with no island and no set of
+    // either crate's: nothing wakes when one goes
+    for (int i = 0; i < NEARS; i++) {
+        b2BodyDef def = b2DefaultBodyDef();
+        def.type = b2_dynamicBody;
+        def.position = b2ToPos((b2Vec2){-92.0f + 1.08f * (float)i, 0.5f});
+        l.bodies[NEAR + i] = b2CreateBody(l.world, &def);
+        const b2ShapeDef shape = b2DefaultShapeDef();
+        const b2Polygon crate = b2MakeBox(0.5f, 0.5f);
+        b2CreatePolygonShape(l.bodies[NEAR + i], &shape, &crate);
+    }
     // Two more shapes on another shelf, with nothing on them: they go one at a time, while everything
     // sleeps. A body's shapes are a list from the last one made, so the first to go is the one in the middle
     const b2ShapeDef plain = b2DefaultShapeDef();
@@ -832,6 +853,15 @@ TIDE_TEST(box2d_parts_where_only_one_line_says_so)
             b2DestroyBody(l.bodies[LONER + 1]);
             b2DestroyBody(l.bodies[SHELF + 7]);
             did(&l, "two crates and a shelf destroyed", 0);
+        }
+        // The first of the crates side by side goes, asleep: its contact with the next one goes with it, the
+        // last contact of the disabled set takes its place there, and the next crate, which stays asleep,
+        // has one contact less
+        if (l.step == 135) {
+            TIDE_CHECK(b2Body_GetContactCapacity(l.bodies[NEAR + 1]) == 3 && !b2Body_IsAwake(l.bodies[NEAR + 1]));
+            b2DestroyBody(l.bodies[NEAR]);
+            TIDE_CHECK(b2Body_GetContactCapacity(l.bodies[NEAR + 1]) == 2 && !b2Body_IsAwake(l.bodies[NEAR + 1]));
+            did(&l, "a sleeping crate beside another destroyed", 0);
         }
         // A crate that's asleep is put somewhere else, where nothing is: nothing wakes, and nothing says so
         // but the move itself
@@ -875,6 +905,12 @@ TIDE_TEST(box2d_parts_where_only_one_line_says_so)
             b2DestroyBody(l.bodies[SHELF]);
             did(&l, "a sensor's shelf destroyed", 0);
         }
+        // ...and the sensor that's first in the list now goes by itself, its shelf staying: the other's shape
+        // is told
+        if (l.step == 255) {
+            b2DestroyShape(gates[2], false);
+            did(&l, "a sensor destroyed", 0);
+        }
         // A static body where there was one, under nothing
         if (l.step == 270) {
             b2BodyDef def = b2DefaultBodyDef();
@@ -888,8 +924,8 @@ TIDE_TEST(box2d_parts_where_only_one_line_says_so)
         const int parts = l.images_in_parts;
         right = take_image(&l);
         // Each of those steps had its image in parts: the world was asleep and followed
-        if (l.step == 120 || l.step == 150 || l.step == 160 || l.step == 165 || l.step == 180 || l.step == 190 || l.step == 200
-            || l.step == 210 || l.step == 250 || l.step == 270) {
+        if (l.step == 120 || l.step == 135 || l.step == 150 || l.step == 160 || l.step == 165 || l.step == 180 || l.step == 190
+            || l.step == 200 || l.step == 210 || l.step == 250 || l.step == 255 || l.step == 270) {
             if (l.images_in_parts == parts) printf("    step %d's image was written whole\n", l.step);
             TIDE_CHECK(l.images_in_parts > parts);
         }
