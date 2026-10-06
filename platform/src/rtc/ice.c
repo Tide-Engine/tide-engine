@@ -6,6 +6,8 @@
 // first pair to answer is the one (aggressive nomination). The other side uses
 // the pair the controlling one picked, once its own check there answered. An
 // answer only counts from the address its check went to.
+// A check of theirs is checked back at once, out of turn (a triggered check),
+// or, when it came before their password did, as soon as that's there.
 // Once there's a pair, checks go on every few seconds, so both sides know the
 // other still wants the packets (consent, RFC 7675).
 
@@ -180,13 +182,6 @@ void rtc_ice_add_remote(rtc_ice *ice, const rtc_candidate *c)
     }
 }
 
-void rtc_ice_set_remote(rtc_ice *ice, const char *ufrag, const char *pwd)
-{
-    snprintf(ice->remote_ufrag, sizeof ice->remote_ufrag, "%s", ufrag);
-    snprintf(ice->remote_pwd, sizeof ice->remote_pwd, "%s", pwd);
-    ice->has_remote = true;
-}
-
 // ---------------------------------------------------------------------------
 // Sending: straight from our socket, or through the TURN server
 
@@ -233,6 +228,33 @@ static void send_check(rtc_ice *ice, rtc_pair *p, const double now)
     send_on(ice, p->relayed, p->remote, buffer, w.size);
     p->sent = now;
     p->tries++;
+}
+
+// A check back on the pair a check of theirs came on (a triggered check, RFC
+// 8445, 7.3.1.4): at once, whatever the pair's turn among the others would be.
+static void check_back(rtc_ice *ice, rtc_pair *p, const double now)
+{
+    p->owed = false;
+    p->state = RTC_PAIR_IN_PROGRESS;
+    p->tries = 0;
+    send_check(ice, p, now);
+}
+
+// Their checks can come before their description does (RFC 8445, 7.3): they
+// have ours first, and check as they send theirs. Such a check is answered,
+// which takes our own password, and the check back, which is signed with
+// theirs, is owed until now. It doesn't wait its pair's turn from here: the
+// address a check came from ranks below the ones their description says
+// they're at, which would each be checked first, 20 ms apart, while they may
+// already send on the pair their check found.
+void rtc_ice_set_remote(rtc_ice *ice, const char *ufrag, const char *pwd, const double now)
+{
+    snprintf(ice->remote_ufrag, sizeof ice->remote_ufrag, "%s", ufrag);
+    snprintf(ice->remote_pwd, sizeof ice->remote_pwd, "%s", pwd);
+    ice->has_remote = true;
+    for (int i = 0; i < ice->pair_count; i++) {
+        if (ice->pairs[i].owed) check_back(ice, &ice->pairs[i], now);
+    }
 }
 
 // A TURN request, signed once the server has told us its realm.
@@ -383,10 +405,10 @@ static void on_request(rtc_ice *ice, const rtc_stun *m, const rtc_addr from, con
         p->nominated = true;
         if (p->state == RTC_PAIR_SUCCEEDED) select_pair(ice, index, now);
     }
-    if (p->state == RTC_PAIR_FAILED || (p->state == RTC_PAIR_WAITING && ice->has_remote)) {
-        p->state = RTC_PAIR_IN_PROGRESS; // Triggered: check back at once
-        p->tries = 0;
-        send_check(ice, p, now);
+    if (p->state == RTC_PAIR_FAILED || p->state == RTC_PAIR_WAITING) {
+        // Triggered: check back at once, or once we have the password that signs it (rtc_ice_set_remote)
+        if (ice->has_remote) check_back(ice, p, now);
+        else p->owed = true;
     }
 }
 

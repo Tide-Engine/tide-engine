@@ -112,6 +112,44 @@ static void dtls_in(void *user, const void *data, const size_t size)
     rtc_sctp_receive(&p->sctp, data, size, p->now);
 }
 
+// DTLS answers what it's given as it reads it, and its answer goes on ICE's
+// pair in use or nowhere (rtc_ice_send). So it's given their datagrams once
+// it can answer: it's started, and ICE has a pair.
+static bool dtls_answers(const rtc_peer *p)
+{
+    return p->dtls_started && p->ice.state == RTC_ICE_CONNECTED;
+}
+
+// Their ClientHello can come before that. ICE hands over what comes from any
+// address it knows, and they send it as soon as their side has a pair: before
+// the answer to our own check arrives, when that's late, lost, or from another
+// address than the check went to; and from Chrome, before its description
+// does, as a check of its own that we answered is all it waits for. Answered
+// then, our flight went nowhere, and waited for DTLS's time to send one again,
+// half a second. So what comes before is held, in order, and DTLS gets it once
+// it can answer. A few datagrams: a ClientHello can take more than one
+// (Chrome's takes two), and they send it again meanwhile, which is also how
+// one that found no room here comes back, as one lost on the way does.
+static void hold(rtc_peer *p, const uint8_t *datagram, const size_t size)
+{
+    if (p->have_remote && p->dtls_client) return; // We're the client, and nothing answers a ClientHello we haven't sent
+    if (p->held_count == RTC_PEER_HELD || size > sizeof p->held[0].data) return;
+    rtc_debug("peer: their DTLS (%u bytes) waits for %s", (unsigned)size, p->have_remote ? "a pair" : "their description");
+    p->held[p->held_count].size = (uint16_t)size;
+    p->held[p->held_count].arrived = p->ice.arrived;
+    memcpy(p->held[p->held_count].data, datagram, size);
+    p->held_count++;
+}
+
+static void give_held(rtc_peer *p, const double now)
+{
+    for (int i = 0; i < p->held_count; i++) {
+        p->reading = p->held[i].arrived;
+        rtc_dtls_receive(&p->dtls, p->held[i].data, p->held[i].size, now);
+    }
+    p->held_count = 0;
+}
+
 rtc_peer *rtc_peer_new(const bool offerer, const rtc_ice_config *config)
 {
     rtc_peer *p = calloc(1, sizeof *p);
@@ -144,7 +182,7 @@ void rtc_peer_description(rtc_peer *p, const char *type, const char *sdp)
         p->state = RTC_PEER_FAILED;
         return;
     }
-    rtc_ice_set_remote(&p->ice, p->remote.ufrag, p->remote.pwd);
+    rtc_ice_set_remote(&p->ice, p->remote.ufrag, p->remote.pwd, p->now);
     for (int i = 0; i < p->remote.candidate_count; i++) rtc_ice_add_remote(&p->ice, &p->remote.candidates[i]);
     // We answer as the DTLS client; an answer to us says which we are
     p->dtls_client = p->offerer ? p->remote.setup == RTC_SETUP_PASSIVE : true;
@@ -153,10 +191,13 @@ void rtc_peer_description(rtc_peer *p, const char *type, const char *sdp)
     p->have_remote = true;
     if (!p->offerer) tell_description(p);
     if (!p->dtls_client) {
-        // A server only waits for ClientHello, which can come as soon as ICE works for them
+        // A server only waits for ClientHello, which can come as soon as ICE
+        // works for them, and before it works for us: it's held until then (hold)
         p->dtls_started = rtc_dtls_start(&p->dtls, false, &p->identity, p->remote.fingerprint, dtls_out, dtls_in, p,
                                          p->now);
         if (!p->dtls_started) p->state = RTC_PEER_FAILED;
+    } else {
+        p->held_count = 0; // Nothing that came before our ClientHello is an answer to it
     }
 }
 
@@ -191,9 +232,17 @@ void rtc_peer_update(rtc_peer *p, const double now)
     uint8_t datagram[2048];
     size_t n;
     while ((n = rtc_ice_receive(&p->ice, now, datagram, sizeof datagram)) != 0) {
+        if (datagram[0] < 20 || datagram[0] > 63) continue; // Not DTLS
+        if (!dtls_answers(p)) {
+            hold(p, datagram, n);
+            continue;
+        }
+        give_held(p, now); // What came before it, first
         p->reading = p->ice.arrived; // What comes out of it arrived when it did
-        if (p->dtls_started && datagram[0] >= 20 && datagram[0] <= 63) rtc_dtls_receive(&p->dtls, datagram, n, now);
+        rtc_dtls_receive(&p->dtls, datagram, n, now);
     }
+    // ICE can have found its pair in what was just read, after what's held came
+    if (dtls_answers(p)) give_held(p, now);
     if (p->dtls_started) rtc_dtls_update(&p->dtls, now);
 
     // Then SCTP, if nothing of theirs started it already (dtls_in)
