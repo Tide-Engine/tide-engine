@@ -28,5 +28,7 @@ target_include_directories(sumo_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_link_libraries(sumo_tests PRIVATE tide_box3d)
 add_test(NAME sumo_tests COMMAND sumo_tests)
 # A step in 3D is several of Box2D's, a web build has no SIMD for it, and
-# this ring has a couple of thousand bodies in it
-set_tests_properties(sumo_tests PROPERTIES TIMEOUT 600)
+# this ring has a couple of thousand bodies in it, in each of the five worlds
+# of its match: 45 seconds optimized, and three to six minutes where it isn't
+# and the machine has other work
+set_tests_properties(sumo_tests PROPERTIES TIMEOUT 1800)
