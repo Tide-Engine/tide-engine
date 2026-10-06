@@ -136,7 +136,7 @@ github.com/someone/tide-packages//physics b01aac4d779e32c9c415283b65e40c86d691e7
 
 ### Replacing a game's code
 
-A package adds to a game, and it can also change it: an expansion, a variant of the rules, a [mod](mods.md). The game marks what can be replaced with `virtual`, and the package replaces it with an `override` of the same name and parameters, which runs in its place:
+A package adds to a game, and it can also change it: an expansion, a variant of the rules, a mod. The game marks what can be replaced with `virtual`, and the package replaces it with an `override` of the same name and parameters, which runs in its place:
 
 ```csharp
 // The game

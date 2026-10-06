@@ -11,6 +11,14 @@
 # They're apart because Fly gives an app's secrets to every machine in it,
 # and a machine that builds gets none of this app's.
 #
+# On hold since 2026-10-06, and not deployed: both apps, the volume and the DNS
+# record were deleted. To bring it back, make them again first:
+#
+#   fly apps create tide-builds
+#   fly apps create tide-builders --network tide-builders
+#   fly volumes create builds_data --size 1 --region fra -a tide-builds
+#   the secrets below, the CNAME, and fly certs add builds.tide-engine.dev -a tide-builds
+#
 # Deploy from this folder, the builders' image first when tide.version
 # changed (fly.builder.toml says how), then:
 #
