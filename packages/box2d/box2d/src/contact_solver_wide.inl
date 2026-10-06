@@ -49,6 +49,14 @@ typedef float32x4_t b2FloatW;
 // wide float holds 4 numbers
 typedef __m128 b2FloatW;
 
+#elif defined( B2_SIMD_WASM )
+
+// Tide: WebAssembly's own SIMD (see ../TIDE.md)
+#include <wasm_simd128.h>
+
+// wide float holds 4 numbers
+typedef v128_t b2FloatW;
+
 #else
 
 // scalar math
@@ -487,6 +495,149 @@ static inline b2FloatW b2SoftMaskW( const int* indexA, const int* indexB )
 	__m128i a = _mm_cmpeq_epi32( _mm_load_si128( (const __m128i*)indexA ), zero );
 	__m128i b = _mm_cmpeq_epi32( _mm_load_si128( (const __m128i*)indexB ), zero );
 	return _mm_castsi128_ps( _mm_or_si128( a, b ) );
+}
+
+#elif defined( B2_SIMD_WASM )
+
+// Tide: WebAssembly's own SIMD. Each function gives, bit for bit, what the SSE2 one above gives for the same
+// numbers, NaN and both zeros among them, as a world's image has to be the same bytes in a browser as on x64
+// (see ../TIDE.md). The least and the greatest are the pseudo ones (f32x4.pmin, f32x4.pmax) with their operands
+// the other way around, which are minps and maxps exactly; f32x4.min and f32x4.max take -0 for less than 0 and
+// give NaN for either NaN. Nothing here is relaxed SIMD.
+
+static inline b2FloatW b2ZeroW( void )
+{
+	return wasm_f32x4_const_splat( 0.0f );
+}
+
+static inline b2FloatW b2SplatW( float scalar )
+{
+	return wasm_f32x4_splat( scalar );
+}
+
+static inline b2FloatW b2SetW( float a, float b, float c, float d )
+{
+	return wasm_f32x4_make( a, b, c, d );
+}
+
+// The sign's bit alone, as SSE2's xor with -0 changes it
+static inline b2FloatW b2NegW( b2FloatW a )
+{
+	return wasm_f32x4_neg( a );
+}
+
+static inline b2FloatW b2AddW( b2FloatW a, b2FloatW b )
+{
+	return wasm_f32x4_add( a, b );
+}
+
+static inline b2FloatW b2SubW( b2FloatW a, b2FloatW b )
+{
+	return wasm_f32x4_sub( a, b );
+}
+
+static inline b2FloatW b2MulW( b2FloatW a, b2FloatW b )
+{
+	return wasm_f32x4_mul( a, b );
+}
+
+static inline b2FloatW b2DivW( b2FloatW a, b2FloatW b )
+{
+	return wasm_f32x4_div( a, b );
+}
+
+// The product rounded before the sum, and before the difference
+static inline b2FloatW b2MulAddW( b2FloatW a, b2FloatW b, b2FloatW c )
+{
+	return wasm_f32x4_add( a, wasm_f32x4_mul( b, c ) );
+}
+
+static inline b2FloatW b2MulSubW( b2FloatW a, b2FloatW b, b2FloatW c )
+{
+	return wasm_f32x4_sub( a, wasm_f32x4_mul( b, c ) );
+}
+
+// minps: a where it's less than b, and else b
+static inline b2FloatW b2MinW( b2FloatW a, b2FloatW b )
+{
+	return wasm_f32x4_pmin( b, a );
+}
+
+// maxps: a where it's greater than b, and else b
+static inline b2FloatW b2MaxW( b2FloatW a, b2FloatW b )
+{
+	return wasm_f32x4_pmax( b, a );
+}
+
+// a = clamp(a, -b, b)
+static inline b2FloatW b2SymClampW( b2FloatW a, b2FloatW b )
+{
+	b2FloatW nb = wasm_f32x4_neg( b );
+	return b2MaxW( nb, b2MinW( a, b ) );
+}
+
+static inline b2FloatW b2AndW( b2FloatW a, b2FloatW b )
+{
+	return wasm_v128_and( a, b );
+}
+
+// The comparisons are false for a NaN, as SSE2's are
+static inline b2FloatW b2GreaterThanW( b2FloatW a, b2FloatW b )
+{
+	return wasm_f32x4_gt( a, b );
+}
+
+static inline b2FloatW b2LessThanW( b2FloatW a, b2FloatW b )
+{
+	return wasm_f32x4_lt( a, b );
+}
+
+static inline bool b2AnyTrueW( b2FloatW mask )
+{
+	// Each lane's top bit, as movmskps
+	return wasm_i32x4_bitmask( mask ) != 0;
+}
+
+static inline bool b2AllZeroW( b2FloatW a )
+{
+	// A bit for each lane that is zero, as movmskps of the comparison
+	return wasm_i32x4_bitmask( wasm_f32x4_eq( a, wasm_f32x4_const_splat( 0.0f ) ) ) == 0xF;
+}
+
+// component-wise returns mask ? b : a
+static inline b2FloatW b2BlendW( b2FloatW a, b2FloatW b, b2FloatW mask )
+{
+	return wasm_v128_bitselect( b, a, mask );
+}
+
+static inline b2FloatW b2LoadU( const float* data )
+{
+	return wasm_v128_load( data );
+}
+
+static inline void b2StoreW( float* data, b2FloatW a )
+{
+	wasm_v128_store( data, a );
+}
+
+// unpcklps: the low halves of a and b, a lane of each in turn
+static inline b2FloatW b2UnpackLoW( b2FloatW a, b2FloatW b )
+{
+	return wasm_i32x4_shuffle( a, b, 0, 4, 1, 5 );
+}
+
+// unpckhps: the high halves
+static inline b2FloatW b2UnpackHiW( b2FloatW a, b2FloatW b )
+{
+	return wasm_i32x4_shuffle( a, b, 2, 6, 3, 7 );
+}
+
+static inline b2FloatW b2SoftMaskW( const int* indexA, const int* indexB )
+{
+	v128_t zero = wasm_i32x4_const_splat( 0 );
+	v128_t a = wasm_i32x4_eq( wasm_v128_load( indexA ), zero );
+	v128_t b = wasm_i32x4_eq( wasm_v128_load( indexB ), zero );
+	return wasm_v128_or( a, b );
 }
 
 #else
@@ -1109,6 +1260,122 @@ B2_FORCE_INLINE void b2ScatterBodies( b2BodyState* B2_RESTRICT states, int* B2_R
 	{
 		// [t2.z t2.w t4.z t4.w]
 		b2StoreW( (float*)( states + i4 ), _mm_shuffle_ps( t2, t4, _MM_SHUFFLE( 3, 2, 3, 2 ) ) );
+	}
+}
+
+#elif defined( B2_SIMD_WASM )
+
+// Tide: the SSE2 gather and scatter above, on WebAssembly's own SIMD. They only move lanes.
+
+// This is a load and transpose.
+B2_FORCE_INLINE b2BodyStateW b2GatherBodies( const b2BodyState* B2_RESTRICT states, int* B2_RESTRICT indices )
+{
+	_Static_assert( sizeof( b2BodyState ) == 32, "b2BodyState not 32 bytes" );
+	B2_ASSERT( ( (uintptr_t)states & 0x1F ) == 0 );
+	B2_VALIDATE( indices[0] >= 0 && indices[1] >= 0 && indices[2] >= 0 && indices[3] >= 0 );
+
+	// [vx vy w flags]
+	b2FloatW identityA = b2ZeroW();
+
+	// [dpx dpy dqc dqs]
+	b2FloatW identityB = b2SetW( 0.0f, 0.0f, 1.0f, 0.0f );
+
+	// zero means null
+	int i1 = indices[0] - 1;
+	int i2 = indices[1] - 1;
+	int i3 = indices[2] - 1;
+	int i4 = indices[3] - 1;
+
+	b2FloatW b1a = i1 == B2_NULL_INDEX ? identityA : b2LoadU( (float*)( states + i1 ) + 0 );
+	b2FloatW b1b = i1 == B2_NULL_INDEX ? identityB : b2LoadU( (float*)( states + i1 ) + 4 );
+	b2FloatW b2a = i2 == B2_NULL_INDEX ? identityA : b2LoadU( (float*)( states + i2 ) + 0 );
+	b2FloatW b2b = i2 == B2_NULL_INDEX ? identityB : b2LoadU( (float*)( states + i2 ) + 4 );
+	b2FloatW b3a = i3 == B2_NULL_INDEX ? identityA : b2LoadU( (float*)( states + i3 ) + 0 );
+	b2FloatW b3b = i3 == B2_NULL_INDEX ? identityB : b2LoadU( (float*)( states + i3 ) + 4 );
+	b2FloatW b4a = i4 == B2_NULL_INDEX ? identityA : b2LoadU( (float*)( states + i4 ) + 0 );
+	b2FloatW b4b = i4 == B2_NULL_INDEX ? identityB : b2LoadU( (float*)( states + i4 ) + 4 );
+
+	// [vx1 vx3 vy1 vy3]
+	b2FloatW t1a = b2UnpackLoW( b1a, b3a );
+
+	// [vx2 vx4 vy2 vy4]
+	b2FloatW t2a = b2UnpackLoW( b2a, b4a );
+
+	// [w1 w3 f1 f3]
+	b2FloatW t3a = b2UnpackHiW( b1a, b3a );
+
+	// [w2 w4 f2 f4]
+	b2FloatW t4a = b2UnpackHiW( b2a, b4a );
+
+	b2BodyStateW simdBody;
+	simdBody.v.X = b2UnpackLoW( t1a, t2a );
+	simdBody.v.Y = b2UnpackHiW( t1a, t2a );
+	simdBody.w = b2UnpackLoW( t3a, t4a );
+	simdBody.flags = b2UnpackHiW( t3a, t4a );
+
+	b2FloatW t1b = b2UnpackLoW( b1b, b3b );
+	b2FloatW t2b = b2UnpackLoW( b2b, b4b );
+	b2FloatW t3b = b2UnpackHiW( b1b, b3b );
+	b2FloatW t4b = b2UnpackHiW( b2b, b4b );
+
+	simdBody.dp.X = b2UnpackLoW( t1b, t2b );
+	simdBody.dp.Y = b2UnpackHiW( t1b, t2b );
+	simdBody.dq.C = b2UnpackLoW( t3b, t4b );
+	simdBody.dq.S = b2UnpackHiW( t3b, t4b );
+
+	return simdBody;
+}
+
+// This writes only the velocities back to the solver bodies.
+B2_FORCE_INLINE void b2ScatterBodies( b2BodyState* B2_RESTRICT states, int* B2_RESTRICT indices,
+									  const b2BodyStateW* B2_RESTRICT simdBody )
+{
+	_Static_assert( sizeof( b2BodyState ) == 32, "b2BodyState not 32 bytes" );
+	B2_ASSERT( ( (uintptr_t)states & 0x1F ) == 0 );
+	B2_VALIDATE( indices[0] >= 0 && indices[1] >= 0 && indices[2] >= 0 && indices[3] >= 0 );
+
+	// [vx1 vy1 vx2 vy2]
+	b2FloatW t1 = b2UnpackLoW( simdBody->v.X, simdBody->v.Y );
+	// [vx3 vy3 vx4 vy4]
+	b2FloatW t2 = b2UnpackHiW( simdBody->v.X, simdBody->v.Y );
+	// [w1 f1 w2 f2]
+	b2FloatW t3 = b2UnpackLoW( simdBody->w, simdBody->flags );
+	// [w3 f3 w4 f4]
+	b2FloatW t4 = b2UnpackHiW( simdBody->w, simdBody->flags );
+
+	// The dynamic flag of each lane's body, moved to the lane's top bit
+	_Static_assert( b2_dynamicFlag == ( 1 << 9 ), "dynamic flag must be bit 9" );
+	int dynamicMask = wasm_i32x4_bitmask( wasm_i32x4_shl( simdBody->flags, 31 - 9 ) );
+
+	// zero means null
+	int i1 = indices[0] - 1;
+	int i2 = indices[1] - 1;
+	int i3 = indices[2] - 1;
+	int i4 = indices[3] - 1;
+
+	// I don't use any dummy body in the body array because this will lead to multithreaded cache coherence problems.
+	if ( dynamicMask & 1 )
+	{
+		// [t1.x t1.y t3.x t3.y]
+		b2StoreW( (float*)( states + i1 ), wasm_i32x4_shuffle( t1, t3, 0, 1, 4, 5 ) );
+	}
+
+	if ( dynamicMask & 2 )
+	{
+		// [t1.z t1.w t3.z t3.w]
+		b2StoreW( (float*)( states + i2 ), wasm_i32x4_shuffle( t1, t3, 2, 3, 6, 7 ) );
+	}
+
+	if ( dynamicMask & 4 )
+	{
+		// [t2.x t2.y t4.x t4.y]
+		b2StoreW( (float*)( states + i3 ), wasm_i32x4_shuffle( t2, t4, 0, 1, 4, 5 ) );
+	}
+
+	if ( dynamicMask & 8 )
+	{
+		// [t2.z t2.w t4.z t4.w]
+		b2StoreW( (float*)( states + i4 ), wasm_i32x4_shuffle( t2, t4, 2, 3, 6, 7 ) );
 	}
 }
 
