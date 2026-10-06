@@ -285,8 +285,10 @@ char *asset_hashes_text(const asset_hashes *h)
     static const char header[] = "# The SHA-256 of each file an asset names, so one that moves is found again. Made by tide.\n";
     asset_hash *sorted = malloc(sizeof(asset_hash) * (size_t)(h->count > 0 ? h->count : 1));
     if (!sorted) abort();
-    memcpy(sorted, h->items, sizeof(asset_hash) * (size_t)h->count);
-    qsort(sorted, (size_t)h->count, sizeof(asset_hash), by_path);
+    if (h->count > 0) { // With none, there's no list to copy from
+        memcpy(sorted, h->items, sizeof(asset_hash) * (size_t)h->count);
+        qsort(sorted, (size_t)h->count, sizeof(asset_hash), by_path);
+    }
     size_t cap = sizeof header;
     for (int i = 0; i < h->count; i++) cap += 64 + 1 + 20 + 1 + strlen(sorted[i].path) + 1;
     char *text = malloc(cap + 1);

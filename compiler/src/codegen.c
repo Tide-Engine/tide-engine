@@ -2721,6 +2721,12 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             }
             if (!reads) sb_printf(o, ", %s", place_where(g, e->object)); // Where the map is
             sb_put(o, ")");
+        } else if (e->call == CALL_GRID && str_eq_c(e->name, "Decode")) { // cells.Decode(bytes): the PNG's pixels
+            sb_put(o, "tide_checked_grid_decode(&(");
+            gen_expr(g, o, e->object);
+            sb_printf(o, "), &%s, %s, ", grid_shape_name(e->object->type.decl), place_where(g, e->object));
+            gen_as(g, o, e->args.items[0], e->args.items[0]->type);
+            sb_put(o, ")");
         } else if (e->call == CALL_GRID) { // cells.Clear()
             sb_put(o, "tide_grid_clear(&(");
             gen_expr(g, o, e->object);
@@ -2944,7 +2950,7 @@ static bool event_batch_value(const expr *e)
         }
     }
     if (e->method || e->block || e->local_field || e->resource_operation || e->edge != EDGE_NONE
-        || e->io_operation || e->path_operation || e->storage_flush) return false;
+        || e->io_operation || e->path_operation || e->storage_flush || e->web_fetch) return false;
     if (e->call != CALL_NONE && e->call != CALL_CONSTRUCT) return false;
     switch (e->kind) {
     case E_INT: case E_FLOAT: case E_BOOL: case E_DEFAULT: case E_THIS: break;
@@ -3313,6 +3319,39 @@ static void gen_await(gen *g, expr *e, const char *name)
         g->indent++;
         gen_reload_live(g);
         line(g, o, "goto tide_io_resume%d;", k);
+        g->indent--;
+        line(g, o, "}");
+        task_declare(g, name, e->type);
+        return;
+    }
+    if (call->web_fetch) {
+        // await Web.Fetch(url): the ticket is the frame's until the fetch is
+        // done; its body is a list in the scratch area, which a local that
+        // outlives the frame's next wait is spilled from like any other
+        line(g, o, "tide_f->tide_fetch_ticket = 0;");
+        line(g, o, "tide_fetch_resume%d:;", k);
+        indent(g, o);
+        sb_put(o, "if (!tide_f->tide_fetch_ticket) tide_f->tide_fetch_ticket = (int32_t)tide_web_fetch_begin(tide_l->tide_io, ");
+        gen_as(g, o, call->args.items[0], call->arg_want.items[0]);
+        sb_put(o, ");\n");
+        line(g, o, "tide_io_list_result tide_fetched%d;", k);
+        line(g, o, "if (!tide_web_fetch_poll(tide_l->tide_io, (uint32_t)tide_f->tide_fetch_ticket, &tide_fetched%d)) {", k);
+        g->indent++;
+        gen_spill_live(g);
+        line(g, o, "tide_f->tide_state = %d;", k);
+        line(g, o, "return tide_l->tide_frames + 1;");
+        g->indent--;
+        line(g, o, "}");
+        line(g, o, "%s %s = {.ok = tide_fetched%d.ok, .error = (IOError)tide_fetched%d.error, .value = tide_fetched%d.value};",
+             c_type(e->type), name, k, k, k);
+        line(g, o, "tide_web_fetch_forget(tide_l->tide_io, (uint32_t)tide_f->tide_fetch_ticket);");
+        line(g, o, "tide_f->tide_fetch_ticket = 0;");
+        e->hoisted = name;
+        line(g, o, "if (0) {");
+        line(g, o, "tide_resume%d:;", k);
+        g->indent++;
+        gen_reload_live(g);
+        line(g, o, "goto tide_fetch_resume%d;", k);
         g->indent--;
         line(g, o, "}");
         task_declare(g, name, e->type);
@@ -5301,6 +5340,7 @@ static void add_task(gen *g, decl *fn)
     frame_field(frame, "tide_until", int_t); // The tick or frame it waits for
     frame_field(frame, "tide_left", (type){TY_FLOAT, NULL}); // Or the seconds it has left to wait, on this machine
     if (fn->uses_io) frame_field(frame, "tide_io_ticket", int_t);
+    if (fn->uses_fetch) frame_field(frame, "tide_fetch_ticket", int_t);
     if (fn->kind == DECL_SYSTEM) frame_field(frame, "tide_event", (type){TY_EVENT, fn->event});
     for (int i = 0; i < fn->params.count; i++) {
         const param *p = &fn->params.items[i];
@@ -5500,6 +5540,11 @@ static void gen_result_types(gen *g)
 // distinct C types. One small adapter per operation preserves that boundary.
 static void gen_io_adapters(gen *g)
 {
+    if (g->prog->decodes) { // grid.Decode: the engine's error as the failable
+        const char *result = c_type(g->prog->decode_result);
+        sb_printf(&g->c, "TIDE_HELPER %s tide_checked_grid_decode(tide_grid *g, const tide_grid_shape *s, const uint32_t where, const tide_list bytes)\n{\n", result);
+        sb_printf(&g->c, "    const tide_io_error r = tide_grid_decode(g, s, where, bytes);\n    return (%s){.ok = r == TIDE_IO_NONE, .error = (IOError)r};\n}\n\n", result);
+    }
     sb *o = &g->c;
     for (int i = 0; i < g->prog->io_calls.count; i++) {
         const expr *e = g->prog->io_calls.items[i];
@@ -5580,7 +5625,9 @@ static void gen_header(gen *g)
     sb_put(o, "#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n\n");
     sb_put(o, "#include \"tide/color.h\"\n#include \"tide/devices.h\"\n#include \"tide/draw.h\"\n#include \"tide/entity.h\"\n"
               "#include \"tide/grid.h\"\n#include \"tide/gui.h\"\n#include \"tide/math.h\"\n#include \"tide/list.h\"\n#include \"tide/map.h\"\n#include \"tide/mesh.h\"\n#include \"tide/player.h\"\n#include \"tide/session.h\"\n"
-              "#include \"tide/jobs.h\"\n#include \"tide/table.h\"\n#include \"tide/attached.h\"\n#include \"tide/text.h\"\n#include \"tide/debug.h\"\n#include \"tide/io.h\"\n\n");
+              "#include \"tide/jobs.h\"\n#include \"tide/table.h\"\n#include \"tide/attached.h\"\n#include \"tide/text.h\"\n#include \"tide/debug.h\"\n#include \"tide/io.h\"\n");
+    if (prog->decodes) sb_put(o, "#include \"tide/png.h\"\n"); // grid.Decode: only in a game that calls it
+    sb_put(o, "\n");
     if (prog->random->named) sb_put(o, "#include \"tide/random.h\"\n\n"); // Random, in the games that have one
     sb_put(o, "// How many players the game's matches take: its maxPlayers setting. The world keeps\n");
     sb_put(o, "// an input for each, and the server's after them.\n");
@@ -8431,7 +8478,7 @@ static bool flat_list_expr(const expr *e)
     if (e->bind == BIND_CONST) return flat_list_expr(e->constant->value);
     if ((e->kind == E_LITERAL || e->kind == E_DEFAULT) && !flat_list_defaults(e->type)) return false;
     if (e->method || e->block || e->local_field || e->resource_operation || e->edge != EDGE_NONE
-        || e->io_operation || e->path_operation || e->storage_flush) return false;
+        || e->io_operation || e->path_operation || e->storage_flush || e->web_fetch) return false;
     if (e->call != CALL_NONE && e->call != CALL_BUILTIN && e->call != CALL_CONSTRUCT) return false;
     if (e->call == CALL_BUILTIN && e->type.kind == TY_VOID) return false;
     switch (e->kind) {
@@ -10675,6 +10722,9 @@ static void gen_frame_forget_io(gen *g, const task_info *ti)
     const char *name = type_cname(ti->frame);
     sb_printf(o, "TIDE_HELPER void tide_forget_io_%s(%s *v, const tide_io *io)\n{\n", name, name);
     sb_put(o, "    if (v->tide_io_ticket) tide_storage_flush_forget(io, (uint32_t)v->tide_io_ticket);\n    v->tide_io_ticket = 0;\n");
+    if (ti->fn->uses_fetch) {
+        sb_put(o, "    if (v->tide_fetch_ticket) tide_web_fetch_forget(io, (uint32_t)v->tide_fetch_ticket);\n    v->tide_fetch_ticket = 0;\n");
+    }
     for (int i = 0; i < ti->fn->awaits.count; i++) {
         const task_info *child = task_of(g, ti->fn->awaits.items[i]);
         if (!child->fn->uses_io) continue;
@@ -10682,6 +10732,7 @@ static void gen_frame_forget_io(gen *g, const task_info *ti)
     }
     sb_put(o, "}\n\n");
     sb_printf(o, "TIDE_HELPER void tide_reset_io_%s(%s *v)\n{\n    v->tide_io_ticket = 0;\n", name, name);
+    if (ti->fn->uses_fetch) sb_put(o, "    v->tide_fetch_ticket = 0;\n");
     for (int i = 0; i < ti->fn->awaits.count; i++) {
         const task_info *child = task_of(g, ti->fn->awaits.items[i]);
         if (!child->fn->uses_io) continue;
