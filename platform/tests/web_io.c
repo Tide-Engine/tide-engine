@@ -1,5 +1,6 @@
 // Browser saves cross a real page reload. The shell runs the phases and
-// injects storage refusal/quota errors before the affected operations.
+// injects storage refusal/quota errors before the affected operations. It
+// counts the transactions that write, and holds one up when asked.
 #include <stdio.h>
 #include <string.h>
 
@@ -8,7 +9,7 @@
 
 static const tide_io *io;
 static const char *phase;
-static uint32_t ticket;
+static uint32_t ticket, earlier;
 static int failures, stage;
 
 static tide_str text(const char *s) { return tide_str_from_cstr(s); }
@@ -20,6 +21,18 @@ static void check(bool ok, const char *what)
 {
     printf("%s: %s\n", ok ? "ok" : "FAIL", what);
     if (!ok) failures++;
+}
+// The page counts the transactions that wrote files (tideWrites in
+// web_io.html). A change queues a save of its own, and a flush in the same
+// turn is another: the second has had its turn by the frame that finds the
+// flush done, so one that wrote the same files again is in the count.
+static void check_writes(const int expected, const char *what)
+{
+    char script[160];
+    snprintf(script, sizeof script,
+             "tideWrites === %d || (Tide.print(`${tideWrites} transactions wrote files, where %d should have`), false)",
+             expected, expected);
+    check(tide_web_eval(script), what);
 }
 static void read_saved(void)
 {
@@ -36,14 +49,37 @@ static void read_saved(void)
     }
     check(tide_directory_exists(io, save_path("saves/renamed")), "directory moves persist");
     check(!tide_file_exists(io, save_path("saves/moved")), "file deletion persists");
+    const tide_io_text_result again = tide_file_read_all_text(io, save_path("saves/again"));
+    check(again.ok && tide_str_eq(again.value, text("second")), "a file changed again while it was being saved is saved as it was left");
+    const tide_io_text_result late = tide_file_read_all_text(io, save_path("saves/late"));
+    check(late.ok && tide_str_eq(late.value, text("late")), "a file written while another was being saved is saved too");
 }
 static int frame(void *user, float seconds)
 {
     (void)user, (void)seconds;
     tide_io_error error = TIDE_IO_NONE;
+    if (!strcmp(phase, "busy") && stage == 0) {
+        // The first save's transaction was made before this frame, and the
+        // page keeps it from finishing: what's written here is written while
+        // it's on its way.
+        check_writes(1, "a save is on its way");
+        check(!tide_storage_flush_poll(io, ticket, &error), "a flush isn't done before its changes committed");
+        check(tide_file_write_all_text(io, save_path("saves/again"), text("second")).ok, "change a file that's being saved");
+        check(tide_file_write_all_text(io, save_path("saves/late"), text("late")).ok, "write another meanwhile");
+        earlier = ticket;
+        ticket = tide_storage_flush_begin(io);
+        tide_web_eval("tideHold = false");
+        stage++;
+        return TIDE_KEEP_RUNNING;
+    }
     if (!tide_storage_flush_poll(io, ticket, &error)) return TIDE_KEEP_RUNNING;
     tide_storage_flush_forget(io, ticket);
-    if (!strcmp(phase, "denied") || !strcmp(phase, "read-denied")) {
+    if (!strcmp(phase, "busy")) {
+        check(error == TIDE_IO_NONE, "a flush made while a save was on its way finishes");
+        tide_io_error first = TIDE_IO_FAILED;
+        check(tide_storage_flush_poll(io, earlier, &first) && first == TIDE_IO_NONE, "the flush before it finished first");
+        check_writes(2, "what changed meanwhile is one transaction more");
+    } else if (!strcmp(phase, "denied") || !strcmp(phase, "read-denied")) {
         check(error == TIDE_IO_ACCESS_DENIED || error == TIDE_IO_STORAGE_UNAVAILABLE,
               "flush reports unavailable persistent storage");
     } else if (!strcmp(phase, "quota") && stage == 0) {
@@ -55,11 +91,16 @@ static int frame(void *user, float seconds)
         return TIDE_KEEP_RUNNING;
     } else if (!strcmp(phase, "quota") && stage == 1) {
         check(error == TIDE_IO_NONE, "a failed commit can be retried");
+        check_writes(1, "the retry is one transaction");
         check(tide_file_delete(io, save_path("retry")).ok, "clean up the retry file");
         ticket = tide_storage_flush_begin(io);
         stage++;
         return TIDE_KEEP_RUNNING;
     } else check(error == TIDE_IO_NONE, "save changes finish committing");
+    if (!strcmp(phase, "write") || !strcmp(phase, "read"))
+        check_writes(1, "a flush after changes saves them in one transaction");
+    else if (!strcmp(phase, "quota")) check_writes(2, "a flush after a change is one transaction more");
+    else if (!strcmp(phase, "other")) check_writes(0, "a flush with nothing to save makes no transaction");
     return failures ? 1 : 0;
 }
 int main(int argc, char **argv)
@@ -96,6 +137,9 @@ int main(int argc, char **argv)
               "paths cannot escape this game's virtual roots");
         io = tide_platform_io_init("dev.tide.io.test");
         check(tide_file_exists(io, save_path("saves/text.txt")), "reinitializing for hot reload retains pending files");
+    } else if (!strcmp(phase, "busy")) {
+        tide_web_eval("tideHold = true");
+        check(tide_file_write_all_text(io, save_path("saves/again"), text("first")).ok, "write a file whose save the page holds up");
     } else if (!strcmp(phase, "read")) {
         read_saved();
         check(tide_directory_delete(io, save_path("saves"), true).ok, "recursive directory deletion");
