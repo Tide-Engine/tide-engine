@@ -133,6 +133,7 @@ add_subdirectory(packages) # The packages that come with tide, and their tests
 # The physics games are built with a package each, so they come after them.
 add_subdirectory(examples/towers)
 add_subdirectory(examples/sumo)
+add_subdirectory(examples/samples)
 
 # The docs' live examples open a window, so they need the platform layer, and
 # come after the packages: the physics examples are built with one each.

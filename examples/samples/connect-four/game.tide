@@ -1,3 +1,5 @@
+const string SampleTitle = "Connect Four";
+
 // Connect Four, for everyone who has the link.
 //
 // Red against yellow. Each player who joins goes to the smaller team, teammates take
@@ -447,7 +449,7 @@ Fit Measure()
     float w = Screen.width;
     float h = Screen.height;
     var scale = Math.Clamp(Math.Min(w / 376, h / 400), 0.75, 2.2);
-    var hud = 66 * scale;
+    var hud = 66 * scale + 52;
     var foot = 40 * scale;
     var room = h - hud - foot - 8 * scale;
     var cell = Math.Min((w - 28 * scale) / COLS, room / (ROWS + 1));
@@ -519,6 +521,7 @@ string Who(Roster roster, int team, PlayerID me)
     return members.count == 1 ? first : $"{first} +{members.count - 1}";
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Backdrop(Session session)
 {
     Draw2D.Clear(BACK);
@@ -531,8 +534,18 @@ view Backdrop(Session session)
 // The pointer and the keys: where this player aims, and when they let a disc go.
 // It asks for a drop by the board the server has confirmed, so the server, which is
 // never behind that, doesn't get a move for a turn it hasn't come to yet.
-view Point(Devices devices, verified Board board, verified Roster roster, Session session, mut Aim aim)
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Point(Devices devices, verified Board board, verified Roster roster, Session session, mut Aim aim, SampleLobby lobby)
 {
+    if (!lobby.playing)
+    {
+        aim.pressed = false;
+        aim.left = false;
+        aim.right = false;
+        aim.drop = false;
+        aim.digit = -1;
+        return;
+    }
     var fit = Measure();
     var dt = Math.Min(Frame.dt, 0.05);
     aim.wait = Math.Max(aim.wait - dt, 0);
@@ -580,6 +593,7 @@ view Point(Devices devices, verified Board board, verified Roster roster, Sessio
     aim.wait = 0.35;
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawBoard(Board board, Roster roster, Session session, Fx fx, Aim aim)
 {
     var fit = Measure();
@@ -664,6 +678,7 @@ view DrawBoard(Board board, Roster roster, Session session, Fx fx, Aim aim)
 }
 
 // The disc of another player whose turn it is, over the column they aim at.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Hands(Hand hand, Owner owner, Board board, Roster roster, Fx fx, without ownership)
 {
     if (board.winner != PLAYING || board.fresh) return;
@@ -673,6 +688,7 @@ view Hands(Hand hand, Owner owner, Board board, Roster roster, Fx fx, without ow
     Disc(Spot(fit, hand.x, ROWS) + bob, fit.cell * 0.41, board.turn);
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Effects(mut Fx fx)
 {
     var fit = Measure();
@@ -771,7 +787,7 @@ void Plate(Fit fit, int team, string name, int wins, bool active, bool mine)
     var s = fit.scale;
     float half = Screen.width * 0.5;
     var side = team == RED ? -1.0 : 1.0;
-    var y = 24 * s;
+    var y = 24 * s + 52;
     var paint = Paint(team);
     var center = float2(half + side * (half * 0.5 + 7 * s), y);
     var size = float2(half - 30 * s, 36 * s);
@@ -784,6 +800,7 @@ void Plate(Fit fit, int team, string name, int wins, bool active, bool mine)
                 team == RED ? Anchor.MiddleRight : Anchor.MiddleLeft, Font.Bold);
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Hud(Board board, Roster roster, Session session, Fx fx)
 {
     var fit = Measure();
@@ -801,7 +818,7 @@ view Hud(Board board, Roster roster, Session session, Fx fx)
     var lit = playing ? board.turn : landed ? board.winner : PLAYING;
     Plate(fit, RED, Who(roster, RED, me), board.redWins - (board.winner == RED && !landed ? 1 : 0), lit == RED, team == RED);
     Plate(fit, YELLOW, Who(roster, YELLOW, me), board.yellowWins - (board.winner == YELLOW && !landed ? 1 : 0), lit == YELLOW, team == YELLOW);
-    Draw2D.Text("-", float2(w * 0.5, 24 * s), 18 * s, QUIET, Anchor.MiddleCenter);
+    Draw2D.Text("-", float2(w * 0.5, 24 * s + 52), 18 * s, QUIET, Anchor.MiddleCenter);
 
     mut var status = "";
     mut var tone = Color.white;
@@ -819,7 +836,7 @@ view Hud(Board board, Roster roster, Session session, Fx fx)
         {
             status += $" ({left / RATE + 1})";
             float part = left;
-            Draw2D.RoundRect(float2(w * 0.5, 63 * s), float2(w * 0.5 * part / HURRY, 3 * s), 1.5 * s, tone);
+            Draw2D.RoundRect(float2(w * 0.5, 63 * s + 52), float2(w * 0.5 * part / HURRY, 3 * s), 1.5 * s, tone);
         }
     }
     else if (board.winner != PLAYING)
@@ -841,12 +858,12 @@ view Hud(Board board, Roster roster, Session session, Fx fx)
         status = "Reconnecting...";
         tone = Color.white;
     }
-    Draw2D.Text(status, float2(w * 0.5, 51 * s), 16 * s, tone, Anchor.MiddleCenter, Font.Bold);
+    Draw2D.Text(status, float2(w * 0.5, 51 * s + 52), 16 * s, tone, Anchor.MiddleCenter, Font.Bold);
 
     Draw2D.Text(hint, float2(w * 0.5, h - 27 * s), 13 * s, Color.white, Anchor.MiddleCenter);
     if (fx.newsLeft > 0)
         Draw2D.Text(fx.news, float2(w * 0.5, h - 11 * s), 12 * s, Color(0.45, 0.9, 0.8, Math.Min(fx.newsLeft, 1)), Anchor.MiddleCenter);
     else
-        Draw2D.Text(alone ? "Four in a row wins. Send the link to play a friend!" : "Four in a row wins: across, up or diagonal",
+        Draw2D.Text(alone ? "Four in a row wins. Host a room to play a friend!" : "Four in a row wins: across, up or diagonal",
                     float2(w * 0.5, h - 11 * s), 12 * s, QUIET, Anchor.MiddleCenter);
 }

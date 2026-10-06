@@ -1,3 +1,5 @@
+const string SampleTitle = "Tower Defense";
+
 // Tower defense for up to four friends. Creeps walk the road to the base, and
 // everyone places and upgrades towers to stop them. Each player has a cursor,
 // a color, a purse of gold and a kill count of their own; the base's lives and
@@ -620,6 +622,7 @@ void DrawHeart(float2 center, float size, Color color)
 }
 
 // First each frame: the screen is laid out from its size, around the board.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Begin(Session session, mut Layout layout, mut Hand hand)
 {
     Draw2D.Clear(BG);
@@ -629,16 +632,17 @@ view Begin(Session session, mut Layout layout, mut Hand hand)
     var ui = Math.Clamp(Math.Min(w, h) / 400, 1.0, 1.6);
     var above = Math.Round(46 * ui);
     var below = Math.Round(70 * ui);
-    var cell = Math.Max(8, Math.Floor(Math.Min((w - 8) / COLS, (h - above - below) / ROWS)));
+    var cell = Math.Max(8, Math.Floor(Math.Min((w - 8) / COLS, (h - 52 - above - below) / ROWS)));
     layout.ui = ui;
     layout.cell = cell;
-    layout.top = Math.Max(0, Math.Floor((h - above - below - cell * ROWS) * 0.5));
+    layout.top = 52 + Math.Max(0, Math.Floor((h - 52 - above - below - cell * ROWS) * 0.5));
     layout.origin = float2(Math.Floor((w - cell * COLS) * 0.5), layout.top + above);
     hand.seat = -1;
     if (session.state == SessionState.Connected) return;
     Draw2D.Text("Joining the game...", float2(w, h) * 0.5, 18 * ui, QUIET, Anchor.MiddleCenter);
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Me(Builder builder, mut Hand hand, with ownership)
 {
     hand.seat = builder.seat;
@@ -646,8 +650,10 @@ view Me(Builder builder, mut Hand hand, with ownership)
 
 // The keyboard, the mouse and fingers all move one cursor, and a press on a
 // tile goes to the match as a command.
-view Play(Devices devices, Session session, Game game, Team team, Board board, World world, Layout layout, mut Hand hand)
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Play(Devices devices, Session session, Game game, Team team, Board board, World world, Layout layout, mut Hand hand, SampleLobby lobby)
 {
+    if (!lobby.playing) { hand.hold = 0; return; }
     var dt = Math.Min(Frame.dt, 0.05);
     hand.deny = Math.Max(0, hand.deny - dt);
     hand.wait = Math.Max(0, hand.wait - dt);
@@ -759,6 +765,7 @@ view Play(Devices devices, Session session, Game game, Team team, Board board, W
     Send(Act { x = hand.cell.x, y = hand.cell.y, kind = hand.kind, upgrade = hand.tower });
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawBoard(Game game, Layout layout)
 {
     var c = layout.cell;
@@ -802,6 +809,7 @@ view DrawBoard(Game game, Layout layout)
 
 // The base, at the road's end: creeps walk in under it.
 [After(DrawCreeps)]
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawBase(Game game, Layout layout, Fx fx)
 {
     var c = layout.cell;
@@ -814,6 +822,7 @@ view DrawBase(Game game, Layout layout, Fx fx)
     Draw2D.Text($"{game.lives}", home + float2(0, c * 0.22), Math.Max(10, c * 0.3), Color.white, Anchor.MiddleCenter);
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawTowers(mut Tower tower, Layout layout)
 {
     var dt = Math.Min(Frame.dt, 0.05);
@@ -832,6 +841,7 @@ view DrawTowers(mut Tower tower, Layout layout)
     }
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawCreeps(mut Creep creep, Layout layout)
 {
     creep.flash = Math.Max(0, creep.flash - Frame.dt);
@@ -872,6 +882,7 @@ view DrawCreeps(mut Creep creep, Layout layout)
 }
 
 // Where the friends point.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawCursors(Builder builder, Layout layout, without ownership)
 {
     var center = ToScreen(layout, float2(builder.cell));
@@ -889,6 +900,7 @@ view DrawCursors(Builder builder, Layout layout, without ownership)
 }
 
 // This player's cursor: the tower it would build, and how far that reaches.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawHand(Team team, Layout layout, Hand hand)
 {
     if (hand.seat < 0) return;
@@ -914,6 +926,7 @@ view DrawHand(Team team, Layout layout, Hand hand)
     Draw2D.WireRoundRect(center, float2(c * 0.98), c * 0.2, 2, Color.white);
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawFx(mut Fx fx, Layout layout)
 {
     var dt = Math.Min(Frame.dt, 0.05);
@@ -1000,6 +1013,7 @@ view DrawFx(mut Fx fx, Layout layout)
 }
 
 // Over everything: who's winning, the gold, the towers to pick from, and how to play.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Hud(Devices devices, Session session, Game game, Team team, Layout layout, Hand hand, mut Fx fx)
 {
     Draw2D.SetClip();
@@ -1041,7 +1055,7 @@ view Hud(Devices devices, Session session, Game game, Team team, Layout layout, 
         Draw2D.Text(label, float2(x + 13 * ui, line), 12 * ui, mine ? Color.white : QUIET);
         x += Draw2D.MeasureText(label, 12 * ui).x + 23 * ui;
     }
-    var aside = team.players == 1 ? "Friends join by your link" : game.best > 0 ? $"Best: wave {game.best}" : "";
+    var aside = team.players == 1 ? "Invite friends from the menu" : game.best > 0 ? $"Best: wave {game.best}" : "";
     if (x + Draw2D.MeasureText(aside, 12 * ui).x <= right)
     {
         Draw2D.Text(aside, float2(right, line), 12 * ui, Faded(QUIET, 0.7), Anchor.UpperRight);

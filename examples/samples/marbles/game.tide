@@ -1,3 +1,5 @@
+const string SampleTitle = "Marble Rush";
+
 settings { title = "Marble Rush"; maxPlayers = 8; hostMigration = true; }
 
 const float HALF = 10;      // The island is 20 across, and has no walls
@@ -166,8 +168,9 @@ input Controls
 {
     [Clamp(-1, 1)] float2 move; // x is to the right on the screen, y away from the camera
 
-    Sample(Devices devices, Stick stick)
+    Sample(Devices devices, Stick stick, SampleLobby lobby)
     {
+        if (!lobby.playing) return;
         var keys = devices.keyboard;
         if (keys.d.pressed || keys.rightArrow.pressed) move.x += 1;
         if (keys.a.pressed || keys.leftArrow.pressed) move.x -= 1;
@@ -639,11 +642,13 @@ void Rank(mut List<Row> rows)
 }
 
 // The camera leans towards this machine's own marble.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Follow(Marble marble, mut Look look, with ownership)
 {
     look.goal = float3(marble.position.x * 0.6, 0, marble.position.z * 0.6);
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Stage(mut Look look, mut Scenery scenery, mut Stick stick, mut Fx fx, Session session)
 {
     if (scenery.ground.count == 0)
@@ -706,8 +711,10 @@ view Stage(mut Look look, mut Scenery scenery, mut Stick stick, mut Fx fx, Sessi
 }
 
 // Holding the mouse or a finger on the island rolls this machine's marble that way.
-view Steer(Marble marble, Devices devices, mut Stick stick, with ownership)
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Steer(Marble marble, Devices devices, mut Stick stick, SampleLobby lobby, with ownership)
 {
+    if (!lobby.playing) { stick.move = float2(0); stick.held = false; return; }
     var pointer = devices.pointer;
     if (!pointer.press.pressed || marble.falling) return;
     var screen = Screen.Flip(pointer.position);
@@ -745,6 +752,7 @@ view Steer(Marble marble, Devices devices, mut Stick stick, with ownership)
     stick.held = true;
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Shadows(Marble marble)
 {
     if (marble.falling) return;
@@ -757,6 +765,7 @@ view Shadows(Marble marble)
     }
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view CoinShadows(Coin coin)
 {
     Draw3D.Depth(Depth.Read)
@@ -765,6 +774,7 @@ view CoinShadows(Coin coin)
     }
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Pointing(Stick stick)
 {
     if (!stick.held) return;
@@ -774,6 +784,7 @@ view Pointing(Stick stick)
     }
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Coins(Coin coin, Look look, Scenery scenery)
 {
     float phase = coin.position.x * 1.3 + coin.position.y * 0.7;
@@ -783,6 +794,7 @@ view Coins(Coin coin, Look look, Scenery scenery)
     Draw3D.Mesh(scenery.disc, scenery.discFaces, float4x4.TRS(at, turn, float3(size)), Gold);
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Marbles(mut Marble marble, Scenery scenery)
 {
     var dt = Math.Min(Frame.dt, 0.05);
@@ -797,6 +809,7 @@ view Marbles(mut Marble marble, Scenery scenery)
     Draw3D.Mesh(scenery.ball, scenery.ballFaces, float4x4.TRS(marble.position, marble.roll, float3(RADIUS)), Glass);
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Mine(Marble marble, Look look, with ownership)
 {
     var above = Draw3D.WorldToScreen(marble.position + float3(0, RADIUS + 0.35, 0));
@@ -806,6 +819,7 @@ view Mine(Marble marble, Look look, with ownership)
     }
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Effects(mut Fx fx, Look look)
 {
     var dt = Math.Min(Frame.dt, 0.05);
@@ -852,6 +866,7 @@ view Effects(mut Fx fx, Look look)
     }
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Hud(Round round, Session session, Time time, Look look, query (Marble body, Owner owner) marbles)
 {
     mut List<Row> rows = [];
@@ -879,11 +894,11 @@ view Hud(Round round, Session session, Time time, Look look, query (Marble body,
             Draw2D.Text($"{row.coins}", float2(112, y + 11), 13, Color(1, 0.88, 0.4), Anchor.MiddleRight, Font.Bold);
             y += 23;
         }
-        Caption($"First to {GOAL} coins wins", float2(width - 10, 10), 14, Color.white, Anchor.UpperRight, Font.Bold);
+        Caption($"First to {GOAL} coins wins", float2(width - 10, 10 + 52 / look.scale), 14, Color.white, Anchor.UpperRight, Font.Bold);
         var clock = Clock((round.over ? round.took : time.tick - round.started) / time.tickRate);
         var record = round.best > 0 ? $"{clock}   best {Clock(round.best / time.tickRate)}" : clock;
-        Caption(record, float2(width - 10, 29), 13, Color(1, 0.9, 0.5), Anchor.UpperRight);
-        if (rows.count < 2) Caption("Send the link to a friend\nto race them", float2(width - 10, 48), 12, Color(1, 1, 1, 0.9), Anchor.UpperRight);
+        Caption(record, float2(width - 10, 29 + 52 / look.scale), 13, Color(1, 0.9, 0.5), Anchor.UpperRight);
+        if (rows.count < 2) Caption("Host a room from the menu\nto race your friends", float2(width - 10, 48 + 52 / look.scale), 12, Color(1, 1, 1, 0.9), Anchor.UpperRight);
 
         var foot = float2(width * 0.5, height - 12);
         var how = "Roll: WASD or arrows, or hold where to go";

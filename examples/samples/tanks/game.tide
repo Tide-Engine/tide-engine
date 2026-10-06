@@ -1,3 +1,5 @@
+const string SampleTitle = "Ricochet Tanks";
+
 // When whoever opened the link first goes, another player's machine carries the match on.
 settings { title = "Ricochet Tanks"; maxPlayers = 8; hostMigration = true; }
 
@@ -19,7 +21,7 @@ const float BULLET_LIFE = 6;
 const float BULLET_SAFE = 1;      // Seconds a bullet can't hurt the tank that fired it: time to get out of its way back
 const int BOUNCES = 3;
 const float TICK = 1.0 / 60;      // A tick's length, for working out where a shot would go
-const float HUD_TOP = 52;         // Pixels the scoreboard takes, and the hints under the arena
+const float HUD_TOP = 104;         // Pixels the scoreboard takes, and the hints under the arena
 const float HUD_BOTTOM = 38;
 
 scene Main { }
@@ -215,8 +217,9 @@ input Controls
     [Absolute, Clamp(-1, 1)] float2 aim; // A direction, which another machine's guess keeps
     bool fire;
 
-    Sample(Devices devices, Pad pad)
+    Sample(Devices devices, Pad pad, SampleLobby lobby)
     {
+        if (!lobby.playing) return;
         var keys = devices.keyboard;
         if (keys.d.pressed || keys.rightArrow.pressed) move.x += 1;
         if (keys.a.pressed || keys.leftArrow.pressed) move.x -= 1;
@@ -631,6 +634,7 @@ local event(Scored) ShowScore(Tank tank, mut Fx fx)
 }
 
 // The arena, fitted between the scoreboard and the hints whatever the window's shape.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Backdrop(mut Fx fx)
 {
     fx.shake = Math.Max(0, fx.shake - Math.Min(Frame.dt, 0.05));
@@ -660,6 +664,7 @@ view Backdrop(mut Fx fx)
     }
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Bullets(Bullet bullet)
 {
     var paint = Paint(bullet.slot);
@@ -669,6 +674,7 @@ view Bullets(Bullet bullet)
     Draw2D.Circle(bullet.position, BULLET_R - 0.05, Color.white);
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Tanks(mut Tank tank)
 {
     tank.kick = Math.Max(0, tank.kick - Frame.dt);
@@ -698,9 +704,18 @@ view Tanks(mut Tank tank)
 }
 
 // This machine's own tank: where its hands point it, and the marks that say it's yours.
-view Mine(Devices devices, Tank tank, mut Pad pad, Fx fx, with ownership)
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Mine(Devices devices, Tank tank, mut Pad pad, Fx fx, SampleLobby lobby, with ownership)
 {
     pad.seat = tank.slot;
+    if (!lobby.playing)
+    {
+        pad.fire = 0;
+        pad.held = false;
+        pad.dragged = false;
+        pad.stick = float2(0);
+        return;
+    }
     pad.fire = Math.Max(0, pad.fire - Frame.dt);
     pad.fingers = devices.touchscreen.connected;
 
@@ -793,6 +808,7 @@ view Mine(Devices devices, Tank tank, mut Pad pad, Fx fx, with ownership)
     }
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Sparks(mut Fx fx)
 {
     var dt = Math.Min(Frame.dt, 0.05);
@@ -834,6 +850,7 @@ view Sparks(mut Fx fx)
 }
 
 // The scoreboard has a place for every seat, and the scores are what the server confirmed.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Hud(Round round, Pad pad, Fx fx, query (verified Tank tank) tanks)
 {
     Draw2D.SetScreen();
@@ -869,7 +886,7 @@ view Hud(Round round, Pad pad, Fx fx, query (verified Tank tank) tanks)
     var under = fx.bottom + 5;
     Draw2D.Text(how, float2(Screen.width * 0.5, under), 13, Color.white, Anchor.UpperCenter);
     if (humans < 2)
-        Draw2D.Text("Bots fill in until friends open your link.", float2(Screen.width * 0.5, under + 16), 12, Color(0.64, 0.64, 0.68), Anchor.UpperCenter);
+        Draw2D.Text("Bots fill in until friends join your room.", float2(Screen.width * 0.5, under + 16), 12, Color(0.64, 0.64, 0.68), Anchor.UpperCenter);
 
     if (round.celebrate > 0)
     {

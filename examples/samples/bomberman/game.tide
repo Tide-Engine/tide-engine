@@ -1,3 +1,5 @@
+const string SampleTitle = "Bomb Buddies";
+
 // Bomb Buddies: a Bomberman arena for up to eight friends.
 // Everyone who opens the link drops in at a corner. Blast crates for power-ups,
 // ghosts for a point and each other for three. First to ten wins the round.
@@ -106,8 +108,9 @@ input Controls
     [Clamp(-1, 1)] int y;
     bool bomb;
 
-    Sample(Devices devices, Pad pad)
+    Sample(Devices devices, Pad pad, SampleLobby lobby)
     {
+        if (!lobby.playing) return;
         var keys = devices.keyboard;
         var stick = devices.gamepad.leftStick;
         if (keys.d.pressed || keys.rightArrow.pressed || stick.x > 0.5 || pad.x > 0) x += 1;
@@ -711,8 +714,18 @@ local event(Scored scored) ShowScore(Bomber bomber, mut Fx fx)
 }
 
 // The pointer: a drag steers, a tap drops a bomb, and so does a second finger.
-view Thumb(Devices devices, mut Pad pad)
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Thumb(Devices devices, mut Pad pad, SampleLobby lobby)
 {
+    if (!lobby.playing)
+    {
+        pad.bomb = 0;
+        pad.x = 0;
+        pad.y = 0;
+        pad.held = false;
+        pad.dragged = false;
+        return;
+    }
     pad.bomb = Math.Max(0, pad.bomb - Frame.dt);
     var pointer = devices.pointer;
     if (pointer.press.down)
@@ -749,6 +762,7 @@ view Thumb(Devices devices, mut Pad pad)
 }
 
 // The board, through a camera that fits it between the scores and the hints.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Board(Arena arena, Time time, mut Fx fx, mut Lens lens)
 {
     // The scores above the board and the hints under it. A tall screen, like a phone's,
@@ -756,7 +770,7 @@ view Board(Arena arena, Time time, mut Fx fx, mut Lens lens)
     var wide = Screen.width;
     var tall = Screen.height;
     lens.unit = Math.Clamp(Math.Min(wide / 376.0, tall / 400.0), 1, 1.6);
-    var above = 40 * lens.unit;
+    var above = 40 * lens.unit + 52;
     var below = 38 * lens.unit;
     lens.pixels = Math.Min((wide - 8) / W, (tall - above - below) / H);
     var spare = tall - above - below - lens.pixels * H;
@@ -853,6 +867,7 @@ view Board(Arena arena, Time time, mut Fx fx, mut Lens lens)
     }
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawGhosts(Ghost ghost, Time time)
 {
     var at = ghost.position + float2(0, Math.Sin(time.t * 6 + ghost.position.x + ghost.position.y) * 0.04);
@@ -867,6 +882,7 @@ view DrawGhosts(Ghost ghost, Time time)
     Draw2D.Circle(at + float2(0.12, 0.1) + look, 0.08, Color(0.15, 0.1, 0.3));
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawBombers(Bomber bomber, Owner owner, Session session, Time time)
 {
     if (bomber.dead > 0) return;
@@ -890,6 +906,7 @@ view DrawBombers(Bomber bomber, Owner owner, Session session, Time time)
     if (mine && bomber.shield > 0) Draw2D.Text("YOU", at + float2(0, 0.6), 0.42, Color.white, Anchor.LowerCenter, Font.Bold);
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Sparkle(mut Fx fx)
 {
     var dt = Math.Min(Frame.dt, 0.05);
@@ -936,6 +953,7 @@ view Sparkle(mut Fx fx)
     }
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Hud(Arena arena, Session session, Pad pad, Lens lens, query (Bomber bomber, Owner owner) bombers)
 {
     Draw2D.SetScreen();
@@ -947,7 +965,7 @@ view Hud(Arena arena, Session session, Pad pad, Lens lens, query (Bomber bomber,
     // A seat for each player along the top: its color and its score
     var slot = Math.Min(wide / 8.0, 84 * unit);
     var start = (wide - slot * SEATS) * 0.5;
-    var row = 20 * unit;
+    var row = 20 * unit + 52;
     mut var players = 0;
     mut var mine = -1;
     mut var away = 0;
@@ -973,8 +991,8 @@ view Hud(Arena arena, Session session, Pad pad, Lens lens, query (Bomber bomber,
     }
     if (players == 1)
     {
-        if (mine < 4) Draw2D.Text("Share the link: friends drop right in", float2(wide - 10, row), 12 * unit, quiet, Anchor.MiddleRight);
-        else Draw2D.Text("Share the link: friends drop right in", float2(10, row), 12 * unit, quiet, Anchor.MiddleLeft);
+        if (mine < 4) Draw2D.Text("Invite friends from the room menu", float2(wide - 10, row), 12 * unit, quiet, Anchor.MiddleRight);
+        else Draw2D.Text("Invite friends from the room menu", float2(10, row), 12 * unit, quiet, Anchor.MiddleLeft);
     }
 
     // How to play, under the board
@@ -1010,6 +1028,7 @@ view Hud(Arena arena, Session session, Pad pad, Lens lens, query (Bomber bomber,
     }
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Joining(Session session)
 {
     if (session.state == SessionState.Connected) return;

@@ -1,3 +1,5 @@
+const string SampleTitle = "Asteroids Co-op";
+
 // Asteroids, co-op. Everyone who opens the link flies a ship in the same field
 // of rocks. The crew shares one score and clears waves together, while a saucer
 // hunts them: a ship that took three hits drifts until a friend flies over it,
@@ -134,8 +136,9 @@ input Controls
     bool steer;                              // The stick is pulled: turn to `heading`
     [Absolute, Clamp(-4, 4)] float heading;  // A direction, so a guess keeps it
 
-    Sample(Devices devices, Pointer pointer)
+    Sample(Devices devices, Pointer pointer, SampleLobby lobby)
     {
+        if (!lobby.playing) return;
         var keys = devices.keyboard;
         var pad = devices.gamepad;
         if (keys.a.pressed || keys.leftArrow.pressed) turn += 1;
@@ -612,7 +615,8 @@ local event(Scored scored) ShowScored(Ship ship, mut Look look)
 
 // The camera fits the whole field in the window, whatever its shape, and the
 // pointer is read through it.
-view Backdrop(Devices devices, mut Pointer pointer, mut Look look)
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
+view Backdrop(Devices devices, mut Pointer pointer, mut Look look, SampleLobby lobby)
 {
     var dt = Math.Min(Frame.dt, 0.05);
     look.time += dt;
@@ -625,8 +629,8 @@ view Backdrop(Devices devices, mut Pointer pointer, mut Look look)
     Draw2D.SetCamera(float2(0), size);
 
     var drag = devices.pointer;
-    if (drag.press.down) pointer.start = drag.position;
-    pointer.held = drag.press.pressed;
+    if (lobby.playing && drag.press.down) pointer.start = drag.position;
+    pointer.held = lobby.playing && drag.press.pressed;
     pointer.pull = pointer.held ? drag.position - pointer.start : float2(0);
 
     // Nothing of the field draws outside it, so what wraps comes in at the other edge.
@@ -665,6 +669,7 @@ void DrawRock(float2 at, float angle, float radius, int shape)
     }
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Rocks(Rock rock)
 {
     var radius = RockRadius(rock.size);
@@ -680,6 +685,7 @@ view Rocks(Rock rock)
     }
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Bullets(Bullet bullet)
 {
     var tail = bullet.position - Math.Normalize(bullet.velocity) * 0.4;
@@ -690,6 +696,7 @@ view Bullets(Bullet bullet)
     Draw2D.Circle(bullet.position, 0.07, Color.white);
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Saucers(Saucer saucer, Look look)
 {
     for (var x = -1; x <= 1; x++)
@@ -711,6 +718,7 @@ view Saucers(Saucer saucer, Look look)
     }
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Shots(Shot shot)
 {
     Draw.Blend(Blend.Add)
@@ -751,6 +759,7 @@ void DrawShip(float2 at, float angle, Color color, bool thrusting, float flicker
     Draw2D.Line(right, tip, 0.09, color);
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Ships(mut Ship ship, Owner owner, Session session, mut Look look)
 {
     ship.flash = Math.Max(0, ship.flash - Frame.dt);
@@ -796,6 +805,7 @@ view Ships(mut Ship ship, Owner owner, Session session, mut Look look)
     }
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Effects(mut Look look)
 {
     var dt = Math.Min(Frame.dt, 0.05);
@@ -858,6 +868,7 @@ void Chip(float2 at, Color color, int score, int hull, bool down, bool mine)
     }
 }
 
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Hud(Game game, Session session, Look look, query (Ship ship, Owner owner) crew)
 {
     Draw2D.SetClip();
@@ -898,21 +909,21 @@ view Hud(Game game, Session session, Look look, query (Ship ship, Owner owner) c
         Draw2D.Text(h < 400 ? "Arrows, space to fire,\nor drag to steer.\nFly over a friend who's\ndown to bring them back."
                             : "A D or arrows: turn\nW or up: thrust\nSpace: fire\n\nOr drag, with the mouse\nor a finger: it steers and\nfires, and thrusts when\npulled past the ring.\n\nFly over a friend who's\ndown to bring them back.",
                     float2(20, h - 20), 14, QUIET, Anchor.LowerLeft);
-        Draw2D.Text(pilots <= 1 ? "CREW: just you" : $"CREW: {pilots}", float2(w - side + 20, 20), 15, QUIET);
+        Draw2D.Text(pilots <= 1 ? "CREW: just you" : $"CREW: {pilots}", float2(w - side + 20, 72), 15, QUIET);
         mut var row = 0;
         foreach (var member in crew)
         {
-            Chip(float2(w - side + 20, 50 + row * 36), Tint(member.ship.tint), member.ship.score, member.ship.hull,
+            Chip(float2(w - side + 20, 102 + row * 36), Tint(member.ship.tint), member.ship.score, member.ship.hull,
                  member.ship.down, member.owner.player == session.player);
             row += 1;
         }
         if (pilots <= 1)
-            Draw2D.Text("Friends who open\nyour link join in.", float2(w - side + 20, 96), 14, QUIET);
+            Draw2D.Text("Invite friends from\nthe room menu.", float2(w - side + 20, 148), 14, QUIET);
     }
     else
     {
         // A small or tall window: over the field's edges, or above and below it where there's room
-        var top = Math.Max(0.0, (h - field) * 0.5 - 100);
+        var top = Math.Max(52.0, (h - field) * 0.5 - 100);
         var bottom = Math.Min(h, (h + field) * 0.5 + 62);
         Draw2D.Text($"WAVE {wave}", float2(10, top + 9), 13, QUIET);
         Draw2D.Text($"{game.score}", float2(w * 0.5, top + 4), 24, Color.white, Anchor.UpperCenter, Font.Bold);
@@ -930,7 +941,7 @@ view Hud(Game game, Session session, Look look, query (Ship ship, Owner owner) c
         }
         Draw2D.Text("Arrows or WASD to fly, space to fire\nor drag: steer and fire, pull past the ring to thrust",
                     float2(w * 0.5, bottom - 22), 12, Faded(QUIET, game.wave > 1 ? 0.6 : 1), Anchor.LowerCenter);
-        Draw2D.Text(pilots <= 1 ? "Friends who open your link join in" : "Fly over a friend who's down to bring them back",
+        Draw2D.Text(pilots <= 1 ? "Host a room from the menu to invite friends" : "Fly over a friend who's down to bring them back",
                     float2(w * 0.5, bottom - 6), 12, Faded(AMBER, game.wave > 1 ? 0.6 : 0.9), Anchor.LowerCenter);
     }
 
@@ -967,6 +978,7 @@ view Hud(Game game, Session session, Look look, query (Ship ship, Owner owner) c
 }
 
 // The stick, while a drag lasts: where it began, the ring that thrust starts at, and the pull.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Stick(Pointer pointer)
 {
     if (!pointer.held) return;
@@ -983,6 +995,7 @@ view Stick(Pointer pointer)
 }
 
 // For someone who just opened the link, while their machine joins.
+[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Joining(Session session)
 {
     if (session.state == SessionState.Connected) return;
