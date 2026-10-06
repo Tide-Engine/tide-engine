@@ -17,7 +17,8 @@ so it has to be the same bytes on every machine for the same state, and one
 machine's has to load on another. The two that aren't are for how long a step
 takes in a browser: WebAssembly's SIMD (the last under The same bytes whatever
 the CPU, as it had to leave them the same) and workers that sleep (the last
-under Threads where upstream knows none).
+under Threads where upstream knows none), and for a body that's put to sleep
+in a world that was just made from an image.
 
 ### Calls to take an image and to restore one
 
@@ -214,6 +215,22 @@ match has no recording, and a player who joins has only the match's bytes.
   then what only mesh contacts have (their other manifolds and their triangle
   caches).
 
+### A body put to sleep in a world that was just made from an image
+
+- **`solver_set.c`: `b3TrySleepIsland` only marks a body's move event where
+  the world still has it.** A body that's awake after a step says which of
+  the step's move events was its own (`b3Body.bodyMoveIndex`), which is in the
+  image, and the events aren't: a restore clears them. Upstream looks the
+  event up regardless, to say the body fell asleep, so `b3Body_SetAwake(
+  false )` before a restored world's first step wrote past the events: an
+  assert in a debug build (seen in `tide_box3d_parts`, which didn't put a
+  body to sleep right after a restore for it, and does now), and otherwise a
+  byte written wherever that was. The package puts bodies to sleep
+  (`Body.asleep`), and a client that runs a tick again does it in a world
+  that was just made. The body says it has no event from there on either
+  way, so its bytes in the next image are the same. `tide_box3d_sleep` makes
+  its world again before every tick of a match that puts bodies to sleep.
+
 ### An image as what changed of the last one
 
 A match takes an image after every step, and most steps change little of a
@@ -310,6 +327,11 @@ compares the two after every step.
       moves the last one into its place, whose shape is told where it is now
       (`b3DestroyShapeInternal`, as `b3DestroySensor` already said for a
       sensor that goes with its body).
+    - `body.c`, `b3Body_SetAwake`, either way: nothing of its own to say.
+      `b3WakeSolverSet` and `b3TrySleepIsland` say what they write, as they do
+      when the step calls them, and the island that's split before it's put
+      to sleep (`b3SplitIsland`) is of bodies that are awake, which are
+      written anyway, with their contacts.
     - `body.c`, `b3Body_SetLinearDamping`, `b3Body_SetAngularDamping` and
       `b3Body_SetGravityScale`: what the body's set has of it, which matters
       for a sleeping one (the static set and the awake one are written every
@@ -319,14 +341,15 @@ compares the two after every step.
     and `B3_REC_CREATE`, which every call that changes a world goes through,
     say which call it is (`b3SnapNoteOp`), and only the ones looked at for the
     list above are followed: the step, making and destroying a body, its
-    transform, its speeds, forces and impulses, its dampings, its gravity
-    scale and whether it's a bullet, making a sphere, a capsule or a hull, and
-    destroying a shape. So are the world's settings that are numbers of its
+    transform, its speeds, forces and impulses, waking it and putting it to
+    sleep, its dampings, its gravity scale and whether it's a bullet, making a
+    sphere, a capsule or a hull, and destroying a shape. So are the world's settings that are numbers of its
     own, which every image writes: its gravity, its contact tuning, and its
     restitution and hit event thresholds. A body's type, enabling and
-    disabling, sleep (a body's, and the world's `b3World_EnableSleeping`),
-    mass, shapes' settings, joints, and whatever upstream adds: all of it is
-    right, at the cost of one whole image. The calls recorded by hand say so
+    disabling, whether a body may sleep and how readily
+    (`b3Body_EnableSleep`, `b3Body_SetSleepThreshold`), the world's
+    `b3World_EnableSleeping`, mass, shapes' settings, joints, and whatever
+    upstream adds: all of it is right, at the cost of one whole image. The calls recorded by hand say so
     themselves (`b3Shape_SetHull`, `b3Shape_SetMesh`), as do
     `b3MergeSolverSets`, `b3TransferBody`, the joints' making and destroying,
     a shape with a mesh, a height field or a material array (made, or
@@ -371,12 +394,6 @@ compares the two after every step.
   says nothing of other machines. A check outside the tests (a mesh, a height
   field, a sensor and a joint, restored before every step, on x64 and for the
   web) had the same bytes everywhere.
-- A restore clears the last step's events, and a body in the image still says
-  which of them was its own (`b3Body.bodyMoveIndex`). `b3Body_SetAwake( false )`
-  right after a restore, before a step, looks the event up and finds none:
-  an assert in a debug build (seen in `tide_box3d_parts`), and otherwise a
-  write to an event that isn't one. The package never puts a body to sleep,
-  and `tide_box3d_parts` doesn't right after a restore.
 - `b3Body_SetType` returns with the world still locked for a body with a
   height field or a compound that's made other than static: upstream's. The
   package sets a body's type, and makes neither of those shapes.
@@ -403,8 +420,35 @@ Box3D has to be read for them again:
 - **`b3Body_SetTransform` doesn't wake a body, or what rests on it.** The
   package wakes both when code moves a body, with `b3Body_SetAwake`, for the
   ones that are asleep (`b3Body_GetContactData` says what touches a body;
-  there's no `b3Body_WakeTouching`). It isn't a call an image in parts
-  follows, so the next image is written whole.
+  there's no `b3Body_WakeTouching`). It's a call an image in parts follows.
+- **Bodies sleep and wake an island at a time** (`b3TrySleepIsland`,
+  `b3WakeSolverSet`): `b3Body_SetAwake( false )` puts to sleep every body of
+  the island the body is in, whatever its speed, and `true` wakes all of the
+  set it fell asleep with. An island is the bodies that touch each other, as
+  the last step found them: every touching contact between two bodies of
+  which neither is static joins their islands (`b3LinkContact`), a kinematic
+  body's too, so a lift is in an island with what stands on it, and a floor
+  that's static ties nothing together. A body that's put to sleep has no
+  speed any more (its `b3BodyState` goes), and Box3D says none of which
+  bodies went with it: the package asks, of each that was awake
+  (`b3t_leave`), in the ticks whose step put a body to sleep for code.
+- **A body that's made asleep** (`b3BodyDef.isAwake`) is alone in a set of its
+  own, and a shape put on it leaves it asleep. Its contacts are made at the
+  next step and aren't looked at until one of their bodies is awake, so
+  bodies made asleep on each other wake one after another, a contact a step
+  (`tide_box3d_sleep` has three do that). Each is also a sleeping set and an
+  island of its own for as long as it sleeps, and those are sections an image
+  writes whole whenever one of them changes: with thousands, a tick in which
+  many wake costs more than it does where they sleep a stack to a set (Sumo
+  measured both, and lets its ring have one step before it puts it to sleep).
+- **A speed that isn't zero wakes a body** (`b3Body_SetLinearVelocity`,
+  `b3Body_SetAngularVelocity`), and so does an impulse; the package puts
+  bodies to sleep after everything else a tick wrote, right before the step.
+- **Nothing checks whether the world's bodies may sleep when one is put to
+  sleep** (`b3World_EnableSleeping` only says what the step does, and wakes
+  every body as it's turned off): a body can be put to sleep in a world whose
+  bodies don't fall asleep by themselves, and stays so until something wakes
+  it. `tide_box3d_sleep` does that.
 - **There's no call to wake every body** but turning sleeping off, which the
   package does, and on again, when gravity changes (`b3World_EnableSleeping`):
   not followed either, and everything is awake after it, so the next image is

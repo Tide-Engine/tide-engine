@@ -245,10 +245,17 @@ system Raise(Ring ring, Time time)
 // sleeps as one, and wakes as one when something hits it. Spawned asleep, each
 // crate would sleep by itself, and a stack that's hit would wake a crate a
 // tick, from where it was hit.
+//
+// It runs for the crates that were just stacked, which is none of them in
+// nearly every tick, so it takes Body to read and puts the ones it changed
+// back through the World: taking it `mut` would have every crate's body
+// copied and compared in every tick, for the tick that writes them.
 [After(PhysicsStages.Step)]
-system Settle(mut Body body, with Fresh)
+system Settle(Body body, mut World world, with Fresh)
 {
     if (body.id == 0) return; // Spawned this tick: its body is made in the next
-    body.asleep = true;
+    mut var lulled = body;
+    lulled.asleep = true;
+    world.Set<Body>(this, lulled);
     this.Remove(Fresh);
 }

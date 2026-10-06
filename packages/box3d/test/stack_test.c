@@ -311,6 +311,10 @@ TIDE_TEST(box3d_costs)
     a.Size.flip = true;
     cost(&a, "a type changed:", 60);
     a.Size.flip = false;
+    // ...and what is followed costs what changed: the same crate, put to sleep and woken in turn
+    a.Size.lull = true;
+    cost(&a, "a crate put to sleep:", 60);
+    a.Size.lull = false;
     printf("    %d crates; the image is %d bytes, and its geometry %d\n", CRATES, (int)a.Box3D_Physics.size,
            (int)b3t_geometry_size());
     tide_world_free(&a);
