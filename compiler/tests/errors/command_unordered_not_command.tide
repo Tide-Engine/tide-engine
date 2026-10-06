@@ -1,0 +1,4 @@
+// expect: Unordered orders a command's delivery, and 'Health' isn't a command
+[Unordered]
+component Health { int value; }
+scene Main { }

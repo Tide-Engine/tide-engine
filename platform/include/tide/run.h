@@ -103,14 +103,14 @@ static inline bool tide_run_take_request(void *local, tide_session_request *requ
 }
 
 #ifdef TIDE_HAS_COMMANDS
-static inline uint32_t tide_run_command(const void *local, uint8_t *out, const uint32_t capacity)
+static inline const uint8_t *tide_run_command(const void *local, const uint32_t channel, uint32_t *size)
 {
-    return tide_local_command(local, out, capacity);
+    return tide_local_command(local, channel, size);
 }
 
-static inline void tide_run_command_sent(void *local)
+static inline void tide_run_command_sent(void *local, const uint32_t channel)
 {
-    tide_local_command_sent(local);
+    tide_local_command_sent(local, channel);
 }
 #endif
 

@@ -895,6 +895,11 @@ static void build_signatures(void)
     describe(add("Path", "GetDirectoryName", T_STR, "tide_path_get_directory_name", 1, T_STR, T_NONE, T_NONE), "path", "Returns the parent path, or an empty string.");
     describe(add("Path", "GetExtension", T_STR, "tide_path_get_extension", 1, T_STR, T_NONE, T_NONE), "path", "Returns the extension, including its dot, or an empty string.");
     describe(add("Storage", "Flush", T_NONE, "tide_storage_flush_begin", 0, T_NONE, T_NONE, T_NONE), NULL, "Await until preceding filesystem changes are committed to persistent storage. Fails with IOError.");
+    describe(add("Web", "Fetch", T_BYTES, "tide_web_fetch_begin", 1, T_STR, T_NONE, T_NONE), "url",
+             "Await a URL's bytes, fetched over HTTP or HTTPS by this machine: `var bytes = await Web.Fetch(url)`. "
+             "Local code only, like File. Fails with IOError: NotFound for a page that isn't there (404), InvalidPath "
+             "for a URL that isn't http:// or https://, and Failed for anything else (no connection, another status, "
+             "a body over 64 MiB, or on the web a server whose CORS refuses the page).");
 }
 
 // ---------------------------------------------------------------------------
@@ -974,7 +979,7 @@ bool builtin_owner(const str name)
     return str_eq_c(name, "Math") || builtin_draw_owner(name) || str_eq_c(name, "Draw") || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout")
         || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor") || str_eq_c(name, "Frame") || str_eq_c(name, "Debug")
         || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
-        || str_eq_c(name, "Application") || str_eq_c(name, "Storage")
+        || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web")
         || builtin_type_named(name, &ignored);
 }
 
@@ -1056,7 +1061,7 @@ static void format_signature(const signature *s, sb *out)
     if (s->result.kind != TY_VOID) sb_printf(out, " -> %s", signature_type_name(s->result));
     if ((strcmp(s->owner, "File") == 0 || strcmp(s->owner, "Directory") == 0) && strcmp(s->name, "Exists") != 0)
         sb_put(out, " fails IOError");
-    if (strcmp(s->owner, "Storage") == 0) sb_put(out, " fails IOError");
+    if (strcmp(s->owner, "Storage") == 0 || strcmp(s->owner, "Web") == 0) sb_put(out, " fails IOError");
 }
 
 // The parameter of `s` named `name`, or -1.
@@ -1395,6 +1400,35 @@ bool builtin_takes_out(const str owner, const str name)
         if (s->out && str_eq_c(owner, s->owner) && str_eq_c(name, s->name)) return true;
     }
     return false;
+}
+
+bool builtin_out_versions(const str owner, const str name, sb *names, sb *example)
+{
+    build_signatures();
+    const signature *with[8]; // Each function once, in the order they were added
+    int count = 0;
+    bool known = false;
+    for (int i = 0; i < signature_count; i++) {
+        const signature *s = &signatures[i];
+        if (!str_eq_c(owner, s->owner)) continue;
+        if (str_eq_c(name, s->name)) known = true;
+        if (!s->out) continue;
+        bool listed = false;
+        for (int k = 0; k < count; k++) listed = listed || strcmp(with[k]->name, s->name) == 0;
+        if (!listed && count < 8) with[count++] = s;
+    }
+    if (!known || count == 0) return false;
+    for (int k = 0; k < count; k++) sb_printf(names, "%s%s", k == 0 ? "" : k == count - 1 ? " and " : ", ", with[k]->name);
+    sb_printf(example, "%s.%s(", with[0]->owner, with[0]->name);
+    const char *p = with[0]->param_names;
+    for (int a = 0; a < with[0]->argc && p; a++) {
+        const char *end = strchr(p, ',');
+        sb_printf(example, "%s%s", a ? ", " : "", with[0]->out & (1u << a) ? "out var " : "");
+        sb_putn(example, p, end ? (size_t)(end - p) : strlen(p));
+        p = end ? end + 2 : NULL;
+    }
+    sb_put(example, ")");
+    return true;
 }
 
 str builtin_param_name(const expr *e, const int index)

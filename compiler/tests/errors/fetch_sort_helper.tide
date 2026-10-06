@@ -1,0 +1,8 @@
+// expect: 'Load' reaches the network, so it can't run in a sort comparison
+async void Load() { var bytes = await Web.Fetch("http://example.com/file")!; }
+local scene Main { }
+local event(Spawned) Setup(with Main)
+{
+    mut List<int> numbers = [2, 1];
+    numbers.Sort(a, b) { Load(); return a < b; }
+}

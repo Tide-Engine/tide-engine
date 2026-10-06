@@ -2299,6 +2299,16 @@ TIDE_TEST(gui_typing_that_ends_another_way_isnt_entered)
     entries();
     TIDE_CHECK(entry_click(ENTRY_X, RATIO_Y) == ENTRY_COUNT * ENTRY_CHANGED);
     TIDE_CHECK(gui.editing == RATIO_ID && entry_count == 8);
+    // ...and on a field before it, which a frame calls before the number's
+    type("2");
+    entries();
+    TIDE_CHECK(entry_click(ENTRY_X, NAME_Y) == ENTRY_RATIO * ENTRY_CHANGED);
+    TIDE_CHECK(gui.editing == 5 && entry_ratio == 2.0f);
+    entry_click(ENTRY_X, COUNT_Y);
+    type("7");
+    entries();
+    TIDE_CHECK(entry_click(ENTRY_X, NAME_Y) == ENTRY_COUNT * ENTRY_CHANGED);
+    TIDE_CHECK(gui.editing == 5 && entry_count == 7 && name_is("K7QF"));
 
     // A field disabled while it's typed into isn't entered, with Enter down in that frame or not
     for (int field = 0; field < 3; field++) {
@@ -2320,7 +2330,7 @@ TIDE_TEST(gui_typing_that_ends_another_way_isnt_entered)
             TIDE_CHECK(entry_tap(&devices.keyboard.enter) == 0);
         }
     }
-    TIDE_CHECK(entry_count == 8 && entry_ratio == 6.0f); // What was typed into a number then is dropped
+    TIDE_CHECK(entry_count == 7 && entry_ratio == 2.0f); // What was typed into a number then is dropped
 }
 
 // A gamepad's south button ends a number field's typing, as Enter does, so it
@@ -2478,4 +2488,411 @@ TIDE_TEST(gui_fields_at_a_rect_say_when_they_are_entered)
         end();
     }
     TIDE_CHECK(said == 7 && name_is("7") && entry_count == 7 && entry_ratio == 7.0f);
+}
+
+// ---------------------------------------------------------------------------
+// What was typed into a field is kept wherever the player goes next, whichever
+// of the two fields a frame calls first. The GUI has one buffer for what's
+// typed, which the field the player goes to takes: a number is only its
+// field's once the field keeps it, so a field that's left before it ran has
+// its number all the same. Fields at rects of their own, so that a frame calls
+// them in any order.
+
+enum { FORM_NAME, FORM_COUNT, FORM_RATIO, FORM_SIZE, FORM_TINT, FORM_FIELDS };
+
+static tide_str form_name;
+static int32_t form_count;
+static float form_ratio;
+static tide_float3 form_size;
+static tide_color form_tint;
+static int form_order[FORM_FIELDS]; // The fields a frame calls, first to last
+static int form_called;             // ...and how many of them
+static int form_off;                // The ones in a Disabled block, a bit each
+static int form_entered;            // The ones a frame said were entered, a bit each
+
+#define FORM_X 700.0f                                   // In a field of one box
+#define FORM_Y(field) (115.0f + 40.0f * (float)(field)) // A field's row
+#define SIZE_X(part) (640.0f + 110.0f * (float)(part))  // In each box of the float3's
+#define TINT_X(part) (668.0f + 70.0f * (float)(part))   // ...and of the color's, past its swatch
+#define SIZE_ID(part) tide_gui_seed(8, (uint32_t)(part) + 1u)
+#define TINT_ID(part) tide_gui_seed(9, (uint32_t)(part) + 1u)
+
+// Starts over, with a frame calling these fields in this order.
+static void form_start(const int *order, const int count)
+{
+    start();
+    form_name = TIDE_STR_EMPTY;
+    form_count = 4;
+    form_ratio = 0.5f;
+    form_size = tide_f3(1.0f, 2.0f, 3.0f);
+    form_tint = (tide_color){0.25f, 0.5f, 0.75f, 1.0f};
+    for (int i = 0; i < count; i++) form_order[i] = order[i];
+    form_called = count;
+    form_off = 0;
+    form_entered = 0;
+}
+
+#define FORM(...) form_start((const int[]){__VA_ARGS__}, (int)(sizeof((const int[]){__VA_ARGS__}) / sizeof(int)))
+
+// A frame of them in a host's order: the game's sample, then the frame. The
+// fields that returned true, a bit each.
+static int form(void)
+{
+    tide_devices sampled = devices;
+    tide_gui_hide(&gui, &sampled);
+    tide_devices_consume(&devices);
+    begin();
+    const tide_textref name = {.local = &form_name};
+    int changed = 0;
+    for (int i = 0; i < form_called; i++) {
+        const int field = form_order[i];
+        const tide_rect rect = {600.0f, 100.0f + 40.0f * (float)field, 300.0f, 30.0f};
+        const int depth = tide_gui_begin_disabled(&gui, (form_off >> field & 1) != 0);
+        bool entered = false;
+        bool said = false;
+        if (field == FORM_NAME) said = tide_gui_text_field_entered(&gui, 5, rect, "", name, &entered);
+        if (field == FORM_COUNT) said = tide_gui_int_field_entered(&gui, 6, rect, "", &form_count, &entered);
+        if (field == FORM_RATIO) said = tide_gui_float_field_entered(&gui, 7, rect, "", &form_ratio, &entered);
+        if (field == FORM_SIZE) said = tide_gui_float3_field(&gui, 8, rect, "", &form_size);
+        if (field == FORM_TINT) said = tide_gui_color_field(&gui, 9, rect, "", &form_tint);
+        tide_gui_close(&gui, depth);
+        if (said) changed |= 1 << field;
+        if (entered) form_entered |= 1 << field;
+    }
+    end();
+    return changed;
+}
+
+// A click: the press, then the release. The fields that changed in either frame.
+static int form_click(const float x, const float y)
+{
+    mouse(x, y, true);
+    const int pressed = form();
+    mouse(x, y, false);
+    return pressed | form();
+}
+
+// A key down for a frame, then up for one. The fields that changed in the first.
+static int form_tap(tide_button *b)
+{
+    key(b, true);
+    const int changed = form();
+    key(b, false);
+    form();
+    return changed;
+}
+
+static bool form_name_is(const char *text)
+{
+    return form_name.bytes == (int32_t)strlen(text) && memcmp(form_name.ptr, text, strlen(text)) == 0;
+}
+
+// The player types a number and clicks a text field: one the frame calls
+// before the number's field, and one it calls after.
+TIDE_TEST(gui_a_number_is_kept_when_the_player_clicks_another_field)
+{
+    for (int number = FORM_COUNT; number <= FORM_RATIO; number++) { // An int field, and a float field
+        for (int earlier = 0; earlier < 2; earlier++) {
+            if (earlier) FORM(FORM_NAME, number);
+            else FORM(number, FORM_NAME);
+            mouse(FORM_X, FORM_Y(number), false);
+            form();
+            TIDE_CHECK(form_click(FORM_X, FORM_Y(number)) == 0);
+            TIDE_REQUIRE(gui.editing != 0);
+            type("7");
+            TIDE_CHECK(form() == 0 && form_count == 4 && form_ratio == 0.5f); // Not until it's kept
+            // The number is kept in the frame of the press, and its field says it changed
+            mouse(FORM_X, FORM_Y(FORM_NAME), true);
+            TIDE_CHECK(form() == 1 << number);
+            TIDE_CHECK(number == FORM_COUNT ? form_count == 7 : form_ratio == 7.0f);
+            TIDE_CHECK(gui.editing == 5 && gui.focus == 5);
+            mouse(FORM_X, FORM_Y(FORM_NAME), false);
+            TIDE_CHECK(form() == 0);
+            TIDE_CHECK(form_entered == 0); // Nothing was entered: the focus left by a click
+            // What's typed from here is the text field's
+            type("K7");
+            TIDE_CHECK(form() == 1 << FORM_NAME && form_name_is("K7"));
+            TIDE_CHECK(number == FORM_COUNT ? form_count == 7 : form_ratio == 7.0f);
+        }
+    }
+}
+
+TIDE_TEST(gui_a_click_between_two_number_fields_keeps_the_number)
+{
+    FORM(FORM_COUNT, FORM_RATIO);
+    mouse(FORM_X, FORM_Y(FORM_RATIO), false);
+    form();
+    // From the one the frame calls second to the one it calls first
+    form_click(FORM_X, FORM_Y(FORM_RATIO));
+    type("2.5");
+    form();
+    TIDE_CHECK(form_click(FORM_X, FORM_Y(FORM_COUNT)) == 1 << FORM_RATIO);
+    TIDE_CHECK(form_ratio == 2.5f && form_count == 4 && gui.editing == 6);
+    // The field the player went to is typed into as any: its value is selected, so typing replaces it
+    type("31");
+    TIDE_CHECK(form() == 0 && form_count == 4);
+    // ...and back, from the first to the second
+    TIDE_CHECK(form_click(FORM_X, FORM_Y(FORM_RATIO)) == 1 << FORM_COUNT);
+    TIDE_CHECK(form_count == 31 && form_ratio == 2.5f && gui.editing == RATIO_ID);
+    // What isn't a number changes nothing, either way
+    type("-");
+    form();
+    TIDE_CHECK(form_click(FORM_X, FORM_Y(FORM_COUNT)) == 0);
+    TIDE_CHECK(form_ratio == 2.5f && gui.editing == 6);
+    type("+");
+    form();
+    TIDE_CHECK(form_click(FORM_X, FORM_Y(FORM_RATIO)) == 0);
+    TIDE_CHECK(form_count == 31 && gui.editing == RATIO_ID);
+    // Nor does the number the field had
+    type("2.5");
+    form();
+    TIDE_CHECK(form_click(FORM_X, FORM_Y(FORM_COUNT)) == 0);
+    TIDE_CHECK(form_ratio == 2.5f && form_count == 31);
+    TIDE_CHECK(form_entered == 0);
+}
+
+// Text is its field's as it's typed, so it never had the number's loss: from a
+// text field to a number field and back, whichever the frame calls first.
+TIDE_TEST(gui_a_number_field_and_a_text_field_keep_what_was_typed_between_them)
+{
+    for (int number_first = 0; number_first < 2; number_first++) {
+        if (number_first) FORM(FORM_COUNT, FORM_NAME);
+        else FORM(FORM_NAME, FORM_COUNT);
+        mouse(FORM_X, FORM_Y(FORM_NAME), false);
+        form();
+        form_click(FORM_X, FORM_Y(FORM_NAME));
+        type("K7");
+        TIDE_CHECK(form() == 1 << FORM_NAME);
+        // To the number field: the text is as it was typed
+        TIDE_CHECK(form_click(FORM_X, FORM_Y(FORM_COUNT)) == 0);
+        TIDE_CHECK(form_name_is("K7") && gui.editing == 6);
+        type("9");
+        TIDE_CHECK(form() == 0 && form_count == 4 && form_name_is("K7"));
+        // And back: the number is kept, and the text goes on from where it was
+        TIDE_CHECK(form_click(FORM_X, FORM_Y(FORM_NAME)) == 1 << FORM_COUNT);
+        TIDE_CHECK(form_count == 9 && form_name_is("K7") && gui.editing == 5);
+        type("Q");
+        TIDE_CHECK(form() == 1 << FORM_NAME && form_name_is("K7Q"));
+        // Once more to the number field, which has what it kept
+        TIDE_CHECK(form_click(FORM_X, FORM_Y(FORM_COUNT)) == 0);
+        TIDE_CHECK(form_count == 9 && form_name_is("K7Q"));
+        TIDE_CHECK(form_entered == 0);
+    }
+}
+
+// A vector's and a color's boxes are number fields side by side, each called
+// after the one on its left.
+TIDE_TEST(gui_each_box_of_a_vector_or_a_color_field_keeps_its_number)
+{
+    FORM(FORM_SIZE, FORM_TINT);
+    mouse(SIZE_X(2), FORM_Y(FORM_SIZE), false);
+    form();
+    // A float3's last box, then its first
+    form_click(SIZE_X(2), FORM_Y(FORM_SIZE));
+    TIDE_REQUIRE(gui.editing == SIZE_ID(2));
+    type("5");
+    form();
+    TIDE_CHECK(form_click(SIZE_X(0), FORM_Y(FORM_SIZE)) == 1 << FORM_SIZE);
+    TIDE_CHECK(form_size.x == 1.0f && form_size.y == 2.0f && form_size.z == 5.0f && gui.editing == SIZE_ID(0));
+    // ...and on to its middle one
+    type("8");
+    form();
+    TIDE_CHECK(form_click(SIZE_X(1), FORM_Y(FORM_SIZE)) == 1 << FORM_SIZE);
+    TIDE_CHECK(form_size.x == 8.0f && form_size.y == 2.0f && form_size.z == 5.0f && gui.editing == SIZE_ID(1));
+
+    // From a color's box to the vector's, which the frame calls before it
+    form_click(TINT_X(3), FORM_Y(FORM_TINT));
+    TIDE_REQUIRE(gui.editing == TINT_ID(3));
+    type("0.5");
+    form();
+    TIDE_CHECK(form_click(SIZE_X(1), FORM_Y(FORM_SIZE)) == 1 << FORM_TINT);
+    TIDE_CHECK(form_tint.a == 0.5f && form_size.y == 2.0f);
+    // A color's box to the one before it: what's kept is from 0 to 1, as when it's entered
+    form_click(TINT_X(2), FORM_Y(FORM_TINT));
+    TIDE_REQUIRE(gui.editing == TINT_ID(2));
+    type("7");
+    form();
+    TIDE_CHECK(form_click(TINT_X(0), FORM_Y(FORM_TINT)) == 1 << FORM_TINT);
+    TIDE_CHECK(form_tint.r == 0.25f && form_tint.g == 0.5f && form_tint.b == 1.0f && form_tint.a == 0.5f);
+}
+
+TIDE_TEST(gui_escape_drops_a_number_whichever_field_is_clicked_next)
+{
+    FORM(FORM_NAME, FORM_COUNT, FORM_RATIO);
+    mouse(FORM_X, FORM_Y(FORM_COUNT), false);
+    form();
+    // Escape, then a click on the field the frame calls before it
+    form_click(FORM_X, FORM_Y(FORM_COUNT));
+    type("99");
+    form();
+    TIDE_CHECK(form_tap(&devices.keyboard.escape) == 0);
+    TIDE_CHECK(gui.editing == 0 && form_count == 4);
+    TIDE_CHECK(form_click(FORM_X, FORM_Y(FORM_NAME)) == 0);
+    TIDE_CHECK(form_count == 4 && gui.editing == 5);
+    // Escape in the frame of that click
+    form_click(FORM_X, FORM_Y(FORM_RATIO));
+    type("9");
+    form();
+    key(&devices.keyboard.escape, true);
+    mouse(FORM_X, FORM_Y(FORM_NAME), true);
+    TIDE_CHECK(form() == 0);
+    TIDE_CHECK(form_ratio == 0.5f);
+    key(&devices.keyboard.escape, false);
+    mouse(FORM_X, FORM_Y(FORM_NAME), false);
+    TIDE_CHECK(form() == 0);
+    // ...and before a click on the field after it
+    form_click(FORM_X, FORM_Y(FORM_COUNT));
+    type("99");
+    form();
+    form_tap(&devices.keyboard.escape);
+    TIDE_CHECK(form_click(FORM_X, FORM_Y(FORM_RATIO)) == 0);
+    TIDE_CHECK(form_count == 4 && form_ratio == 0.5f);
+    TIDE_CHECK(form_entered == 0);
+}
+
+TIDE_TEST(gui_tab_keeps_a_number_whichever_way_the_focus_goes)
+{
+    FORM(FORM_NAME, FORM_COUNT, FORM_RATIO);
+    mouse(FORM_X, FORM_Y(FORM_COUNT), false);
+    form();
+    // On, to the field the frame calls after it
+    form_click(FORM_X, FORM_Y(FORM_COUNT));
+    type("7");
+    form();
+    TIDE_CHECK(form_tap(&devices.keyboard.tab) == 1 << FORM_COUNT);
+    TIDE_CHECK(form_count == 7 && gui.focus == RATIO_ID && gui.editing == 0);
+    // Back, with Shift, to the one it calls before
+    form_click(FORM_X, FORM_Y(FORM_COUNT));
+    type("8");
+    form();
+    key(&devices.keyboard.leftShift, true);
+    TIDE_CHECK(form_tap(&devices.keyboard.tab) == 1 << FORM_COUNT);
+    TIDE_CHECK(form_count == 8 && gui.focus == 5 && gui.editing == 0);
+    key(&devices.keyboard.leftShift, false);
+    form();
+
+    // A slow frame has the keys and what was typed after them at once: what's
+    // typed is the field's the focus went to, whose typing it starts
+    form_click(FORM_X, FORM_Y(FORM_COUNT));
+    type("9");
+    form();
+    key(&devices.keyboard.leftShift, true);
+    key(&devices.keyboard.tab, true);
+    type("Q");
+    TIDE_CHECK(form() == (1 << FORM_COUNT | 1 << FORM_NAME));
+    TIDE_CHECK(form_count == 9 && form_name_is("Q") && gui.editing == 5);
+    key(&devices.keyboard.tab, false);
+    key(&devices.keyboard.leftShift, false);
+    form();
+    // The same from a number field back to a number field
+    form_click(FORM_X, FORM_Y(FORM_RATIO));
+    type("1.5");
+    form();
+    key(&devices.keyboard.leftShift, true);
+    key(&devices.keyboard.tab, true);
+    type("3");
+    TIDE_CHECK(form() == 1 << FORM_RATIO);
+    TIDE_CHECK(form_ratio == 1.5f && form_count == 9 && gui.editing == 6);
+    key(&devices.keyboard.tab, false);
+    key(&devices.keyboard.leftShift, false);
+    form();
+    TIDE_CHECK(form_tap(&devices.keyboard.enter) == 1 << FORM_COUNT);
+    TIDE_CHECK(form_count == 3 && form_ratio == 1.5f);
+}
+
+// A field that isn't called any more has nowhere to keep a number: its typing
+// ends, and nothing of it is left for a later frame.
+TIDE_TEST(gui_a_number_field_that_goes_while_its_typed_into_keeps_nothing)
+{
+    FORM(FORM_NAME, FORM_COUNT);
+    mouse(FORM_X, FORM_Y(FORM_COUNT), false);
+    form();
+    form_click(FORM_X, FORM_Y(FORM_COUNT));
+    type("7");
+    form();
+    TIDE_REQUIRE(gui.editing == 6);
+    form_called = 1; // The number's field goes
+    TIDE_CHECK(form() == 0 && gui.editing == 0 && gui.focus == 0);
+    form_called = 2; // Back, it has the number it had, and isn't typed into
+    TIDE_CHECK(form() == 0 && form_count == 4 && gui.editing == 0);
+
+    // It goes in the frame the player clicks the field before it
+    form_click(FORM_X, FORM_Y(FORM_COUNT));
+    type("7");
+    form();
+    form_called = 1;
+    mouse(FORM_X, FORM_Y(FORM_NAME), true);
+    TIDE_CHECK(form() == 0 && gui.editing == 5);
+    form_called = 2;
+    mouse(FORM_X, FORM_Y(FORM_NAME), false);
+    TIDE_CHECK(form() == 0 && form_count == 4);
+    TIDE_CHECK(form() == 0 && form_count == 4);
+    // The text field's typing goes on
+    type("K7");
+    TIDE_CHECK(form() == 1 << FORM_NAME && form_name_is("K7") && form_count == 4);
+}
+
+// A field disabled while it's typed into drops what was typed, as Escape does,
+// whichever field the player clicked in that frame.
+TIDE_TEST(gui_a_number_field_disabled_as_another_is_clicked_drops_its_number)
+{
+    for (int earlier = 0; earlier < 2; earlier++) {
+        if (earlier) FORM(FORM_NAME, FORM_COUNT);
+        else FORM(FORM_COUNT, FORM_NAME);
+        mouse(FORM_X, FORM_Y(FORM_COUNT), false);
+        form();
+        form_click(FORM_X, FORM_Y(FORM_COUNT));
+        type("7");
+        form();
+        form_off = 1 << FORM_COUNT;
+        TIDE_CHECK(form_click(FORM_X, FORM_Y(FORM_NAME)) == 0);
+        TIDE_CHECK(form_count == 4 && gui.editing == 5);
+        form_off = 0;
+        TIDE_CHECK(form() == 0 && form_count == 4);
+    }
+}
+
+// A frame with an int field and a modal of one button, which the frame calls
+// before the field or after it. Whether the field changed.
+static bool count_under_modal(const bool modal_first, bool *up)
+{
+    begin();
+    bool changed = false;
+    for (int i = 0; i < 2; i++) {
+        if ((i == 0) != modal_first) {
+            const tide_rect rect = {600.0f, 100.0f, 300.0f, 30.0f};
+            changed = tide_gui_int_field(&gui, 6, rect, "", &form_count);
+            continue;
+        }
+        const int depth = tide_gui_begin_modal(&gui, 30, TIDE_ANCHOR_MIDDLE_CENTER, up);
+        if (depth < 0) continue;
+        tide_gui_layout_button(&gui, 31, "Close");
+        tide_gui_close(&gui, depth);
+    }
+    end();
+    return changed;
+}
+
+// A modal that comes up over a number field that's typed into takes the focus
+// from it: the field keeps its number, wherever the frame calls the modal.
+TIDE_TEST(gui_a_modal_over_a_number_field_keeps_what_was_typed)
+{
+    for (int modal_first = 0; modal_first < 2; modal_first++) {
+        start();
+        form_count = 4;
+        bool up = false;
+        mouse(FORM_X, 115.0f, false);
+        count_under_modal(modal_first != 0, &up);
+        mouse(FORM_X, 115.0f, true);
+        count_under_modal(modal_first != 0, &up);
+        mouse(FORM_X, 115.0f, false);
+        type("7");
+        TIDE_CHECK(!count_under_modal(modal_first != 0, &up));
+        TIDE_REQUIRE(gui.editing == 6);
+        up = true; // It's up from the frame after it first drew
+        TIDE_CHECK(!count_under_modal(modal_first != 0, &up) && form_count == 4);
+        TIDE_CHECK(count_under_modal(modal_first != 0, &up));
+        TIDE_CHECK(form_count == 7 && gui.editing == 0 && gui.focus == 31);
+        TIDE_CHECK(!count_under_modal(modal_first != 0, &up) && form_count == 7);
+    }
 }

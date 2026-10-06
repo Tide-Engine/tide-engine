@@ -70,6 +70,9 @@ tide_e2e_test(events)
 tide_e2e_test(events_lookup) # Verified event target rows and fallback after structural changes
 tide_e2e_test(events_batch) # Queue-page runs preserve recording order, filters, defaults and C observers
 tide_e2e_test(commands)
+# Commands in channels, unordered ones, and a command of a file's bytes, in chunks: on a slow network too
+tide_e2e_test(commands_channels)
+set_tests_properties(tidec_e2e_commands_channels PROPERTIES TIMEOUT 300)
 add_test(NAME tidec_command_schema
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}"
         "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/command_schema"
@@ -165,6 +168,34 @@ tide_e2e_test(profile SOURCES e2e/profile.tide e2e/profile_combat.tide) # What t
 tide_e2e_test(handover)
 tide_e2e_test(players) # A match of 150 players, in a game whose maxPlayers is 200
 tide_e2e_test(delta)
+if(TIDE_PLATFORM)
+    # grid.Decode: the engine's PNG reader against the platform's writer, and a PNG decoded in the match
+    tide_e2e_test(decode)
+    target_include_directories(tidec_e2e_decode PRIVATE "${PROJECT_SOURCE_DIR}/platform/src")
+    target_link_libraries(tidec_e2e_decode PRIVATE tide_platform)
+    # await Web.Fetch, against a server on this machine (platform/tests/fetch_routes.mjs): natively through
+    # the platform's HTTP client, and in a page through the page's fetch, served by the test's own server
+    if(TIDE_WEB)
+        tide_add_game(tidec_e2e_fetch_web SOURCES e2e/fetch.tide NAME game HOST "${CMAKE_CURRENT_SOURCE_DIR}/e2e/fetch_web.c" WINDOW)
+        target_include_directories(tidec_e2e_fetch_web PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+        target_link_libraries(tidec_e2e_fetch_web PRIVATE tide_platform)
+        tide_web_page(tidec_e2e_fetch_web SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        add_test(NAME tidec_e2e_fetch_web
+            COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/run_web_served_test.mjs" "${TIDE_BROWSER}"
+                "$<TARGET_FILE_DIR:tidec_e2e_fetch_web>/tidec_e2e_fetch_web.html"
+                "${CMAKE_CURRENT_BINARY_DIR}/tidec_e2e_fetch_web-browser" "backend=webgl"
+                --routes "${PROJECT_SOURCE_DIR}/platform/tests/fetch_routes.mjs")
+        set_tests_properties(tidec_e2e_fetch_web PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" TIMEOUT 120)
+    elseif(NOT TIDE_ANDROID AND TIDE_NODE)
+        tide_add_game(tidec_e2e_fetch SOURCES e2e/fetch.tide NAME game
+            HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/fetch_test.c")
+        target_include_directories(tidec_e2e_fetch PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+        target_link_libraries(tidec_e2e_fetch PRIVATE tide_platform)
+        add_test(NAME tidec_e2e_fetch
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/fetch.mjs" "$<TARGET_FILE:tidec_e2e_fetch>")
+        set_tests_properties(tidec_e2e_fetch PROPERTIES TIMEOUT 120)
+    endif()
+endif()
 
 # An endless chain of events stops the program, naming the event: here past
 # 1000 deep, so it stops quickly.
@@ -222,6 +253,8 @@ foreach(source IN LISTS TIDE_SAFETY_TESTS)
         set_tests_properties(${target}_gpu PROPERTIES TIMEOUT 300 LABELS "safety;gpu")
     endif()
 endforeach()
+# decode.tide fills a world's heap with a gigabyte of cells before it stops: about a minute under wasm with no optimization
+set_tests_properties(tidec_safety_decode PROPERTIES TIMEOUT 900)
 
 # Error tests: each errors/<name>.tide must fail to compile, and tidec's output
 # must contain the text on the file's first line, written as `// expect: <text>`.

@@ -1,0 +1,4 @@
+// expect: Unordered takes nothing: '[Unordered]'
+[Unordered(1)]
+command Ping { int at; }
+scene Main { }
