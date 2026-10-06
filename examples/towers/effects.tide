@@ -1,16 +1,16 @@
-// What makes Siege feel alive is this machine's own: sparks, debris, numbers
-// that float up, a camera that shakes. None of it is in the match. The match
-// says what happens in it with events, and this machine's handlers of them
-// add an effect here. Each hears an event once, however often this machine
-// runs its tick again, and a `verified` one waits until the server has
-// confirmed it: a score is never shown for a crate this machine only
-// predicted falling.
+// What makes Towers feel alive is this machine's own: dust where a brick
+// lands, pieces where one is lost, numbers that float up, a camera that
+// shakes. None of it is in the match. The match says what happens in it with
+// events, and this machine's handlers of them add an effect here. Each hears
+// an event once, however often this machine runs its tick again, and a
+// `verified` one waits until the server has confirmed it: a round is never
+// said to be someone's because this machine predicted so.
 using Box2D;
 
-enum BitKind { Spark, Chunk, Glow }
+enum BitKind { Spark, Chunk, Glow, Dust }
 
-// Something small that flies, fades and is gone. In meters on the map, or in
-// pixels for the paper thrown over the screen.
+// Something small that flies, fades and is gone. In meters in the world, or
+// in pixels for the paper thrown over the screen.
 struct Bit
 {
     float2 position;
@@ -26,30 +26,33 @@ struct Bit
     BitKind kind;
 }
 
-// What a crate was worth, floating up from where it left the map.
+// A word or a number, floating up from where something happened.
 struct Label
 {
     float2 position;
     Color color = Color.white;
     float age;
     float life = 1.3;
-    int amount;
+    string words;
     bool mine;
 }
 
-// How long ago the match said things, for the words over the map (hud.tide).
+// How long ago the match said things, for the words over the world (hud.tide).
 local singleton Flow
 {
-    int winner = -1;     // Who took the round that ended last: a seat, or -1 for nobody
+    int winner = -1;     // Who took the round that ended last: a seat
     int round;
-    int best;
     float since = 100;   // Seconds since a round ended...
     bool papered;        // ...and its winner's paper was thrown
-    int built;           // The round that was built last...
+    int built;           // The round that started last...
     float begun = 100;   // ...and how long ago
-    float flipped = 100; // Seconds since gravity turned over
-    bool turned;         // It ever did, while this machine watched
-    float played;        // Seconds since this machine's player first fired
+    Power struck;        // What was last used, by which seat, against which
+    int striker = -1;
+    int target = -1;
+    float cast = 100;    // ...and how long ago
+    float4 earned = float4(100); // Seconds since each seat earned something: for its chip
+    float wind;          // How hard the wind blows on this machine's screen, fading
+    float windWay = 1;
 }
 
 void Shake(mut Fx fx, float amount)
@@ -93,8 +96,24 @@ void Chunks(mut Fx fx, float2 at, int count, float speed, Color color)
         var tone = fx.random.NextFloat();
         var angle = turn * Math.TAU;
         fx.bits.Add(Bit { position = at, velocity = float2(Math.Cos(angle), Math.Sin(angle) + 0.4) * speed * (0.3 + pace),
-                          color = Shade(color, 0.6 + tone * 0.6), life = 0.5 + long * 0.6, size = 0.1 + big * 0.14,
+                          color = Shade(color, 0.6 + tone * 0.6), life = 0.5 + long * 0.6, size = 0.12 + big * 0.16,
                           angle = angle, spin = (turn - 0.5) * 18, weight = 1, drag = 0.6, kind = BitKind.Chunk });
+    }
+}
+
+// Dust that spreads along what a brick landed on, and thins.
+void Dust(mut Fx fx, float2 at, int count, float speed)
+{
+    if (fx.bits.count > 700) return;
+    for (var i = 0; i < count; i++)
+    {
+        var side = fx.random.NextFloat();
+        var pace = fx.random.NextFloat();
+        var long = fx.random.NextFloat();
+        var big = fx.random.NextFloat();
+        fx.bits.Add(Bit { position = at + float2((side - 0.5) * 3, 0), velocity = float2((side - 0.5) * 2 * speed, 0.3 + pace * 0.8),
+                          color = Fade(Color(0.8, 0.8, 0.84), 0.3), life = 0.35 + long * 0.4, size = 0.22 + big * 0.3, drag = 3,
+                          kind = BitKind.Dust });
     }
 }
 
@@ -117,80 +136,65 @@ void Paper(mut Fx fx, float2 at, int count, float speed, Color color)
     }
 }
 
-void Pop(mut Fx fx, int seat)
+// A brick landed: dust under it, and this machine's camera feels its own,
+// more the faster it came down.
+local event(Landed landed) Thump(mut Fx fx)
 {
-    if (seat == 0) fx.pops.x = 1;
-    if (seat == 1) fx.pops.y = 1;
-    if (seat == 2) fx.pops.z = 1;
-    if (seat == 3) fx.pops.w = 1;
+    var hard = Math.Saturate((landed.speed - FALL) / (FAST - FALL));
+    Dust(fx, landed.at - float2(0, 0.6), 4 + int(hard * 6), 1.5 + hard * 3);
+    if (landed.seat == fx.seat) Shake(fx, 0.06 + hard * 0.16);
 }
 
-float Popped(Fx fx, int seat)
+// The brick that landed is lit for a moment: `lit` is a local field of the
+// match's Brick, which its view lets fade.
+local event(Spawned) Fresh(mut Brick brick)
 {
-    return seat == 0 ? fx.pops.x : seat == 1 ? fx.pops.y : seat == 2 ? fx.pops.z : fx.pops.w;
+    if (!brick.set) brick.lit = 1;
 }
 
-// A shot landed on this crate: it flashes, which its view lets fade.
-local event(Struck) Lit(mut Crate crate)
+// A brick fell off its tower: once that's certain, pieces of it fly where it
+// went, and whoever put it there is told what it cost.
+local event(verified Lost lost) Rue(mut Fx fx)
 {
-    crate.hit = 1;
+    var color = SeatColor(lost.seat);
+    Chunks(fx, lost.at, 5, 4, color);
+    if (lost.seat != fx.seat) return;
+    fx.labels.Add(Label { position = float2(lost.at.x, Math.Max(lost.at.y, fx.low.y + 2.5)), color = ROSE, words = "LOST", mine = true });
+    Shake(fx, 0.12);
 }
 
-// A shot leaves its cannon: a flash at the muzzle, and sparks the way it
-// goes. A body that's just spawned hasn't moved yet: its impulse says where to.
-local event(Spawned) Fired(Body body, Ball ball, mut Fx fx)
+local event(verified Earned earned) Gain(mut Fx fx, mut Flow flow)
 {
-    var way = Math.Normalize(body.impulse);
-    var color = SeatColor(ball.seat);
-    Sparks(fx, body.position, way, 0.8, 5, 9, Mix(color, Color.white, 0.5));
-    fx.bits.Add(Bit { position = body.position, color = Fade(Color.white, 0.8), life = 0.09, size = 0.5, kind = BitKind.Glow });
-    if (ball.seat == fx.seat) Shake(fx, 0.07);
+    flow.earned = Put(flow.earned, earned.seat, 0);
+    if (earned.seat == fx.seat) Flash(fx, SeatColor(earned.seat), 0.12);
 }
 
-// Where it lands, its blast goes off: sparks and debris in its player's
-// color, and the camera feels it, more for this machine's own.
-local event(Spawned) Burst(Blast blast, mut Fx fx)
+// Something a tower earned was used: the words say what, and the wind and
+// the quake show all over the screen of whoever they're against.
+local event(Struck struck) Unleash(mut Fx fx, mut Flow flow)
 {
-    var color = SeatColor(blast.seat);
-    Sparks(fx, blast.at, float2(0, 1), Math.TAU, 10, 10, Mix(color, Color.white, 0.45));
-    Chunks(fx, blast.at, 6, 5.5, color);
-    Shake(fx, blast.seat == fx.seat ? 0.2 : 0.1);
-}
-
-// A crate left the map: once that's certain, what it was worth floats up from
-// where it went, in the color of whoever painted it, and their score jumps.
-local event(verified Dropped dropped) Tally(mut Fx fx)
-{
-    if (dropped.seat < 0) return;
-    var color = SeatColor(dropped.seat);
-    // Where it left: over the pit's floor, or as low as shows over the buttons
-    var at = float2(Math.Clamp(dropped.at.x, fx.low.x + 1.4, fx.high.x - 1.4),
-                    Math.Max(fx.low.y + 78 / Math.Max(fx.meter, 1), FLOOR + 1.2));
-    fx.labels.Add(Label { position = at, color = color, amount = dropped.worth, mine = dropped.seat == fx.seat });
-    Sparks(fx, at - float2(0, 1.2), float2(0, 1), 1.6, dropped.worth >= 5 ? 16 : 6, 9, Mix(color, Color.white, 0.4));
-    Pop(fx, dropped.seat);
-    if (dropped.worth < 5) return;
-    // A king
-    Chunks(fx, at - float2(0, 1.2), 12, 8, GOLD);
-    Shake(fx, 0.3);
-}
-
-local event(Flipped) Upturned(mut Fx fx, mut Flow flow)
-{
-    flow.flipped = 0;
-    flow.turned = true;
-    Shake(fx, 0.55);
-    Flash(fx, ROSE, 0.3);
+    flow.struck = struck.power;
+    flow.striker = struck.seat;
+    flow.target = struck.target;
+    flow.cast = 0;
+    if (struck.power == Power.Gust && struck.target == fx.seat)
+    {
+        flow.wind = 1;
+        flow.windWay = struck.target > struck.seat ? 1 : -1;
+    }
+    if (struck.seat == fx.seat) fx.used = true;
+    if (struck.power == Power.Quake && struck.seat != fx.seat) Shake(fx, 0.8);
+    if (struck.power == Power.Cement && struck.seat == fx.seat) Flash(fx, Color.white, 0.2);
 }
 
 // Who took a round is only said once it's certain.
-local event(verified RoundOver over) RoundTold(mut Flow flow)
+local event(verified RoundOver over) RoundTold(mut Flow flow, mut Fx fx)
 {
     flow.winner = over.winner;
     flow.round = over.round;
-    flow.best = over.best;
     flow.since = 0;
     flow.papered = false;
+    Shake(fx, 0.5);
 }
 
 local event(RoundBuilt built) RoundShown(mut Flow flow)
@@ -199,20 +203,17 @@ local event(RoundBuilt built) RoundShown(mut Flow flow)
     flow.begun = 0;
 }
 
-// Gravity as the match has it, for what falls here.
 [Stage(Layers.Camera, 5)]
-view Weigh(Siege siege, mut Fx fx, mut Flow flow)
+view Elapse(Fx fx, mut Flow flow)
 {
-    // A machine that joined while it was turned over heard no event
-    if (siege.flip > 0) flow.turned = true;
     flow.since += fx.dt;
     flow.begun += fx.dt;
-    flow.flipped += fx.dt;
-    if (fx.fired) flow.played += fx.dt;
-    fx.pull = siege.flip > 0 ? 7.0 : -10.0;
+    flow.cast += fx.dt;
+    flow.earned += float4(fx.dt);
+    flow.wind = Math.Max(0, flow.wind - fx.dt * 1.1);
 }
 
-// The sparks and the debris, on the map: each moves on, fades and goes.
+// The dust and the pieces, in the world: each moves on, fades and goes.
 // Chunks are solid, and what glows is added to what's under it.
 [Stage(Layers.Effects, 10)]
 view Bits(mut Fx fx)
@@ -228,7 +229,7 @@ view Bits(mut Fx fx)
             fx.bits.RemoveAt(i);
             continue;
         }
-        bit.velocity.y += fx.pull * bit.weight * fx.dt;
+        bit.velocity.y += -10 * bit.weight * fx.dt;
         bit.velocity = bit.velocity * Math.Max(0, 1 - bit.drag * fx.dt);
         bit.position += bit.velocity * fx.dt;
         bit.angle += bit.spin * fx.dt;
@@ -236,6 +237,9 @@ view Bits(mut Fx fx)
         var left = 1 - bit.age / bit.life;
         if (bit.kind == BitKind.Chunk)
             Draw2D.Rect(bit.position, float2(Math.Max(bit.size, thin * 1.5)), bit.angle, Fade(bit.color, left * 2));
+        else if (bit.kind == BitKind.Dust)
+            Draw2D.Shape(Shape { center = bit.position, size = float2(bit.size * (2 - left)), ellipse = true, color = Fade(bit.color, left),
+                                 soft = bit.size * 0.5 });
         i++;
     }
     Draw.Blend(Blend.Add)
@@ -252,8 +256,7 @@ view Bits(mut Fx fx)
     }
 }
 
-// What a crate was worth, rising from where it left the map. This machine's
-// own are bigger.
+// Words rising from where something happened. This machine's own are bigger.
 [Stage(Layers.Effects, 20)]
 view Labels(mut Fx fx)
 {
@@ -269,13 +272,12 @@ view Labels(mut Fx fx)
         }
         fx.labels[i] = label;
         var t = label.age / label.life;
-        var size = Math.Max(label.mine ? 1.3 : 1, (label.mine ? 22 : 16) / Math.Max(fx.meter, 1)) * (label.amount >= 5 ? 1.35 : 1)
-                 * (0.6 + 0.4 * EaseBack(t * 5));
+        var size = Math.Max(label.mine ? 1.1 : 0.9, (label.mine ? 18 : 14) / Math.Max(fx.meter, 1)) * (0.6 + 0.4 * EaseBack(t * 5));
         var at = label.position + float2(0, EaseOut(t) * 2.4);
         var shown = Math.Saturate((1 - t) * 3);
-        Draw2D.Text($"+{label.amount}", at + float2(0.06, -0.06), size, Fade(BACK, shown * 0.8), Anchor.MiddleCenter, Font.Bold);
-        Draw2D.Text($"+{label.amount}", at, size, Fade(Mix(label.color, Color.white, label.mine ? 0.35 : 0.1), shown),
-                    Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text(label.words, at + float2(0.06, -0.06), size, Fade(BACK, shown * 0.8), Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text(label.words, at, size, Fade(Mix(label.color, Color.white, label.mine ? 0.35 : 0.1), shown), Anchor.MiddleCenter,
+                    Font.Bold);
         i++;
     }
 }

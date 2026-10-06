@@ -168,7 +168,7 @@ GUI.TextField(Rect(frame.x + 4, frame.y + 4, frame.width - 8, frame.height - 8),
 var go = (Pill(Rect(left + wide - 100, y, 100, row), "JOIN", AMBER, true, code != "") || entered) && code != "";
 ```
 
-A match that ends, or a room that can't be joined, comes back as the built-in `Disconnected` event, whose handler starts a match of this machine's own again and leaves a line for the lobby to show. The lobby's buttons are [controls](../game/gui.md#widgets-of-your-own): the game draws them, and the GUI handles their input, so the pointer, a finger, the keyboard and a gamepad all work them. [Siege](./siege.md#the-lobby) has the same lobby, with its file whole.
+A match that ends, or a room that can't be joined, comes back as the built-in `Disconnected` event, whose handler starts a match of this machine's own again and leaves a line for the lobby to show. The lobby's buttons are [controls](../game/gui.md#widgets-of-your-own): the game draws them, and the GUI handles their input, so the pointer, a finger, the keyboard and a gamepad all work them. [Towers](./towers.md#the-lobby) has the same lobby, with its file whole.
 
 ### What a machine shows
 

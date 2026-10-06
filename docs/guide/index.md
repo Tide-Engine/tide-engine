@@ -53,5 +53,5 @@ The screen updates every **frame**, as fast as the display allows:
 - Look things up in [the language](../language/basics.md) and the [tide command](../tools/cli.md).
 - [Play falling sand](./sand.md) in your browser, alone or with friends.
 - [Play Duel](./duel.md), a small 2D arena game against a practice bot or a friend.
-- [Play Siege](./siege.md), a physics game for up to four, against bots or with friends in a room: towers of crates, cannons, and gravity that turns over.
+- [Play Towers](./towers.md), a physics game for up to four, against bots or with friends in a room: a race to stack bricks into the tallest tower, and keep it standing.
 - [Play Sumo](./sumo.md), heavy balls in a ring stacked with two thousand crates, for up to eight at once in a room.

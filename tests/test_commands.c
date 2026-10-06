@@ -89,26 +89,29 @@ static void command_left(void *world, tide_player_id player)
     ((command_world *)world)->left++;
 }
 
-static bool command_check(const uint8_t *data, uint32_t size)
+// Every command of this game is in the default channel
+static bool command_check(const uint8_t *data, uint32_t size, uint32_t *channel)
 {
     if (!data || size < 2u || size > TIDE_COMMAND_BYTES || data[0] != 0xA5u) return false;
     for (uint32_t i = 2; i < size; i++) {
         if (data[i] != 0xCCu) return false;
     }
+    if (channel) *channel = 0;
     return true;
 }
 
-static uint32_t command_sequence(const void *world, tide_player_id player)
+static uint32_t command_sequence(const void *world, tide_player_id player, uint32_t channel)
 {
     const int32_t index = tide_player_index(player);
-    return index >= 0 && (uint32_t)index < COMMAND_PLAYERS ? ((const command_world *)world)->sequence[index] : 0u;
+    return channel == 0 && index >= 0 && (uint32_t)index < COMMAND_PLAYERS ? ((const command_world *)world)->sequence[index] : 0u;
 }
 
-static bool command_receive(void *world, tide_player_id sender, uint32_t sequence, const uint8_t *data, uint32_t size)
+static bool command_receive(void *world, tide_player_id sender, uint32_t channel, uint32_t sequence, const uint8_t *data,
+                            uint32_t size)
 {
     command_world *w = world;
     const int32_t player = tide_player_index(sender);
-    if (player < 0 || (uint32_t)player >= COMMAND_PLAYERS || !command_check(data, size)
+    if (channel != 0 || player < 0 || (uint32_t)player >= COMMAND_PLAYERS || !command_check(data, size, NULL)
         || w->sequence[player] == UINT32_MAX || sequence != w->sequence[player] + 1u) return false;
     w->sequence[player] = sequence;
     if (data[1] == 0) return true; // A game rejection still consumes this request
@@ -289,7 +292,7 @@ static void command_raw(uint32_t nonce, uint32_t sequence, const uint8_t *data, 
     uint8_t packet[TIDE_NET_MTU];
     tide_writer w = {packet, sizeof packet, 0, false, false};
     tide_write_u16(&w, 0x5449);
-    tide_write_u8(&w, 11); // PROTOCOL
+    tide_write_u8(&w, 12); // PROTOCOL
     tide_write_u8(&w, 9); // MSG_COMMAND: no sender supplied by the packet
     tide_write_u32(&w, nonce);
     tide_write_varint(&w, sequence);

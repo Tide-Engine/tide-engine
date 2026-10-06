@@ -2852,6 +2852,13 @@ static void describe(const occurrence *o, sb *out)
             {"Rotation", "[Rotation]", "Provisional: float radians or a quaternion presented through the shortest rotation, with accumulated visual correction error."},
             {"NativeName", "[NativeName(\"c_function\")]",
              "The C function the extern function after it calls, or the extern system after it is, when its name isn't the declaration's own."},
+            {"Channel", "[Channel(Channels.Uploads)]",
+             "Puts the command after it in a channel of the game's, an enum member: a player's commands are handled in the "
+             "order sent within a channel, and in no order against another channel's, so a chat line never waits behind an "
+             "upload. Without it a command is in the default channel."},
+            {"Unordered", "[Unordered]",
+             "The command after it has no order at all: the server handles it in whichever tick it arrives, before or after "
+             "commands sent earlier, exactly once."},
         };
         for (size_t i = 0; i < sizeof attributes / sizeof attributes[0]; i++) {
             if (!str_eq_c(o->name, attributes[i].name)) continue;
@@ -7253,6 +7260,12 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "NativeName", CK_FUNCTION, "[NativeName(\"c_function\")]",
                  "The C function the extern function after it calls, or the extern system after it is, when its name isn't the declaration's own.",
                  "NativeName(\"$1\")");
+            item(&c, "Channel", CK_FUNCTION, "[Channel(Channels.Uploads)]",
+                 "Puts the command in a channel of the game's: in order among that channel's commands, and in no order against the others.",
+                 "Channel($1)");
+            item(&c, "Unordered", CK_FUNCTION, "[Unordered]",
+                 "The command has no order at all: handled in the tick it arrives, before or after commands sent earlier, once.",
+                 "Unordered");
         }
         break;
 
