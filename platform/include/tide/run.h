@@ -56,6 +56,7 @@
 // tide_host_game_api, made here from the game's header.
 
 #include "tide/host.h"
+#include "tide/pack.h"
 
 static inline void tide_run_local_init(void *local)
 {
@@ -144,8 +145,18 @@ static inline void tide_run_unload(void)
 {
     tide_render_targets_free();
     tide_scratch_free();
+#ifdef TIDE_HAS_ASSETS
+    tide_pack_unload();
+#endif
     tide_pages_free();
 }
+
+#ifdef TIDE_HAS_ASSETS
+static inline bool tide_run_assets(const uint8_t *pack, const size_t size)
+{
+    return tide_assets_load(pack, size);
+}
+#endif
 
 static inline void tide_run_local_free(void *local)
 {
@@ -198,6 +209,9 @@ static const tide_host_game tide_host_game_api = {
     .tick = tide_run_tick,
     .entity_count = tide_run_entity_count,
     .unload = tide_run_unload,
+#ifdef TIDE_HAS_ASSETS
+    .assets = tide_run_assets,
+#endif
     .rebind_resources = tide_run_rebind_resources,
 #ifdef TIDE_HAS_VIEW_CORRECTIONS
     .correct_views = tide_run_local_correct,

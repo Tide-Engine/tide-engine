@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 
 // Files on disk, kept apart so the server doesn't see windows.h.
 
@@ -34,3 +35,11 @@ void folder_list(const char *folder, folder_entry_fn found, void *user);
 // Whether a file is at `path`, how big it is, and when it was last written
 // (a number that changes when it is; the system's units).
 bool folder_file_info(const char *path, unsigned long long *size, unsigned long long *modified);
+
+// Makes the folder at `path`, and every missing one on the way. True when
+// it's there afterwards.
+bool folder_make(const char *path);
+
+// The folder this program runs in, with forward slashes and no slash at the
+// end, into `out`. False when the system won't say.
+bool folder_current(char *out, size_t size);
