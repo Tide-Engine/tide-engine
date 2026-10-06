@@ -6,8 +6,8 @@
 #include "gallery.h"
 
 static bench_flag flags[] = {
-    {"size", "each canvas's width and height, in pixels", 512, 128, 0},
-    {"archived", "canvases already painted when the match starts", 4, 2, 0},
+    {"size", "each canvas's width and height, in pixels", 512, 128, 0, 1},
+    {"archived", "canvases already painted when the match starts", 4, 2, 0, 0},
 };
 
 static void make_world(const bench_flag *f, void *world, const float dt)

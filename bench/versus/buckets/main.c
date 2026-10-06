@@ -12,8 +12,14 @@
 extern const versus_way buckets_c;
 
 static versus_flag flags[] = {
-    {"buckets", "buckets, each keeping its last 32 values", 4096, 256, 0},
+    {"buckets", "buckets, each keeping its last 32 values", 4096, 256, 0, 1},
+    {"kept", "1 to keep each tick's world before the tick, as a client keeps every tick it predicts", 0, 0, 0, 0},
 };
+
+// Retaining the world makes writes copy shared heap pages, as they do when
+// a client predicts ticks while keeping snapshots for rollback.
+static tide_world kept;
+static bool keeps;
 
 static void *make_mode(const versus_flag *f, const int32_t mode)
 {
@@ -21,6 +27,7 @@ static void *make_mode(const versus_flag *f, const int32_t mode)
     tide_world_init(w, VERSUS_DT);
     w->Pool.buckets = (int32_t)f[0].value;
     w->Pool.mode = mode;
+    keeps = f[1].value != 0;
     return w;
 }
 
@@ -36,6 +43,7 @@ static void *make_flat(const versus_flag *f)
 
 static void tick(void *world, const tide_jobs *jobs)
 {
+    if (keeps) tide_world_copy(&kept, world);
     tide_world_tick_on(world, jobs);
 }
 
@@ -46,11 +54,11 @@ typedef struct held {
     int32_t value;
 } held;
 
-static uint64_t digest(const void *world)
+static uint64_t world_digest(const tide_world *w)
 {
-    const tide_world *w = world;
     const Pool *pool = &w->Pool;
     uint64_t sum = 0;
+    if (!pool->counts.at) return sum; // The snapshot before the first tick is empty
     for (int32_t b = 0; b < pool->buckets; b++) {
         const int32_t count = *(const int32_t *)tide_list_read(&w->heap, pool->counts, b, sizeof(int32_t));
         const int32_t head = *(const int32_t *)tide_list_read(&w->heap, pool->heads, b, sizeof(int32_t));
@@ -66,9 +74,20 @@ static uint64_t digest(const void *world)
     return sum;
 }
 
+static uint64_t digest(const void *world)
+{
+    uint64_t sum = world_digest(world);
+    if (keeps) {
+        const uint64_t before = world_digest(&kept);
+        sum += versus_item(&before, sizeof before);
+    }
+    return sum;
+}
+
 static void destroy(void *world)
 {
     tide_world_free(world);
+    tide_world_free(&kept);
     free(world);
 }
 

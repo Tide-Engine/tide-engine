@@ -117,6 +117,15 @@ endif()
 add_test(NAME tide_box2d_kit COMMAND tide_box2d_kit)
 set_tests_properties(tide_box2d_kit PROPERTIES TIMEOUT 120)
 
+# Bodies that code puts to sleep and wakes, and what `asleep` reads of them: a
+# scene of its own, through what a match does to a world.
+tide_add_game(tide_box2d_sleep SOURCES box2d/bridge.c box2d/test/sleep.tide NAME sleeping PACKAGES Box2D box2d/box2d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box2d/test/sleep_test.c)
+target_include_directories(tide_box2d_sleep PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box2d_sleep PRIVATE tide_box2d)
+add_test(NAME tide_box2d_sleep COMMAND tide_box2d_sleep)
+set_tests_properties(tide_box2d_sleep PROPERTIES TIMEOUT 120)
+
 # Box3D's, the same way, and with the same flags for the same reason. Its tests'
 # games are each built with the package as tide builds a game that lists it,
 # the package's files before their own: a game needn't use all of a package.
