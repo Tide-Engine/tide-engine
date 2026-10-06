@@ -84,7 +84,7 @@ view Glare(Fx fx, Flow flow)
 view Chips(verified Towers sure, Fx fx, Flow flow, Lobby lobby, query (verified Seat seat) seats)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None) return;
+    if (lobby.page != Page.None && WATCH != 2) return;
     // Side by side in the screen's middle, as wide as a narrow one lets them be
     var slot = Math.Min(Screen.width / SEATS, 112);
     var first = (Screen.width - slot * SEATS) * 0.5;
@@ -133,7 +133,7 @@ view Chips(verified Towers sure, Fx fx, Flow flow, Lobby lobby, query (verified 
 view Race(Towers towers, Fx fx, Lobby lobby, query (Seat seat) seats)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None) return;
+    if (lobby.page != Page.None && WATCH != 2) return;
     var top = HEADROOM + 26;
     var bottom = Screen.height - 76;
     if (bottom - top < 80) return;
@@ -173,7 +173,7 @@ view Race(Towers towers, Fx fx, Lobby lobby, query (Seat seat) seats)
 view Tray(Seat seat, Session session, Devices devices, Towers towers, Fx fx, Lobby lobby, with ownership)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None) return;
+    if (lobby.page != Page.None && WATCH != 2) return;
     var screen = float2(Screen.width, Screen.height);
     var at = float2(screen.x - 38, HEADROOM + 36);
     Draw2D.Shape(Shape { center = at, size = float2(60, 56), radius = 10, color = Color(0.115, 0.118, 0.13, 0.9), outline = 1,
@@ -231,7 +231,7 @@ void Band(float2 middle, float open, bool big, Color tint, string words, string 
 view Words(Towers towers, Session session, Lobby lobby, mut Flow flow, mut Fx fx)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None) return;
+    if (lobby.page != Page.None && WATCH != 2) return;
     var screen = float2(Screen.width, Screen.height);
     var big = screen.x >= 640 && screen.y >= 420;
     var middle = float2(screen.x * 0.5, HEADROOM + (screen.y - HEADROOM) * 0.3);
@@ -292,7 +292,7 @@ view Words(Towers towers, Session session, Lobby lobby, mut Flow flow, mut Fx fx
 view Hints(Towers towers, Session session, Devices devices, Fx fx, Lobby lobby)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None || fx.seat < 0 || towers.phase != Phase.Play || fx.steered) return;
+    if (lobby.page != Page.None && WATCH != 2 || fx.seat < 0 || towers.phase != Phase.Play || fx.steered) return;
     var screen = float2(Screen.width, Screen.height);
     var words = devices.touchscreen.connected ? "Drag to move, tap to turn, swipe down to drop" : "Drag or arrows to move, tap or up to turn";
     var wide = Draw2D.MeasureText(words, 13).x + 28;
@@ -312,7 +312,7 @@ view Hints(Towers towers, Session session, Devices devices, Fx fx, Lobby lobby)
 view Corner(Session session, Devices devices, mut Lobby lobby)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None) return;
+    if (lobby.page != Page.None && WATCH != 2) return;
     var bottom = Screen.height;
     if (session.room != "")
     {

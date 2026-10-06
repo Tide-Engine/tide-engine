@@ -23,7 +23,7 @@ endif()
 # its C out of the game.
 tide_add_game(towers_tests SOURCES ${TOWERS_SOURCES} "${TOWERS_PACKAGE}/bridge.c" NAME game
     PACKAGES Box2D "${TOWERS_PACKAGE}/box2d.tide"
-    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" test/towers_test.c)
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" test/towers_test.c test/dev_test.c)
 target_include_directories(towers_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_link_libraries(towers_tests PRIVATE tide_box2d)
 add_test(NAME towers_tests COMMAND towers_tests)

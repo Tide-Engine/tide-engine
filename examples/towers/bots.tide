@@ -4,11 +4,20 @@
 // half a cell at a time, and falls fast once it's over its place.
 //
 // The plan is made from how high the tower stands in each of the plinth's six
-// columns, which the match works out from the bricks as they lie (game.tide,
-// Deal). It tries every turn and every place across, lets the brick down on
-// the columns, and keeps the one that leaves the tower lowest, flattest and
-// with the least room under the brick, give or take what its seat's dice
-// say: a tower built that way is slow to rise, and hard to bring down.
+// columns, and whether what's on top there lies askew, which the match works
+// out from the bricks as they are (game.tide, Deal). It tries every turn and
+// every place across, lets the brick down on the columns, and keeps the one
+// that leaves the tower's top most level, with the least room under the brick
+// and the fewest steps, give or take what its seat's dice say. A brick that
+// would rest on less than its middle tips over, and one put on a brick that's
+// askew slides off: it does neither, if it can help it.
+
+const float LEVEL = 0.35;  // What the top's columns being a meter from level costs, each, squared
+const float ROOM = 3.0;    // ...a meter of room left under the brick
+const float STEPS = 0.3;   // ...a meter of step from one column to the next
+const float SPIRE = 3;     // ...a meter of a column standing free over its neighbors
+const float TIPPED = 12;   // ...a brick whose middle is over nothing
+const float ASKEW = 1.5;    // ...and one that rests on a brick that's askew
 
 struct Plan
 {
@@ -16,7 +25,7 @@ struct Plan
     int quarter;
 }
 
-Plan Think(Kind kind, List<float> heights, mut Random dice)
+Plan Think(Kind kind, List<float> heights, List<bool> askew, float careless, mut Random dice)
 {
     mut var best = Plan { column = Start(kind) };
     mut var least = 1000000.0;
@@ -28,6 +37,7 @@ Plan Think(Kind kind, List<float> heights, mut Random dice)
             // brick comes to rest where its first cell meets what's under it.
             mut var fits = true;
             mut var rest = -1000.0;
+            mut var middle = 0.0;
             for (var i = 0; i < 4; i++)
             {
                 var cell = Turned(Cell(kind, i), quarter);
@@ -35,11 +45,16 @@ Plan Think(Kind kind, List<float> heights, mut Random dice)
                 var lane = int(Math.Round(across));
                 if (Math.Abs(across - lane) > 0.01 || lane < 0 || lane >= 6) fits = false;
                 else rest = Math.Max(rest, heights[lane] - cell.y + 0.5);
+                middle += across * 0.25;
             }
             if (!fits) continue;
-            // The columns with the brick on them, and the room left under it
+            // The columns with the brick on them, the room left under it, and
+            // which of the columns it rests on
             mut List<float> after = heights;
             mut var room = 0.0;
+            mut var left = 1000.0;
+            mut var right = -1000.0;
+            mut var slides = false;
             for (var i = 0; i < 4; i++)
             {
                 var cell = Turned(Cell(kind, i), quarter);
@@ -51,18 +66,37 @@ Plan Think(Kind kind, List<float> heights, mut Random dice)
                     var other = Turned(Cell(kind, j), quarter);
                     if (Math.Abs(other.x - cell.x) < 0.01 && other.y < cell.y - 0.01) lowest = false;
                 }
-                if (lowest) room += under - heights[lane];
+                if (lowest && under - heights[lane] < 0.35)
+                {
+                    left = Math.Min(left, lane);
+                    right = Math.Max(right, lane);
+                    if (askew[lane]) slides = true;
+                }
+                else if (lowest)
+                {
+                    room += under - heights[lane];
+                }
                 after[lane] = Math.Max(after[lane], under + 1);
             }
-            mut var peak = 0.0;
-            mut var bumps = 0.0;
+            // How far from level that leaves the tower's top: each column's
+            // height from their mean, squared
+            mut var mean = 0.0;
+            for (var lane = 0; lane < 6; lane++) mean += after[lane] / 6;
+            mut var uneven = 0.0;
+            mut var steps = 0.0;
+            mut var spires = 0.0;
             for (var lane = 0; lane < 6; lane++)
             {
-                peak = Math.Max(peak, after[lane]);
-                if (lane > 0) bumps += Math.Abs(after[lane] - after[lane - 1]);
+                uneven += (after[lane] - mean) * (after[lane] - mean);
+                if (lane > 0) steps += Math.Abs(after[lane] - after[lane - 1]);
+                // A column that stands well over the ones beside it has nothing to lean on
+                var beside = Math.Max(lane > 0 ? after[lane - 1] : 0.0, lane < 5 ? after[lane + 1] : 0.0);
+                spires += Math.Max(after[lane] - beside - 1.5, 0);
             }
-            // ...give or take: no two towers are built alike
-            var cost = peak + room * 3 + bumps * 0.4 + Math.Abs(column) * 0.02 + dice.NextFloat() * 0.7;
+            mut var cost = uneven * LEVEL + room * ROOM + steps * STEPS + spires * SPIRE + Math.Abs(column) * 0.02
+                         + dice.NextFloat() * careless;
+            if (middle < left - 0.4 || middle > right + 0.4) cost += TIPPED;
+            if (slides) cost += ASKEW;
             if (cost >= least) continue;
             least = cost;
             best = Plan { column = column, quarter = quarter };
