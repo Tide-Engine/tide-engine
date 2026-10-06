@@ -23,3 +23,11 @@ add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0x241cefae271
 # C against Tide: concepts written both ways, as fast as each language allows,
 # timed on the same work (see versus/versus.h).
 add_subdirectory(versus)
+
+if(TIDE_NODE)
+    add_test(NAME bench_compile_validation COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/compile.test.mjs")
+    if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+        add_test(NAME bench_harness COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/harness.mjs"
+            $<TARGET_FILE:bench_sand> $<TARGET_FILE:versus_events>)
+    endif()
+endif()

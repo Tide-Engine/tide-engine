@@ -1,5 +1,7 @@
 #include "bench.h"
 
+#include <errno.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -456,12 +458,27 @@ static void write_record(FILE *f, const bench_desc *d, const bench_options *o, c
     if (utc) strftime(date, sizeof date, "%Y-%m-%dT%H:%M:%SZ", utc);
 #if defined(__wasm__)
     const char *os = "web";
+#elif defined(__ANDROID__)
+    const char *os = "android";
 #elif defined(_WIN32)
     const char *os = "windows";
 #elif defined(__APPLE__)
     const char *os = "macos";
 #else
     const char *os = "linux";
+#endif
+#if defined(__wasm__)
+    const char *arch = "wasm32";
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    const char *arch = "arm64";
+#elif defined(__arm__) || defined(_M_ARM)
+    const char *arch = "arm";
+#elif defined(__x86_64__) || defined(_M_X64)
+    const char *arch = "x86_64";
+#elif defined(__i386__) || defined(_M_IX86)
+    const char *arch = "x86";
+#else
+    const char *arch = "unknown";
 #endif
 #if defined(__OPTIMIZE__)
     const bool optimized = true;
@@ -472,8 +489,14 @@ static void write_record(FILE *f, const bench_desc *d, const bench_options *o, c
     json_text(f, d->name);
     fprintf(f, ",\"label\":");
     json_text(f, label);
-    fprintf(f, ",\"date\":\"%s\",\"os\":\"%s\",\"optimized\":%s,\"threads\":%u", date, os, optimized ? "true" : "false",
+    fprintf(f, ",\"date\":\"%s\",\"os\":\"%s\",\"arch\":\"%s\",\"optimized\":%s,\"threads\":%u,\"compiler\":", date, os, arch, optimized ? "true" : "false",
             threads);
+    json_text(f, __clang_version__);
+    const char *machine = getenv("TIDE_BENCH_MACHINE"), *revision = getenv("TIDE_BENCH_REVISION");
+    fprintf(f, ",\"machine\":");
+    json_text(f, machine ? machine : "unknown");
+    fprintf(f, ",\"revision\":");
+    json_text(f, revision ? revision : "unknown");
     fprintf(f, ",\"options\":{\"players\":%u,\"join_every\":%.6g,\"seconds\":%.6g,\"latency_ms\":%.6g,\"jitter_ms\":%.6g,"
                "\"loss_percent\":%.6g",
             o->players, o->join_every, o->seconds, o->latency * 1e3, o->jitter * 1e3, o->loss * 1e2);
@@ -527,6 +550,18 @@ static void usage(const bench_desc *d)
 }
 
 // The options from the command line, over a full run's or --quick's.
+static bool read_number(const char *text, uint32_t *out)
+{
+    if (*text < '0' || *text > '9') return false;
+    for (const char *c = text; *c; c++) if (*c < '0' || *c > '9') return false;
+    errno = 0;
+    char *end;
+    const unsigned long long number = strtoull(text, &end, 10);
+    if (errno == ERANGE || *end || number > UINT32_MAX) return false;
+    *out = (uint32_t)number;
+    return true;
+}
+
 static bool parse(const bench_desc *d, const int argc, char **argv, bench_options *o, const char **save)
 {
     bool quick = false;
@@ -546,24 +581,30 @@ static bool parse(const bench_desc *d, const int argc, char **argv, bench_option
         }
         const char *value = argv[++i];
         char *end = NULL;
+        errno = 0;
         const double number = strtod(value, &end);
-        const bool numeric = end != value && *end == '\0' && number >= 0.0;
+        const bool numeric = end != value && *end == '\0' && errno != ERANGE && isfinite(number) && number >= 0.0;
+        uint32_t integer = 0;
+        const bool whole = read_number(value, &integer);
         bool known = true;
         if (strcmp(arg, "--save") == 0) {
             *save = value;
         } else if (strcmp(arg, "--expect") == 0) {
+            errno = 0;
             o->expect = strtoull(value, &end, 0);
-            if (end == value || *end != '\0') known = false;
+            if (*value < '0' || *value > '9' || end == value || *end != '\0' || errno == ERANGE) known = false;
         } else if (!numeric) {
             known = false;
         } else if (strcmp(arg, "--players") == 0) {
-            o->players = (uint32_t)number;
+            known = whole;
+            if (known) o->players = integer;
         } else if (strcmp(arg, "--join-every") == 0) {
             o->join_every = number;
         } else if (strcmp(arg, "--seconds") == 0) {
             o->seconds = number;
         } else if (strcmp(arg, "--threads") == 0) {
-            o->threads = (uint32_t)number;
+            known = whole;
+            if (known) o->threads = integer;
         } else if (strcmp(arg, "--latency") == 0) {
             o->latency = number / 1e3;
         } else if (strcmp(arg, "--jitter") == 0) {
@@ -574,18 +615,22 @@ static bool parse(const bench_desc *d, const int argc, char **argv, bench_option
             known = false;
             for (uint32_t k = 0; k < d->flag_count; k++) {
                 if (strcmp(arg + 2, d->flags[k].name) == 0) {
-                    d->flags[k].value = (uint32_t)number;
-                    known = true;
+                    known = whole && integer <= INT32_MAX && integer >= d->flags[k].minimum;
+                    if (known) d->flags[k].value = integer;
                 }
             }
         }
         if (!known) {
-            fprintf(stderr, "%s: '%s %s' isn't an option it knows\n", d->name, arg, value);
+            fprintf(stderr, "%s: '%s %s' isn't a valid option and value\n", d->name, arg, value);
             return false;
         }
     }
     if (o->players < 1 || o->players > tide_game_players(d->game)) {
         fprintf(stderr, "%s: --players goes from 1 to %u, the game's maxPlayers\n", d->name, tide_game_players(d->game));
+        return false;
+    }
+    if (o->loss > 1.0) {
+        fprintf(stderr, "%s: --loss goes from 0 to 100 percent\n", d->name);
         return false;
     }
     return true;
@@ -603,6 +648,12 @@ static void sample(void *user, const uint32_t tick, void *input)
 
 int bench_main(const bench_desc *d, const int argc, char **argv)
 {
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            usage(d);
+            return 0;
+        }
+    }
     bench_options o;
     const char *save = NULL; // The label to save the results under
     if (!parse(d, argc, argv, &o, &save)) {
