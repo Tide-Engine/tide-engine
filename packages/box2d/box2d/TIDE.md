@@ -102,10 +102,15 @@ Emscripten. The first is WebAssembly's SIMD:
   of these functions on awkward numbers (every three of 24 values with both
   zeros, denormals, infinities and NaNs among them, 40,000 of any bits at all,
   and 40,000 small ones of which many are equal), and about 5,000 pairs of
-  polygons through `b2CollidePolygons`, built for x64 and for the web: the same bits
-  from both for all 23 kinds of result, where the scalar path differs in 9.
+  polygons through `b2CollidePolygons`, built for x64 and for the web: the
+  same bits from both for all 23 kinds of result, where the scalar path
+  differs in 9.
   Which NaN arithmetic gives of two isn't compared: that's the CPU's, and no
   NaN is ever in a world.
+
+  It took a quarter off a step in a browser. The package's `README.md` has the
+  numbers, and why it's no more: clang had already made SIMD of most of the
+  scalar path by itself.
 
   At an update, the WebAssembly code is read beside the SSE2 code it follows:
   a function upstream adds to the solver's wide floats needs its twin, or the

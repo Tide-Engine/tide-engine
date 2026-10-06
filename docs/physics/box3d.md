@@ -549,7 +549,7 @@ Measured on a release build, with 2,400 crates in stacks, on one thread, with th
 - **A body's `type` that changes** has all of that state written again in that tick, where a tick usually writes what's awake: a quarter of a millisecond for this world. The other fields of a body cost nothing more than writing them.
 - **Asking the world** takes about a microsecond a question in a small world. A view that asks of a world Box3D isn't at (a `verified Physics`, while this machine runs ahead of what's confirmed) has it made from the match's state first, as a rollback does.
 - **The step runs on the tick's threads** once 512 bodies are awake, and gives the same world on any number of them: 1.3 ms on one thread and 0.5 on twelve, with every crate awake.
-- **On the web** Box3D has no SIMD, and the same step takes about 2.2 ms on one thread.
+- **On the web** the same step takes about 1.4 ms on one thread. Box3D solves four contacts at a time there, on WebAssembly's SIMD, where a desktop with AVX2 solves eight, and gives the same world to the bit.
 - **Building**: Box3D compiles in about 8 seconds, once, and adds about 800 KB to a game.
 
 ## Not there yet
