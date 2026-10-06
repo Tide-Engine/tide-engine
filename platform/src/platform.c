@@ -62,6 +62,7 @@ static int pixel_width = 1, pixel_height = 1;
 
 // What draws in the window (see gpu.h), which it says once it's open.
 static const tide_gpu *gpu;
+static bool gpu_timing;
 
 // The last frames' lengths, for tide_platform_fps.
 static float frame_seconds[32];
@@ -162,6 +163,7 @@ static int headless_drawn(void)
 
 _Noreturn static void finish(const int code)
 {
+    tide_platform_gpu_timing(false);
 #ifdef __wasm__
     tide_web_stop();
 #endif
@@ -1173,6 +1175,7 @@ static bool gpu_ready(void)
 {
     const uint32_t epoch = gpu->epoch();
     if (epoch == 0 || epoch == gpu_epoch) return epoch != 0;
+    if (gpu->time_reset) gpu->time_reset();
     free(gpu_state.target_pixels);
     free(gpu_state.frame_pixels);
     memset(&gpu_state, 0, sizeof gpu_state);
@@ -1957,7 +1960,7 @@ static const screen_uniforms *step_uniforms(screen_uniforms *of_target, const dr
 // tide_platform_read_pixels' own pixels. With `over`, it goes over what's
 // there (the overlay), and leaves the frame's camera, textures and meshes as
 // they are.
-static void draw_list(const tide_draw_list *list, const draw_root to, const bool over)
+static void draw_list(const tide_draw_list *list, const draw_root to, const bool over, const bool timed)
 {
     if (!gpu_ready()) { // Between a device that was lost and the next
         if (!over) draw_calls = 0;
@@ -2131,6 +2134,9 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     upload_atlas();
     select_target(0);
     screen_uniforms uniforms = target_uniforms();
+    // Start after the CPU expanded the list and prepared/uploaded resources.
+    // Otherwise a desktop GPU waiting for that work would time the CPU too.
+    if (timed && gpu->time_begin) gpu->time_begin();
     gpu->begin(target, !over); // Every frame starts black; Draw2D.Clear picks another color
     bool pass_active = true;
     uint32_t calls = 0; // The steps that draw, a draw call each
@@ -2237,6 +2243,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         }
     }
     if (pass_active) gpu->end();
+    if (timed && gpu->time_end) gpu->time_end();
     draw_width = draw_height = 0.0f;
     draw_pixel_width = draw_pixel_height = 0;
     scaled = false;
@@ -2275,7 +2282,23 @@ void tide_platform_draw(const tide_draw_list *list)
     // Nobody sees it while the window is minimized or, on the web, the page
     // is hidden, and frames go on meanwhile. A headless window's are for
     // whoever reads them.
-    if (headless || !tide_window_unseen()) draw_list(list, frame_destination(), false);
+    if (headless || !tide_window_unseen()) {
+        if (!gpu_ready()) return;
+        draw_list(list, frame_destination(), false, gpu_timing);
+    }
+}
+
+void tide_platform_gpu_timing(const bool enabled)
+{
+    if (gpu_timing == enabled) return;
+    gpu_timing = enabled;
+    if (!enabled && gpu && gpu->epoch() && gpu->time_reset) gpu->time_reset();
+}
+
+double tide_platform_gpu_ms(void)
+{
+    if (!gpu_timing || !gpu || !gpu_ready() || (!headless && tide_window_unseen()) || !gpu->time_read) return -1.0;
+    return gpu->time_read();
 }
 
 tide_float2 tide_platform_world_to_screen(const tide_float2 world)
@@ -2351,12 +2374,12 @@ void tide_platform_draw_overlay(const char *text)
         tide_draw_text(&overlay, lines[i], tide_f2(right - widths[i], top + (float)i * pitch), size,
                        (tide_color){200.0f / 255.0f, 200.0f / 255.0f, 200.0f / 255.0f, 1.0f});
     }
-    draw_list(&overlay, frame_destination(), true);
+    draw_list(&overlay, frame_destination(), true, false);
 }
 
 void tide_platform_draw_over(const tide_draw_list *list)
 {
-    if (headless || !tide_window_unseen()) draw_list(list, frame_destination(), true);
+    if (headless || !tide_window_unseen()) draw_list(list, frame_destination(), true, false);
 }
 
 const uint8_t *tide_platform_frame_pixels(int *width, int *height)
@@ -2422,7 +2445,7 @@ void tide_platform_read_pixels_as(const tide_draw_list *list, const int logical_
         gpu_state.target_height = height;
     }
     draw_list(list, (draw_root){.gpu = gpu_state.target, .width = (float)logical_width, .height = (float)logical_height,
-                                .pixel_width = width, .pixel_height = height}, false);
+                              .pixel_width = width, .pixel_height = height}, false, false);
     gpu->target_read(gpu_state.target, gpu_state.target_pixels);
     for (int i = 0; i < count; i++) {
         const int x = (int)points[i].x, y = (int)points[i].y;

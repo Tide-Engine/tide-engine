@@ -170,6 +170,29 @@ target_include_directories(tide_platform_migrate PRIVATE "${PROJECT_SOURCE_DIR}/
 target_link_libraries(tide_platform_migrate PRIVATE tide_platform)
 add_test(NAME tide_platform_migrate COMMAND tide_platform_migrate)
 
+# Timers must never wait for the GPU or reuse a query still in flight.
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    add_executable(tide_platform_gpu_timing tests/gpu_timing.c)
+    target_include_directories(tide_platform_gpu_timing PRIVATE src)
+    target_link_libraries(tide_platform_gpu_timing PRIVATE tide_platform)
+    add_test(NAME tide_platform_gpu_timing COMMAND tide_platform_gpu_timing)
+endif()
+if(TIDE_NODE)
+    add_test(NAME tide_platform_gpu_timing_web
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu_timing_web.mjs")
+endif()
+if(NOT TIDE_ANDROID)
+    add_executable(tide_platform_gpu_time tests/gpu_time.c)
+    target_link_libraries(tide_platform_gpu_time PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_platform_gpu_time SHELL web/test_shell.html)
+        tide_add_web_test(tide_platform_gpu_time TARGET tide_platform_gpu_time WEBGPU)
+    else()
+        add_test(NAME tide_platform_gpu_time COMMAND tide_platform_gpu_time)
+        set_tests_properties(tide_platform_gpu_time PROPERTIES LABELS gpu)
+    endif()
+endif()
+
 # Ticks on every core, against ticks on one thread
 tide_add_game(tide_platform_jobs SOURCES tests/jobs.tide tests/jobs_tasks.c NAME game
     HOST tests/jobs.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
@@ -469,7 +492,7 @@ if(TIDE_WEB)
     tide_add_game(tide_platform_web_stats SOURCES tests/stats.tide NAME game HOST tests/web_stats.c)
     target_link_libraries(tide_platform_web_stats PRIVATE tide_platform)
     tide_web_page(tide_platform_web_stats SHELL web/test_shell.html)
-    tide_add_web_test(tide_platform_web_stats TARGET tide_platform_web_stats)
+    tide_add_web_test(tide_platform_web_stats TARGET tide_platform_web_stats WEBGPU)
 
     # ...and what its devices keep for a tick's sample: nothing while no tick
     # can sample, so a match started from a menu doesn't read what was pressed

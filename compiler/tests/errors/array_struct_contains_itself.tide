@@ -1,0 +1,4 @@
+// expect: struct 'Node' can't contain itself
+// expect: it would be infinitely big
+struct Node { Node[1] children; }
+scene Main { }

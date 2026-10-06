@@ -1,0 +1,4 @@
+// expect: int[3] holds exactly 3 values, and this has 2
+// expect: write every element, or 'default' for all zeros
+scene Main { }
+component Short { int[3] cells = [1, 2]; }

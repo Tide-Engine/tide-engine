@@ -1,4 +1,4 @@
-// expect: the GPU has no lists, maps or grids to index or make
+// expect: the GPU has no lists, maps, arrays or grids to index or make
 scene Main { }
 
 struct V

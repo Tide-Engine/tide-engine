@@ -431,6 +431,15 @@ static void type_tree(const type_ref *r, const type t)
         type_tree(&plain, inner);
         return;
     }
+    if (r->sizes.count > 0) { // int[32]: the name is the element's
+        type inner = t;
+        for (int i = 0; i < r->sizes.count && inner.kind == TY_ARRAY && inner.decl; i++) inner = inner.decl->fields.items[0].type;
+        type_ref plain = *r;
+        plain.sizes.count = 0;
+        plain.text = r->name;
+        type_tree(&plain, r->sizes.count > 0 && inner.kind != TY_ARRAY ? inner : (type){TY_ERROR, NULL});
+        return;
+    }
     if (r->args.count > 0) { // List<T>, Map<K, V>, Set<K>, Grid2<T>, Grid3<T>: the generic type, then what it holds
         add_occ((occurrence){.at = r->at, .len = r->name.len, .kind = OCC_TYPE, .name = r->name, .type = t});
         const bool holds = (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID) && t.decl;
@@ -754,7 +763,7 @@ static void walk_value(const expr *e)
         } else if (e->bind == BIND_CONST || e->bind == BIND_ASSET) { // MAX_HEALTH in Combat.MAX_HEALTH, or an asset
             o.kind = OCC_CONST;
             o.decl = e->constant;
-        } else if (e->c_constant) {
+        } else if (e->c_constant && e->object->type.kind != TY_ARRAY) {
             o.kind = OCC_CONSTANT;
             o.owner = e->object->name;
             o.c_name = e->c_constant;
@@ -1406,6 +1415,8 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_ACTION: return "Code the caller writes in braces after the call, run with `content();`.";
     case TY_DRAW_LIST: return "The frame's draw list, for a game's C to draw into with tide/draw.h: an extern "
                               "function takes one, and a view passes it `Draw2D.list` or `Draw3D.list`.";
+    case TY_ARRAY: return "An array: a fixed number of values side by side in whatever holds it, with nothing in the heap. "
+                          "`cells[i]`, `cells[i] = x`, `count`, `foreach`; past the end a read gives zero and a write does nothing.";
     case TY_LIST: return "A list of values, which grows and shrinks: `Count`, `items[i]`, `Add`, `RemoveAt`, `foreach`, "
                          "and `parallel` through its elements by index.";
     case TY_MAP: return "Values by key, in the order the keys were added: `scores[key]` reads (the value type's zero when "
@@ -1443,6 +1454,7 @@ static const char *decl_keyword(const decl *d)
     case DECL_LIST: return "list";
     case DECL_MAP: return "map";
     case DECL_GRID: return "grid";
+    case DECL_ARRAY: return "array";
     case DECL_RESULT: return "result";
     case DECL_CONST: return "const";
     case DECL_ASSET: return "asset";
@@ -1719,6 +1731,7 @@ static const method_form session_calls[] = {
     "picks one, as in tests."
 
 #define LIST_COUNT_DOC "How many elements the list has."
+#define ARRAY_COUNT_DOC "How many elements the array holds: its length, a constant."
 #define MAP_COUNT_DOC "How many keys it has."
 #define DEVICE_ARRAY_COUNT_DOC "How many fingers the touchscreen follows at once: every slot, touching or not."
 #define TEXT_LENGTH_DOC "How many characters the text has."
@@ -2827,6 +2840,7 @@ static void describe(const occurrence *o, sb *out)
         if (o->object_type.kind == TY_STRING && str_eq_c(o->name, "length")) sb_put(out, "\n\n" TEXT_LENGTH_DOC);
         if (keyboard_text(o->object_type, o->name)) sb_put(out, "\n\n" KEYBOARD_TEXT_DOC);
         if (o->object_type.kind == TY_LIST && str_eq_c(o->name, "count")) sb_put(out, "\n\n" LIST_COUNT_DOC);
+        if (o->object_type.kind == TY_ARRAY && str_eq_c(o->name, "count")) sb_put(out, "\n\n" ARRAY_COUNT_DOC);
         if ((o->object_type.kind == TY_MAP || o->object_type.kind == TY_SET) && str_eq_c(o->name, "count")) sb_put(out, "\n\n" MAP_COUNT_DOC);
         if (o->object_type.kind == TY_RECORD && o->object_type.decl && o->object_type.decl->array_of
             && str_eq_c(o->name, "count")) {
@@ -5325,6 +5339,7 @@ static type member_type(const type t, const str member)
     if (t.kind == TY_STRING && str_eq_c(member, "length")) return (type){TY_INT, NULL};
     if ((t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET) && str_eq_c(member, "count")) return (type){TY_INT, NULL};
     if (t.kind == TY_RECORD && t.decl->array_of && str_eq_c(member, "count")) return (type){TY_INT, NULL};
+    if (t.kind == TY_ARRAY && str_eq_c(member, "count")) return (type){TY_INT, NULL};
     if (t.kind == TY_GRID && (str_eq_c(member, "size") || str_eq_c(member, "min") || str_eq_c(member, "max"))) {
         return (type){t.decl->dims == 3 ? TY_INT3 : TY_INT2, NULL};
     }
@@ -5543,6 +5558,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     if (t.kind == TY_LIST) item(c, "count", CK_PROPERTY, "int", LIST_COUNT_DOC, NULL);
     if (t.kind == TY_MAP || t.kind == TY_SET) item(c, "count", CK_PROPERTY, "int", MAP_COUNT_DOC, NULL);
     if (t.kind == TY_RECORD && t.decl->array_of) item(c, "count", CK_PROPERTY, "int", DEVICE_ARRAY_COUNT_DOC, NULL);
+    if (t.kind == TY_ARRAY) item(c, "count", CK_PROPERTY, "int", ARRAY_COUNT_DOC, NULL);
     if (t.kind == TY_GRID) item(c, "size", CK_PROPERTY, t.decl->dims == 3 ? "int3" : "int2", GRID_SIZE_FIELD_DOC, NULL);
     if (t.kind == TY_STRING) {
         item(c, "length", CK_PROPERTY, "int", TEXT_LENGTH_DOC, NULL);
