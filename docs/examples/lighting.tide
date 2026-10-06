@@ -32,6 +32,9 @@ frag Lit(Corner corner, mut Color color, Instance instance, Globe globe)
     float tile = Math.Floor(corner.position.y * 3) + Math.Floor(Math.Atan2(corner.position.z, corner.position.x) * 6 / Math.PI);
     Color paint = Math.Frac(tile * 0.5) < 0.25 ? Color(0.98, 0.75, 0.14) : Color(0.8, 0.52, 0.08);
     color = paint * (0.12 + diffuse * 0.88) + Color(1, 1, 1, 0) * glint;
+    // A color times a number scales its alpha too, and a pixel is blended by
+    // its alpha: left so, the dark side would be see-through.
+    color.a = 1;
 }
 
 view Show(mut Globe globe)

@@ -21,6 +21,7 @@ frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun, Models models)
 {
     float light = Math.Max(Math.Dot(Math.Normalize(vertex.normal), -sun.direction), 0.1);
     color = models.wood.Sample(vertex.uv) * box.tint * light;
+    color.a = 1; // The light dims the color, not how solid it is
 }
 
 view DrawBox(Box box, Models models)
@@ -66,12 +67,14 @@ Frags and verts can share a name when their parameters differ. A draw then names
 frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun)
 {
     color = box.tint * Math.Max(Math.Dot(vertex.normal, -sun.direction), 0.1);
+    color.a = box.tint.a;
 }
 ```
 
 - **The vertex comes first.** It's the struct the mesh's list holds, and the frag gets it blended across the triangle: at each pixel, a mix of the triangle's three vertices by how near each is. It can't change it. Its ints don't blend, so a frag can't read them.
 - **`mut Color color` is the pixel.** A frag writes its output through `mut`, as a system writes a component, and returns nothing. What `color` holds when the frag ends is the pixel's color, blended over what's behind it by its alpha.
 - **The draw's [settings](./views.md#draw-settings) apply to it.** Inside `Draw.Blend(Blend.Add) { ... }` the pixel is added instead, and inside `Draw.Tint(...)` it's multiplied by the tint after the frag ran, so a faded menu fades its shaded meshes too, with nothing for the frag to do. A 2D mesh's vertices go through `Draw2D.Transform` after its vert, and a 3D one's transform goes through `Draw3D.Transform`.
+- **Light the color, not its alpha.** A color times a number scales its alpha too, so `box.tint * light` alone leaves a pixel in the shade see-through, and what was drawn behind the mesh shows in it, its own far side too. The frag above sets `color.a` back.
 - `color` starts as `Color.white`. It isn't the pixel already on the screen: a GPU doesn't let a frag read that. A frag that never writes it draws white.
 - A frag has one output for now, a `Color`. More, and other types, aren't there yet.
 
@@ -147,6 +150,7 @@ frag Lit(BoxVertex vertex, mut Color color, Pixel pixel, Instance instance, Sun 
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, vertex.normal));
     float3 toLight = Math.Normalize(sun.position - pixel.world);
     color = Color.white * Math.Max(Math.Dot(normal, toLight), 0.1);
+    color.a = 1;
 }
 ```
 
@@ -278,6 +282,7 @@ vert Bend(mut BoxVertex vertex, Blade blade)
 frag Grass(BoxVertex vertex, mut Color color, Blade blade, Sun sun)
 {
     color = blade.tint * Math.Max(Math.Dot(vertex.normal, -sun.direction), 0.1);
+    color.a = blade.tint.a;
 }
 
 view GrassField(Foliage foliage, Models models)
