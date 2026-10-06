@@ -85,7 +85,7 @@ if ($env:TIDE_RELEASES_URL -ne 'file:///original-override.json') { throw 'The in
 `;
 
 const shell = String.raw`
-python3() { "$TEST_PYTHON" "$@"; }
+python3() { command "$TEST_PYTHON" "$@"; }
 record() {
     python3 - "$@" >> "$TEST_LOG" <<'PY'
 import json, sys
