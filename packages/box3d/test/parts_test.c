@@ -31,6 +31,7 @@
 // bridge.c
 void b3t_forget(void);
 void b3t_check(bool on, bool whenever);
+void b3t_whole(bool on);
 void b3t_images(int32_t *whole, int32_t *in_parts);
 void b3t_share_from(int32_t bodies);
 int32_t b3t_shared_steps(void);
@@ -99,35 +100,45 @@ TIDE_TEST(box3d_parts_are_the_whole_image)
     }
 }
 
-// A world whose C side is made from its image again before every tick writes
-// every image whole, and one that never is writes them in parts: the same
-// match, tick for tick, so the same bytes in the match's list.
+// A world whose images are all written whole, and one whose C side is made
+// from its image again before every tick, which writes each as parts of the
+// image it was made from, are the match that never was either: the same
+// bytes in the match's list, tick for tick.
 TIDE_TEST(box3d_parts_leave_the_list_as_a_whole_image_does)
 {
     b3t_forget();
     b3t_check(true, true);
     tide_world_init(&a, DT);
     play(&a, went, 0, TICKS);
-    tide_world_init(&b, DT);
-    int32_t whole = 0;
-    int32_t in_parts = 0;
-    images_since(&whole, &in_parts);
-    for (int i = 0; i < TICKS; i++) {
-        if (i == 680) b.Script.quiet = true;
-        b3t_forget();
-        tide_world_tick(&b);
-        if (tide_world_hash(&b) != went[i]) printf("    tick %d came out different\n", i);
-        TIDE_REQUIRE(tide_world_hash(&b) == went[i]);
+    for (int wholly = 0; wholly < 2; wholly++) {
+        tide_world_init(&b, DT);
+        b3t_whole(wholly);
+        int32_t whole = 0;
+        int32_t in_parts = 0;
+        images_since(&whole, &in_parts);
+        for (int i = 0; i < TICKS; i++) {
+            if (i == 680) b.Script.quiet = true;
+            b3t_forget();
+            tide_world_tick(&b);
+            if (tide_world_hash(&b) != went[i]) printf("    tick %d came out different\n", i);
+            TIDE_REQUIRE(tide_world_hash(&b) == went[i]);
+        }
+        images_since(&whole, &in_parts);
+        printf("    %s: %d images written whole and %d in parts\n", wholly ? "written whole" : "made again before every tick", (int)whole,
+               (int)in_parts);
+        if (wholly) TIDE_CHECK(in_parts == 0 && whole > 600);
+        // A world that was just made from an image goes on from that image: only its first, of a world
+        // nothing was in yet, and the ones a section moved in are whole
+        else TIDE_CHECK(in_parts > 500 && whole > 0);
+        b3t_whole(false);
+        tide_world_free(&b);
     }
-    images_since(&whole, &in_parts);
-    TIDE_CHECK(in_parts == 0 && whole > 600);
     tide_world_free(&a);
-    tide_world_free(&b);
 }
 
-// A snapshot goes on as the world it was taken of did: the first image after
-// C's world is made from the match's again is whole, and the ones after it
-// are parts of that one.
+// A snapshot goes on as the world it was taken of did: the images after C's
+// world is made from the match's again are parts of the image it was made
+// from, and of each other.
 TIDE_TEST(box3d_parts_roll_back)
 {
     b3t_forget();
