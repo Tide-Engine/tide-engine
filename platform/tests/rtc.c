@@ -821,6 +821,40 @@ TIDE_TEST(rtc_peers_on_this_machine)
     rtc_peer_free(host);
 }
 
+// The DTLS client says hello in the update that finds ICE's pair. ICE finds
+// it in what an update reads (the answer to its check, or their check that
+// picks the pair), which is all the client waited for: its ClientHello goes
+// then, not in the next update, a frame later. A room's host is the client.
+// Here it's never updated again once its ICE has a pair, so the joiner only
+// ever reads a ClientHello that update sent.
+TIDE_TEST(rtc_peer_says_hello_in_the_update_that_finds_its_pair)
+{
+    const rtc_ice_config none = {0};
+    rtc_peer *joiner = rtc_peer_new(true, &none);
+    rtc_peer *host = rtc_peer_new(false, &none);
+    TIDE_REQUIRE(joiner && host);
+    double start = rtc_now();
+    while (rtc_now() - start < 10.0 && host->ice.state != RTC_ICE_CONNECTED) {
+        const double now = rtc_now();
+        pass_signals(joiner, host);
+        pass_signals(host, joiner);
+        rtc_peer_update(joiner, now);
+        rtc_peer_update(host, now);
+    }
+    TIDE_REQUIRE(host->ice.state == RTC_ICE_CONNECTED && host->dtls_client);
+    TIDE_CHECK(host->dtls_started && host->dtls.record_seq[0] == 1); // Its ClientHello went, once
+
+    // The joiner alone from here. The host answered the joiner's check before
+    // its own ICE had a pair, so the joiner finds its pair, and answers the
+    // ClientHello if there is one to read
+    start = rtc_now();
+    while (rtc_now() - start < 10.0 && !joiner->dtls.flight_count) rtc_peer_update(joiner, rtc_now());
+    TIDE_CHECK(joiner->ice.state == RTC_ICE_CONNECTED);
+    TIDE_CHECK(joiner->dtls_started && !joiner->dtls_client && joiner->dtls.flight_count > 0);
+    rtc_peer_free(joiner);
+    rtc_peer_free(host);
+}
+
 // ---------------------------------------------------------------------------
 // A peer against another side made by hand of the same pieces (ICE, DTLS and
 // SCTP, over real UDP), so a test says what that side sends and when, and what
