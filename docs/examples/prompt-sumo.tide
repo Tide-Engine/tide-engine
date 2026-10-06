@@ -1,0 +1,808 @@
+settings { title = "Sumo"; maxPlayers = 8; hostMigration = true; }
+
+// ---------------------------------------------------------------- the rules
+
+const float RING = 5;          // The ring's radius, in world units
+const float SMALL = 2.4;       // ...and what it closes in to, while nobody falls
+const int CALM = 5;            // Seconds without a fall before it starts to
+const float VIEW = 5.5;        // How far from the ring's middle the screen shows
+const float BODY = 0.62;       // A wrestler's radius
+const float ACCEL = 19;        // How hard a wrestler pushes off the sand
+const float DRAG = 4;          // ...and how fast the sand slows them
+const float DASH = 9;          // The speed a charge adds, all at once
+const float COOLDOWN = 1.1;    // Seconds between charges
+const float CHARGE = 0.3;      // Seconds a charge hits harder for
+const float BOUNCE = 0.6;      // How much of a bump comes back
+const float FALL_TIME = 0.9;   // Seconds from stepping out to coming back
+const float SAFE_TIME = 1.4;   // Seconds nobody can touch a wrestler who just stepped in
+const int WIN = 5;             // Points that take a bout
+const int MIN_WRESTLERS = 3;   // Bots fill the ring up to this many
+const int COLORS = 8;
+
+scene Main { }
+
+// ------------------------------------------------------------ the match
+
+component Wrestler
+{
+    [Position] float2 position;
+    float2 velocity;
+    float2 facing = float2(0, -1);
+    int color;
+    int score;
+    int wins;
+    int round;        // The bout this wrestler was last set up for
+    bool bot;
+    float cooldown;   // Seconds until the next charge
+    float charge;     // Seconds this charge still hits harder for
+    float wish;       // A charge asked for a moment early waits this long
+    float stun;       // Seconds of no grip, after a hard hit
+    float safe;       // Seconds nobody can touch them for, as they step in
+    bool out;         // Stepped out: falling, until FALL_TIME
+    float fall;
+    Entity lastBy;    // Who touched them last, and when: who gets the point
+    int lastByTick;
+    Random random;
+}
+
+// What a wrestler is trying to do this tick: a player's input, or a bot's mind.
+component Drive
+{
+    float2 move;
+    bool dash;
+}
+
+// What the others did to a wrestler this tick, worked out before anyone moves.
+component Shove
+{
+    float2 slide;
+    float2 push;
+    float stun;
+    Entity by;
+}
+
+component Brain
+{
+    Random random;
+    Entity target; // Who it's after
+    float pick;    // Seconds until it picks someone else
+    float2 heading;
+    float think;   // Seconds until it looks again
+}
+
+singleton Roster
+{
+    Map<PlayerID, Entity> bodies;
+    List<Entity> bots;
+    int taken; // A bit for each color in the ring
+}
+
+singleton Bout
+{
+    int round;
+    int winner = -1;   // The color of who took the bout, while it's cheered
+    int until;         // The tick the next bout starts at
+    float ring = RING; // The ring's radius now: it closes in while nobody falls
+    bool closing;
+    int lastFall;      // The tick someone last fell at
+}
+
+event Bumped { float2 at; float power; }  // For what's shown
+event Dashed { float2 at; float2 way; }   // For what's shown
+event Fell { float2 at; int color; }      // Someone stepped out
+event Pushed { }                          // Sent to who touched them last
+event Scored { }                          // Sent to who got a point for it: for what's shown
+
+// This machine's pointer, turned into a stick by the views.
+local singleton Pad
+{
+    float2 stick;
+    float2 target;
+    bool steer;
+    bool onButton;
+    float dashHold;
+}
+
+input Controls
+{
+    [Clamp(-1, 1)] float2 move;
+    bool dash;
+
+    Sample(Devices devices, Pad pad)
+    {
+        var keys = devices.keyboard;
+        if (keys.d.pressed || keys.rightArrow.pressed) move.x += 1;
+        if (keys.a.pressed || keys.leftArrow.pressed) move.x -= 1;
+        if (keys.w.pressed || keys.upArrow.pressed) move.y += 1;
+        if (keys.s.pressed || keys.downArrow.pressed) move.y -= 1;
+        move += devices.gamepad.leftStick + pad.stick;
+        dash = keys.space.pressed || keys.leftShift.pressed || keys.enter.pressed
+            || devices.gamepad.buttonSouth.pressed || pad.dashHold > 0;
+    }
+}
+
+int PickColor(mut Roster roster)
+{
+    for (var i = 0; i < COLORS; i++)
+    {
+        if ((roster.taken & (1 << i)) == 0)
+        {
+            roster.taken |= 1 << i;
+            return i;
+        }
+    }
+    return 0;
+}
+
+// Where a wrestler stands as a bout starts: each color has a place of its own
+// around the middle, so nobody starts on top of anybody.
+float2 Corner(int color)
+{
+    var turn = color * Math.TAU * 0.375;
+    return float2(Math.Cos(turn), Math.Sin(turn)) * 1.9;
+}
+
+// Put somewhere in the ring, facing its center, standing still.
+void Place(mut Wrestler w, float2 spot)
+{
+    w.position = spot;
+    w.velocity = float2(0);
+    w.facing = Math.Normalize(spot) * -1.0;
+    w.out = false;
+    w.fall = 0;
+    w.stun = 0;
+    w.charge = 0;
+    w.wish = 0;
+    w.cooldown = 0.4;
+    w.safe = SAFE_TIME;
+    w.lastBy = default;
+}
+
+event(PlayerJoined joined) Enter(mut Roster roster)
+{
+    var color = PickColor(roster);
+    var spot = Corner(color);
+    roster.bodies[joined.player] = Spawn(
+        Wrestler { position = spot, facing = Math.Normalize(spot) * -1.0, color = color, safe = SAFE_TIME },
+        Drive, Shove,
+        Owner { player = joined.player });
+}
+
+event(PlayerLeft left) Leave(mut Roster roster)
+{
+    roster.bodies[left.player].Destroy();
+    roster.bodies.Remove(left.player);
+}
+
+event(Destroyed) FreeColor(Wrestler w, mut Roster roster)
+{
+    roster.taken &= ~(1 << w.color);
+}
+
+// Nobody wrestles alone: bots stand in until there are players enough.
+system Balance(mut Roster roster)
+{
+    var wanted = Math.Max(0, MIN_WRESTLERS - roster.bodies.count);
+    if (roster.bots.count < wanted)
+    {
+        var color = PickColor(roster);
+        var spot = Corner(color);
+        var bot = Spawn(
+            Wrestler { position = spot, facing = Math.Normalize(spot) * -1.0, color = color, bot = true, safe = SAFE_TIME },
+            Drive, Shove, Brain);
+        roster.bots.Add(bot);
+    }
+    else if (roster.bots.count > wanted)
+    {
+        var last = roster.bots.count - 1;
+        roster.bots[last].Destroy();
+        roster.bots.RemoveAt(last);
+    }
+}
+
+// The bout's own clock: the next bout after a win, and the ring, which closes
+// in while nobody falls and opens again when someone does.
+system Referee(mut Bout bout, Time time)
+{
+    if (bout.winner >= 0 && time.tick >= bout.until)
+    {
+        bout.winner = -1;
+        bout.round += 1; // Every wrestler sees it in Edge, and starts over
+        bout.lastFall = time.tick;
+    }
+    bout.closing = bout.winner < 0 && time.tick - bout.lastFall >= time.tickRate * CALM;
+    if (bout.closing) bout.ring = Math.Max(SMALL, bout.ring - 0.22 * time.dt);
+    else bout.ring = Math.Min(RING, bout.ring + 1.5 * time.dt);
+}
+
+event(Fell) Calm(mut Bout bout, Time time)
+{
+    bout.lastFall = time.tick;
+}
+
+system Steer(Controls input, mut Drive drive, with Owner)
+{
+    drive.move = input.move;
+    drive.dash = input.dash.down;
+}
+
+// A bot picks someone to go after for a few seconds, gets on the ring's side of
+// them, and drives them out. It keeps off the edge, looks a few times a second,
+// and not too carefully: a charge that misses can carry it out.
+system Think(Wrestler me, mut Drive drive, mut Brain brain, Bout bout, Time time, query (Wrestler body) others)
+{
+    drive.dash = false;
+    if (me.out)
+    {
+        drive.move = float2(0);
+        brain.think = 0;
+        brain.pick = 0;
+        return;
+    }
+    mut var count = 0;
+    mut var found = false;
+    mut var target = float2(0);
+    foreach (var other in others)
+    {
+        if (other.entity == this || other.body.out || other.body.safe > 0) continue;
+        count += 1;
+        if (other.entity != brain.target) continue;
+        found = true;
+        target = other.body.position;
+    }
+    brain.pick -= time.dt;
+    if (count > 0 && (!found || brain.pick <= 0))
+    {
+        brain.pick = brain.random.NextFloat(2.5, 5);
+        mut var choice = brain.random.NextInt(count);
+        foreach (var other in others)
+        {
+            if (other.entity == this || other.body.out || other.body.safe > 0) continue;
+            if (choice == 0)
+            {
+                brain.target = other.entity;
+                target = other.body.position;
+                found = true;
+            }
+            choice -= 1;
+        }
+    }
+
+    var aim = Math.Normalize(target - me.position);
+    mut var outward = Math.Normalize(target);
+    if (Math.LengthSq(target) < 0.5) outward = aim;
+    brain.think -= time.dt;
+    if (brain.think <= 0)
+    {
+        brain.think = brain.random.NextFloat(0.12, 0.35);
+        mut var way = Math.Normalize(float2(0) - me.position) * 0.5; // Nobody to go after: the middle
+        if (found)
+        {
+            var goal = Math.Dot(aim, outward) > 0.45 ? target + outward : target - outward * 1.3;
+            way = Math.Normalize(goal - me.position);
+        }
+        way += brain.random.NextFloat2Direction() * 0.35;
+        var edge = Math.Length(me.position);
+        if (edge > bout.ring * 0.7) way -= me.position / edge * ((edge - bout.ring * 0.7) / (bout.ring * 0.3) * 1.8);
+        brain.heading = Math.Normalize(way) * 0.8;
+    }
+    drive.move = brain.heading;
+
+    var roll = brain.random.NextInt(30);
+    if (!found || roll != 0 || me.cooldown > 0 || me.safe > 0) return;
+    if (Math.Distance(target, me.position) > 3) return;
+    var lands = me.position + me.facing * 1.5;
+    if (Math.Dot(aim, me.facing) > 0.85 && Math.Dot(aim, outward) > 0.3 && Math.Length(lands) < bout.ring) drive.dash = true;
+}
+
+system Move(mut Wrestler w, Drive drive, Time time)
+{
+    var dt = time.dt;
+    w.cooldown = Math.Max(0, w.cooldown - dt);
+    w.charge = Math.Max(0, w.charge - dt);
+    w.stun = Math.Max(0, w.stun - dt);
+    w.safe = Math.Max(0, w.safe - dt);
+    w.wish = drive.dash ? 0.25 : Math.Max(0, w.wish - dt);
+    if (!w.out)
+    {
+        mut var want = drive.move;
+        var push = Math.Length(want);
+        if (push > 1) want = want / push;
+        if (push > 0.05) w.facing = Math.Normalize(want);
+        var grip = w.stun > 0 ? 0.2 : 1.0;
+        w.velocity += want * (ACCEL * grip * dt);
+        if (w.wish > 0 && w.cooldown <= 0 && w.stun <= 0)
+        {
+            w.velocity += w.facing * DASH;
+            w.cooldown = COOLDOWN;
+            w.charge = CHARGE;
+            w.wish = 0;
+            Send(Dashed { at = w.position, way = w.facing });
+        }
+    }
+    w.velocity = w.velocity * Math.Max(0, 1 - DRAG * dt);
+    w.position += w.velocity * dt;
+}
+
+// Every wrestler looks at every other, as they all are now: each takes its own
+// half of a bump, so nobody's turn comes first.
+system Bump(Wrestler me, mut Shove shove, query (Wrestler body) others)
+{
+    shove.slide = float2(0);
+    shove.push = float2(0);
+    shove.stun = 0;
+    shove.by = default;
+    if (me.out || me.safe > 0) return;
+    foreach (var other in others)
+    {
+        if (other.entity == this || other.body.out || other.body.safe > 0) continue;
+        var apart = me.position - other.body.position;
+        var gap = Math.Length(apart);
+        if (gap >= BODY * 2 || gap < 0.0001) continue;
+        var away = apart / gap;
+        shove.slide += away * ((BODY * 2 - gap) * 0.5);
+        shove.by = other.entity;
+        var closing = Math.Dot(other.body.velocity - me.velocity, away);
+        if (closing <= 0) continue;
+        mut var kick = closing * (1 + BOUNCE) * 0.5;
+        if (other.body.charge > 0) kick *= 1.4; // Charged into: sent flying
+        if (me.charge > 0) kick *= 0.6;         // Charging: hard to stop
+        shove.push += away * kick;
+        if (closing < 2.5) continue;
+        if (other.body.charge > 0 && me.charge <= 0) shove.stun = Math.Max(shove.stun, Math.Min(kick * 0.035, 0.35));
+        Send(Bumped { at = (me.position + other.body.position) * 0.5, power = closing });
+    }
+}
+
+system Settle(mut Wrestler w, Shove shove, Time time)
+{
+    if (shove.by == default) return;
+    w.position += shove.slide;
+    w.velocity += shove.push;
+    w.stun = Math.Max(w.stun, shove.stun);
+    w.lastBy = shove.by;
+    w.lastByTick = time.tick;
+}
+
+// Past the bales is out. Whoever touched them last, not long ago, scores.
+system Edge(mut Wrestler w, Bout bout, Time time)
+{
+    if (w.round != bout.round)
+    {
+        w.round = bout.round;
+        w.score = 0;
+        Place(w, Corner(w.color));
+        this.Snap();
+        return;
+    }
+    if (!w.out)
+    {
+        if (Math.LengthSq(w.position) <= bout.ring * bout.ring) return;
+        w.out = true;
+        w.fall = 0;
+        Send(Fell { at = w.position, color = w.color });
+        if (w.lastBy != default && time.tick - w.lastByTick < time.tickRate * 4) w.lastBy.Send(Pushed { });
+        w.lastBy = default;
+        return;
+    }
+    w.fall += time.dt;
+    if (w.fall < FALL_TIME) return;
+    var way = w.random.NextFloat2Direction();
+    var spot = way * (bout.ring * w.random.NextFloat(0.25, 0.6));
+    Place(w, spot);
+    this.Snap();
+}
+
+// The first one out loses: a push only counts for someone still in the ring,
+// and nothing counts while a bout is cheered.
+event(Pushed) Award(mut Wrestler w, mut Bout bout, Time time)
+{
+    if (bout.winner >= 0 || w.out) return;
+    w.score += 1;
+    this.Send(Scored { });
+    if (w.score < WIN) return;
+    w.wins += 1;
+    bout.winner = w.color;
+    bout.until = time.tick + time.tickRate * 3;
+}
+
+// ------------------------------------------------- what this machine shows
+
+struct Spark
+{
+    float2 position;
+    float2 velocity;
+    float age;
+    float life = 0.4;
+    float size = 0.1;
+    Color tone = Color.white;
+}
+
+struct Popup
+{
+    string text;
+    float2 position;
+    float age;
+    Color tone = Color.white;
+}
+
+local singleton Fx
+{
+    List<Spark> sparks;
+    List<Popup> popups;
+    float shake;
+    float clock;    // Seconds, wrapped: which hint shows
+    int round = -1; // The bout this machine last saw start
+    float call;     // Seconds the call to fight still shows
+    Random random;
+}
+
+local singleton Layout
+{
+    float middle;  // The ring's middle on the screen, down from its top
+    float2 button; // The DASH button, in the screen's pixels
+    float reach = 30;
+}
+
+local singleton Me
+{
+    Entity self;
+    int color = -1;
+}
+
+Color Tone(int index)
+{
+    switch (index)
+    {
+        case 0: return Color(0.93, 0.3, 0.28);
+        case 1: return Color(0.25, 0.52, 0.95);
+        case 2: return Color(0.3, 0.72, 0.36);
+        case 3: return Color(0.98, 0.75, 0.14);
+        case 4: return Color(0.93, 0.45, 0.75);
+        case 5: return Color(0.18, 0.76, 0.76);
+        case 6: return Color(0.96, 0.55, 0.2);
+        case 7: return Color(0.62, 0.45, 0.9);
+    }
+    return Color.gray;
+}
+
+string ColorName(int index)
+{
+    switch (index)
+    {
+        case 0: return "RED";
+        case 1: return "BLUE";
+        case 2: return "GREEN";
+        case 3: return "GOLD";
+        case 4: return "PINK";
+        case 5: return "TEAL";
+        case 6: return "ORANGE";
+        case 7: return "VIOLET";
+    }
+    return "SOMEONE";
+}
+
+local event(Bumped bump) ShowBump(mut Fx fx)
+{
+    var count = 2 + int(Math.Min(bump.power, 10) * 0.6);
+    for (var i = 0; i < count; i++)
+    {
+        var way = fx.random.NextFloat2Direction();
+        fx.sparks.Add(Spark { position = bump.at, velocity = way * fx.random.NextFloat(1.5, 2 + bump.power * 0.7),
+                              life = fx.random.NextFloat(0.25, 0.5), size = 0.13 });
+    }
+    fx.shake = Math.Max(fx.shake, Math.Min(bump.power * 0.025, 0.3));
+}
+
+local event(Dashed dash) ShowDash(mut Fx fx)
+{
+    for (var i = 0; i < 5; i++)
+    {
+        var way = fx.random.NextFloat2Direction() * 0.8 - dash.way * 2;
+        fx.sparks.Add(Spark { position = dash.at - dash.way * 0.4, velocity = way, life = 0.45,
+                              size = fx.random.NextFloat(0.12, 0.24), tone = Color(0.96, 0.88, 0.7) });
+    }
+}
+
+local event(Fell fell) ShowFall(mut Fx fx)
+{
+    fx.popups.Add(Popup { text = "OUT!", position = fell.at * 0.8, tone = Tone(fell.color) });
+    for (var i = 0; i < 10; i++)
+    {
+        var way = fx.random.NextFloat2Direction() * fx.random.NextFloat(0.6, 2.4);
+        fx.sparks.Add(Spark { position = fell.at, velocity = way, life = 0.6,
+                              size = fx.random.NextFloat(0.12, 0.26), tone = Color(0.96, 0.88, 0.7) });
+    }
+    fx.shake = Math.Max(fx.shake, 0.2);
+}
+
+// A point is only shown once the server says it's one.
+local event(verified Scored) ShowPoint(Wrestler w, mut Fx fx)
+{
+    fx.popups.Add(Popup { text = "+1", position = w.position + float2(0, BODY + 0.5), tone = Tone(w.color) });
+}
+
+view Stage(Devices devices, Bout bout, mut Layout layout, mut Pad pad, mut Me me, mut Fx fx)
+{
+    // The scores are above the ring and the hints under it, whatever the window.
+    var top = 50.0;
+    var bottom = 46.0;
+    var room = Math.Max(Screen.height - top - bottom, 80);
+    var unit = Math.Max(VIEW * 2 / Screen.width, VIEW * 2 / room); // World units in a pixel
+    layout.middle = top + room * 0.5;
+    layout.reach = Math.Clamp(Math.Min(Screen.width, Screen.height) * 0.08, 22, 32);
+    layout.button = float2(Screen.width - layout.reach - 8, Screen.height - bottom - layout.reach - 4);
+
+    var dt = Math.Min(Frame.dt, 0.05);
+    fx.shake = Math.Max(0, fx.shake - dt);
+    fx.clock += dt;
+    if (fx.clock > 8) fx.clock -= 8;
+    var jolt = fx.random.NextFloat2Direction() * (fx.shake * 0.6);
+
+    Draw2D.Clear(Color(0.1, 0.085, 0.11));
+    Draw2D.SetCamera(float2(0, (top - bottom) * 0.5 * unit) + jolt, unit * Screen.height * 0.5);
+
+    // The ring: a mound of clay, and on it the sand inside a border of straw
+    // bales, which turn red as they close in, and the two starting lines.
+    var ring = bout.ring;
+    var tight = Math.Saturate((RING - ring) / (RING - SMALL));
+    Draw2D.Shape(Shape { center = float2(0, -0.2), size = float2(RING * 2 + 1.4), ellipse = true,
+                         color = Color(0, 0, 0, 0.55), soft = 0.7 });
+    Draw2D.Circle(float2(0), RING + 0.44, Color(0.5, 0.36, 0.24));
+    Draw2D.WireCircle(float2(0), RING + 0.2, 0.05, Color(0.44, 0.31, 0.2));
+    Draw2D.Circle(float2(0), ring, Color(0.87, 0.74, 0.52));
+    Draw2D.WireCircle(float2(0), ring * 0.55, 0.05, Color(0.82, 0.68, 0.46));
+    Draw2D.WireCircle(float2(0), ring + 0.16, 0.3, Color(0.95, 0.87, 0.62) * (1 - tight) + Color(0.97, 0.45, 0.3) * tight);
+    Draw2D.WireCircle(float2(0), ring + 0.16, 0.04, Color(0.7, 0.58, 0.36));
+    Draw2D.RoundRect(float2(-0.75, 0), float2(0.16, 1.3), 0.06, Color(1, 1, 1, 0.75));
+    Draw2D.RoundRect(float2(0.75, 0), float2(0.16, 1.3), 0.06, Color(1, 1, 1, 0.75));
+
+    // The mouse, held, and fingers steer towards where they point. The right
+    // button, a second finger and the DASH button charge.
+    me.self = default;
+    me.color = -1;
+    pad.steer = false;
+    pad.stick = float2(0);
+    mut var dash = false;
+    var mouse = devices.mouse;
+    var mouseAt = Screen.Flip(mouse.position);
+    if (mouse.left.down) pad.onButton = Math.Distance(mouseAt, layout.button) < layout.reach;
+    if (mouse.left.pressed)
+    {
+        if (pad.onButton)
+        {
+            dash = true;
+        }
+        else
+        {
+            pad.steer = true;
+            pad.target = Draw2D.ScreenToWorld(mouseAt);
+        }
+    }
+    if (mouse.right.pressed) dash = true;
+    foreach (var touch in devices.touchscreen.touches)
+    {
+        if (!touch.press.pressed) continue;
+        if (pad.steer || Math.Distance(Screen.Flip(touch.startPosition), layout.button) < layout.reach * 1.4)
+        {
+            dash = true;
+            continue;
+        }
+        pad.steer = true;
+        pad.target = Draw2D.ScreenToWorld(Screen.Flip(touch.position));
+    }
+    pad.dashHold = dash ? 0.1 : Math.Max(0, pad.dashHold - dt);
+}
+
+view Shadows(Wrestler w)
+{
+    if (w.out || w.safe > 0) return;
+    Draw2D.Ellipse(w.position + float2(0.1, -0.16), float2(BODY * 1.05, BODY * 0.95), Color(0, 0, 0, 0.22));
+}
+
+// From above: a round body in its color, a head with a top-knot, and two hands
+// held out the way it faces.
+void DrawWrestler(Wrestler w, bool mine)
+{
+    mut var size = BODY;
+    mut var shown = 1.0;
+    if (w.out)
+    {
+        var gone = Math.Saturate(w.fall / FALL_TIME);
+        size = BODY * (1 - gone * 0.55);
+        shown = 1 - gone * gone;
+    }
+    else if (w.safe > 0)
+    {
+        shown = Math.Frac(w.safe * 5) < 0.5 ? 0.45 : 0.8; // Blinks while nobody can touch it
+    }
+    var tone = w.stun > 0 ? Tone(w.color) * 0.45 + Color.white * 0.55 : Tone(w.color);
+    var at = w.position;
+    var front = Math.Normalize(w.facing);
+    var side = float2(-front.y, front.x);
+    var skin = Color(0.99, 0.84, 0.7);
+    var dark = Color(0.13, 0.1, 0.1);
+    var charging = w.charge > 0 && !w.out;
+    Draw.Tint(Color(1, 1, 1, shown))
+    {
+        if (charging)
+        {
+            // A charge leaves the wrestler's shape behind it, fading
+            for (var i = 3; i > 0; i--)
+            {
+                Draw2D.Circle(at - front * (size * 0.75 * i), size * (1 - i * 0.12), Color(tone.r, tone.g, tone.b, 0.4 - i * 0.1));
+            }
+        }
+        var hands = at + front * (size * (charging ? 1.0 : 0.72));
+        Draw2D.Circle(hands + side * (size * 0.62), size * 0.34, dark);
+        Draw2D.Circle(hands - side * (size * 0.62), size * 0.34, dark);
+        Draw2D.Circle(hands + side * (size * 0.62), size * 0.26, skin);
+        Draw2D.Circle(hands - side * (size * 0.62), size * 0.26, skin);
+        Draw2D.Circle(at, size, dark);
+        Draw2D.Circle(at, size - 0.08, tone);
+        Draw2D.Circle(at + front * (size * 0.2), size * 0.5, skin);
+        Draw2D.Circle(at - front * (size * 0.02), size * 0.22, dark);
+        if (mine)
+        {
+            // Your own has a ring around it, which fills up as the dash comes back
+            var filled = 1 - Math.Saturate(w.cooldown / COOLDOWN);
+            Draw2D.WireCircle(at, size + 0.2, 0.08, Color(1, 1, 1, 0.3));
+            Draw2D.Arc(at, size + 0.2, Math.PI * 0.5, -Math.TAU * filled, 0.08, Color.white);
+        }
+    }
+}
+
+view Rivals(Wrestler w, without ownership)
+{
+    DrawWrestler(w, false);
+}
+
+view Mine(Wrestler w, mut Me me, mut Pad pad, Layout layout, with ownership)
+{
+    me.self = this;
+    me.color = w.color;
+    DrawWrestler(w, true);
+    if (!w.out) Draw2D.Text("YOU", w.position + float2(0, BODY + 0.3), 0.44, Color.white, Anchor.LowerCenter, Font.Bold);
+
+    if (pad.steer)
+    {
+        var way = pad.target - w.position;
+        var far = Math.Length(way);
+        if (far > 0.15) pad.stick = way / far * Math.Min(1, far / 0.8);
+    }
+
+    // The DASH button fills up again as the charge comes back.
+    Draw2D.Screen()
+    {
+        var ready = w.cooldown <= 0 && !w.out;
+        var filled = 1 - Math.Saturate(w.cooldown / COOLDOWN);
+        Draw2D.Circle(layout.button, layout.reach, Color(0, 0, 0, 0.5));
+        Draw2D.Circle(layout.button, layout.reach - 4, ready ? Tone(w.color) : Color(0.25, 0.23, 0.27));
+        Draw2D.Arc(layout.button, layout.reach, -Math.PI * 0.5, Math.TAU * filled, 4, Color.white);
+        Draw2D.Text("DASH", layout.button, layout.reach * 0.43, ready ? Color(0.1, 0.08, 0.08) : Color(0.6, 0.58, 0.62),
+                    Anchor.MiddleCenter, Font.Bold);
+    }
+}
+
+view Effects(mut Fx fx)
+{
+    var dt = Math.Min(Frame.dt, 0.05);
+    mut var i = 0;
+    while (i < fx.sparks.count)
+    {
+        mut var spark = fx.sparks[i];
+        spark.age += dt;
+        if (spark.age >= spark.life)
+        {
+            fx.sparks.RemoveAt(i);
+            continue;
+        }
+        spark.velocity = spark.velocity * Math.Max(0, 1 - 4 * dt);
+        spark.position += spark.velocity * dt;
+        fx.sparks[i] = spark;
+        var left = 1 - spark.age / spark.life;
+        Draw2D.Circle(spark.position, spark.size * (0.4 + left * 0.6), Color(spark.tone.r, spark.tone.g, spark.tone.b, left));
+        i++;
+    }
+
+    mut var p = 0;
+    while (p < fx.popups.count)
+    {
+        mut var popup = fx.popups[p];
+        popup.age += dt;
+        if (popup.age >= 1.1)
+        {
+            fx.popups.RemoveAt(p);
+            continue;
+        }
+        popup.position.y += dt * 1.1;
+        fx.popups[p] = popup;
+        var shown = Math.Saturate((1.1 - popup.age) * 3);
+        var grow = 0.75 + Math.Saturate(popup.age * 8) * 0.25;
+        Draw2D.Text(popup.text, popup.position + float2(0.04, -0.04), 0.7 * grow, Color(0, 0, 0, 0.6 * shown),
+                    Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text(popup.text, popup.position, 0.7 * grow, Color(popup.tone.r, popup.tone.g, popup.tone.b, shown),
+                    Anchor.MiddleCenter, Font.Bold);
+        p++;
+    }
+}
+
+view Hud(Bout bout, Me me, Layout layout, mut Fx fx, query (Wrestler w) all)
+{
+    Draw2D.SetScreen();
+    var center = Screen.width * 0.5;
+    var middle = float2(center, layout.middle);
+
+    // A bout starts with a call.
+    if (fx.round != bout.round)
+    {
+        fx.round = bout.round;
+        fx.call = 1.3;
+    }
+    if (fx.call > 0)
+    {
+        fx.call -= Math.Min(Frame.dt, 0.05);
+        var shown = Math.Saturate(fx.call * 2.5);
+        var size = Math.Min(40, Screen.width * 0.1) * (1.25 - Math.Saturate(fx.call - 0.9));
+        Draw2D.Text("FIGHT!", middle + float2(2, 2), size, Color(0, 0, 0, 0.5 * shown), Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text("FIGHT!", middle, size, Color(1, 1, 1, shown), Anchor.MiddleCenter, Font.Bold);
+    }
+
+    var quiet = Color(0.66, 0.63, 0.68);
+    var gold = Color(0.98, 0.78, 0.2);
+
+    // A chip for each wrestler: its color, its points, and the bouts it took.
+    mut var count = 0;
+    mut var players = 0;
+    mut var best = 1;
+    foreach (var row in all)
+    {
+        count += 1;
+        if (!row.w.bot) players += 1;
+        best = Math.Max(best, row.w.score);
+    }
+    var slot = Math.Min(72, (Screen.width - 12) / Math.Max(count, 1));
+    mut var x = (Screen.width - slot * count) * 0.5;
+    foreach (var row in all)
+    {
+        var mid = x + slot * 0.5;
+        var dot = float2(mid - 10, 17);
+        if (row.w.score == best) Draw2D.Circle(dot, 13, gold);
+        Draw2D.Circle(dot, 10.5, Color(0.1, 0.085, 0.11));
+        Draw2D.Circle(dot, 8.5, Tone(row.w.color));
+        Draw2D.Text($"{row.w.score}", float2(mid + 6, 17), 21, Color.white, Anchor.MiddleLeft, Font.Bold);
+        if (row.entity == me.self) Draw2D.Text("YOU", float2(mid, 31), 10, Color.white, Anchor.UpperCenter, Font.Bold);
+        else if (row.w.bot) Draw2D.Text("bot", float2(mid, 31), 10, quiet, Anchor.UpperCenter);
+        var pips = Math.Min(row.w.wins, 5);
+        for (var i = 0; i < pips; i++)
+        {
+            Draw2D.Circle(float2(mid - (pips - 1) * 3.5 + i * 7, 46), 2.4, gold);
+        }
+        x += slot;
+    }
+
+    // How to play, in two lines, which a narrow window gets in smaller letters.
+    var under = Screen.height - 40;
+    var letters = Math.Min(1, Screen.width / 370);
+    var alone = players < 2 && fx.clock > 4;
+    if (bout.closing)
+    {
+        Draw2D.Text("The ring closes in until someone falls!", float2(center, under), 12.5 * letters, Color(0.99, 0.6, 0.4),
+                    Anchor.UpperCenter, Font.Bold);
+    }
+    else
+    {
+        Draw2D.Text(alone ? "Bots fill in until friends open your link" : $"Bump the others out of the ring. First to {WIN} wins!",
+                    float2(center, under), 12.5 * letters, Color.white, Anchor.UpperCenter);
+    }
+    Draw2D.Text("Move: WASD, arrows or press and hold. Dash: Space or the button",
+                float2(center, under + 18), 11.5 * letters, quiet, Anchor.UpperCenter);
+
+    if (bout.winner < 0) return;
+    var word = bout.winner == me.color ? "YOU WIN!" : $"{ColorName(bout.winner)} WINS!";
+    var big = Math.Min(44, Screen.width * 0.098);
+    var box = Draw2D.MeasureText(word, big, Font.Bold);
+    Draw2D.RoundRect(middle + float2(0, 8), box + float2(32, 48), 16, Color(0.06, 0.05, 0.07, 0.82));
+    Draw2D.Text(word, middle, big, Tone(bout.winner), Anchor.MiddleCenter, Font.Bold);
+    Draw2D.Text("Next bout in a moment", middle + float2(0, box.y * 0.5 + 12), 13, Color.white, Anchor.MiddleCenter);
+}

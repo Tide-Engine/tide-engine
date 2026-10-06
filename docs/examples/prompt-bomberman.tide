@@ -1,0 +1,1018 @@
+// Bomb Buddies: a Bomberman arena for up to eight friends.
+// Everyone who opens the link drops in at a corner. Blast crates for power-ups,
+// ghosts for a point and each other for three. First to ten wins the round.
+
+settings
+{
+    title = "Bomb Buddies";
+    tickRate = TICKS;
+    maxPlayers = SEATS;
+    hostMigration = true; // The match goes on when whoever opened it first leaves
+}
+
+const int W = 13;                  // The arena, in cells, walls around it included
+const int H = 11;
+const int SEATS = 8;
+const int ROOM = 3;                // Cells around each start with no crates: enough to get away from a first bomb
+const int TARGET = 10;             // Points that win a round
+const int TICKS = 60;              // In a second
+const int FUSE = TICKS * 5 / 2;    // Ticks from a bomb's drop to its blast
+const int HURRY = TICKS * 3 / 4;   // Ticks before the blast that a bomb glows red
+const int FIRE = TICKS / 2;        // Ticks a blast burns
+const int CHAIN = TICKS / 10;      // Ticks until a bomb caught in a blast goes off too
+const int RESPAWN = TICKS * 3 / 2;
+const int SHIELD = TICKS * 2;      // Ticks nothing hurts a bomber who just came back
+const int PAUSE = TICKS * 4;       // Ticks between a win and the next round
+const int GHOSTS = 3;
+const float SPEED = 4.5;     // Cells a second
+const float GHOST_SPEED = 1.5;
+
+enum Tile : byte { Wall, Floor, Crate }
+enum Loot : byte { None, Bomb, Flame, Boots }
+
+// The whole board is grids: a cell is a place, and everything on it is a number there.
+singleton Arena
+{
+    Grid2<Tile> tiles = Grid2(W, H);
+    Grid2<Loot> loot = Grid2(W, H);
+    Grid2<int> fuse = Grid2(W, H);       // Ticks until the bomb here goes off: 0 is no bomb
+    Grid2<int> reach = Grid2(W, H);      // How far that bomb burns
+    Grid2<Entity> planter = Grid2(W, H); // Whose bomb it is
+    Grid2<int> fire = Grid2(W, H);       // Ticks of fire left here
+    Grid2<Entity> lit = Grid2(W, H);     // Whose fire it is
+    Map<PlayerID, Entity> bodies;
+    Map<PlayerID, int> seats;
+    int taken;                           // A bit for each seat that has a player
+    int round;
+    int winner = -1;                     // The seat that won, while the round is over
+    int pause;
+    int wait;                            // Ticks until the next ghost may come
+    bool stale = true;                   // The board has to be laid out again
+    Random random;
+}
+
+component Bomber
+{
+    [Position] float2 position;  // In cells: the middle of cell (1, 1) is (1.5, 1.5)
+    int2 from;                   // It walks from one cell's middle...
+    int2 target;                 // ...to the next one's
+    int2 facing;
+    int seat;
+    int score;
+    int bombs = 1;               // How many it can have ticking at once
+    int range = 2;
+    float speed = SPEED;
+    int dead;                    // Ticks until it's back: 0 while it's alive
+    int shield;
+    int round;
+}
+
+component Ghost
+{
+    [Position] float2 position;
+    int2 target;
+    int2 heading;
+    int round;
+    Random random;
+}
+
+event Scored { int points; }           // Sent to the bomber who earned them
+event Boom { float2 at; }              // The rest are only for what's shown
+event Smashed { float2 at; }
+event Died { float2 at; int seat; }
+event Popped { float2 at; }
+event Grabbed { float2 at; Loot loot; }
+event Planted { float2 at; }
+event Won { int seat; }
+
+// ---------------------------------------------------------------- input
+
+// What the pointer does, which a view works out: a drag is a stick, a tap is the bomb.
+local singleton Pad
+{
+    float2 origin; // Where the drag is counted from, in the devices' pixels
+    float2 at;
+    bool held;
+    bool dragged;
+    bool woke;     // The first press only gives the game the keyboard, in a page: it's no bomb
+    int x;
+    int y;
+    float bomb;    // Seconds the bomb button still counts as held
+}
+
+input Controls
+{
+    [Clamp(-1, 1)] int x;
+    [Clamp(-1, 1)] int y;
+    bool bomb;
+
+    Sample(Devices devices, Pad pad)
+    {
+        var keys = devices.keyboard;
+        var stick = devices.gamepad.leftStick;
+        if (keys.d.pressed || keys.rightArrow.pressed || stick.x > 0.5 || pad.x > 0) x += 1;
+        if (keys.a.pressed || keys.leftArrow.pressed || stick.x < -0.5 || pad.x < 0) x -= 1;
+        if (keys.w.pressed || keys.upArrow.pressed || stick.y > 0.5 || pad.y > 0) y += 1;
+        if (keys.s.pressed || keys.downArrow.pressed || stick.y < -0.5 || pad.y < 0) y -= 1;
+        bomb = keys.space.pressed || keys.enter.pressed || devices.gamepad.buttonSouth.pressed || pad.bomb > 0;
+    }
+}
+
+// ---------------------------------------------------------------- helpers
+
+// Where each seat starts: the corners first, then the middle of each side.
+int2 Home(int seat)
+{
+    switch (seat)
+    {
+        case 0: return int2(1, H - 2);
+        case 1: return int2(W - 2, 1);
+        case 2: return int2(W - 2, H - 2);
+        case 3: return int2(1, 1);
+        case 4: return int2(W / 2, H - 2);
+        case 5: return int2(W / 2, 1);
+        case 6: return int2(1, H / 2);
+    }
+    return int2(W - 2, H / 2);
+}
+
+Color SeatColor(int seat)
+{
+    switch (seat)
+    {
+        case 0: return Color(0.96, 0.33, 0.33);
+        case 1: return Color(0.33, 0.62, 1.0);
+        case 2: return Color(0.40, 0.86, 0.42);
+        case 3: return Color(1.0, 0.85, 0.25);
+        case 4: return Color(1.0, 0.52, 0.86);
+        case 5: return Color(0.30, 0.90, 0.90);
+        case 6: return Color(1.0, 0.60, 0.22);
+    }
+    return Color(0.72, 0.55, 1.0);
+}
+
+string SeatName(int seat)
+{
+    switch (seat)
+    {
+        case 0: return "Red";
+        case 1: return "Blue";
+        case 2: return "Green";
+        case 3: return "Yellow";
+        case 4: return "Pink";
+        case 5: return "Cyan";
+        case 6: return "Orange";
+    }
+    return "Purple";
+}
+
+// The four ways out of a cell.
+int2 Side(int d)
+{
+    switch (d)
+    {
+        case 0: return int2(1, 0);
+        case 1: return int2(-1, 0);
+        case 2: return int2(0, 1);
+    }
+    return int2(0, -1);
+}
+
+// `open` has a bit for each of the nine cells around one: whether it can be walked into.
+bool IsOpen(int open, int2 d)
+{
+    return ((open >> ((d.y + 1) * 3 + d.x + 1)) & 1) != 0;
+}
+
+// Which way a bomber goes on from a cell's middle, pushed towards (x, y).
+int2 Choose(int x, int y, int2 cell, int2 facing, int open)
+{
+    if (x == 0 && y == 0) return int2(0, 0);
+    var across = int2(x, 0);
+    var along = int2(0, y);
+    if (x != 0 && y != 0)
+    {
+        // Both pushed: the turn first, then straight on
+        if (facing.x != 0)
+        {
+            if (IsOpen(open, along)) return along;
+            if (IsOpen(open, across)) return across;
+        }
+        else
+        {
+            if (IsOpen(open, across)) return across;
+            if (IsOpen(open, along)) return along;
+        }
+        return int2(0, 0);
+    }
+    var want = x != 0 ? across : along;
+    if (IsOpen(open, want)) return want;
+    // A pillar in the way: go around it, the way it was going first
+    var ahead = cell + want;
+    if (ahead.x % 2 != 0 || ahead.y % 2 != 0) return int2(0, 0);
+    mut var side = int2(want.y, want.x);
+    if (facing.x == -side.x && facing.y == -side.y) side = int2(-side.x, -side.y);
+    if (IsOpen(open, side) && IsOpen(open, side + want)) return side;
+    var other = int2(-side.x, -side.y);
+    if (IsOpen(open, other) && IsOpen(open, other + want)) return other;
+    return int2(0, 0);
+}
+
+// ---------------------------------------------------------------- the match
+
+scene Main { }
+
+event(PlayerJoined joined) Arrive(mut Arena arena)
+{
+    if (arena.bodies.Has(joined.player)) return;
+    mut var seat = 0;
+    while (seat < SEATS - 1 && ((arena.taken >> seat) & 1) != 0) seat++;
+    arena.taken |= 1 << seat;
+    var home = Home(seat);
+    // Room to move around where it starts, whatever was there
+    for (var dy = -ROOM; dy <= ROOM; dy++)
+    {
+        for (var dx = -ROOM; dx <= ROOM; dx++)
+        {
+            var p = home + int2(dx, dy);
+            if (Math.Abs(dx) + Math.Abs(dy) <= ROOM && arena.tiles[p] == Tile.Crate) arena.tiles[p] = Tile.Floor;
+        }
+    }
+    arena.seats[joined.player] = seat;
+    arena.bodies[joined.player] = Spawn(
+        Bomber { seat = seat, position = float2(home) + 0.5, from = home, target = home, shield = SHIELD, round = arena.round },
+        Owner { player = joined.player });
+}
+
+event(PlayerLeft left) Depart(mut Arena arena)
+{
+    if (!arena.bodies.Has(left.player)) return;
+    arena.bodies[left.player].Destroy();
+    arena.taken &= ~(1 << arena.seats[left.player]);
+    arena.bodies.Remove(left.player);
+    arena.seats.Remove(left.player);
+}
+
+// Once a tick: rounds, bombs and fire.
+system Burn(mut Arena arena, Time time)
+{
+    if (arena.pause > 0)
+    {
+        arena.pause -= 1;
+        if (arena.pause == 0)
+        {
+            arena.round += 1;
+            arena.winner = -1;
+            arena.stale = true;
+        }
+    }
+    if (arena.stale)
+    {
+        // Walls around the board and on every other cell, crates on most of the rest,
+        // and room to move in each corner and around every seat that has a player
+        for (var y = 0; y < H; y++)
+        {
+            for (var x = 0; x < W; x++)
+            {
+                mut var tile = Tile.Floor;
+                if (x == 0 || y == 0 || x == W - 1 || y == H - 1 || (x % 2 == 0 && y % 2 == 0)) tile = Tile.Wall;
+                else
+                {
+                    mut var clear = false;
+                    for (var seat = 0; seat < SEATS; seat++)
+                    {
+                        if (seat >= 4 && ((arena.taken >> seat) & 1) == 0) continue;
+                        var home = Home(seat);
+                        if (Math.Abs(home.x - x) + Math.Abs(home.y - y) <= ROOM) clear = true;
+                    }
+                    if (!clear && Math.Hash(int3(x, y, time.seed + arena.round * 131)) % 100 < 80) tile = Tile.Crate;
+                }
+                arena.tiles[x, y] = tile;
+                arena.loot[x, y] = Loot.None;
+                arena.fuse[x, y] = 0;
+                arena.fire[x, y] = 0;
+            }
+        }
+        arena.stale = false;
+        arena.wait = TICKS * 6;
+        return;
+    }
+    for (var y = 1; y < H - 1; y++)
+    {
+        for (var x = 1; x < W - 1; x++)
+        {
+            var fire = arena.fire[x, y];
+            if (fire > 0) arena.fire[x, y] = fire - 1;
+            var fuse = arena.fuse[x, y];
+            if (fuse == 0) continue;
+            arena.fuse[x, y] = fuse - 1;
+            if (fuse > 1) continue;
+
+            // It goes off: fire each way, as far as it reaches or to the first wall or crate
+            var middle = int2(x, y);
+            var reach = arena.reach[middle];
+            var by = arena.planter[middle];
+            arena.fire[middle] = FIRE;
+            arena.lit[middle] = by;
+            for (var d = 0; d < 4; d++)
+            {
+                var dir = Side(d);
+                for (var i = 1; i <= reach; i++)
+                {
+                    var p = middle + dir * i;
+                    var tile = arena.tiles[p];
+                    if (tile == Tile.Wall) break;
+                    arena.fire[p] = FIRE;
+                    arena.lit[p] = by;
+                    if (tile == Tile.Crate)
+                    {
+                        arena.tiles[p] = Tile.Floor;
+                        if (arena.random.NextInt(100) < 38) arena.loot[p] = Loot(1 + arena.random.NextInt(3));
+                        Send(Smashed { at = float2(p) + 0.5 });
+                        break;
+                    }
+                    if (arena.fuse[p] > CHAIN) arena.fuse[p] = CHAIN;
+                }
+            }
+            Send(Boom { at = float2(middle) + 0.5 });
+        }
+    }
+}
+
+// Each bomber, by its own player's input.
+system Walk(Controls input, mut Bomber bomber, mut Arena arena, Time time, query (Ghost ghost) ghosts, with Owner)
+{
+    var home = Home(bomber.seat);
+    if (bomber.round != arena.round)
+    {
+        // A new round: everyone starts over
+        bomber.round = arena.round;
+        bomber.score = 0;
+        bomber.bombs = 1;
+        bomber.range = 2;
+        bomber.speed = SPEED;
+        bomber.dead = 0;
+        bomber.shield = SHIELD;
+        bomber.position = float2(home) + 0.5;
+        bomber.from = home;
+        bomber.target = home;
+        this.Snap();
+        return;
+    }
+    if (bomber.dead > 0)
+    {
+        bomber.dead -= 1;
+        if (bomber.dead > 0) return;
+        bomber.shield = SHIELD;
+        bomber.position = float2(home) + 0.5;
+        bomber.from = home;
+        bomber.target = home;
+        this.Snap();
+        return;
+    }
+    if (bomber.shield > 0) bomber.shield -= 1;
+
+    mut var step = bomber.speed * time.dt;
+    for (var pass = 0; pass < 4; pass++)
+    {
+        var goal = float2(bomber.target) + 0.5;
+        var way = goal - bomber.position;
+        var left = Math.Abs(way.x) + Math.Abs(way.y);
+        if (left < 0.001)
+        {
+            // In a cell's middle: which way on?
+            bomber.position = goal;
+            bomber.from = bomber.target;
+            mut var open = 0;
+            for (var dy = -1; dy <= 1; dy++)
+            {
+                for (var dx = -1; dx <= 1; dx++)
+                {
+                    var p = bomber.target + int2(dx, dy);
+                    if (arena.tiles[p] == Tile.Floor && arena.fuse[p] == 0) open |= 1 << ((dy + 1) * 3 + dx + 1);
+                }
+            }
+            var dir = Choose(input.x, input.y, bomber.target, bomber.facing, open);
+            if (dir.x == 0 && dir.y == 0) break;
+            bomber.target = bomber.from + dir;
+            bomber.facing = dir;
+            continue;
+        }
+
+        // Between two cells: a push back turns it around, and so does a push across
+        // when the cell it just left has that way open
+        var heading = bomber.target - bomber.from;
+        mut var back = (heading.x != 0 && input.x == -heading.x) || (heading.y != 0 && input.y == -heading.y);
+        if (!back && left > 0.5)
+        {
+            mut var want = int2(0, 0);
+            if (heading.x != 0 && input.x == 0) want = int2(0, input.y);
+            if (heading.y != 0 && input.y == 0) want = int2(input.x, 0);
+            var q = bomber.from + want;
+            back = (want.x != 0 || want.y != 0) && arena.tiles[q] == Tile.Floor && arena.fuse[q] == 0;
+        }
+        if (back && (left > 0.5 || arena.fuse[bomber.from] == 0))
+        {
+            var came = bomber.from;
+            bomber.from = bomber.target;
+            bomber.target = came;
+            bomber.facing = int2(-heading.x, -heading.y);
+            continue;
+        }
+        var move = Math.Min(step, left);
+        bomber.position += way / left * move;
+        step -= move;
+        if (step <= 0) break;
+    }
+
+    var cell = int2(Math.Floor(bomber.position));
+
+    // A bomb, where it stands, if it has one left
+    if (input.bomb.down && arena.fuse[cell] == 0 && arena.pause == 0)
+    {
+        mut var ticking = 0;
+        for (var y = 1; y < H - 1; y++)
+        {
+            for (var x = 1; x < W - 1; x++)
+            {
+                if (arena.fuse[x, y] > 0 && arena.planter[x, y] == this) ticking += 1;
+            }
+        }
+        if (ticking < bomber.bombs)
+        {
+            arena.fuse[cell] = FUSE;
+            arena.reach[cell] = bomber.range;
+            arena.planter[cell] = this;
+            Send(Planted { at = float2(cell) + 0.5 });
+        }
+    }
+
+    var found = arena.loot[cell];
+    if (found != Loot.None)
+    {
+        if (found == Loot.Bomb) bomber.bombs = Math.Min(bomber.bombs + 1, 5);
+        if (found == Loot.Flame) bomber.range = Math.Min(bomber.range + 1, 6);
+        if (found == Loot.Boots) bomber.speed = Math.Min(bomber.speed + 0.7, 7.3);
+        arena.loot[cell] = Loot.None;
+        Send(Grabbed { at = float2(cell) + 0.5, loot = found });
+    }
+
+    // Fire and ghosts
+    if (bomber.shield > 0) return;
+    mut var hit = arena.fire[cell] > 0;
+    mut Entity killer = default;
+    if (hit) killer = arena.lit[cell];
+    foreach (var entry in ghosts)
+    {
+        if (Math.DistanceSq(entry.ghost.position, bomber.position) < 0.3) hit = true;
+    }
+    if (!hit) return;
+    bomber.dead = RESPAWN;
+    bomber.bombs = 1;
+    bomber.range = 2;
+    bomber.speed = SPEED;
+    Send(Died { at = bomber.position, seat = bomber.seat });
+    if (killer != default && killer != this) killer.Send(Scored { points = 3 });
+}
+
+event(Scored scored) Award(mut Bomber bomber, mut Arena arena)
+{
+    if (arena.pause > 0) return;
+    bomber.score += scored.points;
+    if (bomber.score < TARGET) return;
+    arena.winner = bomber.seat;
+    arena.pause = PAUSE;
+    Send(Won { seat = bomber.seat });
+}
+
+// Ghosts float from cell to cell, through crates too: mostly straight on, now and then
+// towards the nearest bomber, and never into a wall, a bomb or fire.
+system Drift(mut Ghost ghost, Arena arena, Time time, query (Bomber bomber) bombers)
+{
+    if (ghost.round != arena.round)
+    {
+        this.Destroy();
+        return;
+    }
+    var cell = int2(Math.Floor(ghost.position));
+    if (arena.fire[cell] > 0)
+    {
+        arena.lit[cell].Send(Scored { points = 1 });
+        Send(Popped { at = ghost.position });
+        this.Destroy();
+        return;
+    }
+    mut var prey = float2(0, 0); // The way to the nearest bomber
+    mut var near = 1000.0;
+    foreach (var entry in bombers)
+    {
+        var far = Math.Distance(entry.bomber.position, ghost.position);
+        if (entry.bomber.dead > 0 || far >= near) continue;
+        near = far;
+        prey = entry.bomber.position - ghost.position;
+    }
+    mut var step = GHOST_SPEED * time.dt;
+    for (var pass = 0; pass < 3; pass++)
+    {
+        var goal = float2(ghost.target) + 0.5;
+        var way = goal - ghost.position;
+        var left = Math.Abs(way.x) + Math.Abs(way.y);
+        if (left < 0.001)
+        {
+            ghost.position = goal;
+            var mood = ghost.random.NextInt(100);
+            mut var ways = 0;
+            mut var count = 0;
+            mut var pick = -1;
+            mut var pull = 0.0;
+            for (var d = 0; d < 4; d++)
+            {
+                var dir = Side(d);
+                var p = ghost.target + dir;
+                if (arena.tiles[p] == Tile.Wall || arena.fuse[p] > 0 || arena.fire[p] > 0) continue;
+                if (dir.x == -ghost.heading.x && dir.y == -ghost.heading.y) continue; // Not back, unless there's no other way
+                ways |= 1 << d;
+                count += 1;
+                if (mood < 25)
+                {
+                    // Hunting: the way that closes in the most
+                    var closer = dir.x * prey.x + dir.y * prey.y;
+                    if (closer > pull)
+                    {
+                        pull = closer;
+                        pick = d;
+                    }
+                }
+                else if (mood < 80 && dir.x == ghost.heading.x && dir.y == ghost.heading.y) pick = d;
+            }
+            if (count == 0)
+            {
+                var behind = ghost.target - ghost.heading;
+                if (arena.tiles[behind] == Tile.Wall || arena.fuse[behind] > 0 || arena.fire[behind] > 0) break;
+                if (ghost.heading.x == 0 && ghost.heading.y == 0) break;
+                ghost.heading = int2(-ghost.heading.x, -ghost.heading.y);
+                ghost.target = behind;
+                continue;
+            }
+            if (pick < 0)
+            {
+                var nth = ghost.random.NextInt(count);
+                mut var seen = 0;
+                for (var d = 0; d < 4; d++)
+                {
+                    if (((ways >> d) & 1) == 0) continue;
+                    if (seen == nth) pick = d;
+                    seen += 1;
+                }
+            }
+            ghost.heading = Side(pick);
+            ghost.target = ghost.target + ghost.heading;
+            continue;
+        }
+        var move = Math.Min(step, left);
+        ghost.position += way / left * move;
+        step -= move;
+        if (step <= 0) break;
+    }
+}
+
+// A new ghost now and then, away from every bomber.
+system Haunt(mut Arena arena, query (with Ghost) ghosts, query (Bomber bomber) bombers)
+{
+    if (arena.pause > 0 || arena.stale) return;
+    mut var count = 0;
+    foreach (var spook in ghosts) count += 1;
+    if (count >= GHOSTS) return;
+    if (arena.wait > 0)
+    {
+        arena.wait -= 1;
+        return;
+    }
+    var cell = int2(arena.random.NextInt(1, W - 1), arena.random.NextInt(1, H - 1));
+    if (arena.tiles[cell] == Tile.Wall || arena.fuse[cell] > 0 || arena.fire[cell] > 0) return; // Another try next tick
+    var at = float2(cell) + 0.5;
+    foreach (var entry in bombers)
+    {
+        if (Math.Distance(entry.bomber.position, at) < 6) return;
+    }
+    Spawn(Ghost { position = at, target = cell, round = arena.round });
+    arena.wait = TICKS * 5;
+}
+
+// ---------------------------------------------------------------- what a machine shows
+
+struct Spark
+{
+    float2 position;
+    float2 velocity;
+    float age;
+    float life = 0.4;
+    float size = 0.08;
+    Color color = Color.white;
+}
+
+struct Popup
+{
+    float2 position;
+    float age;
+    int points;             // Points scored...
+    Loot loot = Loot.None;  // ...or what was picked up
+}
+
+// Where the board is on this machine's screen, which the view that draws it works out.
+local singleton Lens
+{
+    float unit = 1;   // How much bigger than the smallest window everything on the screen is
+    float pixels = 28; // A cell's
+    float top = 44;    // The board's top edge, in the screen's pixels...
+    float bottom = 356; // ...and its bottom one
+}
+
+local singleton Fx
+{
+    List<Spark> sparks;
+    List<Popup> popups;
+    float shake;
+    Random random;
+}
+
+local event(Boom boom) ShowBoom(mut Fx fx)
+{
+    fx.shake = Math.Max(fx.shake, 0.22);
+    for (var i = 0; i < 16; i++)
+    {
+        fx.sparks.Add(Spark { position = boom.at, velocity = fx.random.NextFloat2Direction() * fx.random.NextFloat(2, 8),
+                              life = fx.random.NextFloat(0.25, 0.6), size = 0.09, color = Color(1, fx.random.NextFloat(0.55, 0.95), 0.25) });
+    }
+}
+
+local event(Smashed smashed) ShowSmash(mut Fx fx)
+{
+    for (var i = 0; i < 8; i++)
+    {
+        fx.sparks.Add(Spark { position = smashed.at, velocity = fx.random.NextFloat2Direction() * fx.random.NextFloat(1, 4),
+                              life = fx.random.NextFloat(0.3, 0.6), size = 0.11, color = Color(0.72, 0.5, 0.3) });
+    }
+}
+
+local event(Died died) ShowDeath(mut Fx fx)
+{
+    fx.shake = Math.Max(fx.shake, 0.35);
+    for (var i = 0; i < 26; i++)
+    {
+        fx.sparks.Add(Spark { position = died.at, velocity = fx.random.NextFloat2Direction() * fx.random.NextFloat(1, 7),
+                              life = fx.random.NextFloat(0.4, 0.9), size = 0.13, color = SeatColor(died.seat) });
+    }
+}
+
+local event(Popped popped) ShowPop(mut Fx fx)
+{
+    for (var i = 0; i < 14; i++)
+    {
+        fx.sparks.Add(Spark { position = popped.at, velocity = fx.random.NextFloat2Direction() * fx.random.NextFloat(1, 5),
+                              life = fx.random.NextFloat(0.3, 0.7), size = 0.11, color = Color(0.85, 0.8, 1) });
+    }
+}
+
+local event(Grabbed grabbed) ShowGrab(mut Fx fx)
+{
+    for (var i = 0; i < 10; i++)
+    {
+        fx.sparks.Add(Spark { position = grabbed.at, velocity = fx.random.NextFloat2Direction() * fx.random.NextFloat(1, 3),
+                              life = 0.4, size = 0.07, color = Color(1, 1, 0.7) });
+    }
+    fx.popups.Add(Popup { position = grabbed.at + float2(0, 0.4), loot = grabbed.loot });
+}
+
+local event(Planted planted) ShowPlant(mut Fx fx)
+{
+    for (var i = 0; i < 10; i++)
+    {
+        var way = float2(Math.Cos(i * 0.628), Math.Sin(i * 0.628));
+        fx.sparks.Add(Spark { position = planted.at + way * 0.3, velocity = way * 2.5, life = 0.3, size = 0.07, color = Color(1, 0.85, 0.4) });
+    }
+}
+
+// Confetti in the winner's color, all over the board
+local event(Won won) ShowWin(mut Fx fx)
+{
+    for (var i = 0; i < 90; i++)
+    {
+        var tint = i % 3 == 0 ? Color.white : SeatColor(won.seat);
+        fx.sparks.Add(Spark { position = fx.random.NextFloat2(float2(1, 1), float2(W - 1, H - 1)),
+                              velocity = fx.random.NextFloat2Direction() * fx.random.NextFloat(1, 6),
+                              life = fx.random.NextFloat(0.8, 2.2), size = 0.12, color = tint });
+    }
+}
+
+local event(Scored scored) ShowScore(Bomber bomber, mut Fx fx)
+{
+    fx.popups.Add(Popup { position = bomber.position + float2(0, 0.5), points = scored.points });
+}
+
+// The pointer: a drag steers, a tap drops a bomb, and so does a second finger.
+view Thumb(Devices devices, mut Pad pad)
+{
+    pad.bomb = Math.Max(0, pad.bomb - Frame.dt);
+    var pointer = devices.pointer;
+    if (pointer.press.down)
+    {
+        pad.origin = pointer.position;
+        pad.dragged = false;
+    }
+    pad.x = 0;
+    pad.y = 0;
+    pad.held = pointer.press.pressed;
+    if (pad.held)
+    {
+        var pull = pointer.position - pad.origin;
+        var far = Math.Length(pull);
+        if (far > 14) pad.dragged = true;
+        if (pad.dragged && far > 8)
+        {
+            if (Math.Abs(pull.x) > Math.Abs(pull.y)) pad.x = pull.x > 0 ? 1 : -1;
+            else pad.y = pull.y > 0 ? 1 : -1;
+        }
+        if (far > 44) pad.origin = pointer.position - pull / far * 44; // The stick follows a finger that goes far
+        pad.at = pointer.position;
+    }
+    if (pointer.press.up)
+    {
+        if (!pad.dragged && pad.woke) pad.bomb = 0.12;
+        pad.woke = true;
+    }
+    var first = devices.touchscreen.primaryTouch.id;
+    foreach (var touch in devices.touchscreen.touches)
+    {
+        if (touch.press.down && touch.id != first) pad.bomb = 0.12;
+    }
+}
+
+// The board, through a camera that fits it between the scores and the hints.
+view Board(Arena arena, Time time, mut Fx fx, mut Lens lens)
+{
+    // The scores above the board and the hints under it. A tall screen, like a phone's,
+    // has the board at its top and room for a thumb under it
+    var wide = Screen.width;
+    var tall = Screen.height;
+    lens.unit = Math.Clamp(Math.Min(wide / 376.0, tall / 400.0), 1, 1.6);
+    var above = 40 * lens.unit;
+    var below = 38 * lens.unit;
+    lens.pixels = Math.Min((wide - 8) / W, (tall - above - below) / H);
+    var spare = tall - above - below - lens.pixels * H;
+    lens.top = above + Math.Min(spare * 0.5, 6 * lens.unit);
+    lens.bottom = lens.top + lens.pixels * H;
+
+    fx.shake = Math.Max(0, fx.shake - Frame.dt);
+    var jolt = fx.random.NextFloat2Direction() * fx.shake * 0.3;
+    Draw2D.Clear(Color(0.07, 0.08, 0.11));
+    var middle = (lens.top + lens.bottom) * 0.5; // The board's, down the screen
+    Draw2D.SetCamera(float2(W * 0.5, H * 0.5 + (middle - tall * 0.5) / lens.pixels) + jolt, tall * 0.5 / lens.pixels);
+
+    for (var y = 0; y < H; y++)
+    {
+        for (var x = 0; x < W; x++)
+        {
+            var at = float2(x + 0.5, y + 0.5);
+            var tile = arena.tiles[x, y];
+            if (tile == Tile.Wall)
+            {
+                Draw2D.Rect(at, float2(1), Color(0.27, 0.30, 0.38));
+                Draw2D.Rect(at + float2(0, 0.08), float2(1, 0.84), Color(0.42, 0.46, 0.56));
+                continue;
+            }
+            Draw2D.Rect(at, float2(1), (x + y) % 2 == 0 ? Color(0.17, 0.29, 0.25) : Color(0.19, 0.32, 0.27));
+            if (tile == Tile.Crate)
+            {
+                Draw2D.RoundRect(at, float2(0.92), 0.12, Color(0.47, 0.30, 0.16));
+                Draw2D.RoundRect(at, float2(0.76), 0.08, Color(0.70, 0.48, 0.27));
+                Draw2D.Line(at + float2(-0.26, -0.26), at + float2(0.26, 0.26), 0.07, Color(0.47, 0.30, 0.16));
+                Draw2D.Line(at + float2(-0.26, 0.26), at + float2(0.26, -0.26), 0.07, Color(0.47, 0.30, 0.16));
+            }
+        }
+    }
+
+    for (var y = 1; y < H - 1; y++)
+    {
+        for (var x = 1; x < W - 1; x++)
+        {
+            var at = float2(x + 0.5, y + 0.5);
+            var loot = arena.loot[x, y];
+            if (loot != Loot.None)
+            {
+                var hop = Math.Sin(time.t * 5 + x) * 0.04;
+                var spot = at + float2(0, hop);
+                if (loot == Loot.Bomb)
+                {
+                    Draw2D.RoundRect(spot, float2(0.72), 0.18, Color(0.20, 0.55, 0.95));
+                    Draw2D.Circle(spot + float2(0, -0.03), 0.19, Color(0.05, 0.06, 0.1));
+                    Draw2D.Circle(spot + float2(0.15, 0.18), 0.06, Color(1, 0.85, 0.3));
+                }
+                if (loot == Loot.Flame)
+                {
+                    Draw2D.RoundRect(spot, float2(0.72), 0.18, Color(0.90, 0.30, 0.20));
+                    Draw2D.Ellipse(spot + float2(0, -0.02), float2(0.17, 0.24), Color(1, 0.8, 0.2));
+                    Draw2D.Ellipse(spot + float2(0, -0.09), float2(0.08, 0.12), Color(1, 1, 0.8));
+                }
+                if (loot == Loot.Boots)
+                {
+                    Draw2D.RoundRect(spot, float2(0.72), 0.18, Color(0.25, 0.75, 0.45));
+                    Draw2D.Line(spot + float2(-0.2, 0.15), spot + float2(-0.02, 0), 0.08, Color.white);
+                    Draw2D.Line(spot + float2(-0.2, -0.15), spot + float2(-0.02, 0), 0.08, Color.white);
+                    Draw2D.Line(spot + float2(0.02, 0.15), spot + float2(0.2, 0), 0.08, Color.white);
+                    Draw2D.Line(spot + float2(0.02, -0.15), spot + float2(0.2, 0), 0.08, Color.white);
+                }
+            }
+            var fuse = arena.fuse[x, y];
+            if (fuse > 0)
+            {
+                var hurry = fuse < HURRY;
+                var beat = 0.5 + 0.5 * Math.Sin(time.t * (hurry ? 30 : 10));
+                var round = 0.29 + 0.05 * beat;
+                Draw2D.Ellipse(at + float2(0, -0.3), float2(0.28, 0.09), Color(0, 0, 0, 0.35));
+                Draw2D.WireCircle(at, 0.5, 0.07, Color(1, 0.4, 0.25, hurry ? 1.0 : 0.45 + 0.4 * beat)); // Shows around whoever stands on it
+                Draw2D.Circle(at + float2(0, -0.03), round + 0.04, Color(0.75, 0.78, 0.85));
+                Draw2D.Circle(at + float2(0, -0.03), round, hurry ? Color(0.75 + 0.25 * beat, 0.15, 0.1) : Color(0.06, 0.06, 0.09));
+                Draw2D.Circle(at + float2(-0.1, 0.07), 0.07, Color(1, 1, 1, 0.55));
+                Draw2D.Line(at + float2(0.12, 0.22), at + float2(0.2, 0.34), 0.06, Color(0.75, 0.6, 0.4));
+                Draw2D.Circle(at + float2(0.22, 0.37), 0.06 + 0.05 * beat, Color(1, 0.85, 0.3));
+            }
+            var fire = arena.fire[x, y];
+            if (fire > 0)
+            {
+                var hot = fire / (FIRE * 1.0);
+                Draw2D.Rect(at, float2(1), Color(1, 0.38, 0.08, 0.45 + 0.5 * hot));
+                Draw2D.RoundRect(at, float2(0.5 + 0.3 * hot), 0.2, Color(1, 0.75, 0.2, 0.5 + 0.5 * hot));
+                Draw2D.Circle(at, 0.1 + 0.16 * hot, Color(1, 1, 0.85, hot));
+                Draw.Blend(Blend.Add)
+                {
+                    Draw2D.Shape(Shape { center = at, size = float2(1.5), ellipse = true, color = Color(1, 0.5, 0.15, 0.22 * hot), soft = 0.5 });
+                }
+            }
+        }
+    }
+}
+
+view DrawGhosts(Ghost ghost, Time time)
+{
+    var at = ghost.position + float2(0, Math.Sin(time.t * 6 + ghost.position.x + ghost.position.y) * 0.04);
+    var look = float2(ghost.heading) * 0.05;
+    var sheet = Color(0.84, 0.80, 0.98);
+    Draw2D.Ellipse(ghost.position + float2(0, -0.34), float2(0.26, 0.08), Color(0, 0, 0, 0.3));
+    Draw2D.RoundRect(at + float2(0, 0.02), float2(0.62, 0.68), 0.3, sheet);
+    Draw2D.Circle(at + float2(-0.2, -0.3), 0.11, sheet);
+    Draw2D.Circle(at + float2(0, -0.3), 0.11, sheet);
+    Draw2D.Circle(at + float2(0.2, -0.3), 0.11, sheet);
+    Draw2D.Circle(at + float2(-0.12, 0.1) + look, 0.08, Color(0.15, 0.1, 0.3));
+    Draw2D.Circle(at + float2(0.12, 0.1) + look, 0.08, Color(0.15, 0.1, 0.3));
+}
+
+view DrawBombers(Bomber bomber, Owner owner, Session session, Time time)
+{
+    if (bomber.dead > 0) return;
+    var mine = owner.player == session.player;
+    var color = SeatColor(bomber.seat);
+    var at = bomber.position;
+    var look = float2(bomber.facing) * 0.07;
+    var faint = bomber.shield > 0 && int(time.t * 10) % 2 == 0 ? 0.35 : 1.0; // Blinks while nothing hurts it
+    Draw.Tint(Color(1, 1, 1, faint))
+    {
+        Draw2D.Ellipse(at + float2(0, -0.33), float2(0.28, 0.09), Color(0, 0, 0, 0.35));
+        Draw2D.Line(at + float2(0, 0.3), at + float2(0, 0.47), 0.07, Color(0.9, 0.9, 0.95));
+        Draw2D.Circle(at + float2(0, 0.5), 0.09, Color(1, 0.45, 0.6));
+        if (mine) Draw2D.Circle(at, 0.44, Color.white);
+        Draw2D.Circle(at, 0.37, color);
+        Draw2D.Circle(at + float2(-0.13, 0.07) + look, 0.1, Color.white);
+        Draw2D.Circle(at + float2(0.13, 0.07) + look, 0.1, Color.white);
+        Draw2D.Circle(at + float2(-0.13, 0.07) + look * 1.6, 0.05, Color(0.08, 0.08, 0.12));
+        Draw2D.Circle(at + float2(0.13, 0.07) + look * 1.6, 0.05, Color(0.08, 0.08, 0.12));
+    }
+    if (mine && bomber.shield > 0) Draw2D.Text("YOU", at + float2(0, 0.6), 0.42, Color.white, Anchor.LowerCenter, Font.Bold);
+}
+
+view Sparkle(mut Fx fx)
+{
+    var dt = Math.Min(Frame.dt, 0.05);
+    mut var i = 0;
+    Draw.Blend(Blend.Add)
+    {
+        while (i < fx.sparks.count)
+        {
+            mut var spark = fx.sparks[i];
+            spark.age += dt;
+            if (spark.age >= spark.life)
+            {
+                fx.sparks.RemoveAt(i);
+                continue;
+            }
+            spark.velocity = spark.velocity * Math.Max(0, 1 - 4 * dt);
+            spark.position += spark.velocity * dt;
+            fx.sparks[i] = spark;
+            var fade = 1 - spark.age / spark.life;
+            Draw2D.Circle(spark.position, spark.size * (0.4 + 0.6 * fade), Color(spark.color.r, spark.color.g, spark.color.b, fade));
+            i++;
+        }
+    }
+    mut var n = 0;
+    while (n < fx.popups.count)
+    {
+        mut var popup = fx.popups[n];
+        popup.age += dt;
+        if (popup.age >= 0.9)
+        {
+            fx.popups.RemoveAt(n);
+            continue;
+        }
+        popup.position.y += dt * 1.2;
+        fx.popups[n] = popup;
+        mut var words = $"+{popup.points}";
+        if (popup.loot == Loot.Bomb) words = "+bomb";
+        if (popup.loot == Loot.Flame) words = "+fire";
+        if (popup.loot == Loot.Boots) words = "+speed";
+        var ink = Color(1, 0.97, 0.75, Math.Min(1, 2.5 * (0.9 - popup.age)));
+        Draw2D.Text(words, popup.position + float2(0.03, -0.03), popup.loot == Loot.None ? 0.7 : 0.46, Color(0, 0, 0, ink.a * 0.7), Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text(words, popup.position, popup.loot == Loot.None ? 0.7 : 0.46, ink, Anchor.MiddleCenter, Font.Bold);
+        n++;
+    }
+}
+
+view Hud(Arena arena, Session session, Pad pad, Lens lens, query (Bomber bomber, Owner owner) bombers)
+{
+    Draw2D.SetScreen();
+    var wide = Screen.width;
+    var tall = Screen.height;
+    var unit = lens.unit;
+    var quiet = Color(0.70, 0.73, 0.80);
+
+    // A seat for each player along the top: its color and its score
+    var slot = Math.Min(wide / 8.0, 84 * unit);
+    var start = (wide - slot * SEATS) * 0.5;
+    var row = 20 * unit;
+    mut var players = 0;
+    mut var mine = -1;
+    mut var away = 0;
+    mut var best = 0;
+    foreach (var entry in bombers)
+    {
+        players += 1;
+        best = Math.Max(best, entry.bomber.score);
+    }
+    foreach (var entry in bombers)
+    {
+        var who = entry.bomber;
+        var x = start + slot * who.seat;
+        if (entry.owner.player == session.player)
+        {
+            mine = who.seat;
+            away = who.dead;
+            Draw2D.RoundRect(float2(x + slot * 0.5, row), float2(slot - 4, 30 * unit), 9 * unit, Color(1, 1, 1, 0.16));
+        }
+        Draw2D.Circle(float2(x + 14 * unit, row), 8 * unit, SeatColor(who.seat));
+        Draw2D.Text($"{who.score}", float2(x + 26 * unit, row), 17 * unit, who.score > 0 && who.score == best ? Color(1, 0.9, 0.4) : Color.white,
+                    Anchor.MiddleLeft, Font.Bold);
+    }
+    if (players == 1)
+    {
+        if (mine < 4) Draw2D.Text("Share the link: friends drop right in", float2(wide - 10, row), 12 * unit, quiet, Anchor.MiddleRight);
+        else Draw2D.Text("Share the link: friends drop right in", float2(10, row), 12 * unit, quiet, Anchor.MiddleLeft);
+    }
+
+    // How to play, under the board
+    Draw2D.Text("Move: arrows / WASD / drag     Bomb: space / tap", float2(wide * 0.5, lens.bottom + 5 * unit), 12 * unit, quiet, Anchor.UpperCenter);
+    Draw2D.Text($"Blast ghosts +1 and rivals +3. First to {TARGET} wins!", float2(wide * 0.5, lens.bottom + 20 * unit), 12 * unit, quiet, Anchor.UpperCenter);
+    var thumbs = tall - lens.bottom - 38 * unit; // What a tall screen has left under them
+    if (thumbs > 90 && !pad.held)
+    {
+        var spot = float2(wide * 0.5, tall - thumbs * 0.5);
+        Draw2D.WireCircle(spot, 44, 2, Color(1, 1, 1, 0.10));
+        Draw2D.Circle(spot, 16, Color(1, 1, 1, 0.10));
+    }
+
+    var middle = float2(wide * 0.5, (lens.top + lens.bottom) * 0.5);
+    if (arena.pause > 0 && arena.winner >= 0)
+    {
+        Draw2D.RoundRect(middle, float2(250, 96) * unit, 16 * unit, Color(0, 0, 0, 0.75));
+        Draw2D.Text(arena.winner == mine ? "You win!" : $"{SeatName(arena.winner)} wins!", middle + float2(0, -14) * unit, 30 * unit,
+                    SeatColor(arena.winner), Anchor.MiddleCenter, Font.Bold);
+        Draw2D.Text($"Next round in {arena.pause / TICKS + 1}", middle + float2(0, 24) * unit, 14 * unit, Color.white, Anchor.MiddleCenter);
+    }
+    else if (away > 0)
+    {
+        Draw2D.RoundRect(middle, float2(190, 44) * unit, 12 * unit, Color(0, 0, 0, 0.7));
+        Draw2D.Text("Ouch! Back in a moment", middle, 14 * unit, Color.white, Anchor.MiddleCenter);
+    }
+
+    // The stick, where a finger or the mouse drags
+    if (pad.held && pad.dragged)
+    {
+        Draw2D.WireCircle(Screen.Flip(pad.origin), 44, 2, Color(1, 1, 1, 0.25));
+        Draw2D.Circle(Screen.Flip(pad.at), 16, Color(1, 1, 1, 0.3));
+    }
+}
+
+view Joining(Session session)
+{
+    if (session.state == SessionState.Connected) return;
+    Draw2D.SetScreen();
+    Draw2D.Text("Joining the game...", float2(Screen.width, Screen.height) * 0.5, 18, Color.white, Anchor.MiddleCenter);
+}
