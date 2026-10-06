@@ -202,7 +202,7 @@ view Look(Towers towers, Lobby lobby, mut Fx fx)
     var wide = fx.high.x - fx.low.x + 4;
     var thin = Math.Max(0.05, 1 / fx.meter);
     var words = Math.Max(0.55, 10 / fx.meter);
-    var margin = Math.Clamp((fx.seat >= 0 ? fx.home : Home(0)) - PLINTH * 0.5 - 0.6, fx.low.x + 34 / fx.meter, fx.high.x - 2);
+    var margin = Math.Clamp((fx.seat >= 0 ? fx.home : Home(0)) - PLINTH * 0.5 - 0.6, fx.low.x + 84 / fx.meter, fx.high.x - 2);
     for (var y = 10.0; y < towers.line - 1; y += 10)
     {
         if (y < fx.low.y || y > fx.high.y) continue;
