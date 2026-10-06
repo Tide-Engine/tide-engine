@@ -62,7 +62,7 @@ static bool mesh_3d(const int i, const tide_depth depth, const uint32_t count, c
 TIDE_TEST(draw_depth_wraps_blocks)
 {
     whole_frame(false);
-    TIDE_REQUIRE(draw_count == 21);
+    TIDE_REQUIRE(draw_count == 25);
     TIDE_CHECK(draw.saved_count == 0); // Every block put back what it found
 
     // As a frame starts, around a block, one inside another, and what each found after it
@@ -84,10 +84,10 @@ TIDE_TEST(draw_depth_wraps_blocks)
     TIDE_CHECK(mesh_3d(9, TIDE_DEPTH_READ_WRITE, 1, 8.0f) && draw.matrices[draws[9].c->mesh3.first].c3.x == 2.0f);
 }
 
-TIDE_TEST(draw_depth_reaches_shaders_and_targets)
+TIDE_TEST(draw_depth_reaches_shaders)
 {
     whole_frame(false);
-    TIDE_REQUIRE(draw_count == 21);
+    TIDE_REQUIRE(draw_count == 25);
     // A mesh through a frag, and a list's instances: their commands', here from a value the game keeps
     const tide_draw_command *mesh = draws[10].c, *spots = draws[11].c, *after = draws[12].c;
     TIDE_REQUIRE(mesh->kind == TIDE_DRAW_SHADED && spots->kind == TIDE_DRAW_SHADED && after->kind == TIDE_DRAW_SHADED);
@@ -101,15 +101,31 @@ TIDE_TEST(draw_depth_reaches_shaders_and_targets)
     TIDE_CHECK(draws[14].c->depth == 0);
     TIDE_CHECK(draws[15].c->kind == TIDE_DRAW_CLEAR && draws[15].c->depth == 0);
 
-    // Set in one view, it holds in the next, on a target's meshes as on the window's
+    // Set in one view, it holds in the next
     TIDE_CHECK(mesh_3d(16, TIDE_DEPTH_READ, 1, 9.0f) && draws[16].target == 0);
-    TIDE_CHECK(mesh_3d(17, TIDE_DEPTH_READ, 1, 8.0f) && draws[17].target == 1);
     // A Set inside a block is for the rest of the block, which still puts back what it found
-    TIDE_CHECK(mesh_3d(18, TIDE_DEPTH_NONE, 1, 7.0f) && draws[18].target == 0);
-    TIDE_CHECK(mesh_3d(19, TIDE_DEPTH_READ, 1, 6.0f));
-    // ...and with no arguments, it's as a frame starts
-    TIDE_CHECK(mesh_3d(20, TIDE_DEPTH_READ_WRITE, 1, 5.0f));
-    TIDE_CHECK(draw.depth == TIDE_DEPTH_NONE); // Left set by the last view
+    TIDE_CHECK(mesh_3d(17, TIDE_DEPTH_NONE, 1, 7.0f) && draws[17].target == 0);
+    TIDE_CHECK(mesh_3d(18, TIDE_DEPTH_READ, 1, 6.0f));
+}
+
+// A render target's is its own, as its cameras are: the window's doesn't
+// reach its meshes, nor its the window's.
+TIDE_TEST(draw_depth_of_a_target_is_its_own)
+{
+    whole_frame(false);
+    TIDE_REQUIRE(draw_count == 25);
+    // The window's is set to read alone by now; the target's meshes start as a frame does
+    TIDE_CHECK(mesh_3d(19, TIDE_DEPTH_READ_WRITE, 1, 9.0f) && draws[19].target == 1);
+    // Around a block of the target's: its meshes', and not the window's inside it
+    TIDE_CHECK(mesh_3d(20, TIDE_DEPTH_NONE, 1, 8.0f) && draws[20].target == 1);
+    TIDE_CHECK(mesh_3d(21, TIDE_DEPTH_READ, 1, 7.0f) && draws[21].target == 0);
+    // Set, and with no arguments, as a frame starts: each destination's own
+    TIDE_CHECK(mesh_3d(22, TIDE_DEPTH_READ, 1, 6.0f) && draws[22].target == 1);
+    TIDE_CHECK(mesh_3d(23, TIDE_DEPTH_READ_WRITE, 1, 5.0f) && draws[23].target == 1);
+    TIDE_CHECK(mesh_3d(24, TIDE_DEPTH_READ_WRITE, 1, 4.0f) && draws[24].target == 0);
+    TIDE_REQUIRE(draw.target_count == 1 && draw.target == 0);
+    TIDE_CHECK(draw.place.depth == TIDE_DEPTH_NONE); // The window's, left set by the last view
+    TIDE_CHECK(draw.targets[0].place.depth == TIDE_DEPTH_READ_WRITE);
 }
 
 // Left through `try`, `return`, `break` and `continue`, a block still puts
@@ -121,7 +137,7 @@ TIDE_TEST(draw_depth_survives_leaving_early)
     TIDE_CHECK(draw.saved_count == 0);
     // The frame before left a depth set: this one started without it
     TIDE_CHECK(mesh_3d(0, TIDE_DEPTH_READ_WRITE, 1, 9.0f));
-    TIDE_REQUIRE(draw_count == 20);
+    TIDE_REQUIRE(draw_count == 24);
     // Guarded's cube never drew. What came next read and wrote depth, over what's there: not Guarded's
     // depth and blend, Counted's depth nor the loop's
     TIDE_CHECK(mesh_3d(8, TIDE_DEPTH_READ_WRITE, 1, 8.0f) && draws[8].c->blend == TIDE_BLEND_ALPHA);

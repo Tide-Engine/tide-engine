@@ -2614,6 +2614,26 @@ static type refuse_out_arg(checker *c, expr *e)
     return T_ERR;
 }
 
+// `out` before an argument of one of the GUI's widgets that has no version
+// with an `out` parameter, where other widgets have: those say when the player
+// entered what they typed, which is what the argument was after, so the error
+// says which they are. False, saying nothing, where that isn't so: the
+// argument is refused as anywhere else. What it's before is still checked.
+static bool refuse_entered_arg(checker *c, const expr *call, expr *arg)
+{
+    const str owner = call->object->name;
+    sb names = {0}, example = {0};
+    if (!str_eq_c(owner, "GUI") && !str_eq_c(owner, "GUILayout")) return false;
+    if (!builtin_out_versions(owner, call->name, &names, &example)) return false;
+    diag_error(arg->out_at, "'" STR_FMT "." STR_FMT "' has no version that says when it was entered, so it takes no 'out' argument",
+               STR_ARG(owner), STR_ARG(call->name));
+    diag_note("remove the argument: the widgets with such a version are %s, like '%s'", names.data, example.data);
+    begin_out_arg(c, arg);
+    if (arg->out_local) arg->out_local->type = T_ERR; // Said: its uses say nothing more
+    arg->type = T_ERR;
+    return true;
+}
+
 // An argument and its parameter that disagree about `out`: the word is
 // written for an `out` parameter, as in C#, and for no other.
 static void out_mismatch(checker *c, const decl *m, const param *p, const expr *arg)
@@ -4664,7 +4684,8 @@ static str target_draw_owner(const expr *e)
 {
     bool three = str_eq_c(e->name, "Cube") || str_eq_c(e->name, "Sphere")
         || str_eq_c(e->name, "Cylinder") || str_eq_c(e->name, "Plane")
-        || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection");
+        || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection")
+        || str_eq_c(e->name, "Depth") || str_eq_c(e->name, "SetDepth"); // Only 3D meshes have depth
     const bool camera = str_eq_c(e->name, "Camera") || str_eq_c(e->name, "SetCamera");
     const bool transform = str_eq_c(e->name, "Transform") || str_eq_c(e->name, "SetTransform");
     if (e->args.count && (camera || transform || str_eq_c(e->name, "WorldToScreen") || str_eq_c(e->name, "ScreenToWorld"))) {
@@ -4812,11 +4833,13 @@ static type check_method(checker *c, expr *e)
         if (builtin_draw_owner(owner) && (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced"))) return check_mesh_draw(c, e);
         // `default` takes its type from the version of the function the other arguments pick,
         // and [a, b, c] is the list the function takes there. An `out` argument is the variable
-        // a version with an `out` parameter makes (check_gui_call): of the others, nothing takes one.
+        // a version with an `out` parameter makes (check_gui_call): of the others, nothing takes one,
+        // and a widget with no such version says which widgets have one.
         for (int i = 0; i < e->args.count; i++) {
             expr *arg = e->args.items[i];
             type list;
             if (arg->is_out && builtin_takes_out(owner, e->name)) begin_out_arg(c, arg);
+            else if (arg->is_out && refuse_entered_arg(c, e, arg)) continue;
             else if (arg->kind == E_LIST && builtin_list_param(owner, e->name, i, arg, &list)) check_expr_want(c, arg, list);
             else if (arg->kind != E_DEFAULT) check_expr(c, arg);
         }
@@ -5724,8 +5747,7 @@ static type check_member(checker *c, expr *e)
         if (str_eq_c(e->object->name, "Application") && !check_io_use(c, e->at, "Application paths")) return T_ERR;
         if (str_eq_c(e->object->name, "Draw") && !str_eq_c(e->member, "window")) {
             diag_error(e->at, "Draw has no member '" STR_FMT "'", STR_ARG(e->member));
-            diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Depth, Blit and window. Shapes, text and meshes "
-                      "are theirs");
+            diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Blit and window. Shapes, text and meshes are theirs");
             return T_ERR;
         }
         if (str_eq_c(e->object->name, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR;
@@ -11815,8 +11837,8 @@ static void add_builtins(program *prog)
         vec_push(blend->members, m);
     }
     prog->blend = blend;
-    // enum Depth { ReadWrite, Read, None }: what a 3D mesh does with depth,
-    // with tide/draw.h's tide_depth's values. Generated C has it only in a
+    // enum Depth { ReadWrite, Read, None }: what a 3D mesh does with depth
+    // (Draw3D.Depth), with tide/draw.h's tide_depth's values. Generated C has it only in a
     // game whose code names it (decl.named), so the others' is as it was.
     static const char *const depths[] = {"ReadWrite", "Read", "None"};
     decl *depth = NEW(decl);
