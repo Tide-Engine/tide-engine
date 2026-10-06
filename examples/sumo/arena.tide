@@ -8,11 +8,11 @@
 //
 // What's stacked is square to the floor, and a column of crates stands a
 // hand's width from the next. That's for what the match carries: Box3D keeps
-// a contact for every two bodies whose boxes are within a tenth of a meter of
+// a contact for every two bodies whose boxes are within 14 centimeters of
 // each other, touching or not, and each contact is in its state, which the
 // match holds, hashes, and sends to a player who joins. A crate in a column
-// has one, with the crate under it. Packed side by side, each had ten, and
-// the state of the same ring was three times the size.
+// has one, with the crate under it. Packed closer than that, each had seven,
+// and the state of the same ring was three times the size.
 using Box3D;
 
 const float PITCH = 0.96;        // From a column's middle to the next one's: a crate, and the gap
