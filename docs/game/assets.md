@@ -14,6 +14,10 @@ asset List<byte> table = "data/table.bin";  // Any file, as its bytes
 
 Code reads `hero` wherever it reads a `Grid2<Color>`: a system indexes its cells, a view draws it as a texture with `Draw2D.Mesh`, and a frag samples it by name, `hero.Sample(uv)`, as it samples a singleton's grid. The three types are the ones there are for now: `string`, `List<byte>` and `Grid2<Color>`.
 
+::: tide-example assets A sprite from a file
+<<< @/examples/assets.tide
+:::
+
 An asset is read-only. Nothing assigns it, takes it `mut`, or clears it: it's the file as the game was built, the same on every machine. To change pixels, keep a `Grid2<Color>` field of your own and copy cells in.
 
 Match code reads assets like any value, since every machine has the same pack. What a machine loads as the game runs is another matter, below.
