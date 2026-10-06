@@ -1,0 +1,5 @@
+// expect: 'GUI.Slider' has no version that says when it was entered, so it takes no 'out' argument
+// expect: remove the argument: the widgets with such a version are TextField, IntField and FloatField, like 'GUI.TextField(rect, label, value, out var entered)'
+scene Main { }
+local singleton Lobby { string code; int count; float ratio; bool entered; }
+view Join(mut Lobby lobby) { GUI.Slider(Rect(0, 0, 200, 30), "Ratio", lobby.ratio, 0, 1, out lobby.entered); }
