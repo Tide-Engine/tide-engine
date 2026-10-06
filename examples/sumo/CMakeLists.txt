@@ -9,7 +9,7 @@
 # lists it: its Tide file before the game's, its C with the game's, and
 # Box3D's own sources, which packages/ builds as tide_box3d. The files are in
 # the order of their names, as tide compiles a folder's.
-set(SUMO_SOURCES arena.tide game.tide light.tide play.tide)
+set(SUMO_SOURCES arena.tide effects.tide game.tide hud.tide light.tide lobby.tide play.tide)
 set(SUMO_PACKAGE "${PROJECT_SOURCE_DIR}/packages/box3d")
 
 if(TARGET tide_platform)

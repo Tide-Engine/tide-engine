@@ -171,7 +171,7 @@ frag CrateLook(Corner corner, mut Color color, Solid solid, Instance instance, P
     float3 at = float3(Math.Abs(corner.position.x), Math.Abs(corner.position.y), Math.Abs(corner.position.z));
     // The middle one of the three is how near the face's edge this is
     float edge = at.x + at.y + at.z - Math.Max(at.x, Math.Max(at.y, at.z)) - Math.Min(at.x, Math.Min(at.y, at.z));
-    mut float tone = edge > 0.44 ? 0.66 : edge > 0.39 ? 0.84 : 1;
+    mut float tone = edge > 0.44 ? 0.78 : edge > 0.4 ? 0.9 : 1;
     if (solid.kind > 1.5 && solid.kind < 2.5 && at.y < 0.14) tone = 1.9;
     if (solid.kind > 2.5)
     {
@@ -199,7 +199,7 @@ frag ShadowLook(Corner corner, mut Color color, Solid solid, Pixel pixel, Room r
     Color paint = FloorPaint(pixel.world, ground.floor.Sample(uv, Filter.Point), sides, room.beat);
     if (paint.a < 0.5) pixel.Discard();
     Color lit = Lit(Color(paint.r, paint.g, paint.b, 1), float3(0, 1, 0), pixel.world, room, 0);
-    color = Color(lit.r * 0.46, lit.g * 0.47, lit.b * 0.54, 1);
+    color = Color(lit.r * 0.56, lit.g * 0.57, lit.b * 0.64, 1);
 }
 
 // A ball: its player's color, with a white band around it and a dark cap at
