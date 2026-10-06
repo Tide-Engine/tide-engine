@@ -11,14 +11,14 @@ target_compile_definitions(tide_bench PRIVATE TIDE_BENCH_RESULTS="${CMAKE_CURREN
 
 tide_add_game(bench_sand SOURCES sand/sand.tide NAME sand HOST sand/main.c)
 target_link_libraries(bench_sand PRIVATE tide_bench)
-add_test(NAME bench_sand COMMAND bench_sand --quick --expect 0x85b0be53c983fca1)
+add_test(NAME bench_sand COMMAND bench_sand --quick --expect 0xfa2f2bb6b040ab70)
 # Sand to play, with its views and the mouse: `sand` in a window, sand.html on
 # the web, which the docs site shows (docs/guide/sand.md).
 tide_add_game(sand SOURCES sand/sand.tide sand/play.tide TITLE "Tide sand" STATS)
 
 tide_add_game(bench_gallery SOURCES gallery/gallery.tide NAME gallery HOST gallery/main.c)
 target_link_libraries(bench_gallery PRIVATE tide_bench)
-add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0x241cefae27192475)
+add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0x45b1d0ae84959084)
 
 # C against Tide: concepts written both ways, as fast as each language allows,
 # timed on the same work (see versus/versus.h).

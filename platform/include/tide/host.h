@@ -248,10 +248,39 @@ static inline void tide_run_sample(void *user, const uint32_t tick, void *input)
     tide_devices_consume(&tide_run_devices);
 }
 
+// What views were corrected by so far, for a page that measures the netcode
+// (tide_run_netcode): the times a wrong guess was put right, and the times
+// what they drew was replaced outright
+static uint32_t tide_run_corrections;
+static uint32_t tide_run_view_resets;
+
 static inline void tide_run_correct_views(void *user, const tide_view_correction *correction)
 {
     (void)user;
+    if (correction->reset) tide_run_view_resets++;
+    else tide_run_corrections++;
     if (tide_run_game->correct_views) tide_run_game->correct_views(tide_run_local, correction);
+}
+
+// The session's numbers for a page that asked for them (its `Tide.netcode`,
+// tide_platform_netcode_wanted), once a frame, in this order: its state, whether
+// this machine runs the server, the ping and what an answer takes in
+// milliseconds, the ticks confirmed, run and the server's as it last said, the
+// input delay in ticks, how long its inputs wait at the server in milliseconds,
+// the ticks counted as late, run again, run at all and run ahead so far, the
+// times the world was sent again, the times views were corrected and replaced,
+// and what the session's update and the whole frame's work took, in
+// milliseconds.
+static inline void tide_run_netcode(const tide_session_status *status, const uint64_t update_ns, const uint64_t work_ns)
+{
+    const tide_client_status *c = &status->client;
+    const double values[] = {
+        (double)c->state, status->server ? 1.0 : 0.0, (double)c->ping_ms, (double)c->answer_ms, (double)c->verified_tick,
+        (double)c->predicted_tick, (double)c->server_tick, (double)c->delay_ticks, (double)c->early_ms, (double)c->late_ticks,
+        (double)c->again_ticks, (double)c->run_ticks, (double)c->ahead_ticks, (double)c->resyncs,
+        (double)tide_run_corrections, (double)tide_run_view_resets, (double)update_ns * 1e-6, (double)work_ns * 1e-6,
+    };
+    tide_platform_netcode(values, (uint32_t)(sizeof values / sizeof values[0]));
 }
 
 static inline void tide_run_refresh_view_corrector(void)
@@ -650,6 +679,9 @@ static inline int tide_run_frame(void *user, const float seconds)
     const bool stats = tide_run_stats();
     // What a frame's work takes is in the stats' list: timed while their drawer is open
     const uint64_t began = stats && tide_run_drawer.open ? tide_time_now_ns() : 0;
+    // ...and for a page that measures the netcode, with its session's update apart
+    const bool measured = tide_platform_netcode_wanted();
+    const uint64_t frame_began = measured ? tide_time_now_ns() : 0;
     tide_run_debug_views();
     // Where the frame's time goes, part by part, while the profiler is shown
     tide_profiler *profiler = tide_run_profiling ? &tide_run_profiler : NULL;
@@ -668,7 +700,9 @@ static inline int tide_run_frame(void *user, const float seconds)
     // What the match's ticks send, for the game's local handlers: asked for
     // before the update, so the session records from its first tick
     tide_event_log *heard = game->events ? tide_session_events(s) : NULL;
+    const uint64_t update_began = measured ? tide_time_now_ns() : 0;
     tide_session_update(s, tide_run_now);
+    const uint64_t update_ns = measured ? tide_time_now_ns() - update_began : 0;
     tide_run_migrate();
     tide_session_event event;
     while (tide_session_next_event(s, &event)) {
@@ -713,6 +747,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_platform_cursor_lock(tide_gui_cursor_lock(&tide_run_gui)); // The next poll says whether the window holds it
     tide_platform_draw(&tide_run_draw);
     tide_profiler_mark(profiler, TIDE_FRAME_RENDER);
+    if (measured) tide_run_netcode(&status, update_ns, tide_time_now_ns() - frame_began);
 
     if (stats) {
         tide_run_stats_frames++;

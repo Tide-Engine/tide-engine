@@ -217,6 +217,113 @@ static waited wait_with_frames(bool (*every)(int frame))
     return result;
 }
 
+// One player in a match of 60 ticks a second, on a network 30 ms each way,
+// settled, and then one of the two machines stops for a while: `frames` of the
+// player's, or of the server's. What the player's updates ran from then on,
+// how far ahead of what's confirmed it was, and how long the server said its
+// inputs waited, each `after` frames after both run again.
+typedef struct stopped {
+    uint32_t most;      // The most ticks one update ran, from when both ran again
+    uint32_t furthest;  // The furthest it was ahead of what's confirmed, `after` frames later and on
+    float longest;      // ...and the longest its inputs waited, and the least, in milliseconds
+    float least;
+    uint32_t late;      // Ticks counted as late, from when both ran again
+    uint32_t again;     // ...and predicted ticks run again
+    uint32_t resyncs;
+    bool caught_up;     // Level with the server at the end
+} stopped;
+
+static stopped stop_for(const int frames, const bool server_stops, const int after)
+{
+    tide_loopback *net = tide_loopback_create(13);
+    tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.03});
+    double now = 0.0;
+    tide_server *server = tide_server_create(&(tide_server_desc){.game = &tide_game_api, .tick_rate = 60,
+                                                                  .transports = {tide_loopback_endpoint(net, 1)}},
+                                             now);
+    player one = {0};
+    one.client = tide_client_create(&(tide_client_desc){.game = &tide_game_api, .transport = tide_loopback_endpoint(net, 2),
+                                                        .server = tide_loopback_address(1), .sample = sample, .user = &one,
+                                                        .lead = 1, .lead_frame = true},
+                                    now);
+    stopped result = {.least = 1000.0f};
+    tide_client_status back = {0};
+    const int stop = 600; // Ten seconds in: its clock has settled
+    for (int frame = 0; frame < stop + frames + 600; frame++) {
+        now += FRAME;
+        tide_loopback_set_time(net, now);
+        one.key = frame / 7 % 2 == 0;
+        const bool stopped_now = frame >= stop && frame < stop + frames;
+        const tide_client_status before = tide_client_status_of(one.client);
+        if (!stopped_now || server_stops) tide_client_update(one.client, now);
+        if (!stopped_now || !server_stops) tide_server_update(server, now);
+        if (frame < stop + frames) {
+            back = tide_client_status_of(one.client);
+            continue;
+        }
+        const tide_client_status status = tide_client_status_of(one.client);
+        if (status.run_ticks - before.run_ticks > result.most) result.most = status.run_ticks - before.run_ticks;
+        if (frame < stop + frames + after) continue;
+        if (status.predicted_tick - status.verified_tick > result.furthest) result.furthest = status.predicted_tick - status.verified_tick;
+        if (status.early_ms > result.longest) result.longest = status.early_ms;
+        if (status.early_ms < result.least) result.least = status.early_ms;
+    }
+    const tide_client_status status = tide_client_status_of(one.client);
+    TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED);
+    result.late = status.late_ticks - back.late_ticks;
+    result.again = status.again_ticks - back.again_ticks;
+    result.resyncs = status.resyncs;
+    result.caught_up = status.verified_tick + 6u > tide_server_tick(server);
+    tide_client_destroy(one.client);
+    tide_server_destroy(server);
+    tide_loopback_destroy(net);
+    return result;
+}
+
+// A player's machine stops for two seconds (a breakpoint, a tab that slept),
+// and the match goes on. Back, it has 120 ticks of the server's to run, and
+// its clock is where it should be: it went on with the time. It runs those
+// ticks 8 an update, predicts nothing until it has, and samples no input for
+// the ticks it slept through, which the server ran without one: they aren't
+// inputs that came late, though the server says for a while that its inputs
+// are two seconds late. Taken at its word, that had the player put its clock
+// two seconds ahead, which is past what it can sample: there it stayed for
+// most of a minute, a second ahead of what's confirmed.
+TIDE_TEST(seen_a_machine_that_stopped_catches_up_and_keeps_its_clock)
+{
+    const stopped s = stop_for(120, false, 60);
+    printf("    back after two seconds, the most a player's update ran was %u ticks; a second later and on it was %u ticks ahead"
+           " at the most, its inputs waiting %.0f to %.0f ms; %u counted as late, %u run again\n",
+           s.most, s.furthest, (double)s.least, (double)s.longest, s.late, s.again);
+    TIDE_CHECK(s.resyncs == 0 && s.caught_up);
+    TIDE_CHECK(s.most <= 16u);
+    TIDE_CHECK(s.furthest <= 8u); // A round trip here is 4 ticks, and its inputs wait a frame
+    TIDE_CHECK(s.least >= 0.0f && s.longest <= 40.0f);
+    TIDE_CHECK(s.late <= 1u && s.again == 0);
+}
+
+// The server's machine stops for three seconds, and drops the time: its ticks
+// are three seconds behind where the player's clock has them, which is past
+// what the player can sample. The server only ever says the player's inputs
+// wait about a second, and losing that a tenth of the time at a go took most
+// of a minute. The player's clock comes back at once: as soon as the server
+// says its tick, with nothing of the server's missing here, and a clock set
+// by that would be within what it samples. The inputs it had sampled for the
+// second to come are the server's already, so its inputs wait as ever once
+// those have run.
+TIDE_TEST(seen_a_clock_far_ahead_comes_back_at_once)
+{
+    const stopped soon = stop_for(180, true, 15);
+    const stopped s = stop_for(180, true, 90);
+    printf("    the server back after three seconds, a player was %u ticks ahead of what's confirmed at the most a quarter of a"
+           " second later and on; from a second and a half later, its inputs waited %.0f to %.0f ms\n",
+           soon.furthest, (double)s.least, (double)s.longest);
+    TIDE_CHECK(s.resyncs == 0 && s.caught_up);
+    TIDE_CHECK(soon.furthest <= 8u);
+    TIDE_CHECK(s.furthest <= 8u);
+    TIDE_CHECK(s.least >= 0.0f && s.longest <= 40.0f);
+}
+
 static bool every_other(const int frame) { return frame % 2 == 0; }
 static bool but_one_in_97(const int frame) { return frame % 97 != 0; }
 

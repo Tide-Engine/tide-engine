@@ -362,10 +362,13 @@ typedef struct tide_client_status {
     uint32_t answer_ms;
     uint32_t verified_tick;        // Ticks the server has confirmed
     uint32_t predicted_tick;       // Ticks run, predicted ones included
+    uint32_t server_tick;          // The server's tick as it last said: the ticks before it are the ones it has run
     uint32_t delay_ticks;          // Ticks this machine's input is delayed by (tide_prediction)
     float early_ms;                // How long this machine's inputs waited at the server before their ticks ran, as it last said: under 0, too late
-    uint32_t late_ticks;           // Ticks the server ran without this machine's input, which came too late, so far
+    uint32_t late_ticks;           // Ticks the server ran without an input this machine sampled for them, which came too late, so far
     uint32_t again_ticks;          // Predicted ticks it ran again so far, after one went otherwise than it guessed
+    uint32_t run_ticks;            // Ticks it ran so far, all of them: as the server sent them, predicted, and again
+    uint32_t ahead_ticks;          // ...and the predicted ones among them, again_ticks included
     uint32_t resyncs;              // Times its world diverged and the server sent it again
     uint64_t world_bytes;          // Bytes the server sent of worlds so far: whole, as deltas, and the hashes of their pages
     uint64_t cookie;               // What makes this player this player again, on the next connection

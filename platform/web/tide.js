@@ -1074,6 +1074,18 @@
                 r.least += (ping - r.least) / r.leastOf;
             }
         },
+        // `Tide.netcode`, for tests and measurements of the netcode: a
+        // function the page gives, which is then called every frame with the
+        // session's numbers as the program's host says them (tide/host.h,
+        // tide_run_netcode), an array in its order. A page that gives none
+        // has none of it.
+        netcode_wanted: () => typeof config.netcode === 'function',
+        netcode(ptr, count) {
+            if (typeof config.netcode !== 'function') return;
+            const values = new Array(count);
+            for (let i = 0; i < count; i++) values[i] = view().getFloat64(ptr + i * 8, true);
+            config.netcode(values);
+        },
     });
 
     // -----------------------------------------------------------------------

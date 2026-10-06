@@ -51,8 +51,8 @@ void b3t_measure(uint64_t *step, uint64_t *image);
 // The server's world in the match below, on every platform and in every
 // configuration: Box3D's math, its image and the netcode, byte for byte.
 // Once in the middle of a round, and once after a new game was asked for.
-#define BRAWL_HASH UINT64_C(0x4bcd7d0a73795303)
-#define MATCH_HASH UINT64_C(0x89fa42fff12ae338)
+#define BRAWL_HASH UINT64_C(0xa10f68ac25605d09)
+#define MATCH_HASH UINT64_C(0x6c4f7a3d5c8fde75)
 
 // Timings of a build that isn't optimized say nothing, so there the test that
 // measures does a tenth of it: enough to show that it runs.
@@ -989,6 +989,10 @@ typedef struct match {
     tide_server *server;
     tide_client *players[PLAYERS];
     double now;
+    // One player's updates, looked at: the longest, and the most ticks one ran
+    int watched; // Plus one: 0 for nobody
+    uint64_t longest_ns;
+    uint32_t most_ticks;
 } match;
 
 // Whose input a client samples: their place among the match's players, which
@@ -1035,7 +1039,18 @@ static void advance(match *m)
     m->now += 1.0 / 60;
     tide_loopback_set_time(m->net, m->now);
     for (int i = 0; i < PLAYERS; i++) {
-        if (m->players[i]) tide_client_update(m->players[i], m->now);
+        if (!m->players[i]) continue;
+        if (i + 1 != m->watched) {
+            tide_client_update(m->players[i], m->now);
+            continue;
+        }
+        const uint32_t ran = tide_client_status_of(m->players[i]).run_ticks;
+        const uint64_t began = tide_time_now_ns();
+        tide_client_update(m->players[i], m->now);
+        const uint64_t took = tide_time_now_ns() - began;
+        const uint32_t ticks = tide_client_status_of(m->players[i]).run_ticks - ran;
+        if (took > m->longest_ns) m->longest_ns = took;
+        if (ticks > m->most_ticks) m->most_ticks = ticks;
     }
     tide_server_update(m->server, m->now);
 }
@@ -1055,14 +1070,24 @@ static void join(match *m, const int who)
 static void join_late(match *m, const int who)
 {
     join(m, who);
+    m->watched = who + 1;
+    m->longest_ns = 0;
+    m->most_ticks = 0;
     int waited = 0;
     while (tide_client_status_of(m->players[who]).state != TIDE_SESSION_CONNECTED && waited < 1200) {
         advance(m);
         waited++;
     }
     TIDE_REQUIRE(tide_client_status_of(m->players[who]).state == TIDE_SESSION_CONNECTED);
+    // Its first second with the world, from the update it came in: what it ran, and what its longest update took
     for (int i = 0; i < 60; i++) advance(m);
     const tide_client_status status = tide_client_status_of(m->players[who]);
+    printf("    in its first second with the world, player %d ran %u ticks: %u the server sent and %u predicted, %u of those"
+           " again; %u ticks counted as late\n",
+           who + 1, status.run_ticks, status.run_ticks - status.ahead_ticks, status.ahead_ticks, status.again_ticks,
+           status.late_ticks);
+    printf("    the most ticks it ran in one update, joining: %u; its longest update: %.1f ms\n", m->most_ticks,
+           (double)m->longest_ns / 1e6);
     printf("    player %d joined at tick %u: %llu bytes of world, of which %d are Box3D's state, in %d updates (%.1f s); a"
            " second later it's %u ticks ahead of what's confirmed\n",
            who + 1, tide_server_tick(m->server) - 60, (unsigned long long)status.world_bytes, ((const tide_world *)tide_server_world(m->server))->Box3D_Physics.size, waited,

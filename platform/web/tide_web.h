@@ -163,6 +163,9 @@ TIDE_WEB_IMPORT(room_receive) uint32_t tide_web_room_receive(uint32_t room, uint
 TIDE_WEB_IMPORT(room_arrived) double tide_web_room_arrived(void);
 // What the session measures to the room's host (see tide_platform_room_ping).
 TIDE_WEB_IMPORT(room_ping) void tide_web_room_ping(int32_t ping_ms, uint32_t answer_ms);
+// The page's `Tide.netcode`: whether it gave one, and the session's numbers for it (see tide_platform_netcode).
+TIDE_WEB_IMPORT(netcode_wanted) bool tide_web_netcode_wanted(void);
+TIDE_WEB_IMPORT(netcode) void tide_web_netcode(const double *values, uint32_t count);
 
 // Hot reloading, under tide run --web: what the page's last program left this
 // one (tide_reload_save in platform/src/reload.c), 0 bytes if nothing, and a

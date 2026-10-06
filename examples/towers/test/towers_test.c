@@ -46,8 +46,8 @@ void b2t_forget(void);
 // The server's world in the match below, on every platform and in every
 // configuration: Box2D's math, its image and the netcode, byte for byte.
 // Once in the middle of the first round, and once after a new game.
-#define RACING_HASH UINT64_C(0x989919e1794dff8c)
-#define MATCH_HASH UINT64_C(0x357865c5c0b85e46)
+#define RACING_HASH UINT64_C(0x9bc3cc72d55b7c98)
+#define MATCH_HASH UINT64_C(0x61c0a29ce6e236c7)
 
 static tide_world world;
 
