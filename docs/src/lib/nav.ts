@@ -31,10 +31,9 @@ export const sidebar: Group[] = [
             { text: 'Your first game', link: '/guide/first-game' },
             { text: 'Live examples', link: '/guide/examples' },
             { text: 'Samples', link: '/guide/samples' },
-            { text: 'Falling sand', link: '/guide/sand' },
-            { text: 'Duel', link: '/guide/duel' },
-            { text: 'Towers', link: '/guide/towers' },
-            { text: 'Sumo', link: '/guide/sumo' },
+            { text: 'Duel code tour', link: '/guide/duel' },
+            { text: 'Towers walkthrough', link: '/guide/towers' },
+            { text: 'Sumo walkthrough', link: '/guide/sumo' },
         ],
     },
     {

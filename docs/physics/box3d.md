@@ -42,7 +42,7 @@ A floor, and a wall of twenty crates. Tap to throw a ball at it.
 - A tap is a [command](../game/commands.md), with the ray through the pixel it was on. `ThrowBall` spawns a body at its start, with a `velocity` along it.
 - `Fall` destroys what fell off the floor, and its body goes with it.
 
-[Sumo](../guide/sumo.md) is a whole game made with the package, for up to eight players in a match: balls driven by pushes through two thousand stacked crates, a floor whose tiles turn from static to loose and fall, blasts, sensors that take what falls and hand out pickups, and most of what this page describes.
+The [Sumo walkthrough](../guide/sumo.md) shows how impulses drive the balls and blasts, how static floor tiles become falling bodies, and how sensors detect ring-outs and pickups. It also covers deterministic arena construction, the room lobby, instanced drawing and the cost of rollback.
 
 ## Bodies
 

@@ -1,4 +1,6 @@
-# Towers
+# Towers walkthrough
+
+This walkthrough explains how a Box2D match steers falling bricks and turns them into loose parts of a tower. Follow its [physics](#the-physics), [input](#the-input), [lobby](#the-lobby) and [presentation](#what-a-machine-shows), with code excerpts and the match and lobby sources.
 
 Four plinths side by side, bricks that come down one at a time, and a race to build the tallest tower, with [Box2D](../physics/box2d.md) under all of it. A game made with Tide to show its 2D physics in a match: a brick that has landed is a body like any other, so towers lean, slide and come down, the same on every machine, whatever their pings. Play it alone against three towers that build themselves, or with friends in a room. The idea is Tricky Towers', the party game of stacking falling bricks.
 
