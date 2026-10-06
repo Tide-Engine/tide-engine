@@ -3,8 +3,8 @@
 // a match.
 //
 // The lobby is drawn over a live match. `Main` is the match's scene, so a
-// match of this machine's own starts with the program, closed, with the lane
-// set up: that's what's behind the title. Playing alone is closing the
+// match of this machine's own starts with the program, closed, with bots in
+// the ring: that's what's behind the title. Playing alone is closing the
 // lobby, hosting is opening that match to others (Session.Open), and joining
 // leaves it for someone else's (Session.Join). Nothing of the lobby is in the
 // match: it's a local singleton, and a view over the others.
@@ -38,6 +38,7 @@ local singleton Lobby
     int manned;        // The seats players have, a bit each
     int mine = -1;     // This machine's player's
     int players;
+    bool bots = true;  // Bots have the seats nobody has, up to the crowd
 }
 
 float2 Middle(Rect rect)
@@ -83,18 +84,13 @@ bool Pill(Rect rect, string label, Color tint, bool solid, bool enabled)
 // Who's in the match, for the room's page: the lobby's views run with no
 // match too, so they don't read it themselves.
 [Stage(Layers.Camera, 10)]
-view Roster(Lane lane, Session session, mut Lobby lobby)
+view Roster(Ring ring, Session session, mut Lobby lobby)
 {
-    lobby.manned = 0;
-    lobby.mine = -1;
+    lobby.manned = ring.manned;
+    lobby.bots = ring.bots;
+    lobby.mine = ring.players.TryGet(session.player, out var seat) ? seat : -1;
     lobby.players = 0;
-    var own = lane.players[session.player];
-    foreach (var entry in lane.bowlers)
-    {
-        lobby.manned |= 1 << entry.key;
-        lobby.players += 1;
-        if (entry.value == own) lobby.mine = entry.key;
-    }
+    for (var each = 0; each < SEATS; each++) lobby.players += ring.manned >> each & 1;
 }
 
 // A seat's row on the room's page: its color, and who has it.
@@ -102,14 +98,15 @@ void SeatRow(Lobby lobby, int seat, float2 at, float wide)
 {
     var manned = (lobby.manned >> seat & 1) == 1;
     var mine = seat == lobby.mine;
-    var color = manned ? SeatColor(seat) : Shade(SeatColor(seat), 0.4);
+    var bot = !manned && Live(lobby.manned, lobby.bots, seat);
+    var color = manned || bot ? SeatColor(seat) : Shade(SeatColor(seat), 0.4);
     Draw2D.Shape(Shape { center = at + float2(wide * 0.5, 0), size = float2(wide, 26), radius = 8,
                          color = mine ? Color(0.21, 0.215, 0.235) : Color(0.14, 0.143, 0.157),
                          outline = mine ? 1.5 : 0.0, outlineColor = Fade(Color.white, 0.7) });
     Draw2D.Circle(at + float2(15, 0), 6, color);
     Draw2D.Text(SeatName(seat), at + float2(29, 0), 12, color, Anchor.MiddleLeft, Font.Bold);
-    Draw2D.Text(mine ? "YOU" : manned ? "PLAYER" : "OPEN", at + float2(wide - 10, 0), 11,
-                mine ? Color.white : Fade(QUIET, manned ? 1 : 0.45), Anchor.MiddleRight, mine ? Font.Bold : Font.Regular);
+    Draw2D.Text(mine ? "YOU" : manned ? "PLAYER" : bot ? "BOT" : "OPEN", at + float2(wide - 10, 0), 11,
+                mine ? Color.white : Fade(QUIET, manned ? 1 : bot ? 0.7 : 0.45), Anchor.MiddleRight, mine ? Font.Bold : Font.Regular);
 }
 
 // The lobby's pages, over whatever the match's views drew. It runs with no
@@ -125,9 +122,10 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand ha
         lobby.joining = !session.server && session.state == SessionState.Connecting;
         lobby.page = lobby.joining ? Page.Join : session.server && session.open ? Page.None : Page.Title;
     }
-    // The player's hands are on the ball with no page up, and once the
-    // pointer that pressed the page's last button is let go. A key that
-    // clicked it is the GUI's until it's let go, so it's never read here.
+    // The player's hands are on their ball with no page up, and once the
+    // pointer that pressed the page's last button is let go: until then the
+    // ball plays by itself, as a bot's does. A key that clicked the button is
+    // the GUI's until it's let go, so it's never read here.
     var held = devices.pointer.press.pressed || devices.keyboard.space.pressed;
     hand.playing = lobby.page == Page.None && session.state == SessionState.Connected
         && (hand.playing || !held);
@@ -142,9 +140,9 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand ha
     Draw2D.SetScreen();
     var screen = float2(Screen.width, Screen.height);
     var middle = screen * 0.5;
-    // The whole screen is the page's: a click between two buttons isn't a
-    // throw. And it's a menu, though a match goes on behind it: the arrows and
-    // a gamepad move between its buttons.
+    // The whole screen is the page's: a drag between two buttons isn't the
+    // stick. And it's a menu, though a match goes on behind it: the arrows
+    // and a gamepad move between its buttons.
     GUI.ClaimPointer(Rect(0, 0, screen.x, screen.y));
     GUI.Navigate();
     lobby.shown = Math.Min(1, lobby.shown + fx.dt * 7);
@@ -169,20 +167,22 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand ha
             var total = 30 + title + (short ? 24 : 36) + main + gap + row + gap + row + 30;
             mut var y = Math.Max(8, (screen.y - total) * 0.45);
 
-            // Four pins, each a player's color, and the name
+            // Four balls, each a player's color, the two in the middle meeting, and the name
             for (var seat = 0; seat < 4; seat++)
             {
                 var color = SeatColor(seat);
-                var at = float2(middle.x + (seat - 1.5) * 22, y + 12 + Math.Sin(fx.beat + seat * 1.3) * 2);
-                Draw2D.Ellipse(at + float2(0, 4), float2(6.5, 9), color);
-                Draw2D.Circle(at + float2(0, -8), 4.5, color);
-                Draw2D.RoundRect(at + float2(0, -3), float2(7, 2.5), 1, Color.white);
+                var push = seat == 1 ? 1 : seat == 2 ? -1 : 0;
+                var at = float2(middle.x + (seat - 1.5) * 26 + push * (3 + Math.Sin(fx.beat * 2) * 3), y + 13);
+                Draw2D.Circle(at + float2(0, 2), 9.5, Color(0.03, 0.03, 0.035));
+                Draw2D.Circle(at, 9.5, color);
+                Draw2D.Rect(at, float2(19, 4.5), fx.beat * (seat % 2 == 0 ? 1 : -1) + seat, Color.white);
+                Draw2D.WireCircle(at, 9.5, 2, Shade(color, 0.6));
             }
             y += 30;
-            Draw2D.Text("ALLEY", float2(middle.x, y + title * 0.5 + 3), title, Color(0.03, 0.03, 0.035), Anchor.MiddleCenter, Font.Bold);
-            Draw2D.Text("ALLEY", float2(middle.x, y + title * 0.5), title, Color.white, Anchor.MiddleCenter, Font.Bold);
+            Draw2D.Text("SUMO", float2(middle.x, y + title * 0.5 + 3), title, Color(0.03, 0.03, 0.035), Anchor.MiddleCenter, Font.Bold);
+            Draw2D.Text("SUMO", float2(middle.x, y + title * 0.5), title, Color.white, Anchor.MiddleCenter, Font.Bold);
             y += title;
-            Draw2D.Text("Paint the pins. Knock them through the goal.", float2(middle.x, y + (short ? 8 : 12)), 13, QUIET, Anchor.MiddleCenter);
+            Draw2D.Text("Ram them. Shove them out of the ring.", float2(middle.x, y + (short ? 8 : 12)), 13, QUIET, Anchor.MiddleCenter);
             y += short ? 24 : 36;
 
             var play = Pill(Rect(left, y, wide, main), "PLAY", AMBER, true, connected);
@@ -196,7 +196,7 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand ha
 
             if (play)
             {
-                // A game of its own, from its start
+                // A game of its own, from its start: the bots had the ring meanwhile
                 if (lobby.players <= 1) Send(Rebuild { });
                 lobby.page = Page.None;
                 lobby.message = "";
@@ -244,15 +244,17 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand ha
                 var frame = Rect(left, y, wide - 108, row);
                 Draw2D.Shape(Shape { center = Middle(frame), size = float2(frame.width, frame.height), radius = 12,
                                      color = Color(0.06, 0.06, 0.066), outline = 1.5, outlineColor = LINE });
+                // Enter in the field joins, as the button beside it does
+                mut var entered = false;
                 GUI.Theme(GUITheme { text = INK, field = Color(0.06, 0.06, 0.066), fieldHot = Color(0.08, 0.08, 0.09), accent = AMBER,
                                      radius = 9 })
                 {
-                    GUI.TextField(Rect(frame.x + 4, frame.y + 4, frame.width - 8, frame.height - 8), "", lobby.code);
+                    GUI.TextField(Rect(frame.x + 4, frame.y + 4, frame.width - 8, frame.height - 8), "", lobby.code, out entered);
                 }
                 // A room's code is capitals, however it's typed
                 lobby.code = lobby.code.ToUpper();
                 var code = lobby.code.Trim();
-                var go = Pill(Rect(left + wide - 100, y, 100, row), "JOIN", AMBER, true, code != "");
+                var go = (Pill(Rect(left + wide - 100, y, 100, row), "JOIN", AMBER, true, code != "") || entered) && code != "";
                 y += row;
                 if (lobby.message != "") Draw2D.Text(lobby.message, float2(middle.x, y + 17), 13, ROSE, Anchor.MiddleCenter);
                 else Draw2D.Text("Six letters and digits, like K7QF2M.", float2(middle.x, y + 17), 12, Fade(QUIET, 0.8), Anchor.MiddleCenter);
@@ -310,8 +312,10 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand ha
 
             var play = Pill(Rect(left, y, wide, main), lobby.resume ? "RESUME" : "PLAY", AMBER, true, connected);
             y += main + gap;
-            var fresh = Pill(Rect(left, y, cell, 44), "NEW GAME", INK, false, connected);
-            var leave = Pill(Rect(left + cell + 8, y, cell, 44), alone ? "TO THE TITLE" : "LEAVE", ROSE, false, true);
+            var third = (wide - 16) / 3;
+            var fresh = Pill(Rect(left, y, third, 44), "NEW GAME", INK, false, connected);
+            var bots = Pill(Rect(left + third + 8, y, third, 44), lobby.bots ? "BOTS: ON" : "BOTS: OFF", INK, false, connected);
+            var leave = Pill(Rect(left + (third + 8) * 2, y, third, 44), alone ? "TITLE" : "LEAVE", ROSE, false, true);
 
             if (invite) Session.Open();
             if (copy)
@@ -325,6 +329,7 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand ha
                 Send(Rebuild { });
                 lobby.page = Page.None;
             }
+            if (bots) Send(Bots { });
             if (leave)
             {
                 // Out of the room, and into a match of this machine's own. The

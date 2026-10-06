@@ -34,6 +34,9 @@ enum BodyType
 
 // A rigid body. Its place and speeds are Box3D's after each step, and a system
 // that writes them moves the body: the next step starts from what they say.
+// How it's to be (its type, how gravity pulls on it, how it slows and whether
+// it's a bullet) is what code says, when it's spawned or later: the next step
+// has it that way.
 //
 // Where it is and how it's turned are said to be that, for views: when the
 // server corrects where this machine had a body, they see it get there over a
@@ -58,6 +61,13 @@ component Body
     float3 stepVelocity;
     float3 stepAngularVelocity;
     bool bullet;
+    // The package's own: what Box3D has of how the body is to be, which is how
+    // a type, a scale, a damping or a bullet that's written later is told
+    bool stepBullet;
+    BodyType stepType = BodyType.Dynamic;
+    float stepGravityScale = 1;
+    float stepLinearDamping;
+    float stepAngularDamping;
 }
 
 // A box on the entity's body, `size` wide, high and deep around `offset`.
@@ -95,6 +105,20 @@ component Capsule
     bool sensor;
 }
 
+// The entity's shapes are on another entity's body: `of`'s. An entity has one
+// shape of each kind at most, so a body of several boxes is a body and a part
+// for each box past its first. A part is an entity of its own: destroying it
+// takes its shapes off the body, and it's destroyed with the body. One whose
+// `of` has no body when its shapes would be made is destroyed too.
+component Part
+{
+    Entity of;
+    // The package's own: Box3D's handles to the shapes made for this entity
+    long box;
+    long sphere;
+    long capsule;
+}
+
 // The package's own: the entity's box, its sphere or its capsule is on its
 // body in Box3D
 [Sparse]
@@ -106,25 +130,68 @@ component SphereMade { }
 [Sparse]
 component CapsuleMade { }
 
-// Two bodies started touching, or stopped: sent to each, with the other. A
-// shape that's a sensor stops nothing, and sends them for what comes into it
+// Two bodies started touching, or stopped: sent to each, with the other, once
+// for each pair of their shapes. `part` is whose shape of this entity's it
+// was, and `otherPart` whose of the other's: the entity itself, for a shape of
+// its own, or the part the shape is on.
+//
+// A shape that's a sensor stops nothing, and sends them for what comes into it
 // and leaves it, to its own entity and to the other's; two sensors say nothing
 // of each other. `other` is no entity when the other one was destroyed while
-// they touched: its parting still comes, from `default`.
+// they touched: its parting still comes, from `default`. A part that was
+// destroyed, on a body that stays, still says its body: the part is `default`.
 event Touched
 {
     Entity other;
+    Entity part;
+    Entity otherPart;
 }
 
 event Parted
 {
     Entity other;
+    Entity part;
+    Entity otherPart;
+}
+
+// Two bodies met faster than Physics.hitSpeed: sent to each, with the other,
+// once a step for each pair of their shapes, while they go on meeting that
+// fast. `point` is where, `speed` how fast they closed on each other there,
+// and `normal` the way this entity was pushed: from the other towards it.
+event Hit
+{
+    Entity other;
+    float3 point;
+    float3 normal;
+    float speed;
+}
+
+// What a ray or a shape that's cast met first: the body's entity, the part
+// its shape is on (the entity itself, for a shape of its own), where, the
+// shape's surface there, and how far along the way from 0 to 1.
+struct RayHit
+{
+    Entity entity;
+    Entity part;
+    float3 point;
+    float3 normal;
+    float fraction;
 }
 
 singleton Physics
 {
     float3 gravity = float3(0, -10, 0);
     int substeps = 4;
+    // How the world steps, as Box3D has it unless a game says: how stiff two
+    // bodies that touch are held apart, in cycles a second, how fast that
+    // springing dies down (1 just stops it), and how fast two that overlap are
+    // pushed apart at most, in meters a second
+    float contactStiffness = 30;
+    float contactDamping = 10;
+    float contactSpeed = 3;
+    float bounceSpeed = 1; // Slower than this, in meters a second, nothing bounces
+    float hitSpeed = 1; // Faster than this, two bodies that meet are sent Hit
+    bool sleeping = true; // Bodies at rest fall asleep
     int bodies; // Made so far
     int shapes;
     long stamp; // Which state `image` is, by all that was ever done to the world: what C's world is told apart by
@@ -134,13 +201,45 @@ singleton Physics
     List<byte> geometry; // The hulls the image names, each once: only ever added to
     List<long> gone; // Bodies whose entities were destroyed, until the next step
     Map<long, Entity> owners; // Each body's entity
+    List<long> goneShapes; // Parts' shapes whose entities were destroyed, until the next step
+    Map<long, Entity> parts; // Each part's shape's entity
+    Map<Entity, Sensors> sensors; // The sensors of each entity that has any
 }
 
+// The package's own: what its systems and its questions pass to C and back
 struct Contact
 {
     long a;
     long b;
+    long shapeA;
+    long shapeB;
     bool began;
+}
+
+struct Strike
+{
+    long a;
+    long b;
+    float3 point;
+    float3 normal;
+    float speed;
+}
+
+struct Found
+{
+    long body;
+    long shape;
+    float3 point;
+    float3 normal;
+    float fraction;
+}
+
+// An entity's sensors: Box3D's handle to each of its shapes that is one
+struct Sensors
+{
+    long box;
+    long sphere;
+    long capsule;
 }
 
 [NativeName("b3t_open")]
@@ -152,20 +251,36 @@ extern void RestoreWorld(List<byte> image, int size, List<byte> geometry, int ge
 [NativeName("b3t_gone")]
 extern void RemoveBodies(List<long> bodies, int count);
 
-[NativeName("b3t_made")]
-extern long TakeMade(Entity entity);
+[NativeName("b3t_gone_shapes")]
+extern void RemoveShapes(List<long> shapes, int count);
+
+[NativeName("b3t_body_shapes")]
+extern int CountShapes(long body);
+
+[NativeName("b3t_body_shape")]
+extern long ShapeAt(int index);
+
+[NativeName("b3t_made_count")]
+extern int CountMade();
+
+[NativeName("b3t_made_body")]
+extern long MadeBody(int index);
+
+[NativeName("b3t_made_entity")]
+extern Entity MadeEntity(int index);
 
 [NativeName("b3t_box")]
-extern int AttachBox(long body, in Box box);
+extern long AttachBox(long body, in Box box);
 
 [NativeName("b3t_sphere")]
-extern int AttachSphere(long body, in Sphere sphere);
+extern long AttachSphere(long body, in Sphere sphere);
 
 [NativeName("b3t_capsule")]
-extern int AttachCapsule(long body, in Capsule capsule);
+extern long AttachCapsule(long body, in Capsule capsule);
 
 [NativeName("b3t_step")]
-extern long StepWorld(float dt, int substeps, float3 gravity);
+extern long StepWorld(float dt, int substeps, float3 gravity, float contactStiffness, float contactDamping, float contactSpeed,
+                      float bounceSpeed, float hitSpeed, bool sleeping);
 
 [NativeName("b3t_image")]
 extern int WriteImage(out List<byte> image);
@@ -182,8 +297,53 @@ extern int CountTouches(long stamp);
 [NativeName("b3t_touch")]
 extern Contact ReadTouch(int index);
 
+[NativeName("b3t_hits")]
+extern int CountHits();
+
+[NativeName("b3t_hit")]
+extern Strike ReadHit(int index);
+
+[NativeName("b3t_find")]
+extern bool FindWorld(long stamp);
+
+[NativeName("b3t_rebuild")]
+extern void RebuildWorld(List<byte> image, int size, List<byte> geometry, int geometrySize, long stamp);
+
+[NativeName("b3t_ray")]
+extern Found CastRay(long stamp, float3 from, float3 to, List<long> gone, int goneCount, List<long> goneShapes, int goneShapeCount);
+
+[NativeName("b3t_cast_box")]
+extern Found CastBox(long stamp, in Box shape, float3 from, quaternion rotation, float3 to, List<long> gone, int goneCount,
+                     List<long> goneShapes, int goneShapeCount);
+
+[NativeName("b3t_cast_sphere")]
+extern Found CastSphere(long stamp, in Sphere shape, float3 from, quaternion rotation, float3 to, List<long> gone, int goneCount,
+                        List<long> goneShapes, int goneShapeCount);
+
+[NativeName("b3t_cast_capsule")]
+extern Found CastCapsule(long stamp, in Capsule shape, float3 from, quaternion rotation, float3 to, List<long> gone, int goneCount,
+                         List<long> goneShapes, int goneShapeCount);
+
+[NativeName("b3t_overlap_box")]
+extern void OverlapBox(out List<long> bodies, long stamp, in Box shape, float3 at, quaternion rotation, List<long> gone,
+                       int goneCount, List<long> goneShapes, int goneShapeCount);
+
+[NativeName("b3t_overlap_sphere")]
+extern void OverlapSphere(out List<long> bodies, long stamp, in Sphere shape, float3 at, quaternion rotation, List<long> gone,
+                          int goneCount, List<long> goneShapes, int goneShapeCount);
+
+[NativeName("b3t_overlap_capsule")]
+extern void OverlapCapsule(out List<long> bodies, long stamp, in Capsule shape, float3 at, quaternion rotation, List<long> gone,
+                           int goneCount, List<long> goneShapes, int goneShapeCount);
+
+[NativeName("b3t_inside")]
+extern void SensorBodies(out List<long> bodies, long stamp, long first, long second, long third, List<long> gone, int goneCount,
+                         List<long> goneShapes, int goneShapeCount);
+
 // C's world for this match, at the state the match is in: the one it has, or
-// one made from the image.
+// one made from the image. Then what went since the last step goes from it:
+// the parts of the bodies that went are destroyed with them, the shapes of the
+// parts that went by themselves, and the bodies.
 //
 // Each of these systems says where it is in the stage, so that nothing a game
 // orders its own systems by, naming the stage or one of these, can put them in
@@ -195,6 +355,24 @@ system Begin(mut Physics physics)
     {
         RestoreWorld(physics.image, physics.size, physics.geometry, physics.geometry.count, physics.stamp);
     }
+    if (physics.parts.count > 0)
+    {
+        for (int i = 0; i < physics.gone.count; i++)
+        {
+            int shapes = CountShapes(physics.gone[i]);
+            for (int k = 0; k < shapes; k++)
+            {
+                long shape = ShapeAt(k);
+                if (physics.parts.TryGet(shape, out var part))
+                {
+                    physics.parts.Remove(shape);
+                    part.Destroy();
+                }
+            }
+        }
+    }
+    RemoveShapes(physics.goneShapes, physics.goneShapes.count);
+    physics.goneShapes.Clear();
     RemoveBodies(physics.gone, physics.gone.count);
     physics.gone.Clear();
 }
@@ -213,48 +391,148 @@ system Begin(mut Physics physics)
 extern system Enter(mut Body body, mut Physics physics);
 
 // The bodies Enter made are their entities' from here on: whose each body is,
-// the match keeps in a map, which is Tide's to write. It runs for the bodies
-// Enter ran for, in its order, and asks C of each whether it was made. It
-// takes no component, so nothing is copied to ask.
+// the match keeps in a map, which is Tide's to write. C says which it made,
+// in the order it made them, so a tick that makes none asks once.
 [Stage(PhysicsStages.Step, 2)]
-system Own(mut Physics physics, with Body)
+system Own(mut Physics physics)
 {
-    long made = TakeMade(this);
-    if (made != 0)
+    int made = CountMade();
+    for (int i = 0; i < made; i++)
     {
         physics.bodies += 1;
-        physics.owners[made] = this;
+        physics.owners[MadeBody(i)] = MadeEntity(i);
     }
 }
 
 [Stage(PhysicsStages.Step, 3)]
-system AttachBoxes(Body body, Box box, mut Physics physics, without BoxMade)
+system AttachBoxes(Body body, Box box, mut Physics physics, without BoxMade, without Part)
 {
-    physics.shapes += AttachBox(body.id, box);
+    long shape = AttachBox(body.id, box);
+    if (shape != 0)
+    {
+        physics.shapes += 1;
+        if (box.sensor)
+        {
+            mut var sensors = physics.sensors[this];
+            sensors.box = shape;
+            physics.sensors[this] = sensors;
+        }
+    }
     this.Add(BoxMade);
 }
 
 [Stage(PhysicsStages.Step, 4)]
-system AttachSpheres(Body body, Sphere sphere, mut Physics physics, without SphereMade)
+system AttachSpheres(Body body, Sphere sphere, mut Physics physics, without SphereMade, without Part)
 {
-    physics.shapes += AttachSphere(body.id, sphere);
+    long shape = AttachSphere(body.id, sphere);
+    if (shape != 0)
+    {
+        physics.shapes += 1;
+        if (sphere.sensor)
+        {
+            mut var sensors = physics.sensors[this];
+            sensors.sphere = shape;
+            physics.sensors[this] = sensors;
+        }
+    }
     this.Add(SphereMade);
 }
 
 [Stage(PhysicsStages.Step, 5)]
-system AttachCapsules(Body body, Capsule capsule, mut Physics physics, without CapsuleMade)
+system AttachCapsules(Body body, Capsule capsule, mut Physics physics, without CapsuleMade, without Part)
 {
-    physics.shapes += AttachCapsule(body.id, capsule);
+    long shape = AttachCapsule(body.id, capsule);
+    if (shape != 0)
+    {
+        physics.shapes += 1;
+        if (capsule.sensor)
+        {
+            mut var sensors = physics.sensors[this];
+            sensors.capsule = shape;
+            physics.sensors[this] = sensors;
+        }
+    }
+    this.Add(CapsuleMade);
+}
+
+// A part's shapes go on the body of the entity it names, which was made by
+// now if it was spawned by the last tick: after the bodies' own, so a game
+// with no part has its shapes made as it did. A part with no body to be on is
+// destroyed.
+[Stage(PhysicsStages.Step, 6)]
+system AttachBoxParts(Box box, mut Part part, World world, mut Physics physics, without BoxMade)
+{
+    mut long shape = 0;
+    if (world.TryGet<Body>(part.of, out var body)) shape = AttachBox(body.id, box);
+    if (shape == 0)
+    {
+        this.Destroy();
+        return;
+    }
+    part.box = shape;
+    physics.shapes += 1;
+    physics.parts[shape] = this;
+    if (box.sensor)
+    {
+        mut var sensors = physics.sensors[this];
+        sensors.box = shape;
+        physics.sensors[this] = sensors;
+    }
+    this.Add(BoxMade);
+}
+
+[Stage(PhysicsStages.Step, 7)]
+system AttachSphereParts(Sphere sphere, mut Part part, World world, mut Physics physics, without SphereMade)
+{
+    mut long shape = 0;
+    if (world.TryGet<Body>(part.of, out var body)) shape = AttachSphere(body.id, sphere);
+    if (shape == 0)
+    {
+        this.Destroy();
+        return;
+    }
+    part.sphere = shape;
+    physics.shapes += 1;
+    physics.parts[shape] = this;
+    if (sphere.sensor)
+    {
+        mut var sensors = physics.sensors[this];
+        sensors.sphere = shape;
+        physics.sensors[this] = sensors;
+    }
+    this.Add(SphereMade);
+}
+
+[Stage(PhysicsStages.Step, 8)]
+system AttachCapsuleParts(Capsule capsule, mut Part part, World world, mut Physics physics, without CapsuleMade)
+{
+    mut long shape = 0;
+    if (world.TryGet<Body>(part.of, out var body)) shape = AttachCapsule(body.id, capsule);
+    if (shape == 0)
+    {
+        this.Destroy();
+        return;
+    }
+    part.capsule = shape;
+    physics.shapes += 1;
+    physics.parts[shape] = this;
+    if (capsule.sensor)
+    {
+        mut var sensors = physics.sensors[this];
+        sensors.capsule = shape;
+        physics.sensors[this] = sensors;
+    }
     this.Add(CapsuleMade);
 }
 
 // The step, and Box3D's state after it into the match. It isn't named Step,
 // so that a game's [Before(Step)] is an error and not a place in the middle of
 // these, after what code wrote has gone to Box3D: the stage is what to name.
-[Stage(PhysicsStages.Step, 6)]
+[Stage(PhysicsStages.Step, 9)]
 system Simulate(Time time, mut Physics physics)
 {
-    long stamp = StepWorld(time.dt, physics.substeps, physics.gravity);
+    long stamp = StepWorld(time.dt, physics.substeps, physics.gravity, physics.contactStiffness, physics.contactDamping,
+                           physics.contactSpeed, physics.bounceSpeed, physics.hitSpeed, physics.sleeping);
     physics.moved = stamp != physics.stamp;
     if (!physics.moved) return;
     physics.stamp = stamp;
@@ -264,11 +542,20 @@ system Simulate(Time time, mut Physics physics)
 }
 
 // Where the step left each body that it moved, into the fields that say so.
-[Stage(PhysicsStages.Step, 7)]
+[Stage(PhysicsStages.Step, 10)]
 [NativeName("b3t_leave")]
 extern system Leave(mut Body body, Physics physics);
 
-[Stage(PhysicsStages.Step, 7)]
+// The entity a shape is on: a part's, or else its body's own, and none for a
+// shape that's gone.
+Entity PartOf(Physics physics, long shape, Entity owner)
+{
+    if (shape == 0) return default;
+    if (physics.parts.count > 0 && physics.parts.TryGet(shape, out var part)) return part;
+    return owner;
+}
+
+[Stage(PhysicsStages.Step, 10)]
 system Report(Physics physics)
 {
     int count = physics.moved ? CountTouches(physics.stamp) : 0;
@@ -277,16 +564,27 @@ system Report(Physics physics)
         Contact contact = ReadTouch(i);
         Entity a = physics.owners[contact.a];
         Entity b = physics.owners[contact.b];
+        Entity partA = PartOf(physics, contact.shapeA, a);
+        Entity partB = PartOf(physics, contact.shapeB, b);
         if (contact.began)
         {
-            a.Send(Touched { other = b });
-            b.Send(Touched { other = a });
+            a.Send(Touched { other = b, part = partA, otherPart = partB });
+            b.Send(Touched { other = a, part = partB, otherPart = partA });
         }
         else
         {
-            a.Send(Parted { other = b });
-            b.Send(Parted { other = a });
+            a.Send(Parted { other = b, part = partA, otherPart = partB });
+            b.Send(Parted { other = a, part = partB, otherPart = partA });
         }
+    }
+    int hits = physics.moved ? CountHits() : 0;
+    for (int i = 0; i < hits; i++)
+    {
+        Strike strike = ReadHit(i);
+        Entity a = physics.owners[strike.a];
+        Entity b = physics.owners[strike.b];
+        a.Send(Hit { other = b, point = strike.point, normal = -strike.normal, speed = strike.speed });
+        b.Send(Hit { other = a, point = strike.point, normal = strike.normal, speed = strike.speed });
     }
 }
 
@@ -298,4 +596,147 @@ event(Destroyed) Remove(Body body, mut Physics physics)
         physics.gone.Add(body.id);
         physics.owners.Remove(body.id);
     }
+    if (physics.sensors.count > 0) physics.sensors.Remove(this);
+}
+
+// A part that goes takes its shapes off its body, at the next step: the ones
+// that didn't go with the body already.
+event(Destroyed) RemovePart(Part part, mut Physics physics)
+{
+    if (part.box != 0 && physics.parts.Remove(part.box)) physics.goneShapes.Add(part.box);
+    if (part.sphere != 0 && physics.parts.Remove(part.sphere)) physics.goneShapes.Add(part.sphere);
+    if (part.capsule != 0 && physics.parts.Remove(part.capsule)) physics.goneShapes.Add(part.capsule);
+    if (physics.sensors.count > 0) physics.sensors.Remove(this);
+}
+
+// ---------------------------------------------------------------------------
+// Questions: what's in the world, asked without changing it. Each takes the
+// Physics singleton, and can be asked from a system, a handler or a view.
+//
+// They see the world as the last step left it. What code wrote into a body
+// since isn't there yet, nor a body that was spawned since, and an entity
+// that was destroyed since is found no more.
+
+// Whether C has the match's world to ask: it's made from the match's image
+// when it doesn't, as before a tick. False for a match no step was taken in.
+bool Ready(Physics physics)
+{
+    if (physics.stamp == 0) return false;
+    if (!FindWorld(physics.stamp))
+    {
+        RebuildWorld(physics.image, physics.size, physics.geometry, physics.geometry.count, physics.stamp);
+    }
+    return true;
+}
+
+RayHit Met(Physics physics, Found found)
+{
+    Entity entity = physics.owners[found.body];
+    return RayHit { entity = entity, part = PartOf(physics, found.shape, entity), point = found.point, normal = found.normal,
+                    fraction = found.fraction };
+}
+
+// The first thing on the way from one point to another: whether there's any,
+// and what. A ray says nothing of a shape it starts inside, and passes
+// through sensors.
+bool Raycast(Physics physics, float3 from, float3 to, out RayHit hit)
+{
+    hit = default;
+    if (!Ready(physics)) return false;
+    Found found = CastRay(physics.stamp, from, to, physics.gone, physics.gone.count, physics.goneShapes, physics.goneShapes.count);
+    if (found.body == 0) return false;
+    hit = Met(physics, found);
+    return true;
+}
+
+// The first thing a shape meets that's moved from one place to another,
+// turned by `rotation` all the way: a box, a sphere or a capsule as one on a
+// body is, with its size and its offset. `hit.point` is where the two touch.
+// What the shape is in at `from` is met there, with a fraction of 0 and no
+// normal.
+bool Cast(Physics physics, Box shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
+{
+    hit = default;
+    if (!Ready(physics)) return false;
+    Found found = CastBox(physics.stamp, shape, from, rotation, to, physics.gone, physics.gone.count, physics.goneShapes,
+                          physics.goneShapes.count);
+    if (found.body == 0) return false;
+    hit = Met(physics, found);
+    return true;
+}
+
+bool Cast(Physics physics, Sphere shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
+{
+    hit = default;
+    if (!Ready(physics)) return false;
+    Found found = CastSphere(physics.stamp, shape, from, rotation, to, physics.gone, physics.gone.count, physics.goneShapes,
+                             physics.goneShapes.count);
+    if (found.body == 0) return false;
+    hit = Met(physics, found);
+    return true;
+}
+
+bool Cast(Physics physics, Capsule shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
+{
+    hit = default;
+    if (!Ready(physics)) return false;
+    Found found = CastCapsule(physics.stamp, shape, from, rotation, to, physics.gone, physics.gone.count, physics.goneShapes,
+                              physics.goneShapes.count);
+    if (found.body == 0) return false;
+    hit = Met(physics, found);
+    return true;
+}
+
+// The entities of the bodies C found, in its order: their bodies' ids'.
+void Owners(Physics physics, List<long> bodies, out List<Entity> found)
+{
+    found = [];
+    for (int i = 0; i < bodies.count; i++) found.Add(physics.owners[bodies[i]]);
+}
+
+// The entities whose bodies a shape at a place overlaps or touches: whether
+// there's any, and which, each once, in the order of their bodies' ids.
+bool Overlap(Physics physics, Box shape, float3 at, quaternion rotation, out List<Entity> found)
+{
+    found = [];
+    if (!Ready(physics)) return false;
+    OverlapBox(out var bodies, physics.stamp, shape, at, rotation, physics.gone, physics.gone.count, physics.goneShapes,
+               physics.goneShapes.count);
+    Owners(physics, bodies, out found);
+    return found.count > 0;
+}
+
+bool Overlap(Physics physics, Sphere shape, float3 at, quaternion rotation, out List<Entity> found)
+{
+    found = [];
+    if (!Ready(physics)) return false;
+    OverlapSphere(out var bodies, physics.stamp, shape, at, rotation, physics.gone, physics.gone.count, physics.goneShapes,
+                  physics.goneShapes.count);
+    Owners(physics, bodies, out found);
+    return found.count > 0;
+}
+
+bool Overlap(Physics physics, Capsule shape, float3 at, quaternion rotation, out List<Entity> found)
+{
+    found = [];
+    if (!Ready(physics)) return false;
+    OverlapCapsule(out var bodies, physics.stamp, shape, at, rotation, physics.gone, physics.gone.count, physics.goneShapes,
+                   physics.goneShapes.count);
+    Owners(physics, bodies, out found);
+    return found.count > 0;
+}
+
+// The entities whose bodies have a shape in an entity's sensors, as the last
+// step found them: whether there's any, and which, each once, in the order of
+// their bodies' ids. `sensor` is the entity the sensor shape is a component
+// of: a body's, or a part's. None, for an entity with no sensor.
+bool Inside(Physics physics, Entity sensor, out List<Entity> found)
+{
+    found = [];
+    if (physics.sensors.count == 0 || !physics.sensors.TryGet(sensor, out var sensors)) return false;
+    if (!Ready(physics)) return false;
+    SensorBodies(out var bodies, physics.stamp, sensors.box, sensors.sphere, sensors.capsule, physics.gone, physics.gone.count,
+                 physics.goneShapes, physics.goneShapes.count);
+    Owners(physics, bodies, out found);
+    return found.count > 0;
 }

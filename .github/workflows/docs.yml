@@ -60,12 +60,12 @@ jobs:
       - name: Build the examples
         run: |
           cmake --preset web-release -DTIDE_DOC_EXAMPLES=ON
-          cmake --build --preset web-release --target sand duel towers alley docs_examples
-          mkdir -p docs/static/sand docs/static/duel docs/static/towers docs/static/alley
+          cmake --build --preset web-release --target sand duel towers sumo docs_examples
+          mkdir -p docs/static/sand docs/static/duel docs/static/towers docs/static/sumo
           cp build/web-release/bin/sand.html docs/static/sand/index.html
           cp build/web-release/bin/duel.html docs/static/duel/index.html
           cp build/web-release/bin/towers.html docs/static/towers/index.html
-          cp build/web-release/bin/alley.html docs/static/alley/index.html
+          cp build/web-release/bin/sumo.html docs/static/sumo/index.html
       - name: Build the site
         working-directory: docs
         run: |
