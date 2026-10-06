@@ -1663,10 +1663,13 @@ void b2SnapNoteOp( b2World* world, int op )
 		case b2_recOpCreateSegmentShape:
 		case b2_recOpCreatePolygonShape:
 		case b2_recOpDestroyShape:
-		// A setting of a body's, which is in its solver set's copy of it: said where it's written
+		// A setting of a body's, which is in the body or in its solver set's copy of it: said where it's
+		// written
 		case b2_recOpBodySetLinearDamping:
 		case b2_recOpBodySetAngularDamping:
 		case b2_recOpBodySetGravityScale:
+		case b2_recOpBodySetBullet:
+		case b2_recOpBodySetMotionLocks:
 		// A setting of the world's, which every image writes. Turning sleeping off also wakes every set,
 		// which says what it writes (b2WakeSolverSet).
 		case b2_recOpWorldSetGravity:

@@ -1982,6 +1982,8 @@ void b2Body_SetMotionLocks( b2BodyId bodyId, b2MotionLocks locks )
 	b2Body* body = b2GetBodyFullId( world, bodyId );
 	if ( ( body->flags & b2_allLocks ) != newFlags )
 	{
+		// Tide: the body's flags (see b2SnapTrack). What its set has of them, and its mass, say so themselves.
+		b2SnapTouchBody( world, body->id );
 		body->flags &= ~b2_allLocks;
 		body->flags |= newFlags;
 
@@ -2042,6 +2044,8 @@ void b2Body_SetBullet( b2BodyId bodyId, bool flag )
 		return;
 	}
 
+	// Tide: the body's flags (see b2SnapTrack). What its set has of them says so itself (b2SyncBodyFlags).
+	b2SnapTouchBody( world, body->id );
 	body->flags &= ~b2_isBullet;
 	body->flags |= newFlag;
 

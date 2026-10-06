@@ -18,6 +18,7 @@
 
 // The package's bridge: C's worlds, which a test starts without
 void b2t_forget(void);
+void b2t_images(int32_t *whole, int32_t *in_parts);
 
 #define DT (1.0f / 60.0f)
 
@@ -1198,6 +1199,10 @@ static void cost(const char *what, const int ticks)
     uint64_t keeping = 0;
     uint64_t worst = 0;
     int most = 0;
+    // How many of the ticks' images of Box2D's world are written whole, and how many as what changed
+    int32_t whole_before;
+    int32_t parts_before;
+    b2t_images(&whole_before, &parts_before);
     for (int i = 0; i < ticks; i++) {
         // A client keeps each tick's world, and hashes it
         const uint64_t began = tide_time_now_ns();
@@ -1211,8 +1216,13 @@ static void cost(const char *what, const int ticks)
         const int bodies = count(&world, tide_has_Box2D_Body);
         if (bodies > most) most = bodies;
     }
-    printf("    %s, %d bodies: %.3f ms a tick (%.3f the longest), and %.3f to keep and hash its world (%d bytes of physics)\n", what,
-           most, (double)ticking / ticks / 1e6, (double)worst / 1e6, (double)keeping / ticks / 1e6, world.Box2D_Physics.size);
+    int32_t whole;
+    int32_t in_parts;
+    b2t_images(&whole, &in_parts);
+    printf("    %s, %d bodies: %.3f ms a tick (%.3f the longest), and %.3f to keep and hash its world (%d bytes of physics, "
+           "%d images of it written whole and %d in parts)\n",
+           what, most, (double)ticking / ticks / 1e6, (double)worst / 1e6, (double)keeping / ticks / 1e6, world.Box2D_Physics.size,
+           (int)(whole - whole_before), (int)(in_parts - parts_before));
     tide_world_free(&kept);
 }
 

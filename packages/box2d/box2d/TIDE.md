@@ -182,8 +182,10 @@ compares the two after every step.
       it is in the graph (`b2AddContactToGraph`), and a body that's told its
       island (`b2MergeIslands`, `b2CreateIslandForBody`).
     - `body.c`: `b2CreateBody`, `b2DestroyBody` (the body and each of its
-      shapes), `b2Body_SetTransform` (each of its shapes: it doesn't wake) and
-      `b2UpdateBodyMassData`. `shape.c`: `b2CreateShapeInternal` (the shape,
+      shapes), `b2Body_SetTransform` (each of its shapes: it doesn't wake),
+      `b2UpdateBodyMassData`, and `b2Body_SetBullet` and
+      `b2Body_SetMotionLocks` (the body's flags, which neither wakes it for).
+      `shape.c`: `b2CreateShapeInternal` (the shape,
       its body, and the shape that headed the body's list), `b2CreateShape`
       (the body's flags), `b2DestroyShapeInternal` (the shape, its neighbors
       in its body's list, and the body).
@@ -223,14 +225,14 @@ compares the two after every step.
     calls' names that's made from `recording_ops.inl`), and only the ones
     looked at for the lists above are followed: the step, making and
     destroying a body, its transform, its speeds and impulses, waking it or
-    putting it to sleep, waking what touches it, its dampings and its gravity
-    scale, making a circle, a capsule, a segment or a polygon, and destroying
-    a shape. So are the world's settings that are numbers of its own, which
+    putting it to sleep, waking what touches it, its dampings, its gravity
+    scale, whether it's a bullet and what it's locked from, making a circle, a
+    capsule, a segment or a polygon, and destroying a shape. So are the world's settings that are numbers of its own, which
     every image writes (its gravity, its contact tuning and the rest), and
     turning sleeping off, which wakes every set the way anything does. A
-    body's type, enabling and disabling, forces and torques, its mass, its
-    locks and its other settings, a shape's settings and geometry, chains,
-    joints, a blast, and whatever upstream adds: all of it is right, at the
+    body's type, enabling and disabling, forces and torques, its mass and its
+    other settings, a shape's settings and geometry, chains, joints, a blast,
+    and whatever upstream adds: all of it is right, at the
     cost of one whole image. `b2MergeSolverSets`, `b2TransferBody`,
     `b2TransferJoint` and `b2DestroyJointInternal`, which a call that's
     followed could come to (a body that's destroyed takes its joints), say so
@@ -294,7 +296,7 @@ at random and compares the two images after every step, and it says where the
 first byte apart is.
 
 Taking each of the lines that say something changed out in turn and running
-that test says which of them it would notice the lack of: 56 of the 91 by
+that test says which of them it would notice the lack of: 57 of the 93 by
 themselves, when this was written. 14 more were noticed with another line
 taken out too, which says the same thing: the two times everything awake goes
 into the sets, waking with the second of them and falling asleep with the
@@ -303,6 +305,6 @@ and the pairs of places an island or a set is said to be written from (a
 body's island made and the body put in it, a set's island taken out and its
 body). 9 say again what being awake says, of a contact that starts or stops
 touching or moves within the awake set or the graph, and weren't noticed all
-taken out together. The other 12 weren't tried together, or are under calls
+taken out together. The other 13 weren't tried together, or are under calls
 that write the next image whole anyway (joints, `b2MergeSolverSets`,
 `b2TransferBody`).
