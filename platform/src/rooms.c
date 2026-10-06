@@ -31,6 +31,8 @@ static void backend_send(uint32_t number, uint32_t to, const void *data, uint32_
 static uint32_t backend_receive(uint32_t number, uint32_t *from, void *data, uint32_t capacity);
 static double backend_arrived(void); // When the datagram backend_receive last gave arrived: seconds, by tide_time_now_ns
 static void backend_ping(int32_t ping_ms, uint32_t answer_ms);
+static bool backend_netcode_wanted(void);
+static void backend_netcode(const double *values, uint32_t count);
 
 #if defined(__wasm__)
 
@@ -100,6 +102,16 @@ static double backend_arrived(void)
 static void backend_ping(const int32_t ping_ms, const uint32_t answer_ms)
 {
     tide_web_room_ping(ping_ms, answer_ms);
+}
+
+static bool backend_netcode_wanted(void)
+{
+    return tide_web_netcode_wanted();
+}
+
+static void backend_netcode(const double *values, const uint32_t count)
+{
+    tide_web_netcode(values, count);
 }
 
 #else
@@ -612,6 +624,18 @@ static void backend_ping(const int32_t ping_ms, const uint32_t answer_ms)
     (void)answer_ms;
 }
 
+// ...and only a page asks for the session's numbers.
+static bool backend_netcode_wanted(void)
+{
+    return false;
+}
+
+static void backend_netcode(const double *values, const uint32_t count)
+{
+    (void)values;
+    (void)count;
+}
+
 #endif
 
 // ---------------------------------------------------------------------------
@@ -728,6 +752,16 @@ bool tide_platform_room_failed(void)
 void tide_platform_room_ping(const int32_t ping_ms, const uint32_t answer_ms)
 {
     backend_ping(ping_ms, answer_ms);
+}
+
+bool tide_platform_netcode_wanted(void)
+{
+    return backend_netcode_wanted();
+}
+
+void tide_platform_netcode(const double *values, const uint32_t count)
+{
+    backend_netcode(values, count);
 }
 
 void tide_platform_room_key(char *out, const size_t size)

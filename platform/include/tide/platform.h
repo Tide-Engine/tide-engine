@@ -288,6 +288,12 @@ bool tide_platform_room_failed(void);
 // them (the page's `Tide.lag`, platform/web/tide.js): its lag is the ping its
 // player is to have, so it adds what this one lacks. Nothing on desktop.
 void tide_platform_room_ping(int32_t ping_ms, uint32_t answer_ms);
+// For tests and measurements of the netcode in a page: whether the page wants
+// the session's numbers (its `Tide.netcode`, a function it gives), and the
+// numbers, which a host then says every frame: `count` of them, in the order
+// tide/host.h has them (tide_run_netcode). Never wanted on desktop.
+bool tide_platform_netcode_wanted(void);
+void tide_platform_netcode(const double *values, uint32_t count);
 // The key of the room this machine hosts into `out`, "" for none: what lets
 // the players of its match meet there again when it goes (see
 // tide_session_set_room). Up to TIDE_ROOM_KEY_LENGTH letters and digits.

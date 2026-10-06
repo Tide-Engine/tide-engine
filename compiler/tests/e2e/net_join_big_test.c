@@ -58,6 +58,119 @@ TIDE_TEST(net_join_big_world_catches_up)
     tide_loopback_destroy(net);
 }
 
+// One player's frames, a 60th of a second apart, watched from the moment it
+// has a world (again from `watch`): what each ran, and where it stood as it
+// first ran a tick ahead of what's confirmed. With `twice`, a frame updates
+// the client twice, at the same time, as a session does (tide_session_update):
+// what a frame may run is a frame's, however many updates it has.
+typedef struct watched {
+    tide_loopback *net;
+    tide_server *server;
+    tide_client *client;
+    double now;
+    bool twice;
+    uint64_t worked;         // The client's clock as the frame before began (slow_clock)
+    double slowest;          // Its longest frame, in seconds
+    tide_client_status from; // Its status as the watch began
+    uint32_t most;        // The most ticks one frame ran...
+    uint32_t most_sent;   // ...and the most of the server's: the ticks it ran as the server sent them
+    uint32_t furthest;    // The furthest it was ahead of what's confirmed
+    float longest;        // The longest the server said its inputs waited, in milliseconds
+    bool predicted;       // It has run a tick ahead since...
+    double predicted_at;  // ...when...
+    uint32_t confirmed;   // ...with this many ticks confirmed...
+    uint32_t heard;       // ...and the server's tick, as it had last said, this
+} watched;
+
+static void watch(watched *w)
+{
+    w->from = tide_client_status_of(w->client);
+    w->most = w->most_sent = w->furthest = 0;
+    w->longest = 0.0f;
+    w->predicted = false;
+}
+
+// A clock for a client to measure its ticks by, which only its ticks move:
+// each one it runs takes `slow_cost` nanoseconds, as on a machine where the
+// game's ticks are dear.
+static uint64_t slow_clock;
+static uint64_t slow_cost;
+
+static uint64_t slow_now(void)
+{
+    return slow_clock;
+}
+
+static void slow_tick(void *world, const tide_jobs *jobs)
+{
+    tide_game_api.tick(world, jobs);
+    slow_clock += slow_cost;
+}
+
+static void step(watched *w, const bool client, const bool server)
+{
+    // A frame takes a 60th of a second, or as long as the work in the one
+    // before took, where that's more: time passes while a machine works
+    const double worked = (double)(slow_clock - w->worked) * 1e-9;
+    w->worked = slow_clock;
+    const double frame = worked > 1.0 / 60 ? worked : 1.0 / 60;
+    if (frame > w->slowest) w->slowest = frame;
+    w->now += frame;
+    tide_loopback_set_time(w->net, w->now);
+    const tide_client_status before = tide_client_status_of(w->client);
+    if (client) tide_client_update(w->client, w->now);
+    if (client && w->twice) tide_client_update(w->client, w->now);
+    if (server) tide_server_update(w->server, w->now);
+    const tide_client_status s = tide_client_status_of(w->client);
+    if (s.state != TIDE_SESSION_CONNECTED) return;
+    const uint32_t ran = s.run_ticks - before.run_ticks;
+    const uint32_t sent = ran - (s.ahead_ticks - before.ahead_ticks);
+    if (ran > w->most) w->most = ran;
+    if (sent > w->most_sent) w->most_sent = sent;
+    if (s.predicted_tick - s.verified_tick > w->furthest) w->furthest = s.predicted_tick - s.verified_tick;
+    if (s.early_ms > w->longest) w->longest = s.early_ms;
+    if (!w->predicted && s.ahead_ticks > w->from.ahead_ticks) {
+        w->predicted = true;
+        w->predicted_at = w->now;
+        w->confirmed = s.verified_tick;
+        w->heard = s.server_tick;
+    }
+}
+
+// The server, and a player who joins, on `net`: until the player has the world.
+// With `cost`, the player has a clock, by which each of its ticks takes that
+// many nanoseconds (`game` then runs its ticks through slow_tick).
+static void join_at_a_cost(watched *w, tide_loopback *net, const tide_game *game, const bool twice, const uint64_t cost)
+{
+    slow_clock = 0;
+    slow_cost = cost;
+    *w = (watched){.net = net, .twice = twice};
+    w->server = tide_server_create(&(tide_server_desc){.game = &tide_game_api, .tick_rate = 60,
+                                     .transports = {tide_loopback_endpoint(net, 1)}}, w->now);
+    TIDE_REQUIRE(w->server != NULL);
+    w->client = tide_client_create(&(tide_client_desc){.game = game, .transport = tide_loopback_endpoint(net, 2),
+                                     .server = tide_loopback_address(1), .sample = sample, .lead = 2,
+                                     .now_ns = cost ? slow_now : NULL}, w->now);
+    TIDE_REQUIRE(w->client != NULL);
+    watch(w);
+    while (tide_client_status_of(w->client).state != TIDE_SESSION_CONNECTED) {
+        TIDE_REQUIRE(w->now < 30.0);
+        step(w, true, true);
+    }
+}
+
+static void join(watched *w, tide_loopback *net, const tide_game *game, const bool twice)
+{
+    join_at_a_cost(w, net, game, twice, 0);
+}
+
+static void leave(watched *w)
+{
+    tide_client_destroy(w->client);
+    tide_server_destroy(w->server);
+    tide_loopback_destroy(w->net);
+}
+
 // A player who joins runs no further ahead than its inputs need, however long
 // its world took to arrive. The server runs ticks for it meanwhile, with no
 // input of its to run them with, as it has no world to sample one for: those
@@ -67,63 +180,211 @@ TIDE_TEST(net_join_big_world_catches_up)
 // heard: a second and more, where it then stayed for a long while, running
 // every tick it predicts again and again, with the other players seeing what
 // it did that much later.
+//
+// Nor does it predict from the world that came, which is as old as it took to
+// come: it runs the ticks the server sent since, so many a frame, and predicts
+// once it has run every tick the server said it had. Every other network's
+// player is updated twice a frame, as a session updates it.
 TIDE_TEST(net_join_big_world_runs_no_further_ahead_than_its_inputs_need)
 {
     uint32_t furthest = 0;
     float longest = 0.0f;
+    uint32_t most = 0;
+    uint32_t most_sent = 0;
     for (uint32_t seed = 1; seed <= 8; seed++) {
         tide_loopback *net = tide_loopback_create(seed);
         tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.04, .jitter = 0.015, .loss = 0.05});
-        double now = 0.0;
-        tide_server *server = tide_server_create(&(tide_server_desc){.game = &tide_game_api, .tick_rate = 60,
-                                                   .transports = {tide_loopback_endpoint(net, 1)}}, now);
-        TIDE_REQUIRE(server != NULL);
-        tide_client *client = tide_client_create(&(tide_client_desc){.game = &tide_game_api,
-                                                   .transport = tide_loopback_endpoint(net, 2),
-                                                   .server = tide_loopback_address(1), .sample = sample, .lead = 2}, now);
-        TIDE_REQUIRE(client != NULL);
-
-        // Updates a 60th of a second apart: the world takes a second and more
-        double connected = 0.0;
-        uint32_t world_took = 0;
-        uint32_t ahead = 0;
-        float waited = 0.0f;
-        while (connected == 0.0 || now < connected + 4.0) {
-            TIDE_REQUIRE(now < 30.0);
-            now += 1.0 / 60;
-            tide_loopback_set_time(net, now);
-            tide_client_update(client, now);
-            tide_server_update(server, now);
-            const tide_client_status s = tide_client_status_of(client);
-            if (s.state != TIDE_SESSION_CONNECTED) continue;
-            if (connected == 0.0) {
-                connected = now;
-                world_took = tide_server_tick(server);
-            }
-            // Not its first second: it starts from a world as old as the world took to come,
-            // and predicts from that until the ticks since have come too, a round trip later
-            if (now < connected + 1.0) continue;
-            if (s.predicted_tick - s.verified_tick > ahead) ahead = s.predicted_tick - s.verified_tick;
-            if (s.early_ms > waited) waited = s.early_ms;
-        }
-        const tide_client_status s = tide_client_status_of(client);
+        watched w;
+        join(&w, net, &tide_game_api, seed % 2u == 0u);
+        // Frames a 60th of a second apart: the world takes a second and more
+        const double connected = w.now;
+        const uint32_t world_took = tide_server_tick(w.server);
+        while (w.now < connected + 4.0) step(&w, true, true);
+        const tide_client_status s = tide_client_status_of(w.client);
         TIDE_CHECK(world_took > 60u); // Ticks the server ran for the player before it had the world
         TIDE_CHECK(s.resyncs == 0);
         TIDE_CHECK(s.early_ms >= 0.0f); // In time, at the end
-        const tide_world *world = tide_client_verified_world(client);
+        const tide_world *world = tide_client_verified_world(w.client);
         TIDE_CHECK(world && world->Archive.total > 0);
-        if (ahead > furthest) furthest = ahead;
-        if (waited > longest) longest = waited;
-
-        tide_client_destroy(client);
-        tide_server_destroy(server);
-        tide_loopback_destroy(net);
+        // It had run every tick the server said it had before it ran one ahead: the ticks the world took among them
+        TIDE_CHECK(w.predicted && w.confirmed >= w.heard && w.confirmed >= world_took);
+        if (w.furthest > furthest) furthest = w.furthest;
+        if (w.longest > longest) longest = w.longest;
+        if (w.most > most) most = w.most;
+        if (w.most_sent > most_sent) most_sent = w.most_sent;
+        leave(&w);
     }
     // A round trip here is about 7 ticks, and the lead 2. With the ticks
     // before it had the world counted as late, it ran the 60 a client may,
-    // its inputs waiting most of a second.
-    printf("    of 8 networks, the furthest a player ran ahead of what's confirmed, from a second after it joined, was %u"
-           " ticks, and the longest its inputs waited %.0f ms\n", furthest, (double)longest);
+    // its inputs waiting most of a second. From the moment it has the world:
+    // before it caught up first, it ran 60 ahead of that world, a guess from
+    // a second and more ago.
+    printf("    of 8 networks, the furthest a player ran ahead of what's confirmed, from when it had the world, was %u ticks,"
+           " the longest its inputs waited %.0f ms, and the most ticks it ran in a frame %u, %u of them the server's\n",
+           furthest, (double)longest, most, most_sent);
     TIDE_CHECK(furthest <= 20u);
     TIDE_CHECK(longest <= 150.0f);
+    TIDE_CHECK(most_sent <= 8u);
 }
+
+// A player's first moments, on a network that's only late, where nothing but
+// the join itself is in the way: 50 ms each way. The world takes over a
+// second to come, and the server ran 70 ticks and more meanwhile. The player
+// runs those as the server sent them, 8 a frame at the most, and nothing
+// ahead until it has; then the ticks up to its clock, 16 an update at the
+// most, as ever. It samples no input for a tick its clock says can't be in
+// time, and the ticks the server ran with no input of its own, which it
+// predicted so, went as predicted: none is run again, as nobody else is in
+// the match to guess wrong about. Before, it ran 60 ticks ahead of the world
+// that came, sampled an input for each, had every one of the server's ticks
+// say it was late, counted them all as late, and ran them all in the one
+// update they came in.
+static void first_moments(const bool twice)
+{
+    tide_loopback *net = tide_loopback_create(21);
+    tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.05});
+    watched w;
+    join(&w, net, &tide_game_api, twice);
+    const double connected = w.now;
+    const uint32_t world_took = tide_server_tick(w.server);
+    while (w.now < connected + 4.0) step(&w, true, true);
+    const tide_client_status s = tide_client_status_of(w.client);
+    printf("    updated %s a frame: the server ran %u ticks before the player had the world; %.2f s after it had, with %u confirmed"
+           " of the %u the server had said, it ran its first tick ahead; the most it ran in a frame was %u ticks, %u of them the"
+           " server's; %u counted as late, %u run again\n", twice ? "twice" : "once", world_took, w.predicted_at - connected,
+           w.confirmed, w.heard, w.most, w.most_sent, s.late_ticks, s.again_ticks);
+    TIDE_CHECK(world_took > 60u);
+    TIDE_CHECK(s.state == TIDE_SESSION_CONNECTED && s.resyncs == 0);
+    TIDE_CHECK(w.predicted && w.confirmed >= w.heard && w.confirmed >= world_took);
+    TIDE_CHECK(w.predicted_at - connected <= 0.5); // 70 ticks and those since at 7 a frame more than the server runs, after a round trip
+    TIDE_CHECK(w.most_sent <= 8u);
+    TIDE_CHECK(w.most <= 8u + (twice ? 32u : 16u)); // ...and the ticks up to its clock, in the frame it's level
+    TIDE_CHECK(s.again_ticks == 0);
+    TIDE_CHECK(s.late_ticks <= 2u); // The first it sampled, as its clock was first set
+    TIDE_CHECK(w.furthest <= 12u && w.longest <= 100.0f);
+    TIDE_CHECK(s.verified_tick + 10u > tide_server_tick(w.server));
+    const tide_world *world = tide_client_verified_world(w.client);
+    TIDE_CHECK(world && world->Archive.total > 0);
+    leave(&w);
+}
+
+TIDE_TEST(net_join_big_world_is_caught_up_with_before_anything_is_predicted)
+{
+    first_moments(false);
+}
+
+// What a frame may run of the server's ticks is the frame's, not each
+// update's: a session updates its client twice a frame, at the same time.
+TIDE_TEST(net_join_big_world_is_caught_up_with_as_a_session_updates_it)
+{
+    first_moments(true);
+}
+
+// A machine with a clock, on which the game's ticks are dear: 5 ms each, where
+// a frame is 16.7. Catching up takes half a frame's time at the most, once it
+// has run a tick more than came due, so its frames stay about as long as they
+// were: 2 of the server's ticks a frame here, where a machine with no clock
+// runs 8. It still gets level, a tick a frame.
+TIDE_TEST(net_join_big_world_is_caught_up_with_in_the_time_a_frame_has_to_spare)
+{
+    static tide_game slow;
+    slow = tide_game_api;
+    slow.tick = slow_tick;
+    for (int twice = 0; twice < 2; twice++) {
+        tide_loopback *net = tide_loopback_create(23);
+        tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.05});
+        watched w;
+        join_at_a_cost(&w, net, &slow, twice == 1, 5000000u);
+        const double connected = w.now;
+        w.slowest = 0.0;
+        // Until it's level: what it runs ahead from there isn't looked at here
+        while (!w.predicted && w.now < connected + 10.0) step(&w, true, true);
+        printf("    updated %s a frame, with ticks of 5 ms: level %.2f s after it had the world; the most of the server's ticks it"
+               " ran in a frame was %u, and its longest frame %.1f ms\n", twice ? "twice" : "once", w.predicted_at - connected,
+               w.most_sent, w.slowest * 1e3);
+        TIDE_CHECK(w.predicted && w.confirmed >= w.heard);
+        TIDE_CHECK(w.most_sent <= 3u);
+        TIDE_CHECK(w.slowest <= 0.0171); // No frame was longer for it
+        TIDE_CHECK(w.predicted_at - connected <= 3.0);
+        TIDE_CHECK(tide_client_status_of(w.client).resyncs == 0);
+        leave(&w);
+    }
+}
+
+// ...and one that can't run the match's ticks in the time they take: 25 ms
+// each, where 16.7 pass. It can't keep up whatever it does, and falls behind
+// until the server sends the world again. What it mustn't do is run every
+// tick that came due while it ran the last ones: each frame would then be
+// longer than the one before, without end. It runs 8 a frame, so its frames
+// are as long as 8 ticks take, and stay so.
+TIDE_TEST(net_join_big_world_on_a_machine_too_slow_for_it_keeps_its_frames_bounded)
+{
+    static tide_game slow;
+    slow = tide_game_api;
+    slow.tick = slow_tick;
+    for (int twice = 0; twice < 2; twice++) {
+        tide_loopback *net = tide_loopback_create(24);
+        tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.05});
+        watched w;
+        join_at_a_cost(&w, net, &slow, twice == 1, 25000000u);
+        const double connected = w.now;
+        w.slowest = 0.0;
+        while (w.now < connected + 8.0) step(&w, true, true);
+        printf("    updated %s a frame, with ticks of 25 ms: the most of the server's ticks it ran in a frame was %u, and its"
+               " longest frame %.0f ms, in 8 seconds\n", twice ? "twice" : "once", w.most_sent, w.slowest * 1e3);
+        TIDE_CHECK(tide_client_status_of(w.client).state == TIDE_SESSION_CONNECTED);
+        TIDE_CHECK(w.most_sent <= 8u);
+        TIDE_CHECK(w.slowest <= 0.201); // 8 ticks of 25 ms
+        leave(&w);
+    }
+}
+
+// The same for a player whose world went wrong and was sent again: a hash
+// that comes out wrong, once, on this machine alone.
+static bool break_hash;
+
+static uint64_t flaky_hash(const void *world)
+{
+    const uint64_t hash = tide_game_api.hash_world(world);
+    if (!break_hash) return hash;
+    break_hash = false;
+    return hash ^ 1u;
+}
+
+TIDE_TEST(net_join_big_world_sent_again_is_caught_up_with_too)
+{
+    static tide_game flaky;
+    flaky = tide_game_api;
+    flaky.hash_world = flaky_hash;
+    break_hash = false;
+    tide_loopback *net = tide_loopback_create(22);
+    tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.05});
+    watched w;
+    join(&w, net, &flaky, true);
+    while (tide_server_tick(w.server) < 300u) step(&w, true, true);
+    TIDE_CHECK(tide_client_status_of(w.client).predicted_tick > tide_client_status_of(w.client).verified_tick);
+    break_hash = true;
+    while (tide_client_status_of(w.client).resyncs == 0) {
+        TIDE_REQUIRE(w.now < 30.0);
+        step(&w, true, true);
+    }
+    // From the frame the world came in again: nothing ahead of it until the ticks since are run
+    const double again = w.now;
+    const tide_client_status then = tide_client_status_of(w.client);
+    TIDE_CHECK(then.predicted_tick == then.verified_tick);
+    watch(&w);
+    while (w.now < again + 3.0) step(&w, true, true);
+    const tide_client_status s = tide_client_status_of(w.client);
+    printf("    sent the world again, it ran its first tick ahead %.2f s later, with %u confirmed of the %u the server had"
+           " said; the most it ran in a frame was %u ticks, %u of them the server's; %u run again\n",
+           w.predicted_at - again, w.confirmed, w.heard, w.most, w.most_sent, s.again_ticks);
+    TIDE_CHECK(s.state == TIDE_SESSION_CONNECTED && s.resyncs == 1);
+    TIDE_CHECK(w.predicted && w.confirmed >= w.heard);
+    TIDE_CHECK(w.predicted_at - again <= 0.5);
+    TIDE_CHECK(w.most_sent <= 8u);
+    TIDE_CHECK(s.again_ticks == 0);
+    TIDE_CHECK(w.furthest <= 12u && w.longest <= 100.0f);
+    TIDE_CHECK(s.verified_tick + 10u > tide_server_tick(w.server));
+    leave(&w);
+}
+
