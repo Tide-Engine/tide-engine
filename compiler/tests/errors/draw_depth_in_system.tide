@@ -1,0 +1,10 @@
+// expect: Draw can only be used in views, and in functions they call
+scene Main { }
+
+component Body { float3 position; }
+
+system Move(mut Body body)
+{
+    Draw.SetDepth(Depth.Read);
+    body.position.x += 1;
+}

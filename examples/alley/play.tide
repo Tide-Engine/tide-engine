@@ -25,6 +25,10 @@ const Color GOLD = Color(1, 0.86, 0.36);    // A kingpin's head
 // What draws over what, whichever file a view is in.
 enum Layers { Camera, Pieces, Lane, Effects, Hud, Menu }
 
+// How far over the lane what's flat on it is drawn, so that the lane, which
+// is in the same place, doesn't show through it.
+const float ON_LANE = 0.006;
+
 // Where this machine's player points on the lane, and the spin they've set,
 // which its input sends.
 local singleton Hand
@@ -50,7 +54,7 @@ local singleton Fx
     Color flashColor = Color.white;
     Random random;   // What rolls the effects: this machine's own
     List<float> pops;     // Each seat's score, just counted up: 1, fading
-    List<Decal> decals;   // What's flat on the lane this frame: shadows, then marks
+    List<Decal> decals;   // What's flat on the lane this frame: shadows and marks, the later over the earlier
     List<Spark> sparks;
     List<Mote> motes;     // ...as they're drawn
     List<Label> labels;
@@ -116,9 +120,7 @@ void Shadow(mut Fx fx, float3 a, float3 b, float radius, float square)
     var along = to - from;
     var reach = Math.Length(along);
     var wide = radius * 2.6;
-    // Each a little over the last, so that none hides another
-    var lift = float3(0, 0.006 + fx.decals.count * 0.0002, 0);
-    fx.decals.Add(Decal { transform = float4x4.TRS((from + to) * 0.5 + lift,
+    fx.decals.Add(Decal { transform = float4x4.TRS((from + to) * 0.5 + float3(0, ON_LANE, 0),
                                                  quaternion.AxisAngle(float3(0, 1, 0), reach > 0.01 ? Math.Atan2(along.x, along.z) : 0),
                                                  float3(wide, 1, reach + wide)),
                           tint = Color(0, 0, 0.02, 0.52 * Math.Saturate(1 - height / 8)), square = square });
@@ -127,7 +129,7 @@ void Shadow(mut Fx fx, float3 a, float3 b, float radius, float square)
 // A mark painted on the lane: a disc, or a ring.
 void Mark(mut Fx fx, float3 at, float size, Color tint, float ring)
 {
-    fx.decals.Add(Decal { transform = float4x4.TRS(float3(at.x, 0.012 + fx.decals.count * 0.0002, at.z), quaternion.identity, float3(size, 1, size)),
+    fx.decals.Add(Decal { transform = float4x4.TRS(float3(at.x, ON_LANE, at.z), quaternion.identity, float3(size, 1, size)),
                           tint = tint, ring = ring });
 }
 
@@ -319,9 +321,13 @@ view Mine(Bowler bowler, Hand hand, Lane lane, mut Fx fx, with ownership)
 }
 
 // The shadows and the marks, all at once, flat on the lane: after what stands
-// on it, which they're under.
+// on it, which they're under. They read depth and write none, so what's in
+// front hides them, and where two overlap the later one goes over the other.
 [Stage(Layers.Lane)]
 view Decals(Fx fx, Models models)
 {
-    Draw3D.Instanced(models.plate, models.plateFaces, fx.decals, DecalLook);
+    Draw.Depth(Depth.Read)
+    {
+        Draw3D.Instanced(models.plate, models.plateFaces, fx.decals, DecalLook);
+    }
 }

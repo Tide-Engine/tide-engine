@@ -27,6 +27,7 @@ typedef ptrdiff_t GLintptr;
 
 enum {
     GL_FALSE = 0,
+    GL_TRUE = 1,
     GL_TRIANGLES = 0x0004,
     GL_DEPTH_BUFFER_BIT = 0x0100,
     GL_COLOR_BUFFER_BIT = 0x4000,
@@ -113,6 +114,7 @@ enum {
     V(DeleteTextures, (GLsizei count, const GLuint *textures), (count, textures))                                      \
     V(DeleteVertexArrays, (GLsizei count, const GLuint *arrays), (count, arrays))                                      \
     V(DepthFunc, (GLenum function), (function))                                                                        \
+    V(DepthMask, (GLboolean write), (write))                                                                           \
     V(Disable, (GLenum capability), (capability))                                                                      \
     V(DrawArrays, (GLenum mode, GLint first, GLsizei count), (mode, first, count))                                     \
     V(DrawArraysInstanced, (GLenum mode, GLint first, GLsizei count, GLsizei instances),                               \

@@ -1,0 +1,3 @@
+// expect: 'Depth' is built into the engine
+enum Depth { Near, Far }
+scene Main { }
