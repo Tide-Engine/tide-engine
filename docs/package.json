@@ -12,6 +12,8 @@
     "start": "node server.js",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test:grammar": "node --test ../tools/tide-syntax/test/grammar.test.mjs",
+    "test:access": "node --test tests/access.test.mjs",
+    "test:access-http": "node --test tests/access-http.test.mjs",
     "test:examples": "node tests/examples.mjs",
     "test:samples": "node tests/samples.mjs"
   },

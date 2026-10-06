@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parse } from 'yaml';
-import { pages, repo, type Link } from '#lib/nav.ts';
+import { pages, type Link } from '#lib/nav.ts';
 import { language, render, type Heading } from './markdown.ts';
 
 const sources = import.meta.glob(['/**/*.md', '!/node_modules/**', '!/.svelte-kit/**', '!/build/**', '!/static/**'], {
@@ -66,7 +66,6 @@ export interface Page {
     description: string;
     html: string;
     headings: Heading[];
-    edit: string;
     prev?: Link;
     next?: Link;
 }
@@ -86,7 +85,6 @@ export function page(slug: string): Page {
             description: describe(rendered.sections[0].text),
             html: rendered.html,
             headings: rendered.headings,
-            edit: `${repo}/edit/dev/docs${file}`,
             prev: pages[index - 1],
             next: pages[index + 1],
         };
