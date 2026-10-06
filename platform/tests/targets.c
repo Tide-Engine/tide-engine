@@ -255,6 +255,62 @@ static void check_render_depth_alpha(void)
     for (int i = 0; i < WIDTH * HEIGHT * 4; i++) expected[i] = 0x00ff00ffu;
     render_expect(expected, "target clear resets depth");
 
+    // What a mesh does with depth is the same in a target as in the window.
+    // One that only reads it writes none: the far mesh, drawn after the near
+    // one, shows where it would have been hidden.
+    tide_draw_reset(&render_list);
+    tide_draw_to(&render_list, TARGET_A, WIDTH, HEIGHT);
+    tide_draw_clear(&render_list, TIDE_COLOR_BLACK);
+    tide_draw_set_camera_matrices(&render_list, identity, identity);
+    tide_draw_set_depth(&render_list, TIDE_DEPTH_READ);
+    tide_draw_mesh_3d(&render_list, &near_mesh, identity, NULL, TIDE_FILTER_POINT);
+    tide_draw_unset_depth(&render_list);
+    tide_draw_mesh_3d(&render_list, &far_mesh, identity, NULL, TIDE_FILTER_POINT);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_image(TARGET_A, WIDTH, HEIGHT, 0);
+    render_expect(expected, "a mesh that only reads depth hides nothing in a target");
+
+    // ...but it's read: the target kept the far mesh's depth, and a frame
+    // later the near one, which only reads it, is in front of that and shows
+    tide_draw_reset(&render_list);
+    tide_draw_to(&render_list, TARGET_A, WIDTH, HEIGHT);
+    tide_draw_set_camera_matrices(&render_list, identity, identity);
+    const uint32_t reading = tide_draw_push_depth(&render_list, TIDE_DEPTH_READ);
+    tide_draw_mesh_3d(&render_list, &near_mesh, identity, NULL, TIDE_FILTER_POINT);
+    tide_draw_pop(&render_list, reading);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_image(TARGET_A, WIDTH, HEIGHT, 0);
+    for (int i = 0; i < WIDTH * HEIGHT * 4; i++) expected[i] = 0xff0000ffu;
+    render_expect(expected, "a mesh that only reads depth is in front of what's farther in a target");
+
+    // One that neither reads nor writes it draws over what's nearer, and
+    // leaves the depth that was there: a frame later, a mesh between the two
+    // is still hidden behind the near one
+    tide_draw_reset(&render_list);
+    tide_draw_to(&render_list, TARGET_A, WIDTH, HEIGHT);
+    tide_draw_clear(&render_list, TIDE_COLOR_BLACK);
+    tide_draw_set_camera_matrices(&render_list, identity, identity);
+    tide_draw_mesh_3d(&render_list, &near_mesh, identity, NULL, TIDE_FILTER_POINT);
+    const uint32_t over = tide_draw_push_depth(&render_list, TIDE_DEPTH_NONE);
+    tide_draw_mesh_3d(&render_list, &far_mesh, identity, NULL, TIDE_FILTER_POINT);
+    tide_draw_pop(&render_list, over);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_image(TARGET_A, WIDTH, HEIGHT, 0);
+    for (int i = 0; i < WIDTH * HEIGHT * 4; i++) expected[i] = 0x00ff00ffu;
+    render_expect(expected, "a mesh that neither reads nor writes depth draws over what's nearer in a target");
+    tide_draw_reset(&render_list);
+    tide_draw_to(&render_list, TARGET_A, WIDTH, HEIGHT);
+    tide_draw_set_camera_matrices(&render_list, identity, identity);
+    const tide_vertex3 between_vertices[4] = {{{-1, 1, 0.0f}, {0, 0}, TIDE_COLOR_BLUE},
+                                             {{1, 1, 0.0f}, {1, 0}, TIDE_COLOR_BLUE},
+                                             {{1, -1, 0.0f}, {1, 1}, TIDE_COLOR_BLUE},
+                                             {{-1, -1, 0.0f}, {0, 1}, TIDE_COLOR_BLUE}};
+    const tide_mesh between_mesh = {between_vertices, 4, indices, 6, 1};
+    tide_draw_mesh_3d(&render_list, &between_mesh, identity, NULL, TIDE_FILTER_POINT);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_image(TARGET_A, WIDTH, HEIGHT, 0);
+    render_expect(expected, "and leaves the nearer one's depth, which hides what's drawn behind it later");
+
     // Use one shader first as an ordinary alpha-blended mesh and then as a
     // replacement blit. Its two pipeline variants must keep distinct state.
     tide_draw_reset(&render_list);
