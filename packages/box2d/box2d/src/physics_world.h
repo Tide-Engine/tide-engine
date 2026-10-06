@@ -63,6 +63,54 @@ typedef struct b2TaskContext
 
 } b2TaskContext;
 
+// Tide: which of a world's bodies, shapes and contacts may differ from what its last image has of them (see
+// ../TIDE.md, and b2World_GetSnapshotParts in snapshot.c), so that the next image writes those and no
+// others. A bit each, by id.
+typedef struct b2SnapSet
+{
+	uint64_t* bits;
+	int blockCount;
+} b2SnapSet;
+
+#define B2_SNAP_TRACK_SECTIONS 17
+
+typedef struct b2SnapTrack
+{
+	// The sets and the flags say everything that may have changed since the last image. Not so until an
+	// image in sections was taken, after a restore, and after anything was done to the world that they
+	// don't follow: then the next image is written whole.
+	bool sparse;
+
+	// A shape's bit is also its fat bounds', which are an array beside the shapes
+	b2SnapSet bodies;
+	b2SnapSet shapes;
+	b2SnapSet contacts;
+
+	// The last image: where its sections were, how big each was, and how many bodies, shapes, contacts
+	// and solver sets it had
+	int bases[B2_SNAP_TRACK_SECTIONS];
+	int sizes[B2_SNAP_TRACK_SECTIONS];
+	int bodyCount;
+	int shapeCount;
+	int contactCount;
+	int setCount;
+
+	// One body in this many can be awake for an image to be written in parts, or 0 for the usual share
+	// (b2World_SetSnapshotAwakeShare)
+	int awakeShare;
+
+	// Something was written in the static or the disabled set, in a sleeping set, or in the pairs, since
+	// the last image. Nothing writes these but what says so (b2SnapTouchSet, b2SnapTouchPairs): the step's
+	// workers only write what's awake, and a pair comes and goes with its contact. An image in parts leaves
+	// out the ones that weren't touched.
+	bool fixedTouched;
+	bool setsTouched;
+	bool pairsTouched;
+
+	// What b2World_GetSnapshotParts hands out, kept from one image to the next (b2SnapParts)
+	void* parts;
+} b2SnapTrack;
+
 // The world struct manages all physics entities, dynamic simulation,  and asynchronous queries.
 // The world also contains efficient memory management facilities.
 typedef struct b2World
@@ -223,7 +271,98 @@ typedef struct b2World
 	bool enableWarmStarting;
 	bool enableContinuous;
 	bool inUse;
+
+	// Tide: what changed since the world's last image. Last, so that everything above is where upstream
+	// has it.
+	b2SnapTrack snapTrack;
 } b2World;
+
+// Tide: a body, a shape or a contact may be another than the world's last image has it (b2SnapTrack). Said
+// wherever one is written that isn't an awake body's own: an awake body, its shapes and the contacts it's in
+// are taken to have changed anyway, as the step writes them on its worker threads. These are only called
+// from code that runs on one thread.
+void b2SnapGrowSet( b2SnapSet* set, int blockCount );
+
+static inline void b2SnapSetBit( b2SnapSet* set, int index )
+{
+	int block = index >> 6;
+	if ( block >= set->blockCount )
+	{
+		b2SnapGrowSet( set, block + 1 );
+	}
+	set->bits[block] |= (uint64_t)1 << ( index & 63 );
+}
+
+static inline void b2SnapTouchBody( b2World* world, int bodyId )
+{
+	if ( world->snapTrack.sparse && bodyId >= 0 )
+	{
+		b2SnapSetBit( &world->snapTrack.bodies, bodyId );
+	}
+}
+
+static inline void b2SnapTouchShape( b2World* world, int shapeId )
+{
+	if ( world->snapTrack.sparse && shapeId >= 0 )
+	{
+		b2SnapSetBit( &world->snapTrack.shapes, shapeId );
+	}
+}
+
+static inline void b2SnapTouchContact( b2World* world, int contactId )
+{
+	if ( world->snapTrack.sparse && contactId >= 0 )
+	{
+		b2SnapSetBit( &world->snapTrack.contacts, contactId );
+	}
+}
+
+// Tide: a contact by its key in a body's list, which says the contact and which of its two edges, or none
+static inline void b2SnapTouchContactKey( b2World* world, int contactKey )
+{
+	if ( world->snapTrack.sparse && contactKey >= 0 )
+	{
+		b2SnapSetBit( &world->snapTrack.contacts, contactKey >> 1 );
+	}
+}
+
+// Tide: something was done that the sets don't follow: the next image is written whole
+static inline void b2SnapTouchAll( b2World* world )
+{
+	world->snapTrack.sparse = false;
+}
+
+// Tide: something was written in a solver set: a body's place or mass, a contact or an island put in or
+// taken out, the set made or destroyed. It matters for every set but the awake one, which every image
+// writes: the static and the disabled set are one section of an image, and the sleeping sets another.
+static inline void b2SnapTouchSet( b2World* world, int setIndex )
+{
+	if ( setIndex >= b2_firstSleepingSet )
+	{
+		world->snapTrack.setsTouched = true;
+	}
+	else if ( setIndex == b2_staticSet || setIndex == b2_disabledSet )
+	{
+		world->snapTrack.fixedTouched = true;
+	}
+}
+
+// Tide: a pair was added or removed
+static inline void b2SnapTouchPairs( b2World* world )
+{
+	world->snapTrack.pairsTouched = true;
+}
+
+// Tide: a body, its shapes and every contact it's in
+void b2SnapTouchBodyDeep( b2World* world, const b2Body* body );
+
+// Tide: what a call does to the world, by the name its recording has: the sets follow the calls named
+// there, through b2SnapTouchBody and the like where they write, and any other writes the next image whole.
+// So a call nobody looked at costs an image, and can't make a wrong one.
+void b2SnapNoteOp( b2World* world, int op );
+
+// Tide: frees what follows a world's images
+void b2DestroySnapshotTrack( b2World* world );
 
 b2World* b2GetWorldFromId( b2WorldId id );
 b2World* b2GetWorld( int index );

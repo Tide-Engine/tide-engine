@@ -30,6 +30,9 @@ b2Island* b2CreateIsland( b2World* world, int setIndex )
 
 	b2SolverSet* set = b2Array_Get( world->solverSets, setIndex );
 
+	// Tide: the set an island is put in (see b2SnapTrack)
+	b2SnapTouchSet( world, setIndex );
+
 	b2Island* island = b2Array_Get( world->islands, islandId );
 	island->setIndex = setIndex;
 	island->localIndex = set->islandSims.count;
@@ -55,6 +58,8 @@ void b2DestroyIsland( b2World* world, int islandId )
 	// assume island is empty
 	b2Island* island = b2Array_Get( world->islands, islandId );
 	b2SolverSet* set = b2Array_Get( world->solverSets, island->setIndex );
+	// Tide: the set an island is taken out of (see b2SnapTrack)
+	b2SnapTouchSet( world, island->setIndex );
 	{
 		int localIndex = island->localIndex;
 		int lastIndex = set->islandSims.count - 1;
@@ -129,6 +134,8 @@ static int b2MergeIslands( b2World* world, int islandIdA, int islandIdB )
 		body->islandId = bigIslandId;
 		body->islandIndex = bigIsland->bodies.count;
 		b2Array_Push( bigIsland->bodies, bodyId );
+		// Tide: a body that's told its island (see b2SnapTrack)
+		b2SnapTouchBody( world, bodyId );
 	}
 
 	// Migrate contacts from smaller island to larger island
@@ -143,6 +150,8 @@ static int b2MergeIslands( b2World* world, int islandIdA, int islandIdB )
 			contact->islandId = bigIslandId;
 			contact->islandIndex = bigIsland->contacts.count;
 			b2Array_Push( bigIsland->contacts, *link );
+			// Tide: and a contact
+			b2SnapTouchContact( world, link->contactId );
 		}
 	}
 
@@ -177,6 +186,9 @@ static void b2AddContactToIsland( b2World* world, int islandId, b2Contact* conta
 	B2_ASSERT( contact->islandIndex == B2_NULL_INDEX );
 
 	b2Island* island = b2Array_Get( world->islands, islandId );
+
+	// Tide: a contact that's told its island (see b2SnapTrack)
+	b2SnapTouchContact( world, contact->contactId );
 
 	contact->islandId = islandId;
 	contact->islandIndex = island->contacts.count;
@@ -252,7 +264,12 @@ void b2UnlinkContact( b2World* world, b2Contact* contact )
 		b2Contact* movedContact = b2Array_Get( world->contacts, movedLink->contactId );
 		B2_ASSERT( movedContact->islandIndex == movedIndex );
 		movedContact->islandIndex = removeIndex;
+		// Tide: another contact of the island, which is told where it is in it now (see b2SnapTrack)
+		b2SnapTouchContact( world, movedLink->contactId );
 	}
+
+	// Tide: and the contact that leaves it
+	b2SnapTouchContact( world, contact->contactId );
 
 	contact->islandId = B2_NULL_INDEX;
 	contact->islandIndex = B2_NULL_INDEX;
