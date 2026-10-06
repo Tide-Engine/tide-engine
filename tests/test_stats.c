@@ -33,6 +33,7 @@ static void start(const bool open)
 {
     memset(&devices, 0, sizeof devices);
     memset(&gui, 0, sizeof gui);
+    tide_stats_free(&stats);
     stats = (tide_stats){.open = open};
     screen = tide_f2(960.0f, 540.0f);
     tide_profile_free(&profile);
@@ -58,10 +59,26 @@ static void start(const bool open)
     };
 }
 
-static void draw(void)
+static void draw_only(void)
 {
     tide_draw_reset(&list);
     tide_stats_draw(&stats, &values, &list, screen, font);
+}
+
+// One made-up tick of the same durations, half a second into the frame. Prime
+// before it on opening, as the host does, so a closed drawer's samples stay out.
+static void draw(void)
+{
+    const tide_profile *p = values.match ? values.profile : NULL;
+    if (stats.open && p && stats.profile != p) tide_stats_collect(&stats, p, 0.0);
+    if (stats.open && p) {
+        for (uint32_t i = 0; i < profile.systems.count; i++) {
+            const tide_profile_time *t = &profile.systems.items[i];
+            tide_profile_add(&profile.systems, i, t->name, 0, (uint64_t)(t->ms * (double)MS));
+        }
+    }
+    tide_stats_collect(&stats, p, 0.5);
+    draw_only();
 }
 
 static bool line_is(const uint32_t i, const char *text)
@@ -198,6 +215,123 @@ TIDE_TEST(stats_fit_a_small_screen)
     screen = tide_f2(960.0f, 50.0f);
     draw();
     TIDE_CHECK(stats.line_count == 1 && line_is(0, "60 fps"));
+    tide_draw_free(&list);
+}
+
+TIDE_TEST(stats_render_and_gpu_times_keep_the_three_system_rows)
+{
+    start(true);
+    values.render_ms = 0.32;
+    values.render_known = true;
+    values.gpu_ms = 1.25;
+    values.gpu_known = true;
+    values.delay_ticks = 2;
+    draw();
+    TIDE_REQUIRE(stats.line_count == 17);
+    TIDE_CHECK(line_is(1, "cpu 2.1 ms") && line_is(2, "render cpu 0.32 ms") && line_is(3, "gpu 1.25 ms"));
+    TIDE_CHECK(line_is(14, "Combat.Hit 1.50 ms") && line_is(15, "Fall 0.31 ms") && line_is(16, "Move 0.20 ms"));
+    values.remote = true;
+    draw();
+    TIDE_CHECK(stats.line_count == 16 && line_is(15, "Move 0.20 ms"));
+
+    // An unsupported backend doesn't report zero GPU work, and an existing
+    // caller with none of the new fields still has the original lines.
+    values.render_known = values.gpu_known = false;
+    draw();
+    TIDE_CHECK(!text_command("render cpu 0.32 ms") && !text_command("gpu 1.25 ms"));
+    tide_draw_free(&list);
+}
+
+TIDE_TEST(stats_system_times_average_measurements_and_hold_their_order)
+{
+    start(true);
+    draw();
+    TIDE_CHECK(text_command("Combat.Hit 1.50 ms") && text_command("Fall 0.31 ms"));
+
+    // Two ticks in one frame, no tick in another: average measured runs, rather
+    // than frames or the last tick. Until half a second, values and order stay.
+    tide_profile_add(&profile.systems, 0, "Fall", 0, 8 * MS);
+    tide_profile_add(&profile.systems, 0, "Fall", 0, 8 * MS);
+    tide_profile_add(&profile.systems, 1, "Combat.Hit", 0, 2 * MS);
+    tide_profile_add(&profile.systems, 2, "Land", 0, 0);
+    tide_profile_add(&profile.systems, 3, "Move", 0, MS);
+    tide_stats_collect(&stats, &profile, 0.1);
+    draw_only();
+    TIDE_CHECK(line_is(11, "Combat.Hit 1.50 ms") && line_is(12, "Fall 0.31 ms"));
+
+    // The F7 profiler clears its totals on its own cadence. Both readers still
+    // see their whole interval, including the samples measured before a clear.
+    tide_profile_clear(&profile);
+    tide_profile_add(&profile.systems, 0, "Fall", 0, MS);
+    tide_profile_add(&profile.systems, 1, "Combat.Hit", 0, 4 * MS);
+    tide_profile_add(&profile.systems, 2, "Land", 0, 0);
+    tide_profile_add(&profile.systems, 3, "Move", 0, MS);
+    tide_stats_collect(&stats, &profile, 0.1);
+    draw_only();
+    TIDE_CHECK(line_is(11, "Combat.Hit 1.50 ms"));
+    tide_stats_collect(&stats, &profile, 0.3); // No tick in this frame
+    draw_only();
+    TIDE_CHECK(line_is(11, "Fall 5.67 ms") && line_is(12, "Combat.Hit 3.00 ms") && line_is(13, "Move 1.00 ms"));
+    TIDE_CHECK(profile.systems.items[0].total == 1.0); // Stats didn't clear the profiler's data
+
+    // Half a second with no ticks keeps the last measurements, without
+    // treating each frame as another run of the last tick's timings.
+    tide_stats_collect(&stats, &profile, 0.5);
+    draw_only();
+    TIDE_CHECK(line_is(11, "Fall 5.67 ms") && line_is(12, "Combat.Hit 3.00 ms"));
+    // A measured run below the clock's resolution is still a real sample.
+    tide_profile_add(&profile.systems, 2, "Land", 0, 0);
+    tide_stats_collect(&stats, &profile, 0.5);
+    draw_only();
+    TIDE_CHECK(stats.slow_count == 1 && line_is(11, "Land 0.00 ms"));
+    tide_draw_free(&list);
+}
+
+TIDE_TEST(stats_system_times_restart_for_closed_drawers_matches_and_builds)
+{
+    start(true);
+    draw();
+    stats.open = false;
+    tide_stats_collect(&stats, &profile, 0.5);
+    // Profiling may continue while closed. Reopening starts with a baseline,
+    // so these old runs never appear in the drawer's new interval.
+    tide_profile_add(&profile.systems, 0, "Fall", 0, 100 * MS);
+    stats.open = true;
+    tide_stats_collect(&stats, &profile, 0.0);
+    draw_only();
+    TIDE_CHECK(stats.slow_count == 0 && stats.line_count == 11);
+    tide_profile_add(&profile.systems, 0, "Fall", 0, 2 * MS);
+    tide_stats_collect(&stats, &profile, 0.5);
+    draw_only();
+    TIDE_CHECK(stats.slow_count == 1 && line_is(11, "Fall 2.00 ms"));
+
+    // A name changed, with the same number of systems: the old ranking goes
+    // immediately, then the replacement's actual measurements are averaged.
+    tide_profile_add(&profile.systems, 0, "Wind", 0, 4 * MS);
+    tide_stats_collect(&stats, &profile, 0.1);
+    draw_only();
+    TIDE_CHECK(stats.slow_count == 0 && stats.line_count == 11);
+    tide_profile_add(&profile.systems, 0, "Wind", 0, 2 * MS);
+    tide_stats_collect(&stats, &profile, 0.4);
+    draw_only();
+    TIDE_CHECK(line_is(11, "Wind 3.00 ms"));
+
+    // A count changed: all of the profile's counters start over.
+    tide_profile_count(&profile.systems, 1);
+    tide_profile_add(&profile.systems, 0, "Rain", 0, 5 * MS);
+    tide_stats_collect(&stats, &profile, 0.5);
+    draw_only();
+    TIDE_CHECK(stats.slow_count == 1 && line_is(11, "Rain 5.00 ms"));
+    tide_stats_collect(&stats, NULL, 0.5); // No match
+    draw_only();
+    TIDE_CHECK(stats.slow_count == 0 && stats.line_count == 11);
+    tide_stats_collect(&stats, &profile, 0.0);
+    tide_profile_add(&profile.systems, 0, "Rain", 0, MS);
+    tide_stats_collect(&stats, &profile, 0.5);
+    tide_stats_off(&stats);
+    TIDE_CHECK(stats.open && stats.slow_count == 0 && !stats.profile);
+    tide_stats_free(&stats);
+    TIDE_CHECK(!stats.open && !stats.systems && stats.system_room == 0);
     tide_draw_free(&list);
 }
 
@@ -446,4 +580,5 @@ TIDE_TEST(stats_that_are_off_take_no_press)
     tide_draw_free(&list);
     tide_draw_free(&gui.list);
     tide_profile_free(&profile);
+    tide_stats_free(&stats);
 }

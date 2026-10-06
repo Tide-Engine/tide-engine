@@ -97,7 +97,7 @@ static int frame(void *user, const float seconds)
         check(drawer->shown && !drawer->open && drawer->line_count == 1 && drew("60 fps"),
               "the game's stats setting shows them closed: one line, the frame rate");
         check(!drew("threads") && !drew("cpu"), "and no list");
-        check(!measured && tide_run_work_ms < 0.0 && tide_run_memory == 0,
+        check(!measured && tide_run_work_ms < 0.0 && tide_run_memory == 0 && tide_platform_gpu_ms() < 0.0,
               "closed, nothing is measured for them: no system's time, no frame's work, no memory");
         x = drawer->rect.x + drawer->rect.width * 0.5f;
         y = drawer->rect.y + drawer->rect.height * 0.5f;
@@ -105,7 +105,7 @@ static int frame(void *user, const float seconds)
         wait = 1;
         break;
     case 2:
-        check(drawer->open && drew("60 fps") && drew("threads") && drew("WebGL 2") && drew("tick "),
+        check(drawer->open && drew("60 fps") && drew("threads") && drew(tide_platform_renderer()) && drew("tick "),
               "F8 opens them: the list is above the line");
         check(measured == &tide_run_profiler.profile && tide_run_memory > 0, "and what the list shows is measured from then on");
         check(seen->key, "the game sees the key too");
@@ -114,6 +114,9 @@ static int frame(void *user, const float seconds)
         break;
     case 3:
         check(drew("cpu ") && drew("Count "), "the list has what a frame's work takes, and the game's system by name");
+        check(drew("render cpu "), "rendering CPU time is shown separately from the frame's total work");
+        check(!drew("gpu ") || strcmp(tide_platform_renderer(), "WebGPU") == 0,
+              "GPU time is shown only on a backend with a timer");
         mouse_event("mousedown", x, y);
         break;
     case 4:
@@ -126,7 +129,8 @@ static int frame(void *user, const float seconds)
         wait = 1;
         break;
     case 6:
-        check(!measured, "closed again, nothing is measured");
+        check(!measured && tide_platform_gpu_ms() < 0.0 && !drew("render cpu ") && !drew("gpu "),
+              "closed again, nothing is measured");
         finger_event("pointerdown", x, y);
         break;
     case 7:
@@ -152,9 +156,19 @@ static int frame(void *user, const float seconds)
         mouse_event("mouseup", 20.0f, 20.0f);
         wait = 2;
         break;
-    default:
+    case 12:
         check(world && world->Read.presses > 0 && seen->pressed, "away from them, a click is the game's: its match and its views read it");
         check(drawer->open, "and opens or closes nothing");
+        tide_draw_forget(&tide_run_draw); // A retained host with a new build's draw list
+        break;
+    case 13:
+        check(tide_run_work_ms < 0.0 && tide_run_render_ms < 0.0 && tide_run_gpu_ms < 0.0 && !drew("Count "),
+              "a reload discards the old build's timing averages and system order");
+        wait = 40;
+        break;
+    default:
+        check(drew("cpu ") && drew("render cpu ") && drew("Count "),
+              "fresh averaged timings return after the new build runs");
         return failures == 0 ? 0 : 1;
     }
     return TIDE_KEEP_RUNNING;

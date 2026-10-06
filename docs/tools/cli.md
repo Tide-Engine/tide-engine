@@ -65,15 +65,17 @@ They're a drawer. Closed, it's one line: the frame rate, and in a match another 
 |---|---|
 | `60 fps` | Frames a second, over the last second. With `ping 34 ms` after it in a match another machine runs: the line that's always there |
 | `cpu 2.1 ms` | What a frame's work takes on its thread: the ticks it runs, the views and the drawing, without the wait for the display |
+| `render cpu 0.42 ms` | The part of `cpu` spent preparing and submitting the frame's draw list, including its render targets |
+| `gpu 0.85 ms` | GPU drawing time, including render targets, on desktop OpenGL and WebGPU devices with timestamp queries. Results arrive asynchronously; the line is absent when no measurement is available |
 | `ping`, `delay` | The network's round trip to the machine running the match (in the list when it's this machine), and the input delay when there is one (see [Input delay](../multiplayer/matches.md#input-delay)) |
 | `up`, `down` | What goes over the network each second |
 | `tick`, `entities` | The match's tick, and how many entities it has |
 | `threads` | The threads ticks run on |
 | `memory 48 MB` | The memory the program has, as the system counts it. On the web it's the program's WebAssembly memory, which only grows |
 | `WebGPU`, `12 draw calls` | What draws (WebGPU, WebGL 2 or OpenGL), and how many draw calls the frame took: a run of shapes, of text or of one mesh's instances is one |
-| `Move 0.31 ms` | The three systems that took longest in the last tick |
+| `Move 0.31 ms` | The three systems that took longest on average per measured run, over the last half second |
 
-The numbers that are rates or averages change once a second, and the drawer shows once there's a first frame rate, a quarter of a second in. Outside a match, the list has the lines that aren't a match's. On a screen too low for the whole list, it keeps the lines there's room for, from its top.
+Timings change twice a second, with the system order held between updates; frame rate and network rates change once a second. The drawer shows once there's a first frame rate, a quarter of a second in. GPU time excludes the drawer and display wait; on WebGPU it sums render-pass durations. CPU and GPU work overlap, so their times aren't added to get a frame's duration. WebGL 2 and OpenGL ES 3 have no GPU timer here. Outside a match, the list has the lines that aren't a match's. On a screen too low for the whole list, it keeps the lines there's room for, from its top.
 
 A setting is part of the build, so `tide build` keeps it: take `stats` out before players get the game, unless the frame rate in a corner is what you want them to have.
 
