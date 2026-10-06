@@ -241,20 +241,24 @@ event(Hit hit) Feel(mut Heard heard)
     heard.speed = hit.speed;
 }
 
+// How many rays a crate of the crowd looks down along, across its width: enough of them that a tick's asking
+// takes a thread long enough for the others to come and take some of it
+const int RAYS = 24;
+
 // It takes nothing a tick has one of to write, so its crates are shared out over the tick's threads: each
 // thread asks of the same world, and where C has none at the match's stamp, the first to ask has it made
 [Before(PhysicsStages.Step)]
 system AskUnder(Body body, mut Asker asker, Physics physics)
 {
-    if (Raycast(physics, body.position, body.position + float2(0, -50), out var hit, ignore: body))
+    asker.under = -1;
+    asker.on = default;
+    for (var i = 0; i < RAYS; i++)
     {
+        var from = body.position + float2((i + 0.5) / RAYS * 0.8 - 0.4, 0);
+        if (!Raycast(physics, from, from + float2(0, -50), out var hit, ignore: body)) continue;
+        if (asker.under >= 0 && hit.fraction * 50 >= asker.under) continue;
         asker.under = hit.fraction * 50;
         asker.on = hit.entity;
-    }
-    else
-    {
-        asker.under = -1;
-        asker.on = default;
     }
 }
 
