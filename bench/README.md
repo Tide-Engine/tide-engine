@@ -253,6 +253,8 @@ The recorded late count changes from 118 to one, but this includes the corrected
 
 ### Provisional budget proposal
 
+The subsequent merge of `5bc9de6` passes all 1,475 native debug and 1,461 web-debug checks, plus 14 native release and 15 web-release affected checks. Combined Sumo/Towers pins reproduce across all four configurations; Sand/Gallery pins stay unchanged. A five-second native and eight-second hardware-WebGPU smoke check verifies the rebuilt three-player telemetry. These bounded checks, retained under `catch-up-integration-smoke`, do not replace the pre-integration full-round measurements above. The validation metadata records the merge and its pins.
+
 Keep the existing 4 ms budget in this scoped fix, pending a separate comparison of delay controllers; these runs do not establish it as adequate or optimal for heavy browser play. It estimates the cost of the current predicted lead from measured tick costs; it is not a hard limit on an update's confirmed work, new prediction or replay. A long update with few replayed ticks therefore does not by itself show that this budget is too large. The catch-up change leaves both this default and the delay policy unchanged. The remaining browser feedback bursts and slow delay recovery need their own investigation before selecting a replacement controller.
 
 A fixed share of the nominal display interval could scale the allowance with the intended frame rate, but needs an agreed share and a measured latency tradeoff. Four milliseconds is about 24% of a 60 Hz frame and 58% of a 144 Hz frame. Use the nominal interval for such an experiment: using the interval of an overloaded frame would increase the allowance precisely when the machine is falling behind.
