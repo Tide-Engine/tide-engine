@@ -767,6 +767,18 @@ static void build_signatures(void)
     describe(add("RenderTarget", "Window", T_TARGET, "tide_render_target_screen_as", 2, T_F, T_FORMAT, T_NONE), "factor, format",
              window_format_doc);
 
+    // For editors: the checker takes the call itself (check_cube_target)
+    static const type T_CUBEMAP = {TY_CUBEMAP, NULL};
+    static const char cube_target_doc[] =
+        "A Cubemap that's drawn into: six square images of `size` pixels a side, each a destination, `cube.faces[0]` "
+        "to `cube.faces[5]` in the order +x, -x, +y, -y, +z, -z, with depth of its own, and all six what a frag "
+        "reads by a direction, `cube.Sample(direction)`. A face is what a camera at the cube's middle sees along "
+        "its axis with a field of view of 90. Its faces hold `Format.Rgba8`, or `Format.Rgba16f`, floats that keep "
+        "any number. It starts black; copies share it, and `Dispose()` lets it go.";
+    describe(add("RenderTarget", "Cube", T_CUBEMAP, "tide_cubemap_make", 1, T_F, T_NONE, T_NONE), "size", cube_target_doc);
+    describe(add("RenderTarget", "Cube", T_CUBEMAP, "tide_cubemap_make_as", 2, T_F, T_FORMAT, T_NONE), "size, format",
+             cube_target_doc);
+
     describe(add("Draw", "Cube", T_NONE, "tide_draw_cube", 3, T_F3, T_F3, T_COLOR),
              "center, size, color", "A filled cube, centered in the world, with the full size along each axis.");
     signature *cube = add("Draw", "Cube", T_NONE, "tide_draw_cube_rotated", 3, T_F3, T_F3, T_Q);

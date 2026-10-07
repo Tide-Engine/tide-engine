@@ -1,0 +1,7 @@
+// expect: a Cubemap's Sample takes which way to read from its middle, a float3 of any length, then how, a Filter: 'sky.Sample(direction)' or 'sky.Sample(direction, Filter.Trilinear)'
+// expect: a float2 from (0, 0) to (1, 1) reads a Texture; a cube is read by a direction
+// A cube is read by a direction, not a uv
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+frag Look(Vertex3 vertex, out Color color, Room room) { color = room.reflection.Sample(vertex.uv); }
+view Show(Room room) { Draw.Mesh(room.ball, [0, 1, 2], float4x4.identity, Look); }

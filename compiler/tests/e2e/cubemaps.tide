@@ -4,9 +4,9 @@
 // RenderTarget. Both are values: kept in fields, passed to functions, and
 // read where they're an asset by name or a field of what a frag takes.
 
-asset Cubemap sky = "assets/sky/sky_??.png";
-asset Cubemap skyAgain = "assets/sky/*.png"; // The same six files: the pack has each once
-asset Texture right = "assets/sky/sky_px.png"; // ...and one of them as a Texture too
+asset Cubemap sky = "cubes/sky/sky_??.png";
+asset Cubemap skyAgain = "cubes/sky/*.png"; // The same six files: the pack has each once
+asset Texture right = "cubes/sky/sky_px.png"; // ...and one of them as a Texture too
 
 scene Main { }
 

@@ -1,0 +1,5 @@
+// expect: a cube's faces are counted from 0, with an int, not float
+// ...counted with an int
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+view Show(mut Room room) { room.side = room.reflection.faces[1.5]; }
