@@ -1,0 +1,18 @@
+// expect: 'Sample' is given its 'wrap' without the ones before it
+scene Main { }
+
+local singleton Models
+{
+    List<Vertex> corners;
+    Grid2<Color> wood = Grid2(4, 4);
+}
+
+frag Shade(Vertex vertex, mut Color color, Models models)
+{
+    color = models.wood.Sample(vertex.uv, wrap: Wrap.Repeat);
+}
+
+view Show(Models models)
+{
+    Draw2D.Mesh(models.corners, [0, 1, 2], Shade);
+}

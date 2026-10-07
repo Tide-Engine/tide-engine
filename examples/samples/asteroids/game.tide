@@ -163,7 +163,7 @@ input Controls
 
 scene Main { }
 
-float Wrap(float value)
+float Around(float value)
 {
     if (value > ARENA) return value - 2 * ARENA;
     if (value < -ARENA) return value + 2 * ARENA;
@@ -173,7 +173,7 @@ float Wrap(float value)
 // From `from` to `to`, the short way round the field.
 float2 Between(float2 from, float2 to)
 {
-    return float2(Wrap(to.x - from.x), Wrap(to.y - from.y));
+    return float2(Around(to.x - from.x), Around(to.y - from.y));
 }
 
 // An angle from -PI to PI.
@@ -254,7 +254,7 @@ system Fly(Controls input, mut Ship ship, Game game, Time time, with Owner)
     if (speed > TOP_SPEED) ship.velocity = ship.velocity * (TOP_SPEED / speed);
 
     var moved = ship.position + ship.velocity * dt;
-    var wrapped = float2(Wrap(moved.x), Wrap(moved.y));
+    var wrapped = float2(Around(moved.x), Around(moved.y));
     if (wrapped.x != moved.x || wrapped.y != moved.y) this.Snap(); // Across the edge at once, not sliding back
     ship.position = wrapped;
 
@@ -270,7 +270,7 @@ system Drift(mut Rock rock, Time time)
 {
     rock.angle = Angle(rock.angle + rock.spin * time.dt);
     var moved = rock.position + rock.velocity * time.dt;
-    var wrapped = float2(Wrap(moved.x), Wrap(moved.y));
+    var wrapped = float2(Around(moved.x), Around(moved.y));
     if (wrapped.x != moved.x || wrapped.y != moved.y) this.Snap();
     rock.position = wrapped;
 }
@@ -284,7 +284,7 @@ system Shoot(mut Bullet bullet, Time time, query (Rock rock) rocks, query (Sauce
         return;
     }
     var moved = bullet.position + bullet.velocity * time.dt;
-    var wrapped = float2(Wrap(moved.x), Wrap(moved.y));
+    var wrapped = float2(Around(moved.x), Around(moved.y));
     if (wrapped.x != moved.x || wrapped.y != moved.y) this.Snap();
     bullet.position = wrapped;
 
@@ -353,7 +353,7 @@ system Prowl(mut Saucer saucer, Time time, query (Ship ship) ships)
         saucer.velocity.y = saucer.random.NextFloat(-2.4, 2.4);
     }
     var moved = saucer.position + saucer.velocity * time.dt;
-    var wrapped = float2(Wrap(moved.x), Wrap(moved.y));
+    var wrapped = float2(Around(moved.x), Around(moved.y));
     if (wrapped.x != moved.x || wrapped.y != moved.y) this.Snap();
     saucer.position = wrapped;
 
@@ -385,7 +385,7 @@ system Sting(mut Shot shot, Time time, query (Ship ship) ships)
         return;
     }
     var moved = shot.position + shot.velocity * time.dt;
-    var wrapped = float2(Wrap(moved.x), Wrap(moved.y));
+    var wrapped = float2(Around(moved.x), Around(moved.y));
     if (wrapped.x != moved.x || wrapped.y != moved.y) this.Snap();
     shot.position = wrapped;
 

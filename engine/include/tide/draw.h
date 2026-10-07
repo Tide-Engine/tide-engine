@@ -83,7 +83,8 @@ typedef struct tide_draw_command {
             uint32_t first;   // Its indices in tide_draw_list.indices, three a triangle...
             uint32_t count;   // ...and how many
             uint32_t texture; // 1 + its texture's place in tide_draw_list.textures, or 0 for none
-            uint32_t filter;  // tide_filter
+            uint16_t filter;  // tide_filter
+            uint16_t wrap;    // tide_wrap
         } mesh;
         struct {             // TIDE_DRAW_CAMERA_3D
             uint32_t matrix; // Its place in tide_draw_list.matrices: from the world to clip space, as OpenGL's.
@@ -95,7 +96,8 @@ typedef struct tide_draw_command {
             uint32_t first;   // Its instances: transforms in tide_draw_list.matrices, from the mesh to the world...
             uint32_t count;   // ...and how many
             uint32_t texture; // As a mesh's
-            uint32_t filter;
+            uint16_t filter;
+            uint16_t wrap;
         } mesh3;
         struct {          // TIDE_DRAW_SHADED
             uint32_t run; // Its place in tide_draw_list.runs
@@ -185,6 +187,43 @@ typedef enum tide_filter {
     TIDE_FILTER_POINT,    // The nearest pixel: hard edges
     TIDE_FILTER_BILINEAR, // Blended with its neighbors
 } tide_filter;
+
+// What a mesh samples of its texture where a uv is past 0 or 1, on both axes.
+// Tide's `Wrap` has the same values. Blended, a pixel at the texture's edge
+// is blended with what the wrap says is past it.
+typedef enum tide_wrap {
+    TIDE_WRAP_CLAMP,  // The pixels at its edge
+    TIDE_WRAP_REPEAT, // The texture again: 1.25 reads what 0.25 does
+    TIDE_WRAP_MIRROR, // The texture again, the other way round each time: 1.25 reads what 0.75 does
+} tide_wrap;
+
+// A wrap from any number, as a Tide enum's value can be: what isn't one is TIDE_WRAP_CLAMP.
+static inline tide_wrap tide_wrap_of(const int32_t wrap)
+{
+    return wrap == TIDE_WRAP_REPEAT || wrap == TIDE_WRAP_MIRROR ? (tide_wrap)wrap : TIDE_WRAP_CLAMP;
+}
+
+// How a shader's textures are sampled, a word for all of them (a
+// tide_draw_run's `sampling`): bit i is set for texture i read blended with
+// its neighbors, and clear for the nearest pixel, and the two bits from
+// TIDE_SAMPLING_WRAP + 2 * i are its tide_wrap. So a word with only its low
+// bits set clamps every texture.
+#define TIDE_SAMPLING_WRAP 8u
+
+static inline uint32_t tide_sampling_wrapped(const uint32_t texture, const int32_t wrap)
+{
+    return (uint32_t)tide_wrap_of(wrap) << (TIDE_SAMPLING_WRAP + 2u * texture);
+}
+
+static inline bool tide_sampling_blended(const uint32_t sampling, const uint32_t texture)
+{
+    return (sampling >> texture & 1u) != 0;
+}
+
+static inline tide_wrap tide_sampling_wrap(const uint32_t sampling, const uint32_t texture)
+{
+    return tide_wrap_of((int32_t)(sampling >> (TIDE_SAMPLING_WRAP + 2u * texture) & 3u));
+}
 
 // Pixels to draw with, where the game keeps them. Nothing holds a texture on
 // the GPU: a mesh names its pixels, the list copies them when it hasn't got
@@ -594,7 +633,7 @@ typedef struct tide_draw_run {
     uint32_t first;    // Its instances: where they start in tide_draw_list.instances, in bytes...
     uint32_t count;    // ...and how many, tide_shader_instance_size each
     uint32_t uniforms; // Its uniforms of the game's: where they start in tide_draw_list.uniforms, in bytes
-    uint32_t blended;  // A bit for each texture: sampled blended with its neighbors, or the nearest
+    uint32_t sampling; // How each texture is sampled: blended or the nearest, and its wrap (see TIDE_SAMPLING_WRAP)
     uint32_t textures[TIDE_SHADER_TEXTURES]; // 1 + each one's place in tide_draw_list.textures, or 0 for none: white
     tide_color tint;   // What its pixels' colors are multiplied by
     uint32_t moved;    // Whether a 2D shader's mesh goes through `transform` before the camera
@@ -900,10 +939,15 @@ void tide_draw_text_at(tide_draw_list *d, const char *text, tide_float2 position
 // Triangles: three of `indices` each, places in `vertices`, both copied into
 // the list. Each pixel is its corners' colors blended across the triangle,
 // times `texture`'s at their uvs (NULL for none: the colors alone), sampled
-// with `filter`. Either side of a triangle draws. A triangle with an index
-// past the vertices is left out.
+// with `filter`, and for uvs past 0 and 1, the pixels at its edge. Either
+// side of a triangle draws. A triangle with an index past the vertices is
+// left out.
 void tide_draw_mesh(tide_draw_list *d, const tide_vertex *vertices, uint32_t vertex_count, const uint32_t *indices,
                     uint32_t index_count, const tide_texture *texture, tide_filter filter);
+// The same, with what uvs past 0 and 1 read: `wrap`.
+void tide_draw_mesh_wrapped(tide_draw_list *d, const tide_vertex *vertices, uint32_t vertex_count,
+                            const uint32_t *indices, uint32_t index_count, const tide_texture *texture,
+                            tide_filter filter, tide_wrap wrap);
 
 // The same in two steps, for vertices several meshes share, like a GUI
 // library's, whose every batch has a texture and a clip of its own:
@@ -914,6 +958,8 @@ void tide_draw_mesh(tide_draw_list *d, const tide_vertex *vertices, uint32_t ver
 uint32_t tide_draw_vertices(tide_draw_list *d, const tide_vertex *vertices, uint32_t count);
 void tide_draw_triangles(tide_draw_list *d, uint32_t base, const uint32_t *indices, uint32_t count,
                          const tide_texture *texture, tide_filter filter);
+void tide_draw_triangles_wrapped(tide_draw_list *d, uint32_t base, const uint32_t *indices, uint32_t count,
+                                 const tide_texture *texture, tide_filter filter, tide_wrap wrap);
 
 // A version for pixels that change rarely: a hash of them. C that knows when
 // its pixels change can count instead.
@@ -942,9 +988,11 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from);
 uint32_t tide_draw_texture_slot(tide_draw_list *d, uint32_t space, uint64_t id, uint64_t version, int32_t width,
                                 int32_t height, uint8_t **pixels);
 
-// tide_draw_triangles, with what tide_draw_texture_slot gave as the texture.
+// tide_draw_triangles_wrapped, with what tide_draw_texture_slot gave as the
+// texture. Triangles after others with the same texture, filter and wrap are
+// one command.
 void tide_draw_triangles_with(tide_draw_list *d, uint32_t base, const uint32_t *indices, uint32_t count,
-                              uint32_t texture, tide_filter filter);
+                              uint32_t texture, tide_filter filter, tide_wrap wrap);
 
 // ---------------------------------------------------------------------------
 // 3D
@@ -973,11 +1021,15 @@ uint32_t tide_draw_push_camera_matrices(tide_draw_list *d, tide_float4x4 transfo
 
 // A 3D mesh, placed in the world by `transform`: each pixel is its corners'
 // colors blended across the triangle, times `texture`'s at their uvs (NULL
-// for none), sampled with `filter`. Either side of a triangle draws.
-// Instances of one mesh drawn one after another, with one texture and filter,
-// are one command, which renderers draw at once.
+// for none), sampled with `filter`, and for uvs past 0 and 1, the pixels at
+// its edge. Either side of a triangle draws. Instances of one mesh drawn one
+// after another, with one texture, filter and wrap, are one command, which
+// renderers draw at once.
 void tide_draw_mesh_3d(tide_draw_list *d, const tide_mesh *mesh, tide_float4x4 transform, const tide_texture *texture,
                        tide_filter filter);
+// The same, with what uvs past 0 and 1 read: `wrap`.
+void tide_draw_mesh_3d_wrapped(tide_draw_list *d, const tide_mesh *mesh, tide_float4x4 transform,
+                               const tide_texture *texture, tide_filter filter, tide_wrap wrap);
 
 // A version for vertices and indices that change rarely: a hash of them.
 uint64_t tide_mesh_version(const tide_mesh *mesh);
@@ -993,13 +1045,14 @@ void tide_draw_mesh_fill(tide_draw_list *d, uint32_t mesh, const tide_vertex3 *v
                          const uint32_t *indices, uint32_t index_count);
 
 // An instance of what tide_draw_mesh_slot gave, with what
-// tide_draw_texture_slot gave as the texture.
-void tide_draw_instance(tide_draw_list *d, uint32_t mesh, tide_float4x4 transform, uint32_t texture, tide_filter filter);
+// tide_draw_texture_slot gave as the texture, and how it's sampled.
+void tide_draw_instance(tide_draw_list *d, uint32_t mesh, tide_float4x4 transform, uint32_t texture, tide_filter filter,
+                        tide_wrap wrap);
 
 // The same for `count` transforms, copied in their order into one run.
 // With no transforms, nothing is recorded.
 void tide_draw_instances(tide_draw_list *d, uint32_t mesh, const tide_float4x4 *transforms, uint32_t count,
-                         uint32_t texture, tide_filter filter);
+                         uint32_t texture, tide_filter filter, tide_wrap wrap);
 
 // tide_draw_mesh_fill for a TIDE_MESH_BYTES mesh: vertices of `vertex_size`
 // bytes each, as a shader reads them.
@@ -1009,20 +1062,22 @@ void tide_draw_mesh_fill_bytes(tide_draw_list *d, uint32_t mesh, const void *ver
 // An instance of the TIDE_MESH_BYTES mesh tide_draw_mesh_slot gave, through
 // `shader`: its instance's bytes (tide_shader_instance_size of them), the
 // draw's uniforms of the game's (tide_shader_uniform_size), and what
-// tide_draw_texture_slot gave for each of its textures, bit i of `blended`
-// set for one sampled blended. The bytes are copied; a pointer can be NULL
-// when the shader has none of its kind, and with none where it has some,
-// nothing is drawn. Instances of one mesh drawn one after
-// another through one shader, with the same uniforms and textures, are one
-// command, which renderers draw at once.
+// tide_draw_texture_slot gave for each of its textures, with how each is
+// sampled in `sampling`: bit i set for one sampled blended, and its wrap from
+// bit TIDE_SAMPLING_WRAP on (tide_sampling_wrapped), none for the pixels at
+// its edge. The bytes are copied; a pointer can be NULL when the shader has
+// none of its kind, and with none where it has some, nothing is drawn.
+// Instances of one mesh drawn one after another through one shader, with the
+// same uniforms, textures and sampling, are one command, which renderers draw
+// at once.
 void tide_draw_shaded(tide_draw_list *d, const tide_shader *shader, uint32_t mesh, const void *instance,
-                      const void *uniforms, const uint32_t *textures, uint32_t blended);
+                      const void *uniforms, const uint32_t *textures, uint32_t sampling);
 
 // The same for `count` instances, tide_shader_instance_size bytes each,
 // copied in their order into one run. A shader with no instance bytes may
 // take NULL with a positive count. A count of zero records nothing.
 void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, uint32_t mesh, const void *instances,
-                                uint32_t count, const void *uniforms, const uint32_t *textures, uint32_t blended);
+                                uint32_t count, const void *uniforms, const uint32_t *textures, uint32_t sampling);
 
 // Runs a frag over the entire selected destination. The fixed Vertex mesh has
 // clip-space positions, top-left uvs, and white color. The camera is identity,
@@ -1032,7 +1087,7 @@ void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, ui
 // bindings and packed shader data are the same as tide_draw_shaded's.
 // Sampling the destination is refused.
 void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, tide_blend blend, const void *instance,
-                   const void *uniforms, const uint32_t *textures, uint32_t blended);
+                   const void *uniforms, const uint32_t *textures, uint32_t sampling);
 // ---------------------------------------------------------------------------
 // 3D primitives: solid meshes, through the 3D camera and with depth, as
 // tide_draw_mesh_3d. Every shape is centered on `center`; its geometry is

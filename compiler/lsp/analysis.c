@@ -1408,7 +1408,7 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_LOCAL_ENTITY: return "A handle to an entity of the local world: this machine's own, which only local code holds.";
     case TY_PLAYER: return "A player, independent of connections. `PlayerID(0)` names a player by index.";
     case TY_COLOR: return "A color: r, g, b and a from 0 to 1. `Color(r, g, b)` or `Color(r, g, b, a)`.";
-    case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter])`. A Blit supplies its source to a read-only Texture shader parameter.";
+    case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter[, wrap]])`. A Blit supplies its source to a read-only Texture shader parameter.";
     case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Screen()` is always the window's size. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture; `Draw.window` is the window destination.";
     case TY_RECT: return "A rectangle on the screen, for the GUI: x and y from the top left, y down, then width and height.";
     case TY_STRING: return "Text, written in double quotes.";
@@ -1787,16 +1787,20 @@ static const method_form set_calls[] = {
 
 static const method_form grid_calls[] = {
     {"Clear", "Clear()", "Sets every cell back to zero, keeping the size."},
-    {"Sample", "Sample(float2 uv, Filter filter = Filter.Bilinear) -> Color",
+    {"Sample", "Sample(float2 uv, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color",
      "Reads the grid as a texture, in a frag or vert: its color at `uv`, from (0, 0) at its first cell to (1, 1) past "
-     "its last, blended between cells (`Filter.Bilinear`, the default) or the nearest cell's (`Filter.Point`). The "
-     "grid is a `Grid2<Color>` field of a component or singleton the frag or vert takes, and the filter is written "
-     "there: the GPU is told both before any pixel runs."},
+     "its last, blended between cells (`Filter.Bilinear`, the default) or the nearest cell's (`Filter.Point`). A "
+     "`uv` past 0 or 1 reads the cells at the grid's edge (`Wrap.Clamp`, the default), the grid again "
+     "(`Wrap.Repeat`), or again the other way round each time (`Wrap.Mirror`). The grid is a `Grid2<Color>` field "
+     "of a component or singleton the frag or vert takes, and the filter and the wrap are written there: the GPU is "
+     "told all three before any pixel runs."},
 };
 
 static const method_form texture_calls[] = {
-    {"Sample", "Sample(float2 uv, Filter filter = Filter.Bilinear) -> Color",
-     "Samples this image in a frag or vert, with top-left UVs from (0, 0) to (1, 1). The filter is fixed for the draw."},
+    {"Sample", "Sample(float2 uv, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color",
+     "Samples this image in a frag or vert, with top-left UVs from (0, 0) to (1, 1). A `uv` past them reads the "
+     "pixels at the image's edge (`Wrap.Clamp`, the default), the image again (`Wrap.Repeat`), or again the other "
+     "way round each time (`Wrap.Mirror`). The filter and the wrap are written there, fixed for the draw."},
 };
 
 static const method_form target_calls[] = {
@@ -2105,8 +2109,9 @@ static void put_samples(const decl *d, const int index, const char *prefix, sb *
         const shader_sample *s = &d->samples.items[i];
         if (s->param != index) continue;
         const field *f = &(s->local ? t->local_part : t)->fields.items[s->field];
-        sb_printf(out, "%s`%s" STR_FMT "`%s", out->len ? ", " : "", prefix, STR_ARG(f->name),
-                  s->blended ? "" : " (`Filter.Point`)");
+        static const char *const wraps[] = {"", " (`Wrap.Repeat`)", " (`Wrap.Mirror`)"}; // By its number
+        sb_printf(out, "%s`%s" STR_FMT "`%s%s", out->len ? ", " : "", prefix, STR_ARG(f->name),
+                  s->blended ? "" : " (`Filter.Point`)", wraps[s->wrap >= 0 && s->wrap < 3 ? s->wrap : 0]);
     }
 }
 
@@ -6825,9 +6830,10 @@ static type names_type(const scope *sc, const int first, const int last)
 }
 
 // Draw2D.Mesh's parameters, in the order they're written:
-// Draw2D.Mesh(vertices, indices[, transform][, texture[, filter]][, vert][, frag]).
+// Draw2D.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]][, vert][, frag]).
 // A 3D mesh has its transform, and a 2D one none.
-enum { MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_VERT, MESH_FRAG, MESH_INSTANCES, MESH_PARAMS };
+enum { MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_INSTANCES,
+       MESH_PARAMS };
 
 // What an argument of Draw2D.Mesh after its indices is, from what's written at
 // tokens `first` to `last`: which of those parameters, or MESH_PARAMS where
@@ -6846,10 +6852,12 @@ static int mesh_argument(const scope *sc, const int first, const int last)
         const decl *d = A.prog->decls.items[i];
         if (is_shader(d) && (str_eq_c(written, name_for(d)) || str_eq(written, d->qualified))) return d->is_frag ? MESH_FRAG : MESH_VERT;
     }
-    // float4x4.Translate(...), Filter.Point
+    // float4x4.Translate(...), Filter.Point, Wrap.Repeat
     if (str_eq_c(toks[first].text, "float4x4")) return MESH_TRANSFORM;
     if (str_eq_c(toks[first].text, "Filter") && last == first + 2) return MESH_FILTER;
+    if (str_eq_c(toks[first].text, "Wrap") && last == first + 2) return MESH_WRAP;
     const type t = names_type(sc, first, last);
+    if (t.kind == TY_ENUM) return t.decl == A.prog->wrap ? MESH_WRAP : t.decl == A.prog->filter ? MESH_FILTER : MESH_PARAMS;
     return t.kind == TY_FLOAT4X4 ? MESH_TRANSFORM : t.kind == TY_GRID || t.kind == TY_TEXTURE ? MESH_TEXTURE : MESH_PARAMS;
 }
 
@@ -7935,7 +7943,7 @@ static const char *check_new_name(const occurrence *target, const str name)
     static const char *const reserved[] = {"Math", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
-                                           "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Font", "Blend", "Depth", "Draw", "DrawList", "Random",
+                                           "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Wrap", "Font", "Blend", "Depth", "Draw", "DrawList", "Random",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "List", "Map", "Set", "Grid2", "Grid3",
                                            "string", "Sample", "Sanitize"};
     static char message[160];
@@ -8347,13 +8355,13 @@ static void collect_label(void *user, const char *label, const char *doc)
 // a List<Vertex> and a List<Vertex3> with no vert and no frag; the checker
 // takes the rest itself (check_mesh_draw).
 static const char *const mesh_labels[2] = {
-    "Draw2D.Mesh(vertices, indices[, texture[, filter]][, vert][, frag])",
-    "Draw3D.Mesh(vertices, indices, transform[, texture[, filter]][, vert][, frag])",
+    "Draw2D.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag])",
+    "Draw3D.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]][, vert][, frag])",
 };
 
 static const char *const instanced_labels[2] = {
-    "Draw2D.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])",
-    "Draw3D.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])",
+    "Draw2D.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag])",
+    "Draw3D.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag])",
 };
 
 // Each of its parameters: what it's called in those, and what it takes, in a
@@ -8370,6 +8378,10 @@ static const struct {
     [MESH_TEXTURE] = {"texture",
                       {"A `Grid2<Color>` or `Texture`, read at each corner's `uv`. A frag with a Texture parameter receives the explicit Texture source."}},
     [MESH_FILTER] = {"filter", {"How the texture is read between cells: `Filter.Bilinear` (the default) or `Filter.Point`."}},
+    [MESH_WRAP] = {"wrap",
+                   {"What a `uv` past 0 or 1 reads, written after the filter: the cells at the texture's edge (`Wrap.Clamp`, "
+                    "the default), the texture again (`Wrap.Repeat`), or again the other way round each time "
+                    "(`Wrap.Mirror`)."}},
     [MESH_VERT] = {"vert", {"A vert, by name: it runs on the GPU for each vertex, and changes it in place."}},
     [MESH_FRAG] = {"frag", {"A frag, by name: it runs on the GPU for each pixel, and writes its color."}},
     [MESH_INSTANCES] = {"instances",
@@ -8400,6 +8412,7 @@ static int call_param_names(const expr *call, str *names, const int max)
                             : arg->bind == BIND_SHADER && arg->type_decl ? (arg->type_decl->is_frag ? MESH_FRAG : MESH_VERT)
                             : t.kind == TY_FLOAT4X4                      ? MESH_TRANSFORM
                             : t.kind == TY_GRID || t.kind == TY_TEXTURE   ? MESH_TEXTURE
+                            : t.kind == TY_ENUM && t.decl == A.prog->wrap ? MESH_WRAP
                             : t.kind == TY_ENUM                          ? MESH_FILTER
                                                                          : MESH_PARAMS;
             names[count] = param == MESH_PARAMS ? (str){"", 0} : str_from(mesh_params[param].name);
@@ -8521,9 +8534,9 @@ static void collect_mesh_doc(void *user, const char *label, const char *doc)
 static void mesh_signature_help(const int open, const int commas, const loc at, jbuf *out)
 {
     static const int forms[3][MESH_PARAMS] = {
-        {MESH_VERTICES, MESH_INDICES, MESH_TEXTURE, MESH_FILTER, MESH_VERT, MESH_FRAG},
-        {MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_VERT, MESH_FRAG},
-        {MESH_VERTICES, MESH_INDICES, MESH_INSTANCES, MESH_TEXTURE, MESH_FILTER, MESH_VERT, MESH_FRAG},
+        {MESH_VERTICES, MESH_INDICES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG},
+        {MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG},
+        {MESH_VERTICES, MESH_INDICES, MESH_INSTANCES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG},
     };
     const scope sc = scope_at(at);
     call_args args;
@@ -8532,7 +8545,7 @@ static void mesh_signature_help(const int open, const int commas, const loc at, 
     const bool three_d = str_eq_c(owner, "Draw3D");
     const bool instanced = str_eq_c(DOC->toks[open - 1].text, "Instanced");
     const int *order = forms[instanced ? 2 : three_d ? 1 : 0];
-    const int count = instanced || three_d ? 7 : 6;
+    const int count = instanced || three_d ? 8 : 7;
     const int fixed = instanced || three_d ? 3 : 2; // Lists, and an ordinary 3D mesh's transform
 
     int active = 0;

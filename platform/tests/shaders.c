@@ -279,6 +279,95 @@ static void run_screen_target_checks(const char *when)
     local.Art.targetPass = 0;
 }
 
+// What a uv past a texture's edges reads (pass 7): each wrap in a mesh draw,
+// in a frag and in a vert, for a grid and a target's color, in 2D and 3D. A
+// square's cells are a pixel of its texture each: `column` and `row` are one's,
+// from the square's top left, its texture's first cell at (0, 0).
+static void run_wrap_checks(const char *when)
+{
+    static const struct {
+        float left, top, cell; // The square's corner, and how big a cell is, in pixels
+        int column, row;
+        float r, g, b;
+        const char *what;
+    } wanted[] = {
+        {8, 8, 12, 0, 0, 1, 0, 0, "a mesh draw with no wrap: its texture's first cell"},
+        {8, 8, 12, 2, 0, 0, 1, 0, "past its right edge, the cell at that edge"},
+        {8, 8, 12, 0, 3, 0, 0, 1, "past its bottom edge, the one at that"},
+        {8, 8, 12, 3, 3, 1, 1, 1, "and past both, its last"},
+        {64, 8, 12, 2, 0, 1, 0, 0, "a mesh draw's Wrap.Repeat: its first cell again"},
+        {64, 8, 12, 3, 0, 0, 1, 0, "then the one beside it"},
+        {64, 8, 12, 0, 2, 1, 0, 0, "down as across"},
+        {64, 8, 12, 2, 3, 0, 0, 1, "and both ways at once"},
+        {120, 8, 12, 2, 0, 0, 1, 0, "a mesh draw's Wrap.Mirror: its last cell again"},
+        {120, 8, 12, 3, 0, 1, 0, 0, "then back to its first"},
+        {120, 8, 12, 0, 3, 1, 0, 0, "down as across"},
+        {120, 8, 12, 2, 3, 0, 1, 0, "and both ways at once"},
+        {176, 8, 12, 1, 1, 1, 1, 1, "a render target's color in a mesh draw: its own pixels"},
+        {176, 8, 12, 2, 0, 1, 0, 0, "which repeat"},
+        {176, 8, 12, 2, 3, 0, 0, 1, "both ways"},
+        {8, 64, 12, 2, 0, 0, 1, 0, "a frag's Wrap.Clamp, said outright: the cell at the edge"},
+        {8, 64, 12, 3, 3, 1, 1, 1, "its last, past both"},
+        {64, 64, 12, 2, 0, 1, 0, 0, "a frag's Wrap.Repeat"},
+        {64, 64, 12, 2, 3, 0, 0, 1, "both ways"},
+        {120, 64, 12, 3, 0, 1, 0, 0, "a frag's Wrap.Mirror"},
+        {120, 64, 12, 2, 3, 0, 1, 0, "both ways"},
+        {176, 64, 12, 3, 0, 1, 0, 0, "a frag mirrors the Texture its draw gives it, a target's color"},
+        {176, 64, 12, 0, 3, 1, 0, 0, "down as across"},
+        {176, 64, 12, 2, 3, 0, 1, 0, "and both ways"},
+        {8, 120, 12, 0, 2, 1, 0, 0, "one grid read two ways in one frag: where it repeats"},
+        {8, 120, 12, 1, 3, 1, 1, 1, "row after row"},
+        {8, 120, 12, 3, 2, 0, 0, 1, "and where it mirrors"},
+        {8, 120, 12, 3, 3, 1, 0, 0, "row before row"},
+        {64, 120, 12, 1, 1, 1, 1, 1, "a vert samples past the edges, each wrap its own"},
+        {120, 120, 12, 3, 0, 1, 0, 0, "a vertex of the game's with no frag: the draw's Wrap.Mirror"},
+        {120, 120, 12, 2, 3, 0, 1, 0, "both ways"},
+        {176, 120, 12, 2, 0, 0, 1, 0, "and through the same shader, a draw that says no wrap: the cell at the edge"},
+        {176, 120, 12, 0, 3, 0, 0, 1, "down as across"},
+        // Blended, a cell 24 pixels across and one row, twice over: the rest are where two cells meet
+        {8, 176, 24, 0, 0, 1, 0, 0, "a frag's blended Wrap.Repeat: its first cell at its middle"},
+        {8 - 12, 176, 24, 2, 0, 0.5f, 0.5f, 0, "blended with its first where it starts again"},
+        {8 - 12 + 0.5f, 176, 24, 0, 0, 0.5f, 0.5f, 0, "and with its last at its own edge"},
+        {120 - 12, 176, 24, 2, 0, 0, 1, 0, "a frag's blended Wrap.Mirror: its last cell with itself, where it turns round"},
+        {120 - 12 + 0.5f, 176, 24, 0, 0, 1, 0, 0, "and its first with itself at its own edge"},
+        {120 - 12 - 0.5f, 176, 24, 4, 0, 1, 0, 0, "and where it turns again"},
+        // 3D: Cell(column, 7)'s square, 24 across, a cell 6
+        {4, 228, 6, 2, 0, 1, 0, 0, "a 3D mesh draw's Wrap.Repeat"},
+        {4, 228, 6, 3, 3, 1, 1, 1, "both ways"},
+        {36, 228, 6, 3, 0, 1, 0, 0, "a 3D mesh draw's Wrap.Mirror"},
+        {36, 228, 6, 2, 3, 0, 1, 0, "both ways"},
+        {68, 228, 6, 2, 1, 0, 0, 1, "a list's instances with a target's color, which repeats"},
+        {100, 228, 6, 2, 0, 1, 0, 0, "in each of them"},
+        {132, 228, 6, 3, 0, 1, 0, 0, "a 3D mesh mirrors a Texture of the CPU's pixels"},
+        {132, 228, 6, 2, 3, 0, 1, 0, "both ways"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    local.Art.targetPass = 7;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[COUNT];
+    uint32_t got[COUNT];
+    for (int i = 0; i < COUNT; i++) {
+        points[i] = tide_f2(wanted[i].left + wanted[i].cell * ((float)wanted[i].column + 0.5f),
+                            wanted[i].top + wanted[i].cell * ((float)wanted[i].row + 0.5f));
+    }
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
+    for (int i = 0; i < COUNT; i++) {
+        const uint8_t want[3] = {byte(wanted[i].r), byte(wanted[i].g), byte(wanted[i].b)};
+        bool ok = true;
+        for (int c = 0; c < 3; c++) {
+            const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - (int)want[c];
+            ok = ok && d >= -8 && d <= 8;
+        }
+        printf("%s: %s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, when, (unsigned)got[i],
+               want[0], want[1], want[2]);
+        if (!ok) failures++;
+    }
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -299,6 +388,7 @@ static int frame(void *user, const float seconds)
         run_checks(", on another device");
         run_target_checks(", on another device");
         run_screen_target_checks(", on another device");
+        run_wrap_checks(", on another device");
         return failures;
     }
 #endif
@@ -308,6 +398,8 @@ static int frame(void *user, const float seconds)
     run_checks(", again");
     run_target_checks(", again");
     run_screen_target_checks("");
+    run_wrap_checks("");
+    run_wrap_checks(", again");
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");
