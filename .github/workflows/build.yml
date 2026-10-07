@@ -15,14 +15,9 @@
 # published by this workflow itself. A job that fails fails the run, and
 # nothing is published: every release has every package that's built.
 #
-# For now the jobs run on the owner's machines (the account is out of hosted
-# minutes): a runner on the Windows PC (label tide-windows) and one on the home
-# server, which is Linux (tide-linux-home), set up as .github/runner/README.md
-# says. So nothing builds for macOS, and releases have no macOS package until
-# the hosted runners are back: then `runs-on` goes back to windows-latest,
-# ubuntu-latest and macos-latest, with macOS's rows in the Version job's
-# Checks. Steps that only a hosted runner needs (installing tools, restoring
-# caches) say so, and still work there.
+# Jobs run on GitHub-hosted runners. Each platform builds its own package;
+# macOS adds a package, while the existing Windows and Linux test suites
+# keep the same manual-run and stable-release gates.
 name: Build
 
 on:
@@ -34,6 +29,9 @@ on:
 permissions:
   contents: write
 
+env:
+  TIDE_HIDDEN: '1'
+
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -41,7 +39,7 @@ concurrency:
 jobs:
   version:
     name: Version
-    runs-on: tide-linux-home
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.next.outputs.new_release_version || steps.nightly.outputs.version }}
       published: ${{ steps.next.outputs.new_release_published || steps.nightly.outputs.published }}
@@ -75,19 +73,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # What the run's jobs are: the packages always, and the test suites when
-      # the run was asked for by hand or is a stable release's. Windows'
-      # package is built on Linux too (the Package step); its tests are Windows'.
+      # the run was asked for by hand or is a stable release's. macOS only
+      # builds and tries its package; it adds no test-suite rows.
       - name: Checks
         id: checks
         shell: bash
         run: |
           row() { printf '{"platform":"%s","os":"%s","preset":"%s","test-jobs":4}' "$1" "$2" "$3"; }
-          rows="$(row windows-x64 tide-linux-home package),$(row linux-x64 tide-linux-home package)"
+          rows="$(row windows-x64 windows-latest package),$(row linux-x64 ubuntu-latest package),$(row macos-arm64 macos-latest package)"
           tests=false
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || [ "$GITHUB_REF_NAME" = release ]; then
             tests=true
-            for preset in release web-release mingw-release; do rows="$rows,$(row windows-x64 tide-windows $preset)"; done
-            for preset in release web-release sanitize; do rows="$rows,$(row linux-x64 tide-linux-home $preset)"; done
+            for preset in release web-release mingw-release; do rows="$rows,$(row windows-x64 windows-latest $preset)"; done
+            for preset in release web-release sanitize; do rows="$rows,$(row linux-x64 ubuntu-latest $preset)"; done
           fi
           echo "tests=$tests" >> "$GITHUB_OUTPUT"
           echo "matrix=[$rows]" >> "$GITHUB_OUTPUT"
@@ -115,11 +113,7 @@ jobs:
       run:
         shell: bash
     steps:
-      # A runner of our own keeps its checkout, and the build trees in it,
-      # from one job to the next: each job builds what changed.
       - uses: actions/checkout@v4
-        with:
-          clean: false
 
       # The runners' own Node is 22, whose libuv ends a Windows process, about
       # one in 500, as it starts its first TCP connection (exit code
@@ -300,7 +294,7 @@ jobs:
       - name: Test (web)
         if: matrix.preset == 'web-release'
         run: |
-          # The docs' examples are the Docs workflow's, which shares this tree on a runner of our own
+          # The docs' examples are the Docs workflow's.
           cmake --preset web-release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL" -DTIDE_DOC_EXAMPLES=OFF
           cmake --build --preset web-release
           if [ "$RUNNER_OS" = Linux ]; then
@@ -391,8 +385,7 @@ jobs:
           done
           cmake -DNAME=tide-$platform -DNATIVE=build/$native -P cmake/package.cmake
       # Build a game with the package, as a user would, where the package is
-      # this system's: nothing on Linux runs Windows' tide, whose package goes
-      # out untried (the owner's choice, for packages that build fast).
+      # this system's.
       - name: Try the package
         if: matrix.preset == 'package' && (runner.os == 'Windows') == (matrix.platform == 'windows-x64')
         run: |
@@ -466,8 +459,8 @@ jobs:
     if: always()
     strategy:
       matrix:
-        platform: [windows-x64, linux-x64]
-    runs-on: tide-linux-home
+        platform: [windows-x64, linux-x64, macos-arm64]
+    runs-on: ubuntu-latest
     steps:
       - name: Require every test and package
         env:
@@ -479,7 +472,7 @@ jobs:
   jetbrains:
     name: JetBrains plugin
     needs: version
-    runs-on: tide-linux-home
+    runs-on: ubuntu-latest
     env:
       TIDE_VERSION: ${{ needs.version.outputs.version || '0.0.0-dev' }}
     defaults:
@@ -510,7 +503,7 @@ jobs:
     name: Release
     needs: [version, build, jetbrains]
     if: github.event_name == 'push' && needs.version.outputs.published == 'true'
-    runs-on: tide-linux-home
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -562,7 +555,7 @@ jobs:
     name: JetBrains Marketplace
     needs: [version, release]
     if: github.ref_name == 'release'
-    runs-on: tide-linux-home
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
