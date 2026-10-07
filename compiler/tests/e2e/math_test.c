@@ -17,6 +17,11 @@ static bool eq3(const tide_float3 v, const float x, const float y, const float z
     return near(v.x, x) && near(v.y, y) && near(v.z, z);
 }
 
+static bool color_is(const tide_color v, const float r, const float g, const float b, const float a)
+{
+    return v.r == r && v.g == g && v.b == b && v.a == a;
+}
+
 static Results results(void)
 {
     tide_world_init(&world, 1.0f);
@@ -36,6 +41,10 @@ TIDE_TEST(math_defaults)
     TIDE_CHECK(b.basis.c0.x == 1.0f && b.basis.c1.y == 1.0f && b.basis.c0.y == 0.0f);
     TIDE_CHECK(near(b.angle, TIDE_PI_F / 2.0f));
     TIDE_CHECK(b.pi == TIDE_PI_F);
+    TIDE_CHECK(color_is(b.rgbTint, 0.25f, 0.5f, 0.75f, 1));
+    TIDE_CHECK(color_is(b.rgbaTint, 0.25f, 0.5f, 0.75f, 0.5f));
+    TIDE_CHECK(color_is(b.mixedTint, 0.25f, 0.5f, 0.75f, 1));
+    TIDE_CHECK(color_is(b.integerTint, 1, 0, 1, 0.5f));
 }
 
 TIDE_TEST(math_constructors_and_swizzles)
@@ -57,6 +66,22 @@ TIDE_TEST(math_operators)
     TIDE_CHECK(r.halved.x == 3 && r.halved.y == -3 && r.halved.z == 4);
     TIDE_CHECK(eq3(r.widened, 3.5f, -3.5f, 3.5f));
     TIDE_CHECK(eq3(r.negated, -1, -2, -3));
+}
+
+TIDE_TEST(math_color_constructors)
+{
+    const Results r = results();
+    TIDE_REQUIRE(tide_has_Results(&world, THING));
+    TIDE_CHECK(color_is(r.uvColor, 0.25f, 0.5f, 0, 1));
+    TIDE_CHECK(color_is(r.rgbColor, 0.25f, 0.5f, 0.75f, 1));
+    TIDE_CHECK(color_is(r.rgbaColor, 0.25f, 0.5f, 0.75f, 0.5f));
+    TIDE_CHECK(color_is(r.alphaColor, 0.25f, 0.5f, 0.75f, 0.5f));
+    TIDE_CHECK(color_is(r.scalarFirstColor, 0.25f, 0.5f, 0.75f, 1));
+    TIDE_CHECK(color_is(r.vectorMiddleColor, 0.25f, 0.5f, 0.75f, 0.5f));
+    TIDE_CHECK(color_is(r.pairedColor, 0.25f, 0.5f, 0.75f, 0.5f));
+    TIDE_CHECK(color_is(r.integerColor, 1, 0, 1, 1));
+    TIDE_CHECK(color_is(r.integerRgbaColor, 1, 0, 1, 0));
+    TIDE_CHECK(color_is(r.scalarColor, 0.25f, 0.5f, 0.75f, 0.5f));
 }
 
 TIDE_TEST(math_conversions_saturate)

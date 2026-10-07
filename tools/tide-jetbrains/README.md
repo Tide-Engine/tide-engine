@@ -14,7 +14,7 @@ links to install tide, choose `tidels`, or try again, which starts it.
 
 ## Running the game
 
-Tide run configurations run `tide run` on a game's folder, in the Run tool
+Tide run configurations run `tide run --watch` on a game's folder, in the Run tool
 window: natively; on the web, whose page shows in the **Tide Game**
 tool window (JCEF; the system's browser in an IDE without it); or on
 Android, on the phone or emulator that's connected. A `.tide` file's

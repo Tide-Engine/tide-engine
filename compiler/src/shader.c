@@ -1910,16 +1910,19 @@ static void ex_construct(emit *em, const expr *e)
     }
     case CTOR_COMPONENTS:
     case CTOR_MAT_COLUMNS:
-    case CTOR_COLOR:
+    case CTOR_COLOR: {
         sb_printf(em->o, "%s(", ty(em, t));
+        int components = 0;
         for (int i = 0; i < e->args.count; i++) {
             const expr *arg = e->args.items[i];
             if (i) sb_put(em->o, ", ");
             ex_as(em, arg, floats ? as_float(arg->type) : arg->type);
+            components += type_dim(arg->type);
         }
-        if (e->ctor == CTOR_COLOR && e->args.count == 3) sb_put(em->o, ", 1.0");
+        if (e->ctor == CTOR_COLOR && components == 3) sb_put(em->o, ", 1.0");
         sb_put(em->o, ")");
         return;
+    }
     case CTOR_MAT_SCALARS: // Written row by row; both languages take columns
         sb_printf(em->o, "%s(", ty(em, t));
         for (int c = 0; c < n; c++) {

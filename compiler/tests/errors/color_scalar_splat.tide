@@ -1,0 +1,3 @@
+// expect: Color needs 3 or 4 components, got 1
+component Tint { Color color = Color(0.5); }
+scene Main { }

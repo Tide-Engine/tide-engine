@@ -181,6 +181,8 @@ endif()
 if(TIDE_NODE)
     add_test(NAME tide_platform_gpu_timing_web
         COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/gpu_timing_web.mjs")
+    add_test(NAME tide_platform_reload_web
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/reload_web.mjs")
 endif()
 if(NOT TIDE_ANDROID)
     add_executable(tide_platform_gpu_time tests/gpu_time.c)
@@ -395,6 +397,24 @@ else()
 endif()
 
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    # The watching host's Ctrl+R: a library is reopened so C statics reset
+    # along with its local state and match. Scripted headless input, no visible window.
+    add_library(tide_platform_reload_game SHARED tests/reload_game.c)
+    target_include_directories(tide_platform_reload_game PRIVATE include "${PROJECT_SOURCE_DIR}/engine/include")
+    target_link_libraries(tide_platform_reload_game PRIVATE tide_flags)
+    add_executable(tide_platform_reload tests/reload_host.c)
+    target_link_libraries(tide_platform_reload PRIVATE tide_platform)
+    add_executable(tide_platform_reload_plain tests/reload_host.c tests/reload_game.c)
+    target_compile_definitions(tide_platform_reload_plain PRIVATE TIDE_RELOAD_PLAIN)
+    target_link_libraries(tide_platform_reload_plain PRIVATE tide_platform)
+    if(TIDE_NODE)
+        add_test(NAME tide_platform_reload
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/reload.mjs" $<TARGET_FILE:tide_platform_reload>
+                $<TARGET_FILE:tide_platform_reload_plain> $<TARGET_FILE:tide_platform_reload_game>
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_reload-run")
+        set_tests_properties(tide_platform_reload PROPERTIES LABELS gpu TIMEOUT 120)
+    endif()
+
     # A game with no window (tide/run.h's --capture, --frames and --script): a
     # run with a script of every kind of input, whose pictures are read back
     # and checked. Nothing shows, but it needs a desktop session with OpenGL,
