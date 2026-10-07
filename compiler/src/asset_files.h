@@ -17,6 +17,7 @@ typedef enum asset_kind {
     ASSET_TEXT,  // string: UTF-8 text
     ASSET_BYTES, // List<byte>: any file
     ASSET_GRID,  // Grid2<Color>: a PNG, decoded
+    ASSET_TEXTURE, // Texture: a PNG, decoded, kept a byte a channel to draw with
 } asset_kind;
 
 typedef struct asset_match {
@@ -25,7 +26,7 @@ typedef struct asset_match {
     const uint8_t *data;  // The file's bytes (kept until the process ends)
     size_t size;
     uint8_t hash[32];     // SHA-256 of the bytes
-    tide_png_image image; // ASSET_GRID: its pixels
+    tide_png_image image; // ASSET_GRID and ASSET_TEXTURE: its pixels
 } asset_match;
 
 typedef struct asset_value {

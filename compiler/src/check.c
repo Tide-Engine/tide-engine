@@ -1357,6 +1357,11 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
             return false;
         }
         return true;
+    case TY_TEXTURE: // An asset's glob of images: nothing writes one, and each is a value
+        if (asset) return true;
+        diag_error(at, "a list or a map can't hold rendering resources, including inside a struct");
+        diag_note("but for an asset's: 'asset List<Texture> frames = \"art/run_*.png\";'");
+        return false;
     case TY_GRID:
         if (asset) return true;
         diag_error(at, "a %s can't hold grids", key ? "map" : "list");
@@ -7045,14 +7050,18 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
     const expr *of = e->object;
     const bool direct = grid.kind == TY_TEXTURE && of->kind == E_NAME && of->bind == BIND_PARAM
                         && of->param->type.kind == TY_TEXTURE;
-    const bool asset = grid.kind == TY_GRID && of->bind == BIND_ASSET; // A Grid2<Color> asset, by its name (docs/spec.md, Assets)
+    // A Grid2<Color> or a Texture asset, by its name (docs/spec.md, Assets)
+    const bool asset = (grid.kind == TY_GRID || grid.kind == TY_TEXTURE) && of->bind == BIND_ASSET;
     if (!direct && !asset && (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
                               || of->object->param->function_param)) {
         diag_error(of->at, "a %s samples a %s that's a field of a component or singleton it takes, like 'models.wood.Sample(uv)'%s",
                    shader_word(shader), grid.kind == TY_TEXTURE ? "Texture" : "grid",
-                   grid.kind == TY_TEXTURE ? ", or its direct Texture parameter" : ", or a Grid2<Color> asset by its name");
-        if (grid.kind == TY_GRID && of->kind == E_INDEX && of->object->bind == BIND_ASSET) {
-            diag_note("the GPU can't index a list of assets: declare the one to sample as an asset of its own, 'asset Grid2<Color> name = \"...\";'");
+                   grid.kind == TY_TEXTURE ? ", its direct Texture parameter, or a Texture asset by its name"
+                                           : ", or a Grid2<Color> asset by its name");
+        if (of->kind == E_INDEX && of->object->bind == BIND_ASSET) {
+            diag_note("the GPU can't index a list of assets: declare the one to sample as an asset of its own, 'asset %s name = "
+                      "\"...\";'%s", grid.kind == TY_TEXTURE ? "Texture" : "Grid2<Color>",
+                      grid.kind == TY_TEXTURE ? ", or give the draw this one for the frag's Texture parameter" : "");
         }
         return T_ERR;
     }
@@ -9677,9 +9686,9 @@ static type use_asset(checker *c, expr *e, decl *k)
 // ---------------------------------------------------------------------------
 // Assets: asset Grid2<Color> hero = "art/hero.png"; (docs/spec.md, Assets)
 
-// What an asset resolves to: string, List<byte> or Grid2<Color>, alone, or a
-// List<T> or Map<string, T> of one for a glob. False for anything else, which
-// is said.
+// What an asset resolves to: string, List<byte>, Grid2<Color> or Texture,
+// alone, or a List<T> or Map<string, T> of one for a glob. False for anything
+// else, which is said.
 static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *is_map)
 {
     const loc at = k->return_type_qual_at.line ? k->return_type_qual_at : k->return_type_at;
@@ -9701,13 +9710,65 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     if (str_eq_c(inner->text, "string")) *kind = ASSET_TEXT;
     else if (str_eq_c(inner->text, "List<byte>")) *kind = ASSET_BYTES;
     else if (str_eq_c(inner->text, "Grid2<Color>")) *kind = ASSET_GRID;
+    else if (str_eq_c(inner->text, "Texture")) *kind = ASSET_TEXTURE;
     else {
-        diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file) or a Grid2<Color> (a PNG), not '" STR_FMT "'", STR_ARG(inner->text));
+        diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file), or a Grid2<Color> or a Texture (a PNG), not '"
+                       STR_FMT "'", STR_ARG(inner->text));
         diag_note("for the files a glob matches, a 'List<...>' of one of those, or a 'Map<string, ...>' of their paths");
         return false;
     }
     k->return_type = resolve_type(c, written, PLACE_ASSET, at);
     return k->return_type.kind != TY_ERROR;
+}
+
+// [Filter(Filter.Point)] and [Wrap(Wrap.Repeat)] before an asset that's drawn
+// with, a Texture or a Grid2<Color> (alone, or a glob's list or map of them):
+// how it's sampled where a draw or a Sample that names it doesn't say
+// (decl.sample_filter and sample_wrap, which declared_sampling reads). An
+// asset's are read with its declaration, before any code is checked: the
+// shaders are planned from them.
+static void check_sampling_attribute(checker *c, decl *d, attribute *attr)
+{
+    const bool filter = str_eq_c(attr->name, "Filter");
+    const char *name = filter ? "Filter" : "Wrap";
+    const char *usage = filter ? "Filter(Filter.Point)" : "Wrap(Wrap.Repeat)";
+    if (d->kind != DECL_ASSET) {
+        diag_error(attr->at, "%s says how a texture is sampled, and '" STR_FMT "' isn't one", name, STR_ARG(d->name));
+        diag_note("it goes before an asset that's a Texture or a Grid2<Color>, like '[%s] asset Texture tiles = \"art/tiles.png\";', "
+                  "or before a Grid2<Color> field", usage);
+        return;
+    }
+    if (d->return_type.kind == TY_ERROR) return; // Its type said why
+    if (d->asset_kind != ASSET_TEXTURE && d->asset_kind != ASSET_GRID) {
+        diag_error(attr->at, "%s says how a texture is sampled, and '" STR_FMT "' is %s", name, STR_ARG(d->name),
+                   type_name(d->return_type));
+        diag_note("an asset that's drawn with is a Texture or a Grid2<Color>");
+        return;
+    }
+    int *said = filter ? &d->sample_filter : &d->sample_wrap;
+    if (*said) {
+        diag_error(attr->at, "'" STR_FMT "' already has a %s", STR_ARG(d->name), name);
+        return;
+    }
+    decl *wanted = filter ? c->prog->filter : c->prog->wrap;
+    str enum_name;
+    str member_name;
+    if (attr->args.count == 1 && attr->values.count == 0 && split_qualified(attr->args.items[0].text, &enum_name, &member_name)) {
+        decl *other;
+        if (lookup(c->prog, c->unit, enum_name, NAME_TYPE, &other) == wanted) {
+            for (int i = 0; i < wanted->members.count; i++) {
+                if (!str_eq(wanted->members.items[i].name, member_name)) continue;
+                *said = 1 + (int)wanted->members.items[i].number;
+                attr->args.items[0].decl = wanted; // For editors: what the name is
+                attr->args.items[0].enum_member = &wanted->members.items[i];
+                return;
+            }
+        }
+    }
+    diag_error(attr->at, filter ? "Filter takes how the texture is read between its cells: [Filter(Filter.Point)] or "
+                                  "[Filter(Filter.Bilinear)]"
+                                : "Wrap takes what a uv past the texture's edges reads: [Wrap(Wrap.Clamp)], [Wrap(Wrap.Repeat)] or "
+                                  "[Wrap(Wrap.Mirror)]");
 }
 
 // Checks an asset declaration: its type, its path (a constant text) and the
@@ -9725,6 +9786,10 @@ static void check_asset_decl(checker *c, decl *k)
     if (!typed) k->return_type = T_ERR;
     k->asset_kind = kind;
     k->asset_many = many;
+    for (int a = 0; a < k->attributes.count; a++) {
+        attribute *attr = &k->attributes.items[a];
+        if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap")) check_sampling_attribute(c, k, attr);
+    }
     const expr *path = NULL;
     const bool constant = is_constant(c, k->value);
     if (constant) {
@@ -9833,6 +9898,47 @@ static void check_absolute_attribute(const decl *d, const field *f, const attrib
 // it included, so they're a quick way to bound what players send. Elsewhere,
 // a struct field's bounds only describe it. And [Snap] (see check_snap), and
 // [Absolute] (see check_absolute_attribute).
+// [Filter(Filter.Point)] and [Wrap(Wrap.Repeat)] on a Grid2<Color> field: how
+// the grid is sampled where a draw or a Sample that names the field doesn't
+// say (declared_sampling reads them). A Texture field holds whichever image
+// it's given, so it has nothing to say for it.
+static void check_field_sampling(checker *c, const field *f, attribute *a)
+{
+    const bool filter = str_eq_c(a->name, "Filter");
+    const char *name = filter ? "Filter" : "Wrap";
+    if (f->type.kind == TY_ERROR) return;
+    const bool colors = f->type.kind == TY_GRID && f->type.decl->dims == 2 && grid_cell(f->type).kind == TY_COLOR;
+    if (!colors && (f->type.kind == TY_TEXTURE || f->type.kind == TY_RENDER_TARGET)) {
+        diag_error(a->at, "a %s field holds whichever image it's given, so how '" STR_FMT "' is sampled is said where it's drawn: "
+                   "'Draw2D.Mesh(vertices, indices, texture, Filter.Point, Wrap.Repeat)'", type_name(f->type), STR_ARG(f->name));
+        diag_note("an image of the game's says it on its own declaration: '[%s] asset Texture tiles = \"art/tiles.png\";'",
+                  filter ? "Filter(Filter.Point)" : "Wrap(Wrap.Repeat)");
+        return;
+    }
+    if (!colors) {
+        diag_error(a->at, "[%s] says how a texture is sampled, and '" STR_FMT "' is %s", name, STR_ARG(f->name), type_name(f->type));
+        diag_note("it goes on a Grid2<Color> field, or on an asset that's a Texture or a Grid2<Color>");
+        return;
+    }
+    for (const attribute *before = f->attributes.items; before < a; before++) {
+        if (str_eq(before->name, a->name)) {
+            diag_error(a->at, "field '" STR_FMT "' already has a [%s]", STR_ARG(f->name), name);
+            return;
+        }
+    }
+    expr *value = a->values.count == 1 && a->args.count == 0 ? a->values.items[0] : NULL;
+    const decl *wanted = filter ? c->prog->filter : c->prog->wrap;
+    if (value && is_constant(c, value)) {
+        const type t = check_constant_expr(c, value, true, (type){TY_ENUM, (decl *)wanted});
+        if (t.kind == TY_ERROR) return;
+        if (t.kind == TY_ENUM && t.decl == wanted && value->enum_member) return;
+    }
+    diag_error(a->at, filter ? "[Filter] takes how the texture is read between its cells: [Filter(Filter.Point)] or "
+                               "[Filter(Filter.Bilinear)]"
+                             : "[Wrap] takes what a uv past the texture's edges reads: [Wrap(Wrap.Clamp)], [Wrap(Wrap.Repeat)] or "
+                               "[Wrap(Wrap.Mirror)]");
+}
+
 static void check_field_attributes(checker *c, const decl *d, field *f)
 {
     if (f->attributes.count == 0) return;
@@ -9876,6 +9982,10 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
             check_absolute_attribute(d, f, a);
             continue;
         }
+        if (str_eq_c(a->name, "Filter") || str_eq_c(a->name, "Wrap")) {
+            check_field_sampling(c, f, a);
+            continue;
+        }
         if (!clamp && !min && !max) {
             diag_error(a->at, "unknown field attribute '" STR_FMT "'", STR_ARG(a->name));
             suggestion s = suggest_start(a->name);
@@ -9886,6 +9996,8 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
             suggest_consider_c(&s, "Snap");
             suggest_consider_c(&s, "Position");
             suggest_consider_c(&s, "Rotation");
+            suggest_consider_c(&s, "Filter");
+            suggest_consider_c(&s, "Wrap");
             suggest_note(&s);
             continue;
         }
@@ -13673,6 +13785,10 @@ static void check_attributes(checker *c)
                 check_channel_attribute(c, d, attr);
                 continue;
             }
+            if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap")) {
+                if (d->kind != DECL_ASSET) check_sampling_attribute(c, d, attr); // An asset's were read with it
+                continue;
+            }
             if (str_eq_c(attr->name, "Sparse")) { // Read as the archetypes derive (sparse_component)
                 if (d->kind != DECL_COMPONENT || d->is_scene) {
                     diag_error(attr->at, "Sparse marks a component that entities gain and lose, and '" STR_FMT "' isn't one",
@@ -13695,11 +13811,14 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "Sparse");
                 suggest_consider_c(&s, "Channel");
                 suggest_consider_c(&s, "Unordered");
+                suggest_consider_c(&s, "Filter");
+                suggest_consider_c(&s, "Wrap");
                 suggest_note(&s);
                 diag_note("the attributes are Before and After, which order systems: [After(Physics.Integrate)], "
                           "Stage, which assigns an enum phase: [Stage(RenderStages.Objects)], "
                           "NativeName, which names an extern function's or system's C function, Sparse, for a component that "
-                          "entities gain and lose, and Channel and Unordered, which order a command's delivery");
+                          "entities gain and lose, Channel and Unordered, which order a command's delivery, and Filter and "
+                          "Wrap, which say how an asset that's drawn with is sampled");
                 continue;
             }
             if (attr->values.count > 0) {

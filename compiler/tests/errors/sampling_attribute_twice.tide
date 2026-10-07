@@ -1,0 +1,5 @@
+// expect: 'hero' already has a Filter
+[Filter(Filter.Point), Wrap(Wrap.Repeat), Filter(Filter.Bilinear)]
+asset Texture hero = "../e2e/assets/hero.png";
+
+scene Main { }

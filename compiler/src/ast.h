@@ -394,9 +394,13 @@ typedef struct shader_sample {
     int field;    // -1 for a direct Texture parameter; otherwise its component or singleton field
     bool local;   // The field is one of its type's local fields (its local_part's)
     bool blended; // Filter.Bilinear, or the nearest cell
-    const struct decl *asset; // A Grid2<Color> asset sampled by name, or NULL
+    const struct decl *asset; // A Grid2<Color> or Texture asset sampled by name, or NULL
     int wrap;     // What a uv past 0 and 1 reads: its Wrap's number, tide_wrap's
     shader_read read; // A DepthTexture's: which of its two ways it's read
+    // Whether the Sample says its filter and its wrap. A field's or an asset's that doesn't has its
+    // declaration's, worked into `blended` and `wrap` (declared_sampling), so these are true for it. A direct
+    // Texture parameter's that doesn't has its draw's source's, which is each draw's to say
+    bool filter_said, wrap_said;
 } shader_sample;
 
 // One of an enum's members: `Options`, or `Options = 3`.
@@ -538,6 +542,9 @@ typedef struct decl {
     // Assets: the files the path resolved to, once checked (asset_files.h); NULL where it couldn't
     struct asset_value *asset;
     int asset_kind;  // The asset_kind its type says, once checked (asset_files.h)
+    // How its [Filter] and [Wrap] attributes say a texture of it is sampled, where a draw or a Sample that
+    // names it doesn't say: 1 + the enum member's number, or 0 for none (declared_sampling)
+    int sample_filter, sample_wrap;
     bool asset_many; // A List or Map of a glob's matches
 
     // Systems, views, methods, functions, and an input's Sample
@@ -1007,9 +1014,10 @@ typedef struct shader_texture {
     const field *field;
     bool blended;
     bool direct; // Supplied explicitly by Draw.Mesh or Draw.Blit, rather than a field
-    const struct decl *asset; // A Grid2<Color> asset, sampled by name: neither a field nor the draw's
+    const struct decl *asset; // A Grid2<Color> or Texture asset, sampled by name: neither a field nor the draw's
     int wrap;    // Its Wrap's number, tide_wrap's: 0 where the draw says (a `textured` shader's own)
     shader_read read; // A DepthTexture field's: as a number, or compared, each a texture of its own
+    bool filter_said, wrap_said; // As its samples' (shader_sample): false for what a direct one leaves to its draw's source
 } shader_texture;
 
 // A struct a vert writes for its frag, an `out` parameter of the vert's: the
@@ -1032,6 +1040,9 @@ typedef struct shader {
     int dims;            // 2 or 3: its position's
     bool textured;       // No frag, and a texture given at the draw
     bool wrapped;        // ...and one of its draws says how it wraps, so its function takes a wrap
+    // One of its draws gives its stages a source whose declaration says how it's sampled ([Filter], [Wrap]),
+    // and a Sample of that source leaves it unsaid: its function takes the source's filter and wrap
+    bool sourced;
     bool direct_texture; // The draw supplies a Texture to its shader stages
     bool source_grid;    // Blit's explicit source is uploaded from a Grid2<Color> at recording time
     bool blit;           // A full destination overwrite with a fixed Vertex quad
@@ -1306,6 +1317,14 @@ void check_assigned(program *prog, const decl *code, const stmt *body);
 // runs, and plans the shader each mesh draw draws through (program.shaders):
 // what it reads, how that's laid out, and its GLSL and WGSL (shader.c).
 void plan_shaders(program *prog);
+
+// How the declaration of the texture `texture` names says it's sampled: the
+// [Filter] and [Wrap] of an asset (by its name, or an element of its list or
+// map) or of a Grid2<Color> field. Each is its enum member's number, or -1
+// where the declaration says none, and for an expression that names no
+// declaration: a Texture that's a value (a field's, a local's, a target's
+// color), which is sampled as each draw and each Sample says.
+void declared_sampling(const expr *texture, int *filter, int *wrap);
 
 // Whether a shader reads a local field of the match's component or singleton
 // `d`: its draws are handed d's local part too.

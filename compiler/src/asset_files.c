@@ -503,7 +503,7 @@ static char *written_path(const str text)
 
 static const char *kind_name(const asset_kind kind)
 {
-    return kind == ASSET_TEXT ? "string" : kind == ASSET_BYTES ? "List<byte>" : "Grid2<Color>";
+    return kind == ASSET_TEXT ? "string" : kind == ASSET_BYTES ? "List<byte>" : kind == ASSET_TEXTURE ? "Texture" : "Grid2<Color>";
 }
 
 // Where a missing file might be: one with the same bytes, by the hashes the
@@ -591,14 +591,14 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
     item->data = f->data;
     item->size = f->len;
     memcpy(item->hash, f->hash, 32);
-    if (kind == ASSET_GRID) {
+    if (kind == ASSET_GRID || kind == ASSET_TEXTURE) {
         if (!f->decoded) {
             f->decoded = true;
             if (!tide_png_decode(f->data, f->len, &f->image)) f->image = (tide_png_image){0};
         }
         if (!f->image.pixels) {
             diag_error(at, "'%s' isn't a PNG that decodes", key);
-            diag_note("a Grid2<Color> asset is a PNG; for the file's bytes as they are, read it as a List<byte>");
+            diag_note("a %s asset is a PNG; for the file's bytes as they are, read it as a List<byte>", kind_name(kind));
             return false;
         }
         item->image = f->image;

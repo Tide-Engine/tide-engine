@@ -144,6 +144,13 @@ local singleton Art
     List<Corner2> cornerTile; // ...of a vertex of the game's
     List<Vertex3> tile3;      // 24 across, around its middle
     List<float4x4> tilePlaces;
+    // Images of the game's own, and what their declarations say (pass 9)
+    bool bricked;
+    List<Vertex> brickTile;   // As `tile`
+    List<Vertex3> brickTile3; // As `tile3`
+    Texture keptBricks;
+    [Filter(Filter.Point), Wrap(Wrap.Repeat)]
+    Grid2<Color> painted = Grid2(2, 2); // As `four`
 }
 
 float3 Cell(int column, int row)
@@ -1652,12 +1659,124 @@ view Shadows(Art art, mut Shadow shadow)
     Draw2D.Mesh(shadow.readout, art.faces, LampDepth);
 }
 
+// Images of the game's own (pass 9): a Texture asset, drawn with the pack's
+// pixels, and how a texture's declaration says it's sampled wherever a draw
+// or a Sample that names it doesn't say. four.png is `four`'s colors: red,
+// green, blue and white, two by two. Squares as Wraps', their uvs to (2, 2).
+[Filter(Filter.Point), Wrap(Wrap.Repeat)]
+asset Texture bricks = "four.png";
+[Filter(Filter.Point)]
+asset Texture plainBricks = "four.png";
+asset List<Texture> brickFrames = "four*.png";
+[Filter(Filter.Point), Wrap(Wrap.Mirror)]
+asset Grid2<Color> brickCells = "four.png";
+
+frag BricksByName(Vertex vertex, out Color color)
+{
+    color = bricks.Sample(vertex.uv);
+}
+
+frag BrickCellsByName(Vertex vertex, out Color color)
+{
+    color = brickCells.Sample(vertex.uv);
+}
+
+// What its Sample leaves unsaid is its draw's source's to say
+frag BrickSource(Vertex vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv);
+}
+
+frag PaintedByName(Vertex vertex, out Color color, Art art)
+{
+    color = art.painted.Sample(vertex.uv);
+}
+
+[After(ScreenTargets)]
+view Images(mut Art art)
+{
+    if (art.targetPass != 9) return;
+    if (!art.bricked)
+    {
+        art.brickTile = [Vertex { }, Vertex { position = float2(48, 0), uv = float2(2, 0) },
+                         Vertex { position = float2(48, 48), uv = float2(2, 2) }, Vertex { position = float2(0, 48), uv = float2(0, 2) }];
+        art.brickTile3 = [Vertex3 { position = float3(-12, 12, 0) }, Vertex3 { position = float3(12, 12, 0), uv = float2(2, 0) },
+                          Vertex3 { position = float3(12, -12, 0), uv = float2(2, 2) }, Vertex3 { position = float3(-12, -12, 0), uv = float2(0, 2) }];
+        art.painted[0, 0] = Color.red;
+        art.painted[1, 0] = Color.green;
+        art.painted[0, 1] = Color.blue;
+        art.painted[1, 1] = Color.white;
+        art.keptBricks = bricks; // A value: it names the image, and no declaration
+        art.bricked = true;
+    }
+    Draw2D.Clear(Color.black);
+    Draw2D.SetScreen();
+    Draw2D.SetClip();
+    // By its name: its declaration's filter and wrap
+    Draw2D.Transform(float2(8, 8))
+    {
+        Draw2D.Mesh(art.brickTile, art.faces, bricks);
+    }
+    // One that only says its filter: the cells at the edge
+    Draw2D.Transform(float2(64, 8))
+    {
+        Draw2D.Mesh(art.brickTile, art.faces, plainBricks);
+    }
+    // What the draw says goes over its declaration's
+    Draw2D.Transform(float2(120, 8))
+    {
+        Draw2D.Mesh(art.brickTile, art.faces, bricks, Filter.Point, Wrap.Mirror);
+    }
+    // One of a list, and the value a field holds: the image, as the draw says
+    Draw2D.Transform(float2(176, 8))
+    {
+        Draw2D.Mesh(art.brickTile, art.faces, brickFrames[0], Filter.Point);
+    }
+    Draw2D.Transform(float2(8, 64))
+    {
+        Draw2D.Mesh(art.brickTile, art.faces, art.keptBricks, Filter.Point);
+    }
+    // In a frag, by its name; and as the Texture a draw gives a frag, whose Sample says nothing
+    Draw2D.Transform(float2(64, 64))
+    {
+        Draw2D.Mesh(art.brickTile, art.faces, BricksByName);
+    }
+    Draw2D.Transform(float2(120, 64))
+    {
+        Draw2D.Mesh(art.brickTile, art.faces, bricks, BrickSource);
+    }
+    Draw2D.Transform(float2(176, 64))
+    {
+        Draw2D.Mesh(art.brickTile, art.faces, plainBricks, BrickSource);
+    }
+    // A grid's: an asset's and a field's
+    Draw2D.Transform(float2(8, 120))
+    {
+        Draw2D.Mesh(art.brickTile, art.faces, brickCells);
+    }
+    Draw2D.Transform(float2(64, 120))
+    {
+        Draw2D.Mesh(art.brickTile, art.faces, BrickCellsByName);
+    }
+    Draw2D.Transform(float2(120, 120))
+    {
+        Draw2D.Mesh(art.brickTile, art.faces, art.painted);
+    }
+    Draw2D.Transform(float2(176, 120))
+    {
+        Draw2D.Mesh(art.brickTile, art.faces, PaintedByName);
+    }
+    // In 3D
+    Draw3D.Mesh(art.brickTile3, art.faces, float4x4.Translate(Cell(0, 7)), bricks);
+    Draw3D.Mesh(art.brickTile3, art.faces, float4x4.Translate(Cell(1, 7)), plainBricks);
+}
+
 // shaders.c requests independent full-window checks after the existing grid.
 // Resource descriptors are supplied by C, without choosing a Tide lifetime API.
 [After(Manual)]
 view Targets(mut Art art)
 {
-    if (art.targetPass == 0 || art.targetPass >= 6) return; // 6 is ScreenTargets', 7 Wraps' and 8 Shadows'
+    if (art.targetPass == 0 || art.targetPass >= 6) return; // 6 is ScreenTargets', 7 Wraps', 8 Shadows' and 9 Images'
     if (art.targetPass >= 4)
     {
         Draw2D.SetScreen();

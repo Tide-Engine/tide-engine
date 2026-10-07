@@ -364,7 +364,9 @@ typedef struct tide_render_target {
     tide_target_size size;
 } tide_render_target;
 
-// Texture's common sampling reference: either CPU pixels or a rendered image.
+// Texture's common sampling reference: CPU pixels, a rendered image, or an
+// image of the game's pack (an `asset Texture`: no pixels and no target, its
+// size and its version, which names its declaration: see tide_pack_texture_of).
 // Copying this value never copies an image. The existing tide_texture remains
 // the CPU pixel descriptor used by C drawing callers.
 typedef struct tide_texture_ref {
@@ -440,15 +442,19 @@ typedef struct tide_draw_texture {
     int32_t width, height;
     uint32_t frame;    // The frame that last drew with it
     uint32_t epoch;    // The list's when it was copied (see tide_draw_forget)
-    uint32_t capacity; // Bytes `pixels` has room for
-    uint8_t *pixels;   // width * height * 4 bytes, rows from the first
+    uint32_t capacity; // Bytes `pixels` has room for: 0 where they aren't the list's own
+    // width * height * 4 bytes, rows from the first: the list's own copy, or for TIDE_PIXELS_PACK the pack's,
+    // where the pack has them, noted again by each frame that draws with them
+    uint8_t *pixels;
     tide_target_size target; // A target's: the rendered image's size, where the others have a width and a height
 } tide_draw_texture;
 
 // TIDE_PIXELS_TARGET is a render target's color, and TIDE_PIXELS_TARGET_DEPTH
 // its depth, which only a shader that reads that texture as depth is given
 // (tide_shader.texture_reads): neither has pixels here.
-enum { TIDE_PIXELS_MEMORY, TIDE_PIXELS_GRID, TIDE_PIXELS_TARGET, TIDE_PIXELS_TARGET_DEPTH };
+// TIDE_PIXELS_PACK is an image of the game's pack (tide/pack.h), whose `id` is its version: what's in it,
+// the file's hash.
+enum { TIDE_PIXELS_MEMORY, TIDE_PIXELS_GRID, TIDE_PIXELS_TARGET, TIDE_PIXELS_TARGET_DEPTH, TIDE_PIXELS_PACK };
 
 // A 2D transform: where it puts the point (x, y) is `offset` + x * `x` + y * `y`.
 typedef struct tide_draw_transform {
