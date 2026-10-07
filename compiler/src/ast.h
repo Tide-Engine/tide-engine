@@ -120,6 +120,7 @@ typedef enum type_kind {
     TY_DRAW_LIST,  // DrawList: the frame's draw list, `Draw.list`, which only an extern function takes
     TY_TEXTURE,    // Texture: a local reference to pixels or a render target's color image
     TY_DEPTH_TEXTURE, // DepthTexture: a local reference to a render target's depth, which a frag or vert reads
+    TY_CUBEMAP,    // Cubemap: a local reference to six images a frag or vert reads by a direction: an asset's, or one drawn into
     TY_RENDER_TARGET, // RenderTarget: a local drawing destination; Draw.window names the window
     TY_CLIP,       // Clip: a sound of the game's pack, this machine's to play (an asset's, or a copy of one)
     TY_LIST,       // List<T>: decl is the list type, whose one field is its element
@@ -388,7 +389,8 @@ typedef enum decl_kind {
 // How a frag or vert reads a texture: a color, or a target's depth, as a
 // number (depth.Sample) or compared with one of its own (depth.Compare). The
 // values are tide/draw.h's tide_shader_read's.
-typedef enum shader_read { READ_COLOR, READ_DEPTH, READ_COMPARE } shader_read;
+// READ_CUBE is a Cubemap's color, read by a direction.
+typedef enum shader_read { READ_COLOR, READ_DEPTH, READ_COMPARE, READ_CUBE } shader_read;
 
 // A grid a frag or vert samples: a field of one of its parameters, and how.
 typedef struct shader_sample {
@@ -811,6 +813,7 @@ struct expr {
     bool local_field;      // box.verts: a local field of a match component or singleton, in its local part (`field` is that one's)
     bool raw_sampled;      // A [Raw] Texture asset's name as the object of a Sample, which is the one place it goes
     bool target_colors;    // target.colors: a render target's color images, of which an index reads one (target.colors[1])
+                           // ...and cube.faces: a Cubemap's faces, of which an index is one as a RenderTarget (cube.faces[2])
 
 
     // E_CALL, E_METHOD

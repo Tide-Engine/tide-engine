@@ -1,0 +1,5 @@
+// expect: a Cubemap is six files already, which its glob matches: a list or a map of cubes isn't there yet
+// expect: declare each cube as an asset of its own: 'asset Cubemap sky = "art/sky_??.png";'
+// No list of cubes yet
+asset List<Cubemap> skies = "../e2e/cubes/sky/*.png";
+scene Main { }

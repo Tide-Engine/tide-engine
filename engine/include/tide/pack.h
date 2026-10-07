@@ -47,10 +47,13 @@ enum {
     // draw list does, so it's a quarter of a grid's memory. A list's elements' kind too (`extra`)
     TIDE_PACK_TEXTURE = 6,
     TIDE_PACK_TEXTURES = 7, // Map<string, Texture> of a glob: as TIDE_PACK_MAP, its values' blocks textures
+    // Cubemap: a block of six handles, as a list's, each a texture's block (tide_pack_texture): its faces' images
+    // in the order +x, -x, +y, -y, +z, -z, all squares of one size. A face's file is in the pack once, as any is
+    TIDE_PACK_CUBEMAP = 8,
     // Clip: a sound's file as it is (tide_pack_clip), which the engine decodes as it's first played
     // (tide_clip_of). A list's elements' kind too (`extra`)
-    TIDE_PACK_CLIP = 8,
-    TIDE_PACK_CLIPS = 9, // Map<string, Clip> of a glob: as TIDE_PACK_MAP, its values' blocks clips
+    TIDE_PACK_CLIP = 9,
+    TIDE_PACK_CLIPS = 10, // Map<string, Clip> of a glob: as TIDE_PACK_MAP, its values' blocks clips
 };
 
 typedef struct tide_pack_entry {
@@ -172,6 +175,17 @@ tide_texture_ref tide_pack_texture_of(const tide_pack_entry *e);
 // them there (TIDE_PIXELS_PACK), with no copy of its own: a list that drew
 // with one isn't rendered after its pack went.
 bool tide_pack_texture_find(uint64_t named, tide_texture *image);
+// A cubemap's entry as the value the game reads: a Cubemap of the pack's,
+// which names its declaration as a Texture of the pack's does. One for no
+// entry is no cube.
+tide_cubemap_ref tide_pack_cubemap_of(const tide_pack_entry *e);
+// The loaded pack's cube that a Cubemap names: its faces' side in pixels, a
+// version that's what's in the six (their files' hashes), and six pointers
+// to their pixels, 4 bytes each, rows from the top, in the order +x, -x, +y,
+// -y, +z, -z. False when the pack has no cube under that name, or one whose
+// faces aren't six squares of one size. The pointers and the pixels stay
+// where they are until another pack is loaded, as an image's do.
+bool tide_pack_cubemap_find(uint64_t named, int32_t *size, uint64_t *version, const uint8_t *const **faces);
 
 // A clip's entry as the value the game reads: a Clip that names its sound by
 // its declaration, as a Texture names its image (above). Lists and maps of

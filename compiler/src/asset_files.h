@@ -18,6 +18,9 @@ typedef enum asset_kind {
     ASSET_BYTES, // List<byte>: any file
     ASSET_GRID,  // Grid2<Color>: a PNG, decoded
     ASSET_TEXTURE, // Texture: a PNG, decoded, kept a byte a channel to draw with
+    // Cubemap: six PNGs a glob matches, each named for its face by how its name ends before the extension (px,
+    // nx, py, ny, pz, nz), decoded: its items are the six in that order
+    ASSET_CUBEMAP,
     ASSET_CLIP,    // Clip: a WAV, checked here and kept as it is; the engine decodes it as it's first played
 } asset_kind;
 

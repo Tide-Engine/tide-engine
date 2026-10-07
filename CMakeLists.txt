@@ -72,8 +72,9 @@ file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" TIDE_BASE_VERSION LIMIT_COUNT
 set(TIDE_VERSION "${TIDE_BASE_VERSION}-dev" CACHE STRING "tide's version")
 
 # tide_add_game runs tidec: this build's, or in web and Android builds a native
-# one, since a WebAssembly or Android tidec can't run during the build.
-if(TIDE_WEB OR TIDE_ANDROID)
+# one, since a WebAssembly or Android tidec can't run during the build. Nor can
+# a Windows one on another system (the Windows package, built on Linux).
+if(TIDE_WEB OR TIDE_ANDROID OR CMAKE_CROSSCOMPILING)
     include(cmake/HostTidec.cmake)
 else()
     set(TIDEC_COMMAND tidec)

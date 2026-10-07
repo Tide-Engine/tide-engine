@@ -1,0 +1,6 @@
+// expect: rendering resources belong to this machine, so the match can't use them
+// A cube is this machine's: the match can't use one
+asset Cubemap sky = "../e2e/cubes/sky/*.png";
+scene Main { }
+singleton Rules { int rounds; }
+system Count(mut Rules rules) { var kept = sky; rules.rounds++; }

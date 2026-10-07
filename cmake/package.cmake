@@ -41,8 +41,10 @@ set(stage "${dist}/tide")
 # On Windows, games build for MinGW (see cmake/mingw-toolchain.cmake): the
 # MinGW tree brings their platform layer and C runtime. It goes first, so the
 # native tree's tide and tidels, built for Visual Studio's target, replace its.
+# Windows' package is told by its name, as another system builds it too (with
+# NATIVE as the tree of the windows-package preset).
 set(trees "${NATIVE}" "${WEB}" "${ANDROID_ARM64}" "${ANDROID_X86_64}")
-if(CMAKE_HOST_WIN32)
+if(NAME MATCHES "windows")
     list(PREPEND trees "${MINGW}")
 endif()
 
@@ -52,7 +54,7 @@ foreach(tree IN LISTS trees)
         if(tree STREQUAL NATIVE)
             message(FATAL_ERROR "No native package build in ${tree}: run `cmake --preset package` and build it")
         elseif(tree STREQUAL MINGW)
-            message(WARNING "No MinGW build in ${tree}: this package won't build native games")
+            message(FATAL_ERROR "No MinGW build in ${tree}: Windows' package builds native games with it")
         elseif(tree STREQUAL ANDROID_ARM64 OR tree STREQUAL ANDROID_X86_64)
             message(WARNING "No Android package build in ${tree}: this package won't build Android games")
         else()

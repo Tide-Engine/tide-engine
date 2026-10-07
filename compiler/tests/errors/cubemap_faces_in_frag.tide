@@ -1,0 +1,6 @@
+// expect: a frag reads a Cubemap with 'Sample(direction)': its faces are the view's to draw into
+// A frag reads a cube; its faces are the view's
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+frag Look(Vertex3 vertex, out Color color, Room room) { var side = room.reflection.faces[0]; color = Color.white; }
+view Show(Room room) { Draw.Mesh(room.ball, [0, 1, 2], float4x4.identity, Look); }
