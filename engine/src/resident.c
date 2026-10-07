@@ -88,7 +88,9 @@ static uint8_t *reserve(size_t bytes)
 #if defined(_WIN32)
     return VirtualAlloc(NULL, bytes, MEM_RESERVE, PAGE_READWRITE);
 #elif defined(__wasm__)
-    return tide_alloc(bytes); // Linear memory, which the browser backs as it's touched
+    // Linear memory, which the browser backs as it's touched: a page's worth over, so the base is on a page
+    uint8_t *raw = tide_alloc(bytes + TIDE_ARENA_PAGE);
+    return (uint8_t *)(((uintptr_t)raw + TIDE_ARENA_PAGE - 1u) & ~(uintptr_t)(TIDE_ARENA_PAGE - 1u));
 #else
     void *p = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     return p == MAP_FAILED ? NULL : p;
@@ -115,9 +117,10 @@ static void touch_pages(tide_arena *a, const uint32_t first, const uint32_t end)
     for (uint32_t p = first; p < end; p++) __atomic_store_n(&a->touched[p], 1u, __ATOMIC_RELAXED);
 }
 
-static void touch_range(tide_arena *a, const size_t from, const size_t bytes)
+static void touch_range(tide_arena *a, const size_t from, size_t bytes)
 {
-    if (bytes == 0) return;
+    if (bytes == 0 || from >= a->bytes) return;
+    if (bytes > a->bytes - from) bytes = a->bytes - from; // A range a library gets wrong ends at the arena's end
     touch_pages(a, (uint32_t)(from >> TIDE_ARENA_PAGE_SHIFT), (uint32_t)((from + bytes - 1u) >> TIDE_ARENA_PAGE_SHIFT) + 1u);
 }
 

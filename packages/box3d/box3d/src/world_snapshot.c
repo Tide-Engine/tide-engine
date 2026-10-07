@@ -2933,7 +2933,7 @@ static void b3TouchTree( const b3DynamicTree* tree )
 static void b3TouchShape( const b3Shape* shape )
 {
 	b3Touch( shape, sizeof( b3Shape ) );
-	if ( shape->materials != NULL )
+	if ( shape->id != B3_NULL_INDEX && shape->materials != NULL ) // A destroyed one's holds whatever it held
 	{
 		b3TouchArray( shape->materials, shape->materialCount, sizeof( b3SurfaceMaterial ) );
 	}
@@ -2942,6 +2942,10 @@ static void b3TouchShape( const b3Shape* shape )
 static void b3TouchContact( const b3Contact* contact )
 {
 	b3Touch( contact, sizeof( b3Contact ) );
+	if ( contact->contactId == B3_NULL_INDEX )
+	{
+		return; // Destroyed: what it holds is whatever it held
+	}
 	if ( contact->manifolds != NULL )
 	{
 		b3TouchArray( contact->manifolds, contact->manifoldCount, sizeof( b3Manifold ) );
