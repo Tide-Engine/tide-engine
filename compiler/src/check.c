@@ -267,7 +267,7 @@ static const decl_index *decls_by(const program *prog, const bool c_names)
 static bool named_only(const program *prog, const decl *d)
 {
     return d == prog->depth || d == prog->cull || d == prog->wrap || d == prog->format || d == prog->stencil_test
-        || d == prog->stencil_op;
+        || d == prog->stencil_op || d == prog->sound;
 }
 
 // The first declaration in the bucket of a name in generated C: -1 for none.
@@ -286,6 +286,7 @@ static decl *find_in(const program *prog, const str ns, const str name, const na
         if (is_kind(d, kind) && str_eq(d->name, name) && str_eq(decl_ns(d), ns)) {
             // Generated C only has these in games that name them
             if ((d == prog->random || named_only(prog, d)) && builds(prog)) d->named = true;
+            if (d == prog->sound && builds(prog)) ((program *)prog)->uses_audio = true; // The frame names its Sounds
             return d;
         }
     }
@@ -10920,7 +10921,7 @@ static void check_fields(checker *c, const decl *d)
             const loc at = f->type_qual_at.line ? f->type_qual_at : f->type_at.line ? f->type_at : f->at;
             if (d->kind != DECL_STRUCT && !d->is_local) {
                 diag_error(at, "'" STR_FMT "' can't hold rendering resources in match state", STR_ARG(d->name));
-                diag_note("Texture, DepthTexture, Cubemap and RenderTarget belong to this machine: keep the field local, or use a local component "
+                diag_note("Texture, DepthTexture, Cubemap, RenderTarget, Clip and Sound belong to this machine: keep the field local, or use a local component "
                           "or singleton");
             } else if (f->type.kind == TY_LIST || f->type.kind == TY_MAP || f->type.kind == TY_SET || f->type.kind == TY_GRID) {
                 diag_error(at, "containers can't hold rendering resources, including inside a struct");
@@ -13233,6 +13234,29 @@ static void add_builtins(program *prog)
         vec_push(control->fields, f);
     }
     prog->gui_control = control;
+    // struct Sound { Clip clip; float3 position; bool spatial; float volume
+    // = 1; float pitch = 1; bool loop; bool playing; }: a sound source a local
+    // field keeps, which the frame names to the mixer while `playing` (tide/audio.h's tide_voice).
+    decl *sound = NEW(decl);
+    sound->kind = DECL_STRUCT;
+    sound->name = str_from("Sound");
+    sound->builtin = true;
+    static const char *const sound_fields[][2] = {{"clip", "Clip"},     {"position", "float3"}, {"spatial", "bool"},
+                                                  {"volume", "float"},  {"pitch", "float"},     {"loop", "bool"},
+                                                  {"playing", "bool"}};
+    for (int i = 0; i < (int)(sizeof sound_fields / sizeof sound_fields[0]); i++) {
+        field f = {0};
+        f.name = str_from(sound_fields[i][0]);
+        f.type_name = str_from(sound_fields[i][1]);
+        if (i == 3 || i == 4) {
+            expr *one = NEW(expr);
+            one->kind = E_FLOAT;
+            one->text = str_from("1");
+            f.default_value = one;
+        }
+        vec_push(sound->fields, f);
+    }
+    prog->sound = sound;
     // Trilinear is in generated C only for a game that names it (program.names_trilinear)
     static const char *const filters[] = {"Point", "Bilinear", "Trilinear"};
     decl *filter = NEW(decl);
@@ -13396,6 +13420,7 @@ static void add_builtins(program *prog)
     vec_push(decls, shape);
     vec_push(decls, theme);
     vec_push(decls, control);
+    vec_push(decls, sound);
     vec_push(decls, filter);
     vec_push(decls, blend);
     vec_push(decls, depth);
@@ -14187,19 +14212,23 @@ static void check_sanitize(checker *c, decl *input)
     c->system = NULL;
 }
 
-// `namespace` and `using` at the top of each file.
+// `namespace` and `using` at the top of each file, and each namespace block's
+// name. A block inside a namespace only adds to it: what its name starts with
+// is no root, and the namespace around it was checked where it's written.
 static void check_units(const program *prog)
 {
     for (int i = 0; i < prog->units.count; i++) {
         const unit *u = prog->units.items[i];
+        const bool inside = u->outer && u->outer->ns.len > 0;
         if (u->ns.len > 0) {
             const char *dot = memchr(u->ns.ptr, '.', (size_t)u->ns.len);
             const str root = {u->ns.ptr, dot ? (int)(dot - u->ns.ptr) : u->ns.len};
-            if (is_builtin_name(root)) {
+            if (!inside && is_builtin_name(root)) {
                 diag_error(u->ns_at, "'" STR_FMT "' is built into the language, so it can't name a namespace", STR_ARG(root));
             }
-            check_reserved(u->ns, u->ns_at);
+            check_reserved(u->outer ? u->ns_written : u->ns, u->ns_at);
         }
+        if (u->outer) continue; // Its `using`s are its file's
         for (int k = 0; k < u->usings.count; k++) {
             const str used = u->usings.items[k];
             if (is_namespace(prog, used)) continue;
@@ -14234,6 +14263,15 @@ static void check_packages(const program *prog)
         if (u->ns.len >= n && memcmp(u->ns.ptr, package, (size_t)n) == 0 && (u->ns.len == n || u->ns.ptr[n] == '.')) {
             continue;
         }
+        if (u->outer) { // A block: in a file with a namespace of its own it's inside that one, which is what's wrong
+            const unit *file = u->outer;
+            while (file->outer) file = file->outer;
+            if (file->ns.len > 0 || u->outer->outer) continue; // ...or inside a block that was said
+            diag_error(u->ns_at, "a namespace of package %s is its own, or one inside it, not '" STR_FMT "'", package, STR_ARG(u->ns));
+            diag_note("write 'namespace %s { ... }', or one inside it like 'namespace %s." STR_FMT " { ... }'", package, package,
+                      STR_ARG(u->ns));
+            continue;
+        }
         if (u->ns.len > 0) {
             diag_error(u->ns_at, "a file of package %s is in its namespace, or one inside it, not '" STR_FMT "'", package,
                        STR_ARG(u->ns));
@@ -14250,7 +14288,7 @@ static void check_packages(const program *prog)
         }
         if (!first.line) continue; // Nothing declared
         diag_error(first, "what package %s declares goes in its namespace, %s", package, package);
-        diag_note("start the file with 'namespace %s;'", package);
+        diag_note("start the file with 'namespace %s;', or put it in 'namespace %s { ... }'", package, package);
     }
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];

@@ -25,6 +25,8 @@ typedef struct codegen_options {
     const char *game_folder; // Where the game's .tide/ is, for its asset hashes and fetched URLs; NULL where nothing says
     const char *pack;        // Where to write the pack of the game's assets (tide/pack.h), or NULL
     const char *pack_c;      // Where to write the pack as a C array (tide_game_pack), for hosts that embed it, or NULL
+    const char *const *defines; // The symbols the build defines for every file's #if (`--define FAST`, DEBUG), or NULL
+    int define_count;
 } codegen_options;
 
 // Writes <out_dir>/<name>.h and <out_dir>/<name>.c. Returns false on I/O errors.

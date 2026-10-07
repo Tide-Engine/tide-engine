@@ -28,7 +28,7 @@ typedef struct tide_run_desc {
     int tick_rate;          // Ticks per second, over the game's tickRate setting; 0 for that, or else 60
     // Show the stats in the bottom right corner, as the game's `stats` setting does: a drawer (tide/stats.h), one
     // line with the frame rate, which a click or a tap on it or F8 opens to the rest: what a frame's work takes,
-    // ping, bandwidth, tick, entity count, threads, memory, what draws, its draw calls and the slowest systems
+    // ping, bandwidth, entity count, threads, memory, what draws, its draw calls and the slowest systems
     bool stats;
     // ...and they start open, for whoever asked to read them, as `tide run --stats` does. They start closed
     // without it: what a game's players get of them is the one line.
@@ -871,7 +871,6 @@ static inline int tide_run_frame(void *user, const float seconds)
             .delay_ticks = status.client.delay_ticks,
             .up = tide_run_up,
             .down = tide_run_down,
-            .tick = open && match ? game->tick(match) : 0,
             .entities = open && match ? game->entity_count(match) : 0u,
             .profile = &tide_run_profiler.profile,
         };

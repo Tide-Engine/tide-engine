@@ -245,7 +245,7 @@ typedef struct text_value {
 } text_value;
 
 // ---------------------------------------------------------------------------
-// Conditional compilation: #if, #elif, #else and #endif, as in C#. A
+// Conditional compilation: #if, #elif, #else, #endif, #define and #undef, as in C#. A
 // directive is a line of its own, and the lines it leaves out aren't read as
 // code, only looked through for the directives that end them, so they can
 // hold anything (code for another version of tide).
@@ -281,6 +281,7 @@ typedef struct cond_reader {
     const char *end;
     const lexer *lx;
     bool ok;
+    const void *own; // The file's #defines and #undefs so far (file_symbols)
 } cond_reader;
 
 static loc cond_here(const cond_reader *c)
@@ -313,6 +314,98 @@ static bool version_symbol(const str name, int v[3])
     return false;
 }
 
+// The symbols a build defines for every file (see docs/spec.md, Conditional
+// compilation): what its command line named, DEBUG, and PACKAGE_<NAME> for
+// each package the game builds with. And those of them conditions read, with
+// what each was: builds that differ in one are different games.
+static VEC(const char *) build_symbols;
+static VEC(lex_symbol) read_symbols;
+
+// Their arrays are the arena's, which whoever compiles again has reset: nothing of them is kept.
+void lex_symbols_reset(void)
+{
+    memset(&build_symbols, 0, sizeof build_symbols);
+    memset(&read_symbols, 0, sizeof read_symbols);
+}
+
+static bool reserved_symbol(const str name)
+{
+    return (name.len >= 5 && memcmp(name.ptr, "TIDE_", 5) == 0) || (name.len >= 8 && memcmp(name.ptr, "PACKAGE_", 8) == 0);
+}
+
+bool lex_symbol_ok(const char *name)
+{
+    if (!is_ident_start(name[0])) return false;
+    for (const char *p = name; *p; p++) {
+        if (!is_ident_char(*p)) return false;
+    }
+    return strcmp(name, "true") != 0 && strcmp(name, "false") != 0 && !reserved_symbol((str){name, (int)strlen(name)});
+}
+
+static bool build_defines(const str name)
+{
+    for (int i = 0; i < build_symbols.count; i++) {
+        if (str_eq_c(name, build_symbols.items[i])) return true;
+    }
+    return false;
+}
+
+void lex_define(const char *name)
+{
+    if (!build_defines((str){name, (int)strlen(name)})) vec_push(build_symbols, name);
+}
+
+void lex_define_package(const char *package)
+{
+    const size_t n = strlen(package);
+    char *name = arena_alloc(n + 9);
+    memcpy(name, "PACKAGE_", 8);
+    for (size_t i = 0; i < n; i++) {
+        const unsigned char ch = (unsigned char)package[i];
+        name[8 + i] = isalnum(ch) ? (char)toupper(ch) : '_';
+    }
+    name[8 + n] = '\0';
+    lex_define(name);
+}
+
+const lex_symbol *lex_symbols_read(int *count)
+{
+    *count = read_symbols.count;
+    return read_symbols.items;
+}
+
+// What a condition reads a build's symbol as, noted by name, in order of the names.
+static bool read_build_symbol(const str name)
+{
+    const bool defined = build_defines(name);
+    int at = 0;
+    for (; at < read_symbols.count; at++) {
+        const char *other = read_symbols.items[at].name;
+        const size_t other_len = strlen(other);
+        const size_t shared = (size_t)name.len < other_len ? (size_t)name.len : other_len;
+        int order = memcmp(name.ptr, other, shared);
+        if (order == 0) order = (int)name.len - (int)other_len;
+        if (order == 0) return defined;
+        if (order < 0) break;
+    }
+    char *copy = arena_alloc((size_t)name.len + 1);
+    memcpy(copy, name.ptr, (size_t)name.len);
+    copy[name.len] = '\0';
+    const lex_symbol read = {copy, defined};
+    vec_push(read_symbols, read);
+    for (int i = read_symbols.count - 1; i > at; i--) read_symbols.items[i] = read_symbols.items[i - 1];
+    read_symbols.items[at] = read;
+    return defined;
+}
+
+// A file's own symbols: what its #define and #undef lines said, the last word standing.
+typedef struct file_symbol {
+    str name;
+    bool defined;
+} file_symbol;
+
+typedef VEC(file_symbol) file_symbols;
+
 static bool cond_or(cond_reader *c);
 
 static bool cond_primary(cond_reader *c)
@@ -321,7 +414,7 @@ static bool cond_primary(cond_reader *c)
     if (c->p >= c->end) {
         if (c->ok) {
             diag_error(cond_here(c), "a condition is missing here");
-            diag_note("conditions are tide's versions, like '#if TIDE_0_3_OR_NEWER', with !, && and ||");
+            diag_note("conditions are symbols, like '#if DEBUG' or '#if TIDE_0_3_OR_NEWER', with !, && and ||");
         }
         c->ok = false;
         return false;
@@ -352,20 +445,24 @@ static bool cond_primary(cond_reader *c)
         if (str_eq_c(name, "false")) return false;
         int v[3];
         if (version_symbol(name, v)) return tide_version_at_least(v[0], v[1], v[2]);
-        if (c->ok) {
-            diag_error(at, "'" STR_FMT "' isn't a symbol Tide knows", STR_ARG(name));
-            if (name.len > 5 && memcmp(name.ptr, "TIDE_", 5) == 0) {
+        // TIDE_ is tide's own: a version misspelled doesn't quietly leave code out
+        if (name.len >= 5 && memcmp(name.ptr, "TIDE_", 5) == 0) {
+            if (c->ok) {
+                diag_error(at, "'" STR_FMT "' isn't a symbol Tide knows", STR_ARG(name));
                 diag_note("a version of tide is written like TIDE_0_3_OR_NEWER, true in tide 0.3 and newer");
-            } else {
-                diag_note("conditions are tide's versions, like TIDE_0_3_OR_NEWER, true in tide 0.3 and newer");
             }
+            c->ok = false;
+            return false;
         }
-        c->ok = false;
-        return false;
+        const file_symbols *own = c->own;
+        for (int i = own ? own->count - 1 : -1; i >= 0; i--) {
+            if (str_eq(own->items[i].name, name)) return own->items[i].defined;
+        }
+        return read_build_symbol(name);
     }
     if (c->ok) {
         diag_error(cond_here(c), "'%c' can't go in a condition", *c->p);
-        diag_note("conditions are tide's versions, like '#if TIDE_0_3_OR_NEWER', with !, &&, ||, == and !=");
+        diag_note("conditions are symbols, like '#if DEBUG' or '#if TIDE_0_3_OR_NEWER', with !, &&, ||, == and !=");
     }
     c->ok = false;
     c->p = c->end;
@@ -476,7 +573,7 @@ static void skip_branch(lexer *lx, lex_spans *spans)
 
 // Reads the directive at lx->p (its '#'), to the end of its line, and leaves
 // out what it says to. False after reporting an error.
-static bool directive(lexer *lx, cond_stack *conds, lex_spans *spans)
+static bool directive(lexer *lx, cond_stack *conds, lex_spans *spans, file_symbols *own, const bool before_code)
 {
     const loc at = here(lx);
     const char *line_end = lx->p;
@@ -492,7 +589,7 @@ static bool directive(lexer *lx, cond_stack *conds, lex_spans *spans)
     const char *after;
     const str word = directive_word(lx->p, text_end, &after);
     add_span(spans, at.line, at.line, true);
-    cond_reader c = {after, text_end, lx, true};
+    cond_reader c = {after, text_end, lx, true, own};
     cond *top = conds->count > 0 ? &conds->items[conds->count - 1] : NULL;
     bool skip = false;
     bool ok = true;
@@ -538,9 +635,38 @@ static bool directive(lexer *lx, cond_stack *conds, lex_spans *spans)
             ok = false;
         }
         conds->count--;
+    } else if (str_eq_c(word, "define") || str_eq_c(word, "undef")) {
+        // A file's own symbol, for the whole file: so before any of its code, as in C#
+        cond_space(&c);
+        const loc name_at = cond_here(&c);
+        const char *start = c.p;
+        while (c.p < c.end && is_ident_char(*c.p)) c.p++;
+        const str name = {start, (int)(c.p - start)};
+        cond_space(&c);
+        if (name.len == 0 || !is_ident_start(*start) || c.p < c.end) {
+            diag_error(name_at, "'#" STR_FMT "' takes one symbol's name, like '#" STR_FMT " FAST'", STR_ARG(word), STR_ARG(word));
+            diag_note("a symbol is defined or it isn't: it has no value");
+            ok = false;
+        } else if (str_eq_c(name, "true") || str_eq_c(name, "false")) {
+            diag_error(name_at, "'" STR_FMT "' is a condition's own word, so no symbol can have the name", STR_ARG(name));
+            ok = false;
+        } else if (reserved_symbol(name)) {
+            diag_error(name_at, "'" STR_FMT "' is tide's to say: symbols that start with TIDE_ are its versions, and with "
+                                "PACKAGE_ the packages the game builds with", STR_ARG(name));
+            ok = false;
+        } else if (!before_code) {
+            diag_error(at, "'#" STR_FMT "' comes after code: a file's symbols are for all of it, so they go before its "
+                           "first declaration", STR_ARG(word));
+            diag_note("move it to the top of the file; for every file of the game, there's `tide build --define " STR_FMT "`",
+                      STR_ARG(name));
+            ok = false;
+        } else {
+            const file_symbol said = {name, word.len == 6};
+            vec_push(*own, said);
+        }
     } else {
         diag_error(at, "'#" STR_FMT "' isn't a directive", STR_ARG(word));
-        diag_note("Tide's directives are #if, #elif, #else and #endif, as in '#if TIDE_0_3_OR_NEWER'");
+        diag_note("Tide's directives are #if, #elif, #else, #endif, #define and #undef, as in '#if DEBUG'");
         lx->p = line_end;
         return false;
     }
@@ -556,6 +682,7 @@ static token *lex_impl(const source *src, const bool tolerant, lex_spans *spans)
     bool ok = true;
     VEC(text_value) values = {0}; // Innermost last
     cond_stack conds = {0};       // #ifs not ended yet, innermost last
+    file_symbols own = {0};       // The file's #defines and #undefs
 
     // Editors on Windows often start UTF-8 files with a byte-order mark.
     if (src->len >= 3 && memcmp(src->text, "\xEF\xBB\xBF", 3) == 0) {
@@ -593,7 +720,7 @@ static token *lex_impl(const source *src, const bool tolerant, lex_spans *spans)
         char n = lx.p + 1 < lx.end ? lx.p[1] : '\0';
 
         if (c == '#' && values.count == 0 && starts_line(&lx)) {
-            if (!directive(&lx, &conds, spans)) ok = false;
+            if (!directive(&lx, &conds, spans, &own, toks.count == 0)) ok = false;
             continue;
         }
 

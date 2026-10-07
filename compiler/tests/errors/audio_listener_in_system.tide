@@ -1,0 +1,15 @@
+// expect: the match runs the same on every machine, so it can't play sounds
+singleton Probe
+{
+    int ticks;
+}
+
+system Count(mut Probe probe)
+{
+    probe.ticks += 1;
+    Audio.SetListener(float3(0, 0, 0), quaternion.identity);
+}
+
+scene Main
+{
+}

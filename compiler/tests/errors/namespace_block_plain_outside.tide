@@ -1,0 +1,10 @@
+// expect: unknown component or singleton 'Health'
+scene Main { }
+namespace Combat
+{
+    component Health { int hp; }
+}
+system Heal(mut Health health)
+{
+    health.hp += 1;
+}
