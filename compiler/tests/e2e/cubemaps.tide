@@ -1,0 +1,171 @@
+// Cubemaps: six images a frag reads by a direction (docs/spec.md, Views and
+// drawing, Cubemaps). One of the game's files, six PNGs a glob matches, named
+// for their faces; and one a view draws into, a face at a time, each face a
+// RenderTarget. Both are values: kept in fields, passed to functions, and
+// read where they're an asset by name or a field of what a frag takes.
+
+asset Cubemap sky = "assets/sky/sky_??.png";
+asset Cubemap skyAgain = "assets/sky/*.png"; // The same six files: the pack has each once
+asset Texture right = "assets/sky/sky_px.png"; // ...and one of them as a Texture too
+
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+    Color color = Color.white;
+}
+
+// A struct that keeps a cube with one of its faces
+struct Probe
+{
+    Cubemap cube;
+    RenderTarget front;
+}
+
+component Prop
+{
+    float3 at;
+    local Cubemap around; // A match component's local field keeps one too
+}
+
+local singleton Room
+{
+    Cubemap reflection; // One that's drawn into
+    Cubemap bright;     // ...of floats
+    Cubemap held;       // An asset's, kept
+    Cubemap none;       // Never set: no cube
+    Probe probe;
+    List<Corner> ball;
+    List<int> faces;
+    List<Vertex3> box;
+    List<int> boxFaces;
+    int frames;
+    bool resized;
+    bool disposed;
+}
+
+// A function gives one back, and takes one
+Cubemap Pick(Cubemap first, Cubemap second, bool which)
+{
+    return which ? first : second;
+}
+
+RenderTarget Up(Cubemap cube)
+{
+    return cube.faces[2];
+}
+
+// The asset by its name, read the plain way
+frag Sky(Corner corner, out Color color)
+{
+    color = sky.Sample(corner.normal);
+}
+
+// A field's, in a branch, with the filter said; and the asset between its smaller images
+frag Mirror(Corner corner, out Color color, Room room)
+{
+    var away = corner.normal * 2;
+    Color far = sky.Sample(away, Filter.Trilinear);
+    if (corner.color.r > 0.5)
+    {
+        color = room.reflection.Sample(corner.normal, Filter.Point) + far * 0.25;
+    }
+    else
+    {
+        color = room.bright.Sample(-corner.normal);
+    }
+}
+
+// A match component's local field, and a kept asset: two more bindings
+frag Around(Corner corner, out Color color, Prop prop, Room room)
+{
+    color = prop.around.Sample(corner.normal) * room.held.Sample(corner.normal, Filter.Point).a;
+}
+
+// Two names of the same six files, and one of the files as a Texture beside them
+frag Twice(Corner corner, out Color color)
+{
+    color = skyAgain.Sample(corner.normal) + sky.Sample(corner.normal) + right.Sample(corner.normal.xy);
+}
+
+// A vert reads one too, at its own pixels
+vert Lift(mut Corner corner, Room room)
+{
+    corner.position += corner.normal * room.reflection.Sample(corner.normal).r;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Prop { at = float3(1, 2, 3) });
+}
+
+view Make(mut Room room)
+{
+    room.frames++;
+    if (room.frames > 1) return;
+    room.reflection = RenderTarget.Cube(64);
+    room.bright = RenderTarget.Cube(16, Format.Rgba16f);
+    room.held = sky;
+    room.probe = Probe { cube = Pick(room.reflection, room.bright, true), front = room.reflection.faces[4] };
+    room.ball = [
+        Corner { position = float3(-1, -1, 0), normal = float3(1, 0, 0) },
+        Corner { position = float3(1, -1, 0), normal = float3(0, 1, 0) },
+        Corner { position = float3(0, 1, 0), normal = float3(0, 0, 1) }];
+    room.faces = [0, 2, 1];
+    room.box = [
+        Vertex3 { position = float3(-1, -1, 2) },
+        Vertex3 { position = float3(1, -1, 2) },
+        Vertex3 { position = float3(0, 1, 2) }];
+    room.boxFaces = [0, 2, 1];
+}
+
+view Keep(mut Prop prop, Room room)
+{
+    prop.around = room.reflection;
+}
+
+// Each face is a destination with its own camera, clip and settings, like any target
+[After(Make)]
+view Fill(Room room)
+{
+    for (int face = 0; face < 6; face++)
+    {
+        var into = room.reflection.faces[face];
+        into.Clear(Color(face / 5.0, 0, 0));
+        into.SetCamera(float3(0, 0, 0), quaternion.identity, 90);
+        into.Mesh(room.box, room.boxFaces, float4x4.identity);
+    }
+    Up(room.bright).Clear(Color(4, 4, 4));
+    room.probe.front.Mesh(room.ball, room.faces, float4x4.identity, Sky);
+    // One that was never made has no faces to draw into: these are passed by
+    room.none.faces[0].Clear(Color.white);
+}
+
+[After(Fill)]
+view Show(Room room, Prop prop)
+{
+    Draw.Mesh(room.ball, room.faces, float4x4.identity, Sky);
+    Draw.Mesh(room.ball, room.faces, float4x4.identity, Mirror);
+    Draw.Mesh(room.ball, room.faces, float4x4.identity, Around);
+    Draw.Mesh(room.ball, room.faces, float4x4.identity, Lift);
+    Draw.Mesh(room.ball, room.faces, float4x4.identity, Twice);
+    // A cube's own face can't be drawn into while the cube is read: the renderer passes this by
+    room.reflection.faces[1].Mesh(room.ball, room.faces, float4x4.identity, Mirror);
+}
+
+[After(Show)]
+view Change(mut Room room)
+{
+    if (room.frames == 2 && !room.resized)
+    {
+        room.reflection.Resize(128);
+        room.resized = true;
+    }
+    if (room.frames == 3 && !room.disposed)
+    {
+        room.bright.Dispose();
+        room.disposed = true;
+    }
+}

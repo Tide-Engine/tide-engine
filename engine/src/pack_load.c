@@ -45,6 +45,14 @@ typedef struct handle_entry {
     uint32_t value;
 } handle_entry;
 
+// A cube as a declaration names it: its faces' pixels, where the region has them.
+typedef struct packed_cube {
+    uint64_t named;
+    uint64_t version; // What's in its six faces
+    int32_t size;
+    const uint8_t *faces[TIDE_CUBE_FACES];
+} packed_cube;
+
 static struct {
     uint8_t *region;
     uint32_t size;
@@ -55,6 +63,8 @@ static struct {
     // taken, each found from its name's low bits and on from there
     packed_texture *textures;
     uint32_t texture_count, texture_places;
+    packed_cube *cubes; // Its cubes, of which a game has a few: looked through
+    uint32_t cube_count;
 } pack;
 
 static TIDE_THREAD_LOCAL uint32_t mapped_epoch;
@@ -233,6 +243,41 @@ static void lay_textures(const uint32_t file)
     }
 }
 
+// Notes the cubes the entries name: each one's six faces, where they're whole, square and of one size.
+static void note_cubes(void)
+{
+    uint32_t most = 0;
+    for (uint32_t i = 0; i < pack.entry_count; i++) most += pack.entries[i].kind == TIDE_PACK_CUBEMAP;
+    if (!most) return;
+    pack.cubes = tide_alloc_zeroed(most, sizeof *pack.cubes);
+    for (uint32_t i = 0; i < pack.entry_count; i++) {
+        const tide_pack_entry *e = &pack.entries[i];
+        if (e->kind != TIDE_PACK_CUBEMAP || count_at(pack.region, pack.size, e->offset, sizeof(uint32_t)) != TIDE_CUBE_FACES) continue;
+        uint32_t handles[TIDE_CUBE_FACES];
+        memcpy(handles, pack.region + e->offset + sizeof(tide_block), sizeof handles);
+        packed_cube cube = {.named = texture_name(e->name, ALONE, NULL, 0)};
+        tide_sha256 s;
+        tide_sha256_init(&s);
+        bool whole = true;
+        for (uint32_t face = 0; face < TIDE_CUBE_FACES && whole; face++) {
+            packed_texture t;
+            const uint32_t at = place_of(handles[face], pack.size);
+            whole = at != UINT32_MAX && texture_at(pack.region, pack.size, at, &t) && t.width == t.height
+                 && (face == 0 || t.width == cube.size);
+            if (!whole) break;
+            cube.size = t.width;
+            cube.faces[face] = pack.region + at + sizeof(tide_block) + 2u * sizeof(int32_t);
+            tide_sha256_add(&s, &t.version, sizeof t.version);
+        }
+        if (!whole) continue;
+        uint8_t out[32];
+        tide_sha256_end(&s, out);
+        memcpy(&cube.version, out, sizeof cube.version);
+        if (!cube.version) cube.version = 1u;
+        pack.cubes[pack.cube_count++] = cube;
+    }
+}
+
 bool tide_pack_load(const uint8_t *bytes, const size_t size)
 {
     tide_pack_header h;
@@ -259,6 +304,7 @@ bool tide_pack_load(const uint8_t *bytes, const size_t size)
     memcpy(pack.entries, entries, (size_t)h.entries * sizeof(tide_pack_entry));
     pack.entry_count = h.entries;
     lay_textures(h.region_size);
+    note_cubes(); // Once nothing more is laid out: the region is where it stays
     pack.epoch++;
     tide_pack_region_slots = slots;
     tide_pack_use();
@@ -270,6 +316,9 @@ void tide_pack_unload(void)
     free(pack.region);
     free(pack.entries);
     free(pack.textures);
+    free(pack.cubes);
+    pack.cubes = NULL;
+    pack.cube_count = 0;
     pack.region = NULL;
     pack.entries = NULL;
     pack.textures = NULL;
@@ -338,6 +387,24 @@ bool tide_pack_texture_find(const uint64_t named, tide_texture *image)
     *image = (tide_texture){.pixels = pack.region + t->offset + sizeof(tide_block) + 2u * sizeof(int32_t),
                             .width = t->width, .height = t->height, .version = t->version};
     return true;
+}
+
+tide_cubemap_ref tide_pack_cubemap_of(const tide_pack_entry *e)
+{
+    if (!e || e->kind != TIDE_PACK_CUBEMAP) return (tide_cubemap_ref){0};
+    return (tide_cubemap_ref){.named = texture_name(e->name, ALONE, NULL, 0)};
+}
+
+bool tide_pack_cubemap_find(const uint64_t named, int32_t *size, uint64_t *version, const uint8_t *const **faces)
+{
+    for (uint32_t i = 0; named && i < pack.cube_count; i++) {
+        if (pack.cubes[i].named != named) continue;
+        *size = pack.cubes[i].size;
+        *version = pack.cubes[i].version;
+        *faces = pack.cubes[i].faces;
+        return true;
+    }
+    return false;
 }
 
 uint64_t tide_pack_grid_version(const tide_grid g)

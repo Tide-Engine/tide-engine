@@ -240,6 +240,7 @@ static bool type_fits(emit *em, const type t, const loc at)
     case TY_DEPTH_TEXTURE:
         why = "a target's depth is read with 'depth.Sample(uv)' or 'depth.Compare(uv, value)', not kept as a GPU value";
         break;
+    case TY_CUBEMAP: why = "a cube is read with 'cube.Sample(direction)', not kept as a GPU value"; break;
     case TY_RENDER_TARGET: why = "a render target belongs to the CPU: sample its color as a Texture"; break;
     case TY_ENTITY:
     case TY_LOCAL_ENTITY:
@@ -1707,6 +1708,7 @@ static int known_filter(const expr *e)
     const expr *of = e->object;
     if (of->type.kind == TY_DEPTH_TEXTURE) return 0;
     if (e->args.count >= 2) return e->args.items[1]->enum_member ? (int)e->args.items[1]->enum_member->number : 1;
+    if (of->type.kind == TY_CUBEMAP) return 1; // A cube that says none is read blended
     if (of->bind != BIND_ASSET && of->type.kind == TY_TEXTURE) return -1;
     int filter, wrap;
     declared_sampling(of, &filter, &wrap);
@@ -1787,6 +1789,85 @@ static bool liftable(const emit *em, const expr *e, const int depth)
     }
 }
 
+// A Cubemap's Sample: an asset's by name, or a field's, read by a direction.
+// One sampled with another filter is another binding, as a texture's is, and
+// one read between its smaller images has its direction worked out as the
+// frag starts, with how fast it changes, as a uv is (ex_sample).
+static void ex_cube_sample(emit *em, const expr *e, const decl *asset, const param *p)
+{
+    const expr *of = e->object;
+    const int said = e->args.count >= 2 ? (int)e->args.items[1]->enum_member->number : 1;
+    const int filter = said == 0 ? 0 : said == 2 ? 2 : 1;
+    const bool lifts = em->root->is_frag && em->code == em->root && !em->lifting && filter == 2;
+    const bool grad = lifts && liftable(em, e->args.items[0], 0);
+    if (lifts && !grad && em->checking) {
+        refuse(em, e->args.items[0]->at, "a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this "
+                                         "direction is made of a variable that changes, or of one a loop counts");
+        diag_note("the GPU picks between a cube's smaller images by how fast the direction changes from one pixel to the "
+                  "next, which it's asked before any branch or loop: make it of the frag's parameters, constants and "
+                  "variables declared with 'var' and never assigned again, or sample with Filter.Bilinear here");
+    }
+    int slot = 0;
+    if (em->checking) {
+        if (em->code != em->root) {
+            refuse(em, e->at, "a texture is sampled in the frag or vert that takes it, not in a function it calls");
+            return;
+        }
+        const decl *holds = asset ? NULL : of->local_field ? p->type.decl->local_part : p->type.decl;
+        const shader_sample sample = {asset ? -1 : param_index(em->root, p), asset ? -1 : field_index(holds, of->field),
+                                      of->local_field && !asset, filter, asset, 0, READ_CUBE, true, true};
+        bool known = false;
+        for (int i = 0; i < em->root->samples.count; i++) {
+            const shader_sample *s = &em->root->samples.items[i];
+            known |= s->param == sample.param && s->field == sample.field && s->local == sample.local && s->filter == sample.filter
+                  && s->asset == sample.asset && s->read == READ_CUBE;
+        }
+        if (!known) vec_push(em->root->samples, sample);
+    } else {
+        while (slot < em->sh->textures.count) {
+            const shader_texture *t = &em->sh->textures.items[slot];
+            if (t->asset == asset && !t->direct && t->source == (p ? p->type.decl : NULL) && t->field == (asset ? NULL : of->field)
+                && t->filter == filter && t->read == READ_CUBE) {
+                break;
+            }
+            slot++;
+        }
+    }
+    const type way = {TY_FLOAT3, NULL};
+    need(em, H_STRAIGHT); // The color itself, where the cube has it times its alpha
+    sb_put(em->o, "tide_straight(");
+    if (grad) {
+        const int at = em->grad_count++;
+        sb *const out = em->o;
+        const int defuse = em->defuse;
+        const expr *statement = em->statement;
+        em->o = &em->grads;
+        em->defuse = 0;
+        em->statement = NULL;
+        em->lifting++;
+        sb_printf(em->o, em->l == WGSL ? "    let tide_uv%d: vec3f = " : "    vec3 tide_uv%d = ", at);
+        ex_as(em, e->args.items[0], way);
+        if (em->l == WGSL) {
+            sb_printf(em->o, ";\n    let tide_dx%d: vec3f = dpdx(tide_uv%d);\n    let tide_dy%d: vec3f = dpdy(tide_uv%d);\n", at, at, at, at);
+        } else {
+            sb_printf(em->o, ";\n    vec3 tide_dx%d = dFdx(tide_uv%d);\n    vec3 tide_dy%d = dFdy(tide_uv%d);\n", at, at, at, at);
+        }
+        em->lifting--;
+        em->o = out;
+        em->defuse = defuse;
+        em->statement = statement;
+        if (em->l == WGSL) sb_printf(em->o, "textureSampleGrad(pixels%d, sampler%d, ", slot, slot);
+        else sb_printf(em->o, "textureGrad(pixels%d, ", slot);
+        ex_as(em, e->args.items[0], way);
+        sb_printf(em->o, ", tide_dx%d, tide_dy%d))", at, at);
+        return;
+    }
+    if (em->l == WGSL) sb_printf(em->o, "textureSampleLevel(pixels%d, sampler%d, ", slot, slot);
+    else sb_printf(em->o, "textureLod(pixels%d, ", slot);
+    ex_as(em, e->args.items[0], way);
+    sb_put(em->o, ", 0.0))");
+}
+
 // A texture parameter, or a grid or texture field: which binding reads it.
 // One sampled with another filter or another wrap is another binding, as a
 // backend's sampler is how a binding is read. A DepthTexture field is a
@@ -1798,6 +1879,10 @@ static void ex_sample(emit *em, const expr *e)
     const decl *asset = of->bind == BIND_ASSET ? of->constant : NULL; // A Grid2<Color> or Texture asset, by name
     const bool direct = of->kind == E_NAME && !asset;
     const param *p = asset ? NULL : direct ? of->param : of->object->param;
+    if (of->type.kind == TY_CUBEMAP) {
+        ex_cube_sample(em, e, asset, p);
+        return;
+    }
     const shader_read read = of->type.kind != TY_DEPTH_TEXTURE ? READ_COLOR : str_eq_c(e->name, "Compare") ? READ_COMPARE : READ_DEPTH;
     // A depth's nearest pixel is read, the pixels at its edge past them, and what its comparisons give, the
     // GPU blends: none of it is the draw's to say
@@ -2724,8 +2809,10 @@ static void put_uniforms(const shader *sh, const lang l, sb *o)
         const shader_read read = sh->textures.items[i].read;
         if (wgsl) {
             sb_printf(o, "@group(0) @binding(%d) var pixels%d: %s;\n@group(0) @binding(%d) var sampler%d: %s;\n",
-                      1 + 2 * i, i, read == READ_COLOR ? "texture_2d<f32>" : "texture_depth_2d", 2 + 2 * i, i,
-                      read == READ_COMPARE ? "sampler_comparison" : "sampler");
+                      1 + 2 * i, i, read == READ_COLOR ? "texture_2d<f32>" : read == READ_CUBE ? "texture_cube<f32>" : "texture_depth_2d",
+                      2 + 2 * i, i, read == READ_COMPARE ? "sampler_comparison" : "sampler");
+        } else if (read == READ_CUBE) {
+            sb_printf(o, "uniform highp samplerCube pixels%d;\n", i); // With all of its bits, for a cube of floats
         } else if (read != READ_COLOR) {
             // With all of its bits: a sampler's own precision is the lowest there is, where there's a choice
             sb_printf(o, "uniform highp %s pixels%d;\n", read == READ_COMPARE ? "sampler2DShadow" : "sampler2D", i);
@@ -3169,7 +3256,8 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         for (int k = 0; k < p->type.decl->fields.count; k++) {
             const field *f = &p->type.decl->fields.items[k];
             if (f->hidden || !(p->whole || (p->reads && p->reads[k]))) continue;
-            if (f->type.kind == TY_GRID || f->type.kind == TY_TEXTURE || f->type.kind == TY_DEPTH_TEXTURE) continue; // Sampled, below
+            if (f->type.kind == TY_GRID || f->type.kind == TY_TEXTURE || f->type.kind == TY_DEPTH_TEXTURE
+                || f->type.kind == TY_CUBEMAP) continue; // Sampled, below
             shader_value *v = add_value(sh, p->type.decl, f, f->type, p->type.kind == TY_COMPONENT || explicit_instance);
             if (code->is_frag) v->frag_reads = true;
             else v->vert_reads = true;
@@ -3179,7 +3267,8 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         const decl *part = p->type.decl->local_part;
         for (int k = 0; part && p->local_reads && k < part->fields.count; k++) {
             const field *f = &part->fields.items[k];
-            if (!p->local_reads[k] || f->type.kind == TY_GRID || f->type.kind == TY_TEXTURE || f->type.kind == TY_DEPTH_TEXTURE) continue;
+            if (!p->local_reads[k] || f->type.kind == TY_GRID || f->type.kind == TY_TEXTURE || f->type.kind == TY_DEPTH_TEXTURE
+                || f->type.kind == TY_CUBEMAP) continue;
             shader_value *v = add_value(sh, p->type.decl, f, f->type, p->type.kind == TY_COMPONENT);
             if (code->is_frag) v->frag_reads = true;
             else v->vert_reads = true;
