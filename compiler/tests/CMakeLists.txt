@@ -70,6 +70,7 @@ tide_e2e_test(assets) # Files a game is built with, read by name: each type, glo
 tide_e2e_test(assets_plain) # ...and the same game with none: its world is the same bytes
 tide_e2e_test(asset_textures) # Texture assets, and [Filter] and [Wrap] on a texture's declaration
 tide_e2e_test(audio) # Clip assets, and Audio.Play from views, local handlers and the functions they call
+tide_e2e_test(sound) # Sound fields the frame names to the mixer while they play, and the listener
 tide_e2e_test(textures) # Texture as the one type a draw and a Sample take: grids of colors and of floats as textures, and the sampling a Texture carries
 tide_e2e_test(stages) # Enum phases, local offsets and whole-phase ordering in every schedule
 tide_e2e_test(render_targets) # Target receivers, explicit Texture sources and distributed rendering phases
@@ -181,6 +182,8 @@ tide_e2e_test(defines SOURCES e2e/defines/game.tide PACKAGES Extra e2e/defines/E
 target_compile_definitions(tidec_e2e_defines PRIVATE DEFINES_DEBUG=$<IF:$<CONFIG:Debug>,1,0>)
 tide_e2e_test(multi_file SOURCES e2e/multi_file/a_physics.tide e2e/multi_file/b_main.tide
     e2e/multi_file/c_combat.tide e2e/multi_file/d_items.tide)
+tide_e2e_test(namespace_blocks SOURCES e2e/namespace_blocks/a_game.tide e2e/namespace_blocks/b_more.tide
+    e2e/namespace_blocks/c_tools.tide) # `namespace Name { ... }`: several in a file, one opened twice, blocks in blocks
 # What a game declares itself comes before what a namespace it imports has by that name
 tide_e2e_test(using_own SOURCES e2e/using_own/a_lib.tide e2e/using_own/a_other.tide e2e/using_own/b_game.tide
     e2e/using_own/c_inner.tide)

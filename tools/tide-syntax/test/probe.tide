@@ -365,3 +365,17 @@ system Words(mut Toast toast)
     var virtual = 1;
     var override = virtual + 1;
 }
+
+// Namespace blocks: the word and the name on the block's own line, and the
+// declarations inside as they are anywhere, a step in.
+namespace ProbeBlocks.Inner
+{
+    component InBlock { int hp; }
+
+    int BlockFunction(int x) { return x; }
+
+    namespace Deeper
+    {
+        system InDeeper(mut InBlock body) { }
+    }
+}

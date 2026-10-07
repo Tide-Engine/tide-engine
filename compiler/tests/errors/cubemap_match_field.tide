@@ -1,5 +1,5 @@
 // expect: 'Prop' can't hold rendering resources in match state
-// expect: Texture, DepthTexture, Cubemap and RenderTarget belong to this machine: keep the field local, or use a local component or singleton
+// expect: Texture, DepthTexture, Cubemap, RenderTarget, Clip and Sound belong to this machine: keep the field local, or use a local component or singleton
 // A match component can't keep one
 scene Main { }
 component Prop { Cubemap around; }

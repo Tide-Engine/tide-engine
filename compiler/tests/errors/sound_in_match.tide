@@ -1,0 +1,12 @@
+// expect: 'Engine' can't hold rendering resources in match state
+// expect: Texture, DepthTexture, Cubemap, RenderTarget, Clip and Sound belong to this machine
+asset Clip hum = "../e2e/assets/beep.wav";
+
+component Engine
+{
+    Sound sound;
+}
+
+scene Main
+{
+}

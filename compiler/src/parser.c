@@ -16,7 +16,8 @@ typedef struct parser {
     jmp_buf fail; // Where a syntax error goes: the innermost place that can recover.
     bool recover;
     // File level. In the struct rather than locals: they change between setjmp and longjmp.
-    unit *unit;
+    program *prog;
+    unit *unit; // The file's, or that of the namespace block being read
     VEC(attribute) pending; // Attributes waiting for the next declaration
     VEC(attribute) field_pending; // Attributes waiting for the next field
     bool seen_decl;
@@ -870,35 +871,37 @@ static bool at_replace_word(const parser *p, const bool in_type)
 
 // Where recovery can pick up again: a declaration's start. `Type Name(` at
 // column 1 starts a function, except in a type's body (`functions` false),
-// where it's a method.
+// where it's a method. Column 1 is a file's: inside a namespace block it's the
+// column the block's declarations are at (unit.decl_col).
 static bool at_decl_start_or_function(const parser *p, const bool functions)
 {
     const token *t = peek(p);
+    const int col = p->unit->decl_col; // 1, or where the namespace block being read has its declarations
     if (t->kind == T_COMPONENT || t->kind == T_SINGLETON || t->kind == T_SYSTEM) return true;
-    if (t->kind == T_LBRACKET && t->at.col == 1) return !attributes_before_field(p->toks, p->pos);
-    if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_IDENT && is_decl_word(t->text)) {
+    if (t->kind == T_LBRACKET && t->at.col == col) return !attributes_before_field(p->toks, p->pos);
+    if (t->kind == T_IDENT && t->at.col == col && peek_at(p, 1)->kind == T_IDENT && is_decl_word(t->text)) {
         // `local float x;` is a field; `local event Blink` starts a declaration
         if (!str_eq_c(t->text, "local")) return true;
         const str next = peek_at(p, 1)->text;
         if (peek_at(p, 2)->kind != T_SEMI && (is_decl_word(next) || str_eq_c(next, "async"))) return true;
     }
-    if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_LPAREN
+    if (t->kind == T_IDENT && t->at.col == col && peek_at(p, 1)->kind == T_LPAREN
         && (str_eq_c(t->text, "event") || str_eq_c(t->text, "command"))) return true;
-    if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_LBRACE && str_eq_c(t->text, "settings")) return true;
+    if (t->kind == T_IDENT && t->at.col == col && peek_at(p, 1)->kind == T_LBRACE && str_eq_c(t->text, "settings")) return true;
     // `virtual system ...`, `override float Combat.Damage(...)`. In a type's body a method can be virtual,
     // so there only a declaration's own word after it starts one
-    if (t->kind == T_IDENT && t->at.col == 1 && is_replace_word(t->text) && at_replace_word(p, false)) {
+    if (t->kind == T_IDENT && t->at.col == col && is_replace_word(t->text) && at_replace_word(p, false)) {
         const token *next = peek_at(p, 1);
         if (functions || next->kind == T_SYSTEM || next->kind == T_COMPONENT || next->kind == T_SINGLETON) return true;
         if (next->kind == T_IDENT && (is_decl_word(next->text) || str_eq_c(next->text, "async"))) return true;
     }
-    if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_IDENT && str_eq_c(t->text, "async")) return true;
-    if (t->kind == T_IDENT && t->at.col == 1 && peek_at(p, 1)->kind == T_SYSTEM && str_eq_c(t->text, "extern")) return true; // extern system
-    if (t->kind == T_IDENT && t->at.col == 1 && str_eq_c(t->text, "local")
+    if (t->kind == T_IDENT && t->at.col == col && peek_at(p, 1)->kind == T_IDENT && str_eq_c(t->text, "async")) return true;
+    if (t->kind == T_IDENT && t->at.col == col && peek_at(p, 1)->kind == T_SYSTEM && str_eq_c(t->text, "extern")) return true; // extern system
+    if (t->kind == T_IDENT && t->at.col == col && str_eq_c(t->text, "local")
         && (peek_at(p, 1)->kind == T_COMPONENT || peek_at(p, 1)->kind == T_SINGLETON || peek_at(p, 1)->kind == T_SYSTEM)) {
         return true;
     }
-    return functions && (t->kind == T_IDENT || t->kind == T_MUT) && t->at.col == 1 && at_method(p);
+    return functions && (t->kind == T_IDENT || t->kind == T_MUT) && t->at.col == col && at_method(p);
 }
 
 static bool at_decl_start(const parser *p)
@@ -2060,9 +2063,15 @@ static decl *parse_handler(parser *p, const bool command)
 
 // After a syntax error outside any body: skips to the next declaration. A
 // failed declaration always consumed its first token, so this makes progress.
+// Inside a namespace block it stops at the block's '}' too, which is the one
+// under the block's `namespace` word, as the formatter puts it: the braces of
+// a broken declaration don't pair, so counting them tells nothing.
 static void skip_declaration(parser *p)
 {
-    while (!at(p, T_EOF) && !at_decl_start(p)) advance(p);
+    while (!at(p, T_EOF) && !at_decl_start(p)) {
+        if (p->unit->outer && at(p, T_RBRACE) && peek(p)->at.col == p->unit->block_at.col) break;
+        advance(p);
+    }
 }
 
 // (Position, Velocity, with Player) after a name in [Before] and [After]: the
@@ -2153,20 +2162,60 @@ static void parse_attributes(parser *p)
     expect(p, T_RBRACKET, "']' after attributes");
 }
 
-// `namespace Game.Combat;` and `using Physics;` come before a file's declarations.
+// `namespace Game.Combat;` and `using Physics;` come before a file's
+// declarations. `namespace Combat { ... }` goes anywhere a declaration does,
+// and is a unit of its own until its '}': its namespace is its name inside
+// the one it's written in.
 static void parse_file_header(parser *p, const token *keyword)
 {
     const bool is_namespace = str_eq_c(keyword->text, "namespace");
+    if (is_namespace) { // namespace Name {: a block
+        int i = 1;
+        while (peek_at(p, i)->kind == T_DOT && peek_at(p, i + 1)->kind == T_IDENT) i += 2;
+        if (peek_at(p, i)->kind == T_LBRACE) {
+            const qname name = parse_qname(p, "a namespace name");
+            unit *block = NEW(unit);
+            block->src = p->unit->src;
+            block->outer = p->unit;
+            block->usings = p->unit->usings; // Complete: `using` comes before any declaration, and a block is one
+            block->using_at = p->unit->using_at;
+            block->ns_written = name.text;
+            block->ns_at = name.at;
+            block->block_at = keyword->at;
+            block->open_at = advance(p)->at;
+            const token *first = peek(p);
+            block->decl_col = first->kind != T_EOF && first->kind != T_RBRACE && first->at.line > block->open_at.line
+                                ? first->at.col : keyword->at.col + 4;
+            if (p->unit->ns.len > 0) {
+                sb ns = {0};
+                sb_printf(&ns, STR_FMT "." STR_FMT, STR_ARG(p->unit->ns), STR_ARG(name.text));
+                block->ns = (str){ns.data, (int)ns.len};
+            } else {
+                block->ns = name.text;
+            }
+            vec_push(p->prog->units, block);
+            p->unit = block;
+            p->seen_decl = true;
+            return;
+        }
+    }
     if (p->seen_decl) {
         diag_error(keyword->at, "'" STR_FMT "' goes at the top of the file, before any declaration", STR_ARG(keyword->text));
+        if (is_namespace) {
+            diag_note("a namespace for some of a file's declarations is a block, 'namespace Name { ... }', which goes anywhere a "
+                      "declaration does");
+        } else if (p->unit->outer) {
+            diag_note("a file's 'using' lines are its namespace blocks' too");
+        }
         longjmp(p->fail, 1);
     }
     const qname name = parse_qname(p, "a namespace name");
-    expect(p, T_SEMI, "';'");
+    expect(p, T_SEMI, is_namespace ? "';', or '{' and the namespace's declarations" : "';'");
     if (is_namespace) {
         if (p->unit->ns.len > 0) {
             diag_error(keyword->at, "a file has one namespace; it's already '" STR_FMT "'", STR_ARG(p->unit->ns));
-            diag_note("put the declarations of another namespace in their own file");
+            diag_note("put the declarations of another namespace in a block, 'namespace Name { ... }', which is inside '" STR_FMT "'",
+                      STR_ARG(p->unit->ns));
             return;
         }
         p->unit->ns = name.text;
@@ -2258,9 +2307,10 @@ program *program_new(void)
 
 bool parse_file(program *prog, const source *src, token *toks, const bool recover)
 {
-    parser p = {.toks = toks, .recover = recover};
+    parser p = {.toks = toks, .recover = recover, .prog = prog};
     p.unit = NEW(unit);
     p.unit->src = src;
+    p.unit->decl_col = 1;
     vec_push(prog->units, p.unit);
 
     if (!recover && setjmp(p.fail)) return false;
@@ -2273,6 +2323,17 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
             continue;
         }
         const token *t = peek(&p);
+        // '}' ends the namespace block it's in
+        if (t->kind == T_RBRACE && p.unit->outer) {
+            if (p.pending.count > 0) {
+                diag_error(p.pending.items[0].at, "attributes go right before a declaration");
+                p.pending.count = 0;
+                if (!recover) return false;
+            }
+            p.unit->close_at = advance(&p)->at;
+            p.unit = (unit *)p.unit->outer;
+            continue;
+        }
         // `local` before a declaration: it belongs to this machine, not the match.
         // `async` before a function or an event handler: it runs as a task.
         // `virtual` before a declaration with code: another package can replace it.
@@ -2307,6 +2368,12 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
             advance(&p);
             if (local) diag_error(local->at, "'local' goes before a declaration, like 'local component Spark { ... }'");
             if (replace_word) refuse_replace_word(replace_word, "a namespace is where names are, and has no code of its own");
+            if (p.pending.count > 0 && str_eq_c(t->text, "namespace")) {
+                diag_error(p.pending.items[0].at, "attributes go right before a declaration, and a namespace takes none");
+                diag_note("put them before the declarations inside it that they're for");
+                p.pending.count = 0;
+                if (!recover) return false;
+            }
             parse_file_header(&p, t);
             continue;
         }
@@ -2390,6 +2457,11 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         p.pending.count = p.pending.cap = 0;
         p.seen_decl = true;
         vec_push(prog->decls, d);
+    }
+    if (p.unit->outer) {
+        diag_error(peek(&p)->at, "expected '}' to end the namespace '" STR_FMT "', which opens at line %d", STR_ARG(p.unit->ns_written),
+                   p.unit->open_at.line);
+        if (!recover) return false;
     }
     if (p.pending.count > 0) {
         diag_error(p.pending.items[0].at, "attributes go right before a declaration");

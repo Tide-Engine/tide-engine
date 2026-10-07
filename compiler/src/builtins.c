@@ -564,6 +564,15 @@ static void build_signatures(void)
                  "with its distance (at its volume within 1 unit, silent past 50, unless the view sets a falloff).");
     }
 
+    describe(add("Audio", "SetListener", T_NONE, "tide_audio_set_listener", 2, T_F3, T_Q, T_NONE), "position, rotation",
+             "Where this frame's spatial sounds are heard from, and which way it faces (its right is +x turned by `rotation`): "
+             "for the frames after too, until it's set again or the frame ends. Without it, the origin, facing +z.");
+    describe(add("Audio", "SetListener", T_NONE, "tide_audio_set_listener2", 1, T_F2, T_NONE, T_NONE), "center",
+             "The listener at a 2D place (z 0), facing +z: a sound to its right is heard on the right.");
+    describe(add("Audio", "SetFalloff", T_NONE, "tide_audio_set_falloff", 2, T_F, T_F, T_NONE), "near, far",
+             "How a spatial sound's volume falls off with its distance from the listener: at its volume within `near`, "
+             "silent past `far`, and as `near / distance` between, scaled to reach 0 at `far`. 1 and 50 without it.");
+
     // Drawing, in views: tide/draw.h. Codegen passes the view's draw list first.
     describe(add("Draw", "Clear", T_NONE, "tide_draw_clear", 1, T_COLOR, T_NONE, T_NONE),
              "color", "Fills the whole screen, or what the clip leaves of it, and clears depth and stencil. No blend, tint "

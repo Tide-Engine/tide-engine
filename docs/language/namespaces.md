@@ -31,13 +31,54 @@ event(Spawned) Setup(with Main)
 }
 ```
 
-- A file has at most one namespace, and files without one are in the global namespace. Namespaces can be dotted: `namespace Game.Combat;`.
-- `namespace` and `using` come before any declaration.
-- A plain name is looked up in the file's namespace, then the namespaces around it out to the global namespace, then the `using` ones. So a name your game declares itself always means yours, even when a namespace you import has one too: write the namespace, `Physics.Body`, for the imported one. If two `using` namespaces both have a name that nothing of yours has, it's ambiguous: write the namespace.
+- A file has at most one `namespace Name;` line, and files without one are in the global namespace. Namespaces can be dotted: `namespace Game.Combat;`.
+- `namespace Name;` and `using` come before any declaration.
+- A plain name is looked up in the namespace of the code that writes it, then the namespaces around it out to the global namespace, then the `using` ones. So a name your game declares itself always means yours, even when a namespace you import has one too: write the namespace, `Physics.Body`, for the imported one. If two `using` namespaces both have a name that nothing of yours has, it's ambiguous: write the namespace.
 - Qualified names work wherever a type is named: parameters (`mut Combat.Health health`), `with` and `without`, component values, `Spawn`, `Add` and `Remove`, and `[Before]` and `[After]` (`[After(Physics.Gravity)]`). They work for constants too: `Combat.CRIT_MULTIPLIER`.
 - The same name can be declared in different namespaces.
 - An [override](overrides.md) names what it replaces the same way: `override system Combat.Move(...)`, or `Move` alone after `using Combat;`.
 - There's exactly one `Main` in a game, in any file or namespace.
+
+### Several namespaces in one file
+
+A namespace can also be a block, which puts only what's between its braces in it. A file can have several, so small things that belong together can stay in one file and still keep their names apart:
+
+```csharp
+namespace Combat
+{
+    component Health { int value = 100; }
+
+    namespace Rules
+    {
+        int Cap(int value) { return Math.Min(value, 100); }
+    }
+
+    system Heal(mut Health health)
+    {
+        health.value = Combat.Rules.Cap(health.value + 1);
+    }
+}
+
+namespace Items
+{
+    component Bag { int coins; }
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Combat.Health, Items.Bag);
+}
+```
+
+- A block goes wherever a declaration does, and one can be inside another: `Rules` above is `Combat.Rules`. A block's name can be dotted, `namespace Game.Items { }`.
+- A block is inside the namespace it's written in. In a file that starts with `namespace Game;`, the block `namespace Combat { }` is `Game.Combat`.
+- The same namespace can be a block more than once, in one file or in several, and a file's own namespace somewhere else: it's one namespace, and each sees what the others declare by its plain name.
+- Code in a block finds plain names in its block's namespace first, then the ones around it, then the file's `using` ones. `using` lines stay at the top of the file, and are for every block in it.
+- A name with a namespace is written whole, from the outermost one: `Combat.Rules.Cap`, inside `Combat` too.
+- A block changes no order: its systems run where they're written in the file, like any others.
+- Attributes, `local`, `virtual` and `override` go before the declarations inside a block, not before the block.
 
 ## Code for other versions of tide
 

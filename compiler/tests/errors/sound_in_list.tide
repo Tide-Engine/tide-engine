@@ -1,0 +1,11 @@
+// expect: a list or a map can't hold rendering resources, including inside a struct
+asset Clip hum = "../e2e/assets/beep.wav";
+
+local singleton Band
+{
+    List<Sound> players;
+}
+
+scene Main
+{
+}
