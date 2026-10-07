@@ -121,6 +121,7 @@ typedef enum type_kind {
     TY_TEXTURE,    // Texture: a local reference to pixels or a render target's color image
     TY_DEPTH_TEXTURE, // DepthTexture: a local reference to a render target's depth, which a frag or vert reads
     TY_RENDER_TARGET, // RenderTarget: a local drawing destination; Draw.window names the window
+    TY_CLIP,       // Clip: a sound of the game's pack, this machine's to play (an asset's, or a copy of one)
     TY_LIST,       // List<T>: decl is the list type, whose one field is its element
     TY_MAP,        // Map<K, V>: decl is the map type, whose fields are its key and its value
     TY_SET,        // Set<K>: decl is the set type, whose one field is its key
@@ -571,6 +572,8 @@ typedef struct decl {
     bool entity_local;   // Its entities are the local world's (views of local components)
     bool draws;          // A function that draws or uses the GUI, itself or through the functions it calls
     loc draws_at;        // ...where it first does
+    bool plays;          // Plays sounds (Audio), itself or through the functions it calls: local code's
+    loc plays_at;
     bool render_resources; // Uses local rendering handles, directly or through its calls
     loc render_resources_at;
     bool uses_io;         // Filesystem access, directly or through helpers: this machine's local state
@@ -693,6 +696,7 @@ typedef enum builtin_call {
     CALL_CONSTRUCT, // float3(...), int(...), quaternion(...), float4x4(...), and an enum's Card(number)
     CALL_BUILTIN,   // Math.Dot(...), quaternion.AxisAngle(...): calls c_callee
     CALL_DRAW,      // Draw.Circle(...): calls c_callee with the view's draw list first
+    CALL_AUDIO,     // Audio.Play(...): calls c_callee with the frame's audio list first (tide_l->tide_audio)
     CALL_SPAWN,
     CALL_ADD,
     CALL_REMOVE,
@@ -1164,6 +1168,7 @@ typedef struct program {
     // Application.title is read: generated C has the game's title as text
     // (its title setting, or the program's name), and no other game's does.
     bool uses_title;
+    bool uses_audio;     // Some code plays sounds: the local state carries the frame's audio list
     VEC(mesh_draw) mesh_draws; // Every mesh draw that draws through a shader
     VEC(shader *) shaders;     // ...and the shaders they draw through, once each
     decl *session;       // The built-in local singleton Session: this machine's part in a match

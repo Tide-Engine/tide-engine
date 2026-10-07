@@ -16,6 +16,7 @@
 #include "assets.h"
 #include "folders.h"
 #include "sha256.h"
+#include "tide/wav.h"
 #include "tide/sha256.h"
 
 #ifdef _WIN32
@@ -36,6 +37,7 @@ typedef struct read_file {
     bool decoded;          // Tried as a PNG...
     tide_png_image image;  // ...and what it gave (pixels NULL when it isn't one)
     bool utf8_known, utf8; // Whether its bytes are UTF-8 text
+    bool sound_tried, sound; // Whether it's a WAV that decodes
 } read_file;
 
 static struct {
@@ -503,7 +505,8 @@ static char *written_path(const str text)
 
 static const char *kind_name(const asset_kind kind)
 {
-    return kind == ASSET_TEXT ? "string" : kind == ASSET_BYTES ? "List<byte>" : kind == ASSET_TEXTURE ? "Texture" : "Grid2<Color>";
+    return kind == ASSET_TEXT ? "string" : kind == ASSET_BYTES ? "List<byte>" : kind == ASSET_TEXTURE ? "Texture"
+         : kind == ASSET_CLIP ? "Clip" : "Grid2<Color>";
 }
 
 // Where a missing file might be: one with the same bytes, by the hashes the
@@ -602,6 +605,19 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             return false;
         }
         item->image = f->image;
+    } else if (kind == ASSET_CLIP) {
+        if (!f->sound_tried) {
+            f->sound_tried = true;
+            tide_sound sound;
+            f->sound = tide_wav_decode(f->data, f->len, &sound);
+            if (f->sound) tide_sound_free(&sound);
+        }
+        if (!f->sound) {
+            diag_error(at, "'%s' isn't a WAV that decodes", key);
+            diag_note("a Clip asset is a WAV of PCM or floats, of one or two channels (Ogg Vorbis is to come); for the "
+                      "file's bytes as they are, read it as a List<byte>");
+            return false;
+        }
     } else if (kind == ASSET_TEXT) {
         if (!f->utf8_known) {
             f->utf8_known = true;

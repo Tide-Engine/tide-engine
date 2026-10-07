@@ -1104,7 +1104,7 @@ static const char *operator_word(const decl *m)
 // local entities' components through its World.
 static bool takes_local(const decl *m)
 {
-    return m->uses_io || m->frame_time || m->world_local;
+    return m->uses_io || m->frame_time || m->world_local || m->plays;
 }
 
 // A function or method that reaches the match's entities through its World
@@ -3280,7 +3280,7 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             if (e->io_operation && str_eq_c(e->object->name, "Directory") && e->args.count == 1
                 && (str_eq_c(e->name, "GetFiles") || str_eq_c(e->name, "GetDirectories") || str_eq_c(e->name, "Delete"))) sb_put(o, ", false");
             sb_put(o, ")");
-        } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW) {
+        } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW || e->call == CALL_AUDIO) {
             gen_builtin_call(g, o, e);
         }
         break;
@@ -3297,6 +3297,7 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
     // target.Resize(...) runs on its receiver; RenderTarget.Window(...) has none
     const bool receiver = e->resource_operation && e->object->type.kind == TY_RENDER_TARGET;
     if (e->call == CALL_DRAW) gen_draw_list(g, o, e);
+    else if (e->call == CALL_AUDIO) sb_put(o, "tide_l->tide_audio"); // The frame's audio list, which the host gave the local state
     else if (receiver) gen_expr(g, o, e->object);
     // Draw.Transform(offset, rotation): its arguments as the one value the setting takes
     if (e->c_pack) sb_printf(o, ", %s(", e->c_pack);
@@ -3305,9 +3306,15 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
     const bool measure_text = e->call == CALL_DRAW && str_eq_c(e->name, "MeasureText");
     bool anchored = false, weighted = false;
     for (int i = 0; i < e->args.count; i++) {
-        if (i || (!e->c_pack && (e->call == CALL_DRAW || receiver))) sb_put(o, ", ");
+        if (i || (!e->c_pack && (e->call == CALL_DRAW || e->call == CALL_AUDIO || receiver))) sb_put(o, ", ");
         const type want = e->arg_want.items[i];
         if (gen_target_format(g, o, e, i)) continue; // RenderTarget.Window(Format.Rgba8, Format.Rgba16f)
+        if (want.kind == TY_CLIP) { // A Clip names a sound of the pack's: the call takes its samples
+            sb_put(o, "tide_clip_of(");
+            gen_as(g, o, e->args.items[i], want);
+            sb_put(o, ")");
+            continue;
+        }
         if (e->call == CALL_DRAW && want.kind == TY_ENUM && want.decl == g->prog->font) {
             if (text_at && !anchored) sb_put(o, "TIDE_ANCHOR_UPPER_LEFT, ");
             sb_put(o, "tide_font_file(");
@@ -3324,6 +3331,10 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
         else gen_as(g, o, e->args.items[i], want);
     }
     if (e->c_pack) sb_put(o, ")");
+    if (e->call == CALL_AUDIO) { // Audio.Play's volume and pitch, 1 each where the call leaves them out
+        const int takes = strcmp(e->c_callee, "tide_audio_play") == 0 ? 3 : 4;
+        for (int i = e->args.count; i < takes; i++) sb_put(o, ", 1.0f");
+    }
     if ((text_at || measure_text) && !weighted) sb_put(o, ", TIDE_FONT_REGULAR");
     if (e->call == CALL_DRAW && (str_eq_c(e->name, "WorldToScreen") || str_eq_c(e->name, "ScreenToWorld")
                                 || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection"))) {
@@ -4088,7 +4099,7 @@ static bool call_keeps_order(const expr *e)
 {
     if (is_spawn(e)) return true;
     if (e->type.kind == TY_VOID) return false;
-    if (e->call == CALL_GUI || e->call == CALL_DRAW || e->resource_operation || e->io_operation) return true;
+    if (e->call == CALL_GUI || e->call == CALL_DRAW || e->call == CALL_AUDIO || e->resource_operation || e->io_operation) return true;
     if ((e->call == CALL_FUNCTION || e->call == CALL_METHOD) && (e->method->draws || e->method->is_extern || e->method->calls_c)) {
         return true;
     }
@@ -5744,7 +5755,7 @@ static void gen_stmt(gen *g, const stmt *s)
             line(g, o, "}");
         } else if (s->value->call == CALL_METHOD || s->value->call == CALL_FUNCTION || s->value->call == CALL_DRAW
                    || s->value->call == CALL_GUI || s->value->call == CALL_LIST || s->value->call == CALL_MAP
-                   || s->value->call == CALL_GRID || s->value->call == CALL_WORLD
+                   || s->value->call == CALL_GRID || s->value->call == CALL_WORLD || s->value->call == CALL_AUDIO
                    || s->value->call == CALL_BUILTIN) { // Debug.Log(...), Debug.Assert(...)
             indent(g, o);
             gen_expr(g, o, s->value);
@@ -5894,6 +5905,7 @@ static layout type_layout(const type t)
     if (t.kind == TY_RENDER_TARGET) return (layout){24, 8}; // tide_render_target: its id, then its size, four floats
     if (t.kind == TY_TEXTURE) return (layout){48, 8};       // tide_texture_ref: an image, then a target
     if (t.kind == TY_DEPTH_TEXTURE) return (layout){24, 8}; // tide_depth_ref: a target
+    if (t.kind == TY_CLIP) return (layout){8, 8};           // tide_clip_ref: a name
     if (t.kind == TY_MAP || t.kind == TY_SET) return (layout){12, 4}; // tide_map: two lists and a count
     if (t.kind == TY_ARRAY) {
         const layout e = type_layout(t.decl->fields.items[0].type);
@@ -6128,6 +6140,8 @@ static void gen_task_tables(gen *g, const bool local)
     sb_put(o, "    uint32_t tide_task_order; // Tasks started so far\n");
 }
 
+static bool program_has_clips(const program *prog);
+
 static bool program_uses_io(const program *prog)
 {
     for (int i = 0; i < prog->decls.count; i++) {
@@ -6144,7 +6158,9 @@ static void gen_header(gen *g)
     sb_put(o, "#pragma once\n\n");
     if (program_uses_io(prog)) sb_put(o, "#define TIDE_HAS_IO 1\n\n");
     if (prog->assets.count) sb_put(o, "#define TIDE_HAS_ASSETS 1\n\n");
+    if (prog->uses_audio) sb_put(o, "#define TIDE_HAS_AUDIO 1\n\n");
     sb_put(o, "#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n\n");
+    if (program_has_clips(prog)) sb_put(o, "#include \"tide/audio.h\"\n");
     sb_put(o, "#include \"tide/color.h\"\n#include \"tide/devices.h\"\n#include \"tide/draw.h\"\n#include \"tide/entity.h\"\n"
               "#include \"tide/grid.h\"\n#include \"tide/gui.h\"\n#include \"tide/math.h\"\n#include \"tide/list.h\"\n#include \"tide/map.h\"\n#include \"tide/mesh.h\"\n#include \"tide/player.h\"\n#include \"tide/session.h\"\n"
               "#include \"tide/jobs.h\"\n#include \"tide/table.h\"\n#include \"tide/attached.h\"\n#include \"tide/text.h\"\n#include \"tide/debug.h\"\n#include \"tide/io.h\"\n");
@@ -6408,6 +6424,7 @@ static void gen_header(gen *g)
     sb_put(o, "    tide_session_request tide_request_open; // Session.Open or Close, after tide_request\n");
     sb_put(o, "    tide_session_request tide_kicks[TIDE_GAME_PLAYERS]; // Session.Kick and KickAll, after those\n");
     sb_put(o, "    uint32_t tide_kick_count;\n");
+    if (prog->uses_audio) sb_put(o, "    tide_audio_frame *tide_audio; // The frame's audio list (tide_local_audio): what Audio.Play records into\n");
     sb_put(o, "    tide_session_request tide_copy; // Clipboard.Copy: the frame's last, after the kicks\n");
     sb_put(o, "    char tide_message[TIDE_MESSAGE_BYTES]; // Disconnected's message: a kick's, or \"\"\n");
     sb_put(o, "    char tide_room[8]; // Session.room: the code of the room the match is in, or \"\"\n");
@@ -6435,6 +6452,11 @@ static void gen_header(gen *g)
         sb_put(o, "// The game's assets (docs/spec.md, Assets): loaded from its pack before it runs. tide/run.h's host\n"
                   "// does it; a host of its own calls this with the pack's bytes (tide_game_pack, with --pack-c).\n"
                   "bool tide_assets_load(const uint8_t *pack, size_t size);\n\n");
+    }
+    if (prog->uses_audio) {
+        sb_put(o, "// The frame's audio (tide/audio.h), which the host gives the local state before each tide_frame: what\n"
+                  "// Audio.Play records into. NULL records nothing.\n"
+                  "void tide_local_audio(tide_local *l, tide_audio_frame *frame);\n\n");
     }
     sb_put(o, "// The same, starting the match in `start`'s scene instead (NULL: Main).\n");
     sb_put(o, "void tide_world_start(tide_world *w, float dt, const tide_start *start);\n\n");
@@ -7710,6 +7732,9 @@ static void gen_session_helpers(gen *g)
     sb_put(o, "    if (n >= sizeof l->tide_copy.text) n = sizeof l->tide_copy.text - 1u;\n");
     sb_put(o, "    while (n > 0 && ((unsigned char)text[n] & 0xC0u) == 0x80u) n--;\n");
     sb_put(o, "    memcpy(l->tide_copy.text, text, n);\n}\n\n");
+    if (g->prog->uses_audio) {
+        sb_put(o, "void tide_local_audio(tide_local *l, tide_audio_frame *frame)\n{\n    l->tide_audio = frame;\n}\n\n");
+    }
 }
 
 static void gen_prelude(gen *g)
@@ -13671,12 +13696,24 @@ static int lone_archetype(const gen *g, const decl *scene)
 static bool write_file(const char *path, const sb *text);
 
 // What kind of entry an asset's type is in the pack.
+// Whether any asset is a Clip: then generated C names tide_clip_ref
+static bool program_has_clips(const program *prog)
+{
+    for (int i = 0; i < prog->assets.count; i++)
+        if (prog->assets.items[i]->asset_kind == ASSET_CLIP) return true;
+    return false;
+}
+
 static uint32_t asset_pack_kind(const type t)
 {
     if (t.kind == TY_STRING) return TIDE_PACK_TEXT;
     if (t.kind == TY_GRID) return TIDE_PACK_GRID;
     if (t.kind == TY_TEXTURE) return TIDE_PACK_TEXTURE;
-    if (t.kind == TY_MAP) return t.decl->fields.items[1].type.kind == TY_TEXTURE ? TIDE_PACK_TEXTURES : TIDE_PACK_MAP;
+    if (t.kind == TY_CLIP) return TIDE_PACK_CLIP;
+    if (t.kind == TY_MAP) {
+        const type value = t.decl->fields.items[1].type;
+        return value.kind == TY_TEXTURE ? TIDE_PACK_TEXTURES : value.kind == TY_CLIP ? TIDE_PACK_CLIPS : TIDE_PACK_MAP;
+    }
     if (t.kind == TY_LIST && list_elem(t.decl).kind == TY_BYTE) return TIDE_PACK_BYTES;
     return TIDE_PACK_LIST;
 }
@@ -13684,7 +13721,7 @@ static uint32_t asset_pack_kind(const type t)
 static const char *asset_ctype(const type t)
 {
     return t.kind == TY_STRING ? "tide_str" : t.kind == TY_GRID ? "tide_grid" : t.kind == TY_TEXTURE ? "tide_texture_ref"
-         : t.kind == TY_MAP ? "tide_map" : "tide_list";
+         : t.kind == TY_CLIP ? "tide_clip_ref" : t.kind == TY_MAP ? "tide_map" : "tide_list";
 }
 
 static void gen_assets(gen *g)
@@ -13709,6 +13746,7 @@ static void gen_assets(gen *g)
                   STR_ARG(d->qualified), (unsigned)kind, STR_ARG(d->qualified));
         if (d->return_type.kind == TY_STRING) sb_printf(o, "    %s = tide_pack_text(e);\n", asset_cname(d));
         else if (d->return_type.kind == TY_TEXTURE) sb_printf(o, "    %s = tide_pack_texture_of(e);\n", asset_cname(d));
+        else if (d->return_type.kind == TY_CLIP) sb_printf(o, "    %s = tide_pack_clip_of(e);\n", asset_cname(d));
         else if (d->return_type.kind == TY_MAP) sb_printf(o, "    %s = tide_pack_map_of(e);\n", asset_cname(d));
         else sb_printf(o, "    %s = (%s){tide_pack_handle(e)};\n", asset_cname(d), asset_ctype(d->return_type));
         // A Texture is born sampled as its declaration says ([Filter], [Wrap]), each of a glob's too
@@ -13763,6 +13801,7 @@ static uint32_t pack_item(tide_pack_builder *b, const asset_match *item, const a
         free(rgba);
         return at;
     }
+    if (kind == ASSET_CLIP) return tide_pack_clip(b, item->hash, item->data, (uint32_t)item->size); // The file as it is
     if (kind == ASSET_GRID) {
         const tide_grid_shape shape = asset_grid_shape(grid);
         return tide_pack_grid(b, item->hash, (int32_t)item->image.width, (int32_t)item->image.height, item->image.pixels, &shape);
@@ -13826,7 +13865,7 @@ static bool write_pack(gen *g)
             }
         }
         const uint32_t element_kind = v->kind == ASSET_TEXT ? TIDE_PACK_TEXT : v->kind == ASSET_BYTES ? TIDE_PACK_BYTES
-                                    : v->kind == ASSET_TEXTURE ? TIDE_PACK_TEXTURE : TIDE_PACK_GRID;
+                                    : v->kind == ASSET_TEXTURE ? TIDE_PACK_TEXTURE : v->kind == ASSET_CLIP ? TIDE_PACK_CLIP : TIDE_PACK_GRID;
         if (v->is_map) {
             uint32_t index;
             const uint32_t at = tide_pack_map(&b, keys, offsets, (uint32_t)v->count, &index);

@@ -1,0 +1,26 @@
+// expect: a task runs between frames, so it can't play sounds
+asset Clip beep = "../e2e/assets/beep.wav";
+
+local singleton Menu
+{
+    bool open;
+}
+
+async void Fanfare()
+{
+    await Wait.Seconds(1);
+    Audio.Play(beep);
+}
+
+view Open(mut Menu menu)
+{
+    if (!menu.open)
+    {
+        menu.open = true;
+        Fanfare();
+    }
+}
+
+scene Main
+{
+}

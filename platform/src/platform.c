@@ -10,13 +10,13 @@
 
 #include "tide/page.h"
 #include "tide/time.h"
+#include "tide/wav.h"
 #include "font.h"
 #include "gpu.h"
 #include "mixer.h"
 #include "png.h"
 #include "script.h"
 #include "shaders.h"
-#include "wav.h"
 #include "window.h"
 
 uint8_t *tide_platform_pack(size_t *size)
@@ -180,7 +180,7 @@ static bool capture_audio(const char *path, const uint64_t from)
 {
     const uint64_t frames = played - from;
     size_t size = 0;
-    uint8_t *wav = frames <= 0xFFFFFFFFu ? tide_wav_encode(headless_audio + from * 2, (uint32_t)frames, &size) : NULL;
+    uint8_t *wav = frames <= 0xFFFFFFFFu ? tide_wav_encode(headless_audio + from * 2, (uint32_t)frames, TIDE_AUDIO_RATE, &size) : NULL;
     errno = 0;
     FILE *file = wav ? fopen(path, "wb") : NULL;
     bool written = file && fwrite(wav, 1, size, file) == size;
@@ -210,6 +210,11 @@ bool tide_platform_capture_audio(const char *path)
 void tide_platform_audio(const tide_audio_frame *frame)
 {
     tide_mixer_submit(frame);
+}
+
+void tide_platform_audio_forget(void)
+{
+    tide_mixer_forget();
 }
 
 // A headless run's frame, once it drew: the pictures its script and its desc
