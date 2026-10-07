@@ -23,7 +23,8 @@ in its WSL's Ubuntu (label `tide-linux`). Nothing builds for macOS meanwhile.
 
 - GitHub's runner, unpacked in `~/tide-runner` and registered with the label
   `tide-linux`. `~/tide-runner/start.sh` runs it, which `start-runners.ps1`
-  calls through `wsl.exe`.
+  calls through `wsl.exe`. It sets `PATH` to Linux's own folders: WSL adds
+  Windows' to it, where a job would find Windows' programs (its `npm`).
 - `setup-linux.sh` installs, once, what a hosted runner comes with: LLVM's
   packages, Chrome, the X11 headers, Java, Android's SDK with its emulator, and
   the user's place in the `kvm` group. It needs the sudo password. Run it again

@@ -8,19 +8,16 @@ the Tide language, which compiles to C and then to native code or WebAssembly.
 
 ## Install
 
-Access is limited to whitelisted GitHub accounts. Sign in with `gh auth login`
-using an account with access, then run the installer through GitHub's authenticated API.
-
 Windows, in PowerShell:
 
 ```powershell
-gh api -H 'Accept: application/vnd.github.raw+json' 'repos/BlenMiner/tide-engine/contents/install.ps1?ref=dev' | Out-String | iex
+irm https://tide-engine.dev/install.ps1 | iex
 ```
 
 Linux and macOS:
 
 ```sh
-gh api -H 'Accept: application/vnd.github.raw+json' 'repos/BlenMiner/tide-engine/contents/install.sh?ref=dev' | sh
+curl -fsSL https://tide-engine.dev/install.sh | sh
 ```
 
 This installs `tide` for your user (in `%LOCALAPPDATA%\Tide` or `~/.tide`) and
@@ -28,10 +25,9 @@ puts it on your `PATH`; no admin rights needed. For nightly versions, which
 follow development day by day, set `TIDE_CHANNEL=nightly` before running the
 script.
 
-The installers and `tide upgrade` use `GH_TOKEN`, then `GITHUB_TOKEN`, or your
-existing GitHub CLI login. Tokens need read access to this repository's contents.
-Running the installer again also upgrades older copies of tide that predate
-authenticated downloads.
+The installers and `tide upgrade` get tide from https://tide-engine.dev, with no
+account. Running the installer again upgrades a tide that's already there,
+older copies that looked for releases elsewhere among them.
 
 `tide` has its C compiler built in (clang), for native and web games alike.
 Native games also need the system's own headers and libraries:

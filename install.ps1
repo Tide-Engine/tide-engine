@@ -1,47 +1,23 @@
 # Installs tide for this user, on Windows:
 #
-#     gh api -H 'Accept: application/vnd.github.raw+json' 'repos/BlenMiner/tide-engine/contents/install.ps1?ref=dev' | Out-String | iex
+#     irm https://tide-engine.dev/install.ps1 | iex
 #
 # Nightly versions instead: set $env:TIDE_CHANNEL = 'nightly' first.
 # tide goes in %LOCALAPPDATA%\Tide, and its bin folder on the user's PATH. No
 # admin rights needed. Once installed, `tide upgrade` keeps it up to date.
-# Private releases use GH_TOKEN, then GITHUB_TOKEN, then `gh auth login`.
 
 $ErrorActionPreference = 'Stop'
-$repo = 'BlenMiner/tide-engine'
+$releasesUrl = 'https://tide-engine.dev/releases.json'
 $package = 'tide-windows-x64.zip'
 $channel = if ($env:TIDE_CHANNEL -eq 'nightly') { 'nightly' } else { 'stable' }
 $root = Join-Path $env:LOCALAPPDATA 'Tide'
 $bin = Join-Path $root 'bin'
 $tide = Join-Path $bin 'tide.exe'
 
-# Keep credentials in memory, rather than a child process's command line.
-$token = if ($env:GH_TOKEN) { $env:GH_TOKEN } else { $env:GITHUB_TOKEN }
-if (-not $token -and (Get-Command gh -ErrorAction SilentlyContinue)) {
-    try {
-        $token = & gh auth token --hostname github.com 2>$null
-        if ($LASTEXITCODE -ne 0) { $token = $null }
-    } catch { $token = $null }
-}
-if ($token -and $token -match '[^\x21-\x7e]') { throw 'The GitHub token must contain only printable non-space ASCII characters.' }
-$apiHeaders = @{ Accept = 'application/vnd.github+json' }
-$assetHeaders = @{}
-if ($token) {
-    $apiHeaders.Authorization = "Bearer $token"
-    $assetHeaders.Authorization = "Bearer $token"
-    $assetHeaders.Accept = 'application/octet-stream'
-}
-
 $installed = Test-Path $tide
 if ($installed) {
     Write-Host "tide is already installed in $root; upgrading it."
     # It keeps its channel, unless TIDE_CHANNEL says which.
-    if (-not $token) {
-        if ($env:TIDE_CHANNEL) { & $tide upgrade "--$channel" } else { & $tide upgrade }
-        if ($LASTEXITCODE -ne 0) { throw 'tide could not finish the upgrade.' }
-        & $tide editors
-        return
-    }
     $channelFile = Join-Path $root 'channel'
     if (-not $env:TIDE_CHANNEL -and (Test-Path $channelFile)) {
         $savedChannel = (Get-Content $channelFile -Raw).Trim()
@@ -77,10 +53,8 @@ function Compare-Version([string]$a, [string]$b) {
 }
 
 # The channel's highest version with this platform's package, not the last one
-# published (as tide upgrade picks, compiler/cli/release.c): some old
-# nightlies have none for macOS. Nightly takes stable releases
-# too, when they're newer. Stable also asks for GitHub's latest release, since
-# nightly ones can push it out of the list.
+# published (as tide upgrade picks, compiler/cli/release.c): some nightlies
+# have none for macOS. Nightly takes stable releases too, when they're newer.
 function Select-Release($releases, [string]$channel) {
     $best = $null
     foreach ($r in $releases) {
@@ -92,15 +66,11 @@ function Select-Release($releases, [string]$channel) {
 }
 
 # ForEach-Object unrolls the list: Windows PowerShell returns a JSON array as one object.
-$releases = @(Invoke-RestMethod "https://api.github.com/repos/$repo/releases?per_page=100" -Headers $apiHeaders | ForEach-Object { $_ })
-if ($channel -eq 'stable') {
-    try { $releases += Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" -Headers $apiHeaders } catch { }
-}
+$releases = @(Invoke-RestMethod $releasesUrl | ForEach-Object { $_ })
 $release = Select-Release $releases $channel
 if (-not $release) { throw "There's no $channel release of tide for this platform yet." }
-$urlField = if ($token) { 'url' } else { 'browser_download_url' }
-$zipUrl = ($release.assets | Where-Object name -eq $package).$urlField
-$sumsUrl = ($release.assets | Where-Object name -eq 'SHA256SUMS').$urlField
+$zipUrl = ($release.assets | Where-Object name -eq $package).browser_download_url
+$sumsUrl = ($release.assets | Where-Object name -eq 'SHA256SUMS').browser_download_url
 if (-not $zipUrl -or -not $sumsUrl) { throw "Release $($release.tag_name) has no $package." }
 
 $work = Join-Path ([IO.Path]::GetTempPath()) "tide-install-$([Guid]::NewGuid())"
@@ -109,10 +79,8 @@ try {
     Write-Host "Downloading tide $($release.tag_name.TrimStart('v'))..."
     $zip = Join-Path $work $package
     $sums = Join-Path $work 'SHA256SUMS'
-    $zipHeaders = if ($zipUrl.StartsWith('https://api.github.com/', [StringComparison]::Ordinal)) { $assetHeaders } else { @{} }
-    $sumsHeaders = if ($sumsUrl.StartsWith('https://api.github.com/', [StringComparison]::Ordinal)) { $assetHeaders } else { @{} }
-    Invoke-WebRequest $zipUrl -Headers $zipHeaders -OutFile $zip -UseBasicParsing
-    Invoke-WebRequest $sumsUrl -Headers $sumsHeaders -OutFile $sums -UseBasicParsing
+    Invoke-WebRequest $zipUrl -OutFile $zip -UseBasicParsing
+    Invoke-WebRequest $sumsUrl -OutFile $sums -UseBasicParsing
 
     # The download must match the checksum published with it.
     $line = Get-Content $sums | Where-Object { $_ -match [Regex]::Escape($package) } | Select-Object -First 1
@@ -123,8 +91,9 @@ try {
     }
 
     if ($installed) {
-        # An older tide doesn't know how to authenticate. Give its updater
-        # the checked local files, so it still replaces running programs safely.
+        # The installed tide's own updater takes it from here, with the files
+        # checked above: it replaces running programs safely, whichever
+        # version it is (older ones look for releases elsewhere).
         $manifest = Join-Path $work 'releases.json'
         $localRelease = @{
             tag_name = $release.tag_name; draft = $false; prerelease = $release.prerelease

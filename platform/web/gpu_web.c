@@ -62,6 +62,13 @@ static tide_gpu_id tide_web_gpu_pipeline(const tide_gpu_pipeline_desc *desc)
     return tide_web_gpu_pipeline_end();
 }
 
+// WebGPU has two sample counts, 1 and 4, for every format here: what asks for
+// more than 1 has 4. A target of depth alone has 1.
+static uint32_t tide_web_gpu_target_samples(const tide_gpu_target_format format)
+{
+    return tide_gpu_target_samples(format) > 1u && tide_gpu_target_colors(format) ? 4u : 1u;
+}
+
 // Every WebGPU draws into floats of 16 bits, blends them and reads them blended.
 static bool tide_web_gpu_float_targets(void)
 {
@@ -85,6 +92,7 @@ const tide_gpu tide_gpu_webgpu = {
     .pipeline_free = tide_web_gpu_pipeline_free,
     .target = tide_web_gpu_target,
     .target_limit = tide_web_gpu_target_limit,
+    .target_samples = tide_web_gpu_target_samples,
     .float_targets = tide_web_gpu_float_targets,
     .target_texture = tide_web_gpu_target_texture,
     .target_depth = tide_web_gpu_target_depth,

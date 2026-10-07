@@ -747,7 +747,9 @@ static void build_signatures(void)
         "A render target that's always the window's size, or that part of it (`RenderTarget.Window(0.5)` is half as "
         "wide and half as high), at the display's full resolution. It's made again, empty, whenever the window's "
         "size or the display's scale changes, so it's for what a view draws again every frame, like a pass over "
-        "the whole screen, and it's never resized by hand.";
+        "the whole screen, and it's never resized by hand. `RenderTarget.Window(samples: 4)` draws each of its pixels "
+        "with 4 samples (1, 2, 4 or 8), which smooths the edges of the triangles drawn into it: a frame drawn into "
+        "one and brought to the window with `Draw.Blit` is an antialiased frame.";
     describe(add("RenderTarget", "Window", T_TARGET, "tide_render_target_window", 0, T_NONE, T_NONE, T_NONE), NULL,
              window_target_doc);
     describe(add("RenderTarget", "Window", T_TARGET, "tide_render_target_screen", 1, T_F, T_NONE, T_NONE), "factor",
@@ -757,7 +759,8 @@ static void build_signatures(void)
         "for each of its color images, four at the most: `RenderTarget.Window(Format.Rgba8, Format.Rgba16f)` holds "
         "two, which a frag's `out Color` parameters go to in order. `Format.Depth`, by itself, is depth alone, "
         "with no color image, for a pass whose depth a frag reads afterwards (`target.depth`). It's made again, "
-        "empty, whenever the window's size or the display's scale changes.";
+        "empty, whenever the window's size or the display's scale changes. Its samples come last, by name: "
+        "`RenderTarget.Window(Format.Rgba16f, samples: 4)`.";
     describe(add("RenderTarget", "Window", T_TARGET, "tide_render_target_window_as", 1, T_FORMAT, T_NONE, T_NONE), "format",
              window_format_doc);
     describe(add("RenderTarget", "Window", T_TARGET, "tide_render_target_screen_as", 2, T_F, T_FORMAT, T_NONE), "factor, format",
@@ -803,6 +806,20 @@ static void build_signatures(void)
              "position", "The world origin on the near plane of a ray through this screen point in pixels from the top left.");
     describe(add("Draw", "ScreenRayDirection", T_F3, "tide_draw_screen_ray_direction", 1, T_F2, T_NONE, T_NONE),
              "position", "The normalized world direction of a ray through this screen point in pixels from the top left.");
+    // The cameras as matrices: what the conversions above go through
+    describe(add("Draw", "WorldToClip", T_F4X4, "tide_draw_world_to_clip", 0, T_NONE, T_NONE, T_NONE),
+             "", "The current 3D camera as one matrix, from the world to clip space, fitted to the shape of what it "
+             "draws into: what the GPU multiplies a 3D mesh's positions by, the turn of z included. Keep a target's "
+             "for a frag that looks a pixel up in what the target saw, as a shadow map's does.");
+    describe(add("Draw", "CameraTransform", T_F4X4, "tide_draw_camera_transform", 0, T_NONE, T_NONE, T_NONE),
+             "", "Where the current 3D camera is in the world, as a matrix: it looks along its +z, with +y up. "
+             "`Draw.Camera(Draw.CameraTransform(), Draw.CameraProjection())` is the same camera.");
+    describe(add("Draw", "CameraProjection", T_F4X4, "tide_draw_camera_projection", 0, T_NONE, T_NONE, T_NONE),
+             "", "The current 3D camera's projection, fitted to the shape of what it draws into: from what the camera "
+             "sees, looking down -z, to clip space, as `float4x4.PerspectiveFov` and `float4x4.Ortho` make them.");
+    describe(add("Draw", "WorldToScreenMatrix", T_F3X3, "tide_draw_world_to_screen_matrix", 0, T_NONE, T_NONE, T_NONE),
+             "", "The current 2D camera as a matrix: what `WorldToScreen` does to a float2 as (x, y, 1), into screen "
+             "pixels from the top left, with y down. The identity inside `Pixels`.");
     // The window's height comes with the call (see gen_expr)
     describe(add("Screen", "Flip", T_F2, "tide_draw_screen_flip", 1, T_F2, T_NONE, T_NONE),
              "position", "The same point counted from the screen's other edge. Devices count pixels from the bottom "
@@ -1367,7 +1384,8 @@ type resolve_builtin_call(const str owner, expr *e)
                    STR_ARG(e->name));
         if (str_eq_c(owner, "Draw")) {
             diag_note("Draw has the window's shapes, text, meshes and primitives, its settings (Blend, Tint, Transform, "
-                      "Clip, Camera, Pixels, Depth, Cull, Stencil), the conversions, MeasureText, Blit, window and list; "
+                      "Clip, Camera, Pixels, Depth, Cull, Stencil), the conversions, the cameras' matrices, MeasureText, Blit, "
+                      "window and list; "
                       "a render target has the same, as its methods");
         }
         suggestion s = suggest_start(e->name);

@@ -1,0 +1,109 @@
+// A render target's samples: `samples: 4` after its size and what it holds,
+// where a target is made. Each pixel is drawn with that many samples, which
+// smooths the edges of the triangles drawn into it, and its color images are
+// what those come to. Its depth isn't a shader's to read.
+
+struct Pass
+{
+    RenderTarget into;
+    Texture read;
+}
+
+local singleton Stage
+{
+    RenderTarget plain;    // None said
+    RenderTarget one;      // One said: as none
+    RenderTarget four;     // After its size
+    RenderTarget exact;    // After its pixels per unit
+    RenderTarget wide;     // After a format
+    RenderTarget several;  // After several, and its pixels per unit
+    RenderTarget window;   // All of the window
+    RenderTarget half;     // After a window's factor
+    RenderTarget bright;   // After a window's format
+    RenderTarget both;     // After a window's factor and formats
+    RenderTarget counted;  // From a variable
+    RenderTarget odd;      // A number that's none of them, known only as it runs
+    RenderTarget many;     // More than there are
+    RenderTarget shadow;   // Depth alone, with samples only known as it runs
+    RenderTarget made;     // Through a function
+    Texture smooth;
+    Texture second;
+    DepthTexture deep;
+    Pass pass;
+    List<Vertex3> crate;
+    List<Vertex> quad;
+    List<int> faces;
+    int frames;
+}
+
+const int SMOOTH = 4;
+
+// A function says how many
+RenderTarget Smooth(float size, int samples)
+{
+    return RenderTarget(size, size, Format.Rgba16f, samples: samples);
+}
+
+// The target's first image, read after it was drawn into
+frag Show(Vertex vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv);
+}
+
+// ...and its depth, which a multisampled target hasn't got to read
+frag Deep(Vertex vertex, out Color color, Stage stage)
+{
+    float depth = stage.deep.Sample(vertex.uv);
+    color = Color(depth, depth, depth);
+}
+
+view Make(mut Stage stage)
+{
+    stage.frames++;
+    if (stage.frames > 1) return;
+    stage.plain = RenderTarget(64, 48);
+    stage.one = RenderTarget(64, 48, samples: 1);
+    stage.four = RenderTarget(64, 48, samples: 4);
+    stage.exact = RenderTarget(256, 256, 1, samples: 2);
+    stage.wide = RenderTarget(32, 32, Format.Rgba16f, samples: 8);
+    stage.several = RenderTarget(16, 16, 2, Format.Rgba8, Format.Rgba16f, samples: SMOOTH);
+    stage.window = RenderTarget.Window(samples: 4);
+    stage.half = RenderTarget.Window(0.5, samples: 2);
+    stage.bright = RenderTarget.Window(Format.Rgba16f, samples: 4);
+    stage.both = RenderTarget.Window(0.25, Format.Rgba8, Format.Rgba8, samples: 8);
+    int count = 2;
+    stage.counted = RenderTarget(8, 8, samples: count * 2);
+    stage.odd = RenderTarget(8, 8, samples: count + 4);
+    stage.many = RenderTarget(8, 8, samples: count * 50);
+    Format none = Format.Depth;
+    stage.shadow = RenderTarget(8, 8, none, samples: count * 2);
+    stage.made = Smooth(24, 4);
+
+    stage.smooth = stage.four.color;
+    stage.second = stage.several.colors[1];
+    stage.deep = stage.four.depth;
+    stage.pass = Pass { into = stage.wide, read = stage.wide.color };
+
+    stage.crate = [Vertex3 { position = float3(0, 0, 0) }, Vertex3 { position = float3(1, 0, 0) },
+                   Vertex3 { position = float3(0, 1, 0) }];
+    stage.quad = [Vertex { position = float2(0, 0) }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }];
+    stage.faces = [0, 1, 2];
+}
+
+[After(Make)]
+view Draws(Stage stage)
+{
+    // Drawn into like any target, by its own methods
+    stage.four.Clear(Color.black);
+    stage.four.Mesh(stage.crate, stage.faces, float4x4.identity);
+    stage.four.Rect(float2(4, 4), float2(8), Color.red);
+    // ...and its color read like any target's
+    Draw.Blit(stage.smooth, Draw.window, Show);
+    Draw.Blit(stage.second, stage.plain, Show);
+    // Its depth is named all the same: the renderer passes this draw by
+    Draw.Mesh(stage.quad, stage.faces, Deep);
+}
+
+scene Main
+{
+}

@@ -92,6 +92,46 @@ A `Format.Rgba16f` image is read as it was written: `Sample` gives the numbers b
 Nearly every machine does. An old phone, or an old browser on WebGL, may not: there a `Format.Rgba16f` image is made as a `Format.Rgba8` one, and the engine says so once, in the game's output. The game runs, with what it draws there kept from 0 to 1: light stops at white, and what's under 0 is 0.
 :::
 
+### Smooth edges
+
+Text and the smooth shapes have smooth edges by themselves. A mesh's triangles don't: each pixel is in a triangle or out of it, so a slanted edge is a staircase. A target made with `samples` draws each of its pixels with that many samples, and a triangle's edge covers some of them, so the pixels along it are part the triangle's color and part what's behind it:
+
+```csharp
+render.scene = RenderTarget.Window(samples: 4);                  // The window's size, 4 samples a pixel
+render.light = RenderTarget.Window(Format.Rgba16f, samples: 4);  // ...after what it holds
+render.card  = RenderTarget(200, 300, samples: 2);               // ...or after a size of its own
+```
+
+`samples` is the last argument, and it's written with its name. It's 1, 2, 4 or 8; 1 is a target that says nothing.
+
+The window itself has none. For a frame with smooth edges, draw the scene into a target of the window's size and bring it to the window:
+
+```csharp
+view Scene(mut Render render)
+{
+    render.scene.Clear(Color.black);
+    render.scene.SetCamera(eye, look, 1.0);
+    render.scene.Mesh(render.crate, render.faces, float4x4.identity);
+}
+
+[After(Scene)]
+view Show(Render render)
+{
+    Draw.Blit(render.scene.color, Draw.window, Copy);  // What its samples came to, one color a pixel
+}
+
+frag Copy(Vertex vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv);
+}
+```
+
+- **Its color is read like any target's.** `target.color` and `target.colors[i]` are what each pixel's samples come to, worked out each time drawing into the target ends. A frag samples them, and a `Draw.Blit` reads them, as it would any other target's.
+- **Its depth can't be read.** A GPU keeps several depths a pixel there, with no one depth for a frag to sample. A draw that reads `target.depth` of a target with samples is passed by, with a line that says so in the game's output. A shadow map, or any depth a frag reads, goes into a target without `samples`. `Format.Depth` with `samples` is an error for the same reason.
+- **It costs memory:** as many colors and depths a pixel as it has samples, plus the color they come to. Four samples at the window's size is about four and a half times a plain target. A frag still runs once for each pixel a triangle covers, so drawing costs little more.
+- **A device may have fewer.** 4 is there on everything Tide draws with, for images of bytes. Where a device hasn't got what's asked, the target is drawn with the most it has under that, and the engine says so once in the game's output. WebGPU has 1 and 4 alone: 2 is 4 there, and 8 is 4.
+- **Everything draws into it** as into any target: shapes, text, meshes, frags, clears, [stencil](#stencil). What's in it persists from frame to frame, like any target's.
+
 ### Several colors
 
 A target holds up to four color images, one for each format it's made with, and a frag writes them all at once: each of its `out Color` parameters goes to the image that's its place among them (see [Frags and verts](./shaders.md#several-outputs)).
@@ -123,7 +163,7 @@ view Make(mut Deferred deferred)
 - **Each output is blended like the pixel's color:** over what's in its own image, as the draw's [blend](#blending) says, by its own alpha, after the draw's [tint](#tints). `Color(x, y, z)` has an alpha of 1, so it replaces what was there, which is what a normal or a place wants.
 - `Format.Depth` is said alone: every target has its depth already, and `target.depth` reads it whatever colors are beside it.
 
-The formats are the constructor's last arguments, after its pixels per unit when it says them: `RenderTarget(1024, 1024, 1, Format.Rgba8, Format.Rgba16f)`.
+The formats are the constructor's last arguments, after its pixels per unit when it says them: `RenderTarget(1024, 1024, 1, Format.Rgba8, Format.Rgba16f)`. Only [`samples`](#smooth-edges) comes after them.
 
 [Frags and verts](./shaders.md#several-outputs) has a scene drawn this way to try: one frag fills three images, and a second lights the window from them.
 
@@ -1182,6 +1222,34 @@ view Isometric(Viewer viewer)
 }
 ```
 
+### A camera as matrices
+
+Whatever set the camera, a view reads it back as the matrices the GPU draws through:
+
+| Function | Result |
+|---|---|
+| `Draw.WorldToClip()` | The 3D camera as one `float4x4`, from the world to clip space |
+| `Draw.CameraTransform()` | Where the 3D camera is in the world, a `float4x4`: it looks along its `+z` |
+| `Draw.CameraProjection()` | Its projection, a `float4x4`: from what it sees to clip space |
+| `Draw.WorldToScreenMatrix()` | The 2D camera as a `float3x3`, from the world to the screen's pixels |
+
+- They're the camera as it's set when they're asked, in this frame: ask after `SetCamera`, or inside a `Camera` block. Before any camera is set, they're the camera each frame starts with.
+- A render target has the same four, for its own cameras: `target.WorldToClip()`.
+- `WorldToClip()` is what a 3D mesh's positions are multiplied by, exactly: the camera's transform undone, z turned around (a camera looks along its `+z`, and clip space along `-z`), then the projection, fitted to the shape of the window or the target. A point through it is in clip space: once divided by its `w`, `x` and `y` go from -1 to 1 across what the camera sees, `y` up, and `z` from -1 at the near plane to 1 at the far limit. It's what a frag needs to find a pixel in another camera's image, as a [shadow map](./shaders.md#a-shadow-map) does with its lamp's.
+- `CameraTransform()` and `CameraProjection()` are the two `SetCamera(transform, projection)` takes, so `Draw.SetCamera(Draw.CameraTransform(), Draw.CameraProjection())` sets the camera there already was. A camera set with a field of view has them too, its projection with the screen's shape in it.
+- `WorldToScreenMatrix()` does to `float3(x, y, 1)` what `Draw.WorldToScreen` does to a `float2`. It's the identity inside `Draw.Pixels`.
+- [`Draw.Transform`](#transforms) is no part of any of them: they're the camera's alone.
+
+```csharp
+view Mirror(mut Looking looking)
+{
+    Draw.SetCamera(looking.eye, looking.turned, 60);
+    looking.toClip = Draw.WorldToClip();            // Kept for a frag, in a local singleton
+    float4 clip = Math.Mul(looking.toClip, float4(looking.target, 1));
+    looking.onScreen = clip.w > 0 && Math.Abs(clip.x) <= clip.w && Math.Abs(clip.y) <= clip.w;
+}
+```
+
 A game's C draws 3D meshes too, with vertices of its own, like a model a library loaded: see [Drawing from C](../c/functions.md#drawing-from-c).
 
 ## Screen and world coordinates
@@ -1220,6 +1288,8 @@ view Pointer(Devices devices)
     }
 }
 ```
+
+The cameras these go through are there as matrices too: see [A camera as matrices](#a-camera-as-matrices).
 
 On the screen (`Draw.Pixels`, `Draw.SetPixels`), its conversion helpers are identity mappings. A viewport with no size, a singular camera matrix, or a point whose projection has no finite position returns zero.
 

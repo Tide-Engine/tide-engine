@@ -14,6 +14,7 @@
     "test:grammar": "node --test ../tools/tide-syntax/test/grammar.test.mjs",
     "test:access": "node --test tests/access.test.mjs",
     "test:access-http": "node --test tests/access-http.test.mjs",
+    "test:releases": "node --test tests/releases.test.mjs",
     "test:examples": "node tests/examples.mjs"
   },
   "devDependencies": {

@@ -6,12 +6,28 @@ local singleton Probe
     float2 overlay;
     float3 screen3;
     float3 world3;
+    float3 screen3b;
     float3 rayOrigin;
     float3 rayDirection;
     float2 pointer;
     float2 pointerWorld;
     float2 corner;
     float2 flippedTwice;
+    // The cameras as matrices
+    float3x3 flat;
+    float3x3 flatPixels;
+    float4x4 toClip;
+    float4x4 place;
+    float4x4 projection;
+    float3 throughMatrix;
+    float4x4 firstClip;
+    bool made;
+    RenderTarget wide;
+    float4x4 wideClip;
+    float4x4 wideProjection;
+    float3x3 wideFlat;
+    float4x4 wideBlock;
+    float4x4 wideAfter;
 }
 
 struct Corner2 { float2 position; }
@@ -26,12 +42,20 @@ extern bool SameList(DrawList a, DrawList b);
 float2 Project2(float2 position) { return Draw.WorldToScreen(position); }
 float3 Project3(float3 position) { return Draw.WorldToScreen(position); }
 float2 OnScreen(Devices devices) { return Screen.Flip(devices.pointer.position); }
+// A function a view calls reads the camera too
+float3 Through(float3 position)
+{
+    float4 clip = Math.Mul(Draw.WorldToClip(), float4(position, 1));
+    return float3((clip.x / clip.w * 0.5 + 0.5) * Screen.width, (0.5 - clip.y / clip.w * 0.5) * Screen.height, clip.z / clip.w * 0.5 + 0.5);
+}
 
 view Show(mut Probe probe, Devices devices)
 {
     probe.sameList = SameList(Draw.list, Draw.list);
+    probe.firstClip = Draw.WorldToClip();
     Draw.Clear(Color.black);
     Draw.SetCamera(float2(2, 3), 5);
+    probe.flat = Draw.WorldToScreenMatrix();
     probe.screen2 = Project2(float2(2, 3));
     probe.world2 = Draw.ScreenToWorld(probe.screen2);
     // Devices count from the bottom left, the screen from the top left: Screen.Flip goes either way
@@ -43,6 +67,7 @@ view Show(mut Probe probe, Devices devices)
     Draw.Mesh([Corner2 { position = float2(1, 0) }], [0, 0, 0], Shade2);
     Draw.SetPixels();
     probe.overlay = Draw.WorldToScreen(float2(12, 34));
+    probe.flatPixels = Draw.WorldToScreenMatrix();
 
     Draw.Clear(Color.black);
     Draw.SetCamera(float3(0, 0, -5), quaternion.identity, 60);
@@ -50,6 +75,28 @@ view Show(mut Probe probe, Devices devices)
     probe.world3 = Draw.ScreenToWorld(probe.screen3);
     probe.rayOrigin = Draw.ScreenRayOrigin(probe.screen3.xy);
     probe.rayDirection = Draw.ScreenRayDirection(probe.screen3.xy);
+    probe.toClip = Draw.WorldToClip();
+    probe.place = Draw.CameraTransform();
+    probe.projection = Draw.CameraProjection();
+    probe.throughMatrix = Through(float3(1, 2, 5));
+    probe.screen3b = Draw.WorldToScreen(float3(1, 2, 5));
+    // A target's own, in its own shape: set, inside a block, and after it
+    if (!probe.made)
+    {
+        probe.made = true;
+        probe.wide = RenderTarget(64, 16);
+    }
+    var sees = float4x4.Ortho(8, 2, 1, 9);
+    probe.wide.SetCamera(float4x4.Translate(float3(0, 0, -3)), sees);
+    probe.wideClip = probe.wide.WorldToClip();
+    probe.wide.Camera(float3(0), quaternion.identity, 90)
+    {
+        probe.wideBlock = probe.wide.WorldToClip();
+        probe.wideProjection = probe.wide.CameraProjection();
+    }
+    probe.wideAfter = probe.wide.WorldToClip();
+    probe.wide.SetCamera(float2(1, 1), 4);
+    probe.wideFlat = probe.wide.WorldToScreenMatrix();
     Draw.Mesh([], [], float4x4.identity);
     Draw.Mesh([Corner3 { position = float3(1, 0, 5) }], [0, 0, 0], float4x4.identity, Shade3);
     Draw.Cube(float3(0, 0, 5), float3(2), Color.red);
