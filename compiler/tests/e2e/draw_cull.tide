@@ -152,17 +152,17 @@ view Early(Look look)
     Draw3D.Cube(float3(counted, 0, 8), float3(1, 1, 1), Color.white);
 }
 
-frag Flat(Corner vertex, mut Color color)
+frag Flat(Corner vertex, out Color color)
 {
     color = vertex.color;
 }
 
-frag Dot(Corner vertex, mut Color color, Spot spot)
+frag Dot(Corner vertex, out Color color, Spot spot)
 {
     color = spot.tint;
 }
 
-frag Plain(Vertex vertex, mut Color color)
+frag Plain(Vertex vertex, out Color color)
 {
     color = vertex.color;
 }

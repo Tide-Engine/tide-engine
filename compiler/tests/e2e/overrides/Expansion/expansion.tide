@@ -110,7 +110,7 @@ override vert Wave(mut Corner vertex)
     vertex.position.x += 0.25;
 }
 
-override frag Shade(Corner vertex, mut Color color)
+override frag Shade(Corner vertex, out Color color)
 {
     color = Color(vertex.color.r * 0.125, vertex.color.g, vertex.color.b, vertex.color.a);
 }

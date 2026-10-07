@@ -59,7 +59,7 @@ vert Wave(mut BoxVertex vertex, Time time, Instance instance)
     Brighten(vertex.normal, 1);
 }
 
-frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun, Models models, Pixel pixel)
+frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models, Pixel pixel)
 {
     float light = box.lit ? Lit(vertex.normal, -DirectionThrough(sun)) : 1;
     color = models.wood.Sample(vertex.uv) * box.tint * light;

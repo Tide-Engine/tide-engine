@@ -43,7 +43,7 @@ event(Spawned) Setup(with Main)
     Spawn(Object { position = float2(1, 0) });
 }
 
-frag Copy(Vertex vertex, mut Color color, Texture source)
+frag Copy(Vertex vertex, out Color color, Texture source)
 {
     color = source.Sample(vertex.uv, Filter.Point);
 }

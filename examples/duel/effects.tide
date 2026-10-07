@@ -284,7 +284,7 @@ vert PlaceSky(mut Corner corner, Sky sky)
 
 // Night air with each side's light in it, lamps that drift far off, and a
 // floor of dots that light travels through when something big happens.
-frag PaintSky(Corner corner, mut Color color, Sky sky, Pixel pixel)
+frag PaintSky(Corner corner, out Color color, Sky sky, Pixel pixel)
 {
     var half = sky.view.xy;
     var scale = sky.view.z;
@@ -531,7 +531,7 @@ const float GLOW_FAR = 1.4;
 // small falls between two samples, and what's left of that above GLOW_FROM.
 // White is brighter than a color as strong, so a shot's core spills more
 // than a fighter's side.
-frag Brights(Vertex vertex, mut Color color, Texture source, Lens lens)
+frag Brights(Vertex vertex, out Color color, Texture source, Lens lens)
 {
     mut var sum = Color(0, 0, 0, 0);
     for (var y = -1; y <= 1; y++)
@@ -546,7 +546,7 @@ frag Brights(Vertex vertex, mut Color color, Texture source, Lens lens)
 
 // A blur along one axis, as wide as nine pixels of its target, in five
 // samples: each of the outer four is between two pixels and reads both.
-frag Blur(Vertex vertex, mut Color color, Texture source, Lens lens)
+frag Blur(Vertex vertex, out Color color, Texture source, Lens lens)
 {
     var near = lens.along * 1.3846;
     var far = lens.along * 3.2308;
@@ -558,7 +558,7 @@ frag Blur(Vertex vertex, mut Color color, Texture source, Lens lens)
 
 // A target half the size of its source: each of its pixels is between four of
 // the source's, and reads them all at once.
-frag Halve(Vertex vertex, mut Color color, Texture source)
+frag Halve(Vertex vertex, out Color color, Texture source)
 {
     color = source.Sample(vertex.uv);
 }
@@ -566,7 +566,7 @@ frag Halve(Vertex vertex, mut Color color, Texture source)
 // The frame: the arena as it was drawn, and its light over it. Light adds
 // less to what's bright already, so a fighter keeps its shading under its own
 // glow, and the dark around it takes all of it.
-frag Lit(Vertex vertex, mut Color color, Texture source, Lens lens)
+frag Lit(Vertex vertex, out Color color, Texture source, Lens lens)
 {
     var arena = source.Sample(vertex.uv, Filter.Point);
     var glow = lens.glow.Sample(vertex.uv) * GLOW_NEAR + lens.haze.Sample(vertex.uv) * GLOW_FAR;
