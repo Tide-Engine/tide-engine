@@ -1,0 +1,7 @@
+Inter 4.1, by Rasmus Andersson.
+Unmodified static Regular and Bold TrueType fonts from the official release:
+https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip
+The SIL Open Font License is in LICENSE.txt beside these files.
+
+These fonts are only used to render social preview images at build time.
+The renderer loads no fonts from the host operating system.

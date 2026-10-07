@@ -1,4 +1,4 @@
-// Hot reloading, for `tide run --watch` (see tide/host.h). tide rebuilds the game as a
+// Hot reloading, for `tide run` (see tide/host.h). tide rebuilds the game as a
 // library whenever a .tide file changes: game-1, game-2 and so on, each renamed
 // into place once it's whole. Between two frames, the host loads the newest
 // and runs it from then on. A file of its own, since it includes the operating

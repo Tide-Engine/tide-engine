@@ -1,0 +1,3 @@
+// expect: a function can't take the same singleton with resident state both by value and mut
+singleton Physics { Resident state; int count; }
+void Mix(Physics before, mut Physics after) { }

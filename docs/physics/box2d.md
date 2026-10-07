@@ -1,3 +1,7 @@
+---
+description: "Use Tide's Box2D package for deterministic 2D rigid bodies, collisions, queries and multiplayer physics that survives rollback and joins."
+---
+
 # 2D physics (Box2D)
 
 [Box2D](https://box2d.org) is Erin Catto's 2D physics engine: rigid bodies that fall, collide, stack and come to rest. It comes with `tide` as a [package](../tools/packages.md#packages-that-come-with-tide). A body and its shapes are components of an entity, every tick steps them, and the match stays the same on every machine, through rollbacks, joins and hot reloads, with nothing for the game to do.

@@ -1,3 +1,7 @@
+---
+description: "Send player actions to a Tide multiplayer match with commands, validate their payloads and control delivery, ticks and ordering channels."
+---
+
 # Commands
 
 A command is an action a player sends into the match: submit a name, choose a team, equip an item, or press a ready button. Declare its payload like an event:

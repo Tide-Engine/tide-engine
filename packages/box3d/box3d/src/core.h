@@ -167,6 +167,18 @@ void b3Free( void* mem, size_t size );
 void* b3GrowAlloc( void* oldMem, int oldSize, int newSize );
 void* b3GrowAllocZeroed( void* oldMem, int oldSize, int newSize );
 
+// Tide: memory that holds nothing between steps (the stack, the workers' arenas, OS objects) comes from the
+// system, never from the allocator b3SetAllocator gave, which is the state's: a world's state lives in an arena
+// that's copied page by page as a snapshot and restored the same way, and scratch has no place in it (see
+// ../TIDE.md, Resident state).
+void* b3AllocScratch( size_t size );
+void b3FreeScratch( void* mem, size_t size );
+
+// Tide: what may have been written of the state, said where it's written (b3World_TouchChanged says most of
+// it, once a step; the block allocator says a freed element's link): the hooks go to whoever keeps the arena.
+void b3Touch( const void* mem, size_t size );
+void b3TouchAll( void );
+
 #define B3_GROW( A, N, M ) b3GrowAlloc( ( A ), (int)( ( N ) * sizeof( *( A ) ) ), (int)( ( M ) * sizeof( *( A ) ) ) )
 #define B3_GROW_ZERO( A, N, M ) b3GrowAllocZeroed( ( A ), (int)( ( N ) * sizeof( *( A ) ) ), (int)( ( M ) * sizeof( *( A ) ) ) )
 

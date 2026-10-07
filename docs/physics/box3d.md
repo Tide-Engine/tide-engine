@@ -1,3 +1,7 @@
+---
+description: "Use Tide's Box3D package for deterministic 3D rigid bodies, collisions, compound shapes and world queries in multiplayer matches."
+---
+
 # 3D physics (Box3D)
 
 [Box3D](https://github.com/erincatto/box3d) is Erin Catto's 3D physics engine: rigid bodies that fall, collide, stack and come to rest. It comes with `tide` as a [package](../tools/packages.md#packages-that-come-with-tide). A body and its shapes are components of an entity, every tick steps them, and the match stays the same on every machine, through rollbacks, joins and hot reloads, with nothing for the game to do.
@@ -573,7 +577,7 @@ event(Spawned) Setup(mut Physics physics, with Main)
 
 A new gravity wakes every body that's [asleep](#bodies-at-rest), so that what was at rest feels it, and so does `sleeping` turned off. A game that changes gravity every tick has nothing at rest. The other fields wake nothing: they're how the next step that has something to step goes.
 
-The other fields are the package's own. `moved` says whether the last tick stepped the world, and `bodies` and `shapes` how many were made so far; `stamp`, `size`, `image`, `geometry`, `gone`, `owners`, `goneShapes`, `parts` and `sensors` are how the package keeps Box3D's state in the match, and whose each body and shape is.
+The other fields are the package's own. `moved` says whether the last tick stepped the world, and `bodies` and `shapes` how many were made so far; `stamp`, `state`, `gone`, `owners`, `goneShapes`, `parts` and `sensors` are how the package keeps Box3D's state in the match, and whose each body and shape is. `state` is a `Resident` field for the package's C; game code has nothing to read or write in it.
 
 ## Destroying
 
@@ -583,15 +587,42 @@ Removing `Body` from an entity that stays doesn't take its body out of the world
 
 ## Multiplayer
 
-There's nothing to add for a match with several machines. Box3D keeps its world in C's memory, which a rollback or a joining player wouldn't reach, so after every step the package writes Box3D's whole state into the match, as bytes in `Physics`. A client that predicted wrong and runs ticks again, a player who joins, a build that's reloaded and a machine that takes the match over all go on from that state.
+There's nothing to add for a match with several machines. Box3D's memory is resident in the match: `Physics.state` holds snapshots of the engine's arena, including the bodies, contacts, sleeping sets and geometry. After a step the package commits the 16 KiB pages it may have written; older worlds share the untouched pages. A client that predicted wrong restores the pages that differ from its earlier world, by page identity, and runs its ticks again. It doesn't serialize the world or build Box3D again for a rollback.
 
-That state is in the match's hash, and it's the same bytes on every machine: the same match gives the same result on desktop and on the web, so their players share one. See [Networking](../multiplayer/networking.md) and [Determinism](../multiplayer/determinism.md).
+The arena's raw bytes hold this machine's pointers, so they aren't sent or hashed. The match's hash includes the state's stamp and Box3D's deterministic digest, which covers its counts, awake bodies and their contacts' impulses. When a player joins, a world is resynced, a machine takes over the match, or a reload packs its state, the package writes a canonical Box3D snapshot and its geometry. The receiving machine builds its own arena from those bytes. A network delta currently carries that canonical state whole when it differs from its base. The same match gives the same simulation on desktop and on the web, so their players share one. See [Networking](../multiplayer/networking.md) and [Determinism](../multiplayer/determinism.md).
+
+A query, including one from a view of a confirmed world while this machine predicts ahead, restores the resident state it asks about. The process has one Box3D arena, so the next tick restores its own state before stepping it. A native hot reload can keep the arena and relink the new build's callbacks; a reload through canonical bytes, as on the web, makes the arena from those bytes.
 
 It's also why code never calls Box3D: everything that changes the physics world goes through the match, as components. The package itself talks to Box3D through [C functions](../c/functions.md), and reads the bodies back with [systems written in C](../c/functions.md#systems-written-in-c).
 
 ## What it costs
 
-Measured on a release build, with 2,400 crates in stacks, on one thread, with the world kept and hashed every tick as a client's is:
+A resident tick copies the pages Box3D may have written and computes its digest. Keeping a snapshot shares the pages, and hashing reads the stamp and digest. A rollback copies the pages that differ from its target state; packing a world for another machine still writes the full canonical snapshot and geometry.
+
+- **A world at rest costs next to nothing.** It isn't stepped or committed, and nothing of the match is written. What's left is looking at each body for what code wrote.
+- **Commit cost goes by touched pages.** Bodies, contacts, trees, sleeping sets and allocator metadata can touch pages, so one moving body can cost more than its own bytes. The marks are conservative: each touched page is copied without comparing it first. A body's type changing or many bodies waking can mark the whole state.
+- **A rollback and a query of another world restore pages.** They avoid making Box3D again from a serialized image. A view that restores a confirmed world also leaves the next tick to restore its predicted world.
+- **The step runs on the tick's threads** once 512 bodies are awake, with the same result on any number of them. On the web it solves four contacts at a time with WebAssembly SIMD; a desktop with AVX2 solves eight. Their simulations agree to the bit.
+
+### Resident comparison (2026-10-07)
+
+Three alternating runs against the image-list baseline (`14df837`), using Windows clang 23 release and WebAssembly release under Node's WASI, not a browser. The machine was contended: CPU load was 63% before the rounds and 24% after. These are medians (minimum–maximum) in milliseconds for 2,400 crates, combining the tick with keeping its snapshot and hashing on one thread. That combined cost accounts for work moved from writing and hashing the image into resident commits.
+
+| Workload | Windows image list | Windows resident | Node image list | Node resident |
+|---|---|---|---|---|
+| Everything moving | 1.529 (1.521–1.916) | 1.531 (1.520–1.599) | 2.207 (2.204–2.208) | 2.466 (2.334–2.488) |
+| One crate pushed | 0.121 (0.120–0.143) | 0.138 (0.136–0.147) | 0.172 (0.164–0.195) | 0.170 (0.169–0.180) |
+| At rest | 0.015 (0.014–0.015) | 0.014 (0.014–0.015) | 0.029 (0.028–0.029) | 0.027 (0.027–0.029) |
+| A type changed | 0.242 (0.242–0.272) | 0.249 (0.238–0.316) | 0.423 (0.339–0.474) | 0.292 (0.291–0.333) |
+| A crate put to sleep and woken in turn | 0.257 (0.254–0.364) | 0.099 (0.099–0.101) | 0.417 (0.355–0.426) | 0.123 (0.118–0.131) |
+
+The resident arena spans 7.08 MB, where the former canonical image was 3.48 MB plus 1.4 KB of geometry. Arena span and serialized size measure different representations; neither is total process memory or the memory retained by all snapshots. Conservative marks touch 45–46% of the arena even with one crate pushed. Hashing costs less, but the native total for that case is higher, and everything moving costs more under Node.
+
+The [Sumo example](../guide/sumo.md) benefits most in rollback: five ticks run again averaged 5.29 to 3.48 ms natively and 7.53 to 4.63 under Node; ten averaged 5.53 to 4.12 and 7.59 to 5.10. These are medians of the three runs' rollback means, with snapshots and hashes included. Four bots at a full ring cost 1.20 to 0.95 ms a tick natively and 1.62 to 1.25 under Node, including snapshot/hash. Raising the ring's body-making tick was slower, 8.86 to 9.87 ms and 25.08 to 33.00; settling after it also cost more. Sumo's arena span grows from about 7.1 to 9.1 MB where its canonical image occupied 3.8 to 4.8 MB. The remaining contention limits what these comparisons say about an idle machine.
+
+### Before resident state
+
+This is the measured baseline for the previous implementation, which wrote a serialized image into a match list each tick. These timings don't measure the resident implementation above. It was a release build with 2,400 crates in stacks, on one thread, with the world kept and hashed every tick as a client's is:
 
 | A tick, in milliseconds | Everything moving | One crate pushed | At rest |
 |---|---|---|---|
@@ -600,15 +631,7 @@ Measured on a release build, with 2,400 crates in stacks, on one thread, with th
 | Keeping and hashing the world, after it | 0.35 | 0.08 | 0.00 |
 | Box3D alone, the same scene in plain C: a step | 1.0 | 0.015 | 0.0002 |
 
-- **A world at rest costs next to nothing.** It isn't stepped, and nothing of the match is written. What's left is looking at each body for what code wrote.
-- **A tick goes by what's moving.** With one crate pushed among 2,400 it takes a tenth of a millisecond: the step is a third of that, and the rest is the package's.
-- **What the package adds to Box3D alone** is 0.42 ms a tick with everything moving, 0.08 with one crate pushed, and 0.01 at rest. Most of it is keeping Box3D's state in the match: about a kilobyte and a half a body, 3.5 MB here. With most of the world awake all of it is written each tick, and only what changed is copied and hashed. With most of it asleep, only what's awake is written. A player who joins downloads it with the rest of the world.
-- **A rollback** makes Box3D's world again from that state, once: about a millisecond for this world, before the ticks it runs again.
-- **A body's `type` that changes** has all of that state written again in that tick, where a tick usually writes what's awake: a quarter of a millisecond for this world. The other fields of a body cost nothing more than writing them.
-- **Asking the world** takes about a microsecond a question in a small world. A view that asks of a world Box3D isn't at (a `verified Physics`, while this machine runs ahead of what's confirmed) has it made from the match's state first, as a rollback does.
-- **The step runs on the tick's threads** once 512 bodies are awake, and gives the same world on any number of them: 1.3 ms on one thread and 0.5 on twelve, with every crate awake.
-- **On the web** the same step takes about 1.4 ms on one thread. Box3D solves four contacts at a time there, on WebAssembly's SIMD, where a desktop with AVX2 solves eight, and gives the same world to the bit.
-- **Building**: Box3D compiles in about 8 seconds, once, and adds about 800 KB to a game.
+In that implementation the serialized state was 3.5 MB, about a kilobyte and a half a body. Most of the extra work was writing it into the match, comparing its chunks and hashing what changed. A rollback made Box3D's world again from it, once, taking about a millisecond before the ticks it ran again. Resident commits and page restores replace that work.
 
 ## Not there yet
 
@@ -618,4 +641,5 @@ Measured on a release build, with 2,400 crates in stacks, on one thread, with th
 - Removing `Body` from an entity that stays leaves its body in the world, and removing a shape's component leaves the shape on it.
 - What's asked of the world takes no filter, and finds the nearest thing only, not everything on the way.
 - Whether one body may fall asleep by itself, and locks on the axes a body moves and turns on.
-- Box3D keeps what a box of each size is made of, in `Physics`, and never lets one go: a game that makes boxes of ever new sizes keeps them all.
+- Box3D keeps what a box of each size is made of in its resident arena, and never lets one go: a game that makes boxes of ever new sizes keeps them all.
+- The resident arena has a fixed 64 MiB limit; exhaustion stops the program. There is one Box3D arena per process, so switching between worlds costs a page restore.

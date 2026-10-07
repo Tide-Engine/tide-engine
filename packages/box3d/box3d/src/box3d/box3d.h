@@ -546,6 +546,30 @@ B3_API int b3World_GetSnapshotParts( b3WorldId worldId, const int* bases, int* s
 /// every body, which is for tests of the parts.
 B3_API void b3World_SetSnapshotAwakeShare( b3WorldId worldId, int share );
 
+/// Tide: resident state (see ../../TIDE.md). The world's state lives in an arena whoever gave b3SetAllocator keeps,
+/// and these are what a snapshot of it takes beside the arena's pages and what a restore puts back.
+/// The world's own struct, which is outside the arena: its size, a copy of it, and a copy put back into the slot
+/// `worldId`, which is in use from then on.
+B3_API int b3World_StructSize( void );
+B3_API void b3World_StructSave( b3WorldId worldId, void* out );
+B3_API b3WorldId b3World_StructLoad( int worldId, const void* in );
+/// After a struct was put back, or a build took the arena over from another: the scratch this process has
+/// (the stack, the workers' arenas, the mutex), this build's callbacks and constants.
+B3_API void b3World_Relink( b3WorldId worldId, b3EnqueueTaskCallback* enqueue, b3FinishTaskCallback* finish, void* context );
+/// Says through b3SetTouchHooks what of the state may have been written since the last time: the bodies, shapes
+/// and contacts the snapshot track marked, with their manifolds, and the rest of the state whole, but for what
+/// holds nothing between steps. Then starts the marks over, as an image does. A world that had something done
+/// to it that isn't followed says everything, and returns true for that.
+B3_API bool b3World_TouchChanged( b3WorldId worldId );
+/// A number of the state that's the same on every machine for the same state: the awake bodies and the
+/// impulses their contacts carry into the next step. Not all of the state: what else differs shows there within
+/// a step.
+B3_API uint64_t b3World_Digest( b3WorldId worldId );
+/// What of the state is at an address, for a check that found a page the marks didn't say: a line of text.
+B3_API int b3World_Describe( b3WorldId worldId, const void* at, char* out, int capacity );
+/// The hull database's bytes: the map (0), then its buckets (1); NULL and 0 for none.
+B3_API void b3World_HullMapRange( b3WorldId worldId, int which, const void** start, size_t* size );
+
 /// Where an image's sections start. False for an image that has none.
 B3_API bool b3GetSnapshotBases( const uint8_t* image, int size, int* bases );
 

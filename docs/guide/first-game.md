@@ -1,3 +1,7 @@
+---
+description: "Build your first Tide game with components, systems, input and drawing, then host a multiplayer match and invite another player."
+---
+
 # Your first game
 
 This page builds a small game: a ball bouncing around, and a player for everyone who joins, which they steer with the keyboard. It takes a few minutes, and shows most of what a Tide game is made of.
@@ -80,7 +84,7 @@ In the folder:
 tide run
 ```
 
-`tide` compiles the game and opens a window with the ball bouncing. It keeps its work in a hidden `.tide` folder, which you can delete any time. To pick up changes while the window stays open, run `tide run --watch`: whenever you save, `tide` rebuilds the game and the window picks up the new code (see [hot reload](../tools/cli.md#hot-reload)).
+`tide` compiles the game and opens a window with the ball bouncing. It keeps its work in a hidden `.tide` folder, which you can delete any time. Whenever you save, `tide` rebuilds the game and the window picks up the new code (see [hot reload](../tools/cli.md#hot-reload)).
 
 This is the game so far, built for the web and running in the page:
 
@@ -186,7 +190,7 @@ Here are two machines in one match, each running [the whole game](#the-whole-gam
 tide run --web
 ```
 
-This builds the game as a web page, which draws with WebGPU (or WebGL 2 where the browser has none), and opens it in your browser. `tide` serves the page on your machine and keeps running until you stop it with Ctrl+C. Add `--watch` (`tide run --web --watch`) to reload the game in the page when you save. For a page to put online:
+This builds the game as a web page, which draws with WebGPU (or WebGL 2 where the browser has none), and opens it in your browser. `tide` serves the page on your machine and keeps running until you stop it with Ctrl+C. Saving a file reloads the game in the page. For a page to put online:
 
 ```sh
 tide build --release --web

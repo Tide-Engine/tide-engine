@@ -52,6 +52,7 @@ typedef struct checker {
     const expr *out_arg;     // An argument written `out x`, about to be checked as the variable an `out` parameter makes
     int outs;                // `out` arguments checked so far: code that has some is checked for what it assigns (assigned.c)
     const expr *world_arg;   // A call's argument about to be checked: the World can be named there, to pass it on
+    const expr *resident_arg; // ...and one an extern function's Resident parameter takes: the one place a Resident field is read
     bool world_value_ok;     // ...and the name being checked is it
 } checker;
 
@@ -102,6 +103,15 @@ static bool has_fields(const type t)
 {
     return t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_RECORD
         || t.kind == TY_STRUCT || t.kind == TY_EVENT;
+}
+
+static bool singleton_has_resident(const type t)
+{
+    if (t.kind != TY_SINGLETON) return false;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        if (t.decl->fields.items[i].type.kind == TY_RESIDENT) return true;
+    }
+    return false;
 }
 
 // A local field of a match component or singleton, by name: one of its local
@@ -1577,7 +1587,13 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
     const str name = r->name;
     type t;
     if (r->args.count > 0) return resolve_generic(c, r, at, place == PLACE_ASSET);
-    if (builtin_type_named(name, &t)) return t;
+    if (builtin_type_named(name, &t)) {
+        if (t.kind == TY_RESIDENT && place != PLACE_FIELD && place != PLACE_FUNCTION) {
+            diag_error(at, "Resident state is a match singleton's field, for the C of a package that comes with tide: nothing else holds one");
+            return T_ERR;
+        }
+        return t;
+    }
     if (str_eq_c(name, "string")) return (type){TY_STRING, NULL};
     if (routine_place(place) || place == PLACE_FIELD || place == PLACE_LOCAL) {
         if (str_eq_c(name, "Action")) return (type){TY_ACTION, NULL};
@@ -3350,7 +3366,9 @@ static void check_method_args(checker *c, expr *e, decl *m)
         // Devices passed on are read where they go: the callee's reads count. So does what's reached through the World.
         c->device_whole_ok = arg;
         c->world_arg = arg;
+        c->resident_arg = p && p->type.kind == TY_RESIDENT && m->is_extern ? arg : NULL;
         check_expr_want(c, arg, p ? p->type : T_ERR);
+        c->resident_arg = NULL;
     }
     for (int i = 0; i < m->params.count; i++) vec_push(e->arg_want, m->params.items[i].type);
     if (m->takes_action && !e->block) {
@@ -6898,6 +6916,12 @@ static type check_member(checker *c, expr *e)
                               "read them in a view");
                     return T_ERR;
                 }
+                if (f->type.kind == TY_RESIDENT && e != c->resident_arg) {
+                    diag_error(e->at, "'" STR_FMT "' is resident state: the C of the package that keeps it reads it, and Tide code can't",
+                               STR_ARG(f->name));
+                    diag_note("it goes to C as the argument of an extern function's 'in Resident' or 'mut Resident' parameter, and nowhere else");
+                    return T_ERR;
+                }
                 e->field = f;
                 if (f == c->prog->seed) c->prog->uses_seed = true; // Time.seed: the world has it for the code that reads it
                 if (obj.decl->query_row && e->object->bind == BIND_LOCAL && e->object->local->query) {
@@ -9175,6 +9199,11 @@ static void check_assign(checker *c, const stmt *s)
     c->write_root = outer_root;
     const type value = check_expr_want(c, s->value, target);
     if (target.kind == TY_ERROR) return;
+    if (singleton_has_resident(target)) {
+        diag_error(s->target->at, "a singleton with resident state can't be assigned whole");
+        diag_note("set its other fields one by one: only the package's C writes its Resident field");
+        return;
+    }
     // world.Get<Health>(e).value = 5: a copy of the entity's component
     const expr *got = s->target;
     while (got->kind == E_MEMBER || got->kind == E_INDEX) got = got->object;
@@ -9709,6 +9738,12 @@ static void check_var(checker *c, stmt *s)
             diag_error(s->value->at, "can't initialize %s with %s", type_name(s->type), type_name(value));
             note_conversion(s->type, value);
         }
+    }
+
+    if (singleton_has_resident(s->type)) {
+        diag_error(s->type_at.line ? s->type_at : s->value->at, "a local can't hold a singleton with resident state");
+        diag_note("read its other fields through the singleton, or pass it to a function: its Resident field stays in the match");
+        s->type = T_ERR;
     }
 
     // A grid stays where it's made: a local would be a copy of every chunk
@@ -10853,7 +10888,26 @@ static void resolve_field_types(const checker *c, const decl *d)
     for (int i = 0; i < d->fields.count; i++) {
         field *f = &d->fields.items[i];
         const loc at = f->type_qual_at.line ? f->type_qual_at : f->at;
-        if (builtin_type_named(f->type_name, &f->type)) continue;
+        if (builtin_type_named(f->type_name, &f->type)) {
+            if (f->type.kind != TY_RESIDENT) continue;
+            // Resident state (tide/resident.h): a match singleton's, one of them, for the C of a package that comes with tide
+            f->type = T_ERR;
+            if (d->kind != DECL_SINGLETON || d->is_local || d->part_of) {
+                diag_error(at, "Resident state is a match singleton's field, for the C of a package that comes with tide: %s can't hold one",
+                           d->kind == DECL_SINGLETON ? "a local singleton" : d->kind == DECL_COMPONENT ? "a component" : d->kind == DECL_STRUCT ? "a struct"
+                           : d->kind == DECL_EVENT ? "an event" : d->kind == DECL_INPUT ? "an input" : "this");
+                continue;
+            }
+            bool another = false;
+            for (int j = 0; j < i; j++) another = another || d->fields.items[j].type.kind == TY_RESIDENT;
+            if (another) {
+                diag_error(at, "'" STR_FMT "' has resident state already: a singleton holds one Resident", STR_ARG(d->name));
+                continue;
+            }
+            f->type = (type){TY_RESIDENT, NULL};
+            c->prog->uses_resident = true;
+            continue;
+        }
         f->type = T_ERR;
         const type_ref *const r = type_ref_or_text(f->type_ref, f->type_name);
         if (r->optional) {
@@ -11322,6 +11376,15 @@ static void check_signature(checker *c, decl *m)
                           STR_ARG(p->name), STR_ARG(m->params.items[k - 1].name));
             }
         }
+        if (p->type.kind == TY_RESIDENT) {
+            if (!m->is_extern) {
+                diag_error(p->type_at, "only extern functions take resident state, as 'in Resident' or 'mut Resident': the C that keeps it reads it");
+                p->type = T_ERR;
+            } else if (p->mode != PARAM_IN && p->mode != PARAM_MUT) {
+                diag_error(p->type_at, "C takes resident state by address: write 'in Resident' to read it, or 'mut Resident' to step it");
+                p->type = T_ERR;
+            }
+        }
         if (p->mode == PARAM_IN && !m->is_extern) {
             diag_error(p->at, "only extern functions take 'in' parameters: C gets a read-only pointer to the value");
             diag_note("a Tide %s's parameters are read-only already; drop 'in'", m->owner ? "method" : "function");
@@ -11365,6 +11428,25 @@ static void check_signature(checker *c, decl *m)
             diag_error(p->at, "an Action can't be 'mut'; it's code, run with '" STR_FMT "();'", STR_ARG(p->name));
         } else {
             m->takes_action = true;
+        }
+    }
+    if (!m->is_extern) {
+        for (int k = 0; k < m->params.count; k++) {
+            const param *p = &m->params.items[k];
+            if (!singleton_has_resident(p->type)) continue;
+            // There is one instance of each singleton. A read parameter copies
+            // its page references, which a mut parameter could release.
+            bool mixed = m->owner && !m->is_operator && !m->is_interpolate
+                && same_type(p->type, decl_type(m->owner))
+                && (p->mode == PARAM_MUT) != m->is_mut_method;
+            for (int j = 0; !mixed && j < k; j++) {
+                const param *other = &m->params.items[j];
+                mixed = same_type(p->type, other->type) && p->mode != other->mode;
+            }
+            if (mixed) {
+                diag_error(p->at, "a function can't take the same singleton with resident state both by value and mut");
+                diag_note("read its other fields before the mut call, or pass the singleton only as mut");
+            }
         }
     }
     if (m->takes_action && m->return_type.kind != TY_VOID && m->return_type.kind != TY_ERROR) {
@@ -16307,6 +16389,16 @@ bool check(program *prog)
     for (int i = 0; i < prog->local_parts.count; i++) {
         c.unit = prog->local_parts.items[i]->unit;
         resolve_field_types(&c, prog->local_parts.items[i]);
+    }
+    int residents = 0;
+    for (int i = 0; i < prog->singletons.count; i++) {
+        const decl *d = prog->singletons.items[i];
+        for (int k = 0; k < d->fields.count; k++) {
+            const field *f = &d->fields.items[k];
+            if (f->type.kind == TY_RESIDENT && ++residents > MAX_RESIDENT_FIELDS) {
+                diag_error(f->at, "a match holds at most %d Resident fields", MAX_RESIDENT_FIELDS);
+            }
+        }
     }
     for (int i = 0; i < prog->decls.count; i++) {
         if (prog->decls.items[i]->kind == DECL_CONST) check_constant(&c, prog->decls.items[i]);

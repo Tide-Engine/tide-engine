@@ -1,3 +1,7 @@
+---
+description: "Learn how Tide keeps ordinary float simulations bit-identical across desktop and web, with deterministic math, execution and state."
+---
+
 # Determinism
 
 Given the same build and the same inputs, Tide's simulation gives bit-identical results on every supported platform: Windows, Linux, macOS and the web, on Intel, AMD and ARM. That's what lets players send only their inputs, and lets desktop and web players share one match.

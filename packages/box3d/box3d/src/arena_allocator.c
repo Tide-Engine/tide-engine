@@ -13,13 +13,13 @@ b3Stack b3CreateStack( int capacity )
 	B3_ASSERT( capacity >= 0 );
 	b3Stack stack = { 0 };
 	stack.capacity = capacity;
-	stack.memory = (char*)b3Alloc( capacity );
+	stack.memory = (char*)b3AllocScratch( capacity );
 	return stack;
 }
 
 void b3DestroyStack( b3Stack* stack )
 {
-	b3Free( stack->memory, stack->capacity );
+	b3FreeScratch( stack->memory, stack->capacity );
 }
 
 void* b3StackAlloc( b3Stack* stack, int size, const char* name )
@@ -38,7 +38,7 @@ void* b3StackAlloc( b3Stack* stack, int size, const char* name )
 	if ( stack->index + alignedSize > stack->capacity )
 	{
 		// fall back to the heap (undesirable)
-		entry.data = (char*)b3Alloc( alignedSize );
+		entry.data = (char*)b3AllocScratch( alignedSize );
 		entry.usedMalloc = true;
 
 		B3_ASSERT( ( (uintptr_t)entry.data & ( B3_ALIGNMENT - 1 ) ) == 0 );
@@ -71,7 +71,7 @@ void b3StackFree( b3Stack* stack, void* mem )
 	B3_ASSERT( mem == entry->data );
 	if ( entry->usedMalloc )
 	{
-		b3Free( mem, entry->size );
+		b3FreeScratch( mem, entry->size );
 	}
 	else
 	{
@@ -88,9 +88,9 @@ void b3GrowStack( b3Stack* stack )
 
 	if ( stack->maxAllocation > stack->capacity )
 	{
-		b3Free( stack->memory, stack->capacity );
+		b3FreeScratch( stack->memory, stack->capacity );
 		stack->capacity = stack->maxAllocation + stack->maxAllocation / 2;
-		stack->memory = (char*)b3Alloc( stack->capacity );
+		stack->memory = (char*)b3AllocScratch( stack->capacity );
 	}
 }
 
@@ -112,11 +112,11 @@ int b3GetMaxStackAllocation( b3Stack* stack )
 b3Arena b3CreateArena( int capacity )
 {
 	int c = capacity > 8 ? capacity : 8;
-	b3ArenaSharedState* shared = (b3ArenaSharedState*)b3Alloc( sizeof( b3ArenaSharedState ) );
+	b3ArenaSharedState* shared = (b3ArenaSharedState*)b3AllocScratch( sizeof( b3ArenaSharedState ) );
 	*shared = (b3ArenaSharedState){ 0 };
 
 	return (b3Arena){
-		.memory = (char*)b3Alloc( c ),
+		.memory = (char*)b3AllocScratch( c ),
 		.capacity = c,
 		.index = 0,
 		.shared = shared,
@@ -128,23 +128,26 @@ void b3DestroyArena( b3Arena* arena )
 	b3ArenaSharedState* shared = arena->shared;
 	if ( shared != NULL )
 	{
-		for ( int i = 0; i < shared->overflows.count; ++i )
+		for ( int i = 0; i < shared->overflowCount; ++i )
 		{
-			b3Free( shared->overflows.data[i].data, shared->overflows.data[i].size );
+			b3FreeScratch( shared->overflows[i].data, shared->overflows[i].size );
 		}
-		b3Array_Destroy( shared->overflows );
-		b3Free( shared, sizeof( b3ArenaSharedState ) );
+		b3FreeScratch( shared, sizeof( b3ArenaSharedState ) );
 	}
-	b3Free( arena->memory, arena->capacity );
+	b3FreeScratch( arena->memory, arena->capacity );
 	*arena = (b3Arena){ 0 };
 }
 
 void* b3ArenaOverflowAlloc( b3Arena* arena, int size )
 {
 	b3ArenaSharedState* shared = arena->shared;
-	char* data = (char*)b3Alloc( size );
+	char* data = (char*)b3AllocScratch( size );
 	b3OverflowBlock block = { data, size };
-	b3Array_Push( shared->overflows, block );
+	B3_ASSERT( shared->overflowCount < B3_ARENA_OVERFLOWS );
+	if ( shared->overflowCount < B3_ARENA_OVERFLOWS )
+	{
+		shared->overflows[shared->overflowCount++] = block;
+	}
 	shared->overflowBytes += size;
 	return data;
 }
@@ -153,11 +156,11 @@ void b3ArenaSync( b3Arena* arena )
 {
 	b3ArenaSharedState* shared = arena->shared;
 
-	for ( int i = 0; i < shared->overflows.count; ++i )
+	for ( int i = 0; i < shared->overflowCount; ++i )
 	{
-		b3Free( shared->overflows.data[i].data, shared->overflows.data[i].size );
+		b3FreeScratch( shared->overflows[i].data, shared->overflows[i].size );
 	}
-	b3Array_Clear( shared->overflows );
+	shared->overflowCount = 0;
 
 	int demand = shared->maxIndex + shared->overflowBytes;
 	if ( demand > shared->peakDemand )
@@ -166,9 +169,9 @@ void b3ArenaSync( b3Arena* arena )
 	}
 	if ( demand > arena->capacity )
 	{
-		b3Free( arena->memory, arena->capacity );
+		b3FreeScratch( arena->memory, arena->capacity );
 		int newCapacity = demand + demand / 2;
-		arena->memory = (char*)b3Alloc( newCapacity );
+		arena->memory = (char*)b3AllocScratch( newCapacity );
 		arena->capacity = newCapacity;
 	}
 

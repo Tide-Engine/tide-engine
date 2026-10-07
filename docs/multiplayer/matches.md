@@ -1,3 +1,7 @@
+---
+description: "Start, host and join Tide matches, share room codes and manage sessions with one server-based path for single-player and multiplayer."
+---
+
 # Matches
 
 Every match runs on a server, and this machine's player connects to it. When the server is on this machine, that's over a loopback transport, so single-player and multiplayer are the same game with the same code. The engine assumes nothing about what a game does with a match, like pausing: games build that from inputs and state.
@@ -238,11 +242,11 @@ settings
 }
 ```
 
-`maxPlayers` goes from 1 to 256. One player more is refused, as from a full match (`DisconnectReason.Refused`). The world keeps an input for every player it can take, so the number is part of the game's data: builds with different `maxPlayers` can't share a match, and changing it under `tide run --watch` starts the match over.
+`maxPlayers` goes from 1 to 256. One player more is refused, as from a full match (`DisconnectReason.Refused`). The world keeps an input for every player it can take, so the number is part of the game's data: builds with different `maxPlayers` can't share a match, and changing it under `tide run` starts the match over.
 
 Pick what the game is built for. Every player's input goes to every other player each tick, so what a match sends grows with the square of its players, and each client runs the whole simulation: 64 players cost sixteen times what 16 do, before the game does anything with them.
 
 ## Limits for now
 
-- Under `tide run --web --watch`, a reload plays on alone: the room closes, and the other players drop out.
+- Under `tide run --web`, a reload plays on alone: the room closes, and the other players drop out.
 - A match can't start in a scene that holds text or lists yet.

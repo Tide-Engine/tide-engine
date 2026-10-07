@@ -1,3 +1,7 @@
+---
+description: "Define components, entities and singletons in Tide's ECS, then spawn, add, remove and destroy data to build your game's world."
+---
+
 # Components and entities
 
 Tide is an ECS: the world is made of **entities**, entities are made of **components**, and **systems** run code over them. This page is about the data; [Systems](./systems.md) is about the code.

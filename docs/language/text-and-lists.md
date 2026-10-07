@@ -1,3 +1,7 @@
+---
+description: "Work with Tide strings, lists, arrays, maps and sets as values, including text formatting, sorting and parallel element loops."
+---
+
 # Text and lists
 
 Text and lists are values, like everything else: assigning one copies it, and changing a copy never changes the original. Nothing about them fails, either: past the end, positions are clamped.

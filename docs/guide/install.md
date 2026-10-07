@@ -1,3 +1,7 @@
+---
+description: "Install the tide command on Windows, Linux or macOS, with built-in clang for native and web games, and learn how to update it."
+---
+
 # Install
 
 Tide comes as one command, `tide`, which builds and runs games. It has its C compiler built in (clang), for native and web games alike.

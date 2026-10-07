@@ -182,7 +182,7 @@ static const tide_layout_place old_singletons[] = {{OLD_RULES, offsetof(old_worl
 static const tide_layout old_layout = {
     5, old_types, 1, old_enums,
     {sizeof(old_world), 1, old_singletons, 4, old_archetypes, OLD_IN, offsetof(old_world, inputs),
-     offsetof(old_world, previous), 3, false, 0, NULL, 0, 0, 0, NULL},
+     offsetof(old_world, previous), 3, false, 0, NULL, 0, 0, 0, NULL, 0, NULL},
     {0},
 };
 
@@ -284,7 +284,7 @@ static const tide_layout_place new_singletons[] = {{NEW_RULES, offsetof(new_worl
 
 #define NEW_MATCH(archetypes, count)                                                                                \
     {sizeof(new_world), 1, new_singletons, count, archetypes, NEW_IN, offsetof(new_world, inputs),                  \
-     offsetof(new_world, previous), 3, false, 0, NULL, 0, 0, 0, NULL}
+     offsetof(new_world, previous), 3, false, 0, NULL, 0, 0, 0, NULL, 0, NULL}
 
 static const tide_layout new_layout = {4, new_types, 1, new_enums, NEW_MATCH(new_archetypes, 2), {0}};
 

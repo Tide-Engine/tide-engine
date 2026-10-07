@@ -1,3 +1,7 @@
+---
+description: "Organize Tide games across files and namespaces, control declaration names and compile code for engine versions or custom symbols."
+---
+
 # Namespaces and files
 
 ## Files

@@ -15,8 +15,6 @@
 <svelte:head>
     <meta name="theme-color" content="#1b1b1f" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
-    <meta property="og:site_name" content="Tide Engine" />
-    <meta property="og:type" content="website" />
 </svelte:head>
 
 <a class="skip" href="#content">Skip to content</a>

@@ -87,16 +87,16 @@ function removeOwned(root, path) {
     rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 
-async function webRunTest(tide, root, watch) {
-    console.log(`Cache correctness: web ${watch ? "hot reload" : "run without watching"}`);
-    const game = join(root, watch ? "web-reload" : "web-run");
+async function webRunTest(tide, root) {
+    console.log("Cache correctness: default web hot reload");
+    const game = join(root, "web-reload");
     mkdirSync(game);
     const source = join(game, "game.tide");
     const c = join(game, "native.c");
     const tideText = "scene Main { }\nsingleton State { int value; }\nextern int Native(int value);\nsystem Update(mut State state) { state.value = Native(state.value) + 1; }\n";
     put(source, tideText);
     put(c, "int Native(int value) { return value + 1; }\n");
-    const child = spawn(tide, ["run", game, "--web", "--no-open", "--seed", "7", ...(watch ? ["--watch"] : [])],
+    const child = spawn(tide, ["run", game, "--web", "--no-open", "--seed", "7"],
         { cwd: game, env, shell: false, windowsHide: true });
     let output = "", url = null, exited = false, startError = null;
     const closed = new Promise((accept) => {
@@ -131,19 +131,7 @@ async function webRunTest(tide, root, watch) {
         check(response.ok, "web run serves its page");
         const page = await response.text();
         check(page.includes('Tide.arguments = [ "--seed","7"]'), "web run passes the game's arguments");
-        check(page.includes("Tide.reload = true;") === watch, "only --watch enables page polling");
-        if (!watch) {
-            check(page.includes("const TIDE_PROGRAM = ") && !page.includes("tide_reload_save"), "plain web run serves a standalone page");
-            check((await fetch(`${url}build`)).status === 404, "plain web run has no reload endpoint");
-            const cache = join(game, ".tide", "web-debug");
-            const before = mark(cache);
-            put(c, "int Native(int value) { return value + 2; }\n");
-            put(source, tideText.replace("+ 1;", "+ 2;"));
-            await new Promise((accept) => setTimeout(accept, 1250));
-            expectWrites(cache, before, [], "plain web run keeps its initial build after edits");
-            check((await (await fetch(url)).text()) === page, "plain web run serves the same page after edits");
-            return;
-        }
+        check(page.includes("Tide.reload = true;"), "web run enables page polling by default");
         await waitFor(async () => await buildNumber() === 1, "initial web build");
         const cache = join(game, ".tide", "web-debug");
         let before = mark(cache);
@@ -163,7 +151,7 @@ async function webRunTest(tide, root, watch) {
 }
 
 async function nativeRunTest(tide, root) {
-    console.log("Standalone native run (requires a GPU)");
+    console.log("Headless native run (requires a GPU)");
     const game = join(root, "native-run");
     mkdirSync(game);
     put(join(game, "game.tide"), 'scene Main { }\nasset string message = "message.txt";\nextern void Verify(bool ok);\n'
@@ -172,12 +160,12 @@ async function nativeRunTest(tide, root) {
     put(join(game, "verify.c"), "#include <stdbool.h>\n#include <stdlib.h>\nvoid Verify(bool ok) { if (!ok) abort(); }\n");
     const capture = join(root, "native-run.png");
     const result = await run(tide, ["run", game, "--frames", "3", "--capture", capture, "--size", "32", "32"], root);
-    check(result.code === 0, `plain native run failed:\n${result.said}`);
-    check(!result.said.includes("saving a .tide or C file"), "plain native run doesn't start the watcher");
+    check(result.code === 0, `headless native run failed:\n${result.said}`);
+    check(!result.said.includes("saving a .tide or C file"), "headless native run doesn't start the watcher");
     check(readFileSync(capture).subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])), "native run captures a PNG");
     const cache = join(game, ".tide", "native-debug");
     check(!existsSync(join(game, "build")), "native run's executable is private to its run");
-    check(readFileSync(join(cache, "gen", "main.c"), "utf8").includes("tide_run(&(tide_run_desc)"), "plain native run uses the standalone host");
+    check(readFileSync(join(cache, "gen", "main.c"), "utf8").includes("tide_run(&(tide_run_desc)"), "headless native run uses the standalone host");
     check(readdirSync(join(cache, "run")).length === 0, "the native run cleans its private executable and pack");
 }
 
@@ -336,10 +324,7 @@ async function main() {
         const embedded = /clang:\s+built in/.test(version.said);
         if (!embedded) console.log("External compiler is unchanged; installed-header and configuration invalidation are still exercised.");
         for (const target of opts.web ? ["native", "web"] : ["native"]) await targetTests(tide, installation, root, target, embedded);
-        if (opts.web) {
-            await webRunTest(tide, root, false);
-            await webRunTest(tide, root, true);
-        }
+        if (opts.web) await webRunTest(tide, root);
         if (opts.gpu) await nativeRunTest(tide, root);
         console.log("Cache integration tests passed.");
     } finally {
