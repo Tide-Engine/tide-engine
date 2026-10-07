@@ -151,6 +151,12 @@ local singleton Art
     Texture keptBricks;
     [Filter(Filter.Point), Wrap(Wrap.Repeat)]
     Grid2<Color> painted = Grid2(2, 2); // As `four`
+    // Grids of floats as textures of one channel (pass 12)
+    bool heighted;
+    [Filter(Filter.Point)]
+    Grid2<float> heights = Grid2(2, 2);
+    Grid2<float> ramp = Grid2(2, 1);
+    Texture keptHeights;
 }
 
 float3 Cell(int column, int row)
@@ -1158,7 +1164,7 @@ vert TileChecks(mut Vertex vertex, Art art)
 vert TextureChecks(mut Vertex vertex, Texture source)
 {
     Color nearest = source.Sample(float2(0.25, 0.25), Filter.Point);
-    Color middle = source.Sample(float2(0.5, 0.5));
+    Color middle = source.Sample(float2(0.5, 0.5), Filter.Bilinear); // The draw gives it as Filter.Point: said here, it's blended
     bool correct = nearest.r > 0.99 && nearest.g < 0.01 && nearest.b < 0.01
                 && Halfway(middle.r) && Halfway(middle.g) && Halfway(middle.b);
     vertex.color = correct ? Color.white : Color.magenta;
@@ -1835,7 +1841,7 @@ view Images(mut Art art)
         art.painted[1, 0] = Color.green;
         art.painted[0, 1] = Color.blue;
         art.painted[1, 1] = Color.white;
-        art.keptBricks = bricks; // A value: it names the image, and no declaration
+        art.keptBricks = bricks; // A value: the image, sampled as its declaration says
         art.bricked = true;
     }
     Draw.Clear(Color.black);
@@ -1898,6 +1904,71 @@ view Images(mut Art art)
     // In 3D
     Draw.Mesh(art.brickTile3, art.faces, float4x4.Translate(Cell(0, 7)), bricks);
     Draw.Mesh(art.brickTile3, art.faces, float4x4.Translate(Cell(1, 7)), plainBricks);
+}
+
+// A grid of floats is a texture of one channel (pass 12): a frag reads it as
+// red, with green and blue 0 and alpha 1, and the numbers are the grid's, not
+// bytes from 0 to 1. Squares as the images' (pass 10).
+frag HeightLook(Vertex vertex, out Color color, Art art)
+{
+    Color read = art.heights.Sample(vertex.uv);
+    color = Color(read.r * 0.5, read.g + (read.a > 0.99 ? 0.25 : 0.75), read.b, 1);
+}
+
+frag RampLook(Vertex vertex, out Color color, Art art)
+{
+    color = Color(art.ramp.Sample(vertex.uv).r, 0, 0, 1);
+}
+
+frag HeightSource(Vertex vertex, out Color color, Texture source)
+{
+    color = Color(source.Sample(vertex.uv).r * 0.5, 0, 1, 1);
+}
+
+[After(Shadows)]
+view Heights(mut Art art)
+{
+    if (art.targetPass != 12) return;
+    if (!art.heighted)
+    {
+        art.brickTile = [Vertex { }, Vertex { position = float2(48, 0), uv = float2(2, 0) },
+                         Vertex { position = float2(48, 48), uv = float2(2, 2) }, Vertex { position = float2(0, 48), uv = float2(0, 2) }];
+        art.heights[0, 0] = 0.5;
+        art.heights[1, 0] = 1;
+        art.heights[0, 1] = 2;
+        art.heights[1, 1] = -1;
+        art.ramp[1, 0] = 1;
+        art.keptHeights = art.heights; // A grid is a Texture where one is wanted, which a field then holds
+        art.heighted = true;
+    }
+    Draw.Clear(Color.black);
+    Draw.SetScreen();
+    Draw.SetClip();
+    // In a frag, by its field
+    Draw.Transform(float2(8, 8))
+    {
+        Draw.Mesh(art.brickTile, art.faces, HeightLook);
+    }
+    // With no frag: the vertex's color times it, which is red
+    Draw.Transform(float2(64, 8))
+    {
+        Draw.Mesh(art.brickTile, art.faces, art.heights);
+    }
+    // Blended between its cells, as a grid that says nothing is
+    Draw.Transform(float2(120, 8))
+    {
+        Draw.Mesh(art.brickTile, art.faces, RampLook);
+    }
+    // The Texture a field holds of it, with the draw's wrap in the place of its own
+    Draw.Transform(float2(176, 8))
+    {
+        Draw.Mesh(art.brickTile, art.faces, art.keptHeights, Filter.Point, Wrap.Repeat, HeightSource);
+    }
+    // ...and as it says itself: the nearest cell, and the cells at its edge
+    Draw.Transform(float2(8, 64))
+    {
+        Draw.Mesh(art.brickTile, art.faces, art.keptHeights, HeightSource);
+    }
 }
 
 // Several colors from one frag (pass 11). A target made to hold three color
@@ -2054,7 +2125,7 @@ view Outputs(Art art, mut Several several)
 [After(Manual)]
 view Targets(mut Art art)
 {
-    // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images' and 11 Outputs'
+    // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images', 11 Outputs' and 12 Heights'
     if (art.targetPass == 0 || art.targetPass >= 6) return;
     if (art.targetPass >= 4)
     {

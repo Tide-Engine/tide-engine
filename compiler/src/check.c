@@ -4415,10 +4415,10 @@ static type check_blit(checker *c, expr *e)
         return T_ERR;
     }
     const type source = e->args.items[0]->type;
-    const bool grid = source.kind == TY_GRID && source.decl->dims == 2 && source.decl->fields.items[0].type.kind == TY_COLOR;
     bool ok = true;
-    if (source.kind != TY_TEXTURE && !grid && source.kind != TY_ERROR) {
-        diag_error(e->args.items[0]->at, "Blit's source is a Texture or Grid2<Color>, not %s", type_name(source));
+    if (source.kind != TY_TEXTURE && !type_is_texture_grid(source) && source.kind != TY_ERROR) {
+        diag_error(e->args.items[0]->at, "Blit's source is a Texture, which a Grid2<Color> and a Grid2<float> are too, not %s",
+                   type_name(source));
         ok = false;
     }
     if (e->args.items[1]->type.kind != TY_RENDER_TARGET && e->args.items[1]->type.kind != TY_ERROR) {
@@ -4465,7 +4465,7 @@ static type check_blit(checker *c, expr *e)
     if (e->args.count == 4 && e->args.items[2]->type.kind == TY_ERROR) return T_ERR;
     e->call = CALL_DRAW;
     e->draw_dims = 2;
-    vec_push(e->arg_want, source);
+    vec_push(e->arg_want, ((type){TY_TEXTURE, NULL})); // A grid is the texture it is
     vec_push(e->arg_want, e->args.items[1]->type);
     if (e->args.count == 4) vec_push(e->arg_want, e->args.items[2]->type);
     const mesh_draw draw = {e, c->system};
@@ -4599,7 +4599,10 @@ static type check_mesh_draw(checker *c, expr *e)
         diag_error(arg->at, sampled ? "a mesh's wrap comes after its filter: '%s(..., texture, Filter.Bilinear, Wrap.Repeat)'"
                                     : "a mesh's wrap comes after its texture and its filter: '%s(..., texture, Filter.Bilinear, "
                                       "Wrap.Repeat)'", draw_name);
-        if (sampled) diag_note("'Filter.Bilinear' is the filter of a draw that says none");
+        if (sampled) {
+            diag_note("a texture that isn't to be sampled as it says is given both; one that only wraps another way says so "
+                      "where it's declared: '[Wrap(Wrap.Repeat)]'");
+        }
         return T_ERR;
     }
 
@@ -4618,6 +4621,15 @@ static type check_mesh_draw(checker *c, expr *e)
     if (!instanced && dims == 2 && count > 2 && e->args.items[2]->type.kind == TY_FLOAT4X4) {
         diag_error(e->args.items[2]->at, "a 2D mesh is drawn where its vertices are, through the 2D camera: it takes no transform");
         diag_note("'" STR_FMT "' is a 2D mesh's vertex, as its 'position' is a float2; a 3D mesh's has a float3", STR_ARG(vertex->name));
+        return T_ERR;
+    }
+
+    // A grid that's no texture, where the texture goes: said here, for every way the mesh is drawn
+    for (int i = 2; i < count; i++) {
+        const expr *arg = e->args.items[i];
+        if (arg->type.kind != TY_GRID || type_is_texture_grid(arg->type)) continue;
+        diag_error(arg->at, "a texture is a Texture, a Grid2<Color> or a Grid2<float>, and this is a %s", type_name(arg->type));
+        diag_note("a grid of colors is its pixels, and one of floats a texture of one channel, which a frag reads as red");
         return T_ERR;
     }
 
@@ -4672,23 +4684,15 @@ static type check_mesh_draw(checker *c, expr *e)
     } else if (dims == 3) {
         at++; // Its transform, checked above
     }
-    // A texture, its filter and its wrap: grids retain their original no-frag
-    // form, while an explicit Texture also supplies a shader's Texture parameter.
+    // A texture, its filter and its wrap. The texture is a Texture, which a grid of colors or of floats
+    // is where one is wanted: what the draw draws with, or what its shader's Texture parameter is. The
+    // filter and the wrap are the texture's for this draw, where it isn't to be sampled as it says
     const expr *texture = NULL;
-    const expr *draw_filter = NULL;
-    const expr *draw_wrap = NULL;
     if (at < count && (e->args.items[at]->type.kind == TY_GRID || e->args.items[at]->type.kind == TY_TEXTURE)) {
         texture = e->args.items[at++];
-        const decl *grid = texture->type.decl;
-        if (texture->type.kind == TY_GRID && (grid->dims != 2 || grid->fields.items[0].type.kind != TY_COLOR)) {
-            diag_error(texture->at, "a texture is a Grid2<Color>, and this is a %s", type_name(texture->type));
-            ok = false;
-        }
         if (at < count && e->args.items[at]->type.kind == TY_ENUM && e->args.items[at]->type.decl == prog->filter) {
-            draw_filter = e->args.items[at++];
-            if (at < count && e->args.items[at]->type.kind == TY_ENUM && e->args.items[at]->type.decl == prog->wrap) {
-                draw_wrap = e->args.items[at++];
-            }
+            at++;
+            if (at < count && e->args.items[at]->type.kind == TY_ENUM && e->args.items[at]->type.decl == prog->wrap) at++;
         }
     }
     if (at < count) {
@@ -4696,27 +4700,15 @@ static type check_mesh_draw(checker *c, expr *e)
         note_mesh_forms(e);
         return T_ERR;
     }
-    if (texture && e->frag && texture->type.kind == TY_GRID) {
-        diag_error(texture->at, "a frag samples the grids it takes itself, so this draw takes no texture");
-        diag_note("put the grid in a component or a singleton that '" STR_FMT "' takes, and read it there: "
-                  "'color = models.wood.Sample(vertex.uv);'", STR_ARG(e->frag->name));
-        ok = false;
-    }
     const bool direct = shader_takes_texture(e->vert) || shader_takes_texture(e->frag);
-    if (direct && (!texture || texture->type.kind != TY_TEXTURE)) {
+    if (direct && !texture) {
         diag_error(e->at, "this mesh's shader takes a Texture source: supply one after the mesh arguments");
         ok = false;
-    } else if (texture && texture->type.kind == TY_TEXTURE && e->frag && !direct) {
+    } else if (texture && e->frag && !direct) {
         diag_error(texture->at, "this mesh's frag has no Texture parameter for the explicit source");
-        ok = false;
-    }
-    if (e->frag && draw_filter) {
-        diag_error(draw_filter->at, draw_wrap ? "a frag chooses its texture's filter and wrap at Sample: leave the draw's out"
-                                              : "a frag chooses its texture filter at Sample: leave the draw's filter out");
-        if (draw_wrap) {
-            diag_note("like 'color = source.Sample(vertex.uv, Filter.Bilinear, Wrap.Repeat);' in '" STR_FMT "'",
-                      STR_ARG(e->frag->name));
-        }
+        diag_note("give '" STR_FMT "' one, 'Texture source', and read it there, 'color = source.Sample(vertex.uv);', or "
+                  "have it sample a texture of a component or a singleton it takes, and leave this one out",
+                  STR_ARG(e->frag->name));
         ok = false;
     }
     // With no frag, a pixel is its vertex's color times the texture at its uv
@@ -4775,7 +4767,11 @@ static type check_mesh_draw(checker *c, expr *e)
     e->arg_want.count = 0;
     vec_push(e->arg_want, vertices->type);
     vec_push(e->arg_want, index_list);
-    for (int i = 2; i < count; i++) vec_push(e->arg_want, i == 2 && dims == 3 && !instanced ? f4x4 : e->args.items[i]->type);
+    for (int i = 2; i < count; i++) {
+        const expr *arg = e->args.items[i];
+        // The texture as the Texture it is, a grid too
+        vec_push(e->arg_want, i == 2 && dims == 3 && !instanced ? f4x4 : arg == texture ? ((type){TY_TEXTURE, NULL}) : arg->type);
+    }
     const mesh_draw draw = {e, c->method ? c->method : c->system};
     vec_push(prog->mesh_draws, draw);
     return T_VOID_;
@@ -7153,8 +7149,8 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
         if (grid.kind == TY_GRID) diag_note("here, read a cell by its place: 'grid[x, y]'");
         return T_ERR;
     }
-    if (grid.kind == TY_GRID && (grid.decl->dims != 2 || grid.decl->fields.items[0].type.kind != TY_COLOR)) {
-        diag_error(e->at, "a texture is a Grid2<Color>, and this is a %s", type_name(grid));
+    if (grid.kind == TY_GRID && !type_is_texture_grid(grid)) {
+        diag_error(e->at, "a texture is a Texture, a Grid2<Color> or a Grid2<float>, and this is a %s", type_name(grid));
         return T_ERR;
     }
     const expr *of = e->object;
@@ -7190,7 +7186,8 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
     // A wrap where the filter goes: the filter is said first
     if (e->args.count == 2 && uv.kind == TY_FLOAT2 && how.kind == TY_ENUM && how.decl == c->prog->wrap) {
         diag_error(e->args.items[1]->at, "a wrap comes after the filter: 'texture.Sample(uv, Filter.Bilinear, Wrap.Repeat)'");
-        diag_note("'Filter.Bilinear' is the filter of a Sample that says none");
+        diag_note("a Sample that says neither reads the texture as it says: one that only wraps another way says so where "
+                  "it's declared, '[Wrap(Wrap.Repeat)]'");
         return T_ERR;
     }
     const bool filter_ok = e->args.count < 2 || (how.kind == TY_ENUM && how.decl == c->prog->filter);
@@ -9855,7 +9852,7 @@ static void check_sampling_attribute(checker *c, decl *d, attribute *attr)
     if (d->kind != DECL_ASSET) {
         diag_error(attr->at, "%s says how a texture is sampled, and '" STR_FMT "' isn't one", name, STR_ARG(d->name));
         diag_note("it goes before an asset that's a Texture or a Grid2<Color>, like '[%s] asset Texture tiles = \"art/tiles.png\";', "
-                  "or before a Grid2<Color> field", usage);
+                  "or before a field that's a Grid2<Color>, a Grid2<float> or a RenderTarget", usage);
         return;
     }
     if (d->return_type.kind == TY_ERROR) return; // Its type said why
@@ -10018,26 +10015,30 @@ static void check_absolute_attribute(const decl *d, const field *f, const attrib
 // it included, so they're a quick way to bound what players send. Elsewhere,
 // a struct field's bounds only describe it. And [Snap] (see check_snap), and
 // [Absolute] (see check_absolute_attribute).
-// [Filter(Filter.Point)] and [Wrap(Wrap.Repeat)] on a Grid2<Color> field: how
-// the grid is sampled where a draw or a Sample that names the field doesn't
-// say (declared_sampling reads them). A Texture field holds whichever image
-// it's given, so it has nothing to say for it.
+// [Filter(Filter.Point)] and [Wrap(Wrap.Repeat)] on a field that's a grid of
+// colors or of floats, or a RenderTarget: how the Texture the grid is, or the
+// target's color is, is sampled where a draw or a Sample doesn't say
+// (declared_sampling reads them). A Texture field holds whichever texture
+// it's given, which says how it's sampled itself, so it has nothing to say
+// for it.
 static void check_field_sampling(checker *c, const field *f, attribute *a)
 {
     const bool filter = str_eq_c(a->name, "Filter");
     const char *name = filter ? "Filter" : "Wrap";
     if (f->type.kind == TY_ERROR) return;
-    const bool colors = f->type.kind == TY_GRID && f->type.decl->dims == 2 && grid_cell(f->type).kind == TY_COLOR;
-    if (!colors && (f->type.kind == TY_TEXTURE || f->type.kind == TY_RENDER_TARGET)) {
-        diag_error(a->at, "a %s field holds whichever image it's given, so how '" STR_FMT "' is sampled is said where it's drawn: "
-                   "'Draw.Mesh(vertices, indices, texture, Filter.Point, Wrap.Repeat)'", type_name(f->type), STR_ARG(f->name));
-        diag_note("an image of the game's says it on its own declaration: '[%s] asset Texture tiles = \"art/tiles.png\";'",
-                  filter ? "Filter(Filter.Point)" : "Wrap(Wrap.Repeat)");
+    const bool made_here = type_is_texture_grid(f->type) || f->type.kind == TY_RENDER_TARGET;
+    if (f->type.kind == TY_TEXTURE) {
+        diag_error(a->at, "a Texture says how it's sampled itself, and a field holds whichever it's given: '" STR_FMT
+                   "' takes no [%s]", STR_ARG(f->name), name);
+        diag_note("say it where the texture is made, '[%s] asset Texture tiles = \"art/tiles.png\";' or on the grid or the "
+                  "RenderTarget it comes from, or where it's drawn: 'Draw.Mesh(vertices, indices, texture, Filter.Point, "
+                  "Wrap.Repeat)'", filter ? "Filter(Filter.Point)" : "Wrap(Wrap.Repeat)");
         return;
     }
-    if (!colors) {
+    if (!made_here) {
         diag_error(a->at, "[%s] says how a texture is sampled, and '" STR_FMT "' is %s", name, STR_ARG(f->name), type_name(f->type));
-        diag_note("it goes on a Grid2<Color> field, or on an asset that's a Texture or a Grid2<Color>");
+        diag_note("it goes on a field that's a Grid2<Color>, a Grid2<float> or a RenderTarget, or on an asset that's a Texture "
+                  "or a Grid2<Color>");
         return;
     }
     for (const attribute *before = f->attributes.items; before < a; before++) {

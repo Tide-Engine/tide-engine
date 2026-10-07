@@ -380,7 +380,7 @@ TIDE_TEST(pack_textures_are_drawn_where_the_pack_has_them)
     const uint32_t mark = tide_scratch_mark();
     const tide_vertex corners[3] = {{{0, 0}, {0, 0}, {1, 1, 1, 1}}, {{8, 0}, {1, 0}, {1, 1, 1, 1}}, {{0, 8}, {0, 1}, {1, 1, 1, 1}}};
     tide_draw_mesh_texture(&over, tide_list_from(corners, 3, sizeof(tide_vertex)),
-                           tide_list_from((const int32_t[]){0, 1, 2}, 3, sizeof(int32_t)), other, TIDE_FILTER_POINT);
+                           tide_list_from((const int32_t[]){0, 1, 2}, 3, sizeof(int32_t)), tide_texture_filtered(other, TIDE_FILTER_POINT));
     tide_scratch_reset(mark);
     TIDE_REQUIRE(over.count > 0 && over.commands[over.count - 1].kind == TIDE_DRAW_MESH);
     static tide_draw_list under;

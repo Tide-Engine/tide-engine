@@ -602,7 +602,7 @@ TIDE_TEST(draw_grids_are_textures)
     const tide_list triangles = tide_list_from(indices, 6, sizeof(int32_t));
     tide_draw_list d = {0};
     tide_draw_mesh_lists(&d, vertices, triangles);
-    tide_draw_mesh_grid(&d, vertices, triangles, grid, &colors, TIDE_FILTER_POINT);
+    tide_draw_mesh_texture(&d, vertices, triangles, tide_texture_of_grid(grid, &colors, 1u));
     TIDE_REQUIRE(d.count == 2 && d.vertex_count == 8 && d.index_count == 12 && d.texture_count == 1);
     TIDE_CHECK(d.commands[0].mesh.texture == 0 && d.commands[0].mesh.filter == TIDE_FILTER_BILINEAR);
     TIDE_CHECK(d.commands[1].mesh.texture == 1 && d.commands[1].mesh.filter == TIDE_FILTER_POINT);
@@ -618,7 +618,7 @@ TIDE_TEST(draw_grids_are_textures)
     // Cells that stayed the same aren't copied again
     d.textures[0].pixels[4] = 77;
     tide_draw_reset(&d);
-    tide_draw_mesh_grid(&d, vertices, triangles, grid, &colors, TIDE_FILTER_POINT);
+    tide_draw_mesh_texture(&d, vertices, triangles, tide_texture_of_grid(grid, &colors, 1u));
     TIDE_CHECK(d.texture_count == 1 && d.textures[0].pixels[4] == 77);
 
     // One that changed is, even changed through a cache that had its chunk
@@ -626,25 +626,25 @@ TIDE_TEST(draw_grids_are_textures)
     tide_grid_cache cache = {0};
     *(tide_color *)tide_grid_cached_poke(&cache, &grid, 1, 0, 0, &colors, true, TIDE_IN_LOCAL) = red;
     tide_draw_reset(&d);
-    tide_draw_mesh_grid(&d, vertices, triangles, grid, &colors, TIDE_FILTER_POINT);
+    tide_draw_mesh_texture(&d, vertices, triangles, tide_texture_of_grid(grid, &colors, 1u));
     TIDE_CHECK(memcmp(d.textures[0].pixels + 4, first, 4) == 0);
     *(tide_color *)tide_grid_cached_poke(&cache, &grid, 2, 0, 0, &colors, true, TIDE_IN_LOCAL) = red;
     tide_draw_reset(&d);
-    tide_draw_mesh_grid(&d, vertices, triangles, grid, &colors, TIDE_FILTER_POINT);
+    tide_draw_mesh_texture(&d, vertices, triangles, tide_texture_of_grid(grid, &colors, 1u));
     TIDE_CHECK(memcmp(d.textures[0].pixels + 8, first, 4) == 0);
 
     // A cleared grid is clear pixels, and one with an open axis is no texture
     tide_grid_clear(&grid, &colors, TIDE_IN_LOCAL);
     tide_draw_reset(&d);
-    tide_draw_mesh_grid(&d, vertices, triangles, grid, &colors, TIDE_FILTER_POINT);
+    tide_draw_mesh_texture(&d, vertices, triangles, tide_texture_of_grid(grid, &colors, 1u));
     TIDE_REQUIRE(d.texture_count == 1);
     TIDE_CHECK(memcmp(d.textures[0].pixels, none, 4) == 0);
     tide_grid_set(&grid, tide_grid_new(2, 40, 0, 0), &colors, TIDE_IN_LOCAL);
     *(tide_color *)tide_grid_poke(&grid, 0, 0, 0, &colors, true, TIDE_IN_LOCAL) = red;
     tide_draw_reset(&d);
-    tide_draw_mesh_grid(&d, vertices, triangles, grid, &colors, TIDE_FILTER_POINT);
+    tide_draw_mesh_texture(&d, vertices, triangles, tide_texture_of_grid(grid, &colors, 1u));
     TIDE_CHECK(d.count == 1 && d.commands[0].mesh.texture == 0);
-    tide_draw_mesh_grid(&d, vertices, triangles, (tide_grid){0}, &colors, TIDE_FILTER_POINT);
+    tide_draw_mesh_texture(&d, vertices, triangles, tide_texture_of_grid((tide_grid){0}, &colors, 1u));
     TIDE_CHECK(d.commands[0].mesh.count == 12 && d.commands[0].mesh.texture == 0);
 
     tide_draw_free(&d);
@@ -906,7 +906,7 @@ TIDE_TEST(draw_instance_lists_are_copied_and_batched)
     tide_draw_list d = {0}, appended = {0};
 
     tide_draw_mesh3_instances_lists(&d, vertices, indices, (tide_list){0});
-    tide_draw_mesh3_instances_grid(&d, vertices, indices, (tide_list){0}, grid, &colors, TIDE_FILTER_POINT);
+    tide_draw_mesh3_instances_texture(&d, vertices, indices, (tide_list){0}, tide_texture_of_grid(grid, &colors, 1u));
     TIDE_CHECK(d.count == 0 && d.mesh_count == 0 && d.texture_count == 0 && d.matrix_count == 0);
 
     enum { COUNT = 513 };
@@ -930,7 +930,7 @@ TIDE_TEST(draw_instance_lists_are_copied_and_batched)
     TIDE_CHECK(d.matrices[2 * COUNT].c3.x == (float)(COUNT - 1));
 
     tide_draw_set_camera_3d(&d, tide_f3(0.0f, 0.0f, -5.0f), tide_identity_q(), 60.0f);
-    tide_draw_mesh3_instances_grid(&d, vertices, indices, transforms, grid, &colors, TIDE_FILTER_POINT);
+    tide_draw_mesh3_instances_texture(&d, vertices, indices, transforms, tide_texture_of_grid(grid, &colors, 1u));
     tide_draw_mesh3_instances_lists(&d, vertices, indices, transforms);
     TIDE_REQUIRE(d.count == 4 && d.mesh_count == 1 && d.texture_count == 1);
     TIDE_CHECK(d.commands[2].mesh3.count == COUNT && d.commands[2].mesh3.texture == 1);

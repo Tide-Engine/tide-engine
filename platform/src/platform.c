@@ -1181,6 +1181,7 @@ typedef struct gpu_texture {
     uint64_t id; // Whose pixels (see tide_draw_texture)
     uint64_t version;
     uint32_t space;
+    uint32_t format; // TIDE_TEXELS_*
     int32_t width, height;
     uint32_t epoch; // Its list's when it copied them (see tide_draw_forget)
     tide_gpu_id texture;
@@ -1907,15 +1908,17 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
     }
     g->frame = gpu_frame;
     if (g->texture && g->version == t->version && g->width == t->width && g->height == t->height
-        && g->epoch == t->epoch) {
+        && g->format == t->format && g->epoch == t->epoch) {
         return g;
     }
-    if (g->texture && g->width == t->width && g->height == t->height) {
+    if (g->texture && g->width == t->width && g->height == t->height && g->format == t->format) {
         gpu->texture_write(g->texture, t->pixels);
     } else {
         if (g->texture) gpu->texture_free(g->texture);
-        g->texture = gpu->texture(TIDE_GPU_RGBA8, t->width, t->height, t->pixels);
+        // A grid of floats' cells are one float of 16 bits a pixel
+        g->texture = gpu->texture(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F : TIDE_GPU_RGBA8, t->width, t->height, t->pixels);
     }
+    g->format = t->format;
     g->version = t->version;
     g->width = t->width;
     g->height = t->height;

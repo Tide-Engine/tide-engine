@@ -1,4 +1,4 @@
-// expect: this draw samples 9 grids, and a draw takes 8
+// expect: this draw samples 9 textures, and a draw takes 8
 scene Main { }
 
 struct V
