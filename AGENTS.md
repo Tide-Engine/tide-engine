@@ -8,7 +8,7 @@ Rules and decisions for anyone, human or AI agent, working on Tide. Only agreed 
 - Agents help with specific, scoped tasks. Do what was asked. Don't widen scope, scaffold systems, or refactor nearby code unless asked.
 - Agents validate changes locally and merge directly into `dev`. Do not create pull requests or push feature branches unless the owner explicitly requests them.
 - If it's unclear whether the owner wants code or discussion, ask.
-- **Exception: Claude owns the transpiler.** The owner decides the language design (what it should do, its syntax and semantics). Claude implements and maintains the transpiler, including its tests and build integration, and proposes designs for the owner to approve.
+- **Exception: the AI agent working on a task owns its transpiler work.** The owner decides the language design (what it should do, its syntax and semantics). The agent implements and maintains the transpiler, including its tests and build integration, and proposes designs for the owner to approve. This applies to any AI agent; references to Claude in this guide do not reserve work for a particular agent.
 - The contract between the two sides is the C the transpiler generates and the engine runtime functions that code calls. The owner writes the runtime. Any runtime function the generated code needs is agreed on before either side depends on it.
 
 ## What Tide is
@@ -1095,6 +1095,7 @@ Who wrote and who maintains what is said here, never in the files: users read th
 
 The language shares the engine's name, Tide. Its syntax and semantics are specified in `docs/spec.md`. The docs site explains it to users: a change to the language, `tide` or the editors updates the site's pages too (the folders of `docs/` beside `spec.md`).
 
+- `Color` constructors take numeric scalars and vectors totaling 3 or 4 channels, in order, as vector constructors do (agreed 2026-10-07). `Color(uv.xy, 0)` is `Color(uv.x, uv.y, 0)`, with alpha 1; four channels supply alpha. Ints and int vectors widen to floats, and each argument evaluates once, left to right, on the CPU and GPU alike.
 - Derive as much as possible from the language.
 - It should be as explicit as our needs require, while staying friendly.
 - Dependency trees are static: known at compile time, not discovered at runtime.
