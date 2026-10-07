@@ -1440,7 +1440,7 @@ Picks made as `Texture` assets were built (2026-10-07), awaiting the owner. That
 
 ### Open
 
-- Audio, meshes, fonts and JPEG as assets, each with its type.
+- Meshes, fonts and JPEG as assets, each with its type. Audio's is `Clip` (see Audio).
 - A pack kept beside a web page rather than inside it, fetched from wherever it's hosted (the option's name, and whether a page waits for it).
 - Load order, streaming and lazy loading within the pack, and what a web page fetches first.
 - Decoding off the frame's thread for what a machine loads at runtime (a 4K PNG takes a frame).
@@ -3146,6 +3146,85 @@ Questions:
 - What else a mod's code can't call, beyond `Session.Connect` and `Clipboard.Copy`.
 - How long a build runs offline before the service is asked again.
 - Whether a modded game on a phone is its web build in the system's web view.
+
+## Audio
+
+Planned 2026-10-07. Nothing of it is built.
+
+### Decided
+
+- **Audio is presentation, never the match.** Like drawing, it reads the world and writes nothing to it: no sound is in a snapshot, a hash, a delta or a world sent to a joiner. Everything here is local code's and the platform layer's, and the simulation never includes an audio header.
+- **One-shot sounds come from local handlers of match events.** `local event(Hit hit) HitSound(...)` is heard once under rollback: a sound plays late when a correction brings its event in, and never twice. A `verified` handler plays a sound only once the server confirmed the event.
+- **Continuous sounds come from views**, which run every frame and see blended positions: a view says what should be sounding this frame, as it says what should be drawn.
+- **Two ways to play**, both wanted: a quick sound that's fired and forgotten (`Audio.Play`), and a sound source a game keeps track of to change its pitch, volume and position as it plays (a `Sound` value in a local field).
+- **Procedural audio**: a game modifies sound with code of its own, as Unity's `OnAudioFilterRead` lets it, and can make sound from nothing (a synth) or from a stream (a microphone). It's a declaration of its own, `audio`, compiled to C that runs on the audio thread, with the same shape as code the GPU runs: its parameters say what it reads.
+- **Formats:** WAV and Ogg Vorbis, both, with decoders of the engine's own written from the specifications, as the PNG reader was, so games carry no license terms.
+- **Small and fast**: the pack stays as small as the author's files, and what plays is fast to reach at runtime. The pack keeps the file's bytes as they are; short clips are decoded to PCM at load, long ones streamed.
+- **Headless runs have audio**: a run with no window mixes as a device would, and what played can be captured beside the frame's picture.
+- **The block a filter sees is wrapped**, not a bare `float[512]` a game has to remember the size of: a built-in `Samples` that holds the array and says its size.
+
+```csharp
+struct Knobs { float cutoff; }
+struct LowpassState { float last; }
+
+audio Lowpass(mut Samples samples, mut LowpassState state, Knobs knobs)
+{
+    for (var i = 0; i < samples.count; i++)
+    {
+        state.last += (samples[i] - state.last) * knobs.cutoff;
+        samples[i] = state.last;
+    }
+}
+
+local singleton Engine
+{
+    Sound hum;
+}
+
+[Stage(Layers.World)]
+view Engines(Body body, Throttle throttle, mut Engine engine)
+{
+    engine.hum.clip = engineLoop;
+    engine.hum.position = body.position;
+    engine.hum.pitch = 0.8 + throttle.amount * 0.6;
+    engine.hum.effect = Lowpass;
+    engine.hum.knobs = Knobs { cutoff = 0.2 + throttle.amount * 0.5 };
+    engine.hum.playing = true;
+}
+
+local event(Hit hit) HitSound(Body body)
+{
+    Audio.Play(hitClip, body.position, 0.8);
+}
+```
+
+### Provisional
+
+Picks made to plan it, awaiting the owner. The names, the numbers and each rule below are proposals.
+
+- **`Audio.Play(clip[, volume[, pitch]])` and `Audio.Play(clip, position[, volume[, pitch]])`** start a one-shot the mixer then owns: nothing comes back, and nothing can stop it. A `float2` position places it under the 2D listener, a `float3` under the 3D one. It's a call that does something, so it keeps its turn in evaluation order and is refused in match code, as drawing is.
+- **`Sound` is a built-in struct**, a value kept in a local field: `clip` (a `Clip`), `position` (a `float3`; a 2D sound is one with `z` 0, under the 2D listener where no 3D camera is set), `volume`, `pitch`, `loop`, `bus`, `playing`, `effect` (an `audio` declaration, or none) and `knobs` (the struct that declaration reads). A view writes it each frame. The mixer keeps a voice for each `Sound` a frame names, told apart as GUI widgets are (by the field and the entity), and fades a voice out over a few milliseconds when a frame stops naming it, so a destroyed entity's sound doesn't hang. `playing = false` stops it the same way; writing `clip` to another clip starts over. A `Sound` has no methods: the fields are the API.
+- **The listener** is a frame's setting, with both forms like the draw settings: `Audio.Listener(position, rotation) { ... }` and `Audio.SetListener(...)`, defaulting to the 3D camera, or to the 2D camera's center where none is set. Volume falls off with distance by one curve with a game-set reference distance (`Audio.SetFalloff(near, far)`), and pans by the listener's right.
+- **Buses are a game's enum**, `[Bus] enum Bus { Master, Music, Sfx, Voice }`: `Audio.SetVolume(Bus.Music, 0.5)` holds for the frames after until it's set again, and a bus can have an `effect` too (`Audio.SetEffect(Bus.Master, Compress, knobs)`). Every voice goes through its bus and then `Master`. No graph, no sends, no reverb zones in v1.
+- **`audio` declarations** run on the audio thread, once a block, for the voice or bus they're set on. Their parameters: the block, `mut Samples`; at most one `mut` struct, the voice's own state, which persists between blocks and nothing else reads or writes (plain fields only, as a frag's); and read-only structs, the knobs, which the frame writes into the `Sound` (or the bus) and the mixer hands the thread with its next block, so the thread reads a copy, never the local world. What's refused is what the GPU refuses, and for the same reason: the `World`, text, lists, maps, grids, allocation, `Debug.Log`, events, tasks, anything that reaches outside; `Math` all works; the functions it calls are checked the same way (`refuse` in the shader writer's checking pass is most of the rule). A declaration given as a `Sound`'s `effect` filters that voice; one set on a bus filters the mix; one given to a `Sound` whose clip is `Clip.none` is a **source**: its block starts as silence and what it leaves is what plays (a synth). One `audio` per voice or bus in v1; chains are functions it calls.
+- **`Samples`** is a built-in struct holding one `float[512]`: `samples[i]` (a float, interleaved left then right, with an array's bounds rule: past the end reads zero and writes nothing), `count` (512), `frames` (256), `channels` (2), `rate` (48000), each a constant, and `Frame(i)` as a `float2` with `SetFrame(i, value)`. In generated C it's the array, so a filter's loop vectorizes. If the block ever changes size, every filter still compiles.
+- **The mixer is stereo at 48 kHz in blocks of 256 frames**, in floats, on the system's audio thread. A clip is resampled to 48 kHz at load and a mono clip plays as a stereo voice; a device that wants another rate or block size is adapted to behind the mixer, which is a backend's job. Pitch is linear resampling. The frame hands the thread its commands (voices named, knobs, bus volumes, one-shots) through a lock-free queue, double-buffered by frame: the frame never blocks on audio and the thread never waits for a frame.
+- **The microphone is a source**: `Clip.Microphone` as a `Sound`'s clip gives the voice the capture device's frames, which its `effect` can filter and its bus plays or mutes (`volume` 0 to only process). Capture starts when a frame first names such a `Sound` and stops when none does. On phones and the web the system asks the player; until they say yes the source is silence. Nothing of it reaches the network in v1: voice chat is a package later, over the data channel.
+- **Assets:** `asset Clip shot = "sfx/shot.wav";`, alone or as a glob's `List<Clip>` or `Map<string, Clip>`, WAV (PCM of 8, 16, 24 or 32 bits, or floats) and Ogg Vorbis, each checked as the game is built (a file that isn't one is an error at the path). The pack keeps the file's bytes as they are, so Vorbis stays about a tenth of PCM. At load the platform decodes clips up to about 10 seconds to PCM at 48 kHz, on the pool's threads, once (Vorbis decodes at roughly a hundred times real time a core, so a library of effects is tens of milliseconds, behind the web's wait for its GPU device); longer clips are streamed, the mixer decoding a block ahead. A `Clip` is a value that names its declaration's sound, as a `Texture` names its image, so under `tide run` a saved file plays through the copies a game kept; one the pack hasn't got plays nothing. `Clip.none` is the default and plays nothing. A `Clip` has `length` in seconds and nothing else to read; it's local code's, as a `Texture` is.
+- **Headless:** a run with no window mixes exactly the blocks a device would ask for at the frame loop's made-up 60th of a second (at 48 kHz a frame is 800 frames of audio, 3.125 blocks of 256: the mixer runs as many whole blocks as the time reached), and `--capture-audio <file.wav>` writes the run's whole mix as 16-bit stereo PCM beside `--capture`'s PNG. Nothing in it is a device's or a clock's, and the mixer is the engine's own float code, so a headless run's audio is the same bytes on every machine, which its pictures can't be. A script line, `300 capture-audio hit.wav`, writes what played since the last such line. Tests compare the mixer's output exactly, on every platform, with no device.
+- **Backends**, one mixer against a small `platform/src/audio.h` (a device that asks for stereo frames at a rate, and a capture device that gives them): WASAPI on Windows, CoreAudio on macOS, ALSA loaded at run time on Linux (as OpenGL and X11 are, so games link nothing), AAudio on Android, and on the web an `AudioWorklet` fed from a ring buffer the program fills in shared memory, in `tide.js` as the GPU's objects are. A machine with no device (CI, a server) runs the null backend: the mixer still runs, so `Clip.length` and captures work. Phones and browsers start audio only after a player's gesture, and a phone in the background loses its device: the activity and the page handle both, and nothing in the API says "failed". **Hot reload:** voices live in the platform layer, which outlives the game's library on desktop, so sounds keep playing across a reload; on the web they go with the page's state, as the stats drawer does. An `audio` declaration whose code changed is swapped at the next block.
+- **Stats:** the drawer's open list gains one line, voices playing and the mixer's time a block, measured only while it's open.
+- **The order to build it in:** the mixer, the null backend and `--capture-audio` with tests; WAV assets and `Audio.Play` from a local handler; `Sound` fields and the listener; buses; `audio` declarations with state and knobs; backends, desktop first, the web second, Android last; Vorbis; the microphone.
+
+### Open
+
+- Effects a game can't write itself: a reverb, which needs more state than a struct of plain fields (a `float[N]` delay line fits once arrays are in `audio` state structs, which is the first thing to try), and sends to a shared reverb bus.
+- A chain of `audio` declarations on one voice (`List<Effect>`), where v1 has one.
+- 3D audio beyond panning and distance: HRTF, occlusion, doppler (`pitch` by hand does the last).
+- Streaming a clip from a URL or a file at runtime (`Web.Fetch` gives the bytes; a `Clip` made of bytes is the missing piece), and recording to a file.
+- Voice chat as a package over the data channel, with the microphone as its source.
+- Sample-accurate scheduling (a sound that starts at a tick's exact time, music synced to the match's beat): `Audio.Play` starts at the next block.
+- Whether the simulation should ever hear audio (a rhythm game's match reading the music's position): today it reads `Time.t` and the view keeps the music to it.
 
 ## Conditional compilation
 
