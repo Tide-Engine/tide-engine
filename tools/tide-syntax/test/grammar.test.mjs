@@ -388,12 +388,13 @@ const cases = {
     'frag and vert are keywords only where a declaration starts': [
         ['frag Shade(', [
             ['frag', 'storage.type'], ['Shade', 'entity.name.function'], ['Shade', '!entity.name.function.call'],
-            ['BoxVertex', 'entity.name.type'], ['mut', 'storage.modifier'], ['Color', 'storage.type.primitive'],
+            ['BoxVertex', 'entity.name.type'], ['out', 'storage.modifier'], ['Color', 'storage.type.primitive'],
             ['Box', 'entity.name.type'], ['Pixel', 'entity.name.type'], ['pixel', '!entity'],
         ]],
         ['vert Wave(', [
             ['vert', 'storage.type'], ['Wave', 'entity.name.function'], ['Wave', '!entity.name.function.call'],
-            ['mut', 'storage.modifier'], ['Time', 'support.class'], ['Instance', 'entity.name.type'],
+            ['mut', 'storage.modifier'], ['out', 'storage.modifier'], ['FromLamp', 'entity.name.type'], ['lamp', '!storage'],
+            ['Time', 'support.class'], ['Instance', 'entity.name.type'],
         ]],
         ['float Blend(', [['Blend', 'entity.name.function'], ['frag', '!storage'], ['vert', '!storage']]],
         ['float both = frag + vert;', [['frag', '!storage'], ['frag', '!entity'], ['vert', '!storage'], ['vert', '!entity']]],

@@ -29,7 +29,7 @@ event(Spawned) Setup(with Main)
     Spawn(Box);
 }
 
-frag Shade(V vertex, mut Color color)
+frag Shade(V vertex, out Color color)
 {
     vertex.uv = float2(0, 0);
     color = Color.white;

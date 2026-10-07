@@ -1,6 +1,6 @@
 // expect: a frag runs on the GPU, for each pixel, so it can't read Frame.dt
 scene Main { }
-frag Pulse(Vertex vertex, mut Color color)
+frag Pulse(Vertex vertex, out Color color)
 {
     color = vertex.color * Frame.dt;
 }

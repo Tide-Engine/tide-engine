@@ -96,7 +96,7 @@ view Corners(Art art)
 }
 
 // A frag says both where it samples: each way a grid is read is a texture of its own
-frag Tiled(Corner vertex, mut Color color, Art art)
+frag Tiled(Corner vertex, out Color color, Art art)
 {
     color = art.tiles.Sample(vertex.uv)
           * art.tiles.Sample(vertex.uv, Filter.Point, Wrap.Repeat)
@@ -107,7 +107,7 @@ frag Tiled(Corner vertex, mut Color color, Art art)
 }
 
 // ...and the Texture its draw gives it
-frag Framed(Corner vertex, mut Color color, Texture source)
+frag Framed(Corner vertex, out Color color, Texture source)
 {
     color = source.Sample(vertex.uv, Filter.Point, Wrap.Mirror) * source.Sample(vertex.uv);
 }

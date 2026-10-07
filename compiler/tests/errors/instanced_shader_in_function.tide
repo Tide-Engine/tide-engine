@@ -1,7 +1,7 @@
 // expect: a Draw3D.Instanced that names a vert or a frag goes in a view
 scene Main { }
 struct BatchItem { Color tint; }
-frag Tint(Vertex3 vertex, mut Color color, BatchItem item)
+frag Tint(Vertex3 vertex, out Color color, BatchItem item)
 {
     color = item.tint;
 }

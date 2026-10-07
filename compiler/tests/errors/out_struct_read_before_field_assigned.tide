@@ -1,0 +1,11 @@
+// expect: 'pair' is read before its 'b' is assigned
+scene Main { }
+struct Pair { int a; int b; }
+int Sum(Pair pair) { return pair.a + pair.b; }
+int Make(int seed, out Pair pair)
+{
+    pair.a = seed;
+    int sum = Sum(pair);
+    pair.b = sum;
+    return sum;
+}

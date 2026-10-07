@@ -111,6 +111,15 @@ void Name(int power, out Stats stats)
     stats = Stats { power = power, name = $"p{power}" };
 }
 
+// A struct a field at a time: it has a value once each of its fields does, on
+// every path, and a field is read once it's assigned, or made by a call
+void Pack(int seed, out Pair pair)
+{
+    if (!Half(seed, out pair.a)) pair.a = 0;
+    if (seed > 3) pair.b = pair.a * 0.5;
+    else pair.b = -1;
+}
+
 // An `out` parameter passed on is assigned by the call it goes to
 bool Lookup(Map<int, float> scores, int key, out float score)
 {
@@ -216,6 +225,8 @@ singleton Calls
     int squares;
     Stats named;
     int namedLength;
+    Pair packed;
+    Pair packedOdd;
     // Passed on, and through && and ||
     float looked;
     bool lookedThere;
@@ -370,6 +381,9 @@ system Call(mut Body body, mut Calls calls)
     Name(6, out calls.named);
     Name(11, out var named);
     calls.namedLength = named.name.length + named.power;
+    Pack(8, out calls.packed);
+    Pack(3, out var odd);
+    calls.packedOdd = odd;
 }
 
 system Pass(mut Calls calls, Maps maps)

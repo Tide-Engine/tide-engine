@@ -192,6 +192,7 @@ system Halve(mut Pile pile, mut Tally tally)
 - The code assigns it before it reads it, and on every path that returns. A path that has nothing to give assigns `default`.
 - An `if` assigns it when both sides do. The right of `&&` and `||` only runs sometimes, and a loop may run no rounds, so what only they assign doesn't count after them.
 - Passing it on as another call's `out` argument assigns it: `return scores.TryGet(key, out score);`.
+- A struct can be assigned a field at a time: it has a value once each of its fields does, and a field is read once it's assigned. `pair.a = 1; pair.b = 2;` fills a `Pair`, and reading `pair.b` between the two is an error. A vector or a color is assigned whole: `v.x = 1` before `v = ...` reads a `v` that has no value yet.
 - In a function that [fails](./errors.md), `fail` doesn't have to assign it. After a call that failed, the caller's variable is what the function assigned before it failed, or its type's default.
 
 **At the call**, the argument says `out`, in one of four ways:
@@ -210,7 +211,7 @@ system Halve(mut Pile pile, mut Tally tally)
 - A list's element and a swizzle of several components (`v.xy`) are copies, so neither can be an `out` argument: declare a variable, and put it in.
 - An `out` argument is a write. A system needs `mut` on the component or singleton the variable is in, and a view can't make the match's.
 
-Functions, methods and [C functions](../c/functions.md#values-across) have `out` parameters. Systems, views, handlers, frags and verts don't, as the engine calls them and nothing would take what they make. Async functions don't either: their call returns before the task has made anything, so they return a struct instead. An `out` parameter has no default, and `out` doesn't tell functions that share a name apart.
+Functions, methods and [C functions](../c/functions.md#values-across) have `out` parameters. Systems, views and handlers don't, as the engine calls them and nothing would take what they make. [Frags and verts](../game/shaders.md) have them for what the GPU takes: a frag's color, `out Color color`, and a struct a vert [writes for its frag](../game/shaders.md#from-a-vert-to-its-frag). The rules for the code are the same there: written before it's read, and on every path that ends. Async functions don't either: their call returns before the task has made anything, so they return a struct instead. An `out` parameter has no default, and `out` doesn't tell functions that share a name apart.
 
 Maps have one built in, [`TryGet(key, out value)`](./text-and-lists.md#members-2), and so does the [World](../game/systems.md#other-entities-the-world): `world.TryGet<Health>(target, out var health)`. The GUI's fields that are typed into have one too, for [whether the player pressed Enter in them](../game/gui.md#when-a-field-is-entered): `GUILayout.TextField("Room", lobby.code, out var entered)`.
 

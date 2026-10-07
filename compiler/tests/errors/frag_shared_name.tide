@@ -9,12 +9,12 @@ local singleton Art
     List<int> faces;
 }
 
-frag Tint(Vertex vertex, mut Color color)
+frag Tint(Vertex vertex, out Color color)
 {
     color = vertex.color;
 }
 
-frag Tint(Vertex vertex, mut Color color, Sun sun)
+frag Tint(Vertex vertex, out Color color, Sun sun)
 {
     color = vertex.color * sun.strength;
 }

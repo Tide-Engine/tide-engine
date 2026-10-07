@@ -35,7 +35,7 @@ event(Spawned) Setup(with Main)
     Spawn(Box);
 }
 
-frag Shade(Wide vertex, mut Color color, Box box)
+frag Shade(Wide vertex, out Color color, Box box)
 {
     color = Color.white * (vertex.f0 + vertex.f1 + vertex.f2 + vertex.f3 + vertex.f4 + vertex.f5 + vertex.f6 + vertex.f7 + vertex.f8 + vertex.f9 + vertex.f10 + vertex.position.x) * box.tint0 * box.tint1 * box.tint2 * box.tint3;
 }

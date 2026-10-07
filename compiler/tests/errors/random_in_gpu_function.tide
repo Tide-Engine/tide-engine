@@ -6,7 +6,7 @@ float Noise(float seed)
     mut var random = Random(int(seed));
     return random.NextFloat();
 }
-frag Glitter(Vertex vertex, mut Color color, Glow glow)
+frag Glitter(Vertex vertex, out Color color, Glow glow)
 {
     color = Color(Noise(glow.seed), 0, 0);
 }

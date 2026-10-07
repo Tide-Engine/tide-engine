@@ -76,6 +76,9 @@ TIDE_TEST(out_text_lists_and_structs_with_text)
     TIDE_CHECK(c->named.power == 6);
     TIDE_CHECK(said(c->named.name, "p6"));
     TIDE_CHECK(c->namedLength == 14);
+    // A struct made a field at a time, one of them by a call
+    TIDE_CHECK(c->packed.a == 4 && c->packed.b == 2.0f);
+    TIDE_CHECK(c->packedOdd.a == 0 && c->packedOdd.b == -1.0f);
 }
 
 TIDE_TEST(out_parameters_passed_on_and_through_conditions)

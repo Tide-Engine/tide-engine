@@ -28,7 +28,7 @@ local singleton Sky
 }
 
 // Integers: the same star in the same cell on every GPU
-frag Stars(SkyVertex vertex, mut Color color, Wind wind)
+frag Stars(SkyVertex vertex, out Color color, Wind wind)
 {
     int2 cell = int2(Math.Floor(vertex.uv * 64));
     int luck = Math.Hash(cell) ^ Math.Hash(wind.seed) ^ Math.Hash(int3(cell, wind.seed)) ^ Math.Hash(int4(cell, 1, 2));
@@ -50,7 +50,7 @@ vert Blow(mut SkyVertex vertex, Wind wind)
 }
 
 // What's forgiving on the CPU is forgiving here, and gives a number where the CPU does
-frag Calm(SkyVertex vertex, mut Color color, Wind wind)
+frag Calm(SkyVertex vertex, out Color color, Wind wind)
 {
     float least = Math.Min(wind.strength, 2);
     float2 most = Math.Max(vertex.uv, float2(0.5));
