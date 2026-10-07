@@ -69,13 +69,13 @@ The list is two columns, a label on the left and its value on the right, in four
 | `60 fps` | Frames a second, over the last second. With `ping 34 ms` after it in a match another machine runs: the line that's always there |
 | `cpu` | What a frame's work takes on its thread, all of it: the ticks it runs, the views and the drawing, without the wait for the display |
 | `render` | Listed under `cpu` as the part of it that prepares and submits the frame's draw list, including its render targets |
-| `gpu` | GPU drawing time, including render targets, on desktop OpenGL and WebGPU devices with timestamp queries. Results arrive asynchronously; the line is absent when no measurement is available. It overlaps `cpu`, so the two aren't added |
-| `ping`, `delay` | The network's round trip to the machine running the match (in the list when it's this machine), and the input delay when there is one (see [Input delay](../multiplayer/matches.md#input-delay)) |
-| `up`, `down` | What goes over the network each second |
-| `tick`, `entities` | The match's tick, and how many entities it has |
+| `gpu (22 draw calls)` | GPU drawing time, including render targets, on desktop OpenGL and WebGPU devices with timestamp queries, with how many draw calls the frame took in its label: a run of shapes, of text or of one mesh's instances is one. Results arrive asynchronously, and it overlaps `cpu`, so the two aren't added. Where the backend has no GPU timer (WebGL 2, OpenGL ES 3), the draw calls have a line of their own, `draw calls` |
+| `ping (delay 3 ticks)` | The network's round trip to the machine running the match, in the list when it's this machine, and in its label the input delay when there is one (see [Input delay](../multiplayer/matches.md#input-delay)) |
+| `network` | What goes over the network each second, up and down: `↑2.0  ↓0.5 KB/s` |
+| `entities` | How many entities the match has |
 | `threads` | The threads ticks run on |
 | `memory` | The memory the program has, as the system counts it. On the web it's the program's WebAssembly memory, which only grows |
-| `renderer`, `draw calls` | What draws (WebGPU, WebGL 2 or OpenGL), and how many draw calls the frame took: a run of shapes, of text or of one mesh's instances is one |
+| `renderer` | What draws: WebGPU, WebGL 2 or OpenGL |
 | `Move` | The three systems that took longest on average per measured run, over the last half second. A system keeps its row while it stays among the three, and one that joins them takes the row of the one it replaces, so the rows don't shuffle |
 
 Timings change twice a second; frame rate and network rates change once a second. The panel is as wide as its widest label and value, and while it's open it keeps the widest it has been, so its edge doesn't jump as a long system name comes and goes. The drawer shows once there's a first frame rate, a quarter of a second in. GPU time excludes the drawer and display wait; on WebGPU it sums render-pass durations. WebGL 2 and OpenGL ES 3 have no GPU timer here. Outside a match, the list has the lines that aren't a match's. On a screen too low for the whole list, it keeps the lines there's room for, from its top.
@@ -261,7 +261,7 @@ tide run --script play.txt --size 1280 720
 | `key <name> down`, `key <name> up` | A key goes down or up, by its name in [`Devices`](../game/input.md#devices): `w`, `space`, `enter`, `leftShift`, `upArrow`, `digit1` |
 | `key <name>` | A tap: down for this frame, and up at the next |
 | `button <name> down`, `up`, or neither | A mouse button, the same way: `left`, `right`, `middle`, `back` or `forward`. `button left` is a click where the mouse is |
-| `mouse <x> <y>` | The mouse goes to a place, in pixels from the window's top left, with `y` down, as the GUI's and `Draw.Pixels`'s are |
+| `mouse <x> <y>` | The mouse goes to a place, in pixels from the window's top left, with `y` down, as the GUI's and `Draw.Screen`'s are |
 | `move <dx> <dy>` | The mouse moves by so much, across and down: what turns a camera whose [cursor is locked](../game/views.md#looking-around) |
 | `scroll <x> <y>` | The wheel turns, `y` positive away from you |
 | `text <characters>` | Characters typed, to the line's end, as [`devices.keyboard.text`](../game/input.md#typed-text) and the GUI's fields get them: 32 a frame, as a paste comes. No key is pressed for them: Enter and Backspace are `key` lines |

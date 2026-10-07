@@ -1,4 +1,4 @@
-// expect: target.Pixels sets it around a block
+// expect: target.Screen sets it around a block
 scene Main { }
 
 local singleton Canvas
@@ -8,5 +8,5 @@ local singleton Canvas
 
 view Show(Canvas canvas)
 {
-    canvas.target.Pixels();
+    canvas.target.Screen();
 }

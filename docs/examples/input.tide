@@ -80,7 +80,7 @@ view DrawHero(Hero hero)
     Draw.RoundRect(hero.position + float2(0, 0.05), float2(0.5, 0.7), 0.16, Color(0.98, 0.75, 0.14));
     Draw.Line(hero.position + float2(0, 0.6), hero.position + float2(hero.move.x * 0.6, 0.6), 0.06, Color(0.18, 0.83, 0.75));
 
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Text($"move.x = {hero.move.x:F1}   jump = {hero.jump}   jumps: {hero.jumps}", float2(16, 14), 16, Color.white);
     Draw.Text("Click here, then A and D or the arrows, and space.\nOn a touchscreen, drag sideways, and up to jump.",
                 float2(16, Screen.height - 46), 13, Color(0.64, 0.64, 0.68));

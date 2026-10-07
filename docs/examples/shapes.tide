@@ -27,7 +27,7 @@ view Shapes(ShapeSettings settings)
 
 view Controls(mut ShapeSettings settings)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Text("Shapes, gradients and outlines", float2(16, 14), 18, Color.white);
     GUI.SetTheme(GUITheme { radius = 6 });
     GUI.Slider(Rect(16, Screen.height - 48, Screen.width - 32, 32), "Amount", settings.amount, 0, 1);

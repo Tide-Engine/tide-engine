@@ -105,8 +105,8 @@ view Make(mut Room room)
 {
     room.frames++;
     if (room.frames > 1) return;
-    room.reflection = RenderTarget.Cube(64);
-    room.bright = RenderTarget.Cube(16, Format.Rgba16f);
+    room.reflection = Cubemap(64);
+    room.bright = Cubemap(16, Format.Rgba16f);
     room.held = sky;
     room.probe = Probe { cube = Pick(room.reflection, room.bright, true), front = room.reflection.faces[4] };
     room.ball = [

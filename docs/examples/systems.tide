@@ -63,7 +63,7 @@ view Labels(Demo demo)
     var first = Draw.WorldToScreen(float2(0, 1));
     var second = Draw.WorldToScreen(float2(0, 0));
     var third = Draw.WorldToScreen(float2(0, -1));
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Text("Systems run every tick", float2(16, 14), 18, Color.white);
     Draw.Text("with Moving, without Frozen", float2(16, first.y - 34), 14, Color(0.98, 0.75, 0.14));
     Draw.Text("Moving + Frozen: excluded", float2(16, second.y - 34), 14, Color(0.98, 0.44, 0.52));

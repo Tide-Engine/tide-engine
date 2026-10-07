@@ -30,7 +30,7 @@ void Label(string text, float2 at, Anchor anchor, Font font)
 
 view Show(mut Probe probe)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Text("plain", float2(1, 2), 10, Color.white);
     Draw.Text("anchored", float2(3, 4), 11, Color.white, Anchor.MiddleCenter);
     Draw.Text("bold", float2(5, 6), 12, Color.white, Font.Bold);

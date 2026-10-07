@@ -12,7 +12,7 @@ Color Shade(Color color, float light)
 view Cards(mut Draft draft)
 {
     Draw.Clear(Color(0.086, 0.086, 0.094));
-    Draw.SetPixels();
+    Draw.SetScreen();
     var width = (Screen.width - 64) / 3;
     for (var slot = 0; slot < 3; slot++)
     {
