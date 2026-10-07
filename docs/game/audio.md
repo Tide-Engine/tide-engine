@@ -3,7 +3,7 @@
 Sound is presentation, like drawing: it's this machine's, and nothing of it is in the match. A view says what should be sounding as it says what should be drawn, and a local handler plays a sound when the match sends an event. Nothing in the simulation hears any of it, so a match is the same on a machine with its speakers off.
 
 ::: info
-What's here so far: clips as assets, `Audio.Play`, `Sound` fields and the listener. Buses, `audio` declarations that filter and make sound, and the device backends are coming; see the [spec](../spec.md#audio) for the whole design. Until the backends land, a game with a window is silent, and a run with no window captures what it played (below).
+What's here so far: clips as assets, `Audio.Play`, `Sound` fields and the listener, buses, and `audio` declarations that filter and make sound. The device backends are coming; see the [spec](../spec.md#audio) for the whole design. Until they land, a game with a window is silent, and a run with no window captures what it played (below).
 :::
 
 ## Clips
@@ -86,6 +86,67 @@ view Ears(Camera camera)
 ```
 
 `Audio.SetListener(position, rotation)` says where it is and which way it faces (its right is +x turned by `rotation`); `Audio.SetListener(center)` with a `float2` is the 2D form, facing +z. `Audio.SetFalloff(near, far)` says how a sound's volume falls with its distance: at its volume within `near`, silent past `far`, and as `near / distance` between, scaled to reach 0 at `far`. Like a draw setting, each holds from where it's set to the end of the frame, and every frame starts from the defaults: the origin, facing +z, and 1 and 50.
+
+## Buses
+
+Sounds go through buses, which a game declares as an enum marked `[Bus]`, its first member the master every bus goes through:
+
+```csharp
+[Bus]
+enum Bus
+{
+    Master,
+    Music,
+    Sfx,
+}
+
+view Levels(Settings settings, mut Music music)
+{
+    music.track.bus = Bus.Music;
+    Audio.SetVolume(Bus.Music, settings.music);
+    Audio.SetVolume(Bus.Sfx, settings.effects);
+}
+```
+
+A `Sound`'s `bus` is one of them (the master unless set). `Audio.SetVolume(bus, volume)` sets a bus's volume for the frames after, as a draw setting does; every frame starts with every bus at 1. A game has 16 buses at most. A game with no `[Bus]` enum has the master alone, and a bus is then a number from 0 to 15.
+
+## Effects
+
+An `audio` declaration is code the audio thread runs once a block of 256 stereo frames, on a sound's samples before they're mixed, or on a bus's mix. It's what Unity's `OnAudioFilterRead` lets a game do, and a synth too:
+
+```csharp
+struct Knobs
+{
+    float cutoff;
+}
+
+struct LowpassState
+{
+    float last;
+}
+
+audio Lowpass(mut Samples samples, mut LowpassState state, Knobs knobs)
+{
+    for (var i = 0; i < samples.values.count; i++)
+    {
+        state.last += (samples.values[i] - state.last) * knobs.cutoff;
+        samples.values[i] = state.last;
+    }
+}
+
+view Engines(mut Engine engine, Throttle throttle)
+{
+    engine.hum.effect = Lowpass(Knobs { cutoff = 0.2 + throttle.amount * 0.5 });
+}
+```
+
+- **The block** is its first parameter, `mut Samples samples`: `samples.values` is 512 floats, interleaved left then right, 256 frames at 48 kHz, and `samples.values.count` says so. Write what should play into it.
+- **Its state** is a `mut` struct of plain fields, one at most, the voice's own, zeros when the effect starts and kept from block to block. Nothing else reads it.
+- **Its knobs** are a read-only struct of plain fields, one at most: a copy of what the frame last gave, `Lowpass(Knobs { ... })`. The value that call makes is an `Effect`, which a `Sound`'s `effect` takes, and a bus through `Audio.SetEffect(Bus.Master, Compress(knobs))`. An `audio` declaration with no knobs is `Square()`.
+- **A source** is an effect on a `Sound` with no clip: its block starts as silence, and what it leaves is what plays. That's a synth.
+- **It runs between nothing**: no world, no frame, no files, no C, no text, lists, maps, sets or grids, and no sounds or drawing of its own, itself or through the functions it calls. `Math` is all there, and ordinary functions of plain values are fine. The compiler says what's not.
+
+An effect's state starts over when a `Sound` is given another effect. Changing the knobs each frame is the way to move a filter: the state carries on.
 
 ## Hearing a run with no window
 

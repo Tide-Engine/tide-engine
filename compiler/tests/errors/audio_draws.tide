@@ -1,0 +1,10 @@
+// expect: 'Shout' runs on the audio thread, so it can't draw or use the GUI
+audio Shout(mut Samples samples)
+{
+    samples.values[0] = 1;
+    Draw.Clear(Color.white);
+}
+
+scene Main
+{
+}

@@ -38,6 +38,15 @@ enum BodyType
 // it's a bullet) is what code says, when it's spawned or later: the next step
 // has it that way.
 //
+// Whether it's asleep is Box3D's after each step too: at rest, and stepped no
+// more until something wakes it. A system that writes `asleep` puts the body
+// to sleep or wakes it, at the next step, and one spawned with it starts
+// asleep. Box3D sleeps and wakes bodies an island at a time, the bodies that
+// touch each other, so a body that's put to sleep takes what it touches with
+// it, and one that's woken wakes what it fell asleep with. What code puts to
+// sleep in a tick is asleep as that tick's step starts, whatever else it wrote
+// into it or into the others that tick.
+//
 // Where it is and how it's turned are said to be that, for views: when the
 // server corrects where this machine had a body, they see it get there over a
 // few frames, turning the short way. It changes nothing of the match.
@@ -64,6 +73,10 @@ component Body
     // The package's own: what Box3D has of how the body is to be, which is how
     // a type, a scale, a damping or a bullet that's written later is told
     bool stepBullet;
+    bool asleep; // At rest, and not stepped until something wakes it: never so for a static body
+    // The package's own: whether the last step left it asleep, which is how
+    // an `asleep` that code wrote since is told
+    bool stepAsleep;
     BodyType stepType = BodyType.Dynamic;
     float stepGravityScale = 1;
     float stepLinearDamping;

@@ -1,0 +1,17 @@
+// expect: a game has one [Bus] enum, and 'Bus' is it already
+[Bus]
+enum Bus
+{
+    Master,
+    Music,
+}
+
+[Bus]
+enum Other
+{
+    Master,
+}
+
+scene Main
+{
+}

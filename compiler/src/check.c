@@ -267,7 +267,7 @@ static const decl_index *decls_by(const program *prog, const bool c_names)
 static bool named_only(const program *prog, const decl *d)
 {
     return d == prog->depth || d == prog->cull || d == prog->wrap || d == prog->format || d == prog->stencil_test
-        || d == prog->stencil_op || d == prog->sound;
+        || d == prog->stencil_op || d == prog->sound || d == prog->samples || d == prog->effect;
 }
 
 // The first declaration in the bucket of a name in generated C: -1 for none.
@@ -285,8 +285,9 @@ static decl *find_in(const program *prog, const str ns, const str name, const na
         decl *d = prog->decls.items[i];
         if (is_kind(d, kind) && str_eq(d->name, name) && str_eq(decl_ns(d), ns)) {
             // Generated C only has these in games that name them
-            if ((d == prog->random || named_only(prog, d)) && builds(prog)) d->named = true;
-            if (d == prog->sound && builds(prog)) ((program *)prog)->uses_audio = true; // The frame names its Sounds
+            if ((d == prog->random || named_only(prog, d)) && builds(prog) && !prog->quiet_names) d->named = true;
+            if (d == prog->sound && builds(prog) && !prog->quiet_names) ((program *)prog)->uses_audio = true; // The frame names its Sounds
+            if (d == prog->sound && builds(prog) && !prog->quiet_names) prog->effect->named = true; // A Sound holds an Effect
             return d;
         }
     }
@@ -1722,7 +1723,10 @@ static type array_type(checker *c, const type element, expr *size, const loc at)
     // A forward struct's fields may not be known yet, or still contain a
     // cycle. Check it once all structs are ordered, before walking its fields.
     if ((element.kind != TY_STRUCT || c->fields_ordered) && !array_element_ok(element, at)) return T_ERR;
-    return array_of(c->prog, element, (int)n, at);
+    const type made = array_of(c->prog, element, (int)n, at);
+    // Generated C has an array type once the game names it, not for a built-in struct's own field
+    if (made.kind == TY_ARRAY && !c->prog->quiet_names) made.decl->named = true;
+    return made;
 }
 
 // Whether `e`, or what it's a member of, is a list's element, an array's or
@@ -2640,6 +2644,97 @@ static bool check_audio_use(checker *c, const loc at)
     code->plays = true;
     c->prog->uses_audio = true;
     return true;
+}
+
+// Lowpass(Knobs { cutoff = 0.2 }): an `audio` declaration with its knobs, as
+// the Effect value a Sound's `effect` or a bus takes. With no knobs
+// parameter, `Lowpass()`.
+static type check_effect_value(checker *c, expr *e, decl *fn)
+{
+    e->method = fn;
+    e->call = CALL_EFFECT;
+    const int wants = fn->audio_knobs >= 0 ? 1 : 0;
+    if (e->args.count != wants) {
+        if (wants) {
+            diag_error(e->at, "'" STR_FMT "' takes its knobs, a '%s': '" STR_FMT "(%s { ... })'", STR_ARG(fn->name),
+                       type_name(fn->params.items[fn->audio_knobs].type), STR_ARG(fn->name), type_name(fn->params.items[fn->audio_knobs].type));
+        } else {
+            diag_error(e->at, "'" STR_FMT "' has no knobs: '" STR_FMT "()' is the effect", STR_ARG(fn->name), STR_ARG(fn->name));
+        }
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return T_ERR;
+    }
+    if (wants) {
+        const type want = fn->params.items[fn->audio_knobs].type;
+        check_expr_want(c, e->args.items[0], want);
+        if (e->args.items[0]->type.kind == TY_ERROR) return T_ERR;
+        if (!type_assignable(want, e->args.items[0]->type)) {
+            diag_error(e->args.items[0]->at, "'" STR_FMT "' takes its knobs as a %s, not %s", STR_ARG(fn->name), type_name(want),
+                       type_name(e->args.items[0]->type));
+            return T_ERR;
+        }
+        vec_push(e->arg_want, want);
+    }
+    if (builds(c->prog)) c->prog->effect->named = true; // The value is one
+    return (type){TY_STRUCT, c->prog->effect};
+}
+
+// Audio.SetEffect(bus, effect): the effect on a bus's mix, for the frames after.
+static type check_audio_bus_effect(checker *c, expr *e)
+{
+    if (e->args.count != 2) {
+        diag_error(e->at, "Audio.SetEffect takes a bus and an effect: 'Audio.SetEffect(Bus.Master, Compress(knobs))'");
+        return T_ERR;
+    }
+    const type bus = e->args.items[0]->type;
+    const decl *enumeration = c->prog->bus_enum;
+    if (enumeration ? !(bus.kind == TY_ENUM && bus.decl == enumeration) : !type_is_integer(bus)) {
+        diag_error(e->args.items[0]->at, "a bus is %s, not %s", enumeration ? "one of the game's [Bus] enum" : "a number from 0 to 15",
+                   type_name(bus));
+        return T_ERR;
+    }
+    const type effect = e->args.items[1]->type;
+    if (effect.kind != TY_STRUCT || effect.decl != c->prog->effect) {
+        diag_error(e->args.items[1]->at, "an effect is an audio declaration with its knobs, 'Compress(knobs)', not %s", type_name(effect));
+        return T_ERR;
+    }
+    e->call = CALL_AUDIO;
+    e->c_callee = "tide_audio_set_bus_effect_value";
+    vec_push(e->arg_want, bus);
+    vec_push(e->arg_want, effect);
+    return T_VOID_;
+}
+
+// Audio.SetVolume(bus, volume): a bus of the game's [Bus] enum, or a number
+// from 0 to 15 in a game with none, at a volume for the frames after.
+static type check_audio_volume(checker *c, expr *e)
+{
+    if (e->args.count != 2) {
+        diag_error(e->at, "Audio.SetVolume takes a bus and a volume: 'Audio.SetVolume(Bus.Music, 0.5)'");
+        return T_ERR;
+    }
+    const type bus = e->args.items[0]->type;
+    const decl *enumeration = c->prog->bus_enum;
+    if (enumeration ? !(bus.kind == TY_ENUM && bus.decl == enumeration) : !type_is_integer(bus)) {
+        if (enumeration) {
+            diag_error(e->args.items[0]->at, "a bus is one of '" STR_FMT "', the game's [Bus] enum, not %s", STR_ARG(enumeration->name),
+                       type_name(bus));
+        } else {
+            diag_error(e->args.items[0]->at, "a bus is a number from 0 to 15 (0 is the master), or a member of the game's [Bus] enum, "
+                                             "not %s", type_name(bus));
+            diag_note("declare the buses: '[Bus] enum Bus { Master, Music, Sfx }', then 'Audio.SetVolume(Bus.Music, 0.5)'");
+        }
+        return T_ERR;
+    }
+    if (!type_is_numeric(e->args.items[1]->type)) {
+        diag_error(e->args.items[1]->at, "a bus's volume is a float, not %s", type_name(e->args.items[1]->type));
+        return T_ERR;
+    }
+    e->call = CALL_AUDIO;
+    e->c_callee = "tide_audio_set_bus_volume";
+    vec_push(e->arg_want, bus);
+    vec_push(e->arg_want, T_FLOAT_);
+    return T_VOID_;
 }
 
 static bool check_frame_time_use(checker *c, const loc at)
@@ -3730,6 +3825,7 @@ static type check_call(checker *c, expr *e)
     }
 
     decl *const fn = find_named(c, e->name, e->at, NAME_FUNCTION);
+    if (fn && fn->is_audio) return check_effect_value(c, e, fn);
     if (fn) return check_function_call(c, e, fn);
 
     decl *const d = find_type(c, e->name, e->at);
@@ -5518,6 +5614,8 @@ static type check_method(checker *c, expr *e)
         if ((gui || draws) && !check_frame_use(c, e->at, gui ? "The GUI" : str_to_cstr(owner))) return T_ERR;
         const bool plays = str_eq_c(owner, "Audio");
         if (plays && !check_audio_use(c, e->at)) return T_ERR;
+        if (plays && str_eq_c(e->name, "SetVolume")) return check_audio_volume(c, e);
+        if (plays && str_eq_c(e->name, "SetEffect")) return check_audio_bus_effect(c, e);
         if (str_eq_c(owner, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR; // Screen.Flip: the frame's window
         if (draws && old_setting(e)) return T_ERR;
         const type result = resolve_builtin_call(owner, e);
@@ -8224,6 +8322,12 @@ static type check_expr_any(checker *c, expr *e)
         else diag_error(e->at, "operator %s can't be used with %s", op_str(e->op), type_name(operand));
         break;
     }
+    }
+    if (c->method && !c->method->makes_text && t.kind != TY_ERROR
+        && (t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID
+            || (t.kind == TY_STRUCT && decl_holds_text(t.decl)))) {
+        c->method->makes_text = true; // Scratch memory, which the audio thread has none of (check_audio_bodies)
+        c->method->makes_text_at = e->at;
     }
     if (holds_render_resource(t) && !gpu_code(c)) {
         decl *code = reading_code(c);
@@ -12013,11 +12117,55 @@ static void check_body_assigned(const checker *c, const decl *code, const stmt *
     if (makes) check_assigned(c->prog, code, body);
 }
 
+// An `audio` declaration's parameters: the block first, `mut Samples`; at most
+// one other `mut`, a struct of plain fields, its state; and read-only structs
+// of plain fields, its knobs, at most one.
+static void check_audio_signature(checker *c, decl *m)
+{
+    (void)c;
+    m->audio_state = m->audio_knobs = -1;
+    if (m->params.count == 0 || m->params.items[0].type.kind != TY_STRUCT || m->params.items[0].type.decl != c->prog->samples
+        || m->params.items[0].mode != PARAM_MUT) {
+        diag_error(m->at, "an audio declaration's first parameter is the block it works on, 'mut Samples samples'");
+        diag_note("'audio Lowpass(mut Samples samples, mut LowpassState state, Knobs knobs) { ... }'");
+        return;
+    }
+    for (int k = 1; k < m->params.count; k++) {
+        const param *p = &m->params.items[k];
+        const bool plain = p->type.kind == TY_STRUCT && p->type.decl != c->prog->samples && !decl_holds_text(p->type.decl)
+                        && !holds_render_resource(p->type);
+        if (!plain) {
+            diag_error(p->at, "an audio declaration takes structs of plain fields beside its block: '" STR_FMT "' is %s",
+                       STR_ARG(p->name), type_name(p->type));
+            diag_note("its state is a 'mut' struct, kept between blocks; its knobs a read-only one, a copy the frame gave");
+            return;
+        }
+        if (p->is_out) {
+            diag_error(p->at, "an audio declaration has no 'out' parameters: its state is 'mut', kept between blocks");
+            return;
+        }
+        if (p->mode == PARAM_MUT) {
+            if (m->audio_state >= 0) {
+                diag_error(p->at, "an audio declaration has one state, and '" STR_FMT "' is it already", STR_ARG(m->params.items[m->audio_state].name));
+                return;
+            }
+            m->audio_state = k;
+        } else {
+            if (m->audio_knobs >= 0) {
+                diag_error(p->at, "an audio declaration has one knobs struct, and '" STR_FMT "' is it already", STR_ARG(m->params.items[m->audio_knobs].name));
+                return;
+            }
+            m->audio_knobs = k;
+        }
+    }
+}
+
 static void check_method_body(checker *c, decl *m)
 {
     c->method = m;
     c->system = m; // For its parameters
     c->unit = m->unit;
+    if (m->is_audio) check_audio_signature(c, m);
     const int outs = c->outs;
     const int errors = diag_error_count();
     check_stmt(c, m->body);
@@ -13243,7 +13391,7 @@ static void add_builtins(program *prog)
     sound->builtin = true;
     static const char *const sound_fields[][2] = {{"clip", "Clip"},     {"position", "float3"}, {"spatial", "bool"},
                                                   {"volume", "float"},  {"pitch", "float"},     {"loop", "bool"},
-                                                  {"playing", "bool"}};
+                                                  {"playing", "bool"},  {"effect", "Effect"}, {"bus", "int"}}; // `bus` is the game's [Bus] enum, below
     for (int i = 0; i < (int)(sizeof sound_fields / sizeof sound_fields[0]); i++) {
         field f = {0};
         f.name = str_from(sound_fields[i][0]);
@@ -13257,6 +13405,56 @@ static void add_builtins(program *prog)
         vec_push(sound->fields, f);
     }
     prog->sound = sound;
+    // struct Samples { float[512] values; }: the block an `audio` declaration reads and writes, 256 stereo frames
+    // interleaved left then right, at 48 kHz (tide/audio.h's TIDE_AUDIO_SAMPLES): in generated C only when named.
+    decl *samples = NEW(decl);
+    samples->kind = DECL_STRUCT;
+    samples->name = str_from("Samples");
+    samples->builtin = true;
+    {
+        field f = {0};
+        f.name = str_from("values");
+        f.type_name = str_from("float[512]");
+        type_ref *r = NEW(type_ref);
+        r->name = str_from("float");
+        r->text = f.type_name;
+        expr *n = NEW(expr);
+        n->kind = E_INT;
+        n->int_value = 512;
+        n->text = str_from("512");
+        vec_push(r->sizes, n);
+        f.type_ref = r;
+        vec_push(samples->fields, f);
+    }
+    prog->samples = samples;
+    // struct Effect { long id; int size; byte[256] knobs; }: an `audio` declaration with the knobs it was given,
+    // `Lowpass(Knobs { cutoff = 0.2 })`, which a Sound's `effect` and a bus take. Its fields are the engine's.
+    decl *effect = NEW(decl);
+    effect->kind = DECL_STRUCT;
+    effect->name = str_from("Effect");
+    effect->builtin = true;
+    {
+        field id = {0}, size = {0}, knobs = {0};
+        id.name = str_from("id");
+        id.type_name = str_from("long");
+        size.name = str_from("size");
+        size.type_name = str_from("int");
+        knobs.name = str_from("knobs");
+        knobs.type_name = str_from("byte[256]");
+        type_ref *r = NEW(type_ref);
+        r->name = str_from("byte");
+        r->text = knobs.type_name;
+        expr *n = NEW(expr);
+        n->kind = E_INT;
+        n->int_value = 256;
+        n->text = str_from("256");
+        vec_push(r->sizes, n);
+        knobs.type_ref = r;
+        vec_push(effect->fields, id);
+        vec_push(effect->fields, size);
+        vec_push(effect->fields, knobs);
+    }
+    prog->effect = effect;
     // Trilinear is in generated C only for a game that names it (program.names_trilinear)
     static const char *const filters[] = {"Point", "Bilinear", "Trilinear"};
     decl *filter = NEW(decl);
@@ -13421,6 +13619,8 @@ static void add_builtins(program *prog)
     vec_push(decls, theme);
     vec_push(decls, control);
     vec_push(decls, sound);
+    vec_push(decls, samples);
+    vec_push(decls, effect);
     vec_push(decls, filter);
     vec_push(decls, blend);
     vec_push(decls, depth);
@@ -14549,6 +14749,19 @@ static void check_attributes(checker *c)
                 if (d->kind != DECL_ASSET) check_sampling_attribute(c, d, attr); // An asset's were read with it
                 continue;
             }
+            if (str_eq_c(attr->name, "Bus")) { // The game's buses: read before the fields resolved (check)
+                if (d->kind != DECL_ENUM) {
+                    diag_error(attr->at, "Bus marks the enum of the game's audio buses, and '" STR_FMT "' isn't an enum", STR_ARG(d->name));
+                    diag_note("'[Bus] enum Bus { Master, Music, Sfx }': the first member is the master, which every bus goes through");
+                } else if (attr->values.count > 0 || attr->args.count > 0) {
+                    diag_error(attr->at, "Bus takes nothing: '[Bus]'");
+                } else if (c->prog->bus_enum != d) {
+                    diag_error(attr->at, "a game has one [Bus] enum, and '" STR_FMT "' is it already", STR_ARG(c->prog->bus_enum->name));
+                } else if (d->members.count > 16) {
+                    diag_error(attr->at, "a game has 16 buses at most, and '" STR_FMT "' has %d members", STR_ARG(d->name), d->members.count);
+                }
+                continue;
+            }
             if (str_eq_c(attr->name, "Sparse")) { // Read as the archetypes derive (sparse_component)
                 if (d->kind != DECL_COMPONENT || d->is_scene) {
                     diag_error(attr->at, "Sparse marks a component that entities gain and lose, and '" STR_FMT "' isn't one",
@@ -14569,6 +14782,7 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "Stage");
                 suggest_consider_c(&s, "NativeName");
                 suggest_consider_c(&s, "Sparse");
+                suggest_consider_c(&s, "Bus");
                 suggest_consider_c(&s, "Channel");
                 suggest_consider_c(&s, "Unordered");
                 suggest_consider_c(&s, "Filter");
@@ -14578,8 +14792,8 @@ static void check_attributes(checker *c)
                 diag_note("the attributes are Before and After, which order systems: [After(Physics.Integrate)], "
                           "Stage, which assigns an enum phase: [Stage(RenderStages.Objects)], "
                           "NativeName, which names an extern function's or system's C function, Sparse, for a component that "
-                          "entities gain and lose, Channel and Unordered, which order a command's delivery, and Filter and "
-                          "Wrap, which say how an asset that's drawn with is sampled");
+                          "entities gain and lose, Channel and Unordered, which order a command's delivery, Filter and "
+                          "Wrap, which say how an asset that's drawn with is sampled, and Bus, which marks the enum of the audio buses");
                 continue;
             }
             if (attr->values.count > 0) {
@@ -15080,6 +15294,40 @@ static void check_audio_calls(const checker *c)
                      : site->from->kind == DECL_SHADER ? "the GPU can't"
                      : site->from->is_async ? "a task runs between frames"
                                             : "sound is this machine's: a local handler of the match's event plays it");
+    }
+}
+
+// An `audio` declaration runs on the audio thread, between nothing: no world,
+// no frame, no files, no C, and no scratch memory (text, lists, maps, sets,
+// grids), itself or through the functions it calls.
+static void check_audio_bodies(const checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            if (site->to->makes_text && !site->from->makes_text) {
+                site->from->makes_text = true;
+                site->from->makes_text_at = site->call->at;
+                changed = true;
+            }
+            if (site->to->calls_c && !site->from->calls_c) {
+                site->from->calls_c = true;
+                changed = true;
+            }
+        }
+    }
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        const decl *d = c->prog->decls.items[i];
+        if (d->kind != DECL_FUNCTION || !d->is_audio) continue;
+        const char *what = d->draws ? "draw or use the GUI" : d->plays ? "play sounds" : d->uses_io ? "reach files or the network"
+                         : d->frame_time ? "read Frame.dt" : (d->world_local || d->world_match) ? "reach the world"
+                         : d->calls_c ? "call C" : d->is_async ? "be a task" : d->makes_text ? "make text, lists, maps, sets or read grids" : NULL;
+        if (!what) continue;
+        const loc at = d->draws ? d->draws_at : d->plays ? d->plays_at : d->uses_io ? d->io_at : d->frame_time ? d->frame_time_at
+                     : d->makes_text ? d->makes_text_at : d->at;
+        diag_error(at, "'" STR_FMT "' runs on the audio thread, so it can't %s", STR_ARG(d->name), what);
+        diag_note("an audio declaration reads and writes its block, its state and its knobs, and calls functions that do no more");
     }
 }
 
@@ -16020,11 +16268,22 @@ bool check(program *prog)
     collect_decls(prog);
     check_units(prog);
     check_packages(prog);
+    // A game's [Bus] enum types Sound.bus (checked with the attributes, once fields resolved)
+    for (int i = 0; i < prog->decls.count && !prog->bus_enum; i++) {
+        decl *d = prog->decls.items[i];
+        if (d->kind != DECL_ENUM) continue;
+        for (int a = 0; a < d->attributes.count; a++) {
+            if (str_eq_c(d->attributes.items[a].name, "Bus")) prog->bus_enum = d;
+        }
+    }
+    if (prog->bus_enum) prog->sound->fields.items[prog->sound->fields.count - 1].type_name = prog->bus_enum->qualified;
 
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
         c.unit = d->unit;
+        prog->quiet_names = d->builtin; // Sound's Effect, Samples' float[512]: in generated C once the game names them
         if (d->kind != DECL_SYSTEM) resolve_field_types(&c, d);
+        prog->quiet_names = false;
     }
     for (int i = 0; i < prog->local_parts.count; i++) {
         c.unit = prog->local_parts.items[i]->unit;
@@ -16156,6 +16415,7 @@ bool check(program *prog)
     check_io_calls(&c);
     check_frame_time_calls(&c);
     check_audio_calls(&c);
+    check_audio_bodies(&c);
     resolve_tasks(&c);
     check_this_calls(&c);
     check_drawing_calls(&c);
