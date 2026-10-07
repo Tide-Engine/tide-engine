@@ -881,11 +881,11 @@ static void walk_value(const expr *e)
             o.decl = e->type_decl;
             o.object_type = (type){TY_ERROR, NULL};
             add_occ(o);
-        } else if (e->resource_operation && e->object->type.kind == TY_RENDER_TARGET) {
+        } else if (e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP)) {
             o.kind = OCC_METHOD;
             add_occ(o);
-        } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW || e->call == CALL_GUI || e->call == CALL_TEXT
-                   || e->call == CALL_RANDOM) {
+        } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW || e->call == CALL_AUDIO || e->call == CALL_GUI
+                   || e->call == CALL_TEXT || e->call == CALL_RANDOM) {
             o.kind = OCC_FUNCTION;
             o.owner = e->call == CALL_TEXT ? str_from("string") : e->call == CALL_RANDOM ? str_from("Random")
                       : e->targeted ? target_owner(e) : e->object->name;
@@ -1288,6 +1288,13 @@ void analysis_run(const analysis_file *files, const int count)
     A.files = arena_alloc(sizeof(afile) * (size_t)(count > 0 ? count : 1));
     A.prog = program_new();
     A.prog->game_folder = asset_roots.game_folder; // The checker keeps the assets' hashes and fetched URLs there
+    // The symbols #if lines read, as `tide run` has them: DEBUG, and the game's packages. What a
+    // command line would --define isn't known here, and reads as not defined.
+    lex_symbols_reset();
+    lex_define("DEBUG");
+    for (int i = 0; i < count; i++) {
+        if (files[i].package) lex_define_package(files[i].package);
+    }
     for (int i = 0; i < count; i++) {
         afile *f = &A.files[i];
         char *copy = arena_alloc(files[i].len + 1);
@@ -1463,8 +1470,10 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_COLOR: return "A color: r, g, b and a from 0 to 1. `Color(r, g, b)` or `Color(r, g, b, a)`.";
     case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter[, wrap]])`. A Blit supplies its source to a read-only Texture shader parameter.";
     case TY_DEPTH_TEXTURE: return "A local reference to a render target's depth, `target.depth`, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow wants.";
+    case TY_CUBEMAP: return "A local reference to a cube of six images, which a frag or vert reads by a direction from its middle, `Sample(direction)`, where it's an asset by its name or a field of a component or singleton it takes. An asset's is six files a glob matches, named for their faces: `asset Cubemap sky = \"art/sky_??.png\";`. `RenderTarget.Cube(size)` is one a view draws into, a face at a time: `cube.faces[0]` to `cube.faces[5]` are RenderTargets, in the order +x, -x, +y, -y, +z, -z.";
     case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Window()` is always the window's size. `samples: 4`, after everything else, draws each of its pixels with that many samples, which smooths the edges of the triangles drawn into it. Each says last what it holds when that isn't one color image: `Format.Depth` is depth alone, and a format for each makes several, `RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)`, which a frag's `out Color` parameters go to in order. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture, `target.colors[1]` its second color image's, and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
     case TY_RECT: return "A rectangle on the screen, for the GUI: x and y from the top left, y down, then width and height.";
+    case TY_CLIP: return "A sound of the game's pack, this machine's to play: an `asset Clip` by its name, or a copy of one. `Audio.Play(clip[, position][, volume[, pitch]])` plays it once, from views, local handlers and the functions they call; the match can't use it.";
     case TY_STRING: return "Text, written in double quotes.";
     case TY_ACTION: return "Code the caller writes in braces after the call, run with `content();`.";
     case TY_DRAW_LIST: return "The frame's draw list, for a game's C to draw into with tide/draw.h: an extern "
@@ -1878,6 +1887,19 @@ static const method_form depth_calls[] = {
      "the pixel is from the lamp, a little less, so what the lamp sees isn't in its own shadow: 1 is lit, 0 in shadow."},
 };
 
+static const method_form cube_calls[] = {
+    {"Sample", "Sample(float3 direction, Filter filter = Filter.Bilinear) -> Color",
+     "Reads this cube in a frag or vert, towards `direction` from its middle, of any length: a sky's color that "
+     "way, or what a reflection sees. One face goes on in the next, so there's no edge and no wrap. "
+     "`Filter.Trilinear` also reads its smaller images, where a pixel covers many of its own, in a frag, of a "
+     "direction made of the frag's parameters, constants and variables that are never assigned again. The cube "
+     "is an asset by its name, or a field of a component or singleton the frag or vert takes."},
+    {"Resize", "Resize(float size)",
+     "Another side for all six faces of a cube made with `RenderTarget.Cube`, in pixels, and empty images."},
+    {"Dispose", "Dispose()",
+     "Lets a cube made with `RenderTarget.Cube` go, its six faces with it. Every copy of it then names no cube."},
+};
+
 static const method_form target_calls[] = {
     {"Resize", "Resize(float width, float height)", "Changes the shared image's size, in logical pixels, and discards its contents, even at the same size. It keeps its pixels per unit. Not for a target made with `RenderTarget.Window`, which follows the window."},
     {"Dispose", "Dispose()", "Releases the shared image. All target and color aliases become invalid; repeated disposal is harmless."},
@@ -2047,6 +2069,7 @@ static const method_form *methods_of(const type t, size_t *count)
     case TY_GRID: forms = grid_calls; *count = sizeof grid_calls / sizeof grid_calls[0]; break;
     case TY_TEXTURE: forms = texture_calls; *count = sizeof texture_calls / sizeof texture_calls[0]; break;
     case TY_DEPTH_TEXTURE: forms = depth_calls; *count = sizeof depth_calls / sizeof depth_calls[0]; break;
+    case TY_CUBEMAP: forms = cube_calls; *count = sizeof cube_calls / sizeof cube_calls[0]; break;
     case TY_RENDER_TARGET: forms = target_calls; *count = sizeof target_calls / sizeof target_calls[0]; break;
     case TY_ENTITY: case TY_LOCAL_ENTITY: forms = entity_calls; *count = sizeof entity_calls / sizeof entity_calls[0]; break;
     case TY_SINGLETON: forms = singleton_calls; *count = sizeof singleton_calls / sizeof singleton_calls[0]; break;
@@ -2091,7 +2114,7 @@ static void format_method(const method_form *form, const type t, sb *out)
     const bool generic = (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID) && t.decl;
     const char *element = generic ? type_name(t.decl->fields.items[0].type) : "T";
     const char *value = generic && t.kind == TY_MAP ? type_name(t.decl->fields.items[1].type) : "V";
-    sb_put(out, generic || t.kind == TY_RECORD || t.kind == TY_DEPTH_TEXTURE ? type_name(t) // Pixel.Discard()
+    sb_put(out, generic || t.kind == TY_RECORD || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP ? type_name(t) // Pixel.Discard()
                 : t.kind == TY_LIST ? "items"
                 : t.kind == TY_MAP || t.kind == TY_SET ? "keys"
                 : t.kind == TY_GRID ? "cells"
@@ -2130,6 +2153,7 @@ static void describe_default(const type t, sb *out)
     case TY_GRID: sb_put(out, "An empty grid, open every way"); break;
     case TY_TEXTURE: case TY_RENDER_TARGET: sb_put(out, "An invalid image reference"); break;
     case TY_DEPTH_TEXTURE: sb_put(out, "No target's depth: it reads as the far limit, 1"); break;
+    case TY_CUBEMAP: sb_put(out, "No cube: it reads as black"); break;
     case TY_ENUM: {
         const enum_member *zero = NULL;
         for (int i = 0; i < t.decl->members.count && !zero; i++) {
@@ -2716,10 +2740,20 @@ static void describe(const occurrence *o, sb *out)
             code_block(out, code.data);
             sb_put(out, "\n\nAsset: the file's contents, read as the game is built and packed with it, the same on every machine. "
                         "Any code can read it, and nothing can change it.");
+            if (o->decl->asset_kind == ASSET_CUBEMAP) {
+                sb_put(out, " A `Cubemap` is six images, the files its glob matches, each named for its face by how "
+                            "its name ends before the extension (`px`, `nx`, `py`, `ny`, `pz`, `nz`): squares of one "
+                            "size, this machine's to draw with. A frag reads it by a direction, "
+                            "`Sample(direction)`.");
+            }
             if (o->decl->asset_kind == ASSET_TEXTURE) {
                 sb_put(out, " A `Texture` is an image to draw with, this machine's: no code reads its pixels, and the match "
                             "can't use it. For cells code reads, the same file is a `Grid2<Color>`, which is a Texture "
                             "too wherever one is drawn with.");
+            }
+            if (o->decl->asset_kind == ASSET_CLIP) {
+                sb_put(out, " A `Clip` is a sound to play, this machine's: `Audio.Play(name)` in a view or a local handler plays "
+                            "it, and the match can't use it.");
             }
             if (o->decl->sample_raw) {
                 sb_put(out, "\n\nIt's `[Raw]`: its pixels are numbers, kept as the file has them, which a frag or a vert reads "
@@ -4799,6 +4833,8 @@ void analysis_folding_ranges(jbuf *out)
         }
         const bool opens = text.len >= 2 && memcmp(text.ptr, "if", 2) == 0 && (text.len == 2 || !isalnum((unsigned char)text.ptr[2]));
         const bool ends = text.len >= 5 && memcmp(text.ptr, "endif", 5) == 0;
+        // #define and #undef are lines of their own, in no branch
+        if ((text.len >= 6 && memcmp(text.ptr, "define", 6) == 0) || (text.len >= 5 && memcmp(text.ptr, "undef", 5) == 0)) continue;
         if (!opens && branches > 0) folding_range(out, &written, branch[--branches], line - 1, "region");
         if (!ends) branch[branches++] = line;
     }
@@ -5561,6 +5597,7 @@ static type member_type(const type t, const str member)
 {
     if (t.kind == TY_RENDER_TARGET && str_eq_c(member, "color")) return (type){TY_TEXTURE, NULL};
     if (t.kind == TY_RENDER_TARGET && str_eq_c(member, "depth")) return (type){TY_DEPTH_TEXTURE, NULL};
+    if (t.kind == TY_CUBEMAP && str_eq_c(member, "faces")) return t; // Of which an index is a RenderTarget
     if (t.decl && (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_RECORD
                    || t.kind == TY_STRUCT || t.kind == TY_EVENT)) {
         for (int i = 0; i < t.decl->fields.count + local_field_count(t.decl); i++) {
@@ -5724,6 +5761,22 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         return;
     }
     if (gpu && (t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET)) return;
+    if (t.kind == TY_CUBEMAP) { // A frag reads it; a view draws into its faces, resizes it and lets it go
+        static const char *const snippets[] = {"Sample($1)", "Resize($1)", "Dispose()"};
+        for (size_t i = gpu ? 0 : 1; i < (gpu ? 1 : sizeof cube_calls / sizeof cube_calls[0]); i++) {
+            sb detail = {0};
+            format_method(&cube_calls[i], t, &detail);
+            item(c, cube_calls[i].name, CK_METHOD, detail.data, cube_calls[i].doc, snippets[i]);
+        }
+        if (!gpu) {
+            item(c, "faces", CK_PROPERTY, "RenderTarget, by its number",
+                 "The six faces of a cube made with `RenderTarget.Cube`, each a target to draw into: `faces[0]` to "
+                 "`faces[5]`, in the order +x, -x, +y, -y, +z, -z. A face is what a camera at the cube's middle sees "
+                 "along that axis with a field of view of 90: +y is up for the four around, and for the one above "
+                 "and the one below, -z and +z.", "faces[$1]");
+        }
+        return;
+    }
     if (gpu && t.kind == TY_DEPTH_TEXTURE) {
         for (size_t i = 0; i < sizeof depth_calls / sizeof depth_calls[0]; i++) {
             sb detail = {0};
@@ -6257,7 +6310,7 @@ static bool complete_in_namespace(completion *c, const str ns, const order_compl
 static const char *const value_types[] = {
     "bool", "byte", "int", "long", "int2", "int3", "int4", "float", "float2", "float3", "float4", "quaternion",
     "float2x2", "float3x3", "float4x4", "Entity", "LocalEntity", "PlayerID", "Color", "Rect",
-    "Texture", "DepthTexture", "RenderTarget",
+    "Texture", "DepthTexture", "Cubemap", "RenderTarget", "Clip",
 };
 
 // Which built-in types to offer: each place takes its own.
@@ -6284,8 +6337,9 @@ static void complete_value_types(completion *c, const unsigned which)
                                                           : VT_VALUES;
         // Its ints are 32 bits, and it has no handles into the world, nor rects
         if ((which & VT_GPU) && (t.kind == TY_BYTE || t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT || t.kind == TY_RENDER_TARGET
-                                 || t.kind == TY_DEPTH_TEXTURE)) continue; // A depth is read where it's a field, never a parameter
-        if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_RENDER_TARGET) && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
+                                 || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP)) continue; // A depth and a cube are read where they're a field, never a parameter
+        if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET)
+            && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
         if (which & kind) item(c, value_types[i], CK_STRUCT, "built-in type", builtin_type_doc(t.kind), NULL);
     }
     if (which & VT_TEXT) item(c, "string", CK_STRUCT, "built-in type", builtin_type_doc(TY_STRING), NULL);
@@ -8793,10 +8847,13 @@ static int call_param_names(const expr *call, str *names, const int max)
     }
     label_list list = {0};
     switch (call->call) {
-    case CALL_BUILTIN: case CALL_DRAW: case CALL_GUI: case CALL_TEXT: case CALL_RANDOM: {
+    case CALL_BUILTIN: case CALL_DRAW: case CALL_AUDIO: case CALL_GUI: case CALL_TEXT: case CALL_RANDOM: {
         if (call->resource_operation) {
             if (call->object && call->object->type.kind == TY_RENDER_TARGET) {
                 const method_form *form = find_form(target_calls, sizeof target_calls / sizeof target_calls[0], call->name);
+                if (form) vec_push(list.labels, form->form);
+            } else if (call->object && call->object->type.kind == TY_CUBEMAP) { // cube.Resize(size)
+                const method_form *form = find_form(cube_calls, sizeof cube_calls / sizeof cube_calls[0], call->name);
                 if (form) vec_push(list.labels, form->form);
             } else if (call->object && !call->target_samples) { // RenderTarget.Window(factor)
                 builtin_signatures(call->object->name, call->name, collect_label, &list);
@@ -9782,8 +9839,9 @@ static void collect_assets(void)
         site.file = f;
         site.string = tok;
         site.path = A.files[f].toks[tok].text;
-        site.many = d->asset_many;
-        site.format = d->asset_kind == ASSET_GRID || d->asset_kind == ASSET_TEXTURE ? ".png" : NULL;
+        site.many = d->asset_many || d->asset_kind == ASSET_CUBEMAP; // A cube's path is a glob too: its six faces
+        site.format = d->asset_kind == ASSET_GRID || d->asset_kind == ASSET_TEXTURE || d->asset_kind == ASSET_CUBEMAP ? ".png"
+                    : d->asset_kind == ASSET_CLIP ? ".wav" : NULL;
         site.glob = asset_path_is_glob(site.path.ptr, (size_t)site.path.len);
         site.url = asset_path_is_url(site.path.ptr, (size_t)site.path.len);
         char *folder = asset_path_folder(A.files[f].src.path);

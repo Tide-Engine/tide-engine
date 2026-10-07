@@ -125,6 +125,28 @@ typedef VEC(lex_span) lex_spans;
 // out, in order.
 token *lex_all_spans(const source *src, lex_spans *spans);
 
+// The symbols a build defines for every file it lexes, beside tide's versions
+// and each file's own #defines: named on the command line (`--define FAST`),
+// DEBUG, and PACKAGE_<NAME> for each package the game builds with. Reset
+// before a game's files are lexed, then defined. Names are kept, not copied.
+void lex_symbols_reset(void);
+void lex_define(const char *name);
+void lex_define_package(const char *package); // PACKAGE_BOX2D for "Box2D"
+
+// Whether a name can be defined: an identifier that isn't a condition's own
+// word or tide's to say (TIDE_..., PACKAGE_...).
+bool lex_symbol_ok(const char *name);
+
+// Each of the build's symbols a condition read since the reset, defined or
+// not, in order of their names: what the files read differently in another
+// build.
+typedef struct lex_symbol {
+    const char *name;
+    bool defined;
+} lex_symbol;
+
+const lex_symbol *lex_symbols_read(int *count);
+
 const char *tok_kind_name(tok_kind kind);
 
 // The binary operator behind a compound assignment: T_PLUS for T_PLUS_ASSIGN,

@@ -1,0 +1,6 @@
+// expect: a cube's faces are drawn into one at a time: 'faces[0]' is the one +x points at, as a RenderTarget
+// expect: they're counted from 0, in the order +x, -x, +y, -y, +z, -z
+// Its faces are drawn into one at a time
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+view Show(Room room) { var all = room.reflection.faces; }

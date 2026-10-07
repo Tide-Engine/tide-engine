@@ -933,6 +933,81 @@ static void run_raw_checks(const char *when)
     }
 }
 
+// Cubemaps (pass 17, `CubeFaces` and `CubeReads` in shaders.tide): each
+// square of 8 pixels reads a cube towards one direction, or across a face.
+// `lit` is how wide the stripes drawn into the painted cube's first face are
+// that frame, 8 apart: 2 or 6, so the pixel under a square's pixel's middle
+// is between two stripes, or on one.
+static void run_cube_checks(const float lit, const char *when)
+{
+    static const int colors[6][3] = {{255, 0, 0}, {0, 255, 255}, {0, 255, 0}, {255, 0, 255}, {0, 0, 255}, {255, 255, 0}};
+    static const char *const sides[6] = {"+x", "-x", "+y", "-y", "+z", "-z"};
+    const bool floats = tide_window_gpu()->float_targets();
+    struct {
+        float x, y;
+        int want[3];
+        const char *what, *side;
+    } wanted[64];
+    int count = 0;
+#define WANT(at_x, at_y, r, g, b, text, of)                                                                             \
+    wanted[count++] = (__typeof__(wanted[0])){(float)(at_x), (float)(at_y), {(r), (g), (b)}, (text), (of)}
+    for (int face = 0; face < 6; face++) {
+        const int *c = colors[face];
+        WANT(8 + face * 32, 8, 255, 255, 255, "an asset's cube, towards a face's top left quarter, which is white: face ", sides[face]);
+        WANT(24 + face * 32, 8, c[0], c[1], c[2], "and towards its bottom right, by a direction of any length: face ", sides[face]);
+        if (face) {
+            WANT(8 + face * 32, 24, 255, 255, 255, "a cube a view painted, towards a face's top left quarter: face ", sides[face]);
+            WANT(24 + face * 32, 24, c[0], c[1], c[2], "and towards its bottom right: face ", sides[face]);
+        }
+        WANT(8 + face * 32, 72, c[0], c[1], c[2], "what a camera at the cube's middle saw up and to the right of the face's axis: face ",
+             sides[face]);
+        WANT(24 + face * 32, 72, 0, 0, 0, "and up and to the left, where nothing was: face ", sides[face]);
+    }
+    const int mean = (int)(lit * 255.0f / 8.0f + 0.5f);
+    WANT(8, 40, 255, 255, 64, "an asset's cube kept in a field, blended at a face's middle, in a branch", "");
+    WANT(24, 40, mean, 0, 0, "a face read between its smaller images: the mean of what a pixel covers, made of what was just drawn", "");
+    WANT(40, 40, lit > 4 ? 255 : 0, 0, 0, "the same face at its own pixels: what's under a pixel's middle", "");
+    if (floats) WANT(56, 40, 128, 64, 32, "a cube of floats, added into twice, holds what's past 1", "");
+    else WANT(56, 40, 64, 64, 32, "a cube of floats that's bytes here, added into twice, keeps to 1", "");
+    WANT(72, 40, 0, 128, 0, "a cube that was never made reads as black", "");
+    WANT(88, 40, 128, 128, 128, "a vert that reads a cube moved its square away", "");
+    WANT(88, 56, 255, 255, 255, "to where the cube's color says", "");
+#undef WANT
+    local.Art.targetPass = 17;
+    local.Cubes.lit = lit;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[2 * 64];
+    uint32_t got[2 * 64];
+    for (int i = 0; i < count; i++) { // A pixel at each square's corner, and one inside
+        points[2 * i] = tide_f2(wanted[i].x + 0.5f, wanted[i].y + 0.5f);
+        points[2 * i + 1] = tide_f2(wanted[i].x + 5.5f, wanted[i].y + 4.5f);
+    }
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, (uint32_t)(2 * count), got);
+    for (int i = 0; i < 2 * count; i++) {
+        const int *want = wanted[i / 2].want;
+        bool ok = true;
+        for (int c = 0; c < 3; c++) {
+            const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - want[c];
+            ok = ok && d >= -6 && d <= 6;
+        }
+        printf("%s: %s%s%s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i / 2].what, wanted[i / 2].side,
+               i % 2 ? ", at another pixel" : "", when, (unsigned)got[i], (unsigned)want[0], (unsigned)want[1], (unsigned)want[2]);
+        if (!ok) failures++;
+    }
+    // Draws of one frag towards other directions are runs of one shader: the direction is its values
+    int runs = 0;
+    for (uint32_t i = 0; i < list.run_count; i++) {
+        runs += list.runs[i].shader && strcmp(list.runs[i].shader->name, "SkyLook on Vertex") == 0;
+    }
+    printf("%s: a frag that reads an asset's cube towards twelve directions is one shader in twelve runs%s (%d runs)\n",
+           runs == 12 ? "ok" : "FAIL", when, runs);
+    if (runs != 12) failures++;
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -963,6 +1038,7 @@ static int frame(void *user, const float seconds)
         run_mipmap_checks(2, ", on another device");
         run_alpha_checks(", on another device");
         run_raw_checks(", on another device");
+        run_cube_checks(2, ", on another device");
         return failures;
     }
 #endif
@@ -988,6 +1064,9 @@ static int frame(void *user, const float seconds)
     run_mipmap_checks(4, ", with other pixels drawn into the target");
     run_alpha_checks("");
     run_raw_checks("");
+    run_cube_checks(2, "");
+    run_cube_checks(2, ", again");
+    run_cube_checks(6, ", with other pixels drawn into the cube");
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");

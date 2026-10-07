@@ -3,7 +3,8 @@
 // Then targets of depth alone, and a target's depth as a shader reads it: as
 // a number, and compared. Then stencil: each test and each thing a draw does
 // with what's stored, in targets and, on the web, the window's own canvas.
-// Then targets of several color images, and multisampled ones.
+// Then targets of several color images, and multisampled ones. Then cubes:
+// six faces uploaded, and six drawn into, read by a direction.
 #include <math.h>
 #include <stdio.h>
 #include <stddef.h>
@@ -2837,6 +2838,226 @@ static void check_render_samples(const int32_t samples)
 
 // Only the first failures say which pixels were wrong: this says which group
 // of checks any were in, and how many.
+// A cube read by a direction that's the same for every pixel (`settings.xyz`), at the level `settings.w`.
+static const char cube_vertex[] =
+    "out vec2 uv;\n"
+    "void main() {\n"
+    "    uv = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)) * 2.0 - 1.0;\n"
+    "    gl_Position = vec4(uv, 0, 1);\n"
+    "}\n";
+
+static const char cube_fragment[] =
+    "layout(std140) uniform uniforms { vec4 settings; };\n"
+    "uniform highp samplerCube pixels0;\n"
+    "in vec2 uv;\n"
+    "out vec4 color;\n"
+    "void main() { color = textureLod(pixels0, settings.xyz, settings.w); }\n";
+
+static const char cube_wgsl[] =
+    "struct Uniforms { settings: vec4f }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@group(0) @binding(1) var pixels0: texture_cube<f32>;\n"
+    "@group(0) @binding(2) var how0: sampler;\n"
+    "struct Vertex { @builtin(position) at: vec4f, @location(0) uv: vec2f }\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> Vertex {\n"
+    "    var points = array<vec2f, 3>(vec2f(-1, -1), vec2f(3, -1), vec2f(-1, 3));\n"
+    "    return Vertex(vec4f(points[i], 0.5, 1), points[i]);\n"
+    "}\n"
+    "@fragment fn fragment(v: Vertex) -> @location(0) vec4f {\n"
+    "    return textureSampleLevel(pixels0, how0, u.settings.xyz, u.settings.w);\n"
+    "}\n";
+
+enum { CUBE = 4 }; // A face's side
+
+// Each face's own color, and where its two halves are from the cube's middle: towards the middle of its top
+// left quarter, which is white, and of its bottom right one, which is the face's color. A face is as it's
+// seen from inside: +y is up for the four around, +x is to the right of +z, the one above has -z at its
+// top and the one below +z.
+static const uint8_t cube_colors[TIDE_GPU_CUBE_FACES][3] = {
+    {255, 0, 0}, {0, 255, 255}, {0, 255, 0}, {255, 0, 255}, {0, 0, 255}, {255, 255, 0}};
+static const float cube_top_left[TIDE_GPU_CUBE_FACES][3] = {
+    {1, 0.5f, 0.5f}, {-1, 0.5f, -0.5f}, {-0.5f, 1, -0.5f}, {-0.5f, -1, 0.5f}, {-0.5f, 0.5f, 1}, {0.5f, 0.5f, -1}};
+static const float cube_bottom_right[TIDE_GPU_CUBE_FACES][3] = {
+    {1, -0.5f, -0.5f}, {-1, -0.5f, 0.5f}, {0.5f, 1, 0.5f}, {0.5f, -1, -0.5f}, {0.5f, -0.5f, 1}, {-0.5f, -0.5f, -1}};
+static const float cube_middle[TIDE_GPU_CUBE_FACES][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+
+// What `cube` reads towards `way` at `level`, through `filter`: drawn over all of `into`, and one pixel of it given.
+static const uint8_t *cube_read(const tide_gpu *gpu, const tide_gpu_id pipeline, const tide_gpu_id into, const tide_gpu_id cube,
+                                const float *way, const float level, const tide_gpu_filter filter)
+{
+    static uint8_t actual[WIDTH * HEIGHT * 4];
+    const float settings[4] = {way[0], way[1], way[2], level};
+    gpu->begin(into, true);
+    gpu->use(pipeline);
+    gpu->uniforms(settings, sizeof settings);
+    gpu->sample(0, cube, filter, TIDE_GPU_WRAP_REPEAT); // Its wrap isn't read
+    gpu->draw(0, 3, 1);
+    gpu->end();
+    gpu->target_read(into, actual);
+    return actual + ((HEIGHT / 2) * WIDTH + WIDTH / 2) * 4;
+}
+
+static void expect_side(const uint8_t *got, const float r, const float g, const float b, const char *what, const int face)
+{
+    const uint8_t wanted[3] = {to_byte(r), to_byte(g), to_byte(b)};
+    bool ok = true;
+    for (int c = 0; c < 3; c++) ok &= got[c] + 2 >= wanted[c] && got[c] <= wanted[c] + 2;
+    if (ok) return;
+    if (failures++ < 8) {
+        fprintf(stderr, "%s, face %d: %u,%u,%u instead of %u,%u,%u\n", what, face, got[0], got[1], got[2], wanted[0], wanted[1],
+                wanted[2]);
+    }
+}
+
+// Every face of a cube whose faces are each their color with a white top left quarter, read both ways.
+static void expect_cube(const tide_gpu *gpu, const tide_gpu_id pipeline, const tide_gpu_id into, const tide_gpu_id cube,
+                        const char *what)
+{
+    for (int face = 0; face < TIDE_GPU_CUBE_FACES; face++) {
+        const uint8_t *c = cube_colors[face];
+        expect_side(cube_read(gpu, pipeline, into, cube, cube_top_left[face], 0, TIDE_GPU_FILTER_NEAREST), 1, 1, 1, what, face);
+        expect_side(cube_read(gpu, pipeline, into, cube, cube_bottom_right[face], 0, TIDE_GPU_FILTER_NEAREST), c[0] / 255.0f,
+                     c[1] / 255.0f, c[2] / 255.0f, what, face);
+    }
+}
+
+// The backend's cubes: six faces uploaded, and six drawn into, each read by a
+// direction; their smaller images; a cube of floats; and a face read back.
+static void check_cubes(void)
+{
+    const tide_gpu *gpu = tide_window_gpu();
+    const tide_gpu_target_format one_float = tide_gpu_target_with(TIDE_GPU_TARGET_DEPTH, TIDE_GPU_COLOR_FLOAT);
+    const tide_gpu_id reads = gpu->pipeline(&(tide_gpu_pipeline_desc){
+        .name = "cube by a direction", .glsl_vertex = cube_vertex, .glsl_fragment = cube_fragment, .wgsl = cube_wgsl,
+        .uniform_size = 16, .texture_count = 1, .reads = {TIDE_GPU_READ_CUBE}, .blend = TIDE_GPU_BLEND_REPLACE,
+        .into = TIDE_GPU_TARGET_COLOR,
+    });
+    const tide_gpu_id copies = gpu->pipeline(&(tide_gpu_pipeline_desc){
+        .name = "copy into a face", .glsl_vertex = vertex, .glsl_fragment = fragment, .wgsl = wgsl,
+        .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE, .into = TIDE_GPU_TARGET_COLOR,
+    });
+    const tide_gpu_id adds = gpu->pipeline(&(tide_gpu_pipeline_desc){
+        .name = "added into a float face", .glsl_vertex = vertex, .glsl_fragment = fragment, .wgsl = wgsl,
+        .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_ADD, .into = one_float,
+    });
+    const tide_gpu_id scaled = gpu->pipeline(&(tide_gpu_pipeline_desc){
+        .name = "cube read", .glsl_vertex = cube_vertex, .glsl_fragment = cube_fragment, .wgsl = cube_wgsl,
+        .uniform_size = 16, .texture_count = 1, .reads = {TIDE_GPU_READ_CUBE}, .blend = TIDE_GPU_BLEND_REPLACE,
+        .into = TIDE_GPU_TARGET_COLOR,
+    });
+    const tide_gpu_id scene = gpu->target(TIDE_GPU_TARGET_COLOR, WIDTH, HEIGHT);
+    const tide_gpu_id white = gpu->texture(TIDE_GPU_RGBA8, 1, 1, (const uint8_t[4]){255, 255, 255, 255});
+
+    // Six faces of pixels, rows from the top
+    static uint8_t pixels[TIDE_GPU_CUBE_FACES][CUBE * CUBE * 4];
+    const void *faces[TIDE_GPU_CUBE_FACES];
+    for (int face = 0; face < TIDE_GPU_CUBE_FACES; face++) {
+        for (int i = 0; i < CUBE * CUBE; i++) {
+            const bool corner = i % CUBE < CUBE / 2 && i / CUBE < CUBE / 2;
+            for (int c = 0; c < 3; c++) pixels[face][i * 4 + c] = corner ? 255 : cube_colors[face][c];
+            pixels[face][i * 4 + 3] = 255;
+        }
+        faces[face] = pixels[face];
+    }
+    const tide_gpu_id uploaded = gpu->cube(TIDE_GPU_COLOR_BYTES, CUBE, faces);
+    expect_cube(gpu, reads, scene, uploaded, "an uploaded cube");
+    // Blended, the middle of a face is between its four quarters, and a direction of any length reads the same
+    const float along[3] = {0, 0, 7};
+    expect_side(cube_read(gpu, reads, scene, uploaded, along, 0, TIDE_GPU_FILTER_LINEAR), 0.25f, 0.25f, 1, "a face's middle, blended", 4);
+    // It has no smaller images until they're made: read between them, it's its own pixels
+    const float right[3] = {1, 0, 0};
+    expect_side(cube_read(gpu, reads, scene, uploaded, right, 2, TIDE_GPU_FILTER_MIPMAPS), 1, 0.25f, 0.25f,
+                 "a cube with no smaller images, read between them", 0);
+    expect_side(cube_read(gpu, reads, scene, uploaded, cube_bottom_right[0], 2, TIDE_GPU_FILTER_MIPMAPS), 1, 0, 0,
+                 "a cube with no smaller images, read between them off its middle", 0);
+    gpu->mipmaps(uploaded);
+    // ...and then its smallest is each face's mean, at the face's middle: off it, a face of one pixel is
+    // blended with the faces beside it
+    for (int face = 0; face < TIDE_GPU_CUBE_FACES; face++) {
+        const uint8_t *c = cube_colors[face];
+        expect_side(cube_read(gpu, reads, scene, uploaded, cube_middle[face], 2, TIDE_GPU_FILTER_MIPMAPS),
+                     (c[0] * 12 + 255 * 4) / (16 * 255.0f), (c[1] * 12 + 255 * 4) / (16 * 255.0f),
+                     (c[2] * 12 + 255 * 4) / (16 * 255.0f), "a cube's smallest image", face);
+    }
+    // The filters that read none of them still read its own pixels
+    expect_cube(gpu, reads, scene, uploaded, "an uploaded cube with smaller images, read at its own");
+
+    // Six faces drawn into: each its color, then white over its top left quarter, as a target's pixels are
+    // counted. It reads as the uploaded one does: a face is the same way up drawn as uploaded
+    const tide_gpu_id drawn = gpu->cube(TIDE_GPU_COLOR_BYTES, CUBE, NULL);
+    tide_gpu_id sides[TIDE_GPU_CUBE_FACES];
+    for (uint32_t face = 0; face < TIDE_GPU_CUBE_FACES; face++) {
+        sides[face] = gpu->cube_face(drawn, face);
+        if (gpu->target_texture(sides[face], 0) || !gpu->target_depth(sides[face])) {
+            failures++;
+            fprintf(stderr, "a cube's face hands out a color of its own, or has no depth\n");
+        }
+        gpu->begin(sides[face], true);
+        gpu->end();
+    }
+    for (int face = 0; face < TIDE_GPU_CUBE_FACES; face++) { // Cleared: black on every face
+        expect_side(cube_read(gpu, reads, scene, drawn, cube_bottom_right[face], 0, TIDE_GPU_FILTER_NEAREST), 0, 0, 0,
+                     "a cube nothing drew into", face);
+    }
+    for (uint32_t face = 0; face < TIDE_GPU_CUBE_FACES; face++) {
+        const tide_gpu_id own = gpu->texture(TIDE_GPU_RGBA8, 1, 1, (const uint8_t[4]){cube_colors[face][0], cube_colors[face][1],
+                                                                                     cube_colors[face][2], 255});
+        gpu->begin(sides[face], true);
+        copy(gpu, copies, own, 0);
+        gpu->scissor(0, 0, CUBE / 2, CUBE / 2);
+        copy(gpu, copies, white, 0);
+        gpu->end();
+        gpu->texture_free(own);
+    }
+    expect_cube(gpu, reads, scene, drawn, "a cube that was drawn into");
+    // A face is read back like any target: rows from the top
+    uint8_t back[CUBE * CUBE * 4];
+    gpu->target_read(sides[3], back);
+    expect_side(back, 1, 1, 1, "a face read back, its first pixel", 3);
+    expect_side(back + (CUBE * CUBE - 1) * 4, 1, 0, 1, "a face read back, its last pixel", 3);
+    // A pass over what's there keeps the face, and the others
+    gpu->begin(sides[0], false);
+    gpu->scissor(CUBE / 2, 0, CUBE / 2, CUBE / 2);
+    copy(gpu, copies, white, 0);
+    gpu->end();
+    const float top_right[3] = {1, 0.5f, -0.5f};
+    expect_side(cube_read(gpu, reads, scene, drawn, top_right, 0, TIDE_GPU_FILTER_NEAREST), 1, 1, 1, "a face drawn into again", 0);
+    expect_side(cube_read(gpu, reads, scene, drawn, cube_bottom_right[0], 0, TIDE_GPU_FILTER_NEAREST), 1, 0, 0,
+                 "...and the rest of it, kept", 0);
+    expect_side(cube_read(gpu, reads, scene, drawn, cube_bottom_right[1], 0, TIDE_GPU_FILTER_NEAREST), 0, 1, 1,
+                 "...and the face beside it", 1);
+    // Its smaller images are of what was drawn: half white now, on that face
+    gpu->mipmaps(drawn);
+    expect_side(cube_read(gpu, reads, scene, drawn, cube_middle[0], 2, TIDE_GPU_FILTER_MIPMAPS), 1, 0.5f, 0.5f,
+                 "a drawn cube's smallest image", 0);
+
+    // A cube of floats holds what's added past 1, where the device draws into floats
+    const tide_gpu_id bright = gpu->cube(TIDE_GPU_COLOR_FLOAT, CUBE, NULL);
+    const tide_gpu_id bright_side = gpu->cube_face(bright, 5);
+    const tide_gpu_id dim = gpu->texture(TIDE_GPU_RGBA8, 1, 1, (const uint8_t[4]){255, 128, 64, 255});
+    gpu->begin(bright_side, true);
+    copy(gpu, adds, dim, 0);
+    copy(gpu, adds, dim, 0);
+    gpu->end();
+    const float back_way[3] = {0, 0, -1};
+    const uint8_t *summed = cube_read(gpu, scaled, scene, bright, back_way, 0, TIDE_GPU_FILTER_LINEAR);
+    if (gpu->float_targets()) expect_side(summed, 1, 1, 0.5f, "a float cube, added into twice", 5);
+    else expect_side(summed, 1, 1, 0.5f, "a float cube that's bytes here, added into twice", 5);
+
+    gpu->target_free(bright_side);
+    gpu->texture_free(bright);
+    for (uint32_t face = 0; face < TIDE_GPU_CUBE_FACES; face++) gpu->target_free(sides[face]);
+    gpu->texture_free(drawn);
+    gpu->texture_free(uploaded);
+    gpu->texture_free(white);
+    gpu->texture_free(dim);
+    gpu->target_free(scene);
+    gpu->pipeline_free(reads);
+    gpu->pipeline_free(copies);
+    gpu->pipeline_free(adds);
+    gpu->pipeline_free(scaled);
+}
+
 static void checked(const char *what)
 {
     static int before;
@@ -2895,6 +3116,9 @@ static int frame(void *user, const float seconds)
     check_render_samples(4); // With the pipelines the first made
     check_render_samples(8); // More than some devices have: drawn with what there is
     checked("the renderer's multisampled targets");
+    check_cubes();
+    check_cubes(); // Its pipelines and its cubes are made again
+    checked("the backend's cubes");
     if (failures) return 1;
 #ifdef __wasm__
     if (!lost && strcmp(tide_platform_renderer(), "WebGPU") == 0) {

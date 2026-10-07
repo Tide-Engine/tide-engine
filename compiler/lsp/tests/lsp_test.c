@@ -3578,6 +3578,23 @@ TIDE_TEST(lsp_directives)
     TIDE_CHECK(has(folds, "{\"startLine\":3,\"endLine\":4,\"kind\":\"region\"}")); // #else to #endif
     open_document("scene Main { }\n#if false\nthis is no$t code\n#endif\n");
     TIDE_CHECK(has(request("textDocument/completion"), "\"items\":[]"));
+
+    // A file's own symbols, and DEBUG, which an editor reads as `tide run` does. A symbol only a
+    // command line could define reads as not defined.
+    static const char symbols[] = "#define MINE\n"
+                                  "#if MINE && DEBUG && !FROM_A_COMMAND_LINE\n"
+                                  "scene Main { }\n"
+                                  "#else\n"
+                                  "not code\n"
+                                  "#endif\n";
+    open_document(symbols);
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    TIDE_CHECK(has(format_reply(symbols), "\"result\":[]"));
+    const char *branches = request("textDocument/foldingRange");
+    TIDE_CHECK(has(branches, "{\"startLine\":1,\"endLine\":2,\"kind\":\"region\"}")); // #define starts no branch
+    TIDE_CHECK(!has(branches, "\"startLine\":0"));
+    open_document("scene Main { }\n#define LATE\n");
+    TIDE_CHECK(has(sent[0], "comes after code"));
 }
 
 TIDE_TEST(lsp_folding)
@@ -8289,6 +8306,137 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     TIDE_CHECK(offers(before, "Filter") && offers(before, "Wrap") && offers(before, "Stage"));
     const char *field = complete("scene Main { }\nlocal singleton Art\n{\n    [$] Grid2<Color> paint = Grid2(2, 2);\n}\n");
     TIDE_CHECK(offers(field, "Filter") && offers(field, "Wrap") && offers(field, "Snap"));
+}
+
+// Cubemaps: the type, an asset's six files, a cube a view draws into and its
+// faces, what a frag reads, and the checker's diagnostics.
+TIDE_TEST(lsp_cubemaps)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_cm");
+    make_folder("lsp_cm/sky");
+    // A PNG of 2 by 2 pixels, under each face's name
+    static const unsigned char png[] = {
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x06, 0x00, 0x00, 0x00, 0x72, 0xb6, 0x0d, 0x24, 0x00, 0x00, 0x00, 0x12, 0x49,
+        0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0x0c, 0x81, 0x34, 0x18, 0x00, 0x00, 0x49, 0xc8,
+        0x09, 0xf7, 0x03, 0xd9, 0x64, 0xf1, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
+    static const char *const faces[] = {"px", "nx", "py", "ny", "pz", "nz"};
+    char name[64];
+    for (int i = 0; i < 6; i++) {
+        snprintf(name, sizeof name, "lsp_cm/sky/day_%s.png", faces[i]);
+        write_bytes(name, (const char *)png, sizeof png);
+    }
+    write_file("lsp_cm/sky/notes.txt", "text");
+    static const char main_file[] = "asset Cubemap sky = \"sky/day_??.png\";\n"
+                                    "scene Main { }\n"
+                                    "local singleton Room\n"
+                                    "{\n"
+                                    "    Cubemap reflection;\n"
+                                    "    List<Vertex3> ball;\n"
+                                    "}\n"
+                                    "frag Shine(Vertex3 vertex, out Color color, Room room)\n"
+                                    "{\n"
+                                    "    color = room.reflection.Sample(vertex.position) + sky.Sample(vertex.position, Filter.Trilinear);\n"
+                                    "}\n"
+                                    "view V(mut Room room)\n"
+                                    "{\n"
+                                    "    room.reflection = RenderTarget.Cube(64, Format.Rgba16f);\n"
+                                    "    room.reflection.faces[2].Clear(Color.black);\n"
+                                    "    Draw.Mesh(room.ball, [0, 1, 2], float4x4.identity, Shine);\n"
+                                    "    room.reflection.Resize(32);\n"
+                                    "}\n";
+    write_file("lsp_cm/main.tide", main_file);
+    char root[700], uri_main[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_cm", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_cm/main.tide", dir);
+
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    open_uri(uri_main, main_file);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    // The asset says what it is, and the type what it's for
+    const char *hover = request_at(uri_main, "textDocument/hover", 0, 15, "");
+    TIDE_CHECK(has(hover, "asset Cubemap sky") && has(hover, "six images") && has(hover, "`px`, `nx`, `py`, `ny`, `pz`, `nz`"));
+    hover = request_at(uri_main, "textDocument/hover", 4, 6, "");
+    TIDE_CHECK(has(hover, "a cube of six images") && has(hover, "RenderTarget.Cube(size)"));
+    // What a frag reads, and what a view does with one
+    hover = request_at(uri_main, "textDocument/hover", 9, 30, "");
+    TIDE_CHECK(has(hover, "Sample(float3 direction, Filter filter = Filter.Bilinear) -> Color") && has(hover, "no edge and no wrap"));
+    hover = request_at(uri_main, "textDocument/hover", 16, 22, "");
+    TIDE_CHECK(has(hover, "Resize(float size)"));
+    const char *help = request_at(uri_main, "textDocument/signatureHelp", 13, 40, "");
+    TIDE_CHECK(has(help, "RenderTarget.Cube(float size, Format format)") && has(help, "cube.faces[0]"));
+
+    // A cube's path is a glob over PNGs
+    static const char paths[] = "asset Cubemap sky = \"sky/\";\nscene Main { }\n";
+    open_uri(uri_main, paths);
+    const char *completion = request_at(uri_main, "textDocument/completion", 0, 25, "");
+    TIDE_CHECK(offers(completion, "day_px.png") && !offers(completion, "notes.txt") && offers(completion, "*.png"));
+
+    // What's wrong with the files is said at the path
+    open_uri(uri_main, "asset Cubemap sky = \"sky/day_px.png\";\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "a Cubemap is six files, its faces") && has(last_sent(), "write a glob that matches the six"));
+    open_uri(uri_main, "asset Cubemap sky = \"sky/day_p?.png\";\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "matches no file for the cube's -x face"));
+    open_uri(uri_main, "asset List<Cubemap> skies = \"sky/*.png\";\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "a list or a map of cubes isn't there yet"));
+    open_uri(uri_main, "[Filter(Filter.Point)]\nasset Cubemap sky = \"sky/day_??.png\";\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "a Cubemap's filter is said where it's sampled"));
+
+    for (int i = 0; i < 6; i++) {
+        snprintf(name, sizeof name, "lsp_cm/sky/day_%s.png", faces[i]);
+        remove_game_file(name);
+    }
+    remove_game_file("lsp_cm/sky/notes.txt");
+    remove_game_file("lsp_cm/main.tide");
+    remove_game_file("lsp_cm/.tide/assets.sha256");
+    remove_game_file("lsp_cm/.tide/.gitignore");
+    remove_folder("lsp_cm/.tide");
+    remove_folder("lsp_cm/sky");
+    remove_folder("lsp_cm");
+    clear_sent();
+    lsp_free(&server);
+
+    // With no files: members, methods and where each goes
+    start();
+    static const char types[] = "scene Main { }\nlocal singleton Room { Cubemap reflection; RenderTarget side; }\n";
+    char program[2048];
+    snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    room.reflection.$\n}\n", types);
+    const char *members = complete(program);
+    TIDE_CHECK(offers(members, "faces") && offers(members, "Resize") && offers(members, "Dispose") && !offers(members, "Sample"));
+    TIDE_CHECK(has(members, "faces[$1]") && has(members, "+x, -x, +y, -y, +z, -z"));
+    snprintf(program, sizeof program, "%sfrag F(Vertex3 vertex, out Color color, Room room)\n{\n    color = room.reflection.$\n}\n", types);
+    members = complete(program);
+    TIDE_CHECK(offers(members, "Sample") && !offers(members, "faces") && !offers(members, "Dispose"));
+    snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    room.side = RenderTarget.$\n}\n", types);
+    TIDE_CHECK(offers(complete(program), "Cube") && offers(complete(program), "Window"));
+    // A face is a RenderTarget
+    snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    var up = room.reflection.faces[2];\n    room.side = u$p;\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "RenderTarget"));
+    // A local of the type is offered where a view declares one, and a frag takes none as a parameter
+    snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    Cubem$\n}\n", types);
+    TIDE_CHECK(offers(complete(program), "Cubemap"));
+
+    // The checker says where each belongs
+    snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    var all = room.reflection.faces;\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "a cube's faces are drawn into one at a time"));
+    snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    room.side = room.reflection.faces[6];\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "a cube has six faces"));
+    snprintf(program, sizeof program, "%sfrag F(Vertex3 vertex, out Color color, Room room)\n{\n"
+                                      "    color = room.reflection.Sample(vertex.uv);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "a Cubemap's Sample takes which way to read from its middle") && has(last_sent(), "a cube is read by a direction"));
+    snprintf(program, sizeof program, "%sfrag F(Vertex3 vertex, out Color color, Cubemap sky)\n{\n    color = Color.white;\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "not a parameter of its own"));
+    snprintf(program, sizeof program, "scene Main { }\ncomponent Prop { Cubemap around; }\n");
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "Cubemap and RenderTarget belong to this machine"));
 }
 
 // A game with no asset: nothing is registered and no .tide/ is made. An

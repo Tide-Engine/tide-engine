@@ -2506,12 +2506,254 @@ view Mipmaps(Art art, mut Mips mips)
     }
 }
 
+// Cubemaps (pass 17): six images read by a direction. An asset's six files,
+// each its own color with a white top left quarter (sky/sky_px.png and the
+// five beside it, 4 pixels a side), and cubes a view draws into a face at a
+// time. Each square is 8 pixels of the window.
+asset Cubemap skyFaces = "sky/sky_??.png";
+
+local singleton Cubes
+{
+    Cubemap painted;  // 64 a side: each face painted as the asset's are, but the first, which has stripes
+    Cubemap bright;   // Of floats, added into
+    Cubemap scene;    // Each face what a camera at its middle sees along the face's axis
+    Cubemap none;     // Never made: reads as black
+    Cubemap kept;     // The asset's, kept in a field
+    float lit = 2;    // How wide the first face's stripes are, 8 apart
+    List<Vertex> small;
+    List<Vertex3> card;
+    bool made;
+}
+
+// Which way a draw reads: its values, the same for every pixel
+struct Way
+{
+    float3 to;
+}
+
+frag SkyLook(Vertex vertex, out Color color, Way way)
+{
+    color = skyFaces.Sample(way.to, Filter.Point);
+}
+
+// The asset through a field, in a branch, blended
+frag KeptLook(Vertex vertex, out Color color, Way way, Cubes cubes)
+{
+    color = Color.black;
+    if (vertex.uv.x >= 0) color = cubes.kept.Sample(way.to);
+}
+
+frag PaintedLook(Vertex vertex, out Color color, Way way, Cubes cubes)
+{
+    color = cubes.painted.Sample(way.to, Filter.Point);
+}
+
+// All of the first face across the square: a pixel covers 8 by 8 of the face's
+frag AcrossFirst(Vertex vertex, out Color color, Cubes cubes)
+{
+    var way = float3(1, 1 - 2 * vertex.uv.y, 1 - 2 * vertex.uv.x);
+    color = Color.black;
+    if (vertex.uv.x <= 2) color = cubes.painted.Sample(way, Filter.Trilinear);
+}
+
+frag AcrossFirstPlain(Vertex vertex, out Color color, Cubes cubes)
+{
+    color = cubes.painted.Sample(float3(1, 1 - 2 * vertex.uv.y, 1 - 2 * vertex.uv.x), Filter.Point);
+}
+
+frag BrightLook(Vertex vertex, out Color color, Way way, Cubes cubes)
+{
+    color = cubes.bright.Sample(way.to) * 0.25;
+    color.a = 1;
+}
+
+frag SceneLook(Vertex vertex, out Color color, Way way, Cubes cubes)
+{
+    color = cubes.scene.Sample(way.to, Filter.Point);
+}
+
+frag NoneLook(Vertex vertex, out Color color, Way way, Cubes cubes)
+{
+    color = cubes.none.Sample(way.to);
+    color.g += 0.5;
+}
+
+// A vert reads one too: the face +z points at is blue, which moves the square 16 pixels down
+vert CubeNudge(mut Vertex vertex, Cubes cubes)
+{
+    vertex.position += float2(0, 16) * cubes.painted.Sample(float3(0.5, -0.5, 1), Filter.Point).b;
+}
+
+// Where a face's two quarters are from the cube's middle: its top left one, and its bottom right
+float3 TopLeft(int face)
+{
+    if (face == 0) return float3(1, 0.5, 0.5);
+    if (face == 1) return float3(-1, 0.5, -0.5);
+    if (face == 2) return float3(-0.5, 1, -0.5);
+    if (face == 3) return float3(-0.5, -1, 0.5);
+    if (face == 4) return float3(-0.5, 0.5, 1);
+    return float3(0.5, 0.5, -1);
+}
+
+Color FaceColor(int face)
+{
+    if (face == 0) return Color(1, 0, 0);
+    if (face == 1) return Color(0, 1, 1);
+    if (face == 2) return Color(0, 1, 0);
+    if (face == 3) return Color(1, 0, 1);
+    if (face == 4) return Color(0, 0, 1);
+    return Color(1, 1, 0);
+}
+
+// The way a camera at a cube's middle looks to fill a face: along its axis, with +y up for the four
+// around, and for the one above and the one below, -z and +z
+quaternion FaceRotation(int face)
+{
+    if (face == 0) return quaternion.LookRotation(float3(1, 0, 0), float3(0, 1, 0));
+    if (face == 1) return quaternion.LookRotation(float3(-1, 0, 0), float3(0, 1, 0));
+    if (face == 2) return quaternion.LookRotation(float3(0, 1, 0), float3(0, 0, -1));
+    if (face == 3) return quaternion.LookRotation(float3(0, -1, 0), float3(0, 0, 1));
+    if (face == 4) return quaternion.LookRotation(float3(0, 0, 1), float3(0, 1, 0));
+    return quaternion.LookRotation(float3(0, 0, -1), float3(0, 1, 0));
+}
+
+[After(Shadows)]
+view CubeFaces(Art art, mut Cubes cubes)
+{
+    if (art.targetPass != 17) return;
+    if (!cubes.made)
+    {
+        cubes.made = true;
+        cubes.painted = RenderTarget.Cube(64);
+        cubes.bright = RenderTarget.Cube(8, Format.Rgba16f);
+        cubes.scene = RenderTarget.Cube(32);
+        cubes.kept = skyFaces;
+        cubes.small = [Vertex { }, Vertex { position = float2(8, 0), uv = float2(1, 0) },
+                       Vertex { position = float2(8, 8), uv = float2(1, 1) }, Vertex { position = float2(0, 8), uv = float2(0, 1) }];
+        // A card a unit from the middle, up and to the right of where +z looks
+        cubes.card = [Vertex3 { position = float3(0.2, 0.2, 1) }, Vertex3 { position = float3(0.8, 0.2, 1) },
+                      Vertex3 { position = float3(0.8, 0.8, 1) }, Vertex3 { position = float3(0.2, 0.8, 1) }];
+    }
+    // Each face in its own pixels, from its top left, like any target
+    for (int face = 0; face < 6; face++)
+    {
+        var into = cubes.painted.faces[face];
+        into.SetPixels();
+        if (face == 0)
+        {
+            into.Clear(Color.black);
+            for (int i = 0; i < 8; i++) into.Rect(float2(i * 8 + cubes.lit * 0.5, 32), float2(cubes.lit, 64), Color.red);
+        }
+        else
+        {
+            into.Clear(FaceColor(face));
+            into.Rect(float2(16, 16), float2(32, 32), Color.white);
+        }
+    }
+    // Floats hold what's added past 1
+    var glow = cubes.bright.faces[5];
+    glow.SetPixels();
+    glow.Clear(Color.black);
+    glow.Blend(Blend.Add)
+    {
+        glow.Rect(float2(4, 4), float2(8, 8), Color(1, 0.5, 0.25));
+        glow.Rect(float2(4, 4), float2(8, 8), Color(1, 0.5, 0.25));
+    }
+    // What's around the middle: the same card, turned to where each face looks, in the face's color
+    for (int face = 0; face < 6; face++)
+    {
+        var into = cubes.scene.faces[face];
+        into.Clear(Color.black);
+        into.SetCamera(float3(0, 0, 0), FaceRotation(face), 90);
+        into.Cull(Cull.None), into.Tint(FaceColor(face))
+        {
+            for (int other = 0; other < 6; other++)
+            {
+                into.Mesh(cubes.card, art.faces, float4x4.TRS(float3(0, 0, 0), FaceRotation(other), float3(1, 1, 1)));
+            }
+        }
+    }
+}
+
+[After(CubeFaces)]
+view CubeReads(Art art, Cubes cubes)
+{
+    if (art.targetPass != 17) return;
+    Draw.Clear(Color(0.5, 0.5, 0.5));
+    Draw.SetPixels();
+    Draw.SetClip();
+    for (int face = 0; face < 6; face++)
+    {
+        var corner = TopLeft(face);
+        // The same face's other quarter is through its middle: the two parts that aren't its axis, turned round
+        var across = float3(face < 2 ? corner.x : -corner.x, face == 2 || face == 3 ? corner.y : -corner.y, face > 3 ? corner.z : -corner.z);
+        // Row 1: the asset's, each face's two quarters. Row 2: the same of the cube that was painted
+        Draw.Transform(float2(8 + face * 32, 8))
+        {
+            Draw.Mesh(cubes.small, art.faces, SkyLook, Way { to = corner });
+        }
+        Draw.Transform(float2(24 + face * 32, 8))
+        {
+            Draw.Mesh(cubes.small, art.faces, SkyLook, Way { to = across * 3 });
+        }
+        if (face == 0) continue;
+        Draw.Transform(float2(8 + face * 32, 24))
+        {
+            Draw.Mesh(cubes.small, art.faces, PaintedLook, Way { to = corner });
+        }
+        Draw.Transform(float2(24 + face * 32, 24))
+        {
+            Draw.Mesh(cubes.small, art.faces, PaintedLook, Way { to = across });
+        }
+    }
+    // Row 3: a face's middle, blended; the first face's stripes between its smaller images, and at its own
+    // pixels; the float cube; no cube; and a square a vert moved
+    Draw.Transform(float2(8, 40))
+    {
+        Draw.Mesh(cubes.small, art.faces, KeptLook, Way { to = float3(0, 0, -5) });
+    }
+    Draw.Transform(float2(24, 40))
+    {
+        Draw.Mesh(cubes.small, art.faces, AcrossFirst);
+    }
+    Draw.Transform(float2(40, 40))
+    {
+        Draw.Mesh(cubes.small, art.faces, AcrossFirstPlain);
+    }
+    Draw.Transform(float2(56, 40))
+    {
+        Draw.Mesh(cubes.small, art.faces, BrightLook, Way { to = float3(0, 0, -1) });
+    }
+    Draw.Transform(float2(72, 40))
+    {
+        Draw.Mesh(cubes.small, art.faces, NoneLook, Way { to = float3(0, 1, 0) });
+    }
+    Draw.Transform(float2(88, 40))
+    {
+        Draw.Mesh(cubes.small, art.faces, CubeNudge);
+    }
+    // Row 5: each face of the scene, where its card is, and beside the card
+    for (int face = 0; face < 6; face++)
+    {
+        var turn = FaceRotation(face);
+        Draw.Transform(float2(8 + face * 32, 72))
+        {
+            Draw.Mesh(cubes.small, art.faces, SceneLook, Way { to = Math.Rotate(turn, float3(0.5, 0.5, 1)) });
+        }
+        Draw.Transform(float2(24 + face * 32, 72))
+        {
+            Draw.Mesh(cubes.small, art.faces, SceneLook, Way { to = Math.Rotate(turn, float3(-0.5, 0.5, 1)) });
+        }
+    }
+}
+
 // shaders.c requests independent full-window checks after the existing grid.
 // Resource descriptors are supplied by C, without choosing a Tide lifetime API.
 [After(Manual)]
 view Targets(mut Art art)
 {
-    // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images', 11 Outputs', 12 Values', 13 Heights' and 14 Mipmaps'
+    // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images', 11 Outputs', 12 Values', 13 Heights', 14 Mipmaps',
+    // 15 Alphas', 16 Raws' and 17 the cubes'
     if (art.targetPass == 0 || art.targetPass >= 6) return;
     if (art.targetPass >= 4)
     {

@@ -120,7 +120,9 @@ typedef enum type_kind {
     TY_DRAW_LIST,  // DrawList: the frame's draw list, `Draw.list`, which only an extern function takes
     TY_TEXTURE,    // Texture: a local reference to pixels or a render target's color image
     TY_DEPTH_TEXTURE, // DepthTexture: a local reference to a render target's depth, which a frag or vert reads
+    TY_CUBEMAP,    // Cubemap: a local reference to six images a frag or vert reads by a direction: an asset's, or one drawn into
     TY_RENDER_TARGET, // RenderTarget: a local drawing destination; Draw.window names the window
+    TY_CLIP,       // Clip: a sound of the game's pack, this machine's to play (an asset's, or a copy of one)
     TY_LIST,       // List<T>: decl is the list type, whose one field is its element
     TY_MAP,        // Map<K, V>: decl is the map type, whose fields are its key and its value
     TY_SET,        // Set<K>: decl is the set type, whose one field is its key
@@ -401,7 +403,8 @@ typedef enum decl_kind {
 // How a frag or vert reads a texture: a color, or a target's depth, as a
 // number (depth.Sample) or compared with one of its own (depth.Compare). The
 // values are tide/draw.h's tide_shader_read's.
-typedef enum shader_read { READ_COLOR, READ_DEPTH, READ_COMPARE } shader_read;
+// READ_CUBE is a Cubemap's color, read by a direction.
+typedef enum shader_read { READ_COLOR, READ_DEPTH, READ_COMPARE, READ_CUBE } shader_read;
 
 // A grid a frag or vert samples: a field of one of its parameters, and how.
 typedef struct shader_sample {
@@ -585,6 +588,8 @@ typedef struct decl {
     bool entity_local;   // Its entities are the local world's (views of local components)
     bool draws;          // A function that draws or uses the GUI, itself or through the functions it calls
     loc draws_at;        // ...where it first does
+    bool plays;          // Plays sounds (Audio), itself or through the functions it calls: local code's
+    loc plays_at;
     bool render_resources; // Uses local rendering handles, directly or through its calls
     loc render_resources_at;
     bool uses_io;         // Filesystem access, directly or through helpers: this machine's local state
@@ -707,6 +712,7 @@ typedef enum builtin_call {
     CALL_CONSTRUCT, // float3(...), int(...), quaternion(...), float4x4(...), and an enum's Card(number)
     CALL_BUILTIN,   // Math.Dot(...), quaternion.AxisAngle(...): calls c_callee
     CALL_DRAW,      // Draw.Circle(...): calls c_callee with the view's draw list first
+    CALL_AUDIO,     // Audio.Play(...): calls c_callee with the frame's audio list first (tide_l->tide_audio)
     CALL_SPAWN,
     CALL_ADD,
     CALL_REMOVE,
@@ -821,6 +827,7 @@ struct expr {
     bool local_field;      // box.verts: a local field of a match component or singleton, in its local part (`field` is that one's)
     bool raw_sampled;      // A [Raw] Texture asset's name as the object of a Sample, which is the one place it goes
     bool target_colors;    // target.colors: a render target's color images, of which an index reads one (target.colors[1])
+                           // ...and cube.faces: a Cubemap's faces, of which an index is one as a RenderTarget (cube.faces[2])
 
 
     // E_CALL, E_METHOD
@@ -1178,6 +1185,7 @@ typedef struct program {
     // Application.title is read: generated C has the game's title as text
     // (its title setting, or the program's name), and no other game's does.
     bool uses_title;
+    bool uses_audio;     // Some code plays sounds: the local state carries the frame's audio list
     VEC(mesh_draw) mesh_draws; // Every mesh draw that draws through a shader
     VEC(shader *) shaders;     // ...and the shaders they draw through, once each
     decl *session;       // The built-in local singleton Session: this machine's part in a match

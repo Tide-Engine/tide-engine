@@ -1,0 +1,5 @@
+// expect: a Cubemap is created in local code, not a field default or constant
+// expect: leave the field at default and create its cube in a view or local handler
+// ...nor does a field's default
+scene Main { }
+local singleton Room { Cubemap reflection = RenderTarget.Cube(64); }

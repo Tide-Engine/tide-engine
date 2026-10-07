@@ -28,6 +28,7 @@ tide <command> [folder] [options]
 | `--release` | Optimized, the way players get it |
 | `--web` | A web page (WebGPU, or WebGL 2 where the browser has none), built with clang's WebAssembly target |
 | `--android` | An Android app, for phones and the emulator (see [Android](#android)) |
+| `--define <SYMBOL>` | Defines a symbol for the game's [`#if` lines](../language/namespaces.md#symbols-of-your-own), as many times as there are symbols. `DEBUG` is defined without `--release`. `schedule` and `shaders` take it too |
 | `--title <title>` | The window's title, over the game's `title` setting (default: that, or the folder's name) |
 | `--stats` | Shows the [stats](#stats) in the window's corner, as the game's `stats` setting does. `run` starts them open |
 | `--debug-views` | Turns the [debug views](debug-views.md) on, as the game's `debugViews` setting does: F7 shows the profiler, which says where a frame's time and a tick's go |

@@ -22,7 +22,7 @@ sudo apt-get install -y wget ca-certificates
 wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
 echo "deb http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$major main" | sudo tee /etc/apt/sources.list.d/llvm.list
 sudo apt-get update
-sudo apt-get install -y "clang-$major" "lld-$major" "llvm-$major" ninja-build zstd unzip cmake git curl xvfb \
+sudo apt-get install -y "clang-$major" "lld-$major" "llvm-$major" ninja-build zstd unzip cmake git curl xvfb gh \
     build-essential python3 libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev \
     openjdk-21-jdk-headless
 
