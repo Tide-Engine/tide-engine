@@ -114,7 +114,7 @@ function installedProgram(name) {
 async function missing(message, setting) {
     const choice = await vscode.window.showErrorMessage(message, 'Install tide', 'Settings');
     if (choice === 'Install tide') {
-        vscode.env.openExternal(vscode.Uri.parse('https://github.com/BlenMiner/tide-engine#install'));
+        vscode.env.openExternal(vscode.Uri.parse('https://tide-engine.dev/guide/install'));
     } else if (choice === 'Settings') {
         vscode.commands.executeCommand('workbench.action.openSettings', setting);
     }
