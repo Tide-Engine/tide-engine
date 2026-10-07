@@ -99,7 +99,7 @@ view Show(Devices devices, mut Room room)
             }
         }
         // Six images of 256 pixels a side, each a target to draw into
-        room.around = RenderTarget.Cube(256);
+        room.around = Cubemap(256);
     }
     room.turn += Math.Min(Frame.dt, 0.05) * 0.5;
     if (room.turn > Math.TAU * 6) room.turn -= Math.TAU * 6;

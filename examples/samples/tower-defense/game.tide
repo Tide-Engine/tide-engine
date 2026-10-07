@@ -625,7 +625,7 @@ void DrawHeart(float2 center, float size, Color color)
 view Begin(Session session, mut Layout layout, mut Hand hand)
 {
     Draw.Clear(BG);
-    Draw.SetPixels();
+    Draw.SetScreen();
     float w = Screen.width;
     float h = Screen.height;
     var ui = Math.Clamp(Math.Min(w, h) / 400, 1.0, 1.6);

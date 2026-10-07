@@ -3,5 +3,5 @@
 // A frag makes none
 scene Main { }
 local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
-frag Look(Vertex3 vertex, out Color color) { var made = RenderTarget.Cube(8); color = Color.white; }
+frag Look(Vertex3 vertex, out Color color) { var made = Cubemap(8); color = Color.white; }
 view Show(Room room) { Draw.Mesh(room.ball, [0, 1, 2], float4x4.identity, Look); }

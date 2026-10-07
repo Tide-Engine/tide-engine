@@ -1,7 +1,7 @@
-// expect: to set it for the draws that follow, write 'Draw.SetPixels();'
+// expect: to set it for the draws that follow, write 'Draw.SetScreen();'
 scene Main { }
 
 view Show()
 {
-    Draw.Pixels();
+    Draw.Screen();
 }

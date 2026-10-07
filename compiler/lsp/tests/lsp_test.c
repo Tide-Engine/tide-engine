@@ -367,7 +367,7 @@ TIDE_TEST(lsp_complete_builtin_owners)
     // The 3D draws are Draw's too, beside the 2D ones, and so are the settings and its members
     TIDE_CHECK(offers(draw, "Cube") && offers(draw, "Sphere") && offers(draw, "Cylinder") && offers(draw, "Plane"));
     TIDE_CHECK(offers(draw, "ScreenRayOrigin") && offers(draw, "ScreenRayDirection") && offers(draw, "list") && offers(draw, "window"));
-    TIDE_CHECK(offers(draw, "Rect") && offers(draw, "Pixels") && offers(draw, "Camera") && offers(draw, "Blend") && offers(draw, "Depth"));
+    TIDE_CHECK(offers(draw, "Rect") && offers(draw, "Screen") && offers(draw, "Camera") && offers(draw, "Blend") && offers(draw, "Depth"));
     TIDE_CHECK(offers(draw, "Blit") && !offers(draw, "Draw2D") && !offers(draw, "Draw3D"));
 
     const char *color = complete(GAME_TYPES "view V(Body body)\n{\n    Draw.Circle(body.position, 1, Color.$);\n}\n");
@@ -675,7 +675,7 @@ static const char *c_definition(const char *marked)
     return definition_line();
 }
 
-// Meshes: Draw.Mesh, Draw.Clip and Draw.Pixels, the built-in Vertex and
+// Meshes: Draw.Mesh, Draw.Clip and Draw.Screen, the built-in Vertex and
 // Filter, and the draw list a view passes to C.
 TIDE_TEST(lsp_meshes)
 {
@@ -684,7 +684,7 @@ TIDE_TEST(lsp_meshes)
     "scene Main { }\n"                                                             \
     "extern void DrawUI(DrawList list);\n"                                         \
     "local singleton Art\n{\n    Grid2<Color> pixels = Grid2(4, 4);\n    List<Vertex> corners;\n}\n"
-    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.SetPixels();\n    Draw.SetClip(Rect(0, 0, 4, 4));\n"
+    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.SetScreen();\n    Draw.SetClip(Rect(0, 0, 4, 4));\n"
                              "    Draw.Mesh(art.corners, [0, 1, 2], art.pixels, Filter.Point);\n"
                              "    Draw.Mesh([Vertex { position = float2(1, 2) }], [0, 0, 0]);\n"
                              "    Draw.SetCamera(float3(0, 0, -5), quaternion.identity, 60);\n"
@@ -693,8 +693,8 @@ TIDE_TEST(lsp_meshes)
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
     const char *draw = complete(MESH_TYPES "view V(Art art)\n{\n    Draw.$\n}\n");
-    TIDE_CHECK(offers(draw, "Mesh") && offers(draw, "Clip") && offers(draw, "Pixels") && offers(draw, "list"));
-    TIDE_CHECK(offers(draw, "SetClip") && offers(draw, "SetPixels") && offers(draw, "SetCamera") && offers(draw, "Transform"));
+    TIDE_CHECK(offers(draw, "Mesh") && offers(draw, "Clip") && offers(draw, "Screen") && offers(draw, "list"));
+    TIDE_CHECK(offers(draw, "SetClip") && offers(draw, "SetScreen") && offers(draw, "SetCamera") && offers(draw, "Transform"));
     TIDE_CHECK(has(draw, "Mesh(${1:vertices}, ${2:indices})"));
     TIDE_CHECK(has(draw, "Draw.list: DrawList"));
     const char *filter = complete(MESH_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, [0, 1, 2], art.pixels, Filter.$);\n}\n");
@@ -740,7 +740,7 @@ TIDE_TEST(lsp_meshes)
     TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw.Me$sh(art.corners, [0, 1, 2]);\n}\n"),
                    "void tide_draw_mesh_lists("));
     TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw.SetCl$ip();\n}\n"), "void tide_draw_unset_clip("));
-    TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw.SetPix$els();\n}\n"), "void tide_draw_set_screen("));
+    TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw.SetScr$een();\n}\n"), "void tide_draw_set_screen("));
     TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw.Cl$ip(Rect(0, 0, 4, 4))\n    {\n    }\n}\n"),
                    "uint32_t tide_draw_push_clip("));
 #undef MESH_TYPES
@@ -1226,7 +1226,7 @@ TIDE_TEST(lsp_camera_matrices)
     TIDE_CHECK(has(hover_at(5, 24), "Where the current 3D camera is in the world"));
     TIDE_CHECK(has(hover_at(6, 24), "fitted to the shape of what it draws into"));
     const char *flat = hover_at(7, 24);
-    TIDE_CHECK(has(flat, "float3x3") && has(flat, "The identity inside `Pixels`"));
+    TIDE_CHECK(has(flat, "float3x3") && has(flat, "The identity inside `Screen`"));
 
     const char *draw = complete(CAMERA_GAME "view V(mut Lamp lamp)\n{\n    Draw.$\n}\n");
     TIDE_CHECK(offers(draw, "WorldToClip") && offers(draw, "CameraTransform") && offers(draw, "CameraProjection")
@@ -5149,12 +5149,12 @@ TIDE_TEST(lsp_window_pixels_and_format_names)
     open_document("scene Main { }\nview V()\n{\n    var scene = RenderTarget.Screen(0.5);\n    scene.Dispose();\n}\n");
     TIDE_CHECK(has(last_sent(), "RenderTarget.Screen is 'RenderTarget.Window' now"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Window'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
-    open_document("scene Main { }\nview V()\n{\n    Draw.SetScreen();\n}\n");
-    TIDE_CHECK(has(last_sent(), "Draw.SetScreen is 'Draw.SetPixels' now"));
-    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetPixels'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
-    open_document("scene Main { }\nview V()\n{\n    Draw.Screen()\n    {\n    }\n}\n");
-    TIDE_CHECK(has(last_sent(), "Draw.Screen is 'Draw.Pixels' now"));
-    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Pixels'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetPixels();\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw.SetPixels is 'Draw.SetScreen' now"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetScreen'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    open_document("scene Main { }\nview V()\n{\n    Draw.Pixels()\n    {\n    }\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw.Pixels is 'Draw.Screen' now"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Screen'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
     open_document("scene Main { }\nview V()\n{\n    var lamp = RenderTarget(64, 64, Format.DepthOnly);\n    lamp.Dispose();\n}\n");
     TIDE_CHECK(has(last_sent(), "Format.DepthOnly is 'Format.Depth' now"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Depth'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
@@ -5166,7 +5166,7 @@ TIDE_TEST(lsp_window_pixels_and_format_names)
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Rgba8'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
     // As they're written now, nothing is said, and a target's own has both forms
     open_document("scene Main { }\nview V()\n{\n    var scene = RenderTarget.Window(0.5, Format.Rgba8, Format.Rgba16f);\n"
-                  "    scene.SetPixels();\n    scene.Pixels()\n    {\n    }\n    Draw.SetPixels();\n    scene.Dispose();\n}\n");
+                  "    scene.SetScreen();\n    scene.Screen()\n    {\n    }\n    Draw.SetScreen();\n    scene.Dispose();\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 }
 
@@ -8214,7 +8214,7 @@ TIDE_TEST(lsp_cubemaps)
                                     "}\n"
                                     "view V(mut Room room)\n"
                                     "{\n"
-                                    "    room.reflection = RenderTarget.Cube(64, Format.Rgba16f);\n"
+                                    "    room.reflection = Cubemap(64, Format.Rgba16f);\n"
                                     "    room.reflection.faces[2].Clear(Color.black);\n"
                                     "    Draw.Mesh(room.ball, [0, 1, 2], float4x4.identity, Shine);\n"
                                     "    room.reflection.Resize(32);\n"
@@ -8233,14 +8233,14 @@ TIDE_TEST(lsp_cubemaps)
     const char *hover = request_at(uri_main, "textDocument/hover", 0, 15, "");
     TIDE_CHECK(has(hover, "asset Cubemap sky") && has(hover, "six images") && has(hover, "`px`, `nx`, `py`, `ny`, `pz`, `nz`"));
     hover = request_at(uri_main, "textDocument/hover", 4, 6, "");
-    TIDE_CHECK(has(hover, "a cube of six images") && has(hover, "RenderTarget.Cube(size)"));
+    TIDE_CHECK(has(hover, "a cube of six images") && has(hover, "Cubemap(size)"));
     // What a frag reads, and what a view does with one
     hover = request_at(uri_main, "textDocument/hover", 9, 30, "");
     TIDE_CHECK(has(hover, "Sample(float3 direction, Filter filter = Filter.Bilinear) -> Color") && has(hover, "no edge and no wrap"));
     hover = request_at(uri_main, "textDocument/hover", 16, 22, "");
     TIDE_CHECK(has(hover, "Resize(float size)"));
     const char *help = request_at(uri_main, "textDocument/signatureHelp", 13, 40, "");
-    TIDE_CHECK(has(help, "RenderTarget.Cube(float size, Format format)") && has(help, "cube.faces[0]"));
+    TIDE_CHECK(has(help, "Cubemap(float size, Format format)") && has(help, "cube.faces[0]"));
 
     // A cube's path is a glob over PNGs
     static const char paths[] = "asset Cubemap sky = \"sky/\";\nscene Main { }\n";
@@ -8284,7 +8284,7 @@ TIDE_TEST(lsp_cubemaps)
     members = complete(program);
     TIDE_CHECK(offers(members, "Sample") && !offers(members, "faces") && !offers(members, "Dispose"));
     snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    room.side = RenderTarget.$\n}\n", types);
-    TIDE_CHECK(offers(complete(program), "Cube") && offers(complete(program), "Window"));
+    TIDE_CHECK(offers(complete(program), "Window") && !offers(complete(program), "Cube")); // A cube is Cubemap(size)
     // A face is a RenderTarget
     snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    var up = room.reflection.faces[2];\n    room.side = u$p;\n}\n", types);
     open_document(program);

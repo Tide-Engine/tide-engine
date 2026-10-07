@@ -11,7 +11,7 @@ local singleton Bars
 view Show(mut Bars bars)
 {
     Draw.Clear(Color(0.086, 0.086, 0.094));
-    Draw.SetPixels();
+    Draw.SetScreen();
     var count = bars.heights.count;
     var width = (Screen.width - 32.0) / Math.Max(count, 1);
     var floor = Screen.height - 110;

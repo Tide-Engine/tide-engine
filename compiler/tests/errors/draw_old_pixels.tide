@@ -1,0 +1,11 @@
+// expect: Draw.Pixels is 'Draw.Screen' now
+// expect: it draws in the screen's pixels, from the top left with y down: 'Draw.Screen() { ... }' around some draws, or 'Draw.SetScreen();' for the draws that follow
+scene Main { }
+
+view Show()
+{
+    Draw.Pixels()
+    {
+        Draw.Rect(float2(0, 0), float2(4, 4), Color.white);
+    }
+}
