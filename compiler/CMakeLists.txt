@@ -11,7 +11,7 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     # it packs is what the game reads; those files bring the engine's pages and
     # hashes. The same objects are in the engine's library, so a program that
     # links both (tide_cli_tests) finds each symbol once.
-    set(TIDEC_ENGINE_SOURCES "${PROJECT_SOURCE_DIR}/engine/src/png_read.c" "${PROJECT_SOURCE_DIR}/engine/src/wav.c" "${PROJECT_SOURCE_DIR}/engine/src/pack.c"
+    set(TIDEC_ENGINE_SOURCES "${PROJECT_SOURCE_DIR}/engine/src/png_read.c" "${PROJECT_SOURCE_DIR}/engine/src/wav.c" "${PROJECT_SOURCE_DIR}/engine/src/vorbis.c" "${PROJECT_SOURCE_DIR}/engine/src/pack.c"
         "${PROJECT_SOURCE_DIR}/engine/src/sha256.c" "${PROJECT_SOURCE_DIR}/engine/src/page.c" "${PROJECT_SOURCE_DIR}/engine/src/net.c")
     add_library(tidec_core STATIC ${TIDEC_SOURCES} ${TIDEC_ENGINE_SOURCES})
     # `#if TIDE_0_3_OR_NEWER` and packages' `tide 0.3` compare with it (version.h).

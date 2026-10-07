@@ -64,6 +64,7 @@ static void usage(void)
            "  --debug-views      F7 shows the profiler: where a frame's time and a tick's go (as the debugViews setting)\n"
            "  -o <path>          build: where the program goes\n"
            "  --no-open          run --web: serve the page without opening a browser\n"
+           "  --watch            run: rebuild as files change and reload (Android: reinstall and restart)\n"
            "\n"
            "run, in a match with others (the game's Main must be the match's for --host):\n"
            "  --host [port]        a match others can join: in a room, and on a port (7777 by default; not on the web)\n"
@@ -224,7 +225,7 @@ int main(const int argc, char **argv)
     const char *game_args[24] = {NULL};
     int game_arg_count = 0;
     bool open_page = true; // run --web opens the page in a browser
-    bool once = false;     // run with no window: the game runs once, as it was built, and its exit code is tide's
+    bool headless = false; // --capture, --frames or --script: the game runs with no window
     bool sized = false;
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
@@ -247,7 +248,7 @@ int main(const int argc, char **argv)
             // The game runs in its own folder: the file is where the command says, from here
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = path_absolute(argv[++i]);
-            once = true;
+            headless = true;
         } else if (run && (strcmp(a, "--frames") == 0 || strcmp(a, "--scale") == 0)) {
             if (left < 1) {
                 fprintf(stderr, "tide: %s takes a number, like `%s`\n", a, a[2] == 'f' ? "--frames 300" : "--scale 2");
@@ -255,7 +256,7 @@ int main(const int argc, char **argv)
             }
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = argv[++i];
-            if (a[2] == 'f') once = true;
+            if (a[2] == 'f') headless = true;
         } else if (run && strcmp(a, "--size") == 0) {
             if (left < 2) {
                 fprintf(stderr, "tide: --size takes the window's width and height, like `--size 1280 720`\n");
@@ -279,6 +280,7 @@ int main(const int argc, char **argv)
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = argv[++i];
         } else if (run && strcmp(a, "--no-open") == 0) open_page = false;
+        else if (run && strcmp(a, "--watch") == 0) opts.watch = true;
         else if (strcmp(a, "--release") == 0) opts.release = true;
         else if (strcmp(a, "--web") == 0) opts.web = true;
         else if (strcmp(a, "--android") == 0) opts.android = true;
@@ -312,27 +314,34 @@ int main(const int argc, char **argv)
         fprintf(stderr, "tide: a build is for the web or for Android, not both at once\n");
         return 2;
     }
-    if ((once || sized) && (opts.web || opts.android)) {
+    if ((headless || sized) && (opts.web || opts.android)) {
         fprintf(stderr, "tide: %s on this machine: not with --web or --android\n",
-                once ? "--capture, --frames and --script run the game with no window," : "--size is for a window");
+                headless ? "--capture, --frames and --script run the game with no window," : "--size is for a window");
+        return 2;
+    }
+    if (opts.watch && headless) {
+        fprintf(stderr, "tide: --watch needs a run with a window: --capture, --frames and --script run once; leave out --watch\n");
         return 2;
     }
     if (run && sys_hidden()) {
         // Nobody watches: the game shows no window, so its run has to end by itself, and no browser opens
-        if (!once && !opts.web && !opts.android) {
+        if (!headless && !opts.web && !opts.android) {
             fprintf(stderr, "tide: TIDE_HIDDEN is set, so the game shows no window, and nothing else would end its run: give run "
                             "--frames <n> (and --capture <file.png> for a picture of the last one), or --script <file>\n");
             return 2;
         }
         open_page = false;
     }
+    // A run ends with its game. Do the occasional update check before it
+    // starts, so the network can't keep tide alive after the window closes.
+    if (run) tide_check_for_update(root);
     int code = 0;
     if (schedule) {
         code = tide_schedule(&opts, shaders) ? 0 : 1;
     } else if (run && opts.android) {
         code = tide_run_android(root, &opts, game_args);
     } else if (run && !opts.web) {
-        code = tide_run_reloading(root, &opts, game_args, once);
+        code = opts.watch ? tide_run_reloading(root, &opts, game_args) : tide_run_native(root, &opts, game_args);
     } else if (run) {
         code = tide_run_web(root, &opts, open_page, game_args);
     } else {
@@ -340,6 +349,6 @@ int main(const int argc, char **argv)
         if (!program) code = 1;
         else printf("Built %s\n", program);
     }
-    tide_check_for_update(root);
+    if (!run) tide_check_for_update(root);
     return code;
 }

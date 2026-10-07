@@ -436,3 +436,65 @@ TIDE_TEST(math_hash_of_cells_has_no_stripes)
         TIDE_CHECK(abs(differ[b] - half) < half / 20);
     }
 }
+
+// Noise (noise.c): gradient noise is 0 at the whole numbers and within -1 to 1,
+// simplex noise within about that, cellular noise two distances in order,
+// each the same for the same point and other for another seed, and smooth:
+// a step of a thousandth moves none of them much.
+TIDE_TEST(math_noise_stays_in_its_range_and_is_smooth)
+{
+    rng_state = 4242;
+    float most2 = 0.0f, most3 = 0.0f, most_s2 = 0.0f, most_s3 = 0.0f, most_c2 = 0.0f, most_c3 = 0.0f;
+    for (int i = 0; i < 20000; i++) {
+        const float x = rnd(-300.0f, 300.0f);
+        const float y = rnd(-300.0f, 300.0f);
+        const float z = rnd(-300.0f, 300.0f);
+        const int32_t seed = (int32_t)(rng_state >> 3);
+        const tide_float2 p2 = tide_f2(x, y);
+        const tide_float3 p3 = tide_f3(x, y, z);
+        const float n2 = tide_perlin_f2(p2, seed);
+        const float n3 = tide_perlin_f3(p3, seed);
+        const float s2 = tide_simplex_f2(p2, seed);
+        const float s3 = tide_simplex_f3(p3, seed);
+        const tide_float2 c2 = tide_cellular_f2(p2, seed);
+        const tide_float2 c3 = tide_cellular_f3(p3, seed);
+        TIDE_CHECK(n2 >= -1.0f && n2 <= 1.0f);
+        TIDE_CHECK(n3 >= -1.000001f && n3 <= 1.000001f);
+        TIDE_CHECK(s2 >= -1.0f && s2 <= 1.0f);
+        TIDE_CHECK(s3 >= -1.0f && s3 <= 1.0f);
+        TIDE_CHECK(c2.x >= 0.0f && c2.x <= c2.y && c2.y <= 1.5f);
+        TIDE_CHECK(c3.x >= 0.0f && c3.x <= c3.y && c3.y <= 1.75f);
+        if (fabsf(n2) > most2) most2 = fabsf(n2);
+        if (fabsf(n3) > most3) most3 = fabsf(n3);
+        if (fabsf(s2) > most_s2) most_s2 = fabsf(s2);
+        if (fabsf(s3) > most_s3) most_s3 = fabsf(s3);
+        if (c2.x > most_c2) most_c2 = c2.x;
+        if (c3.x > most_c3) most_c3 = c3.x;
+        // The same again, and another seed is another field
+        TIDE_CHECK(tide_perlin_f2(p2, seed) == n2 && tide_simplex_f3(p3, seed) == s3);
+        TIDE_CHECK(tide_cellular_f2(p2, seed).x == c2.x && tide_cellular_f3(p3, seed).y == c3.y);
+        TIDE_CHECK(tide_perlin_f2(p2, seed + 1) != n2 || tide_perlin_f3(p3, seed + 1) != n3);
+        // Smooth: a small step is a small change
+        const tide_float2 q2 = tide_f2(x + 0.001f, y - 0.001f);
+        const tide_float3 q3 = tide_f3(x + 0.001f, y - 0.001f, z + 0.001f);
+        TIDE_CHECK(fabsf(tide_perlin_f2(q2, seed) - n2) < 0.02f);
+        TIDE_CHECK(fabsf(tide_perlin_f3(q3, seed) - n3) < 0.02f);
+        TIDE_CHECK(fabsf(tide_simplex_f2(q2, seed) - s2) < 0.02f);
+        TIDE_CHECK(fabsf(tide_simplex_f3(q3, seed) - s3) < 0.02f);
+        TIDE_CHECK(fabsf(tide_cellular_f2(q2, seed).x - c2.x) < 0.01f);
+        TIDE_CHECK(fabsf(tide_cellular_f3(q3, seed).x - c3.x) < 0.01f);
+    }
+    // Each reaches well into its range
+    TIDE_CHECK(most2 > 0.7f && most3 > 0.7f && most_s2 > 0.7f && most_s3 > 0.6f);
+    TIDE_CHECK(most_c2 > 0.5f && most_c3 > 0.5f);
+    // Gradient noise is 0 at every whole number, in every seed
+    for (int i = -50; i <= 50; i += 7) {
+        TIDE_CHECK(tide_perlin_f2(tide_f2((float)i, (float)(3 * i)), i) == 0.0f);
+        TIDE_CHECK(tide_perlin_f3(tide_f3((float)i, (float)(-i), 2.0f), i) == 0.0f);
+    }
+    // Cellular noise is 0 on a feature point: the nearest cell's own, which its hash places
+    const int32_t h = tide_hash_i3(tide_i3(5, 7, 0));
+    const tide_float2 feature = tide_f2(5.0f + (float)(h & 32767) * 0.000030518509f,
+                                        7.0f + (float)((h >> 15) & 32767) * 0.000030518509f);
+    TIDE_CHECK(tide_cellular_f2(feature, 0).x < 0.0001f);
+}

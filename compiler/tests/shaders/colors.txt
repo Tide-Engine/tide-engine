@@ -1,0 +1,141 @@
+// Channels and Colors on Vertex: GLSL, vertex
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+};
+layout(location = 0) in vec2 tide_a0;
+layout(location = 1) in vec2 tide_a1;
+layout(location = 2) in vec4 tide_a2;
+out vec2 tide_s1;
+struct tt_Vertex {
+    vec2 m_position;
+    vec2 m_uv;
+    vec4 m_color;
+};
+void ts_Channels(inout tt_Vertex t_vertex) {
+    t_vertex.m_color = vec4(t_vertex.m_uv, 0.0, 1.0);
+}
+
+void main() {
+    tt_Vertex tide_vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    ts_Channels(tide_vertex);
+    vec4 tide_place = vec4(tide_vertex.m_position, 0.0, 1.0);
+    gl_Position = tide_camera * tide_place;
+    tide_s1 = tide_vertex.m_uv;
+}
+
+// Channels and Colors on Vertex: GLSL, fragment
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+};
+in vec2 tide_s1;
+out vec4 tide_pixel;
+struct tt_Vertex {
+    vec2 m_position;
+    vec2 m_uv;
+    vec4 m_color;
+};
+void ts_Colors(tt_Vertex t_vertex, inout vec4 t_color) {
+    vec2 t_uv = t_vertex.m_uv;
+    vec3 t_rgb = vec3(t_uv, 0.75);
+    vec4 t_rgba = vec4(t_rgb, 0.125);
+    vec4 t_pairThenScalar = vec4(t_uv.xy, 0.0, 1.0);
+    vec4 t_scalarThenPair = vec4(0.25, t_uv, 1.0);
+    vec4 t_triple = vec4(t_rgb, 1.0);
+    vec4 t_tripleThenAlpha = vec4(t_rgb, 0.125);
+    vec4 t_quadruple = vec4(t_rgba);
+    vec4 t_pairs = vec4(t_uv, t_rgba.zw);
+    vec4 t_pairThenScalars = vec4(t_uv, 0.75, 0.125);
+    vec4 t_scalarPairScalar = vec4(0.25, t_uv, 0.125);
+    vec4 t_scalarsThenPair = vec4(0.25, 0.5, t_rgba.zw);
+    vec4 t_scalarThenTriple = vec4(0.25, t_rgba.yzw);
+    vec4 t_intsThenScalar = vec4(vec2(ivec2(2, 3)), 4.0, 1.0);
+    vec4 t_intsTriple = vec4(vec3(ivec3(2, 3, 4)), 1.0);
+    vec4 t_intsThenAlpha = vec4(vec3(ivec3(2, 3, 4)), 0.125);
+    vec4 t_intsQuadruple = vec4(vec4(ivec4(2, 3, 4, 5)));
+    vec4 t_scalarThenIntsPair = vec4(2.0, vec2(ivec2(3, 4)), 1.0);
+    vec4 t_scalarThenIntsTriple = vec4(2.0, vec3(ivec3(3, 4, 5)));
+    vec4 t_mixedPairs = vec4(vec2(ivec2(2, 3)), vec2(0.75, 0.125));
+    t_color = ((((((((((((((((t_pairThenScalar + t_scalarThenPair) + t_triple) + t_tripleThenAlpha) + t_quadruple) + t_pairs) + t_pairThenScalars) + t_scalarPairScalar) + t_scalarsThenPair) + t_scalarThenTriple) + t_intsThenScalar) + t_intsTriple) + t_intsThenAlpha) + t_intsQuadruple) + t_scalarThenIntsPair) + t_scalarThenIntsTriple) + t_mixedPairs);
+}
+
+void main() {
+    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
+    ts_Colors(tt_Vertex(vec2(0.0), tide_s1, vec4(0.0)), tide_color);
+    tide_color = tide_color * tide_tint;
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
+    tide_pixel = tide_color;
+}
+
+// Channels and Colors on Vertex: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s1: vec2f,
+}
+struct tt_Vertex {
+    m_position: vec2f,
+    m_uv: vec2f,
+    m_color: vec4f,
+}
+fn ts_Channels(t_vertex: ptr<function, tt_Vertex>) {
+    (*t_vertex).m_color = vec4f((*t_vertex).m_uv, 0.0, 1.0);
+}
+
+fn ts_Colors(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
+    var t_uv: vec2f = t_vertex.m_uv;
+    var t_rgb: vec3f = vec3f(t_uv, 0.75);
+    var t_rgba: vec4f = vec4f(t_rgb, 0.125);
+    var t_pairThenScalar: vec4f = vec4f(t_uv.xy, 0.0, 1.0);
+    var t_scalarThenPair: vec4f = vec4f(0.25, t_uv, 1.0);
+    var t_triple: vec4f = vec4f(t_rgb, 1.0);
+    var t_tripleThenAlpha: vec4f = vec4f(t_rgb, 0.125);
+    var t_quadruple: vec4f = vec4f(t_rgba);
+    var t_pairs: vec4f = vec4f(t_uv, t_rgba.zw);
+    var t_pairThenScalars: vec4f = vec4f(t_uv, 0.75, 0.125);
+    var t_scalarPairScalar: vec4f = vec4f(0.25, t_uv, 0.125);
+    var t_scalarsThenPair: vec4f = vec4f(0.25, 0.5, t_rgba.zw);
+    var t_scalarThenTriple: vec4f = vec4f(0.25, t_rgba.yzw);
+    var t_intsThenScalar: vec4f = vec4f(vec2f(vec2i(2, 3)), 4.0, 1.0);
+    var t_intsTriple: vec4f = vec4f(vec3f(vec3i(2, 3, 4)), 1.0);
+    var t_intsThenAlpha: vec4f = vec4f(vec3f(vec3i(2, 3, 4)), 0.125);
+    var t_intsQuadruple: vec4f = vec4f(vec4f(vec4i(2, 3, 4, 5)));
+    var t_scalarThenIntsPair: vec4f = vec4f(2.0, vec2f(vec2i(3, 4)), 1.0);
+    var t_scalarThenIntsTriple: vec4f = vec4f(2.0, vec3f(vec3i(3, 4, 5)));
+    var t_mixedPairs: vec4f = vec4f(vec2f(vec2i(2, 3)), vec2f(0.75, 0.125));
+    (*t_color) = ((((((((((((((((t_pairThenScalar + t_scalarThenPair) + t_triple) + t_tripleThenAlpha) + t_quadruple) + t_pairs) + t_pairThenScalars) + t_scalarPairScalar) + t_scalarsThenPair) + t_scalarThenTriple) + t_intsThenScalar) + t_intsTriple) + t_intsThenAlpha) + t_intsQuadruple) + t_scalarThenIntsPair) + t_scalarThenIntsTriple) + t_mixedPairs);
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f) -> tide_corner {
+    var tide_vertex: tt_Vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    ts_Channels(&tide_vertex);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_uv;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Colors(tt_Vertex(vec2f(), in.tide_s1, vec4f()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+

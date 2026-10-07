@@ -132,6 +132,13 @@ static void take_stock(tide_profiler *p, const uint32_t again_ticks)
     add_time(p, FRAME, 1, "Render", part[TIDE_FRAME_RENDER], frame_ms);
     add_time(p, FRAME, 1, "Other", part[TIDE_FRAME_OTHER], frame_ms);
     add_time(p, FRAME, 1, "Swap, idle", at_least_zero(frame_ms - work), frame_ms);
+    if (p->memory || p->gpu_memory) { // The program's memory, and the renderer's on the GPU: no time, so no bar
+        r = add_row(p, FRAME, 0, "Memory");
+        const double ram = (double)p->memory / (1024.0 * 1024.0), vram = (double)p->gpu_memory / (1024.0 * 1024.0);
+        if (p->memory && p->gpu_memory) snprintf(r->note, sizeof r->note, "%.0f MB in RAM, %.0f MB on the GPU", ram, vram);
+        else if (p->memory) snprintf(r->note, sizeof r->note, "%.0f MB in RAM", ram);
+        else snprintf(r->note, sizeof r->note, "%.0f MB on the GPU", vram);
+    }
 
     // A tick
     if (f->ticks) {

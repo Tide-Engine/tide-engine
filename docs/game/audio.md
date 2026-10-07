@@ -3,7 +3,7 @@
 Sound is presentation, like drawing: it's this machine's, and nothing of it is in the match. A view says what should be sounding as it says what should be drawn, and a local handler plays a sound when the match sends an event. Nothing in the simulation hears any of it, so a match is the same on a machine with its speakers off.
 
 ::: info
-What's here so far: clips as assets, `Audio.Play`, `Sound` fields and the listener, buses, and `audio` declarations that filter and make sound. The device backends are coming; see the [spec](../spec.md#audio) for the whole design. Until they land, a game with a window is silent, and a run with no window captures what it played (below).
+What's here: clips as assets (WAV and Ogg Vorbis), `Audio.Play`, `Sound` fields and the listener, buses, `audio` declarations that filter and make sound, the device on every platform, and the microphone. See the [spec](../spec.md#audio) for the whole design and what's still open.
 :::
 
 ## Clips
@@ -12,13 +12,16 @@ A sound is a file the game is built with, declared as an [asset](assets.md):
 
 ```csharp
 asset Clip shot = "sfx/shot.wav";
+asset Clip music = "music/theme.ogg";
 asset List<Clip> hits = "sfx/hit_*.wav";
-asset Map<string, Clip> voices = "voice/*.wav";
+asset Map<string, Clip> voices = "voice/*.ogg";
 ```
 
-A `Clip` is a WAV of PCM (8, 16, 24 or 32 bits) or floats, of one or two channels, at any rate. The build checks the file decodes, and the pack keeps it as it is: the engine decodes it the first time it's played, and keeps that. Ogg Vorbis is to come.
+A `Clip` is a WAV (PCM of 8, 16, 24 or 32 bits, or floats) or an Ogg Vorbis file, of one or two channels, at any rate. The build checks the file decodes, and the pack keeps it as it is, so a Vorbis clip stays about a tenth the size of its PCM. As the game loads its pack, every clip is decoded, on the pool's threads, so the first play of one costs nothing: a WAV whole, and Vorbis up to ten seconds long whole too. A longer Vorbis clip (music, a long ambience) is kept as its file and decoded as it plays, a block at a time on the audio thread, which takes a few hundred kilobytes for each voice playing it and nothing for the clip itself. Which way a clip goes changes nothing a game sees: it plays, loops and pitches the same.
 
-A `Clip` is a value: keep it in a local field, pass it to a function, pick one from the glob's list or map. It names the declaration's file, so under `tide run` a saved file plays through every copy the game kept. The match can't use one: a `Clip` is this machine's, as a `Texture` is.
+Both decoders are the engine's own, written from the formats' specifications, so a game carries no license terms for them; a file that isn't one is an error at the path, and for an Ogg file the error says what's wrong with it. A clip has one or two channels: a surround file is refused.
+
+A `Clip` is a value: keep it in a local field, pass it to a function, pick one from the glob's list or map. It names the declaration's file, so under `tide run --watch` a saved file plays through every copy the game kept. The match can't use one: a `Clip` is this machine's, as a `Texture` is.
 
 ## Playing a sound
 
@@ -157,3 +160,31 @@ tide run --frames 300 --capture-audio run.wav
 ```
 
 `--capture-audio` writes the whole run as a WAV of 16-bit stereo at 48 kHz, and a script's `capture-audio hit.wav` line writes what played since the last such line. The mixer is the engine's own arithmetic, so a run plays the same bytes on every machine.
+
+## The device
+
+A game with a window plays through the system's default output: WASAPI on Windows, CoreAudio on macOS, ALSA on Linux (loaded at run time, so games link nothing), AAudio on Android, and the browser's audio on the web. Whatever rate and channels the device has, the mixer's stereo at 48 kHz is resampled and mapped to it. A machine with no device, or none the game can open, says so once on stderr and plays nothing; nothing else differs.
+
+On the web, and on phones, a browser only plays once the player has touched the page: the page starts its audio at the first press or key. A web game's sound runs about 90 ms behind what the frame played, as the page's audio runs on a thread the game's code can't, and the game feeds it ahead. A page that goes to the background keeps the match running (see [web builds](../tools/cli.md)) and its sound with it.
+
+## The microphone
+
+`Clip.Microphone` is the capture device as a clip. A `Sound` that plays it is what the microphone hears, mono, which its `effect` can filter (a voice changer) and its bus plays or mutes: `volume` 0 to only process what's heard. A one-shot of it plays nothing: the microphone goes through a `Sound`, which says when it stops.
+
+```csharp
+local singleton Voice
+{
+    Sound ear;
+}
+
+view Listen(Devices devices, mut Voice voice)
+{
+    voice.ear.clip = Clip.Microphone;
+    voice.ear.effect = Robot();
+    if (devices.keyboard.v.down) voice.ear.playing = !voice.ear.playing;
+}
+```
+
+The device is open while a frame names such a `Sound` playing, and closed when none does. Phones and browsers ask the player the first time: until they allow it, and in a browser until they've touched the page, the sound is silence. A device that couldn't be opened is tried again every second; after declining a browser request, stop and start the `Sound` to ask again. An Android app only asks if the game says `Clip.Microphone` somewhere (its manifest then has `RECORD_AUDIO`); a macOS app needs a bundle that says why it listens (`NSMicrophoneUsageDescription`), which `tide build` doesn't make yet. Pitch doesn't apply to the microphone: it plays at the device's own pace, a few blocks behind it.
+
+A run with no window has no device: `--microphone voice.wav` plays a file into it instead, looped, so a test hears what a player would say (see [the command line](../tools/cli.md)). Nothing of what's heard reaches the match or the network: voice chat is a package for later, with the microphone as its source.

@@ -47,10 +47,23 @@ uint32_t tide_mixer_dropped(void);
 void tide_mixer_take(void);
 
 // The frame's: stops every voice at once, with no fade, and drops every clip
-// and effect, then returns once the renderer has let go of them. With no
-// device rendering elsewhere (a run with none), that's at once.
+// and effect, then returns once the renderer has let go of them: at once with
+// no device rendering on a thread of its own, and else when that thread has
+// taken it (or half a second passed, for a device that stalled).
 void tide_mixer_forget(void);
+
+// A backend says a thread of its own renders (tide_mixer_render) from here on,
+// or no longer: what tide_mixer_forget waits for.
+void tide_mixer_rendered_elsewhere(bool elsewhere);
 
 // The renderer's: drops what's left of the last block, so the next render
 // starts a new one. For a device that starts over, and for tests.
 void tide_mixer_flush(void);
+
+// What the capture device heard: `frames` mono frames at TIDE_AUDIO_RATE, from
+// the device's thread (through audio_in.h), into a ring the renderer takes a
+// block from as each of its blocks begins, which every voice whose clip is
+// the microphone then plays. The renderer keeps the ring within a few blocks
+// of the newest frames, so the microphone is never far behind; what nobody
+// took in time is skipped, and a ring that's full drops what comes.
+void tide_mixer_capture(const float *mono, uint32_t frames);

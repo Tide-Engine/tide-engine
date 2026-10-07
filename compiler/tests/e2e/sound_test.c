@@ -135,3 +135,21 @@ TIDE_TEST(sound_a_local_entitys_sound_and_the_listener)
     TIDE_CHECK(audio.voice_count == 0);
     finish();
 }
+
+TIDE_TEST(sound_the_microphone_is_a_clip_a_sound_plays)
+{
+    start();
+    frame(&audio);
+    TIDE_CHECK(!audio.microphone); // Clip.none, not playing: no device asked for
+    local.Music.listen = true;
+    frame(&audio);
+    TIDE_CHECK(audio.microphone); // The platform opens the device while a frame says so
+    const tide_voice *ear = voice_with_pitch(3.0f);
+    TIDE_REQUIRE(ear != NULL);
+    TIDE_CHECK(ear->playing && ear->clip.microphone && ear->clip.samples == NULL && ear->clip.stream == NULL);
+    TIDE_CHECK(ear->clip.name == TIDE_CLIP_MICROPHONE_NAME && ear->clip.rate == TIDE_AUDIO_RATE && ear->clip.channels == 1);
+    local.Music.listen = false;
+    frame(&audio);
+    TIDE_CHECK(!audio.microphone); // Stopped: the device closes
+    finish();
+}

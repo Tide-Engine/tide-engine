@@ -730,3 +730,719 @@ fn ts_Calm(t_vertex: tt_SkyVertex, t_color: ptr<function, vec4f>) {
     return tide_color;
 }
 
+// Ripple and Clouds on SkyVertex: GLSL, vertex
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    vec4 tide_u0;
+    ivec4 tide_v0;
+};
+layout(location = 0) in vec2 tide_a0;
+layout(location = 1) in vec2 tide_a1;
+out vec2 tide_s1;
+struct tt_SkyVertex {
+    vec2 m_position;
+    vec2 m_uv;
+};
+uint tide_xxh_word(uint h, int w) {
+    uint k = h + uint(w) * 0xC2B2AE3Du;
+    return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;
+}
+uint tide_xxh_lane(uint h, int w) {
+    uint k = h + uint(w) * 0x85EBCA77u;
+    return ((k << 13) | (k >> 19)) * 0x9E3779B1u;
+}
+int tide_xxh_end(uint h) {
+    uint k = h ^ (h >> 15);
+    k = k * 0x85EBCA77u;
+    k = k ^ (k >> 13);
+    k = k * 0xC2B2AE3Du;
+    k = k ^ (k >> 16);
+    return int(k & 0x7FFFFFFFu);
+}
+int tide_hash3(ivec3 v) {
+    return tide_xxh_end(tide_xxh_word(tide_xxh_word(tide_xxh_word(0x165667BDu, v.x), v.y), v.z));
+}
+int tide_hash4(ivec4 v) {
+    uint a = tide_xxh_lane(0x24234428u, v.x);
+    uint b = tide_xxh_lane(0x85EBCA77u, v.y);
+    uint c = tide_xxh_lane(0u, v.z);
+    uint d = tide_xxh_lane(0x61C8864Fu, v.w);
+    return tide_xxh_end(((a << 1) | (a >> 31)) + ((b << 7) | (b >> 25)) + ((c << 12) | (c >> 20)) + ((d << 18) | (d >> 14)) + 16u);
+}
+float tide_fade(float t) {
+    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+}
+float tide_grad2(int h, float x, float y) {
+    float gx = 1.0;
+    float gy = 0.0;
+    if ((h & 4) != 0) {
+        gx = 0.70710678;
+        gy = 0.70710678;
+        if ((h & 1) != 0) { gx = -0.70710678; }
+        if ((h & 2) != 0) { gy = -0.70710678; }
+    } else if ((h & 2) != 0) {
+        gx = 0.0;
+        gy = 1.0;
+        if ((h & 1) != 0) { gy = -1.0; }
+    } else if ((h & 1) != 0) {
+        gx = -1.0;
+    }
+    return gx * x + gy * y;
+}
+float tide_grad3(int h, float x, float y, float z) {
+    int k = h & 15;
+    float u = x;
+    float v = y;
+    if (k >= 8) { u = y; }
+    if (k >= 4) { v = z; }
+    if (k == 12 || k == 14) { v = x; }
+    if ((k & 1) != 0) { u = -u; }
+    if ((k & 2) != 0) { v = -v; }
+    return u + v;
+}
+float tide_perlin3(vec3 p, int seed) {
+    vec3 f = floor(p);
+    ivec3 i = ivec3(f);
+    ivec3 j = i + 1;
+    float x = p.x - f.x;
+    float y = p.y - f.y;
+    float z = p.z - f.z;
+    float u = tide_fade(x);
+    float v = tide_fade(y);
+    float w = tide_fade(z);
+    float n000 = tide_grad3(tide_hash4(ivec4(i.x, i.y, i.z, seed)), x, y, z);
+    float n100 = tide_grad3(tide_hash4(ivec4(j.x, i.y, i.z, seed)), x - 1.0, y, z);
+    float n010 = tide_grad3(tide_hash4(ivec4(i.x, j.y, i.z, seed)), x, y - 1.0, z);
+    float n110 = tide_grad3(tide_hash4(ivec4(j.x, j.y, i.z, seed)), x - 1.0, y - 1.0, z);
+    float n001 = tide_grad3(tide_hash4(ivec4(i.x, i.y, j.z, seed)), x, y, z - 1.0);
+    float n101 = tide_grad3(tide_hash4(ivec4(j.x, i.y, j.z, seed)), x - 1.0, y, z - 1.0);
+    float n011 = tide_grad3(tide_hash4(ivec4(i.x, j.y, j.z, seed)), x, y - 1.0, z - 1.0);
+    float n111 = tide_grad3(tide_hash4(ivec4(j.x, j.y, j.z, seed)), x - 1.0, y - 1.0, z - 1.0);
+    float a0 = n000 + u * (n100 - n000);
+    float a1 = n010 + u * (n110 - n010);
+    float b0 = n001 + u * (n101 - n001);
+    float b1 = n011 + u * (n111 - n011);
+    float a = a0 + v * (a1 - a0);
+    float b = b0 + v * (b1 - b0);
+    return a + w * (b - a);
+}
+float tide_corner2(int h, float x, float y) {
+    float t = 0.5 - x * x - y * y;
+    if (t < 0.0) { return 0.0; }
+    float tt = t * t;
+    return tt * tt * tide_grad2(h, x, y);
+}
+float tide_simplex2(vec2 p, int seed) {
+    float s = (p.x + p.y) * 0.36602540;
+    float fi = floor(p.x + s);
+    float fj = floor(p.y + s);
+    float t = (fi + fj) * 0.21132487;
+    float x0 = p.x - (fi - t);
+    float y0 = p.y - (fj - t);
+    int i1 = 0;
+    int j1 = 1;
+    if (x0 > y0) {
+        i1 = 1;
+        j1 = 0;
+    }
+    float x1 = x0 - float(i1) + 0.21132487;
+    float y1 = y0 - float(j1) + 0.21132487;
+    float x2 = x0 - 1.0 + 0.42264973;
+    float y2 = y0 - 1.0 + 0.42264973;
+    int i = int(fi);
+    int j = int(fj);
+    float n0 = tide_corner2(tide_hash3(ivec3(i, j, seed)), x0, y0);
+    float n1 = tide_corner2(tide_hash3(ivec3(i + i1, j + j1, seed)), x1, y1);
+    float n2 = tide_corner2(tide_hash3(ivec3(i + 1, j + 1, seed)), x2, y2);
+    return (n0 + n1 + n2) * 99.2;
+}
+void ts_Ripple(inout tt_SkyVertex t_vertex) {
+    t_vertex.m_position.y = (t_vertex.m_position.y + (tide_perlin3(vec3(t_vertex.m_position, tide_u0.x), tide_v0.x) + tide_simplex2(t_vertex.m_position, 0)));
+}
+
+void main() {
+    tt_SkyVertex tide_vertex = tt_SkyVertex(tide_a0, tide_a1);
+    ts_Ripple(tide_vertex);
+    vec4 tide_place = vec4(tide_vertex.m_position, 0.0, 1.0);
+    gl_Position = tide_camera * tide_place;
+    tide_s1 = tide_vertex.m_uv;
+}
+
+// Ripple and Clouds on SkyVertex: GLSL, fragment
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    vec4 tide_u0;
+    ivec4 tide_v0;
+};
+in vec2 tide_s1;
+out vec4 tide_pixel;
+struct tt_SkyVertex {
+    vec2 m_position;
+    vec2 m_uv;
+};
+float tide_f(float x) {
+    return x;
+}
+uint tide_xxh_word(uint h, int w) {
+    uint k = h + uint(w) * 0xC2B2AE3Du;
+    return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;
+}
+uint tide_xxh_lane(uint h, int w) {
+    uint k = h + uint(w) * 0x85EBCA77u;
+    return ((k << 13) | (k >> 19)) * 0x9E3779B1u;
+}
+int tide_xxh_end(uint h) {
+    uint k = h ^ (h >> 15);
+    k = k * 0x85EBCA77u;
+    k = k ^ (k >> 13);
+    k = k * 0xC2B2AE3Du;
+    k = k ^ (k >> 16);
+    return int(k & 0x7FFFFFFFu);
+}
+int tide_hash3(ivec3 v) {
+    return tide_xxh_end(tide_xxh_word(tide_xxh_word(tide_xxh_word(0x165667BDu, v.x), v.y), v.z));
+}
+int tide_hash4(ivec4 v) {
+    uint a = tide_xxh_lane(0x24234428u, v.x);
+    uint b = tide_xxh_lane(0x85EBCA77u, v.y);
+    uint c = tide_xxh_lane(0u, v.z);
+    uint d = tide_xxh_lane(0x61C8864Fu, v.w);
+    return tide_xxh_end(((a << 1) | (a >> 31)) + ((b << 7) | (b >> 25)) + ((c << 12) | (c >> 20)) + ((d << 18) | (d >> 14)) + 16u);
+}
+float tide_fade(float t) {
+    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+}
+float tide_grad2(int h, float x, float y) {
+    float gx = 1.0;
+    float gy = 0.0;
+    if ((h & 4) != 0) {
+        gx = 0.70710678;
+        gy = 0.70710678;
+        if ((h & 1) != 0) { gx = -0.70710678; }
+        if ((h & 2) != 0) { gy = -0.70710678; }
+    } else if ((h & 2) != 0) {
+        gx = 0.0;
+        gy = 1.0;
+        if ((h & 1) != 0) { gy = -1.0; }
+    } else if ((h & 1) != 0) {
+        gx = -1.0;
+    }
+    return gx * x + gy * y;
+}
+float tide_grad3(int h, float x, float y, float z) {
+    int k = h & 15;
+    float u = x;
+    float v = y;
+    if (k >= 8) { u = y; }
+    if (k >= 4) { v = z; }
+    if (k == 12 || k == 14) { v = x; }
+    if ((k & 1) != 0) { u = -u; }
+    if ((k & 2) != 0) { v = -v; }
+    return u + v;
+}
+float tide_perlin2(vec2 p, int seed) {
+    vec2 f = floor(p);
+    ivec2 i = ivec2(f);
+    ivec2 j = i + 1;
+    float x = p.x - f.x;
+    float y = p.y - f.y;
+    float u = tide_fade(x);
+    float v = tide_fade(y);
+    float n00 = tide_grad2(tide_hash3(ivec3(i.x, i.y, seed)), x, y);
+    float n10 = tide_grad2(tide_hash3(ivec3(j.x, i.y, seed)), x - 1.0, y);
+    float n01 = tide_grad2(tide_hash3(ivec3(i.x, j.y, seed)), x, y - 1.0);
+    float n11 = tide_grad2(tide_hash3(ivec3(j.x, j.y, seed)), x - 1.0, y - 1.0);
+    float a = n00 + u * (n10 - n00);
+    float b = n01 + u * (n11 - n01);
+    return (a + v * (b - a)) * 1.41421356;
+}
+float tide_corner3(int h, float x, float y, float z) {
+    float t = 0.6 - x * x - y * y - z * z;
+    if (t < 0.0) { return 0.0; }
+    float tt = t * t;
+    return tt * tt * tide_grad3(h, x, y, z);
+}
+float tide_simplex3(vec3 p, int seed) {
+    float s = (p.x + p.y + p.z) * 0.33333334;
+    float fi = floor(p.x + s);
+    float fj = floor(p.y + s);
+    float fk = floor(p.z + s);
+    float t = (fi + fj + fk) * 0.16666667;
+    float x0 = p.x - (fi - t);
+    float y0 = p.y - (fj - t);
+    float z0 = p.z - (fk - t);
+    int i1 = 0;
+    int j1 = 0;
+    int k1 = 0;
+    int i2 = 0;
+    int j2 = 0;
+    int k2 = 0;
+    if (x0 >= y0) {
+        if (y0 >= z0) {
+            i1 = 1;
+            i2 = 1;
+            j2 = 1;
+        } else if (x0 >= z0) {
+            i1 = 1;
+            i2 = 1;
+            k2 = 1;
+        } else {
+            k1 = 1;
+            i2 = 1;
+            k2 = 1;
+        }
+    } else {
+        if (y0 < z0) {
+            k1 = 1;
+            j2 = 1;
+            k2 = 1;
+        } else if (x0 < z0) {
+            j1 = 1;
+            j2 = 1;
+            k2 = 1;
+        } else {
+            j1 = 1;
+            i2 = 1;
+            j2 = 1;
+        }
+    }
+    float x1 = x0 - float(i1) + 0.16666667;
+    float y1 = y0 - float(j1) + 0.16666667;
+    float z1 = z0 - float(k1) + 0.16666667;
+    float x2 = x0 - float(i2) + 0.33333334;
+    float y2 = y0 - float(j2) + 0.33333334;
+    float z2 = z0 - float(k2) + 0.33333334;
+    float x3 = x0 - 0.5;
+    float y3 = y0 - 0.5;
+    float z3 = z0 - 0.5;
+    int i = int(fi);
+    int j = int(fj);
+    int k = int(fk);
+    float n0 = tide_corner3(tide_hash4(ivec4(i, j, k, seed)), x0, y0, z0);
+    float n1 = tide_corner3(tide_hash4(ivec4(i + i1, j + j1, k + k1, seed)), x1, y1, z1);
+    float n2 = tide_corner3(tide_hash4(ivec4(i + i2, j + j2, k + k2, seed)), x2, y2, z2);
+    float n3 = tide_corner3(tide_hash4(ivec4(i + 1, j + 1, k + 1, seed)), x3, y3, z3);
+    return (n0 + n1 + n2 + n3) * 32.5;
+}
+vec2 tide_nearest(vec2 best, float d) {
+    if (d < best.x) { return vec2(d, best.x); }
+    if (d < best.y) { return vec2(best.x, d); }
+    return best;
+}
+float tide_feature2(ivec2 i, int ox, int oy, int seed, float fx, float fy) {
+    int h = tide_hash3(ivec3(i.x + ox, i.y + oy, seed));
+    float px = float(ox) + float(h & 32767) * 0.000030518509;
+    float py = float(oy) + float((h >> 15) & 32767) * 0.000030518509;
+    float dx = px - fx;
+    float dy = py - fy;
+    return dx * dx + dy * dy;
+}
+vec2 tide_cellular2(vec2 p, int seed) {
+    vec2 f = floor(p);
+    ivec2 i = ivec2(f);
+    float x = p.x - f.x;
+    float y = p.y - f.y;
+    vec2 best = vec2(8.0, 8.0);
+    best = tide_nearest(best, tide_feature2(i, -1, -1, seed, x, y));
+    best = tide_nearest(best, tide_feature2(i, 0, -1, seed, x, y));
+    best = tide_nearest(best, tide_feature2(i, 1, -1, seed, x, y));
+    best = tide_nearest(best, tide_feature2(i, -1, 0, seed, x, y));
+    best = tide_nearest(best, tide_feature2(i, 0, 0, seed, x, y));
+    best = tide_nearest(best, tide_feature2(i, 1, 0, seed, x, y));
+    best = tide_nearest(best, tide_feature2(i, -1, 1, seed, x, y));
+    best = tide_nearest(best, tide_feature2(i, 0, 1, seed, x, y));
+    best = tide_nearest(best, tide_feature2(i, 1, 1, seed, x, y));
+    return vec2(sqrt(best.x), sqrt(best.y));
+}
+float tide_feature3(ivec3 i, int ox, int oy, int oz, int seed, float fx, float fy, float fz) {
+    int h = tide_hash4(ivec4(i.x + ox, i.y + oy, i.z + oz, seed));
+    float px = float(ox) + float(h & 1023) * 0.00097751711;
+    float py = float(oy) + float((h >> 10) & 1023) * 0.00097751711;
+    float pz = float(oz) + float((h >> 20) & 1023) * 0.00097751711;
+    float dx = px - fx;
+    float dy = py - fy;
+    float dz = pz - fz;
+    return dx * dx + dy * dy + dz * dz;
+}
+vec2 tide_cellular3(vec3 p, int seed) {
+    vec3 f = floor(p);
+    ivec3 i = ivec3(f);
+    float x = p.x - f.x;
+    float y = p.y - f.y;
+    float z = p.z - f.z;
+    vec2 best = vec2(8.0, 8.0);
+    best = tide_nearest(best, tide_feature3(i, -1, -1, -1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 0, -1, -1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 1, -1, -1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, -1, 0, -1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 0, 0, -1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 1, 0, -1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, -1, 1, -1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 0, 1, -1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 1, 1, -1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, -1, -1, 0, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 0, -1, 0, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 1, -1, 0, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, -1, 0, 0, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 0, 0, 0, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 1, 0, 0, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, -1, 1, 0, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 0, 1, 0, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 1, 1, 0, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, -1, -1, 1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 0, -1, 1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 1, -1, 1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, -1, 0, 1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 0, 0, 1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 1, 0, 1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, -1, 1, 1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 0, 1, 1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 1, 1, 1, seed, x, y, z));
+    return vec2(sqrt(best.x), sqrt(best.y));
+}
+void ts_Clouds(tt_SkyVertex t_vertex, inout vec4 t_color) {
+    float t_cover = ((tide_perlin2((t_vertex.m_uv * tide_f(8.0)), 0) * 0.5) + (tide_simplex3(vec3(t_vertex.m_uv, tide_u0.x), tide_v0.x) * 0.5));
+    vec2 t_cells = tide_cellular2((t_vertex.m_uv * tide_f(4.0)), tide_v0.x);
+    t_color = vec4(t_cover, (t_cells.y - t_cells.x), tide_cellular3(vec3(t_vertex.m_uv, tide_f(1.0)), 0).x, 1.0);
+}
+
+void main() {
+    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
+    ts_Clouds(tt_SkyVertex(vec2(0.0), tide_s1), tide_color);
+    tide_color = tide_color * tide_tint;
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
+    tide_pixel = tide_color;
+}
+
+// Ripple and Clouds on SkyVertex: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_u0: vec4f,
+    tide_v0: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s1: vec2f,
+}
+struct tt_SkyVertex {
+    m_position: vec2f,
+    m_uv: vec2f,
+}
+fn tide_f(x: f32) -> f32 {
+    return x;
+}
+fn tide_xxh_word(h: u32, w: i32) -> u32 {
+    var k: u32 = h + u32(w) * 0xC2B2AE3Du;
+    return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;
+}
+fn tide_xxh_lane(h: u32, w: i32) -> u32 {
+    var k: u32 = h + u32(w) * 0x85EBCA77u;
+    return ((k << 13) | (k >> 19)) * 0x9E3779B1u;
+}
+fn tide_xxh_end(h: u32) -> i32 {
+    var k: u32 = h ^ (h >> 15);
+    k = k * 0x85EBCA77u;
+    k = k ^ (k >> 13);
+    k = k * 0xC2B2AE3Du;
+    k = k ^ (k >> 16);
+    return i32(k & 0x7FFFFFFFu);
+}
+fn tide_hash3(v: vec3i) -> i32 {
+    return tide_xxh_end(tide_xxh_word(tide_xxh_word(tide_xxh_word(0x165667BDu, v.x), v.y), v.z));
+}
+fn tide_hash4(v: vec4i) -> i32 {
+    var a: u32 = tide_xxh_lane(0x24234428u, v.x);
+    var b: u32 = tide_xxh_lane(0x85EBCA77u, v.y);
+    var c: u32 = tide_xxh_lane(0u, v.z);
+    var d: u32 = tide_xxh_lane(0x61C8864Fu, v.w);
+    return tide_xxh_end(((a << 1) | (a >> 31)) + ((b << 7) | (b >> 25)) + ((c << 12) | (c >> 20)) + ((d << 18) | (d >> 14)) + 16u);
+}
+fn tide_fade(t: f32) -> f32 {
+    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+}
+fn tide_grad2(h: i32, x: f32, y: f32) -> f32 {
+    var gx: f32 = 1.0;
+    var gy: f32 = 0.0;
+    if ((h & 4) != 0) {
+        gx = 0.70710678;
+        gy = 0.70710678;
+        if ((h & 1) != 0) { gx = -0.70710678; }
+        if ((h & 2) != 0) { gy = -0.70710678; }
+    } else if ((h & 2) != 0) {
+        gx = 0.0;
+        gy = 1.0;
+        if ((h & 1) != 0) { gy = -1.0; }
+    } else if ((h & 1) != 0) {
+        gx = -1.0;
+    }
+    return gx * x + gy * y;
+}
+fn tide_grad3(h: i32, x: f32, y: f32, z: f32) -> f32 {
+    var k: i32 = h & 15;
+    var u: f32 = x;
+    var v: f32 = y;
+    if (k >= 8) { u = y; }
+    if (k >= 4) { v = z; }
+    if (k == 12 || k == 14) { v = x; }
+    if ((k & 1) != 0) { u = -u; }
+    if ((k & 2) != 0) { v = -v; }
+    return u + v;
+}
+fn tide_perlin2(p: vec2f, seed: i32) -> f32 {
+    var f: vec2f = floor(p);
+    var i: vec2i = vec2i(f);
+    var j: vec2i = i + 1;
+    var x: f32 = p.x - f.x;
+    var y: f32 = p.y - f.y;
+    var u: f32 = tide_fade(x);
+    var v: f32 = tide_fade(y);
+    var n00: f32 = tide_grad2(tide_hash3(vec3i(i.x, i.y, seed)), x, y);
+    var n10: f32 = tide_grad2(tide_hash3(vec3i(j.x, i.y, seed)), x - 1.0, y);
+    var n01: f32 = tide_grad2(tide_hash3(vec3i(i.x, j.y, seed)), x, y - 1.0);
+    var n11: f32 = tide_grad2(tide_hash3(vec3i(j.x, j.y, seed)), x - 1.0, y - 1.0);
+    var a: f32 = n00 + u * (n10 - n00);
+    var b: f32 = n01 + u * (n11 - n01);
+    return (a + v * (b - a)) * 1.41421356;
+}
+fn tide_perlin3(p: vec3f, seed: i32) -> f32 {
+    var f: vec3f = floor(p);
+    var i: vec3i = vec3i(f);
+    var j: vec3i = i + 1;
+    var x: f32 = p.x - f.x;
+    var y: f32 = p.y - f.y;
+    var z: f32 = p.z - f.z;
+    var u: f32 = tide_fade(x);
+    var v: f32 = tide_fade(y);
+    var w: f32 = tide_fade(z);
+    var n000: f32 = tide_grad3(tide_hash4(vec4i(i.x, i.y, i.z, seed)), x, y, z);
+    var n100: f32 = tide_grad3(tide_hash4(vec4i(j.x, i.y, i.z, seed)), x - 1.0, y, z);
+    var n010: f32 = tide_grad3(tide_hash4(vec4i(i.x, j.y, i.z, seed)), x, y - 1.0, z);
+    var n110: f32 = tide_grad3(tide_hash4(vec4i(j.x, j.y, i.z, seed)), x - 1.0, y - 1.0, z);
+    var n001: f32 = tide_grad3(tide_hash4(vec4i(i.x, i.y, j.z, seed)), x, y, z - 1.0);
+    var n101: f32 = tide_grad3(tide_hash4(vec4i(j.x, i.y, j.z, seed)), x - 1.0, y, z - 1.0);
+    var n011: f32 = tide_grad3(tide_hash4(vec4i(i.x, j.y, j.z, seed)), x, y - 1.0, z - 1.0);
+    var n111: f32 = tide_grad3(tide_hash4(vec4i(j.x, j.y, j.z, seed)), x - 1.0, y - 1.0, z - 1.0);
+    var a0: f32 = n000 + u * (n100 - n000);
+    var a1: f32 = n010 + u * (n110 - n010);
+    var b0: f32 = n001 + u * (n101 - n001);
+    var b1: f32 = n011 + u * (n111 - n011);
+    var a: f32 = a0 + v * (a1 - a0);
+    var b: f32 = b0 + v * (b1 - b0);
+    return a + w * (b - a);
+}
+fn tide_corner2(h: i32, x: f32, y: f32) -> f32 {
+    var t: f32 = 0.5 - x * x - y * y;
+    if (t < 0.0) { return 0.0; }
+    var tt: f32 = t * t;
+    return tt * tt * tide_grad2(h, x, y);
+}
+fn tide_simplex2(p: vec2f, seed: i32) -> f32 {
+    var s: f32 = (p.x + p.y) * 0.36602540;
+    var fi: f32 = floor(p.x + s);
+    var fj: f32 = floor(p.y + s);
+    var t: f32 = (fi + fj) * 0.21132487;
+    var x0: f32 = p.x - (fi - t);
+    var y0: f32 = p.y - (fj - t);
+    var i1: i32 = 0;
+    var j1: i32 = 1;
+    if (x0 > y0) {
+        i1 = 1;
+        j1 = 0;
+    }
+    var x1: f32 = x0 - f32(i1) + 0.21132487;
+    var y1: f32 = y0 - f32(j1) + 0.21132487;
+    var x2: f32 = x0 - 1.0 + 0.42264973;
+    var y2: f32 = y0 - 1.0 + 0.42264973;
+    var i: i32 = i32(fi);
+    var j: i32 = i32(fj);
+    var n0: f32 = tide_corner2(tide_hash3(vec3i(i, j, seed)), x0, y0);
+    var n1: f32 = tide_corner2(tide_hash3(vec3i(i + i1, j + j1, seed)), x1, y1);
+    var n2: f32 = tide_corner2(tide_hash3(vec3i(i + 1, j + 1, seed)), x2, y2);
+    return (n0 + n1 + n2) * 99.2;
+}
+fn tide_corner3(h: i32, x: f32, y: f32, z: f32) -> f32 {
+    var t: f32 = 0.6 - x * x - y * y - z * z;
+    if (t < 0.0) { return 0.0; }
+    var tt: f32 = t * t;
+    return tt * tt * tide_grad3(h, x, y, z);
+}
+fn tide_simplex3(p: vec3f, seed: i32) -> f32 {
+    var s: f32 = (p.x + p.y + p.z) * 0.33333334;
+    var fi: f32 = floor(p.x + s);
+    var fj: f32 = floor(p.y + s);
+    var fk: f32 = floor(p.z + s);
+    var t: f32 = (fi + fj + fk) * 0.16666667;
+    var x0: f32 = p.x - (fi - t);
+    var y0: f32 = p.y - (fj - t);
+    var z0: f32 = p.z - (fk - t);
+    var i1: i32 = 0;
+    var j1: i32 = 0;
+    var k1: i32 = 0;
+    var i2: i32 = 0;
+    var j2: i32 = 0;
+    var k2: i32 = 0;
+    if (x0 >= y0) {
+        if (y0 >= z0) {
+            i1 = 1;
+            i2 = 1;
+            j2 = 1;
+        } else if (x0 >= z0) {
+            i1 = 1;
+            i2 = 1;
+            k2 = 1;
+        } else {
+            k1 = 1;
+            i2 = 1;
+            k2 = 1;
+        }
+    } else {
+        if (y0 < z0) {
+            k1 = 1;
+            j2 = 1;
+            k2 = 1;
+        } else if (x0 < z0) {
+            j1 = 1;
+            j2 = 1;
+            k2 = 1;
+        } else {
+            j1 = 1;
+            i2 = 1;
+            j2 = 1;
+        }
+    }
+    var x1: f32 = x0 - f32(i1) + 0.16666667;
+    var y1: f32 = y0 - f32(j1) + 0.16666667;
+    var z1: f32 = z0 - f32(k1) + 0.16666667;
+    var x2: f32 = x0 - f32(i2) + 0.33333334;
+    var y2: f32 = y0 - f32(j2) + 0.33333334;
+    var z2: f32 = z0 - f32(k2) + 0.33333334;
+    var x3: f32 = x0 - 0.5;
+    var y3: f32 = y0 - 0.5;
+    var z3: f32 = z0 - 0.5;
+    var i: i32 = i32(fi);
+    var j: i32 = i32(fj);
+    var k: i32 = i32(fk);
+    var n0: f32 = tide_corner3(tide_hash4(vec4i(i, j, k, seed)), x0, y0, z0);
+    var n1: f32 = tide_corner3(tide_hash4(vec4i(i + i1, j + j1, k + k1, seed)), x1, y1, z1);
+    var n2: f32 = tide_corner3(tide_hash4(vec4i(i + i2, j + j2, k + k2, seed)), x2, y2, z2);
+    var n3: f32 = tide_corner3(tide_hash4(vec4i(i + 1, j + 1, k + 1, seed)), x3, y3, z3);
+    return (n0 + n1 + n2 + n3) * 32.5;
+}
+fn tide_nearest(best: vec2f, d: f32) -> vec2f {
+    if (d < best.x) { return vec2f(d, best.x); }
+    if (d < best.y) { return vec2f(best.x, d); }
+    return best;
+}
+fn tide_feature2(i: vec2i, ox: i32, oy: i32, seed: i32, fx: f32, fy: f32) -> f32 {
+    var h: i32 = tide_hash3(vec3i(i.x + ox, i.y + oy, seed));
+    var px: f32 = f32(ox) + f32(h & 32767) * 0.000030518509;
+    var py: f32 = f32(oy) + f32((h >> 15) & 32767) * 0.000030518509;
+    var dx: f32 = px - fx;
+    var dy: f32 = py - fy;
+    return dx * dx + dy * dy;
+}
+fn tide_cellular2(p: vec2f, seed: i32) -> vec2f {
+    var f: vec2f = floor(p);
+    var i: vec2i = vec2i(f);
+    var x: f32 = p.x - f.x;
+    var y: f32 = p.y - f.y;
+    var best: vec2f = vec2f(8.0, 8.0);
+    best = tide_nearest(best, tide_feature2(i, -1, -1, seed, x, y));
+    best = tide_nearest(best, tide_feature2(i, 0, -1, seed, x, y));
+    best = tide_nearest(best, tide_feature2(i, 1, -1, seed, x, y));
+    best = tide_nearest(best, tide_feature2(i, -1, 0, seed, x, y));
+    best = tide_nearest(best, tide_feature2(i, 0, 0, seed, x, y));
+    best = tide_nearest(best, tide_feature2(i, 1, 0, seed, x, y));
+    best = tide_nearest(best, tide_feature2(i, -1, 1, seed, x, y));
+    best = tide_nearest(best, tide_feature2(i, 0, 1, seed, x, y));
+    best = tide_nearest(best, tide_feature2(i, 1, 1, seed, x, y));
+    return vec2f(sqrt(best.x), sqrt(best.y));
+}
+fn tide_feature3(i: vec3i, ox: i32, oy: i32, oz: i32, seed: i32, fx: f32, fy: f32, fz: f32) -> f32 {
+    var h: i32 = tide_hash4(vec4i(i.x + ox, i.y + oy, i.z + oz, seed));
+    var px: f32 = f32(ox) + f32(h & 1023) * 0.00097751711;
+    var py: f32 = f32(oy) + f32((h >> 10) & 1023) * 0.00097751711;
+    var pz: f32 = f32(oz) + f32((h >> 20) & 1023) * 0.00097751711;
+    var dx: f32 = px - fx;
+    var dy: f32 = py - fy;
+    var dz: f32 = pz - fz;
+    return dx * dx + dy * dy + dz * dz;
+}
+fn tide_cellular3(p: vec3f, seed: i32) -> vec2f {
+    var f: vec3f = floor(p);
+    var i: vec3i = vec3i(f);
+    var x: f32 = p.x - f.x;
+    var y: f32 = p.y - f.y;
+    var z: f32 = p.z - f.z;
+    var best: vec2f = vec2f(8.0, 8.0);
+    best = tide_nearest(best, tide_feature3(i, -1, -1, -1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 0, -1, -1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 1, -1, -1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, -1, 0, -1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 0, 0, -1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 1, 0, -1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, -1, 1, -1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 0, 1, -1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 1, 1, -1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, -1, -1, 0, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 0, -1, 0, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 1, -1, 0, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, -1, 0, 0, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 0, 0, 0, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 1, 0, 0, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, -1, 1, 0, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 0, 1, 0, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 1, 1, 0, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, -1, -1, 1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 0, -1, 1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 1, -1, 1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, -1, 0, 1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 0, 0, 1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 1, 0, 1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, -1, 1, 1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 0, 1, 1, seed, x, y, z));
+    best = tide_nearest(best, tide_feature3(i, 1, 1, 1, seed, x, y, z));
+    return vec2f(sqrt(best.x), sqrt(best.y));
+}
+fn ts_Ripple(t_vertex: ptr<function, tt_SkyVertex>) {
+    (*t_vertex).m_position.y = ((*t_vertex).m_position.y + (tide_perlin3(vec3f((*t_vertex).m_position, tide_block.tide_u0.x), tide_block.tide_v0.x) + tide_simplex2((*t_vertex).m_position, 0)));
+}
+
+fn ts_Clouds(t_vertex: tt_SkyVertex, t_color: ptr<function, vec4f>) {
+    var t_cover: f32 = ((tide_perlin2((t_vertex.m_uv * tide_f(8.0)), 0) * 0.5) + (tide_simplex3(vec3f(t_vertex.m_uv, tide_block.tide_u0.x), tide_block.tide_v0.x) * 0.5));
+    var t_cells: vec2f = tide_cellular2((t_vertex.m_uv * tide_f(4.0)), tide_block.tide_v0.x);
+    (*t_color) = vec4f(t_cover, (t_cells.y - t_cells.x), tide_cellular3(vec3f(t_vertex.m_uv, tide_f(1.0)), 0).x, 1.0);
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f) -> tide_corner {
+    var tide_vertex: tt_SkyVertex = tt_SkyVertex(tide_a0, tide_a1);
+    ts_Ripple(&tide_vertex);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_uv;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Clouds(tt_SkyVertex(vec2f(), in.tide_s1), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+

@@ -9,6 +9,7 @@ tide <command> [folder] [options]
 | Command | What it does |
 |---|---|
 | `tide run [folder]` | Builds the game and plays it |
+| `tide run --watch [folder]` | Plays it and reloads when you save |
 | `tide build [folder]` | Builds the game into `<folder>/build`, named after the folder |
 | `tide schedule [folder]` | Shows which systems can run at the same time, and why the others wait |
 | `tide shaders [folder]` | Shows the shaders the game's [frags and verts](../game/shaders.md) compile to, as GLSL and WGSL |
@@ -28,6 +29,7 @@ tide <command> [folder] [options]
 | `--release` | Optimized, the way players get it |
 | `--web` | A web page (WebGPU, or WebGL 2 where the browser has none), built with clang's WebAssembly target |
 | `--android` | An Android app, for phones and the emulator (see [Android](#android)) |
+| `--watch` | `run` only: watches code and assets, reloading when you save (on Android, builds and starts the app again). Cannot be combined with runs [without a window](#without-a-window) |
 | `--define <SYMBOL>` | Defines a symbol for the game's [`#if` lines](../language/namespaces.md#symbols-of-your-own), as many times as there are symbols. `DEBUG` is defined without `--release`. `schedule` and `shaders` take it too |
 | `--title <title>` | The window's title, over the game's `title` setting (default: that, or the folder's name) |
 | `--stats` | Shows the [stats](#stats) in the window's corner, as the game's `stats` setting does. `run` starts them open |
@@ -40,7 +42,9 @@ tide <command> [folder] [options]
 
 `tide build --release --web` makes one self-contained `.html` file with the game inside. It opens straight from disk, and can be put online as it is.
 
-A game's [assets](../game/assets.md) (its `asset` declarations) are packed with it: beside the program as `<name>.pack`, which has to stay next to it; inside the web page; and in the APK. Nothing else in the folder goes in. Under `tide run`, a file an asset names is watched like the game's code, and a saved image is in the running game within a moment, with no rebuild.
+`tide run` builds and plays once. Add `--watch` for [hot reload](#hot-reload), on desktop, the web or Android. On desktop, closing the game window ends the command too, with or without `--watch`.
+
+A game's [assets](../game/assets.md) (its `asset` declarations) are packed with it: beside the program as `<name>.pack`, which has to stay next to it; inside the web page; and in the APK. Nothing else in the folder goes in. Under `tide run --watch`, a file an asset names is watched like the game's code, and a saved image is in the running game within a moment, with no rebuild.
 
 A web page draws with WebGPU where the browser has it on a GPU, and with WebGL 2 where it doesn't; games draw the same with either. Adding `?backend=webgl` (or `?backend=webgpu`) to the page's address picks one, for example to check a problem a player reports with the other.
 
@@ -57,7 +61,7 @@ settings
 
 They're a drawer. Closed, it's one line: the frame rate, and in a match another machine runs, your ping. A click or a tap on that line opens it, and so does **F8**: the rest is listed above the line, which stays where it is, so a click in the same place closes it again.
 
-- **It starts closed** when the game asks, with its `stats` setting, and when a build does (`tide build --stats`, CMake's `STATS`): what players get is the one line. **`tide run --stats` starts it open**, since whoever typed that wants to read it. Under `tide run`, a reload leaves it as you left it.
+- **It starts closed** when the game asks, with its `stats` setting, and when a build does (`tide build --stats`, CMake's `STATS`): what players get is the one line. **`tide run --stats` starts it open**, since whoever typed that wants to read it. Under `tide run --watch`, a hot reload leaves it as you left it.
 - **A click or a tap on it is never the game's.** Neither the game's input nor its views read that press, from the frame it lands in. A press that began elsewhere and crosses the drawer stays the game's. The game still sees F8, as it sees every key.
 - **Closed, it measures nothing.** The frame rate is a count of frames. What the list shows (a frame's work, each system's time, the memory) is measured while the list is open, so a game can ship with the line.
 - **The bottom right corner is its own.** A game that asks for the stats keeps its own buttons out of that corner: the line is about 80 pixels wide and 40 high, and about 190 wide with a ping in it.
@@ -75,6 +79,7 @@ The list is two columns, a label on the left and its value on the right, in four
 | `entities` | How many entities the match has |
 | `threads` | The threads ticks run on |
 | `memory` | The memory the program has, as the system counts it. On the web it's the program's WebAssembly memory, which only grows |
+| `vram` | What the game's drawing has on the GPU, by the engine's own count: every texture, mesh and render target it made, by what each holds. Not the window's own framebuffer, nor what the driver keeps beside them, so it's the same number on every backend |
 | `renderer` | What draws: WebGPU, WebGL 2 or OpenGL |
 | `Move` | The three systems that took longest on average per measured run, over the last half second. A system keeps its row while it stays among the three, and one that joins them takes the row of the one it replaces, so the rows don't shuffle |
 
@@ -113,7 +118,7 @@ Building for Android needs two things of Google's: the NDK, Android's C library 
 - To sign with another key (a build server's, or one you already have), set `TIDE_ANDROID_KEY` to its file: PEM, the private key (RSA, 2048 bits or more) and then its certificate. `openssl pkcs12 -in upload.p12 -nodes -out key.pem` makes one from a keystore; a `.jks` keystore becomes a `.p12` first with `keytool -importkeystore -srckeystore upload.jks -destkeystore upload.p12 -deststoretype PKCS12`.
 - Each build's version code, which Android only updates an app to a higher one of, is the minutes since 2020 began, so every build is newer than the last. Where `SOURCE_DATE_EPOCH` is set, it stands in for now. The version people see is the game's `version` setting, like `1.2.0`, or else 1.0.
 - The back button comes to the game as Escape, as in Unity.
-- While `tide run --android` runs, saving a `.tide` or C file builds the app again, installs it and starts it over: a phone can't swap code into a running app, so the match starts over too. Type `r` and press Enter to start it over yourself; closing the app ends the run.
+- With `tide run --android --watch`, saving a `.tide` or C file builds the app again, installs it and starts it over: a phone can't swap code into a running app, so the match starts over too. Type `r` and press Enter to start it over yourself; closing the app ends the run.
 
 ### Google Play
 
@@ -128,7 +133,7 @@ Play's other requirements, like the version of Android an app is made for (Andro
 
 ## Hot reload
 
-While `tide run` plays a game, saving a `.tide` file rebuilds it, and so does saving one of its C or C++ files, headers or libraries. The game carries on with the new code in the same window:
+While `tide run --watch` plays a game, saving a `.tide` file rebuilds it, and so does saving one of its C or C++ files, headers or libraries. The game carries on with the new code in the same window:
 
 - If you changed only code (systems, views, event handlers, methods), the match and everything local, like menus, carry on where they are.
 - If you changed data (components, fields, singletons, the input), the game is carried over to it by name, and goes on from where it was.
@@ -148,11 +153,11 @@ Carrying the game over works like this:
 
 `tide` says what happened after each reload, like `reloaded, and carried the game over to its new data layout; 1 field reset; 2 entities dropped`.
 
-When the game gets into a state you don't want, type `r` and press Enter in `tide`'s terminal to start it over. With a match on several windows (`--host` in one, `--connect localhost` in another), each window reloads when you save, and players stay in the match. A window that joined another's match joins it again a second after that match ends without it: when the other window starts it over, or is still on a build with another data layout. On the web, a reload goes on with the match closed for now: the room closes, and the other players drop out.
+When the game gets into a state you don't want, press **Ctrl+R** in the game, or type `r` and press Enter in `tide`'s terminal, to fully reload it. On the web, Cmd+R does the same on macOS. This starts the match, local state, GUI and the game's C or C++ globals over, without carrying state from the old run. With a match on several windows (`--watch --host` in one, `--watch --connect localhost` in another), each window hot reloads when you save, and players stay in the match. A window that joined another's match joins it again a second after that match ends without it: when the other window starts it over, or is still on a build with another data layout. On the web, a hot reload goes on with the match closed for now: the room closes, and the other players drop out.
 
-`tide run --web` reloads too. `tide` serves the game's page at an address on your machine, like `http://127.0.0.1:52407/`, opens it in your browser, and keeps running until you press Ctrl+C. What each reload did shows in the browser's console. VS Code and JetBrains IDEs can play it beside your code instead (see [Editors](editors.md)).
+`tide run --web --watch` hot reloads too. `tide` serves the game's page at an address on your machine, like `http://127.0.0.1:52407/`, opens it in your browser, and keeps running until you press Ctrl+C. What each hot reload did shows in the browser's console. Without `--watch`, the page is served the same way and keeps the build it started with. VS Code and JetBrains IDEs can play it beside your code instead (see [Editors](editors.md)).
 
-Hot reload is only for `tide run`: `tide build` makes a plain program, or a page with nothing of it.
+Hot reload is only for `tide run --watch`: `tide run` and `tide build` make a plain program, or a page with nothing of it.
 
 ## Multiplayer
 
@@ -196,6 +201,7 @@ tide run --frames 300 --capture menu.png
 |---|---|
 | `--capture <file.png>` | Writes the run's last frame as a PNG |
 | `--capture-audio <file.wav>` | Writes everything the run played as a WAV (16-bit stereo at 48 kHz). A game with no sound gives silence, a 60th of a second a frame |
+| `--microphone <file>` | A WAV or Ogg Vorbis file the microphone plays in the run, looped, where a window's run would hear the capture device (`Clip.Microphone`). Without it a run's microphone is silent |
 | `--frames <n>` | Ends the run after `n` frames |
 | `--script <file>` | Input by frame from a file, which also says when to capture and when to quit (see [Scripts](#scripts)) |
 | `--scale <s>` | Draws as on a display scaled this much, like `1.5` or `2` (1 without it). Text and edges are fitted to the display's pixels, so they look different there, and [render targets](../game/views.md#targets-and-post-processing) at the display's scale have that many more pixels |

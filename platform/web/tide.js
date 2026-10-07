@@ -569,6 +569,7 @@
             // Timers take whole milliseconds, dropping the rest: one rounded
             // down would come before the tick, for nothing
             const seconds = exports.tide_web_frame();
+            audioPump(); // What the program's mixer has for the worklet, as the queue runs low
             nextFrame = seconds > 0 ? Math.ceil(seconds * 1000) : 0;
             if (drew) shown();
         } catch (error) {
@@ -578,6 +579,149 @@
         }
         if (heartbeat) beat();
         else scheduleFrame();
+    }
+
+    // The audio device: an AudioContext and a worklet of its own, which plays
+    // the stereo chunks the main thread posts it. The program renders them
+    // (tide_web_audio_render) when the page asks: from its frame, and from a
+    // timer, enough to keep about 90 ms queued, by the context's clock, as a
+    // page has no thread the program's mixer could run on. The context starts
+    // once the player touched the page, which browsers want.
+    const audioWorklet = `class TideOutput extends AudioWorkletProcessor {
+        constructor() { super(); this.queue = []; this.at = 0; this.port.onmessage = e => this.queue.push(e.data); }
+        process(inputs, outputs) {
+            const out = outputs[0];
+            if (!out || out.length === 0) return true;
+            const left = out[0], right = out.length > 1 ? out[1] : out[0];
+            let i = 0;
+            while (i < left.length) {
+                if (this.queue.length === 0) { left.fill(0, i); if (right !== left) right.fill(0, i); break; }
+                const chunk = this.queue[0], frames = chunk.length >> 1;
+                while (i < left.length && this.at < frames) { left[i] = chunk[2 * this.at]; right[i] = chunk[2 * this.at + 1]; i++; this.at++; }
+                if (this.at >= frames) { this.queue.shift(); this.at = 0; }
+            }
+            return true;
+        }
+    }
+    registerProcessor('tide-output', TideOutput);
+    class TideInput extends AudioWorkletProcessor {
+        process(inputs) {
+            const input = inputs[0];
+            if (input && input.length && input[0].length) this.port.postMessage(input[0].slice());
+            return true;
+        }
+    }
+    registerProcessor('tide-input', TideInput);`;
+    let audio = null;
+    function audioOpen() {
+        if (audio) return audio.context.sampleRate | 0;
+        const Context = window.AudioContext || window.webkitAudioContext;
+        if (!Context || !window.AudioWorkletNode) return 0;
+        let context;
+        try {
+            context = new Context({ latencyHint: 'interactive' });
+        } catch (error) {
+            return 0;
+        }
+        audio = { context, node: null, ready: false, started: 0, sent: 0, timer: 0, resume: null, module: null };
+        const url = URL.createObjectURL(new Blob([audioWorklet], { type: 'application/javascript' }));
+        audio.module = context.audioWorklet.addModule(url);
+        audio.module.then(() => {
+            if (!audio || audio.context !== context) return;
+            audio.node = new AudioWorkletNode(context, 'tide-output', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+            audio.node.connect(context.destination);
+            audio.started = context.currentTime;
+            audio.ready = true;
+            audioPump();
+        }).catch(() => {});
+        audio.resume = () => {
+            if (audio && audio.context.state !== 'running') audio.context.resume().catch(() => {});
+        };
+        for (const type of ['pointerdown', 'keydown', 'touchstart']) document.addEventListener(type, audio.resume, { passive: true });
+        audio.timer = setInterval(audioPump, 20);
+        return context.sampleRate | 0;
+    }
+    function audioPump() {
+        if (!audio || !audio.ready || !exports || !exports.tide_web_audio_render) return;
+        const rate = audio.context.sampleRate;
+        const consumed = (audio.context.currentTime - audio.started) * rate;
+        if (audio.sent < consumed) audio.sent = consumed; // Starved (a page that was away): no catching up
+        const target = Math.ceil(rate * 0.09);
+        let need = Math.ceil(target - (audio.sent - consumed));
+        while (need > 0) {
+            const frames = Math.min(need, 4096);
+            const ptr = exports.tide_web_audio_render(frames);
+            const chunk = new Float32Array(u8().buffer, ptr, frames * 2).slice(); // Its own copy, to hand over
+            audio.node.port.postMessage(chunk, [chunk.buffer]);
+            audio.sent += frames;
+            need -= frames;
+        }
+    }
+    // The microphone: getUserMedia, into the context the output plays in,
+    // through a worklet that posts what it hears to the program. The browser
+    // asks the player; until they allow it, and until the context runs (a
+    // touch of the page), the program hears silence.
+    let capture = null;
+    function audioCaptureOpen() {
+        if (capture) return 1;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return 0;
+        if (!audio && !audioOpen()) return 0;
+        const context = audio.context;
+        const opened = capture = { context, stream: null, source: null, node: null };
+        navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+            // Closing and reopening capture keeps the output's context: only
+            // this request may attach the stream the browser eventually gives it.
+            if (capture !== opened) {
+                stream.getTracks().forEach(track => track.stop());
+                return;
+            }
+            opened.stream = stream;
+            audio.module.then(() => {
+                if (capture !== opened) return;
+                opened.source = context.createMediaStreamSource(stream);
+                opened.node = new AudioWorkletNode(context, 'tide-input', { numberOfInputs: 1, numberOfOutputs: 0 });
+                opened.node.port.onmessage = event => { if (capture === opened) audioCaptured(event.data); };
+                opened.source.connect(opened.node);
+            }).catch(() => {});
+        }).catch(() => {}); // Not allowed: silence
+        return 1;
+    }
+    function audioCaptured(chunk) {
+        if (!capture || !exports || !exports.tide_web_audio_captured) return;
+        const most = 4096;
+        for (let at = 0; at < chunk.length; at += most) {
+            const n = Math.min(most, chunk.length - at);
+            const ptr = exports.tide_web_audio_capture_buffer();
+            new Float32Array(u8().buffer, ptr, n).set(chunk.subarray(at, at + n));
+            exports.tide_web_audio_captured(n, capture.context.sampleRate | 0);
+        }
+    }
+    function audioCaptureClose() {
+        if (!capture) return;
+        try {
+            if (capture.node) {
+                capture.node.port.onmessage = null;
+                capture.node.disconnect();
+            }
+            if (capture.source) capture.source.disconnect();
+            if (capture.stream) capture.stream.getTracks().forEach(track => track.stop());
+        } catch (error) {
+            // A context that's closed already
+        }
+        capture = null;
+    }
+    function audioClose() {
+        if (!audio) return;
+        audioCaptureClose();
+        clearInterval(audio.timer);
+        for (const type of ['pointerdown', 'keydown', 'touchstart']) document.removeEventListener(type, audio.resume);
+        try {
+            if (audio.node) audio.node.disconnect();
+            audio.context.close();
+        } catch (error) {
+            // A context that's closed already
+        }
+        audio = null;
     }
 
     const platform = {
@@ -676,6 +820,10 @@
             throw unwind;
         },
         hidden: () => document.hidden ? 1 : 0,
+        audio_open: () => audioOpen(),
+        audio_close: () => audioClose(),
+        audio_capture_open: () => audioCaptureOpen(),
+        audio_capture_close: () => audioCaptureClose(),
         stop() { stopped = true; },
         eval: scriptPtr => (0, eval)(string(scriptPtr)) ? 1 : 0,
     };
@@ -2668,7 +2816,7 @@
     await deviceAsked;
 
     // <tide run>
-    // Hot reloading: tide run --web serves the page, and says which build is
+    // Hot reloading: tide run --web --watch serves the page, and says which build is
     // the newest. Each new one starts in the running one's place, carrying
     // over what the running one leaves it (platform/src/reload.c).
     let resumeWith = null;
@@ -2732,7 +2880,15 @@
     // second. When tide has stopped, the page stays as it is.
     if (config.reload) {
         let build = 0, restarts = 0, bytes = null, pack = 0;
+        let busy = false, freshRequested = false;
+        const startFresh = async () => {
+            freshRequested = false;
+            await replace(bytes, true);
+            print('tide: started over');
+        };
         const poll = async () => {
+            if (busy) return;
+            busy = true;
             try {
                 const [newest, restart, packs] = (await (await fetch('build', { cache: 'no-store' })).text())
                     .trim().split(' ').map(Number);
@@ -2749,22 +2905,43 @@
                     const response = await fetch(`game-${newest}.wasm`, { cache: 'no-store' });
                     if (response.ok) {
                         const next = new Uint8Array(await response.arrayBuffer());
-                        const fresh = !bytes;
+                        const fresh = !bytes || freshRequested || restart !== restarts;
+                        freshRequested = false;
                         build = newest;
                         restarts = restart;
                         bytes = next;
                         await replace(bytes, fresh);
                     }
-                } else if (bytes && restart !== restarts) {
+                } else if (bytes && (freshRequested || restart !== restarts)) {
                     restarts = restart;
-                    await replace(bytes, true);
+                    await startFresh();
                 }
             } catch (error) {
                 if (!(error instanceof TypeError)) printErr('tide: ' + (error && error.stack || error)); // TypeError: tide isn't there
+                // The last good program can still start fresh after tide
+                // stops serving. Ctrl+R keeps working with its cached bytes.
+                if (bytes && freshRequested) {
+                    try { await startFresh(); }
+                    catch (error) { printErr('tide: ' + (error && error.stack || error)); }
+                }
+            } finally {
+                busy = false;
             }
-            setTimeout(poll, 250);
         };
-        poll();
+        addEventListener('keydown', event => {
+            if (event.code !== 'KeyR' || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+            event.preventDefault();
+            const key = keyIndex.get('KeyR');
+            if (key !== undefined) { keysHeld[key] = 0; keysTapped[key] = 0; }
+            if (event.repeat) return;
+            freshRequested = true;
+            poll();
+        });
+        const tick = async () => {
+            await poll();
+            setTimeout(tick, 250);
+        };
+        tick();
         return;
     }
     // </tide run>

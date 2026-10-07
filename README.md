@@ -11,7 +11,7 @@ the Tide language, which compiles to C and then to native code or WebAssembly.
 Windows, in PowerShell:
 
 ```powershell
-irm https://tide-engine.dev/install.ps1 | iex
+Invoke-RestMethod https://tide-engine.dev/install.ps1 | Invoke-Expression
 ```
 
 Linux and macOS:
@@ -88,6 +88,7 @@ Then, in that folder:
 | Command | What it does |
 |---|---|
 | `tide run` | Builds the game and plays it |
+| `tide run --watch` | Plays it and reloads when you save |
 | `tide run --web` | Builds it as a web page and opens it |
 | `tide build` | Builds the game into `build/` |
 | `tide build --release --web` | An optimized, self-contained `.html` (WebGPU, or WebGL 2 where the browser has none) |

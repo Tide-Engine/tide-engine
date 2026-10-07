@@ -17,6 +17,8 @@ view DrawHud(Arena arena)
 
 Drawing is immediate mode: views record their drawing calls every frame. Views run after the frame's ticks, in the order they're declared, and later ones draw on top. `[Before]` and `[After]` order views among themselves, as they do systems. A frame can draw as much as it needs: shapes go to the GPU together, so tens of thousands of rects or circles a frame are cheap, on the web too.
 
+For see-through shapes, sprites and 3D meshes, see [Transparency](#transparency): alpha controls opacity, and 3D also needs the right depth setting and draw order.
+
 Tap a circle to select it, then change the camera's size. The grid and circles use world coordinates; the heading and slider keep their size in screen pixels. Pointer picking uses `ScreenToWorld` with that frame's camera.
 
 ::: tide-example views A view draws the world
@@ -508,6 +510,8 @@ view Trails(Bullet bullet)
 
 A color's alpha is how much of it there is, and you write colors as they are everywhere: `Color(1, 0, 0, 0.5)` is red, half clear, in a draw, a tint, a grid's cell, a PNG and a frag. There's nothing to multiply yourself and no second kind of blend to pick.
 
+See [Transparency](#transparency) for drawing something see-through, fading it, and cutting holes in a 3D mesh.
+
 What that buys:
 
 - **No fringes.** A sprite's clear pixels have a color too in its file, often black or white, which never shows. Scaled or turned with `Filter.Bilinear`, a pixel at the sprite's edge is blended with its clear neighbor, and the neighbor counts for none of the color: a white sprite over a white wall has no gray rim, whatever the file kept in its clear pixels.
@@ -726,7 +730,7 @@ What's drawn through one:
 
 ## Colors
 
-`Color` has `r`, `g`, `b` and `a`, floats from 0 to 1, as in Unity. `Color(r, g, b)` has alpha 1, and `Color(r, g, b, a)` sets it. The constants are `Color.white`, `black`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta`, `gray` and `clear`. Components and singletons can hold colors.
+`Color` has `r`, `g`, `b` and `a`, floats from 0 to 1, as in Unity. Its constructor takes scalars and vectors totaling 3 or 4 channels, in order, just as vector constructors do. `Color(r, g, b)`, `Color(uv.xy, 0)` and `Color(rgb)` have alpha 1; `Color(r, g, b, a)`, `Color(rgb, a)` and `Color(rgba)` set it. Ints and int vectors convert to floats. The constants are `Color.white`, `black`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta`, `gray` and `clear`. Components and singletons can hold colors.
 
 Colors add, subtract and multiply channel by channel, alpha too, and scale by a number: `tint * Color.red * 0.5`.
 
@@ -748,6 +752,66 @@ frag Present(Vertex vertex, out Color color, Texture source)
 The scene is drawn into a [`Format.Rgba16f`](#what-a-target-holds) target, where light adds up past 1, and `Draw.Blit(scene.color, Draw.window, Present)` shows it. Without the last step the picture is too dark between its lights and flat white where they meet. What's drawn after it, the GUI and text among it, is in the display's numbers as ever.
 
 `Color.none` is no color, for where one can be left out, like a [`Shape`](#the-general-shape)'s second color. It isn't one to draw with: nothing shows.
+
+## Transparency
+
+Set a color's **alpha**, its fourth number, to the opacity you want: `0` is invisible, `0.5` is half opaque, and `1` is solid. `Color(r, g, b)` is solid. The default [`Blend.Alpha`](#blending) blends the color over what's already drawn, so shapes and text need no extra setting:
+
+```csharp
+view Overlay()
+{
+    Draw.Screen()
+    {
+        Draw.Rect(float2(160, 100), float2(240, 80), Color(0.18, 0.83, 0.75, 0.5));
+        Draw.Text("Half opaque", float2(40, 60), 20, Color(1, 1, 1, 0.5));
+    }
+}
+```
+
+Draw the background first, then what goes over it. This is also how a **sprite with transparent pixels** works: give `Draw.Mesh` its PNG or texture, and the pixel's alpha supplies its opacity. A mesh's vertex colors multiply that alpha, and a [frag](./shaders.md#a-frag) controls it through its `out Color`.
+
+To **fade a whole set of draws**, wrap them in [`Draw.Tint(Color(1, 1, 1, opacity))`](#tints). This keeps their colors and multiplies each draw's alpha by `opacity`. Each draw still blends separately: if overlapping elements should fade as one finished layer, draw them into a [render target](#targets-and-post-processing) cleared with `Color.clear`, then tint the draw of `target.color`. Colors stay as you wrote them; Tide handles [premultiplied alpha](#alpha) internally.
+
+### Transparent 3D
+
+A 3D mesh also has depth. For glass, smoke and other translucent surfaces:
+
+1. Draw solid geometry first with the default `Depth.ReadWrite`.
+2. Draw translucent geometry inside `Draw.Depth(Depth.Read) { ... }`, with alpha below 1. It tests against the solid geometry's depth and writes no depth itself.
+3. Draw the translucent surfaces **farthest first**, then the nearer ones, so they blend over what's behind them.
+
+Change **Opacity** below. The amber cube is behind the panes and shows through them; the solid pillar in front hides them. The camera stays fixed, so the rose pane is always farther away and is drawn first. The bar above the scene uses the same opacity on a 2D shape.
+
+::: tide-example transparency Opacity in 2D and 3D
+
+<<< @/examples/transparency.tide
+
+:::
+
+Tide draws in the order your views and calls give it; it **doesn't sort transparent entities or a mesh's triangles by distance**. For a moving camera, gather your transparent objects in a local list, [sort it](../language/text-and-lists.md#sorting) from far to near for that camera, then draw them in that order. Intersecting transparent surfaces, or faces within one mesh, may need to be split and ordered too; sorting whole objects alone can't resolve every overlap.
+
+- **Alpha doesn't turn depth writes off.** Even alpha 0 can hide later geometry under `Depth.ReadWrite`. Use `Depth.Read` for translucency, or discard the pixel for a hole.
+- **`Depth.None` also stops testing depth,** so the mesh shows through solid walls. Use `Depth.Read` when walls should hide it.
+- **A thin pane has a back too.** If it should show from either side, use [`Draw.Cull(Cull.None)`](#which-side-draws). On a closed mesh that also draws the far faces, whose alpha blends with the near ones.
+- **A target has its own settings:** use `target.Depth(Depth.Read)` and `target.Tint(...)` for its draws. `Draw`'s settings reach the window alone.
+
+### Cutout holes
+
+Leaves, a fence or a sprite standing in a 3D world often want solid pixels with holes between them. A frag can discard pixels below an alpha threshold and keep the rest opaque:
+
+```csharp
+frag Cutout(Vertex3 vertex, out Color color, Texture image, Pixel pixel)
+{
+    color = image.Sample(vertex.uv);
+    if (color.a < 0.5) pixel.Discard();
+    color.a = 1;
+}
+
+// Keep the default Depth.ReadWrite: only the surviving pixels hide what's behind.
+Draw.Mesh(vertices, indices, transform, texture, Cutout);
+```
+
+[`pixel.Discard()`](./shaders.md#where-the-pixel-is) ends the frag and writes no color, depth or stencil for that pixel. The surviving pixels can use the usual opaque draw order. The threshold gives a hard edge; use the translucent recipe above when you want partial opacity at the edge instead.
 
 ## Smooth shapes
 
@@ -1205,7 +1269,7 @@ view Crates(Crate crate, Scenery scenery)
 ```
 
 - 3D meshes hide each other by how far they are, whatever order they're drawn in. Everything else draws over what's there, in order, through the camera it had before: a view can draw a 3D scene and then a HUD over it, with no camera call between. `Draw.Clear` clears what's in front too.
-- A see-through mesh blends with what's behind it, and still hides what's drawn behind it later, unless it's drawn with [`Draw.Depth(Depth.Read)`](#depth): draw see-through meshes last, the farthest first.
+- A see-through mesh blends with what's behind it, and still hides what's drawn behind it later, unless it's drawn with [`Draw.Depth(Depth.Read)`](#depth): draw see-through meshes last, the farthest first. See [Transparency](#transparent-3d) for the full recipe, and [cutout holes](#cutout-holes) for solid pixels with gaps between them.
 - A triangle is drawn from its front, the side its corners go clockwise on, and not from its back: see [Which side draws](#which-side-draws). A face that's missing is usually a triangle wound the other way.
 - Textures, filters and [wraps](#past-the-edges) work as a mesh's do: `Draw.Mesh(vertices, indices, transform, texture, filter, wrap)`.
 - There's no lighting built in: a pixel is its corners' colors times its texture's. A [`frag`](./shaders.md) lights it your way, with normals in a vertex struct of your own.

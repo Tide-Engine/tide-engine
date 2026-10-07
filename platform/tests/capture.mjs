@@ -11,6 +11,7 @@
 // message that names what to fix. That needs no GPU.
 
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { readPng } from './png_read.mjs';
@@ -277,6 +278,49 @@ if (pinged.status === 0) {
     const playedAgain = run(['--script', script('ping.txt', ['3 key p', '6 quit']), '--capture-audio', 'played2.wav', '--size', '64', '64']);
     check(playedAgain.status === 0 && readFileSync(join(scratch, 'played2.wav')).equals(b), 'and the same bytes again');
 }
+// Without --capture-audio the run keeps only what a capture-audio line can still
+// ask for, and lets go of what the last one took: a line far from the one
+// before it still gets every frame between, with the clip where it played (P at
+// frame 20: 19 frames are 59.375 blocks, so the clip starts at the 61st block,
+// 15360, which is 12960 into b.wav, which starts at frame 2400).
+const spans = run(['--script', script('spans.txt', ['3 capture-audio a.wav', '20 key p', '40 capture-audio b.wav', '41 capture-audio c.wav', '41 quit']),
+                   '--size', '64', '64']);
+check(spans.status === 0, `capture-audio lines without --capture-audio end with exit code 0 (${spans.status})`);
+if (spans.status === 0) {
+    const [a, b, c] = ['a.wav', 'b.wav', 'c.wav'].map(wav);
+    check(a && b && c && a.frames === 3 * 800 && b.frames === 37 * 800 && c.frames === 800,
+          `each takes what played since the last (${[a, b, c].map(w => w && w.frames).join(', ')})`);
+    const bytes = readFileSync(join(scratch, 'b.wav'));
+    const sample = frame => bytes.readInt16LE(44 + frame * 4);
+    check(a && a.silent && c && c.silent && sample(12959) === 0 && sample(12960) === 16384 && sample(13359) === 16384 && sample(13360) === 0,
+          `and the clip is where it played in the one that has it (${sample(12959)}, ${sample(12960)}, ${sample(13359)}, ${sample(13360)})`);
+}
+// The microphone: a run with no window has no capture device, so --microphone
+// plays a file into it, looped: M at frame 3 starts a Sound of Clip.Microphone,
+// and the ping (0.5 for 400 frames, looped: a constant) is in what's captured
+// from the first block the mixer had four blocks of it for, on both channels.
+// Frame 3's feed primes nothing (799 frames), frame 4's does, and frame 4's
+// first whole block is the 11th, at frame 2560.
+const pingFile = fileURLToPath(new URL('./ping.wav', import.meta.url));
+const listened = run(['--script', script('mic.txt', ['3 key m', '8 quit']), '--microphone', pingFile, '--capture-audio', 'mic.wav',
+                      '--size', '64', '64']);
+check(listened.status === 0, `a run with a microphone file ends with exit code 0 (${listened.status})`);
+if (listened.status === 0) {
+    const b = readFileSync(join(scratch, 'mic.wav'));
+    const sample = (frame, channel) => b.readInt16LE(44 + frame * 4 + channel * 2);
+    const w = wav('mic.wav');
+    check(w && w.frames === 8 * 800 && !w.silent, `eight frames of audio, with the microphone in them (${w && w.frames})`);
+    check(sample(2559, 0) === 0 && sample(2560, 0) === 16384 && sample(2560, 1) === 16384 && sample(4000, 0) === 16384
+          && sample(6399, 1) === 16384, `the file plays from frame 2560 on (${sample(2559, 0)}, ${sample(2560, 0)}, ${sample(4000, 0)}, ${sample(6399, 1)})`);
+    const listenedAgain = run(['--script', script('mic.txt', ['3 key m', '8 quit']), '--microphone', pingFile, '--capture-audio', 'mic2.wav',
+                               '--size', '64', '64']);
+    check(listenedAgain.status === 0 && readFileSync(join(scratch, 'mic2.wav')).equals(b), 'and the same bytes again');
+}
+// Without the file the microphone is silent; a file that isn't there is refused before anything runs
+const unheard = run(['--script', script('mic2.txt', ['3 key m', '6 quit']), '--capture-audio', 'quiet.wav', '--size', '64', '64']);
+check(unheard.status === 0 && wav('quiet.wav') && wav('quiet.wav').silent, `a run with no microphone file hears silence (${unheard.status})`);
+const noFile = run(['--frames', '2', '--microphone', 'nope.wav']);
+check(noFile.status === 2 && noFile.err.includes("can't be read"), `a microphone file that isn't there is refused before anything runs (${noFile.status})`);
 const lostAudio = run(['--frames', '2', '--capture-audio', join(scratch, 'no', 'such', 'folder.wav')]);
 check(lostAudio.status === 1 && lostAudio.err.includes("can't write"), `audio that can't be written is exit code 1 (${lostAudio.status})`);
 

@@ -107,7 +107,8 @@ typedef struct asset_site {
     bool glob;
     bool url;
     bool many;          // A List or Map: a glob's matches
-    const char *format; // The files it takes: ".png" for a Grid2<Color> and a Texture; NULL for any
+    const char *format;
+    const char *format2; // A second kind of file the asset can be, or NULL // The files it takes: ".png" for a Grid2<Color> and a Texture; NULL for any
 } asset_site;
 
 // A path to write at a site whose file is missing, fixing its diagnostic.
@@ -1467,7 +1468,7 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_ENTITY: return "A handle to an entity. It stays safe to use after the entity is destroyed.";
     case TY_LOCAL_ENTITY: return "A handle to an entity of the local world: this machine's own, which only local code holds.";
     case TY_PLAYER: return "A player, independent of connections. `PlayerID(0)` names a player by index.";
-    case TY_COLOR: return "A color: r, g, b and a from 0 to 1. `Color(r, g, b)` or `Color(r, g, b, a)`.";
+    case TY_COLOR: return "A color: r, g, b and a from 0 to 1. Its constructor takes numbers and vectors totaling 3 or 4 channels, in order: `Color(uv.xy, 0)` or `Color(rgb)` has alpha 1; `Color(rgb, a)` or `Color(rgba)` supplies it. Ints and int vectors widen to floats.";
     case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter[, wrap]])`. A Blit supplies its source to a read-only Texture shader parameter.";
     case TY_DEPTH_TEXTURE: return "A local reference to a render target's depth, `target.depth`, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow wants.";
     case TY_CUBEMAP: return "A local reference to a cube of six images, which a frag or vert reads by a direction from its middle, `Sample(direction)`, where it's an asset by its name or a field of a component or singleton it takes. An asset's is six files a glob matches, named for their faces: `asset Cubemap sky = \"art/sky_??.png\";`. `Cubemap(size)` is one a view draws into, a face at a time: `cube.faces[0]` to `cube.faces[5]` are RenderTargets, in the order +x, -x, +y, -y, +z, -z.";
@@ -2114,7 +2115,7 @@ static void format_method(const method_form *form, const type t, sb *out)
     const bool generic = (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID) && t.decl;
     const char *element = generic ? type_name(t.decl->fields.items[0].type) : "T";
     const char *value = generic && t.kind == TY_MAP ? type_name(t.decl->fields.items[1].type) : "V";
-    sb_put(out, generic || t.kind == TY_RECORD || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP ? type_name(t) // Pixel.Discard()
+    sb_put(out, generic || t.kind == TY_RECORD || t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP ? type_name(t) // Pixel.Discard()
                 : t.kind == TY_LIST ? "items"
                 : t.kind == TY_MAP || t.kind == TY_SET ? "keys"
                 : t.kind == TY_GRID ? "cells"
@@ -2752,8 +2753,8 @@ static void describe(const occurrence *o, sb *out)
                             "too wherever one is drawn with.");
             }
             if (o->decl->asset_kind == ASSET_CLIP) {
-                sb_put(out, " A `Clip` is a sound to play, this machine's: `Audio.Play(name)` in a view or a local handler plays "
-                            "it, and the match can't use it.");
+                sb_put(out, " A `Clip` is a sound to play, this machine's (a WAV, or Ogg Vorbis): `Audio.Play(name)` in a view "
+                            "or a local handler plays it, and the match can't use it.");
             }
             if (o->decl->sample_raw) {
                 sb_put(out, "\n\nIt's `[Raw]`: its pixels are numbers, kept as the file has them, which a frag or a vert reads "
@@ -3282,22 +3283,109 @@ static void describe_order(const decl *d, sb *out)
 }
 
 // ---------------------------------------------------------------------------
-// Code lenses: above each system, its stage and why it waits, above each
-// local handler of a match event, when it hears it, and above a declaration
-// an override replaced, and the override, which is which
+// Code lenses: above each system, its stage, each system it waits for and why,
+// and what runs alongside it; above each local handler of a match event, when
+// it hears it; above a declaration an override replaced, and the override,
+// which is which; and above a declaration, how many places name it. Each is a
+// lens of its own, so the ones that name declarations go to them when clicked
 
 static const char *package_text(const decl *d);
 static const char *code_name(const decl *d);
+static bool same_symbol(const occurrence *a, const occurrence *b);
+
+static void write_location(jbuf *out, const loc at, const int len)
+{
+    jb_put(out, "{\"uri\":");
+    jb_string(out, A.files[at.file].uri);
+    jb_put(out, ",\"range\":");
+    write_range(out, at, len);
+    jb_put(out, "}");
+}
+
+// A lens with `title` over the name at `at`, up to what its click does.
+static void open_lens(jbuf *out, int *written, const loc at, const int len, const char *title)
+{
+    if ((*written)++) jb_put(out, ",");
+    jb_put(out, "{\"range\":");
+    write_range(out, at, len);
+    jb_put(out, ",\"command\":{\"title\":");
+    jb_string(out, title);
+}
 
 // A lens with `title` above `d`'s name. It only says: it runs no command.
 static void write_lens(jbuf *out, int *written, const decl *d, const char *title)
 {
-    if ((*written)++) jb_put(out, ",");
-    jb_put(out, "{\"range\":");
-    write_range(out, d->at, d->name.len);
-    jb_put(out, ",\"command\":{\"title\":");
-    jb_string(out, title);
+    open_lens(out, written, d->at, d->name.len, title);
     jb_put(out, ",\"command\":\"\"}}");
+}
+
+// The editor's own command, as VS Code names it and LSP4IJ implements it, from the name at `at`: the
+// document, the position, and then the places, which the caller lists and closes.
+static void open_lens_command(jbuf *out, const char *command, const loc at)
+{
+    jb_printf(out, ",\"command\":\"%s\",\"arguments\":[", command);
+    jb_string(out, A.files[at.file].uri);
+    jb_put(out, ",");
+    write_position(out, at);
+    jb_put(out, ",[");
+}
+
+// A lens with `title` above `d`'s name, which goes to `to` when clicked: there, for one, and for several
+// a list of them to pick from.
+static void write_lens_to(jbuf *out, int *written, const decl *d, const char *title, decl *const *to, const int count)
+{
+    open_lens(out, written, d->at, d->name.len, title);
+    open_lens_command(out, "editor.action.goToLocations", d->at);
+    for (int i = 0; i < count; i++) {
+        if (i) jb_put(out, ",");
+        write_location(out, to[i]->at, to[i]->name.len);
+    }
+    jb_printf(out, "],\"%s\"]}}", count == 1 ? "goto" : "peek");
+}
+
+// Whether a declaration nothing names says so, "0 references": what code has to name to use. Not what
+// the engine runs or reads by itself, where none is the usual: a system, view or handler (which only
+// [Before] and [After] name), the input, a scene, an operator, a type's Interpolate.
+static bool unused_is_said(const occurrence *o)
+{
+    const decl *d = o->decl;
+    switch (o->kind) {
+    case OCC_SYSTEM: return is_shader(d);
+    case OCC_TYPE: return d->kind != DECL_INPUT && !d->is_scene;
+    case OCC_FUNCTION:
+    case OCC_METHOD: return !d->is_operator && !d->is_interpolate;
+    default: return true;
+    }
+}
+
+// "3 references" above each declaration of the document, which lists them when clicked.
+static void write_reference_lenses(jbuf *out, int *written)
+{
+    for (int i = 0; i < A.occs.count; i++) {
+        const occurrence *o = &A.occs.items[i];
+        if (!o->declaration || o->at.file != A.doc || !o->decl || o->decl->builtin) continue;
+        if (o->kind != OCC_TYPE && o->kind != OCC_SYSTEM && o->kind != OCC_FUNCTION && o->kind != OCC_METHOD &&
+            o->kind != OCC_CONST) continue;
+        int count = 0;
+        for (int k = 0; k < A.occs.count; k++) count += !A.occs.items[k].declaration && same_symbol(o, &A.occs.items[k]);
+        if (count == 0 && !unused_is_said(o)) continue;
+        sb title = {0};
+        sb_printf(&title, "%d reference%s", count, count == 1 ? "" : "s");
+        open_lens(out, written, o->at, o->len, title.data);
+        if (count == 0) {
+            jb_put(out, ",\"command\":\"\"}}");
+            continue;
+        }
+        open_lens_command(out, "editor.action.showReferences", o->at);
+        int listed = 0;
+        for (int k = 0; k < A.occs.count; k++) {
+            const occurrence *use = &A.occs.items[k];
+            if (use->declaration || !same_symbol(o, use)) continue;
+            if (listed++) jb_put(out, ",");
+            write_location(out, use->at, use->len);
+        }
+        jb_put(out, "]]}}");
+    }
 }
 
 // What code reads and writes of every entity's through its World and its
@@ -3334,26 +3422,29 @@ void analysis_code_lenses(jbuf *out)
         sb_printf(&title, "stage %d", d->stage);
         if (d->extern_system) sb_put(&title, " \u00B7 in C"); // Scheduled by what it declares: its code isn't read
         put_world_lens(&title, d, " \u00B7 "); // Access to every entity's, which its signature doesn't say
+        if (d->alongside_count == 0 && A.prog->systems.count > 1) sb_put(&title, " \u00B7 nothing runs alongside");
+        write_lens(out, &written, d, title.data);
         for (int k = 0; k < d->waits.count; k++) {
             const system_wait *w = &d->waits.items[k];
             if (w->through) continue; // Shown on the system it goes through
-            sb_put(&title, " \u00B7 after ");
-            put_decl_name(&title, w->on, "", d);
-            sb_put(&title, ": ");
-            describe_wait(d, w, "", &title);
+            sb wait = {0};
+            sb_put(&wait, "after ");
+            put_decl_name(&wait, w->on, "", d);
+            sb_put(&wait, ": ");
+            describe_wait(d, w, "", &wait);
+            write_lens_to(out, &written, d, wait.data, (decl *const[]){(decl *)w->on}, 1);
         }
-        if (d->alongside_count == 0 && A.prog->systems.count > 1) {
-            sb_put(&title, " \u00B7 nothing runs alongside");
-        } else if (d->alongside_count > 0) {
-            sb_put(&title, " \u00B7 alongside ");
+        if (d->alongside_count > 0) {
+            sb alongside = {0};
+            sb_put(&alongside, "alongside ");
             const int shown = d->alongside.count > 3 ? 3 : d->alongside.count;
             for (int k = 0; k < shown; k++) {
-                if (k) sb_put(&title, ", ");
-                put_decl_name(&title, d->alongside.items[k], "", d);
+                if (k) sb_put(&alongside, ", ");
+                put_decl_name(&alongside, d->alongside.items[k], "", d);
             }
-            if (d->alongside_count > shown) sb_printf(&title, " and %d more", d->alongside_count - shown);
+            if (d->alongside_count > shown) sb_printf(&alongside, " and %d more", d->alongside_count - shown);
+            write_lens_to(out, &written, d, alongside.data, d->alongside.items, d->alongside.count);
         }
-        write_lens(out, &written, d, title.data);
     }
     // A view's access to every entity's, which its signature doesn't say either
     for (int i = 0; i < A.prog->views.count; i++) {
@@ -3368,12 +3459,12 @@ void analysis_code_lenses(jbuf *out)
         if (v->at.file == A.doc) {
             sb title = {0};
             sb_printf(&title, "replaced by %s: not in the build", package_text(o));
-            write_lens(out, &written, v, title.data);
+            write_lens_to(out, &written, v, title.data, (decl *const[]){(decl *)o}, 1);
         }
         if (o->at.file == A.doc) {
             sb title = {0};
             sb_printf(&title, "replaces %s of %s", code_name(v), package_text(v));
-            write_lens(out, &written, o, title.data);
+            write_lens_to(out, &written, o, title.data, (decl *const[]){(decl *)v}, 1);
         }
     }
     // The program's handlers rather than each event's listeners, which the
@@ -3386,8 +3477,10 @@ void analysis_code_lenses(jbuf *out)
         put_decl_name(&title, h->event, "", h);
         sb_put(&title, h->listens_verified ? " once the server confirmed it" : " at the start of a frame");
         put_world_lens(&title, h, " \u00B7 ");
-        write_lens(out, &written, h, title.data);
+        if (h->event->builtin) write_lens(out, &written, h, title.data); // The engine's own: nowhere to go
+        else write_lens_to(out, &written, h, title.data, (decl *const[]){h->event}, 1);
     }
+    write_reference_lenses(out, &written);
     jb_put(out, "]");
 }
 
@@ -4378,15 +4471,6 @@ void analysis_symbols(jbuf *out)
 // ---------------------------------------------------------------------------
 // Type definitions and implementations
 
-static void write_location(jbuf *out, const loc at, const int len)
-{
-    jb_put(out, "{\"uri\":");
-    jb_string(out, A.files[at.file].uri);
-    jb_put(out, ",\"range\":");
-    write_range(out, at, len);
-    jb_put(out, "}");
-}
-
 void analysis_type_definition(const int line, const int character, jbuf *out)
 {
     const occurrence *o = occurrence_at(from_lsp(line, character));
@@ -5196,7 +5280,11 @@ static void classify(const occurrence *o, int *type, int *mods)
         if (!is_routine(o->decl)) *mods |= SM_DEFAULT_LIBRARY | SM_STATIC;
         break;
     case OCC_CONSTANT: *type = ST_ENUM_MEMBER; *mods |= SM_DEFAULT_LIBRARY | SM_STATIC | SM_READONLY; break;
-    case OCC_CONST: *type = ST_ENUM_MEMBER; *mods |= SM_STATIC | SM_READONLY; break; // Like Math.PI
+    case OCC_CONST:
+        *type = o->decl && o->decl->kind == DECL_ASSET ? ST_VARIABLE : ST_ENUM_MEMBER;
+        *mods |= SM_READONLY;
+        if (!o->decl || o->decl->kind != DECL_ASSET) *mods |= SM_STATIC; // Constants, like Math.PI
+        break;
     case OCC_SETTING: *type = ST_PROPERTY; *mods |= SM_DEFAULT_LIBRARY; break;
     case OCC_METHOD:
         if (is_operator_decl(o->decl)) {
@@ -5204,7 +5292,8 @@ static void classify(const occurrence *o, int *type, int *mods)
             *mods = 0;
         } else if (is_routine(o->decl)) {
             *type = ST_METHOD;
-        } else if (str_eq_c(o->name, "Sample") || str_eq_c(o->name, "Sanitize")) { // The input's own members
+        } else if (o->decl && o->decl->kind == DECL_INPUT
+                   && (str_eq_c(o->name, "Sample") || str_eq_c(o->name, "Sanitize"))) { // The input's own members
             *type = ST_KEYWORD;
             *mods = 0;
         } else {
@@ -5578,6 +5667,10 @@ static type name_type(const scope *sc, const str name, const param **param_out)
         for (int i = 0; i < sc->fields_of->fields.count; i++) {
             if (str_eq(sc->fields_of->fields.items[i].name, name)) return sc->fields_of->fields.items[i].type;
         }
+    }
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (d->kind == DECL_ASSET && str_eq_c(name, name_for(d))) return d->return_type;
     }
     return (type){TY_ERROR, NULL};
 }
@@ -6039,10 +6132,11 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             }
             return;
         }
-        // ORIGIN. or Tuning.ORIGIN.: a constant's members
+        // ORIGIN. or Tuning.ORIGIN.: a constant's members; an asset's too
         for (int i = 0; i < A.prog->decls.count; i++) {
             const decl *d = A.prog->decls.items[i];
-            if (d->kind != DECL_CONST || (strcmp(name_for(d), written.data) != 0 && !str_eq_c(d->qualified, written.data))) {
+            if ((d->kind != DECL_CONST && d->kind != DECL_ASSET)
+                || (strcmp(name_for(d), written.data) != 0 && !str_eq_c(d->qualified, written.data))) {
                 continue;
             }
             list_members(c, d->return_type, false, &sc);
@@ -6220,6 +6314,21 @@ static void complete_constants(completion *c, const type_kind only)
     }
 }
 
+// Assets are values by name too. The GPU reads one image or cube; the CPU
+// can also read text, bytes and the lists and maps made from a glob.
+static void complete_assets(completion *c, const bool gpu)
+{
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (d->kind != DECL_ASSET) continue;
+        if (gpu && (d->asset_many || (d->asset_kind != ASSET_GRID && d->asset_kind != ASSET_TEXTURE
+                                     && d->asset_kind != ASSET_CUBEMAP))) continue;
+        sb detail = {0};
+        sb_printf(&detail, "asset " STR_FMT, STR_ARG(d->return_type_name));
+        item(c, name_for(d), CK_VARIABLE, detail.data, NULL, NULL);
+    }
+}
+
 // In settings { ... } between tokens `open` and `last`: each setting it
 // doesn't set yet.
 static void complete_settings(completion *c, const int open, const int last)
@@ -6301,8 +6410,12 @@ static bool complete_in_namespace(completion *c, const str ns, const order_compl
         if (order == ORDER_OFFSET && (d->kind != DECL_CONST || d->return_type.kind != TY_INT)) continue;
         const int kind = d->kind == DECL_COMPONENT || d->kind == DECL_STRUCT ? CK_STRUCT : d->kind == DECL_INPUT ? CK_INTERFACE
                        : d->kind == DECL_EVENT ? CK_EVENT : d->kind == DECL_ENUM ? CK_ENUM
-                       : d->kind == DECL_SYSTEM || is_shader(d) ? CK_FUNCTION : d->kind == DECL_CONST ? CK_CONSTANT : CK_CLASS;
-        item(c, str_to_cstr(d->name), kind, decl_keyword(d), NULL, NULL);
+                       : d->kind == DECL_SYSTEM || is_shader(d) ? CK_FUNCTION : d->kind == DECL_CONST ? CK_CONSTANT
+                       : d->kind == DECL_ASSET ? CK_VARIABLE : CK_CLASS;
+        sb detail = {0};
+        sb_put(&detail, decl_keyword(d));
+        if (d->kind == DECL_ASSET) sb_printf(&detail, " " STR_FMT, STR_ARG(d->return_type_name));
+        item(c, str_to_cstr(d->name), kind, detail.data, NULL, NULL);
     }
     return any;
 }
@@ -6406,6 +6519,7 @@ static void complete_shader_code(completion *c, const scope *sc, const bool stat
         if (gpu_callable(d)) complete_routine(c, d, name_for(d));
     }
     complete_constants(c, TY_ERROR);
+    complete_assets(c, true);
     complete_value_types(c, VT_VALUES | VT_GPU | (statement ? VT_BOOL : 0));
     complete_structs(c);
     item(c, "Math", CK_MODULE, "Math functions and constants", NULL, NULL);
@@ -6529,6 +6643,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
         if (d->kind == DECL_FUNCTION && has_name(d)) complete_routine(c, d, name_for(d));
     }
     complete_constants(c, TY_ERROR);
+    complete_assets(c, false);
 
     const bool routine = sc.decl && (sc.decl->kind == DECL_METHOD || sc.decl->kind == DECL_FUNCTION);
     if (sc.decl && !sc.in_input && !routine) {
@@ -8633,7 +8748,10 @@ static const struct {
     {"float2x2", {"float2x2(float2 c0, float2 c1)", "float2x2(float m00, float m01, float m10, float m11)"}, "Columns, or numbers row by row."},
     {"float3x3", {"float3x3(float3 c0, float3 c1, float3 c2)", "float3x3(quaternion rotation)"}, NULL},
     {"float4x4", {"float4x4(float4 c0, float4 c1, float4 c2, float4 c3)", "float4x4(float3x3 rotation, float3 translation)"}, NULL},
-    {"Color", {"Color(float r, float g, float b)", "Color(float r, float g, float b, float a)"}, "Channels from 0 to 1."},
+    {"Color", {"Color(float r, float g, float b)", "Color(float r, float g, float b, float a)",
+               "Color(float2 rg, float b)", "Color(float3 rgb, float a = 1)"},
+     "Channels from 0 to 1. Any mix of numbers and vectors totaling 3 or 4 channels, in order. "
+     "Three channels have alpha 1; four supply it. Ints and int vectors widen to floats."},
     {"Rect", {"Rect(float x, float y, float width, float height)"}, "From the top left of the screen, y down, in GUI units."},
     {"RenderTarget", {"RenderTarget(float width, float height)", "RenderTarget(float width, float height, float pixelsPerUnit)",
                       "RenderTarget(float width, float height, Format formats...)",
@@ -8673,6 +8791,14 @@ static type receiver_type(const int dot, const loc at)
     if (t.kind == TY_ERROR) t = loop_variable_type(&sc, first);
     if (t.kind == TY_ERROR) t = out_variable_type(first, at);
     for (int k = first + 2; k < dot && t.kind != TY_ERROR; k += 2) t = member_type(t, DOC->toks[k].text);
+    if (t.kind == TY_ERROR) {
+        const token *last = &DOC->toks[dot - 1];
+        const str written = {DOC->toks[first].text.ptr, (int)(last->text.ptr + last->text.len - DOC->toks[first].text.ptr)};
+        for (int i = 0; i < A.prog->decls.count; i++) {
+            const decl *d = A.prog->decls.items[i];
+            if (d->kind == DECL_ASSET && (str_eq_c(written, name_for(d)) || str_eq(written, d->qualified))) return d->return_type;
+        }
+    }
     return t;
 }
 
@@ -9850,6 +9976,7 @@ static void collect_assets(void)
         site.many = d->asset_many || d->asset_kind == ASSET_CUBEMAP; // A cube's path is a glob too: its six faces
         site.format = d->asset_kind == ASSET_GRID || d->asset_kind == ASSET_TEXTURE || d->asset_kind == ASSET_CUBEMAP ? ".png"
                     : d->asset_kind == ASSET_CLIP ? ".wav" : NULL;
+        site.format2 = d->asset_kind == ASSET_CLIP ? ".ogg" : NULL; // A clip is either
         site.glob = asset_path_is_glob(site.path.ptr, (size_t)site.path.len);
         site.url = asset_path_is_url(site.path.ptr, (size_t)site.path.len);
         char *folder = asset_path_folder(A.files[f].src.path);
@@ -10198,7 +10325,7 @@ static void complete_asset_path(completion *c, const int tok, const loc at)
     for (int i = 0; i < entries.files.count; i++) {
         const char *name = entries.files.items[i];
         if (ends_with_fold(name, ".tide")) continue;
-        if (site->format && !ends_with_fold(name, site->format)) continue;
+        if (site->format && !ends_with_fold(name, site->format) && !(site->format2 && ends_with_fold(name, site->format2))) continue;
         asset_item(c, name, KIND_FILE, start, at, name, NULL, '3');
     }
     free(base);

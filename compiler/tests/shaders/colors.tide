@@ -1,0 +1,46 @@
+// Color flattens numeric scalar/vector arguments in channel order. Three
+// channels leave alpha at 1; four provide it. Integer vectors widen to floats.
+scene Main { }
+
+local singleton Art
+{
+    List<Vertex> corners;
+    List<int> faces;
+}
+
+vert Channels(mut Vertex vertex)
+{
+    vertex.color = Color(vertex.uv, 0);
+}
+
+frag Colors(Vertex vertex, out Color color)
+{
+    float2 uv = vertex.uv;
+    float3 rgb = float3(uv, 0.75);
+    float4 rgba = float4(rgb, 0.125);
+    Color pairThenScalar = Color(uv.xy, 0);
+    Color scalarThenPair = Color(0.25, uv);
+    Color triple = Color(rgb);
+    Color tripleThenAlpha = Color(rgb, 0.125);
+    Color quadruple = Color(rgba);
+    Color pairs = Color(uv, rgba.zw);
+    Color pairThenScalars = Color(uv, 0.75, 0.125);
+    Color scalarPairScalar = Color(0.25, uv, 0.125);
+    Color scalarsThenPair = Color(0.25, 0.5, rgba.zw);
+    Color scalarThenTriple = Color(0.25, rgba.yzw);
+    Color intsThenScalar = Color(int2(2, 3), 4);
+    Color intsTriple = Color(int3(2, 3, 4));
+    Color intsThenAlpha = Color(int3(2, 3, 4), 0.125);
+    Color intsQuadruple = Color(int4(2, 3, 4, 5));
+    Color scalarThenIntsPair = Color(2, int2(3, 4));
+    Color scalarThenIntsTriple = Color(2, int3(3, 4, 5));
+    Color mixedPairs = Color(int2(2, 3), float2(0.75, 0.125));
+    color = pairThenScalar + scalarThenPair + triple + tripleThenAlpha + quadruple + pairs
+          + pairThenScalars + scalarPairScalar + scalarsThenPair + scalarThenTriple
+          + intsThenScalar + intsTriple + intsThenAlpha + intsQuadruple + scalarThenIntsPair + scalarThenIntsTriple + mixedPairs;
+}
+
+view Show(Art art)
+{
+    Draw.Mesh(art.corners, art.faces, Channels, Colors);
+}

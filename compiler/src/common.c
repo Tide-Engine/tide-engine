@@ -1,9 +1,21 @@
+#if !defined(_WIN32) && !defined(__APPLE__)
+#define _DEFAULT_SOURCE // isatty and getcwd under strict C
+#endif
+
 #include "common.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 // ---------------------------------------------------------------------------
 // Memory
@@ -211,8 +223,81 @@ static void to_sink(const diag_severity severity, const loc at, const char *fmt,
     sink(sink_user, severity, at, message);
 }
 
-// Prints the offending source line with a caret under the column.
-static void print_excerpt(const source *src, const loc at)
+// Whether diagnostics are colored: stderr is a terminal that takes escape
+// sequences, and NO_COLOR isn't set (no-color.org). Never for a file or a
+// pipe, so what tools and tests read is plain text.
+static bool colored(void)
+{
+    static int enabled = -1;
+    if (enabled >= 0) return enabled;
+    enabled = 0;
+    const char *off = getenv("NO_COLOR");
+    if (off && off[0]) return false;
+#ifdef _WIN32
+    const HANDLE err = GetStdHandle(STD_ERROR_HANDLE);
+    DWORD mode;
+    if (GetConsoleMode(err, &mode)) {
+        enabled = (mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0 ||
+                  SetConsoleMode(err, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
+    }
+#else
+    const char *term = getenv("TERM");
+    enabled = isatty(STDERR_FILENO) && term && strcmp(term, "dumb") != 0;
+#endif
+    return enabled;
+}
+
+#define PLAIN "\x1b[0m"
+#define BOLD "\x1b[1m"
+#define DIM "\x1b[2m"
+#define CYAN "\x1b[36m"
+
+static const char *paint(const char *color)
+{
+    return colored() ? color : "";
+}
+
+// An error's red, a warning's yellow.
+static const char *kind_color(const char *kind)
+{
+    return kind[0] == 'e' ? "\x1b[1;31m" : "\x1b[1;33m";
+}
+
+// A file's path as a diagnostic says it: from the folder the compiler was
+// run in when the file is under it, and whole otherwise.
+static const char *shown_path(const char *path)
+{
+    static char here[4096];
+    static size_t here_len;
+    static bool asked;
+    if (!asked) {
+        asked = true;
+#ifdef _WIN32
+        const DWORD n = GetCurrentDirectoryA(sizeof here, here);
+        here_len = n < sizeof here ? n : 0;
+#else
+        here_len = getcwd(here, sizeof here) ? strlen(here) : 0;
+#endif
+        while (here_len > 0 && (here[here_len - 1] == '/' || here[here_len - 1] == '\\')) here_len--;
+    }
+    if (here_len == 0 || strlen(path) <= here_len + 1) return path;
+    for (size_t i = 0; i < here_len; i++) {
+        char a = path[i];
+        char b = here[i];
+#ifdef _WIN32
+        a = a == '\\' ? '/' : (char)tolower((unsigned char)a);
+        b = b == '\\' ? '/' : (char)tolower((unsigned char)b);
+#endif
+        if (a != b) return path;
+    }
+    const char after = path[here_len];
+    if (after != '/' && after != '\\') return path;
+    return path + here_len + 1;
+}
+
+// Prints the offending source line with a caret under the column, in the
+// color of what it's for.
+static void print_excerpt(const source *src, const loc at, const char *color)
 {
     const char *p = src->text;
     const char *end = src->text + src->len;
@@ -223,20 +308,23 @@ static void print_excerpt(const source *src, const loc at)
     const char *line_end = p;
     while (line_end < end && *line_end != '\n' && *line_end != '\r') line_end++;
 
-    fprintf(stderr, "%5d | %.*s\n      | ", at.line, (int)(line_end - p), p);
+    fprintf(stderr, "%s%5d |%s %.*s\n%s      |%s ", paint(DIM), at.line, paint(PLAIN), (int)(line_end - p), p, paint(DIM),
+            paint(PLAIN));
     for (int i = 0; i < at.col - 1 && p + i < line_end; i++) fputc(p[i] == '\t' ? '\t' : ' ', stderr);
-    fputs("^\n", stderr);
+    fprintf(stderr, "%s^%s\n", paint(color), paint(PLAIN));
 }
 
 // Not const: va_list is an array on some targets, and vfprintf takes it as is.
 static void report(const loc at, const char *kind, const char *fmt, va_list args)
 {
     const source *src = diag_source(at.file);
-    if (src) fprintf(stderr, "%s:%d:%d: %s: ", src->path, at.line, at.col, kind);
-    else fprintf(stderr, "tidec: %s: ", kind);
+    const char *color = kind_color(kind);
+    if (src) fprintf(stderr, "%s%s:%d:%d:%s ", paint(BOLD), shown_path(src->path), at.line, at.col, paint(PLAIN));
+    else fputs("tidec: ", stderr);
+    fprintf(stderr, "%s%s:%s %s", paint(color), kind, paint(PLAIN), paint(BOLD));
     vfprintf(stderr, fmt, args);
-    fputc('\n', stderr);
-    if (src && at.line > 0) print_excerpt(src, at);
+    fprintf(stderr, "%s\n", paint(PLAIN));
+    if (src && at.line > 0) print_excerpt(src, at, color);
 }
 
 void diag_error(const loc at, const char *fmt, ...)
@@ -264,7 +352,7 @@ static void note(const loc at, const char *fmt, va_list args)
     if (sink) {
         to_sink(DIAG_NOTE, at, fmt, args);
     } else {
-        fputs("      = note: ", stderr);
+        fprintf(stderr, "      %s= note:%s ", paint(CYAN), paint(PLAIN));
         vfprintf(stderr, fmt, args);
         fputc('\n', stderr);
     }
