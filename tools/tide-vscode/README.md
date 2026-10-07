@@ -22,15 +22,15 @@ file in it and its subfolders is one game.
 
 The play button above a `.tide` file runs its game:
 
-- **Tide: Run** plays it in a window of its own, as `tide run --watch` does.
+- **Tide: Run** plays it in a window of its own, as `tide run` does.
 - **Tide: Run on the Web** plays it in a browser tab beside the code:
   VS Code's integrated browser, or the Simple Browser in editors without it.
   The game gets keys while its tab has focus, and the editor may pause it
   while its tab is hidden, so keep it in a group of its own.
 - **Tide: Run on Android** plays it on the Android phone or emulator that's
-  connected, as `tide run --android --watch` does.
+  connected, as `tide run --android` does.
 
-Each runs `tide run --watch` in a terminal of its own, so saving a file reloads the
+Each runs `tide run` in a terminal of its own, so saving a file reloads the
 game (on Android, builds it again and starts it over), and typing `r` and
 Enter there starts it over. Running it again starts the game over. The
 first run on Android may ask to download Android's tools from Google: type

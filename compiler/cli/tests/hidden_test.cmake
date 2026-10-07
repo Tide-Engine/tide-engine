@@ -72,30 +72,11 @@ refused("a hidden run with nothing to end it" 1)
 refused("one that hosts a match" 1 --host)
 refused("one given only a size" 1 --size 320 200)
 refused("an optimized one" yes --release --stats)
-refused("one that watches files" 1 --watch)
 
 goes_on("a hidden run of a counted number of frames" 1 --frames 3)
+goes_on("one capturing its last frame" 1 --capture picture.png)
 goes_on("one with a script" 1 --script play.txt)
 goes_on("one on the web" 1 --web)
-goes_on("one watching files on the web" 1 --web --watch)
 goes_on("a run with the variable unset" unset)
 goes_on("one with it at 0" 0)
 goes_on("one that hosts a match, with it unset" unset --host)
-goes_on("one watching files with it unset" unset --watch)
-
-# --watch is opt-in for interactive runs. A counted run or a script always
-# runs once, so asking to watch one is refused before it builds anything.
-foreach(option --frames --capture --script)
-    tide_run(1 --watch "${option}" 3)
-    string(FIND "${said}" "leave out --watch" at)
-    if(NOT code EQUAL 2 OR at EQUAL -1 OR EXISTS "${game}/.tide")
-        message(FATAL_ERROR "--watch with ${option} should be refused before building: ${said}")
-    endif()
-endforeach()
-
-execute_process(COMMAND "${CMAKE_COMMAND}" -E env TIDE_NO_UPDATE_CHECK=1 "${tide}" build "${game}" --watch
-    RESULT_VARIABLE code OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 60)
-string(FIND "${err}" "build doesn't take '--watch'" at)
-if(NOT code EQUAL 2 OR at EQUAL -1 OR EXISTS "${game}/.tide")
-    message(FATAL_ERROR "--watch is run's, not build's: ${out}${err}")
-endif()

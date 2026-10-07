@@ -127,4 +127,4 @@ A task waiting for an async call waits in the same place: the call is part of th
 
 ## In C
 
-Hosts tell local code how long each frame is, before `tide_frame`: `tide_local_frame_time(local, seconds)`, which local tasks' waits count down and `Frame.dt` reads. `tide/run.h` does. Under `tide run --watch`, a waiting task carries over to a new build when its code is the same; when it changed, the task is dropped, and tide says so.
+Hosts tell local code how long each frame is, before `tide_frame`: `tide_local_frame_time(local, seconds)`, which local tasks' waits count down and `Frame.dt` reads. `tide/run.h` does. Under `tide run`, a waiting task carries over to a new build when its code is the same; when it changed, the task is dropped, and tide says so.
