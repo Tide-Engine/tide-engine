@@ -340,11 +340,11 @@ The scene below does it. **Lamp** turns the lamp, **Soft edges** takes four comp
 
 - **What casts is drawn with no frag,** and has the engine's own look, as anywhere: in a target of depth alone, a color has nowhere to go, and how far each pixel is, is what's kept. A caster with holes in it names a frag that calls `pixel.Discard()` for them.
 - **The lamp's camera is an ordinary one:** `target.SetCamera(transform, projection)`, with `float4x4.Ortho` for a lamp that's far away, like a sun, and `float4x4.PerspectiveFov` for one that's near.
-- **Where a pixel is in the lamp's image is yours to work out,** from the matrix that takes the world to the lamp's clip space. A camera looks along its `+z`, and clip space along `-z`, so that matrix is the projection, after z turned around, after the camera's transform undone:
+- **Where a pixel is in the lamp's image is yours to work out,** from the matrix that takes the world to the lamp's clip space. That's the lamp's camera, which the target gives back as the GPU has it: [`target.WorldToClip()`](./views.md#a-camera-as-matrices), asked once the camera is set, and kept where the frag reads it:
 
   ```csharp
-  float4x4 flip = float4x4.TRS(float3(0), quaternion.identity, float3(1, 1, -1));
-  lamp.toLamp = Math.Mul(projection, Math.Mul(flip, Math.Inverse(transform)));
+  lamp.map.SetCamera(transform, projection);
+  lamp.toLamp = lamp.map.WorldToClip();
   ```
 
   ```csharp
