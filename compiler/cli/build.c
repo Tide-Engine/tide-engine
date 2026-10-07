@@ -384,14 +384,14 @@ static const char *const release_flags[] = {"-O2", "-DNDEBUG", NULL};
 // GLFW, in the platform layer, loads OpenGL at run time.
 static const char *const native_libs[] = {"-lmingw32", "-lmingwex", "-lmoldname", "-lmsvcrt", "-lkernel32",
                                           "-luser32", "-lgdi32", "-lshell32", "-ladvapi32", "-lws2_32",
-                                          "-lsecur32", NULL};
+                                          "-lsecur32", "-lole32", NULL};
 #define EXE_SUFFIX ".exe"
 #define LIBRARY_SUFFIX ".dll"
 #elif defined(__APPLE__)
 // What GLFW, in the platform layer, links on macOS, and Security, for TLS to
 // the relay.
 static const char *const native_libs[] = {"-framework", "Cocoa", "-framework", "IOKit", "-framework", "CoreFoundation",
-                                          "-framework", "Security", NULL};
+                                          "-framework", "Security", "-framework", "AudioToolbox", NULL};
 #define EXE_SUFFIX ""
 #define LIBRARY_SUFFIX ".dylib"
 #else
@@ -2063,7 +2063,7 @@ static bool link_android(const build *b, const file_list *objects, const c_side 
     // as Android 15's devices can have.
     static const char *const flags[] = {"-fuse-ld=lld", "-Wl,-u,ANativeActivity_onCreate", "-Wl,--no-undefined",
                                         "-Wl,-z,max-page-size=16384", "-nodefaultlibs", "-lc", "-lm", "-ldl",
-                                        "-landroid", "-llog", "-lEGL", "-lGLESv3", NULL};
+                                        "-landroid", "-llog", "-lEGL", "-lGLESv3", "-laaudio", NULL};
     arg_list(&a, flags);
     arg(&a, build_target.builtins);
     const int code = sys_run(a.items, NULL, false);

@@ -569,6 +569,7 @@
             // Timers take whole milliseconds, dropping the rest: one rounded
             // down would come before the tick, for nothing
             const seconds = exports.tide_web_frame();
+            audioPump(); // What the program's mixer has for the worklet, as the queue runs low
             nextFrame = seconds > 0 ? Math.ceil(seconds * 1000) : 0;
             if (drew) shown();
         } catch (error) {
@@ -578,6 +579,86 @@
         }
         if (heartbeat) beat();
         else scheduleFrame();
+    }
+
+    // The audio device: an AudioContext and a worklet of its own, which plays
+    // the stereo chunks the main thread posts it. The program renders them
+    // (tide_web_audio_render) when the page asks: from its frame, and from a
+    // timer, enough to keep about 90 ms queued, by the context's clock, as a
+    // page has no thread the program's mixer could run on. The context starts
+    // once the player touched the page, which browsers want.
+    const audioWorklet = `class TideOutput extends AudioWorkletProcessor {
+        constructor() { super(); this.queue = []; this.at = 0; this.port.onmessage = e => this.queue.push(e.data); }
+        process(inputs, outputs) {
+            const out = outputs[0];
+            if (!out || out.length === 0) return true;
+            const left = out[0], right = out.length > 1 ? out[1] : out[0];
+            let i = 0;
+            while (i < left.length) {
+                if (this.queue.length === 0) { left.fill(0, i); if (right !== left) right.fill(0, i); break; }
+                const chunk = this.queue[0], frames = chunk.length >> 1;
+                while (i < left.length && this.at < frames) { left[i] = chunk[2 * this.at]; right[i] = chunk[2 * this.at + 1]; i++; this.at++; }
+                if (this.at >= frames) { this.queue.shift(); this.at = 0; }
+            }
+            return true;
+        }
+    }
+    registerProcessor('tide-output', TideOutput);`;
+    let audio = null;
+    function audioOpen() {
+        if (audio) return audio.context.sampleRate | 0;
+        const Context = window.AudioContext || window.webkitAudioContext;
+        if (!Context || !window.AudioWorkletNode) return 0;
+        let context;
+        try {
+            context = new Context({ latencyHint: 'interactive' });
+        } catch (error) {
+            return 0;
+        }
+        audio = { context, node: null, ready: false, started: 0, sent: 0, timer: 0, resume: null };
+        const url = URL.createObjectURL(new Blob([audioWorklet], { type: 'application/javascript' }));
+        context.audioWorklet.addModule(url).then(() => {
+            if (!audio || audio.context !== context) return;
+            audio.node = new AudioWorkletNode(context, 'tide-output', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+            audio.node.connect(context.destination);
+            audio.started = context.currentTime;
+            audio.ready = true;
+            audioPump();
+        }).catch(() => {});
+        audio.resume = () => {
+            if (audio && audio.context.state !== 'running') audio.context.resume().catch(() => {});
+        };
+        for (const type of ['pointerdown', 'keydown', 'touchstart']) document.addEventListener(type, audio.resume, { passive: true });
+        audio.timer = setInterval(audioPump, 20);
+        return context.sampleRate | 0;
+    }
+    function audioPump() {
+        if (!audio || !audio.ready || !exports || !exports.tide_web_audio_render) return;
+        const rate = audio.context.sampleRate;
+        const consumed = (audio.context.currentTime - audio.started) * rate;
+        if (audio.sent < consumed) audio.sent = consumed; // Starved (a page that was away): no catching up
+        const target = Math.ceil(rate * 0.09);
+        let need = Math.ceil(target - (audio.sent - consumed));
+        while (need > 0) {
+            const frames = Math.min(need, 4096);
+            const ptr = exports.tide_web_audio_render(frames);
+            const chunk = new Float32Array(u8().buffer, ptr, frames * 2).slice(); // Its own copy, to hand over
+            audio.node.port.postMessage(chunk, [chunk.buffer]);
+            audio.sent += frames;
+            need -= frames;
+        }
+    }
+    function audioClose() {
+        if (!audio) return;
+        clearInterval(audio.timer);
+        for (const type of ['pointerdown', 'keydown', 'touchstart']) document.removeEventListener(type, audio.resume);
+        try {
+            if (audio.node) audio.node.disconnect();
+            audio.context.close();
+        } catch (error) {
+            // A context that's closed already
+        }
+        audio = null;
     }
 
     const platform = {
@@ -676,6 +757,8 @@
             throw unwind;
         },
         hidden: () => document.hidden ? 1 : 0,
+        audio_open: () => audioOpen(),
+        audio_close: () => audioClose(),
         stop() { stopped = true; },
         eval: scriptPtr => (0, eval)(string(scriptPtr)) ? 1 : 0,
     };

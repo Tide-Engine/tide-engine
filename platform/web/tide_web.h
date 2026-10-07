@@ -131,6 +131,13 @@ TIDE_WEB_IMPORT(threads) uint32_t tide_web_threads(void);
 // Frames go on, but nobody sees what they draw.
 TIDE_WEB_IMPORT(hidden) bool tide_web_hidden(void);
 
+// The page's audio: an AudioContext with a worklet the program feeds
+// (tide_web_audio_render, which the page calls as its queue runs low). The
+// context's rate, or 0 with none. The browser only plays once the player
+// touched the page, which the page waits for itself.
+TIDE_WEB_IMPORT(audio_open) int tide_web_audio_open(void);
+TIDE_WEB_IMPORT(audio_close) void tide_web_audio_close(void);
+
 // Runs JavaScript, for tests that need to fake browser events or ask the page
 // something: whether its value is truthy.
 TIDE_WEB_IMPORT(eval) bool tide_web_eval(const char *script);
