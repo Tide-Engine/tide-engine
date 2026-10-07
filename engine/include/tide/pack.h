@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "tide/color.h"
+#include "tide/audio.h"
 #include "tide/draw.h"
 #include "tide/grid.h"
 #include "tide/list.h"
@@ -49,6 +50,10 @@ enum {
     // Cubemap: a block of six handles, as a list's, each a texture's block (tide_pack_texture): its faces' images
     // in the order +x, -x, +y, -y, +z, -z, all squares of one size. A face's file is in the pack once, as any is
     TIDE_PACK_CUBEMAP = 8,
+    // Clip: a sound's file as it is (tide_pack_clip), which the engine decodes as it's first played
+    // (tide_clip_of). A list's elements' kind too (`extra`)
+    TIDE_PACK_CLIP = 9,
+    TIDE_PACK_CLIPS = 10, // Map<string, Clip> of a glob: as TIDE_PACK_MAP, its values' blocks clips
 };
 
 typedef struct tide_pack_entry {
@@ -102,6 +107,11 @@ uint32_t tide_pack_grid(tide_pack_builder *b, const uint8_t content[32], int32_t
 // offset: the version the draw list tells it by in its header (the content's
 // first bytes, never 0), then its width and its height, then its pixels.
 uint32_t tide_pack_texture(tide_pack_builder *b, const uint8_t content[32], int32_t width, int32_t height, const uint8_t *rgba);
+
+// A sound's file of `size` bytes as it is (a WAV), shared by `content`. Its
+// block's offset: the version it's told by in its header (the content's
+// first bytes, never 0), then its size, then the bytes.
+uint32_t tide_pack_clip(tide_pack_builder *b, const uint8_t content[32], const void *data, uint32_t size);
 
 // A list of `count` handles (offsets of blocks in this pack, which it tags):
 // its block's offset. Not shared: a declaration's own.
@@ -176,6 +186,17 @@ tide_cubemap_ref tide_pack_cubemap_of(const tide_pack_entry *e);
 // faces aren't six squares of one size. The pointers and the pixels stay
 // where they are until another pack is loaded, as an image's do.
 bool tide_pack_cubemap_find(uint64_t named, int32_t *size, uint64_t *version, const uint8_t *const **faces);
+
+// A clip's entry as the value the game reads: a Clip that names its sound by
+// its declaration, as a Texture names its image (above). Lists and maps of
+// clips are laid out after the region as textures' are. The default Clip for
+// no entry.
+tide_clip_ref tide_pack_clip_of(const tide_pack_entry *e);
+
+// The loaded pack's sound that a Clip names: the file's bytes as they are,
+// and a version that's what's in them (the file's hash). False when the pack
+// has no sound under that name.
+bool tide_pack_clip_find(uint64_t named, const uint8_t **bytes, uint32_t *size, uint64_t *version);
 
 // Maps the loaded region into this thread's scratch slots, if it hasn't since
 // the last load: generated code calls it wherever it sets the thread's heaps

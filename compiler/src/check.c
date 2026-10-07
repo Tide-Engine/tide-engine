@@ -1062,7 +1062,8 @@ typedef struct resource_outer {
 
 static bool holds_render_resource_in(const type t, const resource_outer *outer)
 {
-    if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET) return true;
+    if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
+        || t.kind == TY_CLIP) return true;
     if (t.kind != TY_STRUCT && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_SET
         && t.kind != TY_GRID && t.kind != TY_ARRAY && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
     for (const resource_outer *p = outer; p; p = p->previous) {
@@ -1369,6 +1370,11 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
         if (asset) return true;
         diag_error(at, "a list or a map can't hold rendering resources, including inside a struct");
         diag_note("but for an asset's: 'asset List<Texture> frames = \"art/run_*.png\";'");
+        return false;
+    case TY_CLIP: // The same for an asset's glob of sounds
+        if (asset) return true;
+        diag_error(at, "a list or a map can't hold a Clip, including inside a struct");
+        diag_note("but for an asset's: 'asset List<Clip> hits = \"sfx/hit_*.wav\";'");
         return false;
     case TY_GRID:
         if (asset) return true;
@@ -2600,6 +2606,41 @@ static bool check_io_use(checker *c, const loc at, const char *what, const bool 
 // one and its local state keeps. Local code reads it, and the functions it
 // calls, which get the local state from their callers; an async function that
 // reads it is a local task. The match's time is Time's.
+// Audio.Play: sound is this machine's, so views, local handlers and the
+// functions they call (which are handed the local state, with the frame's
+// audio list in it) can play, and the match, the input and tasks can't.
+static bool check_audio_use(checker *c, const loc at)
+{
+    if (gpu_refuses(c, at, "play sounds", "a view plays them, where it draws")) return false;
+    if (c->in_input) {
+        diag_error(at, "%s runs once per tick, not once per frame, so it can't play sounds", input_code(c));
+        diag_note("a view plays them, from what the input leaves in local state");
+        return false;
+    }
+    if (in_async_function(c)) {
+        diag_error(at, "a task runs between frames, so it can't play sounds");
+        diag_note("set what to play in local state, and play it in a view");
+        return false;
+    }
+    decl *code = c->method ? c->method : c->system;
+    if (code && code->kind == DECL_SYSTEM && !is_local_code(code)) {
+        diag_error(at, "the match runs the same on every machine, so it can't play sounds");
+        diag_note("sound is this machine's: a local handler of the match's event plays it, "
+                  "'local event(Hit hit) HitSound(Body body) { Audio.Play(hitClip); }'");
+        return false;
+    }
+    if (!code || (code->kind != DECL_FUNCTION && code->kind != DECL_SYSTEM)) {
+        diag_error(at, "Audio can only be used in local code, and in functions it calls");
+        if (c->method) diag_note("methods can't; a function can, like 'void Thud(Clip clip, float3 where) { ... }'");
+        else diag_note("views and local handlers play sounds: 'local event(Hit hit) HitSound(Body body) { Audio.Play(hitClip); }'");
+        return false;
+    }
+    if (!code->plays) code->plays_at = at;
+    code->plays = true;
+    c->prog->uses_audio = true;
+    return true;
+}
+
 static bool check_frame_time_use(checker *c, const loc at)
 {
     if (gpu_refuses(c, at, "read Frame.dt", "the view puts what it needs in a component or a singleton, which it takes")) return false;
@@ -5469,6 +5510,8 @@ static type check_method(checker *c, expr *e)
             return T_ERR;
         }
         if ((gui || draws) && !check_frame_use(c, e->at, gui ? "The GUI" : str_to_cstr(owner))) return T_ERR;
+        const bool plays = str_eq_c(owner, "Audio");
+        if (plays && !check_audio_use(c, e->at)) return T_ERR;
         if (str_eq_c(owner, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR; // Screen.Flip: the frame's window
         if (draws && old_setting(e)) return T_ERR;
         const type result = resolve_builtin_call(owner, e);
@@ -5498,6 +5541,7 @@ static type check_method(checker *c, expr *e)
             e->call = CALL_DRAW;
             e->draw_dims = 2;
         }
+        if (plays) e->call = CALL_AUDIO;
         if (gui || cursor) return check_gui_call(c, e, result); // The cursor's lock is a frame's ask, which the GUI collects
         return result;
     }
@@ -7273,6 +7317,7 @@ static void check_compare_expr(checker *c, const expr *e)
     case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER: what = "load or unload scenes"; break;
     case CALL_SESSION: what = "change the session"; break;
     case CALL_CLIPBOARD: what = "use the clipboard"; break;
+    case CALL_AUDIO: what = "play sounds"; break;
     case CALL_DRAW: what = "draw"; break;
     case CALL_GUI: what = gui_call_what(e); break;
     case CALL_SNAP: what = "snap"; break;
@@ -8808,6 +8853,7 @@ static void check_step_expr(checker *c, const expr *e)
     case CALL_ADD: case CALL_REMOVE: case CALL_DESTROY: what = "add, remove or destroy"; break;
     case CALL_SEND: what = "send events"; break;
     case CALL_DRAW: what = "draw"; break;
+    case CALL_AUDIO: what = "play sounds"; break;
     case CALL_GUI: what = gui_call_what(e); break;
     case CALL_SESSION: case CALL_CLIPBOARD: what = "make requests of the host"; break;
     case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER: what = "load and unload scenes"; break;
@@ -9606,7 +9652,7 @@ static bool stands_alone(const expr *e)
                                          || (call == CALL_DRAW && called->type.kind == TY_VOID)))
         || (called->kind == E_CALL && call == CALL_SPAWN) || call == CALL_METHOD || call == CALL_FUNCTION
         || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD || call == CALL_SCENE_PLAYER
-        || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD
+        || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD || call == CALL_AUDIO
         || call == CALL_SNAP || call == CALL_DISCARD
         || called->io_operation
         || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
@@ -10260,6 +10306,7 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     else if (str_eq_c(inner->text, "List<byte>")) *kind = ASSET_BYTES;
     else if (str_eq_c(inner->text, "Grid2<Color>")) *kind = ASSET_GRID;
     else if (str_eq_c(inner->text, "Texture")) *kind = ASSET_TEXTURE;
+    else if (str_eq_c(inner->text, "Clip")) *kind = ASSET_CLIP;
     else if (str_eq_c(inner->text, "Cubemap")) {
         if (*many) {
             diag_error(at, "a Cubemap is six files already, which its glob matches: a list or a map of cubes isn't there yet");
@@ -10268,8 +10315,8 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
         }
         *kind = ASSET_CUBEMAP;
     } else {
-        diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file), a Grid2<Color> or a Texture (a PNG), or a "
-                       "Cubemap (six PNGs), not '" STR_FMT "'", STR_ARG(inner->text));
+        diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file), a Grid2<Color> or a Texture (a PNG), a "
+                       "Cubemap (six PNGs), or a Clip (a WAV), not '" STR_FMT "'", STR_ARG(inner->text));
         diag_note("for the files a glob matches, a 'List<...>' of one of those, or a 'Map<string, ...>' of their paths");
         return false;
     }
@@ -12809,7 +12856,7 @@ static bool call_acts(const expr *e)
     switch (e->call) {
     case CALL_SPAWN: case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER: case CALL_SEND: case CALL_ADD:
     case CALL_REMOVE: case CALL_DESTROY: case CALL_GUI: case CALL_ACTION: case CALL_SESSION:
-    case CALL_CLIPBOARD: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM:
+    case CALL_CLIPBOARD: case CALL_AUDIO: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM:
         return true;
     case CALL_DRAW: return e->type.kind == TY_VOID; // Draw.MeasureText and the conversions only give a value
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
@@ -14965,6 +15012,34 @@ static void check_io_calls(const checker *c)
 // the local state, so only local code calls them, and an async one is a local
 // task. Reading changes nothing, so a comparison and a parallel loop's steps
 // can.
+// A function that plays sounds is local code's to call, as one that reads
+// Frame.dt is.
+static void check_audio_calls(const checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            if (!site->to->plays || site->from->plays) continue;
+            site->from->plays = true;
+            site->from->plays_at = site->call->at;
+            changed = true;
+        }
+    }
+    for (int i = 0; i < c->calls.count; i++) {
+        const call_site *site = &c->calls.items[i];
+        if (!site->to->plays) continue;
+        if ((site->from->kind == DECL_FUNCTION && !site->from->is_async) || is_local_code(site->from)) continue;
+        diag_error(site->call->at, "'" STR_FMT "' plays sounds, which only local code can", STR_ARG(site->to->name));
+        diag_note_at(site->to->plays_at, "it plays on line %d, and %s", site->to->plays_at.line,
+                     site->from->kind == DECL_METHOD ? "methods can't"
+                     : site->from->kind == DECL_INPUT ? "the input's code runs once per tick"
+                     : site->from->kind == DECL_SHADER ? "the GPU can't"
+                     : site->from->is_async ? "a task runs between frames"
+                                            : "sound is this machine's: a local handler of the match's event plays it");
+    }
+}
+
 static void check_frame_time_calls(const checker *c)
 {
     for (bool changed = true; changed;) {
@@ -16037,6 +16112,7 @@ bool check(program *prog)
     check_render_resource_calls(&c);
     check_io_calls(&c);
     check_frame_time_calls(&c);
+    check_audio_calls(&c);
     resolve_tasks(&c);
     check_this_calls(&c);
     check_drawing_calls(&c);
