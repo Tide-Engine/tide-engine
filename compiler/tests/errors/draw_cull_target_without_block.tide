@@ -1,0 +1,13 @@
+// expect: target.Cull sets it around a block: 'target.Cull(...) { ... }'
+// expect: to set it for the draws that follow, write 'target.SetCull(...);'
+scene Main { }
+
+local singleton Look
+{
+    RenderTarget target;
+}
+
+view Show(Look look)
+{
+    look.target.Cull(Cull.None);
+}

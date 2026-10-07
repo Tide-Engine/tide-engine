@@ -33,6 +33,11 @@
 // instance, as float4 and int4 vertex attributes, and a singleton's for each
 // draw, as float4s and int4s of one uniform block. A value is words of those,
 // floats and ints apart (value_text), so both languages lay them out alike.
+//
+// What each writes is an `out` parameter: a frag's color, and the structs a
+// vert writes for the frag it's drawn with (shader_handed), whose fields the
+// frag reads go from the mesh's corners to its pixels as its vertex's do,
+// blended. The checker saw each written on every path (assigned.c).
 
 typedef enum lang { GLSL, WGSL } lang;
 
@@ -226,6 +231,9 @@ static bool type_fits(emit *em, const type t, const loc at)
     case TY_GRID: why = "a grid on the GPU is a texture, read with 'grid.Sample(uv)' where it's a field of a parameter"; break;
     case TY_ARRAY: why = "arrays can't go to the GPU yet: pass the elements it reads as fields of their own"; break;
     case TY_TEXTURE: why = "a texture is sampled with 'texture.Sample(uv)', not kept as a GPU value"; break;
+    case TY_DEPTH_TEXTURE:
+        why = "a target's depth is read with 'depth.Sample(uv)' or 'depth.Compare(uv, value)', not kept as a GPU value";
+        break;
     case TY_RENDER_TARGET: why = "a render target belongs to the CPU: sample its color as a Texture"; break;
     case TY_ENTITY:
     case TY_LOCAL_ENTITY:
@@ -940,11 +948,23 @@ static int field_index(const decl *d, const field *f)
     return (int)(f - d->fields.items);
 }
 
+// A frag's struct parameter `p` among what the shader's vert writes for its
+// frag, or NULL: for one the draw's instances supply, and while checking,
+// when no draw has said which it is.
+static const shader_handed *handed_to(const shader *sh, const param *p)
+{
+    for (int i = 0; sh && i < sh->handed.count; i++) {
+        if (sh->handed.items[i].to == p) return &sh->handed.items[i];
+    }
+    return NULL;
+}
+
 // Whether `p` is a parameter of the frag or vert that the engine supplies: a
-// component, a singleton, Pixel or Instance.
+// component, a singleton, Pixel, Instance or an instance's struct. What the
+// vert wrote for the frag is a value the frag is called with, like its vertex.
 static bool is_bound(const emit *em, const param *p)
 {
-    return em->code == em->root && !p->function_param;
+    return em->code == em->root && !p->function_param && !handed_to(em->sh, p);
 }
 
 static int param_index(const decl *d, const param *p)
@@ -1622,13 +1642,21 @@ static void ex_construct(emit *em, const expr *e)
 }
 
 // A texture parameter, or a grid or texture field: which binding reads it.
+// One sampled with another filter or another wrap is another binding, as a
+// backend's sampler is how a binding is read. A DepthTexture field is a
+// binding for each way it's read, as a number (Sample) and compared
+// (Compare): the GPU reads each through a sampler of another kind.
 static void ex_sample(emit *em, const expr *e)
 {
     const expr *of = e->object;
     const decl *asset = of->bind == BIND_ASSET ? of->constant : NULL; // A Grid2<Color> asset, by name
     const bool direct = of->kind == E_NAME && !asset;
     const param *p = asset ? NULL : direct ? of->param : of->object->param;
-    const bool blended = e->args.count < 2 || e->args.items[1]->enum_member->number != 0;
+    const shader_read read = of->type.kind != TY_DEPTH_TEXTURE ? READ_COLOR : str_eq_c(e->name, "Compare") ? READ_COMPARE : READ_DEPTH;
+    // A depth's nearest pixel is read, the pixels at its edge past them, and what its comparisons give, the
+    // GPU blends: none of it is the draw's to say
+    const bool blended = read == READ_COLOR && (e->args.count < 2 || e->args.items[1]->enum_member->number != 0);
+    const int wrap = read != READ_COLOR || e->args.count < 3 ? 0 : (int)e->args.items[2]->enum_member->number;
     int slot = 0;
     if (em->checking) {
         if (em->code != em->root) {
@@ -1637,29 +1665,41 @@ static void ex_sample(emit *em, const expr *e)
         }
         const decl *holds = direct || asset ? NULL : of->local_field ? p->type.decl->local_part : p->type.decl;
         const shader_sample sample = {asset ? -1 : param_index(em->root, p), direct || asset ? -1 : field_index(holds, of->field),
-                                      of->local_field && !asset, blended, asset};
+                                      of->local_field && !asset, blended, asset, wrap, read};
         bool known = false;
         for (int i = 0; i < em->root->samples.count; i++) {
             const shader_sample *s = &em->root->samples.items[i];
             known |= s->param == sample.param && s->field == sample.field && s->local == sample.local && s->blended == sample.blended
-                  && s->asset == sample.asset;
+                  && s->asset == sample.asset && s->wrap == sample.wrap && s->read == sample.read;
         }
         if (!known) vec_push(em->root->samples, sample);
     } else {
         while (slot < em->sh->textures.count) {
             const shader_texture *t = &em->sh->textures.items[slot];
             if (t->asset == asset && t->direct == direct && t->source == (p ? p->type.decl : NULL) && t->field == of->field
-                && t->blended == blended) {
+                && t->blended == blended && t->wrap == wrap && t->read == read) {
                 break;
             }
             slot++;
         }
     }
     // No pixel's neighbors are asked about, so it can be sampled anywhere, in a branch or a vertex
+    if (read == READ_COMPARE) {
+        // What it's compared with is between the near plane and the far limit, as what's stored is:
+        // past them, GPUs differ in what they make of it
+        if (em->l == WGSL) sb_printf(em->o, "textureSampleCompareLevel(pixels%d, sampler%d, ", slot, slot);
+        else sb_printf(em->o, "textureLod(pixels%d, vec3(", slot);
+        ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
+        sb_put(em->o, ", clamp(");
+        ex_as(em, e->args.items[1], (type){TY_FLOAT, NULL});
+        sb_put(em->o, em->l == WGSL ? ", 0.0, 1.0))" : ", 0.0, 1.0)), 0.0)");
+        return;
+    }
     if (em->l == WGSL) sb_printf(em->o, "textureSampleLevel(pixels%d, sampler%d, ", slot, slot);
     else sb_printf(em->o, "textureLod(pixels%d, ", slot);
     ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
-    sb_put(em->o, ", 0.0)");
+    // A depth is one number: WGSL gives it as that, at a level that's an int, and GLSL as a color's red
+    sb_put(em->o, read == READ_COLOR ? ", 0.0)" : em->l == WGSL ? ", 0)" : ", 0.0).r");
 }
 
 // A call of a function or method of the game's. A mut argument is the
@@ -1758,7 +1798,7 @@ static void ex_call(emit *em, const expr *e)
         diag_note("work it out on the CPU, in the view, and keep the result in a component or a singleton the code reads");
         return;
     case CALL_GRID:
-        if (str_eq_c(e->name, "Sample")) {
+        if (str_eq_c(e->name, "Sample") || (str_eq_c(e->name, "Compare") && e->object->type.kind == TY_DEPTH_TEXTURE)) {
             ex_sample(em, e);
             return;
         }
@@ -2398,7 +2438,7 @@ static void need_function(emit *em, decl *fn, const loc at)
     }
     for (int i = 0; i < fn->params.count; i++) {
         const param *p = &fn->params.items[i];
-        if (shader && !p->function_param) continue; // The engine supplies it
+        if (shader && !p->function_param && !handed_to(em->sh, p)) continue; // The engine supplies it
         if (!type_fits(em, p->type, p->type_at.line ? p->type_at : p->at)) continue;
         if (!first) sb_put(&head, ", ");
         first = false;
@@ -2468,9 +2508,14 @@ static void put_uniforms(const shader *sh, const lang l, sb *o)
     for (int i = 0; i < packs(sh->uniform_ints); i++) sb_printf(o, wgsl ? "    tide_v%d: vec4i,\n" : "    ivec4 tide_v%d;\n", i);
     sb_put(o, wgsl ? "}\n@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;\n" : "};\n");
     for (int i = 0; i < sh->textures.count; i++) {
+        const shader_read read = sh->textures.items[i].read;
         if (wgsl) {
-            sb_printf(o, "@group(0) @binding(%d) var pixels%d: texture_2d<f32>;\n@group(0) @binding(%d) var sampler%d: sampler;\n",
-                      1 + 2 * i, i, 2 + 2 * i, i);
+            sb_printf(o, "@group(0) @binding(%d) var pixels%d: %s;\n@group(0) @binding(%d) var sampler%d: %s;\n",
+                      1 + 2 * i, i, read == READ_COLOR ? "texture_2d<f32>" : "texture_depth_2d", 2 + 2 * i, i,
+                      read == READ_COMPARE ? "sampler_comparison" : "sampler");
+        } else if (read != READ_COLOR) {
+            // With all of its bits: a sampler's own precision is the lowest there is, where there's a choice
+            sb_printf(o, "uniform highp %s pixels%d;\n", read == READ_COMPARE ? "sampler2DShadow" : "sampler2D", i);
         } else {
             sb_printf(o, "uniform sampler2D pixels%d;\n", i);
         }
@@ -2486,8 +2531,9 @@ static const field *field_called(const decl *d, const char *name)
 }
 
 // What the vertex stage passes on to the pixels, as each language declares
-// it: the vertex's fields the pixels read, where they are in the world, and
-// the instance's float4s and int4s, which don't blend.
+// it: the vertex's fields the pixels read, the fields they read of what the
+// vert wrote for them, where they are in the world, and the instance's
+// float4s and int4s, which don't blend.
 static void put_varyings(emit *em, sb *o, const char *direction)
 {
     const shader *sh = em->sh;
@@ -2498,6 +2544,15 @@ static void put_varyings(emit *em, sb *o, const char *direction)
         const char *t = ty(em, as_float(sh->vertex->fields.items[i].type));
         if (wgsl) sb_printf(o, "    @location(%d) tide_s%d: %s,\n", location++, i, t);
         else sb_printf(o, "%s %s tide_s%d;\n", direction, t, i);
+    }
+    for (int h = 0; h < sh->handed.count; h++) {
+        const shader_handed *handed = &sh->handed.items[h];
+        for (int i = 0; i < handed->type->fields.count; i++) {
+            if (!handed->fields[i]) continue;
+            const char *t = ty(em, as_float(handed->type->fields.items[i].type));
+            if (wgsl) sb_printf(o, "    @location(%d) tide_h%d_%d: %s,\n", location++, h, i, t);
+            else sb_printf(o, "%s %s tide_h%d_%d;\n", direction, t, h, i);
+        }
     }
     if (sh->frag_world) {
         if (wgsl) sb_printf(o, "    @location(%d) tide_world: vec3f,\n", location++);
@@ -2542,7 +2597,19 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
     sb_printf(o, wgsl ? "    var tide_vertex: %s = %s(" : "    %s tide_vertex = %s(", ty(em, vertex), ty(em, vertex));
     for (int i = 0; i < v->fields.count; i++) sb_printf(o, "%s%stide_a%d", i ? ", " : "", in, i);
     sb_put(o, ");\n");
-    if (sh->vert) sb_printf(o, "    %s(%stide_vertex);\n", function_name(sh->vert), wgsl ? "&" : "");
+    // What the vert writes for the frag: a variable each, in the order it takes them
+    for (int h = 0; h < sh->handed.count; h++) {
+        const type handed = {TY_STRUCT, (decl *)sh->handed.items[h].type};
+        if (wgsl) sb_printf(o, "    var tide_handed%d: %s = ", h, ty(em, handed));
+        else sb_printf(o, "    %s tide_handed%d = ", ty(em, handed), h);
+        put_zero(em, handed);
+        sb_put(o, ";\n");
+    }
+    if (sh->vert) {
+        sb_printf(o, "    %s(%stide_vertex", function_name(sh->vert), wgsl ? "&" : "");
+        for (int h = 0; h < sh->handed.count; h++) sb_printf(o, ", %stide_handed%d", wgsl ? "&" : "", h);
+        sb_put(o, ");\n");
+    }
     const char *position = field_name(field_called(v, "position"));
     if (sh->dims == 3) {
         sb_printf(o, wgsl ? "    let tide_place = " : "    vec4 tide_place = ");
@@ -2561,6 +2628,13 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
     for (int i = 0; i < v->fields.count; i++) {
         if (sh->frag_fields[i]) sb_printf(o, "    %stide_s%d = tide_vertex.%s;\n", out, i, field_name(&v->fields.items[i]));
     }
+    for (int h = 0; h < sh->handed.count; h++) {
+        const shader_handed *handed = &sh->handed.items[h];
+        for (int i = 0; i < handed->type->fields.count; i++) {
+            if (!handed->fields[i]) continue;
+            sb_printf(o, "    %stide_h%d_%d = tide_handed%d.%s;\n", out, h, i, h, field_name(&handed->type->fields.items[i]));
+        }
+    }
     if (sh->frag_world) sb_printf(o, "    %stide_world = tide_place.xyz;\n", out);
     for (int ints = 0; ints < 2; ints++) {
         const int words = ints ? sh->frag_ints : sh->frag_floats;
@@ -2578,10 +2652,14 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
 }
 
 // The fragment stage's own: the vertex as the pixel sees it, blended, then
-// the frag, or with none, the vertex's color times the texture. What it
-// leaves is the draw's to finish: times its tint (Draw.Tint), and for a draw
-// that multiplies what's there (Blend.Multiply, which `tide_screen.w` says),
-// towards white as it clears, so what's clear changes nothing.
+// the frag, or with none, the vertex's color times the texture. The frag is
+// called with what it takes as values, in its parameters' order: its vertex,
+// what the vert wrote for it, blended too, and the color it writes, which the
+// checker saw it write on every path that ends (the white it starts as here is
+// for the shader's compiler, which didn't). What it leaves is the draw's to
+// finish: times its tint (Draw.Tint), and for a draw that multiplies what's
+// there (Blend.Multiply, which `tide_screen.w` says), towards white as it
+// clears, so what's clear changes nothing.
 static void put_fragment_main(emit *em, sb *o, const char *in, const char *result)
 {
     const shader *sh = em->sh;
@@ -2599,7 +2677,27 @@ static void put_fragment_main(emit *em, sb *o, const char *in, const char *resul
             if (sh->frag_fields[i]) sb_printf(o, "%stide_s%d", in, i);
             else put_zero(em, v->fields.items[i].type);
         }
-        sb_printf(o, "), %stide_color);\n", wgsl ? "&" : "");
+        sb_put(o, ")");
+        for (int i = 1; i < sh->frag->params.count; i++) {
+            const param *p = &sh->frag->params.items[i];
+            const shader_handed *handed = handed_to(sh, p);
+            if (handed) {
+                sb_printf(o, ", %s(", ty(em, p->type));
+                bool first = true;
+                for (int k = 0; k < handed->type->fields.count; k++) {
+                    const field *f = &handed->type->fields.items[k];
+                    if (f->hidden) continue;
+                    if (!first) sb_put(o, ", ");
+                    first = false;
+                    if (handed->fields[k]) sb_printf(o, "%stide_h%d_%d", in, (int)(handed - sh->handed.items), k);
+                    else put_zero(em, f->type);
+                }
+                sb_put(o, ")");
+            } else if (p->function_param) {
+                sb_printf(o, ", %stide_color", wgsl ? "&" : "");
+            }
+        }
+        sb_put(o, ");\n");
     } else {
         const field *color = field_called(v, "color");
         const field *uv = field_called(v, "uv");
@@ -2792,7 +2890,7 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         for (int k = 0; k < p->type.decl->fields.count; k++) {
             const field *f = &p->type.decl->fields.items[k];
             if (f->hidden || !(p->whole || (p->reads && p->reads[k]))) continue;
-            if (f->type.kind == TY_GRID || f->type.kind == TY_TEXTURE) continue; // Sampled, below
+            if (f->type.kind == TY_GRID || f->type.kind == TY_TEXTURE || f->type.kind == TY_DEPTH_TEXTURE) continue; // Sampled, below
             shader_value *v = add_value(sh, p->type.decl, f, f->type, p->type.kind == TY_COMPONENT || explicit_instance);
             if (code->is_frag) v->frag_reads = true;
             else v->vert_reads = true;
@@ -2802,7 +2900,7 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         const decl *part = p->type.decl->local_part;
         for (int k = 0; part && p->local_reads && k < part->fields.count; k++) {
             const field *f = &part->fields.items[k];
-            if (!p->local_reads[k] || f->type.kind == TY_GRID || f->type.kind == TY_TEXTURE) continue;
+            if (!p->local_reads[k] || f->type.kind == TY_GRID || f->type.kind == TY_TEXTURE || f->type.kind == TY_DEPTH_TEXTURE) continue;
             shader_value *v = add_value(sh, p->type.decl, f, f->type, p->type.kind == TY_COMPONENT);
             if (code->is_frag) v->frag_reads = true;
             else v->vert_reads = true;
@@ -2814,11 +2912,13 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         const decl *source = s->asset ? NULL : code->params.items[s->param].type.decl;
         const shader_texture t = {.source = source,
                                   .field = s->field < 0 ? NULL : &(s->local ? source->local_part : source)->fields.items[s->field],
-                                  .blended = s->blended, .direct = s->field < 0 && !s->asset, .asset = s->asset};
+                                  .blended = s->blended, .direct = s->field < 0 && !s->asset, .asset = s->asset,
+                                  .wrap = s->wrap, .read = s->read};
         bool known = false;
         for (int k = 0; k < sh->textures.count; k++) {
             known |= sh->textures.items[k].direct == t.direct && sh->textures.items[k].source == t.source && sh->textures.items[k].field == t.field
-                  && sh->textures.items[k].blended == t.blended && sh->textures.items[k].asset == t.asset;
+                  && sh->textures.items[k].blended == t.blended && sh->textures.items[k].asset == t.asset
+                  && sh->textures.items[k].wrap == t.wrap && sh->textures.items[k].read == t.read;
         }
         if (!known) vec_push(sh->textures, t);
         if (source) add_bound(sh, (decl *)source);
@@ -2909,9 +3009,27 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
             sh->frag_ints += v->ints;
         }
     }
+    // What the vert writes for the frag, each struct it takes as `out`, and what
+    // of it the frag's parameter of that type reads: only that goes on
+    int varyings = (sh->frag_world ? 1 : 0) + packs(sh->frag_floats) + packs(sh->frag_ints);
+    for (int i = 1; sh->vert && i < sh->vert->params.count; i++) {
+        const param *from = &sh->vert->params.items[i];
+        if (!from->is_out || from->type.kind != TY_STRUCT) continue;
+        shader_handed handed = {.type = from->type.decl, .from = from};
+        handed.fields = arena_alloc((size_t)(handed.type->fields.count + 1) * sizeof(bool));
+        for (int k = 1; sh->frag && k < sh->frag->params.count; k++) {
+            const param *to = &sh->frag->params.items[k];
+            if (to->type.kind != TY_STRUCT || to->type.decl != handed.type || to->mode == PARAM_MUT) continue;
+            handed.to = to;
+            for (int f = 0; f < handed.type->fields.count; f++) {
+                handed.fields[f] = !handed.type->fields.items[f].hidden && (to->whole || (to->reads && to->reads[f]));
+                varyings += handed.fields[f];
+            }
+        }
+        vec_push(sh->handed, handed);
+    }
     // What the pixels read of the vertex: the frag's fields, or with none, its color and its uv
     sh->frag_fields = arena_alloc((size_t)(vertex->fields.count + 1) * sizeof(bool));
-    int varyings = (sh->frag_world ? 1 : 0) + packs(sh->frag_floats) + packs(sh->frag_ints);
     for (int i = 0; i < vertex->fields.count; i++) {
         const field *f = &vertex->fields.items[i];
         if (sh->frag) {
@@ -2940,8 +3058,9 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     if (varyings > 15) {
         diag_error(call->at, "this draw's pixels read %d values from the mesh's corners, and a GPU carries 15 between them",
                    varyings);
-        diag_note("each field of the vertex the frag reads is one, its place in the world another, and every 4 floats or 4 ints "
-                  "it reads of the entity's components another: read fewer, or keep what every entity shares in a singleton");
+        diag_note("each field of the vertex the frag reads is one, each it reads of what the vert wrote for it another, its "
+                  "place in the world another, and every 4 floats or 4 ints it reads of the entity's components another: read "
+                  "fewer, or keep what every entity shares in a singleton");
         return NULL;
     }
     if (uniform_bytes > 3984) { // TIDE_SHADER_UNIFORM_BYTES
@@ -2954,7 +3073,8 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     }
     if (sh->textures.count > 8) {
         diag_error(call->at, "this draw samples %d grids, and a draw takes 8", sh->textures.count);
-        diag_note("a grid sampled with both filters counts twice; put several images side by side in one grid");
+        diag_note("a grid sampled with another filter or another wrap counts again, and so does a depth that's both read and "
+                  "compared; put several images side by side in one grid");
         return NULL;
     }
     write_glsl(prog, sh);
@@ -2985,6 +3105,11 @@ void plan_shaders(program *prog)
         }
         shader *sh = plan(prog, call, vertex, textured, direct_texture);
         if (!sh) continue;
+        // A draw that says how its texture wraps: the shader's function takes it, for all its draws
+        for (int a = 2; textured && a < call->args.count; a++) {
+            const type given = call->args.items[a]->type;
+            sh->wrapped |= given.kind == TY_ENUM && given.decl == prog->wrap;
+        }
         call->shader = sh;
         // What the view has to hand over that it doesn't take itself
         decl *view = draw->in;

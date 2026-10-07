@@ -77,7 +77,7 @@ vert Place(mut Corner3 vertex, BatchItem item)
     Bump(vertex.position.z, item.kind);
 }
 
-frag Paint(Corner3 vertex, mut Color color, BatchItem item, Banner banner, Light light)
+frag Paint(Corner3 vertex, out Color color, BatchItem item, Banner banner, Light light)
 {
     color = item.tint * banner.tint * light.strength;
     if (item.lit) color.a *= item.finish.shine;
@@ -89,18 +89,18 @@ vert FlatPlace(mut Corner2 vertex, FlatItem item)
     vertex.position += item.offset;
 }
 
-frag FlatPaint(Corner2 vertex, mut Color color, FlatItem item)
+frag FlatPaint(Corner2 vertex, out Color color, FlatItem item)
 {
     color = item.kind == 1 ? item.tint : Color.white;
 }
 
 // With no transform field in a 3D instance struct, the engine uses identity
-frag Identity(Corner3 vertex, mut Color color, FlatItem item, Instance instance)
+frag Identity(Corner3 vertex, out Color color, FlatItem item, Instance instance)
 {
     color = item.tint * instance.transform.c0.x;
 }
 
-frag SharedPaint(Corner3 vertex, mut Color color, Light light)
+frag SharedPaint(Corner3 vertex, out Color color, Light light)
 {
     color = Color.white * light.strength;
 }

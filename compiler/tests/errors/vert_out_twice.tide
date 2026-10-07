@@ -1,0 +1,9 @@
+// expect: 'FromLamp' appears twice
+scene Main { }
+struct Corner { float2 position; }
+struct FromLamp { float glow; }
+vert Wave(mut Corner corner, out FromLamp near, out FromLamp far)
+{
+    near.glow = corner.position.x;
+    far.glow = corner.position.y;
+}

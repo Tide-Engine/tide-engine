@@ -29,7 +29,7 @@ event(Spawned) Setup(with Main)
     Spawn(Box);
 }
 
-frag Shade(Box box, mut Color color)
+frag Shade(Box box, out Color color)
 {
     color = box.tint;
 }

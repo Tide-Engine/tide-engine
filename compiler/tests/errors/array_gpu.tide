@@ -2,4 +2,4 @@
 struct Corner { float3 position; }
 component Weights { float[4] w; }
 scene Main { }
-frag Shade(Corner vertex, mut Color color, Weights weights) { color = Color(weights.w[0], 0, 0); }
+frag Shade(Corner vertex, out Color color, Weights weights) { color = Color(weights.w[0], 0, 0); }

@@ -17,18 +17,21 @@ bool builtin_draw_owner(str name);
 // The program's Anchor enum, which GUILayout.Area and Draw2D.Text take, its
 // Shape struct, which Draw2D.Shape does, its Blend enum, which Draw.Blend
 // does, and its Font enum, a text's weight. Call before resolving calls.
-void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *font);
+void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *cull,
+                  const decl *font);
 void builtins_use_io(const decl *bytes, const decl *paths);
+// Its Format enum, which RenderTarget.Screen takes, the same way.
+void builtins_use_format(const decl *format);
 // Its GUITheme and GUIControl structs, which GUI.SetTheme and GUI.Theme take
 // and GUI.Control gives, the same way.
 void builtins_use_gui(const decl *theme, const decl *control);
 
 // The types Draw2D.Mesh and Draw3D.Mesh take, as the program has them: List<Vertex>,
 // List<Vertex3>, List<int>, Grid2<Color> (NULL when the program has no such
-// grid, so nothing is one), Filter, and List<float4x4> for Draw3D.Instanced.
+// grid, so nothing is one), Filter, Wrap, and List<float4x4> for Draw3D.Instanced.
 // Call before resolving a draw call.
 void builtins_use_mesh(const decl *vertices, const decl *vertices3, const decl *indices, const decl *pixels,
-                       const decl *filter, const decl *transforms);
+                       const decl *filter, const decl *wrap, const decl *transforms);
 
 // The list type owner.name takes as its argument `index`, when every version
 // of it that has one takes the same: what `[a, b, c]` written there is. When

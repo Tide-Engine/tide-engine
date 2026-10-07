@@ -1,0 +1,4 @@
+// expect: a vert is handed its vertex and changes it, so it takes it 'mut', not 'out': 'vert Name(mut BoxVertex vertex, ...)'
+scene Main { }
+struct Corner { float2 position; }
+vert Wave(out Corner corner) { corner.position = float2(0, 0); }

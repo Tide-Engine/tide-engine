@@ -26,14 +26,15 @@ float3 Dim(float3 value)
     return value * 0.25;
 }
 
-frag Tint(Vertex vertex, mut Color color)
+frag Tint(Vertex vertex, out Color color)
 {
+    color = Color.white;
     color.r = Dim(vertex.color.r);
     color.g = Dim(by: 0.75, value: vertex.color.g);
     color.b = Dim(float3(vertex.color.b)).x;
 }
 
-frag Tint(Vertex vertex, mut Color color, Sun sun)
+frag Tint(Vertex vertex, out Color color, Sun sun)
 {
     color = vertex.color * sun.strength;
 }

@@ -20,7 +20,7 @@ local singleton Globe
 }
 
 // Once for each pixel: its normal, blended across the triangle, against a light.
-frag Lit(Corner corner, mut Color color, Instance instance, Globe globe)
+frag Lit(Corner corner, out Color color, Instance instance, Globe globe)
 {
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
     float3 toLight = Math.Normalize(float3(Math.Cos(globe.lightAngle), 0.6, -Math.Sin(globe.lightAngle)));
@@ -42,6 +42,8 @@ view Show(mut Globe globe)
     if (globe.corners.count == 0)
     {
         // A sphere of rings, built once. Each corner's normal is its position.
+        // A triangle is drawn from the side its corners go clockwise on, so
+        // each is listed that way round as it's seen from outside.
         for (var ring = 0; ring <= 16; ring++)
         {
             for (var step = 0; step <= 32; step++)
@@ -54,11 +56,11 @@ view Show(mut Globe globe)
                 {
                     int first = ring * 33 + step;
                     globe.faces.Add(first);
-                    globe.faces.Add(first + 33);
-                    globe.faces.Add(first + 1);
                     globe.faces.Add(first + 1);
                     globe.faces.Add(first + 33);
+                    globe.faces.Add(first + 1);
                     globe.faces.Add(first + 34);
+                    globe.faces.Add(first + 33);
                 }
             }
         }

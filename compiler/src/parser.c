@@ -1844,7 +1844,9 @@ static void parse_query_params(parser *p, decl *d)
                 prm.mode = PARAM_WITHOUT;
                 what = "component name after 'without'";
             } else {
-                prm.mode = accept(p, T_MUT) ? PARAM_MUT : PARAM_READ;
+                const token *mut = at(p, T_MUT) ? advance(p) : NULL;
+                prm.mode = mut ? PARAM_MUT : PARAM_READ;
+                if (mut) prm.mode_word = mut->text;
                 // `lookup Health health` and `mut lookup` were any entity's component, by its handle
                 if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "lookup") && peek_at(p, 1)->kind == T_IDENT
                     && (peek_at(p, 2)->kind == T_IDENT || peek_at(p, 2)->kind == T_DOT)) {
@@ -1866,10 +1868,27 @@ static void parse_query_params(parser *p, decl *d)
                     }
                     longjmp(p->fail, 1);
                 }
-                // `out Store store`: an `out` parameter is for the code that calls, and the engine calls these
-                if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "out") && peek_at(p, 1)->kind == T_IDENT
-                    && (peek_at(p, 2)->kind == T_IDENT || peek_at(p, 2)->kind == T_DOT || peek_at(p, 2)->kind == T_LT
-                        || peek_at(p, 2)->kind == T_QUESTION)) {
+                const bool out = at(p, T_IDENT) && str_eq_c(peek(p)->text, "out") && peek_at(p, 1)->kind == T_IDENT
+                              && (peek_at(p, 2)->kind == T_IDENT || peek_at(p, 2)->kind == T_DOT || peek_at(p, 2)->kind == T_LT
+                                  || peek_at(p, 2)->kind == T_QUESTION);
+                // `out Color color`, `out FromLamp lamp`: what a frag or a vert writes, which the GPU takes
+                if (out && d->kind == DECL_SHADER) {
+                    if (mut) {
+                        diag_error(mut->at, "'out' says the %s writes it, which 'mut' would only change: drop 'mut'",
+                                   d->is_frag ? "frag" : "vert");
+                        diag_note(d->is_frag ? "like 'frag Shade(BoxVertex vertex, out Color color)'"
+                                             : "like 'vert Place(mut BoxVertex vertex, out FromLamp lamp)'");
+                        const token *word = peek(p);
+                        if (word->at.line == mut->at.line) { // What editors offer: `mut out` as `out`
+                            suggest_replacement((str){mut->text.ptr, (int)(word->text.ptr + word->text.len - mut->text.ptr)}, "out");
+                        }
+                        longjmp(p->fail, 1);
+                    }
+                    prm.mode_word = peek(p)->text;
+                    prm.out_at = advance(p)->at;
+                    prm.is_out = true;
+                    prm.mode = PARAM_MUT;
+                } else if (out) { // An `out` parameter is for the code that calls, and the engine calls these
                     diag_error(peek(p)->at, "the engine calls this itself, so nothing would take what an 'out' parameter "
                                             "makes: functions and methods have them");
                     if (peek_at(p, 2)->kind == T_IDENT) {
@@ -1984,7 +2003,7 @@ static decl *parse_extern_system(parser *p)
     return d;
 }
 
-// frag Shade(BoxVertex vertex, mut Color color, Sun sun) { ... } and
+// frag Shade(BoxVertex vertex, out Color color, Sun sun) { ... } and
 // vert Wave(mut BoxVertex vertex, Time time) { ... }: code the GPU runs.
 static decl *parse_shader(parser *p, const bool is_frag)
 {

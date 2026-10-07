@@ -123,7 +123,7 @@ view AfterEarly(Look look)
     Draw2D.Rect(float2(counted, 0), float2(1, 1), Color.white);
 }
 
-frag Plain(Vertex vertex, mut Color color)
+frag Plain(Vertex vertex, out Color color)
 {
     color = vertex.color;
 }
@@ -200,7 +200,7 @@ view Targets(Look look)
     }
 }
 
-frag Copy(Vertex vertex, mut Color color, Texture source)
+frag Copy(Vertex vertex, out Color color, Texture source)
 {
     color = source.Sample(vertex.uv, Filter.Point);
 }
