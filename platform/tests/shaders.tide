@@ -113,6 +113,7 @@ local singleton Art
     List<Corner2> flat;
     List<Corner2> onScreen;
     List<int> faces;
+    List<int> backFaces; // The same triangles, their corners the other way round
     List<Vertex3> manualMesh;
     List<float4x4> manualTransforms;
     List<Batch3> manual3;
@@ -1206,6 +1207,7 @@ view Start(mut Art art, mut Probe probe)
         art.onScreen = [Corner2 { position = float2(132, 132) }, Corner2 { position = float2(156, 132) },
                         Corner2 { position = float2(156, 156) }, Corner2 { position = float2(132, 156) }];
         art.faces = [0, 1, 2, 0, 2, 3];
+        art.backFaces = [0, 2, 1, 0, 3, 2];
         art.targetQuad = [Vertex { position = float2(0, 0) },
                           Vertex { position = float2(Screen.width, 0), uv = float2(1, 0) },
                           Vertex { position = float2(Screen.width, Screen.height), uv = float2(1, 1) },
@@ -1366,6 +1368,46 @@ view Settings(Art art)
     Draw.Tint(Color(0, 1, 0, 1))
     {
         Draw3D.Mesh(art.quad, art.faces, float4x4.identity, Bare);
+    }
+}
+
+// A vert that mirrors its mesh itself, which nothing but the game knows of:
+// its triangles reach the screen the other way round.
+vert Flip(mut Corner3 vertex)
+{
+    vertex.position.x = -vertex.position.x;
+}
+
+// A quarter of a cell: the quad at two fifths of its size, `right` and `down`
+// pixels from the cell's middle, mirrored left to right by `mirror` of -1.
+float4x4 Quarter(int column, int row, float right, float down, float mirror)
+{
+    return float4x4.TRS(Cell(column, row) + float3(right, -down, 0), quaternion.identity, float3(0.4 * mirror, 0.4, 1));
+}
+
+// Which side of a triangle draws: the front, the side its corners go
+// clockwise on, through a frag and a vert as without them.
+view Sides(Art art)
+{
+    // Mirrored by its own transform, its front is still its front
+    Draw3D.Mesh(art.quad, art.faces, Quarter(5, 6, -7, -7, -1), Blank);
+    // Seen from the back, it isn't drawn, mirrored or not, unless the draw says the back is
+    Draw3D.Mesh(art.quad, art.backFaces, Quarter(5, 6, 7, -7, 1), Blank);
+    Draw3D.Mesh(art.quad, art.backFaces, Quarter(5, 6, 7, 7, -1), Blank);
+    Draw3D.Cull(Cull.Front)
+    {
+        Draw3D.Mesh(art.quad, art.backFaces, Quarter(5, 6, -7, 7, 1), Blank);
+    }
+    // What a vert does to the triangles is the game's to draw for
+    Draw3D.Mesh(art.quad, art.faces, Quarter(6, 6, -7, -7, 1), Flip, Blank);
+    Draw3D.Mesh(art.quad, art.backFaces, Quarter(6, 6, 7, 7, 1), Flip, Blank);
+    Draw3D.Cull(Cull.Front)
+    {
+        Draw3D.Mesh(art.quad, art.faces, Quarter(6, 6, 7, -7, 1), Flip, Blank);
+    }
+    Draw3D.Cull(Cull.None)
+    {
+        Draw3D.Mesh(art.quad, art.faces, Quarter(6, 6, -7, 7, 1), Flip, Blank);
     }
 }
 

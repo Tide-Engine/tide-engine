@@ -40,6 +40,10 @@ enum {
     GL_SRC_ALPHA = 0x0302,
     GL_ONE_MINUS_SRC_ALPHA = 0x0303,
     GL_DST_COLOR = 0x0306,
+    GL_FRONT = 0x0404,
+    GL_BACK = 0x0405,
+    GL_CW = 0x0900,
+    GL_CCW = 0x0901,
     GL_CULL_FACE = 0x0B44,
     GL_DEPTH_TEST = 0x0B71,
     GL_BLEND = 0x0BE2,
@@ -112,6 +116,7 @@ enum {
     V(CompileShader, (GLuint shader), (shader))                                                                        \
     R(GLuint, CreateProgram, (void), ())                                                                               \
     R(GLuint, CreateShader, (GLenum type), (type))                                                                     \
+    V(CullFace, (GLenum side), (side))                                                                                 \
     V(DeleteBuffers, (GLsizei count, const GLuint *buffers), (count, buffers))                                         \
     V(DeleteFramebuffers, (GLsizei count, const GLuint *framebuffers), (count, framebuffers))                          \
     V(DeleteProgram, (GLuint program), (program))                                                                      \
@@ -131,6 +136,7 @@ enum {
     V(EnableVertexAttribArray, (GLuint index), (index))                                                                \
     V(FramebufferTexture2D, (GLenum target, GLenum attachment, GLenum texture_target, GLuint texture, GLint level),    \
       (target, attachment, texture_target, texture, level))                                                            \
+    V(FrontFace, (GLenum winding), (winding))                                                                          \
     V(GenBuffers, (GLsizei count, GLuint *buffers), (count, buffers))                                                  \
     V(GenFramebuffers, (GLsizei count, GLuint *framebuffers), (count, framebuffers))                                   \
     V(GenSamplers, (GLsizei count, GLuint *samplers), (count, samplers))                                               \

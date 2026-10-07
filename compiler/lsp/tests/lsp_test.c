@@ -839,6 +839,64 @@ TIDE_TEST(lsp_draw_depth)
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Depth\""), "built into"));
 }
 
+// Which side of a 3D mesh's triangles draws is one too, and Draw3D's as its
+// depth is: both forms, its sides, what the front is on hover, each form's
+// mistake a rename away, and where it is for whoever asks Draw or Draw2D.
+TIDE_TEST(lsp_draw_cull)
+{
+    start();
+    open_document("scene Main { }\nlocal singleton Look { RenderTarget target; Cull kept = Cull.Front; }\nview V(Look look)\n{\n"
+                  "    Draw3D.Depth(Depth.Read),\n    Draw3D.Cull(Cull.None)\n    {\n"
+                  "        Draw3D.Plane(float3(0, 0, 5), float2(1, 1), Color.red);\n    }\n"
+                  "    Draw3D.SetCull(look.kept);\n    Draw3D.SetCull();\n"
+                  "    look.target.Cull(Cull.Front)\n    {\n"
+                  "        look.target.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.red);\n    }\n"
+                  "    look.target.SetCull();\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    const char *three = complete("scene Main { }\nview V()\n{\n    Draw3D.$\n}\n");
+    TIDE_CHECK(offers(three, "Cull") && offers(three, "SetCull") && offers(three, "Depth"));
+    TIDE_CHECK(has(three, "Cull(${1:side})\\n{\\n\\t$0\\n}") && has(three, "\"SetCull(${1:side})\""));
+    // It's neither Draw's nor Draw2D's: only 3D meshes' triangles have a back
+    const char *shared = complete("scene Main { }\nview V()\n{\n    Draw.$\n}\n");
+    TIDE_CHECK(!offers(shared, "Cull") && !offers(shared, "SetCull") && offers(shared, "Tint"));
+    const char *two = complete("scene Main { }\nview V()\n{\n    Draw2D.$\n}\n");
+    TIDE_CHECK(!offers(two, "Cull") && !offers(two, "SetCull") && offers(two, "Clip"));
+    const char *sides = complete("scene Main { }\nview V()\n{\n    Draw3D.SetCull(Cull.$);\n}\n");
+    TIDE_CHECK(offers(sides, "Back") && offers(sides, "Front") && offers(sides, "None"));
+    // A target has both, as it has its depth's
+    const char *target = complete("scene Main { }\nlocal singleton Look { RenderTarget target; }\nview V(Look look)\n{\n"
+                                  "    look.target.$\n}\n");
+    TIDE_CHECK(offers(target, "Cull") && offers(target, "SetCull"));
+
+    open_document("scene Main { }\nview V()\n{\n    Draw3D.Cu$ll(Cull.None)\n    {\n    }\n}\n");
+    const char *around = request("textDocument/hover");
+    TIDE_CHECK(has(around, "Draw3D.Cull(Cull side, Block content)") && has(around, "For the draws in its block"));
+    TIDE_CHECK(has(around, "the side its corners go clockwise on") && has(around, "usually a triangle wound the other way"));
+    open_document("scene Main { }\nview V()\n{\n    Draw3D.SetCu$ll(Cull.None);\n}\n");
+    const char *set = request("textDocument/hover");
+    TIDE_CHECK(has(set, "Draw3D.SetCull(Cull side)") && has(set, "Draw3D.SetCull()") && has(set, "For the draws after it"));
+
+    // Each form written as the other is a rename away
+    open_document("scene Main { }\nview V()\n{\n    Draw3D.Cull(Cull.None);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw3D.Cull sets it around a block") && has(last_sent(), "Draw3D.SetCull(...);"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetCull'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    open_document("scene Main { }\nview V()\n{\n    Draw3D.SetCull(Cull.None)\n    {\n    }\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw3D.SetCull sets it for the draws that follow, and takes no block"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Cull'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    // Asked of Draw or of Draw2D, the note says whose it is
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetCull(Cull.None);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw has no function 'SetCull'") && has(last_sent(), "it's Draw3D's: 'Draw3D.SetCull(...)'"));
+    open_document("scene Main { }\nview V()\n{\n    Draw2D.Cull(Cull.None)\n    {\n    }\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw2D has no function 'Cull'") && has(last_sent(), "Only 3D meshes' triangles have a back"));
+    // A side that isn't one says the three there are
+    open_document("scene Main { }\nview V()\n{\n    Draw3D.SetCull(Cull.Both);\n}\n");
+    TIDE_CHECK(has(last_sent(), "enum 'Cull' has no member 'Both'") && has(last_sent(), "'Cull.None'"));
+    // A game can't rename one of its own to the enum's name
+    open_document("scene Main { }\ncomponent Fa$ce { int z; }\n");
+    TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Cull\""), "built into"));
+}
+
 // What a uv past a texture's edges reads: the built-in Wrap, after the filter in
 // a mesh draw and in a frag's Sample, in completion, hovers and signature help,
 // with what's wrong said where it's written the other way round.

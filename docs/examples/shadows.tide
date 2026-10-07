@@ -64,7 +64,9 @@ frag LampDepth(Vertex vertex, out Color color, Stage stage)
     color = Color(depth, depth, depth);
 }
 
-// A unit cube's side: four corners that share a normal, and two triangles.
+// A unit cube's side: four corners that share a normal, and two triangles,
+// their corners clockwise as they're seen from outside: a triangle is drawn
+// from that side alone.
 void AddSide(mut Stage stage, float3 normal, float3 right, float3 up)
 {
     int first = stage.cube.count;
@@ -73,11 +75,11 @@ void AddSide(mut Stage stage, float3 normal, float3 right, float3 up)
     stage.cube.Add(Corner { position = (normal + right + up) * 0.5, normal = normal });
     stage.cube.Add(Corner { position = (normal - right + up) * 0.5, normal = normal });
     stage.faces.Add(first);
+    stage.faces.Add(first + 2);
     stage.faces.Add(first + 1);
-    stage.faces.Add(first + 2);
     stage.faces.Add(first);
-    stage.faces.Add(first + 2);
     stage.faces.Add(first + 3);
+    stage.faces.Add(first + 2);
 }
 
 view Show(mut Stage stage)

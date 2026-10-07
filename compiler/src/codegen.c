@@ -945,12 +945,13 @@ static bool program_corrects(const program *prog)
     return false;
 }
 
-// Whether `d` is an enum generated C has: every one but the built-in Depth
-// Wrap and Format in a game no code of which names them, whose C is then what
-// it was without them.
+// Whether `d` is an enum generated C has: every one but the built-in Depth,
+// Cull, Wrap and Format in a game no code of which names them, whose C is then
+// what it was without them.
 static bool enum_generated(const program *prog, const decl *d)
 {
-    return d->kind == DECL_ENUM && ((d != prog->depth && d != prog->wrap && d != prog->format) || d->named);
+    return d->kind == DECL_ENUM
+        && ((d != prog->depth && d != prog->cull && d != prog->wrap && d != prog->format) || d->named);
 }
 
 // Local fields and correction errors stay with what was spawned, rather than

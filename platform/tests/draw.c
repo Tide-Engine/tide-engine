@@ -504,7 +504,10 @@ static void primitive_scene(void)
 
     const tide_quaternion turn_x = tide_axisangle_q(tide_f3(1, 0, 0), TIDE_PI_F * 0.5f);
     const tide_quaternion turn_z = tide_axisangle_q(tide_f3(0, 0, 1), TIDE_PI_F * 0.5f);
-    tide_draw_plane_rotated(&list, primitive_at(40, 110, 10), tide_f2(4, 6), turn_x, yellow);
+    // A plane's front is its top: tipped towards the camera it shows, and tipped away it's seen from the back
+    const tide_quaternion tip_x = tide_axisangle_q(tide_f3(1, 0, 0), -TIDE_PI_F * 0.5f);
+    tide_draw_plane_rotated(&list, primitive_at(40, 110, 10), tide_f2(4, 6), tip_x, yellow);
+    tide_draw_plane_rotated(&list, primitive_at(40, 260, 10), tide_f2(4, 6), turn_x, yellow);
     tide_draw_cube_rotated(&list, primitive_at(110, 110, 10), tide_f3(2, 4, 2), turn_z, cyan);
     tide_draw_cylinder_rotated(&list, primitive_at(180, 110, 10), 2, 4, turn_x, magenta);
 
@@ -534,6 +537,7 @@ static void primitives(void)
         {40, 110, yellow, "a rotated plane"},
         {58, 138, yellow, "a plane's width and depth rotated onto the screen"},
         {62, 110, background, "outside a plane"},
+        {40, 260, background, "a plane seen from below, which has no back to draw"},
         {128, 110, cyan, "a rotated cube's long side"},
         {110, 118, cyan, "a rotated cube's short side"},
         {110, 122, background, "outside a rotated cube's short side"},
@@ -2112,6 +2116,7 @@ static uint32_t wrapped_draw_calls(const int kind)
         const float x = 8.0f + (float)(i % 20) * 12.0f, y = 8.0f + (float)(i / 20) * 12.0f;
         const uint32_t mark = tide_draw_push_blend(&list, TIDE_BLEND_ADD);
         tide_draw_push_depth(&list, TIDE_DEPTH_READ);
+        tide_draw_push_cull(&list, TIDE_CULL_NONE);
         tide_draw_push_clip(&list, (tide_rect){at(0, screen.y).x, at(0, screen.y).y, screen.x, screen.y});
         if (kind == KIND_MESH_3D) { // A 3D mesh's tint is its run's, and each instance goes through the transform
             tide_draw_push_tint(&list, tint);
@@ -2292,8 +2297,8 @@ static void settings(void)
 
     for (int kind = 0; kind < KINDS; kind++) {
         const uint32_t calls = wrapped_draw_calls(kind);
-        snprintf(what, sizeof what, "%s 200 times, a blend, a depth, a clip, a tint and a transform around each, is one draw "
-                                    "call (%u, with the clear)", kind_names[kind], (unsigned)calls);
+        snprintf(what, sizeof what, "%s 200 times, a blend, a depth, a cull, a clip, a tint and a transform around each, is "
+                                    "one draw call (%u, with the clear)", kind_names[kind], (unsigned)calls);
         expect(calls == 2u, what);
     }
 }
@@ -2490,6 +2495,250 @@ static void depth_settings(void)
 }
 
 // ---------------------------------------------------------------------------
+// Cull: which side of a 3D mesh's triangles draws, as a setting says
+
+// A square 16 units across around `world`, 5 away, whose front is towards a
+// camera that looks along +z: its corners go clockwise from there. With
+// `away` they go the other way, and it's its back. `mirror` is its own
+// transform mirroring it, which leaves its front its front. An ordinary 3D
+// mesh, or one through a shader of the game's.
+static void sided_square(const bool through_shader, const tide_float2 world, const tide_color color, const bool away,
+                         const bool mirror)
+{
+    // From the top left: to the right first, or down first
+    static const float order[2][4][2] = {{{-0.5f, 0.5f}, {0.5f, 0.5f}, {0.5f, -0.5f}, {-0.5f, -0.5f}},
+                                         {{-0.5f, 0.5f}, {-0.5f, -0.5f}, {0.5f, -0.5f}, {0.5f, 0.5f}}};
+    const tide_float4x4 placed = tide_trs_f4x4(tide_f3(world.x, world.y, 5), tide_identity_q(),
+                                               tide_f3(mirror ? -16.0f : 16.0f, 16.0f, 1.0f));
+    if (through_shader) {
+        static lit_vertex lit[2][4];
+        for (int i = 0; i < 4; i++) lit[away][i] = (lit_vertex){{order[away][i][0], order[away][i][1], 0.0f}, {0, 0, -1}};
+        const lit_instance instance = {placed, color};
+        tide_draw_shaded(&list, &lit_shader, quad_mesh(16 + (uint64_t)away, lit[away], sizeof lit[0][0]), &instance, NULL,
+                         NULL, 0);
+        return;
+    }
+    static tide_vertex3 corners[2][4]; // In one place every call, as square_3d's are
+    for (int i = 0; i < 4; i++) {
+        corners[away][i] = (tide_vertex3){{order[away][i][0], order[away][i][1], 0.0f}, {0.0f, 0.0f}, color};
+    }
+    tide_mesh mesh = {corners[away], 4, quad_indices, 6, 0};
+    mesh.version = tide_mesh_version(&mesh);
+    tide_draw_mesh_3d(&list, &mesh, placed, NULL, TIDE_FILTER_POINT);
+}
+
+enum { CULL_ROWS = 7, CULL_COLUMNS = 4 };
+
+// Where the cull scene's squares are on the screen: a row for each thing
+// that's set, for each kind of 3D mesh.
+static tide_float2 cull_cell(const int kind, const int row, const int column)
+{
+    return tide_f2(20.0f + 120.0f * (float)kind + 24.0f * (float)column, 20.0f + 24.0f * (float)row);
+}
+
+// A row's four squares: one seen from the front, one from the back, and both
+// again with their own transforms mirroring them. `flip` is what the camera
+// they're under does to the world, so that they land in their cells.
+static void sided_row(const bool through_shader, const int kind, const int row, const tide_color color,
+                      const tide_float2 flip)
+{
+    for (int column = 0; column < CULL_COLUMNS; column++) {
+        const tide_float2 p = cull_cell(kind, row, column), world = at(p.x, p.y);
+        sided_square(through_shader, tide_f2(world.x * flip.x, world.y * flip.y), color, (column & 1) != 0, column >= 2);
+    }
+}
+
+// What each of the scene's squares comes to: whether it draws.
+static const bool cull_draws[CULL_ROWS][CULL_COLUMNS] = {
+    {true, false, true, false}, // As a frame starts: no back
+    {false, true, false, true}, // No front
+    {true, true, true, true},   // Both
+    {true, false, true, false}, // Through a transform that mirrors
+    {true, false, true, false}, // Under a camera placed by a matrix that mirrors, then one whose projection is upside down
+    {true, true, false, true},  // Set for what follows, a block inside it, and unset
+    {true, true, true, false},  // Through a transform that flattens
+};
+static const char *const cull_rows[CULL_ROWS] = {
+    "as a frame starts", "with no front drawn", "with both sides drawn", "through a transform that mirrors",
+    "under a camera that mirrors", "set, with a block inside, and unset", "through a transform that flattens"};
+static const char *const cull_columns[CULL_ROWS][CULL_COLUMNS] = {
+    {"seen from the front", "seen from the back", "mirrored by its own transform, from the front",
+     "mirrored by its own transform, from the back"},
+    {"seen from the front", "seen from the back", "mirrored by its own transform, from the front",
+     "mirrored by its own transform, from the back"},
+    {"seen from the front", "seen from the back", "mirrored by its own transform, from the front",
+     "mirrored by its own transform, from the back"},
+    {"seen from the front", "seen from the back", "mirrored by its own transform too, from the front",
+     "mirrored by its own transform too, from the back"},
+    {"placed by a matrix that mirrors, from the front", "placed by a matrix that mirrors, from the back",
+     "whose projection is upside down, from the front", "whose projection is upside down, from the back"},
+    {"both sides set: seen from the back", "a block with no front in it: seen from the back",
+     "and in that block, from the front", "set again as a frame starts: seen from the front"},
+    {"with both sides drawn: from the back", "a cube, which has a face each way", "from the front",
+     "from the back: a flat thing is still wound one way"},
+};
+
+static void cull_scene(void)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    for (int kind = 0; kind < 2; kind++) {
+        const bool shaded_mesh = kind != 0;
+        const tide_float2 same = {1.0f, 1.0f};
+        pixel_camera_3d();
+        sided_row(shaded_mesh, kind, 0, cyan, same);
+
+        const uint32_t front = tide_draw_push_cull(&list, TIDE_CULL_FRONT);
+        sided_row(shaded_mesh, kind, 1, cyan, same);
+        tide_draw_pop(&list, front);
+
+        const uint32_t none = tide_draw_push_cull(&list, TIDE_CULL_NONE);
+        sided_row(shaded_mesh, kind, 2, cyan, same);
+        tide_draw_pop(&list, none);
+
+        // Mirrored top to bottom about the row's own line, so each square stays in its cell
+        const float line = at(0, cull_cell(kind, 3, 0).y).y;
+        const uint32_t mirrored = tide_draw_push_transform_3d(
+            &list, tide_trs_f4x4(tide_f3(0, 2.0f * line, 0), tide_identity_q(), tide_f3(1, -1, 1)));
+        sided_row(shaded_mesh, kind, 3, cyan, same);
+        tide_draw_pop(&list, mirrored);
+
+        // A camera whose transform mirrors the world left to right, then one whose projection has y down
+        tide_draw_set_camera_matrices(&list, tide_trs_f4x4(tide_f3(0, 0, 0), tide_identity_q(), tide_f3(-1, 1, 1)),
+                                      tide_ortho_f4x4(screen.x, screen.y, 0.1f, 100.0f));
+        for (int column = 0; column < 2; column++) {
+            const tide_float2 p = cull_cell(kind, 4, column), world = at(p.x, p.y);
+            sided_square(shaded_mesh, tide_f2(-world.x, world.y), cyan, column != 0, false);
+        }
+        tide_float4x4 upside_down = tide_ortho_f4x4(screen.x, screen.y, 0.1f, 100.0f);
+        upside_down.c1.y = -upside_down.c1.y;
+        tide_draw_set_camera_matrices(&list, tide_identity_f4x4(), upside_down);
+        for (int column = 2; column < 4; column++) {
+            const tide_float2 p = cull_cell(kind, 4, column), world = at(p.x, p.y);
+            sided_square(shaded_mesh, tide_f2(world.x, -world.y), cyan, column != 2, false);
+        }
+        pixel_camera_3d();
+
+        // Set for what follows, a block inside it, and put back as a frame starts
+        const tide_float2 set = cull_cell(kind, 5, 0), inner_back = cull_cell(kind, 5, 1);
+        const tide_float2 inner_front = cull_cell(kind, 5, 2), unset = cull_cell(kind, 5, 3);
+        tide_draw_set_cull(&list, TIDE_CULL_NONE);
+        const uint32_t inner = tide_draw_push_cull(&list, TIDE_CULL_FRONT);
+        sided_square(shaded_mesh, at(inner_back.x, inner_back.y), cyan, true, false);
+        sided_square(shaded_mesh, at(inner_front.x, inner_front.y), cyan, false, false);
+        tide_draw_pop(&list, inner);
+        sided_square(shaded_mesh, at(set.x, set.y), cyan, true, false);
+        tide_draw_unset_cull(&list);
+        sided_square(shaded_mesh, at(unset.x, unset.y), cyan, false, false);
+
+        // Onto one plane, 5 away: what it makes has no side that's the front, so a game says to draw both
+        const tide_float4x4 flat = tide_trs_f4x4(tide_f3(0, 0, 5), tide_identity_q(), tide_f3(1, 1, 0));
+        const tide_float2 both = cull_cell(kind, 6, 0), cube = cull_cell(kind, 6, 1);
+        const tide_float2 flat_front = cull_cell(kind, 6, 2), flat_back = cull_cell(kind, 6, 3);
+        const uint32_t flattened = tide_draw_push_transform_3d(&list, flat);
+        const uint32_t sides = tide_draw_push_cull(&list, TIDE_CULL_NONE);
+        sided_square(shaded_mesh, at(both.x, both.y), cyan, true, false);
+        tide_draw_pop(&list, sides);
+        tide_draw_cube(&list, tide_f3(at(cube.x, cube.y).x, at(cube.x, cube.y).y, 20), tide_f3(16, 16, 16), cyan);
+        sided_square(shaded_mesh, at(flat_front.x, flat_front.y), cyan, false, false);
+        sided_square(shaded_mesh, at(flat_back.x, flat_back.y), cyan, true, false);
+        tide_draw_pop(&list, flattened);
+    }
+}
+
+// Six squares in a row, the two in the middle mirrored by their own
+// transforms, all seen from the front: with `cull`, in how many draw calls.
+static uint32_t mirrored_draw_calls(const bool through_shader, const tide_cull cull)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    pixel_camera_3d();
+    tide_draw_set_cull(&list, cull);
+    for (int i = 0; i < 6; i++) {
+        sided_square(through_shader, at(20.0f + 24.0f * (float)i, 20), cyan, false, i == 2 || i == 3);
+    }
+    tide_platform_read_pixels(&list, &(tide_float2){0, 0}, 1, &(uint32_t){0});
+    return tide_platform_draw_calls();
+}
+
+// Both kinds' squares in the screen's top left corner, from the front and
+// from the back: with nothing said about cull, with what a frame starts with
+// said outright, and with it around a block that follows another's.
+static void cull_default_scene(const int said)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    pixel_camera_3d();
+    uint32_t mark = 0;
+    if (said == 1) tide_draw_set_cull(&list, TIDE_CULL_BACK);
+    if (said == 2) {
+        tide_draw_pop(&list, tide_draw_push_cull(&list, TIDE_CULL_NONE));
+        mark = tide_draw_push_cull(&list, TIDE_CULL_BACK);
+    }
+    for (int kind = 0; kind < 2; kind++) {
+        for (int column = 0; column < CULL_COLUMNS; column++) {
+            sided_square(kind != 0, at(12.0f + 20.0f * (float)column, 14.0f + 24.0f * (float)kind), cyan, (column & 1) != 0,
+                         column >= 2);
+        }
+    }
+    if (said == 2) tide_draw_pop(&list, mark);
+}
+
+static void cull_settings(void)
+{
+    static const char *const kinds[2] = {"a 3D mesh", "a 3D mesh through a shader"};
+    static char names[2][CULL_ROWS * CULL_COLUMNS][200];
+    char what[200];
+    // Twice: the second frame draws with the pipelines the first made
+    for (int frame = 0; frame < 2; frame++) {
+        cull_scene();
+        for (int kind = 0; kind < 2; kind++) {
+            check checks[CULL_ROWS * CULL_COLUMNS];
+            for (int row = 0; row < CULL_ROWS; row++) {
+                for (int column = 0; column < CULL_COLUMNS; column++) {
+                    const int i = row * CULL_COLUMNS + column;
+                    const tide_float2 p = cull_cell(kind, row, column);
+                    snprintf(names[kind][i], sizeof names[0][0], "%s %s, %s: %s", kinds[kind], cull_rows[row],
+                             cull_columns[row][column], cull_draws[row][column] ? "drawn" : "not drawn");
+                    checks[i] = (check){p.x, p.y, cull_draws[row][column] ? cyan : background, names[kind][i]};
+                }
+            }
+            check_pixels(checks, CULL_ROWS * CULL_COLUMNS);
+        }
+    }
+
+    // Instances that are mirrored are runs of their own, as they're drawn the other way round: three runs here.
+    // With both sides drawn there's nothing to tell them apart by, and they're one
+    for (int kind = 0; kind < 2; kind++) {
+        const uint32_t apart = mirrored_draw_calls(kind != 0, TIDE_CULL_BACK);
+        const uint32_t together = mirrored_draw_calls(kind != 0, TIDE_CULL_NONE);
+        snprintf(what, sizeof what, "%s six times, the middle two mirrored: three draw calls with no back drawn, and one "
+                                    "with both sides (%u and %u, with the clear)", kinds[kind], (unsigned)apart,
+                 (unsigned)together);
+        // An ordinary mesh's color is its corners', so each of these squares is the same mesh
+        expect(apart == 4u && together == 2u, what);
+    }
+
+    // What a frame starts with, said outright or around a block, is the same pixels
+    enum { W = 96, H = 64 };
+    static uint32_t unsaid[W * H], set[W * H], around[W * H];
+    cull_default_scene(0);
+    corner_pixels(unsaid, W, H);
+    cull_default_scene(1);
+    corner_pixels(set, W, H);
+    cull_default_scene(2);
+    corner_pixels(around, W, H);
+    int drawn = 0, different = 0;
+    for (int i = 0; i < W * H; i++) {
+        drawn += !near(unsaid[i], rgba(background), 0);
+        different += unsaid[i] != set[i] || unsaid[i] != around[i];
+    }
+    snprintf(what, sizeof what, "Cull.Back, set or around a block, is what a frame starts with, pixel for pixel "
+                                "(%d differ, of %d drawn)", different, drawn);
+    expect(different == 0 && drawn > 900 && drawn < 1100, what);
+}
+
+// ---------------------------------------------------------------------------
 // --bench: frames of many shapes, rendered offscreen and read back, so it
 // works in a hidden window or page, where tide_platform_draw draws nothing.
 // Recording is timed separately. Rendering includes CPU submission, the GPU
@@ -2607,15 +2856,16 @@ static void bench_write_record(const bench_timing recording, const bench_timing 
             recording.median_ms, recording.p95_ms, rendering.median_ms, rendering.p95_ms, total.median_ms, total.p95_ms);
 }
 
-// A cube a unit across, its faces' corners each a color of their own.
+// A cube a unit across, its faces' corners each a color of their own, their
+// corners clockwise as they're seen from outside.
 static const tide_vertex3 cube_corners[8] = {
     {{-0.5f, -0.5f, -0.5f}, {0, 0}, {1, 0, 0, 1}}, {{0.5f, -0.5f, -0.5f}, {0, 0}, {0, 1, 0, 1}},
     {{0.5f, 0.5f, -0.5f}, {0, 0}, {0, 0, 1, 1}},   {{-0.5f, 0.5f, -0.5f}, {0, 0}, {1, 1, 0, 1}},
     {{-0.5f, -0.5f, 0.5f}, {0, 0}, {1, 0, 1, 1}},  {{0.5f, -0.5f, 0.5f}, {0, 0}, {0, 1, 1, 1}},
     {{0.5f, 0.5f, 0.5f}, {0, 0}, {1, 1, 1, 1}},    {{-0.5f, 0.5f, 0.5f}, {0, 0}, {0.5f, 0.5f, 0.5f, 1}},
 };
-static const uint32_t cube_indices[36] = {0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 0, 4, 5, 0, 5, 1,
-                                          3, 2, 6, 3, 6, 7, 0, 3, 7, 0, 7, 4, 1, 5, 6, 1, 6, 2};
+static const uint32_t cube_indices[36] = {0, 3, 2, 0, 2, 1, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4,
+                                          3, 7, 6, 3, 6, 2, 0, 4, 7, 0, 7, 3, 1, 2, 6, 1, 6, 5};
 static const tide_mesh cube = {cube_corners, 8, cube_indices, 36, 1};
 
 static void bench_scene(void)
@@ -2716,6 +2966,7 @@ static int frame(void *user, const float seconds)
         text_checks();
         settings();
         depth_settings();
+        cull_settings();
         return run_checks();
     }
 #endif
@@ -2730,6 +2981,7 @@ static int frame(void *user, const float seconds)
     text_checks();
     settings();
     depth_settings();
+    cull_settings();
     const int code = run_checks();
 #ifdef __wasm__
     if (code == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
