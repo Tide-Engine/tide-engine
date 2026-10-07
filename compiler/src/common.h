@@ -79,12 +79,13 @@ typedef struct source {
     const char *text;
     size_t len;
     int file;         // Set by diag_add_source
+    const char *package; // The package the file is in (its name, which is its namespace); NULL for the game's own
 } source;
 
 typedef enum diag_severity {
     DIAG_ERROR,
     DIAG_WARNING,
-    DIAG_NOTE, // Belongs to the previous error or warning; `at` is zero.
+    DIAG_NOTE, // Belongs to the previous error or warning; `at` is zero, or where it points.
 } diag_severity;
 
 // Receives diagnostics instead of stderr, for tools such as the language server.
@@ -92,6 +93,11 @@ typedef void (*diag_sink)(void *user, diag_severity severity, loc at, const char
 
 // Forgets every source file and error, before compiling a program.
 void diag_reset(void);
+
+// With TIDEC_TIMES set in the environment, says on stderr how long the phase
+// that just ended took (the time since the last call), under `what`; NULL
+// starts the clock.
+void diag_phase(const char *what);
 // Registers a source file and sets src->file: locations in it carry that index.
 void diag_add_source(source *src);
 const source *diag_source(int file);
@@ -100,6 +106,9 @@ void diag_set_sink(diag_sink sink, void *user); // NULL prints to stderr again.
 void diag_error(loc at, const char *fmt, ...);
 void diag_warning(loc at, const char *fmt, ...);
 void diag_note(const char *fmt, ...); // Attaches to the previous error or warning.
+// A note about another place in the code, which its text names too: a sink
+// gets `at`, where diag_note gives it none.
+void diag_note_at(loc at, const char *fmt, ...);
 int diag_error_count(void);
 
 // "did you mean ...?" for a misspelled name: offer every name that would have
@@ -115,6 +124,20 @@ suggestion suggest_start(str wrong);
 void suggest_consider(suggestion *s, str candidate);
 void suggest_consider_c(suggestion *s, const char *candidate);
 void suggest_note(const suggestion *s);
+// Whether the closest name offered (`best`) is close enough to suggest, for a
+// "did you mean" that isn't a diagnostic's note.
+bool suggest_close(const suggestion *s);
+
+// What to write in place of `wrong` (a slice of the source), which the last
+// diagnostic's note said in its own words: editors offer the change, as they
+// do a "did you mean".
+void suggest_replacement(str wrong, const char *instead);
+
+// Receives the name each "did you mean" note suggests, after the note, with
+// the name written (a slice of the source, where it's the source's): for
+// editors, to offer the change. The note belongs to the previous diagnostic.
+typedef void (*diag_suggestion_sink)(void *user, str wrong, str best);
+void diag_set_suggestion_sink(diag_suggestion_sink sink, void *user); // NULL for none
 
 // The order of a game's files, which decides the default order of its systems:
 // byte by byte, with backslashes as forward slashes, so it's the same on every

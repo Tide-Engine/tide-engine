@@ -1,0 +1,7 @@
+// expect: 'NextInt' is a mut method: it changes what it's called on
+component Wanderer { Random random; int last; }
+scene Main { }
+system Roll(Wanderer wanderer)
+{
+    Debug.Log($"{wanderer.random.NextInt(6)}");
+}

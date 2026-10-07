@@ -1,0 +1,10 @@
+// expect: 'Read' uses the local fields of 'Score', which only views, local handlers and the functions they call have
+singleton Score { int value; local int paint; }
+int Read(Score score) { return score.paint; }
+struct Helper { int Painted(Score score) { return Read(score); } }
+scene Main { }
+view Show(Score score)
+{
+    var helper = Helper { };
+    if (helper.Painted(score) > 0) Draw.Clear(Color.black);
+}

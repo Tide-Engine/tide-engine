@@ -1,0 +1,8 @@
+// expect: a frag's pixel has one method, 'Discard()', which leaves it undrawn; the rest are its fields
+scene Main { }
+
+frag Shade(Vertex vertex, out Color color)
+{
+    this.Destroy();
+    color = Color.white;
+}

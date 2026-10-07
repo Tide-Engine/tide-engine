@@ -1,0 +1,96 @@
+settings { title = "Tasks"; tickRate = 30; maxPlayers = 1; }
+
+component Runner
+{
+    float angle;
+    float speed = 1;
+}
+
+singleton Round
+{
+    int count;     // 3, 2, 1 while it counts down
+    bool running;
+    bool busy;
+}
+
+event RoundStarted { }
+event Boost { }
+command StartRound { }
+command Dash { }
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    for (var i = 0; i < 3; i++) Spawn(Runner { angle = i * 2.1 });
+}
+
+command(StartRound start, PlayerID sender) Begin(mut Round round)
+{
+    if (round.busy) return;
+    round.busy = true;
+    Send(RoundStarted { });
+}
+
+// One task for the whole round: it waits, and goes on where it stopped.
+async event(RoundStarted) Countdown(mut Round round)
+{
+    for (var i = 3; i > 0; i--)
+    {
+        round.count = i;
+        await Wait.Seconds(1);
+    }
+    round.count = 0;
+    round.running = true;
+    await Wait.Seconds(5);
+    round.running = false;
+    round.busy = false;
+}
+
+command(Dash dash, PlayerID sender) DashRunner(with Runner)
+{
+    this.Send(Boost { });
+}
+
+// A task for each runner that dashes. It gets the runner again after the
+// wait, as it is then, and ends by itself if the runner is gone.
+async event(Boost) Sprint(mut Runner runner)
+{
+    runner.speed = 4;
+    await Wait.Seconds(0.6);
+    runner.speed = 1;
+}
+
+system Run(mut Runner runner, Round round, Time time)
+{
+    if (round.running) runner.angle += runner.speed * time.dt;
+}
+
+view Track(Round round)
+{
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0, -0.2), 2.3);
+    Draw.WireCircle(float2(0), 1.5, 0.03, Color(0.24, 0.25, 0.27));
+    var word = round.count > 0 ? $"{round.count}" : round.running ? "GO" : "";
+    Draw.Text(word, float2(0), 0.9, Color.white, Anchor.MiddleCenter, Font.Bold);
+}
+
+view Runners(Runner runner, Round round, Devices devices)
+{
+    var at = float2(Math.Cos(runner.angle), Math.Sin(runner.angle)) * 1.5;
+    Draw.Circle(at, 0.16, runner.speed > 1 ? Color.white : Color(0.98, 0.75, 0.14));
+    var pointer = Draw.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    if (round.running && devices.pointer.press.down && Math.Distance(pointer, at) < 0.4) this.Send(Dash { });
+}
+
+view Controls(Round round)
+{
+    Draw.SetScreen();
+    Draw.Text(round.running ? "Tap a runner to make it dash" : "A round is a task that waits",
+                float2(16, 14), 16, Color.white);
+    GUI.SetTheme(GUITheme { radius = 6 });
+    GUI.Disabled(round.busy)
+    {
+        if (GUI.Button(Rect(16, Screen.height - 48, Screen.width - 32, 32), "Start the round")) Send(StartRound { });
+    }
+}

@@ -1,0 +1,4 @@
+// expect: C can't make Tide's text, so a string it takes can't be 'out'
+// expect: C returns text, as its 'const char *': 'extern string Name(...);'
+scene Main { }
+extern void Name(out string name);

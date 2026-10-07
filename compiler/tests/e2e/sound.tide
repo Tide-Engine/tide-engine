@@ -1,0 +1,78 @@
+// Sound fields: a sound source a local field keeps, which the frame names to
+// the mixer while it plays, in a local singleton, a local component, a match
+// component's local fields and a struct inside one. The host (sound_test.c)
+// reads what each frame recorded.
+
+asset Clip hum = "assets/beep.wav";
+asset Clip buzz = "assets/hits/b.wav";
+
+component Body
+{
+    float3 position;
+    local Sound engine; // The match's entity, with a sound of this machine's
+}
+
+struct Pair
+{
+    Sound left;
+    Sound right;
+}
+
+local singleton Music
+{
+    Sound track;
+    Pair pair;
+    Sound ear;   // The microphone, while `listen`
+    bool place;  // The view sets the listener and falloff
+    bool spark;  // The view spawns a local entity with a sound
+    bool listen; // The view plays the microphone through `ear`
+}
+
+local component Spark
+{
+    float3 at;
+    Sound crackle;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body { position = float3(4, 5, 6) });
+    Spawn(Body { position = float3(7, 8, 9) });
+}
+
+view Engines(mut Body body)
+{
+    body.engine.clip = hum;
+    body.engine.position = body.position;
+    body.engine.spatial = true;
+    body.engine.loop = true;
+    body.engine.pitch = 0.5 + body.position.x * 0.1;
+    body.engine.playing = true;
+}
+
+view Place(mut Music music)
+{
+    if (music.place)
+    {
+        Audio.SetListener(float3(1, 2, 3), quaternion.identity);
+        Audio.SetFalloff(2, 20);
+    }
+    if (music.listen)
+    {
+        music.ear.clip = Clip.Microphone;
+        music.ear.pitch = 3;
+        music.ear.playing = true;
+    }
+    else
+    {
+        music.ear.clip = Clip.none;
+        music.ear.playing = false;
+    }
+    if (music.spark)
+    {
+        music.spark = false;
+        Spawn(Spark { at = float3(0, 1, 0), crackle = Sound { clip = buzz, spatial = true, position = float3(0, 1, 0), playing = true } });
+    }
+}

@@ -1,0 +1,4565 @@
+{
+  "benchmark": "row-functions",
+  "date": "2026-10-06T16:07:39.0383186Z",
+  "rounds": 5,
+  "invocation_utc": "2026-10-06T16:07:39.0383186Z",
+  "reference_cutoff_utc": "2026-10-06T16:07:39.0000000Z",
+  "baseline_commit": "6e4b60eb3d64e01422fb7adaf78480676c32c336",
+  "implementation_commit": "e1bb4bec95e4aa132ac543a744a76d593c6f95f3",
+  "original_rows_commit": "faee8d0d355427a096b73ab897a807f6a4ea5120",
+  "benchmark_script_commit": "e1bb4bec95e4aa132ac543a744a76d593c6f95f3",
+  "implementation_commit_source": "provided parameter",
+  "machine": {
+    "os": "Microsoft Windows NT 10.0.26200.0",
+    "logical_cpus": 24,
+    "cpu": [
+      "AMD Ryzen 9 7900X 12-Core Processor            "
+    ]
+  },
+  "uncertainty": "The mutex serializes complete runtime rounds and compiler pairs. Other builds or processes can still contend; one CPU idle check per runtime round and bounded waits provide evidence rather than continuous machine isolation.",
+  "gate_granularity": {
+    "runtime": "One complete 13-case round, each case before then after, per acquisition; five fresh rounds; idle check once per complete round",
+    "compile": "One archetype fixture before/after pair per acquisition",
+    "direct_clang": "Original completed pairs retained; remaining paired rounds use one finishing acquisition, with CPU idle checks before each pair."
+  },
+  "previous_partial_diagnostics": {
+    "note": "Earlier partial samples with the same final labels are preserved as historical diagnostics, including imported baseline samples. Dates before reference_cutoff_utc are excluded from fresh reference_records.",
+    "preserved_metadata": [],
+    "records": [
+      {
+        "path": "bench/results/versus.jsonl",
+        "line": 496,
+        "benchmark": "versus_wide",
+        "label": "row-functions-final",
+        "date": "2026-10-06T15:43:59Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 100,
+          "count": 1000000,
+          "kept": 0,
+          "tagged": 0,
+          "frozen": 0
+        },
+        "ok": true,
+        "digest": "0x1f364ea85636be95",
+        "hash": null,
+        "tick": null,
+        "threads": null,
+        "way_threads": [
+          1,
+          12
+        ]
+      },
+      {
+        "path": "bench/results/versus.jsonl",
+        "line": 497,
+        "benchmark": "versus_wide",
+        "label": "row-functions-final",
+        "date": "2026-10-06T15:55:26Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 100,
+          "count": 1000000,
+          "kept": 1,
+          "tagged": 0,
+          "frozen": 0
+        },
+        "ok": true,
+        "digest": "0x6f3ccc51b9a1cbb2",
+        "hash": null,
+        "tick": null,
+        "threads": null,
+        "way_threads": [
+          1,
+          12
+        ]
+      },
+      {
+        "path": "bench/results/versus.jsonl",
+        "line": 498,
+        "benchmark": "versus_wide",
+        "label": "row-functions-final",
+        "date": "2026-10-06T15:55:32Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 100,
+          "count": 1000000,
+          "kept": 0,
+          "tagged": 1,
+          "frozen": 0
+        },
+        "ok": true,
+        "digest": "0x1f364ea85636be95",
+        "hash": null,
+        "tick": null,
+        "threads": null,
+        "way_threads": [
+          1,
+          12
+        ]
+      },
+      {
+        "path": "bench/results/versus.jsonl",
+        "line": 499,
+        "benchmark": "versus_wide",
+        "label": "row-functions-final",
+        "date": "2026-10-06T15:58:50Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 100,
+          "count": 1000000,
+          "kept": 1,
+          "tagged": 1,
+          "frozen": 0
+        },
+        "ok": true,
+        "digest": "0x6f3ccc51b9a1cbb2",
+        "hash": null,
+        "tick": null,
+        "threads": null,
+        "way_threads": [
+          1,
+          12
+        ]
+      },
+      {
+        "path": "bench/results/versus.jsonl",
+        "line": 500,
+        "benchmark": "versus_wide",
+        "label": "row-functions-final-before",
+        "date": "2026-10-06T15:43:58Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 100,
+          "count": 1000000,
+          "kept": 0,
+          "tagged": 0,
+          "frozen": 0
+        },
+        "ok": true,
+        "digest": "0x1f364ea85636be95",
+        "hash": null,
+        "tick": null,
+        "threads": null,
+        "way_threads": [
+          1,
+          12
+        ]
+      },
+      {
+        "path": "bench/results/versus.jsonl",
+        "line": 501,
+        "benchmark": "versus_wide",
+        "label": "row-functions-final-before",
+        "date": "2026-10-06T15:55:25Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 100,
+          "count": 1000000,
+          "kept": 1,
+          "tagged": 0,
+          "frozen": 0
+        },
+        "ok": true,
+        "digest": "0x6f3ccc51b9a1cbb2",
+        "hash": null,
+        "tick": null,
+        "threads": null,
+        "way_threads": [
+          1,
+          12
+        ]
+      },
+      {
+        "path": "bench/results/versus.jsonl",
+        "line": 502,
+        "benchmark": "versus_wide",
+        "label": "row-functions-final-before",
+        "date": "2026-10-06T15:55:31Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 100,
+          "count": 1000000,
+          "kept": 0,
+          "tagged": 1,
+          "frozen": 0
+        },
+        "ok": true,
+        "digest": "0x1f364ea85636be95",
+        "hash": null,
+        "tick": null,
+        "threads": null,
+        "way_threads": [
+          1,
+          12
+        ]
+      },
+      {
+        "path": "bench/results/versus.jsonl",
+        "line": 503,
+        "benchmark": "versus_wide",
+        "label": "row-functions-final-before",
+        "date": "2026-10-06T15:58:48Z",
+        "options": {
+          "warmup": 10,
+          "ticks": 100,
+          "count": 1000000,
+          "kept": 1,
+          "tagged": 1,
+          "frozen": 0
+        },
+        "ok": true,
+        "digest": "0x6f3ccc51b9a1cbb2",
+        "hash": null,
+        "tick": null,
+        "threads": null,
+        "way_threads": [
+          1,
+          12
+        ]
+      }
+    ]
+  },
+  "options": {
+    "runtime_cases": [
+      {
+        "name": "wide-plain",
+        "arguments": [],
+        "program": "versus_wide.exe"
+      },
+      {
+        "name": "wide-kept",
+        "arguments": [
+          "--kept",
+          "1"
+        ],
+        "program": "versus_wide.exe"
+      },
+      {
+        "name": "wide-tagged0",
+        "arguments": [
+          "--tagged",
+          "1",
+          "--frozen",
+          "0"
+        ],
+        "program": "versus_wide.exe"
+      },
+      {
+        "name": "wide-tagged0-kept",
+        "arguments": [
+          "--tagged",
+          "1",
+          "--frozen",
+          "0",
+          "--kept",
+          "1"
+        ],
+        "program": "versus_wide.exe"
+      },
+      {
+        "name": "wide-tagged50",
+        "arguments": [
+          "--tagged",
+          "1",
+          "--frozen",
+          "50"
+        ],
+        "program": "versus_wide.exe"
+      },
+      {
+        "name": "wide-tagged50-kept",
+        "arguments": [
+          "--tagged",
+          "1",
+          "--frozen",
+          "50",
+          "--kept",
+          "1"
+        ],
+        "program": "versus_wide.exe"
+      },
+      {
+        "name": "wide-tagged100",
+        "arguments": [
+          "--tagged",
+          "1",
+          "--frozen",
+          "100"
+        ],
+        "program": "versus_wide.exe"
+      },
+      {
+        "name": "wide-tagged100-kept",
+        "arguments": [
+          "--tagged",
+          "1",
+          "--frozen",
+          "100",
+          "--kept",
+          "1"
+        ],
+        "program": "versus_wide.exe"
+      },
+      {
+        "name": "particles-plain",
+        "arguments": [],
+        "program": "versus_particles.exe"
+      },
+      {
+        "name": "particles-kept",
+        "arguments": [
+          "--kept",
+          "1"
+        ],
+        "program": "versus_particles.exe"
+      },
+      {
+        "name": "sand-default",
+        "arguments": [],
+        "program": "bench_sand.exe"
+      },
+      {
+        "name": "sand-1024",
+        "arguments": [
+          "--size",
+          "1024"
+        ],
+        "program": "bench_sand.exe"
+      },
+      {
+        "name": "gallery-default",
+        "arguments": [],
+        "program": "bench_gallery.exe"
+      }
+    ],
+    "before_label": "row-functions-final-before",
+    "after_label": "row-functions-final",
+    "compile": {
+      "loops": 100,
+      "archetypes": [
+        1,
+        4
+      ],
+      "targets": [
+        "native",
+        "web"
+      ],
+      "configs": [
+        "debug",
+        "release"
+      ],
+      "repeat_per_round": 1,
+      "functions": 100,
+      "files": 10
+    },
+    "direct_clang": {
+      "archetypes": 4,
+      "systems": 100,
+      "optimizations": [
+        "O0",
+        "O2"
+      ],
+      "flags": [
+        "-std=c17",
+        "-fno-fast-math",
+        "-ffp-contract=off",
+        "-ftime-report"
+      ]
+    }
+  },
+  "files": {
+    "node": {
+      "path": "C:\\Users\\blenm\\AppData\\Local\\Temp\\tide-node-24.16\\node-v24.16.0-win-x64\\node.exe",
+      "bytes": 92279112,
+      "modified": "2026-05-20T22:44:40.0000000Z",
+      "sha256": "B3094D0B49F9AD602262A9921551737BB97637C05DD357A06AE98188D7290AA3"
+    },
+    "compiler": {
+      "path": "C:\\Program Files\\LLVM\\bin\\clang.exe",
+      "bytes": 109541888,
+      "modified": "2026-09-22T05:30:38.0000000Z",
+      "sha256": "E7956E325BC32A1A96838A19A14C58A18916E710F202776C62F27C621EC79411"
+    },
+    "compile_script": {
+      "path": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\bench\\compile.mjs",
+      "bytes": 19612,
+      "modified": "2026-10-06T15:09:10.7535736Z",
+      "sha256": "DFB01C4B7FC15DB2EF59A7464988C66B14172848B9437DD42437C7D7934769D6"
+    },
+    "measurement_script": {
+      "path": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-measure-batched.ps1",
+      "bytes": 28665,
+      "modified": "2026-10-06T16:06:50.4160800Z",
+      "sha256": "A60BF44BD81C15647B413E62BDFE711B27639494319B208B45C48E2A121FE9D7"
+    },
+    "installations": {
+      "before": {
+        "cli": {
+          "path": "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\tide-before\\bin\\tide.exe",
+          "bytes": 1601024,
+          "modified": "2026-10-06T13:50:37.4449291Z",
+          "sha256": "D3329220D78B2A9858EBCBEB9A0619F321ACCCB2B97CD6B88C4551699EAC2AB1"
+        },
+        "native_platform": {
+          "path": "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\tide-before\\lib\\native\\libtide_platform.a",
+          "bytes": 1075002,
+          "modified": "2026-10-06T14:04:31.4176679Z",
+          "sha256": "66F149F0094F10F354002AC9B6A7081641F403C83BB68F586F89BE497F81681A"
+        },
+        "web_platform": {
+          "path": "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\tide-before\\lib\\web\\libtide_platform.a",
+          "bytes": 623630,
+          "modified": "2026-10-06T15:18:22.8482698Z",
+          "sha256": "DC9CD6259722A65A9B27CFAC1920D478FFC6F4400C120C8E9156178625451E95"
+        },
+        "engine_table_source": {
+          "path": "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\tide-before\\src\\engine\\table.c",
+          "bytes": 21536,
+          "modified": "2026-10-06T13:48:06.0000000Z",
+          "sha256": "DF6FA1036E2C2447F99D4AF2EB11D6C4D9AF80A0F361780D4F26B576BC0F8A6A"
+        },
+        "engine_jobs_source": {
+          "path": "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\tide-before\\src\\engine\\jobs.c",
+          "bytes": 25938,
+          "modified": "2026-10-06T13:48:06.0000000Z",
+          "sha256": "404C22BB2CF490939E850999B63796999E48C7729AFE111EB78CFFCF549B52A7"
+        }
+      },
+      "after": {
+        "cli": {
+          "path": "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\tide-after\\bin\\tide.exe",
+          "bytes": 1618432,
+          "modified": "2026-10-06T15:27:25.6027088Z",
+          "sha256": "1CC7ED42BD3EEE6D58FED8FCF325A3EBF36B31A785FD061CC2BD871407801669"
+        },
+        "native_platform": {
+          "path": "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\tide-after\\lib\\native\\libtide_platform.a",
+          "bytes": 1075002,
+          "modified": "2026-10-06T14:04:35.8574990Z",
+          "sha256": "E5D5D427D3387BF63E24BB9012E18E0253CACDC8AEE80D307F3A14FDC85EDC0B"
+        },
+        "web_platform": {
+          "path": "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\tide-after\\lib\\web\\libtide_platform.a",
+          "bytes": 623630,
+          "modified": "2026-10-06T15:18:32.2745486Z",
+          "sha256": "DC9CD6259722A65A9B27CFAC1920D478FFC6F4400C120C8E9156178625451E95"
+        },
+        "engine_table_source": {
+          "path": "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\tide-after\\src\\engine\\table.c",
+          "bytes": 23980,
+          "modified": "2026-10-06T13:09:54.7064870Z",
+          "sha256": "3E1FF5A249EF4208CE5855F298EB7474428DE4EE9B0EDB52E095274F6FCEA3A2"
+        },
+        "engine_jobs_source": {
+          "path": "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\tide-after\\src\\engine\\jobs.c",
+          "bytes": 27024,
+          "modified": "2026-10-06T13:31:30.0129396Z",
+          "sha256": "0AAAB12383CD2A113C9D2C7442E8BFB681BB9FBF8CF7ECFABDD206B8772C1B40"
+        }
+      }
+    },
+    "runtime": {
+      "before": {
+        "versus_wide.exe": {
+          "path": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-before\\bin\\versus_wide.exe",
+          "bytes": 187392,
+          "modified": "2026-10-06T15:41:06.7920041Z",
+          "sha256": "E9D41F2BFAF01B50FB7DEC34D1108E41FE0E9DB5E8D8364556A0E6F340EB1B48"
+        },
+        "versus_particles.exe": {
+          "path": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-before\\bin\\versus_particles.exe",
+          "bytes": 174080,
+          "modified": "2026-10-06T15:41:06.7899876Z",
+          "sha256": "1AE0F8AAA2D32E1CCF2CDE3F91DA62DEA235FD35D98F118D384CBC091C1B3B08"
+        },
+        "bench_sand.exe": {
+          "path": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-before\\bin\\bench_sand.exe",
+          "bytes": 331776,
+          "modified": "2026-10-06T15:19:06.3463617Z",
+          "sha256": "40180CDDEECF1E4E16833AB84FA542A0E05A77E7F330BC78945F1AAD23EB545E"
+        },
+        "bench_gallery.exe": {
+          "path": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-before\\bin\\bench_gallery.exe",
+          "bytes": 331776,
+          "modified": "2026-10-06T15:19:06.4538416Z",
+          "sha256": "F25514A48E7793F496F613E1CE4F5525AA07C534669A48ABA0B199CE14F59133"
+        }
+      },
+      "after": {
+        "versus_wide.exe": {
+          "path": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\release\\bin\\versus_wide.exe",
+          "bytes": 182272,
+          "modified": "2026-10-06T15:37:23.4671660Z",
+          "sha256": "7E44FDD602D30D68A6EA1D6673082310BA052D6AF3F0B42BEE996138F21200FE"
+        },
+        "versus_particles.exe": {
+          "path": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\release\\bin\\versus_particles.exe",
+          "bytes": 166912,
+          "modified": "2026-10-06T15:41:07.1367952Z",
+          "sha256": "CF42D636AFCA539136B29CA8E9240F0C74B055E00946570380A7D543632703DA"
+        },
+        "bench_sand.exe": {
+          "path": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\release\\bin\\bench_sand.exe",
+          "bytes": 316928,
+          "modified": "2026-10-06T15:27:25.8367534Z",
+          "sha256": "2AED0FD76C7C1265E7CE70DA2A84A11E12AFA07DF889DF28E1F64AF9D4B8065F"
+        },
+        "bench_gallery.exe": {
+          "path": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\release\\bin\\bench_gallery.exe",
+          "bytes": 318976,
+          "modified": "2026-10-06T15:27:25.8377585Z",
+          "sha256": "C2B4634C246514F9DE70A892E49A4507D942EC5D6525A1457269CB99750F0731"
+        }
+      }
+    }
+  },
+  "generated_c": {
+    "before": {
+      "path": "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\before\\game.c",
+      "sha256": "BD95D484C83625C5FE12B62FB95B059B6F55578F589E25C546F09F69DA9F77DD",
+      "bytes": 1997218,
+      "lines": 29295
+    },
+    "after": {
+      "path": "C:\\Users\\blenm\\AppData\\Local\\Temp\\claude-lanes\\cc\\after\\game.c",
+      "sha256": "02A276FC9B9502F82A4A0224F98E96168284E05CB124D0D9F0822F952A19F9F1",
+      "bytes": 2106690,
+      "lines": 29399
+    }
+  },
+  "cpu_samples": [
+    {
+      "date": "2026-10-06T16:10:13.5695468Z",
+      "series": "complete runtime round 1/5 (13 cases)",
+      "cpu_percent": 8.0,
+      "waited_ms": 1683.8106,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:17:04.3228536Z",
+      "series": "complete runtime round 2/5 (13 cases)",
+      "cpu_percent": 12.0,
+      "waited_ms": 498.1174,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:20:49.5905843Z",
+      "series": "complete runtime round 3/5 (13 cases)",
+      "cpu_percent": 20.0,
+      "waited_ms": 505.2754,
+      "contention": true
+    },
+    {
+      "date": "2026-10-06T16:21:09.8907996Z",
+      "series": "complete runtime round 3/5 (13 cases)",
+      "cpu_percent": 2.0,
+      "waited_ms": 20805.493,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:22:22.276645Z",
+      "series": "complete runtime round 4/5 (13 cases)",
+      "cpu_percent": 2.0,
+      "waited_ms": 473.3136,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:23:33.0026011Z",
+      "series": "complete runtime round 5/5 (13 cases)",
+      "cpu_percent": 1.0,
+      "waited_ms": 281.9521,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:24:43.5985193Z",
+      "series": "compile round 1/5 a1",
+      "cpu_percent": 37.0,
+      "waited_ms": 287.077,
+      "contention": true
+    },
+    {
+      "date": "2026-10-06T16:25:03.8985215Z",
+      "series": "compile round 1/5 a1",
+      "cpu_percent": 44.0,
+      "waited_ms": 20587.0803,
+      "contention": true
+    },
+    {
+      "date": "2026-10-06T16:25:24.2231558Z",
+      "series": "compile round 1/5 a1",
+      "cpu_percent": 41.0,
+      "waited_ms": 40911.7132,
+      "contention": true
+    },
+    {
+      "date": "2026-10-06T16:25:44.5154351Z",
+      "series": "compile round 1/5 a1",
+      "cpu_percent": 27.0,
+      "waited_ms": 61203.9936,
+      "contention": true
+    },
+    {
+      "date": "2026-10-06T16:26:04.8421973Z",
+      "series": "compile round 1/5 a1",
+      "cpu_percent": 39.0,
+      "waited_ms": 81530.7533,
+      "contention": true
+    },
+    {
+      "date": "2026-10-06T16:26:31.3403665Z",
+      "series": "compile round 1/5 a1",
+      "cpu_percent": 59.0,
+      "waited_ms": 108028.9245,
+      "contention": true
+    },
+    {
+      "date": "2026-10-06T16:26:51.6296524Z",
+      "series": "compile round 1/5 a1",
+      "cpu_percent": 53.0,
+      "waited_ms": 128318.2076,
+      "contention": true
+    },
+    {
+      "date": "2026-10-06T16:33:48.5954128Z",
+      "series": "compile round 1/5 a4",
+      "cpu_percent": 7.0,
+      "waited_ms": 496.9322,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:39:37.739161Z",
+      "series": "compile round 2/5 a1",
+      "cpu_percent": 1.0,
+      "waited_ms": 482.8048,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:43:24.4424474Z",
+      "series": "compile round 2/5 a4",
+      "cpu_percent": 3.0,
+      "waited_ms": 5628.407,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:46:41.6086104Z",
+      "series": "compile round 3/5 a1",
+      "cpu_percent": 0.0,
+      "waited_ms": 474.5546,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:47:55.5775234Z",
+      "series": "compile round 3/5 a4",
+      "cpu_percent": 2.0,
+      "waited_ms": 526.2862,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T16:58:36.076652Z",
+      "series": "compile round 4/5 a1",
+      "cpu_percent": 4.0,
+      "waited_ms": 494.4997,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T17:02:22.4244572Z",
+      "series": "compile round 4/5 a4",
+      "cpu_percent": 1.0,
+      "waited_ms": 5667.6543,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T17:05:39.8389668Z",
+      "series": "compile round 5/5 a1",
+      "cpu_percent": 11.0,
+      "waited_ms": 485.5567,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T17:06:56.8221764Z",
+      "series": "compile round 5/5 a4",
+      "cpu_percent": 28.0,
+      "waited_ms": 478.6363,
+      "contention": true
+    },
+    {
+      "date": "2026-10-06T17:07:17.1210703Z",
+      "series": "compile round 5/5 a4",
+      "cpu_percent": 3.0,
+      "waited_ms": 20777.5282,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T17:12:26.2695589Z",
+      "series": "direct clang -O0 round 1/5 a4",
+      "cpu_percent": 5.0,
+      "waited_ms": 486.6017,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T17:15:05.8354285Z",
+      "series": "direct clang -O0 round 2/5 a4",
+      "cpu_percent": 5.0,
+      "waited_ms": 288.8822,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T17:21:12.8401401Z",
+      "series": "direct clang -O0 round 3/5 a4",
+      "cpu_percent": 6.0,
+      "waited_ms": 1881.6928,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T17:26:52.2495682Z",
+      "series": "direct clang -O0 round 4/5 a4",
+      "cpu_percent": 3.0,
+      "waited_ms": 534.7717,
+      "contention": false
+    },
+    {
+      "date": "2026-10-06T17:29:46.7776624Z",
+      "series": "direct finish -O0 round 5/5 a4",
+      "cpu_percent": 6.0,
+      "waited_ms": 552.8855,
+      "contention": false,
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "date": "2026-10-06T17:29:48.0643184Z",
+      "series": "direct finish -O2 round 1/5 a4",
+      "cpu_percent": 7.0,
+      "waited_ms": 269.7875,
+      "contention": false,
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "date": "2026-10-06T17:30:26.0782898Z",
+      "series": "direct finish -O2 round 2/5 a4",
+      "cpu_percent": 3.0,
+      "waited_ms": 285.497,
+      "contention": false,
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "date": "2026-10-06T17:31:03.3110328Z",
+      "series": "direct finish -O2 round 3/5 a4",
+      "cpu_percent": 7.0,
+      "waited_ms": 286.7675,
+      "contention": false,
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "date": "2026-10-06T17:31:41.0093566Z",
+      "series": "direct finish -O2 round 4/5 a4",
+      "cpu_percent": 10.0,
+      "waited_ms": 272.0384,
+      "contention": false,
+      "continuation": "20261006T1729458893813Z"
+    },
+    {
+      "date": "2026-10-06T17:32:18.3425121Z",
+      "series": "direct finish -O2 round 5/5 a4",
+      "cpu_percent": 14.0,
+      "waited_ms": 295.6858,
+      "contention": false,
+      "continuation": "20261006T1729458893813Z"
+    }
+  ],
+  "reference_records": [
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 504,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:10:15Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 505,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:10:19Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 506,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:10:21Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 507,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:10:25Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 508,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:10:27Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0xe07070a753ff4ed1",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 509,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:10:32Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0x69b8021a856a7c48",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 510,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:10:33Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0x01dad1b7c66e471f",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 511,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:10:35Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0xe504f6be05e914b3",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 512,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:10:36Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 0
+      },
+      "ok": true,
+      "digest": "0xe36abf3eafdfb876",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 513,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:10:38Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 1
+      },
+      "ok": true,
+      "digest": "0x927e5a2c0eed4917",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 514,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:10:14Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 515,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:10:17Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 516,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:10:20Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 517,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:10:23Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 518,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:10:26Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0xe07070a753ff4ed1",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 519,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:10:30Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0x69b8021a856a7c48",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 520,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:10:32Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0x01dad1b7c66e471f",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 521,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:10:34Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0xe504f6be05e914b3",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 522,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:10:35Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 0
+      },
+      "ok": true,
+      "digest": "0xe36abf3eafdfb876",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 523,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:10:37Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 1
+      },
+      "ok": true,
+      "digest": "0x927e5a2c0eed4917",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 524,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:17:06Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 525,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:17:09Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 526,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:17:11Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 527,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:17:15Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 528,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:17:18Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0xe07070a753ff4ed1",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 529,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:17:22Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0x69b8021a856a7c48",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 530,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:17:23Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0x01dad1b7c66e471f",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 531,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:17:25Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0xe504f6be05e914b3",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 532,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:17:26Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 0
+      },
+      "ok": true,
+      "digest": "0xe36abf3eafdfb876",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 533,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:17:28Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 1
+      },
+      "ok": true,
+      "digest": "0x927e5a2c0eed4917",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 534,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:17:05Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 535,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:17:07Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 536,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:17:10Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 537,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:17:13Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 538,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:17:16Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0xe07070a753ff4ed1",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 539,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:17:20Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0x69b8021a856a7c48",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 540,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:17:22Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0x01dad1b7c66e471f",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 541,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:17:24Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0xe504f6be05e914b3",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 542,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:17:25Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 0
+      },
+      "ok": true,
+      "digest": "0xe36abf3eafdfb876",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 543,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:17:27Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 1
+      },
+      "ok": true,
+      "digest": "0x927e5a2c0eed4917",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 544,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:21:11Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 545,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:21:15Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 546,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:21:17Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 547,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:21:20Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 548,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:21:23Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0xe07070a753ff4ed1",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 549,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:21:27Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0x69b8021a856a7c48",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 550,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:21:28Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0x01dad1b7c66e471f",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 551,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:21:30Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0xe504f6be05e914b3",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 552,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:21:31Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 0
+      },
+      "ok": true,
+      "digest": "0xe36abf3eafdfb876",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 553,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:21:33Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 1
+      },
+      "ok": true,
+      "digest": "0x927e5a2c0eed4917",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 554,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:21:10Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 555,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:21:13Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 556,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:21:16Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 557,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:21:19Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 558,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:21:22Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0xe07070a753ff4ed1",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 559,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:21:25Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0x69b8021a856a7c48",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 560,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:21:27Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0x01dad1b7c66e471f",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 561,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:21:29Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0xe504f6be05e914b3",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 562,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:21:30Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 0
+      },
+      "ok": true,
+      "digest": "0xe36abf3eafdfb876",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 563,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:21:32Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 1
+      },
+      "ok": true,
+      "digest": "0x927e5a2c0eed4917",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 564,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:22:24Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 565,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:22:27Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 566,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:22:29Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 567,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:22:33Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 568,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:22:35Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0xe07070a753ff4ed1",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 569,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:22:39Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0x69b8021a856a7c48",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 570,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:22:41Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0x01dad1b7c66e471f",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 571,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:22:42Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0xe504f6be05e914b3",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 572,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:22:43Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 0
+      },
+      "ok": true,
+      "digest": "0xe36abf3eafdfb876",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 573,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:22:45Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 1
+      },
+      "ok": true,
+      "digest": "0x927e5a2c0eed4917",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 574,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:22:23Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 575,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:22:25Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 576,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:22:28Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 577,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:22:31Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 578,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:22:34Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0xe07070a753ff4ed1",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 579,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:22:37Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0x69b8021a856a7c48",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 580,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:22:40Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0x01dad1b7c66e471f",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 581,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:22:42Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0xe504f6be05e914b3",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 582,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:22:43Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 0
+      },
+      "ok": true,
+      "digest": "0xe36abf3eafdfb876",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 583,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:22:44Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 1
+      },
+      "ok": true,
+      "digest": "0x927e5a2c0eed4917",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 584,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:23:34Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 585,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:23:38Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 586,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:23:40Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 587,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:23:44Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 588,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:23:46Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0xe07070a753ff4ed1",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 589,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:23:50Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0x69b8021a856a7c48",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 590,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:23:51Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0x01dad1b7c66e471f",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 591,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:23:53Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0xe504f6be05e914b3",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 592,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:23:54Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 0
+      },
+      "ok": true,
+      "digest": "0xe36abf3eafdfb876",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 593,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:23:56Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 1
+      },
+      "ok": true,
+      "digest": "0x927e5a2c0eed4917",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 594,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:23:33Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 595,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:23:36Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 0,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 596,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:23:39Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x1f364ea85636be95",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 597,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:23:42Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 0
+      },
+      "ok": true,
+      "digest": "0x6f3ccc51b9a1cbb2",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 598,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:23:45Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0xe07070a753ff4ed1",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 599,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:23:48Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 50
+      },
+      "ok": true,
+      "digest": "0x69b8021a856a7c48",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 600,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:23:51Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0x01dad1b7c66e471f",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 601,
+      "benchmark": "versus_wide",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:23:52Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 100,
+        "count": 1000000,
+        "kept": 1,
+        "tagged": 1,
+        "frozen": 100
+      },
+      "ok": true,
+      "digest": "0xe504f6be05e914b3",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 602,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:23:54Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 0
+      },
+      "ok": true,
+      "digest": "0xe36abf3eafdfb876",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/versus.jsonl",
+      "line": 603,
+      "benchmark": "versus_particles",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:23:55Z",
+      "options": {
+        "warmup": 10,
+        "ticks": 200,
+        "count": 1000000,
+        "kept": 1
+      },
+      "ok": true,
+      "digest": "0x927e5a2c0eed4917",
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        1,
+        12
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 89,
+      "benchmark": "sand",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:10:44Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 256
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xaa1f17c28395f54b",
+      "tick": 736,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 90,
+      "benchmark": "sand",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:11:22Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 1024
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0x77b068d6d8537e86",
+      "tick": 748,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 91,
+      "benchmark": "sand",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:10:41Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 256
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xaa1f17c28395f54b",
+      "tick": 736,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 92,
+      "benchmark": "sand",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:11:03Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 1024
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0x77b068d6d8537e86",
+      "tick": 748,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 93,
+      "benchmark": "sand",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:17:33Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 256
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xaa1f17c28395f54b",
+      "tick": 736,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 94,
+      "benchmark": "sand",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:18:13Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 1024
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0x77b068d6d8537e86",
+      "tick": 748,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 95,
+      "benchmark": "sand",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:17:31Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 256
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xaa1f17c28395f54b",
+      "tick": 736,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 96,
+      "benchmark": "sand",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:17:53Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 1024
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0x77b068d6d8537e86",
+      "tick": 748,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 97,
+      "benchmark": "sand",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:21:39Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 256
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xaa1f17c28395f54b",
+      "tick": 736,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 98,
+      "benchmark": "sand",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:22:17Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 1024
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0x77b068d6d8537e86",
+      "tick": 748,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 99,
+      "benchmark": "sand",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:21:36Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 256
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xaa1f17c28395f54b",
+      "tick": 736,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 100,
+      "benchmark": "sand",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:21:57Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 1024
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0x77b068d6d8537e86",
+      "tick": 748,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 101,
+      "benchmark": "sand",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:22:51Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 256
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xaa1f17c28395f54b",
+      "tick": 736,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 102,
+      "benchmark": "sand",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:23:30Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 1024
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0x77b068d6d8537e86",
+      "tick": 748,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 103,
+      "benchmark": "sand",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:22:48Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 256
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xaa1f17c28395f54b",
+      "tick": 736,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 104,
+      "benchmark": "sand",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:23:10Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 1024
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0x77b068d6d8537e86",
+      "tick": 748,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 105,
+      "benchmark": "sand",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:24:02Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 256
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xaa1f17c28395f54b",
+      "tick": 736,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 106,
+      "benchmark": "sand",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:24:40Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 1024
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0x77b068d6d8537e86",
+      "tick": 748,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 107,
+      "benchmark": "sand",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:23:59Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 256
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xaa1f17c28395f54b",
+      "tick": 736,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/sand.jsonl",
+      "line": 108,
+      "benchmark": "sand",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:24:21Z",
+      "options": {
+        "players": 8,
+        "join_every": 0.25,
+        "seconds": 10,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 1024
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0x77b068d6d8537e86",
+      "tick": 748,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/gallery.jsonl",
+      "line": 53,
+      "benchmark": "gallery",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:11:25Z",
+      "options": {
+        "players": 8,
+        "join_every": 3,
+        "seconds": 5,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 512,
+        "archived": 4
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xd73bd300537806ae",
+      "tick": 1718,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/gallery.jsonl",
+      "line": 54,
+      "benchmark": "gallery",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:11:24Z",
+      "options": {
+        "players": 8,
+        "join_every": 3,
+        "seconds": 5,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 512,
+        "archived": 4
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xd73bd300537806ae",
+      "tick": 1718,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/gallery.jsonl",
+      "line": 55,
+      "benchmark": "gallery",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:18:16Z",
+      "options": {
+        "players": 8,
+        "join_every": 3,
+        "seconds": 5,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 512,
+        "archived": 4
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xd73bd300537806ae",
+      "tick": 1718,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/gallery.jsonl",
+      "line": 56,
+      "benchmark": "gallery",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:18:15Z",
+      "options": {
+        "players": 8,
+        "join_every": 3,
+        "seconds": 5,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 512,
+        "archived": 4
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xd73bd300537806ae",
+      "tick": 1718,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/gallery.jsonl",
+      "line": 57,
+      "benchmark": "gallery",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:22:19Z",
+      "options": {
+        "players": 8,
+        "join_every": 3,
+        "seconds": 5,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 512,
+        "archived": 4
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xd73bd300537806ae",
+      "tick": 1718,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/gallery.jsonl",
+      "line": 58,
+      "benchmark": "gallery",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:22:18Z",
+      "options": {
+        "players": 8,
+        "join_every": 3,
+        "seconds": 5,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 512,
+        "archived": 4
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xd73bd300537806ae",
+      "tick": 1718,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/gallery.jsonl",
+      "line": 59,
+      "benchmark": "gallery",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:23:32Z",
+      "options": {
+        "players": 8,
+        "join_every": 3,
+        "seconds": 5,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 512,
+        "archived": 4
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xd73bd300537806ae",
+      "tick": 1718,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/gallery.jsonl",
+      "line": 60,
+      "benchmark": "gallery",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:23:31Z",
+      "options": {
+        "players": 8,
+        "join_every": 3,
+        "seconds": 5,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 512,
+        "archived": 4
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xd73bd300537806ae",
+      "tick": 1718,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/gallery.jsonl",
+      "line": 61,
+      "benchmark": "gallery",
+      "label": "row-functions-final",
+      "date": "2026-10-06T16:24:43Z",
+      "options": {
+        "players": 8,
+        "join_every": 3,
+        "seconds": 5,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 512,
+        "archived": 4
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xd73bd300537806ae",
+      "tick": 1718,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/gallery.jsonl",
+      "line": 62,
+      "benchmark": "gallery",
+      "label": "row-functions-final-before",
+      "date": "2026-10-06T16:24:42Z",
+      "options": {
+        "players": 8,
+        "join_every": 3,
+        "seconds": 5,
+        "latency_ms": 50,
+        "jitter_ms": 10,
+        "loss_percent": 1,
+        "size": 512,
+        "archived": 4
+      },
+      "ok": true,
+      "digest": null,
+      "hash": "0xd73bd300537806ae",
+      "tick": 1718,
+      "threads": 12,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 7,
+      "benchmark": "compile",
+      "label": "row-functions-final-before-a1",
+      "date": "2026-10-06T16:26:51.707Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 1,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 8,
+      "benchmark": "compile",
+      "label": "row-functions-final-a1",
+      "date": "2026-10-06T16:27:38.556Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 1,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 9,
+      "benchmark": "compile",
+      "label": "row-functions-final-before-a4",
+      "date": "2026-10-06T16:33:48.652Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 4,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 10,
+      "benchmark": "compile",
+      "label": "row-functions-final-a4",
+      "date": "2026-10-06T16:35:46.529Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 4,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 11,
+      "benchmark": "compile",
+      "label": "row-functions-final-before-a1",
+      "date": "2026-10-06T16:39:37.801Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 1,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 12,
+      "benchmark": "compile",
+      "label": "row-functions-final-a1",
+      "date": "2026-10-06T16:40:20.805Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 1,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 13,
+      "benchmark": "compile",
+      "label": "row-functions-final-before-a4",
+      "date": "2026-10-06T16:43:24.539Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 4,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 14,
+      "benchmark": "compile",
+      "label": "row-functions-final-a4",
+      "date": "2026-10-06T16:45:22.955Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 4,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 15,
+      "benchmark": "compile",
+      "label": "row-functions-final-before-a1",
+      "date": "2026-10-06T16:46:41.707Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 1,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 16,
+      "benchmark": "compile",
+      "label": "row-functions-final-a1",
+      "date": "2026-10-06T16:47:24.713Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 1,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 17,
+      "benchmark": "compile",
+      "label": "row-functions-final-before-a4",
+      "date": "2026-10-06T16:47:55.628Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 4,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 18,
+      "benchmark": "compile",
+      "label": "row-functions-final-a4",
+      "date": "2026-10-06T16:49:55.622Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 4,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 19,
+      "benchmark": "compile",
+      "label": "row-functions-final-before-a1",
+      "date": "2026-10-06T16:58:36.133Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 1,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 20,
+      "benchmark": "compile",
+      "label": "row-functions-final-a1",
+      "date": "2026-10-06T16:59:19.129Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 1,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 21,
+      "benchmark": "compile",
+      "label": "row-functions-final-before-a4",
+      "date": "2026-10-06T17:02:22.475Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 4,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 22,
+      "benchmark": "compile",
+      "label": "row-functions-final-a4",
+      "date": "2026-10-06T17:04:21.308Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 4,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 23,
+      "benchmark": "compile",
+      "label": "row-functions-final-before-a1",
+      "date": "2026-10-06T17:05:39.888Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 1,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 24,
+      "benchmark": "compile",
+      "label": "row-functions-final-a1",
+      "date": "2026-10-06T17:06:23.168Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 1,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 25,
+      "benchmark": "compile",
+      "label": "row-functions-final-before-a4",
+      "date": "2026-10-06T17:07:17.176Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 4,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    },
+    {
+      "path": "bench/results/compile.jsonl",
+      "line": 26,
+      "benchmark": "compile",
+      "label": "row-functions-final-a4",
+      "date": "2026-10-06T17:09:16.454Z",
+      "options": {
+        "targets": [
+          "native",
+          "web"
+        ],
+        "configs": [
+          "debug",
+          "release"
+        ],
+        "sizes": [
+          100
+        ],
+        "files": 10,
+        "loops": 100,
+        "archetypes": 4,
+        "repeat": 1,
+        "frontend": false
+      },
+      "ok": true,
+      "digest": null,
+      "hash": null,
+      "tick": null,
+      "threads": null,
+      "way_threads": [
+        null
+      ]
+    }
+  ],
+  "ok": true,
+  "continuation": {
+    "date": "2026-10-06T17:29:45.8893813Z",
+    "reason": "Cooperative public Runspace.Close stopped the original runner while it waited for the benchmark gate; consolidate remaining direct compiler pairs into one acquisition.",
+    "original_runner_pid": 75700,
+    "original_phase_archive": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-20261006T1729458893813Z-original-phases.json",
+    "original_phase_sha256": "BD544392E921FC6BC4B518E3EF895EB4F135CBC22A507D348CC94A84A4DDCB38",
+    "original_metadata_archive": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish-20261006T1729458893813Z-original-metadata.json",
+    "original_metadata_sha256": "8155BB265B836116EB1C41B50D24BEF3AFA799F3F9831C3191A33E671F2CC04D",
+    "original_phase_failure": null,
+    "original_metadata_failure": null,
+    "original_successful_samples": 8,
+    "missing_pairs": [
+      {
+        "optimization": "O0",
+        "round": 5
+      },
+      {
+        "optimization": "O2",
+        "round": 1
+      },
+      {
+        "optimization": "O2",
+        "round": 2
+      },
+      {
+        "optimization": "O2",
+        "round": 3
+      },
+      {
+        "optimization": "O2",
+        "round": 4
+      },
+      {
+        "optimization": "O2",
+        "round": 5
+      }
+    ],
+    "gate": "One benchmark mutex acquisition for all remaining complete before/after pairs; CPU idle check before every pair.",
+    "helper_path": "D:\\Projects\\PurrEngine\\.claude\\worktrees\\vigorous-feynman-f8dad9\\build\\rows-direct-finish.ps1",
+    "helper_sha256": "BE8D55F6DAFA14E868809A57B844E8526F989C8F318CFD21AF73AB4A944CE359",
+    "completed_utc": "2026-10-06T17:32:55.6761745Z"
+  }
+}

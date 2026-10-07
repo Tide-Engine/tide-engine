@@ -1,0 +1,33 @@
+// What a game's code says to a profile (tide/profile.h): its ticks' systems
+// and its frames' views, by name.
+
+component Body
+{
+    float2 position;
+    float2 velocity = float2(1, 0);
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body);
+    Spawn(Body { velocity = float2(0, 2) });
+}
+
+system Move(mut Body body, Time time)
+{
+    body.position += body.velocity * time.dt;
+}
+
+// Once a frame.
+view Backdrop(Time time)
+{
+    Draw.SetCamera(float2(time.tick, 0), 10);
+}
+
+// Once for each body.
+view Bodies(Body body)
+{
+    Draw.Circle(body.position, 1, Color.white);
+}

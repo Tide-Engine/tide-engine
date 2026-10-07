@@ -1,0 +1,12 @@
+// expect: 'Forgotten' is local, so its handlers are too: 'local event(Forgotten ...) Free(...)'
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+event(Forgotten) Free(Box box)
+{
+}

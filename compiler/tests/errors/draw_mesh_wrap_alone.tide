@@ -1,0 +1,12 @@
+// expect: a mesh's wrap comes after its texture and its filter: 'Draw.Mesh(..., texture, Filter.Bilinear, Wrap.Repeat)'
+scene Main { }
+
+local singleton Art
+{
+    List<Vertex3> corners;
+}
+
+view Show(Art art)
+{
+    Draw.Mesh(art.corners, [0, 1, 2], float4x4.identity, Wrap.Mirror);
+}

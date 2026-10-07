@@ -1,0 +1,160 @@
+// Texture assets: images a game draws with, kept a byte a channel in the pack
+// and drawn where the pack has them (docs/spec.md, Assets). One alone, two
+// names of one file, a glob's list and its map, a value kept in a field, and
+// one sampled by name in a frag. And how a texture's declaration says it's
+// sampled: [Filter] and [Wrap] before an asset and before a Grid2<Color>
+// field, wherever a draw or a Sample that names it doesn't say.
+
+asset Texture hero = "assets/hero.png";
+asset Texture heroAgain = "assets/hero.png";
+asset Grid2<Color> heroCells = "assets/hero.png"; // The same file as cells code reads: a value of its own
+asset List<Texture> run = "assets/run/*.png";
+asset Map<string, Texture> runByName = "assets/run/*.png";
+
+[Filter(Filter.Point), Wrap(Wrap.Repeat)]
+asset Texture tiles = "assets/run/0.png";
+[Wrap(Wrap.Mirror)]
+asset Grid2<Color> glass = "assets/run/1.png";
+[Filter(Filter.Point)]
+asset List<Texture> crisp = "assets/run/*.png";
+[Wrap(Wrap.Repeat)]
+asset Map<string, Texture> tiled = "assets/run/*.png";
+
+scene Main { }
+
+// A mesh's corner of the game's own: its draws go through a shader
+struct Corner
+{
+    float2 position;
+    float2 uv;
+    Color color = Color.white;
+}
+
+local singleton Art
+{
+    List<Vertex> flat;
+    List<Vertex3> solid;
+    List<Corner> corners;
+    List<int> faces;
+    List<float4x4> places;
+    Texture kept;      // Whichever image it's given
+    Texture keptTiles;
+    [Filter(Filter.Point), Wrap(Wrap.Mirror)]
+    Grid2<Color> paint = Grid2(2, 2);
+    Grid2<Color> bare = Grid2(2, 2);
+    RenderTarget target;
+    int runCount;
+    int crispCount;
+    int byNameCount;
+    bool hasOne;
+    bool hasNine;
+    int frames;
+}
+
+view Fill(mut Art art)
+{
+    art.frames += 1;
+    if (art.frames > 1) return;
+    art.flat = [Vertex { }, Vertex { position = float2(1, 0), uv = float2(2, 0) }, Vertex { position = float2(0, 1), uv = float2(0, 2) }];
+    art.solid = [Vertex3 { }, Vertex3 { position = float3(1, 0, 0), uv = float2(2, 0) },
+                 Vertex3 { position = float3(0, 1, 0), uv = float2(0, 2) }];
+    art.corners = [Corner { }, Corner { position = float2(1, 0), uv = float2(2, 0) }, Corner { position = float2(0, 1), uv = float2(0, 2) }];
+    art.faces = [0, 1, 2];
+    art.places = [float4x4.identity, float4x4.Translate(float3(2, 0, 0))];
+    art.paint[0, 0] = Color.red;
+    art.bare[1, 1] = Color.white;
+    // A Texture is a value: copied into fields like any other
+    art.kept = run[1];
+    art.keptTiles = tiles;
+    art.runCount = run.count;
+    art.crispCount = crisp.count;
+    art.byNameCount = runByName.count;
+    art.hasOne = runByName.Has("assets/run/1.png");
+    art.hasNine = runByName.Has("assets/run/9.png");
+}
+
+// Drawn by name, as one of a list, by a key, and as the value a field holds
+view Images(Art art)
+{
+    Draw.Mesh(art.flat, art.faces, hero);
+    Draw.Mesh(art.flat, art.faces, heroAgain, Filter.Point);            // The same image: one texture
+    Draw.Mesh(art.flat, art.faces, run[2], Filter.Point);
+    Draw.Mesh(art.flat, art.faces, runByName["assets/run/1.png"]);
+    Draw.Mesh(art.flat, art.faces, art.kept, Filter.Point);             // run[1] again
+    Draw.Mesh(art.flat, art.faces, runByName["assets/run/9.png"]);      // No such key: the default Texture, which is none
+    Draw.Mesh(art.flat, art.faces, run[7], Filter.Point);               // Past the list's end: the same
+    Draw.Mesh(art.solid, art.faces, float4x4.identity, hero);
+    foreach (var frame in run) Draw.Mesh(art.flat, art.faces, frame, Filter.Point, Wrap.Mirror);
+    art.target.Mesh(art.flat, art.faces, hero);
+}
+
+// What a declaration says, wherever a draw that names it doesn't
+view Declared(Art art)
+{
+    Draw.Rect(float2(0, 0), float2(1, 1), Color.white);
+    Draw.Mesh(art.flat, art.faces, tiles);                              // Both its declaration's
+    Draw.Mesh(art.flat, art.faces, tiles, Filter.Bilinear);             // The draw's filter, the declaration's wrap
+    Draw.Mesh(art.flat, art.faces, tiles, Filter.Bilinear, Wrap.Clamp); // Both the draw's
+    Draw.Mesh(art.flat, art.faces, glass);                              // A grid's asset
+    Draw.Mesh(art.flat, art.faces, crisp[0]);                           // One of a list
+    Draw.Mesh(art.flat, art.faces, tiled["assets/run/2.png"]);          // ...and of a map
+    Draw.Mesh(art.flat, art.faces, art.paint);                          // A grid's field
+    Draw.Mesh(art.flat, art.faces, art.bare);                           // One that says nothing
+    Draw.Mesh(art.flat, art.faces, art.keptTiles);                      // A value in a field: sampled as tiles says
+    Draw.Mesh(art.solid, art.faces, float4x4.identity, tiles);
+    art.target.Mesh(art.flat, art.faces, tiles);
+    foreach (var frame in crisp) Draw.Mesh(art.flat, art.faces, frame); // Each of a list, as a loop goes through it
+}
+
+// A vertex of the game's with no frag: its color times the texture, read as its declaration says
+view Corners(Art art)
+{
+    Draw.Rect(float2(0, 0), float2(1, 1), Color.white);
+    Draw.Mesh(art.corners, art.faces, tiles);
+    Draw.Mesh(art.corners, art.faces, tiles, Filter.Bilinear);
+    Draw.Mesh(art.corners, art.faces, art.paint);
+    Draw.Mesh(art.corners, art.faces, hero);
+}
+
+// A frag samples an image by its name, as it samples a grid's asset: each as its declaration says, or as it says
+frag Named(Corner vertex, out Color color, Art art)
+{
+    color = hero.Sample(vertex.uv)
+          * tiles.Sample(vertex.uv)
+          * tiles.Sample(vertex.uv, Filter.Bilinear)
+          * tiles.Sample(vertex.uv, Filter.Point, Wrap.Repeat)   // The declaration's, said outright: no texture more
+          * glass.Sample(vertex.uv)
+          * heroCells.Sample(vertex.uv, Filter.Point)
+          * art.paint.Sample(vertex.uv)
+          * art.bare.Sample(vertex.uv);
+}
+
+// The Texture its draw gives it: what a Sample leaves unsaid is its source's declaration's
+frag Given(Corner vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv) * source.Sample(vertex.uv, Filter.Bilinear, Wrap.Clamp);
+}
+
+frag Copied(Vertex vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv);
+}
+
+frag Given3(Vertex3 vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv);
+}
+
+view Shaded(Art art)
+{
+    Draw.Mesh(art.corners, art.faces, Named);
+    Draw.Mesh(art.corners, art.faces, tiles, Given);
+    Draw.Mesh(art.corners, art.faces, hero, Given);          // No declared sampling: blended, the cells at the edge
+    Draw.Mesh(art.corners, art.faces, art.keptTiles, Given); // A value in a field: as tiles
+    Draw.Blit(tiles, art.target, Copied);
+    Draw.Blit(art.paint, art.target, Copied);
+    Draw.Blit(hero, art.target, Copied);
+    // A list's instances: through a frag, and the engine's own
+    Draw.Instanced(art.solid, art.faces, art.places, tiles, Given3);
+    Draw.Instanced(art.solid, art.faces, art.places, tiles, Filter.Bilinear);
+}

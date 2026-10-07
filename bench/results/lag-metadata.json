@@ -1,0 +1,89 @@
+{
+  "runtime_revision": "abaa39e717810b0d8d5578e122e7b5de051cfc89",
+  "platform": "Windows",
+  "node": "24.16.0",
+  "build_parallelism": 2,
+  "debug_tests": 1438,
+  "web_debug_tests": 1424,
+  "validation_note": "Full native/web-debug suites passed all except the old burst fixture; after restaging its 23/35-frame gaps, tide_tests passes on both without assertion changes.",
+  "release_affected_tests": 6,
+  "web_release_affected_tests": 6,
+  "artifacts": [
+    {
+      "path": "build/release/bin/bench_lag_native.exe",
+      "sha256": "967ee2f5d2b3dc58c02655f0ee0efba0210113e8c7779f7a573e9490c85e572b"
+    },
+    {
+      "path": "build/release/bin/sumo_tests.exe",
+      "sha256": "96e994ec61fbb79249f66aa5a4bfb8874c41a2bc9c653131e917788f06932816"
+    },
+    {
+      "path": "build/web-release/bin/sumo.html",
+      "sha256": "50a45242be2e2f5d25e415bbb8e494a804c5b559984ae1077f33349f61216064"
+    },
+    {
+      "path": "build/lag-before/sumo_tests.exe",
+      "sha256": "11e5212230ef52cfca612b9aebdd2f73fbe1b6503c643e30e6e86d3faa6437d9"
+    }
+  ],
+  "historical_browser_baseline": {
+    "code_revision": "6b52015c4207b56a8461c342f5468c9043f849bc",
+    "instrumentation": "ran/ran_ahead/heard_tick counters and netcode frame telemetry only",
+    "build_time_utc": "2026-10-06T13:00:00Z",
+    "source_edit_time_utc": "2026-10-06T13:02:53Z",
+    "transcript_evidence": "rows28,189,190,260,262,269,275,280 of original continuation transcript",
+    "page_sha256": "a58eda46fd951d808935dbc2b8266da9465108ef3ceaa669a35953c55a678fe2"
+  },
+  "measurement_seed": 0,
+  "final_labels": [
+    "catch-up-native-final",
+    "catch-up-web-final",
+    "catch-up-web-before"
+  ],
+  "browser_seed_source": "Tide.arguments --seed 0; repeat after discovering earlier browser entropy was uncontrolled",
+  "unseeded_labels": [
+    "catch-up-web-final-unseeded",
+    "catch-up-web-before-unseeded"
+  ],
+  "integration_validation": {
+    "integrated_revision": "ef03e169cfd35f4ebed23a2cd8eb77a8328989c6",
+    "incoming_dev_revision": "5bc9de616b83185b41527a3303e948b33a67b1b9",
+    "followup_incoming_revision": "017a851f238900e6aa3022c95ba94f115fec89ad",
+    "full_debug_tests": 1475,
+    "debug_note": "1473 passed initially; Sumo/Towers pins recomputed for combined physics/netcode and both passed after rebuild",
+    "full_web_debug_tests": 1461,
+    "release_affected_tests": 14,
+    "web_release_affected_tests": 15,
+    "combined_world_pins": {
+      "sumo_640": "ab6f2c13e3765ec0",
+      "sumo_880": "a15c5e6bf2a839d9",
+      "towers_1500": "7bb5741470b80075",
+      "towers_1800": "73da28347c9b7e2a",
+      "sand": "fa2f2bb6b040ab70",
+      "gallery": "45b1d0ae84959084"
+    },
+    "pins_note": "These pins reproduce on native/web debug/release. Pre-integration session-only arrival traces remain above; incoming physics changes also change Sumo/Towers worlds.",
+    "native_smoke": {
+      "seconds": 5,
+      "frames": 693,
+      "raw_frames": "bench/results/lag-frames/2026-10-06-catch-up-integration-smoke-native-0.jsonl.gz",
+      "sha256": "c6bb0636cbcb6979bcbb13b36c454409703a7c621ee6919880ff19b248379f1c",
+      "passed": true,
+      "raw_frames_sha256": "41b1696f428c9dd45316428c9aaac420be66304fc8f519b0f88c62423e647227",
+      "raw_content_sha256": "67c3bd5122d3fc0befb0b902970b57a0d928dd860ed024e28ab7a044307ff2ce"
+    },
+    "web_smoke": {
+      "seconds": 8,
+      "seed": 0,
+      "players": 3,
+      "backend": "hardware WebGPU",
+      "page_sha256": "f33c370944e81ddf2a589939f697084580846b52cff7c37cb62b92468d32b766",
+      "raw_frames": "bench/results/lag-frames/2026-10-06T18-07-52-042Z-catch-up-integration-smoke-web-0.jsonl.gz",
+      "passed": true,
+      "raw_frames_sha256": "f49996056c12c7b70d5b64d013aacb0b93e21e0f780ee97697fc1b2e87cd8e62",
+      "raw_content_sha256": "45497927377b7a1b810d9e3a2ade939342527f8ee2ec65151c7e5a463a18bc71"
+    },
+    "smoke_note": "Bounded functionality checks only; neither smoke completes a full round or updates the full-round performance tables.",
+    "sanitizer_build_fix": "Upstream Build37506147514 failed to force-vectorize wide.c under ASan/UBSan. The equivalent upstream fix017a851 is retained, guarding only the pragmas. A local sanitized object compile passes, both optimized loops still vectorize, and native/web release wide checks pass."
+  }
+}

@@ -1,21 +1,31 @@
 # Builds, tests and publishes tide (see AGENTS.md, Packaging).
 #
-# Run by hand with an action:
-# - check: build packages and run every test suite; publish nothing.
-# - nightly, on dev: build and try packages, then publish a nightly pre-release.
-# - stable, on release: run every test suite, publish a stable release, and
-#   commit the new VERSION.
+# Run workflow (or gh workflow run) chooses what to do:
+# - check (default): the packages and every test suite; nothing is published.
+#   Its optional windows-web scope runs only the Windows web test suite.
+# - nightly, on dev: build each platform's package, try it, and publish a
+#   pre-release, like 0.2.0-nightly.3. No test suite runs.
+# - stable, on release: the packages and every test suite, then a stable
+#   release, and the new VERSION committed. A stable release waits for its tests.
+# Pushes and pull requests start nothing.
 #
-# semantic-release picks the version from conventional commits (feat:, fix:,
-# see .releaserc.json). A release run with neither publishes nothing.
+# A release's version comes from conventional commits (feat:, fix:), and a run
+# with neither publishes nothing: semantic-release says for a stable one
+# (.releaserc.json), and .github/next-nightly.mjs for a nightly, which is
+# published by this workflow itself. A job that fails fails the run, and
+# nothing is published: every release has every package that's built.
+#
+# Jobs run on fresh Blacksmith runners. Each platform builds its own package;
+# macOS adds a package, while the existing Windows and Linux test suites
+# keep their full-check and stable-release gates.
 name: Build
-run-name: Build (${{ inputs.action }}, ${{ github.ref_name }})
+run-name: ${{ inputs.action }}${{ inputs.scope == 'windows-web' && ' windows-web' || '' }} (${{ github.ref_name }})
 
 on:
   workflow_dispatch:
     inputs:
       action:
-        description: What to run
+        description: 'Check only, publish a nightly from dev, or publish a stable from release'
         type: choice
         required: true
         default: check
@@ -23,7 +33,17 @@ on:
           - check
           - nightly
           - stable
+      scope:
+        description: 'For checks: all platforms and packages, or Windows web only'
+        type: choice
+        required: false
+        default: all
+        options:
+          - all
+          - windows-web
 
+# Publishing a commit whose workflows differ from the default branch needs
+# TIDE_PUBLISH_TOKEN, scoped to this repo with Contents and Workflows write.
 permissions:
   contents: write
 
@@ -32,30 +52,60 @@ env:
 
 concurrency:
   group: build-${{ github.ref }}
+  # Finish the current manual run, then take the newest waiting request.
+  queue: single
+  cancel-in-progress: false
 
 jobs:
   version:
     name: Version
     runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
-      version: ${{ steps.next.outputs.new_release_version }}
-      published: ${{ steps.next.outputs.new_release_published }}
+      version: ${{ steps.next.outputs.new_release_version || steps.nightly.outputs.version }}
+      published: ${{ steps.next.outputs.new_release_published || steps.nightly.outputs.published }}
+      tests: ${{ steps.checks.outputs.tests }}
+      matrix: ${{ steps.checks.outputs.matrix }}
     steps:
-      - name: Check action and branch
+      - name: Check release branch
         shell: bash
         env:
-          ACTION: ${{ inputs.action }}
+          BUILD_ACTION: ${{ inputs.action }}
+          BUILD_SCOPE: ${{ inputs.scope || 'all' }}
         run: |
-          case "$ACTION:$GITHUB_REF" in
-            check:*|nightly:refs/heads/dev|stable:refs/heads/release) ;;
-            *) echo 'Nightly releases require dev; stable releases require release.' >&2; exit 1 ;;
+          case "$BUILD_ACTION:$BUILD_SCOPE" in
+            check:all|check:windows-web|nightly:all|stable:all) ;;
+            *) echo "::error::Use scope=all for publishing; windows-web is only for action=check."; exit 1 ;;
           esac
-      - uses: actions/checkout@v4
+          case "$BUILD_ACTION:$GITHUB_REF" in
+            check:*|nightly:refs/heads/dev|stable:refs/heads/release) ;;
+            *) echo "::error::Use dev for a nightly, release for a stable, or check on any ref."; exit 1 ;;
+          esac
+      - uses: useblacksmith/checkout@v1
         with:
           fetch-depth: 0
+          token: ${{ secrets.TIDE_PUBLISH_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: Check publishing permission
+        if: inputs.action == 'nightly' || inputs.action == 'stable'
+        shell: bash
+        env:
+          HAS_PUBLISH_TOKEN: ${{ secrets.TIDE_PUBLISH_TOKEN != '' }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: bash .github/check-publish.sh
+      # semantic-release's action installs its plugins with npm.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # A nightly's version is our own to work out: semantic-release publishes
+      # nothing for a commit that isn't its branch's newest any more, which
+      # dev's rarely is by the time its packages are built.
+      - name: Next nightly
+        id: nightly
+        if: inputs.action == 'nightly'
+        shell: bash
+        run: node .github/next-nightly.mjs | tee -a "$GITHUB_OUTPUT"
       - name: Next version
         id: next
-        if: inputs.action != 'check'
+        if: inputs.action == 'stable'
         uses: cycjimmy/semantic-release-action@v4
         with:
           dry_run: true
@@ -63,47 +113,134 @@ jobs:
             @semantic-release/exec
             @semantic-release/git
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.TIDE_PUBLISH_TOKEN || secrets.GITHUB_TOKEN }}
+      # The packages and test suites, or the requested Windows web check alone.
+      # macOS only builds and tries its package; it adds no test-suite rows.
+      - name: Checks
+        id: checks
+        shell: bash
+        env:
+          BUILD_ACTION: ${{ inputs.action }}
+          BUILD_SCOPE: ${{ inputs.scope || 'all' }}
+        run: |
+          row() { printf '{"platform":"%s","os":"%s","preset":"%s","test-jobs":4}' "$1" "$2" "$3"; }
+          tests=false
+          if [ "$BUILD_SCOPE" = windows-web ]; then
+            tests=true
+            rows="$(row windows-x64 blacksmith-4vcpu-windows-2025 web-release)"
+          else
+            rows="$(row windows-x64 blacksmith-4vcpu-windows-2025 package),$(row linux-x64 blacksmith-4vcpu-ubuntu-2404 package),$(row macos-arm64 blacksmith-6vcpu-macos-latest package)"
+            if [ "$BUILD_ACTION" != nightly ]; then
+              tests=true
+              for preset in release web-release mingw-release; do rows="$rows,$(row windows-x64 blacksmith-4vcpu-windows-2025 $preset)"; done
+              for preset in release web-release sanitize; do rows="$rows,$(row linux-x64 blacksmith-4vcpu-ubuntu-2404 $preset)"; done
+            fi
+          fi
+          echo "tests=$tests" >> "$GITHUB_OUTPUT"
+          echo "matrix=[$rows]" >> "$GITHUB_OUTPUT"
 
-  build:
-    name: Build (${{ matrix.platform }})
+  checks:
+    name: ${{ matrix.preset == 'package' && format('Package ({0})', matrix.platform) || format('Test ({0}, {1})', matrix.platform, matrix.preset) }}
     needs: version
     strategy:
-      fail-fast: false
+      fail-fast: false # The other platforms finish, so a run shows every failure
       matrix:
-        include:
-          - platform: windows-x64
-            os: blacksmith-4vcpu-windows-2025
-          - platform: linux-x64
-            os: blacksmith-4vcpu-ubuntu-2404
-          - platform: macos-arm64
-            os: blacksmith-6vcpu-macos-latest
+        include: ${{ fromJSON(needs.version.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
-    # macOS is new: until it's reliable, its failures don't hold back releases.
-    continue-on-error: ${{ matrix.platform == 'macos-arm64' }}
     env:
-      TIDE_VERSION: ${{ needs.version.outputs.version || '0.0.0-dev' }}
+      TIDE_TESTS: ${{ needs.version.outputs.tests }}
+      TIDE_VERSION: ${{ needs.version.outputs.version }}
       TIDE_CHANNEL: ${{ github.ref_name == 'release' && 'stable' || 'nightly' }}
+      TIDE_WEB_CHROME_VERSION: '155.0.8059.39'
+      CTEST_PARALLEL_LEVEL: ${{ matrix.test-jobs }}
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      CCACHE_DIR: ${{ github.workspace }}/build/ccache
+      CCACHE_MAXSIZE: 500M
+      CCACHE_COMPILERCHECK: content
+      CCACHE_NODIRECT: 'true'
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v4
 
+      # The runners' own Node is 22, whose libuv ends a Windows process, about
+      # one in 500, as it starts its first TCP connection (exit code
+      # 3221226505, before a test file's first test ran): libuv's #5107, which
+      # Node has from 24.16. So the Node tests here run on 24, on every
+      # platform, as the docs' do.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # A run that releases nothing builds as this repo's version, as builds
+      # here do: the package's tests check `#if TIDE_0_1_OR_NEWER` against it.
+      - name: Version
+        if: env.TIDE_VERSION == ''
+        run: echo "TIDE_VERSION=$(cat VERSION)-dev" >> "$GITHUB_ENV"
+
+      # Windows and Linux build with the LLVM tide's built-in clang comes from
+      # (cmake/LLVM.cmake), which builds players' games: the runners' own is
+      # older. clang-toolchain.cmake finds it through LLVM_ROOT.
+      - name: LLVM version
+        run: |
+          version=$(sed -nE 's/^set\(TIDE_LLVM_VERSION ([0-9.]+)\).*/\1/p' cmake/LLVM.cmake)
+          test -n "$version"
+          echo "LLVM_VERSION=$version" >> "$GITHUB_ENV"
+      # LLVM's own packages, of the same major version.
       - name: Install tools (Linux)
         if: runner.os == 'Linux'
         run: |
+          major=${LLVM_VERSION%%.*}
+          codename=$(lsb_release -cs)
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$major main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
-          sudo apt-get install -y clang lld ninja-build zstd libx11-dev libxrandr-dev libxinerama-dev \
-            libxcursor-dev libxi-dev libgl1-mesa-dev
+          sudo apt-get install -y clang-$major lld-$major llvm-$major ninja-build zstd ccache libx11-dev libxrandr-dev \
+            libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev
+          echo "LLVM_ROOT=/usr/lib/llvm-$major" >> "$GITHUB_ENV"
+      - name: Cache LLVM tools (Windows)
+        id: llvm-tools
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          # Cache the build tools and their aliases, plus clang's resources.
+          # Debuggers, Fortran and the other LLVM programs aren't used here.
+          path: |
+            C:/llvm/bin/clang.exe
+            C:/llvm/bin/clang++.exe
+            C:/llvm/bin/clang-scan-deps.exe
+            C:/llvm/bin/llvm-ar.exe
+            C:/llvm/bin/llvm-ranlib.exe
+            C:/llvm/bin/llvm-lib.exe
+            C:/llvm/bin/llvm-rc.exe
+            C:/llvm/bin/llvm-windres.exe
+            C:/llvm/bin/llvm-mt.exe
+            C:/llvm/bin/lld.exe
+            C:/llvm/bin/ld.lld.exe
+            C:/llvm/bin/lld-link.exe
+            C:/llvm/bin/wasm-ld.exe
+            C:/llvm/lib/clang
+          key: llvm-tools-v2-Windows-${{ env.LLVM_VERSION }}-${{ hashFiles('cmake/LLVM.cmake', 'cmake/*toolchain.cmake') }}
+      # LLVM's own release, the very archive tide's package unpacks: its
+      # programs and clang's headers.
       - name: Install tools (Windows)
         if: runner.os == 'Windows'
-        run: choco install ninja zstandard -y --no-progress
+        run: |
+          choco install ninja zstandard ccache -y --no-progress
+          if [ '${{ steps.llvm-tools.outputs.cache-hit }}' != true ]; then
+            name="clang+llvm-$LLVM_VERSION-x86_64-pc-windows-msvc"
+            mkdir -p /c/llvm
+            curl -fsSL "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/$name.tar.zst" \
+              | zstd -d -q --long=31 | tar -x -f - -C /c/llvm --strip-components=1 "$name/bin" "$name/lib/clang"
+          fi
+          echo "LLVM_ROOT=C:/llvm" >> "$GITHUB_ENV"
       # Apple's clang builds native code; web builds need Homebrew's LLVM, and its lld for wasm-ld.
       - name: Install tools (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install ninja llvm lld zstd
+          brew install ninja llvm lld zstd ccache
           echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
       # Web builds download wasi-sdk's C library (cmake/wasi-toolchain.cmake),
       # and MinGW builds llvm-mingw's (cmake/mingw-toolchain.cmake).
@@ -118,65 +255,285 @@ jobs:
           key: llvm-mingw-${{ hashFiles('cmake/mingw-toolchain.cmake') }}
       # The package builds clang and lld into tide from LLVM's release (cmake/LLVM.cmake).
       - uses: actions/cache@v4
+        if: matrix.preset == 'package'
         with:
           path: build/llvm-[0-9]*
           key: llvm-${{ runner.os }}-${{ hashFiles('cmake/LLVM.cmake') }}
       # On macOS, LLVM's libraries are bitcode, which lld compiles as it links
       # tide (minutes); its cache keeps that work between runs. Only LLVM and
-      # the code that calls it decide what's in it.
+      # the code that calls it decide what's in it. lld's own keys for what it
+      # keeps there leave out most of how the code is made (whether a function's
+      # address is said to matter, which folding identical ones goes by), so a
+      # change to that takes another number here, or the old code is found.
       - uses: actions/cache@v4
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && matrix.preset == 'package'
         with:
           path: build/package/lto-cache
-          key: lto-${{ hashFiles('cmake/LLVM.cmake', 'compiler/cli/llvm/cc.cpp') }}
-          restore-keys: lto-
+          key: lto-2-${{ hashFiles('cmake/LLVM.cmake', 'compiler/cli/llvm/cc.cpp') }}
+          restore-keys: lto-2-
 
-      # The demo's smoke test opens a window, which needs a GPU the runners
-      # don't have; the web one runs in headless Chrome.
+      # CMake inherits these launchers in its native host builds too. ccache
+      # hashes the compiler and preprocessed source, including optional headers.
+      - name: Cache compiled objects
+        uses: actions/cache@v4
+        with:
+          path: build/ccache
+          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ env.LLVM_VERSION }}-${{ github.sha }}
+          restore-keys: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ env.LLVM_VERSION }}-
+      - name: Compiler cache statistics (start)
+        run: ccache --zero-stats
+
+      # Start long native tests first. Browser workloads compete for software
+      # rendering CPU when grouped together, so keep their usual ordering.
+      # Only scheduling data is cached; every selected test still runs.
+      - name: Cache test durations
+        if: matrix.preset == 'release' || matrix.preset == 'mingw-release'
+        uses: actions/cache@v4
+        with:
+          path: build/${{ matrix.preset }}/Testing/Temporary/CTestCostData.txt
+          key: ctest-cost-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ github.sha }}
+          restore-keys: ctest-cost-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-
+
+      # Native tests that open a window (label gpu: the demo's smoke test, the
+      # renderer's) need OpenGL in a window, which no runner has: Windows' and
+      # Linux's have no GPU, and on macOS's GLFW finds no OpenGL to open one
+      # with. The web ones run in headless Chrome.
       - name: Test (native)
-        if: inputs.action != 'nightly'
+        if: matrix.preset == 'release'
         run: |
-          cmake --preset release
+          cmake --preset release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
           cmake --build --preset release
-          ctest --preset release -E demo_smoke
+          ctest --preset release -LE gpu
+      # Everything again under AddressSanitizer and UndefinedBehaviorSanitizer,
+      # where a read or write out of bounds or an undefined operation is a
+      # report, and a report fails its test: the games of Tide alone that try
+      # to make one (compiler/tests/safety, see AGENTS.md, Language) with the
+      # rest of the suite. Two tests are the other jobs' alone: the relay's,
+      # which is Node's and no sanitizer watches, and rooms with the runner's
+      # browsers, which nobody has run this way yet.
+      - name: Test (sanitizers)
+        if: matrix.preset == 'sanitize'
+        run: |
+          cmake --preset sanitize -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
+          cmake --build --preset sanitize
+          ctest --preset sanitize -LE gpu -E '^(relay|tide_platform_rooms)$'
+      # Pin the Windows web tests' browser independently of the runner image.
+      # Headless Shell draws offscreen; native jobs keep the runner's browser.
+      - name: Cache Chrome Headless Shell (Windows web)
+        if: runner.os == 'Windows' && matrix.preset == 'web-release'
+        uses: actions/cache@v4
+        with:
+          path: build/chrome-for-testing/${{ env.TIDE_WEB_CHROME_VERSION }}/chrome-headless-shell-win64
+          key: chrome-headless-shell-Windows-win64-${{ env.TIDE_WEB_CHROME_VERSION }}
+      - name: Install Chrome Headless Shell (Windows web)
+        if: runner.os == 'Windows' && matrix.preset == 'web-release'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $chromeRoot = Join-Path $env:GITHUB_WORKSPACE "build/chrome-for-testing/$env:TIDE_WEB_CHROME_VERSION"
+          $chromePath = Join-Path $chromeRoot 'chrome-headless-shell-win64/chrome-headless-shell.exe'
+          if (-not (Test-Path -LiteralPath $chromePath)) {
+            New-Item -Path $chromeRoot -ItemType Directory -Force | Out-Null
+            $chromeArchive = Join-Path $chromeRoot 'chrome-headless-shell-win64.zip'
+            Invoke-WebRequest "https://storage.googleapis.com/chrome-for-testing-public/$env:TIDE_WEB_CHROME_VERSION/win64/chrome-headless-shell-win64.zip" -OutFile $chromeArchive
+            Expand-Archive -LiteralPath $chromeArchive -DestinationPath $chromeRoot -Force
+            Remove-Item -LiteralPath $chromeArchive
+          }
+          $chromeVersion = (& $chromePath --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $chromeVersion -ne "Google Chrome for Testing $env:TIDE_WEB_CHROME_VERSION") {
+            throw "Expected Chrome Headless Shell $env:TIDE_WEB_CHROME_VERSION, found $chromeVersion."
+          }
+          Write-Output "Web browser: $chromePath ($chromeVersion)"
+          Write-Output "Windows process session: $((Get-Process -Id $PID).SessionId)"
+          "TIDE_WEB_BROWSER=$($chromePath.Replace('\', '/'))" >> $env:GITHUB_ENV
+
+      # The WebGPU ones (label webgpu) run on the browser's software WebGPU.
+      # Linux's runners leave them out: without a GPU, Chrome there draws with
+      # WebGPU but gives nothing back when the test reads its pixels.
       - name: Test (web)
-        if: inputs.action != 'nightly'
-        run: cmake --workflow --preset web-release
+        if: matrix.preset == 'web-release'
+        run: |
+          # The docs' examples are the Docs workflow's.
+          browser=()
+          if [ "$RUNNER_OS" = Windows ]; then
+            test -f "$TIDE_WEB_BROWSER"
+            browser=(-DTIDE_BROWSER="$TIDE_WEB_BROWSER")
+          fi
+          cmake --preset web-release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL" -DTIDE_DOC_EXAMPLES=OFF "${browser[@]}"
+          cmake --build --preset web-release
+          if [ "$RUNNER_OS" = Linux ]; then
+            ctest --preset web-release -LE webgpu
+          else
+            ctest --preset web-release
+          fi
       # The target tide builds Windows games for; its platform layer goes in the package.
       - name: Test (MinGW)
-        if: runner.os == 'Windows' && inputs.action != 'nightly'
+        if: matrix.preset == 'mingw-release'
         run: |
-          cmake --preset mingw-release
+          cmake --preset mingw-release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
           cmake --build --preset mingw-release
-          ctest --preset mingw-release -E demo_smoke
+          ctest --preset mingw-release -LE gpu
 
-      - name: Package
+      # Android's tests run on its emulator, which Linux's runners accelerate
+      # (KVM). Its SDK is on the runners; the emulator and its image come
+      # through the SDK's manager, under Google's license.
+      # Java for the SDK's tools, and for the checks of what's made for Google
+      # Play.
+      - uses: actions/setup-java@v4
+        if: matrix.platform == 'linux-x64' && matrix.preset == 'package'
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Test (Android)
+        if: matrix.platform == 'linux-x64' && matrix.preset == 'package' && env.TIDE_TESTS == 'true'
         run: |
-          cmake --preset package -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
-          cmake --build --preset package
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          tools="$ANDROID_HOME/cmdline-tools/latest/bin"
+          # Its yes to the licenses, without a pipe: yes ends with a broken one, which pipefail takes for failing
+          "$tools/sdkmanager" --install emulator platform-tools "system-images;android-36;default;x86_64" \
+            > /dev/null < <(yes)
+          # One folder for AVDs, which avdmanager and the emulator would each
+          # look for in their own places (the runner sets XDG_CONFIG_HOME)
+          export ANDROID_AVD_HOME="$HOME/.android/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo no | "$tools/avdmanager" create avd -n tide -k "system-images;android-36;default;x86_64" --force
+          # The memory and disk Android 16 wants, which a new AVD's defaults don't give it
+          "$ANDROID_HOME/emulator/emulator" -avd tide -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect \
+            -no-snapshot -memory 4096 -cores 4 -partition-size 6144 > emulator.log 2>&1 &
+          emulator=$!
+          adb="$ANDROID_HOME/platform-tools/adb"
+          # Build while Android boots; only running tests needs the device.
+          cmake --preset android-debug -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
+          cmake --build --preset android-debug
+          # Until Android says it booted. An emulator that ends first, or hasn't
+          # booted in 15 minutes, fails the step with what it said.
+          until [ "$("$adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do
+            if ! kill -0 $emulator 2>/dev/null || [ $SECONDS -gt 900 ]; then
+              cat emulator.log
+              exit 1
+            fi
+            sleep 2
+          done
+          ctest --preset android-debug
+
+      # The package's Android half is the platform layer for each CPU, built
+      # with the runner's NDK (ANDROID_NDK_HOME).
+      # Windows' package on another system is cross builds: its tide and tidels
+      # for Windows' own target, with Microsoft's headers and libraries from
+      # xwin (cmake/windows-msvc-toolchain.cmake), and the rest as on Windows.
+      - name: Package
+        if: matrix.preset == 'package'
+        run: |
+          platform=${{ matrix.platform }}
+          native=package
+          if [ "$platform" = windows-x64 ]; then
+            # MinGW stages its tools before the native tools replace them.
+            cmake --preset mingw-release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
+            cmake --build --preset mingw-release --target tide_cli tidels tide_platform
+            if [ "$RUNNER_OS" != Windows ]; then native=windows-package; fi
+          fi
+          cmake --preset $native -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
+          targets=(tide_cli tidels tide_vscode)
+          if [ "$platform" != windows-x64 ]; then targets+=(tide_platform); fi
+          cmake --build --preset $native --target "${targets[@]}"
           cmake --preset web-package -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
-          cmake --build --preset web-package
-          cmake -DNAME=tide-${{ matrix.platform }} -P cmake/package.cmake
-      # Build a game with the package, as a user would.
+          cmake --build --preset web-package --target tide_platform
+          for abi in arm64 x86_64; do
+            cmake --preset android-package-$abi
+            cmake --build --preset android-package-$abi --target tide_platform
+          done
+          cmake -DNAME=tide-$platform -DNATIVE=build/$native -P cmake/package.cmake
+      # Build a game with the package, as a user would, where the package is
+      # this system's.
       - name: Try the package
+        if: matrix.preset == 'package' && (runner.os == 'Windows') == (matrix.platform == 'windows-x64')
         run: |
           mkdir -p build/try
           cp demo/demo.tide build/try/
           build/dist/tide/bin/tide version
           build/dist/tide/bin/tide build build/try
           build/dist/tide/bin/tide build build/try --release --web
+          build/dist/tide/bin/tide build build/try --android
+      # The build service (builds/) with the package's tide, on the platform
+      # its builders run: the example game published, built with its mod, and
+      # the page played in headless Chrome.
+      - name: Try the package (build service)
+        if: matrix.platform == 'linux-x64' && matrix.preset == 'package' && env.TIDE_TESTS == 'true'
+        run: TIDE=build/dist/tide/bin/tide node --test builds/page.test.mjs
+      # A game's C++, which builds with no C++ runtime: that it builds for each
+      # target with the package's own compiler and headers, and what tide says
+      # when it can't.
+      - name: Try the package (C++)
+        if: matrix.preset == 'package' && (runner.os == 'Windows') == (matrix.platform == 'windows-x64')
+        run: cmake -DTIDE=build/dist/tide/bin/tide -DWORK=build/try-cpp -DANDROID=ON -P compiler/cli/tests/cpp_test.cmake
+      - name: Try the package (incremental builds)
+        if: matrix.preset == 'package' && (runner.os == 'Windows') == (matrix.platform == 'windows-x64')
+        run: node compiler/cli/tests/cache_test.mjs --tide build/dist/tide/bin/tide --web
+      # Its app and bundle made to ship, checked with Google's tools: apksigner,
+      # Java's JAR signatures, and bundletool (pinned), which Play runs on what
+      # it's given. Then the APKs bundletool makes of the bundle, signed with
+      # tide's key as Play signs with its own, play on the emulator, which the
+      # Android tests started.
+      - name: Try the package (Google Play)
+        if: matrix.platform == 'linux-x64' && matrix.preset == 'package' && env.TIDE_TESTS == 'true'
+        run: |
+          printf 'settings\n{\n    appId = "dev.tide.trydemo";\n}\n' > build/try/settings.tide
+          build/dist/tide/bin/tide build build/try --android --release
+          tools=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
+          "$tools/apksigner" verify --verbose build/try/build/try.apk
+          "$JAVA_HOME/bin/jarsigner" -verify build/try/build/try.aab | tee jarsigner.log
+          grep -q "jar verified" jarsigner.log
+          curl -fsSL -o bundletool.jar https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar
+          echo "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29  bundletool.jar" | sha256sum -c
+          java -jar bundletool.jar validate --bundle=build/try/build/try.aab
+          openssl pkcs12 -export -in ~/.android/tide.pem -inkey ~/.android/tide.pem -out tide.p12 -passout pass:tide -name tide
+          java -jar bundletool.jar build-apks --bundle=build/try/build/try.aab --output=try.apks --connected-device \
+            --ks=tide.p12 --ks-pass=pass:tide --ks-key-alias=tide --key-pass=pass:tide
+          java -jar bundletool.jar install-apks --apks=try.apks
+          adb="$ANDROID_HOME/platform-tools/adb"
+          # -W: back once the app has drawn its first frame
+          "$adb" shell am start -W -n dev.tide.trydemo/android.app.NativeActivity | tee start.log
+          grep -q "Status: ok" start.log
+          "$adb" shell pidof dev.tide.trydemo
+          "$adb" shell dumpsys activity activities | grep topResumedActivity | grep -q dev.tide.trydemo
 
       - uses: actions/upload-artifact@v4
+        if: matrix.preset == 'package'
         with:
           name: tide-${{ matrix.platform }}
           path: build/dist/tide-${{ matrix.platform }}.*
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 1 # Only the release job reads them, and they count against the account's storage
+
+      - name: Compiler cache statistics (end)
+        if: always()
+        run: ccache --show-stats
+
+  # Preserve the required Build checks. Tests and packages run together above,
+  # and every check must pass before these checks or a release can pass.
+  build:
+    name: Build (${{ matrix.platform }})
+    needs: checks
+    if: always() && needs.checks.result != 'skipped'
+    strategy:
+      matrix:
+        platform: ${{ inputs.action == 'check' && inputs.scope == 'windows-web' && fromJSON('["windows-x64"]') || fromJSON('["windows-x64","linux-x64","macos-arm64"]') }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Require every test and package
+        env:
+          RESULT: ${{ needs.checks.result }}
+        run: test "$RESULT" = success
 
   # The plugin for JetBrains IDEs (tools/tide-jetbrains), checked against
   # the oldest IDE it supports and the newest CLion.
   jetbrains:
     name: JetBrains plugin
     needs: version
+    if: inputs.action != 'check' || inputs.scope != 'windows-web'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       TIDE_VERSION: ${{ needs.version.outputs.version || '0.0.0-dev' }}
@@ -185,7 +542,7 @@ jobs:
         shell: bash
         working-directory: tools/tide-jetbrains
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@v1
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -201,33 +558,102 @@ jobs:
           name: tide-jetbrains
           path: tools/tide-jetbrains/build/distributions/tide-jetbrains.zip
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 1 # Only the release job reads them, and they count against the account's storage
 
   release:
     name: Release
     needs: [version, build, jetbrains]
-    if: inputs.action != 'check' && needs.version.outputs.published == 'true'
+    if: (inputs.action == 'nightly' || inputs.action == 'stable') && needs.version.outputs.published == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       published: ${{ steps.publish.outputs.new_release_published }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@v1
         with:
           fetch-depth: 0
+          token: ${{ secrets.TIDE_PUBLISH_TOKEN || secrets.GITHUB_TOKEN }}
+      # The default branch may have changed while the packages were built.
+      - name: Check publishing permission
+        shell: bash
+        env:
+          HAS_PUBLISH_TOKEN: ${{ secrets.TIDE_PUBLISH_TOKEN != '' }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: bash .github/check-publish.sh
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
       - name: Checksums
         run: cat dist/*.sha256 > dist/SHA256SUMS && cat dist/SHA256SUMS
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # A nightly: the commit's tag, the note semantic-release keeps for each
+      # of its tags (which channel it's on, so a stable release still reads
+      # the history rightly), and the release with what was built.
+      - name: Publish (nightly)
+        if: inputs.action == 'nightly'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.TIDE_PUBLISH_TOKEN || secrets.GITHUB_TOKEN }}
+          TAG: v${{ needs.version.outputs.version }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: |
+          tag_ref="refs/tags/$TAG"
+          notes_ref="refs/notes/semantic-release-$TAG"
+          # A previous attempt may have pushed either ref before it stopped.
+          remote_tag=$(git ls-remote origin "$tag_ref")
+          if [ -n "$remote_tag" ]; then
+            git fetch --no-tags origin "+$tag_ref:$tag_ref"
+          fi
+          if git show-ref --verify --quiet "$tag_ref"; then
+            if [ "$(git rev-parse "$tag_ref^{commit}")" != "$GITHUB_SHA" ]; then
+              echo "::error::Tag $TAG already names another commit."
+              exit 1
+            fi
+          else
+            git tag "$TAG" "$GITHUB_SHA"
+          fi
+          remote_notes=$(git ls-remote origin "$notes_ref")
+          if [ -n "$remote_notes" ]; then
+            git fetch --no-tags origin "+$notes_ref:$notes_ref"
+          fi
+          git notes --ref "semantic-release-$TAG" add -f -m '{"channels":["dev"]}' "$GITHUB_SHA"
+          git push --atomic origin "$tag_ref" "$notes_ref"
+          assets=("dist/tide-windows-x64.zip#tide for Windows (x64)" "dist/tide-linux-x64.tar.gz#tide for Linux (x64)"
+            "dist/tide-jetbrains.zip#Tide plugin for JetBrains IDEs" "dist/SHA256SUMS#SHA256SUMS")
+          if [ -f dist/tide-macos-arm64.tar.gz ]; then assets+=("dist/tide-macos-arm64.tar.gz#tide for macOS (Apple Silicon)"); fi
+          if existing=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,assets 2>/dev/null); then
+            if ! jq -e '.isDraft == false and .isPrerelease == true' <<< "$existing" >/dev/null; then
+              echo "::error::Release $TAG exists but is a draft or not a prerelease. Inspect it before retrying."
+              exit 1
+            fi
+            for asset in "${assets[@]}"; do
+              file=${asset%%#*}
+              name=${file##*/}
+              if ! jq -e --arg name "$name" 'any(.assets[]; .name == $name and .state == "uploaded" and .size > 0)' <<< "$existing" >/dev/null; then
+                echo "::error::Release $TAG exists but asset $name is missing or not fully uploaded. Inspect it before retrying."
+                exit 1
+              fi
+            done
+            echo "Release $TAG is already published."
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --title "$TAG" --generate-notes "${assets[@]}"
+          fi
       - name: Publish
         id: publish
+        if: inputs.action == 'stable'
         uses: cycjimmy/semantic-release-action@v4
         with:
           extra_plugins: |
             @semantic-release/exec
             @semantic-release/git
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.TIDE_PUBLISH_TOKEN || secrets.GITHUB_TOKEN }}
 
   # Stable releases also go to JetBrains Marketplace, once the repository has a
   # JETBRAINS_MARKETPLACE_TOKEN secret. Nightlies don't: the plugin only runs
@@ -238,7 +664,7 @@ jobs:
     if: inputs.action == 'stable' && needs.release.outputs.published == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@v1
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

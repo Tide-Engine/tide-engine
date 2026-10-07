@@ -1,0 +1,5 @@
+// expect: the engine calls this itself, so nothing would take what an 'out' parameter makes: functions and methods have them
+// expect: this takes what it changes as 'mut': 'mut Store store'
+scene Main { }
+singleton Store { List<byte> image; }
+system Run(out Store store) { store.image.Clear(); }

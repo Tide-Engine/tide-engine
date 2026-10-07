@@ -6,12 +6,23 @@ target_compile_options(tide_flags INTERFACE
     -Wall
     -Wextra
     -Wpedantic
+    -Werror # Warnings are errors (see AGENTS.md, Building)
 
     # Determinism (see AGENTS.md). Order matters: -fno-fast-math resets
     # contraction to clang's default ("on"), so -ffp-contract=off must follow it.
     -fno-fast-math
     -ffp-contract=off
 )
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Linux and Android (whose toolchain file says Linux): a function whose
+    # locals take more than a page touches each page as it makes room for
+    # them, so a stack that runs out, as a game's recursion with no end does,
+    # ends at its guard page and never past it in memory that's something
+    # else's (see AGENTS.md, Language). Windows' targets check big frames by
+    # themselves, and tide builds games the same way (compiler/cli/build.c).
+    target_compile_options(tide_flags INTERFACE -fstack-clash-protection)
+endif()
 
 if(WIN32)
     # Silences MSVC CRT warnings that push non-portable *_s functions.
@@ -27,7 +38,10 @@ endif()
 
 if(TIDE_WEB)
     # Web builds: a 1 MB stack like native threads' smallest, and memory that
-    # grows as needed (wasi-libc's malloc). Single-threaded: threads need a
-    # cross-origin isolated page (see AGENTS.md, Platforms).
-    target_link_options(tide_flags INTERFACE -Wl,-z,stack-size=1048576)
+    # grows as needed (wasi-libc's malloc), up to wasm32's 4 GiB. The page
+    # makes the memory, shared between its threads' workers when it can
+    # (platform/web/tide.js), so the program imports it, marked shared
+    # (cmake/wasi-toolchain.cmake says why that's spelled out).
+    target_link_options(tide_flags INTERFACE -Wl,-z,stack-size=1048576
+        -Wl,--import-memory -Wl,--export-memory -Wl,--shared-memory -Wl,--max-memory=4294967296)
 endif()

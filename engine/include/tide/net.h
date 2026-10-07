@@ -7,9 +7,8 @@
 // What sessions (tide/session.h) send datagrams with: addresses, transports,
 // an in-process loopback network, and writing and reading bytes and bits.
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later. Real networks come from the platform layer (tide_platform_udp_open);
-// this file never touches the operating system.
+// Real networks come from the platform layer (tide_platform_udp_open); this
+// file never touches the operating system.
 
 #define TIDE_NET_MTU 1200u // The largest datagram sessions send
 
@@ -29,6 +28,9 @@ typedef enum tide_address_kind {
 // 1 and I).
 #define TIDE_ROOM_CODE_LETTERS "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 #define TIDE_ROOM_CODE_LENGTH 6
+// A room's key, as many characters at most: what lets the players of its match
+// meet there again when its host goes (see tide_session_set_room).
+#define TIDE_ROOM_KEY_LENGTH 32
 
 typedef struct tide_address {
     uint32_t kind;
@@ -54,6 +56,18 @@ typedef struct tide_transport {
     // there's none. Longer ones are dropped.
     uint32_t (*receive)(void *self, tide_address *from, void *data, uint32_t capacity);
     void (*close)(void *self);
+    // The match on it ended for good, just before it closes: no one is to
+    // take it over (host migration), as a room's relay then makes sure.
+    // NULL where that means nothing.
+    void (*end)(void *self);
+    // The transport's own clock, in seconds from whenever, and when the
+    // datagram `receive` last gave arrived by it: some time before the frame
+    // that read it. A session's ping is the network's round trip, measured
+    // between the two, so it counts no wait for a frame. Both NULL where a
+    // transport can't say when datagrams arrive: a ping there counts from
+    // when they're read.
+    double (*clock)(void *self);
+    double (*arrived)(void *self);
 } tide_transport;
 
 // ---------------------------------------------------------------------------
@@ -82,14 +96,16 @@ tide_address tide_loopback_address(uint32_t number);
 
 // ---------------------------------------------------------------------------
 // Bytes, little-endian. A writer that runs out of room sets `overflow` and
-// writes nothing more; a reader that runs past the end sets `failed` and reads
-// zeros.
+// writes nothing more, unless it `grows`: then it makes more room as it needs
+// (realloc, starting from NULL is fine), and its owner frees `data`. A reader
+// that runs past the end sets `failed` and reads zeros.
 
 typedef struct tide_writer {
     uint8_t *data;
     uint32_t capacity;
     uint32_t size;
     bool overflow;
+    bool grows;
 } tide_writer;
 
 typedef struct tide_reader {
@@ -104,11 +120,18 @@ void tide_write_u16(tide_writer *w, uint16_t v);
 void tide_write_u32(tide_writer *w, uint32_t v);
 void tide_write_u64(tide_writer *w, uint64_t v);
 void tide_write_bytes(tide_writer *w, const void *data, uint32_t size);
+// 7 bits a byte, the lowest first: small numbers take one.
+void tide_write_varint(tide_writer *w, uint32_t v);
+void tide_write_varint64(tide_writer *w, uint64_t v);
+// Room for the next `size` bytes, to fill in place, or NULL when there isn't.
+uint8_t *tide_write_space(tide_writer *w, uint32_t size);
 
 uint8_t tide_read_u8(tide_reader *r);
 uint16_t tide_read_u16(tide_reader *r);
 uint32_t tide_read_u32(tide_reader *r);
 uint64_t tide_read_u64(tide_reader *r);
+uint32_t tide_read_varint(tide_reader *r);
+uint64_t tide_read_varint64(tide_reader *r);
 // Points at the next `size` bytes, or NULL if there aren't that many.
 const uint8_t *tide_read_bytes(tide_reader *r, uint32_t size);
 
@@ -136,22 +159,75 @@ static inline bool tide_bits_get_bool(tide_bits *b)
 // Floats go as their exact bits.
 void tide_bits_put_f32(tide_bits *b, float v);
 float tide_bits_get_f32(tide_bits *b);
+uint32_t tide_f32_bits(float v);
+
+// A value as part of a delta: whether it changed from `was`, then its 32
+// bits if it did.
+void tide_bits_put_changed(tide_bits *b, uint32_t now, uint32_t was);
+
+// A varint, for numbers that are usually small: 7 bits of the value at a
+// time, lowest first, each followed by a bit that says whether more come.
+// Under 128 takes 8 bits, under 16384 16, and the most 40. Reading stops
+// after 5 groups, whatever the last says, so bad input can't run on.
+void tide_bits_put_varint(tide_bits *b, uint32_t v);
+uint32_t tide_bits_get_varint(tide_bits *b);
+
+// ...as part of a delta: whether it changed from `was`, then the varint if it did.
+void tide_bits_put_changed_varint(tide_bits *b, uint32_t now, uint32_t was);
+
+// An int as part of a delta: whether it changed from `was`, then by how much
+// (wrapping, so it comes back bit for bit), zig-zagged into a varint. A value
+// that moves a little takes a byte, however big it is. Read the change after
+// reading true from the bit before it.
+void tide_bits_put_changed_difference(tide_bits *b, uint32_t now, uint32_t was);
+uint32_t tide_bits_get_difference(tide_bits *b, uint32_t was);
+
+// The same for 64-bit values (longs): a varint of up to 10 groups (80 bits),
+// which reading stops after whatever the last says.
+void tide_bits_put_varint64(tide_bits *b, uint64_t v);
+uint64_t tide_bits_get_varint64(tide_bits *b);
+void tide_bits_put_changed_difference64(tide_bits *b, uint64_t now, uint64_t was);
+uint64_t tide_bits_get_difference64(tide_bits *b, uint64_t was);
+
+// A float's bits as part of a delta: whether they changed from `was`, then
+// their XOR with `was`, which is zeros where they're the same: nearby values
+// share their sign, exponent and first digits, and round ones end in zeros.
+// So it goes as where the bits between those zeros start (5 bits), how many
+// there are (5 bits) and those bits, or as the float's own 32 bits when that's
+// shorter, with a bit to say which. It comes back bit for bit, NaNs and -0
+// too. Read it after reading true from the bit before it; a window that
+// can't be one marks the bits overflowed.
+void tide_bits_put_changed_xor(tide_bits *b, uint32_t now, uint32_t was);
+uint32_t tide_bits_get_xor(tide_bits *b, uint32_t was);
+float tide_f32_from_bits(uint32_t bits);
+
+// Signed values zig-zag into varints, so small negative numbers stay small:
+// 0, -1, 1, -2, 2 become 0, 1, 2, 3, 4.
+static inline uint32_t tide_zigzag(const int32_t v)
+{
+    return (uint32_t)v << 1 ^ (v < 0 ? UINT32_MAX : 0u);
+}
+
+static inline int32_t tide_unzigzag(const uint32_t u)
+{
+    return (int32_t)(u >> 1 ^ (0u - (u & 1u)));
+}
+
+static inline uint64_t tide_zigzag64(const int64_t v)
+{
+    return (uint64_t)v << 1 ^ (v < 0 ? UINT64_MAX : 0ull);
+}
+
+static inline int64_t tide_unzigzag64(const uint64_t u)
+{
+    return (int64_t)(u >> 1 ^ (0ull - (u & 1ull)));
+}
 
 // Done writing: clears the rest of the last byte, so the same value always
 // packs to the same bytes, and returns how many there are (0 if out of room).
 uint32_t tide_bits_end(tide_bits *b);
 
 // ---------------------------------------------------------------------------
-// Snapshots: a world is mostly zeros (empty rows, unused entities), so runs of
-// zeros shrink to a few bytes. Any other byte is kept as it is.
-
-// The most packing `size` bytes can take.
-uint32_t tide_zeros_bound(uint32_t size);
-// Packs `size` bytes into `out`: its size, or 0 if it doesn't fit.
-uint32_t tide_zeros_pack(const void *data, uint32_t size, uint8_t *out, uint32_t capacity);
-// Unpacks into exactly `size` bytes; false if the packed bytes don't make that.
-bool tide_zeros_unpack(const uint8_t *packed, uint32_t packed_size, void *out, uint32_t size);
-
 // A 64-bit hash of `size` bytes, the same on every platform. Sessions compare
 // worlds by it to find divergence.
 uint64_t tide_hash(const void *data, size_t size);
@@ -161,3 +237,11 @@ uint64_t tide_hash(const void *data, size_t size);
 #define TIDE_HASH_START 0x9E3779B97F4A7C15ull
 uint64_t tide_hash_more(uint64_t h, const void *data, size_t size);
 uint64_t tide_hash_end(uint64_t h);
+
+// A hash for a run that's long, like a page of a world: another number than
+// tide_hash's of the same bytes, and the same on every platform too. It's
+// four of that hash's chains side by side, each taking every fourth word, so
+// a CPU works on four words at once, where one chain has it wait for a word's
+// multiplies before it can start on the next: two to three times as many
+// bytes in the same time. What a world's pages keep is this one's (tide_page_hash).
+uint64_t tide_hash_wide(const void *data, size_t size);

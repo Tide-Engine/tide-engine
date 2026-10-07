@@ -2,3 +2,28 @@
 # the checkout's settings.
 compiler/tests/errors/*_crlf.tide -text
 compiler/tests/e2e/crlf.tide -text
+
+# The files the asset tests' games are built with: a game reads an asset's
+# bytes as they are, so a checkout that made their line endings Windows' would
+# give the tests other text than they expect.
+compiler/tests/e2e/assets/** -text
+
+# The platform's font, and code vendored as it came.
+*.ttf binary
+
+# Sounds the tests play.
+*.wav binary
+*.ogg binary
+*.pcm binary
+platform/third_party/* -text
+
+# Box2D, as it came (packages/box2d/box2d/TIDE.md lists what is changed).
+packages/box2d/box2d/** -text
+
+# Box3D, the same (packages/box3d/box3d/TIDE.md).
+packages/box3d/box3d/** -text
+
+# The Linux runner's setup runs in WSL from a Windows checkout.
+.github/runner/*.sh text eol=lf
+# Publishing checks run in bash on any checkout.
+.github/*.sh text eol=lf

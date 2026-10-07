@@ -1,0 +1,64 @@
+// A game for the standard host to start a match in from a menu: in a page
+// (platform/tests/web_first_tick.c), and with no window
+// (platform/tests/first_tick.mjs). Main is local, so the program starts in no
+// match; a view starts one when Enter goes down, and the match keeps what its
+// ticks read of the input. So a test reads whether the first tick got what
+// was pressed before the match, off the match's state or off its pictures.
+
+local scene Main { }
+scene Play { }
+
+input Hands
+{
+    bool jump;    // Space
+    bool hold;    // H
+    float2 moved; // The mouse
+
+    Sample(Devices devices)
+    {
+        jump = devices.keyboard.space.pressed;
+        hold = devices.keyboard.h.pressed;
+        moved = devices.mouse.delta;
+    }
+}
+
+component Hand { }
+
+// The match's side: what its ticks read
+singleton Read
+{
+    int ticks;
+    int jumps;   // Ticks that read Space
+    int holds;   // ...and H
+    float first; // How far the first tick read the mouse move
+}
+
+event(Spawned) Setup(with Play)
+{
+    Spawn(Hand, Owner { player = PlayerID(0) });
+}
+
+system Count(Hands hands, mut Read read, with Hand)
+{
+    if (read.ticks == 0) read.first = Math.Abs(hands.moved.x) + Math.Abs(hands.moved.y);
+    read.ticks += 1;
+    if (hands.jump) read.jumps += 1;
+    if (hands.hold) read.holds += 1;
+}
+
+view Menu(Devices devices)
+{
+    Draw.Clear(Color(0, 0, 1));
+    if (devices.keyboard.enter.down) Session.Start(Play);
+}
+
+// A block for each thing the match read: that it ticked, Space, H in every
+// tick, and the mouse's movement in the first
+view Blocks(Read read)
+{
+    Draw.SetScreen();
+    if (read.ticks > 0) Draw.Rect(float2(40, 40), float2(40, 40), Color(0, 1, 0));
+    if (read.jumps > 0) Draw.Rect(float2(100, 40), float2(40, 40), Color(1, 0, 0));
+    if (read.ticks > 0 && read.holds == read.ticks) Draw.Rect(float2(160, 40), float2(40, 40), Color(1, 1, 0));
+    if (read.first > 0) Draw.Rect(float2(220, 40), float2(40, 40), Color(1, 0, 1));
+}

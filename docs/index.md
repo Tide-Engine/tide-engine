@@ -1,23 +1,24 @@
 ---
+description: "Tide Engine is a networking-first game engine for deterministic multiplayer, with its own Tide language and games on desktop and in the browser."
 layout: home
 
 hero:
-  name: Tide
+  name: Tide Engine
   text: A networking-first game engine
   tagline: One deterministic simulation that every player shares, on desktop or in the browser, written in a language made for it.
   image:
     src: /favicon.svg
-    alt: Tide
+    alt: Tide Engine
   actions:
     - theme: brand
       text: Get started
-      link: /guide/
+      link: /guide
     - theme: alt
-      text: Try the demo
-      link: /guide/demo
+      text: Browse samples
+      link: /guide/samples
     - theme: alt
-      text: GitHub
-      link: https://github.com/BlenMiner/tide-engine
+      text: Install
+      link: /guide/install
 
 features:
   - title: Multiplayer by default
@@ -25,11 +26,11 @@ features:
   - title: Deterministic floats
     details: The same build and the same inputs give the same bits on every platform, the web included. Plain floats, no fixed point.
   - title: A language for the ECS
-    details: A C#-like language built around the ECS. Systems say what they read and write, and the compiler works out the rest. It compiles to C, then to native code or WebAssembly.
+    details: Games are written in Tide, a language of its own, built around the ECS. Systems say what they read and write, and the compiler works out the rest. It compiles to C, then to native code or WebAssembly.
   - title: A schedule you can read
     details: The compiler knows every system's data, so it plans which ones can run at the same time, and tells you why the others wait.
   - title: The web is a real platform
-    details: Every game also builds as one self-contained web page on WebGL 2, running the same simulation as desktop.
+    details: Every game also builds as one self-contained web page on WebGPU or WebGL 2, running the same simulation as desktop.
   - title: Nothing to set up
     details: One tide command, with clang built in. Write a .tide file and run tide run. Editor support for VS Code and JetBrains IDEs.
 ---

@@ -1,0 +1,12 @@
+// expect: target.Clip() is 'target.SetClip()' now
+scene Main { }
+
+local singleton Canvas
+{
+    RenderTarget target;
+}
+
+view Show(Canvas canvas)
+{
+    canvas.target.Clip();
+}

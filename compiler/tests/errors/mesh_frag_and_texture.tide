@@ -1,0 +1,41 @@
+// expect: this mesh's frag has no Texture parameter for the explicit source
+// expect: give 'Shade' one, 'Texture source', and read it there, 'color = source.Sample(vertex.uv);', or have it sample a texture of a component or a singleton it takes, and leave this one out
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+component Box
+{
+    Color tint = Color.white;
+}
+
+singleton Sun
+{
+    float3 direction = float3(0, -1, 0);
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    Grid2<Color> wood = Grid2(4, 4);
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box);
+}
+
+frag Shade(V vertex, out Color color, Box box)
+{
+    color = box.tint;
+}
+
+view Show(with Box, Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, models.wood, Shade);
+}

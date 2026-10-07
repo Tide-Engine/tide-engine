@@ -1,0 +1,11 @@
+// expect: 'Looking' uses this frame's Cursor, so only views and the functions they call can call it
+bool Looking()
+{
+    return Cursor.locked;
+}
+input PlayerInput
+{
+    float2 look;
+    Sample(Devices devices) { if (Looking()) look = devices.mouse.delta; }
+}
+scene Main { }

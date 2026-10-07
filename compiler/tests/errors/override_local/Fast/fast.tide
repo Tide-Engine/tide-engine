@@ -1,0 +1,7 @@
+namespace Fast;
+
+using Combat;
+
+override local event(Hit hit) TakeHit(Unit unit)
+{
+}

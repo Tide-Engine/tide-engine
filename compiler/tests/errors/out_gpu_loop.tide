@@ -1,0 +1,16 @@
+// expect: a loop the GPU runs counts on its own line, which declares nothing with 'out'
+// expect: make the call before the loop, and count to what it gave
+scene Main { }
+struct Corner { float2 position; float2 uv; Color color; }
+local singleton Sheet { List<Corner> corners; List<int> indices; }
+int Steps(float x, out float rest)
+{
+    rest = x;
+    return 4;
+}
+frag Shade(Corner corner, out Color color)
+{
+    color = Color.white;
+    for (int i = 0; i < Steps(corner.uv.x, out var rest); i++) color.r += rest;
+}
+view Show(Sheet sheet) { Draw.Mesh(sheet.corners, sheet.indices, Shade); }

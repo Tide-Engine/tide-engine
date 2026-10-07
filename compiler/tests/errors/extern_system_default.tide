@@ -1,0 +1,5 @@
+// expect: the engine supplies these parameters, so they take no default
+scene Main { }
+component Body { float x; }
+singleton Rules { float pull; }
+extern system Move(mut Body body, Rules rules = default);

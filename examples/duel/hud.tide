@@ -1,0 +1,310 @@
+// Over the arena, in the screen's pixels: the score, both fighters' health and
+// upgrades, what the buttons do, and the words between rounds.
+
+// How much of the screen's bottom right corner the game leaves to the engine's
+// stats (the `stats` setting): their one line, which is the frame rate, and in
+// a match another machine runs, the ping too.
+float StatsCorner(Session session)
+{
+    return session.server ? 100 : 196;
+}
+
+// How long the round's flow has been where it is. The match's events say when
+// it turns (heard.tide): the views only count the seconds.
+local singleton Flow
+{
+    float age;         // Seconds in this phase
+    int winner = -1;   // Who took the last round: a side, or -1 when both went down
+    float since = 100; // Seconds since a round ended
+}
+
+[Stage(PaintStages.Prepare, 10)]
+view WatchRound(Duel duel, mut Flow flow, mut Fx fx)
+{
+    flow.age += fx.dt;
+    flow.since += fx.dt;
+    // Behind the menu, the fight is scenery: it shakes and flashes less
+    fx.calm = duel.attract ? 0.25 : 1;
+}
+
+string SideName(int side)
+{
+    return side == 0 ? "BLUE" : "ORANGE";
+}
+
+Color CardColor(Card card)
+{
+    if (card == Card.Vitality) return Color(0.4, 0.92, 0.56);
+    if (card == Card.RapidFire) return Color(1, 0.84, 0.3);
+    if (card == Card.Scatter) return Color(1, 0.48, 0.74);
+    if (card == Card.Ricochet) return Color(0.38, 0.93, 0.9);
+    if (card == Card.HeavyShot) return Color(1, 0.4, 0.36);
+    if (card == Card.SwiftFeet) return Color(0.66, 0.58, 1);
+    if (card == Card.Featherweight) return Color(0.7, 0.88, 1);
+    return Color(1, 0.62, 0.22);
+}
+
+// The score is what the server has confirmed: a round this machine only
+// predicted lights nothing.
+[Stage(PaintStages.Hud)]
+view PaintScore(verified Duel duel, Flow flow)
+{
+    Draw.SetScreen();
+    if (duel.attract) return;
+    var middle = Screen.width * 0.5;
+    // A narrow screen, or a low one, has less room over the arena
+    var compact = Screen.width < 720 || Screen.height < 640;
+    var row = compact ? 19 : 24;
+    var apart = compact ? 17 : 23;
+
+    // A light for each round won, five to win
+    for (var side = 0; side < 2; side++)
+    {
+        var score = side == 0 ? duel.scoreBlue : duel.scoreOrange;
+        var color = FighterColor(side);
+        for (var i = 0; i < WINS; i++)
+        {
+            var at = float2(middle + (side == 0 ? -1 : 1) * (apart + 8 + i * apart), row);
+            if (i >= score)
+            {
+                Oval(at, float2(compact ? 5.5 : 6.5), Color(0.07, 0.09, 0.17), Color(0.05, 0.07, 0.14), 1.5,
+                     Color(0.25, 0.32, 0.48));
+                continue;
+            }
+            var fresh = flow.since < 0.75 && flow.winner == side && i == score - 1;
+            var pop = fresh ? EaseBack(flow.since / 0.45) : 1;
+            Glow(at, 6, 15, Fade(color, 0.5));
+            Oval(at, float2((compact ? 7 : 8.5) * pop), Shade(color, 0.45), Shade(color, -0.12), 1.5, UI_OUTLINE);
+            if (fresh)
+            {
+                var gone = flow.since / 0.75;
+                Draw.WireCircle(at, 9 + 34 * EaseOut(gone), 3.5 * (1 - gone), Fade(Color.white, 1 - gone));
+            }
+        }
+    }
+    Draw.RoundRect(float2(middle, row), float2(9, 9), 2, Math.PI * 0.25, Color(0.3, 0.38, 0.56));
+    if (!compact)
+    {
+        Draw.RoundRect(float2(24, 25), float2(6, 26), 3, 0.3, UI_BLUE);
+        Draw.RoundRect(float2(34, 25), float2(6, 26), 3, 0.3, UI_ORANGE);
+    }
+
+    if (Screen.width >= 720) Draw.Text($"ROUND {duel.scoreBlue + duel.scoreOrange + 1}", float2(middle, row + 20), 10, UI_MUTED, Anchor.MiddleCenter);
+    if (!compact)
+    {
+        Draw.Text("DUEL", float2(46, 11), 26, UI_INK, Font.Bold);
+    }
+}
+
+[Stage(PaintStages.Hud, 10)]
+view PaintVitals(Fighter fighter, verified Fighter sure, Duel duel, Session session)
+{
+    if (duel.attract) return;
+    var color = FighterColor(fighter.side);
+    var blue = fighter.side == 0;
+    var who = blue ? duel.bluePlayer : duel.orangePlayer;
+    var mine = !fighter.bot && who == session.player;
+    // Beside the score on a low screen, and under it otherwise
+    var slim = Screen.height < 640 && Screen.width >= 720;
+    var narrow = Screen.width < 720;
+    var width = slim ? Math.Min(240, Screen.width * 0.5 - 150) : narrow ? Screen.width * 0.5 - 26
+              : Math.Min(260, Screen.width * 0.5 - 60);
+    var top = slim ? 5 : narrow ? 42 : 47;
+    var edge = blue ? 18 : Screen.width - 18; // The bar's outer end
+    var inward = blue ? 1 : -1;
+    var bar = float2(edge + inward * width * 0.5, top + 21);
+
+    // Its health as the server confirmed it, and in white what the last hits took
+    var solid = SureHealth(fighter, sure);
+    var health = Math.Saturate(solid / fighter.build.maxHealth);
+    var before = Math.Saturate((solid + fighter.chip) / fighter.build.maxHealth);
+    var room = width - 6;
+    var start = edge + inward * 3;
+    Panel(bar, float2(width, 13), 6.5, Color(0.03, 0.04, 0.09, 0.92), Color(0.03, 0.04, 0.09, 0.92), 1.5,
+          Color(0.22, 0.29, 0.45));
+    if (before > health)
+        Draw.RoundRect(float2(start + inward * room * before * 0.5, bar.y), float2(room * before, 7), 3.5, Fade(Color.white, 0.95));
+    if (health > 0.005)
+    {
+        Panel(float2(start + inward * room * health * 0.5, bar.y), float2(room * health, 7), 3.5,
+              Shade(color, 0.4), Shade(color, -0.12), 0, Color.clear);
+        Glow(float2(start + inward * room * health, bar.y), 2, 9, Fade(color, 0.5));
+    }
+    // A notch for every 25 health, so a bigger fighter shows
+    for (var notch = 25.0; notch < fighter.build.maxHealth - 1; notch += 25)
+        Draw.RoundRect(float2(start + inward * room * notch / fighter.build.maxHealth, bar.y), float2(1.3, 7), 0, Color(0.02, 0.03, 0.07, 0.55));
+
+    // Its face, and a gem for each upgrade it picked
+    var face = float2(edge + inward * 10, top + 5);
+    Oval(face, float2(9), Shade(color, 0.28), Shade(color, -0.2), 1.6, UI_OUTLINE);
+    Draw.Circle(face + float2(inward * 1.5 - 3, -1), 2.1, Color.white);
+    Draw.Circle(face + float2(inward * 1.5 + 3, -1), 2.1, Color.white);
+    var name = SideName(fighter.side);
+    var tag = mine ? "YOU" : fighter.bot ? "BOT" : "";
+    var nameWidth = Draw.MeasureText(name, 12).x;
+    var tagWidth = tag == "" ? 0 : Draw.MeasureText(tag, 9).x + 10;
+    var nameAt = blue ? edge + 24 : edge - 24 - nameWidth;
+    var tagAt = blue ? nameAt + nameWidth + 7 : nameAt - 7 - tagWidth;
+    if (tag != "")
+        Panel(float2(tagAt + tagWidth * 0.5, top + 5), float2(tagWidth, 14), 7, mine ? color : Color(0.16, 0.2, 0.32),
+              mine ? color : Color(0.16, 0.2, 0.32), 0, Color.clear);
+    for (var i = 0; i < sure.build.cards.count; i++)
+    {
+        var gem = float2((blue ? tagAt + tagWidth + 13 : tagAt - 13) + inward * i * 14, top + 5);
+        var tint = CardColor(sure.build.cards[i]);
+        Draw.RoundRect(gem, float2(9.5, 9.5), 2, Math.PI * 0.25, UI_OUTLINE);
+        Draw.RoundRect(gem, float2(7, 7), 1.5, Math.PI * 0.25, tint);
+        Draw.Circle(gem + float2(-1, -1.5), 1.2, Fade(Color.white, 0.8));
+    }
+
+    Draw.Text(name, float2(nameAt, top - 1), 12, color);
+    if (tag != "") Draw.Text(tag, float2(tagAt + tagWidth * 0.5, top + 5), 9, mine ? UI_OUTLINE : UI_MUTED, Anchor.MiddleCenter);
+    if (narrow) return;
+    var left = $"{int(Math.Ceil(Math.Max(0, solid)))}";
+    var inner = edge + inward * width;
+    Draw.Text(left, float2(inner, top - 1), 12, UI_INK, blue ? Anchor.UpperRight : Anchor.UpperLeft);
+}
+
+// One hint: a key's cap, and what the key does. With `draw` off, it only
+// measures. Returns where the next one starts.
+float Hint(bool draw, float2 at, string key, string does, float ready, Color color)
+{
+    var cap = Draw.MeasureText(key, 11).x + 14;
+    if (draw)
+    {
+        var center = float2(at.x + cap * 0.5, at.y);
+        if (ready >= 1 && color.a > 0) GlowBox(center, float2(cap, 22), 6, 10, Fade(color, 0.35));
+        Panel(center, float2(cap, 22), 6, Color(0.13, 0.17, 0.29), Color(0.065, 0.085, 0.16), 1.3,
+              ready >= 1 && color.a > 0 ? color : Color(0.29, 0.37, 0.56));
+        // Filling up, while what the key does comes back
+        if (ready < 1)
+            Draw.RoundRect(float2(at.x + 3 + (cap - 6) * ready * 0.5, at.y + 8), float2((cap - 6) * ready, 2.5), 1.2, color);
+        Draw.Text(key, center, 11, ready >= 1 ? UI_INK : UI_MUTED, Anchor.MiddleCenter);
+        Draw.Text(does, float2(at.x + cap + 6, at.y - 6), 11, UI_MUTED);
+    }
+    return at.x + cap + 6 + Draw.MeasureText(does, 11).x + 18;
+}
+
+// What the buttons do, for whichever device was used last. The key that
+// blocks fills up as the shield comes back.
+float Hints(bool draw, float2 at, bool gamepad, float shield, Color color)
+{
+    mut var x = at.x;
+    if (gamepad)
+    {
+        x = Hint(draw, float2(x, at.y), "L STICK", "MOVE", 1, Color.clear);
+        x = Hint(draw, float2(x, at.y), "A", "JUMP", 1, Color.clear);
+        x = Hint(draw, float2(x, at.y), "R STICK", "AIM", 1, Color.clear);
+        x = Hint(draw, float2(x, at.y), "RT", "SHOOT", 1, Color.clear);
+        x = Hint(draw, float2(x, at.y), "LT", "BLOCK", shield, color);
+        return x - 18;
+    }
+    x = Hint(draw, float2(x, at.y), "A", "", 1, Color.clear) - 20;
+    x = Hint(draw, float2(x, at.y), "D", "MOVE", 1, Color.clear);
+    x = Hint(draw, float2(x, at.y), "SPACE", "JUMP", 1, Color.clear);
+    x = Hint(draw, float2(x, at.y), "MOUSE", "AIM", 1, Color.clear);
+    x = Hint(draw, float2(x, at.y), "CLICK", "SHOOT", 1, Color.clear);
+    x = Hint(draw, float2(x, at.y), "RIGHT CLICK", "BLOCK", shield, color);
+    return x - 18;
+}
+
+[Stage(PaintStages.Hud, 20)]
+view PaintHints(Fighter fighter, Duel duel, Devices devices, Canvas canvas, Session session, with ownership)
+{
+    if (duel.attract) return;
+    var screen = float2(Screen.width, Screen.height);
+    var color = FighterColor(fighter.side);
+    var shield = fighter.blockLeft > 0 ? 1 : 1 - Math.Saturate(fighter.blockCooldown / 2);
+    if (devices.touchscreen.connected && (canvas.touchAim || !canvas.handsOn))
+    {
+        // Where fingers go: the left half moves, and a corner blocks, above the stats' line
+        var move = float2(66, screen.y - 92);
+        var block = float2(screen.x - 58, screen.y - 92);
+        Oval(move, float2(36), Color(0.5, 0.62, 0.8, 0.07), Color(0.5, 0.62, 0.8, 0.07), 1.6, Color(0.5, 0.62, 0.8, 0.45));
+        Oval(block, float2(36), Fade(color, 0.1), Fade(color, 0.1), 1.6, Fade(color, shield >= 1 ? 0.9 : 0.35));
+        Draw.Arc(block, 31, -Math.PI * 0.5, Math.TAU * shield, 3, Fade(color, 0.8)); // From the top, clockwise
+        Draw.Text("MOVE", move, 11, UI_MUTED, Anchor.MiddleCenter);
+        Draw.Text("BLOCK", block, 11, shield >= 1 ? UI_INK : UI_MUTED, Anchor.MiddleCenter);
+        if (screen.x > 520)
+            Draw.Text("Drag left to move, swipe up to jump. Touch right to aim and fire.", float2(screen.x * 0.5, screen.y - 16), 11, UI_MUTED, Anchor.MiddleCenter);
+        return;
+    }
+    // In the screen's middle, or as far right as leaves the bottom right corner
+    // to the stats' line. On a narrow screen, two rows would cover the arena:
+    // the keys alone fit.
+    var width = Hints(false, float2(0, 0), canvas.gamepadAim, shield, color);
+    var left = Math.Min((screen.x - width) * 0.5, screen.x - StatsCorner(session) - width);
+    if (left < 12) return;
+    var at = float2(left, screen.y - Math.Min(30, canvas.band * 0.42));
+    Hints(true, at, canvas.gamepadAim, shield, color);
+}
+
+// The words between rounds: get ready, fight, and who took the round.
+[Stage(PaintStages.Hud, 30)]
+view PaintBanner(Duel duel, Flow flow, Session session)
+{
+    if (duel.attract) return;
+    var screen = float2(Screen.width, Screen.height);
+    var middle = float2(screen.x * 0.5, screen.y * 0.5 - Math.Min(70, screen.y * 0.14));
+    var big = screen.x >= 640 && screen.y >= 420;
+
+    var told = flow.since < 1.15 && (flow.winner >= 0 ? duel.phase != Phase.Fight : duel.phase == Phase.Countdown);
+    if (told)
+    {
+        // A band across the screen, in the winner's color, that opens and shuts
+        var open = EaseOut(flow.since / 0.2) * (1 - EaseOut((flow.since - 0.95) / 0.2));
+        var tint = flow.winner < 0 ? Color(0.72, 0.78, 0.9) : FighterColor(flow.winner);
+        var tall = (big ? 84 : 56) * open;
+        GlowBox(middle, float2(screen.x + 80, tall), 0, 46, Fade(tint, 0.28 * open));
+        Panel(middle, float2(screen.x + 80, tall), 0, Shade(tint, 0.12), Shade(tint, -0.2), 0, Color.clear);
+        Draw.RoundRect(middle + float2(0, -tall * 0.5 - 5), float2(screen.x + 80, 2.5 * open), 0, Fade(Color.white, 0.85));
+        Draw.RoundRect(middle + float2(0, tall * 0.5 + 5), float2(screen.x + 80, 2.5 * open), 0, Fade(Color.white, 0.85));
+        var words = flow.winner < 0 ? "DOUBLE K.O." : SideName(flow.winner) + " TAKES THE ROUND";
+        var slide = (1 - EaseOut(flow.since / 0.3)) * 60;
+        var shown = Math.Saturate(open * 1.4 - 0.4);
+        Draw.Tint(Fade(Color.white, shown))
+        {
+            Draw.Text(words, middle + float2(slide + 2, 2), big ? 34 : 22, Fade(Color.white, 0.35), Anchor.MiddleCenter, Font.Bold);
+            Draw.Text(words, middle + float2(slide, 0), big ? 34 : 22, UI_OUTLINE, Anchor.MiddleCenter, Font.Bold);
+        }
+        return;
+    }
+
+    if (duel.phase == Phase.Countdown)
+    {
+        var enter = EaseOut(flow.age / 0.25);
+        GlowBox(middle, float2(250 * enter, 40), 20, 60, Color(0.008, 0.012, 0.035, 0.7));
+        Draw.Tint(Fade(Color.white, enter))
+        {
+            Draw.RoundRect(middle + float2(0, big ? 34 : 24), float2(150 * Math.Saturate(duel.timer / 1.2), 3), 1.5, Fade(UI_INK, 0.8));
+            Draw.Text($"ROUND {duel.scoreBlue + duel.scoreOrange + 1}", middle + float2(0, big ? -36 : -26), big ? 13 : 11, UI_MUTED, Anchor.MiddleCenter);
+            Draw.Text("GET READY", middle + float2(0, (1 - enter) * 12), big ? 38 : 26, UI_INK, Anchor.MiddleCenter, Font.Bold);
+        }
+    }
+    else if (duel.phase == Phase.Fight && flow.age < 0.8)
+    {
+        // It lands big and settles, with each side's color off to its side
+        var gone = flow.age / 0.8;
+        var size = Math.Round((big ? 62 : 40) * (1 + 0.5 * Math.Max(0, 1 - flow.age * 8)) * 0.5) * 2;
+        var shown = Math.Saturate((1 - gone) * 2.5);
+        var apart = 3 + 14 * gone;
+        Draw.Tint(Fade(Color.white, shown))
+        {
+            Draw.Text("FIGHT!", middle + float2(-apart, 1), size, Fade(UI_BLUE, 0.75), Anchor.MiddleCenter, Font.Bold);
+            Draw.Text("FIGHT!", middle + float2(apart, -1), size, Fade(UI_ORANGE, 0.75), Anchor.MiddleCenter, Font.Bold);
+            Draw.Text("FIGHT!", middle, size, Color.white, Anchor.MiddleCenter, Font.Bold);
+        }
+    }
+    else if (duel.phase == Phase.Draft && flow.age > 1.5)
+    {
+        // The other side is picking its upgrade
+        var mine = session.player == (duel.draftSide == 0 ? duel.bluePlayer : duel.orangePlayer);
+        if (mine) return;
+        var tint = FighterColor(duel.draftSide);
+        var words = SideName(duel.draftSide) + " IS CHOOSING AN UPGRADE";
+        var width = Math.Min(screen.x - 24, Draw.MeasureText(words, 15).x + 86);
+        Panel(middle, float2(width, 54), 27, Color(0.1, 0.13, 0.22, 0.95), Color(0.05, 0.065, 0.125, 0.95), 1.6, Fade(tint, 0.8));
+        Draw.Arc(middle + float2(-width * 0.5 + 28, 0), 10, flow.age * 0.9 * Math.TAU, Math.TAU * 0.7, 3, tint);
+        Draw.Text(words, middle + float2(16, 0), screen.x < 460 ? 11 : 15, tint, Anchor.MiddleCenter);
+    }
+}

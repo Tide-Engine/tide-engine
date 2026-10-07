@@ -1,0 +1,8 @@
+// expect: field 'bakes' is declared twice
+scene Main { }
+
+component Box
+{
+    int bakes;
+    local int bakes;
+}

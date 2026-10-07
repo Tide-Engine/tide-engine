@@ -1,0 +1,10 @@
+// expect: expected ';'
+scene Main { }
+
+view Show()
+{
+    Draw.SetBlend(Blend.Add)
+    Draw.Tint(Color.red)
+    {
+    }
+}

@@ -1,0 +1,24 @@
+namespace Fast;
+
+using Combat;
+
+override system Move(mut Position position, mut Velocity velocity)
+{
+    position.value += velocity.value * 2;
+    velocity.value = 0;
+}
+
+override system Combat.Rest(Health health, mut Log log, without Player)
+{
+    if (health.value > 0) log.ticks += 2;
+}
+
+override view Show(Position position)
+{
+    Draw.Circle(float2(position.value, 0), 2, Color.red);
+}
+
+override event(Spawned) Setup(with Main)
+{
+    Spawn(Position, Velocity, Health, Player);
+}

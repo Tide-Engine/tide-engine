@@ -1,0 +1,13 @@
+// expect: 'bakes' is a local field of 'Box', so a value of it doesn't have it
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+system Reset(mut Box box)
+{
+    box = Box { pos = box.pos, bakes = 1 };
+}

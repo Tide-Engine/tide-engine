@@ -1,0 +1,6 @@
+// expect: a view can't change the match
+singleton Score { int value; }
+void Add(mut Score score) { score.value += 1; }
+void AddThrough(mut Score score) { Add(score); }
+scene Main { }
+view Change(Score score) { AddThrough(score); }

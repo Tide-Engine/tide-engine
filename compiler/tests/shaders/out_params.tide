@@ -1,0 +1,52 @@
+// `out` parameters in code the GPU runs: `inout` in GLSL and a pointer in
+// WGSL, as `mut` ones are. A local an `out` argument declares is declared
+// before its statement, with its type's default, and `out _` is a variable
+// nothing else names.
+scene Main { }
+
+struct Corner
+{
+    float2 position;
+    float2 uv;
+}
+
+local singleton Art
+{
+    List<Corner> quad;
+    List<int> faces;
+    float split = 0.5;
+}
+
+// Which side of `at` a value is on, and how far past it
+bool Past(float value, float at, out float over)
+{
+    if (value < at)
+    {
+        over = default;
+        return false;
+    }
+    over = value - at;
+    return true;
+}
+
+void Halves(float2 uv, out float left, out float right)
+{
+    left = uv.x * 0.5;
+    right = 1 - left;
+}
+
+frag Split(Corner corner, out Color color, Art art)
+{
+    color = Color(0, 0, 0, 1);
+    if (Past(corner.uv.x, art.split, out var over)) color.r = over;
+    color.g = over * 2;
+    Halves(corner.uv, out float left, out _);
+    mut var blue = 0.0;
+    Past(left, 0.25, out blue);
+    color.b = blue;
+}
+
+view Show(Art art)
+{
+    Draw.Mesh(art.quad, art.faces, Split);
+}

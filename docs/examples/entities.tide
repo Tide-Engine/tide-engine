@@ -1,0 +1,96 @@
+settings { title = "Entities"; tickRate = 30; maxPlayers = 1; }
+
+component Ball
+{
+    float2 position;
+    float radius = 0.3;
+}
+component Health { int value = 100; }
+component Poisoned { } // No fields: it only marks an entity
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Ball { position = float2(-1.2, 0.4) }, Health);
+    Spawn(Ball { position = float2(0, -0.3) }, Health, Poisoned);
+    Spawn(Ball { position = float2(1.2, 0.5) }, Health);
+}
+
+// What a tap asks of the match. Views can't change it themselves.
+command Drop { float2 at; }
+command Poison { }
+command Cure { }
+
+command(Drop drop, PlayerID sender) DropBall()
+{
+    Spawn(Ball { position = drop.at }, Health { value = 40 });
+}
+
+// `this` is the entity the command was sent to. Add and Remove wait for the
+// end of the tick, and so does Destroy.
+command(Poison poison, PlayerID sender) PoisonBall(with Ball) { this.Add(Poisoned); }
+command(Cure cure, PlayerID sender) CureBall(with Ball) { this.Remove(Poisoned); }
+
+system Sicken(mut Health health, with Poisoned)
+{
+    health.value -= 1;
+    if (health.value <= 0) this.Destroy();
+}
+
+system Recover(mut Health health, without Poisoned)
+{
+    health.value = Math.Min(health.value + 1, 100);
+}
+
+// This machine's side: what the pointer is on, and the counts to show.
+local singleton Pointing
+{
+    float2 world;
+    bool down;
+    bool onBall;
+    int balls;
+    int poisoned;
+}
+
+view Begin(Devices devices, mut Pointing pointing)
+{
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0), 2.2);
+    pointing.world = Draw.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    pointing.down = devices.pointer.press.down;
+    pointing.onBall = false;
+    pointing.balls = 0;
+    pointing.poisoned = 0;
+}
+
+view Healthy(Ball ball, Health health, mut Pointing pointing, without Poisoned)
+{
+    var size = ball.radius * (0.4 + health.value * 0.006);
+    Draw.Circle(ball.position, size, Color(0.98, 0.75, 0.14));
+    pointing.balls += 1;
+    if (Math.Distance(pointing.world, ball.position) > ball.radius) return;
+    pointing.onBall = true;
+    if (pointing.down) this.Send(Poison { });
+}
+
+view Sick(Ball ball, Health health, mut Pointing pointing, with Poisoned)
+{
+    var size = ball.radius * (0.4 + health.value * 0.006);
+    Draw.Circle(ball.position, size, Color(0.18, 0.83, 0.75));
+    Draw.WireCircle(ball.position, ball.radius, 0.03, Color(0.18, 0.83, 0.75));
+    pointing.balls += 1;
+    pointing.poisoned += 1;
+    if (Math.Distance(pointing.world, ball.position) > ball.radius) return;
+    pointing.onBall = true;
+    if (pointing.down) this.Send(Cure { });
+}
+
+view Ground(Pointing pointing)
+{
+    if (pointing.down && !pointing.onBall) Send(Drop { at = pointing.world });
+    Draw.SetScreen();
+    Draw.Text($"{pointing.balls} entities, {pointing.poisoned} with Poisoned", float2(16, 14), 18, Color.white);
+    Draw.Text("Tap a ball to poison or cure it. Tap the ground to spawn one.",
+                float2(16, Screen.height - 30), 13, Color(0.64, 0.64, 0.68));
+}

@@ -1,0 +1,4 @@
+// expect: a render target's samples are 1, 2, 4 or 8, and this says 16
+// expect: each of its pixels is drawn with that many samples, which smooths the edges of the triangles drawn into it: 'RenderTarget.Window(samples: 4)'; a device that has fewer draws it with what it has
+scene Main { }
+view Show() { var target = RenderTarget.Window(0.5, samples: 16); }

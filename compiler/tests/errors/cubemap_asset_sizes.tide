@@ -1,0 +1,4 @@
+// expect: '../e2e/cubes/mixed/m_px.png' is 4 pixels a side and '../e2e/cubes/mixed/m_nz.png' is 2: a cube's six faces are one size
+// ...and all six are one size
+asset Cubemap sky = "../e2e/cubes/mixed/*.png";
+scene Main { }

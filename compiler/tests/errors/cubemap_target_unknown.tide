@@ -1,0 +1,6 @@
+// expect: RenderTarget has no 'Sphere'; it has Window
+// expect: 'RenderTarget.Window()' is a target that's always the window's size, 'RenderTarget(width, height)' one of a size of its own, and 'Cubemap(size)' a cube whose six faces are drawn into
+// RenderTarget has Window; a cube is Cubemap's own constructor
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+view Show(mut Room room) { room.reflection = RenderTarget.Sphere(64); }

@@ -1,0 +1,66 @@
+// A game for the standard host to show its stats over: with no window
+// (platform/tests/stats.mjs), and in a page (platform/tests/web_stats.c). It
+// asks for them with its setting, keeps what its match and its views read of
+// presses and of the stats' key, and draws a block for each, so a test reads
+// whose a press on the stats was, off its state or off its pictures.
+
+settings
+{
+    stats = true;
+}
+
+component Hand { }
+
+// The match's side: the presses that reached the input
+singleton Read
+{
+    int presses;
+}
+
+input Hands
+{
+    bool pressed;
+
+    Sample(Devices devices)
+    {
+        pressed = devices.mouse.left.pressed || devices.touchscreen.primaryTouch.press.pressed;
+    }
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Hand, Owner { player = PlayerID(0) });
+}
+
+system Count(Hands hands, mut Read read, with Hand)
+{
+    if (hands.pressed) read.presses += 1;
+}
+
+local singleton Seen
+{
+    bool pressed; // A view read a press
+    bool key;     // ...and the stats' key
+}
+
+view Background()
+{
+    Draw.Clear(Color(0, 0, 1));
+}
+
+view Blocks(Read read, Devices devices, mut Seen seen)
+{
+    if (devices.pointer.press.pressed || devices.mouse.left.pressed) seen.pressed = true;
+    foreach (var touch in devices.touchscreen.touches)
+    {
+        if (touch.press.pressed) seen.pressed = true;
+    }
+    if (devices.keyboard.f8.down) seen.key = true;
+
+    Draw.SetScreen();
+    if (read.presses > 0) Draw.Rect(float2(40, 40), float2(40, 40), Color(1, 0, 0));
+    if (seen.pressed) Draw.Rect(float2(100, 40), float2(40, 40), Color(0, 1, 0));
+    if (seen.key) Draw.Rect(float2(160, 40), float2(40, 40), Color(1, 1, 0));
+}

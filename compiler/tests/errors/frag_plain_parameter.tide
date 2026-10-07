@@ -1,0 +1,36 @@
+// expect: a frag takes no plain values: 'strength' is float
+// What a frag reads lives in a component or a singleton
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+component Box
+{
+    Color tint = Color.white;
+}
+
+singleton Sun
+{
+    float3 direction = float3(0, -1, 0);
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    Grid2<Color> wood = Grid2(4, 4);
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box);
+}
+
+frag Shade(V vertex, out Color color, float strength)
+{
+    color = Color.white * strength;
+}

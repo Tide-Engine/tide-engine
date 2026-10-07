@@ -1,0 +1,7 @@
+// expect: 'pair' is read before it's assigned
+scene Main { }
+void Make(float seed, out float2 pair)
+{
+    pair.x = seed;
+    pair.y = seed + 1;
+}

@@ -1,0 +1,87 @@
+enum RenderPhases { Prepare, Objects, Effects, Present }
+scene Main { }
+struct Resources { RenderTarget target; Texture image; int retained; }
+component Object { float2 position; local Resources resources; }
+local component Graphic { Resources resources; }
+local singleton Buffers
+{
+    RenderTarget scene;
+    RenderTarget scratch;
+    Texture image;
+    Grid2<Color> pixels = Grid2(2, 2);
+    Resources nested;
+    Resources resumed;
+    int beginTask;
+    RenderTarget windowAlias;
+    RenderTarget borrowed;
+    float2 targetThenWindow;
+    float2 windowThenTarget;
+    float3 projected3;
+}
+
+extern void WindowMark(DrawList draw);
+
+async void Keep(Resources resources, mut Buffers buffers)
+{
+    await Wait.Frames(2);
+    buffers.resumed = resources;
+}
+
+view ResourceState(mut Buffers buffers)
+{
+    if (buffers.beginTask == 1)
+    {
+        buffers.beginTask = 2;
+        Spawn(Graphic { resources = buffers.nested });
+        Keep(buffers.nested, buffers);
+    }
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Object { position = float2(-1, 0) });
+    Spawn(Object { position = float2(1, 0) });
+}
+
+frag Copy(Vertex vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv, Filter.Point);
+}
+
+[Stage(RenderPhases.Present)]
+view Present(Buffers buffers)
+{
+    Draw.Blit(buffers.scratch.color, Draw.window, Copy);
+    Draw.window.Rect(float2(0), float2(1), Color.white);
+    Draw.Clear(Color.black);
+}
+
+[Stage(RenderPhases.Objects)]
+view Objects(Object object, Buffers buffers)
+{
+    buffers.scene.Rect(object.position, float2(1), Color.red);
+}
+
+[Stage(RenderPhases.Effects)]
+view Effects(Buffers buffers)
+{
+    Draw.Blit(buffers.scene.color, buffers.scratch, Copy);
+    Draw.Blit(buffers.image, buffers.scene, Copy);
+    Draw.Blit(buffers.pixels, buffers.scratch, Copy);
+}
+
+[Stage(RenderPhases.Prepare)]
+view Prepare(mut Buffers buffers)
+{
+    Draw.SetCamera(float2(0), 4);
+    buffers.scene.Clear(Color.black);
+    buffers.scene.SetCamera(float2(0), 4);
+    buffers.targetThenWindow = Draw.WorldToScreen(buffers.scene.WorldToScreen(float2(0)));
+    buffers.windowThenTarget = buffers.scene.WorldToScreen(Draw.WorldToScreen(float2(0)));
+    buffers.scene.SetCamera(float3(0, 0, -5), quaternion.identity, 60);
+    buffers.projected3 = buffers.scene.WorldToScreen(float3(0, 0, 5));
+    buffers.scene.Cube(float3(0, 0, 5), float3(2), Color.green);
+    buffers.scene.SetClip(Rect(-2, -2, 4, 4));
+    buffers.scratch.Clear(Color.blue);
+    WindowMark(Draw.list);
+}

@@ -1,0 +1,5 @@
+// expect: a 3D mesh takes the transform that places it in the world, a float4x4, after its indices
+// expect: like 'target.Mesh(vertices, indices, float4x4.Translate(position));'
+scene Main { }
+local singleton Look { RenderTarget target; }
+view Show(Look look) { look.target.Mesh([Vertex3 { }], [0, 0, 0]); }

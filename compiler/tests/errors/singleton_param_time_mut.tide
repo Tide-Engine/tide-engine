@@ -1,0 +1,4 @@
+// expect: 'Time' is managed by the engine
+void Rewind(mut Time time) { time.tick = 0; }
+scene Main { }
+system Change(Time time) { Rewind(time); }

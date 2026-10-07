@@ -1,0 +1,7 @@
+// expect: an asset's Cubemap is the pack's images, which nothing draws into: its faces are no targets
+// expect: a cube that's drawn into is made in a view: 'Cubemap(256)'
+// An asset's faces are the pack's images: no targets
+asset Cubemap sky = "../e2e/cubes/sky/*.png";
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+view Show(Room room) { sky.faces[0].Clear(Color.black); }

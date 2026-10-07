@@ -1,0 +1,41 @@
+// expect: a frag's pixel has one method, 'Discard()', which leaves it undrawn; the rest are its fields
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+component Box
+{
+    Color tint = Color.white;
+}
+
+singleton Sun
+{
+    float3 direction = float3(0, -1, 0);
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    Grid2<Color> wood = Grid2(4, 4);
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box);
+}
+
+frag Shade(V vertex, out Color color)
+{
+    this.Add<Box>();
+    color = Color.white;
+}
+
+view Show(Box box, Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}

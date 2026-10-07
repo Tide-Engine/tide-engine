@@ -1,0 +1,4 @@
+// expect: this list holds byte, not int
+component Bytes { List<byte> content = [0, 256]; }
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Bytes); }

@@ -1,0 +1,100 @@
+// What a function reaches through the World it's passed is its caller's
+// reach, through however many functions it goes: Chase reads any Transform
+// through LeaderAt, so it waits for Aim's writes; Heal sets any Health through
+// Mend, which Patch calls, so Drain waits for it; and Rest, which passes its
+// World to a function that never calls it, makes nothing wait.
+
+component Transform
+{
+    float2 position;
+}
+
+component Turret { }
+
+component Runner
+{
+    Entity leader;
+}
+
+component Health
+{
+    int value;
+}
+
+component Healer
+{
+    Entity patient;
+}
+
+component Armor
+{
+    int value;
+}
+
+component Idle
+{
+    int ticks;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Transform, Turret);
+    Spawn(Transform, Runner);
+    Spawn(Health, Healer);
+    Spawn(Armor);
+    Spawn(Idle);
+}
+
+float2 LeaderAt(Entity leader, World world)
+{
+    return world.Get<Transform>(leader).position;
+}
+
+void Mend(Entity patient, int by, mut World world)
+{
+    if (!world.TryGet<Health>(patient, out mut var health)) return;
+    health.value += by;
+    world.Set<Health>(patient, health);
+}
+
+void Patch(Entity patient, mut World world)
+{
+    Mend(patient, world.Get<Armor>(patient).value, world);
+}
+
+int Rested(int ticks, World world)
+{
+    return ticks + 1;
+}
+
+system Aim(mut Transform transform, with Turret)
+{
+    transform.position.x += 1;
+}
+
+system Chase(mut Transform transform, Runner runner, World world)
+{
+    transform.position = LeaderAt(runner.leader, world);
+}
+
+system Heal(Healer healer, mut World world)
+{
+    Patch(healer.patient, world);
+}
+
+system Drain(mut Health health)
+{
+    health.value -= 1;
+}
+
+system Rust(mut Armor armor)
+{
+    armor.value -= 1;
+}
+
+system Rest(mut Idle idle, World world)
+{
+    idle.ticks = Rested(idle.ticks, world);
+}

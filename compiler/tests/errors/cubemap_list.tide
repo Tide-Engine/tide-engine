@@ -1,0 +1,4 @@
+// expect: a list or a map holds values, like numbers, text, enums and structs, not Cubemap
+// No list holds one
+scene Main { }
+local singleton Room { List<Cubemap> cubes; }

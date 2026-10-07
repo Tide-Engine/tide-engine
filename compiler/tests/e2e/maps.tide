@@ -1,0 +1,169 @@
+// Maps and sets: values by key, and keys each once, in components, singletons,
+// structs, locals and events.
+
+enum Team { Red, Blue, Green }
+
+struct Stats
+{
+    string title;
+    int wins;
+}
+
+component Scores
+{
+    Map<int, int> byLevel;
+    Map<string, Stats> byName;
+    Map<Entity, float> distances;
+    Map<Team, long> totals;
+    Set<int> seen = [3, 1, 2];
+    Set<string> tags;
+}
+
+component Results
+{
+    int checks;
+    int passed;
+    int firstFailure;
+    string shown;
+}
+
+singleton Roster
+{
+    Map<PlayerID, Entity> avatars;
+}
+
+event Tally
+{
+    Map<int, int> counts;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Scores, Results);
+}
+
+void Expect(mut Results t, bool ok)
+{
+    t.checks += 1;
+    if (ok) t.passed += 1;
+    else if (t.firstFailure == 0) t.firstFailure = t.checks;
+}
+
+int Total(Map<int, int> m)
+{
+    mut var total = 0;
+    foreach (var e in m) total += e.value;
+    return total;
+}
+
+Set<int> Doubled(Set<int> keys)
+{
+    mut Set<int> out = [];
+    foreach (var k in keys) out.Add(k * 2);
+    return out;
+}
+
+system Use(mut Scores s, mut Results t, mut Roster roster)
+{
+    if (t.checks > 0) return; // Once
+
+    // Reading and writing by key
+    Expect(t, s.byLevel.count == 0 && s.byLevel[5] == 0 && !s.byLevel.Has(5));
+    s.byLevel[5] = 50;
+    s.byLevel[2] = 20;
+    s.byLevel[5] += 1; // Replaces
+    Expect(t, s.byLevel.count == 2 && s.byLevel[5] == 51 && s.byLevel[2] == 20 && s.byLevel.Has(2));
+    Expect(t, s.byLevel.Remove(2) && !s.byLevel.Remove(2) && s.byLevel.count == 1 && s.byLevel[2] == 0);
+    if (s.byLevel.Get(5) is int found) Expect(t, found == 51);
+    else Expect(t, false);
+    Expect(t, s.byLevel.Get(9) == null);
+
+    // Entries come in the order their keys were added, and skip removed ones
+    s.byLevel[1] = 1;
+    s.byLevel[9] = 9;
+    s.byLevel[3] = 3;
+    s.byLevel.Remove(9);
+    mut var order = "";
+    foreach (var e in s.byLevel) order = $"{order}{e.key}:{e.value} ";
+    Expect(t, order == "5:51 1:1 3:3 ");
+    Expect(t, Total(s.byLevel) == 55);
+
+    // Text keys and values with text
+    s.byName["ann"] = Stats { title = "captain", wins = 3 };
+    s.byName[$"b{"ob"}"] = Stats { title = "rookie" };
+    var ann = s.byName["ann"];
+    Expect(t, ann.title == "captain" && ann.wins == 3 && s.byName["bob"].title == "rookie" && s.byName["carl"].wins == 0);
+    mut var changed = s.byName["bob"];
+    changed.wins = 7;
+    changed.title = changed.title + "!";
+    s.byName["bob"] = changed;
+    Expect(t, s.byName["bob"].wins == 7 && s.byName["bob"].title == "rookie!" && s.byName.count == 2);
+    Expect(t, s.byName.Has("ann") && !s.byName.Has("Ann"));
+
+    // Entity, enum and player keys, long values
+    s.distances[this] = 1.5;
+    Expect(t, s.distances[this] == 1.5 && s.distances.count == 1);
+    s.totals[Team.Blue] = 10_000_000_000;
+    s.totals[Team.Blue] += 1;
+    Expect(t, s.totals[Team.Blue] == 10_000_000_001 && s.totals[Team.Red] == 0 && s.totals.count == 1);
+    roster.avatars[PlayerID(1)] = this;
+    Expect(t, roster.avatars[PlayerID(1)] == this && roster.avatars[PlayerID(0)] == default);
+
+    // Sets: each key once, in order, with a literal default
+    Expect(t, s.seen.count == 3 && s.seen.Has(1) && !s.seen.Has(7));
+    Expect(t, s.seen.Add(7) && !s.seen.Add(7) && s.seen.count == 4);
+    Expect(t, s.seen.Remove(3) && !s.seen.Remove(3));
+    mut var keys = "";
+    foreach (var k in s.seen) keys = $"{keys}{k} ";
+    Expect(t, keys == "1 2 7 ");
+    var doubled = Doubled(s.seen);
+    Expect(t, doubled.count == 3 && doubled.Has(14) && !doubled.Has(7));
+    s.tags.Add("fast");
+    s.tags.Add("fa" + "st");
+    s.tags.Add("slow");
+    Expect(t, s.tags.count == 2 && s.tags.Has("slow"));
+
+    // A map taken out of a field is a copy
+    mut var copy = s.byLevel;
+    copy[100] = 100;
+    copy.Remove(5);
+    Expect(t, s.byLevel.count == 3 && s.byLevel.Has(5) && copy.count == 3 && copy.Has(100) && !copy.Has(5));
+
+    // A whole map assigned: the field has its own copy
+    mut Map<int, int> fresh = default;
+    fresh[8] = 8;
+    s.byLevel = fresh;
+    fresh[9] = 9;
+    Expect(t, s.byLevel.count == 1 && s.byLevel[8] == 8 && fresh.count == 2);
+
+    // Text shows maps and sets
+    t.shown = $"{s.byLevel} {s.seen} {s.byName}";
+
+    // Events carry maps; clearing
+    this.Send(Tally { counts = s.byLevel });
+    s.byLevel.Clear();
+    s.tags.Clear();
+    Expect(t, s.byLevel.count == 0 && s.tags.count == 0 && !s.byLevel.Has(8));
+    s.byLevel[8] = 1;
+    Expect(t, s.byLevel.count == 1 && s.byLevel[8] == 1);
+}
+
+// Every tick after: maps churn, so blocks are given back and reused.
+system Churn(mut Scores s, Results t, Time time)
+{
+    if (t.checks == 0) return;
+    s.byName.Clear();
+    s.byName[$"n{time.tick}"] = Stats { title = $"t{time.tick}" };
+    List<int> levels = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+    foreach (var i in levels) s.byLevel[i * time.tick] = i;
+    s.byLevel.Remove(time.tick);
+    s.byLevel.Remove(2 * time.tick);
+}
+
+event(Tally tally) Count(mut Results t)
+{
+    if (tally.counts.count == 1 && tally.counts[8] == 8) t.passed += 1;
+    t.checks += 1;
+}

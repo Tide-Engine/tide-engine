@@ -1,0 +1,7 @@
+// expect: it's 'Move(Body, with Player)'
+scene Main { }
+component Body { float x; }
+component Player { }
+system Move(mut Body body, with Player) { body.x += 1; }
+[After(Move(Body))]
+system Settle(mut Body body) { body.x *= 0.5; }

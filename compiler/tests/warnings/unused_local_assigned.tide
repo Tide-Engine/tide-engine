@@ -1,0 +1,36 @@
+// warnings: 4
+// expect: 13:13: warning: local 'total' is never used
+// expect: it's assigned, but nothing reads its value: remove it and what assigns it, or use it where it was meant
+// expect: 17:15: warning: local 'stats' is never used
+// expect: 20:19: warning: local 'seen' is never used
+// expect: 24:14: warning: local 'i' is never used
+
+// Assigned but never read counts as never read: `=`, `+=`, `++`, a field of a
+// struct, an element of a list. A for's local is a local like any other.
+
+system Count(mut Unit unit)
+{
+    mut var total = 0;
+    total += unit.hits;
+    total = 5;
+
+    mut Stats stats = Stats { };
+    stats.health = unit.hits;
+
+    mut List<int> seen = [0, 0];
+    seen[unit.hits % 2] = 1;
+    seen[0]++;
+
+    for (var i = 0; unit.hits < 3; i++) unit.hits += 1;
+}
+
+struct Stats { int health; }
+
+component Unit { int hits; }
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Unit);
+}

@@ -1,0 +1,30 @@
+// A game's own Pixel remains an ordinary struct. The implicit pixel `this`
+// stays separate from this value handed from the vert to its frag.
+scene Main { }
+
+struct Pixel
+{
+    float glow;
+}
+
+local singleton Art
+{
+    List<Vertex> mesh;
+    List<int> faces;
+}
+
+vert Light(mut Vertex vertex, out Pixel pixel)
+{
+    pixel.glow = vertex.uv.x;
+}
+
+frag Shade(Vertex vertex, out Color color, Pixel pixel)
+{
+    if (this.position.x < 1) this.Discard();
+    color = vertex.color * pixel.glow;
+}
+
+view Show(Art art)
+{
+    Draw.Mesh(art.mesh, art.faces, Light, Shade);
+}

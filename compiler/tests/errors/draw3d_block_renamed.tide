@@ -1,0 +1,10 @@
+// expect: Draw3D.Depth is 'Draw.Depth' now
+scene Main { }
+
+view Show()
+{
+    Draw3D.Depth(Depth.Read)
+    {
+        Draw.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.white);
+    }
+}

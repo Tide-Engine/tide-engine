@@ -1,0 +1,8 @@
+// expect: 'TryGet' makes its 'value' Health, not Healer
+component Health { int value; }
+component Healer { Entity patient; }
+scene Main { }
+system Read(mut Healer healer, World world)
+{
+    if (world.TryGet<Health>(healer.patient, out Healer other)) healer.patient = other.patient;
+}

@@ -1,0 +1,3 @@
+// expect: [Snap] keeps a field immediate
+component Body { [Snap, Rotation] quaternion rotation; }
+scene Main {}

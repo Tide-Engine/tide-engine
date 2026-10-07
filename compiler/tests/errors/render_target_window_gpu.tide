@@ -1,0 +1,3 @@
+// expect: a frag runs on the GPU, for each pixel, so it can't create a RenderTarget
+scene Main { }
+frag Paint(Vertex vertex, out Color color) { var target = RenderTarget.Window(); color = Color.white; }

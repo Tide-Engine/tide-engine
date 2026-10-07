@@ -1,0 +1,8 @@
+// expect: a struct a draw supplies, its instances' or its values', carries no texture: keep the sampled DepthTexture in a component or singleton
+scene Main { }
+struct Lit { DepthTexture shadow; }
+frag Shade(Vertex vertex, out Color color, Lit lit)
+{
+    float far = lit.shadow.Sample(vertex.uv);
+    color = Color(far, far, far);
+}

@@ -1,0 +1,6 @@
+// expect: the match runs the same on every machine, so it can't call Cursor.Lock
+scene Main { }
+system Look()
+{
+    Cursor.Lock();
+}

@@ -37,8 +37,14 @@ typedef enum tok_kind {
     T_WHILE,
     T_FOR,
     T_FOREACH,
+    T_PARALLEL,
     T_CONTINUE,
     T_THIS, // The entity the code runs for
+    T_FAIL, // fail error;: ends a function that `fails`
+    T_TRY,  // try call: its value, or its error passed on
+    T_AWAIT, // await call: an async call's value, once it's done
+    T_IS,   // x is Type name
+    T_NULL, // The nothing of a T?
 
     // Punctuation
     T_LBRACE,
@@ -51,6 +57,7 @@ typedef enum tok_kind {
     T_COMMA,
     T_DOT,
     T_QUESTION,
+    T_COALESCE, // ??
     T_COLON,
 
     T_ASSIGN,
@@ -102,6 +109,43 @@ token *lex(const source *src);
 // Like lex, but returns the tokens even after errors, skipping what it couldn't
 // read. For editors, which need tokens while code is half typed.
 token *lex_all(const source *src);
+
+// Lines the lexer reads no code from (see docs/spec.md, Conditional
+// compilation): a directive, like `#if TIDE_0_3_OR_NEWER`, or the lines one
+// leaves out.
+typedef struct lex_span {
+    int first; // Lines, from 1
+    int last;
+    bool directive;
+} lex_span;
+
+typedef VEC(lex_span) lex_spans;
+
+// lex_all, listing in `spans` the lines of directives and those they leave
+// out, in order.
+token *lex_all_spans(const source *src, lex_spans *spans);
+
+// The symbols a build defines for every file it lexes, beside tide's versions
+// and each file's own #defines: named on the command line (`--define FAST`),
+// DEBUG, and PACKAGE_<NAME> for each package the game builds with. Reset
+// before a game's files are lexed, then defined. Names are kept, not copied.
+void lex_symbols_reset(void);
+void lex_define(const char *name);
+void lex_define_package(const char *package); // PACKAGE_BOX2D for "Box2D"
+
+// Whether a name can be defined: an identifier that isn't a condition's own
+// word or tide's to say (TIDE_..., PACKAGE_...).
+bool lex_symbol_ok(const char *name);
+
+// Each of the build's symbols a condition read since the reset, defined or
+// not, in order of their names: what the files read differently in another
+// build.
+typedef struct lex_symbol {
+    const char *name;
+    bool defined;
+} lex_symbol;
+
+const lex_symbol *lex_symbols_read(int *count);
 
 const char *tok_kind_name(tok_kind kind);
 

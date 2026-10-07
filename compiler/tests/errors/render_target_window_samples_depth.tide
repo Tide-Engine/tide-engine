@@ -1,0 +1,4 @@
+// expect: a target of depth alone has one sample a pixel: a multisampled target's depth can't be read
+scene Main { }
+const int SMOOTH = 2;
+view Show() { var shadow = RenderTarget.Window(Format.Depth, samples: SMOOTH * 2); }

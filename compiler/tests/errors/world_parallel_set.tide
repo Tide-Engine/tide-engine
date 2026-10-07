@@ -1,0 +1,11 @@
+// expect: a parallel loop's steps run at once, so each changes only its own place
+component Health { int value; }
+singleton Field { Grid2<int> cells = Grid2(16, 16); Entity keeper; }
+scene Main { }
+system Step(mut Field field, mut World world)
+{
+    parallel (var at in field.cells)
+    {
+        world.Set<Health>(field.keeper, Health { value = field.cells[at] });
+    }
+}

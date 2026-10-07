@@ -40,9 +40,20 @@ int sys_run(const char *const *argv, const char *cwd, bool quiet);
 // start.
 typedef struct sys_process sys_process;
 sys_process *sys_start(const char *const *argv, const char *cwd);
+// The same, with what it prints and its errors in the file `log`, made anew,
+// rather than on the terminal.
+sys_process *sys_start_logged(const char *const *argv, const char *cwd, const char *log);
 // Waits up to `ms` milliseconds for it to end. True once it has, with its exit
 // code in `code`; the process is freed then.
 bool sys_wait(sys_process *p, int ms, int *code);
+// Ends it, and frees it.
+void sys_kill(sys_process *p);
+
+// Runs a program like sys_run, and puts what it prints (not its errors) in
+// `out`, `size` bytes with the zero that ends it, cut there if it's longer.
+int sys_capture(const char *const *argv, char *out, size_t size);
+// The same, with its errors too, in the order it said both.
+int sys_capture_all(const char *const *argv, char *out, size_t size);
 
 uint32_t sys_pid(void);                // This process's
 bool sys_process_alive(uint32_t pid); // Whether a process with that ID is running
@@ -58,7 +69,17 @@ bool sys_open_in_browser(const char *page);
 // Finds a program on PATH (with the usual extensions on Windows).
 char *sys_which(const char *name);
 
+// curl or tar, which ship with Windows 10+, macOS and Linux. On Windows, the
+// ones in System32: Git's GNU tar, if it comes first on PATH, can't unpack
+// zips.
+const char *sys_tool(const char *name);
+
 const char *sys_env(const char *name); // NULL if unset or empty
+// Whether this is a run nobody watches: TIDE_HIDDEN is set, to anything but
+// nothing or 0 (an agent's shell, a build server). Nothing tide starts then
+// shows a window, nor one of Windows' dialogs for a program that can't start
+// or crashed.
+bool sys_hidden(void);
 int64_t sys_now(void);                 // Seconds since 1970
 int64_t sys_now_ms(void);              // Milliseconds from a fixed point, never going back
 bool sys_is_terminal(void);            // Whether stdout is a terminal, not a file or a pipe

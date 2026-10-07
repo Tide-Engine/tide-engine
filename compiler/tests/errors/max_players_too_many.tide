@@ -1,0 +1,7 @@
+// expect: maxPlayers is from 1 to 256 players, not 1000
+settings
+{
+    maxPlayers = 1000;
+}
+
+scene Main { }

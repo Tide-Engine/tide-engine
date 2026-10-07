@@ -1,0 +1,5 @@
+// expect: Phase(...) converts an int, not float
+enum Phase { Warmup, Playing }
+singleton Match { Phase phase; float progress; }
+scene Main { }
+system S(mut Match match) { match.phase = Phase(match.progress); }

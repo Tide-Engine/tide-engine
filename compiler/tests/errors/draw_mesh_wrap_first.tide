@@ -1,0 +1,14 @@
+// expect: a mesh's wrap comes after its filter: 'Draw.Mesh(..., texture, Filter.Bilinear, Wrap.Repeat)'
+// expect: a texture that isn't to be sampled as it says is given both; one that only wraps another way says so where it's declared: '[Wrap(Wrap.Repeat)]'
+scene Main { }
+
+local singleton Art
+{
+    List<Vertex> corners;
+    Grid2<Color> tiles = Grid2(4, 4);
+}
+
+view Show(Art art)
+{
+    Draw.Mesh(art.corners, [0, 1, 2], art.tiles, Wrap.Repeat);
+}

@@ -3,13 +3,17 @@
 #   cmake --preset package && cmake --build --preset package
 #   cmake --preset web-package && cmake --build --preset web-package
 #   cmake --preset mingw-release && cmake --build --preset mingw-release  (Windows)
+#   cmake --preset android-package-arm64 && cmake --build --preset android-package-arm64
+#   cmake --preset android-package-x86_64 && cmake --build --preset android-package-x86_64
 #   cmake -DNAME=tide-windows-x64 -P cmake/package.cmake
 #
 # NAME is the archive's name: .zip for Windows, .tar.gz otherwise. It lands in
 # build/dist, next to the unpacked package (build/dist/tide) and a SHA256SUMS
-# line. NATIVE, WEB and MINGW override the build trees (default build/package,
-# build/web-package and build/mingw-release). Without the web tree, the package
-# can't build web games; on Windows, without the MinGW tree, native ones.
+# line. NATIVE, WEB, MINGW, ANDROID_ARM64 and ANDROID_X86_64 override the build
+# trees (default build/package, build/web-package, build/mingw-release,
+# build/android-package-arm64 and build/android-package-x86_64). Without the web
+# tree, the package can't build web games; on Windows, without the MinGW tree,
+# native ones; without the Android trees, Android ones.
 
 cmake_minimum_required(VERSION 3.25)
 get_filename_component(source "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
@@ -25,14 +29,22 @@ endif()
 if(NOT MINGW)
     set(MINGW "${source}/build/mingw-release")
 endif()
+if(NOT ANDROID_ARM64)
+    set(ANDROID_ARM64 "${source}/build/android-package-arm64")
+endif()
+if(NOT ANDROID_X86_64)
+    set(ANDROID_X86_64 "${source}/build/android-package-x86_64")
+endif()
 set(dist "${source}/build/dist")
 set(stage "${dist}/tide")
 
 # On Windows, games build for MinGW (see cmake/mingw-toolchain.cmake): the
 # MinGW tree brings their platform layer and C runtime. It goes first, so the
 # native tree's tide and tidels, built for Visual Studio's target, replace its.
-set(trees "${NATIVE}" "${WEB}")
-if(CMAKE_HOST_WIN32)
+# Windows' package is told by its name, as another system builds it too (with
+# NATIVE as the tree of the windows-package preset).
+set(trees "${NATIVE}" "${WEB}" "${ANDROID_ARM64}" "${ANDROID_X86_64}")
+if(NAME MATCHES "windows")
     list(PREPEND trees "${MINGW}")
 endif()
 
@@ -42,7 +54,9 @@ foreach(tree IN LISTS trees)
         if(tree STREQUAL NATIVE)
             message(FATAL_ERROR "No native package build in ${tree}: run `cmake --preset package` and build it")
         elseif(tree STREQUAL MINGW)
-            message(WARNING "No MinGW build in ${tree}: this package won't build native games")
+            message(FATAL_ERROR "No MinGW build in ${tree}: Windows' package builds native games with it")
+        elseif(tree STREQUAL ANDROID_ARM64 OR tree STREQUAL ANDROID_X86_64)
+            message(WARNING "No Android package build in ${tree}: this package won't build Android games")
         else()
             message(WARNING "No web package build in ${tree}: this package won't build web games")
         endif()
@@ -54,6 +68,11 @@ foreach(tree IN LISTS trees)
         message(FATAL_ERROR "Installing ${tree} failed")
     endif()
 endforeach()
+
+# Every tree installs a VERSION, and the package's is its tide's: tide takes an
+# installation whose VERSION isn't its own version for an upgrade that stopped
+# partway (compiler/cli/install.c), whatever the other trees were configured as.
+file(COPY_FILE "${NATIVE}/package/VERSION" "${stage}/VERSION")
 
 if(NAME MATCHES "windows")
     set(archive "${dist}/${NAME}.zip")

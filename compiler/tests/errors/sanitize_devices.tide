@@ -2,7 +2,7 @@
 input PlayerInput
 {
     bool jump;
-    Sample() { jump = Devices.keyboard.space.pressed; }
+    Sample(Devices devices) { jump = devices.keyboard.space.pressed; }
     Sanitize() { jump = Devices.keyboard.space.pressed; }
 }
 scene Main { }

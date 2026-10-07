@@ -1,0 +1,85 @@
+settings { title = "Predicted and confirmed"; tickRate = 30; maxPlayers = 4; }
+
+scene Main { } // The match's own scene: one machine hosts it, the others join
+
+component Body
+{
+    [Position] float2 position; // Drawn gliding to where a correction put it
+    Color color;
+}
+singleton Roster { Map<PlayerID, Entity> bodies; int arrivals; }
+
+// Where this machine's pointer is in the arena, which its input sends.
+local singleton Aim { float2 world; bool moved; }
+
+input Steer
+{
+    // A place, not something a player does: what another machine guesses of it stays
+    [Absolute, Clamp(-3, 3)] float2 target;
+    [Absolute] bool steering;
+
+    Sample(Devices devices, Aim aim)
+    {
+        target = aim.world;
+        steering = aim.moved; // Not before the pointer was ever on this window
+    }
+}
+
+event(PlayerJoined joined) Arrive(mut Roster roster)
+{
+    var first = roster.arrivals % 2 == 0;
+    roster.arrivals += 1;
+    roster.bodies[joined.player] = Spawn(
+        Body { position = float2(first ? -1 : 1, 0), color = first ? Color(0.98, 0.75, 0.14) : Color(0.18, 0.83, 0.75) },
+        Owner { player = joined.player });
+}
+
+event(PlayerLeft left) Depart(mut Roster roster)
+{
+    roster.bodies[left.player].Destroy();
+    roster.bodies.Remove(left.player);
+}
+
+// Each body walks to where its owner points, on every machine alike.
+system Follow(Steer steer, mut Body body, Time time)
+{
+    if (!steer.steering) return;
+    var way = steer.target - body.position;
+    var step = 2.5 * time.dt;
+    body.position += Math.Length(way) > step ? Math.Normalize(way) * step : way;
+}
+
+view Point(Devices devices, mut Aim aim)
+{
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0, 0.3), 2.4);
+    aim.world = Draw.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    if (Math.LengthSq(devices.pointer.delta) > 0) aim.moved = true;
+}
+
+// The ring: where the server has confirmed the body is. It trails what this
+// machine predicts by as far as the machine runs ahead of the server.
+view Confirmed(verified Body body)
+{
+    Draw.WireCircle(body.position, 0.34, 0.035, body.color);
+}
+
+// The disc: the world as this machine predicts it. Its own input applies at
+// once, and the other player's is guessed from the last one that arrived.
+view Predicted(Body body)
+{
+    Draw.Circle(body.position, 0.2, body.color);
+}
+
+view Mine(Body body, with ownership)
+{
+    Draw.Text("you", body.position + float2(0, 0.42), 0.2, Color.white, Anchor.LowerCenter);
+}
+
+view Hud(Session session)
+{
+    Draw.SetScreen();
+    Draw.Text(session.server ? "This machine runs the server" : $"{session.ping} ms round trip to the server",
+                float2(12, 10), 15, Color.white);
+    Draw.Text("disc: predicted here   ring: confirmed", float2(12, 30), 13, Color(0.64, 0.64, 0.68));
+}

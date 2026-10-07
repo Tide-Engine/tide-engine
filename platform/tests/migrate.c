@@ -13,11 +13,75 @@
 extern const tide_layout tide_game_layout;
 
 #define FIELD(T, f, type, kind, dim, decl) {#f, type, kind, dim, decl, offsetof(T, f), sizeof(((T *)0)->f)}
-#define ROWS 4u
+
+typedef struct byte_before {
+    uint8_t a, b, c, keep;
+    int32_t narrow;
+} byte_before;
+
+typedef struct byte_after {
+    int32_t a;
+    int64_t b;
+    float c;
+    uint8_t keep, narrow;
+} byte_after;
+
+static void byte_after_defaults(void *value)
+{
+    memset(value, 0, sizeof(byte_after));
+    ((byte_after *)value)->narrow = 9;
+}
+
+TIDE_TEST(migrate_byte_fields_widen_and_keep_their_unsigned_value)
+{
+    const tide_layout_field before_fields[] = {
+        FIELD(byte_before, a, "byte", TIDE_LAYOUT_BYTE, 1, -1),
+        FIELD(byte_before, b, "byte", TIDE_LAYOUT_BYTE, 1, -1),
+        FIELD(byte_before, c, "byte", TIDE_LAYOUT_BYTE, 1, -1),
+        FIELD(byte_before, keep, "byte", TIDE_LAYOUT_BYTE, 1, -1),
+        FIELD(byte_before, narrow, "int", TIDE_LAYOUT_INT, 1, -1),
+    };
+    const tide_layout_field after_fields[] = {
+        FIELD(byte_after, a, "int", TIDE_LAYOUT_INT, 1, -1),
+        FIELD(byte_after, b, "long", TIDE_LAYOUT_LONG, 1, -1),
+        FIELD(byte_after, c, "float", TIDE_LAYOUT_FLOAT, 1, -1),
+        FIELD(byte_after, keep, "byte", TIDE_LAYOUT_BYTE, 1, -1),
+        FIELD(byte_after, narrow, "byte", TIDE_LAYOUT_BYTE, 1, -1),
+    };
+    const tide_layout_type before_type = {"Bytes", sizeof(byte_before), false, 5, before_fields, NULL};
+    const tide_layout_type after_type = {"Bytes", sizeof(byte_after), false, 5, after_fields, byte_after_defaults};
+    const tide_layout_place place = {0, 0, false};
+    const tide_layout before = {.type_count = 1, .types = &before_type,
+        .match = {.size = sizeof(byte_before), .singleton_count = 1, .singletons = &place, .input = -1}};
+    const tide_layout after = {.type_count = 1, .types = &after_type,
+        .match = {.size = sizeof(byte_after), .singleton_count = 1, .singletons = &place, .input = -1}};
+    uint8_t packed[1024];
+    const byte_before header = {255, 128, 200, 231, 77};
+    tide_writer w = {packed, sizeof packed, 0, false, false};
+    tide_write_bytes(&w, &header, sizeof header);
+    tide_entities entities = {0};
+    tide_entities_pack(&entities, &w);
+    tide_write_u32(&w, 0); // Empty command queue.
+    TIDE_REQUIRE(!w.overflow);
+    void *bytes = NULL;
+    uint32_t size = 0;
+    tide_migration migration;
+    TIDE_REQUIRE(tide_migrate_world(&before, &before.match, packed, w.size, &after, &after.match,
+                                   &bytes, &size, &migration));
+    TIDE_REQUIRE(size >= sizeof(byte_after));
+    byte_after result;
+    memcpy(&result, bytes, sizeof result);
+    TIDE_CHECK(result.a == 255 && result.b == 128 && result.c == 200.0f);
+    TIDE_CHECK(result.keep == 231 && result.narrow == 9);
+    TIDE_CHECK(tide_layout_fields_reset(&before, &after) == 1);
+    tide_entities_free(&entities);
+    free(bytes);
+}
 
 // ---------------------------------------------------------------------------
 // The old build: enum Kind { A, B, C }; Ball, Tag and the scene Arena; Rules;
-// the input In
+// the input In. Its archetypes: Ball; Ball and Tag; Arena; Tag. Each has the
+// entity column, then the scene's, then its components' lanes: 4 bytes each.
 
 enum { OLD_A, OLD_B, OLD_C };
 
@@ -45,43 +109,9 @@ typedef struct old_in {
     float move;
 } old_in;
 
-typedef struct old_balls {
-    uint32_t count;
-    tide_entity entity[ROWS];
-    tide_entity scene[ROWS];
-    old_ball ball[ROWS];
-} old_balls;
-
-typedef struct old_tagged {
-    uint32_t count;
-    tide_entity entity[ROWS];
-    tide_entity scene[ROWS];
-    old_ball ball[ROWS];
-    old_tag tag[ROWS];
-} old_tagged;
-
-typedef struct old_arenas {
-    uint32_t count;
-    tide_entity entity[ROWS];
-    tide_entity scene[ROWS];
-    old_arena arena[ROWS];
-} old_arenas;
-
-typedef struct old_tags {
-    uint32_t count;
-    tide_entity entity[ROWS];
-    tide_entity scene[ROWS];
-    old_tag tag[ROWS];
-} old_tags;
-
+// The struct its world's bytes start with
 typedef struct old_world {
     old_rules rules;
-    tide_entities entities;
-    old_balls balls;
-    old_tagged tagged;
-    old_arenas arenas;
-    old_tags tags;
-    uint32_t command_count;
     old_in inputs[3];
     old_in previous[3];
 } old_world;
@@ -137,42 +167,38 @@ static const tide_layout_type old_types[] = {
 static const tide_layout_member old_kinds[] = {{"A", OLD_A}, {"B", OLD_B}, {"C", OLD_C}};
 static const tide_layout_enum old_enums[] = {{"Kind", 3, old_kinds}};
 
-static const tide_layout_place old_balls_columns[] = {{OLD_BALL, offsetof(old_balls, ball)}};
-static const tide_layout_place old_tagged_columns[] = {{OLD_BALL, offsetof(old_tagged, ball)},
-                                                       {OLD_TAG, offsetof(old_tagged, tag)}};
-static const tide_layout_place old_arenas_columns[] = {{OLD_ARENA, offsetof(old_arenas, arena)}};
-static const tide_layout_place old_tags_columns[] = {{OLD_TAG, offsetof(old_tags, tag)}};
+static const tide_layout_place old_balls_columns[] = {{OLD_BALL, 2, false}};
+static const tide_layout_place old_tagged_columns[] = {{OLD_BALL, 2, false}, {OLD_TAG, 7, false}}; // Ball's 5 lanes, then Tag's
+static const tide_layout_place old_arenas_columns[] = {{OLD_ARENA, 2, false}};
+static const tide_layout_place old_tags_columns[] = {{OLD_TAG, 2, false}};
 static const tide_layout_archetype old_archetypes[] = {
-    {offsetof(old_world, balls), offsetof(old_balls, count), offsetof(old_balls, entity), offsetof(old_balls, scene), 1,
-     old_balls_columns},
-    {offsetof(old_world, tagged), offsetof(old_tagged, count), offsetof(old_tagged, entity),
-     offsetof(old_tagged, scene), 2, old_tagged_columns},
-    {offsetof(old_world, arenas), offsetof(old_arenas, count), offsetof(old_arenas, entity),
-     offsetof(old_arenas, scene), 1, old_arenas_columns},
-    {offsetof(old_world, tags), offsetof(old_tags, count), offsetof(old_tags, entity), offsetof(old_tags, scene), 1,
-     old_tags_columns},
+    {true, 1, old_balls_columns},
+    {true, 2, old_tagged_columns},
+    {true, 1, old_arenas_columns},
+    {true, 1, old_tags_columns},
 };
-static const tide_layout_place old_singletons[] = {{OLD_RULES, offsetof(old_world, rules)}};
+static const tide_layout_place old_singletons[] = {{OLD_RULES, offsetof(old_world, rules), false}};
 
 static const tide_layout old_layout = {
     5, old_types, 1, old_enums,
-    {sizeof(old_world), 1, old_singletons, offsetof(old_world, entities), 4, old_archetypes, ROWS,
-     offsetof(old_world, command_count), OLD_IN, offsetof(old_world, inputs), offsetof(old_world, previous), 3,
-     UINT32_MAX},
+    {sizeof(old_world), 1, old_singletons, 4, old_archetypes, OLD_IN, offsetof(old_world, inputs),
+     offsetof(old_world, previous), 3, false, 0, NULL, 0, 0, 0, NULL, 0, NULL},
     {0},
 };
 
 // ---------------------------------------------------------------------------
-// The new build: enum Kind { C, A }, without B. Ball's fields moved, hits is a
-// float, gone an int2, and extra is new; Tag is gone. Rules has a new field and
-// speed is a float. The input has jump.
+// The new build: enum Kind : byte { C, A }, without B. Ball's fields moved, hits
+// is a float, gone an int2, and extra is new; Tag is gone. Rules has a new field,
+// lives is a long and speed is a float. The input has jump. Its archetypes:
+// Arena; Ball.
 
 enum { NEW_C, NEW_A };
 
 typedef struct new_ball {
     tide_float2 pos;
     float hits;
-    int32_t kind;
+    uint8_t kind; // Kind is a byte now
+    uint8_t padding[3];
     tide_float3 extra;
     tide_int2 gone;
 } new_ball;
@@ -183,7 +209,7 @@ typedef struct new_arena {
 
 typedef struct new_rules {
     int32_t added;
-    int32_t lives;
+    int64_t lives; // A long now: the int converts
     float speed;
 } new_rules;
 
@@ -192,26 +218,9 @@ typedef struct new_in {
     float jump;
 } new_in;
 
-typedef struct new_arenas {
-    uint32_t count;
-    tide_entity entity[ROWS];
-    tide_entity scene[ROWS];
-    new_arena arena[ROWS];
-} new_arenas;
-
-typedef struct new_balls {
-    uint32_t count;
-    tide_entity entity[ROWS];
-    tide_entity scene[ROWS];
-    new_ball ball[ROWS];
-} new_balls;
-
 typedef struct new_world {
-    tide_entities entities;
-    new_arenas arenas;
-    new_balls balls;
+    uint32_t unused; // The singletons and inputs needn't come first
     new_rules rules;
-    uint32_t command_count;
     new_in inputs[3];
     new_in previous[3];
 } new_world;
@@ -246,7 +255,7 @@ static const tide_layout_field new_ball_fields[] = {
 static const tide_layout_field new_arena_fields[] = {FIELD(new_arena, size, "int", TIDE_LAYOUT_INT, 1, -1)};
 static const tide_layout_field new_rules_fields[] = {
     FIELD(new_rules, added, "int", TIDE_LAYOUT_INT, 1, -1),
-    FIELD(new_rules, lives, "int", TIDE_LAYOUT_INT, 1, -1),
+    FIELD(new_rules, lives, "long", TIDE_LAYOUT_LONG, 1, -1),
     FIELD(new_rules, speed, "float", TIDE_LAYOUT_FLOAT, 1, -1),
 };
 static const tide_layout_field new_in_fields[] = {
@@ -265,20 +274,17 @@ static const tide_layout_type new_types[] = {
 static const tide_layout_member new_kinds[] = {{"C", NEW_C}, {"A", NEW_A}};
 static const tide_layout_enum new_enums[] = {{"Kind", 2, new_kinds}};
 
-static const tide_layout_place new_arenas_columns[] = {{NEW_ARENA, offsetof(new_arenas, arena)}};
-static const tide_layout_place new_balls_columns[] = {{NEW_BALL, offsetof(new_balls, ball)}};
+static const tide_layout_place new_arenas_columns[] = {{NEW_ARENA, 2, false}};
+static const tide_layout_place new_balls_columns[] = {{NEW_BALL, 2, false}};
 static const tide_layout_archetype new_archetypes[] = {
-    {offsetof(new_world, arenas), offsetof(new_arenas, count), offsetof(new_arenas, entity),
-     offsetof(new_arenas, scene), 1, new_arenas_columns},
-    {offsetof(new_world, balls), offsetof(new_balls, count), offsetof(new_balls, entity), offsetof(new_balls, scene), 1,
-     new_balls_columns},
+    {true, 1, new_arenas_columns},
+    {true, 1, new_balls_columns},
 };
-static const tide_layout_place new_singletons[] = {{NEW_RULES, offsetof(new_world, rules)}};
+static const tide_layout_place new_singletons[] = {{NEW_RULES, offsetof(new_world, rules), false}};
 
 #define NEW_MATCH(archetypes, count)                                                                                \
-    {sizeof(new_world), 1, new_singletons, offsetof(new_world, entities), count, archetypes, ROWS,                  \
-     offsetof(new_world, command_count), NEW_IN, offsetof(new_world, inputs), offsetof(new_world, previous), 3,     \
-     UINT32_MAX}
+    {sizeof(new_world), 1, new_singletons, count, archetypes, NEW_IN, offsetof(new_world, inputs),                  \
+     offsetof(new_world, previous), 3, false, 0, NULL, 0, 0, 0, NULL, 0, NULL}
 
 static const tide_layout new_layout = {4, new_types, 1, new_enums, NEW_MATCH(new_archetypes, 2), {0}};
 
@@ -288,39 +294,72 @@ static const tide_layout no_arena_layout = {4, new_types, 1, new_enums, NEW_MATC
 // ---------------------------------------------------------------------------
 
 typedef struct old_match {
-    old_world *w;
+    uint8_t *bytes;
+    uint32_t size;
+    uint32_t slots; // Its entity table's
     tide_entity arena, ball1, ball2, tag_only;
 } old_match;
 
-static tide_entity add_entity(old_world *w, const uint32_t archetype, const uint32_t row)
+// An archetype's rows: its count, then its columns, one after another: the
+// entities, their scenes, then each component's lanes.
+static void put_rows(tide_writer *w, const uint32_t count, const tide_entity *entities, const tide_entity *scenes,
+                     const void *const *components, const uint32_t *sizes, const uint32_t component_count)
 {
-    const tide_entity e = tide_entity_create(&w->entities);
-    tide_entity_set_location(&w->entities, e, (tide_location){archetype, row});
-    return e;
+    tide_write_u32(w, count);
+    tide_write_bytes(w, entities, count * (uint32_t)sizeof(tide_entity));
+    tide_write_bytes(w, scenes, count * (uint32_t)sizeof(tide_entity));
+    for (uint32_t i = 0; i < component_count; i++) {
+        const uint32_t width = tide_lane_width(sizes[i]);
+        for (uint32_t k = 0; k < sizes[i] / width; k++) {
+            for (uint32_t row = 0; row < count; row++) {
+                tide_write_bytes(w, (const uint8_t *)components[i] + row * sizes[i] + k * width, width);
+            }
+        }
+    }
 }
 
 // An arena with two balls in it, one of them tagged, and an entity that only
-// has a tag: its components can't be together in the new build.
-static old_match make_old(void)
+// has a tag: its components can't be together in the new build. `waiting` is
+// how many changes are waiting to be applied.
+static old_match make_old(const uint32_t waiting)
 {
-    old_match m = {.w = calloc(1, sizeof(old_world))};
-    old_world *w = m.w;
-    const tide_entity gone = tide_entity_create(&w->entities); // A slot that's free again
-    tide_entity_destroy(&w->entities, gone);
-    m.arena = add_entity(w, 2, 0);
-    w->arenas = (old_arenas){.count = 1, .entity = {m.arena}, .scene = {m.arena}, .arena = {{9}}};
-    m.ball1 = add_entity(w, 0, 0);
-    w->balls = (old_balls){.count = 1, .entity = {m.ball1}, .scene = {m.arena}, .ball = {{3, {1.0f, 2.0f}, OLD_C, 5}}};
-    m.ball2 = add_entity(w, 1, 0);
-    w->tagged = (old_tagged){.count = 1, .entity = {m.ball2}, .scene = {m.arena},
-                             .ball = {{4, {3.0f, 4.0f}, OLD_B, 6}}, .tag = {{8}}};
-    m.tag_only = add_entity(w, 3, 0);
-    w->tags = (old_tags){.count = 1, .entity = {m.tag_only}, .tag = {{1}}};
-    w->rules = (old_rules){.lives = 2, .speed = 3};
+    old_match m = {0};
+    tide_entities entities = {0};
+    const tide_entity gone = tide_entity_create(&entities); // A slot that's free again
+    tide_entity_destroy(&entities, gone);
+    m.arena = tide_entity_create(&entities);
+    tide_entity_set_location(&entities, m.arena, (tide_location){2, 0});
+    m.ball1 = tide_entity_create(&entities);
+    tide_entity_set_location(&entities, m.ball1, (tide_location){0, 0});
+    m.ball2 = tide_entity_create(&entities);
+    tide_entity_set_location(&entities, m.ball2, (tide_location){1, 0});
+    m.tag_only = tide_entity_create(&entities);
+    tide_entity_set_location(&entities, m.tag_only, (tide_location){3, 0});
+
+    old_world header = {.rules = {.lives = 2, .speed = 3}};
     for (int i = 0; i < 3; i++) {
-        w->inputs[i].move = (float)i + 0.5f;
-        w->previous[i].move = (float)i;
+        header.inputs[i].move = (float)i + 0.5f;
+        header.previous[i].move = (float)i;
     }
+    m.bytes = calloc(1, 4096);
+    tide_writer w = {m.bytes, 4096, 0, false, false};
+    tide_write_bytes(&w, &header, sizeof header);
+    tide_entities_pack(&entities, &w);
+    const tide_entity none = {0};
+    const old_ball ball1 = {3, {1.0f, 2.0f}, OLD_C, 5};
+    const old_ball ball2 = {4, {3.0f, 4.0f}, OLD_B, 6};
+    const old_tag tag2 = {8};
+    const old_tag tag_only = {1};
+    const old_arena arena = {9};
+    const uint32_t ball_size[] = {sizeof(old_ball), sizeof(old_tag)};
+    put_rows(&w, 1, &m.ball1, &m.arena, (const void *[]){&ball1}, ball_size, 1);
+    put_rows(&w, 1, &m.ball2, &m.arena, (const void *[]){&ball2, &tag2}, ball_size, 2);
+    put_rows(&w, 1, &m.arena, &m.arena, (const void *[]){&arena}, (const uint32_t[]){sizeof(old_arena)}, 1);
+    put_rows(&w, 1, &m.tag_only, &none, (const void *[]){&tag_only}, (const uint32_t[]){sizeof(old_tag)}, 1);
+    tide_write_u32(&w, waiting);
+    m.size = w.size;
+    m.slots = entities.next_unused;
+    tide_entities_free(&entities);
     return m;
 }
 
@@ -329,73 +368,129 @@ static bool same_entity(const tide_entity a, const tide_entity b)
     return a.index == b.index && a.generation == b.generation;
 }
 
+// A table of the new world's bytes: its count, where its entities' and
+// scenes' columns start, and its components, gathered from their lanes.
+typedef struct new_rows {
+    uint32_t count;
+    const tide_entity *entities;
+    const tide_entity *scenes;
+    uint8_t values[128];
+} new_rows;
+
+static new_rows read_rows(tide_reader *r, const uint32_t value_size)
+{
+    new_rows rows = {tide_read_u32(r), NULL, NULL, {0}};
+    rows.entities = (const tide_entity *)tide_read_bytes(r, rows.count * (uint32_t)sizeof(tide_entity));
+    rows.scenes = (const tide_entity *)tide_read_bytes(r, rows.count * (uint32_t)sizeof(tide_entity));
+    const uint32_t width = tide_lane_width(value_size);
+    const bool fits = rows.count * value_size <= sizeof rows.values;
+    for (uint32_t k = 0; k < value_size / width; k++) {
+        const uint8_t *lane = tide_read_bytes(r, rows.count * width);
+        for (uint32_t row = 0; fits && lane && row < rows.count; row++) {
+            memcpy(rows.values + row * value_size + k * width, lane + row * width, width);
+        }
+    }
+    TIDE_CHECK(fits);
+    return rows;
+}
+
 TIDE_TEST(migrate_carries_a_world_over_by_name)
 {
-    const old_match old = make_old();
-    new_world *n = calloc(1, sizeof *n);
+    const old_match old = make_old(0);
+    void *bytes = NULL;
+    uint32_t size = 0;
     tide_migration m;
-    TIDE_REQUIRE(tide_migrate_world(&old_layout, &old_layout.match, old.w, &new_layout, &new_layout.match, n, &m));
+    TIDE_REQUIRE(tide_migrate_world(&old_layout, &old_layout.match, old.bytes, old.size, &new_layout, &new_layout.match,
+                                    &bytes, &size, &m));
     TIDE_CHECK(m.failed[0] == '\0');
     TIDE_CHECK(m.entities_dropped == 1); // The one with only a tag
 
+    // The new world's bytes: its struct, its entities, then Arena's rows and Ball's
+    TIDE_REQUIRE(size >= sizeof(new_world));
+    new_world n;
+    memcpy(&n, bytes, sizeof n);
+    tide_reader r = {bytes, size, sizeof n, false};
+    tide_entities entities = {0};
+    TIDE_REQUIRE(tide_entities_unpack(&entities, &r));
+    const new_rows arenas = read_rows(&r, sizeof(new_arena));
+    const new_rows balls = read_rows(&r, sizeof(new_ball));
+    TIDE_CHECK(tide_read_u32(&r) == 0); // No changes waiting
+    TIDE_REQUIRE(!r.failed && r.at == size);
+
     // Entities keep their IDs; the tagged ball moved in with the other
-    TIDE_REQUIRE(n->arenas.count == 1);
-    TIDE_CHECK(same_entity(n->arenas.entity[0], old.arena) && same_entity(n->arenas.scene[0], old.arena));
-    TIDE_CHECK(n->arenas.arena[0].size == 9);
-    TIDE_REQUIRE(n->balls.count == 2);
-    TIDE_CHECK(same_entity(n->balls.entity[0], old.ball1) && same_entity(n->balls.entity[1], old.ball2));
-    TIDE_CHECK(same_entity(n->balls.scene[0], old.arena) && same_entity(n->balls.scene[1], old.arena));
-    const tide_location l1 = tide_entity_location(&n->entities, old.ball1);
-    const tide_location l2 = tide_entity_location(&n->entities, old.ball2);
-    const tide_location la = tide_entity_location(&n->entities, old.arena);
+    TIDE_REQUIRE(arenas.count == 1);
+    TIDE_CHECK(same_entity(arenas.entities[0], old.arena) && same_entity(arenas.scenes[0], old.arena));
+    new_arena a;
+    memcpy(&a, arenas.values, sizeof a);
+    TIDE_CHECK(a.size == 9);
+    TIDE_REQUIRE(balls.count == 2);
+    TIDE_CHECK(same_entity(balls.entities[0], old.ball1) && same_entity(balls.entities[1], old.ball2));
+    TIDE_CHECK(same_entity(balls.scenes[0], old.arena) && same_entity(balls.scenes[1], old.arena));
+    const tide_location l1 = tide_entity_location(&entities, old.ball1);
+    const tide_location l2 = tide_entity_location(&entities, old.ball2);
+    const tide_location la = tide_entity_location(&entities, old.arena);
     TIDE_CHECK(l1.archetype == 1 && l1.row == 0 && l2.archetype == 1 && l2.row == 1);
     TIDE_CHECK(la.archetype == 0 && la.row == 0);
-    TIDE_CHECK(!tide_entity_alive(&n->entities, old.tag_only));
-    TIDE_CHECK(n->entities.next_unused == old.w->entities.next_unused);
+    TIDE_CHECK(!tide_entity_alive(&entities, old.tag_only));
+    TIDE_CHECK(entities.next_unused == old.slots);
 
     // Fields by name: moved, converted, by the member's name, new, and reset
-    const new_ball *b1 = &n->balls.ball[0];
-    const new_ball *b2 = &n->balls.ball[1];
-    TIDE_CHECK(b1->pos.x == 1.0f && b1->pos.y == 2.0f && b1->hits == 3.0f);
-    TIDE_CHECK(b2->pos.x == 3.0f && b2->pos.y == 4.0f && b2->hits == 4.0f);
-    TIDE_CHECK(b1->kind == NEW_C); // C is still there, as another number
-    TIDE_CHECK(b2->kind == NEW_A); // B is gone: the default
-    TIDE_CHECK(b1->extra.x == 7.0f && b1->extra.z == 7.0f);
-    TIDE_CHECK(b1->gone.x == 0 && b1->gone.y == 0); // int to int2 doesn't convert
+    new_ball b[2];
+    memcpy(b, balls.values, sizeof b);
+    TIDE_CHECK(b[0].pos.x == 1.0f && b[0].pos.y == 2.0f && b[0].hits == 3.0f);
+    TIDE_CHECK(b[1].pos.x == 3.0f && b[1].pos.y == 4.0f && b[1].hits == 4.0f);
+    TIDE_CHECK(b[0].kind == NEW_C); // C is still there, as another number
+    TIDE_CHECK(b[1].kind == NEW_A); // B is gone: the default
+    TIDE_CHECK(b[0].extra.x == 7.0f && b[0].extra.z == 7.0f);
+    TIDE_CHECK(b[0].gone.x == 0 && b[0].gone.y == 0); // int to int2 doesn't convert
 
     // Singletons and inputs the same way
-    TIDE_CHECK(n->rules.lives == 2 && n->rules.speed == 3.0f && n->rules.added == 3);
+    TIDE_CHECK(n.rules.lives == 2 && n.rules.speed == 3.0f && n.rules.added == 3);
     for (int i = 0; i < 3; i++) {
-        TIDE_CHECK(n->inputs[i].move == (float)i + 0.5f && n->inputs[i].jump == 1.0f);
-        TIDE_CHECK(n->previous[i].move == (float)i && n->previous[i].jump == 1.0f);
+        TIDE_CHECK(n.inputs[i].move == (float)i + 0.5f && n.inputs[i].jump == 1.0f);
+        TIDE_CHECK(n.previous[i].move == (float)i && n.previous[i].jump == 1.0f);
     }
     TIDE_CHECK(tide_layout_fields_reset(&old_layout, &new_layout) == 1); // Ball.gone
-    free(old.w);
-    free(n);
+    tide_entities_free(&entities);
+    free(old.bytes);
+    free(bytes);
 }
 
 TIDE_TEST(migrate_refuses_a_world_whose_scene_is_gone)
 {
-    const old_match old = make_old();
-    new_world *n = calloc(1, sizeof *n);
+    const old_match old = make_old(0);
+    void *bytes = NULL;
+    uint32_t size = 0;
     tide_migration m;
-    TIDE_CHECK(!tide_migrate_world(&old_layout, &old_layout.match, old.w, &no_arena_layout, &no_arena_layout.match, n,
-                                   &m));
+    TIDE_CHECK(!tide_migrate_world(&old_layout, &old_layout.match, old.bytes, old.size, &no_arena_layout,
+                                   &no_arena_layout.match, &bytes, &size, &m));
     TIDE_CHECK(strstr(m.failed, "Arena") != NULL);
-    free(old.w);
-    free(n);
+    TIDE_CHECK(bytes == NULL);
+    free(old.bytes);
 }
 
 TIDE_TEST(migrate_refuses_a_world_with_changes_waiting)
 {
-    const old_match old = make_old();
-    old.w->command_count = 1;
-    new_world *n = calloc(1, sizeof *n);
+    const old_match old = make_old(1);
+    void *bytes = NULL;
+    uint32_t size = 0;
     tide_migration m;
-    TIDE_CHECK(!tide_migrate_world(&old_layout, &old_layout.match, old.w, &new_layout, &new_layout.match, n, &m));
+    TIDE_CHECK(!tide_migrate_world(&old_layout, &old_layout.match, old.bytes, old.size, &new_layout, &new_layout.match,
+                                   &bytes, &size, &m));
     TIDE_CHECK(m.failed[0] != '\0');
-    free(old.w);
-    free(n);
+    free(old.bytes);
+}
+
+TIDE_TEST(migrate_refuses_bytes_that_arent_a_world)
+{
+    const old_match old = make_old(0);
+    void *bytes = NULL;
+    uint32_t size = 0;
+    tide_migration m;
+    TIDE_CHECK(!tide_migrate_world(&old_layout, &old_layout.match, old.bytes, old.size - 3u, &new_layout,
+                                   &new_layout.match, &bytes, &size, &m));
+    TIDE_CHECK(m.failed[0] != '\0');
+    free(old.bytes);
 }
 
 // ---------------------------------------------------------------------------
@@ -409,16 +504,54 @@ static const tide_layout_type *type_named(const tide_layout *l, const char *name
     return NULL;
 }
 
-// The Unit named `name`, or NULL.
-static Unit *unit_named(tide_world *w, const char *name)
+// The entity whose Unit is named `name`, or the null entity.
+static tide_entity unit_named(const tide_world *w, const char *name)
 {
     for (uint32_t i = 0; i < w->entities.next_unused; i++) {
-        const tide_entity e = {i, w->entities.slots[i].generation};
-        Unit *u = (e.generation & 1u) ? tide_get_Unit(w, e) : NULL;
-        const tide_str text = u ? tide_text_read(&w->heap, u->name) : TIDE_STR_EMPTY;
-        if (u && text.bytes == (int32_t)strlen(name) && memcmp(text.ptr, name, strlen(name)) == 0) return u;
+        const tide_entity e = tide_entity_in_slot(&w->entities, i);
+        if (!tide_has_Unit(w, e)) continue;
+        const tide_str text = tide_text_read(&w->heap, tide_get_Unit(w, e).name);
+        if (text.bytes == (int32_t)strlen(name) && memcmp(text.ptr, name, strlen(name)) == 0) return e;
     }
-    return NULL;
+    return (tide_entity){0};
+}
+
+// A world's bytes, in a block of their own.
+static uint8_t *world_bytes(const tide_world *w, uint32_t *size)
+{
+    *size = tide_world_pack(w, NULL, 0);
+    uint8_t *bytes = malloc(*size);
+    tide_world_pack(w, bytes, *size);
+    return bytes;
+}
+
+// `w`, carried over from `from` (a layout of the same game, by another name)
+// to the game's own layout, into `copy`.
+static bool carry(const tide_layout *from, const tide_world *w, tide_world *copy, tide_migration *m)
+{
+    const tide_layout *l = &tide_game_layout;
+    uint32_t size;
+    uint8_t *bytes = world_bytes(w, &size);
+    void *carried = NULL;
+    uint32_t carried_size = 0;
+    bool ok = tide_migrate_world(from, &from->match, bytes, size, l, &l->match, &carried, &carried_size, m);
+    ok = ok && tide_world_unpack(copy, carried, carried_size);
+    free(bytes);
+    free(carried);
+    return ok;
+}
+
+// Whether two worlds hold the same, as their bytes and hashes.
+static bool same(const tide_world *a, const tide_world *b)
+{
+    uint32_t a_size;
+    uint32_t b_size;
+    uint8_t *x = world_bytes(a, &a_size);
+    uint8_t *y = world_bytes(b, &b_size);
+    const bool equal = a_size == b_size && memcmp(x, y, a_size) == 0;
+    free(x);
+    free(y);
+    return equal && tide_world_hash(a) == tide_world_hash(b);
 }
 
 TIDE_TEST(migrate_a_game_to_its_own_layout_changes_nothing)
@@ -430,20 +563,100 @@ TIDE_TEST(migrate_a_game_to_its_own_layout_changes_nothing)
     tide_world_set_input(w, tide_player_from_index(0), (Controls){.move = {0.5f, -1.0f}});
     tide_world_tick(w);
     tide_migration m;
-    TIDE_REQUIRE(tide_migrate_world(l, &l->match, w, l, &l->match, copy, &m));
+    TIDE_REQUIRE(carry(l, w, copy, &m));
     TIDE_CHECK(m.entities_dropped == 0);
-    TIDE_CHECK(memcmp(w, copy, sizeof *w) == 0);
+    TIDE_CHECK(same(w, copy));
 
     tide_local *local = calloc(1, sizeof *local);
     tide_local *local_copy = calloc(1, sizeof *local_copy);
     tide_local_init(local);
-    TIDE_REQUIRE(tide_migrate_world(l, &l->local, local, l, &l->local, local_copy, &m));
-    TIDE_CHECK(memcmp(local, local_copy, sizeof *local) == 0);
+    const uint32_t size = tide_local_pack(local, NULL, 0);
+    uint8_t *bytes = malloc(size);
+    tide_local_pack(local, bytes, size);
+    void *carried = NULL;
+    uint32_t carried_size = 0;
+    TIDE_REQUIRE(tide_migrate_world(l, &l->local, bytes, size, l, &l->local, &carried, &carried_size, &m));
+    TIDE_CHECK(carried_size == size && memcmp(carried, bytes, size) == 0);
+    TIDE_CHECK(tide_local_unpack(local_copy, carried, carried_size));
     TIDE_CHECK(tide_layout_fields_reset(l, l) == 0);
+    free(bytes);
+    free(carried);
+    tide_world_free(w);
+    tide_world_free(copy);
+    tide_local_free(local);
+    tide_local_free(local_copy);
     free(w);
     free(copy);
     free(local);
     free(local_copy);
+}
+
+// A waiting task carries over to a build where its code and its frame are the
+// same, and is dropped where they aren't.
+TIDE_TEST(migrate_carries_waiting_tasks_whose_code_is_the_same)
+{
+    const tide_layout *l = &tide_game_layout;
+    TIDE_REQUIRE(l->match.task_count == 1 && l->local.task_count == 1);
+    tide_world *w = calloc(1, sizeof *w);
+    tide_world *copy = calloc(1, sizeof *copy);
+    tide_world_init(w, 1.0f / 60.0f);
+    tide_world_tick(w);
+    TIDE_REQUIRE(w->tide_tasks_handler_Wander.count == 2);
+    tide_migration m;
+    TIDE_REQUIRE(carry(l, w, copy, &m));
+    TIDE_CHECK(m.tasks_dropped == 0);
+    TIDE_CHECK(same(w, copy));
+    // They go on the same in both
+    for (int i = 0; i < 40; i++) {
+        tide_world_tick(w);
+        tide_world_tick(copy);
+    }
+    TIDE_CHECK(same(w, copy));
+    TIDE_CHECK(!tide_entity_is_null(unit_named(copy, "first!")));
+
+    // From a build where Wander's code was different
+    tide_world_init(w, 1.0f / 60.0f);
+    tide_world_tick(w);
+    tide_layout_tasks other = l->match.tasks[0];
+    other.name = "Wander 0000000000000000";
+    tide_layout changed = *l;
+    changed.match.tasks = &other;
+    TIDE_REQUIRE(carry(&changed, w, copy, &m));
+    TIDE_CHECK(m.tasks_dropped == 2);
+    TIDE_CHECK(copy->tide_tasks_handler_Wander.count == 0);
+    TIDE_CHECK(copy->tide_task_order == w->tide_task_order); // The order goes on all the same
+
+    // Local tasks, and the frames they count
+    static tide_draw_list draw;
+    static tide_gui gui;
+    tide_local *local = calloc(1, sizeof *local);
+    tide_local *local_copy = calloc(1, sizeof *local_copy);
+    tide_local_init(local);
+    for (int i = 0; i < 3; i++) tide_frame(NULL, NULL, 1.0f, NULL, local, &draw, &gui);
+    TIDE_REQUIRE(local->tide_tasks_function_Blink.count == 1);
+    const uint32_t size = tide_local_pack(local, NULL, 0);
+    uint8_t *bytes = malloc(size);
+    tide_local_pack(local, bytes, size);
+    void *carried = NULL;
+    uint32_t carried_size = 0;
+    TIDE_REQUIRE(tide_migrate_world(l, &l->local, bytes, size, l, &l->local, &carried, &carried_size, &m));
+    TIDE_CHECK(m.tasks_dropped == 0);
+    TIDE_REQUIRE(tide_local_unpack(local_copy, carried, carried_size));
+    TIDE_CHECK(local_copy->tide_frames == 3 && local_copy->tide_tasks_function_Blink.count == 1);
+    for (int i = 0; i < 7; i++) tide_frame(NULL, NULL, 1.0f, NULL, local_copy, &draw, &gui);
+    TIDE_CHECK(local_copy->Menu.shown == 0);
+    tide_frame(NULL, NULL, 1.0f, NULL, local_copy, &draw, &gui); // Frame 10: it started in frame 0
+    TIDE_CHECK(local_copy->Menu.shown == 1);
+    free(bytes);
+    free(carried);
+    tide_local_free(local);
+    tide_local_free(local_copy);
+    free(local);
+    free(local_copy);
+    tide_world_free(w);
+    tide_world_free(copy);
+    free(w);
+    free(copy);
 }
 
 TIDE_TEST(migrate_a_games_defaults_are_its_declared_ones)
@@ -491,13 +704,15 @@ TIDE_TEST(migrate_a_packed_layout_works_where_it_goes)
     tide_world_init(w, 1.0f / 60.0f);
     tide_world_tick(w);
     tide_migration m;
-    TIDE_REQUIRE(tide_migrate_world(unpacked, &unpacked->match, w, l, &l->match, copy, &m));
-    TIDE_CHECK(memcmp(w, copy, sizeof *w) == 0);
+    TIDE_REQUIRE(carry(unpacked, w, copy, &m));
+    TIDE_CHECK(same(w, copy));
     TIDE_CHECK(tide_layout_fields_reset(unpacked, l) == 0);
 
     TIDE_CHECK(tide_layout_unpack(elsewhere, 8) == NULL); // Too small to be one
     free(packed);
     free(elsewhere);
+    tide_world_free(w);
+    tide_world_free(copy);
     free(w);
     free(copy);
 }
@@ -526,19 +741,161 @@ TIDE_TEST(migrate_a_game_keeps_what_has_the_same_name)
     tide_world *w = calloc(1, sizeof *w);
     tide_world *copy = calloc(1, sizeof *copy);
     tide_world_init(w, 1.0f / 60.0f);
-    Unit *before = unit_named(w, "first");
-    TIDE_REQUIRE(before != NULL);
-    before->mode = Mode_Jump;
+    const tide_entity first = unit_named(w, "first");
+    TIDE_REQUIRE(!tide_entity_is_null(first));
+    Unit before = tide_get_Unit(w, first);
+    before.mode = Mode_Jump;
+    tide_set_Unit(w, first, before);
+    // A number none of Mode's members has, as Mode(3) makes it: there's no name to carry it by
+    const tide_entity second = unit_named(w, "unit");
+    TIDE_REQUIRE(!tide_entity_is_null(second));
+    Unit odd = tide_get_Unit(w, second);
+    odd.mode = (Mode)3;
+    tide_set_Unit(w, second, odd);
     tide_migration m;
-    TIDE_REQUIRE(tide_migrate_world(&old, &old.match, w, l, &l->match, copy, &m));
-    const Unit *after = unit_named(copy, "first");
-    TIDE_REQUIRE(after != NULL);
-    TIDE_CHECK(before->position.x == 1.0f && after->position.x == 0.0f); // Another name: the default
-    TIDE_CHECK(after->mode == Mode_Jump);
-    TIDE_CHECK(after->stats.level == 2);
+    TIDE_REQUIRE(carry(&old, w, copy, &m));
+    const tide_entity carried = unit_named(copy, "first");
+    TIDE_REQUIRE(!tide_entity_is_null(carried));
+    const Unit after = tide_get_Unit(copy, carried);
+    TIDE_CHECK(before.position.x == 1.0f && after.position.x == 0.0f); // Another name: the default
+    TIDE_CHECK(after.mode == Mode_Jump);
+    TIDE_CHECK(after.stats.level == 2);
+    TIDE_CHECK(tide_get_Unit(copy, unit_named(copy, "unit")).mode == Mode_Run); // ...so it's the default again
     TIDE_CHECK(tide_world_entity_count(copy) == tide_world_entity_count(w));
     free(fields);
     free(types);
+    tide_world_free(w);
+    tide_world_free(copy);
     free(w);
     free(copy);
+}
+
+// The local state's bytes, carried over from layout `from` to the game's own, into `copy`.
+static bool carry_local(const tide_layout *from, const tide_local *local, tide_local *copy, tide_migration *m)
+{
+    const tide_layout *l = &tide_game_layout;
+    const uint32_t size = tide_local_pack(local, NULL, 0);
+    uint8_t *bytes = malloc(size);
+    tide_local_pack(local, bytes, size);
+    void *carried = NULL;
+    uint32_t carried_size = 0;
+    bool ok = tide_migrate_world(from, &from->local, bytes, size, l, &l->local, &carried, &carried_size, m);
+    ok = ok && tide_local_unpack(copy, carried, carried_size);
+    free(bytes);
+    free(carried);
+    return ok;
+}
+
+static bool local_text_is(const tide_local *local, const tide_text text, const char *want)
+{
+    const tide_str s = tide_text_read(&local->heap, text);
+    return s.bytes == (int32_t)strlen(want) && memcmp(s.ptr, want, strlen(want)) == 0;
+}
+
+// The local fields of the match's components and singletons carry over with
+// the local state, by name: an entity's as rows of "<Component> local", a
+// singleton's as the local singleton they are.
+TIDE_TEST(migrate_carries_local_fields_by_name)
+{
+    static tide_draw_list draw;
+    static tide_gui gui;
+    const tide_layout *l = &tide_game_layout;
+    TIDE_REQUIRE(l->local.attached_count == 1);
+    TIDE_REQUIRE(type_named(l, "Unit local") != NULL && type_named(l, "Score local") != NULL);
+    TIDE_CHECK(type_named(l, "Unit")->size == sizeof(Unit)); // The match's part, with no local fields
+
+    tide_world *w = calloc(1, sizeof *w);
+    tide_local *local = calloc(1, sizeof *local);
+    tide_local *copy = calloc(1, sizeof *copy);
+    tide_world_init(w, 1.0f / 60.0f);
+    tide_local_init(local);
+    for (int i = 0; i < 3; i++) tide_frame(w, NULL, 1.0f, NULL, local, &draw, &gui);
+    const tide_entity first = unit_named(w, "first");
+    TIDE_REQUIRE(tide_has_Unit_local(local, first) && local->tide_fields_Unit.rows.count == 2);
+    TIDE_REQUIRE(tide_get_Unit_local(local, first).drawn == 3 && local->Score_local.shown == 6);
+
+    // To the same layout: all of them, as they were
+    tide_migration m;
+    TIDE_REQUIRE(carry_local(l, local, copy, &m));
+    Unit_local carried = tide_get_Unit_local(copy, first);
+    TIDE_CHECK(copy->tide_fields_Unit.rows.count == 2 && tide_has_Unit_local(copy, first));
+    TIDE_CHECK(carried.drawn == 3 && carried.fade == 0.125f && local_text_is(copy, carried.seen, "3 times"));
+    TIDE_CHECK(copy->Score_local.shown == 6);
+    // ...and views go on from there
+    tide_frame(w, NULL, 1.0f, NULL, copy, &draw, &gui);
+    TIDE_CHECK(tide_get_Unit_local(copy, first).drawn == 4 && copy->Score_local.shown == 8);
+
+    // From a build where `drawn` was called `frames`: it starts at its default,
+    // and the rest carries over
+    tide_layout_type *types = malloc(l->type_count * sizeof *types);
+    memcpy(types, l->types, l->type_count * sizeof *types);
+    tide_layout old = *l;
+    old.types = types;
+    tide_layout_field *unit_fields = NULL;
+    for (uint32_t i = 0; i < old.type_count; i++) {
+        if (strcmp(types[i].name, "Unit local") != 0) continue;
+        unit_fields = malloc(types[i].field_count * sizeof *unit_fields);
+        memcpy(unit_fields, types[i].fields, types[i].field_count * sizeof *unit_fields);
+        for (uint32_t k = 0; k < types[i].field_count; k++) {
+            if (strcmp(unit_fields[k].name, "drawn") == 0) unit_fields[k].name = "frames";
+        }
+        types[i].fields = unit_fields;
+    }
+    TIDE_REQUIRE(unit_fields != NULL);
+    TIDE_REQUIRE(carry_local(&old, local, copy, &m));
+    carried = tide_get_Unit_local(copy, first);
+    TIDE_CHECK(tide_has_Unit_local(copy, first));
+    TIDE_CHECK(carried.drawn == 0); // Another name: the default
+    TIDE_CHECK(carried.fade == 0.125f && local_text_is(copy, carried.seen, "3 times"));
+    TIDE_CHECK(copy->Score_local.shown == 6);
+
+    // From a build whose Unit had no local fields: nothing to carry, and views start them
+    tide_layout none = *l;
+    none.local.attached_count = 0;
+    none.local.attached = NULL;
+    tide_local *bare = calloc(1, sizeof *bare);
+    tide_local_init(bare);
+    bare->Score_local.shown = 5;
+    // Its bytes, as that build packed them: with no table of local fields
+    {
+        const uint32_t size = tide_local_pack(bare, NULL, 0);
+        uint8_t *bytes = malloc(size);
+        tide_local_pack(bare, bytes, size);
+        const uint32_t heap = tide_heap_packed_size(&bare->heap);
+        memmove(bytes + size - heap - 4u, bytes + size - heap, heap); // The empty table's count goes
+        void *moved = NULL;
+        uint32_t moved_size = 0;
+        TIDE_REQUIRE(tide_migrate_world(&none, &none.local, bytes, size - 4u, l, &l->local, &moved, &moved_size, &m));
+        TIDE_REQUIRE(tide_local_unpack(copy, moved, moved_size));
+        free(bytes);
+        free(moved);
+    }
+    TIDE_CHECK(copy->tide_fields_Unit.rows.count == 0 && copy->Score_local.shown == 5);
+    tide_frame(w, NULL, 1.0f, NULL, copy, &draw, &gui);
+    TIDE_CHECK(tide_get_Unit_local(copy, first).drawn == 1 && local_text_is(copy, tide_get_Unit_local(copy, first).seen, "1 times"));
+
+    // What each row's entity was born as carries over with it: the entity it
+    // was kept for still has it, and another on its handle gets none of it
+    const uint32_t born = tide_entity_born(&w->entities, first);
+    TIDE_REQUIRE(born != 0u);
+    TIDE_REQUIRE(carry_local(l, local, copy, &m));
+    tide_world_tick(w);
+    tide_frame(w, NULL, 1.0f, NULL, copy, &draw, &gui);
+    TIDE_CHECK(tide_get_Unit_local(copy, first).drawn == 4);
+    TIDE_REQUIRE(carry_local(l, local, copy, &m));
+    tide_entity_set_born(&w->entities, first, born == 7u ? 8u : 7u); // As a replay that spawned something else there would
+    tide_world_tick(w);
+    tide_frame(w, NULL, 1.0f, NULL, copy, &draw, &gui);
+    TIDE_CHECK(tide_get_Unit_local(copy, first).drawn == 1);
+
+    free(unit_fields);
+    free(types);
+    tide_world_free(w);
+    tide_local_free(local);
+    tide_local_free(copy);
+    tide_local_free(bare);
+    free(w);
+    free(local);
+    free(copy);
+    free(bare);
 }

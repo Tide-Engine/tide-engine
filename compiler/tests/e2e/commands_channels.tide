@@ -1,0 +1,114 @@
+// Commands in channels, unordered commands, and a command that carries a
+// file's bytes: see docs/spec.md, Commands.
+settings
+{
+    hostMigration = true;
+}
+
+enum Channels { Uploads, Chat }
+
+// The default channel: in order, after every earlier Say
+command Say { string text; }
+
+// A channel of its own: a Say never waits behind an upload
+[Channel(Channels.Uploads)]
+command Upload { List<byte> bytes; }
+
+// No order at all: handled in the tick it arrives, once
+[Unordered]
+command Ping { int at; }
+
+// A second channel of the game's, numbered after Uploads
+[Channel(Channels.Chat)]
+command Whisper { string text; }
+
+input Controls
+{
+    bool fire;
+}
+
+singleton Log
+{
+    int says;
+    string last;
+    int uploads;
+    int uploadBytes;
+    int uploadHash;
+    int pings;
+    int pingSum;
+    int duplicates;
+    List<int> pingIds;
+    int whispers;
+    string order;
+}
+
+local singleton UI
+{
+    bool say;
+    string text = "hello";
+    bool upload;
+    int uploadSize;
+    bool ping;
+    int pingAt;
+    bool whisper;
+}
+
+scene Main { }
+
+command(Say say, PlayerID sender) OnSay(mut Log log)
+{
+    log.says++;
+    log.last = say.text;
+    log.order = log.order + "S";
+}
+
+command(Upload upload, PlayerID sender) OnUpload(mut Log log)
+{
+    log.uploads++;
+    log.uploadBytes = upload.bytes.count;
+    mut var hash = 0;
+    foreach (var b in upload.bytes) hash = hash * 31 + b;
+    log.uploadHash = hash;
+    log.order = log.order + "U";
+}
+
+command(Ping ping, PlayerID sender) OnPing(mut Log log)
+{
+    if (log.pingIds.Contains(ping.at)) log.duplicates++;
+    else log.pingIds.Add(ping.at);
+    log.pings++;
+    log.pingSum += ping.at;
+}
+
+command(Whisper whisper, PlayerID sender) OnWhisper(mut Log log)
+{
+    log.whispers++;
+    log.order = log.order + "W";
+}
+
+view Submit(mut UI ui)
+{
+    if (ui.say)
+    {
+        Send(Say { text = ui.text });
+        ui.say = false;
+    }
+    if (ui.upload)
+    {
+        mut List<byte> bytes = [];
+        bytes.Resize(ui.uploadSize);
+        for (var i = 0; i < ui.uploadSize; i++) bytes[i] = byte(i * 7 + 3);
+        Send(Upload { bytes = bytes });
+        ui.upload = false;
+    }
+    if (ui.ping)
+    {
+        Send(Ping { at = ui.pingAt });
+        ui.ping = false;
+    }
+    if (ui.whisper)
+    {
+        Send(Whisper { text = ui.text });
+        ui.whisper = false;
+    }
+}

@@ -1,0 +1,15 @@
+// expect: a query foreach must run directly in its system
+component Body { float x; }
+scene Main { }
+system Hits(query (Body body) bodies)
+{
+    mut List<int> values = [2, 1];
+    values.Sort(a, b)
+    {
+        foreach (var row in bodies)
+        {
+            if (row.body.x > 0) return a < b;
+        }
+        return a > b;
+    }
+}

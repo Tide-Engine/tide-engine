@@ -1,0 +1,8 @@
+// Another, which also has a Body: two imported namespaces with one name are
+// only ambiguous for code that means one of them.
+namespace Other;
+
+component Body
+{
+    int other = 9;
+}

@@ -1,0 +1,19 @@
+// expect: a wrap comes after the filter: 'texture.Sample(uv, Filter.Bilinear, Wrap.Repeat)'
+// expect: a Sample that says neither reads the texture as it says: one that only wraps another way says so where it's declared, '[Wrap(Wrap.Repeat)]'
+scene Main { }
+
+local singleton Models
+{
+    List<Vertex> corners;
+    Grid2<Color> wood = Grid2(4, 4);
+}
+
+frag Shade(Vertex vertex, out Color color, Models models)
+{
+    color = models.wood.Sample(vertex.uv, Wrap.Repeat);
+}
+
+view Show(Models models)
+{
+    Draw.Mesh(models.corners, [0, 1, 2], Shade);
+}

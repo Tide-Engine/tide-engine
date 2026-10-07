@@ -1,0 +1,62 @@
+settings { title = "Views and coordinates"; maxPlayers = 1; }
+
+component Dot
+{
+    float2 position;
+    Color color;
+    local bool selected;
+}
+local singleton CameraSettings { float size = 3; }
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Dot { position = float2(-1.5, 0.6), color = Color(0.98, 0.75, 0.14) });
+    Spawn(Dot { position = float2(0, -0.6), color = Color(0.98, 0.44, 0.52) });
+    Spawn(Dot { position = float2(1.5, 0.6), color = Color(0.18, 0.83, 0.75) });
+}
+
+// The camera applies to every view that draws after this one.
+view Background(CameraSettings camera)
+{
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0), camera.size);
+    for (var i = -6; i <= 6; i++)
+    {
+        Draw.Line(float2(i, -6), float2(i, 6), Color(0.15, 0.15, 0.17));
+        Draw.Line(float2(-6, i), float2(6, i), Color(0.15, 0.15, 0.17));
+    }
+    Draw.Line(float2(-6, 0), float2(6, 0), Color(0.3, 0.3, 0.33));
+    Draw.Line(float2(0, -6), float2(0, 6), Color(0.3, 0.3, 0.33));
+}
+
+// Run once for each Dot. Only selected, a local field, can change here.
+view Dots(mut Dot dot, Devices devices)
+{
+    var pointer = devices.pointer;
+    var screen = float2(pointer.position.x, Screen.height - pointer.position.y);
+    var world = Draw.ScreenToWorld(screen);
+    var hovered = Math.Length(world - dot.position) < 0.4;
+    if (hovered && pointer.press.down) dot.selected = !dot.selected;
+    Draw.Circle(dot.position, 0.32, dot.color);
+    if (hovered || dot.selected)
+        Draw.WireCircle(dot.position, 0.43, 0.035, Color.white);
+}
+
+view Pointer(Devices devices)
+{
+    var pointer = devices.pointer;
+    var screen = float2(pointer.position.x, Screen.height - pointer.position.y);
+    var world = Draw.ScreenToWorld(screen);
+    Draw.Line(world - float2(0.12, 0), world + float2(0.12, 0), Color.white);
+    Draw.Line(world - float2(0, 0.12), world + float2(0, 0.12), Color.white);
+}
+
+// Screen-space text keeps its pixel size when the camera zooms.
+view Controls(mut CameraSettings camera)
+{
+    Draw.SetScreen();
+    Draw.Text("Tap a circle to select it", float2(16, 14), 18, Color.white);
+    GUI.SetTheme(GUITheme { radius = 6 });
+    GUI.Slider(Rect(16, Screen.height - 48, Screen.width - 32, 32), "Camera size", camera.size, 2.5, 4.5);
+}

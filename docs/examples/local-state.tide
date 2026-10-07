@@ -1,0 +1,58 @@
+settings { title = "Local state"; }
+
+local scene Main { } // No match at all: everything here is this machine's own
+
+local component Spark
+{
+    float2 position;
+    float2 velocity;
+    float age;
+}
+
+local singleton Trail
+{
+    Random random; // This machine's own numbers, for effects
+    float2 last;
+    float life = 0.9;
+    int sparks;
+}
+
+// Views change local state: this one spawns local entities.
+view Emit(Devices devices, mut Trail trail)
+{
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetScreen();
+    var at = Screen.Flip(devices.pointer.position);
+    if (Math.Distance(at, trail.last) > 6)
+    {
+        var push = (at - trail.last) * 2 + trail.random.NextFloat2Direction() * 40;
+        Spawn(Spark { position = at, velocity = push });
+        trail.last = at;
+    }
+    trail.sparks = 0;
+}
+
+// Once for each local entity, every frame: `this` is a LocalEntity.
+view Sparks(mut Spark spark, mut Trail trail)
+{
+    var dt = Math.Min(Frame.dt, 0.05); // A frame's length, never a tick's
+    spark.age += dt;
+    if (spark.age >= trail.life)
+    {
+        this.Destroy();
+        return;
+    }
+    spark.velocity.y += 260 * dt;
+    spark.position += spark.velocity * dt;
+    var left = 1 - spark.age / trail.life;
+    Draw.Circle(spark.position, 2 + 6 * left, Color(1, 0.55 + 0.4 * left, 0.25, left));
+    trail.sparks += 1;
+}
+
+view Hud(mut Trail trail)
+{
+    Draw.Text($"{trail.sparks} local entities", float2(16, 14), 18, Color.white);
+    Draw.Text("Move the pointer, or drag a finger", float2(16, 40), 13, Color(0.64, 0.64, 0.68));
+    GUI.SetTheme(GUITheme { radius = 6 });
+    GUI.Slider(Rect(16, Screen.height - 48, Screen.width - 32, 32), "Life", trail.life, 0.2, 2);
+}

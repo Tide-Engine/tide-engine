@@ -1,0 +1,5 @@
+// expect: 'Damage' has no parameter 'crti'
+scene Main { }
+singleton Log { float total; }
+float Damage(float base, float multiplier = 1, bool crit = false) { return crit ? base * multiplier * 2 : base * multiplier; }
+system Run(mut Log log) { log.total = Damage(10, crti: true); }

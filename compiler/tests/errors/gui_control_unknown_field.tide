@@ -1,0 +1,8 @@
+// expect: GUIControl has no field 'held'
+scene Main { }
+local singleton Menu { int picks; }
+view Cards(mut Menu menu)
+{
+    var card = GUI.Control(Rect(0, 0, 100, 60));
+    if (card.held) menu.picks += 1;
+}

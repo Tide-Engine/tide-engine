@@ -1,0 +1,46 @@
+// Explicit instance structs use the same packed float4/int4 attributes as ECS components.
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+struct Surface
+{
+    Color tint;
+    float gain;
+}
+struct BatchItem
+{
+    float4x4 transform;
+    Surface surface;
+    float3 offset;
+    int kind;
+    long unused;
+}
+local singleton Mesh
+{
+    List<Corner> vertices;
+    List<int> indices;
+    List<BatchItem> instances;
+}
+singleton Lighting
+{
+    float3 direction = float3(0, -1, 0);
+}
+vert Place(mut Corner vertex, BatchItem item, Instance instance)
+{
+    vertex.position += item.offset;
+    vertex.normal = Math.Rotate(instance.transform, vertex.normal);
+}
+frag Tint(Corner vertex, out Color color, BatchItem item, Lighting light)
+{
+    float gain = Math.Max(Math.Dot(vertex.normal, -light.direction), 0.1);
+    color = item.surface.tint * (item.surface.gain * gain);
+    if (item.kind == 0) color.a = 0.5;
+}
+view DrawBatch(Mesh mesh)
+{
+    Draw.Instanced(mesh.vertices, mesh.indices, mesh.instances, Place, Tint);
+}

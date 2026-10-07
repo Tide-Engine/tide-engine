@@ -1,0 +1,14 @@
+// expect: 'verts' is a local field of 'Box', and this is a copy of its value, which has none
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+view Count(Box box)
+{
+    var copy = box;
+    if (copy.verts.count > 0) Draw.Clear(Color.black);
+}

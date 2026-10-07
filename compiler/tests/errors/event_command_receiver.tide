@@ -1,0 +1,4 @@
+// expect: 'Renamed' is an event; receive it with 'event(...)'
+event Renamed { string name; }
+command(Renamed renamed, PlayerID sender) Handle() { }
+scene Main { }

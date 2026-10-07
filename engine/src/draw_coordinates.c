@@ -1,0 +1,243 @@
+#include "tide/draw.h"
+
+static bool finite2(const tide_float2 p)
+{
+    return tide_is_finite_f(p.x) && tide_is_finite_f(p.y);
+}
+
+static bool finite3(const tide_float3 p)
+{
+    return tide_is_finite_f(p.x) && tide_is_finite_f(p.y) && tide_is_finite_f(p.z);
+}
+
+static bool finite4(const tide_float4 p)
+{
+    return tide_is_finite_f(p.x) && tide_is_finite_f(p.y) && tide_is_finite_f(p.z) && tide_is_finite_f(p.w);
+}
+
+static bool screen_valid(const tide_float2 screen)
+{
+    return finite2(screen) && screen.x > 0.0f && screen.y > 0.0f;
+}
+
+static tide_float2 target_size(const tide_draw_list *d, const tide_float2 window_size)
+{
+    if (!d->target) return window_size;
+    if (d->target > d->target_count) return tide_f2(0.0f, 0.0f);
+    const tide_draw_target_data *target = &d->targets[d->target - 1u];
+    if (!tide_render_target_live(target->id) || !tide_target_size_valid(target->size)) return tide_f2(0.0f, 0.0f);
+    // In logical pixels, as the window's: one that follows the window is its size, times its factor
+    return tide_target_size_logical(target->size, window_size);
+}
+
+// The destination's 2D camera or screen, as it's set, is what commands recorded
+// now draw through. A 3D camera never changes it, nor does it depend on a rendered frame.
+static bool camera2(const tide_draw_list *d, const tide_float2 screen, tide_float2 *center, float *scale, bool *pixels)
+{
+    *center = tide_f2(0.0f, 0.0f);
+    *scale = 1.0f;
+    *pixels = false;
+    if (!d->place.camera_2d) return true;
+    const tide_draw_camera_data *c = &d->cameras[d->place.camera_2d - 1u];
+    if (c->screen) {
+        *pixels = true;
+        return true;
+    }
+    if (!finite2(c->center) || !tide_is_finite_f(c->size)) return false;
+    *center = c->center;
+    *scale = c->size > 0.0f ? screen.y / (2.0f * c->size) : 1.0f;
+    return tide_is_finite_f(*scale) && *scale > 0.0f;
+}
+
+tide_float2 tide_draw_world_to_screen(const tide_draw_list *d, const tide_float2 point, const tide_float2 window_size)
+{
+    const tide_float2 screen_size = target_size(d, window_size);
+    const tide_float2 zero = tide_f2(0.0f, 0.0f);
+    if (!screen_valid(screen_size) || !finite2(point)) return zero;
+    tide_float2 center;
+    float scale;
+    bool pixels;
+    if (!camera2(d, screen_size, &center, &scale, &pixels)) return zero;
+    if (pixels) return point;
+    const tide_float2 result = tide_f2(screen_size.x * 0.5f + (point.x - center.x) * scale,
+                                       screen_size.y * 0.5f - (point.y - center.y) * scale);
+    return finite2(result) ? result : zero;
+}
+
+tide_float3x3 tide_draw_world_to_screen_matrix(const tide_draw_list *d, const tide_float2 window_size)
+{
+    const tide_float2 screen_size = target_size(d, window_size);
+    const tide_float3x3 zero = {0};
+    tide_float2 center;
+    float scale;
+    bool pixels;
+    if (!screen_valid(screen_size) || !camera2(d, screen_size, &center, &scale, &pixels)) return zero;
+    if (pixels) return tide_identity_f3x3();
+    const tide_float3x3 result = {{scale, 0.0f, 0.0f},
+                                  {0.0f, -scale, 0.0f},
+                                  {screen_size.x * 0.5f - center.x * scale, screen_size.y * 0.5f + center.y * scale, 1.0f}};
+    return finite2(tide_f2(result.c2.x, result.c2.y)) ? result : zero;
+}
+
+tide_float2 tide_draw_screen_flip(const tide_float2 point, const tide_float2 screen_size)
+{
+    return tide_f2(point.x, screen_size.y - point.y);
+}
+
+tide_float2 tide_draw_screen_to_world(const tide_draw_list *d, const tide_float2 point, const tide_float2 window_size)
+{
+    const tide_float2 screen_size = target_size(d, window_size);
+    const tide_float2 zero = tide_f2(0.0f, 0.0f);
+    if (!screen_valid(screen_size) || !finite2(point)) return zero;
+    tide_float2 center;
+    float scale;
+    bool pixels;
+    if (!camera2(d, screen_size, &center, &scale, &pixels)) return zero;
+    if (pixels) return point;
+    const tide_float2 result = tide_f2(center.x + (point.x - screen_size.x * 0.5f) / scale,
+                                       center.y - (point.y - screen_size.y * 0.5f) / scale);
+    return finite2(result) ? result : zero;
+}
+
+tide_float2 tide_draw_guess_text(const char *text, const float size, const tide_target_size *target,
+                                 const unsigned char *font)
+{
+    (void)target;
+    (void)font;
+    uint32_t bytes = 0, lines = 1;
+    for (const char *c = text; *c; c++, bytes++) lines += *c == '\n';
+    return tide_f2((float)bytes * size * 0.6f, size + (float)(lines - 1u) * size * 1.2f);
+}
+
+// Match the renderer: text is drawn as many times bigger as the camera has
+// pixels to a unit, and a transform scales it, and fitted to pixels at that
+// size, so it's measured there. Text a transform turns or stretches is laid
+// out as it would be upright at the transform's mean scale.
+tide_float2 tide_draw_measure_text(const tide_draw_list *d, const char *text, const float size,
+                                   const unsigned char *font, const tide_float2 window_size,
+                                   const tide_measure_fn measure)
+{
+    const tide_float2 screen_size = target_size(d, window_size);
+    const tide_float2 zero = tide_f2(0.0f, 0.0f);
+    if (!screen_valid(screen_size) || !tide_is_finite_f(size) || !(size > 0.0f)) return zero;
+    tide_float2 center;
+    float scale;
+    bool pixels;
+    if (!camera2(d, screen_size, &center, &scale, &pixels)) return zero;
+    if (d->place.moved & TIDE_DRAW_MOVED) scale *= d->place.scale;
+    if (!tide_is_finite_f(scale) || !(scale > 0.0f)) return zero;
+    // Where it's drawn: the window, or the target the commands recorded next go to, at its own scale
+    const tide_float2 drawn = (measure ? measure : tide_draw_guess_text)(
+        text, size * scale, d->target ? &d->targets[d->target - 1u].size : NULL, font);
+    const tide_float2 result = tide_f2(drawn.x / scale, drawn.y / scale);
+    return finite2(result) ? result : zero;
+}
+
+// Match the renderer: ordinary perspective cameras are recorded for a square
+// target and fitted across; matrix cameras already have their target's aspect.
+static tide_draw_camera_3d_data camera3_set(const tide_draw_list *d)
+{
+    return d->place.camera_3d ? d->cameras_3d[d->place.camera_3d - 1u] : tide_draw_first_camera_3d();
+}
+
+// A matrix of the camera's, its own or its projection, as it is for a destination of this shape.
+static tide_float4x4 fitted(const tide_draw_camera_3d_data *c, const tide_float4x4 matrix, const tide_float2 screen)
+{
+    if (!screen_valid(screen)) return (tide_float4x4){0};
+    return c->fit ? tide_draw_camera_fit(matrix, screen.x, screen.y) : matrix;
+}
+
+tide_float4x4 tide_draw_world_to_clip(const tide_draw_list *d, const tide_float2 window_size)
+{
+    const tide_draw_camera_3d_data c = camera3_set(d);
+    return fitted(&c, c.matrix, target_size(d, window_size));
+}
+
+tide_float4x4 tide_draw_camera_transform(const tide_draw_list *d, const tide_float2 window_size)
+{
+    (void)window_size;
+    return camera3_set(d).transform;
+}
+
+tide_float4x4 tide_draw_camera_projection(const tide_draw_list *d, const tide_float2 window_size)
+{
+    const tide_draw_camera_3d_data c = camera3_set(d);
+    return fitted(&c, c.projection, target_size(d, window_size));
+}
+
+static bool camera3(const tide_draw_list *d, const tide_float2 screen, tide_float4x4 *matrix, bool *infinite)
+{
+    if (!screen_valid(screen)) return false;
+    const tide_draw_camera_3d_data c = camera3_set(d);
+    const bool fit = c.fit != 0;
+    *matrix = fitted(&c, c.matrix, screen);
+    if (!finite4(matrix->c0) || !finite4(matrix->c1) || !finite4(matrix->c2) || !finite4(matrix->c3)) return false;
+    const float determinant = tide_determinant_f4x4(*matrix);
+    if (infinite) *infinite = fit;
+    return tide_is_finite_f(determinant) && determinant != 0.0f;
+}
+
+static bool divide(const tide_float4 point, tide_float3 *result)
+{
+    if (!finite4(point) || point.w == 0.0f) return false;
+    *result = tide_f3(point.x / point.w, point.y / point.w, point.z / point.w);
+    return finite3(*result);
+}
+
+static bool unproject(const tide_float4x4 inverse, const tide_float3 point, const tide_float2 screen, tide_float3 *result)
+{
+    const tide_float4 clip = tide_f4(2.0f * (point.x / screen.x) - 1.0f,
+                                    1.0f - 2.0f * (point.y / screen.y), 2.0f * point.z - 1.0f, 1.0f);
+    return divide(tide_mul_f4x4_f4(inverse, clip), result);
+}
+
+tide_float3 tide_draw_world_to_screen_3d(const tide_draw_list *d, const tide_float3 point, const tide_float2 window_size)
+{
+    const tide_float2 screen_size = target_size(d, window_size);
+    const tide_float3 zero = tide_f3(0.0f, 0.0f, 0.0f);
+    tide_float4x4 matrix;
+    tide_float3 clip;
+    if (!finite3(point) || !camera3(d, screen_size, &matrix, NULL)
+        || !divide(tide_mul_f4x4_f4(matrix, tide_f4(point.x, point.y, point.z, 1.0f)), &clip)) return zero;
+    const tide_float3 result = tide_f3((clip.x * 0.5f + 0.5f) * screen_size.x,
+                                       (0.5f - clip.y * 0.5f) * screen_size.y, clip.z * 0.5f + 0.5f);
+    return finite3(result) ? result : zero;
+}
+
+tide_float3 tide_draw_screen_to_world_3d(const tide_draw_list *d, const tide_float3 point, const tide_float2 window_size)
+{
+    const tide_float2 screen_size = target_size(d, window_size);
+    tide_float4x4 matrix;
+    tide_float3 result;
+    bool infinite;
+    if (!finite3(point) || !camera3(d, screen_size, &matrix, &infinite)
+        // Inverting a moved or rotated camera can round infinity's w away
+        // from zero. Its far depth still has no finite world position.
+        || (infinite && point.z == 1.0f)
+        || !unproject(tide_inverse_f4x4(matrix), point, screen_size, &result)) return tide_f3(0.0f, 0.0f, 0.0f);
+    return result;
+}
+
+tide_float3 tide_draw_screen_ray_origin(const tide_draw_list *d, const tide_float2 point, const tide_float2 screen_size)
+{
+    return tide_draw_screen_to_world_3d(d, tide_f3(point.x, point.y, 0.0f), screen_size);
+}
+
+tide_float3 tide_draw_screen_ray_direction(const tide_draw_list *d, const tide_float2 point, const tide_float2 window_size)
+{
+    const tide_float2 screen_size = target_size(d, window_size);
+    const tide_float3 zero = tide_f3(0.0f, 0.0f, 0.0f);
+    tide_float4x4 matrix;
+    tide_float3 near, middle;
+    if (!finite2(point) || !camera3(d, screen_size, &matrix, NULL)) return zero;
+    const tide_float4x4 inverse = tide_inverse_f4x4(matrix);
+    // A depth of one is at infinity for the standard perspective camera.
+    if (!unproject(inverse, tide_f3(point.x, point.y, 0.0f), screen_size, &near)
+        || !unproject(inverse, tide_f3(point.x, point.y, 0.5f), screen_size, &middle)) return zero;
+    const tide_float3 direction = tide_sub_f3(middle, near);
+    if (!finite3(direction)) return zero;
+    const float largest = tide_max_f(tide_abs_f(direction.x), tide_max_f(tide_abs_f(direction.y), tide_abs_f(direction.z)));
+    if (largest == 0.0f) return zero;
+    // Scale first so long rays do not overflow the length's square.
+    return tide_normalize_f3(tide_div_f3(direction, tide_f3_splat(largest)));
+}

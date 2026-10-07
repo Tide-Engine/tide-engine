@@ -1,0 +1,8 @@
+// expect: Draw.Cull sets it around a block: 'Draw.Cull(...) { ... }'
+// expect: to set it for the draws that follow, write 'Draw.SetCull(...);'
+scene Main { }
+
+view Show()
+{
+    Draw.Cull(Cull.None);
+}

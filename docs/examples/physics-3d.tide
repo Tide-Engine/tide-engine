@@ -1,0 +1,67 @@
+using Box3D;
+
+settings { title = "Physics in 3D"; maxPlayers = 1; }
+
+component Crate { }
+component Ball { }
+
+scene Main { }
+
+event(Spawned) Build(with Main)
+{
+    // A body that never moves: the floor, a box as wide as what's drawn.
+    Spawn(Body { type = BodyType.Static, position = float3(0, -0.5, 0) }, Box { size = float3(12, 1, 12) });
+    // A wall of crates, five wide and four high. A body is dynamic unless it says otherwise.
+    for (var i = 0; i < 20; i++)
+        Spawn(Body { position = float3(-2.2 + 1.1 * (i % 5), 0.5 + i / 5, 0) }, Box, Crate);
+}
+
+// What a tap asks of the match.
+command Throw
+{
+    float3 from;
+    float3 towards;
+}
+
+command(Throw ball, PlayerID sender) ThrowBall()
+{
+    Spawn(Body { position = ball.from, velocity = ball.towards * 30 }, Sphere { radius = 0.35, density = 2000 }, Ball);
+}
+
+// What falls off the floor goes, and its body with it.
+system Fall(Body body)
+{
+    if (body.position.y < -10) this.Destroy();
+}
+
+view Look(Devices devices)
+{
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float3(0, 5, -10), quaternion.Euler(float3(0.34, 0, 0)), 50);
+    Draw.Plane(float3(0), float2(12, 12), Color(0.13, 0.13, 0.15));
+    if (!devices.pointer.press.down) return;
+    // A tap throws a ball from the camera, through the pixel it's on.
+    var screen = Screen.Flip(devices.pointer.position);
+    Send(Throw { from = Draw.ScreenRayOrigin(screen), towards = Draw.ScreenRayDirection(screen) });
+}
+
+// A view sees a body where the last step left it, blended between ticks. No
+// lighting is built in, so a crate is three boxes, each a little longer one
+// way: its faces come out in three shades.
+view Crates(Body body, Box box, with Crate)
+{
+    Draw.Cube(body.position, box.size * float3(0.98, 1, 0.98), body.rotation, Color(0.98, 0.75, 0.14));
+    Draw.Cube(body.position, box.size * float3(0.98, 0.98, 1), body.rotation, Color(0.8, 0.58, 0.1));
+    Draw.Cube(body.position, box.size * float3(1, 0.98, 0.98), body.rotation, Color(0.6, 0.42, 0.07));
+}
+
+view Balls(Body body, Sphere sphere)
+{
+    Draw.Sphere(body.position, sphere.radius, Color(0.18, 0.83, 0.75));
+}
+
+view Hud()
+{
+    Draw.SetScreen();
+    Draw.Text("Tap to throw a ball", float2(16, 14), 16, Color.white);
+}

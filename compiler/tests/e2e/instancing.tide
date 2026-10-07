@@ -1,0 +1,162 @@
+// Mesh instances from lists, without an entity for each item. The shader
+// gets one ordinary struct from the list, beside the view's ECS state.
+
+scene Main { }
+
+struct Corner3
+{
+    float3 position;
+    float2 uv;
+    Color color = Color.white;
+}
+
+struct Corner2
+{
+    float2 position;
+    float2 uv;
+    Color color = Color.white;
+}
+
+struct Finish
+{
+    float shine = 1;
+    int layers = 1;
+}
+
+struct BatchItem
+{
+    float4x4 transform = float4x4.identity;
+    Color tint;
+    float2 offset;
+    int kind;
+    bool lit;
+    Finish finish;
+    long unread; // A field the GPU never reads needn't be a GPU type
+}
+
+struct FlatItem
+{
+    float2 offset;
+    Color tint;
+    int kind;
+}
+
+component Banner
+{
+    Color tint = Color(0.5, 1, 1);
+}
+
+singleton Light
+{
+    float strength = 0.75;
+}
+
+local singleton Art
+{
+    List<Vertex3> builtIn;
+    List<Corner3> corners;
+    List<Corner2> flat;
+    List<int> faces;
+    List<float4x4> transforms;
+    List<BatchItem> items;
+    List<FlatItem> flatItems;
+    List<float4x4> emptyTransforms;
+    List<BatchItem> emptyItems;
+    Grid2<Color> texture = Grid2(2, 1);
+    int frames;
+}
+
+void Bump(mut float x, int by)
+{
+    x += by;
+}
+
+vert Place(mut Corner3 vertex, BatchItem item)
+{
+    vertex.position.xy += item.offset;
+    Bump(vertex.position.z, item.kind);
+}
+
+frag Paint(Corner3 vertex, out Color color, BatchItem item, Banner banner, Light light)
+{
+    color = item.tint * banner.tint * light.strength;
+    if (item.lit) color.a *= item.finish.shine;
+    for (int i = 0; i < item.finish.layers; i++) color.b *= 0.5;
+}
+
+vert FlatPlace(mut Corner2 vertex, FlatItem item)
+{
+    vertex.position += item.offset;
+}
+
+frag FlatPaint(Corner2 vertex, out Color color, FlatItem item)
+{
+    color = item.kind == 1 ? item.tint : Color.white;
+}
+
+// With no transform field in a 3D instance struct, the engine uses identity
+frag Identity(Corner3 vertex, out Color color, FlatItem item, Instance instance)
+{
+    color = item.tint * instance.transform.c0.x;
+}
+
+frag SharedPaint(Corner3 vertex, out Color color, Light light)
+{
+    color = Color.white * light.strength;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Banner { });
+}
+
+view Fill(mut Art art)
+{
+    art.frames++;
+    if (art.frames != 1) return;
+    art.builtIn = [Vertex3 { }, Vertex3 { position = float3(1, 0, 0), uv = float2(1, 0) },
+                   Vertex3 { position = float3(0, 1, 0), uv = float2(0, 1) }];
+    art.corners = [Corner3 { }, Corner3 { position = float3(1, 0, 0), uv = float2(1, 0) },
+                   Corner3 { position = float3(0, 1, 0), uv = float2(0, 1) }];
+    art.flat = [Corner2 { }, Corner2 { position = float2(1, 0), uv = float2(1, 0) },
+                Corner2 { position = float2(0, 1), uv = float2(0, 1) }];
+    art.faces = [0, 1, 2];
+    art.texture[0, 0] = Color.red;
+    art.texture[1, 0] = Color.blue;
+    // Cross several list chunks, with distinct data in the last one too
+    for (int i = 0; i < 257; i++)
+    {
+        art.transforms.Add(float4x4.Translate(float3(i, 0, 5)));
+        art.items.Add(BatchItem { transform = float4x4.Translate(float3(i, 2, 5)),
+                                 tint = Color(i / 256.0, 0.25, 1), offset = float2(i, -i),
+                                 kind = i, lit = true, finish = Finish { shine = 0.5, layers = 2 } });
+    }
+    art.flatItems = [FlatItem { offset = float2(10, 20), tint = Color.red, kind = 1 },
+                    FlatItem { offset = float2(30, 40), tint = Color.green, kind = 2 }];
+}
+
+view Plain(Art art)
+{
+    Draw.Instanced(art.builtIn, art.faces, art.emptyTransforms);
+    Draw.Instanced(art.builtIn, art.faces, art.transforms, art.texture, Filter.Point);
+    Draw.Instanced(art.builtIn, art.faces, [float4x4.Translate(float3(500, 0, 5))], art.texture, Filter.Point);
+    Draw.Rect(float2(0, 0), float2(1, 1), Color.white);
+    Draw.Instanced(art.corners, art.faces, art.transforms);
+    Draw.Instanced(art.corners, art.faces, art.transforms, art.texture);
+    Draw.Instanced(art.corners, art.faces, art.flatItems, Identity);
+    // Different generated helpers, one compatible shader and one run
+    Draw.Mesh(art.corners, art.faces, float4x4.Translate(float3(1000, 0, 5)), SharedPaint);
+    Draw.Instanced(art.corners, art.faces, art.transforms, SharedPaint);
+}
+
+view Batch(with Banner, Art art)
+{
+    Draw.Instanced(art.corners, art.faces, art.emptyItems, Place, Paint);
+    Draw.Instanced(art.corners, art.faces, art.items, Place, Paint);
+}
+
+view Flat(Art art)
+{
+    Draw.Instanced(art.flat, art.faces, art.flatItems, FlatPlace, FlatPaint);
+    Draw.Instanced(art.flat, art.faces, art.flatItems, art.texture, Filter.Point, FlatPlace);
+}

@@ -1,0 +1,7 @@
+// expect: no version of Draw.Text takes (string, float2, int, Color, Anchor, Font, Font)
+scene Main { }
+
+view Show()
+{
+    Draw.Text("DUEL", float2(0), 88, Color.white, Anchor.MiddleCenter, Font.Bold, Font.Bold);
+}

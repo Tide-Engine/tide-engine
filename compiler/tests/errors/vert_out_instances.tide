@@ -1,0 +1,21 @@
+// expect: vert 'Place' writes a 'FromLamp' for its frag, and this draw's instances are 'FromLamp's too: a frag that takes one couldn't tell which
+// expect: what a vert hands its frag is a struct of its own, not the one the draw's instances are
+scene Main { }
+struct Corner { float3 position; float3 normal; float2 uv; }
+struct FromLamp { float3 place; float glow; }
+singleton Sun { float3 at = float3(0, 4, 0); }
+local singleton Models { List<Corner> crate; List<int> faces; }
+local singleton Lamps { List<FromLamp> all; }
+vert Place(mut Corner corner, out FromLamp lamp, Sun sun)
+{
+    lamp.place = corner.position - sun.at;
+    lamp.glow = 1;
+}
+frag Look(Corner corner, FromLamp lamp, out Color color)
+{
+    color = Color.white * lamp.glow;
+}
+view Show(Models models, Lamps lamps)
+{
+    Draw.Instanced(models.crate, models.faces, lamps.all, Place, Look);
+}

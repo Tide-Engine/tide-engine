@@ -1,0 +1,9 @@
+// expect: only extern functions take resident state, as 'in Resident' or 'mut Resident': the C that keeps it reads it
+singleton Physics
+{
+    Resident state;
+}
+
+void Keep(Resident state)
+{
+}

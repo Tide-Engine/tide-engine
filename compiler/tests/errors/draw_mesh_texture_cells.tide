@@ -1,0 +1,14 @@
+// expect: a texture is a Texture, a Grid2<Color> or a Grid2<float>, and this is a Grid2<int>
+// expect: a grid of colors is its pixels, and one of floats a texture of one channel, which a frag reads as red
+scene Main { }
+
+local singleton Art
+{
+    Grid2<int> cells = Grid2(4, 4);
+    List<Vertex> corners;
+}
+
+view Show(Art art)
+{
+    Draw.Mesh(art.corners, [0, 1, 2], art.cells);
+}

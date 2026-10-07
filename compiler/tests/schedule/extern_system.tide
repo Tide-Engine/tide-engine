@@ -1,0 +1,67 @@
+// Systems written in C (`extern system`) are scheduled by what they declare,
+// as their code can't be read: what one takes `mut` is written, and the rest
+// is read. So they wait for systems written in Tide and for each other over
+// the same data, run alongside the ones they share nothing with, and take
+// [Before] and [After].
+
+component Position
+{
+    float2 at;
+}
+
+component Velocity
+{
+    float2 by;
+}
+
+component Health
+{
+    float value;
+}
+
+component Rock { }
+
+component Ship { }
+
+singleton Wind
+{
+    float2 by;
+}
+
+singleton Count
+{
+    int moved;
+}
+
+scene Main { }
+
+[NativeName("game_move")]
+extern system Move(mut Position position, Velocity velocity, Time time);
+
+// Reads what Move writes: after it
+[NativeName("game_tally")]
+extern system Tally(Position position, mut Count count, with Ship);
+
+system Blow(mut Velocity velocity, Wind wind)
+{
+    velocity.by += wind.by;
+}
+
+// Shares nothing with the others
+[NativeName("game_heal")]
+extern system Heal(mut Health health);
+
+// Never the same entity as the ships' Tally, but both write Count
+[NativeName("game_tally_rocks")]
+extern system TallyRocks(mut Count count, with Rock);
+
+// Once a tick, ordered before a system written in Tide
+[NativeName("game_gust")]
+[Before(Blow)]
+extern system Gust(mut Wind wind, Time time);
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Position, Velocity, Health { value = 5 }, Ship);
+    Spawn(Position, Velocity, Rock);
+}

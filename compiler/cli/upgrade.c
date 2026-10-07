@@ -1,13 +1,22 @@
+#if !defined(_WIN32) && !defined(__APPLE__)
+#define _DEFAULT_SOURCE
+#endif
+
 #include "upgrade.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "editors.h"
+#include "install.h"
 #include "json.h"
+#include "line.h"
 #include "release.h"
 #include "sha256.h"
 #include "sys.h"
+#include "unzip.h"
 
 #ifndef TIDE_VERSION
 #define TIDE_VERSION "0.0.0-dev"
@@ -15,8 +24,11 @@
 #ifndef TIDE_CHANNEL
 #define TIDE_CHANNEL "nightly"
 #endif
-#ifndef TIDE_REPOSITORY
-#define TIDE_REPOSITORY "BlenMiner/tide-engine"
+// Where the releases are: the list at TIDE_RELEASES ".json", a version at
+// "/v<version>.json", and each file where the list says (the site's
+// releases.js, which anyone can ask).
+#ifndef TIDE_RELEASES
+#define TIDE_RELEASES "https://tide-engine.dev/releases"
 #endif
 
 // The package for this machine, as the release workflow names it.
@@ -49,33 +61,24 @@ const char *tide_channel(const char *root)
     return strcmp(channel, "stable") == 0 || strcmp(channel, "nightly") == 0 ? channel : TIDE_CHANNEL;
 }
 
-// curl and tar ship with Windows 10+, macOS and Linux. On Windows, the ones
-// in System32: Git's GNU tar, if it comes first on PATH, can't unpack zips.
-static const char *system_tool(const char *name)
+// One curl transfer of `url` into `path`, as arguments; returns how many.
+// A download is a redirect to where the file is kept, which has to be https.
+static int curl_request(const char **argv, const char *url, const char *path, const bool quiet)
 {
-#ifdef _WIN32
-    const char *windows = sys_env("SystemRoot");
-    if (windows) {
-        char file[64];
-        snprintf(file, sizeof file, "System32/%s.exe", name);
-        char *path = path_join(windows, file);
-        if (sys_exists(path)) return path;
-        free(path);
-    }
-#endif
-    return name; // Found on PATH
+    const char *const options[] = {"-fsSL", "--retry", "2", "-m", quiet ? "5" : "600", "--proto-redir", "=https", "-o", path, url};
+    const int count = (int)(sizeof options / sizeof options[0]);
+    memcpy(argv, options, sizeof options);
+    argv[count] = NULL;
+    return count;
 }
 
-// Downloads `url` to `path`.
+// Downloads `url` to `path`. -q at the start ignores the user's curl settings.
 static bool download(const char *url, const char *path, const bool quiet)
 {
-    const char *curl = system_tool("curl");
-    const char *const argv[] = {curl, "-fsSL", "--retry", "2", "-m", quiet ? "5" : "600",
-                                "-H", "Accept: application/vnd.github+json", "-o", path, url, NULL};
+    const char *argv[16] = {sys_tool("curl"), "-q"};
+    curl_request(argv + 2, url, path, quiet);
     return sys_run(argv, NULL, quiet) == 0;
 }
-
-#define RELEASES_API "https://api.github.com/repos/" TIDE_REPOSITORY "/releases"
 
 // JSON from `url`, saved in `work` as `name`; NULL if it didn't come.
 static const json *fetch_json(const char *work, const char *url, const char *name)
@@ -88,16 +91,16 @@ static const json *fetch_json(const char *work, const char *url, const char *nam
     return text ? json_parse(text, len) : NULL;
 }
 
-// The GitHub releases list, newest first: the last 100 published, which
-// always include the newest nightly.
+// The releases list, newest first: the last 100 published, which always
+// include the newest nightly, and the latest stable one.
 static const json *fetch_releases(const char *work, const bool quiet)
 {
     char *list = path_join(work, "releases.json");
     const char *custom = sys_env("TIDE_RELEASES_URL"); // For tests: a file:// URL to a releases list
-    const char *url = custom ? custom : RELEASES_API "?per_page=100";
+    const char *url = custom ? custom : TIDE_RELEASES ".json";
     const bool ok = download(url, list, quiet);
     if (!ok) {
-        if (!quiet) fprintf(stderr, "tide: couldn't reach GitHub to look for new versions\n");
+        if (!quiet) fprintf(stderr, "tide: couldn't reach tide-engine.dev to look for new versions\n");
         free(list);
         return NULL;
     }
@@ -106,19 +109,16 @@ static const json *fetch_releases(const char *work, const bool quiet)
     free(list);
     const json *releases = text ? json_parse(text, len) : NULL;
     if (!releases || releases->kind != JSON_ARRAY) {
-        if (!quiet) fprintf(stderr, "tide: GitHub's list of releases didn't make sense\n");
+        if (!quiet) fprintf(stderr, "tide: the list of releases didn't make sense\n");
         return NULL;
     }
     return releases;
 }
 
-// The newest version of `channel` (see tide_release_pick). Stable asks GitHub
-// for its latest release too: nightly ones can push it out of the list.
-static const json *newest(const char *work, const json *releases, const char *channel)
+// The newest version of `channel` (see tide_release_pick).
+static const json *newest(const json *releases, const char *channel)
 {
-    const bool ask = strcmp(channel, "stable") == 0 && !sys_env("TIDE_RELEASES_URL");
-    const json *latest = ask ? fetch_json(work, RELEASES_API "/latest", "latest.json") : NULL;
-    return tide_release_pick(releases, latest, channel);
+    return tide_release_pick(releases, NULL, channel, PACKAGE);
 }
 
 // The release of `version`, in the list or, for an older one, asked by its tag.
@@ -127,91 +127,126 @@ static const json *exactly(const char *work, const json *releases, const char *v
     const json *found = tide_release_find(releases, version);
     if (found || sys_env("TIDE_RELEASES_URL")) return found;
     char url[512];
-    snprintf(url, sizeof url, RELEASES_API "/tags/v%s", version);
+    snprintf(url, sizeof url, TIDE_RELEASES "/v%s.json", version);
     const json *release = fetch_json(work, url, "tag.json");
     return tide_release_is(release, version) ? release : NULL;
 }
 
-static const json *find_asset(const json *release, const char *name)
-{
-    const json *assets = json_get(release, "assets");
-    for (int i = 0; assets && i < assets->count; i++) {
-        const char *asset = json_str(json_get(assets->items[i], "name"));
-        if (asset && strcmp(asset, name) == 0) return assets->items[i];
-    }
-    return NULL;
-}
-
 static const char *asset_url(const json *release, const char *name)
 {
-    return json_str(json_get(find_asset(release, name), "browser_download_url"));
+    return json_str(json_get(tide_release_asset(release, name), "browser_download_url"));
 }
 
-// The asset's size in bytes, as GitHub gives it; 0 if it doesn't.
+// The asset's size in bytes, as the list gives it; 0 if it doesn't.
 static int64_t asset_size(const json *release, const char *name)
 {
-    const json *size = json_get(find_asset(release, name), "size");
+    const json *size = json_get(tide_release_asset(release, name), "size");
     return size && size->kind == JSON_NUMBER && size->number > 0 ? (int64_t)size->number : 0;
 }
 
-// Draws the download's progress over the last one drawn: a bar when the
-// package's size is known, a spinner when it isn't.
-static void draw_progress(int64_t got, const int64_t size, const int64_t ms, const int frame, const bool done)
+// ---------------------------------------------------------------------------
+// What an upgrade shows: a bar for each step that takes a while, drawn over
+// itself on its line of the terminal, and a line once it's done.
+
+// Draws how far a step is: a bar when its size is known, a spinner when it
+// isn't.
+static void draw_progress(const char *step, int64_t got, const int64_t size, const int64_t ms, const int frame,
+                          const bool done)
 {
     const double mb = 1024.0 * 1024.0;
     const double seconds = (double)ms / 1000.0;
     if (got < 0) got = 0;
-    if (size > 0 && got > size) got = size;
-    char line[128];
+    if (size > 0 && (done || got > size)) got = size;
+    char line[160];
     int n;
     if (size > 0) {
-        enum { WIDTH = 30 };
+        enum { WIDTH = 24 };
         const int filled = (int)(got * WIDTH / size);
         char bar[WIDTH + 1];
         for (int i = 0; i < WIDTH; i++) bar[i] = i < filled ? '=' : i == filled ? '>' : ' ';
         bar[WIDTH] = '\0';
-        n = snprintf(line, sizeof line, "  [%s] %3d%%  %.1f / %.1f MB", bar, (int)(got * 100 / size), got / mb, size / mb);
+        n = snprintf(line, sizeof line, "%-11s [%s] %3d%%  %.1f / %.1f MB", step, bar, (int)(got * 100 / size), got / mb,
+                     size / mb);
     } else if (done) {
-        n = snprintf(line, sizeof line, "  %.1f MB", got / mb);
+        n = snprintf(line, sizeof line, "%-11s %.1f MB", step, got / mb);
     } else {
-        n = snprintf(line, sizeof line, "  %c %.1f MB", "|/-\\"[frame % 4], got / mb);
+        n = snprintf(line, sizeof line, "%-11s %c %.1f MB", step, "|/-\\"[frame % 4], got / mb);
     }
     if (done) snprintf(line + n, sizeof line - (size_t)n, "  in %.1fs", seconds);
     else if (seconds >= 1) snprintf(line + n, sizeof line - (size_t)n, "  %.1f MB/s", got / mb / seconds);
-    printf("\r%-72s", line);
-    fflush(stdout);
+    line_draw(line);
 }
 
-// Downloads the package to `path`, with a progress bar in a terminal. curl
-// runs in the background, and the bar follows the file as it grows; curl's
-// errors wait in a log, to be shown once the bar is done with the line.
-static bool download_package(const char *url, const char *path, const char *work, const int64_t size)
+// How many bytes the files in `dir` and its folders hold so far.
+static int64_t tree_size(const char *dir);
+
+typedef struct tree {
+    const char *dir;
+    int64_t bytes;
+} tree;
+
+static void add_size(void *user, const char *name, const bool is_dir)
 {
-    if (!sys_is_terminal()) return download(url, path, false);
-    char *log = path_join(work, "curl.log");
-    const char *const argv[] = {system_tool("curl"), "-fsSL", "--retry", "2", "-m", "600",
-                                "--stderr", log, "-o", path, url, NULL};
-    sys_process *curl = sys_start(argv, NULL);
-    if (!curl) {
-        free(log);
-        return false;
-    }
-    const int64_t start = sys_now_ms();
-    int code = 0;
-    for (int frame = 0;; frame++) {
-        const bool ended = sys_wait(curl, 100, &code);
-        if (!ended || code == 0) draw_progress(sys_file_size(path), size, sys_now_ms() - start, frame, ended);
-        if (ended) break;
-    }
-    printf("\n");
-    fflush(stdout);
-    if (code != 0) {
-        char *errors = sys_read_file(log, NULL);
-        if (errors) fputs(errors, stderr);
-        free(errors);
+    tree *t = user;
+    char *path = path_join(t->dir, name);
+    const int64_t size = is_dir ? tree_size(path) : sys_file_size(path);
+    if (size > 0) t->bytes += size;
+    free(path);
+}
+
+static int64_t tree_size(const char *dir)
+{
+    tree t = {dir, 0};
+    sys_list(dir, add_size, &t);
+    return t.bytes;
+}
+
+// How far a step is, in bytes, from the file or folder it fills.
+typedef int64_t (*progress_fn)(const char *path);
+
+// Runs a step of the upgrade, a program. In a terminal it has a bar: the
+// program runs in the background, `progress` says how much of `size` bytes is
+// in `path`, and what the program says waits in a log until the bar is done
+// with the line.
+static bool run_step(const char *step, const char *const *argv, const char *work, const progress_fn progress,
+                     const char *path, const int64_t size)
+{
+    if (!sys_is_terminal()) return sys_run(argv, NULL, false) == 0;
+    char *log = path_join(work, "step.log");
+    sys_process *program = sys_start_logged(argv, NULL, log);
+    int code = -1;
+    if (program) {
+        const int64_t start = sys_now_ms();
+        for (int frame = 0;; frame++) {
+            const bool ended = sys_wait(program, frame ? 100 : 0, &code);
+            if (!ended || code == 0) draw_progress(step, progress(path), size, sys_now_ms() - start, frame, ended);
+            if (ended) break;
+        }
+        line_end();
+        char *said = sys_read_file(log, NULL);
+        if (said) fputs(said, stderr);
+        free(said);
     }
     free(log);
     return code == 0;
+}
+
+// About how many bytes the package unpacks to: a zip's directory says each
+// entry's size, and a gzip ends with the size of what's in it, the tar, which
+// is its files and a little more. 0 if it doesn't say.
+static int64_t unpacked_size(const char *package)
+{
+    const size_t n = strlen(package);
+    if (n > 4 && strcmp(package + n - 4, ".zip") == 0) {
+        const int64_t size = unzip_size(package);
+        return size > 0 ? size : 0;
+    }
+    uint8_t tail[4] = {0};
+    FILE *f = fopen(package, "rb");
+    const bool ok = f && fseek(f, -4, SEEK_END) == 0 && fread(tail, 1, 4, f) == 4;
+    if (f) fclose(f);
+    const uint32_t size = (uint32_t)tail[0] | (uint32_t)tail[1] << 8 | (uint32_t)tail[2] << 16 | (uint32_t)tail[3] << 24;
+    return ok ? (int64_t)size : 0;
 }
 
 // The hash SHA256SUMS lists for `file` ("<hash>  <file>" lines).
@@ -237,59 +272,8 @@ static bool expected_hash(const char *sums, const char *file, char out[65])
 }
 
 // ---------------------------------------------------------------------------
-// Swapping the files
 
-typedef struct swap {
-    const char *root;
-    const char *from;
-    bool ok;
-} swap;
-
-// tide and tidels may be running (this very tide, or an editor's tidels).
-// Windows can't overwrite them, but it can rename them, so the old ones move
-// aside and tide_cleanup deletes them later.
-static void swap_program(void *user, const char *name, const bool is_dir)
-{
-    swap *s = user;
-    if (is_dir) return;
-    char *from = path_join(s->from, name);
-    char *bin = path_join(s->root, "bin");
-    char *to = path_join(bin, name);
-    if (sys_exists(to)) {
-        char aside[1024];
-        snprintf(aside, sizeof aside, "%s.old-%lld", to, (long long)sys_now());
-        if (!sys_rename(to, aside)) s->ok = false;
-    }
-    if (s->ok && !sys_rename(from, to)) s->ok = false;
-    free(from);
-    free(bin);
-    free(to);
-}
-
-static void swap_entry(void *user, const char *name, const bool is_dir)
-{
-    swap *s = user;
-    char *from = path_join(s->from, name);
-    if (is_dir && strcmp(name, "bin") == 0) {
-        char *bin = path_join(s->root, "bin");
-        sys_mkdirs(bin);
-        swap bin_swap = {s->root, from, true};
-        sys_list(from, swap_program, &bin_swap);
-        s->ok &= bin_swap.ok;
-        free(bin);
-    } else {
-        char *to = path_join(s->root, name);
-        char old[1024];
-        snprintf(old, sizeof old, "%s.old", to);
-        sys_remove_tree(old);
-        if (sys_exists(to) && !sys_rename(to, old)) s->ok = false;
-        if (s->ok && !sys_rename(from, to)) s->ok = false;
-        sys_remove_tree(old);
-        free(to);
-    }
-    free(from);
-}
-
+// The programs an upgrade moved aside while they ran (install.c).
 static void remove_old(void *user, const char *name, const bool is_dir)
 {
     const char *bin = user;
@@ -328,16 +312,19 @@ int tide_upgrade(const char *root, const char *channel, const char *version)
 
     const json *releases = fetch_releases(work, false);
     if (!releases) return 1;
-    const json *release = version ? exactly(work, releases, version) : newest(work, releases, channel);
+    const json *release = version ? exactly(work, releases, version) : newest(releases, channel);
     if (!release) {
         if (version) fprintf(stderr, "tide: there's no release called %s\n", version);
-        else fprintf(stderr, "tide: there's no %s release yet\n", channel);
+        else fprintf(stderr, "tide: there's no %s release with a package for this platform (%s) yet\n", channel, PACKAGE);
         return 1;
     }
     const char *next = tide_release_version(release);
     // Upgrading only ever goes forward; an exact version or another channel is what was asked for.
+    // An installation that isn't whole (an upgrade stopped partway) is installed again, whichever
+    // version its tide is.
+    const bool whole = tide_installation_whole(root, TIDE_VERSION);
     const int order = tide_version_compare(next, TIDE_VERSION);
-    if (order == 0 || (order < 0 && !version && !switching)) {
+    if (whole && (order == 0 || (order < 0 && !version && !switching))) {
         if (order == 0 && version) printf("tide %s is already installed.\n", TIDE_VERSION);
         else if (order == 0) printf("tide %s is the newest %s version.\n", TIDE_VERSION, channel);
         else printf("tide %s is newer than any %s version out (%s).\n", TIDE_VERSION, channel, next);
@@ -353,12 +340,17 @@ int tide_upgrade(const char *root, const char *channel, const char *version)
         fprintf(stderr, "tide: release %s has no package for this platform (%s)\n", next, PACKAGE);
         return 1;
     }
-    printf("Downloading tide %s...\n", next);
+    if (!whole) printf("This installation isn't whole (an upgrade stopped partway): installing tide %s over it.\n", next);
     fflush(stdout);
     char *package = path_join(work, PACKAGE);
     char *sums_path = path_join(work, "SHA256SUMS");
-    if (!download_package(package_url, package, work, asset_size(release, PACKAGE)) ||
-        !download(sums_url, sums_path, false)) {
+    // The checksums come first, so the bar ends when the package is all there.
+    const char *curl[40] = {sys_tool("curl"), "-q", "--fail-early"};
+    int n = 3 + curl_request(curl + 3, sums_url, sums_path, false);
+    curl[n++] = "--next";
+    curl_request(curl + n, package_url, package, false);
+    const bool downloaded = run_step("Downloading", curl, work, sys_file_size, package, asset_size(release, PACKAGE));
+    if (!downloaded) {
         fprintf(stderr, "tide: the download failed\n");
         return 1;
     }
@@ -382,33 +374,52 @@ int tide_upgrade(const char *root, const char *channel, const char *version)
 
     char *fresh = path_join(work, "new");
     sys_mkdirs(fresh);
-    const char *const tar[] = {system_tool("tar"), "-xf", package, "-C", fresh, NULL};
-    if (sys_run(tar, NULL, false) != 0) {
+    const char *const tar[] = {sys_tool("tar"), "-xf", package, "-C", fresh, NULL};
+    if (!run_step("Unpacking", tar, work, tree_size, fresh, unpacked_size(package))) {
         fprintf(stderr, "tide: couldn't unpack the download\n");
         return 1;
     }
-    swap s = {root, fresh, true};
-    sys_list(fresh, swap_entry, &s);
-    if (!s.ok) {
-        fprintf(stderr, "tide: couldn't replace every file in %s; run `tide upgrade` again\n", root);
+    char *trash = path_join(work, "old");
+    char failed[1024];
+    if (!tide_install(root, fresh, trash, failed, sizeof failed)) {
+        fprintf(stderr, "tide: couldn't replace %s\n", failed);
+        fprintf(stderr, "  = note: another program may have it open, like an editor showing it or a game being built: "
+                        "close it, then run `tide upgrade` again\n");
+        if (tide_installation_whole(root, TIDE_VERSION)) fprintf(stderr, "  = note: nothing was changed\n");
+        else fprintf(stderr, "  = note: the upgrade stopped partway, and tide builds no games until it's finished\n");
         return 1;
     }
     char *channel_file = path_join(root, "channel");
     sys_write_text(channel_file, channel);
-    sys_remove_tree(work);
-    printf("Upgraded tide %s -> %s (%s).\n", TIDE_VERSION, next, channel);
-    fflush(stdout);
-    // The new tide updates the editor extension, in the editors that have it.
+
+    // The new tide updates the editor extension, in the editors that have it,
+    // which takes them a while. It only says what went wrong, which waits in a
+    // log for the upgrade's own line.
 #ifdef _WIN32
     char *tide = path_join(root, "bin/tide.exe");
 #else
     char *tide = path_join(root, "bin/tide");
 #endif
     const char *const editors[] = {tide, "editors", "--update", NULL};
-    sys_run(editors, NULL, false);
+    char *log = path_join(work, "editors.log");
+    if (sys_is_terminal() && tide_editors_have_tide()) line_draw("Updating Tide in your editors...");
+    sys_process *update = sys_start_logged(editors, NULL, log);
+    int code = 0;
+    while (update && !sys_wait(update, 1000, &code)) {
+        // Still at it
+    }
+    char *said = sys_read_file(log, NULL);
+    free(log);
     free(tide);
-    const char *notes = json_str(json_get(release, "html_url"));
-    if (notes) printf("What's new: %s\n", notes);
+    sys_remove_tree(work); // What stays, a program still running has open: the next upgrade deletes it
+
+    char line[256];
+    if (order == 0) snprintf(line, sizeof line, "Installed tide %s again (%s).", next, channel);
+    else snprintf(line, sizeof line, "Upgraded tide %s -> %s (%s).", TIDE_VERSION, next, channel);
+    line_draw(line);
+    line_end();
+    if (said) fputs(said, stderr);
+    free(said);
     return 0;
 }
 
@@ -432,7 +443,7 @@ void tide_check_for_update(const char *root)
     sys_mkdirs(work);
     const json *releases = fetch_releases(work, true);
     const char *channel = tide_channel(root);
-    const json *release = releases ? newest(work, releases, channel) : NULL;
+    const json *release = releases ? newest(releases, channel) : NULL;
     if (release && tide_version_compare(tide_release_version(release), TIDE_VERSION) > 0) {
         fprintf(stderr, "\ntide %s is out (you have %s): run `tide upgrade`\n", tide_release_version(release), TIDE_VERSION);
     }

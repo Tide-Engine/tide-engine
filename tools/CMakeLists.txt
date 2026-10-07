@@ -1,7 +1,7 @@
 # Editor support in the package's editors/ folder. The TextMate grammar is for
 # editors that read TextMate bundles; JetBrains IDEs get the Marketplace plugin
-# instead (tools/tide-jetbrains).
-install(DIRECTORY tide-syntax DESTINATION editors COMPONENT tide)
+# instead (tools/tide-jetbrains). Its test stays here.
+install(DIRECTORY tide-syntax DESTINATION editors COMPONENT tide PATTERN test EXCLUDE)
 
 # The VS Code extension, for VS Code, Cursor, VSCodium and Windsurf. It needs
 # Node, so only package builds make it.
@@ -23,6 +23,8 @@ if(TIDE_EDITOR_EXTENSIONS)
             tide-vscode/package.json
             tide-vscode/package-lock.json
             tide-vscode/README.md
+            tide-vscode/icon.png
+            tide-vscode/icons/tide.svg
             tide-vscode/src/extension.js
             tide-syntax/language-configuration.json
             tide-syntax/syntaxes/tide.tmLanguage.json

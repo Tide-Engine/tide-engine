@@ -1,0 +1,4 @@
+// expect: systems run the match; for code that runs every frame on this machine, write a view
+scene Main { }
+component Body { float x; }
+local extern system Move(mut Body body);

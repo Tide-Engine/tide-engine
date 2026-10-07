@@ -1,0 +1,123 @@
+// Package Expansion: what it has for the game to replace, and what it replaces
+// of the game's (namespace Combat), each by its name and its parameters.
+namespace Expansion;
+
+using Combat;
+
+singleton Trace
+{
+    int order;
+    int replaced;
+    int bonus;
+    int hooked;
+}
+
+system P1(mut Trace trace)
+{
+    trace.order = trace.order * 10 + 1;
+}
+
+virtual system P2(mut Trace trace)
+{
+    trace.order = trace.order * 10 + 2;
+    trace.replaced += 1;
+}
+
+system P3(mut Trace trace)
+{
+    trace.order = trace.order * 10 + 3;
+}
+
+virtual int Bonus()
+{
+    return 1;
+}
+
+system UseBonus(mut Trace trace)
+{
+    trace.bonus = Bonus();
+}
+
+// A hook: nothing until a game replaces it, with the parameters its override gets
+virtual system Hook(mut Trace trace, Time time)
+{
+}
+
+// Systems: by the name with its namespace, or through `using`
+override system Combat.Two(mut Log log)
+{
+    log.order = log.order * 10 + 7;
+}
+
+override system Four(mut Log log)
+{
+    log.order = log.order * 10 + 9;
+}
+
+override system Move(mut Body body)
+{
+    body.x += body.speed * 2;
+}
+
+// A function, among those that share its name, with a default of its own
+override float Damage(float base, float multiplier = 3)
+{
+    return base * multiplier + 100;
+}
+
+// Methods, written after their type's name, with its fields in scope
+override bool Stats.IsDead()
+{
+    return health <= 50;
+}
+
+override mut void Combat.Stats.Hurt(float amount)
+{
+    health -= amount * 2;
+}
+
+override int Unit.Reach()
+{
+    return 7;
+}
+
+// Handlers: an event's, a command's and a local one's. This one leaves `log` alone
+override event(Hit hit) TakeHit(mut Unit unit, mut Log log)
+{
+    unit.stats.health -= hit.damage * 3;
+}
+
+override command(Buy buy, PlayerID sender) OnBuy(mut Log log)
+{
+    log.bought = buy.item + 100;
+}
+
+override local event(Hit hit) ShowHit(mut Hud hud)
+{
+    hud.heard += hit.damage * 10;
+}
+
+// A view, with other names for its parameters
+override view Show(Body shape, mut Hud display)
+{
+    display.shown += 1;
+    Draw.Circle(float2(shape.x, 0), 2, Color.red);
+}
+
+// What the GPU runs
+override vert Wave(mut Corner vertex)
+{
+    vertex.position.x += 0.25;
+}
+
+override frag Shade(Corner vertex, out Color color)
+{
+    color = Color(vertex.color.r * 0.125, vertex.color.g, vertex.color.b, vertex.color.a);
+}
+
+// A task
+override async void Later(mut Log log)
+{
+    await Wait.Ticks(2);
+    log.later += 1;
+}

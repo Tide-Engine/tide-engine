@@ -12,7 +12,7 @@
 //
 //   node rooms.mjs <Chrome or Edge> <tide_platform_rooms> <scratch folder> [Firefox]
 //
-// With TIDE_RELAY set, like ws://purrengine-relay.fly.dev, everyone meets
+// With TIDE_RELAY set, like wss://relay.tide-engine.dev, everyone meets
 // through that relay instead, to check a deployed one. TIDE_ICE_POLICY=relay
 // sends every packet through its TURN servers, both the browser's and ours.
 
@@ -35,40 +35,64 @@ const relayOnly = process.env.TIDE_ICE_POLICY === 'relay';
 // Windows, which offers no loopback candidates: there they take a port the
 // system picks, as any game joining a match does.
 const local = !process.env.TIDE_RELAY;
-const env = { ...process.env, TIDE_RELAY: relayUrl, ...(relayOnly ? { TIDE_RTC_RELAY_ONLY: '1' } : {}) };
+// TIDE_RTC_DEBUG: every desktop player says what its connection does, for a
+// case that fails (see account, below)
+const env = { ...process.env, TIDE_RELAY: relayUrl, TIDE_RTC_DEBUG: '1', ...(relayOnly ? { TIDE_RTC_RELAY_ONLY: '1' } : {}) };
 const loopback = { ...env, ...(local ? { TIDE_RTC_LOCAL: '1' } : {}) };
 
-// A desktop player: its lines, as they come
+// What a case's players and its browser said, each line with when, in seconds
+// since the case began. A case that fails ends with all of it: the lines that
+// showed as they came, and what the desktop players said of their connections
+// meanwhile (the lines TIDE_RTC_DEBUG adds, "rtc ..."), which a case that
+// passes keeps to itself. Without it, a case that failed said only that
+// nothing came back, and nothing of how far each side got.
+let began = performance.now();
+const account = [];
+function noted(who, line) {
+    account.push(`${((performance.now() - began) / 1000).toFixed(3).padStart(8)} ${who}: ${line}`);
+    if (!line.startsWith('rtc ')) console.log(`${who}: ${line}`);
+}
+
+// A desktop player: its lines, as they come, and what it's told to do once
+// what it waits for happened (see rooms_native.c)
 function player(args, name, anywhere = false) {
-    const child = spawn(program, args, { env: anywhere ? env : loopback, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(program, args, { env: anywhere ? env : loopback, stdio: ['pipe', 'pipe', 'pipe'] });
+    child.stdin.on('error', () => {}); // Gone already
     const lines = [];
     const waiting = [];
-    let buffer = '';
-    const take = chunk => {
-        buffer += chunk;
-        let at;
-        while ((at = buffer.indexOf('\n')) >= 0) {
-            const line = buffer.slice(0, at).trim();
-            buffer = buffer.slice(at + 1);
-            console.log(`${name}: ${line}`);
-            lines.push(line);
-            for (const w of [...waiting]) {
-                if (w.test(line)) {
-                    waiting.splice(waiting.indexOf(w), 1);
-                    w.resolve(line);
+    // What it prints and what its stack says (stderr) are cut into lines
+    // apart: both come in pieces, and a line of one that arrived in the middle
+    // of a line of the other would be taken for part of it, and never be the
+    // line a case waits for
+    const take = () => {
+        let buffer = '';
+        return chunk => {
+            buffer += chunk;
+            let at;
+            while ((at = buffer.indexOf('\n')) >= 0) {
+                const line = buffer.slice(0, at).trim();
+                buffer = buffer.slice(at + 1);
+                noted(name, line);
+                lines.push(line);
+                for (const w of [...waiting]) {
+                    if (w.test(line)) {
+                        waiting.splice(waiting.indexOf(w), 1);
+                        w.resolve(line);
+                    }
                 }
             }
-        }
+        };
     };
-    child.stdout.setEncoding('utf8').on('data', take);
-    child.stderr.setEncoding('utf8').on('data', take);
+    child.stdout.setEncoding('utf8').on('data', take());
+    child.stderr.setEncoding('utf8').on('data', take());
     const exited = new Promise(resolve => child.on('exit', code => resolve(code)));
     const line = test => {
         const found = lines.find(l => test.test(l));
         if (found) return Promise.resolve(found);
         return new Promise(resolve => waiting.push({ test: l => test.test(l), resolve }));
     };
-    return { child, line, exited };
+    const tell = what => child.stdin.write(`${what}\n`);
+    return { child, line, exited, tell };
 }
 
 const within = (promise, seconds, what) => Promise.race([
@@ -80,16 +104,46 @@ const within = (promise, seconds, what) => Promise.race([
 const page = `<!doctype html><meta charset="utf-8"><title>rooms</title><script>
 const q = new URLSearchParams(location.search);
 const hosting = q.get('mode') === 'host';
-const say = line => fetch('/say', { method: 'POST', body: line });
+const say = line => fetch('/say?browser=' + q.get('browser'), { method: 'POST', body: line });
+say('loaded');
 const ws = new WebSocket(q.get('relay'));
+ws.onerror = () => say('relay error');
+ws.onclose = e => say('relay closed ' + e.code + ' ' + e.reason);
 const send = m => ws.send(JSON.stringify(m));
 let ice = [];
 const peers = new Map();
+// What its channels did, and when: the test asks how the page stands (below)
+const born = performance.now();
+const channels = [];
+const happened = [];
+const note = what => happened.push(Math.round(performance.now() - born) + ' ms: ' + what);
 function channel(ch) {
   ch.binaryType = 'arraybuffer';
-  ch.onopen = () => { say('open'); if (!hosting) ch.send(new Uint8Array([104, 105])); };
-  ch.onmessage = e => ch.send(e.data);
+  const c = { ch, got: 0, sent: 0, refused: '' };
+  channels.push(c);
+  ch.onopen = () => { say('open'); note('open'); if (!hosting) ch.send(new Uint8Array([104, 105])); };
+  ch.onclose = () => note('closed');
+  ch.onerror = e => note('error: ' + (e.error && e.error.message));
+  ch.onmessage = e => {
+    c.got++;
+    try {
+      ch.send(e.data);
+      c.sent++;
+    } catch (error) {
+      c.refused = error.message;
+    }
+  };
 }
+// How the page stands, once a second: that it still runs, what its connections
+// say of themselves, and how many messages each channel got and echoed
+setInterval(() => fetch('/stands?browser=' + q.get('browser'), { method: 'POST', body: JSON.stringify({
+  ms: Math.round(performance.now() - born),
+  peers: [...peers.values()].map(p => ({ state: p.pc.connectionState, ice: p.pc.iceConnectionState,
+    sctp: p.pc.sctp && p.pc.sctp.state, dtls: p.pc.sctp && p.pc.sctp.transport.state })),
+  channels: channels.map(c => ({ state: c.ch.readyState, stream: c.ch.id, got: c.got, sent: c.sent,
+    refused: c.refused, waiting: c.ch.bufferedAmount })),
+  happened,
+}) }), 1000);
 function peer(id, signal) {
   const pc = new RTCPeerConnection({ iceServers: ice, iceTransportPolicy: q.get('policy') || 'all' });
   const p = { pc, chain: Promise.resolve() };
@@ -150,16 +204,27 @@ ws.onmessage = async e => {
 
 const said = [];
 const waiting = [];
+let stands = null; // How the case's page last said it stands, and when
 const server = createServer((request, response) => {
     if (request.url.startsWith('/page')) {
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         response.end(page);
-    } else if (request.url === '/say' && request.method === 'POST') {
+    } else if (request.url.startsWith('/stands?') && request.method === 'POST') {
+        const from = Number(new URL(request.url, 'http://127.0.0.1').searchParams.get('browser'));
         let body = '';
         request.on('data', chunk => { body += chunk; });
         request.on('end', () => {
             response.end();
-            console.log(`browser: ${body}`);
+            if (running && from === running.number) stands = { how: body, at: performance.now() };
+        });
+    } else if (request.url.startsWith('/say?') && request.method === 'POST') {
+        const from = Number(new URL(request.url, 'http://127.0.0.1').searchParams.get('browser'));
+        let body = '';
+        request.on('data', chunk => { body += chunk; });
+        request.on('end', () => {
+            response.end();
+            if (!running || from !== running.number) return; // A browser stopping, after its case
+            noted('browser', body);
             said.push(body);
             for (const w of [...waiting]) {
                 if (w.test.test(body)) {
@@ -193,44 +258,77 @@ user_pref("toolkit.telemetry.reportingpolicy.firstRun", false);
 user_pref("app.update.enabled", false);
 `;
 
+// The browser running a case's page, which says when it's up: the case's own
+// deadlines start there. Starting a browser takes far longer on a busy
+// machine, or on one that never started it before (CI's first run, where a
+// case's 45 seconds sometimes weren't enough for both), and isn't what's tested.
 let running = null;
 let browsers = 0;
 function openBrowser(which, query) {
-    // A folder of its own, since a browser just stopped may still hold the
-    // last one. Absolute, and there already: otherwise Chrome shows a dialog
-    // about it, even headless.
-    const profile = resolve(`${scratch}-${process.pid}-${++browsers}`);
+    // A folder of its own. Absolute, and there already: otherwise Chrome
+    // shows a dialog about it, even headless.
+    const number = ++browsers;
+    const profile = resolve(`${scratch}-${process.pid}-${number}`);
     mkdirSync(profile, { recursive: true });
     const url = `http://127.0.0.1:${server.address().port}/page?relay=${encodeURIComponent(relayUrl)}`
-        + `&policy=${relayOnly ? 'relay' : 'all'}&${query}`;
+        + `&policy=${relayOnly ? 'relay' : 'all'}&browser=${number}&${query}`;
+    let child;
     if (which.firefox) {
         const hiding = `user_pref("media.peerconnection.ice.obfuscate_host_addresses", ${which.hidden});
 `;
         writeFileSync(`${profile}/user.js`, FIREFOX_PREFS + hiding);
         // --wait-for-browser: on Windows, the process started is only a
-        // launcher, and without it, stopping it would leave the browser
-        running = spawn(which.path, ['--headless', '--no-remote', '--wait-for-browser', '--profile', profile, url],
-            { stdio: 'ignore' });
+        // launcher, and without it, stopping it would leave the browser.
+        // MOZ_DISABLE_SAFE_MODE_KEY: Shift held as Firefox starts (someone
+        // typing on this machine) puts it in safe mode, whose prompt nobody
+        // answers headless, so it would never open the page.
+        child = spawn(which.path, ['--headless', '--no-remote', '--wait-for-browser', '--profile', profile, url],
+            { stdio: 'ignore', env: { ...process.env, MOZ_DISABLE_SAFE_MODE_KEY: '1' } });
     } else {
-        running = spawn(which.path, [
+        // --remote-debugging-pipe: DevTools on fds 3 and 4, which stopBrowser
+        // asks to close the browser
+        child = spawn(which.path, [
             '--headless',
             '--no-first-run',
             '--no-default-browser-check',
             '--disable-extensions',
+            '--remote-debugging-pipe',
             `--user-data-dir=${profile}`,
             ...(which.hidden ? [] : ['--disable-features=WebRtcHideLocalIpsWithMdns']),
             '--allow-loopback-in-peer-connection',
             url,
-        ], { stdio: 'ignore' });
+        ], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
+        child.stdio[3].on('error', () => {}); // Gone already
+        child.stdio[4].resume();
     }
+    const exited = new Promise(resolve => child.on('exit', code => resolve(code)));
+    running = { which, child, exited, number };
+    const up = Promise.race([
+        browserSaid(/^loaded$/),
+        exited.then(code => { throw new Error(`the browser exited with ${code} before opening the page`); }),
+    ]);
+    return within(up, 90, 'the browser opening the page');
 }
 
-// The browser and everything it started
-function stopBrowser() {
+// The browser and everything it started, gone before the next case starts.
+// Chrome closes itself: killing its processes from outside can miss one it
+// starts again meanwhile, which then keeps the browser from going.
+async function stopBrowser() {
     if (!running) return;
-    if (process.platform === 'win32') spawn('taskkill', ['/pid', String(running.pid), '/T', '/F'], { stdio: 'ignore' });
-    else running.kill();
+    const { which, child, exited } = running;
     running = null;
+    const kill = () => {
+        if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+        else child.kill(which.firefox ? 'SIGTERM' : 'SIGKILL');
+    };
+    if (which.firefox) kill();
+    else child.stdio[3].end(JSON.stringify({ id: 1, method: 'Browser.close' }) + '\0');
+    try {
+        await within(exited, 60, 'the browser stopping');
+    } catch (error) {
+        if (!which.firefox) kill();
+        throw error;
+    }
 }
 
 let failed = false;
@@ -238,15 +336,28 @@ const players = [];
 async function test(name, run) {
     console.log(`--- ${name}`);
     said.length = 0;
+    account.length = 0;
+    stands = null;
+    began = performance.now();
     try {
         await run();
         console.log(`--- ${name}: ok`);
     } catch (error) {
         console.log(`--- ${name}: FAILED: ${error.message}`);
         failed = true;
+        const now = performance.now();
+        console.log(`--- what each side said, and when: seconds into the case, ${((now - began) / 1000).toFixed(3)} now`);
+        for (const line of account) console.log(line);
+        if (stands) console.log(`--- the page, ${((now - stands.at) / 1000).toFixed(3)} seconds before: ${stands.how}`);
+        else if (running) console.log('--- the page never said how it stands');
     }
     for (const p of players.splice(0)) p.child.kill();
-    stopBrowser();
+    try {
+        await stopBrowser();
+    } catch (error) {
+        console.log(`--- ${name}: FAILED: ${error.message}`);
+        failed = true;
+    }
 }
 
 await test('two desktop players in a match', async () => {
@@ -257,6 +368,56 @@ await test('two desktop players in a match', async () => {
     players.push(joiner);
     await within(Promise.all([host.line(/^ok/), joiner.line(/^ok/)]), 45, 'meeting');
 });
+
+// Host migration: the host leaves, and its two players carry on, one of them
+// hosting the room now, each the same player as before. It leaves once both
+// said they're in, however long that took.
+await test('a desktop match changes hands when its host leaves', async () => {
+    const host = player(['handover-host'], 'host');
+    players.push(host);
+    const code = (await within(host.line(/^room /), 15, 'hosting')).split(' ')[1];
+    const a = player(['handover-join', code, '2'], 'a');
+    const b = player(['handover-join', code, '3'], 'b');
+    players.push(a, b);
+    const before = await within(Promise.all([a.line(/^ok before/), b.line(/^ok before/)]), 45, 'meeting');
+    host.tell('leave');
+    if ((await within(host.exited, 15, 'the host leaving')) !== 0) throw new Error('the host failed');
+    const after = await within(Promise.all([a.line(/^ok after/), b.line(/^ok after/)]), 45, 'the match changing hands');
+    const player_of = line => line.match(/player (\d+)/)[1];
+    for (let i = 0; i < 2; i++) {
+        if (player_of(before[i]) !== player_of(after[i])) throw new Error(`another player after: ${before[i]}, ${after[i]}`);
+    }
+    if (after.filter(line => line.endsWith('hosting')).length !== 1) throw new Error('not one of them hosts');
+});
+
+// A match its host ended stays ended, even for a player who missed the
+// goodbye: the relay tells them so, rather than let them take the room over.
+// The host ends it once the relay has its room, and quits at once, or, early,
+// as soon as it has a room, which the relay may not know yet: then it goes on
+// until it told the relay. TIDE_RTC_DEBUG has it say both: what the relay
+// answered it, and what it told the relay.
+for (const early of [false, true]) {
+    await test(`a match its host ended${early ? ' before the relay knew its room' : ''} isn't taken over`, async () => {
+        const host = player([early ? 'end-host-early' : 'end-host'], 'host');
+        players.push(host);
+        const [, code, , key] = (await within(host.line(/^room /), 15, 'hosting')).split(' ');
+        if (early) {
+            const told = await within(host.line(/the relay its match ended$/), 15, 'the host telling the relay');
+            if (!told.includes(': told the relay')) throw new Error('the host couldn\'t tell the relay its match ended');
+        } else {
+            await within(host.line(new RegExp(`room ${code}: the relay has it$`)), 15, 'the relay opening the room');
+            host.tell('end');
+            if ((await within(host.exited, 15, 'the host ending the match')) !== 0) throw new Error('the host failed');
+        }
+        // Once the relay heard (one here: another can't be asked), so the late player can't get there first
+        const heard = async () => { while (local && !relay.ended.has(code)) await new Promise(r => setTimeout(r, 20)); };
+        await within(heard(), 15, 'the relay hearing the match ended');
+        const late = player(['migrate', code, key], 'late');
+        players.push(late);
+        const answer = await within(late.line(/^migrated /), 30, 'the relay answering');
+        if (answer !== 'migrated -2') throw new Error(`the relay said ${answer}, not that the match ended`);
+    });
+}
 
 // Chrome (or Edge) and Firefox: two WebRTC implementations of their own.
 // Each shows its address, then hides it behind a .local name, as it does for
@@ -274,14 +435,14 @@ for (const which of found) {
         const host = player(['echo-host'], 'desktop', anywhere);
         players.push(host);
         const code = (await within(host.line(/^room /), 15, 'hosting')).split(' ')[1];
-        openBrowser(which, `mode=join&code=${code}`);
+        await openBrowser(which, `mode=join&code=${code}`);
         const exit = await within(host.exited, 45, 'the echoes');
         if (exit !== 0) throw new Error(`the desktop side exited with ${exit}`);
     });
 
     await test(`a desktop player joins a room ${which.name} hosts`, async () => {
         const code = 'B' + Math.random().toString(36).slice(2, 7).toUpperCase().replace(/[01IO]/g, '2');
-        openBrowser(which, `mode=host&code=${code}`);
+        await openBrowser(which, `mode=host&code=${code}`);
         await within(browserSaid(/^room /), 30, 'hosting');
         const joiner = player(['echo-join', code], 'desktop', anywhere);
         players.push(joiner);
@@ -291,10 +452,9 @@ for (const which of found) {
 }
 if (!found.length) console.log('No browser found: skipping the browser tests. Set TIDE_BROWSER to run them.');
 
-// Last, this run's browser folders, once the browsers have let go of them
+// Last, this run's browser folders, which the browsers let go of as they stopped
 relay.close();
 server.close();
-await new Promise(r => setTimeout(r, 1000));
 for (let i = 1; i <= browsers; i++) {
     try {
         rmSync(resolve(`${scratch}-${process.pid}-${i}`), { recursive: true, force: true });

@@ -1,0 +1,4 @@
+// expect: Draw2D.list is 'Draw.list' now
+extern void DrawUI(DrawList list);
+scene Main { }
+view Show() { DrawUI(Draw2D.list); }

@@ -1,0 +1,4 @@
+// expect: RenderTarget.Screen is 'RenderTarget.Window' now
+// expect: a target that's always the window's size is named for the window, as 'Draw.window' is; 'Screen' is the window's measurements alone, 'Screen.width' and 'Screen.height'
+scene Main { }
+view Show() { var target = RenderTarget.Screen(0.5); }

@@ -1,0 +1,11 @@
+// expect: no version of Draw.Cull takes (bool)
+// expect: Draw.Cull(Cull side, Block content)
+scene Main { }
+
+view Show()
+{
+    Draw.Cull(false)
+    {
+        Draw.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.white);
+    }
+}

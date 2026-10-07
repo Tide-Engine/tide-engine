@@ -1,3 +1,0 @@
-// expect: a list can't hold lists yet
-scene Main { }
-component Grid { List<List<int>> cells; }

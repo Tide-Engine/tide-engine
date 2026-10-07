@@ -10,6 +10,9 @@ singleton Trace
     int heal;
     Combat.Hit hit; // A struct from another namespace
     int hit_seen;
+    Combat.Stance stance;                   // An enum from another namespace
+    Combat.Stance high = Combat.Stance(4);  // ...from its number, by its qualified name
+    Combat.Stance healed;
 }
 
 scene Main { }

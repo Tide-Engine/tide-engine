@@ -1,4 +1,4 @@
-// expect: '++' works on ints and floats, not float2
+// expect: '++' works on ints, longs and floats, not float2
 scene Main { }
 component Body { float2 position; }
 system Move(mut Body body)

@@ -1,0 +1,6 @@
+// expect: 'Fill' makes its 'bytes' List<byte>, not List<int>
+// expect: an 'out' argument is the variable itself, so its type is the parameter's: 'out var bytes' declares one of that type
+extern int Fill(out List<byte> bytes);
+singleton Store { List<int> numbers; int size; }
+scene Main { }
+system Run(mut Store store) { store.size = Fill(out store.numbers); }

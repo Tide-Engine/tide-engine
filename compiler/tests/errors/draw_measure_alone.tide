@@ -1,0 +1,7 @@
+// expect: does nothing on its own
+scene Main { }
+
+view Title()
+{
+    Draw.MeasureText("Tide", 32);
+}

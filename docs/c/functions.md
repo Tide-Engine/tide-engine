@@ -1,0 +1,481 @@
+---
+description: "Call C and C++ from Tide through extern functions, pass values across the boundary and integrate native libraries and ECS systems."
+---
+
+# Calling C
+
+A game can call C: a library it ships with, like stb or miniaudio, a platform SDK, or C of its own. `extern` declares a function written in C, with no body:
+
+```csharp
+extern float Lerp3(float a, float b, float c, float t);
+```
+
+It's called like any function, from systems, views, event handlers, methods and other functions, and the call costs what a call between C functions does:
+
+```csharp
+system Blend(mut Mix mix)
+{
+    mix.value = Lerp3(mix.a, mix.b, mix.c, mix.t);
+}
+```
+
+## Names
+
+The C function has the name the extern is written with. When C's name doesn't suit Tide, `[NativeName]` gives it, and the Tide name can follow Tide's style:
+
+```csharp
+[NativeName("stb_perlin_noise3")]
+extern float Noise(float x, float y, float z, int xWrap, int yWrap, int zWrap);
+```
+
+A namespace doesn't change the C name: in `namespace Terrain;`, that's `Terrain.Noise` in Tide and still `stb_perlin_noise3` in C.
+
+An extern's parameters can have [default values](../language/functions.md#default-values-names-and-overloads), and calls can name them: C is passed a default like any argument. Externs can share a name too, but C has one function of a name, so each says which C function it is:
+
+```csharp
+extern float c_scale(float value, float by = 2);
+
+[NativeName("c_mix_floats")]
+extern float Mix(float a, float b);
+
+[NativeName("c_mix_ints")]
+extern int Mix(int a, int b);
+```
+
+## Where the C goes
+
+In the game's folder, with nothing to set up:
+
+- Every `.c` file in the folder and its subfolders compiles with the game, with the same determinism flags as the engine. Headers next to them are found as C finds them.
+- Every `.cpp` file does too, as C++ with no runtime behind it: see [C++](#c).
+- Every prebuilt library there links with the game when it was built for the platform being built for: `.a` and `.lib` files, and `.so`, `.dll` and `.dylib` ones. tide reads each library to tell which platform and CPU it's for, so one folder holds them all, named and placed however you like (for phones, see [Android](#android)).
+- Code for one platform only goes in `#ifdef`, as in any C.
+
+```
+MyGame/
+  game.tide
+  noise.c              // #define STB_PERLIN_IMPLEMENTATION, then #include "stb_perlin.h"
+  stb_perlin.h
+  steam/
+    steam_api64.lib    // Windows: links in
+    steam_api64.dll    // ...and goes next to the game
+    libsteam_api.so    // Linux
+    libsteam_api.dylib // macOS
+  steam_web.c          // #ifdef __wasm__: stand-ins, as the web has no Steam
+  physics/
+    linux/libjoltc.so  // Linux
+    arm64/libjoltc.so  // Android, on phones: goes in the app
+    x86_64/libjoltc.so // Android, on its emulator
+```
+
+`.so`, `.dll` and `.dylib` files are copied next to the built game, where it finds them. On Windows, a `.dll` links through its import library, the `.lib` that comes with it.
+
+Windows games build for MinGW, so a static library built with Microsoft's compiler may need Microsoft's C runtime and fail to link: rebuild it with clang or MinGW.
+
+On the web, only C files and WebAssembly libraries define functions. When a function has no definition there, an extern function or one the game's C calls, the web build fails and names it; give it a stand-in inside `#ifdef __wasm__`. Web games build for `wasm32-wasip1-threads`, which shares memory between threads, so a WebAssembly library needs building for that target too (clang's `--target=wasm32-wasip1-threads`), or at least with `-matomics -mbulk-memory`. tide's own clang can build it, as `tide cc`, with the C library tide brings: `tide cc --target=wasm32-wasip1-threads --sysroot=<tide>/wasi/sysroot`, where `<tide>` is the folder `tide version` says it's installed in.
+
+`tide run` builds again when a C or C++ file, header or library changes. The C is part of the game's library, which each build replaces, so whatever C keeps in its own variables starts over at each reload.
+
+## C++
+
+`.cpp` files in the game's folder compile with it as `.c` files do (`.cc` and `.cxx` too), so a library written in C++ can go in as source. Tide still calls C: what the game calls is `extern "C"`.
+
+```cpp
+// counter.cpp
+struct Counter
+{
+    int count = 0;
+    int Next() { return ++count; }
+};
+
+static Counter counter;
+
+extern "C" int NextId(void)
+{
+    return counter.Next();
+}
+```
+
+```csharp
+extern int NextId();
+```
+
+Tide brings no C++ runtime, so this is C++ the language, with nothing behind it:
+
+- **No standard library.** `<vector>`, `<string>` and the rest aren't there, on any platform. C's headers are, under their C names: `<stdint.h>`, not `<cstdint>`.
+- **No exceptions and no RTTI**: no `throw` and `try`, no `typeid` and `dynamic_cast`.
+- **`new` and `delete` are the code's to define.** A runtime is what defines them, so code that uses them does it itself, over `malloc` and `free`. A class with a virtual destructor uses `delete`, and one with a pure virtual function needs `__cxa_pure_virtual`:
+
+  ```cpp
+  #include <stddef.h>
+  #include <stdlib.h>
+
+  void *operator new(size_t size) { return malloc(size); }
+  void *operator new[](size_t size) { return malloc(size); }
+  void operator delete(void *p) noexcept { free(p); }
+  void operator delete[](void *p) noexcept { free(p); }
+  void operator delete(void *p, size_t) noexcept { free(p); }
+  void operator delete[](void *p, size_t) noexcept { free(p); }
+  extern "C" void __cxa_pure_virtual() { abort(); }
+  ```
+
+  Placement new, which `<new>` would declare, is one line in a header of the code's own: `inline void *operator new(size_t, void *place) noexcept { return place; }`.
+
+The rest of the language is there, as C++20: classes, templates, lambdas, virtual functions. A global's constructor runs before the game starts, and again at each reload under `tide run`, like everything C keeps. A function's `static` is made the first time through, without the lock a runtime would take: two systems on different threads getting there at once is the game's to get right, like the rest of what C does on threads.
+
+When a build fails for want of the runtime, tide says so after the compiler's error, and what to write instead.
+
+Libraries written to need no runtime, as Dear ImGui is, go in as source. One that needs it comes prebuilt instead: a `.dll`, `.so` or `.dylib` behind a C API has its runtime inside. A static library (`.a`, `.lib`) has to be built to need none, as the game's own C++ is (`-fno-exceptions -fno-rtti -fno-threadsafe-statics`, and nothing of the standard library), and the web only has static ones, so a library that needs the runtime can't be used there.
+
+### Android
+
+On Android, the game's `.so` libraries go in the app with it:
+
+- An app is built for two CPUs, arm64 (phones and tablets) and x86-64 (Android's emulator), so a library comes as a file for each. Where one only exists for phones, give its functions stand-ins for the emulator, inside `#if defined(__ANDROID__) && defined(__x86_64__)`.
+- Android's libraries and Linux's are the same kind of file. tide tells them apart by the note Android's NDK puts in every shared library it links, which says the Android it was built for, so both can be in the game's folder.
+- In the app, a library goes by the name it was linked with (its soname), or by its file's name when it was linked with none. Android wants that name to be `lib<name>.so`.
+- A static library (`.a`) can't say it's Android's: the same C compiles to the same thing for Linux and Android. tide takes it for Linux's, so for Android, build the library as a shared one.
+- A library written in C++ needs C++'s own library with it: link it in when building yours (`-static-libstdc++`), or put the NDK's `libc++_shared.so` in the game's folder too.
+- Newer phones have memory pages of 16 KiB, and a library linked for 4 KiB ones may not load there. `tide` warns about such a library; Google Play requires apps to run on those phones. The NDK links for 16 KiB from r28 on, and older ones with `-Wl,-z,max-page-size=16384`.
+
+## Values across
+
+Extern functions take and return plain data, by value:
+
+| Tide | C |
+| --- | --- |
+| `byte` | `uint8_t` |
+| `int`, `float`, `bool` | `int32_t` (`int`), `float`, `bool` |
+| `float3`, `int2`, `quaternion`, `float4x4`, ... | `tide_float3`, `tide_int2`, ... from `tide/math.h` |
+| `Color`, `Rect`, `Entity`, `PlayerID` | `tide_color`, `tide_rect`, `tide_entity`, `tide_player_id` |
+| an enum | `int32_t`, or `uint8_t` and `uint16_t` for `: byte` and `: ushort` |
+| a struct or component | a struct with the same fields, in the same order |
+
+A system that splits its entities across threads gives the entities it spawns temporary handles until it's done (see [The schedule](../game/schedule.md#splitting-across-threads)), so an `Entity` C gets from one may be temporary: `tide_entity_is_temporary(e)`, from `tide/entity.h`, tells. Tide gives the real handle to what the system kept, but not to C, so C that keeps entities should keep real ones.
+
+C often takes pointers. Tide has none, and no pointer arithmetic: the parameter says how a value goes to C, and the call takes its address by itself. Every pointer is only good until C returns.
+
+| Parameter | C gets |
+| --- | --- |
+| `mut T x` | `T *`: the caller's variable, which C can change |
+| `out T x` | `T *`: the caller's variable, which C makes (see [Out parameters](#out-parameters)) |
+| `in T x` | `const T *`: the caller's variable, read-only, with no copy (a copy for a value that's no variable's) |
+| `List<T> xs` | `const T *`: the list's elements, NULL when it's empty. Pass `xs.count` too |
+| `mut List<T> xs` | `T *`: the elements, which C can change, but not how many there are |
+| `out List<T> xs` | `tide_list_out *`: a list C makes, its elements and how many there are (see [Lists C makes](#lists-c-makes)) |
+| `string s` | `const char *`: UTF-8, ending in a zero |
+
+A world keeps a list whose elements take more than 16 KB in pieces, so that changing one element doesn't copy the rest. C gets those elements side by side in a copy, made for the call, and with `mut`, written back into the list once C returns. Smaller lists, and lists that aren't a world's, go to C as they are.
+
+An extern function can return `string` from C's `const char *`: the text is copied, so C can reuse its buffer, and NULL is empty text.
+
+```csharp
+extern float Average(List<float> values, int count);
+extern string Describe(in Stats stats);
+
+system Report(Scores scores, mut Summary summary)
+{
+    summary.average = Average(scores.values, scores.values.count);
+    summary.text = Describe(summary.stats);
+}
+```
+
+```c
+float Average(const float *values, int count);
+const char *Describe(const Stats *stats);
+```
+
+```csharp
+struct Hit
+{
+    float3 point;
+    float distance;
+}
+
+extern bool RayCast(float3 from, float3 direction, mut Hit hit);
+```
+
+```c
+#include <stdbool.h>
+#include "tide/math.h"
+
+typedef struct Hit
+{
+    tide_float3 point;
+    float distance;
+} Hit;
+
+bool RayCast(tide_float3 from, tide_float3 direction, Hit *hit)
+{
+    // ...
+    return false;
+}
+```
+
+Tide's types have no padding the compiler adds, so a C struct with the same fields lines up with them. Structs that hold text or lists can't go to C, and neither can lists of text or `T?` values.
+
+C functions can't `fail` (see [Errors](../language/errors.md)): they return what C returns. To turn a C function's error code into an error, check it in a Tide function that fails, and call that.
+
+### Out parameters
+
+An extern function has [`out` parameters](../language/functions.md#out-parameters) as a Tide function does, for C that gives a value back through a pointer:
+
+```csharp
+extern bool Raycast(float2 from, float2 to, out Hit hit);
+
+system Aim(mut Turret turret)
+{
+    if (Raycast(turret.position, turret.target, out var hit)) turret.range = hit.distance;
+}
+```
+
+```c
+bool Raycast(tide_float2 from, tide_float2 to, hit *out)
+{
+    ...
+    *out = (hit){.distance = distance};
+    return true;
+}
+```
+
+To C it's the pointer a `mut` parameter is. The difference is Tide's: the call says `out`, can declare the variable right there, and passes nothing in for C to read. C is trusted to write it. A variable C leaves alone keeps what it held, which for one declared at the call is its type's default.
+
+Text can't be `out`, as C can't make Tide's text: C returns it. A list can, in its own way:
+
+### Lists C makes
+
+With `mut List<T>`, C changes the elements a list has. With `out List<T>`, C makes the list: its elements, and how many there are. What the list held isn't passed, so nothing of it is copied for C.
+
+```csharp
+extern int WriteImage(out List<byte> image);
+
+system Save(mut Physics physics)
+{
+    physics.size = WriteImage(out physics.image);
+}
+```
+
+```c
+#include "tide/list.h"
+
+int WriteImage(tide_list_out *image)
+{
+    uint8_t *bytes = tide_list_out_room(image, ImageSize());
+    const uint32_t written = WriteBytes(bytes);
+    tide_list_out_count(image, written);
+    return (int)written;
+}
+```
+
+- `tide_list_out_room(out, count)` gives memory for `count` elements side by side, for C to fill. What's in it is unspecified. Asking again gives memory for the new count, and the earlier one is no longer good, so C that finds it needs more asks again and starts over. It's NULL for no elements, and for more than a list holds (1 GiB of them).
+- `tide_list_out_count(out, count)` says how many of those elements, from the first, the list has once C returns: at most the room last asked for. Never called, the list is empty.
+
+Once C returns, the list is exactly those elements, however many it had: more, fewer or none. The memory is the engine's, kept from one call to the next, so C neither frees it nor keeps it.
+
+A world's list is written piece by piece, and only the pieces whose bytes differ from what the list had. So a big list that comes out mostly the same costs little: the pieces that didn't change aren't hashed again, and stay shared with the snapshots rollback keeps.
+
+C still writes all of it, and all of it is compared. C that knows which elements changed can say only those, and the list keeps the rest:
+
+```c
+int PatchImage(tide_list_out *image)
+{
+    tide_list_out_keep(image, ImageSize());
+    for (int i = 0; i < changed_count; i++) {
+        tide_list_out_part(image, changed[i].first, changed[i].bytes, changed[i].count);
+    }
+    return ImageSize();
+}
+```
+
+- `tide_list_out_keep(out, count)` says the list keeps the elements it holds, and is `count` long once C returns. The ones past that go, and the ones it gains are zeros.
+- `tide_list_out_part(out, first, elements, count)` says the `count` elements from `first` on are the ones at `elements`, side by side. Parts are written in the order they're given, a later one over an earlier one, and what's past the list's count is left out.
+
+Nothing of what the list keeps is written, compared or hashed again: only the parts are, each with the elements it goes over. So a list of megabytes that changes in a few places costs those places.
+
+A part's elements are read once C has returned. They have to be in memory that's still good then, and that nothing changes meanwhile: C's own (static, or allocated), never the function's variables. Of keeping and asking for room, what C said last stands, so C that starts out keeping and finds everything changed asks for room and fills it.
+
+The argument is a list the code can change, with `out` before it, as for any `out` parameter: a field of a `mut` component or singleton, a `mut` local, or one declared there with `out var`. Its elements are what a list goes to C with.
+
+## Systems written in C
+
+An extern function is called for one entity at a time: a system written in Tide takes the components, and passes C what it reads of them. C that wants every entity's data at once (a physics library that reads its bodies back, a loop written with SIMD) would pay a call and a copy of each component for every entity. A system can be written in C instead, and handed the components as the arrays the match keeps them in. It's declared as a system is, with `extern` before it and no body:
+
+```csharp
+component Position
+{
+    float2 at;
+}
+
+component Velocity
+{
+    float2 by;
+}
+
+[NativeName("game_move")]
+extern system Move(mut Position position, Velocity velocity, Time time, without Frozen);
+```
+
+```c
+#include <stddef.h>
+#include "tide/math.h"
+#include "tide/rows.h"
+
+typedef struct Position { tide_float2 at; } Position;
+typedef struct Velocity { tide_float2 by; } Velocity;
+typedef struct Time { float dt; int32_t tick; float t; int32_t tickRate; } Time;
+
+void game_move(tide_rows *rows, const Time *time)
+{
+    const uint32_t count = tide_rows_count(rows);
+    float *x = tide_rows_floats_mut(rows, 0, offsetof(Position, at.x));
+    float *y = tide_rows_floats_mut(rows, 0, offsetof(Position, at.y));
+    const float *dx = tide_rows_floats(rows, 1, offsetof(Velocity, by.x));
+    const float *dy = tide_rows_floats(rows, 1, offsetof(Velocity, by.y));
+    for (uint32_t i = 0; i < count; i++) {
+        x[i] += dx[i] * time->dt;
+        y[i] += dy[i] * time->dt;
+    }
+}
+```
+
+To the rest of the game it's the system its declaration says. It runs for the entities its parameters pick, it takes `[Stage]`, `[Before]` and `[After]`, and [the schedule](../game/schedule.md) has it wait for the systems it shares data with, and they for it, by what it declares: what it takes `mut` is written, and the rest is read. `tide schedule` shows it as `Move  (per entity, in C)`, and the editors' line above it says `in C`. Nothing warns about a parameter it doesn't use, as its code can't be read.
+
+### What C is called with
+
+C is called once for each **run of rows**: entities that are side by side in the match's memory. That's a chunk of the entities that have one combination of components, a couple of thousand at most, or a piece of a chunk when the tick shares one out over threads. The runs come in the order a system written in Tide would go through the entities on one thread.
+
+- `rows` comes first: `tide_rows_count(rows)` is how many rows the run has, and every array has that many values.
+- The **singletons** the system takes follow it, in the declaration's order, each a pointer: `const` for one it reads, and the match's own for one it takes `mut`. `Time` is `{ float dt; int32_t tick; float t; int32_t tickRate; }`, with an `int32_t seed` after them in a game that uses [the match's seed](../language/math.md#the-match-s-seed).
+- The **components** are reached through `rows`, by number: 0 for the system's first component parameter, 1 for the second. Filters and singletons don't count.
+
+A system with no component and no filter runs once a tick, as in Tide: C is called once, with no rows (`tide_rows_count` is 0) and its singletons, which is a way to hand C a singleton.
+
+### Fields as arrays
+
+The match keeps a component 4 bytes at a time, each a column of its own, so a field of 4 bytes is already an array, a value for each row. C names a field by where it starts in a struct that has the component's fields in order, with `offsetof`:
+
+| Call | Gives |
+| --- | --- |
+| `tide_rows_floats(rows, component, offset)` | `const float *`: a `float` field, or one part of a vector (`offsetof(Position, at.y)`) |
+| `tide_rows_ints(rows, component, offset)` | `const int32_t *`: an `int` field, an enum stored as an int, half of a `long` or of an `Entity` |
+| `tide_rows_floats_mut`, `tide_rows_ints_mut` | The same to write, for a component the system takes as `mut` |
+| `tide_rows_entities(rows)` | `const tide_entity *`: each row's entity |
+| `tide_rows_get(rows, component, row, &value)` | One row's whole component, copied into a struct |
+| `tide_rows_set(rows, component, row, &value)` | The same back, for a `mut` component |
+
+`tide_rows_get` and `tide_rows_set` are for the fields that aren't arrays of 4 bytes (a `bool` or a `byte` is one byte of a column, a `long` and an `Entity` are two columns), for a component whose size isn't a multiple of 4, which is kept otherwise, and for C that would rather work with a struct at a time.
+
+Nothing is copied to read: an array is the match's own memory. Writing is asked for a field at a time, and costs what's written:
+
+- The match shares what a tick doesn't change with its snapshots, and a client keeps one of every tick it predicts. Asking for an array to write is what makes that field's memory the match's own to change. C that asks for 2 of a component's 20 fields touches those 2.
+- A field that comes out as it was is shared again once C returns. So is a row `tide_rows_set` puts back as it was read: it writes the columns that differ, and asks for no other.
+- An array to write has what's there in it, and is the field from then on: read through it too. An array of the same field that was asked for to read before it may no longer be the one the run writes.
+- Every array is good until C returns, and no longer.
+
+A field that holds text, a list, a map, a set or a grid is a handle into the match's memory: C leaves those as they are.
+
+A call that can't be answered stops the program, saying which function it was, in which system, and what to write instead: a component the system doesn't take, an offset that isn't a 4-byte field's, an array to write of a component that isn't `mut`.
+
+### What it can take, and do
+
+A system written in C takes components (to read, or `mut`), filters (`with`, `without`) and singletons. The rest is an error that says what to write instead, for now: a sparse component or a filter by one (which rows have it is told row by row, and C gets whole runs), the `World`, a query, `Devices` and the input. A system written in Tide takes those, and can call C for each entity.
+
+C can't spawn, destroy, add or remove components, or send events from a system: a system written in Tide does that, from what C left in a component or a singleton.
+
+### Threads
+
+A system written in C splits its entities across threads by the rule every system does (see [Splitting across threads](../game/schedule.md#splitting-across-threads)): its runs go to different threads, and C is called on several at once, unless it takes a singleton as `mut`. Each run only reaches its own rows, so C that works row by row needs nothing more. C that keeps something from one run to the next, or needs its runs in order, takes a `mut` singleton, which keeps it on one thread, as it does a system written in Tide.
+
+The engine can't tell how much work C does, so it counts a row of a system written in C as a few calls' worth (256 operations) when it decides whether a tick is worth threads.
+
+## Drawing from C
+
+Some libraries draw their own way: Dear ImGui, Nuklear, Clay, RmlUi and Spine hand over triangles every frame, as vertices, indices, and batches that each have a texture and a clip rectangle. How many there are changes every frame, so they don't go through Tide lists: a view passes C its draw list, and C draws into it with the engine's own functions, `tide/draw.h`.
+
+```csharp
+extern void DrawUI(DrawList list);
+
+view UI()
+{
+    Draw.SetScreen();
+    DrawUI(Draw.list);
+}
+```
+
+```c
+#include "tide/draw.h"
+
+void DrawUI(tide_draw_list *list)
+{
+    // The batches' vertices, once, then each batch's triangles with its clip
+    // and its texture
+    const uint32_t base = tide_draw_vertices(list, vertices, vertex_count);
+    for (int i = 0; i < batch_count; i++) {
+        tide_draw_set_clip(list, batches[i].clip);
+        tide_draw_triangles(list, base, indices + batches[i].first, batches[i].count, &atlas, TIDE_FILTER_BILINEAR);
+    }
+    tide_draw_unset_clip(list);
+}
+```
+
+A `DrawList` parameter is for extern functions only, and takes `Draw.list`, which is only ever passed on. Like `Draw`, it needs the frame, so views and the functions they call can use it. What C draws lands in order with what the view draws before and after the call.
+
+C has everything Tide's drawing APIs have, as `tide_draw_circle`, `tide_draw_text`, `tide_draw_set_camera`, `tide_draw_set_screen` and the rest, and meshes:
+
+- `tide_vertex` is Tide's `Vertex`: a position, a uv and a color of four floats. Indices are `uint32_t`.
+- `tide_draw_mesh(list, vertices, vertex_count, indices, index_count, texture, filter)` draws triangles, like `Draw.Mesh`. `texture` is NULL for none. `tide_draw_mesh_wrapped` takes a `tide_wrap` after the filter, for what a uv [past the texture's edges](../game/views.md#past-the-edges) reads: `TIDE_WRAP_REPEAT` or `TIDE_WRAP_MIRROR`, where `tide_draw_mesh` reads the pixels at the edge (`TIDE_WRAP_CLAMP`).
+- `tide_draw_vertices` and `tide_draw_triangles` are the same in two steps, for vertices several batches share: the first copies them into the list and returns where they start, and the second draws triangles of them. `tide_draw_triangles_wrapped` takes a wrap too.
+- The [draw settings](../game/views.md#draw-settings) have their two forms in C too. `tide_draw_set_clip(list, rect)` is `Draw.SetClip(rect)`, and `tide_draw_unset_clip(list)` is `Draw.SetClip()`; the others are `tide_draw_set_blend`, `tide_draw_set_tint`, `tide_draw_set_depth`, `tide_draw_set_cull`, `tide_draw_set_stencil` (which takes a `tide_stencil`: `tide_stencil_tested(test, value)` or `tide_stencil_stored(test, value, operation)`), `tide_draw_set_transform`, `tide_draw_set_camera` and `tide_draw_set_screen`, each with its `tide_draw_unset_`. A block is two calls: `tide_draw_push_clip(list, rect)` (and `tide_draw_push_blend`, `tide_draw_push_tint`, `tide_draw_push_depth`, `tide_draw_push_cull`, `tide_draw_push_stencil`...) returns a mark, and `tide_draw_pop(list, mark)` puts back what it found, along with whatever was pushed since:
+
+  ```c
+  const uint32_t mark = tide_draw_push_clip(list, panel);
+  tide_draw_push_tint(list, faded);
+  draw_rows(list);
+  tide_draw_pop(list, mark); // Both
+  ```
+
+  What C sets on the view's list stays set for the view, like a `Set` in Tide, so a library that draws through a `DrawList` pushes what it needs and pops it before it returns.
+- `tide_draw_text(list, text, position, size, color)` is `Draw.Text` at its top left corner in the regular weight, and `tide_draw_text_at(list, text, position, size, color, anchor, font)` takes [an anchor and a weight](../game/views.md#text): a `tide_anchor` (`TIDE_ANCHOR_MIDDLE_CENTER`) and `TIDE_FONT_REGULAR` or `TIDE_FONT_BOLD`. C names a weight by its font file, so a program whose C says `TIDE_FONT_BOLD` carries the bold weight's file, as a game that says `Font.Bold` does.
+- The [smooth shapes](../game/views.md#smooth-shapes) are `tide_draw_round_rect`, `tide_draw_ellipse`, `tide_draw_arc` and the rest, with `_rotated` for the turned ones and `tide_draw_thick_line`, `tide_draw_thick_wire_rect` and `tide_draw_thick_wire_circle` for the ones that take a width. `tide_shape` is Tide's `Shape`, for `tide_draw_shape(list, shape)`, with `outline_color` for `outlineColor`. Start one from `TIDE_SHAPE_WHITE` rather than from zeros: its `color2` is `TIDE_COLOR_NONE`, Tide's `Color.none`, where a zeroed one is a clear color the fill would fade to.
+- `tide_vertex3` is Tide's `Vertex3`. `tide_draw_set_camera_3d(list, position, rotation, field_of_view)` and `tide_draw_set_camera_matrices(list, transform, projection)` are `Draw.SetCamera`.
+- `tide_draw_mesh_3d(list, &mesh, transform, texture, filter)` draws a 3D mesh, a `tide_mesh`: its vertices and indices, and a version (see below). Instances of one mesh drawn in a row, with one texture, filter and wrap, are drawn at once. `tide_draw_mesh_3d_wrapped` takes a `tide_wrap` after the filter. Its triangles are drawn from their front, the side their corners go clockwise on, unless `tide_draw_set_cull` says otherwise (see [Which side draws](../game/views.md#which-side-draws)).
+
+### C's own pixels
+
+C draws with pixels it keeps itself, where a library made them:
+
+```c
+static tide_texture atlas; // Its pixels: 4 bytes each, red, green, blue and alpha, rows from the first
+
+void LoadFont(void)
+{
+    atlas.pixels = BakeFont(&atlas.width, &atlas.height);
+    atlas.version++;
+}
+```
+
+Nothing is created or uploaded, and C holds no handle. A mesh names its pixels, and the draw list copies them when it hasn't got them as they are: when they're new to it, or their `version` or size isn't what it last copied. The GPU gets them from that copy, and lets them go once a frame draws without them. So:
+
+- Change `version` whenever the pixels change, or when other pixels come to be at that address. Counting up does it; `tide_texture_version(pixels, width, height)` hashes them instead, for pixels that rarely change.
+- C can free its pixels, or change them, as soon as the call returns.
+- At a hot reload, C's state starts over, and the draw list forgets what it copied: an atlas the new build bakes is drawn as baked, whatever its address and version.
+
+3D meshes go the same way: a `tide_mesh` names its vertices and indices where C keeps them, and the list copies them when it hasn't got its `version` of them, so a mesh that doesn't change costs nothing to draw again, frame after frame. Change `version` whenever they change, or hash them with `tide_mesh_version(&mesh)`.
+
+## Order
+
+C can keep state, so calling it is a side effect, and Tide keeps its order: in `Pick(Roll(), Roll())`, the first `Roll` runs first on every platform, though C itself would let each compiler pick. The same goes for functions, methods and operators that call C, and for calls inside `&&`, `||` and `?:`, whose parts still only run when they would.
+
+A C function that changes what it's given as `mut`, or makes a list as `out`, keeps its turn among what's read beside it too, like any [function that does](../language/functions.md#order): in `Pack(counter.n, c_next(counter))`, `counter.n` is read first.
+
+## What C is trusted with
+
+The compiler doesn't look inside C. It takes each call as touching nothing it tracks, so C never makes systems wait for each other, and anything C does is the game's to get right:
+
+- **Determinism.** Match code runs the same on every machine only if its C does too: no platform math library (`sinf`, `powf`), and nothing that depends on the machine. The game's own C and C++ files get the engine's flags, which keep float math exact; a prebuilt library's flags are whatever it was built with.
+- **State.** Variables C keeps aren't in the world, so they aren't sent, rolled back or hashed. Keep what the match depends on in components and singletons.
+- **Threads.** Once systems run in parallel, two that call the same C function can run at the same time.
+
+C also changes how players join. When starting a match calls no C (no match event handler does, through anything it calls), a player joining a big world starts the match on its own machine too, and only gets what changed since (see [Sending worlds](../multiplayer/networking.md#sending-worlds)). C called while a match starts could do something outside the world on every joining machine, so a game whose match start calls C sends joining players the whole world instead.
+
+tidec declares each extern function from its Tide signature, and each extern system's function from its declaration. If it doesn't match the C function, the call goes wrong the way it would in C.

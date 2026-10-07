@@ -1,0 +1,4 @@
+// expect: 'async' goes before a function or an event handler, like 'async void Countdown() { ... }'
+scene Main { }
+component Body { float x; }
+async extern system Move(mut Body body);

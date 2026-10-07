@@ -1,0 +1,6 @@
+// expect: Cursor has no 'Unlock'; it has Lock
+local scene Main { }
+view Menu()
+{
+    Cursor.Unlock();
+}

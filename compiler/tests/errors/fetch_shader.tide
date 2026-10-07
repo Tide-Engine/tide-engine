@@ -1,0 +1,8 @@
+// expect: so it can't reach the network
+scene Main { }
+frag Shade(Vertex vertex, out Color color)
+{
+    var bytes = await Web.Fetch("http://example.com/file")!;
+    color = bytes.count > 0 ? vertex.color : Color.black;
+}
+view DrawIt() { Draw.Mesh([Vertex { position = float2(0) }], [0, 0, 0], Shade); }

@@ -1,0 +1,10 @@
+// expect: 'ReadThrough' uses its 'score''s local fields, and this is a copy of the singleton's value, which has none
+singleton Score { int value; local int paint; }
+int Read(Score score) { return score.paint; }
+int ReadThrough(Score score) { return Read(score); }
+scene Main { }
+view Show(Score score)
+{
+    var copy = score;
+    if (ReadThrough(copy) > 0) Draw.Clear(Color.black);
+}

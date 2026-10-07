@@ -1,0 +1,7 @@
+// expect: the match runs the same on every machine, so an event handler can't filter by 'without ownership'
+component Body { float2 position; }
+event Hit { }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Body, Owner { player = PlayerID(0) }).Send(Hit); }
+event(Hit) Flinch(mut Body body, without ownership) { body.position.x += 1; }

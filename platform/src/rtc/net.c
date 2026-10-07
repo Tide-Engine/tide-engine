@@ -142,25 +142,6 @@ void rtc_udp_send(const rtc_socket s, const rtc_addr to, const void *data, const
     sendto(FD(s), (const char *)data, (int)size, 0, (const struct sockaddr *)&a, sizeof a);
 }
 
-size_t rtc_udp_receive(const rtc_socket s, rtc_addr *from, void *out, const size_t capacity)
-{
-    for (;;) {
-        struct sockaddr_in a;
-        socklen_t length = sizeof a;
-        const int n = (int)recvfrom(FD(s), (char *)out, (int)capacity, 0, (struct sockaddr *)&a, &length);
-        if (n > 0 && a.sin_family == AF_INET) {
-            *from = (rtc_addr){ntohl(a.sin_addr.s_addr), ntohs(a.sin_port)};
-            return (size_t)n;
-        }
-        if (n > 0) continue;
-#ifdef _WIN32
-        const int error = WSAGetLastError();
-        if (n < 0 && (error == WSAECONNRESET || error == WSAEMSGSIZE)) continue;
-#endif
-        return 0;
-    }
-}
-
 // The address this machine reaches others from: "connecting" a UDP socket
 // sends nothing, but picks the route, and with it the local address.
 bool rtc_local_ip(uint32_t *ip)
@@ -256,10 +237,14 @@ void rtc_debug(const char *format, ...)
     static int on = -1;
     if (on < 0) on = getenv("TIDE_RTC_DEBUG") != NULL;
     if (!on) return;
+    // A line, written whole: what the program prints meanwhile doesn't land inside it
+    char line[512];
+    int n = snprintf(line, sizeof line, "rtc %.3f: ", rtc_now());
     va_list args;
     va_start(args, format);
-    fprintf(stderr, "rtc %.3f: ", rtc_now());
-    vfprintf(stderr, format, args);
-    fputc(10, stderr);
+    n += vsnprintf(line + n, sizeof line - (size_t)n, format, args);
     va_end(args);
+    if (n > (int)sizeof line - 1) n = (int)sizeof line - 1; // Cut where it was too long
+    line[n++] = 10;
+    fwrite(line, 1, (size_t)n, stderr);
 }

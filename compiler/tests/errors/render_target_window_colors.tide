@@ -1,0 +1,3 @@
+// expect: Draw.window has no sampleable color image
+scene Main { }
+view Show() { Texture source = Draw.window.colors[0]; }

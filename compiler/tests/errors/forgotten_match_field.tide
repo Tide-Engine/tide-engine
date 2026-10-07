@@ -1,0 +1,15 @@
+// expect: 'pos' is a match field of 'Box', and the entity is gone: only its local fields are left
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+local singleton Log { float lastX; }
+
+local event(Forgotten) Free(Box box, mut Log log)
+{
+    log.lastX = box.pos.x;
+}

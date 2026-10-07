@@ -1,0 +1,42 @@
+// Draw.MeasureText: how big Draw.Text would draw a text where the view is
+// now, in the units its Draw calls are in.
+local singleton Probe
+{
+    RenderTarget panel;
+    string label = "abcd";
+    float2 screen;   // In the screen's pixels
+    float2 lines;    // Two lines, the second the wider
+    float2 nothing;  // A size nothing is drawn at
+    float2 centered; // Where a line starts that's centered on the screen
+    float2 world;    // Under a camera
+    float2 helper;   // ...from a function the view calls
+    float2 target;   // In a render target, through its own camera
+    float2 after;    // The window's again, as its camera was left
+}
+
+scene Main { }
+
+float2 Measure(string text, float size)
+{
+    return Draw.MeasureText(text, size);
+}
+
+view Show(mut Probe probe)
+{
+    Draw.SetScreen();
+    probe.screen = Draw.MeasureText(probe.label, 10);
+    probe.lines = Draw.MeasureText("ab\ncdef", 10);
+    probe.nothing = Draw.MeasureText(probe.label, 0);
+
+    var size = Draw.MeasureText(probe.label, 20);
+    probe.centered = float2(Screen.width - size.x, Screen.height - size.y) * 0.5;
+    Draw.Text(probe.label, probe.centered, 20, Color.white);
+
+    Draw.SetCamera(float2(2, 3), 5);
+    probe.world = Draw.MeasureText(probe.label, 0.5);
+    probe.helper = Measure("ab" + "cd", 0.25);
+
+    probe.panel.SetCamera(float2(0), 4);
+    probe.target = probe.panel.MeasureText(probe.label, 2);
+    probe.after = Draw.MeasureText(probe.label, 0.5);
+}

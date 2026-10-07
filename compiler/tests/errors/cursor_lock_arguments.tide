@@ -1,0 +1,6 @@
+// expect: no version of Cursor.Lock takes (bool)
+local scene Main { }
+view Look()
+{
+    Cursor.Lock(true);
+}

@@ -43,12 +43,12 @@ static int frame(void *user, const float seconds)
     case 1:
         check(devices.keyboard.w.held && devices.keyboard.w.down, "the key in the W position reads as w");
         check(!devices.keyboard.z.held, "and not as z, the letter it types on AZERTY");
-        check(devices.text.count == 1 && devices.text.chars[0] == 'z', "but the character it types is z");
+        check(devices.keyboard.text.count == 1 && devices.keyboard.text.chars[0] == 'z', "but the character it types is z");
         key_event("keyup", "KeyW", "z", 90);
         return TIDE_KEEP_RUNNING;
     case 2:
         check(!devices.keyboard.w.held && devices.keyboard.w.up, "releasing it reads as a release");
-        check(devices.text.count == 0, "characters are only typed once");
+        check(devices.keyboard.text.count == 0, "characters are only typed once");
         // A tap shorter than a frame: down and up again before the next one.
         key_event("keydown", "KeyA", "q", 81);
         key_event("keyup", "KeyA", "q", 81);
@@ -61,9 +61,51 @@ static int frame(void *user, const float seconds)
         key_event("keydown", "Space", " ", 32);
         tide_web_eval("dispatchEvent(new FocusEvent('blur'))");
         return TIDE_KEEP_RUNNING;
-    default:
+    case 5:
         check(!devices.keyboard.space.held, "losing focus releases held keys");
-        check(devices.text.count == 1 && devices.text.chars[0] == ' ', "space types a space");
+        check(devices.keyboard.text.count == 1 && devices.keyboard.text.chars[0] == ' ', "space types a space");
+        // Ctrl+V: the browser's paste event, with what's on the clipboard
+        tide_web_eval("const data = new DataTransfer(); data.setData('text', 'K7\\n\\u00e9');"
+                      "dispatchEvent(new ClipboardEvent('paste', {clipboardData: data}))");
+        return TIDE_KEEP_RUNNING;
+    case 6:
+        check(devices.keyboard.text.count == 3 && devices.keyboard.text.chars[0] == 'K' && devices.keyboard.text.chars[1] == '7'
+                  && devices.keyboard.text.chars[2] == 0xE9u,
+              "pasting types what's on the clipboard, but for newlines");
+        // Typing into the GUI on a phone: its keyboard types into the page's
+        // field, saying no key, only what it typed, or that it deleted.
+        tide_platform_typing(true);
+        tide_web_eval("{ const f = document.activeElement;"
+                      " f.dispatchEvent(new InputEvent('input', {inputType: 'insertText', data: 'Q4'})); }");
+        return TIDE_KEEP_RUNNING;
+    case 7:
+        check(devices.keyboard.text.count == 2 && devices.keyboard.text.chars[0] == 'Q' && devices.keyboard.text.chars[1] == '4',
+              "what a phone's keyboard types comes as characters");
+        tide_web_eval("{ const f = document.activeElement;"
+                      " f.dispatchEvent(new InputEvent('input', {inputType: 'deleteContentBackward'})); }");
+        return TIDE_KEEP_RUNNING;
+    case 8:
+        check(devices.keyboard.backspace.down && devices.keyboard.text.count == 0, "and deleting, as Backspace");
+        // Its Enter, whatever the keyboard calls the key (Go, Done): a key that
+        // says its name and no position, down and up at once. It's what enters
+        // a field of the GUI's.
+        tide_web_eval("{ const f = document.activeElement;"
+                      " f.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', keyCode: 13, bubbles: true}));"
+                      " f.dispatchEvent(new KeyboardEvent('keyup', {key: 'Enter', keyCode: 13, bubbles: true})); }");
+        return TIDE_KEEP_RUNNING;
+    case 9:
+        check(devices.keyboard.enter.held && devices.keyboard.enter.down, "its Enter reads as Enter, though it says no position");
+        check(devices.keyboard.text.count == 0, "and types nothing");
+        return TIDE_KEEP_RUNNING;
+    case 10:
+        check(!devices.keyboard.enter.held && devices.keyboard.enter.up, "and as released the next frame");
+        // ...or a line break typed into the field, from a keyboard that sends no key
+        tide_web_eval("{ const f = document.activeElement;"
+                      " f.dispatchEvent(new InputEvent('input', {inputType: 'insertLineBreak'})); }");
+        return TIDE_KEEP_RUNNING;
+    default:
+        check(devices.keyboard.enter.down && devices.keyboard.text.count == 0, "a line break typed into the field is Enter too");
+        tide_platform_typing(false);
         return failures == 0 ? 0 : 1;
     }
 }

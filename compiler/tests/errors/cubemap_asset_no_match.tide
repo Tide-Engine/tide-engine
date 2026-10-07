@@ -1,0 +1,4 @@
+// expect: '../e2e/cubes/none/*.png' matches no file
+// A glob that matches nothing
+asset Cubemap sky = "../e2e/cubes/none/*.png";
+scene Main { }

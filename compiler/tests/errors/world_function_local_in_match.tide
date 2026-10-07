@@ -1,0 +1,10 @@
+// expect: 'Spark' is local, and the match can't use local state: 'Lit' reaches it through its World
+local component Spark { int life; }
+component Health { int value; }
+scene Main { }
+bool Lit(LocalEntity spark, World world) { return world.Has<Spark>(spark); }
+system Read(mut Health health, World world)
+{
+    LocalEntity none = default;
+    if (Lit(none, world)) health.value += 1;
+}

@@ -1,0 +1,447 @@
+// Over the world, in the screen's pixels: how high everyone is, the brick
+// that comes next, what a tower has earned, the words when something happens,
+// and what to do first. None of it shows while the menu is up (the rooms
+// package's), which also shows who has each seat, from what Roster tells it.
+using Box2D;
+using Rooms;
+
+float2 Middle(Rect rect)
+{
+    return float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
+}
+
+// A button of the game's own: a control, whose input the GUI handles (the
+// pointer's, the keyboard's and a gamepad's alike), drawn here. A solid one is
+// the main way on. Returns whether it was pressed.
+bool Pill(Rect rect, string label, Color tint, bool solid, bool enabled)
+{
+    mut var pill = GUIControl { };
+    GUI.Disabled(!enabled)
+    {
+        pill = GUI.Control(rect);
+    }
+    var over = pill.hovered || pill.focused;
+    var center = Middle(rect) + float2(0, pill.pressed && pill.hovered ? 1.5 : 0);
+    var size = float2(rect.width, rect.height);
+    var radius = Math.Min(rect.height * 0.5, 12);
+    var faint = enabled ? 1.0 : 0.4;
+    if (solid)
+    {
+        var fill = over ? Mix(tint, Color.white, 0.28) : tint;
+        Draw.Shape(Shape { center = center + float2(0, 3), size = size, radius = radius, color = Fade(Shade(tint, 0.4), faint) });
+        Draw.Shape(Shape { center = center, size = size, radius = radius, color = Fade(fill, faint),
+                             color2 = Fade(Shade(fill, 0.86), faint), outline = pill.focused ? 2.5 : 0.0,
+                             outlineColor = Color.white });
+        Draw.Text(label, center, rect.height >= 50 ? 20 : 15, Fade(BACK, faint), Anchor.MiddleCenter, Font.Bold);
+        return pill.clicked;
+    }
+    Draw.Shape(Shape { center = center, size = size, radius = radius,
+                         color = Fade(over ? Color(0.225, 0.23, 0.25) : RAISED, 0.97 * faint),
+                         outline = pill.focused ? 2.2 : 1.5,
+                         outlineColor = pill.focused ? Color.white : Fade(over ? tint : LINE, faint) });
+    Draw.Text(label, center, 14, Fade(tint, faint), Anchor.MiddleCenter, Font.Bold);
+    return pill.clicked;
+}
+
+// What the menu's room page shows of the match: who has each seat, and the
+// bots' switch; and the commands its buttons send, a new game and the switch.
+view Roster(Towers towers, Session session, mut Lobby lobby)
+{
+    lobby.seats = SEATS;
+    lobby.manned = 0;
+    lobby.mine = -1;
+    foreach (var entry in towers.seats)
+    {
+        lobby.manned |= 1 << entry.value;
+        if (entry.key == session.player) lobby.mine = entry.value;
+    }
+    lobby.bots = towers.bots;
+    lobby.offersNewGame = true;
+    lobby.offersBots = true;
+    // A game of its own, from its start: the bots had every tower meanwhile
+    if (lobby.newGame) Send(Rebuild { });
+    if (lobby.toggleBots) Send(Bots { });
+}
+
+const float HEADROOM = 48; // The height of the row along the top, which the camera keeps the brick under
+const float FOOT = 62;     // ...and of the buttons along the bottom, which it keeps the tower's top over
+
+// How much of the screen's bottom right corner the game leaves to the engine's
+// stats (the `stats` setting): their one line, which is the frame rate, and in
+// a match another machine runs, the ping too.
+float StatsCorner(Session session)
+{
+    return session.server ? 100 : 196;
+}
+
+// A crown, for whoever leads: its middle at `at`.
+void Crown(float2 at, float size, Color color)
+{
+    Draw.RoundRect(at + float2(0, size * 0.25), float2(size * 1.5, size * 0.45), size * 0.12, color);
+    for (var i = -1; i <= 1; i++)
+        Draw.Circle(at + float2(i * size * 0.55, -size * 0.2), size * 0.28, color);
+}
+
+// A brick drawn small, on the screen: its four cells around `at`, `cell`
+// pixels each. The screen's y goes down, so a cell that's up is drawn up.
+void Icon(Kind kind, float2 at, float cell, Color color)
+{
+    // Around the middle of what it covers, not its body's place
+    mut var low = float2(10, 10);
+    mut var high = float2(-10, -10);
+    for (var i = 0; i < 4; i++)
+    {
+        low = Math.Min(low, Cell(kind, i));
+        high = Math.Max(high, Cell(kind, i));
+    }
+    var middle = (low + high) * 0.5;
+    for (var i = 0; i < 4; i++)
+    {
+        var place = Cell(kind, i) - middle;
+        Draw.Shape(Shape { center = at + float2(place.x, -place.y) * cell, size = float2(cell - 1), radius = cell * 0.18,
+                             color = Mix(color, Color.white, 0.12), color2 = Shade(color, 0.72), outline = 1, outlineColor = Shade(color, 0.45) });
+    }
+}
+
+string PowerName(Power power)
+{
+    return power == Power.Gust ? "GUST" : power == Power.Cement ? "CEMENT" : power == Power.Quake ? "QUAKE" : "";
+}
+
+Color PowerColor(Power power)
+{
+    return power == Power.Gust ? TEAL : power == Power.Cement ? STONE : ROSE;
+}
+
+// Whatever just lit the whole screen fades here, the wind against this
+// machine's player's tower blows across it, and its edges glow while a brick
+// of that tower is on the move.
+[Stage(Layers.Hud)]
+view Glare(Fx fx, Flow flow)
+{
+    Draw.SetScreen();
+    var screen = float2(Screen.width, Screen.height);
+    Draw.Blend(Blend.Add)
+    {
+        if (flow.wind > 0)
+        {
+            for (var i = 0; i < 9; i++)
+            {
+                var along = Math.Frac(i * 0.37 + (1 - flow.wind) * (1.4 + i * 0.13));
+                var x = flow.windWay > 0 ? along * (screen.x + 160) - 80 : screen.x + 80 - along * (screen.x + 160);
+                var y = HEADROOM + (screen.y - HEADROOM - 60) * Math.Frac(i * 0.618 + 0.1);
+                Draw.Line(float2(x, y), float2(x - flow.windWay * (50 + i * 9), y), 2, Fade(TEAL, flow.wind * 0.5));
+            }
+        }
+        // A brick of this machine's player's tower is on the move: the screen's edges say so
+        if (fx.alarm > 0)
+            Draw.Shape(Shape { center = screen * 0.5, size = screen, color = Fade(ROSE, 0.13 * fx.alarm), soft = -Math.Min(screen.x, screen.y) * 0.2 });
+        if (fx.flash > 0) Draw.Rect(screen * 0.5, screen, Fade(fx.flashColor, fx.flash));
+    }
+}
+
+// The row along the top: each tower's height, as the server has confirmed it,
+// with this machine's player's marked and a crown on whoever is highest. The
+// heights are on the plinths' seats, so the query goes through them all.
+[Stage(Layers.Hud, 10)]
+view Chips(verified Towers sure, Fx fx, Flow flow, Lobby lobby, query (verified Seat seat) seats)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing) return;
+    // Side by side in the screen's middle, as wide as a narrow one lets them be
+    var slot = Math.Min(Screen.width / SEATS, 112);
+    var first = (Screen.width - slot * SEATS) * 0.5;
+    mut var best = 0.5;
+    mut var leader = -1;
+    foreach (var entry in seats)
+    {
+        if (entry.seat.top <= best) continue;
+        best = entry.seat.top;
+        leader = entry.seat.index;
+    }
+    foreach (var entry in seats)
+    {
+        var seat = entry.seat.index;
+        var manned = Sitter(sure, seat) != default;
+        var mine = seat == fx.seat;
+        var color = manned || sure.bots ? SeatColor(seat) : Shade(SeatColor(seat), 0.45);
+        var middle = float2(first + (seat + 0.5) * slot, HEADROOM * 0.5);
+        var wide = Math.Min(slot - 8, 96);
+        var pop = Math.Saturate(1 - Of(flow.earned, seat) * 2);
+        Draw.Shape(Shape { center = middle, size = float2(wide, HEADROOM - 8), radius = 10,
+                             color = mine ? Color(0.21, 0.215, 0.235) : Color(0.115, 0.118, 0.13, 0.9),
+                             outline = mine ? 1.5 : 0, outlineColor = Fade(Color.white, 0.75) });
+        var number = $"{int(Math.Max(entry.seat.top, 0))}";
+        var size = Math.Round(22 * (1 + 0.3 * pop));
+        var across = Draw.MeasureText(number, size, Font.Bold).x + Draw.MeasureText("m", 12, Font.Bold).x + 2;
+        var left = middle.x - (across + 16) * 0.5;
+        if (seat == leader) Crown(float2(left + 5, middle.y - 6), 7, GOLD);
+        else Draw.Circle(float2(left + 5, middle.y - 6), 5, color);
+        Draw.Text(number, float2(left + 16, middle.y - 6), size, pop > 0 ? Mix(color, Color.white, pop) : color,
+                    Anchor.MiddleLeft, Font.Bold);
+        Draw.Text("m", float2(left + across + 16, middle.y - 3), 12, Fade(color, 0.8), Anchor.MiddleRight, Font.Bold);
+        // Its wins, a pip each, beside who has it
+        var who = mine ? "YOU" : manned ? "PLAYER" : sure.bots ? "BOT" : "OFF";
+        Draw.Text(who, middle + float2(0, 12), 10, mine ? Color.white : Fade(QUIET, manned ? 1 : 0.7), Anchor.MiddleCenter,
+                    mine ? Font.Bold : Font.Regular);
+        for (var i = 0; i < Math.Min(entry.seat.wins, 5); i++)
+            Draw.Circle(float2(middle.x + wide * 0.5 - 8 - i * 6, middle.y + 12), 2, GOLD);
+    }
+}
+
+// The race, down the screen's left side: the plinths' tops at the bottom, the
+// finish line where it is, and a mark for each tower where it stands. It says
+// who's ahead while only one tower is in sight.
+[Stage(Layers.Hud, 12)]
+view Race(Towers towers, Fx fx, Lobby lobby, query (Seat seat) seats)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing) return;
+    var top = HEADROOM + 22;
+    var bottom = Screen.height - FOOT - 14;
+    if (bottom - top < 80) return;
+    var x = 12.0;
+    var tall = bottom - top;
+    Draw.RoundRect(float2(x, (top + bottom) * 0.5), float2(8, tall + 8), 4, Color(0.115, 0.118, 0.13, 0.92));
+    // The quarters, where a tower earns something, each in what it earns' color
+    for (var mark = 1; mark <= 3; mark++)
+        Draw.Circle(float2(x, bottom - tall * mark / 4), 2.5, Fade(PowerColor(Power(mark)), 0.9));
+    var line = bottom - tall * Math.Saturate(towers.line / FINISH);
+    Draw.RoundRect(float2(x + 3, line), float2(20, 3), 1.5, GOLD);
+    foreach (var entry in seats)
+    {
+        var mine = entry.seat.index == fx.seat;
+        if (mine) continue;
+        var y = bottom - tall * Math.Saturate(entry.seat.top / FINISH);
+        var color = SeatColor(entry.seat.index);
+        Draw.Shape(Shape { center = float2(x + 8, y), size = float2(12, 7), radius = 3.5, color = color, outline = 1, outlineColor = Shade(color, 0.4) });
+        if (entry.seat.above > 0 && towers.phase == Phase.Play)
+            Draw.Arc(float2(x + 8, y), 9, Math.PI / 2, -Math.TAU * entry.seat.above / HOLD, 2, Color.white);
+    }
+    // This machine's player's, over the others
+    foreach (var entry in seats)
+    {
+        if (entry.seat.index != fx.seat) continue;
+        var y = bottom - tall * Math.Saturate(entry.seat.top / FINISH);
+        Draw.Shape(Shape { center = float2(x + 10, y), size = float2(22, 11), radius = 5.5, color = SeatColor(entry.seat.index), outline = 1.5,
+                             outlineColor = Color.white });
+        if (entry.seat.above > 0 && towers.phase == Phase.Play)
+            Draw.Arc(float2(x + 10, y), 12, Math.PI / 2, -Math.TAU * entry.seat.above / HOLD, 2.5, Color.white);
+    }
+}
+
+// What this machine's player's seat is dealt next, and what its tower has
+// earned: a button, which sends a command when it's pressed. `with ownership`
+// picks the plinth this machine's player owns.
+[Stage(Layers.Hud, 14)]
+view Tray(Seat seat, Session session, Devices devices, Towers towers, Fx fx, Lobby lobby, with ownership)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing) return;
+    var screen = float2(Screen.width, Screen.height);
+    var at = float2(screen.x - 38, HEADROOM + 36);
+    Draw.Shape(Shape { center = at, size = float2(60, 56), radius = 10, color = Color(0.115, 0.118, 0.13, 0.9), outline = 1,
+                         outlineColor = LINE });
+    Draw.Text("NEXT", at - float2(0, 19), 9, QUIET, Anchor.MiddleCenter, Font.Bold);
+    Icon(seat.next, at + float2(0, 6), 11, SeatColor(seat.index));
+    // The wait for the next brick, when bricks fell off: a ring that runs out
+    if (!seat.busy && seat.wait > PAUSE && towers.phase == Phase.Play)
+    {
+        var middle = float2(screen.x * 0.5, HEADROOM + 40);
+        Draw.Circle(middle, 17, Color(0.1, 0.1, 0.11, 0.9));
+        Draw.Arc(middle, 14, Math.PI / 2, -Math.TAU * Math.Saturate(seat.wait / float(STUN_MOST)), 4, ROSE);
+        Draw.Text("WAIT", middle + float2(0, 28), 10, ROSE, Anchor.MiddleCenter, Font.Bold);
+    }
+    if (seat.power == Power.None || towers.phase != Phase.Play) return;
+    var color = PowerColor(seat.power);
+    var wide = Math.Min(150, screen.x - 96 - StatsCorner(session) - 12);
+    var rect = Rect(96 + (screen.x - 96 - StatsCorner(session) - wide) * 0.5, screen.y - 52, wide, 44);
+    var pulse = 0.5 + 0.5 * Math.Sin(fx.beat * 2);
+    Draw.Blend(Blend.Add)
+    {
+        Draw.Shape(Shape { center = Middle(rect), size = float2(rect.width, rect.height), radius = 12, color = Fade(color, 0.2 + pulse * 0.2),
+                             soft = 10 });
+    }
+    if (Pill(rect, PowerName(seat.power), color, true, true) || devices.keyboard.e.down) Send(Use { });
+}
+
+// A band across the screen, in a color, with a line of words and a smaller
+// one under it: open for `open`, from 0 to 1.
+void Band(float2 middle, float open, bool big, Color tint, string words, string under)
+{
+    var screen = float2(Screen.width, Screen.height);
+    var tall = (big ? 84 : 60) * open;
+    Draw.Blend(Blend.Add)
+    {
+        Draw.Shape(Shape { center = middle, size = float2(screen.x + 80, tall), color = Fade(tint, 0.25 * open), soft = 40 });
+    }
+    Draw.Shape(Shape { center = middle, size = float2(screen.x + 80, tall), color = Shade(tint, 0.95), color2 = Shade(tint, 0.7) });
+    Draw.Rect(middle - float2(0, tall * 0.5 + 4), float2(screen.x, 2 * open), Fade(Color.white, 0.85));
+    Draw.Rect(middle + float2(0, tall * 0.5 + 4), float2(screen.x, 2 * open), Fade(Color.white, 0.85));
+    Draw.Tint(Fade(Color.white, Math.Saturate(open * 1.5 - 0.5)))
+    {
+        var size = big ? 30 : 20;
+        // As big as fits
+        var fit = Math.Min(1, (screen.x - 24) / Math.Max(1, Draw.MeasureText(words, size, Font.Bold).x));
+        Draw.Text(words, middle - float2(0, under == "" ? 0 : (big ? 9 : 7)), Math.Floor(size * fit), BACK, Anchor.MiddleCenter, Font.Bold);
+        if (under != "") Draw.Text(under, middle + float2(0, big ? 21 : 15), big ? 14 : 12, Fade(BACK, 0.8), Anchor.MiddleCenter);
+    }
+}
+
+// The words over the world: who took a round, which round starts, and what
+// was just used against whom. A round's winner is the server's to say, so it
+// comes from a `verified` event's handler (effects.tide).
+[Stage(Layers.Hud, 20)]
+view Words(Towers towers, Session session, Lobby lobby, mut Flow flow, mut Fx fx, query (Seat seat) seats)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing) return;
+    var screen = float2(Screen.width, Screen.height);
+    var big = screen.x >= 640 && screen.y >= 420;
+    var middle = float2(screen.x * 0.5, HEADROOM + (screen.y - HEADROOM) * 0.3);
+
+    if (flow.since < 3.2)
+    {
+        var open = EaseOut(flow.since / 0.2) * (1 - EaseOut((flow.since - 2.9) / 0.3));
+        var mine = flow.winner >= 0 && flow.winner == fx.seat;
+        var tint = SeatColor(flow.winner);
+        var words = mine ? $"YOU TAKE ROUND {flow.round}" : $"{SeatName(flow.winner)} TAKES ROUND {flow.round}";
+        Band(middle, open, big, tint, words, "First over the line");
+        if (!flow.papered)
+        {
+            flow.papered = true;
+            Paper(fx, float2(screen.x * 0.3, middle.y), mine ? 40 : 18, 420, tint);
+            Paper(fx, float2(screen.x * 0.7, middle.y), mine ? 40 : 18, 420, tint);
+        }
+    }
+    else if (flow.begun < 1.3 && flow.built > 0 && towers.phase == Phase.Play)
+    {
+        var shown = Math.Saturate(flow.begun * 6) * Math.Saturate((1.3 - flow.begun) * 3);
+        var size = Math.Round((big ? 54 : 36) * (1 + 0.3 * Math.Max(0, 1 - flow.begun * 6)) * 0.5) * 2;
+        Draw.Tint(Fade(Color.white, shown))
+        {
+            Draw.Text($"ROUND {flow.built}", middle + float2(0, 3), size, Fade(BACK, 0.7), Anchor.MiddleCenter, Font.Bold);
+            Draw.Text($"ROUND {flow.built}", middle, size, Color.white, Anchor.MiddleCenter, Font.Bold);
+        }
+    }
+
+    // A tower is over the line: whose, and how long it has to stand there
+    // still. It's read as this machine predicts it, to count with the tower.
+    mut var over = -1;
+    mut var stood = 0;
+    foreach (var entry in seats)
+    {
+        if (entry.seat.above <= stood) continue;
+        stood = entry.seat.above;
+        over = entry.seat.index;
+    }
+    if (over >= 0 && towers.phase == Phase.Play)
+    {
+        var mine = over == fx.seat;
+        var color = SeatColor(over);
+        var left = Math.Max(HOLD - stood, 0) / 60.0;
+        var at = float2(screen.x * 0.5, middle.y + (big ? 70 : 52));
+        var words = mine ? "HOLD IT" : $"{SeatName(over)} IS OVER THE LINE";
+        var wide = Math.Max(Draw.MeasureText(words, 14, Font.Bold).x + 64, 150);
+        Draw.Shape(Shape { center = at, size = float2(wide, 36), radius = 18, color = Color(0.1, 0.1, 0.11, 0.94), outline = 2, outlineColor = color });
+        Draw.Text(words, at - float2(18, 0), 14, color, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text($"{int(left)}.{int(left * 10) % 10}", at + float2(wide * 0.5 - 14, 0), 15, Color.white, Anchor.MiddleRight, Font.Bold);
+    }
+
+    if (flow.cast < 2.2 && flow.since >= 3.2 && flow.striker >= 0)
+    {
+        // Under the top row: who used what, against whom
+        var at = float2(screen.x * 0.5, HEADROOM + 24);
+        var enter = EaseBack(flow.cast / 0.25) * Math.Saturate((2.2 - flow.cast) * 4);
+        var color = PowerColor(flow.struck);
+        var who = flow.striker == fx.seat ? "YOU" : SeatName(flow.striker);
+        var what = flow.struck == Power.Gust ? (flow.target == fx.seat ? $"{who}: A GUST AT YOU" : $"{who}: A GUST AT {SeatName(flow.target)}")
+                 : flow.struck == Power.Quake ? (flow.striker == fx.seat ? "YOU SHAKE THE OTHERS" : $"{who} SHAKES THE REST")
+                 : (flow.striker == fx.seat ? "YOUR TOWER IS SET" : $"{who}'S TOWER IS SET");
+        var wide = Draw.MeasureText(what, 13, Font.Bold).x + 30;
+        Draw.Shape(Shape { center = at, size = float2(wide, 30) * enter, radius = 15, color = Color(0.1, 0.1, 0.11, 0.94), outline = 1.5,
+                             outlineColor = color });
+        if (enter > 0.9) Draw.Text(what, at, 13, color, Anchor.MiddleCenter, Font.Bold);
+    }
+    else if (towers.phase == Phase.Play && towers.clock > LIMIT && towers.clock < LIMIT + 300)
+    {
+        // A round that has gone on long: the line comes down to the towers
+        var at = float2(screen.x * 0.5, HEADROOM + 24);
+        var shown = Math.Saturate((towers.clock - LIMIT) / 12.0) * Math.Saturate((LIMIT + 300 - towers.clock) / 20.0);
+        var what = "THE LINE IS COMING DOWN";
+        Draw.Shape(Shape { center = at, size = float2(Draw.MeasureText(what, 13, Font.Bold).x + 30, 30), radius = 15,
+                             color = Fade(Color(0.1, 0.1, 0.11), 0.94 * shown), outline = 1.5, outlineColor = Fade(GOLD, shown) });
+        Draw.Text(what, at, 13, Fade(GOLD, shown), Anchor.MiddleCenter, Font.Bold);
+    }
+
+    // The match's host left, and another machine is taking it over
+    if (session.state == SessionState.Connecting)
+    {
+        var at = float2(screen.x * 0.5, HEADROOM + 62);
+        Draw.Shape(Shape { center = at, size = float2(Math.Min(screen.x - 16, 300), 34), radius = 17, color = Color(0.1, 0.1, 0.11, 0.94),
+                             outline = 1.5, outlineColor = LINE });
+        Draw.Text("The host left. Finding the match again...", at, 12, INK, Anchor.MiddleCenter);
+    }
+}
+
+// What to do first, until the player has done it: move and turn a brick, drop
+// one, and use what the tower earned.
+[Stage(Layers.Hud, 30)]
+view Hints(Towers towers, Devices devices, Fx fx, Hand hand, Lobby lobby)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing || fx.seat < 0 || towers.phase != Phase.Play || !hand.playing) return;
+    var screen = float2(Screen.width, Screen.height);
+    var touch = devices.touchscreen.connected;
+    mut var words = "";
+    if (!fx.steered) words = touch ? "Drag to move it, tap to turn it" : "Arrows move and turn it. Or drag, and tap";
+    else if (!fx.dropped) words = touch ? "Swipe down and hold to drop it" : "Hold down to drop it";
+    else if (fx.power != Power.None && !fx.used) words = touch ? $"Tap {PowerName(fx.power)} to use it" : $"Press E, or the button, for {PowerName(fx.power)}";
+    if (words == "") return;
+    var wide = Math.Min(Draw.MeasureText(words, 13).x + 28, screen.x - 12);
+    // Over the buttons along the bottom
+    var at = float2(screen.x * 0.5, screen.y - FOOT - 22);
+    var bob = Math.Sin(fx.beat * 2) * 2;
+    Draw.Shape(Shape { center = at + float2(0, bob), size = float2(wide, 30), radius = 15, color = Color(0.1, 0.1, 0.11, 0.92),
+                         outline = 1.5, outlineColor = LINE });
+    Draw.Text(words, at + float2(0, bob), 13, INK, Anchor.MiddleCenter);
+}
+
+// The room this machine is in, for whoever asks: over the menu's button, in
+// the bottom left corner. The bottom right corner is the engine's stats'.
+[Stage(Layers.Hud, 40)]
+view Corner(Session session, Lobby lobby)
+{
+    Draw.SetScreen();
+    if (lobby.page != Page.Playing || session.room == "") return;
+    // Over the button, out of the way of what the tower earned
+    Draw.Text($"ROOM {session.room}", float2(10, Screen.height - 62), 10, QUIET, Anchor.MiddleLeft, Font.Bold);
+}
+
+// Paper for a round's winner, over everything but the menu.
+[Stage(Layers.Hud, 50)]
+view Confetti(mut Fx fx)
+{
+    Draw.SetScreen();
+    mut var i = 0;
+    while (i < fx.paper.count)
+    {
+        mut var bit = fx.paper[i];
+        bit.age += fx.dt;
+        if (bit.age >= bit.life)
+        {
+            fx.paper.RemoveAt(i);
+            continue;
+        }
+        bit.velocity.y += 620 * fx.dt;
+        bit.velocity = bit.velocity * Math.Max(0, 1 - bit.drag * fx.dt);
+        bit.position += bit.velocity * fx.dt;
+        bit.angle += bit.spin * fx.dt;
+        fx.paper[i] = bit;
+        // It turns over as it falls
+        var flat = Math.Abs(Math.Sin(bit.angle * 1.7));
+        Draw.Rect(bit.position, float2(bit.size, bit.size * (0.25 + 0.75 * flat)), bit.angle,
+                    Fade(bit.color, (1 - bit.age / bit.life) * 3));
+        i++;
+    }
+}

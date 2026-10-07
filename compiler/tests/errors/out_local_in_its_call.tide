@@ -1,0 +1,12 @@
+// expect: 'whole' isn't assigned here: the call that makes it may not have run
+scene Main { }
+singleton Tally { int total; }
+void Split(int value, out int whole, int twice)
+{
+    whole = value + twice;
+}
+system Run(mut Tally tally)
+{
+    Split(3, out var whole, whole * 2);
+    tally.total = whole;
+}

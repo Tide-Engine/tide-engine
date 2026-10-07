@@ -1,0 +1,7 @@
+// expect: to set it for the draws that follow, write 'Draw.SetScreen();'
+scene Main { }
+
+view Show()
+{
+    Draw.Screen();
+}

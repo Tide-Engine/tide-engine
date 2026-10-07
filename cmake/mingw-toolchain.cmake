@@ -7,6 +7,13 @@
 # downloaded once into build/llvm-mingw-<version> and pinned. clang is found like
 # native builds find it (clang-toolchain.cmake), and links with lld.
 
+# On another system than Windows it's a cross build (the Windows package's
+# platform layer and C runtime, built on Linux).
+if(NOT CMAKE_HOST_WIN32)
+    set(CMAKE_SYSTEM_NAME Windows)
+    set(CMAKE_SYSTEM_PROCESSOR x86_64)
+endif()
+
 set(TIDE_MINGW_VERSION 20260922)
 set(TIDE_MINGW_TARGET x86_64-w64-windows-gnu)
 
@@ -59,5 +66,6 @@ set(CMAKE_SYSROOT "${TIDE_MINGW_SYSROOT}")
 # (what clang links by default for MinGW, and what CMake adds on Windows): LLVM's
 # releases default to GCC's runtime for this target, and don't include ours.
 set(CMAKE_EXE_LINKER_FLAGS_INIT "-fuse-ld=lld -nodefaultlibs")
+set(CMAKE_SHARED_LINKER_FLAGS_INIT "-fuse-ld=lld -nodefaultlibs")
 set(CMAKE_C_STANDARD_LIBRARIES "-lmingw32 -lmingwex -lmoldname -lmsvcrt -lkernel32 -luser32 -lgdi32 -lwinspool \
 -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32 \"${TIDE_MINGW_BUILTINS}\"")

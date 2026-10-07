@@ -1,0 +1,3 @@
+// expect: 'StencilTest' is built into the engine
+enum StencilTest { Inside, Outside }
+scene Main { }

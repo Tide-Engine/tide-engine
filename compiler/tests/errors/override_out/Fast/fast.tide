@@ -1,0 +1,6 @@
+namespace Fast;
+
+override bool Combat.TryHalf(int value, int half)
+{
+    return value + half > 0;
+}

@@ -1,0 +1,48 @@
+// How a texture's declaration says it's sampled ([Filter], [Wrap]), where a
+// Sample doesn't say: an asset's and a field's are a texture of the shader's
+// for each way they're read, as when the Sample says it; a direct Texture
+// parameter's is its draw's source's, so what its Sample leaves unsaid is a
+// texture of its own beside one that says the same.
+
+[Filter(Filter.Point), Wrap(Wrap.Repeat)]
+asset Texture tiles = "../e2e/assets/run/0.png";
+[Wrap(Wrap.Mirror)]
+asset Grid2<Color> glass = "../e2e/assets/run/1.png";
+asset Texture hero = "../e2e/assets/hero.png";
+
+scene Main { }
+
+struct Corner
+{
+    float2 position;
+    float2 uv;
+}
+
+local singleton Art
+{
+    List<Corner> corners;
+    [Filter(Filter.Point), Wrap(Wrap.Mirror)]
+    Grid2<Color> paint = Grid2(2, 2);
+}
+
+frag Named(Corner vertex, out Color color, Art art)
+{
+    color = tiles.Sample(vertex.uv)
+          * tiles.Sample(vertex.uv, Filter.Point, Wrap.Repeat) // Its declaration's, said outright: the same texture
+          * tiles.Sample(vertex.uv, Filter.Bilinear)           // The Sample's filter, the declaration's wrap
+          * glass.Sample(vertex.uv)
+          * hero.Sample(vertex.uv)
+          * art.paint.Sample(vertex.uv);
+}
+
+frag Given(Corner vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv) * source.Sample(vertex.uv, Filter.Bilinear, Wrap.Clamp);
+}
+
+view Show(Art art)
+{
+    Draw.Mesh(art.corners, [0, 1, 2], Named);
+    Draw.Mesh(art.corners, [0, 1, 2], tiles, Given);
+    Draw.Mesh(art.corners, [0, 1, 2], hero, Given);
+}

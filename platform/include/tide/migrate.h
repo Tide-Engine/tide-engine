@@ -15,25 +15,32 @@
 //   default; new text and lists start empty.
 // - Entities keep their IDs. An entity whose component was removed goes where
 //   entities with the rest of its components go, and is dropped when no such
-//   storage exists in the new build, or it's full.
+//   storage exists in the new build.
 // - The inputs carry over like singletons, and the heap as it is.
+// - A waiting task carries over to a build where its code and its frame are
+//   the same (its table has the same name); the others are dropped.
+// - The local fields of the match's components and singletons carry over with
+//   the local world, like any value: an entity's by its component's name, a
+//   singleton's as the local singleton they are. A component that's gone, or
+//   has no local fields left, takes them with it.
 //
 // A world whose scene is gone can't be carried over.
-//
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
 
 typedef struct tide_migration {
     uint32_t entities_dropped;
+    uint32_t tasks_dropped;
     char failed[160]; // Why the world couldn't be carried over, or empty
 } tide_migration;
 
-// Makes `to`, a zeroed world of `to_layout`'s game, from `from`, a world of
-// `from_layout`'s. `from_world` and `to_world` say which world they are: the
-// layouts' match or local. False, with `m->failed` saying why, if it can't.
+// Makes the bytes of a world of `to_layout`'s game, which its unpack function
+// (tide_world_unpack, tide_local_unpack) makes a world of, from `from`, the
+// bytes of a world of `from_layout`'s (tide_world_pack, tide_local_pack).
+// `from_world` and `to_world` say which world they are: the layouts' match or
+// local. The new bytes go in `*to`, which the caller frees. False, with
+// `m->failed` saying why, if it can't.
 bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world *from_world, const void *from,
-                        const tide_layout *to_layout, const tide_layout_world *to_world, void *to,
-                        tide_migration *m);
+                        uint32_t from_size, const tide_layout *to_layout, const tide_layout_world *to_world, void **to,
+                        uint32_t *to_size, tide_migration *m);
 
 // How many fields both layouts have, of the same name in the same type, whose
 // values can't carry over: their type changed to one they don't convert to.

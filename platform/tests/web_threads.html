@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tide threads test</title>
+</head>
+<body>
+<canvas id="canvas" tabindex="-1"></canvas>
+<script>
+  // The page web_threads.mjs serves: every line the program prints, and how
+  // it ends, go back to the server, in order. A line that can't be sent
+  // doesn't stop the ones after it or the result: it's the result.
+  let sent = Promise.resolve(), lost = '';
+  const post = (path, body) => {
+    sent = sent.then(() => fetch(path, { method: 'POST', body })).then(answer => answer.arrayBuffer()).catch(error => {
+      lost = lost || `${path} (${body}): ${error}`;
+    });
+  };
+  const result = code => sent.then(() => post('result', lost ? `couldn't send ${lost}` : code));
+  const tell = line => {
+    console.log(line);
+    post('log', String(line));
+  };
+  tell('cross-origin isolated: ' + globalThis.crossOriginIsolated);
+  var Tide = {
+    canvas: document.getElementById('canvas'),
+    checkGL: true,
+    print: tell,
+    printErr: tell,
+    onExit: code => result(String(code)),
+    onAbort: reason => {
+      tell('abort: ' + reason);
+      result('abort');
+    },
+  };
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>

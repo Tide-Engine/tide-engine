@@ -1,0 +1,11 @@
+// expect: a query row can't be captured by parallel loops or callback blocks
+component Body { float x; }
+singleton Items { List<int> values; }
+scene Main { }
+system Hits(Items items, query (Body body) bodies)
+{
+    foreach (var row in bodies)
+    {
+        parallel (var i in items.values) Debug.Log($"{row.body.x + i}");
+    }
+}

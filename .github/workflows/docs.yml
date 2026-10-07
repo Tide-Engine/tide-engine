@@ -1,6 +1,7 @@
-# Builds the docs site (docs/, VitePress), with the web demo in it, and
-# publishes it to GitHub Pages when run by hand on dev. Other branches only
-# build it, which also checks its links.
+# Builds the docs site (docs/, SvelteKit), with its playable web examples, and
+# deploys it to Fly.io (docs/fly.toml) when run manually on dev. Other refs only
+# build it, which also checks its links. It tests the editors' grammar first,
+# through the Shiki the site highlights Tide with.
 name: Docs
 
 on:
@@ -20,51 +21,69 @@ jobs:
   build:
     name: Build
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    env:
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CCACHE_DIR: ${{ github.workspace }}/build/ccache
+      CCACHE_MAXSIZE: 500M
+      CCACHE_COMPILERCHECK: content
+      CCACHE_NODIRECT: 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@v1
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: docs/package-lock.json
+      # tools/tide-syntax/test: the grammar's scopes, on its cases and the
+      # compiler's test programs.
+      - name: Test the grammar
+        working-directory: docs
+        run: |
+          npm ci
+          npm run test:grammar
+          npm run test:access
+          npm run test:releases
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang lld ninja-build
+          sudo apt-get install -y clang lld ninja-build ccache
       - uses: actions/cache@v4
         with:
           path: build/wasi-sdk-*
           key: wasi-sdk-${{ hashFiles('cmake/wasi-toolchain.cmake') }}
+      - name: Cache compiled examples
+        uses: actions/cache@v4
+        with:
+          path: build/ccache
+          key: ccache-docs-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: ccache-docs-${{ runner.os }}-${{ runner.arch }}-
 
-      # The demo's page (docs/guide/demo.md) shows it at demo/.
-      - name: Build the demo
+      # The Samples gallery opens full games; guide pages show smaller examples.
+      - name: Build the examples
         run: |
-          cmake --preset web-release
-          cmake --build --preset web-release --target demo
-          mkdir -p docs/public/demo
-          cp build/web-release/bin/demo.html docs/public/demo/index.html
+          cmake --preset web-release -DTIDE_DOC_EXAMPLES=ON
+          cmake --build --preset web-release --target sand duel towers sumo docs_examples sample_games
+          mkdir -p docs/static/sand docs/static/duel docs/static/towers docs/static/sumo
+          cp build/web-release/bin/sand.html docs/static/sand/index.html
+          cp build/web-release/bin/duel.html docs/static/duel/index.html
+          cp build/web-release/bin/towers.html docs/static/towers/index.html
+          cp build/web-release/bin/sumo.html docs/static/sumo/index.html
       - name: Build the site
         working-directory: docs
         run: |
-          npm ci
+          npm run check
           npm run build
+          npm run test:seo
+          npm run test:access-http
+          npm run test:examples
 
-      - uses: actions/upload-pages-artifact@v5
-        if: github.ref == 'refs/heads/dev'
-        with:
-          path: docs/.vitepress/dist
-
-  deploy:
-    name: Deploy
-    needs: build
-    if: github.ref == 'refs/heads/dev'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v5
+      # The image takes what the build made (docs/Dockerfile). The token is
+      # a deploy token for the app: fly tokens create deploy -a tide-website
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'
+      - name: Deploy
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'
+        working-directory: docs
+        run: flyctl deploy --remote-only --ha=false
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

@@ -1,0 +1,7 @@
+// expect: 'Fill' makes its 'bytes', so pass it a variable or field
+// expect: 'out var bytes' declares a variable for it there
+extern int Fill(out List<byte> bytes);
+singleton Sizes { int image; }
+List<byte> Empty() { return []; }
+scene Main { }
+system Run(mut Sizes sizes) { sizes.image = Fill(out Empty()); }

@@ -1,0 +1,8 @@
+// expect: enum 'StencilTest' has no member 'Different'
+// expect: a draw's number against the one stored at a pixel: 'Always' (no test, as each frame starts), 'Never', 'Less', 'Equal', 'LessEqual', 'Greater', 'NotEqual' or 'GreaterEqual'
+scene Main { }
+
+view Show()
+{
+    Draw.SetStencil(StencilTest.Different, 1);
+}

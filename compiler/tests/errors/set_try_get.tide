@@ -1,0 +1,4 @@
+// expect: a set has no values to get: it holds keys, which Has(key) looks for
+scene Main { }
+singleton Board { Set<int> seen; int key; bool has; }
+system Run(mut Board board) { board.has = board.seen.TryGet(3, out board.key); }

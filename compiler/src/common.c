@@ -1,8 +1,21 @@
+#if !defined(_WIN32) && !defined(__APPLE__)
+#define _DEFAULT_SOURCE // isatty and getcwd under strict C
+#endif
+
 #include "common.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 // ---------------------------------------------------------------------------
 // Memory
@@ -63,7 +76,8 @@ str str_from(const char *cstr)
 
 bool str_eq(const str a, const str b)
 {
-    return a.len == b.len && memcmp(a.ptr, b.ptr, (size_t)a.len) == 0;
+    // An empty str may have no pointer, which memcmp isn't to be given
+    return a.len == b.len && (a.len == 0 || memcmp(a.ptr, b.ptr, (size_t)a.len) == 0);
 }
 
 bool str_eq_c(const str a, const char *cstr)
@@ -88,7 +102,10 @@ void sb_putn(sb *b, const char *s, const size_t n)
 {
     if (b->line == 0) b->line = 1;
     if (b->len + n + 1 > b->cap) {
-        size_t cap = b->cap ? b->cap * 2 : 4096;
+        // Most builders hold a name or a line of code, so a new one takes
+        // little: the arena never frees, and code that makes thousands would
+        // otherwise take pages for a few bytes each.
+        size_t cap = b->cap ? b->cap * 2 : 64;
         while (cap < b->len + n + 1) cap *= 2;
         b->data = vec_grow(b->data, b->cap, cap, 1);
         b->cap = cap;
@@ -129,13 +146,33 @@ void sb_printf(sb *b, const char *fmt, ...)
 // ---------------------------------------------------------------------------
 // Diagnostics
 
-#define MAX_SOURCES 1024
-
-static const source *sources[MAX_SOURCES];
+static const source **sources; // As many as the program has files: it grows
 static int source_count;
+static int source_room;
 static int error_count;
 static diag_sink sink;
 static void *sink_user;
+static diag_suggestion_sink suggestion_sink;
+static void *suggestion_user;
+
+// With TIDEC_TIMES set in the environment, says on stderr how long each phase
+// of a compile took: the time since the last call, under `what`.
+void diag_phase(const char *what)
+{
+    static int enabled = -1;
+    static struct timespec last;
+    if (enabled < 0) {
+        const char *set = getenv("TIDEC_TIMES");
+        enabled = set && set[0] && set[0] != '0';
+        timespec_get(&last, TIME_UTC);
+    }
+    if (!enabled) return;
+    struct timespec now;
+    timespec_get(&now, TIME_UTC);
+    const double ms = (double)(now.tv_sec - last.tv_sec) * 1e3 + (double)(now.tv_nsec - last.tv_nsec) * 1e-6;
+    if (what) fprintf(stderr, "tidec: %-22s %9.1f ms\n", what, ms);
+    last = now;
+}
 
 void diag_reset(void)
 {
@@ -145,9 +182,13 @@ void diag_reset(void)
 
 void diag_add_source(source *src)
 {
-    if (source_count == MAX_SOURCES) {
-        fprintf(stderr, "tidec: more than %d source files\n", MAX_SOURCES);
-        exit(1);
+    if (source_count == source_room) {
+        source_room = source_room ? source_room * 2 : 256;
+        sources = realloc(sources, (size_t)source_room * sizeof *sources);
+        if (!sources) {
+            fprintf(stderr, "tidec: out of memory\n");
+            exit(1);
+        }
     }
     src->file = source_count;
     sources[source_count++] = src;
@@ -169,6 +210,12 @@ void diag_set_sink(const diag_sink new_sink, void *user)
     sink_user = user;
 }
 
+void diag_set_suggestion_sink(const diag_suggestion_sink new_sink, void *user)
+{
+    suggestion_sink = new_sink;
+    suggestion_user = user;
+}
+
 static void to_sink(const diag_severity severity, const loc at, const char *fmt, va_list args)
 {
     char message[1024];
@@ -176,8 +223,81 @@ static void to_sink(const diag_severity severity, const loc at, const char *fmt,
     sink(sink_user, severity, at, message);
 }
 
-// Prints the offending source line with a caret under the column.
-static void print_excerpt(const source *src, const loc at)
+// Whether diagnostics are colored: stderr is a terminal that takes escape
+// sequences, and NO_COLOR isn't set (no-color.org). Never for a file or a
+// pipe, so what tools and tests read is plain text.
+static bool colored(void)
+{
+    static int enabled = -1;
+    if (enabled >= 0) return enabled;
+    enabled = 0;
+    const char *off = getenv("NO_COLOR");
+    if (off && off[0]) return false;
+#ifdef _WIN32
+    const HANDLE err = GetStdHandle(STD_ERROR_HANDLE);
+    DWORD mode;
+    if (GetConsoleMode(err, &mode)) {
+        enabled = (mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0 ||
+                  SetConsoleMode(err, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
+    }
+#else
+    const char *term = getenv("TERM");
+    enabled = isatty(STDERR_FILENO) && term && strcmp(term, "dumb") != 0;
+#endif
+    return enabled;
+}
+
+#define PLAIN "\x1b[0m"
+#define BOLD "\x1b[1m"
+#define DIM "\x1b[2m"
+#define CYAN "\x1b[36m"
+
+static const char *paint(const char *color)
+{
+    return colored() ? color : "";
+}
+
+// An error's red, a warning's yellow.
+static const char *kind_color(const char *kind)
+{
+    return kind[0] == 'e' ? "\x1b[1;31m" : "\x1b[1;33m";
+}
+
+// A file's path as a diagnostic says it: from the folder the compiler was
+// run in when the file is under it, and whole otherwise.
+static const char *shown_path(const char *path)
+{
+    static char here[4096];
+    static size_t here_len;
+    static bool asked;
+    if (!asked) {
+        asked = true;
+#ifdef _WIN32
+        const DWORD n = GetCurrentDirectoryA(sizeof here, here);
+        here_len = n < sizeof here ? n : 0;
+#else
+        here_len = getcwd(here, sizeof here) ? strlen(here) : 0;
+#endif
+        while (here_len > 0 && (here[here_len - 1] == '/' || here[here_len - 1] == '\\')) here_len--;
+    }
+    if (here_len == 0 || strlen(path) <= here_len + 1) return path;
+    for (size_t i = 0; i < here_len; i++) {
+        char a = path[i];
+        char b = here[i];
+#ifdef _WIN32
+        a = a == '\\' ? '/' : (char)tolower((unsigned char)a);
+        b = b == '\\' ? '/' : (char)tolower((unsigned char)b);
+#endif
+        if (a != b) return path;
+    }
+    const char after = path[here_len];
+    if (after != '/' && after != '\\') return path;
+    return path + here_len + 1;
+}
+
+// Prints the offending source line with a caret under the column, in the
+// color of what it's for.
+static void print_excerpt(const source *src, const loc at, const char *color)
 {
     const char *p = src->text;
     const char *end = src->text + src->len;
@@ -188,20 +308,23 @@ static void print_excerpt(const source *src, const loc at)
     const char *line_end = p;
     while (line_end < end && *line_end != '\n' && *line_end != '\r') line_end++;
 
-    fprintf(stderr, "%5d | %.*s\n      | ", at.line, (int)(line_end - p), p);
+    fprintf(stderr, "%s%5d |%s %.*s\n%s      |%s ", paint(DIM), at.line, paint(PLAIN), (int)(line_end - p), p, paint(DIM),
+            paint(PLAIN));
     for (int i = 0; i < at.col - 1 && p + i < line_end; i++) fputc(p[i] == '\t' ? '\t' : ' ', stderr);
-    fputs("^\n", stderr);
+    fprintf(stderr, "%s^%s\n", paint(color), paint(PLAIN));
 }
 
 // Not const: va_list is an array on some targets, and vfprintf takes it as is.
 static void report(const loc at, const char *kind, const char *fmt, va_list args)
 {
     const source *src = diag_source(at.file);
-    if (src) fprintf(stderr, "%s:%d:%d: %s: ", src->path, at.line, at.col, kind);
-    else fprintf(stderr, "tidec: %s: ", kind);
+    const char *color = kind_color(kind);
+    if (src) fprintf(stderr, "%s%s:%d:%d:%s ", paint(BOLD), shown_path(src->path), at.line, at.col, paint(PLAIN));
+    else fputs("tidec: ", stderr);
+    fprintf(stderr, "%s%s:%s %s", paint(color), kind, paint(PLAIN), paint(BOLD));
     vfprintf(stderr, fmt, args);
-    fputc('\n', stderr);
-    if (src && at.line > 0) print_excerpt(src, at);
+    fprintf(stderr, "%s\n", paint(PLAIN));
+    if (src && at.line > 0) print_excerpt(src, at, color);
 }
 
 void diag_error(const loc at, const char *fmt, ...)
@@ -223,17 +346,31 @@ void diag_warning(const loc at, const char *fmt, ...)
     va_end(args);
 }
 
+// Not const: va_list is an array on some targets, and vfprintf takes it as is.
+static void note(const loc at, const char *fmt, va_list args)
+{
+    if (sink) {
+        to_sink(DIAG_NOTE, at, fmt, args);
+    } else {
+        fprintf(stderr, "      %s= note:%s ", paint(CYAN), paint(PLAIN));
+        vfprintf(stderr, fmt, args);
+        fputc('\n', stderr);
+    }
+}
+
 void diag_note(const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    if (sink) {
-        to_sink(DIAG_NOTE, (loc){0, 0, 0}, fmt, args);
-    } else {
-        fputs("      = note: ", stderr);
-        vfprintf(stderr, fmt, args);
-        fputc('\n', stderr);
-    }
+    note((loc){0, 0, 0}, fmt, args);
+    va_end(args);
+}
+
+void diag_note_at(const loc at, const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    note(at, fmt, args);
     va_end(args);
 }
 
@@ -295,11 +432,23 @@ void suggest_consider_c(suggestion *s, const char *candidate)
     suggest_consider(s, str_from(candidate));
 }
 
-void suggest_note(const suggestion *s)
+bool suggest_close(const suggestion *s)
 {
     // One typo in a short name, two in a longer one. Beyond that it's a guess.
     const int allowed = s->wrong.len <= 4 ? 1 : 2;
-    if (s->best.len > 0 && s->distance <= allowed) diag_note("did you mean '" STR_FMT "'?", STR_ARG(s->best));
+    return s->best.len > 0 && s->distance <= allowed;
+}
+
+void suggest_note(const suggestion *s)
+{
+    if (!suggest_close(s)) return;
+    diag_note("did you mean '" STR_FMT "'?", STR_ARG(s->best));
+    if (suggestion_sink) suggestion_sink(suggestion_user, s->wrong, s->best);
+}
+
+void suggest_replacement(const str wrong, const char *instead)
+{
+    if (suggestion_sink) suggestion_sink(suggestion_user, wrong, str_from(instead));
 }
 
 int path_compare(const char *a, const char *b)

@@ -1,0 +1,14 @@
+// expect: a view can't change the match, and 'pos' is a match field of 'Box'
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+view Nudge(mut Box box)
+{
+    box.bakes += 1;
+    box.pos.x += 1;
+}

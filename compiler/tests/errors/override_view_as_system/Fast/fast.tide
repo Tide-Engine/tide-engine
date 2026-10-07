@@ -1,0 +1,7 @@
+namespace Fast;
+
+using Combat;
+
+override system Show(Position position)
+{
+}

@@ -1,0 +1,6 @@
+// expect: did you mean 'Absolute'?
+input Controls
+{
+    [Absolut] float2 aim;
+}
+scene Main { }

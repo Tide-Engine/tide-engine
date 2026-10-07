@@ -1,0 +1,42 @@
+// expect: a loop the GPU runs counts, so it's known how far it goes: a variable of its own
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+component Box
+{
+    Color tint = Color.white;
+}
+
+singleton Sun
+{
+    float3 direction = float3(0, -1, 0);
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    Grid2<Color> wood = Grid2(4, 4);
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box);
+}
+
+frag Shade(V vertex, out Color color)
+{
+    mut float x = 0;
+    for (; x < 1; x += 0.1) { }
+    color = Color.white * x;
+}
+
+view Show(Box box, Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}

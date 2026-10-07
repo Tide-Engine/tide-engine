@@ -1,17 +1,37 @@
-# tide_add_game(<target> [SOURCES <file.tide|file.c>...] [HOST <file.c>...] [NAME <name>]
-#               [TITLE <title>] [STATS] [LAYOUT])
+# tide_add_game(<target> [SOURCES <file.tide|file.c|file.cpp>...] [HOST <file.c>...] [WINDOW] [NAME <name>]
+#               [TITLE <title>] [STATS] [LAYOUT] [WARNINGS <text>...]
+#               [PACKAGES <Name> <file.tide>... [<Name> <file.tide>...]]
+#               [DEFINES <SYMBOL>...])
 #
 # Builds a Tide game as the program <target>. The game is every .tide file
 # in the current source folder and its subfolders (new ones are picked up by
 # the next build), or only the files listed after SOURCES. Its C files, which
 # define its extern functions, compile with it: every .c file in the folder
-# but the HOST ones, or the .c files listed after SOURCES.
+# but the HOST ones, or the .c files listed after SOURCES. So do its C++
+# files (.cpp, .cc and .cxx), with no C++ runtime (TIDE_CPP_FLAGS).
 #
-# Without HOST, the game is the whole program: it opens a window titled TITLE
-# (default <target>) and runs (see platform/include/tide/run.h). STATS shows the
-# tick, entity count and frame rate in a corner. On the web it's <target>.html.
+# PACKAGES lists files of packages the game builds with, each package's after
+# its name (which is its namespace): what isn't a .tide file is a name. They
+# compile before the game's, in the order the packages are named, as tide
+# builds a game with what its tide.packages lists. It's for tests of what
+# packages do to a game: this doesn't read tide.packages, and a game with real
+# packages builds with tide.
+#
+# DEFINES lists symbols the game's #if lines read as defined, as tide's
+# --define does (docs/spec.md, Conditional compilation). DEBUG is defined in a
+# Debug build, and PACKAGE_<NAME> for each package after PACKAGES.
+#
+# Without HOST, the game is the whole program: it opens a window titled TITLE,
+# or the game's title setting, or <target>, and runs (see
+# platform/include/tide/run.h). STATS shows the stats in a corner, as the
+# game's stats setting does: the frame rate, and at a click on it or F8, what
+# a frame's work takes, ping, bandwidth, tick, entity count, the threads ticks
+# run on, memory, draw calls and the slowest systems. On the web it's
+# <target>.html, and on Android an app (see tide_android_app).
 #
 # With HOST, those C files are the program instead, for tests and custom hosts.
+# WINDOW says they open a window, so that on Android they're an app too, rather
+# than a program that runs from a shell.
 # They include the game's generated header, <name>.h (NAME defaults to
 # <target>), and drive the game through its API (see AGENTS.md). LAYOUT also
 # describes the game's data layout, as tide run does for hot reloading
@@ -20,11 +40,79 @@
 # The generated files land in the build tree and are regenerated whenever a
 # .tide file or tidec changes. Every game is also listed in
 # TIDE_GAMES_MANIFEST, so editors know which files belong together.
+#
+# A game's assets (its `asset` declarations: docs/spec.md, Assets) are packed
+# by tidec beside the generated files, <name>.pack, which the files they name
+# regenerate too. A game with a window gets it beside its program, as
+# <target>.pack (tide/run.h loads it), inside its web page, and in its APK. A
+# HOST program gets it as C instead (<name>_pack.c: tide_game_pack and
+# tide_game_pack_size), to hand tide_assets_load itself; a game with no assets
+# has an empty one.
+#
+# tidec's warnings are errors here (cmake/run_tidec.cmake), as the compiler's
+# are. WARNINGS lists the ones a game means to have, such as tests of what
+# tidec generates for programs it warns about: each is part of a warning's
+# text, and has to be there.
+
+# The bold weight's file (platform/font/Tuffy_Bold.ttf) as a library of that
+# one object. A game that says Font.Bold names the file in its C
+# (tide_font_bold_ttf, tide/draw.h), and a linker takes it out of a library for
+# such a game alone: out of the platform layer's, which has it too, for a game
+# with a window, and out of this one for a HOST's program, which may link no
+# platform layer. So a game builds whichever program it's in, and one that
+# never says Font.Bold carries no file in any.
+set(TIDE_FONT_BOLD_C "${PROJECT_BINARY_DIR}/tide_font_bold/tide_font_bold.c")
+add_custom_command(OUTPUT "${TIDE_FONT_BOLD_C}"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${PROJECT_SOURCE_DIR}/platform/font/Tuffy_Bold.ttf"
+        "-DOUTPUT=${TIDE_FONT_BOLD_C}" -DNAME=tide_font_bold_ttf -P "${CMAKE_CURRENT_LIST_DIR}/embed.cmake"
+    DEPENDS "${PROJECT_SOURCE_DIR}/platform/font/Tuffy_Bold.ttf" "${CMAKE_CURRENT_LIST_DIR}/embed.cmake"
+    COMMENT "The bold font as C"
+    VERBATIM)
+add_library(tide_font_bold STATIC "${TIDE_FONT_BOLD_C}")
 
 set(TIDE_GAMES_MANIFEST "${PROJECT_SOURCE_DIR}/build/tools/games.txt")
+set(TIDE_RUN_TIDEC "${CMAKE_CURRENT_LIST_DIR}/run_tidec.cmake")
+
+# A game's C++ is the language alone, as tide builds it (cpp_flags in
+# compiler/cli/build.c): no standard library, exceptions or RTTI, since tide
+# brings no C++ runtime (see AGENTS.md, Language). This project is C, so the C
+# compiler compiles those files, and programs link as C: -x c++ and -std=c++20
+# go over what CMake says for a C file, which comes before them.
+set(TIDE_CPP_FLAGS -x c++ -std=c++20 -nostdinc++ -fno-exceptions -fno-rtti -fno-threadsafe-statics)
+
+# tide_web_page(<target> [SHELL <page.html>] [PACK <game.pack>])
+#
+# Web builds: makes <target>.html next to <target>.wasm, one self-contained
+# page with the program and platform/web/tide.js inside, which opens straight
+# from disk. SHELL is the page around the canvas (default platform/web/shell.html;
+# tests use platform/web/test_shell.html). PACK is the game's pack of assets
+# (tide_add_game), which goes inside the page when there is one. Does nothing
+# in native builds, so it can be called unconditionally. Here, beside
+# tide_add_game, which pages the games it builds with it, so any folder's CMake
+# can page a host of its own.
+set(TIDE_WEB_SHELL "${PROJECT_SOURCE_DIR}/platform/web/shell.html" CACHE INTERNAL "")
+set(TIDE_WEB_SCRIPT "${PROJECT_SOURCE_DIR}/platform/web/tide.js" CACHE INTERNAL "")
+function(tide_web_page target)
+    if(NOT TIDE_WEB)
+        return()
+    endif()
+    cmake_parse_arguments(ARG "" "SHELL;PACK" "" ${ARGN})
+    if(ARG_SHELL)
+        get_filename_component(shell "${ARG_SHELL}" ABSOLUTE)
+    else()
+        set(shell "${TIDE_WEB_SHELL}")
+    endif()
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/web_page.mjs"
+            "$<TARGET_FILE:${target}>" "${shell}" "${TIDE_WEB_SCRIPT}"
+            "$<TARGET_FILE_DIR:${target}>/${target}.html" ${ARG_PACK}
+        COMMENT "Web page for ${target}"
+        VERBATIM)
+    set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS "${shell}" "${TIDE_WEB_SCRIPT}")
+endfunction()
 
 function(tide_add_game target)
-    cmake_parse_arguments(ARG "STATS;LAYOUT" "NAME;TITLE" "SOURCES;HOST" ${ARGN})
+    cmake_parse_arguments(ARG "STATS;LAYOUT;WINDOW" "NAME;TITLE" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
     if("SOURCES" IN_LIST ARG_KEYWORDS_MISSING_VALUES)
         message(FATAL_ERROR "tide_add_game(${target}): list the game's .tide files after SOURCES, or leave "
                             "SOURCES out to use every .tide file in ${CMAKE_CURRENT_SOURCE_DIR} and its subfolders")
@@ -33,8 +121,11 @@ function(tide_add_game target)
     if(ARG_NAME)
         set(name "${ARG_NAME}")
     endif()
+    # TITLE goes over the game's title setting; the target's name only stands in for it
+    set(title_field "game_name")
     set(title "${target}")
     if(ARG_TITLE)
+        set(title_field "title")
         set(title "${ARG_TITLE}")
     endif()
 
@@ -43,7 +134,7 @@ function(tide_add_game target)
     if(ARG_SOURCES)
         foreach(file IN LISTS ARG_SOURCES)
             get_filename_component(path "${file}" ABSOLUTE)
-            if(path MATCHES "\\.c$")
+            if(path MATCHES "\\.(c|cpp|cc|cxx)$")
                 list(APPEND c_sources "${path}")
             else()
                 list(APPEND sources "${path}")
@@ -59,7 +150,8 @@ function(tide_add_game target)
         endif()
         # Not in hidden folders or build/, where tide keeps what it makes (.tide/),
         # generated C included.
-        file(GLOB_RECURSE found CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.c")
+        file(GLOB_RECURSE found CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/*.cc" "${CMAKE_CURRENT_SOURCE_DIR}/*.cxx")
         foreach(path IN LISTS found)
             file(RELATIVE_PATH relative "${CMAKE_CURRENT_SOURCE_DIR}" "${path}")
             if(NOT relative MATCHES "(^|/)\\." AND NOT relative MATCHES "^build/")
@@ -74,25 +166,124 @@ function(tide_add_game target)
         set(manifest_paths "${CMAKE_CURRENT_SOURCE_DIR}/")
     endif()
 
+    # The packages' files, as tidec's list says them: `--package <Name>`, then its files
+    set(package_lines "")
+    set(package_sources "")
+    set(manifest_packages "")
+    set(package "")
+    foreach(item IN LISTS ARG_PACKAGES)
+        if(item MATCHES "\\.tide$")
+            if(package STREQUAL "")
+                message(FATAL_ERROR "tide_add_game(${target}): name the package before its files, after PACKAGES")
+            endif()
+            get_filename_component(path "${item}" ABSOLUTE)
+            list(APPEND package_lines "${path}")
+            list(APPEND package_sources "${path}")
+            list(APPEND manifest_packages "${path}\t${package}")
+        else()
+            set(package "${item}")
+            list(APPEND package_lines "--package ${item}")
+        endif()
+    endforeach()
+
+    foreach(path IN LISTS c_sources)
+        if(path MATCHES "\\.(cpp|cc|cxx)$")
+            set_source_files_properties("${path}" PROPERTIES LANGUAGE C COMPILE_OPTIONS "${TIDE_CPP_FLAGS}")
+        endif()
+    endforeach()
+
     set(layout "")
     if(ARG_LAYOUT)
         set(layout --layout)
+    endif()
+    # The symbols the game's #if lines read as defined: DEFINES', and DEBUG in a Debug build, as tide
+    # defines it without --release
+    set(defines "")
+    foreach(symbol IN LISTS ARG_DEFINES)
+        list(APPEND defines --define "${symbol}")
+    endforeach()
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        list(APPEND defines --define DEBUG)
     endif()
 
     set(out_dir "${CMAKE_CURRENT_BINARY_DIR}/tide/${target}")
     set(out_c "${out_dir}/${name}.c")
     set(out_h "${out_dir}/${name}.h")
+    set(out_pack "${out_dir}/${name}.pack")
+    set(out_pack_c "${out_dir}/${name}_pack.c")
+    set(pack_c "")
+    set(pack_outputs "")
+    if(ARG_HOST)
+        set(pack_c --pack-c)
+        set(pack_outputs "${out_pack_c}")
+    endif()
+    # The files its assets name: a change to one regenerates the pack. They're
+    # found when the game is configured, as its .tide files are with no SOURCES.
+    set(asset_files "")
+    foreach(path IN LISTS sources package_sources)
+        file(STRINGS "${path}" asset_lines REGEX "^asset ")
+        foreach(line IN LISTS asset_lines)
+            if(line MATCHES "= *\"([^\"]*)\"")
+                set(asset_path "${CMAKE_MATCH_1}")
+                if(NOT asset_path MATCHES "^https?://")
+                    get_filename_component(asset_dir "${path}" DIRECTORY)
+                    if(asset_path MATCHES "[*?]")
+                        string(REGEX REPLACE "/[^/]*[*?].*$" "" asset_base "${asset_path}")
+                        if(asset_base STREQUAL asset_path)
+                            set(asset_base ".")
+                        endif()
+                        file(GLOB_RECURSE matched CONFIGURE_DEPENDS "${asset_dir}/${asset_base}/*")
+                        list(APPEND asset_files ${matched})
+                    else()
+                        list(APPEND asset_files "${asset_dir}/${asset_path}")
+                    endif()
+                endif()
+            endif()
+        endforeach()
+    endforeach()
+    # The warnings it means to have, written only when they change, so tidec
+    # runs again when they do.
+    set(expected "${CMAKE_CURRENT_BINARY_DIR}/tide/${target}.warnings")
+    list(JOIN ARG_WARNINGS "\n" warnings)
+    set(written "-")
+    if(EXISTS "${expected}")
+        file(READ "${expected}" written)
+    endif()
+    if(NOT written STREQUAL warnings)
+        file(WRITE "${expected}" "${warnings}")
+    endif()
+    # The game's files go to tidec as a list in a file (@list), written only
+    # when it changes: a big game's are more than a command line holds
+    # (32,767 characters on Windows).
+    set(listed "${CMAKE_CURRENT_BINARY_DIR}/tide/${target}.sources")
+    list(JOIN sources "\n" source_lines)
+    if(package_lines)
+        list(JOIN package_lines "\n" more_lines)
+        string(APPEND source_lines "\n${more_lines}")
+    endif()
+    set(written "-")
+    if(EXISTS "${listed}")
+        file(READ "${listed}" written)
+    endif()
+    if(NOT written STREQUAL source_lines)
+        file(WRITE "${listed}" "${source_lines}")
+    endif()
     add_custom_command(
-        OUTPUT "${out_c}" "${out_h}"
+        OUTPUT "${out_c}" "${out_h}" ${pack_outputs}
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${out_dir}"
-        COMMAND ${TIDEC_COMMAND} ${sources} -o "${out_dir}" --name "${name}" ${layout}
-        DEPENDS ${TIDEC_DEPENDS} ${sources}
+        COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" -P "${TIDE_RUN_TIDEC}"
+            -- "@${listed}" -o "${out_dir}" --name "${name}" ${layout} ${pack_c} ${defines}
+        DEPENDS ${TIDEC_DEPENDS} ${sources} ${package_sources} ${asset_files} "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
         COMMENT "tidec ${target}"
         VERBATIM)
 
-    if(ARG_HOST)
-        add_executable(${target} ${ARG_HOST} "${out_c}" "${out_h}" ${c_sources})
-        target_link_libraries(${target} PRIVATE tide)
+    if(ARG_HOST AND ARG_WINDOW AND TIDE_ANDROID)
+        add_library(${target} SHARED ${ARG_HOST} "${out_c}" "${out_h}" "${out_pack_c}" ${c_sources})
+        target_link_libraries(${target} PRIVATE tide tide_platform)
+        tide_android_app(${target} LABEL "${title}")
+    elseif(ARG_HOST)
+        add_executable(${target} ${ARG_HOST} "${out_c}" "${out_h}" "${out_pack_c}" ${c_sources})
+        target_link_libraries(${target} PRIVATE tide tide_font_bold)
     else()
         if(NOT TARGET tide_platform)
             message(FATAL_ERROR "tide_add_game(${target}): a game without HOST opens a window, which needs the "
@@ -110,25 +301,39 @@ function(tide_add_game target)
 
 int main(int argc, char **argv)
 {
-    tide_run(&(tide_run_desc){.title = "@title@", .stats = @stats@, .argc = argc, .argv = argv});
+    tide_run(&(tide_run_desc){.@title_field@ = "@title@", .stats = @stats@, .argc = argc, .argv = argv});
 }
 ]])
-        add_executable(${target} "${main}" "${out_c}" "${out_h}" ${c_sources})
-        target_link_libraries(${target} PRIVATE tide_platform)
-        tide_web_page(${target})
+        if(TIDE_ANDROID)
+            add_library(${target} SHARED "${main}" "${out_c}" "${out_h}" ${c_sources})
+            target_link_libraries(${target} PRIVATE tide_platform)
+            tide_android_app(${target} LABEL "${title}" PACK "${out_pack}")
+        else()
+            add_executable(${target} "${main}" "${out_c}" "${out_h}" ${c_sources})
+            target_link_libraries(${target} PRIVATE tide_platform)
+            # Its assets beside it, as <target>.pack, when it has any (tide/run.h loads it)
+            add_custom_command(TARGET ${target} POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" "-DFROM=${out_pack}" "-DTO=$<TARGET_FILE_DIR:${target}>/${target}.pack"
+                    -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/copy_pack.cmake"
+                VERBATIM)
+            tide_web_page(${target} PACK "${out_pack}")
+        endif()
     endif()
     target_include_directories(${target} PRIVATE "${out_dir}")
 
     # `cmake --build --preset <preset> --target <target>_schedule` prints which
     # systems can run at the same time, and why the others wait.
     add_custom_target(${target}_schedule
-        COMMAND ${TIDEC_COMMAND} ${sources} --schedule --name "${name}"
+        COMMAND ${TIDEC_COMMAND} "@${listed}" --schedule --name "${name}"
         DEPENDS ${TIDEC_DEPENDS}
         VERBATIM
         USES_TERMINAL)
 
     foreach(path IN LISTS manifest_paths)
         set_property(GLOBAL APPEND PROPERTY TIDE_GAME_LINES "${target}\t${path}")
+    endforeach()
+    foreach(line IN LISTS manifest_packages)
+        set_property(GLOBAL APPEND PROPERTY TIDE_GAME_LINES "${target}\t${line}")
     endforeach()
     get_property(scheduled GLOBAL PROPERTY TIDE_GAMES_MANIFEST_SCHEDULED)
     if(NOT scheduled)
@@ -139,7 +344,9 @@ endfunction()
 
 # Lists every game and its files, one "<game>\t<path>" per line, once all the
 # games are known. A path ending in '/' is a folder: every .tide file in it and
-# its subfolders. tidels reads it to analyze a game's files together.
+# its subfolders. A file of a package the game is built with (PACKAGES) has the
+# package's name after it: "<game>\t<path>\t<package>". tidels reads it to
+# analyze a game's files together.
 function(tide_write_games_manifest)
     get_property(lines GLOBAL PROPERTY TIDE_GAME_LINES)
     list(JOIN lines "\n" content)

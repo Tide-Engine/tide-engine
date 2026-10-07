@@ -1,0 +1,8 @@
+// expect: write 'World world' instead, 'world.Get<Health>(entity)' where the code has 'health[entity]', and 'world.Has<Health>(entity)' where it has 'health.Has(entity)'
+component Health { int value; }
+component Attacker { Entity target; }
+scene Main { }
+system Attack(Attacker attacker, lookup Health health)
+{
+    var h = health[attacker.target];
+}

@@ -1,0 +1,11 @@
+// expect: Web.Fetch can only be used in local code
+input PlayerInput
+{
+    bool jump;
+    Sample(Devices devices)
+    {
+        var bytes = Web.Fetch("http://example.com/file")!;
+        jump = devices.keyboard.space.pressed;
+    }
+}
+scene Main { }

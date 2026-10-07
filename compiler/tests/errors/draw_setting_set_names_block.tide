@@ -1,0 +1,9 @@
+// expect: write 'Draw.Transform(...) { ... }'
+scene Main { }
+
+view Show()
+{
+    Draw.SetTransform(float2(1, 2))
+    {
+    }
+}

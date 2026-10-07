@@ -1,0 +1,77 @@
+# The build service on Fly.io (see builds.mjs), at https://builds.tide-engine.dev.
+# That name is a CNAME to tide-builds.fly.dev in tide-engine.dev's DNS on
+# Cloudflare, not proxied, with its certificate from Fly (fly certs), as the
+# relay's is.
+#
+# Two apps. This one, tide-builds, is the service: one machine, with the
+# volume everything is kept on (builds_data, 1 GB), which stops when nobody
+# asks it anything and starts again for the next request. The other,
+# tide-builders (fly.builder.toml), has no machine of its own: the service
+# makes one there for each build, which Fly destroys when the build is done.
+# They're apart because Fly gives an app's secrets to every machine in it,
+# and a machine that builds gets none of this app's.
+#
+# On hold since 2026-10-06, and not deployed: both apps, the volume and the DNS
+# record were deleted. To bring it back, make them again first:
+#
+#   fly apps create tide-builds
+#   fly apps create tide-builders --network tide-builders
+#   fly volumes create builds_data --size 1 --region fra -a tide-builds
+#   the secrets below, the CNAME, and fly certs add builds.tide-engine.dev -a tide-builds
+#
+# Deploy from this folder, the builders' image first when tide.version
+# changed (fly.builder.toml says how), then:
+#
+#   fly deploy --ha=false
+#
+# Its secrets (never in this file):
+#
+#   TIDE_BUILDS_ADMIN       the admin secret, which makes games (admin.mjs)
+#   TIDE_BUILDS_MASTER_KEY  32 random bytes in base64, which the games' private
+#                           keys are encrypted with: lost, every game needs
+#                           new keys, and a shipped game trusts the old ones
+#   TIDE_BUILDERS_TOKEN     a token for tide-builders, and for nothing else:
+#                           fly tokens create deploy -a tide-builders
+#
+#   fly secrets set TIDE_BUILDS_ADMIN=... TIDE_BUILDS_MASTER_KEY=... TIDE_BUILDERS_TOKEN=... -a tide-builds
+app = 'tide-builds'
+primary_region = 'fra'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  TIDE_BUILDS_URL = 'https://builds.tide-engine.dev'
+  TIDE_BUILDERS_APP = 'tide-builders'
+  # A builder: Fly's smallest CPU, and the memory a build has
+  TIDE_BUILDERS_CPUS = '1'
+  TIDE_BUILDERS_MEMORY = '1024'
+
+# Storage is this volume for now, behind store.mjs, which is all that knows:
+# it moves to object storage without the rest changing.
+[mounts]
+  source = 'builds_data'
+  destination = '/data'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = 'requests'
+    soft_limit = 200
+    hard_limit = 250
+
+  [[http_service.checks]]
+    grace_period = '10s'
+    interval = '30s'
+    method = 'GET'
+    path = '/'
+    timeout = '5s'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '256mb'

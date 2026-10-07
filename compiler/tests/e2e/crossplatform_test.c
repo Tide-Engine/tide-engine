@@ -28,18 +28,18 @@ static uint64_t hash_world(void)
     uint64_t h = 0xCBF29CE484222325ull;
     h = hash_bits(h, (uint32_t)world.Spawner.spawned);
     h = hash_bits(h, (uint32_t)world.Spawner.seed);
-    const tide_arch0_Body *bodies = &world.arch0_Body;
-    h = hash_bits(h, bodies->count);
-    for (uint32_t i = 0; i < bodies->count; i++) {
-        const Body *b = &bodies->Body[i];
-        h = hash_bits(h, bodies->entity[i].index);
-        h = hash_bits(h, bodies->entity[i].generation);
-        h = hash_float(hash_float(hash_float(h, b->position.x), b->position.y), b->position.z);
-        h = hash_float(hash_float(hash_float(h, b->velocity.x), b->velocity.y), b->velocity.z);
-        h = hash_float(hash_float(hash_float(hash_float(h, b->rotation.value.x), b->rotation.value.y),
-                                  b->rotation.value.z), b->rotation.value.w);
-        h = hash_float(h, b->phase);
-        h = hash_bits(h, (uint32_t)b->counter);
+    h = hash_bits(h, world.arch0_Body.count);
+    for (uint32_t i = 0; i < world.arch0_Body.count; i++) {
+        const Body b = TIDE_AT(&world, arch0_Body, Body, i);
+        const tide_entity e = TIDE_ENTITY_AT(&world, arch0_Body, i);
+        h = hash_bits(h, e.index);
+        h = hash_bits(h, e.generation);
+        h = hash_float(hash_float(hash_float(h, b.position.x), b.position.y), b.position.z);
+        h = hash_float(hash_float(hash_float(h, b.velocity.x), b.velocity.y), b.velocity.z);
+        h = hash_float(hash_float(hash_float(hash_float(h, b.rotation.value.x), b.rotation.value.y),
+                                  b.rotation.value.z), b.rotation.value.w);
+        h = hash_float(h, b.phase);
+        h = hash_bits(h, (uint32_t)b.counter);
     }
     return h;
 }

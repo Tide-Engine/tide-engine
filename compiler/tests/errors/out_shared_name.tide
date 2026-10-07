@@ -1,0 +1,16 @@
+// expect: no 'Pick' takes (int, int)
+// expect: Pick(int key, out int value)
+// expect: Pick(string key, out int value)
+scene Main { }
+singleton Tally { int total; }
+bool Pick(int key, out int value)
+{
+    value = key;
+    return true;
+}
+bool Pick(string key, out int value)
+{
+    value = key.length;
+    return true;
+}
+system Run(mut Tally tally) { Pick(4, tally.total); }

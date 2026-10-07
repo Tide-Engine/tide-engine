@@ -1,0 +1,85 @@
+// The World in local code: a view reads the match's entities through it, and
+// reads and changes the local world's.
+
+component Health
+{
+    int value = 10;
+}
+
+component Follower
+{
+    Entity leader;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    var leader = Spawn(Health { value = 42 });
+    Spawn(Follower { leader = leader });
+}
+
+local singleton Seen
+{
+    int leaderHealth;
+    int pickedFrames;
+    int glow;
+    Entity picked;
+    LocalEntity lamp;
+    bool made;
+}
+
+local component Lamp
+{
+    int glow;
+}
+
+local component Toggle
+{
+    LocalEntity lamp;
+}
+
+local event Dim
+{
+    int by;
+}
+
+// Makes a lamp and a toggle for it, once
+view Make(mut Seen seen)
+{
+    if (seen.made) return;
+    seen.made = true;
+    seen.lamp = Spawn(Lamp { glow = 5 });
+    Spawn(Toggle { lamp = seen.lamp });
+}
+
+// A match entity's component, from the entity the view runs for
+view Watch(Follower follower, World world, mut Seen seen)
+{
+    seen.leaderHealth = world.Get<Health>(follower.leader).value;
+    seen.picked = follower.leader;
+}
+
+// It only reads the match through the World, so it only runs in a match
+view Picked(mut Seen seen, World world)
+{
+    if (world.Has<Health>(seen.picked)) seen.pickedFrames += 1;
+}
+
+// A local entity's component, read and changed through the World
+view Flip(Toggle toggle, mut World world, mut Seen seen)
+{
+    mut var lamp = world.Get<Lamp>(toggle.lamp);
+    lamp.glow += 1;
+    world.Set<Lamp>(toggle.lamp, lamp);
+    seen.glow = world.Get<Lamp>(toggle.lamp).glow;
+    if (seen.glow >= 8) this.Send(Dim { by = 6 });
+}
+
+// A local handler takes the World too, for local entities
+local event(Dim dim) DimLamp(Toggle toggle, mut World world)
+{
+    mut var lamp = world.Get<Lamp>(toggle.lamp);
+    lamp.glow -= dim.by;
+    world.Set<Lamp>(toggle.lamp, lamp);
+}

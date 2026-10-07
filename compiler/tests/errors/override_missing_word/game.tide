@@ -1,0 +1,15 @@
+// expect: 'Shared.Tick' is already declared with these parameters
+// expect: the other one is virtual: to replace it, write 'override' before this one
+namespace Shared;
+
+system Tick(mut Position position)
+{
+    position.value += 2;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Position);
+}
+
+scene Main { }

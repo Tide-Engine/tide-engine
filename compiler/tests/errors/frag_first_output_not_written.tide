@@ -1,0 +1,7 @@
+// expect: frag 'Shade' can end without writing its pixel's color, 'color'
+// The first of several is the pixel's color, as a frag's only one is
+scene Main { }
+frag Shade(Vertex vertex, out Color color, out Color glow)
+{
+    glow = Color.white;
+}

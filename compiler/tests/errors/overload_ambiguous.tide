@@ -1,0 +1,6 @@
+// expect: 'Half(int)' could be more than one 'Half'
+scene Main { }
+singleton Log { float total; }
+float Half(long value) { return 1; }
+float Half(float value) { return value * 0.5; }
+system Run(mut Log log) { log.total = Half(3); }

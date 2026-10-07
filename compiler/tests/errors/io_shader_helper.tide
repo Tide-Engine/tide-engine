@@ -1,0 +1,8 @@
+// expect: file and directory access belongs to local CPU code
+scene Main { }
+bool Present() { return File.Exists("save"); }
+frag Shade(Vertex vertex, out Color color)
+{
+    color = Present() ? vertex.color : Color.black;
+}
+view DrawIt() { Draw.Mesh([Vertex { position = float2(0) }], [0, 0, 0], Shade); }

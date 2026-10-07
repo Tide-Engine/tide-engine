@@ -1,7 +1,8 @@
 # tide's built-in clang and lld (compiler/cli/llvm/cc.cpp): tide links LLVM's
 # static libraries, so users need no compiler of their own.
 #
-# The libraries come from LLVM's own release for this machine, downloaded once
+# The libraries come from LLVM's own release for the system tide is built for
+# (this machine's, or Windows' when its package is built elsewhere), downloaded once
 # into build/llvm-<version> and pinned; unpacking it needs the zstd program.
 # TIDE_LLVM_ROOT can name an unpacked LLVM instead. Defines the tide_cc library,
 # and installs clang's own headers into the package, where tide's clang looks
@@ -12,10 +13,10 @@ string(REGEX MATCH "^[0-9]+" _tide_llvm_major "${TIDE_LLVM_VERSION}")
 set(TIDE_LLVM_ROOT "" CACHE PATH "An unpacked LLVM ${TIDE_LLVM_VERSION} with its static libraries (default: downloaded)")
 
 if(NOT TIDE_LLVM_ROOT)
-    if(CMAKE_HOST_WIN32)
+    if(WIN32)
         set(_tide_llvm_name "clang+llvm-${TIDE_LLVM_VERSION}-x86_64-pc-windows-msvc")
         set(_tide_llvm_hash ceaee048142fece144752c6f6431cb0905a7a6160f78ab8cf5cf0b6216f99418)
-    elseif(CMAKE_HOST_APPLE)
+    elseif(APPLE)
         set(_tide_llvm_name "LLVM-${TIDE_LLVM_VERSION}-macOS-ARM64")
         set(_tide_llvm_hash 3da0e91b5dfe3a5ec795ad2be79b3f5e6f28c8b23edcd3847fad7742b25e0507)
     else()
@@ -55,7 +56,7 @@ if(NOT TIDE_LLVM_ROOT)
             # Straight from zstd into tar: the Linux archive unpacks to 12 GB. On
             # macOS, LLVM's lld too, which links tide (see below).
             find_program(TIDE_TAR NAMES tar REQUIRED)
-            if(CMAKE_HOST_APPLE)
+            if(APPLE)
                 set(_tide_llvm_lld "${_tide_llvm_name}/bin/lld" "${_tide_llvm_name}/bin/ld64.lld")
             endif()
             execute_process(COMMAND "${TIDE_ZSTD}" -d -q -c --long=31 "${_tide_llvm_file}"
@@ -123,6 +124,27 @@ if(APPLE)
         "LINKER:-cache_path_lto,${CMAKE_BINARY_DIR}/lto-cache")
 endif()
 
+# tide is nearly all LLVM, so how it's linked decides how big it is. Windows'
+# linker (lld-link) leaves out what nothing reaches and keeps one of the
+# functions that are the same code by itself, and a program there has no table
+# of its functions' names. The others have to be told each: without it, tide
+# for Linux was 210 MB to Windows' 121, a sixth of it names. Not in a build to
+# debug.
+set(_tide_small "$<CONFIG:Release,MinSizeRel>")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(tide_cc INTERFACE "$<${_tide_small}:LINKER:--gc-sections,-s>")
+    # Folding functions takes lld (GNU ld has none of it), where clang finds one.
+    include(CheckLinkerFlag)
+    check_linker_flag(CXX -fuse-ld=lld TIDE_LLD_LINKS)
+    if(TIDE_LLD_LINKS)
+        target_link_options(tide_cc INTERFACE -fuse-ld=lld "$<${_tide_small}:LINKER:--icf=safe>")
+    endif()
+elseif(APPLE)
+    # Nothing loads into tide, so it exports nothing, which makes every name
+    # one the table can leave out.
+    target_link_options(tide_cc INTERFACE "$<${_tide_small}:LINKER:-dead_strip,-x,-no_exported_symbols,--icf=safe>")
+endif()
+
 # LLVM's releases are built with zlib and zstd, and on Windows with libxml2
 # (for lld's manifests), without including them: build them for tide, only as
 # the static libraries. A function, so these settings stay local.
@@ -165,5 +187,24 @@ function(tide_add_llvm_dependencies)
 endfunction()
 tide_add_llvm_dependencies()
 
+# clang's own headers, but not those for what tide never builds for: other
+# CPUs (it builds for x86-64 and arm64, the machine's and Android's, and the
+# web), GPUs, OpenCL and HLSL, MSVC's compatibility outside Windows, and the
+# runtimes the package doesn't have (sanitizers, OpenMP, profiling, XRay).
+set(_tide_clang_unneeded cuda_wrappers fuzzer llvm_libc_wrappers llvm_offload_wrappers openmp_wrappers ppc_wrappers
+    profile sanitizer xray zos_wrappers "__clang_cuda_*" "__clang_gpu_*" "__clang_hip_*" "__clang_spirv_*" altivec.h
+    amo.h amdgpuintrin.h amdhsa_abi.h andes_vector.h gpuintrin.h "hexagon_*" hvx_hexagon_protos.h "hlsl*" htmintrin.h
+    htmxlintrin.h larchintrin.h lasxintrin.h lsxintrin.h msa.h nvptxintrin.h omp.h ompx.h "opencl-c*" "riscv_*"
+    s390intrin.h sifive_vector.h spirvintrin.h vecintrin.h "velintrin*" arm_cde.h arm_cmse.h arm_mve.h)
+if(NOT WIN32)
+    list(APPEND _tide_clang_unneeded intrin.h intrin0.h vadefs.h yvals_core.h armintr.h arm64intr.h)
+endif()
+if(NOT APPLE)
+    list(APPEND _tide_clang_unneeded ptrauth.h)
+endif()
+set(_tide_clang_excludes "")
+foreach(name IN LISTS _tide_clang_unneeded)
+    list(APPEND _tide_clang_excludes PATTERN "${name}" EXCLUDE)
+endforeach()
 install(DIRECTORY "${TIDE_LLVM_ROOT}/lib/clang/${_tide_llvm_major}/include"
-    DESTINATION "lib/clang/${_tide_llvm_major}" COMPONENT tide)
+    DESTINATION "lib/clang/${_tide_llvm_major}" COMPONENT tide ${_tide_clang_excludes})

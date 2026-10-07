@@ -1,0 +1,46 @@
+// expect: 'Fade' calls itself, and the GPU has no recursion
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+component Box
+{
+    Color tint = Color.white;
+}
+
+singleton Sun
+{
+    float3 direction = float3(0, -1, 0);
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    Grid2<Color> wood = Grid2(4, 4);
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box);
+}
+
+float Fade(float x)
+{
+    if (x < 0.1) return x;
+    return Fade(x * 0.5);
+}
+
+frag Shade(V vertex, out Color color)
+{
+    color = Color.white * Fade(vertex.uv.x);
+}
+
+view Show(Box box, Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}

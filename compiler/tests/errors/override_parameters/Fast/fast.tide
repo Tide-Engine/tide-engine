@@ -1,0 +1,8 @@
+namespace Fast;
+
+using Combat;
+
+override system Combat.Move(mut Position position, Velocity velocity, with Player)
+{
+    position.value += velocity.value * 2;
+}

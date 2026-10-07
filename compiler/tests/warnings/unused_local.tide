@@ -1,0 +1,47 @@
+// warnings: 3
+// expect: 13:9: warning: local 'fwd' is never used
+// expect: nothing reads its value: remove it, or use it where it was meant
+// expect: 21:9: warning: local 'doubled' is never used
+// expect: 25:13: warning: local 'inner' is never used
+
+// A value worked out and then not used: the code moves by `move`, not `fwd`.
+// A call of a function that only gives a value is as removable as Math's.
+
+system Move(mut Player player, PlayerInput input, Time time)
+{
+    var move = Math.Normalize(float3(input.horizontal, 0, input.vertical));
+    var fwd = Math.Mul(player.rotation, move);
+    player.position += move * 5 * time.dt;
+}
+
+int Twice(int x) { return x * 2; }
+
+system Count(mut Player player)
+{
+    var doubled = Twice(player.hits);
+    player.hits += 1;
+    if (player.hits > 2)
+    {
+        var inner = player.hits; // Each scope's own
+    }
+}
+
+component Player
+{
+    float3 position;
+    quaternion rotation = quaternion.identity;
+    int hits;
+}
+
+input PlayerInput
+{
+    float horizontal;
+    float vertical;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Player, Owner);
+}

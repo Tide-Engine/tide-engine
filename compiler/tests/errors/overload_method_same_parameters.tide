@@ -1,0 +1,8 @@
+// expect: 'Stats' already has a method 'Hurt' with these parameters
+scene Main { }
+struct Stats
+{
+    float health = 10;
+    float Hurt(float amount) { return health - amount; }
+    float Hurt(float by) { return health - by * 2; }
+}

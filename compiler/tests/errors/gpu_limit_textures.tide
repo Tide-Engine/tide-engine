@@ -1,0 +1,48 @@
+// expect: this draw samples 9 textures, and a draw takes 8
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+component Box
+{
+    Color tint = Color.white;
+}
+
+singleton Sun
+{
+    float3 direction = float3(0, -1, 0);
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    Grid2<Color> page0 = Grid2(2, 2);
+    Grid2<Color> page1 = Grid2(2, 2);
+    Grid2<Color> page2 = Grid2(2, 2);
+    Grid2<Color> page3 = Grid2(2, 2);
+    Grid2<Color> page4 = Grid2(2, 2);
+    Grid2<Color> page5 = Grid2(2, 2);
+    Grid2<Color> page6 = Grid2(2, 2);
+    Grid2<Color> page7 = Grid2(2, 2);
+    Grid2<Color> page8 = Grid2(2, 2);
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box);
+}
+
+frag Shade(V vertex, out Color color, Models models)
+{
+    color = models.page0.Sample(vertex.uv) * models.page1.Sample(vertex.uv) * models.page2.Sample(vertex.uv) * models.page3.Sample(vertex.uv) * models.page4.Sample(vertex.uv) * models.page5.Sample(vertex.uv) * models.page6.Sample(vertex.uv) * models.page7.Sample(vertex.uv) * models.page8.Sample(vertex.uv);
+}
+
+view Show(Box box, Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}
