@@ -1177,6 +1177,36 @@ TIDE_TEST(lsp_instanced_drawing)
 // A draw's values: the struct a mesh draw or a Blit gives after its vert and
 // frag, which they read through a parameter of its type. VALUE_TYPES is 8
 // lines: the vert is on line 5, the frags on lines 6 and 7.
+// The cameras as matrices: Draw's functions, and a target's.
+TIDE_TEST(lsp_camera_matrices)
+{
+    start();
+#define CAMERA_GAME \
+    "scene Main { }\nlocal singleton Lamp { RenderTarget map; float4x4 toLamp; float4x4 place; float3x3 flat; }\n"
+    open_document(CAMERA_GAME "view Cast(mut Lamp lamp)\n{\n"
+                              "    lamp.toLamp = lamp.map.WorldToClip();\n"
+                              "    lamp.place = Draw.CameraTransform();\n"
+                              "    lamp.place = Draw.CameraProjection();\n"
+                              "    lamp.flat = Draw.WorldToScreenMatrix();\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *to_clip = hover_at(4, 28);
+    TIDE_CHECK(has(to_clip, "float4x4") && has(to_clip, "from the world to clip space") && has(to_clip, "the turn of z included"));
+    TIDE_CHECK(has(hover_at(5, 24), "Where the current 3D camera is in the world"));
+    TIDE_CHECK(has(hover_at(6, 24), "fitted to the shape of what it draws into"));
+    const char *flat = hover_at(7, 24);
+    TIDE_CHECK(has(flat, "float3x3") && has(flat, "The identity inside `Pixels`"));
+
+    const char *draw = complete(CAMERA_GAME "view V(mut Lamp lamp)\n{\n    Draw.$\n}\n");
+    TIDE_CHECK(offers(draw, "WorldToClip") && offers(draw, "CameraTransform") && offers(draw, "CameraProjection")
+               && offers(draw, "WorldToScreenMatrix"));
+    const char *target = complete(CAMERA_GAME "view V(mut Lamp lamp)\n{\n    lamp.map.$\n}\n");
+    TIDE_CHECK(offers(target, "WorldToClip") && offers(target, "CameraProjection") && offers(target, "WorldToScreenMatrix"));
+
+    // The match has no camera
+    open_document(CAMERA_GAME "singleton Rules { float4x4 seen; }\nsystem S(mut Rules rules)\n{\n    rules.seen = Draw.WorldToClip();\n}\n");
+    TIDE_CHECK(!has(last_sent(), "\"diagnostics\":[]"));
+}
+
 TIDE_TEST(lsp_draw_values)
 {
     start();

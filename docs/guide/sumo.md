@@ -183,10 +183,10 @@ view Cast(Fx fx, Models models, mut Shadow shadow)
     var turned = quaternion.LookRotation(-Lamp(), float3(0, 1, 0));
     var lamp = float4x4.TRS(Math.Mul(turned, float3(0, LAMP_RAISED, -LAMP_AWAY)), turned, float3(1));
     var sees = float4x4.Ortho(LAMP_SPAN, LAMP_SPAN, 0, LAMP_FAR);
-    shadow.toLamp = Math.Mul(sees, Math.Mul(float4x4.TRS(float3(0), quaternion.identity, float3(1, 1, -1)), Math.Inverse(lamp)));
 
     shadow.map.Clear(Color.white);
     shadow.map.SetCamera(lamp, sees);
+    shadow.toLamp = shadow.map.WorldToClip();
     shadow.map.Instanced(models.cube, models.cubeFaces, fx.tiles);
     shadow.map.Instanced(models.cube, models.cubeFaces, fx.solids);
     ...

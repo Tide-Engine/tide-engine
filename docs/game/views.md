@@ -1182,6 +1182,34 @@ view Isometric(Viewer viewer)
 }
 ```
 
+### A camera as matrices
+
+Whatever set the camera, a view reads it back as the matrices the GPU draws through:
+
+| Function | Result |
+|---|---|
+| `Draw.WorldToClip()` | The 3D camera as one `float4x4`, from the world to clip space |
+| `Draw.CameraTransform()` | Where the 3D camera is in the world, a `float4x4`: it looks along its `+z` |
+| `Draw.CameraProjection()` | Its projection, a `float4x4`: from what it sees to clip space |
+| `Draw.WorldToScreenMatrix()` | The 2D camera as a `float3x3`, from the world to the screen's pixels |
+
+- They're the camera as it's set when they're asked, in this frame: ask after `SetCamera`, or inside a `Camera` block. Before any camera is set, they're the camera each frame starts with.
+- A render target has the same four, for its own cameras: `target.WorldToClip()`.
+- `WorldToClip()` is what a 3D mesh's positions are multiplied by, exactly: the camera's transform undone, z turned around (a camera looks along its `+z`, and clip space along `-z`), then the projection, fitted to the shape of the window or the target. A point through it is in clip space: once divided by its `w`, `x` and `y` go from -1 to 1 across what the camera sees, `y` up, and `z` from -1 at the near plane to 1 at the far limit. It's what a frag needs to find a pixel in another camera's image, as a [shadow map](./shaders.md#a-shadow-map) does with its lamp's.
+- `CameraTransform()` and `CameraProjection()` are the two `SetCamera(transform, projection)` takes, so `Draw.SetCamera(Draw.CameraTransform(), Draw.CameraProjection())` sets the camera there already was. A camera set with a field of view has them too, its projection with the screen's shape in it.
+- `WorldToScreenMatrix()` does to `float3(x, y, 1)` what `Draw.WorldToScreen` does to a `float2`. It's the identity inside `Draw.Pixels`.
+- [`Draw.Transform`](#transforms) is no part of any of them: they're the camera's alone.
+
+```csharp
+view Mirror(mut Looking looking)
+{
+    Draw.SetCamera(looking.eye, looking.turned, 60);
+    looking.toClip = Draw.WorldToClip();            // Kept for a frag, in a local singleton
+    float4 clip = Math.Mul(looking.toClip, float4(looking.target, 1));
+    looking.onScreen = clip.w > 0 && Math.Abs(clip.x) <= clip.w && Math.Abs(clip.y) <= clip.w;
+}
+```
+
 A game's C draws 3D meshes too, with vertices of its own, like a model a library loaded: see [Drawing from C](../c/functions.md#drawing-from-c).
 
 ## Screen and world coordinates
@@ -1220,6 +1248,8 @@ view Pointer(Devices devices)
     }
 }
 ```
+
+The cameras these go through are there as matrices too: see [A camera as matrices](#a-camera-as-matrices).
 
 On the screen (`Draw.Pixels`, `Draw.SetPixels`), its conversion helpers are identity mappings. A viewport with no size, a singular camera matrix, or a point whose projection has no finite position returns zero.
 
