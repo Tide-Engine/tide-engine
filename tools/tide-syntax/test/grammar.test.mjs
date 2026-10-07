@@ -462,6 +462,12 @@ const cases = {
         ['var either = on ? 1 : out;', [['out', '!storage.modifier']]],
         ['if (out is Stats made) return;', [['out', '!storage.modifier'], ['is', 'keyword.operator.expression.is']]],
         ['Write(count: out);', [['count', 'variable.parameter'], ['out', '!storage.modifier']]],
+    ],    'namespace blocks': [
+        ['namespace ProbeBlocks.Inner', [['namespace', 'keyword.other.namespace'], ['ProbeBlocks', 'entity.name.namespace'], ['Inner', 'entity.name.namespace']]],
+        ['component InBlock {', [['component', 'storage.type'], ['InBlock', 'entity.name.type']]],
+        ['int BlockFunction(', [['int', 'storage.type.primitive'], ['BlockFunction', 'entity.name.function']]],
+        ['namespace Deeper', [['namespace', 'keyword.other.namespace'], ['Deeper', 'entity.name.namespace']]],
+        ['system InDeeper(', [['system', 'storage.type'], ['InDeeper', 'entity.name.function'], ['InBlock', 'entity.name.type']]],
     ],
 };
 
@@ -527,8 +533,21 @@ for (const program of programs) {
         checkLinesEndText(program, lines);
         let inType = false; // In a component's, singleton's, struct's, input's or scene's body
         let found = 0;
+        const blocks = []; // The namespace blocks open: how far in each one's declarations are
         for (const line of lines) {
-            const text = line.text.replace(/\r$/, '');
+            const whole = line.text.replace(/\r$/, '');
+            // Inside `namespace Name { ... }`, declarations are a step in: read as they'd be at a file's top
+            const shift = blocks.length > 0 ? blocks[blocks.length - 1] : 0;
+            const opens = /^( *)namespace\s+[\w.]+\s*\{?$/.exec(whole);
+            if (opens) {
+                blocks.push(opens[1].length + 4);
+                continue;
+            }
+            if (shift > 0 && whole === ' '.repeat(shift - 4) + '}') {
+                blocks.pop();
+                continue;
+            }
+            const text = whole.startsWith(' '.repeat(shift)) ? whole.slice(shift) : whole;
             for (const piece of line.pieces) {
                 assert.ok(!has(piece.scopes, 'invalid'), `${program}:${line.number}: "${piece.text}" is ${piece.scopes.join(' ')}`);
             }
@@ -552,7 +571,7 @@ for (const program of programs) {
             }
             if (!name) continue;
             found++;
-            const index = text.search(new RegExp(String.raw`\b${name}\b`));
+            const index = text.search(new RegExp(String.raw`\b${name}\b`)) + (whole.length - text.length);
             const pieces = line.pieces.filter(p => p.start < index + name.length && p.end > index);
             for (const piece of pieces) {
                 assert.ok(has(piece.scopes, scope) && !has(piece.scopes, 'entity.name.function.call'),

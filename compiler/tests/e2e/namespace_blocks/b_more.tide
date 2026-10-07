@@ -1,0 +1,29 @@
+// A file with a namespace of its own, whose blocks are inside it: Items here
+// is Game.Items, the namespace the other file's dotted block declares.
+namespace Game;
+
+using Combat;
+
+namespace Items
+{
+    // Bag by its plain name: the other file's block is the same namespace.
+    // CRIT through the file's `using`, which is its blocks' too.
+    int Worth(Bag bag)
+    {
+        return bag.coins * Scale() + CRIT;
+    }
+}
+
+// Game's own, which the block above finds in the namespace around it
+int Scale()
+{
+    return 10;
+}
+
+namespace Tools.Deep
+{
+    int Edge()
+    {
+        return 5;
+    }
+}

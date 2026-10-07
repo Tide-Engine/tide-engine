@@ -1,0 +1,3 @@
+// expect: a namespace of package Kit is its own, or one inside it, not 'Other'
+// expect: write 'namespace Kit { ... }', or one inside it like 'namespace Kit.Other { ... }'
+scene Main { }

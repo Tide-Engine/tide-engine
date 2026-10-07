@@ -1,0 +1,8 @@
+// expect: 'namespace' goes at the top of the file, before any declaration
+// expect: a namespace for some of a file's declarations is a block, 'namespace Name { ... }', which goes anywhere a declaration does
+scene Main { }
+namespace Combat
+{
+    component Health { int hp; }
+}
+namespace Game;

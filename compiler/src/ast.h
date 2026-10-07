@@ -147,13 +147,27 @@ typedef struct type {
 // ---------------------------------------------------------------------------
 // Files and names
 
-// One source file of a program.
+// One source file of a program, or one `namespace Name { ... }` block of a
+// file: where declarations get their namespace, and what their code reads
+// names through. A block's unit has its file's source and its `using`s, and
+// the namespace its name makes inside the one it's written in. Both are in
+// program.units, a file's before its blocks', each block where it opens.
 typedef struct unit {
     const source *src;
     str ns;           // `namespace Game.Combat;`, or empty for the global namespace
     loc ns_at;
-    VEC(str) usings;  // `using Physics;`
+    VEC(str) usings;  // `using Physics;`: the file's, which its blocks share
     VEC(loc) using_at;
+    const struct unit *outer; // A block's: the file or the block it's written in. NULL for a file
+    str ns_written;   // A block's name as written, at ns_at: `Combat` in a file of `namespace Game;`, where ns is Game.Combat
+    loc block_at;     // A block's `namespace` word
+    loc open_at;      // ...its '{'
+    loc close_at;     // ...and its '}'; no line where it's missing
+    // The column its declarations start at, which is how a parser that
+    // recovers and the editors tell where one starts: 1 in a file, and in a
+    // block that of its first line after the '{', or four past its
+    // `namespace` word, as the formatter puts them.
+    int decl_col;
 } unit;
 
 // A type as it's written: a name, maybe qualified, what it takes in <>, and
