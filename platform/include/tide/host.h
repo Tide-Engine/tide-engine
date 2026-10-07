@@ -287,8 +287,11 @@ static inline void tide_run_correct_views(void *user, const tide_view_correction
 // input delay in ticks, how long its inputs wait at the server in milliseconds,
 // the ticks counted as late, run again, run at all and run ahead so far, the
 // times the world was sent again, the times views were corrected and replaced,
-// and what the session's update and the whole frame's work took, in
-// milliseconds.
+// what the session's update and the whole frame's work took, in
+// milliseconds, and what the input delay goes by: what a rollback would cost
+// now, the most one may take, and what rollbacks have cost an update of late,
+// in milliseconds. A value joins at the end, so a page that reads the first
+// ones by their place keeps reading them.
 static inline void tide_run_netcode(const tide_session_status *status, const uint64_t update_ns, const uint64_t work_ns)
 {
     const tide_client_status *c = &status->client;
@@ -297,6 +300,7 @@ static inline void tide_run_netcode(const tide_session_status *status, const uin
         (double)c->predicted_tick, (double)c->server_tick, (double)c->delay_ticks, (double)c->early_ms, (double)c->late_ticks,
         (double)c->again_ticks, (double)c->run_ticks, (double)c->ahead_ticks, (double)c->resyncs,
         (double)tide_run_corrections, (double)tide_run_view_resets, (double)update_ns * 1e-6, (double)work_ns * 1e-6,
+        (double)c->rollback_ms, (double)c->rollback_most_ms, (double)c->resim_ms,
     };
     tide_platform_netcode(values, (uint32_t)(sizeof values / sizeof values[0]));
 }

@@ -1,7 +1,8 @@
 // Shared reporting of the browser and native per-frame netcode samples.
 // A frame as a page said it: when, then the numbers in tide_run_netcode's order.
 const F = { at: 0, state: 1, server: 2, ping: 3, answer: 4, verified: 5, predicted: 6, heard: 7, delay: 8, early: 9, late: 10,
-    again: 11, ran: 12, ahead: 13, resyncs: 14, corrections: 15, resets: 16, update: 17, work: 18 };
+    again: 11, ran: 12, ahead: 13, resyncs: 14, corrections: 15, resets: 16, update: 17, work: 18,
+    rollback: 19, most: 20, load: 21 }; // The last three since 2026-10-07: frames from before have none
 const CONNECTED = 2;
 
 const sorted = values => [...values].sort((a, b) => a - b);
@@ -77,6 +78,10 @@ function summary(frames) {
         frames_over_50ms: between.filter(ms => ms > 50).length,
         update_ms: spread(update),
         work_ms: spread(work),
+        // What the delay went by, where the frames say it (the median rollback cost, the most one may take, and the load)
+        rollback_ms: end.length > F.load ? spread(played.map(f => f[F.rollback])) : null,
+        most_ms: end.length > F.load ? spread(played.map(f => f[F.most])).median : null,
+        load_ms: end.length > F.load ? spread(played.map(f => f[F.load])) : null,
         corrections_a_second: +((end[F.corrections] - start[F.corrections]) / took).toFixed(1),
         view_resets: end[F.resets] - start[F.resets],
         late_ticks: end[F.late] - start[F.late],
@@ -97,6 +102,10 @@ function show(who, s) {
         + ` ${s.frames_over_50ms} over 50); the session's update ${s.update_ms.median} ms (p95 ${s.update_ms.p95}, p99 ${s.update_ms.p99}, longest`
         + ` ${s.update_ms.max}); a frame's work ${s.work_ms.median} ms (p95 ${s.work_ms.p95})`);
     console.log(`    views corrected ${s.corrections_a_second} times a second, replaced ${s.view_resets} times; ${s.late_ticks} inputs late; sent the world again ${s.resyncs} times`);
+    if (s.rollback_ms) {
+        console.log(`    a rollback would cost ${s.rollback_ms.median} ms (p95 ${s.rollback_ms.p95}, most ${s.rollback_ms.max}) against ${s.most_ms} it may take;`
+            + ` rollbacks cost ${s.load_ms.median} ms an update (p95 ${s.load_ms.p95}, most ${s.load_ms.max})`);
+    }
     const j = s.joining;
     console.log(`    joining, ${j.behind} ticks behind: in its first second it ran ${j.ran} ticks, ${j.ahead} of them ahead and ${j.again} again;`
         + ` ${j.late} counted late; ${j.most_in_a_frame} in one frame at the most; longest update ${j.longest_update_ms} ms, longest frame`

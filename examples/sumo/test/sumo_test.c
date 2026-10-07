@@ -1413,15 +1413,21 @@ TIDE_TEST(sumo_costs)
     spend(MEASURED(120), "a fresh ring at rest, one ball that nobody drives", false);
     // A world made again from its image, as a client that predicted wrong does before it runs its ticks again
     double again = 1e9;
+    double restore = 1e9; // Of which Box3D's restore, and the image in parts the tick writes after it
     for (int i = 0; i < 5; i++) {
         b3t_forget();
         (void)counted();
+        uint64_t step_ns, image_ns;
+        b3t_measure(&step_ns, &image_ns);
         began = tide_time_now_ns();
         tide_world_tick(&world);
         const double took = (double)(tide_time_now_ns() - began - counted()) / 1e6;
+        b3t_measure(&step_ns, &image_ns);
         if (took < again) again = took;
+        if ((double)image_ns / 1e6 < restore) restore = (double)image_ns / 1e6;
     }
-    printf("    a tick that makes Box3D's world again from the match's image (%d bytes): %.2f ms\n", world.Box3D_Physics.size, again);
+    printf("    a tick that makes Box3D's world again from the match's image (%d bytes): %.2f ms, of which the restore %.2f\n",
+           world.Box3D_Physics.size, again, restore);
     world.Ring.bots = true;
     tick(4);
     spend(MEASURED(600), "four bots at a full ring, 10 seconds", true);
