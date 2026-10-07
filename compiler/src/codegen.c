@@ -2168,7 +2168,8 @@ static void gen_construct(gen *g, sb *o, const expr *e)
         sb_put(o, ")");
         break;
 
-    case CTOR_COMPONENTS: {
+    case CTOR_COMPONENTS:
+    case CTOR_COLOR: {
         if (t.kind == TY_QUATERNION) {
             sb_put(o, "tide_q(");
             for (int i = 0; i < e->args.count; i++) {
@@ -2178,7 +2179,7 @@ static void gen_construct(gen *g, sb *o, const expr *e)
             sb_put(o, ")");
             break;
         }
-        const bool is_float = type_is_float_based(t);
+        const bool is_float = type_is_float_based(t) || t.kind == TY_COLOR;
         sb_printf(o, "(%s){", c_type(t));
         int written = 0;
         for (int i = 0; i < e->args.count; i++) {
@@ -2204,6 +2205,7 @@ static void gen_construct(gen *g, sb *o, const expr *e)
                 sb_printf(o, "%s%s(%s).%s", written++ ? ", " : "", widen ? "(float)" : "", text, xyzw[k]);
             }
         }
+        if (e->ctor == CTOR_COLOR && written == 3) sb_put(o, ", 1.0f");
         sb_put(o, "}");
         break;
     }
@@ -2271,16 +2273,6 @@ static void gen_construct(gen *g, sb *o, const expr *e)
         sb_printf(o, "((%s)(", c_type(t));
         gen_expr(g, o, first);
         sb_put(o, "))");
-        break;
-
-    case CTOR_COLOR:
-        sb_put(o, "(tide_color){");
-        for (int i = 0; i < e->args.count; i++) {
-            if (i) sb_put(o, ", ");
-            gen_as(g, o, e->args.items[i], float_t);
-        }
-        if (e->args.count == 3) sb_put(o, ", 1.0f");
-        sb_put(o, "}");
         break;
 
     case CTOR_RECT:
@@ -3315,6 +3307,13 @@ static void gen_expr(gen *g, sb *o, const expr *e)
 
 // Math.Dot(a, b), Draw.Circle(center, radius, color): c_callee, with the
 // frame's draw list first for a call that draws.
+// Math.Perlin, Simplex and Cellular (tide/math.h): a point and a seed, 0 where the call leaves it out.
+static bool noise_call(const char *c_callee)
+{
+    return c_callee && (strncmp(c_callee, "tide_perlin_", 12) == 0 || strncmp(c_callee, "tide_simplex_", 13) == 0
+                        || strncmp(c_callee, "tide_cellular_", 14) == 0);
+}
+
 static void gen_builtin_call(gen *g, sb *o, const expr *e)
 {
     // Draw.Shape goes through the helper that turns a Shape into a tide_shape
@@ -3365,6 +3364,7 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
         const int takes = strcmp(e->c_callee, "tide_audio_play") == 0 ? 3 : 4;
         for (int i = e->args.count; i < takes; i++) sb_put(o, ", 1.0f");
     }
+    if (e->call == CALL_BUILTIN && noise_call(e->c_callee) && e->args.count == 1) sb_put(o, ", 0"); // Its seed, left out
     if ((text_at || measure_text) && !weighted) sb_put(o, ", TIDE_FONT_REGULAR");
     if (e->call == CALL_DRAW && (str_eq_c(e->name, "WorldToScreen") || str_eq_c(e->name, "ScreenToWorld")
                                 || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection"))) {
@@ -4423,8 +4423,9 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
         for (int i = 0; out->strict && m && m->owner && e->kind == E_CALL && !m->is_mut_method && i < e->args.count; i++) {
             if (holds_writer(e->args.items[i])) out->forced = true;
         }
-        // A vector made from vectors reads each one's components from its text, written out again for each
-        for (int i = 0; e->call == CALL_CONSTRUCT && e->ctor == CTOR_COMPONENTS && i < e->args.count; i++) {
+        // A vector or color made from vectors reads each one's components from its text, written out again for each
+        for (int i = 0; e->call == CALL_CONSTRUCT && (e->ctor == CTOR_COMPONENTS || e->ctor == CTOR_COLOR)
+                        && i < e->args.count; i++) {
             expr *arg = e->args.items[i];
             if (type_dim(arg->type) >= 2 && holds_ordered(arg)) out->forced = true;
         }
@@ -6230,7 +6231,7 @@ static void gen_header(gen *g)
     if (prog->assets.count) sb_put(o, "#define TIDE_HAS_ASSETS 1\n\n");
     if (prog->uses_audio) sb_put(o, "#define TIDE_HAS_AUDIO 1\n\n");
     sb_put(o, "#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n\n");
-    if (program_has_clips(prog) || prog->sound->named) sb_put(o, "#include \"tide/audio.h\"\n");
+    if (program_has_clips(prog) || prog->sound->named || prog->uses_microphone) sb_put(o, "#include \"tide/audio.h\"\n");
     sb_put(o, "#include \"tide/color.h\"\n#include \"tide/devices.h\"\n#include \"tide/draw.h\"\n#include \"tide/entity.h\"\n"
               "#include \"tide/grid.h\"\n#include \"tide/gui.h\"\n#include \"tide/math.h\"\n#include \"tide/list.h\"\n#include \"tide/map.h\"\n#include \"tide/mesh.h\"\n#include \"tide/player.h\"\n#include \"tide/session.h\"\n"
               "#include \"tide/jobs.h\"\n#include \"tide/table.h\"\n#include \"tide/attached.h\"\n#include \"tide/text.h\"\n#include \"tide/debug.h\"\n#include \"tide/io.h\"\n");
@@ -16369,6 +16370,7 @@ bool codegen(program *prog, const codegen_options *opts)
         setting_text(opts->info->app_id, sizeof opts->info->app_id, prog->app_id);
         setting_text(opts->info->version, sizeof opts->info->version, prog->version);
         opts->info->bold = prog->names_bold;
+        opts->info->microphone = prog->uses_microphone;
     }
     gen g = {0};
     g.prog = prog;

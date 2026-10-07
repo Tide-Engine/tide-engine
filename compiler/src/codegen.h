@@ -8,6 +8,7 @@ typedef struct game_info {
     char app_id[256]; // appId, likewise
     char version[64]; // version, likewise
     bool bold;        // Its C names the bold weight's file (it says Font.Bold), which is in the platform layer's library
+    bool microphone;  // It says Clip.Microphone: its Android app's manifest asks to record audio
     // The files and folders its assets name (asset_files.h), for whoever
     // watches them: malloc'd, each path malloc'd, for the caller to free.
     char **asset_paths;

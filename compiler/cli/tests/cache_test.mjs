@@ -1,12 +1,12 @@
 // Package-level cache correctness, with real native/web compilation.
-// node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--keep]
+// node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--gpu] [--keep]
 // Copies the installation before changing headers or compiler timestamps.
 import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
-const opts = { tide: null, web: false, keep: false };
+const opts = { tide: null, web: false, gpu: false, keep: false };
 for (let i = 2; i < process.argv.length; i++) {
     if (process.argv[i] === "--tide") {
         const value = process.argv[++i];
@@ -14,9 +14,10 @@ for (let i = 2; i < process.argv.length; i++) {
         opts.tide = resolve(value);
     }
     else if (process.argv[i] === "--web") opts.web = true;
+    else if (process.argv[i] === "--gpu") opts.gpu = true;
     else if (process.argv[i] === "--keep") opts.keep = true;
     else if (process.argv[i] === "--help") {
-        console.log("Usage: node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--keep]");
+        console.log("Usage: node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--gpu] [--keep]");
         process.exit(0);
     } else throw new Error(`unknown option ${process.argv[i]}`);
 }
@@ -86,16 +87,17 @@ function removeOwned(root, path) {
     rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 
-async function webReloadTest(tide, root) {
-    console.log("Cache correctness: web hot reload");
-    const game = join(root, "web-reload");
+async function webRunTest(tide, root, watch) {
+    console.log(`Cache correctness: web ${watch ? "hot reload" : "run without watching"}`);
+    const game = join(root, watch ? "web-reload" : "web-run");
     mkdirSync(game);
     const source = join(game, "game.tide");
     const c = join(game, "native.c");
     const tideText = "scene Main { }\nsingleton State { int value; }\nextern int Native(int value);\nsystem Update(mut State state) { state.value = Native(state.value) + 1; }\n";
     put(source, tideText);
     put(c, "int Native(int value) { return value + 1; }\n");
-    const child = spawn(tide, ["run", game, "--web", "--no-open"], { cwd: game, env, shell: false, windowsHide: true });
+    const child = spawn(tide, ["run", game, "--web", "--no-open", "--seed", "7", ...(watch ? ["--watch"] : [])],
+        { cwd: game, env, shell: false, windowsHide: true });
     let output = "", url = null, exited = false, startError = null;
     const closed = new Promise((accept) => {
         child.on("error", (error) => { startError = error; exited = true; accept(); });
@@ -125,6 +127,23 @@ async function webReloadTest(tide, root) {
     }
     try {
         await waitFor(() => Boolean(url), "web run startup");
+        const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+        check(response.ok, "web run serves its page");
+        const page = await response.text();
+        check(page.includes('Tide.arguments = [ "--seed","7"]'), "web run passes the game's arguments");
+        check(page.includes("Tide.reload = true;") === watch, "only --watch enables page polling");
+        if (!watch) {
+            check(page.includes("const TIDE_PROGRAM = ") && !page.includes("tide_reload_save"), "plain web run serves a standalone page");
+            check((await fetch(`${url}build`)).status === 404, "plain web run has no reload endpoint");
+            const cache = join(game, ".tide", "web-debug");
+            const before = mark(cache);
+            put(c, "int Native(int value) { return value + 2; }\n");
+            put(source, tideText.replace("+ 1;", "+ 2;"));
+            await new Promise((accept) => setTimeout(accept, 1250));
+            expectWrites(cache, before, [], "plain web run keeps its initial build after edits");
+            check((await (await fetch(url)).text()) === page, "plain web run serves the same page after edits");
+            return;
+        }
         await waitFor(async () => await buildNumber() === 1, "initial web build");
         const cache = join(game, ".tide", "web-debug");
         let before = mark(cache);
@@ -141,6 +160,25 @@ async function webReloadTest(tide, root) {
         child.kill();
         await closed;
     }
+}
+
+async function nativeRunTest(tide, root) {
+    console.log("Standalone native run (requires a GPU)");
+    const game = join(root, "native-run");
+    mkdirSync(game);
+    put(join(game, "game.tide"), 'scene Main { }\nasset string message = "message.txt";\nextern void Verify(bool ok);\n'
+        + 'view Paint() { Verify(message == "hello"); Draw.Clear(Color(0, 1, 0)); }\n');
+    put(join(game, "message.txt"), "hello");
+    put(join(game, "verify.c"), "#include <stdbool.h>\n#include <stdlib.h>\nvoid Verify(bool ok) { if (!ok) abort(); }\n");
+    const capture = join(root, "native-run.png");
+    const result = await run(tide, ["run", game, "--frames", "3", "--capture", capture, "--size", "32", "32"], root);
+    check(result.code === 0, `plain native run failed:\n${result.said}`);
+    check(!result.said.includes("saving a .tide or C file"), "plain native run doesn't start the watcher");
+    check(readFileSync(capture).subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])), "native run captures a PNG");
+    const cache = join(game, ".tide", "native-debug");
+    check(!existsSync(join(game, "build")), "native run's executable is private to its run");
+    check(readFileSync(join(cache, "gen", "main.c"), "utf8").includes("tide_run(&(tide_run_desc)"), "plain native run uses the standalone host");
+    check(readdirSync(join(cache, "run")).length === 0, "the native run cleans its private executable and pack");
 }
 
 async function targetTests(tide, installation, root, target, embedded) {
@@ -298,7 +336,11 @@ async function main() {
         const embedded = /clang:\s+built in/.test(version.said);
         if (!embedded) console.log("External compiler is unchanged; installed-header and configuration invalidation are still exercised.");
         for (const target of opts.web ? ["native", "web"] : ["native"]) await targetTests(tide, installation, root, target, embedded);
-        if (opts.web) await webReloadTest(tide, root);
+        if (opts.web) {
+            await webRunTest(tide, root, false);
+            await webRunTest(tide, root, true);
+        }
+        if (opts.gpu) await nativeRunTest(tide, root);
         console.log("Cache integration tests passed.");
     } finally {
         if (opts.keep) console.log(`Kept fixtures: ${root}`);

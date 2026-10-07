@@ -119,10 +119,11 @@ typedef struct tide_host_game {
 // tide_game hash) takes over the match and the local state where they are;
 // with another, they're carried over to it by name (tide/migrate.h), or when
 // that can't be done, the game starts over. A file named `restart` in `dir`
-// starts it over too. Native builds only (platform/src/reload.c).
+// fully reloads it too, as Ctrl+R in its window does: the match, local state
+// and the library's globals start fresh. Native builds only (platform/src/reload.c).
 _Noreturn void tide_host_run_library(const tide_run_desc *desc, const char *dir);
 
-// The same on the web (tide run --web), where each new build is a program of
+// The same on the web (tide run --web --watch), where each new build is a program of
 // its own, which the page starts in the running one's place: `game` goes on
 // from what the last one left it, carried over by name, or starts as
 // tide_host_run would. Web builds only (platform/src/reload.c).
@@ -146,6 +147,7 @@ static inline void tide_run_assets_from(uint8_t *bytes, const size_t size)
     if (tide_run_game->assets && bytes && !tide_run_game->assets(bytes, size)) {
         fprintf(stderr, "tide: the game's pack isn't one: its assets read as empty\n");
     }
+    tide_clips_prepare(tide_platform_jobs()); // Its clips decoded now, on the pool's threads, not at their first play
 }
 
 // The pack the build left with the program, for a game that has assets.
@@ -163,6 +165,9 @@ static inline void tide_run_load_assets(void)
 static void *tide_run_local;  // The game's tide_local
 static void *tide_run_start;  // A tide_start, for what local code asks
 static tide_devices tide_run_devices;
+// The watching host's shortcuts, immediately after polling and before the
+// game reads its devices. Plain hosts leave this unset.
+static void (*tide_run_input)(tide_devices *devices);
 static tide_draw_list tide_run_draw;
 static tide_audio_frame tide_run_audio; // What the frame says should be sounding (tide/audio.h)
 static tide_gui tide_run_gui;
@@ -214,6 +219,7 @@ static double tide_run_fps, tide_run_up, tide_run_down; // A second, over the la
 static double tide_run_work_ms;                         // A frame's work, over the last half second; under 0 until known
 static double tide_run_render_ms, tide_run_gpu_ms;       // Rendering on the CPU and GPU, over the last half second
 static uint64_t tide_run_memory;                        // tide_platform_memory, as of then
+static double tide_run_memory_at = -1.0;                // When the profiler last had it read, in tide_run_now
 
 static inline void tide_run_reset_timing(const bool active)
 {
@@ -509,6 +515,10 @@ static inline void tide_run_configure(const tide_run_desc *desc)
         } else if (strcmp(arg, "--script") == 0) {
             tide_run_headless_desc.script = tide_run_value(&i, arg, "a file of input by frame, like --script play.txt");
             tide_run_headless = true;
+        } else if (strcmp(arg, "--microphone") == 0) {
+            tide_run_headless_desc.microphone =
+                tide_run_value(&i, arg, "a WAV or Ogg Vorbis file the microphone plays in the run, like --microphone voice.wav");
+            tide_run_headless = true;
         }
     }
     if (scaled && !tide_run_headless) {
@@ -722,6 +732,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_profiler *profiler = tide_run_profiling ? &tide_run_profiler : NULL;
     tide_profiler_begin(profiler, seconds);
     tide_platform_poll(&tide_run_devices);
+    if (tide_run_input) tide_run_input(&tide_run_devices);
     tide_run_drawer_input(stats);
     const bool timing = stats && tide_run_drawer.open;
     if (timing != tide_run_timing) {
@@ -863,6 +874,7 @@ static inline int tide_run_frame(void *user, const float seconds)
             .gpu_known = tide_run_gpu_ms >= 0.0,
             .threads = jobs ? jobs->threads : 1u,
             .memory = tide_run_memory,
+            .gpu_memory = tide_platform_gpu_memory(),
             .renderer = tide_platform_renderer(),
             .draw_calls = tide_platform_draw_calls(),
             .match = match != NULL,
@@ -904,6 +916,14 @@ static inline int tide_run_frame(void *user, const float seconds)
     while (game->take_request(tide_run_local, &request, tide_run_start)) tide_run_request(&request, tide_run_start);
     // While nobody sees the window, the next frame is the match's next tick
     tide_platform_next_frame(tide_session_until_tick(s));
+    if (profiler) { // Its memory row: the program's once a second, as the drawer has it, and the renderer's count
+        if (tide_run_memory_at < 0.0 || tide_run_now - tide_run_memory_at >= 1.0) {
+            tide_run_memory = tide_platform_memory();
+            tide_run_memory_at = tide_run_now;
+        }
+        profiler->memory = tide_run_memory;
+        profiler->gpu_memory = tide_platform_gpu_memory();
+    }
     tide_profiler_end(profiler, status.client.again_ticks);
     return TIDE_KEEP_RUNNING;
 }

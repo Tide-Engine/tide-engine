@@ -45,6 +45,17 @@ system Roll(mut Dice dice)
     if (dice.spot == 0) dice.spot = 1 + dice.random.NextInt(12);
 }
 
+local singleton Mic
+{
+    Sound ear; // M starts and stops it: what the microphone hears plays
+}
+
+view Listen(Devices devices, mut Mic mic)
+{
+    mic.ear.clip = Clip.Microphone;
+    if (devices.keyboard.m.down) mic.ear.playing = !mic.ear.playing;
+}
+
 local singleton Seen
 {
     bool pressed;   // The button was

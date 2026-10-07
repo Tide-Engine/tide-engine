@@ -620,6 +620,59 @@ static void check_owned_targets(void)
     render_expect(expected, "unloaded owned targets discarded without stale pointer reads");
 }
 
+// What the renderer has on the GPU, by its own count (tide_platform_gpu_memory).
+// A frame that draws into a target of `width` by `height` and blits it: what's
+// held then, which is the target and the blit's mesh; the target is disposed
+// after, and a frame drawn without it.
+static uint64_t held_with_target(const int width, const int height)
+{
+    uint32_t expected[WIDTH * HEIGHT * 4];
+    const tide_render_target owned = tide_render_target_make(width, height);
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, owned);
+    tide_draw_clear(&render_list, TIDE_COLOR_RED);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_image(owned.id, width, height, 0);
+    for (int i = 0; i < WIDTH * HEIGHT * 4; i++) expected[i] = 0xff0000ffu;
+    render_expect(expected, "a target the count is of");
+    const uint64_t held = tide_platform_gpu_memory();
+    tide_render_target_dispose(owned);
+    tide_draw_reset(&render_list);
+    tide_draw_clear(&render_list, (tide_color){1, 1, 0, 1});
+    for (int i = 0; i < WIDTH * HEIGHT * 4; i++) expected[i] = 0xffff00ffu;
+    render_expect(expected, "a frame without the disposed target");
+    return held;
+}
+
+// The count grows by a target's bytes (4 of color and 4 of depth a pixel) as
+// frames draw into it, and is back where it was once it's disposed and a
+// frame drew without it. Two sizes, as the blit's mesh is held with the
+// target: the difference between them is the targets' alone. It's what was
+// asked for, so it's the same number on every backend.
+static void check_gpu_memory(void)
+{
+    uint32_t expected[WIDTH * HEIGHT * 4];
+    tide_draw_reset(&render_list);
+    tide_draw_clear(&render_list, (tide_color){1, 1, 0, 1});
+    for (int i = 0; i < WIDTH * HEIGHT * 4; i++) expected[i] = 0xffff00ffu;
+    render_expect(expected, "a frame before the count is taken");
+    const uint64_t before = tide_platform_gpu_memory();
+    const uint64_t small = held_with_target(WIDTH, HEIGHT);
+    const uint64_t after_small = tide_platform_gpu_memory();
+    const uint64_t big = held_with_target(WIDTH * 2, HEIGHT * 2);
+    const uint64_t after_big = tide_platform_gpu_memory();
+    if (before == 0 || small <= before + WIDTH * HEIGHT * 8u || big - small != 3u * WIDTH * HEIGHT * 8u) {
+        failures++;
+        fprintf(stderr, "gpu memory: %llu before, %llu with a target of %d by %d, %llu with one of %d by %d\n",
+                (unsigned long long)before, (unsigned long long)small, WIDTH, HEIGHT, (unsigned long long)big, WIDTH * 2, HEIGHT * 2);
+    }
+    if (after_small != before || after_big != before) {
+        failures++;
+        fprintf(stderr, "gpu memory: %llu and %llu after the targets were disposed, %llu before they were made\n",
+                (unsigned long long)after_small, (unsigned long long)after_big, (unsigned long long)before);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Targets on a scaled display, and under a window that changes: a list drawn
 // as a window of a given size would draw it on a display of a given scale
@@ -3119,6 +3172,8 @@ static int frame(void *user, const float seconds)
     check_cubes();
     check_cubes(); // Its pipelines and its cubes are made again
     checked("the backend's cubes");
+    check_gpu_memory();
+    checked("the renderer's count of what it has on the GPU");
     if (failures) return 1;
 #ifdef __wasm__
     if (!lost && strcmp(tide_platform_renderer(), "WebGPU") == 0) {

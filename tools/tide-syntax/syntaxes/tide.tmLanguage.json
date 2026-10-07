@@ -303,8 +303,8 @@
           }
         },
         {
-          "comment": "system MovePlayer, view DrawBalls, frag Shade, vert Wave, extern system MoveInC",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override|extern)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(system|view|frag|vert)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
+          "comment": "system MovePlayer, view DrawBalls, frag Shade, vert Wave, audio Echo, extern system MoveInC",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override|extern)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(system|view|frag|vert|audio)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },
@@ -350,8 +350,8 @@
           }
         },
         {
-          "comment": "const int MAX_HEALTH = ...: a constant",
-          "match": "^\\s*(const)\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\s*>)?\\??)\\s+([A-Za-z_][A-Za-z0-9_]*)(?=\\s*=)",
+          "comment": "const int MAX_HEALTH = ...: a constant, maybe after its attributes",
+          "match": "(?:^|(?<=\\]))\\s*(const)\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\s*>)?\\??)\\s+([A-Za-z_][A-Za-z0-9_]*)(?=\\s*=)",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "patterns": [{ "include": "#type-name" }] },
@@ -359,8 +359,24 @@
           }
         },
         {
+          "comment": "asset Texture hero = ...: a file under an ordinary variable name, including lists and maps",
+          "match": "(?:^|(?<=\\]))\\s*(asset)\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[A-Za-z0-9_.,<> \\t]+>)?\\??)\\s+([A-Za-z_][A-Za-z0-9_]*)(?=\\s*=)",
+          "captures": {
+            "1": { "name": "storage.modifier.tide" },
+            "2": { "patterns": [{ "include": "#type-name" }] },
+            "3": { "name": "variable.other.tide" }
+          }
+        },
+        {
+          "comment": "The word asset before an incomplete declaration",
+          "match": "(?:^|(?<=\\]))\\s*(asset)\\b(?=\\s+[A-Za-z_])",
+          "captures": {
+            "1": { "name": "storage.modifier.tide" }
+          }
+        },
+        {
           "comment": "Methods and functions: [virtual] [async] [mut] Type Name(, where Type can be List<T> or T?, at the start of a line. An override's name is written with what it's in: override float Combat.Damage(, override bool Stats.IsDead(",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(?:(mut)\\s+)?(?!(?:return|if|else|var|mut|with|without|system|view|frag|vert|audio|component|singleton|struct|input|event|command|enum|scene|local|async|switch|case|default|break|while|for|foreach|parallel|continue|namespace|using|extern|const|settings|fail|try|is|null|true|false|this|await|operator|virtual|override)\\b)([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\s*>)?\\??)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(?:(mut)\\s+)?(?!(?:return|if|else|var|mut|with|without|system|view|frag|vert|audio|component|singleton|struct|input|event|command|enum|scene|local|async|switch|case|default|break|while|for|foreach|parallel|continue|namespace|using|extern|const|asset|settings|fail|try|is|null|true|false|this|await|operator|virtual|override)\\b)([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\s*>)?\\??)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },

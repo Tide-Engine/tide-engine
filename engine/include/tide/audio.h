@@ -43,14 +43,27 @@
 // for none): a voice whose clip's id changes starts over from the new one's
 // beginning. A clip with no samples plays silence, which is what a source
 // (an effect on a voice with no clip) starts from.
+struct tide_vorbis;
+struct tide_jobs;
+
 typedef struct tide_clip {
-    const float *samples;
+    const float *samples; // Decoded, interleaved; NULL for a clip that streams (`stream`) or plays nothing
     uint32_t frames;
     uint32_t channels;
     uint32_t rate;
     uint64_t id;
-    uint64_t name; // The Clip it came from, where it's the pack's (tide_clip_of); 0 otherwise
+    uint64_t name;                     // The Clip it came from, where it's the pack's (tide_clip_of); 0 otherwise
+    const struct tide_vorbis *stream;  // A long Ogg Vorbis clip, decoded as it plays (tide/vorbis.h), with no `samples`
+    bool microphone;                   // The capture device's frames (Clip.Microphone): no samples, mono at TIDE_AUDIO_RATE
 } tide_clip;
+
+// Tide's `Clip.Microphone`: the capture device, as a clip a `Sound` plays. A
+// voice of it gives what the device captures, mono, at the mixer's rate,
+// through its effect and bus; a one-shot of it plays nothing. The platform
+// opens the device while a frame names such a voice (tide_audio_frame.microphone)
+// and closes it when none does. Its name is one no pack's clip has.
+#define TIDE_CLIP_MICROPHONE_NAME UINT64_MAX
+#define TIDE_CLIP_MICROPHONE ((tide_clip_ref){.name = TIDE_CLIP_MICROPHONE_NAME})
 
 // Tide's `Clip`: a sound of the game's pack, named by its declaration (as a
 // Texture of the pack's names its image: a number made of the declaration's
@@ -69,6 +82,14 @@ typedef struct tide_clip_ref {
 // until tide_clips_free, which a host calls once the mixer let go of them.
 tide_clip tide_clip_of(tide_clip_ref ref);
 void tide_clips_free(void);
+
+// Decodes the loaded pack's clips that aren't decoded yet, on `jobs`' threads
+// (or this one, for NULL), so the first play of each costs nothing: what a host
+// calls once it loaded a pack. A WAV decodes whole; Ogg Vorbis up to
+// tide_clips_whole_seconds long does too, and a longer one is kept as its file,
+// to stream.
+void tide_clips_prepare(const struct tide_jobs *jobs);
+extern uint32_t tide_clips_whole_seconds; // 10
 
 // Code the audio thread runs once a block: `samples` is the block, TIDE_AUDIO_SAMPLES
 // floats it reads and writes; `state` is `state_size` bytes of the voice's (or
@@ -121,6 +142,7 @@ typedef struct tide_audio_frame {
     tide_audio_effect bus_effect[TIDE_AUDIO_BUSES]; // Its knobs copied too (knobs_at below)
     uint32_t bus_knobs_at[TIDE_AUDIO_BUSES];
     bool forget; // The host says: stop everything and let go of every clip and effect (a reload)
+    bool microphone; // A voice of the frame's plays the microphone: the platform keeps the capture device open
 
     uint32_t frame; // Counts tide_audio_reset
 } tide_audio_frame;
