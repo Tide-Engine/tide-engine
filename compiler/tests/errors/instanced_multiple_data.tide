@@ -1,4 +1,4 @@
-// expect: a vert takes one instance struct, supplied by Draw3D.Instanced, and this names two
+// expect: a vert takes one instance struct, supplied by Draw.Instanced, and this names two
 scene Main { }
 struct BatchItem { float3 offset; }
 struct OtherItem { float3 offset; }

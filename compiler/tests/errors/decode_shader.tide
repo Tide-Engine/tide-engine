@@ -6,4 +6,4 @@ frag Shade(Vertex vertex, out Color color, mut Field field)
     field.cells.Decode(field.bytes)!;
     color = vertex.color;
 }
-view DrawIt() { Draw2D.Mesh([Vertex { position = float2(0) }], [0, 0, 0], Shade); }
+view DrawIt() { Draw.Mesh([Vertex { position = float2(0) }], [0, 0, 0], Shade); }

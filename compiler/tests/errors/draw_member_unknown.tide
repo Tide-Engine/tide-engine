@@ -1,0 +1,4 @@
+// expect: Draw has no member 'camera'
+// expect: Draw has two: 'window', the window as a render target, and 'list', the frame's draw list for C
+scene Main { }
+view Show() { var c = Draw.camera; }

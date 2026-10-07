@@ -137,6 +137,6 @@ system Use(mut Unit unit, mut Results t)
 // Draw calls take `default` too.
 view Render(with Main)
 {
-    Draw2D.Circle(default, 5, Color.yellow);
-    Draw2D.Text(default, default, 1, default);
+    Draw.Circle(default, 5, Color.yellow);
+    Draw.Text(default, default, 1, default);
 }

@@ -77,9 +77,9 @@ command(Trade trade, PlayerID sender) TradeBodies(mut Roster roster)
 
 view Point(Devices devices, mut Aim aim)
 {
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw2D.SetCamera(float2(0, 0.2), 2.4);
-    aim.world = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0, 0.2), 2.4);
+    aim.world = Draw.ScreenToWorld(Screen.Flip(devices.pointer.position));
     if (Math.LengthSq(devices.pointer.delta) > 0) aim.moved = true;
     GUI.SetTheme(GUITheme { radius = 6 });
     if (GUI.Button(Rect(12, Screen.height - 44, Screen.width - 24, 32), "Trade bodies")) Send(Trade { });
@@ -88,17 +88,17 @@ view Point(Devices devices, mut Aim aim)
 // Every body this machine's player doesn't own: the other player's, and nobody's.
 view Others(Body body, without ownership)
 {
-    Draw2D.Circle(body.position, 0.2, body.color);
+    Draw.Circle(body.position, 0.2, body.color);
 }
 
 view Unowned(Body body, without Owner)
 {
-    Draw2D.Text("no Owner", body.position + float2(0, 0.3), 0.17, Color(0.64, 0.64, 0.68), Anchor.LowerCenter);
+    Draw.Text("no Owner", body.position + float2(0, 0.3), 0.17, Color(0.64, 0.64, 0.68), Anchor.LowerCenter);
 }
 
 view Mine(Body body, with ownership)
 {
-    Draw2D.Circle(body.position, 0.2, body.color);
-    Draw2D.WireCircle(body.position, 0.32, 0.04, Color.white);
-    Draw2D.Text("yours", body.position + float2(0, 0.4), 0.2, Color.white, Anchor.LowerCenter);
+    Draw.Circle(body.position, 0.2, body.color);
+    Draw.WireCircle(body.position, 0.32, 0.04, Color.white);
+    Draw.Text("yours", body.position + float2(0, 0.4), 0.2, Color.white, Anchor.LowerCenter);
 }

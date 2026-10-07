@@ -28,5 +28,5 @@ virtual frag Tint(Vertex vertex, out Color color, Sun sun)
 
 view Show(Art art)
 {
-    Draw2D.Mesh(art.quad, art.faces, Tint);
+    Draw.Mesh(art.quad, art.faces, Tint);
 }

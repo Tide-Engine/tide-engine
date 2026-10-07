@@ -6,13 +6,13 @@ scene Main { }
 
 view Words()
 {
-    Draw2D.Clear(Color(0.07, 0.08, 0.11));
-    Draw2D.SetScreen();
+    Draw.Clear(Color(0.07, 0.08, 0.11));
+    Draw.SetScreen();
     var weight = Font.Regular;
-    Draw2D.Text("Regular", float2(20, 20), 24, Color.white);
-    Draw2D.Text("in the middle", float2(Screen.width, Screen.height) * 0.5, 24, Color.white, Anchor.MiddleCenter);
-    Draw2D.Text("and still regular", float2(20, 60), 24, Color.white, weight);
-    var size = Draw2D.MeasureText("measured", 24, weight);
-    Draw2D.Rect(float2(20, 110) + size * 0.5, size, Color(0.2, 0.3, 0.5));
-    Draw2D.Text("measured", float2(20, 110), 24, Color.white, Anchor.UpperLeft, weight);
+    Draw.Text("Regular", float2(20, 20), 24, Color.white);
+    Draw.Text("in the middle", float2(Screen.width, Screen.height) * 0.5, 24, Color.white, Anchor.MiddleCenter);
+    Draw.Text("and still regular", float2(20, 60), 24, Color.white, weight);
+    var size = Draw.MeasureText("measured", 24, weight);
+    Draw.Rect(float2(20, 110) + size * 0.5, size, Color(0.2, 0.3, 0.5));
+    Draw.Text("measured", float2(20, 110), 24, Color.white, Anchor.UpperLeft, weight);
 }

@@ -38,6 +38,6 @@ vert Sink(mut Vertex3 vertex, Lamp lamp)
 view Show(mut Lamp lamp)
 {
     lamp.shadow = lamp.map.depth;
-    Draw3D.Mesh(lamp.mesh, lamp.faces, float4x4.identity, Lit);
-    Draw3D.Mesh(lamp.mesh, lamp.faces, float4x4.identity, Sink, Lit);
+    Draw.Mesh(lamp.mesh, lamp.faces, float4x4.identity, Lit);
+    Draw.Mesh(lamp.mesh, lamp.faces, float4x4.identity, Sink, Lit);
 }

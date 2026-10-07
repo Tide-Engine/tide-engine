@@ -1,4 +1,4 @@
-// expect: no version of Draw2D.WireEllipse takes (float2, float2, Color)
+// expect: no version of Draw.WireEllipse takes (float2, float2, Color)
 scene Main { }
 
 local singleton Canvas

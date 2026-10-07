@@ -2454,7 +2454,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     // Start after the CPU expanded the list and prepared/uploaded resources.
     // Otherwise a desktop GPU waiting for that work would time the CPU too.
     if (timed && gpu->time_begin) gpu->time_begin();
-    begin_pass(target, !over); // Every frame starts black; Draw2D.Clear picks another color
+    begin_pass(target, !over); // Every frame starts black; Draw.Clear picks another color
     bool pass_active = true;
     uint32_t calls = 0; // The steps that draw, a draw call each
     for (uint32_t i = 0; i < step_count; i++) {

@@ -7,5 +7,5 @@ frag Shade(Vertex vertex, out Color color)
 }
 view DrawIt()
 {
-    Draw2D.Mesh([Vertex { position = float2(0) }], [0, 0, 0], Shade);
+    Draw.Mesh([Vertex { position = float2(0) }], [0, 0, 0], Shade);
 }

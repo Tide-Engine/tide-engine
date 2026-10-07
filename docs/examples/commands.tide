@@ -52,19 +52,19 @@ float2 Seat(int seat)
 
 view Backdrop(Roster roster)
 {
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw2D.SetScreen();
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetScreen();
     GUI.SetTheme(GUITheme { radius = 6 }); // For the views after this one too
-    Draw2D.Text($"Commands the match refused: {roster.refused}", float2(16, Screen.height - 30), 14, Color(0.64, 0.64, 0.68));
+    Draw.Text($"Commands the match refused: {roster.refused}", float2(16, Screen.height - 30), 14, Color(0.64, 0.64, 0.68));
 }
 
 view Mine(Badge badge, mut Draft draft, with ownership)
 {
     var at = Seat(badge.seat);
-    Draw2D.RoundRect(at, float2(150, 64), 12, Color(0.36, 0.26, 0.04));
-    Draw2D.WireRoundRect(at, float2(150, 64), 12, 2, Color.white);
-    Draw2D.Text(badge.name, at, 20, Color.white, Anchor.MiddleCenter);
-    Draw2D.Text("yours", at + float2(0, 48), 13, Color(0.64, 0.64, 0.68), Anchor.MiddleCenter);
+    Draw.RoundRect(at, float2(150, 64), 12, Color(0.36, 0.26, 0.04));
+    Draw.WireRoundRect(at, float2(150, 64), 12, 2, Color.white);
+    Draw.Text(badge.name, at, 20, Color.white, Anchor.MiddleCenter);
+    Draw.Text("yours", at + float2(0, 48), 13, Color(0.64, 0.64, 0.68), Anchor.MiddleCenter);
     GUI.TextField(Rect(12, 12, Screen.width - 24, 32), "Name", draft.name);
     if (GUI.Button(Rect(12, 52, Screen.width - 24, 32), "Rename my badge")) this.Send(Rename { name = draft.name });
 }
@@ -72,8 +72,8 @@ view Mine(Badge badge, mut Draft draft, with ownership)
 view Theirs(Badge badge, without ownership)
 {
     var at = Seat(badge.seat);
-    Draw2D.RoundRect(at, float2(150, 64), 12, Color(0.2, 0.2, 0.23));
-    Draw2D.Text(badge.name, at, 20, Color.white, Anchor.MiddleCenter);
+    Draw.RoundRect(at, float2(150, 64), 12, Color(0.2, 0.2, 0.23));
+    Draw.Text(badge.name, at, 20, Color.white, Anchor.MiddleCenter);
     // Nothing stops a machine from sending this. The handler does.
     if (GUI.Button(Rect(at.x - 75, at.y + 42, 150, 30), "Rename theirs")) this.Send(Rename { name = "Mine now" });
 }

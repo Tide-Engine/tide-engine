@@ -1,11 +1,11 @@
 // The duel is drawn with the engine's shapes: round rects, circles, ellipses,
 // thick lines and arcs, with smooth edges at any size, in the order they're
-// written, text among them. Most of it is a `Draw2D` call. These are the few
+// written, text among them. Most of it is a `Draw` call. These are the few
 // shapes the game draws again and again that take a `Shape` to say: a fill
 // that goes from one color to another under an outline, and edges that fade
 // into a glow or a shadow.
 //
-// Each draws into the window, as `Draw2D` does. The arena isn't drawn there
+// Each draws into the window, as `Draw` does. The arena isn't drawn there
 // but into a target the size of the screen (effects.tide), so the ones it uses
 // come a second time, ending in `On`, and take what they draw into.
 Color Fade(Color color, float alpha)

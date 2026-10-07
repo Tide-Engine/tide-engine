@@ -6,7 +6,7 @@
 #include "tide/color.h"
 #include "tide/math.h"
 
-// Immediate-mode drawing: Tide's Draw2D and Draw3D APIs record commands into a draw
+// Immediate-mode drawing: Tide's Draw calls record commands into a draw
 // list, and a renderer plays them back (tide_platform_draw, on OpenGL or WebGPU). The list
 // knows nothing about any renderer, so replacing one doesn't touch game code.
 //
@@ -674,6 +674,9 @@ typedef struct tide_draw_place {
     uint32_t depth; // tide_depth: what the 3D meshes to come do with depth
     uint32_t cull;  // tide_cull: which side of their triangles isn't drawn
     uint32_t stencil; // A tide_stencil, packed: what the commands to come do with stencil
+    uint32_t blend;   // tide_blend: how the commands to come go over what's there
+    uint32_t tinted;  // Whether `tint` is anything but white: it's unset otherwise
+    tide_color tint;  // What the commands to come have their colors multiplied by
     // What the commands recorded so far leave a renderer with. Where it isn't the above, the commands
     // that say so are recorded before the next one that draws: a setting that's set and put back with
     // nothing drawn records nothing, and neither does one that's set to what it was.
@@ -728,7 +731,7 @@ typedef struct tide_draw_saved {
     uint32_t setting; // Which one: TIDE_DRAW_SAVED_*
     uint32_t target;  // Whose, for a destination's own: 0 for the window, or 1 + its place in tide_draw_list.targets
     union {
-        uint32_t value; // A blend, or what a place has for a camera, a clip, its depth, its cull or its stencil
+        uint32_t value; // What a place has for its blend, a camera, a clip, its depth, its cull or its stencil
         tide_color tint;
         struct {
             tide_draw_transform transform;
@@ -950,9 +953,6 @@ typedef struct tide_draw_list {
     tide_draw_place place;  // The current destination's settings...
     tide_draw_place window; // ...and the window's, while a target is selected
     uint32_t unsettled;     // Whether `place` plays other than what it has (see tide_draw_place)
-    uint32_t blend;         // tide_blend: how the commands to come go over what's there
-    uint32_t tinted;        // Whether `tint` is anything but white: it's unset otherwise
-    tide_color tint;        // What the commands to come have their colors multiplied by
     uint32_t altered;       // Whether a 2D command is recorded other than as it's given: tinted, or moved
     tide_draw_camera_data *cameras; // The 2D cameras the frame was given, which places and clips name
     uint32_t camera_count, camera_capacity;
@@ -1055,13 +1055,13 @@ void tide_draw_clear(tide_draw_list *d, tide_color color);
 // Settings: what the commands recorded after them are drawn with. Each frame
 // starts from the defaults (tide_draw_reset).
 //
-// There are two kinds. How a command comes out is the same wherever it draws:
-// how it blends (tide_draw_set_blend) and what tints it (tide_draw_set_tint).
-// Where it lands belongs to its destination, the window or a target, each
-// with its own for the frame: its cameras, its clip, its transforms, what its
-// 3D meshes do with its depth, which side of their triangles draws, and what
-// its draws do with its stencil. Those are set, and pushed, for the
-// destination that's selected (tide_draw_to).
+// Every setting belongs to a destination, the window or a target, each with
+// its own for the frame: how its commands blend and what tints them, its
+// cameras, its clip, its transforms, what its 3D meshes do with its depth,
+// which side of their triangles draws, and what its draws do with its
+// stencil. Each is set, and pushed, for the destination that's selected
+// (tide_draw_to), and reaches no other: a target's blend doesn't reach the
+// window's draws.
 //
 // Each has two forms. tide_draw_set_* sets it for the commands to come, until
 // it's set again, and tide_draw_unset_* puts it back as each frame starts.
@@ -1075,15 +1075,17 @@ void tide_draw_clear(tide_draw_list *d, tide_color color);
 // between, records nothing, so it never comes between commands a renderer
 // would draw at once.
 
-// How the commands after it go over what's there (tide_blend): by their alpha,
-// each frame's first. Clears and blits don't blend.
+// How the selected destination's commands after it go over what's there
+// (tide_blend): by their alpha, each frame's first. Clears and blits don't
+// blend.
 void tide_draw_set_blend(tide_draw_list *d, tide_blend blend);
 void tide_draw_unset_blend(tide_draw_list *d);
 uint32_t tide_draw_push_blend(tide_draw_list *d, tide_blend blend);
 
-// What the commands after it have their colors multiplied by, alpha too: a
-// shape's and text's colors, a mesh's corners', and what a shader of the
-// game's wrote. White, each frame's first, changes nothing.
+// What the selected destination's commands after it have their colors
+// multiplied by, alpha too: a shape's and text's colors, a mesh's corners',
+// and what a shader of the game's wrote. White, each frame's first, changes
+// nothing.
 void tide_draw_set_tint(tide_draw_list *d, tide_color tint);
 void tide_draw_unset_tint(tide_draw_list *d);
 uint32_t tide_draw_push_tint(tide_draw_list *d, tide_color tint);
@@ -1179,10 +1181,10 @@ void tide_draw_pop(tide_draw_list *d, uint32_t mark);
 // GUI.
 void tide_draw_defaults(tide_draw_list *d);
 
-// The tint the commands to come are drawn with: white for none.
+// The tint the selected destination's commands to come are drawn with: white for none.
 static inline tide_color tide_draw_tint(const tide_draw_list *d)
 {
-    return d->tinted ? d->tint : TIDE_COLOR_WHITE;
+    return d->place.tinted ? d->place.tint : TIDE_COLOR_WHITE;
 }
 
 void tide_draw_circle(tide_draw_list *d, tide_float2 center, float radius, tide_color color);

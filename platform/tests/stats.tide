@@ -47,7 +47,7 @@ local singleton Seen
 
 view Background()
 {
-    Draw2D.Clear(Color(0, 0, 1));
+    Draw.Clear(Color(0, 0, 1));
 }
 
 view Blocks(Read read, Devices devices, mut Seen seen)
@@ -59,8 +59,8 @@ view Blocks(Read read, Devices devices, mut Seen seen)
     }
     if (devices.keyboard.f8.down) seen.key = true;
 
-    Draw2D.SetScreen();
-    if (read.presses > 0) Draw2D.Rect(float2(40, 40), float2(40, 40), Color(1, 0, 0));
-    if (seen.pressed) Draw2D.Rect(float2(100, 40), float2(40, 40), Color(0, 1, 0));
-    if (seen.key) Draw2D.Rect(float2(160, 40), float2(40, 40), Color(1, 1, 0));
+    Draw.SetScreen();
+    if (read.presses > 0) Draw.Rect(float2(40, 40), float2(40, 40), Color(1, 0, 0));
+    if (seen.pressed) Draw.Rect(float2(100, 40), float2(40, 40), Color(0, 1, 0));
+    if (seen.key) Draw.Rect(float2(160, 40), float2(40, 40), Color(1, 1, 0));
 }

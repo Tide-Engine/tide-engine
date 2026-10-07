@@ -2305,7 +2305,7 @@ static void gen_text_literal(sb *o, const str text, const bool values)
     sb_printf(o, ", %d, %d})", bytes, chars);
 }
 
-// Text for a C function that takes a `const char *`, like Draw2D.Text's.
+// Text for a C function that takes a `const char *`, like Draw.Text's.
 // The source line `at` is on, without the space around it: what an assertion
 // that fails shows.
 static str source_line(const loc at)
@@ -2664,8 +2664,9 @@ static void gen_window_index(gen *g, sb *o, const expr *index)
 }
 
 // Every ordinary Draw call names the window; a receiver names its target.
-// The receiver is evaluated once, while the runtime keeps its camera and clip.
-// Draw's own settings (Draw.Blend) are no destination's: they select none.
+// The receiver is evaluated once, while the runtime keeps its settings. A
+// call with neither (draw_dims 0) selects none: there's none such from Tide,
+// as every setting is a destination's own.
 static void gen_draw_list(gen *g, sb *o, const expr *e)
 {
     if (!e->targeted && e->draw_dims == 0) {
@@ -3151,7 +3152,7 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             }
             sb_put(o, ")");
         } else if (e->call == CALL_DRAW && e->shader) {
-            // Draw2D.Mesh through a shader: its values, then what the frag and the vert read of the view's
+            // Draw.Mesh through a shader: its values, then what the frag and the vert read of the view's
             const shader *sh = e->shader;
             bool filter = false, wrap = false;
             const expr *source = sh->blit ? e->args.items[0] : NULL; // The texture it's given, which may say how it's sampled
@@ -3249,18 +3250,18 @@ static void gen_expr(gen *g, sb *o, const expr *e)
     }
 }
 
-// Math.Dot(a, b), Draw2D.Circle(center, radius, color): c_callee, with the
+// Math.Dot(a, b), Draw.Circle(center, radius, color): c_callee, with the
 // frame's draw list first for a call that draws.
 static void gen_builtin_call(gen *g, sb *o, const expr *e)
 {
-    // Draw2D.Shape goes through the helper that turns a Shape into a tide_shape
+    // Draw.Shape goes through the helper that turns a Shape into a tide_shape
     const bool shape = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_shape") == 0;
     sb_printf(o, "%s(", shape ? "tide_draw_shape_value" : e->c_callee);
     // target.Resize(...) runs on its receiver; RenderTarget.Screen(...) has none
     const bool receiver = e->resource_operation && e->object->type.kind == TY_RENDER_TARGET;
     if (e->call == CALL_DRAW) gen_draw_list(g, o, e);
     else if (receiver) gen_expr(g, o, e->object);
-    // Draw2D.Transform(offset, rotation): its arguments as the one value the setting takes
+    // Draw.Transform(offset, rotation): its arguments as the one value the setting takes
     if (e->c_pack) sb_printf(o, ", %s(", e->c_pack);
     // Text at an anchor, in a weight: C takes both, the weight as its file (tide_font_file)
     const bool text_at = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_text_at") == 0;
@@ -7686,7 +7687,7 @@ static void gen_prelude(gen *g)
     sb_put(o, "#define TIDE_ROWS static __attribute__((noinline))\n\n");
 
     // Tide's Shape and tide/draw.h's tide_shape have the same fields, and are two types in C
-    sb_printf(o, "// Draw2D.Shape: a Shape as tide/draw.h takes it.\n"
+    sb_printf(o, "// Draw.Shape: a Shape as tide/draw.h takes it.\n"
                  "TIDE_HELPER void tide_draw_shape_value(tide_draw_list *d, const %s s)\n{\n"
                  "    tide_draw_shape(d, (tide_shape){.center = s.center, .size = s.size, .rotation = s.rotation,\n"
                  "                                    .radius = s.radius, .color = s.color, .color2 = s.color2,\n"
@@ -15572,7 +15573,7 @@ static void setting_text(char *out, const size_t size, const expr *setting)
 
 // ---------------------------------------------------------------------------
 // Shaders (see shader.c): each as a tide_shader, and a function that draws a
-// mesh through it, which a Draw2D.Mesh calls with what the view has.
+// mesh through it, which a Draw.Mesh calls with what the view has.
 
 // A shader's source as an array of chars: C only promises string literals of
 // 4095.
@@ -15641,7 +15642,7 @@ static void gen_shaders(gen *g)
     const program *prog = g->prog;
     sb *o = &g->c;
     if (prog->shaders.count == 0) return;
-    sb_put(o, "// Shaders: what Draw2D.Mesh draws a vertex struct of the game's through, with its vert and frag\n\n");
+    sb_put(o, "// Shaders: what Draw.Mesh draws a vertex struct of the game's through, with its vert and frag\n\n");
     for (int s = 0; s < prog->shaders.count; s++) {
         const shader *sh = prog->shaders.items[s];
         const char *vertex = type_cname(sh->vertex);

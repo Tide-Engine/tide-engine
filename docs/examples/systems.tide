@@ -37,37 +37,37 @@ command(SetRunning change, PlayerID sender) Run(mut Demo demo)
 
 view Background()
 {
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw2D.SetCamera(float2(0), 3);
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0), 3);
     for (var i = -1; i <= 1; i++)
-        Draw2D.Line(float2(-2.1, i), float2(2.1, i), 0.025, Color(0.24, 0.25, 0.27));
+        Draw.Line(float2(-2.1, i), float2(2.1, i), 0.025, Color(0.24, 0.25, 0.27));
 }
 
 view Active(Body body, with Moving, without Frozen)
 {
-    Draw2D.Circle(body.position, 0.19, Color(0.98, 0.75, 0.14));
+    Draw.Circle(body.position, 0.19, Color(0.98, 0.75, 0.14));
 }
 
 view Blocked(Body body, with Moving, with Frozen)
 {
-    Draw2D.Circle(body.position, 0.19, Color(0.98, 0.44, 0.52));
+    Draw.Circle(body.position, 0.19, Color(0.98, 0.44, 0.52));
 }
 
 view Excluded(Body body, without Moving)
 {
-    Draw2D.Circle(body.position, 0.19, Color(0.64, 0.64, 0.68));
+    Draw.Circle(body.position, 0.19, Color(0.64, 0.64, 0.68));
 }
 
 view Labels(Demo demo)
 {
-    var first = Draw2D.WorldToScreen(float2(0, 1));
-    var second = Draw2D.WorldToScreen(float2(0, 0));
-    var third = Draw2D.WorldToScreen(float2(0, -1));
-    Draw2D.SetScreen();
-    Draw2D.Text("Systems run every tick", float2(16, 14), 18, Color.white);
-    Draw2D.Text("with Moving, without Frozen", float2(16, first.y - 34), 14, Color(0.98, 0.75, 0.14));
-    Draw2D.Text("Moving + Frozen: excluded", float2(16, second.y - 34), 14, Color(0.98, 0.44, 0.52));
-    Draw2D.Text("No Moving: excluded", float2(16, third.y - 34), 14, Color(0.64, 0.64, 0.68));
+    var first = Draw.WorldToScreen(float2(0, 1));
+    var second = Draw.WorldToScreen(float2(0, 0));
+    var third = Draw.WorldToScreen(float2(0, -1));
+    Draw.SetScreen();
+    Draw.Text("Systems run every tick", float2(16, 14), 18, Color.white);
+    Draw.Text("with Moving, without Frozen", float2(16, first.y - 34), 14, Color(0.98, 0.75, 0.14));
+    Draw.Text("Moving + Frozen: excluded", float2(16, second.y - 34), 14, Color(0.98, 0.44, 0.52));
+    Draw.Text("No Moving: excluded", float2(16, third.y - 34), 14, Color(0.64, 0.64, 0.68));
     GUI.SetTheme(GUITheme { radius = 6 });
     if (GUI.Button(Rect(16, Screen.height - 48, Screen.width - 32, 32), demo.running ? "Pause the match" : "Resume the match"))
         Send(SetRunning { value = !demo.running });

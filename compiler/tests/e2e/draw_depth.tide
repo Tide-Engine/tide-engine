@@ -1,4 +1,4 @@
-// What 3D meshes do with depth, as a draw setting of Draw3D's: around a block
+// What 3D meshes do with depth, as a draw setting: around a block
 // and set for the views that follow, listed with other settings, around each
 // entity's mesh, left early, in a function, kept in a value, through a frag
 // and for a list's instances. A render target has its own, as it has its own
@@ -59,50 +59,50 @@ view Blocks(mut Look look)
         look.faces = [0, 1, 2];
         look.spots = [Spot { }, Spot { transform = float4x4.Translate(float3(3, 0, 0)) }];
     }
-    Draw3D.Cube(float3(0, 0, 9), float3(1, 1, 1), Color.white);
-    Draw3D.Depth(Depth.Read)
+    Draw.Cube(float3(0, 0, 9), float3(1, 1, 1), Color.white);
+    Draw.Depth(Depth.Read)
     {
-        Draw3D.Cube(float3(0, 0, 8), float3(1, 1, 1), Color.white);
-        Draw3D.Depth(Depth.None)
+        Draw.Cube(float3(0, 0, 8), float3(1, 1, 1), Color.white);
+        Draw.Depth(Depth.None)
         {
-            Draw3D.Cube(float3(0, 0, 7), float3(1, 1, 1), Color.white);
+            Draw.Cube(float3(0, 0, 7), float3(1, 1, 1), Color.white);
         }
-        Draw3D.Cube(float3(0, 0, 6), float3(1, 1, 1), Color.white);
+        Draw.Cube(float3(0, 0, 6), float3(1, 1, 1), Color.white);
     }
-    Draw3D.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.white);
+    Draw.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.white);
 
     // Listed with commas, beside the other settings
     Draw.Blend(Blend.Add),
-    Draw3D.Depth(Depth.Read),
+    Draw.Depth(Depth.Read),
     Draw.Tint(Color(1, 0.5, 0.25, 1))
     {
-        Draw3D.Cube(float3(0, 0, 4), float3(1, 1, 1), Color.white);
+        Draw.Cube(float3(0, 0, 4), float3(1, 1, 1), Color.white);
     }
-    Draw3D.Cube(float3(0, 0, 3), float3(1, 1, 1), Color.white);
+    Draw.Cube(float3(0, 0, 3), float3(1, 1, 1), Color.white);
 }
 
 // The same setting around each entity's mesh: still one run of instances.
 view Panes(Pane pane)
 {
-    Draw3D.Depth(Depth.Read)
+    Draw.Depth(Depth.Read)
     {
-        Draw3D.Sphere(pane.position, 1, Color.white);
+        Draw.Sphere(pane.position, 1, Color.white);
     }
 }
 
 void Guarded(bool leave) fails Trouble
 {
-    Draw3D.Depth(Depth.None),
+    Draw.Depth(Depth.None),
     Draw.Blend(Blend.Add)
     {
         try Hide(leave); // Its error leaves through both
-        Draw3D.Cube(float3(1, 0, 9), float3(1, 1, 1), Color.white);
+        Draw.Cube(float3(1, 0, 9), float3(1, 1, 1), Color.white);
     }
 }
 
 int Counted(bool leave)
 {
-    Draw3D.Depth(Depth.Read)
+    Draw.Depth(Depth.Read)
     {
         if (leave) return 1;
     }
@@ -116,13 +116,13 @@ view Early(Look look)
     var counted = Counted(look.leave);
     for (var i = 0; i < 3; i++)
     {
-        Draw3D.Depth(Depth.None)
+        Draw.Depth(Depth.None)
         {
             if (i == 0) continue;
             if (i == 2) break;
         }
     }
-    Draw3D.Cube(float3(counted, 0, 8), float3(1, 1, 1), Color.white);
+    Draw.Cube(float3(counted, 0, 8), float3(1, 1, 1), Color.white);
 }
 
 frag Flat(Corner vertex, out Color color)
@@ -143,41 +143,41 @@ frag Plain(Vertex vertex, out Color color)
 // A mesh through a frag, and a list's instances, do with depth what the draw says.
 view Shaded(Look look)
 {
-    Draw3D.Depth(look.kept)
+    Draw.Depth(look.kept)
     {
-        Draw3D.Mesh(look.corners, look.faces, float4x4.identity, Flat);
-        Draw3D.Instanced(look.corners, look.faces, look.spots, Dot);
+        Draw.Mesh(look.corners, look.faces, float4x4.identity, Flat);
+        Draw.Instanced(look.corners, look.faces, look.spots, Dot);
     }
-    Draw3D.Mesh(look.corners, look.faces, float4x4.identity, Flat);
+    Draw.Mesh(look.corners, look.faces, float4x4.identity, Flat);
 }
 
 // Nothing else has depth: what's set changes none of these.
 view Flats()
 {
-    Draw3D.Depth(Depth.None)
+    Draw.Depth(Depth.None)
     {
-        Draw2D.Rect(float2(1, 1), float2(1, 1), Color.white);
-        Draw2D.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], Plain);
-        Draw2D.Clear(Color.black);
+        Draw.Rect(float2(1, 1), float2(1, 1), Color.white);
+        Draw.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], Plain);
+        Draw.Clear(Color.black);
     }
 }
 
 // Set, it holds for the views that follow.
 view Sets()
 {
-    Draw3D.SetDepth(Depth.Read);
+    Draw.SetDepth(Depth.Read);
 }
 
 view Follows()
 {
-    Draw3D.Cube(float3(2, 0, 9), float3(1, 1, 1), Color.white);
+    Draw.Cube(float3(2, 0, 9), float3(1, 1, 1), Color.white);
     // Set inside a block, it's for the rest of the block
-    Draw3D.Depth(Depth.ReadWrite)
+    Draw.Depth(Depth.ReadWrite)
     {
-        Draw3D.SetDepth(Depth.None);
-        Draw3D.Cube(float3(2, 0, 7), float3(1, 1, 1), Color.white);
+        Draw.SetDepth(Depth.None);
+        Draw.Cube(float3(2, 0, 7), float3(1, 1, 1), Color.white);
     }
-    Draw3D.Cube(float3(2, 0, 6), float3(1, 1, 1), Color.white);
+    Draw.Cube(float3(2, 0, 6), float3(1, 1, 1), Color.white);
 }
 
 // A target's own: the window's isn't its, nor its the window's.
@@ -187,14 +187,14 @@ view Targets(Look look)
     look.target.Depth(Depth.None)
     {
         look.target.Cube(float3(3, 0, 8), float3(1, 1, 1), Color.white);
-        Draw3D.Cube(float3(3, 0, 7), float3(1, 1, 1), Color.white);
+        Draw.Cube(float3(3, 0, 7), float3(1, 1, 1), Color.white);
     }
     look.target.SetDepth(Depth.Read);
     look.target.Cube(float3(3, 0, 6), float3(1, 1, 1), Color.white);
     // With no arguments, a Set puts back what each frame starts with
     look.target.SetDepth();
     look.target.Cube(float3(3, 0, 5), float3(1, 1, 1), Color.white);
-    Draw3D.SetDepth();
-    Draw3D.Cube(float3(3, 0, 4), float3(1, 1, 1), Color.white);
-    Draw3D.SetDepth(Depth.None); // Left set by the last view: the next frame starts over
+    Draw.SetDepth();
+    Draw.Cube(float3(3, 0, 4), float3(1, 1, 1), Color.white);
+    Draw.SetDepth(Depth.None); // Left set by the last view: the next frame starts over
 }

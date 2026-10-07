@@ -1,7 +1,7 @@
-// expect: no version of Draw2D.Shape takes (float2, float2, Color)
+// expect: no version of Draw.Shape takes (float2, float2, Color)
 scene Main { }
 
 view Panel()
 {
-    Draw2D.Shape(float2(0, 0), float2(2, 2), Color.red);
+    Draw.Shape(float2(0, 0), float2(2, 2), Color.red);
 }

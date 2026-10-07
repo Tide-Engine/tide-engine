@@ -86,17 +86,17 @@ local event(Destroyed) Burst(Ball ball, mut Fx fx)
 
 view Arena()
 {
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw2D.SetCamera(float2(0, 0.15), 2.3);
-    Draw2D.WireRect(float2(0), float2(3.8, 3.8), 0.03, Color(0.24, 0.25, 0.27));
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0, 0.15), 2.3);
+    Draw.WireRect(float2(0), float2(3.8, 3.8), 0.03, Color(0.24, 0.25, 0.27));
 }
 
 view Balls(mut Ball ball, Devices devices)
 {
     ball.flash = Math.Max(0, ball.flash - Frame.dt);
-    var pointer = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    var pointer = Draw.ScreenToWorld(Screen.Flip(devices.pointer.position));
     if (devices.pointer.press.down && Math.Distance(pointer, ball.position) < 0.45) this.Send(Poke { });
-    Draw2D.Circle(ball.position, 0.14 + ball.health * 0.07, ball.flash > 0 ? Color.white : Color(0.98, 0.75, 0.14));
+    Draw.Circle(ball.position, 0.14 + ball.health * 0.07, ball.flash > 0 ? Color.white : Color(0.98, 0.75, 0.14));
 }
 
 view Sparks(mut Fx fx)
@@ -113,9 +113,9 @@ view Sparks(mut Fx fx)
         }
         spark.position += spark.velocity * Frame.dt;
         fx.sparks[i] = spark;
-        Draw2D.Circle(spark.position, 0.04, Color(1, 0.9, 0.5, 1 - spark.age * 2));
+        Draw.Circle(spark.position, 0.04, Color(1, 0.9, 0.5, 1 - spark.age * 2));
         i++;
     }
-    Draw2D.SetScreen();
-    Draw2D.Text("Tap a ball three times", float2(16, 14), 18, Color.white);
+    Draw.SetScreen();
+    Draw.Text("Tap a ball three times", float2(16, 14), 18, Color.white);
 }

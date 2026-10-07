@@ -1,8 +1,8 @@
-// expect: Draw3D.Cull sets it around a block: 'Draw3D.Cull(...) { ... }'
-// expect: to set it for the draws that follow, write 'Draw3D.SetCull(...);'
+// expect: Draw.Cull sets it around a block: 'Draw.Cull(...) { ... }'
+// expect: to set it for the draws that follow, write 'Draw.SetCull(...);'
 scene Main { }
 
 view Show()
 {
-    Draw3D.Cull(Cull.None);
+    Draw.Cull(Cull.None);
 }

@@ -8,10 +8,10 @@
 
 view Title(Menu menu)
 {
-    Draw2D.SetScreen();
-    var size = Draw2D.MeasureText(menu.title, 32);
-    var spot = Draw2D.ScreenToWorld(float2(10, 10));
-    Draw2D.Text(menu.title, float2(10, 10), 32, Color.white);
+    Draw.SetScreen();
+    var size = Draw.MeasureText(menu.title, 32);
+    var spot = Draw.ScreenToWorld(float2(10, 10));
+    Draw.Text(menu.title, float2(10, 10), 32, Color.white);
 }
 
 local singleton Menu { string title = "Tide"; }

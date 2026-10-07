@@ -5,4 +5,4 @@ frag Shade(Vertex vertex, out Color color)
     var bytes = await Web.Fetch("http://example.com/file")!;
     color = bytes.count > 0 ? vertex.color : Color.black;
 }
-view DrawIt() { Draw2D.Mesh([Vertex { position = float2(0) }], [0, 0, 0], Shade); }
+view DrawIt() { Draw.Mesh([Vertex { position = float2(0) }], [0, 0, 0], Shade); }

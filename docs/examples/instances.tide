@@ -62,16 +62,16 @@ view Show(mut Swarm swarm)
     swarm.clock += Math.Min(Frame.dt, 0.05);
     if (swarm.clock > Math.TAU * 10) swarm.clock -= Math.TAU * 10;
 
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw2D.SetCamera(float2(0), 2.2);
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0), 2.2);
     // One draw, however many. Its colors add to what's there, as light does.
     Draw.Blend(Blend.Add)
     {
-        Draw2D.Instanced(swarm.quad, swarm.faces, swarm.motes, Place, Glow);
+        Draw.Instanced(swarm.quad, swarm.faces, swarm.motes, Place, Glow);
     }
 
-    Draw2D.SetScreen();
-    Draw2D.Text($"{swarm.motes.count} motes, in one draw", float2(16, 14), 16, Color.white);
+    Draw.SetScreen();
+    Draw.Text($"{swarm.motes.count} motes, in one draw", float2(16, 14), 16, Color.white);
     GUI.SetTheme(GUITheme { radius = 6 });
     GUI.IntSlider(Rect(16, Screen.height - 48, Screen.width - 32, 32), "Motes", swarm.count, 1, 5000);
 }

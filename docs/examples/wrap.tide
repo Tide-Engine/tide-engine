@@ -13,8 +13,8 @@ local singleton Tiles
 
 view Show(mut Tiles tiles)
 {
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw2D.SetCamera(float2(0, -0.1), 2);
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0, -0.1), 2);
     if (!tiles.ready)
     {
         // A frame, an L and a dot: each copy shows which way round it is.
@@ -41,16 +41,16 @@ view Show(mut Tiles tiles)
         Vertex { position = float2(1.5, -1.5), uv = last },
         Vertex { position = float2(-1.5, -1.5), uv = float2(first.x, last.y) },
     ];
-    Draw2D.Mesh(corners, [0, 1, 2, 0, 2, 3], tiles.tile, Filter.Point, tiles.wrap);
+    Draw.Mesh(corners, [0, 1, 2, 0, 2, 3], tiles.tile, Filter.Point, tiles.wrap);
 
     // Where the uvs are from 0 to 1.
-    Draw2D.Clip(Rect(-1.5, -1.5, 3, 3))
+    Draw.Clip(Rect(-1.5, -1.5, 3, 3))
     {
-        Draw2D.WireRect(float2(-tiles.slide, 0), float2(1, 1), 0.03, Color.white);
+        Draw.WireRect(float2(-tiles.slide, 0), float2(1, 1), 0.03, Color.white);
     }
 
-    Draw2D.SetScreen();
-    Draw2D.Text($"Wrap.{tiles.wrap}", float2(16, 14), 16, Color.white);
+    Draw.SetScreen();
+    Draw.Text($"Wrap.{tiles.wrap}", float2(16, 14), 16, Color.white);
     GUI.SetTheme(GUITheme { radius = 6 });
     GUILayout.Area(Rect(12, Screen.height - 52, Screen.width - 24, 40))
     {

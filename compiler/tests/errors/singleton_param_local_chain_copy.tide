@@ -6,5 +6,5 @@ scene Main { }
 view Show(Score score)
 {
     var copy = score;
-    if (ReadThrough(copy) > 0) Draw2D.Clear(Color.black);
+    if (ReadThrough(copy) > 0) Draw.Clear(Color.black);
 }

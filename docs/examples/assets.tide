@@ -29,9 +29,9 @@ system Move(mut Bouncer bouncer, Arena arena, Time time)
 
 view Background(Arena arena)
 {
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw2D.SetCamera(float2(0), arena.half.y * 2);
-    Draw2D.WireRect(float2(0), arena.half * 2, Color(0.24, 0.25, 0.27));
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0), arena.half.y * 2);
+    Draw.WireRect(float2(0), arena.half * 2, Color(0.24, 0.25, 0.27));
 }
 
 // A view draws it as a texture, point-sampled so its pixels stay crisp.
@@ -39,7 +39,7 @@ view Sprites(Bouncer bouncer)
 {
     var p = bouncer.position;
     var h = 0.5;
-    Draw2D.Mesh([Vertex { position = p + float2(-h, h), uv = float2(0, 0), color = Color.white },
+    Draw.Mesh([Vertex { position = p + float2(-h, h), uv = float2(0, 0), color = Color.white },
                  Vertex { position = p + float2(h, h), uv = float2(1, 0), color = Color.white },
                  Vertex { position = p + float2(h, -h), uv = float2(1, 1), color = Color.white },
                  Vertex { position = p + float2(-h, -h), uv = float2(0, 1), color = Color.white }],

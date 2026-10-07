@@ -221,8 +221,8 @@ system Run(mut Log log)
 // The engine's functions take names too, and leave out what has a default
 view Hud()
 {
-    Draw2D.Circle(radius: 2, center: float2(3, 4), color: Color.red);
-    Draw2D.Rect(float2(1, 1), size: float2(2, 2), color: Color.red, rotation: 0.5);
+    Draw.Circle(radius: 2, center: float2(3, 4), color: Color.red);
+    Draw.Rect(float2(1, 1), size: float2(2, 2), color: Color.red, rotation: 0.5);
     Debug.Assert(condition: true);
     Debug.Assert(true, message: "never");
 }

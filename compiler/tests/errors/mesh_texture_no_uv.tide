@@ -41,5 +41,5 @@ local singleton Shapes
 
 view Show(Shapes shapes, Models models)
 {
-    Draw3D.Mesh(shapes.corners, [0, 1, 2], float4x4.identity, models.wood);
+    Draw.Mesh(shapes.corners, [0, 1, 2], float4x4.identity, models.wood);
 }

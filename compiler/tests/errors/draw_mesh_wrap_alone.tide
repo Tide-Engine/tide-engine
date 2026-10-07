@@ -1,4 +1,4 @@
-// expect: a mesh's wrap comes after its texture and its filter: 'Draw3D.Mesh(..., texture, Filter.Bilinear, Wrap.Repeat)'
+// expect: a mesh's wrap comes after its texture and its filter: 'Draw.Mesh(..., texture, Filter.Bilinear, Wrap.Repeat)'
 scene Main { }
 
 local singleton Art
@@ -8,5 +8,5 @@ local singleton Art
 
 view Show(Art art)
 {
-    Draw3D.Mesh(art.corners, [0, 1, 2], float4x4.identity, Wrap.Mirror);
+    Draw.Mesh(art.corners, [0, 1, 2], float4x4.identity, Wrap.Mirror);
 }

@@ -8,5 +8,5 @@ int Parse(string text) fails ParseError
 scene Main { }
 view Show()
 {
-    Draw2D.Text($"{try Parse("1")}", float2(0, 0), 10, Color.white);
+    Draw.Text($"{try Parse("1")}", float2(0, 0), 10, Color.white);
 }

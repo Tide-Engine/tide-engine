@@ -638,29 +638,29 @@ local event(Scored) ShowScore(Tank tank, mut Fx fx)
 view Backdrop(mut Fx fx)
 {
     fx.shake = Math.Max(0, fx.shake - Math.Min(Frame.dt, 0.05));
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
+    Draw.Clear(Color(0.086, 0.086, 0.094));
     var scale = Math.Min(Screen.width / (ARENA_X * 2 + 1), (Screen.height - HUD_TOP - HUD_BOTTOM) / (ARENA_Y * 2 + 1));
     var jolt = float2(Math.Sin(fx.shake * 80), Math.Cos(fx.shake * 63)) * fx.shake * 0.6;
-    Draw2D.SetCamera(float2(0, (HUD_TOP - HUD_BOTTOM) / (2 * scale)) + jolt, Screen.height / (2 * scale));
+    Draw.SetCamera(float2(0, (HUD_TOP - HUD_BOTTOM) / (2 * scale)) + jolt, Screen.height / (2 * scale));
     var middle = (Screen.height + HUD_TOP - HUD_BOTTOM) * 0.5;
     fx.top = middle - (ARENA_Y + 0.25) * scale;
     fx.bottom = middle + (ARENA_Y + 0.25) * scale;
 
-    Draw2D.RoundRect(float2(0), float2(ARENA_X * 2 + 0.5, ARENA_Y * 2 + 0.5), 0.3, Color(0.36, 0.37, 0.42));
-    Draw2D.Rect(float2(0), float2(ARENA_X * 2, ARENA_Y * 2), Color(0.125, 0.125, 0.14));
+    Draw.RoundRect(float2(0), float2(ARENA_X * 2 + 0.5, ARENA_Y * 2 + 0.5), 0.3, Color(0.36, 0.37, 0.42));
+    Draw.Rect(float2(0), float2(ARENA_X * 2, ARENA_Y * 2), Color(0.125, 0.125, 0.14));
     for (var i = -5; i <= 5; i++)
-        Draw2D.Line(float2(i * 1.5, -ARENA_Y), float2(i * 1.5, ARENA_Y), Color(0.15, 0.15, 0.17));
+        Draw.Line(float2(i * 1.5, -ARENA_Y), float2(i * 1.5, ARENA_Y), Color(0.15, 0.15, 0.17));
     for (var j = -4; j <= 4; j++)
-        Draw2D.Line(float2(-ARENA_X, j * 1.5), float2(ARENA_X, j * 1.5), Color(0.15, 0.15, 0.17));
-    Draw2D.Text("BULLETS BOUNCE", float2(0, 6.8), 0.7, Color(1, 1, 1, 0.09), Anchor.MiddleCenter, Font.Bold);
-    Draw2D.Text($"FIRST TO {WIN_SCORE} WINS", float2(0, -6.8), 0.7, Color(1, 1, 1, 0.09), Anchor.MiddleCenter, Font.Bold);
+        Draw.Line(float2(-ARENA_X, j * 1.5), float2(ARENA_X, j * 1.5), Color(0.15, 0.15, 0.17));
+    Draw.Text("BULLETS BOUNCE", float2(0, 6.8), 0.7, Color(1, 1, 1, 0.09), Anchor.MiddleCenter, Font.Bold);
+    Draw.Text($"FIRST TO {WIN_SCORE} WINS", float2(0, -6.8), 0.7, Color(1, 1, 1, 0.09), Anchor.MiddleCenter, Font.Bold);
 
     for (var w = 0; w < WALLS; w++)
     {
         var wall = WallAt(w);
-        Draw2D.RoundRect(wall.center - float2(0, 0.14), wall.half * 2, 0.15, Color(0.05, 0.05, 0.06));
-        Draw2D.RoundRect(wall.center, wall.half * 2, 0.15, Color(0.36, 0.37, 0.42));
-        Draw2D.WireRoundRect(wall.center, wall.half * 2, 0.15, 0.07, Color(0.5, 0.52, 0.58));
+        Draw.RoundRect(wall.center - float2(0, 0.14), wall.half * 2, 0.15, Color(0.05, 0.05, 0.06));
+        Draw.RoundRect(wall.center, wall.half * 2, 0.15, Color(0.36, 0.37, 0.42));
+        Draw.WireRoundRect(wall.center, wall.half * 2, 0.15, 0.07, Color(0.5, 0.52, 0.58));
     }
 }
 
@@ -669,9 +669,9 @@ view Bullets(Bullet bullet)
 {
     var paint = Paint(bullet.slot);
     var tail = Math.Normalize(bullet.velocity) * 0.6;
-    Draw2D.Line(bullet.position - tail, bullet.position, 0.2, Fade(paint, 0.4));
-    Draw2D.Circle(bullet.position, BULLET_R + 0.05, paint);
-    Draw2D.Circle(bullet.position, BULLET_R - 0.05, Color.white);
+    Draw.Line(bullet.position - tail, bullet.position, 0.2, Fade(paint, 0.4));
+    Draw.Circle(bullet.position, BULLET_R + 0.05, paint);
+    Draw.Circle(bullet.position, BULLET_R - 0.05, Color.white);
 }
 
 [After(SampleLobbyBegin), Before(SampleLobbyPages)]
@@ -680,27 +680,27 @@ view Tanks(mut Tank tank)
     tank.kick = Math.Max(0, tank.kick - Frame.dt);
     if (!tank.alive)
     {
-        if (tank.respawn > 0.4) Draw2D.Circle(tank.position, 0.5, Color(0, 0, 0, 0.3)); // Where it went
+        if (tank.respawn > 0.4) Draw.Circle(tank.position, 0.5, Color(0, 0, 0, 0.3)); // Where it went
         return;
     }
     var paint = Paint(tank.slot);
-    Draw2D.Transform(tank.position, tank.heading)
+    Draw.Transform(tank.position, tank.heading)
     {
-        Draw2D.RoundRect(float2(0, 0.42), float2(1.2, 0.28), 0.09, Color(0.03, 0.03, 0.04));
-        Draw2D.RoundRect(float2(0, -0.42), float2(1.2, 0.28), 0.09, Color(0.03, 0.03, 0.04));
-        Draw2D.RoundRect(float2(0), float2(1.02, 0.76), 0.16, Shade(paint, 0.62));
-        Draw2D.RoundRect(float2(0.36, 0), float2(0.14, 0.5), 0.06, Shade(paint, 0.45));
+        Draw.RoundRect(float2(0, 0.42), float2(1.2, 0.28), 0.09, Color(0.03, 0.03, 0.04));
+        Draw.RoundRect(float2(0, -0.42), float2(1.2, 0.28), 0.09, Color(0.03, 0.03, 0.04));
+        Draw.RoundRect(float2(0), float2(1.02, 0.76), 0.16, Shade(paint, 0.62));
+        Draw.RoundRect(float2(0.36, 0), float2(0.14, 0.5), 0.06, Shade(paint, 0.45));
     }
-    Draw2D.Transform(tank.position, tank.turret)
+    Draw.Transform(tank.position, tank.turret)
     {
         var recoil = tank.kick * 1.4;
-        if (tank.kick > 0.07) Draw2D.Circle(float2(1.08, 0), 0.3, Color(1, 0.9, 0.55));
-        Draw2D.RoundRect(float2(0.52 - recoil, 0), float2(0.8, 0.22), 0.07, Color(0.86, 0.87, 0.9));
-        Draw2D.Circle(float2(0), 0.33, paint);
-        Draw2D.Circle(float2(0), 0.15, Shade(paint, 0.62));
+        if (tank.kick > 0.07) Draw.Circle(float2(1.08, 0), 0.3, Color(1, 0.9, 0.55));
+        Draw.RoundRect(float2(0.52 - recoil, 0), float2(0.8, 0.22), 0.07, Color(0.86, 0.87, 0.9));
+        Draw.Circle(float2(0), 0.33, paint);
+        Draw.Circle(float2(0), 0.15, Shade(paint, 0.62));
     }
     if (tank.shield > 0)
-        Draw2D.WireCircle(tank.position, 0.9, 0.07, Color(1, 1, 1, 0.45 + 0.35 * Math.Sin(tank.shield * 22)));
+        Draw.WireCircle(tank.position, 0.9, 0.07, Color(1, 1, 1, 0.45 + 0.35 * Math.Sin(tank.shield * 22)));
 }
 
 // This machine's own tank: where its hands point it, and the marks that say it's yours.
@@ -725,7 +725,7 @@ view Mine(Devices devices, Tank tank, mut Pad pad, Fx fx, SampleLobby lobby, wit
         pad.mouse = true;
         pad.touch = false;
     }
-    if (pad.mouse) pad.aim = Toward(Draw2D.ScreenToWorld(Screen.Flip(mouse.position)) - tank.position, pad.aim);
+    if (pad.mouse) pad.aim = Toward(Draw.ScreenToWorld(Screen.Flip(mouse.position)) - tank.position, pad.aim);
 
     // The first finger drives when it drags, and shoots where it tapped when it doesn't.
     // A finger that lifted is out of its slot by the frame, so the view keeps what it last saw of it.
@@ -754,7 +754,7 @@ view Mine(Devices devices, Tank tank, mut Pad pad, Fx fx, SampleLobby lobby, wit
     {
         if (!pad.dragged)
         {
-            pad.aim = Toward(Draw2D.ScreenToWorld(Screen.Flip(pad.last)) - tank.position, pad.aim);
+            pad.aim = Toward(Draw.ScreenToWorld(Screen.Flip(pad.last)) - tank.position, pad.aim);
             pad.fire = 0.12;
         }
         pad.held = false;
@@ -767,18 +767,18 @@ view Mine(Devices devices, Tank tank, mut Pad pad, Fx fx, SampleLobby lobby, wit
         if (!touch.press.pressed || touch.id == pad.finger) continue;
         pad.touch = true;
         pad.mouse = false;
-        pad.aim = Toward(Draw2D.ScreenToWorld(Screen.Flip(touch.position)) - tank.position, pad.aim);
+        pad.aim = Toward(Draw.ScreenToWorld(Screen.Flip(touch.position)) - tank.position, pad.aim);
         pad.fire = 0.12;
     }
 
     if (tank.alive)
     {
-        Draw2D.WireCircle(tank.position, 0.82, 0.05, Color(1, 1, 1, 0.55));
+        Draw.WireCircle(tank.position, 0.82, 0.05, Color(1, 1, 1, 0.55));
         // Its name over it, or under it where the scoreboard is right above
         if (tank.position.y < ARENA_Y - 1.8)
-            Draw2D.Text("YOU", tank.position + float2(0, 0.95), 0.46, Color.white, Anchor.LowerCenter, Font.Bold);
+            Draw.Text("YOU", tank.position + float2(0, 0.95), 0.46, Color.white, Anchor.LowerCenter, Font.Bold);
         else
-            Draw2D.Text("YOU", tank.position - float2(0, 0.95), 0.46, Color.white, Anchor.UpperCenter, Font.Bold);
+            Draw.Text("YOU", tank.position - float2(0, 0.95), 0.46, Color.white, Anchor.UpperCenter, Font.Bold);
         // Where a shot would go, past its first bounce: a bullet's own steps, a dot every few
         mut var at = tank.position;
         mut var speed = float2(Math.Cos(tank.turret), Math.Sin(tank.turret)) * BULLET_SPEED;
@@ -786,24 +786,24 @@ view Mine(Devices devices, Tank tank, mut Pad pad, Fx fx, SampleLobby lobby, wit
         for (var i = 1; i <= 88 && turns < 2; i++)
         {
             if (StepShot(at, speed, TICK)) turns += 1;
-            if (i > 6 && i % 4 == 0) Draw2D.Circle(at, 0.055, Color(1, 1, 1, 0.6 * (1 - i / 92.0)));
+            if (i > 6 && i % 4 == 0) Draw.Circle(at, 0.055, Color(1, 1, 1, 0.6 * (1 - i / 92.0)));
         }
     }
-    Draw2D.Screen()
+    Draw.Screen()
     {
         if (!tank.alive && tank.respawn > 0.4)
         {
             var middle = float2(Screen.width, fx.top + fx.bottom) * 0.5;
             var who = fx.culprit == tank.slot ? "by your own shot" : $"by {Name(fx.culprit)}";
-            Draw2D.RoundRect(middle, float2(210, 64), 12, Color(0, 0, 0, 0.6));
-            Draw2D.Text("WRECKED!", middle - float2(0, 2), 28, Color(0.98, 0.44, 0.52), Anchor.LowerCenter, Font.Bold);
-            Draw2D.Text(who, middle + float2(0, 4), 14, Color.white, Anchor.UpperCenter);
+            Draw.RoundRect(middle, float2(210, 64), 12, Color(0, 0, 0, 0.6));
+            Draw.Text("WRECKED!", middle - float2(0, 2), 28, Color(0.98, 0.44, 0.52), Anchor.LowerCenter, Font.Bold);
+            Draw.Text(who, middle + float2(0, 4), 14, Color.white, Anchor.UpperCenter);
         }
         if (pad.dragged)
         {
             var from = Screen.Flip(pad.start);
-            Draw2D.WireCircle(from, 44, 2, Color(1, 1, 1, 0.3));
-            Draw2D.Circle(from + float2(pad.stick.x, -pad.stick.y) * 44, 16, Color(1, 1, 1, 0.35));
+            Draw.WireCircle(from, 44, 2, Color(1, 1, 1, 0.3));
+            Draw.Circle(from + float2(pad.stick.x, -pad.stick.y) * 44, 16, Color(1, 1, 1, 0.35));
         }
     }
 }
@@ -828,7 +828,7 @@ view Sparks(mut Fx fx)
             spark.position += spark.velocity * dt;
             fx.sparks[i] = spark;
             var left = 1 - spark.age / spark.life;
-            Draw2D.Circle(spark.position, spark.size * (0.4 + 0.6 * left), Fade(spark.color, left));
+            Draw.Circle(spark.position, spark.size * (0.4 + 0.6 * left), Fade(spark.color, left));
             i++;
         }
     }
@@ -844,7 +844,7 @@ view Sparks(mut Fx fx)
         }
         popup.position.y += 1.6 * dt;
         fx.popups[p] = popup;
-        Draw2D.Text("+1", popup.position, 0.75, Fade(popup.color, 1 - popup.age / 0.9), Anchor.LowerCenter, Font.Bold);
+        Draw.Text("+1", popup.position, 0.75, Fade(popup.color, 1 - popup.age / 0.9), Anchor.LowerCenter, Font.Bold);
         p++;
     }
 }
@@ -853,12 +853,12 @@ view Sparks(mut Fx fx)
 [After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Hud(Round round, Pad pad, Fx fx, query (verified Tank tank) tanks)
 {
-    Draw2D.SetScreen();
+    Draw.SetScreen();
     var pitch = Math.Min(60.0, (Screen.width - 12) / float(SEATS));
     var left = (Screen.width - pitch * SEATS) * 0.5;
     var line = fx.top - 34; // Right over the arena, wherever the window's shape left it
     for (var i = 0; i < SEATS; i++)
-        Draw2D.WireRoundRect(float2(left + (i + 0.5) * pitch, line), float2(pitch - 6, 28), 8, 1.5, Color(0.2, 0.2, 0.23));
+        Draw.WireRoundRect(float2(left + (i + 0.5) * pitch, line), float2(pitch - 6, 28), 8, 1.5, Color(0.2, 0.2, 0.23));
 
     mut var humans = 0;
     foreach (var row in tanks)
@@ -866,16 +866,16 @@ view Hud(Round round, Pad pad, Fx fx, query (verified Tank tank) tanks)
         var seat = row.tank.slot;
         var paint = Paint(seat);
         var at = float2(left + (seat + 0.5) * pitch, line);
-        Draw2D.RoundRect(at, float2(pitch - 6, 28), 8, Shade(paint, row.tank.alive ? 1 : 0.45));
-        Draw2D.Text($"{row.tank.score}", at, 20, Color(0.06, 0.06, 0.07), Anchor.MiddleCenter, Font.Bold);
+        Draw.RoundRect(at, float2(pitch - 6, 28), 8, Shade(paint, row.tank.alive ? 1 : 0.45));
+        Draw.Text($"{row.tank.score}", at, 20, Color(0.06, 0.06, 0.07), Anchor.MiddleCenter, Font.Bold);
         if (seat == pad.seat)
         {
-            Draw2D.WireRoundRect(at, float2(pitch - 2, 32), 10, 2, Color.white);
-            Draw2D.Text("YOU", at + float2(0, 18), 11, Color.white, Anchor.UpperCenter, Font.Bold);
+            Draw.WireRoundRect(at, float2(pitch - 2, 32), 10, 2, Color.white);
+            Draw.Text("YOU", at + float2(0, 18), 11, Color.white, Anchor.UpperCenter, Font.Bold);
         }
         else
         {
-            Draw2D.Text(row.tank.bot ? "bot" : "player", at + float2(0, 18), 10, Color(0.64, 0.64, 0.68), Anchor.UpperCenter);
+            Draw.Text(row.tank.bot ? "bot" : "player", at + float2(0, 18), 10, Color(0.64, 0.64, 0.68), Anchor.UpperCenter);
         }
         if (!row.tank.bot) humans += 1;
     }
@@ -884,18 +884,18 @@ view Hud(Round round, Pad pad, Fx fx, query (verified Tank tank) tanks)
     var how = keys ? "WASD or arrows drive. Mouse aims, click or space shoots."
                    : "Drag to drive. Tap where to shoot.";
     var under = fx.bottom + 5;
-    Draw2D.Text(how, float2(Screen.width * 0.5, under), 13, Color.white, Anchor.UpperCenter);
+    Draw.Text(how, float2(Screen.width * 0.5, under), 13, Color.white, Anchor.UpperCenter);
     if (humans < 2)
-        Draw2D.Text("Bots fill in until friends join your room.", float2(Screen.width * 0.5, under + 16), 12, Color(0.64, 0.64, 0.68), Anchor.UpperCenter);
+        Draw.Text("Bots fill in until friends join your room.", float2(Screen.width * 0.5, under + 16), 12, Color(0.64, 0.64, 0.68), Anchor.UpperCenter);
 
     if (round.celebrate > 0)
     {
         var middle = float2(Screen.width, fx.top + fx.bottom) * 0.5;
         var word = round.winner == pad.seat ? "YOU WIN!" : $"{Name(round.winner)} WINS!";
         var size = Math.Min(54.0, Screen.width * 0.12);
-        var box = Draw2D.MeasureText(word, size, Font.Bold);
-        Draw2D.RoundRect(middle, box + float2(44, 28), 14, Color(0, 0, 0, 0.75));
-        Draw2D.Text(word, middle, size, Paint(round.winner), Anchor.MiddleCenter, Font.Bold);
-        Draw2D.Text("Next round in a moment", middle + float2(0, box.y * 0.5 + 22), 13, Color.white, Anchor.UpperCenter);
+        var box = Draw.MeasureText(word, size, Font.Bold);
+        Draw.RoundRect(middle, box + float2(44, 28), 14, Color(0, 0, 0, 0.75));
+        Draw.Text(word, middle, size, Paint(round.winner), Anchor.MiddleCenter, Font.Bold);
+        Draw.Text("Next round in a moment", middle + float2(0, box.y * 0.5 + 22), 13, Color.white, Anchor.UpperCenter);
     }
 }

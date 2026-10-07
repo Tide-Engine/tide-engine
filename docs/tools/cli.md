@@ -257,7 +257,7 @@ tide run --script play.txt --size 1280 720
 | `key <name> down`, `key <name> up` | A key goes down or up, by its name in [`Devices`](../game/input.md#devices): `w`, `space`, `enter`, `leftShift`, `upArrow`, `digit1` |
 | `key <name>` | A tap: down for this frame, and up at the next |
 | `button <name> down`, `up`, or neither | A mouse button, the same way: `left`, `right`, `middle`, `back` or `forward`. `button left` is a click where the mouse is |
-| `mouse <x> <y>` | The mouse goes to a place, in pixels from the window's top left, with `y` down, as the GUI's and `Draw2D.Screen`'s are |
+| `mouse <x> <y>` | The mouse goes to a place, in pixels from the window's top left, with `y` down, as the GUI's and `Draw.Screen`'s are |
 | `move <dx> <dy>` | The mouse moves by so much, across and down: what turns a camera whose [cursor is locked](../game/views.md#looking-around) |
 | `scroll <x> <y>` | The wheel turns, `y` positive away from you |
 | `text <characters>` | Characters typed, to the line's end, as [`devices.keyboard.text`](../game/input.md#typed-text) and the GUI's fields get them: 32 a frame, as a paste comes. No key is pressed for them: Enter and Backspace are `key` lines |

@@ -12,8 +12,8 @@ scene Main { }
 // A line in both weights, one under the other.
 void Pair(string text, float2 at, float size, Color color)
 {
-    Draw2D.Text(text, at, size, color);
-    Draw2D.Text(text, at + float2(0, size * 1.25), size, color, Font.Bold);
+    Draw.Text(text, at, size, color);
+    Draw.Text(text, at + float2(0, size * 1.25), size, color, Font.Bold);
 }
 
 // The sizes text is read at, down a column `across` from the left.
@@ -37,16 +37,16 @@ void Column(float across, Color color)
 // A cross at `at`, and a text of two lines whose `anchor` is there.
 void Anchored(float2 at, Anchor anchor, Font font, Color color, Color mark)
 {
-    Draw2D.Rect(at, float2(120, 1), mark);
-    Draw2D.Rect(at, float2(1, 60), mark);
-    Draw2D.Text("Anchor\nat it", at, 16, color, anchor, font);
+    Draw.Rect(at, float2(120, 1), mark);
+    Draw.Rect(at, float2(1, 60), mark);
+    Draw.Text("Anchor\nat it", at, 16, color, anchor, font);
 }
 
 view Specimen()
 {
-    Draw2D.Clear(Color(0.07, 0.08, 0.11));
-    Draw2D.SetScreen();
-    Draw2D.Rect(float2(Screen.width * 0.75, Screen.height * 0.5), float2(Screen.width * 0.5, Screen.height), Color(0.93, 0.93, 0.9));
+    Draw.Clear(Color(0.07, 0.08, 0.11));
+    Draw.SetScreen();
+    Draw.Rect(float2(Screen.width * 0.75, Screen.height * 0.5), float2(Screen.width * 0.5, Screen.height), Color(0.93, 0.93, 0.9));
     Column(0, Color.white);
     Column(Screen.width * 0.5, Color(0.08, 0.08, 0.1));
 
@@ -59,7 +59,7 @@ view Specimen()
     }
 
     // Under a camera, where y goes up: upper is still towards the top of the screen
-    Draw2D.SetCamera(float2(0, 0), 10);
-    Draw2D.Text("upper left", float2(-1, -9.2), 0.7, Color(0.5, 0.9, 0.6), Anchor.UpperLeft);
-    Draw2D.Text("lower right", float2(-1, -9.2), 0.7, Color(0.5, 0.9, 0.6), Anchor.LowerRight, Font.Bold);
+    Draw.SetCamera(float2(0, 0), 10);
+    Draw.Text("upper left", float2(-1, -9.2), 0.7, Color(0.5, 0.9, 0.6), Anchor.UpperLeft);
+    Draw.Text("lower right", float2(-1, -9.2), 0.7, Color(0.5, 0.9, 0.6), Anchor.LowerRight, Font.Bold);
 }

@@ -64,6 +64,6 @@ frag Calm(SkyVertex vertex, out Color color, Wind wind)
 
 view Show(Sky sky)
 {
-    Draw2D.Mesh(sky.corners, sky.faces, Stars);
-    Draw2D.Mesh(sky.corners, sky.faces, Blow, Calm);
+    Draw.Mesh(sky.corners, sky.faces, Stars);
+    Draw.Mesh(sky.corners, sky.faces, Blow, Calm);
 }

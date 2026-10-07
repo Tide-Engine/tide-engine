@@ -35,7 +35,7 @@ view Trail(Body body, with Ball)
 
 view DrawSparks(mut Spark spark)
 {
-    Draw2D.Circle(spark.position, 0.1, Color.yellow);
+    Draw.Circle(spark.position, 0.1, Color.yellow);
     spark.age += Frame.dt;
     if (spark.age >= 0.5) this.Destroy();
 }
@@ -88,7 +88,7 @@ view Drift(mut Smoke smoke)
         puff.velocity = puff.velocity * Math.Max(0, 1 - 2 * dt); // Drag
         puff.position += puff.velocity * dt;
         smoke.puffs[i] = puff;
-        Draw2D.Circle(puff.position, 0.2 + puff.age * 0.3, Color(1, 1, 1, 0.4 * (1 - puff.age / 1.5)));
+        Draw.Circle(puff.position, 0.2 + puff.age * 0.3, Color(1, 1, 1, 0.4 * (1 - puff.age / 1.5)));
         i++;
     }
 }
@@ -131,7 +131,7 @@ component Box
 view DrawBox(mut Box box)
 {
     if (box.verts.count == 0) Bake(box);
-    Draw3D.Mesh(box.verts, box.faces, float4x4.Translate(box.pos));
+    Draw.Mesh(box.verts, box.faces, float4x4.Translate(box.pos));
 }
 
 void Bake(mut Box box)

@@ -7,5 +7,5 @@ frag Glitter(Vertex vertex, out Color color, Glow glow)
 }
 view Show(Glow glow)
 {
-    Draw2D.Mesh(glow.corners, glow.faces, Glitter);
+    Draw.Mesh(glow.corners, glow.faces, Glitter);
 }

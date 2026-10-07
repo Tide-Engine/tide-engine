@@ -2,20 +2,23 @@
 
 #include "ast.h"
 
-// Built-in functions and constants reached through a type, `Math`, `Draw2D`, `Draw3D`, `Draw`,
+// Built-in functions and constants reached through a type, `Math`, `Draw`,
 // `GUI`, `GUILayout`, `Screen`, `Cursor` or `Frame`: Math.Dot(a, b),
-// quaternion.AxisAngle(axis, angle), Draw2D.Circle(...), GUILayout.Button(text),
+// quaternion.AxisAngle(axis, angle), Draw.Circle(...), GUILayout.Button(text),
 // Color.red, Screen.width, Cursor.Lock(), Frame.dt.
 
-// Is `name` something that can own static members: Math, Draw2D, Draw3D, Draw (resource operations), GUI, GUILayout,
-// Screen, Cursor, Frame or a built-in type?
+// Is `name` something that can own static members: Math, Draw, GUI, GUILayout,
+// Screen, Cursor, Frame or a built-in type? The old Draw2D and Draw3D count,
+// so that a game can't declare them, and a call of theirs is told the rename.
 bool builtin_owner(str name);
 
-// The two frame drawing APIs: Draw2D and Draw3D.
+// The frame's drawing API: Draw, whose methods a render target has too.
 bool builtin_draw_owner(str name);
+// Draw2D and Draw3D, which Draw took the place of: a call of theirs is an error that names Draw's.
+bool builtin_old_draw_owner(str name);
 
-// The program's Anchor enum, which GUILayout.Area and Draw2D.Text take, its
-// Shape struct, which Draw2D.Shape does, its Blend enum, which Draw.Blend
+// The program's Anchor enum, which GUILayout.Area and Draw.Text take, its
+// Shape struct, which Draw.Shape does, its Blend enum, which Draw.Blend
 // does, and its Font enum, a text's weight. Call before resolving calls.
 void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *cull,
                   const decl *font);
@@ -27,16 +30,16 @@ void builtins_use_stencil(const decl *test, const decl *op);
 // and GUI.Control gives, the same way.
 void builtins_use_gui(const decl *theme, const decl *control);
 
-// The types Draw2D.Mesh and Draw3D.Mesh take, as the program has them: List<Vertex>,
+// The types Draw.Mesh takes, as the program has them: List<Vertex>,
 // List<Vertex3>, List<int>, Grid2<Color> (NULL when the program has no such
-// grid, so nothing is one), Filter, Wrap, and List<float4x4> for Draw3D.Instanced.
+// grid, so nothing is one), Filter, Wrap, and List<float4x4> for Draw.Instanced.
 // Call before resolving a draw call.
 void builtins_use_mesh(const decl *vertices, const decl *vertices3, const decl *indices, const decl *pixels,
                        const decl *filter, const decl *wrap, const decl *transforms);
 
 // The list type owner.name takes as its argument `index`, when every version
 // of it that has one takes the same: what `[a, b, c]` written there is. When
-// drawing APIs take different lists, like Draw2D.Mesh's Vertex and Draw3D.Mesh's Vertex3,
+// versions take different lists, like Draw.Mesh's Vertex and Vertex3,
 // it's the one whose elements `list`'s first one names, as in
 // `[Vertex3 { ... }, ...]`.
 bool builtin_list_param(str owner, str name, int index, const expr *list, type *out);
@@ -75,7 +78,7 @@ const char *builtin_function_owner(str name);
 typedef struct builtin_member {
     const char *name;
     bool is_function;
-    const char *detail;  // "Draw2D.Circle(float2 center, float radius, Color color)", or "Math.PI: float"; with
+    const char *detail;  // "Draw.Circle(float2 center, float radius, Color color)", or "Math.PI: float"; with
                          // " (+1 version)" after a function's first version when it has others
     const char *doc;     // One line, or NULL; then a function's other versions, each as code with what it says of its own
     const char *snippet; // "Circle(${1:center}, ...)" for functions, NULL for constants
@@ -88,7 +91,7 @@ void builtin_list_members(str owner, void (*visit)(void *user, const builtin_mem
 bool builtin_describe(str owner, str name, sb *out);
 
 // Calls `visit` with each signature of owner.name, like
-// "Draw2D.Circle(float2 center, float radius, Color color)", and its doc (or NULL).
+// "Draw.Circle(float2 center, float radius, Color color)", and its doc (or NULL).
 void builtin_signatures(str owner, str name, void (*visit)(void *user, const char *label, const char *doc), void *user);
 
 // ---------------------------------------------------------------------------

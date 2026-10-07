@@ -58,28 +58,28 @@ local singleton Count { int balls; }
 
 view Buttons(Slots slots, mut Count count)
 {
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw2D.SetCamera(float2(0, 0.2), 2.2);
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0, 0.2), 2.2);
     count.balls = 0;
     GUI.SetTheme(GUITheme { radius = 6 });
     for (var slot = 0; slot < 3; slot++)
     {
         var loaded = slots.rooms[slot] != default;
-        Draw2D.WireRoundRect(Center(slot), float2(1.1, 2.3), 0.1, 0.03, loaded ? Color(0.98, 0.75, 0.14) : Color(0.24, 0.25, 0.27));
-        var corner = Draw2D.WorldToScreen(Center(slot) + float2(-0.55, -1.3));
-        var width = Draw2D.WorldToScreen(Center(slot) + float2(0.55, 0)).x - corner.x;
+        Draw.WireRoundRect(Center(slot), float2(1.1, 2.3), 0.1, 0.03, loaded ? Color(0.98, 0.75, 0.14) : Color(0.24, 0.25, 0.27));
+        var corner = Draw.WorldToScreen(Center(slot) + float2(-0.55, -1.3));
+        var width = Draw.WorldToScreen(Center(slot) + float2(0.55, 0)).x - corner.x;
         if (GUI.Button(Rect(corner.x, corner.y, width, 32), loaded ? "Unload" : "Load")) Send(Toggle { slot = slot });
     }
 }
 
 view Balls(Ball ball, mut Count count)
 {
-    Draw2D.Circle(ball.position, 0.1, Color(0.18, 0.83, 0.75));
+    Draw.Circle(ball.position, 0.1, Color(0.18, 0.83, 0.75));
     count.balls += 1;
 }
 
 view Total(Count count)
 {
-    Draw2D.SetScreen();
-    Draw2D.Text($"{count.balls} balls, in the rooms that are loaded", float2(16, 14), 16, Color.white);
+    Draw.SetScreen();
+    Draw.Text($"{count.balls} balls, in the rooms that are loaded", float2(16, 14), 16, Color.white);
 }

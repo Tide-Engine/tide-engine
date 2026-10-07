@@ -5,6 +5,6 @@ view Show()
 {
     Draw.SetBlend(Blend.Add)
     {
-        Draw2D.Clear(Color.black);
+        Draw.Clear(Color.black);
     }
 }

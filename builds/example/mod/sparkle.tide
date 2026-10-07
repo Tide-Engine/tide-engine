@@ -33,8 +33,8 @@ system Quicken(mut Body body, with Ball)
 // this takes its place in the build, and the game's own isn't in it.
 override view DrawBalls(Body body, with Ball)
 {
-    Draw2D.Circle(body.position, body.radius, Color(0.18, 0.83, 0.75));
-    Draw2D.Circle(body.position, body.radius * 0.55, Color(0.086, 0.086, 0.094));
+    Draw.Circle(body.position, body.radius, Color(0.18, 0.83, 0.75));
+    Draw.Circle(body.position, body.radius * 0.55, Color(0.086, 0.086, 0.094));
 }
 
 // A ring that pulses around everything that moves, over what the game drew.
@@ -42,14 +42,14 @@ override view DrawBalls(Body body, with Ball)
 view Rings(Body body, Time time)
 {
     var pulse = 6 + Math.Sin(time.t * 4) * 3;
-    Draw2D.WireCircle(body.position, body.radius + pulse, 2, Color(0.18, 0.83, 0.75));
+    Draw.WireCircle(body.position, body.radius + pulse, 2, Color(0.18, 0.83, 0.75));
 }
 
 [After(DrawPlayers)]
 view Label()
 {
-    Draw2D.Screen()
+    Draw.Screen()
     {
-        Draw2D.Text("with the Sparkle mod", float2(16, 14), 16, Color(0.18, 0.83, 0.75));
+        Draw.Text("with the Sparkle mod", float2(16, 14), 16, Color(0.18, 0.83, 0.75));
     }
 }
