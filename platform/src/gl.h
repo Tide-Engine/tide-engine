@@ -32,8 +32,15 @@ enum {
     GL_NONE = 0,
     GL_TRIANGLES = 0x0004,
     GL_DEPTH_BUFFER_BIT = 0x0100,
+    GL_STENCIL_BUFFER_BIT = 0x0400,
     GL_COLOR_BUFFER_BIT = 0x4000,
+    GL_NEVER = 0x0200,
+    GL_LESS = 0x0201,
+    GL_EQUAL = 0x0202,
     GL_LEQUAL = 0x0203,
+    GL_GREATER = 0x0204,
+    GL_NOTEQUAL = 0x0205,
+    GL_GEQUAL = 0x0206,
     GL_ALWAYS = 0x0207,
     GL_ZERO = 0,
     GL_ONE = 1,
@@ -46,6 +53,7 @@ enum {
     GL_CCW = 0x0901,
     GL_CULL_FACE = 0x0B44,
     GL_DEPTH_TEST = 0x0B71,
+    GL_STENCIL_TEST = 0x0B90,
     GL_BLEND = 0x0BE2,
     GL_SCISSOR_TEST = 0x0C11,
     GL_MAX_TEXTURE_SIZE = 0x0D33,
@@ -57,8 +65,13 @@ enum {
     GL_INT = 0x1404,
     GL_UNSIGNED_INT = 0x1405,
     GL_FLOAT = 0x1406,
+    GL_INVERT = 0x150A,
     GL_RED = 0x1903,
     GL_RGBA = 0x1908,
+    GL_KEEP = 0x1E00,
+    GL_REPLACE = 0x1E01,
+    GL_INCR = 0x1E02,
+    GL_DECR = 0x1E03,
     GL_NEAREST = 0x2600,
     GL_LINEAR = 0x2601,
     GL_TEXTURE_MAG_FILTER = 0x2800,
@@ -160,7 +173,7 @@ enum {
     V(Scissor, (GLint x, GLint y, GLsizei width, GLsizei height), (x, y, width, height))                               \
     V(ShaderSource, (GLuint shader, GLsizei count, const GLchar *const *strings, const GLint *lengths),                \
       (shader, count, strings, lengths))                                                                               \
-    V(TexImage2D,                                                                                                      \
+    V(StencilFunc, (GLenum function, GLint reference, GLuint mask), (function, reference, mask))                           V(StencilOp, (GLenum failed, GLenum hidden, GLenum drawn), (failed, hidden, drawn))                                    V(TexImage2D,                                                                                                      \
       (GLenum target, GLint level, GLint internal, GLsizei width, GLsizei height, GLint border, GLenum format,         \
        GLenum type, const void *pixels),                                                                               \
       (target, level, internal, width, height, border, format, type, pixels))                                          \

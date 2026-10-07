@@ -5,8 +5,9 @@
 // strictest of them, so the others fit under it:
 //
 // - A pipeline is made once, with its shaders, the vertices it reads, how it
-//   blends and tests depth, and which side of a triangle it draws. Nothing
-//   about it changes afterwards.
+//   blends and tests depth and stencil, and which side of a triangle it
+//   draws. Nothing about it changes afterwards. The number its stencil test
+//   compares with isn't its own: it's the pass's, set before a draw.
 // - A pipeline's uniforms are one block of bytes, set before a draw.
 // - Drawing happens in a pass on a target, which starts cleared or as it was
 //   left. There's no clear inside a pass: the renderer draws one.
@@ -80,6 +81,34 @@ typedef enum tide_gpu_cull {
     TIDE_GPU_CULL_FRONT, // The ones that go clockwise don't
 } tide_gpu_cull;
 
+// Stencil: a number from 0 to 255 for each of a target's pixels, beside its
+// depth, the window's too. The test a pipeline's draws pass to draw at a
+// pixel is the pass's number (tide_gpu.stencil), on the left, against the one
+// stored there: tide_stencil_test's numbers. Neither side of a triangle has
+// its own, and no bits are masked.
+typedef enum tide_gpu_stencil_test {
+    TIDE_GPU_STENCIL_ALWAYS, // No test
+    TIDE_GPU_STENCIL_NEVER,
+    TIDE_GPU_STENCIL_LESS,
+    TIDE_GPU_STENCIL_EQUAL,
+    TIDE_GPU_STENCIL_LESS_EQUAL,
+    TIDE_GPU_STENCIL_GREATER,
+    TIDE_GPU_STENCIL_NOT_EQUAL,
+    TIDE_GPU_STENCIL_GREATER_EQUAL,
+} tide_gpu_stencil_test;
+
+// What becomes of the stored number where a pipeline draws, at the pixels that
+// pass its stencil test and its depth test: tide_stencil_op's numbers. It
+// stays at the others.
+typedef enum tide_gpu_stencil_op {
+    TIDE_GPU_STENCIL_KEEP,
+    TIDE_GPU_STENCIL_REPLACE,   // The pass's number
+    TIDE_GPU_STENCIL_INCREMENT, // One more, 255 at the most
+    TIDE_GPU_STENCIL_DECREMENT, // One less, 0 at the least
+    TIDE_GPU_STENCIL_ZERO,
+    TIDE_GPU_STENCIL_INVERT,    // Each of its bits the other way
+} tide_gpu_stencil_op;
+
 // What a texture's uvs past 0 and 1 read, on both axes: tide_wrap's numbers.
 typedef enum tide_gpu_wrap {
     TIDE_GPU_WRAP_CLAMP,  // The pixels at its edge
@@ -125,6 +154,8 @@ typedef struct tide_gpu_pipeline_desc {
     tide_gpu_blend blend;
     tide_gpu_depth depth;
     tide_gpu_cull cull;
+    tide_gpu_stencil_test stencil_test; // Zeroed: every pixel passes, and nothing is stored
+    tide_gpu_stencil_op stencil_op;
     // What the targets it draws into hold: a pipeline is for one kind. One for
     // targets of depth alone writes no color, and its blend isn't read.
     tide_gpu_target_format into;
@@ -162,7 +193,7 @@ typedef struct tide_gpu {
     tide_gpu_id (*pipeline)(const tide_gpu_pipeline_desc *desc);
     void (*pipeline_free)(tide_gpu_id pipeline);
 
-    // Pixels of its own to draw into, with depth, and to read back: 4 bytes
+    // Pixels of its own to draw into, with depth and stencil, and to read back: 4 bytes
     // each, rows from the top. Its color is also a texture, with the same UVs
     // as an uploaded image: (0, 0) is its top left. So is its depth, which a
     // pipeline reads as depth or compares (tide_gpu_read), never as a color.
@@ -180,8 +211,9 @@ typedef struct tide_gpu {
     // sampleable color texture itself retains its original alpha.
     void (*target_read)(tide_gpu_id target, uint8_t *rgba);
 
-    // A pass on `target`, or the window for 0: cleared to black, depth too, or
-    // over what's there. One at a time; everything below is inside one.
+    // A pass on `target`, or the window for 0: cleared to black, depth too and
+    // stencil to 0, or over what's there. One at a time; everything below is
+    // inside one.
     void (*begin)(tide_gpu_id target, bool clear);
     void (*end)(void);
     // Only what's inside the rect draws from here on: the whole target, to
@@ -189,6 +221,10 @@ typedef struct tide_gpu {
     void (*scissor)(int x, int y, int width, int height);
     // The pipeline the draws after it use, then what it draws with.
     void (*use)(tide_gpu_id pipeline);
+    // The number the stencil tests of the draws after it compare with, and
+    // what TIDE_GPU_STENCIL_REPLACE stores, from 0 to 255: the pass's, whatever
+    // pipeline is used, and 0 as a pass begins.
+    void (*stencil)(uint32_t value);
     void (*uniforms)(const void *data, size_t size);
     // Its texture `slot`, and how it's sampled: between pixels, blended with
     // its neighbors or the nearest, and past its edges, as `wrap` says. A

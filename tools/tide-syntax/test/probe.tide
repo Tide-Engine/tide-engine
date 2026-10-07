@@ -135,6 +135,10 @@ view Show(Devices devices)
     {
         Draw3D.SetCull(Cull.Front);
     }
+    Draw.Stencil(StencilTest.Equal, 1)
+    {
+        Draw.SetStencil(StencilTest.Always, 2, StencilOp.Replace);
+    }
     if (GUI.Button("Copy")) Clipboard.Copy("x");
     GUIControl card = GUI.Control(Rect(0, 0, 1, 1));
     GUITheme look = default;

@@ -1,0 +1,8 @@
+// expect: enum 'StencilOp' has no member 'Increase'
+// expect: what becomes of the stored number where a draw draws: 'Keep' (as it is), 'Replace' (the draw's number), 'Increment', 'Decrement', 'Zero' or 'Invert'
+scene Main { }
+
+view Show()
+{
+    Draw.SetStencil(StencilTest.Always, 1, StencilOp.Increase);
+}

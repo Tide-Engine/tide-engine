@@ -897,6 +897,87 @@ TIDE_TEST(lsp_draw_cull)
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Cull\""), "built into"));
 }
 
+// Stencil is a draw setting too, and Draw's, as 2D and 3D draws both take it,
+// with a render target's own beside it: both forms, with what's stored or
+// without, its two enums, each form's mistake a rename away, and where it is
+// for whoever asks Draw2D or Draw3D.
+TIDE_TEST(lsp_draw_stencil)
+{
+    start();
+    open_document("scene Main { }\nlocal singleton Look { RenderTarget target; StencilOp kept = StencilOp.Invert; }\n"
+                  "view V(Look look)\n{\n"
+                  "    Draw.Stencil(StencilTest.Always, 1, StencilOp.Replace)\n    {\n"
+                  "        Draw2D.Circle(float2(0, 0), 20, Color(0, 0, 0, 0));\n    }\n"
+                  "    Draw.Blend(Blend.Add),\n    Draw.Stencil(StencilTest.Equal, 1)\n    {\n"
+                  "        Draw3D.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.red);\n    }\n"
+                  "    Draw.SetStencil(StencilTest.NotEqual, 1, look.kept);\n    Draw.SetStencil();\n"
+                  "    look.target.Stencil(StencilTest.Less, 2)\n    {\n"
+                  "        look.target.Rect(float2(0, 0), float2(8, 8), Color.red);\n    }\n"
+                  "    look.target.SetStencil(StencilTest.Always, 0, StencilOp.Zero);\n    look.target.SetStencil();\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    const char *shared = complete("scene Main { }\nview V()\n{\n    Draw.$\n}\n");
+    TIDE_CHECK(offers(shared, "Stencil") && offers(shared, "SetStencil") && offers(shared, "Blend"));
+    TIDE_CHECK(has(shared, "Stencil(${1:test}, ${2:value})\\n{\\n\\t$0\\n}") && has(shared, "\"SetStencil(${1:test}, ${2:value})\""));
+    // It's neither Draw2D's nor Draw3D's: both of theirs take it
+    const char *two = complete("scene Main { }\nview V()\n{\n    Draw2D.$\n}\n");
+    TIDE_CHECK(!offers(two, "Stencil") && !offers(two, "SetStencil") && offers(two, "Clip"));
+    const char *three = complete("scene Main { }\nview V()\n{\n    Draw3D.$\n}\n");
+    TIDE_CHECK(!offers(three, "Stencil") && !offers(three, "SetStencil") && offers(three, "Cull"));
+    const char *tests = complete("scene Main { }\nview V()\n{\n    Draw.SetStencil(StencilTest.$, 1);\n}\n");
+    TIDE_CHECK(offers(tests, "Always") && offers(tests, "Never") && offers(tests, "Less") && offers(tests, "Equal"));
+    TIDE_CHECK(offers(tests, "LessEqual") && offers(tests, "Greater") && offers(tests, "NotEqual"));
+    TIDE_CHECK(offers(tests, "GreaterEqual"));
+    const char *ops = complete("scene Main { }\nview V()\n{\n    Draw.SetStencil(StencilTest.Always, 1, StencilOp.$);\n}\n");
+    TIDE_CHECK(offers(ops, "Keep") && offers(ops, "Replace") && offers(ops, "Increment") && offers(ops, "Decrement"));
+    TIDE_CHECK(offers(ops, "Zero") && offers(ops, "Invert"));
+    // A target has its own, and none of what's the same wherever a draw goes
+    const char *target = complete("scene Main { }\nlocal singleton Look { RenderTarget target; }\nview V(Look look)\n{\n"
+                                  "    look.target.$\n}\n");
+    TIDE_CHECK(offers(target, "Stencil") && offers(target, "SetStencil") && offers(target, "Cull"));
+    TIDE_CHECK(!offers(target, "Blend") && !offers(target, "Tint") && !offers(target, "Blit"));
+
+    open_document("scene Main { }\nview V()\n{\n    Draw.Sten$cil(StencilTest.Equal, 1)\n    {\n    }\n}\n");
+    const char *around = request("textDocument/hover");
+    TIDE_CHECK(has(around, "Draw.Stencil(StencilTest test, int value, Block content)"));
+    TIDE_CHECK(has(around, "Draw.Stencil(StencilTest test, int value, StencilOp operation, Block content)"));
+    TIDE_CHECK(has(around, "For the draws in its block") && has(around, "a number from 0 to 255 for each pixel"));
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetSten$cil(StencilTest.Equal, 1);\n}\n");
+    const char *set = request("textDocument/hover");
+    TIDE_CHECK(has(set, "Draw.SetStencil(StencilTest test, int value)") && has(set, "Draw.SetStencil()"));
+    TIDE_CHECK(has(set, "For the draws after it"));
+    // A target's is the same function, on hover and as its arguments are typed
+    open_document("scene Main { }\nlocal singleton Look { RenderTarget target; }\nview V(Look look)\n{\n"
+                  "    look.target.SetSten$cil(StencilTest.Equal, 1);\n}\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "Draw.SetStencil(StencilTest test, int value, StencilOp operation)"));
+    open_document("scene Main { }\nlocal singleton Look { RenderTarget target; }\nview V(Look look)\n{\n"
+                  "    look.target.SetStencil($);\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "StencilTest test, int value, StencilOp operation"));
+
+    // Each form written as the other is a rename away
+    open_document("scene Main { }\nview V()\n{\n    Draw.Stencil(StencilTest.Equal, 1);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw.Stencil sets it around a block") && has(last_sent(), "Draw.SetStencil(...);"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetStencil'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetStencil(StencilTest.Equal, 1)\n    {\n    }\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw.SetStencil sets it for the draws that follow, and takes no block"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Stencil'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    // Asked of Draw2D or of Draw3D, the note says whose it is, and that a target has its own
+    open_document("scene Main { }\nview V()\n{\n    Draw2D.SetStencil(StencilTest.Equal, 1);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw2D has no function 'SetStencil'"));
+    TIDE_CHECK(has(last_sent(), "it's Draw's, as 2D and 3D draws both take it: 'Draw.SetStencil(...);'"));
+    open_document("scene Main { }\nview V()\n{\n    Draw3D.Stencil(StencilTest.Equal, 1)\n    {\n    }\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw3D has no function 'Stencil'") && has(last_sent(), "a render target has its own"));
+    // A test or an operation that isn't one says the ones there are
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetStencil(StencilTest.Same, 1);\n}\n");
+    TIDE_CHECK(has(last_sent(), "enum 'StencilTest' has no member 'Same'") && has(last_sent(), "'GreaterEqual'"));
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetStencil(StencilTest.Always, 1, StencilOp.Add);\n}\n");
+    TIDE_CHECK(has(last_sent(), "enum 'StencilOp' has no member 'Add'") && has(last_sent(), "'Increment'"));
+    // A game can't rename one of its own to either enum's name
+    open_document("scene Main { }\ncomponent Ma$sk { int z; }\n");
+    TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"StencilOp\""), "built into"));
+    TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"StencilTest\""), "built into"));
+}
+
 // What a uv past a texture's edges reads: the built-in Wrap, after the filter in
 // a mesh draw and in a frag's Sample, in completion, hovers and signature help,
 // with what's wrong said where it's written the other way round.
