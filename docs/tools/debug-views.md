@@ -19,7 +19,7 @@ They're off until the game, or whoever starts it, asks for them:
 
 With either, **F7** shows the profiler, and F7 again hides it. Nothing is measured while it's hidden, so having debug views on costs a game nothing until the key is pressed. The game sees the key too.
 
-Under `tide run`, changing the setting takes effect at the next reload. A setting is part of the build, so `tide build` keeps it: take `debugViews` out before players get the game, unless they may see the profiler too.
+Under `tide run --watch`, changing the setting takes effect at the next reload. A setting is part of the build, so `tide build` keeps it: take `debugViews` out before players get the game, unless they may see the profiler too.
 
 ## The profiler
 

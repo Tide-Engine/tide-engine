@@ -378,12 +378,12 @@ async function pickGame(last) {
 
 // How each kind of run runs tide, and its terminal's icon
 const KINDS = {
-    desktop: { args: ['run'], icon: 'play' },
-    web: { args: ['run', '--web', '--no-open'], icon: 'globe' },
-    android: { args: ['run', '--android'], icon: 'device-mobile' },
+    desktop: { args: ['run', '--watch'], icon: 'play' },
+    web: { args: ['run', '--watch', '--web', '--no-open'], icon: 'globe' },
+    android: { args: ['run', '--watch', '--android'], icon: 'device-mobile' },
 };
 
-// `tide run` in a terminal of its own, which shows tide's output and the
+// `tide run --watch` in a terminal of its own, which shows tide's output and the
 // game's, and sends tide what's typed there (r and Enter starts the game
 // over, and y answers whether to download Android's tools). On the web, tide
 // serves the page without opening a browser, and `onPage` gets its address

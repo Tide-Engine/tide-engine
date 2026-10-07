@@ -82,7 +82,7 @@ A line can be a folder instead, relative to the game's, for a package you're wri
 github.com/someone/tide-physics b01aac4d779e32c9c415283b65e40c86d691e7ab
 ```
 
-A folder's files build as they are, with no commit, and `tide run` reloads the game when they change, as it does for the game's own. `tide add ../shared` adds one.
+A folder's files build as they are, with no commit, and `tide run --watch` reloads the game when they change, as it does for the game's own. `tide add ../shared` adds one.
 
 ## Packages that come with tide
 

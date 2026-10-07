@@ -7,6 +7,7 @@ typedef struct build_options {
     bool release;       // Optimized, no console window on Windows
     bool web;           // One self-contained .html, with clang's WebAssembly target
     bool android;       // An Android app (.apk), for arm64 phones and the x86-64 emulator
+    bool watch;         // run --watch: rebuild as the game's files change
     const char *output; // Where the program goes; NULL for <folder>/build/<name>
     const char *title;  // The window's title, over the game's title setting; NULL for that, or else the folder's name
     bool stats;         // Show the stats, whether or not the game's stats setting does: a drawer of one line, in a corner
@@ -22,20 +23,21 @@ typedef struct build_options {
 // what went wrong.
 char *tide_build(const char *root, const build_options *opts);
 
-// Runs a game on this machine, as `tide run` does natively: the game is a
-// library in a small host program, rebuilt whenever one of its files changes and
-// swapped into the running game (see tide/host.h). `args` go to the game
-// (--host, --join, --connect, --size, and a run with no window's), ending
-// with NULL. With `once`, as for a run with no window (--capture, --frames,
-// --script), the game runs as it was built: nothing is watched, rebuilt or
-// swapped in. Returns the game's exit code.
-int tide_run_reloading(const char *root, const build_options *opts, const char *const *args, bool once);
+// Builds a standalone program and runs it once (`tide run`). `args` go to the
+// game (--host, --join, --connect, --size, and a run with no window's), ending
+// with NULL. Returns the game's exit code.
+int tide_run_native(const char *root, const build_options *opts, const char *const *args);
+
+// run --watch: the game is a library in a small host program, rebuilt whenever
+// one of its files changes and swapped into the running game (see tide/host.h).
+// `args` go to the game, as for tide_run_native. Returns the game's exit code.
+int tide_run_reloading(const char *root, const build_options *opts, const char *const *args);
 
 // The same on the web (`tide run --web`): tide serves the game's page on this
-// machine, opens it in a browser if `open_page`, and builds the game again
-// whenever one of its files changes, which the page starts in the running build's
-// place (see platform/web/tide.js). `args` go to the game, as for
-// tide_run_reloading. Runs until it's stopped.
+// machine and opens it in a browser if `open_page`. With opts->watch, builds
+// the game again whenever one of its files changes, which the page starts in the
+// running build's place (see platform/web/tide.js). Otherwise serves one
+// standalone build. `args` go to the game. Runs until it's stopped.
 int tide_run_web(const char *root, const build_options *opts, bool open_page, const char *const *args);
 
 // Runs a game on an Android phone or emulator (`tide run --android`): builds
