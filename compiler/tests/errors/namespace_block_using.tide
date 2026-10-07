@@ -1,0 +1,12 @@
+// expect: 'using' goes at the top of the file, before any declaration
+// expect: a file's 'using' lines are its namespace blocks' too
+scene Main { }
+namespace Physics
+{
+    component Body { float2 position; }
+}
+namespace Combat
+{
+    using Physics;
+    component Health { int hp; }
+}

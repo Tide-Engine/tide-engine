@@ -1,0 +1,5 @@
+// expect: expected '}' to end the namespace 'Combat', which opens at line 4
+scene Main { }
+namespace Combat
+{
+    component Health { int hp; }

@@ -622,13 +622,23 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 
 ### Namespaces
 
-- `namespace Game.Combat;` at the top of a file puts everything in the file in that namespace. A file has at most one namespace; files without one are in the global namespace. Namespaces can be dotted.
-- `using Physics;` at the top of a file lets it name Physics' declarations without the prefix. `namespace` and `using` come before any declaration.
-- A plain name is looked up in the file's namespace, then the namespaces around it out to the global namespace, then the `using` namespaces, as in C# (agreed 2026-10-05). So what a game declares itself is what its code means, whatever a namespace it imports also has by that name: a game with a `Body` of its own that says `using Physics;` means its own by `Body`, and writes `Physics.Body` for the other. If two `using` namespaces both have a name and nothing nearer does, it's ambiguous: write the namespace.
+- `namespace Game.Combat;` at the top of a file puts everything in the file in that namespace. A file has at most one such line; files without one are in the global namespace. Namespaces can be dotted.
+- `namespace Combat { ... }` puts the declarations between its braces in that namespace (agreed 2026-10-07, to separate concerns within one file; the rules under it are Provisional). It goes wherever a declaration does, so a file can have several, and one inside another.
+  - A block's name is inside the namespace it's written in: in a file of `namespace Game;`, `namespace Combat { }` is `Game.Combat`, and a block inside it named `Rules` is `Game.Combat.Rules`. A block's name can be dotted too.
+  - A namespace is a set of names, not a place: the same one can be a block twice in a file, a block in several files, and a file's own namespace in another. What any of them declares is one namespace's.
+  - What's inside a block is declared as anywhere: its order among the file's declarations is where it's written, so a block changes no system's order.
+  - Provisional: `using` stays at the top of the file, and is every block's of the file. A `using` inside a block is an error.
+  - Provisional: the line form comes before any declaration, a block being one: a file says its own namespace first, and blocks after it are inside that.
+  - Provisional: a block takes no attributes, `local`, `virtual` or `override`: they go before the declarations inside it.
+  - Provisional: a qualified name is still exact, from the global namespace: inside `Combat`, the block `Rules`' function is `Combat.Rules.Cap`, not `Rules.Cap`. (C# also reads a qualified name's first part from the namespaces around the code. Not built.)
+  - Provisional: a package's blocks are in its namespace or one inside it, as its files are: a package file with no namespace line can have everything in `namespace Package { ... }`.
+  - Where a file is half typed, editors and the errors after a first one tell where a block's declarations start by their column: the first line's after the `{`, which the formatter makes one step in from the block's `namespace`.
+- `using Physics;` at the top of a file lets it name Physics' declarations without the prefix. `namespace Name;` and `using` come before any declaration.
+- A plain name is looked up in the namespace of the code that writes it (its block's, or its file's), then the namespaces around it out to the global namespace, then the `using` namespaces, as in C# (agreed 2026-10-05). So what a game declares itself is what its code means, whatever a namespace it imports also has by that name: a game with a `Body` of its own that says `using Physics;` means its own by `Body`, and writes `Physics.Body` for the other. If two `using` namespaces both have a name and nothing nearer does, it's ambiguous: write the namespace.
 - Qualified names work wherever a type is named: parameters (`mut Combat.Health health`), `with` and `without`, component values (`Combat.Health { value = 10 }`), `Spawn`, `Add` and `Remove`.
 - The same name can be declared in different namespaces. Built-in names can't start a namespace (`namespace Math;` is an error).
 - In generated C, namespaced declarations are prefixed with their namespace: `Combat.Health` is `Combat_Health`, read with `tide_get_Combat_Health`.
-- There's exactly one `Main` in a game, in any file or namespace. `namespace` and `using` are only keywords at the top of a file.
+- There's exactly one `Main` in a game, in any file or namespace. `namespace` and `using` are only keywords where a declaration can start: anywhere else they're names like any other.
 
 ```csharp
 // combat.tide
@@ -644,6 +654,36 @@ scene Main { }
 event(Spawned) Setup(with Main)
 {
     Spawn(Health, Items.Health { value = 3 });
+}
+```
+
+```csharp
+// One file, two namespaces, and the global one around them
+namespace Combat
+{
+    component Health { int value = 100; }
+
+    namespace Rules
+    {
+        int Cap(int value) { return Math.Min(value, 100); }
+    }
+
+    system Heal(mut Health health)
+    {
+        health.value = Combat.Rules.Cap(health.value + 1);
+    }
+}
+
+namespace Items
+{
+    component Bag { int coins; }
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Combat.Health, Items.Bag);
 }
 ```
 
@@ -3309,6 +3349,12 @@ Picks made as `Clip` assets and `Audio.Play` were built (2026-10-07, the second 
 - **`Audio.Play(clip[, volume[, pitch]])`, `Audio.Play(clip, position[, volume[, pitch]])`** with a `float2` (z 0) or a `float3`, each default 1: three overloads, as `Draw`'s are. Who may call: views, local handlers and the functions they call, which are handed the local state as functions that read `Frame.dt` are (the frame's audio list is in it: `tide_local_audio`, which the host gives before each frame); the match, the input's `Sample`, tasks, methods and GPU code can't, each with its own message, and a function that plays called from the match is the error `Frame.dt`'s is. So `Audio` is an owner like `Draw`, with `Draw`'s rule widened to local handlers, where `Draw` stays a view's.
 - **A host that gives no audio list** (a C host of its own) records nothing, and nothing breaks.
 - **A hot reload stops every sound**: the old build's clips are its own, so the host has the mixer forget before it unloads the library (`tide_platform_audio_forget`). A pack loaded again (a saved file under `tide run`) stops nothing.
+
+Picks made as `Sound` fields and the listener were built (2026-10-07, the third card), awaiting the owner too:
+
+- **`Sound` is a built-in struct**, `{ Clip clip; float3 position; bool spatial; float volume = 1; float pitch = 1; bool loop; bool playing; }`, in generated C only for a game that names it, as `Depth` is. It's a resource of this machine's, as it holds a `Clip`: local singletons, local components, a match component's `local` fields and structs in those, and never the match's or a list's. `bus`, `effect` and `knobs` join it with their cards.
+- **The frame names every `Sound` that plays, itself** (`tide_local_sounds`, at the end of `tide_frame`, after the views and the local commands they queued, so an entity spawned or destroyed in a frame is counted that frame): a view only writes the fields. A voice is named by its field's path (hashed) and, for a row's, the entity's bits, so the same field on the same entity is the same voice frame after frame, and another entity's another voice. A `Sound` that isn't `playing` isn't named, so the mixer fades it out as it fades one whose field is gone; `playing` false then true, or another clip, starts over (the mixer's rule). Nothing of a `Sound`'s state is in the field but what the game wrote: where the clip is up to is the mixer's.
+- **The listener and the falloff are `Set` forms alone for now**: `Audio.SetListener(position, rotation)`, `Audio.SetListener(center)` (2D: z 0, facing +z) and `Audio.SetFalloff(near, far)`, each a frame's setting that holds from where it's set to the frame's end, and every frame starts from the defaults. The block forms (`Audio.Listener(...) { }`), and the listener defaulting to the frame's camera, aren't built: the default is the origin.
 
 ### Open
 
