@@ -80,6 +80,7 @@ enum {
     GL_TEXTURE_WRAP_S = 0x2802,
     GL_TEXTURE_WRAP_T = 0x2803,
     GL_REPEAT = 0x2901,
+    GL_SAMPLES = 0x80A9,
     GL_RGBA8 = 0x8058,
     GL_CLAMP_TO_EDGE = 0x812F,
     GL_DEPTH_STENCIL_ATTACHMENT = 0x821A,
@@ -102,9 +103,13 @@ enum {
     GL_VERTEX_SHADER = 0x8B31,
     GL_COMPILE_STATUS = 0x8B81,
     GL_LINK_STATUS = 0x8B82,
+    GL_READ_FRAMEBUFFER = 0x8CA8,
+    GL_DRAW_FRAMEBUFFER = 0x8CA9,
     GL_FRAMEBUFFER_COMPLETE = 0x8CD5,
     GL_COLOR_ATTACHMENT0 = 0x8CE0,
     GL_FRAMEBUFFER = 0x8D40,
+    GL_RENDERBUFFER = 0x8D41,
+    GL_MAX_SAMPLES = 0x8D57,
     GL_UNIFORM_BUFFER = 0x8A11,
 };
 
@@ -118,10 +123,15 @@ enum {
     V(BindBuffer, (GLenum target, GLuint buffer), (target, buffer))                                                    \
     V(BindBufferBase, (GLenum target, GLuint index, GLuint buffer), (target, index, buffer))                           \
     V(BindFramebuffer, (GLenum target, GLuint framebuffer), (target, framebuffer))                                     \
+    V(BindRenderbuffer, (GLenum target, GLuint renderbuffer), (target, renderbuffer))                                  \
     V(BindSampler, (GLuint unit, GLuint sampler), (unit, sampler))                                                     \
     V(BindTexture, (GLenum target, GLuint texture), (target, texture))                                                 \
     V(BindVertexArray, (GLuint array), (array))                                                                        \
     V(BlendFunc, (GLenum source, GLenum destination), (source, destination))                                           \
+    V(BlitFramebuffer,                                                                                                 \
+      (GLint x0, GLint y0, GLint x1, GLint y1, GLint to_x0, GLint to_y0, GLint to_x1, GLint to_y1, GLbitfield mask,    \
+       GLenum filter),                                                                                                 \
+      (x0, y0, x1, y1, to_x0, to_y0, to_x1, to_y1, mask, filter))                                                      \
     V(BlendFuncSeparate, (GLenum source, GLenum destination, GLenum source_alpha, GLenum destination_alpha),          \
       (source, destination, source_alpha, destination_alpha))                                                         \
     V(BufferData, (GLenum target, GLsizeiptr size, const void *data, GLenum usage), (target, size, data, usage))       \
@@ -136,6 +146,7 @@ enum {
     V(DeleteBuffers, (GLsizei count, const GLuint *buffers), (count, buffers))                                         \
     V(DeleteFramebuffers, (GLsizei count, const GLuint *framebuffers), (count, framebuffers))                          \
     V(DeleteProgram, (GLuint program), (program))                                                                      \
+    V(DeleteRenderbuffers, (GLsizei count, const GLuint *renderbuffers), (count, renderbuffers))                       \
     V(DeleteShader, (GLuint shader), (shader))                                                                         \
     V(DeleteTextures, (GLsizei count, const GLuint *textures), (count, textures))                                      \
     V(DeleteVertexArrays, (GLsizei count, const GLuint *arrays), (count, arrays))                                      \
@@ -150,11 +161,14 @@ enum {
       (mode, count, type, indices, instances))                                                                         \
     V(Enable, (GLenum capability), (capability))                                                                       \
     V(EnableVertexAttribArray, (GLuint index), (index))                                                                \
+    V(FramebufferRenderbuffer, (GLenum target, GLenum attachment, GLenum renderbuffer_target, GLuint renderbuffer),    \
+      (target, attachment, renderbuffer_target, renderbuffer))                                                         \
     V(FramebufferTexture2D, (GLenum target, GLenum attachment, GLenum texture_target, GLuint texture, GLint level),    \
       (target, attachment, texture_target, texture, level))                                                            \
     V(FrontFace, (GLenum winding), (winding))                                                                          \
     V(GenBuffers, (GLsizei count, GLuint *buffers), (count, buffers))                                                  \
     V(GenFramebuffers, (GLsizei count, GLuint *framebuffers), (count, framebuffers))                                   \
+    V(GenRenderbuffers, (GLsizei count, GLuint *renderbuffers), (count, renderbuffers))                                \
     V(GenSamplers, (GLsizei count, GLuint *samplers), (count, samplers))                                               \
     V(GenTextures, (GLsizei count, GLuint *textures), (count, textures))                                               \
     V(GenVertexArrays, (GLsizei count, GLuint *arrays), (count, arrays))                                               \
@@ -172,6 +186,9 @@ enum {
     V(ReadBuffer, (GLenum source), (source))                                                                           \
     V(ReadPixels, (GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void *pixels),         \
       (x, y, width, height, format, type, pixels))                                                                     \
+    V(RenderbufferStorageMultisample,                                                                                  \
+      (GLenum target, GLsizei samples, GLenum format, GLsizei width, GLsizei height),                                  \
+      (target, samples, format, width, height))                                                                        \
     V(SamplerParameteri, (GLuint sampler, GLenum name, GLint value), (sampler, name, value))                           \
     V(Scissor, (GLint x, GLint y, GLsizei width, GLsizei height), (x, y, width, height))                               \
     V(ShaderSource, (GLuint shader, GLsizei count, const GLchar *const *strings, const GLint *lengths),                \
@@ -203,6 +220,12 @@ enum {
 TIDE_GL_FUNCTIONS(TIDE_GL_DECLARE_V, TIDE_GL_DECLARE_R)
 #undef TIDE_GL_DECLARE_V
 #undef TIDE_GL_DECLARE_R
+
+// OpenGL ES 3's and WebGL 2's alone (desktop has it from OpenGL 4.2): what a
+// renderbuffer of a format can be, of which the renderer asks its sample
+// counts (GL_SAMPLES: the most first). OpenGL 3.3 has GL_MAX_SAMPLES for
+// every format it draws into.
+void glGetInternalformativ(GLenum target, GLenum format, GLenum name, GLsizei count, GLint *out);
 
 #else
 

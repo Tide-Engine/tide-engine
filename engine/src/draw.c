@@ -17,6 +17,9 @@ static tide_render_target_state *render_targets;
 _Static_assert(TIDE_TARGET_COLORS * 3 == TIDE_RENDER_IMAGE_SHIFT && TIDE_TARGET_RGBA16F + 1 <= 7
                && TIDE_TARGET_COLORS - 1 <= (int)(TIDE_RENDER_IMAGE >> TIDE_RENDER_IMAGE_SHIFT),
                "a target's id has 3 bits for each color image's format, then which image a texture names");
+_Static_assert(TIDE_RENDER_SAMPLES_SHIFT == TIDE_RENDER_IMAGE_SHIFT + 2 && (1 << 3) == TIDE_TARGET_SAMPLES
+               && TIDE_RENDER_BITS == UINT64_C(0xFFFF),
+               "...then 2 bits for its samples, as a power of two: all of it in what a uint16_t holds");
 
 // A managed target's id: its state's address, and what it holds.
 static uint64_t managed_id(const tide_render_target_state *s)
@@ -65,22 +68,50 @@ static tide_target_formats several_formats(const tide_target_format *formats, co
     return held;
 }
 
+// The bits of a target's id for `samples` a pixel: 1, 2, 4 or 8, any other
+// number being the one of those under it (1 for what's under 1), having said
+// so. A target with no color image has 1: nothing reads a multisampled depth.
+static uint16_t samples_of(const int32_t samples, const tide_target_formats formats)
+{
+    uint32_t power = 0;
+    while (power < 3u && (2 << power) <= samples) power++;
+    if (samples != 1 << power) {
+        fprintf(stderr, "RenderTarget: a target's samples are 1, 2, 4 or 8, and this asked for %d: it has %d\n",
+                (int)samples, 1 << power);
+    }
+    if (power && formats.count == 0) {
+        fprintf(stderr, "RenderTarget: a target of depth alone (Format.Depth) has one sample a pixel, and this asked "
+                        "for %d: a multisampled target's depth can't be read, so nothing could be read of it\n",
+                1 << power);
+        power = 0;
+    }
+    return (uint16_t)(power << TIDE_RENDER_SAMPLES_SHIFT);
+}
+
 // A managed target of `size` that holds `formats`, or a dead one, having said
 // `why`, for a size there's no image of. Its state is on a boundary that
-// leaves its id the bits what it holds goes in.
-static tide_render_target make_target(const tide_target_size size, const tide_target_formats formats, const char *why)
+// leaves its id the bits what it holds goes in. `sampled` is its samples, as
+// those bits (samples_of).
+static tide_render_target make_target_sampled(const tide_target_size size, const tide_target_formats formats,
+                                              const uint16_t sampled, const char *why)
 {
     void *memory = tide_alloc_zeroed(1, sizeof(tide_render_target_state) + (size_t)TIDE_RENDER_BITS);
     tide_render_target_state *s = (tide_render_target_state *)(((uintptr_t)memory + (uintptr_t)TIDE_RENDER_BITS)
                                                                & ~(uintptr_t)TIDE_RENDER_BITS);
     *s = (tide_render_target_state){.next = render_targets, .owner = &render_targets, .size = size, .version = 1,
-                                    .memory = memory, .alive = tide_target_size_valid(size), .holds = holds_of(formats)};
+                                    .memory = memory, .alive = tide_target_size_valid(size),
+                                    .holds = (uint16_t)(holds_of(formats) | sampled)};
     render_targets = s;
     if (!s->alive) {
         s->size = (tide_target_size){0};
         fprintf(stderr, "%s\n", why);
     }
     return (tide_render_target){.id = managed_id(s), .size = s->size};
+}
+
+static tide_render_target make_target(const tide_target_size size, const tide_target_formats formats, const char *why)
+{
+    return make_target_sampled(size, formats, 0, why);
 }
 
 static tide_render_target make_sized(const float width, const float height, const tide_target_formats formats)
@@ -143,6 +174,38 @@ tide_render_target tide_render_target_screen_of(const float factor, const tide_t
 tide_render_target tide_render_target_window_of(const tide_target_format *formats, const uint32_t count)
 {
     return tide_render_target_screen_of(1.0f, formats, count);
+}
+
+tide_render_target tide_render_target_make_sampled(const float width, const float height, const tide_target_format *formats,
+                                                   const uint32_t count, const int32_t samples)
+{
+    const tide_target_formats held = several_formats(formats, count);
+    return make_target_sampled((tide_target_size){.width = width, .height = height}, held, samples_of(samples, held),
+                               "RenderTarget requires positive dimensions");
+}
+
+tide_render_target tide_render_target_make_scaled_sampled(const float width, const float height, const float scale,
+                                                          const tide_target_format *formats, const uint32_t count,
+                                                          const int32_t samples)
+{
+    const tide_target_formats held = several_formats(formats, count);
+    const tide_target_size size = {.width = scale > 0.0f ? width : 0.0f, .height = height, .scale = scale};
+    return make_target_sampled(size, held, samples_of(samples, held),
+                               "RenderTarget requires positive dimensions and a positive number of pixels per unit");
+}
+
+tide_render_target tide_render_target_screen_sampled(const float factor, const tide_target_format *formats,
+                                                     const uint32_t count, const int32_t samples)
+{
+    const tide_target_formats held = several_formats(formats, count);
+    return make_target_sampled((tide_target_size){.window = factor > 0.0f ? factor : 0.0f}, held, samples_of(samples, held),
+                               "RenderTarget.Window requires a positive factor of the window's size");
+}
+
+tide_render_target tide_render_target_window_sampled(const tide_target_format *formats, const uint32_t count,
+                                                     const int32_t samples)
+{
+    return tide_render_target_screen_sampled(1.0f, formats, count, samples);
 }
 
 tide_render_target tide_render_target_make(const float width, const float height)
@@ -210,8 +273,10 @@ tide_render_target tide_render_target_recreate(const tide_render_target previous
     for (const tide_render_target_state *s = render_targets; s; s = s->next) {
         if (s->reload_id == whole) return (tide_render_target){.id = managed_id(s) | image, .size = s->size};
     }
-    // As it was: its size, its scale, whether it follows the window, and what it holds, which its id says
-    tide_render_target next = make_target(previous.size, tide_render_target_formats(whole), "");
+    // As it was: its size, its scale, whether it follows the window, and what it holds and its samples, which
+    // its id says
+    tide_render_target next = make_target_sampled(previous.size, tide_render_target_formats(whole),
+                                                  (uint16_t)(whole & TIDE_RENDER_SAMPLES), "");
     tide_render_target_state_of(next.id)->reload_id = whole;
     next.id |= image;
     return next;
@@ -1468,8 +1533,10 @@ static tide_float4x4 turn_z(tide_float4x4 m)
 // change, or a new one. `mirrored` says it shows the world as a looking glass
 // would, which whoever made the matrix knows of its parts: asked of the
 // matrix itself, a camera far from the origin would answer by its rounding.
-static void camera_3d(tide_draw_list *d, const tide_float4x4 world_to_clip, const bool fit, const bool mirrored)
+static void camera_3d(tide_draw_list *d, const tide_draw_camera_3d_data camera)
 {
+    const tide_float4x4 world_to_clip = camera.matrix;
+    const bool fit = camera.fit != 0, mirrored = camera.mirrored != 0;
     tide_draw_place *p = &d->place;
     const uint32_t known[2] = {p->played_3d, p->camera_3d};
     for (int i = 0; i < 2; i++) {
@@ -1482,14 +1549,23 @@ static void camera_3d(tide_draw_list *d, const tide_float4x4 world_to_clip, cons
         }
     }
     d->cameras_3d = grow(d->cameras_3d, d->camera_3d_count, &d->camera_3d_capacity, 1, sizeof(tide_draw_camera_3d_data), 8u);
-    d->cameras_3d[d->camera_3d_count] = (tide_draw_camera_3d_data){.matrix = world_to_clip, .fit = fit,
-                                                                   .mirrored = mirrored};
+    d->cameras_3d[d->camera_3d_count] = camera;
     p->camera_3d = ++d->camera_3d_count;
     refresh(d);
 }
 
-tide_float4x4 tide_draw_camera_3d_matrix(const tide_float3 position, const tide_quaternion rotation,
-                                         const float field_of_view)
+// A camera of which only the matrix is known, as a command has it: one at the
+// origin whose projection is all of it.
+static tide_draw_camera_3d_data camera_of_matrix(const tide_float4x4 world_to_clip, const bool fit, const bool mirrored)
+{
+    tide_float4x4 projection = world_to_clip;
+    projection.c2 = tide_neg_f4(projection.c2);
+    return (tide_draw_camera_3d_data){.matrix = world_to_clip, .transform = tide_identity_f4x4(),
+                                      .projection = projection, .fit = fit, .mirrored = mirrored};
+}
+
+static tide_draw_camera_3d_data perspective_camera(const tide_float3 position, const tide_quaternion rotation,
+                                                   const float field_of_view)
 {
     // The world as the camera sees it: moved and turned the other way
     const tide_quaternion back = tide_conjugate_q(tide_normalize_q(rotation));
@@ -1502,13 +1578,37 @@ tide_float4x4 tide_draw_camera_3d_matrix(const tide_float3 position, const tide_
                                       {0.0f, f, 0.0f, 0.0f},
                                       {0.0f, 0.0f, -1.0f, -1.0f},
                                       {0.0f, 0.0f, -2.0f * near_z, 0.0f}};
-    return tide_mul_f4x4(projection, turn_z(view));
+    return (tide_draw_camera_3d_data){
+        .matrix = tide_mul_f4x4(projection, turn_z(view)),
+        .transform = tide_trs_f4x4(position, tide_normalize_q(rotation), tide_f3(1.0f, 1.0f, 1.0f)),
+        .projection = projection,
+        .fit = 1,
+    };
+}
+
+tide_float4x4 tide_draw_camera_3d_matrix(const tide_float3 position, const tide_quaternion rotation,
+                                         const float field_of_view)
+{
+    return perspective_camera(position, rotation, field_of_view).matrix;
+}
+
+tide_draw_camera_3d_data tide_draw_first_camera_3d(void)
+{
+    return perspective_camera(tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 60.0f);
+}
+
+tide_float4x4 tide_draw_camera_fit(tide_float4x4 matrix, const float width, const float height)
+{
+    const float across = height / width;
+    matrix.c0.x *= across, matrix.c1.x *= across;
+    matrix.c2.x *= across, matrix.c3.x *= across;
+    return matrix;
 }
 
 void tide_draw_set_camera_3d(tide_draw_list *d, const tide_float3 position, const tide_quaternion rotation,
                              const float field_of_view)
 {
-    camera_3d(d, tide_draw_camera_3d_matrix(position, rotation, field_of_view), true, false);
+    camera_3d(d, perspective_camera(position, rotation, field_of_view));
 }
 
 void tide_draw_unset_camera_3d(tide_draw_list *d)
@@ -1524,7 +1624,8 @@ void tide_draw_set_camera_matrices(tide_draw_list *d, const tide_float4x4 transf
     // (a camera placed by a matrix that mirrors, a projection upside down, or the identity's, which
     // looks back along z), and a triangle's front is still its front there
     const bool mirrored = mirrors(&transform) != (tide_determinant_f4x4(projection) > 0.0f);
-    camera_3d(d, tide_mul_f4x4(projection, turn_z(tide_inverse_f4x4(transform))), false, mirrored);
+    camera_3d(d, (tide_draw_camera_3d_data){.matrix = tide_mul_f4x4(projection, turn_z(tide_inverse_f4x4(transform))),
+                                            .transform = transform, .projection = projection, .mirrored = mirrored});
 }
 
 uint32_t tide_draw_push_camera_3d(tide_draw_list *d, const tide_float3 position, const tide_quaternion rotation,
@@ -1972,7 +2073,7 @@ static void append_place(tide_draw_list *d, const tide_draw_list *from, const ti
     p->camera_2d = append_camera(d, from, place->camera_2d);
     if (place->camera_3d && place->camera_3d <= from->camera_3d_count) {
         const tide_draw_camera_3d_data *c = &from->cameras_3d[place->camera_3d - 1u];
-        camera_3d(d, c->matrix, c->fit != 0, c->mirrored != 0);
+        camera_3d(d, *c);
     } else {
         p->camera_3d = 0;
     }
@@ -2006,7 +2107,7 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
         } else if (c->kind == TIDE_DRAW_CAMERA_3D) {
             if (c->camera.matrix == TIDE_DRAW_FIRST_CAMERA) tide_draw_unset_camera_3d(d);
             else if (c->camera.matrix < from->matrix_count) {
-                camera_3d(d, from->matrices[c->camera.matrix], c->camera.fit != 0, c->camera.mirrored != 0);
+                camera_3d(d, camera_of_matrix(from->matrices[c->camera.matrix], c->camera.fit != 0, c->camera.mirrored != 0));
             }
         } else if (c->kind == TIDE_DRAW_CLIP || c->kind == TIDE_DRAW_NO_CLIP) {
             d->place.clip = c->kind == TIDE_DRAW_CLIP ? append_clip(d, from, c->clip) : 0;

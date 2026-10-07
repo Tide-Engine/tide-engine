@@ -36,6 +36,12 @@ typedef struct gl_target {
     GLuint colors[TIDE_GPU_MAX_COLORS]; // Its color images, in order: none for a target of depth alone
     uint32_t color_count;
     uint32_t drawn; // How many of them the framebuffer's draw buffers name (see draw_into)
+    // A multisampled one's (above 1): the framebuffer is of renderbuffers of that many samples a pixel, its color
+    // images' and its depth's, and each color image, a texture as any target's, is in a framebuffer of its own,
+    // which a pass's end resolves the samples into. It has no depth texture.
+    uint32_t samples;
+    GLuint sampled[TIDE_GPU_MAX_COLORS], sampled_depth;
+    GLuint resolved[TIDE_GPU_MAX_COLORS];
     bool bytes;     // Its first color image is 4 bytes a pixel: what's read back
     tide_gpu_target_format format; // What it was made to hold, which the pipelines that draw into it are made for
     int width, height;
@@ -423,6 +429,45 @@ static void draw_into(gl_target *t, const uint32_t count)
     t->drawn = count;
 }
 
+// The most samples a renderbuffer of `format` has here. OpenGL 3.3 has
+// GL_MAX_SAMPLES for every format it draws into; OpenGL ES 3 and WebGL 2 say
+// for each, and may have none for floats.
+static uint32_t most_samples(const GLenum format)
+{
+    GLint most = 0;
+#if defined(__wasm__) || defined(__ANDROID__)
+    glGetInternalformativ(GL_RENDERBUFFER, format, GL_SAMPLES, 1, &most);
+#else
+    (void)format;
+    glGetIntegerv(GL_MAX_SAMPLES, &most);
+#endif
+    return most > 1 ? (uint32_t)most : 1u;
+}
+
+// The samples a target has for the ones its format asks for: the most of 8,
+// 4 and 2 that's no more than asked and that each of its images and its depth
+// can have.
+static uint32_t gl_target_samples(const tide_gpu_target_format format)
+{
+    uint32_t samples = tide_gpu_target_samples(format);
+    const uint32_t colors = tide_gpu_target_colors(format);
+    if (samples <= 1u || colors == 0) return 1u;
+    static uint32_t bytes, floats; // 0 until it's known
+    if (!bytes) {
+        bytes = most_samples(GL_RGBA8);
+        const uint32_t depth = most_samples(GL_DEPTH24_STENCIL8);
+        if (depth < bytes) bytes = depth;
+    }
+    uint32_t most = bytes;
+    for (uint32_t i = 0; i < colors; i++) {
+        if (tide_gpu_target_color(format, i) != TIDE_GPU_COLOR_FLOAT || !gl_float_targets()) continue;
+        if (!floats) floats = most_samples(GL_RGBA16F);
+        if (floats < most) most = floats;
+    }
+    while (samples > most) samples >>= 1;
+    return samples > 1u ? samples : 1u;
+}
+
 static tide_gpu_id gl_target_make(const tide_gpu_target_format format, const int width, const int height)
 {
     uint32_t place = 0;
@@ -444,13 +489,44 @@ static tide_gpu_id gl_target_make(const tide_gpu_target_format format, const int
         floats = false;
     }
     gl_target *t = &targets[place]; // After the float images were looked for, which makes textures of its own
+    const uint32_t samples = colors ? tide_gpu_target_samples(format) : 1u;
     *t = (gl_target){.width = width, .height = height, .format = format, .color_count = colors,
-                     .drawn = colors ? 1u : 0u,
+                     .drawn = colors ? 1u : 0u, .samples = samples,
                      .bytes = colors && !(floats && tide_gpu_target_color(format, 0) == TIDE_GPU_COLOR_FLOAT)};
     glGenFramebuffers(1, &t->framebuffer);
     for (uint32_t i = 0; i < colors; i++) {
         t->colors[i] = floats && tide_gpu_target_color(format, i) == TIDE_GPU_COLOR_FLOAT
             ? float_texture(width, height) : gl_texture_make(TIDE_GPU_RGBA8, width, height, NULL);
+    }
+    if (samples > 1u) {
+        // What's drawn into: `samples` colors, depths and stencils a pixel. The textures are what they come to
+        // (gl_end), each in a framebuffer of its own to be resolved into, and read back from
+        glGenRenderbuffers((GLsizei)colors, t->sampled);
+        glGenRenderbuffers(1, &t->sampled_depth);
+        glGenFramebuffers((GLsizei)colors, t->resolved);
+        glBindFramebuffer(GL_FRAMEBUFFER, t->framebuffer);
+        for (uint32_t i = 0; i < colors; i++) {
+            const bool wide = floats && tide_gpu_target_color(format, i) == TIDE_GPU_COLOR_FLOAT;
+            glBindRenderbuffer(GL_RENDERBUFFER, t->sampled[i]);
+            glRenderbufferStorageMultisample(GL_RENDERBUFFER, (GLsizei)samples, wide ? GL_RGBA16F : GL_RGBA8, width, height);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_RENDERBUFFER, t->sampled[i]);
+        }
+        glBindRenderbuffer(GL_RENDERBUFFER, t->sampled_depth);
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, (GLsizei)samples, GL_DEPTH24_STENCIL8, width, height);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, t->sampled_depth);
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
+        bool complete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        for (uint32_t i = 0; i < colors; i++) {
+            glBindFramebuffer(GL_FRAMEBUFFER, t->resolved[i]);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t->colors[i], 0);
+            complete &= glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        }
+        if (!complete) {
+            fprintf(stderr, "tide: no framebuffer of %u samples a pixel to render offscreen in\n", (unsigned)samples);
+            abort();
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return place + 1u;
     }
     glBindFramebuffer(GL_FRAMEBUFFER, t->framebuffer);
     for (uint32_t i = 0; i < colors; i++) {
@@ -490,7 +566,13 @@ static void gl_target_free(const tide_gpu_id target)
     gl_target *t = &targets[target - 1u];
     glDeleteFramebuffers(1, &t->framebuffer);
     for (uint32_t i = 0; i < t->color_count; i++) gl_texture_free(t->colors[i]);
-    glDeleteTextures(1, &t->depth);
+    if (t->samples > 1u) {
+        glDeleteFramebuffers((GLsizei)t->color_count, t->resolved);
+        glDeleteRenderbuffers((GLsizei)t->color_count, t->sampled);
+        glDeleteRenderbuffers(1, &t->sampled_depth);
+    } else {
+        glDeleteTextures(1, &t->depth);
+    }
     *t = (gl_target){0};
 }
 
@@ -512,7 +594,7 @@ static void gl_target_read(const tide_gpu_id target, uint8_t *rgba)
         memset(rgba, 0, (size_t)t->width * (size_t)t->height * 4u);
         return;
     }
-    glBindFramebuffer(GL_FRAMEBUFFER, t->framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, t->samples > 1u ? t->resolved[0] : t->framebuffer); // What its samples came to
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, t->width, t->height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -581,6 +663,18 @@ static void gl_begin(const tide_gpu_id target, const bool clear)
 
 static void gl_end(void)
 {
+    if (pass_target && pass_target->samples > 1u) {
+        // Each color image's texture is what its samples come to: all of it, whatever the pass's scissor was
+        const gl_target *t = pass_target;
+        glDisable(GL_SCISSOR_TEST);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, t->framebuffer);
+        for (uint32_t i = 0; i < t->color_count; i++) {
+            glReadBuffer(GL_COLOR_ATTACHMENT0 + i);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, t->resolved[i]);
+            glBlitFramebuffer(0, 0, t->width, t->height, 0, 0, t->width, t->height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        }
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+    }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     pass_target = NULL;
 }
@@ -731,6 +825,7 @@ const tide_gpu tide_gpu_gl = {
     .pipeline_free = gl_pipeline_free,
     .target = gl_target_make,
     .target_limit = gl_target_limit,
+    .target_samples = gl_target_samples,
     .float_targets = gl_float_targets,
     .target_texture = gl_target_texture,
     .target_depth = gl_target_depth,
