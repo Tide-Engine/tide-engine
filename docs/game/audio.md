@@ -3,7 +3,7 @@
 Sound is presentation, like drawing: it's this machine's, and nothing of it is in the match. A view says what should be sounding as it says what should be drawn, and a local handler plays a sound when the match sends an event. Nothing in the simulation hears any of it, so a match is the same on a machine with its speakers off.
 
 ::: info
-What's here: clips as assets, `Audio.Play`, `Sound` fields and the listener, buses, `audio` declarations that filter and make sound, and the device on every platform. Ogg Vorbis and the microphone are next; see the [spec](../spec.md#audio) for the whole design and what's still open.
+What's here: clips as assets (WAV and Ogg Vorbis), `Audio.Play`, `Sound` fields and the listener, buses, `audio` declarations that filter and make sound, and the device on every platform. The microphone is next; see the [spec](../spec.md#audio) for the whole design and what's still open.
 :::
 
 ## Clips
@@ -12,11 +12,14 @@ A sound is a file the game is built with, declared as an [asset](assets.md):
 
 ```csharp
 asset Clip shot = "sfx/shot.wav";
+asset Clip music = "music/theme.ogg";
 asset List<Clip> hits = "sfx/hit_*.wav";
-asset Map<string, Clip> voices = "voice/*.wav";
+asset Map<string, Clip> voices = "voice/*.ogg";
 ```
 
-A `Clip` is a WAV of PCM (8, 16, 24 or 32 bits) or floats, of one or two channels, at any rate. The build checks the file decodes, and the pack keeps it as it is: the engine decodes it the first time it's played, and keeps that. Ogg Vorbis is to come.
+A `Clip` is a WAV (PCM of 8, 16, 24 or 32 bits, or floats) or an Ogg Vorbis file, of one or two channels, at any rate. The build checks the file decodes, and the pack keeps it as it is, so a Vorbis clip stays about a tenth the size of its PCM. As the game loads its pack, every clip is decoded, on the pool's threads, so the first play of one costs nothing: a WAV whole, and Vorbis up to ten seconds long whole too. A longer Vorbis clip (music, a long ambience) is kept as its file and decoded as it plays, a block at a time on the audio thread, which takes a few hundred kilobytes for each voice playing it and nothing for the clip itself. Which way a clip goes changes nothing a game sees: it plays, loops and pitches the same.
+
+Both decoders are the engine's own, written from the formats' specifications, so a game carries no license terms for them; a file that isn't one is an error at the path, and for an Ogg file the error says what's wrong with it. A clip has one or two channels: a surround file is refused.
 
 A `Clip` is a value: keep it in a local field, pass it to a function, pick one from the glob's list or map. It names the declaration's file, so under `tide run` a saved file plays through every copy the game kept. The match can't use one: a `Clip` is this machine's, as a `Texture` is.
 
