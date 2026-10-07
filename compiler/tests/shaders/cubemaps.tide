@@ -1,0 +1,45 @@
+scene Main { }
+
+// A cube in a frag and in a vert: read by a direction, an asset's by its
+// name and a field's, each a `samplerCube` and a `texture_cube` of the
+// shader's beside a grid's colors. One read with another filter is another
+// texture, and one read between its smaller images has its direction's
+// change asked as the frag starts.
+asset Cubemap sky = "../e2e/cubes/sky/sky_??.png";
+
+local singleton Room
+{
+    Cubemap reflection;
+    Grid2<Color> wood = Grid2(2, 2);
+    List<Vertex3> mesh;
+    List<int> faces;
+}
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+frag Shine(Corner corner, out Color color, Pixel pixel, Room room)
+{
+    var away = Math.Normalize(corner.normal);
+    mut Color near = room.reflection.Sample(away);
+    // In a branch, as it's read at its one level, and at its nearest pixel: another texture
+    if (near.a < 1) near = room.reflection.Sample(-away, Filter.Point);
+    // Between its smaller images, wherever the Sample is
+    mut Color far = Color.black;
+    if (corner.normal.y > 0) far = sky.Sample(away, Filter.Trilinear);
+    color = room.wood.Sample(corner.normal.xy) * near + far + sky.Sample(float3(0, 1, 0));
+}
+
+vert Swell(mut Vertex3 vertex, Room room)
+{
+    vertex.position *= 1 + room.reflection.Sample(vertex.position).r;
+}
+
+view Show(Room room)
+{
+    Draw.Mesh([Corner { }], [0, 0, 0], float4x4.identity, Shine);
+    Draw.Mesh(room.mesh, room.faces, float4x4.identity, Swell);
+}

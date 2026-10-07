@@ -197,6 +197,24 @@ uint32_t tide_pack_texture(tide_pack_builder *b, const uint8_t content[32], cons
     return at;
 }
 
+uint32_t tide_pack_clip(tide_pack_builder *b, const uint8_t content[32], const void *data, const uint32_t size)
+{
+    const tide_pack_shared *had = find_shared(b, content, TIDE_PACK_CLIP);
+    if (had) return had->offset;
+    if ((uint64_t)size + sizeof(uint32_t) > TIDE_PACK_BASE) tide_out_of_memory(); // Past what a handle can say
+    const uint32_t at = block(b, (uint32_t)(sizeof(uint32_t) + size));
+    tide_block *h = header(b, at);
+    uint64_t version = 0;
+    memcpy(&version, content, sizeof version);
+    if (!version) version = 1u; // 0 is no sound's
+    h->a = (uint32_t)version;
+    h->b = (uint32_t)(version >> 32);
+    memcpy(h + 1, &size, sizeof size);
+    if (size) memcpy((uint8_t *)(h + 1) + sizeof size, data, size);
+    add_shared(b, content, TIDE_PACK_CLIP, at, size, 0);
+    return at;
+}
+
 uint32_t tide_pack_list(tide_pack_builder *b, const uint32_t *offsets, const uint32_t count)
 {
     const uint32_t at = block(b, count * (uint32_t)sizeof(uint32_t));

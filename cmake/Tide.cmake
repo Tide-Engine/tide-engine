@@ -1,6 +1,7 @@
 # tide_add_game(<target> [SOURCES <file.tide|file.c|file.cpp>...] [HOST <file.c>...] [WINDOW] [NAME <name>]
 #               [TITLE <title>] [STATS] [LAYOUT] [WARNINGS <text>...]
-#               [PACKAGES <Name> <file.tide>... [<Name> <file.tide>...]])
+#               [PACKAGES <Name> <file.tide>... [<Name> <file.tide>...]]
+#               [DEFINES <SYMBOL>...])
 #
 # Builds a Tide game as the program <target>. The game is every .tide file
 # in the current source folder and its subfolders (new ones are picked up by
@@ -15,6 +16,10 @@
 # builds a game with what its tide.packages lists. It's for tests of what
 # packages do to a game: this doesn't read tide.packages, and a game with real
 # packages builds with tide.
+#
+# DEFINES lists symbols the game's #if lines read as defined, as tide's
+# --define does (docs/spec.md, Conditional compilation). DEBUG is defined in a
+# Debug build, and PACKAGE_<NAME> for each package after PACKAGES.
 #
 # Without HOST, the game is the whole program: it opens a window titled TITLE,
 # or the game's title setting, or <target>, and runs (see
@@ -107,7 +112,7 @@ function(tide_web_page target)
 endfunction()
 
 function(tide_add_game target)
-    cmake_parse_arguments(ARG "STATS;LAYOUT;WINDOW" "NAME;TITLE" "SOURCES;HOST;WARNINGS;PACKAGES" ${ARGN})
+    cmake_parse_arguments(ARG "STATS;LAYOUT;WINDOW" "NAME;TITLE" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
     if("SOURCES" IN_LIST ARG_KEYWORDS_MISSING_VALUES)
         message(FATAL_ERROR "tide_add_game(${target}): list the game's .tide files after SOURCES, or leave "
                             "SOURCES out to use every .tide file in ${CMAKE_CURRENT_SOURCE_DIR} and its subfolders")
@@ -191,6 +196,15 @@ function(tide_add_game target)
     if(ARG_LAYOUT)
         set(layout --layout)
     endif()
+    # The symbols the game's #if lines read as defined: DEFINES', and DEBUG in a Debug build, as tide
+    # defines it without --release
+    set(defines "")
+    foreach(symbol IN LISTS ARG_DEFINES)
+        list(APPEND defines --define "${symbol}")
+    endforeach()
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        list(APPEND defines --define DEBUG)
+    endif()
 
     set(out_dir "${CMAKE_CURRENT_BINARY_DIR}/tide/${target}")
     set(out_c "${out_dir}/${name}.c")
@@ -258,7 +272,7 @@ function(tide_add_game target)
         OUTPUT "${out_c}" "${out_h}" ${pack_outputs}
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${out_dir}"
         COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" -P "${TIDE_RUN_TIDEC}"
-            -- "@${listed}" -o "${out_dir}" --name "${name}" ${layout} ${pack_c}
+            -- "@${listed}" -o "${out_dir}" --name "${name}" ${layout} ${pack_c} ${defines}
         DEPENDS ${TIDEC_DEPENDS} ${sources} ${package_sources} ${asset_files} "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
         COMMENT "tidec ${target}"
         VERBATIM)

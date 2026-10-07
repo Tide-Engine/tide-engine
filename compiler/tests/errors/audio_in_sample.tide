@@ -1,0 +1,17 @@
+// expect: runs once per tick, not once per frame, so it can't play sounds
+asset Clip beep = "../e2e/assets/beep.wav";
+
+input Keys
+{
+    bool fire;
+
+    Sample(Devices devices)
+    {
+        fire = devices.keyboard.space.pressed;
+        if (fire) Audio.Play(beep);
+    }
+}
+
+scene Main
+{
+}

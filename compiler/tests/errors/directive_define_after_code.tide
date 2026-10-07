@@ -1,0 +1,3 @@
+// expect: '#define' comes after code: a file's symbols are for all of it, so they go before its first declaration
+scene Main { }
+#define FAST

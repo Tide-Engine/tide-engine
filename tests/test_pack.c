@@ -487,3 +487,130 @@ TIDE_TEST(pack_textures_cut_short_are_none)
     tide_pack_unload();
     free(bytes);
 }
+
+// A pack with a cube of six faces of `side` pixels, the last of them `last`
+// by `last`, a second cube of the same files, and one of the faces as a
+// texture. `lead` puts a block before them all, and `edit` is what's in the
+// first face.
+static uint8_t *build_cubes(size_t *size, const bool lead, const int side, const int last, const int edit)
+{
+    static const char *const files[TIDE_CUBE_FACES] = {"px.png", "nx.png", "py.png", "ny.png", "pz.png", "nz.png"};
+    tide_pack_builder b = {0};
+    uint8_t h[32];
+    if (lead) {
+        uint32_t chars;
+        hash_of("lead", h);
+        tide_pack_name(&b, "Game.lead", TIDE_PACK_TEXT, tide_pack_bytes(&b, h, "moved along", 11, &chars), 11, chars);
+    }
+    uint32_t faces[TIDE_CUBE_FACES];
+    for (int face = 0; face < TIDE_CUBE_FACES; face++) {
+        const int wide = face == TIDE_CUBE_FACES - 1 ? last : side;
+        uint8_t *image = malloc((size_t)wide * (size_t)wide * 4u);
+        image_of(image, wide, wide, face == 0 ? edit : 10 * face);
+        char named[32];
+        snprintf(named, sizeof named, "%d/%s", face == 0 ? edit : 0, files[face]);
+        hash_of(named, h);
+        faces[face] = tide_pack_texture(&b, h, wide, wide, image);
+        free(image);
+    }
+    tide_pack_name(&b, "Game.sky", TIDE_PACK_CUBEMAP, tide_pack_list(&b, faces, TIDE_CUBE_FACES), TIDE_CUBE_FACES, (uint32_t)side);
+    tide_pack_name(&b, "Game.skyAgain", TIDE_PACK_CUBEMAP, tide_pack_list(&b, faces, TIDE_CUBE_FACES), TIDE_CUBE_FACES, (uint32_t)side);
+    tide_pack_name(&b, "Game.up", TIDE_PACK_TEXTURE, faces[2], 0, 0);
+    // One with a face too few
+    tide_pack_name(&b, "Game.five", TIDE_PACK_CUBEMAP, tide_pack_list(&b, faces, TIDE_CUBE_FACES - 1), TIDE_CUBE_FACES - 1, (uint32_t)side);
+    return tide_pack_end(&b, size);
+}
+
+TIDE_TEST(pack_cubemaps_are_six_images_named_as_one)
+{
+    size_t size;
+    uint8_t *bytes = build_cubes(&size, false, 4, 4, 1);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+
+    // A Cubemap holds no pixels and no target: it names its declaration's cube, which the pack has
+    const tide_cubemap_ref sky = tide_pack_cubemap_of(tide_pack_find("Game.sky", TIDE_PACK_CUBEMAP));
+    TIDE_REQUIRE(sky.named != 0 && sky.target.id == 0);
+    TIDE_CHECK(tide_pack_cubemap_of(NULL).named == 0);
+    TIDE_CHECK(tide_pack_cubemap_of(tide_pack_find("Game.up", TIDE_PACK_TEXTURE)).named == 0); // Another kind's entry
+    TIDE_CHECK(tide_pack_find("Game.sky", TIDE_PACK_TEXTURE) == NULL && tide_pack_find("Game.sky", TIDE_PACK_LIST) == NULL);
+
+    // Its six faces, in order, where the pack has them: 4 bytes a pixel, rows from the top
+    int32_t side = 0;
+    uint64_t version = 0;
+    const uint8_t *const *faces = NULL;
+    TIDE_REQUIRE(tide_pack_cubemap_find(sky.named, &side, &version, &faces) && side == 4 && version != 0);
+    for (int face = 0; face < TIDE_CUBE_FACES; face++) {
+        uint8_t wanted[4 * 4 * 4];
+        image_of(wanted, 4, 4, face == 0 ? 1 : 10 * face);
+        TIDE_CHECK(memcmp(faces[face], wanted, sizeof wanted) == 0);
+    }
+    // A second declaration of the same six files is another name of the same images, and one of
+    // the files as a Texture is that face's pixels: each file is in the pack once
+    const tide_cubemap_ref again = tide_pack_cubemap_of(tide_pack_find("Game.skyAgain", TIDE_PACK_CUBEMAP));
+    int32_t side_again = 0;
+    uint64_t version_again = 0;
+    const uint8_t *const *faces_again = NULL;
+    TIDE_REQUIRE(again.named != 0 && again.named != sky.named);
+    TIDE_REQUIRE(tide_pack_cubemap_find(again.named, &side_again, &version_again, &faces_again));
+    TIDE_CHECK(version_again == version && faces_again != faces && faces_again[0] == faces[0] && faces_again[5] == faces[5]);
+    const tide_texture_ref up = tide_pack_texture_of(tide_pack_find("Game.up", TIDE_PACK_TEXTURE));
+    TIDE_CHECK(pixels_of(up, NULL, NULL, NULL) == faces[2]);
+    // No name, a name the pack has no cube under, and a cube of five faces are no cube
+    TIDE_CHECK(!tide_pack_cubemap_find(0, &side_again, &version_again, &faces_again));
+    TIDE_CHECK(!tide_pack_cubemap_find(version, &side_again, &version_again, &faces_again));
+    const tide_cubemap_ref five = tide_pack_cubemap_of(tide_pack_find("Game.five", TIDE_PACK_CUBEMAP));
+    TIDE_CHECK(five.named != 0 && !tide_pack_cubemap_find(five.named, &side_again, &version_again, &faces_again));
+
+    // The draw list reads it where it is: its texture points at the pack's six, told by what's in them
+    static tide_draw_list draw;
+    tide_draw_reset(&draw);
+    const uint32_t slot = tide_draw_cube_source(&draw, sky);
+    TIDE_REQUIRE(slot != 0);
+    const tide_draw_texture *t = &draw.textures[slot - 1];
+    TIDE_CHECK(t->space == TIDE_PIXELS_PACK_CUBE && t->width == 4 && t->height == 4 && t->version == version && t->id == version);
+    TIDE_CHECK((const uint8_t *const *)(uintptr_t)t->pixels == faces && t->capacity == 0);
+    TIDE_CHECK(tide_draw_cube_source(&draw, sky) == slot && draw.texture_count == 1);
+    TIDE_CHECK(tide_draw_cube_source(&draw, again) == slot); // Two names of one cube are one texture
+    TIDE_CHECK(tide_draw_cube_source(&draw, five) == 0 && tide_draw_cube_source(&draw, (tide_cubemap_ref){0}) == 0);
+    // Its faces are no targets, and it's no texture of two dimensions
+    TIDE_CHECK(tide_cubemap_face(sky, 0).id == TIDE_RENDER_INVALID);
+    // Another list takes it over as it is, and frames that drop it free nothing of the pack's
+    static tide_draw_list other;
+    tide_draw_reset(&other);
+    tide_draw_append(&other, &draw);
+    tide_draw_reset(&draw);
+    tide_draw_reset(&draw);
+    tide_draw_reset(&draw);
+    TIDE_CHECK(memcmp(faces[1], (const uint8_t[4]){10, 17, 24, 31}, 4) == 0);
+
+    // Loaded again with everything elsewhere, and with the first face's file edited: the same name
+    // is the cube as it is now, another version, and so another texture of a list's
+    free(bytes);
+    bytes = build_cubes(&size, true, 4, 4, 2);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    TIDE_CHECK(tide_pack_cubemap_of(tide_pack_find("Game.sky", TIDE_PACK_CUBEMAP)).named == sky.named);
+    uint64_t edited = 0;
+    TIDE_REQUIRE(tide_pack_cubemap_find(sky.named, &side, &edited, &faces) && side == 4 && edited != version);
+    uint8_t first[4 * 4 * 4];
+    image_of(first, 4, 4, 2);
+    TIDE_CHECK(memcmp(faces[0], first, sizeof first) == 0);
+    tide_draw_reset(&draw);
+    const uint32_t next = tide_draw_cube_source(&draw, sky);
+    TIDE_REQUIRE(next != 0);
+    TIDE_CHECK(draw.textures[next - 1].version == edited && (const uint8_t *const *)(uintptr_t)draw.textures[next - 1].pixels == faces);
+
+    // Faces that aren't one size are no cube: tidec refuses them, and a pack from elsewhere draws nothing
+    free(bytes);
+    bytes = build_cubes(&size, false, 4, 2, 1);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    TIDE_CHECK(!tide_pack_cubemap_find(sky.named, &side, &edited, &faces));
+    tide_draw_reset(&draw);
+    TIDE_CHECK(tide_draw_cube_source(&draw, sky) == 0);
+
+    // The pack gone, so is the cube
+    tide_pack_unload();
+    TIDE_CHECK(!tide_pack_cubemap_find(sky.named, &side, &edited, &faces) && tide_draw_cube_source(&draw, sky) == 0);
+    tide_draw_free(&draw);
+    tide_draw_free(&other);
+    free(bytes);
+}

@@ -9,10 +9,11 @@
 #   release, and the new VERSION committed. A stable release waits for its tests.
 # - Pull requests: the packages.
 #
-# semantic-release picks the version from conventional commits (feat:, fix:,
-# see .releaserc.json). A push with neither publishes nothing. A job that
-# fails fails the run, and nothing is published: every release has every
-# package that's built.
+# A release's version comes from conventional commits (feat:, fix:), and a push
+# with neither publishes nothing: semantic-release says for a stable one
+# (.releaserc.json), and .github/next-nightly.mjs for a nightly, which is
+# published by this workflow itself. A job that fails fails the run, and
+# nothing is published: every release has every package that's built.
 #
 # For now the jobs run on the owner's machines (the account is out of hosted
 # minutes): a runner on the Windows PC (label tide-windows) and one on the home
@@ -42,8 +43,8 @@ jobs:
     name: Version
     runs-on: tide-linux-home
     outputs:
-      version: ${{ steps.next.outputs.new_release_version }}
-      published: ${{ steps.next.outputs.new_release_published }}
+      version: ${{ steps.next.outputs.new_release_version || steps.nightly.outputs.version }}
+      published: ${{ steps.next.outputs.new_release_published || steps.nightly.outputs.published }}
       tests: ${{ steps.checks.outputs.tests }}
       matrix: ${{ steps.checks.outputs.matrix }}
     steps:
@@ -54,9 +55,17 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+      # A nightly's version is our own to work out: semantic-release publishes
+      # nothing for a commit that isn't its branch's newest any more, which
+      # dev's rarely is by the time its packages are built.
+      - name: Next nightly
+        id: nightly
+        if: github.event_name == 'push' && github.ref_name == 'dev'
+        shell: bash
+        run: node .github/next-nightly.mjs | tee -a "$GITHUB_OUTPUT"
       - name: Next version
         id: next
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.ref_name == 'release'
         uses: cycjimmy/semantic-release-action@v4
         with:
           dry_run: true
@@ -515,7 +524,29 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+      # A nightly: the commit's tag, the note semantic-release keeps for each
+      # of its tags (which channel it's on, so a stable release still reads
+      # the history rightly), and the release with what was built.
+      - name: Publish (nightly)
+        if: github.ref_name == 'dev'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ needs.version.outputs.version }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: |
+          git tag "$TAG" "$GITHUB_SHA"
+          git notes --ref "semantic-release-$TAG" add -f -m '{"channels":["dev"]}' "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG" "refs/notes/semantic-release-$TAG"
+          assets=("dist/tide-windows-x64.zip#tide for Windows (x64)" "dist/tide-linux-x64.tar.gz#tide for Linux (x64)"
+            "dist/tide-jetbrains.zip#Tide plugin for JetBrains IDEs" "dist/SHA256SUMS#SHA256SUMS")
+          if [ -f dist/tide-macos-arm64.tar.gz ]; then assets+=("dist/tide-macos-arm64.tar.gz#tide for macOS (Apple Silicon)"); fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --title "$TAG" --generate-notes "${assets[@]}"
       - name: Publish
+        if: github.ref_name == 'release'
         uses: cycjimmy/semantic-release-action@v4
         with:
           extra_plugins: |

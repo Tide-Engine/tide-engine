@@ -1062,7 +1062,8 @@ typedef struct resource_outer {
 
 static bool holds_render_resource_in(const type t, const resource_outer *outer)
 {
-    if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_RENDER_TARGET) return true;
+    if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET
+        || t.kind == TY_CLIP) return true;
     if (t.kind != TY_STRUCT && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_SET
         && t.kind != TY_GRID && t.kind != TY_ARRAY && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
     for (const resource_outer *p = outer; p; p = p->previous) {
@@ -1369,6 +1370,11 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
         if (asset) return true;
         diag_error(at, "a list or a map can't hold rendering resources, including inside a struct");
         diag_note("but for an asset's: 'asset List<Texture> frames = \"art/run_*.png\";'");
+        return false;
+    case TY_CLIP: // The same for an asset's glob of sounds
+        if (asset) return true;
+        diag_error(at, "a list or a map can't hold a Clip, including inside a struct");
+        diag_note("but for an asset's: 'asset List<Clip> hits = \"sfx/hit_*.wav\";'");
         return false;
     case TY_GRID:
         if (asset) return true;
@@ -1800,6 +1806,7 @@ static void check_stmt(checker *c, stmt *s);
 static type check_grid_method(checker *c, expr *e, type grid);
 static type check_grid_sample(const checker *c, expr *e, type grid);
 static type check_depth_read(const checker *c, expr *e);
+static type check_cube_sample(const checker *c, expr *e);
 static type check_new_grid(checker *c, expr *e, type want);
 static bool is_new_grid(const expr *e);
 static void refuse_arg_names(const expr *e, type result);
@@ -2250,9 +2257,13 @@ static type check_construct(checker *c, expr *e, const type target)
         if (sampled) vec_push(e->arg_want, T_INT_);
         return target;
     }
-    if (target.kind == TY_TEXTURE || target.kind == TY_DEPTH_TEXTURE) {
+    if (target.kind == TY_TEXTURE || target.kind == TY_DEPTH_TEXTURE || target.kind == TY_CUBEMAP) {
         diag_error(e->at, "%s has no constructor yet", name);
         if (target.kind == TY_DEPTH_TEXTURE) diag_note("a DepthTexture is a render target's depth: 'target.depth'");
+        if (target.kind == TY_CUBEMAP) {
+            diag_note("a Cubemap is an asset's six files, 'asset Cubemap sky = \"art/sky_??.png\";', or one that's drawn "
+                      "into, 'RenderTarget.Cube(256)'");
+        }
         return T_ERR;
     }
 
@@ -2595,6 +2606,41 @@ static bool check_io_use(checker *c, const loc at, const char *what, const bool 
 // one and its local state keeps. Local code reads it, and the functions it
 // calls, which get the local state from their callers; an async function that
 // reads it is a local task. The match's time is Time's.
+// Audio.Play: sound is this machine's, so views, local handlers and the
+// functions they call (which are handed the local state, with the frame's
+// audio list in it) can play, and the match, the input and tasks can't.
+static bool check_audio_use(checker *c, const loc at)
+{
+    if (gpu_refuses(c, at, "play sounds", "a view plays them, where it draws")) return false;
+    if (c->in_input) {
+        diag_error(at, "%s runs once per tick, not once per frame, so it can't play sounds", input_code(c));
+        diag_note("a view plays them, from what the input leaves in local state");
+        return false;
+    }
+    if (in_async_function(c)) {
+        diag_error(at, "a task runs between frames, so it can't play sounds");
+        diag_note("set what to play in local state, and play it in a view");
+        return false;
+    }
+    decl *code = c->method ? c->method : c->system;
+    if (code && code->kind == DECL_SYSTEM && !is_local_code(code)) {
+        diag_error(at, "the match runs the same on every machine, so it can't play sounds");
+        diag_note("sound is this machine's: a local handler of the match's event plays it, "
+                  "'local event(Hit hit) HitSound(Body body) { Audio.Play(hitClip); }'");
+        return false;
+    }
+    if (!code || (code->kind != DECL_FUNCTION && code->kind != DECL_SYSTEM)) {
+        diag_error(at, "Audio can only be used in local code, and in functions it calls");
+        if (c->method) diag_note("methods can't; a function can, like 'void Thud(Clip clip, float3 where) { ... }'");
+        else diag_note("views and local handlers play sounds: 'local event(Hit hit) HitSound(Body body) { Audio.Play(hitClip); }'");
+        return false;
+    }
+    if (!code->plays) code->plays_at = at;
+    code->plays = true;
+    c->prog->uses_audio = true;
+    return true;
+}
+
 static bool check_frame_time_use(checker *c, const loc at)
 {
     if (gpu_refuses(c, at, "read Frame.dt", "the view puts what it needs in a component or a singleton, which it takes")) return false;
@@ -5285,6 +5331,42 @@ static bool check_setting(const checker *c, const expr *e)
     return false;
 }
 
+// RenderTarget.Cube(256), RenderTarget.Cube(256, Format.Rgba16f): a Cubemap
+// that's drawn into, six images of that many pixels a side, each a
+// destination, 'cube.faces[i]', and all of them what a frag reads by a
+// direction, 'cube.Sample(direction)'. Its arguments are checked already.
+static type check_cube_target(checker *c, expr *e)
+{
+    if (gpu_refuses(c, e->at, "create a Cubemap", "the view creates it, and the frag reads it where it's a field")) return T_ERR;
+    if (!reading_code(c)) {
+        diag_error(e->at, "a Cubemap is created in local code, not a field default or constant");
+        diag_note("leave the field at default and create its cube in a view or local handler");
+        return T_ERR;
+    }
+    const int argc = e->args.count;
+    const type format = argc == 2 ? e->args.items[1]->type : T_ERR;
+    if (argc < 1 || argc > 2 || !type_assignable(T_FLOAT_, e->args.items[0]->type)
+        || (argc == 2 && !(format.kind == TY_ENUM && format.decl == c->prog->format))) {
+        diag_error(e->at, "RenderTarget.Cube takes its faces' side in pixels, and what each holds when that isn't "
+                          "Format.Rgba8: 'RenderTarget.Cube(256)' or 'RenderTarget.Cube(256, Format.Rgba16f)'");
+        diag_note("a cube's six faces are squares of one size and one format, each with depth of its own");
+        return T_ERR;
+    }
+    if (argc == 2 && e->args.items[1]->enum_member && e->args.items[1]->enum_member->number == 1) {
+        diag_error(e->args.items[1]->at, "a cube holds colors: its faces are Format.Rgba8 or Format.Rgba16f, and each has "
+                                         "depth of its own to draw with");
+        diag_note("a cube of depth alone, for a lamp that shines every way, isn't there yet");
+        return T_ERR;
+    }
+    e->call = CALL_BUILTIN;
+    e->c_callee = argc == 2 ? "tide_cubemap_make_as" : "tide_cubemap_make";
+    e->resource_operation = true;
+    reading_code(c)->calls_c = true;
+    vec_push(e->arg_want, T_FLOAT_);
+    if (argc == 2) vec_push(e->arg_want, format);
+    return (type){TY_CUBEMAP, NULL};
+}
+
 // RenderTarget.Window(), RenderTarget.Window(0.5): a target that's always the
 // window's size, or that part of it. Made where the constructor's are, and
 // like them, it says last what it holds when that isn't one color image:
@@ -5303,10 +5385,11 @@ static type check_window_target(checker *c, expr *e)
         suggest_replacement(e->name, "Window");
         return T_ERR;
     }
+    if (str_eq_c(e->name, "Cube")) return any_error ? T_ERR : check_cube_target(c, e);
     if (!str_eq_c(e->name, "Window")) {
-        diag_error(e->at, "RenderTarget has no '" STR_FMT "'; it has Window", STR_ARG(e->name));
-        diag_note("'RenderTarget.Window()' is a target that's always the window's size, and 'RenderTarget(width, height)' "
-                  "one of a size of its own");
+        diag_error(e->at, "RenderTarget has no '" STR_FMT "'; it has Window and Cube", STR_ARG(e->name));
+        diag_note("'RenderTarget.Window()' is a target that's always the window's size, 'RenderTarget(width, height)' "
+                  "one of a size of its own, and 'RenderTarget.Cube(size)' a Cubemap whose six faces are drawn into");
         return T_ERR;
     }
     if (any_error) return T_ERR;
@@ -5427,6 +5510,8 @@ static type check_method(checker *c, expr *e)
             return T_ERR;
         }
         if ((gui || draws) && !check_frame_use(c, e->at, gui ? "The GUI" : str_to_cstr(owner))) return T_ERR;
+        const bool plays = str_eq_c(owner, "Audio");
+        if (plays && !check_audio_use(c, e->at)) return T_ERR;
         if (str_eq_c(owner, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR; // Screen.Flip: the frame's window
         if (draws && old_setting(e)) return T_ERR;
         const type result = resolve_builtin_call(owner, e);
@@ -5456,6 +5541,7 @@ static type check_method(checker *c, expr *e)
             e->call = CALL_DRAW;
             e->draw_dims = 2;
         }
+        if (plays) e->call = CALL_AUDIO;
         if (gui || cursor) return check_gui_call(c, e, result); // The cursor's lock is a frame's ask, which the GUI collects
         return result;
     }
@@ -5534,6 +5620,40 @@ static type check_method(checker *c, expr *e)
         suggest_consider_c(&sg, "Compare");
         suggest_note(&sg);
         return T_ERR;
+    }
+    if (obj.kind == TY_CUBEMAP) {
+        const bool resize = str_eq_c(e->name, "Resize");
+        if (str_eq_c(e->name, "Sample")) {
+            for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+            return check_cube_sample(c, e);
+        }
+        if (!resize && !str_eq_c(e->name, "Dispose")) {
+            for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+            diag_error(e->at, "a Cubemap has Sample(direction[, filter]), and one that's drawn into has Resize(size) and "
+                              "Dispose(), not '" STR_FMT "'", STR_ARG(e->name));
+            if (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Clear") || str_eq_c(e->name, "Instanced")) {
+                diag_note("a cube is drawn into a face at a time: 'cube.faces[0]." STR_FMT "(...)'", STR_ARG(e->name));
+            }
+            return T_ERR;
+        }
+        for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], T_FLOAT_);
+        if (gpu_refuses(c, e->at, resize ? "resize a Cubemap" : "dispose a Cubemap", "the view owns the cube")) return T_ERR;
+        if (e->object->bind == BIND_ASSET) {
+            diag_error(e->at, "an asset's Cubemap is the pack's: it can't be resized or disposed");
+            return T_ERR;
+        }
+        if (e->args.count != (resize ? 1 : 0) || (resize && !type_assignable(T_FLOAT_, e->args.items[0]->type))) {
+            diag_error(e->at, resize ? "Resize takes the faces' side in pixels, a number: 'cube.Resize(size)'"
+                                   : "Dispose takes no arguments: 'cube.Dispose()'");
+            return T_ERR;
+        }
+        if (resize) vec_push(e->arg_want, T_FLOAT_);
+        e->call = CALL_BUILTIN;
+        e->c_callee = resize ? "tide_cubemap_resize" : "tide_cubemap_dispose";
+        e->resource_operation = true;
+        decl *code = reading_code(c);
+        if (code) code->calls_c = true;
+        return T_VOID_;
     }
     if (obj.kind == TY_RENDER_TARGET) {
         if (str_eq_c(e->name, "Resize") || str_eq_c(e->name, "Dispose")) {
@@ -6473,6 +6593,29 @@ static type check_member(checker *c, expr *e)
         return T_ERR;
     }
 
+    if (obj.kind == TY_CUBEMAP) {
+        if (gpu_code(c)) {
+            diag_error(e->at, "a %s reads a Cubemap with 'Sample(direction)': its faces are the view's to draw into",
+                       shader_word(gpu_code(c)));
+            return T_ERR;
+        }
+        if (!str_eq_c(e->member, "faces")) {
+            diag_error(e->at, "a Cubemap has 'faces', its six sides as targets to draw into, not '" STR_FMT "'", STR_ARG(e->member));
+            if (str_eq_c(e->member, "color") || str_eq_c(e->member, "colors")) {
+                diag_note("the cube itself is what a frag reads: 'cube.Sample(direction)', where it's a field of a component or "
+                          "a singleton the frag takes");
+            }
+            return T_ERR;
+        }
+        if (c->colors_indexed != e) {
+            diag_error(e->at, "a cube's faces are drawn into one at a time: 'faces[0]' is the one +x points at, as a RenderTarget");
+            diag_note("they're counted from 0, in the order +x, -x, +y, -y, +z, -z");
+            return T_ERR;
+        }
+        e->target_colors = true;
+        return obj; // What check_index makes a RenderTarget of
+    }
+
     const int dim = type_dim(obj);
     if (dim >= 2) {
         static const char *components[] = {"", "", "x, y", "x, y, z", "x, y, z, w"};
@@ -6936,6 +7079,25 @@ static type check_index(checker *c, expr *e)
         }
         return (type){TY_TEXTURE, NULL};
     }
+    if (obj.kind == TY_CUBEMAP && e->object->kind == E_MEMBER && e->object->target_colors) {
+        // cube.faces[2]: that face, as a RenderTarget. One of a cube that isn't drawn into (an asset's) is no
+        // destination, which is found out as it's drawn into: those draws are passed by
+        const type index = check_expr(c, e->lhs);
+        if (index.kind != TY_ERROR && !type_assignable(T_INT_, index)) {
+            diag_error(e->lhs->at, "a cube's faces are counted from 0, with an int, not %s", type_name(index));
+            return T_ERR;
+        }
+        if (e->lhs->kind == E_INT && (e->lhs->int_value < 0 || e->lhs->int_value >= 6)) {
+            diag_error(e->lhs->at, "a cube has six faces: 'faces[0]' to 'faces[5]', in the order +x, -x, +y, -y, +z, -z");
+            return T_ERR;
+        }
+        if (e->object->object->bind == BIND_ASSET) {
+            diag_error(e->at, "an asset's Cubemap is the pack's images, which nothing draws into: its faces are no targets");
+            diag_note("a cube that's drawn into is made in a view: 'RenderTarget.Cube(256)'");
+            return T_ERR;
+        }
+        return (type){TY_RENDER_TARGET, NULL};
+    }
     if (obj.kind == TY_GRID) { // cells[int2(x, y)], or cells[x, y], which the parser makes the same
         const bool flat = obj.decl->dims == 2;
         const type position = check_expr(c, e->lhs);
@@ -7155,6 +7317,7 @@ static void check_compare_expr(checker *c, const expr *e)
     case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER: what = "load or unload scenes"; break;
     case CALL_SESSION: what = "change the session"; break;
     case CALL_CLIPBOARD: what = "use the clipboard"; break;
+    case CALL_AUDIO: what = "play sounds"; break;
     case CALL_DRAW: what = "draw"; break;
     case CALL_GUI: what = gui_call_what(e); break;
     case CALL_SNAP: what = "snap"; break;
@@ -7521,6 +7684,60 @@ static type check_depth_read(const checker *c, expr *e)
     e->call = CALL_GRID;
     e->type_decl = NULL;
     return T_FLOAT_;
+}
+
+// sky.Sample(direction) and sky.Sample(direction, Filter.Trilinear): a
+// Cubemap read in a frag or a vert, by the direction from its middle, of any
+// length. The cube is an asset by its name, or a field of a component or a
+// singleton the code takes, where a view put one. The filter is written
+// there, as a texture's is; a cube has no edge, so no wrap.
+static type check_cube_sample(const checker *c, expr *e)
+{
+    const decl *shader = gpu_code(c);
+    if (!shader) {
+        diag_error(e->at, "Sample reads a Cubemap on the GPU: in a frag or a vert");
+        return T_ERR;
+    }
+    const expr *of = e->object;
+    const bool asset = of->bind == BIND_ASSET;
+    if (!asset && (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
+                   || of->object->param->function_param)) {
+        diag_error(of->at, "a %s samples a Cubemap that's an asset by its name, or a field of a component or singleton it takes, "
+                           "like 'room.reflection.Sample(direction)'", shader_word(shader));
+        diag_note("a view puts a cube there: 'room.reflection = RenderTarget.Cube(256);'");
+        return T_ERR;
+    }
+    if (!asset && of->object->param->type.kind == TY_STRUCT) {
+        diag_error(of->at, "a struct a draw supplies, its instances' or its values', carries no texture: keep the sampled "
+                           "Cubemap in a component or singleton");
+        return T_ERR;
+    }
+    if (!order_named_args(e, "direction, filter", 1)) return T_ERR;
+    for (int i = 0; i < e->args.count; i++) {
+        if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR; // Said already
+    }
+    const type direction = e->args.count >= 1 ? e->args.items[0]->type : T_ERR;
+    const type how = e->args.count >= 2 ? e->args.items[1]->type : T_ERR;
+    if (e->args.count == 2 && direction.kind == TY_FLOAT3 && how.kind == TY_ENUM && how.decl == c->prog->wrap) {
+        diag_error(e->args.items[1]->at, "a cube has no edge to read past: its Sample takes a direction and a Filter, and no Wrap");
+        diag_note("one face goes on in the next, whichever way the direction points");
+        return T_ERR;
+    }
+    if (e->args.count < 1 || e->args.count > 2 || direction.kind != TY_FLOAT3
+        || (e->args.count == 2 && !(how.kind == TY_ENUM && how.decl == c->prog->filter))) {
+        diag_error(e->at, "a Cubemap's Sample takes which way to read from its middle, a float3 of any length, then how, a "
+                          "Filter: 'sky.Sample(direction)' or 'sky.Sample(direction, Filter.Trilinear)'");
+        if (direction.kind == TY_FLOAT2) diag_note("a float2 from (0, 0) to (1, 1) reads a Texture; a cube is read by a direction");
+        return T_ERR;
+    }
+    if (e->args.count == 2 && !e->args.items[1]->enum_member) {
+        diag_error(e->args.items[1]->at, "the filter is written here, 'Filter.Point', 'Filter.Bilinear' or 'Filter.Trilinear': "
+                                         "the GPU is told how a texture is read before any pixel runs");
+        return T_ERR;
+    }
+    e->call = CALL_GRID;
+    e->type_decl = NULL;
+    return (type){TY_COLOR, NULL};
 }
 
 // grid.Decode(bytes): a Grid2<Color> becomes the PNG in a List<byte>, sized
@@ -8121,6 +8338,11 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         }
         // target.color, target.colors[1], target.depth: the target's own images, which a Texture only names
         const expr *of_target = part->kind == E_INDEX ? part->object : part;
+        if (of_target->kind == E_MEMBER && of_target->object->type.kind == TY_CUBEMAP && of_target->target_colors) {
+            diag_error(target->at, "a cube's faces are its own images, which what's drawn into them changes: they can't be assigned");
+            diag_note("draw into one, 'cube.faces[0].Mesh(...)'");
+            return false;
+        }
         if (of_target->kind == E_MEMBER && of_target->object->type.kind == TY_RENDER_TARGET && !of_target->c_constant
             && (of_target->target_colors || part->type.kind == TY_TEXTURE || part->type.kind == TY_DEPTH_TEXTURE)) {
             diag_error(target->at, "a render target's color and depth are its own images, which what's drawn into it changes: "
@@ -8631,6 +8853,7 @@ static void check_step_expr(checker *c, const expr *e)
     case CALL_ADD: case CALL_REMOVE: case CALL_DESTROY: what = "add, remove or destroy"; break;
     case CALL_SEND: what = "send events"; break;
     case CALL_DRAW: what = "draw"; break;
+    case CALL_AUDIO: what = "play sounds"; break;
     case CALL_GUI: what = gui_call_what(e); break;
     case CALL_SESSION: case CALL_CLIPBOARD: what = "make requests of the host"; break;
     case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER: what = "load and unload scenes"; break;
@@ -9429,7 +9652,7 @@ static bool stands_alone(const expr *e)
                                          || (call == CALL_DRAW && called->type.kind == TY_VOID)))
         || (called->kind == E_CALL && call == CALL_SPAWN) || call == CALL_METHOD || call == CALL_FUNCTION
         || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD || call == CALL_SCENE_PLAYER
-        || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD
+        || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD || call == CALL_AUDIO
         || call == CALL_SNAP || call == CALL_DISCARD
         || called->io_operation
         || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
@@ -10083,9 +10306,17 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     else if (str_eq_c(inner->text, "List<byte>")) *kind = ASSET_BYTES;
     else if (str_eq_c(inner->text, "Grid2<Color>")) *kind = ASSET_GRID;
     else if (str_eq_c(inner->text, "Texture")) *kind = ASSET_TEXTURE;
-    else {
-        diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file), or a Grid2<Color> or a Texture (a PNG), not '"
-                       STR_FMT "'", STR_ARG(inner->text));
+    else if (str_eq_c(inner->text, "Clip")) *kind = ASSET_CLIP;
+    else if (str_eq_c(inner->text, "Cubemap")) {
+        if (*many) {
+            diag_error(at, "a Cubemap is six files already, which its glob matches: a list or a map of cubes isn't there yet");
+            diag_note("declare each cube as an asset of its own: 'asset Cubemap sky = \"art/sky_??.png\";'");
+            return false;
+        }
+        *kind = ASSET_CUBEMAP;
+    } else {
+        diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file), a Grid2<Color> or a Texture (a PNG), a "
+                       "Cubemap (six PNGs), or a Clip (a WAV), not '" STR_FMT "'", STR_ARG(inner->text));
         diag_note("for the files a glob matches, a 'List<...>' of one of those, or a 'Map<string, ...>' of their paths");
         return false;
     }
@@ -10148,6 +10379,13 @@ static void check_sampling_attribute(checker *c, decl *d, attribute *attr)
         return;
     }
     if (d->return_type.kind == TY_ERROR) return; // Its type said why
+    if (d->asset_kind == ASSET_CUBEMAP) {
+        diag_error(attr->at, "a Cubemap's filter is said where it's sampled, and it has no edge to wrap past: '" STR_FMT
+                   "' takes no [%s]", STR_ARG(d->name), name);
+        diag_note("'sky.Sample(direction, Filter.Trilinear)' reads it between its smaller images; one that says none reads it "
+                  "blended, Filter.Bilinear");
+        return;
+    }
     if (d->asset_kind != ASSET_TEXTURE && d->asset_kind != ASSET_GRID) {
         diag_error(attr->at, "%s says how a texture is sampled, and '" STR_FMT "' is %s", name, STR_ARG(d->name),
                    type_name(d->return_type));
@@ -10343,6 +10581,12 @@ static void check_field_sampling(checker *c, const field *f, attribute *a)
     const char *name = filter ? "Filter" : "Wrap";
     if (f->type.kind == TY_ERROR) return;
     const bool made_here = type_is_texture_grid(f->type) || f->type.kind == TY_RENDER_TARGET;
+    if (f->type.kind == TY_CUBEMAP) {
+        diag_error(a->at, "a Cubemap's filter is said where it's sampled, and it has no edge to wrap past: '" STR_FMT
+                   "' takes no [%s]", STR_ARG(f->name), name);
+        diag_note("'cube.Sample(direction, Filter.Trilinear)' reads it between its smaller images");
+        return;
+    }
     if (f->type.kind == TY_TEXTURE) {
         diag_error(a->at, "a Texture says how it's sampled itself, and a field holds whichever it's given: '" STR_FMT
                    "' takes no [%s]", STR_ARG(f->name), name);
@@ -10671,7 +10915,7 @@ static void check_fields(checker *c, const decl *d)
             const loc at = f->type_qual_at.line ? f->type_qual_at : f->type_at.line ? f->type_at : f->at;
             if (d->kind != DECL_STRUCT && !d->is_local) {
                 diag_error(at, "'" STR_FMT "' can't hold rendering resources in match state", STR_ARG(d->name));
-                diag_note("Texture, DepthTexture and RenderTarget belong to this machine: keep the field local, or use a local component "
+                diag_note("Texture, DepthTexture, Cubemap and RenderTarget belong to this machine: keep the field local, or use a local component "
                           "or singleton");
             } else if (f->type.kind == TY_LIST || f->type.kind == TY_MAP || f->type.kind == TY_SET || f->type.kind == TY_GRID) {
                 diag_error(at, "containers can't hold rendering resources, including inside a struct");
@@ -11691,6 +11935,11 @@ static void check_shader_decl(const checker *c, decl *d)
                 // A vert's is an element of the list its Instanced draw is given, or the values its draw gives
                 // after its name. A frag's is either, or what the draw's vert writes for it. The draw says which
                 p->function_param = false; // Supplied by the draw: its instances, its values, or its vert
+            } else if (value.kind == TY_CUBEMAP) {
+                diag_error(at, "a %s reads a Cubemap that's an asset by its name, or a field of a component or singleton it "
+                               "takes, not a parameter of its own", word);
+                diag_note("keep it in local state, 'local singleton Room { Cubemap reflection; }', which a view sets, and "
+                          "read it there: 'room.reflection.Sample(direction)'");
             } else if (value.kind == TY_DEPTH_TEXTURE) {
                 diag_error(at, "a %s reads a DepthTexture that's a field of a component or singleton it takes, not a "
                                "parameter of its own", word);
@@ -12607,7 +12856,7 @@ static bool call_acts(const expr *e)
     switch (e->call) {
     case CALL_SPAWN: case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER: case CALL_SEND: case CALL_ADD:
     case CALL_REMOVE: case CALL_DESTROY: case CALL_GUI: case CALL_ACTION: case CALL_SESSION:
-    case CALL_CLIPBOARD: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM:
+    case CALL_CLIPBOARD: case CALL_AUDIO: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM:
         return true;
     case CALL_DRAW: return e->type.kind == TY_VOID; // Draw.MeasureText and the conversions only give a value
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
@@ -14776,6 +15025,34 @@ static void check_io_calls(const checker *c)
 // the local state, so only local code calls them, and an async one is a local
 // task. Reading changes nothing, so a comparison and a parallel loop's steps
 // can.
+// A function that plays sounds is local code's to call, as one that reads
+// Frame.dt is.
+static void check_audio_calls(const checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            if (!site->to->plays || site->from->plays) continue;
+            site->from->plays = true;
+            site->from->plays_at = site->call->at;
+            changed = true;
+        }
+    }
+    for (int i = 0; i < c->calls.count; i++) {
+        const call_site *site = &c->calls.items[i];
+        if (!site->to->plays) continue;
+        if ((site->from->kind == DECL_FUNCTION && !site->from->is_async) || is_local_code(site->from)) continue;
+        diag_error(site->call->at, "'" STR_FMT "' plays sounds, which only local code can", STR_ARG(site->to->name));
+        diag_note_at(site->to->plays_at, "it plays on line %d, and %s", site->to->plays_at.line,
+                     site->from->kind == DECL_METHOD ? "methods can't"
+                     : site->from->kind == DECL_INPUT ? "the input's code runs once per tick"
+                     : site->from->kind == DECL_SHADER ? "the GPU can't"
+                     : site->from->is_async ? "a task runs between frames"
+                                            : "sound is this machine's: a local handler of the match's event plays it");
+    }
+}
+
 static void check_frame_time_calls(const checker *c)
 {
     for (bool changed = true; changed;) {
@@ -15848,6 +16125,7 @@ bool check(program *prog)
     check_render_resource_calls(&c);
     check_io_calls(&c);
     check_frame_time_calls(&c);
+    check_audio_calls(&c);
     resolve_tasks(&c);
     check_this_calls(&c);
     check_drawing_calls(&c);

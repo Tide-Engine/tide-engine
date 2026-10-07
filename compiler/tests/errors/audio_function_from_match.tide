@@ -1,0 +1,22 @@
+// expect: 'Thud' plays sounds, which only local code can
+asset Clip beep = "../e2e/assets/beep.wav";
+
+singleton Probe
+{
+    int ticks;
+}
+
+void Thud()
+{
+    Audio.Play(beep);
+}
+
+system Count(mut Probe probe)
+{
+    probe.ticks += 1;
+    Thud();
+}
+
+scene Main
+{
+}

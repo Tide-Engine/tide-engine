@@ -483,6 +483,7 @@ static void swap(const tide_host_game *next, void *library)
     // The new build's assets, from the pack the host has
     if (next->assets && tide_run_pack) next->assets(tide_run_pack, tide_run_pack_size);
     fflush(stdout);
+    tide_platform_audio_forget(); // The samples the old build's voices play are its own, and go with it
     old->unload();
     library_close(reload.library);
     reload.library = library;

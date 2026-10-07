@@ -1,0 +1,76 @@
+// Clip assets and Audio.Play: from a view, from a local handler of a match
+// event, and from functions they call. The host (audio_test.c) reads what
+// each frame recorded.
+
+asset Clip beep = "assets/beep.wav";
+asset List<Clip> hits = "assets/hits/*.wav";
+asset Map<string, Clip> named = "assets/hits/*.wav";
+
+component Body
+{
+    float3 position;
+}
+
+singleton Counter
+{
+    int tick;
+}
+
+event Hit
+{
+    float3 where;
+}
+
+local singleton Sfx
+{
+    int heard;  // Hits the local handler heard
+    bool play;  // The view plays the first hit each frame while it's set
+    int plays;  // 1: the keeper plays what it kept, through functions
+    Clip kept;
+    int count;  // How many hits the glob matched
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body { position = float3(4, 5, 6) });
+}
+
+system Thump(mut Counter counter)
+{
+    counter.tick += 1;
+    if (counter.tick == 2) Send(Hit { where = float3(1, 2, 3) });
+}
+
+local event(Hit hit) HitSound(mut Sfx sfx)
+{
+    Audio.Play(beep, hit.where);
+    sfx.heard += 1;
+}
+
+view Engines(Body body, mut Sfx sfx)
+{
+    sfx.count = hits.count;
+    if (sfx.play) Audio.Play(hits[0], body.position, 0.5, 2);
+}
+
+view Keeper(mut Sfx sfx)
+{
+    if (sfx.plays == 1)
+    {
+        sfx.kept = named["assets/hits/b.wav"];
+        Thud(sfx.kept);
+    }
+}
+
+void Thud(Clip clip)
+{
+    Audio.Play(clip, float2(7, 8), 0.25, 1.5);
+    Twice(clip);
+}
+
+void Twice(Clip clip)
+{
+    Audio.Play(clip);
+}

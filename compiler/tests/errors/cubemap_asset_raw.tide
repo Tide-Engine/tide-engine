@@ -1,0 +1,6 @@
+// expect: Raw says a texture's pixels are numbers, and 'sky' is Cubemap
+// expect: it goes before an asset that's one Texture or one Grid2<Color>, like '[Raw] asset Texture masks = "art/masks.png";', or before a field that's a Grid2<Color>
+// A cube's faces are colors: no [Raw] yet
+[Raw]
+asset Cubemap sky = "../e2e/cubes/sky/*.png";
+scene Main { }
