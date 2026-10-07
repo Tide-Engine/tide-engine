@@ -44,6 +44,7 @@ Some examples put two players side by side. Each frame is a machine of its own, 
 - [Anchors, sizes and weights](../game/views.md#measuring-text): text, where it's placed and how big it is.
 - [A grid, drawn as a texture](../game/views.md#textures): a `Grid2<Color>` to paint on.
 - [A texture, past its edges](../game/views.md#past-the-edges): clamped, repeated and mirrored.
+- [A lens, cut out of a wall](../game/views.md#stencil): a shape stored in stencil, and what's drawn inside it and outside it.
 - [Primitives through a 3D camera](../game/views.md#primitives): cubes, a sphere, a cylinder and a plane.
 - [A scene through a frag](../game/views.md#targets-and-post-processing): a render target, blitted to the window.
 - [A frag and a vert](../game/shaders.md): code of the game's on the GPU.

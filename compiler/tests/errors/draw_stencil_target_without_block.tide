@@ -1,0 +1,11 @@
+// expect: target.Stencil sets it around a block: 'target.Stencil(...) { ... }'
+// expect: to set it for the draws that follow, write 'target.SetStencil(...);'
+scene Main { }
+
+local singleton Look { RenderTarget target; }
+
+view Show(Look look)
+{
+    var target = look.target;
+    target.Stencil(StencilTest.Equal, 1);
+}

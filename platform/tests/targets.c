@@ -1,7 +1,8 @@
 // Sample an uploaded image, then the targets it was drawn into. The same
 // top-left UVs, preserved color/depth, clip and ping-pong passes on every GPU.
 // Then targets of depth alone, and a target's depth as a shader reads it: as
-// a number, and compared.
+// a number, and compared. Then stencil: each test and each thing a draw does
+// with what's stored, in targets and, on the web, the window's own canvas.
 #include <math.h>
 #include <stdio.h>
 #include <stddef.h>
@@ -1354,6 +1355,249 @@ static void check_depth(void)
     gpu->pipeline_free(compare);
 }
 
+// ---------------------------------------------------------------------------
+// Stencil, at the backend: a number for each of a target's pixels, which a
+// pipeline's draws are tested against and change.
+
+// Whether a draw whose number is `value` passes `test` where `stored` is.
+static bool stencil_passes(const int test, const int value, const int stored)
+{
+    switch (test) {
+    case TIDE_GPU_STENCIL_NEVER: return false;
+    case TIDE_GPU_STENCIL_LESS: return value < stored;
+    case TIDE_GPU_STENCIL_EQUAL: return value == stored;
+    case TIDE_GPU_STENCIL_LESS_EQUAL: return value <= stored;
+    case TIDE_GPU_STENCIL_GREATER: return value > stored;
+    case TIDE_GPU_STENCIL_NOT_EQUAL: return value != stored;
+    case TIDE_GPU_STENCIL_GREATER_EQUAL: return value >= stored;
+    default: return true;
+    }
+}
+
+// What's stored where a draw whose number is `value` drew over `stored`.
+static int stencil_after(const int op, const int stored, const int value)
+{
+    switch (op) {
+    case TIDE_GPU_STENCIL_REPLACE: return value;
+    case TIDE_GPU_STENCIL_INCREMENT: return stored < 255 ? stored + 1 : 255;
+    case TIDE_GPU_STENCIL_DECREMENT: return stored > 0 ? stored - 1 : 0;
+    case TIDE_GPU_STENCIL_ZERO: return 0;
+    case TIDE_GPU_STENCIL_INVERT: return 255 - stored;
+    default: return stored;
+    }
+}
+
+static void expect_color(const uint8_t *actual, const int x, const int y, const uint8_t *wanted, const char *what)
+{
+    const uint8_t *got = actual + (y * WIDTH + x) * 4;
+    if (memcmp(got, wanted, 3) == 0) return;
+    if (failures++ < 6) {
+        fprintf(stderr, "%s (%d, %d): %u,%u,%u instead of %u,%u,%u\n", what, x, y, got[0], got[1], got[2], wanted[0],
+                wanted[1], wanted[2]);
+    }
+}
+
+enum { STENCIL_TESTS = TIDE_GPU_STENCIL_GREATER_EQUAL + 1, STENCIL_OPS = TIDE_GPU_STENCIL_INVERT + 1 };
+
+// What each column of the target stores, under a top row that's left at 0: both ends of what a pixel holds among them.
+static const uint8_t stencil_columns[WIDTH] = {1, 20, 254, 255};
+
+static int stencil_stored(const int x, const int y)
+{
+    return y ? stencil_columns[x] : 0;
+}
+
+// Each column's number into its pixels under the top row, through `store`, which replaces what's there.
+static void store_columns(const tide_gpu *gpu, const tide_gpu_id store, const tide_gpu_id texture)
+{
+    for (int x = 0; x < WIDTH; x++) {
+        gpu->scissor(x, 1, 1, HEIGHT - 1);
+        gpu->stencil(stencil_columns[x]);
+        copy(gpu, store, texture, 0);
+    }
+    gpu->scissor(0, 0, WIDTH, HEIGHT);
+}
+
+static void check_stencil(void)
+{
+    const tide_gpu *gpu = tide_window_gpu();
+    static const uint8_t black[4] = {0, 0, 0, 255}, magenta[4] = {255, 0, 255, 255}, green[4] = {0, 255, 0, 255};
+    static const char *const test_names[STENCIL_TESTS] = {
+        "a stencil test that always passes", "a stencil test that never passes", "a draw's number less than the stored one",
+        "a draw's number equal to the stored one", "a draw's number less than or equal to the stored one",
+        "a draw's number greater than the stored one", "a draw's number other than the stored one",
+        "a draw's number greater than or equal to the stored one"};
+    static const char *const op_names[STENCIL_OPS] = {
+        "what's stored, kept", "what's stored, replaced by the draw's number", "what's stored, one more, 255 at the most",
+        "what's stored, one less, 0 at the least", "what's stored, set to 0", "what's stored, each bit the other way"};
+    uint8_t actual[WIDTH * HEIGHT * 4];
+    const tide_gpu_id dark = gpu->texture(TIDE_GPU_RGBA8, 1, 1, black), bright = gpu->texture(TIDE_GPU_RGBA8, 1, 1, magenta);
+    const tide_gpu_id right = gpu->texture(TIDE_GPU_RGBA8, 1, 1, green);
+    tide_gpu_pipeline_desc desc = {.name = "stencil", .glsl_vertex = vertex, .glsl_fragment = fragment, .wgsl = wgsl,
+                                   .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE,
+                                   .into = TIDE_GPU_TARGET_COLOR};
+    const tide_gpu_id paint = gpu->pipeline(&desc); // Neither tests nor stores
+    tide_gpu_id tests[STENCIL_TESTS], stores[STENCIL_OPS];
+    for (int t = 0; t < STENCIL_TESTS; t++) {
+        desc.stencil_test = (tide_gpu_stencil_test)t;
+        tests[t] = gpu->pipeline(&desc);
+    }
+    desc.stencil_test = TIDE_GPU_STENCIL_ALWAYS;
+    for (int op = 0; op < STENCIL_OPS; op++) {
+        desc.stencil_op = (tide_gpu_stencil_op)op;
+        stores[op] = gpu->pipeline(&desc);
+    }
+    const tide_gpu_id scene = gpu->target(TIDE_GPU_TARGET_COLOR, WIDTH, HEIGHT);
+
+    // A new target's is 0 everywhere, and so is a pass's number: nothing is other than it, and all of it equal
+    gpu->begin(scene, true);
+    copy(gpu, tests[TIDE_GPU_STENCIL_NOT_EQUAL], bright, 0);
+    gpu->end();
+    gpu->target_read(scene, actual);
+    for (int i = 0; i < WIDTH * HEIGHT; i++) expect_color(actual, i % WIDTH, i / WIDTH, black, "a new target's stencil is 0");
+    gpu->begin(scene, false);
+    copy(gpu, tests[TIDE_GPU_STENCIL_EQUAL], bright, 0);
+    gpu->end();
+    gpu->target_read(scene, actual);
+    for (int i = 0; i < WIDTH * HEIGHT; i++) expect_color(actual, i % WIDTH, i / WIDTH, magenta, "a pass's stencil number is 0");
+
+    // Each column stores a number of its own, in a pass; each test is then against what stayed, in passes after it
+    gpu->begin(scene, false);
+    store_columns(gpu, stores[TIDE_GPU_STENCIL_REPLACE], dark);
+    gpu->end();
+    for (int t = 0; t < STENCIL_TESTS; t++) {
+        gpu->begin(scene, false);
+        copy(gpu, paint, dark, 0);
+        gpu->stencil(20); // The pass's, whichever pipeline is used after it
+        copy(gpu, tests[t], bright, 0);
+        gpu->end();
+        gpu->target_read(scene, actual);
+        for (int i = 0; i < WIDTH * HEIGHT; i++) {
+            const int x = i % WIDTH, y = i / WIDTH;
+            expect_color(actual, x, y, stencil_passes(t, 20, stencil_stored(x, y)) ? magenta : black, test_names[t]);
+        }
+    }
+    // ...and a pass after those starts with a number of 0 again: only the top row is still that
+    gpu->begin(scene, false);
+    copy(gpu, paint, dark, 0);
+    copy(gpu, tests[TIDE_GPU_STENCIL_EQUAL], bright, 0);
+    gpu->end();
+    gpu->target_read(scene, actual);
+    for (int i = 0; i < WIDTH * HEIGHT; i++) {
+        expect_color(actual, i % WIDTH, i / WIDTH, i < WIDTH ? magenta : black, "a pass's stencil number starts at 0 again");
+    }
+
+    // Each thing a draw does with what's stored, over all of it, with a number of 77: what's there afterwards is
+    // found a column at a time, by a draw that passes only where it's that
+    for (int op = 0; op < STENCIL_OPS; op++) {
+        gpu->begin(scene, true); // Back to 0
+        store_columns(gpu, stores[TIDE_GPU_STENCIL_REPLACE], dark);
+        gpu->stencil(77);
+        copy(gpu, stores[op], bright, 0);
+        for (int x = 0; x < WIDTH; x++) {
+            for (int top = 0; top < 2; top++) {
+                gpu->scissor(x, top ? 0 : 1, 1, top ? 1 : HEIGHT - 1);
+                gpu->stencil((uint32_t)stencil_after(op, stencil_stored(x, top ? 0 : 1), 77));
+                copy(gpu, tests[TIDE_GPU_STENCIL_EQUAL], right, 0);
+            }
+        }
+        gpu->end();
+        gpu->target_read(scene, actual);
+        for (int i = 0; i < WIDTH * HEIGHT; i++) expect_color(actual, i % WIDTH, i / WIDTH, green, op_names[op]);
+    }
+
+    // Only where a draw draws: one that's hidden behind what's nearer stores nothing there
+    desc.stencil_op = TIDE_GPU_STENCIL_KEEP;
+    desc.depth = TIDE_GPU_DEPTH_TEST;
+    const tide_gpu_id deep = gpu->pipeline(&desc);
+    desc.stencil_op = TIDE_GPU_STENCIL_REPLACE;
+    const tide_gpu_id deep_store = gpu->pipeline(&desc);
+    gpu->begin(scene, true);
+    gpu->scissor(0, 0, 2, HEIGHT);
+    copy(gpu, deep, dark, -0.5f); // Near, on the left
+    gpu->scissor(0, 0, WIDTH, HEIGHT);
+    gpu->stencil(9);
+    copy(gpu, deep_store, dark, 0.5f); // Farther, everywhere: hidden on the left
+    copy(gpu, tests[TIDE_GPU_STENCIL_EQUAL], bright, 0);
+    gpu->end();
+    gpu->target_read(scene, actual);
+    for (int i = 0; i < WIDTH * HEIGHT; i++) {
+        expect_color(actual, i % WIDTH, i / WIDTH, i % WIDTH < 2 ? black : magenta, "a draw hidden behind what's nearer stores no stencil");
+    }
+
+    // A pass that starts cleared sets all of it back to 0
+    gpu->begin(scene, true);
+    copy(gpu, tests[TIDE_GPU_STENCIL_NOT_EQUAL], bright, 0);
+    gpu->end();
+    gpu->target_read(scene, actual);
+    for (int i = 0; i < WIDTH * HEIGHT; i++) expect_color(actual, i % WIDTH, i / WIDTH, black, "stencil cleared with its pass");
+
+    // A target of depth alone has it too: a depth written only where its stencil lets it be
+    desc = (tide_gpu_pipeline_desc){.name = "stencil into depth alone", .glsl_vertex = vertex, .glsl_fragment = fragment,
+                                    .wgsl = wgsl, .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE,
+                                    .stencil_op = TIDE_GPU_STENCIL_REPLACE, .into = TIDE_GPU_TARGET_DEPTH};
+    const tide_gpu_id mask = gpu->pipeline(&desc); // Stores, and writes no depth
+    desc.stencil_op = TIDE_GPU_STENCIL_KEEP;
+    desc.stencil_test = TIDE_GPU_STENCIL_EQUAL;
+    desc.depth = TIDE_GPU_DEPTH_TEST;
+    const tide_gpu_id masked = gpu->pipeline(&desc);
+    const tide_gpu_id read = gpu->pipeline(&(tide_gpu_pipeline_desc){
+        .name = "depth read", .glsl_vertex = vertex, .glsl_fragment = depth_fragment, .wgsl = depth_wgsl,
+        .uniform_size = 16, .texture_count = 1, .reads = {TIDE_GPU_READ_DEPTH}, .blend = TIDE_GPU_BLEND_REPLACE,
+        .into = TIDE_GPU_TARGET_COLOR,
+    });
+    const tide_gpu_id shadow = gpu->target(TIDE_GPU_TARGET_DEPTH, WIDTH, HEIGHT);
+    gpu->begin(shadow, true);
+    gpu->scissor(0, 0, 2, HEIGHT);
+    gpu->stencil(5);
+    copy(gpu, mask, dark, 0);
+    gpu->scissor(0, 0, WIDTH, HEIGHT);
+    copy(gpu, masked, dark, 0.4f * 2.0f - 1.0f);
+    gpu->end();
+    gpu->begin(scene, true);
+    show(gpu, read, gpu->target_depth(shadow), 0);
+    gpu->end();
+    gpu->target_read(scene, actual);
+    for (int i = 0; i < WIDTH * HEIGHT; i++) {
+        expect_depth(actual, WIDTH, i % WIDTH, i / WIDTH, i % WIDTH < 2 ? 0.4f : 1.0f, 1.0f, "a target of depth alone's stencil");
+    }
+
+#ifdef __wasm__
+    // The window's own has it as a target has: the page's canvas, read as the browser shows it. A context made
+    // without stencil would let the second draw through everywhere.
+    int wide, high;
+    tide_window_pixel_size(&wide, &high);
+    gpu->begin(0, true);
+    gpu->scissor(0, 0, wide / 2, high);
+    gpu->stencil(3);
+    copy(gpu, stores[TIDE_GPU_STENCIL_REPLACE], dark, 0);
+    gpu->scissor(0, 0, wide, high);
+    copy(gpu, tests[TIDE_GPU_STENCIL_EQUAL], bright, 0);
+    gpu->end();
+    if (!tide_web_eval("(() => { const c = document.getElementById('canvas');"
+                       " const r = new OffscreenCanvas(c.width, c.height).getContext('2d'); r.drawImage(c, 0, 0);"
+                       " const a = r.getImageData(1, 1, 1, 1).data, b = r.getImageData(c.width - 2, c.height - 2, 1, 1).data;"
+                       " return a[0] === 255 && a[1] === 0 && a[2] === 255 && b[0] === 0 && b[1] === 0 && b[2] === 0; })()")) {
+        failures++;
+        fprintf(stderr, "the window's own stencil: a draw that passes only on the left half isn't only there\n");
+    }
+#endif
+
+    gpu->target_free(shadow);
+    gpu->target_free(scene);
+    gpu->texture_free(dark);
+    gpu->texture_free(bright);
+    gpu->texture_free(right);
+    gpu->pipeline_free(paint);
+    for (int t = 0; t < STENCIL_TESTS; t++) gpu->pipeline_free(tests[t]);
+    for (int op = 0; op < STENCIL_OPS; op++) gpu->pipeline_free(stores[op]);
+    gpu->pipeline_free(deep);
+    gpu->pipeline_free(deep_store);
+    gpu->pipeline_free(mask);
+    gpu->pipeline_free(masked);
+    gpu->pipeline_free(read);
+}
+
 static void check_targets(void)
 {
     const tide_gpu *gpu = tide_window_gpu();
@@ -1473,6 +1717,383 @@ static void check_targets(void)
 }
 
 // ---------------------------------------------------------------------------
+// Stencil through the renderer: lists whose commands test and store it, each
+// drawn as a window of 48 by 32 logical pixels would be.
+
+enum { STENCIL_WIDE = 48, STENCIL_HIGH = 32, STENCIL_BAND = 8 };
+
+static const tide_color unseen = {0, 0, 0, 0}; // Drawn for what it stores: it leaves the colors there as they are
+static const tide_float2 stencil_middle = {STENCIL_WIDE * 0.5f, STENCIL_HIGH * 0.5f};
+static const tide_float2 stencil_all = {STENCIL_WIDE, STENCIL_HIGH};
+
+// The window's pixel under the logical pixel (x, y), at whatever scale it was read.
+static void expect_at(const int x, const int y, const uint32_t wanted, const char *what)
+{
+    const float scale = (float)window_wide / STENCIL_WIDE;
+    expect_pixel((int)(((float)x + 0.5f) * scale), (int)(((float)y + 0.5f) * scale), wanted, what);
+}
+
+// A new frame, in the screen's pixels, over `color`.
+static void stencil_frame(const tide_color color)
+{
+    tide_draw_reset(&render_list);
+    tide_draw_clear(&render_list, color);
+    tide_draw_set_screen(&render_list);
+}
+
+// The selected destination's draws store `value` over the rect from (x, y), with nothing seen of it.
+static void store_rect(const float x, const float y, const float width, const float height, const int value)
+{
+    const uint32_t mark = tide_draw_push_stencil(&render_list, tide_stencil_stored(TIDE_STENCIL_ALWAYS, value, TIDE_STENCIL_REPLACE));
+    tide_draw_rect(&render_list, tide_f2(x + width * 0.5f, y + height * 0.5f), tide_f2(width, height), unseen);
+    tide_draw_pop(&render_list, mark);
+}
+
+// ...and `color` over all of it, where `test` passes with `value`.
+static void fill_where(const tide_stencil_test test, const int value, const tide_color color)
+{
+    const uint32_t mark = tide_draw_push_stencil(&render_list, tide_stencil_tested(test, value));
+    tide_draw_rect(&render_list, stencil_middle, stencil_all, color);
+    tide_draw_pop(&render_list, mark);
+}
+
+// Five bands across the window: the first left at 0, the others storing stencil_columns' numbers.
+static int band_stored(const int band)
+{
+    return band ? stencil_columns[band - 1] : 0;
+}
+
+static void store_bands(void)
+{
+    for (int band = 1; band <= WIDTH; band++) {
+        store_rect((float)(band * STENCIL_BAND), 0, STENCIL_BAND, STENCIL_HIGH, band_stored(band));
+    }
+}
+
+static void check_render_stencil(const float scale)
+{
+    const uint32_t blue = 0x0000ffffu, white = 0xffffffffu, red = 0xff0000ffu, green = 0x00ff00ffu, black = 0x000000ffu;
+    static const uint32_t quad[6] = {0, 1, 2, 0, 2, 3};
+    char what[160];
+
+    // Shapes: a circle that's drawn clear stores where it is, and leaves the colors there; what's drawn after is
+    // tested against it, inside and outside. On a scaled display the circle is a smooth shape, drawn the same.
+    stencil_frame(TIDE_COLOR_BLUE);
+    uint32_t mark = tide_draw_push_stencil(&render_list, tide_stencil_stored(TIDE_STENCIL_ALWAYS, 1, TIDE_STENCIL_REPLACE));
+    tide_draw_circle(&render_list, tide_f2(12, 16), 8, unseen);
+    tide_draw_pop(&render_list, mark);
+    read_window(STENCIL_WIDE, STENCIL_HIGH, scale);
+    expect_all(blue, "a clear circle that stores stencil leaves the colors as they are");
+    fill_where(TIDE_STENCIL_EQUAL, 1, TIDE_COLOR_WHITE);
+    mark = tide_draw_push_stencil(&render_list, tide_stencil_tested(TIDE_STENCIL_NOT_EQUAL, 1));
+    tide_draw_rect(&render_list, tide_f2(36, 16), tide_f2(24, 32), TIDE_COLOR_RED);
+    tide_draw_pop(&render_list, mark);
+    read_window(STENCIL_WIDE, STENCIL_HIGH, scale);
+    expect_at(12, 16, white, "a rect drawn where stencil is the circle's number: at its middle");
+    expect_at(15, 19, white, "and near its edge");
+    expect_at(12, 4, blue, "and not above the circle");
+    expect_at(22, 16, blue, "nor beside it");
+    expect_at(2, 2, blue, "nor far from it");
+    expect_at(36, 16, red, "a rect drawn where stencil is another number than the circle's");
+    expect_at(47, 31, red, "to its corner");
+
+    // Smooth shapes store where they are too, clear as they may be: a round rect, and an ellipse inside it that
+    // stores another number
+    stencil_frame(TIDE_COLOR_BLUE);
+    mark = tide_draw_push_stencil(&render_list, tide_stencil_stored(TIDE_STENCIL_ALWAYS, 2, TIDE_STENCIL_REPLACE));
+    tide_draw_round_rect(&render_list, tide_f2(24, 16), tide_f2(32, 24), 6, unseen);
+    tide_draw_pop(&render_list, mark);
+    mark = tide_draw_push_stencil(&render_list, tide_stencil_stored(TIDE_STENCIL_EQUAL, 2, TIDE_STENCIL_INCREMENT));
+    tide_draw_ellipse(&render_list, tide_f2(24, 16), tide_f2(8, 5), unseen);
+    tide_draw_pop(&render_list, mark);
+    fill_where(TIDE_STENCIL_EQUAL, 2, TIDE_COLOR_WHITE);
+    fill_where(TIDE_STENCIL_EQUAL, 3, TIDE_COLOR_RED);
+    read_window(STENCIL_WIDE, STENCIL_HIGH, scale);
+    expect_at(24, 16, red, "an ellipse that stores one more where a round rect stored: at its middle");
+    expect_at(30, 16, red, "and towards its end");
+    expect_at(24, 8, white, "the round rect around it, above the ellipse");
+    expect_at(11, 16, white, "and at its side");
+    expect_at(8, 4, blue, "and not past its round corner");
+    expect_at(3, 16, blue, "nor beside it");
+
+    // Text stores where its glyphs are, and nowhere else in their quads: the pixels a rect is then drawn at are
+    // exactly the ones the same text shows at
+    static uint32_t shown[MOST_PIXELS];
+    stencil_frame(TIDE_COLOR_BLACK);
+    tide_draw_text(&render_list, "Tide", tide_f2(4, 4), 20, TIDE_COLOR_WHITE);
+    read_window(STENCIL_WIDE, STENCIL_HIGH, scale);
+    memcpy(shown, window_pixels, (size_t)(window_wide * window_high) * sizeof(uint32_t));
+    stencil_frame(TIDE_COLOR_BLACK);
+    mark = tide_draw_push_stencil(&render_list, tide_stencil_stored(TIDE_STENCIL_ALWAYS, 1, TIDE_STENCIL_REPLACE));
+    tide_draw_text(&render_list, "Tide", tide_f2(4, 4), 20, unseen);
+    tide_draw_pop(&render_list, mark);
+    fill_where(TIDE_STENCIL_EQUAL, 1, TIDE_COLOR_WHITE);
+    read_window(STENCIL_WIDE, STENCIL_HIGH, scale);
+    int inked = 0, differ = 0;
+    for (int i = 0; i < window_wide * window_high; i++) {
+        const bool ink = (shown[i] >> 8) != 0, stored = (window_pixels[i] >> 8) == 0xffffffu;
+        inked += ink;
+        differ += ink != stored || (!stored && (window_pixels[i] >> 8) != 0);
+    }
+    snprintf(what, sizeof what, "text stores stencil at its glyphs' pixels, and no others (%d of %d differ, at a scale of %g)",
+             differ, inked, (double)scale);
+    if (differ != 0 || inked < 60 || inked > window_wide * window_high / 2) {
+        failures++;
+        fprintf(stderr, "%s\n", what);
+    }
+
+    // A mesh stores over all of its triangles, whatever its corners' alpha
+    stencil_frame(TIDE_COLOR_BLUE);
+    const tide_vertex corners[4] = {{{8, 8}, {0, 0}, unseen}, {{24, 8}, {1, 0}, unseen}, {{24, 24}, {1, 1}, unseen},
+                                    {{8, 24}, {0, 1}, unseen}};
+    mark = tide_draw_push_stencil(&render_list, tide_stencil_stored(TIDE_STENCIL_ALWAYS, 1, TIDE_STENCIL_REPLACE));
+    tide_draw_triangles_with(&render_list, tide_draw_vertices(&render_list, corners, 4), quad, 6, 0, TIDE_FILTER_POINT,
+                             TIDE_WRAP_CLAMP);
+    tide_draw_pop(&render_list, mark);
+    // ...and one drawn where it did is tested like anything else
+    const tide_vertex over[4] = {{{0, 0}, {0, 0}, TIDE_COLOR_GREEN}, {{STENCIL_WIDE, 0}, {1, 0}, TIDE_COLOR_GREEN},
+                                 {{STENCIL_WIDE, STENCIL_HIGH}, {1, 1}, TIDE_COLOR_GREEN}, {{0, STENCIL_HIGH}, {0, 1}, TIDE_COLOR_GREEN}};
+    mark = tide_draw_push_stencil(&render_list, tide_stencil_tested(TIDE_STENCIL_EQUAL, 1));
+    tide_draw_triangles_with(&render_list, tide_draw_vertices(&render_list, over, 4), quad, 6, 0, TIDE_FILTER_POINT,
+                             TIDE_WRAP_CLAMP);
+    tide_draw_pop(&render_list, mark);
+    read_window(STENCIL_WIDE, STENCIL_HIGH, scale);
+    expect_at(16, 16, green, "a mesh drawn where a clear mesh stored: at its middle");
+    expect_at(9, 23, green, "and in its corner");
+    expect_at(30, 16, blue, "and not beside it");
+    expect_at(4, 4, blue, "nor above it");
+
+    // Each test, against bands that each store a number of their own beside one left at 0
+    static const char *const test_names[STENCIL_TESTS] = {
+        "drawn everywhere", "drawn nowhere", "drawn where its number is less than the stored one",
+        "drawn where its number is the stored one", "drawn where its number is less than or equal to the stored one",
+        "drawn where its number is greater than the stored one", "drawn where its number isn't the stored one",
+        "drawn where its number is greater than or equal to the stored one"};
+    for (int test = 0; test < STENCIL_TESTS; test++) {
+        stencil_frame(TIDE_COLOR_BLUE);
+        store_bands();
+        fill_where((tide_stencil_test)test, 20, TIDE_COLOR_WHITE);
+        read_window(STENCIL_WIDE, STENCIL_HIGH, scale);
+        for (int band = 0; band <= WIDTH; band++) {
+            expect_at(band * STENCIL_BAND + 4, 16, stencil_passes(test, 20, band_stored(band)) ? white : blue, test_names[test]);
+        }
+    }
+    // ...and each thing a draw does with what's stored: a draw over all of it with a number of 77, then one over
+    // each band that passes where the band stores what it should by now
+    static const char *const op_names[STENCIL_OPS] = {
+        "what's stored, kept", "what's stored, replaced by the draw's number", "what's stored, one more, 255 at the most",
+        "what's stored, one less, 0 at the least", "what's stored, set to 0", "what's stored, each bit the other way"};
+    for (int op = 0; op < STENCIL_OPS; op++) {
+        stencil_frame(TIDE_COLOR_BLUE);
+        store_bands();
+        mark = tide_draw_push_stencil(&render_list, tide_stencil_stored(TIDE_STENCIL_ALWAYS, 77, op));
+        tide_draw_rect(&render_list, stencil_middle, stencil_all, TIDE_COLOR_RED);
+        tide_draw_pop(&render_list, mark);
+        for (int band = 0; band <= WIDTH; band++) {
+            mark = tide_draw_push_stencil(&render_list,
+                                          tide_stencil_tested(TIDE_STENCIL_EQUAL, stencil_after(op, band_stored(band), 77)));
+            tide_draw_rect(&render_list, tide_f2((float)(band * STENCIL_BAND) + 4, 16), tide_f2(STENCIL_BAND, STENCIL_HIGH),
+                           TIDE_COLOR_GREEN);
+            tide_draw_pop(&render_list, mark);
+        }
+        read_window(STENCIL_WIDE, STENCIL_HIGH, scale);
+        for (int band = 0; band <= WIDTH; band++) expect_at(band * STENCIL_BAND + 4, 16, green, op_names[op]);
+        expect_at(44, 16, red, "and nothing is tested past the bands");
+    }
+
+    // The same setting around each of 200 draws is still one draw call, after the clear
+    stencil_frame(TIDE_COLOR_BLUE);
+    for (int i = 0; i < 200; i++) {
+        mark = tide_draw_push_stencil(&render_list, tide_stencil_tested(TIDE_STENCIL_EQUAL, 0));
+        tide_draw_rect(&render_list, tide_f2((float)(i % 40) + 0.5f, (float)(i / 40) + 0.5f), tide_f2(1, 1), TIDE_COLOR_WHITE);
+        tide_draw_pop(&render_list, mark);
+    }
+    read_window(STENCIL_WIDE, STENCIL_HIGH, scale);
+    expect_at(20, 2, white, "200 rects drawn where stencil is 0");
+    expect_at(20, 8, blue, "and nothing under them");
+    if (tide_platform_draw_calls() != 2) {
+        failures++;
+        fprintf(stderr, "a stencil around each of 200 rects takes %u draw calls, not the clear's and one\n",
+                (unsigned)tide_platform_draw_calls());
+    }
+
+    // A clear sets what's stored back to 0 within the clip, whatever is set, and nothing tests it
+    stencil_frame(TIDE_COLOR_BLUE);
+    store_rect(0, 0, STENCIL_WIDE, STENCIL_HIGH, 1);
+    tide_draw_set_clip(&render_list, (tide_rect){0, 0, STENCIL_WIDE / 2, STENCIL_HIGH});
+    mark = tide_draw_push_stencil(&render_list, tide_stencil_stored(TIDE_STENCIL_NEVER, 5, TIDE_STENCIL_REPLACE));
+    tide_draw_clear(&render_list, TIDE_COLOR_RED);
+    tide_draw_pop(&render_list, mark);
+    tide_draw_unset_clip(&render_list);
+    fill_where(TIDE_STENCIL_EQUAL, 1, TIDE_COLOR_WHITE);
+    read_window(STENCIL_WIDE, STENCIL_HIGH, scale);
+    expect_halves(red, white, "a clear under a stencil test that never passes still clears, and sets stencil back, in its clip");
+
+    // A blit is its destination's whatever is set: it neither tests stencil nor stores any
+    stencil_frame(TIDE_COLOR_BLUE);
+    tide_draw_to(&render_list, TARGET_B, WIDTH * 2, HEIGHT * 2);
+    tide_draw_clear(&render_list, TIDE_COLOR_GREEN);
+    tide_draw_to(&render_list, 0, 0, 0);
+    store_rect(0, 0, STENCIL_WIDE / 2, STENCIL_HIGH, 1);
+    mark = tide_draw_push_stencil(&render_list, tide_stencil_stored(TIDE_STENCIL_EQUAL, 99, TIDE_STENCIL_ZERO));
+    blit_image(TARGET_B, WIDTH * 2, HEIGHT * 2, 0);
+    tide_draw_pop(&render_list, mark);
+    read_window(STENCIL_WIDE, STENCIL_HIGH, scale);
+    expect_all(green, "a blit under a stencil test that fails everywhere still replaces everything");
+    fill_where(TIDE_STENCIL_EQUAL, 1, TIDE_COLOR_WHITE);
+    read_window(STENCIL_WIDE, STENCIL_HIGH, scale);
+    expect_halves(white, green, "and it stored nothing: what was stored before it is still there");
+
+    // 3D meshes, with depth: one hidden behind what's nearer stores nothing there, and one that neither reads
+    // nor writes depth is still tested. Wound for a projection that's the identity, as check_render_depth_alpha's.
+    static const uint32_t turned[6] = {0, 2, 1, 0, 3, 2};
+    const tide_vertex3 left_vertices[4] = {{{-1, 1, 0.5f}, {0, 0}, TIDE_COLOR_RED}, {{0, 1, 0.5f}, {1, 0}, TIDE_COLOR_RED},
+                                          {{0, -1, 0.5f}, {1, 1}, TIDE_COLOR_RED}, {{-1, -1, 0.5f}, {0, 1}, TIDE_COLOR_RED}};
+    const tide_vertex3 far_vertices[4] = {{{-1, 1, -0.5f}, {0, 0}, TIDE_COLOR_GREEN}, {{1, 1, -0.5f}, {1, 0}, TIDE_COLOR_GREEN},
+                                         {{1, -1, -0.5f}, {1, 1}, TIDE_COLOR_GREEN}, {{-1, -1, -0.5f}, {0, 1}, TIDE_COLOR_GREEN}};
+    const tide_vertex3 over_vertices[4] = {{{-1, 1, 0}, {0, 0}, TIDE_COLOR_WHITE}, {{1, 1, 0}, {1, 0}, TIDE_COLOR_WHITE},
+                                          {{1, -1, 0}, {1, 1}, TIDE_COLOR_WHITE}, {{-1, -1, 0}, {0, 1}, TIDE_COLOR_WHITE}};
+    const tide_mesh left_mesh = {left_vertices, 4, turned, 6, 1}, far_mesh = {far_vertices, 4, turned, 6, 1};
+    const tide_mesh over_mesh = {over_vertices, 4, turned, 6, 1};
+    const tide_float4x4 identity = tide_identity_f4x4();
+    stencil_frame(TIDE_COLOR_BLUE);
+    tide_draw_set_camera_matrices(&render_list, identity, identity);
+    tide_draw_mesh_3d(&render_list, &left_mesh, identity, NULL, TIDE_FILTER_POINT);
+    mark = tide_draw_push_stencil(&render_list, tide_stencil_stored(TIDE_STENCIL_ALWAYS, 7, TIDE_STENCIL_REPLACE));
+    tide_draw_mesh_3d(&render_list, &far_mesh, identity, NULL, TIDE_FILTER_POINT);
+    tide_draw_pop(&render_list, mark);
+    read_window(STENCIL_WIDE, STENCIL_HIGH, scale);
+    expect_halves(red, green, "a 3D mesh that stores stencil is still hidden behind what's nearer");
+    mark = tide_draw_push_stencil(&render_list, tide_stencil_tested(TIDE_STENCIL_EQUAL, 7));
+    tide_draw_push_depth(&render_list, TIDE_DEPTH_NONE);
+    tide_draw_mesh_3d(&render_list, &over_mesh, identity, NULL, TIDE_FILTER_POINT);
+    tide_draw_pop(&render_list, mark);
+    read_window(STENCIL_WIDE, STENCIL_HIGH, scale);
+    expect_halves(red, white, "and stored nothing where it was hidden: a mesh drawn where it stored is over its half alone");
+
+    // Through a shader of the game's: the pixels its frag discards store nothing, and a mesh through another
+    // is tested like anything else. The caster's frag keeps the target's first two columns of pixels.
+    if (scale == 1.0f) {
+        stencil_frame(TIDE_COLOR_BLUE);
+        tide_draw_set_camera_matrices(&render_list, identity, identity);
+        bool fill;
+        const uint32_t caster = tide_draw_mesh_slot(&render_list, TIDE_MESH_BYTES, 705, 0, 1, &fill);
+        if (fill) tide_draw_mesh_fill_bytes(&render_list, caster, far_vertices, sizeof(tide_vertex3), 4, turned, 6);
+        mark = tide_draw_push_stencil(&render_list, tide_stencil_stored(TIDE_STENCIL_ALWAYS, 4, TIDE_STENCIL_REPLACE));
+        tide_draw_shaded(&render_list, &caster_shader, caster, &identity, NULL, NULL, 0);
+        tide_draw_pop(&render_list, mark);
+        const tide_vertex sheet_vertices[4] = {{{0, 0}, {0, 0}, TIDE_COLOR_GREEN}, {{STENCIL_WIDE, 0}, {1, 0}, TIDE_COLOR_GREEN},
+                                               {{STENCIL_WIDE, STENCIL_HIGH}, {1, 1}, TIDE_COLOR_GREEN},
+                                               {{0, STENCIL_HIGH}, {0, 1}, TIDE_COLOR_GREEN}};
+        const uint32_t sheet = tide_draw_mesh_slot(&render_list, TIDE_MESH_BYTES, 706, 0, 1, &fill);
+        if (fill) tide_draw_mesh_fill_bytes(&render_list, sheet, sheet_vertices, sizeof(tide_vertex), 4, quad, 6);
+        const float settings[4] = {0, 0, 0, 0};
+        const uint32_t none = 0;
+        mark = tide_draw_push_stencil(&render_list, tide_stencil_tested(TIDE_STENCIL_EQUAL, 4));
+        tide_draw_shaded(&render_list, &list_shader, sheet, NULL, settings, &none, 0);
+        tide_draw_pop(&render_list, mark);
+        read_window(STENCIL_WIDE, STENCIL_HIGH, scale);
+        for (int y = 0; y < STENCIL_HIGH; y += 5) {
+            expect_at(0, y, green, "a mesh through a shader, drawn where another's frag stored: the pixels it kept");
+            expect_at(1, y, green, "both columns of them");
+            expect_at(2, y, blue, "and not where it discarded them");
+            expect_at(30, y, blue, "anywhere");
+        }
+    }
+
+    // It's a destination's own: a target's stencil is nothing to the window's draws, the window's setting is
+    // nothing to a target's, and a target keeps its stencil from frame to frame, until it's cleared
+    const tide_render_target kept = tide_render_target_make_scaled(STENCIL_WIDE, STENCIL_HIGH, scale);
+    tide_draw_reset(&render_list);
+    tide_draw_set_stencil(&render_list, tide_stencil_tested(TIDE_STENCIL_NEVER, 0)); // The window's: nothing to the target
+    tide_draw_render_target(&render_list, kept);
+    tide_draw_clear(&render_list, TIDE_COLOR_GREEN);
+    tide_draw_set_screen(&render_list);
+    store_rect(0, 0, STENCIL_WIDE / 2, STENCIL_HIGH, 1);
+    tide_draw_to(&render_list, 0, 0, 0);
+    tide_draw_unset_stencil(&render_list);
+    blit_target(kept, 0);
+    tide_draw_set_screen(&render_list);
+    fill_where(TIDE_STENCIL_EQUAL, 1, TIDE_COLOR_RED); // The window stores 0 everywhere, whatever its target does
+    read_window(STENCIL_WIDE, STENCIL_HIGH, scale);
+    expect_all(green, "a target's draws aren't tested by the window's setting, nor the window's against a target's stencil");
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, kept);
+    tide_draw_set_screen(&render_list);
+    fill_where(TIDE_STENCIL_EQUAL, 1, TIDE_COLOR_WHITE);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_target(kept, 0);
+    read_window(STENCIL_WIDE, STENCIL_HIGH, scale);
+    expect_halves(white, green, "a target's stencil stays from frame to frame");
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, kept);
+    tide_draw_clear(&render_list, TIDE_COLOR_BLACK);
+    tide_draw_set_screen(&render_list);
+    fill_where(TIDE_STENCIL_EQUAL, 1, TIDE_COLOR_WHITE);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_target(kept, 0);
+    read_window(STENCIL_WIDE, STENCIL_HIGH, scale);
+    expect_all(black, "until its clear sets it back");
+
+    // A target of depth alone has stencil too, and what stores it is drawn there, where a color has nowhere
+    // to go: a rect, a round rect, a mesh and text each store a number, and a 3D mesh's depth is then written
+    // only where its stencil test passes
+    const tide_render_target shadow = tide_render_target_make_scaled_as(STENCIL_WIDE, STENCIL_HIGH, scale, TIDE_TARGET_DEPTH_ONLY);
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, shadow);
+    tide_draw_clear(&render_list, TIDE_COLOR_BLACK);
+    tide_draw_set_screen(&render_list);
+    store_rect(0, 0, 16, STENCIL_HIGH, 1);
+    mark = tide_draw_push_stencil(&render_list, tide_stencil_stored(TIDE_STENCIL_ALWAYS, 2, TIDE_STENCIL_REPLACE));
+    tide_draw_round_rect(&render_list, tide_f2(24, 16), tide_f2(16, 32), 4, unseen);
+    tide_draw_pop(&render_list, mark);
+    const tide_vertex third[4] = {{{32, 0}, {0, 0}, unseen}, {{48, 0}, {1, 0}, unseen}, {{48, 32}, {1, 1}, unseen},
+                                  {{32, 32}, {0, 1}, unseen}};
+    mark = tide_draw_push_stencil(&render_list, tide_stencil_stored(TIDE_STENCIL_ALWAYS, 3, TIDE_STENCIL_REPLACE));
+    tide_draw_triangles_with(&render_list, tide_draw_vertices(&render_list, third, 4), quad, 6, 0, TIDE_FILTER_POINT,
+                             TIDE_WRAP_CLAMP);
+    tide_draw_pop(&render_list, mark);
+    mark = tide_draw_push_stencil(&render_list, tide_stencil_stored(TIDE_STENCIL_EQUAL, 3, TIDE_STENCIL_INCREMENT));
+    tide_draw_text(&render_list, "Tide", tide_f2(34, 4), 10, unseen);
+    tide_draw_pop(&render_list, mark);
+    fill_where(TIDE_STENCIL_EQUAL, 1, TIDE_COLOR_WHITE); // Tests, and stores nothing: nothing of it is left there
+    tide_draw_set_camera_matrices(&render_list, identity, identity);
+    // Each over the whole target, at a depth of its own. The camera looks along +z: z = 0.5 is a depth of 0.25
+    static const float depths[3] = {0.25f, 0.5f, 0.75f};
+    tide_vertex3 near_vertices[4];
+    memcpy(near_vertices, far_vertices, sizeof near_vertices);
+    for (int i = 0; i < 4; i++) near_vertices[i].position.z = 0.5f;
+    const tide_mesh near_mesh = {near_vertices, 4, turned, 6, 1};
+    const tide_mesh *const layers[3] = {&near_mesh, &over_mesh, &far_mesh};
+    for (int layer = 0; layer < 3; layer++) {
+        mark = tide_draw_push_stencil(&render_list, tide_stencil_tested(TIDE_STENCIL_EQUAL, layer + 1));
+        tide_draw_mesh_3d(&render_list, layers[layer], identity, NULL, TIDE_FILTER_POINT);
+        tide_draw_pop(&render_list, mark);
+    }
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_depth(tide_render_target_depth(shadow));
+    read_window(STENCIL_WIDE, STENCIL_HIGH, scale);
+    expect_at(8, 16, gray(depths[0]), "a target of depth alone: a mesh drawn where a rect stored its number");
+    expect_at(24, 16, gray(depths[1]), "one drawn where a round rect stored another");
+    expect_at(40, 28, gray(depths[2]), "and one drawn where a mesh stored a third");
+    expect_at(16, 0, gray(1.0f), "and none past the round rect's corner, where nothing stored");
+    // ...nor where text stored one more over the mesh's: some of its box's pixels, and not all of them
+    int lettered = 0, box = 0;
+    for (int y = (int)(4 * scale); y < (int)(14 * scale); y++) {
+        for (int x = (int)(34 * scale); x < (int)(47 * scale); x++, box++) {
+            lettered += (window_pixels[y * window_wide + x] >> 8) == (gray(1.0f) >> 8);
+        }
+    }
+    if (lettered < 8 || lettered > box * 3 / 4) {
+        failures++;
+        fprintf(stderr, "text stored stencil at %d of %d pixels of its box in a target of depth alone\n", lettered, box);
+    }
+
+    tide_draw_forget(&render_list);
+    tide_render_targets_free();
+}
+
+// ---------------------------------------------------------------------------
 // Several color images, and floats: the backend's part, then the renderer's.
 
 // Three colors at once: a color, numbers past 1 and under 0, and four times the uv.
@@ -1533,7 +2154,7 @@ static uint8_t to_byte(const float v)
 }
 
 // The pixel (x, y) of what was read back is this color, to a step of a channel.
-static void expect_color(const uint8_t *actual, const int x, const int y, const float r, const float g, const float b,
+static void expect_rgb(const uint8_t *actual, const int x, const int y, const float r, const float g, const float b,
                          const char *what)
 {
     const uint8_t *got = actual + (y * WIDTH + x) * 4;
@@ -1577,14 +2198,14 @@ static void expect_three(const uint8_t *second, const uint8_t *third, const bool
         for (int x = 0; x < WIDTH; x++) {
             const float u = ((float)x + 0.5f) / WIDTH * 4.0f, v = ((float)y + 0.5f) / HEIGHT * 4.0f;
             if (x >= WIDTH / 2) { // Past the scissor: as the clear left them
-                expect_color(second, x, y, 0.25f, 0.25f, 0.25f, what);
-                expect_color(third, x, y, 0, 0, 0, what);
+                expect_rgb(second, x, y, 0.25f, 0.25f, 0.25f, what);
+                expect_rgb(third, x, y, 0, 0, 0, what);
             } else if (floats) {
-                expect_color(second, x, y, 3 * 0.25f + 0.25f, -1 * 0.25f + 0.25f, 0.5f * 0.25f + 0.25f, what);
-                expect_color(third, x, y, u * 0.25f, v * 0.25f, 2 * 0.25f, what);
+                expect_rgb(second, x, y, 3 * 0.25f + 0.25f, -1 * 0.25f + 0.25f, 0.5f * 0.25f + 0.25f, what);
+                expect_rgb(third, x, y, u * 0.25f, v * 0.25f, 2 * 0.25f, what);
             } else { // Kept from 0 to 1 as they were written
-                expect_color(second, x, y, 1 * 0.25f + 0.25f, 0.25f, 0.5f * 0.25f + 0.25f, what);
-                expect_color(third, x, y, (u > 1 ? 1 : u) * 0.25f, (v > 1 ? 1 : v) * 0.25f, 0.25f, what);
+                expect_rgb(second, x, y, 1 * 0.25f + 0.25f, 0.25f, 0.5f * 0.25f + 0.25f, what);
+                expect_rgb(third, x, y, (u > 1 ? 1 : u) * 0.25f, (v > 1 ? 1 : v) * 0.25f, 0.25f, what);
             }
         }
     }
@@ -1643,13 +2264,13 @@ static void check_colors(void)
     gpu->target_read(several, actual); // Its first image, which is bytes
     for (int y = 0; y < HEIGHT; y++) {
         for (int x = 0; x < WIDTH; x++) {
-            if (x < WIDTH / 2) expect_color(actual, x, y, 0.25f, 0.5f, 0.75f, "a first output, read back");
-            else expect_color(actual, x, y, 0, 0, 0, "a first image past the scissor, cleared");
+            if (x < WIDTH / 2) expect_rgb(actual, x, y, 0.25f, 0.5f, 0.75f, "a first output, read back");
+            else expect_rgb(actual, x, y, 0, 0, 0, "a first image past the scissor, cleared");
         }
     }
     show_scaled(gpu, scaled, scene, gpu->target_texture(several, 0), 1, 0, actual);
     for (int i = 0; i < WIDTH * HEIGHT; i++) {
-        if (i % WIDTH < WIDTH / 2) expect_color(actual, i % WIDTH, i / WIDTH, 0.25f, 0.5f, 0.75f, "a first output, sampled");
+        if (i % WIDTH < WIDTH / 2) expect_rgb(actual, i % WIDTH, i / WIDTH, 0.25f, 0.5f, 0.75f, "a first output, sampled");
     }
     show_scaled(gpu, scaled, scene, gpu->target_texture(several, 1), 0.25f, 0.25f, actual);
     show_scaled(gpu, scaled, scene, gpu->target_texture(several, 2), 0.25f, 0, other);
@@ -1662,8 +2283,8 @@ static void check_colors(void)
     copy(gpu, one_into_three, solid, 0);
     gpu->end();
     gpu->target_read(several, actual);
-    for (int x = 0; x < WIDTH; x++) expect_color(actual, x, 0, 1, 0, 1, "one output into a target of three: its first image");
-    for (int x = 0; x < WIDTH / 2; x++) expect_color(actual, x, 1, 0.25f, 0.5f, 0.75f, "and the rest of that image, kept");
+    for (int x = 0; x < WIDTH; x++) expect_rgb(actual, x, 0, 1, 0, 1, "one output into a target of three: its first image");
+    for (int x = 0; x < WIDTH / 2; x++) expect_rgb(actual, x, 1, 0.25f, 0.5f, 0.75f, "and the rest of that image, kept");
     show_scaled(gpu, scaled, scene, gpu->target_texture(several, 1), 0.25f, 0.25f, actual);
     show_scaled(gpu, scaled, scene, gpu->target_texture(several, 2), 0.25f, 0, other);
     expect_three(actual, other, floats, 0, "one output into a target of three leaves the second and third as they were");
@@ -1674,7 +2295,7 @@ static void check_colors(void)
     gpu->end();
     gpu->target_read(scene, actual);
     for (int i = 0; i < WIDTH * HEIGHT; i++) {
-        expect_color(actual, i % WIDTH, i / WIDTH, 0.25f, 0.5f, 0.75f, "three outputs into a target of one image");
+        expect_rgb(actual, i % WIDTH, i / WIDTH, 0.25f, 0.5f, 0.75f, "three outputs into a target of one image");
     }
 
     // Floats add up past 1, and aren't read back as bytes
@@ -1683,8 +2304,8 @@ static void check_colors(void)
     gpu->end();
     show_scaled(gpu, scaled, scene, gpu->target_texture(bright, 0), 0.25f, 0, actual);
     for (int i = 0; i < WIDTH * HEIGHT; i++) {
-        if (floats) expect_color(actual, i % WIDTH, i / WIDTH, 3 * 0.25f, 3 * (128 / 255.0f) * 0.25f, 3 * (64 / 255.0f) * 0.25f, "three draws added up in a float image");
-        else expect_color(actual, i % WIDTH, i / WIDTH, 0.25f, 0.25f, 3 * (64 / 255.0f) * 0.25f, "three draws added up in an image of bytes");
+        if (floats) expect_rgb(actual, i % WIDTH, i / WIDTH, 3 * 0.25f, 3 * (128 / 255.0f) * 0.25f, 3 * (64 / 255.0f) * 0.25f, "three draws added up in a float image");
+        else expect_rgb(actual, i % WIDTH, i / WIDTH, 0.25f, 0.25f, 3 * (64 / 255.0f) * 0.25f, "three draws added up in an image of bytes");
     }
     memset(actual, 7, sizeof actual);
     gpu->target_read(bright, actual);
@@ -1710,7 +2331,7 @@ static void check_colors(void)
         show_scaled(gpu, scaled, scene, gpu->target_texture(plain, 2), 0.25f, 0, other);
         expect_three(actual, other, false, 0, "float images on a device with none are bytes");
         gpu->target_read(plain, actual);
-        for (int y = 0; y < HEIGHT; y++) expect_color(actual, 0, y, 0.25f, 0.5f, 0.75f, "and its first image is as ever");
+        for (int y = 0; y < HEIGHT; y++) expect_rgb(actual, 0, y, 0.25f, 0.5f, 0.75f, "and its first image is as ever");
         gpu->target_free(plain);
     }
 
@@ -1943,6 +2564,13 @@ static int frame(void *user, const float seconds)
     check_depth_targets();
     check_depth_cull();
     checked("the renderer's depth");
+    check_stencil();
+    check_stencil(); // Its pipelines are made again
+    checked("the backend's stencil");
+    check_render_stencil(1.0f);
+    check_render_stencil(2.0f);
+    check_render_stencil(1.0f); // With the pipelines the first frames made
+    checked("the renderer's stencil");
     check_colors();
     check_colors();
     checked("the backend's targets of several colors");
