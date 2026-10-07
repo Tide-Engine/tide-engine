@@ -33,18 +33,16 @@ void tide_check_for_update(const char *root)
 int tide_run_native(const char *root, const build_options *opts, const char *const *args)
 {
     (void)root;
-    (void)opts;
     (void)args;
-    called('N');
+    called(opts->watch ? 'X' : 'N');
     return 13;
 }
 
 int tide_run_reloading(const char *root, const build_options *opts, const char *const *args)
 {
     (void)root;
-    (void)opts;
     (void)args;
-    called('W');
+    called(opts->watch ? 'W' : 'X');
     return 13;
 }
 
@@ -102,12 +100,13 @@ int main(void)
         int argc;
         const char *calls;
     } runs[] = {
+        {{"tide", "run"}, 2, "UW"},
+        {{"tide", "run", "--size", "640", "480"}, 5, "UW"},
         {{"tide", "run", "--frames", "1"}, 4, "UN"},
-        {{"tide", "run", "--watch"}, 3, "UW"},
-        {{"tide", "run", "--web", "--no-open"}, 4, "Ub"},
-        {{"tide", "run", "--web", "--watch", "--no-open"}, 5, "Uw"},
-        {{"tide", "run", "--android"}, 3, "UA"},
-        {{"tide", "run", "--android", "--watch"}, 4, "Ua"},
+        {{"tide", "run", "--capture", "frame.png"}, 4, "UN"},
+        {{"tide", "run", "--script", "play.txt"}, 4, "UN"},
+        {{"tide", "run", "--web", "--no-open"}, 4, "Uw"},
+        {{"tide", "run", "--android"}, 3, "Ua"},
     };
     for (size_t i = 0; i < sizeof runs / sizeof runs[0]; i++) {
         call_count = 0;

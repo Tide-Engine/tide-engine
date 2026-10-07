@@ -74,7 +74,7 @@ Windows games build for MinGW, so a static library built with Microsoft's compil
 
 On the web, only C files and WebAssembly libraries define functions. When a function has no definition there, an extern function or one the game's C calls, the web build fails and names it; give it a stand-in inside `#ifdef __wasm__`. Web games build for `wasm32-wasip1-threads`, which shares memory between threads, so a WebAssembly library needs building for that target too (clang's `--target=wasm32-wasip1-threads`), or at least with `-matomics -mbulk-memory`. tide's own clang can build it, as `tide cc`, with the C library tide brings: `tide cc --target=wasm32-wasip1-threads --sysroot=<tide>/wasi/sysroot`, where `<tide>` is the folder `tide version` says it's installed in.
 
-`tide run --watch` builds again when a C or C++ file, header or library changes. The C is part of the game's library, which each build replaces, so whatever C keeps in its own variables starts over at each reload.
+`tide run` builds again when a C or C++ file, header or library changes. The C is part of the game's library, which each build replaces, so whatever C keeps in its own variables starts over at each reload.
 
 ## C++
 
@@ -121,7 +121,7 @@ Tide brings no C++ runtime, so this is C++ the language, with nothing behind it:
 
   Placement new, which `<new>` would declare, is one line in a header of the code's own: `inline void *operator new(size_t, void *place) noexcept { return place; }`.
 
-The rest of the language is there, as C++20: classes, templates, lambdas, virtual functions. A global's constructor runs before the game starts, and again at each reload under `tide run --watch`, like everything C keeps. A function's `static` is made the first time through, without the lock a runtime would take: two systems on different threads getting there at once is the game's to get right, like the rest of what C does on threads.
+The rest of the language is there, as C++20: classes, templates, lambdas, virtual functions. A global's constructor runs before the game starts, and again at each reload under `tide run`, like everything C keeps. A function's `static` is made the first time through, without the lock a runtime would take: two systems on different threads getting there at once is the game's to get right, like the rest of what C does on threads.
 
 When a build fails for want of the runtime, tide says so after the compiler's error, and what to write instead.
 

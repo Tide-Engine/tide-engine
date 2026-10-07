@@ -35,7 +35,7 @@ static void usage(void)
            "\n"
            "usage: tide <command> [folder] [options]\n"
            "\n"
-           "  run [folder]       build the game in folder (default: here) and play it\n"
+           "  run [folder]       build the game in folder (default: here), play it and reload as files change\n"
            "  build [folder]     build the game into <folder>/build\n"
            "  schedule [folder]  show which systems can run at the same time, and why the others wait\n"
            "  shaders [folder]   show the shaders the game's frags and verts compile to, as GLSL and WGSL\n"
@@ -64,7 +64,6 @@ static void usage(void)
            "  --debug-views      F7 shows the profiler: where a frame's time and a tick's go (as the debugViews setting)\n"
            "  -o <path>          build: where the program goes\n"
            "  --no-open          run --web: serve the page without opening a browser\n"
-           "  --watch            run: rebuild as files change and reload (Android: reinstall and restart)\n"
            "\n"
            "run, in a match with others (the game's Main must be the match's for --host):\n"
            "  --host [port]        a match others can join: in a room, and on a port (7777 by default; not on the web)\n"
@@ -280,7 +279,6 @@ int main(const int argc, char **argv)
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = argv[++i];
         } else if (run && strcmp(a, "--no-open") == 0) open_page = false;
-        else if (run && strcmp(a, "--watch") == 0) opts.watch = true;
         else if (strcmp(a, "--release") == 0) opts.release = true;
         else if (strcmp(a, "--web") == 0) opts.web = true;
         else if (strcmp(a, "--android") == 0) opts.android = true;
@@ -308,6 +306,8 @@ int main(const int argc, char **argv)
     // Whoever runs a game with --stats wants to read them: they start open. What a build shows its players
     // starts as one line.
     opts.stats_open = run && opts.stats;
+    // Interactive runs reload as files change. Runs with no window end once.
+    opts.watch = run && !headless;
     // DEBUG is every build's but --release's
     if (!opts.release) opts.defines[opts.define_count++] = "DEBUG";
     if (opts.web && opts.android) {
@@ -317,10 +317,6 @@ int main(const int argc, char **argv)
     if ((headless || sized) && (opts.web || opts.android)) {
         fprintf(stderr, "tide: %s on this machine: not with --web or --android\n",
                 headless ? "--capture, --frames and --script run the game with no window," : "--size is for a window");
-        return 2;
-    }
-    if (opts.watch && headless) {
-        fprintf(stderr, "tide: --watch needs a run with a window: --capture, --frames and --script run once; leave out --watch\n");
         return 2;
     }
     if (run && sys_hidden()) {

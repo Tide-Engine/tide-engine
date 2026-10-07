@@ -2816,7 +2816,7 @@
     await deviceAsked;
 
     // <tide run>
-    // Hot reloading: tide run --web --watch serves the page, and says which build is
+    // Hot reloading: tide run --web serves the page, and says which build is
     // the newest. Each new one starts in the running one's place, carrying
     // over what the running one leaves it (platform/src/reload.c).
     let resumeWith = null;
