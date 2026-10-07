@@ -22,7 +22,8 @@
 #define TIDE_MIXER_VOICES 256u    // Voices and one-shots at once; past it, a new one takes the quietest's place
 #define TIDE_MIXER_ONE_SHOTS 1024u // One-shots waiting for the next block; past it, they're dropped
 
-// Makes the mixer, once: before the first submit or render. Safe to call again.
+// Makes the mixer, once: before the first submit or render. Safe to call
+// again, and from both threads at once: it's made when the call returns.
 void tide_mixer_init(void);
 
 // The frame's: hands the frame's audio over. The frame's arrays are copied, so
@@ -53,7 +54,8 @@ void tide_mixer_take(void);
 void tide_mixer_forget(void);
 
 // A backend says a thread of its own renders (tide_mixer_render) from here on,
-// or no longer: what tide_mixer_forget waits for.
+// or no longer: what tide_mixer_forget waits for. Said before that thread can
+// ask for its first block, so the mixer is made by then.
 void tide_mixer_rendered_elsewhere(bool elsewhere);
 
 // The renderer's: drops what's left of the last block, so the next render

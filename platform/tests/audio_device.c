@@ -20,7 +20,7 @@ static void wait_ms(const uint32_t ms)
 
 TIDE_TEST(audio_device_plays_from_the_mixer_on_its_own_thread)
 {
-    tide_mixer_init();
+    // As a window opens it: with nothing made the mixer first, so the device's thread can be the first to ask it for anything
     const bool opened = tide_audio_out_open();
     printf("audio device: %s\n", opened ? "opened" : "none (nothing is heard)");
     static float ones[2 * 480];

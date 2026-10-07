@@ -77,7 +77,7 @@ typedef struct bus {
 } bus;
 
 static struct {
-    bool made;
+    _Atomic uint32_t made;        // NOT_MADE, MAKING while one thread makes it, then MADE
     handed slots[3];
     uint32_t writer, reader;      // Which slot each side holds
     _Atomic uint32_t pending;     // The third, with PENDING_NEW when it's a frame to take
@@ -107,11 +107,20 @@ static struct {
 #define FALLOFF_NEAR 1.0f
 #define FALLOFF_FAR 50.0f
 
+enum { NOT_MADE, MAKING, MADE };
+
+// Whichever thread asks first makes it, and it's made by the time any call
+// returns: the frame's thread and a device's can both be the first to ask,
+// and one that found it half made would render from voices that aren't there
+// yet. A thread that asks while another makes it waits for that one.
 void tide_mixer_init(void)
 {
-    if (m.made) return;
-    memset(&m, 0, sizeof m);
-    m.made = true;
+    if (atomic_load_explicit(&m.made, memory_order_acquire) == MADE) return;
+    uint32_t state = NOT_MADE;
+    if (!atomic_compare_exchange_strong_explicit(&m.made, &state, MAKING, memory_order_acq_rel, memory_order_acquire)) {
+        while (atomic_load_explicit(&m.made, memory_order_acquire) != MADE) tide_yield();
+        return;
+    }
     m.writer = 0;
     m.reader = 1;
     atomic_store(&m.pending, 2);
@@ -123,6 +132,7 @@ void tide_mixer_init(void)
     m.falloff_near = FALLOFF_NEAR;
     m.falloff_far = FALLOFF_FAR;
     m.left_from = TIDE_AUDIO_BLOCK;
+    atomic_store_explicit(&m.made, MADE, memory_order_release);
 }
 
 // ---------------------------------------------------------------------------
@@ -613,6 +623,8 @@ void tide_mixer_flush(void)
     m.left_from = TIDE_AUDIO_BLOCK;
 }
 
-uint32_t tide_mixer_voices(void) { return m.made ? atomic_load_explicit(&m.playing, memory_order_relaxed) : 0; }
+static bool made(void) { return atomic_load_explicit(&m.made, memory_order_acquire) == MADE; }
 
-uint32_t tide_mixer_dropped(void) { return m.made ? atomic_load_explicit(&m.dropped, memory_order_relaxed) : 0; }
+uint32_t tide_mixer_voices(void) { return made() ? atomic_load_explicit(&m.playing, memory_order_relaxed) : 0; }
+
+uint32_t tide_mixer_dropped(void) { return made() ? atomic_load_explicit(&m.dropped, memory_order_relaxed) : 0; }
