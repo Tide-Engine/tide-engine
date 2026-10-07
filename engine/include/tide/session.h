@@ -81,6 +81,15 @@ typedef struct tide_game {
     // the same as from `tick`. NULL: the game has no local handlers of the
     // match's events, and nothing is recorded for it.
     void (*tick_events)(void *world, const tide_jobs *jobs, tide_event_log *events);
+    // Records into `events` a `Spawned` for each entity `world` has that `had`
+    // doesn't (NULL: every one), for the local handlers that hear the match's:
+    // the entities a world starts with, or arrives with, were spawned in no
+    // tick this machine ran, and are heard as `world` has them, in its
+    // order. An entity is one `had` has by its handle. NULL: no local handler
+    // hears the match's `Spawned`. A host that ticks a world itself calls it
+    // once the world has started, and hands the log to the game's local state
+    // as it does a tick's.
+    void (*hear_arrived)(const void *world, const void *had, tide_event_log *events);
     // A snapshot: `to` becomes `from`, sharing its pages until one of them
     // changes. The hash covers what's in use, and only reads what changed since
     // it was last taken.
@@ -328,7 +337,9 @@ typedef struct tide_client_desc {
     const tide_jobs *jobs; // Threads to run ticks on (tide/jobs.h), or NULL: this one
     // A world like the match's, such as the last one it had of a match that
     // changed hands (the game's tide_world, copied): the server only sends what
-    // it lacks. NULL: the whole world comes.
+    // it lacks. NULL: the whole world comes. It's a world this machine had, so
+    // its entities aren't new to it: with `events`, only the entities the
+    // match's world has beyond it are heard as spawned when that world comes.
     const void *base;
     // The real time, in nanoseconds, to measure what the game's ticks cost:
     // a client predicting (TIDE_PREDICTION_ROLLBACK) keeps running them again
@@ -350,7 +361,12 @@ typedef struct tide_client_desc {
     // (tide/events.h), once its host takes it from there (`taken`): each event
     // once, however often its tick ran again, and again, as verified, once the
     // server confirmed the tick. The host hands it to the game's local state
-    // before each frame (tide_local_events). NULL: nobody listens.
+    // before each frame (tide_local_events). NULL: nobody listens. The
+    // entities a world it's sent has that this machine didn't have are heard
+    // as spawned when the world comes (tide_game.hear_arrived): all of its
+    // first world's, but for `base`'s, and of one sent again, those its own
+    // world at that tick lacked, and for the handlers that hear confirmed
+    // ticks, those its last confirmed world lacked.
     tide_event_log *events;
 } tide_client_desc;
 
