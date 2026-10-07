@@ -1,0 +1,4 @@
+// expect: a render target holds 4 color images at the most, and this names 5 formats
+// expect: each format after its size is one color image: 'RenderTarget.Window(Format.Rgba8, Format.Rgba16f)' holds two
+scene Main { }
+view Show() { var target = RenderTarget.Window(Format.Rgba8, Format.Rgba8, Format.Rgba8, Format.Rgba8, Format.Rgba8); }

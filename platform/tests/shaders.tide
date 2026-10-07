@@ -151,7 +151,7 @@ local singleton Art
     Texture keptBricks;
     [Filter(Filter.Point), Wrap(Wrap.Repeat)]
     Grid2<Color> painted = Grid2(2, 2); // As `four`
-    // Grids of floats as textures of one channel (pass 12)
+    // Grids of floats as textures of one channel (pass 13)
     bool heighted;
     [Filter(Filter.Point)]
     Grid2<float> heights = Grid2(2, 2);
@@ -1321,7 +1321,7 @@ view Flat(Art art)
     Draw.SetCamera(-Spot(1, 4), Screen.height / 2);
     Draw.Mesh(art.flat, art.faces, Hand2, Take2);
 
-    Draw.SetScreen();
+    Draw.SetPixels();
     Draw.Mesh(art.onScreen, art.faces, Stripe);
     Draw.SetCamera(float2(0, 0), Screen.height / 2);
 }
@@ -1433,8 +1433,8 @@ view ScreenTargets(mut Art art)
     if (art.targetPass != 6) return;
     if (!art.sized)
     {
-        art.full = RenderTarget.Screen();
-        art.half = RenderTarget.Screen(0.5);
+        art.full = RenderTarget.Window();
+        art.half = RenderTarget.Window(0.5);
         art.exact = RenderTarget(4, 4, 1);
         art.sized = true;
     }
@@ -1443,19 +1443,19 @@ view ScreenTargets(mut Art art)
     art.window = float2(w, h);
     // Where each of its pixels is, then a square in its top right corner: in logical pixels, as in the window
     Draw.Blit(art.uploaded, art.full, Where);
-    art.full.SetScreen();
+    art.full.SetPixels();
     art.full.Rect(float2(w - 16, 16), float2(32), Color.blue);
     // Half the window, so its own left half is a quarter of the window across
-    art.half.SetScreen();
+    art.half.SetPixels();
     art.half.Clear(Color.black);
     art.half.Rect(float2(w * 0.125, h * 0.25), float2(w * 0.25, h * 0.5), Color.green);
     // Four pixels by four on any display, the first one white
-    art.exact.SetScreen();
+    art.exact.SetPixels();
     art.exact.Clear(Color.black);
     art.exact.Rect(float2(0.5), float2(1), Color.white);
 
     Draw.Blit(art.full.color, Draw.window, TargetCopy);
-    Draw.SetScreen();
+    Draw.SetPixels();
     Draw.SetClip();
     // The half one over the window's bottom right quarter, pixel for pixel
     Draw.Mesh([Vertex { position = float2(w * 0.5, h * 0.5) },
@@ -1492,7 +1492,7 @@ view Wraps(mut Art art)
         art.tilePlaces = [float4x4.Translate(Cell(2, 7)), float4x4.Translate(Cell(3, 7))];
         art.tiled = true;
     }
-    art.tiles.SetScreen();
+    art.tiles.SetPixels();
     art.tiles.Clear(Color.black);
     art.tiles.Rect(float2(0.5, 0.5), float2(1), Color.red);
     art.tiles.Rect(float2(1.5, 0.5), float2(1), Color.green);
@@ -1500,7 +1500,7 @@ view Wraps(mut Art art)
     art.tiles.Rect(float2(1.5, 1.5), float2(1), Color.white);
 
     Draw.Clear(Color.black);
-    Draw.SetScreen();
+    Draw.SetPixels();
     Draw.SetClip();
     // The engine's own vertices: the draw says the wrap, after the filter, and none is the cells at the edge
     Draw.Transform(float2(8, 8))
@@ -1623,7 +1623,7 @@ view Shadows(Art art, mut Shadow shadow)
     if (!shadow.made)
     {
         shadow.made = true;
-        shadow.map = RenderTarget(256, 256, 1, Format.DepthOnly);
+        shadow.map = RenderTarget(256, 256, 1, Format.Depth);
         shadow.depth = shadow.map.depth;
         // The floor, 8 by 8 around the origin; a slab 1 above it; a grate 2 above it, its uv from 0 to 1 along x
         shadow.floor = [Vertex3 { position = float3(-4, 0, 4) }, Vertex3 { position = float3(4, 0, 4) },
@@ -1651,7 +1651,7 @@ view Shadows(Art art, mut Shadow shadow)
     shadow.map.SetCamera(lamp, sees);
     shadow.map.Mesh(shadow.slab, art.faces, float4x4.identity);
     shadow.map.Mesh(shadow.grate, art.faces, float4x4.identity, Grate);
-    shadow.map.SetScreen();
+    shadow.map.SetPixels();
     shadow.map.Rect(float2(128, 128), float2(256), Color.blue);
 
     // The window, from straight above: x to the right and z up, 8 by 8
@@ -1661,7 +1661,7 @@ view Shadows(Art art, mut Shadow shadow)
     Draw.Mesh(shadow.floor, art.faces, float4x4.identity, Shadowed);
     Draw.Mesh(shadow.slab, art.faces, float4x4.identity, Shadowed);
     // ...and what the lamp's target holds, as a picture
-    Draw.SetScreen();
+    Draw.SetPixels();
     Draw.Mesh(shadow.readout, art.faces, LampDepth);
 }
 
@@ -1711,7 +1711,7 @@ view Masks(Art art, mut Mask mask)
     }
     Draw.SetClip();
     Draw.Clear(Color.blue); // ...and every pixel's number is 0
-    Draw.SetScreen();
+    Draw.SetPixels();
 
     // A circle drawn clear stores where it is, and shows nothing; a rect over it is drawn where it stored
     Draw.Stencil(StencilTest.Always, 1, StencilOp.Replace)
@@ -1778,7 +1778,7 @@ view Masks(Art art, mut Mask mask)
     Draw.Stencil(StencilTest.Never, 0)
     {
         mask.target.Clear(Color.black);
-        mask.target.SetScreen();
+        mask.target.SetPixels();
         mask.target.Stencil(StencilTest.Always, 1, StencilOp.Replace)
         {
             mask.target.Rect(float2(16, 32), float2(32, 64), Color.clear);
@@ -1845,7 +1845,7 @@ view Images(mut Art art)
         art.bricked = true;
     }
     Draw.Clear(Color.black);
-    Draw.SetScreen();
+    Draw.SetPixels();
     Draw.SetClip();
     // By its name: its declaration's filter and wrap
     Draw.Transform(float2(8, 8))
@@ -1906,7 +1906,7 @@ view Images(mut Art art)
     Draw.Mesh(art.brickTile3, art.faces, float4x4.Translate(Cell(1, 7)), plainBricks);
 }
 
-// A grid of floats is a texture of one channel (pass 12): a frag reads it as
+// A grid of floats is a texture of one channel (pass 13): a frag reads it as
 // red, with green and blue 0 and alpha 1, and the numbers are the grid's, not
 // bytes from 0 to 1. Squares as the images' (pass 10).
 frag HeightLook(Vertex vertex, out Color color, Art art)
@@ -1928,7 +1928,7 @@ frag HeightSource(Vertex vertex, out Color color, Texture source)
 [After(Shadows)]
 view Heights(mut Art art)
 {
-    if (art.targetPass != 12) return;
+    if (art.targetPass != 13) return;
     if (!art.heighted)
     {
         art.brickTile = [Vertex { }, Vertex { position = float2(48, 0), uv = float2(2, 0) },
@@ -1942,7 +1942,7 @@ view Heights(mut Art art)
         art.heighted = true;
     }
     Draw.Clear(Color.black);
-    Draw.SetScreen();
+    Draw.SetPixels();
     Draw.SetClip();
     // In a frag, by its field
     Draw.Transform(float2(8, 8))
@@ -2053,8 +2053,8 @@ view Outputs(Art art, mut Several several)
     if (!several.made)
     {
         several.made = true;
-        several.scene = RenderTarget(64, 64, 1, Format.Color, Format.Float, Format.Float);
-        several.bright = RenderTarget(16, 16, 1, Format.Float);
+        several.scene = RenderTarget(64, 64, 1, Format.Rgba8, Format.Rgba16f, Format.Rgba16f);
+        several.bright = RenderTarget(16, 16, 1, Format.Rgba16f);
         several.first = several.scene.colors[0];
         several.second = several.scene.colors[1];
         several.third = several.scene.colors[2];
@@ -2073,7 +2073,7 @@ view Outputs(Art art, mut Several several)
     // A clear fills every image. Then three outputs over the top three quarters; two over a corner, which
     // leaves the third there; a frag that discards half of a square; and a shape of the engine's own,
     // which has one color and writes the first image alone
-    several.scene.SetScreen();
+    several.scene.SetPixels();
     several.scene.Clear(Color(0.5, 0.25, 1));
     several.scene.Mesh(several.top, art.faces, Fill);
     several.scene.Mesh(several.corner, art.faces, Two);
@@ -2081,7 +2081,7 @@ view Outputs(Art art, mut Several several)
     several.scene.Rect(float2(56, 8), float2(16), Color.green);
 
     // Floats add up past 1: three times white over the right half, with the target's own blend
-    several.bright.SetScreen();
+    several.bright.SetPixels();
     several.bright.Clear(Color.black);
     several.bright.Blend(Blend.Add)
     {
@@ -2094,7 +2094,7 @@ view Outputs(Art art, mut Several several)
     // into it (where its first is the pixel's and the others go nowhere), the bright target, and
     // an image the scene hasn't got, whose draw is passed by
     Draw.SetClip();
-    Draw.SetScreen();
+    Draw.SetPixels();
     Draw.Clear(Color.black);
     Draw.Mesh(several.panel, art.faces, ShowFirst);
     Draw.Transform(float2(64, 0))
@@ -2120,16 +2120,134 @@ view Outputs(Art art, mut Several several)
     }
 }
 
+// A draw's values (pass 12): a struct after the vert and the frag, the same
+// for the whole draw. Blits of one frag with values of their own, meshes
+// through a vert and a frag that each read some of theirs, and instances
+// whose struct is beside the draw's.
+struct Rinse
+{
+    Color tint = Color.white;
+    int steps;        // Each adds a quarter of red
+    float4x4 unread;  // Not sent
+}
+
+struct Put
+{
+    float2 by;
+    Color tint = Color.white;
+    bool dim;
+}
+
+struct Speck
+{
+    float2 offset;
+    Color tint;
+}
+
+struct Strip
+{
+    float2 origin;
+    float gain = 1;
+}
+
+local singleton PerDraw
+{
+    RenderTarget source; // White, 16 pixels by 16 whatever the display
+    RenderTarget first;  // What a blit made of it, with its values
+    RenderTarget second; // ...and another, with others, and a third over that
+    List<Vertex> square; // 16 by 16 at the origin
+    List<Vertex> left;   // 32 by 32, where each target is shown
+    List<Vertex> right;
+    List<Speck> dots;
+    bool made;
+}
+
+frag Rinsed(Vertex vertex, out Color color, Texture source, Rinse rinse)
+{
+    color = source.Sample(vertex.uv, Filter.Point) * rinse.tint;
+    for (var i = 0; i < rinse.steps; i++) color.r += 0.25;
+}
+
+vert PutAt(mut Vertex vertex, Put put)
+{
+    vertex.position += put.by;
+}
+
+frag PutTint(Vertex vertex, out Color color, Put put)
+{
+    color = put.tint;
+    if (put.dim) color = Color(color.r * 0.5, color.g * 0.5, color.b * 0.5);
+}
+
+vert SpeckAt(mut Vertex vertex, Speck speck, Strip strip)
+{
+    vertex.position += speck.offset + strip.origin;
+}
+
+frag SpeckTint(Vertex vertex, out Color color, Speck speck, Strip strip)
+{
+    color = Color(speck.tint.r * strip.gain, speck.tint.g * strip.gain, speck.tint.b * strip.gain);
+}
+
+[After(Outputs)]
+view Values(Art art, mut PerDraw given)
+{
+    if (art.targetPass != 12) return;
+    if (!given.made)
+    {
+        given.made = true;
+        given.source = RenderTarget(16, 16, 1);
+        given.first = RenderTarget(16, 16, 1);
+        given.second = RenderTarget(16, 16, 1);
+        given.square = [Vertex { position = float2(0, 0) }, Vertex { position = float2(16, 0), uv = float2(1, 0) },
+                        Vertex { position = float2(16, 16), uv = float2(1, 1) }, Vertex { position = float2(0, 16), uv = float2(0, 1) }];
+        given.left = [Vertex { position = float2(0, 0) }, Vertex { position = float2(32, 0), uv = float2(1, 0) },
+                      Vertex { position = float2(32, 32), uv = float2(1, 1) }, Vertex { position = float2(0, 32), uv = float2(0, 1) }];
+        given.right = [Vertex { position = float2(32, 0) }, Vertex { position = float2(64, 0), uv = float2(1, 0) },
+                       Vertex { position = float2(64, 32), uv = float2(1, 1) }, Vertex { position = float2(32, 32), uv = float2(0, 1) }];
+        given.dots = [Speck { tint = Color.red }, Speck { offset = float2(32, 0), tint = Color.blue }];
+    }
+    given.source.Clear(Color.white);
+    given.first.Clear(Color.black);
+    given.second.Clear(Color.black);
+
+    // One frag, three blits, each with its own values: none of them is the others'
+    Draw.Blit(given.source.color, given.first, Rinsed, Rinse { tint = Color(1, 0.5, 0.25) });
+    Draw.Blit(given.source.color, given.second, Rinsed, Rinse { tint = Color(0.25, 0.5, 0.5), steps = 2 });
+    Draw.Blit(given.source.color, given.second, Blend.Add, Rinsed, Rinse { tint = Color(0, 0, 0.25) });
+
+    Draw.SetClip();
+    Draw.SetPixels();
+    Draw.Clear(Color.black);
+    Draw.Mesh(given.left, art.faces, given.first.color, Filter.Point);
+    Draw.Mesh(given.right, art.faces, given.second.color, Filter.Point);
+
+    // Meshes: the vert reads where, the frag which color, of the same values. Two values in a row are two
+    // draws; the same values twice are one, of two instances, which add up here
+    Draw.Mesh(given.square, art.faces, PutAt, PutTint, Put { by = float2(0, 64), tint = Color.red });
+    Draw.Mesh(given.square, art.faces, PutAt, PutTint, Put { by = float2(32, 64), tint = Color.green, dim = true });
+    var gray = Put { by = float2(64, 64), tint = Color(0.25, 0.25, 0.25) };
+    Draw.Blend(Blend.Add)
+    {
+        Draw.Mesh(given.square, art.faces, PutAt, PutTint, gray);
+        Draw.Mesh(given.square, art.faces, PutAt, PutTint, gray);
+    }
+
+    // Instances: each one's own struct, and the draw's for all of them
+    Draw.Instanced(given.square, art.faces, given.dots, SpeckAt, SpeckTint, Strip { origin = float2(0, 128), gain = 0.5 });
+    Draw.Instanced(given.square, art.faces, given.dots, SpeckAt, SpeckTint, Strip { origin = float2(0, 160) });
+}
+
 // shaders.c requests independent full-window checks after the existing grid.
 // Resource descriptors are supplied by C, without choosing a Tide lifetime API.
 [After(Manual)]
 view Targets(mut Art art)
 {
-    // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images', 11 Outputs' and 12 Heights'
+    // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images', 11 Outputs', 12 Values' and 13 Heights'
     if (art.targetPass == 0 || art.targetPass >= 6) return;
     if (art.targetPass >= 4)
     {
-        Draw.SetScreen();
+        Draw.SetPixels();
         if (art.targetPass == 4)
             Draw.Mesh(art.targetQuad, art.faces, art.uploaded, Filter.Point, TextureChecks);
         else
@@ -2137,7 +2255,7 @@ view Targets(mut Art art)
         return;
     }
 
-    art.sourceTarget.SetScreen();
+    art.sourceTarget.SetPixels();
     art.sourceTarget.Clear(Color.black);
     art.sourceTarget.Rect(float2(8, 8), float2(16), Color.red);
     art.sourceTarget.Rect(float2(24, 8), float2(16), Color.green);

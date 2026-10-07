@@ -2705,7 +2705,7 @@ static void gen_draw_list(gen *g, sb *o, const expr *e)
 
 static void gen_builtin_call(gen *g, sb *o, const expr *e);
 
-// RenderTarget(width, height, Format.Color, Format.Float): its color images'
+// RenderTarget(width, height, Format.Rgba8, Format.Rgba16f): its color images'
 // formats, the call's last arguments, as C takes several: an array of them,
 // and how many. Writes argument `i` if it's one of them, and says whether.
 static bool gen_target_format(gen *g, sb *o, const expr *e, const int i)
@@ -3186,8 +3186,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_printf(o, "tide_shade_%d(", sh->index);
             if (sh->blit) sb_put(o, "tide_draw");
             else gen_draw_list(g, o, e);
+            int given = 0; // The arguments before its vert and frag
             for (int i = 0; i < e->args.count && e->args.items[i]->bind != BIND_SHADER; i++) {
                 expr *arg = e->args.items[i];
+                given++;
                 // A mesh's filter and wrap went with its texture (a blit's enum is how it blends, which it always takes)
                 const bool sampling = arg->type.kind == TY_ENUM && (arg->type.decl == g->prog->filter || arg->type.decl == g->prog->wrap);
                 if (sampling && !sh->blit) continue;
@@ -3207,7 +3209,11 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                 }
                 gen_as(g, o, arg, e->arg_want.items[i]);
             }
-            if (sh->blit && e->args.count < 4) sb_put(o, ", TIDE_BLEND_REPLACE"); // In its destination's place
+            if (sh->blit && given < 3) sb_put(o, ", TIDE_BLEND_REPLACE"); // In its destination's place
+            if (sh->values_type) { // What it gives its vert and frag, after their names
+                sb_put(o, ", ");
+                gen_as(g, o, e->values, e->values->type);
+            }
             for (int b = 0; b < sh->bound.count; b++) {
                 // The view's own parameter of it: the one that isn't `verified`, where it takes it both ways
                 const param *from = NULL;
@@ -3279,7 +3285,7 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
     // Draw.Shape goes through the helper that turns a Shape into a tide_shape
     const bool shape = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_shape") == 0;
     sb_printf(o, "%s(", shape ? "tide_draw_shape_value" : e->c_callee);
-    // target.Resize(...) runs on its receiver; RenderTarget.Screen(...) has none
+    // target.Resize(...) runs on its receiver; RenderTarget.Window(...) has none
     const bool receiver = e->resource_operation && e->object->type.kind == TY_RENDER_TARGET;
     if (e->call == CALL_DRAW) gen_draw_list(g, o, e);
     else if (receiver) gen_expr(g, o, e->object);
@@ -3292,7 +3298,7 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
     for (int i = 0; i < e->args.count; i++) {
         if (i || (!e->c_pack && (e->call == CALL_DRAW || receiver))) sb_put(o, ", ");
         const type want = e->arg_want.items[i];
-        if (gen_target_format(g, o, e, i)) continue; // RenderTarget.Screen(Format.Color, Format.Float)
+        if (gen_target_format(g, o, e, i)) continue; // RenderTarget.Window(Format.Rgba8, Format.Rgba16f)
         if (e->call == CALL_DRAW && want.kind == TY_ENUM && want.decl == g->prog->font) {
             if (text_at && !anchored) sb_put(o, "TIDE_ANCHOR_UPPER_LEFT, ");
             sb_put(o, "tide_font_file(");
@@ -15744,6 +15750,7 @@ static void gen_shaders(gen *g)
         else if (sh->dims == 3) sb_put(o, ", tide_float4x4 tide_transform");
         if (sh->direct_texture || sh->textured) sb_put(o, ", tide_texture_ref tide_texture");
         if (sh->blit) sb_put(o, ", tide_render_target tide_destination, int32_t tide_over");
+        if (sh->values_type) sb_printf(o, ", %s tide_values", type_cname(sh->values_type));
         for (int b = 0; b < sh->bound.count; b++) {
             const decl *d = sh->bound.items[b];
             sb_printf(o, ", const %s *tide_b%d", type_cname(d), b);
@@ -15759,6 +15766,7 @@ static void gen_shaders(gen *g)
             if (sh->dims == 3 && sh->instance_type && !sh->instance_transform)
                 sb_put(o, "    const tide_float4x4 tide_transform = tide_identity_f4x4();\n");
         }
+        if (sh->values_type) sb_put(o, "    (void)tide_values;\n");
         for (int b = 0; b < sh->bound.count; b++) sb_printf(o, "    (void)tide_b%d;\n", b);
         const bool instance = gen_shader_words(o, "tide_instance", sh->instance_floats, sh->instance_ints);
         const bool uniforms = gen_shader_words(o, "tide_uniforms", sh->uniform_floats, sh->uniform_ints);
@@ -15773,9 +15781,14 @@ static void gen_shaders(gen *g)
                 gen_shader_value(o, to, (type){TY_FLOAT4X4, NULL}, "tide_transform", &f, &i);
                 continue;
             }
+            sb access = {0};
+            if (sh->values_type && value->source == sh->values_type) { // The draw's own, once for the draw
+                sb_printf(&access, "tide_values.%s", field_cname(value->field));
+                gen_shader_value(o, to, value->field->type, access.data, &f, &i);
+                continue;
+            }
             int b = 0;
             while (sh->bound.items[b] != value->source) b++;
-            sb access = {0};
             sb_printf(&access, "tide_%sb%d->%s", value->field->is_local ? "l" : "", b, field_cname(value->field));
             gen_shader_value(o, to, value->field->type, access.data, &f, &i);
         }

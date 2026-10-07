@@ -963,11 +963,11 @@ static void check_depth_targets(void)
                                          {{1, -1, 0.9f}, {1, 1}, TIDE_COLOR_GREEN}, {{-1, -1, 0.9f}, {0, 1}, TIDE_COLOR_GREEN}};
     const tide_mesh left_mesh = {left_vertices, 4, indices, 6, 1}, all_mesh = {all_vertices, 4, indices, 6, 1};
     const tide_float4x4 identity = tide_identity_f4x4();
-    const tide_render_target shadow = tide_render_target_make_scaled_as(WIDE, HIGH, 1, TIDE_TARGET_DEPTH_ONLY);
+    const tide_render_target shadow = tide_render_target_make_scaled_as(WIDE, HIGH, 1, TIDE_TARGET_DEPTH);
     const tide_render_target scene = tide_render_target_make_scaled(WIDE, HIGH, 1);
     const tide_depth_ref shadow_depth = tide_render_target_depth(shadow), scene_depth = tide_render_target_depth(scene);
-    if (tide_render_target_format(shadow.id) != TIDE_TARGET_DEPTH_ONLY || tide_render_target_format(scene.id) != TIDE_TARGET_COLOR
-        || tide_render_target_format(TARGET_A) != TIDE_TARGET_COLOR) {
+    if (tide_render_target_format(shadow.id) != TIDE_TARGET_DEPTH || tide_render_target_format(scene.id) != TIDE_TARGET_RGBA8
+        || tide_render_target_format(TARGET_A) != TIDE_TARGET_RGBA8) {
         failures++;
         fprintf(stderr, "a target's id doesn't say what it holds\n");
     }
@@ -1111,7 +1111,7 @@ static void check_depth_targets(void)
 
     // One that follows the window has the display's pixels, whatever its scale
     static const float scales[] = {1.0f, 2.0f, 1.5f};
-    const tide_render_target screen = tide_render_target_window_as(TIDE_TARGET_DEPTH_ONLY);
+    const tide_render_target screen = tide_render_target_window_as(TIDE_TARGET_DEPTH);
     for (size_t i = 0; i < sizeof scales / sizeof scales[0]; i++) {
         char what[96];
         tide_draw_reset(&render_list);
@@ -1159,7 +1159,7 @@ static void check_depth_cull(void)
                                           {{0, -1, 2}, {1, 1}, TIDE_COLOR_RED}, {{0, 1, 2}, {1, 0}, TIDE_COLOR_RED}};
     const tide_mesh front = {front_vertices, 4, indices, 6, 1}, back = {back_vertices, 4, indices, 6, 1};
     const tide_float4x4 identity = tide_identity_f4x4(), across = tide_ortho_f4x4(2, 2, 0.1f, 10);
-    const tide_render_target lamp = tide_render_target_make_scaled_as(WIDE, HIGH, 1, TIDE_TARGET_DEPTH_ONLY);
+    const tide_render_target lamp = tide_render_target_make_scaled_as(WIDE, HIGH, 1, TIDE_TARGET_DEPTH);
     const tide_depth_ref lamp_depth = tide_render_target_depth(lamp);
     struct {
         const tide_mesh *mesh;
@@ -2038,7 +2038,7 @@ static void check_render_stencil(const float scale)
     // A target of depth alone has stencil too, and what stores it is drawn there, where a color has nowhere
     // to go: a rect, a round rect, a mesh and text each store a number, and a 3D mesh's depth is then written
     // only where its stencil test passes
-    const tide_render_target shadow = tide_render_target_make_scaled_as(STENCIL_WIDE, STENCIL_HIGH, scale, TIDE_TARGET_DEPTH_ONLY);
+    const tide_render_target shadow = tide_render_target_make_scaled_as(STENCIL_WIDE, STENCIL_HIGH, scale, TIDE_TARGET_DEPTH);
     tide_draw_reset(&render_list);
     tide_draw_render_target(&render_list, shadow);
     tide_draw_clear(&render_list, TIDE_COLOR_BLACK);
@@ -2441,7 +2441,7 @@ static void check_render_colors(const bool plain)
     const tide_mesh left = {left_vertices, 4, indices, 6, 1};
     const tide_float4x4 identity = tide_identity_f4x4(), across = tide_ortho_f4x4(2, 2, 0.1f, 10);
     const bool floats = !plain && tide_window_gpu()->float_targets();
-    const tide_target_format formats[] = {TIDE_TARGET_COLOR, TIDE_TARGET_FLOAT};
+    const tide_target_format formats[] = {TIDE_TARGET_RGBA8, TIDE_TARGET_RGBA16F};
     if (plain) tide_gpu_gl_no_floats = true; // Its images are made as it's first drawn into
     const tide_render_target scene = tide_render_target_make_scaled_of(WIDE, HIGH, 1, formats, 2);
     const tide_texture_ref first = tide_render_target_color(scene), second = tide_render_target_color_at(scene, 1);

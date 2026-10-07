@@ -48,7 +48,7 @@ view Rings(Body body, Time time)
 [After(DrawPlayers)]
 view Label()
 {
-    Draw.Screen()
+    Draw.Pixels()
     {
         Draw.Text("with the Sparkle mod", float2(16, 14), 16, Color(0.18, 0.83, 0.75));
     }

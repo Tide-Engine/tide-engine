@@ -55,7 +55,7 @@ view Pointer(Devices devices)
 // Screen-space text keeps its pixel size when the camera zooms.
 view Controls(mut CameraSettings camera)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     Draw.Text("Tap a circle to select it", float2(16, 14), 18, Color.white);
     GUI.SetTheme(GUITheme { radius = 6 });
     GUI.Slider(Rect(16, Screen.height - 48, Screen.width - 32, 32), "Camera size", camera.size, 2.5, 4.5);

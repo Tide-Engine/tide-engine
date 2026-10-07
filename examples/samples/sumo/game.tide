@@ -676,7 +676,7 @@ view Mine(Wrestler w, mut Me me, mut Pad pad, Layout layout, with ownership)
     }
 
     // The DASH button fills up again as the charge comes back.
-    Draw.Screen()
+    Draw.Pixels()
     {
         var ready = w.cooldown <= 0 && !w.out;
         var filled = 1 - Math.Saturate(w.cooldown / COOLDOWN);
@@ -733,7 +733,7 @@ view Effects(mut Fx fx)
 
 view Hud(Bout bout, Me me, Layout layout, mut Fx fx, query (Wrestler w) all)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     var center = Screen.width * 0.5;
     var middle = float2(center, layout.middle);
 

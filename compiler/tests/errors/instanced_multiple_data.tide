@@ -1,8 +1,19 @@
-// expect: a vert takes one instance struct, supplied by Draw.Instanced, and this names two
+// expect: vert 'Place' reads a 'OtherItem', which this draw doesn't supply
+// expect: a vert's struct is an element of the list an Instanced draw is given, a List<OtherItem>, or the values a draw gives after its vert and frag, 'Draw.Instanced(..., Place, OtherItem { ... })'
 scene Main { }
 struct BatchItem { float3 offset; }
 struct OtherItem { float3 offset; }
+local singleton Mesh
+{
+    List<Vertex3> vertices;
+    List<int> indices;
+    List<BatchItem> instances;
+}
 vert Place(mut Vertex3 vertex, BatchItem item, OtherItem other)
 {
     vertex.position += item.offset + other.offset;
+}
+view DrawBatch(Mesh mesh)
+{
+    Draw.Instanced(mesh.vertices, mesh.indices, mesh.instances, Place);
 }

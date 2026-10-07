@@ -367,7 +367,7 @@ TIDE_TEST(lsp_complete_builtin_owners)
     // The 3D draws are Draw's too, beside the 2D ones, and so are the settings and its members
     TIDE_CHECK(offers(draw, "Cube") && offers(draw, "Sphere") && offers(draw, "Cylinder") && offers(draw, "Plane"));
     TIDE_CHECK(offers(draw, "ScreenRayOrigin") && offers(draw, "ScreenRayDirection") && offers(draw, "list") && offers(draw, "window"));
-    TIDE_CHECK(offers(draw, "Rect") && offers(draw, "Screen") && offers(draw, "Camera") && offers(draw, "Blend") && offers(draw, "Depth"));
+    TIDE_CHECK(offers(draw, "Rect") && offers(draw, "Pixels") && offers(draw, "Camera") && offers(draw, "Blend") && offers(draw, "Depth"));
     TIDE_CHECK(offers(draw, "Blit") && !offers(draw, "Draw2D") && !offers(draw, "Draw3D"));
 
     const char *color = complete(GAME_TYPES "view V(Body body)\n{\n    Draw.Circle(body.position, 1, Color.$);\n}\n");
@@ -675,7 +675,7 @@ static const char *c_definition(const char *marked)
     return definition_line();
 }
 
-// Meshes: Draw.Mesh, Draw.Clip and Draw.Screen, the built-in Vertex and
+// Meshes: Draw.Mesh, Draw.Clip and Draw.Pixels, the built-in Vertex and
 // Filter, and the draw list a view passes to C.
 TIDE_TEST(lsp_meshes)
 {
@@ -684,7 +684,7 @@ TIDE_TEST(lsp_meshes)
     "scene Main { }\n"                                                             \
     "extern void DrawUI(DrawList list);\n"                                         \
     "local singleton Art\n{\n    Grid2<Color> pixels = Grid2(4, 4);\n    List<Vertex> corners;\n}\n"
-    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.SetScreen();\n    Draw.SetClip(Rect(0, 0, 4, 4));\n"
+    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.SetPixels();\n    Draw.SetClip(Rect(0, 0, 4, 4));\n"
                              "    Draw.Mesh(art.corners, [0, 1, 2], art.pixels, Filter.Point);\n"
                              "    Draw.Mesh([Vertex { position = float2(1, 2) }], [0, 0, 0]);\n"
                              "    Draw.SetCamera(float3(0, 0, -5), quaternion.identity, 60);\n"
@@ -693,8 +693,8 @@ TIDE_TEST(lsp_meshes)
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
     const char *draw = complete(MESH_TYPES "view V(Art art)\n{\n    Draw.$\n}\n");
-    TIDE_CHECK(offers(draw, "Mesh") && offers(draw, "Clip") && offers(draw, "Screen") && offers(draw, "list"));
-    TIDE_CHECK(offers(draw, "SetClip") && offers(draw, "SetScreen") && offers(draw, "SetCamera") && offers(draw, "Transform"));
+    TIDE_CHECK(offers(draw, "Mesh") && offers(draw, "Clip") && offers(draw, "Pixels") && offers(draw, "list"));
+    TIDE_CHECK(offers(draw, "SetClip") && offers(draw, "SetPixels") && offers(draw, "SetCamera") && offers(draw, "Transform"));
     TIDE_CHECK(has(draw, "Mesh(${1:vertices}, ${2:indices})"));
     TIDE_CHECK(has(draw, "Draw.list: DrawList"));
     const char *filter = complete(MESH_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, [0, 1, 2], art.pixels, Filter.$);\n}\n");
@@ -724,7 +724,7 @@ TIDE_TEST(lsp_meshes)
     // Its two forms, a 2D mesh's first for a List<Vertex>, and each parameter by what's written before it
     open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, $\n}\n");
     const char *indices = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(indices, "\"label\":\"Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag])\""));
+    TIDE_CHECK(has(indices, "\"label\":\"Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag][, values])\""));
     TIDE_CHECK(!has(indices, "\"label\":\"Draw.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]][, vert][, frag])\""));
     TIDE_CHECK(has(indices, "\"activeSignature\":0,\"activeParameter\":1"));
     TIDE_CHECK(has(indices, "{\"label\":[20,27],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A `List<int>`"));
@@ -740,7 +740,7 @@ TIDE_TEST(lsp_meshes)
     TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw.Me$sh(art.corners, [0, 1, 2]);\n}\n"),
                    "void tide_draw_mesh_lists("));
     TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw.SetCl$ip();\n}\n"), "void tide_draw_unset_clip("));
-    TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw.SetScr$een();\n}\n"), "void tide_draw_set_screen("));
+    TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw.SetPix$els();\n}\n"), "void tide_draw_set_screen("));
     TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw.Cl$ip(Rect(0, 0, 4, 4))\n    {\n    }\n}\n"),
                    "uint32_t tide_draw_push_clip("));
 #undef MESH_TYPES
@@ -1015,7 +1015,7 @@ TIDE_TEST(lsp_wrap)
                                                  "Wrap wrap = the texture's)"));
     open_document(IN_VIEW("Draw.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, $"));
     const char *after = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(after, "\"label\":\"Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag])\""));
+    TIDE_CHECK(has(after, "\"label\":\"Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag][, values])\""));
     TIDE_CHECK(has(after, "\"activeParameter\":4") && has(after, "What a `uv` past 0 or 1 reads, written after the filter"));
     open_document(IN_VIEW("Draw.Mesh(art.solid, [0, 1, 2], float4x4.identity, art.tiles, Filter.Point, Wrap.Re$peat);"));
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":5"));
@@ -1172,6 +1172,66 @@ TIDE_TEST(lsp_instanced_drawing)
     TIDE_CHECK(has(hover_at(7, 6), "Draw.Instanced"));
     TIDE_CHECK(has(hover_at(7, 52), "An element of the draw's instance list"));
 #undef INSTANCE_TYPES
+}
+
+// A draw's values: the struct a mesh draw or a Blit gives after its vert and
+// frag, which they read through a parameter of its type. VALUE_TYPES is 8
+// lines: the vert is on line 5, the frags on lines 6 and 7.
+TIDE_TEST(lsp_draw_values)
+{
+    start();
+#define VALUE_TYPES \
+    "scene Main { }\nstruct Corner { float3 position; }\n" \
+    "struct Swell { float height; Color tint; float unread; }\nstruct BlurStep { float2 along; }\n" \
+    "local singleton Art { List<Corner> space; List<int> faces; RenderTarget bright; RenderTarget spread; }\n" \
+    "vert Wave(mut Corner vertex, Swell swell) { vertex.position.y += swell.height; }\n" \
+    "frag Shade(Corner vertex, out Color color, Swell swell) { color = swell.tint; }\n" \
+    "frag Blur(Vertex vertex, out Color color, Texture source, BlurStep step) { color = source.Sample(vertex.uv + step.along); }\n"
+#define VALUE_DRAWS \
+    VALUE_TYPES "view Show(Art art)\n{\n" \
+                "    Draw.Mesh(art.space, art.faces, float4x4.identity, Wave, Shade, Swell { height = 2 });\n" \
+                "    Draw.Blit(art.bright.color, art.spread, Blur, BlurStep { along = float2(1, 0) });\n}\n"
+    open_document(VALUE_DRAWS);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // The parameter, in the vert and in a frag: the draw's, once, and the fields each reads
+    const char *vert = hover_at(5, 36);
+    TIDE_CHECK(has(vert, "The values of the draw") && has(vert, "sent to the GPU once for the draw"));
+    TIDE_CHECK(has(vert, "height") && !has(vert, "tint") && !has(vert, "An element of the draw's instance list"));
+    const char *frag = hover_at(6, 50);
+    TIDE_CHECK(has(frag, "The values of the draw") && has(frag, "tint") && !has(frag, "unread"));
+    TIDE_CHECK(has(hover_at(7, 68), "The values of the draw"));
+    // The frag itself lists them with what's sent for each draw, and is a Mesh's, not an Instanced draw's
+    const char *shade = hover_at(6, 6);
+    TIDE_CHECK(has(shade, "for each draw: ") && has(shade, "Draw.Mesh(..., Shade)") && !has(shade, "for each instance"));
+    // The draws
+    TIDE_CHECK(has(hover_at(10, 10), "A struct's value after them is the draw's values"));
+    TIDE_CHECK(has(hover_at(11, 10), "[, Blend blend], frag shader[, values])") && has(hover_at(11, 10), "this blit's values"));
+
+    // Signature help: after the frag, the values
+    open_document(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Mesh(art.space, art.faces, float4x4.identity, Wave, Shade, $\n}\n");
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "[, vert][, frag][, values])") && has(help, "\"activeParameter\":8"));
+    TIDE_CHECK(has(help, "A struct's value, after the vert and the frag"));
+    open_document(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Mesh(art.space, art.faces, float4x4.identity, Shade, Swell { height = 2 }$);\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":8"));
+    open_document(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Blit(art.bright.color, art.spread, Blur, $\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "frag shader[, values])"));
+
+    // Completion: after a vert or a frag, the structs it takes, as values to fill in
+    const char *mesh = complete(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Mesh(art.space, art.faces, float4x4.identity, Shade, $);\n}\n");
+    TIDE_CHECK(offers(mesh, "Swell") && has(mesh, "Swell { $1 }") && has(mesh, "The values this draw gives frag `Shade`"));
+    TIDE_CHECK(!has(mesh, "BlurStep { $1 }"));
+    const char *blit = complete(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Blit(art.bright.color, art.spread, Blur, $);\n}\n");
+    TIDE_CHECK(offers(blit, "BlurStep") && has(blit, "BlurStep { $1 }") && !has(blit, "Swell { $1 }"));
+    const char *before = complete(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Mesh(art.space, art.faces, float4x4.identity, $);\n}\n");
+    TIDE_CHECK(offers(before, "Shade") && !has(before, "Swell { $1 }"));
+
+    // A value of the wrong type says what the frag reads, at the frag
+    open_document(VALUE_TYPES "view Show(Art art)\n{\n"
+                              "    Draw.Blit(art.bright.color, art.spread, Blur, Swell { height = 2 });\n}\n");
+    TIDE_CHECK(has(last_sent(), "frag 'Blur' reads a 'BlurStep'") && has(last_sent(), "or the values the draw gives after its frag"));
+#undef VALUE_DRAWS
+#undef VALUE_TYPES
 }
 
 // Frags and verts: code the GPU runs for a mesh's pixels and vertices, which a
@@ -4800,13 +4860,13 @@ TIDE_TEST(lsp_render_targets_texture_members_and_blit)
     open_document(program);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget(float width, float height)"));
     TIDE_CHECK(has(last_sent(), "RenderTarget(float width, float height, float pixelsPerUnit)"));
-    // RenderTarget.Screen: the one that follows the window, after the type's name
+    // RenderTarget.Window: the one that follows the window, after the type's name
     snprintf(program, sizeof program, "%sview V()\n{\n    var scene = RenderTarget.$\n}\n", types);
-    TIDE_CHECK(offers(complete(program), "Screen"));
-    snprintf(program, sizeof program, "%sview V()\n{\n    var scene = RenderTarget.Screen($\n}\n", types);
+    TIDE_CHECK(offers(complete(program), "Window"));
+    snprintf(program, sizeof program, "%sview V()\n{\n    var scene = RenderTarget.Window($\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "always the window's size"));
-    snprintf(program, sizeof program, "%sview V()\n{\n    var scene = RenderTarget.Scr$een(0.5);\n}\n", types);
+    snprintf(program, sizeof program, "%sview V()\n{\n    var scene = RenderTarget.Win$dow(0.5);\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "always the window's size"));
     snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Dis$pose();\n}\n", types);
@@ -4827,10 +4887,10 @@ TIDE_TEST(lsp_render_target_formats_and_depth)
                                       "    float lit = lamp.shadow.Compare(vertex.uv, 0.5) * lamp.shadow.Sample(vertex.uv);\n"
                                       "    color = Color(lit, lit, lit);\n}\n"
                                       "view V(mut Lamp lamp)\n{\n"
-                                      "    lamp.map = RenderTarget(64, 64, Format.DepthOnly);\n"
-                                      "    lamp.map = RenderTarget(64, 64, 1, Format.DepthOnly);\n"
-                                      "    lamp.map = RenderTarget.Screen(Format.DepthOnly);\n"
-                                      "    lamp.map = RenderTarget.Screen(0.5, Format.Color);\n"
+                                      "    lamp.map = RenderTarget(64, 64, Format.Depth);\n"
+                                      "    lamp.map = RenderTarget(64, 64, 1, Format.Depth);\n"
+                                      "    lamp.map = RenderTarget.Window(Format.Depth);\n"
+                                      "    lamp.map = RenderTarget.Window(0.5, Format.Rgba8);\n"
                                       "    lamp.shadow = lamp.map.depth;\n"
                                       "    Draw.Mesh([Vertex3 { }], [0, 0, 0], float4x4.identity, Lit);\n}\n", types);
     open_document(program);
@@ -4838,13 +4898,13 @@ TIDE_TEST(lsp_render_target_formats_and_depth)
 
     snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.map = RenderTarget(64, 64, Format.$);\n}\n", types);
     const char *formats = complete(program);
-    TIDE_CHECK(offers(formats, "Color") && offers(formats, "DepthOnly"));
+    TIDE_CHECK(offers(formats, "Rgba8") && offers(formats, "Depth"));
     snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.map = RenderTarget(64, 64, $\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget(float width, float height, Format formats...)"));
     TIDE_CHECK(has(last_sent(), "RenderTarget(float width, float height, float pixelsPerUnit, Format formats...)"));
     TIDE_CHECK(has(last_sent(), "depth alone"));
-    snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.map = RenderTarget.Screen($\n}\n", types);
+    snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.map = RenderTarget.Window($\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "Format format") && has(last_sent(), "float factor, Format format"));
 
@@ -4893,25 +4953,25 @@ TIDE_TEST(lsp_render_target_colors_and_frag_outputs)
     snprintf(program, sizeof program, "%sfrag Fill(Vertex3 vertex, out Color albedo, out Color normal)\n{\n"
                                       "    albedo = vertex.color;\n    normal = Color(0, 0, 1);\n}\n"
                                       "view V(mut Maps maps)\n{\n"
-                                      "    maps.scene = RenderTarget(64, 64, Format.Color, Format.Float);\n"
-                                      "    maps.scene = RenderTarget(64, 64, 1, Format.Float);\n"
-                                      "    maps.scene = RenderTarget.Screen(0.5, Format.Color, Format.Float, Format.Float);\n"
+                                      "    maps.scene = RenderTarget(64, 64, Format.Rgba8, Format.Rgba16f);\n"
+                                      "    maps.scene = RenderTarget(64, 64, 1, Format.Rgba16f);\n"
+                                      "    maps.scene = RenderTarget.Window(0.5, Format.Rgba8, Format.Rgba16f, Format.Rgba16f);\n"
                                       "    maps.normals = maps.scene.colors[1];\n"
                                       "    maps.scene.Mesh([Vertex3 { }], [0, 0, 0], float4x4.identity, Fill);\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
     // A format for each color image, after the size
-    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(64, 64, Format.Color, Format.$);\n}\n", types);
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(64, 64, Format.Rgba8, Format.$);\n}\n", types);
     const char *formats = complete(program);
-    TIDE_CHECK(offers(formats, "Float") && offers(formats, "Color") && offers(formats, "DepthOnly"));
-    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(64, 64, Format.Color, $\n}\n", types);
+    TIDE_CHECK(offers(formats, "Rgba16f") && offers(formats, "Rgba8") && offers(formats, "Depth"));
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(64, 64, Format.Rgba8, $\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget(float width, float height, Format formats...)"));
     TIDE_CHECK(has(last_sent(), "one for each color image") && has(last_sent(), "target.colors[1]"));
-    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget.Screen($\n}\n", types);
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget.Window($\n}\n", types);
     open_document(program);
-    TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget.Screen(Format.Color, Format.Float)"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget.Window(Format.Rgba8, Format.Rgba16f)"));
 
     // Its color images, beside its first and its depth
     snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.normals = maps.scene.$\n}\n", types);
@@ -4931,7 +4991,7 @@ TIDE_TEST(lsp_render_target_colors_and_frag_outputs)
     snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene.colors[1] = maps.normals;\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(last_sent(), "they can't be assigned"));
-    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(8, 8, Format.DepthOnly, Format.Color);\n}\n", types);
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(8, 8, Format.Depth, Format.Rgba8);\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(last_sent(), "it's a target's only format"));
 
@@ -4970,6 +5030,35 @@ TIDE_TEST(lsp_render_target_colors_and_frag_outputs)
                                       "    a = vertex.color;\n    b = a;\n    c = a;\n    d = a;\n    e = a;\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(last_sent(), "a frag writes 4 colors at the most"));
+}
+
+// The window's one word, and formats named by what they store: the spellings
+// from before are each a rename away.
+TIDE_TEST(lsp_window_pixels_and_format_names)
+{
+    start();
+    open_document("scene Main { }\nview V()\n{\n    var scene = RenderTarget.Screen(0.5);\n    scene.Dispose();\n}\n");
+    TIDE_CHECK(has(last_sent(), "RenderTarget.Screen is 'RenderTarget.Window' now"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Window'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetScreen();\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw.SetScreen is 'Draw.SetPixels' now"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetPixels'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    open_document("scene Main { }\nview V()\n{\n    Draw.Screen()\n    {\n    }\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw.Screen is 'Draw.Pixels' now"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Pixels'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    open_document("scene Main { }\nview V()\n{\n    var lamp = RenderTarget(64, 64, Format.DepthOnly);\n    lamp.Dispose();\n}\n");
+    TIDE_CHECK(has(last_sent(), "Format.DepthOnly is 'Format.Depth' now"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Depth'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    open_document("scene Main { }\nview V()\n{\n    var glow = RenderTarget(64, 64, Format.Float);\n    glow.Dispose();\n}\n");
+    TIDE_CHECK(has(last_sent(), "Format.Float is 'Format.Rgba16f' now"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Rgba16f'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    open_document("scene Main { }\nview V()\n{\n    var plain = RenderTarget(64, 64, Format.Color);\n    plain.Dispose();\n}\n");
+    TIDE_CHECK(has(last_sent(), "Format.Color is 'Format.Rgba8' now"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Rgba8'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    // As they're written now, nothing is said, and a target's own has both forms
+    open_document("scene Main { }\nview V()\n{\n    var scene = RenderTarget.Window(0.5, Format.Rgba8, Format.Rgba16f);\n"
+                  "    scene.SetPixels();\n    scene.Pixels()\n    {\n    }\n    Draw.SetPixels();\n    scene.Dispose();\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 }
 
 // ---------------------------------------------------------------------------

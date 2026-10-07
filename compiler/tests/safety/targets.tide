@@ -57,7 +57,7 @@ view Targets(mut Buffers buffers)
             Use(exact, buffers.corners);
             var both = RenderTarget(w, v, w);
             Use(both, buffers.corners);
-            var part = RenderTarget.Screen(v);
+            var part = RenderTarget.Window(v);
             Use(part, buffers.corners);
             sized.Resize(w, v);
             exact.Resize(v, v);

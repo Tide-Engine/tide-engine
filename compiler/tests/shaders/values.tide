@@ -1,0 +1,78 @@
+// A draw's values: a struct given after the vert and the frag, which they read
+// through a parameter of its type. Only the fields they read are sent, once for
+// the draw, in the uniform block with what they read of singletons.
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float2 uv;
+}
+struct Stripe
+{
+    Color tint;
+    float gain;
+}
+struct BlurParams
+{
+    float2 direction;
+    int taps;
+    Stripe stripe;
+    float4x4 unused;
+    long alsoUnused;
+}
+struct Lift
+{
+    float3 by;
+    bool flip;
+}
+struct Spark
+{
+    float4x4 transform;
+    Color tint;
+}
+singleton Sun
+{
+    float glow = 1;
+}
+local singleton Lens
+{
+    RenderTarget bright;
+    RenderTarget spread;
+    List<Corner> corners;
+    List<int> faces;
+    List<Spark> sparks;
+}
+
+// A blit's frag: its source, and the values of the blit
+frag Blur(Vertex vertex, out Color color, Texture source, BlurParams params, Sun sun)
+{
+    mut var sum = Color(0, 0, 0, 0);
+    for (var i = 0; i < params.taps; i++) sum += source.Sample(vertex.uv + params.direction * i);
+    color = sum * params.stripe.tint * (params.stripe.gain * sun.glow);
+}
+
+// A mesh's vert and frag, each with values of its own type's fields
+vert Raise(mut Corner corner, Lift lift)
+{
+    corner.position += lift.by;
+    if (lift.flip) corner.uv = float2(1, 1) - corner.uv;
+}
+frag Paint(Corner corner, out Color color, Lift lift)
+{
+    color = Color(corner.uv.x, corner.uv.y, lift.by.y);
+}
+
+// Beside an instance's struct: the list's for each instance, the values for the draw
+frag Glow(Corner corner, out Color color, Spark spark, Stripe stripe)
+{
+    color = spark.tint * stripe.tint * stripe.gain;
+}
+
+view Show(Lens lens)
+{
+    Draw.Blit(lens.bright.color, lens.spread, Blur, BlurParams { direction = float2(1, 0), taps = 3 });
+    Draw.Blit(lens.spread.color, lens.bright, Blend.Add, Blur, BlurParams { direction = float2(0, 1), taps = 3 });
+    Draw.Mesh(lens.corners, lens.faces, float4x4.identity, Raise, Paint, Lift { by = float3(0, 1, 0) });
+    Draw.Instanced(lens.corners, lens.faces, lens.sparks, Glow, Stripe { tint = Color.white, gain = 2 });
+}
