@@ -211,7 +211,7 @@ add_test(NAME tide_platform_font COMMAND tide_platform_font)
 # The mixer and the WAV writer, with no device: the same bytes on every platform.
 add_executable(tide_platform_audio tests/audio.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
 target_include_directories(tide_platform_audio PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
-target_link_libraries(tide_platform_audio PRIVATE tide_platform)
+target_link_libraries(tide_platform_audio PRIVATE tide_platform tide_audio_refs) # tests/audio: the Vorbis reference files
 add_test(NAME tide_platform_audio COMMAND tide_platform_audio)
 
 # The audio device, where the machine has one: opened, played through silently, forgotten and closed.

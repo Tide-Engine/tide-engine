@@ -10,4 +10,4 @@ string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," bytes "${hex}")
 string(REGEX REPLACE "(0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,0x..,)" "    \\1\n"
     bytes "${bytes}")
 get_filename_component(file "${INPUT}" NAME)
-file(WRITE "${OUTPUT}" "// ${file}, ${size} bytes: made by cmake/embed.cmake\nconst unsigned char ${NAME}[${size}] = {\n${bytes}\n};\n")
+file(WRITE "${OUTPUT}" "// ${file}, ${size} bytes: made by cmake/embed.cmake\nconst unsigned char ${NAME}[${size}] = {\n${bytes}\n};\nconst unsigned int ${NAME}_size = ${size}u;\n")

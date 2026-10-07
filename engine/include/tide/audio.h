@@ -43,13 +43,17 @@
 // for none): a voice whose clip's id changes starts over from the new one's
 // beginning. A clip with no samples plays silence, which is what a source
 // (an effect on a voice with no clip) starts from.
+struct tide_vorbis;
+struct tide_jobs;
+
 typedef struct tide_clip {
-    const float *samples;
+    const float *samples; // Decoded, interleaved; NULL for a clip that streams (`stream`) or plays nothing
     uint32_t frames;
     uint32_t channels;
     uint32_t rate;
     uint64_t id;
-    uint64_t name; // The Clip it came from, where it's the pack's (tide_clip_of); 0 otherwise
+    uint64_t name;                     // The Clip it came from, where it's the pack's (tide_clip_of); 0 otherwise
+    const struct tide_vorbis *stream;  // A long Ogg Vorbis clip, decoded as it plays (tide/vorbis.h), with no `samples`
 } tide_clip;
 
 // Tide's `Clip`: a sound of the game's pack, named by its declaration (as a
@@ -69,6 +73,14 @@ typedef struct tide_clip_ref {
 // until tide_clips_free, which a host calls once the mixer let go of them.
 tide_clip tide_clip_of(tide_clip_ref ref);
 void tide_clips_free(void);
+
+// Decodes the loaded pack's clips that aren't decoded yet, on `jobs`' threads
+// (or this one, for NULL), so the first play of each costs nothing: what a host
+// calls once it loaded a pack. A WAV decodes whole; Ogg Vorbis up to
+// tide_clips_whole_seconds long does too, and a longer one is kept as its file,
+// to stream.
+void tide_clips_prepare(const struct tide_jobs *jobs);
+extern uint32_t tide_clips_whole_seconds; // 10
 
 // Code the audio thread runs once a block: `samples` is the block, TIDE_AUDIO_SAMPLES
 // floats it reads and writes; `state` is `state_size` bytes of the voice's (or

@@ -16,6 +16,7 @@
 #include "assets.h"
 #include "folders.h"
 #include "sha256.h"
+#include "tide/vorbis.h"
 #include "tide/wav.h"
 #include "tide/sha256.h"
 
@@ -37,7 +38,8 @@ typedef struct read_file {
     bool decoded;          // Tried as a PNG...
     tide_png_image image;  // ...and what it gave (pixels NULL when it isn't one)
     bool utf8_known, utf8; // Whether its bytes are UTF-8 text
-    bool sound_tried, sound; // Whether it's a WAV that decodes
+    bool sound_tried, sound; // Whether it's a WAV or an Ogg Vorbis file that decodes
+    const char *vorbis_why;  // What's wrong with it as Ogg Vorbis, for a file that starts as one
 } read_file;
 
 static struct {
@@ -610,12 +612,21 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             f->sound_tried = true;
             tide_sound sound;
             f->sound = tide_wav_decode(f->data, f->len, &sound);
-            if (f->sound) tide_sound_free(&sound);
+            if (f->sound) {
+                tide_sound_free(&sound);
+            } else {
+                const char *why = NULL;
+                tide_vorbis *v = tide_vorbis_open(f->data, f->len, &why); // Its headers and pages: no audio is decoded
+                f->sound = v != NULL;
+                tide_vorbis_close(v);
+                if (!f->sound && f->len >= 4 && memcmp(f->data, "OggS", 4) == 0) f->vorbis_why = why;
+            }
         }
         if (!f->sound) {
-            diag_error(at, "'%s' isn't a WAV that decodes", key);
-            diag_note("a Clip asset is a WAV of PCM or floats, of one or two channels (Ogg Vorbis is to come); for the "
-                      "file's bytes as they are, read it as a List<byte>");
+            diag_error(at, "'%s' isn't a WAV or an Ogg Vorbis file that decodes", key);
+            diag_note("a Clip asset is a WAV of PCM or floats, or Ogg Vorbis, of one or two channels; for the file's bytes as "
+                      "they are, read it as a List<byte>");
+            if (f->vorbis_why) diag_note("as Ogg Vorbis, %s", f->vorbis_why);
             return false;
         }
     } else if (kind == ASSET_TEXT) {

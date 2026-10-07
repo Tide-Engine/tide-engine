@@ -174,6 +174,22 @@ function traceChannel() {
     };
 }
 
+// A lens that goes somewhere when clicked runs one of VS Code's own commands,
+// which tidels names with their arguments as JSON: a document, a position in
+// it and the places to show. VS Code takes those as its own types.
+function lensCommand(command) {
+    if (command?.command !== 'editor.action.showReferences' && command?.command !== 'editor.action.goToLocations') return;
+    const [uri, position, locations, ...rest] = command.arguments ?? [];
+    if (typeof uri !== 'string' || !position || !Array.isArray(locations)) return;
+    const range = r => new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character);
+    command.arguments = [
+        vscode.Uri.parse(uri),
+        new vscode.Position(position.line, position.character),
+        locations.map(l => new vscode.Location(vscode.Uri.parse(l.uri), range(l.range))),
+        ...rest,
+    ];
+}
+
 // Starts the language server. It never throws: what went wrong shows in a
 // notification, so that Restart Language Server always has a server to stop.
 async function start() {
@@ -189,6 +205,13 @@ async function start() {
         ],
         outputChannel: output,
         traceOutputChannel: trace,
+        middleware: {
+            provideCodeLenses: async (document, token, next) => {
+                const lenses = await next(document, token);
+                for (const lens of lenses ?? []) lensCommand(lens.command);
+                return lenses;
+            },
+        },
     });
     client = next;
     try {
