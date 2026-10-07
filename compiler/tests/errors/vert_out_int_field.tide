@@ -1,0 +1,10 @@
+// expect: 'Marked' can't go from a vert to its frag: its 'bone' is int
+// expect: the GPU blends what a vert hands on across the triangle, and ints don't blend: keep it as a float
+scene Main { }
+struct Corner { float2 position; }
+struct Marked { float glow; int bone; }
+vert Wave(mut Corner corner, out Marked marked)
+{
+    marked.glow = corner.position.x;
+    marked.bone = 2;
+}

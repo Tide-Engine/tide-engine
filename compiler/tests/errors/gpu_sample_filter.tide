@@ -29,7 +29,7 @@ event(Spawned) Setup(with Main)
     Spawn(Box);
 }
 
-frag Shade(V vertex, mut Color color, Models models)
+frag Shade(V vertex, out Color color, Models models)
 {
     Filter how = Filter.Point;
     color = models.wood.Sample(vertex.uv, how);

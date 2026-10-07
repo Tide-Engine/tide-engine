@@ -1,4 +1,5 @@
-// expect: frag 'Shade' reads instance data of 'V': draw it with Draw3D.Instanced and a List<V>
+// expect: frag 'Shade' reads a 'V', and this draw names no vert that writes one
+// expect: a frag's struct is what the draw's vert writes for it, 'out V other' among the vert's parameters, or an element of the list an Instanced draw is given, a List<V>
 scene Main { }
 
 struct V
@@ -29,7 +30,7 @@ event(Spawned) Setup(with Main)
     Spawn(Box);
 }
 
-frag Shade(V vertex, mut Color color, V other)
+frag Shade(V vertex, out Color color, V other)
 {
     color = Color.white;
 }

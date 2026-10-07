@@ -35,7 +35,7 @@ struct Other
     float3 position;
 }
 
-frag Shade(Other vertex, mut Color color)
+frag Shade(Other vertex, out Color color)
 {
     color = Color.white;
 }

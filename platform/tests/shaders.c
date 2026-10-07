@@ -45,7 +45,7 @@ static const check checks[] = {
     {0, 0, 0, 0, 1, 0, 0, "a frag writes a color from its entity's component, times a singleton's"},
     {1, 0, 0, 0, 0, 1, 0, "the next instance of the draw has its own component"},
     {2, 0, 0, 0, 0, 0, 0.5f, "and the third, whose blue the singleton halves"},
-    {4, 0, 0, 0, 1, 1, 1, "a frag that leaves its color as it starts draws white"},
+    {4, 0, 0, 0, 1, 1, 1, "a frag that reads nothing writes white"},
     {5, 0, 0, 0, 1, 1, 1, "a vertex with only a position draws white, with no frag"},
     {6, 0, 0, 0, YELLOW, "with no frag, a pixel is its vertex's color"},
     {0, 1, 0, 0, back, back, back, "a vert moved the mesh away from where it was drawn"},
@@ -78,13 +78,15 @@ static const check checks[] = {
     {7, 6, 7, 0, 1, 0.5f, 0, "a transform turns and scales a mesh through a frag: past where its side was"},
     {7, 6, 5, 5, back, back, back, "and short of where its corner was"},
     {7, 3, 0, 0, 0, 1, 0, "a 3D mesh through a frag, tinted, through the 3D transform"},
-    // Which side of a triangle draws
-    {4, 6, 0, 0, 1, 1, 1, "a 3D mesh through a frag, mirrored by its own transform, is still seen from the front"},
-    {5, 6, 0, 0, back, back, back, "one seen from the back isn't drawn"},
-    {6, 6, 0, 0, 1, 1, 1, "unless the draw says the back is"},
-    {3, 0, 0, 0, back, back, back, "a vert that mirrors its mesh turns its triangles round: they aren't drawn"},
-    {1, 1, 0, 0, 1, 1, 1, "but with the draw saying the back is"},
-    {3, 1, 0, 0, 1, 1, 1, "or both sides"},
+    // Which side of a triangle draws, four to a cell
+    {5, 6, -7, -7, 1, 1, 1, "a 3D mesh through a frag, mirrored by its own transform, is still seen from the front"},
+    {5, 6, 7, -7, back, back, back, "one seen from the back isn't drawn"},
+    {5, 6, 7, 7, back, back, back, "mirrored by its own transform or not"},
+    {5, 6, -7, 7, 1, 1, 1, "unless the draw says the back is"},
+    {6, 6, -7, -7, back, back, back, "a vert that mirrors its mesh turns its triangles round: they aren't drawn"},
+    {6, 6, 7, 7, 1, 1, 1, "and the ones that were seen from the back are"},
+    {6, 6, 7, -7, 1, 1, 1, "as are the first, with the draw saying the back is"},
+    {6, 6, -7, 7, 1, 1, 1, "or both sides"},
     // 2D
     {0, 4, 0, 0, 0, 1, 0, "a rect drawn after a 2D mesh is over it"},
     {0, 4, 8, 0, 1, 0.5f, 0, "the mesh, through its frag, over the rect before it"},
@@ -127,6 +129,17 @@ static const check checks[] = {
     {6, 7, -6, -6, 1, 0, 0, "manual 2D instancing takes a texture with a vert and no frag"},
     {6, 7, 6, 6, 1, 1, 1, "with the filter the draw specified"},
     {7, 7, 0, 0, back, back, back, "an empty instance list adds nothing"},
+    // What a vert writes for its frag
+    {3, 0, -6, 0, 0.27f, 1, 0, "a frag reads what its vert wrote for it, blended across the triangle: a quarter of the way"},
+    {3, 0, 6, 0, 0.77f, 1, 0, "and three quarters"},
+    {1, 1, 0, -6, 1, 0, 0.27f, "a frag reads another struct of the same vert's, whole, through a function"},
+    {1, 1, 0, 6, 1, 0, 0.77f, "blended down the triangle"},
+    {6, 2, 0, 0, YELLOW, "with no frag, what a vert writes for one goes nowhere, and the mesh draws as it does"},
+    {4, 6, -6, 0, back, back, back, "a frag's path that discards its pixel writes no color"},
+    {4, 6, 6, 0, 0, 1, 0, "and the others what the vert handed it"},
+    {3, 1, 0, 0, 0, 0.5f, 1, "a frag reads an instance's struct beside what its vert wrote from it"},
+    {1, 4, 0, -6, 0, 0.27f, 1, "a 2D vert hands its frag a struct the same way"},
+    {1, 4, 0, 6, 0, 0.77f, 1, "blended down the triangle"},
 };
 
 #define CHECKS ((int)(sizeof checks / sizeof checks[0]))
@@ -172,6 +185,9 @@ static void run_checks(const char *when)
            "three ordinary list items through a vert and frag are one draw");
     expect(runs_through("BatchPlace2 and BatchPaint2 on Corner2", &instances) == 1 && instances == 2,
            "two ordinary 2D items are one draw");
+    expect(runs_through("Hand and Take on Corner3", &instances) == 1 && instances == 1
+           && runs_through("Hand and TakeWhole on Corner3", &instances) == 1,
+           "a vert drawn with two frags is two shaders, each carrying what its frag reads");
 
     static tide_float2 points[CHECKS];
     static uint32_t got[CHECKS];

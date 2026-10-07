@@ -20,7 +20,7 @@ local singleton Globe
 }
 
 // Once for each pixel: its normal, blended across the triangle, against a light.
-frag Lit(Corner corner, mut Color color, Instance instance, Globe globe)
+frag Lit(Corner corner, out Color color, Instance instance, Globe globe)
 {
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
     float3 toLight = Math.Normalize(float3(Math.Cos(globe.lightAngle), 0.6, -Math.Sin(globe.lightAngle)));

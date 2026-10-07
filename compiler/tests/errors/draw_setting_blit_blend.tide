@@ -6,7 +6,7 @@ local singleton Canvas
     RenderTarget target;
 }
 
-frag Copy(Vertex vertex, mut Color color, Texture source)
+frag Copy(Vertex vertex, out Color color, Texture source)
 {
     color = source.Sample(vertex.uv);
 }

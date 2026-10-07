@@ -1,0 +1,5 @@
+// expect: a vert hands its frag a struct, and 'glow' is float
+// expect: put it in a struct both take, 'struct ForFrag { float glow; }': 'out ForFrag forFrag' here, and 'ForFrag forFrag' in the frag
+scene Main { }
+struct Corner { float2 position; }
+vert Wave(mut Corner corner, out float glow) { glow = corner.position.x; }

@@ -2,7 +2,7 @@
 component Glow { float amount; }
 scene Main { }
 
-frag Shade(Vertex vertex, mut Color color, verified Glow glow)
+frag Shade(Vertex vertex, out Color color, verified Glow glow)
 {
     color = vertex.color * glow.amount;
 }

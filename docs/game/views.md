@@ -72,7 +72,7 @@ Otherwise a target's color and depth persist across frames until cleared. Copies
 local singleton RenderState { RenderTarget scene; bool made; }
 enum RenderStages { Prepare, Objects, Effects }
 
-frag Present(Vertex vertex, mut Color color, Texture source)
+frag Present(Vertex vertex, out Color color, Texture source)
 {
     color = source.Sample(vertex.uv);
 }

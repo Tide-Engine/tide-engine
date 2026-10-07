@@ -161,7 +161,24 @@ The browser uses three headless Chrome processes, isolated pages with threads, h
 
 `--save` appends summaries to `bench/results/lag.jsonl` and keeps compressed per-frame samples in `bench/results/lag-frames/*.jsonl.gz`. Saved records include relative raw-data paths and SHA-256 digests. Raw rows are `[player_index, frame_values]`, with indices 0, 1 and 2 in the order above; `lag_summary.mjs` defines the values, in `tide_run_netcode`'s order. A final object contains measurement metadata. `checkout_revision` identifies the harness checkout, and a browser page's `page_sha256` identifies its actual built artifact, including historical pages measured from elsewhere. Native `full_round` means a second ring round started; browser Sumo uses the host's confirmed ticks to establish that the first round's maximum duration passed. Check this field rather than assuming 150 seconds of wall time advanced the match far enough.
 
-Run on an otherwise idle machine and repeat comparisons when sharing CPU or GPU resources. The continuation chats serialize these rounds with `Local\TideClaudeContinuationBenchmark`. The runners themselves do not acquire that coordination gate. Input delay is the extra ticks the engine chooses, rather than the full time between a button press and its display. The measurements propose changes to the budget; they do not change its default or the delay policy.
+Run on an otherwise idle machine and repeat comparisons when sharing CPU or GPU resources. The continuation chats serialize these rounds with `Local\TideClaudeContinuationBenchmark`. The runners themselves do not acquire that coordination gate. Input delay is the extra ticks the engine chooses, rather than the full time between a button press and its display. The measurements propose changes to the budget; they do not change its default or the delay policy. The native harness also takes `--budget <ms>`, the clients' resim budget in place of the engine's 4 ms, which the saved record says as `resim_budget_ms`.
+
+### Observations on dev `7430975` (2026-10-07)
+
+The same sweeps on dev at `7430975`, which has what the Sumo performance work added after `abaa39e` (Box3D's world going on from its image in parts, `tide_same_bytes` on the web, the wide page hash, and what changed of a world hashed on a few threads): labels `page-hash-native` and `page-hash-web`, one run a ping, the same seed, harness and machine, with the user's own programs at about 18% load. Mean/max delay in ticks:
+
+| Ping | Native first | Native late | Browser first | Browser late |
+| ---: | --- | --- | --- | --- |
+| 0 | 0.14/1 | 0.18/1 | 3.69/12 | 2.01/9 |
+| 50 | 2.33/6 | 2.07/5 | 4.92/13 | 8.65/17 |
+| 100 | 6.6/9 | 6.47/9 | 6.54/13 | 9.59/17 |
+| 150 | 7.71/11 | 7.45/12 | 10.43/15 | 13.43/28 |
+
+Against `abaa39e`: natively the same within a run's noise (the 100 ms run had frames over 50 ms on all three machines, the host's included, and reads two ticks higher); the browser's late joiner lower at 50 and 100 ms (8.65 and 9.59 where it was 16.13 and 26.32), one run each, and its 100 ms run has one 5-second stall of the page. The per-tick costs did fall (`sumo_costs`: keeping and hashing a full ring's world from 0.28 ms to 0.06 with threads called in), and none of it reaches the delay: `adjust_delay` goes by `tick_cost`, a moving mean of what `run_predicted`'s tick alone took, which has neither the hash nor the snapshot's copy in it.
+
+What sets the delay is the policy's shape, which the timelines show. It climbs within seconds of a burst of expensive ticks (joining: 100 to 400 ticks in the first second; each round's ring raised: a 9 ms tick natively and 25 in a browser, then a second of 1.3 to 2 ms ticks; the rims falling), one tick per round trip, and comes back one tick per `SLACK_SECONDS` (5 s) plus a round trip, only while `(ahead - verified) * tick_cost` is under a third of the budget. So after a burst a client settles where its lead is about budget / (3 × tick_cost), two ticks natively and one in a browser, and the rest of its round trip is delay. The browser's late joiner at 50 ms goes 17 16 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 in its "delay every 5 s" line, one a step, until the next round's ring is raised.
+
+`--budget 12` (`page-hash-native-budget12`, native, the same seed) says how much of it is the policy: mean delay 0.29/0.55 at 50 ms, 3.47/2.86 at 100 and 5.99/4.33 at 150 (first/late), with ticks run again up from 4 to 12 a second to 14 to 45, and 13 in one frame at the most. The bursts still take it to 9 to 11, and it still comes down one a step. Charging what re-simulation costs in practice (Sumo runs 0.03 to 0.15 ticks again a frame, in one or two rollbacks a second), or a quicker way back down, would move the delay more than any further cut of the tick; both are changes to the policy, which these measurements don't make.
 
 ### Full-round observations (2026-10-06)
 
