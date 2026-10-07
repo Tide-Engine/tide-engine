@@ -1,6 +1,6 @@
 # Installs tide for this user, on Windows:
 #
-#     irm https://tide-engine.dev/install.ps1 | iex
+#     Invoke-RestMethod https://tide-engine.dev/install.ps1 | Invoke-Expression
 #
 # Nightly versions instead: set $env:TIDE_CHANNEL = 'nightly' first.
 # tide goes in %LOCALAPPDATA%\Tide, and its bin folder on the user's PATH. No

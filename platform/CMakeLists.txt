@@ -9,13 +9,14 @@ if(NOT TIDE_WEB)
     list(APPEND TIDE_PLATFORM_SOURCES ${TIDE_RTC_SOURCES})
 endif()
 # The window (src/window.h): the page's canvas, Android's activity, or GLFW's.
+# ...and the audio device (src/audio_out.h): the page's worklet, AAudio, or WASAPI, CoreAudio and ALSA.
 if(TIDE_WEB)
-    list(APPEND TIDE_PLATFORM_SOURCES web/canvas.c web/gpu_web.c)
+    list(APPEND TIDE_PLATFORM_SOURCES web/canvas.c web/gpu_web.c web/audio.c)
 elseif(TIDE_ANDROID)
-    list(APPEND TIDE_PLATFORM_SOURCES android/activity.c)
+    list(APPEND TIDE_PLATFORM_SOURCES android/activity.c android/audio.c)
 else()
     include("${PROJECT_SOURCE_DIR}/cmake/GLFW.cmake")
-    list(APPEND TIDE_PLATFORM_SOURCES desktop/glfw.c desktop/gl.c)
+    list(APPEND TIDE_PLATFORM_SOURCES desktop/glfw.c desktop/gl.c desktop/audio.c)
 endif()
 
 # The font text is drawn in (src/font.c), inside the library, as arrays: a
@@ -45,14 +46,14 @@ add_library(tide_platform STATIC ${TIDE_PLATFORM_SOURCES} "${TIDE_FONT_C}" "${TI
 target_include_directories(tide_platform PUBLIC include PRIVATE src third_party)
 target_link_libraries(tide_platform PUBLIC tide)
 if(TIDE_ANDROID)
-    target_link_libraries(tide_platform PUBLIC android log EGL GLESv3)
+    target_link_libraries(tide_platform PUBLIC android log EGL GLESv3 aaudio) # ...and the audio device
 elseif(NOT TIDE_WEB)
     target_link_libraries(tide_platform PRIVATE glfw)
 endif()
 if(WIN32)
-    target_link_libraries(tide_platform PUBLIC ws2_32 secur32) # UDP, for sessions; TLS, for the relay
+    target_link_libraries(tide_platform PUBLIC ws2_32 secur32 ole32) # UDP, for sessions; TLS, for the relay; COM, for WASAPI
 elseif(APPLE)
-    target_link_libraries(tide_platform PUBLIC "-framework Security") # TLS, for the relay
+    target_link_libraries(tide_platform PUBLIC "-framework Security" "-framework AudioToolbox") # TLS, for the relay; the audio device
 endif()
 if(NOT WIN32 AND NOT TIDE_WEB AND NOT TIDE_ANDROID) # Android's are in its C library
     # Threads for ticks (src/jobs.c)
@@ -142,7 +143,7 @@ elseif(MINGW)
         PATTERN c++ EXCLUDE PATTERN wrl EXCLUDE PATTERN wrl.h EXCLUDE PATTERN "*.hxx" EXCLUDE PATTERN "*.idl" EXCLUDE
         PATTERN "*.tlb" EXCLUDE)
     set(mingw_libs crt2.o dllcrt2.o crtbegin.o crtend.o)
-    foreach(lib IN ITEMS mingw32 mingwex moldname msvcrt kernel32 user32 gdi32 shell32 advapi32 ws2_32 secur32)
+    foreach(lib IN ITEMS mingw32 mingwex moldname msvcrt kernel32 user32 gdi32 shell32 advapi32 ws2_32 secur32 ole32)
         list(APPEND mingw_libs lib${lib}.a)
     endforeach()
     list(TRANSFORM mingw_libs PREPEND "${mingw_target}/lib/")
@@ -212,6 +213,15 @@ add_executable(tide_platform_audio tests/audio.c "${PROJECT_SOURCE_DIR}/tests/te
 target_include_directories(tide_platform_audio PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
 target_link_libraries(tide_platform_audio PRIVATE tide_platform)
 add_test(NAME tide_platform_audio COMMAND tide_platform_audio)
+
+# The audio device, where the machine has one: opened, played through silently, forgotten and closed.
+if(NOT TIDE_WEB)
+    add_executable(tide_platform_audio_device tests/audio_device.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tide_platform_audio_device PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+    target_link_libraries(tide_platform_audio_device PRIVATE tide_platform)
+    add_test(NAME tide_platform_audio_device COMMAND tide_platform_audio_device)
+    set_tests_properties(tide_platform_audio_device PROPERTIES TIMEOUT 60)
+endif()
 
 # A game carries the bold weight's file when it says Font.Bold, and only then:
 # two games as tide_add_game builds them, read as the build left them. No

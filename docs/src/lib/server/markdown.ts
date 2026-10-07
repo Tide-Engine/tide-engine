@@ -100,12 +100,7 @@ md.renderer.rules.fence = (tokens, idx, _options, env) => {
         defaultColor: false,
     });
     const label = lang === 'text' ? '' : `<span class="lang">${labels[lang] ?? lang}</span>`;
-    // No copy button on PowerShell that downloads and runs (`irm ... | iex`):
-    // ad blockers take a page that puts one on the clipboard for a scam
-    // (uBlock Origin's "ClickFix" warning), and block it. Selecting it by hand
-    // copies it as ever.
-    const copy = /\|\s*iex\b/i.test(token.content) ? '' : '<button type="button" class="copy" aria-label="Copy code" title="Copy code"></button>';
-    const block = `<div class="code">${label}${copy}${code}</div>`;
+    const block = `<div class="code">${label}<button type="button" class="copy" aria-label="Copy code" title="Copy code"></button>${code}</div>`;
     return (env as Env).grouped ? `<div class="block">${block}</div>` : block;
 };
 
