@@ -24,7 +24,7 @@ A component with no fields, like `Poisoned`, is still useful: systems can pick t
 
 ### Defaults
 
-Fields can have a default. It must be a constant: literals, constructors of built-in types, struct values of constants, `Math` functions, built-in constants like `quaternion.identity`, and operators on those. A default can't read other fields, singletons or `Time`.
+Fields can have a default. It must be a constant: literals, constructors of built-in types, struct values of constants, `Math` functions, built-in constants like `quaternion.identity`, and operators on those. It can name an [asset](./assets.md#a-field-s-default) too, like `Texture face = logo;`. A default can't read other fields, singletons or `Time`.
 
 ```csharp
 component Turret

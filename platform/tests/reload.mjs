@@ -6,8 +6,8 @@ import { spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
 
-const [hostArg, plainArg, libraryArg, scratchArg] = process.argv.slice(2);
-const [host, plain, library, scratch] = [hostArg, plainArg, libraryArg, scratchArg].map(path => resolve(path));
+const [hostArg, plainArg, libraryArg, scratchArg, nextArg] = process.argv.slice(2);
+const [host, plain, library, scratch, next] = [hostArg, plainArg, libraryArg, scratchArg, nextArg].map(path => resolve(path));
 rmSync(scratch, { recursive: true, force: true });
 mkdirSync(scratch, { recursive: true });
 copyFileSync(library, join(scratch, 'game-1' + extname(library)));
@@ -24,8 +24,8 @@ writeFileSync(script, [
     '35 quit',
 ].join('\n') + '\n');
 
-function run(program, args, env = process.env) {
-    const ran = spawnSync(program, [...args, '--script', script, '--size', '64', '64'], {
+function run(program, args, env = process.env, played = script) {
+    const ran = spawnSync(program, [...args, '--script', played, '--size', '64', '64'], {
         cwd: scratch, encoding: 'utf8', timeout: 100000, env,
     });
     assert.equal(ran.status, 0, `${ran.error || ''}\n${ran.stdout}\n${ran.stderr}`);
@@ -35,6 +35,7 @@ function run(program, args, env = process.env) {
 function groups(output) {
     return output.split('reload-test: local started ').slice(1).map(group => ({
         starts: Number(group.match(/^static=(\d+)/)[1]),
+        packed: Number(group.match(/^static=\d+ packed=(\d+)/)[1]),
         matches: (group.match(/reload-test: match started/g) || []).length,
         frames: [...group.matchAll(/reload-test: frame=(\d+) tick=(\d+) r=(\d+)/g)]
             .map(([, frame, tick, r]) => ({ frame: Number(frame), tick: Number(tick), r: Number(r) })),
@@ -75,4 +76,20 @@ assert.ok(retired.includes('reload-test: numbered library removed'), 'the origin
 const reopened = groups(retired);
 assert.equal(reopened.length, 3, 'both shortcuts still work after the watcher retired the loaded build');
 assert.ok(reopened.every(group => group.starts === 1), 'reopening the host-owned copy initializes C statics again');
+
+// A build of another layout, published while the game runs: the host hands it
+// the run's pack before it starts the game over in it, as a field's default
+// can name an asset.
+rmSync(join(scratch, 'game-2' + extname(library)), { force: true });
+copyFileSync(library, join(scratch, 'game-1' + extname(library)));
+writeFileSync(join(scratch, 'pack-1'), 'a pack');
+const quiet = join(scratch, 'quiet.txt');
+writeFileSync(quiet, '35 quit\n');
+const swapped = run(host, [scratch], { ...process.env, TIDE_RELOAD_PUBLISH: next }, quiet);
+assert.ok(swapped.includes('reload-test: next build published'), swapped);
+assert.ok(swapped.includes('tide: reloaded, and started over'), swapped);
+const builds = groups(swapped);
+assert.equal(builds.length, 2, swapped);
+assert.ok(builds.every(group => group.packed === 1), 'each build has the pack before its local state is made');
+assert.ok(builds[1].frames.length > 4, 'the new build goes on running');
 console.log('ok: Ctrl+R resets native local state, match and C statics, once per press and only in a watching host');

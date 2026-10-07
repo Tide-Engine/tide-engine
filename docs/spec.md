@@ -54,6 +54,7 @@ The language Tide games and the engine's built-in systems are written in. It tra
 
 - Fields of components, singletons, inputs and structs can declare a default value: `int value = 100;`.
 - A default must be a constant expression: literals, constants, constructors of built-in types, struct values of constants (`Range { hi = 5 }`), `Math` functions, built-in constants like `quaternion.identity`, and operators, as in `float angle = Math.Radians(45);`. It can't read fields, singletons or `Time`.
+  - Provisional: it can name an asset too, as it names a constant, `local Texture face = logo;` (see Assets, A field's default).
 - Singletons start with their defaults when the world is created, before `Main` runs.
 - Components get their defaults whenever a value is created without setting that field: `Spawn(Health)`, `e.Add(Health)`, and fields left out of `Health { max = 200 }`.
 - Fields without a default start at zero. `Entity` fields always start as the null entity and can't have another default.
@@ -1478,6 +1479,16 @@ Picks made as the first slice was built (2026-10-06), awaiting the owner too:
 - **What the pack holds of a grid** is the chunks that have a color in them: a clear black cell takes nothing, as in a world's grid a cell nothing wrote takes nothing. A texture drawn from an asset is told apart by the file's hash, so the draw list copies it once.
 - **Where the pack is at runtime:** the top 512 MiB of the scratch area's offsets, so an asset's handle is a scratch handle that every read path reads already, and a thread maps the region into its slots the first time it runs after a load; the scratch area has 512 MiB a thread while a pack is loaded, where it had 1 GiB.
 - **The editor and the build say the same things** about a path: the checker reports a missing file (naming a file of the same bytes, or files of that name), a glob with no match, bytes that aren't the type's, and tidels attaches its fixes to those diagnostics.
+
+Picks made as defaults that name assets were built (2026-10-07), awaiting the owner, who asked for the first of these to compile (`local Texture test = logo;` in a component: "I feel like this should be possible?"):
+
+- **A field's default can name an asset**, where it could only be a constant expression: `local Texture face = logo;`, `string text = rules;`, a struct's `Texture image = logo;`. An asset is as good as a constant there: read-only, known as the game is built, the same on every machine.
+  - **It counts as a constant anywhere in the default's expression**, by the rule for constants and no other: a struct's value (`Sprite { image = logo }`), a member (`table.count`), an operator, a `Math` function, a name through its namespace (`Art.logo`).
+  - **The value is the pack's, read where the default is given**, not while compiling: as a spawn or an `Add` leaves the field out, as a match's or the local state's singletons start, for the local fields of an entity nothing wrote yet, and for a field a hot reload adds. Text, bytes and a glob's list or map are copied, into the world the field is in; a `Texture`, a `Clip` and a `Cubemap` are names of their declarations (above), so nothing is copied and a file saved under `tide run` shows through them.
+  - **What a field can't be, a default doesn't make it**: a `Texture` field in the match is the error it was, and a `Grid2<Color>` field can't start as an asset's grid, as a grid is never copied (an error that says to read the asset by its name). A grid asset is a `Texture` field's default, by the conversion there is.
+  - **One of a glob's isn't a default**: `frames[0]` and `icons["star.png"]` are no constant expressions, as indexing isn't one.
+  - **Nothing else that takes a constant takes an asset**: a `const`'s value, a setting, a bound, an enum member's value, an array's length, an asset's path, a parameter's default. Those are worked out as the game is built, or name what the build reads, and an asset's value is the pack's. Through a namespace or a member (`Art.rules`, `rules.length`) an asset used to get past that check with no error, and an asset whose path was one had no file; it's an error that says a field's default is where one goes.
+  - **A host loads the pack before it makes a world or the local state** (the standard host does; a hot reload hands a new build the pack before it carries anything over): a default given with no pack loaded reads the asset as empty, as any read does.
 
 Picks made as `Texture` assets were built (2026-10-07), awaiting the owner. That an asset can be a `Texture` is decided, above:
 

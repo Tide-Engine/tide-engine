@@ -1,0 +1,12 @@
+// expect: a grid can't be copied: every chunk would be
+// expect: an asset's grid is read where it is, by its name; a field starts as a new, empty one, like 'Grid2(64, 64)'
+asset Grid2<Color> hero = "../e2e/assets/hero.png";
+
+singleton Paint
+{
+    Grid2<Color> canvas = hero;
+}
+
+scene Main
+{
+}
