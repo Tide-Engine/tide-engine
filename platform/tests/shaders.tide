@@ -2042,6 +2042,65 @@ view Alphas(Art art, mut Clears clears)
     }
 }
 
+// Textures that are numbers (pass 16): [Raw] keeps a texture's pixels as its
+// file or its grid has them, and a Sample gives them as they are, where a
+// texture of colors has no color in a pixel with no alpha. The file's last
+// column is clear, with a color of its own there: (210, 200, 100).
+[Raw] asset Texture heroNumbers = "../../compiler/tests/e2e/assets/hero.png";
+asset Texture heroColors = "../../compiler/tests/e2e/assets/hero.png";
+[Raw] asset Grid2<Color> heroCellNumbers = "../../compiler/tests/e2e/assets/hero.png";
+
+local singleton Numbers
+{
+    [Raw] Grid2<Color> kept = Grid2(2, 1);
+    Grid2<Color> worked = Grid2(2, 1);
+    bool made;
+}
+
+struct Which
+{
+    int read;
+}
+
+frag ReadNumbers(Vertex vertex, out Color color, Numbers numbers, Which which)
+{
+    float2 clear = float2(7.5 / 8, 5.5 / 6); // The file's last pixel
+    mut Color c = heroNumbers.Sample(clear, Filter.Point);
+    if (which.read == 1) c = heroColors.Sample(clear, Filter.Point);
+    if (which.read == 2) c = heroCellNumbers.Sample(clear, Filter.Point);
+    if (which.read == 3) c = numbers.kept.Sample(float2(0.25, 0.5), Filter.Point);
+    if (which.read == 4) c = numbers.worked.Sample(float2(0.25, 0.5), Filter.Point);
+    // Between a cell that's all there and one with no alpha: numbers blend as numbers
+    if (which.read == 5) c = numbers.kept.Sample(float2(0.5, 0.5));
+    color = Color(c.r, c.g, c.b);
+}
+
+[After(Alphas)]
+view Raws(Art art, mut Numbers numbers)
+{
+    if (art.targetPass != 16) return;
+    if (!numbers.made)
+    {
+        numbers.made = true;
+        numbers.kept[0, 0] = Color(1, 0.5, 0.25, 0);
+        numbers.kept[1, 0] = Color(0, 0.5, 0.75, 1);
+        numbers.worked[0, 0] = Color(1, 0.5, 0.25, 0);
+        numbers.worked[1, 0] = Color(0, 0.5, 0.75, 1);
+    }
+    List<Vertex> tile = [Vertex { }, Vertex { position = float2(32, 0), uv = float2(1, 0) },
+                         Vertex { position = float2(32, 32), uv = float2(1, 1) }, Vertex { position = float2(0, 32), uv = float2(0, 1) }];
+    Draw.Clear(Color.black);
+    Draw.SetPixels();
+    Draw.SetClip();
+    for (var read = 0; read < 6; read++)
+    {
+        Draw.Transform(float2(8 + 40 * read, 8))
+        {
+            Draw.Mesh(tile, art.faces, ReadNumbers, Which { read = read });
+        }
+    }
+}
+
 // Several colors from one frag (pass 11). A target made to hold three color
 // images, the second and third of floats, is drawn into by frags that write
 // three colors, two, and one, and by the engine's own shapes; then each image
