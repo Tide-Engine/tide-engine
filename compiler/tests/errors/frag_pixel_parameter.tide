@@ -1,0 +1,7 @@
+// expect: a frag's pixel is 'this' now: remove the 'Pixel' parameter and use 'this'
+scene Main { }
+
+frag Shade(Vertex vertex, out Color color, Pixel pixel)
+{
+    color = Color.white;
+}

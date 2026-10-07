@@ -1,5 +1,5 @@
 // expect: frag 'Shade' can end without writing its pixel's color, 'color'
-// expect: a frag writes its color on every path that ends; one that draws nothing leaves the pixel with 'pixel.Discard();', through a 'Pixel pixel' parameter
+// expect: a frag writes its color on every path that ends; one that draws nothing leaves the pixel with 'this.Discard();'
 scene Main { }
 struct Corner { float2 position; float2 uv; }
 frag Shade(Corner corner, out Color color)

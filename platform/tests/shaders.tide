@@ -212,26 +212,26 @@ frag Smooth(Corner3 vertex, out Color color, Art art)
 // ---------------------------------------------------------------------------
 // Where the pixel is, and how the mesh was drawn
 
-frag Split(Corner3 vertex, out Color color, Pixel pixel, Marks marks)
+frag Split(Corner3 vertex, out Color color, Marks marks)
 {
-    color = pixel.position.x < marks.split ? Color.red : Color.blue;
+    color = this.position.x < marks.split ? Color.red : Color.blue;
 }
 
-frag Hole(Corner3 vertex, out Color color, Pixel pixel)
+frag Hole(Corner3 vertex, out Color color)
 {
     float2 from = vertex.uv - float2(0.5, 0.5);
-    if (Math.Abs(from.x) < 0.2 && Math.Abs(from.y) < 0.2) pixel.Discard();
-    color = Color.magenta;
+    if (Math.Abs(from.x) < 0.2 && Math.Abs(from.y) < 0.2) this.Discard();
+    else color = Color.magenta;
 }
 
-frag World(Corner3 vertex, out Color color, Pixel pixel, Marks marks)
+frag World(Corner3 vertex, out Color color, Marks marks)
 {
-    color = pixel.world.x > marks.world ? Color.green : Color.red;
+    color = this.world.x > marks.world ? Color.green : Color.red;
 }
 
-frag ByDepth(Corner3 vertex, out Color color, Pixel pixel)
+frag ByDepth(Corner3 vertex, out Color color)
 {
-    color = Color(pixel.depth * 10, 0, 0);
+    color = Color(this.depth * 10, 0, 0);
 }
 
 vert Turn(mut Corner3 vertex, Instance instance)
@@ -288,9 +288,9 @@ frag Glow(Corner2 vertex, out Color color, Lamp lamp)
     color = lamp.glow;
 }
 
-frag Stripe(Corner2 vertex, out Color color, Pixel pixel, Marks marks)
+frag Stripe(Corner2 vertex, out Color color, Marks marks)
 {
-    color = pixel.position.y < marks.line ? Color.yellow : Color.cyan;
+    color = this.position.y < marks.line ? Color.yellow : Color.cyan;
 }
 
 // Manual instances: the vert and frag both read the list's current item
@@ -346,9 +346,9 @@ frag TakeWhole(Corner3 vertex, out Color color, Extra extra)
 }
 
 // A path that draws no pixel writes no color
-frag TakeHalf(Corner3 vertex, Handed handed, out Color color, Pixel pixel)
+frag TakeHalf(Corner3 vertex, Handed handed, out Color color)
 {
-    if (handed.across < 0.5) pixel.Discard();
+    if (handed.across < 0.5) this.Discard();
     color = handed.paint;
 }
 
@@ -1116,9 +1116,9 @@ frag TargetInspect(Vertex vertex, out Color color, Texture source, Art art)
 
 // Where a pixel is, over the window's size: in logical pixels, so the same
 // picture on a display of any scale, in a target as in the window.
-frag Where(Vertex vertex, out Color color, Texture source, Pixel pixel, Art art)
+frag Where(Vertex vertex, out Color color, Texture source, Art art)
 {
-    color = Color(pixel.position.x / art.window.x, pixel.position.y / art.window.y, 0);
+    color = Color(this.position.x / art.window.x, this.position.y / art.window.y, 0);
 }
 
 // What a uv past a texture's edges reads, said where it's sampled (pass 7).
@@ -1604,9 +1604,9 @@ float3 FromLamp(float3 world, float4x4 toLamp)
     return float3(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5, clip.z * 0.5 + 0.5);
 }
 
-frag Shadowed(Vertex3 vertex, out Color color, Pixel pixel, Shadow shadow)
+frag Shadowed(Vertex3 vertex, out Color color, Shadow shadow)
 {
-    float3 at = FromLamp(pixel.world, shadow.toLamp);
+    float3 at = FromLamp(this.world, shadow.toLamp);
     // A little nearer than it is, so what the lamp sees isn't in its own shadow
     float lit = shadow.depth.Compare(at.xy, at.z - 0.01);
     float shade = 0.25 + 0.75 * lit;
@@ -1615,9 +1615,9 @@ frag Shadowed(Vertex3 vertex, out Color color, Pixel pixel, Shadow shadow)
 
 // What a caster with holes in it is: its color goes nowhere in the lamp's
 // target, and the pixels it leaves out cast nothing.
-frag Grate(Vertex3 vertex, out Color color, Pixel pixel)
+frag Grate(Vertex3 vertex, out Color color)
 {
-    if (vertex.uv.x < 0.5) pixel.Discard();
+    if (vertex.uv.x < 0.5) this.Discard();
     color = Color.magenta;
 }
 
@@ -1688,9 +1688,9 @@ local singleton Mask
 }
 
 // A sheet that leaves its right half out: what it stores, it stores on the left.
-frag LeftHalf(Vertex vertex, out Color color, Pixel pixel)
+frag LeftHalf(Vertex vertex, out Color color)
 {
-    if (vertex.uv.x > 0.5) pixel.Discard();
+    if (vertex.uv.x > 0.5) this.Discard();
     color = Color.clear;
 }
 
@@ -2149,9 +2149,9 @@ frag Two(Vertex vertex, out Color albedo, out Color big)
 }
 
 // A frag of several outputs leaves a pixel out like any other: none of them is written there.
-frag Holes(Vertex vertex, out Color albedo, out Color big, Pixel pixel)
+frag Holes(Vertex vertex, out Color albedo, out Color big)
 {
-    if (vertex.uv.x < 0.5) pixel.Discard();
+    if (vertex.uv.x < 0.5) this.Discard();
     albedo = Color.white;
     big = Color(6, 6, 1);
 }
@@ -2408,10 +2408,10 @@ frag MipLook(Vertex vertex, out Color color, Mips mips)
 }
 
 // The Texture a draw gives, read as it says: after a pixel may have been left undrawn, in a branch
-frag MipSource(Vertex vertex, out Color color, Pixel pixel, Texture source)
+frag MipSource(Vertex vertex, out Color color, Texture source)
 {
     color = Color.black;
-    if (vertex.uv.x > 2) pixel.Discard();
+    if (vertex.uv.x > 2) this.Discard();
     if (vertex.uv.y < 2) color = source.Sample(vertex.uv);
 }
 

@@ -1,4 +1,4 @@
-// expect: a vert runs for a vertex, before there are pixels: 'Pixel' is a frag's
+// expect: a vert runs for a vertex, before there are pixels: the pixel is a frag's 'this'
 scene Main { }
 
 struct V

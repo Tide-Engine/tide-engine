@@ -35,12 +35,12 @@ local singleton Stage
 // One pass over the scene, and each pixel leaves three things: its paint, which
 // way it faces, and where it is. Each `out Color` goes to the target's image
 // that's its place among them. The last two aren't colors: their images are floats.
-frag Fill(Corner corner, out Color paint, out Color normal, out Color place, Pixel pixel, Instance instance, Block block)
+frag Fill(Corner corner, out Color paint, out Color normal, out Color place, Instance instance, Block block)
 {
     float3 facing = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
     paint = block.paint;
     normal = Color(facing.x, facing.y, facing.z);
-    place = Color(pixel.world.x, pixel.world.y, pixel.world.z);
+    place = Color(this.world.x, this.world.y, this.world.z);
 }
 
 // A second pass, over the whole window, with nothing of the scene drawn again:

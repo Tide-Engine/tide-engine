@@ -48,7 +48,7 @@ typedef enum occ_kind {
     OCC_NAMESPACE, // Combat in `namespace Combat;` or Combat.Health
     OCC_ATTRIBUTE, // Stage, Before, After, Clamp, Min, Max
     OCC_ENUM_MEMBER, // Title in Page.Title, and in `enum Page { Title }` (with `decl`, the enum)
-    OCC_THIS,     // `this`, with `decl` the system, view, handler or method it's in
+    OCC_THIS,     // `this`, with `decl` the system, view, handler, method or frag it's in
     OCC_DEFAULT,  // `default`, with the type it takes
     OCC_CONST,    // A constant the game declares, MAX_HEALTH, with `decl`
     OCC_SETTING,  // One of the engine's settings, tickRate in settings { ... }
@@ -895,7 +895,7 @@ static void walk_value(const expr *e)
         } else if (e->call == CALL_ADD || e->call == CALL_REMOVE || e->call == CALL_DESTROY || e->call == CALL_SEND
                    || e->call == CALL_LIST || e->call == CALL_MAP || e->call == CALL_GRID || e->call == CALL_SNAP
                    || e->call == CALL_DISCARD) {
-            o.kind = OCC_METHOD; // e.Destroy(), items.Add(x), scores.TryGet(k, out v), cells.Clear(), this.Snap(), pixel.Discard()
+            o.kind = OCC_METHOD; // e.Destroy(), items.Add(x), scores.TryGet(k, out v), cells.Clear(), this.Snap(), this.Discard()
             add_occ(o);
         } else if (e->call == CALL_LOAD || e->call == CALL_UNLOAD || e->call == CALL_SCENE_PLAYER) {
             add_occ((occurrence){.at = e->object->at, .len = 5, .kind = OCC_OWNER, .owner = str_from("Scene"),
@@ -1879,7 +1879,7 @@ static const method_form texture_calls[] = {
 static const method_form depth_calls[] = {
     {"Sample", "Sample(float2 uv) -> float",
      "Reads a render target's depth in a frag or vert: how far the nearest thing drawn at `uv` is, from 0 at the "
-     "camera's near plane to 1 at its far limit, as `pixel.depth` is, and 1 where nothing was drawn since the target "
+     "camera's near plane to 1 at its far limit, as `this.depth` in a frag is, and 1 where nothing was drawn since the target "
      "was cleared. `uv` is from (0, 0) at the top left to (1, 1). It's the nearest pixel's: a depth blended between "
      "two would be neither's."},
     {"Compare", "Compare(float2 uv, float value) -> float",
@@ -1930,12 +1930,12 @@ static const method_form pixel_calls[] = {
      "itself."},
 };
 
-// What a frag and a vert take beside the game's state: Pixel and Instance.
+// A frag's implicit pixel and a frag's or vert's Instance parameter.
 static const char *shader_record_doc(const decl *d)
 {
     if (d && d == A.prog->pixel) {
-        return "A frag's parameter: where its pixel is, on the screen and in the world, and `Discard()`, which leaves "
-               "it undrawn. The GPU says it, so nothing is sent for it.";
+        return "A frag's `this`: where its pixel is, on the screen and in the world, and `this.Discard()`, which leaves "
+               "it undrawn. Its read-only fields are `position`, `depth` and `world`. The GPU says them, so nothing is sent for it.";
     }
     if (d && d == A.prog->instance) {
         return "A frag's or vert's parameter: how the mesh was drawn. Its `transform` is sent to the GPU for each "
@@ -2115,7 +2115,8 @@ static void format_method(const method_form *form, const type t, sb *out)
     const bool generic = (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID) && t.decl;
     const char *element = generic ? type_name(t.decl->fields.items[0].type) : "T";
     const char *value = generic && t.kind == TY_MAP ? type_name(t.decl->fields.items[1].type) : "V";
-    sb_put(out, generic || t.kind == TY_RECORD || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP ? type_name(t) // Pixel.Discard()
+    sb_put(out, t.kind == TY_RECORD && t.decl == A.prog->pixel ? "this"
+                : generic || t.kind == TY_RECORD || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP ? type_name(t)
                 : t.kind == TY_LIST ? "items"
                 : t.kind == TY_MAP || t.kind == TY_SET ? "keys"
                 : t.kind == TY_GRID ? "cells"
@@ -2369,7 +2370,7 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
     }
     if (p->mode == PARAM_MUT && p->type.kind == TY_COLOR) {
         sb_put(out, "\n\nThe pixel's color, which the frag writes. It starts with no value: the frag writes it on every "
-                    "path that ends, before it reads it, and a path that ends in `pixel.Discard()` draws no pixel. It "
+                    "path that ends, before it reads it, and a path that ends in `this.Discard()` draws no pixel. It "
                     "isn't what's on the screen already, which a GPU doesn't let a frag read. What the frag wrote is "
                     "blended over what's behind it by its alpha.");
         return;
@@ -2897,7 +2898,9 @@ static void describe(const occurrence *o, sb *out)
         }
         sb_printf(&code, "%s this", type_name(o->type));
         code_block(out, code.data);
-        if (d->kind == DECL_METHOD) {
+        if (is_shader(d) && d->is_frag) {
+            sb_printf(out, "\n\nThe pixel `" STR_FMT "` runs for. %s", STR_ARG(d->name), shader_record_doc(A.prog->pixel));
+        } else if (d->kind == DECL_METHOD) {
             sb_printf(out, "\n\nThe entity whose `" STR_FMT "` this is.", STR_ARG(d->owner->name));
         } else if (d->is_handler && d->event) {
             sb_printf(out, "\n\nThe entity the `" STR_FMT "` was sent to.", STR_ARG(d->event->name));
@@ -3649,7 +3652,7 @@ static loc token_end(const token *t)
     return (loc){t->at.line, t->at.col + token_len(t), t->at.file};
 }
 
-// An Entity or LocalEntity parameter: removes it, with the comma between it
+// An Entity, LocalEntity or legacy Pixel parameter: removes it, with the comma between it
 // and its neighbor, and writes `this` where the code uses it.
 static void use_this_action(const param *p, jbuf *out, int *written)
 {
@@ -5264,6 +5267,7 @@ static void classify(const occurrence *o, int *type, int *mods)
     case OCC_FIELD:
         *type = ST_PROPERTY;
         if (o->decl && o->decl->builtin) *mods |= SM_DEFAULT_LIBRARY;
+        if (o->decl == A.prog->pixel) *mods |= SM_READONLY;
         if (o->field && o->field->is_local) *mods |= SM_LOCAL;
         break;
     case OCC_PARAM:
@@ -5630,12 +5634,13 @@ static scope scope_at(const loc at)
     return sc;
 }
 
-// The type of `this` in scope: the entity the code runs for, or a component
-// method's. TY_ERROR where there's none.
+// The type of `this` in scope: a frag's pixel, the entity the code runs for,
+// or a component method's. TY_ERROR where there's none.
 static type this_type(const scope *sc)
 {
     const decl *d = sc->decl;
     if (!d || sc->in_input) return (type){TY_ERROR, NULL};
+    if (is_shader(d) && d->is_frag) return (type){TY_RECORD, A.prog->pixel};
     if (d->kind == DECL_METHOD && !d->is_operator && !d->is_interpolate && d->owner && d->owner->kind == DECL_COMPONENT) {
         return (type){d->owner->is_local ? TY_LOCAL_ENTITY : TY_ENTITY, NULL};
     }
@@ -6032,7 +6037,7 @@ static type out_variable_type(int use, loc at);
 
 static void complete_members(completion *c, const int dot, const loc at, const order_completion order)
 {
-    if (dot >= 1 && DOC->toks[dot - 1].kind == T_THIS) { // this.: the entity's methods
+    if (dot >= 1 && DOC->toks[dot - 1].kind == T_THIS) { // this.: the entity's methods or frag's pixel
         const scope sc = scope_at(at);
         const type t = this_type(&sc);
         if (t.kind != TY_ERROR) list_members(c, t, false, &sc);
@@ -6046,6 +6051,14 @@ static void complete_members(completion *c, const int dot, const loc at, const o
         else break;
     }
     if (n == 0) return;
+    if (ids[n - 1] >= 2 && DOC->toks[ids[n - 1] - 1].kind == T_DOT
+        && DOC->toks[ids[n - 1] - 2].kind == T_THIS) { // this.position. or this.world.xy.
+        const scope sc = scope_at(at);
+        type t = this_type(&sc);
+        for (int k = n - 1; k >= 0 && t.kind != TY_ERROR; k--) t = member_type(t, DOC->toks[ids[k]].text);
+        if (t.kind != TY_ERROR) list_members(c, t, false, &sc);
+        return;
+    }
 
     if (order != ORDER_NONE) {
         sb written = {0};
@@ -6467,6 +6480,7 @@ static bool gpu_callable(const decl *d)
 // frame, like Spawn, Draw or Devices.
 static void complete_shader_code(completion *c, const scope *sc, const bool statement)
 {
+    if (sc->decl->is_frag) item(c, "this", CK_KEYWORD, "Pixel", shader_record_doc(A.prog->pixel), NULL);
     if (statement) {
         static const char *const keywords[] = {"if", "else", "return", "var", "mut", "for", "break", "continue"};
         for (size_t i = 0; i < sizeof keywords / sizeof keywords[0]; i++) item(c, keywords[i], CK_KEYWORD, NULL, NULL, NULL);
@@ -6578,11 +6592,12 @@ static void complete_expression(completion *c, const loc at, const bool statemen
         item(c, "Wait", CK_MODULE, "Ticks, frames and seconds to wait for", NULL, NULL);
     }
     if (!statement) item(c, "default", CK_KEYWORD, NULL, NULL, NULL); // A statement's list has it, for switches
-    // this: the entity the code runs for, or whose component a method is called on
-    const type entity = this_type(&sc);
-    if (entity.kind != TY_ERROR) {
-        item(c, "this", CK_KEYWORD, type_name(entity),
-             sc.decl->kind == DECL_METHOD ? "The entity whose component this is." : "The entity the code runs for.", NULL);
+    // this: a frag's pixel, the entity the code runs for, or whose component a method is called on
+    const type self = this_type(&sc);
+    if (self.kind != TY_ERROR) {
+        item(c, "this", CK_KEYWORD, type_name(self),
+             is_shader(sc.decl) && sc.decl->is_frag ? shader_record_doc(A.prog->pixel)
+             : sc.decl->kind == DECL_METHOD ? "The entity whose component this is." : "The entity the code runs for.", NULL);
     }
 
     for (int i = sc.locals.count - 1; i >= 0; i--) {
@@ -6878,8 +6893,8 @@ static void complete_param_name(completion *c, const str type_name_)
     item(c, name, CK_VARIABLE, NULL, NULL, NULL);
 }
 
-// Whether the game declares a type named `name`: Pixel and Instance are only
-// built in where it doesn't.
+// Whether the game declares a type named `name`: Instance is only offered as
+// a built-in parameter where it doesn't.
 static bool game_type_named(const char *name)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
@@ -6895,7 +6910,7 @@ static bool game_type_named(const char *name)
 // after token `last`. The vertex comes first, a struct with a position, which
 // a vert takes mut; what each writes is `out`, a frag's pixel, its `out Color`,
 // and the structs a vert hands its frag; the rest is what the engine supplies:
-// components, singletons, Pixel (a frag's) and Instance.
+// components, singletons and Instance. A frag's pixel is `this`.
 static void complete_shader_header(completion *c, const int open, const int last)
 {
     const token *toks = DOC->toks;
@@ -6950,7 +6965,6 @@ static void complete_shader_header(completion *c, const int open, const int last
     if (!frag) item(c, "out", CK_KEYWORD, "out FromLamp lamp: a struct the vert writes for its frag, which reads it blended", NULL, NULL);
     complete_types(c, true, true, false);
     item(c, "Texture", CK_STRUCT, "Read-only image supplied by the draw", builtin_type_doc(TY_TEXTURE), NULL);
-    if (frag && !game_type_named("Pixel")) item(c, "Pixel", CK_CLASS, "built-in", shader_record_doc(A.prog->pixel), NULL);
     if (!game_type_named("Instance")) item(c, "Instance", CK_CLASS, "built-in", shader_record_doc(A.prog->instance), NULL);
     complete_namespaces(c, false);
 }

@@ -33,13 +33,13 @@ local singleton Stage
 }
 
 // Once for each pixel: its own light, and whether the lamp sees it.
-frag Lit(Corner corner, out Color color, Pixel pixel, Instance instance, Block block, Stage stage)
+frag Lit(Corner corner, out Color color, Instance instance, Block block, Stage stage)
 {
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
     float facing = Math.Max(Math.Dot(normal, -stage.lampDirection), 0);
 
     // Where this pixel is in the lamp's image, and how far from the lamp
-    float4 seen = Math.Mul(stage.toLamp, float4(pixel.world, 1));
+    float4 seen = Math.Mul(stage.toLamp, float4(this.world, 1));
     float2 uv = float2(seen.x * 0.5 + 0.5, 0.5 - seen.y * 0.5);
     // A little nearer than it is, so what the lamp sees isn't in its own shadow
     float depth = seen.z * 0.5 + 0.5 - 0.003;

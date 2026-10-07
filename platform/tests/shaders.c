@@ -63,13 +63,13 @@ static const check checks[] = {
     {6, 1, -6, -6, 1, 0, 0, "with no frag, the draw's texture times the vertex's color"},
     {6, 1, 6, 6, YELLOW, "at each of its cells"},
     // Where the pixel is
-    {0, 2, -6, 0, 1, 0, 0, "pixel.position counts the screen's pixels from the left"},
+    {0, 2, -6, 0, 1, 0, 0, "this.position counts the screen's pixels from the left"},
     {0, 2, 6, 0, 0, 0, 1, "on both sides of the line"},
-    {1, 2, 0, 0, back, back, back, "pixel.Discard leaves the pixel undrawn"},
+    {1, 2, 0, 0, back, back, back, "this.Discard leaves the pixel undrawn"},
     {1, 2, 9, 0, 1, 0, 1, "and the others drawn"},
-    {2, 2, -6, 0, 1, 0, 0, "pixel.world is where the pixel is in the world"},
+    {2, 2, -6, 0, 1, 0, 0, "this.world is where the pixel is in the world"},
     {2, 2, 6, 0, 0, 1, 0, "on both sides of the line"},
-    {3, 2, 0, 0, 0.4905f, 0, 0, "pixel.depth is how far it is between the camera's near and far sides"},
+    {3, 2, 0, 0, 0.4905f, 0, 0, "this.depth is how far it is between the camera's near and far sides"},
     {4, 2, 0, 0, 0.5f, 1, 0.5f, "a vert turns a normal by instance.transform, and the frag gets it"},
     {5, 2, 0, 0, 0, 1, 1, "a frag reads instance.transform"},
     // Ints, bools, enums and structs of a component
@@ -99,7 +99,7 @@ static const check checks[] = {
     {2, 4, 0, 0, 1, 1, 1, "a 2D vertex with only a position draws white"},
     {3, 4, -6, -6, 1, 0, 0, "a 2D mesh with no frag samples the draw's texture"},
     {3, 4, 6, 6, 1, 1, 1, "at each of its cells"},
-    {4, 4, 0, -6, YELLOW, "a 2D mesh on the screen's pixels: pixel.position from the top"},
+    {4, 4, 0, -6, YELLOW, "a 2D mesh on the screen's pixels: this.position from the top"},
     {4, 4, 0, 6, 0, 1, 1, "on both sides of the line"},
     {5, 4, 0, 0, back, back, back, "a vert moved the 2D mesh away"},
     {7, 4, 0, 0, 1, 1, 1, "to where the singleton says"},
@@ -268,7 +268,7 @@ static void run_screen_target_checks(const char *when)
             int low[3], high[3];
             const char *what;
         } wanted[] = {
-            {64, 64, {0}, {0}, "a frag's pixel.position is in logical pixels in a screen target"},
+            {64, 64, {0}, {0}, "a frag's this.position is in logical pixels in a screen target"},
             {w * 0.75f, h * 0.25f, {0}, {0}, "all the way across it"},
             {w - 16, 16, {0, 0, 250}, {5, 5, 255}, "a screen target's own units are logical pixels, from the window's corner"},
             {w * 0.7f, h * 0.75f, {0, 250, 0}, {5, 255, 5}, "a target of half the window is half as many logical pixels across"},

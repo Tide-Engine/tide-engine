@@ -10,7 +10,7 @@
 // An `out` parameter is assigned before the code reads it, and on every path
 // that returns: `fail` owes it nothing, as a call that fails gives its `out`
 // variables their type's default (codegen), and neither does a frag's path
-// that ends in `pixel.Discard()`, which draws no pixel. A local an `out`
+// that ends in `this.Discard()`, which draws no pixel. A local an `out`
 // argument declares is assigned once the call it's written in has run, which
 // `&&`, `||`, `?:` and `??` can skip: it's only read where the call ran.
 //
@@ -405,11 +405,11 @@ static void flow_leave(const flow *f, const loc at, const uint8_t *st, const boo
             diag_error(at, "frag '" STR_FMT "' %s without writing %s, its %s output", STR_ARG(f->code->name), ends, what.data,
                        which[p->output < 4 ? p->output : 3]);
             diag_note("a frag writes each of its outputs on every path that ends; one that draws nothing leaves the pixel "
-                      "with 'pixel.Discard();', through a 'Pixel pixel' parameter");
+                      "with 'this.Discard();'");
         } else if (gpu(f) && f->code->is_frag) {
             diag_error(at, "frag '" STR_FMT "' %s without writing its pixel's color, %s", STR_ARG(f->code->name), ends, what.data);
             diag_note("a frag writes its color on every path that ends; one that draws nothing leaves the pixel with "
-                      "'pixel.Discard();', through a 'Pixel pixel' parameter");
+                      "'this.Discard();'");
         } else if (gpu(f)) {
             diag_error(at, "vert '" STR_FMT "' %s without writing %s", STR_ARG(f->code->name), ends, what.data);
             diag_note("what a vert writes for its frag, it writes on every path, each field of it: '" STR_FMT " = default;' "
@@ -503,7 +503,7 @@ static void flow_stmt(flow *f, const stmt *s, uint8_t *st)
         break;
     case S_EXPR:
         flow_expr(f, s->value, st);
-        // pixel.Discard(): no pixel is drawn, so nothing is owed the frag's color from here
+        // this.Discard(): no pixel is drawn, so nothing is owed the frag's color from here
         if (s->value && s->value->kind == E_METHOD && s->value->call == CALL_DISCARD) state_end(f, st);
         break;
     case S_ASSIGN:

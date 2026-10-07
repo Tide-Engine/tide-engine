@@ -32,9 +32,9 @@ event(Spawned) Setup(with Main)
     Spawn(Caster { position = float3(0, 1, 0) });
 }
 
-frag Lit(Vertex3 vertex, out Color color, Pixel pixel, Lamp lamp)
+frag Lit(Vertex3 vertex, out Color color, Lamp lamp)
 {
-    float4 seen = Math.Mul(lamp.toLamp, float4(pixel.world, 1));
+    float4 seen = Math.Mul(lamp.toLamp, float4(this.world, 1));
     float lit = lamp.shadow.Compare(float2(seen.x * 0.5 + 0.5, 0.5 - seen.y * 0.5), seen.z * 0.5 + 0.5 - 0.01);
     float far = lamp.sceneDepth.Sample(vertex.uv);
     color = Color(lit, far, lamp.shadow.Sample(uv: vertex.uv) * lamp.shadow.Compare(value: 0.5, uv: vertex.uv));

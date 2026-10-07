@@ -59,7 +59,7 @@ vert Wave(mut BoxVertex vertex, Time time, Instance instance)
     Brighten(vertex.normal, 1);
 }
 
-frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models, Pixel pixel)
+frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models)
 {
     float light = box.lit ? Lit(vertex.normal, -DirectionThrough(sun)) : 1;
     color = models.wood.Sample(vertex.uv) * box.tint * light;
@@ -69,7 +69,7 @@ frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models, P
         color.a = color.a * 0.5;
     }
     if (Finish(box.kind) == Finish.Gloss || Layer(box.kind + 256) == Layer.Top) color.a = 1;
-    if (pixel.position.x < 10 || pixel.world.y < 0) pixel.Discard();
+    if (this.position.x < 10 || this.world.y < 0) this.Discard();
 }
 
 event(Spawned) Setup(with Main)

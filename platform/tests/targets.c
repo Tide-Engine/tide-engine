@@ -102,7 +102,7 @@ static const char compare_wgsl[] =
 static int failures;
 
 // Exercise the renderer as well as the backend: different target sizes,
-// per-target cameras and clips, the full-screen blit's state, and Pixel data.
+// per-target cameras and clips, the full-screen blit's state, and pixel data.
 static const tide_shader list_shader = {
     .name = "render-list target copy", .id = 0x72656e646572u, .dims = 2,
     .vertex_size = sizeof(tide_vertex), .attribute_count = 3,
@@ -358,7 +358,7 @@ static void check_render_list(void)
             expected[y * WIDTH * 2 + x] = r << 24 | g << 16 | 0xffffu;
         }
     }
-    render_expect(expected, "target shader Pixel dimensions");
+    render_expect(expected, "target shader this.position dimensions");
 }
 
 static void check_render_depth_alpha(void)

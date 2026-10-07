@@ -1,4 +1,4 @@
-// expect: a frag runs on the GPU, for each pixel, so it can't name the entity
+// expect: a frag's pixel has one method, 'Discard()', which leaves it undrawn; the rest are its fields
 scene Main { }
 
 struct V
@@ -31,7 +31,7 @@ event(Spawned) Setup(with Main)
 
 frag Shade(V vertex, out Color color)
 {
-    var e = this;
+    this.Add<Box>();
     color = Color.white;
 }
 

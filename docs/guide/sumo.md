@@ -199,14 +199,14 @@ That view comes before anything is drawn to the window, the window's own clear t
 **Every frag that lights a pixel asks the lamp's image.** It works out where its pixel is in that image, and compares how far the pixel is from the lamp with what's stored there. Only a frag reads a target's depth, so each of the four that light something asks for itself, four times around its pixel, which blends a shadow's edge, and hands the one function that does the lighting how much of the lamp's light arrives:
 
 ```csharp
-frag CrateLook(Corner corner, out Color color, Solid solid, Instance instance, Pixel pixel, Room room, Shadow shadow)
+frag CrateLook(Corner corner, out Color color, Solid solid, Instance instance, Room room, Shadow shadow)
 {
     ...
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
-    float3 seen = FromLamp(pixel.world, normal, shadow.toLamp);
+    float3 seen = FromLamp(this.world, normal, shadow.toLamp);
     float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
                + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
-    color = Lit(paint, normal, pixel.world, room, 0.25, sun);
+    color = Lit(paint, normal, this.world, room, 0.25, sun);
 }
 ```
 

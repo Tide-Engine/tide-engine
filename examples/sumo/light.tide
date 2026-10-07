@@ -188,33 +188,33 @@ Color FloorPaint(float3 world, Color here, float4 sides, float beat)
 
 // A tile: its top is the floor's paint, and its sides are dark, with the
 // edge's light along their top.
-frag TileLook(Corner corner, out Color color, Solid solid, Pixel pixel, Room room, Ground ground, Shadow shadow)
+frag TileLook(Corner corner, out Color color, Solid solid, Room room, Ground ground, Shadow shadow)
 {
     // How much of the lamp's light gets here: four looks at its image around where this pixel is in it
-    float3 seen = FromLamp(pixel.world, corner.normal, shadow.toLamp);
+    float3 seen = FromLamp(this.world, corner.normal, shadow.toLamp);
     float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
                + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
     if (corner.normal.y > 0.5)
     {
-        float2 uv = (float2(pixel.world.x, pixel.world.z) / TILE + float2(7.5)) / 15;
+        float2 uv = (float2(this.world.x, this.world.z) / TILE + float2(7.5)) / 15;
         float step = 1.0 / 15;
         float4 sides = float4(ground.floor.Sample(uv - float2(step, 0), Filter.Point).r, ground.floor.Sample(uv + float2(step, 0), Filter.Point).r,
                               ground.floor.Sample(uv - float2(0, step), Filter.Point).r, ground.floor.Sample(uv + float2(0, step), Filter.Point).r);
-        Color paint = FloorPaint(pixel.world, ground.floor.Sample(uv, Filter.Point), sides, room.beat);
-        color = Lit(Color(paint.r, paint.g, paint.b, 1), corner.normal, pixel.world, room, 0.35, sun);
+        Color paint = FloorPaint(this.world, ground.floor.Sample(uv, Filter.Point), sides, room.beat);
+        color = Lit(Color(paint.r, paint.g, paint.b, 1), corner.normal, this.world, room, 0.35, sun);
         // What glows is its own light
         if (paint.r > 0.9) color = Color(paint.r, paint.g, paint.b, 1);
         return;
     }
-    float down = -pixel.world.y;
+    float down = -this.world.y;
     mut Color side = Color(0.13, 0.14, 0.17);
     if (down < 0.12) side = solid.tint;
-    color = Lit(side, corner.normal, pixel.world, room, 0, sun);
+    color = Lit(side, corner.normal, this.world, room, 0, sun);
     if (down < 0.12) color = Color(solid.tint.r, solid.tint.g, solid.tint.b, 1);
 }
 
 // A crate has a frame around each face, a shade darker, and a keg a band.
-frag CrateLook(Corner corner, out Color color, Solid solid, Instance instance, Pixel pixel, Room room, Shadow shadow)
+frag CrateLook(Corner corner, out Color color, Solid solid, Instance instance, Room room, Shadow shadow)
 {
     float3 at = float3(Math.Abs(corner.position.x), Math.Abs(corner.position.y), Math.Abs(corner.position.z));
     // The middle one of the three is how near the face's edge this is
@@ -228,16 +228,16 @@ frag CrateLook(Corner corner, out Color color, Solid solid, Instance instance, P
     }
     Color paint = Color(solid.tint.r * tone, solid.tint.g * tone, solid.tint.b * tone, 1);
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
-    float3 seen = FromLamp(pixel.world, normal, shadow.toLamp);
+    float3 seen = FromLamp(this.world, normal, shadow.toLamp);
     float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
                + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
-    color = Lit(paint, normal, pixel.world, room, 0.25, sun);
+    color = Lit(paint, normal, this.world, room, 0.25, sun);
 }
 
 // A ball: its player's color, with a white band around it and a dark cap at
 // each end, so that its roll shows. A heavy one is dark, with its color in
 // the band. It glows as it winds up, and flashes when it's hit.
-frag BallLook(Corner corner, out Color color, Instance instance, Pixel pixel, Room room, Ball ball, Shadow shadow)
+frag BallLook(Corner corner, out Color color, Instance instance, Room room, Ball ball, Shadow shadow)
 {
     Color seat = SeatColor(ball.seat);
     float band = Math.Abs(corner.position.y);
@@ -245,27 +245,27 @@ frag BallLook(Corner corner, out Color color, Instance instance, Pixel pixel, Ro
     if (ball.heavy > 0) paint = band < 0.2 ? seat : band > 0.82 ? Color(0.5, 0.52, 0.58) : Color(0.16, 0.17, 0.2);
     paint = Mix(paint, Color.white, Math.Saturate(ball.flash + ball.charge * (0.35 + 0.25 * Math.Sin(room.beat * 14))));
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
-    float3 seen = FromLamp(pixel.world, normal, shadow.toLamp);
+    float3 seen = FromLamp(this.world, normal, shadow.toLamp);
     float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
                + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
-    color = Lit(paint, normal, pixel.world, room, ball.heavy > 0 ? 1.6 : 1.0, sun);
+    color = Lit(paint, normal, this.world, room, ball.heavy > 0 ? 1.6 : 1.0, sun);
 }
 
 // Anything of one color, lit: a pickup.
-frag Plain(Corner corner, out Color color, Solid solid, Instance instance, Pixel pixel, Room room, Shadow shadow)
+frag Plain(Corner corner, out Color color, Solid solid, Instance instance, Room room, Shadow shadow)
 {
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
-    float3 seen = FromLamp(pixel.world, normal, shadow.toLamp);
+    float3 seen = FromLamp(this.world, normal, shadow.toLamp);
     float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
                + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
-    color = Lit(solid.tint, normal, pixel.world, room, 0.9, sun);
+    color = Lit(solid.tint, normal, this.world, room, 0.9, sun);
 }
 
 // What's flat on the floor: a disc that fades at its edge, a ring, or part of
 // one, going round from the top.
-frag DecalLook(Corner corner, out Color color, Decal decal, Pixel pixel, Ground ground)
+frag DecalLook(Corner corner, out Color color, Decal decal, Ground ground)
 {
-    if (ground.floor.Sample((float2(pixel.world.x, pixel.world.z) / TILE + float2(7.5)) / 15, Filter.Point).r < 0.5) pixel.Discard();
+    if (ground.floor.Sample((float2(this.world.x, this.world.z) / TILE + float2(7.5)) / 15, Filter.Point).r < 0.5) this.Discard();
     float2 at = float2(corner.position.x, corner.position.z) * 2;
     float far = Math.Length(at);
     mut float shown = Math.Saturate((1 - far) * 8);

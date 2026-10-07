@@ -670,6 +670,7 @@ typedef struct decl {
 
     // Frags and verts (DECL_SHADER), and the functions they call
     bool is_frag;                 // A frag; else a vert
+    bool pixel_world;             // A frag reads this.world: pass the world position from its vertices
     int outputs;                  // A frag: the colors it writes, its `out Color` parameters, which go to a target's color images in that order
     VEC(shader_sample) samples;   // The grids it samples, once each
     int gpu_state;                // Code checked for the GPU: 1 while it is, 2 once it fits, 3 if it doesn't
@@ -695,7 +696,7 @@ typedef enum expr_kind {
     E_INTERP,  // $"score {score}": `parts` around the values in `args`, each with its format
     E_INDEX,   // object[lhs]: a list's element
     E_LIST,    // [a, b, c]: a list of `args`, whose type comes from where it goes
-    E_THIS,    // this: the entity the code runs for
+    E_THIS,    // this: the entity the code runs for, or the pixel in a frag
     E_DEFAULT, // `default`: the default value of the type where it goes
     E_NULL,    // `null`: the nothing of the T? where it goes
     E_COALESCE,  // lhs ?? rhs: lhs's value, or rhs when it failed or is nothing
@@ -741,7 +742,7 @@ typedef enum builtin_call {
     CALL_WAIT,      // Wait.Ticks(n), Wait.Seconds(s) and Wait.Frames(n), awaited: `name` says which
     CALL_GRID,      // cells.Clear(), a grid's methods: `name` says which; type_decl is the grid
     CALL_NEW_GRID,  // Grid2(1024, 1024) or Grid3(...): a grid with that size (0: open), whose type comes from where it goes
-    CALL_DISCARD,   // pixel.Discard(), in a frag: the pixel isn't drawn
+    CALL_DISCARD,   // this.Discard(), in a frag: the pixel isn't drawn
     CALL_RANDOM,    // random.NextInt(6), a Random's methods: calls c_callee with the generator's address first
 } builtin_call;
 
@@ -1262,7 +1263,7 @@ typedef enum fix_kind {
     FIX_CREATE_FUNCTION,  // A call of an unknown function: declare it, taking the arguments' types
     FIX_CREATE_STRUCT,    // An unknown type where a struct fits: declare one
     FIX_CREATE_COMPONENT, // An unknown type where a component fits: declare one
-    FIX_USE_THIS,   // An Entity or LocalEntity parameter: remove it, and name the entity `this`
+    FIX_USE_THIS,   // An Entity, LocalEntity or frag's Pixel parameter: remove it, and use `this`
     FIX_UNWRAP,     // A failable call's or a T?'s value that nothing handles: `!` after it, or `try` before it
     FIX_UNUSED_LOCAL, // A local that's never read, with nothing to offer: it's assigned later, or a for declares it
     FIX_REMOVE_LOCAL, // ...whose value does nothing: remove its declaration

@@ -593,11 +593,11 @@ frag Ground(Corner corner, out Color color)
 }
 
 // A marble in its player's color, with a white band and a spot that show it rolling.
-frag Glass(Corner corner, out Color color, Instance instance, Pixel pixel, Marble marble, Look look)
+frag Glass(Corner corner, out Color color, Instance instance, Marble marble, Look look)
 {
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
     float diffuse = Math.Max(Math.Dot(normal, SUN), 0);
-    float3 toEye = Math.Normalize(look.eye - pixel.world);
+    float3 toEye = Math.Normalize(look.eye - this.world);
     float glint = Math.Pow(Math.Max(Math.Dot(normal, Math.Normalize(SUN + toEye)), 0), 40);
     mut Color paint = marble.tint;
     if (corner.position.y < 0) paint = marble.tint * 0.78;
@@ -606,11 +606,11 @@ frag Glass(Corner corner, out Color color, Instance instance, Pixel pixel, Marbl
     color.a = 1;
 }
 
-frag Gold(Corner corner, out Color color, Instance instance, Pixel pixel, Look look)
+frag Gold(Corner corner, out Color color, Instance instance, Look look)
 {
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
     float diffuse = Math.Abs(Math.Dot(normal, SUN));
-    float3 toEye = Math.Normalize(look.eye - pixel.world);
+    float3 toEye = Math.Normalize(look.eye - this.world);
     float glint = Math.Pow(Math.Abs(Math.Dot(normal, Math.Normalize(SUN + toEye))), 20);
     // A ring pressed into each face
     float across = Math.Length(corner.position.xy);

@@ -1,0 +1,8 @@
+// expect: a frag's pixel can only be read
+scene Main { }
+
+frag Shade(Vertex vertex, out Color color)
+{
+    this.position.x = 1;
+    color = Color.white;
+}

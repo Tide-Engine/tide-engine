@@ -74,9 +74,9 @@ vert Place(mut Corner corner, out FromLamp lamp, out Fog fog, Sun sun)
 }
 
 // Reads some of FromLamp, and none of Fog
-frag Look(Corner corner, FromLamp lamp, out Color color, Pixel pixel)
+frag Look(Corner corner, FromLamp lamp, out Color color)
 {
-    if (lamp.glow <= 0) pixel.Discard();
+    if (lamp.glow <= 0) this.Discard();
     color = lamp.tint * lamp.glow;
     color.a = corner.uv.x;
 }

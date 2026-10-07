@@ -400,7 +400,7 @@ const cases = {
         ['frag Shade(', [
             ['frag', 'storage.type'], ['Shade', 'entity.name.function'], ['Shade', '!entity.name.function.call'],
             ['BoxVertex', 'entity.name.type'], ['out', 'storage.modifier'], ['Color', 'storage.type.primitive'],
-            ['Box', 'entity.name.type'], ['Pixel', 'entity.name.type'], ['pixel', '!entity'],
+            ['Box', 'entity.name.type'],
         ]],
         ['vert Wave(', [
             ['vert', 'storage.type'], ['Wave', 'entity.name.function'], ['Wave', '!entity.name.function.call'],
@@ -412,7 +412,9 @@ const cases = {
         ['frag = both;', [['frag', '!storage'], ['frag', '!entity'], ['both', '!entity']]],
         ['return vert * both;', [['return', 'keyword.control'], ['vert', '!storage']]],
         ['color = box.wood.Sample(', [['Sample', 'entity.name.function.call'], ['Sample', '!keyword']]],
-        ['if (pixel.position.x < 10) pixel.Discard();', [['Discard', 'entity.name.function.call']]],
+        ['if (this.position.x < 10) this.Discard();', [
+            ['this', 'variable.language.this'], ['this', 'variable.language.this', 2], ['Discard', 'entity.name.function.call'],
+        ]],
         ['Draw.Mesh(models.crate', [['Draw', 'support.class'], ['Mesh', 'entity.name.function.call'], ['Wave', '!storage'], ['Shade', '!storage']]],
         ['Draw.Cube(', [['Draw', 'support.class'], ['Cube', 'entity.name.function.call']]],
     ],

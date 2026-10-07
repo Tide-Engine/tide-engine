@@ -289,14 +289,14 @@ vert PlaceSky(mut Corner corner, Sky sky)
 
 // Night air with each side's light in it, lamps that drift far off, and a
 // floor of dots that light travels through when something big happens.
-frag PaintSky(Corner corner, out Color color, Sky sky, Pixel pixel)
+frag PaintSky(Corner corner, out Color color, Sky sky)
 {
     var half = sky.view.xy;
     var scale = sky.view.z;
     var time = sky.view.w;
-    var across = pixel.position / (half * 2);
+    var across = this.position / (half * 2);
     // Arena units from its middle, y up. What's far moves less with the camera.
-    var here = float2(pixel.position.x - half.x, half.y - pixel.position.y) / scale + sky.look * 0.55;
+    var here = float2(this.position.x - half.x, half.y - this.position.y) / scale + sky.look * 0.55;
     var side = here.x / (ARENA_WIDTH * 0.5);
     var rise = here.y / (ARENA_HEIGHT * 0.5);
 
