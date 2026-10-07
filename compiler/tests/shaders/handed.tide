@@ -102,8 +102,8 @@ frag Snow(Flake flake, Fog fog, out Color color)
 
 view Show(Models models)
 {
-    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Place, Look);
-    Draw3D.Instanced(models.crate, models.faces, models.crates, Place, Misty);
-    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Place); // What it writes goes nowhere
-    Draw2D.Mesh(models.flakes, models.faces, Fall, Snow);
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Place, Look);
+    Draw.Instanced(models.crate, models.faces, models.crates, Place, Misty);
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Place); // What it writes goes nowhere
+    Draw.Mesh(models.flakes, models.faces, Fall, Snow);
 }

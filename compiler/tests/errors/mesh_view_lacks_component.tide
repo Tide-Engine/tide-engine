@@ -37,5 +37,5 @@ frag Shade(V vertex, out Color color, Box box)
 
 view Show(Models models)
 {
-    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
 }

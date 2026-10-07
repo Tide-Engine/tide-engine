@@ -1,4 +1,4 @@
-// expect: a texture is a Grid2<Color>, and this is a Grid2<int>
+// expect: a texture is a Texture, a Grid2<Color> or a Grid2<float>, and this is a Grid2<int>
 scene Main { }
 
 struct V
@@ -37,5 +37,5 @@ frag Shade(V vertex, out Color color, Models models)
 
 view Show(Box box, Models models)
 {
-    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
 }

@@ -1,8 +1,0 @@
-// expect: Draw3D has no function 'SetStencil'
-// expect: it's Draw's, as 2D and 3D draws both take it: 'Draw.SetStencil(...);' for the window's stencil, and a render target has its own, 'target.SetStencil(...);'
-scene Main { }
-
-view Show()
-{
-    Draw3D.SetStencil(StencilTest.Equal, 1);
-}

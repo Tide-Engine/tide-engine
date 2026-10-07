@@ -48,5 +48,5 @@ frag Split(Corner corner, out Color color, Art art)
 
 view Show(Art art)
 {
-    Draw2D.Mesh(art.quad, art.faces, Split);
+    Draw.Mesh(art.quad, art.faces, Split);
 }

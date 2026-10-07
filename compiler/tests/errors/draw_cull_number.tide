@@ -1,8 +1,8 @@
-// expect: no version of Draw3D.SetCull takes (int)
-// expect: Draw3D.SetCull(Cull side)
+// expect: no version of Draw.SetCull takes (int)
+// expect: Draw.SetCull(Cull side)
 scene Main { }
 
 view Show()
 {
-    Draw3D.SetCull(2);
+    Draw.SetCull(2);
 }

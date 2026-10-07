@@ -13,6 +13,6 @@ view Show(mut Art art)
     parallel (var at in art.cells)
     {
         art.cells[at] = Color.red;
-        Paint(Draw2D.list);
+        Paint(Draw.list);
     }
 }

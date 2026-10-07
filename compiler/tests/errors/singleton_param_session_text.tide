@@ -1,4 +1,4 @@
 // expect: functions and methods can't show a whole Session value: its room belongs to the local world
 string Description(Session session) { return $"{session}"; }
 local scene Main { }
-view Show(Session session) { Draw2D.Text(Description(session), float2(0, 0), 16, Color.white); }
+view Show(Session session) { Draw.Text(Description(session), float2(0, 0), 16, Color.white); }

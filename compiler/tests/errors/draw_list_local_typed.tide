@@ -3,5 +3,5 @@ scene Main { }
 
 view Show()
 {
-    DrawList list = Draw2D.list;
+    DrawList list = Draw.list;
 }

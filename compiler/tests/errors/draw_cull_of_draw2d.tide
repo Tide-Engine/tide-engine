@@ -1,8 +1,0 @@
-// expect: Draw2D has no function 'SetCull'
-// expect: it's Draw3D's: 'Draw3D.SetCull(...);'. Only 3D meshes' triangles have a back
-scene Main { }
-
-view Show()
-{
-    Draw2D.SetCull(Cull.None);
-}

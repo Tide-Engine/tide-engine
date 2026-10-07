@@ -15,7 +15,7 @@ override system Combat.Rest(Health health, mut Log log, without Player)
 
 override view Show(Position position)
 {
-    Draw2D.Circle(float2(position.value, 0), 2, Color.red);
+    Draw.Circle(float2(position.value, 0), 2, Color.red);
 }
 
 override event(Spawned) Setup(with Main)

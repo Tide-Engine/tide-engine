@@ -1,6 +1,6 @@
-// expect: Draw2D.Instanced takes a mesh's vertices, its indices, and a list of instances first
+// expect: Draw.Instanced takes a mesh's vertices, its indices, and a list of instances first
 scene Main { }
 view DrawBatch()
 {
-    Draw2D.Instanced([], []);
+    Draw.Instanced([], []);
 }

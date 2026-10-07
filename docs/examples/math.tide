@@ -40,24 +40,24 @@ view Graph(mut Plot plot)
     plot.x += Math.Min(Frame.dt, 0.05) * 0.4;
     if (plot.x > 1) plot.x -= 1;
 
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw2D.SetCamera(float2(0.62, 0.42), 0.85); // The graph goes from (0, 0) to (1, 1)
-    Draw2D.WireRect(float2(0.5), float2(1), Color(0.24, 0.25, 0.27));
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0.62, 0.42), 0.85); // The graph goes from (0, 0) to (1, 1)
+    Draw.WireRect(float2(0.5), float2(1), Color(0.24, 0.25, 0.27));
     for (var i = 0; i < 96; i++)
     {
         float from = i / 96.0;
         float to = (i + 1) / 96.0;
-        Draw2D.Line(float2(from, Curve(plot.curve, from)), float2(to, Curve(plot.curve, to)), 0.012, Color(0.98, 0.75, 0.14));
+        Draw.Line(float2(from, Curve(plot.curve, from)), float2(to, Curve(plot.curve, to)), 0.012, Color(0.98, 0.75, 0.14));
     }
     var y = Curve(plot.curve, plot.x);
-    Draw2D.Line(float2(plot.x, 0), float2(plot.x, y), Color(0.3, 0.3, 0.33));
-    Draw2D.Line(float2(plot.x, y), float2(1.25, y), Color(0.3, 0.3, 0.33));
-    Draw2D.Circle(float2(plot.x, y), 0.03, Color.white);
+    Draw.Line(float2(plot.x, 0), float2(plot.x, y), Color(0.3, 0.3, 0.33));
+    Draw.Line(float2(plot.x, y), float2(1.25, y), Color(0.3, 0.3, 0.33));
+    Draw.Circle(float2(plot.x, y), 0.03, Color.white);
     // The same number, moving something.
-    Draw2D.Circle(float2(1.25, y), 0.06, Color(0.18, 0.83, 0.75));
+    Draw.Circle(float2(1.25, y), 0.06, Color(0.18, 0.83, 0.75));
 
-    Draw2D.SetScreen();
-    Draw2D.Text(Formula(plot.curve), float2(16, 14), 15, Color.white);
+    Draw.SetPixels();
+    Draw.Text(Formula(plot.curve), float2(16, 14), 15, Color.white);
     GUI.SetTheme(GUITheme { radius = 6 });
     GUILayout.Area(Rect(12, Screen.height - 52, Screen.width - 24, 40))
     {

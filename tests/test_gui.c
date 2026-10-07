@@ -123,7 +123,7 @@ TIDE_TEST(gui_isnt_drawn_with_what_the_views_set)
     TIDE_CHECK(memcmp(&text->color, &label.color, sizeof label.color) == 0);
     // The block's end puts back what it found, as it would have without the GUI: the views' red
     tide_draw_pop(&draw, block);
-    TIDE_CHECK(draw.tinted && draw.tint.r == 1.0f && draw.tint.b == 0.0f && draw.tint.a == 0.5f);
+    TIDE_CHECK(draw.place.tinted && draw.place.tint.r == 1.0f && draw.place.tint.b == 0.0f && draw.place.tint.a == 0.5f);
 }
 
 TIDE_TEST(gui_toggle_and_slider_change_values)

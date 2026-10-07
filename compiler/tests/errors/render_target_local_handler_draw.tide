@@ -1,4 +1,4 @@
-// expect: Draw2D can only be used in views, and in functions they call
+// expect: Draw can only be used in views, and in functions they call
 scene Main { }
 local singleton Buffers { RenderTarget scene; }
 local event(Spawned) Work(Buffers buffers) { buffers.scene.Clear(Color.black); }

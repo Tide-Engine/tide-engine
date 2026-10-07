@@ -3,5 +3,5 @@ scene Main { }
 
 view Title()
 {
-    Draw2D.MeasureText("Tide", 32);
+    Draw.MeasureText("Tide", 32);
 }

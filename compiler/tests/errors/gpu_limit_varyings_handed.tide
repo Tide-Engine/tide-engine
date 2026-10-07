@@ -20,5 +20,5 @@ frag Shade(Corner corner, Wide wide, out Color color)
 }
 view Show(Shapes shapes)
 {
-    Draw2D.Mesh(shapes.corners, [0, 1, 2], Spread, Shade);
+    Draw.Mesh(shapes.corners, [0, 1, 2], Spread, Shade);
 }

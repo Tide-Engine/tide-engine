@@ -1,4 +1,4 @@
-// Draw2D.MeasureText: how big Draw2D.Text would draw a text where the view is
+// Draw.MeasureText: how big Draw.Text would draw a text where the view is
 // now, in the units its Draw calls are in.
 local singleton Probe
 {
@@ -18,25 +18,25 @@ scene Main { }
 
 float2 Measure(string text, float size)
 {
-    return Draw2D.MeasureText(text, size);
+    return Draw.MeasureText(text, size);
 }
 
 view Show(mut Probe probe)
 {
-    Draw2D.SetScreen();
-    probe.screen = Draw2D.MeasureText(probe.label, 10);
-    probe.lines = Draw2D.MeasureText("ab\ncdef", 10);
-    probe.nothing = Draw2D.MeasureText(probe.label, 0);
+    Draw.SetPixels();
+    probe.screen = Draw.MeasureText(probe.label, 10);
+    probe.lines = Draw.MeasureText("ab\ncdef", 10);
+    probe.nothing = Draw.MeasureText(probe.label, 0);
 
-    var size = Draw2D.MeasureText(probe.label, 20);
+    var size = Draw.MeasureText(probe.label, 20);
     probe.centered = float2(Screen.width - size.x, Screen.height - size.y) * 0.5;
-    Draw2D.Text(probe.label, probe.centered, 20, Color.white);
+    Draw.Text(probe.label, probe.centered, 20, Color.white);
 
-    Draw2D.SetCamera(float2(2, 3), 5);
-    probe.world = Draw2D.MeasureText(probe.label, 0.5);
+    Draw.SetCamera(float2(2, 3), 5);
+    probe.world = Draw.MeasureText(probe.label, 0.5);
     probe.helper = Measure("ab" + "cd", 0.25);
 
     probe.panel.SetCamera(float2(0), 4);
     probe.target = probe.panel.MeasureText(probe.label, 2);
-    probe.after = Draw2D.MeasureText(probe.label, 0.5);
+    probe.after = Draw.MeasureText(probe.label, 0.5);
 }

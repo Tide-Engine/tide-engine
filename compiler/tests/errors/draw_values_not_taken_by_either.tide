@@ -1,0 +1,25 @@
+// expect: this draw gives a 'Lift', which neither vert 'Raise' nor frag 'Shade' takes
+scene Main { }
+struct Corner { float3 position; float2 uv; }
+struct Glow { Color tint; float gain; }
+struct Lift { float3 by; }
+local singleton Models
+{
+    List<Corner> crate;
+    List<int> faces;
+    List<Glow> glows;
+    RenderTarget bright;
+    RenderTarget spread;
+}
+vert Raise(mut Corner corner)
+{
+    corner.position.y += 1;
+}
+frag Shade(Corner corner, out Color color)
+{
+    color = Color.white;
+}
+view Show(Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Raise, Shade, Lift { by = float3(0, 1, 0) });
+}

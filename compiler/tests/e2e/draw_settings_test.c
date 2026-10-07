@@ -27,6 +27,8 @@ static void frame(const bool leave)
 {
     local.Look.leave = leave;
     tide_draw_reset(&draw);
+    static tide_devices devices;
+    tide_gui_begin(&gui, &devices, tide_f2(800, 600), NULL); // A screen, for the conversions
     tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
     draw_count = 0;
     drawn places[8] = {0};
@@ -86,7 +88,7 @@ static void whole_frame(void)
 TIDE_TEST(draw_settings_wrap_blocks)
 {
     whole_frame();
-    TIDE_REQUIRE(draw_count == 25);
+    TIDE_REQUIRE(draw_count == 37);
     TIDE_CHECK(draw.saved_count == 0); // Every block put back what it found
 
     // Around a block, and one inside another
@@ -122,7 +124,7 @@ TIDE_TEST(draw_settings_wrap_blocks)
 TIDE_TEST(draw_settings_reach_shaders_and_targets)
 {
     whole_frame();
-    TIDE_REQUIRE(draw_count == 25);
+    TIDE_REQUIRE(draw_count == 37);
     // A mesh through a frag: its run's tint and transform, its command's blend
     const drawn *shaded = &draws[11];
     TIDE_REQUIRE(shaded->c->kind == TIDE_DRAW_SHADED && shaded->c->blend == TIDE_BLEND_ADD);
@@ -173,7 +175,25 @@ TIDE_TEST(draw_settings_reach_shaders_and_targets)
     TIDE_REQUIRE(replaced->c->kind == TIDE_DRAW_BLIT && added->c->kind == TIDE_DRAW_BLIT);
     TIDE_CHECK(replaced->c->blend == TIDE_BLEND_REPLACE && added->c->blend == TIDE_BLEND_ADD);
     TIDE_CHECK(colored(draw.runs[replaced->c->shaded.run].tint, 1, 1, 1, 1) && !draw.runs[added->c->shaded.run].moved);
-    TIDE_CHECK(draw.blend == TIDE_BLEND_MULTIPLY && draw.tinted); // Left set by the last view
+    TIDE_CHECK(draw.place.blend == TIDE_BLEND_MULTIPLY && draw.place.tinted); // Left set by the last view
+
+    // One Draw: a target's blend and tint are its own, and the window's its own
+    TIDE_CHECK(draws[25].target == 1 && draws[25].c->blend == TIDE_BLEND_ALPHA && colored(draws[25].c->color, 1, 1, 1, 1));
+    TIDE_CHECK(draws[26].target == 1 && draws[26].c->blend == TIDE_BLEND_MULTIPLY && colored(draws[26].c->color, 1, 0, 0, 1));
+    TIDE_CHECK(draws[27].target == 0 && draws[27].c->blend == TIDE_BLEND_ADD && colored(draws[27].c->color, 0.5f, 0.5f, 0.5f, 1));
+    TIDE_CHECK(draws[28].target == 1 && draws[28].c->blend == TIDE_BLEND_REPLACE && colored(draws[28].c->color, 1, 1, 1, 1));
+    TIDE_CHECK(draws[29].target == 0 && draws[29].c->blend == TIDE_BLEND_ADD && colored(draws[29].c->color, 0.5f, 0.5f, 0.5f, 1));
+    // The 2D camera from a center and a size, and the conversions through it
+    TIDE_CHECK(draws[30].camera == 1 && draws[30].center.x == 3.0f && draws[30].center.y == 4.0f && draws[30].size == 5.0f);
+    TIDE_CHECK(draws[31].c->kind == TIDE_DRAW_RECT && draws[31].c->a.x == 3.0f && draws[31].c->a.y == 4.0f);
+    // The 3D camera from a position, a rotation and a field of view, with a 3D transform, and from matrices
+    TIDE_REQUIRE(draws[32].c->kind == TIDE_DRAW_MESH_3D && draws[33].c->kind == TIDE_DRAW_MESH_3D);
+    TIDE_CHECK(draws[32].camera_3d != 0 && draw.matrices[draws[32].c->mesh3.first].c3.y == 2.0f);
+    TIDE_CHECK(local.Look.depth > 0.0f && local.Look.depth < 1.0f);
+    TIDE_CHECK(draws[33].camera_3d != 0 && draws[33].camera_3d != draws[32].camera_3d);
+    // Every Set form took, and with no arguments both cameras and both transforms went back
+    TIDE_CHECK(plain_rect(34, 0, 0) && draws[34].camera_3d == 0);
+    TIDE_CHECK(draws[35].c->kind == TIDE_DRAW_MESH && draws[36].c->kind == TIDE_DRAW_MESH_3D && draws[36].camera_3d == 0);
 }
 
 // Left through `return`, `try`, `fail`, `break` and `continue`, a block still

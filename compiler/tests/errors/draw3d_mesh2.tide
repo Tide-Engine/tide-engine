@@ -1,3 +1,0 @@
-// expect: Draw3D.Mesh draws 3D vertices, and 'Vertex' has a float2 position
-scene Main { }
-view Show() { Draw3D.Mesh([Vertex { }], [0, 0, 0]); }

@@ -4,5 +4,5 @@ scene Main { }
 
 view Show()
 {
-    Draw3D.SetCull(Cull.Both);
+    Draw.SetCull(Cull.Both);
 }

@@ -1,0 +1,27 @@
+// expect: vert 'Raise' writes a 'Glow' for its frag, and this draw gives a 'Glow' too: a frag that takes one couldn't tell which
+// expect: what a vert hands its frag is a struct of its own, not the one the draw gives after their names
+scene Main { }
+struct Corner { float3 position; float2 uv; }
+struct Glow { Color tint; float gain; }
+struct Lift { float3 by; }
+local singleton Models
+{
+    List<Corner> crate;
+    List<int> faces;
+    List<Glow> glows;
+    RenderTarget bright;
+    RenderTarget spread;
+}
+vert Raise(mut Corner corner, out Glow glow)
+{
+    glow.tint = Color.white;
+    glow.gain = corner.position.y;
+}
+frag Shade(Corner corner, out Color color, Glow glow)
+{
+    color = glow.tint * glow.gain;
+}
+view Show(Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Raise, Shade, Glow { gain = 2 });
+}

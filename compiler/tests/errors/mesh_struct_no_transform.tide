@@ -31,5 +31,5 @@ event(Spawned) Setup(with Main)
 
 view Show(Models models)
 {
-    Draw3D.Mesh(models.crate, models.faces);
+    Draw.Mesh(models.crate, models.faces);
 }

@@ -54,7 +54,7 @@ system Follow(Steer steer, mut Body body, Time time)
 // This machine's side of it: which match it's in is local code's to say.
 view Lobby(Session session, mut Menu menu)
 {
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
+    Draw.Clear(Color(0.086, 0.086, 0.094));
     GUI.SetTheme(GUITheme { radius = 6 });
     GUILayout.Area(Rect(8, 8, Screen.width - 16, session.state == SessionState.Offline ? 118 : 86))
     {
@@ -103,19 +103,19 @@ local event(Disconnected gone) Say(mut Menu menu)
 
 view Point(Devices devices, mut Aim aim)
 {
-    Draw2D.SetCamera(float2(0, 0.6), 2.4);
-    aim.world = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    Draw.SetCamera(float2(0, 0.6), 2.4);
+    aim.world = Draw.ScreenToWorld(Screen.Flip(devices.pointer.position));
     if (Math.LengthSq(devices.pointer.delta) > 0) aim.moved = true;
 }
 
 view Others(Body body, without ownership)
 {
-    Draw2D.Circle(body.position, 0.22, body.color);
+    Draw.Circle(body.position, 0.22, body.color);
 }
 
 view Mine(Body body, with ownership)
 {
-    Draw2D.Circle(body.position, 0.22, body.color);
-    Draw2D.WireCircle(body.position, 0.32, 0.04, Color.white);
-    Draw2D.Text("you", body.position + float2(0, 0.4), 0.22, Color.white, Anchor.LowerCenter);
+    Draw.Circle(body.position, 0.22, body.color);
+    Draw.WireCircle(body.position, 0.32, 0.04, Color.white);
+    Draw.Text("you", body.position + float2(0, 0.4), 0.22, Color.white, Anchor.LowerCenter);
 }

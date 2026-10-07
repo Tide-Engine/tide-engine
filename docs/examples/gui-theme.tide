@@ -27,7 +27,7 @@ GUITheme Pick(int theme, float radius)
 
 view Themed(mut Look look)
 {
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
+    Draw.Clear(Color(0.086, 0.086, 0.094));
 
     // These widgets have the look every frame starts with.
     GUILayout.Area(Rect(12, 12, Screen.width - 24, 86))

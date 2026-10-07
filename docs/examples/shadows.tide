@@ -93,7 +93,7 @@ view Show(mut Stage stage)
         AddSide(stage, float3(0, 0, 1), float3(-1, 0, 0), float3(0, 1, 0));
         AddSide(stage, float3(0, 0, -1), float3(1, 0, 0), float3(0, 1, 0));
         // Depth alone: nothing looks at this target but the frags that read its depth
-        stage.map = RenderTarget(1024, 1024, 1, Format.DepthOnly);
+        stage.map = RenderTarget(1024, 1024, 1, Format.Depth);
         stage.shadow = stage.map.depth;
         stage.corner = [Vertex { position = float2(12, 12) }, Vertex { position = float2(108, 12), uv = float2(1, 0) },
                         Vertex { position = float2(108, 108), uv = float2(1, 1) }, Vertex { position = float2(12, 108), uv = float2(0, 1) }];
@@ -125,13 +125,13 @@ view Show(mut Stage stage)
     stage.map.Instanced(stage.cube, stage.faces, stage.blocks);
 
     // Then the picture: every pixel asks the lamp's image whether the lamp sees it
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
+    Draw.Clear(Color(0.086, 0.086, 0.094));
     var eye = float3(0, 6.5, -9.5);
-    Draw3D.SetCamera(eye, quaternion.LookRotation(Math.Normalize(float3(0, -1.6, 0) - eye), float3(0, 1, 0)), 45);
-    Draw3D.Instanced(stage.cube, stage.faces, stage.blocks, Lit);
+    Draw.SetCamera(eye, quaternion.LookRotation(Math.Normalize(float3(0, -1.6, 0) - eye), float3(0, 1, 0)), 45);
+    Draw.Instanced(stage.cube, stage.faces, stage.blocks, Lit);
 
-    Draw2D.SetScreen();
-    if (stage.showDepth) Draw2D.Mesh(stage.corner, [0, 1, 2, 0, 2, 3], LampDepth);
+    Draw.SetPixels();
+    if (stage.showDepth) Draw.Mesh(stage.corner, [0, 1, 2, 0, 2, 3], LampDepth);
 
     GUI.SetTheme(GUITheme { radius = 6 });
     GUILayout.Area(Rect(12, Screen.height - 124, Screen.width - 24, 112))

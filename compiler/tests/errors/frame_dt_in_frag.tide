@@ -4,4 +4,4 @@ frag Pulse(Vertex vertex, out Color color)
 {
     color = vertex.color * Frame.dt;
 }
-view DrawIt() { Draw2D.Mesh([Vertex { position = float2(0) }], [0, 0, 0], Pulse); }
+view DrawIt() { Draw.Mesh([Vertex { position = float2(0) }], [0, 0, 0], Pulse); }

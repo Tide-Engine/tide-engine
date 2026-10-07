@@ -156,8 +156,8 @@ What the game adds is in `hud.tide`: the input reads the menu's `Lobby.playing`,
 
 ### What a machine shows
 
-- **The crates are one draw.** A view runs for every crate and adds a box to a list, where the body is between its last two ticks. One [`Draw3D.Instanced`](../game/shaders.md#instances-from-a-list) draws the list, through a [frag](../game/shaders.md) that paints a frame around each face and lights it. A frame of a full ring is under thirty draw calls.
-- **The floor is a texture of 15 cells by 15.** A view writes each tile into a local grid, there or about to go, and the frags [sample it](../game/shaders.md#textures): the floor's paint has a line of light along an edge with no tile past it, and the rings under the balls stop where the floor does. Those rings are drawn inside [`Draw3D.Depth(Depth.Read)`](../game/views.md#depth): what stands in front hides them, and they hide nothing.
+- **The crates are one draw.** A view runs for every crate and adds a box to a list, where the body is between its last two ticks. One [`Draw.Instanced`](../game/shaders.md#instances-from-a-list) draws the list, through a [frag](../game/shaders.md) that paints a frame around each face and lights it. A frame of a full ring is under thirty draw calls.
+- **The floor is a texture of 15 cells by 15.** A view writes each tile into a local grid, there or about to go, and the frags [sample it](../game/shaders.md#textures): the floor's paint has a line of light along an edge with no tile past it, and the rings under the balls stop where the floor does. Those rings are drawn inside [`Draw.Depth(Depth.Read)`](../game/views.md#depth): what stands in front hides them, and they hide nothing.
 - **There's no lighting built in,** so everything is a mesh whose corners have a normal, made once in a local singleton, and lit by one function that every frag calls. A ball's frag gives it a white band and a dark cap, so that its roll shows.
 - **The camera shows the whole ring when a ball is still big enough to find at that size,** and as much of it as that takes otherwise, around your ball and towards the middle, where the others are. It always looks from the same side, so up on the screen is the same way in the ring for every player, and for the stick.
 - **The scores are read [`verified`](../game/views.md#confirmed-state):** what the server has confirmed, never a fall this machine only predicted. They're on the seats, so the view goes through them with a [query](../game/views.md#other-entities).
@@ -177,7 +177,7 @@ view Cast(Fx fx, Models models, mut Shadow shadow)
     if (!shadow.made)
     {
         shadow.made = true;
-        shadow.map = RenderTarget(LAMP_PIXELS, LAMP_PIXELS, 1, Format.DepthOnly);
+        shadow.map = RenderTarget(LAMP_PIXELS, LAMP_PIXELS, 1, Format.Depth);
         shadow.depth = shadow.map.depth;
     }
     var turned = quaternion.LookRotation(-Lamp(), float3(0, 1, 0));

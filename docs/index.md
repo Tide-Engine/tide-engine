@@ -61,7 +61,7 @@ system Move(mut Ball ball, Time time)
 
 view DrawBalls(Ball ball)
 {
-    Draw2D.Circle(ball.position, 20, Color.red);
+    Draw.Circle(ball.position, 20, Color.red);
 }
 ```
 

@@ -598,34 +598,34 @@ void DrawTurret(float2 center, float size, TowerKind kind, float aim, float kick
     var way = float2(Math.Cos(aim), Math.Sin(aim));
     if (kind == TowerKind.Gun)
     {
-        Draw2D.Line(center, center + way * size * (0.4 - kick * 0.12), size * 0.13, STEEL);
-        Draw2D.Circle(center, size * 0.2, tint);
+        Draw.Line(center, center + way * size * (0.4 - kick * 0.12), size * 0.13, STEEL);
+        Draw.Circle(center, size * 0.2, tint);
         return;
     }
     if (kind == TowerKind.Bomb)
     {
-        Draw2D.Line(center, center + way * size * (0.28 - kick * 0.12), size * 0.26, STEEL);
-        Draw2D.Circle(center, size * 0.25, tint);
-        Draw2D.Circle(center, size * 0.1, Color(0.1, 0.1, 0.12));
+        Draw.Line(center, center + way * size * (0.28 - kick * 0.12), size * 0.26, STEEL);
+        Draw.Circle(center, size * 0.25, tint);
+        Draw.Circle(center, size * 0.1, Color(0.1, 0.1, 0.12));
         return;
     }
-    Draw2D.Circle(center, size * (0.3 + kick * 0.06), Faded(ICE, 0.35));
-    Draw2D.Rect(center, float2(size * 0.34), Math.PI * 0.25, ICE);
-    Draw2D.Circle(center, size * 0.09, tint);
+    Draw.Circle(center, size * (0.3 + kick * 0.06), Faded(ICE, 0.35));
+    Draw.Rect(center, float2(size * 0.34), Math.PI * 0.25, ICE);
+    Draw.Circle(center, size * 0.09, tint);
 }
 
 void DrawHeart(float2 center, float size, Color color)
 {
-    Draw2D.Circle(center + float2(-size * 0.25, -size * 0.18), size * 0.3, color);
-    Draw2D.Circle(center + float2(size * 0.25, -size * 0.18), size * 0.3, color);
-    Draw2D.Rect(center + float2(0, size * 0.1), float2(size * 0.56), Math.PI * 0.25, color);
+    Draw.Circle(center + float2(-size * 0.25, -size * 0.18), size * 0.3, color);
+    Draw.Circle(center + float2(size * 0.25, -size * 0.18), size * 0.3, color);
+    Draw.Rect(center + float2(0, size * 0.1), float2(size * 0.56), Math.PI * 0.25, color);
 }
 
 // First each frame: the screen is laid out from its size, around the board.
 view Begin(Session session, mut Layout layout, mut Hand hand)
 {
-    Draw2D.Clear(BG);
-    Draw2D.SetScreen();
+    Draw.Clear(BG);
+    Draw.SetPixels();
     float w = Screen.width;
     float h = Screen.height;
     var ui = Math.Clamp(Math.Min(w, h) / 400, 1.0, 1.6);
@@ -638,7 +638,7 @@ view Begin(Session session, mut Layout layout, mut Hand hand)
     layout.origin = float2(Math.Floor((w - cell * COLS) * 0.5), layout.top + above);
     hand.seat = -1;
     if (session.state == SessionState.Connected) return;
-    Draw2D.Text("Joining the game...", float2(w, h) * 0.5, 18 * ui, QUIET, Anchor.MiddleCenter);
+    Draw.Text("Joining the game...", float2(w, h) * 0.5, 18 * ui, QUIET, Anchor.MiddleCenter);
 }
 
 view Me(Builder builder, mut Hand hand, with ownership)
@@ -766,23 +766,23 @@ view DrawBoard(Game game, Layout layout)
 {
     var c = layout.cell;
     var size = float2(COLS, ROWS) * c;
-    Draw2D.RoundRect(layout.origin + size * 0.5, size + float2(6), 6, Color(0.16, 0.17, 0.19));
+    Draw.RoundRect(layout.origin + size * 0.5, size + float2(6), 6, Color(0.16, 0.17, 0.19));
     for (var y = 0; y < ROWS; y++)
     {
         for (var x = 0; x < COLS; x++)
         {
             var shade = (x + y) % 2 == 0 ? Color(0.118, 0.125, 0.135) : Color(0.128, 0.136, 0.147);
-            Draw2D.Rect(ToScreen(layout, float2(x, y)), float2(c), shade);
+            Draw.Rect(ToScreen(layout, float2(x, y)), float2(c), shade);
         }
     }
     // From here on, nothing draws past the board's edge.
-    Draw2D.SetClip(Rect(layout.origin.x, layout.origin.y, size.x, size.y));
+    Draw.SetClip(Rect(layout.origin.x, layout.origin.y, size.x, size.y));
     // The road reddens as the base runs out of lives.
     var danger = 1 - Math.Saturate(game.lives / 10.0);
     var road = Color(0.23 + danger * 0.1, 0.215 - danger * 0.035, 0.2 - danger * 0.03);
     for (var i = 0; i + 1 < WAYPOINTS; i++)
     {
-        Draw2D.Line(ToScreen(layout, float2(Waypoint(i))), ToScreen(layout, float2(Waypoint(i + 1))), c * 0.84, road);
+        Draw.Line(ToScreen(layout, float2(Waypoint(i))), ToScreen(layout, float2(Waypoint(i + 1))), c * 0.84, road);
     }
     // Chevrons along the road say which way the creeps go.
     for (var i = 0; i + 1 < WAYPOINTS; i++)
@@ -797,8 +797,8 @@ view DrawBoard(Game game, Layout layout)
             var at = ToScreen(layout, a + way * k);
             var tip = at + way * c * 0.1;
             var color = Color(0.33, 0.31, 0.29);
-            Draw2D.Line(tip, at - way * c * 0.08 + side * c * 0.14, Math.Max(1.5, c * 0.05), color);
-            Draw2D.Line(tip, at - way * c * 0.08 - side * c * 0.14, Math.Max(1.5, c * 0.05), color);
+            Draw.Line(tip, at - way * c * 0.08 + side * c * 0.14, Math.Max(1.5, c * 0.05), color);
+            Draw.Line(tip, at - way * c * 0.08 - side * c * 0.14, Math.Max(1.5, c * 0.05), color);
         }
     }
 }
@@ -811,10 +811,10 @@ view DrawBase(Game game, Layout layout, Fx fx)
     var home = ToScreen(layout, float2(Waypoint(WAYPOINTS - 1)));
     var glow = Math.Saturate(fx.hurt);
     var size = c * (0.92 + glow * 0.12);
-    Draw2D.RoundRect(home, float2(size), c * 0.22, Color(0.2 + glow * 0.7, 0.12 + glow * 0.5, 0.15 + glow * 0.5));
-    Draw2D.WireRoundRect(home, float2(size), c * 0.22, Math.Max(2, c * 0.06), ROSE);
+    Draw.RoundRect(home, float2(size), c * 0.22, Color(0.2 + glow * 0.7, 0.12 + glow * 0.5, 0.15 + glow * 0.5));
+    Draw.WireRoundRect(home, float2(size), c * 0.22, Math.Max(2, c * 0.06), ROSE);
     DrawHeart(home + float2(0, -c * 0.1), c * 0.42, ROSE);
-    Draw2D.Text($"{game.lives}", home + float2(0, c * 0.22), Math.Max(10, c * 0.3), Color.white, Anchor.MiddleCenter);
+    Draw.Text($"{game.lives}", home + float2(0, c * 0.22), Math.Max(10, c * 0.3), Color.white, Anchor.MiddleCenter);
 }
 
 view DrawTowers(mut Tower tower, Layout layout)
@@ -825,13 +825,13 @@ view DrawTowers(mut Tower tower, Layout layout)
     var size = layout.cell * (1 + tower.pop * tower.pop * 0.4);
     var center = ToScreen(layout, float2(tower.cell));
     var tint = SeatColor(tower.seat);
-    Draw2D.RoundRect(center, float2(size * 0.86), size * 0.2, Color(tint.r * 0.22, tint.g * 0.22, tint.b * 0.22));
-    Draw2D.WireRoundRect(center, float2(size * 0.86), size * 0.2, Math.Max(1.5, size * 0.045), Faded(tint, 0.85));
+    Draw.RoundRect(center, float2(size * 0.86), size * 0.2, Color(tint.r * 0.22, tint.g * 0.22, tint.b * 0.22));
+    Draw.WireRoundRect(center, float2(size * 0.86), size * 0.2, Math.Max(1.5, size * 0.045), Faded(tint, 0.85));
     DrawTurret(center, size, tower.kind, tower.aim, tower.kick, tint);
     for (var i = 0; i < tower.level; i++)
     {
         var x = (i - (tower.level - 1) * 0.5) * size * 0.16;
-        Draw2D.Circle(center + float2(x, size * 0.32), size * 0.045, Color.white);
+        Draw.Circle(center + float2(x, size * 0.32), size * 0.045, Color.white);
     }
 }
 
@@ -842,36 +842,36 @@ view DrawCreeps(mut Creep creep, Layout layout)
     var at = ToScreen(layout, creep.position);
     var radius = CreepRadius(creep.kind) * c;
     var color = creep.flash > 0 ? Color.white : CreepColor(creep.kind);
-    Draw2D.Circle(at + float2(0, radius * 0.3), radius, Color(0, 0, 0, 0.3));
+    Draw.Circle(at + float2(0, radius * 0.3), radius, Color(0, 0, 0, 0.3));
     if (creep.kind == CreepKind.Runner)
     {
-        Draw2D.Rect(at, float2(radius * 1.7), Math.PI * 0.25, color);
+        Draw.Rect(at, float2(radius * 1.7), Math.PI * 0.25, color);
     }
     else if (creep.kind == CreepKind.Brute)
     {
-        Draw2D.RoundRect(at, float2(radius * 1.9), radius * 0.5, color);
+        Draw.RoundRect(at, float2(radius * 1.9), radius * 0.5, color);
     }
     else
     {
-        Draw2D.Circle(at, radius, color);
+        Draw.Circle(at, radius, color);
     }
     if (creep.kind == CreepKind.Boss)
     {
-        Draw2D.WireCircle(at, radius, Math.Max(2, c * 0.06), Color.white);
+        Draw.WireCircle(at, radius, Math.Max(2, c * 0.06), Color.white);
     }
     // Two eyes, on the way it's going
     var way = Math.Normalize(PathPoint(creep.along + 0.4) - PathPoint(creep.along));
     var side = float2(-way.y, way.x);
     var eye = Color(0.16, 0.05, 0.1);
-    Draw2D.Circle(at + (way * 0.4 + side * 0.38) * radius, radius * 0.2, eye);
-    Draw2D.Circle(at + (way * 0.4 - side * 0.38) * radius, radius * 0.2, eye);
-    if (creep.chill > 0) Draw2D.WireCircle(at, radius + c * 0.06, Math.Max(1.5, c * 0.05), ICE);
+    Draw.Circle(at + (way * 0.4 + side * 0.38) * radius, radius * 0.2, eye);
+    Draw.Circle(at + (way * 0.4 - side * 0.38) * radius, radius * 0.2, eye);
+    if (creep.chill > 0) Draw.WireCircle(at, radius + c * 0.06, Math.Max(1.5, c * 0.05), ICE);
     if (creep.hp >= creep.maxHp) return;
     var wide = Math.Max(radius * 2.2, c * 0.5);
     var part = Math.Saturate(creep.hp / creep.maxHp);
     var y = at.y - radius - c * 0.14;
-    Draw2D.Rect(float2(at.x, y), float2(wide + 2, 5), Color(0, 0, 0, 0.7));
-    Draw2D.Rect(float2(at.x - wide * (1 - part) * 0.5, y), float2(wide * part, 3), part > 0.5 ? LIME : part > 0.25 ? AMBER : ROSE);
+    Draw.Rect(float2(at.x, y), float2(wide + 2, 5), Color(0, 0, 0, 0.7));
+    Draw.Rect(float2(at.x - wide * (1 - part) * 0.5, y), float2(wide * part, 3), part > 0.5 ? LIME : part > 0.25 ? AMBER : ROSE);
 }
 
 // Where the friends point.
@@ -879,15 +879,15 @@ view DrawCursors(Builder builder, Layout layout, without ownership)
 {
     var center = ToScreen(layout, float2(builder.cell));
     var tint = SeatColor(builder.seat);
-    Draw2D.WireRoundRect(center, float2(layout.cell * 0.98), layout.cell * 0.2, 2, Faded(tint, 0.8));
+    Draw.WireRoundRect(center, float2(layout.cell * 0.98), layout.cell * 0.2, 2, Faded(tint, 0.8));
     // Their name goes over the tile, or under it along the board's top row
     if (builder.cell.y > 0)
     {
-        Draw2D.Text($"P{builder.seat + 1}", center - float2(0, layout.cell * 0.5), 11 * layout.ui, tint, Anchor.LowerCenter);
+        Draw.Text($"P{builder.seat + 1}", center - float2(0, layout.cell * 0.5), 11 * layout.ui, tint, Anchor.LowerCenter);
     }
     else
     {
-        Draw2D.Text($"P{builder.seat + 1}", center + float2(0, layout.cell * 0.5), 11 * layout.ui, tint, Anchor.UpperCenter);
+        Draw.Text($"P{builder.seat + 1}", center + float2(0, layout.cell * 0.5), 11 * layout.ui, tint, Anchor.UpperCenter);
     }
 }
 
@@ -900,13 +900,13 @@ view DrawHand(Team team, Layout layout, Hand hand)
     var tint = SeatColor(hand.seat);
     if (hand.blocked)
     {
-        Draw2D.WireRoundRect(center, float2(c * 0.98), c * 0.2, 2, Faded(QUIET, 0.6));
+        Draw.WireRoundRect(center, float2(c * 0.98), c * 0.2, 2, Faded(QUIET, 0.6));
         return;
     }
     var kind = hand.tower ? hand.towerKind : hand.kind;
     var reach = Range(kind, hand.tower ? hand.towerLevel : 1) * c;
-    Draw2D.Circle(center, reach, Faded(tint, 0.06));
-    Draw2D.WireCircle(center, reach, 1.5, Faded(tint, 0.55));
+    Draw.Circle(center, reach, Faded(tint, 0.06));
+    Draw.WireCircle(center, reach, 1.5, Faded(tint, 0.55));
     if (!hand.tower)
     {
         Draw.Tint(Color(1, 1, 1, team.gold[hand.seat] >= hand.price ? 0.6 : 0.25))
@@ -914,7 +914,7 @@ view DrawHand(Team team, Layout layout, Hand hand)
             DrawTurret(center, c, kind, -1.5708, 0, tint);
         }
     }
-    Draw2D.WireRoundRect(center, float2(c * 0.98), c * 0.2, 2, Color.white);
+    Draw.WireRoundRect(center, float2(c * 0.98), c * 0.2, 2, Color.white);
 }
 
 view DrawFx(mut Fx fx, Layout layout)
@@ -936,7 +936,7 @@ view DrawFx(mut Fx fx, Layout layout)
             fx.tracers[i] = tracer;
             var fade = 1 - tracer.age / 0.12;
             var width = Math.Max(1.5, c * (tracer.bomb ? 0.1 : 0.06));
-            Draw2D.Line(ToScreen(layout, tracer.from), ToScreen(layout, tracer.to), width, Color(1, 0.9, 0.6, fade * 0.9));
+            Draw.Line(ToScreen(layout, tracer.from), ToScreen(layout, tracer.to), width, Color(1, 0.9, 0.6, fade * 0.9));
             i++;
         }
         i = 0;
@@ -955,16 +955,16 @@ view DrawFx(mut Fx fx, Layout layout)
             var radius = ring.radius * c * (0.35 + 0.65 * Math.Sqrt(grown));
             if (ring.built)
             {
-                Draw2D.WireCircle(at, radius, Math.Max(2, c * 0.07), Color(1, 1, 1, 0.6 * (1 - grown)));
+                Draw.WireCircle(at, radius, Math.Max(2, c * 0.07), Color(1, 1, 1, 0.6 * (1 - grown)));
             }
             else if (ring.frost)
             {
-                Draw2D.WireCircle(at, radius, Math.Max(2, c * 0.08), Faded(ICE, 0.7 * (1 - grown)));
+                Draw.WireCircle(at, radius, Math.Max(2, c * 0.08), Faded(ICE, 0.7 * (1 - grown)));
             }
             else
             {
-                Draw2D.Circle(at, radius, Color(1, 0.55, 0.2, 0.5 * (1 - grown)));
-                Draw2D.WireCircle(at, radius, Math.Max(2, c * 0.06), Color(1, 0.85, 0.5, 0.8 * (1 - grown)));
+                Draw.Circle(at, radius, Color(1, 0.55, 0.2, 0.5 * (1 - grown)));
+                Draw.WireCircle(at, radius, Math.Max(2, c * 0.06), Color(1, 0.85, 0.5, 0.8 * (1 - grown)));
             }
             i++;
         }
@@ -982,7 +982,7 @@ view DrawFx(mut Fx fx, Layout layout)
         bit.position += bit.velocity * dt;
         bit.velocity = bit.velocity * Math.Max(0, 1 - 4 * dt);
         fx.bits[b] = bit;
-        Draw2D.Circle(ToScreen(layout, bit.position), c * 0.07 * (1 - bit.age / 0.45) + 1, Faded(bit.color, 1 - bit.age / 0.45));
+        Draw.Circle(ToScreen(layout, bit.position), c * 0.07 * (1 - bit.age / 0.45) + 1, Faded(bit.color, 1 - bit.age / 0.45));
         b++;
     }
     mut var n = 0;
@@ -997,7 +997,7 @@ view DrawFx(mut Fx fx, Layout layout)
         }
         fx.notes[n] = note;
         var at = ToScreen(layout, note.at) - float2(0, c * (0.3 + note.age * 0.7));
-        Draw2D.Text($"+{note.amount}", at, 12 * layout.ui, Faded(AMBER, Math.Saturate(2.4 - note.age * 3)), Anchor.MiddleCenter);
+        Draw.Text($"+{note.amount}", at, 12 * layout.ui, Faded(AMBER, Math.Saturate(2.4 - note.age * 3)), Anchor.MiddleCenter);
         n++;
     }
 }
@@ -1005,7 +1005,7 @@ view DrawFx(mut Fx fx, Layout layout)
 // Over everything: who's winning, the gold, the towers to pick from, and how to play.
 view Hud(Devices devices, Session session, Game game, Team team, Layout layout, Hand hand, mut Fx fx)
 {
-    Draw2D.SetClip();
+    Draw.SetClip();
     var dt = Math.Min(Frame.dt, 0.05);
     var ui = layout.ui;
     var c = layout.cell;
@@ -1019,35 +1019,35 @@ view Hud(Devices devices, Session session, Game game, Team team, Layout layout, 
     var seconds = int(Math.Ceil(game.timer));
     var number = building ? game.wave + 1 : game.wave;
     var title = $"WAVE {number}";
-    Draw2D.Text(title, float2(left, top + 4 * ui), 18 * ui, Color.white, Font.Bold);
-    Draw2D.Text(building ? $"in {seconds}" : $"{game.left} to go",
-                float2(left + Draw2D.MeasureText(title, 18 * ui, Font.Bold).x + 8 * ui, top + 9 * ui), 12 * ui, building ? TEAL : QUIET);
+    Draw.Text(title, float2(left, top + 4 * ui), 18 * ui, Color.white, Font.Bold);
+    Draw.Text(building ? $"in {seconds}" : $"{game.left} to go",
+                float2(left + Draw.MeasureText(title, 18 * ui, Font.Bold).x + 8 * ui, top + 9 * ui), 12 * ui, building ? TEAL : QUIET);
     DrawHeart(float2(middle.x - 12 * ui, top + 14 * ui), 14 * ui, ROSE);
-    Draw2D.Text($"{game.lives}", float2(middle.x, top + 5 * ui), 16 * ui, game.lives <= 5 ? ROSE : Color.white);
+    Draw.Text($"{game.lives}", float2(middle.x, top + 5 * ui), 16 * ui, game.lives <= 5 ? ROSE : Color.white);
     var gold = $"{team.gold[hand.seat]}";
-    var goldWide = Draw2D.MeasureText(gold, 16 * ui).x;
+    var goldWide = Draw.MeasureText(gold, 16 * ui).x;
     var shake = hand.deny > 0 ? Math.Sin(hand.deny * 40) * 3 * ui * hand.deny : 0.0;
-    Draw2D.Text(gold, float2(right + shake, top + 5 * ui), 16 * ui, hand.deny > 0 ? ROSE : AMBER, Anchor.UpperRight);
-    Draw2D.Circle(float2(right + shake - goldWide - 10 * ui, top + 14 * ui), 6 * ui, AMBER);
-    Draw2D.Circle(float2(right + shake - goldWide - 10 * ui, top + 14 * ui), 3.5 * ui, Color(0.75, 0.5, 0.05));
+    Draw.Text(gold, float2(right + shake, top + 5 * ui), 16 * ui, hand.deny > 0 ? ROSE : AMBER, Anchor.UpperRight);
+    Draw.Circle(float2(right + shake - goldWide - 10 * ui, top + 14 * ui), 6 * ui, AMBER);
+    Draw.Circle(float2(right + shake - goldWide - 10 * ui, top + 14 * ui), 3.5 * ui, Color(0.75, 0.5, 0.05));
 
     // Who's beaten how many creeps.
     var line = top + 28 * ui;
-    Draw2D.Text("Kills", float2(left, line), 12 * ui, QUIET);
-    mut var x = left + Draw2D.MeasureText("Kills", 12 * ui).x + 9 * ui;
+    Draw.Text("Kills", float2(left, line), 12 * ui, QUIET);
+    mut var x = left + Draw.MeasureText("Kills", 12 * ui).x + 9 * ui;
     for (var seat = 0; seat < SEATS; seat++)
     {
         if (!team.taken[seat]) continue;
         var mine = seat == hand.seat;
         var label = mine ? $"You {team.kills[seat]}" : $"P{seat + 1} {team.kills[seat]}";
-        Draw2D.Circle(float2(x + 5 * ui, line + 6.5 * ui), 4.5 * ui, SeatColor(seat));
-        Draw2D.Text(label, float2(x + 13 * ui, line), 12 * ui, mine ? Color.white : QUIET);
-        x += Draw2D.MeasureText(label, 12 * ui).x + 23 * ui;
+        Draw.Circle(float2(x + 5 * ui, line + 6.5 * ui), 4.5 * ui, SeatColor(seat));
+        Draw.Text(label, float2(x + 13 * ui, line), 12 * ui, mine ? Color.white : QUIET);
+        x += Draw.MeasureText(label, 12 * ui).x + 23 * ui;
     }
     var aside = team.players == 1 ? "Invite friends from the menu" : game.best > 0 ? $"Best: wave {game.best}" : "";
-    if (x + Draw2D.MeasureText(aside, 12 * ui).x <= right)
+    if (x + Draw.MeasureText(aside, 12 * ui).x <= right)
     {
-        Draw2D.Text(aside, float2(right, line), 12 * ui, Faded(QUIET, 0.7), Anchor.UpperRight);
+        Draw.Text(aside, float2(right, line), 12 * ui, Faded(QUIET, 0.7), Anchor.UpperRight);
     }
 
     // The towers to pick from.
@@ -1061,15 +1061,15 @@ view Hud(Devices devices, Session session, Game game, Team team, Layout layout, 
         var center = float2(rect.x, rect.y) + size * 0.5;
         var picked = hand.kind == kind;
         var lit = picked || Inside(rect, pointer);
-        Draw2D.RoundRect(center, size, 8 * ui, lit ? Color(0.2, 0.21, 0.24) : Color(0.14, 0.145, 0.16));
-        if (picked) Draw2D.WireRoundRect(center, size, 8 * ui, 2, tint);
+        Draw.RoundRect(center, size, 8 * ui, lit ? Color(0.2, 0.21, 0.24) : Color(0.14, 0.145, 0.16));
+        if (picked) Draw.WireRoundRect(center, size, 8 * ui, 2, tint);
         Draw.Tint(Color(1, 1, 1, team.gold[hand.seat] >= Cost(kind) ? 1 : 0.4))
         {
             DrawTurret(float2(rect.x + rect.height * 0.5, center.y), rect.height * 0.95, kind, -0.7, 0, tint);
-            Draw2D.Text($"{kind}", float2(rect.x + rect.height * 0.98, rect.y + 7 * ui), 14 * ui, Color.white);
-            Draw2D.Text($"{Cost(kind)} gold", float2(rect.x + rect.height * 0.98, rect.y + 24 * ui), 12 * ui, AMBER);
+            Draw.Text($"{kind}", float2(rect.x + rect.height * 0.98, rect.y + 7 * ui), 14 * ui, Color.white);
+            Draw.Text($"{Cost(kind)} gold", float2(rect.x + rect.height * 0.98, rect.y + 24 * ui), 12 * ui, AMBER);
         }
-        Draw2D.Text($"{i + 1}", float2(rect.x + rect.width - 7 * ui, rect.y + 5 * ui), 11 * ui, Faded(QUIET, 0.7), Anchor.UpperRight);
+        Draw.Text($"{i + 1}", float2(rect.x + rect.width - 7 * ui, rect.y + 5 * ui), 11 * ui, Faded(QUIET, 0.7), Anchor.UpperRight);
     }
 
     // One line that says how to play, or what a press here would do.
@@ -1094,7 +1094,7 @@ view Hud(Devices devices, Session session, Game game, Team team, Layout layout, 
         hintColor = ROSE;
     }
     var under = ButtonRect(layout, 0);
-    Draw2D.Text(hint, float2(middle.x, under.y + under.height + 4 * ui), 12 * ui, hintColor, Anchor.UpperCenter);
+    Draw.Text(hint, float2(middle.x, under.y + under.height + 4 * ui), 12 * ui, hintColor, Anchor.UpperCenter);
 
     // A wave's name as it starts, and what clearing one paid.
     fx.banner = Math.Max(0, fx.banner - dt);
@@ -1107,28 +1107,28 @@ view Hud(Devices devices, Session session, Game game, Team team, Layout layout, 
         {
             var tall = fx.sub == "" ? 34 * ui : 52 * ui;
             var at = float2(middle.x, layout.origin.y + tall * 0.5);
-            Draw2D.Rect(at, float2(COLS * c, tall), Color(0.05, 0.05, 0.06, 0.82));
-            Draw2D.Text(fx.title, at - float2(0, fx.sub == "" ? 0 : 9 * ui), 22 * ui, Color.white, Anchor.MiddleCenter, Font.Bold);
-            Draw2D.Text(fx.sub, at + float2(0, 13 * ui), 13 * ui, AMBER, Anchor.MiddleCenter);
+            Draw.Rect(at, float2(COLS * c, tall), Color(0.05, 0.05, 0.06, 0.82));
+            Draw.Text(fx.title, at - float2(0, fx.sub == "" ? 0 : 9 * ui), 22 * ui, Color.white, Anchor.MiddleCenter, Font.Bold);
+            Draw.Text(fx.sub, at + float2(0, 13 * ui), 13 * ui, AMBER, Anchor.MiddleCenter);
         }
     }
     if (fx.hurt > 0)
     {
         var whole = float2(Screen.width, Screen.height);
-        Draw2D.Shape(Shape { center = whole * 0.5, size = whole, color = Color(0.95, 0.15, 0.25, 0.55 * fx.hurt), soft = -70 * ui });
+        Draw.Shape(Shape { center = whole * 0.5, size = whole, color = Color(0.95, 0.15, 0.25, 0.55 * fx.hurt), soft = -70 * ui });
     }
     if (session.state != SessionState.Connected)
     {
         // The match is changing hands: it goes on from here in a moment
-        Draw2D.Rect(middle, float2(COLS * c, 40 * ui), Color(0.05, 0.05, 0.06, 0.85));
-        Draw2D.Text("Reconnecting...", middle, 16 * ui, Color.white, Anchor.MiddleCenter);
+        Draw.Rect(middle, float2(COLS * c, 40 * ui), Color(0.05, 0.05, 0.06, 0.85));
+        Draw.Text("Reconnecting...", middle, 16 * ui, Color.white, Anchor.MiddleCenter);
     }
     if (!over) return;
-    Draw2D.Rect(middle, float2(COLS, ROWS) * c, Color(0.05, 0.05, 0.06, 0.8));
-    Draw2D.Text("THE BASE FELL", middle - float2(0, 40 * ui), 28 * ui, ROSE, Anchor.MiddleCenter, Font.Bold);
-    Draw2D.Text($"You held out until wave {game.wave}", middle, 15 * ui, Color.white, Anchor.MiddleCenter);
-    Draw2D.Text($"Best so far: wave {game.best}", middle + float2(0, 22 * ui), 13 * ui, AMBER, Anchor.MiddleCenter);
-    Draw2D.Text($"A new game starts in {seconds}", middle + float2(0, 48 * ui), 13 * ui, QUIET, Anchor.MiddleCenter);
+    Draw.Rect(middle, float2(COLS, ROWS) * c, Color(0.05, 0.05, 0.06, 0.8));
+    Draw.Text("THE BASE FELL", middle - float2(0, 40 * ui), 28 * ui, ROSE, Anchor.MiddleCenter, Font.Bold);
+    Draw.Text($"You held out until wave {game.wave}", middle, 15 * ui, Color.white, Anchor.MiddleCenter);
+    Draw.Text($"Best so far: wave {game.best}", middle + float2(0, 22 * ui), 13 * ui, AMBER, Anchor.MiddleCenter);
+    Draw.Text($"A new game starts in {seconds}", middle + float2(0, 48 * ui), 13 * ui, QUIET, Anchor.MiddleCenter);
 }
 
 string KindHint(TowerKind kind)

@@ -17,7 +17,7 @@ void Grow(RenderTarget target) { target.Resize(32, 24); }
 void Finish(RenderTarget target) { target.Dispose(); }
 
 // A third of the window, whatever it is: the factor is any number
-RenderTarget Part(float factor) { return RenderTarget.Screen(factor); }
+RenderTarget Part(float factor) { return RenderTarget.Window(factor); }
 
 local event(Release release) Cleanup()
 {
@@ -40,7 +40,7 @@ view Lifecycle(mut Buffers buffers)
         buffers.exact = RenderTarget(320, 180, 1);
         // Logical pixels, like the window's: any number, at the display's scale
         buffers.card = RenderTarget(Screen.width / 4, 90.5);
-        buffers.screen = RenderTarget.Screen();
+        buffers.screen = RenderTarget.Window();
         buffers.half = Part(0.5);
     }
     else if (buffers.frames == 1)

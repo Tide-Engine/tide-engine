@@ -280,7 +280,7 @@ The pointer is the GUI's wherever it's on a widget or an area, from the moment i
 
 ## Widgets of your own
 
-A widget with a look of its own is a control: the view draws it, with `Draw2D` or anything else, and the GUI handles its input.
+A widget with a look of its own is a control: the view draws it, with `Draw` or anything else, and the GUI handles its input.
 
 ```csharp
 local singleton Draft
@@ -290,14 +290,14 @@ local singleton Draft
 
 view Cards(mut Draft draft)
 {
-    Draw2D.SetScreen();
+    Draw.SetPixels();
     for (var slot = 0; slot < 3; slot++)
     {
         var rect = Rect(Screen.width * 0.5 - 330 + slot * 220, 200, 200, 280);
         var card = GUI.Control(rect);
         var lit = card.hovered || card.focused;
         var center = float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5 + (card.pressed ? 2 : 0));
-        Draw2D.RoundRect(center, float2(rect.width, rect.height), 18, lit ? Color(0.2, 0.3, 0.6) : Color(0.1, 0.14, 0.25));
+        Draw.RoundRect(center, float2(rect.width, rect.height), 18, lit ? Color(0.2, 0.3, 0.6) : Color(0.1, 0.14, 0.25));
         if (card.clicked) draft.picked = slot;
     }
 }

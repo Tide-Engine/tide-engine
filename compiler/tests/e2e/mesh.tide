@@ -1,5 +1,5 @@
-// Meshes: Draw2D.Mesh with lists of Vertex and of int, a grid of colors as the
-// texture, Draw2D.Clip, Draw2D.Screen, and C that draws into the view's list.
+// Meshes: Draw.Mesh with lists of Vertex and of int, a grid of colors as the
+// texture, Draw.Clip, Draw.Pixels, and C that draws into the view's list.
 
 local singleton Art
 {
@@ -36,8 +36,8 @@ void Square(float2 at, float size, Color color)
         Vertex { position = at + float2(size, size), uv = float2(1, 1), color = color },
         Vertex { position = at + float2(0, size), uv = float2(0, 1) },
     ];
-    Draw2D.Mesh(corners, [0, 1, 2, 0, 2, 3]);
-    DrawFan(Draw2D.list, 1, color);
+    Draw.Mesh(corners, [0, 1, 2, 0, 2, 3]);
+    DrawFan(Draw.list, 1, color);
 }
 
 view Meshes(mut Art art)
@@ -54,23 +54,23 @@ view Meshes(mut Art art)
     }
     if (art.frames == 3) art.checker[1, 0] = Color.white;
 
-    Draw2D.Clear(Color.black);
+    Draw.Clear(Color.black);
     Square(float2(10, 20), 2, Color.green);
-    Draw2D.SetClip(Rect(1, 2, 3, 4));
-    Draw2D.Mesh(art.kept, [0, 1, 2], art.checker);
-    Draw2D.Mesh(art.kept, [2, 1, 0, 0, 1, 7], art.checker, Filter.Point);
-    Draw2D.Mesh(art.kept, [0, 1, 2], art.open); // No size, so no texture
-    Draw2D.SetClip();
-    Draw2D.SetScreen();
-    var before = Count(Draw2D.list);
-    DrawFan(Draw2D.list, art.frames, Color.cyan);
-    Draw2D.Text($"{Count(Draw2D.list) - before}", float2(0, 0), 10, Color.white);
+    Draw.SetClip(Rect(1, 2, 3, 4));
+    Draw.Mesh(art.kept, [0, 1, 2], art.checker);
+    Draw.Mesh(art.kept, [2, 1, 0, 0, 1, 7], art.checker, Filter.Point);
+    Draw.Mesh(art.kept, [0, 1, 2], art.open); // No size, so no texture
+    Draw.SetClip();
+    Draw.SetPixels();
+    var before = Count(Draw.list);
+    DrawFan(Draw.list, art.frames, Color.cyan);
+    Draw.Text($"{Count(Draw.list) - before}", float2(0, 0), 10, Color.white);
 }
 
 // The match's grids draw too: a view reads them as they are.
 view Match(Canvas canvas)
 {
-    Draw2D.SetCamera(float2(0, 0), 5);
-    Draw2D.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2],
+    Draw.SetCamera(float2(0, 0), 5);
+    Draw.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2],
               canvas.pixels, Filter.Bilinear);
 }

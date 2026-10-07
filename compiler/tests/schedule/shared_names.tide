@@ -52,25 +52,25 @@ event(Hit hit) Count(mut Body body)
 
 view Show(Body body)
 {
-    Draw2D.Circle(float2(body.x, 0), 1, Color.white);
+    Draw.Circle(float2(body.x, 0), 1, Color.white);
 }
 
 [After(Show(Body))]
 view Show(Log log)
 {
-    Draw2D.Text($"{log.hits}", float2(0, 0), 12, Color.white);
+    Draw.Text($"{log.hits}", float2(0, 0), 12, Color.white);
 }
 
 // `verified` tells two apart too, and is written where one is named
 [After(Sure(verified Body))]
 view Sure(Body body)
 {
-    Draw2D.Circle(float2(body.x, 2), 1, Color.red);
+    Draw.Circle(float2(body.x, 2), 1, Color.red);
 }
 
 view Sure(verified Body body)
 {
-    Draw2D.Circle(float2(body.x, 3), 1, Color.green);
+    Draw.Circle(float2(body.x, 3), 1, Color.green);
 }
 
 event(Spawned) Setup(with Main)

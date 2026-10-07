@@ -32,9 +32,9 @@ float StatsCorner(Session session)
 // A crown, for whoever leads: its middle at `at`.
 void Crown(float2 at, float size, Color color)
 {
-    Draw2D.RoundRect(at + float2(0, size * 0.25), float2(size * 1.5, size * 0.45), size * 0.12, color);
+    Draw.RoundRect(at + float2(0, size * 0.25), float2(size * 1.5, size * 0.45), size * 0.12, color);
     for (var i = -1; i <= 1; i++)
-        Draw2D.Circle(at + float2(i * size * 0.55, -size * 0.2), size * 0.28, color);
+        Draw.Circle(at + float2(i * size * 0.55, -size * 0.2), size * 0.28, color);
 }
 
 // The rim is danger, and the screen says so: its edges glow rose while this
@@ -43,14 +43,14 @@ void Crown(float2 at, float size, Color color)
 [Stage(Layers.Hud)]
 view Glare(Fx fx)
 {
-    Draw2D.SetScreen();
+    Draw.SetPixels();
     var screen = float2(Screen.width, Screen.height);
     Draw.Blend(Blend.Add)
     {
         if (fx.peril > 0)
-            Draw2D.Shape(Shape { center = screen * 0.5, size = screen, color = Fade(ROSE, 0.3 * fx.peril * (0.75 + 0.25 * Math.Sin(fx.beat * 3))),
+            Draw.Shape(Shape { center = screen * 0.5, size = screen, color = Fade(ROSE, 0.3 * fx.peril * (0.75 + 0.25 * Math.Sin(fx.beat * 3))),
                                  soft = -Math.Min(screen.x, screen.y) * 0.28 });
-        if (fx.flash > 0) Draw2D.Rect(screen * 0.5, screen, Fade(fx.flashColor, fx.flash));
+        if (fx.flash > 0) Draw.Rect(screen * 0.5, screen, Fade(fx.flashColor, fx.flash));
     }
 }
 
@@ -61,34 +61,34 @@ view Glare(Fx fx)
 [Stage(Layers.Hud, 5)]
 view Tags(Body body, Ball ball, Fx fx, Lobby lobby)
 {
-    Draw2D.SetScreen();
+    Draw.SetPixels();
     if (lobby.page != Page.Playing) return;
     var screen = float2(Screen.width, Screen.height);
-    var place = Draw3D.WorldToScreen(body.position + float3(0, ball.radius + 0.9, 0));
+    var place = Draw.WorldToScreen(body.position + float3(0, ball.radius + 0.9, 0));
     var mine = ball.seat == fx.seat;
     var color = SeatColor(ball.seat);
     var at = float2(Math.Clamp(place.x, 14, screen.x - 14), Math.Clamp(place.y, SCORES + 12, screen.y - 14));
     if (at.x != place.x || at.y != place.y)
     {
         // Out of view: a dot at the edge, on its way
-        Draw2D.Circle(at, 8, Fade(BACK, 0.8));
-        Draw2D.Circle(at, 5.5, color);
+        Draw.Circle(at, 8, Fade(BACK, 0.8));
+        Draw.Circle(at, 5.5, color);
         return;
     }
     if (mine)
     {
         // A ring around it too, which nothing in front of it hides
-        var middle = Draw3D.WorldToScreen(body.position);
-        var top = Draw3D.WorldToScreen(body.position + float3(0, ball.radius, 0));
-        Draw2D.WireCircle(float2(middle.x, middle.y), Math.Max(middle.y - top.y, 6) + 5, 2, Fade(Color.white, 0.55));
+        var middle = Draw.WorldToScreen(body.position);
+        var top = Draw.WorldToScreen(body.position + float3(0, ball.radius, 0));
+        Draw.WireCircle(float2(middle.x, middle.y), Math.Max(middle.y - top.y, 6) + 5, 2, Fade(Color.white, 0.55));
         var bob = Math.Sin(fx.beat * 2) * 1.5;
-        Draw2D.Text("YOU", at + float2(1, -12 + bob + 1.5), 12, Fade(BACK, 0.85), Anchor.MiddleCenter, Font.Bold);
-        Draw2D.Text("YOU", at + float2(0, -12 + bob), 12, Color.white, Anchor.MiddleCenter, Font.Bold);
-        Draw2D.Rect(at + float2(0, bob), float2(7), 0.785, Color.white);
+        Draw.Text("YOU", at + float2(1, -12 + bob + 1.5), 12, Fade(BACK, 0.85), Anchor.MiddleCenter, Font.Bold);
+        Draw.Text("YOU", at + float2(0, -12 + bob), 12, Color.white, Anchor.MiddleCenter, Font.Bold);
+        Draw.Rect(at + float2(0, bob), float2(7), 0.785, Color.white);
         return;
     }
-    Draw2D.Rect(at, float2(8), 0.785, Fade(BACK, 0.8));
-    Draw2D.Rect(at, float2(5.5), 0.785, color);
+    Draw.Rect(at, float2(8), 0.785, Fade(BACK, 0.8));
+    Draw.Rect(at, float2(5.5), 0.785, color);
 }
 
 // The scores are read `verified`: what the server has confirmed, never a
@@ -99,7 +99,7 @@ view Tags(Body body, Ball ball, Fx fx, Lobby lobby)
 [Stage(Layers.Hud, 10)]
 view Scores(verified Ring sure, Fx fx, Lobby lobby, query (verified Seat seat) seats)
 {
-    Draw2D.SetScreen();
+    Draw.SetPixels();
     if (lobby.page != Page.Playing) return;
     mut var live = 0;
     mut var count = 0;
@@ -132,20 +132,20 @@ view Scores(verified Ring sure, Fx fx, Lobby lobby, query (verified Seat seat) s
         var color = SeatColor(seat);
         var middle = float2(first + (place + 0.5) * slot, SCORES * 0.5);
         var pop = fx.pops[seat];
-        Draw2D.Shape(Shape { center = middle, size = float2(Math.Min(slot - 6, 96), SCORES - 8), radius = 10,
+        Draw.Shape(Shape { center = middle, size = float2(Math.Min(slot - 6, 96), SCORES - 8), radius = 10,
                              color = mine ? Color(0.21, 0.215, 0.235, 0.96) : Color(0.115, 0.118, 0.13, 0.9),
                              outline = mine ? 1.5 : 0.0, outlineColor = Fade(Color.white, 0.75) });
         var number = $"{entry.seat.score}";
         var size = Math.Round((narrow ? 18 : 22) * (1 + 0.35 * pop));
-        var across = Draw2D.MeasureText(number, size, Font.Bold).x;
+        var across = Draw.MeasureText(number, size, Font.Bold).x;
         var dot = narrow ? 4.0 : 5.0;
         var left = middle.x - (across + dot * 2 + 6) * 0.5;
         var row = middle.y - 6;
         if (seat == leader) Crown(float2(left + dot, row), dot * 1.4, GOLD);
-        else Draw2D.Circle(float2(left + dot, row), dot, color);
-        Draw2D.Text(number, float2(left + dot * 2 + 6, row), size, pop > 0 ? Mix(color, Color.white, pop) : color,
+        else Draw.Circle(float2(left + dot, row), dot, color);
+        Draw.Text(number, float2(left + dot * 2 + 6, row), size, pop > 0 ? Mix(color, Color.white, pop) : color,
                     Anchor.MiddleLeft, Font.Bold);
-        Draw2D.Text(mine ? "YOU" : manned ? (narrow ? "" : SeatName(seat)) : "BOT", middle + float2(0, 12), mine ? 10 : 9,
+        Draw.Text(mine ? "YOU" : manned ? (narrow ? "" : SeatName(seat)) : "BOT", middle + float2(0, 12), mine ? 10 : 9,
                     mine ? Color.white : Fade(QUIET, 0.8), Anchor.MiddleCenter, mine ? Font.Bold : Font.Regular);
     }
 }
@@ -158,18 +158,18 @@ void Band(float2 middle, float open, bool big, Color tint, string words, string 
     var tall = (big ? 84 : 60) * open;
     Draw.Blend(Blend.Add)
     {
-        Draw2D.Shape(Shape { center = middle, size = float2(screen.x + 80, tall), color = Fade(tint, 0.25 * open), soft = 40 });
+        Draw.Shape(Shape { center = middle, size = float2(screen.x + 80, tall), color = Fade(tint, 0.25 * open), soft = 40 });
     }
-    Draw2D.Shape(Shape { center = middle, size = float2(screen.x + 80, tall), color = Shade(tint, 0.95), color2 = Shade(tint, 0.7) });
-    Draw2D.Rect(middle - float2(0, tall * 0.5 + 4), float2(screen.x, 2 * open), Fade(Color.white, 0.85));
-    Draw2D.Rect(middle + float2(0, tall * 0.5 + 4), float2(screen.x, 2 * open), Fade(Color.white, 0.85));
+    Draw.Shape(Shape { center = middle, size = float2(screen.x + 80, tall), color = Shade(tint, 0.95), color2 = Shade(tint, 0.7) });
+    Draw.Rect(middle - float2(0, tall * 0.5 + 4), float2(screen.x, 2 * open), Fade(Color.white, 0.85));
+    Draw.Rect(middle + float2(0, tall * 0.5 + 4), float2(screen.x, 2 * open), Fade(Color.white, 0.85));
     Draw.Tint(Fade(Color.white, Math.Saturate(open * 1.5 - 0.5)))
     {
         var size = big ? 30 : 20;
         // As big as fits
-        var fit = Math.Min(1, (screen.x - 24) / Math.Max(1, Draw2D.MeasureText(words, size, Font.Bold).x));
-        Draw2D.Text(words, middle - float2(0, under == "" ? 0 : (big ? 9 : 7)), Math.Floor(size * fit), BACK, Anchor.MiddleCenter, Font.Bold);
-        if (under != "") Draw2D.Text(under, middle + float2(0, big ? 21 : 15), big ? 14 : 12, Fade(BACK, 0.8), Anchor.MiddleCenter);
+        var fit = Math.Min(1, (screen.x - 24) / Math.Max(1, Draw.MeasureText(words, size, Font.Bold).x));
+        Draw.Text(words, middle - float2(0, under == "" ? 0 : (big ? 9 : 7)), Math.Floor(size * fit), BACK, Anchor.MiddleCenter, Font.Bold);
+        if (under != "") Draw.Text(under, middle + float2(0, big ? 21 : 15), big ? 14 : 12, Fade(BACK, 0.8), Anchor.MiddleCenter);
     }
 }
 
@@ -180,8 +180,8 @@ void Shout(float2 at, string words, float size, Color color, float age, float sh
     var landed = Math.Round(size * (1 + 0.35 * Math.Max(0, 1 - age * 7)) * 0.5) * 2;
     Draw.Tint(Fade(Color.white, shown))
     {
-        Draw2D.Text(words, at + float2(0, 3), landed, Fade(BACK, 0.75), Anchor.MiddleCenter, Font.Bold);
-        Draw2D.Text(words, at, landed, color, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(words, at + float2(0, 3), landed, Fade(BACK, 0.75), Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(words, at, landed, color, Anchor.MiddleCenter, Font.Bold);
     }
 }
 
@@ -192,7 +192,7 @@ void Shout(float2 at, string words, float size, Color color, float age, float sh
 [Stage(Layers.Hud, 20)]
 view Words(Ring ring, Session session, Lobby lobby, mut Flow flow, mut Fx fx, mut Air air, query (Seat seat) seats)
 {
-    Draw2D.SetScreen();
+    Draw.SetPixels();
     if (lobby.page != Page.Playing) return;
     var screen = float2(Screen.width, Screen.height);
     var big = screen.x >= 640 && screen.y >= 420;
@@ -205,12 +205,12 @@ view Words(Ring ring, Session session, Lobby lobby, mut Flow flow, mut Fx fx, mu
         var rim = ring.next < ring.radius;
         var until = (Falls(ring.gone + 1) - (ROUND - ring.timer) + 59) / 60;
         var words = rim ? $"THE RIM FALLS IN {until}" : left % 60 < 10 ? $"{left / 60}:0{left % 60}" : $"{left / 60}:{left % 60}";
-        var wide = Draw2D.MeasureText(words, 13, Font.Bold).x + 22;
+        var wide = Draw.MeasureText(words, 13, Font.Bold).x + 22;
         var at = float2(screen.x * 0.5, SCORES + 15);
         var pulse = rim ? 0.5 + 0.5 * Math.Sin(fx.beat * 4) : 0.0;
-        Draw2D.Shape(Shape { center = at, size = float2(wide, 24), radius = 12, color = rim ? Mix(Color(0.2, 0.09, 0.11, 0.94), Color(0.3, 0.12, 0.15, 0.94), pulse) : Color(0.1, 0.1, 0.11, 0.9),
+        Draw.Shape(Shape { center = at, size = float2(wide, 24), radius = 12, color = rim ? Mix(Color(0.2, 0.09, 0.11, 0.94), Color(0.3, 0.12, 0.15, 0.94), pulse) : Color(0.1, 0.1, 0.11, 0.9),
                              outline = 1.5, outlineColor = rim ? ROSE : LINE });
-        Draw2D.Text(words, at, 13, rim ? Mix(ROSE, Color.white, pulse * 0.5) : INK, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(words, at, 13, rim ? Mix(ROSE, Color.white, pulse * 0.5) : INK, Anchor.MiddleCenter, Font.Bold);
     }
 
     if (flow.since < 3.4)
@@ -245,11 +245,11 @@ view Words(Ring ring, Session session, Lobby lobby, mut Flow flow, mut Fx fx, mu
         var back = (entry.seat.wait + 59) / 60;
         // Under the clock: the ring is the others' meanwhile, and worth watching
         var at = float2(screen.x * 0.5, SCORES + 70);
-        Draw2D.Shape(Shape { center = at, size = float2(Math.Min(screen.x - 24, 250), 62), radius = 16, color = Color(0.1, 0.1, 0.11, 0.92),
+        Draw.Shape(Shape { center = at, size = float2(Math.Min(screen.x - 24, 250), 62), radius = 16, color = Color(0.1, 0.1, 0.11, 0.92),
                              outline = 1.5, outlineColor = ROSE });
-        Draw2D.Text(flow.by >= 0 && flow.fell < 4 ? $"{SeatName(flow.by)} THREW YOU OUT" : "YOU FELL", at - float2(0, 11), 16,
+        Draw.Text(flow.by >= 0 && flow.fell < 4 ? $"{SeatName(flow.by)} THREW YOU OUT" : "YOU FELL", at - float2(0, 11), 16,
                     flow.by >= 0 && flow.fell < 4 ? SeatColor(flow.by) : ROSE, Anchor.MiddleCenter, Font.Bold);
-        Draw2D.Text(back > 0 ? $"Back in {back}" : "Here you come", at + float2(0, 13), 13, QUIET, Anchor.MiddleCenter);
+        Draw.Text(back > 0 ? $"Back in {back}" : "Here you come", at + float2(0, 13), 13, QUIET, Anchor.MiddleCenter);
     }
     // ...or it threw someone out
     if (flow.threw < 1.6 && flow.whom >= 0)
@@ -258,8 +258,8 @@ view Words(Ring ring, Session session, Lobby lobby, mut Flow flow, mut Fx fx, mu
         var at = float2(screen.x * 0.5, screen.y - 150 - EaseOut(flow.threw) * 8);
         Draw.Tint(Fade(Color.white, shown))
         {
-            Draw2D.Text($"YOU THREW {SeatName(flow.whom)} OUT", at + float2(0, 2), 16, Fade(BACK, 0.8), Anchor.MiddleCenter, Font.Bold);
-            Draw2D.Text($"YOU THREW {SeatName(flow.whom)} OUT", at, 16, SeatColor(flow.whom), Anchor.MiddleCenter, Font.Bold);
+            Draw.Text($"YOU THREW {SeatName(flow.whom)} OUT", at + float2(0, 2), 16, Fade(BACK, 0.8), Anchor.MiddleCenter, Font.Bold);
+            Draw.Text($"YOU THREW {SeatName(flow.whom)} OUT", at, 16, SeatColor(flow.whom), Anchor.MiddleCenter, Font.Bold);
         }
     }
 
@@ -267,9 +267,9 @@ view Words(Ring ring, Session session, Lobby lobby, mut Flow flow, mut Fx fx, mu
     if (session.state == SessionState.Connecting)
     {
         var at = float2(screen.x * 0.5, SCORES + 70);
-        Draw2D.Shape(Shape { center = at, size = float2(Math.Min(screen.x - 16, 300), 34), radius = 17, color = Color(0.1, 0.1, 0.11, 0.94),
+        Draw.Shape(Shape { center = at, size = float2(Math.Min(screen.x - 16, 300), 34), radius = 17, color = Color(0.1, 0.1, 0.11, 0.94),
                              outline = 1.5, outlineColor = LINE });
-        Draw2D.Text("The host left. Finding the match again...", at, 12, INK, Anchor.MiddleCenter);
+        Draw.Text("The host left. Finding the match again...", at, 12, INK, Anchor.MiddleCenter);
     }
 }
 
@@ -278,7 +278,7 @@ view Words(Ring ring, Session session, Lobby lobby, mut Flow flow, mut Fx fx, mu
 [Stage(Layers.Hud, 25)]
 view Floats(Lobby lobby, Fx fx, mut Air air)
 {
-    Draw2D.SetScreen();
+    Draw.SetPixels();
     var screen = float2(Screen.width, Screen.height);
     mut var i = 0;
     while (i < air.labels.count)
@@ -294,13 +294,13 @@ view Floats(Lobby lobby, Fx fx, mut Air air)
         i++;
         if (lobby.page != Page.Playing) continue;
         var t = label.age / label.life;
-        var place = Draw3D.WorldToScreen(label.at + float3(0, EaseOut(t) * 2.2, 0));
+        var place = Draw.WorldToScreen(label.at + float3(0, EaseOut(t) * 2.2, 0));
         // One from past the screen's edge is shown at the edge
         var at = float2(Math.Clamp(place.x, 26, screen.x - 26), Math.Clamp(place.y, SCORES + 30, screen.y - 70));
         var size = Math.Round((label.big ? 30 : 20) * (0.6 + 0.4 * EaseBack(t * 5)));
         var shown = Math.Saturate((1 - t) * 3);
-        Draw2D.Text(label.words, at + float2(1.5, 2), size, Fade(BACK, shown * 0.85), Anchor.MiddleCenter, Font.Bold);
-        Draw2D.Text(label.words, at, size, Fade(Mix(label.color, Color.white, label.big ? 0.35 : 0.1), shown), Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(label.words, at + float2(1.5, 2), size, Fade(BACK, shown * 0.85), Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(label.words, at, size, Fade(Mix(label.color, Color.white, label.big ? 0.35 : 0.1), shown), Anchor.MiddleCenter, Font.Bold);
     }
 }
 
@@ -308,7 +308,7 @@ view Floats(Lobby lobby, Fx fx, mut Air air)
 [Stage(Layers.Hud, 30)]
 view Hints(Ring ring, Devices devices, Fx fx, Flow flow, Lobby lobby)
 {
-    Draw2D.SetScreen();
+    Draw.SetPixels();
     if (lobby.page != Page.Playing || fx.seat < 0 || ring.phase != Phase.Play || !fx.here) return;
     var screen = float2(Screen.width, Screen.height);
     var touch = devices.touchscreen.connected;
@@ -316,12 +316,12 @@ view Hints(Ring ring, Devices devices, Fx fx, Flow flow, Lobby lobby)
     if (!flow.rolled) words = touch ? "Drag anywhere to roll" : "Drag, or use W A S D, to roll";
     else if (!flow.charged) words = touch ? "Hold CHARGE and let go to ram" : "Hold Space and let go to ram";
     if (words == "") return;
-    var wide = Draw2D.MeasureText(words, 14).x + 28;
+    var wide = Draw.MeasureText(words, 14).x + 28;
     // Under the clock, out of the way of the ball it is about
     var at = float2(screen.x * 0.5, SCORES + 50 + Math.Sin(fx.beat * 2) * 2);
-    Draw2D.Shape(Shape { center = at, size = float2(wide, 30), radius = 15, color = Color(0.1, 0.1, 0.11, 0.92),
+    Draw.Shape(Shape { center = at, size = float2(wide, 30), radius = 15, color = Color(0.1, 0.1, 0.11, 0.92),
                          outline = 1.5, outlineColor = LINE });
-    Draw2D.Text(words, at, 14, INK, Anchor.MiddleCenter);
+    Draw.Text(words, at, 14, INK, Anchor.MiddleCenter);
 }
 
 // The controls. A drag anywhere is the stick: from where the pointer, or a
@@ -335,7 +335,7 @@ view Hints(Ring ring, Devices devices, Fx fx, Flow flow, Lobby lobby)
 [Stage(Layers.Hud, 40)]
 view Controls(Session session, Devices devices, mut Hand hand, mut Flow flow, Fx fx, Lobby lobby)
 {
-    Draw2D.SetScreen();
+    Draw.SetPixels();
     hand.playing = lobby.playing;
     hand.stick = float2(0);
     hand.charge = false;
@@ -391,8 +391,8 @@ view Controls(Session session, Devices devices, mut Hand hand, mut Flow flow, Fx
         hand.stick = hard > 1 ? pulled / hard : pulled;
         // The stick, where it was put down
         var base = Screen.Flip(from);
-        Draw2D.WireCircle(base, 44, 2, Fade(Color.white, 0.25));
-        Draw2D.Circle(base + float2(hand.stick.x, -hand.stick.y) * 44, 16, Fade(Color.white, 0.4));
+        Draw.WireCircle(base, 44, 2, Fade(Color.white, 0.25));
+        Draw.Circle(base + float2(hand.stick.x, -hand.stick.y) * 44, 16, Fade(Color.white, 0.4));
     }
     var keys = devices.keyboard;
     if (hand.playing && (Math.Length(hand.stick) > 0.3 || keys.w.pressed || keys.a.pressed || keys.s.pressed || keys.d.pressed
@@ -402,24 +402,24 @@ view Controls(Session session, Devices devices, mut Hand hand, mut Flow flow, Fx
     // The charge button: it fills as the charge winds up, and a ring goes round it until the next one is ready
     var color = fx.seat >= 0 ? SeatColor(fx.seat) : AMBER;
     var ready = fx.cooldown <= 0;
-    Draw2D.Circle(button + float2(0, 3), reach, Fade(BACK, 0.6));
-    Draw2D.Circle(button, reach, Color(0.13, 0.133, 0.147, 0.94));
-    if (fx.winding) Draw2D.Circle(button, reach * (0.35 + 0.65 * fx.charge), Fade(Mix(color, Color.white, fx.charge * 0.6), 0.9));
-    Draw2D.WireCircle(button, reach, 2, ready ? Fade(color, 0.9) : LINE);
-    if (!ready) Draw2D.Arc(button, reach - 1, -Math.PI / 2, Math.TAU * (1 - fx.cooldown / float(COOLDOWN)), 3, color);
-    Draw2D.Text("CHARGE", button, 10, fx.winding ? BACK : ready ? INK : Fade(QUIET, 0.7), Anchor.MiddleCenter, Font.Bold);
+    Draw.Circle(button + float2(0, 3), reach, Fade(BACK, 0.6));
+    Draw.Circle(button, reach, Color(0.13, 0.133, 0.147, 0.94));
+    if (fx.winding) Draw.Circle(button, reach * (0.35 + 0.65 * fx.charge), Fade(Mix(color, Color.white, fx.charge * 0.6), 0.9));
+    Draw.WireCircle(button, reach, 2, ready ? Fade(color, 0.9) : LINE);
+    if (!ready) Draw.Arc(button, reach - 1, -Math.PI / 2, Math.TAU * (1 - fx.cooldown / float(COOLDOWN)), 3, color);
+    Draw.Text("CHARGE", button, 10, fx.winding ? BACK : ready ? INK : Fade(QUIET, 0.7), Anchor.MiddleCenter, Font.Bold);
 
     var narrow = Screen.width < 420 + StatsCorner(session);
     var bottom = screen.y - 52;
     if (session.room != "" && narrow)
     {
         // Beside the Menu button, and narrow enough to leave the stats their corner
-        Draw2D.Text("ROOM", float2(102, screen.y - 39), 10, QUIET, Anchor.MiddleLeft, Font.Bold);
-        Draw2D.Text(session.room, float2(102, screen.y - 23), 14, INK, Anchor.MiddleLeft, Font.Bold);
+        Draw.Text("ROOM", float2(102, screen.y - 39), 10, QUIET, Anchor.MiddleLeft, Font.Bold);
+        Draw.Text(session.room, float2(102, screen.y - 23), 14, INK, Anchor.MiddleLeft, Font.Bold);
     }
     else if (session.room != "")
     {
-        Draw2D.Text($"ROOM {session.room}", float2(104, bottom + 22), 13, INK, Anchor.MiddleLeft, Font.Bold);
+        Draw.Text($"ROOM {session.room}", float2(104, bottom + 22), 13, INK, Anchor.MiddleLeft, Font.Bold);
     }
 }
 
@@ -427,7 +427,7 @@ view Controls(Session session, Devices devices, mut Hand hand, mut Flow flow, Fx
 [Stage(Layers.Hud, 50)]
 view Confetti(Fx fx, mut Air air)
 {
-    Draw2D.SetScreen();
+    Draw.SetPixels();
     mut var i = 0;
     while (i < air.paper.count)
     {
@@ -445,7 +445,7 @@ view Confetti(Fx fx, mut Air air)
         air.paper[i] = bit;
         // It turns over as it falls
         var flat = Math.Abs(Math.Sin(bit.angle * 1.7));
-        Draw2D.Rect(bit.position, float2(bit.size, bit.size * (0.25 + 0.75 * flat)), bit.angle,
+        Draw.Rect(bit.position, float2(bit.size, bit.size * (0.25 + 0.75 * flat)), bit.angle,
                     Fade(bit.color, (1 - bit.age / bit.life) * 3));
         i++;
     }

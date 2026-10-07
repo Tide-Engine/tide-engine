@@ -164,7 +164,7 @@ virtual view Show(Body body, mut Hud hud)
 {
     hud.shown += 1;
     hud.replaced += 1;
-    Draw2D.Circle(float2(body.x, 0), 1, Color.white);
+    Draw.Circle(float2(body.x, 0), 1, Color.white);
 }
 
 virtual local event(Hit hit) ShowHit(mut Hud hud)
@@ -194,7 +194,7 @@ view DrawCorners(mut Hud hud)
         hud.indices.Add(1);
         hud.indices.Add(2);
     }
-    Draw2D.Mesh(hud.corners, hud.indices, Wave, Shade);
+    Draw.Mesh(hud.corners, hud.indices, Wave, Shade);
 }
 
 view Shop(mut Hud hud)

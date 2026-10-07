@@ -12,25 +12,90 @@ static uint8_t channel(const float v)
     return (uint8_t)(v * 255.0f + 0.5f);
 }
 
-// The grid's cells as pixels: its chunks' colors, a byte a channel, and clear
-// where it has no chunk.
-static void grid_pixels(const tide_grid_dir *dir, const tide_heap *heap, const tide_grid_shape *s, uint8_t *pixels)
+uint16_t tide_half_from_float(const float value)
 {
-    const int32_t width = dir->size[0], height = dir->size[1];
-    memset(pixels, 0, (size_t)width * (size_t)height * 4u);
-    const tide_grid_record *records = tide_grid_records(dir);
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof bits);
+    const uint32_t sign = bits >> 16 & 0x8000u;
+    const uint32_t exponent = bits >> 23 & 255u;
+    uint32_t mantissa = bits & 0x7FFFFFu;
+    if (exponent == 255u) return mantissa ? 0u : (uint16_t)(sign | 0x7BFFu); // NaN, and either infinity
+    if (exponent > 142u) return (uint16_t)(sign | 0x7BFFu);                   // 65536 and past it
+    if (exponent < 102u) return (uint16_t)sign;                               // Under half of the least a half holds
+    uint32_t half, rest, tie;
+    if (exponent < 113u) { // The halves with no leading one: what's left of the float's, shifted down
+        mantissa |= 0x800000u;
+        const uint32_t shift = 126u - exponent; // 14 to 24
+        half = mantissa >> shift;
+        rest = mantissa & ((1u << shift) - 1u);
+        tie = 1u << (shift - 1u);
+    } else {
+        half = (exponent - 112u) << 10 | mantissa >> 13;
+        rest = mantissa & 0x1FFFu;
+        tie = 0x1000u;
+    }
+    if (rest > tie || (rest == tie && (half & 1u))) half++; // Carries into the exponent as it should
+    if (half > 0x7BFFu) half = 0x7BFFu;
+    return (uint16_t)(sign | half);
+}
+
+// `bytes` bytes of a grid's memory from `offset`, where they're all within
+// one page of its heap, or within the pack's region for a grid of the pack's
+// (`heap` is NULL): NULL otherwise. A grid's own blocks always are. What a
+// Texture kept past its grid names may be anything, so nothing is read of it
+// that this didn't give.
+static const uint8_t *span(const tide_heap *heap, const uint32_t offset, const uint64_t bytes)
+{
+    if (!heap) return tide_pack_span(offset, bytes);
+    if (!offset || (uint64_t)offset + bytes > heap->used || offset >> TIDE_HEAP_PAGE_SHIFT >= heap->pages) return NULL;
+    const tide_page *p = heap->page[offset >> TIDE_HEAP_PAGE_SHIFT];
+    if (!p) return NULL;
+    const uint64_t first = (uint64_t)p->first << TIDE_HEAP_PAGE_SHIFT;
+    if (offset < first || (uint64_t)offset + bytes > first + p->size) return NULL;
+    return (const uint8_t *)tide_page_data(p) + (offset - first);
+}
+
+// A chunk's place in the grid's pixels, where it has one: its first cell.
+static bool chunk_place(const tide_grid_record *record, const tide_grid_shape *s, const int32_t width, const int32_t height,
+                        int32_t *x0, int32_t *y0)
+{
+    const int64_t x = (int64_t)record->chunk[0] << s->shift[0], y = (int64_t)record->chunk[1] << s->shift[1];
+    if (record->chunk[2] != 0 || x < 0 || y < 0 || x >= width || y >= height) return false;
+    *x0 = (int32_t)x;
+    *y0 = (int32_t)y;
+    return true;
+}
+
+// The grid's cells as pixels: its chunks' colors, a byte a channel, or its
+// floats, 16 bits each, and zeros where it has no chunk.
+static void grid_pixels(const int32_t width, const int32_t height, const tide_grid_record *records, const uint32_t count,
+                        const tide_heap *heap, const tide_grid_shape *s, uint8_t *pixels)
+{
+    const bool colors = s->cell == sizeof(tide_color);
+    const size_t pixel = colors ? 4u : 2u;
+    memset(pixels, 0, (size_t)width * (size_t)height * pixel);
     const int32_t across = 1 << s->shift[0], down = 1 << s->shift[1];
-    for (uint32_t r = 0; r < dir->records; r++) {
-        const tide_color *cells = (const tide_color *)(const void *)tide_grid_chunk_at(heap, records[r].block);
-        const int32_t x0 = records[r].chunk[0] * across, y0 = records[r].chunk[1] * down;
+    for (uint32_t r = 0; r < count; r++) {
+        int32_t x0, y0;
+        const uint8_t *cells = span(heap, records[r].block, tide_grid_chunk_bytes(s));
+        if (!cells || !chunk_place(&records[r], s, width, height, &x0, &y0)) continue;
         for (int32_t y = 0; y < down && y0 + y < height; y++) {
-            uint8_t *out = pixels + ((size_t)(y0 + y) * (size_t)width + (size_t)x0) * 4u;
-            const tide_color *row = cells + (size_t)y * (size_t)across;
-            for (int32_t x = 0; x < across && x0 + x < width; x++, out += 4) {
-                out[0] = channel(row[x].r);
-                out[1] = channel(row[x].g);
-                out[2] = channel(row[x].b);
-                out[3] = channel(row[x].a);
+            uint8_t *out = pixels + ((size_t)(y0 + y) * (size_t)width + (size_t)x0) * pixel;
+            const uint8_t *in = cells + (size_t)y * (size_t)across * s->cell;
+            if (colors) {
+                const tide_color *row = (const tide_color *)(const void *)in;
+                for (int32_t x = 0; x < across && x0 + x < width; x++, out += 4) {
+                    out[0] = channel(row[x].r);
+                    out[1] = channel(row[x].g);
+                    out[2] = channel(row[x].b);
+                    out[3] = channel(row[x].a);
+                }
+            } else {
+                const float *row = (const float *)(const void *)in;
+                for (int32_t x = 0; x < across && x0 + x < width; x++, out += 2) {
+                    const uint16_t half = tide_half_from_float(row[x]);
+                    memcpy(out, &half, sizeof half);
+                }
             }
         }
     }
@@ -38,41 +103,54 @@ static void grid_pixels(const tide_grid_dir *dir, const tide_heap *heap, const t
 
 uint32_t tide_draw_grid_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s)
 {
-    const tide_grid_dir *dir = tide_grid_dir_of(g);
+    const bool colors = s->cell == sizeof(tide_color);
+    // A chunk is a page at the most, which is also what keeps its size in an int
+    if (!g.at || s->dims != 2u || (!colors && s->cell != sizeof(float)) || s->shift[0] + s->shift[1] > TIDE_HEAP_PAGE_SHIFT
+        || s->shift[2] != 0u || tide_grid_chunk_bytes(s) > 1u << TIDE_HEAP_PAGE_SHIFT) {
+        return 0;
+    }
     // The confirmed world's too: only its pages' hashes are asked of it, which it keeps
     tide_heap *heap = (tide_heap *)(uintptr_t)tide_heap_read(g.at >> 30);
     const bool packed = !heap && tide_pack_holds(g.at); // The pack's (tide/pack.h): its chunks in the scratch area's slots
-    if (!dir || (!heap && !packed) || dir->dims != 2u || dir->size[0] <= 0 || dir->size[1] <= 0 || s->cell != sizeof(tide_color)) {
-        return 0;
-    }
+    if (!heap && !packed) return 0;
+    const uint32_t at = g.at & 0x3FFFFFFFu;
+    const uint8_t *block = span(heap, at, sizeof(tide_block) + sizeof(tide_grid_dir));
+    if (!block) return 0;
+    tide_grid_dir dir;
+    memcpy(&dir, block + sizeof(tide_block), sizeof dir);
+    if (dir.dims != 2u || dir.size[0] <= 0 || dir.size[1] <= 0 || dir.records > dir.room) return 0;
+    // No GPU has a texture bigger, and bytes that aren't a grid's could say any size
+    if (dir.size[0] > TIDE_GRID_TEXTURE_MOST || dir.size[1] > TIDE_GRID_TEXTURE_MOST) return 0;
+    // A grid with a size on both axes has as many chunks as cover it, and no more of them than that
+    const uint64_t across = ((uint64_t)dir.size[0] + (1u << s->shift[0]) - 1u) >> s->shift[0];
+    const uint64_t down = ((uint64_t)dir.size[1] + (1u << s->shift[1]) - 1u) >> s->shift[1];
+    if (dir.records > across * down) return 0;
+    if (dir.flat && ((uint64_t)dir.chunks[0] != across || (uint64_t)dir.chunks[1] != down)) return 0;
+    const tide_grid_record *records = (const tide_grid_record *)(const void *)
+        span(heap, at + (uint32_t)(sizeof(tide_block) + sizeof(tide_grid_dir)), (uint64_t)dir.records * sizeof(tide_grid_record));
+    if (dir.records && !records) return 0;
+    const uint32_t format = colors ? TIDE_TEXELS_BYTES : TIDE_TEXELS_HALF;
+    uint64_t version;
     if (packed) { // Its version is its file's, in its directory's header, as the builder put it
-        uint8_t *pixels;
-        const uint32_t slot = tide_draw_texture_slot(d, TIDE_PIXELS_GRID, g.at, tide_pack_grid_version(g), dir->size[0], dir->size[1], &pixels);
-        if (pixels) grid_pixels(dir, NULL, s, pixels);
-        return slot;
-    }
-    // What its cells are: its size, and each chunk's place and hash, which its
-    // heap keeps until the chunk changes
-    const bool whole_pages = tide_grid_chunk_bytes(s) == 1u << TIDE_HEAP_PAGE_SHIFT;
-    const tide_grid_record *records = tide_grid_records(dir);
-    uint64_t version = tide_hash_more(TIDE_HASH_START, dir->size, sizeof dir->size);
-    for (uint32_t r = 0; r < dir->records; r++) {
-        const uint64_t cells = whole_pages ? tide_heap_block_hash(heap, records[r].block)
-                                           : tide_hash(tide_grid_chunk_at(heap, records[r].block), tide_grid_chunk_bytes(s));
-        version = tide_hash_more(version, records[r].chunk, sizeof records[r].chunk);
-        version = tide_hash_more(version, &cells, sizeof cells);
+        version = tide_pack_grid_version(g);
+    } else {
+        // What its cells are: its size, and each chunk's place and hash, which its
+        // heap keeps until the chunk changes
+        const bool whole_pages = tide_grid_chunk_bytes(s) == 1u << TIDE_HEAP_PAGE_SHIFT;
+        version = tide_hash_more(TIDE_HASH_START, dir.size, sizeof dir.size);
+        for (uint32_t r = 0; r < dir.records; r++) {
+            const uint8_t *chunk = span(heap, records[r].block, tide_grid_chunk_bytes(s));
+            const uint64_t cells = !chunk ? 0u : whole_pages ? tide_heap_block_hash(heap, records[r].block)
+                                                             : tide_hash(chunk, tide_grid_chunk_bytes(s));
+            version = tide_hash_more(version, records[r].chunk, sizeof records[r].chunk);
+            version = tide_hash_more(version, &cells, sizeof cells);
+        }
+        version = tide_hash_end(version);
     }
     uint8_t *pixels;
-    const uint32_t slot = tide_draw_texture_slot(d, TIDE_PIXELS_GRID, g.at, tide_hash_end(version), dir->size[0],
-                                                 dir->size[1], &pixels);
-    if (pixels) grid_pixels(dir, heap, s, pixels);
+    const uint32_t slot = tide_draw_texture_slot_as(d, TIDE_PIXELS_GRID, g.at, version, dir.size[0], dir.size[1], format, &pixels);
+    if (pixels) grid_pixels(dir.size[0], dir.size[1], records, dir.records, packed ? NULL : heap, s, pixels);
     return slot;
-}
-
-// A filter from any number, as a Tide enum's value can be.
-static tide_filter filter_of(const int32_t filter)
-{
-    return filter == TIDE_FILTER_POINT ? TIDE_FILTER_POINT : TIDE_FILTER_BILINEAR;
 }
 
 static void mesh_lists(tide_draw_list *d, const tide_list vertices, const tide_list indices, const uint32_t slot,
@@ -96,29 +174,11 @@ void tide_draw_mesh_lists(tide_draw_list *d, const tide_list vertices, const tid
     mesh_lists(d, vertices, indices, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
 }
 
-void tide_draw_mesh_grid_wrapped(tide_draw_list *d, const tide_list vertices, const tide_list indices,
-                                 const tide_grid texture, const tide_grid_shape *shape, const int32_t filter,
-                                 const int32_t wrap)
-{
-    mesh_lists(d, vertices, indices, tide_draw_grid_texture(d, texture, shape), filter_of(filter), tide_wrap_of(wrap));
-}
-
-void tide_draw_mesh_grid(tide_draw_list *d, const tide_list vertices, const tide_list indices, const tide_grid texture,
-                         const tide_grid_shape *shape, const int32_t filter)
-{
-    tide_draw_mesh_grid_wrapped(d, vertices, indices, texture, shape, filter, TIDE_WRAP_CLAMP);
-}
-
-void tide_draw_mesh_texture_wrapped(tide_draw_list *d, const tide_list vertices, const tide_list indices,
-                                    const tide_texture_ref texture, const int32_t filter, const int32_t wrap)
-{
-    mesh_lists(d, vertices, indices, tide_draw_texture_source(d, texture), filter_of(filter), tide_wrap_of(wrap));
-}
-
 void tide_draw_mesh_texture(tide_draw_list *d, const tide_list vertices, const tide_list indices,
-                            const tide_texture_ref texture, const int32_t filter)
+                            const tide_texture_ref texture)
 {
-    tide_draw_mesh_texture_wrapped(d, vertices, indices, texture, filter, TIDE_WRAP_CLAMP);
+    mesh_lists(d, vertices, indices, tide_draw_texture_source(d, texture), tide_texture_filter(texture),
+               tide_texture_wrap(texture));
 }
 
 // ---------------------------------------------------------------------------
@@ -228,33 +288,13 @@ void tide_draw_mesh3_lists(tide_draw_list *d, const tide_list vertices, const ti
     tide_draw_instance(d, mesh3_slot(d, vertices, indices), transform, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
 }
 
-void tide_draw_mesh3_grid_wrapped(tide_draw_list *d, const tide_list vertices, const tide_list indices,
-                                  const tide_float4x4 transform, const tide_grid texture, const tide_grid_shape *shape,
-                                  const int32_t filter, const int32_t wrap)
-{
-    const uint32_t pixels = tide_draw_grid_texture(d, texture, shape);
-    tide_draw_instance(d, mesh3_slot(d, vertices, indices), transform, pixels, filter_of(filter), tide_wrap_of(wrap));
-}
-
-void tide_draw_mesh3_grid(tide_draw_list *d, const tide_list vertices, const tide_list indices,
-                          const tide_float4x4 transform, const tide_grid texture, const tide_grid_shape *shape,
-                          const int32_t filter)
-{
-    tide_draw_mesh3_grid_wrapped(d, vertices, indices, transform, texture, shape, filter, TIDE_WRAP_CLAMP);
-}
-
-void tide_draw_mesh3_texture_wrapped(tide_draw_list *d, const tide_list vertices, const tide_list indices,
-                                     const tide_float4x4 transform, const tide_texture_ref texture,
-                                     const int32_t filter, const int32_t wrap)
-{
-    tide_draw_instance(d, mesh3_slot(d, vertices, indices), transform, tide_draw_texture_source(d, texture),
-                       filter_of(filter), tide_wrap_of(wrap));
-}
-
 void tide_draw_mesh3_texture(tide_draw_list *d, const tide_list vertices, const tide_list indices,
-                             const tide_float4x4 transform, const tide_texture_ref texture, const int32_t filter)
+                             const tide_float4x4 transform, const tide_texture_ref texture)
 {
-    tide_draw_mesh3_texture_wrapped(d, vertices, indices, transform, texture, filter, TIDE_WRAP_CLAMP);
+    // The texture first, as the draws always found theirs before their mesh
+    const uint32_t pixels = tide_draw_texture_source(d, texture);
+    tide_draw_instance(d, mesh3_slot(d, vertices, indices), transform, pixels, tide_texture_filter(texture),
+                       tide_texture_wrap(texture));
 }
 
 static void mesh3_instances_lists(tide_draw_list *d, const tide_list vertices, const tide_list indices,
@@ -277,33 +317,10 @@ void tide_draw_mesh3_instances_lists(tide_draw_list *d, const tide_list vertices
     mesh3_instances_lists(d, vertices, indices, transforms, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
 }
 
-void tide_draw_mesh3_instances_grid_wrapped(tide_draw_list *d, const tide_list vertices, const tide_list indices,
-                                            const tide_list transforms, const tide_grid texture,
-                                            const tide_grid_shape *shape, const int32_t filter, const int32_t wrap)
-{
-    if (tide_list_count(transforms) <= 0) return;
-    mesh3_instances_lists(d, vertices, indices, transforms, tide_draw_grid_texture(d, texture, shape),
-                          filter_of(filter), tide_wrap_of(wrap));
-}
-
-void tide_draw_mesh3_instances_grid(tide_draw_list *d, const tide_list vertices, const tide_list indices,
-                                   const tide_list transforms, const tide_grid texture, const tide_grid_shape *shape,
-                                   const int32_t filter)
-{
-    tide_draw_mesh3_instances_grid_wrapped(d, vertices, indices, transforms, texture, shape, filter, TIDE_WRAP_CLAMP);
-}
-
-void tide_draw_mesh3_instances_texture_wrapped(tide_draw_list *d, const tide_list vertices, const tide_list indices,
-                                               const tide_list transforms, const tide_texture_ref texture,
-                                               const int32_t filter, const int32_t wrap)
-{
-    if (tide_list_count(transforms) <= 0) return;
-    mesh3_instances_lists(d, vertices, indices, transforms, tide_draw_texture_source(d, texture), filter_of(filter),
-                          tide_wrap_of(wrap));
-}
-
 void tide_draw_mesh3_instances_texture(tide_draw_list *d, const tide_list vertices, const tide_list indices,
-                                       const tide_list transforms, const tide_texture_ref texture, const int32_t filter)
+                                       const tide_list transforms, const tide_texture_ref texture)
 {
-    tide_draw_mesh3_instances_texture_wrapped(d, vertices, indices, transforms, texture, filter, TIDE_WRAP_CLAMP);
+    if (tide_list_count(transforms) <= 0) return;
+    mesh3_instances_lists(d, vertices, indices, transforms, tide_draw_texture_source(d, texture),
+                          tide_texture_filter(texture), tide_wrap_of((int32_t)tide_texture_wrap(texture)));
 }

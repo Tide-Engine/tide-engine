@@ -1,0 +1,4 @@
+// expect: a 2D mesh is drawn where its vertices are, through the 2D camera: it takes no transform
+// expect: 'Vertex' is a 2D mesh's vertex, as its 'position' is a float2; a 3D mesh's has a float3
+scene Main { }
+view Show() { Draw.Mesh([Vertex { }], [0, 0, 0], float4x4.identity); }

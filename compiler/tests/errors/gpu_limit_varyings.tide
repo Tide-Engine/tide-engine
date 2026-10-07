@@ -42,5 +42,5 @@ frag Shade(Wide vertex, out Color color, Box box)
 
 view Show(with Box, Shapes shapes)
 {
-    Draw2D.Mesh(shapes.corners, [0, 1, 2], Shade);
+    Draw.Mesh(shapes.corners, [0, 1, 2], Shade);
 }

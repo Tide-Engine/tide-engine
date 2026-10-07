@@ -10,5 +10,5 @@ scene Main { }
 view Count(Box box)
 {
     var copy = box;
-    if (copy.verts.count > 0) Draw2D.Clear(Color.black);
+    if (copy.verts.count > 0) Draw.Clear(Color.black);
 }

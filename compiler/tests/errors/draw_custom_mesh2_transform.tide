@@ -1,0 +1,5 @@
+// expect: a 2D mesh is drawn where its vertices are, through the 2D camera: it takes no transform
+struct Corner { float2 position; }
+frag Shade(Corner vertex, out Color color) { color = Color(vertex.position.x, 0, 0); }
+scene Main { }
+view Show() { Draw.Mesh([Corner { }], [0, 0, 0], float4x4.identity, Shade); }

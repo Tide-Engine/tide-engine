@@ -202,7 +202,7 @@ typedef enum name_kind {
     NAME_SYSTEM,   // Systems and views, in [Before] and [After]
     NAME_FUNCTION,
     NAME_CONST,
-    NAME_SHADER,   // Frags and verts, where Draw2D.Mesh names them
+    NAME_SHADER,   // Frags and verts, where Draw.Mesh names them
     NAME_ASSET,    // Assets: values, like constants, read where their type's values are
 } name_kind;
 
@@ -1817,7 +1817,7 @@ static type check_default_value(checker *c, expr *e, const type want)
     }
     e->type = want;
     if (want.kind == TY_STRING || want.kind == TY_LIST || want.kind == TY_MAP || want.kind == TY_SET) c->prog->uses_text = true;
-    // Generated C writes the type of an enum's default, so it has the enum: `Draw3D.SetDepth(default)` names Depth
+    // Generated C writes the type of an enum's default, so it has the enum: `Draw.SetDepth(default)` names Depth
     if (want.kind == TY_ENUM && want.decl && named_only(c->prog, want.decl) && builds(c->prog)) want.decl->named = true;
     return want;
 }
@@ -2068,9 +2068,9 @@ enum { TARGET_COLORS = 4 }; // The most color images a render target holds, and 
 
 // How many of a call's last arguments are formats: where a render target is
 // made, what it holds comes last, a format for each of its color images.
-// Too many, and Format.DepthOnly written among several, are said here; -1
+// Too many, and Format.Depth written among several, are said here; -1
 // then. `made` is how the target is made, for the notes: "RenderTarget(width,
-// height" or "RenderTarget.Screen(".
+// height" or "RenderTarget.Window(".
 static int target_formats(const checker *c, const expr *e, const char *made)
 {
     int formats = 0;
@@ -2079,15 +2079,15 @@ static int target_formats(const checker *c, const expr *e, const char *made)
     if (formats > TARGET_COLORS) {
         diag_error(e->args.items[e->args.count - formats + TARGET_COLORS]->at,
                    "a render target holds %d color images at the most, and this names %d formats", TARGET_COLORS, formats);
-        diag_note("each format after its size is one color image: '%s%sFormat.Color, Format.Float)' holds two", made, sep);
+        diag_note("each format after its size is one color image: '%s%sFormat.Rgba8, Format.Rgba16f)' holds two", made, sep);
         return -1;
     }
     for (int i = 0; formats > 1 && i < formats; i++) {
         const expr *format = e->args.items[e->args.count - formats + i];
-        if (!format->enum_member || !str_eq_c(format->enum_member->name, "DepthOnly")) continue;
-        diag_error(format->at, "Format.DepthOnly is a target with no color image, so it's a target's only format");
-        diag_note("every target has depth beside its color images, which 'target.depth' reads: '%s%sFormat.Color, "
-                  "Format.Float)' holds two colors and its depth", made, sep);
+        if (!format->enum_member || !str_eq_c(format->enum_member->name, "Depth")) continue;
+        diag_error(format->at, "Format.Depth is a target with no color image, so it's a target's only format");
+        diag_note("every target has depth beside its color images, which 'target.depth' reads: '%s%sFormat.Rgba8, "
+                  "Format.Rgba16f)' holds two colors and its depth", made, sep);
         return -1;
     }
     return formats;
@@ -2116,7 +2116,7 @@ static type check_construct(checker *c, expr *e, const type target)
             return T_ERR;
         }
         // Its size in logical pixels, like the window's, its image's pixels in each (the display's when left
-        // out), and last, what it holds, a format for each of its color images: one of Format.Color when left out
+        // out), and last, what it holds, a format for each of its color images: one of Format.Rgba8 when left out
         const int formats = argc > 2 ? target_formats(c, e, "RenderTarget(width, height") : 0;
         if (formats < 0) return T_ERR;
         const int sizes = argc - formats;
@@ -2126,8 +2126,8 @@ static type check_construct(checker *c, expr *e, const type target)
             diag_error(e->at, "RenderTarget takes its width and height in logical pixels, and its pixels per unit when "
                               "it isn't the display's: 'RenderTarget(width, height)' or 'RenderTarget(width, height, 1)'");
             diag_note("what it holds comes last, when that isn't one color image: 'RenderTarget(width, height, "
-                      "Format.DepthOnly)', or a format for each, 'RenderTarget(width, height, Format.Color, Format.Float)'");
-            diag_note("'RenderTarget.Screen()' is a target that's always the window's size");
+                      "Format.Depth)', or a format for each, 'RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)'");
+            diag_note("'RenderTarget.Window()' is a target that's always the window's size");
             return T_ERR;
         }
         e->call = CALL_BUILTIN;
@@ -2420,7 +2420,7 @@ static bool gpu_refuses(const checker *c, const loc at, const char *what, const 
     return true;
 }
 
-// Draw2D, Draw3D, GUI, GUILayout and Screen belong to a frame: views have one, and the
+// Draw, GUI, GUILayout and Screen belong to a frame: views have one, and the
 // functions they call use theirs. A function that uses them draws, and only
 // views and other functions can call it (see check_drawing_calls).
 static bool check_frame_use(checker *c, const loc at, const char *what)
@@ -2429,9 +2429,9 @@ static bool check_frame_use(checker *c, const loc at, const char *what)
         const bool devices = strcmp(what, "Devices") == 0;
         const bool screen = strcmp(what, "Screen") == 0;
         gpu_refuses(c, at, devices ? "read the devices" : screen ? "read Screen"
-                    : (builtin_draw_owner(str_from(what)) || strcmp(what, "Draw") == 0) ? "draw" : "use the GUI",
+                    : builtin_draw_owner(str_from(what)) ? "draw" : "use the GUI",
                     devices || screen ? "the view puts what it needs in a component or a singleton, which it takes"
-                                      : "it writes its pixel or changes its vertex: a view draws, and names it at Draw2D.Mesh or Draw3D.Mesh");
+                                      : "it writes its pixel or changes its vertex: a view draws, and names it at Draw.Mesh");
         return false;
     }
     if (in_async_function(c)) {
@@ -3180,7 +3180,7 @@ static void check_arg_types(checker *c, expr *e, decl *m)
         } else if (!type_assignable(p->type, arg->type)) {
             diag_error(arg->at, "'" STR_FMT "' takes %s for '" STR_FMT "', not %s", STR_ARG(m->name), type_name(p->type),
                        STR_ARG(p->name), type_name(arg->type));
-            if (p->type.kind == TY_DRAW_LIST) diag_note("pass the frame's draw list: 'Draw2D.list'");
+            if (p->type.kind == TY_DRAW_LIST) diag_note("pass the frame's draw list: 'Draw.list'");
             note_conversion(p->type, arg->type);
         } else if (p->mode == PARAM_MUT) {
             if (through_element(arg)) {
@@ -3596,7 +3596,7 @@ static type check_call(checker *c, expr *e)
     const decl *shader = find_named(c, e->name, e->at, NAME_SHADER);
     if (shader) {
         diag_error(e->at, "'" STR_FMT "' is a %s: the GPU runs it, and nothing calls it", STR_ARG(e->name), shader_word(shader));
-        diag_note("a view's Draw2D.Mesh or Draw3D.Mesh names it, last: the engine gives it what its parameters say");
+        diag_note("a view's Draw.Mesh names it, last: the engine gives it what its parameters say");
         return T_ERR;
     }
     diag_error(e->at, "unknown function '" STR_FMT "'", STR_ARG(e->name));
@@ -4165,7 +4165,7 @@ static type check_clipboard_call(checker *c, expr *e)
     return T_VOID_;
 }
 
-// Draw2D.Mesh and Draw3D.Mesh take the program's own vertex lists and
+// Draw.Mesh takes the program's own vertex lists and
 // List<int>, its Grid2<Color> if it has one, and its Filter and Wrap.
 static void use_mesh_types(checker *c)
 {
@@ -4179,7 +4179,7 @@ static void use_mesh_types(checker *c)
                       pixels, c->prog->filter, c->prog->wrap, list_of(c->prog, (type){TY_FLOAT4X4, NULL}).decl);
 }
 
-// The frag or vert an argument of Draw2D.Mesh names, or NULL: `Shade`, or
+// The frag or vert an argument of Draw.Mesh names, or NULL: `Shade`, or
 // `Effects.Shade`.
 static decl *named_shader(const checker *c, expr *arg)
 {
@@ -4298,22 +4298,19 @@ static const field *field_called(const decl *d, const char *name)
     return NULL;
 }
 
+static const char *draw_receiver(const expr *e);
+
 static void note_mesh_forms(const expr *e)
 {
-    if (e->targeted) {
-        diag_note(e->instanced ? "target.Instanced(vertices, indices, instances) draws a 2D or 3D mesh; then come a texture, its filter and its wrap, or a vert and a frag by name"
-                               : "target.Mesh(vertices, indices[, transform]) draws a 2D or 3D mesh; then come a texture, its filter and its wrap, or a vert and a frag by name");
-        return;
-    }
-    const str owner = e->object->name;
+    const char *on = draw_receiver(e);
     if (e->instanced) {
-        diag_note(STR_FMT ".Instanced(vertices, indices, instances) draws a %dD mesh; then come a texture, its filter and "
-                  "its wrap, or a vert and a frag by name", STR_ARG(owner), str_eq_c(owner, "Draw3D") ? 3 : 2);
+        diag_note("%s.Instanced(vertices, indices, instances) draws a 2D or 3D mesh, by its vertices' position; then come a "
+                  "texture, its filter and its wrap, or a vert and a frag by name, and after those a struct of values they read", on);
         return;
     }
-    diag_note(STR_FMT ".Mesh(vertices, indices%s) draws a %dD mesh; then come a texture, its filter and its wrap, or a vert and a "
-              "frag by name",
-              STR_ARG(owner), str_eq_c(owner, "Draw3D") ? ", transform" : "", str_eq_c(owner, "Draw3D") ? 3 : 2);
+    diag_note("%s.Mesh(vertices, indices) draws a 2D mesh, and %s.Mesh(vertices, indices, transform) a 3D one, by its "
+              "vertices' position; then come a texture, its filter and its wrap, or a vert and a frag by name, and after those "
+              "a struct of values they read", on, on);
 }
 
 // Whether a vert writes a struct of this type for its frag: `out FromLamp lamp`.
@@ -4326,15 +4323,35 @@ static bool shader_writes(const decl *vert, const decl *type)
     return false;
 }
 
-// A view's Draw2D.Mesh or Draw3D.Mesh through a frag or a vert: the components they read are
+// Whether a frag or vert reads a struct of this type that a draw supplies: its
+// instances', or the values it gives after its vert and frag.
+static bool shader_takes_struct(const decl *code, const decl *type)
+{
+    for (int i = 1; code && i < code->params.count; i++) {
+        const param *p = &code->params.items[i];
+        if (p->type.kind == TY_STRUCT && p->mode != PARAM_MUT && p->type.decl == type) return true;
+    }
+    return false;
+}
+
+// A view's Draw.Mesh through a frag or a vert: the components they read are
 // those of the entity the view runs for, so it has to have them, and a struct
-// its frag reads is its vert's to write, or what its instances are.
+// its frag reads is its vert's to write, what its instances are, or the
+// values the draw gives after their names.
 static void check_shader_binding(const checker *c, const expr *e, const expr *name, const decl *shader)
 {
     decl *view = c->system;
+    const char *draw = e->blit ? "Draw.Blit" : e->targeted ? (e->instanced ? "target.Instanced" : "target.Mesh")
+                     : e->instanced ? "Draw.Instanced" : "Draw.Mesh";
     for (int i = 1; i < shader->params.count; i++) {
         const param *p = &shader->params.items[i];
         if (p->type.kind == TY_STRUCT && p->is_out) { // What a vert writes for its frag
+            if (e->values_type == p->type.decl) {
+                diag_error(name->at, "vert '" STR_FMT "' writes a '" STR_FMT "' for its frag, and this draw gives a '"
+                           STR_FMT "' too: a frag that takes one couldn't tell which", STR_ARG(shader->name),
+                           STR_ARG(p->type.decl->name), STR_ARG(p->type.decl->name));
+                diag_note("what a vert hands its frag is a struct of its own, not the one the draw gives after their names");
+            }
             if (e->instance_type == p->type.decl) {
                 diag_error(name->at, "vert '" STR_FMT "' writes a '" STR_FMT "' for its frag, and this draw's instances are '"
                            STR_FMT "'s too: a frag that takes one couldn't tell which", STR_ARG(shader->name),
@@ -4347,6 +4364,7 @@ static void check_shader_binding(const checker *c, const expr *e, const expr *na
             // The draw's vert writes it, or its instances are it
             if (e->vert && shader_writes(e->vert, p->type.decl)) continue;
             if (e->instanced && p->type.decl == e->instance_type) continue;
+            if (p->type.decl == e->values_type) continue;
             if (e->vert) {
                 diag_error(name->at, "frag '" STR_FMT "' reads a '" STR_FMT "', which vert '" STR_FMT "' doesn't write",
                            STR_ARG(shader->name), STR_ARG(p->type.decl->name), STR_ARG(e->vert->name));
@@ -4355,19 +4373,20 @@ static void check_shader_binding(const checker *c, const expr *e, const expr *na
                            STR_ARG(shader->name), STR_ARG(p->type.decl->name));
             }
             diag_note("a frag's struct is what the draw's vert writes for it, 'out " STR_FMT " " STR_FMT "' among the vert's "
-                      "parameters, or an element of the list an Instanced draw is given, a List<" STR_FMT ">",
-                      STR_ARG(p->type.decl->name), STR_ARG(p->name), STR_ARG(p->type.decl->name));
+                      "parameters, an element of the list an Instanced draw is given, a List<" STR_FMT ">, or the values the "
+                      "draw gives after its frag, '%s(..., " STR_FMT ", " STR_FMT " { ... })'",
+                      STR_ARG(p->type.decl->name), STR_ARG(p->name), STR_ARG(p->type.decl->name), draw, STR_ARG(shader->name),
+                      STR_ARG(p->type.decl->name));
             continue;
         }
-        if (p->type.kind == TY_STRUCT && p->mode != PARAM_MUT) {
-            if (!e->instanced) {
-                diag_error(name->at, "%s '" STR_FMT "' reads instance data of '" STR_FMT "': draw it with " STR_FMT ".Instanced and a List<" STR_FMT ">",
-                           shader_word(shader), STR_ARG(shader->name), STR_ARG(p->type.decl->name), STR_ARG(e->object->name), STR_ARG(p->type.decl->name));
-            } else if (p->type.decl != e->instance_type) {
-                diag_error(name->at, "%s '" STR_FMT "' reads instance data of '" STR_FMT "', which this draw's instances don't supply",
-                           shader_word(shader), STR_ARG(shader->name), STR_ARG(p->type.decl->name));
-                diag_note("its read-only struct parameter has to be the element type of the draw's instance list");
-            }
+        if (p->type.kind == TY_STRUCT && p->mode != PARAM_MUT) { // A vert's: its instances', or the draw's values
+            if (e->instanced && p->type.decl == e->instance_type) continue;
+            if (p->type.decl == e->values_type) continue;
+            diag_error(name->at, "vert '" STR_FMT "' reads a '" STR_FMT "', which this draw doesn't supply",
+                       STR_ARG(shader->name), STR_ARG(p->type.decl->name));
+            diag_note("a vert's struct is an element of the list an Instanced draw is given, a List<" STR_FMT ">, or the "
+                      "values a draw gives after its vert and frag, '%s(..., " STR_FMT ", " STR_FMT " { ... })'",
+                      STR_ARG(p->type.decl->name), draw, STR_ARG(shader->name), STR_ARG(p->type.decl->name));
             continue;
         }
         if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON) continue;
@@ -4401,28 +4420,70 @@ static bool shader_takes_texture(const decl *code)
     return false;
 }
 
+// The values a draw gives its vert and frag, written after their names: a
+// struct's, which a vert or frag takes as a read-only parameter of that type.
+// They're sent once for the draw, as a singleton's fields are.
+static bool check_draw_values(checker *c, expr *e, expr *values)
+{
+    e->values = values;
+    const type t = check_expr(c, values);
+    if (t.kind == TY_ERROR) return false;
+    if (t.kind != TY_STRUCT) {
+        diag_error(values->at, "what a draw gives after its vert and frag is a struct's value, which they read through a "
+                   "parameter of its type, and this is %s", type_name(t));
+        diag_note("like 'Draw.Blit(source, destination, Blur, BlurParams { direction = float2(1, 0) })', for a "
+                  "'frag Blur(Vertex vertex, out Color color, Texture source, BlurParams params)'");
+        return false;
+    }
+    e->values_type = t.decl;
+    return true;
+}
+
+// ...which one of them has to take, or the draw gave them for nothing.
+static bool check_values_taken(const expr *e)
+{
+    if (!e->values_type || shader_takes_struct(e->vert, e->values_type) || shader_takes_struct(e->frag, e->values_type)) return true;
+    const str type = e->values_type->name;
+    if (e->vert && e->frag) {
+        diag_error(e->values->at, "this draw gives a '" STR_FMT "', which neither vert '" STR_FMT "' nor frag '" STR_FMT "' takes",
+                   STR_ARG(type), STR_ARG(e->vert->name), STR_ARG(e->frag->name));
+    } else {
+        const decl *code = e->vert ? e->vert : e->frag;
+        diag_error(e->values->at, "this draw gives a '" STR_FMT "', which %s '" STR_FMT "' doesn't take", STR_ARG(type),
+                   shader_word(code), STR_ARG(code->name));
+    }
+    diag_note("a vert or a frag reads a draw's values through a read-only parameter of their type, '" STR_FMT " values', "
+              "after its vertex", STR_ARG(type));
+    return false;
+}
+
 // A blit has a fixed full-destination Vertex quad. Its frag receives the
 // explicit source as a Texture, alongside the usual entity and singleton data.
 static type check_blit(checker *c, expr *e)
 {
     e->blit = true;
-    // Draw.Blit(source, destination[, blend], frag)
-    const int last = e->args.count - 1;
-    decl *frag = e->args.count == 3 || e->args.count == 4 ? named_shader(c, e->args.items[last]) : NULL;
-    for (int i = 0; i < e->args.count; i++) {
+    // Draw.Blit(source, destination[, blend], frag[, values])
+    int count = e->args.count;
+    decl *frag = count >= 3 ? named_shader(c, e->args.items[count - 1]) : NULL;
+    expr *values = NULL;
+    if (!frag && count >= 4 && (frag = named_shader(c, e->args.items[count - 2])) != NULL) values = e->args.items[--count];
+    const int last = count - 1;
+    for (int i = 0; i < count; i++) {
         if (i != last || !frag) check_expr(c, e->args.items[i]);
     }
+    const bool values_ok = !values || check_draw_values(c, e, values);
     if (!check_frame_use(c, e->at, "Draw")) return T_ERR;
-    if (e->args.count != 3 && e->args.count != 4) {
+    if (count != 3 && count != 4) {
         diag_error(e->at, "Blit takes an explicit source texture, destination target and frag: 'Draw.Blit(source, destination, Blur)'");
-        diag_note("and how it goes over the destination, before the frag: 'Draw.Blit(source, destination, Blend.Add, Blur)'");
+        diag_note("and how it goes over the destination, before the frag: 'Draw.Blit(source, destination, Blend.Add, Blur)'; "
+                  "and after the frag, a struct of values it reads: 'Draw.Blit(source, destination, Blur, BlurParams { ... })'");
         return T_ERR;
     }
     const type source = e->args.items[0]->type;
-    const bool grid = source.kind == TY_GRID && source.decl->dims == 2 && source.decl->fields.items[0].type.kind == TY_COLOR;
     bool ok = true;
-    if (source.kind != TY_TEXTURE && !grid && source.kind != TY_ERROR) {
-        diag_error(e->args.items[0]->at, "Blit's source is a Texture or Grid2<Color>, not %s", type_name(source));
+    if (source.kind != TY_TEXTURE && !type_is_texture_grid(source) && source.kind != TY_ERROR) {
+        diag_error(e->args.items[0]->at, "Blit's source is a Texture, which a Grid2<Color> and a Grid2<float> are too, not %s",
+                   type_name(source));
         ok = false;
     }
     if (e->args.items[1]->type.kind != TY_RENDER_TARGET && e->args.items[1]->type.kind != TY_ERROR) {
@@ -4435,7 +4496,7 @@ static type check_blit(checker *c, expr *e)
         diag_error(source_expr->at, "Blit can't sample the color image of its own destination");
         ok = false;
     }
-    if (e->args.count == 4) {
+    if (count == 4) {
         const type blend = e->args.items[2]->type;
         if (blend.kind != TY_ERROR && !(blend.kind == TY_ENUM && blend.decl == c->prog->blend)) {
             diag_error(e->args.items[2]->at, "Blit's third of four is how it goes over its destination, a Blend like Blend.Add, "
@@ -4445,9 +4506,11 @@ static type check_blit(checker *c, expr *e)
     }
     if (!frag || !frag->is_frag) {
         diag_error(e->args.items[last]->at, "Blit names a frag last, like 'Draw.Blit(source, destination, Blur)'");
+        diag_note("or before the struct of values it gives the frag: 'Draw.Blit(source, destination, Blur, BlurParams { ... })'");
         return T_ERR;
     }
     e->frag = frag;
+    if (!values_ok) ok = false;
     if (!frag->params.count || frag->params.items[0].type.kind != TY_STRUCT
         || frag->params.items[0].type.decl != c->prog->vertex) {
         diag_error(e->args.items[last]->at, "Blit's frag runs on Vertex, its full-destination quad");
@@ -4463,39 +4526,46 @@ static type check_blit(checker *c, expr *e)
     } else if (ok) {
         const int errors = diag_error_count();
         check_shader_binding(c, e, e->args.items[last], frag);
-        ok = diag_error_count() == errors;
+        ok = diag_error_count() == errors && check_values_taken(e);
     }
     if (!ok || source.kind == TY_ERROR || e->args.items[1]->type.kind == TY_ERROR) return T_ERR;
-    if (e->args.count == 4 && e->args.items[2]->type.kind == TY_ERROR) return T_ERR;
+    if (count == 4 && e->args.items[2]->type.kind == TY_ERROR) return T_ERR;
     e->call = CALL_DRAW;
     e->draw_dims = 2;
-    vec_push(e->arg_want, source);
+    vec_push(e->arg_want, ((type){TY_TEXTURE, NULL})); // A grid is the texture it is
     vec_push(e->arg_want, e->args.items[1]->type);
-    if (e->args.count == 4) vec_push(e->arg_want, e->args.items[2]->type);
+    if (count == 4) vec_push(e->arg_want, e->args.items[2]->type);
     const mesh_draw draw = {e, c->system};
     vec_push(c->prog->mesh_draws, draw);
     return T_VOID_;
 }
 
-// Draw2D.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]][, vert][, frag]).
-// A List<Vertex> or a List<Vertex3> with no vert and no frag is the built-in
-// call it always was. Anything else draws through a shader tidec writes (see
-// shader.c): a vertex struct of the game's, a vert, a frag.
+// Draw.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]][, vert][, frag][, values]).
+// Whether the mesh is 2D or 3D is its vertices' to say, by their position: a
+// float2's goes through the 2D camera, a float3's takes a transform and goes
+// through the 3D one. A List<Vertex> or a List<Vertex3> with no vert and no
+// frag is the built-in call it always was. Anything else draws through a
+// shader tidec writes (see shader.c): a vertex struct of the game's, a vert,
+// a frag.
 static type check_mesh_draw(checker *c, expr *e)
 {
     program *prog = c->prog;
-    const str owner = e->object->name;
-    const int wanted_dims = e->targeted ? 0 : str_eq_c(owner, "Draw3D") ? 3 : 2;
     const bool instanced = e->instanced = str_eq_c(e->name, "Instanced");
-    const char *draw_name = e->targeted ? (instanced ? "RenderTarget.Instanced" : "RenderTarget.Mesh")
-                           : wanted_dims == 3 ? (instanced ? "Draw3D.Instanced" : "Draw3D.Mesh")
-                                          : (instanced ? "Draw2D.Instanced" : "Draw2D.Mesh");
-    // The vert and the frag it names come last, the vert first
+    const char *draw_name = e->targeted ? (instanced ? "target.Instanced" : "target.Mesh")
+                                        : (instanced ? "Draw.Instanced" : "Draw.Mesh");
+    // The vert and the frag it names come last, the vert first, and after
+    // them a struct of values they read, the same for the whole draw
     int count = e->args.count;
     bool order_said = false;
+    expr *values = NULL;
     while (count > 0) {
         expr *name = e->args.items[count - 1];
         decl *shader = named_shader(c, name);
+        if (!shader && count == e->args.count && count > 2) { // Its values, if a vert or a frag is named before them
+            values = name;
+            count--;
+            continue;
+        }
         if (!shader) break;
         decl **slot = shader->is_frag ? &e->frag : &e->vert;
         if (*slot) {
@@ -4511,7 +4581,13 @@ static type check_mesh_draw(checker *c, expr *e)
         count--;
     }
     const bool shaded = e->vert || e->frag;
-    if (!check_frame_use(c, e->at, e->targeted ? "Draw2D" : str_to_cstr(owner))) {
+    if (values && !shaded) { // An argument like the others
+        values = NULL;
+        count = e->args.count;
+    }
+    const int named_end = e->args.count - (values ? 1 : 0); // Past the vert and the frag
+    const bool values_ok = !values || check_draw_values(c, e, values);
+    if (!check_frame_use(c, e->at, "Draw")) {
         for (int i = 0; i < count; i++) {
             if (e->args.items[i]->kind != E_DEFAULT) check_expr(c, e->args.items[i]);
         }
@@ -4529,6 +4605,7 @@ static type check_mesh_draw(checker *c, expr *e)
     // the list's first value names
     expr *vertices = e->args.items[0];
     decl *vertex = NULL;
+    int early = -1; // An argument checked before its turn, to tell the vertices' dimension
     if (vertices->kind == E_LIST) {
         const decl *shader = e->vert ? e->vert : e->frag;
         const expr *first = vertices->args.count ? vertices->args.items[0] : NULL;
@@ -4538,7 +4615,12 @@ static type check_mesh_draw(checker *c, expr *e)
             decl *named = find_type(c, first->name, first->at);
             if (named && named->kind == DECL_STRUCT) vertex = named;
         }
-        if (!vertex) vertex = wanted_dims == 3 ? prog->vertex3 : prog->vertex;
+        // `[]` says nothing: a transform after the indices makes it a 3D mesh's, checked here and not again
+        if (!vertex && !instanced && count > 2 && e->args.items[2]->kind != E_LIST && e->args.items[2]->kind != E_DEFAULT) {
+            early = 2;
+            if (check_expr(c, e->args.items[2]).kind == TY_FLOAT4X4) vertex = prog->vertex3;
+        }
+        if (!vertex) vertex = prog->vertex;
         check_expr_want(c, vertices, list_of(prog, decl_type(vertex)));
     } else {
         const type t = check_expr(c, vertices);
@@ -4554,6 +4636,7 @@ static type check_mesh_draw(checker *c, expr *e)
     const type index_type = indices->kind == E_LIST ? check_expr_want(c, indices, index_list) : check_expr(c, indices);
     for (int i = 2; i < count; i++) {
         expr *arg = e->args.items[i];
+        if (i == early) continue;
         if (instanced && i == 2 && arg->kind == E_LIST) {
             type element = {TY_FLOAT4X4, NULL};
             const decl *stages[] = {e->vert, e->frag};
@@ -4563,7 +4646,9 @@ static type check_mesh_draw(checker *c, expr *e)
                 for (int p = 1; code && p < code->params.count; p++) {
                     const param *data = &code->params.items[p];
                     // A frag's struct that the vert writes is the vert's, not the instances'
-                    if (data->type.kind == TY_STRUCT && data->mode != PARAM_MUT && !shader_writes(e->vert, data->type.decl)) {
+                    // ...and one of the type the draw gives after their names is the draw's
+                    if (data->type.kind == TY_STRUCT && data->mode != PARAM_MUT && !shader_writes(e->vert, data->type.decl)
+                        && data->type.decl != e->values_type) {
                         element = data->type;
                         supplied = true;
                         break;
@@ -4596,23 +4681,43 @@ static type check_mesh_draw(checker *c, expr *e)
         diag_error(arg->at, sampled ? "a mesh's wrap comes after its filter: '%s(..., texture, Filter.Bilinear, Wrap.Repeat)'"
                                     : "a mesh's wrap comes after its texture and its filter: '%s(..., texture, Filter.Bilinear, "
                                       "Wrap.Repeat)'", draw_name);
-        if (sampled) diag_note("'Filter.Bilinear' is the filter of a draw that says none");
+        if (sampled) {
+            diag_note("a texture that isn't to be sampled as it says is given both; one that only wraps another way says so "
+                      "where it's declared: '[Wrap(Wrap.Repeat)]'");
+        }
         return T_ERR;
     }
 
     const int dims = vertex_dims(vertex, vertices->at, true);
     if (dims == 0) return T_ERR;
     e->draw_dims = dims;
-    if (wanted_dims && dims != wanted_dims) {
-        diag_error(vertices->at, "%s draws %dD vertices, and '" STR_FMT "' has a float%d position",
-                   draw_name, wanted_dims, STR_ARG(vertex->name), dims);
-        diag_note("use Draw%dD." STR_FMT " for this vertex type", dims, STR_ARG(e->name));
+    // A 3D mesh takes the transform that places it; a 2D one is drawn where its vertices are
+    if (!instanced && dims == 3 && (count < 3 || (e->args.items[2]->type.kind != TY_FLOAT4X4 && e->args.items[2]->type.kind != TY_ERROR
+                                                 && e->args.items[2]->kind != E_DEFAULT))) {
+        diag_error(count < 3 ? e->at : e->args.items[2]->at, "a 3D mesh takes the transform that places it in the world, "
+                   "a float4x4, after its indices");
+        diag_note("like '%s(vertices, indices, float4x4.Translate(position));': '" STR_FMT "' is a 3D mesh's vertex, "
+                  "as its 'position' is a float3", draw_name, STR_ARG(vertex->name));
+        return T_ERR;
+    }
+    if (!instanced && dims == 2 && count > 2 && e->args.items[2]->type.kind == TY_FLOAT4X4) {
+        diag_error(e->args.items[2]->at, "a 2D mesh is drawn where its vertices are, through the 2D camera: it takes no transform");
+        diag_note("'" STR_FMT "' is a 2D mesh's vertex, as its 'position' is a float2; a 3D mesh's has a float3", STR_ARG(vertex->name));
+        return T_ERR;
+    }
+
+    // A grid that's no texture, where the texture goes: said here, for every way the mesh is drawn
+    for (int i = 2; i < count; i++) {
+        const expr *arg = e->args.items[i];
+        if (arg->type.kind != TY_GRID || type_is_texture_grid(arg->type)) continue;
+        diag_error(arg->at, "a texture is a Texture, a Grid2<Color> or a Grid2<float>, and this is a %s", type_name(arg->type));
+        diag_note("a grid of colors is its pixels, and one of floats a texture of one channel, which a frag reads as red");
         return T_ERR;
     }
 
     if ((vertex == prog->vertex || vertex == prog->vertex3) && !shaded && !instanced) {
         use_mesh_types(c);
-        const type result = resolve_builtin_call(str_from(dims == 3 ? "Draw3D" : "Draw2D"), e);
+        const type result = resolve_builtin_call(str_from("Draw"), e);
         if (result.kind == TY_ERROR) return result;
         check_default_args(c, e);
         e->call = CALL_DRAW;
@@ -4650,6 +4755,13 @@ static type check_mesh_draw(checker *c, expr *e)
             return T_ERR;
         }
         e->instance_type = transforms ? NULL : element.decl;
+        if (e->instance_type && e->instance_type == e->values_type) {
+            diag_error(values->at, "this draw's instances are '" STR_FMT "'s, and it gives a '" STR_FMT "' after its vert and "
+                       "frag too: one that takes a '" STR_FMT "' couldn't tell which", STR_ARG(element.decl->name),
+                       STR_ARG(element.decl->name), STR_ARG(element.decl->name));
+            diag_note("what's the same for every instance goes in a struct of its own, and what differs in the list's");
+            return T_ERR;
+        }
         if (e->instance_type && dims == 3) {
             const field *transform = field_called(e->instance_type, "transform");
             if (transform && transform->type.kind != TY_FLOAT4X4) {
@@ -4659,64 +4771,46 @@ static type check_mesh_draw(checker *c, expr *e)
             }
         }
     } else if (dims == 3) {
-        if (at >= count || e->args.items[at]->type.kind != TY_FLOAT4X4) {
-            diag_error(at < count ? e->args.items[at]->at : e->at, "a 3D mesh takes the transform that places it in the world, "
-                       "a float4x4, after its indices");
-            diag_note("like 'Draw3D.Mesh(vertices, indices, float4x4.Translate(position));': '" STR_FMT "' is a 3D mesh's vertex, "
-                      "as its 'position' is a float3", STR_ARG(vertex->name));
-            return T_ERR;
-        }
-        at++;
-    } else if (at < count && e->args.items[at]->type.kind == TY_FLOAT4X4) {
-        diag_error(e->args.items[at]->at, "a 2D mesh is drawn where its vertices are, through the 2D camera: it takes no transform");
-        diag_note("'" STR_FMT "' is a 2D mesh's vertex, as its 'position' is a float2", STR_ARG(vertex->name));
-        return T_ERR;
+        at++; // Its transform, checked above
     }
-    // A texture, its filter and its wrap: grids retain their original no-frag
-    // form, while an explicit Texture also supplies a shader's Texture parameter.
+    // A texture, its filter and its wrap. The texture is a Texture, which a grid of colors or of floats
+    // is where one is wanted: what the draw draws with, or what its shader's Texture parameter is. The
+    // filter and the wrap are the texture's for this draw, where it isn't to be sampled as it says
     const expr *texture = NULL;
-    const expr *draw_filter = NULL;
-    const expr *draw_wrap = NULL;
     if (at < count && (e->args.items[at]->type.kind == TY_GRID || e->args.items[at]->type.kind == TY_TEXTURE)) {
         texture = e->args.items[at++];
-        const decl *grid = texture->type.decl;
-        if (texture->type.kind == TY_GRID && (grid->dims != 2 || grid->fields.items[0].type.kind != TY_COLOR)) {
-            diag_error(texture->at, "a texture is a Grid2<Color>, and this is a %s", type_name(texture->type));
-            ok = false;
-        }
         if (at < count && e->args.items[at]->type.kind == TY_ENUM && e->args.items[at]->type.decl == prog->filter) {
-            draw_filter = e->args.items[at++];
-            if (at < count && e->args.items[at]->type.kind == TY_ENUM && e->args.items[at]->type.decl == prog->wrap) {
-                draw_wrap = e->args.items[at++];
-            }
+            at++;
+            if (at < count && e->args.items[at]->type.kind == TY_ENUM && e->args.items[at]->type.decl == prog->wrap) at++;
         }
     }
     if (at < count) {
-        diag_error(e->args.items[at]->at, "%s doesn't take %s here", draw_name, type_name(e->args.items[at]->type));
-        note_mesh_forms(e);
+        const type extra = e->args.items[at]->type;
+        if (extra.kind == TY_STRUCT && shaded) {
+            diag_error(e->args.items[at]->at, "the values a draw gives its vert and frag come after their names: '%s(..., "
+                       STR_FMT ", " STR_FMT " { ... })'", draw_name, STR_ARG((e->frag ? e->frag : e->vert)->name),
+                       STR_ARG(extra.decl->name));
+        } else if (extra.kind == TY_STRUCT) {
+            diag_error(e->args.items[at]->at, "%s doesn't take a '" STR_FMT "' here: a draw's values are read by the vert or the "
+                       "frag it names before them, and this names neither", draw_name, STR_ARG(extra.decl->name));
+            diag_note("like '%s(..., Shade, " STR_FMT " { ... })', for a frag that takes a '" STR_FMT "' parameter", draw_name,
+                      STR_ARG(extra.decl->name), STR_ARG(extra.decl->name));
+        } else {
+            diag_error(e->args.items[at]->at, "%s doesn't take %s here", draw_name, type_name(extra));
+            note_mesh_forms(e);
+        }
         return T_ERR;
     }
-    if (texture && e->frag && texture->type.kind == TY_GRID) {
-        diag_error(texture->at, "a frag samples the grids it takes itself, so this draw takes no texture");
-        diag_note("put the grid in a component or a singleton that '" STR_FMT "' takes, and read it there: "
-                  "'color = models.wood.Sample(vertex.uv);'", STR_ARG(e->frag->name));
-        ok = false;
-    }
+    if (!values_ok) ok = false;
     const bool direct = shader_takes_texture(e->vert) || shader_takes_texture(e->frag);
-    if (direct && (!texture || texture->type.kind != TY_TEXTURE)) {
+    if (direct && !texture) {
         diag_error(e->at, "this mesh's shader takes a Texture source: supply one after the mesh arguments");
         ok = false;
-    } else if (texture && texture->type.kind == TY_TEXTURE && e->frag && !direct) {
+    } else if (texture && e->frag && !direct) {
         diag_error(texture->at, "this mesh's frag has no Texture parameter for the explicit source");
-        ok = false;
-    }
-    if (e->frag && draw_filter) {
-        diag_error(draw_filter->at, draw_wrap ? "a frag chooses its texture's filter and wrap at Sample: leave the draw's out"
-                                              : "a frag chooses its texture filter at Sample: leave the draw's filter out");
-        if (draw_wrap) {
-            diag_note("like 'color = source.Sample(vertex.uv, Filter.Bilinear, Wrap.Repeat);' in '" STR_FMT "'",
-                      STR_ARG(e->frag->name));
-        }
+        diag_note("give '" STR_FMT "' one, 'Texture source', and read it there, 'color = source.Sample(vertex.uv);', or "
+                  "have it sample a texture of a component or a singleton it takes, and leave this one out",
+                  STR_ARG(e->frag->name));
         ok = false;
     }
     // With no frag, a pixel is its vertex's color times the texture at its uv
@@ -4736,7 +4830,7 @@ static type check_mesh_draw(checker *c, expr *e)
         }
     }
     // The vert and the frag run on this mesh's vertex
-    for (int i = count; i < e->args.count; i++) {
+    for (int i = count; i < named_end; i++) {
         const expr *name = e->args.items[i];
         const decl *shader = name->type_decl;
         const type on = shader->params.count ? shader->params.items[0].type : T_ERR;
@@ -4756,14 +4850,14 @@ static type check_mesh_draw(checker *c, expr *e)
         ok = false;
     } else if (shaded && ok) {
         const int errors = diag_error_count();
-        for (int i = count; i < e->args.count; i++) check_shader_binding(c, e, e->args.items[i], e->args.items[i]->type_decl);
-        ok = diag_error_count() == errors;
+        for (int i = count; i < named_end; i++) check_shader_binding(c, e, e->args.items[i], e->args.items[i]->type_decl);
+        ok = diag_error_count() == errors && check_values_taken(e);
     }
     if (!ok) return T_ERR;
 
     if (instanced && transforms && vertex == prog->vertex3 && !shaded) {
         use_mesh_types(c);
-        const type result = resolve_builtin_call(str_from("Draw3D"), e);
+        const type result = resolve_builtin_call(str_from("Draw"), e);
         if (result.kind == TY_ERROR) return result;
         check_default_args(c, e);
         e->call = CALL_DRAW;
@@ -4775,7 +4869,11 @@ static type check_mesh_draw(checker *c, expr *e)
     e->arg_want.count = 0;
     vec_push(e->arg_want, vertices->type);
     vec_push(e->arg_want, index_list);
-    for (int i = 2; i < count; i++) vec_push(e->arg_want, i == 2 && dims == 3 && !instanced ? f4x4 : e->args.items[i]->type);
+    for (int i = 2; i < count; i++) {
+        const expr *arg = e->args.items[i];
+        // The texture as the Texture it is, a grid too
+        vec_push(e->arg_want, i == 2 && dims == 3 && !instanced ? f4x4 : arg == texture ? ((type){TY_TEXTURE, NULL}) : arg->type);
+    }
     const mesh_draw draw = {e, c->method ? c->method : c->system};
     vec_push(prog->mesh_draws, draw);
     return T_VOID_;
@@ -5007,38 +5105,40 @@ static type check_world_call(checker *c, expr *e, param *world)
     return try_get || str_eq_c(e->name, "Has") ? T_BOOL_ : decl_type(d);
 }
 
-// Target receivers share the two drawing APIs: the argument's dimension picks
-// an overloaded camera, transform or conversion, and the other methods belong
-// to one API.
-static str target_draw_owner(const expr *e)
-{
-    bool three = str_eq_c(e->name, "Cube") || str_eq_c(e->name, "Sphere")
-        || str_eq_c(e->name, "Cylinder") || str_eq_c(e->name, "Plane")
-        || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection")
-        || str_eq_c(e->name, "Depth") || str_eq_c(e->name, "SetDepth") // Only 3D meshes have depth...
-        || str_eq_c(e->name, "Cull") || str_eq_c(e->name, "SetCull");  // ...and triangles with a back
-    // What its 2D and 3D draws both take is neither's: Draw's, of which a target has its own
-    if (str_eq_c(e->name, "Stencil") || str_eq_c(e->name, "SetStencil")) return str_from("Draw");
-    const bool camera = str_eq_c(e->name, "Camera") || str_eq_c(e->name, "SetCamera");
-    const bool transform = str_eq_c(e->name, "Transform") || str_eq_c(e->name, "SetTransform");
-    if (e->args.count && (camera || transform || str_eq_c(e->name, "WorldToScreen") || str_eq_c(e->name, "ScreenToWorld"))) {
-        const type_kind kind = e->args.items[0]->type.kind;
-        three = kind == TY_FLOAT3 || kind == TY_FLOAT4X4 || (camera && e->args.count == 3);
-        if (camera && e->args.count == 2 && e->args.items[1]->type.kind == TY_FLOAT4X4) three = true;
-    }
-    return str_from(three ? "Draw3D" : "Draw2D");
-}
-
-// What a draw call is called on, for messages: Draw2D, or a target's name.
+// What a draw call is called on, for messages: Draw, or a target's name.
 static const char *draw_receiver(const expr *e)
 {
     return e->object && e->object->kind == E_NAME ? str_to_cstr(e->object->name) : "target";
 }
 
-// The spellings from before settings had two forms: Draw2D.Clip() and
-// Draw2D.NoClip() put the clip back. Reports them, with what they are now.
+// Draw2D.Circle(...), Draw3D.SetCamera(...): the owners from before there was
+// one Draw. Reports the rename, with Draw's name as the fix.
+static type old_draw_owner(checker *c, expr *e)
+{
+    for (int i = 0; i < e->args.count; i++) {
+        if (e->args.items[i]->kind != E_DEFAULT && !e->args.items[i]->is_out) check_expr(c, e->args.items[i]);
+    }
+    diag_error(e->at, STR_FMT "." STR_FMT " is 'Draw." STR_FMT "' now", STR_ARG(e->object->name), STR_ARG(e->name), STR_ARG(e->name));
+    diag_note("Draw has every 2D and 3D draw, told apart by their arguments (a float2 center or a float3 position, a "
+              "List<Vertex> or a List<Vertex3>); Draw2D and Draw3D are gone");
+    suggest_replacement(e->object->name, "Draw");
+    return T_ERR;
+}
+
+// The spellings from before settings had two forms: Draw.Clip() and
+// Draw.NoClip() put the clip back. Reports them, with what they are now.
 static bool old_setting(const expr *e)
 {
+    const bool set_screen = str_eq_c(e->name, "SetScreen");
+    if (set_screen || (str_eq_c(e->name, "Screen") && e->args.count == 0)) { // From before the window had one word
+        const char *on = draw_receiver(e);
+        const char *now = set_screen ? "SetPixels" : "Pixels";
+        diag_error(e->at, "%s." STR_FMT " is '%s.%s' now", on, STR_ARG(e->name), on, now);
+        diag_note("it draws in the screen's pixels, from the top left with y down: '%s.Pixels() { ... }' around some "
+                  "draws, or '%s.SetPixels();' for the draws that follow", on, on);
+        suggest_replacement(e->name, now);
+        return true;
+    }
     if (!str_eq_c(e->name, "NoClip") && !(str_eq_c(e->name, "Clip") && e->args.count == 0 && !e->block)) return false;
     const char *on = draw_receiver(e);
     diag_error(e->at, "%s." STR_FMT "() is '%s.SetClip()' now", on, STR_ARG(e->name), on);
@@ -5070,25 +5170,32 @@ static bool check_setting(const checker *c, const expr *e)
     const char *around = str_to_cstr((str){e->name.ptr + 3, e->name.len - 3}); // Without its "Set"
     diag_error(e->at, "%s." STR_FMT " sets it for the draws that follow, and takes no block", on, STR_ARG(e->name));
     diag_note("to set it around some draws, and have it put back after them, write '%s.%s(%s) { ... }'", on, around,
-              e->args.count || !str_eq_c(e->name, "SetScreen") ? "..." : "");
+              e->args.count || !str_eq_c(e->name, "SetPixels") ? "..." : "");
     suggest_replacement(e->name, around);
     return false;
 }
 
-// RenderTarget.Screen(), RenderTarget.Screen(0.5): a target that's always the
+// RenderTarget.Window(), RenderTarget.Window(0.5): a target that's always the
 // window's size, or that part of it. Made where the constructor's are, and
 // like them, it says last what it holds when that isn't one color image:
-// RenderTarget.Screen(Format.DepthOnly), RenderTarget.Screen(0.5, Format.DepthOnly),
-// RenderTarget.Screen(Format.Color, Format.Float).
-static type check_screen_target(checker *c, expr *e)
+// RenderTarget.Window(Format.Depth), RenderTarget.Window(0.5, Format.Depth),
+// RenderTarget.Window(Format.Rgba8, Format.Rgba16f).
+static type check_window_target(checker *c, expr *e)
 {
     bool any_error = false;
     for (int i = 0; i < e->args.count; i++) {
         if (check_expr(c, e->args.items[i]).kind == TY_ERROR) any_error = true;
     }
-    if (!str_eq_c(e->name, "Screen")) {
-        diag_error(e->at, "RenderTarget has no '" STR_FMT "'; it has Screen", STR_ARG(e->name));
-        diag_note("'RenderTarget.Screen()' is a target that's always the window's size, and 'RenderTarget(width, height)' "
+    if (str_eq_c(e->name, "Screen")) { // From before the window had one word
+        diag_error(e->at, "RenderTarget.Screen is 'RenderTarget.Window' now");
+        diag_note("a target that's always the window's size is named for the window, as 'Draw.window' is; 'Screen' is "
+                  "the window's measurements alone, 'Screen.width' and 'Screen.height'");
+        suggest_replacement(e->name, "Window");
+        return T_ERR;
+    }
+    if (!str_eq_c(e->name, "Window")) {
+        diag_error(e->at, "RenderTarget has no '" STR_FMT "'; it has Window", STR_ARG(e->name));
+        diag_note("'RenderTarget.Window()' is a target that's always the window's size, and 'RenderTarget(width, height)' "
                   "one of a size of its own");
         return T_ERR;
     }
@@ -5099,14 +5206,14 @@ static type check_screen_target(checker *c, expr *e)
         diag_note("leave the field at default and create its target in a view or local handler");
         return T_ERR;
     }
-    const int formats = target_formats(c, e, "RenderTarget.Screen(");
+    const int formats = target_formats(c, e, "RenderTarget.Window(");
     if (formats < 0) return T_ERR;
     const int factors = e->args.count - formats;
     if (factors > 1 || (factors == 1 && !type_assignable(T_FLOAT_, e->args.items[0]->type))) {
-        diag_error(e->at, "RenderTarget.Screen takes the part of the window's size the target is, a number, or nothing "
-                          "for all of it: 'RenderTarget.Screen()' or 'RenderTarget.Screen(0.5)'");
-        diag_note("what it holds comes last, when that isn't one color image: 'RenderTarget.Screen(Format.DepthOnly)', or "
-                  "a format for each, 'RenderTarget.Screen(Format.Color, Format.Float)'");
+        diag_error(e->at, "RenderTarget.Window takes the part of the window's size the target is, a number, or nothing "
+                          "for all of it: 'RenderTarget.Window()' or 'RenderTarget.Window(0.5)'");
+        diag_note("what it holds comes last, when that isn't one color image: 'RenderTarget.Window(Format.Depth)', or "
+                  "a format for each, 'RenderTarget.Window(Format.Rgba8, Format.Rgba16f)'");
         diag_note("a target of a size of its own is 'RenderTarget(width, height)'");
         return T_ERR;
     }
@@ -5152,10 +5259,11 @@ static type check_method(checker *c, expr *e)
         return check_clipboard_call(c, e);
     }
 
-    // Math.Dot(a, b), quaternion.AxisAngle(axis, angle), Draw2D.Circle(center,
+    // Math.Dot(a, b), quaternion.AxisAngle(axis, angle), Draw.Circle(center,
     // radius, color), GUILayout.Button(text)
     if (names_builtin_owner(c, e->object)) {
         const str owner = e->object->name;
+        if (builtin_old_draw_owner(owner)) return old_draw_owner(c, e);
         const bool io = str_eq_c(owner, "File") || str_eq_c(owner, "Directory");
         const bool flush = str_eq_c(owner, "Storage");
         const bool fetch = str_eq_c(owner, "Web");
@@ -5176,11 +5284,11 @@ static type check_method(checker *c, expr *e)
                 builtins_use_io(bytes.decl, paths.decl);
             }
         }
-        if (str_eq_c(owner, "RenderTarget")) return check_screen_target(c, e);
+        if (str_eq_c(owner, "RenderTarget")) return check_window_target(c, e);
         if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Blit")) return check_blit(c, e);
-        // Draw has what Draw2D and Draw3D share: the settings that are the same wherever a draw goes
-        const bool draws = builtin_draw_owner(owner) || str_eq_c(owner, "Draw");
-        if (builtin_draw_owner(owner) && (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced"))) return check_mesh_draw(c, e);
+        // Draw is the window's drawing: what a render target has as its methods
+        const bool draws = builtin_draw_owner(owner);
+        if (draws && (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced"))) return check_mesh_draw(c, e);
         // `default` takes its type from the version of the function the other arguments pick,
         // and [a, b, c] is the list the function takes there. An `out` argument is the variable
         // a version with an `out` parameter makes (check_gui_call): of the others, nothing takes one,
@@ -5204,7 +5312,7 @@ static type check_method(checker *c, expr *e)
         }
         if ((gui || draws) && !check_frame_use(c, e->at, gui ? "The GUI" : str_to_cstr(owner))) return T_ERR;
         if (str_eq_c(owner, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR; // Screen.Flip: the frame's window
-        if (builtin_draw_owner(owner) && old_setting(e)) return T_ERR;
+        if (draws && old_setting(e)) return T_ERR;
         const type result = resolve_builtin_call(owner, e);
         if (result.kind == TY_ERROR) return result;
         if (draws && !check_setting(c, e)) return T_ERR;
@@ -5228,10 +5336,9 @@ static type check_method(checker *c, expr *e)
             e->path_operation = true;
             c->prog->uses_text = true;
         }
-        if (draws) { // Draw's own are neither's: they go to no destination, but for the window's stencil
-            const bool stencil = str_eq_c(e->name, "Stencil") || str_eq_c(e->name, "SetStencil");
+        if (draws) { // The window's: every setting is a destination's own, so each call selects it
             e->call = CALL_DRAW;
-            e->draw_dims = str_eq_c(owner, "Draw3D") ? 3 : builtin_draw_owner(owner) || stencil ? 2 : 0;
+            e->draw_dims = 2;
         }
         if (gui || cursor) return check_gui_call(c, e, result); // The cursor's lock is a frame's ask, which the GUI collects
         return result;
@@ -5341,23 +5448,25 @@ static type check_method(checker *c, expr *e)
             if (code) code->calls_c = true;
             return T_VOID_;
         }
+        // A target's methods are Draw's, told apart by the receiver alone: the window is a target too
         e->targeted = true;
         if (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced")) return check_mesh_draw(c, e);
+        if (str_eq_c(e->name, "Blit")) {
+            for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+            diag_error(e->at, "a render target has no Blit: a blit names the target it goes into, 'Draw.Blit(source, target, frag)'");
+            return T_ERR;
+        }
         for (int i = 0; i < e->args.count; i++) {
             if (e->args.items[i]->kind != E_DEFAULT) check_expr(c, e->args.items[i]);
         }
-        const str owner = target_draw_owner(e);
-        if (!check_frame_use(c, e->at, str_to_cstr(owner))) return T_ERR;
+        if (!check_frame_use(c, e->at, "Draw")) return T_ERR;
         if (old_setting(e)) return T_ERR;
-        const type result = resolve_builtin_call(owner, e);
+        const type result = resolve_builtin_call(str_from("Draw"), e);
         if (result.kind == TY_ERROR) return result;
         if (!check_setting(c, e)) return T_ERR;
         check_default_args(c, e);
-        // With no arguments, a target's cameras and transforms both go back: nothing says which
-        if (e->args.count == 0 && str_eq_c(e->name, "SetCamera")) e->c_callee = "tide_draw_unset_cameras";
-        if (e->args.count == 0 && str_eq_c(e->name, "SetTransform")) e->c_callee = "tide_draw_unset_transforms";
         e->call = CALL_DRAW;
-        e->draw_dims = str_eq_c(owner, "Draw3D") ? 3 : 2;
+        e->draw_dims = 2;
         return result;
     }
     // name.Contains("cat"), name.Substring(0, 3): text's methods
@@ -5930,6 +6039,14 @@ static bool is_input_field(const expr *e)
     return e->kind == E_NAME && e->bind == BIND_PARAM && e->param->type.kind == TY_INPUT;
 }
 
+// Format.Color, Format.DepthOnly, Format.Float: the formats' names from before
+// they said what an image stores. What each is now, or NULL.
+static const char *old_format_member(const decl *d, const str member)
+{
+    if (!d->builtin || !str_eq_c(d->name, "Format")) return NULL;
+    return str_eq_c(member, "Color") ? "Rgba8" : str_eq_c(member, "DepthOnly") ? "Depth" : str_eq_c(member, "Float") ? "Rgba16f" : NULL;
+}
+
 // Page.Title, or Game.Page.Title: one of an enum's members.
 static type check_enum_member(expr *e, decl *d)
 {
@@ -5943,6 +6060,14 @@ static type check_enum_member(expr *e, decl *d)
             e->enum_member = &d->members.items[i];
             return (type){TY_ENUM, d};
         }
+    }
+    const char *format_now = old_format_member(d, e->member);
+    if (format_now) {
+        diag_error(e->at, "Format." STR_FMT " is 'Format.%s' now", STR_ARG(e->member), format_now);
+        diag_note("a format is named by what an image stores: Format.Rgba8 is four channels of a byte each, "
+                  "Format.Rgba16f four floats of 16 bits, and Format.Depth depth alone, with no color image");
+        suggest_replacement(e->member, format_now);
+        return T_ERR;
     }
     diag_error(e->at, "enum '" STR_FMT "' has no member '" STR_FMT "'", STR_ARG(d->name), STR_ARG(e->member));
     suggestion s = suggest_start(e->member);
@@ -6136,9 +6261,16 @@ static type check_member(checker *c, expr *e)
             return T_ERR;
         }
         if (str_eq_c(e->object->name, "Application") && str_eq_c(e->member, "title")) c->prog->uses_title = true;
-        if (str_eq_c(e->object->name, "Draw") && !str_eq_c(e->member, "window")) {
+        if (builtin_old_draw_owner(e->object->name)) {
+            diag_error(e->at, STR_FMT "." STR_FMT " is 'Draw." STR_FMT "' now", STR_ARG(e->object->name), STR_ARG(e->member),
+                       STR_ARG(e->member));
+            diag_note("Draw has every 2D and 3D draw, told apart by their arguments; Draw2D and Draw3D are gone");
+            suggest_replacement(e->object->name, "Draw");
+            return T_ERR;
+        }
+        if (str_eq_c(e->object->name, "Draw") && !str_eq_c(e->member, "window") && !str_eq_c(e->member, "list")) {
             diag_error(e->at, "Draw has no member '" STR_FMT "'", STR_ARG(e->member));
-            diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Blit and window. Shapes, text and meshes are theirs");
+            diag_note("Draw has two: 'window', the window as a render target, and 'list', the frame's draw list for C");
             return T_ERR;
         }
         if (str_eq_c(e->object->name, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR;
@@ -6520,13 +6652,12 @@ static type check_name(checker *c, expr *e)
     if (shader) {
         e->bind = BIND_SHADER;
         e->type_decl = shader;
-        diag_error(e->at, "'" STR_FMT "' is a %s: the GPU runs it, for the meshes a Draw2D.Mesh or Draw3D.Mesh names it for", STR_ARG(e->name),
+        diag_error(e->at, "'" STR_FMT "' is a %s: the GPU runs it, for the meshes a Draw.Mesh names it for", STR_ARG(e->name),
                    shader_word(shader));
         const bool three_d = shader->params.count && shader->params.items[0].type.kind == TY_STRUCT
                          && shader_dims(shader->params.items[0].type.decl) == 3;
-        diag_note("name it last in a view's Draw2D.Mesh or Draw3D.Mesh, like 'Draw%dD.Mesh(vertices, indices, %s" STR_FMT ");'",
-                  three_d ? 3 : 2, three_d ? "transform, " : "",
-                  STR_ARG(e->name));
+        diag_note("name it last in a view's Draw.Mesh, like 'Draw.Mesh(vertices, indices, %s" STR_FMT ");'",
+                  three_d ? "transform, " : "", STR_ARG(e->name));
         return T_ERR;
     }
     const decl *d = find_type(c, e->name, e->at);
@@ -6560,8 +6691,7 @@ static type check_name(checker *c, expr *e)
         if (c->prog->decls.items[i]->kind == DECL_CONST) suggest_consider(&s, c->prog->decls.items[i]->name);
     }
     suggest_consider_c(&s, "Math");
-    suggest_consider_c(&s, "Draw2D");
-    suggest_consider_c(&s, "Draw3D");
+    suggest_consider_c(&s, "Draw");
     suggest_builtin_types(&s);
     suggest_note(&s);
     return T_ERR;
@@ -7154,8 +7284,8 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
         if (grid.kind == TY_GRID) diag_note("here, read a cell by its place: 'grid[x, y]'");
         return T_ERR;
     }
-    if (grid.kind == TY_GRID && (grid.decl->dims != 2 || grid.decl->fields.items[0].type.kind != TY_COLOR)) {
-        diag_error(e->at, "a texture is a Grid2<Color>, and this is a %s", type_name(grid));
+    if (grid.kind == TY_GRID && !type_is_texture_grid(grid)) {
+        diag_error(e->at, "a texture is a Texture, a Grid2<Color> or a Grid2<float>, and this is a %s", type_name(grid));
         return T_ERR;
     }
     const expr *of = e->object;
@@ -7177,8 +7307,8 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
         return T_ERR;
     }
     if (!direct && !asset && of->object->param->type.kind == TY_STRUCT) {
-        diag_error(of->at, "a texture is shared by an instanced draw: keep the sampled %s in a component or singleton",
-                   grid.kind == TY_TEXTURE ? "Texture" : "grid");
+        diag_error(of->at, "a struct a draw supplies, its instances' or its values', carries no texture: keep the sampled "
+                   "%s in a component or singleton", grid.kind == TY_TEXTURE ? "Texture" : "grid");
         return T_ERR;
     }
     if (!order_named_args(e, "uv, filter, wrap", 2)) return T_ERR;
@@ -7191,7 +7321,8 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
     // A wrap where the filter goes: the filter is said first
     if (e->args.count == 2 && uv.kind == TY_FLOAT2 && how.kind == TY_ENUM && how.decl == c->prog->wrap) {
         diag_error(e->args.items[1]->at, "a wrap comes after the filter: 'texture.Sample(uv, Filter.Bilinear, Wrap.Repeat)'");
-        diag_note("'Filter.Bilinear' is the filter of a Sample that says none");
+        diag_note("a Sample that says neither reads the texture as it says: one that only wraps another way says so where "
+                  "it's declared, '[Wrap(Wrap.Repeat)]'");
         return T_ERR;
     }
     const bool filter_ok = e->args.count < 2 || (how.kind == TY_ENUM && how.decl == c->prog->filter);
@@ -7243,7 +7374,8 @@ static type check_depth_read(const checker *c, expr *e)
         return T_ERR;
     }
     if (of->object->param->type.kind == TY_STRUCT) {
-        diag_error(of->at, "a texture is shared by an instanced draw: keep the sampled DepthTexture in a component or singleton");
+        diag_error(of->at, "a struct a draw supplies, its instances' or its values', carries no texture: keep the sampled "
+                   "DepthTexture in a component or singleton");
         return T_ERR;
     }
     if (!order_named_args(e, compare ? "uv, value" : "uv", 0)) return T_ERR;
@@ -9065,7 +9197,7 @@ static void check_var(checker *c, stmt *s)
         }
         if (value.kind == TY_DRAW_LIST) {
             diag_error(s->value->at, "the draw list is only passed on, to an extern function that takes a DrawList");
-            diag_note("write 'Draw2D.list' where it goes, like 'DrawUI(Draw2D.list);'");
+            diag_note("write 'Draw.list' where it goes, like 'DrawUI(Draw.list);'");
             value = T_ERR;
         }
         s->type = value;
@@ -9080,7 +9212,7 @@ static void check_var(checker *c, stmt *s)
             s->type = T_ERR;
         } else if (s->type.kind == TY_DRAW_LIST) {
             diag_error(s->type_at, "the draw list is only passed on, to an extern function that takes a DrawList");
-            diag_note("write 'Draw2D.list' where it goes, like 'DrawUI(Draw2D.list);'");
+            diag_note("write 'Draw.list' where it goes, like 'DrawUI(Draw.list);'");
             s->type = T_ERR;
         } else if (s->type.kind == TY_WORLD) {
             world_misplaced(str_from("World"), s->type_at.line ? s->type_at : s->at);
@@ -9856,7 +9988,7 @@ static void check_sampling_attribute(checker *c, decl *d, attribute *attr)
     if (d->kind != DECL_ASSET) {
         diag_error(attr->at, "%s says how a texture is sampled, and '" STR_FMT "' isn't one", name, STR_ARG(d->name));
         diag_note("it goes before an asset that's a Texture or a Grid2<Color>, like '[%s] asset Texture tiles = \"art/tiles.png\";', "
-                  "or before a Grid2<Color> field", usage);
+                  "or before a field that's a Grid2<Color>, a Grid2<float> or a RenderTarget", usage);
         return;
     }
     if (d->return_type.kind == TY_ERROR) return; // Its type said why
@@ -10019,26 +10151,30 @@ static void check_absolute_attribute(const decl *d, const field *f, const attrib
 // it included, so they're a quick way to bound what players send. Elsewhere,
 // a struct field's bounds only describe it. And [Snap] (see check_snap), and
 // [Absolute] (see check_absolute_attribute).
-// [Filter(Filter.Point)] and [Wrap(Wrap.Repeat)] on a Grid2<Color> field: how
-// the grid is sampled where a draw or a Sample that names the field doesn't
-// say (declared_sampling reads them). A Texture field holds whichever image
-// it's given, so it has nothing to say for it.
+// [Filter(Filter.Point)] and [Wrap(Wrap.Repeat)] on a field that's a grid of
+// colors or of floats, or a RenderTarget: how the Texture the grid is, or the
+// target's color is, is sampled where a draw or a Sample doesn't say
+// (declared_sampling reads them). A Texture field holds whichever texture
+// it's given, which says how it's sampled itself, so it has nothing to say
+// for it.
 static void check_field_sampling(checker *c, const field *f, attribute *a)
 {
     const bool filter = str_eq_c(a->name, "Filter");
     const char *name = filter ? "Filter" : "Wrap";
     if (f->type.kind == TY_ERROR) return;
-    const bool colors = f->type.kind == TY_GRID && f->type.decl->dims == 2 && grid_cell(f->type).kind == TY_COLOR;
-    if (!colors && (f->type.kind == TY_TEXTURE || f->type.kind == TY_RENDER_TARGET)) {
-        diag_error(a->at, "a %s field holds whichever image it's given, so how '" STR_FMT "' is sampled is said where it's drawn: "
-                   "'Draw2D.Mesh(vertices, indices, texture, Filter.Point, Wrap.Repeat)'", type_name(f->type), STR_ARG(f->name));
-        diag_note("an image of the game's says it on its own declaration: '[%s] asset Texture tiles = \"art/tiles.png\";'",
-                  filter ? "Filter(Filter.Point)" : "Wrap(Wrap.Repeat)");
+    const bool made_here = type_is_texture_grid(f->type) || f->type.kind == TY_RENDER_TARGET;
+    if (f->type.kind == TY_TEXTURE) {
+        diag_error(a->at, "a Texture says how it's sampled itself, and a field holds whichever it's given: '" STR_FMT
+                   "' takes no [%s]", STR_ARG(f->name), name);
+        diag_note("say it where the texture is made, '[%s] asset Texture tiles = \"art/tiles.png\";' or on the grid or the "
+                  "RenderTarget it comes from, or where it's drawn: 'Draw.Mesh(vertices, indices, texture, Filter.Point, "
+                  "Wrap.Repeat)'", filter ? "Filter(Filter.Point)" : "Wrap(Wrap.Repeat)");
         return;
     }
-    if (!colors) {
+    if (!made_here) {
         diag_error(a->at, "[%s] says how a texture is sampled, and '" STR_FMT "' is %s", name, STR_ARG(f->name), type_name(f->type));
-        diag_note("it goes on a Grid2<Color> field, or on an asset that's a Texture or a Grid2<Color>");
+        diag_note("it goes on a field that's a Grid2<Color>, a Grid2<float> or a RenderTarget, or on an asset that's a Texture "
+                  "or a Grid2<Color>");
         return;
     }
     for (const attribute *before = f->attributes.items; before < a; before++) {
@@ -10173,7 +10309,7 @@ static void resolve_field_types(const checker *c, const decl *d)
         case TY_ERROR: break;
         case TY_ACTION: diag_error(at, "fields can't hold an Action; it's only ever a function's last parameter"); break;
         case TY_DRAW_LIST:
-            diag_error(at, "fields can't hold a DrawList; it's the frame's, which a view passes to C as 'Draw2D.list'");
+            diag_error(at, "fields can't hold a DrawList; it's the frame's, which a view passes to C as 'Draw.list'");
             break;
         case TY_WORLD: world_misplaced(str_from("World"), at); break;
         case TY_COMPONENT:
@@ -10452,7 +10588,7 @@ static type method_type(const checker *c, const type_ref *r, const loc at, const
         return T_ERR;
     case TY_DRAW_LIST:
         if (!is_return) return t;
-        diag_error(at, "a function can't return a DrawList; an extern function takes one, passed 'Draw2D.list'");
+        diag_error(at, "a function can't return a DrawList; an extern function takes one, passed 'Draw.list'");
         return T_ERR;
     case TY_SINGLETON:
         if (!is_return) return t;
@@ -10654,7 +10790,7 @@ static void check_signature(checker *c, decl *m)
         }
         if (p->type.kind == TY_DRAW_LIST && !m->is_extern) {
             diag_error(p->type_at, "only extern functions take a DrawList: C draws into it with tide/draw.h");
-            diag_note("a Tide function draws with Draw2D or Draw3D themselves, like 'Draw2D.Mesh(vertices, indices);'");
+            diag_note("a Tide function draws with Draw itself, like 'Draw.Mesh(vertices, indices);'");
             p->type = T_ERR;
         } else if (p->type.kind == TY_DRAW_LIST && p->mode != PARAM_READ) {
             diag_error(p->at, "a DrawList goes to C as it is, a 'tide_draw_list *'; drop '%s'",
@@ -11236,7 +11372,6 @@ static void check_shader_decl(const checker *c, decl *d)
     d->fails = T_VOID_;
     d->outputs = 0;
     const param *color = NULL;
-    const param *instance_data = NULL;
     const param *source_texture = NULL;
     for (int i = 0; i < d->params.count; i++) {
         param *p = &d->params.items[i];
@@ -11336,7 +11471,7 @@ static void check_shader_decl(const checker *c, decl *d)
             } else if (d->is_frag && p->is_out) {
                 diag_error(p->at, "a frag's outputs are colors: 'out Color " STR_FMT "'", STR_ARG(p->name));
                 diag_note("an output of another type than Color isn't there yet: a Color holds four floats, of which a "
-                          "target made with Format.Float keeps any number");
+                          "target made with Format.Rgba16f keeps any number");
             } else if (d->is_frag && changes) {
                 diag_error(p->at, "a frag reads '" STR_FMT "', and can't change it: drop 'mut'", STR_ARG(p->name));
                 diag_note("what it writes is its pixel's color, 'out Color color'");
@@ -11368,17 +11503,9 @@ static void check_shader_decl(const checker *c, decl *d)
                         diag_error(p->at, "'" STR_FMT "' appears twice", STR_ARG(t->name));
                     }
                 }
-                // A vert's is an element of the list its Instanced draw is given. A frag's is that, or what the
-                // draw's vert writes for it, and it can take both
-                if (instance_data && !d->is_frag) {
-                    const type vertex = d->params.items[0].type;
-                    const bool three_d = vertex.kind == TY_STRUCT && shader_dims(vertex.decl) == 3;
-                    diag_error(p->at, "a vert takes one instance struct, supplied by Draw%dD.Instanced, and this names two",
-                               three_d ? 3 : 2);
-                } else {
-                    instance_data = p;
-                }
-                p->function_param = false; // Supplied by the draw: its instances, or its vert
+                // A vert's is an element of the list its Instanced draw is given, or the values its draw gives
+                // after its name. A frag's is either, or what the draw's vert writes for it. The draw says which
+                p->function_param = false; // Supplied by the draw: its instances, its values, or its vert
             } else if (value.kind == TY_DEPTH_TEXTURE) {
                 diag_error(at, "a %s reads a DepthTexture that's a field of a component or singleton it takes, not a "
                                "parameter of its own", word);
@@ -12297,7 +12424,7 @@ static bool call_acts(const expr *e)
     case CALL_REMOVE: case CALL_DESTROY: case CALL_GUI: case CALL_ACTION: case CALL_SESSION:
     case CALL_CLIPBOARD: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM:
         return true;
-    case CALL_DRAW: return e->type.kind == TY_VOID; // Draw2D.MeasureText and the conversions only give a value
+    case CALL_DRAW: return e->type.kind == TY_VOID; // Draw.MeasureText and the conversions only give a value
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get");
     case CALL_WORLD: return str_eq_c(e->name, "Set") || str_eq_c(e->name, "TryGet");
@@ -12540,7 +12667,7 @@ static void add_builtins(program *prog)
     }
     prog->anchor = anchor;
 
-    // enum Font { Regular, Bold }: the weight Draw2D.Text draws in. Each is a
+    // enum Font { Regular, Bold }: the weight Draw.Text draws in. Each is a
     // file of the engine's font, and C names a weight by its file (tide/draw.h:
     // TIDE_FONT_REGULAR, TIDE_FONT_BOLD), which generated code turns these into.
     static const char *const fonts[] = {"Regular", "Bold"};
@@ -12555,7 +12682,7 @@ static void add_builtins(program *prog)
     prog->font = font;
 
     // struct Vertex { float2 position; float2 uv; Color color = Color.white; }:
-    // a corner of what Draw2D.Mesh draws, as tide/draw.h's tide_vertex. And
+    // a corner of what Draw.Mesh draws, as tide/draw.h's tide_vertex. And
     // enum Filter { Point, Bilinear }: how it reads its texture between cells,
     // with tide_filter's values, which are Unity's FilterMode's.
     decl *vertex = NEW(decl);
@@ -12593,7 +12720,7 @@ static void add_builtins(program *prog)
     // struct Shape { float2 center; float2 size; float rotation; float radius;
     // bool ellipse; Color color = Color.white; Color color2 = Color.none; float
     // outline; Color outlineColor = Color.white; float soft; }: what
-    // Draw2D.Shape draws, which generated C hands tide/draw.h as a tide_shape.
+    // Draw.Shape draws, which generated C hands tide/draw.h as a tide_shape.
     decl *shape = NEW(decl);
     shape->kind = DECL_STRUCT;
     shape->name = str_from("Shape");
@@ -12690,7 +12817,7 @@ static void add_builtins(program *prog)
     }
     prog->blend = blend;
     // enum Depth { ReadWrite, Read, None }: what a 3D mesh does with depth
-    // (Draw3D.Depth), with tide/draw.h's tide_depth's values. Generated C has it only in a
+    // (Draw.Depth), with tide/draw.h's tide_depth's values. Generated C has it only in a
     // game whose code names it (decl.named), so the others' is as it was.
     static const char *const depths[] = {"ReadWrite", "Read", "None"};
     decl *depth = NEW(decl);
@@ -12703,7 +12830,7 @@ static void add_builtins(program *prog)
     }
     prog->depth = depth;
     // enum Cull { Back, Front, None }: which side of a 3D mesh's triangles
-    // isn't drawn (Draw3D.Cull), with tide/draw.h's tide_cull's values. In
+    // isn't drawn (Draw.Cull), with tide/draw.h's tide_cull's values. In
     // generated C as Depth is: only in a game whose code names it.
     static const char *const culls[] = {"Back", "Front", "None"};
     decl *cull = NEW(decl);
@@ -12728,10 +12855,10 @@ static void add_builtins(program *prog)
         vec_push(wrap->members, m);
     }
     prog->wrap = wrap;
-    // enum Format { Color, DepthOnly, Float }: what a render target holds beside its depth, said
+    // enum Format { Rgba8, Depth, Rgba16f }: what a render target holds, named by what an image stores, said
     // when it's made, a format for each of its color images, with tide/draw.h's
     // tide_target_format's values. Like Depth, generated C has it only in a game whose code names it.
-    static const char *const formats[] = {"Color", "DepthOnly", "Float"};
+    static const char *const formats[] = {"Rgba8", "Depth", "Rgba16f"};
     decl *format = NEW(decl);
     format->kind = DECL_ENUM;
     format->name = str_from("Format");
@@ -13041,7 +13168,7 @@ static void add_device_records(program *prog)
 static bool is_builtin_name(const str name)
 {
     type dummy;
-    return builtin_type_named(name, &dummy) || str_eq_c(name, "Math") || builtin_draw_owner(name) || str_eq_c(name, "Draw")
+    return builtin_type_named(name, &dummy) || str_eq_c(name, "Math") || builtin_draw_owner(name) || builtin_old_draw_owner(name)
         || str_eq_c(name, "Devices") || str_eq_c(name, "Spawn") || str_eq_c(name, "Send") || str_eq_c(name, "Scene")
         || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout") || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor")
         || str_eq_c(name, "Frame") || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")

@@ -6,7 +6,7 @@
 #include "tide/color.h"
 #include "tide/math.h"
 
-// Immediate-mode drawing: Tide's Draw2D and Draw3D APIs record commands into a draw
+// Immediate-mode drawing: Tide's Draw calls record commands into a draw
 // list, and a renderer plays them back (tide_platform_draw, on OpenGL or WebGPU). The list
 // knows nothing about any renderer, so replacing one doesn't touch game code.
 //
@@ -377,20 +377,20 @@ static inline bool tide_target_size_same(const tide_target_size a, const tide_ta
 // of depth alone, which is drawn into like any other, where a color has
 // nowhere to go and only what writes depth leaves anything. A format is what
 // one color image holds for each pixel (Tide's Format), and
-// TIDE_TARGET_DEPTH_ONLY, the one format of a target with none.
+// TIDE_TARGET_DEPTH, the one format of a target with none.
 typedef enum tide_target_format {
-    TIDE_TARGET_COLOR,      // 4 bytes: red, green, blue and alpha, each from 0 to 1
-    TIDE_TARGET_DEPTH_ONLY, // No color image at all
+    TIDE_TARGET_RGBA8, // 4 bytes: red, green, blue and alpha, each from 0 to 1
+    TIDE_TARGET_DEPTH, // No color image at all
     // Four floats of 16 bits: any number, to 3 digits or so. Where a GPU can't
     // draw into those (an OpenGL ES 3 or a WebGL 2 without them), it's 4
     // bytes, and the renderer says so once
-    TIDE_TARGET_FLOAT,
+    TIDE_TARGET_RGBA16F,
 } tide_target_format;
 
 enum { TIDE_TARGET_COLORS = 4 }; // The most color images a target holds: what every GPU Tide draws with has
 
 // A target's color images, in order: how many, and what each holds
-// (TIDE_TARGET_COLOR or TIDE_TARGET_FLOAT). None for a target of depth alone.
+// (TIDE_TARGET_RGBA8 or TIDE_TARGET_RGBA16F). None for a target of depth alone.
 typedef struct tide_target_formats {
     uint8_t count;
     uint8_t color[TIDE_TARGET_COLORS];
@@ -460,12 +460,12 @@ static inline uint32_t tide_render_target_colors(const uint64_t id)
     return tide_render_target_formats(id).count;
 }
 
-// What its first color image holds, or TIDE_TARGET_DEPTH_ONLY for a target
+// What its first color image holds, or TIDE_TARGET_DEPTH for a target
 // with none: the format a target of one image, or of none, was made with.
 static inline tide_target_format tide_render_target_format(const uint64_t id)
 {
     const tide_target_formats formats = tide_render_target_formats(id);
-    return formats.count ? (tide_target_format)formats.color[0] : TIDE_TARGET_DEPTH_ONLY;
+    return formats.count ? (tide_target_format)formats.color[0] : TIDE_TARGET_DEPTH;
 }
 
 // A texture's reference to one of a target's color images has which in its
@@ -501,15 +501,92 @@ typedef struct tide_render_target {
     tide_target_size size;
 } tide_render_target;
 
-// Texture's common sampling reference: CPU pixels, a rendered image, or an
-// image of the game's pack (an `asset Texture`: no pixels and no target, its
-// size and its version, which names its declaration: see tide_pack_texture_of).
+// Texture's common sampling reference: CPU pixels, a rendered image, an image
+// of the game's pack (an `asset Texture`: no pixels and no target, its size
+// and its version, which names its declaration: see tide_pack_texture_of), or
+// a grid of the game's (no pixels, no target and a height of
+// TIDE_TEXTURE_GRID: see tide_texture_of_grid in tide/mesh.h).
 // Copying this value never copies an image. The existing tide_texture remains
 // the CPU pixel descriptor used by C drawing callers.
+//
+// It carries how it's sampled where a draw doesn't say: its filter and its
+// wrap (tide_texture_sampling), in the top bits of `image.version`
+// (TIDE_TEXTURE_SAMPLING_SHIFT), which are free there for every kind but C's
+// own pixels, whose version is all C's: for those it's in `target.size`,
+// which only a rendered image reads, as a whole number in its `scale`. So a
+// reference C makes of its pixels with nothing more said, and a zeroed one,
+// which is no texture, are blended and clamped.
 typedef struct tide_texture_ref {
     tide_texture image;
     tide_render_target target; // A rendered image; its id is 0 for CPU pixels
 } tide_texture_ref;
+
+// A reference's sampling: bit 0 for the nearest pixel (none: blended, as a
+// draw that says nothing is), and its tide_wrap from bit 2. The rest of
+// `image.version` is TIDE_TEXTURE_NAME: a pack image's name, or a grid's
+// place and cells.
+#define TIDE_TEXTURE_SAMPLING_SHIFT 60u
+#define TIDE_TEXTURE_NAME ((UINT64_C(1) << TIDE_TEXTURE_SAMPLING_SHIFT) - 1u)
+#define TIDE_TEXTURE_GRID (-1) // A grid's reference's `image.height`
+
+static inline uint32_t tide_sampling_bits(const int32_t filter, const int32_t wrap)
+{
+    return (filter == TIDE_FILTER_POINT ? 1u : 0u) | (uint32_t)tide_wrap_of(wrap) << 2;
+}
+
+static inline uint32_t tide_texture_sampling(const tide_texture_ref texture)
+{
+    if (texture.image.pixels) { // C's pixels: beside them, where no target is
+        const float kept = texture.target.id ? 0.0f : texture.target.size.scale;
+        return kept >= 1.0f && kept <= 15.0f ? (uint32_t)kept : 0u;
+    }
+    return (uint32_t)(texture.image.version >> TIDE_TEXTURE_SAMPLING_SHIFT);
+}
+
+static inline tide_filter tide_texture_filter(const tide_texture_ref texture)
+{
+    return tide_texture_sampling(texture) & 1u ? TIDE_FILTER_POINT : TIDE_FILTER_BILINEAR;
+}
+
+static inline tide_wrap tide_texture_wrap(const tide_texture_ref texture)
+{
+    return tide_wrap_of((int32_t)(tide_texture_sampling(texture) >> 2));
+}
+
+// The same texture, sampled as `sampling` says (tide_sampling_bits).
+static inline tide_texture_ref tide_texture_sampled(tide_texture_ref texture, const uint32_t sampling)
+{
+    if (texture.image.pixels) {
+        if (!texture.target.id) texture.target.size.scale = (float)(sampling & 15u);
+        return texture;
+    }
+    texture.image.version = (texture.image.version & TIDE_TEXTURE_NAME) | (uint64_t)(sampling & 15u) << TIDE_TEXTURE_SAMPLING_SHIFT;
+    return texture;
+}
+
+// ...with another filter, or another wrap: what a draw that says one draws
+// with. Tide's `Filter` and `Wrap`, as any number an enum's value can be.
+static inline tide_texture_ref tide_texture_filtered(const tide_texture_ref texture, const int32_t filter)
+{
+    return tide_texture_sampled(texture, (tide_texture_sampling(texture) & ~1u) | (filter == TIDE_FILTER_POINT ? 1u : 0u));
+}
+
+static inline tide_texture_ref tide_texture_wrapped(const tide_texture_ref texture, const int32_t wrap)
+{
+    return tide_texture_sampled(texture, (tide_texture_sampling(texture) & 3u) | (uint32_t)tide_wrap_of(wrap) << 2);
+}
+
+// What texture `texture` of a shader's adds to its run's `sampling` when it's
+// read as its reference says: its filter's bit, or its wrap's.
+static inline uint32_t tide_sampling_filter_of(const uint32_t texture, const tide_texture_ref from)
+{
+    return tide_texture_filter(from) != TIDE_FILTER_POINT ? 1u << texture : 0u;
+}
+
+static inline uint32_t tide_sampling_wrap_of(const uint32_t texture, const tide_texture_ref from)
+{
+    return tide_sampling_wrapped(texture, (int32_t)tide_texture_wrap(from));
+}
 
 // A target's depth, for a shader to read: a number for each of its pixels,
 // 0 at the camera's near plane to 1 at its far limit, as the meshes drawn
@@ -532,7 +609,7 @@ tide_render_target tide_render_target_screen(float factor);
 // ...and the window's size itself.
 tide_render_target tide_render_target_window(void);
 // The same four, holding what `format` says: one color image of it, or none
-// for TIDE_TARGET_DEPTH_ONLY. The ones above hold TIDE_TARGET_COLOR.
+// for TIDE_TARGET_DEPTH. The ones above hold TIDE_TARGET_RGBA8.
 tide_render_target tide_render_target_make_as(float width, float height, tide_target_format format);
 tide_render_target tide_render_target_make_scaled_as(float width, float height, float scale, tide_target_format format);
 tide_render_target tide_render_target_screen_as(float factor, tide_target_format format);
@@ -541,8 +618,8 @@ tide_render_target tide_render_target_window_as(tide_target_format format);
 // the most: each what its format says, in order. A shader's outputs go to
 // them in that order (tide_shader.outputs), and each is read as a texture of
 // its own (tide_render_target_color_at). One format is as the four above;
-// among several, one that's no color's (TIDE_TARGET_DEPTH_ONLY) is
-// TIDE_TARGET_COLOR, having said so.
+// among several, one that's no color's (TIDE_TARGET_DEPTH) is
+// TIDE_TARGET_RGBA8, having said so.
 tide_render_target tide_render_target_make_of(float width, float height, const tide_target_format *formats, uint32_t count);
 tide_render_target tide_render_target_make_scaled_of(float width, float height, float scale,
                                                      const tide_target_format *formats, uint32_t count);
@@ -607,12 +684,13 @@ typedef struct tide_draw_texture {
     uint64_t id;      // Whose pixels: C's address of them, or a grid's place in its world
     uint64_t version; // ...as they were then
     uint32_t space;   // What `id` is: TIDE_PIXELS_*
+    uint32_t format;  // What a pixel is: TIDE_TEXELS_*
     int32_t width, height;
     uint32_t frame;    // The frame that last drew with it
     uint32_t epoch;    // The list's when it was copied (see tide_draw_forget)
     uint32_t capacity; // Bytes `pixels` has room for: 0 where they aren't the list's own
-    // width * height * 4 bytes, rows from the first: the list's own copy, or for TIDE_PIXELS_PACK the pack's,
-    // where the pack has them, noted again by each frame that draws with them
+    // width * height pixels, rows from the first, 4 bytes each or 2 (tide_texels_bytes): the list's own copy,
+    // or for TIDE_PIXELS_PACK the pack's, where the pack has them, noted again by each frame that draws with them
     uint8_t *pixels;
     tide_target_size target; // A target's: the rendered image's size, where the others have a width and a height
 } tide_draw_texture;
@@ -624,6 +702,16 @@ typedef struct tide_draw_texture {
 // TIDE_PIXELS_PACK is an image of the game's pack (tide/pack.h), whose `id` is its version: what's in it,
 // the file's hash.
 enum { TIDE_PIXELS_MEMORY, TIDE_PIXELS_GRID, TIDE_PIXELS_TARGET, TIDE_PIXELS_TARGET_DEPTH, TIDE_PIXELS_PACK };
+
+// What a list's texture holds for each pixel: red, green, blue and alpha, a
+// byte each, or one float of 16 bits (IEEE 754's half), which a shader reads
+// as red, with green and blue 0 and alpha 1: a Grid2<float>'s cells.
+enum { TIDE_TEXELS_BYTES, TIDE_TEXELS_HALF };
+
+static inline uint32_t tide_texels_bytes(const uint32_t format)
+{
+    return format == TIDE_TEXELS_HALF ? 2u : 4u;
+}
 
 // A 2D transform: where it puts the point (x, y) is `offset` + x * `x` + y * `y`.
 typedef struct tide_draw_transform {
@@ -674,6 +762,9 @@ typedef struct tide_draw_place {
     uint32_t depth; // tide_depth: what the 3D meshes to come do with depth
     uint32_t cull;  // tide_cull: which side of their triangles isn't drawn
     uint32_t stencil; // A tide_stencil, packed: what the commands to come do with stencil
+    uint32_t blend;   // tide_blend: how the commands to come go over what's there
+    uint32_t tinted;  // Whether `tint` is anything but white: it's unset otherwise
+    tide_color tint;  // What the commands to come have their colors multiplied by
     // What the commands recorded so far leave a renderer with. Where it isn't the above, the commands
     // that say so are recorded before the next one that draws: a setting that's set and put back with
     // nothing drawn records nothing, and neither does one that's set to what it was.
@@ -728,7 +819,7 @@ typedef struct tide_draw_saved {
     uint32_t setting; // Which one: TIDE_DRAW_SAVED_*
     uint32_t target;  // Whose, for a destination's own: 0 for the window, or 1 + its place in tide_draw_list.targets
     union {
-        uint32_t value; // A blend, or what a place has for a camera, a clip, its depth, its cull or its stencil
+        uint32_t value; // What a place has for its blend, a camera, a clip, its depth, its cull or its stencil
         tide_color tint;
         struct {
             tide_draw_transform transform;
@@ -950,9 +1041,6 @@ typedef struct tide_draw_list {
     tide_draw_place place;  // The current destination's settings...
     tide_draw_place window; // ...and the window's, while a target is selected
     uint32_t unsettled;     // Whether `place` plays other than what it has (see tide_draw_place)
-    uint32_t blend;         // tide_blend: how the commands to come go over what's there
-    uint32_t tinted;        // Whether `tint` is anything but white: it's unset otherwise
-    tide_color tint;        // What the commands to come have their colors multiplied by
     uint32_t altered;       // Whether a 2D command is recorded other than as it's given: tinted, or moved
     tide_draw_camera_data *cameras; // The 2D cameras the frame was given, which places and clips name
     uint32_t camera_count, camera_capacity;
@@ -1055,13 +1143,13 @@ void tide_draw_clear(tide_draw_list *d, tide_color color);
 // Settings: what the commands recorded after them are drawn with. Each frame
 // starts from the defaults (tide_draw_reset).
 //
-// There are two kinds. How a command comes out is the same wherever it draws:
-// how it blends (tide_draw_set_blend) and what tints it (tide_draw_set_tint).
-// Where it lands belongs to its destination, the window or a target, each
-// with its own for the frame: its cameras, its clip, its transforms, what its
-// 3D meshes do with its depth, which side of their triangles draws, and what
-// its draws do with its stencil. Those are set, and pushed, for the
-// destination that's selected (tide_draw_to).
+// Every setting belongs to a destination, the window or a target, each with
+// its own for the frame: how its commands blend and what tints them, its
+// cameras, its clip, its transforms, what its 3D meshes do with its depth,
+// which side of their triangles draws, and what its draws do with its
+// stencil. Each is set, and pushed, for the destination that's selected
+// (tide_draw_to), and reaches no other: a target's blend doesn't reach the
+// window's draws.
 //
 // Each has two forms. tide_draw_set_* sets it for the commands to come, until
 // it's set again, and tide_draw_unset_* puts it back as each frame starts.
@@ -1075,15 +1163,17 @@ void tide_draw_clear(tide_draw_list *d, tide_color color);
 // between, records nothing, so it never comes between commands a renderer
 // would draw at once.
 
-// How the commands after it go over what's there (tide_blend): by their alpha,
-// each frame's first. Clears and blits don't blend.
+// How the selected destination's commands after it go over what's there
+// (tide_blend): by their alpha, each frame's first. Clears and blits don't
+// blend.
 void tide_draw_set_blend(tide_draw_list *d, tide_blend blend);
 void tide_draw_unset_blend(tide_draw_list *d);
 uint32_t tide_draw_push_blend(tide_draw_list *d, tide_blend blend);
 
-// What the commands after it have their colors multiplied by, alpha too: a
-// shape's and text's colors, a mesh's corners', and what a shader of the
-// game's wrote. White, each frame's first, changes nothing.
+// What the selected destination's commands after it have their colors
+// multiplied by, alpha too: a shape's and text's colors, a mesh's corners',
+// and what a shader of the game's wrote. White, each frame's first, changes
+// nothing.
 void tide_draw_set_tint(tide_draw_list *d, tide_color tint);
 void tide_draw_unset_tint(tide_draw_list *d);
 uint32_t tide_draw_push_tint(tide_draw_list *d, tide_color tint);
@@ -1179,10 +1269,10 @@ void tide_draw_pop(tide_draw_list *d, uint32_t mark);
 // GUI.
 void tide_draw_defaults(tide_draw_list *d);
 
-// The tint the commands to come are drawn with: white for none.
+// The tint the selected destination's commands to come are drawn with: white for none.
 static inline tide_color tide_draw_tint(const tide_draw_list *d)
 {
-    return d->tinted ? d->tint : TIDE_COLOR_WHITE;
+    return d->place.tinted ? d->place.tint : TIDE_COLOR_WHITE;
 }
 
 void tide_draw_circle(tide_draw_list *d, tide_float2 center, float radius, tide_color color);
@@ -1320,6 +1410,10 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from);
 // Otherwise it's NULL.
 uint32_t tide_draw_texture_slot(tide_draw_list *d, uint32_t space, uint64_t id, uint64_t version, int32_t width,
                                 int32_t height, uint8_t **pixels);
+
+// ...whose pixels are `format` (TIDE_TEXELS_*): width * height of them to write.
+uint32_t tide_draw_texture_slot_as(tide_draw_list *d, uint32_t space, uint64_t id, uint64_t version, int32_t width,
+                                   int32_t height, uint32_t format, uint8_t **pixels);
 
 // tide_draw_triangles_wrapped, with what tide_draw_texture_slot gave as the
 // texture. Triangles after others with the same texture, filter and wrap are

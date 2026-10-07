@@ -162,7 +162,7 @@ view MyBrick(Falling falling, Body body, mut Fx fx, with ownership)
 [Stage(Layers.Camera, 3)]
 view Look(Towers towers, Lobby lobby, mut Fx fx)
 {
-    Draw2D.Clear(BACK);
+    Draw.Clear(BACK);
     var width = Screen.width;
     var height = Screen.height;
     var aspect = width / height;
@@ -190,7 +190,7 @@ view Look(Towers towers, Lobby lobby, mut Fx fx)
     fx.meter = height / (2 * fx.half);
     fx.low = fx.center - float2(fx.half * aspect, fx.half);
     fx.high = fx.center + float2(fx.half * aspect, fx.half);
-    Draw2D.SetCamera(fx.center + fx.shake, fx.half);
+    Draw.SetCamera(fx.center + fx.shake, fx.half);
 
     // The room behind: a dot every two meters, the ground, and how high
     // things are, every ten meters
@@ -198,7 +198,7 @@ view Look(Towers towers, Lobby lobby, mut Fx fx)
     for (var x = Math.Ceil(fx.low.x / step) * step; x < fx.high.x; x += step)
     {
         for (var y = Math.Ceil(Math.Max(fx.low.y, GROUND) / step) * step; y < fx.high.y; y += step)
-            Draw2D.Circle(float2(x, y), Math.Max(0.05, 0.8 / fx.meter), Color(1, 1, 1, 0.05));
+            Draw.Circle(float2(x, y), Math.Max(0.05, 0.8 / fx.meter), Color(1, 1, 1, 0.05));
     }
     var wide = fx.high.x - fx.low.x + 4;
     var thin = Math.Max(0.05, 1 / fx.meter);
@@ -207,21 +207,21 @@ view Look(Towers towers, Lobby lobby, mut Fx fx)
     for (var y = 10.0; y < towers.line - 1; y += 10)
     {
         if (y < fx.low.y || y > fx.high.y) continue;
-        Draw2D.Rect(float2(fx.center.x, y), float2(wide, thin), Color(1, 1, 1, 0.07));
-        Draw2D.Text($"{int(y)} m", float2(margin, y + words * 0.75), words, Fade(QUIET, 0.6), Anchor.MiddleRight);
+        Draw.Rect(float2(fx.center.x, y), float2(wide, thin), Color(1, 1, 1, 0.07));
+        Draw.Text($"{int(y)} m", float2(margin, y + words * 0.75), words, Fade(QUIET, 0.6), Anchor.MiddleRight);
     }
-    Draw2D.Rect(float2(fx.center.x, GROUND - 20), float2(wide, 40), Color(0.125, 0.127, 0.14));
-    Draw2D.Rect(float2(fx.center.x, GROUND - 0.06), float2(wide, 0.12), LINE);
+    Draw.Rect(float2(fx.center.x, GROUND - 20), float2(wide, 40), Color(0.125, 0.127, 0.14));
+    Draw.Rect(float2(fx.center.x, GROUND - 0.06), float2(wide, 0.12), LINE);
 
     // The line to build over
     Draw.Blend(Blend.Add)
     {
-        Draw2D.Shape(Shape { center = float2(fx.center.x, towers.line + 1.5), size = float2(wide, 3), color = Fade(GOLD, 0), color2 = Fade(GOLD, 0.1) });
+        Draw.Shape(Shape { center = float2(fx.center.x, towers.line + 1.5), size = float2(wide, 3), color = Fade(GOLD, 0), color2 = Fade(GOLD, 0.1) });
     }
     for (var x = Math.Floor(fx.low.x / 2) * 2; x < fx.high.x; x += 2)
-        Draw2D.Rect(float2(x + 0.5, towers.line), float2(1, Math.Max(0.12, 2 / fx.meter)), GOLD);
+        Draw.Rect(float2(x + 0.5, towers.line), float2(1, Math.Max(0.12, 2 / fx.meter)), GOLD);
     if (towers.line > fx.low.y && towers.line < fx.high.y)
-        Draw2D.Text("FINISH", float2(margin, towers.line + words * 0.75), words, GOLD, Anchor.MiddleRight, Font.Bold);
+        Draw.Text("FINISH", float2(margin, towers.line + words * 0.75), words, GOLD, Anchor.MiddleRight, Font.Bold);
 }
 
 // This machine's player's hand: where they want their brick, how turned, and
@@ -323,22 +323,22 @@ view Plinths(Body body, Box box, Seat seat, Towers towers, Fx fx)
     var manned = Sitter(towers, seat.index) != default;
     var color = manned || towers.bots ? SeatColor(seat.index) : Shade(SeatColor(seat.index), 0.45);
     var top = body.position.y + box.size.y / 2;
-    Draw2D.Shape(Shape { center = float2(body.position.x, top - 20), size = float2(box.size.x, 40), color = Color(0.25, 0.26, 0.285),
+    Draw.Shape(Shape { center = float2(body.position.x, top - 20), size = float2(box.size.x, 40), color = Color(0.25, 0.26, 0.285),
                          color2 = Color(0.13, 0.135, 0.15) });
-    Draw2D.Rect(float2(body.position.x, top - 0.16), float2(box.size.x, 0.32), color);
+    Draw.Rect(float2(body.position.x, top - 0.16), float2(box.size.x, 0.32), color);
     var words = Math.Max(0.7, 11 / fx.meter);
-    Draw2D.Text(mine ? "YOU" : manned ? "PLAYER" : towers.bots ? "BOT" : "", float2(body.position.x, top - 0.5 - words * 0.7), words,
+    Draw.Text(mine ? "YOU" : manned ? "PLAYER" : towers.bots ? "BOT" : "", float2(body.position.x, top - 0.5 - words * 0.7), words,
                 mine ? Color.white : Fade(color, 0.8), Anchor.MiddleCenter, Font.Bold);
     for (var i = 0; i < Math.Min(seat.wins, 6); i++)
-        Draw2D.Circle(float2(body.position.x + (i - (Math.Min(seat.wins, 6) - 1) * 0.5) * 0.6, top - 1 - words * 1.6), 0.2, GOLD);
+        Draw.Circle(float2(body.position.x + (i - (Math.Min(seat.wins, 6) - 1) * 0.5) * 0.6, top - 1 - words * 1.6), 0.2, GOLD);
     if (!mine || towers.phase != Phase.Play) return;
     for (var mark = seat.marks + 1; mark <= 3; mark++)
     {
         var y = FINISH * mark / 4;
         var tint = PowerColor(Power(mark));
         for (var x = -4.5; x < 4.5; x += 0.6)
-            Draw2D.Rect(float2(seat.home + x + 0.15, y), float2(0.3, Math.Max(0.07, 1.5 / fx.meter)), Fade(tint, 0.7));
-        Draw2D.Text(PowerName(Power(mark)), float2(seat.home + 4.6, y + words * 0.6), words * 0.85, Fade(tint, 0.9), Anchor.MiddleRight, Font.Bold);
+            Draw.Rect(float2(seat.home + x + 0.15, y), float2(0.3, Math.Max(0.07, 1.5 / fx.meter)), Fade(tint, 0.7));
+        Draw.Text(PowerName(Power(mark)), float2(seat.home + 4.6, y + words * 0.6), words * 0.85, Fade(tint, 0.9), Anchor.MiddleRight, Font.Bold);
     }
 }
 
@@ -348,7 +348,7 @@ void Cells(Kind kind, Color color, float lit, float shown)
     var face = Mix(color, Color.white, 0.1 + lit * 0.7);
     for (var i = 0; i < 4; i++)
     {
-        Draw2D.Shape(Shape { center = Cell(kind, i), size = float2(0.96), radius = 0.14, color = Fade(face, shown),
+        Draw.Shape(Shape { center = Cell(kind, i), size = float2(0.96), radius = 0.14, color = Fade(face, shown),
                              color2 = Fade(Shade(face, 0.72), shown), outline = 0.08, outlineColor = Fade(Shade(color, 0.45), shown) });
     }
 }
@@ -369,14 +369,14 @@ view Bricks(Body body, Piece piece, mut Brick brick, Towers towers, Time time, m
     var loose = !brick.down && !brick.set && fx.seat >= 0 && towers.phase == Phase.Play && Math.Abs(body.position.x - fx.home) < PLINTH / 2 + 1.5
              && time.tick - brick.born > 45 && Math.LengthSq(body.velocity) > 0.3;
     if (loose) fx.alarm = 1;
-    Draw2D.Transform(body.position, body.angle)
+    Draw.Transform(body.position, body.angle)
     {
         Cells(piece.kind, brick.down ? Shade(color, 0.6) : color, brick.lit, shown);
         for (var i = 0; i < 4 && (brick.set || loose); i++)
         {
             // Set solid: a rivet in each cell. On the move: a red edge
-            if (brick.set) Draw2D.Circle(Cell(piece.kind, i), 0.11, Shade(color, 0.55));
-            else Draw2D.Shape(Shape { center = Cell(piece.kind, i), size = float2(0.96), radius = 0.14, color = Fade(ROSE, 0.25), outline = 0.1,
+            if (brick.set) Draw.Circle(Cell(piece.kind, i), 0.11, Shade(color, 0.55));
+            else Draw.Shape(Shape { center = Cell(piece.kind, i), size = float2(0.96), radius = 0.14, color = Fade(ROSE, 0.25), outline = 0.1,
                                       outlineColor = ROSE });
         }
     }
@@ -415,25 +415,25 @@ view Fallings(Body body, Piece piece, mut Falling falling, Physics physics, Fx f
         for (var i = 0; i < 4; i++)
         {
             var cell = Turned(Cell(piece.kind, i), falling.quarter);
-            Draw2D.Rect(float2(from.x + cell.x, from.y + cell.y - fall * 0.5), float2(1, fall), Color(1, 1, 1, 0.035));
+            Draw.Rect(float2(from.x + cell.x, from.y + cell.y - fall * 0.5), float2(1, fall), Color(1, 1, 1, 0.035));
         }
         if (fall < SIGHT)
         {
-            Draw2D.Transform(from - float2(0, fall), Angle(falling.quarter))
+            Draw.Transform(from - float2(0, fall), Angle(falling.quarter))
             {
                 for (var i = 0; i < 4; i++)
-                    Draw2D.Shape(Shape { center = Cell(piece.kind, i), size = float2(0.96), radius = 0.14, color = Fade(color, 0.12),
+                    Draw.Shape(Shape { center = Cell(piece.kind, i), size = float2(0.96), radius = 0.14, color = Fade(color, 0.12),
                                          outline = 0.06, outlineColor = Fade(Color.white, 0.45) });
             }
         }
     }
-    Draw2D.Transform(at, falling.turned)
+    Draw.Transform(at, falling.turned)
     {
         Cells(piece.kind, Mix(color, Color.white, 0.25), 0, 1);
         if (mine)
         {
             for (var i = 0; i < 4; i++)
-                Draw2D.Shape(Shape { center = Cell(piece.kind, i), size = float2(0.96), radius = 0.14, color = Color(1, 1, 1, 0),
+                Draw.Shape(Shape { center = Cell(piece.kind, i), size = float2(0.96), radius = 0.14, color = Color(1, 1, 1, 0),
                                      outline = 0.1, outlineColor = Color.white });
         }
     }

@@ -1,7 +1,7 @@
-// expect: to set it for the draws that follow, write 'Draw2D.SetCamera(...);'
+// expect: to set it for the draws that follow, write 'Draw.SetCamera(...);'
 scene Main { }
 
 view Show()
 {
-    Draw2D.Camera(float2(0, 0), 5);
+    Draw.Camera(float2(0, 0), 5);
 }

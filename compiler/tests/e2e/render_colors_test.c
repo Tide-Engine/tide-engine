@@ -71,8 +71,8 @@ static tide_entity prop(void)
     return (tide_entity){0};
 }
 
-#define C TIDE_TARGET_COLOR
-#define F TIDE_TARGET_FLOAT
+#define C TIDE_TARGET_RGBA8
+#define F TIDE_TARGET_RGBA16F
 
 TIDE_TEST(render_colors_targets_hold_several_and_frags_write_them_in_order)
 {
@@ -94,7 +94,7 @@ TIDE_TEST(render_colors_targets_hold_several_and_frags_write_them_in_order)
     TIDE_CHECK(holds(stage->half.id, 3, C, C, F, 0) && stage->half.size.window == 0.5f);
     TIDE_CHECK(holds(stage->four.id, 4, C, C, C, C) && holds(stage->bright.id, 1, F, 0, 0, 0));
     TIDE_CHECK(holds(stage->picked.id, 2, F, C, 0, 0) && stage->picked.size.width == 32.0f);
-    // Among several, a format that's no color's, known only as it runs, is a Format.Color image
+    // Among several, a format that's no color's, known only as it runs, is a Format.Rgba8 image
     TIDE_CHECK(holds(stage->odd.id, 2, F, C, 0, 0));
 
     // Each color image is a Texture: the first is the target's `color`, and the others say

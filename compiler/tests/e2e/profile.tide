@@ -23,11 +23,11 @@ system Move(mut Body body, Time time)
 // Once a frame.
 view Backdrop(Time time)
 {
-    Draw2D.SetCamera(float2(time.tick, 0), 10);
+    Draw.SetCamera(float2(time.tick, 0), 10);
 }
 
 // Once for each body.
 view Bodies(Body body)
 {
-    Draw2D.Circle(body.position, 1, Color.white);
+    Draw.Circle(body.position, 1, Color.white);
 }

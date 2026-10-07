@@ -1,3 +1,0 @@
-// expect: it's Draw2D's: 'Draw2D.Clear(...)'
-scene Main { }
-view Show() { Draw.Clear(Color.black); }

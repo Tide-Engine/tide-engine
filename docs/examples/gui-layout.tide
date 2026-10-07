@@ -10,8 +10,8 @@ local scene Main { }
 
 view TryLayout(mut Menu menu)
 {
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw2D.SetScreen();
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetPixels();
 
     GUILayout.Area(Anchor.UpperLeft)
     {
@@ -38,8 +38,8 @@ view TryLayout(mut Menu menu)
 
     var center = float2(Screen.width * 0.5, Screen.height - 136);
     var color = menu.teal ? Color(0.18, 0.83, 0.75) : Color(0.98, 0.75, 0.14);
-    Draw2D.Rect(center, float2(120, 80), color);
-    if (menu.guide) Draw2D.WireRect(center, float2(144, 104), Color.white);
+    Draw.Rect(center, float2(120, 80), color);
+    if (menu.guide) Draw.WireRect(center, float2(144, 104), Color.white);
 
     // GUI places a widget at the exact rect; GUILayout sizes the modal for us.
     if (GUI.Button(Rect(12, Screen.height - 52, Screen.width - 24, 40), "Open modal")) menu.open = true;

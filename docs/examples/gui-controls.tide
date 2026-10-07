@@ -12,8 +12,8 @@ local scene Main { }
 
 view TryControls(mut Controls controls)
 {
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw2D.SetScreen();
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetPixels();
 
     GUILayout.Area(Rect(12, 12, Screen.width - 24, 250))
     {
@@ -41,14 +41,14 @@ view TryControls(mut Controls controls)
         GUILayout.Label($"Clicks: {controls.clicks}");
     }
 
-    // These Draw2D calls read the values the widgets just edited.
+    // These Draw calls read the values the widgets just edited.
     for (var i = 0; i < controls.circles; i++)
     {
         var center = float2(Screen.width * 0.5 + (i - (controls.circles - 1) * 0.5) * 64,
                             Screen.height - 76);
-        if (controls.outline) Draw2D.WireCircle(center, controls.radius, Color(0.98, 0.75, 0.14));
-        else Draw2D.Circle(center, controls.radius, Color(0.98, 0.75, 0.14));
+        if (controls.outline) Draw.WireCircle(center, controls.radius, Color(0.98, 0.75, 0.14));
+        else Draw.Circle(center, controls.radius, Color(0.98, 0.75, 0.14));
     }
-    Draw2D.SetClip(Rect(12, Screen.height - 38, Screen.width - 24, 24));
-    Draw2D.Text(controls.name, float2(24, Screen.height - 34), 18, Color.white);
+    Draw.SetClip(Rect(12, Screen.height - 38, Screen.width - 24, 24));
+    Draw.Text(controls.name, float2(24, Screen.height - 34), 18, Color.white);
 }

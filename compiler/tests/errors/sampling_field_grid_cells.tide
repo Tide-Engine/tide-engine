@@ -1,5 +1,5 @@
 // expect: [Filter] says how a texture is sampled, and 'heights' is Grid2<int>
-// expect: it goes on a Grid2<Color> field, or on an asset that's a Texture or a Grid2<Color>
+// expect: it goes on a field that's a Grid2<Color>, a Grid2<float> or a RenderTarget, or on an asset that's a Texture or a Grid2<Color>
 scene Main { }
 
 local singleton Art

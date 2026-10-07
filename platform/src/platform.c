@@ -545,7 +545,7 @@ typedef struct frame_target {
     uint64_t version;
     tide_target_size size; // As the list recorded it
     bool valid;
-    bool bare; // It holds depth alone (TIDE_TARGET_DEPTH_ONLY): a color has nowhere to go there
+    bool bare; // It holds depth alone (TIDE_TARGET_DEPTH): a color has nowhere to go there
     tide_gpu_target_format into; // What it holds, which the pipelines that draw into it are made for
 } frame_target;
 
@@ -1086,7 +1086,7 @@ static tide_gpu_target_format gpu_target_format(const uint64_t id)
     const tide_target_formats held = tide_render_target_formats(id);
     tide_gpu_target_format format = TIDE_GPU_TARGET_DEPTH;
     for (uint32_t i = 0; i < held.count; i++) {
-        format = tide_gpu_target_with(format, held.color[i] == TIDE_TARGET_FLOAT ? TIDE_GPU_COLOR_FLOAT : TIDE_GPU_COLOR_BYTES);
+        format = tide_gpu_target_with(format, held.color[i] == TIDE_TARGET_RGBA16F ? TIDE_GPU_COLOR_FLOAT : TIDE_GPU_COLOR_BYTES);
     }
     return format;
 }
@@ -1181,6 +1181,7 @@ typedef struct gpu_texture {
     uint64_t id; // Whose pixels (see tide_draw_texture)
     uint64_t version;
     uint32_t space;
+    uint32_t format; // TIDE_TEXELS_*
     int32_t width, height;
     uint32_t epoch; // Its list's when it copied them (see tide_draw_forget)
     tide_gpu_id texture;
@@ -1907,15 +1908,17 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
     }
     g->frame = gpu_frame;
     if (g->texture && g->version == t->version && g->width == t->width && g->height == t->height
-        && g->epoch == t->epoch) {
+        && g->format == t->format && g->epoch == t->epoch) {
         return g;
     }
-    if (g->texture && g->width == t->width && g->height == t->height) {
+    if (g->texture && g->width == t->width && g->height == t->height && g->format == t->format) {
         gpu->texture_write(g->texture, t->pixels);
     } else {
         if (g->texture) gpu->texture_free(g->texture);
-        g->texture = gpu->texture(TIDE_GPU_RGBA8, t->width, t->height, t->pixels);
+        // A grid of floats' cells are one float of 16 bits a pixel
+        g->texture = gpu->texture(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F : TIDE_GPU_RGBA8, t->width, t->height, t->pixels);
     }
+    g->format = t->format;
     g->version = t->version;
     g->width = t->width;
     g->height = t->height;
@@ -2454,7 +2457,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     // Start after the CPU expanded the list and prepared/uploaded resources.
     // Otherwise a desktop GPU waiting for that work would time the CPU too.
     if (timed && gpu->time_begin) gpu->time_begin();
-    begin_pass(target, !over); // Every frame starts black; Draw2D.Clear picks another color
+    begin_pass(target, !over); // Every frame starts black; Draw.Clear picks another color
     bool pass_active = true;
     uint32_t calls = 0; // The steps that draw, a draw call each
     for (uint32_t i = 0; i < step_count; i++) {

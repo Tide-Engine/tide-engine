@@ -2,5 +2,5 @@
 scene Main { }
 view Label()
 {
-    Draw2D.Text("oops, float2(0, 0), 1, Color.white);
+    Draw.Text("oops, float2(0, 0), 1, Color.white);
 }

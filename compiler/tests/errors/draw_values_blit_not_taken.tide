@@ -1,0 +1,21 @@
+// expect: this draw gives a 'Lift', which frag 'Blur' doesn't take
+scene Main { }
+struct Corner { float3 position; float2 uv; }
+struct Glow { Color tint; float gain; }
+struct Lift { float3 by; }
+local singleton Models
+{
+    List<Corner> crate;
+    List<int> faces;
+    List<Glow> glows;
+    RenderTarget bright;
+    RenderTarget spread;
+}
+frag Blur(Vertex vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv);
+}
+view Show(Models models)
+{
+    Draw.Blit(models.bright.color, models.spread, Blur, Lift { by = float3(0, 1, 0) });
+}

@@ -1,7 +1,7 @@
-// expect: Draw2D.SetClip(Rect rect)
+// expect: Draw.SetClip(Rect rect)
 scene Main { }
 
 view Show()
 {
-    Draw2D.SetClip(1, 2, 3, 4);
+    Draw.SetClip(1, 2, 3, 4);
 }

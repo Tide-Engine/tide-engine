@@ -111,29 +111,29 @@ view Show(Devices devices)
     float4x4 world = default;
     float2x3 wrong = default;
     int2x2 alsoWrong = default;
-    Draw2D.Rect(0, 0, 1, 1, Color.white);
+    Draw.Rect(0, 0, 1, 1, Color.white);
     Vertex corner = default;
-    Draw2D.Mesh([corner], [0, 0, 0], cells, Filter.Point);
-    Draw2D.Text("DUEL", corner.position, 88, Color.white, Anchor.MiddleCenter, Font.Bold);
+    Draw.Mesh([corner], [0, 0, 0], cells, Filter.Point);
+    Draw.Text("DUEL", corner.position, 88, Color.white, Anchor.MiddleCenter, Font.Bold);
     Vertex3 corner3 = default;
-    Draw3D.Mesh([corner3], [0, 0, 0], world, cells, Filter.Bilinear, Wrap.Repeat);
+    Draw.Mesh([corner3], [0, 0, 0], world, cells, Filter.Bilinear, Wrap.Repeat);
     Shape panel = default;
-    Draw2D.Shape(panel);
+    Draw.Shape(panel);
     Random dice = Random(7);
     var roll = dice.NextInt(6);
-    DrawUI(Draw2D.list);
+    DrawUI(Draw.list);
     Draw.Blend(Blend.Add),
-    Draw2D.Clip(Rect(0, 0, 4, 4))
+    Draw.Clip(Rect(0, 0, 4, 4))
     {
         Draw.SetTint(Color.red);
     }
-    Draw3D.Depth(Depth.Read)
+    Draw.Depth(Depth.Read)
     {
-        Draw3D.SetDepth(Depth.None);
+        Draw.SetDepth(Depth.None);
     }
-    Draw3D.Cull(Cull.None)
+    Draw.Cull(Cull.None)
     {
-        Draw3D.SetCull(Cull.Front);
+        Draw.SetCull(Cull.Front);
     }
     Draw.Stencil(StencilTest.Equal, 1)
     {
@@ -227,8 +227,8 @@ float Blend(float frag, float vert)
 }
 view Boxes(with Box, Models models)
 {
-    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Wave, Shade);
-    Draw3D.Cube(float3(0, 0, 5), float3(1), Color.red);
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Wave, Shade);
+    Draw.Cube(float3(0, 0, 5), float3(1), Color.red);
 }
 
 // Local filesystem APIs and binary values.

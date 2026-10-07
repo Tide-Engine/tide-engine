@@ -6,6 +6,6 @@ view Show()
 {
     Draw.SetStencil(StencilTest.Always, 1, StencilOp.Replace)
     {
-        Draw2D.Circle(float2(0, 0), 20, Color.white);
+        Draw.Circle(float2(0, 0), 20, Color.white);
     }
 }

@@ -79,5 +79,5 @@ event(Spawned) Setup(with Main)
 
 view Boxes(with Box, Models models)
 {
-    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Wave, Shade);
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Wave, Shade);
 }

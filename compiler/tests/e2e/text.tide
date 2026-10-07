@@ -1,4 +1,4 @@
-// Draw2D.Text at an anchor and in a weight, and Draw2D.MeasureText in a
+// Draw.Text at an anchor and in a weight, and Draw.MeasureText in a
 // weight: what the draw list gets of each, on the screen, under a camera and
 // in a render target.
 local singleton Probe
@@ -25,36 +25,36 @@ Font Chosen(mut Probe probe)
 // Text from a function a view calls, with the anchor and the weight it's given.
 void Label(string text, float2 at, Anchor anchor, Font font)
 {
-    Draw2D.Text(text, at, 15, Color.red, anchor, font);
+    Draw.Text(text, at, 15, Color.red, anchor, font);
 }
 
 view Show(mut Probe probe)
 {
-    Draw2D.SetScreen();
-    Draw2D.Text("plain", float2(1, 2), 10, Color.white);
-    Draw2D.Text("anchored", float2(3, 4), 11, Color.white, Anchor.MiddleCenter);
-    Draw2D.Text("bold", float2(5, 6), 12, Color.white, Font.Bold);
-    Draw2D.Text("both", float2(7, 8), 13, Color.white, Anchor.LowerRight, Font.Bold);
-    Draw2D.Text("regular", float2(9, 10), 14, Color.white, Anchor.UpperCenter, Font.Regular);
+    Draw.SetPixels();
+    Draw.Text("plain", float2(1, 2), 10, Color.white);
+    Draw.Text("anchored", float2(3, 4), 11, Color.white, Anchor.MiddleCenter);
+    Draw.Text("bold", float2(5, 6), 12, Color.white, Font.Bold);
+    Draw.Text("both", float2(7, 8), 13, Color.white, Anchor.LowerRight, Font.Bold);
+    Draw.Text("regular", float2(9, 10), 14, Color.white, Anchor.UpperCenter, Font.Regular);
     Label("passed on", float2(11, 12), Anchor.MiddleLeft, Font.Bold);
 
     // A weight is a value: from a function, in a local, each worked out once
     var weight = Chosen(probe);
-    Draw2D.Text("chosen", float2(13, 14), 16, Color.white, weight);
-    Draw2D.Text("chosen again", float2(15, 16), 17, Color.white, Anchor.LowerCenter, Chosen(probe));
+    Draw.Text("chosen", float2(13, 14), 16, Color.white, weight);
+    Draw.Text("chosen again", float2(15, 16), 17, Color.white, Anchor.LowerCenter, Chosen(probe));
 
     // An anchor is a value too, and a number none of the nine is the first
-    for (var i = 0; i < 9; i++) Draw2D.Text($"anchor {i}", float2(i, i), 18, Color.white, Anchor(i));
-    Draw2D.Text("no anchor", float2(17, 18), 19, Color.white, Anchor(40));
+    for (var i = 0; i < 9; i++) Draw.Text($"anchor {i}", float2(i, i), 18, Color.white, Anchor(i));
+    Draw.Text("no anchor", float2(17, 18), 19, Color.white, Anchor(40));
 
-    probe.regular = Draw2D.MeasureText("abcd", 10);
-    probe.named = Draw2D.MeasureText("abcd", 10, Font.Regular);
-    probe.bold = Draw2D.MeasureText("abcd", 10, Font.Bold);
-    probe.chosen = Draw2D.MeasureText("abcd", 10, weight);
+    probe.regular = Draw.MeasureText("abcd", 10);
+    probe.named = Draw.MeasureText("abcd", 10, Font.Regular);
+    probe.bold = Draw.MeasureText("abcd", 10, Font.Bold);
+    probe.chosen = Draw.MeasureText("abcd", 10, weight);
 
     // Under a camera, an anchor's position is in the world
-    Draw2D.SetCamera(float2(2, 3), 5);
-    Draw2D.Text("world", float2(-1, 1.5), 0.5, Color.white, Anchor.UpperRight, Font.Bold);
+    Draw.SetCamera(float2(2, 3), 5);
+    Draw.Text("world", float2(-1, 1.5), 0.5, Color.white, Anchor.UpperRight, Font.Bold);
 
     // A render target takes both, and measures in a weight
     probe.panel.SetCamera(float2(0), 4);

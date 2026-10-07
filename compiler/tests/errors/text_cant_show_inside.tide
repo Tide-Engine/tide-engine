@@ -9,5 +9,5 @@ scene Main { }
 view V()
 {
     Pose pose = default;
-    Draw2D.Text($"{pose}", float2(0, 0), 10, Color.white);
+    Draw.Text($"{pose}", float2(0, 0), 10, Color.white);
 }

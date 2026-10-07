@@ -42,7 +42,7 @@ frag Given(Corner vertex, out Color color, Texture source)
 
 view Show(Art art)
 {
-    Draw2D.Mesh(art.corners, [0, 1, 2], Named);
-    Draw2D.Mesh(art.corners, [0, 1, 2], tiles, Given);
-    Draw2D.Mesh(art.corners, [0, 1, 2], hero, Given);
+    Draw.Mesh(art.corners, [0, 1, 2], Named);
+    Draw.Mesh(art.corners, [0, 1, 2], tiles, Given);
+    Draw.Mesh(art.corners, [0, 1, 2], hero, Given);
 }

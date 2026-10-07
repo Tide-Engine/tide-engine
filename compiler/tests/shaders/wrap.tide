@@ -36,6 +36,6 @@ frag Tile(Corner vertex, out Color color, Art art, Texture source)
 
 view Show(Art art)
 {
-    Draw2D.Mesh(art.corners, art.faces, art.image, Lift, Tile);
-    Draw2D.Mesh(art.corners, art.faces, art.tiles, Filter.Point, Wrap.Mirror);
+    Draw.Mesh(art.corners, art.faces, art.image, Lift, Tile);
+    Draw.Mesh(art.corners, art.faces, art.tiles, Filter.Point, Wrap.Mirror);
 }

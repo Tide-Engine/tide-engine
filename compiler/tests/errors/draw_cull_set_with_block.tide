@@ -1,11 +1,11 @@
-// expect: Draw3D.SetCull sets it for the draws that follow, and takes no block
-// expect: to set it around some draws, and have it put back after them, write 'Draw3D.Cull(...) { ... }'
+// expect: Draw.SetCull sets it for the draws that follow, and takes no block
+// expect: to set it around some draws, and have it put back after them, write 'Draw.Cull(...) { ... }'
 scene Main { }
 
 view Show()
 {
-    Draw3D.SetCull(Cull.Front)
+    Draw.SetCull(Cull.Front)
     {
-        Draw3D.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.white);
+        Draw.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.white);
     }
 }

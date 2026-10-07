@@ -36,13 +36,13 @@ system Fall(Body body)
 
 view Look(Devices devices)
 {
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw3D.SetCamera(float3(0, 5, -10), quaternion.Euler(float3(0.34, 0, 0)), 50);
-    Draw3D.Plane(float3(0), float2(12, 12), Color(0.13, 0.13, 0.15));
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float3(0, 5, -10), quaternion.Euler(float3(0.34, 0, 0)), 50);
+    Draw.Plane(float3(0), float2(12, 12), Color(0.13, 0.13, 0.15));
     if (!devices.pointer.press.down) return;
     // A tap throws a ball from the camera, through the pixel it's on.
     var screen = Screen.Flip(devices.pointer.position);
-    Send(Throw { from = Draw3D.ScreenRayOrigin(screen), towards = Draw3D.ScreenRayDirection(screen) });
+    Send(Throw { from = Draw.ScreenRayOrigin(screen), towards = Draw.ScreenRayDirection(screen) });
 }
 
 // A view sees a body where the last step left it, blended between ticks. No
@@ -50,18 +50,18 @@ view Look(Devices devices)
 // way: its faces come out in three shades.
 view Crates(Body body, Box box, with Crate)
 {
-    Draw3D.Cube(body.position, box.size * float3(0.98, 1, 0.98), body.rotation, Color(0.98, 0.75, 0.14));
-    Draw3D.Cube(body.position, box.size * float3(0.98, 0.98, 1), body.rotation, Color(0.8, 0.58, 0.1));
-    Draw3D.Cube(body.position, box.size * float3(1, 0.98, 0.98), body.rotation, Color(0.6, 0.42, 0.07));
+    Draw.Cube(body.position, box.size * float3(0.98, 1, 0.98), body.rotation, Color(0.98, 0.75, 0.14));
+    Draw.Cube(body.position, box.size * float3(0.98, 0.98, 1), body.rotation, Color(0.8, 0.58, 0.1));
+    Draw.Cube(body.position, box.size * float3(1, 0.98, 0.98), body.rotation, Color(0.6, 0.42, 0.07));
 }
 
 view Balls(Body body, Sphere sphere)
 {
-    Draw3D.Sphere(body.position, sphere.radius, Color(0.18, 0.83, 0.75));
+    Draw.Sphere(body.position, sphere.radius, Color(0.18, 0.83, 0.75));
 }
 
 view Hud()
 {
-    Draw2D.SetScreen();
-    Draw2D.Text("Tap to throw a ball", float2(16, 14), 16, Color.white);
+    Draw.SetPixels();
+    Draw.Text("Tap to throw a ball", float2(16, 14), 16, Color.white);
 }

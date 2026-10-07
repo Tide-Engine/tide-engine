@@ -61,12 +61,12 @@ system Bounce(mut Body body, with Ball)
 
 ## Drawing: views
 
-A **view** looks like a system, but it runs once per frame instead of once per tick, and it can only read the match. `Draw2D` and `Draw3D` functions only work in views.
+A **view** looks like a system, but it runs once per frame instead of once per tick, and it can only read the match. `Draw` functions only work in views.
 
 ```csharp
 view DrawBalls(Body body, with Ball)
 {
-    Draw2D.Circle(body.position, body.radius, Color.red);
+    Draw.Circle(body.position, body.radius, Color.red);
 }
 ```
 
@@ -138,7 +138,7 @@ Put `Steer` before `Move`, so bodies move the tick they're steered. Last, draw t
 view DrawPlayers(Body body, Owner owner, Session session)
 {
     var color = owner.player == session.player ? Color.yellow : Color.gray;
-    Draw2D.Circle(body.position, body.radius, color);
+    Draw.Circle(body.position, body.radius, color);
 }
 ```
 

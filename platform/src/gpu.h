@@ -25,8 +25,19 @@ typedef uint32_t tide_gpu_id; // A buffer, texture, pipeline or target; 0 is non
 
 typedef enum tide_gpu_buffer_kind { TIDE_GPU_VERTICES, TIDE_GPU_INDICES } tide_gpu_buffer_kind;
 
-// A texture's pixels: 4 bytes each (red, green, blue, alpha), or 1 (red).
-typedef enum tide_gpu_format { TIDE_GPU_RGBA8, TIDE_GPU_R8 } tide_gpu_format;
+// A texture's pixels: 4 bytes each (red, green, blue, alpha), 1 (red), or one
+// float of 16 bits (red: any number a half holds). One of a single channel
+// reads as that for red, 0 for green and blue and 1 for alpha. A float of 16
+// bits is what every backend samples blended between pixels with nothing
+// asked of the device (OpenGL 3.3, OpenGL ES 3, WebGL 2 and WebGPU alike),
+// where one of 32 needs an extension or a feature a device may lack.
+typedef enum tide_gpu_format { TIDE_GPU_RGBA8, TIDE_GPU_R8, TIDE_GPU_R16F } tide_gpu_format;
+
+// The bytes a pixel of a texture takes, as texture and texture_write are given them.
+static inline int tide_gpu_format_bytes(const tide_gpu_format format)
+{
+    return format == TIDE_GPU_RGBA8 ? 4 : format == TIDE_GPU_R16F ? 2 : 1;
+}
 
 // What one of a target's color images holds for each pixel: 4 bytes (red,
 // green, blue, alpha, each from 0 to 1), or four floats of 16 bits, which
