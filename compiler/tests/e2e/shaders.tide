@@ -101,7 +101,7 @@ vert Wave(mut BoxVertex vertex, Time time, Instance instance)
 }
 
 // Once for each pixel: its vertex blended across the triangle, and its color
-frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun, Models models, Pixel pixel)
+frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models, Pixel pixel)
 {
     float light = Lit(vertex.normal, -sun.direction) * sun.strength;
     color = models.wood.Sample(vertex.uv) * models.moss.Sample(vertex.uv, Filter.Point) * box.tint * light;
@@ -116,14 +116,36 @@ frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun, Models models, P
     color.g = Math.Saturate(color.g);
 }
 
-// Leaves its pixel as it starts: white
-frag Blank(BoxVertex vertex, mut Color color)
+// Writes white, and reads nothing
+frag Blank(BoxVertex vertex, out Color color)
 {
+    color = Color.white;
 }
 
-frag Tint(Corner vertex, mut Color color, Models models)
+frag Tint(Corner vertex, out Color color, Models models)
 {
     color = vertex.color * models.fade;
+}
+
+// What a vert works out for its frag: a struct it takes as `out`, which the
+// frag reads blended across the triangle. Nothing of it is the draw's to send
+struct Spread
+{
+    float along;
+    float2 unread;
+    Color paint;
+}
+
+vert Fan(mut Corner vertex, out Spread spread, Models models)
+{
+    spread.along = vertex.position.x * models.fade;
+    spread.unread = vertex.uv;
+    spread.paint = vertex.color;
+}
+
+frag Take(Corner vertex, Spread spread, out Color color)
+{
+    color = spread.paint * spread.along;
 }
 
 event(Spawned) Setup(with Main)
@@ -177,4 +199,5 @@ view Plain(Models models)
     Draw2D.Mesh(models.flat, [0, 1, 2], models.wood);
     Draw2D.Mesh(models.flat, [0, 1, 2], Tint);
     Draw2D.Mesh([Corner { }, Corner { position = float2(2, 0) }, Corner { position = float2(0, 2) }], [0, 1, 2]);
+    Draw2D.Mesh(models.flat, [0, 1, 2], Fan, Take);
 }

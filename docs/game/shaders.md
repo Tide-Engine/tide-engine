@@ -16,8 +16,8 @@ vert Wave(mut BoxVertex vertex, Time time)
     vertex.position.y += Math.Sin(time.t * 2 + vertex.position.x) * 0.1;
 }
 
-// Once per pixel: the triangle's three vertices blended at that pixel, and the pixel's color to write
-frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun, Models models)
+// Once per pixel: the triangle's three vertices blended at that pixel, and the pixel's color, which it writes
+frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models)
 {
     float light = Math.Max(Math.Dot(Math.Normalize(vertex.normal), -sun.direction), 0.1);
     color = models.wood.Sample(vertex.uv) * box.tint * light;
@@ -64,7 +64,7 @@ Frags and verts can share a name when their parameters differ. A draw then names
 ## A frag
 
 ```csharp
-frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun)
+frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun)
 {
     color = box.tint * Math.Max(Math.Dot(vertex.normal, -sun.direction), 0.1);
     color.a = box.tint.a;
@@ -72,11 +72,15 @@ frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun)
 ```
 
 - **The vertex comes first.** It's the struct the mesh's list holds, and the frag gets it blended across the triangle: at each pixel, a mix of the triangle's three vertices by how near each is. It can't change it. Its ints don't blend, so a frag can't read them.
-- **`mut Color color` is the pixel.** A frag writes its output through `mut`, as a system writes a component, and returns nothing. What `color` holds when the frag ends is the pixel's color, blended over what's behind it by its alpha.
+- **`out Color color` is the pixel.** A frag writes its output through an [`out` parameter](../language/functions.md#out-parameters), and returns nothing. What it wrote there when it ends is the pixel's color, blended over what's behind it by its alpha.
+- **It starts with no value, so the frag writes it.** On every path that ends, and before reading it: `color.a = 1` alone, with nothing written first, is an error, and so is a frag whose only write is inside an `if` with no `else`. It isn't the pixel already on the screen either: a GPU doesn't let a frag read that. A path that ends in [`pixel.Discard()`](#where-the-pixel-is) draws no pixel, and owes it nothing.
 - **The draw's [settings](./views.md#draw-settings) apply to it.** Inside `Draw.Blend(Blend.Add) { ... }` the pixel is added instead, and inside `Draw.Tint(...)` it's multiplied by the tint after the frag ran, so a faded menu fades its shaded meshes too, with nothing for the frag to do. A 2D mesh's vertices go through `Draw2D.Transform` after its vert, and a 3D one's transform goes through `Draw3D.Transform`. A 3D mesh does with depth what [`Draw3D.Depth`](./views.md#depth) says: inside `Draw3D.Depth(Depth.Read) { ... }` it's hidden behind what's nearer and hides nothing itself, which is how something see-through is drawn.
 - **Light the color, not its alpha.** A color times a number scales its alpha too, so `box.tint * light` alone leaves a pixel in the shade see-through, and what was drawn behind the mesh shows in it, its own far side too. The frag above sets `color.a` back.
-- `color` starts as `Color.white`. It isn't the pixel already on the screen: a GPU doesn't let a frag read that. A frag that never writes it draws white.
 - A frag has one output for now, a `Color`. More, and other types, aren't there yet.
+
+::: tip It used to be mut
+A frag's color used to be `mut Color color`, which started white. That spelling is an error now, and the editor offers the change to `out`. A frag that leaned on the white writes it itself, `color = Color.white;`, which the editor offers too where a path is missing it.
+:::
 
 ## A vert
 
@@ -89,15 +93,52 @@ vert Wave(mut BoxVertex vertex, Time time)
 
 A vert takes its vertex `mut` and changes it in place: where it is, and anything else the pixels read of it. The engine then places it with the draw's transform and the camera, and the frag gets the changed vertex, blended. The mesh's list isn't touched: the GPU changes its own copy, each frame.
 
+### From a vert to its frag
+
+What a vert works out for the pixels needn't be a field of every vertex in the mesh. A vert writes a struct of its own, an `out` parameter, and the frag it's drawn with reads it, blended across the triangle as its vertex is:
+
+```csharp
+struct FromLamp
+{
+    float3 toward; // From the corner to the lamp
+    float reach;   // How much of the lamp's light gets there
+}
+
+vert Place(mut Corner corner, out FromLamp lamp, Lamp light, Instance instance)
+{
+    float3 place = Math.Transform(instance.transform, corner.position);
+    lamp.toward = light.position - place;
+    lamp.reach = Math.Saturate(1 - Math.Length(lamp.toward) / light.range);
+}
+
+frag Look(Corner corner, FromLamp lamp, out Color color)
+{
+    float facing = Math.Max(Math.Dot(Math.Normalize(corner.normal), Math.Normalize(lamp.toward)), 0);
+    color = Color.white * (0.1 + facing * lamp.reach);
+    color.a = 1;
+}
+
+view DrawRoom(Models models)
+{
+    Draw3D.Mesh(models.room, models.faces, float4x4.identity, Place, Look);
+}
+```
+
+- **The draw pairs them.** A vert and a frag stay declarations of their own, and one vert can be drawn with several frags. A frag's struct is found by its type among what the draw's vert writes: a frag that reads a `FromLamp` in a draw whose vert writes none, or that names no vert, is an error at the draw.
+- **The vert writes all of it.** The struct starts with no value: each field is written on every path, a field at a time or all at once (`lamp = FromLamp { ... };`), before it's read.
+- **Its fields are what blends**: floats, their vectors and colors. Ints don't blend across a triangle, so a struct with one can't be handed on: keep it as a float.
+- **Only what the frag reads is carried.** A field no frag reads costs nothing between the two, and a vert drawn with no frag, or with one that takes none of its structs, just doesn't hand them on. A GPU carries 15 values from a mesh's corners to its pixels: each field read of the vertex or of such a struct is one.
+- A vert can write several structs, and a frag take any of them, each by its type. A frag can also take what its vert wrote beside an [instance's struct](#instances-from-a-list), as long as the two are different types.
+
 ## What they read
 
-After the vertex (and a frag's color), a frag or vert takes the game's state, as a view does:
+After the vertex, and what each writes (a frag's color, the structs a vert hands its frag), a frag or vert takes the game's state, as a view does:
 
 - **Components** are those of the entity the view that draws runs for. `box.tint` in the frag above is the tint of the box being drawn: a view that runs for a thousand boxes draws them all at once, each with its own.
 - **Singletons**, the match's or [local](./local-state.md) ones, and `Time`. `time.t`, the match's seconds, is blended between ticks like every float a view sees, so what moves by it moves every frame.
-- None is `mut`: the GPU reads the game's state, and changes none of it.
+- None is `mut` or `out`: the GPU reads the game's state, and changes none of it.
 - A [`local` field](./local-state.md) of the match's component or singleton is read like any other: `box.highlight`, which a view set for the entity under the mouse.
-- With [`Draw2D.Instanced`/`Draw3D.Instanced`](#instances-from-a-list), an ordinary struct parameter takes the current item of the instance list. It is read-only too.
+- With [`Draw2D.Instanced`/`Draw3D.Instanced`](#instances-from-a-list), an ordinary struct parameter takes the current item of the instance list. It is read-only too. (A frag's struct of a type its draw's vert writes is [the vert's](#from-a-vert-to-its-frag) instead.)
 - A read-only `Texture` parameter receives the explicit image passed to either namespace's `Mesh` or `Instanced` or [`Draw.Blit`](./views.md#targets-and-post-processing). Each stage takes at most one; when both stages take it, they receive the same source. `source.Sample(vertex.uv[, Filter.Point])` uses the same top-left UVs as grid sampling. Local component and singleton `Texture` fields can be sampled too.
 
 The view needn't take them itself. It has to run for entities that have the components, so `with Box` is enough, and it's an error at the mesh draw when it doesn't:
@@ -120,7 +161,7 @@ local singleton Look
     Color sky = Color(0.5, 0.7, 1);
 }
 
-frag Fog(BoxVertex vertex, mut Color color, Look look, Pixel pixel)
+frag Fog(BoxVertex vertex, out Color color, Look look, Pixel pixel)
 {
     float clear = Math.Exp(-pixel.depth * look.fog * 1000);
     color = Color.white * clear + look.sky * (1 - clear);
@@ -145,7 +186,7 @@ color = models.wood.Sample(vertex.uv, Filter.Point);   // The nearest cell
 Two more parameters are the engine's:
 
 ```csharp
-frag Lit(BoxVertex vertex, mut Color color, Pixel pixel, Instance instance, Sun sun)
+frag Lit(BoxVertex vertex, out Color color, Pixel pixel, Instance instance, Sun sun)
 {
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, vertex.normal));
     float3 toLight = Math.Normalize(sun.position - pixel.world);
@@ -170,7 +211,7 @@ The sphere below has a vertex of its own, with a normal, and a frag that lights 
   - `pixel.Discard()` leaves the pixel undrawn, and ends the frag there: for holes, and edges cut out of a texture.
 
 ```csharp
-frag Leaves(BoxVertex vertex, mut Color color, Models models, Pixel pixel)
+frag Leaves(BoxVertex vertex, out Color color, Models models, Pixel pixel)
 {
     color = models.leaves.Sample(vertex.uv);
     if (color.a < 0.5) pixel.Discard();
@@ -201,7 +242,7 @@ Everything in [`Math`](../language/math.md) is there unless it makes no sense on
 - **`Math.Hash` is exact.** It's integers, so a frag gets the number a system gets: a pattern made from a cell's hash is the same on every GPU.
 
 ```csharp
-frag Stars(BoxVertex vertex, mut Color color)
+frag Stars(BoxVertex vertex, out Color color)
 {
     // About one cell in thirty has a star, the same cells on every machine
     int2 cell = int2(Math.Floor(vertex.uv * 64));
@@ -279,7 +320,7 @@ vert Bend(mut BoxVertex vertex, Blade blade)
     vertex.position.x += vertex.position.y * blade.bend;
 }
 
-frag Grass(BoxVertex vertex, mut Color color, Blade blade, Sun sun)
+frag Grass(BoxVertex vertex, out Color color, Blade blade, Sun sun)
 {
     color = blade.tint * Math.Max(Math.Dot(vertex.normal, -sun.direction), 0.1);
     color.a = blade.tint.a;

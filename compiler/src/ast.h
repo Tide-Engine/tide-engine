@@ -273,11 +273,14 @@ typedef struct param {
     // `out Health health`, a function's or method's, as C#'s: the call makes the caller's variable, which starts
     // unassigned in the code and is assigned on every path that returns. Its mode is PARAM_MUT, as for everything
     // else it's a variable the call changes, by address. An extern function's `out List<byte> image` is a list C
-    // makes the elements of, through a tide_list_out (tide/list.h)
+    // makes the elements of, through a tide_list_out (tide/list.h). A frag's `out Color color` is its pixel's
+    // color, and a vert's `out FromLamp lamp` a struct it hands the frag it's drawn with, which reads it blended
+    // across the triangle: the same rules for the code, with the GPU in the caller's place
     bool is_out;
     loc out_at; // ...the word
     struct expr *default_value; // ...and what a call that leaves it out passes, `float multiplier = 1`: a constant expression, or NULL
     str default_text;           // ...as its declaration writes it, for messages and editors: "1"
+    str mode_word;       // `mut` or `out` as a system, view, handler, frag or vert writes it, for what editors offer in its place
     bool *reads;         // A frag's or vert's: for each field of its type, whether the code reads it
     bool *local_reads;   // ...and for each of its type's local fields (its local_part's)
     bool whole;          // ...or reads it as a value, all its fields at once
@@ -999,6 +1002,15 @@ typedef struct shader_texture {
     const struct decl *asset; // A Grid2<Color> asset, sampled by name: neither a field nor the draw's
 } shader_texture;
 
+// A struct a vert writes for its frag, an `out` parameter of the vert's: the
+// fields the frag reads go from the mesh's corners to its pixels, blended.
+typedef struct shader_handed {
+    const struct decl *type;
+    const param *from; // The vert's `out` parameter
+    const param *to;   // The frag's parameter of that type; NULL when it takes none
+    bool *fields;      // By the struct's field: whether the pixels read it
+} shader_handed;
+
 // What draws a mesh: a vertex struct with a vert, a frag, both or neither, one
 // for each combination a mesh draw uses (see shader.c). Codegen writes each
 // as a tide_shader (tide/draw.h).
@@ -1018,6 +1030,7 @@ typedef struct shader {
     VEC(shader_value) values;
     VEC(shader_texture) textures;
     VEC(struct decl *) bound; // The components and singletons it reads, in the order its draws pass them
+    VEC(shader_handed) handed; // What its vert writes for its frag, in the order the vert takes them
     int instance_floats, instance_ints; // Words
     int uniform_floats, uniform_ints;
     int frag_floats, frag_ints; // Words of the instance the vertex stage passes on to the pixels

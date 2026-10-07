@@ -37,7 +37,7 @@ event(Spawned) Setup(with Main)
     Spawn(Box);
 }
 
-frag Shade(V vertex, mut Color color, Models models)
+frag Shade(V vertex, out Color color, Models models)
 {
     color = models.page0.Sample(vertex.uv) * models.page1.Sample(vertex.uv) * models.page2.Sample(vertex.uv) * models.page3.Sample(vertex.uv) * models.page4.Sample(vertex.uv) * models.page5.Sample(vertex.uv) * models.page6.Sample(vertex.uv) * models.page7.Sample(vertex.uv) * models.page8.Sample(vertex.uv);
 }

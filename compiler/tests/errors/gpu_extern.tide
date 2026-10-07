@@ -31,7 +31,7 @@ event(Spawned) Setup(with Main)
 
 extern float Noise(float x);
 
-frag Shade(V vertex, mut Color color)
+frag Shade(V vertex, out Color color)
 {
     color = Color.white * Noise(vertex.uv.x);
 }

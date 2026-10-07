@@ -1,8 +1,7 @@
 // expect: 'pair' is read before it's assigned
 scene Main { }
-struct Pair { int a; int b; }
-void Make(int seed, out Pair pair)
+void Make(float seed, out float2 pair)
 {
-    pair.a = seed;
-    pair.b = seed + 1;
+    pair.x = seed;
+    pair.y = seed + 1;
 }
