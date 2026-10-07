@@ -1304,7 +1304,17 @@ static uint32_t texture_slot(tide_draw_list *d, const tide_texture *texture)
     uint8_t *pixels;
     const uint32_t slot = tide_draw_texture_slot(d, TIDE_PIXELS_MEMORY, (uint64_t)(uintptr_t)texture->pixels,
                                                  texture->version, texture->width, texture->height, &pixels);
-    if (pixels) memcpy(pixels, texture->pixels, (size_t)texture->width * (size_t)texture->height * 4u);
+    if (pixels) { // The list's copy has each color times its alpha, as every texture a GPU blends (see tide_gpu_blend)
+        const size_t count = (size_t)texture->width * (size_t)texture->height;
+        for (size_t i = 0; i < count; i++) {
+            const uint8_t *in = (const uint8_t *)texture->pixels + i * 4u;
+            const uint32_t alpha = in[3];
+            pixels[i * 4u] = (uint8_t)((in[0] * alpha + 127u) / 255u);
+            pixels[i * 4u + 1u] = (uint8_t)((in[1] * alpha + 127u) / 255u);
+            pixels[i * 4u + 2u] = (uint8_t)((in[2] * alpha + 127u) / 255u);
+            pixels[i * 4u + 3u] = in[3];
+        }
+    }
     return slot;
 }
 

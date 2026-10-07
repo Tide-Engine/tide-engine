@@ -486,7 +486,8 @@ static void check_render_depth_alpha(void)
     blit_image(TARGET_A, WIDTH, HEIGHT, 0);
     tide_draw_to(&render_list, 0, 0, 0);
     blit_image(TARGET_B, WIDTH * 2, HEIGHT * 2, 2); // Inspect target alpha through opaque RGB.
-    for (int i = 0; i < WIDTH * HEIGHT * 4; i++) expected[i] = 0x40ff00ffu;
+    // What the image holds: the clear's alpha, and its red times that
+    for (int i = 0; i < WIDTH * HEIGHT * 4; i++) expected[i] = 0x404000ffu;
     render_expect(expected, "blit replaces color including alpha");
 
     tide_draw_forget(&render_list); // Another build may reuse the same resource identity.

@@ -96,6 +96,10 @@ vec3 tide_normalize3(vec3 v) {
     if (l > 1.17549435e-38) { return v * inversesqrt(l); }
     return vec3(0.0);
 }
+vec4 tide_straight(vec4 c) {
+    if (c.a == 0.0) { return vec4(0.0); }
+    return vec4(c.rgb / c.a, c.a);
+}
 float tf_Lit(vec3 t_normal, vec3 t_toward) {
     return tide_max1(dot(tide_normalize3(t_normal), t_toward), tide_f(0.1));
 }
@@ -110,7 +114,7 @@ vec3 tf_DirectionThrough(tt_Sun t_sun) {
 
 void ts_Shade(tt_BoxVertex t_vertex, inout vec4 t_color) {
     float t_light = ((tide_g0.y != 0) ? tf_Lit(t_vertex.m_normal, (-tf_DirectionThrough(tt_Sun(tide_u0.yzw)))) : 1.0);
-    t_color = ((textureLod(pixels0, t_vertex.m_uv, 0.0) * tide_f0) * t_light);
+    t_color = ((tide_straight(textureLod(pixels0, t_vertex.m_uv, 0.0)) * tide_f0) * t_light);
     for (int t_i = 0; (t_i < tide_g0.x); t_i = (t_i + 1)) {
         if ((t_i > 4)) {
             break;
@@ -129,7 +133,8 @@ void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Shade(tt_BoxVertex(vec3(0.0), tide_s1, tide_s2), tide_color);
     tide_color = tide_color * tide_tint;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -190,6 +195,10 @@ fn tide_normalize3(v: vec3f) -> vec3f {
     if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
     return vec3f(0.0);
 }
+fn tide_straight(c: vec4f) -> vec4f {
+    if (c.a == 0.0) { return vec4f(0.0); }
+    return vec4f(c.rgb / c.a, c.a);
+}
 fn tf_Brighten(t_rgb: ptr<function, vec3f>, t_by: f32) {
     (*t_rgb) = ((*t_rgb) * t_by);
 }
@@ -220,7 +229,7 @@ fn tf_DirectionThrough(t_sun: tt_Sun) -> vec3f {
 
 fn ts_Shade(t_vertex: tt_BoxVertex, t_color: ptr<function, vec4f>) {
     var t_light: f32 = select(1.0, tf_Lit(t_vertex.m_normal, (-tf_DirectionThrough(tt_Sun(tide_block.tide_u0.yzw)))), (tide_g0.y != 0));
-    (*t_color) = ((textureSampleLevel(pixels0, sampler0, t_vertex.m_uv, 0.0) * tide_f0) * t_light);
+    (*t_color) = ((tide_straight(textureSampleLevel(pixels0, sampler0, t_vertex.m_uv, 0.0)) * tide_f0) * t_light);
     for (var t_i: i32 = 0; (t_i < tide_g0.x); t_i = (t_i + 1)) {
         if ((t_i > 4)) {
             break;
@@ -264,8 +273,9 @@ fn ts_Shade(t_vertex: tt_BoxVertex, t_color: ptr<function, vec4f>) {
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Shade(tt_BoxVertex(vec3f(), in.tide_s1, in.tide_s2), &tide_color);
     tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
     if (tide_block.tide_screen.w > 0.0) {
-        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
     }
     return tide_color;
 }

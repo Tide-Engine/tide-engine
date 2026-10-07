@@ -214,6 +214,11 @@ static uint8_t four[2 * 2 * 4] = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255
 static const uint8_t two[2 * 1 * 4] = {255, 255, 0, 255, 0, 0, 0, 0};
 static tide_texture four_texture = {four, 2, 2, 1};
 static const tide_texture two_texture = {two, 2, 1, 1};
+// White beside a clear pixel that has a color of its own, as a paint program leaves them, and a half-clear red
+static const uint8_t edge[2 * 1 * 4] = {255, 255, 255, 255, 255, 0, 255, 0};
+static const uint8_t half[1 * 1 * 4] = {255, 0, 0, 128};
+static const tide_texture edge_texture = {edge, 2, 1, 1};
+static const tide_texture half_texture = {half, 1, 1, 1};
 
 static void mesh_scene(void)
 {
@@ -228,6 +233,10 @@ static void mesh_scene(void)
     quad(at(176, 16), at(240, 80), white, white, &four_texture, TIDE_FILTER_BILINEAR, false);
     quad(at(16, 96), at(80, 160), gray, gray, &four_texture, TIDE_FILTER_POINT, true);
     quad(at(96, 96), at(160, 128), white, white, &two_texture, TIDE_FILTER_POINT, true);
+    // Blended towards a clear pixel, over white: a clear pixel's color counts for nothing
+    tide_draw_rect(&list, at(128, 148), tide_f2(64, 24), white);
+    quad(at(96, 136), at(160, 160), white, white, &edge_texture, TIDE_FILTER_BILINEAR, true);
+    quad(at(120, 162), at(136, 174), white, white, &half_texture, TIDE_FILTER_POINT, true);
 
     // A clip, in the world's units: what's drawn after it only shows inside
     // it, a clear and shapes too
@@ -273,6 +282,7 @@ static void meshes(void)
 {
     const tide_color dim = {0.5f, 0.0f, 0.0f, 1.0f}, pale = {0.5f, 1.0f, 1.0f, 1.0f};
     const tide_color between = {0.5f, 0.0f, 0.5f, 1.0f}, blend = {0.5f, 0.5f, 0.5f, 1.0f};
+    const tide_color half_red = {background.r * 0.5f + 0.5f, background.g * 0.5f, background.b * 0.5f, 1.0f};
     mesh_scene();
     const check checks[] = {
         {17, 48, red, "a mesh's left corners' color"},
@@ -288,6 +298,10 @@ static void meshes(void)
         {64, 144, pale, "and another"},
         {112, 112, yellow, "another texture, wider than it's tall"},
         {144, 112, background, "and its clear pixel"},
+        {128, 148, white, "white blended halfway to a clear pixel, over white, is white: no fringe of the clear one's color"},
+        {120, 148, white, "and a quarter of the way"},
+        {156, 148, white, "and what's under shows where it's clear"},
+        {128, 168, half_red, "a half-clear pixel of C's, over what's there by half"},
         {196, 116, magenta, "a mesh inside the clip"},
         {180, 100, cyan, "a clear fills the clip"},
         {170, 116, background, "and nothing outside it"},
@@ -583,7 +597,8 @@ static void primitives(void)
     "out vec4 pixel;\n"                                                                                                \
     "void main() {\n"                                                                                                  \
     "    vec4 c = tint * tide_tint;\n"                                                                                 \
-    "    if (tide_screen.w > 0.0) c.rgb = c.rgb * c.a + (1.0 - c.a);\n"                                                \
+    "    c.rgb = c.rgb * c.a;\n" /* As every blend takes a color: times its alpha */                              \
+    "    if (tide_screen.w > 0.0) c.rgb = c.rgb + (1.0 - c.a);\n"                                                \
     "    pixel = c;\n"                                                                                                 \
     "}\n"
 #define WGSL_TINT_CORNER                                                                                               \
@@ -594,7 +609,8 @@ static void primitives(void)
 #define WGSL_TINT_FRAGMENT                                                                                             \
     "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"                                                      \
     "    var c = in.tint * u.tide_tint;\n"                                                                             \
-    "    if (u.tide_screen.w > 0.0) { c = vec4f(c.rgb * c.a + (1.0 - c.a), c.a); }\n"                                  \
+    "    c = vec4f(c.rgb * c.a, c.a);\n"                                                                           \
+    "    if (u.tide_screen.w > 0.0) { c = vec4f(c.rgb + (1.0 - c.a), c.a); }\n"                                  \
     "    return c;\n"                                                                                                  \
     "}\n"
 
@@ -696,7 +712,7 @@ static const tide_shader picked_shader = {
                      "    vec4 c = tint;\n"
                      "    if (pick.x == 1) c = c.gbra;\n"
                      "    if (pick.w == -3) c.rgb = 1.0 - c.rgb;\n"
-                     "    pixel = c;\n"
+                     "    pixel = vec4(c.rgb * c.a, c.a);\n"
                      "}\n",
     .wgsl = WGSL(WGSL_UNIFORMS("tint: vec4f, pick: vec4i ")
         "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
@@ -707,7 +723,7 @@ static const tide_shader picked_shader = {
         "    var c = u.tint;\n"
         "    if (u.pick.x == 1) { c = c.gbra; }\n"
         "    if (u.pick.w == -3) { c = vec4f(1.0 - c.rgb, c.a); }\n"
-        "    return c;\n"
+        "    return vec4f(c.rgb * c.a, c.a);\n"
         "}\n"),
     .id = 0x7E570003,
     .dims = 2,
@@ -739,7 +755,7 @@ static const tide_shader many_shader = {
     .glsl_fragment = MANY_GLSL_UNIFORMS
                      "out vec4 pixel;\n"
                      "void main() {\n"
-                     "    pixel = colors[pick.x];\n"
+                     "    pixel = vec4(colors[pick.x].rgb * colors[pick.x].a, colors[pick.x].a);\n"
                      "}\n",
     .wgsl = WGSL(WGSL_UNIFORMS("colors: array<vec4f, 248>, pick: vec4i ")
         "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
@@ -747,7 +763,7 @@ static const tide_shader many_shader = {
         "    return vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
         "}\n"
         "@fragment fn fragment() -> @location(0) vec4f {\n"
-        "    return u.colors[u.pick.x];\n"
+        "    return vec4f(u.colors[u.pick.x].rgb * u.colors[u.pick.x].a, u.colors[u.pick.x].a);\n"
         "}\n"),
     .id = 0x7E570008,
     .dims = 2,
@@ -1886,7 +1902,7 @@ static tide_color blended(const tide_blend blend)
     case TIDE_BLEND_MULTIPLY:
         return (tide_color){under.r * (ink.r * a + 1.0f - a), under.g * (ink.g * a + 1.0f - a),
                             under.b * (ink.b * a + 1.0f - a), 1.0f};
-    case TIDE_BLEND_REPLACE: return (tide_color){ink.r, ink.g, ink.b, 1.0f};
+    case TIDE_BLEND_REPLACE: return (tide_color){ink.r * a, ink.g * a, ink.b * a, 1.0f}; // Its color times its alpha is what's kept
     default:
         return (tide_color){under.r + (ink.r - under.r) * a, under.g + (ink.g - under.g) * a,
                             under.b + (ink.b - under.b) * a, 1.0f};

@@ -612,11 +612,11 @@ static void gl_use(const tide_gpu_id pipeline)
     switch (current->desc.blend) {
     case TIDE_GPU_BLEND_ALPHA:
         glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
         break;
     case TIDE_GPU_BLEND_ADD:
         glEnable(GL_BLEND);
-        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE, GL_ONE, GL_ONE);
+        glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ONE_MINUS_DST_ALPHA, GL_ONE);
         break;
     case TIDE_GPU_BLEND_MULTIPLY:
         glEnable(GL_BLEND);

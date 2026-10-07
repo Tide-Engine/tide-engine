@@ -45,10 +45,14 @@ struct tt_Stripe {
     vec4 m_tint;
     float m_gain;
 };
+vec4 tide_straight(vec4 c) {
+    if (c.a == 0.0) { return vec4(0.0); }
+    return vec4(c.rgb / c.a, c.a);
+}
 void ts_Blur(tt_Vertex t_vertex, inout vec4 t_color) {
     vec4 t_sum = vec4(0.0, 0.0, 0.0, 0.0);
     for (int t_i = 0; (t_i < tide_v0.x); t_i = (t_i + 1)) {
-        t_sum = (t_sum + textureLod(pixels0, (t_vertex.m_uv + (tide_u0.xy * float(t_i))), 0.0));
+        t_sum = (t_sum + tide_straight(textureLod(pixels0, (t_vertex.m_uv + (tide_u0.xy * float(t_i))), 0.0)));
     }
     t_color = ((t_sum * tt_Stripe(vec4(tide_u0.z, tide_u0.w, tide_u1.x, tide_u1.y), tide_u1.z).m_tint) * (tt_Stripe(vec4(tide_u0.z, tide_u0.w, tide_u1.x, tide_u1.y), tide_u1.z).m_gain * tide_u1.w));
 }
@@ -57,7 +61,8 @@ void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Blur(tt_Vertex(vec2(0.0), tide_s1, vec4(0.0)), tide_color);
     tide_color = tide_color * tide_tint;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -88,10 +93,14 @@ struct tt_Stripe {
     m_tint: vec4f,
     m_gain: f32,
 }
+fn tide_straight(c: vec4f) -> vec4f {
+    if (c.a == 0.0) { return vec4f(0.0); }
+    return vec4f(c.rgb / c.a, c.a);
+}
 fn ts_Blur(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     var t_sum: vec4f = vec4f(0.0, 0.0, 0.0, 0.0);
     for (var t_i: i32 = 0; (t_i < tide_block.tide_v0.x); t_i = (t_i + 1)) {
-        t_sum = (t_sum + textureSampleLevel(pixels0, sampler0, (t_vertex.m_uv + (tide_block.tide_u0.xy * f32(t_i))), 0.0));
+        t_sum = (t_sum + tide_straight(textureSampleLevel(pixels0, sampler0, (t_vertex.m_uv + (tide_block.tide_u0.xy * f32(t_i))), 0.0)));
     }
     (*t_color) = ((t_sum * tt_Stripe(vec4f(tide_block.tide_u0.z, tide_block.tide_u0.w, tide_block.tide_u1.x, tide_block.tide_u1.y), tide_block.tide_u1.z).m_tint) * (tt_Stripe(vec4f(tide_block.tide_u0.z, tide_block.tide_u0.w, tide_block.tide_u1.x, tide_block.tide_u1.y), tide_block.tide_u1.z).m_gain * tide_block.tide_u1.w));
 }
@@ -110,8 +119,9 @@ fn ts_Blur(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Blur(tt_Vertex(vec2f(), in.tide_s1, vec4f()), &tide_color);
     tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
     if (tide_block.tide_screen.w > 0.0) {
-        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
     }
     return tide_color;
 }
@@ -172,7 +182,8 @@ void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Paint(tt_Corner(vec3(0.0), tide_s1), tide_color);
     tide_color = tide_color * tide_tint;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -229,8 +240,9 @@ fn ts_Paint(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Paint(tt_Corner(vec3f(), in.tide_s1), &tide_color);
     tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
     if (tide_block.tide_screen.w > 0.0) {
-        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
     }
     return tide_color;
 }
@@ -284,7 +296,8 @@ void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Glow(tt_Corner(vec3(0.0), vec2(0.0)), tide_color);
     tide_color = tide_color * tide_tint;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -337,8 +350,9 @@ fn ts_Glow(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Glow(tt_Corner(vec3f(), vec2f()), &tide_color);
     tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
     if (tide_block.tide_screen.w > 0.0) {
-        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
     }
     return tide_color;
 }
