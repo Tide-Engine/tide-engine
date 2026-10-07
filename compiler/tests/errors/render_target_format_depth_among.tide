@@ -1,0 +1,5 @@
+// expect: Format.DepthOnly is a target with no color image, so it's a target's only format
+// expect: every target has depth beside its color images, which 'target.depth' reads: 'RenderTarget(width, height, Format.Color, Format.Float)' holds two colors and its depth
+// Every target has depth: Format.DepthOnly says it has no color image beside it, so it's said alone
+scene Main { }
+view Show() { var target = RenderTarget(64, 64, Format.DepthOnly, Format.Color); }

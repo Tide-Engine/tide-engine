@@ -1,0 +1,5 @@
+// expect: a render target's color and depth are its own images, which what's drawn into it changes: they can't be assigned
+// expect: draw into the target, 'target.Mesh(...)' or 'Draw.Blit(source, target, frag)'; a Texture field keeps which image a draw reads, 'held = target.color;'
+scene Main { }
+local singleton Maps { RenderTarget scene; Texture held; DepthTexture deep; }
+view Show(mut Maps maps) { maps.scene.colors[1] = maps.held; }

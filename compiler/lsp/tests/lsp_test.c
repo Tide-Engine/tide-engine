@@ -1164,7 +1164,8 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(offers(written, "Color") && !offers(written, "Box") && !offers(written, "Pixel") && !offers(written, "BoxVertex"));
     TIDE_CHECK(!offers(complete(SHADER_TYPES "frag Shade(BoxVertex vertex, mut $)\n{\n}\n"), "Color")); // Nothing of a frag's is
     const char *rest = complete(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, $)\n{\n}\n");
-    TIDE_CHECK(!offers(rest, "mut") && !offers(rest, "out") && offers(rest, "Pixel") && offers(rest, "Sun"));
+    TIDE_CHECK(!offers(rest, "mut") && offers(rest, "Pixel") && offers(rest, "Sun"));
+    TIDE_CHECK(offers(rest, "out") && has(rest, "one more color the frag writes")); // Another output, for a target of several
     // A vert's `out` is a struct it writes for its frag
     const char *vert = complete(SHADER_TYPES "vert Wave(mut BoxVertex vertex, $)\n{\n}\n");
     TIDE_CHECK(offers(vert, "Instance") && offers(vert, "Time") && !offers(vert, "Pixel") && !offers(vert, "mut"));
@@ -4767,8 +4768,8 @@ TIDE_TEST(lsp_render_target_formats_and_depth)
     TIDE_CHECK(offers(formats, "Color") && offers(formats, "DepthOnly"));
     snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.map = RenderTarget(64, 64, $\n}\n", types);
     open_document(program);
-    TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget(float width, float height, Format format)"));
-    TIDE_CHECK(has(last_sent(), "RenderTarget(float width, float height, float pixelsPerUnit, Format format)"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget(float width, float height, Format formats...)"));
+    TIDE_CHECK(has(last_sent(), "RenderTarget(float width, float height, float pixelsPerUnit, Format formats...)"));
     TIDE_CHECK(has(last_sent(), "depth alone"));
     snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.map = RenderTarget.Screen($\n}\n", types);
     open_document(program);
@@ -4807,6 +4808,95 @@ TIDE_TEST(lsp_render_target_formats_and_depth)
     snprintf(program, sizeof program, "%sfrag Lit(Vertex3 vertex, out Color color, DepthTexture shadow)\n{\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(last_sent(), "a field of a component or singleton it takes"));
+}
+
+// A target of several color images, a format each; its `colors`, read one at
+// a time; and a frag's outputs after the pixel's color.
+TIDE_TEST(lsp_render_target_colors_and_frag_outputs)
+{
+    start();
+    static const char types[] = "scene Main { }\nlocal singleton Maps { RenderTarget scene; Texture normals; }\n";
+    char program[2048];
+    snprintf(program, sizeof program, "%sfrag Fill(Vertex3 vertex, out Color albedo, out Color normal)\n{\n"
+                                      "    albedo = vertex.color;\n    normal = Color(0, 0, 1);\n}\n"
+                                      "view V(mut Maps maps)\n{\n"
+                                      "    maps.scene = RenderTarget(64, 64, Format.Color, Format.Float);\n"
+                                      "    maps.scene = RenderTarget(64, 64, 1, Format.Float);\n"
+                                      "    maps.scene = RenderTarget.Screen(0.5, Format.Color, Format.Float, Format.Float);\n"
+                                      "    maps.normals = maps.scene.colors[1];\n"
+                                      "    maps.scene.Mesh([Vertex3 { }], [0, 0, 0], float4x4.identity, Fill);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    // A format for each color image, after the size
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(64, 64, Format.Color, Format.$);\n}\n", types);
+    const char *formats = complete(program);
+    TIDE_CHECK(offers(formats, "Float") && offers(formats, "Color") && offers(formats, "DepthOnly"));
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(64, 64, Format.Color, $\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget(float width, float height, Format formats...)"));
+    TIDE_CHECK(has(last_sent(), "one for each color image") && has(last_sent(), "target.colors[1]"));
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget.Screen($\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget.Screen(Format.Color, Format.Float)"));
+
+    // Its color images, beside its first and its depth
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.normals = maps.scene.$\n}\n", types);
+    const char *members = complete(program);
+    TIDE_CHECK(offers(members, "colors") && offers(members, "color") && offers(members, "depth"));
+    TIDE_CHECK(has(members, "colors[1]") && has(members, "in the order of the formats it was made with"));
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    var second = maps.scene.colors[1];\n    maps.normals = sec$ond;\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "Texture"));
+    // A frag doesn't read a target: its images aren't offered there
+    snprintf(program, sizeof program, "%sfrag Lit(Vertex3 vertex, out Color color, Maps maps)\n{\n    color = maps.scene.$\n}\n", types);
+    TIDE_CHECK(!offers(complete(program), "colors"));
+    // Read one at a time, and never assigned
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    var all = maps.scene.colors;\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "read one at a time"));
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene.colors[1] = maps.normals;\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "they can't be assigned"));
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(8, 8, Format.DepthOnly, Format.Color);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "it's a target's only format"));
+
+    // A frag's outputs: the pixel's color, then one for each color image after its target's first
+    static const char fill[] = "frag Fill(Vertex3 vertex, out Color albedo, out Color nor$mal)\n{\n"
+                               "    albedo = vertex.color;\n    normal = Color(0, 0, 1);\n}\n";
+    snprintf(program, sizeof program, "%s%s", types, fill);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "second output") && has(last_sent(), "target.colors[1]"));
+    snprintf(program, sizeof program, "%sfrag Fill(Vertex3 vertex, out Color alb$edo, out Color normal)\n{\n"
+                                      "    albedo = vertex.color;\n    normal = Color(0, 0, 1);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "The pixel's color") && !has(last_sent(), "second output"));
+    snprintf(program, sizeof program, "%sfrag Fill(Vertex3 vertex, out Color albedo, out Color normal, o$ut Color far)\n{\n"
+                                      "    albedo = vertex.color;\n    normal = albedo;\n    far = albedo;\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "third output") && has(last_sent(), "target.colors[2]"));
+    // Another `out` is offered after the first, and Color after it
+    snprintf(program, sizeof program, "%sfrag Fill(Vertex3 vertex, out Color albedo, $)\n{\n}\n", types);
+    const char *more = complete(program);
+    TIDE_CHECK(offers(more, "out") && has(more, "one more color the frag writes"));
+    snprintf(program, sizeof program, "%sfrag Fill(Vertex3 vertex, out Color albedo, out $)\n{\n}\n", types);
+    TIDE_CHECK(offers(complete(program), "Color"));
+    // Each is owed on every path, and five is one too many
+    static char unwritten[1024];
+    snprintf(unwritten, sizeof unwritten, "%sfrag Fill(Vertex3 vertex, out Color albedo, out Color normal)\n{\n"
+                                          "    albedo = vertex.color;\n}\n", types);
+    open_document(unwritten);
+    TIDE_CHECK(has(last_sent(), "without writing 'normal', its second output"));
+    actions_at(2);
+    const char *written = apply_fix(unwritten, "Write 'normal = Color.white;'");
+    TIDE_REQUIRE(written != NULL);
+    open_document(written);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    snprintf(program, sizeof program, "%sfrag Fill(Vertex3 vertex, out Color a, out Color b, out Color c, out Color d, out Color e)\n{\n"
+                                      "    a = vertex.color;\n    b = a;\n    c = a;\n    d = a;\n    e = a;\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "a frag writes 4 colors at the most"));
 }
 
 // ---------------------------------------------------------------------------

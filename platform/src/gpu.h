@@ -27,9 +27,43 @@ typedef enum tide_gpu_buffer_kind { TIDE_GPU_VERTICES, TIDE_GPU_INDICES } tide_g
 // A texture's pixels: 4 bytes each (red, green, blue, alpha), or 1 (red).
 typedef enum tide_gpu_format { TIDE_GPU_RGBA8, TIDE_GPU_R8 } tide_gpu_format;
 
-// What a target holds beside its depth, which every target has: a color
-// image, 4 bytes a pixel, or none.
-typedef enum tide_gpu_target_format { TIDE_GPU_TARGET_COLOR, TIDE_GPU_TARGET_DEPTH } tide_gpu_target_format;
+// What one of a target's color images holds for each pixel: 4 bytes (red,
+// green, blue, alpha, each from 0 to 1), or four floats of 16 bits, which
+// hold any number. A device that can't draw into floats (float_targets) has 4
+// bytes for those too.
+typedef enum tide_gpu_color { TIDE_GPU_COLOR_NONE, TIDE_GPU_COLOR_BYTES, TIDE_GPU_COLOR_FLOAT } tide_gpu_color;
+
+enum { TIDE_GPU_MAX_COLORS = 4 }; // The most color images a target has: what OpenGL ES 3 and WebGL 2 promise
+
+// What a target holds beside its depth, which every target has: its color
+// images in order, 4 bits each (tide_gpu_color), and 0 past the last. So 0 is
+// a target of depth alone, and 1 a target of one image of 4 bytes a pixel,
+// which is also what the window is.
+typedef uint32_t tide_gpu_target_format;
+#define TIDE_GPU_TARGET_DEPTH 0u
+#define TIDE_GPU_TARGET_COLOR 1u
+
+// A target's color image `color`, from 0: TIDE_GPU_COLOR_NONE for one it hasn't got.
+static inline tide_gpu_color tide_gpu_target_color(const tide_gpu_target_format format, const uint32_t color)
+{
+    const uint32_t held = color < TIDE_GPU_MAX_COLORS ? format >> (4u * color) & 15u : 0u;
+    return held == TIDE_GPU_COLOR_FLOAT ? TIDE_GPU_COLOR_FLOAT : held ? TIDE_GPU_COLOR_BYTES : TIDE_GPU_COLOR_NONE;
+}
+
+// How many color images it has.
+static inline uint32_t tide_gpu_target_colors(const tide_gpu_target_format format)
+{
+    uint32_t count = 0;
+    while (count < TIDE_GPU_MAX_COLORS && tide_gpu_target_color(format, count) != TIDE_GPU_COLOR_NONE) count++;
+    return count;
+}
+
+// ...and the format with one more, `color`, after them.
+static inline tide_gpu_target_format tide_gpu_target_with(const tide_gpu_target_format format, const tide_gpu_color color)
+{
+    const uint32_t count = tide_gpu_target_colors(format);
+    return count < TIDE_GPU_MAX_COLORS ? format | (uint32_t)color << (4u * count) : format;
+}
 
 // How a pipeline reads one of its textures. A color is read as it is. A
 // target's depth is read as a number, 0 at the near plane to 1 at the far
@@ -125,9 +159,17 @@ typedef struct tide_gpu_pipeline_desc {
     tide_gpu_blend blend;
     tide_gpu_depth depth;
     tide_gpu_cull cull;
-    // What the targets it draws into hold: a pipeline is for one kind. One for
-    // targets of depth alone writes no color, and its blend isn't read.
+    // What the targets it draws into hold: a pipeline is for one kind, and
+    // the window is of the kind TIDE_GPU_TARGET_COLOR. One for targets of
+    // depth alone writes no color, and its blend isn't read.
     tide_gpu_target_format into;
+    // How many colors its fragment shader writes, at locations 0 on: one, for
+    // 0. They go to the target's color images in that order, each blended the
+    // way `blend` says. Those the target has no image for go nowhere, and the
+    // images past them are left as they were. GLSL's are `out vec4`s, each
+    // with its `layout(location = i)` where there are several; WGSL's, the
+    // `@location(i)`s of what `fragment` returns.
+    uint32_t outputs;
 } tide_gpu_pipeline_desc;
 
 typedef struct tide_gpu {
@@ -162,26 +204,37 @@ typedef struct tide_gpu {
     tide_gpu_id (*pipeline)(const tide_gpu_pipeline_desc *desc);
     void (*pipeline_free)(tide_gpu_id pipeline);
 
-    // Pixels of its own to draw into, with depth, and to read back: 4 bytes
-    // each, rows from the top. Its color is also a texture, with the same UVs
-    // as an uploaded image: (0, 0) is its top left. So is its depth, which a
+    // Pixels of its own to draw into, with depth: the color images `format`
+    // says, in order, rows from the top. Each color image is also a texture
+    // (target_texture, by its number from 0), with the same UVs as an
+    // uploaded image: (0, 0) is its top left. So is its depth, which a
     // pipeline reads as depth or compares (tide_gpu_read), never as a color.
-    // The target owns both textures; only target_free frees them. Neither can
+    // The target owns those textures; only target_free frees them. None can
     // be sampled in a pass that draws into it, or written with texture_write.
     // A target of depth alone (TIDE_GPU_TARGET_DEPTH) has no color: its
-    // texture is 0, nothing is read back from it, and the pipelines that draw
-    // into it are made for that (tide_gpu_pipeline_desc.into).
+    // textures are 0, nothing is read back from it, and the pipelines that
+    // draw into it are made for that (tide_gpu_pipeline_desc.into), as those
+    // into every other kind of target are.
     tide_gpu_id (*target)(tide_gpu_target_format format, int width, int height);
     int (*target_limit)(void); // The most pixels a side one has, on this device
-    tide_gpu_id (*target_texture)(tide_gpu_id target);
+    // Whether a color image of floats (TIDE_GPU_COLOR_FLOAT) is one on this
+    // device. Where it isn't (an OpenGL ES 3 or a WebGL 2 with no way to draw
+    // into floats), such an image is 4 bytes a pixel, having said so once:
+    // what's drawn into it is kept from 0 to 1.
+    bool (*float_targets)(void);
+    tide_gpu_id (*target_texture)(tide_gpu_id target, uint32_t color); // 0 for an image it hasn't got
     tide_gpu_id (*target_depth)(tide_gpu_id target);
     void (*target_free)(tide_gpu_id target);
-    // The browser's synchronous canvas readback reports opaque alpha; the
-    // sampleable color texture itself retains its original alpha.
+    // Its first color image, read back: 4 bytes a pixel, rows from the top.
+    // Zeros for a target whose first isn't 4 bytes a pixel, or that has none:
+    // a pass that draws a float image into bytes reads it. The browser's
+    // synchronous canvas readback reports opaque alpha; the sampleable color
+    // texture itself retains its original alpha.
     void (*target_read)(tide_gpu_id target, uint8_t *rgba);
 
-    // A pass on `target`, or the window for 0: cleared to black, depth too, or
-    // over what's there. One at a time; everything below is inside one.
+    // A pass on `target`, or the window for 0: cleared to black, depth too
+    // (every color image it has, a float one too), or over what's there. One
+    // at a time; everything below is inside one.
     void (*begin)(tide_gpu_id target, bool clear);
     void (*end)(void);
     // Only what's inside the rect draws from here on: the whole target, to
@@ -207,6 +260,9 @@ typedef struct tide_gpu {
 } tide_gpu;
 
 extern const tide_gpu tide_gpu_gl; // gpu_gl.c
+// A test's: has OpenGL make its targets as a device that can't draw into
+// floats does, while it's set. The targets there already stay as they are.
+extern bool tide_gpu_gl_no_floats;
 #ifdef __wasm__
 extern const tide_gpu tide_gpu_webgpu; // web/gpu_web.c
 #endif

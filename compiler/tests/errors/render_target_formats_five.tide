@@ -1,0 +1,5 @@
+// expect: a render target holds 4 color images at the most, and this names 5 formats
+// expect: each format after its size is one color image: 'RenderTarget(width, height, Format.Color, Format.Float)' holds two
+// Four color images is what every GPU Tide draws with has
+scene Main { }
+view Show() { var target = RenderTarget(64, 64, 1, Format.Color, Format.Float, Format.Float, Format.Float, Format.Float); }

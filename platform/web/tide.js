@@ -600,6 +600,10 @@
             }
             if (wantedBackend === 'webgpu') return 0; // Asked for, and not to be had
             gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: true, stencil: false });
+            // The one thing asked of WebGL beyond what every WebGL 2 has: drawing into float images (a render
+            // target's Format.Float), which it only does once it's asked for. It adds no function, and the
+            // program finds out whether it's there by making one (gl_float_targets in gpu_gl.c)
+            if (gl && !gl.getExtension('EXT_color_buffer_float')) gl.getExtension('EXT_color_buffer_half_float');
             return gl ? 1 : 0;
         },
         canvas_width: () => size.width,
@@ -1529,6 +1533,16 @@
         { depthWriteEnabled: true, depthCompare: 'always' },
     ];
     const culls = ['none', 'back', 'front']; // tide_gpu_cull, of a front that goes clockwise
+    // What a kind of target holds (tide_gpu_target_format): 4 bits for each of its color images in order, 1 for
+    // 4 bytes a pixel, which is the canvas's own format, and 2 for four floats of 16 bits (tide_gpu_color), and
+    // none past the last. A change to either enum goes here.
+    const colorFormats = into => {
+        const formats = [];
+        for (; formats.length < 4 && (into >> 4 * formats.length & 15); ) {
+            formats.push((into >> 4 * formats.length & 15) === 2 ? 'rgba16float' : gpuFormat);
+        }
+        return formats;
+    };
     const attributeFormats = ['float32', 'float32x2', 'float32x3', 'float32x4', 'unorm8x4',
         'sint32', 'sint32x2', 'sint32x3', 'sint32x4']; // tide_gpu_attribute_format
     let building = null; // The pipeline being described
@@ -1681,10 +1695,11 @@
             gpuRemove('texture', id);
             for (const key of t.groups) bindGroups.delete(key);
         },
-        gpu_pipeline_begin(namePtr, codePtr, uniformSize, textures, reads, blend, depth, cull, into) {
+        gpu_pipeline_begin(namePtr, codePtr, uniformSize, textures, reads, blend, depth, cull, into, outputs) {
             building = { name: string(namePtr), code: string(codePtr), textures, blend, depth, cull, slots: [], attributes: [],
                 reads: Array.from({ length: textures }, (unused, i) => reads >> 2 * i & 3), // 2 bits each: tide_gpu_read
-                bare: into !== 0 }; // For targets of depth alone (TIDE_GPU_TARGET_DEPTH)
+                // What the targets it draws into hold (none: depth alone), and how many of those colors it writes
+                into: colorFormats(into), outputs };
         },
         gpu_pipeline_slot: (stride, perInstance) => { building.slots.push({ stride, perInstance: !!perInstance }); },
         gpu_pipeline_attribute: (slot, format, offset) => { building.attributes.push({ slot, format, offset }); },
@@ -1705,9 +1720,11 @@
                 label: b.name,
                 layout: layout.pipeline,
                 vertex: { module, entryPoint: 'vertex', buffers },
-                // Into depth alone, what the fragment stage returns goes nowhere; it still runs, as it may discard
-                fragment: { module, entryPoint: 'fragment', targets: b.bare ? [] : [{ format: gpuFormat,
-                    blend: blends[b.blend] }] },
+                // Its outputs go to the target's color images in order, each blended the same way. One with no
+                // image in its place goes nowhere (into depth alone, that's all of them; the stage still runs,
+                // as it may discard), and an image past them is one the pipeline doesn't write
+                fragment: { module, entryPoint: 'fragment', targets: b.into.map((format, i) =>
+                    i < b.outputs ? { format, blend: blends[b.blend] } : { format, writeMask: 0 }) },
                 // A triangle's front goes clockwise as it's seen, in the canvas and in a target alike
                 primitive: { topology: 'triangle-list', cullMode: culls[b.cull], frontFace: 'cw' },
                 depthStencil: { format: depthFormat, ...depths[b.depth] },
@@ -1716,32 +1733,34 @@
         },
         gpu_pipeline_free: id => gpuRemove('pipeline', id),
         gpu_target(format, width, height) {
-            let color = 0; // None for a target of depth alone (TIDE_GPU_TARGET_DEPTH)
-            if (format === 0) {
-                const texture = device.createTexture({ size: [width, height], format: gpuFormat,
+            // Its color images, in order: none for a target of depth alone (TIDE_GPU_TARGET_DEPTH)
+            const formats = colorFormats(format);
+            const colors = formats.map(format => {
+                const texture = device.createTexture({ size: [width, height], format,
                     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC });
-                color = gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * 4,
+                return gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * 4,
                     groups: new Set() });
-            }
+            });
             // Its depth is a texture of the program's too: sampled as depth alone, and drawn into whole
             const texture = depthFor(width, height, true);
             const depth = gpuAdd('texture', { texture, view: texture.createView({ aspect: 'depth-only' }),
                 whole: texture.createView(), width, height, row: 0, groups: new Set() });
-            return gpuAdd('target', { color, depth, width, height, canvas: null, context: null });
+            // Only bytes are read back: the first color image, where it's that
+            return gpuAdd('target', { colors, bytes: formats[0] === gpuFormat, depth, width, height, canvas: null, context: null });
         },
         gpu_target_limit: () => device.limits.maxTextureDimension2D,
-        gpu_target_texture: id => gpuTables.target[id].color,
+        gpu_target_texture: (id, color) => gpuTables.target[id].colors[color] || 0,
         gpu_target_depth: id => gpuTables.target[id].depth,
         gpu_target_free(id) {
             const t = gpuTables.target[id];
-            if (t.color) platform.gpu_texture_free(t.color);
+            for (const color of t.colors) platform.gpu_texture_free(color);
             platform.gpu_texture_free(t.depth);
             if (t.context) t.context.unconfigure();
             gpuRemove('target', id);
         },
         gpu_target_read(id, ptr) {
             const t = gpuTables.target[id];
-            if (!t.color) { // Depth alone: no pixels to read
+            if (!t.bytes) { // Depth alone, or floats first: no bytes to read
                 u8().fill(0, ptr, ptr + t.width * t.height * 4);
                 return;
             }
@@ -1754,7 +1773,7 @@
                     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST });
             }
             const copy = device.createCommandEncoder();
-            copy.copyTextureToTexture({ texture: gpuTables.texture[t.color].texture },
+            copy.copyTextureToTexture({ texture: gpuTables.texture[t.colors[0]].texture },
                 { texture: t.context.getCurrentTexture() }, [t.width, t.height]);
             device.queue.submit([copy.finish()]);
             if (!reader) reader = new OffscreenCanvas(t.width, t.height).getContext('2d', { willReadFrequently: true });
@@ -1770,11 +1789,11 @@
             uniformsUsed = 0;
             commands = device.createCommandEncoder();
             const load = clear ? 'clear' : 'load';
+            // The canvas, or each of a target's color images: none for a target of depth alone
+            const views = id ? t.colors.map(color => gpuTables.texture[color].view) : [t.context.getCurrentTexture().createView()];
             const descriptor = {
-                // No color for a target of depth alone
-                colorAttachments: id && !t.color ? [] : [{
-                    view: id ? gpuTables.texture[t.color].view : t.context.getCurrentTexture().createView(),
-                    loadOp: load, storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
+                colorAttachments: views.map(view => ({ view, loadOp: load, storeOp: 'store',
+                    clearValue: { r: 0, g: 0, b: 0, a: 1 } })),
                 depthStencilAttachment: { view: id ? gpuTables.texture[t.depth].whole : t.depth.createView(),
                     depthLoadOp: load, depthStoreOp: 'store', depthClearValue: 1,
                     stencilLoadOp: load, stencilStoreOp: 'store', stencilClearValue: 0 },
