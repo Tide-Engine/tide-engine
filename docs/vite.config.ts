@@ -24,9 +24,19 @@ const asInProduction: Plugin = {
     },
 };
 
+// The installers are the repo's (install.sh, install.ps1), served at the site's
+// root: `curl -fsSL https://tide-engine.dev/install.sh | sh`.
+const installers: Plugin = {
+    name: 'installers',
+    buildStart() {
+        for (const name of ['install.sh', 'install.ps1']) fs.copyFileSync(`../${name}`, `static/${name}`);
+    },
+};
+
 export default defineConfig(({ command }) => ({
     plugins: [
         asInProduction,
+        installers,
         sveltekit({
             adapter: adapter(),
             prerender: {

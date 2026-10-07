@@ -87,7 +87,6 @@ if(TIDE_TOOLS_ONLY)
 endif()
 
 set(TIDE_CHANNEL "nightly" CACHE STRING "The update channel tide starts on: stable or nightly")
-set(TIDE_REPOSITORY "BlenMiner/tide-engine" CACHE STRING "The GitHub repository tide updates from")
 
 # The package (see cmake/package.cmake) is everything installed as the `tide`
 # component: tide and tidels, the engine's headers and sources, and the

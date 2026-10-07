@@ -115,13 +115,12 @@ view Show(mut Stage stage)
     stage.lampDirection = Math.Normalize(float3(Math.Cos(stage.lampAngle), -1.2, Math.Sin(stage.lampAngle)));
     var lamp = float4x4.TRS(stage.lampDirection * -12, quaternion.LookRotation(stage.lampDirection, float3(0, 1, 0)), float3(1));
     var sees = float4x4.Ortho(12, 12, 0.1, 30);
-    // A camera looks along its +z, and clip space along -z: the world to the lamp's clip space is its
-    // projection, after z turned around, after the lamp's transform undone
-    stage.toLamp = Math.Mul(sees, Math.Mul(float4x4.TRS(float3(0), quaternion.identity, float3(1, 1, -1)), Math.Inverse(lamp)));
 
     // What casts, through the lamp's camera: no frag, as there's no color to write there
     stage.map.Clear(Color.white);
     stage.map.SetCamera(lamp, sees);
+    // ...and that camera as a matrix, from the world to the lamp's clip space, for the frag that lights
+    stage.toLamp = stage.map.WorldToClip();
     stage.map.Instanced(stage.cube, stage.faces, stage.blocks);
 
     // Then the picture: every pixel asks the lamp's image whether the lamp sees it

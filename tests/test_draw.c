@@ -792,6 +792,111 @@ TIDE_TEST(draw_cameras_3d)
     tide_draw_free(&d);
 }
 
+static bool same_place(const tide_float3 a, const tide_float3 b, const float within)
+{
+    return tide_abs_f(a.x - b.x) < within && tide_abs_f(a.y - b.y) < within && tide_abs_f(a.z - b.z) < within;
+}
+
+// A point through the destination's world-to-clip matrix, as a screen
+// position: where tide_draw_world_to_screen_3d has to put it.
+static tide_float3 by_matrix(const tide_draw_list *d, const tide_float3 p, const tide_float2 window, const tide_float2 size)
+{
+    const tide_float4 clip = tide_mul_f4x4_f4(tide_draw_world_to_clip(d, window), tide_f4(p.x, p.y, p.z, 1.0f));
+    return tide_f3((clip.x / clip.w * 0.5f + 0.5f) * size.x, (0.5f - clip.y / clip.w * 0.5f) * size.y,
+                   clip.z / clip.w * 0.5f + 0.5f);
+}
+
+// The same camera given back as its parts: the matrix tide_draw_set_camera_matrices makes of them.
+static bool parts_make_it(tide_draw_list *d, const tide_float2 window)
+{
+    const tide_float4x4 whole = tide_draw_world_to_clip(d, window);
+    const uint32_t mark = tide_draw_push_camera_matrices(d, tide_draw_camera_transform(d, window),
+                                                         tide_draw_camera_projection(d, window));
+    const tide_float4x4 again = tide_draw_world_to_clip(d, window);
+    tide_draw_pop(d, mark);
+    const float *a = &whole.c0.x, *b = &again.c0.x;
+    for (int i = 0; i < 16; i++) {
+        if (tide_abs_f(a[i] - b[i]) > 1e-4f * (1.0f + tide_abs_f(a[i]))) return false;
+    }
+    return true;
+}
+
+// A destination's cameras are read back as matrices: the 3D one from the
+// world to clip space, fitted to the destination's shape as a renderer fits
+// it, with the parts it's made of, and the 2D one from the world to the screen.
+TIDE_TEST(draw_cameras_are_read_as_matrices)
+{
+    tide_draw_list d = {0};
+    const tide_float2 window = tide_f2(800.0f, 600.0f), small = tide_f2(64.0f, 16.0f);
+    const tide_float3 points[3] = {{0.5f, 1.0f, 4.0f}, {-2.0f, 0.25f, 9.0f}, {3.0f, -1.5f, 2.0f}};
+
+    // Each frame's first camera, then one that's set, then one of any projection: the window's shape is in each
+    for (int camera = 0; camera < 3; camera++) {
+        if (camera == 1) tide_draw_set_camera_3d(&d, tide_f3(1.0f, 2.0f, -6.0f), tide_axisangle_q(tide_f3(0.0f, 1.0f, 0.0f), 0.3f), 70.0f);
+        if (camera == 2) {
+            tide_draw_set_camera_matrices(&d, tide_trs_f4x4(tide_f3(0.0f, 1.0f, -8.0f), tide_identity_q(), tide_f3_splat(1.0f)),
+                                          tide_ortho_f4x4(16.0f, 12.0f, 0.5f, 40.0f));
+        }
+        for (int i = 0; i < 3; i++) {
+            TIDE_CHECK(same_place(by_matrix(&d, points[i], window, window), tide_draw_world_to_screen_3d(&d, points[i], window), 1e-3f));
+        }
+        TIDE_CHECK(parts_make_it(&d, window));
+    }
+    // A camera of any projection is given back as it was given, bit for bit
+    const tide_float4x4 sees = tide_ortho_f4x4(16.0f, 12.0f, 0.5f, 40.0f), given = tide_draw_camera_projection(&d, window);
+    TIDE_CHECK(memcmp(&sees, &given, sizeof sees) == 0);
+    TIDE_CHECK(tide_draw_camera_transform(&d, window).c3.z == -8.0f);
+    // ...and nothing was recorded for the asking
+    TIDE_CHECK(d.count == 0);
+
+    // A fitted camera's matrix is the square one with x divided by the destination's shape
+    tide_draw_set_camera_3d(&d, tide_f3(0.0f, 0.0f, -5.0f), tide_identity_q(), 90.0f);
+    const tide_float4x4 square = tide_draw_camera_3d_matrix(tide_f3(0.0f, 0.0f, -5.0f), tide_identity_q(), 90.0f);
+    const tide_float4x4 wide = tide_draw_world_to_clip(&d, window);
+    TIDE_CHECK(wide.c0.x == square.c0.x * (600.0f / 800.0f) && wide.c1.y == square.c1.y && wide.c3.z == square.c3.z);
+    const tide_float4x4 fitted = tide_draw_camera_fit(square, 800.0f, 600.0f);
+    TIDE_CHECK(memcmp(&wide, &fitted, sizeof wide) == 0);
+    TIDE_CHECK(about(tide_draw_camera_projection(&d, window).c0.x, 0.75f) && about(tide_draw_camera_projection(&d, window).c1.y, 1.0f));
+    // A transform is no part of a camera
+    tide_draw_set_transform_3d(&d, tide_translate_f4x4(tide_f3(5.0f, 0.0f, 0.0f)));
+    const tide_float4x4 moved = tide_draw_world_to_clip(&d, window);
+    TIDE_CHECK(memcmp(&wide, &moved, sizeof wide) == 0);
+
+    // A target has its own, fitted to its own shape, whatever the window's
+    tide_draw_to(&d, 17, small.x, small.y);
+    for (int i = 0; i < 3; i++) {
+        TIDE_CHECK(same_place(by_matrix(&d, points[i], window, small), tide_draw_world_to_screen_3d(&d, points[i], window), 1e-3f));
+    }
+    TIDE_CHECK(about(tide_draw_camera_projection(&d, window).c0.x, 0.25f * tide_draw_first_camera_3d().projection.c0.x));
+    tide_draw_set_camera_matrices(&d, tide_identity_f4x4(), sees);
+    const tide_float4x4 target_sees = tide_draw_camera_projection(&d, window);
+    TIDE_CHECK(memcmp(&sees, &target_sees, sizeof sees) == 0);
+    TIDE_CHECK(parts_make_it(&d, window));
+    tide_draw_to(&d, 0, 0, 0);
+    const tide_float4x4 back = tide_draw_world_to_clip(&d, window);
+    TIDE_CHECK(memcmp(&wide, &back, sizeof wide) == 0);
+    // No size, no matrix
+    TIDE_CHECK(tide_draw_world_to_clip(&d, tide_f2(0.0f, 600.0f)).c0.x == 0.0f
+               && tide_draw_world_to_clip(&d, tide_f2(0.0f, 600.0f)).c3.w == 0.0f);
+
+    // The 2D camera: the same place as tide_draw_world_to_screen gives
+    const tide_float2 spots[3] = {{2.0f, 3.0f}, {-40.0f, 7.5f}, {0.0f, 0.0f}};
+    for (int camera = 0; camera < 3; camera++) {
+        if (camera == 1) tide_draw_set_camera(&d, tide_f2(2.0f, 3.0f), 5.0f);
+        if (camera == 2) tide_draw_set_screen(&d);
+        const tide_float3x3 m = tide_draw_world_to_screen_matrix(&d, window);
+        for (int i = 0; i < 3; i++) {
+            const tide_float3 by = tide_mul_f3x3_f3(m, tide_f3(spots[i].x, spots[i].y, 1.0f));
+            const tide_float2 to = tide_draw_world_to_screen(&d, spots[i], window);
+            TIDE_CHECK(tide_abs_f(by.x - to.x) < 1e-3f && tide_abs_f(by.y - to.y) < 1e-3f && by.z == 1.0f);
+        }
+        const tide_float3x3 same = tide_identity_f3x3();
+        TIDE_CHECK(camera != 2 || memcmp(&m, &same, sizeof m) == 0);
+    }
+    TIDE_CHECK(tide_draw_world_to_screen_matrix(&d, tide_f2(0.0f, 0.0f)).c2.z == 0.0f);
+    tide_draw_free(&d);
+}
+
 static const tide_vertex3 cube_corners[4] = {
     {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
     {{1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
