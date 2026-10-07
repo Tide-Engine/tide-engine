@@ -1,0 +1,8 @@
+// expect: a texture is shared by an instanced draw: keep the sampled DepthTexture in a component or singleton
+scene Main { }
+struct Lit { DepthTexture shadow; }
+frag Shade(Vertex vertex, mut Color color, Lit lit)
+{
+    float far = lit.shadow.Sample(vertex.uv);
+    color = Color(far, far, far);
+}

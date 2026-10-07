@@ -6023,7 +6023,10 @@ static type check_member(checker *c, expr *e)
 
     if (obj.kind == TY_RENDER_TARGET) {
         if (gpu_code(c)) {
-            gpu_refuses(c, e->at, "read a RenderTarget", "the view supplies its color image as a Texture instead");
+            gpu_refuses(c, e->at, "read a RenderTarget",
+                        str_eq_c(e->member, "depth") ? "the view keeps its depth in a DepthTexture field of a component or singleton "
+                                                       "this takes, 'lamp.shadow = lamp.map.depth;', which it reads there"
+                                                     : "the view supplies its color image as a Texture instead");
             return T_ERR;
         }
         if (str_eq_c(e->member, "color")) {
@@ -8899,7 +8902,7 @@ static void check_var(checker *c, stmt *s)
         }
         if (!c->method && !local_code(c)) {
             diag_error(s->type_at.line ? s->type_at : s->at, "rendering resources belong to this machine, so the match can't keep them in a local");
-            diag_note("keep the Texture or RenderTarget in local state and use it in a view");
+            diag_note("keep the Texture, DepthTexture or RenderTarget in local state and use it in a view");
             s->type = T_ERR;
         }
     }
@@ -10020,7 +10023,8 @@ static void check_fields(checker *c, const decl *d)
             const loc at = f->type_qual_at.line ? f->type_qual_at : f->type_at.line ? f->type_at : f->at;
             if (d->kind != DECL_STRUCT && !d->is_local) {
                 diag_error(at, "'" STR_FMT "' can't hold rendering resources in match state", STR_ARG(d->name));
-                diag_note("Texture and RenderTarget belong to this machine: keep the field local, or use a local component or singleton");
+                diag_note("Texture, DepthTexture and RenderTarget belong to this machine: keep the field local, or use a local component "
+                          "or singleton");
             } else if (f->type.kind == TY_LIST || f->type.kind == TY_MAP || f->type.kind == TY_SET || f->type.kind == TY_GRID) {
                 diag_error(at, "containers can't hold rendering resources, including inside a struct");
             }
@@ -13914,7 +13918,8 @@ static void check_render_resource_calls(const checker *c)
             || site->from->kind == DECL_SHADER || is_local_code(site->from)) continue;
         diag_error(site->call->at, "'" STR_FMT "' uses rendering resources, which belong to this machine: the match can't call it",
                    STR_ARG(site->to->name));
-        diag_note_at(site->to->render_resources_at, "it uses a Texture or RenderTarget on line %d", site->to->render_resources_at.line);
+        diag_note_at(site->to->render_resources_at, "it uses a Texture, DepthTexture or RenderTarget on line %d",
+                     site->to->render_resources_at.line);
     }
     for (int i = 0; i < c->prog->decls.count; i++) {
         decl *d = c->prog->decls.items[i];

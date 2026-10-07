@@ -1,0 +1,3 @@
+// expect: 'Format' is built into the engine
+scene Main { }
+enum Format { Wide, Tall }

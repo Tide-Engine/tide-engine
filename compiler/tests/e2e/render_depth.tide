@@ -1,0 +1,96 @@
+scene Main { }
+
+// A target says what it holds when it's made, and a frag reads a target's
+// depth: each way to write the format, a DepthTexture kept in local state of
+// every kind, and both ways to read one, in a frag and in a vert.
+struct Light { RenderTarget map; DepthTexture shadow; }
+component Caster { float3 position; local DepthTexture seen; }
+local component Probe { DepthTexture shadow; }
+local singleton Lamp
+{
+    RenderTarget map;       // Depth alone
+    RenderTarget exact;     // ...with pixels of its own
+    RenderTarget screen;    // ...the window's size
+    RenderTarget half;      // ...and half of it
+    RenderTarget scene;     // Color, said by name
+    RenderTarget picked;    // What a variable said
+    DepthTexture shadow;
+    DepthTexture sceneDepth;
+    Light light;
+    float4x4 toLamp;
+    List<Vertex3> mesh;
+    List<int> faces;
+    int frames;
+}
+
+// What a target holds can be any Format: a function's, as a number's
+RenderTarget Made(float size, Format format) { return RenderTarget(size, size, format); }
+DepthTexture DepthOf(RenderTarget target) { return target.depth; }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Caster { position = float3(0, 1, 0) });
+}
+
+frag Lit(Vertex3 vertex, mut Color color, Pixel pixel, Lamp lamp)
+{
+    float4 seen = Math.Mul(lamp.toLamp, float4(pixel.world, 1));
+    float lit = lamp.shadow.Compare(float2(seen.x * 0.5 + 0.5, 0.5 - seen.y * 0.5), seen.z * 0.5 + 0.5 - 0.01);
+    float far = lamp.sceneDepth.Sample(vertex.uv);
+    color = Color(lit, far, lamp.shadow.Sample(uv: vertex.uv) * lamp.shadow.Compare(value: 0.5, uv: vertex.uv));
+}
+
+// A vert reads one too, and a component's local field is one a frag reads
+vert Sink(mut Vertex3 vertex, Lamp lamp)
+{
+    vertex.position.y -= lamp.shadow.Sample(vertex.uv);
+}
+
+frag Seen(Vertex3 vertex, mut Color color, Caster caster)
+{
+    float lit = caster.seen.Compare(vertex.uv, 0.25);
+    color = Color(lit, lit, lit);
+}
+
+view Make(mut Lamp lamp)
+{
+    if (lamp.frames == 0)
+    {
+        lamp.map = RenderTarget(64, 48, Format.DepthOnly);
+        lamp.exact = RenderTarget(256, 256, 1, Format.DepthOnly);
+        lamp.screen = RenderTarget.Screen(Format.DepthOnly);
+        lamp.half = RenderTarget.Screen(0.5, Format.DepthOnly);
+        lamp.scene = RenderTarget(64, 48, Format.Color);
+        Format kind = lamp.frames == 0 ? Format.DepthOnly : Format.Color;
+        lamp.picked = Made(32, kind);
+        lamp.shadow = lamp.map.depth;
+        lamp.sceneDepth = DepthOf(lamp.scene);
+        var light = Light { map = lamp.exact, shadow = lamp.exact.depth };
+        lamp.light = light;
+        lamp.mesh = [Vertex3 { position = float3(-1, 0, 0) }, Vertex3 { position = float3(1, 0, 0) }, Vertex3 { position = float3(0, 1, 0) }];
+        lamp.faces = [0, 1, 2];
+        Spawn(Probe { shadow = lamp.half.depth });
+    }
+    lamp.frames += 1;
+    lamp.toLamp = float4x4.Ortho(8, 8, 0.1, 20);
+}
+
+[After(Make)]
+view Casters(mut Caster caster, Lamp lamp)
+{
+    caster.seen = lamp.light.shadow;
+    // Into depth alone: a clear, a mesh with no frag, one through a frag, and a rect, whose color has nowhere to go
+    lamp.map.Clear(Color.black);
+    lamp.map.SetCamera(float4x4.identity, lamp.toLamp);
+    lamp.map.Mesh(lamp.mesh, lamp.faces, float4x4.Translate(caster.position));
+    lamp.map.Mesh(lamp.mesh, lamp.faces, float4x4.Translate(caster.position), Seen);
+    lamp.map.SetScreen();
+    lamp.map.Rect(float2(8, 8), float2(16), Color.red);
+}
+
+[After(Casters)]
+view Show(Lamp lamp)
+{
+    lamp.scene.Mesh(lamp.mesh, lamp.faces, float4x4.identity, Sink, Lit);
+    Draw3D.Mesh(lamp.mesh, lamp.faces, float4x4.identity, Lit);
+}

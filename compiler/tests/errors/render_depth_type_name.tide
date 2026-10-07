@@ -1,0 +1,3 @@
+// expect: 'DepthTexture' is built into the language
+scene Main { }
+struct DepthTexture { int bits; }
