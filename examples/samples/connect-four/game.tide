@@ -405,12 +405,18 @@ local event(verified GameOver over) ShowOver(mut Fx fx)
     fx.burst = 0.55;
 }
 
-// A player's hand comes and goes with them.
-local event(Spawned) ShowArrival(Hand hand, Owner owner, Session session, mut Fx fx)
+// A player's hand comes and goes with them. A machine hears the joins from its
+// own on, where it hears a Spawned for the hands that were there too: so the
+// news is a join's, and the hand it brought is among the tick's.
+local event(PlayerJoined joined) ShowArrival(Session session, mut Fx fx, query (Hand hand, Owner owner) hands)
 {
-    if (owner.player == session.player) return;
-    fx.news = $"Player {hand.number} joined the game";
-    fx.newsLeft = 4;
+    if (joined.player == session.player) return;
+    foreach (var row in hands)
+    {
+        if (row.owner.player != joined.player) continue;
+        fx.news = $"Player {row.hand.number} joined the game";
+        fx.newsLeft = 4;
+    }
 }
 
 local event(Destroyed) ShowLeaving(Hand hand, mut Fx fx)

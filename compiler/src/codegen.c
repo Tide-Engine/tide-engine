@@ -1082,6 +1082,16 @@ static bool program_hears(const program *prog)
     return false;
 }
 
+// Whether local handlers hear the match's `Spawned` for the entities of some
+// archetype: those a world arrives with are heard too (gen_hear_arrived).
+static bool hears_arrivals(const program *prog)
+{
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (heard_for(prog, prog->spawned, a)) return true;
+    }
+    return false;
+}
+
 // What an operator is called in C: add for +, negate for - with one parameter.
 static const char *operator_word(const decl *m)
 {
@@ -9077,6 +9087,52 @@ static void gen_hear(gen *g)
     gen_hear_rows(g);
 }
 
+// The entities a world has that no tick of this machine's spawned: those the
+// match starts with, and those of a world it's sent. tide_world_hear_arrived
+// records a `Spawned` for each that `had`, a world this machine had before,
+// doesn't have, as the world has it now, for the local handlers that hear the
+// match's: in the world's order, an archetype after another. It's the game's
+// `hear_arrived` (tide/session.h), in the .c alone, as the header is the
+// game's hash. Every archetype whose entities a handler runs for, where a tick
+// only records the ones spawned so: an entity that came to its components by
+// an Add arrives with them.
+static void gen_hear_arrived(gen *g)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    if (!hears_arrivals(prog)) return;
+    const char *spawned = type_cname(prog->spawned);
+    sb_put(o, "// Records a Spawned for each entity of `w` that `had` doesn't have (NULL: every one), for the local\n"
+              "// handlers that hear the match's: what a world starts or arrives with, as it has it\n");
+    sb_put(o, "static void tide_world_hear_arrived(const tide_world *w, const tide_world *had, tide_event_log *events)\n{\n");
+    sb_put(o, "    if (!events) return;\n");
+    sb_put(o, "    const uint32_t tide_from = events->build == TIDE_HEARD_BUILD ? events->size : 0u; // Another build's go as it records\n");
+    sb_put(o, "    tide_listening = events;\n");
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (!heard_for(prog, prog->spawned, a)) continue;
+        sb_printf(o, "    { // %s\n        const tide_table *t = &w->%s;\n", arch_label(g, a), arch_name(g, a));
+        sb_put(o, "        for (uint32_t c = 0; c < t->chunks; c++) {\n");
+        sb_printf(o, "            const uint32_t n = tide_table_rows(t, %d, c);\n", arch_shift(g, a));
+        sb_printf(o, "            const tide_entity *ent = tide_table_column(t, %s, c, 0);\n", arch_columns(g, a));
+        sb_put(o, "            for (uint32_t i = 0; i < n; i++) {\n");
+        sb_put(o, "                if (had && tide_entity_alive(&had->entities, ent[i])) continue; // It had it\n");
+        // Recording only reads the world
+        sb_printf(o, "                tide_hear_%s((tide_world *)(uintptr_t)w, ent[i], &(%s){0});\n", spawned, spawned);
+        sb_put(o, "            }\n        }\n    }\n");
+    }
+    sb_put(o, "    tide_listening = NULL;\n");
+    // What their handlers' queries go through, as the world is
+    if (g->heard_rows.count) sb_put(o, "    tide_hear_rows(w, events);\n");
+    sb_put(o, "    if (events->build != TIDE_HEARD_BUILD) return; // None was recorded, and what's there is another build's\n");
+    // A tick's events say the tick that sent them, and its rows the tick before the one the world
+    // is at by then: these are all of the world as it is
+    sb_put(o, "    for (uint32_t tide_at = tide_from; tide_at < events->size;) {\n"
+              "        tide_heard *r = (tide_heard *)(events->bytes + tide_at);\n"
+              "        tide_at += r->size;\n"
+              "        r->tick = (uint32_t)w->Time.tick;\n"
+              "    }\n}\n\n");
+}
+
 // ---------------------------------------------------------------------------
 // Source: systems
 
@@ -14169,6 +14225,7 @@ static void gen_api(gen *g)
     } else {
         sb_put(o, "    (void)events; // No local handler hears the match\n    tide_world_tick_on(w, jobs);\n}\n\n");
     }
+    gen_hear_arrived(g);
 
     // A match that's out of scenes ends when Main is local. A match Main comes
     // back instead (see tide_apply_commands), and a match that can't hold a
@@ -15593,6 +15650,10 @@ static void gen_game_api(gen *g)
         sb_put(o, "static void tide_game_tick_events(void *w, const tide_jobs *jobs, tide_event_log *events)\n{\n"
                   "    tide_world_tick_events(w, jobs, events);\n}\n\n");
     }
+    if (hears_arrivals(prog)) {
+        sb_put(o, "static void tide_game_hear_arrived(const void *w, const void *had, tide_event_log *events)\n{\n"
+                  "    tide_world_hear_arrived(w, had, events);\n}\n\n");
+    }
     sb_put(o, "static void tide_game_copy(void *to, const void *from)\n{\n    tide_world_copy(to, from);\n}\n\n");
     sb_put(o, "static uint64_t tide_game_hash(const void *w)\n{\n    return tide_world_hash(w);\n}\n\n");
     // The same hash, with the pages that changed hashed on threads first: every page tide_world_hash
@@ -15711,6 +15772,7 @@ static void gen_game_api(gen *g)
     sb_put(o, "    .start_size = sizeof(tide_start),\n");
     sb_put(o, "    .start = tide_game_start,\n    .tick = tide_game_tick,\n");
     if (program_hears(prog)) sb_put(o, "    .tick_events = tide_game_tick_events,\n");
+    if (hears_arrivals(prog)) sb_put(o, "    .hear_arrived = tide_game_hear_arrived,\n");
     sb_put(o, "    .copy_world = tide_game_copy,\n    .hash_world = tide_game_hash,\n");
     sb_put(o, "    .hash_world_on = tide_game_hash_on,\n");
     sb_put(o, "    .free_world = tide_game_free,\n    .pack_world = tide_game_pack,\n    .unpack_world = tide_game_unpack,\n");
