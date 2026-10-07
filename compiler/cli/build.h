@@ -12,6 +12,9 @@ typedef struct build_options {
     bool stats;         // Show the stats, whether or not the game's stats setting does: a drawer of one line, in a corner
     bool stats_open;    // ...which starts open: tide run's, for whoever typed --stats to read them
     bool debug_views;   // The debug views are on, whatever the game's debugViews setting says: F7 shows the profiler
+    // The symbols every file's #if conditions read as defined: --define's, and DEBUG without --release
+    const char *defines[64];
+    int define_count;
 } build_options;
 
 // Builds a game with the engine files installed in `root` (see AGENTS.md,
@@ -54,6 +57,7 @@ char *tide_work_folder(const char *folder);
 // the game's.
 char **tide_game_sources(const char *folder, int *count);
 
-// Prints the schedule of the game in `folder` (see tidec --schedule), or with
-// `shaders`, the shaders its mesh draw calls draw through (tidec --shaders).
-bool tide_schedule(const char *folder, bool shaders);
+// Prints the schedule of the game in `opts->folder` (see tidec --schedule), or with
+// `shaders`, the shaders its mesh draw calls draw through (tidec --shaders),
+// as a build with these options has them.
+bool tide_schedule(const build_options *opts, bool shaders);

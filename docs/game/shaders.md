@@ -1,6 +1,6 @@
 # Frags and verts
 
-A mesh's pixels and vertices can run code of yours on the GPU, written in Tide: a `frag` runs once for each pixel a mesh covers, and a `vert` once for each of its vertices. They're declarations, like [views](./views.md), and a `Draw.Mesh` or `Draw.Mesh` names them:
+A mesh's pixels and vertices can run code of yours on the GPU, written in Tide: a `frag` runs once for each pixel a mesh covers, and a `vert` once for each of its vertices. They're declarations, like [views](./views.md), and a `Draw.Mesh` names them:
 
 ```csharp
 struct BoxVertex
@@ -47,7 +47,7 @@ A mesh's vertices are a list of a struct, and the struct can be yours:
 - It has a `position`: a `float2` makes a 2D mesh, drawn through the 2D camera in order with the other Draw calls, and a `float3` a 3D one, which `Draw.Mesh` places with a transform.
 - Its other fields are whatever the mesh needs: floats, ints, their vectors and colors, 12 fields at most. The GPU reads them from the list as they are, so a vertex costs what its struct does: a struct with only a `position` is 12 bytes a vertex.
 
-`Draw.Mesh` and `Draw.Mesh` take a list of it, with or without a vert and a frag:
+`Draw.Mesh` takes a list of it, with or without a vert and a frag:
 
 ```csharp
 Draw.Mesh(vertices, indices);                           // 2D
@@ -189,7 +189,7 @@ After the vertex, and what each writes (a frag's color, the structs a vert hands
 - A [`local` field](./local-state.md) of the match's component or singleton is read like any other: `box.highlight`, which a view set for the entity under the mouse.
 - With [`Draw.Instanced`](#instances-from-a-list), an ordinary struct parameter takes the current item of the instance list. It is read-only too. (A frag's struct of a type its draw's vert writes is [the vert's](#from-a-vert-to-its-frag) instead.)
 - An ordinary struct parameter also takes [the values a draw gives](#values-for-one-draw) after its vert and frag: `Draw.Blit(source, destination, Blur, BlurStep { along = float2(1, 0) })`.
-- A read-only `Texture` parameter receives the explicit image passed to either namespace's `Mesh` or `Instanced` or [`Draw.Blit`](./views.md#targets-and-post-processing). Each stage takes at most one; when both stages take it, they receive the same source. `source.Sample(vertex.uv[, Filter.Point[, Wrap.Repeat]])` uses the same top-left UVs as grid sampling. Local component and singleton `Texture` fields can be sampled too.
+- A read-only `Texture` parameter receives the explicit image passed to `Draw.Mesh`, `Draw.Instanced`, a target's `Mesh` or `Instanced`, or [`Draw.Blit`](./views.md#targets-and-post-processing). Each stage takes at most one; when both stages take it, they receive the same source. `source.Sample(vertex.uv[, Filter.Point[, Wrap.Repeat]])` uses the same top-left UVs as grid sampling. Local component and singleton `Texture` fields can be sampled too.
 
 The view needn't take them itself. It has to run for entities that have the components, so `with Box` is enough, and it's an error at the mesh draw when it doesn't:
 

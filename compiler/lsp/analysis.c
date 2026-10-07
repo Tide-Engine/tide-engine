@@ -136,6 +136,8 @@ static struct {
     // where what it replaced was, and nothing of what was replaced. This one has both, each where its file
     // has it, and an override of a method, which the program keeps in the method's type.
     VEC(const decl *) written;
+    VEC(const unit *) blocks;      // Every `namespace Name { ... }` block, file by file, a block before those inside it
+    loc from;                      // Where the request reads names from, for which namespace is its own; no line: the file's
     VEC(asset_site) assets;        // The files `asset` declarations name
     VEC(asset_fix) asset_fixes;
     VEC(asset_file) asset_files;   // Every file of the game's folders, once it's been listed
@@ -164,6 +166,38 @@ static int loc_cmp(const loc a, const loc b)
 {
     if (a.file != b.file) return a.file - b.file;
     return a.line != b.line ? a.line - b.line : a.col - b.col;
+}
+
+// The namespace block a position is in, the innermost; NULL outside every one.
+static const unit *block_at(const loc at)
+{
+    const unit *found = NULL;
+    for (int i = 0; i < A.blocks.count; i++) {
+        const unit *u = A.blocks.items[i];
+        if (u->open_at.file != at.file || loc_cmp(at, u->open_at) <= 0) continue;
+        if (u->close_at.line && loc_cmp(at, u->close_at) > 0) continue;
+        found = u; // A block inside this one comes after it
+    }
+    return found;
+}
+
+// The column declarations start at where `at` is: 1, or inside a namespace
+// block, the block's.
+static int decl_col_at(const loc at)
+{
+    const unit *u = block_at(at);
+    return u ? u->decl_col : 1;
+}
+
+// Whether a token is the '{' or the '}' of a namespace block.
+static bool namespace_brace(const loc at)
+{
+    for (int i = 0; i < A.blocks.count; i++) {
+        const unit *u = A.blocks.items[i];
+        if (u->open_at.file != at.file) continue;
+        if (loc_cmp(at, u->open_at) == 0 || (u->close_at.line && loc_cmp(at, u->close_at) == 0)) return true;
+    }
+    return false;
 }
 
 // 0-based UTF-16 column of a 1-based byte column.
@@ -352,12 +386,12 @@ static str last_part(const str text)
 // Each part of the namespace `path` written at `at`: Game and Game.Combat in
 // `namespace Game.Combat;`. A part is named by the path up to it, so the Combat
 // in Game.Combat is never another namespace's Combat.
-static void namespace_parts(const loc at, const str path, const bool declaration)
+static void namespace_parts_from(const loc at, const str path, const int from, const bool declaration)
 {
     int t = token_at(at);
     if (t < 0) return;
     const afile *f = &A.files[at.file];
-    for (int start = 0; start < path.len && t < f->tok_count; start++) {
+    for (int start = from; start < path.len && t < f->tok_count; start++) {
         int end = start;
         while (end < path.len && path.ptr[end] != '.') end++;
         const token *part = &f->toks[t];
@@ -368,6 +402,12 @@ static void namespace_parts(const loc at, const str path, const bool declaration
         t += 2; // And the dot
         start = end;
     }
+}
+
+// The parts of a namespace's name written at `at`, each the namespace it names: Game, then Game.Combat.
+static void namespace_parts(const loc at, const str path, const bool declaration)
+{
+    namespace_parts_from(at, path, 0, declaration);
 }
 
 // The namespace in front of a qualified name written at `qual_at`: Combat in
@@ -1103,9 +1143,16 @@ static int occ_order(const void *a, const void *b)
 
 static void index_program(void)
 {
-    // `namespace X;` and `using Y;` at the top of each file
+    // `namespace X;` and `using Y;` at the top of each file, and each
+    // `namespace X { ... }`, whose name is written without the namespace it's in
+    A.blocks.count = 0;
     for (int i = 0; i < A.prog->units.count; i++) {
         const unit *u = A.prog->units.items[i];
+        if (u->outer) {
+            vec_push(A.blocks, u);
+            namespace_parts_from(u->ns_at, u->ns, u->ns.len - u->ns_written.len, true);
+            continue;
+        }
         if (u->ns.len > 0) namespace_parts(u->ns_at, u->ns, true);
         for (int k = 0; k < u->usings.count; k++) namespace_parts(u->using_at.items[k], u->usings.items[k], false);
     }
@@ -1241,6 +1288,13 @@ void analysis_run(const analysis_file *files, const int count)
     A.files = arena_alloc(sizeof(afile) * (size_t)(count > 0 ? count : 1));
     A.prog = program_new();
     A.prog->game_folder = asset_roots.game_folder; // The checker keeps the assets' hashes and fetched URLs there
+    // The symbols #if lines read, as `tide run` has them: DEBUG, and the game's packages. What a
+    // command line would --define isn't known here, and reads as not defined.
+    lex_symbols_reset();
+    lex_define("DEBUG");
+    for (int i = 0; i < count; i++) {
+        if (files[i].package) lex_define_package(files[i].package);
+    }
     for (int i = 0; i < count; i++) {
         afile *f = &A.files[i];
         char *copy = arena_alloc(files[i].len + 1);
@@ -3435,8 +3489,13 @@ static void move_to_file_action(const int line, jbuf *out, int *written)
         if (u && u->ns.len > 0) sb_printf(&text, "namespace " STR_FMT ";\n", STR_ARG(u->ns));
         for (int k = 0; u && k < u->usings.count; k++) sb_printf(&text, "using " STR_FMT ";\n", STR_ARG(u->usings.items[k]));
         if (text.len > 0) sb_put(&text, "\n");
+        const int indent = u ? u->decl_col - 1 : 0; // In a namespace block: the new file has it at column 1
         for (int l = first; l <= last; l++) {
-            const str line_text = doc_line(l);
+            str line_text = doc_line(l);
+            for (int k = 0; k < indent && line_text.len > 0 && line_text.ptr[0] == ' '; k++) {
+                line_text.ptr++;
+                line_text.len--;
+            }
             sb_putn(&text, line_text.ptr, (size_t)line_text.len);
             sb_put(&text, "\n");
         }
@@ -3707,10 +3766,16 @@ static void namespace_actions(const int start_line, const int end_line, jbuf *ou
         const diagnostic *d = &A.diags.items[i];
         if (d->severity != DIAG_ERROR || d->at.file != A.doc) continue;
         if (d->at.line - 1 < start_line || d->at.line - 1 > end_line) continue;
+        A.from = d->at; // In a namespace block, what the block can name
         const int t = token_at(d->at);
         if (t < 0 || DOC->toks[t].kind != T_IDENT || (t > 0 && DOC->toks[t - 1].kind == T_DOT)) continue;
-        bool known = false; // The name means something there already: the error's about something else
-        for (int k = 0; k < A.occs.count && !known; k++) known = loc_cmp(A.occs.items[k].at, d->at) == 0;
+        // The name means something there already: the error's about something else. A type nothing
+        // resolved is shown as the declaration of that name wherever it is, which is what's offered here.
+        bool known = false;
+        for (int k = 0; k < A.occs.count && !known; k++) {
+            const occurrence *o = &A.occs.items[k];
+            known = loc_cmp(o->at, d->at) == 0 && !(o->kind == OCC_TYPE && o->decl && !o->decl->builtin && !visible_by_name(o->decl));
+        }
         const str name = DOC->toks[t].text;
         VEC(str) offered = {0};
         for (int k = 0; !known && k < A.prog->decls.count; k++) {
@@ -3746,6 +3811,7 @@ static void namespace_actions(const int start_line, const int end_line, jbuf *ou
             quick_fix(out, written, title_using.data, offered.count == 1, d, at, at, using_text.data);
         }
     }
+    A.from = (loc){0};
 }
 
 // An `out` parameter read before it's assigned, as the checker's note says:
@@ -4767,6 +4833,8 @@ void analysis_folding_ranges(jbuf *out)
         }
         const bool opens = text.len >= 2 && memcmp(text.ptr, "if", 2) == 0 && (text.len == 2 || !isalnum((unsigned char)text.ptr[2]));
         const bool ends = text.len >= 5 && memcmp(text.ptr, "endif", 5) == 0;
+        // #define and #undef are lines of their own, in no branch
+        if ((text.len >= 6 && memcmp(text.ptr, "define", 6) == 0) || (text.len >= 5 && memcmp(text.ptr, "undef", 5) == 0)) continue;
         if (!opens && branches > 0) folding_range(out, &written, branch[--branches], line - 1, "region");
         if (!ends) branch[branches++] = line;
     }
@@ -6019,7 +6087,8 @@ static void complete_members(completion *c, const int dot, const loc at, const o
     list_members(c, t, edges, &sc);
 }
 
-// The current document's file: its namespace and `using`s.
+// The current document's file: its namespace and `using`s. Its namespace
+// blocks' units come after it.
 static const unit *doc_unit(void)
 {
     for (int i = 0; i < A.prog->units.count; i++) {
@@ -6028,12 +6097,20 @@ static const unit *doc_unit(void)
     return NULL;
 }
 
-// Can the current document name `d` without its namespace?
+// What names are read through where the request is (A.from): the namespace
+// block it's in, or the current document's file.
+static const unit *from_unit(void)
+{
+    const unit *block = A.from.line && A.from.file == A.doc ? block_at(A.from) : NULL;
+    return block ? block : doc_unit();
+}
+
+// Can the current document name `d` without its namespace, where the request is?
 static bool visible_by_name(const decl *d)
 {
     const str ns = decl_home(d) ? decl_home(d)->ns : (str){"", 0};
     if (ns.len == 0) return true;
-    const unit *u = doc_unit();
+    const unit *u = from_unit();
     if (!u) return false;
     // Its own namespace or one it's inside of
     if (u->ns.len >= ns.len && memcmp(u->ns.ptr, ns.ptr, (size_t)ns.len) == 0
@@ -6570,6 +6647,9 @@ static void complete_declarations(completion *c)
          NULL);
     item(c, "namespace", CK_KEYWORD, "namespace Name;", "The namespace of everything in this file. Goes at the top.",
          "namespace ${1:Name};");
+    item(c, "namespace block", CK_SNIPPET, "namespace Name { ... }",
+         "A namespace for the declarations inside it. A file can have several, and one inside another.",
+         "namespace ${1:Name}\n{\n    $0\n}");
     item(c, "using", CK_KEYWORD, "using Name;", "Names from another namespace, without writing it. Goes at the top.",
          "using ${1:Name};");
 }
@@ -6914,7 +6994,7 @@ static header_kind member_header(const int i)
 static bool starts_function(const int i)
 {
     const token *t = &DOC->toks[i];
-    if (t->kind != T_IDENT || t->at.col != 1) return false;
+    if (t->kind != T_IDENT || t->at.col != decl_col_at(t->at)) return false;
     int k = i + 1;
     while (DOC->toks[k].kind == T_DOT && DOC->toks[k + 1].kind == T_IDENT) k += 2;
     if (DOC->toks[k].kind == T_QUESTION) k++; // int? Find(
@@ -6937,7 +7017,7 @@ static bool after_fails(const int i)
 static bool starts_replace_word(const int i)
 {
     const token *t = &DOC->toks[i];
-    if (t->kind != T_IDENT || t->at.col != 1 || (!str_eq_c(t->text, "virtual") && !str_eq_c(t->text, "override"))) return false;
+    if (t->kind != T_IDENT || t->at.col != decl_col_at(t->at) || (!str_eq_c(t->text, "virtual") && !str_eq_c(t->text, "override"))) return false;
     const tok_kind next = DOC->toks[i + 1].kind;
     return next == T_IDENT || next == T_SYSTEM || next == T_MUT;
 }
@@ -6947,8 +7027,8 @@ static bool starts_declaration(const int i)
     const token *t = &DOC->toks[i];
     if (t->kind == T_COMPONENT || t->kind == T_SINGLETON || t->kind == T_SYSTEM) return true;
     if (starts_replace_word(i)) return true;
-    if (t->kind == T_LBRACKET && t->at.col == 1) return !attributes_before_field(DOC->toks, i); // Attributes
-    if (t->kind == T_IDENT && t->at.col == 1 && DOC->toks[i + 1].kind == T_IDENT
+    if (t->kind == T_LBRACKET && t->at.col == decl_col_at(t->at)) return !attributes_before_field(DOC->toks, i); // Attributes
+    if (t->kind == T_IDENT && t->at.col == decl_col_at(t->at) && DOC->toks[i + 1].kind == T_IDENT
         && (str_eq_c(t->text, "input") || str_eq_c(t->text, "view") || str_eq_c(t->text, "struct")
             || str_eq_c(t->text, "event") || str_eq_c(t->text, "command") || str_eq_c(t->text, "enum") || str_eq_c(t->text, "scene")
             || str_eq_c(t->text, "local") || str_eq_c(t->text, "namespace")
@@ -6956,18 +7036,18 @@ static bool starts_declaration(const int i)
             || str_eq_c(t->text, "vert"))) {
         return true;
     }
-    if (t->kind == T_IDENT && t->at.col == 1 && str_eq_c(t->text, "local")
+    if (t->kind == T_IDENT && t->at.col == decl_col_at(t->at) && str_eq_c(t->text, "local")
         && (DOC->toks[i + 1].kind == T_COMPONENT || DOC->toks[i + 1].kind == T_SINGLETON)) {
         return true;
     }
-    if (t->kind == T_IDENT && t->at.col == 1 && DOC->toks[i + 1].kind == T_LPAREN
+    if (t->kind == T_IDENT && t->at.col == decl_col_at(t->at) && DOC->toks[i + 1].kind == T_LPAREN
         && (str_eq_c(t->text, "event") || str_eq_c(t->text, "command"))) {
         return true; // event(Hit hit) TakeHit(...)
     }
-    if (t->kind == T_IDENT && t->at.col == 1 && DOC->toks[i + 1].kind == T_IDENT && str_eq_c(t->text, "async")) {
+    if (t->kind == T_IDENT && t->at.col == decl_col_at(t->at) && DOC->toks[i + 1].kind == T_IDENT && str_eq_c(t->text, "async")) {
         return true; // async void Countdown(), async event(...)
     }
-    if (t->kind == T_IDENT && t->at.col == 1 && DOC->toks[i + 1].kind == T_LBRACE && str_eq_c(t->text, "settings")) {
+    if (t->kind == T_IDENT && t->at.col == decl_col_at(t->at) && DOC->toks[i + 1].kind == T_LBRACE && str_eq_c(t->text, "settings")) {
         return true;
     }
     return starts_function(i);
@@ -7444,6 +7524,7 @@ static void complete_out_argument(completion *c, const out_argument *arg, const 
 void analysis_completion(const int line, const int character, jbuf *out)
 {
     const loc at = from_lsp(line, character);
+    A.from = at;
     completion c = {out, 0, {0}};
     jb_put(out, "{\"isIncomplete\":false,\"items\":[");
     if (at.line >= 1 && at.line <= DOC->lines.count && DOC->inactive[at.line]) goto done; // A directive, or no code
@@ -7471,6 +7552,11 @@ void analysis_completion(const int line, const int character, jbuf *out)
     frame stack[64] = {{CTX_TOP, -1, HEADER_NONE}};
     int depth = 0;
     for (int i = 0; i <= last; i++) {
+        // A namespace block's braces hold declarations, as a file does: inside them is the top still
+        if ((DOC->toks[i].kind == T_LBRACE || DOC->toks[i].kind == T_RBRACE) && namespace_brace(DOC->toks[i].at)) {
+            depth = 0;
+            continue;
+        }
         // In a type's body a method starts no declaration, `virtual` before it or not
         if (starts_declaration(i) && !(stack[depth].kind == CTX_DATA && (starts_function(i) || starts_replace_word(i)))) {
             depth = 0;
@@ -7556,7 +7642,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
 
     switch (f.kind) {
     case CTX_TOP:
-        if (pk == T_EOF || pk == T_RBRACE || pk == T_SEMI || pk == T_RBRACKET) {
+        if (pk == T_EOF || pk == T_RBRACE || pk == T_SEMI || pk == T_RBRACKET || (pk == T_LBRACE && namespace_brace(prev->at))) {
             complete_declarations(&c);
         } else if (pk == T_IDENT && str_eq_c(prev->text, "override")) { // What there is to replace, each written out
             complete_overrides(&c);
@@ -7696,7 +7782,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
         bool is_extern = false;
         bool is_async = false;
         for (int k = f.open - 1; k >= 0 && DOC->toks[k].at.line == DOC->toks[f.open].at.line; k--) {
-            if (DOC->toks[k].kind != T_IDENT || DOC->toks[k].at.col != 1) continue;
+            if (DOC->toks[k].kind != T_IDENT || DOC->toks[k].at.col != decl_col_at(DOC->toks[k].at)) continue;
             is_extern = str_eq_c(DOC->toks[k].text, "extern");
             is_async = str_eq_c(DOC->toks[k].text, "async");
         }
@@ -8028,6 +8114,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
 
 done:
     jb_put(out, "]}");
+    A.from = (loc){0};
 }
 
 // ---------------------------------------------------------------------------
@@ -9493,6 +9580,7 @@ const char *analysis_format(int tab_size, const bool insert_spaces, const int fi
 
     jb_put(out, "[");
     int depth = 0;
+    int top = 0; // The namespace blocks open: at that depth a line starts a declaration, as at a file's top
     int parens = 0;
     // `parens` at each brace depth: inside a literal in a call, like
     // Spawn(Body {, only parentheses opened since the brace continue a line.
@@ -9562,7 +9650,7 @@ const char *analysis_format(int tab_size, const bool insert_spaces, const int fi
                 // A line that continues an expression or an argument list goes one
                 // level deeper, or keeps its own indentation if that's deeper
                 // still: code aligned under an opening parenthesis stays aligned.
-                const bool continuation = first != T_LBRACE && first != T_RBRACE && (depth > 0 || parens > 0)
+                const bool continuation = first != T_LBRACE && first != T_RBRACE && (depth > top || parens > 0)
                                        && ((parens > parens_at[depth] && first != T_RPAREN)
                                            || (statement_open && !opened_pending && !(enum_at[depth] && ended_comma)));
                 int own_width = 0;
@@ -9595,10 +9683,14 @@ const char *analysis_format(int tab_size, const bool insert_spaces, const int fi
                 if (item->tok < 0) continue;
                 switch (DOC->toks[item->tok].kind) {
                 case T_LBRACE:
+                    if (depth == top && namespace_brace(DOC->toks[item->tok].at)) top++;
                     parens_at[++depth] = parens;
                     enum_at[depth] = opens_enum(item->tok);
                     break;
-                case T_RBRACE: if (depth > 0) depth--; break;
+                case T_RBRACE:
+                    if (depth > 0 && depth == top && namespace_brace(DOC->toks[item->tok].at)) top--;
+                    if (depth > 0) depth--;
+                    break;
                 case T_LPAREN: parens++; break;
                 case T_RPAREN: if (parens > 0) parens--; break;
                 default: break;

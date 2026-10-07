@@ -1,0 +1,3 @@
+// expect: '#define' takes one symbol's name, like '#define FAST'
+#define FAST 1
+scene Main { }
