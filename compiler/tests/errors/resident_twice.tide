@@ -1,0 +1,6 @@
+// expect: 'Physics' has resident state already: a singleton holds one Resident
+singleton Physics
+{
+    Resident state;
+    Resident other;
+}

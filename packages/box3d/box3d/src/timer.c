@@ -91,7 +91,7 @@ typedef struct b3Mutex
 
 b3Mutex* b3CreateMutex( void )
 {
-	b3Mutex* m = b3Alloc( sizeof( b3Mutex ) );
+	b3Mutex* m = b3AllocScratch( sizeof( b3Mutex ) );
 	InitializeCriticalSection( &m->cs );
 	return m;
 }
@@ -100,7 +100,7 @@ void b3DestroyMutex( b3Mutex* m )
 {
 	DeleteCriticalSection( &m->cs );
 	*m = (b3Mutex){ 0 };
-	b3Free( m, sizeof( b3Mutex ) );
+	b3FreeScratch( m, sizeof( b3Mutex ) );
 }
 
 void b3LockMutex( b3Mutex* m )
@@ -120,7 +120,7 @@ typedef struct b3Semaphore
 
 b3Semaphore* b3CreateSemaphore( int initCount )
 {
-	b3Semaphore* s = b3Alloc( sizeof( b3Semaphore ) );
+	b3Semaphore* s = b3AllocScratch( sizeof( b3Semaphore ) );
 	s->semaphore = CreateSemaphoreExW( NULL, initCount, INT_MAX, NULL, 0, SEMAPHORE_ALL_ACCESS );
 	return s;
 }
@@ -129,7 +129,7 @@ void b3DestroySemaphore( b3Semaphore* s )
 {
 	CloseHandle( s->semaphore );
 	*s = (b3Semaphore){ 0 };
-	b3Free( s, sizeof( b3Semaphore ) );
+	b3FreeScratch( s, sizeof( b3Semaphore ) );
 }
 
 void b3WaitSemaphore( b3Semaphore* s )
@@ -202,7 +202,7 @@ static DWORD WINAPI b3ThreadStart( LPVOID param )
 
 b3Thread* b3CreateThread( b3ThreadFunction* function, void* context, const char* name )
 {
-	b3Thread* t = b3Alloc( sizeof( b3Thread ) );
+	b3Thread* t = b3AllocScratch( sizeof( b3Thread ) );
 	t->function = function;
 	t->context = context;
 	if ( name != NULL )
@@ -222,7 +222,7 @@ void b3JoinThread( b3Thread* t )
 	WaitForSingleObject( t->thread, INFINITE );
 	CloseHandle( t->thread );
 	*t = (b3Thread){ 0 };
-	b3Free( t, sizeof( b3Thread ) );
+	b3FreeScratch( t, sizeof( b3Thread ) );
 }
 
 #elif defined( __linux__ ) || defined( __EMSCRIPTEN__ )
@@ -272,7 +272,7 @@ typedef struct b3Mutex
 
 b3Mutex* b3CreateMutex( void )
 {
-	b3Mutex* m = b3Alloc( sizeof( b3Mutex ) );
+	b3Mutex* m = b3AllocScratch( sizeof( b3Mutex ) );
 	pthread_mutex_init( &m->mtx, NULL );
 	return m;
 }
@@ -281,7 +281,7 @@ void b3DestroyMutex( b3Mutex* m )
 {
 	pthread_mutex_destroy( &m->mtx );
 	*m = (b3Mutex){ 0 };
-	b3Free( m, sizeof( b3Mutex ) );
+	b3FreeScratch( m, sizeof( b3Mutex ) );
 }
 
 void b3LockMutex( b3Mutex* m )
@@ -303,7 +303,7 @@ typedef struct b3Semaphore
 
 b3Semaphore* b3CreateSemaphore( int initCount )
 {
-	b3Semaphore* s = b3Alloc( sizeof( b3Semaphore ) );
+	b3Semaphore* s = b3AllocScratch( sizeof( b3Semaphore ) );
 	sem_init( &s->semaphore, 0, (unsigned int)initCount );
 	return s;
 }
@@ -312,7 +312,7 @@ void b3DestroySemaphore( b3Semaphore* s )
 {
 	sem_destroy( &s->semaphore );
 	*s = (b3Semaphore){ 0 };
-	b3Free( s, sizeof( b3Semaphore ) );
+	b3FreeScratch( s, sizeof( b3Semaphore ) );
 }
 
 void b3WaitSemaphore( b3Semaphore* s )
@@ -360,7 +360,7 @@ static void* b3ThreadStart( void* param )
 
 b3Thread* b3CreateThread( b3ThreadFunction* function, void* context, const char* name )
 {
-	b3Thread* t = b3Alloc( sizeof( b3Thread ) );
+	b3Thread* t = b3AllocScratch( sizeof( b3Thread ) );
 	t->function = function;
 	t->context = context;
 	if ( name != NULL )
@@ -379,7 +379,7 @@ void b3JoinThread( b3Thread* t )
 {
 	pthread_join( t->thread, NULL );
 	*t = (b3Thread){ 0 };
-	b3Free( t, sizeof( b3Thread ) );
+	b3FreeScratch( t, sizeof( b3Thread ) );
 }
 
 #elif defined( __APPLE__ )
@@ -449,7 +449,7 @@ typedef struct b3Mutex
 
 b3Mutex* b3CreateMutex( void )
 {
-	b3Mutex* m = b3Alloc( sizeof( b3Mutex ) );
+	b3Mutex* m = b3AllocScratch( sizeof( b3Mutex ) );
 	pthread_mutex_init( &m->mtx, NULL );
 	return m;
 }
@@ -458,7 +458,7 @@ void b3DestroyMutex( b3Mutex* m )
 {
 	pthread_mutex_destroy( &m->mtx );
 	*m = (b3Mutex){ 0 };
-	b3Free( m, sizeof( b3Mutex ) );
+	b3FreeScratch( m, sizeof( b3Mutex ) );
 }
 
 void b3LockMutex( b3Mutex* m )
@@ -481,7 +481,7 @@ typedef struct b3Semaphore
 
 b3Semaphore* b3CreateSemaphore( int initCount )
 {
-	b3Semaphore* s = b3Alloc( sizeof( b3Semaphore ) );
+	b3Semaphore* s = b3AllocScratch( sizeof( b3Semaphore ) );
 	s->semaphore = dispatch_semaphore_create( (long)initCount );
 	s->initialCount = initCount;
 	return s;
@@ -497,7 +497,7 @@ void b3DestroySemaphore( b3Semaphore* s )
 	}
 	dispatch_release( s->semaphore );
 	*s = (b3Semaphore){ 0 };
-	b3Free( s, sizeof( b3Semaphore ) );
+	b3FreeScratch( s, sizeof( b3Semaphore ) );
 }
 
 void b3WaitSemaphore( b3Semaphore* s )
@@ -538,7 +538,7 @@ static void* b3ThreadStart( void* param )
 
 b3Thread* b3CreateThread( b3ThreadFunction* function, void* context, const char* name )
 {
-	b3Thread* t = b3Alloc( sizeof( b3Thread ) );
+	b3Thread* t = b3AllocScratch( sizeof( b3Thread ) );
 	t->function = function;
 	t->context = context;
 	if ( name != NULL )
@@ -557,7 +557,7 @@ void b3JoinThread( b3Thread* t )
 {
 	pthread_join( t->thread, NULL );
 	*t = (b3Thread){ 0 };
-	b3Free( t, sizeof( b3Thread ) );
+	b3FreeScratch( t, sizeof( b3Thread ) );
 }
 
 #else
@@ -600,7 +600,7 @@ typedef struct b3Mutex
 
 b3Mutex* b3CreateMutex( void )
 {
-	b3Mutex* m = b3Alloc( sizeof( b3Mutex ) );
+	b3Mutex* m = b3AllocScratch( sizeof( b3Mutex ) );
 	m->held = 0;
 	return m;
 }
@@ -608,7 +608,7 @@ b3Mutex* b3CreateMutex( void )
 void b3DestroyMutex( b3Mutex* m )
 {
 	*m = (b3Mutex){ 0 };
-	b3Free( m, sizeof( b3Mutex ) );
+	b3FreeScratch( m, sizeof( b3Mutex ) );
 }
 
 void b3LockMutex( b3Mutex* m )
@@ -641,7 +641,7 @@ typedef struct b3Semaphore
 
 b3Semaphore* b3CreateSemaphore( int initCount )
 {
-	b3Semaphore* s = b3Alloc( sizeof( b3Semaphore ) );
+	b3Semaphore* s = b3AllocScratch( sizeof( b3Semaphore ) );
 	(void)initCount;
 	s->dummy = 42;
 	return s;
@@ -650,7 +650,7 @@ b3Semaphore* b3CreateSemaphore( int initCount )
 void b3DestroySemaphore( b3Semaphore* s )
 {
 	*s = (b3Semaphore){ 0 };
-	b3Free( s, sizeof( b3Semaphore ) );
+	b3FreeScratch( s, sizeof( b3Semaphore ) );
 }
 
 void b3WaitSemaphore( b3Semaphore* s )
@@ -672,7 +672,7 @@ b3Thread* b3CreateThread( b3ThreadFunction* function, void* context, const char*
 {
 	(void)name;
 	function( context );
-	b3Thread* t = b3Alloc( sizeof( b3Thread ) );
+	b3Thread* t = b3AllocScratch( sizeof( b3Thread ) );
 	t->dummy = 42;
 	return t;
 }
@@ -680,7 +680,7 @@ b3Thread* b3CreateThread( b3ThreadFunction* function, void* context, const char*
 void b3JoinThread( b3Thread* t )
 {
 	*t = (b3Thread){ 0 };
-	b3Free( t, sizeof( b3Thread ) );
+	b3FreeScratch( t, sizeof( b3Thread ) );
 }
 
 #endif

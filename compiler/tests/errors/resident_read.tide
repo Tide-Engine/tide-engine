@@ -1,0 +1,16 @@
+// expect: 'state' is resident state: the C of the package that keeps it reads it, and Tide code can't
+// expect: it goes to C as the argument of an extern function's 'in Resident' or 'mut Resident' parameter, and nowhere else
+singleton Physics
+{
+    Resident state;
+    int steps;
+}
+
+extern void Keep(in Resident state);
+
+system Run(mut Physics physics)
+{
+    Keep(physics.state);
+    var s = physics.state;
+    physics.steps += 1;
+}

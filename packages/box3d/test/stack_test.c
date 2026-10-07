@@ -12,7 +12,15 @@
 #include "tide/net.h"
 #include "tide/profile.h"
 #include "tide/time.h"
+#include "tide/resident.h"
 #include "tide_test.h"
+
+// What the match holds of Box3D's state: the pages its resident keeps (tide/resident.h), in bytes
+static int physics_bytes(const tide_world *w)
+{
+    return w->Box3D_Physics.state.pages ? (int)w->Box3D_Physics.state.pages->count * TIDE_ARENA_PAGE : 0;
+}
+
 
 #ifdef BOX3D_TEST_JOBS
 #include "tide/platform.h"
@@ -23,9 +31,7 @@ void b3t_forget(void);
 void b3t_narrow(bool on);
 void b3t_check(bool on, bool whenever);
 void b3t_images(int32_t *whole, int32_t *in_parts);
-uint64_t b3t_image_hash(void);   // Of the image the last tick's world wrote
-int32_t b3t_image_bytes(uint8_t *bytes, int32_t room);
-int32_t b3t_geometry_size(void); // Of the world the last tick had
+uint64_t b3t_image_hash(void); // Of the resident digests committed so far
 int32_t b3t_shared_steps(void);
 int32_t b3t_restores(void);
 void b3t_measure(uint64_t *step, uint64_t *image);
@@ -34,16 +40,16 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took);
 #define DT (1.0f / 60.0f)
 
 // The match after 300 ticks, on every platform and in every configuration:
-// Box3D's own math, SIMD or not, and its image, byte for byte.
-#define SETTLED_HASH UINT64_C(0xce9944063d975f1f)
-#define IMAGES_HASH UINT64_C(0x0b0635eabd4b5ce2)
-// Box3D's own image at each of the 300 ticks, apart from everything else the
-// match holds: its state, byte for byte. A change to what the match keeps
+// Box3D's own math, SIMD or not, and its resident stamp and digest.
+#define SETTLED_HASH UINT64_C(0x7d8c8cd18a765812)
+#define IMAGES_HASH UINT64_C(0x7f7788db1545a3f5)
+// Box3D's own digest at each of the 300 ticks, apart from everything else the
+// match holds. A change to what the match keeps
 // beside it (a field of Physics, a component of the package's) moves the two
 // above and leaves this one.
-#define OWN_HASH UINT64_C(0x5fb58e8f083d76cd)
+#define OWN_HASH UINT64_C(0x2c0f0b8554356083)
 // Where the crates are and how fast, at each of the 300 ticks: the simulation
-// alone. A change to what the image holds of a world moves the three above and
+// alone. A change to the resident stamp or digest moves the three above and
 // leaves this one; a change to how the world steps moves all four.
 #define BODIES_HASH UINT64_C(0xace1f5d330399dd5)
 
@@ -63,7 +69,7 @@ static void tick(tide_world *w, const int ticks)
     for (int i = 0; i < ticks; i++) tide_world_tick(w);
 }
 
-// How many images were written whole and how many in parts since `*whole` and
+// How many resident commits used whole or sparse marks since `*whole` and
 // `*in_parts` were last read, which they are again.
 static void images_since(int32_t *whole, int32_t *in_parts)
 {
@@ -101,20 +107,20 @@ TIDE_TEST(box3d_steps_a_match)
         images_since(&whole, &in_parts);
         b3t_forget();
         b3t_narrow(narrow);
-        // Every image that's written as what changed of the last one is compared
-        // with the image written whole, here and in every test but the timed
-        // ones. Once with images in parts whenever there can be, and once as a
-        // match has them: whole while most of the world is awake.
+        // Every committed resident page is compared with the live arena,
+        // here and in every test but the timed ones. Once with sparse marks
+        // whenever possible, and once as a match uses them: whole while most
+        // of the world is awake.
         b3t_check(true, narrow == 0);
         start(&a, 12);
-        // Every tick's image, not only the last: a byte that differs somewhere and
-        // then doesn't (a field one platform's solver leaves behind) shows here
+        // Every tick's world hash and resident digest, not only the last:
+        // a divergence that later disappears still shows here
         uint64_t images = 0;
         uint64_t bodies = 0;
         uint64_t bytes = 0;
         for (int t = 0; t < 300; t++) {
             tide_world_tick(&a);
-            const uint64_t hash = tide_world_hash(&a); // The image is in it
+            const uint64_t hash = tide_world_hash(&a); // The resident stamp and digest are in it
             images = tide_hash_more(images, &hash, sizeof hash);
             bodies = places(&a, bodies);
             const uint64_t image = b3t_image_hash();
@@ -131,33 +137,21 @@ TIDE_TEST(box3d_steps_a_match)
             crates++;
             if (body.velocity.x == 0.0f && body.velocity.y == 0.0f && body.velocity.z == 0.0f) resting++;
         }
-        printf("    %s: %d crates, %d at rest; %d touches began and %d ended; the image is %d bytes, and its geometry %d\n",
+        printf("    %s: %d crates, %d at rest; %d touches began and %d ended; the resident arena is %d bytes\n",
                narrow ? "4 at a time" : "as this CPU does", crates, resting, (int)a.Tally.touched, (int)a.Tally.parted,
-               (int)a.Box3D_Physics.size, (int)b3t_geometry_size());
+               physics_bytes(&a));
         TIDE_CHECK(crates == 22); // 12 stacked, 8 thrown, 1 pushed, 1 capsule: the doomed one went
         TIDE_CHECK(a.Box3D_Physics.bodies == 24 && a.Box3D_Physics.shapes == 24);
         TIDE_CHECK(a.Tally.touched > 20 && a.Tally.parted > 0);
-        printf("    the world's hash is %016llx, its 300 images' %016llx, and its bodies' %016llx\n",
+        printf("    the world's hash is %016llx, its 300 ticks' %016llx, and its bodies' %016llx\n",
                (unsigned long long)tide_world_hash(&a), (unsigned long long)tide_hash_end(images), (unsigned long long)tide_hash_end(bodies));
-        printf("    Box3D's own images, apart from the match: %016llx\n", (unsigned long long)tide_hash_end(bytes));
-        // The last image into a file, for two builds that disagree about it to compare (box3d/TIDE.md)
-        if (narrow == 0 && getenv("B3T_DUMP")) {
-            const int32_t size = b3t_image_bytes(NULL, 0);
-            uint8_t *image = malloc((size_t)size);
-            b3t_image_bytes(image, size);
-            FILE *file = fopen(getenv("B3T_DUMP"), "wb");
-            if (file) {
-                fwrite(image, 1, (size_t)size, file);
-                fclose(file);
-            }
-            free(image);
-        }
+        printf("    Box3D's own resident digests, apart from the match: %016llx\n", (unsigned long long)tide_hash_end(bytes));
         TIDE_CHECK(tide_world_hash(&a) == SETTLED_HASH);
         TIDE_CHECK(tide_hash_end(images) == IMAGES_HASH);
         TIDE_CHECK(tide_hash_end(bytes) == OWN_HASH);
         TIDE_CHECK(tide_hash_end(bodies) == BODIES_HASH);
         images_since(&whole, &in_parts);
-        printf("    %d of its images were written whole, and %d as what changed of the one before\n", (int)whole, (int)in_parts);
+        printf("    %d resident commits used whole marks, and %d sparse marks\n", (int)whole, (int)in_parts);
         TIDE_CHECK(whole > 0 && in_parts > (narrow ? 20 : 250)); // Both ways are in the pinned hashes
         tide_world_free(&a);
     }
@@ -193,9 +187,9 @@ TIDE_TEST(box3d_rolls_back)
     tide_world_free(&kept);
 }
 
-// A world that's made from its image again before every step is, byte for
-// byte, the world that never was: the image says everything, and a restore
-// leaves nothing of its own in the next one.
+// Restoring resident pages before every step gives the same world as running
+// straight through: the pages keep everything, and a restore leaves nothing
+// of its own in the next step.
 TIDE_TEST(box3d_images_say_everything)
 {
     enum { TICKS = 240 };
@@ -237,8 +231,7 @@ TIDE_TEST(box3d_joins)
     TIDE_REQUIRE(tide_world_unpack(&b, bytes, size));
     tick(&b, 100);
     TIDE_CHECK(tide_world_hash(&b) == went);
-    printf("    the world is %u bytes packed, %d of them Box3D's image and %d its geometry\n", (unsigned)size, (int)b.Box3D_Physics.size,
-           (int)b3t_geometry_size());
+    printf("    the world is %u bytes packed; Box3D's resident arena is %d bytes\n", (unsigned)size, physics_bytes(&b));
     free(bytes);
     tide_world_free(&a);
     tide_world_free(&b);
@@ -253,14 +246,14 @@ static void cost(tide_world *w, const char *what, const int ticks)
     uint64_t image;
     uint64_t changed;
     uint64_t in_all;
-    uint64_t counting; // What counting the image's changes took inside the ticks: the measuring's, not a match's
+    uint64_t counting; // Optional full-arena check time inside the ticks, which no match pays
     b3t_measure(&step, &image);
     b3t_measure_blocks(&changed, &in_all, &counting);
     int32_t whole = 0;
     int32_t in_parts = 0;
     images_since(&whole, &in_parts);
     // As a match does: each tick's world is kept (a snapshot, which shares what
-    // the tick left alone) and hashed (what the tick changed)
+    // the tick left alone) and hashed (including the resident stamp and digest)
     uint64_t took = 0;
     uint64_t kept_ns = 0;
     static tide_profile profile;
@@ -279,8 +272,8 @@ static void cost(tide_world *w, const char *what, const int ticks)
     b3t_measure_blocks(&changed, &in_all, &counting);
     took -= counting;
     images_since(&whole, &in_parts);
-    printf("    %-19s a tick takes %.3f ms: %.3f Box3D's step, %.3f its image, %.3f the rest; keeping and hashing it %.3f, "
-           "with %.0f%% of the image changed; %d images whole and %d in parts\n",
+    printf("    %-19s a tick takes %.3f ms: %.3f Box3D's step, %.3f resident restore/commit, %.3f the rest; keeping and hashing it %.3f, "
+           "with %.0f%% of arena pages touched; %d commits whole and %d sparse\n",
            what, (double)took / (ticks * 1e6), (double)step / (ticks * 1e6), (double)image / (ticks * 1e6),
            (double)(took - step - image) / (ticks * 1e6), (double)kept_ns / (ticks * 1e6),
            in_all ? 100.0 * (double)changed / (double)in_all : 0.0, (int)whole, (int)in_parts);
@@ -306,17 +299,16 @@ TIDE_TEST(box3d_costs)
     const uint64_t stamp = (uint64_t)a.Box3D_Physics.stamp;
     cost(&a, "at rest:", 240);
     TIDE_CHECK((uint64_t)a.Box3D_Physics.stamp == stamp && !a.Box3D_Physics.moved); // Nothing stepped, and nothing was written
-    // What isn't followed by an image in parts costs an image written whole: one crate's type, changed
+    // What the sparse tracking doesn't follow marks the whole arena: one crate's type, changed
     // every tick, in a world that's otherwise asleep
     a.Size.flip = true;
     cost(&a, "a type changed:", 60);
     a.Size.flip = false;
-    // ...and what is followed costs what changed: the same crate, put to sleep and woken in turn
+    // ...and what is followed uses sparse marks: the same crate, put to sleep and woken in turn
     a.Size.lull = true;
     cost(&a, "a crate put to sleep:", 60);
     a.Size.lull = false;
-    printf("    %d crates; the image is %d bytes, and its geometry %d\n", CRATES, (int)a.Box3D_Physics.size,
-           (int)b3t_geometry_size());
+    printf("    %d crates; the resident arena is %d bytes\n", CRATES, physics_bytes(&a));
     tide_world_free(&a);
     tide_world_free(&kept);
 }
@@ -364,17 +356,17 @@ TIDE_TEST(box3d_threads_change_nothing)
         if (tide_world_hash(&a) != tide_world_hash(&b)) printf("    tick %d came out different\n", i);
         TIDE_REQUIRE(tide_world_hash(&a) == tide_world_hash(&b));
     }
-    // Where a tick goes: Box3D's step, its state into an image, and the rest,
-    // which is the package's systems (bodies in and out, the image into the match)
+    // Where a tick goes: Box3D's step, resident restores and commits, and the
+    // rest, which is the package's systems (bodies and events in and out)
     for (int on = 0; on < 2; on++) {
-        printf("    %d crates on %u thread%s: a tick takes %.2f ms: %.2f Box3D's step, %.2f its image, %.2f the rest\n", CRATES,
+        printf("    %d crates on %u thread%s: a tick takes %.2f ms: %.2f Box3D's step, %.2f resident restore/commit, %.2f the rest\n", CRATES,
                on ? (unsigned)jobs->threads : 1u, on ? "s" : "", (double)ticks[on] / (TICKS * 1e6), (double)steps[on] / (TICKS * 1e6),
                (double)images[on] / (TICKS * 1e6), (double)(ticks[on] - steps[on] - images[on]) / (TICKS * 1e6));
     }
-    printf("    %d steps were shared out; the image is %d bytes\n", (int)(b3t_shared_steps() - before), (int)a.Box3D_Physics.size);
+    printf("    %d steps were shared out; the resident arena is %d bytes\n", (int)(b3t_shared_steps() - before), physics_bytes(&a));
     TIDE_CHECK(b3t_shared_steps() - before > TICKS / 2);
 
-    // What a rollback pays once: C's world made from the match's image
+    // What a rollback pays once: C's world restored from the match's resident pages
     b3t_forget();
     b3t_measure(&step, &image);
     const uint64_t t = tide_time_now_ns();
@@ -382,7 +374,7 @@ TIDE_TEST(box3d_threads_change_nothing)
     b3t_measure(&step, &image);
     b3t_measure_blocks(&changed, &in_all, &counting);
     const uint64_t ticked = tide_time_now_ns() - t - counting;
-    printf("    a tick that makes Box3D's world from the image first takes %.2f ms, %.2f more than one that has it\n",
+    printf("    a tick that restores Box3D's resident state first takes %.2f ms, %.2f more than one that has it\n",
            (double)ticked / 1e6, ((double)ticked - (double)ticks[0] / TICKS) / 1e6);
     tide_world_free(&a);
     tide_world_free(&b);

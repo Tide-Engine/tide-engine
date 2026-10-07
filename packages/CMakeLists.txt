@@ -159,6 +159,17 @@ add_test(NAME tide_box3d_stack COMMAND tide_box3d_stack)
 # A step in 3D is several of Box2D's
 set_tests_properties(tide_box3d_stack PROPERTIES TIMEOUT 300)
 
+# A joining process has never ticked Box3D: its resident kind has to be
+# registered before either form of the first world can be unpacked.
+tide_add_game(tide_box3d_join SOURCES box3d/bridge.c box3d/test/stack.tide NAME game PACKAGES Box3D box3d/box3d.tide
+    HOST box3d/test/join_test.c)
+target_link_libraries(tide_box3d_join PRIVATE tide_box3d)
+add_test(NAME tide_box3d_join
+    COMMAND "${CMAKE_COMMAND}" "-DPROGRAM=$<TARGET_FILE:tide_box3d_join>"
+        "-DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/box3d_join"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/box3d/test/join.cmake")
+set_tests_properties(tide_box3d_join PROPERTIES TIMEOUT 120)
+
 tide_package_order_test(tide_box3d_order Box3D "${CMAKE_CURRENT_SOURCE_DIR}/box3d/box3d.tide" "${CMAKE_CURRENT_SOURCE_DIR}/box3d/test")
 
 # What a game does with it, as tide_box2d_course is for Box2D.
