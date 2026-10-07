@@ -267,7 +267,7 @@ static const decl_index *decls_by(const program *prog, const bool c_names)
 static bool named_only(const program *prog, const decl *d)
 {
     return d == prog->depth || d == prog->cull || d == prog->wrap || d == prog->format || d == prog->stencil_test
-        || d == prog->stencil_op;
+        || d == prog->stencil_op || d == prog->sound;
 }
 
 // The first declaration in the bucket of a name in generated C: -1 for none.
@@ -286,6 +286,7 @@ static decl *find_in(const program *prog, const str ns, const str name, const na
         if (is_kind(d, kind) && str_eq(d->name, name) && str_eq(decl_ns(d), ns)) {
             // Generated C only has these in games that name them
             if ((d == prog->random || named_only(prog, d)) && builds(prog)) d->named = true;
+            if (d == prog->sound && builds(prog)) ((program *)prog)->uses_audio = true; // The frame names its Sounds
             return d;
         }
     }
@@ -10915,7 +10916,7 @@ static void check_fields(checker *c, const decl *d)
             const loc at = f->type_qual_at.line ? f->type_qual_at : f->type_at.line ? f->type_at : f->at;
             if (d->kind != DECL_STRUCT && !d->is_local) {
                 diag_error(at, "'" STR_FMT "' can't hold rendering resources in match state", STR_ARG(d->name));
-                diag_note("Texture, DepthTexture, Cubemap and RenderTarget belong to this machine: keep the field local, or use a local component "
+                diag_note("Texture, DepthTexture, Cubemap, RenderTarget, Clip and Sound belong to this machine: keep the field local, or use a local component "
                           "or singleton");
             } else if (f->type.kind == TY_LIST || f->type.kind == TY_MAP || f->type.kind == TY_SET || f->type.kind == TY_GRID) {
                 diag_error(at, "containers can't hold rendering resources, including inside a struct");
@@ -13228,6 +13229,29 @@ static void add_builtins(program *prog)
         vec_push(control->fields, f);
     }
     prog->gui_control = control;
+    // struct Sound { Clip clip; float3 position; bool spatial; float volume
+    // = 1; float pitch = 1; bool loop; bool playing; }: a sound source a local
+    // field keeps, which the frame names to the mixer while `playing` (tide/audio.h's tide_voice).
+    decl *sound = NEW(decl);
+    sound->kind = DECL_STRUCT;
+    sound->name = str_from("Sound");
+    sound->builtin = true;
+    static const char *const sound_fields[][2] = {{"clip", "Clip"},     {"position", "float3"}, {"spatial", "bool"},
+                                                  {"volume", "float"},  {"pitch", "float"},     {"loop", "bool"},
+                                                  {"playing", "bool"}};
+    for (int i = 0; i < (int)(sizeof sound_fields / sizeof sound_fields[0]); i++) {
+        field f = {0};
+        f.name = str_from(sound_fields[i][0]);
+        f.type_name = str_from(sound_fields[i][1]);
+        if (i == 3 || i == 4) {
+            expr *one = NEW(expr);
+            one->kind = E_FLOAT;
+            one->text = str_from("1");
+            f.default_value = one;
+        }
+        vec_push(sound->fields, f);
+    }
+    prog->sound = sound;
     // Trilinear is in generated C only for a game that names it (program.names_trilinear)
     static const char *const filters[] = {"Point", "Bilinear", "Trilinear"};
     decl *filter = NEW(decl);
@@ -13391,6 +13415,7 @@ static void add_builtins(program *prog)
     vec_push(decls, shape);
     vec_push(decls, theme);
     vec_push(decls, control);
+    vec_push(decls, sound);
     vec_push(decls, filter);
     vec_push(decls, blend);
     vec_push(decls, depth);

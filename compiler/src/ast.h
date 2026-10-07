@@ -1147,6 +1147,7 @@ typedef struct program {
     decl *shape;         // The built-in struct Shape, what Draw.Shape draws
     decl *gui_theme;     // The built-in struct GUITheme, how the GUI's widgets look
     decl *gui_control;   // The built-in struct GUIControl, what GUI.Control says of a control
+    decl *sound;         // The built-in struct Sound, a sound source a local field keeps: in generated C when named
     decl *filter;        // The built-in enum Filter, how mesh draw samples its texture
     decl *wrap;          // The built-in enum Wrap, what a uv past a texture's edges reads: in generated C when code names it
     decl *blend;         // The built-in enum Blend, how what's drawn goes over what's there
