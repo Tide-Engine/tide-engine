@@ -1153,6 +1153,9 @@ typedef struct program {
     // or a Random in the match's state, which the engine seeds from it.
     field *seed;
     bool uses_seed;
+    // Application.title is read: generated C has the game's title as text
+    // (its title setting, or the program's name), and no other game's does.
+    bool uses_title;
     VEC(mesh_draw) mesh_draws; // Every mesh draw that draws through a shader
     VEC(shader *) shaders;     // ...and the shaders they draw through, once each
     decl *session;       // The built-in local singleton Session: this machine's part in a match

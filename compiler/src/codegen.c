@@ -4891,10 +4891,10 @@ static void gen_session_call(gen *g, const expr *e)
     if (!e->type_decl) return;
     int index = 0;
     while (g->prog->start_scenes.items[index] != e->type_decl) index++;
-    const expr *arg = e->args.items[0];
+    const expr *arg = e->args.count ? e->args.items[0] : NULL; // None: Session.Start(), in Main with its defaults
     indent(g, o);
     sb_printf(o, "tide_l->tide_request_start = (tide_start){.scene = %d, .value.%s = ", index, type_cname(e->type_decl));
-    if (arg->kind == E_LITERAL) gen_value(g, o, e->type_decl, arg->inits.items, arg->inits.count);
+    if (arg && arg->kind == E_LITERAL) gen_value(g, o, e->type_decl, arg->inits.items, arg->inits.count);
     else gen_value(g, o, e->type_decl, NULL, 0);
     sb_put(o, "};\n");
 }
@@ -7681,6 +7681,13 @@ static void gen_prelude(gen *g)
     sb_put(o, "#pragma STDC FP_CONTRACT OFF\n\n");
     sb_put(o, "// Helpers are emitted whether or not this program uses them.\n");
     sb_put(o, "#define TIDE_HELPER static inline __attribute__((unused))\n\n");
+    if (g->prog->uses_title) {
+        // Application.title: the game's title setting, or the program's name
+        sb_put(o, "// Application.title\nstatic const char tide_game_title[] = ");
+        if (g->prog->title) gen_c_literal(o, g->prog->title->text, false);
+        else gen_c_literal(o, str_from(g->opts->name), false);
+        sb_put(o, ";\n\n");
+    }
     sb_put(o, "// A system's loop over a chunk's rows (tide_rows_<System>_<n>): never inlined, so that what its\n");
     sb_put(o, "// parameters say of the lanes, that each is apart from the rest, stays said of the loop.\n");
     sb_put(o, "#define TIDE_ROWS static __attribute__((noinline))\n\n");

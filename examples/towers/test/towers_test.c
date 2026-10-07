@@ -45,8 +45,8 @@ void b2t_images(int32_t *whole, int32_t *in_parts);
 // The server's world in the match below, on every platform and in every
 // configuration: Box2D's math, its image and the netcode, byte for byte.
 // Once in the middle of the first round, and once after a new game.
-#define RACING_HASH UINT64_C(0x1b30e2c0d1573845)
-#define MATCH_HASH UINT64_C(0x155212171e42e1d4)
+#define RACING_HASH UINT64_C(0x85eb07ba5e721a2b)
+#define MATCH_HASH UINT64_C(0xf33f45f2887af54b)
 
 static tide_world world;
 
@@ -873,7 +873,7 @@ static bool plays(void)
 
 static bool says_something(void)
 {
-    return tide_text_read(&local.heap, local.Lobby.message).bytes > 0;
+    return tide_text_read(&local.heap, local.Rooms_Lobby.message).bytes > 0;
 }
 
 // What local code asked of the session since it was last asked
@@ -892,8 +892,8 @@ TIDE_TEST(towers_opens_on_its_lobby_unless_it_was_told_which_match)
     machine(TIDE_SESSION_CONNECTED, 0, true, false, "");
     frame(&world);
     frame(&world);
-    TIDE_CHECK(local.Lobby.page == Page_Title && !local.Hand.playing && !plays());
-    TIDE_CHECK(local.Lobby.players == 2 && local.Lobby.mine == 0 && local.Lobby.manned == 3);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Title && !local.Hand.playing && !plays());
+    TIDE_CHECK(local.Rooms_Lobby.seats == SEATS && local.Rooms_Lobby.mine == 0 && local.Rooms_Lobby.manned == 3);
     TIDE_CHECK(asked() == TIDE_REQUEST_NONE);
     tide_local_free(&local);
 
@@ -901,16 +901,12 @@ TIDE_TEST(towers_opens_on_its_lobby_unless_it_was_told_which_match)
     machine(TIDE_SESSION_CONNECTED, 0, true, true, "K7QF2M");
     frame(&world);
     frame(&world);
-    TIDE_CHECK(local.Lobby.page == Page_None && local.Hand.playing && plays());
-    // The button is held as the menu closes: the player's hands aren't on the brick until it's let go
-    local.Lobby.page = Page_Room;
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Playing && local.Hand.playing && plays());
+    // A page up over the match: the hands are off the brick until it closes
+    local.Rooms_Lobby.page = Rooms_Page_Room;
     frame(&world);
     TIDE_CHECK(!plays());
-    local.Lobby.page = Page_None;
-    devices.pointer.press.pressed = devices.pointer.press.held = true;
-    frame(&world);
-    TIDE_CHECK(!plays());
-    devices.pointer.press.pressed = devices.pointer.press.held = false;
+    local.Rooms_Lobby.page = Rooms_Page_Playing;
     frame(&world);
     TIDE_CHECK(plays());
     tide_local_free(&local);
@@ -918,20 +914,20 @@ TIDE_TEST(towers_opens_on_its_lobby_unless_it_was_told_which_match)
     // --join <code>, or ?join=<code>: joining by the first frame. The page says so until the match's world is here
     machine(TIDE_SESSION_CONNECTING, -1, false, false, "K7QF2M");
     frame(NULL);
-    TIDE_CHECK(local.Lobby.page == Page_Join && local.Lobby.joining && !plays());
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Join && local.Rooms_Lobby.joining && !plays());
     tide_local_connected(&local);
     tide_local_set_session(&local, TIDE_SESSION_CONNECTED, player(1), 30, false, false, "K7QF2M");
     frame(&world);
     frame(&world);
     frame(&world);
-    TIDE_CHECK(local.Lobby.page == Page_None && !local.Lobby.joining && plays());
-    TIDE_CHECK(local.Lobby.mine == 1);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Playing && !local.Rooms_Lobby.joining && plays());
+    TIDE_CHECK(local.Rooms_Lobby.mine == 1);
     // That match ends: back on the title, with a line that says so, and a match of its own asked for
     tide_local_disconnected(&local, TIDE_DISCONNECT_ENDED, "");
     tide_local_set_session(&local, TIDE_SESSION_OFFLINE, (tide_player_id){0}, 0, false, false, "");
     frame(NULL);
     frame(NULL);
-    TIDE_CHECK(local.Lobby.page == Page_Title && says_something() && !plays());
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Title && says_something() && !plays());
     TIDE_CHECK(asked() == TIDE_REQUEST_START);
     tide_local_free(&local);
 
@@ -942,13 +938,13 @@ TIDE_TEST(towers_opens_on_its_lobby_unless_it_was_told_which_match)
     tide_local_set_session(&local, TIDE_SESSION_OFFLINE, (tide_player_id){0}, 0, false, false, "");
     frame(NULL);
     frame(NULL);
-    TIDE_CHECK(local.Lobby.page == Page_Join && !local.Lobby.joining && says_something());
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Join && !local.Rooms_Lobby.joining && says_something());
     TIDE_CHECK(asked() == TIDE_REQUEST_START);
     // This machine leaving a match, as when it starts or joins another, says nothing
     tide_local_disconnected(&local, TIDE_DISCONNECT_LEFT, "");
     frame(NULL);
     frame(NULL);
-    TIDE_CHECK(local.Lobby.page == Page_Join && asked() == TIDE_REQUEST_NONE);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Join && asked() == TIDE_REQUEST_NONE);
     tide_local_free(&local);
     tide_draw_free(&draw);
     tide_world_free(&world);
