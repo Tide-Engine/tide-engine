@@ -515,7 +515,7 @@ What that buys:
 
 A few things follow from how that's kept, which is each color times its alpha, in textures and in targets:
 
-- **A pixel with no alpha has no color.** A frag that samples one gets `Color(0, 0, 0, 0)`, whatever the file or the cell said its color was. An image whose alpha is something other than how clear it is (a mask beside unrelated colors) loses its colors where the alpha is 0: keep such numbers in a `Grid2<float>` of their own, or in the color with an alpha of 1.
+- **A pixel with no alpha has no color.** A frag that samples one gets `Color(0, 0, 0, 0)`, whatever the file or the cell said its color was. An image whose alpha is something other than how clear it is (a mask beside unrelated colors) would lose its colors where the alpha is 0: mark it [`[Raw]`](./shaders.md#textures-that-are-numbers), and a frag reads its numbers as the file has them.
 - **`Blend.Replace` with an alpha under 1** leaves the window, which has no alpha of its own, darker by that much, as if over black. Into a target it's exact: drawn from the target later, it's the color and the alpha that were written.
 - **`Blend.Add` raises the alpha that's there** towards 1 by its own, and never past it, so light added into a clear target shows when the target is drawn over something.
 - A dim color that's nearly clear keeps few of its 256 steps in an image of bytes. It doesn't show once it's blended; a [`Format.Rgba16f`](#what-a-target-holds) target keeps them all.

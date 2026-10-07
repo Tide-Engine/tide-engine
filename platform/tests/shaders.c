@@ -893,6 +893,46 @@ static void run_alpha_checks(const char *when)
     }
 }
 
+// Textures that are numbers (pass 16, `Raws` in shaders.tide): [Raw] ones are
+// read as their file or their grid has them, where a texture of colors has no
+// color in a pixel with no alpha. Squares of 32 pixels, 40 apart.
+static void run_raw_checks(const char *when)
+{
+    static const struct {
+        float r, g, b;
+        const char *what;
+    } wanted[] = {
+        {210 / 255.0f, 200 / 255.0f, 100 / 255.0f, "a [Raw] Texture asset's clear pixel keeps the numbers its file has"},
+        {0, 0, 0, "the same file as colors has none where it's clear"},
+        {210 / 255.0f, 200 / 255.0f, 100 / 255.0f, "a [Raw] Grid2<Color> asset keeps them too"},
+        {1, 0.5f, 0.25f, "a [Raw] grid's cell with no alpha is its numbers"},
+        {0, 0, 0, "and the same cell of a grid of colors is none"},
+        {0.5f, 0.5f, 0.5f, "between two cells, a [Raw] grid's numbers blend as numbers, whatever their alpha"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    local.Art.targetPass = 16;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[COUNT];
+    uint32_t got[COUNT];
+    for (int i = 0; i < COUNT; i++) points[i] = tide_f2(24.0f + 40.0f * (float)i, 24.0f);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
+    for (int i = 0; i < COUNT; i++) {
+        const uint8_t want[3] = {byte(wanted[i].r), byte(wanted[i].g), byte(wanted[i].b)};
+        bool ok = true;
+        for (int k = 0; k < 3; k++) {
+            const int d = (int)(got[i] >> (24 - 8 * k) & 0xFFu) - (int)want[k];
+            ok = ok && d >= -3 && d <= 3;
+        }
+        printf("%s: %s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, when, (unsigned)got[i],
+               want[0], want[1], want[2]);
+        if (!ok) failures++;
+    }
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -922,6 +962,7 @@ static int frame(void *user, const float seconds)
         run_height_checks(", on another device");
         run_mipmap_checks(2, ", on another device");
         run_alpha_checks(", on another device");
+        run_raw_checks(", on another device");
         return failures;
     }
 #endif
@@ -946,6 +987,7 @@ static int frame(void *user, const float seconds)
     run_mipmap_checks(2, ", again");
     run_mipmap_checks(4, ", with other pixels drawn into the target");
     run_alpha_checks("");
+    run_raw_checks("");
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");

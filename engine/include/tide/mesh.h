@@ -81,6 +81,11 @@ void tide_draw_mesh3_instances_texture(tide_draw_list *d, tide_list vertices, ti
 // as the handle may be one a Texture kept past its grid.
 uint32_t tide_draw_grid_texture(tide_draw_list *d, tide_grid texture, const tide_grid_shape *shape);
 
+// The same for a grid of colors whose cells are numbers ([Raw] in Tide): the
+// list's copy has each channel as it is, with no alpha worked into it, which
+// is for a shader that reads it so and for nothing that blends it.
+uint32_t tide_draw_grid_texture_raw(tide_draw_list *d, tide_grid texture, const tide_grid_shape *shape);
+
 // The most cells a side a grid that's a texture has: a bigger one is none.
 #define TIDE_GRID_TEXTURE_MOST 16384
 

@@ -547,6 +547,9 @@ typedef struct decl {
     // How its [Filter] and [Wrap] attributes say a texture of it is sampled, where a draw or a Sample that
     // names it doesn't say: 1 + the enum member's number, or 0 for none (declared_sampling)
     int sample_filter, sample_wrap;
+    // [Raw] before it: its pixels are numbers as the file has them, with no alpha worked into them, which
+    // only a frag or a vert reads, by its name (declared_raw)
+    bool sample_raw;
     bool asset_many; // A List or Map of a glob's matches
 
     // Systems, views, methods, functions, and an input's Sample
@@ -802,6 +805,7 @@ struct expr {
     const enum_member *enum_member; // Page.Title: the member (type_decl is its enum)
     bool typed_text;       // keyboard.text: what was typed, which C keeps as code points
     bool local_field;      // box.verts: a local field of a match component or singleton, in its local part (`field` is that one's)
+    bool raw_sampled;      // A [Raw] Texture asset's name as the object of a Sample, which is the one place it goes
     bool target_colors;    // target.colors: a render target's color images, of which an index reads one (target.colors[1])
 
 
@@ -1338,6 +1342,9 @@ void plan_shaders(program *prog);
 // declaration: a Texture that's a value (a field's, a local's, a target's
 // color), which is sampled as each draw and each Sample says.
 void declared_sampling(const expr *texture, int *filter, int *wrap);
+// Whether a texture's declaration says [Raw]: an asset by its name, or a grid's field.
+bool declared_raw(const expr *texture);
+bool field_is_raw(const field *f);
 
 // Whether a shader reads a local field of the match's component or singleton
 // `d`: its draws are handed d's local part too.
