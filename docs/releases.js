@@ -23,6 +23,7 @@ const filePattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const listAge = 60_000;
 const linkAge = 180_000;
 const tagsKept = 256;
+const movesFollowed = 3;
 
 export function createReleases({ token, repo, fetch = globalThis.fetch, now = Date.now } = {}) {
     const headers = { authorization: `Bearer ${token}`, 'user-agent': 'tide-releases', 'x-github-api-version': '2022-11-28' };
@@ -80,11 +81,21 @@ export function createReleases({ token, repo, fetch = globalThis.fetch, now = Da
         return found;
     };
 
+    // A repository that was renamed or moved answers under its old name with
+    // where it is now, on GitHub's API, before the redirect to the file. That
+    // one is followed, as the token is GitHub's API's alone to see; the file's
+    // is handed on.
     const link = async (id) => {
         const had = links.get(id);
         if (had && now() - had.at < linkAge) return had.location;
-        const response = await fetch(`${api}/repos/${repo}/releases/assets/${id}`,
-            { headers: { ...headers, accept: 'application/octet-stream' }, redirect: 'manual' });
+        let url = `${api}/repos/${repo}/releases/assets/${id}`;
+        let response;
+        for (let moves = 0; ; moves++) {
+            response = await fetch(url, { headers: { ...headers, accept: 'application/octet-stream' }, redirect: 'manual' });
+            const moved = response.headers.get('location');
+            if (moves === movesFollowed || ![301, 307, 308].includes(response.status) || !moved?.startsWith(`${api}/`)) break;
+            url = moved;
+        }
         const location = response.headers.get('location');
         if (response.status !== 302 || !location) throw new Error(`GitHub answered ${response.status} for a download`);
         for (const [key, value] of links) if (now() - value.at >= linkAge) links.delete(key);

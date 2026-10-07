@@ -23,7 +23,7 @@ primary_region = 'fra'
   # Whose releases /releases gives (releases.js). The token that reads them is
   # a secret: fly secrets set TIDE_RELEASES_TOKEN=<a token that can only read
   # that repository's contents>
-  TIDE_RELEASES_REPO = 'BlenMiner/tide-engine'
+  TIDE_RELEASES_REPO = 'Tide-Engine/tide-engine'
 
 [[mounts]]
   source = 'access_requests'
