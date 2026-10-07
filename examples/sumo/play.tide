@@ -274,11 +274,13 @@ view Floor(Fx fx, Models models)
 // The shadows: everything that casts one, once more, through a transform that
 // lays it flat on the floor along the lamp's light. They read depth and write
 // none, so what's in front hides them, and where two overlap neither hides
-// the other: they're the same paint.
+// the other: they're the same paint. Laid flat, a box has no side that's its
+// front any more, so both sides of its triangles are drawn.
 [Stage(Layers.Shadows)]
 view Shadows(Fx fx, Models models)
 {
     Draw3D.Depth(Depth.Read),
+    Draw3D.Cull(Cull.None),
     Draw3D.Transform(Flatten())
     {
         Draw3D.Instanced(models.cube, models.cubeFaces, fx.solids, ShadowDrop, ShadowLook);

@@ -78,6 +78,15 @@ static const check checks[] = {
     {7, 6, 7, 0, 1, 0.5f, 0, "a transform turns and scales a mesh through a frag: past where its side was"},
     {7, 6, 5, 5, back, back, back, "and short of where its corner was"},
     {7, 3, 0, 0, 0, 1, 0, "a 3D mesh through a frag, tinted, through the 3D transform"},
+    // Which side of a triangle draws, four to a cell
+    {5, 6, -7, -7, 1, 1, 1, "a 3D mesh through a frag, mirrored by its own transform, is still seen from the front"},
+    {5, 6, 7, -7, back, back, back, "one seen from the back isn't drawn"},
+    {5, 6, 7, 7, back, back, back, "mirrored by its own transform or not"},
+    {5, 6, -7, 7, 1, 1, 1, "unless the draw says the back is"},
+    {6, 6, -7, -7, back, back, back, "a vert that mirrors its mesh turns its triangles round: they aren't drawn"},
+    {6, 6, 7, 7, 1, 1, 1, "and the ones that were seen from the back are"},
+    {6, 6, 7, -7, 1, 1, 1, "as are the first, with the draw saying the back is"},
+    {6, 6, -7, 7, 1, 1, 1, "or both sides"},
     // 2D
     {0, 4, 0, 0, 0, 1, 0, "a rect drawn after a 2D mesh is over it"},
     {0, 4, 8, 0, 1, 0.5f, 0, "the mesh, through its frag, over the rect before it"},

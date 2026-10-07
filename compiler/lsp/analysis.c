@@ -8053,7 +8053,7 @@ static const char *check_new_name(const occurrence *target, const str name)
     static const char *const reserved[] = {"Math", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
-                                           "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Wrap", "Font", "Blend", "Depth", "Format", "Draw", "DrawList", "Random",
+                                           "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Wrap", "Font", "Blend", "Depth", "Cull", "Format", "Draw", "DrawList", "Random",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "List", "Map", "Set", "Grid2", "Grid3",
                                            "string", "Sample", "Sanitize"};
     static char message[160];

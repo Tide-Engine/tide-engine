@@ -4,15 +4,16 @@
 // buffers, textures, pipelines and passes. It's shaped by WebGPU, the
 // strictest of them, so the others fit under it:
 //
-// - A pipeline is made once, with its shaders, the vertices it reads, and how
-//   it blends and tests depth. Nothing about it changes afterwards.
+// - A pipeline is made once, with its shaders, the vertices it reads, how it
+//   blends and tests depth, and which side of a triangle it draws. Nothing
+//   about it changes afterwards.
 // - A pipeline's uniforms are one block of bytes, set before a draw.
 // - Drawing happens in a pass on a target, which starts cleared or as it was
 //   left. There's no clear inside a pass: the renderer draws one.
 //
 // Each has one, which the window says (tide_window_gpu): OpenGL (gpu_gl.c, on
 // gl.h) and, on the web, WebGPU (web/gpu_web.c, in tide.js). Vulkan is to come.
-// Clip space is OpenGL's (depth from -1 to 1), pixels are counted from a
+// Clip space is OpenGL's (depth from -1 to 1, y up), pixels are counted from a
 // target's top left, and textures' and targets' rows go from the top.
 
 #include <stdbool.h>
@@ -70,6 +71,15 @@ typedef enum tide_gpu_depth {
     TIDE_GPU_DEPTH_RESET, // Written whatever is there: for clears
 } tide_gpu_depth;
 
+// Which side of a triangle a pipeline doesn't draw. The front is the side its
+// corners go clockwise on in clip space, with y up: as they're seen, in the
+// window and in a target alike, whichever way up a backend keeps its rows.
+typedef enum tide_gpu_cull {
+    TIDE_GPU_CULL_NONE,  // Both sides draw
+    TIDE_GPU_CULL_BACK,  // The triangles that go counterclockwise don't
+    TIDE_GPU_CULL_FRONT, // The ones that go clockwise don't
+} tide_gpu_cull;
+
 // What a texture's uvs past 0 and 1 read, on both axes: tide_wrap's numbers.
 typedef enum tide_gpu_wrap {
     TIDE_GPU_WRAP_CLAMP,  // The pixels at its edge
@@ -114,6 +124,7 @@ typedef struct tide_gpu_pipeline_desc {
     uint8_t reads[TIDE_GPU_MAX_TEXTURES]; // ...and how it reads each: tide_gpu_read
     tide_gpu_blend blend;
     tide_gpu_depth depth;
+    tide_gpu_cull cull;
     // What the targets it draws into hold: a pipeline is for one kind. One for
     // targets of depth alone writes no color, and its blend isn't read.
     tide_gpu_target_format into;

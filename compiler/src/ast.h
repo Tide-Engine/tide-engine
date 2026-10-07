@@ -428,7 +428,7 @@ typedef struct decl {
     loc local_at;     // The `local` keyword
     bool is_scene;    // `scene Arena { ... }`: a DECL_COMPONENT whose entity is a loaded scene
     bool is_sparse;   // [Sparse], or a tag any Add or Remove names: a presence byte and its lanes in every archetype it can reach, not an archetype of its own
-    bool named;       // The built-in Random and Depth: some code names it, so generated C has it
+    bool named;       // The built-in Random, Depth and Cull: some code names it, so generated C has it
     // A match component's or singleton's `local` fields are a declaration of
     // their own, its local part: a local one of the same kind and name, which
     // isn't in program.decls. A component's is kept for the match's entities
@@ -1121,6 +1121,7 @@ typedef struct program {
     decl *wrap;          // The built-in enum Wrap, what a uv past a texture's edges reads: in generated C when code names it
     decl *blend;         // The built-in enum Blend, how what's drawn goes over what's there
     decl *depth;         // The built-in enum Depth, what a 3D mesh does with depth: in generated C when code names it
+    decl *cull;          // The built-in enum Cull, which side of a 3D mesh's triangles isn't drawn: the same
     decl *format;        // The built-in enum Format, what a render target holds: in generated C when code names it
     decl *io_error;      // The built-in IOError enum, shared with tide/io.h
     VEC(struct expr *) io_calls; // Checked filesystem calls, for result adapters in generated C
