@@ -1,0 +1,16 @@
+// expect: this grid is [Raw], its cells numbers and not colors to draw: it's no Texture to draw with or hand on
+[Raw] asset Grid2<Color> cells = "../e2e/assets/hero.png";
+
+frag Copy(Vertex vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv);
+}
+
+view Show()
+{
+    Draw.Blit(cells, Draw.window, Copy);
+}
+
+scene Main
+{
+}

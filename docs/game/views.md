@@ -504,6 +504,22 @@ view Trails(Bullet bullet)
 
 `Draw.Clear` and `Draw.Clear` fill with their color whatever the blend, and [`Draw.Blit`](#targets-and-post-processing) takes a blend of its own (`Draw.Blit(source, destination, Blend.Add, frag)`).
 
+### Alpha
+
+A color's alpha is how much of it there is, and you write colors as they are everywhere: `Color(1, 0, 0, 0.5)` is red, half clear, in a draw, a tint, a grid's cell, a PNG and a frag. There's nothing to multiply yourself and no second kind of blend to pick.
+
+What that buys:
+
+- **No fringes.** A sprite's clear pixels have a color too in its file, often black or white, which never shows. Scaled or turned with `Filter.Bilinear`, a pixel at the sprite's edge is blended with its clear neighbor, and the neighbor counts for none of the color: a white sprite over a white wall has no gray rim, whatever the file kept in its clear pixels.
+- **Layers.** What's drawn into a cleared [render target](#targets-and-post-processing), `target.Clear(Color.clear)`, and then drawn from it with `target.color` looks as it would drawn straight onto the window: a HUD, a minimap or a trail kept in a target goes over the game as it is.
+
+A few things follow from how that's kept, which is each color times its alpha, in textures and in targets:
+
+- **A pixel with no alpha has no color.** A frag that samples one gets `Color(0, 0, 0, 0)`, whatever the file or the cell said its color was. An image whose alpha is something other than how clear it is (a mask beside unrelated colors) would lose its colors where the alpha is 0: mark it [`[Raw]`](./shaders.md#textures-that-are-numbers), and a frag reads its numbers as the file has them.
+- **`Blend.Replace` with an alpha under 1** leaves the window, which has no alpha of its own, darker by that much, as if over black. Into a target it's exact: drawn from the target later, it's the color and the alpha that were written.
+- **`Blend.Add` raises the alpha that's there** towards 1 by its own, and never past it, so light added into a clear target shows when the target is drawn over something.
+- A dim color that's nearly clear keeps few of its 256 steps in an image of bytes. It doesn't show once it's blended; a [`Format.Rgba16f`](#what-a-target-holds) target keeps them all.
+
 ### Tints
 
 A tint multiplies the color of everything drawn inside, alpha too. `Color(1, 1, 1, 0.5)` fades it to half, with no alpha to pass to every call:
@@ -714,6 +730,23 @@ What's drawn through one:
 
 Colors add, subtract and multiply channel by channel, alpha too, and scale by a number: `tint * Color.red * 0.5`.
 
+A color's numbers are the display's own: `Color(0.5, 0.5, 0.5)` is the middle gray a paint program shows for 128, a PNG's pixels are drawn as the file has them, and colors blend and add as those numbers. Nothing is converted on the way in or out, and nothing is sRGB-aware. It's what sprites and UI want. It isn't how light adds up: two lamps of half don't make white's brightness, and a half-clear white over black is darker than half the light. A game that wants that works in light itself, in a float target:
+
+```csharp
+// Colors and textures to light as they're read, in the frags that draw the scene
+Color paint = models.wood.Sample(vertex.uv);
+float3 light = float3(Math.Pow(paint.r, 2.2), Math.Pow(paint.g, 2.2), Math.Pow(paint.b, 2.2));
+
+// The last pass, from the float target to the window: under 1 first, then back to the display's numbers
+frag Present(Vertex vertex, out Color color, Texture source)
+{
+    Color lit = source.Sample(vertex.uv);
+    color = Color(Math.Pow(lit.r / (1 + lit.r), 1 / 2.2), Math.Pow(lit.g / (1 + lit.g), 1 / 2.2), Math.Pow(lit.b / (1 + lit.b), 1 / 2.2));
+}
+```
+
+The scene is drawn into a [`Format.Rgba16f`](#what-a-target-holds) target, where light adds up past 1, and `Draw.Blit(scene.color, Draw.window, Present)` shows it. Without the last step the picture is too dark between its lights and flat white where they meet. What's drawn after it, the GUI and text among it, is in the display's numbers as ever.
+
 `Color.none` is no color, for where one can be left out, like a [`Shape`](#the-general-shape)'s second color. It isn't one to draw with: nothing shows.
 
 ## Smooth shapes
@@ -871,7 +904,7 @@ There's nothing to create, upload or free. The grid is ordinary state: change it
 
 The grid can be local state or the match's, like a canvas each player paints. Views read the match's grids as they are at the latest tick: cells aren't blended.
 
-The argument after the texture says how it's read between pixels: `Filter.Bilinear` blends them, `Filter.Point` takes the nearest, for pixel art. A call that leaves it out reads the texture as the texture says (see [Saying it once](#saying-it-once-on-the-texture)), which is blended unless something said otherwise.
+The argument after the texture says how it's read between pixels: `Filter.Bilinear` blends them, `Filter.Point` takes the nearest, for pixel art, and `Filter.Trilinear` blends them and stays smooth where the texture is drawn smaller than it is (see [Drawn smaller](#drawn-smaller)). A call that leaves it out reads the texture as the texture says (see [Saying it once](#saying-it-once-on-the-texture)), which is blended unless something said otherwise.
 
 - A grid with an open axis has no size, so it's no texture: the mesh draws with its colors alone. Neither is one past 16384 cells a side.
 - How big a texture can be is the GPU's limit: at least 2048 by 2048 wherever Tide runs.
@@ -956,6 +989,22 @@ The quad below has uvs that go three times across its texture and three times do
 - It's how this draw reads the texture, and changes nothing of the image: one grid can be clamped in one draw and repeated in the next. So can a [render target's color](#targets-and-post-processing), and a texture of any size.
 - Blended, a cell at the edge blends with what the wrap says is past it: with `Wrap.Repeat` that's the cell at the opposite edge, which is what makes tiles meet without a seam.
 - `Wrap` is the engine's name: a game's own type or function takes another one, or a namespace.
+
+### Drawn smaller
+
+A texture drawn smaller than it is has several of its pixels under each pixel of the screen. `Filter.Bilinear` reads the ones under the pixel's middle, and skips the rest: a tiled floor seen from far away shimmers as the camera moves, and a big image shown as a thumbnail looks grainy. `Filter.Trilinear` reads all of them:
+
+```csharp
+Draw.Mesh(floor, faces, float4x4.identity, tiles, Filter.Trilinear, Wrap.Repeat);
+```
+
+- The engine keeps smaller copies of the texture for it, each half the size of the last, down to one pixel (its mipmaps), and the GPU blends between the two nearest the size the texture is drawn at. So a pixel is the mean of what it covers.
+- Drawn at its own size or bigger, it's the same as `Filter.Bilinear`.
+- **It's a filter like the others**: a draw's argument, a `Sample`'s in a [frag](./shaders.md#textures), a declaration's `[Filter(Filter.Trilinear)]`, and what a `Texture` carries from there (below).
+- **Nothing to make or keep up to date.** The copies are made the first time a draw reads the texture this way, and again when its pixels changed: a grid whose cells were written, a [render target](#targets-and-post-processing) that was drawn into. A texture no draw reads this way has none.
+- **What it costs**: a third more memory on the GPU for that texture, and making the copies, which is quick for an image that never changes and adds up for a big grid that changes every frame.
+- It's for what's seen at a distance or at many sizes: floors and walls in 3D, a map you zoom out of, a target shown as a thumbnail. Pixel art at its own size wants `Filter.Point`.
+- A `Grid2<float>` has them wherever the device can draw into floats, which is nearly everywhere (see [float images](#what-a-target-holds)); where it can't, it's read as `Filter.Bilinear`.
 
 ### Saying it once, on the texture
 

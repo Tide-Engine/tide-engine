@@ -788,6 +788,151 @@ static void run_height_checks(const char *when)
     if (!halves) failures++;
 }
 
+// Filter.Trilinear (pass 14, `Mipmaps` in shaders.tide): each square is a
+// texture of stripes drawn an eighth of its size, whose pixels are the mean
+// of the 8 by 8 they cover where it's read between its smaller images, and
+// the ones under a pixel's middle, which have no stripe, where it isn't.
+// `lit` is how wide the stripes drawn into the target are that frame.
+static void run_mipmap_checks(const float lit, const char *when)
+{
+    // A float texture's smaller images are drawn, so made where the device draws into floats
+    const bool floats = tide_window_gpu()->float_targets();
+    const int drawn = (int)(lit * 255.0f / 8.0f + 0.5f);
+    const struct {
+        float left;
+        int want[3];
+        const char *what;
+    } wanted[] = {
+        {8, {32, 64, 255}, "a grid whose declaration says Trilinear, sampled in a frag's branch: the mean of what a pixel covers"},
+        {24, {32, 64, 255}, "a Texture that says Trilinear, through a frag that leaves the filter to it, after a discard"},
+        {40, {0, 0, 255}, "the same frag with a draw that says Bilinear: the texture's own pixels"},
+        {56, {32, 64, 255}, "a Sample that says Trilinear, whatever the draw says"},
+        {72, {0, 0, 255}, "a uv a loop changes can't be asked about as the frag starts: the texture's own pixels"},
+        {88, {32, 64, 255}, "a mesh with no frag, of a grid that says Trilinear"},
+        {104, {0, 0, 255}, "and with a draw that says Point"},
+        {120, {32, 64, 255}, "a mesh through a vert alone, of a Texture that says Trilinear"},
+        {136, {floats ? 32 : 0, 0, 0}, "a grid of floats, sampled Trilinear"},
+        {152, {drawn, 0, 0}, "a target's color, read between its smaller images: made of what was just drawn into it"},
+        {168, {drawn, 0, 0}, "through a frag too"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    local.Art.targetPass = 14;
+    local.Mips.lit = lit;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[2 * COUNT];
+    uint32_t got[2 * COUNT];
+    for (int i = 0; i < COUNT; i++) { // A pixel near each square's corner, and one inside
+        points[2 * i] = tide_f2(wanted[i].left + 0.5f, 8.5f);
+        points[2 * i + 1] = tide_f2(wanted[i].left + 5.5f, 12.5f);
+    }
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, 2 * COUNT, got);
+    for (int i = 0; i < 2 * COUNT; i++) {
+        const int *want = wanted[i / 2].want;
+        bool ok = true;
+        for (int c = 0; c < 3; c++) {
+            const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - want[c];
+            ok = ok && d >= -6 && d <= 6;
+        }
+        printf("%s: %s%s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i / 2].what,
+               i % 2 ? ", at another pixel" : "", when, (unsigned)got[i], (unsigned)want[0], (unsigned)want[1], (unsigned)want[2]);
+        if (!ok) failures++;
+    }
+    // One frag given a texture read two ways is one shader in two runs: how it's read is no part of its text
+    int runs = 0;
+    for (uint32_t i = 0; i < list.run_count; i++) {
+        runs += list.runs[i].shader && strcmp(list.runs[i].shader->name, "MipSource on Vertex") == 0;
+    }
+    printf("%s: a frag whose texture is read another way is the same shader in another run%s (%d runs)\n",
+           runs == 3 ? "ok" : "FAIL", when, runs);
+    if (runs != 3) failures++;
+}
+
+// Alpha (pass 15, `Alphas` in shaders.tide): textures hold colors times their
+// alpha and blends take them so, which nothing written in Tide sees. Squares
+// of 48 pixels over white.
+static void run_alpha_checks(const char *when)
+{
+    static const struct {
+        float x, y;
+        float r, g, b;
+        const char *what;
+    } wanted[] = {
+        {20, 32, 1, 1, 1, "a grid's white cell blended a quarter of the way to a clear one of another color, over white, is white"},
+        {32, 32, 1, 1, 1, "and halfway"},
+        {52, 32, 1, 1, 1, "and what's under shows where it's clear"},
+        {88, 32, 1, 0.5f, 0, "a Sample between the two is the white cell's color, and half its alpha"},
+        {144, 32, 0.5f, 0.75f, 1, "a half-clear rect over white"},
+        {200, 32, 0.5f, 0.75f, 1, "the same drawn into a clear target, and the target drawn over white"},
+        {32, 88, 0.5f, 0.75f, 1, "and through a frag that samples the target"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    local.Art.targetPass = 15;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[COUNT];
+    uint32_t got[COUNT];
+    for (int i = 0; i < COUNT; i++) points[i] = tide_f2(wanted[i].x, wanted[i].y);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
+    for (int i = 0; i < COUNT; i++) {
+        const uint8_t want[3] = {byte(wanted[i].r), byte(wanted[i].g), byte(wanted[i].b)};
+        bool ok = true;
+        for (int k = 0; k < 3; k++) {
+            const int d = (int)(got[i] >> (24 - 8 * k) & 0xFFu) - (int)want[k];
+            ok = ok && d >= -3 && d <= 3;
+        }
+        printf("%s: %s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, when, (unsigned)got[i],
+               want[0], want[1], want[2]);
+        if (!ok) failures++;
+    }
+}
+
+// Textures that are numbers (pass 16, `Raws` in shaders.tide): [Raw] ones are
+// read as their file or their grid has them, where a texture of colors has no
+// color in a pixel with no alpha. Squares of 32 pixels, 40 apart.
+static void run_raw_checks(const char *when)
+{
+    static const struct {
+        float r, g, b;
+        const char *what;
+    } wanted[] = {
+        {210 / 255.0f, 200 / 255.0f, 100 / 255.0f, "a [Raw] Texture asset's clear pixel keeps the numbers its file has"},
+        {0, 0, 0, "the same file as colors has none where it's clear"},
+        {210 / 255.0f, 200 / 255.0f, 100 / 255.0f, "a [Raw] Grid2<Color> asset keeps them too"},
+        {1, 0.5f, 0.25f, "a [Raw] grid's cell with no alpha is its numbers"},
+        {0, 0, 0, "and the same cell of a grid of colors is none"},
+        {0.5f, 0.5f, 0.5f, "between two cells, a [Raw] grid's numbers blend as numbers, whatever their alpha"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    local.Art.targetPass = 16;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[COUNT];
+    uint32_t got[COUNT];
+    for (int i = 0; i < COUNT; i++) points[i] = tide_f2(24.0f + 40.0f * (float)i, 24.0f);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
+    for (int i = 0; i < COUNT; i++) {
+        const uint8_t want[3] = {byte(wanted[i].r), byte(wanted[i].g), byte(wanted[i].b)};
+        bool ok = true;
+        for (int k = 0; k < 3; k++) {
+            const int d = (int)(got[i] >> (24 - 8 * k) & 0xFFu) - (int)want[k];
+            ok = ok && d >= -3 && d <= 3;
+        }
+        printf("%s: %s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, when, (unsigned)got[i],
+               want[0], want[1], want[2]);
+        if (!ok) failures++;
+    }
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -815,6 +960,9 @@ static int frame(void *user, const float seconds)
         run_output_checks(", on another device");
         run_values_checks(", on another device");
         run_height_checks(", on another device");
+        run_mipmap_checks(2, ", on another device");
+        run_alpha_checks(", on another device");
+        run_raw_checks(", on another device");
         return failures;
     }
 #endif
@@ -835,6 +983,11 @@ static int frame(void *user, const float seconds)
     run_values_checks("");
     run_values_checks(", again");
     run_height_checks("");
+    run_mipmap_checks(2, "");
+    run_mipmap_checks(2, ", again");
+    run_mipmap_checks(4, ", with other pixels drawn into the target");
+    run_alpha_checks("");
+    run_raw_checks("");
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");

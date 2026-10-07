@@ -1,0 +1,6 @@
+// expect: Raw says a texture's pixels are numbers, and 'words' is string
+[Raw] asset string words = "../e2e/assets/hero.png";
+
+scene Main
+{
+}

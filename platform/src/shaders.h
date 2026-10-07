@@ -51,10 +51,23 @@
 
 #define SHAPE_GLSL_UNIFORMS "layout(std140) uniform uniforms { mat4 screen; vec2 texel; vec2 scale; vec4 fix; };\n"
 
-// A color as its pipeline blends it: towards white as it clears, by `by`.
-#define GLSL_WHITEN "vec4 whiten(vec4 c, float by) { return vec4(c.rgb + by * (1.0 - c.a) * (1.0 - c.rgb), c.a); }\n"
+// A color as its pipeline blends it: times its alpha, which is how every
+// pipeline's blend takes what a shader writes (see tide_gpu_blend), and
+// towards white as it clears, by `by`. `whiten` takes a color whose alpha
+// isn't worked into it yet. `over` takes a texture's pixel, which has its
+// own worked in already, and the tint it's drawn with, which hasn't.
+#define GLSL_WHITEN \
+    "vec4 whiten(vec4 c, float by) { return vec4(c.rgb * c.a + by * (1.0 - c.a), c.a); }\n" \
+    "vec4 over(vec4 p, vec4 tint, float by) {\n" \
+    "    vec4 c = p * vec4(tint.rgb * tint.a, tint.a);\n" \
+    "    return vec4(c.rgb + by * (1.0 - c.a), c.a);\n" \
+    "}\n"
 #define WGSL_WHITEN \
-    "fn whiten(c: vec4f, by: f32) -> vec4f { return vec4f(c.rgb + by * (1.0 - c.a) * (1.0 - c.rgb), c.a); }\n"
+    "fn whiten(c: vec4f, by: f32) -> vec4f { return vec4f(c.rgb * c.a + by * (1.0 - c.a), c.a); }\n" \
+    "fn over(p: vec4f, tint: vec4f, by: f32) -> vec4f {\n" \
+    "    let c = p * vec4f(tint.rgb * tint.a, tint.a);\n" \
+    "    return vec4f(c.rgb + by * (1.0 - c.a), c.a);\n" \
+    "}\n"
 
 // Where a plain kind's corner goes. `c` is the quad's, from -1 to 1.
 #define SHAPE_GLSL_PLACE                                                                                    \
@@ -110,7 +123,7 @@ static const char shape_glsl_fragment[] =
     "out vec4 pixel;\n"
     "void main() {\n"
     "    " SHAPE_GLSL_COVER
-    "    pixel = vec4(tint.rgb, tint.a * cover);\n"
+    "    pixel = vec4(tint.rgb * (tint.a * cover), tint.a * cover);\n"
     "}\n";
 
 // Smooth shapes are drawn by how far each pixel is from their edge, under 0
@@ -243,7 +256,7 @@ static const char smooth_shape_glsl_fragment[] =
     "        pixel = whiten(vec4(0.0), fix.x);\n"
     "        return;\n"
     "    }\n"
-    "    pixel = whiten(vec4(paint.rgb / paint.a, paint.a * cover), fix.x);\n"
+    "    pixel = paint * cover + vec4(vec3(fix.x * (1.0 - paint.a * cover)), 0.0);\n"
     "}\n";
 
 #define SHAPE_WGSL_UNIFORMS                                                      \
@@ -301,7 +314,7 @@ static const char *const shape_wgsl = WGSL(
     "}\n"
     "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
     "    " SHAPE_WGSL_COVER
-    "    return vec4f(in.tint.rgb, in.tint.a * cover);\n"
+    "    return vec4f(in.tint.rgb * (in.tint.a * cover), in.tint.a * cover);\n"
     "}\n");
 
 // In two pieces, which the renderer joins: together they're longer than C
@@ -413,7 +426,7 @@ static const char *const smooth_shape_wgsl_fragment = WGSL(
     "        if (u.fix.y < 0.5) { discard; }\n"
     "        return whiten(vec4f(0.0), u.fix.x);\n"
     "    }\n"
-    "    return whiten(vec4f(paint.rgb / paint.a, paint.a * cover), u.fix.x);\n"
+    "    return paint * cover + vec4f(vec3f(u.fix.x * (1.0 - paint.a * cover)), 0.0);\n"
     "}\n");
 
 // Meshes: a mesh's pixels are its corners' colors, blended across each
@@ -444,7 +457,7 @@ static const char mesh_glsl_fragment[] =
     "out vec4 pixel;\n"
     GLSL_WHITEN
     "void main() {\n"
-    "    pixel = whiten(texture(pixels0, at) * tint, white);\n"
+    "    pixel = over(texture(pixels0, at), tint, white);\n"
     "}\n";
 
 #define MESH_WGSL_VERTEX                                                                                               \
@@ -469,7 +482,7 @@ static const char mesh_glsl_fragment[] =
 
 static const char *const mesh_wgsl = WGSL(MESH_WGSL_VERTEX
     "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
-    "    return whiten(textureSample(pixels0, how0, in.at) * in.tint, in.white);\n"
+    "    return over(textureSample(pixels0, how0, in.at), in.tint, in.white);\n"
     "}\n");
 
 // Text: its pixels are its color, as much as the font atlas says its glyph
@@ -554,7 +567,7 @@ static const char *const mesh_3d_wgsl = WGSL(
     "    return out;\n"
     "}\n"
     "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
-    "    return whiten(textureSample(pixels0, how0, in.at) * in.tint, in.white);\n"
+    "    return over(textureSample(pixels0, how0, in.at), in.tint, in.white);\n"
     "}\n");
 
 // A clear: one triangle over the whole target, as far as depth goes, in one
@@ -570,7 +583,7 @@ static const char clear_glsl_fragment[] =
     "layout(std140) uniform uniforms { vec4 color; };\n"
     "out vec4 pixel;\n"
     "void main() {\n"
-    "    pixel = color;\n"
+    "    pixel = vec4(color.rgb * color.a, color.a);\n"
     "}\n";
 
 static const char *const clear_wgsl = WGSL(
@@ -581,7 +594,7 @@ static const char *const clear_wgsl = WGSL(
     "    return vec4f(corner * 2.0 - 1.0, 1.0, 1.0);\n"
     "}\n"
     "@fragment fn fragment() -> @location(0) vec4f {\n"
-    "    return u.color;\n"
+    "    return vec4f(u.color.rgb * u.color.a, u.color.a);\n"
     "}\n");
 
 // A clear of a target of several color images: the same color into each of
@@ -593,10 +606,10 @@ static const char clear_all_glsl_fragment[] =
     "layout(location = 2) out vec4 pixel2;\n"
     "layout(location = 3) out vec4 pixel3;\n"
     "void main() {\n"
-    "    pixel0 = color;\n"
-    "    pixel1 = color;\n"
-    "    pixel2 = color;\n"
-    "    pixel3 = color;\n"
+    "    pixel0 = vec4(color.rgb * color.a, color.a);\n"
+    "    pixel1 = vec4(color.rgb * color.a, color.a);\n"
+    "    pixel2 = vec4(color.rgb * color.a, color.a);\n"
+    "    pixel3 = vec4(color.rgb * color.a, color.a);\n"
     "}\n";
 
 static const char *const clear_all_wgsl = WGSL(
@@ -608,5 +621,6 @@ static const char *const clear_all_wgsl = WGSL(
     "    return vec4f(corner * 2.0 - 1.0, 1.0, 1.0);\n"
     "}\n"
     "@fragment fn fragment() -> Colors {\n"
-    "    return Colors(u.color, u.color, u.color, u.color);\n"
+    "    let c = vec4f(u.color.rgb * u.color.a, u.color.a);\n"
+    "    return Colors(c, c, c, c);\n"
     "}\n");

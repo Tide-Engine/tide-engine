@@ -1234,6 +1234,7 @@
             gl.framebufferTexture2D(target, attachment, textureTarget, get('texture', t), level),
         glFrontFace: winding => gl.frontFace(winding),
         glGenBuffers: (n, ptr) => generate('buffer', () => gl.createBuffer(), n, ptr),
+        glGenerateMipmap: target => gl.generateMipmap(target),
         glGenFramebuffers: (n, ptr) => generate('framebuffer', () => gl.createFramebuffer(), n, ptr),
         glGenRenderbuffers: (n, ptr) => generate('renderbuffer', () => gl.createRenderbuffer(), n, ptr),
         glGenSamplers: (n, ptr) => generate('sampler', () => gl.createSampler(), n, ptr),
@@ -1447,15 +1448,22 @@
     const UNIFORM_BYTES = 4096; // The most a pipeline's uniforms take (TIDE_GPU_MAX_UNIFORMS), which every pipeline is bound
     const MAX_TEXTURES = 8;     // TIDE_GPU_MAX_TEXTURES
     const READ_COMPARE = 2;     // TIDE_GPU_READ_COMPARE, after a color's 0 and a depth's 1
-    const NEAREST = 0, COMPARED = 6; // Samplers: the nearest pixel past no edge, and after the six of colors, a depth compared
-    let layouts = null, samplers = null;
+    // Samplers: the nearest pixel past no edge first, and after the nine of colors, a depth compared
+    const NEAREST = 0, LINEAR = 1, MIPMAPS = 2, COMPARED = 9;
+    let layouts = null, samplers = null, mipPipelines = null;
     function gpuStart() {
         layouts = new Map();
-        // By how it's read between pixels, then past its edges: 2 * tide_gpu_wrap's number + whether it's blended
+        mipPipelines = new Map();
+        // By how it's read past its edges, then between pixels: 3 * tide_gpu_wrap's number + tide_gpu_filter's.
+        // Only the last filter reads a texture's smaller images (gpu_mipmaps): the others keep to its own
+        // pixels whatever it has and however a shader asks (lodMaxClamp). A change to either enum goes here.
         samplers = [];
         for (const wrap of ['clamp-to-edge', 'repeat', 'mirror-repeat']) {
-            for (const filter of ['nearest', 'linear']) {
-                samplers.push(device.createSampler({ magFilter: filter, minFilter: filter, addressModeU: wrap, addressModeV: wrap }));
+            for (const filter of [NEAREST, LINEAR, MIPMAPS]) {
+                const between = filter === NEAREST ? 'nearest' : 'linear';
+                samplers.push(device.createSampler({ magFilter: between, minFilter: between,
+                    mipmapFilter: filter === MIPMAPS ? 'linear' : 'nearest', lodMaxClamp: filter === MIPMAPS ? 32 : 0,
+                    addressModeU: wrap, addressModeV: wrap }));
             }
         }
         // 1 where the depth that's stored isn't nearer than the shader's number (the test a mesh passes to
@@ -1516,6 +1524,28 @@
         return group;
     }
 
+    // A texture's smaller images, which WebGPU makes none of: each is drawn
+    // from the one before it, a pixel the mean of the four it's made of (one
+    // sample between them, blended). A pipeline for each format there is.
+    function mipPipeline(format) {
+        let pipeline = mipPipelines.get(format);
+        if (!pipeline) {
+            const module = device.createShaderModule({ code: `
+                @vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+                    return vec4f(f32((i << 1u) & 2u) * 2.0 - 1.0, f32(i & 2u) * 2.0 - 1.0, 0.0, 1.0);
+                }
+                @group(0) @binding(0) var pixels: texture_2d<f32>;
+                @group(0) @binding(1) var between: sampler;
+                @fragment fn fragment(@builtin(position) at: vec4f) -> @location(0) vec4f {
+                    return textureSampleLevel(pixels, between, at.xy * 2.0 / vec2f(textureDimensions(pixels)), 0.0);
+                }` });
+            pipeline = device.createRenderPipeline({ layout: 'auto', vertex: { module, entryPoint: 'vertex' },
+                fragment: { module, entryPoint: 'fragment', targets: [{ format }] } });
+            mipPipelines.set(format, pipeline);
+        }
+        return pipeline;
+    }
+
     // A target: the canvas, or persistent sampleable pixels of its own, each
     // with depth, and 8 bits of stencil beside it. A target's own depth is
     // sampled too.
@@ -1535,11 +1565,11 @@
     let reader = null; // A 2D canvas, which a target is drawn into to read it back without waiting
 
     // tide_gpu_blend: by its alpha, added, what's there times it, or in its place (none)
-    const alphaBlend = { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' };
+    const alphaBlend = { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' };
     const blends = [
         { color: alphaBlend, alpha: alphaBlend },
-        { color: { srcFactor: 'src-alpha', dstFactor: 'one', operation: 'add' },
-          alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' } },
+        { color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+          alpha: { srcFactor: 'one-minus-dst-alpha', dstFactor: 'one', operation: 'add' } },
         { color: { srcFactor: 'dst', dstFactor: 'zero', operation: 'add' },
           alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' } },
         undefined,
@@ -1701,9 +1731,11 @@
         },
         gpu_texture(format, width, height, ptr) {
             // By tide_gpu_format's numbers: a change to the enum goes here
-            const texture = device.createTexture({ size: [width, height], format: ['rgba8unorm', 'r8unorm', 'r16float'][format],
-                usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
-            const id = gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * [4, 1, 2][format],
+            const usage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC;
+            const row = width * [4, 1, 2][format];
+            format = ['rgba8unorm', 'r8unorm', 'r16float'][format];
+            const texture = device.createTexture({ size: [width, height], format, usage });
+            const id = gpuAdd('texture', { texture, view: texture.createView(), width, height, row, format, usage,
                 groups: new Set() }); // The bind groups it's in, by their keys
             if (ptr) platform.gpu_texture_write(id, ptr);
             return id;
@@ -1713,6 +1745,40 @@
             const [data, offset] = memoryBytes(ptr, t.row * t.height);
             device.queue.writeTexture({ texture: t.texture }, data, { offset, bytesPerRow: t.row, rowsPerImage: t.height },
                 [t.width, t.height]);
+        },
+        gpu_mipmaps(id) {
+            const t = gpuTables.texture[id];
+            const levels = 1 + Math.floor(Math.log2(Math.max(t.width, t.height)));
+            if (!t.format || levels < 2) return;
+            const pipeline = mipPipeline(t.format);
+            if (!t.levels) {
+                // A texture has as many images as it was made with, so the first time, one with room for them
+                // takes its place: `view` is all of it, which draws sample, and `first` what a pass draws into
+                const texture = device.createTexture({ size: [t.width, t.height], format: t.format, mipLevelCount: levels,
+                    usage: t.usage | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT });
+                const copy = device.createCommandEncoder();
+                copy.copyTextureToTexture({ texture: t.texture }, { texture }, [t.width, t.height]);
+                device.queue.submit([copy.finish()]);
+                t.texture.destroy();
+                t.texture = texture;
+                t.view = texture.createView();
+                t.levels = [];
+                for (let level = 0; level < levels; level++) t.levels.push(texture.createView({ baseMipLevel: level, mipLevelCount: 1 }));
+                t.first = t.levels[0];
+                t.halving = t.levels.slice(0, -1).map(from => device.createBindGroup({ layout: pipeline.getBindGroupLayout(0),
+                    entries: [{ binding: 0, resource: from }, { binding: 1, resource: samplers[LINEAR] }] }));
+                for (const key of t.groups) bindGroups.delete(key); // They have the texture it was
+                t.groups.clear();
+            }
+            const encoder = device.createCommandEncoder();
+            for (let level = 1; level < levels; level++) {
+                const halve = encoder.beginRenderPass({ colorAttachments: [{ view: t.levels[level], loadOp: 'clear', storeOp: 'store' }] });
+                halve.setPipeline(pipeline);
+                halve.setBindGroup(0, t.halving[level - 1]);
+                halve.draw(3);
+                halve.end();
+            }
+            device.queue.submit([encoder.finish()]);
         },
         gpu_texture_free(id) {
             const t = gpuTables.texture[id];
@@ -1785,9 +1851,9 @@
                     context: null, sampled, sampledDepth: { texture: many, view: many.createView() } });
             }
             const colors = formats.map(format => {
-                const texture = device.createTexture({ size: [width, height], format,
-                    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC });
-                return gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * 4,
+                const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC;
+                const texture = device.createTexture({ size: [width, height], format, usage });
+                return gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * 4, format, usage,
                     groups: new Set() });
             });
             // Its depth is a texture of the program's too: sampled as depth alone, and drawn into whole
@@ -1844,7 +1910,8 @@
             commands = device.createCommandEncoder();
             const load = clear ? 'clear' : 'load';
             // The canvas, or each of a target's color images: none for a target of depth alone
-            const views = id ? t.colors.map(color => gpuTables.texture[color].view) : [t.context.getCurrentTexture().createView()];
+            // ...of each, its own pixels, where it has smaller images too (gpu_mipmaps)
+            const views = id ? t.colors.map(color => gpuTables.texture[color].first || gpuTables.texture[color].view) : [t.context.getCurrentTexture().createView()];
             const many = id && t.sampled; // A multisampled target's samples, which each color image is resolved from
             const descriptor = {
                 colorAttachments: views.map((view, i) => ({ view: many ? many[i].view : view,
@@ -1890,9 +1957,10 @@
             uniformsUsed += slots;
             drawing.bound = false;
         },
-        gpu_sample(slot, id, blended, wrap) {
+        gpu_sample(slot, id, filter, wrap) {
             drawing.textures[slot] = id;
-            drawing.sampled[slot] = (wrap === 1 || wrap === 2 ? 2 * wrap : 0) + (blended ? 1 : 0); // Its place in `samplers`
+            // Its place in `samplers`
+            drawing.sampled[slot] = (wrap === 1 || wrap === 2 ? 3 * wrap : 0) + (filter === NEAREST || filter === MIPMAPS ? filter : LINEAR);
             drawing.bound = false;
         },
         gpu_vertices: (slot, id, offset) => pass.setVertexBuffer(slot, gpuTables.buffer[id], offset),

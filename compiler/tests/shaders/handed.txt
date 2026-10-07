@@ -103,7 +103,8 @@ void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Look(tt_Corner(vec3(0.0), vec3(0.0), tide_s2), tt_FromLamp(vec3(0.0), tide_h0_1, tide_h0_2), tide_color);
     tide_color = tide_color * tide_tint;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -206,8 +207,9 @@ fn ts_Look(t_corner: tt_Corner, t_lamp: tt_FromLamp, t_color: ptr<function, vec4
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Look(tt_Corner(vec3f(), vec3f(), in.tide_s2), tt_FromLamp(vec3f(), in.tide_h0_1, in.tide_h0_2), &tide_color);
     tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
     if (tide_block.tide_screen.w > 0.0) {
-        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
     }
     return tide_color;
 }
@@ -335,7 +337,8 @@ void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Misty(tt_Corner(vec3(0.0), vec3(0.0), vec2(0.0)), tide_color, tt_Fog(tide_h1_0, tide_h1_1), tt_FromLamp(tide_h0_0, 0.0, vec4(0.0)));
     tide_color = tide_color * tide_tint;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -447,8 +450,9 @@ fn ts_Misty(t_corner: tt_Corner, t_color: ptr<function, vec4f>, t_fog: tt_Fog, t
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Misty(tt_Corner(vec3f(), vec3f(), vec2f()), &tide_color, tt_Fog(in.tide_h1_0, in.tide_h1_1), tt_FromLamp(in.tide_h0_0, f32(), vec4f()));
     tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
     if (tide_block.tide_screen.w > 0.0) {
-        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
     }
     return tide_color;
 }
@@ -530,7 +534,8 @@ out vec4 tide_pixel;
 void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     tide_color = tide_color * tide_tint;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -617,8 +622,9 @@ fn ts_Place(t_corner: ptr<function, tt_Corner>, t_lamp: ptr<function, tt_FromLam
     tide_at = in.tide_at;
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
     if (tide_block.tide_screen.w > 0.0) {
-        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
     }
     return tide_color;
 }
@@ -685,7 +691,8 @@ void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Snow(tt_Flake(vec2(0.0)), tt_Fog(tide_h0_0, vec2(0.0)), tide_color);
     tide_color = tide_color * tide_tint;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -743,8 +750,9 @@ fn ts_Snow(t_flake: tt_Flake, t_fog: tt_Fog, t_color: ptr<function, vec4f>) {
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Snow(tt_Flake(vec2f()), tt_Fog(in.tide_h0_0, vec2f()), &tide_color);
     tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
     if (tide_block.tide_screen.w > 0.0) {
-        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
     }
     return tide_color;
 }

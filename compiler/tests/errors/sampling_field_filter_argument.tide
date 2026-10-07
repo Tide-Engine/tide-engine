@@ -1,4 +1,4 @@
-// expect: [Filter] takes how the texture is read between its cells: [Filter(Filter.Point)] or [Filter(Filter.Bilinear)]
+// expect: [Filter] takes how the texture is read between its cells: [Filter(Filter.Point)], [Filter(Filter.Bilinear)] or [Filter(Filter.Trilinear)]
 scene Main { }
 
 local singleton Art

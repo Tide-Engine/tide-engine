@@ -666,7 +666,8 @@ TIDE_TEST(draw_meshes_append)
     TIDE_CHECK(c->kind == TIDE_DRAW_MESH && c->mesh.first == 6 && c->mesh.count == 6 && c->mesh.texture == 1);
     TIDE_CHECK(c->mesh.filter == TIDE_FILTER_POINT);
     TIDE_CHECK(world.indices[6] == 6 && world.indices[11] == 9);
-    TIDE_CHECK(world.textures[0].version == 5 && memcmp(world.textures[0].pixels, pixel, 4) == 0);
+    static const uint8_t copied[4] = {0, 0, 0, 4}; // The list's copy: each color times its alpha, 4 of 255
+    TIDE_CHECK(world.textures[0].version == 5 && memcmp(world.textures[0].pixels, copied, 4) == 0);
     tide_draw_free(&world);
     tide_draw_free(&over);
 }
@@ -697,8 +698,9 @@ TIDE_TEST(draw_grids_are_textures)
     TIDE_CHECK(d.indices[6] == 4 && d.indices[11] == 7);
     const tide_draw_texture *t = &d.textures[0];
     TIDE_REQUIRE(t->width == 40 && t->height == 33 && t->space == TIDE_PIXELS_GRID);
-    static const uint8_t first[4] = {255, 0, 0, 255}, last[4] = {128, 255, 0, 64}, none[4] = {0, 0, 0, 0};
+    static const uint8_t first[4] = {255, 0, 0, 255}, last[4] = {32, 64, 0, 64}, none[4] = {0, 0, 0, 0};
     TIDE_CHECK(memcmp(t->pixels, first, 4) == 0);
+    // Each color times its alpha, as a texture has them, with what's past 0 and 1 kept there first
     TIDE_CHECK(memcmp(t->pixels + (32 * 40 + 39) * 4, last, 4) == 0);
     TIDE_CHECK(memcmp(t->pixels + 4, none, 4) == 0);          // A cell nothing set
     TIDE_CHECK(memcmp(t->pixels + (10 * 40 + 35) * 4, none, 4) == 0); // ...and one where the grid has no chunk

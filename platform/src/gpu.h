@@ -119,13 +119,16 @@ typedef enum tide_gpu_attribute_format {
 } tide_gpu_attribute_format;
 
 // How a pipeline's pixels go over what's there. A pixel's color is as its
-// fragment shader wrote it, its alpha how much of it there is, but for
-// TIDE_GPU_BLEND_MULTIPLY, whose shader writes a color that's gone to white
-// where its alpha is 0 (the renderer's shaders do, by a uniform, as one
-// shader is drawn through pipelines that blend each way).
+// fragment shader wrote it, already times its alpha (premultiplied), and its
+// alpha how much of what's there it covers. A texture's pixels are the same
+// way, so that what's blended between two of them is right whatever color a
+// clear one has, and a target holds what was blended into it that way too.
+// TIDE_GPU_BLEND_MULTIPLY's shader writes a color that's gone to white where
+// its alpha is 0 (the renderer's shaders do, by a uniform, as one shader is
+// drawn through pipelines that blend each way).
 typedef enum tide_gpu_blend {
-    TIDE_GPU_BLEND_ALPHA,    // Over what's there, by its alpha
-    TIDE_GPU_BLEND_ADD,      // Added to what's there, by its alpha; the alpha there grows by it
+    TIDE_GPU_BLEND_ALPHA,    // Over what's there: its color, and what's there less its alpha
+    TIDE_GPU_BLEND_ADD,      // Added to what's there; the alpha there grows by its own, of what was left to 1
     TIDE_GPU_BLEND_MULTIPLY, // What's there times its color; the alpha there stays
     TIDE_GPU_BLEND_REPLACE,  // In place of what's there, alpha too
 } tide_gpu_blend;
@@ -180,6 +183,16 @@ typedef enum tide_gpu_wrap {
     TIDE_GPU_WRAP_REPEAT, // The texture again
     TIDE_GPU_WRAP_MIRROR, // The texture again, the other way round each time
 } tide_gpu_wrap;
+
+// How a texture is read between its pixels: tide_filter's numbers. With
+// TIDE_GPU_FILTER_MIPMAPS it's also read between its smaller images
+// (tide_gpu.mipmaps), by how much smaller than itself it's drawn; one that
+// has none yet is read as TIDE_GPU_FILTER_LINEAR.
+typedef enum tide_gpu_filter {
+    TIDE_GPU_FILTER_NEAREST, // The nearest pixel
+    TIDE_GPU_FILTER_LINEAR,  // Blended with its neighbors
+    TIDE_GPU_FILTER_MIPMAPS, // ...and between the two of its images nearest the size it's drawn at
+} tide_gpu_filter;
 
 enum { TIDE_GPU_MAX_SLOTS = 3, TIDE_GPU_MAX_ATTRIBUTES = 16, TIDE_GPU_MAX_TEXTURES = 8 };
 
@@ -262,6 +275,15 @@ typedef struct tide_gpu {
     // A texture. Writing takes all of it. How it's read is each draw's to say (sample).
     tide_gpu_id (*texture)(tide_gpu_format format, int width, int height, const void *pixels);
     void (*texture_write)(tide_gpu_id texture, const void *pixels);
+    // Its smaller images, each half the last one's size down to one pixel
+    // and each pixel the mean of the four it's made of, from its pixels as
+    // they are: what TIDE_GPU_FILTER_MIPMAPS reads. Outside a pass. For a
+    // texture and for a target's color image alike. They're as they were
+    // made until this is called again: writing a texture, or drawing into a
+    // target, changes none of them. Where the device can't make them (a
+    // float texture where it draws into no floats), the texture has none,
+    // and is read as TIDE_GPU_FILTER_LINEAR.
+    void (*mipmaps)(tide_gpu_id texture);
     void (*texture_free)(tide_gpu_id texture);
 
     tide_gpu_id (*pipeline)(const tide_gpu_pipeline_desc *desc);
@@ -327,15 +349,15 @@ typedef struct tide_gpu {
     // pipeline is used, and 0 as a pass begins.
     void (*stencil)(uint32_t value);
     void (*uniforms)(const void *data, size_t size);
-    // Its texture `slot`, and how it's sampled: between pixels, blended with
-    // its neighbors or the nearest, and past its edges, as `wrap` says. A
+    // Its texture `slot`, and how it's sampled: between pixels, as `filter`
+    // says, and past its edges, as `wrap` says. A
     // texture of any size wraps, and one texture can be in several slots,
     // sampled another way in each. Each of a pipeline's is set before it
     // draws, after the pipeline is. One the pipeline reads as depth is a
-    // target's depth, and neither `blended` nor `wrap` is read: its nearest
+    // target's depth, and neither `filter` nor `wrap` is read: its nearest
     // pixel is, the pixels at its edge past them, and where it's compared,
     // the GPU blends what the comparisons give.
-    void (*sample)(uint32_t slot, tide_gpu_id texture, bool blended, tide_gpu_wrap wrap);
+    void (*sample)(uint32_t slot, tide_gpu_id texture, tide_gpu_filter filter, tide_gpu_wrap wrap);
     void (*vertices)(uint32_t slot, tide_gpu_id buffer, size_t offset);
     void (*indices)(tide_gpu_id buffer, bool wide); // 32 bits each, or 16
     // Triangles, three vertices (or indices) each, `instances` times over.

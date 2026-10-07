@@ -80,7 +80,7 @@ TIDE_TEST(meshes_draw_in_order)
     TIDE_CHECK(kept[1].position.x == 3.0f && kept[1].uv.x == 1.0f && kept[1].color.b == 0.0f && kept[1].color.g == 1.0f);
     TIDE_CHECK(draw.vertices[draw.indices[command(6)->mesh.first]].position.x == 5.0f); // 2, 1, 0
     TIDE_CHECK(pixel_is(checker, 0, 0, 255, 0, 0, 255));
-    TIDE_CHECK(pixel_is(checker, 3, 1, 0, 0, 255, 128));
+    TIDE_CHECK(pixel_is(checker, 3, 1, 0, 0, 128, 128)); // Times its alpha, as a texture has it
     TIDE_CHECK(pixel_is(checker, 1, 0, 0, 0, 0, 0));
 
     // On the screen, C again, which says how many commands the list has: the screen, its clip and its mesh

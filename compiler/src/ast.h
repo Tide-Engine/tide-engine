@@ -394,12 +394,12 @@ typedef struct shader_sample {
     int param;    // -1 for an asset's grid
     int field;    // -1 for a direct Texture parameter; otherwise its component or singleton field
     bool local;   // The field is one of its type's local fields (its local_part's)
-    bool blended; // Filter.Bilinear, or the nearest cell
+    int filter;   // Its Filter's number, tide_filter's: the nearest cell, blended, or between its smaller images too
     const struct decl *asset; // A Grid2<Color> or Texture asset sampled by name, or NULL
     int wrap;     // What a uv past 0 and 1 reads: its Wrap's number, tide_wrap's
     shader_read read; // A DepthTexture's: which of its two ways it's read
     // Whether how it's read is known here: the Sample says its filter and its wrap, or it's of a grid field
-    // or an asset by name, whose declaration's it then has, worked into `blended` and `wrap`
+    // or an asset by name, whose declaration's it then has, worked into `filter` and `wrap`
     // (declared_sampling). A Texture's that isn't (a frag's own Texture parameter, a Texture field) is read as
     // the Texture it's given says, which each draw's run carries (tide_draw_run.sampling)
     bool filter_said, wrap_said;
@@ -547,6 +547,9 @@ typedef struct decl {
     // How its [Filter] and [Wrap] attributes say a texture of it is sampled, where a draw or a Sample that
     // names it doesn't say: 1 + the enum member's number, or 0 for none (declared_sampling)
     int sample_filter, sample_wrap;
+    // [Raw] before it: its pixels are numbers as the file has them, with no alpha worked into them, which
+    // only a frag or a vert reads, by its name (declared_raw)
+    bool sample_raw;
     bool asset_many; // A List or Map of a glob's matches
 
     // Systems, views, methods, functions, and an input's Sample
@@ -802,6 +805,7 @@ struct expr {
     const enum_member *enum_member; // Page.Title: the member (type_decl is its enum)
     bool typed_text;       // keyboard.text: what was typed, which C keeps as code points
     bool local_field;      // box.verts: a local field of a match component or singleton, in its local part (`field` is that one's)
+    bool raw_sampled;      // A [Raw] Texture asset's name as the object of a Sample, which is the one place it goes
     bool target_colors;    // target.colors: a render target's color images, of which an index reads one (target.colors[1])
 
 
@@ -1020,7 +1024,7 @@ typedef struct shader_value {
 typedef struct shader_texture {
     const struct decl *source;
     const field *field;
-    bool blended;
+    int filter;  // Its Filter's number, tide_filter's, where it's known here (filter_said)
     bool direct; // Supplied explicitly by Draw.Mesh or Draw.Blit, rather than a field
     const struct decl *asset; // A Grid2<Color> or Texture asset, sampled by name: neither a field nor the draw's
     int wrap;    // Its Wrap's number, tide_wrap's: 0 where the draw says (a `textured` shader's own)
@@ -1127,6 +1131,10 @@ typedef struct program {
     // Whether code names Font.Bold, or makes a Font of a number: only then does
     // generated C name the bold weight's file, so only then does the game carry it.
     bool names_bold;
+    // Whether code names Filter.Trilinear: only then does generated C have the member, and only then is a
+    // Sample that leaves its filter to the Texture it's given written so that it can read between that
+    // texture's smaller images. So a game that doesn't generates the C and the shaders it did.
+    bool names_trilinear;
     decl *vertex;        // The built-in struct Vertex, a corner of what mesh draw draws
     decl *vertex3;       // The built-in struct Vertex3, a corner of a 3D mesh
     decl *shape;         // The built-in struct Shape, what Draw.Shape draws
@@ -1334,6 +1342,9 @@ void plan_shaders(program *prog);
 // declaration: a Texture that's a value (a field's, a local's, a target's
 // color), which is sampled as each draw and each Sample says.
 void declared_sampling(const expr *texture, int *filter, int *wrap);
+// Whether a texture's declaration says [Raw]: an asset by its name, or a grid's field.
+bool declared_raw(const expr *texture);
+bool field_is_raw(const field *f);
 
 // Whether a shader reads a local field of the match's component or singleton
 // `d`: its draws are handed d's local part too.
