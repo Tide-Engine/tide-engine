@@ -1269,7 +1269,7 @@ static unsigned declared_sampling_bits(const expr *texture)
 {
     int filter, wrap;
     declared_sampling(texture, &filter, &wrap);
-    return (filter == 0 ? 1u : 0u) | (wrap > 0 ? (unsigned)wrap << 2 : 0u);
+    return (filter == 0 ? 1u : filter == 2 ? 2u : 0u) | (wrap > 0 ? (unsigned)wrap << 2 : 0u);
 }
 
 // A draw's texture: `texture` as the Texture it is, with the filter and the
@@ -15842,8 +15842,9 @@ static void gen_shaders(gen *g)
             else blended |= (unsigned)texture->wrap << (8 + 2 * t); // TIDE_SAMPLING_WRAP
             if (filter_carried) {
                 // Its bit comes with the texture
-            } else if (texture->blended) {
+            } else if (texture->filter) {
                 blended |= 1u << t;
+                if (texture->filter == 2) blended |= 1u << (24 + t); // TIDE_SAMPLING_MIPS
             }
             if (texture->asset && texture->asset->return_type.kind == TY_TEXTURE) { // A Texture asset, by name
                 sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, %s);\n", t, asset_cname(texture->asset));
@@ -15912,6 +15913,8 @@ static void bind_views(const program *prog)
 
 bool codegen(program *prog, const codegen_options *opts)
 {
+    // Filter.Trilinear is a member of the enum only in a game that names it, so the others' C is as it was
+    if (!prog->names_trilinear && prog->filter && prog->filter->members.count > 2) prog->filter->members.count = 2;
     if (opts->info) {
         setting_text(opts->info->title, sizeof opts->info->title, prog->title);
         setting_text(opts->info->app_id, sizeof opts->info->app_id, prog->app_id);

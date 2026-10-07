@@ -831,7 +831,7 @@ There's nothing to create, upload or free. The grid is ordinary state: change it
 
 The grid can be local state or the match's, like a canvas each player paints. Views read the match's grids as they are at the latest tick: cells aren't blended.
 
-The argument after the texture says how it's read between pixels: `Filter.Bilinear` blends them, `Filter.Point` takes the nearest, for pixel art. A call that leaves it out reads the texture as the texture says (see [Saying it once](#saying-it-once-on-the-texture)), which is blended unless something said otherwise.
+The argument after the texture says how it's read between pixels: `Filter.Bilinear` blends them, `Filter.Point` takes the nearest, for pixel art, and `Filter.Trilinear` blends them and stays smooth where the texture is drawn smaller than it is (see [Drawn smaller](#drawn-smaller)). A call that leaves it out reads the texture as the texture says (see [Saying it once](#saying-it-once-on-the-texture)), which is blended unless something said otherwise.
 
 - A grid with an open axis has no size, so it's no texture: the mesh draws with its colors alone. Neither is one past 16384 cells a side.
 - How big a texture can be is the GPU's limit: at least 2048 by 2048 wherever Tide runs.
@@ -916,6 +916,22 @@ The quad below has uvs that go three times across its texture and three times do
 - It's how this draw reads the texture, and changes nothing of the image: one grid can be clamped in one draw and repeated in the next. So can a [render target's color](#targets-and-post-processing), and a texture of any size.
 - Blended, a cell at the edge blends with what the wrap says is past it: with `Wrap.Repeat` that's the cell at the opposite edge, which is what makes tiles meet without a seam.
 - `Wrap` is the engine's name: a game's own type or function takes another one, or a namespace.
+
+### Drawn smaller
+
+A texture drawn smaller than it is has several of its pixels under each pixel of the screen. `Filter.Bilinear` reads the ones under the pixel's middle, and skips the rest: a tiled floor seen from far away shimmers as the camera moves, and a big image shown as a thumbnail looks grainy. `Filter.Trilinear` reads all of them:
+
+```csharp
+Draw.Mesh(floor, faces, float4x4.identity, tiles, Filter.Trilinear, Wrap.Repeat);
+```
+
+- The engine keeps smaller copies of the texture for it, each half the size of the last, down to one pixel (its mipmaps), and the GPU blends between the two nearest the size the texture is drawn at. So a pixel is the mean of what it covers.
+- Drawn at its own size or bigger, it's the same as `Filter.Bilinear`.
+- **It's a filter like the others**: a draw's argument, a `Sample`'s in a [frag](./shaders.md#textures), a declaration's `[Filter(Filter.Trilinear)]`, and what a `Texture` carries from there (below).
+- **Nothing to make or keep up to date.** The copies are made the first time a draw reads the texture this way, and again when its pixels changed: a grid whose cells were written, a [render target](#targets-and-post-processing) that was drawn into. A texture no draw reads this way has none.
+- **What it costs**: a third more memory on the GPU for that texture, and making the copies, which is quick for an image that never changes and adds up for a big grid that changes every frame.
+- It's for what's seen at a distance or at many sizes: floors and walls in 3D, a map you zoom out of, a target shown as a thumbnail. Pixel art at its own size wants `Filter.Point`.
+- A `Grid2<float>` has them wherever the device can draw into floats, which is nearly everywhere (see [float images](#what-a-target-holds)); where it can't, it's read as `Filter.Bilinear`.
 
 ### Saying it once, on the texture
 

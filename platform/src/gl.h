@@ -75,6 +75,7 @@ enum {
     GL_DECR = 0x1E03,
     GL_NEAREST = 0x2600,
     GL_LINEAR = 0x2601,
+    GL_LINEAR_MIPMAP_LINEAR = 0x2703,
     GL_TEXTURE_MAG_FILTER = 0x2800,
     GL_TEXTURE_MIN_FILTER = 0x2801,
     GL_TEXTURE_WRAP_S = 0x2802,
@@ -153,7 +154,7 @@ enum {
     V(FramebufferTexture2D, (GLenum target, GLenum attachment, GLenum texture_target, GLuint texture, GLint level),    \
       (target, attachment, texture_target, texture, level))                                                            \
     V(FrontFace, (GLenum winding), (winding))                                                                          \
-    V(GenBuffers, (GLsizei count, GLuint *buffers), (count, buffers))                                                  \
+    V(GenBuffers, (GLsizei count, GLuint *buffers), (count, buffers))                                                      V(GenerateMipmap, (GLenum target), (target))                                                                       \
     V(GenFramebuffers, (GLsizei count, GLuint *framebuffers), (count, framebuffers))                                   \
     V(GenSamplers, (GLsizei count, GLuint *samplers), (count, samplers))                                               \
     V(GenTextures, (GLsizei count, GLuint *textures), (count, textures))                                               \

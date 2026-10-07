@@ -65,6 +65,7 @@ tide_e2e_test(draw_depth) # ...and what 3D meshes do with depth: the setting tha
 tide_e2e_test(draw_cull) # ...and which side of their triangles draws, with the instances a transform mirrors told apart
 tide_e2e_test(draw_stencil) # ...and stencil: Draw's, for 2D and 3D draws alike, said to a renderer once before the draws it's for
 tide_e2e_test(wrap) # What a uv past a texture's edges reads: a mesh draw's wrap after its filter, and a frag's at Sample
+tide_e2e_test(mipmaps) # Filter.Trilinear, wherever a filter is said: what a draw records, and how a frag reads between a texture's smaller images
 tide_e2e_test(assets) # Files a game is built with, read by name: each type, globs, a grid drawn and sampled, match code
 tide_e2e_test(assets_plain) # ...and the same game with none: its world is the same bytes
 tide_e2e_test(asset_textures) # Texture assets, and [Filter] and [Wrap] on a texture's declaration
