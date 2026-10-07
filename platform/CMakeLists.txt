@@ -216,6 +216,13 @@ target_include_directories(tide_platform_audio PRIVATE "${PROJECT_SOURCE_DIR}/te
 target_link_libraries(tide_platform_audio PRIVATE tide_platform tide_audio_refs) # tests/audio: the Vorbis reference files
 add_test(NAME tide_platform_audio COMMAND tide_platform_audio)
 
+# The page's microphone lifecycle and worklet bridge, with a fake device:
+# no browser permissions or physical microphone are needed.
+if(TIDE_NODE)
+    add_test(NAME tide_platform_web_audio
+        COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/tests/web_audio.mjs")
+endif()
+
 # The audio device, where the machine has one: opened, played through silently, forgotten and closed.
 if(NOT TIDE_WEB)
     add_executable(tide_platform_audio_device tests/audio_device.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
