@@ -64,6 +64,21 @@ tide_float2 tide_draw_world_to_screen(const tide_draw_list *d, const tide_float2
     return finite2(result) ? result : zero;
 }
 
+tide_float3x3 tide_draw_world_to_screen_matrix(const tide_draw_list *d, const tide_float2 window_size)
+{
+    const tide_float2 screen_size = target_size(d, window_size);
+    const tide_float3x3 zero = {0};
+    tide_float2 center;
+    float scale;
+    bool pixels;
+    if (!screen_valid(screen_size) || !camera2(d, screen_size, &center, &scale, &pixels)) return zero;
+    if (pixels) return tide_identity_f3x3();
+    const tide_float3x3 result = {{scale, 0.0f, 0.0f},
+                                  {0.0f, -scale, 0.0f},
+                                  {screen_size.x * 0.5f - center.x * scale, screen_size.y * 0.5f + center.y * scale, 1.0f}};
+    return finite2(tide_f2(result.c2.x, result.c2.y)) ? result : zero;
+}
+
 tide_float2 tide_draw_screen_flip(const tide_float2 point, const tide_float2 screen_size)
 {
     return tide_f2(point.x, screen_size.y - point.y);
@@ -120,24 +135,42 @@ tide_float2 tide_draw_measure_text(const tide_draw_list *d, const char *text, co
 
 // Match the renderer: ordinary perspective cameras are recorded for a square
 // target and fitted across; matrix cameras already have their target's aspect.
+static tide_draw_camera_3d_data camera3_set(const tide_draw_list *d)
+{
+    return d->place.camera_3d ? d->cameras_3d[d->place.camera_3d - 1u] : tide_draw_first_camera_3d();
+}
+
+// A matrix of the camera's, its own or its projection, as it is for a destination of this shape.
+static tide_float4x4 fitted(const tide_draw_camera_3d_data *c, const tide_float4x4 matrix, const tide_float2 screen)
+{
+    if (!screen_valid(screen)) return (tide_float4x4){0};
+    return c->fit ? tide_draw_camera_fit(matrix, screen.x, screen.y) : matrix;
+}
+
+tide_float4x4 tide_draw_world_to_clip(const tide_draw_list *d, const tide_float2 window_size)
+{
+    const tide_draw_camera_3d_data c = camera3_set(d);
+    return fitted(&c, c.matrix, target_size(d, window_size));
+}
+
+tide_float4x4 tide_draw_camera_transform(const tide_draw_list *d, const tide_float2 window_size)
+{
+    (void)window_size;
+    return camera3_set(d).transform;
+}
+
+tide_float4x4 tide_draw_camera_projection(const tide_draw_list *d, const tide_float2 window_size)
+{
+    const tide_draw_camera_3d_data c = camera3_set(d);
+    return fitted(&c, c.projection, target_size(d, window_size));
+}
+
 static bool camera3(const tide_draw_list *d, const tide_float2 screen, tide_float4x4 *matrix, bool *infinite)
 {
     if (!screen_valid(screen)) return false;
-    bool fit = true;
-    if (d->place.camera_3d) {
-        const tide_draw_camera_3d_data *c = &d->cameras_3d[d->place.camera_3d - 1u];
-        *matrix = c->matrix;
-        fit = c->fit != 0;
-    } else {
-        *matrix = tide_draw_camera_3d_matrix(tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 60.0f);
-    }
-    if (fit) {
-        const float across = screen.y / screen.x;
-        matrix->c0.x *= across;
-        matrix->c1.x *= across;
-        matrix->c2.x *= across;
-        matrix->c3.x *= across;
-    }
+    const tide_draw_camera_3d_data c = camera3_set(d);
+    const bool fit = c.fit != 0;
+    *matrix = fitted(&c, c.matrix, screen);
     if (!finite4(matrix->c0) || !finite4(matrix->c1) || !finite4(matrix->c2) || !finite4(matrix->c3)) return false;
     const float determinant = tide_determinant_f4x4(*matrix);
     if (infinite) *infinite = fit;

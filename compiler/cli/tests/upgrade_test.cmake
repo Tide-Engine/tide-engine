@@ -79,7 +79,7 @@ function(make_installation install version)
 endfunction()
 
 # A release of `version` in `dir`, with its package, checksums and the list
-# GitHub would give; the list's URL goes in TIDE_RELEASES_URL.
+# the site would give; the list's URL goes in TIDE_RELEASES_URL.
 function(make_release dir version)
     set(stage "${dir}/tide")
     file(COPY "${TIDE}" DESTINATION "${stage}/bin")
@@ -97,17 +97,9 @@ function(make_release dir version)
     file(SIZE "${dir}/${package}" size)
     file_url(package_url "${dir}/${package}")
     file_url(sums_url "${dir}/SHA256SUMS")
-    set(browser_package_url "${package_url}")
-    set(browser_sums_url "${sums_url}")
-    if(ARGV2 STREQUAL "authenticated")
-        # Private assets need their API URL; the browser URL cannot be fetched.
-        file_url(browser_package_url "${dir}/not-public/${package}")
-        file_url(browser_sums_url "${dir}/not-public/SHA256SUMS")
-    endif()
-    file(WRITE "${dir}/releases.json" "[{\"tag_name\": \"v${version}\", \"prerelease\": true, \"draft\": false, "
-        "\"html_url\": \"https://example.invalid/v${version}\", \"assets\": ["
-        "{\"name\": \"${package}\", \"size\": ${size}, \"url\": \"${package_url}\", \"browser_download_url\": \"${browser_package_url}\"}, "
-        "{\"name\": \"SHA256SUMS\", \"size\": 1, \"url\": \"${sums_url}\", \"browser_download_url\": \"${browser_sums_url}\"}]}]")
+    file(WRITE "${dir}/releases.json" "[{\"tag_name\": \"v${version}\", \"prerelease\": true, \"draft\": false, \"assets\": ["
+        "{\"name\": \"${package}\", \"size\": ${size}, \"browser_download_url\": \"${package_url}\"}, "
+        "{\"name\": \"SHA256SUMS\", \"size\": 1, \"browser_download_url\": \"${sums_url}\"}]}]")
     file_url(releases_url "${dir}/releases.json")
     set(ENV{TIDE_RELEASES_URL} "${releases_url}")
 endfunction()
@@ -149,27 +141,6 @@ if(NOT output STREQUAL "Upgraded tide ${version} -> 99.0.0 (nightly).\n")
     message(FATAL_ERROR "tide upgrade didn't say just \"Upgraded tide ${version} -> 99.0.0 (nightly).\":\n${output}")
 endif()
 check_installed("${install}" "99.0.0")
-
-# --- Either token variable enables API asset downloads. Local test URLs
-# still receive no credentials, and successful upgrades remove their files.
-set(ENV{GH_TOKEN} "")
-set(ENV{GITHUB_TOKEN} "")
-foreach(token_var GH_TOKEN GITHUB_TOKEN)
-    set(ENV{${token_var}} "upgrade-test-token")
-    set(install "${WORK}/${token_var}/Tide")
-    make_installation("${install}" "${version}")
-    make_release("${WORK}/${token_var}/release" "99.0.0" authenticated)
-    run_tide("${install}" result output upgrade)
-    if(NOT result EQUAL 0)
-        message(FATAL_ERROR "tide upgrade with ${token_var} failed (${result}):\n${output}")
-    endif()
-    check_installed("${install}" "99.0.0")
-    string(FIND "${output}" "upgrade-test-token" leaked)
-    if(NOT leaked EQUAL -1)
-        message(FATAL_ERROR "tide upgrade printed its authentication token")
-    endif()
-    set(ENV{${token_var}} "")
-endforeach()
 
 # --- The newest version already, and whole: nothing to do.
 set(install "${WORK}/same/Tide")

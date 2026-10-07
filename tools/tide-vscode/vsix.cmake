@@ -14,7 +14,13 @@ foreach(var SOURCE SYNTAX WORK VERSION OUT)
     endif()
 endforeach()
 
-find_program(NPM NAMES npm.cmd npm REQUIRED)
+# Windows' npm is a script of cmd's, which only Windows runs: under WSL its
+# folder is on PATH too.
+if(CMAKE_HOST_WIN32)
+    find_program(NPM NAMES npm.cmd npm REQUIRED)
+else()
+    find_program(NPM NAMES npm REQUIRED)
+endif()
 
 function(run)
     execute_process(COMMAND ${ARGN} WORKING_DIRECTORY "${WORK}" RESULT_VARIABLE result)

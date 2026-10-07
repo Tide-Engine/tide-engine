@@ -806,6 +806,20 @@ static void build_signatures(void)
              "position", "The world origin on the near plane of a ray through this screen point in pixels from the top left.");
     describe(add("Draw", "ScreenRayDirection", T_F3, "tide_draw_screen_ray_direction", 1, T_F2, T_NONE, T_NONE),
              "position", "The normalized world direction of a ray through this screen point in pixels from the top left.");
+    // The cameras as matrices: what the conversions above go through
+    describe(add("Draw", "WorldToClip", T_F4X4, "tide_draw_world_to_clip", 0, T_NONE, T_NONE, T_NONE),
+             "", "The current 3D camera as one matrix, from the world to clip space, fitted to the shape of what it "
+             "draws into: what the GPU multiplies a 3D mesh's positions by, the turn of z included. Keep a target's "
+             "for a frag that looks a pixel up in what the target saw, as a shadow map's does.");
+    describe(add("Draw", "CameraTransform", T_F4X4, "tide_draw_camera_transform", 0, T_NONE, T_NONE, T_NONE),
+             "", "Where the current 3D camera is in the world, as a matrix: it looks along its +z, with +y up. "
+             "`Draw.Camera(Draw.CameraTransform(), Draw.CameraProjection())` is the same camera.");
+    describe(add("Draw", "CameraProjection", T_F4X4, "tide_draw_camera_projection", 0, T_NONE, T_NONE, T_NONE),
+             "", "The current 3D camera's projection, fitted to the shape of what it draws into: from what the camera "
+             "sees, looking down -z, to clip space, as `float4x4.PerspectiveFov` and `float4x4.Ortho` make them.");
+    describe(add("Draw", "WorldToScreenMatrix", T_F3X3, "tide_draw_world_to_screen_matrix", 0, T_NONE, T_NONE, T_NONE),
+             "", "The current 2D camera as a matrix: what `WorldToScreen` does to a float2 as (x, y, 1), into screen "
+             "pixels from the top left, with y down. The identity inside `Pixels`.");
     // The window's height comes with the call (see gen_expr)
     describe(add("Screen", "Flip", T_F2, "tide_draw_screen_flip", 1, T_F2, T_NONE, T_NONE),
              "position", "The same point counted from the screen's other edge. Devices count pixels from the bottom "
@@ -1370,7 +1384,8 @@ type resolve_builtin_call(const str owner, expr *e)
                    STR_ARG(e->name));
         if (str_eq_c(owner, "Draw")) {
             diag_note("Draw has the window's shapes, text, meshes and primitives, its settings (Blend, Tint, Transform, "
-                      "Clip, Camera, Pixels, Depth, Cull, Stencil), the conversions, MeasureText, Blit, window and list; "
+                      "Clip, Camera, Pixels, Depth, Cull, Stencil), the conversions, the cameras' matrices, MeasureText, Blit, "
+                      "window and list; "
                       "a render target has the same, as its methods");
         }
         suggestion s = suggest_start(e->name);
