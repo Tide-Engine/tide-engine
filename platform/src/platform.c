@@ -77,13 +77,13 @@ static unsigned frames_counted;
 static bool headless;
 static tide_headless_desc headless_run;
 static uint32_t headless_frame; // The frame running, or the last one, counted from 1
-// What a headless window's mixer played, every frame of it, as stereo floats:
-// `played` frames so far, of which the ones from `captured` on haven't gone to
-// a capture yet. A frame is a 60th of a second, which at TIDE_AUDIO_RATE is
-// HEADLESS_AUDIO_FRAMES of audio.
+// What a headless window's mixer played, as stereo floats: `played` frames so
+// far, of which the ones from `captured` on haven't gone to a capture yet, and
+// the buffer holds the ones from `kept` on. A frame is a 60th of a second,
+// which at TIDE_AUDIO_RATE is HEADLESS_AUDIO_FRAMES of audio.
 #define HEADLESS_AUDIO_FRAMES (TIDE_AUDIO_RATE / 60u)
 static float *headless_audio;
-static uint64_t played, captured, audio_capacity;
+static uint64_t played, captured, kept, audio_capacity;
 
 // Seconds since the window opened.
 static double now(void)
@@ -160,10 +160,20 @@ void tide_platform_open_headless(const tide_headless_desc *desc)
 }
 
 // A headless window's mixer renders a frame's worth of audio once the frame
-// ran, as a device would have asked for it meanwhile, and keeps it.
+// ran, as a device would have asked for it meanwhile, and keeps what a capture
+// can still ask for: the whole run for --capture-audio, what played since the
+// last capture-audio line while the script has another, and nothing otherwise.
+// So a run that captures nothing holds a frame of it, however long it goes on.
 static void headless_audio_frame(void)
 {
-    const uint64_t need = played + HEADLESS_AUDIO_FRAMES;
+    if (!headless_run.capture_audio) {
+        if (!tide_script_captures_audio()) captured = played;
+        if (captured > kept) { // The frames before `captured` go: a capture just took them, so nothing's rendered past it yet
+            memmove(headless_audio, headless_audio + (captured - kept) * 2, (size_t)(played - captured) * 2 * sizeof *headless_audio);
+            kept = captured;
+        }
+    }
+    const uint64_t need = played - kept + HEADLESS_AUDIO_FRAMES;
     if (need > audio_capacity) {
         uint64_t c = audio_capacity ? audio_capacity : 16u * HEADLESS_AUDIO_FRAMES;
         while (c < need) c *= 2;
@@ -171,16 +181,17 @@ static void headless_audio_frame(void)
                                       (size_t)c * 2 * sizeof *headless_audio);
         audio_capacity = c;
     }
-    tide_mixer_render(headless_audio + played * 2, HEADLESS_AUDIO_FRAMES);
-    played = need;
+    tide_mixer_render(headless_audio + (played - kept) * 2, HEADLESS_AUDIO_FRAMES);
+    played += HEADLESS_AUDIO_FRAMES;
 }
 
-// Writes what was played from frame `from` on to a WAV at `path`.
+// Writes what was played from frame `from` on, which the buffer still has, to
+// a WAV at `path`.
 static bool capture_audio(const char *path, const uint64_t from)
 {
     const uint64_t frames = played - from;
     size_t size = 0;
-    uint8_t *wav = frames <= 0xFFFFFFFFu ? tide_wav_encode(headless_audio + from * 2, (uint32_t)frames, TIDE_AUDIO_RATE, &size) : NULL;
+    uint8_t *wav = frames <= 0xFFFFFFFFu && from >= kept ? tide_wav_encode(headless_audio + (from - kept) * 2, (uint32_t)frames, TIDE_AUDIO_RATE, &size) : NULL;
     errno = 0;
     FILE *file = wav ? fopen(path, "wb") : NULL;
     bool written = file && fwrite(wav, 1, size, file) == size;

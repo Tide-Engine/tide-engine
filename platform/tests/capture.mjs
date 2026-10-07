@@ -277,6 +277,23 @@ if (pinged.status === 0) {
     const playedAgain = run(['--script', script('ping.txt', ['3 key p', '6 quit']), '--capture-audio', 'played2.wav', '--size', '64', '64']);
     check(playedAgain.status === 0 && readFileSync(join(scratch, 'played2.wav')).equals(b), 'and the same bytes again');
 }
+// Without --capture-audio the run keeps only what a capture-audio line can still
+// ask for, and lets go of what the last one took: a line far from the one
+// before it still gets every frame between, with the clip where it played (P at
+// frame 20: 19 frames are 59.375 blocks, so the clip starts at the 61st block,
+// 15360, which is 12960 into b.wav, which starts at frame 2400).
+const spans = run(['--script', script('spans.txt', ['3 capture-audio a.wav', '20 key p', '40 capture-audio b.wav', '41 capture-audio c.wav', '41 quit']),
+                   '--size', '64', '64']);
+check(spans.status === 0, `capture-audio lines without --capture-audio end with exit code 0 (${spans.status})`);
+if (spans.status === 0) {
+    const [a, b, c] = ['a.wav', 'b.wav', 'c.wav'].map(wav);
+    check(a && b && c && a.frames === 3 * 800 && b.frames === 37 * 800 && c.frames === 800,
+          `each takes what played since the last (${[a, b, c].map(w => w && w.frames).join(', ')})`);
+    const bytes = readFileSync(join(scratch, 'b.wav'));
+    const sample = frame => bytes.readInt16LE(44 + frame * 4);
+    check(a && a.silent && c && c.silent && sample(12959) === 0 && sample(12960) === 16384 && sample(13359) === 16384 && sample(13360) === 0,
+          `and the clip is where it played in the one that has it (${sample(12959)}, ${sample(12960)}, ${sample(13359)}, ${sample(13360)})`);
+}
 const lostAudio = run(['--frames', '2', '--capture-audio', join(scratch, 'no', 'such', 'folder.wav')]);
 check(lostAudio.status === 1 && lostAudio.err.includes("can't write"), `audio that can't be written is exit code 1 (${lostAudio.status})`);
 
