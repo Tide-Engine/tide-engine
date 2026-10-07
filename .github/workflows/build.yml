@@ -2,6 +2,7 @@
 #
 # Run workflow (or gh workflow run) chooses what to do:
 # - check (default): the packages and every test suite; nothing is published.
+#   Its optional windows-web scope runs only the Windows web test suite.
 # - nightly, on dev: build each platform's package, try it, and publish a
 #   pre-release, like 0.2.0-nightly.3. No test suite runs.
 # - stable, on release: the packages and every test suite, then a stable
@@ -18,7 +19,7 @@
 # macOS adds a package, while the existing Windows and Linux test suites
 # keep their full-check and stable-release gates.
 name: Build
-run-name: ${{ inputs.action }} (${{ github.ref_name }})
+run-name: ${{ inputs.action }}${{ inputs.scope == 'windows-web' && ' windows-web' || '' }} (${{ github.ref_name }})
 
 on:
   workflow_dispatch:
@@ -32,6 +33,14 @@ on:
           - check
           - nightly
           - stable
+      scope:
+        description: 'For checks: all platforms and packages, or Windows web only'
+        type: choice
+        required: false
+        default: all
+        options:
+          - all
+          - windows-web
 
 # Publishing a commit whose workflows differ from the default branch needs
 # TIDE_PUBLISH_TOKEN, scoped to this repo with Contents and Workflows write.
@@ -61,7 +70,12 @@ jobs:
         shell: bash
         env:
           BUILD_ACTION: ${{ inputs.action }}
+          BUILD_SCOPE: ${{ inputs.scope || 'all' }}
         run: |
+          case "$BUILD_ACTION:$BUILD_SCOPE" in
+            check:all|check:windows-web|nightly:all|stable:all) ;;
+            *) echo "::error::Use scope=all for publishing; windows-web is only for action=check."; exit 1 ;;
+          esac
           case "$BUILD_ACTION:$GITHUB_REF" in
             check:*|nightly:refs/heads/dev|stable:refs/heads/release) ;;
             *) echo "::error::Use dev for a nightly, release for a stable, or check on any ref."; exit 1 ;;
@@ -100,21 +114,27 @@ jobs:
             @semantic-release/git
         env:
           GITHUB_TOKEN: ${{ secrets.TIDE_PUBLISH_TOKEN || secrets.GITHUB_TOKEN }}
-      # The packages always, and the test suites for check and stable.
+      # The packages and test suites, or the requested Windows web check alone.
       # macOS only builds and tries its package; it adds no test-suite rows.
       - name: Checks
         id: checks
         shell: bash
         env:
           BUILD_ACTION: ${{ inputs.action }}
+          BUILD_SCOPE: ${{ inputs.scope || 'all' }}
         run: |
           row() { printf '{"platform":"%s","os":"%s","preset":"%s","test-jobs":4}' "$1" "$2" "$3"; }
-          rows="$(row windows-x64 blacksmith-4vcpu-windows-2025 package),$(row linux-x64 blacksmith-4vcpu-ubuntu-2404 package),$(row macos-arm64 blacksmith-6vcpu-macos-latest package)"
           tests=false
-          if [ "$BUILD_ACTION" != nightly ]; then
+          if [ "$BUILD_SCOPE" = windows-web ]; then
             tests=true
-            for preset in release web-release mingw-release; do rows="$rows,$(row windows-x64 blacksmith-4vcpu-windows-2025 $preset)"; done
-            for preset in release web-release sanitize; do rows="$rows,$(row linux-x64 blacksmith-4vcpu-ubuntu-2404 $preset)"; done
+            rows="$(row windows-x64 blacksmith-4vcpu-windows-2025 web-release)"
+          else
+            rows="$(row windows-x64 blacksmith-4vcpu-windows-2025 package),$(row linux-x64 blacksmith-4vcpu-ubuntu-2404 package),$(row macos-arm64 blacksmith-6vcpu-macos-latest package)"
+            if [ "$BUILD_ACTION" != nightly ]; then
+              tests=true
+              for preset in release web-release mingw-release; do rows="$rows,$(row windows-x64 blacksmith-4vcpu-windows-2025 $preset)"; done
+              for preset in release web-release sanitize; do rows="$rows,$(row linux-x64 blacksmith-4vcpu-ubuntu-2404 $preset)"; done
+            fi
           fi
           echo "tests=$tests" >> "$GITHUB_OUTPUT"
           echo "matrix=[$rows]" >> "$GITHUB_OUTPUT"
@@ -464,7 +484,7 @@ jobs:
     if: always() && needs.checks.result != 'skipped'
     strategy:
       matrix:
-        platform: [windows-x64, linux-x64, macos-arm64]
+        platform: ${{ inputs.action == 'check' && inputs.scope == 'windows-web' && fromJSON('["windows-x64"]') || fromJSON('["windows-x64","linux-x64","macos-arm64"]') }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Require every test and package
@@ -477,6 +497,7 @@ jobs:
   jetbrains:
     name: JetBrains plugin
     needs: version
+    if: inputs.action != 'check' || inputs.scope != 'windows-web'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       TIDE_VERSION: ${{ needs.version.outputs.version || '0.0.0-dev' }}
