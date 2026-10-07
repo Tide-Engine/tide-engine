@@ -250,6 +250,11 @@ static bool type_fits(emit *em, const type t, const loc at)
     case TY_OPTIONAL:
     case TY_FAILABLE: why = "the GPU has no values that may be missing: handle it on the CPU"; break;
     case TY_RECORD:
+        if (t.decl == em->prog->pixel) {
+            refuse(em, at, "a frag's pixel is read through 'this.position', 'this.depth' and 'this.world': it's not a value "
+                          "to keep or pass on");
+            return false;
+        }
         refuse(em, at, "a %s is read by its fields, where the frag or vert takes it: it's not a value to keep or pass on",
                type_name(t));
         return false;
@@ -1254,7 +1259,7 @@ static const shader_handed *handed_to(const shader *sh, const param *p)
 }
 
 // Whether `p` is a parameter of the frag or vert that the engine supplies: a
-// component, a singleton, Pixel, Instance, an instance's struct or the one
+// component, a singleton, Instance, an instance's struct or the one
 // the draw gives after its vert and frag. What the
 // vert wrote for the frag is a value the frag is called with, like its vertex.
 static bool is_bound(const emit *em, const param *p)
@@ -1432,7 +1437,7 @@ static void ex_static(emit *em, const expr *e)
            STR_ARG(e->member));
 }
 
-// pixel.position and the like: what the GPU says of the pixel being drawn.
+// this.position and the like: what the GPU says of the pixel being drawn.
 static void ex_pixel(emit *em, const expr *e)
 {
     const bool wgsl = em->l == WGSL;
@@ -1462,6 +1467,11 @@ static void ex_member(emit *em, const expr *e)
         return;
     }
     const expr *obj = e->object;
+    if (obj->kind == E_THIS && obj->type.kind == TY_RECORD && obj->type.decl == em->prog->pixel) {
+        if (em->checking && str_eq_c(e->member, "world")) em->root->pixel_world = true;
+        ex_pixel(em, e);
+        return;
+    }
     // A field of what the engine supplies
     if (obj->kind == E_NAME && obj->bind == BIND_PARAM && is_bound(em, obj->param) && e->field) {
         const param *p = obj->param;
@@ -2037,6 +2047,8 @@ static bool liftable(const emit *em, const expr *e, const int depth)
     case E_BOOL:
     case E_DEFAULT:
         return true;
+    case E_THIS:
+        return em->code == em->root && em->root->is_frag;
     case E_NAME:
         if (e->bind == BIND_CONST) return true;
         if (e->bind == BIND_PARAM) return em->code == em->root && e->param->mode != PARAM_MUT && !e->param->is_out;
@@ -2563,7 +2575,8 @@ static void ex(emit *em, const expr *e)
                           "grid of colors with 'grid.Sample(uv)'");
         return;
     case E_THIS:
-        refuse(em, e->at, "the GPU has no entities: code it runs takes values, and has no 'this'");
+        refuse(em, e->at, "a frag's pixel is read through 'this.position', 'this.depth' and 'this.world': it's not a value "
+                          "to keep or pass on");
         return;
     case E_NULL:
     case E_COALESCE:
@@ -2602,7 +2615,7 @@ static bool ends(const stmt *s)
         return false;
     case S_IF:
         return s->else_stmt && ends(s->then_stmt) && ends(s->else_stmt);
-    case S_EXPR: // pixel.Discard()
+    case S_EXPR: // this.Discard()
         return s->value->kind == E_METHOD && s->value->call == CALL_DISCARD;
     default:
         return false;
@@ -3567,6 +3580,7 @@ static void add_bound(shader *sh, decl *d)
 static void plan_reads(const program *prog, shader *sh, const decl *code)
 {
     if (!code) return;
+    if (code->is_frag && code->pixel_world) sh->frag_world = true;
     for (int i = 1; i < code->params.count; i++) {
         const param *p = &code->params.items[i];
         if (p->type.decl == prog->instance && p->reads && p->reads[0] && sh->dims == 3) {

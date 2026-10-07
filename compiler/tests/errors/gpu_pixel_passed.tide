@@ -1,4 +1,4 @@
-// expect: a Pixel is read by its fields, where the frag or vert takes it: it's not a value to keep or pass on
+// expect: a frag's pixel is read through 'this.position', 'this.depth' and 'this.world': it's not a value to keep or pass on
 scene Main { }
 
 struct V
@@ -29,9 +29,9 @@ event(Spawned) Setup(with Main)
     Spawn(Box);
 }
 
-frag Shade(V vertex, out Color color, Pixel pixel)
+frag Shade(V vertex, out Color color)
 {
-    var p = pixel;
+    var p = this;
     color = Color.white;
 }
 

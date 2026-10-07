@@ -21,7 +21,7 @@ struct Corner
     float3 normal;
 }
 
-frag Shine(Corner corner, out Color color, Pixel pixel, Room room)
+frag Shine(Corner corner, out Color color, Room room)
 {
     var away = Math.Normalize(corner.normal);
     mut Color near = room.reflection.Sample(away);

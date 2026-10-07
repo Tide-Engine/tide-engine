@@ -1,0 +1,12 @@
+// expect: functions don't run for an entity, so they have no 'this'
+scene Main { }
+
+float PixelX()
+{
+    return this.position.x;
+}
+
+frag Shade(Vertex vertex, out Color color)
+{
+    color = Color(PixelX(), 0, 0);
+}

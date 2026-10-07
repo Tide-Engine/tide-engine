@@ -50,9 +50,9 @@ frag Painted(Corner corner, out Color color, Instance instance, Moon moon)
 }
 
 // The mirror: each pixel reads the cube towards where a ray from the eye bounces.
-frag Mirror(Corner corner, out Color color, Pixel pixel, Room room)
+frag Mirror(Corner corner, out Color color, Room room)
 {
-    float3 from = Math.Normalize(pixel.world - room.eye);
+    float3 from = Math.Normalize(this.world - room.eye);
     float3 away = Math.Reflect(from, corner.normal);
     // The cube a view drew, with the moons in it, or the sky's own files
     mut Color seen = sky.Sample(away);

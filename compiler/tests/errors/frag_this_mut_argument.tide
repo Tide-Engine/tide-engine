@@ -1,0 +1,13 @@
+// expect: a frag's pixel can only be read
+scene Main { }
+
+void Move(mut float3 position)
+{
+    position.x += 1;
+}
+
+frag Shade(Vertex vertex, out Color color)
+{
+    Move(this.world);
+    color = Color.white;
+}

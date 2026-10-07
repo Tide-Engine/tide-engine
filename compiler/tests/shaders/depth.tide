@@ -20,9 +20,9 @@ float3 FromLamp(float3 world, float4x4 toLamp)
     return float3(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5, clip.z * 0.5 + 0.5);
 }
 
-frag Lit(Vertex3 vertex, out Color color, Pixel pixel, Lamp lamp)
+frag Lit(Vertex3 vertex, out Color color, Lamp lamp)
 {
-    float3 at = FromLamp(pixel.world, lamp.toLamp);
+    float3 at = FromLamp(this.world, lamp.toLamp);
     mut float lit = lamp.shadow.Compare(at.xy, at.z - 0.01);
     // In a branch, as it's read at its one level
     if (lit < 1) lit = lit * 0.5 + lamp.shadow.Compare(at.xy + float2(0.01, 0), at.z - 0.01) * 0.5;

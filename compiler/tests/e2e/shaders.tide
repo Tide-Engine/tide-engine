@@ -101,7 +101,7 @@ vert Wave(mut BoxVertex vertex, Time time, Instance instance)
 }
 
 // Once for each pixel: its vertex blended across the triangle, and its color
-frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models, Pixel pixel)
+frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models)
 {
     float light = Lit(vertex.normal, -sun.direction) * sun.strength;
     color = models.wood.Sample(vertex.uv) * models.moss.Sample(vertex.uv, Filter.Point) * box.tint * light;
@@ -110,8 +110,8 @@ frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models, P
     {
         color.a = color.a * box.finish.shine;
     }
-    if (box.wear == Wear.Broken || pixel.position.x < 0) pixel.Discard();
-    color.g += pixel.world.y * 0.01 + box.glow + models.fade + pixel.depth;
+    if (box.wear == Wear.Broken || this.position.x < 0) this.Discard();
+    color.g += this.world.y * 0.01 + box.glow + models.fade + this.depth;
     color.b += box.sparkle * sun.dim;
     color.g = Math.Saturate(color.g);
 }

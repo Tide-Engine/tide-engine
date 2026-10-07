@@ -1313,10 +1313,10 @@ TIDE_TEST(lsp_draw_values)
     SHADER_TYPES                                                                                                      \
     "vert Wave(mut BoxVertex vertex, Time time, Instance instance)\n{\n"                                              \
     "    vertex.position.y += Math.Sin(time.tick * time.dt + instance.transform.c3.x) * 0.1;\n}\n"                    \
-    "frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models, Pixel pixel)\n{\n"                \
+    "frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models)\n{\n"                \
     "    float light = Lit(vertex.normal, sun.direction);\n"                                                          \
     "    color = models.wood.Sample(vertex.uv) * box.tint * light;\n"                                                 \
-    "    if (pixel.position.x < 10) pixel.Discard();\n}\n"
+    "    if (this.position.x < 10) this.Discard();\n}\n"
 
 #define SHADERS                                                                                                       \
     SHADER_CODE                                                                                                       \
@@ -1348,18 +1348,18 @@ TIDE_TEST(lsp_shaders_complete)
     const char *changed = complete(SHADER_TYPES "vert Wave($)\n{\n}\n");
     TIDE_CHECK(offers(changed, "mut") && offers(changed, "BoxVertex"));
     TIDE_CHECK(offers(complete(SHADER_TYPES "vert Wave(mut $)\n{\n}\n"), "BoxVertex"));
-    // Then a frag's pixel, `out`, and what the engine supplies: components, singletons, Pixel and Instance
+    // Then a frag's pixel, `out`, and what the engine supplies: components, singletons and Instance
     const char *frag = complete(SHADER_TYPES "frag Shade(BoxVertex vertex, $)\n{\n}\n");
     TIDE_CHECK(offers(frag, "out") && !offers(frag, "mut"));
     TIDE_CHECK(offers(frag, "Box") && offers(frag, "Sun") && offers(frag, "Models") && offers(frag, "Time"));
-    TIDE_CHECK(offers(frag, "Pixel") && offers(frag, "Instance"));
+    TIDE_CHECK(!offers(frag, "Pixel") && offers(frag, "Instance"));
     TIDE_CHECK(!offers(frag, "with") && !offers(frag, "without") && !offers(frag, "World") && !offers(frag, "Devices"));
     TIDE_CHECK(!offers(frag, "BoxVertex") && !offers(frag, "float3"));
     const char *written = complete(SHADER_TYPES "frag Shade(BoxVertex vertex, out $)\n{\n}\n");
     TIDE_CHECK(offers(written, "Color") && !offers(written, "Box") && !offers(written, "Pixel") && !offers(written, "BoxVertex"));
     TIDE_CHECK(!offers(complete(SHADER_TYPES "frag Shade(BoxVertex vertex, mut $)\n{\n}\n"), "Color")); // Nothing of a frag's is
     const char *rest = complete(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, $)\n{\n}\n");
-    TIDE_CHECK(!offers(rest, "mut") && offers(rest, "Pixel") && offers(rest, "Sun"));
+    TIDE_CHECK(!offers(rest, "mut") && !offers(rest, "Pixel") && offers(rest, "Sun"));
     TIDE_CHECK(offers(rest, "out") && has(rest, "one more color the frag writes")); // Another output, for a target of several
     // A vert's `out` is a struct it writes for its frag
     const char *vert = complete(SHADER_TYPES "vert Wave(mut BoxVertex vertex, $)\n{\n}\n");
@@ -1367,7 +1367,8 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(offers(vert, "out"));
     const char *hands = complete(SHADER_TYPES "struct FromLamp { float glow; }\nvert Wave(mut BoxVertex vertex, out $)\n{\n}\n");
     TIDE_CHECK(offers(hands, "FromLamp") && !offers(hands, "Color") && !offers(hands, "Box") && !offers(hands, "Time"));
-    TIDE_CHECK(offers(complete(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, Pixel $)\n{\n}\n"), "pixel"));
+    TIDE_CHECK(offers(complete(SHADER_TYPES "component Pixel { float x; }\n"
+                                         "frag Shade(BoxVertex vertex, out Color color, Pixel $)\n{\n}\n"), "pixel"));
     // A game's own Pixel is the game's
     const char *own = complete(SHADER_TYPES "component Pixel { float x; }\nfrag Shade(BoxVertex vertex, $)\n{\n}\n");
     TIDE_CHECK(has(own, "{\"label\":\"Pixel\",\"kind\":22,\"detail\":\"component\"}") && !has(own, "where its pixel is"));
@@ -1375,23 +1376,29 @@ TIDE_TEST(lsp_shaders_complete)
     // In its code: what it takes, its locals, the game's functions and Math; nothing of the world or the frame
 #define IN_FRAG(code)                                                                                                 \
     SHADER_TYPES "extern float Noise(float x);\n"                                                                     \
-    "frag Shade(BoxVertex vertex, out Color color, Box box, Models models, Pixel pixel)\n{\n    " code "\n}\n"
+    "frag Shade(BoxVertex vertex, out Color color, Box box, Models models)\n{\n    " code "\n}\n"
     const char *code = complete(IN_FRAG("var glow = box.glow;\n    $"));
-    TIDE_CHECK(offers(code, "vertex") && offers(code, "color") && offers(code, "box") && offers(code, "pixel") && offers(code, "glow"));
+    TIDE_CHECK(offers(code, "vertex") && offers(code, "color") && offers(code, "box") && offers(code, "this") && offers(code, "glow"));
+    TIDE_CHECK(has(code, "A frag's `this`: where its pixel is") && has(code, "`this.Discard()`"));
     TIDE_CHECK(offers(code, "Math") && offers(code, "Lit") && offers(code, "float3") && offers(code, "bool") && offers(code, "BoxVertex"));
     TIDE_CHECK(offers(code, "if") && offers(code, "for") && offers(code, "var"));
     TIDE_CHECK(!offers(code, "Draw") && !offers(code, "GUI") && !offers(code, "Spawn") && !offers(code, "Send"));
     TIDE_CHECK(!offers(code, "Devices") && !offers(code, "Scene") && !offers(code, "Debug") && !offers(code, "Cursor"));
-    TIDE_CHECK(!offers(code, "while") && !offers(code, "foreach") && !offers(code, "switch") && !offers(code, "this"));
+    TIDE_CHECK(!offers(code, "while") && !offers(code, "foreach") && !offers(code, "switch"));
     TIDE_CHECK(!offers(code, "byte") && !offers(code, "long") && !offers(code, "Entity") && !offers(code, "string") && !offers(code, "List"));
     TIDE_CHECK(!offers(code, "Noise") && !offers(code, "Box")); // C runs on the CPU, and nothing spawns here
     const char *value = complete(IN_FRAG("color = $"));
     TIDE_CHECK(offers(value, "box") && offers(value, "Math") && offers(value, "Lit") && !offers(value, "Draw") && !offers(value, "null"));
     TIDE_CHECK(!offers(complete(IN_FRAG("mut $")), "Entity") && offers(complete(IN_FRAG("mut $")), "float3"));
 
-    const char *pixel = complete(IN_FRAG("var x = pixel.$"));
+    const char *pixel = complete(IN_FRAG("var x = this.$"));
     TIDE_CHECK(offers(pixel, "position") && offers(pixel, "depth") && offers(pixel, "world") && offers(pixel, "Discard"));
     TIDE_CHECK(has(pixel, "Where the pixel is on the screen"));
+    const char *position = complete(IN_FRAG("var x = this.position.$"));
+    TIDE_CHECK(offers(position, "x") && offers(position, "y") && !offers(position, "z") && !offers(position, "Discard"));
+    const char *world = complete(IN_FRAG("var x = this.world.$"));
+    TIDE_CHECK(offers(world, "x") && offers(world, "y") && offers(world, "z"));
+    TIDE_CHECK(offers(complete(IN_FRAG("var x = this.world.xy.$")), "x"));
     const char *grid = complete(IN_FRAG("color = models.wood.$"));
     TIDE_CHECK(offers(grid, "Sample") && !offers(grid, "Clear") && !offers(grid, "size"));
     TIDE_CHECK(has(grid, "Grid2<Color>.Sample(float2 uv, Filter filter = the grid's, Wrap wrap = the grid's) -> Color"));
@@ -1404,6 +1411,9 @@ TIDE_TEST(lsp_shaders_complete)
 #undef IN_FRAG
     const char *instance = complete(SHADER_TYPES "vert Wave(mut BoxVertex vertex, Instance instance)\n{\n    var m = instance.$\n}\n");
     TIDE_CHECK(offers(instance, "transform") && !offers(instance, "Discard"));
+    TIDE_CHECK(!offers(complete(SHADER_TYPES "vert Wave(mut BoxVertex vertex)\n{\n    $\n}\n"), "this"));
+    TIDE_CHECK(!offers(complete(SHADER_TYPES "vert Wave(mut BoxVertex vertex)\n{\n    this.$\n}\n"), "Discard"));
+    TIDE_CHECK(!offers(complete(SHADER_TYPES "void Helper()\n{\n    this.$\n}\n"), "Discard"));
     // Outside a frag or vert, a grid has its own methods, and no Sample
     const char *cells = complete(SHADER_TYPES "view V(mut Models models)\n{\n    models.wood.$\n}\n");
     TIDE_CHECK(offers(cells, "Clear") && offers(cells, "size") && !offers(cells, "Sample"));
@@ -1441,7 +1451,7 @@ TIDE_TEST(lsp_shaders_hover)
     open_document(SHADERS);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *frag = hover_at(35, 6);
-    TIDE_CHECK(has(frag, "frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models, Pixel pixel)"));
+    TIDE_CHECK(has(frag, "frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models)"));
     TIDE_CHECK(has(frag, "Runs on the GPU, for each pixel of a mesh a view draws through it"));
     TIDE_CHECK(has(frag, "- for each instance: `Box.tint`\\n- for each draw: `Sun.direction`\\n- as textures: `Models.wood`\\n"
                          "- of its vertex, blended across the triangle: `normal`, `uv`"));
@@ -1472,32 +1482,31 @@ TIDE_TEST(lsp_shaders_hover)
     TIDE_CHECK(has(blended, "blended across the triangle from its three corners") && has(blended, "`normal`, `uv`"));
     TIDE_CHECK(has(hover_at(31, 25), "which it changes in place"));
 
-    // Pixel and Instance, their fields, Discard and Sample
-    const char *pixel = hover_at(35, 80);
-    TIDE_CHECK(has(pixel, "record Pixel") && has(pixel, "float3 world;") && has(pixel, "void Discard();"));
-    TIDE_CHECK(has(pixel, "where its pixel is") && !has(pixel, "Built into the engine"));
-    TIDE_CHECK(has(hover_at(35, 86), "A frag's parameter: where its pixel is"));
+    // The frag's implicit Pixel and Instance, their fields, Discard and Sample
+    const char *pixel = hover_at(39, 9);
+    TIDE_CHECK(has(pixel, "Pixel this") && has(pixel, "The pixel `Shade` runs for."));
+    TIDE_CHECK(has(pixel, "A frag's `this`") && has(pixel, "read-only fields are `position`, `depth` and `world`"));
     TIDE_CHECK(has(hover_at(31, 45), "record Instance") && has(hover_at(31, 54), "how the mesh was drawn"));
     TIDE_CHECK(has(hover_at(39, 15), "Field of record `Pixel`. Where the pixel is on the screen"));
     TIDE_CHECK(has(hover_at(33, 66), "The transform `Draw.Mesh` was given"));
     const char *discard = hover_at(39, 38);
-    TIDE_CHECK(has(discard, "Pixel.Discard()") && has(discard, "Leaves the pixel undrawn"));
+    TIDE_CHECK(has(discard, "this.Discard()") && has(discard, "Leaves the pixel undrawn"));
     const char *sample = hover_at(38, 25);
     TIDE_CHECK(has(sample, "Grid2<Color>.Sample(float2 uv, Filter filter = the grid's, Wrap wrap = the grid's) -> Color") && has(sample, "Reads the grid as the texture it is"));
     TIDE_CHECK(has(hover_at(43, 12), "A vert and a frag, named last, run on the GPU"));
     // They're the GPU's: no C to go to
-    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 35, 80, ""), "\"result\":null"));
-    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/typeDefinition", 35, 86, ""), "\"result\":null"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 39, 9, ""), "\"result\":null"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/typeDefinition", 39, 9, ""), "\"result\":null"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 39, 15, ""), "\"result\":null"));
 
     // A component a function takes whole is sent whole, and one never read not at all
     open_document(SHADER_TYPES "float Glow(Box box) { return box.glow; }\n"
-                  "frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Pixel pixel)\n{\n"
-                  "    color = Color.white * Glow(box) * pixel.depth * pixel.world.x;\n}\n");
+                  "frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun)\n{\n"
+                  "    color = Color.white * Glow(box) * this.depth * this.world.x;\n}\n");
     TIDE_CHECK(has(last_sent(), "'sun' is never used") && !has(last_sent(), "\"severity\":1"));
     TIDE_CHECK(has(hover_at(32, 51), "the only ones sent: `tint`, `glow`."));
     TIDE_CHECK(has(hover_at(32, 60), "This code reads none of its fields, so nothing of it is sent."));
-    TIDE_CHECK(has(hover_at(34, 45), "How deep the pixel is") && has(hover_at(34, 59), "Where the pixel is in the world."));
+    TIDE_CHECK(has(hover_at(34, 44), "How deep the pixel is") && has(hover_at(34, 57), "Where the pixel is in the world."));
 
     // The local fields of the match's components and singletons it reads go the same way
 #define LOCAL_FIELDS                                                                                                   \
@@ -1583,7 +1592,7 @@ TIDE_TEST(lsp_shaders_names)
     open_document(SHADERS);
     const char *item = request_at("file:///test.tide", "textDocument/prepareCallHierarchy", 43, 88, "");
     TIDE_CHECK(has(item, "{\"name\":\"Shade\",\"kind\":12,\"detail\":\"frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, "
-                         "Models models, Pixel pixel)\""));
+                         "Models models)\""));
     TIDE_CHECK(has(item, "\"selectionRange\":{\"start\":{\"line\":35,\"character\":5},\"end\":{\"line\":35,\"character\":10}}"));
     clear_sent();
     handle("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"callHierarchy/incomingCalls\",\"params\":{\"item\":{\"name\":\"Shade\","
@@ -1614,7 +1623,7 @@ TIDE_TEST(lsp_shaders_names)
 }
 
 // The outline, symbols across the game and semantic tokens: frags and verts
-// are functions, their words keywords, and Pixel and Instance the engine's types.
+// are functions, their words and a frag's `this` keywords, and Instance an engine type.
 TIDE_TEST(lsp_shaders_symbols_and_tokens)
 {
     start();
@@ -1635,7 +1644,7 @@ TIDE_TEST(lsp_shaders_symbols_and_tokens)
     TIDE_CHECK(has(tokens, ",2,0,4,11,0,0,5,4,9,1,0,9,9,2,0,0,10,6,5,1,0,8,4,3,8,0,5,4,5,3,0,6,8,1,8,0,9,8,5,3,"));
     // `frag`, Shade, its vertex, then its pixel: `out`, a keyword there, Color, and `color`, which it writes
     TIDE_CHECK(has(tokens, ",2,0,4,11,0,0,5,5,9,1,0,6,9,2,0,0,10,6,5,3,0,8,3,11,0,0,4,5,1,8,0,6,5,5,1,"));
-    TIDE_CHECK(has(tokens, ",0,8,5,1,8,0,6,5,5,3,")); // Pixel pixel
+    TIDE_CHECK(has(tokens, ",1,8,4,11,0,0,5,8,7,10,")); // this.position: keyword and read-only engine property
     TIDE_CHECK(has(tokens, ",4,9,0,0,6,5,9,0]"));     // Wave and Shade at Draw.Mesh: functions
 
     // Anywhere else, the two words are names
@@ -1711,8 +1720,7 @@ TIDE_TEST(lsp_shaders_format_fold_and_move)
     // Nothing orders frags and verts by their files, so they move, as functions do
     const char *move = actions_at(35);
     TIDE_CHECK(has(move, "\"title\":\"Move 'Shade' to Shade.tide\",\"kind\":\"refactor.move\""));
-    TIDE_CHECK(has(move, "\"newText\":\"frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models, "
-                         "Pixel pixel)\\n{\\n"));
+    TIDE_CHECK(has(move, "\"newText\":\"frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models)\\n{\\n"));
     TIDE_CHECK(has(move, "{\"range\":{\"start\":{\"line\":35,\"character\":0},\"end\":{\"line\":41,\"character\":0}},"
                          "\"newText\":\"\"}"));
     TIDE_CHECK(has(actions_at(32), "Move 'Wave' to Wave.tide") && !has(actions_at(42), "Move '"));
@@ -4041,6 +4049,58 @@ static const char *apply_fix(const char *original, const char *title)
     return fixed;
 }
 
+// A frag's pixel is implicit `this`. Migrate the old parameter and its bound
+// uses, while keeping a game's own Pixel type and entity `this` independent.
+TIDE_TEST(lsp_shader_this)
+{
+    start();
+    static const char last[] = "scene Main { }\n"
+                              "frag Mask(Vertex3 vertex, out Color color, Pixel fragment)\n{\n"
+                              "    if (fragment.depth > 0.5) fragment.Discard();\n"
+                              "    color = Color(fragment.world.x, fragment.position.x, 0);\n}\n";
+    open_document(last);
+    TIDE_CHECK(has(last_sent(), "a frag's pixel is 'this' now: remove the 'Pixel' parameter and use 'this'"));
+    TIDE_CHECK(has(actions_at(1), "Use 'this' instead of 'fragment'"));
+    const char *migrated = apply_fix(last, "Use 'this' instead of 'fragment'");
+    TIDE_REQUIRE(migrated != NULL);
+    TIDE_CHECK(has(migrated, "frag Mask(Vertex3 vertex, out Color color)\n"));
+    TIDE_CHECK(has(migrated, "if (this.depth > 0.5) this.Discard();"));
+    TIDE_CHECK(has(migrated, "Color(this.world.x, this.position.x, 0)"));
+    open_document(migrated);
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareRename", 3, 9, ""), "'this' is a keyword"));
+
+    static const char middle[] = "scene Main { }\n"
+                                "frag Mask(Vertex3 vertex, Pixel pixel, out Color color)\n{\n"
+                                "    color = Color.white * pixel.depth;\n}\n";
+    open_document(middle);
+    actions_at(1);
+    migrated = apply_fix(middle, "Use 'this' instead of 'pixel'");
+    TIDE_REQUIRE(migrated != NULL);
+    TIDE_CHECK(has(migrated, "frag Mask(Vertex3 vertex, out Color color)\n"));
+    TIDE_CHECK(has(migrated, "Color.white * this.depth"));
+    open_document(migrated);
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+
+    // User types retain their names, even though the frag's `this` is still its pixel.
+    open_document("scene Main { }\ncomponent Pixel { float strength = 1; }\n"
+                  "frag Mask(Vertex3 vertex, out Color color, Pixel pixel)\n{\n"
+                  "    color = Color.white * pixel.strength * this.depth;\n}\n");
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    TIDE_CHECK(!has(actions_at(2), "Use 'this' instead of 'pixel'"));
+    const char *fields = complete("scene Main { }\ncomponent Pixel { float strength = 1; }\n"
+                                  "frag Mask(Vertex3 vertex, out Color color, Pixel pixel)\n{\n    this.$\n}\n");
+    TIDE_CHECK(offers(fields, "Discard") && offers(fields, "depth") && !offers(fields, "strength"));
+
+    open_document("scene Main { }\nfrag Mask(Vertex3 vertex, out Color color)\n{\n"
+                  "    this.depth = 0.5;\n    color = Color.white;\n}\n");
+    TIDE_CHECK(has(last_sent(), "a frag's pixel can only be read"));
+    open_document("scene Main { }\nvert Place(mut Vertex3 vertex)\n{\n    this.Discard();\n}\n");
+    TIDE_CHECK(has(last_sent(), "a vert runs for a vertex, so it has no pixel 'this'"));
+    open_document("scene Main { }\nvoid Helper()\n{\n    this.Discard();\n}\n");
+    TIDE_CHECK(has(last_sent(), "functions don't run for an entity, so they have no 'this'"));
+}
+
 // What a frag and a vert write, `out`: the spelling there was before as a
 // change, a color nothing wrote or that's read first as an assignment (white,
 // which is what it started as), what a vert writes for its frag in hovers, and
@@ -4091,7 +4151,7 @@ TIDE_TEST(lsp_shader_outputs)
                                                  "    if (corner.uv.x > 0.5) color = Color.red;\n}\n";
     open_document(unwritten);
     TIDE_CHECK(has(last_sent(), "frag 'Shade' can end without writing its pixel's color, 'color'"));
-    TIDE_CHECK(has(last_sent(), "leaves the pixel with 'pixel.Discard();'"));
+    TIDE_CHECK(has(last_sent(), "leaves the pixel with 'this.Discard();'"));
     const char *ends = actions_at(6);
     TIDE_CHECK(has(ends, "\"title\":\"Write 'color = Color.white;'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
     const char *whitened = apply_fix(unwritten, "Write 'color = Color.white;'");

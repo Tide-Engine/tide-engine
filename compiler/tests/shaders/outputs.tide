@@ -55,16 +55,16 @@ frag Fill(Corner corner, out Color albedo, out Color normal)
     Packed(corner.normal, out normal);
 }
 
-// Three, with what its vert wrote between them and the engine's Pixel after: one path leaves the pixel out
-frag Deep(Corner corner, out Color albedo, FromLamp lamp, out Color normal, out Color place, Pixel pixel)
+// Three, with what its vert wrote between them: one path leaves the pixel out
+frag Deep(Corner corner, out Color albedo, FromLamp lamp, out Color normal, out Color place)
 {
     if (corner.color.a < 0.5)
     {
-        pixel.Discard();
+        this.Discard();
     }
     albedo = corner.color;
     normal = Color(corner.normal.x, corner.normal.y, corner.normal.z);
-    place = Color(lamp.place.x, lamp.place.y, lamp.place.z, pixel.depth);
+    place = Color(lamp.place.x, lamp.place.y, lamp.place.z, this.depth);
 }
 
 // Four, which is as many as a target holds, in 2D

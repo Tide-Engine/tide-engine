@@ -5692,14 +5692,15 @@ static type check_method(checker *c, expr *e)
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return T_ERR;
     }
-    if (obj.kind == TY_RECORD && obj.decl == c->prog->pixel) { // pixel.Discard(): the frag's pixel isn't drawn
+    if (obj.kind == TY_RECORD && obj.decl == c->prog->pixel) { // this.Discard(): the frag's pixel isn't drawn
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         if (!str_eq_c(e->name, "Discard") || e->args.count) {
-            diag_error(e->at, "a Pixel has one method, 'Discard()', which leaves the pixel undrawn; the rest are its fields");
+            diag_error(e->at, "a frag's pixel has one method, 'Discard()', which leaves it undrawn; the rest are its fields");
             return T_ERR;
         }
         if (c->statement_call != e || c->short_circuit_depth > 0 || c->branch_depth > 0) {
-            diag_error(e->at, "'" STR_FMT ".Discard()' is a statement of its own: it ends the frag there", STR_ARG(e->object->name));
+            const str name = e->object->kind == E_THIS ? str_from("this") : e->object->name;
+            diag_error(e->at, "'" STR_FMT ".Discard()' is a statement of its own: it ends the frag there", STR_ARG(name));
             return T_ERR;
         }
         e->call = CALL_DISCARD;
@@ -7070,8 +7071,11 @@ static type check_name(checker *c, expr *e)
 static type check_this(const checker *c, const expr *e)
 {
     decl *m = c->method;
-    if (gpu_refuses(c, e->at, "name the entity",
-                    "it takes the entity's components as parameters, and reads their fields")) {
+    const decl *shader = gpu_code(c);
+    if (shader && shader->is_frag) return decl_type(c->prog->pixel);
+    if (shader) {
+        diag_error(e->at, "a vert runs for a vertex, so it has no pixel 'this'");
+        diag_note("read or change its vertex through the first parameter");
         return T_ERR;
     }
     if (m && m->kind == DECL_FUNCTION) {
@@ -7739,7 +7743,7 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
 // shadow.Sample(uv) and shadow.Compare(uv, value): a render target's depth,
 // read in a frag or a vert. Sample gives how far the nearest thing drawn at
 // `uv` is, from 0 at the camera's near plane to 1 at its far limit, as
-// pixel.depth is: the nearest pixel's, as a depth blended between two pixels
+// this.depth is: the nearest pixel's, as a depth blended between two pixels
 // is neither's. Compare gives how much of what's stored around `uv` isn't
 // nearer than `value`, from 0 to 1, which the GPU works out between pixels:
 // what a shadow's edge wants. The DepthTexture is a field of a component or a
@@ -8436,6 +8440,13 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
 {
     if (c->parallel && !check_step_write(c, target)) return false;
     if (c->compare && !check_compare_write(c, target)) return false;
+    const expr *pixel = target;
+    while (pixel->kind == E_MEMBER || pixel->kind == E_INDEX) pixel = pixel->object;
+    if (pixel->kind == E_THIS && pixel->type.kind == TY_RECORD && pixel->type.decl == c->prog->pixel) {
+        diag_error(target->at, "a frag's pixel can only be read");
+        diag_note("write its color through the frag's 'out Color' parameter");
+        return false;
+    }
     if (target->kind == E_THIS) {
         diag_error(target->at, "'this' is the entity the code runs for, so it can't change");
         if (called) diag_note("store it in a 'mut var' first");
@@ -11900,7 +11911,7 @@ static void check_handed_struct(const decl *vert, const param *p, const decl *t)
 // more for each color image after the first of a target it draws into, and
 // the structs a vert hands the frag it's drawn with; then what the engine
 // supplies as it does to a view: the entity's components, singletons of either
-// side, and Pixel and Instance. A frag's read-only struct is one the draw's
+// side, and Instance. The frag's pixel is `this`. A read-only struct is one the draw's
 // vert writes, or an element of the list an Instanced draw is given: the draw
 // says which (check_shader_binding).
 static void check_shader_decl(const checker *c, decl *d)
@@ -12064,10 +12075,13 @@ static void check_shader_decl(const checker *c, decl *d)
         }
         if (!t && str_eq_c(p->type_name, "Pixel")) {
             if (!d->is_frag) {
-                diag_error(at, "a vert runs for a vertex, before there are pixels: 'Pixel' is a frag's");
+                diag_error(at, "a vert runs for a vertex, before there are pixels: the pixel is a frag's 'this'");
                 continue;
             }
             t = prog->pixel;
+            diag_error(at, "a frag's pixel is 'this' now: remove the 'Pixel' parameter and use 'this'");
+            const fix f = {.kind = FIX_USE_THIS, .at = at, .param = p};
+            vec_push(c->prog->fixes, f);
         } else if (!t && str_eq_c(p->type_name, "Instance")) {
             t = prog->instance;
         }
@@ -12076,7 +12090,6 @@ static void check_shader_decl(const checker *c, decl *d)
             suggestion s = suggest_start(p->type_name);
             suggest_decls(&s, prog, true, true, false);
             suggest_consider_c(&s, "Instance");
-            if (d->is_frag) suggest_consider_c(&s, "Pixel");
             suggest_note(&s);
             continue;
         }
@@ -13161,9 +13174,8 @@ static void add_builtins(program *prog)
     vec_push(random->fields, state_field);
     prog->random = random;
 
-    // What a frag and a vert take beside the game's state, as parameters:
-    // Pixel { float2 position; float depth; float3 world; }, where a frag's
-    // pixel is, and Instance { float4x4 transform; }, how the mesh was drawn.
+    // A frag's implicit pixel `this`, with position, depth and world; and
+    // Instance { float4x4 transform; }, how the mesh was drawn, as a parameter.
     // Not declarations: a game's own Pixel or Instance is the game's.
     static const char *const pixel_fields[][2] = {{"position", "float2"}, {"depth", "float"}, {"world", "float3"}};
     decl *pixel = NEW(decl);

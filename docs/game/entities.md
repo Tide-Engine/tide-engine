@@ -124,7 +124,7 @@ system Expire(mut Lifetime life)
 }
 ```
 
-In local code that runs for a local entity, like a view of local components, `this` is a `LocalEntity`. Code that runs once per tick, frame or event runs for no entity, so it has no `this`, and neither do functions.
+In local code that runs for a local entity, like a view of local components, `this` is a `LocalEntity`. Code that runs once per tick, frame or event runs for no entity, so it has no `this`, and neither do functions. In a [frag](./shaders.md#where-the-pixel-is), `this` is the pixel it runs for.
 
 A component's methods have `this` too: the entity whose component they're called on.
 

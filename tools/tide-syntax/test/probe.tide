@@ -217,10 +217,10 @@ component Mesh
 view Bake(mut Mesh mesh) { var local = mesh.local; }
 
 // Frags and verts: their words start a declaration, and are names anywhere else.
-frag Shade(BoxVertex vertex, out Color color, Box box, Pixel pixel)
+frag Shade(BoxVertex vertex, out Color color, Box box)
 {
     color = box.wood.Sample(vertex.uv) * box.tint;
-    if (pixel.position.x < 10) pixel.Discard();
+    if (this.position.x < 10) this.Discard();
 }
 vert Wave(mut BoxVertex vertex, out FromLamp lamp, Time time, Instance instance) { }
 float Blend(float frag, float vert)

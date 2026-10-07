@@ -1,0 +1,7 @@
+// expect: a vert runs for a vertex, so it has no pixel 'this'
+scene Main { }
+
+vert Raise(mut Vertex vertex)
+{
+    vertex.position.x += this.position.x;
+}

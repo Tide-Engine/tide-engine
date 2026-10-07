@@ -1,0 +1,47 @@
+// A frag's `this` is its pixel: read-only coordinates and depth, and a
+// discard that ends the invocation without requiring any output. Neither
+// coordinates nor the discard need a Pixel parameter. UV derivatives made
+// from this are worked out before branches and loops, like a vertex's UVs.
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float2 uv;
+}
+
+local singleton Art
+{
+    List<Corner> mesh;
+    List<int> faces;
+    Grid2<Color> image = Grid2(8, 8);
+}
+
+frag Cutout(Corner vertex, out Color color)
+{
+    if (this.position.x < 4) this.Discard();
+    else color = Color(this.world.x, this.world.y, this.depth);
+}
+
+frag Invisible(Corner vertex, out Color color)
+{
+    this.Discard();
+}
+
+frag Tiled(Corner vertex, out Color color, Texture source)
+{
+    var uv = this.world.xz + this.position / float2(32);
+    for (int i = 0; i < 2; i++)
+    {
+        if (this.depth > 0.75) this.Discard();
+    }
+    if (vertex.uv.x > 0.5) color = source.Sample(uv, Filter.Trilinear);
+    else color = Color.white;
+}
+
+view Show(Art art)
+{
+    Draw.Mesh(art.mesh, art.faces, float4x4.identity, Cutout);
+    Draw.Mesh(art.mesh, art.faces, float4x4.identity, Invisible);
+    Draw.Mesh(art.mesh, art.faces, float4x4.identity, art.image, Tiled);
+}
