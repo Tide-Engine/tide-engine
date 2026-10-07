@@ -24,3 +24,13 @@ system Count(mut Tally tally)
 scene Main
 {
 }
+
+// The field goes to C as the argument of an extern's Resident parameter, and
+// nowhere else: a read of the counter the state holds, by address
+[NativeName("resident_test_cell")]
+extern long CellOf(in Resident state, int i);
+
+system Peek(mut Tally tally)
+{
+    tally.seen = CellOf(tally.state, 3);
+}

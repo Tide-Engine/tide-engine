@@ -1,2 +1,2 @@
-// expect: Resident state is a match singleton's field, for the C of a package that comes with tide: nothing else holds one
+// expect: C takes resident state by address: write 'in Resident' to read it, or 'mut Resident' to step it
 extern void Keep(Resident state);

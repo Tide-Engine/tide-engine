@@ -42,7 +42,7 @@ TIDE_TEST(resident_state_rides_in_the_world_and_rolls_back_with_it)
     TIDE_CHECK(world.Tally.steps == 2);
     TIDE_CHECK(world.Tally.state.kind == tide_resident_kind_of("tally"));
     TIDE_CHECK(world.Tally.state.stamp == 2 && world.Tally.state.pages != NULL);
-    TIDE_CHECK((int64_t)world.Tally.state.digest == world.Tally.seen);
+    TIDE_CHECK(world.Tally.seen == resident_test_cell(&world.Tally.state, 3)); // Read by C through the field, as an extern's argument
     TIDE_CHECK(hashes[0] != hashes[1]);
     TIDE_CHECK(tide_arena_stamp(resident_test_arena()) == 2);
 

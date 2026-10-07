@@ -1,4 +1,4 @@
-// expect: Resident state is a match singleton's field, for the C of a package that comes with tide: nothing else holds one
+// expect: only extern functions take resident state, as 'in Resident' or 'mut Resident': the C that keeps it reads it
 singleton Physics
 {
     Resident state;

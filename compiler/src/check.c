@@ -52,6 +52,7 @@ typedef struct checker {
     const expr *out_arg;     // An argument written `out x`, about to be checked as the variable an `out` parameter makes
     int outs;                // `out` arguments checked so far: code that has some is checked for what it assigns (assigned.c)
     const expr *world_arg;   // A call's argument about to be checked: the World can be named there, to pass it on
+    const expr *resident_arg; // ...and one an extern function's Resident parameter takes: the one place a Resident field is read
     bool world_value_ok;     // ...and the name being checked is it
 } checker;
 
@@ -1578,7 +1579,7 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
     type t;
     if (r->args.count > 0) return resolve_generic(c, r, at, place == PLACE_ASSET);
     if (builtin_type_named(name, &t)) {
-        if (t.kind == TY_RESIDENT && place != PLACE_FIELD) {
+        if (t.kind == TY_RESIDENT && place != PLACE_FIELD && place != PLACE_FUNCTION) {
             diag_error(at, "Resident state is a match singleton's field, for the C of a package that comes with tide: nothing else holds one");
             return T_ERR;
         }
@@ -3351,7 +3352,9 @@ static void check_method_args(checker *c, expr *e, decl *m)
         // Devices passed on are read where they go: the callee's reads count. So does what's reached through the World.
         c->device_whole_ok = arg;
         c->world_arg = arg;
+        c->resident_arg = p && p->type.kind == TY_RESIDENT && m->is_extern ? arg : NULL;
         check_expr_want(c, arg, p ? p->type : T_ERR);
+        c->resident_arg = NULL;
     }
     for (int i = 0; i < m->params.count; i++) vec_push(e->arg_want, m->params.items[i].type);
     if (m->takes_action && !e->block) {
@@ -6896,9 +6899,10 @@ static type check_member(checker *c, expr *e)
                               "read them in a view");
                     return T_ERR;
                 }
-                if (f->type.kind == TY_RESIDENT) {
+                if (f->type.kind == TY_RESIDENT && e != c->resident_arg) {
                     diag_error(e->at, "'" STR_FMT "' is resident state: the C of the package that keeps it reads it, and Tide code can't",
                                STR_ARG(f->name));
+                    diag_note("it goes to C as the argument of an extern function's 'in Resident' or 'mut Resident' parameter, and nowhere else");
                     return T_ERR;
                 }
                 e->field = f;
@@ -11332,6 +11336,15 @@ static void check_signature(checker *c, decl *m)
                 diag_error(p->name_at, "'" STR_FMT "' comes after a parameter with a default, so it needs one too", STR_ARG(p->name));
                 diag_note("the parameters a call can leave out go last: give '" STR_FMT "' a default, or move it before '" STR_FMT "'",
                           STR_ARG(p->name), STR_ARG(m->params.items[k - 1].name));
+            }
+        }
+        if (p->type.kind == TY_RESIDENT) {
+            if (!m->is_extern) {
+                diag_error(p->type_at, "only extern functions take resident state, as 'in Resident' or 'mut Resident': the C that keeps it reads it");
+                p->type = T_ERR;
+            } else if (p->mode != PARAM_IN && p->mode != PARAM_MUT) {
+                diag_error(p->type_at, "C takes resident state by address: write 'in Resident' to read it, or 'mut Resident' to step it");
+                p->type = T_ERR;
             }
         }
         if (p->mode == PARAM_IN && !m->is_extern) {
