@@ -242,6 +242,7 @@ static bool type_fits(emit *em, const type t, const loc at)
         break;
     case TY_CUBEMAP: why = "a cube is read with 'cube.Sample(direction)', not kept as a GPU value"; break;
     case TY_RENDER_TARGET: why = "a render target belongs to the CPU: sample its color as a Texture"; break;
+    case TY_RESIDENT: why = "resident state belongs to the CPU: the C of the package that keeps it reads it"; break;
     case TY_ENTITY:
     case TY_LOCAL_ENTITY:
     case TY_PLAYER: why = "it's a handle into the world, which the GPU doesn't have"; break;

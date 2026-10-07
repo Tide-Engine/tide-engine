@@ -1,0 +1,12 @@
+// expect: 'state' is resident state: the C of the package that keeps it reads it, and Tide code can't
+singleton Physics
+{
+    Resident state;
+    int steps;
+}
+
+system Run(mut Physics physics)
+{
+    var s = physics.state;
+    physics.steps += 1;
+}

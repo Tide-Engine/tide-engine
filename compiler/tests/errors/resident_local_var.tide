@@ -1,0 +1,10 @@
+// expect: Resident state is a match singleton's field, for the C of a package that comes with tide: nothing else holds one
+singleton Physics
+{
+    Resident state;
+}
+
+system Run(Physics physics)
+{
+    Resident copy;
+}

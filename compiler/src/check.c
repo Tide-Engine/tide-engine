@@ -1577,7 +1577,13 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
     const str name = r->name;
     type t;
     if (r->args.count > 0) return resolve_generic(c, r, at, place == PLACE_ASSET);
-    if (builtin_type_named(name, &t)) return t;
+    if (builtin_type_named(name, &t)) {
+        if (t.kind == TY_RESIDENT && place != PLACE_FIELD) {
+            diag_error(at, "Resident state is a match singleton's field, for the C of a package that comes with tide: nothing else holds one");
+            return T_ERR;
+        }
+        return t;
+    }
     if (str_eq_c(name, "string")) return (type){TY_STRING, NULL};
     if (routine_place(place) || place == PLACE_FIELD || place == PLACE_LOCAL) {
         if (str_eq_c(name, "Action")) return (type){TY_ACTION, NULL};
@@ -1973,6 +1979,13 @@ static type check_literal(checker *c, expr *e)
         field_init *init = &e->inits.items[i];
         for (int j = 0; j < d->fields.count; j++) {
             if (str_eq(d->fields.items[j].name, init->name) && !d->fields.items[j].hidden) init->field = &d->fields.items[j];
+        }
+        if (init->field && init->field->type.kind == TY_RESIDENT) {
+            diag_error(init->at, "'" STR_FMT "' is resident state, which the C of the package that keeps it fills: a value leaves it out",
+                       STR_ARG(init->name));
+            init->field = NULL;
+            check_expr_any(c, init->value);
+            continue;
         }
         const type value = check_expr_want(c, init->value, init->field ? init->field->type : T_ERR);
         if (!init->field && local_field_of(d, init->name)) {
@@ -6890,6 +6903,11 @@ static type check_member(checker *c, expr *e)
                               "read them in a view");
                     return T_ERR;
                 }
+                if (f->type.kind == TY_RESIDENT) {
+                    diag_error(e->at, "'" STR_FMT "' is resident state: the C of the package that keeps it reads it, and Tide code can't",
+                               STR_ARG(f->name));
+                    return T_ERR;
+                }
                 e->field = f;
                 if (f == c->prog->seed) c->prog->uses_seed = true; // Time.seed: the world has it for the code that reads it
                 if (obj.decl->query_row && e->object->bind == BIND_LOCAL && e->object->local->query) {
@@ -10835,7 +10853,26 @@ static void resolve_field_types(const checker *c, const decl *d)
     for (int i = 0; i < d->fields.count; i++) {
         field *f = &d->fields.items[i];
         const loc at = f->type_qual_at.line ? f->type_qual_at : f->at;
-        if (builtin_type_named(f->type_name, &f->type)) continue;
+        if (builtin_type_named(f->type_name, &f->type)) {
+            if (f->type.kind != TY_RESIDENT) continue;
+            // Resident state (tide/resident.h): a match singleton's, one of them, for the C of a package that comes with tide
+            f->type = T_ERR;
+            if (d->kind != DECL_SINGLETON || d->is_local || d->part_of) {
+                diag_error(at, "Resident state is a match singleton's field, for the C of a package that comes with tide: %s can't hold one",
+                           d->kind == DECL_SINGLETON ? "a local singleton" : d->kind == DECL_COMPONENT ? "a component" : d->kind == DECL_STRUCT ? "a struct"
+                           : d->kind == DECL_EVENT ? "an event" : d->kind == DECL_INPUT ? "an input" : "this");
+                continue;
+            }
+            bool another = false;
+            for (int j = 0; j < i; j++) another = another || d->fields.items[j].type.kind == TY_RESIDENT;
+            if (another) {
+                diag_error(at, "'" STR_FMT "' has resident state already: a singleton holds one Resident", STR_ARG(d->name));
+                continue;
+            }
+            f->type = (type){TY_RESIDENT, NULL};
+            c->prog->uses_resident = true;
+            continue;
+        }
         f->type = T_ERR;
         const type_ref *const r = type_ref_or_text(f->type_ref, f->type_name);
         if (r->optional) {
