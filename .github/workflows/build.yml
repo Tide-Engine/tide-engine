@@ -339,6 +339,12 @@ jobs:
             Expand-Archive -LiteralPath $chromeArchive -DestinationPath $chromeRoot -Force
             Remove-Item -LiteralPath $chromeArchive
           }
+          # CfT's setup grants Chrome's install-file capabilities read/execute access.
+          # Cached files need it too; the archive does not preserve NTFS ACLs.
+          $chromeDirectory = Split-Path -Path $chromePath -Parent
+          $chromeSetup = Join-Path $chromeDirectory 'setup.exe'
+          $chromeConfig = Start-Process -FilePath $chromeSetup -ArgumentList "--configure-browser-in-directory=`"$chromeDirectory`"" -WindowStyle Hidden -Wait -PassThru
+          if ($chromeConfig.ExitCode -ne 78) { throw "Could not configure Chrome's sandbox permissions (exit $($chromeConfig.ExitCode))." }
           $chromeVersion = (Get-Item -LiteralPath $chromePath).VersionInfo.ProductVersion
           if ($chromeVersion -ne $env:TIDE_WEB_CHROME_VERSION) {
             throw "Expected Chrome $env:TIDE_WEB_CHROME_VERSION, found $chromeVersion."

@@ -117,6 +117,10 @@ note(`GPU flags: ${flags.join(' ')}`);
 const profileDir = resolve(profile);
 rmSync(profileDir, { recursive: true, force: true });
 mkdirSync(profileDir, { recursive: true });
+// Windows sandboxed GPU processes may not send their errors to stderr.
+const browserLog = resolve(profileDir, 'chrome.log');
+const logging = process.platform === 'win32'
+    ? ['--enable-logging', '--v=1', `--log-file=${browserLog}`] : [];
 // It opens on an empty page, and goes to the test's once DevTools is
 // listening to it (open, below), so nothing of the test's page goes unheard.
 const child = spawn(browser, [
@@ -126,6 +130,7 @@ const child = spawn(browser, [
     '--disable-extensions',
     '--remote-debugging-pipe', // DevTools on fds 3 and 4
     `--user-data-dir=${profileDir}`,
+    ...logging,
     ...flags,
     'about:blank',
 ], { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] });
@@ -286,6 +291,19 @@ if (!exited) {
     if (await within(gone.then(() => true), 30) === null) {
         if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
         else child.kill('SIGKILL');
+    }
+}
+// Read after Chrome closes, before the next run removes its scratch profile.
+if (!passed && process.platform === 'win32') {
+    try {
+        const log = await readFile(browserLog, 'utf8');
+        const warnings = log.split(/\r?\n/).filter(line => /\b(?:WARNING|ERROR|FATAL)\b/.test(line)).join('\n');
+        const details = (warnings || log).trim();
+        const excerpt = details.length > 8000
+            ? `${details.slice(0, 4000)}\n--- intervening log omitted ---\n${details.slice(-4000)}` : details;
+        if (excerpt) console.log(`--- the browser's subprocess log (${browserLog}):\n${excerpt}`);
+    } catch (error) {
+        console.log(`--- couldn't read the browser's subprocess log (${browserLog}): ${error.message}`);
     }
 }
 await said();
