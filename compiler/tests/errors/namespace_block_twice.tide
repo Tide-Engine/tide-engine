@@ -1,0 +1,10 @@
+// expect: 'Combat.Health' is already declared
+scene Main { }
+namespace Combat
+{
+    component Health { int hp; }
+}
+namespace Combat
+{
+    component Health { int armor; }
+}

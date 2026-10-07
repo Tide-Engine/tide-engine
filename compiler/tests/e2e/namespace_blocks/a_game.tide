@@ -1,0 +1,119 @@
+// A file whose declarations are in several namespaces, each a block: the
+// global one around them, a block that's opened twice, a block inside a block,
+// and a dotted one that another file's blocks add to.
+using Tools;
+
+int Double(int x)
+{
+    return x + 100;
+}
+
+namespace Combat
+{
+    const int CRIT = 3;
+
+    component Health
+    {
+        int hp = 10;
+    }
+
+    enum Stance
+    {
+        Low,
+        High,
+    }
+
+    // The block's own Double, which is what its code means, and the one inside it
+    int Double(int x)
+    {
+        return x * 2;
+    }
+
+    namespace Rules
+    {
+        struct Limit
+        {
+            int most = 30;
+
+            int Cap(int hp)
+            {
+                return Math.Min(hp, most);
+            }
+        }
+
+        // Combat's Double: the namespaces around a block's, nearest first
+        int Raise(int hp)
+        {
+            return Double(hp) + CRIT;
+        }
+    }
+}
+
+singleton Seen
+{
+    int global;
+    int combat;
+    int rules;
+    int stance;
+    int order;
+    int bag;
+    int tool;
+    int hits;
+}
+
+scene Main { }
+
+namespace Combat
+{
+    // The same namespace again: what the first block declared is here by its plain name
+    event Hit
+    {
+        int amount;
+    }
+
+    system Bleed(mut Health health, mut Seen seen)
+    {
+        var limit = Combat.Rules.Limit { most = 25 };
+        health.hp = limit.Cap(Combat.Rules.Raise(health.hp));
+        seen.combat = Double(7);
+        seen.rules = health.hp;
+        seen.stance = int(Stance.High);
+        seen.order = seen.order * 10 + 1;
+        Send(Hit { amount = CRIT });
+    }
+
+    [After(Bleed)]
+    system Mark(mut Seen seen, with Health)
+    {
+        seen.order = seen.order * 10 + 2;
+    }
+
+    event(Hit hit) Count(mut Seen seen)
+    {
+        seen.hits += hit.amount;
+    }
+}
+
+namespace Game.Items
+{
+    component Bag
+    {
+        int coins = 4;
+    }
+}
+
+event(Spawned) Build(with Main)
+{
+    Spawn(Combat.Health, Game.Items.Bag);
+}
+
+// The global namespace's Double; a block's names with their namespace; and
+// Sharpen, which the file's `using` finds in a block of the other file
+[After(Combat.Mark)]
+system Look(Combat.Health health, Game.Items.Bag bag, mut Seen seen)
+{
+    seen.global = Double(7);
+    seen.bag = Game.Items.Worth(bag);
+    seen.tool = Sharpen(health.hp);
+    seen.order = seen.order * 10 + 3;
+}

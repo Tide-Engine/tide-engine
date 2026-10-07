@@ -176,6 +176,8 @@ tide_e2e_test(crlf) # Windows line endings, kept by .gitattributes
 tide_e2e_test(directives) # #if and the rest: what other versions of tide read is left out
 tide_e2e_test(multi_file SOURCES e2e/multi_file/a_physics.tide e2e/multi_file/b_main.tide
     e2e/multi_file/c_combat.tide e2e/multi_file/d_items.tide)
+tide_e2e_test(namespace_blocks SOURCES e2e/namespace_blocks/a_game.tide e2e/namespace_blocks/b_more.tide
+    e2e/namespace_blocks/c_tools.tide) # `namespace Name { ... }`: several in a file, one opened twice, blocks in blocks
 # What a game declares itself comes before what a namespace it imports has by that name
 tide_e2e_test(using_own SOURCES e2e/using_own/a_lib.tide e2e/using_own/a_other.tide e2e/using_own/b_game.tide
     e2e/using_own/c_inner.tide)

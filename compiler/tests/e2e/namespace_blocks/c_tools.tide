@@ -1,0 +1,8 @@
+// Blocks only, with nothing in the global namespace.
+namespace Tools
+{
+    int Sharpen(int x)
+    {
+        return x + Game.Tools.Deep.Edge();
+    }
+}
