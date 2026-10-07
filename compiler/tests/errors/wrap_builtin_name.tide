@@ -1,0 +1,8 @@
+// expect: 'Wrap' is built into the engine
+scene Main { }
+
+// The enum of what a uv past a texture's edges reads has the name: a game's own function takes another
+float Wrap(float value)
+{
+    return value > 1 ? value - 1 : value;
+}

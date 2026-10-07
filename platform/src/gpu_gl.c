@@ -57,11 +57,17 @@ static uint32_t texture_names;
 
 static GLuint upload_vao;     // What index buffers are bound in while they're written, in no pipeline's place
 static GLuint uniform_buffer; // Every pipeline's uniform block, as the last draw's was set
-// How a unit samples the texture it has: the nearest pixel, blended, or, for
-// a target's depth, compared with the shader's number and those blended. A
-// texture's own way would be the same in every unit that has it.
-enum { SAMPLE_NEAREST, SAMPLE_BLENDED, SAMPLE_COMPARED, SAMPLERS };
+// How a unit samples the texture it has: the nearest pixel or blended, by
+// each tide_gpu_wrap (sampler_for), and, for a target's depth, compared with
+// the shader's number and those blended. A texture's own way would be the
+// same in every unit that has it.
+enum { WRAPS = TIDE_GPU_WRAP_MIRROR + 1, SAMPLE_COMPARED = 2 * WRAPS, SAMPLERS };
 static GLuint samplers[SAMPLERS];
+
+static GLuint sampler_for(const bool blended, const tide_gpu_wrap wrap)
+{
+    return samplers[(blended ? WRAPS : 0) + ((uint32_t)wrap < WRAPS ? (int)wrap : TIDE_GPU_WRAP_CLAMP)];
+}
 static const gl_pipeline *current;
 static GLenum index_type;
 static int pass_height; // The pass's target's, in its pixels
@@ -436,15 +442,24 @@ static void gl_begin(const tide_gpu_id target, const bool clear)
         glGenBuffers(1, &uniform_buffer);
         glBindBuffer(GL_UNIFORM_BUFFER, uniform_buffer);
         glBufferData(GL_UNIFORM_BUFFER, TIDE_GPU_MAX_UNIFORMS, NULL, GL_DYNAMIC_DRAW);
+        static const GLint wraps[WRAPS] = {GL_CLAMP_TO_EDGE, GL_REPEAT, GL_MIRRORED_REPEAT}; // By tide_gpu_wrap
         glGenSamplers(SAMPLERS, samplers);
-        for (int how = 0; how < SAMPLERS; how++) {
-            const GLint filter = how == SAMPLE_NEAREST ? GL_NEAREST : GL_LINEAR;
-            glSamplerParameteri(samplers[how], GL_TEXTURE_MIN_FILTER, filter);
-            glSamplerParameteri(samplers[how], GL_TEXTURE_MAG_FILTER, filter);
-            glSamplerParameteri(samplers[how], GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glSamplerParameteri(samplers[how], GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        for (int blended = 0; blended < 2; blended++) {
+            const GLint filter = blended ? GL_LINEAR : GL_NEAREST;
+            for (int wrap = 0; wrap < WRAPS; wrap++) {
+                const GLuint sampler = sampler_for(blended != 0, (tide_gpu_wrap)wrap);
+                glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, filter);
+                glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, filter);
+                glSamplerParameteri(sampler, GL_TEXTURE_WRAP_S, wraps[wrap]);
+                glSamplerParameteri(sampler, GL_TEXTURE_WRAP_T, wraps[wrap]);
+            }
         }
-        // 1 where the depth that's stored isn't nearer than the shader's number: the test a mesh passes to draw there
+        // 1 where the depth that's stored isn't nearer than the shader's number, the test a mesh passes to draw
+        // there: what that gives at the pixels around is blended, and past the edges it's the pixels at the edge
+        glSamplerParameteri(samplers[SAMPLE_COMPARED], GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glSamplerParameteri(samplers[SAMPLE_COMPARED], GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glSamplerParameteri(samplers[SAMPLE_COMPARED], GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glSamplerParameteri(samplers[SAMPLE_COMPARED], GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glSamplerParameteri(samplers[SAMPLE_COMPARED], GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
         glSamplerParameteri(samplers[SAMPLE_COMPARED], GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
     }
@@ -506,14 +521,14 @@ static void gl_uniforms(const void *data, const size_t size)
     glBufferSubData(GL_UNIFORM_BUFFER, 0, (GLsizeiptr)size, data);
 }
 
-static void gl_sample(const uint32_t slot, const tide_gpu_id texture, const bool blended)
+static void gl_sample(const uint32_t slot, const tide_gpu_id texture, const bool blended, const tide_gpu_wrap wrap)
 {
     // A target's depth is whole only where its nearest pixel is read, unless it's compared
     const uint8_t read = current->desc.reads[slot];
     glActiveTexture(GL_TEXTURE0 + slot);
     glBindTexture(GL_TEXTURE_2D, texture);
-    glBindSampler(slot, samplers[read == TIDE_GPU_READ_COMPARE ? SAMPLE_COMPARED :
-                                 read == TIDE_GPU_READ_DEPTH || !blended ? SAMPLE_NEAREST : SAMPLE_BLENDED]);
+    glBindSampler(slot, read == TIDE_GPU_READ_COMPARE ? samplers[SAMPLE_COMPARED] :
+                        read == TIDE_GPU_READ_DEPTH ? sampler_for(false, TIDE_GPU_WRAP_CLAMP) : sampler_for(blended, wrap));
 }
 
 static void gl_vertices(const uint32_t slot, const tide_gpu_id buffer, const size_t offset)

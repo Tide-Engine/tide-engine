@@ -38,7 +38,7 @@ TIDE_WEB_IMPORT(gpu_end) void tide_web_gpu_end(void);
 TIDE_WEB_IMPORT(gpu_scissor) void tide_web_gpu_scissor(int x, int y, int width, int height);
 TIDE_WEB_IMPORT(gpu_use) void tide_web_gpu_use(tide_gpu_id pipeline);
 TIDE_WEB_IMPORT(gpu_uniforms) void tide_web_gpu_uniforms(const void *data, size_t size);
-TIDE_WEB_IMPORT(gpu_sample) void tide_web_gpu_sample(uint32_t slot, tide_gpu_id texture, bool blended);
+TIDE_WEB_IMPORT(gpu_sample) void tide_web_gpu_sample(uint32_t slot, tide_gpu_id texture, bool blended, tide_gpu_wrap wrap);
 TIDE_WEB_IMPORT(gpu_vertices) void tide_web_gpu_vertices(uint32_t slot, tide_gpu_id buffer, size_t offset);
 TIDE_WEB_IMPORT(gpu_indices) void tide_web_gpu_indices(tide_gpu_id buffer, bool wide);
 TIDE_WEB_IMPORT(gpu_draw) void tide_web_gpu_draw(uint32_t first, uint32_t count, uint32_t instances);

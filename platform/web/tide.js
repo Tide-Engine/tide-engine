@@ -1423,11 +1423,17 @@
     const UNIFORM_BYTES = 4096; // The most a pipeline's uniforms take (TIDE_GPU_MAX_UNIFORMS), which every pipeline is bound
     const MAX_TEXTURES = 8;     // TIDE_GPU_MAX_TEXTURES
     const READ_COMPARE = 2;     // TIDE_GPU_READ_COMPARE, after a color's 0 and a depth's 1
-    const NEAREST = 0, COMPARED = 2; // Samplers: the nearest pixel, blended (1), and a depth compared
+    const NEAREST = 0, COMPARED = 6; // Samplers: the nearest pixel past no edge, and after the six of colors, a depth compared
     let layouts = null, samplers = null;
     function gpuStart() {
         layouts = new Map();
-        samplers = ['nearest', 'linear'].map(filter => device.createSampler({ magFilter: filter, minFilter: filter }));
+        // By how it's read between pixels, then past its edges: 2 * tide_gpu_wrap's number + whether it's blended
+        samplers = [];
+        for (const wrap of ['clamp-to-edge', 'repeat', 'mirror-repeat']) {
+            for (const filter of ['nearest', 'linear']) {
+                samplers.push(device.createSampler({ magFilter: filter, minFilter: filter, addressModeU: wrap, addressModeV: wrap }));
+            }
+        }
         // 1 where the depth that's stored isn't nearer than the shader's number (the test a mesh passes to
         // draw there), and what that gives at the pixels around, blended
         samplers.push(device.createSampler({ magFilter: 'linear', minFilter: 'linear', compare: 'less-equal' }));
@@ -1467,9 +1473,9 @@
         uniformsUsed = 0;
         bindGroups.clear();
     }
-    function bindGroup(p, textures, blended) {
+    function bindGroup(p, textures, sampled) {
         let key = p.layout.key + ';';
-        for (let i = 0; i < p.textures; i++) key += textures[i] + ':' + (p.reads[i] ? 0 : blended[i]) + ',';
+        for (let i = 0; i < p.textures; i++) key += textures[i] + ':' + (p.reads[i] ? 0 : sampled[i]) + ',';
         let group = bindGroups.get(key);
         if (!group) {
             const entries = [{ binding: 0, resource: { buffer: uniformBuffer, size: UNIFORM_BYTES } }];
@@ -1477,7 +1483,7 @@
                 const t = gpuTables.texture[textures[i]];
                 const read = p.reads[i];
                 entries.push({ binding: 1 + 2 * i, resource: t.view });
-                entries.push({ binding: 2 + 2 * i, resource: samplers[read === READ_COMPARE ? COMPARED : read ? NEAREST : blended[i]] });
+                entries.push({ binding: 2 + 2 * i, resource: samplers[read === READ_COMPARE ? COMPARED : read ? NEAREST : sampled[i]] });
                 t.groups.add(key); // Which go when it does
             }
             group = device.createBindGroup({ layout: p.layout.group, entries });
@@ -1602,13 +1608,13 @@
         }, () => { slot.busy = false; }); // A reset or device loss cancelled it
     }
     // What the next draw draws with: its pipeline, and each texture it samples, by its slot
-    const drawing = { pipeline: null, textures: new Array(MAX_TEXTURES).fill(0), blended: new Array(MAX_TEXTURES).fill(0),
+    const drawing = { pipeline: null, textures: new Array(MAX_TEXTURES).fill(0), sampled: new Array(MAX_TEXTURES).fill(0),
         bound: false };
 
     function beforeDraw() {
         drew = true;
         if (drawing.bound) return;
-        pass.setBindGroup(0, bindGroup(drawing.pipeline, drawing.textures, drawing.blended), [uniformsAt]);
+        pass.setBindGroup(0, bindGroup(drawing.pipeline, drawing.textures, drawing.sampled), [uniformsAt]);
         drawing.bound = true;
     }
 
@@ -1804,9 +1810,9 @@
             uniformsUsed += slots;
             drawing.bound = false;
         },
-        gpu_sample(slot, id, blended) {
+        gpu_sample(slot, id, blended, wrap) {
             drawing.textures[slot] = id;
-            drawing.blended[slot] = blended ? 1 : 0;
+            drawing.sampled[slot] = (wrap === 1 || wrap === 2 ? 2 * wrap : 0) + (blended ? 1 : 0); // Its place in `samplers`
             drawing.bound = false;
         },
         gpu_vertices: (slot, id, offset) => pass.setVertexBuffer(slot, gpuTables.buffer[id], offset),

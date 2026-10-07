@@ -139,7 +139,7 @@ After the vertex, and what each writes (a frag's color, the structs a vert hands
 - None is `mut` or `out`: the GPU reads the game's state, and changes none of it.
 - A [`local` field](./local-state.md) of the match's component or singleton is read like any other: `box.highlight`, which a view set for the entity under the mouse.
 - With [`Draw2D.Instanced`/`Draw3D.Instanced`](#instances-from-a-list), an ordinary struct parameter takes the current item of the instance list. It is read-only too. (A frag's struct of a type its draw's vert writes is [the vert's](#from-a-vert-to-its-frag) instead.)
-- A read-only `Texture` parameter receives the explicit image passed to either namespace's `Mesh` or `Instanced` or [`Draw.Blit`](./views.md#targets-and-post-processing). Each stage takes at most one; when both stages take it, they receive the same source. `source.Sample(vertex.uv[, Filter.Point])` uses the same top-left UVs as grid sampling. Local component and singleton `Texture` fields can be sampled too.
+- A read-only `Texture` parameter receives the explicit image passed to either namespace's `Mesh` or `Instanced` or [`Draw.Blit`](./views.md#targets-and-post-processing). Each stage takes at most one; when both stages take it, they receive the same source. `source.Sample(vertex.uv[, Filter.Point[, Wrap.Repeat]])` uses the same top-left UVs as grid sampling. Local component and singleton `Texture` fields can be sampled too.
 
 The view needn't take them itself. It has to run for entities that have the components, so `with Box` is enough, and it's an error at the mesh draw when it doesn't:
 
@@ -175,11 +175,19 @@ Only the fields the code reads go to the GPU: a component's with each entity dra
 A grid of colors in what a frag takes is a texture (see [Textures](./views.md#textures)), and `Sample` reads it:
 
 ```csharp
-color = models.wood.Sample(vertex.uv);                 // Blended between its cells
-color = models.wood.Sample(vertex.uv, Filter.Point);   // The nearest cell
+color = models.wood.Sample(vertex.uv);                             // Blended between its cells
+color = models.wood.Sample(vertex.uv, Filter.Point);               // The nearest cell
+color = models.wood.Sample(vertex.uv * 4, Filter.Point, Wrap.Repeat); // Four times across, and four down
 ```
 
-`uv` is as a mesh's: (0, 0) is the outer corner of the grid's cell (0, 0) and (1, 1) the outer corner of its last, and past them it reads the cells at the edge. The filter is written there, `Filter.Point` or `Filter.Bilinear`. Verts sample too.
+`uv` is as a mesh's: (0, 0) is the outer corner of the grid's cell (0, 0) and (1, 1) the outer corner of its last. The filter is written there, `Filter.Point` or `Filter.Bilinear`. Verts sample too.
+
+Past 0 and 1, `uv` reads what the [wrap](./views.md#past-the-edges) after the filter says: the cells at the edge without one (`Wrap.Clamp`), the grid again (`Wrap.Repeat`), or again the other way round each time (`Wrap.Mirror`). A frag is where a wrap earns its keep, since it works its `uv` out: `vertex.uv * 4` tiles a floor, and `vertex.uv + float2(time.t * 0.1, 0)` scrolls one.
+
+- The filter and the wrap are written in the call, `Filter.Point` and `Wrap.Repeat`, never read from a variable: the GPU is told how a texture is read before any pixel runs.
+- A wrap comes after a filter, so a `Sample` that says how it wraps says both. The names work too: `Sample(uv: vertex.uv, filter: Filter.Bilinear, wrap: Wrap.Repeat)`.
+- One grid can be read several ways in one frag, clamped here and repeated there. Each way counts as one of the 8 textures a draw samples, and the same way twice counts once.
+- A draw through a frag takes no filter and no wrap of its own: `Draw2D.Mesh(corners, faces, image, Filter.Point, Shade)` is an error that says to write them at `Sample`.
 
 ## A target's depth
 
@@ -205,7 +213,7 @@ float lit = lamp.shadow.Compare(uv, depth);   // How much of what's stored there
 - **`Sample(uv)`** gives the depth as a number: 0 at the camera's near plane, 1 at its far limit, as [`pixel.depth`](#where-the-pixel-is) is, and 1 where nothing was drawn since the target was cleared. It's the nearest pixel's, with no filter to pick: a depth blended between two pixels would be neither's.
 - **`Compare(uv, value)`** compares what's stored with a number of yours, and gives a number from 0 to 1: 1 where what's stored isn't nearer than `value`, 0 where it is, and in between along an edge, as the GPU compares the pixels around `uv` and blends what that gives. `value` is kept between 0 and 1, so what's past the far limit counts as at it.
 
-`uv` is a color's: (0, 0) is the target's top left corner. Verts read a depth too. Each way a frag reads one is one of its draw's [8 textures](#what-the-gpu-runs).
+`uv` is a color's: (0, 0) is the target's top left corner. Past the target's edges, both read the pixels at the edge: a depth takes no `Wrap`. Verts read a depth too. Each way a frag reads one is one of its draw's [8 textures](#what-the-gpu-runs).
 
 ### A shadow map
 
@@ -356,6 +364,7 @@ For a 3D mesh, a `List<float4x4>` supplies its transforms:
 ```csharp
 Draw3D.Instanced(models.crate, models.faces, scenery.transforms);
 Draw3D.Instanced(models.crate, models.faces, scenery.transforms, models.wood, Filter.Point);
+Draw3D.Instanced(models.crate, models.faces, scenery.transforms, models.wood, Filter.Point, Wrap.Repeat);
 Draw3D.Instanced(models.crate, models.faces, scenery.transforms, Wave, Shade);
 ```
 
@@ -395,7 +404,7 @@ view GrassField(Foliage foliage, Models models)
 - For a 2D mesh, the instance list holds an ordinary struct and a vert places its vertices, as `Place` does above. A field named `transform` is ordinary data there; the engine doesn't apply it, and `Instance.transform` remains identity.
 - Components still come from the calling view's entity, and singletons are shared by the draw. The list items don't have to be entities and don't add any.
 - Only the instance fields the shaders read are sent, beside the 3D transform. Unread fields take no GPU space. The fields that are read follow the same GPU type and attribute limits as components.
-- Textures, filters, verts and frags go after the instance list, in the same order as `Mesh`: `Draw3D.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])`. A frag can sample fields of its parameters, or receive an explicit `Texture` through its read-only `Texture` parameter.
+- Textures, filters, wraps, verts and frags go after the instance list, in the same order as `Mesh`: `Draw3D.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag])`. A frag can sample fields of its parameters, or receive an explicit `Texture` through its read-only `Texture` parameter.
 - An empty instance list draws nothing. Items draw in list order, in one instanced draw; adjacent compatible calls can join the same run.
 
 Every mote below is an item of a list, and none is an entity. A vert places the quad's four corners for each, with that mote's own center, size and phase, and a frag makes a soft dot of it in its tint. The slider changes how many the list holds: they're one draw either way.

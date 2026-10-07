@@ -116,6 +116,7 @@ view Show(Devices devices)
     Draw2D.Mesh([corner], [0, 0, 0], cells, Filter.Point);
     Draw2D.Text("DUEL", corner.position, 88, Color.white, Anchor.MiddleCenter, Font.Bold);
     Vertex3 corner3 = default;
+    Draw3D.Mesh([corner3], [0, 0, 0], world, cells, Filter.Bilinear, Wrap.Repeat);
     Shape panel = default;
     Draw2D.Shape(panel);
     Random dice = Random(7);

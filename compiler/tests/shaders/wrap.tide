@@ -1,0 +1,41 @@
+// A wrap is no part of a shader's text: each way a texture is read, its filter
+// and its wrap, is a binding of its own, which the backend samples that way.
+// One grid read three ways is three bindings, the same way again is none more,
+// and a texture the draw gives a shader with no frag is one, read as the draw
+// says.
+scene Main { }
+
+struct Corner
+{
+    float2 position;
+    float2 uv;
+}
+
+local singleton Art
+{
+    Grid2<Color> tiles = Grid2(2, 2);
+    Texture image;
+    List<Corner> corners;
+    List<int> faces;
+}
+
+vert Lift(mut Corner vertex, Art art)
+{
+    vertex.position.y += art.tiles.Sample(vertex.uv, Filter.Point, Wrap.Repeat).r;
+}
+
+frag Tile(Corner vertex, out Color color, Art art, Texture source)
+{
+    color = art.tiles.Sample(vertex.uv)
+          * art.tiles.Sample(vertex.uv * 2, Filter.Point, Wrap.Repeat)
+          * art.tiles.Sample(vertex.uv * 3, Filter.Bilinear, Wrap.Mirror)
+          * art.tiles.Sample(vertex.uv * 4, Filter.Point, Wrap.Repeat)
+          * source.Sample(vertex.uv, Filter.Bilinear, Wrap.Repeat)
+          * source.Sample(vertex.uv, Filter.Bilinear, Wrap.Clamp);
+}
+
+view Show(Art art)
+{
+    Draw2D.Mesh(art.corners, art.faces, art.image, Lift, Tile);
+    Draw2D.Mesh(art.corners, art.faces, art.tiles, Filter.Point, Wrap.Mirror);
+}

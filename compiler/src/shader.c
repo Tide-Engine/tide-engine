@@ -1641,10 +1641,11 @@ static void ex_construct(emit *em, const expr *e)
     }
 }
 
-// A texture parameter, or a grid or texture field: which binding reads it. A
-// DepthTexture field is a binding for each way it's read, as a number
-// (Sample) and compared (Compare): the GPU reads each through a sampler of
-// another kind.
+// A texture parameter, or a grid or texture field: which binding reads it.
+// One sampled with another filter or another wrap is another binding, as a
+// backend's sampler is how a binding is read. A DepthTexture field is a
+// binding for each way it's read, as a number (Sample) and compared
+// (Compare): the GPU reads each through a sampler of another kind.
 static void ex_sample(emit *em, const expr *e)
 {
     const expr *of = e->object;
@@ -1652,8 +1653,10 @@ static void ex_sample(emit *em, const expr *e)
     const bool direct = of->kind == E_NAME && !asset;
     const param *p = asset ? NULL : direct ? of->param : of->object->param;
     const shader_read read = of->type.kind != TY_DEPTH_TEXTURE ? READ_COLOR : str_eq_c(e->name, "Compare") ? READ_COMPARE : READ_DEPTH;
-    // A depth's nearest pixel is read, and what its comparisons give, the GPU blends: neither is the draw's to say
+    // A depth's nearest pixel is read, the pixels at its edge past them, and what its comparisons give, the
+    // GPU blends: none of it is the draw's to say
     const bool blended = read == READ_COLOR && (e->args.count < 2 || e->args.items[1]->enum_member->number != 0);
+    const int wrap = read != READ_COLOR || e->args.count < 3 ? 0 : (int)e->args.items[2]->enum_member->number;
     int slot = 0;
     if (em->checking) {
         if (em->code != em->root) {
@@ -1662,19 +1665,19 @@ static void ex_sample(emit *em, const expr *e)
         }
         const decl *holds = direct || asset ? NULL : of->local_field ? p->type.decl->local_part : p->type.decl;
         const shader_sample sample = {asset ? -1 : param_index(em->root, p), direct || asset ? -1 : field_index(holds, of->field),
-                                      of->local_field && !asset, blended, asset, read};
+                                      of->local_field && !asset, blended, asset, wrap, read};
         bool known = false;
         for (int i = 0; i < em->root->samples.count; i++) {
             const shader_sample *s = &em->root->samples.items[i];
             known |= s->param == sample.param && s->field == sample.field && s->local == sample.local && s->blended == sample.blended
-                  && s->asset == sample.asset && s->read == sample.read;
+                  && s->asset == sample.asset && s->wrap == sample.wrap && s->read == sample.read;
         }
         if (!known) vec_push(em->root->samples, sample);
     } else {
         while (slot < em->sh->textures.count) {
             const shader_texture *t = &em->sh->textures.items[slot];
             if (t->asset == asset && t->direct == direct && t->source == (p ? p->type.decl : NULL) && t->field == of->field
-                && t->blended == blended && t->read == read) {
+                && t->blended == blended && t->wrap == wrap && t->read == read) {
                 break;
             }
             slot++;
@@ -2909,12 +2912,13 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         const decl *source = s->asset ? NULL : code->params.items[s->param].type.decl;
         const shader_texture t = {.source = source,
                                   .field = s->field < 0 ? NULL : &(s->local ? source->local_part : source)->fields.items[s->field],
-                                  .blended = s->blended, .direct = s->field < 0 && !s->asset, .asset = s->asset, .read = s->read};
+                                  .blended = s->blended, .direct = s->field < 0 && !s->asset, .asset = s->asset,
+                                  .wrap = s->wrap, .read = s->read};
         bool known = false;
         for (int k = 0; k < sh->textures.count; k++) {
             known |= sh->textures.items[k].direct == t.direct && sh->textures.items[k].source == t.source && sh->textures.items[k].field == t.field
                   && sh->textures.items[k].blended == t.blended && sh->textures.items[k].asset == t.asset
-                  && sh->textures.items[k].read == t.read;
+                  && sh->textures.items[k].wrap == t.wrap && sh->textures.items[k].read == t.read;
         }
         if (!known) vec_push(sh->textures, t);
         if (source) add_bound(sh, (decl *)source);
@@ -3069,8 +3073,8 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     }
     if (sh->textures.count > 8) {
         diag_error(call->at, "this draw samples %d grids, and a draw takes 8", sh->textures.count);
-        diag_note("a grid sampled with both filters counts twice, and so does a depth that's read and compared; put several "
-                  "images side by side in one grid");
+        diag_note("a grid sampled with another filter or another wrap counts again, and so does a depth that's both read and "
+                  "compared; put several images side by side in one grid");
         return NULL;
     }
     write_glsl(prog, sh);
@@ -3101,6 +3105,11 @@ void plan_shaders(program *prog)
         }
         shader *sh = plan(prog, call, vertex, textured, direct_texture);
         if (!sh) continue;
+        // A draw that says how its texture wraps: the shader's function takes it, for all its draws
+        for (int a = 2; textured && a < call->args.count; a++) {
+            const type given = call->args.items[a]->type;
+            sh->wrapped |= given.kind == TY_ENUM && given.decl == prog->wrap;
+        }
         call->shader = sh;
         // What the view has to hand over that it doesn't take itself
         decl *view = draw->in;
