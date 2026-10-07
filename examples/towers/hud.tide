@@ -119,7 +119,7 @@ Color PowerColor(Power power)
 [Stage(Layers.Hud)]
 view Glare(Fx fx, Flow flow)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     var screen = float2(Screen.width, Screen.height);
     Draw.Blend(Blend.Add)
     {
@@ -146,7 +146,7 @@ view Glare(Fx fx, Flow flow)
 [Stage(Layers.Hud, 10)]
 view Chips(verified Towers sure, Fx fx, Flow flow, Lobby lobby, query (verified Seat seat) seats)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     if (lobby.page != Page.Playing) return;
     // Side by side in the screen's middle, as wide as a narrow one lets them be
     var slot = Math.Min(Screen.width / SEATS, 112);
@@ -195,7 +195,7 @@ view Chips(verified Towers sure, Fx fx, Flow flow, Lobby lobby, query (verified 
 [Stage(Layers.Hud, 12)]
 view Race(Towers towers, Fx fx, Lobby lobby, query (Seat seat) seats)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     if (lobby.page != Page.Playing) return;
     var top = HEADROOM + 22;
     var bottom = Screen.height - FOOT - 14;
@@ -236,7 +236,7 @@ view Race(Towers towers, Fx fx, Lobby lobby, query (Seat seat) seats)
 [Stage(Layers.Hud, 14)]
 view Tray(Seat seat, Session session, Devices devices, Towers towers, Fx fx, Lobby lobby, with ownership)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     if (lobby.page != Page.Playing) return;
     var screen = float2(Screen.width, Screen.height);
     var at = float2(screen.x - 38, HEADROOM + 36);
@@ -294,7 +294,7 @@ void Band(float2 middle, float open, bool big, Color tint, string words, string 
 [Stage(Layers.Hud, 20)]
 view Words(Towers towers, Session session, Lobby lobby, mut Flow flow, mut Fx fx, query (Seat seat) seats)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     if (lobby.page != Page.Playing) return;
     var screen = float2(Screen.width, Screen.height);
     var big = screen.x >= 640 && screen.y >= 420;
@@ -389,7 +389,7 @@ view Words(Towers towers, Session session, Lobby lobby, mut Flow flow, mut Fx fx
 [Stage(Layers.Hud, 30)]
 view Hints(Towers towers, Devices devices, Fx fx, Hand hand, Lobby lobby)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     if (lobby.page != Page.Playing || fx.seat < 0 || towers.phase != Phase.Play || !hand.playing) return;
     var screen = float2(Screen.width, Screen.height);
     var touch = devices.touchscreen.connected;
@@ -412,7 +412,7 @@ view Hints(Towers towers, Devices devices, Fx fx, Hand hand, Lobby lobby)
 [Stage(Layers.Hud, 40)]
 view Corner(Session session, Lobby lobby)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     if (lobby.page != Page.Playing || session.room == "") return;
     // Over the button, out of the way of what the tower earned
     Draw.Text($"ROOM {session.room}", float2(10, Screen.height - 62), 10, QUIET, Anchor.MiddleLeft, Font.Bold);
@@ -422,7 +422,7 @@ view Corner(Session session, Lobby lobby)
 [Stage(Layers.Hud, 50)]
 view Confetti(mut Fx fx)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     mut var i = 0;
     while (i < fx.paper.count)
     {

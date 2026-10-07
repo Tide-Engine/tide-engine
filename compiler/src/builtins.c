@@ -610,7 +610,7 @@ static void build_signatures(void)
                 "middle of the screen and `size` is half the visible height, like Unity's orthographic size. The 3D "
                 "camera is the version with a position, a rotation and a field of view, or with matrices.",
                 2, &T_F2, &T_F);
-    add_setting("Draw", "Screen", "tide_draw_push_screen", "tide_draw_set_screen", NULL, "",
+    add_setting("Draw", "Pixels", "tide_draw_push_screen", "tide_draw_set_screen", NULL, "",
                 "The 2D draws are in the screen's pixels: from the top left, with y down, as the GUI's are.", 0);
     add_setting("Draw", "Camera", "tide_draw_push_camera_3d", "tide_draw_set_camera_3d", NULL,
                 "position, rotation, fieldOfView",
@@ -749,26 +749,26 @@ static void build_signatures(void)
                 "are in. In a block, it's what of `rect` is inside the clip there is.",
                 1, &T_RECT);
     add_unset("Draw", "SetClip", "tide_draw_unset_clip", "No clip, as each frame starts: everything draws again.");
-    // The checker takes these itself (check_screen_target): they're here for editors
-    static const char screen_target_doc[] =
-        "A render target that's always the window's size, or that part of it (`RenderTarget.Screen(0.5)` is half as "
+    // The checker takes these itself (check_window_target): they're here for editors
+    static const char window_target_doc[] =
+        "A render target that's always the window's size, or that part of it (`RenderTarget.Window(0.5)` is half as "
         "wide and half as high), at the display's full resolution. It's made again, empty, whenever the window's "
         "size or the display's scale changes, so it's for what a view draws again every frame, like a pass over "
         "the whole screen, and it's never resized by hand.";
-    describe(add("RenderTarget", "Screen", T_TARGET, "tide_render_target_window", 0, T_NONE, T_NONE, T_NONE), NULL,
-             screen_target_doc);
-    describe(add("RenderTarget", "Screen", T_TARGET, "tide_render_target_screen", 1, T_F, T_NONE, T_NONE), "factor",
-             screen_target_doc);
-    static const char screen_format_doc[] =
+    describe(add("RenderTarget", "Window", T_TARGET, "tide_render_target_window", 0, T_NONE, T_NONE, T_NONE), NULL,
+             window_target_doc);
+    describe(add("RenderTarget", "Window", T_TARGET, "tide_render_target_screen", 1, T_F, T_NONE, T_NONE), "factor",
+             window_target_doc);
+    static const char window_format_doc[] =
         "A render target that's always the window's size, or that part of it, which holds what its formats say, one "
-        "for each of its color images, four at the most: `RenderTarget.Screen(Format.Color, Format.Float)` holds "
-        "two, which a frag's `out Color` parameters go to in order. `Format.DepthOnly`, by itself, is depth alone, "
+        "for each of its color images, four at the most: `RenderTarget.Window(Format.Rgba8, Format.Rgba16f)` holds "
+        "two, which a frag's `out Color` parameters go to in order. `Format.Depth`, by itself, is depth alone, "
         "with no color image, for a pass whose depth a frag reads afterwards (`target.depth`). It's made again, "
         "empty, whenever the window's size or the display's scale changes.";
-    describe(add("RenderTarget", "Screen", T_TARGET, "tide_render_target_window_as", 1, T_FORMAT, T_NONE, T_NONE), "format",
-             screen_format_doc);
-    describe(add("RenderTarget", "Screen", T_TARGET, "tide_render_target_screen_as", 2, T_F, T_FORMAT, T_NONE), "factor, format",
-             screen_format_doc);
+    describe(add("RenderTarget", "Window", T_TARGET, "tide_render_target_window_as", 1, T_FORMAT, T_NONE, T_NONE), "format",
+             window_format_doc);
+    describe(add("RenderTarget", "Window", T_TARGET, "tide_render_target_screen_as", 2, T_F, T_FORMAT, T_NONE), "factor, format",
+             window_format_doc);
 
     describe(add("Draw", "Cube", T_NONE, "tide_draw_cube", 3, T_F3, T_F3, T_COLOR),
              "center, size, color", "A filled cube, centered in the world, with the full size along each axis.");
@@ -1374,7 +1374,7 @@ type resolve_builtin_call(const str owner, expr *e)
                    STR_ARG(e->name));
         if (str_eq_c(owner, "Draw")) {
             diag_note("Draw has the window's shapes, text, meshes and primitives, its settings (Blend, Tint, Transform, "
-                      "Clip, Camera, Screen, Depth, Cull, Stencil), the conversions, MeasureText, Blit, window and list; "
+                      "Clip, Camera, Pixels, Depth, Cull, Stencil), the conversions, MeasureText, Blit, window and list; "
                       "a render target has the same, as its methods");
         }
         suggestion s = suggest_start(e->name);

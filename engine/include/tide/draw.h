@@ -377,20 +377,20 @@ static inline bool tide_target_size_same(const tide_target_size a, const tide_ta
 // of depth alone, which is drawn into like any other, where a color has
 // nowhere to go and only what writes depth leaves anything. A format is what
 // one color image holds for each pixel (Tide's Format), and
-// TIDE_TARGET_DEPTH_ONLY, the one format of a target with none.
+// TIDE_TARGET_DEPTH, the one format of a target with none.
 typedef enum tide_target_format {
-    TIDE_TARGET_COLOR,      // 4 bytes: red, green, blue and alpha, each from 0 to 1
-    TIDE_TARGET_DEPTH_ONLY, // No color image at all
+    TIDE_TARGET_RGBA8, // 4 bytes: red, green, blue and alpha, each from 0 to 1
+    TIDE_TARGET_DEPTH, // No color image at all
     // Four floats of 16 bits: any number, to 3 digits or so. Where a GPU can't
     // draw into those (an OpenGL ES 3 or a WebGL 2 without them), it's 4
     // bytes, and the renderer says so once
-    TIDE_TARGET_FLOAT,
+    TIDE_TARGET_RGBA16F,
 } tide_target_format;
 
 enum { TIDE_TARGET_COLORS = 4 }; // The most color images a target holds: what every GPU Tide draws with has
 
 // A target's color images, in order: how many, and what each holds
-// (TIDE_TARGET_COLOR or TIDE_TARGET_FLOAT). None for a target of depth alone.
+// (TIDE_TARGET_RGBA8 or TIDE_TARGET_RGBA16F). None for a target of depth alone.
 typedef struct tide_target_formats {
     uint8_t count;
     uint8_t color[TIDE_TARGET_COLORS];
@@ -460,12 +460,12 @@ static inline uint32_t tide_render_target_colors(const uint64_t id)
     return tide_render_target_formats(id).count;
 }
 
-// What its first color image holds, or TIDE_TARGET_DEPTH_ONLY for a target
+// What its first color image holds, or TIDE_TARGET_DEPTH for a target
 // with none: the format a target of one image, or of none, was made with.
 static inline tide_target_format tide_render_target_format(const uint64_t id)
 {
     const tide_target_formats formats = tide_render_target_formats(id);
-    return formats.count ? (tide_target_format)formats.color[0] : TIDE_TARGET_DEPTH_ONLY;
+    return formats.count ? (tide_target_format)formats.color[0] : TIDE_TARGET_DEPTH;
 }
 
 // A texture's reference to one of a target's color images has which in its
@@ -532,7 +532,7 @@ tide_render_target tide_render_target_screen(float factor);
 // ...and the window's size itself.
 tide_render_target tide_render_target_window(void);
 // The same four, holding what `format` says: one color image of it, or none
-// for TIDE_TARGET_DEPTH_ONLY. The ones above hold TIDE_TARGET_COLOR.
+// for TIDE_TARGET_DEPTH. The ones above hold TIDE_TARGET_RGBA8.
 tide_render_target tide_render_target_make_as(float width, float height, tide_target_format format);
 tide_render_target tide_render_target_make_scaled_as(float width, float height, float scale, tide_target_format format);
 tide_render_target tide_render_target_screen_as(float factor, tide_target_format format);
@@ -541,8 +541,8 @@ tide_render_target tide_render_target_window_as(tide_target_format format);
 // the most: each what its format says, in order. A shader's outputs go to
 // them in that order (tide_shader.outputs), and each is read as a texture of
 // its own (tide_render_target_color_at). One format is as the four above;
-// among several, one that's no color's (TIDE_TARGET_DEPTH_ONLY) is
-// TIDE_TARGET_COLOR, having said so.
+// among several, one that's no color's (TIDE_TARGET_DEPTH) is
+// TIDE_TARGET_RGBA8, having said so.
 tide_render_target tide_render_target_make_of(float width, float height, const tide_target_format *formats, uint32_t count);
 tide_render_target tide_render_target_make_scaled_of(float width, float height, float scale,
                                                      const tide_target_format *formats, uint32_t count);

@@ -1,3 +1,0 @@
-// expect: RenderTarget has no 'Window'; it has Screen
-scene Main { }
-view Show() { var target = RenderTarget.Window(); }

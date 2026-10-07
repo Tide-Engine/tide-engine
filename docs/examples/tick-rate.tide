@@ -31,7 +31,7 @@ view Show(Mover mover, Time time)
     Draw.Circle(mover.stepped, 0.2, Color(0.18, 0.83, 0.75));
     Draw.Circle(mover.position, 0.14, Color(0.98, 0.75, 0.14));
 
-    Draw.SetScreen();
+    Draw.SetPixels();
     Draw.Text($"tick {time.tick}, at {time.tickRate} ticks a second", float2(16, 14), 18, Color.white);
     Draw.Text("float2 position: blended", float2(16, Screen.height - 50), 14, Color(0.98, 0.75, 0.14));
     Draw.Text("[Snap] float2 stepped: as the tick left it", float2(16, Screen.height - 30), 14, Color(0.18, 0.83, 0.75));

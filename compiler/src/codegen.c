@@ -2681,7 +2681,7 @@ static void gen_draw_list(gen *g, sb *o, const expr *e)
 
 static void gen_builtin_call(gen *g, sb *o, const expr *e);
 
-// RenderTarget(width, height, Format.Color, Format.Float): its color images'
+// RenderTarget(width, height, Format.Rgba8, Format.Rgba16f): its color images'
 // formats, the call's last arguments, as C takes several: an array of them,
 // and how many. Writes argument `i` if it's one of them, and says whether.
 static bool gen_target_format(gen *g, sb *o, const expr *e, const int i)
@@ -3257,7 +3257,7 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
     // Draw.Shape goes through the helper that turns a Shape into a tide_shape
     const bool shape = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_shape") == 0;
     sb_printf(o, "%s(", shape ? "tide_draw_shape_value" : e->c_callee);
-    // target.Resize(...) runs on its receiver; RenderTarget.Screen(...) has none
+    // target.Resize(...) runs on its receiver; RenderTarget.Window(...) has none
     const bool receiver = e->resource_operation && e->object->type.kind == TY_RENDER_TARGET;
     if (e->call == CALL_DRAW) gen_draw_list(g, o, e);
     else if (receiver) gen_expr(g, o, e->object);
@@ -3270,7 +3270,7 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
     for (int i = 0; i < e->args.count; i++) {
         if (i || (!e->c_pack && (e->call == CALL_DRAW || receiver))) sb_put(o, ", ");
         const type want = e->arg_want.items[i];
-        if (gen_target_format(g, o, e, i)) continue; // RenderTarget.Screen(Format.Color, Format.Float)
+        if (gen_target_format(g, o, e, i)) continue; // RenderTarget.Window(Format.Rgba8, Format.Rgba16f)
         if (e->call == CALL_DRAW && want.kind == TY_ENUM && want.decl == g->prog->font) {
             if (text_at && !anchored) sb_put(o, "TIDE_ANCHOR_UPPER_LEFT, ");
             sb_put(o, "tide_font_file(");

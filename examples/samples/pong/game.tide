@@ -464,7 +464,7 @@ local event(Connected) Joined(mut Fx fx)
 view Backdrop(mut Lens lens, mut Fx fx)
 {
     Draw.Clear(BACKGROUND);
-    Draw.SetScreen();
+    Draw.SetPixels();
     float w = Screen.width;
     float h = Screen.height;
     var dt = Math.Min(Frame.dt, 0.05);

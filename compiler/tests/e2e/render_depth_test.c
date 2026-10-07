@@ -47,13 +47,13 @@ TIDE_TEST(render_depth_targets_say_what_they_hold_and_frags_read_their_depth)
     // Each way to say what a target holds: after its size, after its pixels per unit, after a
     // screen's factor, alone for all of the screen, by name for color, and from a variable
     const Lamp *lamp = &local.Lamp;
-    TIDE_CHECK(tide_render_target_format(lamp->map.id) == TIDE_TARGET_DEPTH_ONLY);
+    TIDE_CHECK(tide_render_target_format(lamp->map.id) == TIDE_TARGET_DEPTH);
     TIDE_CHECK(lamp->map.size.width == 64.0f && lamp->map.size.height == 48.0f && lamp->map.size.scale == 0.0f);
-    TIDE_CHECK(tide_render_target_format(lamp->exact.id) == TIDE_TARGET_DEPTH_ONLY && lamp->exact.size.scale == 1.0f);
-    TIDE_CHECK(tide_render_target_format(lamp->screen.id) == TIDE_TARGET_DEPTH_ONLY && lamp->screen.size.window == 1.0f);
-    TIDE_CHECK(tide_render_target_format(lamp->half.id) == TIDE_TARGET_DEPTH_ONLY && lamp->half.size.window == 0.5f);
-    TIDE_CHECK(tide_render_target_format(lamp->scene.id) == TIDE_TARGET_COLOR && tide_render_target_live(lamp->scene.id));
-    TIDE_CHECK(tide_render_target_format(lamp->picked.id) == TIDE_TARGET_DEPTH_ONLY && lamp->picked.size.width == 32.0f);
+    TIDE_CHECK(tide_render_target_format(lamp->exact.id) == TIDE_TARGET_DEPTH && lamp->exact.size.scale == 1.0f);
+    TIDE_CHECK(tide_render_target_format(lamp->screen.id) == TIDE_TARGET_DEPTH && lamp->screen.size.window == 1.0f);
+    TIDE_CHECK(tide_render_target_format(lamp->half.id) == TIDE_TARGET_DEPTH && lamp->half.size.window == 0.5f);
+    TIDE_CHECK(tide_render_target_format(lamp->scene.id) == TIDE_TARGET_RGBA8 && tide_render_target_live(lamp->scene.id));
+    TIDE_CHECK(tide_render_target_format(lamp->picked.id) == TIDE_TARGET_DEPTH && lamp->picked.size.width == 32.0f);
 
     // A target's depth is a reference to the target, wherever it's kept: a singleton's field, a
     // struct's, a function's result, and a match component's local field
@@ -127,10 +127,10 @@ TIDE_TEST(render_depth_targets_say_what_they_hold_and_frags_read_their_depth)
     tide_local_rebind_resources(&restored, false);
     const Lamp *again = &restored.Lamp;
     TIDE_REQUIRE(tide_render_target_managed(again->map.id) && again->map.id != map.id);
-    TIDE_CHECK(tide_render_target_format(again->map.id) == TIDE_TARGET_DEPTH_ONLY && again->map.size.width == 64.0f);
-    TIDE_CHECK(tide_render_target_format(again->exact.id) == TIDE_TARGET_DEPTH_ONLY && again->exact.size.scale == 1.0f);
-    TIDE_CHECK(tide_render_target_format(again->half.id) == TIDE_TARGET_DEPTH_ONLY && again->half.size.window == 0.5f);
-    TIDE_CHECK(tide_render_target_format(again->scene.id) == TIDE_TARGET_COLOR);
+    TIDE_CHECK(tide_render_target_format(again->map.id) == TIDE_TARGET_DEPTH && again->map.size.width == 64.0f);
+    TIDE_CHECK(tide_render_target_format(again->exact.id) == TIDE_TARGET_DEPTH && again->exact.size.scale == 1.0f);
+    TIDE_CHECK(tide_render_target_format(again->half.id) == TIDE_TARGET_DEPTH && again->half.size.window == 0.5f);
+    TIDE_CHECK(tide_render_target_format(again->scene.id) == TIDE_TARGET_RGBA8);
     TIDE_CHECK(again->shadow.target.id == again->map.id && again->sceneDepth.target.id == again->scene.id);
     TIDE_CHECK(again->light.map.id == again->exact.id && again->light.shadow.target.id == again->exact.id);
     TIDE_CHECK(tide_get_Caster_local(&restored, entity).seen.target.id == again->exact.id);

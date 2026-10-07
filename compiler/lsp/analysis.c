@@ -1416,7 +1416,7 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_COLOR: return "A color: r, g, b and a from 0 to 1. `Color(r, g, b)` or `Color(r, g, b, a)`.";
     case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter[, wrap]])`. A Blit supplies its source to a read-only Texture shader parameter.";
     case TY_DEPTH_TEXTURE: return "A local reference to a render target's depth, `target.depth`, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow wants.";
-    case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Screen()` is always the window's size. Each says last what it holds when that isn't one color image: `Format.DepthOnly` is depth alone, and a format for each makes several, `RenderTarget(width, height, Format.Color, Format.Float)`, which a frag's `out Color` parameters go to in order. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture, `target.colors[1]` its second color image's, and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
+    case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Window()` is always the window's size. Each says last what it holds when that isn't one color image: `Format.Depth` is depth alone, and a format for each makes several, `RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)`, which a frag's `out Color` parameters go to in order. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture, `target.colors[1]` its second color image's, and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
     case TY_RECT: return "A rectangle on the screen, for the GUI: x and y from the top left, y down, then width and height.";
     case TY_STRING: return "Text, written in double quotes.";
     case TY_ACTION: return "Code the caller writes in braces after the call, run with `content();`.";
@@ -1823,7 +1823,7 @@ static const method_form depth_calls[] = {
 };
 
 static const method_form target_calls[] = {
-    {"Resize", "Resize(float width, float height)", "Changes the shared image's size, in logical pixels, and discards its contents, even at the same size. It keeps its pixels per unit. Not for a target made with `RenderTarget.Screen`, which follows the window."},
+    {"Resize", "Resize(float width, float height)", "Changes the shared image's size, in logical pixels, and discards its contents, even at the same size. It keeps its pixels per unit. Not for a target made with `RenderTarget.Window`, which follows the window."},
     {"Dispose", "Dispose()", "Releases the shared image. All target and color aliases become invalid; repeated disposal is harmless."},
 };
 
@@ -2259,7 +2259,7 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
         static const char *const which[] = {"first", "second", "third", "fourth"};
         const int at = p->output < 4 ? p->output : 3;
         sb_printf(out, "\n\nThe frag's %s output: a color it writes beside the pixel's. It goes to the %s color image of "
-                       "a target made to hold as many, `RenderTarget(width, height, Format.Color, Format.Float)`, which "
+                       "a target made to hold as many, `RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)`, which "
                        "`target.colors[%d]` reads; in the window, or in a target with fewer images, it goes nowhere. It "
                        "starts with no value: the frag writes it on every path that ends, before it reads it. It's "
                        "blended over what's in its image by its alpha, as the pixel's color is: `Color(x, y, z)` has "
@@ -8407,7 +8407,7 @@ static const struct {
     {"RenderTarget", {"RenderTarget(float width, float height)", "RenderTarget(float width, float height, float pixelsPerUnit)",
                       "RenderTarget(float width, float height, Format formats...)",
                       "RenderTarget(float width, float height, float pixelsPerUnit, Format formats...)"},
-     "Creates a local image of a positive size in logical pixels, like the window's. Its image has the display's pixels in each, so it's as sharp as the window, or `pixelsPerUnit` of them: with 1, exactly `width` by `height` pixels on any display. It holds one color image beside its depth, or what its formats say, one for each color image, four at the most: `Format.Color` is 4 bytes a pixel and `Format.Float` four floats, which keep any number. A frag's `out Color` parameters go to them in order, and `target.colors[1]` reads the second. `Format.DepthOnly`, by itself, is depth alone, for a pass whose depth a frag reads afterwards (`target.depth`). Color and depth persist until cleared; copies share it. Dispose it when finished. `RenderTarget.Screen()` is one that's always the window's size."},
+     "Creates a local image of a positive size in logical pixels, like the window's. Its image has the display's pixels in each, so it's as sharp as the window, or `pixelsPerUnit` of them: with 1, exactly `width` by `height` pixels on any display. It holds one color image beside its depth, or what its formats say, one for each color image, four at the most: `Format.Rgba8` is 4 bytes a pixel and `Format.Rgba16f` four floats, which keep any number. A frag's `out Color` parameters go to them in order, and `target.colors[1]` reads the second. `Format.Depth`, by itself, is depth alone, for a pass whose depth a frag reads afterwards (`target.depth`). Color and depth persist until cleared; copies share it. Dispose it when finished. `RenderTarget.Window()` is one that's always the window's size."},
     {"PlayerID", {"PlayerID(int index)"}, "A player by index, for local play and tests."},
     {"Random", {"Random(long seed)"}, RANDOM_SEEDED_DOC},
     {"Spawn", {"Spawn(components...)"}, "Creates an entity with these components. It's added at the end of the tick."},
@@ -8615,7 +8615,7 @@ static int call_param_names(const expr *call, str *names, const int max)
             if (call->object && call->object->type.kind == TY_RENDER_TARGET) {
                 const method_form *form = find_form(target_calls, sizeof target_calls / sizeof target_calls[0], call->name);
                 if (form) vec_push(list.labels, form->form);
-            } else if (call->object) { // RenderTarget.Screen(factor)
+            } else if (call->object) { // RenderTarget.Window(factor)
                 builtin_signatures(call->object->name, call->name, collect_label, &list);
             } else {
                 // What it holds comes last, where the call says: the engine's function is another then
