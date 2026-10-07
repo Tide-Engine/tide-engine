@@ -13,6 +13,9 @@ on:
 permissions:
   contents: read
 
+env:
+  TIDE_HIDDEN: '1'
+
 concurrency:
   group: docs-${{ github.ref }}
   cancel-in-progress: true
@@ -20,8 +23,7 @@ concurrency:
 jobs:
   build:
     name: Build
-    # The owner's home server, for now: see build.yml.
-    runs-on: tide-linux-home
+    runs-on: ubuntu-latest
     env:
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CCACHE_DIR: ${{ github.workspace }}/build/ccache
@@ -30,8 +32,6 @@ jobs:
       CCACHE_NODIRECT: 'true'
     steps:
       - uses: actions/checkout@v4
-        with:
-          clean: false
       - uses: actions/setup-node@v7
         with:
           node-version: 24
