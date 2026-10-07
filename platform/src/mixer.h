@@ -59,3 +59,11 @@ void tide_mixer_rendered_elsewhere(bool elsewhere);
 // The renderer's: drops what's left of the last block, so the next render
 // starts a new one. For a device that starts over, and for tests.
 void tide_mixer_flush(void);
+
+// What the capture device heard: `frames` mono frames at TIDE_AUDIO_RATE, from
+// the device's thread (through audio_in.h), into a ring the renderer takes a
+// block from as each of its blocks begins, which every voice whose clip is
+// the microphone then plays. The renderer keeps the ring within a few blocks
+// of the newest frames, so the microphone is never far behind; what nobody
+// took in time is skipped, and a ring that's full drops what comes.
+void tide_mixer_capture(const float *mono, uint32_t frames);

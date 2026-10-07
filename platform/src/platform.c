@@ -12,7 +12,9 @@
 #include "tide/time.h"
 #include "tide/wav.h"
 #include "font.h"
+#include "audio_in.h"
 #include "audio_out.h"
+#include "tide/vorbis.h"
 #include "gpu.h"
 #include "mixer.h"
 #include "png.h"
@@ -77,6 +79,16 @@ static unsigned frames_counted;
 // only there for its graphics context.
 static bool headless;
 static tide_headless_desc headless_run;
+
+// The microphone: open while frames name a voice of it, closed when none does
+static struct {
+    bool open;
+    uint32_t retry;    // Frames until a device that wouldn't open is tried again
+    tide_sound file;   // A headless run's --microphone file
+    uint32_t file_at;  // The next frame of it to play
+    double file_due;   // Frames of it owed this frame, with the remainder carried
+} mic;
+
 static uint32_t headless_frame; // The frame running, or the last one, counted from 1
 // What a headless window's mixer played, as stereo floats: `played` frames so
 // far, of which the ones from `captured` on haven't gone to a capture yet, and
@@ -137,6 +149,30 @@ void tide_platform_open_headless(const tide_headless_desc *desc)
     exit(2);
 #else
     headless_run = *desc;
+    if (headless_run.microphone) {
+        FILE *f = fopen(headless_run.microphone, "rb");
+        uint8_t *bytes = NULL;
+        size_t size = 0;
+        if (f) {
+            fseek(f, 0, SEEK_END);
+            const long length = ftell(f);
+            fseek(f, 0, SEEK_SET);
+            if (length > 0) {
+                bytes = tide_alloc((size_t)length);
+                size = fread(bytes, 1, (size_t)length, f);
+            }
+            fclose(f);
+        }
+        if (!bytes) {
+            fprintf(stderr, "tide: --microphone: '%s' can't be read\n", headless_run.microphone);
+            exit(2);
+        }
+        if (!tide_wav_decode(bytes, size, &mic.file) && !tide_vorbis_decode(bytes, size, &mic.file)) {
+            fprintf(stderr, "tide: --microphone: '%s' isn't a WAV or an Ogg Vorbis file that decodes\n", headless_run.microphone);
+            exit(2);
+        }
+        free(bytes);
+    }
     if (headless_run.width <= 0) headless_run.width = 960;
     if (headless_run.height <= 0) headless_run.height = 540;
     if (!(headless_run.scale > 0.0f)) headless_run.scale = 1.0f;
@@ -220,9 +256,42 @@ bool tide_platform_capture_audio(const char *path)
     return capture_audio(path, from);
 }
 
+static void headless_microphone(void)
+{
+    if (!mic.file.samples || !mic.file.frames) return;
+    mic.file_due += (double)mic.file.rate / 60.0;
+    uint32_t n = (uint32_t)mic.file_due;
+    mic.file_due -= n;
+    while (n) {
+        uint32_t run = mic.file.frames - mic.file_at;
+        if (run > n) run = n;
+        tide_audio_in_push(mic.file.samples + (size_t)mic.file_at * mic.file.channels, run, mic.file.rate, mic.file.channels);
+        mic.file_at += run;
+        if (mic.file_at == mic.file.frames) mic.file_at = 0; // Looped
+        n -= run;
+    }
+}
+
 void tide_platform_audio(const tide_audio_frame *frame)
 {
     tide_mixer_submit(frame);
+    if (headless) {
+        if (frame->microphone) headless_microphone();
+        return;
+    }
+    if (frame->microphone) {
+        if (mic.open) return;
+        if (mic.retry) {
+            mic.retry--;
+            return;
+        }
+        mic.open = tide_audio_in_open();
+        if (!mic.open) mic.retry = 60; // A second, for a player still being asked
+    } else if (mic.open) {
+        tide_audio_in_close();
+        mic.open = false;
+        mic.retry = 0;
+    }
 }
 
 void tide_platform_audio_forget(void)
@@ -245,6 +314,7 @@ static int headless_drawn(void)
 _Noreturn static void finish(const int code)
 {
     tide_platform_gpu_timing(false);
+    if (mic.open) tide_audio_in_close();
     tide_audio_out_close();
 #ifdef __wasm__
     tide_web_stop();

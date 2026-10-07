@@ -6,6 +6,7 @@
 
 #include <stdio.h>
 
+#include "audio_in.h"
 #include "audio_out.h"
 #include "mixer.h"
 #include "tide/time.h"
@@ -54,4 +55,11 @@ TIDE_TEST(audio_device_plays_from_the_mixer_on_its_own_thread)
     tide_audio_out_close();
     tide_audio_out_close(); // Twice is fine
     tide_audio_free(&f);
+    // The capture device: opened where the machine has one the program may
+    // use (a muted one captures silence, which is fine), and closed
+    const bool heard = tide_audio_in_open();
+    printf("capture device: %s\n", heard ? "opened" : "none (the microphone is silent)");
+    if (heard) wait_ms(100);
+    tide_audio_in_close();
+    tide_audio_in_close();
 }

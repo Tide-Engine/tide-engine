@@ -42,3 +42,44 @@ __attribute__((export_name("tide_web_audio_render"))) const float *tide_web_audi
     tide_audio_out_fill(rendered, frames, rate, 2);
     return rendered;
 }
+
+// ---------------------------------------------------------------------------
+// The capture device (src/audio_in.h): the page's microphone, through
+// getUserMedia and a worklet of tide.js's, which posts what it hears to the
+// page's main thread, and the page to the program: into a buffer of the
+// program's (tide_web_audio_capture_buffer), then tide_web_audio_captured.
+
+#include "audio_in.h"
+
+#define CAPTURE_MOST 4096u
+
+static float captured[CAPTURE_MOST];
+static bool capturing;
+
+bool tide_audio_in_open(void)
+{
+    if (capturing) return true;
+    if (!tide_web_audio_capture_open()) {
+        fprintf(stderr, "tide: no microphone: the browser has no audio capture, or the page no AudioContext\n");
+        return false;
+    }
+    tide_audio_in_reset();
+    capturing = true;
+    return true;
+}
+
+void tide_audio_in_close(void)
+{
+    if (!capturing) return;
+    tide_web_audio_capture_close();
+    capturing = false;
+}
+
+__attribute__((export_name("tide_web_audio_capture_buffer"))) float *tide_web_audio_capture_buffer(void) { return captured; }
+
+__attribute__((export_name("tide_web_audio_captured"))) void tide_web_audio_captured(uint32_t frames, const uint32_t rate)
+{
+    if (!capturing || !rate) return;
+    if (frames > CAPTURE_MOST) frames = CAPTURE_MOST;
+    tide_audio_in_push(captured, frames, rate, 1u);
+}

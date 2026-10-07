@@ -511,6 +511,10 @@ static inline void tide_run_configure(const tide_run_desc *desc)
         } else if (strcmp(arg, "--script") == 0) {
             tide_run_headless_desc.script = tide_run_value(&i, arg, "a file of input by frame, like --script play.txt");
             tide_run_headless = true;
+        } else if (strcmp(arg, "--microphone") == 0) {
+            tide_run_headless_desc.microphone =
+                tide_run_value(&i, arg, "a WAV or Ogg Vorbis file the microphone plays in the run, like --microphone voice.wav");
+            tide_run_headless = true;
         }
     }
     if (scaled && !tide_run_headless) {

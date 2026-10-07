@@ -6601,6 +6601,8 @@ static type check_member(checker *c, expr *e)
             return T_ERR;
         }
         if (str_eq_c(e->object->name, "Application") && str_eq_c(e->member, "title")) c->prog->uses_title = true;
+        // Clip.Microphone: the game records, which its Android app's manifest has to say
+        if (str_eq_c(e->object->name, "Clip") && str_eq_c(e->member, "Microphone") && builds(c->prog)) c->prog->uses_microphone = true;
         if (builtin_old_draw_owner(e->object->name)) {
             diag_error(e->at, STR_FMT "." STR_FMT " is 'Draw." STR_FMT "' now", STR_ARG(e->object->name), STR_ARG(e->member),
                        STR_ARG(e->member));

@@ -138,6 +138,13 @@ TIDE_WEB_IMPORT(hidden) bool tide_web_hidden(void);
 TIDE_WEB_IMPORT(audio_open) int tide_web_audio_open(void);
 TIDE_WEB_IMPORT(audio_close) void tide_web_audio_close(void);
 
+// The page's microphone: getUserMedia and a worklet that posts what it hears
+// to the program (tide_web_audio_captured, into tide_web_audio_capture_buffer).
+// Open gives 1 once the page is asking, whatever the player then says; a
+// browser with no capture gives 0.
+TIDE_WEB_IMPORT(audio_capture_open) int tide_web_audio_capture_open(void);
+TIDE_WEB_IMPORT(audio_capture_close) void tide_web_audio_capture_close(void);
+
 // Runs JavaScript, for tests that need to fake browser events or ask the page
 // something: whether its value is truthy.
 TIDE_WEB_IMPORT(eval) bool tide_web_eval(const char *script);

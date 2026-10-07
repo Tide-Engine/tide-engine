@@ -603,7 +603,15 @@
             return true;
         }
     }
-    registerProcessor('tide-output', TideOutput);`;
+    registerProcessor('tide-output', TideOutput);
+    class TideInput extends AudioWorkletProcessor {
+        process(inputs) {
+            const input = inputs[0];
+            if (input && input.length && input[0].length) this.port.postMessage(input[0].slice());
+            return true;
+        }
+    }
+    registerProcessor('tide-input', TideInput);`;
     let audio = null;
     function audioOpen() {
         if (audio) return audio.context.sampleRate | 0;
@@ -615,9 +623,10 @@
         } catch (error) {
             return 0;
         }
-        audio = { context, node: null, ready: false, started: 0, sent: 0, timer: 0, resume: null };
+        audio = { context, node: null, ready: false, started: 0, sent: 0, timer: 0, resume: null, module: null };
         const url = URL.createObjectURL(new Blob([audioWorklet], { type: 'application/javascript' }));
-        context.audioWorklet.addModule(url).then(() => {
+        audio.module = context.audioWorklet.addModule(url);
+        audio.module.then(() => {
             if (!audio || audio.context !== context) return;
             audio.node = new AudioWorkletNode(context, 'tide-output', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
             audio.node.connect(context.destination);
@@ -648,8 +657,60 @@
             need -= frames;
         }
     }
+    // The microphone: getUserMedia, into the context the output plays in,
+    // through a worklet that posts what it hears to the program. The browser
+    // asks the player; until they allow it, and until the context runs (a
+    // touch of the page), the program hears silence.
+    let capture = null;
+    function audioCaptureOpen() {
+        if (capture) return 1;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return 0;
+        if (!audio && !audioOpen()) return 0;
+        const context = audio.context;
+        capture = { context, stream: null, source: null, node: null };
+        navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+            if (!capture || capture.context !== context) {
+                stream.getTracks().forEach(track => track.stop());
+                return;
+            }
+            capture.stream = stream;
+            audio.module.then(() => {
+                if (!capture || capture.context !== context) return;
+                capture.source = context.createMediaStreamSource(stream);
+                capture.node = new AudioWorkletNode(context, 'tide-input', { numberOfInputs: 1, numberOfOutputs: 0 });
+                capture.node.port.onmessage = event => audioCaptured(event.data);
+                capture.source.connect(capture.node);
+            }).catch(() => {});
+        }).catch(() => {}); // Not allowed: silence
+        return 1;
+    }
+    function audioCaptured(chunk) {
+        if (!capture || !exports || !exports.tide_web_audio_captured) return;
+        const most = 4096;
+        for (let at = 0; at < chunk.length; at += most) {
+            const n = Math.min(most, chunk.length - at);
+            const ptr = exports.tide_web_audio_capture_buffer();
+            new Float32Array(u8().buffer, ptr, n).set(chunk.subarray(at, at + n));
+            exports.tide_web_audio_captured(n, capture.context.sampleRate | 0);
+        }
+    }
+    function audioCaptureClose() {
+        if (!capture) return;
+        try {
+            if (capture.node) {
+                capture.node.port.onmessage = null;
+                capture.node.disconnect();
+            }
+            if (capture.source) capture.source.disconnect();
+            if (capture.stream) capture.stream.getTracks().forEach(track => track.stop());
+        } catch (error) {
+            // A context that's closed already
+        }
+        capture = null;
+    }
     function audioClose() {
         if (!audio) return;
+        audioCaptureClose();
         clearInterval(audio.timer);
         for (const type of ['pointerdown', 'keydown', 'touchstart']) document.removeEventListener(type, audio.resume);
         try {
@@ -759,6 +820,8 @@
         hidden: () => document.hidden ? 1 : 0,
         audio_open: () => audioOpen(),
         audio_close: () => audioClose(),
+        audio_capture_open: () => audioCaptureOpen(),
+        audio_capture_close: () => audioCaptureClose(),
         stop() { stopped = true; },
         eval: scriptPtr => (0, eval)(string(scriptPtr)) ? 1 : 0,
     };

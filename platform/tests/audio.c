@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "audio_in.h"
 #include "audio_out.h"
 #include "mixer.h"
 #include "tide/net.h"
@@ -520,4 +521,77 @@ TIDE_TEST(audio_a_streamed_clip_plays_as_its_decode_does_and_loops)
     tide_audio_free(&f);
     tide_vorbis_close(file);
     tide_sound_free(&whole);
+}
+
+TIDE_TEST(audio_the_microphone_plays_what_the_device_captured)
+{
+    fresh();
+    const tide_clip mic = {.microphone = true, .channels = 1, .rate = TIDE_AUDIO_RATE, .id = TIDE_CLIP_MICROPHONE_NAME,
+                           .name = TIDE_CLIP_MICROPHONE_NAME};
+    tide_audio_frame f = {0};
+    tide_audio_reset(&f);
+    TIDE_CHECK(!f.microphone);
+    tide_audio_voice(&f, &(tide_voice){.id = 4, .clip = mic, .playing = true, .volume = 1.0f, .pitch = 1.0f});
+    TIDE_CHECK(f.microphone); // The platform keeps the device open for it
+    tide_mixer_submit(&f);
+    float out[SAMPLES * 4];
+    // Nothing captured yet: silence, with the voice there
+    tide_mixer_render(out, 2 * BLOCK);
+    TIDE_CHECK(silent(out, 2 * SAMPLES) && tide_mixer_voices() == 1);
+    // A ramp through the device's path at 24 kHz, stereo: averaged to one
+    // channel and resampled to 48 kHz, each frame as it came and one between
+    // each two, which plays once the ring holds four blocks
+    static float device[2 * 600];
+    for (uint32_t i = 0; i < 600; i++) device[2 * i] = device[2 * i + 1] = (float)i / 600.0f;
+    tide_audio_in_push(device, 600, 24000, 2);
+    tide_mixer_render(out, 4 * BLOCK);
+    uint32_t wrong = 0;
+    for (uint32_t k = 0; k < 4 * BLOCK; k++) {
+        const float expected = ((float)(k / 2) + (k & 1 ? 0.5f : 0.0f)) / 600.0f;
+        if (!near(out[2 * k], expected) || !near(out[2 * k + 1], expected)) wrong++;
+    }
+    TIDE_CHECK(wrong == 0);
+    // Run dry (174 frames left of 1198): silence, and it waits for a prime again
+    tide_mixer_render(out, BLOCK);
+    TIDE_CHECK(silent(out, SAMPLES));
+    // Two voices of it play the same frames, through their own volumes
+    fresh();
+    tide_audio_reset(&f);
+    tide_audio_voice(&f, &(tide_voice){.id = 4, .clip = mic, .playing = true, .volume = 0.5f, .pitch = 1.0f});
+    tide_audio_voice(&f, &(tide_voice){.id = 5, .clip = mic, .playing = true, .volume = 0.25f, .pitch = 7.0f}); // Pitch doesn't apply
+    tide_mixer_submit(&f);
+    static float level[1100];
+    for (uint32_t i = 0; i < 1100; i++) level[i] = 0.4f;
+    tide_mixer_capture(level, 1100);
+    tide_mixer_render(out, BLOCK);
+    wrong = 0;
+    for (uint32_t i = 0; i < SAMPLES; i++)
+        if (!near(out[i], 0.4f * 0.5f + 0.4f * 0.25f)) wrong++;
+    TIDE_CHECK(wrong == 0);
+    // Far behind (the device ran on while nothing rendered): the newest frames play, a prime back from the head
+    static float late[4000];
+    for (uint32_t i = 0; i < 4000; i++) late[i] = i < 2900 ? 0.1f : 0.9f;
+    tide_mixer_capture(late, 4000);
+    tide_mixer_render(out, BLOCK);
+    wrong = 0;
+    for (uint32_t i = 0; i < SAMPLES; i++)
+        if (!near(out[i], 0.9f * 0.75f)) wrong++;
+    TIDE_CHECK(wrong == 0);
+    // A one-shot of the microphone records nothing, and a voice of it that isn't playing asks for no device
+    tide_audio_reset(&f);
+    tide_audio_play(&f, mic, 1.0f, 1.0f);
+    tide_audio_play_at(&f, mic, tide_f3(1, 2, 3), 1.0f, 1.0f);
+    TIDE_CHECK(f.voice_count == 0 && !f.microphone);
+    tide_audio_voice(&f, &(tide_voice){.id = 4, .clip = mic, .playing = false, .volume = 1.0f, .pitch = 1.0f});
+    TIDE_CHECK(f.voice_count == 1 && !f.microphone);
+    // A forget empties the ring: what was captured before it isn't heard after
+    tide_mixer_capture(level, 1100);
+    fresh();
+    tide_audio_reset(&f);
+    tide_audio_voice(&f, &(tide_voice){.id = 4, .clip = mic, .playing = true, .volume = 1.0f, .pitch = 1.0f});
+    tide_mixer_submit(&f);
+    tide_mixer_render(out, BLOCK);
+    TIDE_CHECK(silent(out, SAMPLES));
+    fresh();
+    tide_audio_free(&f);
 }

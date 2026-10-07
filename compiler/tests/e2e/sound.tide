@@ -22,8 +22,10 @@ local singleton Music
 {
     Sound track;
     Pair pair;
-    bool place; // The view sets the listener and falloff
-    bool spark; // The view spawns a local entity with a sound
+    Sound ear;   // The microphone, while `listen`
+    bool place;  // The view sets the listener and falloff
+    bool spark;  // The view spawns a local entity with a sound
+    bool listen; // The view plays the microphone through `ear`
 }
 
 local component Spark
@@ -56,6 +58,17 @@ view Place(mut Music music)
     {
         Audio.SetListener(float3(1, 2, 3), quaternion.identity);
         Audio.SetFalloff(2, 20);
+    }
+    if (music.listen)
+    {
+        music.ear.clip = Clip.Microphone;
+        music.ear.pitch = 3;
+        music.ear.playing = true;
+    }
+    else
+    {
+        music.ear.clip = Clip.none;
+        music.ear.playing = false;
     }
     if (music.spark)
     {

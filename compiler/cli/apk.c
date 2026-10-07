@@ -339,6 +339,11 @@ static void manifest_nodes(const apk_desc *desc, xml *x)
     n = open_node(x, "uses-permission"); // Matches go over the network
     attr_text(n, ATTR_NAME, "name", "android.permission.INTERNET");
     close_node(x, "uses-permission");
+    if (desc->microphone) { // The game says Clip.Microphone: the player is asked as it first wants it
+        n = open_node(x, "uses-permission");
+        attr_text(n, ATTR_NAME, "name", "android.permission.RECORD_AUDIO");
+        close_node(x, "uses-permission");
+    }
 
     // No code of its own, and its libraries straight from the APK, unpacked:
     // they're stored, aligned to pages, as Android maps them. The back button

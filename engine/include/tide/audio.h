@@ -54,7 +54,16 @@ typedef struct tide_clip {
     uint64_t id;
     uint64_t name;                     // The Clip it came from, where it's the pack's (tide_clip_of); 0 otherwise
     const struct tide_vorbis *stream;  // A long Ogg Vorbis clip, decoded as it plays (tide/vorbis.h), with no `samples`
+    bool microphone;                   // The capture device's frames (Clip.Microphone): no samples, mono at TIDE_AUDIO_RATE
 } tide_clip;
+
+// Tide's `Clip.Microphone`: the capture device, as a clip a `Sound` plays. A
+// voice of it gives what the device captures, mono, at the mixer's rate,
+// through its effect and bus; a one-shot of it plays nothing. The platform
+// opens the device while a frame names such a voice (tide_audio_frame.microphone)
+// and closes it when none does. Its name is one no pack's clip has.
+#define TIDE_CLIP_MICROPHONE_NAME UINT64_MAX
+#define TIDE_CLIP_MICROPHONE ((tide_clip_ref){.name = TIDE_CLIP_MICROPHONE_NAME})
 
 // Tide's `Clip`: a sound of the game's pack, named by its declaration (as a
 // Texture of the pack's names its image: a number made of the declaration's
@@ -133,6 +142,7 @@ typedef struct tide_audio_frame {
     tide_audio_effect bus_effect[TIDE_AUDIO_BUSES]; // Its knobs copied too (knobs_at below)
     uint32_t bus_knobs_at[TIDE_AUDIO_BUSES];
     bool forget; // The host says: stop everything and let go of every clip and effect (a reload)
+    bool microphone; // A voice of the frame's plays the microphone: the platform keeps the capture device open
 
     uint32_t frame; // Counts tide_audio_reset
 } tide_audio_frame;

@@ -1,0 +1,14 @@
+// expect: Clip has no member 'Mic'
+local singleton Ears
+{
+    Sound ear;
+}
+
+view Listen(mut Ears ears)
+{
+    ears.ear.clip = Clip.Mic;
+}
+
+scene Main
+{
+}

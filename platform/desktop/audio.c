@@ -302,3 +302,271 @@ void tide_audio_out_close(void)
     tide_mixer_rendered_elsewhere(false);
 }
 #endif
+
+// ---------------------------------------------------------------------------
+// The capture device (src/audio_in.h): the default microphone, each system's
+// own way, pushing what it hears through tide_audio_in_push from the
+// device's thread or a thread of our own.
+
+#include "audio_in.h"
+
+#if defined(_WIN32)
+
+static const IID iid_capture = {0xC8ADBD64, 0xE71E, 0x48A0, {0xA4, 0xDE, 0x18, 0x5C, 0x39, 0x5C, 0xD3, 0x17}};
+
+static struct {
+    HANDLE thread;
+    HANDLE event;
+    HANDLE opened;
+    atomic_bool stop;
+    atomic_bool ok;
+    float *scratch;
+} wasapi_in;
+
+static DWORD WINAPI wasapi_in_thread(LPVOID arg)
+{
+    (void)arg;
+    IMMDeviceEnumerator *enumerator = NULL;
+    IMMDevice *device = NULL;
+    IAudioClient *client = NULL;
+    IAudioCaptureClient *capture = NULL;
+    WAVEFORMATEX *format = NULL;
+    const HRESULT co = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    bool started = false;
+    if (FAILED(co) && co != RPC_E_CHANGED_MODE) goto done;
+    if (FAILED(CoCreateInstance(&clsid_enumerator, NULL, CLSCTX_ALL, &iid_enumerator, (void **)&enumerator))) goto done;
+    if (FAILED(IMMDeviceEnumerator_GetDefaultAudioEndpoint(enumerator, eCapture, eConsole, &device))) goto done;
+    if (FAILED(IMMDevice_Activate(device, &iid_client, CLSCTX_ALL, NULL, (void **)&client))) goto done;
+    if (FAILED(IAudioClient_GetMixFormat(client, &format))) goto done;
+    bool floats = format->wFormatTag == WAVE_FORMAT_IEEE_FLOAT;
+    bool ints16 = format->wFormatTag == WAVE_FORMAT_PCM && format->wBitsPerSample == 16;
+    if (format->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
+        const WAVEFORMATEXTENSIBLE *x = (const WAVEFORMATEXTENSIBLE *)format;
+        floats = memcmp(&x->SubFormat, &subtype_float, sizeof subtype_float) == 0 && format->wBitsPerSample == 32;
+        ints16 = memcmp(&x->SubFormat, &subtype_pcm, sizeof subtype_pcm) == 0 && format->wBitsPerSample == 16;
+    }
+    if (!floats && !ints16) goto done;
+    if (FAILED(IAudioClient_Initialize(client, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 0, 0, format, NULL))) goto done;
+    UINT32 buffer_frames = 0;
+    if (FAILED(IAudioClient_GetBufferSize(client, &buffer_frames))) goto done;
+    if (FAILED(IAudioClient_SetEventHandle(client, wasapi_in.event))) goto done;
+    if (FAILED(IAudioClient_GetService(client, &iid_capture, (void **)&capture))) goto done;
+    wasapi_in.scratch = calloc((size_t)buffer_frames * format->nChannels + 1u, sizeof *wasapi_in.scratch);
+    if (!wasapi_in.scratch) goto done;
+    tide_audio_in_reset();
+    if (FAILED(IAudioClient_Start(client))) goto done;
+    started = true;
+    atomic_store(&wasapi_in.ok, true);
+    SetEvent(wasapi_in.opened);
+    while (!atomic_load(&wasapi_in.stop)) {
+        if (WaitForSingleObject(wasapi_in.event, 2000) != WAIT_OBJECT_0) continue;
+        for (;;) {
+            UINT32 packet = 0;
+            if (FAILED(IAudioCaptureClient_GetNextPacketSize(capture, &packet)) || !packet) break;
+            BYTE *data = NULL;
+            UINT32 frames = 0;
+            DWORD flags = 0;
+            if (FAILED(IAudioCaptureClient_GetBuffer(capture, &data, &frames, &flags, NULL, NULL))) break;
+            if (frames > buffer_frames) frames = buffer_frames;
+            const size_t count = (size_t)frames * format->nChannels;
+            if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
+                memset(wasapi_in.scratch, 0, count * sizeof(float));
+            } else if (floats) {
+                memcpy(wasapi_in.scratch, data, count * sizeof(float));
+            } else {
+                const int16_t *in = (const int16_t *)data;
+                for (size_t i = 0; i < count; i++) wasapi_in.scratch[i] = (float)in[i] / 32768.0f;
+            }
+            tide_audio_in_push(wasapi_in.scratch, frames, format->nSamplesPerSec, format->nChannels);
+            IAudioCaptureClient_ReleaseBuffer(capture, frames);
+        }
+    }
+done:
+    if (!started) SetEvent(wasapi_in.opened);
+    if (client && started) IAudioClient_Stop(client);
+    if (capture) IAudioCaptureClient_Release(capture);
+    if (format) CoTaskMemFree(format);
+    if (client) IAudioClient_Release(client);
+    if (device) IMMDevice_Release(device);
+    if (enumerator) IMMDeviceEnumerator_Release(enumerator);
+    if (SUCCEEDED(co)) CoUninitialize();
+    return 0;
+}
+
+bool tide_audio_in_open(void)
+{
+    if (wasapi_in.thread) return atomic_load(&wasapi_in.ok);
+    atomic_store(&wasapi_in.stop, false);
+    atomic_store(&wasapi_in.ok, false);
+    wasapi_in.event = CreateEventW(NULL, FALSE, FALSE, NULL);
+    wasapi_in.opened = CreateEventW(NULL, TRUE, FALSE, NULL);
+    wasapi_in.thread = CreateThread(NULL, 0, wasapi_in_thread, NULL, 0, NULL);
+    if (!wasapi_in.thread || !wasapi_in.event || !wasapi_in.opened) {
+        fprintf(stderr, "tide: no microphone: the device's thread couldn't start\n");
+        tide_audio_in_close();
+        return false;
+    }
+    WaitForSingleObject(wasapi_in.opened, INFINITE);
+    if (!atomic_load(&wasapi_in.ok)) {
+        fprintf(stderr, "tide: no microphone: no capture device, or none this program can open (WASAPI)\n");
+        tide_audio_in_close();
+        return false;
+    }
+    return true;
+}
+
+void tide_audio_in_close(void)
+{
+    atomic_store(&wasapi_in.stop, true);
+    if (wasapi_in.event) SetEvent(wasapi_in.event);
+    if (wasapi_in.thread) {
+        WaitForSingleObject(wasapi_in.thread, INFINITE);
+        CloseHandle(wasapi_in.thread);
+    }
+    if (wasapi_in.event) CloseHandle(wasapi_in.event);
+    if (wasapi_in.opened) CloseHandle(wasapi_in.opened);
+    free(wasapi_in.scratch);
+    memset(&wasapi_in, 0, sizeof wasapi_in);
+}
+
+#elif defined(__APPLE__)
+// An AudioQueue of mono floats at 48 kHz, which the system converts from the
+// device's own; it asks the player the first time, where the program's
+// bundle says why (NSMicrophoneUsageDescription).
+
+#define CORE_IN_BUFFERS 3
+#define CORE_IN_FRAMES 480
+
+static struct {
+    AudioQueueRef queue;
+    bool open;
+} core_in;
+
+static void core_in_callback(void *user, AudioQueueRef queue, AudioQueueBufferRef buffer, const AudioTimeStamp *when, UInt32 packets,
+                             const AudioStreamPacketDescription *descriptions)
+{
+    (void)user;
+    (void)when;
+    (void)packets;
+    (void)descriptions;
+    const UInt32 frames = buffer->mAudioDataByteSize / sizeof(float);
+    if (frames) tide_audio_in_push((const float *)buffer->mAudioData, frames, 48000u, 1u);
+    AudioQueueEnqueueBuffer(queue, buffer, 0, NULL);
+}
+
+bool tide_audio_in_open(void)
+{
+    if (core_in.open) return true;
+    AudioStreamBasicDescription format = {0};
+    format.mSampleRate = 48000.0;
+    format.mFormatID = kAudioFormatLinearPCM;
+    format.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
+    format.mFramesPerPacket = 1;
+    format.mChannelsPerFrame = 1;
+    format.mBitsPerChannel = 32;
+    format.mBytesPerFrame = 4;
+    format.mBytesPerPacket = 4;
+    if (AudioQueueNewInput(&format, core_in_callback, NULL, NULL, NULL, 0, &core_in.queue) != noErr) goto failed;
+    for (int i = 0; i < CORE_IN_BUFFERS; i++) {
+        AudioQueueBufferRef buffer = NULL;
+        if (AudioQueueAllocateBuffer(core_in.queue, CORE_IN_FRAMES * sizeof(float), &buffer) != noErr) goto failed;
+        AudioQueueEnqueueBuffer(core_in.queue, buffer, 0, NULL);
+    }
+    tide_audio_in_reset();
+    if (AudioQueueStart(core_in.queue, NULL) != noErr) goto failed;
+    core_in.open = true;
+    return true;
+failed:
+    fprintf(stderr, "tide: no microphone: no capture device, or none this program can open (CoreAudio)\n");
+    if (core_in.queue) AudioQueueDispose(core_in.queue, true);
+    memset(&core_in, 0, sizeof core_in);
+    return false;
+}
+
+void tide_audio_in_close(void)
+{
+    if (!core_in.open) return;
+    AudioQueueStop(core_in.queue, true);
+    AudioQueueDispose(core_in.queue, true);
+    memset(&core_in, 0, sizeof core_in);
+}
+
+#else
+// ALSA's capture stream, mono floats at 48 kHz (ALSA resamples), read on a thread of our own
+
+enum { SND_PCM_STREAM_CAPTURE = 1 };
+
+static struct {
+    void *lib;
+    int (*open)(snd_pcm_t **, const char *, int, int);
+    int (*set_params)(snd_pcm_t *, int, int, unsigned, unsigned, int, unsigned);
+    long (*readi)(snd_pcm_t *, void *, unsigned long);
+    int (*recover)(snd_pcm_t *, int, int);
+    int (*close)(snd_pcm_t *);
+    snd_pcm_t *pcm;
+    pthread_t thread;
+    atomic_bool stop;
+    bool opened;
+} alsa_in;
+
+static void *alsa_in_thread(void *arg)
+{
+    (void)arg;
+    float block[TIDE_AUDIO_BLOCK];
+    while (!atomic_load(&alsa_in.stop)) {
+        const long got = alsa_in.readi(alsa_in.pcm, block, TIDE_AUDIO_BLOCK);
+        if (got < 0) {
+            if (alsa_in.recover(alsa_in.pcm, (int)got, 1) < 0) break;
+            continue;
+        }
+        if (got > 0) tide_audio_in_push(block, (uint32_t)got, ALSA_RATE, 1u);
+    }
+    return NULL;
+}
+
+bool tide_audio_in_open(void)
+{
+    if (alsa_in.opened) return true;
+    alsa_in.lib = dlopen("libasound.so.2", RTLD_NOW);
+    if (!alsa_in.lib) {
+        fprintf(stderr, "tide: no microphone: libasound.so.2 isn't there (ALSA)\n");
+        return false;
+    }
+    *(void **)&alsa_in.open = dlsym(alsa_in.lib, "snd_pcm_open");
+    *(void **)&alsa_in.set_params = dlsym(alsa_in.lib, "snd_pcm_set_params");
+    *(void **)&alsa_in.readi = dlsym(alsa_in.lib, "snd_pcm_readi");
+    *(void **)&alsa_in.recover = dlsym(alsa_in.lib, "snd_pcm_recover");
+    *(void **)&alsa_in.close = dlsym(alsa_in.lib, "snd_pcm_close");
+    if (!alsa_in.open || !alsa_in.set_params || !alsa_in.readi || !alsa_in.recover || !alsa_in.close
+        || alsa_in.open(&alsa_in.pcm, "default", SND_PCM_STREAM_CAPTURE, 0) < 0
+        || alsa_in.set_params(alsa_in.pcm, SND_PCM_FORMAT_FLOAT_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 1, ALSA_RATE, 1, 50000) < 0) {
+        fprintf(stderr, "tide: no microphone: no capture device, or none this program can open (ALSA)\n");
+        if (alsa_in.pcm && alsa_in.close) alsa_in.close(alsa_in.pcm);
+        dlclose(alsa_in.lib);
+        memset(&alsa_in, 0, sizeof alsa_in);
+        return false;
+    }
+    atomic_store(&alsa_in.stop, false);
+    tide_audio_in_reset();
+    if (pthread_create(&alsa_in.thread, NULL, alsa_in_thread, NULL) != 0) {
+        alsa_in.close(alsa_in.pcm);
+        dlclose(alsa_in.lib);
+        memset(&alsa_in, 0, sizeof alsa_in);
+        fprintf(stderr, "tide: no microphone: the device's thread couldn't start\n");
+        return false;
+    }
+    alsa_in.opened = true;
+    return true;
+}
+
+void tide_audio_in_close(void)
+{
+    if (!alsa_in.opened) return;
+    atomic_store(&alsa_in.stop, true);
+    pthread_join(alsa_in.thread, NULL);
+    alsa_in.close(alsa_in.pcm);
+    dlclose(alsa_in.lib);
+    memset(&alsa_in, 0, sizeof alsa_in);
+}
+
+#endif
