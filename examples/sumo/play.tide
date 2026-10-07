@@ -1,6 +1,6 @@
 // Sumo, as one machine shows it: the camera, the ring and what's on it.
 // Views read the match and never change it: what they write is this machine's
-// own (Hand, Fx, Room, Ground, and a ball's local fields). The light is in
+// own (Hand, Fx, Room, Ground, Shadow, and a ball's local fields). The light is in
 // light.tide, the sparks and the numbers in effects.tide, the scores and the
 // controls in hud.tide, and the lobby in lobby.tide.
 using Box3D;
@@ -22,8 +22,10 @@ const Color LIME = Color(0.78, 0.92, 0.3);
 const Color PLAIN = Color(0.86, 0.87, 0.9);
 const Color GOLD = Color(1, 0.86, 0.36);
 
-// What draws over what, whichever file a view is in.
-enum Layers { Camera, Gather, Floor, Shadows, Pieces, Marks, Effects, Hud, Menu }
+// What draws over what, whichever file a view is in. The lamp's image is
+// drawn before anything goes to the window, as everything there asks it where
+// the shadows are.
+enum Layers { Camera, Gather, Lamp, Floor, Marks, Pieces, Effects, Hud, Menu }
 
 // How far over the floor what's flat on it is drawn, so that the floor, which
 // is in the same place, doesn't show through it.
@@ -62,9 +64,11 @@ local singleton Fx
     float flash;     // The whole screen lit, fading
     Color flashColor = Color.white;
     Random random;   // What rolls the effects: this machine's own
-    List<Solid> tiles;    // What's drawn this frame: the floor's tiles,
-    List<Solid> solids;   // the crates, which cast shadows,
-    List<Solid> rounds;   // the balls' shadows,
+    List<Solid> tiles;    // What's drawn this frame, for the window and for the lamp: the floor's tiles,
+    List<Solid> solids;   // the crates,
+    List<Solid> gems;     // the pickups that are boxes,
+    List<Solid> orbs;     // and the ones that are balls;
+    List<Solid> rounds;   // the players' balls, for the lamp alone;
     List<Decal> decals;   // and what's flat on the floor, the later over the earlier
     List<float> pops;     // Each seat's score, just counted up: 1, fading
 }
@@ -133,6 +137,8 @@ view Begin(mut Fx fx, mut Models models, mut Room room, mut Ground ground)
         fx.pops[seat] = Math.Max(0, fx.pops[seat] - fx.dt * 2.2);
     fx.tiles.Clear();
     fx.solids.Clear();
+    fx.gems.Clear();
+    fx.orbs.Clear();
     fx.rounds.Clear();
     fx.decals.Clear();
     for (var i = 0; i < 15; i++)
@@ -204,7 +210,6 @@ view Look(mut Fx fx, mut Room room)
                        Math.Sin(wobble * 0.89 + 2.1) + Math.Sin(wobble * 0.54 + 0.4) * 0.6, 0) * (fx.trauma * fx.trauma * 0.014 * back);
     room.eye = eye + shake;
     Draw3D.SetCamera(room.eye, turned, fov);
-    Draw2D.Clear(BACK);
 }
 
 // The floor's tiles, each into the list that's drawn at once, and into the
@@ -232,20 +237,18 @@ view Crates(Body body, Box box, Crate crate, Time time, mut Fx fx)
     var shade = 0.88 + crate.tone * 0.07;
     var tint = crate.kind == Kind.Keg ? ROSE : crate.kind == Kind.Plank ? Color(0.56, 0.47, 0.37)
              : crate.kind == Kind.Slab ? Color(0.25, 0.27, 0.33) : Color(0.47 * shade, 0.49 * shade, 0.56 * shade);
-    fx.solids.Add(Solid { transform = float4x4.TRS(body.position, body.rotation, box.size * left), tint = tint, kind = int(crate.kind),
-                          low = body.position.y < -0.2 ? 1 : 0 });
+    fx.solids.Add(Solid { transform = float4x4.TRS(body.position, body.rotation, box.size * left), tint = tint, kind = int(crate.kind) });
 }
 
-// A ball's shadow, and the marks under it: a ring in its color, the charge
-// it's winding up, and the time until it can charge again. A ball that's
-// bursting leaves sparks behind it: `trailed`, a local field, is where the
-// last one was.
+// A ball, for the lamp, and the marks under it: a ring in its color, the
+// charge it's winding up, and the time until it can charge again. A ball
+// that's bursting leaves sparks behind it: `trailed`, a local field, is where
+// the last one was.
 [Stage(Layers.Gather)]
 view Rings(Body body, mut Ball ball, mut Fx fx, mut Air air)
 {
     ball.flash = Math.Max(0, ball.flash - fx.dt * 5);
-    fx.rounds.Add(Solid { transform = float4x4.TRS(body.position, quaternion.identity, float3(ball.radius)),
-                          low = body.position.y < 0.2 ? 1 : 0 });
+    fx.rounds.Add(Solid { transform = float4x4.TRS(body.position, quaternion.identity, float3(ball.radius)) });
     if (body.position.y > 4 || body.position.y < 0.3) return;
     var color = SeatColor(ball.seat);
     var mine = ball.seat == fx.seat;
@@ -265,32 +268,52 @@ view Rings(Body body, mut Ball ball, mut Fx fx, mut Air air)
                                life = 0.4, size = 0.22 });
 }
 
+// The lamp's image: everything that casts a shadow, drawn through a camera
+// where the lamp is, into a target that keeps how far the lamp sees along each
+// of its pixels, and nothing else. There's no frag: no color goes anywhere
+// there. The boxes are one draw and the balls another, each mesh's lists one
+// after the other.
+[Stage(Layers.Lamp)]
+view Cast(Fx fx, Models models, mut Shadow shadow)
+{
+    if (!shadow.made)
+    {
+        shadow.made = true;
+        shadow.map = RenderTarget(LAMP_PIXELS, LAMP_PIXELS, 1, Format.DepthOnly);
+        shadow.depth = shadow.map.depth;
+    }
+    // The lamp looks along its light from far off, and sees a box with no
+    // perspective, as a sun's light has none
+    var turned = quaternion.LookRotation(-Lamp(), float3(0, 1, 0));
+    var lamp = float4x4.TRS(Math.Mul(turned, float3(0, LAMP_RAISED, -LAMP_AWAY)), turned, float3(1));
+    var sees = float4x4.Ortho(LAMP_SPAN, LAMP_SPAN, 0, LAMP_FAR);
+    // What takes the world to the lamp's image, for the frags: a camera looks
+    // along its +z, and clip space along -z, so it's the projection, after z
+    // turned around, after the lamp's own transform undone
+    shadow.toLamp = Math.Mul(sees, Math.Mul(float4x4.TRS(float3(0), quaternion.identity, float3(1, 1, -1)), Math.Inverse(lamp)));
+
+    shadow.map.Clear(Color.white);
+    shadow.map.SetCamera(lamp, sees);
+    shadow.map.Instanced(models.cube, models.cubeFaces, fx.tiles);
+    shadow.map.Instanced(models.cube, models.cubeFaces, fx.solids);
+    shadow.map.Instanced(models.cube, models.cubeFaces, fx.gems);
+    shadow.map.Instanced(models.ball, models.ballFaces, fx.rounds);
+    shadow.map.Instanced(models.ball, models.ballFaces, fx.orbs);
+}
+
+// The window's frame starts here, with the floor: everything before this
+// went into the lamp's image.
 [Stage(Layers.Floor)]
 view Floor(Fx fx, Models models)
 {
+    Draw2D.Clear(BACK);
     Draw3D.Instanced(models.cube, models.cubeFaces, fx.tiles, TileLook);
 }
 
-// The shadows: everything that casts one, once more, through a transform that
-// lays it flat on the floor along the lamp's light. They read depth and write
-// none, so what's in front hides them, and where two overlap neither hides
-// the other: they're the same paint. Laid flat, a box has no side that's its
-// front any more, so both sides of its triangles are drawn.
-[Stage(Layers.Shadows)]
-view Shadows(Fx fx, Models models)
-{
-    Draw3D.Depth(Depth.Read),
-    Draw3D.Cull(Cull.None),
-    Draw3D.Transform(Flatten())
-    {
-        Draw3D.Instanced(models.cube, models.cubeFaces, fx.solids, ShadowDrop, ShadowLook);
-        Draw3D.Instanced(models.ball, models.ballFaces, fx.rounds, ShadowDrop, ShadowLook);
-    }
-}
-
-// What's flat on the floor, all at once, over the shadows and under what
-// stands on it.
-[Stage(Layers.Shadows, 1)]
+// What's flat on the floor, all at once, over it and under what stands on
+// it. It reads depth and writes none: what's in front hides it, and it hides
+// nothing.
+[Stage(Layers.Marks)]
 view Decals(Fx fx, Models models)
 {
     Draw3D.Depth(Depth.Read)
@@ -314,28 +337,26 @@ view Balls(Body body, Ball ball, Models models)
     Draw3D.Mesh(models.ball, models.ballFaces, float4x4.TRS(body.position, body.rotation, float3(ball.radius)), BallLook);
 }
 
-// A pickup turns over the floor, with a ring under it.
+// A pickup turns over the floor, with a ring under it. What it is shows in
+// its shape: a heavy ball's is a ball, pale and bigger than its ring looks,
+// and a shock's a box on its corner, teal.
 [Stage(Layers.Gather)]
-view Beacons(Pickup pickup, mut Fx fx)
+view Beacons(Body body, Pickup pickup, mut Fx fx)
 {
-    var color = pickup.power == Power.Heavy ? PLAIN : TEAL;
-    Mark(fx, float3(pickup.at.x, 0, pickup.at.y), 2.3 + Math.Sin(fx.beat * 2) * 0.25, Fade(color, 0.85), 0.14, 1);
+    var heavy = pickup.power == Power.Heavy;
+    Mark(fx, float3(pickup.at.x, 0, pickup.at.y), 2.3 + Math.Sin(fx.beat * 2) * 0.25, Fade(heavy ? PLAIN : TEAL, 0.85), 0.14, 1);
+    var at = body.position + float3(0, Math.Sin(fx.beat * 2 + pickup.at.x) * 0.15, 0);
+    if (heavy)
+        fx.orbs.Add(Solid { transform = float4x4.TRS(at, quaternion.Euler(float3(0.4, fx.beat, 0)), float3(0.52 + Math.Sin(fx.beat * 4) * 0.05)),
+                            tint = PLAIN });
+    else
+        fx.gems.Add(Solid { transform = float4x4.TRS(at, quaternion.Euler(float3(0.62, fx.beat * 2, 0.79)), float3(0.66)), tint = TEAL });
 }
 
-// What it is shows in its shape: a heavy ball's is a ball, pale and bigger
-// than its ring looks, and a shock's a box on its corner, teal.
+// The pickups, each shape's in one draw.
 [Stage(Layers.Pieces, 2)]
-view Pickups(Body body, Pickup pickup, Models models, Fx fx)
+view Pickups(Fx fx, Models models)
 {
-    var bob = Math.Sin(fx.beat * 2 + pickup.at.x) * 0.15;
-    var at = body.position + float3(0, bob, 0);
-    if (pickup.power == Power.Heavy)
-    {
-        List<Solid> ball = [Solid { transform = float4x4.TRS(at, quaternion.Euler(float3(0.4, fx.beat, 0)), float3(0.52 + Math.Sin(fx.beat * 4) * 0.05)),
-                                    tint = PLAIN }];
-        Draw3D.Instanced(models.ball, models.ballFaces, ball, Plain);
-        return;
-    }
-    List<Solid> spark = [Solid { transform = float4x4.TRS(at, quaternion.Euler(float3(0.62, fx.beat * 2, 0.79)), float3(0.66)), tint = TEAL }];
-    Draw3D.Instanced(models.cube, models.cubeFaces, spark, Plain);
+    Draw3D.Instanced(models.ball, models.ballFaces, fx.orbs, Plain);
+    Draw3D.Instanced(models.cube, models.cubeFaces, fx.gems, Plain);
 }
