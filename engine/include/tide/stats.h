@@ -63,18 +63,23 @@ typedef struct tide_stats_values {
     uint32_t ping_ms;     // The round trip to the machine that runs it
     uint32_t delay_ticks; // Ticks the input is delayed by; no line for 0
     double up, down;      // Bytes a second over the network
-    int32_t tick;
     uint32_t entities;
     // The profile collected by tide_stats_collect; NULL for no system lines
     const tide_profile *profile;
 } tide_stats_values;
 
 // The line that's always there, and every line of the list above it.
-#define TIDE_STATS_LINES 17
+#define TIDE_STATS_LINES 15
 
+// A line of the list is a label on the left and a value on the right, in two
+// columns, so the eye finds a number by its row: `cpu` and `2.1 ms`, a
+// system's name and what it took. The line that's always there is one text,
+// its label (`60 fps   ping 34 ms`), with no value.
 typedef struct tide_stats_line {
-    char text[TIDE_PROFILE_NAME + 24];
-    uint32_t name; // How many of its first bytes are a system's name, which is cut where the line is too long
+    char label[TIDE_PROFILE_NAME]; // Cut from its end where the screen is too narrow; a value never is
+    char value[32];
+    bool indent; // Under the line before it, as a part of it: `render` under `cpu`
+    bool gap;    // A little space before it: the first line of a group
 } tide_stats_line;
 
 // A finger that touched the drawer.
@@ -107,14 +112,17 @@ typedef struct tide_stats {
     // Where the last frame drew it, in the screen's pixels from the top left,
     // out to the screen's corner: the pointer there is on the drawer
     tide_rect rect;
+    float held;   // The widest the panel has been since it opened: it only grows while open, so its edge stays put
     bool shown;   // ...if it drew it
     bool hovered; // The mouse's cursor is on it
     bool key_held;        // Its key, at the last frame
     uint8_t buttons_held; // The mouse's buttons at the last frame, a bit each, the left one's first
     uint8_t buttons;      // ...and the ones that went down on the drawer, until a sample is done with each
     tide_stats_finger fingers[TIDE_TOUCHES]; // The fingers that touched it, while each has its slot
-    // The three slowest systems' average per measurement. Their names, order
-    // and values stay until another half-second of measurements is collected.
+    // The three slowest systems' average per measurement. Their names and
+    // values stay until another half-second of measurements is collected, and
+    // a system keeps its row while it stays among the three: one that joins
+    // them takes the row of the one it replaces, so the rows don't shuffle.
     tide_stats_time slow[3];
     uint32_t slow_count;
     double span;

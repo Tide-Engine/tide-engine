@@ -3578,6 +3578,23 @@ TIDE_TEST(lsp_directives)
     TIDE_CHECK(has(folds, "{\"startLine\":3,\"endLine\":4,\"kind\":\"region\"}")); // #else to #endif
     open_document("scene Main { }\n#if false\nthis is no$t code\n#endif\n");
     TIDE_CHECK(has(request("textDocument/completion"), "\"items\":[]"));
+
+    // A file's own symbols, and DEBUG, which an editor reads as `tide run` does. A symbol only a
+    // command line could define reads as not defined.
+    static const char symbols[] = "#define MINE\n"
+                                  "#if MINE && DEBUG && !FROM_A_COMMAND_LINE\n"
+                                  "scene Main { }\n"
+                                  "#else\n"
+                                  "not code\n"
+                                  "#endif\n";
+    open_document(symbols);
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    TIDE_CHECK(has(format_reply(symbols), "\"result\":[]"));
+    const char *branches = request("textDocument/foldingRange");
+    TIDE_CHECK(has(branches, "{\"startLine\":1,\"endLine\":2,\"kind\":\"region\"}")); // #define starts no branch
+    TIDE_CHECK(!has(branches, "\"startLine\":0"));
+    open_document("scene Main { }\n#define LATE\n");
+    TIDE_CHECK(has(sent[0], "comes after code"));
 }
 
 TIDE_TEST(lsp_folding)
@@ -4368,6 +4385,116 @@ TIDE_TEST(lsp_rename_namespace)
     request_with("textDocument/rename", "\"newName\":\"Play\"");
     renamed = apply_reply("namespace Game.Combat;\n" NAMESPACED, "file:///test.tide");
     TIDE_CHECK(count(renamed, "Play.Combat") == 4 && !has(renamed, "Game"));
+}
+
+// `namespace Name { ... }`: a file's declarations in several namespaces.
+#define BLOCKS                                                    \
+    "namespace Combat\n"                                          \
+    "{\n"                                                         \
+    "    component Health { int value; }\n"                       \
+    "\n"                                                          \
+    "    namespace Rules\n"                                       \
+    "    {\n"                                                     \
+    "        int Cap(int value) { return Math.Min(value, 9); }\n" \
+    "    }\n"                                                     \
+    "}\n"                                                         \
+    "\n"                                                          \
+    "scene Main { }\n"
+
+TIDE_TEST(lsp_namespace_blocks)
+{
+    start();
+    // No diagnostics, and a block's name is its namespace: inside the one it's written in
+    open_document(BLOCKS "system Hurt(mut Combat.Health health) { health.value = Combat.Rules.Cap(health.value); }\n"
+                         "event(Spawned) Setup(with Main) { Spawn(Combat.Health); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(hover_at(0, 12), "namespace Combat") && has(hover_at(0, 12), "`Health`"));
+    TIDE_CHECK(has(hover_at(4, 16), "namespace Combat.Rules") && has(hover_at(4, 16), "`Cap`"));
+
+    // Where a declaration goes inside a block, the declarations' words are offered, as at a file's top...
+    const char *reply = complete("namespace Combat\n{\n    component Health { int value; }\n\n    $\n}\nscene Main { }\n");
+    TIDE_CHECK(offers(reply, "component") && offers(reply, "system") && offers(reply, "namespace block"));
+    // ...in an empty one too, and after a block that closed
+    reply = complete("namespace Combat\n{\n    $\n}\nscene Main { }\n");
+    TIDE_CHECK(offers(reply, "component") && offers(reply, "system"));
+    reply = complete(BLOCKS "$\n");
+    TIDE_CHECK(offers(reply, "component") && offers(reply, "system"));
+
+    // A parameter's type: the block's own names plainly, another namespace's with it
+    reply = complete("namespace Combat\n{\n    component Health { int value; }\n\n    system Hurt(mut $) { }\n}\n"
+                     "namespace Items\n{\n    component Bag { int coins; }\n}\nscene Main { }\n");
+    TIDE_CHECK(offers(reply, "Health") && offers(reply, "Items.Bag") && !offers(reply, "Combat.Health"));
+    // Outside the blocks, both with their namespaces
+    reply = complete("namespace Combat\n{\n    component Health { int value; }\n}\n"
+                     "namespace Items\n{\n    component Bag { int coins; }\n}\nscene Main { }\nsystem Hurt(mut $) { }\n");
+    TIDE_CHECK(offers(reply, "Combat.Health") && offers(reply, "Items.Bag") && !offers(reply, "Health"));
+    // A block inside the file's namespace is inside it: what the file's namespace has is plain there
+    reply = complete("namespace Game;\ncomponent Body { int mass; }\nnamespace Combat\n{\n    system Hurt(mut $) { }\n}\nscene Main { }\n");
+    TIDE_CHECK(offers(reply, "Body") && !offers(reply, "Game.Body"));
+
+    // An unknown name that a block declares: written with its namespace
+    open_document("namespace Combat\n{\n    component Health { int value; }\n}\nscene Main { }\n"
+                  "system Hurt(mut Hea$lth health) { health.value -= 1; }\n");
+    const char *fixes = actions_at(5);
+    TIDE_CHECK(has(fixes, "\"title\":\"Write 'Combat.Health'\"") && has(fixes, "\"title\":\"Add 'using Combat;'\""));
+
+    // Renaming a block's namespace renames every block of it, and what names it
+    static const char twice[] = "namespace Combat\n{\n    component Health { int value; }\n}\n"
+                                "scene Main { }\n"
+                                "namespace Combat\n{\n    system Hurt(mut Health health) { health.value -= 1; }\n}\n"
+                                "system Heal(mut Combat.Health health) { health.value += 1; }\n"
+                                "event(Spawned) Setup(with Main) { Spawn(Combat.Health); }\n";
+    open_document("namespace Com$bat\n{\n    component Health { int value; }\n}\n"
+                  "scene Main { }\n"
+                  "namespace Combat\n{\n    system Hurt(mut Health health) { health.value -= 1; }\n}\n"
+                  "system Heal(mut Combat.Health health) { health.value += 1; }\n"
+                  "event(Spawned) Setup(with Main) { Spawn(Combat.Health); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    request_with("textDocument/rename", "\"newName\":\"Fight\"");
+    const char *renamed = apply_reply(twice, "file:///test.tide");
+    TIDE_CHECK(count(renamed, "Fight") == 4 && !has(renamed, "Combat"));
+    // The inner part of a block in the file's namespace, from code that names it whole
+    static const char inner[] = "namespace Game;\nnamespace Combat\n{\n    component Health { int value; }\n}\n"
+                                "scene Main { }\nsystem Heal(mut Game.Combat.Health health) { health.value += 1; }\n";
+    open_document("namespace Game;\nnamespace Combat\n{\n    component Health { int value; }\n}\n"
+                  "scene Main { }\nsystem Heal(mut Game.Com$bat.Health health) { health.value += 1; }\n");
+    request_with("textDocument/rename", "\"newName\":\"Fight\"");
+    renamed = apply_reply(inner, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "namespace Fight\n{") && has(renamed, "Game.Fight.Health") && !has(renamed, "Combat"));
+
+    // The formatter: a block's braces on lines of their own, and what's inside one step in
+    static const char messy[] = "namespace Combat {\ncomponent Health { int value; }\n\n"
+                                "  namespace Rules\n{\nint Cap(int value)\n{\nreturn value;\n}\n}\n"
+                                "system Hurt(mut Health health)\n{\nhealth.value -= 1;\n}\n}\nscene Main { }\n";
+    static const char tidy[] = "namespace Combat\n{\n    component Health { int value; }\n\n"
+                               "    namespace Rules\n    {\n        int Cap(int value)\n        {\n            return value;\n        }\n    }\n"
+                               "    system Hurt(mut Health health)\n    {\n        health.value -= 1;\n    }\n}\nscene Main { }\n";
+    format_reply(messy);
+    TIDE_CHECK(strcmp(apply_reply(messy, NULL), tidy) == 0);
+    TIDE_CHECK(has(format_reply(tidy), "\"result\":[]"));
+    // An attribute's line in a block is no line that goes on: the declaration after it starts where it does
+    static const char ordered[] = "namespace Combat\n{\n    system First() { }\n\n    [After(First)]\n    system Second() { }\n}\nscene Main { }\n";
+    TIDE_CHECK(has(format_reply(ordered), "\"result\":[]"));
+
+    // Half typed: a declaration that's broken in a block leaves the ones after it, and the block's end, as they are
+    open_document("namespace Combat\n{\n    component Health { int value; }\n\n    system Hurt(mut Health health\n\n"
+                  "    system Heal(mut Health health) { health.value += 1; }\n}\n\nscene Main { }\nsystem Look(Combat.Hea$lth health) { }\n");
+    TIDE_CHECK(count(last_sent(), "\"severity\":1") == 1);
+    TIDE_CHECK(has(request("textDocument/hover"), "component Health"));
+
+    // A declaration in a block moves to a file of its own with the block's namespace as that file's, at the file's top
+    open_document("namespace Game;\nnamespace Combat\n{\n    component Health\n    {\n        int value;\n    }\n}\n\n"
+                  "scene Main { }\nevent(Spawned) Setup(with Main) { Spawn(Combat.Health); }\n");
+    const char *move = request_at("file:///test.tide", "textDocument/codeAction", 3, 0,
+                                  "\"range\":{\"start\":{\"line\":3,\"character\":0},\"end\":{\"line\":3,\"character\":0}}");
+    TIDE_CHECK(has(move, "\"title\":\"Move 'Health' to Health.tide\""));
+    TIDE_CHECK(has(move, "\"newText\":\"namespace Game.Combat;\\n\\ncomponent Health\\n{\\n    int value;\\n}\\n\""));
+
+    // What a block can't be
+    open_document("scene Main { }\nnamespace Combat\n{\n    component Health { int value; }\n");
+    TIDE_CHECK(has(last_sent(), "to end the namespace 'Combat'"));
+    open_document("scene Main { }\nnamespace Combat\n{\n    using Physics;\n}\n");
+    TIDE_CHECK(has(last_sent(), "'using' goes at the top of the file"));
 }
 
 TIDE_TEST(lsp_rename_refusals)
@@ -8309,7 +8436,7 @@ TIDE_TEST(lsp_cubemaps)
     TIDE_CHECK(has(last_sent(), "not a parameter of its own"));
     snprintf(program, sizeof program, "scene Main { }\ncomponent Prop { Cubemap around; }\n");
     open_document(program);
-    TIDE_CHECK(has(last_sent(), "Cubemap and RenderTarget belong to this machine"));
+    TIDE_CHECK(has(last_sent(), "Cubemap, RenderTarget, Clip and Sound belong to this machine"));
 }
 
 // A game with no asset: nothing is registered and no .tide/ is made. An

@@ -622,13 +622,23 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 
 ### Namespaces
 
-- `namespace Game.Combat;` at the top of a file puts everything in the file in that namespace. A file has at most one namespace; files without one are in the global namespace. Namespaces can be dotted.
-- `using Physics;` at the top of a file lets it name Physics' declarations without the prefix. `namespace` and `using` come before any declaration.
-- A plain name is looked up in the file's namespace, then the namespaces around it out to the global namespace, then the `using` namespaces, as in C# (agreed 2026-10-05). So what a game declares itself is what its code means, whatever a namespace it imports also has by that name: a game with a `Body` of its own that says `using Physics;` means its own by `Body`, and writes `Physics.Body` for the other. If two `using` namespaces both have a name and nothing nearer does, it's ambiguous: write the namespace.
+- `namespace Game.Combat;` at the top of a file puts everything in the file in that namespace. A file has at most one such line; files without one are in the global namespace. Namespaces can be dotted.
+- `namespace Combat { ... }` puts the declarations between its braces in that namespace (agreed 2026-10-07, to separate concerns within one file; the rules under it are Provisional). It goes wherever a declaration does, so a file can have several, and one inside another.
+  - A block's name is inside the namespace it's written in: in a file of `namespace Game;`, `namespace Combat { }` is `Game.Combat`, and a block inside it named `Rules` is `Game.Combat.Rules`. A block's name can be dotted too.
+  - A namespace is a set of names, not a place: the same one can be a block twice in a file, a block in several files, and a file's own namespace in another. What any of them declares is one namespace's.
+  - What's inside a block is declared as anywhere: its order among the file's declarations is where it's written, so a block changes no system's order.
+  - Provisional: `using` stays at the top of the file, and is every block's of the file. A `using` inside a block is an error.
+  - Provisional: the line form comes before any declaration, a block being one: a file says its own namespace first, and blocks after it are inside that.
+  - Provisional: a block takes no attributes, `local`, `virtual` or `override`: they go before the declarations inside it.
+  - Provisional: a qualified name is still exact, from the global namespace: inside `Combat`, the block `Rules`' function is `Combat.Rules.Cap`, not `Rules.Cap`. (C# also reads a qualified name's first part from the namespaces around the code. Not built.)
+  - Provisional: a package's blocks are in its namespace or one inside it, as its files are: a package file with no namespace line can have everything in `namespace Package { ... }`.
+  - Where a file is half typed, editors and the errors after a first one tell where a block's declarations start by their column: the first line's after the `{`, which the formatter makes one step in from the block's `namespace`.
+- `using Physics;` at the top of a file lets it name Physics' declarations without the prefix. `namespace Name;` and `using` come before any declaration.
+- A plain name is looked up in the namespace of the code that writes it (its block's, or its file's), then the namespaces around it out to the global namespace, then the `using` namespaces, as in C# (agreed 2026-10-05). So what a game declares itself is what its code means, whatever a namespace it imports also has by that name: a game with a `Body` of its own that says `using Physics;` means its own by `Body`, and writes `Physics.Body` for the other. If two `using` namespaces both have a name and nothing nearer does, it's ambiguous: write the namespace.
 - Qualified names work wherever a type is named: parameters (`mut Combat.Health health`), `with` and `without`, component values (`Combat.Health { value = 10 }`), `Spawn`, `Add` and `Remove`.
 - The same name can be declared in different namespaces. Built-in names can't start a namespace (`namespace Math;` is an error).
 - In generated C, namespaced declarations are prefixed with their namespace: `Combat.Health` is `Combat_Health`, read with `tide_get_Combat_Health`.
-- There's exactly one `Main` in a game, in any file or namespace. `namespace` and `using` are only keywords at the top of a file.
+- There's exactly one `Main` in a game, in any file or namespace. `namespace` and `using` are only keywords where a declaration can start: anywhere else they're names like any other.
 
 ```csharp
 // combat.tide
@@ -644,6 +654,36 @@ scene Main { }
 event(Spawned) Setup(with Main)
 {
     Spawn(Health, Items.Health { value = 3 });
+}
+```
+
+```csharp
+// One file, two namespaces, and the global one around them
+namespace Combat
+{
+    component Health { int value = 100; }
+
+    namespace Rules
+    {
+        int Cap(int value) { return Math.Min(value, 100); }
+    }
+
+    system Heal(mut Health health)
+    {
+        health.value = Combat.Rules.Cap(health.value + 1);
+    }
+}
+
+namespace Items
+{
+    component Bag { int coins; }
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Combat.Health, Items.Bag);
 }
 ```
 
@@ -2898,11 +2938,11 @@ Implemented, awaiting approval:
 - `appId` is text written out, or a constant that is: what Android and iOS, and their app stores, know the app by, like `com.studio.game`, the same for every version. It's two parts or more between dots, of letters and digits, each starting with a letter: what Android and iOS both take. Without it, apps are `dev.tide.<the game's name>`, which is fine to test with; an app made to ship (`tide build --android --release`) needs one.
 - `stats` is true or false, or a constant that is. With it, the window shows the stats in its bottom right corner with no option asking for them, as `tide run --stats` and CMake's `STATS` do. It's part of the build like every setting, so what `tide build` makes shows them too: a game takes it out before players get it, unless the frame rate is theirs to see. Under `tide run`, setting it or taking it out shows at the next reload. In generated C it's `tide_game_api.stats`, which the standard host reads beside its own `tide_run_desc.stats`.
 - The stats are a drawer (`tide/stats.h`), which the standard host draws over the game:
-  - Closed, it's one line: the frame rate, and in a match another machine runs, the ping (`60 fps   ping 34 ms`). A click or a tap on it, or F8, opens it: the rest is listed above that line, which stays where it is, so a click in the same place closes it again. The list: what a frame's work takes on its thread (`cpu`: everything but the wait for the display), the ping of a match this machine runs, the input delay when there is one, the bandwidth, the tick, the entity count, the threads ticks run on, the memory the program has (as the system counts it; on the web, its WebAssembly memory), what draws and in how many draw calls, and the three systems that took longest on average per measured run over the last half second, with their order held between updates. Outside a match it has the lines that aren't a match's, and on a screen too low for all of it, the lines there's room for, from its top.
+  - Closed, it's one line: the frame rate, and in a match another machine runs, the ping (`60 fps   ping 34 ms`). A click or a tap on it, or F8, opens it: the rest is listed above that line, which stays where it is, so a click in the same place closes it again. The list is two columns, a label on the left and its value on the right, in groups: what a frame's work takes on its thread (`cpu`: everything but the wait for the display, with `render`, the part of it that's rendering, listed under it, and `gpu` beside them, with the frame's draw calls in its label, or on a line of their own where there's no GPU timer); the match's (the ping of a match this machine runs, with the input delay in its label when there is one; the bandwidth, up and down on one line; the entity count); the machine's (the threads ticks run on, the memory the program has (as the system counts it; on the web, its WebAssembly memory), what draws); and the three systems that took longest on average per measured run over the last half second, each keeping its row while it stays among them. Open, the panel keeps the widest it has been, so its edge doesn't jump. Outside a match it has the lines that aren't a match's, and on a screen too low for all of it, the lines there's room for, from its top.
   - It starts closed when the game's setting, `tide build --stats` or CMake's `STATS` asks for the stats, and open under `tide run --stats` (`tide_run_desc.stats_open`). Open or closed is the host's own, whatever build of the game runs, so a reload keeps it.
   - A press that lands on it is the drawer's until it's let go, wherever it goes meanwhile: the mouse's buttons, and any finger. The game's input never samples it and its views and GUI never read it, from the frame it lands in. A press that began elsewhere stays the game's when it crosses the drawer, and a mouse whose cursor is locked is on nothing. The game reads F8 like any key.
-  - Closed, the host measures nothing for it: the frame rate is frames counted, and the ping is the session's. A frame's work, the systems' times and the memory are measured while the list is open. Timing averages update every half second; rendering's CPU cost is part of the CPU total and has its own `render cpu` line. Desktop OpenGL and WebGPU devices with timestamp queries show asynchronous `gpu` drawing time, including render targets and excluding the drawer and display wait (WebGPU sums pass durations). Unsupported backends show no GPU line. CPU and GPU overlap, so their times aren't added. Closing or reloading discards old timings.
-  - What's picked, to confirm: that it's a drawer at all, and closed by default; the key, F8, beside the profiler's F7; what the one line says, and that the ping is in it only when another machine runs the match; that `tide run --stats` alone starts it open; that it shows outside a match too, where the stats showed nothing before; that a game can't ask where it is, and leaves the corner free by its own numbers (about 80 by 40 pixels, 190 wide with a ping); and the names in C (`tide/stats.h`, `tide_run_desc.stats_open`, `tide_platform_draw_over`).
+  - Closed, the host measures nothing for it: the frame rate is frames counted, and the ping is the session's. A frame's work, the systems' times and the memory are measured while the list is open. Timing averages update every half second; rendering's CPU cost is part of the CPU total and has its own `render` line, indented under `cpu`. Desktop OpenGL and WebGPU devices with timestamp queries show asynchronous `gpu` drawing time, including render targets and excluding the drawer and display wait (WebGPU sums pass durations). Unsupported backends show no GPU line. CPU and GPU overlap, so their times aren't added. Closing or reloading discards old timings.
+  - What's picked, to confirm: that it's a drawer at all, and closed by default; the key, F8, beside the profiler's F7; what the one line says, and that the ping is in it only when another machine runs the match; that `tide run --stats` alone starts it open; that it shows outside a match too, where the stats showed nothing before; that a game can't ask where it is, and leaves the corner free by its own numbers (about 80 by 40 pixels, 190 wide with a ping); the two columns, the groups, `render` under `cpu`, a system keeping its row, and the panel's width that only grows while it's open (2026-10-07, for the owner's ask that it read better and shift less; the draw calls in the GPU line's label, the bandwidth on one line and no tick line were their own asks); and the names in C (`tide/stats.h`, `tide_run_desc.stats_open`, `tide_platform_draw_over`).
 - `version` is text written out, or a constant that is: the version people see, like `1.2.0`, one to three numbers between dots, which Android and iOS both take (iOS's version has to be). Without it, it's `1.0`. The number app stores order updates by is each build's own: on Android, the minutes since 2020.
 - A setting that's set twice, a name that isn't a setting, and a type written before one are errors. The last two say that a game's own values are constants.
 - In generated C, the settings are in `tide_game_api` (`tick_rate` and `title`), in the `.c` rather than the header, so they don't change the game's hash.
@@ -3310,6 +3350,12 @@ Picks made as `Clip` assets and `Audio.Play` were built (2026-10-07, the second 
 - **A host that gives no audio list** (a C host of its own) records nothing, and nothing breaks.
 - **A hot reload stops every sound**: the old build's clips are its own, so the host has the mixer forget before it unloads the library (`tide_platform_audio_forget`). A pack loaded again (a saved file under `tide run`) stops nothing.
 
+Picks made as `Sound` fields and the listener were built (2026-10-07, the third card), awaiting the owner too:
+
+- **`Sound` is a built-in struct**, `{ Clip clip; float3 position; bool spatial; float volume = 1; float pitch = 1; bool loop; bool playing; }`, in generated C only for a game that names it, as `Depth` is. It's a resource of this machine's, as it holds a `Clip`: local singletons, local components, a match component's `local` fields and structs in those, and never the match's or a list's. `bus`, `effect` and `knobs` join it with their cards.
+- **The frame names every `Sound` that plays, itself** (`tide_local_sounds`, at the end of `tide_frame`, after the views and the local commands they queued, so an entity spawned or destroyed in a frame is counted that frame): a view only writes the fields. A voice is named by its field's path (hashed) and, for a row's, the entity's bits, so the same field on the same entity is the same voice frame after frame, and another entity's another voice. A `Sound` that isn't `playing` isn't named, so the mixer fades it out as it fades one whose field is gone; `playing` false then true, or another clip, starts over (the mixer's rule). Nothing of a `Sound`'s state is in the field but what the game wrote: where the clip is up to is the mixer's.
+- **The listener and the falloff are `Set` forms alone for now**: `Audio.SetListener(position, rotation)`, `Audio.SetListener(center)` (2D: z 0, facing +z) and `Audio.SetFalloff(near, far)`, each a frame's setting that holds from where it's set to the frame's end, and every frame starts from the defaults. The block forms (`Audio.Listener(...) { }`), and the listener defaulting to the frame's camera, aren't built: the default is the origin.
+
 ### Open
 
 - Effects a game can't write itself: a reverb, which needs more state than a struct of plain fields (a `float[N]` delay line fits once arrays are in `audio` state structs, which is the first thing to try), and sends to a shared reverb bus.
@@ -3339,10 +3385,20 @@ const int SLOTS = 4;
 Implemented, awaiting approval:
 
 - C#'s directives: `#if`, `#elif`, `#else` and `#endif`, each on a line of its own (spaces before it are fine, and a `//` comment after it), nesting. Conditions take symbols, `true`, `false`, `!`, `&&`, `||`, `==`, `!=` and parentheses.
-- The symbols are tide's versions: `TIDE_0_4_OR_NEWER` is true in tide 0.4 and after, `TIDE_0_4_2_OR_NEWER` in 0.4.2 and after. Only a version's numbers count: a pre-release (0.4.0-nightly.3) is the version it comes before. Any other symbol is an error, so a misspelling doesn't quietly leave code out.
+- Tide's versions are symbols: `TIDE_0_4_OR_NEWER` is true in tide 0.4 and after, `TIDE_0_4_2_OR_NEWER` in 0.4.2 and after. Only a version's numbers count: a pre-release (0.4.0-nightly.3) is the version it comes before. Any other symbol that starts with `TIDE_` is an error, so a misspelled version doesn't quietly leave code out.
 - Lines a directive leaves out aren't read, only looked through for the directives that end them, as in C#: they can hold anything, like code with syntax a newer tide reads. A directive inside a `/* */` comment in code that's read is part of the comment.
-- There are no symbols for platforms, debug and release, or anything else that differs between the machines of a match, which all have to run the same code.
 - Editors show the lines left out as comments, fold each branch, and the formatter leaves directives and those lines as they are.
+
+Symbols beyond tide's versions (the owner, 2026-10-07: `#if` with no `#define` isn't much, symbols from the command line, `#if DEBUG`, and knowing whether a package is installed; everything below is Claude's pick of how):
+
+- A symbol is defined or not, with no value, as in C#. One that nothing defines is false, and no error: `#if STEAM` has to compile in the build that doesn't define it.
+- `#define NAME` and `#undef NAME` are C#'s: for the file they're in, and before its first token, as they're for all of it; after code they're an error. `#undef` takes away a build's symbol too, in that file. A line in a branch that's left out isn't read.
+- `--define NAME` on `tide run`, `build`, `schedule` and `shaders` (and tidec, and a line of its `@list`; `DEFINES` in `tide_add_game`) defines a symbol for every file of the game and its packages. No `-D`, no `NAME=value`, no setting or `tide.packages` line for it.
+- `DEBUG` is defined in every build but `tide`'s `--release` (in this repo's CMake builds: in the Debug configuration). Nothing else is predefined: no `RELEASE`, no symbols for `--web` or `--android`, and none for platforms, as a game is one code for all of them.
+- `PACKAGE_<NAME>` is defined for each package the game builds with: its name (the `package Name` of its `tide.packages`, its namespace) in capitals, anything that's no letter or digit as `_`. No versions of packages.
+- `TIDE_` and `PACKAGE_` names, `true` and `false` can't be defined, by a file or a command line.
+- **The build's symbols that conditions read are part of the game's identity.** Each one a condition reads (not a file's own, not tide's versions) is listed in the generated header with whether it's defined, so it's in the game's hash: a debug and a release build of a game that says `#if DEBUG`, or builds with other `--define`s that the game reads, are different games and join none of each other's matches, where they'd otherwise connect and correct each other every tick. A game that reads none has the header it had. The alternative that was weighed: refusing those symbols in match code, which a lexer can't tell.
+- Editors read `DEBUG` as defined and know the game's packages; what a command line defines they don't, and read as not defined.
 
 ## Open
 

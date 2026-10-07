@@ -1,0 +1,15 @@
+// A package's blocks are in its namespace, as its files are.
+namespace Kit
+{
+    component Tag { int n; }
+}
+
+namespace Kit.Deep
+{
+    int Two() { return 2; }
+}
+
+namespace Other
+{
+    component Stray { int n; }
+}

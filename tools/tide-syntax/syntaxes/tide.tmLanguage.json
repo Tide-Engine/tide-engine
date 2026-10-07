@@ -36,9 +36,9 @@
     "directives": {
       "patterns": [
         {
-          "comment": "#if TIDE_0_3_OR_NEWER, #elif, #else and #endif, each a line of its own",
+          "comment": "#if DEBUG, #elif, #else, #endif, #define and #undef, each a line of its own",
           "name": "meta.preprocessor.tide",
-          "begin": "^\\s*(#\\s*(?:if|elif|else|endif))\\b",
+          "begin": "^\\s*(#\\s*(?:if|elif|else|endif|define|undef))\\b",
           "end": "$",
           "beginCaptures": {
             "1": { "name": "keyword.preprocessor.tide" }

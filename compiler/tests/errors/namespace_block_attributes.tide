@@ -1,0 +1,8 @@
+// expect: attributes go right before a declaration, and a namespace takes none
+// expect: put them before the declarations inside it that they're for
+scene Main { }
+[Sparse]
+namespace Combat
+{
+    component Stunned { }
+}

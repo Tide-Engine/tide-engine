@@ -1,0 +1,6 @@
+// expect: 'Math' is built into the language, so it can't name a namespace
+scene Main { }
+namespace Math
+{
+    int Twice(int x) { return x * 2; }
+}
