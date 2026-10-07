@@ -3,11 +3,13 @@
 #include <string.h>
 
 #include "compile.h"
+#include "lexer.h"
 
 static void usage(void)
 {
     fprintf(stderr,
             "usage: tidec <file.tide>... -o <output-dir> [--name <name>] [--no-line] [--layout]\n"
+            "             [--define <SYMBOL>]...\n"
             "       tidec <file.tide>... --schedule [--name <name>]\n"
             "       tidec <file.tide>... --shaders\n"
             "\n"
@@ -18,6 +20,9 @@ static void usage(void)
             "  --package <P>  the files after it are package P's, to the next --package;\n"
             "                 a line of a list can say it too. Packages' files compile\n"
             "                 first, in the order the packages are named\n"
+            "  --define <S>   a symbol every file's #if conditions read as defined, like DEBUG;\n"
+            "                 a line of a list can say it too. PACKAGE_<NAME> is defined for\n"
+            "                 each package named\n"
             "  --name <name>  base name of the generated files (default: the first file's name)\n"
             "  --no-line      don't map generated code back to .tide lines for debuggers\n"
             "  --layout       also describe the data layout, as tide run does for hot reloading\n"
@@ -36,6 +41,27 @@ typedef struct input_list {
     int room;
     const char *package; // What `--package` last said: the files after it are that package's
 } input_list;
+
+// The symbols `--define` named.
+static const char *defines[256];
+static int define_count;
+
+static bool add_define(const char *name)
+{
+    if (!lex_symbol_ok(name)) {
+        fprintf(stderr, "tidec: --define takes a symbol's name, like `--define FAST`, and '%s' isn't one%s\n", name,
+                strncmp(name, "TIDE_", 5) == 0 || strncmp(name, "PACKAGE_", 8) == 0
+                    ? ": symbols that start with TIDE_ and PACKAGE_ are tide's to say"
+                    : "");
+        return false;
+    }
+    if (define_count == 256) {
+        fprintf(stderr, "tidec: --define takes 256 symbols at most\n");
+        return false;
+    }
+    defines[define_count++] = name;
+    return true;
+}
 
 static bool add_input(input_list *inputs, const char *path)
 {
@@ -98,6 +124,8 @@ static bool add_listed(const char *path, input_list *inputs)
         *end = '\0';
         if (strncmp(line, "--package ", 10) == 0) {
             inputs->package = line + 10;
+        } else if (strncmp(line, "--define ", 9) == 0) {
+            if (!add_define(line + 9)) return false;
         } else if (*line && !add_input(inputs, line)) {
             return false;
         }
@@ -134,6 +162,8 @@ int main(const int argc, char **argv)
             opts.shaders = true;
         } else if (strcmp(argv[i], "--package") == 0 && i + 1 < argc) {
             inputs.package = argv[++i];
+        } else if (strcmp(argv[i], "--define") == 0 && i + 1 < argc) {
+            if (!add_define(argv[++i])) return 2;
         } else if (argv[i][0] == '-') {
             usage();
             return 2;
@@ -147,6 +177,8 @@ int main(const int argc, char **argv)
         usage();
         return 2;
     }
+    opts.defines = defines;
+    opts.define_count = define_count;
     // By the order the packages were named in, which sorting would lose
     input_list named = inputs;
     named.items = malloc((size_t)inputs.count * sizeof(compile_input));

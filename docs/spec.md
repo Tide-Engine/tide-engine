@@ -3305,10 +3305,20 @@ const int SLOTS = 4;
 Implemented, awaiting approval:
 
 - C#'s directives: `#if`, `#elif`, `#else` and `#endif`, each on a line of its own (spaces before it are fine, and a `//` comment after it), nesting. Conditions take symbols, `true`, `false`, `!`, `&&`, `||`, `==`, `!=` and parentheses.
-- The symbols are tide's versions: `TIDE_0_4_OR_NEWER` is true in tide 0.4 and after, `TIDE_0_4_2_OR_NEWER` in 0.4.2 and after. Only a version's numbers count: a pre-release (0.4.0-nightly.3) is the version it comes before. Any other symbol is an error, so a misspelling doesn't quietly leave code out.
+- Tide's versions are symbols: `TIDE_0_4_OR_NEWER` is true in tide 0.4 and after, `TIDE_0_4_2_OR_NEWER` in 0.4.2 and after. Only a version's numbers count: a pre-release (0.4.0-nightly.3) is the version it comes before. Any other symbol that starts with `TIDE_` is an error, so a misspelled version doesn't quietly leave code out.
 - Lines a directive leaves out aren't read, only looked through for the directives that end them, as in C#: they can hold anything, like code with syntax a newer tide reads. A directive inside a `/* */` comment in code that's read is part of the comment.
-- There are no symbols for platforms, debug and release, or anything else that differs between the machines of a match, which all have to run the same code.
 - Editors show the lines left out as comments, fold each branch, and the formatter leaves directives and those lines as they are.
+
+Symbols beyond tide's versions (the owner, 2026-10-07: `#if` with no `#define` isn't much, symbols from the command line, `#if DEBUG`, and knowing whether a package is installed; everything below is Claude's pick of how):
+
+- A symbol is defined or not, with no value, as in C#. One that nothing defines is false, and no error: `#if STEAM` has to compile in the build that doesn't define it.
+- `#define NAME` and `#undef NAME` are C#'s: for the file they're in, and before its first token, as they're for all of it; after code they're an error. `#undef` takes away a build's symbol too, in that file. A line in a branch that's left out isn't read.
+- `--define NAME` on `tide run`, `build`, `schedule` and `shaders` (and tidec, and a line of its `@list`; `DEFINES` in `tide_add_game`) defines a symbol for every file of the game and its packages. No `-D`, no `NAME=value`, no setting or `tide.packages` line for it.
+- `DEBUG` is defined in every build but `tide`'s `--release` (in this repo's CMake builds: in the Debug configuration). Nothing else is predefined: no `RELEASE`, no symbols for `--web` or `--android`, and none for platforms, as a game is one code for all of them.
+- `PACKAGE_<NAME>` is defined for each package the game builds with: its name (the `package Name` of its `tide.packages`, its namespace) in capitals, anything that's no letter or digit as `_`. No versions of packages.
+- `TIDE_` and `PACKAGE_` names, `true` and `false` can't be defined, by a file or a command line.
+- **The build's symbols that conditions read are part of the game's identity.** Each one a condition reads (not a file's own, not tide's versions) is listed in the generated header with whether it's defined, so it's in the game's hash: a debug and a release build of a game that says `#if DEBUG`, or builds with other `--define`s that the game reads, are different games and join none of each other's matches, where they'd otherwise connect and correct each other every tick. A game that reads none has the header it had. The alternative that was weighed: refusing those symbols in match code, which a lexer can't tell.
+- Editors read `DEBUG` as defined and know the game's packages; what a command line defines they don't, and read as not defined.
 
 ## Open
 
