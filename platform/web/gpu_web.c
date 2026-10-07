@@ -17,6 +17,9 @@ TIDE_WEB_IMPORT(gpu_buffer_free) void tide_web_gpu_buffer_free(tide_gpu_id buffe
 TIDE_WEB_IMPORT(gpu_texture) tide_gpu_id tide_web_gpu_texture(tide_gpu_format format, int width, int height, const void *pixels);
 TIDE_WEB_IMPORT(gpu_texture_write) void tide_web_gpu_texture_write(tide_gpu_id texture, const void *pixels);
 TIDE_WEB_IMPORT(gpu_texture_free) void tide_web_gpu_texture_free(tide_gpu_id texture);
+// A cube's faces' pixels are six pointers at `faces`, or it's 0 for none
+TIDE_WEB_IMPORT(gpu_cube) tide_gpu_id tide_web_gpu_cube(tide_gpu_color color, int size, const void *const *faces);
+TIDE_WEB_IMPORT(gpu_cube_face) tide_gpu_id tide_web_gpu_cube_face(tide_gpu_id cube, uint32_t face);
 // A pipeline, piece by piece: its slots and attributes in order, between begin and end
 // ...with how it reads its textures, 2 bits each from the lowest: tide_gpu_read
 TIDE_WEB_IMPORT(gpu_pipeline_begin) void tide_web_gpu_pipeline_begin(const char *name, const char *wgsl, uint32_t uniform_size,
@@ -89,6 +92,8 @@ const tide_gpu tide_gpu_webgpu = {
     .texture = tide_web_gpu_texture,
     .texture_write = tide_web_gpu_texture_write,
     .texture_free = tide_web_gpu_texture_free,
+    .cube = tide_web_gpu_cube,
+    .cube_face = tide_web_gpu_cube_face,
     .mipmaps = tide_web_gpu_mipmaps,
     .pipeline = tide_web_gpu_pipeline,
     .pipeline_free = tide_web_gpu_pipeline_free,

@@ -1,0 +1,5 @@
+// expect: a Cubemap's filter is said where it's sampled, and it has no edge to wrap past: 'reflection' takes no [Filter]
+// expect: 'cube.Sample(direction, Filter.Trilinear)' reads it between its smaller images
+// A field's cube takes no [Filter]
+scene Main { }
+local singleton Room { [Filter(Filter.Point)] Cubemap reflection; }

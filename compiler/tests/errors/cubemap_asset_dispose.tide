@@ -1,0 +1,6 @@
+// expect: an asset's Cubemap is the pack's: it can't be resized or disposed
+// ...and it's the pack's to keep
+asset Cubemap sky = "../e2e/cubes/sky/*.png";
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+view Show(Room room) { sky.Dispose(); }

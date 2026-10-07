@@ -61,6 +61,10 @@ enum {
     GL_UNPACK_ALIGNMENT = 0x0CF5,
     GL_PACK_ALIGNMENT = 0x0D05,
     GL_TEXTURE_2D = 0x0DE1,
+    GL_TEXTURE_CUBE_MAP = 0x8513,
+    GL_TEXTURE_CUBE_MAP_POSITIVE_X = 0x8515, // The five after it are -x, +y, -y, +z, -z
+    GL_TEXTURE_CUBE_MAP_SEAMLESS = 0x884F, // OpenGL 3.3's to ask for: OpenGL ES 3 and WebGL 2 read across a cube's edges anyway
+    GL_TEXTURE_WRAP_R = 0x8072,
     GL_UNSIGNED_BYTE = 0x1401,
     GL_UNSIGNED_SHORT = 0x1403,
     GL_INT = 0x1404,

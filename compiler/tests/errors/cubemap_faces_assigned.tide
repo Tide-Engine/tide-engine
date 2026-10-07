@@ -1,0 +1,6 @@
+// expect: a cube's faces are its own images, which what's drawn into them changes: they can't be assigned
+// expect: draw into one, 'cube.faces[0].Mesh(...)'
+// A face is the cube's own image
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+view Show(mut Room room) { room.reflection.faces[0] = room.side; }

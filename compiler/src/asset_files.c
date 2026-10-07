@@ -16,6 +16,7 @@
 #include "assets.h"
 #include "folders.h"
 #include "sha256.h"
+#include "tide/wav.h"
 #include "tide/sha256.h"
 
 #ifdef _WIN32
@@ -36,6 +37,7 @@ typedef struct read_file {
     bool decoded;          // Tried as a PNG...
     tide_png_image image;  // ...and what it gave (pixels NULL when it isn't one)
     bool utf8_known, utf8; // Whether its bytes are UTF-8 text
+    bool sound_tried, sound; // Whether it's a WAV that decodes
 } read_file;
 
 static struct {
@@ -503,7 +505,8 @@ static char *written_path(const str text)
 
 static const char *kind_name(const asset_kind kind)
 {
-    return kind == ASSET_TEXT ? "string" : kind == ASSET_BYTES ? "List<byte>" : kind == ASSET_TEXTURE ? "Texture" : "Grid2<Color>";
+    return kind == ASSET_TEXT ? "string" : kind == ASSET_BYTES ? "List<byte>" : kind == ASSET_TEXTURE ? "Texture"
+         : kind == ASSET_CUBEMAP ? "Cubemap" : kind == ASSET_CLIP ? "Clip" : "Grid2<Color>";
 }
 
 // Where a missing file might be: one with the same bytes, by the hashes the
@@ -591,7 +594,7 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
     item->data = f->data;
     item->size = f->len;
     memcpy(item->hash, f->hash, 32);
-    if (kind == ASSET_GRID || kind == ASSET_TEXTURE) {
+    if (kind == ASSET_GRID || kind == ASSET_TEXTURE || kind == ASSET_CUBEMAP) {
         if (!f->decoded) {
             f->decoded = true;
             if (!tide_png_decode(f->data, f->len, &f->image)) f->image = (tide_png_image){0};
@@ -602,6 +605,19 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             return false;
         }
         item->image = f->image;
+    } else if (kind == ASSET_CLIP) {
+        if (!f->sound_tried) {
+            f->sound_tried = true;
+            tide_sound sound;
+            f->sound = tide_wav_decode(f->data, f->len, &sound);
+            if (f->sound) tide_sound_free(&sound);
+        }
+        if (!f->sound) {
+            diag_error(at, "'%s' isn't a WAV that decodes", key);
+            diag_note("a Clip asset is a WAV of PCM or floats, of one or two channels (Ogg Vorbis is to come); for the "
+                      "file's bytes as they are, read it as a List<byte>");
+            return false;
+        }
     } else if (kind == ASSET_TEXT) {
         if (!f->utf8_known) {
             f->utf8_known = true;
@@ -630,6 +646,72 @@ static char *declaring_abs(const char *declaring)
     return abs;
 }
 
+// A cube's faces, in the order a cube has them, by how a file's name ends before its extension.
+static const char *const cube_faces[6] = {"px", "nx", "py", "ny", "pz", "nz"};
+static const char *const cube_sides[6] = {"+x", "-x", "+y", "-y", "+z", "-z"};
+
+// Which face a file is, by its name: -1 for one named for none.
+static int cube_face_of(const char *key)
+{
+    const char *name = strrchr(key, '/');
+    name = name ? name + 1 : key;
+    const char *dot = strrchr(name, '.');
+    const size_t length = dot ? (size_t)(dot - name) : strlen(name);
+    if (length < 2) return -1;
+    for (int face = 0; face < 6; face++) {
+        if (tolower((unsigned char)name[length - 2]) == cube_faces[face][0]
+            && tolower((unsigned char)name[length - 1]) == cube_faces[face][1]) return face;
+    }
+    return -1;
+}
+
+// Puts the files a Cubemap's glob matched in the faces' order, six of them, squares of one size. What's wrong is said.
+static bool order_cube(asset_value *v, const char *written, const loc at)
+{
+    asset_match *faces[6] = {0};
+    for (int i = 0; i < v->count; i++) {
+        asset_match *m = &v->items[i];
+        const int face = cube_face_of(m->key);
+        if (face < 0) {
+            diag_error(at, "'%s' isn't named for a face of the cube: a face's file ends in px, nx, py, ny, pz or nz before its "
+                           "extension", m->key);
+            diag_note("like 'sky_px.png' for the face +x points at, 'sky_nx.png' for -x's, and so on: a glob that matches "
+                      "only the six, like \"sky_??.png\", leaves other files out");
+            return false;
+        }
+        if (faces[face]) {
+            diag_error(at, "'%s' and '%s' are both the cube's %s face: a Cubemap has one file a face", faces[face]->key, m->key,
+                       cube_sides[face]);
+            return false;
+        }
+        faces[face] = m;
+    }
+    for (int face = 0; face < 6; face++) {
+        if (faces[face]) continue;
+        diag_error(at, "'%s' matches no file for the cube's %s face, whose name ends in '%s' before its extension", written,
+                   cube_sides[face], cube_faces[face]);
+        diag_note("a Cubemap is six files, one a face: px, nx, py, ny, pz and nz, the faces the axes point at and away from");
+        return false;
+    }
+    asset_match *ordered = arena_alloc(sizeof(asset_match) * 6u);
+    for (int face = 0; face < 6; face++) ordered[face] = *faces[face];
+    for (int face = 0; face < 6; face++) {
+        const asset_match *m = &ordered[face];
+        if (m->image.width != m->image.height) {
+            diag_error(at, "'%s' is %d by %d pixels: a cube's face is square", m->key, (int)m->image.width, (int)m->image.height);
+            return false;
+        }
+        if (m->image.width != ordered[0].image.width) {
+            diag_error(at, "'%s' is %d pixels a side and '%s' is %d: a cube's six faces are one size", ordered[0].key,
+                       (int)ordered[0].image.width, m->key, (int)m->image.width);
+            return false;
+        }
+    }
+    v->items = ordered;
+    v->count = 6;
+    return true;
+}
+
 asset_value *asset_resolve(const char *declaring_as_given, const str path, const asset_kind kind, const bool many, const bool is_map,
                            const loc at, const char *game_folder)
 {
@@ -648,12 +730,19 @@ asset_value *asset_resolve(const char *declaring_as_given, const str path, const
     v->is_map = is_map;
     const bool url = asset_path_is_url(written, strlen(written));
     const bool glob = !url && asset_path_is_glob(written, strlen(written));
+    if (kind == ASSET_CUBEMAP && !glob) {
+        diag_error(at, "a Cubemap is six files, its faces, and '%s' names one: write a glob that matches the six", written);
+        diag_note("like \"art/sky_??.png\", for files named for their faces by how their names end: sky_px.png, sky_nx.png, "
+                  "sky_py.png, sky_ny.png, sky_pz.png and sky_nz.png");
+        free(folder);
+        return NULL;
+    }
     if (url && many) {
         diag_error(at, "a URL is one file, and the type holds many: write the type as '%s'", kind_name(kind));
         free(folder);
         return NULL;
     }
-    if (glob && !many) {
+    if (glob && !many && kind != ASSET_CUBEMAP) {
         diag_error(at, "'%s' is a glob, which matches many files, and the type holds one", written);
         diag_note("write the type as a list of them, 'List<%s>', or as a map of their paths, 'Map<string, %s>', or name one file",
                   kind_name(kind), kind_name(kind));
@@ -706,6 +795,7 @@ asset_value *asset_resolve(const char *declaring_as_given, const str path, const
             v->count = w.keys.count;
             for (int i = 0; i < w.keys.count && ok; i++) ok = read_item(&v->items[i], pairs[2 * i], pairs[2 * i + 1], kind, written, at);
             free(pairs);
+            if (ok && kind == ASSET_CUBEMAP) ok = order_cube(v, written, at);
         }
         free(base_slash);
         free(base);
