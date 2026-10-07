@@ -221,24 +221,44 @@ Only the fields the code reads go to the GPU: a component's with each entity dra
 
 ## Textures
 
-A grid of colors in what a frag takes is a texture (see [Textures](./views.md#textures)), and `Sample` reads it:
+`Sample` reads a [texture](./views.md#textures) at a `uv`, and gives its color there. A frag samples the textures it can name three ways:
 
 ```csharp
-color = models.wood.Sample(vertex.uv);                             // Blended between its cells
-color = models.wood.Sample(vertex.uv, Filter.Point);               // The nearest cell
-color = models.wood.Sample(vertex.uv * 4, Filter.Point, Wrap.Repeat); // Four times across, and four down
+frag Shade(Corner corner, out Color color, Models models, Texture source)
+{
+    color = models.wood.Sample(corner.uv)        // A field of a component or singleton it takes
+          * tiles.Sample(corner.uv)              // An asset, by its name
+          * source.Sample(corner.uv);            // The texture its draw gives it
+}
+
+view Crates(Models models)
+{
+    Draw.Mesh(models.crate, models.faces, models.label, Shade);   // models.label is Shade's `source`
+}
 ```
 
-`uv` is as a mesh's: (0, 0) is the outer corner of the grid's cell (0, 0) and (1, 1) the outer corner of its last. The filter is written there, `Filter.Point` or `Filter.Bilinear`. Verts sample too.
+- **A field**: a `Texture`, a `Grid2<Color>` or a `Grid2<float>` of a component or a singleton the frag takes.
+- **An asset**, by its name, with no parameter for it: `asset Texture tiles = "art/tiles.png";` and then `tiles.Sample(uv)` (see [Assets](./assets.md#images-to-draw-with)).
+- **Its own `Texture` parameter**, one at the most, which is whatever texture the draw gives after its mesh: an asset, a target's color, a grid, a `Texture` a field holds. A [`Draw.Blit`](./views.md#targets-and-post-processing)'s source is its frag's.
 
-Past 0 and 1, `uv` reads what the [wrap](./views.md#past-the-edges) after the filter says: the cells at the edge without one (`Wrap.Clamp`), the grid again (`Wrap.Repeat`), or again the other way round each time (`Wrap.Mirror`). A frag is where a wrap earns its keep, since it works its `uv` out: `vertex.uv * 4` tiles a floor, and `vertex.uv + float2(time.t * 0.1, 0)` scrolls one.
+`uv` is as a mesh's: (0, 0) is the outer corner of the texture's first pixel and (1, 1) the outer corner of its last. Verts sample too. A `Grid2<float>` gives its number as the color's `r`, with `g` and `b` 0 and `a` 1 (see [One channel](./views.md#one-channel)).
 
-- The filter and the wrap are written in the call, `Filter.Point` and `Wrap.Repeat`, never read from a variable: the GPU is told how a texture is read before any pixel runs.
-- A wrap comes after a filter, so a `Sample` that says how it wraps says both. The names work too: `Sample(uv: vertex.uv, filter: Filter.Bilinear, wrap: Wrap.Repeat)`.
-- What a `Sample` leaves out is the texture's own to say, where its declaration does ([`[Filter]` and `[Wrap]`](./views.md#saying-it-once-on-the-texture)): `models.wood.Sample(uv)` is read as the field `wood` says, and `tiles.Sample(uv)` as the asset `tiles` says. A direct `Texture` parameter is read as its draw's source says, so `Draw.Mesh(corners, faces, tiles, Shade)` gives `source.Sample(uv)` the sampling `tiles` declared, and a `Texture` that's a value (a field's, a target's color) the usual: blended, the cells at the edge.
-- An image file of the game's is sampled by its name, with no parameter for it: `asset Texture tiles = "art/tiles.png";` and then `tiles.Sample(vertex.uv)` (see [Assets](./assets.md#images-to-draw-with)).
-- One grid can be read several ways in one frag, clamped here and repeated there. Each way counts as one of the 8 textures a draw samples, and the same way twice counts once.
-- A draw through a frag takes no filter and no wrap of its own: `Draw.Mesh(corners, faces, image, Filter.Point, Shade)` is an error that says to write them at `Sample`.
+How it's read is the texture's own to say, and the `Sample`'s where it says:
+
+```csharp
+color = models.wood.Sample(corner.uv);                                   // As `wood` says: blended and clamped, if it says nothing
+color = models.wood.Sample(corner.uv, Filter.Point);                     // The nearest pixel
+color = models.wood.Sample(corner.uv * 4, Filter.Point, Wrap.Repeat);    // Four times across, and four down
+```
+
+Past 0 and 1, `uv` reads what the [wrap](./views.md#past-the-edges) says: the pixels at the edge (`Wrap.Clamp`), the texture again (`Wrap.Repeat`), or again the other way round each time (`Wrap.Mirror`). A frag is where a wrap earns its keep, since it works its `uv` out: `corner.uv * 4` tiles a floor, and `corner.uv + float2(time.t * 0.1, 0)` scrolls one.
+
+- What a `Sample` leaves out is the texture's: what its declaration says ([`[Filter]` and `[Wrap]`](./views.md#saying-it-once-on-the-texture)), and blended and clamped with nothing said. A `Texture` carries that with it, so a frag's `source` is read as whichever texture the draw gave says, and a `Texture` field as whichever it holds: the same frag draws `tiles` repeated and `hero` clamped, in two draws.
+- A draw can say it for that draw, after the texture: `Draw.Mesh(corners, faces, tiles, Filter.Bilinear, Wrap.Clamp, Shade)` gives `source` blended and clamped, whatever `tiles` says.
+- A filter and a wrap written at a `Sample` are written out, `Filter.Point` and `Wrap.Repeat`, never read from a variable: the GPU is told how a texture is read before any pixel runs. Where they come with the texture, the engine tells it for each draw.
+- A wrap comes after a filter, so a `Sample` that says how it wraps says both. The names work too: `Sample(uv: corner.uv, filter: Filter.Bilinear, wrap: Wrap.Repeat)`.
+- One texture can be read several ways in one frag, clamped here and repeated there. Each way counts as one of the 8 textures a draw samples, and the same way twice counts once. A `Sample` that says nothing and one that says the default are two ways for a `Texture` parameter or field, since the texture may say otherwise.
+- A draw gives a texture to a frag that takes one, and none to a frag that doesn't: `Draw.Mesh(corners, faces, models.wood, Shade)` is an error where `Shade` has no `Texture` parameter.
 
 ## A target's depth
 

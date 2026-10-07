@@ -349,7 +349,7 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw.Text(text, position, size, color, font)` | Text in a weight: `Font.Bold`. An anchor goes before it: `Draw.Text(text, position, size, color, anchor, font)` |
 | `Draw.MeasureText(text, size)` | Nothing: it returns how big `Draw.Text` would draw the text, a `float2` of its width and height (see [Measuring text](#measuring-text)). `MeasureText(text, size, font)` measures in a weight |
 | `Draw.Mesh(vertices, indices)` | Triangles, with a color at each corner (see [Meshes](#meshes)) |
-| `Draw.Mesh(vertices, indices, texture)` | Triangles drawn with a grid of colors, read with a filter and a wrap (see [Textures](#textures)) |
+| `Draw.Mesh(vertices, indices, texture)` | Triangles drawn with a texture, read as it says or with the filter and the wrap after it (see [Textures](#textures)) |
 | `Draw.Blend(mode) { ... }` | How what's drawn in the block goes over what's there: added, multiplied, replaced (see [Blending](#blending)) |
 | `Draw.Tint(color) { ... }` | Fades or colors what's drawn in the block (see [Tints](#tints)) |
 | `Draw.Stencil(test, value, operation) { ... }` | What's drawn in the block is drawn only where a number kept for each pixel passes a test, and changes that number where it draws: masks, cut-outs, counting (see [Stencil](#stencil)) |
@@ -786,7 +786,9 @@ A mesh's corners can be a struct of your own instead, with whatever fields the m
 
 ## Textures
 
-An uploaded texture can come from a grid of colors with a size, `Grid2<Color>` (see [Grids](../language/grids.md)). `Draw.Mesh` also accepts a `Texture`: an image file of the game's, `asset Texture hero = "art/hero.png";` (see [Assets](./assets.md#images-to-draw-with)), or a target's `.color`. With no frag, each pixel is the triangle's color times the image's at its `uv`: (0, 0) is the first pixel's outer corner, and (1, 1) the last pixel's outer corner.
+A `Texture` is what you draw with. It comes from an asset, `asset Texture hero = "art/hero.png";` (see [Assets](./assets.md#images-to-draw-with)), from a render target, `target.color` (see [Targets](#targets-and-post-processing)), or from a grid you paint: a `Grid2<Color>` or a `Grid2<float>` with a size (see [Grids](../language/grids.md)) is a `Texture` wherever one is wanted.
+
+`Draw.Mesh` takes one after its indices. With no frag, each pixel is the triangle's color times the texture's at its `uv`: (0, 0) is the first pixel's outer corner, and (1, 1) the last pixel's outer corner.
 
 ```csharp
 local singleton Art
@@ -823,32 +825,79 @@ Drag over the grid below to set its cells, and the next frame draws them. The to
 
 :::
 
-There's nothing to create, upload or free. The grid is ordinary state: change its cells whenever, with `[x, y]`, a loop or `Clear()`, and the next frame draws what it holds. The engine keeps a copy on the GPU while views draw with it, and sends the cells again only when they changed. Nothing holds a handle, so hot reloading carries a texture as it carries any state.
+There's nothing to create, upload or free. The grid is ordinary state: change its cells whenever, with `[x, y]`, a loop or `Clear()`, and the next frame draws what it holds. The engine keeps a copy on the GPU while views draw with it, and sends the cells again only when they changed.
 
 The grid can be local state or the match's, like a canvas each player paints. Views read the match's grids as they are at the latest tick: cells aren't blended.
 
-The argument after the texture says how it's read between cells: `Filter.Bilinear` blends them, and is what a call without it does; `Filter.Point` takes the nearest, for pixel art.
+The argument after the texture says how it's read between pixels: `Filter.Bilinear` blends them, `Filter.Point` takes the nearest, for pixel art. A call that leaves it out reads the texture as the texture says (see [Saying it once](#saying-it-once-on-the-texture)), which is blended unless something said otherwise.
 
-- A cell is four floats, and the GPU's copy a byte a channel: values are clamped to 0 to 1.
-- A grid with an open axis has no size, so it's no texture: the mesh draws with its colors alone.
+- A grid with an open axis has no size, so it's no texture: the mesh draws with its colors alone. Neither is one past 16384 cells a side.
 - How big a texture can be is the GPU's limit: at least 2048 by 2048 wherever Tide runs.
+- What a grid costs is game state, 16 bytes a cell of colors and 4 a cell of floats, with a copy on the GPU at a byte a channel (values are clamped to 0 to 1) or 16 bits a float. An asset's `Texture` is a byte a channel and nothing else: for an image that's only drawn, a sprite or a tile sheet, declare it as one. A grid is for pixels code reads and writes.
 
 A game's C can draw meshes too, with pixels of its own, like a font atlas a library made: see [Drawing from C](../c/functions.md#drawing-from-c).
 
-Which of the two to keep an image in:
+### A Texture is a value
 
-- A **`Grid2<Color>`** is cells code reads and writes: a canvas, a map, a picture whose pixels the game looks at. It's four floats a cell.
-- A **`Texture`** is an image that's only drawn: a sprite, a tile sheet, a background. It's a byte a channel, a quarter of the memory, and no code reads it: it has no cells and no size to ask.
+A `Texture` is a small value that names an image: a field or a local holds one, a function takes one and gives one back, and copying it copies no pixels. A grid goes wherever a `Texture` does, and is the texture it is there:
+
+```csharp
+local singleton Art
+{
+    Grid2<Color> canvas = Grid2(64, 64);
+    RenderTarget scene;
+    Texture shown;          // Whichever it's given
+}
+
+void Show(List<Vertex> corners, List<int> faces, Texture texture)
+{
+    Draw.Mesh(corners, faces, texture);
+}
+
+view Panel(mut Art art)
+{
+    art.shown = art.paused ? art.scene.color : art.canvas;   // A target's color, or the grid
+    Show(art.corners, art.faces, art.shown);
+    Show(art.corners, art.faces, hero);                      // An asset
+}
+```
+
+- A texture made of a grid is that grid, not a copy: it draws what the grid holds when it's drawn. It lasts as long as the grid does. One kept past its grid (the entity the grid was a field of is gone, the match ended) draws nothing, or whatever took the grid's place: it's a name, as an `Entity` kept past its entity is.
+- The default `Texture`, what a field starts as, is no texture: a mesh drawn with it draws its colors alone.
+- It belongs to this machine: views, local state and the functions they call have them, and the match doesn't.
+- No code reads a `Texture`'s pixels or asks its size. A grid's cells are read as the grid.
+
+### One channel
+
+A `Grid2<float>` is a texture of one channel, for what isn't a picture: a heightmap, a lookup table, a field of distances. A frag reads it like any texture, and gets the cell's number as the color's `r`, with `g` and `b` 0 and `a` 1:
+
+```csharp
+local singleton Land
+{
+    Grid2<float> heights = Grid2(256, 256);
+}
+
+frag Slope(Corner corner, out Color color, Land land)
+{
+    float height = land.heights.Sample(corner.uv).r;
+    float snow = Math.Saturate(height / 40);
+    color = Color(snow, 0.6 + 0.4 * snow, snow);   // Green in the valleys, white at 40 and up
+}
+```
+
+- The numbers are the grid's own, not clamped to 0 to 1: a cell that's 40 reads as 40, and one that's -3 as -3.
+- The GPU's copy is a float of 16 bits a cell, which every device Tide draws on can blend between cells. That's about three digits, up to 65504 either way: a bigger number reads as that, and a cell that's NaN as 0. The grid itself keeps its 32 bits for the code that reads it.
+- Drawn with no frag, it's red: the vertex's color times `(r, 0, 0, 1)`. It's a frag that makes something of the number.
 
 ### Past the edges
 
-A texture's own cells are where `uv` goes from 0 to 1. What a `uv` past those reads is the draw's to say too, with a `Wrap` after the filter:
+A texture's own pixels are where `uv` goes from 0 to 1. What a `uv` past those reads is its wrap, which a draw says after the filter:
 
 ```csharp
 Draw.Mesh(corners, [0, 1, 2, 0, 2, 3], art.tile, Filter.Point, Wrap.Repeat);
 ```
 
-- `Wrap.Clamp` reads the cells at the texture's edge. It's what a call without a wrap does.
+- `Wrap.Clamp` reads the pixels at the texture's edge. It's what a texture that says nothing has.
 - `Wrap.Repeat` reads the texture again: 1.25 reads what 0.25 does. It's for tiles, and for what scrolls.
 - `Wrap.Mirror` reads the texture again, the other way round each time: 1.25 reads what 0.75 does, so no seam shows where its edges don't match.
 
@@ -860,15 +909,17 @@ The quad below has uvs that go three times across its texture and three times do
 
 :::
 
-- It's one wrap, for both ways across the texture, and it's written after the filter: a draw that says how it wraps says its filter too (`Filter.Bilinear` is the one a draw without has).
+- It's one wrap, for both ways across the texture, and it's written after the filter: a draw that says how it wraps says its filter too. A texture that's always wrapped one way says so where it's declared instead (below).
 - It's a value like the filter: a field, or `tiled ? Wrap.Repeat : Wrap.Clamp`.
-- It's how this draw reads the texture, and no part of the texture: one grid can be clamped in one draw and repeated in the next. So can a [render target's color](#targets-and-post-processing), and a texture of any size.
+- It's how this draw reads the texture, and changes nothing of the image: one grid can be clamped in one draw and repeated in the next. So can a [render target's color](#targets-and-post-processing), and a texture of any size.
 - Blended, a cell at the edge blends with what the wrap says is past it: with `Wrap.Repeat` that's the cell at the opposite edge, which is what makes tiles meet without a seam.
 - `Wrap` is the engine's name: a game's own type or function takes another one, or a namespace.
 
 ### Saying it once, on the texture
 
-A texture that's always read one way can say so where it's declared, with `[Filter(...)]` and `[Wrap(...)]`, each alone or both:
+How a texture is sampled is said in two places: on the texture, where it's made, and on the draw, for that draw.
+
+A texture that's always read one way says so where it's declared, with `[Filter(...)]` and `[Wrap(...)]`, each alone or both:
 
 ```csharp
 [Filter(Filter.Point), Wrap(Wrap.Repeat)]
@@ -881,30 +932,29 @@ local singleton Art
 {
     [Filter(Filter.Point)]
     Grid2<Color> canvas = Grid2(64, 64);
+    [Filter(Filter.Point)]
+    RenderTarget small;                          // Its color images
+    Texture sprite;
 }
 
-view Floor(Art art)
+view Floor(mut Art art)
 {
     Draw.Mesh(corners, faces, tiles);                               // Nearest, repeated: as tiles says
     Draw.Mesh(corners, faces, tiles, Filter.Bilinear);              // Blended here, still repeated
     Draw.Mesh(corners, faces, tiles, Filter.Bilinear, Wrap.Clamp);  // Both the draw's
     Draw.Mesh(corners, faces, frames[2]);                           // Nearest: as frames says
     Draw.Mesh(corners, faces, art.canvas);                          // Nearest: as the field says
+    Draw.Mesh(corners, faces, art.small.color);                     // Nearest: as the target's field says
+
+    art.sprite = tiles;
+    Draw.Mesh(corners, faces, art.sprite);                          // Nearest, repeated: it's tiles
 }
 ```
 
-- They go before an asset that's a `Texture` or a `Grid2<Color>` (one image, or a list or a map of them), and before a `Grid2<Color>` field.
-- It's what's used where a draw doesn't say. A draw that says its filter or its wrap has what it says, each of the two apart.
-- It holds wherever the declaration is named: `tiles`, `frames[2]`, `icons["coin"]`, the variable of a `foreach` over `frames`, `art.canvas`. In a frag too: `tiles.Sample(uv)` is read as `tiles` says, and so is the source a draw gives a frag (see [Sampling a texture](./shaders.md#textures)).
-- **A `Texture` kept in a field or a local doesn't carry it.** It's a value that names an image, and no declaration, so a draw with it is blended and clamped unless the draw says otherwise:
-
-```csharp
-art.sprite = tiles;                                   // The image
-Draw.Mesh(corners, faces, art.sprite);              // Blended, the cells at the edge
-Draw.Mesh(corners, faces, art.sprite, Filter.Point, Wrap.Repeat);
-```
-
-  For the same reason a `Texture` field takes neither attribute, and neither does a render target's.
+- They go before an asset that's a `Texture` or a `Grid2<Color>` (one image, or a list or a map of them), and before a field that's a `Grid2<Color>`, a `Grid2<float>` or a `RenderTarget`.
+- **A `Texture` carries it.** The texture made of that asset, that grid or that target is sampled as the declaration says wherever it goes: in a field, a local, a function's parameter. `art.sprite = tiles` draws as `tiles` does. So a `Texture` field takes neither attribute: it holds whichever texture it's given, which says it itself.
+- A texture with nothing said is blended and clamped.
+- What a draw says is for that draw, in the place of the texture's own, each of the two apart. In a frag, a `Sample` that says its filter or its wrap has what it says, and one that doesn't reads the texture as the texture says (see [Sampling a texture](./shaders.md#textures)).
 
 ## Clipping
 
