@@ -1,0 +1,6 @@
+// expect: RenderTarget.Cube takes its faces' side in pixels, and what each holds when that isn't Format.Rgba8: 'RenderTarget.Cube(256)' or 'RenderTarget.Cube(256, Format.Rgba16f)'
+// expect: a cube's six faces are squares of one size and one format, each with depth of its own
+// ...and the size isn't left out
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+view Show(mut Room room) { room.reflection = RenderTarget.Cube(); }

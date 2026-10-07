@@ -1,0 +1,5 @@
+// expect: '../e2e/cubes/sky/sky_p?.png' matches no file for the cube's -x face, whose name ends in 'nx' before its extension
+// expect: a Cubemap is six files, one a face: px, nx, py, ny, pz and nz, the faces the axes point at and away from
+// All six are there
+asset Cubemap sky = "../e2e/cubes/sky/sky_p?.png";
+scene Main { }

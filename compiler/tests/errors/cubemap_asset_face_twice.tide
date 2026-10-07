@@ -1,0 +1,4 @@
+// expect: '../e2e/cubes/twice/t_px.png' and '../e2e/cubes/twice/u_px.png' are both the cube's +x face: a Cubemap has one file a face
+// ...each once
+asset Cubemap sky = "../e2e/cubes/twice/*.png";
+scene Main { }

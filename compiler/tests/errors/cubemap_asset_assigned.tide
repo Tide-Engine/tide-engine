@@ -1,0 +1,7 @@
+// expect: 'sky' is an asset, read-only: it's the file it names, as the game was built
+// expect: copy it into a 'mut var' first, or into a field
+// An asset is read-only
+asset Cubemap sky = "../e2e/cubes/sky/*.png";
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+view Show(Room room) { sky = room.reflection; }
