@@ -87,7 +87,7 @@ TIDE_TEST(box3d_parts_are_the_whole_image)
                usual ? "as a match has them" : "in parts whenever", (int)whole, (int)in_parts, (int)a.Tally.touched, (int)a.Tally.parted,
                (int)a.Box3D_Physics.size);
         // What the script is for happened: bodies came and went, and things touched
-        TIDE_CHECK(a.Box3D_Physics.bodies == 39 && a.Box3D_Physics.shapes == 44 && a.Tally.touched > 30 && a.Tally.parted > 5);
+        TIDE_CHECK(a.Box3D_Physics.bodies == 40 && a.Box3D_Physics.shapes == 45 && a.Tally.touched > 30 && a.Tally.parted > 5);
         TIDE_CHECK(a.Box3D_Physics.parts.live == 0); // Every part that came went again
         TIDE_CHECK(in_parts > (usual ? 300 : 500) && whole > 0);
         // ...and it all came to rest: the last ticks stepped nothing
@@ -239,7 +239,6 @@ typedef struct lab {
     b3JointId old_joints[JOINTS];
     bool sleeping; // b3World_EnableSleeping
     bool recorded; // Box3D is recording what's done: the world isn't made again from an image meanwhile
-    bool restored_now; // ...and it was, since the last step
     int images_whole;
     int images_in_parts;
     int restored;
@@ -524,9 +523,8 @@ static void act(lab *l)
         did(l, "a body disabled or enabled", at);
     } else if (what < 69) {
         if (!enabled(l, at) || b3Body_GetType(body) == b3_staticBody) return;
-        // Not to sleep right after a restore: Box3D then looks the body up among the last step's events,
-        // which a restore clears (b3TrySleepIsland)
-        if (!wake && l->restored_now) return;
+        // To sleep right after a restore too, before the world's first step: its island goes with it, and
+        // the body no longer looks for the event it had in a step the world never took (box3d/TIDE.md)
         b3Body_SetAwake(body, wake);
         did(l, wake ? "a body woken" : "a body put to sleep", at);
     } else if (what < 72) {
@@ -598,7 +596,6 @@ static void act(lab *l)
             abort();
         }
         l->restored++;
-        l->restored_now = true;
         did(l, "the world restored", 0);
     } else if (what < 88 && l->old_size > 0 && !l->recorded) {
         // ...or from an older one, as a rollback does: the image a match holds is then that one
@@ -614,7 +611,6 @@ static void act(lab *l)
         memcpy(l->terrain, l->old_terrain, sizeof l->terrain);
         memcpy(l->joints, l->old_joints, sizeof l->joints);
         l->restored++;
-        l->restored_now = true;
         did(l, "the world rolled back", 0);
     } else if (what >= 91 && what < 96) {
         // How a body is to be, which is in the body or in what its set has of it: asleep or static as it may be
@@ -736,7 +732,6 @@ static bool go_on(lab *l, const int steps)
             }
         }
         b3World_Step(l->world, DT, 4);
-        l->restored_now = false;
         right = take_image(l);
         // And once more with nothing done: no part of it is another
         if (right && l->step % 97 == 0) right = take_image(l);
@@ -820,6 +815,8 @@ static void where_one_line_says_so(const bool with_mesh)
     const b3ShapeId middle = b3CreateSphereShape(l.bodies[SHELF + 5], &plain, &ball);
     const b3ShapeId head = b3CreateSphereShape(l.bodies[SHELF + 5], &plain, &ball);
     b3ShapeId lined = {0};
+    b3BodyId restless = {0};
+    b3BodyId loner = {0};
     // A few bodies that never sleep, away from the rest: with them the awake set has room for one more
     // body in the image, where one that wakes in a world all asleep moves a section, and the image is
     // then written whole whatever else is so
@@ -831,10 +828,42 @@ static void where_one_line_says_so(const bool with_mesh)
         const b3BodyId body = b3CreateBody(l.world, &def);
         const b3ShapeDef shape = b3DefaultShapeDef();
         b3CreateSphereShape(body, &shape, &(b3Sphere){{0.0f, 0.0f, 0.0f}, 0.5f});
+        if (i == 0) restless = body;
+    }
+    // ...and one more by itself that does sleep, to be woken and put to sleep again by a call
+    {
+        b3BodyDef def = b3DefaultBodyDef();
+        def.type = b3_dynamicBody;
+        def.position = b3ToPos((b3Vec3){-50.0f, 0.5f, 0.0f});
+        loner = b3CreateBody(l.world, &def);
+        const b3ShapeDef shape = b3DefaultShapeDef();
+        b3CreateSphereShape(loner, &shape, &(b3Sphere){{0.0f, 0.0f, 0.0f}, 0.5f});
     }
 
     bool right = true;
     for (l.step = 0; l.step < 300 && right; l.step++) {
+        // A body that's asleep is woken by a call, and put to sleep again by one before it would fall
+        // asleep: what wakes and what's put to sleep is said where it's written, as when the step does it
+        if (l.step == 140) {
+            TIDE_CHECK(!b3Body_IsAwake(loner));
+            b3Body_SetAwake(loner, true);
+            did(&l, "a sleeping body woken by a call", 0);
+        }
+        if (l.step == 150) {
+            TIDE_CHECK(b3Body_IsAwake(loner));
+            b3Body_SetAwake(loner, false);
+            did(&l, "an awake body put to sleep by a call", 0);
+        }
+        // ...and one that never falls asleep by itself is put to sleep all the same, and woken
+        if (l.step == 160) {
+            b3Body_SetAwake(restless, false);
+            did(&l, "a body that never sleeps put to sleep by a call", 0);
+        }
+        if (l.step == 166) {
+            TIDE_CHECK(!b3Body_IsAwake(restless) && !b3Body_IsAwake(loner));
+            b3Body_SetAwake(restless, true);
+            did(&l, "a body that never sleeps woken by a call", 0);
+        }
         // Crates and a shelf go, while everything is asleep: their places are there to take
         if (l.step == 120) {
             for (int i = 0; i < 4; i++) b3DestroyBody(l.bodies[4 + 8 * i]); // The tops of four stacks
@@ -880,6 +909,10 @@ static void where_one_line_says_so(const bool with_mesh)
         if (l.step == 119 || l.step == 249 || l.step == 269) TIDE_CHECK(l.images_in_parts > parts);
         // ...and so did the steps that took a shape off a body: a shape that goes is followed
         if (l.step == 180 || l.step == 190) TIDE_CHECK(l.images_in_parts > parts);
+        // ...and the ones a body was woken in or put to sleep in, by a call: both are followed. (The step
+        // that put the lone body to sleep again is followed too, and its image is whole all the same: the
+        // sleeping sets no longer fit where the image had them, and a section that moves is all written.)
+        if (l.step == 140 || l.step == 160 || l.step == 166) TIDE_CHECK(l.images_in_parts > parts);
     }
     TIDE_REQUIRE(right);
     TIDE_CHECK(b3World_GetAwakeBodyCount(l.world) == RESTLESS);

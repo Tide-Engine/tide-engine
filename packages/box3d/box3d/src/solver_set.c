@@ -245,10 +245,19 @@ void b3TrySleepIsland( b3World* world, int islandId )
 			// It could happen the body is forced asleep before it ever moves.
 			if ( body->bodyMoveIndex != B3_NULL_INDEX )
 			{
-				b3BodyMoveEvent* moveEvent = b3Array_Get( world->bodyMoveEvents, body->bodyMoveIndex );
-				B3_ASSERT( moveEvent->bodyId.index1 - 1 == bodyId );
-				B3_ASSERT( moveEvent->bodyId.generation == body->generation );
-				moveEvent->fellAsleep = true;
+				// Tide: only where the world still has the event. A world that was made from an image has
+				// none of its last step's (b3World_Restore clears them), and a body in the image still says
+				// which was its own: upstream looks it up regardless, which is a write past the events when
+				// a body is put to sleep (b3Body_SetAwake) before such a world's first step. The body says
+				// it has none from here on either way, so its bytes in the next image are the same.
+				if ( body->bodyMoveIndex < world->bodyMoveEvents.count )
+				{
+					b3BodyMoveEvent* moveEvent = world->bodyMoveEvents.data + body->bodyMoveIndex;
+					if ( moveEvent->bodyId.index1 - 1 == bodyId && moveEvent->bodyId.generation == body->generation )
+					{
+						moveEvent->fellAsleep = true;
+					}
+				}
 				body->bodyMoveIndex = B3_NULL_INDEX;
 			}
 
