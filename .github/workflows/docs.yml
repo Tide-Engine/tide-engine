@@ -23,7 +23,7 @@ concurrency:
 jobs:
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CCACHE_DIR: ${{ github.workspace }}/build/ccache
@@ -31,7 +31,7 @@ jobs:
       CCACHE_COMPILERCHECK: content
       CCACHE_NODIRECT: 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: useblacksmith/checkout@v1
       - uses: actions/setup-node@v7
         with:
           node-version: 24
