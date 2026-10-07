@@ -7,7 +7,7 @@ Tide comes as one command, `tide`, which builds and runs games. It has its C com
 In PowerShell:
 
 ```powershell
-irm https://tide-engine.dev/install.ps1 | iex
+Invoke-RestMethod https://tide-engine.dev/install.ps1 | Invoke-Expression
 ```
 
 Windows needs nothing else: `tide` brings the headers and libraries games build with.
@@ -43,7 +43,7 @@ Stable versions come out now and then. Nightly versions follow development day b
 
 ```powershell [Windows]
 $env:TIDE_CHANNEL = 'nightly'
-irm https://tide-engine.dev/install.ps1 | iex
+Invoke-RestMethod https://tide-engine.dev/install.ps1 | Invoke-Expression
 ```
 
 ```sh [Linux and macOS]
