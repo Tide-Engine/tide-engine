@@ -15,7 +15,7 @@
 # published by this workflow itself. A job that fails fails the run, and
 # nothing is published: every release has every package that's built.
 #
-# Jobs run on GitHub-hosted runners. Each platform builds its own package;
+# Jobs run on fresh Blacksmith runners. Each platform builds its own package;
 # macOS adds a package, while the existing Windows and Linux test suites
 # keep the same manual-run and stable-release gates.
 name: Build
@@ -80,12 +80,12 @@ jobs:
         shell: bash
         run: |
           row() { printf '{"platform":"%s","os":"%s","preset":"%s","test-jobs":4}' "$1" "$2" "$3"; }
-          rows="$(row windows-x64 windows-latest package),$(row linux-x64 ubuntu-latest package),$(row macos-arm64 macos-latest package)"
+          rows="$(row windows-x64 blacksmith-4vcpu-windows-2025 package),$(row linux-x64 blacksmith-4vcpu-ubuntu-2404 package),$(row macos-arm64 blacksmith-6vcpu-macos-latest package)"
           tests=false
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || [ "$GITHUB_REF_NAME" = release ]; then
             tests=true
-            for preset in release web-release mingw-release; do rows="$rows,$(row windows-x64 windows-latest $preset)"; done
-            for preset in release web-release sanitize; do rows="$rows,$(row linux-x64 ubuntu-latest $preset)"; done
+            for preset in release web-release mingw-release; do rows="$rows,$(row windows-x64 blacksmith-4vcpu-windows-2025 $preset)"; done
+            for preset in release web-release sanitize; do rows="$rows,$(row linux-x64 blacksmith-4vcpu-ubuntu-2404 $preset)"; done
           fi
           echo "tests=$tests" >> "$GITHUB_OUTPUT"
           echo "matrix=[$rows]" >> "$GITHUB_OUTPUT"
@@ -138,27 +138,9 @@ jobs:
           version=$(sed -nE 's/^set\(TIDE_LLVM_VERSION ([0-9.]+)\).*/\1/p' cmake/LLVM.cmake)
           test -n "$version"
           echo "LLVM_VERSION=$version" >> "$GITHUB_ENV"
-      # A runner of our own has its tools installed once (.github/runner), and
-      # no compiler cache: its build trees are still there.
-      - name: Tools (our own runner)
-        if: runner.environment != 'github-hosted'
-        run: |
-          echo "CMAKE_C_COMPILER_LAUNCHER=" >> "$GITHUB_ENV"
-          echo "CMAKE_CXX_COMPILER_LAUNCHER=" >> "$GITHUB_ENV"
-          major=${LLVM_VERSION%%.*}
-          if [ "$RUNNER_OS" = Windows ]; then
-            clang="C:/Program Files/LLVM/bin/clang"
-          else
-            clang=/usr/lib/llvm-$major/bin/clang
-            echo "LLVM_ROOT=/usr/lib/llvm-$major" >> "$GITHUB_ENV"
-          fi
-          "$clang" --version
-          "$clang" --version | grep -q "clang version $major[.]" \
-            || { echo "This runner's clang isn't LLVM $major: install it (.github/runner/README.md)"; exit 1; }
-          rm -rf build/dist build/try build/try-cpp
       # LLVM's own packages, of the same major version.
       - name: Install tools (Linux)
-        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+        if: runner.os == 'Linux'
         run: |
           major=${LLVM_VERSION%%.*}
           codename=$(lsb_release -cs)
@@ -170,7 +152,7 @@ jobs:
           echo "LLVM_ROOT=/usr/lib/llvm-$major" >> "$GITHUB_ENV"
       - name: Cache LLVM tools (Windows)
         id: llvm-tools
-        if: runner.os == 'Windows' && runner.environment == 'github-hosted'
+        if: runner.os == 'Windows'
         uses: actions/cache@v4
         with:
           # Cache the build tools and their aliases, plus clang's resources.
@@ -194,7 +176,7 @@ jobs:
       # LLVM's own release, the very archive tide's package unpacks: its
       # programs and clang's headers.
       - name: Install tools (Windows)
-        if: runner.os == 'Windows' && runner.environment == 'github-hosted'
+        if: runner.os == 'Windows'
         run: |
           choco install ninja zstandard ccache -y --no-progress
           if [ '${{ steps.llvm-tools.outputs.cache-hit }}' != true ]; then
@@ -213,18 +195,17 @@ jobs:
       # Web builds download wasi-sdk's C library (cmake/wasi-toolchain.cmake),
       # and MinGW builds llvm-mingw's (cmake/mingw-toolchain.cmake).
       - uses: actions/cache@v4
-        if: runner.environment == 'github-hosted'
         with:
           path: build/wasi-sdk-*
           key: wasi-sdk-${{ hashFiles('cmake/wasi-toolchain.cmake') }}
       - uses: actions/cache@v4
-        if: runner.os == 'Windows' && runner.environment == 'github-hosted'
+        if: runner.os == 'Windows'
         with:
           path: build/llvm-mingw-*
           key: llvm-mingw-${{ hashFiles('cmake/mingw-toolchain.cmake') }}
       # The package builds clang and lld into tide from LLVM's release (cmake/LLVM.cmake).
       - uses: actions/cache@v4
-        if: matrix.preset == 'package' && runner.environment == 'github-hosted'
+        if: matrix.preset == 'package'
         with:
           path: build/llvm-[0-9]*
           key: llvm-${{ runner.os }}-${{ hashFiles('cmake/LLVM.cmake') }}
@@ -244,21 +225,19 @@ jobs:
       # CMake inherits these launchers in its native host builds too. ccache
       # hashes the compiler and preprocessed source, including optional headers.
       - name: Cache compiled objects
-        if: runner.environment == 'github-hosted'
         uses: actions/cache@v4
         with:
           path: build/ccache
           key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ env.LLVM_VERSION }}-${{ github.sha }}
           restore-keys: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ env.LLVM_VERSION }}-
       - name: Compiler cache statistics (start)
-        if: runner.environment == 'github-hosted'
         run: ccache --zero-stats
 
       # Start long native tests first. Browser workloads compete for software
       # rendering CPU when grouped together, so keep their usual ordering.
       # Only scheduling data is cached; every selected test still runs.
       - name: Cache test durations
-        if: runner.environment == 'github-hosted' && (matrix.preset == 'release' || matrix.preset == 'mingw-release')
+        if: matrix.preset == 'release' || matrix.preset == 'mingw-release'
         uses: actions/cache@v4
         with:
           path: build/${{ matrix.preset }}/Testing/Temporary/CTestCostData.txt
@@ -314,7 +293,7 @@ jobs:
       # (KVM). Its SDK is on the runners; the emulator and its image come
       # through the SDK's manager, under Google's license.
       # Java for the SDK's tools, and for the checks of what's made for Google
-      # Play: the hosted runners have one, a runner of our own needn't.
+      # Play.
       - uses: actions/setup-java@v4
         if: matrix.platform == 'linux-x64' && matrix.preset == 'package'
         with:
@@ -323,12 +302,9 @@ jobs:
       - name: Test (Android)
         if: matrix.platform == 'linux-x64' && matrix.preset == 'package' && env.TIDE_TESTS == 'true'
         run: |
-          # A runner of our own is in the kvm group already (.github/runner).
-          if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
-            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
-            sudo udevadm control --reload-rules
-            sudo udevadm trigger --name-match=kvm
-          fi
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
           tools="$ANDROID_HOME/cmdline-tools/latest/bin"
           # Its yes to the licenses, without a pipe: yes ends with a broken one, which pipefail takes for failing
           "$tools/sdkmanager" --install emulator platform-tools "system-images;android-36;default;x86_64" \
@@ -448,7 +424,7 @@ jobs:
           retention-days: 1 # Only the release job reads them, and they count against the account's storage
 
       - name: Compiler cache statistics (end)
-        if: always() && runner.environment == 'github-hosted'
+        if: always()
         run: ccache --show-stats
 
   # Preserve the required Build checks. Tests and packages run together above,
