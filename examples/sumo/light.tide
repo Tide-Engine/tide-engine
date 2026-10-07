@@ -4,10 +4,27 @@
 // far right, the sky's own glow, a shine where the lamp reflects, and the dark
 // of the drop for what's far.
 //
-// Shadows are the things themselves, flattened onto the floor along the
-// lamp's light and drawn in the floor's own paint, darker: a tower's shadow
-// is as long as the tower is high, and falls across the tiles behind it.
+// Shadows are a shadow map. Everything that casts one is drawn once more,
+// through a camera where the lamp is, into a target that keeps only how far
+// the lamp sees along each of its pixels. A frag that lights a pixel then asks
+// that image whether the lamp sees as far as the pixel: a tower's shadow is as
+// long as the tower is high, and falls across the tiles behind it, and across
+// the crates, the balls and the towers that stand there.
 using Box3D;
+
+// The lamp's image. It's of the whole ring as a round starts, and it never
+// moves, so the shadow of what stands still never crawls. A pixel of it is 4
+// centimeters of the ring: half a pixel of a window 375 wide, where the
+// camera shows 30 meters across, and about one at 1080 lines, where it shows
+// the whole ring. A quarter as many pixels blur a crate's shadow, and four
+// times as many are four times the drawing, for an edge that's sharper only
+// where a pixel of the screen is smaller than one of these.
+const float LAMP_SPAN = 40;      // Meters across what the lamp sees: the floor, and what's stacked on it, which leans up its image
+const float LAMP_RAISED = 2.9;   // ...so the image's middle is this far up it from the ring's
+const int LAMP_PIXELS = 1024;    // Pixels across it
+const float LAMP_AWAY = 60;      // How far from the ring's middle it looks from,
+const float LAMP_FAR = 120;      // and how far it sees
+const float LAMP_SOFT = 0.75 / LAMP_PIXELS;  // How far apart a pixel's four looks at it are, as a uv: they blend a shadow's edge
 
 // A corner of a mesh: where it is, which way its face looks, and its paint.
 struct Corner
@@ -38,22 +55,32 @@ local singleton Room
     float beat;     // Radians, for what pulses
 }
 
+// What the lamp sees: how far, along each pixel of its image. A frag takes
+// this itself to ask whether its pixel is in shadow, as only a frag reads a
+// target's depth.
+local singleton Shadow
+{
+    RenderTarget map;      // Depth alone, LAMP_PIXELS a side on any display
+    DepthTexture depth;    // ...as the frags read it
+    float4x4 toLamp;       // From the world to the lamp's clip space
+    bool made;
+}
+
 // The floor, a cell a tile: whether it's there (red), and whether it's about
-// to fall (green). A frag reads it as a texture, so the floor's paint and the
-// shadows that fall on it know where the floor ends.
+// to fall (green). A frag reads it as a texture, so the floor's paint and
+// what's flat on it know where the floor ends.
 local singleton Ground
 {
     Grid2<Color> floor = Grid2(15, 15);
 }
 
 // A box that's drawn: a crate, a plank, a keg, a tile. One of a list, all
-// drawn at once, and once more, flattened, for their shadows.
+// drawn at once, and once more into the lamp's image, for their shadows.
 struct Solid
 {
     float4x4 transform = float4x4.identity;
     Color tint = Color.white;
     float kind;   // What it's painted as: a Kind's number
-    float low;    // It's under the floor, where nothing has a shadow
 }
 
 // Something flat on the floor: a ring around a ball, a blast's edge.
@@ -78,30 +105,47 @@ float3 Lamp()
     return Math.Normalize(float3(-0.5, 0.8, -0.34));
 }
 
-// What takes a thing to its shadow: every point slides along the lamp's
-// light until it's on the floor, a hair over it.
-float4x4 Flatten()
+// Where a pixel is in the lamp's image, a uv from its top left corner, and how
+// far from the lamp it is there, from 0 to 1: what a frag compares with what
+// the lamp saw.
+//
+// A surface the lamp sees is exactly as far as what's stored for it, where
+// that was measured: at the middle of a pixel of the lamp's image, which on a
+// surface that slants away from the lamp is a way off, nearer or further. So
+// compared as it is, the surface is in its own shadow, in stripes. A pixel
+// looks from off its surface instead, along its normal, by as much of a pixel
+// of the lamp's image as its four looks reach across, the more the more the
+// surface slants: that's off every stripe, and still on the floor's side of
+// what stands on it, so a shadow starts where its crate does.
+//
+// What's outside the image is nearer than anything in it: lit.
+float3 FromLamp(float3 world, float3 normal, float4x4 toLamp)
 {
-    float3 lamp = Lamp();
-    float across = lamp.x / lamp.y;
-    float along = lamp.z / lamp.y;
-    float lift = 0.012;
-    return float4x4(float4(1, 0, 0, 0), float4(-across, 0, -along, 0), float4(0, 0, 1, 0), float4(across * lift, lift, along * lift, 1));
+    float facing = Math.Dot(normal, Lamp());
+    float slant = Math.Sqrt(Math.Saturate(1 - facing * facing));
+    float step = LAMP_SPAN / LAMP_PIXELS;
+    float4 clip = Math.Mul(toLamp, float4(world + normal * (step * (0.4 + 1.8 * slant)), 1));
+    if (Math.Max(Math.Abs(clip.x), Math.Abs(clip.y)) > 1) return float3(0.5, 0.5, 0);
+    return float3(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5, clip.z * 0.5 + 0.5);
 }
 
-// A surface's paint in the ring's light.
-Color Lit(Color paint, float3 normal, float3 world, Room room, float gloss)
+// A surface's paint in the ring's light. `sun` is how much of the lamp's
+// light gets to it, from 0, in shadow, to 1: its frag asks the lamp's image,
+// as only a frag reads it.
+Color Lit(Color paint, float3 normal, float3 world, Room room, float gloss, float sun)
 {
     float3 lamp = Lamp();
     float3 toEye = Math.Normalize(room.eye - world);
     float direct = Math.Max(Math.Dot(normal, lamp), 0);
     float fill = Math.Max(Math.Dot(normal, Math.Normalize(float3(0.6, 0.25, 0.7))), 0);
     float sky = 0.36 + 0.16 * normal.y;
-    float shine = Math.Pow(Math.Max(Math.Dot(normal, Math.Normalize(lamp + toEye)), 0), 26) * gloss;
+    float shine = Math.Pow(Math.Max(Math.Dot(normal, Math.Normalize(lamp + toEye)), 0), 26) * gloss * sun;
     float rim = Math.Pow(1 - Math.Max(Math.Dot(normal, toEye), 0), 3) * 0.12;
     float3 base = float3(paint.r, paint.g, paint.b);
     float3 cool = float3(0.5, 0.72, 1);
-    mut float3 lit = base * (sky + direct * 0.7) + base * cool * (fill * 0.24) + float3(shine) + cool * rim;
+    // In shadow the lamp's light is gone, and a little of the sky's blue is there in its place
+    float3 dusk = float3(0.09, 0.095, 0.185) * (direct * (1 - sun));
+    mut float3 lit = base * (sky + direct * sun * 0.7) + base * dusk + base * cool * (fill * 0.24) + float3(shine) + cool * rim;
     // What's deep under the floor sinks into the dark
     float deep = Math.Saturate((-2 - world.y) / 14);
     lit = lit + (float3(0.086, 0.086, 0.094) - lit) * deep;
@@ -144,8 +188,12 @@ Color FloorPaint(float3 world, Color here, float4 sides, float beat)
 
 // A tile: its top is the floor's paint, and its sides are dark, with the
 // edge's light along their top.
-frag TileLook(Corner corner, out Color color, Solid solid, Pixel pixel, Room room, Ground ground)
+frag TileLook(Corner corner, out Color color, Solid solid, Pixel pixel, Room room, Ground ground, Shadow shadow)
 {
+    // How much of the lamp's light gets here: four looks at its image around where this pixel is in it
+    float3 seen = FromLamp(pixel.world, corner.normal, shadow.toLamp);
+    float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
+               + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
     if (corner.normal.y > 0.5)
     {
         float2 uv = (float2(pixel.world.x, pixel.world.z) / TILE + float2(7.5)) / 15;
@@ -153,7 +201,7 @@ frag TileLook(Corner corner, out Color color, Solid solid, Pixel pixel, Room roo
         float4 sides = float4(ground.floor.Sample(uv - float2(step, 0), Filter.Point).r, ground.floor.Sample(uv + float2(step, 0), Filter.Point).r,
                               ground.floor.Sample(uv - float2(0, step), Filter.Point).r, ground.floor.Sample(uv + float2(0, step), Filter.Point).r);
         Color paint = FloorPaint(pixel.world, ground.floor.Sample(uv, Filter.Point), sides, room.beat);
-        color = Lit(Color(paint.r, paint.g, paint.b, 1), corner.normal, pixel.world, room, 0.35);
+        color = Lit(Color(paint.r, paint.g, paint.b, 1), corner.normal, pixel.world, room, 0.35, sun);
         // What glows is its own light
         if (paint.r > 0.9) color = Color(paint.r, paint.g, paint.b, 1);
         return;
@@ -161,12 +209,12 @@ frag TileLook(Corner corner, out Color color, Solid solid, Pixel pixel, Room roo
     float down = -pixel.world.y;
     mut Color side = Color(0.13, 0.14, 0.17);
     if (down < 0.12) side = solid.tint;
-    color = Lit(side, corner.normal, pixel.world, room, 0);
+    color = Lit(side, corner.normal, pixel.world, room, 0, sun);
     if (down < 0.12) color = Color(solid.tint.r, solid.tint.g, solid.tint.b, 1);
 }
 
 // A crate has a frame around each face, a shade darker, and a keg a band.
-frag CrateLook(Corner corner, out Color color, Solid solid, Instance instance, Pixel pixel, Room room)
+frag CrateLook(Corner corner, out Color color, Solid solid, Instance instance, Pixel pixel, Room room, Shadow shadow)
 {
     float3 at = float3(Math.Abs(corner.position.x), Math.Abs(corner.position.y), Math.Abs(corner.position.z));
     // The middle one of the three is how near the face's edge this is
@@ -179,46 +227,38 @@ frag CrateLook(Corner corner, out Color color, Solid solid, Instance instance, P
         tone = 1;
     }
     Color paint = Color(solid.tint.r * tone, solid.tint.g * tone, solid.tint.b * tone, 1);
-    color = Lit(paint, Math.Normalize(Math.Rotate(instance.transform, corner.normal)), pixel.world, room, 0.25);
-}
-
-// A shadow: the floor's paint where it falls, darker, and nothing where
-// there's no floor to fall on. Whatever is under the floor casts none: its
-// corners are all put in one place, which draws nothing.
-vert ShadowDrop(mut Corner corner, Solid solid)
-{
-    if (solid.low > 0.5) corner.position = float3(0);
-}
-
-frag ShadowLook(Corner corner, out Color color, Solid solid, Pixel pixel, Room room, Ground ground)
-{
-    float2 uv = (float2(pixel.world.x, pixel.world.z) / TILE + float2(7.5)) / 15;
-    float step = 1.0 / 15;
-    float4 sides = float4(ground.floor.Sample(uv - float2(step, 0), Filter.Point).r, ground.floor.Sample(uv + float2(step, 0), Filter.Point).r,
-                          ground.floor.Sample(uv - float2(0, step), Filter.Point).r, ground.floor.Sample(uv + float2(0, step), Filter.Point).r);
-    Color paint = FloorPaint(pixel.world, ground.floor.Sample(uv, Filter.Point), sides, room.beat);
-    if (paint.a < 0.5) pixel.Discard();
-    Color lit = Lit(Color(paint.r, paint.g, paint.b, 1), float3(0, 1, 0), pixel.world, room, 0);
-    color = Color(lit.r * 0.56, lit.g * 0.57, lit.b * 0.64, 1);
+    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 seen = FromLamp(pixel.world, normal, shadow.toLamp);
+    float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
+               + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
+    color = Lit(paint, normal, pixel.world, room, 0.25, sun);
 }
 
 // A ball: its player's color, with a white band around it and a dark cap at
 // each end, so that its roll shows. A heavy one is dark, with its color in
 // the band. It glows as it winds up, and flashes when it's hit.
-frag BallLook(Corner corner, out Color color, Instance instance, Pixel pixel, Room room, Ball ball)
+frag BallLook(Corner corner, out Color color, Instance instance, Pixel pixel, Room room, Ball ball, Shadow shadow)
 {
     Color seat = SeatColor(ball.seat);
     float band = Math.Abs(corner.position.y);
     mut Color paint = band < 0.2 ? Color.white : band > 0.82 ? Shade(seat, 0.45) : seat;
     if (ball.heavy > 0) paint = band < 0.2 ? seat : band > 0.82 ? Color(0.5, 0.52, 0.58) : Color(0.16, 0.17, 0.2);
     paint = Mix(paint, Color.white, Math.Saturate(ball.flash + ball.charge * (0.35 + 0.25 * Math.Sin(room.beat * 14))));
-    color = Lit(paint, Math.Normalize(Math.Rotate(instance.transform, corner.normal)), pixel.world, room, ball.heavy > 0 ? 1.6 : 1.0);
+    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 seen = FromLamp(pixel.world, normal, shadow.toLamp);
+    float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
+               + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
+    color = Lit(paint, normal, pixel.world, room, ball.heavy > 0 ? 1.6 : 1.0, sun);
 }
 
 // Anything of one color, lit: a pickup.
-frag Plain(Corner corner, out Color color, Solid solid, Instance instance, Pixel pixel, Room room)
+frag Plain(Corner corner, out Color color, Solid solid, Instance instance, Pixel pixel, Room room, Shadow shadow)
 {
-    color = Lit(solid.tint, Math.Normalize(Math.Rotate(instance.transform, corner.normal)), pixel.world, room, 0.9);
+    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 seen = FromLamp(pixel.world, normal, shadow.toLamp);
+    float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
+               + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
+    color = Lit(solid.tint, normal, pixel.world, room, 0.9, sun);
 }
 
 // What's flat on the floor: a disc that fades at its edge, a ring, or part of
