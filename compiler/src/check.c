@@ -2068,9 +2068,9 @@ enum { TARGET_COLORS = 4 }; // The most color images a render target holds, and 
 
 // How many of a call's last arguments are formats: where a render target is
 // made, what it holds comes last, a format for each of its color images.
-// Too many, and Format.DepthOnly written among several, are said here; -1
+// Too many, and Format.Depth written among several, are said here; -1
 // then. `made` is how the target is made, for the notes: "RenderTarget(width,
-// height" or "RenderTarget.Screen(".
+// height" or "RenderTarget.Window(".
 static int target_formats(const checker *c, const expr *e, const char *made)
 {
     int formats = 0;
@@ -2079,15 +2079,15 @@ static int target_formats(const checker *c, const expr *e, const char *made)
     if (formats > TARGET_COLORS) {
         diag_error(e->args.items[e->args.count - formats + TARGET_COLORS]->at,
                    "a render target holds %d color images at the most, and this names %d formats", TARGET_COLORS, formats);
-        diag_note("each format after its size is one color image: '%s%sFormat.Color, Format.Float)' holds two", made, sep);
+        diag_note("each format after its size is one color image: '%s%sFormat.Rgba8, Format.Rgba16f)' holds two", made, sep);
         return -1;
     }
     for (int i = 0; formats > 1 && i < formats; i++) {
         const expr *format = e->args.items[e->args.count - formats + i];
-        if (!format->enum_member || !str_eq_c(format->enum_member->name, "DepthOnly")) continue;
-        diag_error(format->at, "Format.DepthOnly is a target with no color image, so it's a target's only format");
-        diag_note("every target has depth beside its color images, which 'target.depth' reads: '%s%sFormat.Color, "
-                  "Format.Float)' holds two colors and its depth", made, sep);
+        if (!format->enum_member || !str_eq_c(format->enum_member->name, "Depth")) continue;
+        diag_error(format->at, "Format.Depth is a target with no color image, so it's a target's only format");
+        diag_note("every target has depth beside its color images, which 'target.depth' reads: '%s%sFormat.Rgba8, "
+                  "Format.Rgba16f)' holds two colors and its depth", made, sep);
         return -1;
     }
     return formats;
@@ -2116,7 +2116,7 @@ static type check_construct(checker *c, expr *e, const type target)
             return T_ERR;
         }
         // Its size in logical pixels, like the window's, its image's pixels in each (the display's when left
-        // out), and last, what it holds, a format for each of its color images: one of Format.Color when left out
+        // out), and last, what it holds, a format for each of its color images: one of Format.Rgba8 when left out
         const int formats = argc > 2 ? target_formats(c, e, "RenderTarget(width, height") : 0;
         if (formats < 0) return T_ERR;
         const int sizes = argc - formats;
@@ -2126,8 +2126,8 @@ static type check_construct(checker *c, expr *e, const type target)
             diag_error(e->at, "RenderTarget takes its width and height in logical pixels, and its pixels per unit when "
                               "it isn't the display's: 'RenderTarget(width, height)' or 'RenderTarget(width, height, 1)'");
             diag_note("what it holds comes last, when that isn't one color image: 'RenderTarget(width, height, "
-                      "Format.DepthOnly)', or a format for each, 'RenderTarget(width, height, Format.Color, Format.Float)'");
-            diag_note("'RenderTarget.Screen()' is a target that's always the window's size");
+                      "Format.Depth)', or a format for each, 'RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)'");
+            diag_note("'RenderTarget.Window()' is a target that's always the window's size");
             return T_ERR;
         }
         e->call = CALL_BUILTIN;
@@ -5133,6 +5133,16 @@ static type old_draw_owner(checker *c, expr *e)
 // Draw.NoClip() put the clip back. Reports them, with what they are now.
 static bool old_setting(const expr *e)
 {
+    const bool set_screen = str_eq_c(e->name, "SetScreen");
+    if (set_screen || (str_eq_c(e->name, "Screen") && e->args.count == 0)) { // From before the window had one word
+        const char *on = draw_receiver(e);
+        const char *now = set_screen ? "SetPixels" : "Pixels";
+        diag_error(e->at, "%s." STR_FMT " is '%s.%s' now", on, STR_ARG(e->name), on, now);
+        diag_note("it draws in the screen's pixels, from the top left with y down: '%s.Pixels() { ... }' around some "
+                  "draws, or '%s.SetPixels();' for the draws that follow", on, on);
+        suggest_replacement(e->name, now);
+        return true;
+    }
     if (!str_eq_c(e->name, "NoClip") && !(str_eq_c(e->name, "Clip") && e->args.count == 0 && !e->block)) return false;
     const char *on = draw_receiver(e);
     diag_error(e->at, "%s." STR_FMT "() is '%s.SetClip()' now", on, STR_ARG(e->name), on);
@@ -5164,25 +5174,32 @@ static bool check_setting(const checker *c, const expr *e)
     const char *around = str_to_cstr((str){e->name.ptr + 3, e->name.len - 3}); // Without its "Set"
     diag_error(e->at, "%s." STR_FMT " sets it for the draws that follow, and takes no block", on, STR_ARG(e->name));
     diag_note("to set it around some draws, and have it put back after them, write '%s.%s(%s) { ... }'", on, around,
-              e->args.count || !str_eq_c(e->name, "SetScreen") ? "..." : "");
+              e->args.count || !str_eq_c(e->name, "SetPixels") ? "..." : "");
     suggest_replacement(e->name, around);
     return false;
 }
 
-// RenderTarget.Screen(), RenderTarget.Screen(0.5): a target that's always the
+// RenderTarget.Window(), RenderTarget.Window(0.5): a target that's always the
 // window's size, or that part of it. Made where the constructor's are, and
 // like them, it says last what it holds when that isn't one color image:
-// RenderTarget.Screen(Format.DepthOnly), RenderTarget.Screen(0.5, Format.DepthOnly),
-// RenderTarget.Screen(Format.Color, Format.Float).
-static type check_screen_target(checker *c, expr *e)
+// RenderTarget.Window(Format.Depth), RenderTarget.Window(0.5, Format.Depth),
+// RenderTarget.Window(Format.Rgba8, Format.Rgba16f).
+static type check_window_target(checker *c, expr *e)
 {
     bool any_error = false;
     for (int i = 0; i < e->args.count; i++) {
         if (check_expr(c, e->args.items[i]).kind == TY_ERROR) any_error = true;
     }
-    if (!str_eq_c(e->name, "Screen")) {
-        diag_error(e->at, "RenderTarget has no '" STR_FMT "'; it has Screen", STR_ARG(e->name));
-        diag_note("'RenderTarget.Screen()' is a target that's always the window's size, and 'RenderTarget(width, height)' "
+    if (str_eq_c(e->name, "Screen")) { // From before the window had one word
+        diag_error(e->at, "RenderTarget.Screen is 'RenderTarget.Window' now");
+        diag_note("a target that's always the window's size is named for the window, as 'Draw.window' is; 'Screen' is "
+                  "the window's measurements alone, 'Screen.width' and 'Screen.height'");
+        suggest_replacement(e->name, "Window");
+        return T_ERR;
+    }
+    if (!str_eq_c(e->name, "Window")) {
+        diag_error(e->at, "RenderTarget has no '" STR_FMT "'; it has Window", STR_ARG(e->name));
+        diag_note("'RenderTarget.Window()' is a target that's always the window's size, and 'RenderTarget(width, height)' "
                   "one of a size of its own");
         return T_ERR;
     }
@@ -5193,14 +5210,14 @@ static type check_screen_target(checker *c, expr *e)
         diag_note("leave the field at default and create its target in a view or local handler");
         return T_ERR;
     }
-    const int formats = target_formats(c, e, "RenderTarget.Screen(");
+    const int formats = target_formats(c, e, "RenderTarget.Window(");
     if (formats < 0) return T_ERR;
     const int factors = e->args.count - formats;
     if (factors > 1 || (factors == 1 && !type_assignable(T_FLOAT_, e->args.items[0]->type))) {
-        diag_error(e->at, "RenderTarget.Screen takes the part of the window's size the target is, a number, or nothing "
-                          "for all of it: 'RenderTarget.Screen()' or 'RenderTarget.Screen(0.5)'");
-        diag_note("what it holds comes last, when that isn't one color image: 'RenderTarget.Screen(Format.DepthOnly)', or "
-                  "a format for each, 'RenderTarget.Screen(Format.Color, Format.Float)'");
+        diag_error(e->at, "RenderTarget.Window takes the part of the window's size the target is, a number, or nothing "
+                          "for all of it: 'RenderTarget.Window()' or 'RenderTarget.Window(0.5)'");
+        diag_note("what it holds comes last, when that isn't one color image: 'RenderTarget.Window(Format.Depth)', or "
+                  "a format for each, 'RenderTarget.Window(Format.Rgba8, Format.Rgba16f)'");
         diag_note("a target of a size of its own is 'RenderTarget(width, height)'");
         return T_ERR;
     }
@@ -5271,7 +5288,7 @@ static type check_method(checker *c, expr *e)
                 builtins_use_io(bytes.decl, paths.decl);
             }
         }
-        if (str_eq_c(owner, "RenderTarget")) return check_screen_target(c, e);
+        if (str_eq_c(owner, "RenderTarget")) return check_window_target(c, e);
         if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Blit")) return check_blit(c, e);
         // Draw is the window's drawing: what a render target has as its methods
         const bool draws = builtin_draw_owner(owner);
@@ -6026,6 +6043,14 @@ static bool is_input_field(const expr *e)
     return e->kind == E_NAME && e->bind == BIND_PARAM && e->param->type.kind == TY_INPUT;
 }
 
+// Format.Color, Format.DepthOnly, Format.Float: the formats' names from before
+// they said what an image stores. What each is now, or NULL.
+static const char *old_format_member(const decl *d, const str member)
+{
+    if (!d->builtin || !str_eq_c(d->name, "Format")) return NULL;
+    return str_eq_c(member, "Color") ? "Rgba8" : str_eq_c(member, "DepthOnly") ? "Depth" : str_eq_c(member, "Float") ? "Rgba16f" : NULL;
+}
+
 // Page.Title, or Game.Page.Title: one of an enum's members.
 static type check_enum_member(expr *e, decl *d)
 {
@@ -6039,6 +6064,14 @@ static type check_enum_member(expr *e, decl *d)
             e->enum_member = &d->members.items[i];
             return (type){TY_ENUM, d};
         }
+    }
+    const char *format_now = old_format_member(d, e->member);
+    if (format_now) {
+        diag_error(e->at, "Format." STR_FMT " is 'Format.%s' now", STR_ARG(e->member), format_now);
+        diag_note("a format is named by what an image stores: Format.Rgba8 is four channels of a byte each, "
+                  "Format.Rgba16f four floats of 16 bits, and Format.Depth depth alone, with no color image");
+        suggest_replacement(e->member, format_now);
+        return T_ERR;
     }
     diag_error(e->at, "enum '" STR_FMT "' has no member '" STR_FMT "'", STR_ARG(d->name), STR_ARG(e->member));
     suggestion s = suggest_start(e->member);
@@ -11437,7 +11470,7 @@ static void check_shader_decl(const checker *c, decl *d)
             } else if (d->is_frag && p->is_out) {
                 diag_error(p->at, "a frag's outputs are colors: 'out Color " STR_FMT "'", STR_ARG(p->name));
                 diag_note("an output of another type than Color isn't there yet: a Color holds four floats, of which a "
-                          "target made with Format.Float keeps any number");
+                          "target made with Format.Rgba16f keeps any number");
             } else if (d->is_frag && changes) {
                 diag_error(p->at, "a frag reads '" STR_FMT "', and can't change it: drop 'mut'", STR_ARG(p->name));
                 diag_note("what it writes is its pixel's color, 'out Color color'");
@@ -12821,10 +12854,10 @@ static void add_builtins(program *prog)
         vec_push(wrap->members, m);
     }
     prog->wrap = wrap;
-    // enum Format { Color, DepthOnly, Float }: what a render target holds beside its depth, said
+    // enum Format { Rgba8, Depth, Rgba16f }: what a render target holds, named by what an image stores, said
     // when it's made, a format for each of its color images, with tide/draw.h's
     // tide_target_format's values. Like Depth, generated C has it only in a game whose code names it.
-    static const char *const formats[] = {"Color", "DepthOnly", "Float"};
+    static const char *const formats[] = {"Rgba8", "Depth", "Rgba16f"};
     decl *format = NEW(decl);
     format->kind = DECL_ENUM;
     format->name = str_from("Format");

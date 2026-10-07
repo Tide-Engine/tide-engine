@@ -11,7 +11,7 @@ local scene Main { }
 view TryLayout(mut Menu menu)
 {
     Draw.Clear(Color(0.086, 0.086, 0.094));
-    Draw.SetScreen();
+    Draw.SetPixels();
 
     GUILayout.Area(Anchor.UpperLeft)
     {

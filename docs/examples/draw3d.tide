@@ -42,7 +42,7 @@ view Scenery(Devices devices, mut Orbit orbit)
     Draw.Sphere(float3(0, 4.2, 0), 0.7, Color(0.18, 0.83, 0.75));
     Draw.Cylinder(float3(0, 3, 0), 0.08, 1.6, Color.white);
 
-    Draw.SetScreen();
+    Draw.SetPixels();
     Draw.Text("Drag to turn the camera", float2(16, 14), 16, Color.white);
     GUI.SetTheme(GUITheme { radius = 6 });
     GUI.Slider(Rect(16, Screen.height - 48, Screen.width - 32, 32), "Field of view", orbit.fieldOfView, 25, 90);

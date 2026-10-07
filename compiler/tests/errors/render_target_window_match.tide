@@ -1,3 +1,3 @@
 // expect: rendering resources belong to this machine, so the match can't use them
 scene Main { }
-system Work() { RenderTarget.Screen(0.5).Dispose(); }
+system Work() { RenderTarget.Window(0.5).Dispose(); }

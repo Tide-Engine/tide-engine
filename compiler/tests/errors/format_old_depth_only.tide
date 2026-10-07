@@ -1,0 +1,3 @@
+// expect: Format.DepthOnly is 'Format.Depth' now
+scene Main { }
+view Show() { var target = RenderTarget(8, 8, Format.DepthOnly); }

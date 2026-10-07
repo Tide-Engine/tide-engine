@@ -80,6 +80,6 @@ view Balls(Ball ball, mut Count count)
 
 view Total(Count count)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     Draw.Text($"{count.balls} balls, in the rooms that are loaded", float2(16, 14), 16, Color.white);
 }
