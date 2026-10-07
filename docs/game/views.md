@@ -70,19 +70,62 @@ Otherwise a target's color, depth and stencil persist across frames until cleare
 
 ### What a target holds
 
-Every target has depth, which its 3D meshes read and write, and a color image beside it. A target says otherwise when it's made, with a `Format` as its last argument, and keeps what it said from then on:
+Every target has depth, which its 3D meshes read and write, and a color image beside it. A target says otherwise when it's made, with a `Format` after its size, and keeps what it said from then on:
 
 ```csharp
 lamp.map    = RenderTarget(1024, 1024, 1, Format.DepthOnly);  // Depth alone, in exactly these pixels
 lamp.map    = RenderTarget(512, 512, Format.DepthOnly);       // ...or at the display's resolution
 lamp.screen = RenderTarget.Screen(Format.DepthOnly);          // ...or the window's size, or part of it:
 lamp.half   = RenderTarget.Screen(0.5, Format.DepthOnly);
+glow.light  = RenderTarget.Screen(Format.Float);              // A color image that keeps numbers past 1
 ```
 
-| Format | What the target holds | For |
+| Format | What an image of it holds | For |
 |---|---|---|
-| `Format.Color` | A color image and depth: what's made when nothing is said | Everything that's looked at |
-| `Format.DepthOnly` | Depth alone | What only a later frag reads: a shadow map, a pass that lays down depth |
+| `Format.Color` | A color of 4 bytes, each channel from 0 to 1: what's made when nothing is said | Everything that's looked at |
+| `Format.Float` | A color of four floats, each any number, to three digits or so | Light that adds up past white, and numbers that aren't colors: a normal, a place, a speed |
+| `Format.DepthOnly` | No color image at all | What only a later frag reads: a shadow map, a pass that lays down depth |
+
+A `Format.Float` image is read as it was written: `Sample` gives the numbers back, blended between its pixels like any texture's, and what's drawn into it is blended and added as into any other, without stopping at 1. It takes twice the memory of a `Format.Color` one. A clear's color is a color, each channel from 0 to 1, whatever the image holds.
+
+::: warning Where a GPU can't draw into floats
+Nearly every machine does. An old phone, or an old browser on WebGL, may not: there a `Format.Float` image is made as a `Format.Color` one, and the engine says so once, in the game's output. The game runs, with what it draws there kept from 0 to 1: light stops at white, and what's under 0 is 0.
+:::
+
+### Several colors
+
+A target holds up to four color images, one for each format it's made with, and a frag writes them all at once: each of its `out Color` parameters goes to the image that's its place among them (see [Frags and verts](./shaders.md#several-outputs)).
+
+```csharp
+local singleton Deferred
+{
+    RenderTarget scene;
+    Texture albedo;
+    Texture normals;
+    Texture places;
+}
+
+view Make(mut Deferred deferred)
+{
+    // A color as it's looked at, and beside it two images of floats
+    deferred.scene   = RenderTarget.Screen(Format.Color, Format.Float, Format.Float);
+    deferred.albedo  = deferred.scene.color;       // Its first image, as ever
+    deferred.normals = deferred.scene.colors[1];   // ...its second
+    deferred.places  = deferred.scene.colors[2];   // ...and its third
+}
+```
+
+- **`target.colors[i]` is the image at that place,** a `Texture` like `target.color`, which is the first. They're counted from 0, in the order of the formats. Which images a target has is said where it's made, so one it hasn't got is only found out as a draw samples it: that draw is passed by, with a line that says so.
+- **A frag's outputs go to them in order.** Its first `out Color` is the first image, its second the second. An output with no image in its place goes nowhere, as a color does in a target of depth alone, so the same frag draws into the window, where its first is the pixel and the rest are dropped. An image past the frag's outputs is left as it was.
+- **What the engine draws itself has one color,** which goes into the first image and leaves the others: shapes, text, and meshes drawn with no frag.
+- **A clear fills every image** with its color, and sets depth back.
+- **`Draw.Blit` replaces as many images as its frag writes,** and leaves the others.
+- **Each output is blended like the pixel's color:** over what's in its own image, as the draw's [blend](#blending) says, by its own alpha, after the draw's [tint](#tints). `Color(x, y, z)` has an alpha of 1, so it replaces what was there, which is what a normal or a place wants.
+- `Format.DepthOnly` is said alone: every target has its depth already, and `target.depth` reads it whatever colors are beside it.
+
+The formats are the constructor's last arguments, after its pixels per unit when it says them: `RenderTarget(1024, 1024, 1, Format.Color, Format.Float)`.
+
+[Frags and verts](./shaders.md#several-outputs) has a scene drawn this way to try: one frag fills three images, and a second lights the window from them.
 
 A target of depth alone is drawn into like any other: it has its `Clear`, its cameras and its `Mesh`. A color has nowhere to go there, so the only things that leave anything are the ones that write depth, or [stencil](#stencil), which it has too:
 
@@ -157,7 +200,7 @@ A Blit replaces what's in its destination, and nothing blends two images for you
 
 A frag has no way to ask how many pixels a texture has. It doesn't need to: a step of a blur is a logical pixel, `1 / Screen.width` across the screen's texture and `1 / Screen.height` down, which the view puts in a singleton for the frag, and the blur is then as wide on every display.
 
-Target color is GPU data: `.color` gives a `Texture` reference and does no readback, and so is its depth, a `DepthTexture`. Neither has a constructor; CPU pixel sources remain `Grid2<Color>`, and C can supply a CPU texture reference. `Draw.window` has no sampleable color or depth and cannot be resized or disposed by the game. Texture references, depth references and targets can be stored only in local state. The GUI and stats draw onto the window. Hot reload preserves managed references, their sizes and pixels per unit, whether they follow the window, what they hold, and shared aliases, recreating their images on the web; it discards rendered contents and clears borrowed references supplied by the old build. Device loss also discards rendered contents. Drawing with an invalid or disposed target is skipped with a diagnostic; disposal also invalidates uses already recorded in the frame.
+Target color is GPU data: `.color` gives a `Texture` reference and does no readback, as `.colors[i]` does for each image of a target that holds several, and so is its depth, a `DepthTexture`. None of them is assigned: what's drawn into the target is what changes them. Neither has a constructor; CPU pixel sources remain `Grid2<Color>`, and C can supply a CPU texture reference. `Draw.window` has no sampleable color or depth and cannot be resized or disposed by the game. Texture references, depth references and targets can be stored only in local state. The GUI and stats draw onto the window. Hot reload preserves managed references, their sizes and pixels per unit, whether they follow the window, what they hold, and shared aliases, recreating their images on the web; it discards rendered contents and clears borrowed references supplied by the old build. Device loss also discards rendered contents. Drawing with an invalid or disposed target is skipped with a diagnostic; disposal also invalidates uses already recorded in the frame.
 
 A view's `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are all local: views can change this machine's own state, like particles or a menu, but not the match (see [Local state](./local-state.md)). Only views, and the functions they call, can draw.
 

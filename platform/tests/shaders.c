@@ -15,6 +15,7 @@
 
 #include "game.h"
 #include "tide/platform.h"
+#include "window.h" // The backend, for whether it draws into floats
 
 #ifdef __wasm__
 #include "tide_web.h" // The page, to lose WebGPU's device
@@ -590,6 +591,79 @@ static void run_stencil_checks(const char *when)
     local.Art.targetPass = 0;
 }
 
+// Several colors from one frag (pass 11): a target of three color images, the
+// second and third of floats, drawn into by frags of three outputs and two,
+// by one that discards, and by a shape of the engine's; each image read back
+// through a frag of its own, into a panel of 64 pixels in the window; and a
+// target of one float image that adds up past 1. A point is a pixel of the
+// scene, (x, y), as its panel shows it. Where the device can't draw into
+// floats, those images are bytes, and what was drawn is kept from 0 to 1.
+static void run_output_checks(const char *when)
+{
+    const bool floats = tide_window_gpu()->float_targets();
+    static const struct {
+        int panel_x, panel_y; // The panel's corner in the window
+        float x, y;           // In the panel
+        int with[3];          // What floats give
+        int without[3];       // ...and bytes
+        const char *what;
+    } wanted[] = {
+        // The first image: bytes
+        {0, 0, 48, 36, {193, 194, 0}, {193, 194, 0}, "a frag's first output is its target's first color image"},
+        {0, 0, 32, 56, {128, 64, 255}, {128, 64, 255}, "which a clear fills, where nothing was drawn since"},
+        {0, 0, 8, 8, {0, 0, 255}, {0, 0, 255}, "a frag of two outputs into a target of three writes the first"},
+        {0, 0, 56, 8, {0, 255, 0}, {0, 255, 0}, "a shape of the engine's own is in the first image"},
+        {0, 0, 28, 32, {114, 173, 0}, {114, 173, 0}, "where a frag of several outputs discards, the first image is as it was"},
+        {0, 0, 36, 32, {255, 255, 255}, {255, 255, 255}, "and written where it doesn't"},
+        // The second: floats, shown an eighth of what they are
+        {64, 0, 48, 36, {97, 64, 128}, {32, 32, 128}, "a frag's second output is the second image, which keeps numbers past 1"},
+        {64, 0, 32, 56, {16, 8, 255}, {16, 8, 255}, "a clear fills the second image too"},
+        {64, 0, 8, 8, {255, 128, 64}, {32, 32, 64}, "a frag of two outputs writes the second"},
+        {64, 0, 56, 8, {113, 64, 128}, {32, 32, 128}, "a shape of the engine's own leaves the second image as it was"},
+        {64, 0, 28, 32, {57, 64, 128}, {32, 32, 128}, "where a frag discards, the second image is as it was"},
+        {64, 0, 36, 32, {191, 191, 255}, {32, 32, 255}, "and written where it doesn't"},
+        // The third: floats, shown with what's under 0 turned over
+        {128, 0, 48, 36, {255, 64, 194}, {0, 64, 255}, "a frag's third output is the third image, which keeps numbers under 0"},
+        {128, 0, 32, 56, {0, 64, 255}, {0, 64, 255}, "a clear fills the third image too"},
+        {128, 0, 8, 8, {255, 64, 45}, {0, 64, 255}, "a frag of two outputs leaves the third image as it was"},
+        {128, 0, 36, 32, {255, 64, 173}, {0, 64, 255}, "and so does one of two outputs that draws over it"},
+        // A frag of three outputs, drawn into the window
+        {192, 0, 48, 16, {193, 66, 0}, {193, 66, 0}, "a frag of several outputs drawn into the window: its first is the pixel's"},
+        // One float image that draws added up
+        {0, 64, 48, 32, {191, 191, 191}, {64, 64, 64}, "white added three times over is 3 in a float image"},
+        {0, 64, 16, 32, {0, 0, 0}, {0, 0, 0}, "and nothing where nothing was drawn"},
+        {0, 64, 30, 32, {24, 24, 24}, {8, 8, 8}, "a float image is blended between its pixels: nearer the dark one"},
+        {0, 64, 33, 32, {167, 167, 167}, {56, 56, 56}, "and nearer the bright one"},
+        // An image the target hasn't got
+        {64, 64, 32, 32, {255, 0, 255}, {255, 0, 255}, "a draw that samples a color image its target hasn't got is passed by"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    local.Art.targetPass = 11;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[COUNT];
+    uint32_t got[COUNT];
+    for (int i = 0; i < COUNT; i++) {
+        points[i] = tide_f2((float)wanted[i].panel_x + wanted[i].x + 0.5f, (float)wanted[i].panel_y + wanted[i].y + 0.5f);
+    }
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
+    for (int i = 0; i < COUNT; i++) {
+        const int *want = floats ? wanted[i].with : wanted[i].without;
+        bool ok = true;
+        for (int c = 0; c < 3; c++) {
+            const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - want[c];
+            ok = ok && d >= -6 && d <= 6;
+        }
+        printf("%s: %s%s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what,
+               floats ? "" : ", on a device with no float images", when, (unsigned)got[i], (unsigned)want[0],
+               (unsigned)want[1], (unsigned)want[2]);
+        if (!ok) failures++;
+    }
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -614,6 +688,7 @@ static int frame(void *user, const float seconds)
         run_image_checks(", on another device");
         run_shadow_checks(", on another device");
         run_stencil_checks(", on another device");
+        run_output_checks(", on another device");
         return failures;
     }
 #endif
@@ -630,6 +705,7 @@ static int frame(void *user, const float seconds)
     run_shadow_checks("");
     run_shadow_checks(", again");
     run_stencil_checks("");
+    run_output_checks("");
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");

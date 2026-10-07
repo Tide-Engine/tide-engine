@@ -760,9 +760,11 @@ static void build_signatures(void)
     describe(add("RenderTarget", "Screen", T_TARGET, "tide_render_target_screen", 1, T_F, T_NONE, T_NONE), "factor",
              screen_target_doc);
     static const char screen_format_doc[] =
-        "A render target that's always the window's size, or that part of it, which holds what `format` says: "
-        "`Format.DepthOnly` is depth alone, with no color image, for a pass whose depth a frag reads afterwards "
-        "(`target.depth`). It's made again, empty, whenever the window's size or the display's scale changes.";
+        "A render target that's always the window's size, or that part of it, which holds what its formats say, one "
+        "for each of its color images, four at the most: `RenderTarget.Screen(Format.Color, Format.Float)` holds "
+        "two, which a frag's `out Color` parameters go to in order. `Format.DepthOnly`, by itself, is depth alone, "
+        "with no color image, for a pass whose depth a frag reads afterwards (`target.depth`). It's made again, "
+        "empty, whenever the window's size or the display's scale changes.";
     describe(add("RenderTarget", "Screen", T_TARGET, "tide_render_target_window_as", 1, T_FORMAT, T_NONE, T_NONE), "format",
              screen_format_doc);
     describe(add("RenderTarget", "Screen", T_TARGET, "tide_render_target_screen_as", 2, T_F, T_FORMAT, T_NONE), "factor, format",

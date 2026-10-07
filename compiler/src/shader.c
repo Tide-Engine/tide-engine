@@ -2692,24 +2692,48 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
     }
 }
 
+// How many colors a shader's fragment stage writes: its frag's `out Color`
+// parameters, or the one a mesh drawn with no frag has.
+static int shader_outputs(const shader *sh)
+{
+    return sh->frag && sh->frag->outputs > 1 ? sh->frag->outputs : 1;
+}
+
+// The variable the fragment stage has its output `k` in (`pixel` false), and
+// what GLSL writes it to (true): the pixel's color first, which has the name
+// there always was.
+static const char *output_name(const bool pixel, const int k)
+{
+    static char names[2][4][16];
+    const char *stem = pixel ? "tide_pixel" : "tide_color";
+    if (k == 0) return stem;
+    snprintf(names[pixel][k & 3], sizeof names[0][0], "%s%d", stem, k);
+    return names[pixel][k & 3];
+}
+
 // The fragment stage's own: the vertex as the pixel sees it, blended, then
 // the frag, or with none, the vertex's color times the texture. The frag is
 // called with what it takes as values, in its parameters' order: its vertex,
-// what the vert wrote for it, blended too, and the color it writes, which the
-// checker saw it write on every path that ends (the white it starts as here is
-// for the shader's compiler, which didn't). What it leaves is the draw's to
-// finish: times its tint (Draw.Tint), and for a draw that multiplies what's
-// there (Blend.Multiply, which `tide_screen.w` says), towards white as it
-// clears, so what's clear changes nothing.
+// what the vert wrote for it, blended too, and the colors it writes, each of
+// which the checker saw it write on every path that ends (the white they
+// start as here is for the shader's compiler, which didn't). What it leaves
+// is the draw's to finish: each times its tint (Draw.Tint), and for a draw
+// that multiplies what's there (Blend.Multiply, which `tide_screen.w` says),
+// towards white as it clears, so what's clear changes nothing. A frag's
+// outputs go out at the locations of their order, the pixel's color at 0.
 static void put_fragment_main(emit *em, sb *o, const char *in, const char *result)
 {
     const shader *sh = em->sh;
     const bool wgsl = em->l == WGSL;
     const decl *v = sh->vertex;
     const char *f4 = float_ty(em, 4);
+    const int outputs = shader_outputs(sh);
     em->stage = STAGE_FRAG;
     em->o = o;
-    sb_printf(o, wgsl ? "    var tide_color: vec4f = %s(1.0, 1.0, 1.0, 1.0);\n" : "    vec4 tide_color = %s(1.0, 1.0, 1.0, 1.0);\n", f4);
+    for (int k = 0; k < outputs; k++) {
+        sb_printf(o, wgsl ? "    var %s: vec4f = %s(1.0, 1.0, 1.0, 1.0);\n" : "    vec4 %s = %s(1.0, 1.0, 1.0, 1.0);\n",
+                  output_name(false, k), f4);
+    }
     if (sh->frag) {
         const type vertex = {TY_STRUCT, (decl *)v};
         sb_printf(o, "    %s(%s(", function_name(sh->frag), ty(em, vertex));
@@ -2734,8 +2758,8 @@ static void put_fragment_main(emit *em, sb *o, const char *in, const char *resul
                     else put_zero(em, f->type);
                 }
                 sb_put(o, ")");
-            } else if (p->function_param) {
-                sb_printf(o, ", %stide_color", wgsl ? "&" : "");
+            } else if (p->function_param) { // One of the colors it writes
+                sb_printf(o, ", %s%s", wgsl ? "&" : "", output_name(false, p->output));
             }
         }
         sb_put(o, ");\n");
@@ -2755,16 +2779,32 @@ static void put_fragment_main(emit *em, sb *o, const char *in, const char *resul
             sb_printf(o, "    tide_color = tide_color * textureLod(pixels%d, %stide_s%d, 0.0);\n", texture, in, field_index(v, uv));
         }
     }
-    if (wgsl) {
-        sb_put(o, "    tide_color = tide_color * tide_block.tide_tint;\n"
-                  "    if (tide_block.tide_screen.w > 0.0) {\n"
-                  "        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);\n"
-                  "    }\n");
-    } else {
-        sb_put(o, "    tide_color = tide_color * tide_tint;\n"
-                  "    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);\n");
+    for (int k = 0; k < outputs; k++) {
+        const char *color = output_name(false, k);
+        if (wgsl) {
+            sb_printf(o, "    %s = %s * tide_block.tide_tint;\n"
+                         "    if (tide_block.tide_screen.w > 0.0) {\n"
+                         "        %s = vec4f(%s.rgb * %s.a + (1.0 - %s.a), %s.a);\n"
+                         "    }\n", color, color, color, color, color, color, color);
+        } else {
+            sb_printf(o, "    %s = %s * tide_tint;\n"
+                         "    if (tide_screen.w > 0.0) %s.rgb = %s.rgb * %s.a + (1.0 - %s.a);\n",
+                      color, color, color, color, color, color);
+        }
     }
-    sb_printf(o, "    %s tide_color;\n", result);
+    if (outputs == 1) {
+        sb_printf(o, "    %s tide_color;\n", result);
+    } else if (wgsl) { // Its struct of them, in order
+        sb_put(o, "    return tide_colors(");
+        for (int k = 0; k < outputs; k++) sb_printf(o, "%s%s", k ? ", " : "", output_name(false, k));
+        sb_put(o, ");\n");
+    } else {
+        for (int k = 0; k < outputs; k++) {
+            const char *color = output_name(false, k);
+            sb_printf(o, "    %s = ", output_name(true, k));
+            sb_printf(o, "%s;\n", color);
+        }
+    }
 }
 
 // The private variables WGSL's functions read their stage's inputs through,
@@ -2821,7 +2861,12 @@ static void write_glsl(program *prog, shader *sh)
             put_varyings(&em, &o, "out");
         } else {
             put_varyings(&em, &o, "in");
-            sb_put(&o, "out vec4 tide_pixel;\n");
+            const int outputs = shader_outputs(sh);
+            if (outputs == 1) sb_put(&o, "out vec4 tide_pixel;\n");
+            // Several say where each goes: a target's color images, in order
+            for (int k = 0; outputs > 1 && k < outputs; k++) {
+                sb_printf(&o, "layout(location = %d) out vec4 %s;\n", k, output_name(true, k));
+            }
         }
         put_structs(&em, &o);
         put_helpers(&em, &o);
@@ -2864,7 +2909,14 @@ static void write_wgsl(program *prog, shader *sh)
     for (int i = 0; i < packs(sh->instance_ints); i++) sb_printf(&o, "    tide_j%d = tide_ij%d;\n", i, i);
     sb_printf(&o, "%s    return out;\n}\n", vertex.data);
 
-    sb_put(&o, "@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {\n    tide_at = in.tide_at;\n");
+    const int outputs = shader_outputs(sh);
+    if (outputs == 1) {
+        sb_put(&o, "@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {\n    tide_at = in.tide_at;\n");
+    } else { // Several colors, each to the color image of a target that's its place
+        sb_put(&o, "struct tide_colors {\n");
+        for (int k = 0; k < outputs; k++) sb_printf(&o, "    @location(%d) %s: vec4f,\n", k, output_name(false, k));
+        sb_put(&o, "}\n@fragment fn fragment(in: tide_corner) -> tide_colors {\n    tide_at = in.tide_at;\n");
+    }
     if (sh->frag_world) sb_put(&o, "    tide_world = in.tide_world;\n");
     for (int i = 0; i < packs(sh->frag_floats); i++) sb_printf(&o, "    tide_f%d = in.tide_f%d;\n", i, i);
     for (int i = 0; i < packs(sh->frag_ints); i++) sb_printf(&o, "    tide_g%d = in.tide_g%d;\n", i, i);

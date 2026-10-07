@@ -1251,15 +1251,17 @@ static void check_depth(void)
     const tide_gpu_id read = gpu->pipeline(&(tide_gpu_pipeline_desc){
         .name = "depth read", .glsl_vertex = vertex, .glsl_fragment = depth_fragment, .wgsl = depth_wgsl,
         .uniform_size = 16, .texture_count = 1, .reads = {TIDE_GPU_READ_DEPTH}, .blend = TIDE_GPU_BLEND_REPLACE,
+        .into = TIDE_GPU_TARGET_COLOR,
     });
     const tide_gpu_id compare = gpu->pipeline(&(tide_gpu_pipeline_desc){
         .name = "depth compare", .glsl_vertex = vertex, .glsl_fragment = compare_fragment, .wgsl = compare_wgsl,
         .uniform_size = 16, .texture_count = 1, .reads = {TIDE_GPU_READ_COMPARE}, .blend = TIDE_GPU_BLEND_REPLACE,
+        .into = TIDE_GPU_TARGET_COLOR,
     });
     const tide_gpu_id shadow = gpu->target(TIDE_GPU_TARGET_DEPTH, WIDTH, HEIGHT);
     const tide_gpu_id scene = gpu->target(TIDE_GPU_TARGET_COLOR, WIDTH, HEIGHT);
     const tide_gpu_id scaled = gpu->target(TIDE_GPU_TARGET_COLOR, WIDTH * 2, HEIGHT * 2);
-    if (gpu->target_texture(shadow) || !gpu->target_depth(shadow) || !gpu->target_depth(scene)) {
+    if (gpu->target_texture(shadow, 0) || !gpu->target_depth(shadow) || !gpu->target_depth(scene)) {
         failures++;
         fprintf(stderr, "a target of depth alone has a color, or a target has no depth to read\n");
     }
@@ -1432,7 +1434,8 @@ static void check_stencil(void)
     const tide_gpu_id dark = gpu->texture(TIDE_GPU_RGBA8, 1, 1, black), bright = gpu->texture(TIDE_GPU_RGBA8, 1, 1, magenta);
     const tide_gpu_id right = gpu->texture(TIDE_GPU_RGBA8, 1, 1, green);
     tide_gpu_pipeline_desc desc = {.name = "stencil", .glsl_vertex = vertex, .glsl_fragment = fragment, .wgsl = wgsl,
-                                   .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE};
+                                   .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE,
+                                   .into = TIDE_GPU_TARGET_COLOR};
     const tide_gpu_id paint = gpu->pipeline(&desc); // Neither tests nor stores
     tide_gpu_id tests[STENCIL_TESTS], stores[STENCIL_OPS];
     for (int t = 0; t < STENCIL_TESTS; t++) {
@@ -1541,6 +1544,7 @@ static void check_stencil(void)
     const tide_gpu_id read = gpu->pipeline(&(tide_gpu_pipeline_desc){
         .name = "depth read", .glsl_vertex = vertex, .glsl_fragment = depth_fragment, .wgsl = depth_wgsl,
         .uniform_size = 16, .texture_count = 1, .reads = {TIDE_GPU_READ_DEPTH}, .blend = TIDE_GPU_BLEND_REPLACE,
+        .into = TIDE_GPU_TARGET_COLOR,
     });
     const tide_gpu_id shadow = gpu->target(TIDE_GPU_TARGET_DEPTH, WIDTH, HEIGHT);
     gpu->begin(shadow, true);
@@ -1612,10 +1616,11 @@ static void check_targets(void)
     const tide_gpu_id pipeline = gpu->pipeline(&(tide_gpu_pipeline_desc){
         .name = "target copy", .glsl_vertex = vertex, .glsl_fragment = fragment, .wgsl = wgsl,
         .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE, .depth = TIDE_GPU_DEPTH_TEST,
+        .into = TIDE_GPU_TARGET_COLOR,
     });
     const tide_gpu_id scene = gpu->target(TIDE_GPU_TARGET_COLOR, WIDTH, HEIGHT);
     const tide_gpu_id scaled = gpu->target(TIDE_GPU_TARGET_COLOR, WIDTH * 2, HEIGHT * 2);
-    const tide_gpu_id scene_color = gpu->target_texture(scene), scaled_color = gpu->target_texture(scaled);
+    const tide_gpu_id scene_color = gpu->target_texture(scene, 0), scaled_color = gpu->target_texture(scaled, 0);
 
     gpu->begin(scene, true);
     copy(gpu, pipeline, image, -0.5f);
@@ -2088,6 +2093,438 @@ static void check_render_stencil(const float scale)
     tide_render_targets_free();
 }
 
+// ---------------------------------------------------------------------------
+// Several color images, and floats: the backend's part, then the renderer's.
+
+// Three colors at once: a color, numbers past 1 and under 0, and four times the uv.
+static const char three_fragment[] =
+    "layout(std140) uniform uniforms { vec4 settings; };\n"
+    "in vec2 uv;\n"
+    "layout(location = 0) out vec4 first;\n"
+    "layout(location = 1) out vec4 second;\n"
+    "layout(location = 2) out vec4 third;\n"
+    "void main() {\n"
+    "    first = vec4(0.25, 0.5, 0.75, 1);\n"
+    "    second = vec4(3, -1, 0.5, 1);\n"
+    "    third = vec4(uv * 4.0, 2, 1);\n"
+    "}\n";
+
+static const char three_wgsl[] =
+    "struct Uniforms { settings: vec4f }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "struct Vertex { @builtin(position) at: vec4f, @location(0) uv: vec2f }\n"
+    "struct Colors { @location(0) first: vec4f, @location(1) second: vec4f, @location(2) third: vec4f }\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> Vertex {\n"
+    "    var points = array<vec2f, 3>(vec2f(-1, -1), vec2f(3, -1), vec2f(-1, 3));\n"
+    "    let at = points[i];\n"
+    "    return Vertex(vec4f(at, (u.settings.z + 1.0) * 0.5, 1), at * vec2f(0.5, -0.5) + vec2f(0.5));\n"
+    "}\n"
+    "@fragment fn fragment(v: Vertex) -> Colors {\n"
+    "    return Colors(vec4f(0.25, 0.5, 0.75, 1), vec4f(3, -1, 0.5, 1), vec4f(v.uv * 4.0, 2, 1));\n"
+    "}\n";
+
+// A texture's color times `settings.x`, plus `settings.y`: what floats hold, in what bytes show.
+static const char scaled_fragment[] =
+    "layout(std140) uniform uniforms { vec4 settings; };\n"
+    "uniform sampler2D pixels0;\n"
+    "in vec2 uv;\n"
+    "out vec4 color;\n"
+    "void main() {\n"
+    "    color = vec4(textureLod(pixels0, uv, 0.0).rgb * settings.x + vec3(settings.y), 1);\n"
+    "}\n";
+
+static const char scaled_wgsl[] =
+    "struct Uniforms { settings: vec4f }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
+    "@group(0) @binding(2) var how0: sampler;\n"
+    "struct Vertex { @builtin(position) at: vec4f, @location(0) uv: vec2f }\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> Vertex {\n"
+    "    var points = array<vec2f, 3>(vec2f(-1, -1), vec2f(3, -1), vec2f(-1, 3));\n"
+    "    let at = points[i];\n"
+    "    return Vertex(vec4f(at, (u.settings.z + 1.0) * 0.5, 1), at * vec2f(0.5, -0.5) + vec2f(0.5));\n"
+    "}\n"
+    "@fragment fn fragment(v: Vertex) -> @location(0) vec4f {\n"
+    "    return vec4f(textureSampleLevel(pixels0, how0, v.uv, 0.0).rgb * u.settings.x + vec3f(u.settings.y), 1);\n"
+    "}\n";
+
+static uint8_t to_byte(const float v)
+{
+    return (uint8_t)(v <= 0.0f ? 0.0f : v >= 1.0f ? 255.0f : v * 255.0f + 0.5f);
+}
+
+// The pixel (x, y) of what was read back is this color, to a step of a channel.
+static void expect_rgb(const uint8_t *actual, const int x, const int y, const float r, const float g, const float b,
+                         const char *what)
+{
+    const uint8_t *got = actual + (y * WIDTH + x) * 4;
+    const uint8_t wanted[3] = {to_byte(r), to_byte(g), to_byte(b)};
+    bool ok = true;
+    for (int c = 0; c < 3; c++) ok &= got[c] + 1 >= wanted[c] && got[c] <= wanted[c] + 1;
+    if (ok) return;
+    if (failures++ < 6) {
+        fprintf(stderr, "%s (%d, %d): %u,%u,%u instead of %u,%u,%u\n", what, x, y, got[0], got[1], got[2], wanted[0],
+                wanted[1], wanted[2]);
+    }
+}
+
+// `texture` times `scale` plus `offset`, into `into`, read back.
+static void show_scaled(const tide_gpu *gpu, const tide_gpu_id pipeline, const tide_gpu_id into, const tide_gpu_id texture,
+                        const float scale, const float offset, uint8_t *actual)
+{
+    const float settings[4] = {scale, offset, 0, 0};
+    gpu->begin(into, true);
+    gpu->use(pipeline);
+    gpu->uniforms(settings, sizeof settings);
+    gpu->sample(0, texture, false, TIDE_GPU_WRAP_CLAMP);
+    gpu->draw(0, 3, 1);
+    gpu->end();
+    gpu->target_read(into, actual);
+}
+
+static void fill(const tide_gpu *gpu, const tide_gpu_id pipeline)
+{
+    const float settings[4] = {0};
+    gpu->use(pipeline);
+    gpu->uniforms(settings, sizeof settings);
+    gpu->draw(0, 3, 1);
+}
+
+// What the three-output shader's second and third leave, as show_scaled shows
+// them, where the device draws into floats and where its float images are bytes.
+static void expect_three(const uint8_t *second, const uint8_t *third, const bool floats, const int from_row, const char *what)
+{
+    for (int y = from_row; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            const float u = ((float)x + 0.5f) / WIDTH * 4.0f, v = ((float)y + 0.5f) / HEIGHT * 4.0f;
+            if (x >= WIDTH / 2) { // Past the scissor: as the clear left them
+                expect_rgb(second, x, y, 0.25f, 0.25f, 0.25f, what);
+                expect_rgb(third, x, y, 0, 0, 0, what);
+            } else if (floats) {
+                expect_rgb(second, x, y, 3 * 0.25f + 0.25f, -1 * 0.25f + 0.25f, 0.5f * 0.25f + 0.25f, what);
+                expect_rgb(third, x, y, u * 0.25f, v * 0.25f, 2 * 0.25f, what);
+            } else { // Kept from 0 to 1 as they were written
+                expect_rgb(second, x, y, 1 * 0.25f + 0.25f, 0.25f, 0.5f * 0.25f + 0.25f, what);
+                expect_rgb(third, x, y, (u > 1 ? 1 : u) * 0.25f, (v > 1 ? 1 : v) * 0.25f, 0.25f, what);
+            }
+        }
+    }
+}
+
+static void check_colors(void)
+{
+    const tide_gpu *gpu = tide_window_gpu();
+    const bool floats = gpu->float_targets();
+    uint8_t actual[WIDTH * HEIGHT * 4], other[WIDTH * HEIGHT * 4];
+    // 4 bytes a pixel, then floats twice
+    const tide_gpu_target_format held =
+        tide_gpu_target_with(tide_gpu_target_with(TIDE_GPU_TARGET_COLOR, TIDE_GPU_COLOR_FLOAT), TIDE_GPU_COLOR_FLOAT);
+    const tide_gpu_target_format one_float = tide_gpu_target_with(TIDE_GPU_TARGET_DEPTH, TIDE_GPU_COLOR_FLOAT);
+    if (tide_gpu_target_colors(held) != 3 || tide_gpu_target_color(held, 0) != TIDE_GPU_COLOR_BYTES
+        || tide_gpu_target_color(held, 2) != TIDE_GPU_COLOR_FLOAT || tide_gpu_target_color(held, 3) != TIDE_GPU_COLOR_NONE
+        || tide_gpu_target_colors(TIDE_GPU_TARGET_DEPTH) != 0 || tide_gpu_target_colors(TIDE_GPU_TARGET_COLOR) != 1
+        || tide_gpu_target_colors(one_float) != 1) {
+        failures++;
+        fprintf(stderr, "a target's format doesn't say its color images\n");
+    }
+    const tide_gpu_id solid = gpu->texture(TIDE_GPU_RGBA8, 1, 1, (const uint8_t[4]){255, 0, 255, 255});
+    const tide_gpu_id dim = gpu->texture(TIDE_GPU_RGBA8, 1, 1, (const uint8_t[4]){255, 128, 64, 255});
+    tide_gpu_pipeline_desc three_desc = {.name = "three colors", .glsl_vertex = vertex, .glsl_fragment = three_fragment,
+                                         .wgsl = three_wgsl, .uniform_size = 16, .blend = TIDE_GPU_BLEND_REPLACE,
+                                         .into = held, .outputs = 3};
+    const tide_gpu_id three = gpu->pipeline(&three_desc);
+    three_desc.into = TIDE_GPU_TARGET_COLOR; // More outputs than the target has images
+    const tide_gpu_id three_into_one = gpu->pipeline(&three_desc);
+    const tide_gpu_id one_into_three = gpu->pipeline(&(tide_gpu_pipeline_desc){ // Fewer: the others are left alone
+        .name = "one color into three", .glsl_vertex = vertex, .glsl_fragment = fragment, .wgsl = wgsl,
+        .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE, .into = held,
+    });
+    const tide_gpu_id scaled = gpu->pipeline(&(tide_gpu_pipeline_desc){
+        .name = "scaled copy", .glsl_vertex = vertex, .glsl_fragment = scaled_fragment, .wgsl = scaled_wgsl,
+        .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE, .into = TIDE_GPU_TARGET_COLOR,
+    });
+    const tide_gpu_id added = gpu->pipeline(&(tide_gpu_pipeline_desc){
+        .name = "added into floats", .glsl_vertex = vertex, .glsl_fragment = fragment, .wgsl = wgsl,
+        .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_ADD, .into = one_float,
+    });
+    const tide_gpu_id several = gpu->target(held, WIDTH, HEIGHT);
+    const tide_gpu_id scene = gpu->target(TIDE_GPU_TARGET_COLOR, WIDTH, HEIGHT);
+    const tide_gpu_id bright = gpu->target(one_float, WIDTH, HEIGHT);
+    if (!gpu->target_texture(several, 0) || !gpu->target_texture(several, 1) || !gpu->target_texture(several, 2)
+        || gpu->target_texture(several, 3) || gpu->target_texture(scene, 1) || !gpu->target_depth(several)) {
+        failures++;
+        fprintf(stderr, "a target of three colors doesn't have its three, or has a fourth\n");
+    }
+
+    // Three outputs into three images, over the left half of a target a pass cleared
+    gpu->begin(several, true);
+    gpu->scissor(0, 0, WIDTH / 2, HEIGHT);
+    fill(gpu, three);
+    gpu->end();
+    gpu->target_read(several, actual); // Its first image, which is bytes
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            if (x < WIDTH / 2) expect_rgb(actual, x, y, 0.25f, 0.5f, 0.75f, "a first output, read back");
+            else expect_rgb(actual, x, y, 0, 0, 0, "a first image past the scissor, cleared");
+        }
+    }
+    show_scaled(gpu, scaled, scene, gpu->target_texture(several, 0), 1, 0, actual);
+    for (int i = 0; i < WIDTH * HEIGHT; i++) {
+        if (i % WIDTH < WIDTH / 2) expect_rgb(actual, i % WIDTH, i / WIDTH, 0.25f, 0.5f, 0.75f, "a first output, sampled");
+    }
+    show_scaled(gpu, scaled, scene, gpu->target_texture(several, 1), 0.25f, 0.25f, actual);
+    show_scaled(gpu, scaled, scene, gpu->target_texture(several, 2), 0.25f, 0, other);
+    expect_three(actual, other, floats, 0, floats ? "a second and a third output, in float images"
+                                                   : "a second and a third output, in float images that are bytes here");
+
+    // A pass over what's there keeps all three, and a pipeline of one output writes the first alone
+    gpu->begin(several, false);
+    gpu->scissor(0, 0, WIDTH, 1);
+    copy(gpu, one_into_three, solid, 0);
+    gpu->end();
+    gpu->target_read(several, actual);
+    for (int x = 0; x < WIDTH; x++) expect_rgb(actual, x, 0, 1, 0, 1, "one output into a target of three: its first image");
+    for (int x = 0; x < WIDTH / 2; x++) expect_rgb(actual, x, 1, 0.25f, 0.5f, 0.75f, "and the rest of that image, kept");
+    show_scaled(gpu, scaled, scene, gpu->target_texture(several, 1), 0.25f, 0.25f, actual);
+    show_scaled(gpu, scaled, scene, gpu->target_texture(several, 2), 0.25f, 0, other);
+    expect_three(actual, other, floats, 0, "one output into a target of three leaves the second and third as they were");
+
+    // Three outputs into a target of one image: the first is all that goes anywhere
+    gpu->begin(scene, true);
+    fill(gpu, three_into_one);
+    gpu->end();
+    gpu->target_read(scene, actual);
+    for (int i = 0; i < WIDTH * HEIGHT; i++) {
+        expect_rgb(actual, i % WIDTH, i / WIDTH, 0.25f, 0.5f, 0.75f, "three outputs into a target of one image");
+    }
+
+    // Floats add up past 1, and aren't read back as bytes
+    gpu->begin(bright, true);
+    for (int i = 0; i < 3; i++) copy(gpu, added, dim, 0);
+    gpu->end();
+    show_scaled(gpu, scaled, scene, gpu->target_texture(bright, 0), 0.25f, 0, actual);
+    for (int i = 0; i < WIDTH * HEIGHT; i++) {
+        if (floats) expect_rgb(actual, i % WIDTH, i / WIDTH, 3 * 0.25f, 3 * (128 / 255.0f) * 0.25f, 3 * (64 / 255.0f) * 0.25f, "three draws added up in a float image");
+        else expect_rgb(actual, i % WIDTH, i / WIDTH, 0.25f, 0.25f, 3 * (64 / 255.0f) * 0.25f, "three draws added up in an image of bytes");
+    }
+    memset(actual, 7, sizeof actual);
+    gpu->target_read(bright, actual);
+    for (int i = 0; floats && i < WIDTH * HEIGHT * 4; i++) {
+        if (actual[i] == 0) continue;
+        failures++;
+        fprintf(stderr, "a float image was read back as bytes\n");
+        break;
+    }
+
+    // OpenGL on a device that can't draw into floats: those images are bytes, and everything else is as it was
+    if (gpu == &tide_gpu_gl) {
+        tide_gpu_gl_no_floats = true;
+        if (gpu->float_targets()) failures++, fprintf(stderr, "float targets, with none to be had\n");
+        const tide_gpu_id plain = gpu->target(held, WIDTH, HEIGHT);
+        tide_gpu_gl_no_floats = false;
+        if (gpu->float_targets() != floats) failures++, fprintf(stderr, "float targets don't come back\n");
+        gpu->begin(plain, true);
+        gpu->scissor(0, 0, WIDTH / 2, HEIGHT);
+        fill(gpu, three);
+        gpu->end();
+        show_scaled(gpu, scaled, scene, gpu->target_texture(plain, 1), 0.25f, 0.25f, actual);
+        show_scaled(gpu, scaled, scene, gpu->target_texture(plain, 2), 0.25f, 0, other);
+        expect_three(actual, other, false, 0, "float images on a device with none are bytes");
+        gpu->target_read(plain, actual);
+        for (int y = 0; y < HEIGHT; y++) expect_rgb(actual, 0, y, 0.25f, 0.5f, 0.75f, "and its first image is as ever");
+        gpu->target_free(plain);
+    }
+
+    gpu->target_free(several);
+    gpu->target_free(scene);
+    gpu->target_free(bright);
+    gpu->texture_free(solid);
+    gpu->texture_free(dim);
+    gpu->pipeline_free(three);
+    gpu->pipeline_free(three_into_one);
+    gpu->pipeline_free(one_into_three);
+    gpu->pipeline_free(scaled);
+    gpu->pipeline_free(added);
+}
+
+// A blit that writes two colors: yellow, and numbers a byte doesn't hold.
+static const tide_shader two_shader = {
+    .name = "render-list two colors", .id = 0x74776f636f6c6f72u, .dims = 2,
+    .vertex_size = sizeof(tide_vertex), .attribute_count = 3,
+    .attributes = {{TIDE_SHADER_FLOAT2, offsetof(tide_vertex, position)},
+                   {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)},
+                   {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
+    .outputs = 2,
+    .glsl_vertex =
+        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; };\n"
+        "layout(location=0) in vec2 position;\n"
+        "void main() { gl_Position = camera * vec4(position, 0, 1); }\n",
+    .glsl_fragment =
+        "layout(location = 0) out vec4 first;\n"
+        "layout(location = 1) out vec4 second;\n"
+        "void main() { first = vec4(1, 1, 0, 1); second = vec4(2, 0.5, -1, 1); }\n",
+    .wgsl =
+        "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f }\n"
+        "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+        "struct Colors { @location(0) first: vec4f, @location(1) second: vec4f }\n"
+        "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
+        "  return u.camera * vec4f(position, 0, 1);\n"
+        "}\n"
+        "@fragment fn fragment() -> Colors {\n"
+        "  return Colors(vec4f(1, 1, 0, 1), vec4f(2, 0.5, -1, 1));\n"
+        "}\n",
+};
+
+// A blit of a texture's color, a quarter of it plus a quarter: what floats hold, as bytes show it.
+static const tide_shader quarter_shader = {
+    .name = "render-list quarter", .id = 0x71756172746572u, .dims = 2,
+    .vertex_size = sizeof(tide_vertex), .attribute_count = 3,
+    .attributes = {{TIDE_SHADER_FLOAT2, offsetof(tide_vertex, position)},
+                   {TIDE_SHADER_FLOAT2, offsetof(tide_vertex, uv)},
+                   {TIDE_SHADER_FLOAT4, offsetof(tide_vertex, color)}},
+    .texture_count = 1,
+    .glsl_vertex =
+        "layout(std140) uniform uniforms { mat4 camera; vec4 screen; vec4 run_tint; };\n"
+        "layout(location=0) in vec2 position;\n"
+        "layout(location=1) in vec2 coords;\n"
+        "out vec2 uv;\n"
+        "void main() { gl_Position = camera * vec4(position, 0, 1); uv = coords; }\n",
+    .glsl_fragment =
+        "uniform sampler2D pixels0;\n"
+        "in vec2 uv; out vec4 color;\n"
+        "void main() { color = vec4(textureLod(pixels0, uv, 0.0).rgb * 0.25 + vec3(0.25), 1); }\n",
+    .wgsl =
+        "struct Uniforms { camera: mat4x4f, screen: vec4f, run_tint: vec4f }\n"
+        "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+        "@group(0) @binding(1) var pixels0: texture_2d<f32>;\n"
+        "@group(0) @binding(2) var how0: sampler;\n"
+        "struct Vertex { @builtin(position) at: vec4f, @location(0) uv: vec2f }\n"
+        "@vertex fn vertex(@location(0) position: vec2f, @location(1) coords: vec2f) -> Vertex {\n"
+        "  return Vertex(u.camera * vec4f(position, 0, 1), coords);\n"
+        "}\n"
+        "@fragment fn fragment(v: Vertex) -> @location(0) vec4f {\n"
+        "  return vec4f(textureSampleLevel(pixels0, how0, v.uv, 0.0).rgb * 0.25 + vec3f(0.25), 1);\n"
+        "}\n",
+};
+
+static uint32_t rgb(const float r, const float g, const float b)
+{
+    return (uint32_t)to_byte(r) << 24 | (uint32_t)to_byte(g) << 16 | (uint32_t)to_byte(b) << 8 | 0xffu;
+}
+
+static void blit_color(const tide_texture_ref color, const tide_shader *through)
+{
+    const uint32_t texture = tide_draw_texture_source(&render_list, color);
+    const float settings[4] = {0, WIDTH * 2, HEIGHT * 2, 0};
+    tide_draw_blit(&render_list, through, TIDE_BLEND_REPLACE, NULL, settings, &texture, 0);
+}
+
+// The window shows `color` through `through`, as a window of the scene's size.
+static void show_color(const tide_texture_ref color, const tide_shader *through)
+{
+    tide_draw_reset(&render_list);
+    blit_color(color, through);
+    read_window(WIDTH * 2, HEIGHT * 2, 1.0f);
+}
+
+// A target of two color images, the second of floats, through the renderer:
+// what the engine draws itself has one color, which goes into the first and
+// leaves the second, a clear fills both, and a shader's outputs go to them in
+// order. Each is a texture of its own.
+static void check_render_colors(const bool plain)
+{
+    enum { WIDE = WIDTH * 2, HIGH = HEIGHT * 2 };
+    static const uint32_t indices[6] = {0, 1, 2, 0, 2, 3};
+    // Over the target's left half, 2 away from a camera that looks along +z
+    const tide_vertex3 left_vertices[4] = {{{-1, 1, 2}, {0, 0}, TIDE_COLOR_GREEN}, {{0, 1, 2}, {1, 0}, TIDE_COLOR_GREEN},
+                                          {{0, -1, 2}, {1, 1}, TIDE_COLOR_GREEN}, {{-1, -1, 2}, {0, 1}, TIDE_COLOR_GREEN}};
+    const tide_mesh left = {left_vertices, 4, indices, 6, 1};
+    const tide_float4x4 identity = tide_identity_f4x4(), across = tide_ortho_f4x4(2, 2, 0.1f, 10);
+    const bool floats = !plain && tide_window_gpu()->float_targets();
+    const tide_target_format formats[] = {TIDE_TARGET_COLOR, TIDE_TARGET_FLOAT};
+    if (plain) tide_gpu_gl_no_floats = true; // Its images are made as it's first drawn into
+    const tide_render_target scene = tide_render_target_make_scaled_of(WIDE, HIGH, 1, formats, 2);
+    const tide_texture_ref first = tide_render_target_color(scene), second = tide_render_target_color_at(scene, 1);
+    // What the two-output shader's second color is through quarter_shader
+    const uint32_t held = floats ? rgb(2 * 0.25f + 0.25f, 0.5f * 0.25f + 0.25f, 0) : rgb(0.5f, 0.5f * 0.25f + 0.25f, 0.25f);
+    const uint32_t red = rgb(0.5f, 0.25f, 0.25f); // Red, through it
+
+    // The engine's own: a clear, a shape over the top half, a 3D mesh over the left half
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, scene);
+    tide_draw_clear(&render_list, TIDE_COLOR_RED);
+    tide_draw_set_screen(&render_list);
+    tide_draw_rect(&render_list, tide_f2(WIDE * 0.5f, HIGH * 0.25f), tide_f2(WIDE, HIGH * 0.5f), TIDE_COLOR_BLUE);
+    tide_draw_set_camera_matrices(&render_list, identity, across);
+    tide_draw_mesh_3d(&render_list, &left, identity, NULL, TIDE_FILTER_POINT);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_color(first, &list_shader);
+    read_window(WIDE, HIGH, 1.0f);
+    tide_gpu_gl_no_floats = false;
+    for (int y = 0; y < HIGH; y++) {
+        for (int x = 0; x < WIDE; x++) {
+            expect_pixel(x, y, x < WIDE / 2 ? 0x00ff00ffu : y < HIGH / 2 ? 0x0000ffffu : 0xff0000ffu,
+                         "the engine's own draws are in a target's first color image");
+        }
+    }
+    show_color(second, &quarter_shader);
+    expect_all(red, "a clear fills a target's second color image, and the engine's own draws leave it");
+
+    // A shader of two outputs, as a blit: both images, whole
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, scene);
+    tide_draw_blit(&render_list, &two_shader, TIDE_BLEND_REPLACE, NULL, NULL, NULL, 0);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_color(first, &list_shader);
+    read_window(WIDE, HIGH, 1.0f);
+    expect_all(0xffff00ffu, "a blit of two outputs replaces the first color image");
+    show_color(second, &quarter_shader);
+    expect_all(held, floats ? "and the second, which keeps what a float holds" : "and the second, kept from 0 to 1 where it's bytes");
+
+    // A blit of one output replaces the first alone
+    tide_draw_reset(&render_list);
+    tide_draw_to(&render_list, TARGET_A, WIDTH, HEIGHT);
+    tide_draw_clear(&render_list, (tide_color){1, 0, 1, 1});
+    tide_draw_render_target(&render_list, scene);
+    blit_image(TARGET_A, WIDTH, HEIGHT, 0);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_color(first, &list_shader);
+    read_window(WIDE, HIGH, 1.0f);
+    expect_all(0xff00ffffu, "a blit of one output replaces a target's first color image");
+    show_color(second, &quarter_shader);
+    expect_all(held, "and leaves its second");
+
+    // A draw into a target samples none of its images, the second no more than the first
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, scene);
+    tide_draw_set_screen(&render_list);
+    const tide_vertex vertices[4] = {{{0, 0}, {0, 0}, TIDE_COLOR_WHITE}, {{WIDE, 0}, {1, 0}, TIDE_COLOR_WHITE},
+                                     {{WIDE, HIGH}, {1, 1}, TIDE_COLOR_WHITE}, {{0, HIGH}, {0, 1}, TIDE_COLOR_WHITE}};
+    tide_draw_triangles_with(&render_list, tide_draw_vertices(&render_list, vertices, 4), indices, 6,
+                             tide_draw_texture_source(&render_list, second), TIDE_FILTER_POINT, TIDE_WRAP_CLAMP);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_color(first, &list_shader);
+    read_window(WIDE, HIGH, 1.0f);
+    expect_all(0xff00ffffu, "a mesh drawn into a target with its own second image is passed by");
+
+    // An image it hasn't got is no texture: the draw is passed by, over what was there
+    tide_draw_reset(&render_list);
+    tide_draw_clear(&render_list, TIDE_COLOR_GREEN);
+    blit_color(tide_render_target_color_at(scene, 2), &list_shader);
+    read_window(WIDE, HIGH, 1.0f);
+    expect_all(0x00ff00ffu, "a target's third color image, where it has two, isn't sampled");
+
+    // Another build's first list forgets what the last one's had: both images are made again, empty
+    tide_draw_forget(&render_list);
+    show_color(second, &quarter_shader);
+    expect_all(rgb(0.25f, 0.25f, 0.25f), "a hot reload discards a target's second color image");
+    show_color(first, &list_shader);
+    expect_all(0x000000ffu, "and its first");
+
+    tide_draw_forget(&render_list);
+    tide_render_targets_free();
+}
+
 // Only the first failures say which pixels were wrong: this says which group
 // of checks any were in, and how many.
 static void checked(const char *what)
@@ -2134,6 +2571,12 @@ static int frame(void *user, const float seconds)
     check_render_stencil(2.0f);
     check_render_stencil(1.0f); // With the pipelines the first frames made
     checked("the renderer's stencil");
+    check_colors();
+    check_colors();
+    checked("the backend's targets of several colors");
+    check_render_colors(false);
+    if (tide_window_gpu() == &tide_gpu_gl) check_render_colors(true); // As on an OpenGL that can't draw into floats
+    checked("the renderer's targets of several colors");
     if (failures) return 1;
 #ifdef __wasm__
     if (!lost && strcmp(tide_platform_renderer(), "WebGPU") == 0) {

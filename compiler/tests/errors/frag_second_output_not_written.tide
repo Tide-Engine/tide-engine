@@ -1,0 +1,9 @@
+// expect: frag 'Shade' can end without writing 'glow', its second output
+// expect: a frag writes each of its outputs on every path that ends; one that draws nothing leaves the pixel with 'pixel.Discard();', through a 'Pixel pixel' parameter
+// Each output is owed on every path, the second as much as the pixel's color
+scene Main { }
+frag Shade(Vertex vertex, out Color color, out Color glow)
+{
+    color = Color.red;
+    if (vertex.uv.x > 0.5) glow = Color.white;
+}

@@ -1,0 +1,11 @@
+// expect: a frag writes 4 colors at the most, as many as a render target holds
+// expect: each 'out Color' goes to one of its target's color images, in the order they're written
+scene Main { }
+frag Shade(Vertex vertex, out Color first, out Color second, out Color third, out Color fourth, out Color fifth)
+{
+    first = Color.red;
+    second = first;
+    third = first;
+    fourth = first;
+    fifth = first;
+}
