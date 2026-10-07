@@ -4,7 +4,6 @@ singleton Physics
     Resident state;
 }
 
-system Run(Physics physics)
+void Keep(Resident state)
 {
-    Resident copy;
 }
