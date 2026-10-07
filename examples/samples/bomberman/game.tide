@@ -950,7 +950,7 @@ view Sparkle(mut Fx fx)
 
 view Hud(Arena arena, Session session, Pad pad, Lens lens, query (Bomber bomber, Owner owner) bombers)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     var wide = Screen.width;
     var tall = Screen.height;
     var unit = lens.unit;
@@ -1025,7 +1025,7 @@ view Hud(Arena arena, Session session, Pad pad, Lens lens, query (Bomber bomber,
 view Joining(Session session)
 {
     if (session.state == SessionState.Connected) return;
-    Draw.SetScreen();
+    Draw.SetPixels();
     Draw.Text("Joining the game...", float2(Screen.width, Screen.height) * 0.5, 18, Color.white, Anchor.MiddleCenter);
 }
 

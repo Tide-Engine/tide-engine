@@ -13,7 +13,7 @@ static void reindex_meshes(tide_draw_list *d);
 
 static tide_render_target_state *render_targets;
 
-_Static_assert(TIDE_TARGET_COLORS * 3 == TIDE_RENDER_IMAGE_SHIFT && TIDE_TARGET_FLOAT + 1 <= 7
+_Static_assert(TIDE_TARGET_COLORS * 3 == TIDE_RENDER_IMAGE_SHIFT && TIDE_TARGET_RGBA16F + 1 <= 7
                && TIDE_TARGET_COLORS - 1 <= (int)(TIDE_RENDER_IMAGE >> TIDE_RENDER_IMAGE_SHIFT),
                "a target's id has 3 bits for each color image's format, then which image a texture names");
 
@@ -25,29 +25,29 @@ static uint64_t managed_id(const tide_render_target_state *s)
 
 // What a target of these color images holds, as its id's bits say it: for
 // each in order, 1 + its format, which is a color's (anything but
-// TIDE_TARGET_FLOAT is TIDE_TARGET_COLOR).
+// TIDE_TARGET_RGBA16F is TIDE_TARGET_RGBA8).
 static uint16_t holds_of(const tide_target_formats formats)
 {
     uint16_t holds = 0;
     for (uint32_t i = 0; i < formats.count && i < TIDE_TARGET_COLORS; i++) {
-        const uint32_t format = formats.color[i] == TIDE_TARGET_FLOAT ? TIDE_TARGET_FLOAT : TIDE_TARGET_COLOR;
+        const uint32_t format = formats.color[i] == TIDE_TARGET_RGBA16F ? TIDE_TARGET_RGBA16F : TIDE_TARGET_RGBA8;
         holds |= (uint16_t)((format + 1u) << (3u * i));
     }
     return holds;
 }
 
 // What a target made with one format holds: one color image of it, or none for
-// TIDE_TARGET_DEPTH_ONLY. A format there's none of is TIDE_TARGET_COLOR.
+// TIDE_TARGET_DEPTH. A format there's none of is TIDE_TARGET_RGBA8.
 static tide_target_formats one_format(const tide_target_format format)
 {
-    if (format == TIDE_TARGET_DEPTH_ONLY) return (tide_target_formats){0};
-    return (tide_target_formats){.count = 1, .color = {(uint8_t)(format == TIDE_TARGET_FLOAT ? TIDE_TARGET_FLOAT : TIDE_TARGET_COLOR)}};
+    if (format == TIDE_TARGET_DEPTH) return (tide_target_formats){0};
+    return (tide_target_formats){.count = 1, .color = {(uint8_t)(format == TIDE_TARGET_RGBA16F ? TIDE_TARGET_RGBA16F : TIDE_TARGET_RGBA8)}};
 }
 
 // ...and one made with `count` of them, each a color image's.
 static tide_target_formats several_formats(const tide_target_format *formats, const uint32_t count)
 {
-    if (!formats || count == 0) return one_format(TIDE_TARGET_COLOR);
+    if (!formats || count == 0) return one_format(TIDE_TARGET_RGBA8);
     if (count == 1) return one_format(formats[0]);
     tide_target_formats held = {.count = (uint8_t)(count < TIDE_TARGET_COLORS ? count : (uint32_t)TIDE_TARGET_COLORS)};
     if (count > TIDE_TARGET_COLORS) {
@@ -55,11 +55,11 @@ static tide_target_formats several_formats(const tide_target_format *formats, co
                         "first %d\n", TIDE_TARGET_COLORS, (unsigned)count, TIDE_TARGET_COLORS);
     }
     for (uint32_t i = 0; i < held.count; i++) {
-        if (formats[i] == TIDE_TARGET_DEPTH_ONLY) {
-            fprintf(stderr, "RenderTarget: Format.DepthOnly is the format of a target with no color image, by itself: "
-                            "among several it's a Format.Color image\n");
+        if (formats[i] == TIDE_TARGET_DEPTH) {
+            fprintf(stderr, "RenderTarget: Format.Depth is the format of a target with no color image, by itself: "
+                            "among several it's a Format.Rgba8 image\n");
         }
-        held.color[i] = (uint8_t)(formats[i] == TIDE_TARGET_FLOAT ? TIDE_TARGET_FLOAT : TIDE_TARGET_COLOR);
+        held.color[i] = (uint8_t)(formats[i] == TIDE_TARGET_RGBA16F ? TIDE_TARGET_RGBA16F : TIDE_TARGET_RGBA8);
     }
     return held;
 }
@@ -98,7 +98,7 @@ static tide_render_target make_scaled(const float width, const float height, con
 static tide_render_target make_screen(const float factor, const tide_target_formats formats)
 {
     const tide_target_size size = {.window = factor > 0.0f ? factor : 0.0f};
-    return make_target(size, formats, "RenderTarget.Screen requires a positive factor of the window's size");
+    return make_target(size, formats, "RenderTarget.Window requires a positive factor of the window's size");
 }
 
 tide_render_target tide_render_target_make_as(const float width, const float height, const tide_target_format format)
@@ -146,29 +146,29 @@ tide_render_target tide_render_target_window_of(const tide_target_format *format
 
 tide_render_target tide_render_target_make(const float width, const float height)
 {
-    return tide_render_target_make_as(width, height, TIDE_TARGET_COLOR);
+    return tide_render_target_make_as(width, height, TIDE_TARGET_RGBA8);
 }
 
 tide_render_target tide_render_target_make_scaled(const float width, const float height, const float scale)
 {
-    return tide_render_target_make_scaled_as(width, height, scale, TIDE_TARGET_COLOR);
+    return tide_render_target_make_scaled_as(width, height, scale, TIDE_TARGET_RGBA8);
 }
 
 tide_render_target tide_render_target_screen(const float factor)
 {
-    return tide_render_target_screen_as(factor, TIDE_TARGET_COLOR);
+    return tide_render_target_screen_as(factor, TIDE_TARGET_RGBA8);
 }
 
 tide_render_target tide_render_target_window(void)
 {
-    return tide_render_target_window_as(TIDE_TARGET_COLOR);
+    return tide_render_target_window_as(TIDE_TARGET_RGBA8);
 }
 
 void tide_render_target_resize(const tide_render_target target, const float width, const float height)
 {
     tide_render_target_state *s = tide_render_target_state_of(target.id);
     if (s && s->alive && s->size.window > 0.0f) {
-        fprintf(stderr, "RenderTarget.Resize: a target made with RenderTarget.Screen follows the window's size, and "
+        fprintf(stderr, "RenderTarget.Resize: a target made with RenderTarget.Window follows the window's size, and "
                         "keeps it\n");
         return;
     }

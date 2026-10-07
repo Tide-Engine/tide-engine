@@ -45,7 +45,7 @@ void Pipes(float time)
 view Show(mut Lens lens, Devices devices)
 {
     Draw.Clear(Color(0.086, 0.086, 0.094));
-    Draw.SetScreen();
+    Draw.SetPixels();
     lens.time += Frame.dt;
     var pointer = Screen.Flip(devices.pointer.position);
     if (pointer.y < Screen.height - 64) lens.at = pointer;

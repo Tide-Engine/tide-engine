@@ -177,7 +177,7 @@ view Cast(Fx fx, Models models, mut Shadow shadow)
     if (!shadow.made)
     {
         shadow.made = true;
-        shadow.map = RenderTarget(LAMP_PIXELS, LAMP_PIXELS, 1, Format.DepthOnly);
+        shadow.map = RenderTarget(LAMP_PIXELS, LAMP_PIXELS, 1, Format.Depth);
         shadow.depth = shadow.map.depth;
     }
     var turned = quaternion.LookRotation(-Lamp(), float3(0, 1, 0));

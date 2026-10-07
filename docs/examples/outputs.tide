@@ -94,7 +94,7 @@ view Show(mut Stage stage, Devices devices)
         AddSide(stage, float3(0, 0, 1), float3(-1, 0, 0), float3(0, 1, 0));
         AddSide(stage, float3(0, 0, -1), float3(1, 0, 0), float3(0, 1, 0));
         // A color as it's looked at, and beside it two images of floats
-        stage.scene = RenderTarget.Screen(Format.Color, Format.Float, Format.Float);
+        stage.scene = RenderTarget.Window(Format.Rgba8, Format.Rgba16f, Format.Rgba16f);
         stage.normals = stage.scene.colors[1];
         stage.places = stage.scene.colors[2];
     }
@@ -132,7 +132,7 @@ view Show(mut Stage stage, Devices devices)
     Draw.Blit(stage.scene.color, Draw.window, Light);
 
     // The lamp, and the spot on the floor right under it
-    Draw.SetScreen();
+    Draw.SetPixels();
     var under = stage.scene.WorldToScreen(float3(stage.lamp.x, 0, stage.lamp.z));
     Draw.Line(float2(under.x, under.y), stage.at, 1, Color(0.64, 0.64, 0.68));
     Draw.Circle(stage.at, 7, Color(0.086, 0.086, 0.094));

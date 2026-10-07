@@ -1,4 +1,0 @@
-// expect: RenderTarget.Screen takes the part of the window's size the target is, a number, or nothing for all of it
-// expect: what it holds comes last, when that isn't one color image: 'RenderTarget.Screen(Format.DepthOnly)', or a format for each, 'RenderTarget.Screen(Format.Color, Format.Float)'
-scene Main { }
-view Show() { var target = RenderTarget.Screen(Format.DepthOnly, 0.5); }

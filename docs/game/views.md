@@ -52,15 +52,15 @@ An offset such as `[Stage(RenderStages.Objects, 10)]` runs later within `Objects
 There are three ways to make one:
 
 ```csharp
-render.scene = RenderTarget.Screen();      // Always the window's size, at full resolution
-render.blur  = RenderTarget.Screen(0.5);   // Always half of it, each way
+render.scene = RenderTarget.Window();      // Always the window's size, at full resolution
+render.blur  = RenderTarget.Window(0.5);   // Always half of it, each way
 render.card  = RenderTarget(200, 300);     // A size of its own, in logical pixels, at the display's resolution
 render.small = RenderTarget(320, 180, 1);  // A size of its own, in exactly these pixels
 ```
 
-A target's size is in logical pixels, like the window's, and its image is made at the display's scale. So drawing into a target is the same as drawing into the window: on a display scaled to 150%, a target of 200 by 300 has 300 by 450 pixels, its text is fitted to them, its shapes' edges are one of them wide, and `target.Screen()`, clips, conversions like `WorldToScreen` and a frag's `pixel.position` are all in logical pixels. A pass over the whole screen that goes through a target comes out as sharp as the window.
+A target's size is in logical pixels, like the window's, and its image is made at the display's scale. So drawing into a target is the same as drawing into the window: on a display scaled to 150%, a target of 200 by 300 has 300 by 450 pixels, its text is fitted to them, its shapes' edges are one of them wide, and `target.Pixels()`, clips, conversions like `WorldToScreen` and a frag's `pixel.position` are all in logical pixels. A pass over the whole screen that goes through a target comes out as sharp as the window.
 
-- `RenderTarget.Screen()` is for exactly that: a target that's always the window's size. `RenderTarget.Screen(factor)` is always that part of it, for the smaller targets a blur or a glow goes through. The engine makes them again when the window's size changes, so there's nothing to resize and nothing to forget. What was drawn in one is lost then, which doesn't matter for a target a view draws again every frame. `Resize` on one is refused.
+- `RenderTarget.Window()` is for exactly that: a target that's always the window's size. `RenderTarget.Window(factor)` is always that part of it, for the smaller targets a blur or a glow goes through. The engine makes them again when the window's size changes, so there's nothing to resize and nothing to forget. What was drawn in one is lost then, which doesn't matter for a target a view draws again every frame. `Resize` on one is refused.
 - `RenderTarget(width, height)` is a target of a size of its own. `Resize(width, height)` changes it for every alias and discards its contents, even at the same size.
 - A third argument is the target's pixels per unit, where the display's isn't wanted: `RenderTarget(320, 180, 1)` is exactly 320 by 180 pixels on every display, for pixel art and anything else that must not depend on the display.
 
@@ -73,23 +73,23 @@ Otherwise a target's color, depth and stencil persist across frames until cleare
 Every target has depth, which its 3D meshes read and write, and a color image beside it. A target says otherwise when it's made, with a `Format` after its size, and keeps what it said from then on:
 
 ```csharp
-lamp.map    = RenderTarget(1024, 1024, 1, Format.DepthOnly);  // Depth alone, in exactly these pixels
-lamp.map    = RenderTarget(512, 512, Format.DepthOnly);       // ...or at the display's resolution
-lamp.screen = RenderTarget.Screen(Format.DepthOnly);          // ...or the window's size, or part of it:
-lamp.half   = RenderTarget.Screen(0.5, Format.DepthOnly);
-glow.light  = RenderTarget.Screen(Format.Float);              // A color image that keeps numbers past 1
+lamp.map    = RenderTarget(1024, 1024, 1, Format.Depth);  // Depth alone, in exactly these pixels
+lamp.map    = RenderTarget(512, 512, Format.Depth);       // ...or at the display's resolution
+lamp.screen = RenderTarget.Window(Format.Depth);          // ...or the window's size, or part of it:
+lamp.half   = RenderTarget.Window(0.5, Format.Depth);
+glow.light  = RenderTarget.Window(Format.Rgba16f);              // A color image that keeps numbers past 1
 ```
 
 | Format | What an image of it holds | For |
 |---|---|---|
-| `Format.Color` | A color of 4 bytes, each channel from 0 to 1: what's made when nothing is said | Everything that's looked at |
-| `Format.Float` | A color of four floats, each any number, to three digits or so | Light that adds up past white, and numbers that aren't colors: a normal, a place, a speed |
-| `Format.DepthOnly` | No color image at all | What only a later frag reads: a shadow map, a pass that lays down depth |
+| `Format.Rgba8` | A color of 4 bytes, each channel from 0 to 1: what's made when nothing is said | Everything that's looked at |
+| `Format.Rgba16f` | A color of four floats, each any number, to three digits or so | Light that adds up past white, and numbers that aren't colors: a normal, a place, a speed |
+| `Format.Depth` | No color image at all | What only a later frag reads: a shadow map, a pass that lays down depth |
 
-A `Format.Float` image is read as it was written: `Sample` gives the numbers back, blended between its pixels like any texture's, and what's drawn into it is blended and added as into any other, without stopping at 1. It takes twice the memory of a `Format.Color` one. A clear's color is a color, each channel from 0 to 1, whatever the image holds.
+A `Format.Rgba16f` image is read as it was written: `Sample` gives the numbers back, blended between its pixels like any texture's, and what's drawn into it is blended and added as into any other, without stopping at 1. It takes twice the memory of a `Format.Rgba8` one. A clear's color is a color, each channel from 0 to 1, whatever the image holds.
 
 ::: warning Where a GPU can't draw into floats
-Nearly every machine does. An old phone, or an old browser on WebGL, may not: there a `Format.Float` image is made as a `Format.Color` one, and the engine says so once, in the game's output. The game runs, with what it draws there kept from 0 to 1: light stops at white, and what's under 0 is 0.
+Nearly every machine does. An old phone, or an old browser on WebGL, may not: there a `Format.Rgba16f` image is made as a `Format.Rgba8` one, and the engine says so once, in the game's output. The game runs, with what it draws there kept from 0 to 1: light stops at white, and what's under 0 is 0.
 :::
 
 ### Several colors
@@ -108,7 +108,7 @@ local singleton Deferred
 view Make(mut Deferred deferred)
 {
     // A color as it's looked at, and beside it two images of floats
-    deferred.scene   = RenderTarget.Screen(Format.Color, Format.Float, Format.Float);
+    deferred.scene   = RenderTarget.Window(Format.Rgba8, Format.Rgba16f, Format.Rgba16f);
     deferred.albedo  = deferred.scene.color;       // Its first image, as ever
     deferred.normals = deferred.scene.colors[1];   // ...its second
     deferred.places  = deferred.scene.colors[2];   // ...and its third
@@ -121,9 +121,9 @@ view Make(mut Deferred deferred)
 - **A clear fills every image** with its color, and sets depth back.
 - **`Draw.Blit` replaces as many images as its frag writes,** and leaves the others.
 - **Each output is blended like the pixel's color:** over what's in its own image, as the draw's [blend](#blending) says, by its own alpha, after the draw's [tint](#tints). `Color(x, y, z)` has an alpha of 1, so it replaces what was there, which is what a normal or a place wants.
-- `Format.DepthOnly` is said alone: every target has its depth already, and `target.depth` reads it whatever colors are beside it.
+- `Format.Depth` is said alone: every target has its depth already, and `target.depth` reads it whatever colors are beside it.
 
-The formats are the constructor's last arguments, after its pixels per unit when it says them: `RenderTarget(1024, 1024, 1, Format.Color, Format.Float)`.
+The formats are the constructor's last arguments, after its pixels per unit when it says them: `RenderTarget(1024, 1024, 1, Format.Rgba8, Format.Rgba16f)`.
 
 [Frags and verts](./shaders.md#several-outputs) has a scene drawn this way to try: one frag fills three images, and a second lights the window from them.
 
@@ -143,7 +143,7 @@ local singleton Lamp { RenderTarget map; DepthTexture shadow; }
 
 view Make(mut Lamp lamp)
 {
-    lamp.map = RenderTarget(1024, 1024, 1, Format.DepthOnly);
+    lamp.map = RenderTarget(1024, 1024, 1, Format.Depth);
     lamp.shadow = lamp.map.depth;   // A reference, like a Texture: copies share the image
 }
 ```
@@ -166,7 +166,7 @@ view Prepare(mut RenderState render)
 {
     if (!render.made)
     {
-        render.scene = RenderTarget.Screen();
+        render.scene = RenderTarget.Window();
         render.made = true;
     }
     render.scene.Clear(Color.black);
@@ -198,7 +198,7 @@ The view below draws its scene into a target, then blits it to the window throug
 
 What one pass needs beyond its source goes after the frag, as a struct the frag takes: `Draw.Blit(lens.bright.color, lens.spread, Blur, BlurStep { along = float2(1, 0) })` and then the same frag the other way, `BlurStep { along = float2(0, 1) }`. Those are [the Blit's values](./shaders.md#values-for-one-draw), and each Blit has its own.
 
-A Blit replaces what's in its destination, and nothing blends two images for you yet, so an effect that adds to the picture, like a glow, ends in a frag that reads both and writes their sum: the scene as the Blit's source, and the other image as a `Texture` field of a singleton the frag takes. The [Duel](../guide/duel.md) example does it: its arena goes into a `RenderTarget.Screen()`, the arena's bright parts are blurred through targets a quarter and an eighth of the size, and one frag puts the arena and its light in the window. Its score and menus are drawn into the window afterwards, so their text has none of that light on it.
+A Blit replaces what's in its destination, and nothing blends two images for you yet, so an effect that adds to the picture, like a glow, ends in a frag that reads both and writes their sum: the scene as the Blit's source, and the other image as a `Texture` field of a singleton the frag takes. The [Duel](../guide/duel.md) example does it: its arena goes into a `RenderTarget.Window()`, the arena's bright parts are blurred through targets a quarter and an eighth of the size, and one frag puts the arena and its light in the window. Its score and menus are drawn into the window afterwards, so their text has none of that light on it.
 
 A frag has no way to ask how many pixels a texture has. It doesn't need to: a step of a blur is a logical pixel, `1 / Screen.width` across the screen's texture and `1 / Screen.height` down, which the view puts in a singleton for the frag, and the blur is then as wide on every display.
 
@@ -293,7 +293,7 @@ view Corpse(Body body, with verified Dead)
 
 view Board(verified Duel duel)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     Draw.Text($"Round {duel.round}", float2(20, 20), 24, Color.white);
 }
 ```
@@ -357,7 +357,7 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw.Stencil(test, value, operation) { ... }` | What's drawn in the block is drawn only where a number kept for each pixel passes a test, and changes that number where it draws: masks, cut-outs, counting (see [Stencil](#stencil)) |
 | `Draw.Transform(offset, rotation, scale) { ... }` | Moves, turns and scales what's drawn in the block (see [Transforms](#transforms)) |
 | `Draw.Clip(rect) { ... }` | Only what's inside `rect` draws, in the block (see [Clipping](#clipping)) |
-| `Draw.Screen() { ... }` | The calls in the block are in the screen's pixels, from the top left, with `y` down (see [On the screen](#on-the-screen)) |
+| `Draw.Pixels() { ... }` | The calls in the block are in the screen's pixels, from the top left, with `y` down (see [On the screen](#on-the-screen)) |
 | `Draw.SetCamera(position, rotation, fieldOfView)` | Sets the 3D camera for the 3D meshes after it (see [3D](#_3d)) |
 | `Draw.Depth(mode) { ... }` | What the 3D meshes drawn in the block do with depth: hide and are hidden, are only hidden, or neither (see [Depth](#depth)) |
 | `Draw.Cull(side) { ... }` | Which side of the triangles of the 3D meshes drawn in the block isn't drawn: the back, the front, or neither (see [Which side draws](#which-side-draws)) |
@@ -400,7 +400,7 @@ view Follow(Player player, with ownership)
 | `Draw.Transform(...)`, `Draw.Transform(transform)` | `Draw.SetTransform(...)`, `Draw.SetTransform(transform)` | Where draws land: moved, turned, scaled (see [Transforms](#transforms)) |
 | `Draw.Clip(rect)` | `Draw.SetClip(rect)` | The rectangle draws are kept inside (see [Clipping](#clipping)) |
 | `Draw.Camera(center, size)`, `Draw.Camera(...)` | `Draw.SetCamera(center, size)`, `Draw.SetCamera(...)` | The camera |
-| `Draw.Screen()` | `Draw.SetScreen()` | The screen's pixels in the camera's place (see [On the screen](#on-the-screen)) |
+| `Draw.Pixels()` | `Draw.SetPixels()` | The screen's pixels in the camera's place (see [On the screen](#on-the-screen)) |
 | `Draw.Depth(mode)` | `Draw.SetDepth(mode)` | What 3D meshes do with depth: whether they're hidden behind what's nearer, and whether they hide what's behind them (see [Depth](#depth)) |
 | `Draw.Cull(side)` | `Draw.SetCull(side)` | Which side of a 3D mesh's triangles isn't drawn: the back, unless this says otherwise (see [Which side draws](#which-side-draws)) |
 
@@ -471,7 +471,7 @@ A tint multiplies the color of everything drawn inside, alpha too. `Color(1, 1, 
 ```csharp
 view Menu(MenuState menu)
 {
-    Draw.Screen(),
+    Draw.Pixels(),
     Draw.Tint(Color(1, 1, 1, menu.shown))
     {
         Draw.RoundRect(float2(200, 120), float2(320, 160), 12, Color(0.1, 0.1, 0.15));
@@ -683,7 +683,7 @@ Colors add, subtract and multiply channel by channel, alpha too, and scale by a 
 ```csharp
 view Bar(Health health)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     var middle = float2(120, 40);
     Draw.RoundRect(middle, float2(200, 24), 12, Color(0, 0, 0, 0.6));                 // A pill
     Draw.RoundRect(float2(22 + health.left * 98, 40), float2(health.left * 196, 20), 10, Color.red);
@@ -737,7 +737,7 @@ struct Shape // Built in
 ```csharp
 view Card(Deal deal)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     // A shadow first: a dark shape whose edge fades outwards
     Draw.Shape(Shape { center = deal.at + float2(0, 6), size = float2(180, 240), radius = 16,
                          color = Color(0, 0, 0, 0.5), soft = 18 });
@@ -915,7 +915,7 @@ Draw.Mesh(corners, faces, art.sprite, Filter.Point, Wrap.Repeat);
 ```csharp
 view Panel()
 {
-    Draw.Screen(),
+    Draw.Pixels(),
     Draw.Clip(Rect(20, 20, 200, 100))
     {
         Draw.Clear(Color.black); // The panel only
@@ -930,13 +930,13 @@ A clip in a clip's block only narrows it: what draws is inside both, which is wh
 
 ## On the screen
 
-In `Draw.Screen() { ... }`, Draw calls are in the screen's pixels: from the top left, with `y` down, as the GUI's are, `Screen.width` by `Screen.height`. After the block, the camera is what it was, so a view of the world can draw a label in pixels and leave the world's camera alone for the views after it:
+In `Draw.Pixels() { ... }`, Draw calls are in the screen's pixels: from the top left, with `y` down, as the GUI's are, `Screen.width` by `Screen.height`. After the block, the camera is what it was, so a view of the world can draw a label in pixels and leave the world's camera alone for the views after it:
 
 ```csharp
 view Nameplates(Player player, Body body)
 {
     var above = Draw.WorldToScreen(body.position + float2(0, 1.5));
-    Draw.Screen()
+    Draw.Pixels()
     {
         var size = Draw.MeasureText(player.name, 14);
         Draw.Text(player.name, above - float2(size.x * 0.5, size.y), 14, Color.white);
@@ -944,12 +944,12 @@ view Nameplates(Player player, Body body)
 }
 ```
 
-A view that only draws on the screen can set it for the views that follow instead, with `Draw.SetScreen()`:
+A view that only draws on the screen can set it for the views that follow instead, with `Draw.SetPixels()`:
 
 ```csharp
 view Health(Stats stats)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     Draw.Rect(float2(110, 30), float2(200, 20), Color.gray);
     Draw.Rect(float2(10 + stats.health, 30), float2(stats.health * 2, 20), Color.red);
 }
@@ -970,7 +970,7 @@ Without more, `position` is the text's top left corner. An `Anchor` after the co
 ```csharp
 view Banner(Round round)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     var middle = float2(Screen.width, Screen.height) * 0.5;
     Draw.Text("FIGHT!", middle, 64, Color.white, Anchor.MiddleCenter);
     Draw.Text($"Round {round.number}", float2(Screen.width - 16, 16), 24, Color.gray, Anchor.UpperRight);
@@ -1003,7 +1003,7 @@ To fit a panel around a text, or to put something beside it, ask how big it will
 ```csharp
 view Banner(Round round)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     var middle = float2(Screen.width, Screen.height) * 0.5;
     var size = Draw.MeasureText(round.message, 48, Font.Bold);
     Draw.Rect(middle, size + float2(32, 16), Color.black);
@@ -1136,7 +1136,7 @@ A game's C draws 3D meshes too, with vertices of its own, like a model a library
 
 ## Screen and world coordinates
 
-The conversion helpers use the currently selected camera, including a camera set earlier in the same frame. Their screen coordinates are logical pixels from the top left, with `y` down, as `Draw.Screen` and the GUI's are.
+The conversion helpers use the currently selected camera, including a camera set earlier in the same frame. Their screen coordinates are logical pixels from the top left, with `y` down, as `Draw.Pixels` and the GUI's are.
 
 `Screen.width` and `Screen.height` are the window's size in those pixels. Both are floats, so `Screen.width / Screen.height` is the screen's shape with nothing rounded away. Views, and the functions they call, read them.
 
@@ -1151,7 +1151,7 @@ The conversion helpers use the currently selected camera, including a camera set
 
 In 3D, depth is the depth buffer's value: 0 at the near plane and 1 at the far limit, rather than a distance in world units. The standard perspective camera has an infinite far limit, so depth 1 has no finite world position. The ray helpers work with perspective and orthographic cameras, including custom projection matrices. Intersect the ray with your game's objects or a plane to pick a world position; a pixel alone has no unique 3D position.
 
-The devices count pixels the other way: from the bottom left, with `y` up, as Unity's Input System does. `Screen.Flip(position)` gives the same point counted from the screen's other edge, so it turns a device's position into a screen position, for these helpers, `Draw.Screen()` and a `Rect` of the GUI's. It's its own inverse: it turns a screen position into a device's too.
+The devices count pixels the other way: from the bottom left, with `y` up, as Unity's Input System does. `Screen.Flip(position)` gives the same point counted from the screen's other edge, so it turns a device's position into a screen position, for these helpers, `Draw.Pixels()` and a `Rect` of the GUI's. It's its own inverse: it turns a screen position into a device's too.
 
 ```csharp
 view Pointer(Devices devices)
@@ -1171,7 +1171,7 @@ view Pointer(Devices devices)
 }
 ```
 
-On the screen (`Draw.Screen`, `Draw.SetScreen`), its conversion helpers are identity mappings. A viewport with no size, a singular camera matrix, or a point whose projection has no finite position returns zero.
+On the screen (`Draw.Pixels`, `Draw.SetPixels`), its conversion helpers are identity mappings. A viewport with no size, a singular camera matrix, or a point whose projection has no finite position returns zero.
 
 ## Looking around
 
