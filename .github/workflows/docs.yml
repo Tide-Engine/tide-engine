@@ -57,7 +57,7 @@ jobs:
         if: runner.environment != 'github-hosted'
         run: |
           echo "CMAKE_C_COMPILER_LAUNCHER=" >> "$GITHUB_ENV"
-          major=$(sed -nE 's/^set\(TIDE_LLVM_VERSION ([0-9]+)\..*//p' cmake/LLVM.cmake)
+          major=$(sed -nE 's/^set\(TIDE_LLVM_VERSION ([0-9]+)\..*/\1/p' cmake/LLVM.cmake)
           test -x "/usr/lib/llvm-$major/bin/clang"
           echo "LLVM_ROOT=/usr/lib/llvm-$major" >> "$GITHUB_ENV"
       - uses: actions/cache@v4
