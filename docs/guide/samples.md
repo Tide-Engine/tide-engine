@@ -1,3 +1,7 @@
+---
+description: "Play Tide Engine sample games in your browser, from falling sand and arena combat to 2D and 3D physics, and invite friends to a room."
+---
+
 # Samples
 
 Choose a game to play in your browser. Each thumbnail opens the full game in a new tab.

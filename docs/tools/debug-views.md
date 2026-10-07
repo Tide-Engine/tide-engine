@@ -1,3 +1,7 @@
+---
+description: "Use Tide's in-game profiler to inspect frame and tick costs, system execution, netcode and memory use while your game runs."
+---
+
 # Debug views
 
 Debug views are panels the engine draws over a running game, for the people making it. There's one so far: the profiler, which shows where a frame's time goes, and a tick's.

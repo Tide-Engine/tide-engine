@@ -55,6 +55,7 @@ function renderFile(file: string) {
 
 /** A sentence or two from the start of the page, for search engines. */
 function describe(text: string): string {
+    text = text.replace(/\s+/g, ' ').trim();
     if (text.length <= 160) return text;
     const cut = text.slice(0, 160);
     return `${cut.slice(0, cut.lastIndexOf(' '))}…`;
@@ -82,7 +83,9 @@ export function page(slug: string): Page {
         result = {
             path: at,
             title: rendered.title || pages[index].text,
-            description: describe(rendered.sections[0].text),
+            description: typeof rendered.data.description === 'string' && rendered.data.description.trim()
+                ? rendered.data.description.trim()
+                : describe(rendered.sections.find((section) => section.text.trim())?.text ?? `Learn about ${rendered.title} in Tide Engine.`),
             html: rendered.html,
             headings: rendered.headings,
             prev: pages[index - 1],
@@ -94,6 +97,7 @@ export function page(slug: string): Page {
 }
 
 export interface Home {
+    description: string;
     hero: {
         name: string;
         text: string;
@@ -107,7 +111,8 @@ export interface Home {
 /** The home page: `index.md`, its hero and features in its front matter. */
 export function home(): Home {
     const { data, html } = renderFile('/index.md');
-    return { hero: data.hero as Home['hero'], features: data.features as Home['features'], html };
+    const hero = data.hero as Home['hero'];
+    return { description: typeof data.description === 'string' ? data.description.trim() : describe(`${hero.text}. ${hero.tagline}`), hero, features: data.features as Home['features'], html };
 }
 
 export interface Entry {

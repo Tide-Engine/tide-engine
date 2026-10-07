@@ -1,3 +1,7 @@
+---
+description: "Sample keyboard, mouse, touch and gamepad devices into Tide player input, then predict, sanitize and share it across the multiplayer match."
+---
+
 # Input
 
 A player's **input** is what they do in one tick, and it's what the network sends. Each game declares one `input`, and systems read it.

@@ -1,13 +1,10 @@
 <script lang="ts">
     import type { PageProps } from './$types';
+    import Seo from '#lib/components/Seo.svelte';
     let { form }: PageProps = $props();
 </script>
 
-<svelte:head>
-    <title>Tide Engine access request</title>
-    <meta name="description" content="Request access to Tide Engine during early development. Requests are reviewed manually." />
-    <link rel="canonical" href="https://tide-engine.dev/request-access" />
-</svelte:head>
+<Seo title="Tide Engine access request" description="Request access to Tide Engine during early development. Requests are reviewed manually." path="/request-access" />
 
 <main id="content">
     <h1>Tide Engine access request</h1>

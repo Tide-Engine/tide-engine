@@ -1,3 +1,7 @@
+---
+description: "The Tide language reference: syntax, types, ECS components and systems, deterministic simulation, multiplayer, drawing and runtime APIs."
+---
+
 # The Tide language
 
 The language Tide games and the engine's built-in systems are written in. It transpiles to C (see AGENTS.md). This file is the source of truth for the language: only decisions the owner has approved go in **Decided**. Proposals and open questions go in **Open**.

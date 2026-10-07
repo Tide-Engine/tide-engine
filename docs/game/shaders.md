@@ -1,3 +1,7 @@
+---
+description: "Write Tide frag and vert shaders for the GPU, with textures, per-draw values, instancing, shadow maps and multiple render outputs."
+---
+
 # Frags and verts
 
 A mesh's pixels and vertices can run code of yours on the GPU, written in Tide: a `frag` runs once for each pixel a mesh covers, and a `vert` once for each of its vertices. They're declarations, like [views](./views.md), and a `Draw.Mesh` names them:

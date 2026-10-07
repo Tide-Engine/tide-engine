@@ -1,3 +1,7 @@
+---
+description: "Learn Tide language syntax, types, variables, operators and control flow, plus enums, attributes and settings for your game."
+---
+
 # Basics
 
 Tide is a language of its own. Its basics are the familiar kind, braces and semicolons, so if you've programmed before, most of this page will read as you expect. It covers what's the same everywhere in the language: values, variables and control flow. What's special to Tide starts with [components and entities](../game/entities.md).

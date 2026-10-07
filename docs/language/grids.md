@@ -1,3 +1,7 @@
+---
+description: "Store 2D and 3D cell data with Tide's Grid2 and Grid3, access cells by position and process grids in ordered or parallel loops."
+---
+
 # Grids
 
 A grid holds cells at positions: the pixels of a canvas, the sand of a falling-sand game, the blocks of a voxel world. `Grid2<T>` takes `int2` positions and `Grid3<T>` takes `int3` ones. Grids are fields of components, singletons and scenes, so a game can have as many as it needs: a canvas for each player, a grid for each ship, a dimension for each scene.

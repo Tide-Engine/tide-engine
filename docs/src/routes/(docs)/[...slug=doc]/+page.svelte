@@ -1,5 +1,6 @@
 <script lang="ts">
     import { liveExamples } from '#lib/examples.ts';
+    import Seo from '#lib/components/Seo.svelte';
 
     let { data } = $props();
 
@@ -23,13 +24,7 @@
     }
 </script>
 
-<svelte:head>
-    <title>{data.title} | Tide Engine</title>
-    <meta name="description" content={data.description} />
-    <meta property="og:title" content={data.title} />
-    <meta property="og:description" content={data.description} />
-    <link rel="canonical" href="https://tide-engine.dev{data.path}" />
-</svelte:head>
+<Seo title={`${data.title} | Tide Engine`} description={data.description} path={data.path} documentation />
 
 {#key data.path}
     <article class="prose" {@attach copyButtons} {@attach liveExamples}>

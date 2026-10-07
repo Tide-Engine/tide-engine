@@ -1,3 +1,7 @@
+---
+description: "Explore a deterministic 2D multiplayer physics game in Tide with Box2D, falling bricks, player input, a room lobby and drawing."
+---
+
 # Towers walkthrough
 
 This walkthrough explains how a Box2D match steers falling bricks and turns them into loose parts of a tower. Follow its [physics](#the-physics), [input](#the-input), [lobby](#the-lobby) and [presentation](#what-a-machine-shows), with code excerpts and the match and lobby sources.

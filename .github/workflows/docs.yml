@@ -88,6 +88,7 @@ jobs:
         run: |
           npm run check
           npm run build
+          npm run test:seo
           npm run test:access-http
           npm run test:examples
 

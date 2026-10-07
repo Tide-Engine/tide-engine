@@ -1,3 +1,7 @@
+---
+description: "Play WAV and Ogg Vorbis assets in Tide, control spatial sound and buses, and create audio filters while keeping sound local to each machine."
+---
+
 # Audio
 
 Sound is presentation, like drawing: it's this machine's, and nothing of it is in the match. A view says what should be sounding as it says what should be drawn, and a local handler plays a sound when the match sends an event. Nothing in the simulation hears any of it, so a match is the same on a machine with its speakers off.
