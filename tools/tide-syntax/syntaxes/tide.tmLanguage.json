@@ -350,8 +350,8 @@
           }
         },
         {
-          "comment": "const int MAX_HEALTH = ...: a constant; asset Texture hero = ...: a file under a name, maybe after its attributes",
-          "match": "(?:^|(?<=\\]))\\s*(const|asset)\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\s*>)?\\??)\\s+([A-Za-z_][A-Za-z0-9_]*)(?=\\s*=)",
+          "comment": "const int MAX_HEALTH = ...: a constant, maybe after its attributes",
+          "match": "(?:^|(?<=\\]))\\s*(const)\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\s*>)?\\??)\\s+([A-Za-z_][A-Za-z0-9_]*)(?=\\s*=)",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "patterns": [{ "include": "#type-name" }] },
@@ -359,7 +359,16 @@
           }
         },
         {
-          "comment": "asset Map<string, Texture> frames = ...: the word, before a type the rule above doesn't read",
+          "comment": "asset Texture hero = ...: a file under an ordinary variable name, including lists and maps",
+          "match": "(?:^|(?<=\\]))\\s*(asset)\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[A-Za-z0-9_.,<> \\t]+>)?\\??)\\s+([A-Za-z_][A-Za-z0-9_]*)(?=\\s*=)",
+          "captures": {
+            "1": { "name": "storage.modifier.tide" },
+            "2": { "patterns": [{ "include": "#type-name" }] },
+            "3": { "name": "variable.other.tide" }
+          }
+        },
+        {
+          "comment": "The word asset before an incomplete declaration",
           "match": "(?:^|(?<=\\]))\\s*(asset)\\b(?=\\s+[A-Za-z_])",
           "captures": {
             "1": { "name": "storage.modifier.tide" }

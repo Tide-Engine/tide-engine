@@ -236,6 +236,50 @@ system CallsInOrder(mut Calls c)
     c.external = Pack(c_next(c.t), c_next(c.t));
 }
 
+// Flattening a Color's vector arguments keeps each call and read in its turn.
+singleton Colors
+{
+    Tally t;
+    float2 pair;
+    Color once;
+    int onceCount;
+    Color middle;
+    int middleCount;
+    Color paired;
+    int pairedCount;
+    Color external;
+    int externalCount;
+    Color before;
+    Color after;
+}
+
+int Change(mut float2 pair)
+{
+    pair = float2(3, 4);
+    return 0;
+}
+
+system ColorsInOrder(mut Colors c)
+{
+    c.t = Tally { };
+    c.once = Color(Corner(c.t), Next(c.t));
+    c.onceCount = c.t.n;
+    c.t = Tally { };
+    c.middle = Color(Next(c.t), Corner(c.t), Next(c.t));
+    c.middleCount = c.t.n;
+    c.t = Tally { };
+    c.paired = Color(Corner(c.t), Corner(c.t));
+    c.pairedCount = c.t.n;
+    c.t = Tally { };
+    c.external = Color(c_corner(c.t), c_next(c.t));
+    c.externalCount = c.t.n;
+
+    c.pair = float2(1, 2);
+    c.before = Color(c.pair, Change(c.pair));
+    c.pair = float2(1, 2);
+    c.after = Color(Change(c.pair), c.pair);
+}
+
 // What's read beside a call that writes it.
 singleton Reads
 {

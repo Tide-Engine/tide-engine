@@ -215,6 +215,25 @@ static bool offers(const char *reply, const char *label)
     return has(reply, needle);
 }
 
+// A semantic token's absolute position, decoded from LSP's relative data.
+static bool token_is(const char *reply, const int line, const int col, const int type, const int mods)
+{
+    const json *data = json_path(json_parse(reply, strlen(reply)), "result", "data", NULL);
+    bool found = false;
+    int at_line = 0, at_col = 0;
+    for (int i = 0; data && i + 4 < data->count; i += 5) {
+        const int delta = json_int(data->items[i], 0);
+        at_line += delta;
+        at_col = (delta ? 0 : at_col) + json_int(data->items[i + 1], 0);
+        if (at_line == line && at_col == col) {
+            found = json_int(data->items[i + 3], -1) == type && json_int(data->items[i + 4], -1) == mods;
+            break;
+        }
+    }
+    json_release();
+    return found;
+}
+
 #define GAME_TYPES                                                             \
     "component Body\n"                                                         \
     "{\n"                                                                      \
@@ -8250,6 +8269,84 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     hover = request_at(uri_main, "textDocument/hover", 15, 39, ""); // ...where a draw names it too
     TIDE_CHECK(has(hover, "asset Texture tiles") && has(hover, "`Filter.Point` and `Wrap.Repeat`"));
 
+    // Assets are ordinary read-only values in completion and highlighting,
+    // including while the receiver or its Sample call is half written.
+    static const char shader_assets[] = "asset Texture logo = \"art/tile.png\";\n"
+                                        "asset List<Texture> frames = \"art/*.png\";\n"
+                                        "asset Map<string, Texture> images = \"art/*.png\";\n"
+                                        "asset string notes = \"art/other.txt\";\n"
+                                        "const float SCALE = 1;\n"
+                                        "scene Main { }\n";
+    char asset_code[2048];
+    snprintf(asset_code, sizeof asset_code, "%sfrag Frag(Vertex3 vertex, out Color color)\n{\n"
+                                           "    Color logoColor = logo.Sample(vertex.position.xy);\n"
+                                           "    color = logoColor * SCALE;\n}\n"
+                                           "view V() { Draw.Mesh([Vertex3 { }], [0, 0, 0], float4x4.identity, Frag); }\n", shader_assets);
+    open_uri(uri_main, asset_code);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    hover = request_at(uri_main, "textDocument/hover", 8, 24, "");
+    TIDE_CHECK(has(hover, "asset Texture logo") && has(hover, "an image to draw with"));
+    hover = request_at(uri_main, "textDocument/hover", 8, 30, "");
+    TIDE_CHECK(has(hover, "Texture.Sample(float2 uv") && !has(hover, "entity.Sample"));
+    const char *tokens = request_at(uri_main, "textDocument/semanticTokens/full", 0, 0, "");
+    TIDE_CHECK(token_is(tokens, 0, 14, 6, 3)); // Asset declaration: variable, declared and read-only
+    TIDE_CHECK(token_is(tokens, 8, 22, 6, 2)); // Asset use: variable, read-only
+    TIDE_CHECK(token_is(tokens, 8, 27, 10, 8)); // Texture.Sample: method from the built-in library
+    TIDE_CHECK(token_is(tokens, 4, 12, 8, 7)); // A true constant keeps enumMember, declared/static/read-only
+
+    snprintf(asset_code, sizeof asset_code, "%sfrag Frag(Vertex3 vertex, out Color color)\n{\n"
+                                           "    Color logoColor = Color.white;\n    lo\n}\n", shader_assets);
+    open_uri(uri_main, asset_code);
+    const char *asset_completion = request_at(uri_main, "textDocument/completion", 9, 6, "");
+    TIDE_CHECK(offers(asset_completion, "logo") && offers(asset_completion, "logoColor"));
+    TIDE_CHECK(has(asset_completion, "\"label\":\"logo\",\"kind\":6,\"detail\":\"asset Texture\""));
+    TIDE_CHECK(!offers(asset_completion, "frames") && !offers(asset_completion, "images") && !offers(asset_completion, "notes"));
+    snprintf(asset_code, sizeof asset_code, "%sfrag Frag(Vertex3 vertex, out Color color)\n{\n    color = logo.\n}\n", shader_assets);
+    open_uri(uri_main, asset_code);
+    asset_completion = request_at(uri_main, "textDocument/completion", 8, 17, "");
+    TIDE_CHECK(offers(asset_completion, "Sample") && has(asset_completion, "Texture.Sample(float2 uv"));
+    TIDE_CHECK(!offers(asset_completion, "Add") && !offers(asset_completion, "Clear"));
+    snprintf(asset_code, sizeof asset_code, "%sfrag Frag(Vertex3 vertex, out Color color)\n{\n    color = logo.Sample(\n}\n", shader_assets);
+    open_uri(uri_main, asset_code);
+    TIDE_CHECK(has(request_at(uri_main, "textDocument/signatureHelp", 8, 24, ""), "Texture.Sample(float2 uv"));
+
+    snprintf(asset_code, sizeof asset_code, "%sview V()\n{\n    var count = frames.\n}\n", shader_assets);
+    open_uri(uri_main, asset_code);
+    asset_completion = request_at(uri_main, "textDocument/completion", 8, 23, "");
+    TIDE_CHECK(offers(asset_completion, "count") && offers(asset_completion, "Contains"));
+    TIDE_CHECK(!offers(asset_completion, "Sample"));
+    snprintf(asset_code, sizeof asset_code, "%sview V()\n{\n    var present = images.\n}\n", shader_assets);
+    open_uri(uri_main, asset_code);
+    asset_completion = request_at(uri_main, "textDocument/completion", 8, 25, "");
+    TIDE_CHECK(offers(asset_completion, "Has") && offers(asset_completion, "TryGet"));
+    TIDE_CHECK(!offers(asset_completion, "Sample"));
+
+    // Qualified names resolve the same image when its declaration is in a namespace.
+    static const char namespaced_asset[] = "namespace Art { asset Texture logo = \"art/tile.png\"; }\nscene Main { }\n";
+    snprintf(asset_code, sizeof asset_code, "%sfrag Frag(Vertex3 vertex, out Color color)\n{\n    color = Art.logo.\n}\n", namespaced_asset);
+    open_uri(uri_main, asset_code);
+    TIDE_CHECK(offers(request_at(uri_main, "textDocument/completion", 4, 21, ""), "Sample"));
+    snprintf(asset_code, sizeof asset_code, "%sfrag Frag(Vertex3 vertex, out Color color)\n{\n    color = Art.logo.Sample(\n}\n", namespaced_asset);
+    open_uri(uri_main, asset_code);
+    TIDE_CHECK(has(request_at(uri_main, "textDocument/signatureHelp", 4, 28, ""), "Texture.Sample(float2 uv"));
+
+    // The same fallback works across source files and through a using.
+    char uri_icons[700];
+    snprintf(uri_icons, sizeof uri_icons, "file:///%s/lsp_tx/icons.tide", dir);
+    static const char icons_file[] = "namespace Icons;\nasset Texture badge = \"art/tile.png\";\n";
+    write_file("lsp_tx/icons.tide", icons_file);
+    open_uri(uri_icons, icons_file);
+    open_uri(uri_main, "scene Main { }\nfrag Frag(Vertex3 vertex, out Color color)\n{\n    color = Icons.badge.\n}\n");
+    TIDE_CHECK(offers(request_at(uri_main, "textDocument/completion", 3, 24, ""), "Sample"));
+    open_uri(uri_main, "using Icons;\nscene Main { }\nfrag Frag(Vertex3 vertex, out Color color)\n{\n    color = badge.Sample(\n}\n");
+    TIDE_CHECK(has(request_at(uri_main, "textDocument/signatureHelp", 4, 25, ""), "Texture.Sample(float2 uv"));
+
+    // A missing file has its own diagnostic; it doesn't erase the asset's type.
+    open_uri(uri_main, "asset Texture missing = \"art/missing.png\";\nscene Main { }\n"
+                       "frag Frag(Vertex3 vertex, out Color color)\n{\n    color = missing.\n}\n");
+    TIDE_CHECK(has(sent_with(uri_main), "there's no file at 'art/missing.png'"));
+    TIDE_CHECK(offers(request_at(uri_main, "textDocument/completion", 4, 20, ""), "Sample"));
+
     // A Texture's path takes PNGs, and a list of them the globs
     static const char paths[] = "asset Texture one = \"art/\";\n"
                                 "asset List<Texture> many = \"art/\";\n"
@@ -8309,6 +8406,7 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     TIDE_CHECK(has(last_sent(), "read it in a frag or a vert, by its name"));
 
     remove_game_file("lsp_tx/main.tide");
+    remove_game_file("lsp_tx/icons.tide");
     remove_game_file("lsp_tx/art/tile.png");
     remove_game_file("lsp_tx/art/other.txt");
     remove_game_file("lsp_tx/.tide/assets.sha256");

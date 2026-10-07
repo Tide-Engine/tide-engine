@@ -730,7 +730,7 @@ What's drawn through one:
 
 ## Colors
 
-`Color` has `r`, `g`, `b` and `a`, floats from 0 to 1, as in Unity. `Color(r, g, b)` has alpha 1, and `Color(r, g, b, a)` sets it. The constants are `Color.white`, `black`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta`, `gray` and `clear`. Components and singletons can hold colors.
+`Color` has `r`, `g`, `b` and `a`, floats from 0 to 1, as in Unity. Its constructor takes scalars and vectors totaling 3 or 4 channels, in order, just as vector constructors do. `Color(r, g, b)`, `Color(uv.xy, 0)` and `Color(rgb)` have alpha 1; `Color(r, g, b, a)`, `Color(rgb, a)` and `Color(rgba)` set it. Ints and int vectors convert to floats. The constants are `Color.white`, `black`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta`, `gray` and `clear`. Components and singletons can hold colors.
 
 Colors add, subtract and multiply channel by channel, alpha too, and scale by a number: `tint * Color.red * 0.5`.
 
