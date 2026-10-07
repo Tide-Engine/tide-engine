@@ -230,7 +230,8 @@ Measured on a release build, on one thread, with the world kept and hashed after
 | Keeping and hashing the world, after each | 0.06 to 0.1 | 0.08 to 0.14 |
 | ...where there's one thread to hash it on | 0.12 to 0.2 | 0.14 to 0.23 |
 | Raising a ring: the tick that makes its 2,460 bodies | 9 | 27 |
-| ...and each tick of the second it takes to come to rest | 1.2 | 2.0 |
+| ...the one after, which puts what's stacked to sleep | 3 | 6 |
+| ...and each tick of the half second in which the balls come to rest | 0.09 | 0.5 |
 
 - **Box3D's state is 3.8 megabytes** as a round starts, a kilobyte and a half a body, and all of it is in the match. Most ticks write only the part of it that changed: two in three while four bots bring a full ring down, and nine in ten after.
 - **Keeping that state costs about as much as the physics.** With four bots at a full ring, Box3D's own step is 0.3 ms of a tick. Writing what changed of its state into the match is 0.2 more, and hashing the world after is 0.12 for one thread: about half of the state's 16 kilobyte blocks have a byte that changed, since what's moving is scattered through it. So the engine calls a few more threads in to hash, where the machine has them and the page lets it use them, which takes it to 0.06. The game's own systems, and the package's that read bodies in and out, are 0.03 together.
