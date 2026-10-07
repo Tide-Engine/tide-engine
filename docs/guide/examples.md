@@ -47,6 +47,7 @@ Some examples put two players side by side. Each frame is a machine of its own, 
 - [A scene through a frag](../game/views.md#targets-and-post-processing): a render target, blitted to the window.
 - [A frag and a vert](../game/shaders.md): code of the game's on the GPU.
 - [Lighting, in a frag](../game/shaders.md#where-the-pixel-is): a vertex with a normal, lit pixel by pixel.
+- [A shadow map](../game/shaders.md#a-shadow-map): what casts drawn into a target of depth alone, and a frag that compares.
 - [A list of motes, in one draw](../game/shaders.md#instances-from-a-list): thousands of instances from a list.
 - [Local entities, and no match](../game/local-state.md#views-change-local-state): particles that are one machine's own.
 

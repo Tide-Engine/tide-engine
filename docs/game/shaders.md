@@ -140,6 +140,65 @@ color = models.wood.Sample(vertex.uv, Filter.Point);   // The nearest cell
 
 `uv` is as a mesh's: (0, 0) is the outer corner of the grid's cell (0, 0) and (1, 1) the outer corner of its last, and past them it reads the cells at the edge. The filter is written there, `Filter.Point` or `Filter.Bilinear`. Verts sample too.
 
+## A target's depth
+
+A [render target](./views.md#what-a-target-holds) keeps how far the nearest thing drawn at each of its pixels is, and a frag reads that as it reads a color: `target.depth`, a `DepthTexture`, which a view keeps in a field of a singleton or a component the frag takes.
+
+```csharp
+local singleton Lamp { RenderTarget map; DepthTexture shadow; float4x4 toLamp; }
+
+view Make(mut Lamp lamp)
+{
+    lamp.map = RenderTarget(1024, 1024, 1, Format.DepthOnly);
+    lamp.shadow = lamp.map.depth;
+}
+```
+
+A frag reads it two ways:
+
+```csharp
+float far = lamp.shadow.Sample(uv);           // The depth stored there
+float lit = lamp.shadow.Compare(uv, depth);   // How much of what's stored there isn't nearer than `depth`
+```
+
+- **`Sample(uv)`** gives the depth as a number: 0 at the camera's near plane, 1 at its far limit, as [`pixel.depth`](#where-the-pixel-is) is, and 1 where nothing was drawn since the target was cleared. It's the nearest pixel's, with no filter to pick: a depth blended between two pixels would be neither's.
+- **`Compare(uv, value)`** compares what's stored with a number of yours, and gives a number from 0 to 1: 1 where what's stored isn't nearer than `value`, 0 where it is, and in between along an edge, as the GPU compares the pixels around `uv` and blends what that gives. `value` is kept between 0 and 1, so what's past the far limit counts as at it.
+
+`uv` is a color's: (0, 0) is the target's top left corner. Verts read a depth too. Each way a frag reads one is one of its draw's [8 textures](#what-the-gpu-runs).
+
+### A shadow map
+
+That second read is what a shadow is. Draw what casts into a target of depth alone, through a camera where the lamp is, and that target holds how far the lamp sees along each of its pixels. A frag that lights a pixel then asks whether the lamp sees that far: it works out where its pixel is in the lamp's image, and compares how far the pixel is from the lamp with what's stored there.
+
+The scene below does it. **Lamp** turns the lamp, **Soft edges** takes four comparisons around the pixel where one would do, and **The lamp's depth** shows the lamp's own image in the corner: near is dark, and what nothing was drawn on is white.
+
+::: tide-example shadows A shadow map
+
+<<< @/examples/shadows.tide
+
+:::
+
+- **What casts is drawn with no frag,** and has the engine's own look, as anywhere: in a target of depth alone, a color has nowhere to go, and how far each pixel is, is what's kept. A caster with holes in it names a frag that calls `pixel.Discard()` for them.
+- **The lamp's camera is an ordinary one:** `target.SetCamera(transform, projection)`, with `float4x4.Ortho` for a lamp that's far away, like a sun, and `float4x4.PerspectiveFov` for one that's near.
+- **Where a pixel is in the lamp's image is yours to work out,** from the matrix that takes the world to the lamp's clip space. A camera looks along its `+z`, and clip space along `-z`, so that matrix is the projection, after z turned around, after the camera's transform undone:
+
+  ```csharp
+  float4x4 flip = float4x4.TRS(float3(0), quaternion.identity, float3(1, 1, -1));
+  lamp.toLamp = Math.Mul(projection, Math.Mul(flip, Math.Inverse(transform)));
+  ```
+
+  ```csharp
+  float4 seen = Math.Mul(lamp.toLamp, float4(pixel.world, 1));
+  float2 uv = float2(seen.x * 0.5 + 0.5, 0.5 - seen.y * 0.5);   // From the image's top left corner
+  float depth = seen.z * 0.5 + 0.5;                             // From 0 to 1, as what's stored is
+  ```
+
+  Under a perspective, divide `seen.xyz` by `seen.w` first.
+
+- **Compare a little nearer than the pixel is,** `depth - 0.003`: a surface the lamp sees is exactly as far as what's stored there, to the rounding, and would be in its own shadow in stripes. How much it takes goes with how slanted the surface is to the lamp and how few pixels the lamp's image has across what it sees.
+- **A target with pixels of its own** (`RenderTarget(1024, 1024, 1, ...)`) casts the same shadows on every display. The fewer pixels it has across what the lamp sees, the blockier a shadow's edge.
+- **The target that's read isn't the one drawn into.** A draw into a target that reads that target's depth is passed by, with a line that says so.
+
 ## Where the pixel is
 
 Two more parameters are the engine's:
@@ -183,7 +242,7 @@ The camera isn't given: keep where yours is in a singleton, where the view that 
 
 Code for the GPU is ordinary Tide, less what a GPU doesn't have:
 
-- **It has** bools, ints, floats, vectors, quaternions, matrices, colors, enums and structs of those; locals, `if`, `?:`, and `for` loops that count (`for (int i = 0; i < 8; i++)`), with `break` and `continue`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; and sampling a grid.
+- **It has** bools, ints, floats, vectors, quaternions, matrices, colors, enums and structs of those; locals, `if`, `?:`, and `for` loops that count (`for (int i = 0; i < 8; i++)`), with `break` and `continue`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; and sampling a grid, a texture or a target's depth, 8 of them to a draw.
 - **It doesn't have** lists, maps, text, entities, `this`, spawning and sending, `Draw2D` and `Draw3D`, the GUI, `Devices`, `Debug`, C, tasks, errors, or recursion. `while` and `switch` aren't there yet: write `for` with a bound, and `if`.
 
 Each of those is an error where it's written, which says what to do instead. A function a frag calls has to fit too, and the error says which frag reaches it; the same function still runs on the CPU for the code that calls it there.
