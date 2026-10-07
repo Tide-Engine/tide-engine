@@ -33,7 +33,7 @@ local singleton Stage
 }
 
 // Once for each pixel: its own light, and whether the lamp sees it.
-frag Lit(Corner corner, mut Color color, Pixel pixel, Instance instance, Block block, Stage stage)
+frag Lit(Corner corner, out Color color, Pixel pixel, Instance instance, Block block, Stage stage)
 {
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
     float facing = Math.Max(Math.Dot(normal, -stage.lampDirection), 0);
@@ -58,7 +58,7 @@ frag Lit(Corner corner, mut Color color, Pixel pixel, Instance instance, Block b
 }
 
 // The lamp's image itself: near is dark, and what nothing was drawn on is white.
-frag LampDepth(Vertex vertex, mut Color color, Stage stage)
+frag LampDepth(Vertex vertex, out Color color, Stage stage)
 {
     float depth = stage.shadow.Sample(vertex.uv);
     color = Color(depth, depth, depth);

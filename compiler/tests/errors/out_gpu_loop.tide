@@ -8,8 +8,9 @@ int Steps(float x, out float rest)
     rest = x;
     return 4;
 }
-frag Shade(Corner corner, mut Color color)
+frag Shade(Corner corner, out Color color)
 {
+    color = Color.white;
     for (int i = 0; i < Steps(corner.uv.x, out var rest); i++) color.r += rest;
 }
 view Show(Sheet sheet) { Draw2D.Mesh(sheet.corners, sheet.indices, Shade); }

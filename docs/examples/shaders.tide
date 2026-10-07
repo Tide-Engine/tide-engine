@@ -24,7 +24,7 @@ vert Wave(mut RibbonVertex vertex, Ribbon ribbon)
 }
 
 // UVs blend across each triangle, giving every pixel its own stripe color.
-frag Stripes(RibbonVertex vertex, mut Color color, Ribbon ribbon)
+frag Stripes(RibbonVertex vertex, out Color color, Ribbon ribbon)
 {
     float stripe = 0.5 + 0.5 * Math.Sin(vertex.uv.x * ribbon.bands * 6.283185);
     color = Color(0.18 + stripe * 0.8, 0.83 - stripe * 0.08, 0.75 - stripe * 0.61);

@@ -1,6 +1,6 @@
 // expect: Draw3D.Instanced draws 3D vertices, and 'Corner' has a float2 position
 struct Corner { float2 position; }
 struct Item { Color color; }
-frag Shade(Corner vertex, mut Color color, Item item) { color = item.color * vertex.position.x; }
+frag Shade(Corner vertex, out Color color, Item item) { color = item.color * vertex.position.x; }
 scene Main { }
 view Show() { Draw3D.Instanced([Corner { }], [0, 0, 0], [Item { }], Shade); }

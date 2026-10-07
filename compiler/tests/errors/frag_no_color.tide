@@ -1,4 +1,4 @@
-// expect: frag 'Shade' has no pixel to write: it takes the pixel's color as 'mut Color color'
+// expect: frag 'Shade' has no pixel to write: it takes the pixel's color as 'out Color color'
 // A frag says what it writes: its pixel's color
 scene Main { }
 

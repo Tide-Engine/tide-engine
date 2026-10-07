@@ -566,7 +566,7 @@ void BuildGround(mut Scenery scenery)
 }
 
 // Grass in squares, lighter on the hills, with a sandy path around the rim.
-frag Ground(Corner corner, mut Color color)
+frag Ground(Corner corner, out Color color)
 {
     float3 normal = Math.Normalize(corner.normal);
     float light = 0.5 + 0.5 * Math.Max(Math.Dot(normal, SUN), 0);
@@ -589,7 +589,7 @@ frag Ground(Corner corner, mut Color color)
 }
 
 // A marble in its player's color, with a white band and a spot that show it rolling.
-frag Glass(Corner corner, mut Color color, Instance instance, Pixel pixel, Marble marble, Look look)
+frag Glass(Corner corner, out Color color, Instance instance, Pixel pixel, Marble marble, Look look)
 {
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
     float diffuse = Math.Max(Math.Dot(normal, SUN), 0);
@@ -602,7 +602,7 @@ frag Glass(Corner corner, mut Color color, Instance instance, Pixel pixel, Marbl
     color.a = 1;
 }
 
-frag Gold(Corner corner, mut Color color, Instance instance, Pixel pixel, Look look)
+frag Gold(Corner corner, out Color color, Instance instance, Pixel pixel, Look look)
 {
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
     float diffuse = Math.Abs(Math.Dot(normal, SUN));
@@ -615,7 +615,7 @@ frag Gold(Corner corner, mut Color color, Instance instance, Pixel pixel, Look l
     color.a = 1;
 }
 
-frag Bump(Corner corner, mut Color color, Dome dome, Instance instance)
+frag Bump(Corner corner, out Color color, Dome dome, Instance instance)
 {
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
     float light = 0.45 + 0.55 * Math.Max(Math.Dot(normal, SUN), 0);

@@ -144,7 +144,7 @@ Color FloorPaint(float3 world, Color here, float4 sides, float beat)
 
 // A tile: its top is the floor's paint, and its sides are dark, with the
 // edge's light along their top.
-frag TileLook(Corner corner, mut Color color, Solid solid, Pixel pixel, Room room, Ground ground)
+frag TileLook(Corner corner, out Color color, Solid solid, Pixel pixel, Room room, Ground ground)
 {
     if (corner.normal.y > 0.5)
     {
@@ -166,7 +166,7 @@ frag TileLook(Corner corner, mut Color color, Solid solid, Pixel pixel, Room roo
 }
 
 // A crate has a frame around each face, a shade darker, and a keg a band.
-frag CrateLook(Corner corner, mut Color color, Solid solid, Instance instance, Pixel pixel, Room room)
+frag CrateLook(Corner corner, out Color color, Solid solid, Instance instance, Pixel pixel, Room room)
 {
     float3 at = float3(Math.Abs(corner.position.x), Math.Abs(corner.position.y), Math.Abs(corner.position.z));
     // The middle one of the three is how near the face's edge this is
@@ -190,7 +190,7 @@ vert ShadowDrop(mut Corner corner, Solid solid)
     if (solid.low > 0.5) corner.position = float3(0);
 }
 
-frag ShadowLook(Corner corner, mut Color color, Solid solid, Pixel pixel, Room room, Ground ground)
+frag ShadowLook(Corner corner, out Color color, Solid solid, Pixel pixel, Room room, Ground ground)
 {
     float2 uv = (float2(pixel.world.x, pixel.world.z) / TILE + float2(7.5)) / 15;
     float step = 1.0 / 15;
@@ -205,7 +205,7 @@ frag ShadowLook(Corner corner, mut Color color, Solid solid, Pixel pixel, Room r
 // A ball: its player's color, with a white band around it and a dark cap at
 // each end, so that its roll shows. A heavy one is dark, with its color in
 // the band. It glows as it winds up, and flashes when it's hit.
-frag BallLook(Corner corner, mut Color color, Instance instance, Pixel pixel, Room room, Ball ball)
+frag BallLook(Corner corner, out Color color, Instance instance, Pixel pixel, Room room, Ball ball)
 {
     Color seat = SeatColor(ball.seat);
     float band = Math.Abs(corner.position.y);
@@ -216,14 +216,14 @@ frag BallLook(Corner corner, mut Color color, Instance instance, Pixel pixel, Ro
 }
 
 // Anything of one color, lit: a pickup.
-frag Plain(Corner corner, mut Color color, Solid solid, Instance instance, Pixel pixel, Room room)
+frag Plain(Corner corner, out Color color, Solid solid, Instance instance, Pixel pixel, Room room)
 {
     color = Lit(solid.tint, Math.Normalize(Math.Rotate(instance.transform, corner.normal)), pixel.world, room, 0.9);
 }
 
 // What's flat on the floor: a disc that fades at its edge, a ring, or part of
 // one, going round from the top.
-frag DecalLook(Corner corner, mut Color color, Decal decal, Pixel pixel, Ground ground)
+frag DecalLook(Corner corner, out Color color, Decal decal, Pixel pixel, Ground ground)
 {
     if (ground.floor.Sample((float2(pixel.world.x, pixel.world.z) / TILE + float2(7.5)) / 15, Filter.Point).r < 0.5) pixel.Discard();
     float2 at = float2(corner.position.x, corner.position.z) * 2;
@@ -239,7 +239,7 @@ frag DecalLook(Corner corner, mut Color color, Decal decal, Pixel pixel, Ground 
     color = Color(decal.tint.r, decal.tint.g, decal.tint.b, decal.tint.a * shown);
 }
 
-frag MoteLook(Corner corner, mut Color color, Mote mote)
+frag MoteLook(Corner corner, out Color color, Mote mote)
 {
     color = mote.tint;
 }
