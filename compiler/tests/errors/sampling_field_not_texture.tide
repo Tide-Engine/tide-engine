@@ -1,0 +1,8 @@
+// expect: [Wrap] says how a texture is sampled, and 'speed' is float
+// expect: it goes on a Grid2<Color> field, or on an asset that's a Texture or a Grid2<Color>
+scene Main { }
+
+local singleton Art
+{
+    [Wrap(Wrap.Repeat)] float speed;
+}

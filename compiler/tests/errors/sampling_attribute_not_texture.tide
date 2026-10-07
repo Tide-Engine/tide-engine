@@ -1,0 +1,9 @@
+// expect: Filter says how a texture is sampled, and 'Rules' isn't one
+// expect: it goes before an asset that's a Texture or a Grid2<Color>, like '[Filter(Filter.Point)] asset Texture tiles = "art/tiles.png";', or before a Grid2<Color> field
+[Filter(Filter.Point)]
+singleton Rules
+{
+    int rounds;
+}
+
+scene Main { }

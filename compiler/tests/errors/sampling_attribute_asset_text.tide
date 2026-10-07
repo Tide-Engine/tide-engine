@@ -1,0 +1,6 @@
+// expect: Wrap says how a texture is sampled, and 'rules' is string
+// expect: an asset that's drawn with is a Texture or a Grid2<Color>
+[Wrap(Wrap.Repeat)]
+asset string rules = "../e2e/assets/rules.txt";
+
+scene Main { }

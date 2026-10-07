@@ -1,0 +1,12 @@
+// expect: 'hero' is an asset, read-only
+asset Texture hero = "../e2e/assets/hero.png";
+asset Texture other = "../e2e/assets/run/0.png";
+
+view Show()
+{
+    hero = other;
+}
+
+scene Main
+{
+}

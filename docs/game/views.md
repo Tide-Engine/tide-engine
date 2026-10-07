@@ -786,7 +786,7 @@ A mesh's corners can be a struct of your own instead, with whatever fields the m
 
 ## Textures
 
-An uploaded texture can come from a grid of colors with a size, `Grid2<Color>` (see [Grids](../language/grids.md)). `Draw2D.Mesh` also accepts a `Texture` reference, including a target's `.color`. With no frag, each pixel is the triangle's color times the image's at its `uv`: (0, 0) is the first pixel's outer corner, and (1, 1) the last pixel's outer corner.
+An uploaded texture can come from a grid of colors with a size, `Grid2<Color>` (see [Grids](../language/grids.md)). `Draw2D.Mesh` also accepts a `Texture`: an image file of the game's, `asset Texture hero = "art/hero.png";` (see [Assets](./assets.md#images-to-draw-with)), or a target's `.color`. With no frag, each pixel is the triangle's color times the image's at its `uv`: (0, 0) is the first pixel's outer corner, and (1, 1) the last pixel's outer corner.
 
 ```csharp
 local singleton Art
@@ -835,6 +835,11 @@ The argument after the texture says how it's read between cells: `Filter.Bilinea
 
 A game's C can draw meshes too, with pixels of its own, like a font atlas a library made: see [Drawing from C](../c/functions.md#drawing-from-c).
 
+Which of the two to keep an image in:
+
+- A **`Grid2<Color>`** is cells code reads and writes: a canvas, a map, a picture whose pixels the game looks at. It's four floats a cell.
+- A **`Texture`** is an image that's only drawn: a sprite, a tile sheet, a background. It's a byte a channel, a quarter of the memory, and no code reads it: it has no cells and no size to ask.
+
 ### Past the edges
 
 A texture's own cells are where `uv` goes from 0 to 1. What a `uv` past those reads is the draw's to say too, with a `Wrap` after the filter:
@@ -860,6 +865,46 @@ The quad below has uvs that go three times across its texture and three times do
 - It's how this draw reads the texture, and no part of the texture: one grid can be clamped in one draw and repeated in the next. So can a [render target's color](#targets-and-post-processing), and a texture of any size.
 - Blended, a cell at the edge blends with what the wrap says is past it: with `Wrap.Repeat` that's the cell at the opposite edge, which is what makes tiles meet without a seam.
 - `Wrap` is the engine's name: a game's own type or function takes another one, or a namespace.
+
+### Saying it once, on the texture
+
+A texture that's always read one way can say so where it's declared, with `[Filter(...)]` and `[Wrap(...)]`, each alone or both:
+
+```csharp
+[Filter(Filter.Point), Wrap(Wrap.Repeat)]
+asset Texture tiles = "art/tiles.png";
+
+[Filter(Filter.Point)]
+asset List<Texture> frames = "art/run/*.png";   // Every one of them
+
+local singleton Art
+{
+    [Filter(Filter.Point)]
+    Grid2<Color> canvas = Grid2(64, 64);
+}
+
+view Floor(Art art)
+{
+    Draw2D.Mesh(corners, faces, tiles);                               // Nearest, repeated: as tiles says
+    Draw2D.Mesh(corners, faces, tiles, Filter.Bilinear);              // Blended here, still repeated
+    Draw2D.Mesh(corners, faces, tiles, Filter.Bilinear, Wrap.Clamp);  // Both the draw's
+    Draw2D.Mesh(corners, faces, frames[2]);                           // Nearest: as frames says
+    Draw2D.Mesh(corners, faces, art.canvas);                          // Nearest: as the field says
+}
+```
+
+- They go before an asset that's a `Texture` or a `Grid2<Color>` (one image, or a list or a map of them), and before a `Grid2<Color>` field.
+- It's what's used where a draw doesn't say. A draw that says its filter or its wrap has what it says, each of the two apart.
+- It holds wherever the declaration is named: `tiles`, `frames[2]`, `icons["coin"]`, the variable of a `foreach` over `frames`, `art.canvas`. In a frag too: `tiles.Sample(uv)` is read as `tiles` says, and so is the source a draw gives a frag (see [Sampling a texture](./shaders.md#textures)).
+- **A `Texture` kept in a field or a local doesn't carry it.** It's a value that names an image, and no declaration, so a draw with it is blended and clamped unless the draw says otherwise:
+
+```csharp
+art.sprite = tiles;                                   // The image
+Draw2D.Mesh(corners, faces, art.sprite);              // Blended, the cells at the edge
+Draw2D.Mesh(corners, faces, art.sprite, Filter.Point, Wrap.Repeat);
+```
+
+  For the same reason a `Texture` field takes neither attribute, and neither does a render target's.
 
 ## Clipping
 

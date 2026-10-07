@@ -1641,6 +1641,38 @@ static void ex_construct(emit *em, const expr *e)
     }
 }
 
+// The first value of the field attribute `name`, as its enum member's number: -1 without one.
+static int field_sampling(const field *f, const char *name)
+{
+    for (int i = 0; f && i < f->attributes.count; i++) {
+        const attribute *a = &f->attributes.items[i];
+        if (str_eq_c(a->name, name) && a->values.count == 1 && a->values.items[0]->enum_member) {
+            return (int)a->values.items[0]->enum_member->number;
+        }
+    }
+    return -1;
+}
+
+void declared_sampling(const expr *texture, int *filter, int *wrap)
+{
+    *filter = *wrap = -1;
+    if (!texture) return;
+    // frames[2], icons["coin"]: one of an asset's glob, whose declaration is the glob's
+    const expr *named = texture->kind == E_INDEX && texture->object && texture->object->bind == BIND_ASSET ? texture->object : texture;
+    // ...and `frame` of 'foreach (var frame in frames)', which is read-only: one of them too
+    if (named->bind == BIND_LOCAL && named->local && named->local->kind == S_FOREACH && named->local->value
+        && named->local->value->bind == BIND_ASSET) {
+        named = named->local->value;
+    }
+    if (named->bind == BIND_ASSET && named->constant) {
+        *filter = named->constant->sample_filter - 1;
+        *wrap = named->constant->sample_wrap - 1;
+    } else if (named->kind == E_MEMBER && named->field && named->type.kind == TY_GRID) {
+        *filter = field_sampling(named->field, "Filter");
+        *wrap = field_sampling(named->field, "Wrap");
+    }
+}
+
 // A texture parameter, or a grid or texture field: which binding reads it.
 // One sampled with another filter or another wrap is another binding, as a
 // backend's sampler is how a binding is read. A DepthTexture field is a
@@ -1649,14 +1681,21 @@ static void ex_construct(emit *em, const expr *e)
 static void ex_sample(emit *em, const expr *e)
 {
     const expr *of = e->object;
-    const decl *asset = of->bind == BIND_ASSET ? of->constant : NULL; // A Grid2<Color> asset, by name
+    const decl *asset = of->bind == BIND_ASSET ? of->constant : NULL; // A Grid2<Color> or Texture asset, by name
     const bool direct = of->kind == E_NAME && !asset;
     const param *p = asset ? NULL : direct ? of->param : of->object->param;
     const shader_read read = of->type.kind != TY_DEPTH_TEXTURE ? READ_COLOR : str_eq_c(e->name, "Compare") ? READ_COMPARE : READ_DEPTH;
     // A depth's nearest pixel is read, the pixels at its edge past them, and what its comparisons give, the
     // GPU blends: none of it is the draw's to say
-    const bool blended = read == READ_COLOR && (e->args.count < 2 || e->args.items[1]->enum_member->number != 0);
-    const int wrap = read != READ_COLOR || e->args.count < 3 ? 0 : (int)e->args.items[2]->enum_member->number;
+    // A Sample that doesn't say its filter or its wrap has its texture's declaration's ([Filter], [Wrap]), and
+    // without one, blended and the cells at the edge. A direct Texture parameter has no declaration here: what
+    // its Sample leaves unsaid is its draw's source's to say (shader.sourced)
+    int declared_filter, declared_wrap;
+    declared_sampling(of, &declared_filter, &declared_wrap);
+    const bool says_filter = e->args.count >= 2, says_wrap = e->args.count >= 3;
+    const bool filter_said = read != READ_COLOR || !direct || says_filter, wrap_said = read != READ_COLOR || !direct || says_wrap;
+    const bool blended = read == READ_COLOR && (says_filter ? e->args.items[1]->enum_member->number != 0 : declared_filter != 0);
+    const int wrap = read != READ_COLOR ? 0 : says_wrap ? (int)e->args.items[2]->enum_member->number : declared_wrap > 0 ? declared_wrap : 0;
     int slot = 0;
     if (em->checking) {
         if (em->code != em->root) {
@@ -1665,19 +1704,21 @@ static void ex_sample(emit *em, const expr *e)
         }
         const decl *holds = direct || asset ? NULL : of->local_field ? p->type.decl->local_part : p->type.decl;
         const shader_sample sample = {asset ? -1 : param_index(em->root, p), direct || asset ? -1 : field_index(holds, of->field),
-                                      of->local_field && !asset, blended, asset, wrap, read};
+                                      of->local_field && !asset, blended, asset, wrap, read, filter_said, wrap_said};
         bool known = false;
         for (int i = 0; i < em->root->samples.count; i++) {
             const shader_sample *s = &em->root->samples.items[i];
             known |= s->param == sample.param && s->field == sample.field && s->local == sample.local && s->blended == sample.blended
-                  && s->asset == sample.asset && s->wrap == sample.wrap && s->read == sample.read;
+                  && s->asset == sample.asset && s->wrap == sample.wrap && s->read == sample.read
+                  && s->filter_said == sample.filter_said && s->wrap_said == sample.wrap_said;
         }
         if (!known) vec_push(em->root->samples, sample);
     } else {
         while (slot < em->sh->textures.count) {
             const shader_texture *t = &em->sh->textures.items[slot];
             if (t->asset == asset && t->direct == direct && t->source == (p ? p->type.decl : NULL) && t->field == of->field
-                && t->blended == blended && t->wrap == wrap && t->read == read) {
+                && t->blended == blended && t->wrap == wrap && t->read == read && t->filter_said == filter_said
+                && t->wrap_said == wrap_said) {
                 break;
             }
             slot++;
@@ -2965,12 +3006,13 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         const shader_texture t = {.source = source,
                                   .field = s->field < 0 ? NULL : &(s->local ? source->local_part : source)->fields.items[s->field],
                                   .blended = s->blended, .direct = s->field < 0 && !s->asset, .asset = s->asset,
-                                  .wrap = s->wrap, .read = s->read};
+                                  .wrap = s->wrap, .read = s->read, .filter_said = s->filter_said, .wrap_said = s->wrap_said};
         bool known = false;
         for (int k = 0; k < sh->textures.count; k++) {
             known |= sh->textures.items[k].direct == t.direct && sh->textures.items[k].source == t.source && sh->textures.items[k].field == t.field
                   && sh->textures.items[k].blended == t.blended && sh->textures.items[k].asset == t.asset
-                  && sh->textures.items[k].wrap == t.wrap && sh->textures.items[k].read == t.read;
+                  && sh->textures.items[k].wrap == t.wrap && sh->textures.items[k].read == t.read
+                  && sh->textures.items[k].filter_said == t.filter_said && sh->textures.items[k].wrap_said == t.wrap_said;
         }
         if (!known) vec_push(sh->textures, t);
         if (source) add_bound(sh, (decl *)source);
@@ -3157,10 +3199,21 @@ void plan_shaders(program *prog)
         }
         shader *sh = plan(prog, call, vertex, textured, direct_texture);
         if (!sh) continue;
-        // A draw that says how its texture wraps: the shader's function takes it, for all its draws
-        for (int a = 2; textured && a < call->args.count; a++) {
+        // A draw that says how its texture wraps, or whose texture's declaration does: the shader's function
+        // takes it, for all its draws
+        const expr *source = call->blit ? call->args.items[0] : NULL;
+        for (int a = 2; !call->blit && a < call->args.count; a++) {
             const type given = call->args.items[a]->type;
-            sh->wrapped |= given.kind == TY_ENUM && given.decl == prog->wrap;
+            if (given.kind == TY_GRID || given.kind == TY_TEXTURE) source = call->args.items[a];
+            sh->wrapped |= textured && given.kind == TY_ENUM && given.decl == prog->wrap;
+        }
+        int declared_filter, declared_wrap;
+        declared_sampling(source, &declared_filter, &declared_wrap);
+        sh->wrapped |= textured && declared_wrap > 0;
+        // ...and a source its stages take as a Texture, where their Samples leave it to the source
+        for (int t = 0; t < sh->textures.count && (declared_filter >= 0 || declared_wrap >= 0); t++) {
+            const shader_texture *taken = &sh->textures.items[t];
+            sh->sourced |= taken->direct && (!taken->filter_said || !taken->wrap_said);
         }
         call->shader = sh;
         // What the view has to hand over that it doesn't take itself
