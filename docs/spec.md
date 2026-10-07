@@ -699,7 +699,7 @@ event(Spawned) Setup(with Main)
 - Otherwise the default order holds: of the systems whose constraints are met, the earliest in the default order runs next.
 - Constraints that form a loop are an error naming the loop. Systems and views are ordered separately, and `Main` isn't ordered: it runs once, before everything.
 - The language server shows a system's place in the order when hovering it.
-- Systems that share no data they write can run at the same time; the others wait, in this order. Above each system, the language server shows its stage, what it reaches through its `World` and why it waits ("stage 2 · World: reads Health · after Move: both write Body"), and `tidec --schedule` prints the whole plan.
+- Systems that share no data they write can run at the same time; the others wait, in this order. Above each system, the language server shows its stage, what it reaches through its `World` and why it waits ("stage 2 · World: reads Health", "after Move: both write Body", each wait a link to its system), and `tidec --schedule` prints the whole plan.
 
 ```csharp
 [After(Physics.Gravity)]
