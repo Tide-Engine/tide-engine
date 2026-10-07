@@ -1814,6 +1814,7 @@
                     }
                 }
                 device.queue.submit([encoder.finish()]);
+                t.mipped = true;
                 return;
             }
             const levels = 1 + Math.floor(Math.log2(Math.max(t.width, t.height)));
@@ -2031,6 +2032,10 @@
         },
         gpu_sample(slot, id, filter, wrap) {
             drawing.textures[slot] = id;
+            // A cube has room for its smaller images from the start, with nothing in them until they're made:
+            // read between them before that, it's its own pixels, as a texture with none is
+            const t = gpuTables.texture[id];
+            if (filter === MIPMAPS && t && t.cube && !t.mipped) filter = LINEAR;
             // Its place in `samplers`
             drawing.sampled[slot] = (wrap === 1 || wrap === 2 ? 3 * wrap : 0) + (filter === NEAREST || filter === MIPMAPS ? filter : LINEAR);
             drawing.bound = false;
