@@ -1,6 +1,6 @@
 # C hosts
 
-A game needs no C: `tide` runs it in a window. This page is for working inside Tide's own repo, where CMake builds games, and for C programs that drive a game themselves: tests, tools, custom hosts. See [AGENTS.md](https://github.com/BlenMiner/tide-engine/blob/dev/AGENTS.md) for building the repo.
+A game needs no C: `tide` runs it in a window. This page is for CMake builds and C programs that drive a game themselves: tests, tools, custom hosts.
 
 ## tide_add_game
 

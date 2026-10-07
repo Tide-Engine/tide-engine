@@ -62,7 +62,7 @@ Only the players' inputs go over the network: which way each holds the stick, an
 
 ## The code
 
-The game is `examples/sumo` in the [repo](https://github.com/BlenMiner/tide-engine/tree/dev/examples/sumo): seven files of Tide, and a `tide.packages` that says `box3d`.
+Sumo has seven files of Tide, and a `tide.packages` that says `box3d`.
 
 - `game.tide` is the match, which every machine runs the same way, and `arena.tide` what a round's ring is built of. Both are on this page, [whole](#the-match-whole).
 - `play.tide` is what one machine shows of it: the camera, and the ring and what's on it.
@@ -176,7 +176,7 @@ A match that ends, or a room that can't be joined, comes back as the built-in `D
 ### What a machine shows
 
 - **The crates are one draw.** A view runs for every crate and adds a box to a list, where the body is between its last two ticks. One [`Draw3D.Instanced`](../game/shaders.md#instances-from-a-list) draws the list, through a [frag](../game/shaders.md) that paints a frame around each face and lights it. A frame of a full ring is under thirty draw calls.
-- **A shadow is the thing itself, flattened.** The same list is drawn once more inside [`Draw3D.Transform`](../game/views.md#transforms), with a matrix that slides every point along the lamp's light until it's on the floor. Its frag paints the floor's own look there, darker, so a tower's shadow is as long as the tower is high, and where two shadows overlap they're the same paint. It's inside [`Draw3D.Depth(Depth.Read)`](../game/views.md#depth), as the rings under the balls are: what stands in front hides them, and they hide nothing.
+- **A shadow is the thing itself, flattened.** The same list is drawn once more inside [`Draw3D.Transform`](../game/views.md#transforms), with a matrix that slides every point along the lamp's light until it's on the floor. Its frag paints the floor's own look there, darker, so a tower's shadow is as long as the tower is high, and where two shadows overlap they're the same paint. It's inside [`Draw3D.Depth(Depth.Read)`](../game/views.md#depth), as the rings under the balls are: what stands in front hides them, and they hide nothing. And it's inside [`Draw3D.Cull(Cull.None)`](../game/views.md#which-side-draws): laid flat, a box has no side that's its front any more.
 - **The floor is a texture of 15 cells by 15.** A view writes each tile into a local grid, there or about to go, and the frags [sample it](../game/shaders.md#textures): the floor's paint has a line of light along an edge with no tile past it, and a shadow that falls past the rim falls on nothing.
 - **There's no lighting built in,** so everything is a mesh whose corners have a normal, made once in a local singleton, and lit by one function that every frag calls. A ball's frag gives it a white band and a dark cap, so that its roll shows.
 - **The camera shows the whole ring when a ball is still big enough to find at that size,** and as much of it as that takes otherwise, around your ball and towards the middle, where the others are. It always looks from the same side, so up on the screen is the same way in the ring for every player, and for the stick.
@@ -190,16 +190,18 @@ Measured on a release build, on one thread, with the world kept and hashed after
 
 | A tick, in milliseconds | Desktop | Browser |
 |---|---|---|
-| A fresh ring at rest | 0.03 | 0.04 |
-| Four bots at a full ring | 0.4 to 0.8 | 1.1 |
-| The worst: a shock beside the middle's pyramid | 1.2 to 1.6 | 2.3 |
-| Keeping and hashing the world, after each | 0.2 to 0.45 | 0.2 to 0.45 |
-| Raising a ring: the tick that makes its 2,460 bodies | 9 | 25 |
-| ...and each tick of the second it takes to come to rest | 1.5 | 3.1 |
+| A fresh ring at rest | 0.02 | 0.03 |
+| Four bots at a full ring | 0.4 to 0.6 | 0.5 to 1.0 |
+| The worst: a shock beside the middle's pyramid | 0.9 to 1.1 | 1.2 to 1.5 |
+| Keeping and hashing the world, after each | 0.06 to 0.1 | 0.08 to 0.14 |
+| ...where there's one thread to hash it on | 0.12 to 0.2 | 0.14 to 0.23 |
+| Raising a ring: the tick that makes its 2,460 bodies | 9 | 27 |
+| ...and each tick of the second it takes to come to rest | 1.2 | 2.0 |
 
-- **Box3D's state is 3.8 megabytes** as a round starts, a kilobyte and a half a body, and all of it is in the match. Most ticks write only the part of it that changed: four in five while four bots bring a full ring down, and nine in ten after.
+- **Box3D's state is 3.8 megabytes** as a round starts, a kilobyte and a half a body, and all of it is in the match. Most ticks write only the part of it that changed: two in three while four bots bring a full ring down, and nine in ten after.
+- **Keeping that state costs about as much as the physics.** With four bots at a full ring, Box3D's own step is 0.3 ms of a tick. Writing what changed of its state into the match is 0.2 more, and hashing the world after is 0.12 for one thread: about half of the state's 16 kilobyte blocks have a byte that changed, since what's moving is scattered through it. So the engine calls a few more threads in to hash, where the machine has them and the page lets it use them, which takes it to 0.06. The game's own systems, and the package's that read bodies in and out, are 0.03 together.
 - **A player who joins downloads it:** 2.4 megabytes as the match packs it, with the rest of the world.
-- **A client that guessed wrong runs ticks again,** from the last one the server confirmed: Box3D's world is made again from the state in the match, and the ticks since run again. Five ticks take 5.5 ms on a desktop and 10 in a browser, and ten take 6.6 and 14. Where the ticks a client is ahead by would take more than 4 ms to run again, by what its ticks took of late, the engine [delays the player's input](../multiplayer/matches.md#input-delay) a tick at a time instead. With four bots at a full ring that's past about six ticks ahead on a desktop, which is where a client is at a ping of about 60 milliseconds, and past three in a browser, which is at nearly any ping. Later in a round, with less in the ring, there's room for more.
+- **A client that guessed wrong runs ticks again,** from the last one the server confirmed: Box3D's world is made again from the state in the match, and the ticks since run again. Five ticks take 5 ms on a desktop and 7 in a browser, and ten take 7 and 8.5. Where the ticks a client is ahead by would take more than 4 ms to run again, by what its ticks took of late, the engine [delays the player's input](../multiplayer/matches.md#input-delay) a tick at a time instead. With four bots at a full ring that's past about seven ticks ahead on a desktop, which is where a client is at a ping of about 90 milliseconds, and past four in a browser, which is still at most pings. Later in a round, with less in the ring, there's room for more.
 - **A frame's views** take 0.2 ms with a full ring standing, for under thirty draw calls.
 
 That's about as much as a match takes, with the package as it is: a ring twice the size is twice the state to hold, to send and to read again for every wrong guess.

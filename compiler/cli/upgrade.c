@@ -1,9 +1,16 @@
+#if !defined(_WIN32) && !defined(__APPLE__)
+#define _DEFAULT_SOURCE
+#endif
+
 #include "upgrade.h"
 
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
 
 #include "editors.h"
 #include "install.h"
@@ -54,13 +61,94 @@ const char *tide_channel(const char *root)
     return strcmp(channel, "stable") == 0 || strcmp(channel, "nightly") == 0 ? channel : TIDE_CHANNEL;
 }
 
+// curl reads the credential from a short-lived file, never its command line.
+// A GitHub CLI login is enough when neither token environment variable is set.
+static bool github_auth(const char *work, char **header)
+{
+    *header = NULL;
+    const char *token = sys_env("GH_TOKEN");
+    if (!token) token = sys_env("GITHUB_TOKEN");
+    char login[4096] = {0};
+    if (!token) {
+        char *gh = sys_which("gh");
+        const char *const argv[] = {gh, "auth", "token", "--hostname", "github.com", NULL};
+        const bool found = gh && sys_capture(argv, login, sizeof login) == 0;
+        free(gh);
+        if (found) {
+            size_t n = strlen(login);
+            while (n && (login[n - 1] == '\r' || login[n - 1] == '\n')) login[--n] = '\0';
+            if (n) token = login;
+        }
+    }
+    if (!token) return true;
+    for (const unsigned char *c = (const unsigned char *)token; *c; c++) {
+        if (*c <= ' ' || *c >= 127) return false;
+    }
+    char *path = path_join(work, "github-auth");
+    FILE *file = fopen(path, "wbx"); // Never follow an existing file or symlink
+    bool ok = file != NULL;
+#ifndef _WIN32
+    if (ok) ok = chmod(path, S_IRUSR | S_IWUSR) == 0; // Before the file holds the token
+#endif
+    if (ok) ok = fprintf(file, "Authorization: Bearer %s\n", token) > 0;
+    if (file && fclose(file) != 0) ok = false;
+    if (!ok) {
+        if (file) sys_remove(path);
+        free(path);
+        return false;
+    }
+    *header = malloc(strlen(path) + 2);
+    if (!*header) abort();
+    sprintf(*header, "@%s", path);
+    free(path);
+    return true;
+}
+
+static void github_auth_free(char *header)
+{
+    if (header) sys_remove(header + 1);
+    free(header);
+}
+
+static bool github_api(const char *url)
+{
+    const char prefix[] = "https://api.github.com/";
+    return url && strncmp(url, prefix, sizeof prefix - 1) == 0;
+}
+
+// One curl transfer. --next keeps a token off another transfer's URL, and
+// curl's normal redirects keep Authorization off other origins. -q at the
+// start of the command ignores settings that might log or forward it.
+static int curl_request(const char **argv, const char *url, const char *path, const char *accept,
+                        const char *header, const bool quiet)
+{
+    const char *const options[] = {"-fsSL", "--retry", "2", "-m", quiet ? "5" : "600",
+                                   "--proto-redir", "=https", "-H", accept, "-o", path};
+    const int count = (int)(sizeof options / sizeof options[0]);
+    memcpy(argv, options, sizeof options);
+    int n = count;
+    if (header && github_api(url)) {
+        argv[n++] = "-H";
+        argv[n++] = header;
+    }
+    argv[n++] = url;
+    argv[n] = NULL;
+    return n;
+}
+
 // Downloads `url` to `path`.
 static bool download(const char *url, const char *path, const bool quiet)
 {
-    const char *curl = sys_tool("curl");
-    const char *const argv[] = {curl, "-fsSL", "--retry", "2", "-m", quiet ? "5" : "600",
-                                "-H", "Accept: application/vnd.github+json", "-o", path, url, NULL};
-    return sys_run(argv, NULL, quiet) == 0;
+    char *work = path_dir(path);
+    char *header = NULL;
+    const bool ready = !github_api(url) || github_auth(work, &header);
+    free(work);
+    if (!ready) return false;
+    const char *argv[20] = {sys_tool("curl"), "-q"};
+    curl_request(argv + 2, url, path, "Accept: application/vnd.github+json", header, quiet);
+    const bool ok = sys_run(argv, NULL, quiet) == 0;
+    github_auth_free(header);
+    return ok;
 }
 
 #define RELEASES_API "https://api.github.com/repos/" TIDE_REPOSITORY "/releases"
@@ -86,6 +174,8 @@ static const json *fetch_releases(const char *work, const bool quiet)
     const bool ok = download(url, list, quiet);
     if (!ok) {
         if (!quiet) fprintf(stderr, "tide: couldn't reach GitHub to look for new versions\n");
+        if (!quiet) fprintf(stderr, "  = note: for private releases, use `gh auth login` or set GH_TOKEN (or GITHUB_TOKEN) "
+                                   "with repository read access\n");
         free(list);
         return NULL;
     }
@@ -120,9 +210,11 @@ static const json *exactly(const char *work, const json *releases, const char *v
     return tide_release_is(release, version) ? release : NULL;
 }
 
-static const char *asset_url(const json *release, const char *name)
+static const char *asset_url(const json *release, const char *name, const bool authenticated)
 {
-    return json_str(json_get(tide_release_asset(release, name), "browser_download_url"));
+    const json *asset = tide_release_asset(release, name);
+    const char *api = authenticated ? json_str(json_get(asset, "url")) : NULL;
+    return api ? api : json_str(json_get(asset, "browser_download_url"));
 }
 
 // The asset's size in bytes, as GitHub gives it; 0 if it doesn't.
@@ -322,9 +414,15 @@ int tide_upgrade(const char *root, const char *channel, const char *version)
         return 0;
     }
 
-    const char *package_url = asset_url(release, PACKAGE);
-    const char *sums_url = asset_url(release, "SHA256SUMS");
+    char *header = NULL;
+    if (!github_auth(work, &header)) {
+        fprintf(stderr, "tide: couldn't prepare GitHub authentication\n");
+        return 1;
+    }
+    const char *package_url = asset_url(release, PACKAGE, header != NULL);
+    const char *sums_url = asset_url(release, "SHA256SUMS", header != NULL);
     if (!package_url || !sums_url) {
+        github_auth_free(header);
         fprintf(stderr, "tide: release %s has no package for this platform (%s)\n", next, PACKAGE);
         return 1;
     }
@@ -333,9 +431,13 @@ int tide_upgrade(const char *root, const char *channel, const char *version)
     char *package = path_join(work, PACKAGE);
     char *sums_path = path_join(work, "SHA256SUMS");
     // The checksums come first, so the bar ends when the package is all there.
-    const char *const curl[] = {sys_tool("curl"), "-fsSL", "--fail-early", "--retry", "2", "-m", "600", "-o", sums_path,
-                                sums_url, "-o", package, package_url, NULL};
-    if (!run_step("Downloading", curl, work, sys_file_size, package, asset_size(release, PACKAGE))) {
+    const char *curl[40] = {sys_tool("curl"), "-q", "--fail-early"};
+    int n = 3 + curl_request(curl + 3, sums_url, sums_path, "Accept: application/octet-stream", header, false);
+    curl[n++] = "--next";
+    curl_request(curl + n, package_url, package, "Accept: application/octet-stream", header, false);
+    const bool downloaded = run_step("Downloading", curl, work, sys_file_size, package, asset_size(release, PACKAGE));
+    github_auth_free(header);
+    if (!downloaded) {
         fprintf(stderr, "tide: the download failed\n");
         return 1;
     }

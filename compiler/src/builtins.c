@@ -42,10 +42,23 @@ static const decl *blend_decl;
 static decl depth_enum;
 static const type T_DEPTH = {TY_ENUM, &depth_enum};
 static const decl *depth_decl;
+// ...and the Cull enum, which Draw3D.Cull does.
+static decl cull_enum;
+static const type T_CULL = {TY_ENUM, &cull_enum};
+static const decl *cull_decl;
 // And the Font enum, which Draw2D.Text and Draw2D.MeasureText take.
 static decl text_font;
 static const type T_FONT = {TY_ENUM, &text_font};
 static const decl *font_decl;
+// ...and the Format enum, what a render target is made to hold.
+static decl format_enum;
+static const type T_FORMAT = {TY_ENUM, &format_enum};
+static const decl *format_decl;
+
+void builtins_use_format(const decl *format)
+{
+    format_decl = format;
+}
 
 // The GUITheme and GUIControl structs, which the GUI takes and gives, the same way.
 static decl theme_struct, control_struct;
@@ -59,7 +72,7 @@ void builtins_use_gui(const decl *theme, const decl *control)
     control_decl = control;
 }
 
-static const decl *vertices_decl, *vertices3_decl, *indices_decl, *pixels_decl, *filter_decl, *transforms_decl;
+static const decl *vertices_decl, *vertices3_decl, *indices_decl, *pixels_decl, *filter_decl, *wrap_decl, *transforms_decl;
 static const decl *bytes_decl, *paths_decl;
 static decl io_bytes, io_paths;
 static const type T_BYTES = {TY_LIST, &io_bytes};
@@ -71,26 +84,29 @@ void builtins_use_io(const decl *bytes, const decl *paths)
     paths_decl = paths;
 }
 
-void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *font)
+void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *cull,
+                  const decl *font)
 {
     anchor_decl = anchor;
     shape_decl = shape;
     blend_decl = blend;
     depth_decl = depth;
+    cull_decl = cull;
     font_decl = font;
     // Another program's: this one's come with its first mesh draw
-    vertices_decl = vertices3_decl = indices_decl = pixels_decl = filter_decl = transforms_decl = NULL;
+    vertices_decl = vertices3_decl = indices_decl = pixels_decl = filter_decl = wrap_decl = transforms_decl = NULL;
     bytes_decl = paths_decl = NULL;
 }
 
 // What Draw2D.Mesh and Draw3D.Mesh take, the same way: these stand for the program's own
-// List<Vertex>, List<Vertex3>, List<int>, Grid2<Color> and Filter.
-static decl mesh_vertices, mesh_vertices3, mesh_indices, mesh_pixels, mesh_filter, mesh_transforms, mesh_instances;
+// List<Vertex>, List<Vertex3>, List<int>, Grid2<Color>, Filter and Wrap.
+static decl mesh_vertices, mesh_vertices3, mesh_indices, mesh_pixels, mesh_filter, mesh_wrap, mesh_transforms, mesh_instances;
 static const type T_VERTICES = {TY_LIST, &mesh_vertices};
 static const type T_VERTICES3 = {TY_LIST, &mesh_vertices3};
 static const type T_INDICES = {TY_LIST, &mesh_indices};
 static const type T_PIXELS = {TY_GRID, &mesh_pixels};
 static const type T_FILTER = {TY_ENUM, &mesh_filter};
+static const type T_WRAP = {TY_ENUM, &mesh_wrap};
 static const type T_TRANSFORMS = {TY_LIST, &mesh_transforms};
 // Editor signatures for ordinary instance structs: the checker resolves these itself.
 static const type T_INSTANCES = {TY_LIST, &mesh_instances};
@@ -99,13 +115,14 @@ static const type T_TEXTURE = {TY_TEXTURE, NULL};
 static const type T_TARGET = {TY_RENDER_TARGET, NULL};
 
 void builtins_use_mesh(const decl *vertices, const decl *vertices3, const decl *indices, const decl *pixels,
-                       const decl *filter, const decl *transforms)
+                       const decl *filter, const decl *wrap, const decl *transforms)
 {
     vertices_decl = vertices;
     vertices3_decl = vertices3;
     indices_decl = indices;
     pixels_decl = pixels;
     filter_decl = filter;
+    wrap_decl = wrap;
     transforms_decl = transforms;
 }
 
@@ -113,7 +130,7 @@ void builtins_use_mesh(const decl *vertices, const decl *vertices3, const decl *
 static bool mesh_type(const type t)
 {
     return t.decl == &mesh_vertices || t.decl == &mesh_vertices3 || t.decl == &mesh_indices || t.decl == &mesh_pixels
-        || t.decl == &mesh_filter || t.decl == &mesh_transforms || t.decl == &mesh_instances;
+        || t.decl == &mesh_filter || t.decl == &mesh_wrap || t.decl == &mesh_transforms || t.decl == &mesh_instances;
 }
 
 // A signature's type as a program sees it.
@@ -125,6 +142,8 @@ static type real_type(const type t)
     if (t.decl == &shape_struct && shape_decl) return (type){TY_STRUCT, (decl *)shape_decl};
     if (t.decl == &blend_enum && blend_decl) return (type){TY_ENUM, (decl *)blend_decl};
     if (t.decl == &depth_enum && depth_decl) return (type){TY_ENUM, (decl *)depth_decl};
+    if (t.decl == &cull_enum && cull_decl) return (type){TY_ENUM, (decl *)cull_decl};
+    if (t.decl == &format_enum && format_decl) return (type){TY_ENUM, (decl *)format_decl};
     if (t.decl == &text_font && font_decl) return (type){TY_ENUM, (decl *)font_decl};
     if (t.decl == &theme_struct && theme_decl) return (type){TY_STRUCT, (decl *)theme_decl};
     if (t.decl == &control_struct && control_decl) return (type){TY_STRUCT, (decl *)control_decl};
@@ -133,6 +152,7 @@ static type real_type(const type t)
     if (t.decl == &mesh_indices && indices_decl) return (type){TY_LIST, (decl *)indices_decl};
     if (t.decl == &mesh_pixels && pixels_decl) return (type){TY_GRID, (decl *)pixels_decl};
     if (t.decl == &mesh_filter && filter_decl) return (type){TY_ENUM, (decl *)filter_decl};
+    if (t.decl == &mesh_wrap && wrap_decl) return (type){TY_ENUM, (decl *)wrap_decl};
     if (t.decl == &mesh_transforms && transforms_decl) return (type){TY_LIST, (decl *)transforms_decl};
     return t;
 }
@@ -146,11 +166,14 @@ static const char *signature_type_name(const type t)
     if (t.decl == &mesh_indices) return "List<int>";
     if (t.decl == &mesh_pixels) return "Grid2<Color>";
     if (t.decl == &mesh_filter) return "Filter";
+    if (t.decl == &mesh_wrap) return "Wrap";
     if (t.decl == &mesh_transforms) return "List<float4x4>";
     if (t.decl == &mesh_instances) return "List<T>";
     if (t.decl == &shape_struct) return "Shape";
     if (t.decl == &blend_enum) return "Blend";
     if (t.decl == &depth_enum) return "Depth";
+    if (t.decl == &cull_enum) return "Cull";
+    if (t.decl == &format_enum) return "Format";
     if (t.decl == &text_font) return "Font";
     if (t.decl == &theme_struct) return "GUITheme";
     if (t.decl == &control_struct) return "GUIControl";
@@ -252,6 +275,20 @@ static signature *defaulted(signature *s, const char *text)
 {
     s->optional = 1;
     s->defaults[s->argc - 1] = text;
+    return s;
+}
+
+// A mesh draw's last two parameters are ones a call can leave out, the wrap
+// alone or both: how its texture is read between cells, and past its edges.
+// `argc` is how many parameters it has before them.
+static signature *sampled(signature *s, const int argc)
+{
+    s->argc = argc + 2;
+    s->params[argc] = T_FILTER;
+    s->params[argc + 1] = T_WRAP;
+    s->optional = 2;
+    s->defaults[argc] = "Filter.Bilinear";
+    s->defaults[argc + 1] = "Wrap.Clamp";
     return s;
 }
 
@@ -531,6 +568,15 @@ static void build_signatures(void)
                 "what's there, in order.",
                 1, &T_DEPTH);
     add_unset("Draw3D", "SetDepth", "tide_draw_unset_depth", "Back to `Depth.ReadWrite`, as each frame starts.");
+    add_setting("Draw3D", "Cull", "tide_draw_push_cull", "tide_draw_set_cull", NULL, "side",
+                "Which side of the 3D meshes' triangles isn't drawn: `Cull.Back` (each frame's first: a triangle seen "
+                "from behind isn't drawn, so what's solid costs half its triangles), `Cull.Front` (only the backs are: "
+                "the inside of a shell) or `Cull.None` (both sides: what's flat or see-through, like a leaf or a "
+                "pane). The front of a triangle is the side its corners go clockwise on, whatever transform or camera "
+                "it's drawn through, one that mirrors too. A face that's missing is usually a triangle wound the other "
+                "way. The Draw2D calls have no back.",
+                1, &T_CULL);
+    add_unset("Draw3D", "SetCull", "tide_draw_unset_cull", "Back to `Cull.Back`, as each frame starts.");
     add_setting("Draw2D", "Camera", "tide_draw_push_camera", "tide_draw_set_camera", NULL, "center, size",
                 "The camera the Draw2D calls go through: `center` is the world position at the middle of the screen and "
                 "`size` is half the visible height, like Unity's orthographic size.",
@@ -627,34 +673,30 @@ static void build_signatures(void)
     static const char mesh_doc[] =
         "Triangles: three of `indices` each, places in `vertices`. Each pixel is its corners' colors blended "
         "across the triangle, times `texture`'s at their uvs: a grid of colors with a size, whose cell (0, 0) is at "
-        "uv (0, 0). `filter` is how it's read between cells: `Filter.Bilinear` (the default) or `Filter.Point`.";
+        "uv (0, 0). `filter` is how it's read between cells: `Filter.Bilinear` (the default) or `Filter.Point`. "
+        "`wrap`, after the filter, is what a uv past 0 or 1 reads: the cells at the texture's edge (`Wrap.Clamp`, "
+        "the default), the texture again (`Wrap.Repeat`), or again the other way round each time (`Wrap.Mirror`).";
     describe(add("Draw2D", "Mesh", T_NONE, "tide_draw_mesh_lists", 2, T_VERTICES, T_INDICES, T_NONE),
              "vertices, indices", mesh_doc);
-    signature *sampled = add("Draw2D", "Mesh", T_NONE, "tide_draw_mesh_grid", 3, T_VERTICES, T_INDICES, T_PIXELS);
-    sampled->argc = 4;
-    sampled->params[3] = T_FILTER;
-    describe(defaulted(sampled, "Filter.Bilinear"), "vertices, indices, texture, filter", mesh_doc);
-    signature *texture_sampled = add("Draw2D", "Mesh", T_NONE, "tide_draw_mesh_texture", 3, T_VERTICES, T_INDICES, T_TEXTURE);
-    texture_sampled->argc = 4;
-    texture_sampled->params[3] = T_FILTER;
-    describe(defaulted(texture_sampled, "Filter.Bilinear"), "vertices, indices, texture, filter", mesh_doc);
+    // With a wrap, generated code calls each of these textured ones' `_wrapped` twin (gen_expr)
+    describe(sampled(add("Draw2D", "Mesh", T_NONE, "tide_draw_mesh_grid", 3, T_VERTICES, T_INDICES, T_PIXELS), 3),
+             "vertices, indices, texture, filter, wrap", mesh_doc);
+    describe(sampled(add("Draw2D", "Mesh", T_NONE, "tide_draw_mesh_texture", 3, T_VERTICES, T_INDICES, T_TEXTURE), 3),
+             "vertices, indices, texture, filter, wrap", mesh_doc);
     static const char mesh3_doc[] =
         "A 3D mesh, placed in the world by `transform`, through the 3D camera: triangles, three of `indices` each, "
         "places in `vertices`, the nearest in front. Each pixel is its corners' colors blended across the "
-        "triangle, times `texture`'s at their uvs. Lists that don't change aren't copied again, and a mesh drawn "
-        "again and again in a row is drawn at once.";
+        "triangle, times `texture`'s at their uvs, read with `filter` between its cells and, for a uv past 0 or 1, "
+        "as `wrap` says (`Wrap.Clamp`, the default: the cells at its edge). Lists that don't change aren't copied "
+        "again, and a mesh drawn again and again in a row is drawn at once.";
     describe(add("Draw3D", "Mesh", T_NONE, "tide_draw_mesh3_lists", 3, T_VERTICES3, T_INDICES, T_F4X4),
              "vertices, indices, transform", mesh3_doc);
     signature *sampled3 = add("Draw3D", "Mesh", T_NONE, "tide_draw_mesh3_grid", 3, T_VERTICES3, T_INDICES, T_F4X4);
-    sampled3->argc = 5;
     sampled3->params[3] = T_PIXELS;
-    sampled3->params[4] = T_FILTER;
-    describe(defaulted(sampled3, "Filter.Bilinear"), "vertices, indices, transform, texture, filter", mesh3_doc);
+    describe(sampled(sampled3, 4), "vertices, indices, transform, texture, filter, wrap", mesh3_doc);
     signature *texture_sampled3 = add("Draw3D", "Mesh", T_NONE, "tide_draw_mesh3_texture", 3, T_VERTICES3, T_INDICES, T_F4X4);
-    texture_sampled3->argc = 5;
     texture_sampled3->params[3] = T_TEXTURE;
-    texture_sampled3->params[4] = T_FILTER;
-    describe(defaulted(texture_sampled3, "Filter.Bilinear"), "vertices, indices, transform, texture, filter", mesh3_doc);
+    describe(sampled(texture_sampled3, 4), "vertices, indices, transform, texture, filter, wrap", mesh3_doc);
     static const char instanced_doc[] =
         "Draws one mesh for each element of `instances`, in order: a List<float4x4> of 3D transforms, or a List<T> "
         "of structs whose fields a vert or frag reads through a read-only T parameter. A 3D struct's float4x4 "
@@ -663,16 +705,12 @@ static void build_signatures(void)
              "vertices, indices, instances", instanced_doc);
     signature *instances_sampled = add("Draw3D", "Instanced", T_NONE, "tide_draw_mesh3_instances_grid", 3,
                                        T_VERTICES3, T_INDICES, T_TRANSFORMS);
-    instances_sampled->argc = 5;
     instances_sampled->params[3] = T_PIXELS;
-    instances_sampled->params[4] = T_FILTER;
-    describe(defaulted(instances_sampled, "Filter.Bilinear"), "vertices, indices, instances, texture, filter", instanced_doc);
+    describe(sampled(instances_sampled, 4), "vertices, indices, instances, texture, filter, wrap", instanced_doc);
     signature *instances_texture_sampled = add("Draw3D", "Instanced", T_NONE, "tide_draw_mesh3_instances_texture", 3,
                                               T_VERTICES3, T_INDICES, T_TRANSFORMS);
-    instances_texture_sampled->argc = 5;
     instances_texture_sampled->params[3] = T_TEXTURE;
-    instances_texture_sampled->params[4] = T_FILTER;
-    describe(defaulted(instances_texture_sampled, "Filter.Bilinear"), "vertices, indices, instances, texture, filter", instanced_doc);
+    describe(sampled(instances_texture_sampled, 4), "vertices, indices, instances, texture, filter, wrap", instanced_doc);
     describe(add("Draw2D", "Instanced", T_NONE, "tide_draw_mesh_shaded_instances", 3, T_VERTICES, T_INDICES, T_INSTANCES),
              "vertices, indices, instances", instanced_doc);
     describe(add("Draw3D", "Instanced", T_NONE, "tide_draw_mesh_shaded_instances", 3, T_VERTICES3, T_INDICES, T_INSTANCES),
@@ -692,6 +730,14 @@ static void build_signatures(void)
              screen_target_doc);
     describe(add("RenderTarget", "Screen", T_TARGET, "tide_render_target_screen", 1, T_F, T_NONE, T_NONE), "factor",
              screen_target_doc);
+    static const char screen_format_doc[] =
+        "A render target that's always the window's size, or that part of it, which holds what `format` says: "
+        "`Format.DepthOnly` is depth alone, with no color image, for a pass whose depth a frag reads afterwards "
+        "(`target.depth`). It's made again, empty, whenever the window's size or the display's scale changes.";
+    describe(add("RenderTarget", "Screen", T_TARGET, "tide_render_target_window_as", 1, T_FORMAT, T_NONE, T_NONE), "format",
+             screen_format_doc);
+    describe(add("RenderTarget", "Screen", T_TARGET, "tide_render_target_screen_as", 2, T_F, T_FORMAT, T_NONE), "factor, format",
+             screen_format_doc);
 
     describe(add("Draw3D", "Cube", T_NONE, "tide_draw_cube", 3, T_F3, T_F3, T_COLOR),
              "center, size, color", "A filled cube, centered in the world, with the full size along each axis.");
@@ -1303,7 +1349,7 @@ type resolve_builtin_call(const str owner, expr *e)
                           "are theirs");
             }
         } else if (str_eq_c(owner, "Draw2D") || str_eq_c(owner, "Draw3D")) {
-            // What another of the three has, asked of this one: Draw3D.SetBlend, Draw2D.Depth, target.Tint
+            // What another of the three has, asked of this one: Draw3D.SetBlend, Draw2D.Depth, Draw2D.Cull, target.Tint
             const char *other = str_eq_c(owner, "Draw2D") ? "Draw3D" : "Draw2D";
             const signature *shared = NULL, *theirs = NULL;
             for (int i = 0; i < signature_count; i++) {
@@ -1318,6 +1364,10 @@ type resolve_builtin_call(const str owner, expr *e)
             } else if (theirs && (str_eq_c(e->name, "Depth") || str_eq_c(e->name, "SetDepth"))) {
                 diag_note("it's Draw3D's: 'Draw3D." STR_FMT "(...)%s'. Only 3D meshes have depth: the Draw2D calls draw "
                           "over what's there, in order", STR_ARG(e->name), theirs->gui & DRAW_BLOCK ? " { ... }" : ";");
+            } else if (theirs && (str_eq_c(e->name, "Cull") || str_eq_c(e->name, "SetCull"))) {
+                diag_note("it's Draw3D's: 'Draw3D." STR_FMT "(...)%s'. Only 3D meshes' triangles have a back: the Draw2D "
+                          "calls draw whichever way they're wound", STR_ARG(e->name),
+                          theirs->gui & DRAW_BLOCK ? " { ... }" : ";");
             } else if (theirs) {
                 diag_note("it's %s's: '%s." STR_FMT "(...)'", other, other, STR_ARG(e->name));
             }

@@ -124,7 +124,8 @@ void tide_draw_cube_rotated(tide_draw_list *d, const tide_float3 center, const t
                              const tide_quaternion rotation, const tide_color color)
 {
     if (!(size.x > 0 && size.y > 0 && size.z > 0)) return;
-    tide_draw_instance(d, primitive(d, PRIMITIVE_CUBE, color), tide_trs_f4x4(center, rotation, size), 0, TIDE_FILTER_POINT);
+    tide_draw_instance(d, primitive(d, PRIMITIVE_CUBE, color), tide_trs_f4x4(center, rotation, size), 0, TIDE_FILTER_POINT,
+                       TIDE_WRAP_CLAMP);
 }
 
 void tide_draw_cube(tide_draw_list *d, const tide_float3 center, const tide_float3 size, const tide_color color)
@@ -136,7 +137,7 @@ void tide_draw_sphere(tide_draw_list *d, const tide_float3 center, const float r
 {
     if (!(radius > 0)) return;
     tide_draw_instance(d, primitive(d, PRIMITIVE_SPHERE, color),
-                       tide_trs_f4x4(center, tide_identity_q(), tide_f3_splat(radius)), 0, TIDE_FILTER_POINT);
+                       tide_trs_f4x4(center, tide_identity_q(), tide_f3_splat(radius)), 0, TIDE_FILTER_POINT, TIDE_WRAP_CLAMP);
 }
 
 void tide_draw_cylinder_rotated(tide_draw_list *d, const tide_float3 center, const float radius, const float height,
@@ -144,7 +145,7 @@ void tide_draw_cylinder_rotated(tide_draw_list *d, const tide_float3 center, con
 {
     if (!(radius > 0 && height > 0)) return;
     tide_draw_instance(d, primitive(d, PRIMITIVE_CYLINDER, color),
-                       tide_trs_f4x4(center, rotation, tide_f3(radius, height, radius)), 0, TIDE_FILTER_POINT);
+                       tide_trs_f4x4(center, rotation, tide_f3(radius, height, radius)), 0, TIDE_FILTER_POINT, TIDE_WRAP_CLAMP);
 }
 
 void tide_draw_cylinder(tide_draw_list *d, const tide_float3 center, const float radius, const float height,
@@ -158,7 +159,7 @@ void tide_draw_plane_rotated(tide_draw_list *d, const tide_float3 center, const 
 {
     if (!(size.x > 0 && size.y > 0)) return;
     tide_draw_instance(d, primitive(d, PRIMITIVE_PLANE, color),
-                       tide_trs_f4x4(center, rotation, tide_f3(size.x, 1, size.y)), 0, TIDE_FILTER_POINT);
+                       tide_trs_f4x4(center, rotation, tide_f3(size.x, 1, size.y)), 0, TIDE_FILTER_POINT, TIDE_WRAP_CLAMP);
 }
 
 void tide_draw_plane(tide_draw_list *d, const tide_float3 center, const tide_float2 size, const tide_color color)

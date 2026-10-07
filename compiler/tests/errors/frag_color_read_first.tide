@@ -1,0 +1,8 @@
+// expect: 'color' is read before it's written
+// expect: a frag's 'out Color' starts with no value, where 'mut Color' started white: write it first, like 'color = Color.white;'
+scene Main { }
+struct Corner { float2 position; float2 uv; }
+frag Shade(Corner corner, out Color color)
+{
+    color.a = corner.uv.x;
+}

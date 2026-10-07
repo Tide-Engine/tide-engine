@@ -41,9 +41,9 @@ tide_e2e_test(io)
 tide_e2e_test(byte)
 tide_e2e_test(maps)
 tide_e2e_test(nested) # Lists of lists, maps of lists, lists of maps and sets, structs with lists as elements
-target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=13944507110118551999ull)
+target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=6375947640992776174ull)
 tide_e2e_test(arrays) # T[N]: fixed-length arrays in components, structs, lists, maps, events, inputs and locals
-target_compile_definitions(tidec_e2e_arrays PRIVATE ARRAYS_HASH=1956267260095108023ull)
+target_compile_definitions(tidec_e2e_arrays PRIVATE ARRAYS_HASH=9835394150231905810ull)
 tide_e2e_test(arrays_plain_input) # Bounds and padding inside integer-only array input
 tide_e2e_test(arrays_forward) # Arrays of structs whose fields and types are declared later
 tide_e2e_test(sort)
@@ -62,11 +62,14 @@ tide_e2e_test(views)
 tide_e2e_test(shapes) # The shapes with smooth edges: each Draw2D call, the general Shape, and target receivers
 tide_e2e_test(draw_settings) # Blend, tint, transform, clip and cameras: around blocks, listed with commas, and set
 tide_e2e_test(draw_depth) # ...and what 3D meshes do with depth: the setting that's in a game's C only when it names it
+tide_e2e_test(draw_cull) # ...and which side of their triangles draws, with the instances a transform mirrors told apart
+tide_e2e_test(wrap) # What a uv past a texture's edges reads: a mesh draw's wrap after its filter, and a frag's at Sample
 tide_e2e_test(assets) # Files a game is built with, read by name: each type, globs, a grid drawn and sampled, match code
 tide_e2e_test(assets_plain) # ...and the same game with none: its world is the same bytes
 tide_e2e_test(stages) # Enum phases, local offsets and whole-phase ordering in every schedule
 tide_e2e_test(render_targets) # Target receivers, explicit Texture sources and distributed rendering phases
 tide_e2e_test(render_lifecycle) # Shared target copies, resizing and explicit disposal from local code
+tide_e2e_test(render_depth) # What a target holds, said when it's made, and a target's depth as frags and verts read it
 tide_e2e_test(ownership) # Views `with ownership` and `without ownership`: this machine's player's entities, and the others
 tide_e2e_test(conditional)
 tide_e2e_test(input_bounds)

@@ -35,7 +35,7 @@ void Halves(float2 uv, out float left, out float right)
     right = 1 - left;
 }
 
-frag Split(Corner corner, mut Color color, Art art)
+frag Split(Corner corner, out Color color, Art art)
 {
     color = Color(0, 0, 0, 1);
     if (Past(corner.uv.x, art.split, out var over)) color.r = over;

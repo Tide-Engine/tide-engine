@@ -26,6 +26,11 @@ tide_add_game(sumo_tests SOURCES ${SUMO_SOURCES} "${SUMO_PACKAGE}/bridge.c" NAME
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" test/sumo_test.c)
 target_include_directories(sumo_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_link_libraries(sumo_tests PRIVATE tide_box3d)
+if(TARGET tide_platform)
+    # Its costs say what hashing a world on the pool's threads takes, beside one thread
+    target_compile_definitions(sumo_tests PRIVATE SUMO_TEST_JOBS)
+    target_link_libraries(sumo_tests PRIVATE tide_platform)
+endif()
 add_test(NAME sumo_tests COMMAND sumo_tests)
 # A step in 3D is several of Box2D's
 set_tests_properties(sumo_tests PROPERTIES TIMEOUT 300)

@@ -23,12 +23,12 @@ vert Offset(mut Vertex vertex, Texture source)
     vertex.position.x += nearest.r * smooth.g;
 }
 
-frag Copy(Vertex vertex, mut Color color, Texture source)
+frag Copy(Vertex vertex, out Color color, Texture source)
 {
     color = source.Sample(vertex.uv);
 }
 
-frag Combine(Vertex vertex, mut Color color, Texture source, Images images, Material material)
+frag Combine(Vertex vertex, out Color color, Texture source, Images images, Material material)
 {
     color = source.Sample(vertex.uv, Filter.Point)
           * source.Sample(vertex.uv)

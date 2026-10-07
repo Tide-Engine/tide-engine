@@ -110,19 +110,35 @@ static void *worker(void *thread)
     return NULL;
 }
 
-static void run(void *self, void (*work)(void *context, uint32_t thread), void *context)
+// A round of work, which wakes at most `others` of the workers that sleep.
+// The workers are made by the first round that wants them all, as a tick with
+// work for threads does: a round that asks for a few is little work, and a
+// page pays far more for its workers than they'd save it, so until they're
+// there it's the caller's alone.
+static void run_some(void *self, const uint32_t others, void (*work)(void *context, uint32_t thread), void *context)
 {
     pool *p = self;
-    if (!p->started) start_workers(p);
+    if (!p->started) {
+        if (others < p->jobs.threads - 1u) {
+            work(context, 0);
+            return;
+        }
+        start_workers(p);
+    }
     p->work = work;
     p->context = context;
     __atomic_store_n(&p->gate, OPEN, __ATOMIC_RELEASE);
     __atomic_fetch_add(&p->calls, 1u, __ATOMIC_SEQ_CST);
-    __builtin_wasm_memory_atomic_notify((int32_t *)&p->calls, UINT32_MAX);
+    __builtin_wasm_memory_atomic_notify((int32_t *)&p->calls, others);
     work(context, 0);
     __atomic_fetch_and(&p->gate, ~OPEN, __ATOMIC_ACQ_REL);
     while (__atomic_load_n(&p->gate, __ATOMIC_ACQUIRE) != 0) {
     }
+}
+
+static void run(void *self, void (*work)(void *context, uint32_t thread), void *context)
+{
+    run_some(self, UINT32_MAX, work, context);
 }
 
 // Up to `count` of the workers that sleep come back into the round. A worker
@@ -141,7 +157,7 @@ const tide_jobs *tide_platform_jobs(void)
     made = true;
     pool *p = &the_pool;
     const uint32_t n = tide_web_threads();
-    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, more}; // A profile given before stays
+    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, more, run_some}; // A profile given before stays
     return p->jobs.threads > 1 ? &p->jobs : NULL;
 }
 
@@ -243,7 +259,8 @@ static void *worker(void *thread)
 }
 #endif
 
-static void run(void *self, void (*work)(void *context, uint32_t thread), void *context)
+// A round of work, which wakes at most `others` of the workers that sleep.
+static void run_some(void *self, const uint32_t others, void (*work)(void *context, uint32_t thread), void *context)
 {
     pool *p = self;
     LOCK(&p->lock);
@@ -253,12 +270,21 @@ static void run(void *self, void (*work)(void *context, uint32_t thread), void *
     p->inside = 0;
     __atomic_fetch_add(&p->calls, 1u, __ATOMIC_SEQ_CST);
     UNLOCK(&p->lock);
-    WAKE_ALL(&p->start);
+    if (others >= p->jobs.threads - 1u) {
+        WAKE_ALL(&p->start);
+    } else {
+        for (uint32_t i = 0; i < others; i++) WAKE_ONE(&p->start);
+    }
     work(context, 0);
     LOCK(&p->lock);
     p->open = false;
     while (p->inside) WAIT(&p->done, &p->lock);
     UNLOCK(&p->lock);
+}
+
+static void run(void *self, void (*work)(void *context, uint32_t thread), void *context)
+{
+    run_some(self, UINT32_MAX, work, context);
 }
 
 // Up to `count` of the workers that sleep come back into the round. Nothing
@@ -330,7 +356,7 @@ const tide_jobs *tide_platform_jobs(void)
     made = true;
     pool *p = &the_pool;
     const uint32_t n = cores();
-    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, more}; // A profile given before stays
+    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, more, run_some}; // A profile given before stays
 #ifdef _WIN32
     InitializeSRWLock(&p->lock);
     InitializeConditionVariable(&p->start);

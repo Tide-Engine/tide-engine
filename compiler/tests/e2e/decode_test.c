@@ -14,7 +14,7 @@
 
 // The pinned world: the same bits on every platform
 #ifndef DECODE_WORLD_HASH
-#define DECODE_WORLD_HASH 0xe83b5362d18eac83ull
+#define DECODE_WORLD_HASH 0xf83ed9e3d2de8a11ull
 #endif
 
 static tide_world world;

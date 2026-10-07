@@ -227,12 +227,12 @@ compares the two after every step.
   `b3SnapshotPart`, `b3World_SetSnapshotAwakeShare`,
   `b3World_CheckSnapshotAt`.** The parts to write over the world's last image,
   which the caller has: the world keeps no copy. It says there's no telling
-  (the caller takes the image whole) for a world with no image yet, a world
-  that was restored, one with more bodies, shapes or contacts than its last
-  image had room for, one that had something done to it that isn't followed
-  (below), and one with more than half of its bodies awake, where writing it
-  whole costs no more. The last image is the one `b3World_GetSnapshotAt` or
-  this last gave, whole and at the same bases. `b3World_CheckSnapshotAt` is the
+  (the caller takes the image whole) for a world with no image yet, one with
+  more bodies, shapes or contacts than its last image had room for, one that
+  had something done to it that isn't followed (below), and one with more
+  than half of its bodies awake, where writing it whole costs no more. The
+  last image is the one `b3World_GetSnapshotAt` or this last gave, whole and
+  at the same bases, or the one the world was restored from. `b3World_CheckSnapshotAt` is the
   image written whole that isn't taken for the last one, for a test to compare
   the parts with; `b3World_SetSnapshotAwakeShare` has a test's world say what
   changed whatever is awake. `physics_world.c` frees what follows the images
@@ -330,7 +330,19 @@ compares the two after every step.
     themselves (`b3Shape_SetHull`, `b3Shape_SetMesh`), as do
     `b3MergeSolverSets`, `b3TransferBody`, the joints' making and destroying,
     a shape with a mesh, a height field or a material array (made, or
-    destroyed), and a restore.
+    destroyed).
+  - **A restore is followed** (`b3SnapFollow`, from `b3World_Restore`). A
+    world that was just made from an image would write that image, byte for
+    byte, were it asked for one: it's what the pins of a world restored before
+    every tick rest on. So that image is the world's last one, at the bases its
+    table says, and the next is written in parts that go on from it: what the
+    sets hold is what was awake in it and what's said after. The writer runs
+    once with nothing to write into, for where each section ends and how many
+    shapes have more than their room, which the image doesn't say. A world
+    restored from an image with more than half of its bodies awake writes its
+    next one whole, as any such world does. The other readers of an image
+    (the recording's replay, through `b3DeserializeIntoShell`) leave the
+    world with no last image, as before.
 
     `b3Body_SetType` is left at a whole image on purpose. It moves the body
     to another solver set (`b3TransferBody`, which moves another body into its

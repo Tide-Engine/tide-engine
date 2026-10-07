@@ -493,13 +493,15 @@ typedef struct draw_step {
     uint32_t kind;    // STEP_*
     uint32_t blend;   // How it goes over what's there: tide_blend
     uint32_t depth;   // STEP_MESH_3D, and a STEP_SHADED through a 3D shader: what it does with depth, tide_depth
+    uint32_t cull;    // ...and which of its triangles don't draw, as they reach the GPU: tide_gpu_cull
     uint32_t target;  // The destination: 0 for the window, 1 + its place in the list's targets
     uint32_t first;   // STEP_SHAPES: its shapes; STEP_TEXT and STEP_MESH: its vertices;
                       // STEP_MESH_3D: its instances' transforms in the list's matrices;
                       // STEP_SHADED: its run's place in the list's
     uint32_t count;
     uint32_t texture; // STEP_MESH and STEP_MESH_3D: 1 + its texture's place in the list's, or 0 for none
-    uint32_t filter;  // ...and how it's sampled: tide_filter
+    uint32_t filter;  // ...and how it's sampled: tide_filter...
+    uint32_t wrap;    // ...and tide_wrap
     uint32_t mesh;    // STEP_MESH_3D: 1 + its mesh's place in the list's
     uint32_t camera;  // ...and 1 + its camera's matrix's place in the list's, or 0 for the first camera:
                       // a STEP_SHADED's too, for a 3D shader
@@ -530,6 +532,7 @@ static uint32_t draw_calls; // What the last list drawn took, the overlay's asid
 typedef struct frame_target {
     camera through, world;
     uint32_t camera_3d, fit;
+    bool mirrored; // Its 3D camera mirrors what it sees, so triangles reach the GPU wound the other way
     draw_step clipping;
     tide_gpu_id gpu;
     float width, height;           // Its logical pixels, as the window's
@@ -538,6 +541,7 @@ typedef struct frame_target {
     uint64_t version;
     tide_target_size size; // As the list recorded it
     bool valid;
+    bool bare; // It holds depth alone (TIDE_TARGET_DEPTH_ONLY): a color has nowhere to go there
 } frame_target;
 
 static frame_target *frame_targets;
@@ -780,11 +784,12 @@ static void add_mesh(const tide_draw_list *list, const tide_draw_command *c, con
     const uint32_t count = c->mesh.count;
     mesh_vertex *out = mesh_room(count);
     draw_step *s = run_goes_on(STEP_MESH) ? &steps[step_count - 1] : NULL;
-    if (!s || s->texture != c->mesh.texture || s->filter != c->mesh.filter) {
+    if (!s || s->texture != c->mesh.texture || s->filter != c->mesh.filter || s->wrap != c->mesh.wrap) {
         s = add_step(STEP_MESH);
         s->first = mesh_vertex_count;
         s->texture = c->mesh.texture;
         s->filter = c->mesh.filter;
+        s->wrap = c->mesh.wrap;
     }
     s->count += count;
     const uint32_t *indices = list->indices + c->mesh.first;
@@ -936,9 +941,10 @@ static void add_text_turned(const char *text, const tide_float2 at, const float 
 
 // The engine's own pipelines, each in a version for each way of blending
 // (tide_blend) and, for the 3D meshes', each thing a mesh does with depth
-// (tide_depth), made the first time a list draws with it.
+// (tide_depth) and each side of a triangle it leaves out (tide_gpu_cull),
+// made the first time a list draws with it.
 enum { PIPELINE_SHAPES, PIPELINE_SMOOTH_SHAPES, PIPELINE_MESHES, PIPELINE_TEXT, PIPELINE_MESHES_3D, PIPELINE_KINDS };
-enum { BLENDS = TIDE_BLEND_REPLACE + 1, DEPTHS = TIDE_DEPTH_NONE + 1 };
+enum { BLENDS = TIDE_BLEND_REPLACE + 1, DEPTHS = TIDE_DEPTH_NONE + 1, CULLS = TIDE_GPU_CULL_FRONT + 1 };
 
 // What a pipeline does with depth for each tide_depth.
 static const tide_gpu_depth gpu_depths[DEPTHS] = {
@@ -949,8 +955,11 @@ static const tide_gpu_depth gpu_depths[DEPTHS] = {
 // shaders are in shaders.h, and the buffers and textures a list's steps draw
 // from, made the first time they're needed.
 static struct {
-    tide_gpu_id pipelines[PIPELINE_KINDS][BLENDS][DEPTHS]; // Only the 3D meshes' have more than the first depth
+    tide_gpu_id pipelines[PIPELINE_KINDS][BLENDS][DEPTHS][CULLS]; // Only the 3D meshes' have more than the first depth and cull
     tide_gpu_id clear;   // The clears' pipeline
+    // The two of the engine's that leave anything in a target of depth alone: its clears', and its 3D meshes'
+    tide_gpu_id bare_clear, bare_meshes[CULLS];
+    tide_gpu_id far; // A target of depth alone that's 1 everywhere: what a shader reads for a depth it wasn't given
     tide_gpu_id corners; // The shapes' quad
     tide_gpu_id shape_instances;
     uint32_t shape_capacity; // Shapes the instance buffer holds
@@ -1085,6 +1094,14 @@ typedef struct gpu_target {
 
 static gpu_target *gpu_targets;
 static uint32_t gpu_target_count, gpu_target_capacity;
+
+// How a pipeline reads a shader's texture `i`: a color, unless the shader says it's a depth.
+static tide_gpu_read gpu_read(const tide_shader *shader, const uint32_t i)
+{
+    const uint8_t read = i < TIDE_SHADER_TEXTURES ? shader->texture_reads[i] : TIDE_SHADER_READ_COLOR;
+    return read == TIDE_SHADER_READ_DEPTH ? TIDE_GPU_READ_DEPTH :
+           read == TIDE_SHADER_READ_COMPARE ? TIDE_GPU_READ_COMPARE : TIDE_GPU_READ_COLOR;
+}
 static uint32_t target_epoch; // A hot reload discards the old build's target identities
 
 static gpu_target *find_target(const uint64_t id)
@@ -1119,7 +1136,9 @@ static gpu_target *target_for(const uint64_t id, const tide_target_size size, co
         if (g->target) gpu->target_free(g->target);
         g->width = width, g->height = height;
         g->version = version;
-        g->target = gpu->target(width, height);
+        // What it holds is its id's to say: the same for as long as it's this target
+        g->target = gpu->target(tide_render_target_format(id) == TIDE_TARGET_DEPTH_ONLY ? TIDE_GPU_TARGET_DEPTH
+                                                                                       : TIDE_GPU_TARGET_COLOR, width, height);
         gpu->begin(g->target, true);
         gpu->end();
         if (limited) {
@@ -1156,7 +1175,9 @@ typedef struct shader_pipeline {
     uint32_t frame; // The frame that last drew through it
     uint8_t blend;  // How it goes over what's there: a pipeline for each way a shader is drawn (tide_blend)
     uint8_t depth;  // ...and for each thing a 3D one does with depth (tide_depth): 0 for a 2D one, and a blit
+    uint8_t cull;   // ...and each side of a triangle it leaves out (tide_gpu_cull): none, for those too
     bool blit;      // The whole destination, leaving its depth alone, rather than an ordinary mesh
+    bool bare;      // Into targets of depth alone, which a pipeline is made for: its blend is the first, as none is read
 } shader_pipeline;
 
 static shader_pipeline *shader_pipelines;
@@ -1202,15 +1223,32 @@ static const char *joined(const char *first, const char *second)
     return whole;
 }
 
+// Which of a 3D mesh's triangles a pipeline leaves out, for its command's cull
+// (a tide_cull, with TIDE_DRAW_MIRRORED or not) under a camera that mirrors or
+// doesn't. A triangle's front goes clockwise as its mesh has it, and reaches
+// the GPU that way unless what it went through mirrored it an odd number of
+// times, its instance's transform and the camera.
+static tide_gpu_cull gpu_cull(const uint32_t cull, const bool mirrored)
+{
+    const uint32_t side = cull & 3u;
+    if (side == TIDE_CULL_NONE) return TIDE_GPU_CULL_NONE;
+    const bool back = side != TIDE_CULL_FRONT;
+    return back != (((cull & TIDE_DRAW_MIRRORED) != 0) != mirrored) ? TIDE_GPU_CULL_BACK : TIDE_GPU_CULL_FRONT;
+}
+
 // One of the engine's pipelines, for one way of blending and, for the 3D
-// meshes', one thing done with depth: made if there's none.
-static tide_gpu_id engine_pipeline(const int kind, const uint32_t blend, uint32_t depth)
+// meshes', one thing done with depth and one side left out: made if there's
+// none. `bare` is the 3D meshes' into targets of depth alone, where they read
+// and write depth and nothing else.
+static tide_gpu_id engine_pipeline(const int kind, const uint32_t blend, uint32_t depth, uint32_t cull, const bool bare)
 {
     static const tide_gpu_blend blends[BLENDS] = {
         [TIDE_BLEND_ALPHA] = TIDE_GPU_BLEND_ALPHA, [TIDE_BLEND_ADD] = TIDE_GPU_BLEND_ADD,
         [TIDE_BLEND_MULTIPLY] = TIDE_GPU_BLEND_MULTIPLY, [TIDE_BLEND_REPLACE] = TIDE_GPU_BLEND_REPLACE};
     if (kind != PIPELINE_MESHES_3D || depth >= DEPTHS) depth = TIDE_DEPTH_READ_WRITE;
-    tide_gpu_id *made = &gpu_state.pipelines[kind][blend < BLENDS ? blend : TIDE_BLEND_ALPHA][depth];
+    if (kind != PIPELINE_MESHES_3D || cull >= CULLS) cull = TIDE_GPU_CULL_NONE; // Nothing in 2D has a back
+    tide_gpu_id *made = bare ? &gpu_state.bare_meshes[cull]
+                             : &gpu_state.pipelines[kind][blend < BLENDS ? blend : TIDE_BLEND_ALPHA][depth][cull];
     if (*made) return *made;
     tide_gpu_pipeline_desc desc;
     switch (kind) {
@@ -1287,41 +1325,85 @@ static tide_gpu_id engine_pipeline(const int kind, const uint32_t blend, uint32_
             .uniform_size = sizeof(mesh_3d_uniforms),
             .texture_count = 1,
             .depth = gpu_depths[depth],
+            .cull = (tide_gpu_cull)cull,
         };
         break;
     }
     desc.blend = blends[blend < BLENDS ? blend : TIDE_BLEND_ALPHA];
+    if (bare) {
+        desc.name = "3D meshes into depth alone";
+        desc.blend = TIDE_GPU_BLEND_ALPHA;
+        desc.into = TIDE_GPU_TARGET_DEPTH;
+    }
     return *made = gpu->pipeline(&desc);
 }
 
-// The clears' pipeline, the quad and the white pixel, the first time a list is drawn.
-static void renderer_start(void)
+// A clear, in a version for each kind of target: a triangle over it, which
+// sets depth back.
+static tide_gpu_id clear_pipeline(const bool bare)
 {
-    if (gpu_state.clear) return;
-    gpu_state.clear = gpu->pipeline(&(tide_gpu_pipeline_desc){
-        .name = "clears",
+    tide_gpu_id *made = bare ? &gpu_state.bare_clear : &gpu_state.clear;
+    if (*made) return *made;
+    return *made = gpu->pipeline(&(tide_gpu_pipeline_desc){
+        .name = bare ? "clears of depth alone" : "clears",
         .glsl_vertex = clear_glsl_vertex,
         .glsl_fragment = clear_glsl_fragment,
         .wgsl = clear_wgsl,
         .uniform_size = 4 * sizeof(float),
         .blend = TIDE_GPU_BLEND_REPLACE,
         .depth = TIDE_GPU_DEPTH_RESET,
+        .into = bare ? TIDE_GPU_TARGET_DEPTH : TIDE_GPU_TARGET_COLOR,
     });
+}
+
+// The clears' pipeline, the quad and the white pixel, the first time a list is drawn.
+static void renderer_start(void)
+{
+    if (gpu_state.clear) return;
+    clear_pipeline(false);
     static const float corners[12] = {0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0};
     gpu_state.corners = gpu->buffer(TIDE_GPU_VERTICES, sizeof corners, corners);
     gpu_state.white = gpu->texture(TIDE_GPU_RGBA8, 1, 1, (const uint8_t[4]){255, 255, 255, 255});
 }
 
+// Whether a step leaves anything in a target of depth alone, where a color
+// has nowhere to go: a clear, which sets depth back, and a 3D mesh that
+// writes depth, through a shader of the game's or not. Everything else draws
+// colors, which such a target has none of, and is passed by there.
+static bool writes_depth(const tide_draw_list *list, const draw_step *s)
+{
+    switch (s->kind) {
+    case STEP_SHAPES:
+    case STEP_TEXT:
+    case STEP_MESH:
+    case STEP_BLIT: return false;
+    case STEP_MESH_3D: return s->depth == TIDE_DEPTH_READ_WRITE;
+    case STEP_SHADED: return list->runs[s->first].shader->dims == 3 && s->depth == TIDE_DEPTH_READ_WRITE;
+    default: return true; // A clear, and what only says where the steps after it go
+    }
+}
+
+// Whether a step goes into a target of depth alone, and leaves nothing there.
+static bool leaves_nothing(const tide_draw_list *list, const draw_step *s)
+{
+    return frame_targets[s->target].bare && !writes_depth(list, s);
+}
+
 // The pipeline each step of the engine's own draws through, before anything draws.
-static void find_pipelines(void)
+static void find_pipelines(const tide_draw_list *list)
 {
     for (uint32_t i = 0; i < step_count; i++) {
         draw_step *s = &steps[i];
+        const bool bare = frame_targets[s->target].bare;
+        if (bare && !writes_depth(list, s)) continue;
         switch (s->kind) {
-        case STEP_SHAPES: s->pipeline = engine_pipeline(s->smooth ? PIPELINE_SMOOTH_SHAPES : PIPELINE_SHAPES, s->blend, 0); break;
-        case STEP_MESH: s->pipeline = engine_pipeline(PIPELINE_MESHES, s->blend, 0); break;
-        case STEP_TEXT: s->pipeline = engine_pipeline(PIPELINE_TEXT, s->blend, 0); break;
-        case STEP_MESH_3D: s->pipeline = engine_pipeline(PIPELINE_MESHES_3D, s->blend, s->depth); break;
+        case STEP_SHAPES:
+            s->pipeline = engine_pipeline(s->smooth ? PIPELINE_SMOOTH_SHAPES : PIPELINE_SHAPES, s->blend, 0, 0, false);
+            break;
+        case STEP_MESH: s->pipeline = engine_pipeline(PIPELINE_MESHES, s->blend, 0, 0, false); break;
+        case STEP_TEXT: s->pipeline = engine_pipeline(PIPELINE_TEXT, s->blend, 0, 0, false); break;
+        case STEP_MESH_3D: s->pipeline = engine_pipeline(PIPELINE_MESHES_3D, s->blend, s->depth, s->cull, bare); break;
+        case STEP_CLEAR: s->pipeline = clear_pipeline(bare); break;
         default: break;
         }
     }
@@ -1430,14 +1512,19 @@ static void forget_meshes_3d(void)
     }
 }
 
-// Where the pipeline of the shader `id`, blending as `blend` and doing `depth` with depth, is in the index, or would go.
-static uint32_t shader_slot(const uint64_t id, const bool blit, const uint8_t blend, const uint8_t depth)
+// Where the pipeline of the shader `id`, blending as `blend`, doing `depth` with depth and leaving
+// `cull` out, is in the index, or would go: `bare` for the one that draws into targets of depth alone.
+static uint32_t shader_slot(const uint64_t id, const bool blit, const uint8_t blend, const uint8_t depth,
+                            const uint8_t cull, const bool bare)
 {
     const uint32_t mask = shader_index_capacity - 1u;
-    uint32_t i = (uint32_t)(id ^ id >> 32 ^ (blit ? 0x9e3779b9u : 0u) ^ blend * 0x85ebca6bu ^ depth * 0xc2b2ae35u) & mask;
+    uint32_t i = (uint32_t)(id ^ id >> 32 ^ (blit ? 0x9e3779b9u : 0u) ^ blend * 0x85ebca6bu ^ depth * 0xc2b2ae35u
+                            ^ cull * 0x27d4eb2fu ^ (bare ? 0x165667b1u : 0u)) & mask;
     while (shader_index[i]) {
         const shader_pipeline *p = &shader_pipelines[shader_index[i] - 1u];
-        if (p->id == id && p->blit == blit && p->blend == blend && p->depth == depth) break;
+        if (p->id == id && p->blit == blit && p->blend == blend && p->depth == depth && p->cull == cull && p->bare == bare) {
+            break;
+        }
         i = (i + 1u) & mask;
     }
     return i;
@@ -1457,25 +1544,30 @@ static void index_shaders(void)
     }
     for (uint32_t i = 0; i < shader_pipeline_count; i++) {
         const shader_pipeline *p = &shader_pipelines[i];
-        shader_index[shader_slot(p->id, p->blit, p->blend, p->depth)] = i + 1u;
+        shader_index[shader_slot(p->id, p->blit, p->blend, p->depth, p->cull, p->bare)] = i + 1u;
     }
 }
 
 // The pipeline of a shader of the game's for one way of blending and, for a
-// 3D one, one thing done with depth, made if there's none: it reads a mesh's
-// vertices as they are from the first slot, and from the second an instance's
-// bytes, a float4 or an int4 an attribute.
-static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint32_t blend, uint32_t depth)
+// 3D one, one thing done with depth and one side left out, made if there's
+// none: it reads a mesh's vertices as they are from the first slot, and from
+// the second an instance's bytes, a float4 or an int4 an attribute. `bare` is
+// the one that draws into targets of depth alone, where its frag's color goes
+// nowhere: the frag still runs, as it may discard the pixel.
+static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint32_t blend, uint32_t depth,
+                                uint32_t cull, const bool bare)
 {
     static const tide_gpu_blend blends[BLENDS] = {
         [TIDE_BLEND_ALPHA] = TIDE_GPU_BLEND_ALPHA, [TIDE_BLEND_ADD] = TIDE_GPU_BLEND_ADD,
         [TIDE_BLEND_MULTIPLY] = TIDE_GPU_BLEND_MULTIPLY, [TIDE_BLEND_REPLACE] = TIDE_GPU_BLEND_REPLACE};
     if (blend >= BLENDS) blend = blit ? TIDE_BLEND_REPLACE : TIDE_BLEND_ALPHA;
+    if (bare) blend = TIDE_BLEND_ALPHA; // None is read
     // Only a 3D mesh has depth: a 2D one draws over what's there, and a blit leaves its destination's alone
     const bool deep = !blit && shader->dims == 3;
     if (!deep || depth >= DEPTHS) depth = TIDE_DEPTH_READ_WRITE;
+    if (!deep || cull >= CULLS) cull = TIDE_GPU_CULL_NONE; // ...and only a 3D mesh's triangles have a back
     if (shader_pipeline_count >= shader_index_capacity / 2u) index_shaders();
-    const uint32_t slot = shader_slot(shader->id, blit, (uint8_t)blend, (uint8_t)depth);
+    const uint32_t slot = shader_slot(shader->id, blit, (uint8_t)blend, (uint8_t)depth, (uint8_t)cull, bare);
     if (shader_index[slot]) {
         shader_pipeline *p = &shader_pipelines[shader_index[slot] - 1u];
         p->frame = gpu_frame;
@@ -1499,7 +1591,10 @@ static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint
         .texture_count = shader->texture_count,
         .blend = blends[blend],
         .depth = deep ? gpu_depths[depth] : TIDE_GPU_DEPTH_NONE,
+        .cull = (tide_gpu_cull)cull,
+        .into = bare ? TIDE_GPU_TARGET_DEPTH : TIDE_GPU_TARGET_COLOR,
     };
+    for (uint32_t i = 0; i < shader->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) desc.reads[i] = gpu_read(shader, i);
     for (uint32_t i = 0; i < shader->attribute_count; i++) {
         desc.attributes[i].slot = 0;
         desc.attributes[i].format = formats[shader->attributes[i].format];
@@ -1520,7 +1615,7 @@ static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint
     }
     const tide_gpu_id pipeline = gpu->pipeline(&desc);
     shader_pipelines[shader_pipeline_count] = (shader_pipeline){shader->id, pipeline, gpu_frame, (uint8_t)blend,
-                                                                (uint8_t)depth, blit};
+                                                                (uint8_t)depth, (uint8_t)cull, blit, bare};
     shader_index[slot] = ++shader_pipeline_count;
     return pipeline;
 }
@@ -1575,10 +1670,19 @@ static bool upload_shaded(const tide_draw_list *list)
     bool any = false;
     for (uint32_t i = 0; i < step_count; i++) {
         if (steps[i].kind != STEP_SHADED && steps[i].kind != STEP_BLIT) continue;
+        if (leaves_nothing(list, &steps[i])) continue;
         const tide_draw_run *run = &list->runs[steps[i].first];
         any = true;
         mesh_for(list, run->mesh);
-        steps[i].pipeline = pipeline_for(run->shader, steps[i].kind == STEP_BLIT, steps[i].blend, steps[i].depth);
+        steps[i].pipeline = pipeline_for(run->shader, steps[i].kind == STEP_BLIT, steps[i].blend, steps[i].depth,
+                                         steps[i].cull, frame_targets[steps[i].target].bare);
+        // A shader that reads a depth it may not be given reads the far one: made here, outside any pass
+        for (uint32_t t = 0; t < run->shader->texture_count && !gpu_state.far; t++) {
+            if (gpu_read(run->shader, t) == TIDE_GPU_READ_COLOR) continue;
+            gpu_state.far = gpu->target(TIDE_GPU_TARGET_DEPTH, 1, 1);
+            gpu->begin(gpu_state.far, true);
+            gpu->end();
+        }
     }
     if (any && list->instance_used) {
         buffer_room(&gpu_state.instances, &gpu_state.instance_capacity, list->instance_used, 1, 4096u);
@@ -1674,22 +1778,36 @@ static void forget_textures(void)
     gpu_frame++;
 }
 
-// The GPU's copy of the list's texture `texture` (1 + its place), or the
-// white pixel for none.
-static tide_gpu_id texture_or_white(const tide_draw_list *list, const uint32_t texture)
+// Whether a list's texture is a render target's image: its color, or its depth.
+static bool of_target(const tide_draw_texture *t)
 {
-    if (texture == 0 || texture > list->texture_count) return gpu_state.white;
-    const tide_draw_texture *t = &list->textures[texture - 1u];
-    if (t->space == TIDE_PIXELS_TARGET) {
-        const gpu_target *g = find_target(t->id);
-        return g && g->target ? gpu->target_texture(g->target) : gpu_state.white;
-    }
-    const gpu_texture *g = texture_for(t);
-    return g->texture ? g->texture : gpu_state.white;
+    return t->space == TIDE_PIXELS_TARGET || t->space == TIDE_PIXELS_TARGET_DEPTH;
 }
 
-// Reading the color attachment while writing it is undefined on every GPU.
-// Refuse the whole draw, including an ordinary mesh or an indirect binding.
+// The GPU's copy of the list's texture `texture` (1 + its place), for a
+// shader that reads it as `read` says (tide_gpu_read). For none, and for one
+// that isn't what the shader reads there (a color where it reads a depth, or
+// the other way round, as a list filled by hand may say), it's the white
+// pixel where a color is read, and where a depth is, the far one.
+static tide_gpu_id texture_to_read(const tide_draw_list *list, const uint32_t texture, const tide_gpu_read read)
+{
+    const bool depth = read != TIDE_GPU_READ_COLOR;
+    const tide_gpu_id none = depth ? gpu->target_depth(gpu_state.far) : gpu_state.white;
+    if (texture == 0 || texture > list->texture_count) return none;
+    const tide_draw_texture *t = &list->textures[texture - 1u];
+    if (depth != (t->space == TIDE_PIXELS_TARGET_DEPTH)) return none;
+    if (of_target(t)) {
+        const gpu_target *g = find_target(t->id);
+        const tide_gpu_id image = !g || !g->target ? 0 : depth ? gpu->target_depth(g->target) : gpu->target_texture(g->target);
+        return image ? image : none;
+    }
+    const gpu_texture *g = texture_for(t);
+    return g->texture ? g->texture : none;
+}
+
+// Reading an attachment while writing it is undefined on every GPU, a
+// target's depth as much as its color. Refuse the whole draw, including an
+// ordinary mesh or an indirect binding.
 static bool samples_destination(const tide_draw_list *list, const draw_step *s)
 {
     if (!s->target) return false;
@@ -1700,34 +1818,41 @@ static bool samples_destination(const tide_draw_list *list, const draw_step *s)
             const uint32_t at = run->textures[i];
             if (at && at <= list->texture_count) {
                 const tide_draw_texture *t = &list->textures[at - 1u];
-                if (t->space == TIDE_PIXELS_TARGET && t->id == id) return true;
+                if (of_target(t) && t->id == id) return true;
             }
         }
     } else if (s->texture && s->texture <= list->texture_count) {
         const tide_draw_texture *t = &list->textures[s->texture - 1u];
-        if (t->space == TIDE_PIXELS_TARGET && t->id == id) return true;
+        if (of_target(t) && t->id == id) return true;
     }
     return false;
 }
 
-static bool unavailable_texture(const tide_draw_list *list, const uint32_t texture)
+// Why a list's texture can't be sampled, or NULL: a target that was disposed
+// or has no image, and the color of one that holds depth alone.
+static const char *unavailable_texture(const tide_draw_list *list, const uint32_t texture)
 {
-    if (!texture || texture > list->texture_count) return false;
+    if (!texture || texture > list->texture_count) return NULL;
     const tide_draw_texture *t = &list->textures[texture - 1u];
-    return t->space == TIDE_PIXELS_TARGET && (!tide_render_target_live(t->id) || !tide_target_size_valid(t->target));
+    if (!of_target(t)) return NULL;
+    if (!tide_render_target_live(t->id) || !tide_target_size_valid(t->target)) return "source render target is invalid or disposed";
+    if (t->space == TIDE_PIXELS_TARGET && tide_render_target_format(t->id) == TIDE_TARGET_DEPTH_ONLY) {
+        return "source render target holds depth alone: it has no color to sample";
+    }
+    return NULL;
 }
 
-static bool samples_unavailable(const tide_draw_list *list, const draw_step *s)
+static const char *samples_unavailable(const tide_draw_list *list, const draw_step *s)
 {
     if (s->kind == STEP_SHADED || s->kind == STEP_BLIT) {
         const tide_draw_run *run = &list->runs[s->first];
         for (uint32_t i = 0; i < run->shader->texture_count; i++) {
-            if (unavailable_texture(list, run->textures[i])) return true;
+            const char *why = unavailable_texture(list, run->textures[i]);
+            if (why) return why;
         }
-    } else if (unavailable_texture(list, s->texture)) {
-        return true;
+        return NULL;
     }
-    return false;
+    return unavailable_texture(list, s->texture);
 }
 
 // A source recorded after Resize first sees the replacement black image,
@@ -1740,7 +1865,7 @@ static bool prepare_source_target(const tide_draw_list *list, const uint32_t tex
 {
     if (!texture || texture > list->texture_count) return false;
     const tide_draw_texture *t = &list->textures[texture - 1u];
-    if (t->space != TIDE_PIXELS_TARGET) return false;
+    if (!of_target(t)) return false;
     const gpu_target *g = find_target(t->id);
     if (g && (!tide_render_target_managed(t->id) || t->version < g->version)) return false;
     float width, height;
@@ -1766,10 +1891,18 @@ static bool prepare_source_targets(const tide_draw_list *list, const draw_step *
     return needed;
 }
 
+// A list's wrap as the GPU's, which has tide_wrap's numbers: what isn't one clamps.
+static tide_gpu_wrap gpu_wrap(const uint32_t wrap)
+{
+    _Static_assert(TIDE_GPU_WRAP_REPEAT == (int)TIDE_WRAP_REPEAT && TIDE_GPU_WRAP_MIRROR == (int)TIDE_WRAP_MIRROR,
+                   "gpu.h's wraps are draw.h's");
+    return wrap == TIDE_WRAP_REPEAT || wrap == TIDE_WRAP_MIRROR ? (tide_gpu_wrap)wrap : TIDE_GPU_WRAP_CLAMP;
+}
+
 // The texture a mesh step samples, sampled as the step says.
 static void sample_step_texture(const tide_draw_list *list, const draw_step *s)
 {
-    gpu->sample(0, texture_or_white(list, s->texture), s->filter != TIDE_FILTER_POINT);
+    gpu->sample(0, texture_to_read(list, s->texture, TIDE_GPU_READ_COLOR), s->filter != TIDE_FILTER_POINT, gpu_wrap(s->wrap));
 }
 
 // A step's 3D camera, from the world to clip space, fitted to the screen's
@@ -1833,7 +1966,8 @@ static void draw_shaded(const tide_draw_list *list, const draw_step *s)
     gpu->use(s->pipeline);
     gpu->uniforms(&block, sizeof(shaded_uniforms) + own);
     for (uint32_t i = 0; i < shader->texture_count; i++) {
-        gpu->sample(i, texture_or_white(list, run->textures[i]), (run->blended >> i & 1u) != 0);
+        gpu->sample(i, texture_to_read(list, run->textures[i], gpu_read(shader, i)), tide_sampling_blended(run->sampling, i),
+                    gpu_wrap(tide_sampling_wrap(run->sampling, i)));
     }
     gpu->vertices(0, g->vertices, 0);
     if (tide_shader_instance_size(shader)) gpu->vertices(1, gpu_state.instances, run->first);
@@ -1996,6 +2130,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             // In logical pixels, like the window: what's drawn into it lands as it would there
             f->valid = target_extent(t->size, &root, &f->width, &f->height, &f->pixel_width, &f->pixel_height, &limited)
                     && tide_render_target_live(t->id);
+            f->bare = tide_render_target_format(t->id) == TIDE_TARGET_DEPTH_ONLY;
             if (!f->valid) f->width = f->height = 1.0f, f->pixel_width = f->pixel_height = 1;
         } else {
             f->gpu = target;
@@ -2044,20 +2179,24 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             if (c->camera.matrix >= list->matrix_count) { // TIDE_DRAW_FIRST_CAMERA
                 f->camera_3d = 0;
                 f->fit = 1;
+                f->mirrored = false;
                 break;
             }
             f->camera_3d = c->camera.matrix + 1u;
             f->fit = c->camera.fit;
+            f->mirrored = c->camera.mirrored != 0;
             break;
         case TIDE_DRAW_MESH_3D: {
             if (!c->mesh3.mesh || c->mesh3.mesh > list->mesh_count) break; // Forgotten (see tide_draw_forget)
             if (list->meshes[c->mesh3.mesh - 1u].space == TIDE_MESH_BYTES) break; // A shader's: not these vertices
             draw_step *s = add_step(STEP_MESH_3D);
             s->depth = c->depth;
+            s->cull = gpu_cull(c->cull, f->mirrored);
             s->first = c->mesh3.first;
             s->count = c->mesh3.count;
             s->texture = c->mesh3.texture;
             s->filter = c->mesh3.filter;
+            s->wrap = c->mesh3.wrap;
             s->mesh = c->mesh3.mesh;
             s->camera = f->camera_3d;
             s->fit = f->fit;
@@ -2070,6 +2209,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             if (c->kind == TIDE_DRAW_BLIT && list->runs[c->shaded.run].shader->dims != 2) break;
             draw_step *s = add_step(c->kind == TIDE_DRAW_BLIT ? STEP_BLIT : STEP_SHADED);
             s->depth = c->depth;
+            s->cull = gpu_cull(c->cull, f->mirrored);
             s->first = c->shaded.run;
             s->camera = f->camera_3d;
             s->fit = f->fit;
@@ -2127,7 +2267,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
 
     // What the steps draw from goes to the GPU first
     renderer_start();
-    find_pipelines();
+    find_pipelines(list);
     upload_shapes_and_meshes();
     upload_meshes_3d(list);
     const bool shaded = upload_shaded(list);
@@ -2161,8 +2301,10 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             clip(&frame_targets[draw_target].clipping);
         }
         if (!frame_targets[draw_target].valid) continue;
-        if (samples_unavailable(list, s)) {
-            fprintf(stderr, "draw skipped: source render target is invalid or disposed\n");
+        if (leaves_nothing(list, s)) continue; // A color, into a target of depth alone
+        const char *unavailable = samples_unavailable(list, s);
+        if (unavailable) {
+            fprintf(stderr, "draw skipped: %s\n", unavailable);
             continue;
         }
         if (samples_destination(list, s)) {
@@ -2197,7 +2339,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             // A triangle over the target, which the clip cuts, and which sets depth back too
             const float color[4] = {(float)s->color.r / 255.0f, (float)s->color.g / 255.0f, (float)s->color.b / 255.0f,
                                     (float)s->color.a / 255.0f};
-            gpu->use(gpu_state.clear);
+            gpu->use(s->pipeline);
             gpu->uniforms(color, sizeof color);
             gpu->draw(0, 3, 1);
             calls++;
@@ -2235,7 +2377,8 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             if (s->count == 0 || !gpu_state.atlas) break;
             gpu->use(s->pipeline);
             gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
-            gpu->sample(0, gpu_state.atlas, true); // Stretched glyphs blend; the others land on the target's pixels
+            // Stretched glyphs blend; the others land on the target's pixels
+            gpu->sample(0, gpu_state.atlas, true, TIDE_GPU_WRAP_CLAMP);
             gpu->vertices(0, gpu_state.mesh_vertices, 0);
             gpu->draw(s->first, s->count, 1);
             calls++;
@@ -2269,7 +2412,7 @@ static draw_root frame_destination(void)
                     .pixel_width = pixel_width, .pixel_height = pixel_height};
     if (!headless || !gpu_ready()) return to;
     if (!gpu_state.frame) {
-        gpu_state.frame = gpu->target(pixel_width, pixel_height);
+        gpu_state.frame = gpu->target(TIDE_GPU_TARGET_COLOR, pixel_width, pixel_height);
         gpu_state.frame_width = pixel_width;
         gpu_state.frame_height = pixel_height;
     }
@@ -2437,7 +2580,7 @@ void tide_platform_read_pixels_as(const tide_draw_list *list, const int logical_
     }
     if (!gpu_state.target || gpu_state.target_width != width || gpu_state.target_height != height) {
         if (gpu_state.target) gpu->target_free(gpu_state.target);
-        gpu_state.target = gpu->target(width, height);
+        gpu_state.target = gpu->target(TIDE_GPU_TARGET_COLOR, width, height);
         gpu_state.target_pixels =
             tide_realloc(gpu_state.target_pixels, (size_t)gpu_state.target_width * (size_t)gpu_state.target_height * 4u,
                          (size_t)width * (size_t)height * 4u);

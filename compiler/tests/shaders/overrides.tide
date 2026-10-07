@@ -20,7 +20,7 @@ virtual float Dim(float value)
     return value * 0.75;
 }
 
-virtual frag Tint(Vertex vertex, mut Color color, Sun sun)
+virtual frag Tint(Vertex vertex, out Color color, Sun sun)
 {
     color = vertex.color;
     color.r = Dim(vertex.color.r) * sun.strength;

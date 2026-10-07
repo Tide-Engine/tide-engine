@@ -1,0 +1,19 @@
+// expect: the wrap is written here, 'Wrap.Clamp', 'Wrap.Repeat' or 'Wrap.Mirror'
+scene Main { }
+
+local singleton Models
+{
+    List<Vertex> corners;
+    Grid2<Color> wood = Grid2(4, 4);
+}
+
+frag Shade(Vertex vertex, out Color color, Models models)
+{
+    Wrap past = Wrap.Repeat;
+    color = models.wood.Sample(vertex.uv, Filter.Point, past);
+}
+
+view Show(Models models)
+{
+    Draw2D.Mesh(models.corners, [0, 1, 2], Shade);
+}

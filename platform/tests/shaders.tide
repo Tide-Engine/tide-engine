@@ -58,6 +58,20 @@ struct Finish
     int layers = 1;
 }
 
+// What a vert works out for its frag, which no vertex of a mesh carries
+struct Handed
+{
+    float across;
+    Color paint;
+    float unread; // Written, and read by no frag: it isn't carried
+}
+
+struct Extra
+{
+    float level;
+    float2 pair;
+}
+
 component Box
 {
     float3 pos;
@@ -99,12 +113,14 @@ local singleton Art
     List<Corner2> flat;
     List<Corner2> onScreen;
     List<int> faces;
+    List<int> backFaces; // The same triangles, their corners the other way round
     List<Vertex3> manualMesh;
     List<float4x4> manualTransforms;
     List<Batch3> manual3;
     List<Batch2> manual2;
     List<Batch2> manualTextured;
     List<Batch3> empty;
+    List<Batch3> handedItems;
     Grid2<Color> four = Grid2(2, 2);
     Color paint = Color(1, 0.5, 0);
     int frames;
@@ -120,6 +136,14 @@ local singleton Art
     RenderTarget exact;
     bool sized;
     float2 window;
+    // What a uv past a texture's edges reads (pass 7)
+    RenderTarget tiles; // Two pixels by two, as `four`
+    bool tiled;
+    List<Vertex> tile;        // 48 pixels across from its corner, its uvs to (2, 2)
+    List<Vertex> wideTile;    // 96 across and 24 down
+    List<Corner2> cornerTile; // ...of a vertex of the game's
+    List<Vertex3> tile3;      // 24 across, around its middle
+    List<float4x4> tilePlaces;
 }
 
 float3 Cell(int column, int row)
@@ -146,14 +170,15 @@ Color Lighting(Sun sun)
     return Sunlight(sun);
 }
 
-frag Tinted(Corner3 vertex, mut Color color, Box box, Sun sun)
+frag Tinted(Corner3 vertex, out Color color, Box box, Sun sun)
 {
     color = box.tint * Lighting(sun);
 }
 
-// Leaves its pixel as it starts
-frag Blank(Corner3 vertex, mut Color color)
+// Writes white, and reads nothing
+frag Blank(Corner3 vertex, out Color color)
 {
+    color = Color.white;
 }
 
 vert Shift(mut Corner3 vertex, Sun sun)
@@ -161,12 +186,12 @@ vert Shift(mut Corner3 vertex, Sun sun)
     vertex.position.x += sun.shift;
 }
 
-frag Wood(Corner3 vertex, mut Color color, Art art)
+frag Wood(Corner3 vertex, out Color color, Art art)
 {
     color = art.four.Sample(vertex.uv, Filter.Point);
 }
 
-frag Smooth(Corner3 vertex, mut Color color, Art art)
+frag Smooth(Corner3 vertex, out Color color, Art art)
 {
     color = art.four.Sample(vertex.uv);
 }
@@ -174,24 +199,24 @@ frag Smooth(Corner3 vertex, mut Color color, Art art)
 // ---------------------------------------------------------------------------
 // Where the pixel is, and how the mesh was drawn
 
-frag Split(Corner3 vertex, mut Color color, Pixel pixel, Marks marks)
+frag Split(Corner3 vertex, out Color color, Pixel pixel, Marks marks)
 {
     color = pixel.position.x < marks.split ? Color.red : Color.blue;
 }
 
-frag Hole(Corner3 vertex, mut Color color, Pixel pixel)
+frag Hole(Corner3 vertex, out Color color, Pixel pixel)
 {
     float2 from = vertex.uv - float2(0.5, 0.5);
     if (Math.Abs(from.x) < 0.2 && Math.Abs(from.y) < 0.2) pixel.Discard();
     color = Color.magenta;
 }
 
-frag World(Corner3 vertex, mut Color color, Pixel pixel, Marks marks)
+frag World(Corner3 vertex, out Color color, Pixel pixel, Marks marks)
 {
     color = pixel.world.x > marks.world ? Color.green : Color.red;
 }
 
-frag ByDepth(Corner3 vertex, mut Color color, Pixel pixel)
+frag ByDepth(Corner3 vertex, out Color color, Pixel pixel)
 {
     color = Color(pixel.depth * 10, 0, 0);
 }
@@ -201,18 +226,18 @@ vert Turn(mut Corner3 vertex, Instance instance)
     vertex.normal = Math.Rotate(instance.transform, vertex.normal);
 }
 
-frag Normal(Corner3 vertex, mut Color color)
+frag Normal(Corner3 vertex, out Color color)
 {
     color = Color(vertex.normal.x * 0.5 + 0.5, vertex.normal.y * 0.5 + 0.5, vertex.normal.z * 0.5 + 0.5);
 }
 
-frag Placed(Corner3 vertex, mut Color color, Instance instance, Marks marks)
+frag Placed(Corner3 vertex, out Color color, Instance instance, Marks marks)
 {
     color = instance.transform.c3.x == marks.placed ? Color.cyan : Color.red;
 }
 
 // Ints, bools, enums and structs of a component, for each instance
-frag Lit(Corner3 vertex, mut Color color, Lamp lamp)
+frag Lit(Corner3 vertex, out Color color, Lamp lamp)
 {
     if (lamp.kind == 1)
     {
@@ -230,7 +255,7 @@ frag Lit(Corner3 vertex, mut Color color, Lamp lamp)
 // ---------------------------------------------------------------------------
 // 2D
 
-frag Paint(Corner2 vertex, mut Color color, Art art)
+frag Paint(Corner2 vertex, out Color color, Art art)
 {
     color = art.paint;
 }
@@ -245,12 +270,12 @@ vert Place(mut Corner2 vertex, Lamp lamp)
     vertex.position += lamp.at;
 }
 
-frag Glow(Corner2 vertex, mut Color color, Lamp lamp)
+frag Glow(Corner2 vertex, out Color color, Lamp lamp)
 {
     color = lamp.glow;
 }
 
-frag Stripe(Corner2 vertex, mut Color color, Pixel pixel, Marks marks)
+frag Stripe(Corner2 vertex, out Color color, Pixel pixel, Marks marks)
 {
     color = pixel.position.y < marks.line ? Color.yellow : Color.cyan;
 }
@@ -261,7 +286,7 @@ vert BatchPlace3(mut Corner3 vertex, Batch3 item)
     Bump(vertex.position.x, item.kind);
 }
 
-frag BatchPaint3(Corner3 vertex, mut Color color, Batch3 item, Instance instance)
+frag BatchPaint3(Corner3 vertex, out Color color, Batch3 item, Instance instance)
 {
     color = instance.transform.c3.z == 5 && item.kind < 3 ? item.tint : Color.magenta;
 }
@@ -271,9 +296,70 @@ vert BatchPlace2(mut Corner2 vertex, Batch2 item)
     vertex.position += item.at;
 }
 
-frag BatchPaint2(Corner2 vertex, mut Color color, Batch2 item, Instance instance)
+frag BatchPaint2(Corner2 vertex, out Color color, Batch2 item, Instance instance)
 {
     color = item.kind == 3 && instance.transform.c0.x == 1 && item.transform.c3.x == 10000 ? item.tint : Color.magenta;
+}
+
+// ---------------------------------------------------------------------------
+// What a vert writes for its frag: an `out` struct of the vert's, which the
+// frag reads blended across the triangle
+
+// A field at a time
+vert Hand(mut Corner3 vertex, out Handed handed, out Extra extra)
+{
+    handed.across = vertex.uv.x;
+    handed.paint = Color(0, 1, 0);
+    handed.unread = vertex.uv.y;
+    extra.level = 1;
+    extra.pair = float2(0, vertex.uv.y);
+}
+
+// Reads one of the two, and not all of it
+frag Take(Corner3 vertex, Handed handed, out Color color)
+{
+    color = Color(handed.across, handed.paint.g, 0);
+}
+
+Color Mixed(Extra extra)
+{
+    return Color(extra.level, extra.pair.x, extra.pair.y);
+}
+
+// Reads the other, whole
+frag TakeWhole(Corner3 vertex, out Color color, Extra extra)
+{
+    color = Mixed(extra);
+}
+
+// A path that draws no pixel writes no color
+frag TakeHalf(Corner3 vertex, Handed handed, out Color color, Pixel pixel)
+{
+    if (handed.across < 0.5) pixel.Discard();
+    color = handed.paint;
+}
+
+// All at once, from an instance's struct, which the frag reads beside it
+vert HandItem(mut Corner3 vertex, out Handed handed, Batch3 item)
+{
+    handed = Handed { across = vertex.uv.x, paint = Color(1, 0.5, 1), unread = item.kind };
+}
+
+frag TakeItem(Corner3 vertex, Batch3 item, Handed handed, out Color color)
+{
+    color = item.tint * handed.paint;
+}
+
+vert Hand2(mut Corner2 vertex, out Handed handed, Sun sun)
+{
+    handed.across = vertex.uv.y;
+    handed.paint = sun.light;
+    handed.unread = 0;
+}
+
+frag Take2(Corner2 vertex, out Color color, Handed handed)
+{
+    color = Color(0, handed.across, handed.paint.r);
 }
 
 // ---------------------------------------------------------------------------
@@ -331,7 +417,14 @@ bool Near(float a, float b)
     return Math.Abs(a - b) < 0.001;
 }
 
-frag Sink(Corner3 vertex, mut Color color, Marks marks)
+// Halfway between two colors a byte each: a GPU that blends in bytes gives 127
+// or 128 of 255, where one that blends in floats gives a half.
+bool Halfway(float a)
+{
+    return Math.Abs(a - 0.5) < 0.003;
+}
+
+frag Sink(Corner3 vertex, out Color color, Marks marks)
 {
     mut bool ok = true;
 
@@ -465,7 +558,7 @@ float First(float3 v, float least)
     return -1;
 }
 
-frag More(Corner3 vertex, mut Color color)
+frag More(Corner3 vertex, out Color color)
 {
     mut bool ok = true;
 
@@ -559,7 +652,7 @@ frag More(Corner3 vertex, mut Color color)
 // worked out, and nothing else: what a shader's compiler makes of a loop's
 // first line is all this frag asks of it. (One compiler lost a function that
 // only such lines called.)
-frag Counts(Corner3 vertex, mut Color color)
+frag Counts(Corner3 vertex, out Color color)
 {
     mut int around = 0;
     for (int row = -1; row <= 1; row++)
@@ -573,7 +666,7 @@ frag Counts(Corner3 vertex, mut Color color)
 
 // A loop that starts under 0 and samples as it goes, as a blur does: the
 // grid's first row, a cell to each side of its middle.
-frag Around(Corner3 vertex, mut Color color, Art art)
+frag Around(Corner3 vertex, out Color color, Art art)
 {
     mut var sum = Color(0, 0, 0, 0);
     for (int x = -1; x <= 1; x += 2) sum = sum + art.four.Sample(float2(0.5 + x * 0.25, 0.25), Filter.Point);
@@ -926,22 +1019,22 @@ bool SameRest(Rest a, Rest b)
     return same && a.wrongInts.x == b.wrongInts.x && a.wrongInts.y == b.wrongInts.y;
 }
 
-frag HashFrag(Corner3 vertex, mut Color color, Probe probe)
+frag HashFrag(Corner3 vertex, out Color color, Probe probe)
 {
     color = SameHashes(HashesOf(probe.given), probe.hashes) ? Color.green : Color.red;
 }
 
-frag TurnFrag(Corner3 vertex, mut Color color, Probe probe)
+frag TurnFrag(Corner3 vertex, out Color color, Probe probe)
 {
     color = SameTurns(TurnsOf(probe.given), probe.turns) ? Color.green : Color.red;
 }
 
-frag MatrixFrag(Corner3 vertex, mut Color color, Probe probe)
+frag MatrixFrag(Corner3 vertex, out Color color, Probe probe)
 {
     color = SameMatrices(MatricesOf(probe.given), probe.matrices) ? Color.green : Color.red;
 }
 
-frag RestFrag(Corner3 vertex, mut Color color, Probe probe)
+frag RestFrag(Corner3 vertex, out Color color, Probe probe)
 {
     color = SameRest(RestOf(probe.given), probe.rest) ? Color.green : Color.red;
 }
@@ -976,32 +1069,83 @@ vert Checks(mut Corner3 vertex, Art art)
 
 // Explicit Texture inputs, target colors, and Texture fields use the same
 // top-left UVs. Point and bilinear bindings can share one image in a shader.
-frag TargetCopy(Vertex vertex, mut Color color, Texture source)
+frag TargetCopy(Vertex vertex, out Color color, Texture source)
 {
     color = source.Sample(vertex.uv, Filter.Point);
 }
 
-frag TargetAlpha(Vertex vertex, mut Color color, Texture source)
+frag TargetAlpha(Vertex vertex, out Color color, Texture source)
 {
     color = source.Sample(vertex.uv, Filter.Point);
     color.a = 0.25;
 }
 
-frag TargetInspect(Vertex vertex, mut Color color, Texture source, Art art)
+frag TargetInspect(Vertex vertex, out Color color, Texture source, Art art)
 {
     Color nearest = art.targetTexture.Sample(float2(0.25, 0.25), Filter.Point);
     Color middle = art.targetTexture.Sample(float2(0.5, 0.5));
     Color sampled = source.Sample(vertex.uv, Filter.Point);
     bool correct = nearest.r > 0.99 && nearest.g < 0.01 && nearest.b < 0.01
-                && Near(middle.r, 0.5) && Near(middle.g, 0.5) && Near(middle.b, 0.5);
+                && Halfway(middle.r) && Halfway(middle.g) && Halfway(middle.b);
     color = correct ? Color(sampled.a, sampled.r, sampled.g) : Color.magenta;
 }
 
 // Where a pixel is, over the window's size: in logical pixels, so the same
 // picture on a display of any scale, in a target as in the window.
-frag Where(Vertex vertex, mut Color color, Texture source, Pixel pixel, Art art)
+frag Where(Vertex vertex, out Color color, Texture source, Pixel pixel, Art art)
 {
     color = Color(pixel.position.x / art.window.x, pixel.position.y / art.window.y, 0);
+}
+
+// What a uv past a texture's edges reads, said where it's sampled (pass 7).
+frag Clamped(Vertex vertex, out Color color, Art art)
+{
+    color = art.four.Sample(vertex.uv, Filter.Point, Wrap.Clamp);
+}
+
+frag Repeated(Vertex vertex, out Color color, Art art)
+{
+    color = art.four.Sample(vertex.uv, Filter.Point, Wrap.Repeat);
+}
+
+frag Mirrored(Vertex vertex, out Color color, Art art)
+{
+    color = art.four.Sample(vertex.uv, Filter.Point, Wrap.Mirror);
+}
+
+// The Texture its draw gives it: a target's color
+frag SourceMirrored(Vertex vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv, Filter.Point, Wrap.Mirror);
+}
+
+// One grid read two ways in one frag: its left half repeats, and its right half mirrors
+frag BothWays(Vertex vertex, out Color color, Art art)
+{
+    if (vertex.uv.x < 1) color = art.four.Sample(vertex.uv, Filter.Point, Wrap.Repeat);
+    else color = art.four.Sample(vertex.uv, Filter.Point, Wrap.Mirror);
+}
+
+// Blended: what a cell at the edge blends with is what the wrap says is past it
+frag SmoothRepeated(Vertex vertex, out Color color, Art art)
+{
+    color = art.four.Sample(vertex.uv, Filter.Bilinear, Wrap.Repeat);
+}
+
+frag SmoothMirrored(Vertex vertex, out Color color, Art art)
+{
+    color = art.four.Sample(vertex.uv, Filter.Bilinear, Wrap.Mirror);
+}
+
+// A vert samples past the edges too
+vert TileChecks(mut Vertex vertex, Art art)
+{
+    Color repeated = art.four.Sample(float2(1.25, 0.25), Filter.Point, Wrap.Repeat); // As (0.25, 0.25): red
+    Color mirrored = art.four.Sample(float2(1.25, 0.25), Filter.Point, Wrap.Mirror); // As (0.75, 0.25): green
+    Color clamped = art.four.Sample(float2(1.25, 1.25), Filter.Point);               // Its last cell: white
+    bool correct = repeated.r > 0.99 && repeated.g < 0.01 && mirrored.g > 0.99 && mirrored.r < 0.01
+                && clamped.r > 0.99 && clamped.b > 0.99;
+    vertex.color = correct ? Color.white : Color.magenta;
 }
 
 vert TextureChecks(mut Vertex vertex, Texture source)
@@ -1009,7 +1153,7 @@ vert TextureChecks(mut Vertex vertex, Texture source)
     Color nearest = source.Sample(float2(0.25, 0.25), Filter.Point);
     Color middle = source.Sample(float2(0.5, 0.5));
     bool correct = nearest.r > 0.99 && nearest.g < 0.01 && nearest.b < 0.01
-                && Near(middle.r, 0.5) && Near(middle.g, 0.5) && Near(middle.b, 0.5);
+                && Halfway(middle.r) && Halfway(middle.g) && Halfway(middle.b);
     vertex.color = correct ? Color.white : Color.magenta;
 }
 
@@ -1063,6 +1207,7 @@ view Start(mut Art art, mut Probe probe)
         art.onScreen = [Corner2 { position = float2(132, 132) }, Corner2 { position = float2(156, 132) },
                         Corner2 { position = float2(156, 156) }, Corner2 { position = float2(132, 156) }];
         art.faces = [0, 1, 2, 0, 2, 3];
+        art.backFaces = [0, 2, 1, 0, 3, 2];
         art.targetQuad = [Vertex { position = float2(0, 0) },
                           Vertex { position = float2(Screen.width, 0), uv = float2(1, 0) },
                           Vertex { position = float2(Screen.width, Screen.height), uv = float2(1, 1) },
@@ -1080,6 +1225,7 @@ view Start(mut Art art, mut Probe probe)
                        Batch2 { at = Spot(5, 7), tint = Color.cyan, kind = 3,
                                transform = float4x4.Translate(float3(10000)) }];
         art.manualTextured = [Batch2 { at = Spot(6, 7) }];
+        art.handedItems = [Batch3 { transform = float4x4.Translate(Cell(3, 1)), tint = Color(0, 1, 1) }];
         art.four[0, 0] = Color.red;
         art.four[1, 0] = Color.green;
         art.four[0, 1] = Color.blue;
@@ -1120,6 +1266,11 @@ view Singles(Art art)
     Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(2, 5)), More);
     Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(7, 3)), Counts);
     Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(7, 5)), Around);
+
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(3, 0)), Hand, Take);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(1, 1)), Hand, TakeWhole);
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(6, 2)), Hand); // What it writes goes nowhere
+    Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(4, 6)), Hand, TakeHalf);
 }
 
 view Lamps(Lamp lamp, Art art)
@@ -1154,6 +1305,8 @@ view Flat(Art art)
     Draw2D.Mesh(art.flat, art.faces, art.four, Filter.Point);
     Draw2D.SetCamera(-Spot(5, 4), Screen.height / 2);
     Draw2D.Mesh(art.flat, art.faces, Slide);
+    Draw2D.SetCamera(-Spot(1, 4), Screen.height / 2);
+    Draw2D.Mesh(art.flat, art.faces, Hand2, Take2);
 
     Draw2D.SetScreen();
     Draw2D.Mesh(art.onScreen, art.faces, Stripe);
@@ -1173,9 +1326,10 @@ view Manual(Art art)
     Draw3D.Instanced(art.manualMesh, art.faces, art.manualTransforms, art.four, Filter.Point);
     Draw2D.Instanced(art.flat, art.faces, art.manual2, BatchPlace2, BatchPaint2);
     Draw2D.Instanced(art.flat, art.faces, art.manualTextured, art.four, Filter.Point, BatchPlace2);
+    Draw3D.Instanced(art.quad, art.faces, art.handedItems, HandItem, TakeItem);
 }
 
-frag Bare(Corner3 vertex, mut Color color)
+frag Bare(Corner3 vertex, out Color color)
 {
     color = Color.white;
 }
@@ -1214,6 +1368,46 @@ view Settings(Art art)
     Draw.Tint(Color(0, 1, 0, 1))
     {
         Draw3D.Mesh(art.quad, art.faces, float4x4.identity, Bare);
+    }
+}
+
+// A vert that mirrors its mesh itself, which nothing but the game knows of:
+// its triangles reach the screen the other way round.
+vert Flip(mut Corner3 vertex)
+{
+    vertex.position.x = -vertex.position.x;
+}
+
+// A quarter of a cell: the quad at two fifths of its size, `right` and `down`
+// pixels from the cell's middle, mirrored left to right by `mirror` of -1.
+float4x4 Quarter(int column, int row, float right, float down, float mirror)
+{
+    return float4x4.TRS(Cell(column, row) + float3(right, -down, 0), quaternion.identity, float3(0.4 * mirror, 0.4, 1));
+}
+
+// Which side of a triangle draws: the front, the side its corners go
+// clockwise on, through a frag and a vert as without them.
+view Sides(Art art)
+{
+    // Mirrored by its own transform, its front is still its front
+    Draw3D.Mesh(art.quad, art.faces, Quarter(5, 6, -7, -7, -1), Blank);
+    // Seen from the back, it isn't drawn, mirrored or not, unless the draw says the back is
+    Draw3D.Mesh(art.quad, art.backFaces, Quarter(5, 6, 7, -7, 1), Blank);
+    Draw3D.Mesh(art.quad, art.backFaces, Quarter(5, 6, 7, 7, -1), Blank);
+    Draw3D.Cull(Cull.Front)
+    {
+        Draw3D.Mesh(art.quad, art.backFaces, Quarter(5, 6, -7, 7, 1), Blank);
+    }
+    // What a vert does to the triangles is the game's to draw for
+    Draw3D.Mesh(art.quad, art.faces, Quarter(6, 6, -7, -7, 1), Flip, Blank);
+    Draw3D.Mesh(art.quad, art.backFaces, Quarter(6, 6, 7, 7, 1), Flip, Blank);
+    Draw3D.Cull(Cull.Front)
+    {
+        Draw3D.Mesh(art.quad, art.faces, Quarter(6, 6, 7, -7, 1), Flip, Blank);
+    }
+    Draw3D.Cull(Cull.None)
+    {
+        Draw3D.Mesh(art.quad, art.faces, Quarter(6, 6, -7, 7, 1), Flip, Blank);
     }
 }
 
@@ -1262,12 +1456,208 @@ view ScreenTargets(mut Art art)
                  Vertex { position = float2(0, h), uv = float2(0, 1) }], art.faces, art.exact.color);
 }
 
+// What a uv past a texture's edges reads (pass 7): squares in the screen's
+// pixels whose uvs go to (2, 2), so each shows its texture twice across and
+// twice down, or what its wrap makes of that. The grid and the target are red,
+// green, blue and white, two by two.
+[After(ScreenTargets)]
+view Wraps(mut Art art)
+{
+    if (art.targetPass != 7) return;
+    if (!art.tiled)
+    {
+        art.tiles = RenderTarget(2, 2, 1);
+        art.tile = [Vertex { }, Vertex { position = float2(48, 0), uv = float2(2, 0) },
+                    Vertex { position = float2(48, 48), uv = float2(2, 2) }, Vertex { position = float2(0, 48), uv = float2(0, 2) }];
+        // Twice across its top row alone
+        art.wideTile = [Vertex { uv = float2(0, 0.25) }, Vertex { position = float2(96, 0), uv = float2(2, 0.25) },
+                        Vertex { position = float2(96, 24), uv = float2(2, 0.25) }, Vertex { position = float2(0, 24), uv = float2(0, 0.25) }];
+        art.cornerTile = [Corner2 { }, Corner2 { position = float2(48, 0), uv = float2(2, 0) },
+                          Corner2 { position = float2(48, 48), uv = float2(2, 2) }, Corner2 { position = float2(0, 48), uv = float2(0, 2) }];
+        art.tile3 = [Vertex3 { position = float3(-12, 12, 0) }, Vertex3 { position = float3(12, 12, 0), uv = float2(2, 0) },
+                     Vertex3 { position = float3(12, -12, 0), uv = float2(2, 2) }, Vertex3 { position = float3(-12, -12, 0), uv = float2(0, 2) }];
+        art.tilePlaces = [float4x4.Translate(Cell(2, 7)), float4x4.Translate(Cell(3, 7))];
+        art.tiled = true;
+    }
+    art.tiles.SetScreen();
+    art.tiles.Clear(Color.black);
+    art.tiles.Rect(float2(0.5, 0.5), float2(1), Color.red);
+    art.tiles.Rect(float2(1.5, 0.5), float2(1), Color.green);
+    art.tiles.Rect(float2(0.5, 1.5), float2(1), Color.blue);
+    art.tiles.Rect(float2(1.5, 1.5), float2(1), Color.white);
+
+    Draw2D.Clear(Color.black);
+    Draw2D.SetScreen();
+    Draw2D.SetClip();
+    // The engine's own vertices: the draw says the wrap, after the filter, and none is the cells at the edge
+    Draw2D.Transform(float2(8, 8))
+    {
+        Draw2D.Mesh(art.tile, art.faces, art.four, Filter.Point);
+    }
+    Draw2D.Transform(float2(64, 8))
+    {
+        Draw2D.Mesh(art.tile, art.faces, art.four, Filter.Point, Wrap.Repeat);
+    }
+    Draw2D.Transform(float2(120, 8))
+    {
+        Draw2D.Mesh(art.tile, art.faces, art.four, Filter.Point, Wrap.Mirror);
+    }
+    // A render target's color wraps as a grid does
+    Draw2D.Transform(float2(176, 8))
+    {
+        Draw2D.Mesh(art.tile, art.faces, art.tiles.color, Filter.Point, Wrap.Repeat);
+    }
+    // A frag says it where it samples
+    Draw2D.Transform(float2(8, 64))
+    {
+        Draw2D.Mesh(art.tile, art.faces, Clamped);
+    }
+    Draw2D.Transform(float2(64, 64))
+    {
+        Draw2D.Mesh(art.tile, art.faces, Repeated);
+    }
+    Draw2D.Transform(float2(120, 64))
+    {
+        Draw2D.Mesh(art.tile, art.faces, Mirrored);
+    }
+    Draw2D.Transform(float2(176, 64))
+    {
+        Draw2D.Mesh(art.tile, art.faces, art.tiles.color, SourceMirrored);
+    }
+    Draw2D.Transform(float2(8, 120))
+    {
+        Draw2D.Mesh(art.tile, art.faces, BothWays);
+    }
+    Draw2D.Transform(float2(64, 120))
+    {
+        Draw2D.Mesh(art.tile, art.faces, TileChecks);
+    }
+    // A vertex of the game's with no frag: one shader, whose draws say the wrap or leave it out
+    Draw2D.Transform(float2(120, 120))
+    {
+        Draw2D.Mesh(art.cornerTile, art.faces, art.four, Filter.Point, Wrap.Mirror);
+    }
+    Draw2D.Transform(float2(176, 120))
+    {
+        Draw2D.Mesh(art.cornerTile, art.faces, art.four, Filter.Point);
+    }
+    Draw2D.Transform(float2(8, 176))
+    {
+        Draw2D.Mesh(art.wideTile, art.faces, SmoothRepeated);
+    }
+    Draw2D.Transform(float2(120, 176))
+    {
+        Draw2D.Mesh(art.wideTile, art.faces, SmoothMirrored);
+    }
+    // 3D meshes, and a list's instances with a target's color
+    Draw3D.Mesh(art.tile3, art.faces, float4x4.Translate(Cell(0, 7)), art.four, Filter.Point, Wrap.Repeat);
+    Draw3D.Mesh(art.tile3, art.faces, float4x4.Translate(Cell(1, 7)), art.four, Filter.Point, Wrap.Mirror);
+    Draw3D.Instanced(art.tile3, art.faces, art.tilePlaces, art.tiles.color, Filter.Point, Wrap.Repeat);
+    Draw3D.Mesh(art.tile3, art.faces, float4x4.Translate(Cell(4, 7)), art.uploaded, Filter.Point, Wrap.Mirror);
+}
+
+// A shadow map, the whole way (pass 8). What's nearest the lamp goes into a
+// target of depth alone, through the lamp's camera, and the frag that lights
+// a pixel compares how far that pixel is from the lamp with what's stored
+// where the lamp sees it.
+local singleton Shadow
+{
+    RenderTarget map;      // Depth alone, 256 pixels by 256 whatever the display
+    DepthTexture depth;    // ...as the frags read it
+    float4x4 toLamp;       // From the world to the lamp's clip space
+    List<Vertex3> floor;
+    List<Vertex3> slab;    // Casts a shadow, and is lit itself
+    List<Vertex3> grate;   // Casts through a frag that leaves its left half out
+    List<Vertex> readout;  // Where the lamp's depth shows: the window's top left corner
+    bool made;
+}
+
+// Where a point of the world is in the lamp's image, a uv from its top left
+// corner, and how far from the lamp it is there, a depth from 0 to 1.
+float3 FromLamp(float3 world, float4x4 toLamp)
+{
+    float4 clip = Math.Mul(toLamp, float4(world, 1));
+    return float3(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5, clip.z * 0.5 + 0.5);
+}
+
+frag Shadowed(Vertex3 vertex, out Color color, Pixel pixel, Shadow shadow)
+{
+    float3 at = FromLamp(pixel.world, shadow.toLamp);
+    // A little nearer than it is, so what the lamp sees isn't in its own shadow
+    float lit = shadow.depth.Compare(at.xy, at.z - 0.01);
+    float shade = 0.25 + 0.75 * lit;
+    color = Color(vertex.color.r * shade, vertex.color.g * shade, vertex.color.b * shade);
+}
+
+// What a caster with holes in it is: its color goes nowhere in the lamp's
+// target, and the pixels it leaves out cast nothing.
+frag Grate(Vertex3 vertex, out Color color, Pixel pixel)
+{
+    if (vertex.uv.x < 0.5) pixel.Discard();
+    color = Color.magenta;
+}
+
+frag LampDepth(Vertex vertex, out Color color, Shadow shadow)
+{
+    float depth = shadow.depth.Sample(vertex.uv);
+    color = Color(depth, depth, depth);
+}
+
+[After(ScreenTargets)]
+view Shadows(Art art, mut Shadow shadow)
+{
+    if (art.targetPass != 8) return;
+    if (!shadow.made)
+    {
+        shadow.made = true;
+        shadow.map = RenderTarget(256, 256, 1, Format.DepthOnly);
+        shadow.depth = shadow.map.depth;
+        // The floor, 8 by 8 around the origin; a slab 1 above it; a grate 2 above it, its uv from 0 to 1 along x
+        shadow.floor = [Vertex3 { position = float3(-4, 0, 4) }, Vertex3 { position = float3(4, 0, 4) },
+                        Vertex3 { position = float3(4, 0, -4) }, Vertex3 { position = float3(-4, 0, -4) }];
+        shadow.slab = [Vertex3 { position = float3(-3, 1, 1), color = Color.red }, Vertex3 { position = float3(-1, 1, 1), color = Color.red },
+                       Vertex3 { position = float3(-1, 1, -1), color = Color.red }, Vertex3 { position = float3(-3, 1, -1), color = Color.red }];
+        shadow.grate = [Vertex3 { position = float3(0, 2, -1) }, Vertex3 { position = float3(2, 2, -1), uv = float2(1, 0) },
+                        Vertex3 { position = float3(2, 2, -3), uv = float2(1, 1) }, Vertex3 { position = float3(0, 2, -3), uv = float2(0, 1) }];
+        shadow.readout = [Vertex { position = float2(0, 0) }, Vertex { position = float2(64, 0), uv = float2(1, 0) },
+                          Vertex { position = float2(64, 64), uv = float2(1, 1) }, Vertex { position = float2(0, 64), uv = float2(0, 1) }];
+    }
+    // The lamp looks down and along +x, halfway between the two, from 10 away: a shadow falls as far
+    // along +x as what casts it is high. Its camera sees a box 16 by 16, with no perspective.
+    quaternion down = quaternion.AxisAngle(float3(1, 0, 0), Math.PI * 0.5);
+    quaternion slant = Math.Mul(quaternion.AxisAngle(float3(0, 0, 1), Math.PI * 0.25), down);
+    float4x4 lamp = float4x4.TRS(Math.Mul(slant, float3(0, 0, -10)), slant, float3(1));
+    float4x4 sees = float4x4.Ortho(16, 16, 0.1, 30);
+    // A camera looks along its +z, and clip space along -z: the world to the lamp's clip space is its
+    // projection, after z turned around, after the lamp's transform undone
+    shadow.toLamp = Math.Mul(sees, Math.Mul(float4x4.TRS(float3(0), quaternion.identity, float3(1, 1, -1)), Math.Inverse(lamp)));
+
+    // What casts, into the lamp's target: as far as a clear leaves it, then each caster's depth. The
+    // slab has no frag, and the grate's leaves half of it out; neither's color goes anywhere there
+    shadow.map.Clear(Color.white);
+    shadow.map.SetCamera(lamp, sees);
+    shadow.map.Mesh(shadow.slab, art.faces, float4x4.identity);
+    shadow.map.Mesh(shadow.grate, art.faces, float4x4.identity, Grate);
+    shadow.map.SetScreen();
+    shadow.map.Rect(float2(128, 128), float2(256), Color.blue);
+
+    // The window, from straight above: x to the right and z up, 8 by 8
+    Draw2D.SetClip();
+    Draw2D.Clear(Color.black);
+    Draw3D.SetCamera(float4x4.TRS(float3(0, 10, 0), down, float3(1)), float4x4.Ortho(8, 8, 0.1, 30));
+    Draw3D.Mesh(shadow.floor, art.faces, float4x4.identity, Shadowed);
+    Draw3D.Mesh(shadow.slab, art.faces, float4x4.identity, Shadowed);
+    // ...and what the lamp's target holds, as a picture
+    Draw2D.SetScreen();
+    Draw2D.Mesh(shadow.readout, art.faces, LampDepth);
+}
+
 // shaders.c requests independent full-window checks after the existing grid.
 // Resource descriptors are supplied by C, without choosing a Tide lifetime API.
 [After(Manual)]
 view Targets(mut Art art)
 {
-    if (art.targetPass == 0 || art.targetPass == 6) return; // 6 is ScreenTargets'
+    if (art.targetPass == 0 || art.targetPass >= 6) return; // 6 is ScreenTargets', 7 Wraps' and 8 Shadows'
     if (art.targetPass >= 4)
     {
         Draw2D.SetScreen();

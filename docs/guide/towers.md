@@ -62,7 +62,7 @@ Only the players' inputs go over the network: where each wants their brick, how 
 
 ## The code
 
-The game is `examples/towers` in the [repo](https://github.com/BlenMiner/tide-engine/tree/dev/examples/towers): six files of Tide, and a `tide.packages` that says `box2d`.
+Towers has six files of Tide, and a `tide.packages` that says `box2d`.
 
 - `game.tide` is the match, which every machine runs the same way. It's on this page, [whole](#the-match-whole).
 - `bots.tide` is how a tower nobody steers gets built: a plan for each brick, from how high the tower stands in each column.

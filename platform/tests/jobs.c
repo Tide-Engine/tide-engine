@@ -45,6 +45,106 @@ TIDE_TEST(jobs_workers_join)
     TIDE_CHECK(threads_seen & ~1u);
 }
 
+// A round that calls in a few of the pool's threads (run_some) has them in
+// it, beside the caller's.
+TIDE_TEST(jobs_some_workers_join)
+{
+    const tide_jobs *jobs = tide_platform_jobs();
+    if (!jobs || !jobs->run_some) {
+        printf("    one core: nothing to check\n");
+        return;
+    }
+    // On the web the workers are made by the first round that wants them all
+    jobs->run(jobs->self, note_thread, NULL);
+    static uint32_t some_seen;
+    for (int round = 0; round < 20000 && !(some_seen & ~1u); round++) {
+        threads_seen = 0;
+        jobs->run_some(jobs->self, 2, note_thread, NULL);
+        some_seen |= threads_seen;
+    }
+    TIDE_CHECK(some_seen & ~1u);
+}
+
+// A table with megabytes in it: an entity and four numbers a row, in chunks
+// of 2,048 rows.
+static const uint32_t wide_sizes[] = {sizeof(tide_entity), 4, 4, 4, 4};
+static const tide_columns wide = {5, 11, wide_sizes};
+
+static void widen(tide_table *t, const uint32_t rows)
+{
+    for (uint32_t i = 0; i < rows; i++) {
+        const uint32_t row = tide_table_add(t, &wide);
+        *(tide_entity *)tide_table_cell(t, &wide, row, 0) = (tide_entity){row, 1};
+        for (uint32_t k = 1; k < 5; k++) *(uint32_t *)tide_table_cell(t, &wide, row, k) = row * 2654435761u + k;
+    }
+}
+
+// What a hash would read again is hashed on a few of the pool's threads
+// first (tide_pages_hash), each page by one of them, whichever takes it, and
+// the hash that follows is the one a twin gets on one thread: round after
+// round of changes, megabytes of them or a few pages, which are left to this
+// thread. And as a game's own hash (tide_game.hash_world_on), whose generated
+// code gathers every page its hash asks of.
+TIDE_TEST(jobs_hash_what_changed_on_threads)
+{
+    const tide_jobs *jobs = tide_platform_jobs();
+    if (!jobs || !jobs->run_some) {
+        printf("    one core: nothing to compare\n");
+        return;
+    }
+    enum { ROWS = 200000 };
+    tide_table a = {0};
+    tide_table b = {0};
+    widen(&a, ROWS);
+    widen(&b, ROWS);
+    uint32_t dice = 1;
+    int shared = 0;
+    int alone = 0;
+    for (int round = 0; round < 60; round++) {
+        const uint32_t rows = round % 3 == 0 ? 40u : 4000u;
+        for (uint32_t i = 0; i < rows; i++) {
+            dice = dice * 1664525u + 1013904223u;
+            const uint32_t row = (dice >> 8) % ROWS;
+            const uint32_t column = 1u + (dice >> 28) % 4u;
+            *(uint32_t *)tide_table_cell(&a, &wide, row, column) = dice;
+            *(uint32_t *)tide_table_cell(&b, &wide, row, column) = dice;
+        }
+        tide_stale_pages stale = {0};
+        tide_table_stale(&a, &wide, &stale);
+        const uint32_t pages = stale.count;
+        const uint32_t hashed = tide_pages_hash(&stale, jobs);
+        TIDE_REQUIRE(hashed == 0u || hashed == pages);
+        if (hashed) {
+            shared++;
+            tide_table_stale(&a, &wide, &stale); // Every one of them has its hash kept
+            TIDE_REQUIRE(stale.count == 0u);
+            (void)tide_pages_hash(&stale, NULL);
+        } else {
+            alone++;
+        }
+        if (tide_table_hash(TIDE_HASH_START, &a, &wide) != tide_table_hash(TIDE_HASH_START, &b, &wide)) {
+            printf("    round %d came out different\n", round);
+        }
+        TIDE_REQUIRE(tide_table_hash(TIDE_HASH_START, &a, &wide) == tide_table_hash(TIDE_HASH_START, &b, &wide));
+    }
+    printf("    %d rounds were hashed with threads called in, and %d on this one alone\n", shared, alone);
+    // The first round's is every page, as no hash was kept of any yet, then two rounds in three
+    TIDE_CHECK(shared == 41 && alone == 19);
+    tide_table_free(&a, &wide);
+    tide_table_free(&b, &wide);
+
+    tide_world_init(&one, 1.0f / 60.0f);
+    tide_world_init(&many, 1.0f / 60.0f);
+    for (int t = 0; t < 60; t++) {
+        tide_world_tick(&one);
+        tide_world_tick(&many);
+        TIDE_REQUIRE(tide_game_api.hash_world_on(&many, jobs) == tide_world_hash(&one));
+        TIDE_REQUIRE(tide_world_hash(&many) == tide_world_hash(&one));
+    }
+    tide_world_free(&one);
+    tide_world_free(&many);
+}
+
 TIDE_TEST(jobs_threads_change_nothing)
 {
     const tide_jobs *jobs = tide_platform_jobs();
@@ -250,7 +350,7 @@ TIDE_TEST(jobs_threads_come_back)
     tide_queue queue = {0};
     tide_entities entities = {0};
     const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities, NULL};
-    const tide_jobs counted = {NULL, back_pool->threads, back_run, NULL, back_more};
+    const tide_jobs counted = {NULL, back_pool->threads, back_run, NULL, back_more, NULL};
     int ticks = 0;
     // A worker has to have joined the tick while its first system ran to have
     // left it: a few more ticks if none had yet

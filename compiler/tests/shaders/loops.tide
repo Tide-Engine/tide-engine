@@ -25,7 +25,7 @@ int Twice(int n)
     return n * 2;
 }
 
-frag Spread(Corner corner, mut Color color, Art art)
+frag Spread(Corner corner, out Color color, Art art)
 {
     mut var sum = Color(0, 0, 0, 0);
     // Numbers, one of them under 0: as they are

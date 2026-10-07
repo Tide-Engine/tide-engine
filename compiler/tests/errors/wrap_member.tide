@@ -1,0 +1,14 @@
+// expect: enum 'Wrap' has no member 'Tile'
+// expect: reads the cells at its edge, 'Wrap.Clamp'; the texture again, 'Wrap.Repeat'; or again the other way round each time, 'Wrap.Mirror'
+scene Main { }
+
+local singleton Art
+{
+    List<Vertex> corners;
+    Grid2<Color> tiles = Grid2(4, 4);
+}
+
+view Show(Art art)
+{
+    Draw2D.Mesh(art.corners, [0, 1, 2], art.tiles, Filter.Point, Wrap.Tile);
+}

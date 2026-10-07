@@ -1,0 +1,9 @@
+// expect: 'Make' can end without assigning 'pair.b'
+// expect: an 'out' parameter is assigned on every path that returns: 'pair = default;' fills it where there's nothing to give
+scene Main { }
+struct Pair { int a; int b; }
+void Make(int seed, out Pair pair)
+{
+    pair.a = seed;
+    if (seed > 0) pair.b = seed + 1;
+}

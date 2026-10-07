@@ -191,7 +191,7 @@ void tide_rows_end(tide_rows *rows)
             tide_page **p = page_of(rows, c, k);
             tide_page *own = *p;
             const size_t bytes = (size_t)in_chunk * width;
-            if (memcmp(tide_page_data(own), tide_page_data(was), bytes) == 0) { // No row changed: still shared, still hashed
+            if (tide_same_bytes(tide_page_data(own), tide_page_data(was), bytes)) { // No row changed: still shared, still hashed
                 *p = was;
                 tide_page_give(own);
                 continue;

@@ -29,12 +29,12 @@ event(Spawned) Setup(with Main)
     Spawn(Box);
 }
 
-frag Shade(V vertex, mut Color color, Box box)
+frag Shade(V vertex, out Color color, Box box)
 {
     color = box.tint;
 }
 
-frag Other(V vertex, mut Color color)
+frag Other(V vertex, out Color color)
 {
     color = Color.red;
 }

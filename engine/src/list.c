@@ -521,7 +521,7 @@ static void put_elements_at(const tide_list l, const uint32_t first, const char 
         const char *as_it_was = run(l, first + i, size, false, &n); // First: it says how many
         if (n > count - i) n = count - i;
         const char *mine = from + (size_t)i * size;
-        if (!compare || memcmp(as_it_was, mine, (size_t)n * size) != 0) {
+        if (!compare || !tide_same_bytes(as_it_was, mine, (size_t)n * size)) {
             memcpy(run_over(l, first + i, n, size), mine, (size_t)n * size);
         }
         i += n;
@@ -727,7 +727,7 @@ void tide_par_list_end(tide_par_list *l)
             const uint8_t *now = list_run(*l->list, first + i, l->size, &run);
             if (run > count - i) run = count - i;
             const uint8_t *mine = copy + (size_t)i * l->size;
-            if (memcmp(now, mine, (size_t)run * l->size) != 0) {
+            if (!tide_same_bytes(now, mine, (size_t)run * l->size)) {
                 memcpy(tide_list_at_mut(*l->list, first + i, l->size), mine, (size_t)run * l->size);
             }
             i += run;

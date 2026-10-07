@@ -2825,6 +2825,25 @@ int b3World_GetSnapshotGeometry( b3WorldId worldId, uint8_t* geometry, int capac
 	return own->byteCount;
 }
 
+// Tide: a world that was just made from an image with its sections at `bases` would write that image, byte
+// for byte, were it asked for one now. So that's its last image, as if it had been taken of it, and the next
+// can be written in parts: what the sets hold from here is what was awake in it and what's said after. Where
+// each section ends, and how many shapes have more than their room, are counted: nothing is written.
+static void b3SnapFollow( b3World* world, const int* bases )
+{
+	int sizes[b3_sectionCount];
+	b3RecBuffer buf = { 0 };
+	buf.fixed = true;
+	buf.countOnly = true;
+	buf.bases = bases;
+	buf.sizes = sizes;
+	b3SerializeWorld( world, &buf, NULL );
+	if ( buf.failed == false && buf.overran == false )
+	{
+		b3SnapCommit( world, bases, sizes, true );
+	}
+}
+
 bool b3World_Restore( b3WorldId worldId, const uint8_t* image, int size, const uint8_t* geometry, int geometrySize )
 {
 	// Validate what can be before touching the world, so bytes that are no image leave it intact
@@ -2849,5 +2868,16 @@ bool b3World_Restore( b3WorldId worldId, const uint8_t* image, int size, const u
 	b3FreeLiveSimElements( world );
 	b3SnapGeometryLoad( world, geometry, geometrySize );
 
-	return b3DeserializeIntoShell( image, size, world, NULL );
+	if ( b3DeserializeIntoShell( image, size, world, NULL ) == false )
+	{
+		return false;
+	}
+
+	// Tide: the image this world would write now is the one it was made from, which the caller has: its
+	// next image goes on from that one (see b3SnapTrack)
+	if ( reader.sectioned )
+	{
+		b3SnapFollow( world, reader.bases );
+	}
+	return true;
 }

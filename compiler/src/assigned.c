@@ -2,62 +2,116 @@
 
 #include "ast.h"
 
-// Definite assignment, as C#'s, for the two kinds of variable that start
-// without a value: a function's or method's `out` parameters, and the locals
-// `out` arguments declare (`out var health`).
+// Definite assignment, as C#'s, for the kinds of variable that start without
+// a value: a function's or method's `out` parameters, what a frag and a vert
+// write (a frag's `out Color`, the structs a vert takes as `out` for its
+// frag), and the locals `out` arguments declare (`out var health`).
 //
 // An `out` parameter is assigned before the code reads it, and on every path
 // that returns: `fail` owes it nothing, as a call that fails gives its `out`
-// variables their type's default (codegen). A local an `out` argument declares
-// is assigned once the call it's written in has run, which `&&`, `||`, `?:`
-// and `??` can skip: it's only read where the call ran.
+// variables their type's default (codegen), and neither does a frag's path
+// that ends in `pixel.Discard()`, which draws no pixel. A local an `out`
+// argument declares is assigned once the call it's written in has run, which
+// `&&`, `||`, `?:` and `??` can skip: it's only read where the call ran.
 //
-// The state is a byte per variable, set where it's assigned on every path
-// there. Where no path leads (after a return, a break, a `while (true)` with no
-// break), every variable counts as assigned, as in C#, so joining such a place
-// with another changes nothing. Assignments only add, so a loop's start is as
-// what's before the loop left it, and one pass over the code is enough.
+// A struct is assigned whole, or a field at a time, as in C#: it has a value
+// once each of its fields does, and a field is read once it's assigned. That's
+// its own fields: a field of a struct in it is a part of that field.
+//
+// The state is a byte per slot, a variable's, or one for each field of a
+// struct, set where it's assigned on every path there. Where no path leads
+// (after a return, a break, a `while (true)` with no break), every slot counts
+// as assigned, as in C#, so joining such a place with another changes nothing.
+// Assignments only add, so a loop's start is as what's before the loop left
+// it, and one pass over the code is enough.
 
 typedef struct flow {
-    program *prog;            // For the fixes editors offer
-    const decl *code;         // The function or method, for its `out` parameters; NULL for other code
-    VEC(const void *) vars;   // Each variable: a param of `code`, or the S_VAR an `out` argument declares
-    int params;               // ...the first of them are the parameters
-    bool *reported;           // By variable: a read before its assignment was said
-    VEC(uint8_t *) breaks;    // By loop and switch being gone through: what's assigned at each of its breaks
-    VEC(uint8_t *) continues; // By loop: at each of its continues
-    int comparing;            // In a Sort's comparison block, whose returns are its own
+    program *prog;             // For the fixes editors offer
+    const decl *code;          // The function, method, frag or vert, for its `out` parameters; NULL for other code
+    VEC(const void *) vars;    // Each variable: a param of `code`, or the S_VAR an `out` argument declares
+    VEC(const decl *) structs; // ...the struct it is, assigned a field at a time, or NULL
+    VEC(int) firsts;           // ...and its first slot
+    int slots;                 // A slot a variable, or one for each field of a struct
+    int params;                // The first of the variables are the parameters
+    bool *reported;            // By variable: a read before its assignment was said
+    VEC(uint8_t *) breaks;     // By loop and switch being gone through: what's assigned at each of its breaks
+    VEC(uint8_t *) continues;  // By loop: at each of its continues
+    int comparing;             // In a Sort's comparison block, whose returns are its own
 } flow;
 
 static uint8_t *state_new(const flow *f, const uint8_t value)
 {
-    uint8_t *s = arena_alloc((size_t)(f->vars.count ? f->vars.count : 1));
-    memset(s, value, (size_t)f->vars.count);
+    uint8_t *s = arena_alloc((size_t)(f->slots ? f->slots : 1));
+    memset(s, value, (size_t)f->slots);
     return s;
 }
 
 static uint8_t *state_copy(const flow *f, const uint8_t *from)
 {
-    uint8_t *s = arena_alloc((size_t)(f->vars.count ? f->vars.count : 1));
-    memcpy(s, from, (size_t)f->vars.count);
+    uint8_t *s = arena_alloc((size_t)(f->slots ? f->slots : 1));
+    memcpy(s, from, (size_t)f->slots);
     return s;
 }
 
 // What's assigned on both of two paths, into `into`.
 static void state_meet(const flow *f, uint8_t *into, const uint8_t *other)
 {
-    for (int i = 0; i < f->vars.count; i++) into[i] &= other[i];
+    for (int i = 0; i < f->slots; i++) into[i] &= other[i];
 }
 
 static void state_set(const flow *f, uint8_t *into, const uint8_t *from)
 {
-    memcpy(into, from, (size_t)f->vars.count);
+    memcpy(into, from, (size_t)f->slots);
 }
 
 // No path leads here: everything counts as assigned.
 static void state_end(const flow *f, uint8_t *s)
 {
-    memset(s, 1, (size_t)f->vars.count);
+    memset(s, 1, (size_t)f->slots);
+}
+
+// A variable that starts without a value: its slots, one for each field where
+// it's a struct.
+static void add_var(flow *f, const void *var, const type t)
+{
+    const decl *of = t.kind == TY_STRUCT && t.decl && t.decl->fields.count > 0 ? t.decl : NULL;
+    vec_push(f->vars, var);
+    vec_push(f->structs, of);
+    vec_push(f->firsts, f->slots);
+    f->slots += of ? of->fields.count : 1;
+}
+
+static int slot_count(const flow *f, const int v)
+{
+    return f->structs.items[v] ? f->structs.items[v]->fields.count : 1;
+}
+
+// Whether all of variable `v` is assigned. `missing` gets its first field
+// that isn't, where it's a struct with some that are.
+static bool var_assigned(const flow *f, const int v, const uint8_t *st, const field **missing)
+{
+    const int first = f->firsts.items[v], count = slot_count(f, v);
+    int assigned = 0, lacks = -1;
+    for (int i = 0; i < count; i++) {
+        if (st[first + i]) assigned++;
+        else if (lacks < 0) lacks = i;
+    }
+    const decl *of = f->structs.items[v];
+    int hidden = 0; // The layout's own fields, which start assigned
+    for (int i = 0; of && i < of->fields.count; i++) hidden += of->fields.items[i].hidden;
+    if (missing) *missing = lacks >= 0 && assigned > hidden && of ? &of->fields.items[lacks] : NULL;
+    return lacks < 0;
+}
+
+static void assign_var(const flow *f, const int v, uint8_t *st)
+{
+    memset(st + f->firsts.items[v], 1, (size_t)slot_count(f, v));
+}
+
+// A frag or a vert, which writes what a function assigns.
+static bool gpu(const flow *f)
+{
+    return f->code && f->code->kind == DECL_SHADER;
 }
 
 // Which variable a name is, or -1 for one that always has a value.
@@ -73,6 +127,33 @@ static int var_of(const flow *f, const expr *e)
     return -1;
 }
 
+// The slot `e` stands for where it's one field of a struct variable,
+// `lamp.place`, or -1.
+static int field_slot(const flow *f, const expr *e)
+{
+    if (!e || e->kind != E_MEMBER || !e->field || e->swizzle_len > 0) return -1;
+    const int v = var_of(f, e->object);
+    const decl *of = v < 0 ? NULL : f->structs.items[v];
+    for (int i = 0; of && i < of->fields.count; i++) {
+        if (&of->fields.items[i] == e->field) return f->firsts.items[v] + i;
+    }
+    return -1;
+}
+
+// What an `out` argument or a plain assignment's target names: a whole
+// variable, or one field of a struct.
+static bool names_place(const flow *f, const expr *e)
+{
+    return var_of(f, e) >= 0 || field_slot(f, e) >= 0;
+}
+
+static void assign_place(const flow *f, const expr *e, uint8_t *st)
+{
+    const int v = var_of(f, e);
+    if (v >= 0) assign_var(f, v, st);
+    else if (field_slot(f, e) >= 0) st[field_slot(f, e)] = 1;
+}
+
 static void find_stmt(flow *f, const stmt *s);
 
 // The locals `out` arguments declare in an expression, and in the blocks
@@ -80,7 +161,7 @@ static void find_stmt(flow *f, const stmt *s);
 static void find_expr(flow *f, const expr *e)
 {
     if (!e) return;
-    if (e->kind == E_NAME && e->out_local && !e->out_local->discard) vec_push(f->vars, e->out_local);
+    if (e->kind == E_NAME && e->out_local && !e->out_local->discard) add_var(f, e->out_local, e->out_local->type);
     find_expr(f, e->object);
     find_expr(f, e->lhs);
     find_expr(f, e->rhs);
@@ -113,27 +194,52 @@ static void find_stmt(flow *f, const stmt *s)
 static void flow_stmt(flow *f, const stmt *s, uint8_t *st);
 static void flow_expr(flow *f, const expr *e, uint8_t *st);
 
-// A name read: it has to be assigned on every path here.
-static void flow_read(flow *f, const expr *e, uint8_t *st)
+// A name read, or one field of a struct (`part`, of `name.part`): it has to
+// be assigned on every path here.
+static void flow_read(flow *f, const expr *e, const field *part, uint8_t *st)
 {
-    const int v = var_of(f, e);
-    if (v < 0 || st[v]) return;
-    st[v] = 1; // Said once along this path
+    const expr *name = part ? e->object : e;
+    const int v = var_of(f, name);
+    if (v < 0) return;
+    const field *missing = NULL;
+    if (part) {
+        const int slot = field_slot(f, e);
+        if (st[slot]) return;
+        st[slot] = 1; // Said once along this path
+    } else {
+        if (var_assigned(f, v, st, &missing)) return;
+        assign_var(f, v, st);
+    }
     if (f->reported[v]) return;
     f->reported[v] = true;
-    if (v < f->params) {
-        diag_error(e->at, "'" STR_FMT "' is read before it's assigned", STR_ARG(e->name));
-        diag_note("an 'out' parameter starts unassigned: what the caller's variable held isn't passed in. Assign it first, "
-                  "or take it as 'mut " STR_FMT " " STR_FMT "' to read what the caller has",
-                  STR_ARG(e->param->type_name), STR_ARG(e->name));
-        const fix first = {.kind = FIX_ASSIGN_FIRST, .at = e->at, .param = e->param, .method = f->code};
-        vec_push(f->prog->fixes, first);
-    } else {
-        diag_error(e->at, "'" STR_FMT "' isn't assigned here: the call that makes it may not have run", STR_ARG(e->name));
+    if (v >= f->params) {
+        diag_error(e->at, "'" STR_FMT "' isn't assigned here: the call that makes it may not have run", STR_ARG(name->name));
         diag_note("it's assigned once the call that takes 'out " STR_FMT "' has run, which '&&', '||', '?:' and '?\?' can "
                   "skip: read '" STR_FMT "' where that call ran, like in the 'if' it's the condition of",
-                  STR_ARG(e->name), STR_ARG(e->name));
+                  STR_ARG(name->name), STR_ARG(name->name));
+        return;
     }
+    const param *p = name->param;
+    const char *done = gpu(f) ? "written" : "assigned";
+    if (part) {
+        diag_error(e->at, "'" STR_FMT "." STR_FMT "' is read before it's %s", STR_ARG(name->name), STR_ARG(part->name), done);
+    } else if (missing) {
+        diag_error(e->at, "'" STR_FMT "' is read before its '" STR_FMT "' is %s", STR_ARG(name->name), STR_ARG(missing->name), done);
+    } else {
+        diag_error(e->at, "'" STR_FMT "' is read before it's %s", STR_ARG(name->name), done);
+    }
+    if (gpu(f) && f->code->is_frag) {
+        diag_note("a frag's 'out Color' starts with no value, where 'mut Color' started white: write it first, like '" STR_FMT
+                  " = Color.white;'", STR_ARG(name->name));
+    } else if (gpu(f)) {
+        diag_note("what a vert writes for its frag starts with no value: write it before reading it");
+    } else {
+        diag_note("an 'out' parameter starts unassigned: what the caller's variable held isn't passed in. Assign it first, "
+                  "or take it as 'mut " STR_FMT " " STR_FMT "' to read what the caller has",
+                  STR_ARG(p->type_name), STR_ARG(name->name));
+    }
+    const fix first = {.kind = FIX_ASSIGN_FIRST, .at = e->at, .param = p, .method = f->code};
+    vec_push(f->prog->fixes, first);
 }
 
 // A block written after a call, which the call runs when it does, as often as
@@ -156,14 +262,13 @@ static void flow_call(flow *f, const expr *e, uint8_t *st)
     expr *const *args = e->settled ? e->written.items : e->args.items;
     for (int i = 0; i < count; i++) {
         const expr *arg = args[i];
-        if (arg->is_out && var_of(f, arg) >= 0) continue; // Written, not read
+        if (arg->is_out && names_place(f, arg)) continue; // Written, not read
         flow_expr(f, arg, st);
     }
     const bool sort = e->call == CALL_LIST && str_eq_c(e->name, "Sort");
     flow_block(f, e->block, st, sort);
     for (int i = 0; i < count; i++) {
-        const int v = args[i]->is_out ? var_of(f, args[i]) : -1;
-        if (v >= 0) st[v] = 1;
+        if (args[i]->is_out) assign_place(f, args[i], st);
     }
 }
 
@@ -222,10 +327,11 @@ static void flow_expr(flow *f, const expr *e, uint8_t *st)
     if (!e) return;
     switch (e->kind) {
     case E_NAME:
-        flow_read(f, e, st);
+        flow_read(f, e, NULL, st);
         break;
     case E_MEMBER:
-        flow_expr(f, e->object, st);
+        if (field_slot(f, e) >= 0) flow_read(f, e, e->field, st); // One field of a struct: its others aren't read
+        else flow_expr(f, e->object, st);
         break;
     case E_INDEX:
         flow_expr(f, e->object, st);
@@ -282,19 +388,31 @@ static void flow_expr(flow *f, const expr *e, uint8_t *st)
     }
 }
 
-// A function's or method's `out` parameters at a place it returns from.
+// A function's or method's `out` parameters at a place it returns from, and
+// what a frag or a vert writes at a place it ends.
 static void flow_leave(const flow *f, const loc at, const uint8_t *st, const bool at_end)
 {
     for (int i = 0; i < f->params; i++) {
-        if (st[i]) continue;
+        const field *missing = NULL;
+        if (var_assigned(f, i, st, &missing)) continue;
         const param *p = f->vars.items[i];
-        if (at_end) {
-            diag_error(at, "'" STR_FMT "' can end without assigning its '" STR_FMT "'", STR_ARG(f->code->name), STR_ARG(p->name));
+        sb what = {0}; // The parameter, or the field of it that's left: 'lamp.place'
+        if (missing) sb_printf(&what, "'" STR_FMT "." STR_FMT "'", STR_ARG(p->name), STR_ARG(missing->name));
+        else sb_printf(&what, "%s'" STR_FMT "'", gpu(f) ? "" : "its ", STR_ARG(p->name));
+        const char *ends = at_end ? "can end" : "returns here";
+        if (gpu(f) && f->code->is_frag) {
+            diag_error(at, "frag '" STR_FMT "' %s without writing its pixel's color, %s", STR_ARG(f->code->name), ends, what.data);
+            diag_note("a frag writes its color on every path that ends; one that draws nothing leaves the pixel with "
+                      "'pixel.Discard();', through a 'Pixel pixel' parameter");
+        } else if (gpu(f)) {
+            diag_error(at, "vert '" STR_FMT "' %s without writing %s", STR_ARG(f->code->name), ends, what.data);
+            diag_note("what a vert writes for its frag, it writes on every path, each field of it: '" STR_FMT " = default;' "
+                      "fills it where there's nothing to give", STR_ARG(p->name));
         } else {
-            diag_error(at, "'" STR_FMT "' returns here without assigning its '" STR_FMT "'", STR_ARG(f->code->name), STR_ARG(p->name));
+            diag_error(at, "'" STR_FMT "' %s without assigning %s", STR_ARG(f->code->name), ends, what.data);
+            diag_note("an 'out' parameter is assigned on every path that returns: '" STR_FMT " = default;' fills it where "
+                      "there's nothing to give", STR_ARG(p->name));
         }
-        diag_note("an 'out' parameter is assigned on every path that returns: '" STR_FMT " = default;' fills it where there's "
-                  "nothing to give", STR_ARG(p->name));
         const fix assign = {.kind = FIX_ASSIGN_OUT, .at = at, .param = p, .method = f->code};
         vec_push(f->prog->fixes, assign);
     }
@@ -375,20 +493,22 @@ static void flow_stmt(flow *f, const stmt *s, uint8_t *st)
         break;
     }
     case S_VAR:
-    case S_EXPR:
         flow_expr(f, s->value, st);
         break;
-    case S_ASSIGN: {
-        const int v = var_of(f, s->target);
-        if (v >= 0 && s->op == T_ASSIGN) { // The whole variable, which isn't read
+    case S_EXPR:
+        flow_expr(f, s->value, st);
+        // pixel.Discard(): no pixel is drawn, so nothing is owed the frag's color from here
+        if (s->value && s->value->kind == E_METHOD && s->value->call == CALL_DISCARD) state_end(f, st);
+        break;
+    case S_ASSIGN:
+        if (s->op == T_ASSIGN && names_place(f, s->target)) { // The whole variable, or a struct's field: not read
             flow_expr(f, s->value, st);
-            st[v] = 1;
+            assign_place(f, s->target, st);
             break;
         }
         flow_expr(f, s->target, st); // A part of it, or what it holds changed: it has a value first
         flow_expr(f, s->value, st);
         break;
-    }
     case S_RETURN:
         flow_expr(f, s->value, st);
         if (f->comparing == 0) flow_leave(f, s->at, st, false);
@@ -416,13 +536,17 @@ void check_assigned(program *prog, const decl *code, const stmt *body)
     f.prog = prog;
     f.code = code;
     for (int i = 0; code && i < code->params.count; i++) {
-        if (code->params.items[i].is_out) vec_push(f.vars, &code->params.items[i]);
+        if (code->params.items[i].is_out) add_var(&f, &code->params.items[i], code->params.items[i].type);
     }
     f.params = f.vars.count;
     find_stmt(&f, body);
     if (f.vars.count == 0) return;
     f.reported = arena_alloc(sizeof(bool) * (size_t)f.vars.count);
     uint8_t *st = state_new(&f, 0);
+    for (int v = 0; v < f.vars.count; v++) { // What a struct keeps for its layout is no field to assign
+        const decl *of = f.structs.items[v];
+        for (int k = 0; of && k < of->fields.count; k++) st[f.firsts.items[v] + k] = of->fields.items[k].hidden;
+    }
     flow_stmt(&f, body, st);
     // One that returns a value ends at a return, on every path, or the checker says so
     if (code && code->return_type.kind == TY_VOID) flow_leave(&f, code->at, st, true);

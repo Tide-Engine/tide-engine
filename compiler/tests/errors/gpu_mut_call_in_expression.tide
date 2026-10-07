@@ -35,8 +35,9 @@ float Bump(mut float x)
     return x;
 }
 
-frag Shade(V vertex, mut Color color)
+frag Shade(V vertex, out Color color)
 {
+    color = Color.white;
     color.r = Bump(color.g) * 0.5;
 }
 
