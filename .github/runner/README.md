@@ -15,6 +15,8 @@ builds for macOS meanwhile.
   bash, CMake, Ninja, Node, zstd, LLVM in `C:\Program Files\LLVM` (the major
   version `cmake/LLVM.cmake` pins, which a job checks), Chrome, and Android's
   SDK and NDK where Android Studio puts them.
+- A push runs nothing here: this runner is for a full run's Windows test
+  suites, which are started by hand.
 - `start-runner.ps1`, copied beside the runner, starts it hidden; a shortcut
   to it in the user's Startup folder starts it at logon. It puts Git's bash
   first on `PATH` (System32's `bash.exe` is WSL's) and sets `TIDE_HIDDEN`, so
@@ -30,11 +32,15 @@ builds for macOS meanwhile.
   packages, Chrome, the X11 headers, Java, Android's SDK with its emulator, and
   the user's place in the `kvm` group. It works on Ubuntu too. Run it again
   when `cmake/LLVM.cmake` moves to another major version.
+- This runner builds Windows' package too, which takes Microsoft's headers and
+  libraries in `~/xwin`: the same script fetches them with xwin when
+  `TIDE_ACCEPT_MICROSOFT_LICENSE` is set, which accepts Visual Studio's
+  license for them.
 - The runner needs .NET's own libraries first: `sudo
   ./bin/installdependencies.sh` in its folder.
-- It's a small machine (4 cores) that runs other things. The Linux package
-  builds there in a few minutes; a full run's test suites take it far longer
-  than they took the PC.
+- It's a small machine (4 cores) that runs other things. Each package builds
+  there in a few minutes; a full run's test suites take it far longer than
+  they took the PC.
 
 ## What differs from a hosted runner
 

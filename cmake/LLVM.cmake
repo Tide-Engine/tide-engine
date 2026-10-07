@@ -1,7 +1,8 @@
 # tide's built-in clang and lld (compiler/cli/llvm/cc.cpp): tide links LLVM's
 # static libraries, so users need no compiler of their own.
 #
-# The libraries come from LLVM's own release for this machine, downloaded once
+# The libraries come from LLVM's own release for the system tide is built for
+# (this machine's, or Windows' when its package is built elsewhere), downloaded once
 # into build/llvm-<version> and pinned; unpacking it needs the zstd program.
 # TIDE_LLVM_ROOT can name an unpacked LLVM instead. Defines the tide_cc library,
 # and installs clang's own headers into the package, where tide's clang looks
@@ -12,10 +13,10 @@ string(REGEX MATCH "^[0-9]+" _tide_llvm_major "${TIDE_LLVM_VERSION}")
 set(TIDE_LLVM_ROOT "" CACHE PATH "An unpacked LLVM ${TIDE_LLVM_VERSION} with its static libraries (default: downloaded)")
 
 if(NOT TIDE_LLVM_ROOT)
-    if(CMAKE_HOST_WIN32)
+    if(WIN32)
         set(_tide_llvm_name "clang+llvm-${TIDE_LLVM_VERSION}-x86_64-pc-windows-msvc")
         set(_tide_llvm_hash ceaee048142fece144752c6f6431cb0905a7a6160f78ab8cf5cf0b6216f99418)
-    elseif(CMAKE_HOST_APPLE)
+    elseif(APPLE)
         set(_tide_llvm_name "LLVM-${TIDE_LLVM_VERSION}-macOS-ARM64")
         set(_tide_llvm_hash 3da0e91b5dfe3a5ec795ad2be79b3f5e6f28c8b23edcd3847fad7742b25e0507)
     else()
@@ -55,7 +56,7 @@ if(NOT TIDE_LLVM_ROOT)
             # Straight from zstd into tar: the Linux archive unpacks to 12 GB. On
             # macOS, LLVM's lld too, which links tide (see below).
             find_program(TIDE_TAR NAMES tar REQUIRED)
-            if(CMAKE_HOST_APPLE)
+            if(APPLE)
                 set(_tide_llvm_lld "${_tide_llvm_name}/bin/lld" "${_tide_llvm_name}/bin/ld64.lld")
             endif()
             execute_process(COMMAND "${TIDE_ZSTD}" -d -q -c --long=31 "${_tide_llvm_file}"
