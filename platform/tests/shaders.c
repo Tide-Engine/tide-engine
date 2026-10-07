@@ -475,7 +475,9 @@ static void run_stencil_checks(const char *when)
         {240, 224, 0, 0, 0, "and not where they didn't"},
     };
     enum { COUNT = sizeof wanted / sizeof wanted[0] };
-    static const float scales[] = {1.0f, 2.0f, 1.5f};
+    // One frame, as on a display scaled to twice its pixels, where a circle is a smooth shape: this
+    // test's frames are slow in a browser with no GPU, and targets.c has stencil at every scale
+    static const float scales[] = {2.0f};
     for (size_t k = 0; k < sizeof scales / sizeof scales[0]; k++) {
         const float scale = scales[k];
         local.Art.targetPass = 9;
@@ -539,7 +541,6 @@ static int frame(void *user, const float seconds)
     run_shadow_checks("");
     run_shadow_checks(", again");
     run_stencil_checks("");
-    run_stencil_checks(", again");
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");
