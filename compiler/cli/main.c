@@ -332,6 +332,9 @@ int main(const int argc, char **argv)
         }
         open_page = false;
     }
+    // A run ends with its game. Do the occasional update check before it
+    // starts, so the network can't keep tide alive after the window closes.
+    if (run) tide_check_for_update(root);
     int code = 0;
     if (schedule) {
         code = tide_schedule(&opts, shaders) ? 0 : 1;
@@ -346,6 +349,6 @@ int main(const int argc, char **argv)
         if (!program) code = 1;
         else printf("Built %s\n", program);
     }
-    tide_check_for_update(root);
+    if (!run) tide_check_for_update(root);
     return code;
 }
