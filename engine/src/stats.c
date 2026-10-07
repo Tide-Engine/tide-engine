@@ -388,6 +388,7 @@ static void fill(tide_stats *s, const tide_stats_values *v)
     const uint32_t from = s->line_count;
     line(s, "threads", "%u", (unsigned)(v->threads ? v->threads : 1u));
     if (v->memory) line(s, "memory", "%.0f MB", (double)v->memory / (1024.0 * 1024.0));
+    if (v->gpu_memory) line(s, "vram", "%.0f MB", (double)v->gpu_memory / (1024.0 * 1024.0));
     if (v->renderer && v->renderer[0]) line(s, "renderer", "%s", v->renderer);
     group(s, from);
     if (v->match && v->profile == s->profile) add_systems(s);

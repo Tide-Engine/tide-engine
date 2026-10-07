@@ -240,6 +240,14 @@ uint32_t tide_platform_draw_calls(void);
 // where the system doesn't say.
 uint64_t tide_platform_memory(void);
 
+// What the renderer has on the GPU, in bytes, by its own count: every buffer,
+// texture, cube and render target it asked the backend for, by what each
+// holds (a texture's smaller images a third more), less what it freed. Not
+// the window's own framebuffer, the pipelines or what the driver keeps
+// beside them: the same number on every backend, for what a game's draws
+// cost. 0 before anything drew, and again when the device was lost.
+uint64_t tide_platform_gpu_memory(void);
+
 // The game's pack of assets (tide/pack.h), as its build left it with the
 // program: beside it as <program>.pack on desktop, in its page on the web and
 // in its APK on Android. malloc'd bytes, the caller's to free, or NULL for
