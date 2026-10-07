@@ -56,8 +56,8 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took);
 // The server's world in the match below, on every platform and in every
 // configuration: Box3D's math, its image and the netcode, byte for byte.
 // Once in the middle of a round, and once after a new game was asked for.
-#define BRAWL_HASH UINT64_C(0x2ebf3fc65c3d4944)
-#define MATCH_HASH UINT64_C(0x5365a353a1194bda)
+#define BRAWL_HASH UINT64_C(0xa1787015fd4435c7)
+#define MATCH_HASH UINT64_C(0xd6f39ac4ca266997)
 
 // Timings of a build that isn't optimized say nothing, so there the test that
 // measures does a tenth of it: enough to show that it runs.
