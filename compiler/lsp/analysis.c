@@ -1794,20 +1794,24 @@ static const method_form set_calls[] = {
 
 static const method_form grid_calls[] = {
     {"Clear", "Clear()", "Sets every cell back to zero, keeping the size."},
-    {"Sample", "Sample(float2 uv, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color",
-     "Reads the grid as a texture, in a frag or vert: its color at `uv`, from (0, 0) at its first cell to (1, 1) past "
-     "its last, blended between cells (`Filter.Bilinear`, the default) or the nearest cell's (`Filter.Point`). A "
-     "`uv` past 0 or 1 reads the cells at the grid's edge (`Wrap.Clamp`, the default), the grid again "
-     "(`Wrap.Repeat`), or again the other way round each time (`Wrap.Mirror`). The grid is a `Grid2<Color>` field "
-     "of a component or singleton the frag or vert takes, and the filter and the wrap are written there: the GPU is "
-     "told all three before any pixel runs."},
+    {"Sample", "Sample(float2 uv, Filter filter = the grid's, Wrap wrap = the grid's) -> Color",
+     "Reads the grid as the texture it is, in a frag or vert: its color at `uv`, from (0, 0) at its first cell to "
+     "(1, 1) past its last, blended between cells (`Filter.Bilinear`) or the nearest cell's (`Filter.Point`). A "
+     "`uv` past 0 or 1 reads the cells at the grid's edge (`Wrap.Clamp`), the grid again (`Wrap.Repeat`), or again "
+     "the other way round each time (`Wrap.Mirror`). A Sample that leaves one out has what the grid's declaration "
+     "says (`[Filter]`, `[Wrap]`), and blended and clamped without one. A `Grid2<float>` is a texture of one "
+     "channel: its number is the color's `r`, with `g` and `b` 0 and `a` 1. The grid is a field of a component or "
+     "singleton the frag or vert takes, or an asset by its name, and the filter and the wrap are written there: the "
+     "GPU is told all three before any pixel runs."},
 };
 
 static const method_form texture_calls[] = {
-    {"Sample", "Sample(float2 uv, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color",
-     "Samples this image in a frag or vert, with top-left UVs from (0, 0) to (1, 1). A `uv` past them reads the "
-     "pixels at the image's edge (`Wrap.Clamp`, the default), the image again (`Wrap.Repeat`), or again the other "
-     "way round each time (`Wrap.Mirror`). The filter and the wrap are written there, fixed for the draw."},
+    {"Sample", "Sample(float2 uv, Filter filter = the texture's, Wrap wrap = the texture's) -> Color",
+     "Samples this texture in a frag or vert, with top-left UVs from (0, 0) to (1, 1). A `uv` past them reads the "
+     "pixels at its edge (`Wrap.Clamp`), the texture again (`Wrap.Repeat`), or again the other way round each time "
+     "(`Wrap.Mirror`). A Sample that leaves the filter or the wrap out reads the texture as it says itself: what "
+     "its declaration says (`[Filter]`, `[Wrap]`), or what the draw that gave it says, and blended and clamped with "
+     "neither. Written here, they're fixed for the draw."},
 };
 
 static const method_form depth_calls[] = {
@@ -2640,10 +2644,11 @@ static void describe(const occurrence *o, sb *out)
                         "Any code can read it, and nothing can change it.");
             if (o->decl->asset_kind == ASSET_TEXTURE) {
                 sb_put(out, " A `Texture` is an image to draw with, this machine's: no code reads its pixels, and the match "
-                            "can't use it. For cells code reads, the same file is a `Grid2<Color>`.");
+                            "can't use it. For cells code reads, the same file is a `Grid2<Color>`, which is a Texture "
+                            "too wherever one is drawn with.");
             }
             if (o->decl->sample_filter || o->decl->sample_wrap) { // [Filter] and [Wrap] before it
-                sb_put(out, "\n\nWhere a draw or a `Sample` that names it doesn't say, it's sampled with ");
+                sb_put(out, "\n\nWhere a draw or a `Sample` doesn't say, it's sampled with ");
                 const decl *enums[2] = {A.prog->filter, A.prog->wrap};
                 const int said[2] = {o->decl->sample_filter, o->decl->sample_wrap};
                 bool first = true;
@@ -2996,16 +3001,17 @@ static void describe(const occurrence *o, sb *out)
              "The command after it has no order at all: the server handles it in whichever tick it arrives, before or after "
              "commands sent earlier, exactly once."},
             {"Filter", "[Filter(Filter.Point)]",
-             "How this texture is read between its cells wherever a draw or a `Sample` that names it doesn't say: "
-             "`Filter.Point` for the nearest cell, `Filter.Bilinear` (what's read without it) for the four around, "
-             "blended. It goes before an asset that's a `Texture` or a `Grid2<Color>` (alone, or a list or a map of "
-             "them) and before a `Grid2<Color>` field. A `Texture` kept in a field or a local is a value, which names "
-             "no declaration: it's read as the draw says."},
+             "How this texture is read between its cells wherever a draw or a `Sample` doesn't say: `Filter.Point` "
+             "for the nearest cell, `Filter.Bilinear` (what's read without it) for the four around, blended. It goes "
+             "before an asset that's a `Texture` or a `Grid2<Color>` (alone, or a list or a map of them) and before a "
+             "field that's a `Grid2<Color>`, a `Grid2<float>` or a `RenderTarget` (for its color). The `Texture` made "
+             "there carries it: one kept in a field or a local, or passed to a function, is sampled the same."},
             {"Wrap", "[Wrap(Wrap.Repeat)]",
-             "What a `uv` past this texture's edges reads wherever a draw or a `Sample` that names it doesn't say: "
-             "`Wrap.Clamp` (what's read without it) for the cells at the edge, `Wrap.Repeat` for the texture over "
-             "again, `Wrap.Mirror` for it the other way round each time. It goes before an asset that's a `Texture` "
-             "or a `Grid2<Color>` and before a `Grid2<Color>` field."},
+             "What a `uv` past this texture's edges reads wherever a draw or a `Sample` doesn't say: `Wrap.Clamp` "
+             "(what's read without it) for the cells at the edge, `Wrap.Repeat` for the texture over again, "
+             "`Wrap.Mirror` for it the other way round each time. It goes before an asset that's a `Texture` or a "
+             "`Grid2<Color>` and before a field that's a `Grid2<Color>`, a `Grid2<float>` or a `RenderTarget`. The "
+             "`Texture` made there carries it, wherever it's kept."},
         };
         for (size_t i = 0; i < sizeof attributes / sizeof attributes[0]; i++) {
             if (!str_eq_c(o->name, attributes[i].name)) continue;
@@ -7474,10 +7480,10 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "The command has no order at all: handled in the tick it arrives, before or after commands sent earlier, once.",
                  "Unordered");
             item(&c, "Filter", CK_FUNCTION, "[Filter(Filter.Point)]",
-                 "How an asset that's a Texture or a Grid2<Color> is read between its cells, where a draw that names it doesn't say.",
+                 "How an asset that's a Texture or a Grid2<Color> is read between its cells, where a draw doesn't say.",
                  "Filter(Filter.${1:Point})");
             item(&c, "Wrap", CK_FUNCTION, "[Wrap(Wrap.Repeat)]",
-                 "What a uv past the edges of an asset that's a Texture or a Grid2<Color> reads, where a draw that names it doesn't say.",
+                 "What a uv past the edges of an asset that's a Texture or a Grid2<Color> reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
         }
         break;
@@ -7495,10 +7501,10 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "Position", CK_FUNCTION, "[Position]", "Provisional: linear tick interpolation with smooth visual correction error.", "Position");
             item(&c, "Rotation", CK_FUNCTION, "[Rotation]", "Provisional: shortest rotation interpolation and smooth correction error: float radians or quaternion.", "Rotation");
             item(&c, "Filter", CK_FUNCTION, "[Filter(Filter.Point)]",
-                 "How this Grid2<Color> is read between its cells, where a draw that names it doesn't say.",
+                 "How this grid, or this RenderTarget's color, is read between its cells as a texture, where a draw doesn't say.",
                  "Filter(Filter.${1:Point})");
             item(&c, "Wrap", CK_FUNCTION, "[Wrap(Wrap.Repeat)]",
-                 "What a uv past this Grid2<Color>'s edges reads, where a draw that names it doesn't say.",
+                 "What a uv past the edges of this grid, or of this RenderTarget's color, reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
         }
         break;
@@ -8561,12 +8567,14 @@ static const struct {
     [MESH_INDICES] = {"indices", {"A `List<int>`: three for each triangle, places in `vertices`."}},
     [MESH_TRANSFORM] = {"transform", {"A `float4x4`: where the mesh is in the world."}},
     [MESH_TEXTURE] = {"texture",
-                      {"A `Grid2<Color>` or `Texture`, read at each corner's `uv`. A frag with a Texture parameter receives the explicit Texture source."}},
-    [MESH_FILTER] = {"filter", {"How the texture is read between cells: `Filter.Bilinear` (the default) or `Filter.Point`."}},
+                      {"A `Texture`, read at each corner's `uv`: an asset's, a render target's color, or a `Grid2<Color>` or "
+                       "`Grid2<float>`, which is one here. A frag or vert with a Texture parameter receives it as its source."}},
+    [MESH_FILTER] = {"filter", {"How the texture is read between cells, `Filter.Bilinear` or `Filter.Point`: the texture's own "
+                                "where the draw leaves it out."}},
     [MESH_WRAP] = {"wrap",
-                   {"What a `uv` past 0 or 1 reads, written after the filter: the cells at the texture's edge (`Wrap.Clamp`, "
-                    "the default), the texture again (`Wrap.Repeat`), or again the other way round each time "
-                    "(`Wrap.Mirror`)."}},
+                   {"What a `uv` past 0 or 1 reads, written after the filter: the cells at the texture's edge (`Wrap.Clamp`), "
+                    "the texture again (`Wrap.Repeat`), or again the other way round each time (`Wrap.Mirror`). The "
+                    "texture's own where the draw leaves it out."}},
     [MESH_VERT] = {"vert", {"A vert, by name: it runs on the GPU for each vertex, and changes it in place."}},
     [MESH_FRAG] = {"frag", {"A frag, by name: it runs on the GPU for each pixel, and writes its color."}},
     [MESH_INSTANCES] = {"instances",

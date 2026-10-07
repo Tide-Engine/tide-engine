@@ -51,7 +51,7 @@ A match is snapshotted every tick and rolled back when a guess about another pla
 
 A grid is never copied, since every chunk would be: a local can't hold one, nor a component that has one, and functions can't take grids yet. Read and change cells through the component or singleton.
 
-A `Grid2<Color>` with a size draws as a texture: `Draw.Mesh` takes one (see [Textures](../game/views.md#textures)).
+A `Grid2<Color>` or a `Grid2<float>` with a size is a `Texture` wherever one is wanted: a draw's texture, a frag's source, a `Texture` field or parameter (see [Textures](../game/views.md#textures)). The texture is the grid, not a copy of it, so that's how a grid's pixels get to a function, which can't take the grid itself.
 
 ## Going through every cell
 
