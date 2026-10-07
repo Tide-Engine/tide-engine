@@ -1,0 +1,5 @@
+// expect: a frag's color is an 'out' parameter: 'out Color color'
+// expect: it starts with no value, where 'mut Color color' started white: the frag writes it on every path that ends, before it reads it
+scene Main { }
+struct Corner { float2 position; }
+frag Shade(Corner corner, mut Color color) { color = Color.red; }

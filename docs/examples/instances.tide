@@ -36,7 +36,7 @@ vert Place(mut Corner corner, Mote mote, Swarm swarm)
 }
 
 // And this for each pixel: a soft dot, from how far the pixel is from the middle.
-frag Glow(Corner corner, mut Color color, Mote mote)
+frag Glow(Corner corner, out Color color, Mote mote)
 {
     float away = Math.Length(corner.uv - 0.5) * 2;
     color = mote.tint;
