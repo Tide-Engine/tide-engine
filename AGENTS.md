@@ -465,7 +465,7 @@ Tests are for finding what a change broke, not a ritual before every push. With 
   - It changed something the change is built on (a header it includes, tidec under a game, a function it calls): build what the change touches, run its own tests, push.
   - It touches the same files or the same subsystem, or there were conflicts: run the tests for that overlap (`ctest --preset debug -R <pattern>`, or a label), on native or the web as the overlap calls for. Both suites whole only when the overlap is that wide.
   - One round. When `dev` moved again meanwhile and what came in is unrelated again, merge and push; don't start over.
-- CI is the net under this. Every push to `dev` runs every platform (see Packaging and releases), a failure there publishes nothing, and that's where it's reported. A session that pushed looks at its push's run when it has finished (`gh run list --branch dev`), and whoever's change broke `dev` fixes it there first, ahead of anything else.
+- CI doesn't test a push to `dev` for now (below, and Packaging and releases): it builds the packages, tries them and publishes the nightly. So what a session ran before it merged is all that was run, and Linux, MinGW, the sanitizers and Android are only tested when someone asks for a full run (`gh workflow run build.yml --ref dev`), or for a stable release. A session that pushed still looks at its push's run when it has finished (`gh run list --branch dev`): a package that doesn't build publishes nothing, and whoever's change broke it fixes it there first, ahead of anything else. A change that leans on what this machine can't run (Linux's or MinGW's own code, the sanitizers) asks for a full run, and says so.
 
 ### Web builds
 
@@ -767,6 +767,11 @@ Users get Tide as the `tide` command, not this repo: see README.md.
   - A runner keeps its checkout and `build/` between jobs (`clean: false`), so there's no compiler cache and no cache step there, and the Build and Docs workflows share one checkout on Linux: a job passes what it needs explicitly (`-DTIDE_DOC_EXAMPLES=OFF` for the web tests), as a CMake cache variable another job set is still set.
   - Steps only a hosted runner needs are conditioned on `runner.environment == 'github-hosted'` and still work there; going back is the `runs-on` labels and the matrix's macOS rows.
   - A run is one job at a time for each OS, on a machine sessions also build on: a push's run takes longer than it did, and a newer push still replaces the one waiting (the workflow's `concurrency` group), never the one running.
+- **The test suites run when asked for, and for a stable release, never for a nightly** (the owner, 2026-10-07: "dev/nightly is meant to move fast; we can introduce them back later, right now its too early for always running it"). What the paragraph above says the workflow tests is what a full run does:
+  - A push to `dev` (and a pull request) runs the two Package jobs: each builds its package and tries it as a user would (a game built natively, for the web and for Android, a game's C++, incremental builds), and the nightly is published from them. No test suite runs, nor the Android emulator, the checks for Google Play or the build service's page.
+  - A run started by hand (`gh workflow run build.yml --ref dev`, or Run workflow on GitHub) is the packages and every suite (native, web, MinGW, the sanitizers, Android), and publishes nothing. A push to `release` is the same, and its stable release waits for all of it.
+  - Which jobs a run has is the Version job's to say (its `Checks` step: the matrix as JSON, and `tests`), so the jobs' steps are written once.
+  - A nightly can therefore go out with a suite failing somewhere this machine's sessions didn't run it. That's accepted for now.
 - Versions come from conventional commits (`.releaserc.json`): `fix:` is a patch, `feat:` a minor version. While the version starts with 0, breaking changes (`feat!:`) are minor versions too, and we avoid them until 1.0 anyway.
 
 ### Box2D

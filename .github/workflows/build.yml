@@ -1,13 +1,18 @@
 # Builds, tests and publishes tide (see AGENTS.md, Packaging).
 #
-# - Pull requests: build and test on Windows, Linux and macOS.
-# - Pushes to dev: also publish a nightly pre-release, like 0.2.0-nightly.3.
-# - Pushes to release: also publish a stable release, and commit the new VERSION.
+# - Pushes to dev: build each platform's package, try it, and publish a nightly
+#   pre-release, like 0.2.0-nightly.3. No test suite runs: nightlies follow dev
+#   as fast as packages build.
+# - Run by hand (Run workflow, or `gh workflow run build.yml --ref dev`): the
+#   packages and every test suite, and nothing is published.
+# - Pushes to release: the packages and every test suite, then a stable
+#   release, and the new VERSION committed. A stable release waits for its tests.
+# - Pull requests: the packages.
 #
 # semantic-release picks the version from conventional commits (feat:, fix:,
-# see .releaserc.json). A push with neither publishes nothing. A build that
-# fails on any platform fails the run, and nothing is published: every release
-# has every platform's package.
+# see .releaserc.json). A push with neither publishes nothing. A job that
+# fails fails the run, and nothing is published: every release has every
+# package that's built.
 #
 # For now the jobs run on the owner's machine (the account is out of hosted
 # minutes): a runner on Windows (label tide-windows) and one in its WSL
@@ -38,6 +43,8 @@ jobs:
     outputs:
       version: ${{ steps.next.outputs.new_release_version }}
       published: ${{ steps.next.outputs.new_release_published }}
+      tests: ${{ steps.checks.outputs.tests }}
+      matrix: ${{ steps.checks.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -57,6 +64,22 @@ jobs:
             @semantic-release/git
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # What the run's jobs are: the packages always, and the test suites when
+      # the run was asked for by hand or is a stable release's.
+      - name: Checks
+        id: checks
+        shell: bash
+        run: |
+          row() { printf '{"platform":"%s","os":"%s","preset":"%s","test-jobs":4}' "$1" "$2" "$3"; }
+          rows="$(row windows-x64 tide-windows package),$(row linux-x64 tide-linux package)"
+          tests=false
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || [ "$GITHUB_REF_NAME" = release ]; then
+            tests=true
+            for preset in release web-release mingw-release; do rows="$rows,$(row windows-x64 tide-windows $preset)"; done
+            for preset in release web-release sanitize; do rows="$rows,$(row linux-x64 tide-linux $preset)"; done
+          fi
+          echo "tests=$tests" >> "$GITHUB_OUTPUT"
+          echo "matrix=[$rows]" >> "$GITHUB_OUTPUT"
 
   checks:
     name: ${{ matrix.preset == 'package' && format('Package ({0})', matrix.platform) || format('Test ({0}, {1})', matrix.platform, matrix.preset) }}
@@ -64,41 +87,10 @@ jobs:
     strategy:
       fail-fast: false # The other platforms finish, so a run shows every failure
       matrix:
-        include:
-          - platform: windows-x64
-            os: tide-windows
-            preset: package
-            test-jobs: 4
-          - platform: linux-x64
-            os: tide-linux
-            preset: package
-            test-jobs: 4
-          - platform: windows-x64
-            os: tide-windows
-            preset: release
-            test-jobs: 4
-          - platform: windows-x64
-            os: tide-windows
-            preset: web-release
-            test-jobs: 4
-          - platform: windows-x64
-            os: tide-windows
-            preset: mingw-release
-            test-jobs: 4
-          - platform: linux-x64
-            os: tide-linux
-            preset: release
-            test-jobs: 4
-          - platform: linux-x64
-            os: tide-linux
-            preset: web-release
-            test-jobs: 4
-          - platform: linux-x64
-            os: tide-linux
-            preset: sanitize
-            test-jobs: 4
+        include: ${{ fromJSON(needs.version.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     env:
+      TIDE_TESTS: ${{ needs.version.outputs.tests }}
       TIDE_VERSION: ${{ needs.version.outputs.version }}
       TIDE_CHANNEL: ${{ github.ref_name == 'release' && 'stable' || 'nightly' }}
       CTEST_PARALLEL_LEVEL: ${{ matrix.test-jobs }}
@@ -324,7 +316,7 @@ jobs:
           distribution: temurin
           java-version: 21
       - name: Test (Android)
-        if: runner.os == 'Linux' && matrix.preset == 'package'
+        if: runner.os == 'Linux' && matrix.preset == 'package' && env.TIDE_TESTS == 'true'
         run: |
           # A runner of our own is in the kvm group already (.github/runner).
           if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
@@ -395,7 +387,7 @@ jobs:
       # its builders run: the example game published, built with its mod, and
       # the page played in headless Chrome.
       - name: Try the package (build service)
-        if: runner.os == 'Linux' && matrix.preset == 'package'
+        if: runner.os == 'Linux' && matrix.preset == 'package' && env.TIDE_TESTS == 'true'
         run: TIDE=build/dist/tide/bin/tide node --test builds/page.test.mjs
       # A game's C++, which builds with no C++ runtime: that it builds for each
       # target with the package's own compiler and headers, and what tide says
@@ -412,7 +404,7 @@ jobs:
       # tide's key as Play signs with its own, play on the emulator, which the
       # Android tests started.
       - name: Try the package (Google Play)
-        if: runner.os == 'Linux' && matrix.preset == 'package'
+        if: runner.os == 'Linux' && matrix.preset == 'package' && env.TIDE_TESTS == 'true'
         run: |
           printf 'settings\n{\n    appId = "dev.tide.trydemo";\n}\n' > build/try/settings.tide
           build/dist/tide/bin/tide build build/try --android --release
