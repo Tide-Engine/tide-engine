@@ -416,6 +416,13 @@ bool Near(float a, float b)
     return Math.Abs(a - b) < 0.001;
 }
 
+// Halfway between two colors a byte each: a GPU that blends in bytes gives 127
+// or 128 of 255, where one that blends in floats gives a half.
+bool Halfway(float a)
+{
+    return Math.Abs(a - 0.5) < 0.003;
+}
+
 frag Sink(Corner3 vertex, out Color color, Marks marks)
 {
     mut bool ok = true;
@@ -1078,7 +1085,7 @@ frag TargetInspect(Vertex vertex, out Color color, Texture source, Art art)
     Color middle = art.targetTexture.Sample(float2(0.5, 0.5));
     Color sampled = source.Sample(vertex.uv, Filter.Point);
     bool correct = nearest.r > 0.99 && nearest.g < 0.01 && nearest.b < 0.01
-                && Near(middle.r, 0.5) && Near(middle.g, 0.5) && Near(middle.b, 0.5);
+                && Halfway(middle.r) && Halfway(middle.g) && Halfway(middle.b);
     color = correct ? Color(sampled.a, sampled.r, sampled.g) : Color.magenta;
 }
 
@@ -1145,7 +1152,7 @@ vert TextureChecks(mut Vertex vertex, Texture source)
     Color nearest = source.Sample(float2(0.25, 0.25), Filter.Point);
     Color middle = source.Sample(float2(0.5, 0.5));
     bool correct = nearest.r > 0.99 && nearest.g < 0.01 && nearest.b < 0.01
-                && Near(middle.r, 0.5) && Near(middle.g, 0.5) && Near(middle.b, 0.5);
+                && Halfway(middle.r) && Halfway(middle.g) && Halfway(middle.b);
     vertex.color = correct ? Color.white : Color.magenta;
 }
 
