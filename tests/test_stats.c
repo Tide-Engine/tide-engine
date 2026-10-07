@@ -117,7 +117,7 @@ TIDE_TEST(stats_closed_are_one_line_in_the_corner)
     tide_stats_draw(&stats, &values, &list, screen, font);
     TIDE_REQUIRE(stats.line_count == 1 && stats.shown);
     TIDE_CHECK(line_is(0, "60 fps")); // The frame rate, and nothing a host would have to measure
-    TIDE_CHECK(!list.tinted && text_command("60 fps") && !text_command("cpu 2.1 ms"));
+    TIDE_CHECK(!list.place.tinted && text_command("60 fps") && !text_command("cpu 2.1 ms"));
 
     // A panel around the line, 8 pixels from the screen's right and bottom edges
     const tide_rect box = panel();

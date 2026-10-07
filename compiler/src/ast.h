@@ -117,7 +117,7 @@ typedef enum type_kind {
     TY_STRING,     // Text: literals, and function parameters and locals that hold them
     TY_RECT,       // Rect: a GUI rectangle, x and y from the top left, width and height
     TY_ACTION,      // Action: a function's last parameter, the code its caller writes in braces after the call
-    TY_DRAW_LIST,  // DrawList: the frame's draw list, `Draw2D.list`, which only an extern function takes
+    TY_DRAW_LIST,  // DrawList: the frame's draw list, `Draw.list`, which only an extern function takes
     TY_TEXTURE,    // Texture: a local reference to pixels or a render target's color image
     TY_DEPTH_TEXTURE, // DepthTexture: a local reference to a render target's depth, which a frag or vert reads
     TY_RENDER_TARGET, // RenderTarget: a local drawing destination; Draw.window names the window
@@ -398,9 +398,10 @@ typedef struct shader_sample {
     const struct decl *asset; // A Grid2<Color> or Texture asset sampled by name, or NULL
     int wrap;     // What a uv past 0 and 1 reads: its Wrap's number, tide_wrap's
     shader_read read; // A DepthTexture's: which of its two ways it's read
-    // Whether the Sample says its filter and its wrap. A field's or an asset's that doesn't has its
-    // declaration's, worked into `blended` and `wrap` (declared_sampling), so these are true for it. A direct
-    // Texture parameter's that doesn't has its draw's source's, which is each draw's to say
+    // Whether how it's read is known here: the Sample says its filter and its wrap, or it's of a grid field
+    // or an asset by name, whose declaration's it then has, worked into `blended` and `wrap`
+    // (declared_sampling). A Texture's that isn't (a frag's own Texture parameter, a Texture field) is read as
+    // the Texture it's given says, which each draw's run carries (tide_draw_run.sampling)
     bool filter_said, wrap_said;
 } shader_sample;
 
@@ -688,7 +689,7 @@ typedef enum builtin_call {
     CALL_NONE,
     CALL_CONSTRUCT, // float3(...), int(...), quaternion(...), float4x4(...), and an enum's Card(number)
     CALL_BUILTIN,   // Math.Dot(...), quaternion.AxisAngle(...): calls c_callee
-    CALL_DRAW,      // Draw2D.Circle(...): calls c_callee with the view's draw list first
+    CALL_DRAW,      // Draw.Circle(...): calls c_callee with the view's draw list first
     CALL_SPAWN,
     CALL_ADD,
     CALL_REMOVE,
@@ -846,8 +847,10 @@ struct expr {
     bool path_operation;     // Pure Path operation: receives tide_str, rather than a C string
     bool storage_flush;      // Storage.Flush, awaited through a provider completion ticket
     bool web_fetch;          // Web.Fetch, awaited the same way: its body is the task's value
-    int draw_dims;        // CALL_DRAW: the drawing API's dimensions, or a target mesh's vertex dimensions
+    int draw_dims;        // CALL_DRAW: 0 for a call that selects no destination; else the window's, and a mesh's vertex dimensions
     struct decl *instance_type; // Its List<T> element struct; NULL for List<float4x4>
+    struct expr *values;        // mesh draw and Blit: the struct it gives its vert and frag after their names, or NULL
+    struct decl *values_type;   // ...and its type: sent once, for the draw
     struct decl *frag;
     struct shader *shader; // ...and what draws it, once planned: NULL for a List<Vertex> or List<Vertex3> with neither
     str type_arg;         // E_METHOD: the type written in <> after its name, world.Get<Health>(e), or empty
@@ -1021,7 +1024,7 @@ typedef struct shader_texture {
     const struct decl *asset; // A Grid2<Color> or Texture asset, sampled by name: neither a field nor the draw's
     int wrap;    // Its Wrap's number, tide_wrap's: 0 where the draw says (a `textured` shader's own)
     shader_read read; // A DepthTexture field's: as a number, or compared, each a texture of its own
-    bool filter_said, wrap_said; // As its samples' (shader_sample): false for what a direct one leaves to its draw's source
+    bool filter_said, wrap_said; // As its samples' (shader_sample): false for what's left to the Texture it's given
 } shader_texture;
 
 // A struct a vert writes for its frag, an `out` parameter of the vert's: the
@@ -1042,16 +1045,12 @@ typedef struct shader {
     struct decl *vert;   // NULL: the vertices as they are
     struct decl *frag;   // NULL: the vertex's color times the texture
     int dims;            // 2 or 3: its position's
-    bool textured;       // No frag, and a texture given at the draw
-    bool wrapped;        // ...and one of its draws says how it wraps, so its function takes a wrap
-    // One of its draws gives its stages a source whose declaration says how it's sampled ([Filter], [Wrap]),
-    // and a Sample of that source leaves it unsaid: its function takes the source's filter and wrap
-    bool sourced;
-    bool direct_texture; // The draw supplies a Texture to its shader stages
-    bool source_grid;    // Blit's explicit source is uploaded from a Grid2<Color> at recording time
+    bool textured;       // No frag, and a texture given at the draw, read as that texture says
+    bool direct_texture; // The draw supplies a Texture: the one it draws with, or its shader stages' source
     bool blit;           // A full destination overwrite with a fixed Vertex quad
     bool instanced;      // Its draw supplies a list of instances
     struct decl *instance_type; // Explicit instance data, or NULL for transforms only
+    struct decl *values_type;   // The struct its draws give after their vert and frag, sent once for each draw, or NULL
     const field *instance_transform; // The instance struct's optional float4x4 transform
     VEC(shader_value) values;
     VEC(shader_texture) textures;
@@ -1129,7 +1128,7 @@ typedef struct program {
     bool names_bold;
     decl *vertex;        // The built-in struct Vertex, a corner of what mesh draw draws
     decl *vertex3;       // The built-in struct Vertex3, a corner of a 3D mesh
-    decl *shape;         // The built-in struct Shape, what Draw2D.Shape draws
+    decl *shape;         // The built-in struct Shape, what Draw.Shape draws
     decl *gui_theme;     // The built-in struct GUITheme, how the GUI's widgets look
     decl *gui_control;   // The built-in struct GUIControl, what GUI.Control says of a control
     decl *filter;        // The built-in enum Filter, how mesh draw samples its texture

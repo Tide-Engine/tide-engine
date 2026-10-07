@@ -51,11 +51,11 @@ system Bounce(mut Body body, with Ball)
 
 view DrawBalls(Body body, with Ball)
 {
-    Draw2D.Circle(body.position, body.radius, Color.red);
+    Draw.Circle(body.position, body.radius, Color.red);
 }
 
 view DrawPlayers(Body body, Owner owner, Session session)
 {
     var color = owner.player == session.player ? Color.yellow : Color.gray;
-    Draw2D.Circle(body.position, body.radius, color);
+    Draw.Circle(body.position, body.radius, color);
 }

@@ -40,75 +40,75 @@ void Shapes(float v, float w)
     var at = float2(v, w);
     var size = float2(w, v);
     var color = Color(v, w, v, w);
-    Draw2D.Rect(at, size, color);
-    Draw2D.Rect(at, size, v, color);
-    Draw2D.WireRect(at, size, color);
-    Draw2D.WireRect(at, size, w, color);
-    Draw2D.Circle(at, v, color);
-    Draw2D.WireCircle(at, w, color);
-    Draw2D.WireCircle(at, w, v, color);
-    Draw2D.Line(at, size, color);
-    Draw2D.Line(at, size, v, color);
-    Draw2D.RoundRect(at, size, v, color);
-    Draw2D.RoundRect(at, size, v, w, color);
-    Draw2D.WireRoundRect(at, size, v, w, color);
-    Draw2D.Ellipse(at, size, color);
-    Draw2D.Ellipse(at, size, v, color);
-    Draw2D.WireEllipse(at, size, w, color);
-    Draw2D.Arc(at, v, w, v, w, color);
-    Draw2D.Shape(Shape { center = at, size = size, radius = v, rotation = w, color = color, color2 = color, outline = v,
+    Draw.Rect(at, size, color);
+    Draw.Rect(at, size, v, color);
+    Draw.WireRect(at, size, color);
+    Draw.WireRect(at, size, w, color);
+    Draw.Circle(at, v, color);
+    Draw.WireCircle(at, w, color);
+    Draw.WireCircle(at, w, v, color);
+    Draw.Line(at, size, color);
+    Draw.Line(at, size, v, color);
+    Draw.RoundRect(at, size, v, color);
+    Draw.RoundRect(at, size, v, w, color);
+    Draw.WireRoundRect(at, size, v, w, color);
+    Draw.Ellipse(at, size, color);
+    Draw.Ellipse(at, size, v, color);
+    Draw.WireEllipse(at, size, w, color);
+    Draw.Arc(at, v, w, v, w, color);
+    Draw.Shape(Shape { center = at, size = size, radius = v, rotation = w, color = color, color2 = color, outline = v,
         outlineColor = color, soft = w });
-    Draw2D.Shape(Shape { center = float2(10, 10), size = float2(20, 20), radius = w, rotation = v, soft = v, outline = w });
+    Draw.Shape(Shape { center = float2(10, 10), size = float2(20, 20), radius = w, rotation = v, soft = v, outline = w });
 }
 
 void Texts(float v, float w, int number)
 {
-    Draw2D.Text("text", float2(v, w), v, Color.white);
-    Draw2D.Text("two\nlines", float2(w, v), w, Color(v, w, v, w), Anchor(number));
-    Draw2D.Text("bold", float2(0, 0), v, Color.white, Anchor(number % 9), Font(number));
-    var measured = Draw2D.MeasureText("measured\n\n", v) + Draw2D.MeasureText("", w, Font.Bold);
-    Draw2D.Text($"{measured}", measured, 12, Color.white);
-    var there = Draw2D.WorldToScreen(float2(v, w)) + Draw2D.ScreenToWorld(float2(w, v)) + Screen.Flip(float2(v, w));
-    var deep = Draw3D.WorldToScreen(float3(v, w, v)) + Draw3D.ScreenToWorld(float3(w, v, w)) + Draw3D.ScreenRayOrigin(there)
-        + Draw3D.ScreenRayDirection(float2(v, w));
-    Draw2D.Circle(there, deep.x, Color.white);
+    Draw.Text("text", float2(v, w), v, Color.white);
+    Draw.Text("two\nlines", float2(w, v), w, Color(v, w, v, w), Anchor(number));
+    Draw.Text("bold", float2(0, 0), v, Color.white, Anchor(number % 9), Font(number));
+    var measured = Draw.MeasureText("measured\n\n", v) + Draw.MeasureText("", w, Font.Bold);
+    Draw.Text($"{measured}", measured, 12, Color.white);
+    var there = Draw.WorldToScreen(float2(v, w)) + Draw.ScreenToWorld(float2(w, v)) + Screen.Flip(float2(v, w));
+    var deep = Draw.WorldToScreen(float3(v, w, v)) + Draw.ScreenToWorld(float3(w, v, w)) + Draw.ScreenRayOrigin(there)
+        + Draw.ScreenRayDirection(float2(v, w));
+    Draw.Circle(there, deep.x, Color.white);
 }
 
 void Settings(float v, float w, int number)
 {
     Draw.Blend(Blend(number)),
     Draw.Tint(Color(v, w, v, w)),
-    Draw2D.Transform(float2(v, w), w, v),
-    Draw2D.Clip(Rect(v, w, w, v))
+    Draw.Transform(float2(v, w), w, v),
+    Draw.Clip(Rect(v, w, w, v))
     {
-        Draw2D.Rect(float2(0, 0), float2(10, 10), Color.white);
-        Draw2D.Text("clipped", float2(1, 1), 14, Color.white);
-        Draw2D.Camera(float2(w, v), v)
+        Draw.Rect(float2(0, 0), float2(10, 10), Color.white);
+        Draw.Text("clipped", float2(1, 1), 14, Color.white);
+        Draw.Camera(float2(w, v), v)
         {
-            Draw2D.Circle(float2(0, 0), 1, Color.white);
+            Draw.Circle(float2(0, 0), 1, Color.white);
         }
-        Draw2D.Clip(Rect(w, v, v, w))
+        Draw.Clip(Rect(w, v, v, w))
         {
-            Draw2D.Screen()
+            Draw.Pixels()
             {
-                Draw2D.Rect(float2(v, v), float2(1, 1), Color.red);
+                Draw.Rect(float2(v, v), float2(1, 1), Color.red);
             }
         }
     }
-    Draw3D.Camera(float3(v, w, v), quaternion.Euler(float3(w, v, w)), v)
+    Draw.Camera(float3(v, w, v), quaternion.Euler(float3(w, v, w)), v)
     {
-        Draw3D.Transform(float4x4.TRS(float3(v, v, v), quaternion.AxisAngle(float3(w, w, w), v), float3(w, v, w)))
+        Draw.Transform(float4x4.TRS(float3(v, v, v), quaternion.AxisAngle(float3(w, w, w), v), float3(w, v, w)))
         {
-            Draw3D.Cube(float3(v, w, v), float3(w, v, w), Color.white);
-            Draw3D.Cube(float3(0, 0, 0), float3(1, 1, 1), quaternion.Euler(float3(v, w, v)), Color.white);
-            Draw3D.Sphere(float3(w, v, w), v, Color.white);
-            Draw3D.Cylinder(float3(v, v, v), w, v, Color.white);
-            Draw3D.Plane(float3(w, w, w), float2(v, w), Color.white);
+            Draw.Cube(float3(v, w, v), float3(w, v, w), Color.white);
+            Draw.Cube(float3(0, 0, 0), float3(1, 1, 1), quaternion.Euler(float3(v, w, v)), Color.white);
+            Draw.Sphere(float3(w, v, w), v, Color.white);
+            Draw.Cylinder(float3(v, v, v), w, v, Color.white);
+            Draw.Plane(float3(w, w, w), float2(v, w), Color.white);
         }
     }
-    Draw3D.Camera(float4x4.TRS(float3(v, w, v), quaternion.identity, float3(w, w, w)), float4x4.PerspectiveFov(v, w, v, w))
+    Draw.Camera(float4x4.TRS(float3(v, w, v), quaternion.identity, float3(w, w, w)), float4x4.PerspectiveFov(v, w, v, w))
     {
-        Draw3D.Sphere(float3(0, 0, 5), 1, Color.white);
+        Draw.Sphere(float3(0, 0, 5), 1, Color.white);
     }
 }
 
@@ -117,12 +117,12 @@ void Nest(int depth)
 {
     if (depth <= 0)
     {
-        Draw2D.Rect(float2(1, 1), float2(2, 2), Color.white);
+        Draw.Rect(float2(1, 1), float2(2, 2), Color.white);
         return;
     }
     Draw.Tint(Color(1, 1, 1, 0.999)),
-    Draw2D.Transform(float2(0.001, 0)),
-    Draw2D.Clip(Rect(0, 0, 600 - depth * 0.01, 300))
+    Draw.Transform(float2(0.001, 0)),
+    Draw.Clip(Rect(0, 0, 600 - depth * 0.01, 300))
     {
         Nest(depth - 1);
     }
@@ -135,7 +135,7 @@ view Bad(Art art)
     List<float> bad = [nan, inf, -inf, 3.4028235e38, -3.4028235e38, 1e30, -1e30, 0.0, -art.zero, 1e-30, 1e10, -1e10, 4294967296.0,
         2147483648.0, -2147483649.0, 0.5];
     mut var number = art.least;
-    Draw2D.Clear(Color(nan, inf, -inf, 2));
+    Draw.Clear(Color(nan, inf, -inf, 2));
     foreach (var v in bad)
     {
         foreach (var w in bad)
@@ -149,12 +149,12 @@ view Bad(Art art)
     Nest(1000);
     Draw.SetBlend(Blend(art.most));
     Draw.SetTint(Color(nan, nan, nan, nan));
-    Draw2D.SetTransform(float2(inf, nan), nan, inf);
-    Draw2D.SetClip(Rect(nan, inf, -inf, 1e30));
-    Draw2D.SetCamera(float2(nan, nan), 0);
-    Draw3D.SetCamera(float3(nan, nan, nan), quaternion.identity, 0);
-    Draw2D.Rect(float2(0, 0), float2(1, 1), Color.white);
-    Draw3D.Cube(float3(0, 0, 0), float3(1, 1, 1), Color.white);
+    Draw.SetTransform(float2(inf, nan), nan, inf);
+    Draw.SetClip(Rect(nan, inf, -inf, 1e30));
+    Draw.SetCamera(float2(nan, nan), 0);
+    Draw.SetCamera(float3(nan, nan, nan), quaternion.identity, 0);
+    Draw.Rect(float2(0, 0), float2(1, 1), Color.white);
+    Draw.Cube(float3(0, 0, 0), float3(1, 1, 1), Color.white);
 }
 
 [After(Bad)]
@@ -162,33 +162,33 @@ view Meshes(Art art)
 {
     Draw.SetBlend();
     Draw.SetTint();
-    Draw2D.SetTransform();
-    Draw2D.SetClip();
-    Draw2D.SetScreen();
+    Draw.SetTransform();
+    Draw.SetClip();
+    Draw.SetPixels();
     List<Vertex> none = [];
     List<int> nothing = [];
     // Indices that point at nothing, and too few of them for a triangle
-    Draw2D.Mesh(art.corners, [0, 1, 2, -1, art.most, art.least, 3, 0, 1]);
-    Draw2D.Mesh(art.corners, [0, 1]);
-    Draw2D.Mesh(art.corners, nothing);
-    Draw2D.Mesh(none, [0, 1, 2]);
-    Draw2D.Mesh(none, nothing);
-    Draw2D.Mesh(art.corners, [2, 1, 0, 0, 1, 7], art.picture);
-    Draw2D.Mesh(art.corners, [0, 1, 2], art.picture, Filter(art.most));
-    Draw2D.Mesh(art.corners, [0, 1, 2], art.open);
-    Draw2D.Mesh(art.corners, [0, 1, 2], art.wide, Filter(art.least));
-    Draw3D.SetCamera(float3(0, 1, -5), quaternion.identity, 60);
-    Draw3D.Mesh(art.solid, [0, 1, 2, 3, -5, art.most], float4x4.identity);
-    Draw3D.Mesh(art.solid, [0, 1], float4x4.identity, art.picture);
-    Draw3D.Mesh(art.solid, nothing, float4x4.identity);
+    Draw.Mesh(art.corners, [0, 1, 2, -1, art.most, art.least, 3, 0, 1]);
+    Draw.Mesh(art.corners, [0, 1]);
+    Draw.Mesh(art.corners, nothing);
+    Draw.Mesh(none, [0, 1, 2]);
+    Draw.Mesh(none, nothing);
+    Draw.Mesh(art.corners, [2, 1, 0, 0, 1, 7], art.picture);
+    Draw.Mesh(art.corners, [0, 1, 2], art.picture, Filter(art.most));
+    Draw.Mesh(art.corners, [0, 1, 2], art.open);
+    Draw.Mesh(art.corners, [0, 1, 2], art.wide, Filter(art.least));
+    Draw.SetCamera(float3(0, 1, -5), quaternion.identity, 60);
+    Draw.Mesh(art.solid, [0, 1, 2, 3, -5, art.most], float4x4.identity);
+    Draw.Mesh(art.solid, [0, 1], float4x4.identity, art.picture);
+    Draw.Mesh(art.solid, nothing, float4x4.identity);
     // More corners than 16 bits count, and indices on both sides of them
-    Draw3D.Mesh(art.many, [0, 65535, 65536, 69999, 70000, 1, 2, 3, art.least], float4x4.identity);
-    Draw3D.Mesh(art.many, art.around, float4x4.identity);
+    Draw.Mesh(art.many, [0, 65535, 65536, 69999, 70000, 1, 2, 3, art.least], float4x4.identity);
+    Draw.Mesh(art.many, art.around, float4x4.identity);
     List<float4x4> places = [float4x4.identity, float4x4.TRS(float3(1, 2, 3), quaternion.identity, float3(0, 0, 0))];
     List<float4x4> nowhere = [];
-    Draw3D.Instanced(art.solid, [0, 1, 2, 9], places);
-    Draw3D.Instanced(art.solid, [0, 1, 2], nowhere);
-    Draw3D.Instanced(art.many, art.around, places, art.picture);
+    Draw.Instanced(art.solid, [0, 1, 2, 9], places);
+    Draw.Instanced(art.solid, [0, 1, 2], nowhere);
+    Draw.Instanced(art.many, art.around, places, art.picture);
 }
 
 [After(Meshes)]
@@ -197,13 +197,13 @@ view Long()
     // Text of a megabyte on one line, and of a hundred thousand lines
     mut var line = "wide ";
     for (var i = 0; i < 18; i++) line = line + line;
-    Draw2D.Text(line, float2(0, 0), 1e-3, Color.white);
-    var across = Draw2D.MeasureText(line, 400);
+    Draw.Text(line, float2(0, 0), 1e-3, Color.white);
+    var across = Draw.MeasureText(line, 400);
     mut var lines = "\n";
     for (var i = 0; i < 17; i++) lines = lines + lines;
-    Draw2D.Text(lines, float2(0, 0), 16, Color.white, Anchor.LowerRight);
-    var down = Draw2D.MeasureText(lines, 1e6);
-    Draw2D.Text("ok", across + down, 16, Color.white);
+    Draw.Text(lines, float2(0, 0), 16, Color.white, Anchor.LowerRight);
+    var down = Draw.MeasureText(lines, 1e6);
+    Draw.Text("ok", across + down, 16, Color.white);
 }
 
 system Count(mut Art art)

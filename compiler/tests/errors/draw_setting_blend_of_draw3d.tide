@@ -1,8 +1,0 @@
-// expect: Draw3D has no function 'SetBlend'
-// expect: it's Draw's, the same wherever it's drawn, the window or a target: 'Draw.SetBlend(...);'
-scene Main { }
-
-view Show()
-{
-    Draw3D.SetBlend(Blend.Add);
-}

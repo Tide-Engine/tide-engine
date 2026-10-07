@@ -67,6 +67,8 @@ type matrix_type(int dim);
 // plus byte -> int/long/float, int -> long/float and intN -> floatN widening. Errors are always accepted so
 // they don't cascade.
 bool type_assignable(type to, type from);
+// A grid that's a texture where one is wanted: a Grid2<Color>, or a Grid2<float> (one channel).
+bool type_is_texture_grid(type t);
 
 // Suffix of the tide/math.h functions for a type: f3, i2, q, f4x4, ...
 const char *type_suffix(type t);

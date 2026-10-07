@@ -1,5 +1,5 @@
 // expect: frag 'Look' reads a 'FromLamp', which vert 'Lift' doesn't write
-// expect: a frag's struct is what the draw's vert writes for it, 'out FromLamp lamp' among the vert's parameters, or an element of the list an Instanced draw is given, a List<FromLamp>
+// expect: a frag's struct is what the draw's vert writes for it, 'out FromLamp lamp' among the vert's parameters, an element of the list an Instanced draw is given, a List<FromLamp>, or the values the draw gives after its frag, 'Draw.Mesh(..., Look, FromLamp { ... })'
 scene Main { }
 struct Corner { float3 position; float3 normal; float2 uv; }
 struct FromLamp { float3 place; float glow; }
@@ -16,5 +16,5 @@ frag Look(Corner corner, FromLamp lamp, out Color color)
 
 view Show(Models models)
 {
-    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Lift, Look);
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Lift, Look);
 }

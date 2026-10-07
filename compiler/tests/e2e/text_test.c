@@ -4,7 +4,7 @@
 #include "game.h"
 #include "tide_test.h"
 
-// Draw2D.Text's anchor and weight, and Draw2D.MeasureText's weight, as the
+// Draw.Text's anchor and weight, and Draw.MeasureText's weight, as the
 // draw list and the renderer's measure get them.
 
 static bool close_to(const float a, const float b)

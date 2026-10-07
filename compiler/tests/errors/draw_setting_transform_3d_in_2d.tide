@@ -1,9 +1,0 @@
-// expect: no version of Draw2D.Transform takes (float4x4)
-scene Main { }
-
-view Show()
-{
-    Draw2D.Transform(float4x4.identity)
-    {
-    }
-}

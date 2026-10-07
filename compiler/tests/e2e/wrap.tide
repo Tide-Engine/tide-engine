@@ -44,33 +44,33 @@ view Fill(mut Art art)
 // The engine's own vertices: a wrap after the filter, and none for the cells at the edge
 view Flat(Art art)
 {
-    Draw2D.Mesh(art.flat, art.faces, art.tiles);
-    Draw2D.Mesh(art.flat, art.faces, art.tiles, Filter.Point);
-    Draw2D.Mesh(art.flat, art.faces, art.tiles, Filter.Point, Wrap.Clamp); // Said outright: the same, so one command with the last
-    Draw2D.Mesh(art.flat, art.faces, art.tiles, Filter.Point, Wrap.Repeat);
-    Draw2D.Mesh(art.flat, art.faces, art.tiles, Filter.Point, Wrap.Repeat); // More of the same: one command
-    Draw2D.Mesh(art.flat, art.faces, art.tiles, Filter.Bilinear, Wrap.Mirror);
+    Draw.Mesh(art.flat, art.faces, art.tiles);
+    Draw.Mesh(art.flat, art.faces, art.tiles, Filter.Point);
+    Draw.Mesh(art.flat, art.faces, art.tiles, Filter.Point, Wrap.Clamp); // Said outright: the same, so one command with the last
+    Draw.Mesh(art.flat, art.faces, art.tiles, Filter.Point, Wrap.Repeat);
+    Draw.Mesh(art.flat, art.faces, art.tiles, Filter.Point, Wrap.Repeat); // More of the same: one command
+    Draw.Mesh(art.flat, art.faces, art.tiles, Filter.Bilinear, Wrap.Mirror);
     // A render target's color is a texture like any other
-    Draw2D.Mesh(art.flat, art.faces, art.target.color, Filter.Point, Wrap.Repeat);
+    Draw.Mesh(art.flat, art.faces, art.target.color, Filter.Point, Wrap.Repeat);
 }
 
 // A wrap is a value: kept in a field, picked, made of a number, and one that's no wrap's
 view Values(Art art)
 {
-    Draw2D.Rect(float2(0, 0), float2(1, 1), Color.white);
-    Draw2D.Mesh(art.flat, art.faces, art.tiles, Filter.Point, art.kept);
-    Draw2D.Mesh(art.flat, art.faces, art.tiles, Filter.Point, art.tiled ? Wrap.Repeat : Wrap.Clamp);
-    Draw2D.Mesh(art.flat, art.faces, art.tiles, Filter.Point, Wrap(2));
-    Draw2D.Mesh(art.flat, art.faces, art.tiles, Filter.Point, Wrap(7));
+    Draw.Rect(float2(0, 0), float2(1, 1), Color.white);
+    Draw.Mesh(art.flat, art.faces, art.tiles, Filter.Point, art.kept);
+    Draw.Mesh(art.flat, art.faces, art.tiles, Filter.Point, art.tiled ? Wrap.Repeat : Wrap.Clamp);
+    Draw.Mesh(art.flat, art.faces, art.tiles, Filter.Point, Wrap(2));
+    Draw.Mesh(art.flat, art.faces, art.tiles, Filter.Point, Wrap(7));
 }
 
 view Solid(Art art)
 {
-    Draw3D.Mesh(art.solid, art.faces, float4x4.identity, art.tiles, Filter.Point);
-    Draw3D.Mesh(art.solid, art.faces, float4x4.identity, art.tiles, Filter.Point, Wrap.Mirror);
-    Draw3D.Mesh(art.solid, art.faces, float4x4.identity, art.target.color, Filter.Bilinear, Wrap.Repeat);
-    Draw3D.Instanced(art.solid, art.faces, art.places, art.tiles, Filter.Point, Wrap.Repeat);
-    Draw3D.Instanced(art.solid, art.faces, art.places, art.target.color, Filter.Point, Wrap.Mirror);
+    Draw.Mesh(art.solid, art.faces, float4x4.identity, art.tiles, Filter.Point);
+    Draw.Mesh(art.solid, art.faces, float4x4.identity, art.tiles, Filter.Point, Wrap.Mirror);
+    Draw.Mesh(art.solid, art.faces, float4x4.identity, art.target.color, Filter.Bilinear, Wrap.Repeat);
+    Draw.Instanced(art.solid, art.faces, art.places, art.tiles, Filter.Point, Wrap.Repeat);
+    Draw.Instanced(art.solid, art.faces, art.places, art.target.color, Filter.Point, Wrap.Mirror);
 }
 
 // Into a target, by its own methods
@@ -88,11 +88,11 @@ vert Shift(mut Corner vertex)
 // A vertex of the game's with no frag: its color times the texture, read as the draw says
 view Corners(Art art)
 {
-    Draw2D.Mesh(art.corners, art.faces, art.tiles);
-    Draw2D.Mesh(art.corners, art.faces, art.tiles, Filter.Point);
-    Draw2D.Mesh(art.corners, art.faces, art.tiles, Filter.Point, Wrap.Repeat);
-    Draw2D.Mesh(art.corners, art.faces, art.tiles, Filter.Bilinear, art.kept);
-    Draw2D.Mesh(art.corners, art.faces, art.target.color, Filter.Point, Wrap.Repeat, Shift);
+    Draw.Mesh(art.corners, art.faces, art.tiles);
+    Draw.Mesh(art.corners, art.faces, art.tiles, Filter.Point);
+    Draw.Mesh(art.corners, art.faces, art.tiles, Filter.Point, Wrap.Repeat);
+    Draw.Mesh(art.corners, art.faces, art.tiles, Filter.Bilinear, art.kept);
+    Draw.Mesh(art.corners, art.faces, art.target.color, Filter.Point, Wrap.Repeat, Shift);
 }
 
 // A frag says both where it samples: each way a grid is read is a texture of its own
@@ -120,7 +120,7 @@ vert Lifted(mut Corner vertex, Art art)
 
 view Shaded(Art art)
 {
-    Draw2D.Mesh(art.corners, art.faces, Tiled);
-    Draw2D.Mesh(art.corners, art.faces, art.target.color, Framed);
-    Draw2D.Mesh(art.corners, art.faces, Lifted);
+    Draw.Mesh(art.corners, art.faces, Tiled);
+    Draw.Mesh(art.corners, art.faces, art.target.color, Framed);
+    Draw.Mesh(art.corners, art.faces, Lifted);
 }

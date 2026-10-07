@@ -51,9 +51,9 @@ system Follow(Steer steer, mut Body body, Time time)
 
 view Point(Devices devices, mut Aim aim)
 {
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw2D.SetCamera(float2(0, 0.3), 2.4);
-    aim.world = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0, 0.3), 2.4);
+    aim.world = Draw.ScreenToWorld(Screen.Flip(devices.pointer.position));
     if (Math.LengthSq(devices.pointer.delta) > 0) aim.moved = true;
 }
 
@@ -61,25 +61,25 @@ view Point(Devices devices, mut Aim aim)
 // machine predicts by as far as the machine runs ahead of the server.
 view Confirmed(verified Body body)
 {
-    Draw2D.WireCircle(body.position, 0.34, 0.035, body.color);
+    Draw.WireCircle(body.position, 0.34, 0.035, body.color);
 }
 
 // The disc: the world as this machine predicts it. Its own input applies at
 // once, and the other player's is guessed from the last one that arrived.
 view Predicted(Body body)
 {
-    Draw2D.Circle(body.position, 0.2, body.color);
+    Draw.Circle(body.position, 0.2, body.color);
 }
 
 view Mine(Body body, with ownership)
 {
-    Draw2D.Text("you", body.position + float2(0, 0.42), 0.2, Color.white, Anchor.LowerCenter);
+    Draw.Text("you", body.position + float2(0, 0.42), 0.2, Color.white, Anchor.LowerCenter);
 }
 
 view Hud(Session session)
 {
-    Draw2D.SetScreen();
-    Draw2D.Text(session.server ? "This machine runs the server" : $"{session.ping} ms round trip to the server",
+    Draw.SetPixels();
+    Draw.Text(session.server ? "This machine runs the server" : $"{session.ping} ms round trip to the server",
                 float2(12, 10), 15, Color.white);
-    Draw2D.Text("disc: predicted here   ring: confirmed", float2(12, 30), 13, Color(0.64, 0.64, 0.68));
+    Draw.Text("disc: predicted here   ring: confirmed", float2(12, 30), 13, Color(0.64, 0.64, 0.68));
 }

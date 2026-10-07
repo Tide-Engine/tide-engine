@@ -98,17 +98,17 @@ view Make(mut Stage stage)
 {
     stage.frames++;
     if (stage.frames > 1) return;
-    stage.two = RenderTarget(64, 48, Format.Color, Format.Float);
-    stage.exact = RenderTarget(256, 256, 1, Format.Color, Format.Float, Format.Float);
-    stage.screen = RenderTarget.Screen(Format.Float, Format.Color);
-    stage.half = RenderTarget.Screen(0.5, Format.Color, Format.Color, Format.Float);
-    stage.four = RenderTarget(8, 8, Format.Color, Format.Color, Format.Color, Format.Color);
-    stage.bright = RenderTarget(16, 16, Format.Float);
-    Format first = Format.Float;
-    Format second = Format.Color;
+    stage.two = RenderTarget(64, 48, Format.Rgba8, Format.Rgba16f);
+    stage.exact = RenderTarget(256, 256, 1, Format.Rgba8, Format.Rgba16f, Format.Rgba16f);
+    stage.screen = RenderTarget.Window(Format.Rgba16f, Format.Rgba8);
+    stage.half = RenderTarget.Window(0.5, Format.Rgba8, Format.Rgba8, Format.Rgba16f);
+    stage.four = RenderTarget(8, 8, Format.Rgba8, Format.Rgba8, Format.Rgba8, Format.Rgba8);
+    stage.bright = RenderTarget(16, 16, Format.Rgba16f);
+    Format first = Format.Rgba16f;
+    Format second = Format.Rgba8;
     stage.picked = Wide(first, second);
-    Format none = Format.DepthOnly;
-    stage.odd = RenderTarget(4, 4, Format.Float, none);
+    Format none = Format.Depth;
+    stage.odd = RenderTarget(4, 4, Format.Rgba16f, none);
 
     stage.albedo = stage.two.color;
     stage.normals = stage.two.colors[1];
@@ -140,7 +140,7 @@ view Show(Stage stage)
     Draw.Blit(stage.bright.color, stage.exact, Both);
     Draw.Blit(stage.albedo, Draw.window, Light);
     // A frag of several outputs draws into the window too, where its first is the pixel's
-    Draw3D.Mesh(stage.crate, stage.faces, float4x4.identity, Fill);
+    Draw.Mesh(stage.crate, stage.faces, float4x4.identity, Fill);
 }
 
 scene Main

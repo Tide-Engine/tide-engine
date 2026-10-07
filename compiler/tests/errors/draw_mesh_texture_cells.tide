@@ -1,4 +1,5 @@
-// expect: Draw2D.Mesh(List<Vertex> vertices, List<int> indices, Grid2<Color> texture, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp)
+// expect: a texture is a Texture, a Grid2<Color> or a Grid2<float>, and this is a Grid2<int>
+// expect: a grid of colors is its pixels, and one of floats a texture of one channel, which a frag reads as red
 scene Main { }
 
 local singleton Art
@@ -9,5 +10,5 @@ local singleton Art
 
 view Show(Art art)
 {
-    Draw2D.Mesh(art.corners, [0, 1, 2], art.cells);
+    Draw.Mesh(art.corners, [0, 1, 2], art.cells);
 }

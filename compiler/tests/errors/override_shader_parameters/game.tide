@@ -41,7 +41,7 @@ system Fall(mut Velocity velocity)
 
 virtual view Show(Position position)
 {
-    Draw2D.Circle(float2(position.value, 0), 1, Color.white);
+    Draw.Circle(float2(position.value, 0), 1, Color.white);
 }
 
 virtual event(Hit hit) TakeHit(mut Unit unit)
@@ -76,7 +76,7 @@ virtual frag Shade(BoxVertex vertex, out Color color)
 
 view DrawBoxes(Mesh mesh)
 {
-    Draw2D.Mesh(mesh.vertices, mesh.indices, Shade);
+    Draw.Mesh(mesh.vertices, mesh.indices, Shade);
 }
 
 scene Main { }

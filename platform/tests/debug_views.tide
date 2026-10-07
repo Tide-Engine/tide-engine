@@ -21,5 +21,5 @@ system Drift(mut Dot dot, Time time)
 
 view Dots(Dot dot)
 {
-    Draw2D.Circle(dot.position, 1, Color.white);
+    Draw.Circle(dot.position, 1, Color.white);
 }

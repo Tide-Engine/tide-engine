@@ -56,12 +56,12 @@ view Make(mut Lamp lamp)
 {
     if (lamp.frames == 0)
     {
-        lamp.map = RenderTarget(64, 48, Format.DepthOnly);
-        lamp.exact = RenderTarget(256, 256, 1, Format.DepthOnly);
-        lamp.screen = RenderTarget.Screen(Format.DepthOnly);
-        lamp.half = RenderTarget.Screen(0.5, Format.DepthOnly);
-        lamp.scene = RenderTarget(64, 48, Format.Color);
-        Format kind = lamp.frames == 0 ? Format.DepthOnly : Format.Color;
+        lamp.map = RenderTarget(64, 48, Format.Depth);
+        lamp.exact = RenderTarget(256, 256, 1, Format.Depth);
+        lamp.screen = RenderTarget.Window(Format.Depth);
+        lamp.half = RenderTarget.Window(0.5, Format.Depth);
+        lamp.scene = RenderTarget(64, 48, Format.Rgba8);
+        Format kind = lamp.frames == 0 ? Format.Depth : Format.Rgba8;
         lamp.picked = Made(32, kind);
         lamp.shadow = lamp.map.depth;
         lamp.sceneDepth = DepthOf(lamp.scene);
@@ -84,7 +84,7 @@ view Casters(mut Caster caster, Lamp lamp)
     lamp.map.SetCamera(float4x4.identity, lamp.toLamp);
     lamp.map.Mesh(lamp.mesh, lamp.faces, float4x4.Translate(caster.position));
     lamp.map.Mesh(lamp.mesh, lamp.faces, float4x4.Translate(caster.position), Seen);
-    lamp.map.SetScreen();
+    lamp.map.SetPixels();
     lamp.map.Rect(float2(8, 8), float2(16), Color.red);
 }
 
@@ -92,5 +92,5 @@ view Casters(mut Caster caster, Lamp lamp)
 view Show(Lamp lamp)
 {
     lamp.scene.Mesh(lamp.mesh, lamp.faces, float4x4.identity, Sink, Lit);
-    Draw3D.Mesh(lamp.mesh, lamp.faces, float4x4.identity, Lit);
+    Draw.Mesh(lamp.mesh, lamp.faces, float4x4.identity, Lit);
 }

@@ -1,4 +1,4 @@
 // expect: this mesh's shader takes a Texture source
 scene Main { }
 frag Copy(Vertex vertex, out Color color, Texture source) { color = source.Sample(vertex.uv); }
-view Show() { Draw2D.Mesh([Vertex { position = float2(0), uv = float2(0), color = Color.white }], [0, 0, 0], Copy); }
+view Show() { Draw.Mesh([Vertex { position = float2(0), uv = float2(0), color = Color.white }], [0, 0, 0], Copy); }

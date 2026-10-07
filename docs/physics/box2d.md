@@ -497,7 +497,7 @@ A [view](../game/views.md) asks too, with the `Physics` it takes: where the mous
 // What's under the pointer
 view Hover(Devices devices, Physics physics, mut Pointed pointed)
 {
-    var at = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    var at = Draw.ScreenToWorld(Screen.Flip(devices.pointer.position));
     pointed.over = default;
     if (Overlap(physics, Circle { radius = 0.1 }, at, 0, out var found)) pointed.over = found[0];
 }

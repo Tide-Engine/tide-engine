@@ -777,9 +777,9 @@ view Board(Arena arena, Time time, mut Fx fx, mut Lens lens)
 
     fx.shake = Math.Max(0, fx.shake - Frame.dt);
     var jolt = fx.random.NextFloat2Direction() * fx.shake * 0.3;
-    Draw2D.Clear(Color(0.07, 0.08, 0.11));
+    Draw.Clear(Color(0.07, 0.08, 0.11));
     var middle = (lens.top + lens.bottom) * 0.5; // The board's, down the screen
-    Draw2D.SetCamera(float2(W * 0.5, H * 0.5 + (middle - tall * 0.5) / lens.pixels) + jolt, tall * 0.5 / lens.pixels);
+    Draw.SetCamera(float2(W * 0.5, H * 0.5 + (middle - tall * 0.5) / lens.pixels) + jolt, tall * 0.5 / lens.pixels);
 
     for (var y = 0; y < H; y++)
     {
@@ -789,17 +789,17 @@ view Board(Arena arena, Time time, mut Fx fx, mut Lens lens)
             var tile = arena.tiles[x, y];
             if (tile == Tile.Wall)
             {
-                Draw2D.Rect(at, float2(1), Color(0.27, 0.30, 0.38));
-                Draw2D.Rect(at + float2(0, 0.08), float2(1, 0.84), Color(0.42, 0.46, 0.56));
+                Draw.Rect(at, float2(1), Color(0.27, 0.30, 0.38));
+                Draw.Rect(at + float2(0, 0.08), float2(1, 0.84), Color(0.42, 0.46, 0.56));
                 continue;
             }
-            Draw2D.Rect(at, float2(1), (x + y) % 2 == 0 ? Color(0.17, 0.29, 0.25) : Color(0.19, 0.32, 0.27));
+            Draw.Rect(at, float2(1), (x + y) % 2 == 0 ? Color(0.17, 0.29, 0.25) : Color(0.19, 0.32, 0.27));
             if (tile == Tile.Crate)
             {
-                Draw2D.RoundRect(at, float2(0.92), 0.12, Color(0.47, 0.30, 0.16));
-                Draw2D.RoundRect(at, float2(0.76), 0.08, Color(0.70, 0.48, 0.27));
-                Draw2D.Line(at + float2(-0.26, -0.26), at + float2(0.26, 0.26), 0.07, Color(0.47, 0.30, 0.16));
-                Draw2D.Line(at + float2(-0.26, 0.26), at + float2(0.26, -0.26), 0.07, Color(0.47, 0.30, 0.16));
+                Draw.RoundRect(at, float2(0.92), 0.12, Color(0.47, 0.30, 0.16));
+                Draw.RoundRect(at, float2(0.76), 0.08, Color(0.70, 0.48, 0.27));
+                Draw.Line(at + float2(-0.26, -0.26), at + float2(0.26, 0.26), 0.07, Color(0.47, 0.30, 0.16));
+                Draw.Line(at + float2(-0.26, 0.26), at + float2(0.26, -0.26), 0.07, Color(0.47, 0.30, 0.16));
             }
         }
     }
@@ -816,23 +816,23 @@ view Board(Arena arena, Time time, mut Fx fx, mut Lens lens)
                 var spot = at + float2(0, hop);
                 if (loot == Loot.Bomb)
                 {
-                    Draw2D.RoundRect(spot, float2(0.72), 0.18, Color(0.20, 0.55, 0.95));
-                    Draw2D.Circle(spot + float2(0, -0.03), 0.19, Color(0.05, 0.06, 0.1));
-                    Draw2D.Circle(spot + float2(0.15, 0.18), 0.06, Color(1, 0.85, 0.3));
+                    Draw.RoundRect(spot, float2(0.72), 0.18, Color(0.20, 0.55, 0.95));
+                    Draw.Circle(spot + float2(0, -0.03), 0.19, Color(0.05, 0.06, 0.1));
+                    Draw.Circle(spot + float2(0.15, 0.18), 0.06, Color(1, 0.85, 0.3));
                 }
                 if (loot == Loot.Flame)
                 {
-                    Draw2D.RoundRect(spot, float2(0.72), 0.18, Color(0.90, 0.30, 0.20));
-                    Draw2D.Ellipse(spot + float2(0, -0.02), float2(0.17, 0.24), Color(1, 0.8, 0.2));
-                    Draw2D.Ellipse(spot + float2(0, -0.09), float2(0.08, 0.12), Color(1, 1, 0.8));
+                    Draw.RoundRect(spot, float2(0.72), 0.18, Color(0.90, 0.30, 0.20));
+                    Draw.Ellipse(spot + float2(0, -0.02), float2(0.17, 0.24), Color(1, 0.8, 0.2));
+                    Draw.Ellipse(spot + float2(0, -0.09), float2(0.08, 0.12), Color(1, 1, 0.8));
                 }
                 if (loot == Loot.Boots)
                 {
-                    Draw2D.RoundRect(spot, float2(0.72), 0.18, Color(0.25, 0.75, 0.45));
-                    Draw2D.Line(spot + float2(-0.2, 0.15), spot + float2(-0.02, 0), 0.08, Color.white);
-                    Draw2D.Line(spot + float2(-0.2, -0.15), spot + float2(-0.02, 0), 0.08, Color.white);
-                    Draw2D.Line(spot + float2(0.02, 0.15), spot + float2(0.2, 0), 0.08, Color.white);
-                    Draw2D.Line(spot + float2(0.02, -0.15), spot + float2(0.2, 0), 0.08, Color.white);
+                    Draw.RoundRect(spot, float2(0.72), 0.18, Color(0.25, 0.75, 0.45));
+                    Draw.Line(spot + float2(-0.2, 0.15), spot + float2(-0.02, 0), 0.08, Color.white);
+                    Draw.Line(spot + float2(-0.2, -0.15), spot + float2(-0.02, 0), 0.08, Color.white);
+                    Draw.Line(spot + float2(0.02, 0.15), spot + float2(0.2, 0), 0.08, Color.white);
+                    Draw.Line(spot + float2(0.02, -0.15), spot + float2(0.2, 0), 0.08, Color.white);
                 }
             }
             var fuse = arena.fuse[x, y];
@@ -841,24 +841,24 @@ view Board(Arena arena, Time time, mut Fx fx, mut Lens lens)
                 var hurry = fuse < HURRY;
                 var beat = 0.5 + 0.5 * Math.Sin(time.t * (hurry ? 30 : 10));
                 var round = 0.29 + 0.05 * beat;
-                Draw2D.Ellipse(at + float2(0, -0.3), float2(0.28, 0.09), Color(0, 0, 0, 0.35));
-                Draw2D.WireCircle(at, 0.5, 0.07, Color(1, 0.4, 0.25, hurry ? 1.0 : 0.45 + 0.4 * beat)); // Shows around whoever stands on it
-                Draw2D.Circle(at + float2(0, -0.03), round + 0.04, Color(0.75, 0.78, 0.85));
-                Draw2D.Circle(at + float2(0, -0.03), round, hurry ? Color(0.75 + 0.25 * beat, 0.15, 0.1) : Color(0.06, 0.06, 0.09));
-                Draw2D.Circle(at + float2(-0.1, 0.07), 0.07, Color(1, 1, 1, 0.55));
-                Draw2D.Line(at + float2(0.12, 0.22), at + float2(0.2, 0.34), 0.06, Color(0.75, 0.6, 0.4));
-                Draw2D.Circle(at + float2(0.22, 0.37), 0.06 + 0.05 * beat, Color(1, 0.85, 0.3));
+                Draw.Ellipse(at + float2(0, -0.3), float2(0.28, 0.09), Color(0, 0, 0, 0.35));
+                Draw.WireCircle(at, 0.5, 0.07, Color(1, 0.4, 0.25, hurry ? 1.0 : 0.45 + 0.4 * beat)); // Shows around whoever stands on it
+                Draw.Circle(at + float2(0, -0.03), round + 0.04, Color(0.75, 0.78, 0.85));
+                Draw.Circle(at + float2(0, -0.03), round, hurry ? Color(0.75 + 0.25 * beat, 0.15, 0.1) : Color(0.06, 0.06, 0.09));
+                Draw.Circle(at + float2(-0.1, 0.07), 0.07, Color(1, 1, 1, 0.55));
+                Draw.Line(at + float2(0.12, 0.22), at + float2(0.2, 0.34), 0.06, Color(0.75, 0.6, 0.4));
+                Draw.Circle(at + float2(0.22, 0.37), 0.06 + 0.05 * beat, Color(1, 0.85, 0.3));
             }
             var fire = arena.fire[x, y];
             if (fire > 0)
             {
                 var hot = fire / (FIRE * 1.0);
-                Draw2D.Rect(at, float2(1), Color(1, 0.38, 0.08, 0.45 + 0.5 * hot));
-                Draw2D.RoundRect(at, float2(0.5 + 0.3 * hot), 0.2, Color(1, 0.75, 0.2, 0.5 + 0.5 * hot));
-                Draw2D.Circle(at, 0.1 + 0.16 * hot, Color(1, 1, 0.85, hot));
+                Draw.Rect(at, float2(1), Color(1, 0.38, 0.08, 0.45 + 0.5 * hot));
+                Draw.RoundRect(at, float2(0.5 + 0.3 * hot), 0.2, Color(1, 0.75, 0.2, 0.5 + 0.5 * hot));
+                Draw.Circle(at, 0.1 + 0.16 * hot, Color(1, 1, 0.85, hot));
                 Draw.Blend(Blend.Add)
                 {
-                    Draw2D.Shape(Shape { center = at, size = float2(1.5), ellipse = true, color = Color(1, 0.5, 0.15, 0.22 * hot), soft = 0.5 });
+                    Draw.Shape(Shape { center = at, size = float2(1.5), ellipse = true, color = Color(1, 0.5, 0.15, 0.22 * hot), soft = 0.5 });
                 }
             }
         }
@@ -870,13 +870,13 @@ view DrawGhosts(Ghost ghost, Time time)
     var at = ghost.position + float2(0, Math.Sin(time.t * 6 + ghost.position.x + ghost.position.y) * 0.04);
     var look = float2(ghost.heading) * 0.05;
     var sheet = Color(0.84, 0.80, 0.98);
-    Draw2D.Ellipse(ghost.position + float2(0, -0.34), float2(0.26, 0.08), Color(0, 0, 0, 0.3));
-    Draw2D.RoundRect(at + float2(0, 0.02), float2(0.62, 0.68), 0.3, sheet);
-    Draw2D.Circle(at + float2(-0.2, -0.3), 0.11, sheet);
-    Draw2D.Circle(at + float2(0, -0.3), 0.11, sheet);
-    Draw2D.Circle(at + float2(0.2, -0.3), 0.11, sheet);
-    Draw2D.Circle(at + float2(-0.12, 0.1) + look, 0.08, Color(0.15, 0.1, 0.3));
-    Draw2D.Circle(at + float2(0.12, 0.1) + look, 0.08, Color(0.15, 0.1, 0.3));
+    Draw.Ellipse(ghost.position + float2(0, -0.34), float2(0.26, 0.08), Color(0, 0, 0, 0.3));
+    Draw.RoundRect(at + float2(0, 0.02), float2(0.62, 0.68), 0.3, sheet);
+    Draw.Circle(at + float2(-0.2, -0.3), 0.11, sheet);
+    Draw.Circle(at + float2(0, -0.3), 0.11, sheet);
+    Draw.Circle(at + float2(0.2, -0.3), 0.11, sheet);
+    Draw.Circle(at + float2(-0.12, 0.1) + look, 0.08, Color(0.15, 0.1, 0.3));
+    Draw.Circle(at + float2(0.12, 0.1) + look, 0.08, Color(0.15, 0.1, 0.3));
 }
 
 view DrawBombers(Bomber bomber, Owner owner, Session session, Time time)
@@ -889,17 +889,17 @@ view DrawBombers(Bomber bomber, Owner owner, Session session, Time time)
     var faint = bomber.shield > 0 && int(time.t * 10) % 2 == 0 ? 0.35 : 1.0; // Blinks while nothing hurts it
     Draw.Tint(Color(1, 1, 1, faint))
     {
-        Draw2D.Ellipse(at + float2(0, -0.33), float2(0.28, 0.09), Color(0, 0, 0, 0.35));
-        Draw2D.Line(at + float2(0, 0.3), at + float2(0, 0.47), 0.07, Color(0.9, 0.9, 0.95));
-        Draw2D.Circle(at + float2(0, 0.5), 0.09, Color(1, 0.45, 0.6));
-        if (mine) Draw2D.Circle(at, 0.44, Color.white);
-        Draw2D.Circle(at, 0.37, color);
-        Draw2D.Circle(at + float2(-0.13, 0.07) + look, 0.1, Color.white);
-        Draw2D.Circle(at + float2(0.13, 0.07) + look, 0.1, Color.white);
-        Draw2D.Circle(at + float2(-0.13, 0.07) + look * 1.6, 0.05, Color(0.08, 0.08, 0.12));
-        Draw2D.Circle(at + float2(0.13, 0.07) + look * 1.6, 0.05, Color(0.08, 0.08, 0.12));
+        Draw.Ellipse(at + float2(0, -0.33), float2(0.28, 0.09), Color(0, 0, 0, 0.35));
+        Draw.Line(at + float2(0, 0.3), at + float2(0, 0.47), 0.07, Color(0.9, 0.9, 0.95));
+        Draw.Circle(at + float2(0, 0.5), 0.09, Color(1, 0.45, 0.6));
+        if (mine) Draw.Circle(at, 0.44, Color.white);
+        Draw.Circle(at, 0.37, color);
+        Draw.Circle(at + float2(-0.13, 0.07) + look, 0.1, Color.white);
+        Draw.Circle(at + float2(0.13, 0.07) + look, 0.1, Color.white);
+        Draw.Circle(at + float2(-0.13, 0.07) + look * 1.6, 0.05, Color(0.08, 0.08, 0.12));
+        Draw.Circle(at + float2(0.13, 0.07) + look * 1.6, 0.05, Color(0.08, 0.08, 0.12));
     }
-    if (mine && bomber.shield > 0) Draw2D.Text("YOU", at + float2(0, 0.6), 0.42, Color.white, Anchor.LowerCenter, Font.Bold);
+    if (mine && bomber.shield > 0) Draw.Text("YOU", at + float2(0, 0.6), 0.42, Color.white, Anchor.LowerCenter, Font.Bold);
 }
 
 view Sparkle(mut Fx fx)
@@ -921,7 +921,7 @@ view Sparkle(mut Fx fx)
             spark.position += spark.velocity * dt;
             fx.sparks[i] = spark;
             var fade = 1 - spark.age / spark.life;
-            Draw2D.Circle(spark.position, spark.size * (0.4 + 0.6 * fade), Color(spark.color.r, spark.color.g, spark.color.b, fade));
+            Draw.Circle(spark.position, spark.size * (0.4 + 0.6 * fade), Color(spark.color.r, spark.color.g, spark.color.b, fade));
             i++;
         }
     }
@@ -942,15 +942,15 @@ view Sparkle(mut Fx fx)
         if (popup.loot == Loot.Flame) words = "+fire";
         if (popup.loot == Loot.Boots) words = "+speed";
         var ink = Color(1, 0.97, 0.75, Math.Min(1, 2.5 * (0.9 - popup.age)));
-        Draw2D.Text(words, popup.position + float2(0.03, -0.03), popup.loot == Loot.None ? 0.7 : 0.46, Color(0, 0, 0, ink.a * 0.7), Anchor.MiddleCenter, Font.Bold);
-        Draw2D.Text(words, popup.position, popup.loot == Loot.None ? 0.7 : 0.46, ink, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(words, popup.position + float2(0.03, -0.03), popup.loot == Loot.None ? 0.7 : 0.46, Color(0, 0, 0, ink.a * 0.7), Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(words, popup.position, popup.loot == Loot.None ? 0.7 : 0.46, ink, Anchor.MiddleCenter, Font.Bold);
         n++;
     }
 }
 
 view Hud(Arena arena, Session session, Pad pad, Lens lens, query (Bomber bomber, Owner owner) bombers)
 {
-    Draw2D.SetScreen();
+    Draw.SetPixels();
     var wide = Screen.width;
     var tall = Screen.height;
     var unit = lens.unit;
@@ -977,56 +977,56 @@ view Hud(Arena arena, Session session, Pad pad, Lens lens, query (Bomber bomber,
         {
             mine = who.seat;
             away = who.dead;
-            Draw2D.RoundRect(float2(x + slot * 0.5, row), float2(slot - 4, 30 * unit), 9 * unit, Color(1, 1, 1, 0.16));
+            Draw.RoundRect(float2(x + slot * 0.5, row), float2(slot - 4, 30 * unit), 9 * unit, Color(1, 1, 1, 0.16));
         }
-        Draw2D.Circle(float2(x + 14 * unit, row), 8 * unit, SeatColor(who.seat));
-        Draw2D.Text($"{who.score}", float2(x + 26 * unit, row), 17 * unit, who.score > 0 && who.score == best ? Color(1, 0.9, 0.4) : Color.white,
+        Draw.Circle(float2(x + 14 * unit, row), 8 * unit, SeatColor(who.seat));
+        Draw.Text($"{who.score}", float2(x + 26 * unit, row), 17 * unit, who.score > 0 && who.score == best ? Color(1, 0.9, 0.4) : Color.white,
                     Anchor.MiddleLeft, Font.Bold);
     }
     if (players == 1)
     {
-        if (mine < 4) Draw2D.Text("Invite friends from the room menu", float2(wide - 10, row), 12 * unit, quiet, Anchor.MiddleRight);
-        else Draw2D.Text("Invite friends from the room menu", float2(10, row), 12 * unit, quiet, Anchor.MiddleLeft);
+        if (mine < 4) Draw.Text("Invite friends from the room menu", float2(wide - 10, row), 12 * unit, quiet, Anchor.MiddleRight);
+        else Draw.Text("Invite friends from the room menu", float2(10, row), 12 * unit, quiet, Anchor.MiddleLeft);
     }
 
     // How to play, under the board
-    Draw2D.Text("Move: arrows / WASD / drag     Bomb: space / tap", float2(wide * 0.5, lens.bottom + 5 * unit), 12 * unit, quiet, Anchor.UpperCenter);
-    Draw2D.Text($"Blast ghosts +1 and rivals +3. First to {TARGET} wins!", float2(wide * 0.5, lens.bottom + 20 * unit), 12 * unit, quiet, Anchor.UpperCenter);
+    Draw.Text("Move: arrows / WASD / drag     Bomb: space / tap", float2(wide * 0.5, lens.bottom + 5 * unit), 12 * unit, quiet, Anchor.UpperCenter);
+    Draw.Text($"Blast ghosts +1 and rivals +3. First to {TARGET} wins!", float2(wide * 0.5, lens.bottom + 20 * unit), 12 * unit, quiet, Anchor.UpperCenter);
     var thumbs = tall - lens.bottom - 38 * unit; // What a tall screen has left under them
     if (thumbs > 90 && !pad.held)
     {
         var spot = float2(wide * 0.5, tall - thumbs * 0.5);
-        Draw2D.WireCircle(spot, 44, 2, Color(1, 1, 1, 0.10));
-        Draw2D.Circle(spot, 16, Color(1, 1, 1, 0.10));
+        Draw.WireCircle(spot, 44, 2, Color(1, 1, 1, 0.10));
+        Draw.Circle(spot, 16, Color(1, 1, 1, 0.10));
     }
 
     var middle = float2(wide * 0.5, (lens.top + lens.bottom) * 0.5);
     if (arena.pause > 0 && arena.winner >= 0)
     {
-        Draw2D.RoundRect(middle, float2(250, 96) * unit, 16 * unit, Color(0, 0, 0, 0.75));
-        Draw2D.Text(arena.winner == mine ? "You win!" : $"{SeatName(arena.winner)} wins!", middle + float2(0, -14) * unit, 30 * unit,
+        Draw.RoundRect(middle, float2(250, 96) * unit, 16 * unit, Color(0, 0, 0, 0.75));
+        Draw.Text(arena.winner == mine ? "You win!" : $"{SeatName(arena.winner)} wins!", middle + float2(0, -14) * unit, 30 * unit,
                     SeatColor(arena.winner), Anchor.MiddleCenter, Font.Bold);
-        Draw2D.Text($"Next round in {arena.pause / TICKS + 1}", middle + float2(0, 24) * unit, 14 * unit, Color.white, Anchor.MiddleCenter);
+        Draw.Text($"Next round in {arena.pause / TICKS + 1}", middle + float2(0, 24) * unit, 14 * unit, Color.white, Anchor.MiddleCenter);
     }
     else if (away > 0)
     {
-        Draw2D.RoundRect(middle, float2(190, 44) * unit, 12 * unit, Color(0, 0, 0, 0.7));
-        Draw2D.Text("Ouch! Back in a moment", middle, 14 * unit, Color.white, Anchor.MiddleCenter);
+        Draw.RoundRect(middle, float2(190, 44) * unit, 12 * unit, Color(0, 0, 0, 0.7));
+        Draw.Text("Ouch! Back in a moment", middle, 14 * unit, Color.white, Anchor.MiddleCenter);
     }
 
     // The stick, where a finger or the mouse drags
     if (pad.held && pad.dragged)
     {
-        Draw2D.WireCircle(Screen.Flip(pad.origin), 44, 2, Color(1, 1, 1, 0.25));
-        Draw2D.Circle(Screen.Flip(pad.at), 16, Color(1, 1, 1, 0.3));
+        Draw.WireCircle(Screen.Flip(pad.origin), 44, 2, Color(1, 1, 1, 0.25));
+        Draw.Circle(Screen.Flip(pad.at), 16, Color(1, 1, 1, 0.3));
     }
 }
 
 view Joining(Session session)
 {
     if (session.state == SessionState.Connected) return;
-    Draw2D.SetScreen();
-    Draw2D.Text("Joining the game...", float2(Screen.width, Screen.height) * 0.5, 18, Color.white, Anchor.MiddleCenter);
+    Draw.SetPixels();
+    Draw.Text("Joining the game...", float2(Screen.width, Screen.height) * 0.5, 18, Color.white, Anchor.MiddleCenter);
 }
 
 // The menu's button goes in the top right corner here: the bottom of the

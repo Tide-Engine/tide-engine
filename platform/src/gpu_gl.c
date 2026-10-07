@@ -216,13 +216,14 @@ static void gl_buffer_free(const tide_gpu_id buffer)
 
 static void texture_pixels(const gl_texture *t, const void *pixels, const bool again)
 {
-    const bool red = t->format == TIDE_GPU_R8;
+    const bool red = t->format != TIDE_GPU_RGBA8, halves = t->format == TIDE_GPU_R16F;
+    const GLenum type = halves ? GL_HALF_FLOAT : GL_UNSIGNED_BYTE;
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1); // Rows of any width, one after the other
     if (again) {
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, t->width, t->height, red ? GL_RED : GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, t->width, t->height, red ? GL_RED : GL_RGBA, type, pixels);
     } else {
-        glTexImage2D(GL_TEXTURE_2D, 0, red ? GL_R8 : GL_RGBA8, t->width, t->height, 0, red ? GL_RED : GL_RGBA,
-                     GL_UNSIGNED_BYTE, pixels);
+        glTexImage2D(GL_TEXTURE_2D, 0, halves ? GL_R16F : red ? GL_R8 : GL_RGBA8, t->width, t->height, 0,
+                     red ? GL_RED : GL_RGBA, type, pixels);
     }
 }
 
@@ -437,7 +438,7 @@ static tide_gpu_id gl_target_make(const tide_gpu_target_format format, const int
         static bool said;
         if (!said) {
             fprintf(stderr, "tide: this device's " GL_NAME " can't draw into float images: a render target's "
-                            "Format.Float image is 4 bytes a pixel here, and keeps what's drawn into it from 0 to 1\n");
+                            "Format.Rgba16f image is 4 bytes a pixel here, and keeps what's drawn into it from 0 to 1\n");
         }
         said = true;
         floats = false;

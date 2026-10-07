@@ -68,7 +68,7 @@ view Preview(mut Ribbon ribbon)
         if (ribbon.phase > 6.283185) ribbon.phase -= 6.283185;
     }
 
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw2D.SetCamera(float2(0, 0.3), 2.2);
-    Draw2D.Mesh(ribbon.vertices, ribbon.indices, Wave, Stripes);
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0, 0.3), 2.2);
+    Draw.Mesh(ribbon.vertices, ribbon.indices, Wave, Stripes);
 }

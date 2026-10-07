@@ -101,7 +101,7 @@ override local event(Hit hit) ShowHit(mut Hud hud)
 override view Show(Body shape, mut Hud display)
 {
     display.shown += 1;
-    Draw2D.Circle(float2(shape.x, 0), 2, Color.red);
+    Draw.Circle(float2(shape.x, 0), 2, Color.red);
 }
 
 // What the GPU runs

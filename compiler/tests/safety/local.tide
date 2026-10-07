@@ -85,8 +85,8 @@ view Show(mut Body body, verified Body confirmed, mut Mine mine, mut World world
     mut var others = 0;
     foreach (var each in all) others += each.other.trail.count > 0 ? 1 : 0;
     mine.seen = others * 3;
-    Draw2D.Text(body.label, body.position, 12, Color.white);
-    Draw2D.Circle(confirmed.position, confirmed.health, Color.red);
+    Draw.Text(body.label, body.position, 12, Color.white);
+    Draw.Circle(confirmed.position, confirmed.health, Color.red);
     // A spark each frame, which goes a frame later, and everything code can do with one that's gone
     var spark = Spawn(Spark { at = body.position, twin = mine.gone });
     mine.sparks.Add(spark);

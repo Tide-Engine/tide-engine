@@ -1,7 +1,7 @@
-// expect: to set it for the draws that follow, write 'Draw2D.SetClip(...);'
+// expect: to set it for the draws that follow, write 'Draw.SetClip(...);'
 scene Main { }
 
 view Show()
 {
-    Draw2D.Clip(Rect(0, 0, 4, 4));
+    Draw.Clip(Rect(0, 0, 4, 4));
 }

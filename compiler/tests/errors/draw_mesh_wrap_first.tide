@@ -1,5 +1,5 @@
-// expect: a mesh's wrap comes after its filter: 'Draw2D.Mesh(..., texture, Filter.Bilinear, Wrap.Repeat)'
-// expect: 'Filter.Bilinear' is the filter of a draw that says none
+// expect: a mesh's wrap comes after its filter: 'Draw.Mesh(..., texture, Filter.Bilinear, Wrap.Repeat)'
+// expect: a texture that isn't to be sampled as it says is given both; one that only wraps another way says so where it's declared: '[Wrap(Wrap.Repeat)]'
 scene Main { }
 
 local singleton Art
@@ -10,5 +10,5 @@ local singleton Art
 
 view Show(Art art)
 {
-    Draw2D.Mesh(art.corners, [0, 1, 2], art.tiles, Wrap.Repeat);
+    Draw.Mesh(art.corners, [0, 1, 2], art.tiles, Wrap.Repeat);
 }

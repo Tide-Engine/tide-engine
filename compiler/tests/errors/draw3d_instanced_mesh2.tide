@@ -1,4 +1,0 @@
-// expect: Draw3D.Instanced draws 3D vertices, and 'Vertex' has a float2 position
-struct Item { Color color; }
-scene Main { }
-view Show() { Draw3D.Instanced([Vertex { }], [0, 0, 0], [Item { }]); }

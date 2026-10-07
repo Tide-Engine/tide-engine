@@ -164,7 +164,11 @@ TIDE_TEST(asset_textures_are_values_drawn_where_the_pack_has_them)
     TIDE_CHECK(art->runCount == 3 && art->crispCount == 3 && art->byNameCount == 3 && art->hasOne && !art->hasNine);
     // A Texture holds no pixels: it names its image by its declaration, and for one of a list's, by its place
     TIDE_CHECK(!art->kept.image.pixels && !art->kept.target.id && art->kept.image.width == 2 && art->kept.image.height == 2);
-    TIDE_CHECK(art->kept.image.version == run_named[1] && art->keptTiles.image.version == tiles_named);
+    TIDE_CHECK(art->kept.image.version == run_named[1] && (art->keptTiles.image.version & TIDE_TEXTURE_NAME) == tiles_named);
+    // ...and carries how it's sampled, which its declaration says: nothing for run, and for tiles its
+    // filter and its wrap
+    TIDE_CHECK(tide_texture_filter(art->kept) == TIDE_FILTER_BILINEAR && tide_texture_wrap(art->kept) == TIDE_WRAP_CLAMP);
+    TIDE_CHECK(tide_texture_filter(art->keptTiles) == TIDE_FILTER_POINT && tide_texture_wrap(art->keptTiles) == TIDE_WRAP_REPEAT);
     TIDE_CHECK(hero_named && tiles_named && tiles_named != run_named[0] && run_named[0] != run_named[1]);
     // tiles is run/0.png, as run[0] is: two names of one image
     TIDE_CHECK(image_of(tiles_named, NULL) == image_of(run_named[0], NULL));
@@ -221,8 +225,8 @@ TIDE_TEST(asset_textures_are_sampled_as_their_declaration_says)
     TIDE_CHECK(mesh(18, run_texture[2], TIDE_FILTER_BILINEAR, TIDE_WRAP_REPEAT)); // ...and of a map that says its wrap
     TIDE_CHECK(mesh(19, paint_texture, TIDE_FILTER_POINT, TIDE_WRAP_MIRROR));     // A grid's field
     TIDE_CHECK(mesh(20, bare_texture, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP));    // One with nothing said
-    // The same image as tiles, through a field: a value names no declaration
-    TIDE_CHECK(mesh(21, run_texture[0], TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP));
+    // The same image as tiles, through a field: a Texture carries how it's sampled, so it draws as tiles does
+    TIDE_CHECK(mesh(21, run_texture[0], TIDE_FILTER_POINT, TIDE_WRAP_REPEAT));
     TIDE_CHECK(mesh_3d(22, run_texture[0], TIDE_FILTER_POINT, TIDE_WRAP_REPEAT));
     TIDE_CHECK(mesh(23, run_texture[0], TIDE_FILTER_POINT, TIDE_WRAP_REPEAT) && draws[23].target != 0);
     for (int i = 0; i < 3; i++) TIDE_CHECK(mesh(24 + i, run_texture[i], TIDE_FILTER_POINT, TIDE_WRAP_CLAMP) && draws[24 + i].target == 0);
@@ -260,8 +264,8 @@ TIDE_TEST(asset_textures_are_sampled_in_frags)
     // says reads it so. One shader, whatever it's given
     TIDE_CHECK(reads(33, TIDE_DRAW_SHADED, (const way[]){{run_texture[0], false, TIDE_WRAP_REPEAT}, {run_texture[0], true, TIDE_WRAP_CLAMP}}, 2));
     TIDE_CHECK(reads(34, TIDE_DRAW_SHADED, (const way[]){{hero_texture, true, TIDE_WRAP_CLAMP}, {hero_texture, true, TIDE_WRAP_CLAMP}}, 2));
-    // ...and a value in a field names no declaration: blended, the cells at the edge
-    TIDE_CHECK(reads(35, TIDE_DRAW_SHADED, (const way[]){{run_texture[0], true, TIDE_WRAP_CLAMP}, {run_texture[0], true, TIDE_WRAP_CLAMP}}, 2));
+    // ...and a value in a field is the texture it was given, sampled as that one says: as draw 33
+    TIDE_CHECK(reads(35, TIDE_DRAW_SHADED, (const way[]){{run_texture[0], false, TIDE_WRAP_REPEAT}, {run_texture[0], true, TIDE_WRAP_CLAMP}}, 2));
     TIDE_CHECK(draw.runs[draws[33].c->shaded.run].shader == draw.runs[draws[34].c->shaded.run].shader);
     TIDE_CHECK(draw.runs[draws[33].c->shaded.run].shader == draw.runs[draws[35].c->shaded.run].shader);
 

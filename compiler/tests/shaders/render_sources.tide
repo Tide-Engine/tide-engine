@@ -47,7 +47,7 @@ view Post(Images images)
     Draw.Blit(images.source, images.destination, Copy);
     Draw.Blit(images.pixels, Draw.window, Copy);
     images.destination.Mesh(images.vertices, images.indices, images.source, Offset, Copy);
-    Draw2D.Mesh(images.vertices, images.indices, images.source, Filter.Point, Offset);
+    Draw.Mesh(images.vertices, images.indices, images.source, Filter.Point, Offset);
 }
 
 view DrawMaterial(with Material, Images images)

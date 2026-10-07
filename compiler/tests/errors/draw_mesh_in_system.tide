@@ -1,4 +1,4 @@
-// expect: Draw2D can only be used in views, and in functions they call
+// expect: Draw can only be used in views, and in functions they call
 scene Main { }
 
 singleton Shape
@@ -8,5 +8,5 @@ singleton Shape
 
 system Run(Shape shape)
 {
-    Draw2D.Mesh(shape.corners, [0, 1, 2]);
+    Draw.Mesh(shape.corners, [0, 1, 2]);
 }

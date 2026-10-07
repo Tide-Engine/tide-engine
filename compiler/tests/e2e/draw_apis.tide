@@ -23,40 +23,40 @@ frag Shade3(Corner3 vertex, out Color color) { color = Color(vertex.position.x, 
 scene Main { }
 
 extern bool SameList(DrawList a, DrawList b);
-float2 Project2(float2 position) { return Draw2D.WorldToScreen(position); }
-float3 Project3(float3 position) { return Draw3D.WorldToScreen(position); }
+float2 Project2(float2 position) { return Draw.WorldToScreen(position); }
+float3 Project3(float3 position) { return Draw.WorldToScreen(position); }
 float2 OnScreen(Devices devices) { return Screen.Flip(devices.pointer.position); }
 
 view Show(mut Probe probe, Devices devices)
 {
-    probe.sameList = SameList(Draw2D.list, Draw3D.list);
-    Draw2D.Clear(Color.black);
-    Draw2D.SetCamera(float2(2, 3), 5);
+    probe.sameList = SameList(Draw.list, Draw.list);
+    Draw.Clear(Color.black);
+    Draw.SetCamera(float2(2, 3), 5);
     probe.screen2 = Project2(float2(2, 3));
-    probe.world2 = Draw2D.ScreenToWorld(probe.screen2);
+    probe.world2 = Draw.ScreenToWorld(probe.screen2);
     // Devices count from the bottom left, the screen from the top left: Screen.Flip goes either way
     probe.pointer = OnScreen(devices);
-    probe.pointerWorld = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    probe.pointerWorld = Draw.ScreenToWorld(Screen.Flip(devices.pointer.position));
     probe.corner = Screen.Flip(float2(0, 0));
     probe.flippedTwice = Screen.Flip(Screen.Flip(devices.pointer.position));
-    Draw2D.Mesh([], []);
-    Draw2D.Mesh([Corner2 { position = float2(1, 0) }], [0, 0, 0], Shade2);
-    Draw2D.SetScreen();
-    probe.overlay = Draw2D.WorldToScreen(float2(12, 34));
+    Draw.Mesh([], []);
+    Draw.Mesh([Corner2 { position = float2(1, 0) }], [0, 0, 0], Shade2);
+    Draw.SetPixels();
+    probe.overlay = Draw.WorldToScreen(float2(12, 34));
 
-    Draw3D.Clear(Color.black);
-    Draw3D.SetCamera(float3(0, 0, -5), quaternion.identity, 60);
+    Draw.Clear(Color.black);
+    Draw.SetCamera(float3(0, 0, -5), quaternion.identity, 60);
     probe.screen3 = Project3(float3(0, 0, 5));
-    probe.world3 = Draw3D.ScreenToWorld(probe.screen3);
-    probe.rayOrigin = Draw3D.ScreenRayOrigin(probe.screen3.xy);
-    probe.rayDirection = Draw3D.ScreenRayDirection(probe.screen3.xy);
-    Draw3D.Mesh([], [], float4x4.identity);
-    Draw3D.Mesh([Corner3 { position = float3(1, 0, 5) }], [0, 0, 0], float4x4.identity, Shade3);
-    Draw3D.Cube(float3(0, 0, 5), float3(2), Color.red);
-    Draw3D.Cube(float3(2, 0, 5), float3(2), quaternion.identity, Color.green);
-    Draw3D.Sphere(float3(4, 0, 5), 1, Color.blue);
-    Draw3D.Cylinder(float3(6, 0, 5), 1, 2, Color.yellow);
-    Draw3D.Cylinder(float3(8, 0, 5), 1, 2, quaternion.identity, Color.yellow);
-    Draw3D.Plane(float3(10, 0, 5), float2(2), Color.white);
-    Draw3D.Plane(float3(12, 0, 5), float2(2), quaternion.identity, Color.white);
+    probe.world3 = Draw.ScreenToWorld(probe.screen3);
+    probe.rayOrigin = Draw.ScreenRayOrigin(probe.screen3.xy);
+    probe.rayDirection = Draw.ScreenRayDirection(probe.screen3.xy);
+    Draw.Mesh([], [], float4x4.identity);
+    Draw.Mesh([Corner3 { position = float3(1, 0, 5) }], [0, 0, 0], float4x4.identity, Shade3);
+    Draw.Cube(float3(0, 0, 5), float3(2), Color.red);
+    Draw.Cube(float3(2, 0, 5), float3(2), quaternion.identity, Color.green);
+    Draw.Sphere(float3(4, 0, 5), 1, Color.blue);
+    Draw.Cylinder(float3(6, 0, 5), 1, 2, Color.yellow);
+    Draw.Cylinder(float3(8, 0, 5), 1, 2, quaternion.identity, Color.yellow);
+    Draw.Plane(float3(10, 0, 5), float2(2), Color.white);
+    Draw.Plane(float3(12, 0, 5), float2(2), quaternion.identity, Color.white);
 }

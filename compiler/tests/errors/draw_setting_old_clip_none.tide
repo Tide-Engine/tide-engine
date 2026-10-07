@@ -1,7 +1,7 @@
-// expect: Draw2D.Clip() is 'Draw2D.SetClip()' now
+// expect: Draw.Clip() is 'Draw.SetClip()' now
 scene Main { }
 
 view Show()
 {
-    Draw2D.Clip();
+    Draw.Clip();
 }

@@ -1,4 +1,5 @@
-// expect: a frag samples the grids it takes itself, so this draw takes no texture
+// expect: this mesh's frag has no Texture parameter for the explicit source
+// expect: give 'Shade' one, 'Texture source', and read it there, 'color = source.Sample(vertex.uv);', or have it sample a texture of a component or a singleton it takes, and leave this one out
 scene Main { }
 
 struct V
@@ -36,5 +37,5 @@ frag Shade(V vertex, out Color color, Box box)
 
 view Show(with Box, Models models)
 {
-    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, models.wood, Shade);
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, models.wood, Shade);
 }

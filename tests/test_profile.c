@@ -282,7 +282,7 @@ TIDE_TEST(profiler_draws_its_columns_where_they_fit)
     TIDE_CHECK(list.commands[2].kind == TIDE_DRAW_SCREEN && list.commands[3].kind == TIDE_DRAW_NO_CLIP);
     TIDE_CHECK(list.commands[4].kind == TIDE_DRAW_RECT); // The panel, in the corner, in its own color
     TIDE_CHECK(list.commands[4].a.x - list.commands[4].b.x * 0.5f == 12.0f);
-    TIDE_CHECK(list.commands[4].color.b == 0.08f && !list.tinted);
+    TIDE_CHECK(list.commands[4].color.b == 0.08f && !list.place.tinted);
     const tide_draw_command *frame = text_command("Frame");
     const tide_draw_command *tick = text_command("Tick");
     TIDE_REQUIRE(frame && tick);

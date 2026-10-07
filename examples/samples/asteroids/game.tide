@@ -622,10 +622,10 @@ view Backdrop(Devices devices, mut Pointer pointer, mut Look look, Lobby lobby)
     if (look.time > 600) look.time -= 600;
     look.shake = Math.Max(0, look.shake - dt);
 
-    Draw2D.Clear(SPACE);
+    Draw.Clear(SPACE);
     var size = ARENA * Math.Max(1.0, Screen.height / Screen.width) * 1.02;
     look.pixels = Screen.height / (2 * size);
-    Draw2D.SetCamera(float2(0), size);
+    Draw.SetCamera(float2(0), size);
 
     var drag = devices.pointer;
     if (lobby.playing && drag.press.down) pointer.start = drag.position;
@@ -633,18 +633,18 @@ view Backdrop(Devices devices, mut Pointer pointer, mut Look look, Lobby lobby)
     pointer.pull = pointer.held ? drag.position - pointer.start : float2(0);
 
     // Nothing of the field draws outside it, so what wraps comes in at the other edge.
-    Draw2D.SetClip(Rect(-ARENA, -ARENA, 2 * ARENA, 2 * ARENA));
-    Draw2D.Clear(Color(0.045, 0.05, 0.085));
+    Draw.SetClip(Rect(-ARENA, -ARENA, 2 * ARENA, 2 * ARENA));
+    Draw.Clear(Color(0.045, 0.05, 0.085));
     for (var i = 0; i < 70; i++)
     {
         var roll = Math.Hash(i + 11);
         var at = float2(roll % 2000, (roll / 2000) % 2000) * 0.01 - float2(ARENA);
         var twinkle = 0.25 + 0.2 * Math.Sin(look.time * (0.6 + (roll % 7) * 0.2) + i);
-        Draw2D.Circle(at, 0.03 + (roll % 3) * 0.015, Color(0.8, 0.85, 1, twinkle));
+        Draw.Circle(at, 0.03 + (roll % 3) * 0.015, Color(0.8, 0.85, 1, twinkle));
     }
-    Draw2D.WireRect(float2(0), float2(2 * ARENA), 0.06, Color(0.16, 0.18, 0.27));
+    Draw.WireRect(float2(0), float2(2 * ARENA), 0.06, Color(0.16, 0.18, 0.27));
     var shake = look.shake * look.shake * 2.2;
-    Draw2D.SetCamera(float2(Math.Sin(look.time * 71), Math.Cos(look.time * 53)) * shake, size);
+    Draw.SetCamera(float2(Math.Sin(look.time * 71), Math.Cos(look.time * 53)) * shake, size);
 }
 
 void DrawRock(float2 at, float angle, float radius, int shape)
@@ -660,11 +660,11 @@ void DrawRock(float2 at, float angle, float radius, int shape)
         faces.Add(i + 1);
         faces.Add(i == ROCK_CORNERS - 1 ? 1 : i + 2);
     }
-    Draw2D.Mesh(corners, faces);
+    Draw.Mesh(corners, faces);
     for (var i = 1; i <= ROCK_CORNERS; i++)
     {
         var next = i == ROCK_CORNERS ? 1 : i + 1;
-        Draw2D.Line(corners[i].position, corners[next].position, 0.09, ROCK_EDGE);
+        Draw.Line(corners[i].position, corners[next].position, 0.09, ROCK_EDGE);
     }
 }
 
@@ -688,9 +688,9 @@ view Bullets(Bullet bullet)
     var tail = bullet.position - Math.Normalize(bullet.velocity) * 0.4;
     Draw.Blend(Blend.Add)
     {
-        Draw2D.Line(tail, bullet.position, 0.13, Tint(bullet.tint));
+        Draw.Line(tail, bullet.position, 0.13, Tint(bullet.tint));
     }
-    Draw2D.Circle(bullet.position, 0.07, Color.white);
+    Draw.Circle(bullet.position, 0.07, Color.white);
 }
 
 view Saucers(Saucer saucer, Look look)
@@ -701,14 +701,14 @@ view Saucers(Saucer saucer, Look look)
         {
             var at = saucer.position + float2(x, y) * (2 * ARENA);
             if (Math.Abs(at.x) > ARENA + 1 || Math.Abs(at.y) > ARENA + 1) continue;
-            Draw2D.Ellipse(at + float2(0, 0.2), float2(0.34, 0.3), Color(0.25, 0.08, 0.1));
-            Draw2D.WireEllipse(at + float2(0, 0.2), float2(0.34, 0.3), 0.08, ALARM);
-            Draw2D.Ellipse(at, float2(SAUCER_RADIUS, 0.26), Color(0.25, 0.08, 0.1));
-            Draw2D.WireEllipse(at, float2(SAUCER_RADIUS, 0.26), 0.08, ALARM);
+            Draw.Ellipse(at + float2(0, 0.2), float2(0.34, 0.3), Color(0.25, 0.08, 0.1));
+            Draw.WireEllipse(at + float2(0, 0.2), float2(0.34, 0.3), 0.08, ALARM);
+            Draw.Ellipse(at, float2(SAUCER_RADIUS, 0.26), Color(0.25, 0.08, 0.1));
+            Draw.WireEllipse(at, float2(SAUCER_RADIUS, 0.26), 0.08, ALARM);
             for (var light = -1; light <= 1; light++)
             {
                 var lit = 0.5 + 0.5 * Math.Sin(look.time * 9 + light * 2.1);
-                Draw2D.Circle(at + float2(light * 0.36, 0), 0.06, Color(1, 0.9, 0.6, 0.3 + 0.7 * lit));
+                Draw.Circle(at + float2(light * 0.36, 0), 0.06, Color(1, 0.9, 0.6, 0.3 + 0.7 * lit));
             }
         }
     }
@@ -718,9 +718,9 @@ view Shots(Shot shot)
 {
     Draw.Blend(Blend.Add)
     {
-        Draw2D.Circle(shot.position, 0.2, Faded(ALARM, 0.5));
+        Draw.Circle(shot.position, 0.2, Faded(ALARM, 0.5));
     }
-    Draw2D.Circle(shot.position, 0.1, Color(1, 0.85, 0.8));
+    Draw.Circle(shot.position, 0.1, Color(1, 0.85, 0.8));
 }
 
 void DrawShip(float2 at, float angle, Color color, bool thrusting, float flicker)
@@ -738,20 +738,20 @@ void DrawShip(float2 at, float angle, Color color, bool thrusting, float flicker
         Vertex { position = notch, color = hull },
         Vertex { position = right, color = hull },
     ];
-    Draw2D.Mesh(corners, [0, 1, 2, 0, 2, 3]);
+    Draw.Mesh(corners, [0, 1, 2, 0, 2, 3]);
     if (thrusting)
     {
         var tail = at - nose * (0.6 + flicker * 0.45);
         Draw.Blend(Blend.Add)
         {
-            Draw2D.Line(notch + wing * 0.16, tail, 0.1, Color(1, 0.55, 0.15));
-            Draw2D.Line(notch - wing * 0.16, tail, 0.1, Color(1, 0.55, 0.15));
+            Draw.Line(notch + wing * 0.16, tail, 0.1, Color(1, 0.55, 0.15));
+            Draw.Line(notch - wing * 0.16, tail, 0.1, Color(1, 0.55, 0.15));
         }
     }
-    Draw2D.Line(tip, left, 0.09, color);
-    Draw2D.Line(left, notch, 0.09, color);
-    Draw2D.Line(notch, right, 0.09, color);
-    Draw2D.Line(right, tip, 0.09, color);
+    Draw.Line(tip, left, 0.09, color);
+    Draw.Line(left, notch, 0.09, color);
+    Draw.Line(notch, right, 0.09, color);
+    Draw.Line(right, tip, 0.09, color);
 }
 
 view Ships(mut Ship ship, Owner owner, Session session, mut Look look)
@@ -769,14 +769,14 @@ view Ships(mut Ship ship, Owner owner, Session session, mut Look look)
             if (ship.down)
             {
                 // A pod, and a ring that calls for help
-                Draw2D.Circle(at, 0.24, Faded(paint, 0.55));
-                Draw2D.WireCircle(at, 0.5 + pulse * 0.7, 0.07, Faded(ALARM, 1 - pulse * 0.8));
+                Draw.Circle(at, 0.24, Faded(paint, 0.55));
+                Draw.WireCircle(at, 0.5 + pulse * 0.7, 0.07, Faded(ALARM, 1 - pulse * 0.8));
                 continue;
             }
             DrawShip(at, ship.angle, ship.flash > 0 ? Color.white : paint, ship.thrusting,
                      Math.Abs(Math.Sin(look.time * 47)));
             if (ship.shield > 0)
-                Draw2D.WireCircle(at, 0.85, 0.05, Faded(paint, 0.25 + 0.45 * Math.Abs(Math.Sin(ship.shield * 9))));
+                Draw.WireCircle(at, 0.85, 0.05, Faded(paint, 0.25 + 0.45 * Math.Abs(Math.Sin(ship.shield * 9))));
         }
     }
 
@@ -789,13 +789,13 @@ view Ships(mut Ship ship, Owner owner, Session session, mut Look look)
     }
 
     // Its label, in pixels, so it reads at any size of window
-    var under = Draw2D.WorldToScreen(ship.position - float2(0, 0.85));
-    Draw2D.Screen()
+    var under = Draw.WorldToScreen(ship.position - float2(0, 0.85));
+    Draw.Pixels()
     {
         if (ship.down)
-            Draw2D.Text(mine ? "you: SOS" : "SOS", under, 12, ALARM, Anchor.UpperCenter, Font.Bold);
+            Draw.Text(mine ? "you: SOS" : "SOS", under, 12, ALARM, Anchor.UpperCenter, Font.Bold);
         else if (mine)
-            Draw2D.Text("you", under, 11, Faded(Color.white, 0.75), Anchor.UpperCenter);
+            Draw.Text("you", under, 11, Faded(Color.white, 0.75), Anchor.UpperCenter);
     }
 }
 
@@ -818,7 +818,7 @@ view Effects(mut Look look)
             spark.velocity = spark.velocity * (1 - 1.8 * dt);
             look.sparks[i] = spark;
             var left = 1 - spark.age / spark.life;
-            Draw2D.Line(spark.position - spark.velocity * 0.05, spark.position, 0.08, Faded(Tint(spark.tint), left));
+            Draw.Line(spark.position - spark.velocity * 0.05, spark.position, 0.08, Faded(Tint(spark.tint), left));
             i++;
         }
     }
@@ -834,10 +834,10 @@ view Effects(mut Look look)
             continue;
         }
         look.popups[p] = popup;
-        var at = Draw2D.WorldToScreen(popup.at + float2(0, 0.5 + popup.age * 1.4));
-        Draw2D.Screen()
+        var at = Draw.WorldToScreen(popup.at + float2(0, 0.5 + popup.age * 1.4));
+        Draw.Pixels()
         {
-            Draw2D.Text($"+{popup.points}", at, 14, Faded(Tint(popup.tint), 1 - popup.age / 0.9),
+            Draw.Text($"+{popup.points}", at, 14, Faded(Tint(popup.tint), 1 - popup.age / 0.9),
                         Anchor.MiddleCenter, Font.Bold);
         }
         p++;
@@ -847,24 +847,24 @@ view Effects(mut Look look)
 // One of the crew on the board: its color, its score and its hull.
 void Chip(float2 at, Color color, int score, int hull, bool down, bool mine)
 {
-    Draw2D.Circle(at + float2(8, 9), 5, down ? Faded(color, 0.4) : color);
-    if (mine) Draw2D.WireCircle(at + float2(8, 9), 8, 1.5, Color.white);
-    Draw2D.Text($"{score}", at + float2(20, 1), 14, down ? QUIET : Color.white);
+    Draw.Circle(at + float2(8, 9), 5, down ? Faded(color, 0.4) : color);
+    if (mine) Draw.WireCircle(at + float2(8, 9), 8, 1.5, Color.white);
+    Draw.Text($"{score}", at + float2(20, 1), 14, down ? QUIET : Color.white);
     if (down)
     {
-        Draw2D.Text("SOS", at + float2(20, 16), 10, ALARM, Font.Bold);
+        Draw.Text("SOS", at + float2(20, 16), 10, ALARM, Font.Bold);
         return;
     }
     for (var i = 0; i < HULL; i++)
     {
-        Draw2D.Rect(at + float2(24 + i * 9, 21), float2(7, 3), i < hull ? color : Color(0.25, 0.27, 0.34));
+        Draw.Rect(at + float2(24 + i * 9, 21), float2(7, 3), i < hull ? color : Color(0.25, 0.27, 0.34));
     }
 }
 
 view Hud(Game game, Session session, Look look, query (Ship ship, Owner owner) crew)
 {
-    Draw2D.SetClip();
-    Draw2D.SetScreen();
+    Draw.SetClip();
+    Draw.SetPixels();
     var w = Screen.width;
     var h = Screen.height;
     var field = 2 * ARENA * look.pixels;   // The field's side, in pixels
@@ -893,15 +893,15 @@ view Hud(Game game, Session session, Look look, query (Ship ship, Owner owner) c
     if (wide)
     {
         // Room beside the field: the game on the left, the crew on the right
-        Draw2D.Text("ASTEROIDS", float2(20, 18), 26, Color.white, Font.Bold);
-        Draw2D.Text("co-op", float2(20, 48), 15, QUIET);
-        Draw2D.Text($"WAVE {wave}", float2(20, 92), 16, QUIET);
-        Draw2D.Text($"{game.score}", float2(20, 112), 38, AMBER, Font.Bold);
-        Draw2D.Text($"best {best}", float2(20, 156), 14, QUIET);
-        Draw2D.Text(h < 400 ? "Arrows, space to fire,\nor drag to steer.\nFly over a friend who's\ndown to bring them back."
+        Draw.Text("ASTEROIDS", float2(20, 18), 26, Color.white, Font.Bold);
+        Draw.Text("co-op", float2(20, 48), 15, QUIET);
+        Draw.Text($"WAVE {wave}", float2(20, 92), 16, QUIET);
+        Draw.Text($"{game.score}", float2(20, 112), 38, AMBER, Font.Bold);
+        Draw.Text($"best {best}", float2(20, 156), 14, QUIET);
+        Draw.Text(h < 400 ? "Arrows, space to fire,\nor drag to steer.\nFly over a friend who's\ndown to bring them back."
                             : "A D or arrows: turn\nW or up: thrust\nSpace: fire\n\nOr drag, with the mouse\nor a finger: it steers and\nfires, and thrusts when\npulled past the ring.\n\nFly over a friend who's\ndown to bring them back.",
                     float2(20, h - 20), 14, QUIET, Anchor.LowerLeft);
-        Draw2D.Text(pilots <= 1 ? "CREW: just you" : $"CREW: {pilots}", float2(w - side + 20, 72), 15, QUIET);
+        Draw.Text(pilots <= 1 ? "CREW: just you" : $"CREW: {pilots}", float2(w - side + 20, 72), 15, QUIET);
         mut var row = 0;
         foreach (var member in crew)
         {
@@ -910,16 +910,16 @@ view Hud(Game game, Session session, Look look, query (Ship ship, Owner owner) c
             row += 1;
         }
         if (pilots <= 1)
-            Draw2D.Text("Invite friends from\nthe room menu.", float2(w - side + 20, 148), 14, QUIET);
+            Draw.Text("Invite friends from\nthe room menu.", float2(w - side + 20, 148), 14, QUIET);
     }
     else
     {
         // A small or tall window: over the field's edges, or above and below it where there's room
         var top = Math.Max(52.0, (h - field) * 0.5 - 100);
         var bottom = Math.Min(h, (h + field) * 0.5 + 62);
-        Draw2D.Text($"WAVE {wave}", float2(10, top + 9), 13, QUIET);
-        Draw2D.Text($"{game.score}", float2(w * 0.5, top + 4), 24, Color.white, Anchor.UpperCenter, Font.Bold);
-        Draw2D.Text($"BEST {best}", float2(w - 10, top + 9), 13, QUIET, Anchor.UpperRight);
+        Draw.Text($"WAVE {wave}", float2(10, top + 9), 13, QUIET);
+        Draw.Text($"{game.score}", float2(w * 0.5, top + 4), 24, Color.white, Anchor.UpperCenter, Font.Bold);
+        Draw.Text($"BEST {best}", float2(w - 10, top + 9), 13, QUIET, Anchor.UpperRight);
         var chip = Math.Min(92.0, (w - 12) / Math.Min(Math.Max(pilots, 1), 4));
         mut var seat = 0;
         foreach (var member in crew)
@@ -931,9 +931,9 @@ view Hud(Game game, Session session, Look look, query (Ship ship, Owner owner) c
                  member.ship.hull, member.ship.down, member.owner.player == session.player);
             seat += 1;
         }
-        Draw2D.Text("Arrows or WASD to fly, space to fire\nor drag: steer and fire, pull past the ring to thrust",
+        Draw.Text("Arrows or WASD to fly, space to fire\nor drag: steer and fire, pull past the ring to thrust",
                     float2(w * 0.5, bottom - 22), 12, Faded(QUIET, game.wave > 1 ? 0.6 : 1), Anchor.LowerCenter);
-        Draw2D.Text(pilots <= 1 ? "Host a room from the menu to invite friends" : "Fly over a friend who's down to bring them back",
+        Draw.Text(pilots <= 1 ? "Host a room from the menu to invite friends" : "Fly over a friend who's down to bring them back",
                     float2(w * 0.5, bottom - 6), 12, Faded(AMBER, game.wave > 1 ? 0.6 : 0.9), Anchor.LowerCenter);
     }
 
@@ -942,29 +942,29 @@ view Hud(Game game, Session session, Look look, query (Ship ship, Owner owner) c
     var middle = float2(w * 0.5, h * 0.5 - field * 0.2);
     if (game.phase == Phase.Over)
     {
-        Draw2D.Rect(middle, float2(field, big * 3.4), Color(0, 0, 0, 0.6));
-        Draw2D.Text("GAME OVER", middle - float2(0, big * 0.8), big, Color.white, Anchor.MiddleCenter, Font.Bold);
-        Draw2D.Text(pilots > 1 ? $"The crew scored {game.score}" : $"You scored {game.score}", middle + float2(0, big * 0.15),
+        Draw.Rect(middle, float2(field, big * 3.4), Color(0, 0, 0, 0.6));
+        Draw.Text("GAME OVER", middle - float2(0, big * 0.8), big, Color.white, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(pilots > 1 ? $"The crew scored {game.score}" : $"You scored {game.score}", middle + float2(0, big * 0.15),
                     big * 0.42, AMBER, Anchor.MiddleCenter);
-        Draw2D.Text($"New game in {int(Math.Ceil(game.timer))}", middle + float2(0, big * 0.85), big * 0.36, QUIET,
+        Draw.Text($"New game in {int(Math.Ceil(game.timer))}", middle + float2(0, big * 0.85), big * 0.36, QUIET,
                     Anchor.MiddleCenter);
     }
     else if (game.phase == Phase.Intermission)
     {
-        Draw2D.Text($"WAVE {game.wave + 1}", middle - float2(0, big * 0.3), big, Color.white, Anchor.MiddleCenter, Font.Bold);
-        Draw2D.Text(game.wave == 0 ? "Shoot the rocks. Keep each other flying."
+        Draw.Text($"WAVE {game.wave + 1}", middle - float2(0, big * 0.3), big, Color.white, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(game.wave == 0 ? "Shoot the rocks. Keep each other flying."
                                    : pilots > 1 ? "Cleared! Everyone's back in." : "Cleared! Hull patched up.",
                     middle + float2(0, big * 0.5), big * 0.36, AMBER, Anchor.MiddleCenter);
     }
     else if (meDown)
     {
-        Draw2D.Text("SHIP DOWN", middle - float2(0, big * 0.3), big * 0.8, ALARM, Anchor.MiddleCenter, Font.Bold);
-        Draw2D.Text("A friend who flies over you brings you back", middle + float2(0, big * 0.4), big * 0.34, Color.white,
+        Draw.Text("SHIP DOWN", middle - float2(0, big * 0.3), big * 0.8, ALARM, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text("A friend who flies over you brings you back", middle + float2(0, big * 0.4), big * 0.34, Color.white,
                     Anchor.MiddleCenter);
     }
     else if (friendsDown > 0)
     {
-        Draw2D.Text("A friend is down: fly over them!", float2(w * 0.5, h * 0.5 - field * 0.5 + (wide ? 16 : 96)), 14, ALARM,
+        Draw.Text("A friend is down: fly over them!", float2(w * 0.5, h * 0.5 - field * 0.5 + (wide ? 16 : 96)), 14, ALARM,
                     Anchor.UpperCenter, Font.Bold);
     }
 }
@@ -973,25 +973,25 @@ view Hud(Game game, Session session, Look look, query (Ship ship, Owner owner) c
 view Stick(Pointer pointer)
 {
     if (!pointer.held) return;
-    Draw2D.SetClip();
-    Draw2D.SetScreen();
+    Draw.SetClip();
+    Draw.SetPixels();
     var far = Math.Length(pointer.pull);
     var powered = far > STICK_RING;
     var from = Screen.Flip(pointer.start);
     var reach = Math.Min(far, STICK_RING + 26.0);
     var knob = Screen.Flip(pointer.start + Math.Normalize(pointer.pull) * reach);
-    Draw2D.WireCircle(from, STICK_RING, 2, Faded(powered ? AMBER : Color.white, 0.35));
-    if (far > STICK_REST) Draw2D.Line(from, knob, 3, Faded(Color.white, 0.25));
-    Draw2D.Circle(knob, 13, Faded(powered ? AMBER : Color.white, 0.55));
+    Draw.WireCircle(from, STICK_RING, 2, Faded(powered ? AMBER : Color.white, 0.35));
+    if (far > STICK_REST) Draw.Line(from, knob, 3, Faded(Color.white, 0.25));
+    Draw.Circle(knob, 13, Faded(powered ? AMBER : Color.white, 0.55));
 }
 
 // For someone who just opened the link, while their machine joins.
 view Joining(Session session)
 {
     if (session.state == SessionState.Connected) return;
-    Draw2D.SetClip();
-    Draw2D.SetScreen();
-    Draw2D.Text(session.state == SessionState.Connecting ? "Joining the crew..." : "The game is gone.\nReload the page to fly again.",
+    Draw.SetClip();
+    Draw.SetPixels();
+    Draw.Text(session.state == SessionState.Connecting ? "Joining the crew..." : "The game is gone.\nReload the page to fly again.",
                 float2(Screen.width, Screen.height) * 0.5, 20, Color.white, Anchor.MiddleCenter);
 }
 

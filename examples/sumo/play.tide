@@ -210,7 +210,7 @@ view Look(mut Fx fx, mut Room room)
     var shake = float3(Math.Sin(wobble) + Math.Sin(wobble * 0.62 + 1.3) * 0.6,
                        Math.Sin(wobble * 0.89 + 2.1) + Math.Sin(wobble * 0.54 + 0.4) * 0.6, 0) * (fx.trauma * fx.trauma * 0.014 * back);
     room.eye = eye + shake;
-    Draw3D.SetCamera(room.eye, turned, fov);
+    Draw.SetCamera(room.eye, turned, fov);
 }
 
 // The floor's tiles, each into the list that's drawn at once, and into the
@@ -280,7 +280,7 @@ view Cast(Fx fx, Models models, mut Shadow shadow)
     if (!shadow.made)
     {
         shadow.made = true;
-        shadow.map = RenderTarget(LAMP_PIXELS, LAMP_PIXELS, 1, Format.DepthOnly);
+        shadow.map = RenderTarget(LAMP_PIXELS, LAMP_PIXELS, 1, Format.Depth);
         shadow.depth = shadow.map.depth;
     }
     // The lamp looks along its light from far off, and sees a box with no
@@ -307,8 +307,8 @@ view Cast(Fx fx, Models models, mut Shadow shadow)
 [Stage(Layers.Floor)]
 view Floor(Fx fx, Models models)
 {
-    Draw2D.Clear(BACK);
-    Draw3D.Instanced(models.cube, models.cubeFaces, fx.tiles, TileLook);
+    Draw.Clear(BACK);
+    Draw.Instanced(models.cube, models.cubeFaces, fx.tiles, TileLook);
 }
 
 // What's flat on the floor, all at once, over it and under what stands on
@@ -317,9 +317,9 @@ view Floor(Fx fx, Models models)
 [Stage(Layers.Marks)]
 view Decals(Fx fx, Models models)
 {
-    Draw3D.Depth(Depth.Read)
+    Draw.Depth(Depth.Read)
     {
-        Draw3D.Instanced(models.plate, models.plateFaces, fx.decals, DecalLook);
+        Draw.Instanced(models.plate, models.plateFaces, fx.decals, DecalLook);
     }
 }
 
@@ -327,7 +327,7 @@ view Decals(Fx fx, Models models)
 [Stage(Layers.Pieces)]
 view Solids(Fx fx, Models models)
 {
-    Draw3D.Instanced(models.cube, models.cubeFaces, fx.solids, CrateLook);
+    Draw.Instanced(models.cube, models.cubeFaces, fx.solids, CrateLook);
 }
 
 // The balls. Instances of one mesh drawn in a row are one draw, each with its
@@ -335,7 +335,7 @@ view Solids(Fx fx, Models models)
 [Stage(Layers.Pieces, 1)]
 view Balls(Body body, Ball ball, Models models)
 {
-    Draw3D.Mesh(models.ball, models.ballFaces, float4x4.TRS(body.position, body.rotation, float3(ball.radius)), BallLook);
+    Draw.Mesh(models.ball, models.ballFaces, float4x4.TRS(body.position, body.rotation, float3(ball.radius)), BallLook);
 }
 
 // A pickup turns over the floor, with a ring under it. What it is shows in
@@ -358,6 +358,6 @@ view Beacons(Body body, Pickup pickup, mut Fx fx)
 [Stage(Layers.Pieces, 2)]
 view Pickups(Fx fx, Models models)
 {
-    Draw3D.Instanced(models.ball, models.ballFaces, fx.orbs, Plain);
-    Draw3D.Instanced(models.cube, models.cubeFaces, fx.gems, Plain);
+    Draw.Instanced(models.ball, models.ballFaces, fx.orbs, Plain);
+    Draw.Instanced(models.cube, models.cubeFaces, fx.gems, Plain);
 }

@@ -49,5 +49,5 @@ frag Shade(Vertex vertex, out Color color, Body body, Camera camera)
 
 view Shader(with Body)
 {
-    Draw2D.Mesh([Vertex {}, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], Shade);
+    Draw.Mesh([Vertex {}, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], Shade);
 }

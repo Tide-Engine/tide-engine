@@ -49,31 +49,31 @@ system Hide(Trick trick, Owner owner)
 
 view Mine(Body body, with ownership)
 {
-    Draw2D.Circle(body.position, 1, Color.yellow);
+    Draw.Circle(body.position, 1, Color.yellow);
 }
 
 // Other players' entities, nobody's, and those with no Owner
 view Others(Body body, without ownership)
 {
-    Draw2D.Rect(body.position, float2(1, 1), Color.gray);
+    Draw.Rect(body.position, float2(1, 1), Color.gray);
 }
 
 // With `with Owner`: only those somebody else owns, or nobody
 view Rivals(Body body, with Owner, without ownership)
 {
-    Draw2D.WireCircle(body.position, 1, Color.red);
+    Draw.WireCircle(body.position, 1, Color.red);
 }
 
 // The Owner it filters by is a parameter like any other
 view Named(Body body, Owner owner, with ownership)
 {
-    Draw2D.WireRect(body.position, float2(owner.player == PlayerID(0) ? 10 : 20), Color.white);
+    Draw.WireRect(body.position, float2(owner.player == PlayerID(0) ? 10 : 20), Color.white);
 }
 
 // Beside a sparse component's filter
 view Shown(Body body, with ownership, without Hidden)
 {
-    Draw2D.Line(body.position, body.position + float2(1, 0), Color.green);
+    Draw.Line(body.position, body.position + float2(1, 0), Color.green);
 }
 
 // By the filter alone: once for each entity

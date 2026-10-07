@@ -3,7 +3,7 @@ asset List<Grid2<Color>> frames = "../e2e/assets/run/*.png";
 
 view Show()
 {
-    Draw2D.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], Shade);
+    Draw.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], Shade);
 }
 
 frag Shade(Vertex vertex, out Color color)

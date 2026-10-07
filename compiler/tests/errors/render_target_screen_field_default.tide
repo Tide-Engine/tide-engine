@@ -1,3 +1,0 @@
-// expect: a RenderTarget is created in local code, not a field default or constant
-scene Main { }
-local singleton Buffers { RenderTarget scene = RenderTarget.Screen(); }

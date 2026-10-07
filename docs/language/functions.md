@@ -148,7 +148,7 @@ system Strike(mut Unit unit, Weapon weapon)
 
 - Arguments without a name come first, in the parameters' order. After a named one, each is named, in any order: `Damage(crit: true, base: 5)`.
 - They're worked out in the order the call writes them (see [Order](#order)).
-- The engine's functions take names where their parameters have them: `Draw2D.Circle(center: p, radius: 2, color: Color.red)`, `Session.Connect(address: host, port: 7001)`. Constructors, `Spawn`, `Send` and the like take their arguments in order.
+- The engine's functions take names where their parameters have them: `Draw.Circle(center: p, radius: 2, color: Color.red)`, `Session.Connect(address: host, port: 7001)`. Constructors, `Spawn`, `Send` and the like take their arguments in order.
 
 **Overloads.** Functions can share a name, and so can a type's methods, when their parameters' types differ. Names, `mut` and defaults don't tell two apart.
 

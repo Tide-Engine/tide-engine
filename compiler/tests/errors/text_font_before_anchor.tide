@@ -3,5 +3,5 @@ scene Main { }
 
 view Show()
 {
-    Draw2D.Text("DUEL", float2(0), 88, Color.white, Font.Bold, Anchor.MiddleCenter);
+    Draw.Text("DUEL", float2(0), 88, Color.white, Font.Bold, Anchor.MiddleCenter);
 }

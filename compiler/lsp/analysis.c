@@ -41,7 +41,7 @@ typedef enum occ_kind {
     OCC_PARAM,
     OCC_LOCAL,
     OCC_OWNER,    // Math, Draw
-    OCC_FUNCTION, // Math.Dot, Draw2D.Circle, Spawn, Send, and the game's functions (with `decl`)
+    OCC_FUNCTION, // Math.Dot, Draw.Circle, Spawn, Send, and the game's functions (with `decl`)
     OCC_CONSTANT, // Math.PI, Color.red
     OCC_METHOD,   // e.Add, e.Remove, e.Destroy, e.Send, and methods of structs and components (with `decl`)
     OCC_MEMBER,   // Swizzles, color channels, quaternion.value, matrix columns, input .down/.up
@@ -70,7 +70,7 @@ typedef struct occurrence {
     const param *param;
     const decl *param_of;
     const stmt *local;
-    str owner;          // Functions and constants: "Math", "Draw2D", "Draw3D", "Color"...
+    str owner;          // Functions and constants: "Math", "Draw", "Color"...
     str name;
     type type;
     type object_type;   // Members, and built-in methods: the type they're read from or called on
@@ -501,13 +501,11 @@ static bool is_operator_decl(const decl *d)
     return is_routine(d) && d->is_operator;
 }
 
-// A frag or vert: code the GPU runs, which a Draw2D.Mesh names.
-// Whose function a draw call on a render target is: Draw2D's or Draw3D's, by
-// what it draws, or Draw's for the target's stencil, which both take.
+// Whose function a draw call on a render target is: Draw's, as a target has the window's methods.
 static str target_owner(const expr *e)
 {
-    if (str_eq_c(e->name, "Stencil") || str_eq_c(e->name, "SetStencil")) return str_from("Draw");
-    return str_from(e->draw_dims == 3 ? "Draw3D" : "Draw2D");
+    (void)e;
+    return str_from("Draw");
 }
 
 static bool is_shader(const decl *d)
@@ -731,7 +729,7 @@ static void walk_value(const expr *e)
             o.kind = OCC_CONST;
             o.decl = e->constant;
             break;
-        case BIND_SHADER: // The vert or frag a Draw2D.Mesh names, maybe with its parameters' types: Shade(BoxVertex, Color)
+        case BIND_SHADER: // The vert or frag a Draw.Mesh names, maybe with its parameters' types: Shade(BoxVertex, Color)
             o.kind = OCC_SYSTEM;
             o.decl = e->type_decl;
             for (int i = 0; i < e->args.count; i++) walk_expr(e->args.items[i]);
@@ -758,7 +756,7 @@ static void walk_value(const expr *e)
         if (e->bind == BIND_TYPE && e->type_decl) { // Combat.Health, in Spawn(Combat.Health)
             o.kind = OCC_TYPE;
             o.decl = e->type_decl;
-        } else if (e->bind == BIND_SHADER && e->type_decl) { // Effects.Shade, in Draw2D.Mesh(..., Effects.Shade)
+        } else if (e->bind == BIND_SHADER && e->type_decl) { // Effects.Shade, in Draw.Mesh(..., Effects.Shade)
             o.kind = OCC_SYSTEM;
             o.decl = e->type_decl;
             for (int i = 0; i < e->args.count; i++) walk_expr(e->args.items[i]); // Its parameters' types, where it's written with them
@@ -1418,12 +1416,12 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_COLOR: return "A color: r, g, b and a from 0 to 1. `Color(r, g, b)` or `Color(r, g, b, a)`.";
     case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter[, wrap]])`. A Blit supplies its source to a read-only Texture shader parameter.";
     case TY_DEPTH_TEXTURE: return "A local reference to a render target's depth, `target.depth`, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow wants.";
-    case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Screen()` is always the window's size. Each says last what it holds when that isn't one color image: `Format.DepthOnly` is depth alone, and a format for each makes several, `RenderTarget(width, height, Format.Color, Format.Float)`, which a frag's `out Color` parameters go to in order. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture, `target.colors[1]` its second color image's, and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
+    case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Window()` is always the window's size. Each says last what it holds when that isn't one color image: `Format.Depth` is depth alone, and a format for each makes several, `RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)`, which a frag's `out Color` parameters go to in order. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture, `target.colors[1]` its second color image's, and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
     case TY_RECT: return "A rectangle on the screen, for the GUI: x and y from the top left, y down, then width and height.";
     case TY_STRING: return "Text, written in double quotes.";
     case TY_ACTION: return "Code the caller writes in braces after the call, run with `content();`.";
     case TY_DRAW_LIST: return "The frame's draw list, for a game's C to draw into with tide/draw.h: an extern "
-                              "function takes one, and a view passes it `Draw2D.list` or `Draw3D.list`.";
+                              "function takes one, and a view passes it `Draw.list`.";
     case TY_ARRAY: return "An array: a fixed number of values side by side in whatever holds it, with nothing in the heap. "
                           "`cells[i]`, `cells[i] = x`, `count`, `foreach`; past the end a read gives zero and a write does nothing.";
     case TY_LIST: return "A list of values, which grows and shrinks: `Count`, `items[i]`, `Add`, `RemoveAt`, `foreach`, "
@@ -1796,20 +1794,24 @@ static const method_form set_calls[] = {
 
 static const method_form grid_calls[] = {
     {"Clear", "Clear()", "Sets every cell back to zero, keeping the size."},
-    {"Sample", "Sample(float2 uv, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color",
-     "Reads the grid as a texture, in a frag or vert: its color at `uv`, from (0, 0) at its first cell to (1, 1) past "
-     "its last, blended between cells (`Filter.Bilinear`, the default) or the nearest cell's (`Filter.Point`). A "
-     "`uv` past 0 or 1 reads the cells at the grid's edge (`Wrap.Clamp`, the default), the grid again "
-     "(`Wrap.Repeat`), or again the other way round each time (`Wrap.Mirror`). The grid is a `Grid2<Color>` field "
-     "of a component or singleton the frag or vert takes, and the filter and the wrap are written there: the GPU is "
-     "told all three before any pixel runs."},
+    {"Sample", "Sample(float2 uv, Filter filter = the grid's, Wrap wrap = the grid's) -> Color",
+     "Reads the grid as the texture it is, in a frag or vert: its color at `uv`, from (0, 0) at its first cell to "
+     "(1, 1) past its last, blended between cells (`Filter.Bilinear`) or the nearest cell's (`Filter.Point`). A "
+     "`uv` past 0 or 1 reads the cells at the grid's edge (`Wrap.Clamp`), the grid again (`Wrap.Repeat`), or again "
+     "the other way round each time (`Wrap.Mirror`). A Sample that leaves one out has what the grid's declaration "
+     "says (`[Filter]`, `[Wrap]`), and blended and clamped without one. A `Grid2<float>` is a texture of one "
+     "channel: its number is the color's `r`, with `g` and `b` 0 and `a` 1. The grid is a field of a component or "
+     "singleton the frag or vert takes, or an asset by its name, and the filter and the wrap are written there: the "
+     "GPU is told all three before any pixel runs."},
 };
 
 static const method_form texture_calls[] = {
-    {"Sample", "Sample(float2 uv, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color",
-     "Samples this image in a frag or vert, with top-left UVs from (0, 0) to (1, 1). A `uv` past them reads the "
-     "pixels at the image's edge (`Wrap.Clamp`, the default), the image again (`Wrap.Repeat`), or again the other "
-     "way round each time (`Wrap.Mirror`). The filter and the wrap are written there, fixed for the draw."},
+    {"Sample", "Sample(float2 uv, Filter filter = the texture's, Wrap wrap = the texture's) -> Color",
+     "Samples this texture in a frag or vert, with top-left UVs from (0, 0) to (1, 1). A `uv` past them reads the "
+     "pixels at its edge (`Wrap.Clamp`), the texture again (`Wrap.Repeat`), or again the other way round each time "
+     "(`Wrap.Mirror`). A Sample that leaves the filter or the wrap out reads the texture as it says itself: what "
+     "its declaration says (`[Filter]`, `[Wrap]`), or what the draw that gave it says, and blended and clamped with "
+     "neither. Written here, they're fixed for the draw."},
 };
 
 static const method_form depth_calls[] = {
@@ -1825,19 +1827,21 @@ static const method_form depth_calls[] = {
 };
 
 static const method_form target_calls[] = {
-    {"Resize", "Resize(float width, float height)", "Changes the shared image's size, in logical pixels, and discards its contents, even at the same size. It keeps its pixels per unit. Not for a target made with `RenderTarget.Screen`, which follows the window."},
+    {"Resize", "Resize(float width, float height)", "Changes the shared image's size, in logical pixels, and discards its contents, even at the same size. It keeps its pixels per unit. Not for a target made with `RenderTarget.Window`, which follows the window."},
     {"Dispose", "Dispose()", "Releases the shared image. All target and color aliases become invalid; repeated disposal is harmless."},
 };
 
-#define BLIT_FORM "Draw.Blit(Texture source, RenderTarget destination[, Blend blend], frag shader)"
-#define BLIT_DOC "Runs the frag over the whole destination, supplying its Texture parameter from source. No setting changes it: not the camera, the clip, the transform, the tint nor Draw.Blend. It replaces the destination's color, or goes over it as `blend` says (`Blend.Add`), and preserves depth. Source cannot be destination.color."
+#define BLIT_FORM "Draw.Blit(Texture source, RenderTarget destination[, Blend blend], frag shader[, values])"
+#define BLIT_DOC "Runs the frag over the whole destination, supplying its Texture parameter from source. No setting changes it: not the camera, the clip, the transform, the tint nor Draw.Blend. It replaces the destination's color, or goes over it as `blend` says (`Blend.Add`), and preserves depth. Source cannot be destination.color. A struct's value after the frag is this blit's values, which the frag reads through a parameter of its type: `Draw.Blit(source, destination, Blur, BlurStep { along = float2(1, 0) })`."
 
-// What Draw2D.Mesh takes beside the built-in signatures' lists of Vertex and
+// What Draw.Mesh takes beside the built-in signatures' lists of Vertex and
 // Vertex3 (builtins.c): the checker takes those itself.
 #define MESH_SHADER_DOC                                                                                                \
     "`vertices` can be a list of a struct of the game's too, one with a `position`: a float2 for a 2D mesh, a float3 " \
     "for a 3D one. A vert and a frag, named last, run on the GPU for each of the mesh's vertices and pixels: "         \
-    "`Draw3D.Mesh(vertices, indices, transform, Wave, Shade)`."
+    "`Draw.Mesh(vertices, indices, transform, Wave, Shade)`. A struct's value after them is the draw's values, "       \
+    "which they read through a parameter of its type, the same for the whole draw: "                                   \
+    "`Draw.Mesh(vertices, indices, transform, Wave, Shade, Swell { height = 2 })`."
 
 static bool is_mesh_draw(const str owner, const str name)
 {
@@ -1890,10 +1894,10 @@ static const char *builtin_field_doc(const decl *d, const str name)
         if (str_eq_c(name, "world")) return "Where the pixel is in the world.";
     }
     if (d && d == A.prog->instance && str_eq_c(name, "transform")) {
-        return "The transform `Draw3D.Mesh` was given, which places the mesh in the world.";
+        return "The transform `Draw.Mesh` was given, which places the mesh in the world.";
     }
     if (d && d == A.prog->shape) {
-        if (str_eq_c(name, "center")) return "Its middle, in the units `Draw2D` is in: the world's under a camera, pixels on the screen.";
+        if (str_eq_c(name, "center")) return "Its middle, in the units the 2D draws are in: the world's under a camera, pixels on the screen.";
         if (str_eq_c(name, "size")) return "Its width and height. A shape with none draws nothing.";
         if (str_eq_c(name, "rotation")) {
             return "How far it's turned about its center, in radians, from +x towards +y: counterclockwise under a "
@@ -2177,6 +2181,23 @@ static bool handed_param(const decl *d, const param *p)
     return d->is_frag && p->type.kind == TY_STRUCT && !p->is_out && vert_writes(p->type.decl);
 }
 
+// Whether a struct is one a draw of the game gives after its vert and frag,
+// `Draw.Blit(source, destination, Blur, BlurStep { ... })`: a frag's or vert's
+// parameter of that type is the draw's values, sent once for the draw.
+static bool draw_gives(const decl *type)
+{
+    for (int i = 0; i < A.prog->mesh_draws.count; i++) {
+        if (A.prog->mesh_draws.items[i].call->values_type == type) return true;
+    }
+    return false;
+}
+
+// A frag's or vert's struct that the draws it's drawn with give as their values.
+static bool values_param(const decl *d, const param *p)
+{
+    return p->type.kind == TY_STRUCT && !p->is_out && !handed_param(d, p) && draw_gives(p->type.decl);
+}
+
 // A frag or vert: when it runs, and what it reads, grouped as the engine
 // sends it to the GPU: components' fields for each instance drawn,
 // singletons' for each draw, grids as textures, and of a frag's vertex and of
@@ -2189,14 +2210,14 @@ static void describe_shader(const decl *d, sb *out)
     bool hands = false;
     for (int i = 1; i < d->params.count; i++) {
         const param *p = &d->params.items[i];
-        instanced |= p->type.kind == TY_STRUCT && !p->is_out && !handed_param(d, p);
+        instanced |= p->type.kind == TY_STRUCT && !p->is_out && !handed_param(d, p) && !values_param(d, p);
         hands |= p->type.kind == TY_STRUCT && p->is_out;
     }
-    sb_printf(out, d->is_frag ? "\n\nRuns on the GPU, for each pixel of a mesh a view draws through it: `Draw%dD.%s(..., "
-                                STR_FMT ")`. What it writes to its `out Color` is the pixel."
-                              : "\n\nRuns on the GPU, for each vertex of a mesh a view draws through it: `Draw%dD.%s(..., "
-                                STR_FMT ")`. It changes the vertex in place, before its triangles are drawn.",
-              three_d ? 3 : 2, instanced ? "Instanced" : "Mesh", STR_ARG(d->name));
+    sb_printf(out, d->is_frag ? "\n\nRuns on the GPU, for each pixel of a mesh a view draws through it: `Draw.%s(..., "
+                                STR_FMT ")`, a %s one. What it writes to its `out Color` is the pixel."
+                              : "\n\nRuns on the GPU, for each vertex of a mesh a view draws through it: `Draw.%s(..., "
+                                STR_FMT ")`, a %s one. It changes the vertex in place, before its triangles are drawn.",
+              instanced ? "Instanced" : "Mesh", STR_ARG(d->name), three_d ? "3D" : "2D");
     if (hands) sb_put(out, " What it writes to a struct it takes as `out`, the frag it's drawn with reads, blended across the triangle.");
     if (!shader_planned(d)) {
         sb_put(out, "\n\nWhat it reads is worked out once the game has no errors.");
@@ -2220,8 +2241,9 @@ static void describe_shader(const decl *d, sb *out)
         }
         const bool component = p->type.kind == TY_COMPONENT;
         const bool transform = p->type.kind == TY_RECORD && p->type.decl == A.prog->instance;
-        const bool data = p->type.kind == TY_STRUCT;
-        if (!component && !transform && !data && p->type.kind != TY_SINGLETON) continue; // Its pixel, which nothing sends
+        const bool values = values_param(d, p); // The draw's own, once for the draw, as a singleton's
+        const bool data = p->type.kind == TY_STRUCT && !values;
+        if (!component && !transform && !data && !values && p->type.kind != TY_SINGLETON) continue; // Its pixel, which nothing sends
         put_reads(p, type_prefix(p), false, component || transform || data ? &instance : &draw);
         put_samples(d, i, type_prefix(p), &textures);
     }
@@ -2261,7 +2283,7 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
         static const char *const which[] = {"first", "second", "third", "fourth"};
         const int at = p->output < 4 ? p->output : 3;
         sb_printf(out, "\n\nThe frag's %s output: a color it writes beside the pixel's. It goes to the %s color image of "
-                       "a target made to hold as many, `RenderTarget(width, height, Format.Color, Format.Float)`, which "
+                       "a target made to hold as many, `RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)`, which "
                        "`target.colors[%d]` reads; in the window, or in a target with fewer images, it goes nowhere. It "
                        "starts with no value: the frag writes it on every path that ends, before it reads it. It's "
                        "blended over what's in its image by its alpha, as the pixel's color is: `Color(x, y, z)` has "
@@ -2297,7 +2319,9 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
         sb_put(out, "\n\nParameter, read-only.");
         return;
     }
-    sb_put(out, p->type.kind == TY_STRUCT ? "\n\nAn element of the draw's instance list, sent to the GPU for each instance drawn."
+    sb_put(out, values_param(d, p)        ? "\n\nThe values of the draw: the struct a `Draw.Mesh`, `Draw.Instanced` or `Draw.Blit` "
+                                            "gives after its vert and frag, sent to the GPU once for the draw."
+              : p->type.kind == TY_STRUCT ? "\n\nAn element of the draw's instance list, sent to the GPU for each instance drawn."
               : p->type.kind == TY_COMPONENT ? "\n\nA component of the entity the view that draws the mesh runs for, sent "
                                                "to the GPU for each instance drawn."
                                              : "\n\nA singleton, sent to the GPU once for each draw.");
@@ -2481,9 +2505,9 @@ static void describe(const occurrence *o, sb *out)
             if (o->decl->kind == DECL_EVENT && o->decl->builtin) sb_printf(out, "\n\n%s", builtin_event_doc(A.prog, o->decl));
             else if (shader_record_doc(o->decl)) sb_printf(out, "\n\n%s", shader_record_doc(o->decl));
             else if (o->decl == A.prog->shape) {
-                sb_put(out, "\n\nWhat `Draw2D.Shape` draws: a box with round corners, or an ellipse, turned, with a fill "
+                sb_put(out, "\n\nWhat `Draw.Shape` draws: a box with round corners, or an ellipse, turned, with a fill "
                             "of one color or from one to another, an outline, and an edge that's sharp or fades. "
-                            "`Draw2D.RoundRect`, `Ellipse` and the thick outlines and lines are short for it.");
+                            "`Draw.RoundRect`, `Ellipse` and the thick outlines and lines are short for it.");
             } else if (o->decl == A.prog->gui_theme) {
                 sb_put(out, "\n\nHow the GUI's own widgets look: their colors, and how round their corners are. Its "
                             "defaults are the look they have without one, so a theme names what it changes: "
@@ -2494,12 +2518,12 @@ static void describe(const occurrence *o, sb *out)
                             "held, focused and clicked.");
             } else if (o->decl == A.prog->random) sb_put(out, "\n\n" RANDOM_DOC);
             else if (o->decl == A.prog->font) {
-                sb_put(out, "\n\nThe weight `Draw2D.Text` draws in and `Draw2D.MeasureText` measures in, after their "
+                sb_put(out, "\n\nThe weight `Draw.Text` draws in and `Draw.MeasureText` measures in, after their "
                             "other arguments: `Font.Regular` (what they use without one) or `Font.Bold`, the font's "
                             "own bold. A game only carries the bold weight's file when its code says `Font.Bold`.");
             } else if (o->decl == A.prog->anchor) {
                 sb_put(out, "\n\nA place of a box, as Unity's `TextAnchor`: where `GUILayout.Area` puts an area on "
-                            "the screen, and which place of a text's box is at the position `Draw2D.Text` takes "
+                            "the screen, and which place of a text's box is at the position `Draw.Text` takes "
                             "(`Anchor.MiddleCenter` centers it there). Upper is towards the top of the screen.");
             }
             else if (o->decl->builtin) sb_put(out, "\n\nBuilt into the engine.");
@@ -2537,7 +2561,7 @@ static void describe(const occurrence *o, sb *out)
         }
         format_header(o->decl, &code);
         code_block(out, code.data);
-        if (is_shader(o->decl)) { // Where it's declared, and where a Draw2D.Mesh names it
+        if (is_shader(o->decl)) { // Where it's declared, and where a Draw.Mesh names it
             describe_shader(o->decl, out);
             break;
         }
@@ -2642,10 +2666,11 @@ static void describe(const occurrence *o, sb *out)
                         "Any code can read it, and nothing can change it.");
             if (o->decl->asset_kind == ASSET_TEXTURE) {
                 sb_put(out, " A `Texture` is an image to draw with, this machine's: no code reads its pixels, and the match "
-                            "can't use it. For cells code reads, the same file is a `Grid2<Color>`.");
+                            "can't use it. For cells code reads, the same file is a `Grid2<Color>`, which is a Texture "
+                            "too wherever one is drawn with.");
             }
             if (o->decl->sample_filter || o->decl->sample_wrap) { // [Filter] and [Wrap] before it
-                sb_put(out, "\n\nWhere a draw or a `Sample` that names it doesn't say, it's sampled with ");
+                sb_put(out, "\n\nWhere a draw or a `Sample` doesn't say, it's sampled with ");
                 const decl *enums[2] = {A.prog->filter, A.prog->wrap};
                 const int said[2] = {o->decl->sample_filter, o->decl->sample_wrap};
                 bool first = true;
@@ -2806,7 +2831,10 @@ static void describe(const occurrence *o, sb *out)
             put_names(out, wait_calls, sizeof wait_calls / sizeof wait_calls[0]);
             sb_put(out, ", the match's ticks, this machine's frames, or seconds.");
         } else {
-            sb_put(out, builtin_draw_owner(o->name)        ? "\n\nImmediate-mode drawing, in views and the functions they call."
+            sb_put(out, builtin_draw_owner(o->name)        ? "\n\nImmediate-mode drawing into the window, in views and the "
+                                                         "functions they call: shapes, text, 2D and 3D meshes and primitives, "
+                                                         "the cameras and the settings. A render target has the same, as its "
+                                                         "methods."
                       : str_eq_c(o->name, "GUI")       ? "\n\nThe GUI's widgets, each at a Rect; `Control`, a widget a view "
                                                          "draws itself; the widgets' theme; and claims of the pointer and "
                                                          "the keyboard for widgets that read the devices themselves. In "
@@ -2995,16 +3023,17 @@ static void describe(const occurrence *o, sb *out)
              "The command after it has no order at all: the server handles it in whichever tick it arrives, before or after "
              "commands sent earlier, exactly once."},
             {"Filter", "[Filter(Filter.Point)]",
-             "How this texture is read between its cells wherever a draw or a `Sample` that names it doesn't say: "
-             "`Filter.Point` for the nearest cell, `Filter.Bilinear` (what's read without it) for the four around, "
-             "blended. It goes before an asset that's a `Texture` or a `Grid2<Color>` (alone, or a list or a map of "
-             "them) and before a `Grid2<Color>` field. A `Texture` kept in a field or a local is a value, which names "
-             "no declaration: it's read as the draw says."},
+             "How this texture is read between its cells wherever a draw or a `Sample` doesn't say: `Filter.Point` "
+             "for the nearest cell, `Filter.Bilinear` (what's read without it) for the four around, blended. It goes "
+             "before an asset that's a `Texture` or a `Grid2<Color>` (alone, or a list or a map of them) and before a "
+             "field that's a `Grid2<Color>`, a `Grid2<float>` or a `RenderTarget` (for its color). The `Texture` made "
+             "there carries it: one kept in a field or a local, or passed to a function, is sampled the same."},
             {"Wrap", "[Wrap(Wrap.Repeat)]",
-             "What a `uv` past this texture's edges reads wherever a draw or a `Sample` that names it doesn't say: "
-             "`Wrap.Clamp` (what's read without it) for the cells at the edge, `Wrap.Repeat` for the texture over "
-             "again, `Wrap.Mirror` for it the other way round each time. It goes before an asset that's a `Texture` "
-             "or a `Grid2<Color>` and before a `Grid2<Color>` field."},
+             "What a `uv` past this texture's edges reads wherever a draw or a `Sample` doesn't say: `Wrap.Clamp` "
+             "(what's read without it) for the cells at the edge, `Wrap.Repeat` for the texture over again, "
+             "`Wrap.Mirror` for it the other way round each time. It goes before an asset that's a `Texture` or a "
+             "`Grid2<Color>` and before a field that's a `Grid2<Color>`, a `Grid2<float>` or a `RenderTarget`. The "
+             "`Texture` made there carries it, wherever it's kept."},
         };
         for (size_t i = 0; i < sizeof attributes / sizeof attributes[0]; i++) {
             if (!str_eq_c(o->name, attributes[i].name)) continue;
@@ -4322,7 +4351,7 @@ void analysis_implementation(const int line, const int character, jbuf *out)
 
 // ---------------------------------------------------------------------------
 // Call hierarchy: who calls the game's functions and methods, and what they
-// call. A view that names a frag or vert at Draw2D.Mesh calls it, as far as the
+// call. A view that names a frag or vert at Draw.Mesh calls it, as far as the
 // hierarchy goes: the GPU runs it for what the view draws.
 
 static bool block_contains(const stmt *block, loc at);
@@ -4382,7 +4411,7 @@ static void write_call_item(jbuf *out, const caller *c)
 
 // The code named at the cursor, which the call hierarchy is about: a function
 // or method where it's declared or called, a system where it's declared, or a
-// frag or vert where it's declared or a Draw2D.Mesh names it.
+// frag or vert where it's declared or a Draw.Mesh names it.
 static caller hierarchy_target(const int line, const int character)
 {
     const occurrence *o = occurrence_at(from_lsp(line, character));
@@ -4412,7 +4441,7 @@ void analysis_prepare_call_hierarchy(const int line, const int character, jbuf *
 }
 
 // A call of a game's function or method, by name or by operator, or a frag's
-// or vert's name at a Draw2D.Mesh.
+// or vert's name at a Draw.Mesh.
 static bool is_call(const occurrence *o)
 {
     if (o->kind == OCC_SYSTEM) return !o->declaration && is_shader(o->decl);
@@ -4904,7 +4933,7 @@ void analysis_inlay_hints(const int start_line, const int end_line, jbuf *out)
         sb_printf(&label, ": %s", type_name(o->type));
         inlay_hint(out, &written, (loc){o->at.line, o->at.col + o->len, o->at.file}, label.data, HINT_TYPE, false);
     }
-    for (int i = 0; i < A.calls.count; i++) { // Heal(unit.stats, amount: 2), Draw2D.Circle(p, radius: 3, color)
+    for (int i = 0; i < A.calls.count; i++) { // Heal(unit.stats, amount: 2), Draw.Circle(p, radius: 3, color)
         const expr *call = A.calls.items[i];
         if (call->at.file != A.doc || call->at.line - 1 < start_line || call->at.line - 1 > end_line) continue;
         str names[16];
@@ -5559,13 +5588,6 @@ static void add_target_member(void *user, const builtin_member *m)
     item(c, m->name, CK_METHOD, m->detail, m->doc, m->snippet);
 }
 
-// Of Draw's own, a target has what's a destination's: its stencil. How a draw
-// blends and what tints it are the same wherever it goes.
-static void add_target_stencil(void *user, const builtin_member *m)
-{
-    if (strcmp(m->name, "Stencil") == 0 || strcmp(m->name, "SetStencil") == 0) add_target_member(user, m);
-}
-
 static int label_split(const char *label, int starts[16], int ends[16]);
 
 // What a built-in method's call starts as: its name and parentheses, with the
@@ -5622,9 +5644,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
                      i == 0 ? "Resize($1, $2)" : "Dispose()");
         }
         if (!gpu && sc->decl && (sc->decl->is_view || sc->decl->kind == DECL_FUNCTION)) {
-            builtin_list_members(str_from("Draw2D"), add_target_member, c);
-            builtin_list_members(str_from("Draw3D"), add_target_member, c);
-            builtin_list_members(str_from("Draw"), add_target_stencil, c);
+            builtin_list_members(str_from("Draw"), add_target_member, c); // The window's, as its own
         }
         return;
     }
@@ -5906,7 +5926,7 @@ static void complete_members(completion *c, const int dot, const loc at, const o
                                || str_eq_c(base, "Application") || str_eq_c(base, "Storage") || str_eq_c(base, "Web")
                                || str_eq_c(base, "Frame");
             if (local_owner && (!sc.decl || (!sc.decl->is_view && !sc.decl->is_local && sc.decl->kind != DECL_FUNCTION))) return;
-            const bool frame_owner = builtin_draw_owner(base) || str_eq_c(base, "Draw") || str_eq_c(base, "GUI") || str_eq_c(base, "GUILayout")
+            const bool frame_owner = builtin_draw_owner(base) || str_eq_c(base, "GUI") || str_eq_c(base, "GUILayout")
                                   || str_eq_c(base, "Screen");
             const bool frame = sc.decl && (sc.decl->is_view || sc.decl->kind == DECL_FUNCTION);
             if (frame_owner && !frame) return;
@@ -5919,7 +5939,8 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             builtin_visit v = {c, cursor && !frame};
             builtin_list_members(base, add_builtin_member, &v);
             if (str_eq_c(base, "Draw")) {
-                item(c, "window", CK_PROPERTY, "RenderTarget", "The window drawing destination.", NULL);
+                item(c, "window", CK_PROPERTY, "RenderTarget", "The window as a render target: what Draw's own calls draw into.", NULL);
+                item(c, "list", CK_PROPERTY, "DrawList", "The frame's draw list, which an extern function takes to draw into with tide/draw.h.", NULL);
                 item(c, "Blit", CK_FUNCTION, BLIT_FORM, BLIT_DOC, "Blit($1, $2, $3)");
             }
             return;
@@ -6408,8 +6429,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
     complete_namespaces(c, false);
     // What views draw with, which the functions they call can use too.
     if (view || (routine && sc.decl->kind == DECL_FUNCTION)) {
-        item(c, "Draw2D", CK_MODULE, "2D drawing and its camera", NULL, NULL);
-        item(c, "Draw3D", CK_MODULE, "3D drawing and its camera", NULL, NULL);
+        item(c, "Draw", CK_MODULE, "Drawing into the window: shapes, text, meshes, cameras and settings", NULL, NULL);
         item(c, "GUI", CK_MODULE, "Widgets at a Rect", NULL, NULL);
         item(c, "GUILayout", CK_MODULE, "Widgets laid out automatically", NULL, NULL);
         item(c, "Screen", CK_MODULE, "The window's size, in pixels, and Flip for the devices' positions", NULL, NULL);
@@ -6710,7 +6730,7 @@ static void complete_shader_header(completion *c, const int open, const int last
     complete_namespaces(c, false);
 }
 
-// The frags and verts a Draw2D.Mesh can name after its other arguments: those
+// The frags and verts a Draw.Mesh can name after its other arguments: those
 // that run on its mesh's vertex, `vertex`, or all of them where it isn't known.
 static void complete_shaders(completion *c, const decl *vertex)
 {
@@ -6725,6 +6745,26 @@ static void complete_shaders(completion *c, const decl *vertex)
              d->is_frag ? "Runs on the GPU for each pixel of the mesh, and writes its color. It comes last, after a vert."
                         : "Runs on the GPU for each vertex of the mesh, and changes it in place. A frag comes after it.",
              NULL);
+    }
+}
+
+// The values a draw can give the vert or the frag it names, after their
+// names: each struct one of them takes as a read-only parameter that no vert
+// writes, as `Swell { }`.
+static void complete_draw_values(completion *c, const decl *shader)
+{
+    for (int k = 1; shader && k < shader->params.count; k++) {
+        const param *p = &shader->params.items[k];
+        if (p->type.kind != TY_STRUCT || p->is_out || p->mode == PARAM_MUT || handed_param(shader, p)) continue;
+        sb detail = {0};
+        sb_printf(&detail, "%s { ... }", name_for(p->type.decl));
+        sb doc = {0};
+        sb_printf(&doc, "The values this draw gives %s `%s`, which reads them through its `" STR_FMT "` parameter: the same "
+                        "for the whole draw, and only the fields it reads are sent.", shader->is_frag ? "frag" : "vert",
+                  name_for(shader), STR_ARG(p->name));
+        sb snippet = {0};
+        sb_printf(&snippet, "%s { $1 }", name_for(p->type.decl));
+        item(c, name_for(p->type.decl), CK_STRUCT, detail.data, doc.data, snippet.data);
     }
 }
 
@@ -6944,7 +6984,7 @@ static int open_call(const int last, int *commas)
     return -1;
 }
 
-// Whether the '(' at token `open` is Draw2D.Mesh's.
+// Whether the '(' at token `open` is Draw.Mesh's.
 static type receiver_type(int dot, loc at);
 static bool opens_mesh_draw(const int open)
 {
@@ -7008,28 +7048,47 @@ static type names_type(const scope *sc, const int first, const int last)
     return t;
 }
 
-// Draw2D.Mesh's parameters, in the order they're written:
-// Draw2D.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]][, vert][, frag]).
+// Draw.Mesh's parameters, in the order they're written:
+// Draw.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]][, vert][, frag]).
 // A 3D mesh has its transform, and a 2D one none.
 enum { MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_INSTANCES,
-       MESH_PARAMS };
+       MESH_VALUES, MESH_PARAMS };
 
-// What an argument of Draw2D.Mesh after its indices is, from what's written at
+// What an argument of Draw.Mesh after its indices is, from what's written at
 // tokens `first` to `last`: which of those parameters, or MESH_PARAMS where
 // that doesn't say.
+// The vert or frag the tokens `first` to `last` name: what the checker bound
+// them to, or the game's one of that name. NULL for anything else.
+static const decl *shader_written(const int first, const int last)
+{
+    const token *toks = DOC->toks;
+    if (first > last || toks[first].kind != T_IDENT) return NULL;
+    const occurrence *o = occurrence_at(toks[last].at);
+    if (o && loc_cmp(o->at, toks[last].at) == 0 && o->kind == OCC_SYSTEM && is_shader(o->decl)) return o->decl;
+    const str written = {toks[first].text.ptr, (int)(toks[last].text.ptr + toks[last].text.len - toks[first].text.ptr)};
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (is_shader(d) && (str_eq_c(written, name_for(d)) || str_eq(written, d->qualified))) return d;
+    }
+    return NULL;
+}
+
 static int mesh_argument(const scope *sc, const int first, const int last)
 {
     const token *toks = DOC->toks;
     if (first > last || toks[first].kind != T_IDENT) return MESH_PARAMS;
     // A vert or a frag, by name: what the checker bound it to, or the game's one of that name
-    const occurrence *o = occurrence_at(toks[last].at);
-    if (o && loc_cmp(o->at, toks[last].at) == 0 && o->kind == OCC_SYSTEM && is_shader(o->decl)) {
-        return o->decl->is_frag ? MESH_FRAG : MESH_VERT;
-    }
-    const str written = {toks[first].text.ptr, (int)(toks[last].text.ptr + toks[last].text.len - toks[first].text.ptr)};
-    for (int i = 0; i < A.prog->decls.count; i++) {
-        const decl *d = A.prog->decls.items[i];
-        if (is_shader(d) && (str_eq_c(written, name_for(d)) || str_eq(written, d->qualified))) return d->is_frag ? MESH_FRAG : MESH_VERT;
+    const decl *shader = shader_written(first, last);
+    if (shader) return shader->is_frag ? MESH_FRAG : MESH_VERT;
+    // Swell { height = 2 }: the draw's values, a struct's
+    for (int brace = first + 1; brace <= last; brace++) {
+        if (toks[brace].kind != T_LBRACE) continue;
+        const str written = {toks[first].text.ptr, (int)(toks[brace - 1].text.ptr + toks[brace - 1].text.len - toks[first].text.ptr)};
+        for (int i = 0; i < A.prog->decls.count; i++) {
+            const decl *d = A.prog->decls.items[i];
+            if (d->kind == DECL_STRUCT && (str_eq_c(written, name_for(d)) || str_eq(written, d->qualified))) return MESH_VALUES;
+        }
+        break;
     }
     // float4x4.Translate(...), Filter.Point, Wrap.Repeat
     if (str_eq_c(toks[first].text, "float4x4")) return MESH_TRANSFORM;
@@ -7037,10 +7096,11 @@ static int mesh_argument(const scope *sc, const int first, const int last)
     if (str_eq_c(toks[first].text, "Wrap") && last == first + 2) return MESH_WRAP;
     const type t = names_type(sc, first, last);
     if (t.kind == TY_ENUM) return t.decl == A.prog->wrap ? MESH_WRAP : t.decl == A.prog->filter ? MESH_FILTER : MESH_PARAMS;
-    return t.kind == TY_FLOAT4X4 ? MESH_TRANSFORM : t.kind == TY_GRID || t.kind == TY_TEXTURE ? MESH_TEXTURE : MESH_PARAMS;
+    return t.kind == TY_FLOAT4X4 ? MESH_TRANSFORM : t.kind == TY_GRID || t.kind == TY_TEXTURE ? MESH_TEXTURE
+         : t.kind == TY_STRUCT ? MESH_VALUES : MESH_PARAMS;
 }
 
-// The vertex struct of the mesh a Draw2D.Mesh draws, from its first argument,
+// The vertex struct of the mesh a Draw.Mesh draws, from its first argument,
 // at tokens `first` to `last`: the element of the list that names say, like
 // models.crate, or the struct a list written there starts with, like
 // [Vertex3 { ... }]. NULL where that doesn't say.
@@ -7482,10 +7542,10 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "The command has no order at all: handled in the tick it arrives, before or after commands sent earlier, once.",
                  "Unordered");
             item(&c, "Filter", CK_FUNCTION, "[Filter(Filter.Point)]",
-                 "How an asset that's a Texture or a Grid2<Color> is read between its cells, where a draw that names it doesn't say.",
+                 "How an asset that's a Texture or a Grid2<Color> is read between its cells, where a draw doesn't say.",
                  "Filter(Filter.${1:Point})");
             item(&c, "Wrap", CK_FUNCTION, "[Wrap(Wrap.Repeat)]",
-                 "What a uv past the edges of an asset that's a Texture or a Grid2<Color> reads, where a draw that names it doesn't say.",
+                 "What a uv past the edges of an asset that's a Texture or a Grid2<Color> reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
         }
         break;
@@ -7503,10 +7563,10 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "Position", CK_FUNCTION, "[Position]", "Provisional: linear tick interpolation with smooth visual correction error.", "Position");
             item(&c, "Rotation", CK_FUNCTION, "[Rotation]", "Provisional: shortest rotation interpolation and smooth correction error: float radians or quaternion.", "Rotation");
             item(&c, "Filter", CK_FUNCTION, "[Filter(Filter.Point)]",
-                 "How this Grid2<Color> is read between its cells, where a draw that names it doesn't say.",
+                 "How this grid, or this RenderTarget's color, is read between its cells as a texture, where a draw doesn't say.",
                  "Filter(Filter.${1:Point})");
             item(&c, "Wrap", CK_FUNCTION, "[Wrap(Wrap.Repeat)]",
-                 "What a uv past this Grid2<Color>'s edges reads, where a draw that names it doesn't say.",
+                 "What a uv past the edges of this grid, or of this RenderTarget's color, reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
         }
         break;
@@ -7868,14 +7928,23 @@ void analysis_completion(const int line, const int character, jbuf *out)
         const bool statement_start = before == T_LBRACE || before == T_RBRACE || before == T_SEMI || before == T_MUT;
         const bool type_written = pk == T_IDENT && (builtin_type_named(prev->text, &ignored) || str_eq_c(prev->text, "string"));
         if (statement_start && type_written) break;
-        // Draw2D.Mesh(vertices, indices, ...: the vert and the frag a view draws through, by name
+        // Draw.Mesh(vertices, indices, ...: the vert and the frag a view draws through, by name
         if (call >= 0 && opens_mesh_draw(call) && commas >= (str_eq_c(DOC->toks[call - 1].text, "Instanced") ? 3 : 2)) {
             const scope sc = scope_at(at);
             call_args args;
             call_arguments(call, &args);
             const decl *vertex = mesh_vertex(&sc, args.first[0], args.last[0]);
-            const bool three_d = str_eq_c(DOC->toks[call - 3].text, "Draw3D");
-            if (sc.decl && sc.decl->is_view && (!vertex || vertex_is_3d(vertex) == three_d)) complete_shaders(&c, vertex);
+            // ...and after them, the values they take
+            for (int a = 2; sc.decl && sc.decl->is_view && a < args.count && a < commas; a++) {
+                complete_draw_values(&c, shader_written(args.first[a], args.last[a]));
+            }
+            if (sc.decl && sc.decl->is_view) complete_shaders(&c, vertex);
+        } else if (call >= 3 && commas >= 3 && DOC->toks[call - 1].kind == T_IDENT && str_eq_c(DOC->toks[call - 1].text, "Blit")
+                   && DOC->toks[call - 2].kind == T_DOT && str_eq_c(DOC->toks[call - 3].text, "Draw")) {
+            // Draw.Blit(source, destination, Blur, ...: the values its frag takes
+            call_args args;
+            call_arguments(call, &args);
+            for (int a = 2; a < args.count && a < commas; a++) complete_draw_values(&c, shader_written(args.first[a], args.last[a]));
         }
         // Damage(10, : the names its other parameters can be passed by
         if (call >= 1 && (pk == T_LPAREN || pk == T_COMMA)) complete_argument_names(&c, call, last);
@@ -8131,7 +8200,7 @@ static const char *check_new_name(const occurrence *target, const str name)
                                              "virtual", "override",
                                              "fails", "in", "by", "offset", "void"};
     enum { DECL_WORDS = 14 };
-    static const char *const reserved[] = {"Math", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
+    static const char *const reserved[] = {"Math", "Draw", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
                                            "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Wrap", "Font", "Blend", "Depth", "Cull", "Format", "StencilTest", "StencilOp", "Draw", "DrawList", "Random",
@@ -8416,7 +8485,7 @@ static const struct {
     {"RenderTarget", {"RenderTarget(float width, float height)", "RenderTarget(float width, float height, float pixelsPerUnit)",
                       "RenderTarget(float width, float height, Format formats...)",
                       "RenderTarget(float width, float height, float pixelsPerUnit, Format formats...)"},
-     "Creates a local image of a positive size in logical pixels, like the window's. Its image has the display's pixels in each, so it's as sharp as the window, or `pixelsPerUnit` of them: with 1, exactly `width` by `height` pixels on any display. It holds one color image beside its depth, or what its formats say, one for each color image, four at the most: `Format.Color` is 4 bytes a pixel and `Format.Float` four floats, which keep any number. A frag's `out Color` parameters go to them in order, and `target.colors[1]` reads the second. `Format.DepthOnly`, by itself, is depth alone, for a pass whose depth a frag reads afterwards (`target.depth`). Color and depth persist until cleared; copies share it. Dispose it when finished. `RenderTarget.Screen()` is one that's always the window's size."},
+     "Creates a local image of a positive size in logical pixels, like the window's. Its image has the display's pixels in each, so it's as sharp as the window, or `pixelsPerUnit` of them: with 1, exactly `width` by `height` pixels on any display. It holds one color image beside its depth, or what its formats say, one for each color image, four at the most: `Format.Rgba8` is 4 bytes a pixel and `Format.Rgba16f` four floats, which keep any number. A frag's `out Color` parameters go to them in order, and `target.colors[1]` reads the second. `Format.Depth`, by itself, is depth alone, for a pass whose depth a frag reads afterwards (`target.depth`). Color and depth persist until cleared; copies share it. Dispose it when finished. `RenderTarget.Window()` is one that's always the window's size."},
     {"PlayerID", {"PlayerID(int index)"}, "A player by index, for local play and tests."},
     {"Random", {"Random(long seed)"}, RANDOM_SEEDED_DOC},
     {"Spawn", {"Spawn(components...)"}, "Creates an entity with these components. It's added at the end of the tick."},
@@ -8544,18 +8613,18 @@ static void collect_label(void *user, const char *label, const char *doc)
     vec_push(((label_list *)user)->labels, label);
 }
 
-// Draw2D.Mesh's two forms, a 2D mesh's and a 3D one's, with what may follow
+// Draw.Mesh's two forms, a 2D mesh's and a 3D one's, with what may follow
 // their lists in brackets. The built-in signatures (builtins.c) are those of
 // a List<Vertex> and a List<Vertex3> with no vert and no frag; the checker
 // takes the rest itself (check_mesh_draw).
 static const char *const mesh_labels[2] = {
-    "Draw2D.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag])",
-    "Draw3D.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]][, vert][, frag])",
+    "Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag][, values])",
+    "Draw.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]][, vert][, frag][, values])",
 };
 
 static const char *const instanced_labels[2] = {
-    "Draw2D.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag])",
-    "Draw3D.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag])",
+    "Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag][, values])",
+    "Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag][, values])",
 };
 
 // Each of its parameters: what it's called in those, and what it takes, in a
@@ -8570,18 +8639,23 @@ static const struct {
     [MESH_INDICES] = {"indices", {"A `List<int>`: three for each triangle, places in `vertices`."}},
     [MESH_TRANSFORM] = {"transform", {"A `float4x4`: where the mesh is in the world."}},
     [MESH_TEXTURE] = {"texture",
-                      {"A `Grid2<Color>` or `Texture`, read at each corner's `uv`. A frag with a Texture parameter receives the explicit Texture source."}},
-    [MESH_FILTER] = {"filter", {"How the texture is read between cells: `Filter.Bilinear` (the default) or `Filter.Point`."}},
+                      {"A `Texture`, read at each corner's `uv`: an asset's, a render target's color, or a `Grid2<Color>` or "
+                       "`Grid2<float>`, which is one here. A frag or vert with a Texture parameter receives it as its source."}},
+    [MESH_FILTER] = {"filter", {"How the texture is read between cells, `Filter.Bilinear` or `Filter.Point`: the texture's own "
+                                "where the draw leaves it out."}},
     [MESH_WRAP] = {"wrap",
-                   {"What a `uv` past 0 or 1 reads, written after the filter: the cells at the texture's edge (`Wrap.Clamp`, "
-                    "the default), the texture again (`Wrap.Repeat`), or again the other way round each time "
-                    "(`Wrap.Mirror`)."}},
+                   {"What a `uv` past 0 or 1 reads, written after the filter: the cells at the texture's edge (`Wrap.Clamp`), "
+                    "the texture again (`Wrap.Repeat`), or again the other way round each time (`Wrap.Mirror`). The "
+                    "texture's own where the draw leaves it out."}},
     [MESH_VERT] = {"vert", {"A vert, by name: it runs on the GPU for each vertex, and changes it in place."}},
     [MESH_FRAG] = {"frag", {"A frag, by name: it runs on the GPU for each pixel, and writes its color."}},
     [MESH_INSTANCES] = {"instances",
                         {"A List<T> of instance structs, one for each mesh. A vert or frag reads each through a read-only T parameter.",
                          "A List<float4x4> of transforms, or a List<T> of instance structs. A struct's float4x4 transform places "
                          "the mesh; without one, it uses the identity."}},
+    [MESH_VALUES] = {"values",
+                     {"A struct's value, after the vert and the frag: they read it through a read-only parameter of its type. "
+                      "It's sent once for the draw, and only the fields they read."}},
 };
 
 // The names of the parameters a checked call's arguments go to, in order:
@@ -8602,6 +8676,7 @@ static int call_param_names(const expr *call, str *names, const int max)
             const expr *arg = call->args.items[count];
             const type t = call->arg_want.count > count ? call->arg_want.items[count] : arg->type;
             const int param = count < 2                                  ? count
+                            : arg == call->values                         ? MESH_VALUES
                             : count == 2 && call->instanced               ? MESH_INSTANCES
                             : arg->bind == BIND_SHADER && arg->type_decl ? (arg->type_decl->is_frag ? MESH_FRAG : MESH_VERT)
                             : t.kind == TY_FLOAT4X4                      ? MESH_TRANSFORM
@@ -8624,7 +8699,7 @@ static int call_param_names(const expr *call, str *names, const int max)
             if (call->object && call->object->type.kind == TY_RENDER_TARGET) {
                 const method_form *form = find_form(target_calls, sizeof target_calls / sizeof target_calls[0], call->name);
                 if (form) vec_push(list.labels, form->form);
-            } else if (call->object) { // RenderTarget.Screen(factor)
+            } else if (call->object) { // RenderTarget.Window(factor)
                 builtin_signatures(call->object->name, call->name, collect_label, &list);
             } else {
                 // What it holds comes last, where the call says: the engine's function is another then
@@ -8713,7 +8788,7 @@ static int label_word(const char *label, const char *name)
     return 0;
 }
 
-// The built-in signatures' docs for Draw2D.Mesh: a 2D mesh's, and a 3D one's.
+// The built-in signatures' docs for Draw.Mesh: a 2D mesh's, and a 3D one's.
 typedef struct mesh_docs {
     const char *doc[2];
 } mesh_docs;
@@ -8725,25 +8800,28 @@ static void collect_mesh_doc(void *user, const char *label, const char *doc)
     if (!docs->doc[form]) docs->doc[form] = doc;
 }
 
-// Signature help in Draw2D.Mesh's parentheses, opened at token `open`, with
-// `commas` before the cursor: its two forms, the one the mesh's vertices or a
-// transform say first, and the parameter the argument at the cursor is. What
-// follows the lists can be left out, so that goes by what each argument is.
+// Signature help in Draw.Mesh's parentheses, opened at token `open`, with
+// `commas` before the cursor: its two forms, the one the mesh's vertices say
+// (a 3D mesh's take a transform), and the parameter the argument at the cursor
+// is. What follows the lists can be left out, so that goes by what each
+// argument is.
 static void mesh_signature_help(const int open, const int commas, const loc at, jbuf *out)
 {
     static const int forms[3][MESH_PARAMS] = {
-        {MESH_VERTICES, MESH_INDICES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG},
-        {MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG},
-        {MESH_VERTICES, MESH_INDICES, MESH_INSTANCES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG},
+        {MESH_VERTICES, MESH_INDICES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES},
+        {MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES},
+        {MESH_VERTICES, MESH_INDICES, MESH_INSTANCES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES},
     };
     const scope sc = scope_at(at);
     call_args args;
     call_arguments(open, &args);
-    const str owner = DOC->toks[open - 3].text;
-    const bool three_d = str_eq_c(owner, "Draw3D");
+    const str owner = str_from("Draw"); // A target's are Draw's too
+    const decl *const drawn = mesh_vertex(&sc, args.first[0], args.last[0]);
+    const bool three_d = drawn ? vertex_is_3d(drawn)
+                               : args.count > 2 && mesh_argument(&sc, args.first[2], args.last[2]) == MESH_TRANSFORM;
     const bool instanced = str_eq_c(DOC->toks[open - 1].text, "Instanced");
     const int *order = forms[instanced ? 2 : three_d ? 1 : 0];
-    const int count = instanced || three_d ? 8 : 7;
+    const int count = instanced || three_d ? 9 : 8;
     const int fixed = instanced || three_d ? 3 : 2; // Lists, and an ordinary 3D mesh's transform
 
     int active = 0;
@@ -8834,7 +8912,7 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
             sb_printf(&label, STR_FMT "(DeclarationOrPhase, ...)", STR_ARG(name));
             add_signature(&s, label.data, "An enum member names the entire phase, including all its offsets.");
         }
-    } else if (owner.len > 0 && builtin_owner(owner)) { // Math.Clamp(, Draw2D.Circle(, quaternion.Euler(
+    } else if (owner.len > 0 && builtin_owner(owner)) { // Math.Clamp(, Draw.Circle(, quaternion.Euler(
         if (str_eq_c(owner, "Draw") && str_eq_c(name, "Blit")) add_signature(&s, BLIT_FORM, BLIT_DOC);
         else builtin_signatures(owner, name, visit_signature, &s);
     } else if (str_eq_c(owner, "Scene")) {
@@ -8866,12 +8944,7 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
         } else if (t.kind == TY_STRUCT && t.decl == A.prog->random) {
             builtin_signatures(str_from("Random"), name, visit_signature, &s);
         } else if (t.kind == TY_RENDER_TARGET && !form) {
-            builtin_signatures(str_from("Draw2D"), name, visit_signature, &s);
-            builtin_signatures(str_from("Draw3D"), name, visit_signature, &s);
-            // Its stencil is Draw's, as 2D and 3D draws both take it
-            if (str_eq_c(name, "Stencil") || str_eq_c(name, "SetStencil")) {
-                builtin_signatures(str_from("Draw"), name, visit_signature, &s);
-            }
+            builtin_signatures(str_from("Draw"), name, visit_signature, &s); // A target has the window's methods
         } else if (form && t.kind == TY_WORLD) {
             sb label = {0};
             format_world_method(form, type_open >= 0 ? component_written(type_open, open - 1) : NULL, &label);
@@ -9193,7 +9266,7 @@ static int case_level_at(const int *levels, const char *text)
 enum { BREAK_BEFORE = 1, BREAK_AFTER = 2, BREAK_STACKED = 4 };
 
 // Whether the ',' at token `i` is between calls listed before the block they
-// share, `Draw.Blend(Blend.Add), Draw2D.Clip(panel) { ... }`: it follows a
+// share, `Draw.Blend(Blend.Add), Draw.Clip(panel) { ... }`: it follows a
 // call's ')' with nothing open since `brace`, the brace it's in, which is a
 // block's, and what it starts ends at a '{' rather than a ';'.
 static bool stacks_calls(const int i, const int brace)

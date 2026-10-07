@@ -10,5 +10,5 @@ local singleton Art
 
 view Show(Art art)
 {
-    Draw2D.Mesh(art.corners, [0, 1, 2], art.tiles, Filter.Point, Wrap.Tile);
+    Draw.Mesh(art.corners, [0, 1, 2], art.tiles, Filter.Point, Wrap.Tile);
 }

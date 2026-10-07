@@ -6,4 +6,4 @@ string Description(Session session)
     return text;
 }
 local scene Main { }
-view Show(Session session) { Draw2D.Text(Description(session), float2(0, 0), 16, Color.white); }
+view Show(Session session) { Draw.Text(Description(session), float2(0, 0), 16, Color.white); }

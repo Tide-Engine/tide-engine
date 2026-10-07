@@ -1,7 +1,7 @@
-// expect: to set it for the draws that follow, write 'Draw3D.SetCamera(...);'
+// expect: to set it for the draws that follow, write 'Draw.SetCamera(...);'
 scene Main { }
 
 view Show()
 {
-    Draw3D.Camera(float3(0, 0, -5), quaternion.identity, 60);
+    Draw.Camera(float3(0, 0, -5), quaternion.identity, 60);
 }

@@ -65,7 +65,7 @@ TIDE_TEST(draw_settings_start_over_each_frame)
     TIDE_CHECK(last(&d)->blend == TIDE_BLEND_ADD && d.count > 2);
 
     tide_draw_reset(&d);
-    TIDE_CHECK(d.blend == TIDE_BLEND_ALPHA && !d.tinted && !d.place.moved && !d.place.clip && !d.saved_count);
+    TIDE_CHECK(d.place.blend == TIDE_BLEND_ALPHA && !d.place.tinted && !d.place.moved && !d.place.clip && !d.saved_count);
     TIDE_CHECK(!d.place.camera_2d && !d.place.camera_3d && d.place.depth == TIDE_DEPTH_READ_WRITE);
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_RED);
     // Nothing but the rect, as it was given
@@ -90,7 +90,7 @@ TIDE_TEST(draw_settings_blocks_put_back_what_they_found)
     tide_draw_rect(&d, origin, unit, TIDE_COLOR_WHITE);
     TIDE_CHECK(last(&d)->blend == TIDE_BLEND_MULTIPLY && d.saved_count == 0);
     tide_draw_unset_blend(&d);
-    TIDE_CHECK(d.blend == TIDE_BLEND_ALPHA);
+    TIDE_CHECK(d.place.blend == TIDE_BLEND_ALPHA);
 
     // Tints multiply, one inside the other
     tide_draw_set_tint(&d, (tide_color){1.0f, 0.5f, 1.0f, 1.0f});
@@ -115,7 +115,7 @@ TIDE_TEST(draw_settings_blocks_put_back_what_they_found)
     // A block that found no tint leaves none
     const uint32_t only = tide_draw_push_tint(&d, TIDE_COLOR_RED);
     tide_draw_pop(&d, only);
-    TIDE_CHECK(!d.tinted);
+    TIDE_CHECK(!d.place.tinted);
 
     // Transforms: the inner one is inside the outer
     const uint32_t moved = tide_draw_push_transform(&d, tide_draw_transform_moved(tide_f2(10.0f, 0.0f)));
@@ -236,8 +236,9 @@ TIDE_TEST(draw_settings_never_split_a_run)
     tide_draw_free(&d);
 }
 
-// Where commands land belongs to their destination; how they come out is the
-// same wherever they go. A block's end puts back its own destination's.
+// Every setting belongs to its destination, how commands come out (their blend
+// and tint) as much as where they land. A block's end puts back its own
+// destination's.
 TIDE_TEST(draw_settings_of_a_destination_are_its_own)
 {
     tide_draw_list d = {0};
@@ -247,9 +248,37 @@ TIDE_TEST(draw_settings_of_a_destination_are_its_own)
     tide_draw_set_camera(&d, tide_f2(1.0f, 1.0f), 4.0f);
     tide_draw_set_clip(&d, (tide_rect){0.0f, 0.0f, 8.0f, 8.0f});
     tide_draw_to(&d, 17, 64, 64);
-    TIDE_CHECK(!d.place.moved && !d.place.clip && !d.place.camera_2d); // A target's own: a frame's first
+    // A target's own: a frame's first, the window's blend and tint among what doesn't reach it
+    TIDE_CHECK(!d.place.moved && !d.place.clip && !d.place.camera_2d && !d.place.tinted && d.place.blend == TIDE_BLEND_ALPHA);
     tide_draw_rect(&d, tide_f2(1.0f, 2.0f), unit, TIDE_COLOR_WHITE);
-    TIDE_CHECK(last(&d)->a.x == 1.0f && last(&d)->blend == TIDE_BLEND_ADD && color_is(last(&d)->color, 0.5f, 1, 1, 1));
+    TIDE_CHECK(last(&d)->a.x == 1.0f && last(&d)->blend == TIDE_BLEND_ALPHA && color_is(last(&d)->color, 1, 1, 1, 1));
+    // Set for the target, they're the target's: the window's are as they were when it's selected again
+    tide_draw_set_blend(&d, TIDE_BLEND_MULTIPLY);
+    tide_draw_set_tint(&d, (tide_color){1.0f, 0.0f, 0.0f, 1.0f});
+    tide_draw_rect(&d, tide_f2(1.0f, 2.0f), unit, TIDE_COLOR_WHITE);
+    TIDE_CHECK(last(&d)->blend == TIDE_BLEND_MULTIPLY && color_is(last(&d)->color, 1, 0, 0, 1));
+    tide_draw_to(&d, 0, 0, 0);
+    tide_draw_rect(&d, tide_f2(1.0f, 2.0f), unit, TIDE_COLOR_WHITE);
+    TIDE_CHECK(last(&d)->a.x == 101.0f && last(&d)->blend == TIDE_BLEND_ADD && color_is(last(&d)->color, 0.5f, 1, 1, 1));
+    // A block of the target's blend and tint, left while the window is selected, puts the target's back
+    tide_draw_to(&d, 17, 64, 64);
+    const uint32_t tinted = tide_draw_push_tint(&d, (tide_color){1.0f, 1.0f, 0.0f, 1.0f});
+    tide_draw_push_blend(&d, TIDE_BLEND_REPLACE);
+    tide_draw_rect(&d, tide_f2(1.0f, 2.0f), unit, TIDE_COLOR_WHITE);
+    TIDE_CHECK(last(&d)->blend == TIDE_BLEND_REPLACE && color_is(last(&d)->color, 1, 0, 0, 1)); // Inside the red, times yellow
+    tide_draw_to(&d, 0, 0, 0);
+    tide_draw_pop(&d, tinted);
+    tide_draw_rect(&d, tide_f2(1.0f, 2.0f), unit, TIDE_COLOR_WHITE);
+    TIDE_CHECK(last(&d)->blend == TIDE_BLEND_ADD && color_is(last(&d)->color, 0.5f, 1, 1, 1)); // The window's, untouched
+    tide_draw_to(&d, 17, 64, 64);
+    tide_draw_rect(&d, tide_f2(1.0f, 2.0f), unit, TIDE_COLOR_WHITE);
+    TIDE_CHECK(last(&d)->blend == TIDE_BLEND_MULTIPLY && color_is(last(&d)->color, 1, 0, 0, 1)); // The target's, as before its block
+    tide_draw_to(&d, 0, 0, 0);
+    tide_draw_set_blend(&d, TIDE_BLEND_ADD);
+    tide_draw_set_tint(&d, (tide_color){0.5f, 1.0f, 1.0f, 1.0f});
+    tide_draw_to(&d, 17, 64, 64);
+    tide_draw_unset_blend(&d);
+    tide_draw_unset_tint(&d);
     const uint32_t block = tide_draw_push_clip(&d, (tide_rect){0.0f, 0.0f, 2.0f, 2.0f});
     tide_draw_push_transform(&d, tide_draw_transform_moved(tide_f2(0.0f, 50.0f)));
     tide_draw_to(&d, 0, 0, 0);
@@ -450,7 +479,7 @@ TIDE_TEST(draw_settings_stay_with_their_list)
         }
     }
     // What the appended list drew with isn't left set, but its cameras and its clip
-    TIDE_CHECK(world.blend == TIDE_BLEND_ALPHA && !world.tinted && !world.place.moved);
+    TIDE_CHECK(world.place.blend == TIDE_BLEND_ALPHA && !world.place.tinted && !world.place.moved);
     TIDE_CHECK(world.place.depth == TIDE_DEPTH_READ_WRITE && world.place.cull == TIDE_CULL_BACK);
     TIDE_CHECK(world.place.clip && world.cameras[world.place.camera_2d - 1u].screen == 1);
     tide_draw_free(&over);
@@ -485,7 +514,7 @@ TIDE_TEST(draw_depth_is_the_3d_meshes_own)
     tide_draw_push_blend(&d, TIDE_BLEND_ADD);
     tide_draw_push_depth(&d, TIDE_DEPTH_READ_WRITE);
     tide_draw_pop(&d, outer);
-    TIDE_CHECK(d.place.depth == TIDE_DEPTH_NONE && d.blend == TIDE_BLEND_ALPHA && d.saved_count == 0);
+    TIDE_CHECK(d.place.depth == TIDE_DEPTH_NONE && d.place.blend == TIDE_BLEND_ALPHA && d.saved_count == 0);
     tide_draw_unset_depth(&d);
     TIDE_CHECK(d.place.depth == TIDE_DEPTH_READ_WRITE);
     tide_draw_set_depth(&d, (tide_depth)77); // None of them: as a frame starts
@@ -599,7 +628,7 @@ TIDE_TEST(draw_cull_is_the_3d_meshes_own)
     tide_draw_push_blend(&d, TIDE_BLEND_ADD);
     tide_draw_push_cull(&d, TIDE_CULL_BACK);
     tide_draw_pop(&d, outer);
-    TIDE_CHECK(d.place.cull == TIDE_CULL_NONE && d.blend == TIDE_BLEND_ALPHA && d.saved_count == 0);
+    TIDE_CHECK(d.place.cull == TIDE_CULL_NONE && d.place.blend == TIDE_BLEND_ALPHA && d.saved_count == 0);
     tide_draw_unset_cull(&d);
     TIDE_CHECK(d.place.cull == TIDE_CULL_BACK);
     tide_draw_set_cull(&d, TIDE_CULL_FRONT);
@@ -863,7 +892,7 @@ TIDE_TEST(draw_stencil_is_a_destinations_own)
     tide_draw_push_blend(&d, TIDE_BLEND_ADD);
     tide_draw_push_stencil(&d, tide_stencil_tested(TIDE_STENCIL_LESS, 3));
     tide_draw_pop(&d, outer);
-    TIDE_CHECK(d.place.stencil == tide_stencil_packed(mask) && d.blend == TIDE_BLEND_ALPHA && d.saved_count == 0);
+    TIDE_CHECK(d.place.stencil == tide_stencil_packed(mask) && d.place.blend == TIDE_BLEND_ALPHA && d.saved_count == 0);
     tide_draw_unset_stencil(&d);
     TIDE_CHECK(d.place.stencil == 0 && d.count == 9);
 
