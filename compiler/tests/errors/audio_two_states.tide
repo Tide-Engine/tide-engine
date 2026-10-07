@@ -1,0 +1,15 @@
+// expect: an audio declaration has one state, and 'a' is it already
+struct State
+{
+    float last;
+}
+
+audio Scale(mut Samples samples, mut State a, mut State b)
+{
+    a.last = 1;
+    b.last = 2;
+}
+
+scene Main
+{
+}

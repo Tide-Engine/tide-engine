@@ -1,0 +1,10 @@
+// expect: a game has 16 buses at most, and 'Bus' has 17 members
+[Bus]
+enum Bus
+{
+    A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q,
+}
+
+scene Main
+{
+}

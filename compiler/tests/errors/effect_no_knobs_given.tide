@@ -1,0 +1,19 @@
+// expect: 'Square' has no knobs: 'Square()' is the effect
+audio Square(mut Samples samples)
+{
+    samples.values[0] = 1;
+}
+
+local singleton Mix
+{
+    Sound track;
+}
+
+view Levels(mut Mix mix)
+{
+    mix.track.effect = Square(1);
+}
+
+scene Main
+{
+}
