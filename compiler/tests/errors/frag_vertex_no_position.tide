@@ -34,7 +34,7 @@ struct Normal
     float3 normal;
 }
 
-frag Shade(Normal vertex, mut Color color)
+frag Shade(Normal vertex, out Color color)
 {
     color = Color.white;
 }

@@ -1,6 +1,6 @@
 // expect: the GPU's ints are 32 bits
 scene Main { }
-frag Shade(Vertex vertex, mut Color color)
+frag Shade(Vertex vertex, out Color color)
 {
     byte value = 255;
     color = vertex.color * value;

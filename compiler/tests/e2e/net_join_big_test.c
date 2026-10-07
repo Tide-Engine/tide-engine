@@ -301,11 +301,13 @@ static void sample_fresh(void *user, const uint32_t tick, void *input)
     sample(NULL, tick, input);
 }
 
-static void join_fresh_at_cost(watched *w, fresh_inputs *f, const bool twice, const uint64_t cost, const double budget)
+static void join_fresh_at_cost(watched *w, fresh_inputs *f, const bool twice, const uint64_t cost, const double budget,
+                               const tide_prediction prediction)
 {
     static tide_game slow;
     slow = tide_game_api;
     slow.tick = slow_tick;
+    slow.prediction = prediction;
     slow_clock = 0;
     slow_cost = cost;
     *f = (fresh_inputs){0};
@@ -314,7 +316,8 @@ static void join_fresh_at_cost(watched *w, fresh_inputs *f, const bool twice, co
     w->server = tide_server_create(&(tide_server_desc){.game = &tide_game_api, .tick_rate = 60,
                                      .transports = {tide_loopback_endpoint(w->net, 1)}}, w->now);
     TIDE_REQUIRE(w->server != NULL);
-    w->client = tide_client_create(&(tide_client_desc){.game = cost ? &slow : &tide_game_api,
+    const bool own = cost > 0 || prediction != tide_game_api.prediction; // A game of its own: dear ticks, or no prediction
+    w->client = tide_client_create(&(tide_client_desc){.game = own ? &slow : &tide_game_api,
                                      .transport = tide_loopback_endpoint(w->net, 2), .server = tide_loopback_address(1),
                                      .sample = sample_fresh, .user = f, .lead = 2, .now_ns = cost ? slow_now : NULL,
                                      .resim_budget = budget}, w->now);
@@ -329,7 +332,7 @@ static void join_fresh_at_cost(watched *w, fresh_inputs *f, const bool twice, co
 
 static void join_fresh(watched *w, fresh_inputs *f, const bool twice)
 {
-    join_fresh_at_cost(w, f, twice, 0, 0.0);
+    join_fresh_at_cost(w, f, twice, 0, 0.0, tide_game_api.prediction);
 }
 
 // Catching up can take several frames, and a later frame can itself be
@@ -392,20 +395,24 @@ TIDE_TEST(net_join_big_world_fresh_inputs_can_still_be_counted_as_late)
 // With enough input delay, the world is behind the sampled inputs. A short
 // pause can leave fewer than eight ticks since the last sample but more than
 // eight authoritative ticks to run: bounded playback mustn't then sample
-// the old inputs it hasn't reached. Expensive ticks and a small, made-up
-// re-simulation budget give the client that delay without private hooks.
+// the old inputs it hasn't reached. A game whose clients never predict
+// (Prediction.Delay) has that delay by itself, about a round trip and a half:
+// a client that predicts takes none while no guess of its is wrong, and this
+// one's never is, as it's alone with the server.
 TIDE_TEST(net_join_big_world_a_delayed_client_keeps_inputs_fresh_after_a_short_pause)
 {
     for (int twice = 0; twice < 2; twice++) {
         watched w;
         fresh_inputs f;
-        join_fresh_at_cost(&w, &f, twice == 1, 1000000u, 0.0001);
+        join_fresh_at_cost(&w, &f, twice == 1, 0, 0.0, TIDE_PREDICTION_DELAY);
         const double connected = w.now;
         while (w.now < connected + 6.0) step(&w, true, true);
         const tide_client_status before = tide_client_status_of(w.client);
         TIDE_REQUIRE(before.state == TIDE_SESSION_CONNECTED && before.resyncs == 0 && before.delay_ticks >= 6u);
         const uint32_t next = f.next;
-        for (int frame = 0; frame < 12; frame++) step(&w, false, true);
+        // A pause of a few frames more than the last sample is ahead of the server: the server gets past it by those few
+        const uint32_t gap = next > before.server_tick ? next - before.server_tick : 0u;
+        for (uint32_t frame = 0; frame < gap + 4u; frame++) step(&w, false, true);
         f.watch = true;
         step(&w, true, true);
         const tide_client_status resumed = tide_client_status_of(w.client);

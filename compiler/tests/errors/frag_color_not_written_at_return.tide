@@ -1,0 +1,8 @@
+// expect: frag 'Shade' returns here without writing its pixel's color, 'color'
+scene Main { }
+struct Corner { float2 position; float2 uv; }
+frag Shade(Corner corner, out Color color)
+{
+    if (corner.uv.x > 0.5) return;
+    color = Color.red;
+}

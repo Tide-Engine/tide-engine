@@ -1,6 +1,6 @@
 // expect: so it can't reach the network
 scene Main { }
-frag Shade(Vertex vertex, mut Color color)
+frag Shade(Vertex vertex, out Color color)
 {
     var bytes = await Web.Fetch("http://example.com/file")!;
     color = bytes.count > 0 ? vertex.color : Color.black;

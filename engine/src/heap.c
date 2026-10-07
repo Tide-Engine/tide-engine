@@ -164,6 +164,11 @@ uint64_t tide_heap_hash(uint64_t h, const tide_heap *heap)
     return h;
 }
 
+void tide_heap_stale(const tide_heap *heap, tide_stale_pages *s)
+{
+    for (uint32_t i = 0; i < heap->pages; i += places(heap->page[i])) tide_page_stale(s, heap->page[i], in_use(heap, heap->page[i]));
+}
+
 uint64_t tide_heap_block_hash(tide_heap *h, const uint32_t block)
 {
     tide_page *p = h->page[block >> TIDE_HEAP_PAGE_SHIFT];

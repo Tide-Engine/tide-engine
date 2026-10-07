@@ -1,0 +1,14 @@
+// expect: a mesh's wrap comes after its filter: 'Draw2D.Mesh(..., texture, Filter.Bilinear, Wrap.Repeat)'
+// expect: 'Filter.Bilinear' is the filter of a draw that says none
+scene Main { }
+
+local singleton Art
+{
+    List<Vertex> corners;
+    Grid2<Color> tiles = Grid2(4, 4);
+}
+
+view Show(Art art)
+{
+    Draw2D.Mesh(art.corners, [0, 1, 2], art.tiles, Wrap.Repeat);
+}

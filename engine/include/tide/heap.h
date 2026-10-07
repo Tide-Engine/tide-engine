@@ -64,6 +64,8 @@ uint32_t tide_heap_alloc(tide_heap *h, uint32_t bytes);
 // what's been handed out.
 void tide_heap_copy(tide_heap *to, const tide_heap *from);
 uint64_t tide_heap_hash(uint64_t h, const tide_heap *heap);
+// The pages that hash would have to read again (tide/page.h), for whoever hashes them on threads first.
+void tide_heap_stale(const tide_heap *heap, tide_stale_pages *s);
 
 // Lets go of its pages, leaving it empty.
 void tide_heap_free(tide_heap *h);

@@ -1,6 +1,6 @@
 <script lang="ts">
     import { page } from '$app/state';
-    import { docs, repo, slugs } from '#lib/nav.ts';
+    import { docs, slugs } from '#lib/nav.ts';
     import { theme, toggleTheme } from '#lib/theme.svelte.ts';
 
     let { onsearch }: { onsearch: () => void } = $props();
@@ -41,13 +41,6 @@
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.1A8.5 8.5 0 0 1 9.9 3.5a8.5 8.5 0 1 0 10.6 10.6Z" /></svg>
                 {/if}
             </button>
-            <a class="icon" href={repo} target="_blank" rel="noreferrer" aria-label="Tide Engine on GitHub" title="GitHub">
-                <svg viewBox="0 0 24 24" aria-hidden="true" class="filled"
-                    ><path
-                        d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1-.7.1-.7.1-.7 1.2 0 1.9 1.2 1.9 1.2 1 1.8 2.8 1.3 3.5 1 0-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.2.5-2.3 1.3-3.1-.2-.4-.6-1.6 0-3.2 0 0 1-.3 3.4 1.2a11.5 11.5 0 0 1 6 0C17.3 4.6 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.2.8.8 1.3 1.9 1.3 3.2 0 4.6-2.8 5.6-5.5 5.9.5.4.9 1.1.9 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"
-                    /></svg
-                >
-            </a>
         </div>
 
         <button class="icon burger" type="button" onclick={() => (menu = !menu)} aria-expanded={menu} aria-controls="mobile-nav" aria-label="Menu">
@@ -62,7 +55,6 @@
             <a href={docs.link} class:active={inDocs}>{docs.text}</a>
             <div class="row">
                 <button type="button" onclick={toggleTheme}>{theme.dark ? 'Light theme' : 'Dark theme'}</button>
-                <a href={repo} target="_blank" rel="noreferrer">GitHub</a>
             </div>
         </nav>
     {/if}
@@ -189,11 +181,6 @@
         stroke-width: 2;
         stroke-linecap: round;
         stroke-linejoin: round;
-    }
-
-    svg.filled {
-        fill: currentColor;
-        stroke: none;
     }
 
     .burger {

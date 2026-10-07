@@ -67,6 +67,10 @@ static void correct(void *user, const tide_view_correction *correction)
     tide_local_correct(m->local, correction);
 }
 
+// Milliseconds a frame a client may spend running predicted ticks again
+// before it takes input delay (--budget); 0 is the engine's own budget.
+static double budget_ms;
+
 static bool create(const int who, const tide_jobs *jobs)
 {
     machine *m = &machines[who];
@@ -75,7 +79,7 @@ static bool create(const int who, const tide_jobs *jobs)
     if (!m->local) return false;
     tide_local_init(m->local);
     m->session = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .sample = sample, .user = m,
-        .jobs = jobs, .now_ns = tide_time_now_ns, .correct_views = correct});
+        .jobs = jobs, .now_ns = tide_time_now_ns, .correct_views = correct, .resim_budget = budget_ms * 1e-3});
     return m->session != NULL;
 }
 
@@ -116,10 +120,11 @@ static void frame(FILE *raw, const int who, const uint64_t origin, tide_loopback
     tide_gui_end(&m->gui, &m->draw);
     const double work_ms = (double)(tide_time_now_ns() - began) * 1e-6;
     // Same frame layout as lag.mjs: time, then tide_run_netcode's values.
-    fprintf(raw, "[%d,[%.3f,%u,%d,%u,%u,%u,%u,%u,%u,%.3f,%u,%u,%u,%u,%u,%u,%u,%.6f,%.6f]]\n", who,
+    fprintf(raw, "[%d,[%.3f,%u,%d,%u,%u,%u,%u,%u,%u,%.3f,%u,%u,%u,%u,%u,%u,%u,%.6f,%.6f,%.3f,%.3f,%.3f]]\n", who,
         now * 1000.0, (unsigned)c->state, status.server ? 1 : 0, c->ping_ms, c->answer_ms, c->verified_tick,
         c->predicted_tick, c->server_tick, c->delay_ticks, (double)c->early_ms, c->late_ticks, c->again_ticks,
-        c->run_ticks, c->ahead_ticks, c->resyncs, m->corrections, m->resets, update_ms, work_ms);
+        c->run_ticks, c->ahead_ticks, c->resyncs, m->corrections, m->resets, update_ms, work_ms, (double)c->rollback_ms,
+        (double)c->rollback_most_ms, (double)c->resim_ms);
 }
 
 int main(const int argc, char **argv)
@@ -135,12 +140,14 @@ int main(const int argc, char **argv)
         else if (!strcmp(option, "--fps")) fps = strtod(argv[i], NULL);
         else if (!strcmp(option, "--ping")) ping = strtod(argv[i], NULL);
         else if (!strcmp(option, "--frames")) frames = (uint32_t)strtoul(argv[i], NULL, 10);
+        else if (!strcmp(option, "--budget")) budget_ms = strtod(argv[i], NULL);
         else if (!strcmp(option, "--raw")) path = argv[i];
         else return 2;
     }
     if (!path || !(seconds > 0 && seconds <= 3600) || !(join_at >= 0 && join_at < seconds)
-        || !(fps >= 1 && fps <= 1000) || !(ping >= 0 && ping <= 2000)) {
-        fprintf(stderr, "usage: bench_lag_native --raw <file.jsonl> [--ping 50] [--seconds 150] [--join 30] [--fps 144] [--frames n]\n");
+        || !(fps >= 1 && fps <= 1000) || !(ping >= 0 && ping <= 2000) || !(budget_ms >= 0 && budget_ms <= 1000)) {
+        fprintf(stderr, "usage: bench_lag_native --raw <file.jsonl> [--ping 50] [--seconds 150] [--join 30] [--fps 144] [--frames n]"
+                        " [--budget ms]\n");
         return 2;
     }
     FILE *raw = fopen(path, "wb");
@@ -181,9 +188,10 @@ int main(const int argc, char **argv)
     const tide_session_status host = machines[0].session ? tide_session_status_of(machines[0].session) : (tide_session_status){0};
     for (int who = 0; who < made; who++) if (!machines[who].playing) failed = 1;
     fprintf(raw, "{\"meta\":{\"platform\":\"native\",\"seconds\":%.3f,\"ping\":%.0f,\"join_at\":%.3f,\"fps\":%.0f,"
-        "\"threads\":%u,\"rounds_started\":%d,\"full_round\":%s,\"host_skipped_seconds\":%.3f,\"failed\":%s}}\n",
-        took, ping, join_at, fps, jobs ? jobs->threads : 1u, rounds, rounds >= 2 ? "true" : "false", host.skipped,
-        failed ? "true" : "false");
+        "\"threads\":%u,\"resim_budget_ms\":%.3f,\"rounds_started\":%d,\"full_round\":%s,\"host_skipped_seconds\":%.3f,"
+        "\"failed\":%s}}\n",
+        took, ping, join_at, fps, jobs ? jobs->threads : 1u, budget_ms > 0 ? budget_ms : 4.0, rounds,
+        rounds >= 2 ? "true" : "false", host.skipped, failed ? "true" : "false");
     if (fclose(raw)) failed = 1;
     for (int who = 0; who < 3; who++) {
         machine *m = &machines[who];

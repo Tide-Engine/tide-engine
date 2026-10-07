@@ -110,7 +110,7 @@ void tide_table_lanes_end(tide_table *t, const tide_columns *c, const uint32_t c
         if (out[k] == tide_page_data(*p)) continue; // Written in place
         tide_page *own = (tide_page *)(void *)out[k] - 1;
         const size_t bytes = (size_t)rows * c->sizes[first + k];
-        if (memcmp(out[k], tide_page_data(*p), bytes) == 0) { // No row changed: still shared, still hashed
+        if (tide_same_bytes(out[k], tide_page_data(*p), bytes)) { // No row changed: still shared, still hashed
             tide_page_give(own);
             continue;
         }
@@ -167,7 +167,7 @@ void tide_table_lanes_end_pieces(tide_table *t, const tide_columns *c, const uin
         tide_page *was = (tide_page *)(uintptr_t)own->was;
         own->was = 0;
         const size_t bytes = (size_t)rows * c->sizes[first + k];
-        if (memcmp(tide_page_data(own), tide_page_data(was), bytes) == 0) { // No row changed: still shared, still hashed
+        if (tide_same_bytes(tide_page_data(own), tide_page_data(was), bytes)) { // No row changed: still shared, still hashed
             *p = was;
             tide_page_give(own);
             continue;
@@ -285,6 +285,14 @@ uint64_t tide_table_hash(uint64_t h, const tide_table *t, const tide_columns *c)
         }
     }
     return h;
+}
+
+void tide_table_stale(const tide_table *t, const tide_columns *c, tide_stale_pages *s)
+{
+    for (uint32_t chunk = 0; chunk < t->chunks; chunk++) {
+        const uint32_t rows = tide_table_rows(t, c->shift, chunk);
+        for (uint32_t k = 0; k < c->count; k++) tide_page_stale(s, t->pages[chunk * c->count + k], rows * c->sizes[k]);
+    }
 }
 
 void tide_table_free(tide_table *t, const tide_columns *c)

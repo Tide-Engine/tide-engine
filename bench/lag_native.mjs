@@ -13,7 +13,7 @@ import { saveRaw } from './lag_data.mjs';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = dirname(here);
 const args = process.argv.slice(2);
-const options = { pings: '0,50,100,150', seconds: '150', join: '30', fps: '144', save: '', frames: '' };
+const options = { pings: '0,50,100,150', seconds: '150', join: '30', fps: '144', save: '', frames: '', budget: '' };
 let executable = '';
 for (let i = 0; i < args.length; i++) {
     if (args[i].startsWith('--') && args[i].slice(2) in options) options[args[i].slice(2)] = args[++i];
@@ -21,7 +21,8 @@ for (let i = 0; i < args.length; i++) {
     else throw new Error(`unknown argument: ${args[i]}`);
 }
 if (!executable || !existsSync(executable)) {
-    console.error('usage: node bench/lag_native.mjs <bench_lag_native.exe> [--pings 0,50,100,150] [--seconds 150] [--join 30] [--fps 144] [--save label]');
+    console.error('usage: node bench/lag_native.mjs <bench_lag_native.exe> [--pings 0,50,100,150] [--seconds 150] [--join 30] [--fps 144]'
+        + ' [--budget ms] [--save label]');
     process.exit(2);
 }
 const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', env: { ...process.env, TIDE_HIDDEN: '1' } }).stdout.trim();
@@ -35,6 +36,7 @@ for (const ping of options.pings.split(',').map(Number)) {
     const raw = join(rawFolder, `${stamp}-${label}-native-${ping}.jsonl`);
     const flags = ['--raw', raw, '--ping', String(ping), '--seconds', options.seconds, '--join', options.join, '--fps', options.fps];
     if (options.frames) flags.push('--frames', options.frames);
+    if (options.budget) flags.push('--budget', options.budget);
     console.log(`\nSumo native: three players, ping ${ping} ms, ${options.seconds} s, ${options.fps} fps requested`);
     const run = spawnSync(resolve(executable), flags, { cwd: root, stdio: ['ignore', 'inherit', 'inherit'],
         timeout: (Number(options.seconds) + 120) * 1000, env: { ...process.env, TIDE_HIDDEN: '1' } });

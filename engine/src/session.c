@@ -88,7 +88,7 @@
 // the world's pages, says which of them its world lacks, and gets those.
 
 #define MAGIC 0x5449u // "TI"
-#define PROTOCOL 12u
+#define PROTOCOL 13u
 
 enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_CHUNK, MSG_CLIENT, MSG_SERVER, MSG_BYE, MSG_HANDOVER, MSG_COMMAND,
        MSG_UPLOAD, MSG_DOWNLOAD };
@@ -125,9 +125,21 @@ enum { START_UNKNOWN = 0, START_MAIN = 1, START_GIVEN = 2 };
 // The server's input is the slot after the players': how many the game takes
 // (tide_game_players), which servers and clients keep as `players`.
 #define PREDICTION_SECONDS 1.0 // How far a client runs ahead of the last tick it knows, at most
-#define RESIM_BUDGET 0.004     // Seconds a frame a client may spend running predicted ticks again, unless its desc says
+#define RESIM_BUDGET 0.004     // Seconds an update a client may spend running predicted ticks again, on the whole, unless its desc says
+#define ROLLBACK_FRAMES 1.0    // Frames (the time between its updates) one rollback may take, and never less than the budget
+#define LOAD_SECONDS 1.0       // Over how long what running ticks again costs an update is averaged
+#define LEAD_SECONDS 0.5       // How long the most a client was ahead of what's confirmed counts for what a rollback would run again
+#define ROOM_SHARE 0.9         // The share of what it may take that a rollback, and the whole, must stay within for the delay to come back
+#define ROOM_SECONDS 0.5       // How long a predicting client has to have had that room before it takes a tick of input delay back
+#define COST_STALL 4.0         // A tick that took more times its mean than this was the machine stalling: it counts as that many ticks
+#define LEVEL_TICKS 2u         // Ticks a client may be behind what the server said it ran and still be level with it, for the lead to count
+#define LEAD_SETTLED 2.0       // Ticks its lead may be from what it's been of late and count as settled, for a tick of delay more
+#define ROLLBACK_SECONDS (1.0 / 60.0) // The least one rollback may take, however short the frames: a 60th of a second
+#define QUIET_SECONDS 2.0      // With no rollback for this long, nothing says the delay is still needed: it comes back a tick at a time
+#define COLD_SECONDS 1.0       // A rollback in a client's first second with a world isn't measured: everything is cold, and it's catching up
+#define REPLAY_SAMPLES 5       // Rollbacks' first ticks whose median is what one costs
 #define GUESS_SECONDS 0.15     // How long a client guesses that another player's input stays as it was, unless its desc says
-#define SLACK_SECONDS 5.0      // How long a client has to have had room to spare before it takes input delay back
+#define SLACK_SECONDS 5.0      // How long a client that never predicts has to have had room to spare before it takes input delay back
 #define SLACK_TICKS 3          // Ticks a frame has to come before its tick is due to count as room to spare
 #define HISTORY_SECONDS 4.0    // How long the server keeps ticks to send again, and a client keeps ticks ahead
 #define HISTORY_MOST 8u        // ...times this at most, for a player catching up with a world it was sent; past that, the world again
@@ -294,6 +306,14 @@ static uint32_t varint_size(uint32_t v)
 static void patch_u64(uint8_t *at, const uint64_t v)
 {
     for (int i = 0; i < 8; i++) at[i] = (uint8_t)(v >> (8 * i));
+}
+
+// A world's hash, between ticks: what changed of it since its last one is
+// hashed on the session's threads where the game can share that out, which
+// frees this one of most of it. The same hash either way.
+static uint64_t hash_of(const tide_game *g, const void *world, const tide_jobs *jobs)
+{
+    return jobs && g->hash_world_on ? g->hash_world_on(world, jobs) : g->hash_world(world);
 }
 
 // The most a frame can take: its hash, the events, which inputs changed and
@@ -1689,7 +1709,7 @@ static void server_tick(tide_server *s)
     g->tick(s->world, s->desc.jobs);
     s->tick++;
     s->ended = g->ended && g->ended(s->world);
-    patch_u64(s->frame, g->hash_world(s->world));
+    patch_u64(s->frame, hash_of(g, s->world, s->desc.jobs));
 
     keep_needed(s, tick);
     stored_frame *f = &s->frames[tick % s->w.history];
@@ -2333,7 +2353,26 @@ struct tide_client {
     uint32_t delay;         // Ticks short of `sampled` it runs
     uint32_t delay_cap;     // The most delay it takes, so its inputs fit their ring
     bool predicts;          // It runs ticks the server hasn't confirmed (TIDE_PREDICTION_ROLLBACK)
-    double tick_cost;       // Seconds one of its ticks takes, as last measured (tide_client_desc.now_ns)
+    double tick_cost;       // Seconds one of its predicted ticks takes, a moving mean (tide_client_desc.now_ns)
+    // What running ticks again costs, measured as it happens (note_tick_cost):
+    // the first tick of a rollback, which has to find or make what C keeps
+    // of the world again, as the last REPLAY_SAMPLES rollbacks had it (their
+    // median is what one costs), while the ticks after it cost what a
+    // predicted tick does; when the last rollback was; what this update's
+    // rollbacks took; and what they take an update on the whole, a moving
+    // mean over LOAD_SECONDS (adjust_delay). `rerunning` while predict_from
+    // runs ticks again, and which of them it's at.
+    double rerun_firsts[REPLAY_SAMPLES];
+    uint32_t rerun_count;
+    double rerun_at;
+    double resim_now;
+    double resim_load;
+    bool rerunning;
+    uint32_t rerun_tick;
+    double delay_at;        // When the delay was last looked at, for that mean
+    double lead_mean;       // How far ahead of what's confirmed it's been of late, while level with the server
+    double rollback_now;    // What a rollback would cost now, as last reckoned, and the most one may take: for the status
+    double most_now;
     uint32_t again;         // Predicted ticks it ran again so far
     uint32_t ran;           // Ticks it ran so far, all of them...
     uint32_t ran_ahead;     // ...and the predicted ones among them, the first time and again
@@ -3225,7 +3264,47 @@ static bool apply_frame(tide_client *c, void *world, const pending_frame *f)
     }
     if (r.failed || r.at != r.size) return false;
     run_tick(c, world, f->tick);
-    return g->hash_world(world) == hash;
+    return hash_of(g, world, c->desc.jobs) == hash;
+}
+
+// What a predicted tick cost, for the input delay to go by (adjust_delay): a
+// moving mean of a tick's, and apart, of the first tick of a rollback, which
+// finds or makes again what C keeps of the world at the tick it starts from
+// (`rerun_first`). A tick that took many times its mean is the machine
+// stalling, not the tick, and counts as COST_STALL ticks' worth: a tick that
+// got dearer is still learned within a few. What a rollback's ticks cost is
+// summed for the update (`resim_now`).
+static void note_tick_cost(tide_client *c, double cost)
+{
+    if (c->rerunning && c->rerun_tick++ == 0u) {
+        // Not in its first second with a world: everything is cold then, and it's catching up
+        if (c->now - c->early_from >= COLD_SECONDS) c->rerun_firsts[c->rerun_count++ % REPLAY_SAMPLES] = cost;
+        c->resim_now += cost;
+        return;
+    }
+    if (c->tick_cost > 0.0 && cost > c->tick_cost * COST_STALL) cost = c->tick_cost * COST_STALL;
+    c->tick_cost = c->tick_cost > 0.0 ? c->tick_cost * 0.9 + cost * 0.1 : cost;
+    if (c->rerunning) c->resim_now += cost;
+}
+
+// What a rollback's first tick costs: the median of the last rollbacks', so
+// one that the machine stalled in, or that found everything cold, says
+// nothing by itself. 0 before any.
+static double rerun_first_cost(const tide_client *c)
+{
+    const uint32_t count = c->rerun_count < REPLAY_SAMPLES ? c->rerun_count : REPLAY_SAMPLES;
+    if (count == 0u) return 0.0;
+    double sorted[REPLAY_SAMPLES];
+    for (uint32_t i = 0; i < count; i++) { // Insertion sort: a handful
+        const double v = c->rerun_firsts[i];
+        uint32_t at = i;
+        while (at > 0u && sorted[at - 1u] > v) {
+            sorted[at] = sorted[at - 1u];
+            at--;
+        }
+        sorted[at] = v;
+    }
+    return sorted[count / 2u];
 }
 
 // Runs predicted tick `tick`: the snapshot after it is the one before it, run
@@ -3260,20 +3339,23 @@ static void run_predicted(tide_client *c, const uint32_t tick)
     c->ran_ahead++;
     run_tick(c, world, tick);
     finish_view_rewrite(c, tick + 1u);
-    if (c->desc.now_ns) {
-        const double cost = (double)(c->desc.now_ns() - started) * 1e-9;
-        c->tick_cost = c->tick_cost > 0.0 ? c->tick_cost * 0.9 + cost * 0.1 : cost;
-    }
+    if (c->desc.now_ns) note_tick_cost(c, (double)(c->desc.now_ns() - started) * 1e-9);
 }
 
 // The predicted ticks from `from` on, again: the ones before it stand.
 static void predict_from(tide_client *c, const uint32_t from)
 {
     c->let_go = UINT32_MAX; // Where the others let go is found again, from the tick confirmed now
+    // What the rollback costs is measured tick by tick for the input delay to
+    // go by (note_tick_cost): its first tick apart from the rest
+    c->rerunning = c->desc.now_ns != NULL;
+    c->rerun_tick = 0u;
+    if (from < c->ahead) c->rerun_at = c->now;
     for (uint32_t t = from; t < c->ahead; t++) {
         capture_view_correction(c, t + 1u);
         run_predicted(c, t);
     }
+    c->rerunning = false;
     c->again += c->ahead - from;
 }
 
@@ -3484,6 +3566,15 @@ static void load_snapshot(tide_client *c)
         const uint32_t delay = c->desc.lead ? c->desc.lead + trip + (trip + 1u) / 2u + 2u : 0u;
         c->delay = c->predicts ? 0u : delay < c->delay_cap ? delay : c->delay_cap;
         c->tick_cost = 0.0;
+        c->rerun_count = 0u;
+        c->rerun_at = 0.0;
+        c->rerunning = false;
+        c->resim_now = 0.0;
+        c->resim_load = 0.0;
+        c->delay_at = 0.0;
+        c->lead_mean = 0.0;
+        c->rollback_now = 0.0;
+        c->most_now = 0.0;
         c->slack_since = c->now;
         c->delay_hold_until = c->now + (double)c->rtt_ms / 1000.0 + 3.0 / c->tick_rate;
     } else {
@@ -3690,7 +3781,7 @@ static void play(tide_client *c)
         if (own_late(c, f) && own_input(c, tick, &own_size)) c->late++;
         bool ok;
         if (predicted) {
-            ok = c->game->hash_world(world_at(c, tick + 1u)) == frame_hash(f);
+            ok = hash_of(c->game, world_at(c, tick + 1u), c->desc.jobs) == frame_hash(f);
         } else {
             if (tick < c->ahead) capture_view_correction(c, tick + 1u);
             c->game->copy_world(world_at(c, tick + 1u), world_at(c, tick));
@@ -3746,23 +3837,84 @@ static void play(tide_client *c)
 }
 
 // Its input delay (tide_prediction): how many ticks short of the ones it has
-// inputs for it runs. Predicting, it takes a tick more when running the
-// predicted ticks again would cost more than its budget a frame, and a tick
-// less once there's been room to spare for a while. Not predicting, it takes
-// a tick more when the clock reached a tick whose frame hasn't come, and a
-// tick less once frames have come well before their ticks for a while. Each
-// change takes a round trip to show, so there's one at a time.
+// inputs for it runs.
+//
+// Predicting, it's the least at which running ticks again fits what a frame
+// can afford, by what that costs in practice, so a client whose guesses are
+// right pays nothing for them, and none at all on the server's machine,
+// whose inputs go straight in. A rollback runs the ticks from the one that
+// went otherwise to the one it's predicting again, about its lead: what one
+// would cost now is what the last ones' first ticks cost (rerun_first_cost,
+// or `tick_cost` before any) and a tick's cost for each of the rest, over
+// how far ahead it's been of late and a tick (`lead_mean`, while it's level
+// with the server), and may take up to a frame, the time between its
+// updates, and never less than the budget nor than a 60th of a second
+// (ROLLBACK_FRAMES, ROLLBACK_SECONDS); and what rollbacks cost on the whole,
+// an update, may take up to the budget (`resim_load`, to which an update
+// counts for two budgets at the most, so one rollback a stall made long
+// isn't a load). It takes a tick more when either is over, and one back once
+// both would still hold with a tick less, with a share to spare (ROOM_SHARE),
+// for ROOM_SECONDS. With no rollback for QUIET_SECONDS nothing says either:
+// it takes none more, and takes them back a tick at a time, as what it
+// reckons by may be stale, and a rollback that then comes is measured.
+//
+// Not predicting, it takes a tick more when the clock reached a tick whose
+// frame hasn't come, and a tick less once frames have come well before their
+// ticks for a while. Each change takes a round trip to show, so there's one
+// at a time.
 static void adjust_delay(tide_client *c)
 {
-    if (!c->loaded || c->now < c->delay_hold_until) return;
+    if (!c->loaded) return;
+    const double budget = c->desc.resim_budget > 0.0 ? c->desc.resim_budget : RESIM_BUDGET;
+    const double frame = (double)c->room.time * 2e-9 * ROLLBACK_FRAMES; // room.time is half the time between updates
+    double most = frame > budget ? frame : budget;                      // What one rollback may take
+    if (most < ROLLBACK_SECONDS) most = ROLLBACK_SECONDS;
+    double rollback = 0.0; // What one would cost now
+    double ticks = 1.0;    // ...running this many ticks again
+    bool settled = false;  // Its lead is what it's been of late: not a stall's, nor a change's on its way
+    if (c->predicts && c->desc.now_ns) {
+        // What running ticks again has cost an update, on the whole, over the
+        // updates of late: an update that a stall made long is one update
+        double since = c->delay_at > 0.0 && c->now > c->delay_at ? c->now - c->delay_at : 0.0;
+        if (since > 0.1) since = 0.1;
+        c->delay_at = c->now;
+        const double spent = c->resim_now < budget * 2.0 ? c->resim_now : budget * 2.0;
+        c->resim_load += (spent - c->resim_load) * (since / (since + LOAD_SECONDS));
+        c->resim_now = 0.0;
+        // How far ahead it's been of late, while level with the server: a
+        // server that fell silent for a while, or whose ticks it's still
+        // confirming after one did, leaves it further ahead than a rollback
+        // is ever about
+        const bool level = c->heard_tick <= c->verified + LEVEL_TICKS && c->now - c->last_heard <= 4.0 / c->tick_rate;
+        const double lead = (double)(c->ahead - c->verified);
+        if (level) c->lead_mean += (lead - c->lead_mean) * (since / (since + LEAD_SECONDS));
+        const double apart = lead - c->lead_mean;
+        settled = level && apart <= LEAD_SETTLED && apart >= -LEAD_SETTLED;
+        const double first = rerun_first_cost(c);
+        ticks = c->lead_mean + 1.0;
+        rollback = (first > 0.0 ? first : c->tick_cost) + (ticks - 1.0) * c->tick_cost;
+        c->rollback_now = rollback;
+        c->most_now = most;
+    }
+    if (c->now < c->delay_hold_until) return;
     int change = 0;
     if (c->predicts) {
-        if (!c->desc.now_ns) return; // No clock: the same run on every machine
-        const double budget = c->desc.resim_budget > 0.0 ? c->desc.resim_budget : RESIM_BUDGET;
-        const double cost = (double)(c->ahead - c->verified) * c->tick_cost;
-        if (cost > budget) change = 1;
-        else if (cost < budget / 3.0 && c->now - c->slack_since > SLACK_SECONDS) change = -1;
-        if (cost >= budget / 3.0) c->slack_since = c->now;
+        if (!c->desc.now_ns || c->desc.lead == 0u) return; // No clock: the same run on every machine. No lead: nothing to run again
+        const bool quiet = c->rerun_at == 0.0 || c->now - c->rerun_at > QUIET_SECONDS;
+        // A tick more only for a lead that's settled: a client whose clock jumped
+        // ahead while its machine stalled runs far ahead for a moment, and that
+        // moment is no reason for a delay that would take seconds to come back
+        if (!quiet && settled && (rollback > most || c->resim_load > budget)) change = 1;
+        else {
+            // With a tick of delay less it's a tick further ahead: a tick more to run again, each time.
+            // Where that leaves half of what it may take to spare, the delay is clearly more than it
+            // needs, and comes back a tick at a time as fast as changes can show
+            const double more = c->resim_load * (ticks + 1.0) / ticks;
+            const bool room = quiet || (rollback + c->tick_cost <= most * ROOM_SHARE && more <= budget * ROOM_SHARE);
+            const bool spare = quiet || (rollback + c->tick_cost <= most * 0.5 && more <= budget * 0.5);
+            if (!room) c->slack_since = c->now;
+            else if (spare || c->now - c->slack_since > ROOM_SECONDS) change = -1;
+        }
     } else {
         const int64_t due = due_tick(c);
         uint32_t has = 0; // Ticks from `verified` whose frames have come
@@ -3776,6 +3928,15 @@ static void adjust_delay(tide_client *c)
     if (change > 0 && c->delay < c->delay_cap) c->delay++;
     else if (change < 0 && c->delay > 0) c->delay--;
     else return;
+    if (c->predicts) {
+        // What rollbacks have cost is about the lead it had: with a tick of
+        // delay more each runs a tick less again, and with one less a tick
+        // more, until what they cost from here says otherwise; and the lead
+        // itself changes by a tick at once
+        c->resim_load *= change > 0 ? (ticks - 1.0) / ticks : (ticks + 1.0) / ticks;
+        c->lead_mean += change > 0 ? -1.0 : 1.0;
+        if (c->lead_mean < 0.0) c->lead_mean = 0.0;
+    }
     c->slack_since = c->now;
     c->delay_hold_until = c->now + (double)c->rtt_ms / 1000.0 + 3.0 / c->tick_rate;
 }
@@ -4162,6 +4323,9 @@ tide_client_status tide_client_status_of(const tide_client *c)
         .predicted_tick = c->ahead,
         .server_tick = c->heard_tick,
         .delay_ticks = c->delay,
+        .rollback_ms = (float)(c->rollback_now * 1000.0),
+        .rollback_most_ms = (float)(c->most_now * 1000.0),
+        .resim_ms = (float)(c->resim_load * 1000.0),
         .early_ms = c->waited_known ? (float)((double)c->waited * 1000.0 / WAITS) : 0.0f,
         .late_ticks = c->late,
         .again_ticks = c->again,

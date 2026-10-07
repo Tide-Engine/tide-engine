@@ -68,11 +68,51 @@ When the display's scale changes (the window moves to another monitor, a browser
 
 Otherwise a target's color and depth persist across frames until cleared. Copies share the image, including copies of `.color`. Call `Dispose()` when finished; every alias becomes invalid, and disposing again is harmless. A default target is invalid. Creation and lifetime methods run in views or local handlers and their helpers; field defaults cannot allocate targets.
 
+### What a target holds
+
+Every target has depth, which its 3D meshes read and write, and a color image beside it. A target says otherwise when it's made, with a `Format` as its last argument, and keeps what it said from then on:
+
+```csharp
+lamp.map    = RenderTarget(1024, 1024, 1, Format.DepthOnly);  // Depth alone, in exactly these pixels
+lamp.map    = RenderTarget(512, 512, Format.DepthOnly);       // ...or at the display's resolution
+lamp.screen = RenderTarget.Screen(Format.DepthOnly);          // ...or the window's size, or part of it:
+lamp.half   = RenderTarget.Screen(0.5, Format.DepthOnly);
+```
+
+| Format | What the target holds | For |
+|---|---|---|
+| `Format.Color` | A color image and depth: what's made when nothing is said | Everything that's looked at |
+| `Format.DepthOnly` | Depth alone | What only a later frag reads: a shadow map, a pass that lays down depth |
+
+A target of depth alone is drawn into like any other: it has its `Clear`, its cameras and its `Mesh`. A color has nowhere to go there, so the only things that leave anything are the ones that write depth:
+
+- **A clear** sets its depth back to the far limit. It takes a color like any clear, which goes nowhere.
+- **A 3D mesh** writes how far it is, with a frag or without. A mesh drawn with no frag has the engine's own look, as anywhere, and in this target that look's color is dropped: what a draw writes is said by where it's drawn, never by what it leaves out. A frag still runs for each pixel, as it may leave some out with `pixel.Discard()`, which is how a fence or a leaf casts a shadow with holes in it.
+- **Everything else draws nothing there:** shapes, text, 2D meshes, a `Draw.Blit` into it, and 3D meshes under [`Depth.Read` or `Depth.None`](#depth).
+
+### A target's depth
+
+A frag reads a target's depth as it reads its color: `target.depth` beside `target.color`. It's a `DepthTexture`, which a view keeps in local state, and a frag reads where it's a field of a component or a singleton it takes (see [Frags and verts](./shaders.md#a-target-s-depth)):
+
+```csharp
+local singleton Lamp { RenderTarget map; DepthTexture shadow; }
+
+view Make(mut Lamp lamp)
+{
+    lamp.map = RenderTarget(1024, 1024, 1, Format.DepthOnly);
+    lamp.shadow = lamp.map.depth;   // A reference, like a Texture: copies share the image
+}
+```
+
+Every target has one, with color or without, and `Draw.window` has none to read. A depth is how far the nearest thing drawn at a pixel is, from 0 at the camera's near plane to 1 at its far limit, and 1 where nothing was drawn since the target was cleared.
+
+A draw into a target can't read that target's depth, any more than its color: the draw is passed by, with a line that says so. Draw what reads it into another target, or the window.
+
 ```csharp
 local singleton RenderState { RenderTarget scene; bool made; }
 enum RenderStages { Prepare, Objects, Effects }
 
-frag Present(Vertex vertex, mut Color color, Texture source)
+frag Present(Vertex vertex, out Color color, Texture source)
 {
     color = source.Sample(vertex.uv);
 }
@@ -116,7 +156,7 @@ A Blit replaces what's in its destination, and nothing blends two images for you
 
 A frag has no way to ask how many pixels a texture has. It doesn't need to: a step of a blur is a logical pixel, `1 / Screen.width` across the screen's texture and `1 / Screen.height` down, which the view puts in a singleton for the frag, and the blur is then as wide on every display.
 
-Target color is GPU data: `.color` gives a `Texture` reference and does no readback. `Texture` has no constructor; CPU pixel sources remain `Grid2<Color>`, and C can supply a CPU texture reference. `Draw.window` has no sampleable color and cannot be resized or disposed by the game. Texture references and targets can be stored only in local state. The GUI and stats draw onto the window. Hot reload preserves managed references, their sizes and pixels per unit, whether they follow the window, and shared aliases, recreating their images on the web; it discards rendered contents and clears borrowed references supplied by the old build. Device loss also discards rendered contents. Drawing with an invalid or disposed target is skipped with a diagnostic; disposal also invalidates uses already recorded in the frame.
+Target color is GPU data: `.color` gives a `Texture` reference and does no readback, and so is its depth, a `DepthTexture`. Neither has a constructor; CPU pixel sources remain `Grid2<Color>`, and C can supply a CPU texture reference. `Draw.window` has no sampleable color or depth and cannot be resized or disposed by the game. Texture references, depth references and targets can be stored only in local state. The GUI and stats draw onto the window. Hot reload preserves managed references, their sizes and pixels per unit, whether they follow the window, what they hold, and shared aliases, recreating their images on the web; it discards rendered contents and clears borrowed references supplied by the old build. Device loss also discards rendered contents. Drawing with an invalid or disposed target is skipped with a diagnostic; disposal also invalidates uses already recorded in the frame.
 
 A view's `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are all local: views can change this machine's own state, like particles or a menu, but not the match (see [Local state](./local-state.md)). Only views, and the functions they call, can draw.
 
@@ -265,7 +305,7 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw2D.Text(text, position, size, color, font)` | Text in a weight: `Font.Bold`. An anchor goes before it: `Draw2D.Text(text, position, size, color, anchor, font)` |
 | `Draw2D.MeasureText(text, size)` | Nothing: it returns how big `Draw2D.Text` would draw the text, a `float2` of its width and height (see [Measuring text](#measuring-text)). `MeasureText(text, size, font)` measures in a weight |
 | `Draw2D.Mesh(vertices, indices)` | Triangles, with a color at each corner (see [Meshes](#meshes)) |
-| `Draw2D.Mesh(vertices, indices, texture)` | Triangles drawn with a grid of colors (see [Textures](#textures)) |
+| `Draw2D.Mesh(vertices, indices, texture)` | Triangles drawn with a grid of colors, read with a filter and a wrap (see [Textures](#textures)) |
 | `Draw.Blend(mode) { ... }` | How what's drawn in the block goes over what's there: added, multiplied, replaced (see [Blending](#blending)) |
 | `Draw.Tint(color) { ... }` | Fades or colors what's drawn in the block (see [Tints](#tints)) |
 | `Draw2D.Transform(offset, rotation, scale) { ... }` | Moves, turns and scales what's drawn in the block (see [Transforms](#transforms)) |
@@ -273,7 +313,8 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw2D.Screen() { ... }` | The calls in the block are in the screen's pixels, from the top left, with `y` down (see [On the screen](#on-the-screen)) |
 | `Draw3D.SetCamera(position, rotation, fieldOfView)` | Sets the 3D camera for the 3D meshes after it (see [3D](#_3d)) |
 | `Draw3D.Depth(mode) { ... }` | What the 3D meshes drawn in the block do with depth: hide and are hidden, are only hidden, or neither (see [Depth](#depth)) |
-| `Draw3D.Mesh(vertices, indices, transform)` | A 3D mesh, placed in the world by `transform`, with a texture and filter as a mesh's (see [3D](#_3d)) |
+| `Draw3D.Cull(side) { ... }` | Which side of the triangles of the 3D meshes drawn in the block isn't drawn: the back, the front, or neither (see [Which side draws](#which-side-draws)) |
+| `Draw3D.Mesh(vertices, indices, transform)` | A 3D mesh, placed in the world by `transform`, with a texture, a filter and a wrap as a mesh's (see [3D](#_3d)) |
 | `Draw3D.Cube(center, size, color)` | A box with full widths `size.x`, `size.y` and `size.z` |
 | `Draw3D.Sphere(center, radius, color)` | A sphere |
 | `Draw3D.Cylinder(center, radius, height, color)` | A capped cylinder along its local `y` axis, with full `height` |
@@ -284,7 +325,7 @@ Each frame starts black, with the camera at the origin and one world unit per pi
 
 ## Draw settings
 
-A setting changes how everything drawn after it comes out: how it blends, what tints it, what it does with depth, where it lands. Each has two forms, and its name says which.
+A setting changes how everything drawn after it comes out: how it blends, what tints it, what it does with depth, which side of it shows, where it lands. Each has two forms, and its name says which.
 
 The plain name wraps a block. It's set for the draws in the block, and when the block ends, what it found is back:
 
@@ -313,8 +354,9 @@ view Follow(Player player, with ownership)
 | `Draw2D.Camera(center, size)`, `Draw3D.Camera(...)` | `Draw2D.SetCamera(center, size)`, `Draw3D.SetCamera(...)` | The camera |
 | `Draw2D.Screen()` | `Draw2D.SetScreen()` | The screen's pixels in the camera's place (see [On the screen](#on-the-screen)) |
 | `Draw3D.Depth(mode)` | `Draw3D.SetDepth(mode)` | What 3D meshes do with depth: whether they're hidden behind what's nearer, and whether they hide what's behind them (see [Depth](#depth)) |
+| `Draw3D.Cull(side)` | `Draw3D.SetCull(side)` | Which side of a 3D mesh's triangles isn't drawn: the back, unless this says otherwise (see [Which side draws](#which-side-draws)) |
 
-Every frame starts from the defaults, so a `Set` never outlives its frame, and the GUI and the stats are never drawn with what a game set. A `Set` with no arguments puts the default back early: `Draw.SetTint()`, `Draw2D.SetClip()`, `Draw2D.SetCamera()`, `Draw3D.SetDepth()`.
+Every frame starts from the defaults, so a `Set` never outlives its frame, and the GUI and the stats are never drawn with what a game set. A `Set` with no arguments puts the default back early: `Draw.SetTint()`, `Draw2D.SetClip()`, `Draw2D.SetCamera()`, `Draw3D.SetDepth()`, `Draw3D.SetCull()`.
 
 Writing one form as the other is a compile error that names the right one: `Draw.Blend(Blend.Add);` with no block says to write `Draw.SetBlend`, and `Draw.SetBlend(Blend.Add) { }` says `Draw.Blend`. Your editor offers the rename.
 
@@ -328,10 +370,10 @@ Draw.Tint(Color(1, 1, 1, 0.5))
 }
 ```
 
-`Draw.Blend` and `Draw.Tint` say how a draw comes out, wherever it's drawn: the window or a [render target](#targets-and-post-processing). The others belong to what they draw into: `Draw2D`'s and `Draw3D`'s are the window's, and a target has its own, by the same names (`target.Clip(rect) { ... }`, `target.SetCamera(...)`, `target.Depth(mode) { ... }`). `Draw3D`'s are for 3D meshes alone, which is why depth is there: nothing in 2D has any.
+`Draw.Blend` and `Draw.Tint` say how a draw comes out, wherever it's drawn: the window or a [render target](#targets-and-post-processing). The others belong to what they draw into: `Draw2D`'s and `Draw3D`'s are the window's, and a target has its own, by the same names (`target.Clip(rect) { ... }`, `target.SetCamera(...)`, `target.Depth(mode) { ... }`, `target.Cull(side) { ... }`). `Draw3D`'s are for 3D meshes alone, which is why depth and cull are there: nothing in 2D has depth, or a back.
 
 ::: info
-Which settings are `Draw`'s and which belong to a destination, what a `Set` with no arguments does, how one nests in another, and `Draw3D.Depth`'s name and its three modes' are provisional: they're how it works today, and may still change.
+Which settings are `Draw`'s and which belong to a destination, what a `Set` with no arguments does, how one nests in another, `Draw3D.Depth`'s name and its three modes', and `Cull`'s three names and which way round a triangle's front goes, are provisional: they're how it works today, and may still change.
 :::
 
 ### Several at once
@@ -427,6 +469,49 @@ view Windows(Pane pane, Scenery scenery)
 - **It's for 3D meshes of every kind:** `Draw3D.Mesh`, the [primitives](#primitives), meshes [through a frag or a vert](./shaders.md) and `Draw3D.Instanced`. Instances drawn in a row with the same setting are still one draw.
 - **A render target has its own,** as it has its own camera: `target.Depth(Depth.Read) { target.Mesh(...); }`. `Draw3D.Depth` is the window's, and doesn't reach a target's meshes.
 - **Nothing else has depth,** which is why it's `Draw3D`'s: the `Draw2D` calls draw over what's there, in order, whatever is set. `Draw3D.Clear` clears depth whatever is set, and [`Draw.Blit`](#targets-and-post-processing) leaves it as it is.
+
+### Which side draws
+
+A triangle of a [3D mesh](#_3d) has a front and a back. Its front is the side its corners go clockwise on, in the order its indices list them, and a triangle seen from the back isn't drawn. So a solid thing costs half its triangles: the ones turned away from the camera are behind the ones turned towards it anyway.
+
+```csharp
+// A square facing a camera that looks along +z: from there, its corners go clockwise
+scenery.card = [Vertex3 { position = float3(-1, 1, 0) }, Vertex3 { position = float3(1, 1, 0) },
+                Vertex3 { position = float3(1, -1, 0) }, Vertex3 { position = float3(-1, -1, 0) }];
+scenery.faces = [0, 1, 2, 0, 2, 3];
+```
+
+::: tip
+A face that's missing is usually a triangle wound the other way. Swap two of its three indices (`0, 1, 2` becomes `0, 2, 1`) and it's back. A whole mesh that looks hollow, showing its far side's inside, has every triangle the wrong way round.
+:::
+
+That's `Cull.Back`, which every frame starts with. `Draw3D.Cull` says otherwise:
+
+| Side | Which triangles draw | For |
+|---|---|---|
+| `Cull.Back` | The ones seen from the front | Everything solid: the default |
+| `Cull.Front` | The ones seen from the back | The inside of a shell: a room seen from within, a sky dome |
+| `Cull.None` | All of them | What's flat or see-through: a leaf, a flag, a pane of glass |
+
+```csharp
+// A leaf is one square, seen from either side
+view Leaves(Leaf leaf, Scenery scenery)
+{
+    Draw3D.Cull(Cull.None)
+    {
+        Draw3D.Mesh(scenery.card, scenery.faces, float4x4.TRS(leaf.position, leaf.rotation, float3(1)));
+    }
+}
+```
+
+- **A triangle's front stays its front, whatever it's drawn through.** A transform that mirrors a mesh (a scale of `-1` along one axis, to make a left hand of a right one) turns its triangles round on the screen, and the engine accounts for it: the mesh's own transform, [`Draw3D.Transform`](#transforms) and a camera that mirrors the world, like one placed for a reflection. Mirrored and unmirrored meshes drawn in a row are drawn apart, a draw each.
+- **A transform that flattens a mesh leaves it no front.** Squashed onto a plane, as for a shadow lying on a floor, the triangles of its near side and of its far side land on each other, wound opposite ways. Draw it inside `Draw3D.Cull(Cull.None)`.
+- **See-through and closed, a mesh shows its near side alone.** For a glass ball's far side to show through its near one, draw it inside `Cull.None`, or twice: inside `Cull.Front` first, then as usual.
+- **A [`vert`](./shaders.md) that turns triangles round is yours to draw for.** The engine goes by the transforms it's given: one that mirrors its mesh itself (`vertex.position.x = -vertex.position.x`) is drawn inside `Cull.Front`.
+- **The [primitives](#primitives) are solid,** their fronts outside. A plane has one side, its top: seen from below it isn't drawn, unless it's inside `Cull.None`.
+- **It's for 3D meshes of every kind:** `Draw3D.Mesh`, the primitives, meshes through a frag or a vert and `Draw3D.Instanced`. Instances drawn in a row with the same setting are still one draw.
+- **A render target has its own,** as it has its own depth setting: `target.Cull(Cull.None) { target.Mesh(...); }`. A triangle's front is the same side there.
+- **Nothing in 2D has a back,** which is why it's `Draw3D`'s: `Draw2D.Mesh` draws its triangles whichever way they're wound.
 
 ### Transforms
 
@@ -567,7 +652,7 @@ view Arrows(Body body)
 }
 ```
 
-Each pixel of a triangle is its corners' colors, blended across it, over what's behind it by its alpha. Triangles draw whichever way round their corners go, in the order they're given, among everything else a view draws. An index past the end of `vertices` leaves its triangle out.
+Each pixel of a triangle is its corners' colors, blended across it, over what's behind it by its alpha. Triangles draw whichever way round their corners go (a 2D mesh has no back, where a [3D one](#which-side-draws) does), in the order they're given, among everything else a view draws. An index past the end of `vertices` leaves its triangle out.
 
 A mesh is one call however many triangles it has, and meshes drawn one after another go to the GPU together, so thousands of triangles a frame are cheap.
 
@@ -616,13 +701,39 @@ There's nothing to create, upload or free. The grid is ordinary state: change it
 
 The grid can be local state or the match's, like a canvas each player paints. Views read the match's grids as they are at the latest tick: cells aren't blended.
 
-The last argument says how the texture is read between cells: `Filter.Bilinear` blends them, and is what a call without it does; `Filter.Point` takes the nearest, for pixel art. Past 0 and 1, `uv` reads the cells at the edge.
+The argument after the texture says how it's read between cells: `Filter.Bilinear` blends them, and is what a call without it does; `Filter.Point` takes the nearest, for pixel art.
 
 - A cell is four floats, and the GPU's copy a byte a channel: values are clamped to 0 to 1.
 - A grid with an open axis has no size, so it's no texture: the mesh draws with its colors alone.
 - How big a texture can be is the GPU's limit: at least 2048 by 2048 wherever Tide runs.
 
 A game's C can draw meshes too, with pixels of its own, like a font atlas a library made: see [Drawing from C](../c/functions.md#drawing-from-c).
+
+### Past the edges
+
+A texture's own cells are where `uv` goes from 0 to 1. What a `uv` past those reads is the draw's to say too, with a `Wrap` after the filter:
+
+```csharp
+Draw2D.Mesh(corners, [0, 1, 2, 0, 2, 3], art.tile, Filter.Point, Wrap.Repeat);
+```
+
+- `Wrap.Clamp` reads the cells at the texture's edge. It's what a call without a wrap does.
+- `Wrap.Repeat` reads the texture again: 1.25 reads what 0.25 does. It's for tiles, and for what scrolls.
+- `Wrap.Mirror` reads the texture again, the other way round each time: 1.25 reads what 0.75 does, so no seam shows where its edges don't match.
+
+The quad below has uvs that go three times across its texture and three times down, and the white square is where they go from 0 to 1. Scroll it, and switch between the three.
+
+::: tide-example wrap A texture, past its edges
+
+<<< @/examples/wrap.tide
+
+:::
+
+- It's one wrap, for both ways across the texture, and it's written after the filter: a draw that says how it wraps says its filter too (`Filter.Bilinear` is the one a draw without has).
+- It's a value like the filter: a field, or `tiled ? Wrap.Repeat : Wrap.Clamp`.
+- It's how this draw reads the texture, and no part of the texture: one grid can be clamped in one draw and repeated in the next. So can a [render target's color](#targets-and-post-processing), and a texture of any size.
+- Blended, a cell at the edge blends with what the wrap says is past it: with `Wrap.Repeat` that's the cell at the opposite edge, which is what makes tiles meet without a seam.
+- `Wrap` is the engine's name: a game's own type or function takes another one, or a namespace.
 
 ## Clipping
 
@@ -779,7 +890,8 @@ view Crates(Crate crate, Scenery scenery)
 
 - 3D meshes hide each other by how far they are, whatever order they're drawn in. Everything else draws over what's there, in order, through the camera it had before: a view can draw a 3D scene and then a HUD over it, with no camera call between. `Draw2D.Clear` clears what's in front too.
 - A see-through mesh blends with what's behind it, and still hides what's drawn behind it later, unless it's drawn with [`Draw3D.Depth(Depth.Read)`](#depth): draw see-through meshes last, the farthest first.
-- Triangles draw whichever way round their corners go. Textures and filters work as a mesh's do: `Draw3D.Mesh(vertices, indices, transform, texture, filter)`.
+- A triangle is drawn from its front, the side its corners go clockwise on, and not from its back: see [Which side draws](#which-side-draws). A face that's missing is usually a triangle wound the other way.
+- Textures, filters and [wraps](#past-the-edges) work as a mesh's do: `Draw3D.Mesh(vertices, indices, transform, texture, filter, wrap)`.
 - There's no lighting built in: a pixel is its corners' colors times its texture's. A [`frag`](./shaders.md) lights it your way, with normals in a vertex struct of your own.
 - Each frame starts with the 3D camera at the origin, looking along `+z`, with a field of view of 60 degrees.
 
@@ -795,6 +907,8 @@ Draw3D.Plane(float3(0, -1, 5), float2(10, 10), quaternion.identity, Color.gray);
 ```
 
 Nonpositive dimensions draw nothing. Geometry is cached by shape and color; consecutive instances of the same shape and color are drawn together. Use a mesh with a frag for textures or lighting.
+
+They're solid: a cube, a sphere and a cylinder are [drawn from outside](#which-side-draws), and a plane from above, its local `+y`. A plane tipped to face the camera is turned so that its top does: `quaternion.AxisAngle(float3(1, 0, 0), -Math.PI / 2)` stands one up to face a camera that looks along `+z`.
 
 Everything below is a primitive: a plane, 81 cubes, a sphere and a cylinder, drawn again every frame through a camera that circles them. Drag to turn it yourself, and change its field of view with the slider.
 
@@ -830,7 +944,7 @@ view Rocks(mut Rock rock)
 
 A mesh many entities share, like the crate above, is one list in a singleton, or a local one.
 
-A mesh drawn again and again in a row, from the same lists, with the same texture and filter, is drawn all at once: a view that runs for each of thousands of entities and draws one mesh costs the GPU one draw. Something drawn between them, like another mesh or a camera, starts another.
+A mesh drawn again and again in a row, from the same lists, with the same texture, filter and wrap, is drawn all at once: a view that runs for each of thousands of entities and draws one mesh costs the GPU one draw. Something drawn between them, like another mesh or a camera, starts another.
 
 ### Any projection
 

@@ -528,14 +528,15 @@ typedef struct b3SnapshotPart
 
 /// What changed of a world's image since its last one, as parts to write over that one: the image is then,
 /// byte for byte, what b3World_GetSnapshotAt writes. The last image is the one this or b3World_GetSnapshotAt
-/// last returned the size of, at the same bases, and the caller has it: the world keeps no copy. What's
-/// between its end and the new size is zeros before the parts are written.
+/// last returned the size of, at the same bases, or the one b3World_Restore made the world from, and the
+/// caller has it: the world keeps no copy. What's between its end and the new size is zeros before the parts
+/// are written.
 /// The parts and their bytes are the world's, some of them the world's own arrays: they're good until the
 /// world is next stepped, changed or asked for an image.
 /// @return The image's size. Or 0 when there's no saying what changed, and the caller takes the image whole
-///         (b3World_GetSnapshotAt): a world that had no image yet, was restored, has most of its bodies awake,
-///         has more bodies, shapes or contacts than its last image had room for, or had something done to it
-///         that isn't followed one body at a time. Or -1 when a section ran past the next one's base, as
+///         (b3World_GetSnapshotAt): a world that had no image yet, has most of its bodies awake, has more
+///         bodies, shapes or contacts than its last image had room for, or had something done to it that
+///         isn't followed one body at a time. Or -1 when a section ran past the next one's base, as
 ///         b3World_GetSnapshotAt returns it, with the sizes right.
 B3_API int b3World_GetSnapshotParts( b3WorldId worldId, const int* bases, int* sizes, const b3SnapshotPart** parts,
 									 int* partCount );
@@ -556,6 +557,8 @@ B3_API int b3World_GetSnapshotGeometry( b3WorldId worldId, uint8_t* geometry, in
 /// Restore a world in place from an image and the geometry it names. The world keeps its id, and so do the
 /// bodies, shapes and joints in the image. Host wiring is kept: tasks, callbacks, and user data on the world.
 /// User data on bodies, shapes and joints isn't in an image and comes back null.
+/// An image with sections is then the world's last image, at the bases its table says: what
+/// b3World_GetSnapshotParts says changed next is what changed of it.
 /// @return true on success. For bytes that are no image, or no geometry, the world is left unchanged. A
 ///         corrupt payload detected after the rebuild begins returns false and leaves the world unusable, so
 ///         the caller must destroy it.

@@ -119,6 +119,7 @@ typedef enum type_kind {
     TY_ACTION,      // Action: a function's last parameter, the code its caller writes in braces after the call
     TY_DRAW_LIST,  // DrawList: the frame's draw list, `Draw2D.list`, which only an extern function takes
     TY_TEXTURE,    // Texture: a local reference to pixels or a render target's color image
+    TY_DEPTH_TEXTURE, // DepthTexture: a local reference to a render target's depth, which a frag or vert reads
     TY_RENDER_TARGET, // RenderTarget: a local drawing destination; Draw.window names the window
     TY_LIST,       // List<T>: decl is the list type, whose one field is its element
     TY_MAP,        // Map<K, V>: decl is the map type, whose fields are its key and its value
@@ -273,11 +274,14 @@ typedef struct param {
     // `out Health health`, a function's or method's, as C#'s: the call makes the caller's variable, which starts
     // unassigned in the code and is assigned on every path that returns. Its mode is PARAM_MUT, as for everything
     // else it's a variable the call changes, by address. An extern function's `out List<byte> image` is a list C
-    // makes the elements of, through a tide_list_out (tide/list.h)
+    // makes the elements of, through a tide_list_out (tide/list.h). A frag's `out Color color` is its pixel's
+    // color, and a vert's `out FromLamp lamp` a struct it hands the frag it's drawn with, which reads it blended
+    // across the triangle: the same rules for the code, with the GPU in the caller's place
     bool is_out;
     loc out_at; // ...the word
     struct expr *default_value; // ...and what a call that leaves it out passes, `float multiplier = 1`: a constant expression, or NULL
     str default_text;           // ...as its declaration writes it, for messages and editors: "1"
+    str mode_word;       // `mut` or `out` as a system, view, handler, frag or vert writes it, for what editors offer in its place
     bool *reads;         // A frag's or vert's: for each field of its type, whether the code reads it
     bool *local_reads;   // ...and for each of its type's local fields (its local_part's)
     bool whole;          // ...or reads it as a value, all its fields at once
@@ -379,6 +383,11 @@ typedef enum decl_kind {
     DECL_ASSET,    // asset Grid2<Color> hero = "art/hero.png";: a file's contents under a name, read-only, packed with the game
 } decl_kind;
 
+// How a frag or vert reads a texture: a color, or a target's depth, as a
+// number (depth.Sample) or compared with one of its own (depth.Compare). The
+// values are tide/draw.h's tide_shader_read's.
+typedef enum shader_read { READ_COLOR, READ_DEPTH, READ_COMPARE } shader_read;
+
 // A grid a frag or vert samples: a field of one of its parameters, and how.
 typedef struct shader_sample {
     int param;    // -1 for an asset's grid
@@ -386,6 +395,8 @@ typedef struct shader_sample {
     bool local;   // The field is one of its type's local fields (its local_part's)
     bool blended; // Filter.Bilinear, or the nearest cell
     const struct decl *asset; // A Grid2<Color> asset sampled by name, or NULL
+    int wrap;     // What a uv past 0 and 1 reads: its Wrap's number, tide_wrap's
+    shader_read read; // A DepthTexture's: which of its two ways it's read
 } shader_sample;
 
 // One of an enum's members: `Options`, or `Options = 3`.
@@ -417,7 +428,7 @@ typedef struct decl {
     loc local_at;     // The `local` keyword
     bool is_scene;    // `scene Arena { ... }`: a DECL_COMPONENT whose entity is a loaded scene
     bool is_sparse;   // [Sparse], or a tag any Add or Remove names: a presence byte and its lanes in every archetype it can reach, not an archetype of its own
-    bool named;       // The built-in Random and Depth: some code names it, so generated C has it
+    bool named;       // The built-in Random, Depth and Cull: some code names it, so generated C has it
     // A match component's or singleton's `local` fields are a declaration of
     // their own, its local part: a local one of the same kind and name, which
     // isn't in program.decls. A component's is kept for the match's entities
@@ -997,7 +1008,18 @@ typedef struct shader_texture {
     bool blended;
     bool direct; // Supplied explicitly by Draw.Mesh or Draw.Blit, rather than a field
     const struct decl *asset; // A Grid2<Color> asset, sampled by name: neither a field nor the draw's
+    int wrap;    // Its Wrap's number, tide_wrap's: 0 where the draw says (a `textured` shader's own)
+    shader_read read; // A DepthTexture field's: as a number, or compared, each a texture of its own
 } shader_texture;
+
+// A struct a vert writes for its frag, an `out` parameter of the vert's: the
+// fields the frag reads go from the mesh's corners to its pixels, blended.
+typedef struct shader_handed {
+    const struct decl *type;
+    const param *from; // The vert's `out` parameter
+    const param *to;   // The frag's parameter of that type; NULL when it takes none
+    bool *fields;      // By the struct's field: whether the pixels read it
+} shader_handed;
 
 // What draws a mesh: a vertex struct with a vert, a frag, both or neither, one
 // for each combination a mesh draw uses (see shader.c). Codegen writes each
@@ -1009,6 +1031,7 @@ typedef struct shader {
     struct decl *frag;   // NULL: the vertex's color times the texture
     int dims;            // 2 or 3: its position's
     bool textured;       // No frag, and a texture given at the draw
+    bool wrapped;        // ...and one of its draws says how it wraps, so its function takes a wrap
     bool direct_texture; // The draw supplies a Texture to its shader stages
     bool source_grid;    // Blit's explicit source is uploaded from a Grid2<Color> at recording time
     bool blit;           // A full destination overwrite with a fixed Vertex quad
@@ -1018,6 +1041,7 @@ typedef struct shader {
     VEC(shader_value) values;
     VEC(shader_texture) textures;
     VEC(struct decl *) bound; // The components and singletons it reads, in the order its draws pass them
+    VEC(shader_handed) handed; // What its vert writes for its frag, in the order the vert takes them
     int instance_floats, instance_ints; // Words
     int uniform_floats, uniform_ints;
     int frag_floats, frag_ints; // Words of the instance the vertex stage passes on to the pixels
@@ -1094,8 +1118,11 @@ typedef struct program {
     decl *gui_theme;     // The built-in struct GUITheme, how the GUI's widgets look
     decl *gui_control;   // The built-in struct GUIControl, what GUI.Control says of a control
     decl *filter;        // The built-in enum Filter, how mesh draw samples its texture
+    decl *wrap;          // The built-in enum Wrap, what a uv past a texture's edges reads: in generated C when code names it
     decl *blend;         // The built-in enum Blend, how what's drawn goes over what's there
     decl *depth;         // The built-in enum Depth, what a 3D mesh does with depth: in generated C when code names it
+    decl *cull;          // The built-in enum Cull, which side of a 3D mesh's triangles isn't drawn: the same
+    decl *format;        // The built-in enum Format, what a render target holds: in generated C when code names it
     decl *io_error;      // The built-in IOError enum, shared with tide/io.h
     VEC(struct expr *) io_calls; // Checked filesystem calls, for result adapters in generated C
     bool decodes;        // grid.Decode(bytes) is called: its adapter and tide/png.h go in the generated C

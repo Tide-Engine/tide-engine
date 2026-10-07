@@ -30,7 +30,7 @@ event(Spawned) Setup(with Main)
     Spawn(Box);
 }
 
-frag Shade(V vertex, mut Color color, float strength)
+frag Shade(V vertex, out Color color, float strength)
 {
     color = Color.white * strength;
 }

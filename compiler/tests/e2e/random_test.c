@@ -207,7 +207,7 @@ TIDE_TEST(random_crossplatform_match)
 {
     tide_world_start_seeded(&world, DT, NULL, 20261005u);
     const uint64_t h = hash_after(&world, 200);
-    const uint64_t expected = 0x7AF5EA2A6540D4F3ull;
+    const uint64_t expected = 0xF262A52EC302F966ull;
     if (h != expected) printf("    random match: hash is 0x%016" PRIX64 ", expected 0x%016" PRIX64 "\n", h, expected);
     TIDE_CHECK(h == expected);
 }

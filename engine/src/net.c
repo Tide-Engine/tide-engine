@@ -618,3 +618,38 @@ uint64_t tide_hash(const void *data, const size_t size)
 {
     return tide_hash_end(tide_hash_more(TIDE_HASH_START, data, size));
 }
+
+// Four chains, 32 bytes a round: chain k takes the words at 8k, 32 + 8k and on.
+// What's left after the last whole round goes a word a chain, from the first,
+// the last of them short and zeros past its bytes. Then the size and the four
+// chains are one chain's words, so two runs that differ in length, or anywhere
+// in a word, end as other numbers.
+uint64_t tide_hash_wide(const void *data, const size_t size)
+{
+    const uint8_t *p = data;
+    uint64_t chain[4];
+    for (uint64_t k = 0; k < 4u; k++) chain[k] = TIDE_HASH_START + k * 0xBF58476D1CE4E5B9ull;
+    size_t i = 0;
+    for (; i + 32u <= size; i += 32u) {
+        uint64_t words[4];
+        memcpy(words, p + i, 32);
+        chain[0] = add_word(chain[0], words[0]);
+        chain[1] = add_word(chain[1], words[1]);
+        chain[2] = add_word(chain[2], words[2]);
+        chain[3] = add_word(chain[3], words[3]);
+    }
+    uint32_t k = 0;
+    for (; i + 8u <= size; i += 8u, k++) {
+        uint64_t word;
+        memcpy(&word, p + i, 8);
+        chain[k] = add_word(chain[k], word);
+    }
+    if (i < size) {
+        uint64_t tail = 0;
+        for (size_t at = 0; i + at < size; at++) tail |= (uint64_t)p[i + at] << (8u * at);
+        chain[k] = add_word(chain[k], tail);
+    }
+    uint64_t h = add_word(TIDE_HASH_START, (uint64_t)size);
+    for (k = 0; k < 4u; k++) h = add_word(h, chain[k]);
+    return mix(h);
+}

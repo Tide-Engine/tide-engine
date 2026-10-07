@@ -1,4 +1,4 @@
-// expect: a frag writes its pixel's color, a 'mut Color', for now
+// expect: a frag writes its pixel's color, an 'out Color', for now
 // The output is a Color
 scene Main { }
 
@@ -30,7 +30,7 @@ event(Spawned) Setup(with Main)
     Spawn(Box);
 }
 
-frag Shade(V vertex, mut float depth)
+frag Shade(V vertex, out float depth)
 {
     depth = 1;
 }

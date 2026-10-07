@@ -269,11 +269,14 @@ TIDE_TEST(net_a_client_over_its_budget_delays_its_input)
 {
     start((tide_net_conditions){.latency = 0.05}, 29);
     join(0);
-    // A client whose ticks cost a millisecond each, with a budget of three a
-    // frame. With 100 ms round trips it predicts about eight ticks, so running
-    // them again would cost eight: it delays its input until about three are left.
+    // A client whose ticks cost three milliseconds each, with a budget of
+    // three a frame and frames of eleven milliseconds at the shortest: one
+    // rollback may take a 60th of a second, the least it ever may. With 100
+    // ms round trips it predicts about eight ticks, so a wrong guess would
+    // run eight again, 27 milliseconds: it delays its input until four or
+    // five are left, where a rollback fits.
     fake_ns = 0;
-    fake_tick_ns = 1000000;
+    fake_tick_ns = 3000000;
     const tide_client_desc desc = {
         .game = &tide_game_api,
         .transport = tide_loopback_endpoint(net, 3),
@@ -287,20 +290,94 @@ TIDE_TEST(net_a_client_over_its_budget_delays_its_input)
     clients[1] = tide_client_create(&desc, now);
     run(10.0);
     tide_client_status b = tide_client_status_of(clients[1]);
+    printf("    with ticks of 3 ms: %u ticks of delay, %u ahead of what's confirmed; a rollback would cost %.1f ms of the %.1f it may take\n",
+           b.delay_ticks, b.predicted_tick - b.verified_tick, (double)b.rollback_ms, (double)b.rollback_most_ms);
     TIDE_CHECK(b.state == TIDE_SESSION_CONNECTED);
     TIDE_CHECK(b.resyncs == 0);
     TIDE_CHECK(b.delay_ticks >= 3u);
-    TIDE_CHECK(b.predicted_tick - b.verified_tick <= 4u);
+    TIDE_CHECK(b.predicted_tick - b.verified_tick <= 6u);
     TIDE_CHECK(b.verified_tick + 30u > tide_server_tick(server));
     TIDE_CHECK(tide_client_status_of(clients[0]).delay_ticks == 0); // No clock: as it always was
-    // Its ticks get cheap: it takes the delay back, a tick every few seconds
+    // Its ticks get cheap: it takes the delay back, a tick every half second or so
     fake_tick_ns = 1000;
-    run(60.0);
+    run(20.0);
     b = tide_client_status_of(clients[1]);
     TIDE_CHECK(b.state == TIDE_SESSION_CONNECTED);
     TIDE_CHECK(b.resyncs == 0);
     TIDE_CHECK(b.delay_ticks == 0);
     TIDE_CHECK(b.predicted_tick > b.verified_tick + 4u);
+    finish();
+}
+
+// A machine that stalls for a while (a browser's page frozen, a process
+// swapped out) runs far ahead of what's confirmed for a moment once it goes
+// on, on a clock that jumped meanwhile, and running that many ticks again
+// would cost more than a frame: no reason for input delay, which would take
+// seconds to come back once the clock is put right. Its ticks are cheap
+// enough that nothing else asks for any.
+TIDE_TEST(net_a_stall_leaves_no_lasting_delay)
+{
+    start((tide_net_conditions){.latency = 0.05}, 31);
+    join(0);
+    fake_ns = 0;
+    fake_tick_ns = 500000; // Half a millisecond a tick: the eight it's ahead by fit a frame, sixty wouldn't
+    const tide_client_desc desc = {
+        .game = &tide_game_api,
+        .transport = tide_loopback_endpoint(net, 3),
+        .server = tide_loopback_address(1),
+        .sample = sample,
+        .user = &who[1],
+        .lead = 2,
+        .now_ns = fake_now_ns,
+    };
+    clients[1] = tide_client_create(&desc, now);
+    run(5.0);
+    TIDE_CHECK(tide_client_status_of(clients[1]).state == TIDE_SESSION_CONNECTED);
+    TIDE_CHECK(tide_client_status_of(clients[1]).delay_ticks == 0);
+    // The stall: a second and a half passes with no update of this client, while the server and the other player go on
+    tide_client *stalled = clients[1];
+    clients[1] = NULL;
+    run(now + 1.5);
+    clients[1] = stalled;
+    // Then every frame for three seconds: how far ahead it got, and the most delay it took meanwhile
+    uint32_t most = 0;
+    uint32_t furthest = 0;
+    const double resumed = now;
+    while (now < resumed + 3.0) {
+        run(now + 0.005);
+        const tide_client_status s = tide_client_status_of(clients[1]);
+        if (s.delay_ticks > most) most = s.delay_ticks;
+        if (s.predicted_tick - s.verified_tick > furthest) furthest = s.predicted_tick - s.verified_tick;
+    }
+    const tide_client_status b = tide_client_status_of(clients[1]);
+    printf("    after a stall of 1.5 s it ran %u ticks ahead at the most, took %u ticks of delay at the most, and has %u three seconds on\n",
+           furthest, most, b.delay_ticks);
+    TIDE_CHECK(b.state == TIDE_SESSION_CONNECTED);
+    TIDE_CHECK(b.resyncs == 0);
+    TIDE_CHECK(most <= 2u);
+    TIDE_CHECK(b.delay_ticks == 0);
+    // The network stalls instead: nothing arrives for a second and a half,
+    // while this machine goes on predicting on its clock, and then it all
+    // comes at once, with the ticks since to run again
+    tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 1.5});
+    run(now + 1.5);
+    tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.05});
+    most = 0;
+    furthest = 0;
+    const double arrived = now;
+    while (now < arrived + 4.0) {
+        run(now + 0.005);
+        const tide_client_status s = tide_client_status_of(clients[1]);
+        if (s.delay_ticks > most) most = s.delay_ticks;
+        if (s.predicted_tick - s.verified_tick > furthest) furthest = s.predicted_tick - s.verified_tick;
+    }
+    const tide_client_status a = tide_client_status_of(clients[1]);
+    printf("    after the network stalled for 1.5 s it ran %u ticks ahead at the most, took %u ticks of delay at the most, and has %u"
+           " four seconds on\n", furthest, most, a.delay_ticks);
+    TIDE_CHECK(a.state == TIDE_SESSION_CONNECTED);
+    TIDE_CHECK(furthest >= 40u); // It did run far ahead: what the check is about
+    TIDE_CHECK(most <= 2u);
+    TIDE_CHECK(a.delay_ticks == 0);
     finish();
 }
 

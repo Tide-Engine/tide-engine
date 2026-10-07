@@ -2,21 +2,13 @@
 
 Tide comes as one command, `tide`, which builds and runs games. It has its C compiler built in (clang), for native and web games alike.
 
+Access is currently limited to whitelisted users. [Request access](/request-access) to join the whitelist; requests are reviewed manually. Installation instructions are provided privately to users with access. You can try the [samples](./samples.md) and [live examples](./examples.md) in your browser without installing anything.
+
 ## Windows
-
-In PowerShell:
-
-```powershell
-irm https://raw.githubusercontent.com/BlenMiner/tide-engine/release/install.ps1 | iex
-```
 
 Windows needs nothing else: `tide` brings the headers and libraries games build with.
 
 ## Linux and macOS
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/BlenMiner/tide-engine/release/install.sh | sh
-```
 
 The installer uses `curl`, `tar` and `python3`. Native games also need the system's own headers and libraries:
 
@@ -37,17 +29,16 @@ The installer also adds Tide to the editors it finds (see [Editors](../tools/edi
 
 ## Nightly versions
 
-Stable versions come out now and then. Nightly versions follow development day by day. For a nightly version, set `TIDE_CHANNEL` before running the installer:
+Stable versions come out now and then. Nightly versions follow development day by day. For a nightly version, set `TIDE_CHANNEL` before following your private installation instructions:
 
 ::: code-group
 
 ```powershell [Windows]
 $env:TIDE_CHANNEL = 'nightly'
-irm https://raw.githubusercontent.com/BlenMiner/tide-engine/release/install.ps1 | iex
 ```
 
 ```sh [Linux and macOS]
-curl -fsSL https://raw.githubusercontent.com/BlenMiner/tide-engine/release/install.sh | TIDE_CHANNEL=nightly sh
+export TIDE_CHANNEL=nightly
 ```
 
 :::

@@ -41,6 +41,7 @@ jobs:
         run: |
           npm ci
           npm run test:grammar
+          npm run test:access
       - name: Install tools
         run: |
           sudo apt-get update
@@ -71,6 +72,7 @@ jobs:
         run: |
           npm run check
           npm run build
+          npm run test:access-http
           npm run test:examples
 
       # The image takes what the build made (docs/Dockerfile). The token is

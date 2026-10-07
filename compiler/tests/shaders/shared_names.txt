@@ -42,6 +42,7 @@ vec3 tf_Dim_3_0float3(vec3 t_value) {
 }
 
 void ts_Tint_3_0Vertex_0Color(tt_Vertex t_vertex, inout vec4 t_color) {
+    t_color = vec4(1.0, 1.0, 1.0, 1.0);
     t_color.r = tf_Dim_3_0float_0float(t_vertex.m_color.r, 0.5);
     t_color.g = tf_Dim_3_0float_0float(t_vertex.m_color.g, 0.75);
     t_color.b = tf_Dim_3_0float3(vec3(t_vertex.m_color.b)).x;
@@ -82,6 +83,7 @@ fn tf_Dim_3_0float3(t_value: vec3f) -> vec3f {
 }
 
 fn ts_Tint_3_0Vertex_0Color(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
+    (*t_color) = vec4f(1.0, 1.0, 1.0, 1.0);
     (*t_color).r = tf_Dim_3_0float_0float(t_vertex.m_color.r, 0.5);
     (*t_color).g = tf_Dim_3_0float_0float(t_vertex.m_color.g, 0.75);
     (*t_color).b = tf_Dim_3_0float3(vec3f(t_vertex.m_color.b)).x;

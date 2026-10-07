@@ -1,4 +1,5 @@
-// expect: the engine calls this itself, so nothing would take what an 'out' parameter makes: functions and methods have them
+// expect: a frag reads its vertex, blended across the triangle: it's no output of the frag's
+// expect: drop 'out'; the pixel it writes is its 'out Color' parameter, after the vertex
 scene Main { }
 struct Corner { float2 position; }
-frag Shade(Corner corner, out Color color) { color = Color.white; }
+frag Shade(out Corner corner, out Color color) { color = Color.white; }
