@@ -1,3 +1,7 @@
+---
+description: "Start, host and join Tide matches, share room codes and manage sessions with one server-based path for single-player and multiplayer."
+---
+
 # Matches
 
 Every match runs on a server, and this machine's player connects to it. When the server is on this machine, that's over a loopback transport, so single-player and multiplayer are the same game with the same code. The engine assumes nothing about what a game does with a match, like pausing: games build that from inputs and state.

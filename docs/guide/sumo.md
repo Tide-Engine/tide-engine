@@ -1,3 +1,7 @@
+---
+description: "Explore a deterministic 3D multiplayer physics game in Tide with Box3D, impulses, a collapsing arena, instanced drawing and shadow maps."
+---
+
 # Sumo walkthrough
 
 This walkthrough explains how a Box3D match drives balls with impulses, replaces floor bodies when tiles fall and keeps a large arena deterministic. It also covers [the lobby](#the-lobby), [instanced rendering](#what-a-machine-shows), [the shadow map](#the-shadows), and [the cost of simulation and rollback](#what-it-costs).

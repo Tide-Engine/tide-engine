@@ -1,3 +1,7 @@
+---
+description: "Draw Tide games with views, cameras, shapes, text, meshes and render targets while keeping each machine's presentation outside the match."
+---
+
 # Views and drawing
 
 A **view** draws the game. It looks like a system and takes the same parameters, components and singletons, but it runs once per rendered frame instead of once per tick, and it never changes the match. It reads this machine's devices through a `Devices devices` parameter, and can't read the input (see [Input](./input.md#devices-in-the-match)).

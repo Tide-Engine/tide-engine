@@ -1,3 +1,7 @@
+---
+description: "Understand Tide's server-authoritative rollback netcode, client prediction, input delivery, corrections and host migration."
+---
+
 # Networking
 
 Tide uses rollback netcode with full server authority. The server is the source of truth, and clients predict ahead of it, rolling back when it disagrees. Since the simulation is [deterministic](./determinism.md), what goes over the network is mostly inputs.

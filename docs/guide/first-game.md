@@ -1,3 +1,7 @@
+---
+description: "Build your first Tide game with components, systems, input and drawing, then host a multiplayer match and invite another player."
+---
+
 # Your first game
 
 This page builds a small game: a ball bouncing around, and a player for everyone who joins, which they steer with the keyboard. It takes a few minutes, and shows most of what a Tide game is made of.

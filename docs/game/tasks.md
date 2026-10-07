@@ -1,3 +1,7 @@
+---
+description: "Write Tide async functions and tasks that wait for time, ticks or events, and learn how they run in the match or local presentation."
+---
+
 # Async and tasks
 
 Some code takes longer than a tick: a countdown before a round, an ability that ends after a moment, a sign-in that waits for a service. An `async` function can wait, with `await`, and pick up where it stopped. Calling one starts a **task**, which goes on by itself, tick after tick or frame after frame, until it's done.

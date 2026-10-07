@@ -1,3 +1,7 @@
+---
+description: "Handle Tide errors as values with fails, fail and try, and use optional values to represent data that may be missing."
+---
+
 # Errors
 
 Errors in Tide are values, never exceptions. A function that can fail says so, and the code that calls it decides what to do about it, right where it calls.

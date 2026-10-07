@@ -1,3 +1,7 @@
+---
+description: "Send and handle Tide events in the match and local presentation, with predicted and verified handlers that work through rollback."
+---
+
 # Events
 
 An event is something that happened, sent from one part of the game to the rest: a hit, a pickup, a round ending. Events carry their context in fields, like a struct's.

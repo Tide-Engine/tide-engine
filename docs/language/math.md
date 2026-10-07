@@ -1,3 +1,7 @@
+---
+description: "Use Tide's deterministic vector, matrix and quaternion math, with noise, random generators and seeds shared by the match."
+---
+
 # Math
 
 Tide's math follows Unity.Mathematics, with Tide's naming: functions live on `Math`, in PascalCase. It's all deterministic: the same inputs give the same bits on every platform (see [Determinism](../multiplayer/determinism.md)).

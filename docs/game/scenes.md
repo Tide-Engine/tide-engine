@@ -1,3 +1,7 @@
+---
+description: "Group Tide entities into scenes, start with Main, load and unload levels, and manage scene ownership and multiple instances."
+---
+
 # Scenes
 
 A scene is a group of entities that load and unload together: a menu, a level, an arena. Several scenes can be loaded at once, and several copies of the same one.

@@ -1,3 +1,7 @@
+---
+description: "Integrate Tide games into CMake and custom C hosts, use the generated game API and drive simulation and presentation without a window."
+---
+
 # C hosts
 
 A game needs no C: `tide` runs it in a window. This page is for CMake builds and C programs that drive a game themselves: tests, tools, custom hosts.

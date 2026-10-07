@@ -1,3 +1,7 @@
+---
+description: "Read Tide's system schedule and see how the compiler uses data dependencies to run ECS systems across threads without changing results."
+---
+
 # The schedule
 
 Every system declares what it reads and writes, so the compiler knows, before the game runs, which systems can run at the same time and which have to wait. That plan is the **schedule**.

@@ -1,3 +1,7 @@
+---
+description: "Use the tide command to run and build native, web and Android games, hot reload code, manage packages and capture scripted headless runs."
+---
+
 # The tide command
 
 `tide` builds and runs games. A game is every `.tide` file in a folder and its subfolders, with the `.c` and `.cpp` files and libraries there when it calls C (see [Calling C](../c/functions.md)), and the packages its `tide.packages` lists (see [Packages](packages.md)). Commands take the game's folder, or use the current one.

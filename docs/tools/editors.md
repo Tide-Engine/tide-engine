@@ -1,3 +1,7 @@
+---
+description: "Set up Tide in VS Code or JetBrains IDEs with language server support for completion, errors, quick fixes, navigation and refactoring."
+---
+
 # Editors
 
 Tide's language server, `tidels`, comes with `tide`. Open your game's folder, the one you run `tide run` in, and every `.tide` file in it is one game, with its [packages](packages.md). Across all of them, editors get:

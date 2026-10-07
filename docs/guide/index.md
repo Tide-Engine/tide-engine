@@ -1,3 +1,7 @@
+---
+description: "Learn how Tide Engine combines deterministic multiplayer, an ECS and its own language to build games for desktop and the web."
+---
+
 # Introduction
 
 Tide is a game engine built for multiplayer first. Its simulation is deterministic: given the same inputs, it gives the same results on every machine, down to the last bit of every float. So players only send each other their inputs, and players on different machines, the web included, share one world.

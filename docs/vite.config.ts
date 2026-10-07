@@ -34,6 +34,9 @@ const installers: Plugin = {
 };
 
 export default defineConfig(({ command }) => ({
+    // Only prerendering uses the native PNG renderer; Vite must load its
+    // platform binding from node_modules rather than bundle the binary.
+    ssr: { external: ['@resvg/resvg-js'] },
     plugins: [
         asInProduction,
         installers,

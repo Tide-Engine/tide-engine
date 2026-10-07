@@ -1,3 +1,7 @@
+---
+description: "Call C and C++ from Tide through extern functions, pass values across the boundary and integrate native libraries and ECS systems."
+---
+
 # Calling C
 
 A game can call C: a library it ships with, like stb or miniaudio, a platform SDK, or C of its own. `extern` declares a function written in C, with no body:

@@ -1,3 +1,7 @@
+---
+description: "Read and write local files in Tide, use persistent save and temporary cache paths, and fetch URL bytes from views, handlers or tasks."
+---
+
 # Files and directories
 
 `File` and `Directory` read and change this machine's files, and `Web.Fetch` gets a URL's bytes. Use them from views, local handlers and local tasks, or functions those call. They cannot run in the match, in input sampling, on the GPU or inside a parallel loop. A service or file's contents reach the match through [input](./input.md) or a [command](./commands.md).

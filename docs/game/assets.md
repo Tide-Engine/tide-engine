@@ -1,3 +1,7 @@
+---
+description: "Declare images, textures, cubemaps, text and bytes as Tide assets, then load files or fetch URLs locally while the game runs."
+---
+
 # Assets
 
 An asset is a file a game is built with: an image, a text, some bytes. The language names it, the compiler checks it, and the build packs what's named and nothing else. The second half of this page covers what a machine loads while the game runs instead: a file of the player's, or a URL, which is local to that machine until the match is told about it.

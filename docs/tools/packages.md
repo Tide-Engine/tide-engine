@@ -1,3 +1,7 @@
+---
+description: "Add and update Tide packages from git or local folders, pin commits and share game code and C libraries through tide.packages."
+---
+
 # Packages
 
 A package is Tide code, and C, that games share: a folder of `.tide` files, like a game's, without a `Main`. A game lists the packages it uses in a file named `tide.packages`, next to its own files, and `tide` builds them with it. Packages come from git repositories, at a commit, from folders on your machine, or with `tide` itself.

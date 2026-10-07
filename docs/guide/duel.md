@@ -1,3 +1,7 @@
+---
+description: "Follow Duel's Tide source to build a 2D multiplayer arena game with predicted events, local effects, menus, queries and render targets."
+---
+
 # Duel code tour
 
 This code tour follows Duel's match rules, local effects and menus. [The code](#the-code) explains how predicted and verified events drive its presentation, and how its views use queries, render targets and draw settings.

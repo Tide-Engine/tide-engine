@@ -1,3 +1,7 @@
+---
+description: "Keep Tide menus, settings, particles and connection status in local state, separate from the deterministic match and its rollback."
+---
+
 # Local state
 
 The **match** is what every machine simulates the same way. **Local state** belongs to one machine, and lives outside the match: menus, settings, connection status, animation timers, particles. It's never sent, rolled back or checked against other machines.

@@ -1,3 +1,7 @@
+---
+description: "Define Tide value structs, methods and functions, with named arguments, defaults, overloads, out parameters, actions and operators."
+---
+
 # Structs and functions
 
 ## Structs

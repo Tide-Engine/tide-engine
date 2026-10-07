@@ -1,3 +1,7 @@
+---
+description: "Use Tide's Box3D package for deterministic 3D rigid bodies, collisions, compound shapes and world queries in multiplayer matches."
+---
+
 # 3D physics (Box3D)
 
 [Box3D](https://github.com/erincatto/box3d) is Erin Catto's 3D physics engine: rigid bodies that fall, collide, stack and come to rest. It comes with `tide` as a [package](../tools/packages.md#packages-that-come-with-tide). A body and its shapes are components of an entity, every tick steps them, and the match stays the same on every machine, through rollbacks, joins and hot reloads, with nothing for the game to do.
