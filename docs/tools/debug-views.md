@@ -38,6 +38,7 @@ Frame  60 fps, longest 21.4 ms   16.67 ms     Tick  180 a second          0.93 m
   Render                          0.60
   Other                           0.00
   Swap, idle                     11.48
+Memory  162 MB in RAM, 12 MB on the GPU
 ```
 
 **A frame**, in milliseconds a frame:
@@ -54,6 +55,7 @@ Frame  60 fps, longest 21.4 ms   16.67 ms     Tick  180 a second          0.93 m
 | Render | Drawing what the views recorded, as far as the CPU does it. What the GPU takes shows in the last row |
 | Other | The rest of what the frame did |
 | Swap, idle | The rest of the frame: waiting for the display, the GPU or the browser |
+| Memory | What the program has, as the system counts it, and what its drawing has on the GPU by the engine's own count (every texture, mesh and render target, by what each holds; not the window's framebuffer or the driver's own). No time, so no bar |
 
 **A tick**, in milliseconds a tick:
 

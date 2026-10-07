@@ -214,6 +214,7 @@ static double tide_run_fps, tide_run_up, tide_run_down; // A second, over the la
 static double tide_run_work_ms;                         // A frame's work, over the last half second; under 0 until known
 static double tide_run_render_ms, tide_run_gpu_ms;       // Rendering on the CPU and GPU, over the last half second
 static uint64_t tide_run_memory;                        // tide_platform_memory, as of then
+static double tide_run_memory_at = -1.0;                // When the profiler last had it read, in tide_run_now
 
 static inline void tide_run_reset_timing(const bool active)
 {
@@ -863,6 +864,7 @@ static inline int tide_run_frame(void *user, const float seconds)
             .gpu_known = tide_run_gpu_ms >= 0.0,
             .threads = jobs ? jobs->threads : 1u,
             .memory = tide_run_memory,
+            .gpu_memory = tide_platform_gpu_memory(),
             .renderer = tide_platform_renderer(),
             .draw_calls = tide_platform_draw_calls(),
             .match = match != NULL,
@@ -904,6 +906,14 @@ static inline int tide_run_frame(void *user, const float seconds)
     while (game->take_request(tide_run_local, &request, tide_run_start)) tide_run_request(&request, tide_run_start);
     // While nobody sees the window, the next frame is the match's next tick
     tide_platform_next_frame(tide_session_until_tick(s));
+    if (profiler) { // Its memory row: the program's once a second, as the drawer has it, and the renderer's count
+        if (tide_run_memory_at < 0.0 || tide_run_now - tide_run_memory_at >= 1.0) {
+            tide_run_memory = tide_platform_memory();
+            tide_run_memory_at = tide_run_now;
+        }
+        profiler->memory = tide_run_memory;
+        profiler->gpu_memory = tide_platform_gpu_memory();
+    }
     tide_profiler_end(profiler, status.client.again_ticks);
     return TIDE_KEEP_RUNNING;
 }
