@@ -54,6 +54,8 @@ typedef struct checker {
     const expr *world_arg;   // A call's argument about to be checked: the World can be named there, to pass it on
     const expr *resident_arg; // ...and one an extern function's Resident parameter takes: the one place a Resident field is read
     bool world_value_ok;     // ...and the name being checked is it
+    bool constants_only;     // A constant expression is being checked (check_constant_expr)
+    bool assets_constant;    // ...a field's default, where an asset's name is read as a constant is
 } checker;
 
 // A call of an async function: awaited, its frame part of the caller's, or
@@ -10057,7 +10059,8 @@ static bool names_only(const expr *e)
 // Constant expressions: literals, constants, constructors of built-in types,
 // Math functions, built-in constants like quaternion.identity, members of any
 // of these, and operators on them. Nothing that reads fields, singletons or
-// Time, so a default never depends on other state.
+// Time, so a default never depends on other state. A field's default also
+// names assets (c->assets_constant): the pack's, the same on every machine.
 static bool is_constant(const checker *c, const expr *e)
 {
     type ignored;
@@ -10070,7 +10073,8 @@ static bool is_constant(const checker *c, const expr *e)
     case E_DEFAULT:
         return true;
     case E_NAME:
-        return lookup(c->prog, c->unit, e->name, NAME_CONST, &other) != NULL;
+        return lookup(c->prog, c->unit, e->name, NAME_CONST, &other) != NULL
+            || (c->assets_constant && lookup(c->prog, c->unit, e->name, NAME_ASSET, &other) != NULL);
     case E_UNARY:
         return is_constant(c, e->lhs);
     case E_BINARY:
@@ -10143,15 +10147,18 @@ static type check_constant_expr(checker *c, expr *value, const bool typed, const
     decl *const method = c->method;
     const bool in_input = c->in_input;
     const bool in_sanitize = c->in_sanitize;
+    const bool constants_only = c->constants_only;
     const int locals = c->locals.count;
     c->system = c->method = NULL;
     c->in_input = c->in_sanitize = false;
+    c->constants_only = true;
     c->locals.count = 0;
     const type t = typed ? check_expr_want(c, value, want) : check_expr(c, value);
     c->system = system;
     c->method = method;
     c->in_input = in_input;
     c->in_sanitize = in_sanitize;
+    c->constants_only = constants_only;
     c->locals.count = locals;
     return t;
 }
@@ -10213,7 +10220,9 @@ static void check_constant(checker *c, decl *k)
     if (k->index != 0) return;
     k->index = 1;
     const unit *const outer = c->unit;
+    const bool assets = c->assets_constant; // A default that names this constant names no asset through it
     c->unit = k->unit;
+    c->assets_constant = false;
     check_reserved(k->name, k->at);
     k->return_type = constant_type(c, k);
     if (!is_constant(c, k->value)) {
@@ -10230,6 +10239,7 @@ static void check_constant(checker *c, decl *k)
         }
     }
     c->unit = outer;
+    c->assets_constant = assets;
     k->index = 2;
 }
 
@@ -10437,6 +10447,13 @@ static type use_asset(checker *c, expr *e, decl *k)
 {
     e->bind = BIND_ASSET;
     e->constant = k;
+    if (c->constants_only && !c->assets_constant) { // Art.hero and hero.count get this far: such a chain could be a constant's
+        diag_error(e->at, "'" STR_FMT "' is an asset, not a constant: its value is the pack's, read as the game runs",
+                   STR_ARG(k->qualified));
+        diag_note("a field's default can name an asset, like '" STR_FMT " value = " STR_FMT ";'; nothing else that takes a "
+                  "constant can", STR_ARG(k->return_type_name), STR_ARG(k->qualified));
+        return T_ERR;
+    }
     if (k->sample_raw && k->return_type.kind == TY_TEXTURE && builds(c->prog)) vec_push(c->raw_uses, e);
     return k->return_type;
 }
@@ -10622,6 +10639,14 @@ static void check_asset_decl(checker *c, decl *k)
     c->unit = outer;
 }
 
+// Whether a grid field's default is a grid of its own: a new one, or `default`.
+// What's left is an asset's, which a field would have to copy.
+static bool own_grid(const expr *e)
+{
+    if (e->kind == E_CONDITIONAL) return own_grid(e->lhs) && own_grid(e->rhs);
+    return e->kind == E_DEFAULT || is_new_grid(e);
+}
+
 static void check_default(checker *c, const field *f)
 {
     expr *value = f->default_value;
@@ -10630,14 +10655,25 @@ static void check_default(checker *c, const field *f)
                    type_name(f->type));
         return;
     }
+    // An asset's name is as good as a constant's here: the pack's value, the
+    // same on every machine, read when the default is given
+    c->assets_constant = true;
     if (!is_constant(c, value)) {
+        c->assets_constant = false;
         diag_error(value->at, "default values must be constant expressions");
-        diag_note("use literals, constants, constructors like float3(...), struct values of constants, Math "
+        diag_note("use literals, constants, assets, constructors like float3(...), struct values of constants, Math "
                   "functions and operators; defaults can't read fields, singletons or Time");
         suggest_constant(c, value);
         return;
     }
     const type t = check_constant_expr(c, value, true, f->type);
+    c->assets_constant = false;
+    if (f->type.kind == TY_GRID && t.kind == TY_GRID && !own_grid(value)) {
+        diag_error(value->at, "a grid can't be copied: every chunk would be");
+        diag_note("an asset's grid is read where it is, by its name; a field starts as a new, empty one, like 'Grid%d(64, 64)'",
+                  f->type.decl->dims);
+        return;
+    }
     if (f->type.kind != TY_ERROR && !type_assignable(f->type, t)) {
         diag_error(value->at, "field '" STR_FMT "' is %s, not %s", STR_ARG(f->name), type_name(f->type), type_name(t));
         note_conversion(f->type, t);

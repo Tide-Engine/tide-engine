@@ -120,6 +120,8 @@ view Show(Devices devices, mut Room room)
     {
         var into = room.around.faces[face];
         into.SetCamera(float3(0), Facing(face), 90);
+        // A face keeps its depth from frame to frame, and the last frame's moons would hide this one's
+        into.Clear(Color.black);
         into.Cull(Cull.Front), into.Depth(Depth.None)
         {
             into.Mesh(room.ball, room.faces, all, Sky);

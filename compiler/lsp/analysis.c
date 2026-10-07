@@ -8115,10 +8115,11 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "operator", CK_KEYWORD, "Type operator +(Type a, Type b)", NULL, NULL); // After the return type
         } else if (pk != T_IDENT || (last >= 1 && DOC->toks[last - 1].kind != T_LBRACE && DOC->toks[last - 1].kind != T_SEMI
                                    && DOC->toks[last - 1].kind != T_RBRACE)) {
-            // A default value: constants only, and a grid field's size.
+            // A default value: constants and assets only, and a grid field's size.
             complete_value_types(&c, VT_VALUES);
             complete_structs(&c);
             complete_constants(&c, TY_ERROR);
+            complete_assets(&c, false);
             item(&c, "Math", CK_MODULE, "Math functions and constants", NULL, NULL);
             int first = last; // The field's first token: its type
             while (first > f.open + 1 && DOC->toks[first - 1].kind != T_SEMI && DOC->toks[first - 1].kind != T_LBRACE

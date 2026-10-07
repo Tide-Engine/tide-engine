@@ -402,6 +402,11 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     add_library(tide_platform_reload_game SHARED tests/reload_game.c)
     target_include_directories(tide_platform_reload_game PRIVATE include "${PROJECT_SOURCE_DIR}/engine/include")
     target_link_libraries(tide_platform_reload_game PRIVATE tide_flags)
+    # ...and a build of another layout, which the host swaps in while the game runs
+    add_library(tide_platform_reload_game_next SHARED tests/reload_game.c)
+    target_compile_definitions(tide_platform_reload_game_next PRIVATE RELOAD_GAME_HASH=4343)
+    target_include_directories(tide_platform_reload_game_next PRIVATE include "${PROJECT_SOURCE_DIR}/engine/include")
+    target_link_libraries(tide_platform_reload_game_next PRIVATE tide_flags)
     add_executable(tide_platform_reload tests/reload_host.c)
     target_link_libraries(tide_platform_reload PRIVATE tide_platform)
     add_executable(tide_platform_reload_plain tests/reload_host.c tests/reload_game.c)
@@ -411,7 +416,7 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         add_test(NAME tide_platform_reload
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/reload.mjs" $<TARGET_FILE:tide_platform_reload>
                 $<TARGET_FILE:tide_platform_reload_plain> $<TARGET_FILE:tide_platform_reload_game>
-                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_reload-run")
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_reload-run" $<TARGET_FILE:tide_platform_reload_game_next>)
         set_tests_properties(tide_platform_reload PROPERTIES LABELS gpu TIMEOUT 120)
     endif()
 

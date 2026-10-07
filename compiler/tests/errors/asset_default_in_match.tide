@@ -1,0 +1,11 @@
+// expect: 'Sign' can't hold rendering resources in match state
+asset Texture hero = "../e2e/assets/hero.png";
+
+component Sign
+{
+    Texture face = hero;
+}
+
+scene Main
+{
+}

@@ -8465,6 +8465,30 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     TIDE_CHECK(has(last_sent(), "'masks' is [Raw], its pixels numbers and not colors to draw"));
     TIDE_CHECK(has(last_sent(), "read it in a frag or a vert, by its name"));
 
+    // A field's default names an asset as it names a constant: the asset where it's named, and assets offered there
+    static const char default_assets[] = "asset Texture logo = \"art/tile.png\";\n"
+                                         "asset string notes = \"art/other.txt\";\n"
+                                         "scene Main { }\n"
+                                         "struct Sprite { Texture image = logo; }\n"
+                                         "component Box\n"
+                                         "{\n"
+                                         "    string text = notes;\n";
+    snprintf(asset_code, sizeof asset_code, "%s    local Texture test = logo;\n    local Sprite art = Sprite { image = logo };\n}\n",
+             default_assets);
+    open_uri(uri_main, asset_code);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    hover = request_at(uri_main, "textDocument/hover", 7, 26, "");
+    TIDE_CHECK(has(hover, "asset Texture logo") && has(hover, "an image to draw with"));
+    snprintf(asset_code, sizeof asset_code, "%s    local Texture test = \n}\n", default_assets);
+    open_uri(uri_main, asset_code);
+    completion = request_at(uri_main, "textDocument/completion", 7, 25, "");
+    TIDE_CHECK(offers(completion, "logo") && offers(completion, "notes") && offers(completion, "Math"));
+    TIDE_CHECK(has(completion, "\"label\":\"logo\",\"kind\":6,\"detail\":\"asset Texture\""));
+    // ...and nowhere else that takes a constant
+    open_uri(uri_main, "asset string notes = \"art/other.txt\";\nconst int SIZE = notes.length;\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "'notes' is an asset, not a constant: its value is the pack's, read as the game runs"));
+    TIDE_CHECK(has(last_sent(), "a field's default can name an asset, like 'string value = notes;'"));
+
     remove_game_file("lsp_tx/main.tide");
     remove_game_file("lsp_tx/icons.tide");
     remove_game_file("lsp_tx/art/tile.png");

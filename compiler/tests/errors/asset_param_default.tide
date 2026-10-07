@@ -1,0 +1,14 @@
+// expect: 'Art.rules' is an asset, not a constant: its value is the pack's, read as the game runs
+namespace Art
+{
+    asset string rules = "../e2e/assets/rules.txt";
+}
+
+int Count(string text = Art.rules)
+{
+    return text.length;
+}
+
+scene Main
+{
+}

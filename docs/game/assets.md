@@ -27,6 +27,37 @@ An asset is read-only. Nothing assigns it, takes it `mut`, or clears it: it's th
 
 Match code reads assets like any value, since every machine has the same pack; a `Texture` is the one that's local code's alone (below). What a machine loads as the game runs is another matter, further down.
 
+### A field's default
+
+A field's default can name an asset, as it names a constant:
+
+```csharp
+asset Texture logo = "art/logo.png";
+asset string motto = "motto.txt";
+asset List<byte> table = "data/table.bin";
+
+struct Sprite
+{
+    Texture image = logo;
+    Color tint = Color.white;
+}
+
+component Sign
+{
+    string text = motto;         // The match's own copy of the text
+    int size = table.count;      // An expression can read one
+    local Texture face = logo;   // This machine's, as every Texture is
+    local Sprite art;            // Its image starts as the logo too
+}
+```
+
+- The field gets the asset's value where the default is given: as an entity is spawned, as a match or this machine's local state starts, and for an entity's [local fields](./local-state.md) nothing wrote yet.
+- Text, bytes and a glob's list or map are copied into the field, which is the field's own from then on: changing `text` changes no file's.
+- A `Texture`, a [`Clip`](./audio.md#clips) and a `Cubemap` name their asset, so they cost nothing to give, and under `tide run` a saved file shows through them.
+- A `Grid2<Color>` field can't start as an asset's grid, since a grid is never copied: read the asset's by its name, or give it to a `Texture` field, `Texture face = hero;`.
+- One of a glob's, like `run[0]` or `icons["art/icons/star.png"]`, isn't a default yet: a view assigns it.
+- Only a field's default takes one. A `const`, a setting, an attribute's bound, an asset's path and a parameter's default are constants alone, as the compiler works those out while it builds.
+
 ## Images to draw with
 
 Most of a game's images are only ever drawn: sprites, tile sheets, backgrounds, icons. Those are `Texture`s:

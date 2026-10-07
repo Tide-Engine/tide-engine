@@ -69,6 +69,7 @@ tide_e2e_test(mipmaps) # Filter.Trilinear, wherever a filter is said: what a dra
 tide_e2e_test(assets) # Files a game is built with, read by name: each type, globs, a grid drawn and sampled, match code
 tide_e2e_test(assets_plain) # ...and the same game with none: its world is the same bytes
 tide_e2e_test(asset_textures) # Texture assets, and [Filter] and [Wrap] on a texture's declaration
+tide_e2e_test(asset_defaults) # A field's default that names an asset: the match's text and bytes, this machine's images and clips
 tide_e2e_test(audio) # Clip assets, and Audio.Play from views, local handlers and the functions they call
 tide_e2e_test(sound) # Sound fields the frame names to the mixer while they play, and the listener
 tide_e2e_test(buses) # A game's [Bus] enum, a Sound's bus and Audio.SetVolume
