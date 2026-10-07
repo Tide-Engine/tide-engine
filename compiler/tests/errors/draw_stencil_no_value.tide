@@ -1,0 +1,12 @@
+// expect: no version of Draw.Stencil takes (StencilTest)
+// expect: Draw.Stencil(StencilTest test, int value, Block content)
+// expect: Draw.Stencil(StencilTest test, int value, StencilOp operation, Block content)
+scene Main { }
+
+view Show()
+{
+    Draw.Stencil(StencilTest.Equal)
+    {
+        Draw.Circle(float2(0, 0), 20, Color.white);
+    }
+}

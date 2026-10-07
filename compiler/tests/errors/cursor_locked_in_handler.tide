@@ -1,0 +1,9 @@
+// expect: the match runs the same on every machine, so it can't read Cursor.locked
+scene Main { }
+event Shot { }
+singleton Aim { int shots; }
+event(Shot) Count(mut Aim aim)
+{
+    if (Cursor.locked) aim.shots += 1;
+}
+system Fire() { Send(Shot); }

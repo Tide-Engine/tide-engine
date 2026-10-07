@@ -1,0 +1,236 @@
+// Default values, named arguments and overloads, as in C#: on functions and
+// methods, on the engine's own functions, and systems that share a name.
+
+scene Main { }
+
+const float BASE = 2;
+
+enum Element { Fire, Ice }
+
+struct Weapon
+{
+    float power = 3;
+
+    // Three methods of one name: their parameters tell them apart.
+    float Swing() { return power; }
+    float Swing(float scale) { return power * scale; }
+    float Swing(int times, float scale = 1) { return power * times * scale; }
+
+    mut void Sharpen(float by = 1) { power += by; }
+
+    // One of them calls another, by its arguments
+    float Twice() { return Swing(2); }
+}
+
+component Position { float x; }
+component Velocity { float x = 1; }
+component Player { }
+component Enemy { }
+
+singleton Log
+{
+    float plain;
+    float two;
+    float named;
+    float reordered;
+    float element;
+    float weapon;
+    float whole;
+    int order;
+    float swings;
+    float sharpened;
+    float twice;
+    string label;
+    string named_label;
+    float2 offset;
+    int maybe;
+    int some;
+    int small;
+    float sum;
+    float between;
+    int byte_or_float;
+    int exact;
+    int blocks;
+    int counted;
+    int picked;
+    int later;
+}
+
+// A default is a constant, like a field's: a literal, a constant, an enum's
+// member, a constructor, an operator.
+float Damage(float base, float multiplier = BASE, bool crit = false, Element element = Element.Ice)
+{
+    mut float damage = base * multiplier;
+    if (crit) damage *= 2;
+    if (element == Element.Fire) damage += 0.5;
+    return damage;
+}
+
+float Damage(float base, Weapon weapon)
+{
+    return base + weapon.power;
+}
+
+float Damage(int base)
+{
+    return base + 100;
+}
+
+int Pack(int hundreds, int tens = 0, int ones = 0)
+{
+    return hundreds * 100 + tens * 10 + ones;
+}
+
+int Step(mut int counter)
+{
+    counter += 1;
+    return counter;
+}
+
+string Label(string name = "none", int count = 1 + 2)
+{
+    return $"{name} x{count}";
+}
+
+float2 Offset(float2 by = float2(1, 2))
+{
+    return by * 2;
+}
+
+int Value(int? value = null)
+{
+    return value ?? -1;
+}
+
+int Small(byte value = 7)
+{
+    return value + 1;
+}
+
+float Sum(List<float> values = [1, 2, 3])
+{
+    mut float total = 0;
+    foreach (var value in values) total += value;
+    return total;
+}
+
+// An Action is the block after the call, never an argument: the parameters
+// before it can have defaults, and go by name
+void Repeat(int times = 2, int step = 1, Action content)
+{
+    for (var i = 0; i < times; i += step) content();
+}
+
+// Two of a name, one of which takes a block
+void Each(int count, Action content)
+{
+    for (var i = 0; i < count; i++) content();
+}
+
+int Each(int count)
+{
+    return count * 100;
+}
+
+int Pick(int? value = null, int otherwise = 7)
+{
+    return value ?? otherwise;
+}
+
+// A task's arguments go into its frame, defaults too
+async void Later(mut Log log, int ticks = 1, int add = 3)
+{
+    await Wait.Ticks(ticks);
+    log.later += add;
+}
+
+// A byte goes to an int rather than to a float, and an int to itself
+int Kind(int value) { return 1; }
+int Kind(float value) { return 2; }
+int Kind(long value) { return 3; }
+
+// Two systems of one name. Where nothing calls, as in [Before] and [After], a
+// shared name is written with its parameters' types.
+system Move(mut Position position, Velocity velocity, with Player)
+{
+    position.x += velocity.x;
+}
+
+system Move(mut Position position, Velocity velocity, with Enemy)
+{
+    position.x -= velocity.x;
+}
+
+// Players have moved, and enemies haven't yet
+[After(Move(Position, Velocity, with Player)), Before(Move(Position, Velocity, with Enemy))]
+system Between(Position position, mut Log log)
+{
+    log.between += position.x;
+}
+
+system Run(mut Log log)
+{
+    mut Weapon sword = Weapon { };
+    log.plain = Damage(10.0);
+    log.two = Damage(10.0, 3);
+    log.named = Damage(10.0, crit: true);
+    log.reordered = Damage(crit: true, base: 5, multiplier: 3);
+    log.element = Damage(1.0, element: Element.Fire);
+    log.weapon = Damage(10.0, sword);
+    log.whole = Damage(10);
+
+    // Named arguments are worked out in the order written, not the parameters'
+    mut int n = 0;
+    log.order = Pack(ones: Step(n), hundreds: Step(n), tens: Step(n));
+
+    log.swings = sword.Swing() + sword.Swing(2.0) + sword.Swing(2) + sword.Swing(2, scale: 10);
+    log.twice = sword.Twice();
+    sword.Sharpen();
+    sword.Sharpen(by: 2);
+    log.sharpened = sword.power;
+
+    log.label = Label();
+    log.named_label = Label(count: 5);
+    log.offset = Offset();
+    log.maybe = Value();
+    log.some = Value(4);
+    log.small = Small() + Small(1);
+    log.sum = Sum() + Sum([10]);
+
+    byte b = 3;
+    log.byte_or_float = Kind(b);
+    log.exact = Kind(1) * 100 + Kind(1.5) * 10 + Kind(1L);
+
+    log.blocks = 0;
+    Repeat()
+    {
+        log.blocks += 1;
+    }
+    Repeat(step: 2, times: 6)
+    {
+        log.blocks += 10;
+    }
+    Each(2)
+    {
+        log.blocks += 100;
+    }
+    log.counted = Each(3);
+    log.picked = Pick() + Pick(otherwise: 1) + Pick(5, otherwise: 2);
+}
+
+// The engine's functions take names too, and leave out what has a default
+view Hud()
+{
+    Draw.Circle(radius: 2, center: float2(3, 4), color: Color.red);
+    Draw.Rect(float2(1, 1), size: float2(2, 2), color: Color.red, rotation: 0.5);
+    Debug.Assert(condition: true);
+    Debug.Assert(true, message: "never");
+}
+
+event(Spawned) Setup(with Main, mut Log log)
+{
+    Later(log);
+    Later(log, add: 40);
+    Spawn(Position, Velocity, Player);
+    Spawn(Position, Velocity { x = 2 }, Enemy);
+}

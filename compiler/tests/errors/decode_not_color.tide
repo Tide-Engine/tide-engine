@@ -1,0 +1,4 @@
+// expect: Decode reads a PNG into a Grid2<Color>, and this is a Grid2<int>
+singleton Field { Grid2<int> cells; List<byte> bytes; }
+scene Main { }
+event(Spawned) Setup(with Main, mut Field field) { field.cells.Decode(field.bytes)!; }

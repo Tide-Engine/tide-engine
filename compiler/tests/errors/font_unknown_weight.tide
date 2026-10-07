@@ -1,0 +1,7 @@
+// expect: the engine's font has two weights
+scene Main { }
+
+view Show()
+{
+    Draw.Text("DUEL", float2(0), 88, Color.white, Font.Heavy);
+}

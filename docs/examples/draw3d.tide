@@ -1,0 +1,49 @@
+settings { title = "3D"; }
+
+local scene Main { }
+
+local singleton Orbit
+{
+    float yaw = 0.7;
+    float pitch = 0.6;
+    float fieldOfView = 50;
+    float wave;
+}
+
+view Scenery(Devices devices, mut Orbit orbit)
+{
+    // Drag to look around. Left alone, the camera circles by itself.
+    var pointer = devices.pointer;
+    if (pointer.press.pressed)
+    {
+        orbit.yaw += pointer.delta.x * 0.01;
+        orbit.pitch = Math.Clamp(orbit.pitch - pointer.delta.y * 0.01, 0.15, 1.4);
+    }
+    else orbit.yaw += Frame.dt * 0.25;
+    orbit.wave += Frame.dt * 1.5;
+    if (orbit.wave > Math.TAU) orbit.wave -= Math.TAU;
+
+    // The camera looks along its rotation's +z, from 14 units behind the middle.
+    var rotation = quaternion.Euler(float3(orbit.pitch, orbit.yaw, 0));
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float3(0, 1, 0) - Math.Forward(rotation) * 14, rotation, orbit.fieldOfView);
+
+    // 3D draws hide each other by depth, whatever order they come in.
+    Draw.Plane(float3(0, 0, 0), float2(11, 11), Color(0.13, 0.13, 0.15));
+    for (var x = -4; x <= 4; x++)
+    {
+        for (var z = -4; z <= 4; z++)
+        {
+            var height = 1.3 + Math.Sin(x * 0.8 + orbit.wave) * Math.Cos(z * 0.8) * 1.1;
+            var shade = height * 0.3;
+            Draw.Cube(float3(x, height * 0.5, z), float3(0.92, height, 0.92), Color(0.3 + shade, 0.22 + shade * 0.75, 0.08 + shade * 0.08));
+        }
+    }
+    Draw.Sphere(float3(0, 4.2, 0), 0.7, Color(0.18, 0.83, 0.75));
+    Draw.Cylinder(float3(0, 3, 0), 0.08, 1.6, Color.white);
+
+    Draw.SetScreen();
+    Draw.Text("Drag to turn the camera", float2(16, 14), 16, Color.white);
+    GUI.SetTheme(GUITheme { radius = 6 });
+    GUI.Slider(Rect(16, Screen.height - 48, Screen.width - 32, 32), "Field of view", orbit.fieldOfView, 25, 90);
+}

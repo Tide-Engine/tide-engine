@@ -1,0 +1,6 @@
+// expect: 'AddThrough' changes its 'score''s match fields
+singleton Score { int value; local int paint; }
+void Add(mut Score score) { score.value += 1; }
+void AddThrough(mut Score score) { Add(score); }
+scene Main { }
+view Change(mut Score score) { AddThrough(score); }

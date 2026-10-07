@@ -1,0 +1,8 @@
+// expect: an async function can't take the World yet
+// expect: read what it needs through the World before it starts, and pass the values; an async handler takes 'World world' itself
+component Health { int value; }
+scene Main { }
+async void Watch(Entity target, World world)
+{
+    await Wait.Ticks(1);
+}

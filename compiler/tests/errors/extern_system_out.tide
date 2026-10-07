@@ -1,0 +1,4 @@
+// expect: the engine calls this itself, so nothing would take what an 'out' parameter makes: functions and methods have them
+scene Main { }
+component Body { float x; }
+extern system Move(out Body body);

@@ -1,0 +1,3 @@
+// expect: a parameter's default must be a constant expression
+scene Main { }
+float Scale(float value, float by = value * 2) { return value * by; }

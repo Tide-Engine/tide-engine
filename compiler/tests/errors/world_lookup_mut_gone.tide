@@ -1,0 +1,9 @@
+// expect: write 'mut World world' instead, 'world.Get<Combat.Health>(entity)' where the code has 'all[entity]', and 'world.Set<Combat.Health>(entity, value)' where it has 'all[entity] = value'
+namespace Combat;
+component Health { int value; }
+component Healer { Entity patient; }
+scene Main { }
+system Heal(Healer healer, mut lookup Combat.Health all)
+{
+    all[healer.patient] = Health { value = 1 };
+}

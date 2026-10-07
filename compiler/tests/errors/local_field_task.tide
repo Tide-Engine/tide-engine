@@ -1,0 +1,14 @@
+// expect: a task can't use local fields yet, and 'bakes' is one of 'Box''s
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+async void Rebake(mut Box box)
+{
+    await Wait.Frames(2);
+    box.bakes = 0;
+}

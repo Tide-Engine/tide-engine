@@ -1,0 +1,294 @@
+// What makes Towers feel alive is this machine's own: dust where a brick
+// lands, pieces where one is lost, numbers that float up, a camera that
+// shakes. None of it is in the match. The match says what happens in it with
+// events, and this machine's handlers of them add an effect here. Each hears
+// an event once, however often this machine runs its tick again, and a
+// `verified` one waits until the server has confirmed it: a round is never
+// said to be someone's because this machine predicted so.
+using Box2D;
+
+enum BitKind { Spark, Chunk, Glow, Dust }
+
+// Something small that flies, fades and is gone. In meters in the world, or
+// in pixels for the paper thrown over the screen.
+struct Bit
+{
+    float2 position;
+    float2 velocity;
+    Color color = Color.white;
+    float age;
+    float life = 0.4;
+    float size = 0.1;
+    float angle;
+    float spin;
+    float weight; // How much of gravity pulls it
+    float drag;
+    BitKind kind;
+}
+
+// A word or a number, floating up from where something happened.
+struct Label
+{
+    float2 position;
+    Color color = Color.white;
+    float age;
+    float life = 1.3;
+    string words;
+    bool mine;
+}
+
+// How long ago the match said things, for the words over the world (hud.tide).
+local singleton Flow
+{
+    int winner = -1;     // Who took the round that ended last: a seat
+    int round;
+    float since = 100;   // Seconds since a round ended...
+    bool papered;        // ...and its winner's paper was thrown
+    int built;           // The round that started last...
+    float begun = 100;   // ...and how long ago
+    Power struck;        // What was last used, by which seat, against which
+    int striker = -1;
+    int target = -1;
+    float cast = 100;    // ...and how long ago
+    float4 earned = float4(100); // Seconds since each seat earned something: for its chip
+    float wind;          // How hard the wind blows on this machine's screen, fading
+    float windWay = 1;
+}
+
+void Shake(mut Fx fx, float amount)
+{
+    fx.trauma = Math.Min(1, fx.trauma + amount);
+}
+
+void Flash(mut Fx fx, Color color, float amount)
+{
+    if (amount < fx.flash) return;
+    fx.flash = amount;
+    fx.flashColor = color;
+}
+
+// Sparks thrown around `toward`, within `spread` radians of it.
+void Sparks(mut Fx fx, float2 at, float2 toward, float spread, int count, float speed, Color color)
+{
+    if (fx.bits.count > 700) return;
+    var middle = Math.Atan2(toward.y, toward.x);
+    for (var i = 0; i < count; i++)
+    {
+        var turn = fx.random.NextFloat();
+        var pace = fx.random.NextFloat();
+        var long = fx.random.NextFloat();
+        var angle = middle + (turn - 0.5) * spread;
+        fx.bits.Add(Bit { position = at, velocity = float2(Math.Cos(angle), Math.Sin(angle)) * speed * (0.35 + pace * 0.9),
+                          color = color, life = 0.18 + long * 0.3, size = 0.07, weight = 0.5, drag = 2.4, kind = BitKind.Spark });
+    }
+}
+
+// Pieces thrown every way, which fall.
+void Chunks(mut Fx fx, float2 at, int count, float speed, Color color)
+{
+    if (fx.bits.count > 700) return;
+    for (var i = 0; i < count; i++)
+    {
+        var turn = fx.random.NextFloat();
+        var pace = fx.random.NextFloat();
+        var long = fx.random.NextFloat();
+        var big = fx.random.NextFloat();
+        var tone = fx.random.NextFloat();
+        var angle = turn * Math.TAU;
+        fx.bits.Add(Bit { position = at, velocity = float2(Math.Cos(angle), Math.Sin(angle) + 0.4) * speed * (0.3 + pace),
+                          color = Shade(color, 0.6 + tone * 0.6), life = 0.5 + long * 0.6, size = 0.12 + big * 0.16,
+                          angle = angle, spin = (turn - 0.5) * 18, weight = 1, drag = 0.6, kind = BitKind.Chunk });
+    }
+}
+
+// Dust that spreads along what a brick landed on, and thins.
+void Dust(mut Fx fx, float2 at, int count, float speed)
+{
+    if (fx.bits.count > 700) return;
+    for (var i = 0; i < count; i++)
+    {
+        var side = fx.random.NextFloat();
+        var pace = fx.random.NextFloat();
+        var long = fx.random.NextFloat();
+        var big = fx.random.NextFloat();
+        fx.bits.Add(Bit { position = at + float2((side - 0.5) * 3, 0), velocity = float2((side - 0.5) * 2 * speed, 0.3 + pace * 0.8),
+                          color = Fade(Color(0.8, 0.8, 0.84), 0.3), life = 0.35 + long * 0.4, size = 0.22 + big * 0.3, drag = 3,
+                          kind = BitKind.Dust });
+    }
+}
+
+// Paper thrown over the screen, in its pixels.
+void Paper(mut Fx fx, float2 at, int count, float speed, Color color)
+{
+    if (fx.paper.count > 400) return;
+    for (var i = 0; i < count; i++)
+    {
+        var turn = fx.random.NextFloat();
+        var pace = fx.random.NextFloat();
+        var long = fx.random.NextFloat();
+        var big = fx.random.NextFloat();
+        var tone = fx.random.NextFloat();
+        var angle = turn * Math.TAU;
+        fx.paper.Add(Bit { position = at, velocity = float2(Math.Cos(angle), Math.Sin(angle) - 0.7) * speed * (0.25 + pace),
+                           color = tone < 0.25 ? Color.white : Shade(color, 0.7 + tone * 0.5), life = 1.2 + long * 1.2,
+                           size = 4 + big * 5, angle = angle, spin = (turn - 0.5) * 24, weight = 1, drag = 1.3,
+                           kind = BitKind.Chunk });
+    }
+}
+
+// A brick landed: dust under it, and this machine's camera feels its own,
+// more the faster it came down.
+local event(Landed landed) Thump(mut Fx fx)
+{
+    var hard = Math.Saturate((landed.speed - FALL) / (FAST - FALL));
+    Dust(fx, landed.at - float2(0, 0.6), 4 + int(hard * 6), 1.5 + hard * 3);
+    if (landed.seat == fx.seat) Shake(fx, 0.06 + hard * 0.16);
+}
+
+// Bricks that meet something hard: the package says so (its Hit, sent to each
+// body's entity, with where and how fast), and pieces fly from there, more
+// the harder it was. This machine's camera feels its own player's.
+local event(Hit hit) Crash(Brick brick, mut Fx fx)
+{
+    var hard = Math.Saturate((hit.speed - CRASH) / 12);
+    Chunks(fx, hit.point, 1 + int(hard * 3), 1.5 + hard * 4, SeatColor(brick.seat));
+    if (brick.seat == fx.seat && !brick.down) Shake(fx, 0.03 + hard * 0.1);
+}
+
+// The brick that landed is lit for a moment: `lit` is a local field of the
+// match's Brick, which its view lets fade. Landed is sent to the brick, so
+// this runs for it.
+local event(Landed) Fresh(mut Brick brick)
+{
+    brick.lit = 1;
+}
+
+// A brick fell off its tower: once that's certain, pieces of it fly where it
+// went, and whoever put it there is told what it cost.
+local event(verified Lost lost) Rue(mut Fx fx)
+{
+    var color = SeatColor(lost.seat);
+    Chunks(fx, lost.at, 5, 4, color);
+    if (lost.seat != fx.seat) return;
+    fx.labels.Add(Label { position = float2(lost.at.x, Math.Max(lost.at.y, fx.low.y + 2.5)), color = ROSE, words = "LOST", mine = true });
+    Shake(fx, 0.12);
+}
+
+local event(verified Earned earned) Gain(mut Fx fx, mut Flow flow)
+{
+    flow.earned = Put(flow.earned, earned.seat, 0);
+    if (earned.seat == fx.seat) Flash(fx, SeatColor(earned.seat), 0.12);
+}
+
+// Something a tower earned was used: the words say what, and the wind and
+// the quake show all over the screen of whoever they're against.
+local event(Struck struck) Unleash(mut Fx fx, mut Flow flow)
+{
+    flow.struck = struck.power;
+    flow.striker = struck.seat;
+    flow.target = struck.target;
+    flow.cast = 0;
+    if (struck.power == Power.Gust && struck.target == fx.seat)
+    {
+        flow.wind = 1;
+        flow.windWay = struck.target > struck.seat ? 1 : -1;
+    }
+    if (struck.seat == fx.seat) fx.used = true;
+    if (struck.power == Power.Quake && struck.seat != fx.seat) Shake(fx, 0.8);
+    if (struck.power == Power.Cement && struck.seat == fx.seat) Flash(fx, Color.white, 0.2);
+}
+
+// Who took a round is only said once it's certain.
+local event(verified RoundOver over) RoundTold(mut Flow flow, mut Fx fx)
+{
+    flow.winner = over.winner;
+    flow.round = over.round;
+    flow.since = 0;
+    flow.papered = false;
+    Shake(fx, 0.5);
+}
+
+local event(RoundBuilt built) RoundShown(mut Flow flow)
+{
+    flow.built = built.round;
+    flow.begun = 0;
+}
+
+[Stage(Layers.Camera, 5)]
+view Elapse(Fx fx, mut Flow flow)
+{
+    flow.since += fx.dt;
+    flow.begun += fx.dt;
+    flow.cast += fx.dt;
+    flow.earned += float4(fx.dt);
+    flow.wind = Math.Max(0, flow.wind - fx.dt * 1.1);
+}
+
+// The dust and the pieces, in the world: each moves on, fades and goes.
+// Chunks are solid, and what glows is added to what's under it.
+[Stage(Layers.Effects, 10)]
+view Bits(mut Fx fx)
+{
+    var thin = 1.3 / Math.Max(fx.meter, 1);
+    mut var i = 0;
+    while (i < fx.bits.count)
+    {
+        mut var bit = fx.bits[i];
+        bit.age += fx.dt;
+        if (bit.age >= bit.life)
+        {
+            fx.bits.RemoveAt(i);
+            continue;
+        }
+        bit.velocity.y += -10 * bit.weight * fx.dt;
+        bit.velocity = bit.velocity * Math.Max(0, 1 - bit.drag * fx.dt);
+        bit.position += bit.velocity * fx.dt;
+        bit.angle += bit.spin * fx.dt;
+        fx.bits[i] = bit;
+        var left = 1 - bit.age / bit.life;
+        if (bit.kind == BitKind.Chunk)
+            Draw.Rect(bit.position, float2(Math.Max(bit.size, thin * 1.5)), bit.angle, Fade(bit.color, left * 2));
+        else if (bit.kind == BitKind.Dust)
+            Draw.Shape(Shape { center = bit.position, size = float2(bit.size * (2 - left)), ellipse = true, color = Fade(bit.color, left),
+                                 soft = bit.size * 0.5 });
+        i++;
+    }
+    Draw.Blend(Blend.Add)
+    {
+        foreach (var bit in fx.bits)
+        {
+            var left = 1 - bit.age / bit.life;
+            if (bit.kind == BitKind.Spark)
+                Draw.Line(bit.position - bit.velocity * 0.035, bit.position, Math.Max(bit.size, thin), Fade(bit.color, left * 1.5));
+            else if (bit.kind == BitKind.Glow)
+                Draw.Shape(Shape { center = bit.position, size = float2(bit.size * 2 * left), ellipse = true,
+                                     color = Fade(bit.color, left), soft = bit.size * 0.6 });
+        }
+    }
+}
+
+// Words rising from where something happened. This machine's own are bigger.
+[Stage(Layers.Effects, 20)]
+view Labels(mut Fx fx)
+{
+    mut var i = 0;
+    while (i < fx.labels.count)
+    {
+        mut var label = fx.labels[i];
+        label.age += fx.dt;
+        if (label.age >= label.life)
+        {
+            fx.labels.RemoveAt(i);
+            continue;
+        }
+        fx.labels[i] = label;
+        var t = label.age / label.life;
+        var size = Math.Max(label.mine ? 1.1 : 0.9, (label.mine ? 18 : 14) / Math.Max(fx.meter, 1)) * (0.6 + 0.4 * EaseBack(t * 5));
+        var at = label.position + float2(0, EaseOut(t) * 2.4);
+        var shown = Math.Saturate((1 - t) * 3);
+        Draw.Text(label.words, at + float2(0.06, -0.06), size, Fade(BACK, shown * 0.8), Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(label.words, at, size, Fade(Mix(label.color, Color.white, label.mine ? 0.35 : 0.1), shown), Anchor.MiddleCenter,
+                    Font.Bold);
+        i++;
+    }
+}

@@ -1,0 +1,639 @@
+// A small deterministic platform duel. This file is the match. What a machine
+// shows of it is in paint.tide (the arena), hud.tide and play.tide (the menus).
+// `stats` puts the frame rate in the bottom right corner, and the ping in a
+// friend's match: a click on it, or F8, lists the rest of what the engine does.
+settings { title = "Tide duel"; maxPlayers = 2; hostMigration = true; stats = true; }
+
+const float ARENA_WIDTH = 960;
+const float ARENA_HEIGHT = 540;
+const int WINS = 5;
+
+enum Phase { Countdown, Fight, Draft, Finished }
+enum Card { Vitality, RapidFire, Scatter, Ricochet, HeavyShot, SwiftFeet, Featherweight, Mortar }
+const int CARDS = 8;
+
+struct Build
+{
+    float maxHealth = 100;
+    float speed = 270;
+    float reload = 0.8;
+    float damage = 35;
+    float bulletSpeed = 750;
+    float knockback = 220;
+    float gravity = 420; // How fast its shots drop
+    int pellets = 1;
+    int bounces;
+    List<Card> cards;    // The upgrades picked this match, in order
+}
+
+component Body
+{
+    [Position] float2 position;
+    [Position] float2 previous;
+    float2 velocity;
+    float radius = 18;
+}
+
+component Fighter
+{
+    int side;
+    bool bot = true;
+    Build build;
+    float health = 100;
+    float2 aim = float2(1, 0);
+    bool grounded;
+    float fireCooldown;
+    float blockCooldown;
+    float blockLeft;
+    int round;
+    int match;
+
+    // How this machine shows it: what its local handlers set as things happen
+    // to it (heard.tide), and its views let settle (paint.tide)
+    local float chip;         // Health the last hits took, which its bar lets go of slowly
+    local float hit;          // A flash that fades
+    local float squash;       // Wider than tall above 0, taller than wide under it
+    local float squashSpeed;
+    local float arrive = 1;   // 0 to 1 as it pops in at a round's start
+    local float recoil;
+    local float puff;         // Until the next dust at its feet
+}
+
+component Platform { float2 center; float2 half; }
+
+component Bullet
+{
+    Entity shooter;
+    int side;
+    float damage;
+    float knockback;
+    int bounces;
+    float gravity;
+    float lifetime = 4;
+    int round;
+
+    // Where this machine's trail of it has got to
+    local float2 trail;
+}
+
+singleton Duel
+{
+    Phase phase = Phase.Countdown;
+    float timer = 1.5;
+    int round = 1;
+    int match = 1;
+    int scoreBlue;
+    int scoreOrange;
+    int draftSide;
+    // What deals the cards a round's loser picks from, and the three it dealt.
+    // Nothing seeds it here, so the engine does, from the match's seed: no two
+    // matches offer the same cards.
+    Random deck;
+    int3 offers;
+    // Nobody plays yet: the fighters duel by themselves behind the menu, until
+    // a player there picks practice or a second player joins.
+    bool attract = true;
+    Entity blue;
+    Entity orange;
+    PlayerID bluePlayer;
+    PlayerID orangePlayer;
+}
+
+scene Main { }
+
+input Controls
+{
+    [Clamp(-1, 1)] float move;
+    // Where a fighter points isn't something its player does: what another
+    // machine guesses of these three stays, where the rest is let go
+    [Absolute] float2 aim;
+    [Absolute] float2 point;
+    [Absolute] bool pointAim;
+    bool jump;
+    bool fire;
+    bool block;
+
+    Sample(Devices devices, Canvas canvas)
+    {
+        var keys = devices.keyboard;
+        move = (keys.d.pressed || keys.rightArrow.pressed ? 1 : 0)
+             - (keys.a.pressed || keys.leftArrow.pressed ? 1 : 0);
+        jump = keys.space.pressed || keys.w.pressed || keys.upArrow.pressed;
+        fire = devices.mouse.left.pressed;
+        block = devices.mouse.right.pressed || keys.leftShift.pressed || keys.rightShift.pressed;
+        pointAim = canvas.scale > 0 && !canvas.touchAim;
+        point = (devices.mouse.position - canvas.screenHalf) / Math.Max(canvas.scale, 0.01);
+
+        var pad = devices.gamepad;
+        if (Math.Abs(pad.leftStick.x) > 0.15) move = pad.leftStick.x;
+        jump = jump || pad.buttonSouth.pressed;
+        fire = fire || pad.rightTrigger > 0.4;
+        block = block || pad.leftTrigger > 0.4 || pad.leftShoulder.pressed;
+        var padUsed = Math.Abs(pad.leftStick.x) > 0.15 || Math.LengthSq(pad.rightStick) > 0.04
+                   || pad.buttonSouth.pressed || pad.rightTrigger > 0.4
+                   || pad.leftTrigger > 0.4 || pad.leftShoulder.pressed;
+        var mouseUsed = Math.LengthSq(devices.mouse.delta) > 0
+                     || devices.mouse.left.down || devices.mouse.right.down;
+        var keyboardUsed = keys.a.down || keys.d.down || keys.leftArrow.down || keys.rightArrow.down
+                        || keys.space.down || keys.w.down || keys.upArrow.down
+                        || keys.leftShift.down || keys.rightShift.down;
+        if (mouseUsed || keyboardUsed) pointAim = canvas.scale > 0;
+        if ((canvas.gamepadAim || padUsed) && !mouseUsed && !keyboardUsed)
+        {
+            aim = Math.LengthSq(pad.rightStick) > 0.04 ? Math.Normalize(pad.rightStick) : float2(0);
+            pointAim = false;
+        }
+
+        foreach (var touch in devices.touchscreen.touches)
+        {
+            if (!touch.press.pressed) continue;
+            pointAim = false;
+            aim = float2(0);
+        }
+
+        foreach (var touch in devices.touchscreen.touches)
+        {
+            if (!touch.press.pressed) continue;
+            if (touch.startPosition.x < canvas.screenHalf.x)
+            {
+                move = Math.Clamp((touch.position.x - touch.startPosition.x) / 60, -1, 1);
+                jump = jump || touch.position.y - touch.startPosition.y > 45;
+            }
+            else if (touch.startPosition.x > canvas.screenHalf.x * 2 - 110 && touch.startPosition.y < 150)
+                block = true;
+            else
+            {
+                point = (touch.position - canvas.screenHalf) / Math.Max(canvas.scale, 0.01);
+                pointAim = true;
+                fire = true;
+            }
+        }
+    }
+
+    Sanitize()
+    {
+        aim = Math.Normalize(aim);
+        point = Math.Clamp(point, -2000, 2000);
+    }
+}
+
+event Hit { float damage; float2 impulse; int round; }
+
+// What happened, for whoever shows it. Nothing in the match handles these:
+// each machine's local handlers do (heard.tide), so they cost the match
+// nothing, and a machine with nobody to show them to doesn't even record them.
+event Hurt { float damage; float2 push; bool fatal; } // A hit that counted, to the fighter it hit
+event Fired { }                                       // To the fighter that fired
+event Raised { }                                      // ...that put its shield up
+event Jumped { }
+event Landed { float speed; }                         // How fast it was falling
+event Entered { }                                     // To a fighter, as it starts a round
+event Bounced { float2 at; float2 normal; bool blocked; int side; } // To a shot, off a wall or a shield: `side` is whose it was
+event Impact { float2 at; float2 normal; float2 direction; int side; } // A shot ended on something
+event PhaseBegan { Phase phase; }
+event RoundWon { int side; }                          // -1 when both went down
+event MatchBegan { }
+
+command ChooseCard { int round; int slot; }
+command Rematch { int match; }
+command Practice { int match; }
+command ToMenu { int match; }
+
+// Three cards out of the deck, no two alike, as a draft starts.
+void Deal(mut Duel duel)
+{
+    var first = duel.deck.NextInt(CARDS);
+    mut var second = duel.deck.NextInt(CARDS - 1);
+    if (second >= first) second += 1;
+    mut var third = duel.deck.NextInt(CARDS - 2);
+    if (third >= Math.Min(first, second)) third += 1;
+    if (third >= Math.Max(first, second)) third += 1;
+    duel.offers = int3(first, second, third);
+}
+
+Card Offer(Duel duel, int slot)
+{
+    return Card(slot == 0 ? duel.offers.x : slot == 1 ? duel.offers.y : duel.offers.z);
+}
+
+void ApplyCard(mut Build build, Card card)
+{
+    if (card == Card.Vitality) build.maxHealth += 35;
+    if (card == Card.RapidFire) build.reload = Math.Max(0.18, build.reload * 0.78);
+    if (card == Card.Scatter)
+    {
+        build.pellets = Math.Min(5, build.pellets + 1);
+        build.damage *= 0.85;
+    }
+    if (card == Card.Ricochet) build.bounces = Math.Min(5, build.bounces + 1);
+    if (card == Card.HeavyShot)
+    {
+        build.damage *= 1.3;
+        build.knockback *= 1.3;
+        build.reload *= 1.12;
+    }
+    if (card == Card.SwiftFeet) build.speed = Math.Min(450, build.speed * 1.15);
+    if (card == Card.Featherweight)
+    {
+        build.gravity *= 0.4;
+        build.bulletSpeed = Math.Min(1200, build.bulletSpeed * 1.15);
+    }
+    if (card == Card.Mortar)
+    {
+        build.gravity *= 1.6;
+        build.damage *= 1.45;
+        build.knockback *= 1.2;
+    }
+    build.cards.Add(card);
+}
+
+// Where to aim from `from` so a shot that drops lands on `to`: the flatter of
+// the two arcs, or a lob when it's out of reach.
+float2 Lead(float2 from, float2 to, float speed, float gravity)
+{
+    var offset = to - from;
+    var across = Math.Abs(offset.x);
+    if (gravity < 1 || across < 1) return offset;
+    var fast = speed * speed;
+    var root = fast * fast - gravity * (gravity * across * across + 2 * offset.y * fast);
+    if (root < 0) return float2(Math.Sign(offset.x), 1);
+    return float2(Math.Sign(offset.x), (fast - Math.Sqrt(root)) / (gravity * across));
+}
+
+void NewMatch(mut Duel duel)
+{
+    duel.match += 1;
+    duel.round += 1;
+    duel.scoreBlue = 0;
+    duel.scoreOrange = 0;
+    duel.phase = Phase.Countdown;
+    duel.timer = 1.5;
+}
+
+event(Spawned) Setup(with Main, mut Duel duel)
+{
+    Spawn(Platform { center = float2(0, -235), half = float2(480, 25) });
+    Spawn(Platform { center = float2(-490, 0), half = float2(10, 270) });
+    Spawn(Platform { center = float2(490, 0), half = float2(10, 270) });
+    Spawn(Platform { center = float2(0, 280), half = float2(500, 10) });
+    Spawn(Platform { center = float2(-220, -80), half = float2(110, 10) });
+    Spawn(Platform { center = float2(220, -80), half = float2(110, 10) });
+    Spawn(Platform { center = float2(0, 55), half = float2(95, 10) });
+    duel.blue = Spawn(Body { position = float2(-360, -192) }, Fighter { side = 0 });
+    duel.orange = Spawn(Body { position = float2(360, -192) }, Fighter { side = 1 });
+}
+
+event(PlayerJoined joined) Join(mut Duel duel, mut World world)
+{
+    mut var target = duel.blue;
+    if (duel.bluePlayer == default || duel.bluePlayer == joined.player)
+        duel.bluePlayer = joined.player;
+    else
+    {
+        target = duel.orange;
+        duel.orangePlayer = joined.player;
+    }
+    mut var fighter = world.Get<Fighter>(target);
+    fighter.bot = false;
+    world.Set<Fighter>(target, fighter);
+    target.Add(Owner { player = joined.player });
+    // Two players start their match. One alone is at the menu.
+    duel.attract = duel.bluePlayer == default || duel.orangePlayer == default;
+    NewMatch(duel);
+    Send(MatchBegan { });
+}
+
+event(PlayerLeft left) Leave(mut Duel duel, mut World world)
+{
+    mut var target = duel.orange;
+    if (duel.bluePlayer == left.player)
+    {
+        target = duel.blue;
+        duel.bluePlayer = default;
+    }
+    else if (duel.orangePlayer == left.player) duel.orangePlayer = default;
+    else return;
+    mut var fighter = world.Get<Fighter>(target);
+    fighter.bot = true;
+    world.Set<Fighter>(target, fighter);
+    target.Remove(Owner);
+    // Whoever stays is back at the menu, rather than facing a bot at once
+    duel.attract = true;
+    NewMatch(duel);
+    Send(MatchBegan { });
+}
+
+command(ChooseCard choice, PlayerID sender) PickCard(Owner owner, mut Fighter fighter, mut Duel duel)
+{
+    if (sender != owner.player || duel.phase != Phase.Draft || fighter.side != duel.draftSide) return;
+    if (duel.attract) return;
+    if (choice.round != duel.round || choice.slot < 0 || choice.slot > 2) return;
+    ApplyCard(fighter.build, Offer(duel, choice.slot));
+    duel.round += 1;
+    duel.phase = Phase.Countdown;
+    duel.timer = 1.2;
+    Send(PhaseBegan { phase = Phase.Countdown });
+}
+
+command(Rematch request, PlayerID sender) PlayAgain(mut Duel duel)
+{
+    if (duel.phase != Phase.Finished || request.match != duel.match || duel.attract) return;
+    if (sender != duel.bluePlayer && sender != duel.orangePlayer) return;
+    NewMatch(duel);
+    Send(MatchBegan { });
+}
+
+command(Practice request, PlayerID sender) StartPractice(mut Duel duel)
+{
+    if (!duel.attract || request.match != duel.match) return;
+    if (sender != duel.bluePlayer && sender != duel.orangePlayer) return;
+    duel.attract = false;
+    NewMatch(duel);
+    Send(MatchBegan { });
+}
+
+// Practice ends when its player says so. Two players have no menu to go back
+// to together: one who has had enough leaves, and the other is at the menu.
+command(ToMenu request, PlayerID sender) BackToMenu(mut Duel duel)
+{
+    if (duel.attract || request.match != duel.match) return;
+    if (duel.bluePlayer != default && duel.orangePlayer != default) return;
+    if (sender != duel.bluePlayer && sender != duel.orangePlayer) return;
+    duel.attract = true;
+    NewMatch(duel);
+    Send(MatchBegan { });
+}
+
+// Health changes settle at the end of the previous tick, so simultaneous
+// knockouts can be counted together here, without favoring event order.
+system RoundFlow(mut Duel duel, Time time, query (Fighter fighter) fighters)
+{
+    if (duel.phase == Phase.Countdown)
+    {
+        duel.timer -= time.dt;
+        if (duel.timer > 0) return;
+        duel.phase = Phase.Fight;
+        Send(PhaseBegan { phase = Phase.Fight });
+        return;
+    }
+    if (duel.phase == Phase.Draft)
+    {
+        duel.timer = Math.Max(0, duel.timer - time.dt);
+        return;
+    }
+    if (duel.phase == Phase.Finished)
+    {
+        // Behind the menu, the next match starts by itself
+        duel.timer = Math.Max(0, duel.timer - time.dt);
+        if (!duel.attract || duel.timer > 0) return;
+        NewMatch(duel);
+        Send(MatchBegan { });
+        return;
+    }
+    mut var blueAlive = false;
+    mut var orangeAlive = false;
+    foreach (var entry in fighters)
+    {
+        if (entry.fighter.side == 0) blueAlive = entry.fighter.health > 0;
+        else orangeAlive = entry.fighter.health > 0;
+    }
+    if (blueAlive && orangeAlive) return;
+    if (!blueAlive && !orangeAlive)
+    {
+        duel.round += 1;
+        duel.phase = Phase.Countdown;
+        duel.timer = 1.2;
+        Send(RoundWon { side = -1 });
+        Send(PhaseBegan { phase = Phase.Countdown });
+        return;
+    }
+    if (blueAlive) duel.scoreBlue += 1;
+    else duel.scoreOrange += 1;
+    Send(RoundWon { side = blueAlive ? 0 : 1 });
+    if (duel.scoreBlue >= WINS || duel.scoreOrange >= WINS)
+    {
+        duel.phase = Phase.Finished;
+        duel.timer = 3.5;
+        Send(PhaseBegan { phase = Phase.Finished });
+        return;
+    }
+    duel.draftSide = blueAlive ? 1 : 0;
+    Deal(duel);
+    duel.phase = Phase.Draft;
+    duel.timer = 1;
+    Send(PhaseBegan { phase = Phase.Draft });
+}
+
+system BotDraft(mut Fighter fighter, mut Duel duel)
+{
+    if (!fighter.bot && !duel.attract) return;
+    if (duel.phase != Phase.Draft || duel.timer > 0 || fighter.side != duel.draftSide) return;
+    ApplyCard(fighter.build, Offer(duel, duel.deck.NextInt(3)));
+    duel.round += 1;
+    duel.phase = Phase.Countdown;
+    duel.timer = 1.2;
+    Send(PhaseBegan { phase = Phase.Countdown });
+}
+
+system ResetFighters(Duel duel, mut Body body, mut Fighter fighter)
+{
+    if (fighter.match != duel.match)
+    {
+        fighter.build = default;
+        fighter.match = duel.match;
+    }
+    if (fighter.round == duel.round) return;
+    fighter.round = duel.round;
+    fighter.health = fighter.build.maxHealth;
+    fighter.fireCooldown = 0.15;
+    fighter.blockCooldown = 0;
+    fighter.blockLeft = 0;
+    fighter.grounded = true;
+    fighter.aim = float2(fighter.side == 0 ? 1 : -1, 0);
+    body.position = float2(fighter.side == 0 ? -360 : 360, -192);
+    body.previous = body.position;
+    body.velocity = float2(0);
+    this.Snap();
+    this.Send(Entered { });
+}
+
+system Drive(Controls input, Duel duel, Time time, World world, mut Body body, mut Fighter fighter,
+    query (Platform box) platforms)
+{
+    if (duel.phase != Phase.Fight || fighter.health <= 0) return;
+    fighter.fireCooldown = Math.Max(0, fighter.fireCooldown - time.dt);
+    fighter.blockCooldown = Math.Max(0, fighter.blockCooldown - time.dt);
+    fighter.blockLeft = Math.Max(0, fighter.blockLeft - time.dt);
+    mut var move = input.move;
+    mut var jump = input.jump.down;
+    mut var fire = input.fire;
+    mut var block = input.block.down;
+    mut var aim = input.pointAim ? input.point - body.position : input.aim;
+    if (fighter.bot || duel.attract)
+    {
+        var target = world.Get<Body>(fighter.side == 0 ? duel.orange : duel.blue);
+        var distance = target.position.x - body.position.x;
+        // A bot has moods, a few a second: how near it likes to be, how well
+        // it aims and whether it holds its fire. Each side has its own, so
+        // two bots never mirror each other, and each match its own, from its seed.
+        var mood = Math.Hash(int4(time.seed, time.tick / 22, fighter.side, duel.round));
+        var near = 130 + mood % 4 * 30;
+        move = Math.Abs(distance) > near + 130 ? Math.Sign(distance) : Math.Abs(distance) < near ? -Math.Sign(distance) : 0;
+        var lead = Math.Normalize(Lead(body.position, target.position, fighter.build.bulletSpeed, fighter.build.gravity));
+        var off = (float(mood / 4 % 1000) / 1000 - 0.5) * 0.3;
+        aim = float2(lead.x * Math.Cos(off) - lead.y * Math.Sin(off), lead.x * Math.Sin(off) + lead.y * Math.Cos(off));
+        // Step off a ledge when it blocks the shot instead of firing into it.
+        var muzzle = body.position + Math.Normalize(aim) * (body.radius + 7);
+        foreach (var candidate in platforms)
+        {
+            var hit = SweepBox(muzzle, target.position - muzzle, candidate.box.center, candidate.box.half + 5);
+            if (hit.fraction <= 1)
+                move = Math.Abs(distance) > 1 ? Math.Sign(distance) : fighter.side == 0 ? 1 : -1;
+        }
+        jump = fighter.grounded && (time.tick + fighter.side * 41) % 90 == 0;
+        fire = mood / 4000 % 5 != 0;
+        block = (time.tick + fighter.side * 59) % 137 == 0;
+    }
+    if (Math.LengthSq(aim) > 0.001) fighter.aim = Math.Normalize(aim);
+    var targetSpeed = move * fighter.build.speed;
+    body.velocity.x += Math.Clamp(targetSpeed - body.velocity.x, -1700 * time.dt, 1700 * time.dt);
+    if (jump && fighter.grounded)
+    {
+        body.velocity.y = 600;
+        this.Send(Jumped { });
+    }
+    if (block && fighter.blockCooldown <= 0)
+    {
+        fighter.blockLeft = 0.22;
+        fighter.blockCooldown = 2;
+        this.Send(Raised { });
+    }
+    if (!fire || fighter.fireCooldown > 0) return;
+    fighter.fireCooldown = fighter.build.reload;
+    this.Send(Fired { });
+    for (var i = 0; i < fighter.build.pellets; i++)
+    {
+        var angle = (i - (fighter.build.pellets - 1) * 0.5) * 0.14;
+        var direction = float2(fighter.aim.x * Math.Cos(angle) - fighter.aim.y * Math.Sin(angle),
+                               fighter.aim.x * Math.Sin(angle) + fighter.aim.y * Math.Cos(angle));
+        var muzzle = body.position + direction * (body.radius + 7);
+        Spawn(Body { position = muzzle, previous = muzzle, velocity = direction * fighter.build.bulletSpeed, radius = 5 },
+              Bullet { shooter = this, side = fighter.side, damage = fighter.build.damage,
+                       knockback = fighter.build.knockback, bounces = fighter.build.bounces,
+                       gravity = fighter.build.gravity, round = duel.round });
+    }
+}
+
+system MoveFighters(Duel duel, Time time, mut Body body, mut Fighter fighter, query (Platform box) platforms)
+{
+    body.previous = body.position;
+    if (duel.phase != Phase.Fight || fighter.health <= 0) return;
+    body.velocity.y -= 1100 * time.dt;
+    var airborne = !fighter.grounded;
+    var falling = -body.velocity.y;
+    fighter.grounded = false;
+    mut var remaining = time.dt;
+    for (var iteration = 0; iteration < 4; iteration++)
+    {
+        var delta = body.velocity * remaining;
+        mut var closest = Sweep { };
+        foreach (var candidate in platforms)
+        {
+            var hit = SweepBox(body.position, delta, candidate.box.center, candidate.box.half + body.radius);
+            if (hit.fraction < closest.fraction) closest = hit;
+        }
+        if (closest.fraction > 1)
+        {
+            body.position += delta;
+            break;
+        }
+        body.position += delta * closest.fraction + closest.normal * 0.02;
+        body.velocity -= closest.normal * Math.Min(0, Math.Dot(body.velocity, closest.normal));
+        if (closest.normal.y > 0.5) fighter.grounded = true;
+        remaining *= 1 - closest.fraction;
+    }
+    if (airborne && fighter.grounded) this.Send(Landed { speed = falling });
+}
+
+system MoveBullets(Duel duel, Time time, mut Body body, mut Bullet bullet,
+    query (Platform box) platforms, query (Body body, Fighter fighter) fighters)
+{
+    body.previous = body.position;
+    if (duel.phase != Phase.Fight || bullet.round != duel.round || bullet.lifetime <= 0)
+    {
+        this.Destroy();
+        return;
+    }
+    bullet.lifetime -= time.dt;
+    body.velocity.y -= bullet.gravity * time.dt;
+    mut var remaining = 1.0;
+    mut var elapsed = 0.0;
+    for (var iteration = 0; iteration < 4; iteration++)
+    {
+        var delta = body.velocity * time.dt * remaining;
+        mut var closest = Sweep { };
+        mut Entity target = default;
+        mut var blocked = false;
+        mut var side = bullet.side;
+        foreach (var candidate in platforms)
+        {
+            var hit = SweepBox(body.position, delta, candidate.box.center, candidate.box.half + body.radius);
+            if (hit.fraction < closest.fraction) closest = hit;
+        }
+        foreach (var candidate in fighters)
+        {
+            if (candidate.entity == bullet.shooter || candidate.fighter.health <= 0) continue;
+            var motion = candidate.body.position - candidate.body.previous;
+            var center = candidate.body.previous + motion * elapsed;
+            var shield = candidate.fighter.blockLeft > 0;
+            var hit = SweepCircle(body.position - center, delta - motion * remaining,
+                                  float2(0), body.radius + candidate.body.radius + (shield ? 10 : 0));
+            if (hit.fraction < closest.fraction)
+            {
+                closest = hit;
+                target = candidate.entity;
+                blocked = shield;
+                side = candidate.fighter.side;
+            }
+        }
+        if (closest.fraction > 1)
+        {
+            body.position += delta;
+            return;
+        }
+        body.position += delta * closest.fraction + closest.normal * 0.03;
+        var direction = Math.Normalize(body.velocity);
+        if (target != default && !blocked)
+        {
+            target.Send(Hit { damage = bullet.damage, impulse = direction * bullet.knockback, round = bullet.round });
+            Send(Impact { at = body.position, normal = closest.normal, direction = direction, side = bullet.side });
+            this.Destroy();
+            return;
+        }
+        if (target == default && bullet.bounces <= 0)
+        {
+            Send(Impact { at = body.position, normal = closest.normal, direction = direction, side = bullet.side });
+            this.Destroy();
+            return;
+        }
+        this.Send(Bounced { at = body.position, normal = closest.normal, blocked = target != default, side = bullet.side });
+        if (target == default) bullet.bounces -= 1;
+        else
+        {
+            bullet.shooter = target;
+            bullet.side = side;
+        }
+        body.velocity = Math.Reflect(body.velocity, closest.normal);
+        elapsed += remaining * closest.fraction;
+        remaining *= 1 - closest.fraction;
+    }
+}
+
+event(Hit hit) TakeHit(mut Fighter fighter, mut Body body, Duel duel)
+{
+    if (duel.phase != Phase.Fight || hit.round != duel.round || fighter.health <= 0) return;
+    var taken = Math.Min(fighter.health, hit.damage);
+    fighter.health = Math.Max(0, fighter.health - hit.damage);
+    body.velocity += hit.impulse;
+    this.Send(Hurt { damage = taken, push = Math.Normalize(hit.impulse), fatal = fighter.health <= 0 });
+}

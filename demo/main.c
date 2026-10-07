@@ -58,13 +58,13 @@ static tide_view_worlds update(void)
     tide_session_event event;
     while (tide_session_next_event(session, &event)) {
         if (event.kind == TIDE_SESSION_CONNECTED_EVENT) tide_local_connected(&local);
-        else tide_local_disconnected(&local, event.reason);
+        else tide_local_disconnected(&local, event.reason, event.message);
     }
     const tide_session_status status = tide_session_status_of(session);
-    char room[TIDE_ROOM_CODE_LENGTH + 1];
-    tide_platform_room_code(room, sizeof room);
+    char room[TIDE_ROOM_CODE_LENGTH + 1] = "";
+    if (status.open || !status.server) tide_platform_room_code(room, sizeof room);
     tide_local_set_session(&local, status.client.state, status.client.player, status.client.ping_ms, status.server,
-                           room);
+                           status.open, room);
     return tide_session_view(session);
 }
 
@@ -73,7 +73,7 @@ static void render(const tide_view_worlds view)
 {
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_platform_screen_size(), tide_platform_measure_text);
-    tide_frame(view.current, view.previous, view.alpha, &local, &draw, &gui);
+    tide_frame(view.current, view.previous, view.alpha, view.verified, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
     tide_platform_draw(&draw);
 }
@@ -82,6 +82,7 @@ static int play_frame(const float seconds)
 {
     tide_platform_poll(&devices);
     now += seconds;
+    tide_local_frame_time(&local, seconds);
     const tide_view_worlds view = update();
     const tide_world *match = view.current;
     render(view);
@@ -91,6 +92,7 @@ static int play_frame(const float seconds)
     snprintf(stats, sizeof stats, "tick %d   entities %u   ping %u ms   %d fps", match ? (int)match->Time.tick : 0,
              match ? (unsigned)tide_world_entity_count(match) : 0u, (unsigned)status.client.ping_ms, tide_platform_fps());
     tide_platform_draw_overlay(stats);
+    tide_platform_next_frame(tide_session_until_tick(session)); // While minimized: the next tick
     return TIDE_KEEP_RUNNING;
 }
 
@@ -105,13 +107,16 @@ static void smoke_input(const uint32_t t)
     devices.gamepad.leftStick = t >= 150 && t < 200 ? tide_f2(-0.6f, -0.3f) : tide_f2(0.0f, 0.0f);
 }
 
-static const Body *find_player(const tide_world *w)
+// The player's Body, into `body`: false when there's none.
+static bool find_player(const tide_world *w, Body *body)
 {
     for (uint32_t i = 0; i < w->entities.next_unused; i++) {
-        const tide_entity e = {i, w->entities.slots[i].generation};
-        if (tide_get_Owner((tide_world *)w, e)) return tide_get_Body((tide_world *)w, e);
+        const tide_entity e = tide_entity_in_slot(&w->entities, i);
+        if (!tide_has_Owner(w, e) || !tide_has_Body(w, e)) continue;
+        *body = tide_get_Body(w, e);
+        return true;
     }
-    return NULL;
+    return false;
 }
 
 static uint64_t fnv1a(uint64_t h, const void *data, const size_t size)
@@ -126,27 +131,27 @@ static uint64_t world_hash(const tide_world *w)
 {
     uint64_t h = 0xcbf29ce484222325ull;
     for (uint32_t i = 0; i < w->entities.next_unused; i++) {
-        const tide_entity e = {i, w->entities.slots[i].generation};
-        const Body *body = tide_get_Body((tide_world *)w, e);
-        if (!body) continue;
+        const tide_entity e = tide_entity_in_slot(&w->entities, i);
+        const Body body = tide_get_Body(w, e);
+        if (!tide_has_Body(w, e)) continue;
         h = fnv1a(h, &e, sizeof e);
-        h = fnv1a(h, body, sizeof *body);
+        h = fnv1a(h, &body, sizeof body);
     }
     return h;
 }
 
 // Renders the views offscreen and reads pixels back, which proves the whole
-// path works (Tide views, the draw list, raylib, WebGL on the web) without
+// path works (Tide views, the draw list, the renderer, WebGL on the web) without
 // needing a visible window. The frame's render() set the camera for
 // tide_platform_world_to_screen.
 static bool smoke_pixels(const tide_world *w)
 {
-    const Body *player = find_player(w);
-    if (!player) {
+    Body player;
+    if (!find_player(w, &player)) {
         printf("smoke: no player\n");
         return false;
     }
-    const tide_float2 points[2] = {tide_platform_world_to_screen(player->position), tide_f2(2.0f, 2.0f)};
+    const tide_float2 points[2] = {tide_platform_world_to_screen(player.position), tide_f2(2.0f, 2.0f)};
     uint32_t rgba[2];
     tide_platform_read_pixels(&draw, points, 2, rgba);
 
@@ -173,8 +178,7 @@ static int smoke_frame(const float seconds)
     const uint64_t hash = world_hash(server);
     printf("smoke: %d ticks, %u entities, hash 0x%016llX (expected 0x%016llX)\n", (int)server->Time.tick,
            (unsigned)tide_world_entity_count(server), (unsigned long long)hash, SMOKE_HASH);
-    // A frame loop that doesn't present frames and poll events (raylib built
-    // with SUPPORT_CUSTOM_FRAME_CONTROL) never advances its frame time either.
+    // A frame loop that doesn't time its frames would say none passed.
     const bool frames = smoke_seconds > 0.0;
     printf("smoke: frames took %.3f s%s\n", smoke_seconds, frames ? "" : ", expected time to pass");
     const bool pixels = smoke_pixels(match);
@@ -215,7 +219,8 @@ int main(const int argc, char **argv)
         char room[TIDE_ROOM_CODE_LENGTH + 1];
         tide_platform_room_code(room, sizeof room);
         printf("demo: hosting on port %lu (not on the web), and in room %s\n", port, room);
-        tide_session_host(session, NULL, network, now);
+        tide_session_start(session, NULL, now);
+        tide_session_open(session, network);
     } else if (join) {
         if (!tide_platform_room_join(join, &network, &server)) {
             fprintf(stderr, "demo: can't join room '%s'\n", join);
@@ -229,7 +234,7 @@ int main(const int argc, char **argv)
         }
         tide_session_join(session, network, server, now);
     } else {
-        tide_session_play(session, NULL, now);
+        tide_session_start(session, NULL, now);
     }
     tide_platform_run(frame, NULL);
 }

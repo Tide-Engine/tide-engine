@@ -1,0 +1,6 @@
+namespace Fast;
+
+override system Combat.Mvoe(mut Combat.Position position, Combat.Velocity velocity)
+{
+    position.value += velocity.value * 2;
+}

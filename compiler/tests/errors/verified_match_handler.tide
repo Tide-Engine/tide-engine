@@ -1,0 +1,11 @@
+// expect: the match is the same on every machine, so a match handler has no 'verified' events
+component Health { int value; }
+event Hit { int damage; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Health).Send(Hit); }
+
+event(verified Hit hit) TakeHit(mut Health health)
+{
+    health.value -= hit.damage;
+}

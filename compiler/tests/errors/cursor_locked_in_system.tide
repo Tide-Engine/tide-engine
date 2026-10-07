@@ -1,0 +1,7 @@
+// expect: the match runs the same on every machine, so it can't read Cursor.locked
+scene Main { }
+singleton Aim { bool looking; }
+system Look(mut Aim aim)
+{
+    aim.looking = Cursor.locked;
+}

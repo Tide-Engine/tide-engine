@@ -1,0 +1,8 @@
+// expect: an event is sent whole, so none of its fields can be local
+scene Main { }
+
+event Hit
+{
+    int damage;
+    local int shown;
+}

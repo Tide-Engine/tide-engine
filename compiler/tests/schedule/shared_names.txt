@@ -1,0 +1,33 @@
+shared_names: 4 systems each tick, 4 stages deep; none can run at the same time.
+A system starts once everything it runs after is done.
+
+stage 1  Move(Body, Speed, with Player)  (per entity)
+         reads Speed
+         writes Body
+         alongside nothing
+stage 2  Settle  (per entity)
+         writes Body
+         after Move(Body, Speed, with Player): both write Body
+         alongside nothing
+stage 3  Watch  (per entity)
+         reads Body
+         writes Log
+         after Move(Body, Speed, with Player): it writes Body, which this reads (and through Settle)
+         after Settle: it writes Body, which this reads
+         alongside nothing
+stage 4  Move(Body, Speed, with Enemy)  (per entity)
+         reads Speed
+         writes Body
+         after Settle: both write Body (and through Watch)
+         after Watch: it reads Body, which this writes
+         alongside nothing
+
+Views, every frame in this order (they only read, so nothing waits):
+         Show(Body)
+         Show(Log)
+         Sure(verified Body)
+         Sure(Body)
+
+Event handlers, at the end of the tick, as their events are sent:
+         Spawned: Setup
+         Hit: Count(Log), Count(Body)

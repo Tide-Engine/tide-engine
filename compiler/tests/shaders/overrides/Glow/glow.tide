@@ -1,0 +1,13 @@
+namespace Glow;
+
+override float Dim(float value)
+{
+    return value * 0.25;
+}
+
+// It reads nothing of the Sun, which the draw then doesn't send
+override frag Tint(Vertex vertex, out Color color, Sun sun)
+{
+    color = vertex.color;
+    color.g = Dim(vertex.color.g) + 0.125;
+}

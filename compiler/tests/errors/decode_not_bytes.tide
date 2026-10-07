@@ -1,0 +1,4 @@
+// expect: Decode takes a List<byte>, the PNG's bytes, and this is string
+singleton Field { Grid2<Color> cells; string path; }
+scene Main { }
+event(Spawned) Setup(with Main, mut Field field) { field.cells.Decode(field.path)!; }

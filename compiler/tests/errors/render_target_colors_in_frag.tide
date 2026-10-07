@@ -1,0 +1,6 @@
+// expect: a frag runs on the GPU, for each pixel, so it can't read a RenderTarget
+// expect: the view supplies its color image as a Texture instead
+// A frag reads a Texture field, which a view sets: 'maps.held = maps.scene.colors[1];'
+scene Main { }
+local singleton Maps { RenderTarget scene; Texture held; DepthTexture deep; }
+frag Shade(Vertex vertex, out Color color, Maps maps) { color = maps.scene.colors[1].Sample(vertex.uv); }

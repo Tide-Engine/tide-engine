@@ -1,0 +1,4 @@
+// expect: a frag reads a DepthTexture that's a field of a component or singleton it takes, not a parameter of its own
+// expect: keep it in local state, 'local singleton Lamp { DepthTexture shadow; }', which a view sets
+scene Main { }
+frag Lit(Vertex vertex, out Color color, DepthTexture shadow) { color = Color.white; }

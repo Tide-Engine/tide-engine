@@ -1,0 +1,71 @@
+// Lookups: a roster held in a map and a set. Each tick reads every live key
+// and an absent one, updates each score, then replaces a run of keys. Removing
+// and adding keeps the roster's size fixed but changes its insertion order.
+
+scene Main { }
+
+singleton Roster
+{
+    int count = 257;
+    int changes = 19;
+    bool ready;
+    List<int> keys; // The key in each logical slot, independent of insertion order
+    Map<int, int> scores;
+    Set<int> seen;
+    int cursor;
+    int next;
+    long observed;
+    long misses;
+    long removed;
+    long added;
+}
+
+// Live keys use only 30 bits; setting bit 30 gives a guaranteed miss. The xor
+// permutes the keys without relying on the collection's hash implementation.
+const int KEY_MASK = 0x3FFFFFFF;
+const int KEY_SALT = 0x13579BDF;
+const int MISSING_BIT = 0x40000000;
+
+system Lookup(mut Roster roster, Time time)
+{
+    if (!roster.ready)
+    {
+        roster.ready = true;
+        roster.keys.Resize(roster.count);
+        for (var i = 0; i < roster.count; i++)
+        {
+            var key = (i ^ KEY_SALT) & KEY_MASK;
+            roster.keys[i] = key;
+            roster.scores[key] = Math.Hash(int2(key, 0)) & 0xFFFF;
+            roster.seen.Add(key);
+        }
+        roster.next = roster.count;
+        return;
+    }
+    for (var i = 0; i < roster.count; i++)
+    {
+        var key = roster.keys[i];
+        var value = roster.scores[key];
+        roster.observed += value;
+        if (roster.seen.Has(key)) roster.observed++;
+        var missing = key | MISSING_BIT;
+        roster.observed += roster.scores[missing];
+        if (!roster.seen.Has(missing)) roster.misses++;
+        roster.scores[key] = (value + 1 + (time.tick & 7)) & 0xFFFF;
+    }
+    if (roster.count == 0) return;
+    for (var i = 0; i < roster.changes; i++)
+    {
+        var old = roster.keys[roster.cursor];
+        roster.observed += roster.scores[old];
+        if (roster.scores.Remove(old)) roster.removed++;
+        if (roster.seen.Remove(old)) roster.removed++;
+        var key = (roster.next ^ KEY_SALT) & KEY_MASK;
+        roster.next = (roster.next + 1) & KEY_MASK;
+        roster.scores[key] = Math.Hash(int2(key, time.tick)) & 0xFFFF;
+        if (roster.seen.Add(key)) roster.added++;
+        if (roster.seen.Add(key)) roster.added++; // An existing key isn't added twice
+        roster.keys[roster.cursor] = key;
+        roster.cursor = (roster.cursor + 1) % roster.count;
+    }
+}

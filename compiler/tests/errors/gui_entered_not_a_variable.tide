@@ -1,0 +1,6 @@
+// expect: no version of GUILayout.IntField takes (string, int, int)
+// expect: GUILayout.IntField(string label, mut int value) -> bool
+// expect: GUILayout.IntField(string label, mut int value, out bool entered) -> bool
+scene Main { }
+local singleton Lobby { string code; int count; float ratio; bool entered; }
+view Join(mut Lobby lobby) { GUILayout.IntField("Count", lobby.count, 1); }

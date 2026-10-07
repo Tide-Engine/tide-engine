@@ -31,12 +31,12 @@ TIDE_TEST(net_ended_a_session_goes_back_to_main)
     // The menu starts a match in the arena.
     local.Menu.play = true;
     tide_draw_reset(&draw);
-    tide_frame(NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_frame(NULL, NULL, 1.0f, NULL, &local, &draw, &gui);
     tide_session_request request;
     tide_start start;
     TIDE_REQUIRE(tide_local_take_request(&local, &request, &start));
-    TIDE_CHECK(request.kind == TIDE_REQUEST_PLAY && start.value.Arena.rounds == 30);
-    tide_session_play(s, &start, t);
+    TIDE_CHECK(request.kind == TIDE_REQUEST_START && start.value.Arena.rounds == 30);
+    tide_session_start(s, &start, t);
     bool connected = false;
     bool ended = false;
     for (int frame = 0; frame < 120; frame++) {
@@ -50,7 +50,7 @@ TIDE_TEST(net_ended_a_session_goes_back_to_main)
             }
             TIDE_CHECK(e.reason == TIDE_DISCONNECT_ENDED);
             ended = true;
-            tide_local_disconnected(&local, e.reason);
+            tide_local_disconnected(&local, e.reason, e.message);
         }
     }
     TIDE_CHECK(connected && ended);
@@ -59,7 +59,7 @@ TIDE_TEST(net_ended_a_session_goes_back_to_main)
 
     // Local code hears why, and it's in Main, as it was before the match.
     tide_draw_reset(&draw);
-    tide_frame(NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_frame(NULL, NULL, 1.0f, NULL, &local, &draw, &gui);
     TIDE_CHECK(local.Menu.ended == 1);
     TIDE_CHECK(tide_local_entity_count(&local) == 1);
     tide_session_destroy(s);

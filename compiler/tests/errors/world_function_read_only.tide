@@ -1,0 +1,8 @@
+// expect: 'world' is read-only
+// expect: 'Heal' changes its 'world'
+// expect: declare the parameter as 'mut World world' to set entities' components through it
+component Health { int value; }
+component Healer { Entity patient; }
+scene Main { }
+void Heal(Entity target, mut World world) { world.Set<Health>(target, Health { value = 1 }); }
+system Mend(Healer healer, World world) { Heal(healer.patient, world); }

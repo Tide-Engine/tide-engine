@@ -1,0 +1,5 @@
+// expect: 'with ownership' filters the entities a view runs for, and this is a handler
+local event Blink { }
+scene Main { }
+view Show() { Send(Blink); }
+local event(Blink) Count(with ownership) { }

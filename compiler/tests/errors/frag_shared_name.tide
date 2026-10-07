@@ -1,0 +1,25 @@
+// expect: 2 declarations share the name 'Tint': write the one meant with its parameters' types
+scene Main { }
+
+singleton Sun { float strength = 0.5; }
+
+local singleton Art
+{
+    List<Vertex> quad;
+    List<int> faces;
+}
+
+frag Tint(Vertex vertex, out Color color)
+{
+    color = vertex.color;
+}
+
+frag Tint(Vertex vertex, out Color color, Sun sun)
+{
+    color = vertex.color * sun.strength;
+}
+
+view Show(Art art)
+{
+    Draw.Mesh(art.quad, art.faces, Tint);
+}

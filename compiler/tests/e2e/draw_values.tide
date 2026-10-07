@@ -1,0 +1,159 @@
+// A draw's values: a struct after the vert and the frag, which they read
+// through a parameter of its type. It's sent once for the draw, with what they
+// read of singletons, and only the fields they read.
+
+scene Main { }
+
+struct Corner3
+{
+    float3 position;
+    float2 uv;
+    Color color = Color.white;
+}
+
+struct Corner2
+{
+    float2 position;
+    float2 uv;
+    Color color = Color.white;
+}
+
+struct Finish
+{
+    float shine = 1;
+    int layers = 1;
+}
+
+struct BlurParams
+{
+    float2 direction;
+    int taps = 3;
+    float4x4 unread;       // Never read on the GPU, so never sent
+    long alsoUnread;       // ...and needn't be a type a GPU has
+}
+
+struct Look
+{
+    Color tint = Color.white;
+    float3 lift;
+    bool flip;
+    Finish finish;
+    float unread;
+}
+
+struct Spark
+{
+    float4x4 transform = float4x4.identity;
+    Color tint;
+}
+
+struct Fade
+{
+    float amount = 1;
+    int steps = 2;
+}
+
+singleton Light
+{
+    float strength = 0.75;
+}
+
+local singleton Art
+{
+    List<Corner3> corners;
+    List<Corner2> flat;
+    List<int> faces;
+    List<Spark> sparks;
+    RenderTarget bright;
+    RenderTarget spread;
+    bool made;
+    int rolls;
+}
+
+frag Blur(Vertex vertex, out Color color, Texture source, BlurParams params, Light light)
+{
+    mut var sum = Color(0, 0, 0, 0);
+    for (var i = 0; i < params.taps; i++) sum += source.Sample(vertex.uv + params.direction * i);
+    color = sum * light.strength;
+}
+
+// The vert reads one field of the draw's values and the frag others
+vert Raise(mut Corner3 corner, Look look)
+{
+    corner.position += look.lift;
+}
+
+frag Paint(Corner3 corner, out Color color, Look look, Light light)
+{
+    color = look.tint * light.strength * look.finish.shine;
+    if (look.flip) color.r = 1 - color.r;
+    for (var i = 0; i < look.finish.layers; i++) color.b *= 0.5;
+}
+
+// An instance's struct for each instance, and the draw's for all of them
+frag Glow(Corner3 corner, out Color color, Spark spark, Fade fade)
+{
+    color = spark.tint * fade.amount;
+    for (var i = 0; i < fade.steps; i++) color.a *= 0.5;
+}
+
+vert Slide(mut Corner2 corner, Fade fade)
+{
+    corner.position.x += fade.amount;
+}
+
+Look Rolled(mut Art art)
+{
+    art.rolls++;
+    return Look { tint = Color.green, lift = float3(art.rolls, 0, 0) };
+}
+
+view Fill(mut Art art)
+{
+    if (art.made) return;
+    art.made = true;
+    art.corners = [Corner3 { }, Corner3 { position = float3(1, 0, 0), uv = float2(1, 0) },
+                   Corner3 { position = float3(0, 1, 0), uv = float2(0, 1) }];
+    art.flat = [Corner2 { }, Corner2 { position = float2(1, 0), uv = float2(1, 0) },
+                Corner2 { position = float2(0, 1), uv = float2(0, 1) }];
+    art.faces = [0, 1, 2];
+    art.sparks = [Spark { tint = Color.red }, Spark { tint = Color.blue, transform = float4x4.Translate(float3(3, 0, 0)) }];
+    art.bright = RenderTarget(8, 8, 1);
+    art.spread = RenderTarget(8, 8, 1);
+}
+
+view Blits(Art art)
+{
+    // One frag, two values: a run each
+    Draw.Blit(art.bright.color, art.spread, Blur, BlurParams { direction = float2(1, 0) });
+    Draw.Blit(art.spread.color, art.bright, Blend.Add, Blur, BlurParams { direction = float2(0, 1), taps = 5 });
+}
+
+view Meshes(mut Art art)
+{
+    var red = Look { tint = Color.red, lift = float3(0, 2, 0), flip = true, finish = Finish { shine = 0.5, layers = 3 } };
+    // The same values twice in a row are one run of two instances
+    Draw.Mesh(art.corners, art.faces, float4x4.identity, Raise, Paint, red);
+    Draw.Mesh(art.corners, art.faces, float4x4.Translate(float3(5, 0, 0)), Raise, Paint, red);
+    // ...other values another, though the frag and the mesh are the same
+    Draw.Mesh(art.corners, art.faces, float4x4.identity, Raise, Paint, Look { lift = float3(0, 4, 0) });
+    // A value worked out by a call, kept in a local
+    var rolled = Rolled(art);
+    Draw.Mesh(art.corners, art.faces, float4x4.identity, Raise, Paint, rolled);
+    // An unread field that differs is no other run: it isn't sent
+    Draw.Mesh(art.corners, art.faces, float4x4.identity, Raise, Paint,
+              Look { tint = Color.green, lift = float3(art.rolls, 0, 0), unread = 9 });
+}
+
+view Sparks(Art art)
+{
+    Draw.Instanced(art.corners, art.faces, art.sparks, Glow, Fade { amount = 0.25, steps = 4 });
+    Draw.Instanced(art.corners, art.faces, art.sparks, Glow, Fade { amount = 0.25, steps = 4 });
+    Draw.Instanced(art.corners, art.faces, art.sparks, Glow, Fade { amount = 0.5 });
+}
+
+view Flat(Art art)
+{
+    // A vert alone, in 2D
+    Draw.Mesh(art.flat, art.faces, Slide, Fade { amount = 7 });
+}

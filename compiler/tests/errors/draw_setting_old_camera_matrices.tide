@@ -1,0 +1,7 @@
+// expect: Draw.Camera sets it around a block
+scene Main { }
+
+view Show()
+{
+    Draw.Camera(float4x4.identity, float4x4.identity);
+}

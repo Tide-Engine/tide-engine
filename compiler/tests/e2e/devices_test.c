@@ -48,7 +48,7 @@ TIDE_TEST(devices_are_repaired)
     in.tide_dev.keyboard.a.pressed = true;
     in.tide_dev.keyboard.space.held = true;
     in.tide_dev.mouse.position = tide_f2(3.0f, 4.0f);
-    in.tide_dev.text.count = 5;
+    in.tide_dev.keyboard.text.count = 5;
     in.tide_dev.gamepad.leftStick = tide_f2(INFINITY, -2.0f);
     in.tide_dev.gamepad.rightTrigger = NAN;
     tide_world_init(&world, 1.0f);
@@ -57,7 +57,7 @@ TIDE_TEST(devices_are_repaired)
     TIDE_CHECK(got->gamepad.leftStick.x == 1.0f && got->gamepad.leftStick.y == -1.0f);
     TIDE_CHECK(got->gamepad.rightTrigger == 0.0f);
     TIDE_CHECK(!got->keyboard.a.pressed && !got->keyboard.space.held);
-    TIDE_CHECK(got->mouse.position.x == 0.0f && got->text.count == 0);
+    TIDE_CHECK(got->mouse.position.x == 0.0f && got->keyboard.text.count == 0);
 }
 
 TIDE_TEST(devices_are_the_owners)
@@ -73,13 +73,63 @@ TIDE_TEST(devices_are_the_owners)
     tide_world_set_server_input(&world, tide_input_sample(&server, NULL));
     tide_world_tick(&world);
 
-    const Walker *a = tide_get_Walker(&world, FIRST);
-    const Walker *b = tide_get_Walker(&world, SECOND);
-    const Walker *s = tide_get_Walker(&world, SERVER);
-    TIDE_REQUIRE(a && b && s);
-    TIDE_CHECK(a->position.x == 1.0f && a->jumps == 1 && a->connected && a->throttle == 0.0f);
-    TIDE_CHECK(b->position.x == 0.0f && b->jumps == 0 && !b->connected);
-    TIDE_CHECK(s->throttle == 0.5f && s->jumps == 0);
+    const Walker a = tide_get_Walker(&world, FIRST);
+    const Walker b = tide_get_Walker(&world, SECOND);
+    const Walker s = tide_get_Walker(&world, SERVER);
+    TIDE_REQUIRE(tide_has_Walker(&world, FIRST) && tide_has_Walker(&world, SECOND) && tide_has_Walker(&world, SERVER));
+    TIDE_CHECK(a.position.x == 1.0f && a.jumps == 1 && a.connected && a.throttle == 0.0f);
+    TIDE_CHECK(b.position.x == 0.0f && b.jumps == 0 && !b.connected);
+    TIDE_CHECK(s.throttle == 0.5f && s.jumps == 0);
+}
+
+TIDE_TEST(devices_views_receive_this_machines_frame)
+{
+    tide_world_init(&world, 1.0f);
+    tide_world_tick(&world);
+    // Every owner's networked input remains empty. The view sees the local
+    // frame for all three entities, including the server's unowned one.
+    tide_local local = {0};
+    tide_local_init(&local);
+    tide_draw_list draw = {0};
+    tide_gui gui = {0};
+    tide_devices frame = {0};
+    tide_button_set(&frame.keyboard.space, true);
+    frame.pointer.position = tide_f2(23.0f, 41.0f);
+    tide_gui_begin(&gui, &frame, tide_f2(800.0f, 600.0f), NULL);
+    tide_frame(&world, NULL, 1.0f, NULL, &local, &draw, &gui);
+    tide_gui_end(&gui, &draw);
+    TIDE_CHECK(local.Seen.entities == 3);
+    TIDE_CHECK(local.Seen.held);
+    TIDE_CHECK(local.Seen.pointer.x == 23.0f && local.Seen.pointer.y == 41.0f);
+    tide_draw_free(&draw);
+    tide_local_free(&local);
+}
+
+TIDE_TEST(devices_touches_send_what_systems_read)
+{
+    tide_devices d = {0};
+    tide_touches_poll(&d.touchscreen);
+    tide_touch_event(&d.touchscreen, TIDE_TOUCH_BEGAN, 40, tide_f2(10.0f, 20.0f));
+    tide_touch_event(&d.touchscreen, TIDE_TOUCH_BEGAN, 41, tide_f2(50.0f, 50.0f));
+    tide_touch_event(&d.touchscreen, TIDE_TOUCH_MOVED, 40, tide_f2(13.0f, 24.0f));
+    tide_touch_event(&d.touchscreen, TIDE_TOUCH_MOVED, 41, tide_f2(60.0f, 50.0f));
+
+    const tide_input in = tide_input_sample(&d, NULL);
+    const tide_touchscreen *s = &in.tide_dev.touchscreen;
+    TIDE_CHECK(s->primaryTouch.press.pressed && s->touches.at[0].press.pressed && s->touches.at[1].press.pressed);
+    TIDE_CHECK(s->touches.at[0].delta.x == 3.0f && s->touches.at[0].delta.y == 4.0f);
+    TIDE_CHECK(s->touches.at[1].delta.x == 0.0f); // Only the first slot's movement is read
+    TIDE_CHECK(s->touches.at[0].position.x == 0.0f && s->touches.at[0].startPosition.x == 0.0f); // The window's
+    TIDE_CHECK(s->primaryTouch.position.x == 0.0f && s->touches.at[0].id == 0); // Not read
+    TIDE_CHECK(!s->touches.at[0].press.held && s->touches.at[0].source == 0); // The platform's own
+
+    tide_world_init(&world, 1.0f);
+    tide_world_set_input(&world, tide_player_from_index(0), in);
+    tide_world_tick(&world);
+    const Walker a = tide_get_Walker(&world, FIRST);
+    TIDE_CHECK(a.taps == 1 && a.swipe.x == 3.0f && a.swipe.y == 4.0f && a.fingers == 2 && a.slots == TIDE_TOUCHES);
+    tide_world_tick(&world); // Repeated: the finger doesn't tap again
+    TIDE_CHECK(tide_get_Walker(&world, FIRST).taps == 1);
 }
 
 // A button went down against last tick's input, so an input that repeats,
@@ -92,7 +142,7 @@ TIDE_TEST(devices_buttons_go_down_once)
     tide_world_set_input(&world, tide_player_from_index(0), tide_input_sample(&d, NULL));
     tide_world_tick(&world);
     tide_world_tick(&world); // Not set again: it repeats
-    TIDE_CHECK(tide_get_Walker(&world, FIRST)->jumps == 1);
+    TIDE_CHECK(tide_get_Walker(&world, FIRST).jumps == 1);
 
     // As a host does: sample, then start the next window.
     tide_devices_consume(&d);
@@ -103,5 +153,5 @@ TIDE_TEST(devices_buttons_go_down_once)
     tide_button_set(&d.keyboard.space, true);
     tide_world_set_input(&world, tide_player_from_index(0), tide_input_sample(&d, NULL));
     tide_world_tick(&world);
-    TIDE_CHECK(tide_get_Walker(&world, FIRST)->jumps == 2);
+    TIDE_CHECK(tide_get_Walker(&world, FIRST).jumps == 2);
 }

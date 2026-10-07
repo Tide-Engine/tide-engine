@@ -1,0 +1,9 @@
+// expect: a Texture has Sample(uv[, filter[, wrap]]), not 'Compare'
+// expect: Compare reads a render target's depth, a DepthTexture: 'target.depth'
+scene Main { }
+local singleton Lamp { Texture image; }
+frag Lit(Vertex vertex, out Color color, Lamp lamp)
+{
+    float lit = lamp.image.Compare(vertex.uv, 0.5);
+    color = Color(lit, lit, lit);
+}

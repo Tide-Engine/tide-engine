@@ -1,0 +1,16 @@
+// expect: a comparison runs again and again as the list sorts, so it changes nothing outside it
+scene Main { }
+singleton Tally { List<int> values; int half; }
+bool TryHalf(int value, out int half)
+{
+    half = value / 2;
+    return value % 2 == 0;
+}
+system Run(mut Tally tally)
+{
+    tally.values.Sort(a, b)
+    {
+        TryHalf(a, out tally.half);
+        return a < b;
+    }
+}

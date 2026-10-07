@@ -1,0 +1,6 @@
+// expect: field 'aim' already has [Absolute]
+input Controls
+{
+    [Absolute, Absolute] float2 aim;
+}
+scene Main { }

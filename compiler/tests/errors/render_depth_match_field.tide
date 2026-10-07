@@ -1,0 +1,4 @@
+// expect: 'Caster' can't hold rendering resources in match state
+// expect: Texture, DepthTexture, Cubemap, RenderTarget, Clip and Sound belong to this machine: keep the field local, or use a local component or singleton
+scene Main { }
+component Caster { DepthTexture shadow; }

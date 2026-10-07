@@ -1,0 +1,10 @@
+// expect: 'Add' changes its 'score''s match fields
+singleton Score { int value; local int paint; }
+void AddThrough(mut Score score) { score.value += 1; }
+struct Helper { void Add(mut Score score) { AddThrough(score); } }
+scene Main { }
+view Change(mut Score score)
+{
+    var helper = Helper { };
+    helper.Add(score);
+}

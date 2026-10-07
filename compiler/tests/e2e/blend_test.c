@@ -14,7 +14,7 @@ static void frame(const tide_world *previous, const float alpha)
 {
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(1920.0f, 1080.0f), NULL);
-    tide_frame(&now, previous, alpha, &local, &draw, &gui);
+    tide_frame(&now, previous, alpha, NULL, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
 }
 
@@ -60,15 +60,23 @@ TIDE_TEST(blend_views_see_the_match_between_ticks)
     const tide_draw_command *shot = nth(TIDE_DRAW_RECT, 0);
     TIDE_REQUIRE(shot != NULL);
     TIDE_CHECK(shot->a.y == 500.0f);
+    // Time.t is a float like any other: a quarter of the way from one tick's to the next's
+    const tide_draw_command *clock = nth(TIDE_DRAW_RECT, 1);
+    TIDE_REQUIRE(clock != NULL);
+    TIDE_CHECK(before.Time.t == 1.0f / 20.0f && now.Time.t == 2.0f * (1.0f / 20.0f));
+    TIDE_CHECK(clock->a.x == tide_lerp_f(before.Time.t, now.Time.t, 0.25f));
+    TIDE_CHECK(clock->a.x > before.Time.t && clock->a.x < now.Time.t && clock->a.y == 20.0f);
 
     frame(NULL, 0.25f); // No previous tick: as it is
     TIDE_CHECK(nth(TIDE_DRAW_CIRCLE, 0)->a.x == 8.0f);
+    TIDE_CHECK(nth(TIDE_DRAW_RECT, 1)->a.x == now.Time.t);
     frame(&before, 1.0f);
     TIDE_CHECK(nth(TIDE_DRAW_CIRCLE, 0)->a.x == 8.0f);
+    TIDE_CHECK(nth(TIDE_DRAW_RECT, 1)->a.x == now.Time.t);
 }
 
-// A snapshot copies what's in use, and clears what the world it goes into
-// had beyond it: the same bytes as copying the whole world.
+// A snapshot shares the pages of what it's a snapshot of, and lets go of what
+// the world it goes into had: the same world, ticking the same way.
 TIDE_TEST(blend_snapshots_are_what_is_in_use)
 {
     tide_world_init(&before, 1.0f / 20.0f);
@@ -76,10 +84,10 @@ TIDE_TEST(blend_snapshots_are_what_is_in_use)
     tide_world_init(&now, 1.0f / 20.0f);
     tide_world_tick(&now);
     tide_world_copy(&before, &now);
-    TIDE_CHECK(memcmp(&before, &now, sizeof now) == 0);
+    TIDE_CHECK(tide_world_entity_count(&before) == tide_world_entity_count(&now));
     TIDE_CHECK(tide_world_hash(&before) == tide_world_hash(&now));
     tide_world_tick(&before);
     tide_world_tick(&now);
     TIDE_CHECK(tide_world_hash(&before) == tide_world_hash(&now));
-    TIDE_CHECK(memcmp(&before, &now, sizeof now) == 0);
+    TIDE_CHECK(tide_world_entity_count(&before) == tide_world_entity_count(&now));
 }

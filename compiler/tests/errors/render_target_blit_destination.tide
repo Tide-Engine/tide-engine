@@ -1,0 +1,5 @@
+// expect: Blit's destination is a RenderTarget
+scene Main { }
+local singleton Image { Texture source; }
+frag Copy(Vertex vertex, out Color color, Texture source) { color = source.Sample(vertex.uv); }
+view Show(Image image) { Draw.Blit(image.source, image.source, Copy); }

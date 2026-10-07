@@ -1,0 +1,104 @@
+// Assets: files a game is built with, read by name wherever a value of their
+// type is read (docs/spec.md, Assets). Each type, lists and maps of globs, two
+// declarations of one file, a path through a constant, a grid drawn and
+// sampled in a frag, and match code that reads them.
+
+asset Grid2<Color> hero = "assets/hero.png";
+asset Grid2<Color> heroAgain = "assets/hero.png";
+asset Grid2<Color> runOne = "assets/run/1.png";
+const string RULES = "assets/rules.txt";
+asset string rules = RULES;
+asset List<byte> table = "assets/table.bin";
+asset List<byte> tableAgain = "assets/table.bin";
+asset List<Grid2<Color>> run = "assets/run/*.png";
+asset Map<string, Grid2<Color>> runByName = "assets/run/*.png";
+asset Map<string, string> notes = "assets/notes/*.txt";
+asset List<string> noteList = "assets/*/*.txt"; // A '*' for a folder: the notes, and not rules.txt beside their folder
+asset List<List<byte>> everyPng = "assets/**/*.png";
+
+asset string nested = "assets/notes/a.txt";
+
+singleton Probe
+{
+    int heroWidth;
+    int heroHeight;
+    Color corner;
+    Color atOne;
+    float alphaLast;
+    int heroCells;
+    bool sameHero;
+    int rulesLength;
+    bool rulesStart;
+    int tableSum;
+    int tableCount;
+    int tableFirst;
+    int tableAgainSum;
+    int runCount;
+    Color runTwo;
+    bool hasRunOne;
+    bool hasRunNine;
+    Color byName;
+    string noteA;
+    int noteCount;
+    int noteListCount;
+    string noteFirst;
+    int pngCount;
+    int pngFirstByte;
+    string nested;
+    string copied;
+    List<byte> kept;
+}
+
+// Match code reads assets like any value: every machine has the same pack.
+system Read(mut Probe probe)
+{
+    probe.heroWidth = hero.size.x;
+    probe.heroHeight = hero.size.y;
+    probe.corner = hero[0, 0];
+    probe.atOne = hero[1, 2];
+    probe.alphaLast = hero[7, 5].a;
+    probe.heroCells = 0;
+    foreach (var at in hero) probe.heroCells += 1;
+    probe.sameHero = heroAgain[3, 4].r == hero[3, 4].r && heroAgain.size.x == hero.size.x;
+    probe.rulesLength = rules.length;
+    probe.rulesStart = rules.StartsWith("Règles");
+    probe.tableSum = 0;
+    foreach (var b in table) probe.tableSum += b;
+    probe.tableCount = table.count;
+    probe.tableFirst = table[0];
+    probe.tableAgainSum = 0;
+    foreach (var b in tableAgain) probe.tableAgainSum += b;
+    probe.runCount = run.count;
+    probe.runTwo = run[2][1, 0];
+    probe.hasRunOne = runByName.Has("assets/run/1.png");
+    probe.hasRunNine = runByName.Has("assets/run/9.png");
+    probe.byName = runByName["assets/run/1.png"][0, 1];
+    probe.noteA = notes["assets/notes/a.txt"];
+    probe.noteCount = notes.count;
+    probe.noteListCount = noteList.count;
+    probe.noteFirst = noteList[0];
+    probe.pngCount = everyPng.count;
+    probe.pngFirstByte = everyPng[0][1];
+    probe.nested = nested;
+    probe.copied = rules;
+    probe.kept = table;
+}
+
+scene Main
+{
+}
+
+view Show(Probe probe)
+{
+    var w = float(probe.heroWidth);
+    Draw.Mesh([Vertex { }, Vertex { position = float2(w, 0), uv = float2(1, 0) }, Vertex { position = float2(0, 1), uv = float2(0, 1) }],
+                [0, 1, 2], hero);
+    Draw.Mesh([Vertex { }, Vertex { position = float2(1, 0), uv = float2(1, 0) }, Vertex { position = float2(0, 1), uv = float2(0, 1) }],
+                [0, 1, 2], Shade);
+}
+
+// A frag samples an asset's grid by name, as it samples a singleton's.
+frag Shade(Vertex vertex, out Color color)
+{
+    color = hero.Sample(vertex.uv, Filter.Point) * runOne.Sample(vertex.uv);
+}

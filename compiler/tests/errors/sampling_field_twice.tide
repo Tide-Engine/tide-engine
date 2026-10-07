@@ -1,0 +1,7 @@
+// expect: field 'paint' already has a [Wrap]
+scene Main { }
+
+local singleton Art
+{
+    [Wrap(Wrap.Repeat), Filter(Filter.Point), Wrap(Wrap.Mirror)] Grid2<Color> paint = Grid2(4, 4);
+}

@@ -1,0 +1,28 @@
+// Debug.Log and Debug.Assert: output that changes nothing in the match.
+
+component Counter
+{
+    int value;
+    string label = "counter";
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Counter { value = 1 });
+    Debug.Log("setup");
+}
+
+int Doubled(int x)
+{
+    Debug.Assert(x >= 0, "a counter never goes below zero");
+    return x * 2;
+}
+
+system Count(Time time, mut Counter counter)
+{
+    counter.value = Doubled(counter.value);
+    Debug.Assert(counter.value > 0);
+    Debug.Log($"tick {time.tick}: {counter.label} is {counter.value}");
+}

@@ -1,0 +1,50 @@
+// The game assets.tide is, with no asset in it: its world is the same bytes,
+// as nothing of an asset is in a world (assets_same.h pins both).
+
+singleton Probe
+{
+    int heroWidth;
+    int heroHeight;
+    Color corner;
+    Color atOne;
+    float alphaLast;
+    int heroCells;
+    bool sameHero;
+    int rulesLength;
+    bool rulesStart;
+    int tableSum;
+    int tableCount;
+    int tableFirst;
+    int tableAgainSum;
+    int runCount;
+    Color runTwo;
+    bool hasRunOne;
+    bool hasRunNine;
+    Color byName;
+    string noteA;
+    int noteCount;
+    int noteListCount;
+    string noteFirst;
+    int pngCount;
+    int pngFirstByte;
+    string nested;
+    string copied;
+    List<byte> kept;
+}
+
+system Read(mut Probe probe)
+{
+    probe.heroWidth = 8;
+    probe.copied = "nothing";
+}
+
+scene Main
+{
+}
+
+view Show(Probe probe)
+{
+    var w = float(probe.heroWidth);
+    Draw.Mesh([Vertex { }, Vertex { position = float2(w, 0), uv = float2(1, 0) }, Vertex { position = float2(0, 1), uv = float2(0, 1) }],
+                [0, 1, 2]);
+}

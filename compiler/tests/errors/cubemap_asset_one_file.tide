@@ -1,0 +1,5 @@
+// expect: a Cubemap is six files, its faces, and '../e2e/cubes/sky/sky_px.png' names one: write a glob that matches the six
+// expect: like "art/sky_??.png", for files named for their faces by how their names end: sky_px.png, sky_nx.png, sky_py.png, sky_ny.png, sky_pz.png and sky_nz.png
+// A cube is six files, which a glob matches
+asset Cubemap sky = "../e2e/cubes/sky/sky_px.png";
+scene Main { }

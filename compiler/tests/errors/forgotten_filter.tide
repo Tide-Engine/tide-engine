@@ -1,0 +1,14 @@
+// expect: 'Tag' belongs to the match, and a handler of a local event only takes local state
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+component Tag { }
+
+local event(Forgotten) Free(Box box, with Tag)
+{
+}

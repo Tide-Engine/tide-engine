@@ -1,0 +1,228 @@
+// virtual and override: what a package replaces of a game's code, and a game
+// of a package's. Package Expansion (Expansion/expansion.tide) replaces each
+// declaration here that's marked virtual, but for the second Damage. What's
+// replaced counts itself in `replaced`, which stays 0: it isn't in the build.
+namespace Combat;
+
+using Expansion;
+
+scene Main { }
+
+component Body
+{
+    float x;
+    float speed = 1;
+}
+
+// Only code that's replaced spawns one, so no entity ever has it
+component Ghost { }
+
+struct Stats
+{
+    float health = 100;
+
+    virtual bool IsDead() { return health <= 0; }
+
+    virtual mut void Hurt(float amount)
+    {
+        health -= amount;
+    }
+
+    // Not virtual: it calls the two above, as they're built
+    mut bool Strike(float amount)
+    {
+        Hurt(amount);
+        return IsDead();
+    }
+}
+
+component Unit
+{
+    Stats stats;
+    int reach;
+
+    virtual int Reach() { return 1; }
+}
+
+singleton Log
+{
+    int order;    // Each system's digit, in the order they ran
+    int replaced; // What replaced code counts
+    float damage;
+    float weak;
+    float leveled;
+    int bought;
+    int dead;
+    int later;
+}
+
+event Hit { int damage; }
+
+command Buy { int item; }
+
+struct Corner
+{
+    float2 position;
+    float2 uv;
+    Color color = Color.white;
+}
+
+local singleton Hud
+{
+    int shown;
+    int heard;
+    int replaced;
+    bool buy;
+    List<Corner> corners;
+    List<int> indices;
+}
+
+// Two that share a name. The first is replaced, with another default; the
+// second is virtual too, and nothing replaces it.
+virtual float Damage(float base, float multiplier = 1)
+{
+    return base * multiplier;
+}
+
+virtual float Damage(int level)
+{
+    return level * 10;
+}
+
+virtual async void Later(mut Log log)
+{
+    await Wait.Ticks(1);
+    log.replaced += 1;
+}
+
+// Before One in the file and after Three in the tick: an override keeps the attribute
+[After(Three)]
+virtual system Four(mut Log log)
+{
+    log.order = log.order * 10 + 4;
+    log.replaced += 1;
+}
+
+system One(mut Log log)
+{
+    log.order = log.order * 10 + 1;
+}
+
+virtual system Two(mut Log log)
+{
+    log.order = log.order * 10 + 2;
+    log.replaced += 1;
+    Spawn(Ghost);
+}
+
+system Three(mut Log log)
+{
+    log.order = log.order * 10 + 3;
+}
+
+// It names Two, and waits for what's built in its place
+[After(Two)]
+system Five(mut Log log)
+{
+    log.order = log.order * 10 + 5;
+}
+
+// Nothing spawns a Ghost but code that was replaced, so this matches no entity
+system Haunt(with Ghost, mut Log log)
+{
+    log.replaced += 1;
+}
+
+virtual system Move(mut Body body)
+{
+    body.x += body.speed;
+}
+
+system Fight(mut Unit unit, mut Log log)
+{
+    log.damage = Damage(4.0, 2); // The first Damage, as it's built
+    log.weak = Damage(4.0);      // ...with the default it's built with
+    log.leveled = Damage(3);     // The second, as written
+    unit.reach = unit.Reach();
+    if (unit.stats.Strike(30)) log.dead += 1;
+    this.Send(Hit { damage = 5 });
+}
+
+virtual event(Hit hit) TakeHit(mut Unit unit, mut Log log)
+{
+    unit.stats.health -= hit.damage;
+    log.replaced += 1;
+}
+
+virtual command(Buy buy, PlayerID sender) OnBuy(mut Log log)
+{
+    log.bought = buy.item;
+    log.replaced += 1;
+}
+
+virtual view Show(Body body, mut Hud hud)
+{
+    hud.shown += 1;
+    hud.replaced += 1;
+    Draw.Circle(float2(body.x, 0), 1, Color.white);
+}
+
+virtual local event(Hit hit) ShowHit(mut Hud hud)
+{
+    hud.heard += hit.damage;
+    hud.replaced += 1;
+}
+
+virtual vert Wave(mut Corner vertex)
+{
+    vertex.position.x += 0.75;
+}
+
+virtual frag Shade(Corner vertex, out Color color)
+{
+    color = Color(vertex.color.r * 0.875, vertex.color.g, vertex.color.b, vertex.color.a);
+}
+
+view DrawCorners(mut Hud hud)
+{
+    if (hud.corners.count == 0)
+    {
+        hud.corners.Add(Corner { position = float2(0, 0) });
+        hud.corners.Add(Corner { position = float2(1, 0) });
+        hud.corners.Add(Corner { position = float2(0, 1) });
+        hud.indices.Add(0);
+        hud.indices.Add(1);
+        hud.indices.Add(2);
+    }
+    Draw.Mesh(hud.corners, hud.indices, Wave, Shade);
+}
+
+view Shop(mut Hud hud)
+{
+    if (!hud.buy) return;
+    hud.buy = false;
+    Send(Buy { item = 3 });
+}
+
+event(Spawned) Setup(with Main, mut Log log)
+{
+    Spawn(Body);
+    Spawn(Unit);
+    Later(log);
+}
+
+// The game replaces what the package marked, by its name there or through `using`
+override system Expansion.P2(mut Trace trace)
+{
+    trace.order = trace.order * 10 + 8;
+}
+
+override int Expansion.Bonus()
+{
+    return 5;
+}
+
+override system Hook(mut Trace trace, Time time)
+{
+    trace.hooked += 1;
+}

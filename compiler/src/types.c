@@ -9,7 +9,9 @@ static const struct {
     const char *c_name;
 } builtins[] = {
     {"bool", TY_BOOL, "b", "bool"},
+    {"byte", TY_BYTE, "i", "uint8_t"},
     {"int", TY_INT, "i", "int32_t"},
+    {"long", TY_LONG, "l", "int64_t"},
     {"int2", TY_INT2, "i2", "tide_int2"},
     {"int3", TY_INT3, "i3", "tide_int3"},
     {"int4", TY_INT4, "i4", "tide_int4"},
@@ -26,9 +28,36 @@ static const struct {
     {"PlayerID", TY_PLAYER, "p", "tide_player_id"},
     {"Color", TY_COLOR, "c", "tide_color"},
     {"Rect", TY_RECT, "r", "tide_rect"},
+    {"Texture", TY_TEXTURE, "texture", "tide_texture_ref"},
+    {"DepthTexture", TY_DEPTH_TEXTURE, "depth", "tide_depth_ref"},
+    {"Cubemap", TY_CUBEMAP, "cubemap", "tide_cubemap_ref"},
+    {"RenderTarget", TY_RENDER_TARGET, "target", "tide_render_target"},
+    {"Clip", TY_CLIP, "clip", "tide_clip_ref"},
+    {"Resident", TY_RESIDENT, "resident", "tide_resident"},
 };
 
 #define BUILTIN_COUNT (sizeof builtins / sizeof builtins[0])
+
+static const generic_form generic_forms[] = {
+    {"List", 1, {GENERIC_ELEMENT}, {"the list's element type, like 'List<int>'"}, NULL, "'>' after the list's element type"},
+    {"Map", 2, {GENERIC_KEY, GENERIC_ELEMENT},
+     {"the map's key type, like 'Map<int, string>'", "the map's value type, like 'Map<int, string>'"},
+     "',' between the map's key and value types, like 'Map<int, string>'", "'>' after the map's value type"},
+    {"Set", 1, {GENERIC_KEY}, {"the set's key type, like 'Set<int>'"}, NULL, "'>' after the set's key type"},
+    {"Grid2", 1, {GENERIC_CELL}, {"the grid's cell type, like 'Grid2<int>'"}, NULL, "'>' after the grid's cell type"},
+    {"Grid3", 1, {GENERIC_CELL}, {"the grid's cell type, like 'Grid2<int>'"}, NULL, "'>' after the grid's cell type"},
+};
+
+const generic_form generic_optional = {"?", 1, {GENERIC_VALUE}, {"the type a T? holds"}, NULL, NULL};
+const generic_form generic_fails = {"fails", 1, {GENERIC_ERROR}, {"the error it fails with, like 'fails ParseError'"}, NULL, NULL};
+
+const generic_form *generic_form_named(const str name)
+{
+    for (size_t i = 0; i < sizeof generic_forms / sizeof generic_forms[0]; i++) {
+        if (str_eq_c(name, generic_forms[i].name)) return &generic_forms[i];
+    }
+    return NULL;
+}
 
 bool builtin_type_named(const str name, type *out)
 {
@@ -49,6 +78,7 @@ void suggest_builtin_types(suggestion *s)
 int type_dim(const type t)
 {
     switch (t.kind) {
+    case TY_BYTE:
     case TY_INT:
     case TY_FLOAT: return 1;
     case TY_INT2:
@@ -68,12 +98,17 @@ bool type_is_float_based(const type t)
 
 bool type_is_int_based(const type t)
 {
-    return t.kind == TY_INT || t.kind == TY_INT2 || t.kind == TY_INT3 || t.kind == TY_INT4;
+    return t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_INT2 || t.kind == TY_INT3 || t.kind == TY_INT4;
 }
 
 bool type_is_numeric(const type t)
 {
     return type_dim(t) > 0;
+}
+
+bool type_is_integer(const type t)
+{
+    return t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_LONG;
 }
 
 int matrix_dim(const type t)
@@ -117,10 +152,24 @@ type matrix_type(const int dim)
     return (type){kinds[dim], NULL};
 }
 
+bool type_is_texture_grid(const type t)
+{
+    if (t.kind != TY_GRID || !t.decl || t.decl->dims != 2 || t.decl->fields.count < 1) return false;
+    const type_kind cell = t.decl->fields.items[0].type.kind;
+    return cell == TY_COLOR || cell == TY_FLOAT;
+}
+
 bool type_assignable(const type to, const type from)
 {
     if (to.kind == TY_ERROR || from.kind == TY_ERROR) return true;
     if (to.kind == from.kind && to.decl == from.decl) return true;
+    // A value goes where a T? goes: int? best = 5.
+    if (to.kind == TY_OPTIONAL && from.kind != TY_OPTIONAL && from.kind != TY_FAILABLE) {
+        return type_assignable(to.decl->fields.items[0].type, from);
+    }
+    if (from.kind == TY_BYTE && (to.kind == TY_INT || to.kind == TY_LONG || to.kind == TY_FLOAT)) return true;
+    if (to.kind == TY_TEXTURE) return type_is_texture_grid(from); // A grid of colors or of floats is a texture
+    if (to.kind == TY_LONG) return from.kind == TY_INT; // An int fits a long; floats convert explicitly, both ways
     return type_is_float_based(to) && type_is_int_based(from) && type_dim(to) == type_dim(from);
 }
 
@@ -140,7 +189,10 @@ const char *type_name(const type t)
     case TY_ERROR: return "<error>";
     case TY_VOID: return "nothing";
     case TY_STRING: return "string";
-    case TY_BLOCK: return "Block";
+    case TY_ACTION: return "Action";
+    case TY_DRAW_LIST: return "DrawList";
+    case TY_WORLD: return "World";
+    case TY_QUERY: return "entity query";
     case TY_COMPONENT:
     case TY_SINGLETON:
     case TY_INPUT:
@@ -148,7 +200,13 @@ const char *type_name(const type t)
     case TY_STRUCT:
     case TY_EVENT:
     case TY_ENUM:
-    case TY_LIST: {
+    case TY_LIST:
+    case TY_MAP:
+    case TY_SET:
+    case TY_GRID:
+    case TY_ARRAY:
+    case TY_OPTIONAL:
+    case TY_FAILABLE: {
         char *b = buf[next++ % 4];
         const str name = t.decl->qualified.len > 0 ? t.decl->qualified : t.decl->name;
         snprintf(b, sizeof buf[0], STR_FMT, STR_ARG(name));
@@ -166,6 +224,9 @@ const char *type_c_name(const type t)
 {
     if (t.kind == TY_STRING) return "tide_str";
     if (t.kind == TY_LIST) return "tide_list";
+    if (t.kind == TY_MAP || t.kind == TY_SET) return "tide_map";
+    if (t.kind == TY_GRID) return "tide_grid";
+    if (t.kind == TY_DRAW_LIST) return "tide_draw_list *";
     for (size_t i = 0; i < BUILTIN_COUNT; i++) {
         if (builtins[i].kind == t.kind) return builtins[i].c_name;
     }

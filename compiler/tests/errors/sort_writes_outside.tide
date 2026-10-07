@@ -1,0 +1,17 @@
+// expect: a comparison runs again and again as the list sorts, so it changes nothing outside it
+component Board
+{
+    List<int> numbers;
+    int compared;
+}
+
+scene Main { }
+
+system Order(mut Board board)
+{
+    board.numbers.Sort(a, b)
+    {
+        board.compared += 1;
+        return a < b;
+    }
+}

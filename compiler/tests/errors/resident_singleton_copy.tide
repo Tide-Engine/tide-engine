@@ -1,0 +1,6 @@
+// expect: a local can't hold a singleton with resident state
+singleton Physics { Resident state; int count; }
+system Copy(Physics physics)
+{
+    var copy = physics;
+}

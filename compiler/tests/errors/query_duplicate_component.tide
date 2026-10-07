@@ -1,0 +1,4 @@
+// expect: 'Body' appears twice in the query
+component Body { float x; }
+scene Main { }
+system Hits(query (Body first, Body second) bodies) { }

@@ -1,0 +1,67 @@
+// Filter.Trilinear reads between a texture's smaller images, which the GPU
+// picks by how fast the uv changes from one pixel to the next. It only says
+// that outside branches and loops, so a frag works each such uv out as it
+// starts, asks there, and reads with the answer wherever the Sample is: in a
+// branch, after a discard, of a uv kept in a variable or made by a function.
+// A Sample that leaves its filter to the Texture it's given is written the
+// same way, as that texture may say Trilinear; one that says another filter
+// reads the texture's own pixels, as ever. Where a uv can't be worked out as
+// the frag starts and the filter is the texture's to say, it's the texture's
+// own pixels too. A vert has no pixels to compare: its own pixels. A shader
+// with no frag lets the GPU pick, before any branch.
+scene Main { }
+
+struct Corner
+{
+    float2 position;
+    float2 uv;
+}
+
+local singleton Art
+{
+    [Filter(Filter.Trilinear), Wrap(Wrap.Repeat)]
+    Grid2<Color> tiles = Grid2(4, 4);
+    Texture image;
+    float scale = 2;
+    List<Corner> corners;
+    List<int> faces;
+}
+
+float2 Tiled(float2 uv, float by)
+{
+    return uv * by;
+}
+
+vert Lift(mut Corner vertex, Art art)
+{
+    vertex.position.y += art.tiles.Sample(vertex.uv).r + art.image.Sample(vertex.uv, Filter.Trilinear).g;
+}
+
+frag Tile(Corner vertex, out Color color, Art art, Texture source)
+{
+    color = Color.white;
+    var twice = Tiled(vertex.uv, art.scale);
+    var moved = twice + float2(0.5, 0);
+    if (vertex.uv.x > 0.5)
+    {
+        color = art.tiles.Sample(moved);
+        if (color.a < 0.5) this.Discard();
+        color *= source.Sample(vertex.uv.yx, Filter.Trilinear, Wrap.Mirror);
+    }
+    else
+    {
+        color = source.Sample(vertex.uv) * art.image.Sample(vertex.uv * source.Sample(twice, Filter.Point).r);
+    }
+    mut var step = vertex.uv;
+    for (int i = 0; i < 3; i++)
+    {
+        step += float2(0.1, 0);
+        color += source.Sample(step) * art.tiles.Sample(vertex.uv, Filter.Bilinear);
+    }
+}
+
+view Show(Art art)
+{
+    Draw.Mesh(art.corners, art.faces, art.image, Lift, Tile);
+    Draw.Mesh(art.corners, art.faces, art.image, Lift);
+}

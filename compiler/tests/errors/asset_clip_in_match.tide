@@ -1,0 +1,17 @@
+// expect: rendering resources belong to this machine, so the match can't use them
+asset Clip beep = "../e2e/assets/beep.wav";
+
+singleton Probe
+{
+    int ticks;
+}
+
+system Count(mut Probe probe)
+{
+    var sound = beep;
+    probe.ticks += 1;
+}
+
+scene Main
+{
+}

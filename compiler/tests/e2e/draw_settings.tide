@@ -1,0 +1,274 @@
+// Draw settings: each around a block and set for the views that follow, blocks
+// listed with commas, blocks left early, a target's own, a shader's, a blit's
+// blend, and one Draw whose 2D and 3D forms are told apart by their arguments.
+
+scene Main { }
+
+enum Trouble
+{
+    Hidden,
+}
+
+local singleton Look
+{
+    RenderTarget target;
+    bool leave;  // The blocks are left early
+    int left;    // How far Early got
+    float depth; // What the 3D camera says a point's depth is
+}
+
+void Hide(bool yes) fails Trouble
+{
+    if (yes) fail Trouble.Hidden;
+}
+
+// A function with a block of its own, as a game's containers are.
+void Framed(float2 at, Action content)
+{
+    Draw.Transform(at)
+    {
+        content();
+    }
+}
+
+// Blocks around draws: what each found is back after it.
+view Blocks()
+{
+    Draw.Rect(float2(0, 0), float2(1, 1), Color.white);
+    Draw.Blend(Blend.Add)
+    {
+        Draw.Rect(float2(1, 0), float2(1, 1), Color.white);
+        Draw.Tint(Color(1, 0.5, 0.5, 0.5))
+        {
+            Draw.Rect(float2(2, 0), float2(1, 1), Color.white);
+        }
+    }
+    Draw.Rect(float2(3, 0), float2(1, 1), Color.white);
+
+    // Listed with commas: the same as each inside the one before
+    Draw.Blend(Blend.Multiply),
+    Draw.Tint(Color(0.5, 1, 1, 1)),
+    Draw.Transform(float2(10, 20), 0, 2),
+    Draw.Clip(Rect(0, 0, 100, 100))
+    {
+        Draw.Rect(float2(1, 1), float2(1, 1), Color.white);
+        Draw.Clip(Rect(50, 50, 100, 100))
+        {
+            Draw.Circle(float2(0, 0), 1, Color.white);
+        }
+    }
+    Draw.Rect(float2(4, 0), float2(1, 1), Color.white);
+
+    // A function of the game's that takes a block joins the list
+    Framed(float2(100, 0)),
+    Draw.Tint(Color.red)
+    {
+        Draw.Rect(float2(1, 0), float2(1, 1), Color.white);
+    }
+}
+
+// Left early, a block still puts back what it found.
+view Early(mut Look look)
+{
+    Draw.Tint(Color.green),
+    Draw.Transform(float2(0, 100))
+    {
+        look.left = 1;
+        if (look.leave) return;
+        look.left = 2;
+    }
+    Draw.Rect(float2(9, 9), float2(1, 1), Color.white);
+}
+
+void Guarded(bool leave) fails Trouble
+{
+    Draw.Blend(Blend.Add),
+    Draw.Clip(Rect(0, 0, 1, 1))
+    {
+        try Hide(leave); // Its error leaves through both
+        Draw.Rect(float2(0, 5), float2(1, 1), Color.white);
+    }
+}
+
+void Failing(bool leave) fails Trouble
+{
+    Draw.Tint(Color.blue)
+    {
+        if (leave) fail Trouble.Hidden;
+    }
+}
+
+int Counted(bool leave)
+{
+    Draw.Transform(float2(7, 7))
+    {
+        if (leave) return 1;
+    }
+    return 2;
+}
+
+view AfterEarly(Look look)
+{
+    Guarded(look.leave)!;
+    Failing(look.leave)!;
+    var counted = Counted(look.leave);
+    for (var i = 0; i < 3; i++)
+    {
+        Draw.Tint(Color.red)
+        {
+            if (i == 0) continue;
+            if (i == 2) break;
+        }
+    }
+    // Nothing is left set, however the blocks were left
+    Draw.Rect(float2(counted, 0), float2(1, 1), Color.white);
+}
+
+frag Plain(Vertex vertex, out Color color)
+{
+    color = vertex.color;
+}
+
+// A mesh through a frag is tinted, blended and moved as the draw says.
+view Shaded()
+{
+    Draw.Tint(Color(0.25, 0.5, 1, 1)),
+    Draw.Blend(Blend.Add),
+    Draw.Transform(float2(3, 4))
+    {
+        Draw.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], Plain);
+    }
+}
+
+// Set, each holds for the views that follow.
+view Sets()
+{
+    Draw.SetBlend(Blend.Add);
+    Draw.SetTint(Color(1, 1, 0, 1));
+    Draw.SetTransform(float2(5, 5), 0, float2(2, 3));
+    Draw.SetClip(Rect(1, 2, 3, 4));
+    Draw.SetCamera(float2(8, 9), 10);
+}
+
+view Follows()
+{
+    Draw.Rect(float2(1, 1), float2(1, 1), Color.white);
+    // The screen, for a label: the camera is back after it
+    Draw.Screen()
+    {
+        Draw.Text("label", float2(4, 4), 8, Color.white);
+    }
+    Draw.Rect(float2(1, 1), float2(1, 1), Color.white);
+    // Set inside a block, it's for the rest of the block
+    Draw.Tint(Color.white)
+    {
+        Draw.SetTint(Color.blue);
+        Draw.Rect(float2(1, 1), float2(1, 1), Color.white);
+    }
+    Draw.Rect(float2(1, 1), float2(1, 1), Color.white);
+    // With no arguments, a Set puts back what each frame starts with
+    Draw.SetBlend();
+    Draw.SetTint();
+    Draw.SetTransform();
+    Draw.SetClip();
+    Draw.SetCamera();
+    Draw.Rect(float2(1, 1), float2(1, 1), Color.white);
+}
+
+// Where draws land is each destination's own.
+view Targets(Look look)
+{
+    look.target.SetCamera(float2(1, 2), 3);
+    look.target.Clip(Rect(0, 0, 2, 2)),
+    look.target.Transform(float2(1, 1))
+    {
+        look.target.Rect(float2(0, 0), float2(1, 1), Color.white);
+        Draw.Rect(float2(0, 0), float2(1, 1), Color.white);
+    }
+    look.target.Rect(float2(3, 3), float2(1, 1), Color.white);
+    look.target.SetTransform(float4x4.Translate(float3(0, 0, 5)));
+    look.target.SetScreen();
+    look.target.SetCamera();
+    look.target.SetTransform();
+    Draw.Transform(float4x4.Translate(float3(1, 0, 0)))
+    {
+        Draw.Cube(float3(0, 0, 0), float3(1, 1, 1), Color.white);
+    }
+    Draw.Camera(float3(0, 0, -5), quaternion.identity, 60),
+    Draw.Transform(float4x4.Translate(float3(0, 2, 0)))
+    {
+        Draw.Cube(float3(0, 0, 0), float3(1, 1, 1), Color.white);
+    }
+}
+
+frag Copy(Vertex vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv, Filter.Point);
+}
+
+// A blit is its destination's, whatever is set: it replaces, or blends as it's told.
+view Blits(Look look)
+{
+    Draw.SetBlend(Blend.Multiply);
+    Draw.SetTint(Color.red);
+    Draw.Blit(look.target.color, Draw.window, Copy);
+    Draw.Blit(look.target.color, Draw.window, Blend.Add, Copy);
+}
+
+// One Draw: a target's blend and tint are its own, as its cameras are, and the
+// 2D and 3D forms of a function are told apart by their arguments.
+view Overloads(mut Look look)
+{
+    if (look.leave) return;
+    Draw.SetBlend(Blend.Add);
+    Draw.SetTint(Color(0.5, 0.5, 0.5, 1));
+    look.target.Rect(float2(0, 0), float2(1, 1), Color.white); // The target's own: nothing the window has reaches it
+    look.target.Blend(Blend.Multiply),
+    look.target.Tint(Color(1, 0, 0, 1))
+    {
+        look.target.Rect(float2(0, 0), float2(1, 1), Color.white);
+        Draw.Rect(float2(0, 0), float2(1, 1), Color.white); // The window's, as they were set
+    }
+    look.target.SetBlend(Blend.Replace);
+    look.target.Rect(float2(0, 0), float2(1, 1), Color.white);
+    Draw.Rect(float2(0, 0), float2(1, 1), Color.white);
+    look.target.SetBlend();
+    look.target.SetTint();
+    // The cameras, by their arguments: a center and a size, or a position, a rotation and a field of view
+    Draw.Camera(float2(3, 4), 5)
+    {
+        Draw.Rect(float2(0, 0), float2(1, 1), Color.white);
+        var middle = Draw.WorldToScreen(float2(3, 4));
+        Draw.Rect(Draw.ScreenToWorld(middle), float2(1, 1), Color.white); // Back where it was, through the 2D camera
+    }
+    Draw.Camera(float3(0, 0, -5), quaternion.identity, 60),
+    Draw.Transform(float4x4.Translate(float3(0, 2, 0)))
+    {
+        Draw.Cube(float3(0, 0, 0), float3(1, 1, 1), Color.white);
+        look.depth = Draw.WorldToScreen(float3(0, 0, 1)).z; // Through the 3D camera
+    }
+    Draw.Camera(float4x4.identity, float4x4.Ortho(4, 4, 0.1, 10))
+    {
+        Draw.Sphere(float3(0, 0, 2), 1, Color.white);
+    }
+    // Each Set form, and with no arguments both cameras and both transforms go back
+    Draw.SetCamera(float2(1, 1), 2);
+    Draw.SetCamera(float3(0, 0, 0), quaternion.identity, 45);
+    Draw.SetCamera(float4x4.identity, float4x4.identity);
+    Draw.SetCamera();
+    Draw.SetTransform(float2(1, 1));
+    Draw.SetTransform(float2(1, 1), 0.5);
+    Draw.SetTransform(float2(1, 1), 0.5, 2);
+    Draw.SetTransform(float3x3.identity);
+    Draw.SetTransform(float4x4.identity);
+    Draw.SetTransform();
+    Draw.SetBlend();
+    Draw.SetTint();
+    Draw.Rect(float2(0, 0), float2(1, 1), Color.white); // Plain again
+    // A mesh is 2D or 3D by its vertices: a List<Vertex3> takes a transform
+    Draw.Mesh([Vertex { position = float2(0, 0) }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2]);
+    Draw.Mesh([Vertex3 { position = float3(0, 0, 0) }, Vertex3 { position = float3(1, 0, 0) }, Vertex3 { position = float3(0, 1, 0) }],
+              [0, 1, 2], float4x4.identity);
+    Draw.SetBlend(Blend.Multiply);
+    Draw.SetTint(Color.red);
+}

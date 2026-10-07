@@ -1,0 +1,4 @@
+// expect: 'values' is read before it's assigned
+// expect: an 'out' parameter starts unassigned: what the caller's variable held isn't passed in. Assign it first, or take it as 'mut List<int> values' to read what the caller has
+scene Main { }
+void Fill(out List<int> values) { values.Add(1); }

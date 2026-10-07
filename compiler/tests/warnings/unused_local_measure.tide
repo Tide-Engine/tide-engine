@@ -1,0 +1,19 @@
+// warnings: 2
+// expect: 12:9: warning: local 'size' is never used
+// expect: nothing reads its value: remove it, or use it where it was meant
+// expect: 13:9: warning: local 'spot' is never used
+
+// A Draw call that gives a value only measures or converts: nothing of it is
+// left to keep once nothing reads the value, unlike a call that draws.
+
+view Title(Menu menu)
+{
+    Draw.SetScreen();
+    var size = Draw.MeasureText(menu.title, 32);
+    var spot = Draw.ScreenToWorld(float2(10, 10));
+    Draw.Text(menu.title, float2(10, 10), 32, Color.white);
+}
+
+local singleton Menu { string title = "Tide"; }
+
+scene Main { }

@@ -1,0 +1,10 @@
+// expect: Set changes an entity's component: declare the parameter as 'mut World world' to call it
+component Health { int value; }
+component Healer { Entity patient; }
+scene Main { }
+system Heal(Healer healer, World world)
+{
+    mut var h = world.Get<Health>(healer.patient);
+    h.value += 1;
+    world.Set<Health>(healer.patient, h);
+}

@@ -1,0 +1,893 @@
+using Rooms;
+
+// Snake Pit: every player's snake on one board. The last one alive takes the round.
+
+settings
+{
+    title = "Snake Pit";
+    tickRate = 30;
+    maxPlayers = 8;
+    hostMigration = true;
+}
+
+const int COLS = 24;
+const int ROWS = 24;
+const int SEATS = 8;
+const int FOOD = -1;          // A board cell with food on it. A snake's cells hold its seat + 1
+const int GROWTH = 2;         // Cells a snake grows for each bite
+const int PACE = 4;           // Ticks between steps as a round starts
+const int FASTER = 900;       // Ticks into a round when the snakes speed up...
+const int FASTEST = 2100;     // ...and again, so no round goes on forever
+const int COUNTDOWN = 90;
+const int RESULT = 90;
+const int SOLO_RESULT = 40;
+const int JOIN_FREEZE = 45;   // Ticks a snake that joined mid-round stays put
+const float TOP = 110;         // Pixels the scores take above the board
+const float BOTTOM = 26;      // ...and the help line under it
+const Color FOOD_COLOR = Color(1, 0.93, 0.7);
+
+enum Phase { Countdown, Playing, Over }
+
+// ---------------------------------------------------------------- input
+
+// What this machine's player last asked for. A view fills it from the keys and from swipes.
+local singleton Pad
+{
+    int serial;     // Counts the presses, so the match tells a new one from an old one
+    int dir;        // 0 right, 1 up, 2 left, 3 down
+    int prev;       // The press before, for two presses within one tick
+    float2 start;   // Where the swipe under way began
+    bool swiped;    // The press under way has turned the snake: it's no tap
+    bool finger;    // ...and it's a finger's, not a mouse's
+}
+
+input Controls
+{
+    // Which way the player last said: none of it is something they hold, so a guess keeps it
+    [Absolute, Min(0)] int serial;
+    [Absolute, Clamp(0, 3)] int dir;
+    [Absolute, Clamp(0, 3)] int prev;
+
+    Sample(Devices devices, Pad pad)
+    {
+        serial = pad.serial;
+        dir = pad.dir;
+        prev = pad.prev;
+    }
+}
+
+void Press(mut Pad pad, int dir)
+{
+    pad.prev = pad.dir;
+    pad.dir = dir;
+    pad.serial += 1;
+}
+
+view Steering(Devices devices, mut Pad pad, Lobby lobby)
+{
+    if (!lobby.playing) { pad.swiped = true; pad.finger = false; return; }
+    var keys = devices.keyboard;
+    var cross = devices.gamepad.dpad;
+    if (keys.rightArrow.down || keys.d.down || cross.right.down) Press(pad, 0);
+    if (keys.upArrow.down || keys.w.down || cross.up.down) Press(pad, 1);
+    if (keys.leftArrow.down || keys.a.down || cross.left.down) Press(pad, 2);
+    if (keys.downArrow.down || keys.s.down || cross.down.down) Press(pad, 3);
+
+    // A swipe, with the mouse or a finger. A long one can turn more than once.
+    var pointer = devices.pointer;
+    if (pointer.press.down)
+    {
+        pad.start = pointer.position;
+        pad.swiped = false;
+        pad.finger = devices.touchscreen.primaryTouch.press.pressed;
+    }
+    if (!pointer.press.pressed) return;
+    var pull = pointer.position - pad.start;
+    if (Math.Max(Math.Abs(pull.x), Math.Abs(pull.y)) < 22) return;
+    if (Math.Abs(pull.x) > Math.Abs(pull.y)) Press(pad, pull.x > 0 ? 0 : 2);
+    else Press(pad, pull.y > 0 ? 1 : 3); // The devices count y up
+    pad.start = pointer.position;
+    pad.swiped = true;
+}
+
+// ---------------------------------------------------------------- the match
+
+component Snake
+{
+    int seat;             // Its color, and where it starts
+    int wins;
+    bool alive;
+    int round = -1;       // The deal it was last placed for
+    List<int2> body;      // Tail first, head last
+    int length;
+    int best;             // The longest it's been
+    int dir;              // 0 right, 1 up, 2 left, 3 down
+    int queued1 = -1;     // Turns waiting for the next steps
+    int queued2 = -1;
+    int serial;           // The last press it heard of
+    bool fresh;           // Just placed: what was pressed before doesn't steer it
+    bool awake;           // Its player pressed something since it was placed
+    int grow;             // Steps its tail still stays for
+    int freeze;           // Ticks before it sets off
+    bool moving;          // It takes this step...
+    bool doomed;          // ...into something
+    int2 next;            // Where its head goes this step
+    int2 prevTail;        // The cell its tail left last step
+    int movedTick = -100;
+    int diedTick = -100;
+}
+
+singleton Board
+{
+    Grid2<int> cells = Grid2(COLS, ROWS);
+    Grid2<int> claims = Grid2(COLS, ROWS); // How many heads want each cell this step
+    List<int2> food;
+    Map<PlayerID, Entity> snakes;
+    int seats;                             // A bit for each seat that's taken
+    Random random;
+}
+
+singleton Round
+{
+    Phase phase = Phase.Countdown;
+    int deal;           // Goes up each time the board is set up again
+    int number = 1;     // The round, as the players count them
+    bool versus;        // Two snakes or more: there's a round to win
+    int timer;          // Ticks left of the countdown, or of the result
+    int age;            // Ticks it's been played for
+    int pace = PACE;    // Ticks between steps
+    int rest;           // Ticks to the next step
+    bool stepping;      // The snakes step this tick
+    int winner = -1;    // A seat
+    bool award;         // The winner takes the round this tick
+    int players;        // Counted at the end of each tick
+    int alive;
+    int eager;          // Snakes whose player pressed something
+    int survivor = -1;
+}
+
+// Sent for what each machine shows of them: nothing in the match handles these
+event Crashed { float2 at; int seat; }
+event Bitten { float2 at; int seat; }
+event Won { int seat; }
+
+scene Main { }
+
+int2 Way(int dir)
+{
+    if (dir == 0) return int2(1, 0);
+    if (dir == 1) return int2(0, 1);
+    if (dir == 2) return int2(-1, 0);
+    return int2(0, -1);
+}
+
+// Where each seat's head starts, and which way it faces: no two meet before they turn
+int2 StartCell(int seat)
+{
+    if (seat == 0) return int2(4, 18);
+    if (seat == 1) return int2(19, 5);
+    if (seat == 2) return int2(5, 4);
+    if (seat == 3) return int2(18, 19);
+    if (seat == 4) return int2(4, 9);
+    if (seat == 5) return int2(19, 14);
+    if (seat == 6) return int2(14, 4);
+    return int2(9, 19);
+}
+
+int StartDir(int seat)
+{
+    var turn = seat % 4;
+    if (turn == 0) return 0;
+    if (turn == 1) return 2;
+    if (turn == 2) return 1;
+    return 3;
+}
+
+event(PlayerJoined joined) Arrive(mut Board board)
+{
+    mut var seat = 0;
+    while (seat < SEATS - 1 && (board.seats & (1 << seat)) != 0) seat += 1;
+    board.seats |= 1 << seat;
+    board.snakes[joined.player] = Spawn(Snake { seat = seat }, Owner { player = joined.player });
+}
+
+event(PlayerLeft left) Depart(mut Board board)
+{
+    board.snakes[left.player].Destroy();
+    board.snakes.Remove(left.player);
+}
+
+event(Destroyed) Vacate(Snake snake, mut Board board)
+{
+    if (snake.alive)
+    {
+        foreach (var cell in snake.body) board.cells[cell] = 0;
+    }
+    board.seats &= ~(1 << snake.seat);
+}
+
+// The rounds: a countdown, the play, the result, and again.
+system Referee(mut Round round, mut Board board)
+{
+    round.award = false;
+    round.stepping = false;
+    mut var restart = false;
+    switch (round.phase)
+    {
+        case Phase.Countdown:
+            if (round.versus)
+            {
+                round.timer -= 1;
+                if (round.players < 2) round.versus = false;
+                else if (round.timer <= 0) round.phase = Phase.Playing;
+            }
+            else if (round.players >= 2)
+            {
+                round.versus = true;
+                round.timer = COUNTDOWN;
+            }
+            else if (round.eager > 0) round.phase = Phase.Playing; // Alone, a snake waits for its player
+            break;
+        case Phase.Playing:
+            round.age += 1;
+            if (round.age == FASTER) round.pace = PACE - 1;
+            if (round.age == FASTEST) round.pace = PACE - 2;
+            if (!round.versus && round.players >= 2) restart = true; // Someone came: a round for both
+            else if (round.versus && round.alive <= 1)
+            {
+                round.phase = Phase.Over;
+                round.timer = RESULT;
+                round.winner = round.alive == 1 ? round.survivor : -1;
+                round.award = round.alive == 1;
+                if (round.award) Send(Won { seat = round.winner });
+            }
+            else if (!round.versus && round.players > 0 && round.alive == 0)
+            {
+                round.phase = Phase.Over;
+                round.timer = SOLO_RESULT;
+            }
+            else
+            {
+                round.rest -= 1;
+                if (round.rest <= 0)
+                {
+                    round.rest = round.pace;
+                    round.stepping = true;
+                    board.claims.Clear();
+                }
+            }
+            break;
+        case Phase.Over:
+            round.timer -= 1;
+            if (round.timer <= 0) restart = true;
+            break;
+    }
+    if (!restart) return;
+    if (round.versus) round.number += 1;
+    round.deal += 1;
+    round.versus = round.players >= 2;
+    round.phase = Phase.Countdown;
+    round.timer = COUNTDOWN;
+    round.age = 0;
+    round.pace = PACE;
+    round.rest = 0;
+    round.winner = -1;
+    board.cells.Clear();
+    board.food.Clear();
+}
+
+system Award(mut Snake snake, Round round)
+{
+    if (round.award && snake.seat == round.winner) snake.wins += 1;
+}
+
+// Puts a snake on the board: every one as a round begins, and a player who joins in the middle of one.
+system Place(mut Snake snake, mut Board board, Round round)
+{
+    if (snake.round == round.deal || round.phase == Phase.Over) return;
+    mut var head = StartCell(snake.seat);
+    mut var dir = StartDir(snake.seat);
+    mut var freeze = 0;
+    if (round.phase == Phase.Playing)
+    {
+        // The others are moving: somewhere with room ahead, and no snake near enough to run into it.
+        // Its seat's start first, then anywhere that's four cells or more from the walls.
+        mut var found = false;
+        for (var attempt = 0; attempt < 24 && !found; attempt++)
+        {
+            if (attempt > 0)
+            {
+                head = int2(board.random.NextInt(4, COLS - 4), board.random.NextInt(4, ROWS - 4));
+                dir = board.random.NextInt(4);
+            }
+            var ahead = Way(dir);
+            var across = int2(-ahead.y, ahead.x);
+            mut var clear = true;
+            for (var k = -3; k <= 5; k++)
+            {
+                if (k >= -2 && k <= 4 && board.cells[head + ahead * k] != 0) clear = false;
+                // Past the board's edge a cell reads as empty, which suits a look around
+                for (var s = -2; s <= 2; s++)
+                {
+                    if (board.cells[head + ahead * k + across * s] > 0) clear = false;
+                }
+            }
+            found = clear;
+        }
+        if (!found) return; // Tries again next tick
+        freeze = JOIN_FREEZE;
+    }
+    var back = Way(dir);
+    snake.body.Clear();
+    snake.body.Add(head - back * 2);
+    snake.body.Add(head - back);
+    snake.body.Add(head);
+    foreach (var cell in snake.body) board.cells[cell] = snake.seat + 1;
+    snake.length = 3;
+    snake.prevTail = head - back * 2;
+    snake.dir = dir;
+    snake.queued1 = -1;
+    snake.queued2 = -1;
+    snake.grow = 0;
+    snake.freeze = freeze;
+    snake.alive = true;
+    snake.fresh = true;
+    snake.awake = false;
+    snake.moving = false;
+    snake.doomed = false;
+    snake.movedTick = -100;
+    snake.round = round.deal;
+}
+
+bool Turns(int from, int to)
+{
+    return to != from && to != (from + 2) % 4; // Not straight on, and not straight back
+}
+
+void Turn(mut Snake snake, int dir)
+{
+    if (snake.queued1 < 0)
+    {
+        if (Turns(snake.dir, dir)) snake.queued1 = dir;
+        return;
+    }
+    if (snake.queued2 < 0)
+    {
+        if (Turns(snake.queued1, dir)) snake.queued2 = dir;
+        return;
+    }
+    if (Turns(snake.queued1, dir)) snake.queued2 = dir;
+}
+
+// Each snake hears its own player's presses, and keeps up to two turns for its next steps.
+system Steer(Controls input, mut Snake snake, with Owner)
+{
+    if (snake.fresh)
+    {
+        snake.fresh = false;
+        snake.serial = input.serial;
+        return;
+    }
+    var presses = input.serial - snake.serial;
+    if (presses == 0) return;
+    snake.serial = input.serial;
+    if (!snake.alive) return;
+    snake.awake = true;
+    if (presses != 1) Turn(snake, input.prev);
+    Turn(snake, input.dir);
+}
+
+// A step, in three parts, so that it comes out the same whichever snake goes first.
+// First every tail lets go of its cell, and every head says where it's going.
+system Plan(mut Snake snake, mut Board board, Round round)
+{
+    if (!snake.alive) return;
+    if (snake.freeze > 0)
+    {
+        snake.freeze -= 1;
+        return;
+    }
+    if (!round.stepping) return;
+    if (snake.queued1 >= 0)
+    {
+        snake.dir = snake.queued1;
+        snake.queued1 = snake.queued2;
+        snake.queued2 = -1;
+    }
+    snake.next = snake.body[snake.body.count - 1] + Way(snake.dir);
+    snake.prevTail = snake.body[0];
+    if (snake.grow > 0) snake.grow -= 1;
+    else
+    {
+        board.cells[snake.body[0]] = 0;
+        snake.body.RemoveAt(0);
+    }
+    board.claims[snake.next] += 1;
+    snake.moving = true;
+}
+
+// Then each head finds out what's there: a wall, a snake, or another head arriving.
+system Resolve(mut Snake snake, Board board)
+{
+    if (!snake.moving) return;
+    var at = snake.next;
+    if (at.x < 0 || at.y < 0 || at.x >= COLS || at.y >= ROWS) snake.doomed = true;
+    else snake.doomed = board.cells[at] > 0 || board.claims[at] > 1;
+}
+
+// And then the heads move in, or their snakes go.
+system Apply(mut Snake snake, mut Board board, Time time)
+{
+    if (!snake.moving) return;
+    snake.moving = false;
+    if (snake.doomed)
+    {
+        var head = snake.body[snake.body.count - 1];
+        foreach (var cell in snake.body) board.cells[cell] = 0;
+        snake.doomed = false;
+        snake.alive = false;
+        snake.diedTick = time.tick;
+        Send(Crashed { at = float2(head) + 0.5 + float2(Way(snake.dir)) * 0.45, seat = snake.seat });
+        return;
+    }
+    if (board.cells[snake.next] == FOOD)
+    {
+        snake.grow += GROWTH;
+        for (var i = 0; i < board.food.count; i++)
+        {
+            var bite = board.food[i];
+            if (bite.x == snake.next.x && bite.y == snake.next.y)
+            {
+                board.food.RemoveAt(i);
+                break;
+            }
+        }
+        Send(Bitten { at = float2(snake.next) + 0.5, seat = snake.seat });
+    }
+    board.cells[snake.next] = snake.seat + 1;
+    snake.body.Add(snake.next);
+    snake.length = snake.body.count;
+    snake.best = Math.Max(snake.best, snake.length);
+    snake.movedTick = time.tick;
+}
+
+system Tally(mut Round round)
+{
+    round.players = 0;
+    round.alive = 0;
+    round.eager = 0;
+    round.survivor = -1;
+}
+
+system Count(Snake snake, mut Round round)
+{
+    round.players += 1;
+    if (snake.awake) round.eager += 1;
+    if (!snake.alive) return;
+    round.alive += 1;
+    round.survivor = snake.seat;
+}
+
+system Feed(mut Board board, Round round)
+{
+    if (round.phase != Phase.Playing) return;
+    if (board.food.count >= 3 + round.players) return;
+    var cell = int2(board.random.NextInt(COLS), board.random.NextInt(ROWS));
+    if (board.cells[cell] != 0) return;
+    board.cells[cell] = FOOD;
+    board.food.Add(cell);
+}
+
+// ---------------------------------------------------------------- what a machine shows
+
+Color SeatColor(int seat)
+{
+    if (seat == 0) return Color(0.38, 0.86, 0.4);
+    if (seat == 1) return Color(1, 0.6, 0.16);
+    if (seat == 2) return Color(0.33, 0.62, 1);
+    if (seat == 3) return Color(1, 0.46, 0.76);
+    if (seat == 4) return Color(1, 0.9, 0.26);
+    if (seat == 5) return Color(0.25, 0.9, 0.9);
+    if (seat == 6) return Color(0.72, 0.52, 1);
+    return Color(1, 0.36, 0.32);
+}
+
+string SeatName(int seat)
+{
+    if (seat == 0) return "Green";
+    if (seat == 1) return "Orange";
+    if (seat == 2) return "Blue";
+    if (seat == 3) return "Pink";
+    if (seat == 4) return "Yellow";
+    if (seat == 5) return "Cyan";
+    if (seat == 6) return "Purple";
+    return "Red";
+}
+
+struct Spark
+{
+    float2 position;
+    float2 velocity;
+    float age;
+    float life = 0.5;
+    float size = 0.16;
+    Color color;
+}
+
+local singleton Fx
+{
+    List<Spark> sparks;
+    Random random;
+    float shake;
+    float clock;       // Seconds, wrapped at a full turn: for what pulses
+    int seat = -1;     // This machine's player's
+    string farewell;   // Why this machine is in no game any more
+}
+
+local event(Connected) Welcome(mut Fx fx)
+{
+    fx.farewell = "";
+}
+
+local event(Disconnected gone) Farewell(mut Fx fx)
+{
+    fx.farewell = gone.reason == DisconnectReason.Refused ? "No room in this game right now.\nReload to try again."
+                                                          : "The game ended.\nReload to play again.";
+}
+
+// A crash shows once the server has confirmed it: a guess about another snake can be wrong for a moment
+local event(verified Crashed crashed) ShowCrash(mut Fx fx)
+{
+    var color = SeatColor(crashed.seat);
+    for (var i = 0; i < 22; i++)
+    {
+        var way = fx.random.NextFloat2Direction();
+        fx.sparks.Add(Spark { position = crashed.at, velocity = way * fx.random.NextFloat(2, 11),
+                              life = fx.random.NextFloat(0.35, 0.8), size = 0.2, color = color });
+    }
+    fx.shake = crashed.seat == fx.seat ? 0.6 : 0.3;
+}
+
+// A round that's won: the winner's color, all over the board
+local event(verified Won won) ShowWin(mut Fx fx)
+{
+    var color = SeatColor(won.seat);
+    for (var i = 0; i < 70; i++)
+    {
+        var at = fx.random.NextFloat2(float2(1, 1), float2(COLS - 1, ROWS - 1));
+        var way = fx.random.NextFloat2Direction();
+        fx.sparks.Add(Spark { position = at, velocity = way * fx.random.NextFloat(1, 5),
+                              life = fx.random.NextFloat(0.8, 2), size = fx.random.NextFloat(0.16, 0.34),
+                              color = i % 3 == 0 ? Color.white : color });
+    }
+}
+
+local event(Bitten bitten) ShowBite(mut Fx fx)
+{
+    var color = SeatColor(bitten.seat);
+    for (var i = 0; i < 8; i++)
+    {
+        var way = float2(Math.Cos(i * 0.785), Math.Sin(i * 0.785));
+        fx.sparks.Add(Spark { position = bitten.at, velocity = way * 4, life = 0.3, size = 0.11,
+                              color = i % 2 == 0 ? color : FOOD_COLOR });
+    }
+}
+
+// How many pixels a cell of the board is across, in this window
+float CellPixels()
+{
+    float width = Screen.width;
+    float height = Screen.height;
+    return Math.Max(Math.Min((width - 16) / COLS, (height - TOP - BOTTOM - 8) / ROWS), 1);
+}
+
+view Backdrop(mut Fx fx)
+{
+    var dt = Math.Min(Frame.dt, 0.05);
+    fx.clock += dt;
+    if (fx.clock > Math.TAU) fx.clock -= Math.TAU;
+    fx.shake = Math.Max(0, fx.shake - dt * 1.6);
+
+    // The board fits between the scores and the help line, whatever the window's shape
+    Draw.Clear(Color(0.06, 0.07, 0.09));
+    var cell = CellPixels();
+    var jolt = float2(Math.Sin(fx.clock * 90), Math.Cos(fx.clock * 70)) * fx.shake * fx.shake;
+    var middle = float2(COLS * 0.5, ROWS * 0.5);
+    Draw.SetCamera(middle + float2(0, (TOP - BOTTOM) * 0.5 / cell) + jolt, Screen.height * 0.5 / cell);
+
+    Draw.RoundRect(middle, float2(COLS + 0.7, ROWS + 0.7), 0.6, Color(0.3, 0.33, 0.4));
+    Draw.Rect(middle, float2(COLS, ROWS), Color(0.1, 0.11, 0.14));
+    for (var x = 0; x < COLS; x++)
+    {
+        for (var y = 0; y < ROWS; y++)
+        {
+            if ((x + y) % 2 == 0) Draw.Rect(float2(x + 0.5, y + 0.5), float2(1), Color(0.12, 0.13, 0.165));
+        }
+    }
+}
+
+// A finger's tap turns this player's snake towards the side of its head that was tapped.
+// Not a mouse's click: that's how a page's game gets the keyboard.
+view Taps(Snake snake, Devices devices, mut Pad pad, Lobby lobby, with ownership)
+{
+    if (!lobby.playing) return;
+    var pointer = devices.pointer;
+    if (!pointer.press.up || !pad.finger || pad.swiped || snake.body.count == 0) return;
+    var heading = snake.queued2 >= 0 ? snake.queued2 : (snake.queued1 >= 0 ? snake.queued1 : snake.dir);
+    var head = float2(snake.body[snake.body.count - 1]) + 0.5;
+    var reach = Draw.ScreenToWorld(Screen.Flip(pointer.position)) - head; // The camera is the board's
+    if (heading % 2 == 0) Press(pad, reach.y > 0 ? 1 : 3);
+    else Press(pad, reach.x > 0 ? 0 : 2);
+}
+
+view DrawFood(Board board, Fx fx)
+{
+    foreach (var cell in board.food)
+    {
+        var at = float2(cell) + 0.5;
+        var pulse = 0.5 + 0.5 * Math.Sin(fx.clock * 5 + cell.x + cell.y);
+        Draw.Shape(Shape { center = at, size = float2(0.7), ellipse = true, color = Color(1, 0.85, 0.5, 0.3), soft = 0.35 });
+        Draw.Circle(at, 0.27 + pulse * 0.07, FOOD_COLOR);
+    }
+}
+
+// `snake` is the snake as this machine predicts it, and `sure` as the server last confirmed it. A crash
+// only shows once it's confirmed: this machine guesses that the other snakes go straight on, so one
+// that turned at the last moment is, for an instant, in the wall here.
+view DrawSnake(Snake snake, verified Snake sure, Owner owner, Session session, Round round, Time time, Fx fx)
+{
+    var count = snake.body.count;
+    if (count < 2) return;
+    var mine = owner.player == session.player;
+    var now = time.t * time.tickRate;
+    var crashed = !snake.alive && !sure.alive;
+    mut var color = SeatColor(snake.seat);
+    mut var fade = 1.0;
+    mut var headSlide = 1.0;
+    mut var tailSlide = 1.0;
+    if (snake.alive)
+    {
+        // Between two steps, the head is on its way into its cell and the tail out of its own
+        headSlide = Math.Saturate((now - snake.movedTick + 1) / round.pace);
+        tailSlide = headSlide;
+        if (snake.freeze > 0) fade = 0.55 + 0.35 * Math.Sin(fx.clock * 12);
+    }
+    else if (crashed)
+    {
+        // It stays where it stopped, and fades
+        fade = 0.7 * (1 - (now - snake.diedTick) / 24);
+        if (fade <= 0) return;
+        color = color * 0.45 + Color(0.3, 0.3, 0.33);
+        tailSlide = 0;
+    }
+    else tailSlide = 0; // Stopped, as far as this machine can tell: it waits for the server's word
+
+    var first = float2(snake.body[0]) + 0.5;
+    var left = float2(snake.prevTail) + 0.5;
+    var tail = left + (first - left) * tailSlide;
+    var neck = float2(snake.body[count - 2]) + 0.5;
+    var head = neck + (float2(snake.body[count - 1]) + 0.5 - neck) * headSlide;
+
+    // The body is a line from cell to cell: a dark one, and its color inside it
+    var dark = Color(color.r * 0.5, color.g * 0.5, color.b * 0.5, fade);
+    var skin = Color(color.r, color.g, color.b, fade);
+    var shine = Color(1, 1, 1, 0.22 * fade);
+    for (var pass = 0; pass < 3; pass++)
+    {
+        mut var from = tail;
+        for (var i = 0; i < count; i++)
+        {
+            var to = i == count - 1 ? head : float2(snake.body[i]) + 0.5;
+            if (pass == 0) Draw.Line(from, to, 0.96, dark);
+            else if (pass == 1) Draw.Line(from, to, 0.7, skin);
+            else Draw.Line(from, to, 0.2, shine);
+            from = to;
+        }
+    }
+
+    Draw.Circle(head, 0.58, dark);
+    Draw.Circle(head, 0.45, Color(color.r * 0.75 + 0.25, color.g * 0.75 + 0.25, color.b * 0.75 + 0.25, fade));
+    if (crashed) return;
+    var way = float2(Way(snake.dir));
+    var side = float2(-way.y, way.x);
+    Draw.Circle(head + way * 0.12 + side * 0.22, 0.15, Color.white);
+    Draw.Circle(head + way * 0.12 - side * 0.22, 0.15, Color.white);
+    Draw.Circle(head + way * 0.19 + side * 0.22, 0.08, Color.black);
+    Draw.Circle(head + way * 0.19 - side * 0.22, 0.08, Color.black);
+    if (!mine) return;
+
+    // Which one is yours: a ring, and a word while nothing moves yet
+    Draw.WireCircle(head, 0.8, 0.1, Color.white);
+    if (round.phase != Phase.Countdown && snake.freeze == 0) return;
+    var beat = 0.5 + 0.5 * Math.Sin(fx.clock * 8);
+    Draw.WireCircle(head, 1.0 + beat * 0.5, 0.08, Color(1, 1, 1, 0.8 - beat * 0.6));
+    Draw.Text("YOU", head + float2(0, 1.5), 1.1, Color.white, Anchor.LowerCenter, Font.Bold);
+}
+
+view DrawSparks(mut Fx fx)
+{
+    var dt = Math.Min(Frame.dt, 0.05);
+    mut var i = 0;
+    while (i < fx.sparks.count)
+    {
+        mut var spark = fx.sparks[i];
+        spark.age += dt;
+        if (spark.age >= spark.life)
+        {
+            fx.sparks.RemoveAt(i);
+            continue;
+        }
+        spark.velocity = spark.velocity * Math.Max(0, 1 - 4 * dt);
+        spark.position += spark.velocity * dt;
+        fx.sparks[i] = spark;
+        var left = 1 - spark.age / spark.life;
+        Draw.Circle(spark.position, spark.size * (0.4 + left), Color(spark.color.r, spark.color.g, spark.color.b, left));
+        i++;
+    }
+}
+
+struct Chip
+{
+    int seat;
+    int wins;
+    bool alive;
+    bool mine;
+    bool taken;
+}
+
+// A panel in the middle of the board, with a title and a line or two under it
+void Banner(float2 middle, string title, Color color, string line)
+{
+    var big = Draw.MeasureText(title, 30, Font.Bold);
+    var small = Draw.MeasureText(line, 14);
+    var size = float2(Math.Max(big.x, small.x) + 40, big.y + small.y + 34);
+    Draw.Shape(Shape { center = middle, size = size, radius = 14, color = Color(0.05, 0.06, 0.08, 0.8),
+                         outline = 2, outlineColor = Color(color.r, color.g, color.b, 0.9) });
+    Draw.Text(title, middle - float2(0, size.y * 0.5 - 14), 30, color, Anchor.UpperCenter, Font.Bold);
+    Draw.Text(line, middle + float2(0, size.y * 0.5 - 14), 14, Color(0.8, 0.82, 0.88), Anchor.LowerCenter);
+}
+
+view Hud(Round round, verified Round sure, Session session, mut Fx fx,
+         query (Snake snake, Owner owner, verified Snake confirmed) snakes)
+{
+    Draw.SetScreen();
+    float width = Screen.width;
+    float height = Screen.height;
+    var quiet = Color(0.62, 0.65, 0.72);
+
+    // The scores sit right above the board and the help right under it, wherever the window puts the board
+    var cell = CellPixels();
+    var middle = float2(width * 0.5, TOP + (height - TOP - BOTTOM) * 0.5);
+    var top = middle.y - cell * ROWS * 0.5 - TOP + 52;
+    var under = middle.y + cell * ROWS * 0.5;
+    var edge = Math.Max(10, (width - cell * COLS) * 0.5 - 4);
+
+    // Who's playing, in the order of their seats. Who's out and who has won what is the server's word
+    // (`confirmed`, and `sure` for the round), never this machine's guess, which can be wrong for a moment.
+    mut List<Chip> seated = [];
+    seated.Resize(SEATS);
+    mut var seat = -1;
+    mut var length = 0;
+    mut var alive = false;
+    mut var record = 0;
+    mut var best = 0;
+    mut var living = 0;
+    foreach (var entry in snakes)
+    {
+        var mine = entry.owner.player == session.player;
+        var still = entry.snake.alive || entry.confirmed.alive;
+        if (still) living += 1;
+        if (mine)
+        {
+            seat = entry.snake.seat;
+            length = entry.snake.length;
+            alive = still;
+            record = Math.Max(entry.snake.best, length);
+        }
+        best = Math.Max(best, entry.confirmed.wins);
+        seated[entry.snake.seat] = Chip { seat = entry.snake.seat, wins = entry.confirmed.wins, alive = still,
+                                          mine = mine, taken = true };
+    }
+    mut List<Chip> chips = [];
+    foreach (var chip in seated)
+    {
+        if (chip.taken) chips.Add(chip);
+    }
+    fx.seat = seat;
+    var over = round.phase == Phase.Over && sure.phase == Phase.Over && sure.deal == round.deal;
+
+    // The first line: the round, and which snake is this player's
+    mut var status = $"Practice: length {length}, best {record}";
+    if (round.versus)
+    {
+        status = round.phase == Phase.Playing ? $"Round {round.number}: {living} alive" : $"Round {round.number}";
+    }
+    Draw.Text(status, float2(edge, top + 10), 15, Color.white);
+    if (seat >= 0) Draw.Text($"You: {SeatName(seat)}", float2(width - edge, top + 10), 15, SeatColor(seat), Anchor.UpperRight, Font.Bold);
+
+    // The second: a chip for each player, with the rounds they've won. Alone, there's nobody to beat yet
+    var count = chips.count;
+    if (count < 2)
+    {
+        var alone = "Waiting for players: invite them from the room menu";
+        var fit = Math.Min(1, (width - 16) / Draw.MeasureText(alone, 13).x);
+        Draw.Text(alone, float2(width * 0.5, top + 43), 13 * fit, Color(1, 0.85, 0.3), Anchor.MiddleCenter);
+    }
+    var gap = 6.0;
+    var chipWidth = Math.Min(76.0, (width - 20 - gap * (count - 1)) / Math.Max(count, 1));
+    mut var x = (width - chipWidth * count - gap * (count - 1)) * 0.5;
+    for (var i = 0; i < count && count > 1; i++)
+    {
+        var chip = chips[i];
+        var center = float2(x + chipWidth * 0.5, top + 43);
+        var color = SeatColor(chip.seat);
+        var gone = round.versus && round.phase != Phase.Countdown && !chip.alive;
+        var shade = gone ? 0.3 : 1.0;
+        Draw.RoundRect(center, float2(chipWidth, 22), 11, Color(0.15, 0.17, 0.21));
+        if (chip.mine) Draw.WireRoundRect(center, float2(chipWidth, 22), 11, 1.5, Color.white);
+        Draw.Circle(center - float2(chipWidth * 0.5 - 12, 0), 6, Color(color.r, color.g, color.b, shade));
+        var gold = chip.wins == best && best > 0;
+        Draw.Text($"{chip.wins}", center + float2(7, 0), 14, gold ? Color(1, 0.85, 0.3, shade) : Color(1, 1, 1, shade),
+                    Anchor.MiddleCenter, Font.Bold);
+        x += chipWidth + gap;
+    }
+
+    // Under the board: how to play
+    var help = "Arrows, WASD or swipe to steer. Last snake alive wins!";
+    var wide = Draw.MeasureText(help, 13).x;
+    Draw.Text(help, float2(width * 0.5, under + BOTTOM * 0.5 + 3), 13 * Math.Min(1, (width - 12) / wide), quiet, Anchor.MiddleCenter);
+
+    // Over the board: what's going on
+    if (round.phase == Phase.Countdown)
+    {
+        if (round.versus)
+        {
+            // Each second's number comes in big and settles
+            var settle = ((round.timer + 29) % 30) / 29.0;
+            Draw.Text($"{(round.timer + 29) / 30}", middle, 84 + 30 * settle * settle, Color(1, 1, 1, 0.9), Anchor.MiddleCenter, Font.Bold);
+            Draw.Text("Last snake alive wins", middle + float2(0, 64), 16, Color.white, Anchor.MiddleCenter);
+        }
+        else Banner(middle, "Ready?", Color.white, "Press an arrow or swipe to start");
+        return;
+    }
+    if (over)
+    {
+        // A little above the middle, where the last snake standing most often is
+        var upper = middle - float2(0, cell * ROWS * 0.22);
+        if (!sure.versus) Banner(upper, "Crashed!", Color(1, 0.5, 0.45), $"Length {length}");
+        else if (sure.winner < 0) Banner(upper, "Draw!", Color.white, "Nobody takes the round");
+        else if (sure.winner == seat) Banner(upper, "You win!", SeatColor(seat), "Last snake alive");
+        else Banner(upper, $"{SeatName(sure.winner)} wins!", SeatColor(sure.winner), "Last snake alive");
+        return;
+    }
+    if (round.phase == Phase.Over) return; // Over by this machine's guess: the banner waits for the server's word
+    mut var note = "";
+    if (round.versus && seat >= 0 && !alive) note = "You crashed - back next round";
+    else if (round.versus && round.age < 24) note = "Go!";
+    else if (round.age >= FASTER && round.age < FASTER + 60) note = "Faster!";
+    else if (round.age >= FASTEST && round.age < FASTEST + 60) note = "Even faster!";
+    if (note == "") return;
+    var box = Draw.MeasureText(note, 15, Font.Bold) + float2(24, 12);
+    var at = float2(width * 0.5, top + TOP + 26);
+    Draw.RoundRect(at, box, box.y * 0.5, Color(0.05, 0.06, 0.08, 0.85));
+    Draw.Text(note, at, 15, Color.white, Anchor.MiddleCenter, Font.Bold);
+}
+
+// Before the match's world has arrived, and after it's gone
+view Joining(Session session, Fx fx)
+{
+    if (session.state == SessionState.Connected) return;
+    Draw.Screen()
+    {
+        var gone = session.state == SessionState.Offline && fx.farewell != "";
+        Draw.Text(gone ? fx.farewell : "Connecting...", float2(Screen.width * 0.5, Screen.height * 0.5), 18, Color.white,
+                    Anchor.MiddleCenter);
+    }
+}
+
+// The menu's button goes in the top right corner here: the bottom of the
+// screen is the hints'.
+override Rect Rooms.MenuButton(float2 screen)
+{
+    return Rect(screen.x - 92, 8, 84, 36);
+}

@@ -1,0 +1,14 @@
+// expect: a view can't change the match, and this changes 'Box'
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+view Reset(mut Box box)
+{
+    box.bakes = 0;
+    box = Box { };
+}

@@ -1,0 +1,8 @@
+// expect: a frag reads what the view that draws its mesh is given, so 'verified' isn't its to say
+component Glow { float amount; }
+scene Main { }
+
+frag Shade(Vertex vertex, out Color color, verified Glow glow)
+{
+    color = vertex.color * glow.amount;
+}

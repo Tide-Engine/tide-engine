@@ -14,7 +14,13 @@ foreach(var SOURCE SYNTAX WORK VERSION OUT)
     endif()
 endforeach()
 
-find_program(NPM NAMES npm.cmd npm REQUIRED)
+# Windows' npm is a script of cmd's, which only Windows runs: under WSL its
+# folder is on PATH too.
+if(CMAKE_HOST_WIN32)
+    find_program(NPM NAMES npm.cmd npm REQUIRED)
+else()
+    find_program(NPM NAMES npm REQUIRED)
+endif()
 
 function(run)
     execute_process(COMMAND ${ARGN} WORKING_DIRECTORY "${WORK}" RESULT_VARIABLE result)
@@ -43,7 +49,8 @@ file(READ "${SOURCE}/package.json" manifest)
 string(JSON manifest SET "${manifest}" version "\"${VERSION}\"")
 file(WRITE "${stage}/extension/package.json" "${manifest}")
 file(COPY "${WORK}/out/extension.js" DESTINATION "${stage}/extension/out")
-file(COPY "${SOURCE}/README.md" "${SYNTAX}/language-configuration.json" DESTINATION "${stage}/extension")
+file(COPY "${SOURCE}/README.md" "${SOURCE}/icon.png" "${SYNTAX}/language-configuration.json" DESTINATION "${stage}/extension")
+file(COPY "${SOURCE}/icons/tide.svg" DESTINATION "${stage}/extension/icons")
 file(COPY "${SYNTAX}/syntaxes/tide.tmLanguage.json" DESTINATION "${stage}/extension/syntaxes")
 
 string(JSON engine GET "${manifest}" engines vscode)
@@ -59,6 +66,7 @@ file(WRITE "${stage}/extension.vsixmanifest" "<?xml version=\"1.0\" encoding=\"u
       <Property Id=\"Microsoft.VisualStudio.Code.Engine\" Value=\"${engine}\" />
       <Property Id=\"Microsoft.VisualStudio.Code.ExtensionKind\" Value=\"workspace\" />
     </Properties>
+    <Icon>extension/icon.png</Icon>
   </Metadata>
   <Installation>
     <InstallationTarget Id=\"Microsoft.VisualStudio.Code\" />
@@ -66,6 +74,7 @@ file(WRITE "${stage}/extension.vsixmanifest" "<?xml version=\"1.0\" encoding=\"u
   <Dependencies />
   <Assets>
     <Asset Type=\"Microsoft.VisualStudio.Code.Manifest\" Path=\"extension/package.json\" Addressable=\"true\" />
+    <Asset Type=\"Microsoft.VisualStudio.Services.Icons.Default\" Path=\"extension/icon.png\" Addressable=\"true\" />
   </Assets>
 </PackageManifest>
 ")
@@ -74,6 +83,8 @@ file(WRITE "${stage}/[Content_Types].xml" "<?xml version=\"1.0\" encoding=\"utf-
   <Default Extension=\".json\" ContentType=\"application/json\" />
   <Default Extension=\".js\" ContentType=\"application/javascript\" />
   <Default Extension=\".md\" ContentType=\"text/markdown\" />
+  <Default Extension=\".png\" ContentType=\"image/png\" />
+  <Default Extension=\".svg\" ContentType=\"image/svg+xml\" />
   <Default Extension=\".vsixmanifest\" ContentType=\"text/xml\" />
 </Types>
 ")

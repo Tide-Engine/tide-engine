@@ -1,0 +1,4 @@
+// expect: 'out' says the call makes the variable, which 'mut' would only change: drop 'mut'
+// expect: like 'bool TryFind(Entity target, out Health health)'
+scene Main { }
+extern int Fill(mut out List<byte> bytes);

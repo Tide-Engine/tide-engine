@@ -1,0 +1,6 @@
+// expect: devices can only be read
+local scene Main { }
+view Editor(Devices devices)
+{
+    devices.keyboard.text = "typed";
+}

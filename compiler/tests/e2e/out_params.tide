@@ -1,0 +1,586 @@
+// `out` parameters, as C#'s: a function, method or extern function makes its
+// caller's variable, and the call says `out`: a variable the code has, a field
+// of a component or singleton it changes, a local it declares there (`out var`,
+// `out float`, `out mut var`), or `out _` for what it doesn't want. A local an
+// `out` argument declares is the enclosing block's. `Map.TryGet` is the
+// engine's own. The host (out_params_test.c) reads what each case left.
+
+scene Main { }
+
+enum ParseError { Empty, TooLong }
+
+struct Stats
+{
+    int power = 3;
+    string name;
+
+    // A method's
+    bool TryPower(int least, out int found)
+    {
+        found = power;
+        return power >= least;
+    }
+
+    // ...and a mut method's, which changes its value too
+    mut bool Spend(int cost, out int left)
+    {
+        if (cost > power)
+        {
+            left = power;
+            return false;
+        }
+        power -= cost;
+        left = power;
+        return true;
+    }
+}
+
+struct Pair
+{
+    int a;
+    float b;
+}
+
+component Body
+{
+    float x = 1;
+    int hits;
+    Stats stats;
+}
+
+// What C makes through a pointer (out_params_c.c): nothing is read there
+extern bool c_try_half(int value, out int half);
+extern void c_out_pair(int seed, out Pair pair);
+extern void c_out_two(float seed, out float a, out float3 b);
+// ...and an `out` list, which C makes through its writer
+extern int c_out_squares(int count, out List<int> squares);
+
+// The owner's pattern: whether there's something, and it or the default
+bool TryStronger(Body first, Body second, float least, out Body found)
+{
+    if (first.x >= least)
+    {
+        found = first;
+        return true;
+    }
+    if (second.x >= least)
+    {
+        found = second;
+        return true;
+    }
+    found = default;
+    return false;
+}
+
+void Split(float value, out int whole, out float rest)
+{
+    whole = int(value);
+    rest = value - float(whole);
+}
+
+// A call that fails owes its `out` parameters nothing: they're what was
+// assigned before it failed, or the default
+int Parse(string text, out int used) fails ParseError
+{
+    if (text.length == 0) fail ParseError.Empty;
+    used = text.length;
+    if (text.length > 3) fail ParseError.TooLong;
+    return text.length * 2;
+}
+
+int ParseTwice(string text, out int used) fails ParseError
+{
+    var once = try Parse(text, out used);
+    return once * 2;
+}
+
+bool Label(int n, out string label)
+{
+    label = $"n{n}";
+    return n > 0;
+}
+
+void Fill(int n, out List<int> made)
+{
+    made = [];
+    for (var i = 0; i < n; i++) made.Add(i * i);
+}
+
+void Name(int power, out Stats stats)
+{
+    stats = Stats { power = power, name = $"p{power}" };
+}
+
+// A struct a field at a time: it has a value once each of its fields does, on
+// every path, and a field is read once it's assigned, or made by a call
+void Pack(int seed, out Pair pair)
+{
+    if (!Half(seed, out pair.a)) pair.a = 0;
+    if (seed > 3) pair.b = pair.a * 0.5;
+    else pair.b = -1;
+}
+
+// An `out` parameter passed on is assigned by the call it goes to
+bool Lookup(Map<int, float> scores, int key, out float score)
+{
+    return scores.TryGet(key, out score);
+}
+
+bool Half(int value, out int half)
+{
+    if (!c_try_half(value, out var got))
+    {
+        half = -1;
+        return false;
+    }
+    half = got;
+    return true;
+}
+
+// Assigned on every path through a switch, a loop and a break
+int Grade(int score, out string name)
+{
+    switch (score / 10)
+    {
+        case 10:
+        case 9:
+            name = "A";
+            return 4;
+        case 8:
+            name = "B";
+            break;
+        default:
+            name = "F";
+            break;
+    }
+    return name == "B" ? 3 : 0;
+}
+
+bool FirstOver(List<int> values, int least, out int index)
+{
+    index = -1;
+    for (var i = 0; i < values.count; i++)
+    {
+        if (values[i] <= least) continue;
+        index = i;
+        break;
+    }
+    return index >= 0;
+}
+
+bool Both(int a, int b, out int halfA, out int halfB)
+{
+    halfB = 0;
+    return c_try_half(a, out halfA) && c_try_half(b, out halfB);
+}
+
+// Functions that share a name: `out` goes with the parameter of the one picked
+bool Pick(int key, out int value)
+{
+    value = key * 10;
+    return true;
+}
+
+bool Pick(string key, out int value)
+{
+    value = key.length;
+    return key.length > 0;
+}
+
+// One that takes a block
+void Twice(out int ran, Action content)
+{
+    ran = 0;
+    content();
+    ran += 1;
+    content();
+    ran += 1;
+}
+
+singleton Calls
+{
+    // Declared in an if's condition: in scope in both branches and after it
+    int found;
+    float foundX;
+    float afterX;
+    float missedX;
+    // In a plain statement, typed, discarded, and into variables the code has
+    int whole;
+    float rest;
+    int typedWhole;
+    float existingRest;
+    int changed;
+    int namedWhole;
+    float namedRest;
+    // Methods
+    int power;
+    bool enough;
+    int left;
+    bool spent;
+    Stats stats;
+    // Text, lists and structs with text, into the world and into locals
+    string label;
+    int labelLength;
+    List<int> made;
+    int squares;
+    Stats named;
+    int namedLength;
+    Pair packed;
+    Pair packedOdd;
+    // Passed on, and through && and ||
+    float looked;
+    bool lookedThere;
+    int half;
+    bool halved;
+    int halfA;
+    int halfB;
+    bool both;
+    int chained;
+    int either;
+    // Switches, loops and breaks
+    int grade;
+    string gradeName;
+    int index;
+    int looped;
+    int picked;
+    int pickedText;
+    int ran;
+    int blocks;
+}
+
+singleton Fails
+{
+    int parsed;
+    int used;
+    int emptyUsed = 99;
+    int longUsed = 99;
+    int emptyValue;
+    int tried;
+    int triedUsed;
+    int isValue;
+    int isUsed;
+}
+
+singleton Maps
+{
+    Map<int, float> scores;
+    Map<string, Stats> stats;
+    Map<int, string> names;
+    float there;
+    bool has;
+    float missing = 7;
+    bool hasMissing = true;
+    int power;
+    string statName;
+    int missingPower;
+    string name;
+    string noName = "x";
+    bool named;
+    float total;
+    int count;
+}
+
+singleton FromC
+{
+    int half;
+    bool halved;
+    int odd = 5;
+    bool oddHalved = true;
+    Pair pair;
+    float a;
+    float3 b;
+    List<int> squares;
+    int count;
+    int localCount;
+    int localLast;
+}
+
+singleton Loops
+{
+    List<int> values;
+    List<int> sorted;
+    int halves;
+}
+
+singleton Later
+{
+    int whole;
+    float rest;
+    int waited;
+}
+
+local singleton Seen
+{
+    int whole;
+    float rest;
+    float score;
+    bool has;
+    int frames;
+}
+
+event Poke { int value; }
+
+singleton Poked
+{
+    int half;
+    bool halved;
+}
+
+event(Spawned) Setup(with Main, mut Maps maps, mut Loops loops)
+{
+    Spawn(Body { x = 4, stats = Stats { power = 5 } });
+    maps.scores[3] = 1.5;
+    maps.scores[8] = 2.5;
+    maps.stats["knight"] = Stats { power = 9, name = "Sir" };
+    maps.names[1] = "one";
+    loops.values = [8, 3, 10, 6];
+    loops.sorted = [9, 4, 7, 2];
+    Send(Poke { value = 42 });
+}
+
+system Call(mut Body body, mut Calls calls)
+{
+    // `out var` in an if's condition
+    if (TryStronger(body, Body { x = 20 }, 10, out var strong))
+    {
+        calls.found += 1;
+        calls.foundX = strong.x;
+    }
+    calls.afterX = strong.x;
+    if (TryStronger(body, Body { x = 2 }, 10, out var weak)) calls.found += 10;
+    else calls.missedX = weak.x;
+
+    // In a plain statement, with a type, into a variable and a field, and left out
+    Split(3.25, out var whole, out var rest);
+    calls.whole = whole;
+    calls.rest = rest;
+    Split(7.5, out int typed, out _);
+    calls.typedWhole = typed;
+    mut var existing = 0.0;
+    Split(2.75, out _, out existing);
+    calls.existingRest = existing;
+    Split(9.5, out mut var changed, out float _);
+    changed += 100;
+    calls.changed = changed;
+    Split(value: 6.25, rest: out calls.namedRest, whole: out calls.namedWhole);
+    Split(body.x + 0.5, out body.hits, out _);
+
+    // Methods
+    calls.enough = body.stats.TryPower(4, out calls.power);
+    calls.spent = body.stats.Spend(2, out var left);
+    calls.left = left;
+    calls.stats = body.stats;
+
+    // Text, lists and structs that hold text
+    Label(7, out calls.label);
+    Label(12, out var label);
+    calls.labelLength = label.length;
+    Fill(4, out calls.made);
+    Fill(3, out var squares);
+    calls.squares = squares[2] + squares.count;
+    Name(6, out calls.named);
+    Name(11, out var named);
+    calls.namedLength = named.name.length + named.power;
+    Pack(8, out calls.packed);
+    Pack(3, out var odd);
+    calls.packedOdd = odd;
+}
+
+system Pass(mut Calls calls, Maps maps)
+{
+    calls.lookedThere = Lookup(maps.scores, 8, out calls.looked);
+    calls.halved = Half(10, out calls.half);
+    calls.both = Both(8, 6, out calls.halfA, out calls.halfB);
+    // The second call only runs when the first found something: its variable is read where it ran
+    if (maps.scores.TryGet(3, out var first) && maps.scores.TryGet(int(first * 2) + 5, out var second))
+    {
+        calls.chained = int(first * 10 + second * 100);
+    }
+    if (!Half(18, out var odd) || odd > 100) calls.either = -1;
+    else calls.either = odd;
+
+    calls.grade = Grade(85, out calls.gradeName) + Grade(95, out _) * 10;
+    List<int> values = [1, 5, 9, 2];
+    if (FirstOver(values, 4, out var index)) calls.index = index;
+    // A loop's condition's: the loop's own, made again each round
+    mut var n = 40;
+    while (Half(n, out var halved) && halved > 4)
+    {
+        n = halved;
+        calls.looped += 1;
+    }
+    Pick(4, out calls.picked);
+    Pick("four", out var length);
+    calls.pickedText = length;
+    Twice(out calls.ran)
+    {
+        calls.blocks += 1;
+    }
+}
+
+system Fail(mut Fails fails)
+{
+    fails.parsed = Parse("ab", out fails.used) ?? -1;
+    fails.emptyValue = Parse("", out fails.emptyUsed)!;
+    var failed = Parse("abcdef", out fails.longUsed);
+    if (failed is ParseError.TooLong) fails.parsed += 100;
+    fails.tried = ParseTwice("abc", out var used) ?? -1;
+    fails.triedUsed = used;
+    if (Parse("xyz", out var seen) is int value)
+    {
+        fails.isValue = value;
+        fails.isUsed = seen;
+    }
+}
+
+system ReadMaps(mut Maps maps)
+{
+    maps.has = maps.scores.TryGet(3, out maps.there);
+    maps.hasMissing = maps.scores.TryGet(4, out maps.missing);
+    if (maps.stats.TryGet("knight", out var knight))
+    {
+        maps.power = knight.power;
+        maps.statName = knight.name;
+    }
+    maps.stats.TryGet("nobody", out var nobody);
+    maps.missingPower = nobody.power;
+    maps.named = maps.names.TryGet(key: 1, value: out maps.name);
+    maps.names.TryGet(2, out maps.noName);
+    maps.total = 0;
+    maps.count = 0;
+    foreach (var entry in maps.scores)
+    {
+        if (!maps.scores.TryGet(entry.key, out var score)) continue;
+        maps.total += score;
+        maps.count += 1;
+    }
+}
+
+system CallC(mut FromC from)
+{
+    from.halved = c_try_half(84, out from.half);
+    from.oddHalved = c_try_half(7, out from.odd);
+    c_out_pair(3, out from.pair);
+    c_out_two(1.5, out from.a, out from.b);
+    from.count = c_out_squares(5, out from.squares);
+    from.localCount = c_out_squares(4, out var squares);
+    from.localLast = squares[3];
+}
+
+// In a parallel loop's step and a comparison, a local `out` declares is their own
+system Loop(mut Loops loops)
+{
+    parallel (var i in loops.values)
+    {
+        if (c_try_half(loops.values[i], out var half)) loops.values[i] = half;
+    }
+    loops.sorted.Sort(a, b)
+    {
+        Half(a, out var halfA);
+        Half(b, out var halfB);
+        return halfA < halfB;
+    }
+    loops.halves = 0;
+    foreach (var value in loops.sorted)
+    {
+        if (!Half(value, out _)) continue;
+        loops.halves += 1;
+    }
+}
+
+// A task keeps what `out` arguments declared while it waits
+async void Linger(mut Later later)
+{
+    Split(5.75, out var whole, out var rest);
+    await Wait.Ticks(2);
+    later.whole = whole;
+    later.rest = rest;
+    later.waited += 1;
+}
+
+system Start(mut Later later)
+{
+    if (later.waited == 0 && later.whole == 0)
+    {
+        later.whole = -1;
+        Linger(later);
+    }
+}
+
+event(Poke poke) OnPoke(mut Poked poked)
+{
+    poked.halved = Half(poke.value, out poked.half);
+}
+
+// Local code: a view declares and reads them too
+view Look(Maps maps, mut Seen seen)
+{
+    Split(8.5, out seen.whole, out var rest);
+    seen.rest = rest;
+    seen.has = maps.scores.TryGet(8, out var score);
+    seen.score = score;
+    seen.frames += 1;
+}
+
+// Where else an `out` argument declares: a return's value, a foreach's list, a
+// switch's value, a for's step, an index, and the code of a function that's
+// copied into its call
+singleton Places
+{
+    int returned;
+    int listed;
+    int switched;
+    int stepped;
+    List<int> items;
+    int indexed;
+    int inlined;
+}
+
+int Returned(int value)
+{
+    return Half(value, out var half) ? half : -1;
+}
+
+List<int> Squares(int n, out int last)
+{
+    mut List<int> made = [];
+    for (var i = 1; i <= n; i++) made.Add(i * i);
+    last = n * n;
+    return made;
+}
+
+void Each(int n, Action content)
+{
+    for (var i = 0; i < n; i++)
+    {
+        if (Half(i, out var half) && half > 0) content();
+    }
+}
+
+system Place(mut Places places)
+{
+    places.returned = Returned(14);
+    mut var sum = 0;
+    foreach (var square in Squares(3, out var last)) sum += square;
+    places.listed = sum * 100 + last;
+    switch (Half(12, out var six) ? six : 0)
+    {
+        case 6:
+            places.switched = six;
+            break;
+        default:
+            places.switched = -1;
+            break;
+    }
+    mut var steps = 0;
+    for (var i = 16; i > 1; Half(i, out i)) steps += 1;
+    places.stepped = steps;
+    places.items = [0, 0, 0];
+    places.items[Half(4, out var at) ? at : 0] = at + 40;
+    places.indexed = places.items[2];
+    places.inlined = 0;
+    Each(6)
+    {
+        places.inlined += 1;
+    }
+}

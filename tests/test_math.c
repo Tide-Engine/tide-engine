@@ -1,5 +1,7 @@
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "tide/math.h"
 #include "tide_test.h"
@@ -219,12 +221,78 @@ TIDE_TEST(math_vectors)
     const tide_float3 v = tide_f3(3.0f, 4.0f, 12.0f);
     TIDE_CHECK(tide_length_f3(v) == 13.0f);
     TIDE_CHECK(near(tide_length_f3(tide_normalize_f3(v)), 1.0f));
-    const tide_float3 zero = tide_normalizesafe_f3(tide_f3(0.0f, 0.0f, 0.0f));
-    TIDE_CHECK(zero.x == 0.0f && zero.y == 0.0f && zero.z == 0.0f);
     const tide_float3 c = tide_cross_f3(tide_f3(1, 0, 0), tide_f3(0, 1, 0));
     TIDE_CHECK(c.x == 0.0f && c.y == 0.0f && c.z == 1.0f);
     const tide_float3 r = tide_reflect_f3(tide_f3(1, -1, 0), tide_f3(0, 1, 0));
     TIDE_CHECK(r.x == 1.0f && r.y == 1.0f && r.z == 0.0f);
+}
+
+static bool same_bits(const void *a, const void *b, const size_t size)
+{
+    return memcmp(a, b, size) == 0;
+}
+
+TIDE_TEST(math_normalize_gives_zero_for_what_has_no_direction)
+{
+    // No key held: the move that every game normalizes
+    const tide_float2 none2 = tide_normalize_f2(tide_f2(0.0f, 0.0f));
+    const tide_float3 none3 = tide_normalize_f3(tide_f3(0.0f, 0.0f, 0.0f));
+    const tide_float4 none4 = tide_normalize_f4(tide_f4(0.0f, 0.0f, 0.0f, 0.0f));
+    TIDE_CHECK(same_bits(&none2, &(tide_float2){0.0f, 0.0f}, sizeof none2));
+    TIDE_CHECK(same_bits(&none3, &(tide_float3){0.0f, 0.0f, 0.0f}, sizeof none3));
+    TIDE_CHECK(same_bits(&none4, &(tide_float4){0.0f, 0.0f, 0.0f, 0.0f}, sizeof none4));
+
+    // Too short: a length squared that's no normal float. The shortest that
+    // still has one comes out at length 1.
+    const tide_float3 tiny = tide_normalize_f3(tide_f3(1e-20f, 0.0f, 0.0f));
+    TIDE_CHECK(tiny.x == 0.0f && tiny.y == 0.0f && tiny.z == 0.0f);
+    const tide_float3 denormal = tide_normalize_f3(tide_f3(0.0f, 0x1p-149f, 0.0f));
+    TIDE_CHECK(denormal.x == 0.0f && denormal.y == 0.0f && denormal.z == 0.0f);
+    const tide_float3 small = tide_normalize_f3(tide_f3(0.0f, 0.0f, -2e-19f));
+    TIDE_CHECK(small.x == 0.0f && small.y == 0.0f && near(small.z, -1.0f));
+
+    // NaN doesn't spread through it
+    const tide_float3 nan = tide_normalize_f3(tide_f3(NAN, 1.0f, 0.0f));
+    TIDE_CHECK(nan.x == 0.0f && nan.y == 0.0f && nan.z == 0.0f);
+
+    // A zeroed quaternion (a field nothing set) is the identity
+    const tide_quaternion none = tide_normalize_q(tide_q(0.0f, 0.0f, 0.0f, 0.0f));
+    const tide_quaternion identity = tide_identity_q();
+    TIDE_CHECK(same_bits(&none, &identity, sizeof none));
+    const tide_quaternion blend = tide_nlerp_q(tide_q(0.0f, 0.0f, 0.0f, 0.0f), tide_q(0.0f, 0.0f, 0.0f, 0.0f), 0.5f);
+    TIDE_CHECK(same_bits(&blend, &identity, sizeof blend));
+    TIDE_CHECK(tide_angle_q(tide_q(0.0f, 0.0f, 0.0f, 0.0f), tide_axisangle_q(tide_f3(0, 1, 0), 1.0f)) == 0.0f);
+
+    // Looking straight along up: no rotation to give, but no NaN either
+    const tide_quaternion along = tide_lookrotation_q(tide_f3(0, 1, 0), tide_f3(0, 1, 0));
+    TIDE_CHECK(!isnan(along.value.x) && !isnan(along.value.y) && !isnan(along.value.z) && !isnan(along.value.w));
+}
+
+TIDE_TEST(math_normalize_is_the_reciprocal_square_root_times_the_vector)
+{
+    // What it gave before it was safe, bit for bit, for every vector with a length
+    rng_state = 777;
+    for (int i = 0; i < 100000; i++) {
+        const float scale = i % 3 == 0 ? 1e-15f : i % 3 == 1 ? 1.0f : 1e15f;
+        const float x = rnd(-1.0f, 1.0f) * scale;
+        const float y = rnd(-1.0f, 1.0f) * scale;
+        const float z = rnd(-1.0f, 1.0f) * scale;
+        const float w = rnd(-1.0f, 1.0f) * scale;
+        const tide_float2 v2 = tide_f2(x, y);
+        const tide_float3 v3 = tide_f3(x, y, z);
+        const tide_float4 v4 = tide_f4(x, y, z, w);
+        const tide_float2 got2 = tide_normalize_f2(v2);
+        const tide_float3 got3 = tide_normalize_f3(v3);
+        const tide_float4 got4 = tide_normalize_f4(v4);
+        const tide_quaternion got_q = tide_normalize_q((tide_quaternion){v4});
+        const tide_float2 want2 = tide_mul_f2(tide_f2_splat(tide_rsqrt_f(tide_dot_f2(v2, v2))), v2);
+        const tide_float3 want3 = tide_mul_f3(tide_f3_splat(tide_rsqrt_f(tide_dot_f3(v3, v3))), v3);
+        const tide_float4 want4 = tide_mul_f4(tide_f4_splat(tide_rsqrt_f(tide_dot_f4(v4, v4))), v4);
+        TIDE_REQUIRE(same_bits(&got2, &want2, sizeof got2));
+        TIDE_REQUIRE(same_bits(&got3, &want3, sizeof got3));
+        TIDE_REQUIRE(same_bits(&got4, &want4, sizeof got4));
+        TIDE_REQUIRE(same_bits(&got_q.value, &want4, sizeof want4));
+    }
 }
 
 TIDE_TEST(math_quaternions)
@@ -276,4 +344,157 @@ TIDE_TEST(math_matrices)
     const tide_float2x2 m2 = {{4, 2}, {7, 6}};
     const tide_float2x2 id2 = tide_mul_f2x2(m2, tide_inverse_f2x2(m2));
     TIDE_CHECK(near(id2.c0.x, 1) && near(id2.c0.y, 0) && near(id2.c1.x, 0) && near(id2.c1.y, 1));
+}
+
+// xxHash32 as its spec writes it, byte by byte, for Math.Hash's versions to
+// agree with.
+static uint32_t xxh32_read(const uint8_t *p) { return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
+
+static uint32_t xxh32(const void *data, const size_t size, const uint32_t seed)
+{
+    const uint8_t *p = data;
+    const uint8_t *const end = p + size;
+    uint32_t h;
+    if (size >= 16) {
+        uint32_t lanes[4] = {seed + TIDE_XXH_P1 + TIDE_XXH_P2, seed + TIDE_XXH_P2, seed, seed - TIDE_XXH_P1};
+        for (; end - p >= 16; p += 16) {
+            for (int i = 0; i < 4; i++) {
+                lanes[i] = tide_xxh_rotl(lanes[i] + xxh32_read(p + 4 * i) * TIDE_XXH_P2, 13) * TIDE_XXH_P1;
+            }
+        }
+        h = tide_xxh_rotl(lanes[0], 1) + tide_xxh_rotl(lanes[1], 7) + tide_xxh_rotl(lanes[2], 12)
+          + tide_xxh_rotl(lanes[3], 18);
+    } else {
+        h = seed + TIDE_XXH_P5;
+    }
+    h += (uint32_t)size;
+    for (; end - p >= 4; p += 4) h = tide_xxh_rotl(h + xxh32_read(p) * TIDE_XXH_P3, 17) * TIDE_XXH_P4;
+    for (; p < end; p++) h = tide_xxh_rotl(h + *p * TIDE_XXH_P5, 11) * TIDE_XXH_P1;
+    h ^= h >> 15;
+    h *= TIDE_XXH_P2;
+    h ^= h >> 13;
+    h *= TIDE_XXH_P3;
+    h ^= h >> 16;
+    return h;
+}
+
+// The value's bytes, little-endian whatever the machine's order.
+static int32_t hash_reference(const int32_t *words, const int count)
+{
+    uint8_t bytes[16];
+    for (int i = 0; i < count; i++) {
+        const uint32_t u = (uint32_t)words[i];
+        for (int b = 0; b < 4; b++) bytes[4 * i + b] = (uint8_t)(u >> (8 * b));
+    }
+    return (int32_t)(xxh32(bytes, (size_t)count * 4, 0) & 0x7FFFFFFFu);
+}
+
+TIDE_TEST(math_hash_is_xxhash32)
+{
+    // The reference against xxHash's own: the short path, the bytes at the
+    // end, and stripes, words and bytes together (39 bytes).
+    TIDE_CHECK(xxh32("", 0, 0) == 0x02CC5D05u);
+    TIDE_CHECK(xxh32("abc", 3, 0) == 0x32D153FFu);
+    const char *nobody = "Nobody inspects the spammish repetition";
+    TIDE_CHECK(xxh32(nobody, strlen(nobody), 0) == 0xE2293B2Fu);
+
+    rng_state = 777;
+    for (int i = 0; i < 1000; i++) {
+        int32_t w[4];
+        for (int k = 0; k < 4; k++) {
+            rng_state = rng_state * 1664525u + 1013904223u;
+            w[k] = (int32_t)rng_state;
+        }
+        TIDE_CHECK(tide_hash_i(w[0]) == hash_reference(w, 1));
+        TIDE_CHECK(tide_hash_i2(tide_i2(w[0], w[1])) == hash_reference(w, 2));
+        TIDE_CHECK(tide_hash_i3(tide_i3(w[0], w[1], w[2])) == hash_reference(w, 3));
+        TIDE_CHECK(tide_hash_i4(tide_i4(w[0], w[1], w[2], w[3])) == hash_reference(w, 4));
+    }
+    TIDE_CHECK(tide_hash_i(INT32_MIN) >= 0 && tide_hash_i(-1) >= 0);
+}
+
+// Cells next to each other give unrelated numbers: every one of the low bits
+// is set about half the time, as one bit of a neighbor changes.
+TIDE_TEST(math_hash_of_cells_has_no_stripes)
+{
+    int ones[8] = {0};
+    int differ[8] = {0};
+    const int size = 128;
+    for (int y = 0; y < size; y++) {
+        for (int x = 0; x < size; x++) {
+            const int32_t h = tide_hash_i2(tide_i2(x, y));
+            const int32_t right = tide_hash_i2(tide_i2(x + 1, y));
+            for (int b = 0; b < 8; b++) {
+                ones[b] += (h >> b) & 1;
+                differ[b] += ((h ^ right) >> b) & 1;
+            }
+        }
+    }
+    const int half = size * size / 2;
+    for (int b = 0; b < 8; b++) {
+        TIDE_CHECK(abs(ones[b] - half) < half / 20);
+        TIDE_CHECK(abs(differ[b] - half) < half / 20);
+    }
+}
+
+// Noise (noise.c): gradient noise is 0 at the whole numbers and within -1 to 1,
+// simplex noise within about that, cellular noise two distances in order,
+// each the same for the same point and other for another seed, and smooth:
+// a step of a thousandth moves none of them much.
+TIDE_TEST(math_noise_stays_in_its_range_and_is_smooth)
+{
+    rng_state = 4242;
+    float most2 = 0.0f, most3 = 0.0f, most_s2 = 0.0f, most_s3 = 0.0f, most_c2 = 0.0f, most_c3 = 0.0f;
+    for (int i = 0; i < 20000; i++) {
+        const float x = rnd(-300.0f, 300.0f);
+        const float y = rnd(-300.0f, 300.0f);
+        const float z = rnd(-300.0f, 300.0f);
+        const int32_t seed = (int32_t)(rng_state >> 3);
+        const tide_float2 p2 = tide_f2(x, y);
+        const tide_float3 p3 = tide_f3(x, y, z);
+        const float n2 = tide_perlin_f2(p2, seed);
+        const float n3 = tide_perlin_f3(p3, seed);
+        const float s2 = tide_simplex_f2(p2, seed);
+        const float s3 = tide_simplex_f3(p3, seed);
+        const tide_float2 c2 = tide_cellular_f2(p2, seed);
+        const tide_float2 c3 = tide_cellular_f3(p3, seed);
+        TIDE_CHECK(n2 >= -1.0f && n2 <= 1.0f);
+        TIDE_CHECK(n3 >= -1.000001f && n3 <= 1.000001f);
+        TIDE_CHECK(s2 >= -1.0f && s2 <= 1.0f);
+        TIDE_CHECK(s3 >= -1.0f && s3 <= 1.0f);
+        TIDE_CHECK(c2.x >= 0.0f && c2.x <= c2.y && c2.y <= 1.5f);
+        TIDE_CHECK(c3.x >= 0.0f && c3.x <= c3.y && c3.y <= 1.75f);
+        if (fabsf(n2) > most2) most2 = fabsf(n2);
+        if (fabsf(n3) > most3) most3 = fabsf(n3);
+        if (fabsf(s2) > most_s2) most_s2 = fabsf(s2);
+        if (fabsf(s3) > most_s3) most_s3 = fabsf(s3);
+        if (c2.x > most_c2) most_c2 = c2.x;
+        if (c3.x > most_c3) most_c3 = c3.x;
+        // The same again, and another seed is another field
+        TIDE_CHECK(tide_perlin_f2(p2, seed) == n2 && tide_simplex_f3(p3, seed) == s3);
+        TIDE_CHECK(tide_cellular_f2(p2, seed).x == c2.x && tide_cellular_f3(p3, seed).y == c3.y);
+        TIDE_CHECK(tide_perlin_f2(p2, seed + 1) != n2 || tide_perlin_f3(p3, seed + 1) != n3);
+        // Smooth: a small step is a small change
+        const tide_float2 q2 = tide_f2(x + 0.001f, y - 0.001f);
+        const tide_float3 q3 = tide_f3(x + 0.001f, y - 0.001f, z + 0.001f);
+        TIDE_CHECK(fabsf(tide_perlin_f2(q2, seed) - n2) < 0.02f);
+        TIDE_CHECK(fabsf(tide_perlin_f3(q3, seed) - n3) < 0.02f);
+        TIDE_CHECK(fabsf(tide_simplex_f2(q2, seed) - s2) < 0.02f);
+        TIDE_CHECK(fabsf(tide_simplex_f3(q3, seed) - s3) < 0.02f);
+        TIDE_CHECK(fabsf(tide_cellular_f2(q2, seed).x - c2.x) < 0.01f);
+        TIDE_CHECK(fabsf(tide_cellular_f3(q3, seed).x - c3.x) < 0.01f);
+    }
+    // Each reaches well into its range
+    TIDE_CHECK(most2 > 0.7f && most3 > 0.7f && most_s2 > 0.7f && most_s3 > 0.6f);
+    TIDE_CHECK(most_c2 > 0.5f && most_c3 > 0.5f);
+    // Gradient noise is 0 at every whole number, in every seed
+    for (int i = -50; i <= 50; i += 7) {
+        TIDE_CHECK(tide_perlin_f2(tide_f2((float)i, (float)(3 * i)), i) == 0.0f);
+        TIDE_CHECK(tide_perlin_f3(tide_f3((float)i, (float)(-i), 2.0f), i) == 0.0f);
+    }
+    // Cellular noise is 0 on a feature point: the nearest cell's own, which its hash places
+    const int32_t h = tide_hash_i3(tide_i3(5, 7, 0));
+    const tide_float2 feature = tide_f2(5.0f + (float)(h & 32767) * 0.000030518509f,
+                                        7.0f + (float)((h >> 15) & 32767) * 0.000030518509f);
+    TIDE_CHECK(tide_cellular_f2(feature, 0).x < 0.0001f);
 }

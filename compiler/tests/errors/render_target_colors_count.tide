@@ -1,0 +1,5 @@
+// expect: a target's color images are read one at a time: 'colors[1]' is its second, as a Texture
+// How many it holds is said where it's made
+scene Main { }
+local singleton Maps { RenderTarget scene; Texture held; DepthTexture deep; }
+view Show(Maps maps) { int held = maps.scene.colors.count; }

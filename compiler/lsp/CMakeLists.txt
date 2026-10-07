@@ -1,6 +1,6 @@
 # tidels: the Tide language server. Editors run it for completion,
 # diagnostics, hovers, go to definition and semantic highlighting.
-add_library(tidels_core STATIC analysis.c cdefs.c folders.c json.c server.c)
+add_library(tidels_core STATIC analysis.c cdefs.c json.c packages.c server.c)
 target_link_libraries(tidels_core PUBLIC tidec_core)
 target_include_directories(tidels_core PUBLIC .)
 # "Go to definition" on built-ins opens the engine headers they're defined in.
@@ -11,6 +11,8 @@ target_link_libraries(tidels PRIVATE tidels_core)
 install(TARGETS tidels RUNTIME DESTINATION bin COMPONENT tide)
 # Which files make up each game, for analysing them together (see cmake/Tide.cmake).
 target_compile_definitions(tidels PRIVATE "TIDE_GAMES_MANIFEST=\"${TIDE_GAMES_MANIFEST}\"")
+# The packages that come with tide, for a tidels that isn't installed: the repo's own (packages/).
+target_compile_definitions(tidels PRIVATE "TIDE_SOURCE_DIR=\"${PROJECT_SOURCE_DIR}\"")
 
 if(WIN32)
     # Editors keep tidels running, and Windows won't overwrite a running
@@ -38,3 +40,11 @@ add_test(NAME tidels_tests COMMAND tidels_tests)
 add_test(NAME tidels_stdio
     COMMAND "${CMAKE_COMMAND}" "-DTIDELS=$<TARGET_FILE:tidels>" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/stdio_test.cmake")
+
+# ...and over pipes, a message at a time, where it can tell that nothing more
+# has arrived (see main.c).
+if(TIDE_NODE)
+    add_test(NAME tidels_pipe
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/pipe_test.mjs" "$<TARGET_FILE:tidels>")
+    set_tests_properties(tidels_pipe PROPERTIES TIMEOUT 120)
+endif()

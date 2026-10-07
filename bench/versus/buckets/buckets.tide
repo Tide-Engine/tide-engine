@@ -1,0 +1,109 @@
+// Buckets: many short histories, one for each of many things. Every tick a
+// value goes into each bucket, over its oldest once it holds CAP of them: a
+// ring, as each way keeps it. Written as a list of lists, a list of CAP
+// cells for each bucket, which is what the concept is, and as one flat list
+// of every bucket's cells, which is what a game wrote before a list could
+// hold lists, and as a list of structs each with an int[CAP] array, which
+// needs no second list at all. So what's measured is reading and writing an
+// element of an inner list, of a flat list and of an array, the same work
+// apart from that.
+
+scene Main { }
+
+const int CAP = 32;
+
+// The benchmark sets the count and the way before the first tick.
+struct Ring
+{
+    int[CAP] cells;
+    int head;
+    int count;
+}
+
+singleton Pool
+{
+    int buckets = 64;
+    int mode = 0; // 0: rows, a list of lists; 1: flat, one list with a ring for each bucket; 2: arrays, a ring struct each
+    List<Ring> rings;
+    List<List<int>> rows; // Rows: CAP cells for each bucket, a list each
+    List<int> cells;      // Flat: CAP cells for each bucket, side by side
+    List<int> heads;      // Where each bucket's oldest value is
+    List<int> counts;     // ...and how many it holds
+}
+
+system Push(mut Pool pool, Time time)
+{
+    if (pool.mode != 0) return;
+    if (pool.rows.count == 0)
+    {
+        pool.rows.Resize(pool.buckets);
+        pool.heads.Resize(pool.buckets);
+        pool.counts.Resize(pool.buckets);
+    }
+    for (var b = 0; b < pool.buckets; b++)
+    {
+        var value = Math.Hash(int2(time.tick, b)) & 0xFFFF;
+        var head = pool.heads[b];
+        var count = pool.counts[b];
+        if (count < CAP)
+        {
+            if (count == 0) pool.rows[b].Resize(CAP);
+            pool.rows[b][(head + count) % CAP] = value;
+            pool.counts[b] = count + 1;
+        }
+        else
+        {
+            pool.rows[b][head] = value;
+            pool.heads[b] = (head + 1) % CAP;
+        }
+    }
+}
+
+system PushArrays(mut Pool pool, Time time)
+{
+    if (pool.mode != 2) return;
+    if (pool.rings.count == 0) pool.rings.Resize(pool.buckets);
+    for (var b = 0; b < pool.buckets; b++)
+    {
+        var value = Math.Hash(int2(time.tick, b)) & 0xFFFF;
+        var head = pool.rings[b].head;
+        var count = pool.rings[b].count;
+        if (count < CAP)
+        {
+            pool.rings[b].cells[(head + count) % CAP] = value;
+            pool.rings[b].count = count + 1;
+        }
+        else
+        {
+            pool.rings[b].cells[head] = value;
+            pool.rings[b].head = (head + 1) % CAP;
+        }
+    }
+}
+
+system PushFlat(mut Pool pool, Time time)
+{
+    if (pool.mode != 1) return;
+    if (pool.cells.count == 0)
+    {
+        pool.cells.Resize(pool.buckets * CAP);
+        pool.heads.Resize(pool.buckets);
+        pool.counts.Resize(pool.buckets);
+    }
+    for (var b = 0; b < pool.buckets; b++)
+    {
+        var value = Math.Hash(int2(time.tick, b)) & 0xFFFF;
+        var head = pool.heads[b];
+        var count = pool.counts[b];
+        if (count < CAP)
+        {
+            pool.cells[b * CAP + (head + count) % CAP] = value;
+            pool.counts[b] = count + 1;
+        }
+        else
+        {
+            pool.cells[b * CAP + head] = value;
+            pool.heads[b] = (head + 1) % CAP;
+        }
+    }
+}

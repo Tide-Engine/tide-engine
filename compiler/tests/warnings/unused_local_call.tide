@@ -1,0 +1,83 @@
+// warnings: 7
+// expect: local 'enemy' is never used
+// expect: nothing reads its value, but 'Spawn(...)' does something: keep the call as a statement of its own, without the local
+// expect: local 'noise' is never used
+// expect: but 'Noise(...)' does something
+// expect: local 'bumped' is never used
+// expect: but 'Bump(...)' does something
+// expect: local 'removed' is never used
+// expect: but 'Remove(...)' does something
+// expect: local 'healed' is never used
+// expect: but 'Heal(...)' does something
+// expect: local 'clicked' is never used
+// expect: but 'GUILayout.Button(...)' does something
+// expect: local 'loaded' is never used
+// expect: but 'await Load(...)' does something
+
+// A local nothing reads, whose value is a call that does something: the note
+// says to keep the call. What counts: a spawn, a call to C, a function that
+// changes what it's passed, a method that changes what it's called on, a
+// list's change, a widget, and a wait.
+
+extern int Noise(int seed);
+
+int Bump(mut int count)
+{
+    count += 1;
+    return count;
+}
+
+struct Stats
+{
+    int health;
+
+    mut int Heal(int amount)
+    {
+        health += amount;
+        return health;
+    }
+}
+
+component Unit
+{
+    Stats stats;
+    int hits;
+    List<int> history;
+}
+
+component Enemy { int health = 3; }
+
+system Effects(mut Unit unit)
+{
+    var enemy = Spawn(Enemy);
+    var noise = Noise(3);
+    var bumped = Bump(unit.hits) + 1; // Inside an expression too
+    var removed = unit.history.Remove(3);
+    var healed = unit.stats.Heal(2);
+}
+
+local singleton Menu { bool open; }
+
+view Buttons(Menu menu)
+{
+    var clicked = GUILayout.Button("Play");
+    if (menu.open) GUILayout.Label("Open");
+}
+
+async int Load()
+{
+    await Wait.Ticks(1);
+    return 1;
+}
+
+async event(Spawned) Start(with Unit)
+{
+    var loaded = await Load();
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Unit);
+}

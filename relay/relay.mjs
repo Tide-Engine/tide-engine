@@ -9,7 +9,7 @@
 // it needs nothing but Node. Messages, one object each:
 //
 //   relay -> anyone   {relay: 1, ice: [...]}     On connecting: the ICE servers to use
-//   host  -> relay    {host: "K7QF2M"}           Opens a room
+//   host  -> relay    {host: "K7QF2M", key: K}   Opens a room; the key is optional
 //   relay -> host     {hosting: "K7QF2M"}        ...it's open for as long as this connection is
 //                     {taken: "K7QF2M"}          ...or the code is in use: pick another
 //   joiner -> relay   {join: "K7QF2M"}
@@ -17,13 +17,30 @@
 //                     {missing: "K7QF2M"}        No room has that code
 //                     {full: "K7QF2M"}           Too many players are joining it at once
 //   relay -> host     {peer: 3}                  Player 3 is joining
-//                     {left: 3}                  ...or gave up, or connected and hung up
+//                     {left: 3}                  ...or gave up, or connected and hung up: a player hangs
+//                                                up once the host sent it something over their channel,
+//                                                so a host that hasn't seen its channel open yet can
+//                                                take {left} for giving up
 //   joiner -> relay   {signal: ...}              Passed on to the host as {from: 3, signal: ...}
 //   host  -> relay    {to: 3, signal: ...}       Passed on to player 3 as {signal: ...}
 //   relay -> joiner   {closed: "K7QF2M"}         The host closed the room
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later.
+// Host migration: when a room's host goes, the players of its match come back
+// with the key it opened the room with, which only they know.
+//
+//   player -> relay   {migrate: "K7QF2M", key: K}
+//   relay -> player   {hosting: "K7QF2M"}        The host is gone: this player hosts the room now
+//                     {joined: "K7QF2M"}         ...or another player got there first, or the host
+//                                                answered a ping after all: introduced to it
+//                     {taken: "K7QF2M"}          The room has another key: not the same match
+//   relay -> host     {lost: "K7QF2M"}           The host didn't answer: the room is someone else's
+//   host  -> relay    {end: "K7QF2M"}            Its match ended for good: it closes the room, and
+//                                                for a while the relay tells its players who come
+//                                                back {ended: "K7QF2M"} rather than let them take it
+//                                                over, whatever goodbye of the host's they missed.
+//                                                A host whose match ended before the relay knew the
+//                                                room (on this connection) sends {host} first, at
+//                                                once: messages are read in order, hello or not
 
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -31,6 +48,7 @@ import { createServer } from 'node:http';
 // Codes are 6 characters without look-alikes (no 0, O, 1 or I): about a billion.
 export const CODE_LETTERS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 const CODE = /^[2-9A-HJ-NP-Z]{6}$/;
+const KEY = /^[0-9A-Za-z]{1,32}$/;
 
 const LIMITS = {
     message: 64 * 1024,     // Bytes; offers are a few kilobytes
@@ -41,6 +59,23 @@ const LIMITS = {
     messageBurst: 200,      // ...with this many at once
     loneSeconds: 30,        // A connection that isn't in a room by then is closed
     pingSeconds: 25,        // Keeps connections through proxies, and finds dead ones
+    probeSeconds: 3,        // How long a host has to answer a ping when its players come to take its room over
+    endedSeconds: 300,      // How long a room whose match ended stays so, for its players who missed it
+};
+
+// The time a relay goes by: this machine's. Its tests bring a clock of their
+// own, which only moves when they say, so none of them waits on the machine's.
+const SYSTEM_CLOCK = {
+    // Milliseconds, on a clock that only goes forward: a relay only ever asks
+    // how long ago something was, and the time of day gets set, back too (a
+    // virtual machine's by seconds at a time, when its host is busy)
+    now: () => performance.now(),
+    // Calls `call` once `ms` have passed. What it gives back calls that off.
+    wait(ms, call) {
+        const timer = setTimeout(call, ms);
+        timer.unref();
+        return () => clearTimeout(timer);
+    },
 };
 
 // STUN only: players find their own addresses, and connect directly or not at all.
@@ -90,10 +125,12 @@ export function cloudflareTurn(keyId, token, options = {}) {
 // WebSocket with a line of text (for health checks). Call listen() on it.
 // `iceServers`: what players are told to use, or a function that gives it (a
 // promise will do). `trustProxy`: take the client's address from Fly's
-// Fly-Client-IP header.
-export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limits = {} } = {}) {
+// Fly-Client-IP header. `clock`: where all its time comes from (SYSTEM_CLOCK's
+// `now` and `wait`), for tests.
+export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limits = {}, clock = SYSTEM_CLOCK } = {}) {
     const limit = { ...LIMITS, ...limits };
     const rooms = new Map(); // Code -> room
+    const ended = new Map(); // Code -> {key, until}: rooms whose match ended, which no one takes over
     const perAddress = new Map();
     const sockets = new Set();
     let connections = 0;
@@ -110,15 +147,15 @@ export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limi
             socket.end('HTTP/1.1 503 Service Unavailable\r\n\r\n');
             return;
         }
-        const ws = accept(request, socket, limit.message, sockets);
+        const ws = accept(request, socket, limit.message, sockets, clock);
         if (!ws) return;
         connections++;
         perAddress.set(address, count + 1);
-        const peer = { ws, room: null, id: 0, tokens: limit.messageBurst, last: Date.now() };
-        const lone = setTimeout(() => { if (!peer.room) ws.close(1008, 'not in a room'); }, limit.loneSeconds * 1000);
+        const peer = { ws, room: null, id: 0, claiming: null, tokens: limit.messageBurst, last: clock.now() };
+        const stopLone = clock.wait(limit.loneSeconds * 1000, () => { if (!peer.room) ws.close(1008, 'not in a room'); });
         ws.onmessage = text => receive(peer, text);
         ws.onclose = () => {
-            clearTimeout(lone);
+            stopLone();
             connections--;
             const left = perAddress.get(address) - 1;
             if (left > 0) perAddress.set(address, left);
@@ -131,7 +168,7 @@ export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limi
 
     function receive(peer, text) {
         // Messages refill at a steady rate, up to a burst
-        const now = Date.now();
+        const now = clock.now();
         peer.tokens = Math.min(limit.messageBurst, peer.tokens + (now - peer.last) * limit.messagesPerSecond / 1000);
         peer.last = now;
         if (--peer.tokens < 0) {
@@ -148,27 +185,27 @@ export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limi
         if (!message || typeof message !== 'object') return;
         const room = peer.room;
 
-        if (typeof message.host === 'string' && !room) {
+        if (typeof message.host === 'string' && !room && !peer.claiming) {
             const code = message.host;
+            const key = typeof message.key === 'string' && KEY.test(message.key) ? message.key : null;
             if (!CODE.test(code)) peer.ws.close(1008, 'not a room code');
-            else if (rooms.has(code)) peer.ws.send({ taken: code });
-            else {
-                peer.room = { code, host: peer, joining: new Map(), next: 1 };
-                rooms.set(code, peer.room);
-                peer.ws.send({ hosting: code });
-            }
-        } else if (typeof message.join === 'string' && !room) {
+            else if (rooms.has(code) || endedRoom(code)) peer.ws.send({ taken: code });
+            else host(peer, code, key);
+        } else if (typeof message.end === 'string' && room && room.host === peer && message.end === room.code) {
+            if (room.key) ended.set(room.code, { key: room.key, until: clock.now() + limit.endedSeconds * 1000 });
+            leave(peer);
+        } else if (typeof message.join === 'string' && !room && !peer.claiming) {
             const code = message.join;
             const joined = rooms.get(code);
             if (!CODE.test(code)) peer.ws.close(1008, 'not a room code');
             else if (!joined) peer.ws.send({ missing: code });
-            else if (joined.joining.size >= limit.joining) peer.ws.send({ full: code });
-            else {
-                peer.room = joined;
-                peer.id = joined.next++;
-                joined.joining.set(peer.id, peer);
-                peer.ws.send({ joined: code });
-                joined.host.ws.send({ peer: peer.id });
+            else join(peer, joined);
+        } else if (typeof message.migrate === 'string' && !room && !peer.claiming) {
+            const code = message.migrate;
+            if (!CODE.test(code) || typeof message.key !== 'string' || !KEY.test(message.key)) {
+                peer.ws.close(1008, 'not a room code and key');
+            } else {
+                migrate(peer, code, message.key);
             }
         } else if ('signal' in message && room) {
             if (room.host === peer) {
@@ -180,36 +217,123 @@ export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limi
         }
     }
 
+    function host(peer, code, key) {
+        peer.room = { code, host: peer, joining: new Map(), next: 1, key, since: clock.now(), claims: null };
+        rooms.set(code, peer.room);
+        peer.ws.send({ hosting: code });
+    }
+
+    function join(peer, room) {
+        if (room.joining.size >= limit.joining) {
+            peer.ws.send({ full: room.code });
+            return;
+        }
+        peer.room = room;
+        peer.id = room.next++;
+        room.joining.set(peer.id, peer);
+        peer.ws.send({ joined: room.code });
+        room.host.ws.send({ peer: peer.id });
+    }
+
+    // Host migration: a player of the match in room `code` comes back to it,
+    // with its key. If the room is gone, the player hosts it. If its host is
+    // there, the player joins: one that answers a ping in time, or one who
+    // took the room over a moment ago. Otherwise the host is dropped, and the
+    // first of the players asking hosts the room, which the others join.
+    function migrate(peer, code, key) {
+        const room = rooms.get(code);
+        const gone = endedRoom(code);
+        if (gone && gone.key === key) {
+            peer.ws.send({ ended: code });
+        } else if (gone) {
+            peer.ws.send({ taken: code });
+        } else if (!room) {
+            host(peer, code, key);
+        } else if (room.key !== key) {
+            peer.ws.send({ taken: code });
+        } else if (room.claims) { // Its host was pinged already
+            room.claims.push(peer);
+            peer.claiming = room;
+        } else if (clock.now() - room.since < limit.probeSeconds * 1000) {
+            join(peer, room);
+        } else {
+            room.claims = [peer];
+            peer.claiming = room;
+            room.host.ws.probe(limit.probeSeconds * 1000, alive => settle(room, alive));
+        }
+    }
+
+    function settle(room, alive) {
+        const claims = room.claims.filter(p => p.claiming === room);
+        room.claims = null;
+        for (const p of claims) p.claiming = null;
+        if (alive && rooms.get(room.code) === room) {
+            for (const p of claims) join(p, room);
+            return;
+        }
+        if (rooms.get(room.code) === room) { // The host didn't answer: the room goes to its players
+            const old = room.host;
+            rooms.delete(room.code);
+            old.room = null;
+            old.ws.send({ lost: room.code });
+            closeJoiners(room);
+        }
+        for (const p of claims) migrate(p, room.code, room.key); // The first hosts it again, the others join
+    }
+
+    // A room whose match ended a moment ago, or null
+    function endedRoom(code) {
+        const gone = ended.get(code);
+        if (gone && gone.until > clock.now()) return gone;
+        ended.delete(code);
+        return null;
+    }
+
+    function closeJoiners(room) {
+        for (const joiner of room.joining.values()) {
+            joiner.room = null;
+            joiner.ws.send({ closed: room.code });
+            joiner.ws.close(1000, 'the room closed');
+        }
+    }
+
     function leave(peer) {
+        if (peer.claiming) {
+            peer.claiming.claims = peer.claiming.claims.filter(p => p !== peer);
+            peer.claiming = null;
+        }
         const room = peer.room;
         if (!room) return;
         peer.room = null;
         if (room.host === peer) {
             rooms.delete(room.code);
-            for (const joiner of room.joining.values()) {
-                joiner.room = null;
-                joiner.ws.send({ closed: room.code });
-                joiner.ws.close(1000, 'the room closed');
-            }
+            closeJoiners(room);
         } else {
             room.joining.delete(peer.id);
             room.host.ws.send({ left: peer.id });
         }
     }
 
-    const pings = setInterval(() => { for (const ws of sockets) ws.ping(); }, limit.pingSeconds * 1000);
-    pings.unref();
-    server.on('close', () => clearInterval(pings));
+    let stopPings;
+    (function pings() {
+        stopPings = clock.wait(limit.pingSeconds * 1000, () => {
+            pings(); // Again, as long after
+            for (const ws of sockets) ws.ping();
+            for (const code of [...ended.keys()]) endedRoom(code); // Forgets those whose time is up
+        });
+    })();
+    server.on('close', () => stopPings());
     server.rooms = rooms;
+    server.ended = ended;
     return server;
 }
 
 // ---------------------------------------------------------------------------
 // WebSocket (RFC 6455), as much as browsers use: text messages, pings and
 // closing. Frames from clients are masked; ours aren't. `sockets` holds the
-// open ones.
+// open ones, and `clock` is the relay's.
 
-function accept(request, socket, maxMessage, sockets) {
+function accept(request, socket, maxMessage, sockets, clock) {
     const key = request.headers['sec-websocket-key'];
     if (!/websocket/i.test(request.headers.upgrade || '') || !key || request.headers['sec-websocket-version'] !== '13') {
         socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
@@ -225,6 +349,7 @@ function accept(request, socket, maxMessage, sockets) {
     let partsSize = 0;
     let closed = false;
     let answered = true; // The last ping got its pong
+    const probes = new Set(); // What waits on the next pong
     const ws = {
         onmessage: () => {},
         onclose: () => {},
@@ -238,6 +363,23 @@ function accept(request, socket, maxMessage, sockets) {
             }
             answered = false;
             if (!closed) socket.write(frame(0x9, Buffer.alloc(0)));
+        },
+        // Pings now: done(true) when a pong comes within `ms`, done(false) if not
+        probe(ms, done) {
+            if (closed) {
+                done(false);
+                return;
+            }
+            let settled = false;
+            const settle = alive => {
+                if (settled) return;
+                settled = true;
+                probes.delete(settle);
+                done(alive);
+            };
+            probes.add(settle);
+            socket.write(frame(0x9, Buffer.alloc(0)));
+            clock.wait(ms, () => settle(false));
         },
         close(code = 1000, reason = '') {
             if (closed) return;
@@ -254,6 +396,7 @@ function accept(request, socket, maxMessage, sockets) {
         closed = true;
         sockets.delete(ws);
         socket.end();
+        for (const settle of [...probes]) settle(false);
         ws.onclose();
     }
 
@@ -293,6 +436,7 @@ function accept(request, socket, maxMessage, sockets) {
                 if (!closed) socket.write(frame(0xa, payload));
             } else if (opcode === 0xa) {
                 answered = true;
+                for (const settle of [...probes]) settle(true);
             } else if (opcode === 0x1 || opcode === 0x0) {
                 if ((opcode === 0x1) !== (parts.length === 0) || partsSize + size > maxMessage) {
                     ws.close(1002, 'protocol error');

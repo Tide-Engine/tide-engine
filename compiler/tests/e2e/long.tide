@@ -1,0 +1,119 @@
+// long: 64-bit integers, next to ints and floats.
+
+enum Rank { Low = 1, High = 70000 }
+
+const long BILLIONS = 10_000_000_000;
+const long FOLDED = (1L << 40) + BILLIONS * 3 - 1;
+
+struct Ledger
+{
+    int entries;
+    long balance = 500_000_000_000;
+}
+
+component Tally
+{
+    int small = 7;
+    long total;
+    long wrapped;
+    long bits = 0xFFFF_FFFFL;
+    Ledger ledger;
+    List<long> history;
+}
+
+component Results
+{
+    long sum;
+    long product;
+    long quotient;
+    long zero;
+    long remainder;
+    long shifted;
+    long rightShifted;
+    long masked;
+    long negated;
+    long smallest;
+    long fromFloat;
+    long saturated;
+    long fromNaN;
+    long fromEnum;
+    int truncated;
+    float widened;
+    int rankOrder;
+    long clamped;
+    long largest;
+    int hash;
+    bool ordered;
+    bool equal;
+    long hex;
+    long ticks;
+    string text;
+}
+
+input Controls
+{
+    long bid;
+    [Clamp(0, 1_000_000_000_000)]
+    long bounded;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Tally, Results, Owner { player = PlayerID(0) });
+}
+
+long Doubled(long x)
+{
+    return x * 2;
+}
+
+system Count(Time time, mut Tally tally)
+{
+    tally.total += tally.small;
+    tally.total = Doubled(tally.total);
+    tally.wrapped = 9_223_372_036_854_775_807 + time.tick + 1;
+    tally.ledger.entries++;
+    tally.ledger.balance -= BILLIONS;
+    tally.history.Add(tally.total);
+    tally.total++;
+}
+
+system Compute(Controls controls, Time time, mut Results r)
+{
+    long a = 3_000_000_000;
+    int b = 7;
+    r.sum = a + b;
+    r.product = a * a;
+    r.quotient = r.product / a;
+    r.zero = a / 0;
+    r.remainder = a % b;
+    r.shifted = 1L << 40;
+    r.rightShifted = -8L >> 1;
+    r.masked = r.product & 0xFFFF_FFFFL;
+    r.negated = -a;
+    r.smallest = -9223372036854775807L - 1;
+    r.fromFloat = long(1e15f);
+    r.saturated = long(1e30f);
+    r.fromNaN = long(0.0f / 0.0f);
+    r.fromEnum = long(Rank.High);
+    r.truncated = int(a);
+    r.widened = float(a);
+    r.rankOrder = long(Rank.High) > a ? 1 : 0;
+    r.clamped = Math.Clamp(a, 0, b);
+    r.largest = Math.Max(a, b);
+    r.hash = Math.Hash(a);
+    r.ordered = b < a && a <= FOLDED;
+    r.equal = a == 3_000_000_000L && b != a;
+    r.hex = 0x7FFF_FFFF_FFFF_FFFF;
+    r.ticks = time.tick;
+    switch (a)
+    {
+        case 3_000_000_000: r.ticks += 100; break;
+        case 1: r.ticks += 1000; break;
+        default: break;
+    }
+    if (controls.bid > 0) r.ticks += controls.bid + controls.bounded;
+    r.text = $"{a} {r.negated:D12} {r.masked:X} {b + a}";
+}

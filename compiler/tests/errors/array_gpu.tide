@@ -1,0 +1,5 @@
+// expect: the GPU has no lists, maps, arrays or grids to index or make
+struct Corner { float3 position; }
+component Weights { float[4] w; }
+scene Main { }
+frag Shade(Corner vertex, out Color color, Weights weights) { color = Color(weights.w[0], 0, 0); }

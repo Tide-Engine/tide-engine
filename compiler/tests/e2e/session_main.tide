@@ -1,0 +1,34 @@
+// Session.Start() with no scene starts a match in Main, with its values as
+// declared, and Application.title is the game's title setting: both are what
+// a package's menu needs of a game it can't name anything of.
+settings { title = "Session Main"; }
+
+scene Main
+{
+    int size = 30;
+}
+
+local singleton Menu
+{
+    string title;
+    int frames;
+}
+
+view Show(mut Menu menu)
+{
+    menu.title = Application.title;
+    menu.frames += 1;
+    if (menu.frames == 1) Session.Start();
+    if (menu.frames == 2) Session.Start(Main { size = 40 });
+}
+
+// The match reads it too: it's the build's, the same on every machine
+singleton Tally
+{
+    int titleLength;
+}
+
+system Count(mut Tally tally)
+{
+    tally.titleLength = Application.title.length;
+}

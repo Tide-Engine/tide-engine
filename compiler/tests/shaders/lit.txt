@@ -1,0 +1,282 @@
+// Wave and Shade on BoxVertex: GLSL, vertex
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    vec4 tide_u0;
+    ivec4 tide_v0;
+};
+uniform sampler2D pixels0;
+layout(location = 0) in vec3 tide_a0;
+layout(location = 1) in vec3 tide_a1;
+layout(location = 2) in vec2 tide_a2;
+layout(location = 3) in vec4 tide_n0;
+layout(location = 4) in vec4 tide_n1;
+layout(location = 5) in vec4 tide_n2;
+layout(location = 6) in vec4 tide_n3;
+layout(location = 7) in vec4 tide_n4;
+layout(location = 8) in ivec4 tide_j0;
+out vec3 tide_s1;
+out vec2 tide_s2;
+out vec3 tide_world;
+flat out vec4 tide_f0;
+flat out ivec4 tide_g0;
+struct tt_BoxVertex {
+    vec3 m_position;
+    vec3 m_normal;
+    vec2 m_uv;
+};
+float tide_f(float x) {
+    return x;
+}
+int tide_i(int x) {
+    return x;
+}
+void tf_Brighten(inout vec3 t_rgb, float t_by) {
+    t_rgb = (t_rgb * t_by);
+}
+
+void ts_Wave(inout tt_BoxVertex t_vertex) {
+    float t_height = ((((tide_v0.x / tide_v0.y) % tide_i(2)) == 0) ? 0.1 : 0.2);
+    t_vertex.m_position.y = (t_vertex.m_position.y + (sin(((tide_u0.x * tide_f(2.0)) + t_vertex.m_position.x)) * t_height));
+    t_vertex.m_position.xz = (t_vertex.m_position.xz * (tide_f(1.0) + (tide_f(1.0) / tide_f(2.0))));
+    t_vertex.m_normal = (mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(t_vertex.m_normal, 0.0)).xyz;
+    tf_Brighten(t_vertex.m_normal, 1.0);
+}
+
+void main() {
+    tt_BoxVertex tide_vertex = tt_BoxVertex(tide_a0, tide_a1, tide_a2);
+    ts_Wave(tide_vertex);
+    vec4 tide_place = mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(tide_vertex.m_position, 1.0);
+    gl_Position = tide_camera * tide_place;
+    tide_s1 = tide_vertex.m_normal;
+    tide_s2 = tide_vertex.m_uv;
+    tide_world = tide_place.xyz;
+    tide_f0 = vec4(tide_n4.x, tide_n4.y, tide_n4.z, tide_n4.w);
+    tide_g0 = ivec4(tide_j0.x, tide_j0.y, 0, 0);
+}
+
+// Wave and Shade on BoxVertex: GLSL, fragment
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    vec4 tide_u0;
+    ivec4 tide_v0;
+};
+uniform sampler2D pixels0;
+in vec3 tide_s1;
+in vec2 tide_s2;
+in vec3 tide_world;
+flat in vec4 tide_f0;
+flat in ivec4 tide_g0;
+out vec4 tide_pixel;
+struct tt_BoxVertex {
+    vec3 m_position;
+    vec3 m_normal;
+    vec2 m_uv;
+};
+struct tt_Sun {
+    vec3 m_direction;
+};
+float tide_f(float x) {
+    return x;
+}
+bool tide_nan(float x) {
+    return (floatBitsToInt(x) & 0x7fffffff) > 0x7f800000;
+}
+float tide_max1(float a, float b) {
+    if (tide_nan(b)) { return a; }
+    if (tide_nan(a)) { return b; }
+    if (a > b) { return a; }
+    return b;
+}
+vec3 tide_normalize3(vec3 v) {
+    float l = dot(v, v);
+    if (l > 1.17549435e-38) { return v * inversesqrt(l); }
+    return vec3(0.0);
+}
+vec4 tide_straight(vec4 c) {
+    if (c.a == 0.0) { return vec4(0.0); }
+    return vec4(c.rgb / c.a, c.a);
+}
+float tf_Lit(vec3 t_normal, vec3 t_toward) {
+    return tide_max1(dot(tide_normalize3(t_normal), t_toward), tide_f(0.1));
+}
+
+vec3 tf_Direction(tt_Sun t_sun) {
+    return t_sun.m_direction;
+}
+
+vec3 tf_DirectionThrough(tt_Sun t_sun) {
+    return tf_Direction(t_sun);
+}
+
+void ts_Shade(tt_BoxVertex t_vertex, inout vec4 t_color) {
+    float t_light = ((tide_g0.y != 0) ? tf_Lit(t_vertex.m_normal, (-tf_DirectionThrough(tt_Sun(tide_u0.yzw)))) : 1.0);
+    t_color = ((tide_straight(textureLod(pixels0, t_vertex.m_uv, 0.0)) * tide_f0) * t_light);
+    for (int t_i = 0; (t_i < tide_g0.x); t_i = (t_i + 1)) {
+        if ((t_i > 4)) {
+            break;
+        }
+        t_color.a = (t_color.a * 0.5);
+    }
+    if (((tide_g0.x == 1) || (((tide_g0.x + 256) & 255) == 1))) {
+        t_color.a = 1.0;
+    }
+    if ((((vec2(gl_FragCoord.x, tide_screen.z - gl_FragCoord.y) / tide_screen.xy).x < 10.0) || (tide_world.y < 0.0))) {
+        discard;
+    }
+}
+
+void main() {
+    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
+    ts_Shade(tt_BoxVertex(vec3(0.0), tide_s1, tide_s2), tide_color);
+    tide_color = tide_color * tide_tint;
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
+    tide_pixel = tide_color;
+}
+
+// Wave and Shade on BoxVertex: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_u0: vec4f,
+    tide_v0: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(1) var pixels0: texture_2d<f32>;
+@group(0) @binding(2) var sampler0: sampler;
+var<private> tide_n0: vec4f;
+var<private> tide_n1: vec4f;
+var<private> tide_n2: vec4f;
+var<private> tide_n3: vec4f;
+var<private> tide_n4: vec4f;
+var<private> tide_j0: vec4i;
+var<private> tide_f0: vec4f;
+var<private> tide_g0: vec4i;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s1: vec3f,
+    @location(1) tide_s2: vec2f,
+    @location(2) tide_world: vec3f,
+    @location(3) @interpolate(flat) tide_f0: vec4f,
+    @location(4) @interpolate(flat) tide_g0: vec4i,
+}
+struct tt_BoxVertex {
+    m_position: vec3f,
+    m_normal: vec3f,
+    m_uv: vec2f,
+}
+struct tt_Sun {
+    m_direction: vec3f,
+}
+fn tide_f(x: f32) -> f32 {
+    return x;
+}
+fn tide_i(x: i32) -> i32 {
+    return x;
+}
+fn tide_nan(x: f32) -> bool {
+    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
+}
+fn tide_max1(a: f32, b: f32) -> f32 {
+    if (tide_nan(b)) { return a; }
+    if (tide_nan(a)) { return b; }
+    if (a > b) { return a; }
+    return b;
+}
+fn tide_normalize3(v: vec3f) -> vec3f {
+    var l: f32 = dot(v, v);
+    if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
+    return vec3f(0.0);
+}
+fn tide_straight(c: vec4f) -> vec4f {
+    if (c.a == 0.0) { return vec4f(0.0); }
+    return vec4f(c.rgb / c.a, c.a);
+}
+fn tf_Brighten(t_rgb: ptr<function, vec3f>, t_by: f32) {
+    (*t_rgb) = ((*t_rgb) * t_by);
+}
+
+fn ts_Wave(t_vertex: ptr<function, tt_BoxVertex>) {
+    var t_height: f32 = select(0.2, 0.1, (((tide_block.tide_v0.x / tide_block.tide_v0.y) % tide_i(2)) == 0));
+    (*t_vertex).m_position.y = ((*t_vertex).m_position.y + (sin(((tide_block.tide_u0.x * tide_f(2.0)) + (*t_vertex).m_position.x)) * t_height));
+    { var tide_set0: vec2f = ((*t_vertex).m_position.xz * (tide_f(1.0) + (tide_f(1.0) / tide_f(2.0)))); (*t_vertex).m_position.x = tide_set0.x; (*t_vertex).m_position.z = tide_set0.y; }
+    (*t_vertex).m_normal = (mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f((*t_vertex).m_normal, 0.0)).xyz;
+    {
+        var t_tide_0copy0: vec3f = (*t_vertex).m_normal;
+        tf_Brighten(&t_tide_0copy0, 1.0);
+        (*t_vertex).m_normal = t_tide_0copy0;
+    }
+}
+
+fn tf_Lit(t_normal: vec3f, t_toward: vec3f) -> f32 {
+    return tide_max1(dot(tide_normalize3(t_normal), t_toward), tide_f(0.1));
+}
+
+fn tf_Direction(t_sun: tt_Sun) -> vec3f {
+    return t_sun.m_direction;
+}
+
+fn tf_DirectionThrough(t_sun: tt_Sun) -> vec3f {
+    return tf_Direction(t_sun);
+}
+
+fn ts_Shade(t_vertex: tt_BoxVertex, t_color: ptr<function, vec4f>) {
+    var t_light: f32 = select(1.0, tf_Lit(t_vertex.m_normal, (-tf_DirectionThrough(tt_Sun(tide_block.tide_u0.yzw)))), (tide_g0.y != 0));
+    (*t_color) = ((tide_straight(textureSampleLevel(pixels0, sampler0, t_vertex.m_uv, 0.0)) * tide_f0) * t_light);
+    for (var t_i: i32 = 0; (t_i < tide_g0.x); t_i = (t_i + 1)) {
+        if ((t_i > 4)) {
+            break;
+        }
+        (*t_color).a = ((*t_color).a * 0.5);
+    }
+    if (((tide_g0.x == 1) || (((tide_g0.x + 256) & 255) == 1))) {
+        (*t_color).a = 1.0;
+    }
+    if ((((tide_at.xy / tide_block.tide_screen.xy).x < 10.0) || (tide_world.y < 0.0))) {
+        discard;
+        return;
+    }
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec3f, @location(2) tide_a2: vec2f, @location(3) tide_in0: vec4f, @location(4) tide_in1: vec4f, @location(5) tide_in2: vec4f, @location(6) tide_in3: vec4f, @location(7) tide_in4: vec4f, @location(8) tide_ij0: vec4i) -> tide_corner {
+    tide_n0 = tide_in0;
+    tide_n1 = tide_in1;
+    tide_n2 = tide_in2;
+    tide_n3 = tide_in3;
+    tide_n4 = tide_in4;
+    tide_j0 = tide_ij0;
+    var tide_vertex: tt_BoxVertex = tt_BoxVertex(tide_a0, tide_a1, tide_a2);
+    ts_Wave(&tide_vertex);
+    let tide_place = mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f(tide_vertex.m_position, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_normal;
+    out.tide_s2 = tide_vertex.m_uv;
+    out.tide_world = tide_place.xyz;
+    out.tide_f0 = vec4f(tide_n4.x, tide_n4.y, tide_n4.z, tide_n4.w);
+    out.tide_g0 = vec4i(tide_j0.x, tide_j0.y, 0, 0);
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    tide_world = in.tide_world;
+    tide_f0 = in.tide_f0;
+    tide_g0 = in.tide_g0;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Shade(tt_BoxVertex(vec3f(), in.tide_s1, in.tide_s2), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+

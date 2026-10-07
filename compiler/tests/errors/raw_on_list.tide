@@ -1,0 +1,6 @@
+// expect: a [Raw] texture is read in a frag or a vert by its own name, which one of 'frames' hasn't got
+[Raw] asset List<Texture> frames = "../e2e/assets/run/*.png";
+
+scene Main
+{
+}

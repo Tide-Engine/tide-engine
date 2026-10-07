@@ -1,0 +1,7 @@
+// expect: a frag runs on the GPU, for each pixel, so it can't create a Cubemap
+// expect: the view creates it, and the frag reads it where it's a field
+// A frag makes none
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+frag Look(Vertex3 vertex, out Color color) { var made = Cubemap(8); color = Color.white; }
+view Show(Room room) { Draw.Mesh(room.ball, [0, 1, 2], float4x4.identity, Look); }

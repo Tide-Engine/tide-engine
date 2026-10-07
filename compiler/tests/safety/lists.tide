@@ -1,0 +1,125 @@
+// expect: reads 0 0 0 0 0 "" 0 3
+// expect: writes [1, 2, 3] 3
+// expect: inserts [7, 1, 2, 3, 8] [1, 2, 3]
+// expect: shrinking 12502500 100
+// expect: growing 50 24950
+// expect: emptied 0 0 0
+// expect: sizes 0 0 5 0
+// expect: copies [1, 2, 3] [9, 2, 3] 3
+// expect: structs 0 4 [Pair { a = 1, b = 2 }]
+// expect: text ["b", "b", "a"] "" 3
+
+// Lists read and written anywhere: under 0, past the end, at the ints' limits,
+// after they shrank, and from loops that change them as they go.
+
+struct Pair
+{
+    int a;
+    int b;
+}
+
+singleton Bag
+{
+    List<int> small = [1, 2, 3];
+    List<int> big;
+    List<Pair> pairs;
+    List<string> names = ["a", "b"];
+    List<byte> bytes;
+    int most = 2147483647;
+    int least = 0x80000000;
+    bool done;
+}
+
+scene Main { }
+
+int Sum(List<int> values, int upTo)
+{
+    mut var total = 0;
+    for (var i = -3; i < upTo; i++) total += values[i];
+    return total;
+}
+
+system Run(mut Bag bag)
+{
+    if (bag.done) return;
+    bag.done = true;
+
+    Debug.Log($"reads {bag.small[-1]} {bag.small[3]} {bag.small[bag.most]} {bag.small[bag.least]} {bag.pairs[99].b} "
+        + $"\"{bag.names[-1]}\" {bag.bytes[bag.most]} {bag.small[bag.least - bag.most + 1]}");
+
+    bag.small[-1] = 9;
+    bag.small[3] = 9;
+    bag.small[bag.most] = 9;
+    bag.small[bag.least] = 9;
+    bag.small[bag.small.count] += 5;
+    bag.small.RemoveAt(-1);
+    bag.small.RemoveAt(3);
+    bag.small.RemoveAt(bag.most);
+    bag.small.RemoveAt(bag.least);
+    Debug.Log($"writes {bag.small} {bag.small.count}");
+
+    mut var moved = bag.small;
+    moved.Insert(bag.least, 7);
+    moved.Insert(bag.most, 8);
+    Debug.Log($"inserts {moved} {bag.small}");
+
+    // A list in chunks, cut short while a loop reads it through a cache
+    for (var i = 0; i < 20000; i++) bag.big.Add(i);
+    mut var total = 0;
+    for (var i = 0; i < 20000; i++)
+    {
+        total += bag.big[i];
+        if (i == 5000) bag.big.Resize(100);
+    }
+    Debug.Log($"shrinking {total} {bag.big.count}");
+
+    // ...and loops whose list grows and goes as they read it
+    mut var rounds = 0;
+    foreach (var v in bag.small)
+    {
+        rounds += 1;
+        if (bag.small.count < 50) bag.small.Add(v);
+    }
+    bag.big.Resize(20000);
+    mut var left = 0;
+    foreach (var v in bag.big)
+    {
+        bag.big.RemoveAt(bag.big.count - 1);
+        left += v;
+    }
+    Debug.Log($"growing {rounds} {bag.big.count + 10000 + left}");
+
+    bag.big.Clear();
+    Debug.Log($"emptied {bag.big.count} {bag.big[0]} {Sum(bag.big, 20000)}");
+
+    // Sizes nothing can have leave the list as it is, and those under 0 are 0
+    bag.big.Resize(-1);
+    var none = bag.big.count;
+    bag.big.Resize(bag.most);
+    bag.bytes.Resize(bag.most);
+    var still = bag.big.count + bag.bytes.count;
+    bag.bytes.Resize(5);
+    bag.bytes.Resize(bag.most);
+    var five = bag.bytes.count;
+    bag.bytes.Resize(bag.least);
+    Debug.Log($"sizes {none} {still} {five} {bag.bytes.count}");
+
+    // A list is a value: a copy stays as it was, and a list assigned to itself is itself
+    bag.small.Resize(3);
+    var copy = bag.small;
+    bag.small[0] = 9;
+    bag.small = bag.small;
+    Debug.Log($"copies {copy} {bag.small} {bag.small.count}");
+
+    bag.pairs.Add(Pair { a = 1, b = 2 });
+    bag.pairs[5] = Pair { a = 3, b = 4 };
+    var first = bag.pairs[bag.least];
+    var kept = bag.pairs[0];
+    Debug.Log($"structs {first.a} {kept.a + kept.b + 1} {bag.pairs}");
+
+    // Text in a list: an element put where another was, one read past the end, one added from itself
+    bag.names.Add(bag.names[0]);
+    bag.names[0] = bag.names[1];
+    bag.names[7] = "lost";
+    Debug.Log($"text {bag.names} \"{bag.names[bag.most]}\" {bag.names.count}");
+}

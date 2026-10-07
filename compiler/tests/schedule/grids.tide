@@ -1,0 +1,51 @@
+// Grids: a system with parallel loops is a system like any other, which waits
+// for those that use what it does. Its loops' steps run on threads.
+singleton Field
+{
+    Grid2<int> cells = Grid2(256, 256);
+    int painted;
+}
+
+singleton Stats
+{
+    int seen;
+}
+
+system Paint(mut Field field)
+{
+    field.cells[10, 10] = 1;
+    field.painted += 1;
+}
+
+// Every cell at once, from the grid as it was
+system Blur(mut Field field)
+{
+    parallel (var at in field.cells)
+    {
+        field.cells[at] = (field.cells[at + int2(-1, 0)] + field.cells[at + int2(1, 0)]) / 2;
+    }
+}
+
+// In 2x2 blocks, then a foreach that only touches its own cell, which runs as one
+system Fall(mut Field field, Time time)
+{
+    parallel (var at in field.cells by 2 offset time.tick % 2)
+    {
+        if (field.cells[at + int2(0, 1)] == 1 && field.cells[at] == 0)
+        {
+            field.cells[at] = 1;
+            field.cells[at + int2(0, 1)] = 0;
+        }
+    }
+    foreach (var at in field.cells) field.cells[at] = Math.Min(field.cells[at], 1);
+}
+
+// A foreach that adds to a total outside its cell goes in order
+system Count(Field field, mut Stats stats)
+{
+    mut var seen = 0;
+    foreach (var at in field.cells) seen += field.cells[at];
+    stats.seen = seen;
+}
+
+scene Main { }

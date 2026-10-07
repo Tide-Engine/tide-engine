@@ -1,0 +1,17 @@
+// expect: Blit's third of four is how it goes over its destination, a Blend like Blend.Add, not int
+scene Main { }
+
+local singleton Canvas
+{
+    RenderTarget target;
+}
+
+frag Copy(Vertex vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv);
+}
+
+view Show(Canvas canvas)
+{
+    Draw.Blit(canvas.target.color, Draw.window, 3, Copy);
+}

@@ -1,0 +1,4 @@
+// expect: RenderTarget takes its width and height in logical pixels, and its pixels per unit when it isn't the display's
+// Two formats after one number: the size is a width and a height
+scene Main { }
+view Show() { var target = RenderTarget(64, Format.Rgba8, Format.Rgba16f); }

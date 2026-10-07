@@ -73,7 +73,7 @@ void tide_address_format(const tide_address a, char *out, const size_t size)
 // ---------------------------------------------------------------------------
 // Loopback
 
-#define LOOPBACK_ENDPOINTS 64u
+#define LOOPBACK_ENDPOINTS 1024u // Enough for a match of the most players a game takes, and the one that takes it over
 
 typedef struct datagram {
     uint32_t to;
@@ -88,6 +88,7 @@ typedef struct endpoint {
     tide_loopback *net;
     uint32_t number;
     bool open;
+    double arrived; // When the datagram it last gave arrived
 } endpoint;
 
 struct tide_loopback {
@@ -116,7 +117,7 @@ tide_loopback *tide_loopback_create(const uint64_t seed)
     tide_loopback *net = calloc(1, sizeof *net);
     if (!net) return NULL;
     net->random = seed;
-    for (uint32_t i = 0; i < LOOPBACK_ENDPOINTS; i++) net->endpoints[i] = (endpoint){net, i + 1u, false};
+    for (uint32_t i = 0; i < LOOPBACK_ENDPOINTS; i++) net->endpoints[i] = (endpoint){net, i + 1u, false, 0.0};
     return net;
 }
 
@@ -172,7 +173,7 @@ static void loopback_send(void *self, const tide_address to, const void *data, c
 
 static uint32_t loopback_receive(void *self, tide_address *from, void *data, const uint32_t capacity)
 {
-    const endpoint *e = self;
+    endpoint *e = self;
     tide_loopback *net = e->net;
     for (;;) {
         int32_t next = -1;
@@ -190,9 +191,24 @@ static uint32_t loopback_receive(void *self, tide_address *from, void *data, con
         }
         memcpy(data, d.data, d.size);
         *from = d.from;
+        e->arrived = d.at;
         remove_at(net, (uint32_t)next);
         return d.size;
     }
+}
+
+// The network's time is its clock, and a datagram arrived when its time came,
+// however long after that its endpoint was read.
+static double loopback_clock(void *self)
+{
+    const endpoint *e = self;
+    return e->net->now;
+}
+
+static double loopback_arrived(void *self)
+{
+    const endpoint *e = self;
+    return e->arrived;
 }
 
 static void loopback_close(void *self)
@@ -211,14 +227,29 @@ tide_transport tide_loopback_endpoint(tide_loopback *net, const uint32_t number)
     if (number < 1 || number > LOOPBACK_ENDPOINTS) return (tide_transport){0};
     endpoint *e = &net->endpoints[number - 1u];
     e->open = true;
-    return (tide_transport){e, loopback_send, loopback_receive, loopback_close};
+    return (tide_transport){e, loopback_send, loopback_receive, loopback_close, NULL, loopback_clock, loopback_arrived};
 }
 
 // ---------------------------------------------------------------------------
 // Bytes
 
+// A writer that grows: room for `size` more bytes, doubling what it has.
+static void grow(tide_writer *w, const uint32_t size)
+{
+    const uint64_t needed = (uint64_t)w->size + size;
+    if (needed > UINT32_MAX) return;
+    uint64_t capacity = w->capacity ? w->capacity : 256u;
+    while (capacity < needed) capacity *= 2u;
+    if (capacity > UINT32_MAX) capacity = UINT32_MAX;
+    uint8_t *data = realloc(w->data, (size_t)capacity);
+    if (!data) return;
+    w->data = data;
+    w->capacity = (uint32_t)capacity;
+}
+
 static uint8_t *room(tide_writer *w, const uint32_t size)
 {
+    if (w->grows && !w->overflow && w->capacity - w->size < size) grow(w, size);
     if (w->overflow || w->capacity - w->size < size) {
         w->overflow = true;
         return NULL;
@@ -262,6 +293,23 @@ void tide_write_bytes(tide_writer *w, const void *data, const uint32_t size)
     if (at && size) memcpy(at, data, size);
 }
 
+void tide_write_varint(tide_writer *w, uint32_t v)
+{
+    uint8_t bytes[5];
+    uint32_t n = 0;
+    while (v >= 0x80u) {
+        bytes[n++] = (uint8_t)(v | 0x80u);
+        v >>= 7;
+    }
+    bytes[n++] = (uint8_t)v;
+    tide_write_bytes(w, bytes, n);
+}
+
+uint8_t *tide_write_space(tide_writer *w, const uint32_t size)
+{
+    return room(w, size);
+}
+
 static const uint8_t *take(tide_reader *r, const uint32_t size)
 {
     if (r->failed || r->size - r->at < size) {
@@ -301,6 +349,44 @@ uint64_t tide_read_u64(tide_reader *r)
     uint64_t v = 0;
     for (int i = 0; i < 8; i++) v |= (uint64_t)at[i] << (8 * i);
     return v;
+}
+
+void tide_write_varint64(tide_writer *w, uint64_t v)
+{
+    uint8_t bytes[10];
+    uint32_t n = 0;
+    while (v >= 0x80u) {
+        bytes[n++] = (uint8_t)(v | 0x80u);
+        v >>= 7;
+    }
+    bytes[n++] = (uint8_t)v;
+    tide_write_bytes(w, bytes, n);
+}
+
+uint64_t tide_read_varint64(tide_reader *r)
+{
+    uint64_t v = 0;
+    for (uint32_t shift = 0; shift < 70; shift += 7) {
+        const uint8_t byte = tide_read_u8(r);
+        if (shift == 63 && byte > 0x01u) break; // More than 64 bits
+        v |= (uint64_t)(byte & 0x7Fu) << shift;
+        if (!(byte & 0x80u)) return v;
+    }
+    r->failed = true;
+    return 0;
+}
+
+uint32_t tide_read_varint(tide_reader *r)
+{
+    uint32_t v = 0;
+    for (uint32_t shift = 0; shift < 35; shift += 7) {
+        const uint8_t byte = tide_read_u8(r);
+        if (shift == 28 && byte > 0x0Fu) break; // More than 32 bits
+        v |= (uint32_t)(byte & 0x7Fu) << shift;
+        if (!(byte & 0x80u)) return v;
+    }
+    r->failed = true;
+    return 0;
 }
 
 const uint8_t *tide_read_bytes(tide_reader *r, const uint32_t size)
@@ -364,71 +450,125 @@ float tide_bits_get_f32(tide_bits *b)
     return v;
 }
 
-// ---------------------------------------------------------------------------
-// Snapshots: (zeros, literal count, literal bytes) repeated, the counts as
-// varints. A literal ends at two zeros in a row.
-
-static void put_varint(tide_writer *w, uint32_t v)
+uint32_t tide_f32_bits(const float v)
 {
-    while (v >= 0x80u) {
-        tide_write_u8(w, (uint8_t)(v | 0x80u));
-        v >>= 7;
-    }
-    tide_write_u8(w, (uint8_t)v);
+    uint32_t bits;
+    memcpy(&bits, &v, 4);
+    return bits;
 }
 
-static uint32_t get_varint(tide_reader *r)
+void tide_bits_put_changed(tide_bits *b, const uint32_t now, const uint32_t was)
+{
+    tide_bits_put_bool(b, now != was);
+    if (now != was) tide_bits_put(b, now, 32);
+}
+
+void tide_bits_put_varint(tide_bits *b, uint32_t v)
+{
+    while (v >= 0x80u) {
+        tide_bits_put(b, v & 0x7Fu, 7);
+        tide_bits_put_bool(b, true);
+        v >>= 7;
+    }
+    tide_bits_put(b, v, 7);
+    tide_bits_put_bool(b, false);
+}
+
+uint32_t tide_bits_get_varint(tide_bits *b)
 {
     uint32_t v = 0;
     for (uint32_t shift = 0; shift < 35; shift += 7) {
-        const uint8_t byte = tide_read_u8(r);
-        v |= (uint32_t)(byte & 0x7Fu) << shift;
-        if (!(byte & 0x80u)) return v;
+        v |= tide_bits_get(b, 7) << shift; // Past 32 bits, the rest falls off
+        if (!tide_bits_get_bool(b)) break;
     }
-    r->failed = true;
-    return 0;
+    return v;
 }
 
-uint32_t tide_zeros_bound(const uint32_t size)
+void tide_bits_put_changed_varint(tide_bits *b, const uint32_t now, const uint32_t was)
 {
-    return size + size / 16u + 16u;
+    tide_bits_put_bool(b, now != was);
+    if (now != was) tide_bits_put_varint(b, now);
 }
 
-uint32_t tide_zeros_pack(const void *data, const uint32_t size, uint8_t *out, const uint32_t capacity)
+void tide_bits_put_changed_difference(tide_bits *b, const uint32_t now, const uint32_t was)
 {
-    const uint8_t *p = data;
-    tide_writer w = {out, capacity, 0, false};
-    uint32_t i = 0;
-    while (i < size) {
-        const uint32_t zeros_from = i;
-        while (i < size && p[i] == 0) i++;
-        const uint32_t literal_from = i;
-        while (i < size && !(p[i] == 0 && (i + 1u >= size || p[i + 1u] == 0))) i++;
-        put_varint(&w, literal_from - zeros_from);
-        put_varint(&w, i - literal_from);
-        tide_write_bytes(&w, p + literal_from, i - literal_from);
-    }
-    return w.overflow ? 0 : w.size;
+    tide_bits_put_bool(b, now != was);
+    if (now != was) tide_bits_put_varint(b, tide_zigzag((int32_t)(now - was)));
 }
 
-bool tide_zeros_unpack(const uint8_t *packed, const uint32_t packed_size, void *out, const uint32_t size)
+uint32_t tide_bits_get_difference(tide_bits *b, const uint32_t was)
 {
-    uint8_t *p = out;
-    tide_reader r = {packed, packed_size, 0, false};
-    uint32_t at = 0;
-    while (r.at < r.size) {
-        const uint32_t zeros = get_varint(&r);
-        if (r.failed || zeros > size - at) return false;
-        memset(p + at, 0, zeros);
-        at += zeros;
-        const uint32_t literal = get_varint(&r);
-        if (r.failed || literal > size - at) return false;
-        const uint8_t *bytes = tide_read_bytes(&r, literal);
-        if (!bytes) return false;
-        memcpy(p + at, bytes, literal);
-        at += literal;
+    return was + (uint32_t)tide_unzigzag(tide_bits_get_varint(b));
+}
+
+void tide_bits_put_varint64(tide_bits *b, uint64_t v)
+{
+    while (v >= 0x80u) {
+        tide_bits_put(b, (uint32_t)(v & 0x7Fu), 7);
+        tide_bits_put_bool(b, true);
+        v >>= 7;
     }
-    return at == size;
+    tide_bits_put(b, (uint32_t)v, 7);
+    tide_bits_put_bool(b, false);
+}
+
+uint64_t tide_bits_get_varint64(tide_bits *b)
+{
+    uint64_t v = 0;
+    for (uint32_t shift = 0; shift < 70; shift += 7) {
+        v |= (uint64_t)tide_bits_get(b, 7) << shift; // Past 64 bits, the rest falls off
+        if (!tide_bits_get_bool(b)) break;
+    }
+    return v;
+}
+
+void tide_bits_put_changed_difference64(tide_bits *b, const uint64_t now, const uint64_t was)
+{
+    tide_bits_put_bool(b, now != was);
+    if (now != was) tide_bits_put_varint64(b, tide_zigzag64((int64_t)(now - was)));
+}
+
+uint64_t tide_bits_get_difference64(tide_bits *b, const uint64_t was)
+{
+    return was + (uint64_t)tide_unzigzag64(tide_bits_get_varint64(b));
+}
+
+void tide_bits_put_changed_xor(tide_bits *b, const uint32_t now, const uint32_t was)
+{
+    const uint32_t x = now ^ was;
+    tide_bits_put_bool(b, x != 0);
+    if (!x) return;
+    const uint32_t lead = (uint32_t)__builtin_clz(x);
+    const uint32_t trail = (uint32_t)__builtin_ctz(x);
+    const uint32_t len = 32u - lead - trail;
+    const bool window = 10u + len < 32u;
+    tide_bits_put_bool(b, window);
+    if (!window) {
+        tide_bits_put(b, now, 32);
+        return;
+    }
+    tide_bits_put(b, lead, 5);
+    tide_bits_put(b, len - 1u, 5);
+    tide_bits_put(b, x >> trail, len);
+}
+
+uint32_t tide_bits_get_xor(tide_bits *b, const uint32_t was)
+{
+    if (!tide_bits_get_bool(b)) return tide_bits_get(b, 32);
+    const uint32_t lead = tide_bits_get(b, 5);
+    const uint32_t len = tide_bits_get(b, 5) + 1u;
+    if (lead + len > 32u) { // Bits past either end: not what any input packs to
+        b->overflow = true;
+        return was;
+    }
+    return was ^ (tide_bits_get(b, len) << (32u - lead - len));
+}
+
+float tide_f32_from_bits(const uint32_t bits)
+{
+    float v;
+    memcpy(&v, &bits, sizeof v);
+    return v;
 }
 
 // ---------------------------------------------------------------------------
@@ -477,4 +617,39 @@ uint64_t tide_hash_end(const uint64_t h)
 uint64_t tide_hash(const void *data, const size_t size)
 {
     return tide_hash_end(tide_hash_more(TIDE_HASH_START, data, size));
+}
+
+// Four chains, 32 bytes a round: chain k takes the words at 8k, 32 + 8k and on.
+// What's left after the last whole round goes a word a chain, from the first,
+// the last of them short and zeros past its bytes. Then the size and the four
+// chains are one chain's words, so two runs that differ in length, or anywhere
+// in a word, end as other numbers.
+uint64_t tide_hash_wide(const void *data, const size_t size)
+{
+    const uint8_t *p = data;
+    uint64_t chain[4];
+    for (uint64_t k = 0; k < 4u; k++) chain[k] = TIDE_HASH_START + k * 0xBF58476D1CE4E5B9ull;
+    size_t i = 0;
+    for (; i + 32u <= size; i += 32u) {
+        uint64_t words[4];
+        memcpy(words, p + i, 32);
+        chain[0] = add_word(chain[0], words[0]);
+        chain[1] = add_word(chain[1], words[1]);
+        chain[2] = add_word(chain[2], words[2]);
+        chain[3] = add_word(chain[3], words[3]);
+    }
+    uint32_t k = 0;
+    for (; i + 8u <= size; i += 8u, k++) {
+        uint64_t word;
+        memcpy(&word, p + i, 8);
+        chain[k] = add_word(chain[k], word);
+    }
+    if (i < size) {
+        uint64_t tail = 0;
+        for (size_t at = 0; i + at < size; at++) tail |= (uint64_t)p[i + at] << (8u * at);
+        chain[k] = add_word(chain[k], tail);
+    }
+    uint64_t h = add_word(TIDE_HASH_START, (uint64_t)size);
+    for (k = 0; k < 4u; k++) h = add_word(h, chain[k]);
+    return mix(h);
 }

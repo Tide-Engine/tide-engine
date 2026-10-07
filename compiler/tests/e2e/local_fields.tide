@@ -1,0 +1,211 @@
+// Local fields: `local` before a field of a match component or singleton makes
+// it this machine's. It's outside the match (never sent, hashed, snapshotted or
+// rolled back), every entity with the component has it, and views read and
+// write it in place.
+//
+// local_fields_plain.tide is this game's match without them: its worlds have
+// to be the same, byte for byte.
+
+component Box
+{
+    float3 pos = float3(0, 0, 5);
+    int sides = 4;
+    local List<Vertex3> verts;
+    local List<int> faces;
+    local int bakes;
+    local float age = 0.5;
+}
+
+// Only local fields: a tag in the match, which an entity can lose
+component Glow
+{
+    local float pulse;
+    local int lit;
+}
+
+// Local fields whose defaults the heap holds
+component Label
+{
+    int number;
+    local string text = "new";
+    local List<int> marks = [1, 2];
+    local LocalEntity spark;
+}
+
+singleton Arena
+{
+    float size = 8;
+    local Grid2<Color> floor = Grid2(4, 4);
+    local int painted;
+    local List<float> heights;
+    local Map<int, int> tally;
+}
+
+// What the test's C sets, for the match to do
+singleton Rules
+{
+    int drop;   // Boxes with this many sides are destroyed
+    bool shed;  // Entities lose their Glow
+    int spawn;  // A box with this many sides comes
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box { pos = float3(1, 0, 5) }, Label { number = 1 });
+    Spawn(Box { pos = float3(2, 0, 5), sides = 3 }, Glow);
+    Spawn(Box { pos = float3(3, 0, 5), sides = 5 }, Glow, Label { number = 2 });
+}
+
+system Slide(mut Box box, Time time)
+{
+    box.pos.x += time.dt;
+}
+
+system Drop(Box box, Rules rules)
+{
+    if (box.sides == rules.drop) this.Destroy();
+}
+
+system Shed(Rules rules, with Glow)
+{
+    if (rules.shed) this.Remove(Glow);
+}
+
+system Arrive(mut Rules rules)
+{
+    if (rules.spawn == 0) return;
+    Spawn(Box { sides = rules.spawn });
+    rules.spawn = 0;
+}
+
+local singleton Stats
+{
+    int forgotten;
+    int lastBakes;
+    int arenas;
+    int corners;
+    int fresh;
+    bool pulsing;
+    Entity last;
+}
+
+local component Spark
+{
+    int of;
+}
+
+// A function that takes the component gets its local fields with it
+void Bake(mut Box box)
+{
+    box.verts.Clear();
+    box.faces.Clear();
+    for (var i = 0; i < box.sides; i++)
+    {
+        box.verts.Add(Vertex3 { position = float3(i, 0, 0), color = Color.red });
+        box.faces.Add(i);
+    }
+    box.bakes += 1;
+}
+
+// ...and so does one that only reads them, and one that passes it on
+int Corners(Box box)
+{
+    return box.verts.count;
+}
+
+int CornersOf(Box box)
+{
+    return Corners(box);
+}
+
+// Bakes each box's mesh once, into its local fields, and draws from them. The
+// match's fields are a blended copy, as in any view.
+view DrawBox(mut Box box, mut Stats stats)
+{
+    if (box.verts.count == 0) Bake(box);
+    box.age += 1;
+    stats.corners += CornersOf(box);
+    Draw.Mesh(box.verts, box.faces, float4x4.Translate(box.pos));
+}
+
+// Reads local fields nothing wrote: the defaults, for every entity
+view ReadGlow(Glow glow, mut Stats stats)
+{
+    if (glow.pulse == 0 && glow.lit == 0) stats.fresh += 1;
+}
+
+// Writes only some entities' local fields: the others take no memory
+view Pulse(mut Glow glow, Box box, Stats stats)
+{
+    if (!stats.pulsing || box.sides != 3) return;
+    glow.pulse += 0.25;
+    glow.lit = 1;
+}
+
+// Defaults the heap holds: read where nothing was written, and an entity's own
+// once a view that writes them runs for it
+view ReadLabel(Label label, mut Stats stats)
+{
+    if (label.text == "new" && label.marks.count == 2) stats.fresh += 100;
+}
+
+view Mark(mut Label label, Stats stats)
+{
+    if (!stats.pulsing) return;
+    label.marks.Add(label.number);
+    label.text = $"label {label.number}";
+    if (label.spark == default) label.spark = Spawn(Spark { of = label.number });
+}
+
+// A singleton's local fields: a texture painted from the match's state
+view Paint(mut Arena arena)
+{
+    if (arena.painted == 0) arena.floor[1, 2] = Color(arena.size, 0, 0, 1);
+    arena.painted += 1;
+}
+
+// Loops that run at once, sorts and maps work on local fields as on any
+view Survey(mut Arena arena)
+{
+    if (arena.heights.count == 0)
+    {
+        for (var i = 0; i < 4; i++) arena.heights.Add(4 - i);
+    }
+    parallel (var i in arena.heights)
+    {
+        arena.heights[i] = arena.heights[i] + 1;
+    }
+    arena.heights.Sort(a, b) { return a < b; }
+    arena.tally[arena.painted] = arena.heights.count;
+    parallel (var at in arena.floor)
+    {
+        if (at.x == 3) arena.floor[at] = Color(0, at.y, 0, 1);
+    }
+}
+
+// `mut` that writes no local field: the usual warning, which the build expects
+view Watch(mut Box box)
+{
+    if (box.bakes > 99) Draw.Clear(Color.black);
+}
+
+// As an entity's local fields go, its entity gone from the match
+local event(Forgotten) Free(Box box, mut Stats stats)
+{
+    stats.forgotten += 1;
+    stats.lastBakes = box.bakes * 100 + box.verts.count;
+    stats.last = this;
+}
+
+local event(Forgotten) FreeLabel(Label label)
+{
+    label.spark.Destroy();
+}
+
+// ...and a singleton's, as the match goes
+local event(Forgotten) FreeArena(Arena arena, mut Stats stats)
+{
+    stats.arenas += arena.painted;
+}

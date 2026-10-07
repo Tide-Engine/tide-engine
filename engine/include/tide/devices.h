@@ -7,12 +7,11 @@
 
 // Input devices, as Tide's `Devices` sees them.
 //
-// Temporary implementation written by Claude; the project owner takes it over
-// later. tidec reads the member lists below (the X-macros), so Tide and C
-// always agree on the names.
+// tidec reads the member lists below (the X-macros), so Tide and C always
+// agree on the names.
 //
-// The platform layer (raylib, for example) updates the devices every frame with
-// tide_button_set and the mouse fields. Once per tick, the host builds the local
+// The platform layer (tide/platform.h) updates the devices every frame with
+// tide_button_set, the mouse fields, tide_touch_event and tide_pointer_poll. Once per tick, the host builds the local
 // player's input from them (tide_input_sample in generated code) and then calls
 // tide_devices_consume to start the next sample window. Views read them once
 // per frame, through the GUI (tide/gui.h), which works out what changed since
@@ -60,22 +59,53 @@ typedef struct tide_button {
 #define TIDE_GAMEPAD_STICKS(X) X(leftStick) X(rightStick)
 #define TIDE_GAMEPAD_TRIGGERS(X) X(leftTrigger) X(rightTrigger)
 
+// A touch's and the pointer's values. Positions are in this machine's window,
+// which the match can't read.
+#define TIDE_TOUCH_AXES(X) X(position) X(delta) X(startPosition)
+#define TIDE_POINTER_AXES(X) X(position) X(delta)
+
+// Fingers a touchscreen follows at once, as Unity's.
+#define TIDE_TOUCHES 10
+
 #define TIDE_DEVICES_MEMBER_BUTTON(name) tide_button name;
 #define TIDE_DEVICES_MEMBER_FLOAT2(name) tide_float2 name;
 #define TIDE_DEVICES_MEMBER_FLOAT(name) float name;
 
+#ifndef TIDE_TEXT_MAX
+#define TIDE_TEXT_MAX 32u
+#endif
+
+// Characters typed since the last poll, as Unicode code points. Unlike keys,
+// they follow the keyboard layout: what's printed on the key, with Shift and
+// friends applied. A poll takes as many as fit, and the platform keeps the rest
+// for the next, so a long paste comes over a few. The GUI types them into
+// fields, and views read them as text (`Devices.keyboard.text`); the input
+// never sees them.
+typedef struct tide_typed {
+    uint32_t count;
+    uint32_t chars[TIDE_TEXT_MAX];
+} tide_typed;
+
 typedef struct tide_keyboard {
     TIDE_KEYBOARD_KEYS(TIDE_DEVICES_MEMBER_BUTTON)
+    tide_typed text; // This frame's, for views: never in a sample or the input
 } tide_keyboard;
 
 typedef struct tide_mouse {
     // Position in window pixels from the bottom left, y up, as in Unity. Delta
     // and scroll add up since the last sample; scroll y is positive away from
-    // the user.
+    // the user. While the cursor is locked, the position stays where it was
+    // and the delta is the mouse's own movement, with no screen to stop at.
     TIDE_MOUSE_AXES(TIDE_DEVICES_MEMBER_FLOAT2)
     TIDE_MOUSE_BUTTONS(TIDE_DEVICES_MEMBER_BUTTON)
     tide_float2 poll_delta;  // Platform state: this poll's movement and scroll alone, for what views read
     tide_float2 poll_scroll;
+    // ...and whether the window holds the cursor (Cursor.locked): hidden, and
+    // kept from leaving. It's what the system says, not what the game asked
+    // (Cursor.Lock): the cursor goes back to the player at Escape, and a
+    // window that loses the focus doesn't hold it.
+    bool locked;
+    uint8_t tide_pad[3]; // Written out: no padding the compiler adds (see below)
 } tide_mouse;
 
 typedef struct tide_dpad {
@@ -91,23 +121,57 @@ typedef struct tide_gamepad {
     uint8_t tide_pad[3]; // Written out: no padding the compiler adds (see below)
 } tide_gamepad;
 
-#ifndef TIDE_TEXT_MAX
-#define TIDE_TEXT_MAX 32u
-#endif
+// One finger on a touchscreen, as Unity's TouchControl. `press` went down when
+// it touched (Unity's Began) and up when it lifted (Ended). A finger that
+// touches and lifts between two polls reads as held for one, so no tap is lost.
+typedef struct tide_touch {
+    tide_button press;
+    int32_t id; // Unity's touchId: the same while the finger stays down, a new one for each touch; 0 for none
+    // Window pixels from the bottom left, y up, like the mouse. Delta adds up
+    // since the last sample.
+    TIDE_TOUCH_AXES(TIDE_DEVICES_MEMBER_FLOAT2)
+    tide_float2 poll_delta; // Platform state: this poll's movement alone, for what views read
+    uint32_t source;        // ...the platform's own number for the finger
+    uint8_t began;          // ...it touched this poll
+    uint8_t lifted;         // ...it lifted this poll, after touching in it: it lifts at the next
+    uint8_t rested;         // ...how many polls ago it lifted, up to 255, while no sample has cleared its slot
+    uint8_t tide_pad[1];
+} tide_touch;
 
-// Characters typed since the last poll, as Unicode code points. Unlike keys,
-// they follow the keyboard layout: what's printed on the key, with Shift and
-// friends applied. The GUI types them into fields; the input never sees them.
-typedef struct tide_typed {
-    uint32_t count;
-    uint32_t chars[TIDE_TEXT_MAX];
-} tide_typed;
+// A touchscreen's fingers: a finger keeps its slot while it touches, and once
+// it lifted, until a sample saw that (tide_devices_consume), so no tap is
+// lost between two samples. Where nothing samples, or more fingers come
+// between two samples than there are slots, a finger that touches takes the
+// slot of the one that lifted longest ago.
+typedef struct tide_touches {
+    tide_touch at[TIDE_TOUCHES];
+} tide_touches;
+
+typedef struct tide_touchscreen {
+    tide_touch primaryTouch; // The finger that touched while no other was the primary one, until it lifts
+    tide_touches touches;
+    bool connected; // This machine has a touchscreen
+    uint8_t used;   // Platform state: the primary touch touched, moved or lifted this poll
+    uint8_t tide_pad[2];
+    int32_t last_id; // ...the last touch's id
+} tide_touchscreen;
+
+// The mouse or the touchscreen, whichever was used last, as Unity's Pointer:
+// `press` is the mouse's left button or the primary touch.
+typedef struct tide_pointer {
+    TIDE_POINTER_AXES(TIDE_DEVICES_MEMBER_FLOAT2)
+    tide_button press;
+    tide_float2 poll_delta; // Platform state: this poll's movement alone, for what views read
+    bool touch;             // ...it's the touchscreen
+    uint8_t tide_pad[3];
+} tide_pointer;
 
 typedef struct tide_devices {
     tide_keyboard keyboard;
     tide_mouse mouse;
     tide_gamepad gamepad;
-    tide_typed text; // Platform state, not visible to Tide
+    tide_touchscreen touchscreen;
+    tide_pointer pointer;
 } tide_devices;
 
 #undef TIDE_DEVICES_MEMBER_BUTTON
@@ -119,6 +183,9 @@ typedef struct tide_devices {
 // compiler adds, and the same size on every platform.
 _Static_assert(sizeof(tide_button) == 4, "a button is four bools");
 _Static_assert(sizeof(tide_gamepad) % 4 == 0 && sizeof(tide_devices) % 4 == 0, "devices have no padding the compiler adds");
+_Static_assert(sizeof(tide_touch) == 48 && sizeof(tide_touchscreen) == 48 * (1 + TIDE_TOUCHES) + 8
+                   && sizeof(tide_pointer) == 32,
+               "touches and the pointer have no padding the compiler adds");
 
 // Platform layer: report a button's current state. Call every frame for every
 // button; presses and releases latch until the next tide_devices_consume.
@@ -130,6 +197,39 @@ static inline void tide_button_set(tide_button *b, const bool down_now)
     b->held = down_now;
 }
 
-// After sampling input: buttons restart from their current state, and mouse
-// delta and scroll reset to zero.
+typedef enum tide_touch_phase {
+    TIDE_TOUCH_BEGAN,
+    TIDE_TOUCH_MOVED,
+    TIDE_TOUCH_ENDED,
+    TIDE_TOUCH_CANCELED, // The system took the finger away (a gesture of its own, the window lost it): it lifts where it was
+} tide_touch_phase;
+
+// Platform layer, once per poll, before its touches: lifts the fingers that
+// touched and lifted in the last poll, and starts this poll's movement.
+void tide_touches_poll(tide_touchscreen *s);
+
+// Platform layer: a finger touched, moved or lifted at `position` (window
+// pixels from the bottom left, y up). `source` is the platform's own number for
+// the finger while it touches, which it may give the next one. A finger that
+// touches takes a slot that's free, or else the slot of the finger that lifted
+// longest ago, whose lift the next sample then doesn't see. It's only left
+// out while every slot's finger still touches.
+void tide_touch_event(tide_touchscreen *s, tide_touch_phase phase, uint32_t source, tide_float2 position);
+
+// Platform layer, once per poll, after the mouse and the touches: the pointer
+// follows the touchscreen when the primary touch was used this poll, and the
+// mouse when `mouse_used` (it moved or scrolled, or a button went down or up).
+void tide_pointer_poll(tide_devices *d, bool mouse_used);
+
+// After sampling input: buttons restart from their current state, mouse
+// delta and scroll reset to zero, and lifted fingers leave their slots. A
+// host also calls it at the end of a frame in which nothing could sample, as
+// outside a match: or the first sample that comes reads everything pressed
+// since the last one, however long ago.
 void tide_devices_consume(tide_devices *d);
+
+// touches[i] in generated code: an empty touch past the last.
+static inline tide_touch tide_touch_at(const tide_touches touches, const int32_t i)
+{
+    return i >= 0 && i < TIDE_TOUCHES ? touches.at[i] : (tide_touch){0};
+}

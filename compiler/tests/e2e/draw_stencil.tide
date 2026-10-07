@@ -1,0 +1,180 @@
+// Stencil, as a draw setting of Draw's: around a block and set for the views
+// that follow, with what's stored or without, listed with other settings,
+// around each entity's draw, left early, kept in values, by name, for 2D and
+// 3D draws alike and through a frag. A render target has its own, as it has
+// its own stencil.
+
+enum Trouble
+{
+    Hidden,
+}
+
+struct Corner
+{
+    float3 position;
+    Color color = Color.white;
+}
+
+component Pane
+{
+    float2 position;
+}
+
+local singleton Look
+{
+    RenderTarget target;
+    bool leave;                              // The blocks are left early
+    StencilTest kept = StencilTest.NotEqual; // Values like any other enum's
+    StencilOp does = StencilOp.Invert;
+    int layer = 300;                         // More than a pixel stores: 255
+    List<Corner> corners;
+    List<int> faces;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Pane { position = float2(5, 9) });
+    Spawn(Pane { position = float2(5, 8) });
+    Spawn(Pane { position = float2(5, 7) });
+}
+
+void Hide(bool yes) fails Trouble
+{
+    if (yes) fail Trouble.Hidden;
+}
+
+// As a frame starts: none. Around a block, one inside another, and back after each.
+view Blocks(mut Look look)
+{
+    if (look.corners.count == 0)
+    {
+        look.corners = [Corner { }, Corner { position = float3(0, 1, 0) }, Corner { position = float3(1, 0, 0) }];
+        look.faces = [0, 1, 2];
+    }
+    Draw.Rect(float2(0, 9), float2(1, 1), Color.white);
+    Draw.Stencil(StencilTest.Always, 1, StencilOp.Replace)
+    {
+        Draw.Circle(float2(0, 8), 1, Color.white);
+        Draw.Stencil(StencilTest.Equal, 1)
+        {
+            Draw.Rect(float2(0, 7), float2(1, 1), Color.white);
+        }
+        Draw.Rect(float2(0, 6), float2(1, 1), Color.white);
+    }
+    Draw.Rect(float2(0, 5), float2(1, 1), Color.white);
+
+    // Listed with commas, beside the other settings: 3D meshes and text take it as shapes do
+    Draw.Blend(Blend.Add),
+    Draw.Stencil(StencilTest.Less, 2),
+    Draw.Depth(Depth.Read)
+    {
+        Draw.Cube(float3(0, 0, 4), float3(1, 1, 1), Color.white);
+        Draw.Text("in", float2(0, 4), 8, Color.white);
+    }
+    Draw.Rect(float2(0, 3), float2(1, 1), Color.white);
+}
+
+// The same setting around each entity's shape: said once, and nothing between them.
+view Panes(Pane pane)
+{
+    Draw.Stencil(StencilTest.Equal, 3)
+    {
+        Draw.Rect(pane.position, float2(1, 1), Color.white);
+    }
+}
+
+void Guarded(bool leave) fails Trouble
+{
+    Draw.Stencil(StencilTest.Greater, 4, StencilOp.Zero),
+    Draw.Blend(Blend.Add)
+    {
+        try Hide(leave); // Its error leaves through both
+        Draw.Rect(float2(1, 9), float2(1, 1), Color.white);
+    }
+}
+
+int Counted(bool leave)
+{
+    Draw.Stencil(StencilTest.Never, 0)
+    {
+        if (leave) return 1;
+    }
+    return 2;
+}
+
+// Left early, a block still puts back what it found.
+view Early(Look look)
+{
+    Guarded(look.leave)!;
+    var counted = Counted(look.leave);
+    for (var i = 0; i < 3; i++)
+    {
+        Draw.Stencil(StencilTest.GreaterEqual, 5, StencilOp.Decrement)
+        {
+            if (i == 0) continue;
+            if (i == 2) break;
+        }
+    }
+    Draw.Rect(float2(counted, 8), float2(1, 1), Color.white);
+}
+
+frag Flat(Corner vertex, out Color color)
+{
+    color = vertex.color;
+}
+
+// A test, a number and an operation are values: the game's own, worked out, `default`, by name.
+view Values(Look look)
+{
+    Draw.Stencil(look.kept, look.layer, look.does)
+    {
+        Draw.Mesh(look.corners, look.faces, float4x4.identity, Flat);
+    }
+    Draw.Stencil(default, 7, StencilOp.Increment) // Every pixel passes: its number is read by nothing
+    {
+        Draw.Rect(float2(2, 9), float2(1, 1), Color.white);
+    }
+    Draw.Stencil(StencilTest.Always, 9) // Neither tests nor stores: no stencil at all
+    {
+        Draw.Rect(float2(2, 8), float2(1, 1), Color.white);
+    }
+    Draw.Stencil(operation: StencilOp.Replace, test: StencilTest.Always, value: look.layer - 294)
+    {
+        Draw.Rect(float2(2, 7), float2(1, 1), Color.white);
+    }
+}
+
+// A render target's stencil is its own, and so is what its draws do with it.
+view Targets(Look look)
+{
+    Draw.Stencil(StencilTest.Never, 0) // The window's: nothing to a target's draws
+    {
+        look.target.Rect(float2(3, 9), float2(1, 1), Color.white);
+        look.target.Stencil(StencilTest.Always, 2, StencilOp.Replace)
+        {
+            look.target.Circle(float2(3, 8), 1, Color.white);
+            look.target.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.white);
+        }
+        look.target.SetStencil(StencilTest.Equal, 2);
+        look.target.Rect(float2(3, 7), float2(1, 1), Color.white);
+        look.target.SetStencil();
+        look.target.Rect(float2(3, 6), float2(1, 1), Color.white);
+        Draw.Rect(float2(3, 5), float2(1, 1), Color.white); // ...and a target's is nothing to the window's
+    }
+}
+
+// Set, it holds for the views that follow.
+view Sets()
+{
+    Draw.SetStencil(StencilTest.LessEqual, 8, StencilOp.Keep);
+}
+
+[After(Sets)]
+view Later()
+{
+    Draw.Rect(float2(4, 9), float2(1, 1), Color.white);
+    Draw.SetStencil();
+    Draw.Rect(float2(4, 8), float2(1, 1), Color.white);
+}

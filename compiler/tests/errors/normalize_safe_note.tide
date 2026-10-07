@@ -1,0 +1,4 @@
+// expect: Math.Normalize no longer gives NaN for a vector too short to normalize: it gives zero, and the identity for a quaternion
+component Body { quaternion rotation; }
+system Settle(mut Body body) { body.rotation = Math.NormalizeSafe(body.rotation); }
+scene Main { }

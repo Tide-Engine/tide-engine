@@ -1,0 +1,31 @@
+// A game's own World, in a namespace, is what its code means by World: a
+// singleton here, which Seed writes like any other. No built-in World is in
+// sight, so nothing reaches every entity's component.
+namespace Game;
+
+singleton World
+{
+    int seed;
+}
+
+component Health
+{
+    int value;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Health);
+}
+
+system Seed(mut World world)
+{
+    world.seed += 1;
+}
+
+system Grow(mut Health health, World world)
+{
+    health.value += world.seed;
+}

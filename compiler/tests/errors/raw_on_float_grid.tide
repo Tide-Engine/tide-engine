@@ -1,0 +1,9 @@
+// expect: [Raw] says a texture's pixels are numbers with no alpha worked into them, and 'heights' is Grid2<float>
+local singleton Art
+{
+    [Raw] Grid2<float> heights = Grid2(4, 4);
+}
+
+scene Main
+{
+}

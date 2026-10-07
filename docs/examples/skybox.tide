@@ -1,0 +1,156 @@
+settings { title = "Skybox and reflections"; }
+
+local scene Main { }
+
+// Six files, a face each, which the glob matches: sky_px.png is the face +x
+// points at, sky_nx.png the one behind it, then py, ny, pz and nz.
+asset Cubemap sky = "art/sky_??.png";
+
+// A vertex of our own: the engine has no lighting, so the normal is ours.
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+// One for each ball that goes round: where it is, and its color.
+struct Moon
+{
+    float4x4 transform;
+    Color paint;
+}
+
+local singleton Room
+{
+    Cubemap around;   // What the ball in the middle sees, drawn again each frame
+    List<Corner> ball;
+    List<int> faces;
+    List<Moon> moons;
+    float3 eye;
+    float turn;
+    float look = 0.5;
+    float tilt = 0.2;
+    bool live = true;
+}
+
+// The sky: a ball around the camera, each pixel read towards where it is.
+frag Sky(Corner corner, out Color color)
+{
+    color = sky.Sample(corner.position);
+}
+
+// A moon: lit from where the sky is brightest, and by the sky above it.
+frag Painted(Corner corner, out Color color, Instance instance, Moon moon)
+{
+    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float lit = Math.Max(Math.Dot(normal, Math.Normalize(float3(0.45, 0.35, 0.82))), 0);
+    Color above = sky.Sample(normal);
+    color = Color(moon.paint.r * (0.25 + 0.75 * lit) + above.r * 0.3, moon.paint.g * (0.25 + 0.75 * lit) + above.g * 0.3,
+                  moon.paint.b * (0.25 + 0.75 * lit) + above.b * 0.3);
+}
+
+// The mirror: each pixel reads the cube towards where a ray from the eye bounces.
+frag Mirror(Corner corner, out Color color, Room room)
+{
+    float3 from = Math.Normalize(this.world - room.eye);
+    float3 away = Math.Reflect(from, corner.normal);
+    // The cube a view drew, with the moons in it, or the sky's own files
+    mut Color seen = sky.Sample(away);
+    if (room.live) seen = room.around.Sample(away);
+    float edge = Math.Pow(1 - Math.Max(Math.Dot(-from, corner.normal), 0), 3);
+    color = Color(seen.r * (0.82 + 0.18 * edge), seen.g * (0.82 + 0.18 * edge), seen.b * (0.82 + 0.18 * edge));
+}
+
+// The way a camera looks to fill a face: along the face's axis with +y up,
+// and for the faces above and below, with -z and +z up.
+quaternion Facing(int face)
+{
+    if (face == 0) return quaternion.LookRotation(float3(1, 0, 0), float3(0, 1, 0));
+    if (face == 1) return quaternion.LookRotation(float3(-1, 0, 0), float3(0, 1, 0));
+    if (face == 2) return quaternion.LookRotation(float3(0, 1, 0), float3(0, 0, -1));
+    if (face == 3) return quaternion.LookRotation(float3(0, -1, 0), float3(0, 0, 1));
+    if (face == 4) return quaternion.LookRotation(float3(0, 0, 1), float3(0, 1, 0));
+    return quaternion.LookRotation(float3(0, 0, -1), float3(0, 1, 0));
+}
+
+view Show(Devices devices, mut Room room)
+{
+    if (room.ball.count == 0)
+    {
+        // A sphere of rings, built once: each corner's normal is its position.
+        for (var ring = 0; ring <= 24; ring++)
+        {
+            for (var step = 0; step <= 48; step++)
+            {
+                float across = step * Math.TAU / 48;
+                float down = ring * Math.PI / 24;
+                var at = float3(Math.Sin(down) * Math.Cos(across), Math.Cos(down), Math.Sin(down) * Math.Sin(across));
+                room.ball.Add(Corner { position = at, normal = at });
+                if (ring < 24 && step < 48)
+                {
+                    int first = ring * 49 + step;
+                    room.faces.Add(first);
+                    room.faces.Add(first + 1);
+                    room.faces.Add(first + 49);
+                    room.faces.Add(first + 1);
+                    room.faces.Add(first + 50);
+                    room.faces.Add(first + 49);
+                }
+            }
+        }
+        // Six images of 256 pixels a side, each a target to draw into
+        room.around = Cubemap(256);
+    }
+    room.turn += Math.Min(Frame.dt, 0.05) * 0.5;
+    if (room.turn > Math.TAU * 6) room.turn -= Math.TAU * 6;
+
+    // Three moons go round the middle, each its own way
+    room.moons.Clear();
+    for (var i = 0; i < 3; i++)
+    {
+        float angle = room.turn * (1 + i * 0.5) + i * 2.1;
+        var at = float3(Math.Cos(angle) * 2.5, Math.Sin(angle * 0.5 + i) * 0.9, Math.Sin(angle) * 2.5);
+        var paint = i == 0 ? Color(0.98, 0.75, 0.14) : i == 1 ? Color(0.18, 0.83, 0.75) : Color(0.98, 0.44, 0.52);
+        room.moons.Add(Moon { transform = float4x4.TRS(at, quaternion.identity, float3(0.42)), paint = paint });
+    }
+
+    // What the middle sees, a face at a time: the sky, from inside its ball, and the moons
+    var all = float4x4.TRS(float3(0), quaternion.identity, float3(20));
+    for (var face = 0; face < 6; face++)
+    {
+        var into = room.around.faces[face];
+        into.SetCamera(float3(0), Facing(face), 90);
+        into.Cull(Cull.Front), into.Depth(Depth.None)
+        {
+            into.Mesh(room.ball, room.faces, all, Sky);
+        }
+        into.Instanced(room.ball, room.faces, room.moons, Painted);
+    }
+
+    // Then the picture. A drag looks around
+    var pointer = devices.pointer;
+    if (pointer.press.pressed)
+    {
+        room.look -= pointer.delta.x * 0.01;
+        room.tilt = Math.Clamp(room.tilt + pointer.delta.y * 0.01, -1.2, 1.2);
+    }
+    else
+    {
+        room.look += Math.Min(Frame.dt, 0.05) * 0.12;
+    }
+    room.eye = float3(Math.Sin(room.look) * Math.Cos(room.tilt), Math.Sin(room.tilt), -Math.Cos(room.look) * Math.Cos(room.tilt)) * 5.2;
+    Draw.SetCamera(room.eye, quaternion.LookRotation(Math.Normalize(-room.eye), float3(0, 1, 0)), 50);
+    // The sky is behind everything: its ball is around the eye, seen from inside, and writes no depth
+    Draw.Cull(Cull.Front), Draw.Depth(Depth.None)
+    {
+        Draw.Mesh(room.ball, room.faces, float4x4.TRS(room.eye, quaternion.identity, float3(1)), Sky);
+    }
+    Draw.Instanced(room.ball, room.faces, room.moons, Painted);
+    Draw.Mesh(room.ball, room.faces, float4x4.TRS(float3(0), quaternion.identity, float3(1.3)), Mirror);
+
+    GUI.SetTheme(GUITheme { radius = 6 });
+    GUILayout.Area(Rect(12, Screen.height - 52, Screen.width - 24, 40))
+    {
+        GUILayout.Toggle("Reflect the moons", room.live);
+    }
+}

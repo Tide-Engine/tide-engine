@@ -1,0 +1,7 @@
+// expect: 'Devices' is a type, not a value: take a 'Devices devices' parameter
+input PlayerInput
+{
+    bool jump;
+    Sample() { jump = Devices.keyboard.space.pressed; }
+}
+scene Main { }

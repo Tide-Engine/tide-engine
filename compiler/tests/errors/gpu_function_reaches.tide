@@ -1,0 +1,48 @@
+// expect: frag 'Shade' runs on the GPU, and 'Count' with it, as it calls it
+// What a frag calls runs on the GPU too
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+component Box
+{
+    Color tint = Color.white;
+}
+
+singleton Sun
+{
+    float3 direction = float3(0, -1, 0);
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    Grid2<Color> wood = Grid2(4, 4);
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box);
+}
+
+float Count(float to)
+{
+    mut float x = 0;
+    while (x < to) x += 1;
+    return x;
+}
+
+frag Shade(V vertex, out Color color)
+{
+    color = Color.white * Count(vertex.uv.x);
+}
+
+view Show(Box box, Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}

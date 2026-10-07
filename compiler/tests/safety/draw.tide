@@ -1,0 +1,216 @@
+// expect: drew 3 frames
+// ticks: 3
+// draws
+
+// Drawing with numbers no renderer expects: NaN, infinities and the biggest
+// floats in every shape, text of any size, clips and cameras of no size,
+// meshes whose indices point past their corners, pictures with no size, and
+// blocks of settings a thousand deep.
+
+singleton Art
+{
+    List<Vertex> corners;
+    List<Vertex3> solid;
+    List<Vertex3> many;
+    List<int> around;
+    Grid2<Color> picture = Grid2(4, 4);
+    Grid2<Color> open;
+    Grid2<Color> wide = Grid2(100000, 3);
+    float zero;
+    int most = 2147483647;
+    int least = 0x80000000;
+    int frames;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Art art)
+{
+    art.corners = [Vertex { }, Vertex { position = float2(100, 0) }, Vertex { position = float2(0, 100) }];
+    art.solid = [Vertex3 { }, Vertex3 { position = float3(1, 0, 0) }, Vertex3 { position = float3(0, 1, 0) }];
+    for (var i = 0; i < 70000; i++) art.many.Add(Vertex3 { position = float3(i % 7, i % 5, i % 3) });
+    for (var i = 0; i < 300; i++) art.around.Add(i * 233 % 70003 - 1);
+    art.picture[1, 1] = Color.red;
+    art.open[5, 5] = Color.red;
+    art.wide[99999, 2] = Color.blue;
+}
+
+void Shapes(float v, float w)
+{
+    var at = float2(v, w);
+    var size = float2(w, v);
+    var color = Color(v, w, v, w);
+    Draw.Rect(at, size, color);
+    Draw.Rect(at, size, v, color);
+    Draw.WireRect(at, size, color);
+    Draw.WireRect(at, size, w, color);
+    Draw.Circle(at, v, color);
+    Draw.WireCircle(at, w, color);
+    Draw.WireCircle(at, w, v, color);
+    Draw.Line(at, size, color);
+    Draw.Line(at, size, v, color);
+    Draw.RoundRect(at, size, v, color);
+    Draw.RoundRect(at, size, v, w, color);
+    Draw.WireRoundRect(at, size, v, w, color);
+    Draw.Ellipse(at, size, color);
+    Draw.Ellipse(at, size, v, color);
+    Draw.WireEllipse(at, size, w, color);
+    Draw.Arc(at, v, w, v, w, color);
+    Draw.Shape(Shape { center = at, size = size, radius = v, rotation = w, color = color, color2 = color, outline = v,
+        outlineColor = color, soft = w });
+    Draw.Shape(Shape { center = float2(10, 10), size = float2(20, 20), radius = w, rotation = v, soft = v, outline = w });
+}
+
+void Texts(float v, float w, int number)
+{
+    Draw.Text("text", float2(v, w), v, Color.white);
+    Draw.Text("two\nlines", float2(w, v), w, Color(v, w, v, w), Anchor(number));
+    Draw.Text("bold", float2(0, 0), v, Color.white, Anchor(number % 9), Font(number));
+    var measured = Draw.MeasureText("measured\n\n", v) + Draw.MeasureText("", w, Font.Bold);
+    Draw.Text($"{measured}", measured, 12, Color.white);
+    var there = Draw.WorldToScreen(float2(v, w)) + Draw.ScreenToWorld(float2(w, v)) + Screen.Flip(float2(v, w));
+    var deep = Draw.WorldToScreen(float3(v, w, v)) + Draw.ScreenToWorld(float3(w, v, w)) + Draw.ScreenRayOrigin(there)
+        + Draw.ScreenRayDirection(float2(v, w));
+    Draw.Circle(there, deep.x, Color.white);
+    var seen = Math.Mul(Draw.WorldToClip(), float4(v, w, v, 1)) + Math.Mul(Draw.CameraProjection(), Math.Mul(Draw.CameraTransform(), float4(w)));
+    var flat = Math.Mul(Draw.WorldToScreenMatrix(), float3(v, w, 1));
+    Draw.Circle(flat.xy, seen.x, Color.white);
+}
+
+void Settings(float v, float w, int number)
+{
+    Draw.Blend(Blend(number)),
+    Draw.Tint(Color(v, w, v, w)),
+    Draw.Transform(float2(v, w), w, v),
+    Draw.Clip(Rect(v, w, w, v))
+    {
+        Draw.Rect(float2(0, 0), float2(10, 10), Color.white);
+        Draw.Text("clipped", float2(1, 1), 14, Color.white);
+        Draw.Camera(float2(w, v), v)
+        {
+            Draw.Circle(float2(0, 0), 1, Color.white);
+        }
+        Draw.Clip(Rect(w, v, v, w))
+        {
+            Draw.Screen()
+            {
+                Draw.Rect(float2(v, v), float2(1, 1), Color.red);
+            }
+        }
+    }
+    Draw.Camera(float3(v, w, v), quaternion.Euler(float3(w, v, w)), v)
+    {
+        Draw.Transform(float4x4.TRS(float3(v, v, v), quaternion.AxisAngle(float3(w, w, w), v), float3(w, v, w)))
+        {
+            Draw.Cube(float3(v, w, v), float3(w, v, w), Color.white);
+            Draw.Cube(float3(0, 0, 0), float3(1, 1, 1), quaternion.Euler(float3(v, w, v)), Color.white);
+            Draw.Sphere(float3(w, v, w), v, Color.white);
+            Draw.Cylinder(float3(v, v, v), w, v, Color.white);
+            Draw.Plane(float3(w, w, w), float2(v, w), Color.white);
+        }
+    }
+    Draw.Camera(float4x4.TRS(float3(v, w, v), quaternion.identity, float3(w, w, w)), float4x4.PerspectiveFov(v, w, v, w))
+    {
+        Draw.Sphere(float3(0, 0, 5), 1, Color.white);
+    }
+}
+
+// Settings inside settings, as deep as the call goes
+void Nest(int depth)
+{
+    if (depth <= 0)
+    {
+        Draw.Rect(float2(1, 1), float2(2, 2), Color.white);
+        return;
+    }
+    Draw.Tint(Color(1, 1, 1, 0.999)),
+    Draw.Transform(float2(0.001, 0)),
+    Draw.Clip(Rect(0, 0, 600 - depth * 0.01, 300))
+    {
+        Nest(depth - 1);
+    }
+}
+
+view Bad(Art art)
+{
+    var nan = art.zero / art.zero;
+    var inf = 1.0 / art.zero;
+    List<float> bad = [nan, inf, -inf, 3.4028235e38, -3.4028235e38, 1e30, -1e30, 0.0, -art.zero, 1e-30, 1e10, -1e10, 4294967296.0,
+        2147483648.0, -2147483649.0, 0.5];
+    mut var number = art.least;
+    Draw.Clear(Color(nan, inf, -inf, 2));
+    foreach (var v in bad)
+    {
+        foreach (var w in bad)
+        {
+            Shapes(v, w);
+            Texts(v, w, number);
+            Settings(v, w, number);
+            number = number / 3 + 715827883;
+        }
+    }
+    Nest(1000);
+    Draw.SetBlend(Blend(art.most));
+    Draw.SetTint(Color(nan, nan, nan, nan));
+    Draw.SetTransform(float2(inf, nan), nan, inf);
+    Draw.SetClip(Rect(nan, inf, -inf, 1e30));
+    Draw.SetCamera(float2(nan, nan), 0);
+    Draw.SetCamera(float3(nan, nan, nan), quaternion.identity, 0);
+    Draw.Rect(float2(0, 0), float2(1, 1), Color.white);
+    Draw.Cube(float3(0, 0, 0), float3(1, 1, 1), Color.white);
+}
+
+[After(Bad)]
+view Meshes(Art art)
+{
+    Draw.SetBlend();
+    Draw.SetTint();
+    Draw.SetTransform();
+    Draw.SetClip();
+    Draw.SetScreen();
+    List<Vertex> none = [];
+    List<int> nothing = [];
+    // Indices that point at nothing, and too few of them for a triangle
+    Draw.Mesh(art.corners, [0, 1, 2, -1, art.most, art.least, 3, 0, 1]);
+    Draw.Mesh(art.corners, [0, 1]);
+    Draw.Mesh(art.corners, nothing);
+    Draw.Mesh(none, [0, 1, 2]);
+    Draw.Mesh(none, nothing);
+    Draw.Mesh(art.corners, [2, 1, 0, 0, 1, 7], art.picture);
+    Draw.Mesh(art.corners, [0, 1, 2], art.picture, Filter(art.most));
+    Draw.Mesh(art.corners, [0, 1, 2], art.open);
+    Draw.Mesh(art.corners, [0, 1, 2], art.wide, Filter(art.least));
+    Draw.SetCamera(float3(0, 1, -5), quaternion.identity, 60);
+    Draw.Mesh(art.solid, [0, 1, 2, 3, -5, art.most], float4x4.identity);
+    Draw.Mesh(art.solid, [0, 1], float4x4.identity, art.picture);
+    Draw.Mesh(art.solid, nothing, float4x4.identity);
+    // More corners than 16 bits count, and indices on both sides of them
+    Draw.Mesh(art.many, [0, 65535, 65536, 69999, 70000, 1, 2, 3, art.least], float4x4.identity);
+    Draw.Mesh(art.many, art.around, float4x4.identity);
+    List<float4x4> places = [float4x4.identity, float4x4.TRS(float3(1, 2, 3), quaternion.identity, float3(0, 0, 0))];
+    List<float4x4> nowhere = [];
+    Draw.Instanced(art.solid, [0, 1, 2, 9], places);
+    Draw.Instanced(art.solid, [0, 1, 2], nowhere);
+    Draw.Instanced(art.many, art.around, places, art.picture);
+}
+
+[After(Meshes)]
+view Long()
+{
+    // Text of a megabyte on one line, and of a hundred thousand lines
+    mut var line = "wide ";
+    for (var i = 0; i < 18; i++) line = line + line;
+    Draw.Text(line, float2(0, 0), 1e-3, Color.white);
+    var across = Draw.MeasureText(line, 400);
+    mut var lines = "\n";
+    for (var i = 0; i < 17; i++) lines = lines + lines;
+    Draw.Text(lines, float2(0, 0), 16, Color.white, Anchor.LowerRight);
+    var down = Draw.MeasureText(lines, 1e6);
+    Draw.Text("ok", across + down, 16, Color.white);
+}
+
+system Count(mut Art art)
+{
+    art.frames += 1;
+    if (art.frames == 3) Debug.Log($"drew {art.frames} frames");
+}

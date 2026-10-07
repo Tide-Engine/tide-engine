@@ -1,0 +1,261 @@
+// expect: tick 0: edge 1 101 1 11 same true
+// expect: tick 1: edge 101 111 11 111 same true
+// expect: tick 2: edge 101 211 11 121 same true
+// expect: tick 3: edge 201 221 21 221 same true
+// expect: tick 4: edge 201 321 21 231 same true
+// ticks: 5
+
+// Parallel loops whose blocks start anywhere: offsets at the ints' limits, and
+// cells at the edges of what an int can say, where a block or the cells
+// around it would go past. A block that would go past the last int is left
+// out, as one past a grid's size is, and the cells a step reads past it are
+// the ones its own arithmetic wraps to.
+
+struct Grids
+{
+    int most = 2147483647;
+    int least = 0x80000000;
+    int2 none; // Added to a place, it's the same place, read from the grid rather than a step's window
+}
+
+singleton Field
+{
+    Grid2<int> open;
+    Grid3<int> cube;
+    Grid2<int> strip = Grid2(0, 3); // Open along x, three rows of it
+    Grid2<int> edge;
+    List<int> values = [1, 2, 3, 4, 5, 6, 7];
+    Grids g;
+}
+
+// The same grids, stepped by the same loops, whose steps read every cell from
+// the grid itself: what a window gives has to be what the grid has
+singleton Twin
+{
+    Grid2<int> open;
+    Grid3<int> cube;
+    Grid2<int> strip = Grid2(0, 3);
+    List<int> values = [1, 2, 3, 4, 5, 6, 7];
+    Grids g;
+    int3 none;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main, mut Field f, mut Twin t)
+{
+    var most = f.g.most;
+    var least = f.g.least;
+    f.open[most, most] = 1;
+    f.open[least, least] = 2;
+    f.open[most, least] = 3;
+    f.open[least, most] = 4;
+    f.open[0, 0] = 5;
+    f.open[most - 64, 0] = 1;
+    f.cube[int3(most, most, most)] = 1;
+    f.cube[int3(least, least, least)] = 2;
+    f.cube[int3(0, most, least)] = 3;
+    f.strip[most, 2] = 1;
+    f.strip[least, 0] = 2;
+    f.strip[0, 1] = 3;
+    f.strip[5, 3] = 4;
+    t.open[most, most] = 1;
+    t.open[least, least] = 2;
+    t.open[most, least] = 3;
+    t.open[least, most] = 4;
+    t.open[0, 0] = 5;
+    t.open[most - 64, 0] = 1;
+    t.cube[int3(most, most, most)] = 1;
+    t.cube[int3(least, least, least)] = 2;
+    t.cube[int3(0, most, least)] = 3;
+    t.strip[most, 2] = 1;
+    t.strip[least, 0] = 2;
+    t.strip[0, 1] = 3;
+    t.strip[5, 3] = 4;
+    // The four corners' cells, and the ones next to them
+    f.edge[most, most] = 1;
+    f.edge[most - 1, most - 1] = 1;
+    f.edge[least, least] = 1;
+    f.edge[least + 1, least + 1] = 1;
+}
+
+int Offset(Grids g, int tick)
+{
+    if (tick == 0) return g.most;
+    if (tick == 1) return g.least;
+    if (tick == 2) return g.most - 63;
+    return g.least + 65;
+}
+
+// Blocks of two from 1, then from 0: the last int's cell is the second of a
+// block one tick, and the first of a block that would go past the next
+system Edge(mut Field f, Time time)
+{
+    parallel (var at in f.edge by 2 offset 1 - time.tick % 2)
+    {
+        f.edge[at] = f.edge[at] + 10;
+        f.edge[at + int2(1, 1)] = f.edge[at + int2(1, 1)] + 100;
+    }
+}
+
+// Each cell takes in the ones around it, some of them past the edge
+system Blur(mut Field f, Time time)
+{
+    var o = Offset(f.g, time.tick);
+    parallel (var at in f.open by 2 offset o)
+    {
+        f.open[at] = f.open[at] + f.open[at + int2(2, 2)] + f.open[at - int2(1, 1)];
+        f.open[at + int2(1, 1)] = f.open[at + int2(-64, 64)] + 1;
+    }
+}
+
+system BlurTwin(mut Twin t, Time time)
+{
+    var o = Offset(t.g, time.tick);
+    var none = t.g.none;
+    parallel (var at in t.open by 2 offset o)
+    {
+        t.open[at] = t.open[at + none] + t.open[at + int2(2, 2) + none] + t.open[at - int2(1, 1) + none];
+        t.open[at + int2(1, 1)] = t.open[at + int2(-64, 64) + none] + 1;
+    }
+}
+
+system Blocks(mut Field f, Time time)
+{
+    var o = Offset(f.g, time.tick + 1);
+    parallel (var at in f.open by int2(64, 3) offset int2(o, -o))
+    {
+        if (f.open[at + int2(63, 2)] == 0) continue;
+        f.open[at + int2(63, 2)] = f.open[at + int2(64, 3)] - f.open[at - int2(64, 64)];
+    }
+}
+
+[After(BlurTwin)]
+system BlocksTwin(mut Twin t, Time time)
+{
+    var o = Offset(t.g, time.tick + 1);
+    var none = t.g.none;
+    parallel (var at in t.open by int2(64, 3) offset int2(o, -o))
+    {
+        if (t.open[at + int2(63, 2) + none] == 0) continue;
+        t.open[at + int2(63, 2)] = t.open[at + int2(64, 3) + none] - t.open[at - int2(64, 64) + none];
+    }
+}
+
+system Cube(mut Field f, Time time)
+{
+    var o = Offset(f.g, time.tick + 2);
+    parallel (var at in f.cube by int3(2, 3, 5) offset int3(o, f.g.most, f.g.least))
+    {
+        f.cube[at + int3(1, 2, 4)] = f.cube[at] + f.cube[at + int3(2, 3, 5)] + f.cube[at - int3(64, 64, 64)];
+    }
+}
+
+system CubeTwin(mut Twin t, Time time)
+{
+    var o = Offset(t.g, time.tick + 2);
+    var none = t.none;
+    parallel (var at in t.cube by int3(2, 3, 5) offset int3(o, t.g.most, t.g.least))
+    {
+        t.cube[at + int3(1, 2, 4)] = t.cube[at + none] + t.cube[at + int3(2, 3, 5) + none] + t.cube[at - int3(64, 64, 64) + none];
+    }
+}
+
+system Strip(mut Field f, Time time)
+{
+    var o = Offset(f.g, time.tick);
+    parallel (var at in f.strip by int2(64, 1) offset o)
+    {
+        f.strip[at + int2(63, 0)] = f.strip[at] + f.strip[at + int2(64, 1)] + 1;
+    }
+    // A foreach whose steps keep to their own cell runs at once too
+    foreach (var at in f.open)
+    {
+        f.open[at] = f.open[at] / 2 + 1;
+    }
+}
+
+[After(BlocksTwin)]
+system StripTwin(mut Twin t, Time time)
+{
+    var o = Offset(t.g, time.tick);
+    var none = t.g.none;
+    parallel (var at in t.strip by int2(64, 1) offset o)
+    {
+        t.strip[at + int2(63, 0)] = t.strip[at + none] + t.strip[at + int2(64, 1) + none] + 1;
+    }
+    foreach (var at in t.open)
+    {
+        t.open[at] = t.open[at] / 2 + 1;
+    }
+}
+
+system Values(mut Field f, Time time)
+{
+    var o = Offset(f.g, time.tick);
+    parallel (var i in f.values by 2 offset o)
+    {
+        var a = f.values[i];
+        f.values[i] = f.values[i + 1] + f.values[i - 1000000000] + f.values[i + 2000000000];
+        f.values[i + 1] = a;
+    }
+    parallel (var i in f.values)
+    {
+        f.values[i] = f.values[i] + f.values[i + time.tick] + f.values[i - 2147483647];
+    }
+}
+
+// By hand, in order: each block's two elements from a copy of the list as it was
+system ValuesTwin(mut Twin t, Time time)
+{
+    var o = Offset(t.g, time.tick);
+    var was = t.values;
+    var first = (o % 2 + 2) % 2;
+    for (var i = first; i + 1 < was.count; i += 2)
+    {
+        t.values[i] = was[i + 1] + was[i - 1000000000] + was[i + 2000000000];
+        t.values[i + 1] = was[i];
+    }
+    var then = t.values;
+    for (var i = 0; i < then.count; i++) t.values[i] = then[i] + then[i + time.tick] + then[i - 2147483647];
+}
+
+[After(Edge, Strip, StripTwin, Cube, CubeTwin, Values, ValuesTwin)]
+system Report(Field f, Twin t, Time time)
+{
+    mut var same = true;
+    mut long open = 0;
+    foreach (var at in f.open)
+    {
+        open += f.open[at];
+        if (f.open[at] != t.open[at]) same = false;
+    }
+    foreach (var at in t.open)
+    {
+        if (f.open[at] != t.open[at]) same = false;
+    }
+    foreach (var at in f.cube)
+    {
+        if (f.cube[at] != t.cube[at]) same = false;
+    }
+    foreach (var at in t.cube)
+    {
+        if (f.cube[at] != t.cube[at]) same = false;
+    }
+    foreach (var at in f.strip)
+    {
+        if (f.strip[at] != t.strip[at]) same = false;
+    }
+    foreach (var at in t.strip)
+    {
+        if (f.strip[at] != t.strip[at]) same = false;
+    }
+    for (var i = 0; i < f.values.count; i++)
+    {
+        if (f.values[i] != t.values[i]) same = false;
+    }
+    var most = f.g.most;
+    var least = f.g.least;
+    Debug.Log($"tick {time.tick}: edge {f.edge[most, most]} {f.edge[most - 1, most - 1]} {f.edge[least, least]} "
+        + $"{f.edge[least + 1, least + 1]} same {same && open != 0}");
+}

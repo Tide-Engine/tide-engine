@@ -1,0 +1,8 @@
+// expect: 'this.Discard()' is a statement of its own: it ends the frag there
+scene Main { }
+
+frag Shade(Vertex vertex, out Color color)
+{
+    var gone = this.Discard();
+    color = Color.white;
+}

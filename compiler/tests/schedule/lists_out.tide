@@ -1,0 +1,49 @@
+// A list C makes (`out List<T>`) and a list sized with Resize are changes to
+// the match's lists like any other: systems that make them wait for each
+// other and for the ones that change text or lists, as it's all in one heap,
+// and a system that needs none of it runs alongside.
+
+extern int Fill(out List<byte> bytes);
+
+singleton Image
+{
+    List<byte> bytes;
+    int size;
+}
+
+singleton Scores
+{
+    List<int> values;
+}
+
+singleton Names
+{
+    List<string> values;
+}
+
+singleton Clock
+{
+    int ticks;
+}
+
+scene Main { }
+
+system Make(mut Image image)
+{
+    image.size = Fill(out image.bytes);
+}
+
+system Size(mut Scores scores)
+{
+    scores.values.Resize(8);
+}
+
+system Name(mut Names names)
+{
+    names.values.Add("cat");
+}
+
+system Count(mut Clock clock)
+{
+    clock.ticks += 1;
+}

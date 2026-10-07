@@ -1,0 +1,41 @@
+settings { appId = "tests.tide.decode"; }
+
+// grid.Decode(bytes) in the match: a PNG that comes in a command, decoded in
+// its handler on every machine, the same pixels (the world's hash is pinned,
+// the same natively and on the web). The bytes come from the host
+// (decode_test.c), which writes them with the platform's PNG writer.
+
+singleton Art
+{
+    Grid2<Color> pixels;
+    int decoded; // Decodes that went well
+    int bad;     // ...and that failed with InvalidData
+    int other;   // ...and with anything else
+}
+
+scene Main { }
+
+command Paint { List<byte> png; }
+
+command(Paint paint, PlayerID sender) Apply(mut Art art)
+{
+    if (art.pixels.Decode(paint.png) is IOError error) {
+        if (error == IOError.InvalidData) art.bad += 1;
+        else art.other += 1;
+    }
+    else art.decoded += 1;
+}
+
+// The host puts the bytes to send here, and a view sends them: a command is local code's to send
+local singleton Ui
+{
+    bool send;
+    List<byte> png;
+}
+
+view Sender(mut Ui ui)
+{
+    if (!ui.send) return;
+    Send(Paint { png = ui.png });
+    ui.send = false;
+}

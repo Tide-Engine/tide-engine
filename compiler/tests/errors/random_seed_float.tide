@@ -1,0 +1,7 @@
+// expect: a Random's seed is an int or a long, not float
+singleton Deck { Random random; }
+scene Main { }
+system Shuffle(mut Deck deck, Time time)
+{
+    deck.random = Random(time.t);
+}

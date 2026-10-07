@@ -1,0 +1,65 @@
+// Text as the renderer draws it, to look at: both weights of the font at the
+// sizes text is read at, light on dark and dark on light, and a text at each
+// of the nine anchors, on the screen and under a camera.
+//
+//     build/debug/bin/tide_platform_text --frames 2 --capture text.png --size 1180 900
+//
+// It names Font.Bold, so it carries the bold weight's file, which
+// tests/font_files.mjs checks, with tests/text_plain.tide, which doesn't.
+
+scene Main { }
+
+// A line in both weights, one under the other.
+void Pair(string text, float2 at, float size, Color color)
+{
+    Draw.Text(text, at, size, color);
+    Draw.Text(text, at + float2(0, size * 1.25), size, color, Font.Bold);
+}
+
+// The sizes text is read at, down a column `across` from the left.
+void Column(float across, Color color)
+{
+    mut var y = 14.0;
+    for (var size = 9; size <= 16; size++)
+    {
+        Pair($"{size}: Hamburgefonstiv 0123456789", float2(across + 16, y), size, color);
+        y += size * 2.5 + 6;
+    }
+    Pair("20: The quick brown fox jumps", float2(across + 16, y), 20, color);
+    y += 60;
+    Pair("24: Round 3 - FIGHT!", float2(across + 16, y), 24, color);
+    y += 70;
+    Pair("32: Tide 0.3", float2(across + 16, y), 32, color);
+    y += 92;
+    Pair("48: DUEL", float2(across + 16, y), 48, color);
+}
+
+// A cross at `at`, and a text of two lines whose `anchor` is there.
+void Anchored(float2 at, Anchor anchor, Font font, Color color, Color mark)
+{
+    Draw.Rect(at, float2(120, 1), mark);
+    Draw.Rect(at, float2(1, 60), mark);
+    Draw.Text("Anchor\nat it", at, 16, color, anchor, font);
+}
+
+view Specimen()
+{
+    Draw.Clear(Color(0.07, 0.08, 0.11));
+    Draw.SetScreen();
+    Draw.Rect(float2(Screen.width * 0.75, Screen.height * 0.5), float2(Screen.width * 0.5, Screen.height), Color(0.93, 0.93, 0.9));
+    Column(0, Color.white);
+    Column(Screen.width * 0.5, Color(0.08, 0.08, 0.1));
+
+    // The nine anchors, three a row, regular on the dark side and bold on the light one
+    for (var i = 0; i < 9; i++)
+    {
+        var cell = float2(90 + (i % 3) * 180, Screen.height - 250 + (i / 3) * 90);
+        Anchored(cell, Anchor(i), Font.Regular, Color.white, Color(0.9, 0.3, 0.3));
+        Anchored(cell + float2(Screen.width * 0.5, 0), Anchor(i), Font.Bold, Color(0.08, 0.08, 0.1), Color(0.8, 0.2, 0.2));
+    }
+
+    // Under a camera, where y goes up: upper is still towards the top of the screen
+    Draw.SetCamera(float2(0, 0), 10);
+    Draw.Text("upper left", float2(-1, -9.2), 0.7, Color(0.5, 0.9, 0.6), Anchor.UpperLeft);
+    Draw.Text("lower right", float2(-1, -9.2), 0.7, Color(0.5, 0.9, 0.6), Anchor.LowerRight, Font.Bold);
+}

@@ -1,0 +1,7 @@
+// expect: Sample runs once per tick, not once per frame, so it can't read Frame.dt
+input PlayerInput
+{
+    float2 look;
+    Sample(Devices devices) { look = devices.mouse.delta * Frame.dt; }
+}
+scene Main { }

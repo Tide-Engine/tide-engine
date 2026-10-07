@@ -1,0 +1,5 @@
+// expect: 'Mix(int)' and 'Mix_int' would have the same name in generated C, Mix_int
+scene Main { }
+float Mix(int a) { return a; }
+float Mix(float a) { return a; }
+float Mix_int() { return 1; }

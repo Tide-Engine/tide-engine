@@ -1,0 +1,32 @@
+// A frag another package replaces (overrides/Glow/glow.tide), and a function
+// it calls that's replaced too: the mesh draws through what's built under
+// the names it writes, and nothing of what was replaced is in the shader.
+
+scene Main { }
+
+singleton Sun
+{
+    float strength = 0.5;
+}
+
+local singleton Art
+{
+    List<Vertex> quad;
+    List<int> faces;
+}
+
+virtual float Dim(float value)
+{
+    return value * 0.75;
+}
+
+virtual frag Tint(Vertex vertex, out Color color, Sun sun)
+{
+    color = vertex.color;
+    color.r = Dim(vertex.color.r) * sun.strength;
+}
+
+view Show(Art art)
+{
+    Draw.Mesh(art.quad, art.faces, Tint);
+}

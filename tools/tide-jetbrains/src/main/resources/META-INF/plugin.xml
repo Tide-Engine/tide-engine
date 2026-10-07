@@ -1,17 +1,19 @@
 <idea-plugin>
     <id>io.github.blenminer.tide</id>
     <name>Tide</name>
-    <vendor url="https://github.com/BlenMiner/tide-engine">Tide</vendor>
+    <vendor url="https://tide-engine.dev">Tide</vendor>
     <description><![CDATA[
-        <p>The language of the <a href="https://github.com/BlenMiner/tide-engine">Tide</a> game engine.</p>
-        <p>Highlighting, completion, errors as you type with quick fixes, hover, go to definition, find usages, rename,
-        formatting, parameter hints, inlay hints, the structure view, symbols across the game, folding, moving a
-        declaration to a file of its own, and each system's schedule above it, for <code>.tide</code> files.</p>
-        <p>Run a game from its <code>.tide</code> files: in a window of its own, or on the web, in the IDE. Saving a
-        file reloads it as it runs.</p>
+        <p>The language of the <a href="https://tide-engine.dev">Tide</a> game engine.</p>
+        <p>Highlighting, completion, errors as you type with quick fixes, hover, go to definition, type definition and
+        implementation, find usages, highlights, rename, the call hierarchy, formatting, parameter hints, inlay hints,
+        the structure view, symbols across the game, folding, extending a selection, moving a declaration to a file of
+        its own, and each system's schedule above it, for <code>.tide</code> files.</p>
+        <p>Run a game from its <code>.tide</code> files: in a window of its own, on the web, in the IDE, or on an Android
+        phone or emulator. Saving a file reloads it as it runs.</p>
         <p>It runs <code>tidels</code>, the language server that comes with tide: install tide first
-        (see the <a href="https://github.com/BlenMiner/tide-engine#install">install steps</a>). Then open your game's
-        folder, the one you'd run <code>tide run</code> in: every <code>.tide</code> file in it is one game.</p>
+        (see the <a href="https://tide-engine.dev/guide/install">install steps</a>), or choose a
+        <code>tidels</code> under Settings | Languages &amp; Frameworks | Tide. Then open your game's folder, the one
+        you'd run <code>tide run</code> in: every <code>.tide</code> file in it is one game.</p>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
@@ -28,10 +30,14 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <textmate.bundleProvider implementation="io.github.blenminer.tide.TideTextMateBundle"/>
-        <notificationGroup id="Tide" displayType="BALLOON"/>
+        <fileIconProvider implementation="io.github.blenminer.tide.TideFileIcon"/>
+        <applicationConfigurable parentId="language" instance="io.github.blenminer.tide.TideConfigurable"
+                                 id="io.github.blenminer.tide" displayName="Tide"/>
+        <editorNotificationProvider implementation="io.github.blenminer.tide.TidelsBanner"/>
         <configurationType implementation="io.github.blenminer.tide.TideRunConfigurationType"/>
         <runConfigurationProducer implementation="io.github.blenminer.tide.TideRunProducer$Desktop"/>
         <runConfigurationProducer implementation="io.github.blenminer.tide.TideRunProducer$Web"/>
+        <runConfigurationProducer implementation="io.github.blenminer.tide.TideRunProducer$Android"/>
         <toolWindow id="Tide Game" anchor="right" icon="AllIcons.General.Web" doNotActivateOnStart="true"
                     factoryClass="io.github.blenminer.tide.TideGamePage$Window"/>
     </extensions>

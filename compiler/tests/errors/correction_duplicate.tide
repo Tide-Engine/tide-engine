@@ -1,0 +1,3 @@
+// expect: already has a view correction attribute
+component Body { [Position, Position] float2 position; }
+scene Main {}

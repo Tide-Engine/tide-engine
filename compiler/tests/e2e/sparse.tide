@@ -1,0 +1,66 @@
+// Sparse components: a presence byte and a value in every archetype they can
+// reach, rather than an archetype of their own. Stunned is marked so; Burning,
+// a tag that's added and removed, is sparse by itself; Rock, a tag only set
+// at spawn, isn't.
+
+component Body
+{
+    int hits;
+    int steps;
+}
+
+component Rock { }
+
+[Sparse]
+component Stunned
+{
+    int left;
+    string by;
+}
+
+component Burning { }
+
+component Wet { }
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body, Rock, Stunned { left = 2, by = "setup" });
+    Spawn(Body, Rock);
+    Spawn(Body, Wet);
+    // An Add on the entity a Spawn made: stunned from the start, through Add
+    var e = Spawn(Body);
+    e.Add(Stunned { left = 1, by = "add" });
+}
+
+// Rocks catch fire on odd ticks and go out on even ones
+system Ignite(Time time, with Rock, without Burning)
+{
+    if (time.tick % 2 == 1) this.Add(Burning);
+}
+
+system Quench(Time time, with Rock, with Burning)
+{
+    if (time.tick % 2 == 0) this.Remove(Burning);
+}
+
+// Only stunned bodies count down; one that reaches zero is freed
+system Recover(mut Stunned stunned, mut Body body)
+{
+    stunned.left -= 1;
+    body.hits += 1;
+    if (stunned.left <= 0) this.Remove(Stunned);
+}
+
+// The others step
+system Step(mut Body body, without Stunned)
+{
+    body.steps += 1;
+}
+
+// Wet bodies that aren't stunned get stunned again, with text that replaces the last
+system Slip(Time time, with Body, with Wet, without Stunned)
+{
+    if (time.tick % 3 == 2) this.Add(Stunned { left = 1, by = $"slip {time.tick}" });
+}

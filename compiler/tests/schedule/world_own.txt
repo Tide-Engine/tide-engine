@@ -1,0 +1,14 @@
+world_own: 2 systems each tick, 2 stages deep; none can run at the same time.
+A system starts once everything it runs after is done.
+
+stage 1  Game.Seed  (once)
+         writes Game.World
+         alongside nothing
+stage 2  Game.Grow  (per entity)
+         reads Game.World
+         writes Game.Health
+         after Game.Seed: it writes World, which this reads
+         alongside nothing
+
+Event handlers, at the end of the tick, as their events are sent:
+         Spawned: Game.Setup

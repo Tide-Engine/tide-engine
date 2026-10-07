@@ -1,0 +1,3 @@
+// expect: [Snap] keeps a field immediate
+component Body { [Position, Snap] float2 position; }
+scene Main {}

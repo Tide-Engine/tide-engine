@@ -1,0 +1,8 @@
+// expect: no version of Draw.SetCull takes (int)
+// expect: Draw.SetCull(Cull side)
+scene Main { }
+
+view Show()
+{
+    Draw.SetCull(2);
+}

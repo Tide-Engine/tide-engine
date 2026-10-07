@@ -1,0 +1,33 @@
+queries: 6 systems each tick, 4 stages deep; 6 can run alongside others.
+A system starts once everything it runs after is done.
+
+stage 1  MoveFighters  (per entity)
+         writes Body
+         alongside Count, Carry
+stage 2  BulletHits  (per entity)
+         writes Energy
+         reads any entity's Body, through queries
+         after MoveFighters: it writes Body, which this reads
+         alongside Count, Carry
+stage 3  Alias  (per entity)
+         writes Body
+         reads any entity's Body, through queries
+         after MoveFighters: it writes Body, which this reads (and through BulletHits)
+         after BulletHits: it reads Body, which this writes
+         alongside Count, Carry
+stage 4  WorldAlias  (per entity)
+         reads any entity's Body, through queries
+         writes any entity's Body, through World
+         after MoveFighters: both write Body (and through BulletHits)
+         after BulletHits: it reads Body, which this writes (and through Alias)
+         after Alias: both write Body; it reads Body, which this writes
+         alongside Count, Carry
+stage 1  Count  (once)
+         writes Score
+         alongside MoveFighters, BulletHits, Alias, WorldAlias, Carry
+stage 1  Carry  (per entity)
+         writes Cargo
+         alongside MoveFighters, BulletHits, Alias, WorldAlias, Count
+
+Event handlers, at the end of the tick, as their events are sent:
+         Spawned: Setup

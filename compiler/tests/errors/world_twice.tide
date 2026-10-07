@@ -1,0 +1,6 @@
+// expect: a system can only have one World parameter
+component Health { int value; }
+scene Main { }
+system Twice(World a, mut World b, with Health)
+{
+}

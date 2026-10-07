@@ -1,0 +1,14 @@
+// expect: operator '+' can't be used with long and float
+component Tally
+{
+    long total;
+    float weight;
+}
+
+scene Main { }
+
+system Count(mut Tally tally)
+{
+    var mixed = tally.total + tally.weight;
+    tally.total = long(mixed);
+}

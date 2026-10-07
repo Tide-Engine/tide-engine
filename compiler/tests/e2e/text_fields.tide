@@ -41,20 +41,20 @@ void Rename(mut string name, string to)
 
 void Promote(mut Tag tag)
 {
-    if (tag.label.Length < 8) tag.label = tag.label + "!";
+    if (tag.label.length < 8) tag.label = tag.label + "!";
     tag.level += 1;
 }
 
 system Grow(mut Named n, mut Log log)
 {
     var before = n.name; // A copy: it keeps the old text
-    if (n.name.Length < 12) n.name += "s";
+    if (n.name.length < 12) n.name += "s";
     else n.name = n.name.ToUpper(); // New text every tick, the old released
     if (before + "s" == n.name) log.renames += 1;
     Promote(n.tag);
     mut var copy = n.tag; // A copy of a struct with text in it
     copy.label = "changed";
-    if (n.tag.label != "changed") log.kept += 1;
+    if (n.tag.label != "changed" && copy.label == "changed") log.kept += 1;
     Send(Said { text = $"{n.name} said hi" });
     if (n.name == "nobodyss") this.Destroy();
 }

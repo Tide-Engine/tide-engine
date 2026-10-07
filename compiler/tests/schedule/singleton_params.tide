@@ -1,0 +1,22 @@
+// Singleton accesses flow through function and method helper chains.
+singleton Counter { int value; }
+singleton Seen { int value; }
+component Unit { int value; }
+struct Helper
+{
+    int Read(Counter counter) { return ReadThrough(counter); }
+}
+void Add(mut Counter counter) { counter.value += 1; }
+void AddThrough(mut Counter counter) { Add(counter); }
+int Read(Counter counter) { return counter.value; }
+int ReadThrough(Counter counter) { return Read(counter); }
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Unit); }
+system Write(mut Counter counter) { AddThrough(counter); }
+system ReadOnce(Counter counter, mut Seen seen) { seen.value = ReadThrough(counter); }
+system ReadEach(Counter counter, mut Unit unit)
+{
+    var helper = Helper { };
+    unit.value = helper.Read(counter);
+}
+system WriteAgain(mut Counter counter) { AddThrough(counter); }

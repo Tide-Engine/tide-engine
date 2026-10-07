@@ -1,6 +1,10 @@
 // Vector math: every built-in type, constructors, swizzles, operators,
 // Math functions, quaternions and matrices.
 
+const float3 RGB = float3(0.25, 0.5, 0.75);
+const Color RGB_TINT = Color(RGB);
+const Color RGBA_TINT = Color(float4(RGB.xy, RGB.z, 0.5));
+
 component Body
 {
     float3 position = float3(1, 2, 3);
@@ -12,6 +16,12 @@ component Body
     float4x4 world;
     float angle = Math.Radians(90);
     float pi = Math.PI;
+    float2 move; // No key held
+    quaternion unset = quaternion(0, 0, 0, 0);
+    Color rgbTint = RGB_TINT;
+    Color rgbaTint = RGBA_TINT;
+    Color mixedTint = Color(0.25, float2(0.5, 0.75));
+    Color integerTint = Color(int3(1, 0, 1), 0.5);
 }
 
 component Results
@@ -27,6 +37,10 @@ component Results
     float dotted;
     float length;
     float3 normalized;
+    float3 stayed;
+    float2 noDirection;
+    float4 tooShort;
+    quaternion noRotation;
     float3 crossed;
     float3 rotated;
     float3 transformed;
@@ -40,6 +54,23 @@ component Results
     float2x2 matrixFromRows;
     float3 columnScaled;
     float3 negated;
+    int hashed;
+    int hashed2;
+    int hashed3;
+    int hashed4;
+    float4 perlins;   // Noise: each size, with a seed and without
+    float4 simplexes;
+    float4 cells;
+    Color uvColor;
+    Color rgbColor;
+    Color rgbaColor;
+    Color alphaColor;
+    Color scalarFirstColor;
+    Color vectorMiddleColor;
+    Color pairedColor;
+    Color integerColor;
+    Color integerRgbaColor;
+    Color scalarColor;
 }
 
 scene Main { }
@@ -64,6 +95,11 @@ system Compute(mut Body body, mut Results r)
     r.dotted = Math.Dot(body.position, float3(1, 1, 1));
     r.length = Math.Length(float3(3, 4, 12));
     r.normalized = Math.Normalize(float3(0, 5, 0));
+    // Nothing to normalize gives zero, never NaN: a move with no key held moves nothing
+    r.stayed = body.position + Math.Normalize(float3(body.move.x, 0, body.move.y)) * 5;
+    r.noDirection = Math.Normalize(body.move);
+    r.tooShort = Math.Normalize(float4(body.move, 1e-20, 0));
+    r.noRotation = Math.Normalize(body.unset);
     r.crossed = Math.Cross(float3(1, 0, 0), float3(0, 1, 0));
 
     quaternion yaw = quaternion.AxisAngle(float3(0, 1, 0), body.angle);
@@ -91,4 +127,28 @@ system Compute(mut Body body, mut Results r)
                                 3, 4);
     r.columnScaled = body.basis.c1 * 3;
     r.negated = -body.position;
+
+    r.hashed = Math.Hash(-7);
+    r.hashed2 = Math.Hash(body.cell);
+    r.hashed3 = Math.Hash(int3(body.cell, 9));
+    r.hashed4 = Math.Hash(int4(1, 2, 3, 4));
+
+    float2 at = body.position.xy * 0.37 + 0.11;
+    float3 deep = body.position * 0.83;
+    r.perlins = float4(Math.Perlin(at), Math.Perlin(at, 7), Math.Perlin(deep), Math.Perlin(deep, -3));
+    r.simplexes = float4(Math.Simplex(at), Math.Simplex(at, 7), Math.Simplex(deep), Math.Simplex(deep, -3));
+    r.cells = float4(Math.Cellular(at), Math.Cellular(deep, 7));
+
+    // Color flattens scalar and vector arguments into RGB or RGBA channels.
+    float2 uv = float2(0.25, 0.5);
+    r.uvColor = Color(uv.xy, 0);
+    r.rgbColor = Color(RGB);
+    r.rgbaColor = Color(float4(RGB, 0.5));
+    r.alphaColor = Color(RGB, 0.5);
+    r.scalarFirstColor = Color(0.25, RGB.yz);
+    r.vectorMiddleColor = Color(0.25, RGB.yz, 0.5);
+    r.pairedColor = Color(uv, float2(0.75, 0.5));
+    r.integerColor = Color(int2(1, 0), 1);
+    r.integerRgbaColor = Color(int4(1, 0, 1, 0));
+    r.scalarColor = Color(0.25, 0.5, 0.75, 0.5);
 }

@@ -1,0 +1,51 @@
+// C functions with defaults, with arguments by name, and that share a name
+// (overloads_extern_c.c). C has neither: a default is passed like any
+// argument, and each function that shares a name says which C function it is.
+
+scene Main { }
+
+struct Pair
+{
+    float a;
+    int b;
+}
+
+extern float c_scale(float value, float by = 2);
+
+[NativeName("c_mix_floats")]
+extern float Mix(float a, float b);
+
+[NativeName("c_mix_ints")]
+extern int Mix(int a, int b);
+
+// By address, as C reads an `in` parameter: its default too
+[NativeName("c_pair_total")]
+extern float Total(in Pair pair = Pair { a = 1.5, b = 2 });
+
+// C that keeps state: named arguments run in the order written
+extern int c_count();
+extern int c_digits(int tens, int ones);
+
+singleton Log
+{
+    float scaled;
+    float scaled_by;
+    float named;
+    float floats;
+    int ints;
+    float total;
+    float given;
+    int digits;
+}
+
+system Run(mut Log log)
+{
+    log.scaled = c_scale(3);
+    log.scaled_by = c_scale(3, by: 5);
+    log.named = c_scale(by: 4, value: 2);
+    log.floats = Mix(1.5, 2.0);
+    log.ints = Mix(3, 4);
+    log.total = Total();
+    log.given = Total(Pair { a = 10, b = 1 });
+    log.digits = c_digits(ones: c_count(), tens: c_count());
+}

@@ -1,0 +1,6 @@
+// expect: 'Fill' makes its 'bytes', so the argument says 'out'
+// Lists C makes took no word at the call before `out` was every function's
+extern int Fill(out List<byte> bytes);
+singleton Store { List<byte> image; int size; }
+scene Main { }
+system Run(mut Store store) { store.size = Fill(store.image); }

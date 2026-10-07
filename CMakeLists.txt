@@ -1,4 +1,10 @@
 cmake_minimum_required(VERSION 3.25)
+# Static libraries listed once more only for linkers that need it: Apple's
+# warns about a repeated one, as a program that links the engine and the
+# platform layer would get otherwise. CMake 3.29 and later.
+if(POLICY CMP0156)
+    cmake_policy(SET CMP0156 NEW)
+endif()
 
 # Always build with clang, however CMake is invoked (presets, IDE profiles, plain `cmake -B`).
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
@@ -23,8 +29,22 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 if(CMAKE_SYSTEM_NAME STREQUAL "WASI")
     set(TIDE_WEB ON)
     set(CMAKE_EXECUTABLE_SUFFIX .wasm) # CMake's WASI platform leaves it empty
+    # Threads, which older clang doesn't take from the target's name. Only when
+    # compiling: older clang warns that -pthread does nothing for a link. And
+    # WebAssembly's SIMD, whose operations give the same results on every
+    # machine (relaxed SIMD's don't, and stays off: see AGENTS.md, Determinism).
+    add_compile_options(-pthread -msimd128)
 else()
     set(TIDE_WEB OFF)
+endif()
+# Android builds: through clang with Android's NDK (cmake/android-toolchain.cmake).
+# Games are shared libraries the app loads, which link the engine's static
+# libraries, so everything is position-independent.
+if(CMAKE_C_COMPILER_TARGET MATCHES "android")
+    set(TIDE_ANDROID ON)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+else()
+    set(TIDE_ANDROID OFF)
 endif()
 
 include(cmake/TideFlags.cmake)
@@ -40,12 +60,21 @@ endif()
 include(cmake/WebTest.cmake)
 find_program(TIDE_NODE NAMES node) # Tests that run Node: web builds need it anyway
 
-option(TIDE_PLATFORM "Build the platform layer and the demo. Downloads raylib." ON)
+option(TIDE_PLATFORM "Build the platform layer and the demo. Desktop builds download GLFW." ON)
 option(TIDE_TOOLS_ONLY "Build only tidec, as web builds do for their host (cmake/HostTidec.cmake)" OFF)
 
-# tide_add_game runs tidec: this build's, or in web builds a native one, since
-# a WebAssembly tidec can't run during the build.
-if(TIDE_WEB)
+# What the tide command says it is, and where it looks for updates. Release
+# builds get the version semantic-release picked (.github/workflows/build.yml);
+# anything else is a development build, which never looks for updates. tidec
+# has it too, for `#if TIDE_0_3_OR_NEWER`, so web and Android builds' host tidec
+# gets the same (cmake/HostTidec.cmake).
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" TIDE_BASE_VERSION LIMIT_COUNT 1)
+set(TIDE_VERSION "${TIDE_BASE_VERSION}-dev" CACHE STRING "tide's version")
+
+# tide_add_game runs tidec: this build's, or in web and Android builds a native
+# one, since a WebAssembly or Android tidec can't run during the build. Nor can
+# a Windows one on another system (the Windows package, built on Linux).
+if(TIDE_WEB OR TIDE_ANDROID OR CMAKE_CROSSCOMPILING)
     include(cmake/HostTidec.cmake)
 else()
     set(TIDEC_COMMAND tidec)
@@ -58,20 +87,23 @@ if(TIDE_TOOLS_ONLY)
     return()
 endif()
 
-# What the tide command says it is, and where it looks for updates. Release
-# builds get the version semantic-release picked (.github/workflows/build.yml);
-# anything else is a development build, which never looks for updates.
-file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" TIDE_BASE_VERSION LIMIT_COUNT 1)
-set(TIDE_VERSION "${TIDE_BASE_VERSION}-dev" CACHE STRING "tide's version")
 set(TIDE_CHANNEL "nightly" CACHE STRING "The update channel tide starts on: stable or nightly")
-set(TIDE_REPOSITORY "BlenMiner/tide-engine" CACHE STRING "The GitHub repository tide updates from")
 
 # The package (see cmake/package.cmake) is everything installed as the `tide`
 # component: tide and tidels, the engine's headers and sources, and the
 # prebuilt platform layer.
 file(CONFIGURE OUTPUT "${CMAKE_BINARY_DIR}/package/VERSION" CONTENT "${TIDE_VERSION}\n")
 install(FILES "${CMAKE_BINARY_DIR}/package/VERSION" DESTINATION . COMPONENT tide)
-if(NOT TIDE_WEB)
+# The packages that come with tide (packages/, a folder each) are sources too,
+# beside the engine's in the package: tide compiles one with the games that
+# list it by its name, and with no other. They install as they are, but for
+# what tide makes in a game's folder (an example's, in a package). OPTIONAL:
+# there's no folder until there's a package.
+install(DIRECTORY packages/ DESTINATION src/packages COMPONENT tide OPTIONAL
+    PATTERN ".tide" EXCLUDE PATTERN "build" EXCLUDE
+    # This repo's own: how it builds the packages' tests, and the tests
+    PATTERN "CMakeLists.txt" EXCLUDE PATTERN "test" EXCLUDE)
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     add_subdirectory(tools) # Editor support
 endif()
 
@@ -84,10 +116,32 @@ add_subdirectory(compiler)
 # The relay (relay/), on Node's own test runner, wherever there's Node.
 if(TIDE_NODE)
     add_test(NAME relay COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/relay/relay.test.mjs")
+    # The build service (builds/), the same way, with a tide that stands in for one.
+    add_test(NAME builds COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/builds/builds.test.mjs")
+    # The Android wrapper's file transfers, with adb mocked and no device.
+    add_test(NAME tide_android_runner COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_android.test.mjs")
 endif()
 
 if(TIDE_PLATFORM)
     add_subdirectory(platform)
     add_subdirectory(demo)
     add_subdirectory(sandbox) # Opens a window, so it needs the platform layer
+    add_subdirectory(examples/duel)
+    add_subdirectory(bench)   # Ticks on the platform layer's threads
+endif()
+
+add_subdirectory(packages) # The packages that come with tide, and their tests
+
+# The physics games are built with a package each, so they come after them.
+add_subdirectory(examples/towers)
+add_subdirectory(examples/sumo)
+add_subdirectory(examples/samples)
+
+# The docs' live examples open a window, so they need the platform layer, and
+# come after the packages: the physics examples are built with one each.
+if(TIDE_PLATFORM)
+    option(TIDE_DOC_EXAMPLES "Build the interactive examples in the documentation" OFF)
+    if(TIDE_DOC_EXAMPLES)
+        add_subdirectory(docs/examples)
+    endif()
 endif()

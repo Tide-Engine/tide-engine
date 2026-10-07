@@ -1,0 +1,8 @@
+// expect: local state is never blended: views see it as it is
+scene Main { }
+
+component Box
+{
+    float3 pos;
+    [Snap] local float3 smoothed;
+}

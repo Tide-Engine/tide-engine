@@ -1,0 +1,4 @@
+// expect: Dispose takes no arguments
+scene Main { }
+local singleton Buffers { RenderTarget scene; }
+view Show(Buffers buffers) { buffers.scene.Dispose(1); }

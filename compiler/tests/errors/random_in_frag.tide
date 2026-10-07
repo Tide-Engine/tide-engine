@@ -1,0 +1,11 @@
+// expect: a frag runs on the GPU, for each pixel, so it can't roll random numbers
+local component Glow { Random random; List<Vertex> corners; List<int> faces; }
+scene Main { }
+frag Glitter(Vertex vertex, out Color color, Glow glow)
+{
+    color = Color(glow.random.NextFloat(), 0, 0);
+}
+view Show(Glow glow)
+{
+    Draw.Mesh(glow.corners, glow.faces, Glitter);
+}

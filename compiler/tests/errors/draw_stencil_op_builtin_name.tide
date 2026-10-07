@@ -1,0 +1,3 @@
+// expect: 'StencilOp' is built into the engine
+struct StencilOp { int kind; }
+scene Main { }

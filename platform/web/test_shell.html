@@ -9,15 +9,46 @@
 <pre id="log"></pre>
 <script>
   // For headless web tests (see cmake/WebTest.cmake): stdout goes into #log,
-  // and the exit code into <body data-exit>.
+  // the exit code into <body data-exit>, and a mistake in how the program
+  // draws (a GL error, or one of WebGPU's) stops it. Served rather than opened
+  // from disk (cmake/run_web_served_test.mjs), the page also sends both back
+  // to its server, in order. A line that can't be sent doesn't stop the ones
+  // after it or the result, which would leave the page with nothing said:
+  // it's the result. `tideSteps` is how far the page got, which the server
+  // asks a page that gives no result.
   const log = document.getElementById('log');
-  const show = text => { console.log(text); log.textContent += text + '\n'; };
+  const served = location.protocol !== 'file:';
+  window.tideSteps = [];
+  const step = what => tideSteps.push(`${Math.round(performance.now())} ms: ${what}`);
+  step('the page started');
+  for (const name of ['visibilitychange', 'freeze', 'resume'])
+    document.addEventListener(name, () => step(`${name}: the page is ${document.visibilityState}`));
+  let sent = Promise.resolve(), lost = '', said = false;
+  const post = (path, body) => {
+    if (served) sent = sent.then(() => fetch(path, { method: 'POST', body })).then(answer => answer.arrayBuffer()).catch(error => {
+      lost = lost || `${path} (${body}): ${error}`;
+      step(`${path} couldn't be sent: ${error}`);
+    });
+  };
+  const result = code => sent.then(() => post('result', lost ? `couldn't send ${lost}` : code));
+  const show = text => {
+    if (!said) step('the program printed its first line');
+    said = true;
+    console.log(text); log.textContent += text + '\n'; post('log', String(text));
+  };
+  // ?bench is --bench; backend= isn't the program's, but the page's: what draws (see tide.js)
+  const words = location.search ? location.search.slice(1).split('&').filter(word => !word.startsWith('backend=')) : [];
   var Tide = {
     canvas: document.getElementById('canvas'),
+    checkGL: !words.includes('bench'), // Timings can't: each check waits for the GPU
+    arguments: words.map(word => '--' + word),
     print: show,
     printErr: show,
-    onExit: code => { document.body.dataset.exit = code; },
-    onAbort: reason => { show('abort: ' + reason); document.body.dataset.exit = 'abort'; },
+    onExit: code => { step(`the program exited with ${code}`); document.body.dataset.exit = code; result(String(code)); },
+    onAbort: reason => {
+      step('the program stopped: ' + reason);
+      show('abort: ' + reason); document.body.dataset.exit = 'abort'; result('abort');
+    },
   };
 </script>
 {{{ SCRIPT }}}

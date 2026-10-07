@@ -1,0 +1,6 @@
+// expect: a frag reads 'Sun', and can't write it: drop 'out'
+// expect: what it writes is its pixel's color, 'out Color color'
+scene Main { }
+struct Corner { float2 position; }
+singleton Sun { float strength = 1; }
+frag Shade(Corner corner, out Color color, out Sun sun) { color = Color.white; }

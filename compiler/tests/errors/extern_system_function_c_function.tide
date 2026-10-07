@@ -1,0 +1,8 @@
+// expect: 'Move' and 'Step' are the same C function, step
+// expect: an extern system's C function takes its rows, and an extern function's what it's passed: name each with [NativeName("...")]
+scene Main { }
+component Body { float x; }
+[NativeName("step")]
+extern void Step(float dt);
+[NativeName("step")]
+extern system Move(mut Body body);

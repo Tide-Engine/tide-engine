@@ -1,0 +1,7 @@
+// expect: 'Shape' is built into the engine
+scene Main { }
+
+struct Shape
+{
+    float2 at;
+}

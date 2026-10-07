@@ -1,0 +1,81 @@
+// A game that orders its systems against the package's, each way one might.
+// order.txt is the order `tidec --schedule` puts them all in, which the
+// package's tests hold it to: the package's own systems are in their order
+// whatever a game says. Only the first way is for a game to use; the ones
+// that name a system of the package's get a place in the middle of the step,
+// where what they write into a body is lost.
+
+using Box3D;
+
+scene Main { }
+
+component Driven { }
+
+event(Spawned) Build(with Main)
+{
+    Spawn(Body, Box, Sphere, Capsule, Driven);
+}
+
+// Into this tick's step
+[Before(PhysicsStages.Step)]
+system BeforeTheStep(mut Body body, with Driven)
+{
+    body.velocity = float3(1, 0, 0);
+}
+
+// After it, which is where a game's systems are anyway
+[After(PhysicsStages.Step)]
+system AfterTheStep(mut Body body, with Driven)
+{
+    body.velocity = float3(2, 0, 0);
+}
+
+// One that doesn't say goes by the default order, among the systems whose turn
+// has come: after the package's in a game that orders nothing before them, and
+// here before them, as they wait for systems written further down
+system Unordered(mut Body body, with Driven)
+{
+    body.velocity = float3(3, 0, 0);
+}
+
+[Before(Begin)]
+system BeforeBegin(mut Body body, with Driven)
+{
+    body.velocity = float3(4, 0, 0);
+}
+
+[Before(Enter)]
+system BeforeEnter(mut Body body, with Driven)
+{
+    body.velocity = float3(5, 0, 0);
+}
+
+[Before(Own)]
+system BeforeOwn(mut Body body, with Driven)
+{
+    body.velocity = float3(6, 0, 0);
+}
+
+[Before(AttachSpheres)]
+system BeforeAttachSpheres(mut Body body, with Driven)
+{
+    body.velocity = float3(7, 0, 0);
+}
+
+[Before(Simulate)]
+system BeforeSimulate(mut Body body, with Driven)
+{
+    body.velocity = float3(8, 0, 0);
+}
+
+[Before(Leave)]
+system BeforeLeave(mut Body body, with Driven)
+{
+    body.velocity = float3(9, 0, 0);
+}
+
+[Before(Report)]
+system BeforeReport(mut Body body, with Driven)
+{
+    body.velocity = float3(10, 0, 0);
+}

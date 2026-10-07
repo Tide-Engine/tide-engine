@@ -1,0 +1,12 @@
+// expect: target.SetPixels is 'target.SetScreen' now
+scene Main { }
+
+local singleton Canvas
+{
+    RenderTarget target;
+}
+
+view Show(Canvas canvas)
+{
+    canvas.target.SetPixels();
+}

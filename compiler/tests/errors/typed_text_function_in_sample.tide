@@ -1,0 +1,11 @@
+// expect: 'Typed' reads this frame's Devices, so only views and the functions they call can call it
+int Typed(Keyboard keys)
+{
+    return keys.text.length;
+}
+input PlayerInput
+{
+    int typed;
+    Sample(Devices devices) { typed = Typed(devices.keyboard); }
+}
+scene Main { }

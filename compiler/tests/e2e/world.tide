@@ -1,0 +1,116 @@
+// The World: another entity's component in the same tick, by its handle.
+
+component Health
+{
+    int value = 10;
+    string name;
+}
+
+component Rival
+{
+    Entity other;
+}
+
+component Attacker
+{
+    Entity target;
+    int damage = 3;
+    int hits;
+    int misses;
+}
+
+component Healer
+{
+    Entity patient;
+}
+
+component Watcher
+{
+    Entity first;
+    Entity second;
+    bool ahead;
+    bool behind;
+}
+
+singleton Stats
+{
+    int kills;
+    int seen;
+    int slow;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    var a = Spawn(Health { value = 7, name = "a" });
+    var b = Spawn(Health { value = 20, name = "b" });
+    a.Add(Rival { other = b });
+    b.Add(Rival { other = a });
+    Spawn(Attacker { target = a });
+    Spawn(Attacker { target = b, damage = 1 });
+    Spawn(Attacker { }); // No target: never hits
+    Spawn(Healer { patient = b });
+    Spawn(Watcher { first = a, second = b });
+    Spawn(Watcher { first = b, second = a });
+}
+
+// Reads the target's health as it is this tick, and counts the kill
+system Attack(mut Attacker attacker, World world, mut Stats stats)
+{
+    if (!world.Has<Health>(attacker.target))
+    {
+        attacker.misses += 1;
+        return;
+    }
+    var target = world.Get<Health>(attacker.target);
+    attacker.hits += 1;
+    if (target.value <= attacker.damage) stats.kills += 1;
+    attacker.target.Send(Hit { damage = attacker.damage });
+}
+
+event Hit
+{
+    int damage;
+}
+
+event(Hit hit) TakeHit(mut Health health)
+{
+    health.value -= hit.damage;
+    if (health.value <= 0) this.Destroy();
+}
+
+// Changes another entity's component in place, through a mut World: its text
+// goes into the world as that entity's own
+system Heal(Healer healer, mut World world)
+{
+    mut var h = world.Get<Health>(healer.patient);
+    h.value += 2;
+    h.name = $"healed to {h.value}";
+    world.Set<Health>(healer.patient, h);
+}
+
+// Reads a component it also changes: the rows it changed earlier in this run,
+// as every machine sees them
+system Spread(mut Health health, World world, mut Stats stats, Rival rival)
+{
+    stats.seen += world.Get<Health>(rival.other).value;
+    health.value += 1;
+}
+
+// A type in <> beside comparisons: neither reads as the other
+system Watch(mut Watcher watcher, World world)
+{
+    var first = world.Get<Health>(watcher.first).value;
+    var second = world.Get<Health>(watcher.second).value;
+    watcher.ahead = first < second == false && world.Get<Health>(watcher.first).value > (second);
+    watcher.behind = first < world.Get<Health>(watcher.second).value && world.Get<Health>(watcher.second).value > first;
+}
+
+// A handler takes the World too, and a task keeps it across its waits
+async event(Hit hit) Count(mut Stats stats, World world, with Health)
+{
+    var before = world.Get<Health>(this).value;
+    await Wait.Ticks(1);
+    if (world.Has<Health>(this) && world.Get<Health>(this).value < before) stats.slow += 1;
+}

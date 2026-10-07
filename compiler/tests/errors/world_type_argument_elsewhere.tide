@@ -1,0 +1,8 @@
+// expect: 'Add' takes no type in '<>'
+component Health { int value; }
+component Stunned { }
+scene Main { }
+system Stun(with Health)
+{
+    this.Add<Stunned>(Stunned);
+}

@@ -1,0 +1,22 @@
+// expect: what a draw gives after its vert and frag is a struct's value, which they read through a parameter of its type, and this is int
+// expect: like 'Draw.Blit(source, destination, Blur, BlurParams { direction = float2(1, 0) })', for a 'frag Blur(Vertex vertex, out Color color, Texture source, BlurParams params)'
+scene Main { }
+struct Corner { float3 position; float2 uv; }
+struct Glow { Color tint; float gain; }
+struct Lift { float3 by; }
+local singleton Models
+{
+    List<Corner> crate;
+    List<int> faces;
+    List<Glow> glows;
+    RenderTarget bright;
+    RenderTarget spread;
+}
+frag Shade(Corner corner, out Color color, Glow glow)
+{
+    color = glow.tint;
+}
+view Show(Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade, 3);
+}

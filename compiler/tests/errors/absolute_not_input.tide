@@ -1,0 +1,7 @@
+// expect: [Absolute] goes on an input's own fields
+// expect: [Absolute] says a field's default isn't rest, like an aim's, so a guess keeps it
+component Turret
+{
+    [Absolute] float2 aim;
+}
+scene Main { }

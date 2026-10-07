@@ -1,0 +1,6 @@
+// expect: '../e2e/assets/hero.png' isn't UTF-8 text
+asset string rules = "../e2e/assets/hero.png";
+
+scene Main
+{
+}

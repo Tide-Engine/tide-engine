@@ -1,0 +1,11 @@
+// expect: The GUI can only be used in views, and in functions they call
+input PlayerInput
+{
+    bool jump;
+    Sample(Devices devices)
+    {
+        GUI.ClaimKeyboard();
+        jump = devices.keyboard.space.pressed;
+    }
+}
+scene Main { }

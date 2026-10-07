@@ -9,8 +9,18 @@
 #include "common.h"
 #include "folders.h"
 #include "json.h"
+#include "packages.h"
 
-enum { METHOD_NOT_FOUND = -32601, PARSE_ERROR = -32700, INVALID_PARAMS = -32602, REQUEST_FAILED = -32803 };
+enum {
+    METHOD_NOT_FOUND = -32601,
+    PARSE_ERROR = -32700,
+    INVALID_PARAMS = -32602,
+    REQUEST_FAILED = -32803,
+    REQUEST_CANCELLED = -32800,
+};
+
+// The id of our one request of the editor: to watch files for us.
+#define WATCH_REQUEST "tidels-watch"
 
 void lsp_init(lsp_server *s, const lsp_send_fn send, void *user)
 {
@@ -21,8 +31,17 @@ void lsp_init(lsp_server *s, const lsp_send_fn send, void *user)
 
 static void free_kept(lsp_server *s);
 
+static void forget_unsettled(lsp_server *s)
+{
+    for (int i = 0; i < s->unsettled_count; i++) free(s->unsettled[i]);
+    free(s->unsettled);
+    s->unsettled = NULL;
+    s->unsettled_count = 0;
+}
+
 void lsp_free(lsp_server *s)
 {
+    forget_unsettled(s);
     for (int i = 0; i < s->doc_count; i++) {
         free(s->docs[i].uri);
         free(s->docs[i].text);
@@ -35,6 +54,9 @@ void lsp_free(lsp_server *s)
     s->roots = NULL;
     s->root_count = 0;
     free_kept(s);
+    free(s->rename_filters);
+    free(s->asset_watchers);
+    s->rename_filters = s->asset_watchers = NULL;
     s->analyzed = false;
 }
 
@@ -155,19 +177,60 @@ static char *read_all(const char *path, size_t *len)
     return text;
 }
 
-// A game's files, without repeats.
+// A game's files, without repeats, with the package each is in (NULL for
+// the game's own files).
 typedef struct path_list {
     char **items;
+    char **packages;
     int count;
+    char *game_folder; // The folder the game is, for a game that's one (ending in '/'); NULL for a manifest's
+    char **roots;      // Its folder and its packages', where a moved asset is looked for
+    int root_count;
 } path_list;
 
-static void add_path(void *user, const char *path)
+static void add_root_folder(path_list *list, const char *folder)
 {
-    path_list *list = user;
+    list->roots = realloc(list->roots, sizeof(char *) * (size_t)(list->root_count + 1));
+    if (!list->roots) abort();
+    list->roots[list->root_count++] = copy_string(folder, strlen(folder));
+}
+
+static void add_path_in(path_list *list, const char *path, const char *package)
+{
     for (int i = 0; i < list->count; i++)
         if (same_path(list->items[i], path)) return;
     list->items = realloc(list->items, sizeof(char *) * (size_t)(list->count + 1));
-    list->items[list->count++] = copy_string(path, strlen(path));
+    list->packages = realloc(list->packages, sizeof(char *) * (size_t)(list->count + 1));
+    if (!list->items || !list->packages) abort();
+    list->items[list->count] = copy_string(path, strlen(path));
+    list->packages[list->count++] = package ? copy_string(package, strlen(package)) : NULL;
+}
+
+static void add_path(void *user, const char *path)
+{
+    add_path_in(user, path, NULL);
+}
+
+static void free_roots(path_list *list)
+{
+    for (int i = 0; i < list->root_count; i++) free(list->roots[i]);
+    free(list->roots);
+    free(list->game_folder);
+    list->roots = NULL;
+    list->game_folder = NULL;
+    list->root_count = 0;
+}
+
+static void free_paths(path_list *list)
+{
+    for (int i = 0; i < list->count; i++) {
+        free(list->items[i]);
+        free(list->packages[i]);
+    }
+    free(list->items);
+    free(list->packages);
+    free_roots(list);
+    *list = (path_list){0};
 }
 
 static bool is_folder(const char *path)
@@ -199,25 +262,103 @@ static int compare_paths(const void *a, const void *b)
     return path_compare(*(const char *const *)a, *(const char *const *)b);
 }
 
-// Every .tide file in `folder` and its subfolders, with new files the editor
-// hasn't saved yet.
-static void add_folder(const lsp_server *s, path_list *list, const char *folder)
+// The folder `path` is in, or the one `path` (a folder) is in, ending in '/':
+// "D:/a/b.tide" and "D:/a/b/" -> "D:/a/". NULL at the top. malloc'd.
+static char *parent_folder(const char *path)
 {
-    folder_find(folder, ".tide", add_path, list);
+    size_t n = strlen(path);
+    if (n > 0 && (path[n - 1] == '/' || path[n - 1] == '\\')) n--;
+    while (n > 0 && path[n - 1] != '/' && path[n - 1] != '\\') n--;
+    return n > 0 ? copy_string(path, n) : NULL;
+}
+
+// Whether `folder` (ending in '/') is a game or a package of its own.
+static bool has_packages(const char *folder)
+{
+    jbuf path = {0};
+    jb_printf(&path, "%s%s", folder, PACKAGES_FILE);
+    FILE *f = fopen(path.data, "rb");
+    jb_free(&path);
+    if (f) fclose(f);
+    return f != NULL;
+}
+
+// Whether `path` is a .tide file in `folder` (ending in '/') or its
+// subfolders, but not in a game or a package of their own there.
+static bool in_own_folder(const char *path, const char *folder)
+{
+    if (!in_folder(path, folder)) return false;
+    bool own = true;
+    for (char *dir = parent_folder(path); dir;) {
+        if (strlen(dir) <= strlen(folder)) {
+            free(dir);
+            break;
+        }
+        own = own && !has_packages(dir);
+        char *up = parent_folder(dir);
+        free(dir);
+        dir = up;
+    }
+    return own;
+}
+
+typedef struct found_files {
+    path_list *list;
+    const char *package;
+} found_files;
+
+static void add_found(void *user, const char *path)
+{
+    const found_files *f = user;
+    add_path_in(f->list, path, f->package);
+}
+
+// Every .tide file in `folder` and its subfolders, with new files the editor
+// hasn't saved yet, by path: in `package` (NULL for the game's own). With
+// `own`, but those of games and packages of their own in its subfolders, as
+// tide builds them; without, every one, as tide_add_game does.
+static void add_folder(const lsp_server *s, path_list *list, const char *folder, const char *package, const bool own)
+{
+    const int start = list->count;
+    found_files f = {list, package};
+    if (own) folder_find_own(folder, ".tide", add_found, &f);
+    else folder_find(folder, ".tide", add_found, &f);
     for (int k = 0; k < s->doc_count; k++) {
         char *open = uri_to_path(s->docs[k].uri);
-        if (in_folder(open, folder)) add_path(list, open);
+        if (own ? in_own_folder(open, folder) : in_folder(open, folder)) add_path_in(list, open, package);
         free(open);
     }
+    if (list->count > start) qsort(list->items + start, (size_t)(list->count - start), sizeof(char *), compare_paths);
+}
+
+// The files of the game in `folder`, as tide compiles them: each of its
+// packages' (packages.h), then its own. A package's folder is the package on
+// its own, with the packages it needs. Packages from git that aren't
+// downloaded yet are left out.
+static void add_game(const lsp_server *s, path_list *list, const char *folder)
+{
+    game_packages g;
+    packages_resolve(folder, &g, NULL, NULL, NULL);
+    for (int i = 0; i < g.count; i++) {
+        add_folder(s, list, g.items[i].folder, g.items[i].name, true);
+        add_root_folder(list, g.items[i].folder);
+    }
+    add_folder(s, list, g.file.folder, g.file.name, true);
+    free(list->game_folder);
+    list->game_folder = copy_string(g.file.folder, strlen(g.file.folder));
+    add_root_folder(list, g.file.folder);
+    packages_free(&g);
 }
 
 // A line of a manifest: a game and one of its files, or a folder (ending in
 // '/') for every .tide file in it and its subfolders, as tide_add_game lists a
-// game without SOURCES. Games of different manifests are different games.
+// game without SOURCES. A file of a package the game is built with has the
+// package's name after it. Games of different manifests are different games.
 typedef struct manifest_line {
     int manifest;
     const char *game;
     const char *path;
+    const char *package; // NULL for the game's own
 } manifest_line;
 
 typedef struct manifests {
@@ -247,8 +388,10 @@ static void read_manifest(manifests *m, const char *source)
         char *tab = strchr(line, '\t');
         if (tab) {
             *tab = '\0';
+            char *package = strchr(tab + 1, '\t');
+            if (package) *package++ = '\0';
             m->lines = realloc(m->lines, sizeof(manifest_line) * (size_t)(m->line_count + 1));
-            m->lines[m->line_count++] = (manifest_line){m->count, line, tab + 1};
+            m->lines[m->line_count++] = (manifest_line){m->count, line, tab + 1, package && *package ? package : NULL};
         }
         line = next;
     }
@@ -266,17 +409,98 @@ static void free_manifests(manifests *m)
     free(m->lines);
 }
 
-// The paths of the game `path` belongs to, in the order tidec compiles them.
-// Returns how many; 0 if it's in no game. The paths are malloc'd.
+static bool same_game(const manifest_line *a, const manifest_line *b)
+{
+    return a->manifest == b->manifest && strcmp(a->game, b->game) == 0;
+}
+
+// The files of the manifest game `game` is a line of, into `list`, in the
+// order tidec compiles them: each package's, in the order the packages are
+// first named, then the game's own, each by path.
+static void add_manifest_game(const lsp_server *s, path_list *list, const manifests *m, const manifest_line *game)
+{
+    for (int i = 0; i < m->line_count; i++) {
+        const manifest_line *line = &m->lines[i];
+        if (!same_game(line, game) || !line->package) continue;
+        bool named = false;
+        for (int k = 0; k < i && !named; k++) {
+            named = same_game(&m->lines[k], game) && m->lines[k].package && strcmp(m->lines[k].package, line->package) == 0;
+        }
+        if (named) continue;
+        const int start = list->count;
+        for (int k = i; k < m->line_count; k++) {
+            const manifest_line *other = &m->lines[k];
+            if (same_game(other, game) && other->package && strcmp(other->package, line->package) == 0) {
+                add_path_in(list, other->path, line->package);
+            }
+        }
+        if (list->count > start) qsort(list->items + start, (size_t)(list->count - start), sizeof(char *), compare_paths);
+    }
+    const int start = list->count;
+    for (int i = 0; i < m->line_count; i++) {
+        const manifest_line *line = &m->lines[i];
+        if (!same_game(line, game) || line->package) continue;
+        if (is_folder(line->path)) add_folder(s, list, line->path, NULL, false);
+        else add_path(list, line->path);
+    }
+    if (list->count > start) qsort(list->items + start, (size_t)(list->count - start), sizeof(char *), compare_paths);
+}
+
+// The folder of the game that `path` (not in a manifest's game) belongs to,
+// or NULL for none: the innermost folder with a tide.packages that it's in,
+// up to the open folder it's in, or else that open folder, since that's the
+// game `tide run` builds there; unless a manifest lists games in that folder,
+// whose other files stand alone (tests, for example). A file of a package is
+// analyzed with an open folder's game that uses it, if there's one. malloc'd.
+static char *game_folder(const lsp_server *s, const char *path, const manifests *m)
+{
+    const char *root = NULL; // The innermost open folder it's in
+    for (int i = 0; i < s->root_count; i++) {
+        if (in_folder(path, s->roots[i]) && (!root || strlen(s->roots[i]) > strlen(root))) root = s->roots[i];
+    }
+    char *owner = NULL;
+    for (char *dir = parent_folder(path); dir && !owner;) {
+        const bool top = root && strlen(dir) <= strlen(root);
+        if (has_packages(dir)) {
+            owner = dir;
+            break;
+        }
+        char *up = top ? NULL : parent_folder(dir);
+        free(dir);
+        dir = up;
+    }
+    if (!owner) {
+        for (int i = 0; root && i < m->line_count; i++) {
+            if (under(m->lines[i].path, root)) root = NULL;
+        }
+        return root ? copy_string(root, strlen(root)) : NULL;
+    }
+    packages_file own;
+    packages_read(owner, &own, NULL, NULL);
+    char *game = NULL;
+    for (int r = 0; own.name && r < s->root_count && !game; r++) {
+        game_packages g;
+        packages_resolve(s->roots[r], &g, NULL, NULL, NULL);
+        for (int i = 0; !g.file.name && i < g.count && !game; i++) {
+            if (same_path(g.items[i].folder, own.folder)) game = copy_string(s->roots[r], strlen(s->roots[r]));
+        }
+        packages_free(&g);
+    }
+    packages_free_file(&own);
+    if (!game) return owner;
+    free(owner);
+    return game;
+}
+
+// The paths of the game `path` belongs to, in the order tidec compiles them,
+// into `list`; none if it's in no game.
 //
 // Games come from manifests: the one this server was built with, and the one
 // in any open folder that builds games with CMake, where tide_add_game writes
-// it. A file in none of them belongs to the open folder it's in, since that's
-// the game `tide run` builds there; unless a manifest lists games in that
-// folder, whose other files stand alone (tests, for example).
-static int game_of(const lsp_server *s, const char *path, char ***out)
+// it. Other files belong to the game in a folder (see game_folder).
+static void game_of(const lsp_server *s, const char *path, path_list *list)
 {
-    *out = NULL;
+    *list = (path_list){0};
     manifests m = {0};
     for (int i = 0; i < s->root_count; i++) {
         jbuf source = {0};
@@ -292,28 +516,14 @@ static int game_of(const lsp_server *s, const char *path, char ***out)
         if (is_folder(file) ? in_folder(path, file) : same_path(file, path)) game = &m.lines[i];
     }
 
-    path_list list = {0};
     if (game) {
-        for (int i = 0; i < m.line_count; i++) {
-            const manifest_line *line = &m.lines[i];
-            if (line->manifest != game->manifest || strcmp(line->game, game->game) != 0) continue;
-            if (is_folder(line->path)) add_folder(s, &list, line->path);
-            else add_path(&list, line->path);
-        }
+        add_manifest_game(s, list, &m, game);
     } else {
-        const char *root = NULL; // The innermost open folder it's in
-        for (int i = 0; i < s->root_count; i++) {
-            if (in_folder(path, s->roots[i]) && (!root || strlen(s->roots[i]) > strlen(root))) root = s->roots[i];
-        }
-        for (int i = 0; root && i < m.line_count; i++) {
-            if (under(m.lines[i].path, root)) root = NULL;
-        }
-        if (root) add_folder(s, &list, root);
+        char *folder = game_folder(s, path, &m);
+        if (folder) add_game(s, list, folder);
+        free(folder);
     }
     free_manifests(&m);
-    if (list.count > 0) qsort(list.items, (size_t)list.count, sizeof(char *), compare_paths);
-    *out = list.items;
-    return list.count;
 }
 
 static void free_kept(lsp_server *s)
@@ -324,62 +534,94 @@ static void free_kept(lsp_server *s)
     s->kept_count = 0;
 }
 
-// Analyses the game `d` belongs to, unless the last analysis is still current
-// and includes it. Files open in the editor use its text; the others are read
-// from disk.
-static void analyze(lsp_server *s, const lsp_document *d)
+static void keep(lsp_server *s, char *text)
 {
-    if (s->analyzed && s->analyzed_changes == s->changes && analysis_select(d->uri)) return;
+    s->kept = realloc(s->kept, sizeof(char *) * (size_t)(s->kept_count + 1));
+    if (!s->kept) abort();
+    s->kept[s->kept_count++] = text;
+}
 
-    char *doc_path = uri_to_path(d->uri);
-    char **paths;
-    const int count = game_of(s, doc_path, &paths);
+static void register_assets_of(lsp_server *s, const path_list *list);
+
+// Analyses the files in `list` (as game_of gives them) together, or with
+// none, the file at `alone` by itself. Files open in the editor use its text;
+// the others are read from disk. The analysis points to the paths, so they're
+// kept until the next one, with `alone` (or NULL), and `list` is emptied.
+static void run_game(lsp_server *s, path_list *list, char *alone)
+{
     free_kept(s);
-
+    const int count = list->count;
+    char **paths = list->items;
     const int n = count > 0 ? count : 1;
     analysis_file *files = calloc((size_t)n, sizeof(analysis_file));
     char **uris = calloc((size_t)n, sizeof(char *)); // Made here for files not open
-    s->kept = calloc((size_t)n, sizeof(char *));
     for (int i = 0; i < n; i++) {
-        const char *path = count > 0 ? paths[i] : doc_path;
+        const char *path = count > 0 ? paths[i] : alone;
         const lsp_document *open = NULL;
         for (int k = 0; k < s->doc_count && !open; k++) {
             char *open_path = uri_to_path(s->docs[k].uri);
             if (same_path(open_path, path)) open = &s->docs[k];
             free(open_path);
         }
+        const char *package = count > 0 ? list->packages[i] : NULL;
         if (open) {
-            files[i] = (analysis_file){open->uri, path, open->text, open->len};
+            files[i] = (analysis_file){open->uri, path, open->text, open->len, package};
         } else {
             size_t len = 0;
             char *text = read_all(path, &len);
-            s->kept[s->kept_count++] = text;
+            keep(s, text);
             uris[i] = path_to_uri(path);
-            files[i] = (analysis_file){uris[i], path, text ? text : "", text ? len : 0};
+            files[i] = (analysis_file){uris[i], path, text ? text : "", text ? len : 0, package};
         }
     }
+    analysis_set_game_folders(list->game_folder, (const char *const *)list->roots, list->root_count);
     analysis_run(files, n);
-    analysis_select(d->uri);
     s->analyzed = true;
     s->analyzed_changes = s->changes;
+    register_assets_of(s, list);
 
     // The analysis copied the texts; the URIs and paths must outlive it, so
     // they're kept with the disk texts.
     for (int i = 0; i < n; i++) {
-        if (uris[i]) {
-            s->kept = realloc(s->kept, sizeof(char *) * (size_t)(s->kept_count + 1));
-            s->kept[s->kept_count++] = uris[i];
-        }
+        if (uris[i]) keep(s, uris[i]);
     }
-    if (count > 0) {
-        s->kept = realloc(s->kept, sizeof(char *) * (size_t)(s->kept_count + (size_t)count + 1));
-        for (int i = 0; i < count; i++) s->kept[s->kept_count++] = paths[i];
-        free(paths);
+    for (int i = 0; i < count; i++) {
+        keep(s, paths[i]);
+        if (list->packages[i]) keep(s, list->packages[i]);
     }
-    s->kept = realloc(s->kept, sizeof(char *) * (size_t)(s->kept_count + 1));
-    s->kept[s->kept_count++] = doc_path;
+    free(list->items);
+    free(list->packages);
+    free_roots(list);
+    *list = (path_list){0};
+    if (alone) keep(s, alone);
     free(uris);
     free(files);
+}
+
+// Selects the analysed file at `uri`. Paths decide when URIs don't match: the
+// editor and this server may spell one file's URI differently.
+static bool select_uri(const char *uri)
+{
+    if (analysis_select(uri)) return true;
+    char *path = uri_to_path(uri);
+    bool found = false;
+    for (int i = 0; i < analysis_file_count() && !found; i++) {
+        found = same_path(analysis_file_path(i), path) && analysis_select(analysis_file_uri(i));
+    }
+    free(path);
+    return found;
+}
+
+// Analyses the game of the file at `uri`, open in the editor or not, unless
+// the last analysis is still current and includes it, and selects the file.
+static void analyze(lsp_server *s, const char *uri)
+{
+    if (s->analyzed && s->analyzed_changes == s->changes && select_uri(uri)) return;
+    char *path = uri_to_path(uri);
+    path_list list;
+    game_of(s, path, &list);
+    run_game(s, &list, path);
+    select_uri(uri);
 }
 
 // ---------------------------------------------------------------------------
@@ -409,6 +651,19 @@ static void reply_error(lsp_server *s, const json *id, const int code, const cha
     jb_free(&b);
 }
 
+// A document changed, and its game's analysis waits (lsp_server.defer).
+static void unsettle(lsp_server *s, const char *uri)
+{
+    for (int i = 0; i < s->unsettled_count; i++) {
+        if (strcmp(s->unsettled[i], uri) == 0) return;
+    }
+    s->unsettled = realloc(s->unsettled, sizeof(char *) * (size_t)(s->unsettled_count + 1));
+    char *copy = malloc(strlen(uri) + 1);
+    if (!s->unsettled || !copy) abort();
+    strcpy(copy, uri);
+    s->unsettled[s->unsettled_count++] = copy;
+}
+
 // Diagnostics for one file: of the analysed game, or none (`file` < 0).
 static void publish_diagnostics(lsp_server *s, const char *uri, const int file)
 {
@@ -429,13 +684,14 @@ static void publish_game_diagnostics(lsp_server *s)
     for (int i = 0; i < analysis_file_count(); i++) publish_diagnostics(s, analysis_file_uri(i), i);
 }
 
-static void add_root(lsp_server *s, const char *uri)
+// A folder's path from its URI, ending in '/' as roots do: malloc'd, or NULL.
+static char *folder_path(const char *uri)
 {
     char *path = uri_to_path(uri);
     const size_t n = strlen(path);
     if (n == 0) {
         free(path);
-        return;
+        return NULL;
     }
     if (path[n - 1] != '/') {
         path = realloc(path, n + 2);
@@ -443,9 +699,300 @@ static void add_root(lsp_server *s, const char *uri)
         path[n] = '/';
         path[n + 1] = '\0';
     }
+    return path;
+}
+
+static void add_root(lsp_server *s, const char *uri)
+{
+    char *path = folder_path(uri);
+    for (int i = 0; path && i < s->root_count; i++) {
+        if (same_path(s->roots[i], path)) {
+            free(path);
+            return;
+        }
+    }
+    if (!path) return;
     s->roots = realloc(s->roots, sizeof(char *) * (size_t)(s->root_count + 1));
     if (!s->roots) abort();
     s->roots[s->root_count++] = path;
+}
+
+static void remove_root(lsp_server *s, const char *uri)
+{
+    char *path = folder_path(uri);
+    for (int i = 0; path && i < s->root_count; i++) {
+        if (!same_path(s->roots[i], path)) continue;
+        free(s->roots[i]);
+        s->roots[i--] = s->roots[--s->root_count];
+    }
+    free(path);
+}
+
+// Analyses the games of the documents open in the editor again, and publishes
+// their diagnostics: what's on disk, or which files make up each game,
+// changed. Each game once.
+static void refresh(lsp_server *s)
+{
+    s->changes++;
+    bool *done = calloc((size_t)s->doc_count + 1, sizeof(bool));
+    for (int i = 0; i < s->doc_count; i++) {
+        if (done[i]) continue;
+        analyze(s, s->docs[i].uri);
+        publish_game_diagnostics(s);
+        for (int k = i; k < s->doc_count; k++) done[k] = done[k] || select_uri(s->docs[k].uri);
+    }
+    free(done);
+}
+
+// Asks the editor to say when .tide files and the games' lists change on disk,
+// whether the editor changed them or something else did: a build, git, another
+// program. Those lists are build/tools/games.txt in an open folder, and the one
+// this server was built with, which may be outside them.
+static void register_watchers(lsp_server *s)
+{
+    jbuf b = {0};
+    jb_put(&b, "{\"jsonrpc\":\"2.0\",\"id\":\"" WATCH_REQUEST "\",\"method\":\"client/registerCapability\","
+               "\"params\":{\"registrations\":[{\"id\":\"tide-files\",\"method\":\"workspace/didChangeWatchedFiles\","
+               "\"registerOptions\":{\"watchers\":[{\"globPattern\":\"**/*.tide\"},"
+               "{\"globPattern\":\"**/build/tools/games.txt\"},{\"globPattern\":\"**/tide.packages\"}");
+    bool outside = s->manifest != NULL;
+    for (int i = 0; outside && i < s->root_count; i++) outside = !under(s->manifest, s->roots[i]);
+    const char *slash = outside ? strrchr(s->manifest, '/') : NULL;
+    if (slash && s->relative_patterns) {
+        char *folder = copy_string(s->manifest, (size_t)(slash - s->manifest));
+        char *uri = path_to_uri(folder);
+        jb_put(&b, ",{\"globPattern\":{\"baseUri\":");
+        jb_string(&b, uri);
+        jb_put(&b, ",\"pattern\":");
+        jb_string(&b, slash + 1);
+        jb_put(&b, "}}");
+        free(uri);
+        free(folder);
+    } else if (outside) {
+        jb_put(&b, ",{\"globPattern\":");
+        jb_string(&b, s->manifest);
+        jb_put(&b, "}");
+    }
+    jb_put(&b, "]}}]}}");
+    send_buf(s, &b);
+    jb_free(&b);
+}
+
+// ---------------------------------------------------------------------------
+// Assets: the editor asks before renaming a file an asset names (the paths are
+// rewritten: analysis_rename_files), and says when one changes on disk.
+
+// `path` as a glob that means just itself: what a glob reads as more is put
+// in a class of one.
+static void put_glob_escaped(jbuf *b, const char *path)
+{
+    for (const char *p = path; *p; p++) {
+        if (*p == '[') jb_put(b, "[[]");
+        else if (strchr("*?{}()!@+", *p)) jb_printf(b, "[%c]", *p);
+        else jb_putn(b, p, 1);
+    }
+}
+
+typedef struct folder_set {
+    char **items;
+    int count;
+} folder_set;
+
+// Whether `folder` (or a file) was seen, noting it.
+static bool folder_seen(folder_set *set, const char *folder)
+{
+    for (int i = 0; i < set->count; i++) {
+        if (same_path(set->items[i], folder)) return true;
+    }
+    set->items = realloc(set->items, sizeof(char *) * (size_t)(set->count + 1));
+    if (!set->items) abort();
+    set->items[set->count++] = copy_string(folder, strlen(folder));
+    return false;
+}
+
+static void free_folder_set(folder_set *set)
+{
+    for (int i = 0; i < set->count; i++) free(set->items[i]);
+    free(set->items);
+}
+
+static void put_rename_filter(jbuf *b, int *written, const char *path, const bool folder)
+{
+    if ((*written)++) jb_put(b, ",");
+    jb_put(b, "{\"scheme\":\"file\",\"pattern\":{\"glob\":\"");
+    put_glob_escaped(b, path);
+    jb_printf(b, "\",\"matches\":\"%s\",\"options\":{\"ignoreCase\":true}}}", folder ? "folder" : "file");
+}
+
+// The filters of the renames that can move a file an asset names: the file,
+// and each folder above it up to the folder of the game or package it is in.
+// A glob's matches aren't among them: a glob isn't rewritten.
+static void rename_filters(jbuf *b, const path_list *list)
+{
+    jb_put(b, "[");
+    int written = 0;
+    folder_set folders = {0};
+    for (int i = 0; i < analysis_asset_count(); i++) {
+        const char *path = analysis_asset_path(i);
+        if (!path || analysis_asset_is_glob(i) || folder_seen(&folders, path)) continue; // One filter a file
+        put_rename_filter(b, &written, path, false);
+        for (char *folder = parent_folder(path); folder;) {
+            bool in_root = false;
+            for (int r = 0; r < list->root_count && !in_root; r++) {
+                in_root = same_path(folder, list->roots[r]) || under(folder, list->roots[r]);
+            }
+            if (!in_root || folder_seen(&folders, folder)) {
+                free(folder);
+                break;
+            }
+            const size_t n = strlen(folder);
+            folder[n - 1] = '\0'; // Without its '/', as the editor names a folder
+            put_rename_filter(b, &written, folder, true);
+            folder[n - 1] = '/';
+            char *up = parent_folder(folder);
+            free(folder);
+            folder = up;
+        }
+    }
+    free_folder_set(&folders);
+    jb_put(b, "]");
+}
+
+// A watcher for each file or glob an asset names, so a file that moves, goes
+// or arrives is seen: relative to the folder the path's fixed part leads to,
+// where the editor takes that, else by the rest of the path anywhere.
+static void asset_watchers(jbuf *b, const bool relative)
+{
+    jb_put(b, "[");
+    int written = 0;
+    for (int i = 0; i < analysis_asset_count(); i++) {
+        const char *path = analysis_asset_path(i);
+        if (!path) continue;
+        size_t fixed = 0; // Through the last '/' before a wildcard
+        for (size_t k = 0; path[k] && path[k] != '*' && path[k] != '?'; k++) {
+            if (path[k] == '/') fixed = k + 1;
+        }
+        if (fixed == 0) continue;
+        if (written++) jb_put(b, ",");
+        if (relative) {
+            char *folder = copy_string(path, fixed - 1);
+            char *uri = path_to_uri(folder);
+            jb_put(b, "{\"globPattern\":{\"baseUri\":");
+            jb_string(b, uri);
+            jb_put(b, ",\"pattern\":");
+            jb_string(b, path + fixed);
+            jb_put(b, "}}");
+            free(uri);
+            free(folder);
+        } else {
+            jbuf pattern = {0};
+            jb_printf(&pattern, "**/%s", path + fixed);
+            jb_put(b, "{\"globPattern\":");
+            jb_string(b, pattern.data);
+            jb_put(b, "}");
+            jb_free(&pattern);
+        }
+    }
+    jb_put(b, "]");
+}
+
+// Registers `registrations` (the items of the request's array) in place of
+// what `last` says was registered, when they differ: that is taken back
+// first (`unregistrations`, the same way). Nothing when nothing changed.
+static void reregister(lsp_server *s, char **last, const char *registrations, const char *unregistrations, const char *id)
+{
+    if (*last && strcmp(*last, registrations) == 0) return;
+    if (*last && (*last)[0]) {
+        jbuf b = {0};
+        jb_printf(&b, "{\"jsonrpc\":\"2.0\",\"id\":\"tidels-un%s\",\"method\":\"client/unregisterCapability\","
+                      "\"params\":{\"unregisterations\":[%s]}}", id, unregistrations);
+        send_buf(s, &b);
+        jb_free(&b);
+    }
+    if (registrations[0]) {
+        jbuf b = {0};
+        jb_printf(&b, "{\"jsonrpc\":\"2.0\",\"id\":\"tidels-%s\",\"method\":\"client/registerCapability\","
+                      "\"params\":{\"registrations\":[%s]}}", id, registrations);
+        send_buf(s, &b);
+        jb_free(&b);
+    }
+    free(*last);
+    *last = copy_string(registrations, strlen(registrations));
+}
+
+// After an analysis: the filters for the renames to ask about, and the
+// watchers for the assets' files, as the game names them now.
+static void register_assets_of(lsp_server *s, const path_list *list)
+{
+    const bool any = analysis_asset_count() > 0;
+    if (s->rename_dynamic) {
+        jbuf filters = {0};
+        jbuf b = {0};
+        if (any) {
+            rename_filters(&filters, list);
+            jb_printf(&b, "{\"id\":\"tide-rename\",\"method\":\"workspace/willRenameFiles\",\"registerOptions\":{\"filters\":%s}},"
+                          "{\"id\":\"tide-renamed\",\"method\":\"workspace/didRenameFiles\",\"registerOptions\":{\"filters\":%s}}",
+                       filters.data, filters.data);
+        }
+        reregister(s, &s->rename_filters, b.data ? b.data : "",
+                   "{\"id\":\"tide-rename\",\"method\":\"workspace/willRenameFiles\"},"
+                   "{\"id\":\"tide-renamed\",\"method\":\"workspace/didRenameFiles\"}", "rename");
+        jb_free(&filters);
+        jb_free(&b);
+    }
+    if (s->watch_files) {
+        jbuf watchers = {0};
+        jbuf b = {0};
+        if (any) {
+            asset_watchers(&watchers, s->relative_patterns);
+            jb_printf(&b, "{\"id\":\"tide-assets\",\"method\":\"workspace/didChangeWatchedFiles\",\"registerOptions\":{\"watchers\":%s}}",
+                       watchers.data);
+        }
+        reregister(s, &s->asset_watchers, b.data ? b.data : "",
+                   "{\"id\":\"tide-assets\",\"method\":\"workspace/didChangeWatchedFiles\"}", "assets");
+        jb_free(&watchers);
+        jb_free(&b);
+    }
+}
+
+// workspace/willRenameFiles: the edits that keep every asset path at its
+// file, in the game of the first file renamed (the files of one rename are
+// in one place).
+static void will_rename_files(lsp_server *s, const json *id, const json *params)
+{
+    const json *files = json_get(params, "files");
+    asset_rename renames[64];
+    char *paths[128];
+    int count = 0;
+    for (int i = 0; files && files->kind == JSON_ARRAY && i < files->count && count < 64; i++) {
+        const char *old_uri = json_str(json_get(files->items[i], "oldUri"));
+        const char *new_uri = json_str(json_get(files->items[i], "newUri"));
+        if (!old_uri || !new_uri) continue;
+        char *pair[2] = {uri_to_path(old_uri), uri_to_path(new_uri)};
+        for (int k = 0; k < 2; k++) {
+            const size_t n = strlen(pair[k]);
+            if (n > 1 && pair[k][n - 1] == '/') pair[k][n - 1] = '\0';
+            paths[count * 2 + k] = pair[k];
+        }
+        renames[count++] = (asset_rename){pair[0], pair[1]};
+    }
+    jbuf b = {0};
+    reply_start(&b, id);
+    if (count == 0) {
+        jb_put(&b, "null}");
+    } else {
+        // The game it's in, found as for a Tide file there
+        jbuf there = {0};
+        jb_printf(&there, "%s/x.tide", renames[0].old_path);
+        path_list list;
+        game_of(s, there.data, &list);
+        run_game(s, &list, there.data);
+        analysis_rename_files(renames, count, &b);
+        jb_put(&b, "}");
+    }
+    send_buf(s, &b);
+    jb_free(&b);
+    for (int i = 0; i < count * 2; i++) free(paths[i]);
 }
 
 // Whether the editor applies edits that create files.
@@ -465,6 +1012,17 @@ static bool client_creates_files(const json *params)
 static void initialize(lsp_server *s, const json *id, const json *params)
 {
     analysis_set_can_create_files(client_creates_files(params));
+    const json *related = json_path(params, "capabilities", "textDocument", "publishDiagnostics", "relatedInformation", NULL);
+    analysis_set_related_information(related && related->kind == JSON_TRUE);
+    const json *watch = json_path(params, "capabilities", "workspace", "didChangeWatchedFiles", NULL);
+    const json *dynamic = json_get(watch, "dynamicRegistration");
+    const json *relative = json_get(watch, "relativePatternSupport");
+    s->watch_files = dynamic && dynamic->kind == JSON_TRUE;
+    s->relative_patterns = relative && relative->kind == JSON_TRUE;
+    const json *operations = json_path(params, "capabilities", "workspace", "fileOperations", NULL);
+    const json *will_rename = json_get(operations, "willRename");
+    const json *rename_dynamic = json_get(operations, "dynamicRegistration");
+    s->rename_dynamic = will_rename && will_rename->kind == JSON_TRUE && rename_dynamic && rename_dynamic->kind == JSON_TRUE;
     const json *folders = json_get(params, "workspaceFolders");
     if (folders && folders->kind == JSON_ARRAY && folders->count > 0) {
         for (int i = 0; i < folders->count; i++) {
@@ -478,19 +1036,32 @@ static void initialize(lsp_server *s, const json *id, const json *params)
     jbuf b = {0};
     reply_start(&b, id);
     jb_put(&b, "{\"capabilities\":{"
-               "\"textDocumentSync\":{\"openClose\":true,\"change\":1},"
+               "\"textDocumentSync\":{\"openClose\":true,\"change\":1,\"save\":{\"includeText\":false}},"
+               "\"workspace\":{\"workspaceFolders\":{\"supported\":true,\"changeNotifications\":true}");
+    // An editor that takes no registration (LSP4IJ reads only these) is asked about every rename, and
+    // answered from the game's assets; one that asks about no renames ignores it
+    if (!s->rename_dynamic) {
+        jb_put(&b, ",\"fileOperations\":{\"willRename\":{\"filters\":[{\"scheme\":\"file\",\"pattern\":{\"glob\":\"**/*\"}}]},"
+                   "\"didRename\":{\"filters\":[{\"scheme\":\"file\",\"pattern\":{\"glob\":\"**/*\"}}]}}");
+    }
+    jb_put(&b, "},"
                "\"completionProvider\":{\"triggerCharacters\":[\".\"]},"
                "\"hoverProvider\":true,"
                "\"definitionProvider\":true,"
+               "\"typeDefinitionProvider\":true,"
+               "\"implementationProvider\":true,"
+               "\"callHierarchyProvider\":true,"
                "\"referencesProvider\":true,"
                "\"documentHighlightProvider\":true,"
                "\"renameProvider\":{\"prepareProvider\":true},"
                "\"documentFormattingProvider\":true,"
+               "\"documentRangeFormattingProvider\":true,"
                "\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"],\"retriggerCharacters\":[\",\"]},"
                "\"documentSymbolProvider\":true,"
                "\"workspaceSymbolProvider\":true,"
                "\"inlayHintProvider\":true,"
                "\"foldingRangeProvider\":true,"
+               "\"selectionRangeProvider\":true,"
                "\"codeLensProvider\":{},"
                "\"codeActionProvider\":{\"codeActionKinds\":[\"quickfix\",\"refactor.move\"]},"
                "\"semanticTokensProvider\":{\"legend\":");
@@ -509,7 +1080,7 @@ static void document_request(lsp_server *s, const char *method, const json *id, 
         reply_error(s, id, INVALID_PARAMS, "unknown document");
         return;
     }
-    analyze(s, d);
+    analyze(s, d->uri);
     const int line = json_int(json_path(params, "position", "line", NULL), 0);
     const int character = json_int(json_path(params, "position", "character", NULL), 0);
 
@@ -523,6 +1094,12 @@ static void document_request(lsp_server *s, const char *method, const json *id, 
         analysis_hover(line, character, &b);
     } else if (strcmp(method, "textDocument/definition") == 0) {
         analysis_definition(uri, line, character, &b);
+    } else if (strcmp(method, "textDocument/typeDefinition") == 0) {
+        analysis_type_definition(line, character, &b);
+    } else if (strcmp(method, "textDocument/implementation") == 0) {
+        analysis_implementation(line, character, &b);
+    } else if (strcmp(method, "textDocument/prepareCallHierarchy") == 0) {
+        analysis_prepare_call_hierarchy(line, character, &b);
     } else if (strcmp(method, "textDocument/references") == 0) {
         const json *declaration = json_path(params, "context", "includeDeclaration", NULL);
         analysis_references(uri, line, character, !declaration || declaration->kind == JSON_TRUE, &b);
@@ -535,16 +1112,26 @@ static void document_request(lsp_server *s, const char *method, const json *id, 
     } else if (strcmp(method, "textDocument/rename") == 0) {
         const char *new_name = json_str(json_get(params, "newName"));
         error = new_name ? analysis_rename(uri, line, character, new_name, &b) : "No new name given.";
-    } else if (strcmp(method, "textDocument/formatting") == 0) {
+    } else if (strcmp(method, "textDocument/formatting") == 0 || strcmp(method, "textDocument/rangeFormatting") == 0) {
         const json *spaces = json_path(params, "options", "insertSpaces", NULL);
+        const json *range = json_get(params, "range");
+        int first = 0;
+        int last = 1 << 30;
+        if (range) { // A range ending at a line's start leaves that line out
+            first = json_int(json_path(range, "start", "line", NULL), 0);
+            last = json_int(json_path(range, "end", "line", NULL), 0);
+            if (last > first && json_int(json_path(range, "end", "character", NULL), 0) == 0) last--;
+        }
         error = analysis_format(json_int(json_path(params, "options", "tabSize", NULL), 4),
-                                !spaces || spaces->kind != JSON_FALSE, &b);
+                                !spaces || spaces->kind != JSON_FALSE, first, last, &b);
     } else if (strcmp(method, "textDocument/documentSymbol") == 0) {
         analysis_symbols(&b);
     } else if (strcmp(method, "textDocument/codeLens") == 0) {
         analysis_code_lenses(&b);
     } else if (strcmp(method, "textDocument/foldingRange") == 0) {
         analysis_folding_ranges(&b);
+    } else if (strcmp(method, "textDocument/selectionRange") == 0) {
+        analysis_selection_ranges(json_get(params, "positions"), &b);
     } else if (strcmp(method, "textDocument/inlayHint") == 0) {
         analysis_inlay_hints(json_int(json_path(params, "range", "start", "line", NULL), 0),
                              json_int(json_path(params, "range", "end", "line", NULL), 0), &b);
@@ -564,6 +1151,92 @@ static void document_request(lsp_server *s, const char *method, const json *id, 
     jb_free(&b);
 }
 
+// workspace/symbol: the declarations of every game, each searched once.
+typedef struct symbol_search {
+    const char *query;
+    jbuf *out;
+    int written;
+    path_list seen; // Files searched already, with their games
+} symbol_search;
+
+// Searches a game's files (`list`, or `alone`, as run_game takes them),
+// unless they were all searched already.
+static void search_game(lsp_server *s, symbol_search *search, path_list *list, char *alone)
+{
+    const int count = list->count;
+    bool fresh = false;
+    for (int i = 0; i < (count > 0 ? count : 1); i++) {
+        const char *path = count > 0 ? list->items[i] : alone;
+        bool seen = false;
+        for (int k = 0; k < search->seen.count && !seen; k++) seen = same_path(search->seen.items[k], path);
+        fresh |= !seen;
+        if (!seen) add_path(&search->seen, path);
+    }
+    if (!fresh) {
+        free_paths(list);
+        free(alone);
+        return;
+    }
+    run_game(s, list, alone);
+    analysis_workspace_symbols(search->query, search->out, &search->written);
+}
+
+// Every game in the open folders: those their manifests list, and an open
+// folder that's a game itself; and the games of the documents open in the
+// editor, wherever they are.
+static void workspace_symbols(lsp_server *s, const json *id, const char *query)
+{
+    jbuf b = {0};
+    reply_start(&b, id);
+    jb_put(&b, "[");
+    symbol_search search = {query, &b, 0, {0}};
+
+    manifests m = {0};
+    for (int i = 0; i < s->root_count; i++) {
+        jbuf source = {0};
+        jb_printf(&source, "%sbuild/tools/games.txt", s->roots[i]);
+        read_manifest(&m, source.data);
+        jb_free(&source);
+    }
+    if (s->manifest) read_manifest(&m, s->manifest);
+    for (int i = 0; i < m.line_count; i++) {
+        bool first = true; // Each game at its first line
+        for (int k = 0; k < i && first; k++) first = !same_game(&m.lines[k], &m.lines[i]);
+        bool open = false;
+        for (int k = i; k < m.line_count && first && !open; k++) {
+            for (int r = 0; r < s->root_count && same_game(&m.lines[k], &m.lines[i]) && !open; r++) {
+                open = under(m.lines[k].path, s->roots[r]);
+            }
+        }
+        if (!open) continue;
+        path_list list = {0};
+        add_manifest_game(s, &list, &m, &m.lines[i]);
+        if (list.count > 0) search_game(s, &search, &list, NULL);
+        else free_paths(&list);
+    }
+    for (int r = 0; r < s->root_count; r++) {
+        bool listed = false;
+        for (int i = 0; i < m.line_count && !listed; i++) listed = under(m.lines[i].path, s->roots[r]);
+        if (listed) continue;
+        path_list list = {0};
+        add_game(s, &list, s->roots[r]);
+        if (list.count > 0) search_game(s, &search, &list, NULL);
+        else free_paths(&list);
+    }
+    free_manifests(&m);
+    for (int i = 0; i < s->doc_count; i++) {
+        char *path = uri_to_path(s->docs[i].uri);
+        path_list list;
+        game_of(s, path, &list);
+        search_game(s, &search, &list, path);
+    }
+
+    free_paths(&search.seen);
+    jb_put(&b, "]}");
+    send_buf(s, &b);
+    jb_free(&b);
+}
+
 static bool is_document_request(const char *method)
 {
     static const char *const methods[] = {
@@ -571,7 +1244,8 @@ static bool is_document_request(const char *method)
         "textDocument/documentHighlight", "textDocument/signatureHelp", "textDocument/prepareRename",
         "textDocument/rename", "textDocument/formatting", "textDocument/documentSymbol",
         "textDocument/codeLens", "textDocument/codeAction", "textDocument/inlayHint", "textDocument/foldingRange",
-        "textDocument/semanticTokens/full",
+        "textDocument/semanticTokens/full", "textDocument/typeDefinition", "textDocument/implementation",
+        "textDocument/prepareCallHierarchy", "textDocument/rangeFormatting", "textDocument/selectionRange",
     };
     for (size_t i = 0; i < sizeof methods / sizeof methods[0]; i++) {
         if (strcmp(method, methods[i]) == 0) return true;
@@ -592,10 +1266,20 @@ void lsp_handle(lsp_server *s, const char *message, const size_t len)
     const json *id = json_get(msg, "id");
     const json *params = json_get(msg, "params");
 
+    // Changes that waited are analysed before anything but another change:
+    // what's sent comes in the order it would have without waiting
+    if (s->unsettled_count > 0 && method && strcmp(method, "textDocument/didOpen") != 0
+        && strcmp(method, "textDocument/didChange") != 0 && strcmp(method, "$/cancelRequest") != 0) {
+        lsp_settle(s);
+    }
+
     if (!method) {
-        // A response to a request we never make.
+        // A response to our request: the editor watches the files, or it
+        // can't and says so. Nothing waits for it either way.
     } else if (strcmp(method, "initialize") == 0) {
         initialize(s, id, params);
+    } else if (strcmp(method, "initialized") == 0) {
+        if (s->watch_files) register_watchers(s);
     } else if (strcmp(method, "shutdown") == 0) {
         s->shutdown = true;
         jbuf b = {0};
@@ -616,8 +1300,12 @@ void lsp_handle(lsp_server *s, const char *message, const size_t len)
         if (uri && text && text->kind == JSON_STRING) {
             const lsp_document *d = set_doc(s, uri, text);
             s->changes++;
-            analyze(s, d);
-            publish_game_diagnostics(s);
+            if (s->defer) {
+                unsettle(s, d->uri); // Analysed once the changes after it are in
+            } else {
+                analyze(s, d->uri);
+                publish_game_diagnostics(s);
+            }
         }
     } else if (strcmp(method, "textDocument/didClose") == 0) {
         const char *uri = json_str(json_path(params, "textDocument", "uri", NULL));
@@ -627,26 +1315,136 @@ void lsp_handle(lsp_server *s, const char *message, const size_t len)
             s->changes++;
             s->analyzed = false; // The analysis may point at the closed document's text
         }
+    } else if (strcmp(method, "textDocument/didSave") == 0) {
+        // The editor's text is already ours, but saving is when other files
+        // tend to change on disk too, for editors that watch none for us.
+        const char *uri = json_str(json_path(params, "textDocument", "uri", NULL));
+        const json *text = json_get(params, "text");
+        if (uri && text && text->kind == JSON_STRING && find_doc(s, uri)) set_doc(s, uri, text);
+        refresh(s);
+    } else if (strcmp(method, "workspace/didChangeWatchedFiles") == 0) {
+        // A deleted file's diagnostics go with it, unless the editor still has it open.
+        const json *changes = json_get(params, "changes");
+        for (int i = 0; changes && changes->kind == JSON_ARRAY && i < changes->count; i++) {
+            const char *uri = json_str(json_get(changes->items[i], "uri"));
+            if (!uri || json_int(json_get(changes->items[i], "type"), 0) != 3 || find_doc(s, uri)) continue;
+            publish_diagnostics(s, uri, -1);
+            char *path = uri_to_path(uri);
+            char *ours = path_to_uri(path); // As this server spells it, if the editor spells it otherwise
+            if (strcmp(ours, uri) != 0) publish_diagnostics(s, ours, -1);
+            free(ours);
+            free(path);
+        }
+        refresh(s);
+    } else if (strcmp(method, "workspace/didChangeWorkspaceFolders") == 0) {
+        const json *added = json_path(params, "event", "added", NULL);
+        const json *removed = json_path(params, "event", "removed", NULL);
+        for (int i = 0; removed && removed->kind == JSON_ARRAY && i < removed->count; i++) {
+            const char *uri = json_str(json_get(removed->items[i], "uri"));
+            if (uri) remove_root(s, uri);
+        }
+        for (int i = 0; added && added->kind == JSON_ARRAY && i < added->count; i++) {
+            const char *uri = json_str(json_get(added->items[i], "uri"));
+            if (uri) add_root(s, uri);
+        }
+        refresh(s); // Which files make up a game depends on the open folders
     } else if (is_document_request(method)) {
         document_request(s, method, id, params);
+    } else if (strcmp(method, "workspace/willRenameFiles") == 0) {
+        will_rename_files(s, id, params);
+    } else if (strcmp(method, "workspace/didRenameFiles") == 0) {
+        refresh(s); // The files moved: what's missing, and what's found, changed
     } else if (strcmp(method, "workspace/symbol") == 0) {
-        // The game of the document opened last: every declaration in its files.
+        const char *query = json_str(json_get(params, "query"));
+        workspace_symbols(s, id, query ? query : "");
+    } else if (strcmp(method, "callHierarchy/incomingCalls") == 0 || strcmp(method, "callHierarchy/outgoingCalls") == 0) {
+        // About an item, at its name, in a file the editor may not have open
+        const char *uri = json_str(json_path(params, "item", "uri", NULL));
+        const int line = json_int(json_path(params, "item", "selectionRange", "start", "line", NULL), 0);
+        const int character = json_int(json_path(params, "item", "selectionRange", "start", "character", NULL), 0);
         jbuf b = {0};
         reply_start(&b, id);
-        if (s->doc_count > 0) {
-            analyze(s, &s->docs[s->doc_count - 1]);
-            const char *query = json_str(json_get(params, "query"));
-            analysis_workspace_symbols(query ? query : "", &b);
-        } else {
-            jb_put(&b, "[]");
-        }
+        if (!uri) jb_put(&b, "[]");
+        else analyze(s, uri);
+        if (uri && strcmp(method, "callHierarchy/incomingCalls") == 0) analysis_incoming_calls(line, character, &b);
+        else if (uri) analysis_outgoing_calls(line, character, &b);
         jb_put(&b, "}");
         send_buf(s, &b);
         jb_free(&b);
     } else if (id) {
         reply_error(s, id, METHOD_NOT_FOUND, method);
     }
-    // Other notifications (initialized, didSave, $/cancelRequest...) need nothing.
+    // Other notifications ($/cancelRequest, $/setTrace...) need nothing.
 
     json_release();
+}
+
+void lsp_settle(lsp_server *s)
+{
+    bool analyzed = false;
+    for (int i = 0; i < s->unsettled_count; i++) {
+        const lsp_document *d = find_doc(s, s->unsettled[i]);
+        if (!d) continue;                                    // Closed since
+        if (analyzed && select_uri(d->uri)) continue;        // Its game is the one just analysed
+        analyze(s, d->uri);
+        publish_game_diagnostics(s);
+        analyzed = true;
+    }
+    forget_unsettled(s);
+}
+
+// Whether `text` has `word` in it: a look before parsing.
+static bool mentions(const char *text, const size_t len, const char *word)
+{
+    const size_t n = strlen(word);
+    for (size_t i = 0; i + n <= len; i++) {
+        if (text[i] == word[0] && memcmp(text + i, word, n) == 0) return true;
+    }
+    return false;
+}
+
+void lsp_handle_ahead(lsp_server *s, const char *message, const size_t len, const lsp_message *later, const int later_count)
+{
+    // Few messages cancel anything, so most are handled without a second parse
+    bool cancels = false;
+    for (int i = 0; i < later_count && !cancels; i++) cancels = mentions(later[i].text, later[i].len, "$/cancelRequest");
+    if (!cancels) {
+        lsp_handle(s, message, len);
+        return;
+    }
+    // A request's id, kept past its tree
+    const json *msg = json_parse(message, len);
+    const json *id = msg ? json_get(msg, "id") : NULL;
+    const bool request = id && json_str(json_get(msg, "method")) && (id->kind == JSON_NUMBER || id->kind == JSON_STRING);
+    json mine = {0};
+    char *name = NULL;
+    if (request) {
+        mine.kind = id->kind;
+        mine.number = id->number;
+        if (id->kind == JSON_STRING) {
+            name = malloc(id->string_len + 1);
+            if (!name) abort();
+            memcpy(name, id->string, id->string_len);
+            name[id->string_len] = '\0';
+            mine.string = name;
+            mine.string_len = id->string_len;
+        }
+    }
+    json_release();
+    bool cancelled = false;
+    for (int i = 0; request && i < later_count && !cancelled; i++) {
+        if (!mentions(later[i].text, later[i].len, "$/cancelRequest")) continue;
+        const json *other = json_parse(later[i].text, later[i].len);
+        const char *method = other ? json_str(json_get(other, "method")) : NULL;
+        const json *theirs = method && strcmp(method, "$/cancelRequest") == 0 ? json_path(other, "params", "id", NULL) : NULL;
+        if (theirs && theirs->kind == mine.kind) {
+            cancelled = mine.kind == JSON_NUMBER ? theirs->number == mine.number
+                                                 : theirs->string_len == mine.string_len
+                                                       && memcmp(theirs->string, mine.string, mine.string_len) == 0;
+        }
+        json_release();
+    }
+    if (cancelled) reply_error(s, &mine, REQUEST_CANCELLED, "cancelled");
+    else lsp_handle(s, message, len);
+    free(name);
 }

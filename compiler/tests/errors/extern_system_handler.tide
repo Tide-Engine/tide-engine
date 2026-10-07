@@ -1,0 +1,3 @@
+// expect: an event handler can't be written in C yet: only a system can, 'extern system Name(...);'
+scene Main { }
+extern event(Spawned) Setup(with Main);

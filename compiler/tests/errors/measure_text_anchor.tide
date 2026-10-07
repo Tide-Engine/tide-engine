@@ -1,0 +1,8 @@
+// expect: a text is as big at every anchor
+scene Main { }
+
+view Show()
+{
+    var size = Draw.MeasureText("DUEL", 88, Anchor.MiddleCenter);
+    Draw.Rect(float2(0), size, Color.white);
+}

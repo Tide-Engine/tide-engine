@@ -2,12 +2,32 @@
 
 #include "ast.h"
 
+// What tide needs of the game's settings to build it, beyond its C.
+typedef struct game_info {
+    char title[256];  // The title setting, or "" without one
+    char app_id[256]; // appId, likewise
+    char version[64]; // version, likewise
+    bool bold;        // Its C names the bold weight's file (it says Font.Bold), which is in the platform layer's library
+    bool microphone;  // It says Clip.Microphone: its Android app's manifest asks to record audio
+    // The files and folders its assets name (asset_files.h), for whoever
+    // watches them: malloc'd, each path malloc'd, for the caller to free.
+    char **asset_paths;
+    int asset_count;
+} game_info;
+
 typedef struct codegen_options {
     const char *name;        // Base name of the generated files.
     const char *out_dir;
     bool line_directives;    // Map generated code back to .tide lines for debuggers.
     bool layout;             // Describe the data layout as tide_game_layout (tide/layout.h), for hot reloading.
     sb *externs;             // If set, gets the C function of each extern function, a line each (for tide's checks).
+    game_info *info;         // If set, gets what tide needs of the game's settings.
+    bool shaders;            // Instead of the schedule, print the game's shaders (tidec --shaders).
+    const char *game_folder; // Where the game's .tide/ is, for its asset hashes and fetched URLs; NULL where nothing says
+    const char *pack;        // Where to write the pack of the game's assets (tide/pack.h), or NULL
+    const char *pack_c;      // Where to write the pack as a C array (tide_game_pack), for hosts that embed it, or NULL
+    const char *const *defines; // The symbols the build defines for every file's #if (`--define FAST`, DEBUG), or NULL
+    int define_count;
 } codegen_options;
 
 // Writes <out_dir>/<name>.h and <out_dir>/<name>.c. Returns false on I/O errors.

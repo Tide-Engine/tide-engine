@@ -1,0 +1,4 @@
+// expect: a query both requires and excludes the same component
+component Body { float x; }
+scene Main { }
+system Hits(query (Body body, without Body) bodies) { }

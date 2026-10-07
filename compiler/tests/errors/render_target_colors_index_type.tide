@@ -1,0 +1,4 @@
+// expect: a target's color images are counted from 0, with an int, not float
+scene Main { }
+local singleton Maps { RenderTarget scene; Texture held; DepthTexture deep; }
+view Show(mut Maps maps) { maps.held = maps.scene.colors[1.5]; }

@@ -1,0 +1,8 @@
+namespace Shared;
+
+component Position { float value; }
+
+virtual system Tick(mut Position position)
+{
+    position.value += 1;
+}

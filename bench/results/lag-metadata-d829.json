@@ -1,0 +1,37 @@
+{
+  "runtime_revision": "d8296c5",
+  "platform": "Windows",
+  "node": "24.16.0",
+  "build_parallelism": 2,
+  "debug_tests": 1438,
+  "web_debug_tests": 1424,
+  "release_affected_tests": 6,
+  "web_release_affected_tests": 6,
+  "measurement_note": "Runtime artifacts are d8296c5; later edits refine comments, browser startup deadlines and reporting only.",
+  "artifacts": [
+    {
+      "path": "build/release/bin/bench_lag_native.exe",
+      "sha256": "5562c48bc8c4ae666a865943bbf84be8f02f5ea1607d38753c1151233c931e66"
+    },
+    {
+      "path": "build/release/bin/sumo_tests.exe",
+      "sha256": "294e78b8e6617e1b483f4363bf2a3ccb7dc2c4d7a778d8584a91f933ced959ce"
+    },
+    {
+      "path": "build/web-release/bin/sumo.html",
+      "sha256": "833c904230a26f7362af5d31ffd8f9090696b18357bb520a900342066941671a"
+    },
+    {
+      "path": "build/lag-before/sumo_tests.exe",
+      "sha256": "11e5212230ef52cfca612b9aebdd2f73fbe1b6503c643e30e6e86d3faa6437d9"
+    }
+  ],
+  "historical_browser_baseline": {
+    "code_revision": "6b52015c4207b56a8461c342f5468c9043f849bc",
+    "instrumentation": "ran/ran_ahead/heard_tick counters and netcode frame telemetry only",
+    "build_time_utc": "2026-10-06T13:00:00Z",
+    "source_edit_time_utc": "2026-10-06T13:02:53Z",
+    "transcript_evidence": "rows28,189,190,260,262,269,275,280 of original continuation transcript",
+    "page_sha256": "a58eda46fd951d808935dbc2b8266da9465108ef3ceaa669a35953c55a678fe2"
+  }
+}

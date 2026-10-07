@@ -1,0 +1,7 @@
+// expect: 'rules' is read-only
+// expect: 'GUILayout.TextField' makes its 'entered'
+// expect: a view can't change the match: put what it wants in the input, and change it in a system
+scene Main { }
+local singleton Lobby { string code; int count; float ratio; bool entered; }
+singleton Rules { bool entered; }
+view Join(mut Lobby lobby, Rules rules) { GUILayout.TextField("Code", lobby.code, out rules.entered); }

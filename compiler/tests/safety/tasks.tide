@@ -1,0 +1,150 @@
+// expect: tick 0: started 2003 waits 667
+// expect: tick 3: done 2000 odd 4 orphans 0 deep 45
+// expect: tick 8: done 2000 odd 5 orphans 0 deep 45 local 3
+// ticks: 10
+
+// Tasks that wait for nothing, for ever, or for a number that isn't one; that
+// outlive the entity they ran for; in their thousands; and with a frame that
+// holds text, lists and big values across their waits.
+
+struct Big
+{
+    float4x4 a;
+    float4x4 b;
+    float4x4 c;
+    float4x4 d;
+    List<int> list;
+    string text;
+}
+
+component Keeper
+{
+    int age;
+    List<int> seen;
+    string name = "owner";
+}
+
+singleton Log
+{
+    int started;
+    int done;
+    int odd;
+    int orphans;
+    int deep;
+    float zero;
+    int most = 2147483647;
+    int least = 0x80000000;
+}
+
+local singleton Mine
+{
+    int started;
+    int done;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Keeper);
+}
+
+async void Brief(mut Log log, int n)
+{
+    await Wait.Ticks(n % 3);
+    log.done += 1;
+}
+
+// Waits that aren't a number of ticks: none of them is a wait that never ends but the last
+async void Odd(mut Log log, int ticks, float seconds)
+{
+    await Wait.Ticks(ticks);
+    await Wait.Seconds(seconds);
+    log.odd += 1;
+}
+
+// Its owner is gone before it wakes: it ends with it, and never reads what's gone
+async void Orphan(mut Keeper owner, mut Log log)
+{
+    owner.seen.Add(1);
+    await Wait.Ticks(3);
+    owner.seen.Add(2);
+    owner.name = owner.name + "!";
+    log.orphans += owner.seen.count;
+}
+
+async int Deep(int depth, Big big)
+{
+    mut var mine = big;
+    mine.list.Add(depth);
+    mine.text = mine.text + "x";
+    await Wait.Ticks(1);
+    if (depth == 0) return mine.list.count * 10 + mine.text.length + int(mine.a.c0.x);
+    return mine.list.count * 10 + mine.text.length + int(mine.d.c3.w);
+}
+
+async void Chain(mut Log log)
+{
+    mut var big = Big { };
+    big.list = [1, 2, 3];
+    big.text = "ab";
+    var one = await Deep(0, big);
+    big.list.Clear();
+    var two = await Deep(1, big);
+    log.deep = one + two - 11;
+}
+
+system Start(mut Log log, Time time)
+{
+    if (time.tick == 0)
+    {
+        for (var i = 0; i < 2000; i++) Brief(log, i);
+        var nan = log.zero / log.zero;
+        var inf = 1.0 / log.zero;
+        Odd(log, -5, -1.0);
+        Odd(log, log.least, nan);
+        Odd(log, 0, -inf);
+        Odd(log, 1, 1e-30);
+        Odd(log, 2, 0.05);
+        Odd(log, log.most, 1.0);
+        Odd(log, 0, inf);
+        Odd(log, 0, 1e30);
+        Chain(log);
+        log.started = 2003;
+        Debug.Log($"tick 0: started {log.started} waits {log.done}");
+    }
+    if (time.tick == 3) Debug.Log($"tick 3: done {log.done} odd {log.odd} orphans {log.orphans} deep {log.deep}");
+}
+
+system Age(mut Keeper owner, mut Log log)
+{
+    owner.age += 1;
+    if (owner.age == 1) Orphan(owner, log);
+    if (owner.age == 2) this.Destroy();
+}
+
+async void Later(mut Mine mine, float seconds, int frames)
+{
+    await Wait.Seconds(seconds);
+    await Wait.Frames(frames);
+    mine.done += 1;
+}
+
+view Watch(mut Mine mine, Log log, Time time)
+{
+    if (mine.started == 0)
+    {
+        mine.started = 1;
+        var nan = log.zero / log.zero;
+        Later(mine, nan, -1);
+        Later(mine, -1.0 / log.zero, log.least);
+        Later(mine, 0.01, 1);
+        Later(mine, 1.0 / log.zero, 0);
+        Later(mine, 0.0, log.most);
+    }
+    if (time.tick == 8 && mine.started == 1)
+    {
+        mine.started = 2;
+        Debug.Log($"tick 8: done {log.done} odd {log.odd} orphans {log.orphans} deep {log.deep} local {mine.done}");
+    }
+}

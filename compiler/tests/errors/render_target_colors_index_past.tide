@@ -1,0 +1,5 @@
+// expect: a render target holds 4 color images at the most: 'colors[0]' to 'colors[3]'
+// Which of the four a target has is its own to say, as it's made; past the fourth is no target's
+scene Main { }
+local singleton Maps { RenderTarget scene; Texture held; DepthTexture deep; }
+view Show(mut Maps maps) { maps.held = maps.scene.colors[4]; }

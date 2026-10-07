@@ -1,0 +1,138 @@
+// Ordinary functions and methods get singleton values explicitly, like
+// components. A readonly argument is a snapshot, even beside a mut alias.
+singleton Duel
+{
+    int points = 3;
+    int calls;
+    local int paint = 5;
+    local int marks = 7;
+}
+
+singleton Reset { bool now; }
+singleton Trace { int before; int after; int methodCalls; float dt; }
+singleton Ledger
+{
+    List<int> marks;
+    string title = "start";
+    int before;
+    int beforeFirst;
+    int actionBefore;
+    int actionFirst;
+    int actionAfter;
+    int callbacks;
+}
+local singleton Display
+{
+    int frames;
+    int points;
+    int copyPoints;
+    int copyFrames;
+    int paint;
+    int methodCalls;
+    bool server;
+}
+
+int Points(Duel duel) { return duel.points; }
+int PointsThrough(Duel duel) { return Points(duel); }
+void Add(mut Duel duel) { duel.points += 2; duel.calls += 1; }
+void AddThrough(mut Duel duel) { Add(duel); }
+void Replace(mut Duel duel) { duel = default; duel.points = 10; }
+int BeforeAdding(Duel before, mut Duel after)
+{
+    AddThrough(after);
+    return PointsThrough(before);
+}
+
+void Paint(mut Duel duel) { duel.paint += duel.points; duel.marks += 1; }
+void PaintThrough(mut Duel duel) { Paint(duel); }
+int Painted(Duel duel) { return duel.paint; }
+int PaintedThrough(Duel duel) { return Painted(duel); }
+void Shown(mut Display display) { display.frames += 1; }
+void FrameThrough(mut Display display) { Shown(display); }
+int Frames(Display display) { return display.frames; }
+int FramesThrough(Display display) { return Frames(display); }
+float Step(Time time) { return time.dt; }
+bool Server(Session session) { return session.server; }
+void WhenPlaying(Duel duel, Action content) { if (duel.points > 0) content(); }
+void Mark(mut Ledger ledger)
+{
+    if (ledger.marks.count > 0) ledger.marks[0] += 10;
+    ledger.marks.Add(ledger.marks.count + 1);
+    ledger.title += "!";
+}
+int BeforeMarking(Ledger before, mut Ledger after)
+{
+    Mark(after);
+    after.beforeFirst = before.marks.count == 0 ? 0 : before.marks[0];
+    return before.marks.count;
+}
+void MarkWithAction(Ledger before, mut Ledger after, Action content)
+{
+    Mark(after);
+    after.actionBefore = before.marks.count;
+    after.actionFirst = before.marks[0];
+    content();
+}
+void SnapshotDuringAction(Ledger before, Action content)
+{
+    var first = before.marks[0];
+    content();
+    Debug.Assert(before.marks[0] == first); // The callback mutated the caller's existing list element.
+}
+
+struct Helper
+{
+    int calls;
+    mut void AddDuel(mut Duel duel) { AddThrough(duel); calls += 1; }
+    int ReadDuel(Duel duel) { return PointsThrough(duel); }
+    mut void FrameDisplay(mut Display display) { FrameThrough(display); calls += 1; }
+}
+
+input Choice
+{
+    int frames;
+    Sample(Display display) { frames = FramesThrough(display); }
+}
+
+scene Main { }
+event(Spawned) Setup(with Main, mut Duel duel) { Replace(duel); }
+system ResetMatch(Reset reset, mut Duel duel)
+{
+    if (reset.now) Replace(duel);
+}
+system Advance(mut Duel duel, mut Trace trace, Time time)
+{
+    trace.before = BeforeAdding(duel, duel);
+    mut var helper = Helper { };
+    helper.AddDuel(duel);
+    trace.after = helper.ReadDuel(duel);
+    trace.methodCalls = helper.calls;
+    WhenPlaying(duel) { trace.dt = Step(time); }
+}
+system Record(mut Ledger ledger)
+{
+    ledger.before = BeforeMarking(ledger, ledger);
+    MarkWithAction(ledger, ledger) { ledger.actionAfter = ledger.marks.count; }
+    SnapshotDuringAction(ledger)
+    {
+        ledger.marks[0] += 100;
+        ledger.callbacks += 1;
+    }
+}
+
+view Show(mut Duel duel, mut Display display, Session session)
+{
+    PaintThrough(duel);
+    display.paint = PaintedThrough(duel);
+    display.points = PointsThrough(duel);
+    mut var copy = duel;
+    copy.points += 100;
+    display.copyPoints = PointsThrough(copy); // A copy has the match fields only.
+    mut var helper = Helper { };
+    helper.FrameDisplay(display);
+    display.methodCalls = helper.calls;
+    mut var localCopy = display;
+    FrameThrough(localCopy);
+    display.copyFrames = FramesThrough(localCopy);
+    display.server = Server(session);
+}

@@ -1,0 +1,53 @@
+struct Pose
+{
+    [Position] float scalar;
+    [Position] float2 planar;
+    [Position] float3 spatial;
+    [Position] float4 wide;
+    [Rotation] float angle;
+    [Rotation] quaternion rotation;
+    float ordinary;
+}
+
+struct Nested { Pose pose; [Snap] Pose immediate; }
+component Body { Nested state; }
+singleton Camera { [Position] float3 center; [Rotation] float angle; [Rotation] quaternion rotation; }
+singleton Rules { bool drop; bool remove; bool snapBody; bool snapCamera; }
+local singleton Observed { Nested first; Nested second; float3 center; float angle; quaternion rotation; }
+
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Body); }
+
+system BodyLifetime(Rules rules, with Body)
+{
+    if (rules.snapBody) this.Snap();
+    if (rules.remove) this.Remove(Body);
+    if (rules.drop) this.Destroy();
+}
+
+system CameraCut(Rules rules, mut Camera camera)
+{
+    if (rules.snapCamera) camera.Snap();
+}
+
+view First(Body body, Camera camera, mut Observed observed)
+{
+    observed.first = body.state;
+    observed.center = camera.center;
+    observed.angle = camera.angle;
+    observed.rotation = camera.rotation;
+}
+
+view Second(Body body, mut Observed observed) { observed.second = body.state; }
+
+frag Shade(Vertex vertex, out Color color, Body body, Camera camera)
+{
+    color = vertex.color;
+    color.r = body.state.pose.scalar;
+    color.g = camera.center.x;
+}
+
+view Shader(with Body)
+{
+    Draw.Mesh([Vertex {}, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], Shade);
+}

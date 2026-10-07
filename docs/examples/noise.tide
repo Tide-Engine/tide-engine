@@ -1,0 +1,81 @@
+settings { title = "Noise"; }
+
+local scene Main { }
+
+struct FieldVertex
+{
+    float2 position;
+    float2 uv;
+}
+
+local singleton Field
+{
+    List<FieldVertex> corners;
+    List<int> faces;
+    int kind;          // 0 Perlin, 1 Simplex, 2 Cellular
+    int seed;
+    float scale = 4;
+    float octaves = 1; // More octaves, each twice as fine and half as strong, for detail
+    float drift;
+}
+
+// The noise at a point, in the kind the buttons picked: from 0 to 1.
+float FieldAt(float2 at, int kind, int seed)
+{
+    if (kind == 0) return Math.Perlin(at, seed) * 0.5 + 0.5;
+    if (kind == 1) return Math.Simplex(at, seed) * 0.5 + 0.5;
+    float2 cells = Math.Cellular(at, seed);
+    return cells.y - cells.x; // 0 on the borders between cells
+}
+
+// Every pixel of the quad: octaves of noise, summed, in the site's colors.
+frag Shade(FieldVertex vertex, out Color color, Field field)
+{
+    mut float2 at = vertex.uv * field.scale + field.drift;
+    mut float sum = 0;
+    mut float weight = 1;
+    mut float total = 0;
+    for (int octave = 0; octave < int(field.octaves); octave++)
+    {
+        sum += FieldAt(at, field.kind, field.seed + octave) * weight;
+        total += weight;
+        at *= 2;
+        weight *= 0.5;
+    }
+    float3 dark = float3(0.086, 0.086, 0.094);
+    float3 light = field.kind == 2 ? float3(0.18, 0.83, 0.75) : float3(0.98, 0.75, 0.14);
+    float3 rgb = Math.Lerp(dark, light, sum / total);
+    color = Color(rgb.x, rgb.y, rgb.z, 1);
+}
+
+view Show(mut Field field)
+{
+    if (field.corners.count == 0)
+    {
+        // A quad under the controls, its uv in units of its width, so the noise isn't stretched
+        field.corners = [FieldVertex { position = float2(-1, -1.55), uv = float2(0, 0) },
+                         FieldVertex { position = float2(1, -1.55), uv = float2(1, 0) },
+                         FieldVertex { position = float2(1, -0.1), uv = float2(1, 0.725) },
+                         FieldVertex { position = float2(-1, -0.1), uv = float2(0, 0.725) }];
+        field.faces = [0, 1, 2, 0, 2, 3];
+    }
+    field.drift += Math.Min(Frame.dt, 0.05) * 0.2;
+
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0, -0.6), 1.25);
+    Draw.Mesh(field.corners, field.faces, Shade);
+
+    GUI.SetTheme(GUITheme { radius = 6 });
+    GUILayout.Area(Anchor.UpperLeft)
+    {
+        GUILayout.Horizontal()
+        {
+            if (GUILayout.Button("Perlin")) field.kind = 0;
+            if (GUILayout.Button("Simplex")) field.kind = 1;
+            if (GUILayout.Button("Cellular")) field.kind = 2;
+            if (GUILayout.Button("New seed")) field.seed += 1;
+        }
+        GUILayout.Slider("Scale", field.scale, 1, 16);
+        GUILayout.Slider("Octaves", field.octaves, 1, 6);
+    }
+}

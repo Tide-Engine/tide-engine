@@ -1,0 +1,211 @@
+// Local handlers of the match's events: what a machine hears of the ticks it
+// runs, once, whatever its predictions. A shield one player raises decides
+// what some ticks send, so a client that hasn't heard of the shield yet
+// predicts those wrong, until the server says how they went.
+
+component Target
+{
+    int id;
+    int health = 5;
+    local int struck;  // Hits its local handler heard
+    local int born;    // The id its Spawned handler heard
+}
+
+component Player { }
+
+singleton Guard
+{
+    bool up;
+}
+
+input Controls
+{
+    bool shield;
+}
+
+scene Main { }
+
+// Sent to a target, and the match handles it: a hit takes a point of health
+event Struck
+{
+    int kind;
+}
+
+// Only local code handles these: the match sends them for whoever shows it
+event Rang
+{
+    int at;
+}
+
+event Glanced
+{
+    float2 at;
+    float2 normal;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Target { id = 1 });
+    Spawn(Target { id = 2 });
+    Spawn(Target { id = 3 });
+}
+
+event(PlayerJoined joined) AddPlayer()
+{
+    Spawn(Player, Owner { player = joined.player });
+}
+
+event(Struck struck) TakeHit(mut Target target)
+{
+    target.health -= 1;
+}
+
+system Lower(mut Guard guard)
+{
+    guard.up = false;
+}
+
+system Raise(Controls controls, mut Guard guard, with Player)
+{
+    if (controls.shield) guard.up = true;
+}
+
+// What the ticks send. The shield is up around ticks 90, 150 and 240.
+system Strike(Target target, Guard guard, Time time)
+{
+    if (target.id == 2 && time.tick == 200) this.Destroy();
+    // A destroy the server, which had the shield, never made
+    if (target.id == 3 && time.tick == 91 && !guard.up) this.Destroy();
+    if (target.id != 1) return;
+    // Every machine has this one right
+    if (time.tick == 30) this.Send(Struck { kind = 1 });
+    // The ticks around a wrong guess run again, and each sends this again
+    if (time.tick >= 85 && time.tick < 96) Send(Rang { at = time.tick });
+    // Sent as predicted; the server never sent it
+    if (time.tick == 90 && !guard.up) this.Send(Struck { kind = 2 });
+    // Only the tick as the server ran it has this
+    if (time.tick == 150 && guard.up) this.Send(Glanced { at = float2(1.5, -2), normal = float2(0, 1) });
+    // Sent either way, and another event for it
+    if (time.tick == 151) this.Send(Struck { kind = guard.up ? 4 : 3 });
+    // A spawn the server made otherwise, on the same handle
+    if (time.tick == 241) Spawn(Target { id = guard.up ? 5 : 4 });
+}
+
+// What this machine heard, as it predicted and once the server confirmed it
+local singleton Heard
+{
+    int struck;
+    int kinds;          // A bit for each kind of Struck
+    int health;         // The target's, as the last Struck left it
+    int rang;
+    int rangTicks;      // A bit for each tick from 85 that rang
+    int rangAgain;      // Rangs heard for a tick that had rung
+    int rangLate;       // ...and for a tick before the last one heard
+    int rangLast;
+    int glanced;
+    float2 glancedAt;
+    int glancedTick;    // Time.tick as its turn came
+    int spawned;        // A bit for each id spawned
+    int shielded;       // Entities spawned with the shield up
+    int destroyed;      // A bit for each id destroyed
+    int destroyedHealth;
+    int joined;
+    int entities;       // Every entity of the match spawned, whatever it has
+    int sure;           // A bit for each kind of Struck the server confirmed
+    int sureStruck;
+    int sureGlanced;
+    int sureSpawned;
+    int sureDestroyed;
+    int sureRang;
+    int notes;          // Local events its handlers sent on
+    int looked;
+}
+
+local event Note { }
+
+local event(Struck struck) HearStruck(mut Target target, mut Heard heard)
+{
+    heard.struck += 1;
+    heard.kinds |= 1 << struck.kind;
+    heard.health = target.health;
+    target.struck += 1;
+    Send(Note { });
+}
+
+local event(Rang rang) HearRang(mut Heard heard)
+{
+    var bit = 1 << (rang.at - 85);
+    heard.rang += 1;
+    if ((heard.rangTicks & bit) != 0) heard.rangAgain += 1;
+    if (rang.at < heard.rangLast) heard.rangLate += 1;
+    heard.rangTicks |= bit;
+    heard.rangLast = rang.at;
+}
+
+local event(Glanced glanced) HearGlanced(Target target, mut Heard heard, Time time)
+{
+    heard.glanced += target.id;
+    heard.glancedAt = glanced.at + glanced.normal;
+    heard.glancedTick = time.tick;
+}
+
+local event(Spawned) HearSpawned(mut Target target, mut Heard heard)
+{
+    heard.spawned |= 1 << target.id;
+    target.born = target.id;
+}
+
+local event(Destroyed) HearDestroyed(Target target, mut Heard heard)
+{
+    heard.destroyed |= 1 << target.id;
+    heard.destroyedHealth = target.health;
+}
+
+// It takes nothing of the entity, so it runs for every one of the match's
+local event(Spawned) CountEntities(Guard guard, mut Heard heard)
+{
+    heard.entities += 1;
+    if (guard.up) heard.shielded += 1;
+}
+
+local event(PlayerJoined joined) HearJoined(mut Heard heard)
+{
+    heard.joined += 1;
+}
+
+local event(Note) Noted(mut Heard heard)
+{
+    heard.notes += 1;
+}
+
+local event(verified Struck struck) SureStruck(mut Heard heard)
+{
+    heard.sureStruck += 1;
+    heard.sure |= 1 << struck.kind;
+}
+
+local event(verified Glanced) SureGlanced(mut Heard heard)
+{
+    heard.sureGlanced += 1;
+}
+
+local event(verified Rang) SureRang(mut Heard heard)
+{
+    heard.sureRang += 1;
+}
+
+local event(verified Spawned) SureSpawned(Target target, mut Heard heard)
+{
+    heard.sureSpawned |= 1 << target.id;
+}
+
+local event(verified Destroyed) SureDestroyed(Target target, mut Heard heard)
+{
+    heard.sureDestroyed |= 1 << target.id;
+}
+
+// What a view sees of what the handlers kept
+view Look(Target target, mut Heard heard)
+{
+    if (target.id == 1) heard.looked = target.struck;
+}

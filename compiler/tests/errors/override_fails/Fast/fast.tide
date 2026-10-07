@@ -1,0 +1,7 @@
+namespace Fast;
+
+override float Combat.Damage(float base, float multiplier = 1) fails Combat.DamageError
+{
+    if (base > 100) fail Combat.DamageError.TooMuch;
+    return base;
+}

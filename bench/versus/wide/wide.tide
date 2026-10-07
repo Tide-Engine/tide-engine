@@ -1,0 +1,86 @@
+// Wide: a million bodies of a dozen floats each, of which a tick changes
+// half. A system streams through one component, as particles do, but through
+// twelve arrays of it at once, and writes six of them.
+//
+// With --tagged 1 they're crates instead, moved by a system that leaves out
+// the frozen ones (--frozen, a percentage): a loop that doesn't write every row.
+
+scene Main { }
+
+// The benchmark sets these before the first tick, which spawns them.
+singleton Yard
+{
+    int count = 1000;
+    int frozen;  // Of a hundred crates, how many are frozen
+    bool tagged; // Crates, not bodies
+    bool ready;
+}
+
+struct Motion
+{
+    float3 position;
+    float3 velocity;
+    float3 push;  // What speeds it up, the same every tick
+    float drag;
+    float bounce; // What the floor gives back
+    float radius;
+}
+
+component Body
+{
+    Motion motion;
+}
+
+component Crate
+{
+    Motion motion;
+}
+
+[Sparse]
+component Frozen { }
+
+system Setup(mut Yard yard)
+{
+    if (yard.ready) return;
+    yard.ready = true;
+    for (var i = 0; i < yard.count; i++)
+    {
+        var h = Math.Hash(int2(i, 0));
+        var g = Math.Hash(int2(i, 1));
+        var f = Math.Hash(int2(i, 2));
+        var motion = Motion
+        {
+            position = float3(float(h % 10000) * 0.01, float(g % 10000) * 0.01 + 1, float(f % 10000) * 0.01),
+            velocity = float3(float(h % 201 - 100) * 0.1, float(g % 201 - 100) * 0.1, float(f % 201 - 100) * 0.1),
+            push = float3(float(f % 21 - 10) * 0.05, -9.81, float(h % 21 - 10) * 0.05),
+            drag = float(g % 50) * 0.001,
+            bounce = 0.5 + float(h % 40) * 0.01,
+            radius = 0.25 + float(f % 4) * 0.25
+        };
+        if (!yard.tagged) Spawn(Body { motion = motion });
+        else if (Math.Hash(int2(i, 3)) % 100 < yard.frozen) Spawn(Crate { motion = motion }, Frozen);
+        else Spawn(Crate { motion = motion });
+    }
+}
+
+void Step(mut Motion m, float dt)
+{
+    m.velocity += m.push * dt;
+    m.velocity *= 1 - m.drag * dt;
+    m.position += m.velocity * dt;
+    if (m.position.y < m.radius)
+    {
+        m.position.y = m.radius * 2 - m.position.y;
+        m.velocity.y = -m.velocity.y * m.bounce;
+    }
+}
+
+system Move(mut Body body, Time time)
+{
+    Step(body.motion, time.dt);
+}
+
+system Shift(mut Crate crate, Time time, without Frozen)
+{
+    Step(crate.motion, time.dt);
+}

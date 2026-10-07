@@ -4,26 +4,30 @@ A networking-first game engine. The simulation is deterministic, so players on
 different machines, the web included, can share one world. Games are written in
 the Tide language, which compiles to C and then to native code or WebAssembly.
 
-**Docs, and the demo running in your browser:** https://blenminer.github.io/tide-engine/
+**Docs, and the demo running in your browser:** https://tide-engine.dev
 
 ## Install
 
 Windows, in PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/BlenMiner/tide-engine/release/install.ps1 | iex
+Invoke-RestMethod https://tide-engine.dev/install.ps1 | Invoke-Expression
 ```
 
 Linux and macOS:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/BlenMiner/tide-engine/release/install.sh | sh
+curl -fsSL https://tide-engine.dev/install.sh | sh
 ```
 
 This installs `tide` for your user (in `%LOCALAPPDATA%\Tide` or `~/.tide`) and
-puts it on your `PATH`; no admin rights needed. For nightly versions, which
-follow development day by day, set `TIDE_CHANNEL=nightly` before running the
-script.
+puts it on your `PATH`; no admin rights needed. Nightly versions are previews
+published when ready. Set `TIDE_CHANNEL=nightly` before running the script to
+install them.
+
+The installers and `tide upgrade` get tide from https://tide-engine.dev, with no
+account. Running the installer again upgrades a tide that's already there,
+older copies that looked for releases elsewhere among them.
 
 `tide` has its C compiler built in (clang), for native and web games alike.
 Native games also need the system's own headers and libraries:
@@ -33,6 +37,20 @@ Native games also need the system's own headers and libraries:
   `sudo apt install build-essential` on Debian and Ubuntu, `sudo dnf install gcc`
   on Fedora.
 - **macOS** (Apple Silicon): Apple's command-line tools, `xcode-select --install`.
+
+## Access requests
+
+The website's `/request-access` form collects a GitHub username and an optional
+project description. Requests are stored privately on the site's Fly volume;
+the form sends no email and grants no access automatically. Read them with:
+
+```sh
+fly ssh console -a tide-website -C 'cat /data/access-requests.jsonl'
+```
+
+Review the requests and invite approved accounts manually. For a new deployment,
+create the volume once with `fly volumes create access_requests -a tide-website
+--region fra --size 1` before deploying the site.
 
 ## Make a game
 
@@ -69,16 +87,19 @@ Then, in that folder:
 
 | Command | What it does |
 |---|---|
-| `tide run` | Builds the game and plays it |
+| `tide run` | Builds the game, plays it and reloads when you save |
 | `tide run --web` | Builds it as a web page and opens it |
 | `tide build` | Builds the game into `build/` |
-| `tide build --release --web` | An optimized, self-contained `.html` (WebGL 2) |
+| `tide build --release --web` | An optimized, self-contained `.html` (WebGPU, or WebGL 2 where the browser has none) |
 | `tide schedule` | Shows which systems can run at the same time, and why the others wait |
+| `tide shaders` | Shows the shaders the game's frags and verts compile to |
+| `tide add github.com/owner/repo` | Adds a package, at its newest commit, to `tide.packages` |
+| `tide update` | Moves the packages to the newest commits of what they follow |
 
 `tide help` lists every option. `tide` keeps its work in a hidden `.tide`
 folder next to your files, which you can delete any time; it's ignored by git.
 
-The [docs](https://blenminer.github.io/tide-engine/) go through the language a topic at a time, and
+The [docs](https://tide-engine.dev) go through the language a topic at a time, and
 [docs/spec.md](docs/spec.md) is its full spec.
 
 ## Stay up to date

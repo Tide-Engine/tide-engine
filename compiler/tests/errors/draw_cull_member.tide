@@ -1,0 +1,8 @@
+// expect: enum 'Cull' has no member 'Both'
+// expect: or they're drawn from both sides, 'Cull.None'
+scene Main { }
+
+view Show()
+{
+    Draw.SetCull(Cull.Both);
+}

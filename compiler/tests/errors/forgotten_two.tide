@@ -1,0 +1,17 @@
+// expect: a handler of Forgotten hears one component's or singleton's local fields go, and 'Box' is already it
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+component Tag
+{
+    local int seen;
+}
+
+local event(Forgotten) Free(Box box, Tag tag)
+{
+}

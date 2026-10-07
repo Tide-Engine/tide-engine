@@ -1,0 +1,19 @@
+// expect: a view can't change the match, and 'Lift' changes its 'box''s match fields
+component Box
+{
+    float3 pos;
+    local List<int> verts;
+    local int bakes;
+}
+scene Main { }
+
+void Lift(mut Box box)
+{
+    box.pos.y += 1;
+}
+
+view Raise(mut Box box)
+{
+    box.bakes += 1;
+    Lift(box);
+}

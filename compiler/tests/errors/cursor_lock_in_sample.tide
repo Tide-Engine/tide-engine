@@ -1,0 +1,11 @@
+// expect: Sample makes this machine's input once per tick, so it can't call Cursor.Lock
+input PlayerInput
+{
+    float2 look;
+    Sample(Devices devices)
+    {
+        Cursor.Lock();
+        look = devices.mouse.delta;
+    }
+}
+scene Main { }

@@ -1,0 +1,171 @@
+#include "tide/map.h"
+
+#include <string.h>
+
+#include "tide/net.h"
+
+// See tide/map.h.
+
+#define LEAST_SLOTS 8u
+
+
+static const void *key_of(const tide_map_kind *k, const void *entry)
+{
+    return (const uint8_t *)entry + k->key_offset;
+}
+
+static uint32_t slots(const tide_map m)
+{
+    return (uint32_t)tide_list_count(m.index);
+}
+
+static uint32_t slot_at(const tide_map m, const uint32_t s)
+{
+    const uint32_t *p = tide_list_at(m.index, (int32_t)s, sizeof(uint32_t));
+    return p ? *p : 0u;
+}
+
+static void set_slot(const tide_map m, const uint32_t s, const uint32_t value)
+{
+    uint32_t *p = tide_list_at_mut(m.index, (int32_t)s, sizeof(uint32_t));
+    if (p) *p = value;
+}
+
+// The slot a key with hash `h` lands in: the first empty one from its own.
+static uint32_t empty_slot(const tide_map m, const uint32_t h)
+{
+    const uint32_t mask = slots(m) - 1u;
+    uint32_t s = h & mask;
+    while (slot_at(m, s)) s = (s + 1u) & mask;
+    return s;
+}
+
+// The index built again, with `count` slots: every live entry in its place.
+static void rebuild_index(tide_map *m, const tide_map_kind *k, const uint32_t count, const uint32_t where)
+{
+    tide_list_clear(&m->index, sizeof(uint32_t));
+    for (uint32_t s = 0; s < count; s++) {
+        uint32_t *p = tide_list_add(&m->index, sizeof(uint32_t), where);
+        if (p) *p = 0u;
+    }
+    const int32_t n = tide_list_count(m->entries);
+    for (int32_t i = 0; i < n; i++) {
+        const void *e = tide_list_at(m->entries, i, k->entry_size);
+        if (!tide_map_live(e)) continue;
+        set_slot(*m, empty_slot(*m, k->hash(key_of(k, e))), (uint32_t)i + 1u);
+    }
+}
+
+// The live entries packed together, in their order, dropping the dead ones.
+static void compact(tide_map *m, const tide_map_kind *k, const uint32_t where)
+{
+    tide_list packed = {0};
+    const int32_t n = tide_list_count(m->entries);
+    for (int32_t i = 0; i < n; i++) {
+        const void *e = tide_list_at(m->entries, i, k->entry_size);
+        if (!tide_map_live(e)) continue;
+        void *to = tide_list_add(&packed, k->entry_size, where);
+        if (to) memcpy(to, e, k->entry_size);
+    }
+    tide_list_release(&m->entries, where);
+    m->entries = packed;
+}
+
+int32_t tide_map_find(const tide_map m, const tide_map_kind *k, const void *probe)
+{
+    if (!m.live || !slots(m)) return -1;
+    const uint32_t mask = slots(m) - 1u;
+    for (uint32_t s = k->hash_probe(probe) & mask;; s = (s + 1u) & mask) {
+        const uint32_t number = slot_at(m, s);
+        if (!number) return -1;
+        const void *e = tide_list_at(m.entries, (int32_t)(number - 1u), k->entry_size);
+        if (tide_map_live(e) && k->equal(key_of(k, e), probe)) return (int32_t)(number - 1u);
+    }
+}
+
+void *tide_map_insert(tide_map *m, const tide_map_kind *k, const void *probe, const uint32_t where, bool *added)
+{
+    const int32_t found = tide_map_find(*m, k, probe);
+    if (found >= 0) {
+        *added = false;
+        return tide_list_at_mut(m->entries, found, k->entry_size);
+    }
+    *added = true;
+    const uint32_t entries = (uint32_t)tide_list_count(m->entries);
+    const uint32_t dead = entries - m->live;
+    bool rebuild = false;
+    if (dead > m->live && dead >= LEAST_SLOTS) { // Packing renumbers the entries: the index is built again
+        compact(m, k, where);
+        rebuild = true;
+    }
+    const uint32_t need = (uint32_t)tide_list_count(m->entries) + 1u;
+    uint32_t count = slots(*m);
+    if (need * 2u > count) {
+        if (count < LEAST_SLOTS) count = LEAST_SLOTS;
+        while (need * 2u > count) count *= 2u;
+        rebuild = true;
+    }
+    if (rebuild) rebuild_index(m, k, count, where);
+    void *e = tide_list_add(&m->entries, k->entry_size, where);
+    if (!e) return NULL;
+    *(uint32_t *)e = 1u;
+    m->live++;
+    set_slot(*m, empty_slot(*m, k->hash_probe(probe)), (uint32_t)tide_list_count(m->entries));
+    return e;
+}
+
+void tide_map_erase(tide_map *m, const tide_map_kind *k, const int32_t i, const uint32_t where)
+{
+    (void)where;
+    void *e = tide_list_at_mut(m->entries, i, k->entry_size);
+    if (!tide_map_live(e)) return;
+    // Its slot, then the ones after it moved back over the gap, each as far as
+    // its own slot lets it
+    const uint32_t mask = slots(*m) - 1u;
+    uint32_t s = k->hash(key_of(k, e)) & mask;
+    while (slot_at(*m, s) != (uint32_t)i + 1u) s = (s + 1u) & mask;
+    uint32_t gap = s;
+    for (uint32_t n = (gap + 1u) & mask; slot_at(*m, n); n = (n + 1u) & mask) {
+        const void *other = tide_list_at(m->entries, (int32_t)(slot_at(*m, n) - 1u), k->entry_size);
+        const uint32_t own = k->hash(key_of(k, other)) & mask;
+        if (((n - own) & mask) >= ((n - gap) & mask)) {
+            set_slot(*m, gap, slot_at(*m, n));
+            gap = n;
+        }
+    }
+    set_slot(*m, gap, 0u);
+    memset(e, 0, k->entry_size);
+    m->live--;
+}
+
+void tide_map_clear(tide_map *m, const tide_map_kind *k)
+{
+    tide_list_clear(&m->entries, k->entry_size);
+    tide_list_clear(&m->index, sizeof(uint32_t));
+    m->live = 0;
+}
+
+tide_map tide_map_copy(const tide_map m, const tide_map_kind *k)
+{
+    return (tide_map){tide_list_copy(m.entries, k->entry_size), tide_list_copy(m.index, sizeof(uint32_t)), m.live};
+}
+
+void tide_map_set(tide_map *to, const tide_map value, const tide_map_kind *k, const uint32_t where)
+{
+    tide_list_set(&to->entries, value.entries, k->entry_size, where);
+    tide_list_set(&to->index, value.index, sizeof(uint32_t), where);
+    to->live = value.live;
+}
+
+void tide_map_own(tide_map *m, const tide_map_kind *k, const uint32_t where)
+{
+    tide_list_own(&m->entries, k->entry_size, where);
+    tide_list_own(&m->index, sizeof(uint32_t), where);
+}
+
+void tide_map_release(tide_map *m, const uint32_t where)
+{
+    tide_list_release(&m->entries, where);
+    tide_list_release(&m->index, where);
+    m->live = 0;
+}

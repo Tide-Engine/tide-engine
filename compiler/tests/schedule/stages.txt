@@ -1,0 +1,34 @@
+stages: 5 systems each tick, 4 stages deep; 2 can run alongside others.
+A system starts once everything it runs after is done.
+
+stage 1  Early  (once)
+         writes A
+         alongside Alongside
+stage 1  Alongside  (once)
+         writes E
+         alongside Early
+stage 2  Higher  (once)
+         writes B
+         after Early: the stage order requires this to run after Early
+         after Alongside: the stage order requires this to run after Alongside
+         alongside nothing
+stage 3  Gap  (once)
+         writes C
+         after Early: this has [After(Early)] (and through Higher)
+         after Alongside: the stage order requires this to run after Alongside (and through Higher)
+         after Higher: the stage order requires this to run after Higher
+         alongside nothing
+stage 4  Last  (once)
+         writes D
+         after Early: the stage order requires this to run after Early (and through Higher)
+         after Alongside: the stage order requires this to run after Alongside (and through Higher)
+         after Higher: the stage order requires this to run after Higher (and through Gap)
+         after Gap: the stage order requires this to run after Gap
+         alongside nothing
+
+Views, every frame in this order (they only read, so nothing waits):
+         FirstView
+         FinalView
+
+Event handlers, at the end of the tick, as their events are sent:
+         Spawned: FirstHandler, MiddleHandler

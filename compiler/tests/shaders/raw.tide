@@ -1,0 +1,23 @@
+scene Main { }
+
+// [Raw] textures are read as they are: no tide_straight around their samples.
+[Raw] asset Texture masks = "../e2e/assets/hero.png";
+asset Texture hero = "../e2e/assets/hero.png";
+[Raw] asset Grid2<Color> cells = "../e2e/assets/hero.png";
+
+local singleton Art
+{
+    [Raw] Grid2<Color> kept = Grid2(2, 2);
+    Grid2<Color> paint = Grid2(2, 2);
+}
+
+frag Read(Vertex vertex, out Color color, Art art)
+{
+    color = masks.Sample(vertex.uv) + cells.Sample(vertex.uv, Filter.Point) + art.kept.Sample(vertex.uv, Filter.Point, Wrap.Repeat)
+          + hero.Sample(vertex.uv) + art.paint.Sample(vertex.uv);
+}
+
+view Show(Art art)
+{
+    Draw.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], Read);
+}

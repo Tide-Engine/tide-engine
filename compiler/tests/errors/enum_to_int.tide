@@ -1,0 +1,5 @@
+// expect: int(x) makes it its number
+enum Phase { Warmup, Playing }
+singleton Match { Phase phase; int number; }
+scene Main { }
+system S(mut Match match) { match.number = match.phase; }

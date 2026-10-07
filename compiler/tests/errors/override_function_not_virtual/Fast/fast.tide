@@ -1,0 +1,6 @@
+namespace Fast;
+
+override float Combat.Armor(float base)
+{
+    return base;
+}

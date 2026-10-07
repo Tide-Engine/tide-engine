@@ -1,0 +1,7 @@
+// expect: an operator always gets its operands, so they take no default
+scene Main { }
+struct Money
+{
+    int cents;
+    Money operator +(Money a, Money b = Money { cents = 1 }) { return Money { cents = a.cents + b.cents }; }
+}

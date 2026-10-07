@@ -1,6 +1,5 @@
 // UDP for sessions: tide_platform_udp_open and tide_platform_resolve (see
-// tide/platform.h). A file of its own, since it includes the operating
-// system's headers, which raylib's clash with.
+// tide/platform.h). A file of its own, for the operating system's headers.
 
 #if !defined(_WIN32) && !defined(__wasi__)
 #define _DEFAULT_SOURCE // getaddrinfo and struct addrinfo under strict C
@@ -10,6 +9,9 @@
 
 #include <stdlib.h>
 #include <string.h>
+
+#include "arrivals.h"
+#include "tide/time.h"
 
 #if defined(__wasi__)
 
@@ -54,6 +56,8 @@ typedef int udp_socket;
 
 typedef struct udp {
     udp_socket socket;
+    tide_arrivals *arrivals; // Reads the socket, and says when each datagram arrived
+    double arrived;          // ...which for the last one given was then
 } udp;
 
 static bool started(void)
@@ -84,31 +88,34 @@ static void udp_send(void *self, const tide_address to, const void *data, const 
 
 static uint32_t udp_receive(void *self, tide_address *from, void *data, const uint32_t capacity)
 {
-    const udp *u = self;
-    for (;;) {
-        struct sockaddr_in a;
-        socklen_t length = sizeof a;
-        const int n = (int)recvfrom(u->socket, (char *)data, (int)capacity, 0, (struct sockaddr *)&a, &length);
-        if (n > 0 && a.sin_family == AF_INET) {
-            *from = (tide_address){TIDE_ADDRESS_IPV4, ntohl(a.sin_addr.s_addr), ntohs(a.sin_port)};
-            return (uint32_t)n;
-        }
-        if (n > 0) continue; // Not IPv4
-#ifdef _WIN32
-        // Windows reports a datagram that couldn't be delivered on the next
-        // read, and one too long for `data` as an error: skip both.
-        const int error = WSAGetLastError();
-        if (n < 0 && (error == WSAECONNRESET || error == WSAEMSGSIZE)) continue;
-#endif
-        return 0;
-    }
+    udp *u = self;
+    uint32_t ip = 0;
+    uint16_t port = 0;
+    const size_t n = tide_arrivals_next(u->arrivals, &ip, &port, data, capacity, &u->arrived);
+    if (n) *from = (tide_address){TIDE_ADDRESS_IPV4, ip, port};
+    return (uint32_t)n;
 }
 
 static void udp_close(void *self)
 {
     udp *u = self;
+    tide_arrivals_stop(u->arrivals);
     close_socket(u->socket);
     free(u);
+}
+
+// A ping over it is the network's round trip (tide_transport.clock): the
+// system says when each datagram arrived, by the clock everything here has.
+static double udp_clock(void *self)
+{
+    (void)self;
+    return (double)tide_time_now_ns() * 1e-9;
+}
+
+static double udp_arrived(void *self)
+{
+    const udp *u = self;
+    return u->arrived;
 }
 
 static bool udp_open(const uint32_t host, const uint16_t port, tide_transport *out)
@@ -128,13 +135,17 @@ static bool udp_open(const uint32_t host, const uint16_t port, tide_transport *o
     a.sin_family = AF_INET;
     a.sin_port = htons(port);
     a.sin_addr.s_addr = htonl(host);
-    udp *u = configured && bind(s, (const struct sockaddr *)&a, sizeof a) == 0 ? malloc(sizeof *u) : NULL;
-    if (!u) {
+    udp *u = configured && bind(s, (const struct sockaddr *)&a, sizeof a) == 0 ? calloc(1, sizeof *u) : NULL;
+    // Up to 256 KiB of datagrams between two frames, as a joining player's world comes
+    if (u) u->arrivals = tide_arrivals_start((uintptr_t)s, 262144u);
+    if (!u || !u->arrivals) {
+        free(u);
         close_socket(s);
         return false;
     }
     u->socket = s;
-    *out = (tide_transport){u, udp_send, udp_receive, udp_close};
+    *out = (tide_transport){.self = u, .send = udp_send, .receive = udp_receive, .close = udp_close, .clock = udp_clock,
+                            .arrived = udp_arrived};
     return true;
 }
 

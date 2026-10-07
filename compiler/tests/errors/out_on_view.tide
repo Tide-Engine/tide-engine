@@ -1,0 +1,4 @@
+// expect: the engine calls this itself, so nothing would take what an 'out' parameter makes: functions and methods have them
+scene Main { }
+local singleton Shown { int size; }
+view Show(out Shown shown) { shown.size = 1; }

@@ -1,0 +1,55 @@
+scene Main { }
+
+struct Surface { RenderTarget target; Texture image; }
+local singleton Buffers
+{
+    Surface surface;
+    RenderTarget alias;
+    RenderTarget exact;
+    RenderTarget card;
+    RenderTarget screen;
+    RenderTarget half;
+    int frames;
+}
+local event Release { Surface surface; }
+
+void Grow(RenderTarget target) { target.Resize(32, 24); }
+void Finish(RenderTarget target) { target.Dispose(); }
+
+// A third of the window, whatever it is: the factor is any number
+RenderTarget Part(float factor) { return RenderTarget.Window(factor); }
+
+local event(Release release) Cleanup()
+{
+    var scratch = RenderTarget(3, 5);
+    scratch.Resize(4, 6);
+    scratch.Dispose();
+    Finish(release.surface.target);
+}
+
+view Lifecycle(mut Buffers buffers)
+{
+    if (buffers.frames == 0)
+    {
+        var made = RenderTarget(16, 12);
+        buffers.surface.target = made;
+        buffers.surface.image = made.color;
+        buffers.alias = made;
+        Grow(buffers.alias);
+        // Exactly these pixels, on any display: 1 of them a unit
+        buffers.exact = RenderTarget(320, 180, 1);
+        // Logical pixels, like the window's: any number, at the display's scale
+        buffers.card = RenderTarget(Screen.width / 4, 90.5);
+        buffers.screen = RenderTarget.Window();
+        buffers.half = Part(0.5);
+    }
+    else if (buffers.frames == 1)
+    {
+        Send(Release { surface = buffers.surface });
+        // Keeps the pixels per unit it was made with
+        buffers.exact.Resize(64, 32.5);
+        // The window's to say: refused, with a line on stderr
+        buffers.half.Resize(8, 8);
+    }
+    buffers.frames += 1;
+}

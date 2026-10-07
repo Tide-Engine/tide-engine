@@ -1,0 +1,4 @@
+// expect: the C function Body has the same name as 'Body' in generated C
+scene Main { }
+component Body { float x; }
+extern system Body(mut Body body);

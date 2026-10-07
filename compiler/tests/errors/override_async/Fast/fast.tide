@@ -1,0 +1,7 @@
+namespace Fast;
+
+override async float Combat.Damage(float base, float multiplier = 1)
+{
+    await Wait.Ticks(1);
+    return base;
+}

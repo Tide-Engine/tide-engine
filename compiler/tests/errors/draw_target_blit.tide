@@ -1,0 +1,5 @@
+// expect: a render target has no Blit: a blit names the target it goes into, 'Draw.Blit(source, target, frag)'
+local singleton Look { RenderTarget source; RenderTarget target; }
+frag Copy(Vertex vertex, out Color color, Texture source) { color = source.Sample(vertex.uv); }
+scene Main { }
+view Show(Look look) { look.target.Blit(look.source.color, Copy); }

@@ -1,0 +1,103 @@
+// warnings: 0
+
+// No warning: the names code needs whether it uses them or not (a foreach's
+// and a parallel loop's variable, the name after `is`, a Sort's two
+// elements), and locals that are read in every way a local is.
+
+enum ParseError { Empty }
+
+int Parse(int digits) fails ParseError
+{
+    if (digits == 0) fail ParseError.Empty;
+    return digits;
+}
+
+int Twice(int x) { return x * 2; }
+
+void Bump(mut int count) { count += 1; }
+
+void Section(Action content) { content(); }
+
+struct Stats
+{
+    int health;
+
+    bool IsDead() { return health <= 0; }
+}
+
+component Unit
+{
+    int hits;
+    List<int> history;
+    Stats stats;
+    string name;
+}
+
+singleton Field { Grid2<int> cells = Grid2(64, 64); }
+
+system Exempt(mut Unit unit, mut Field field)
+{
+    // A loop that only counts
+    foreach (var entry in unit.history) unit.hits += 1;
+    // Every cell the same
+    parallel (var at in field.cells) field.cells[at] = 1;
+    // Only whether there's a value
+    if (Parse(unit.hits) is int parsed) unit.hits += 1;
+    // An order that doesn't look at the elements
+    unit.history.Sort(a, b) { return false; }
+}
+
+system Read(mut Unit unit)
+{
+    var plain = unit.hits; // In an expression
+    unit.hits = plain + 1;
+
+    var nested = unit.hits; // In a scope inside its own
+    if (unit.hits > 2)
+    {
+        unit.hits = nested;
+    }
+
+    mut var passed = 0; // As a mut argument
+    Bump(passed);
+
+    var argument = 3; // As an argument
+    unit.hits += Twice(argument);
+
+    var copy = unit.stats; // By a method called on it
+    if (copy.IsDead()) unit.hits = 0;
+
+    var shown = unit.hits; // In text
+    unit.name = $"hits {shown}";
+
+    var index = 0; // As an index, of what's written
+    unit.history[index] = 1;
+
+    var block = 2; // By a block written after a call
+    Section() { unit.hits += block; }
+
+    mut var own = 1; // On the right of its own assignment
+    own = own + 1;
+
+    mut var counter = 0; // Assigned, and read too
+    counter += 1;
+    unit.hits += counter;
+
+    for (var i = 0; i < 3; i++) unit.hits += 1; // By its for's own condition
+
+    var result = Parse(unit.hits); // By `is`
+    if (result is int value) unit.hits = value;
+
+    var condition = unit.hits > 3; // In a condition
+    if (condition) return;
+
+    var returned = unit.stats; // Its field
+    unit.hits = returned.health;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Unit);
+}

@@ -1,0 +1,284 @@
+// A system's loop over its entities' rows (tide_rows_<System>_<n> in generated
+// C), every way it's made: with pages the world alone has and with pages a
+// snapshot shares, for every row and with rows left out, whole chunks and
+// chunks in pieces. Each has to come out the same, bit for bit.
+
+scene Main { }
+
+singleton Rules
+{
+    int count = 5000;
+    bool ready;
+    // Never set. Systems below would spin a million times a row with it,
+    // which is what makes a tick on threads worth it, and their chunks worth
+    // pieces, as far as the engine can tell.
+    bool heavy;
+}
+
+input Controls
+{
+    float2 move;
+    bool jump;
+}
+
+// Wide: fifteen lanes, of floats, an int and entities
+component Body
+{
+    float3 position;
+    float3 velocity;
+    float3 push;
+    float drag;
+    int bounces;
+    Entity mate;
+    Entity child;
+}
+
+// Only ever read
+component Stats
+{
+    float mass;
+    int kind;
+}
+
+// Text and a list beside plain fields: their handles are lanes like the rest
+component Label
+{
+    int hits;
+    string name;
+    List<int> marks;
+    float weight;
+}
+
+// Changed by a system that leaves rows out
+component Cargo
+{
+    float3 at;
+    float2 size;
+    int moves;
+}
+
+// All of it taken to change, a few rows changed
+component Still
+{
+    float3 at;
+    float3 was;
+    int n;
+}
+
+component Spark
+{
+    int from;
+}
+
+struct Sixteen
+{
+    float4 a;
+    float4 b;
+    float4 c;
+    float4 d;
+}
+
+// More lanes than a loop takes as parameters of its own, where each is read in
+// one place and written in another: 128, so 256
+component Bulk
+{
+    Sixteen first;
+    Sixteen second;
+    Sixteen third;
+    Sixteen fourth;
+    Sixteen fifth;
+    Sixteen sixth;
+    Sixteen seventh;
+    Sixteen eighth;
+}
+
+// ...and as many again, which a loop that takes both only reads
+component Hull
+{
+    Sixteen first;
+    Sixteen second;
+    Sixteen third;
+    Sixteen fourth;
+    Sixteen fifth;
+    Sixteen sixth;
+    Sixteen seventh;
+    Sixteen eighth;
+}
+
+[Sparse]
+component Frozen { }
+
+[Sparse]
+component Stunned
+{
+    int left;
+}
+
+// Of the entities no player owns, the first chunk's are all frozen, the
+// second's none, and the third's every third one; a few are stunned. A
+// player's are an archetype of their own, with the same rows and an Owner.
+system Setup(mut Rules rules)
+{
+    if (rules.ready) return;
+    rules.ready = true;
+    mut Entity last = default;
+    mut var row = 0;
+    for (var i = 0; i < rules.count; i++)
+    {
+        var h = Math.Hash(int2(i, 0));
+        var g = Math.Hash(int2(i, 1));
+        var made = Spawn(
+            Body
+            {
+                position = float3(float(h % 1000) * 0.125, float(g % 1000) * 0.125, float(i % 50)),
+                velocity = float3(float(h % 17 - 8) * 0.25, float(g % 17 - 8) * 0.25, 0.5),
+                push = float3(0, -1, 0),
+                drag = float(g % 8) * 0.015625,
+                mate = last
+            },
+            Stats { mass = 1 + float(h % 4), kind = g % 9 },
+            Label { hits = i % 7, name = $"body {i % 10}", weight = float(i % 5) },
+            Cargo { at = float3(float(i % 100), 0, 1), size = float2(1, 2) },
+            Still { at = float3(float(i), 1, 2) },
+            Bulk { first = Sixteen { a = float4(float(i % 3), 1, 2, 3) }, eighth = Sixteen { d = float4(4, 5, 6, float(i % 5)) } },
+            Hull { third = Sixteen { b = float4(0.5, float(i % 7), 0, 0) }, eighth = Sixteen { d = float4(0, 0, 0, 0.25) } });
+        last = made;
+        if (i % 500 == 3)
+        {
+            made.Add(Owner { player = PlayerID(i % 2) });
+            continue;
+        }
+        if (row < 2048 || (row >= 4096 && row % 3 == 0)) made.Add(Frozen);
+        if (i % 40 == 7) made.Add(Stunned { left = 1 + i % 6 });
+        row += 1;
+    }
+}
+
+// Reads through its World a component it changes: its rows are written where
+// they are, one after the other
+system Chase(mut Body body, World world)
+{
+    var mate = world.Get<Body>(body.mate);
+    body.push.x = (mate.position.x - body.position.x) * 0.0078125;
+}
+
+// A component it changes and one it reads, every row
+system Move(mut Body body, Stats stats, Time time, Rules rules)
+{
+    if (rules.heavy)
+    {
+        for (var i = 0; i < 1000000; i++) body.bounces += i;
+    }
+    body.velocity += body.push * (time.dt / stats.mass);
+    body.velocity *= 1 - body.drag * time.dt;
+    body.position += body.velocity * time.dt;
+    if (body.position.y < 0)
+    {
+        body.position.y = -body.position.y;
+        body.velocity.y = -body.velocity.y;
+        body.bounces += 1;
+    }
+}
+
+// Rows left out by a sparse component: a chunk with none to run for, one with
+// all of them, one with some
+system Shift(mut Cargo cargo, Body body, Stats stats, Rules rules, without Frozen)
+{
+    if (rules.heavy)
+    {
+        for (var i = 0; i < 1000000; i++) cargo.moves += i;
+    }
+    cargo.at += body.velocity * 0.5;
+    cargo.size = float2(cargo.size.y, cargo.size.x + stats.mass);
+    cargo.moves += 1;
+}
+
+// The frozen ones' cargo is another system's to change, every other tick: the
+// same component, in the same pages, for the rows the one above leaves out.
+// The two never run for the same entity, and still one waits for the other
+system Thaw(mut Cargo cargo, Stats stats, Time time, Rules rules, with Frozen)
+{
+    if (rules.heavy)
+    {
+        for (var i = 0; i < 1000000; i++) cargo.moves += i;
+    }
+    if (time.tick % 2 == 0)
+    {
+        cargo.at.z += stats.mass * 0.25;
+        cargo.size.x -= 0.5;
+    }
+}
+
+// Two components changed, one of them sparse and with a value: the stunned,
+// who recover in their own time, so the rows it runs for change
+system Recover(mut Stunned stunned, mut Body body)
+{
+    stunned.left -= 1;
+    body.drag += 0.015625;
+    if (stunned.left <= 0) this.Remove(Stunned);
+}
+
+// All of it taken to change, a few rows changed: the pages of the rest stay
+// the snapshot's
+system Rest(mut Still still, Stats stats, Time time, Rules rules)
+{
+    if (rules.heavy)
+    {
+        for (var i = 0; i < 1000000; i++) still.n += i;
+    }
+    if (stats.kind == 7 && time.tick % 2 == 0)
+    {
+        still.was = still.at;
+        still.n += 1;
+    }
+}
+
+// Plain fields of a component that holds text and a list
+system Weigh(mut Label label, Stats stats, Rules rules)
+{
+    if (rules.heavy)
+    {
+        for (var i = 0; i < 1000000; i++) label.hits += i;
+    }
+    label.hits += stats.kind;
+    label.weight = label.weight * 0.5 + stats.mass;
+}
+
+// ...and its text and list, which a system changes on one thread, here with
+// rows left out too
+system Rename(mut Label label, Time time, with Frozen)
+{
+    if ((time.tick + label.hits) % 11 == 0)
+    {
+        label.name = $"frozen {label.hits}";
+        label.marks.Add(time.tick);
+    }
+}
+
+// Its entities' owners' input: the Owner is one more column it reads
+system Drive(mut Body body, Controls controls)
+{
+    body.velocity.x += controls.move.x;
+    if (controls.jump) body.velocity.y += 2;
+}
+
+// Spawns from a system whose entities go across threads: the handles it keeps
+// in what it changes are temporary until it's done
+system Breed(mut Body body, Stats stats, Time time, Rules rules)
+{
+    if (rules.heavy)
+    {
+        for (var i = 0; i < 1000000; i++) body.bounces += i;
+    }
+    if (time.tick % 4 == 1 && stats.kind == 3 && body.bounces % 2 == 0) body.child = Spawn(Spark { from = body.bounces });
+}
+
+// A component of more lanes than a loop's parameters hold when it's written
+// apart, beside one that fits, and another that's only read
+system Churn(mut Body body, mut Bulk bulk, Hull hull, Stats stats)
+{
+    bulk.first.a.x += hull.third.b.y * 0.125;
+    bulk.fifth.c = bulk.fifth.c + float4(stats.mass, 0, hull.eighth.d.w, 1);
+    bulk.eighth.d.w = bulk.first.a.x - bulk.eighth.d.w * 0.5;
+    body.drag = body.drag * 0.5 + bulk.eighth.d.w * 0.00390625;
+}

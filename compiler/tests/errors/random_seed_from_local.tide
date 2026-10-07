@@ -1,0 +1,8 @@
+// expect: 'Options' is local, and the match can't use local state
+local singleton Options { int seed; }
+singleton Deck { Random random; }
+scene Main { }
+system Shuffle(mut Deck deck, Options options)
+{
+    deck.random = Random(options.seed);
+}

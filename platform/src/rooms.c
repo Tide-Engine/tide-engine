@@ -14,15 +14,25 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/time.h"
+
 // The room this program is in, whichever machine does the work: `number`
 // tells rooms apart, so a transport left over from the last one does nothing.
 static uint32_t backend_host(void);
 static uint32_t backend_join(const char *code);
+static uint32_t backend_migrate(const char *code, const char *key);
+static int backend_moved(uint32_t number); // tide_platform_room_migrated's answer, for room `number`
+static void backend_key(char out[TIDE_ROOM_KEY_LENGTH + 1]);
+static void backend_end(uint32_t number); // The match in room `number`, which this program hosts, ended
 static void backend_close(uint32_t number);
 static void backend_code(char out[TIDE_ROOM_CODE_LENGTH + 1]);
 static bool backend_failed(void);
 static void backend_send(uint32_t number, uint32_t to, const void *data, uint32_t size);
 static uint32_t backend_receive(uint32_t number, uint32_t *from, void *data, uint32_t capacity);
+static double backend_arrived(void); // When the datagram backend_receive last gave arrived: seconds, by tide_time_now_ns
+static void backend_ping(int32_t ping_ms, uint32_t answer_ms);
+static bool backend_netcode_wanted(void);
+static void backend_netcode(const double *values, uint32_t count);
 
 #if defined(__wasm__)
 
@@ -36,6 +46,26 @@ static uint32_t backend_host(void)
 static uint32_t backend_join(const char *code)
 {
     return tide_web_room_join(code);
+}
+
+static uint32_t backend_migrate(const char *code, const char *key)
+{
+    return tide_web_room_migrate(code, key);
+}
+
+static int backend_moved(const uint32_t number)
+{
+    return tide_web_room_migrated(number);
+}
+
+static void backend_key(char out[TIDE_ROOM_KEY_LENGTH + 1])
+{
+    tide_web_room_key(out);
+}
+
+static void backend_end(const uint32_t number)
+{
+    tide_web_room_end(number);
 }
 
 static void backend_close(const uint32_t number)
@@ -63,12 +93,33 @@ static uint32_t backend_receive(const uint32_t number, uint32_t *from, void *dat
     return tide_web_room_receive(number, from, data, capacity);
 }
 
+// The page notes when each datagram came, by the clock the program has too.
+static double backend_arrived(void)
+{
+    return tide_web_room_arrived() * 1e-3;
+}
+
+static void backend_ping(const int32_t ping_ms, const uint32_t answer_ms)
+{
+    tide_web_room_ping(ping_ms, answer_ms);
+}
+
+static bool backend_netcode_wanted(void)
+{
+    return tide_web_netcode_wanted();
+}
+
+static void backend_netcode(const double *values, const uint32_t count)
+{
+    tide_web_netcode(values, count);
+}
+
 #else
 
 #include "rtc/rtc.h"
 
-#define RELAY "wss://purrengine-relay.fly.dev"
-#define PEERS 16
+#define RELAY "wss://relay.tide-engine.dev"
+#define PEERS 256 // The most players a game takes (TIDE_PLAYERS_MOST): a host has a peer for each
 
 typedef struct room_peer {
     rtc_peer *peer;
@@ -79,20 +130,25 @@ typedef struct room_peer {
 typedef struct native_room {
     uint32_t number;
     bool hosting;
+    bool moving; // Host migration: the relay says whether it hosts the room or joins it (`moved`, see backend_moved)
+    int moved;
     bool failed;
     bool reachable; // Hosting: the relay knows the room
     bool connected; // Joining: the host is reached
     double opened;
     double join_again; // Joining a room the relay doesn't know yet: when to ask again
     char code[TIDE_ROOM_CODE_LENGTH + 1];
+    char key[TIDE_ROOM_KEY_LENGTH + 1]; // Lets its players meet in it again, with host migration
     rtc_ws ws;
     bool ws_live;
+    bool announced; // This connection asked the relay for the room already
     double reconnect_at;
     rtc_ice_config ice;
     room_peer peers[PEERS];
     int peer_count;
     uint32_t next_number;
     int next_read;
+    double arrived; // When the datagram backend_receive last gave arrived
 } native_room;
 
 static native_room *room;
@@ -112,6 +168,14 @@ static void new_code(char code[TIDE_ROOM_CODE_LENGTH + 1])
     rtc_random(r, sizeof r);
     for (int i = 0; i < TIDE_ROOM_CODE_LENGTH; i++) code[i] = TIDE_ROOM_CODE_LETTERS[r[i] & 31];
     code[TIDE_ROOM_CODE_LENGTH] = '\0';
+}
+
+// A room's key: 128 random bits, in hex.
+static void new_key(char key[TIDE_ROOM_KEY_LENGTH + 1])
+{
+    uint8_t r[TIDE_ROOM_KEY_LENGTH / 2];
+    rtc_random(r, sizeof r);
+    for (int i = 0; i < TIDE_ROOM_KEY_LENGTH / 2; i++) snprintf(key + 2 * i, 3, "%02x", r[i]);
 }
 
 static void relay_send(native_room *r, const char *json)
@@ -150,6 +214,7 @@ static void relay_lost(native_room *r, const double now)
         r->reconnect_at = now + 1.0;
     } else if (!r->connected && !r->failed) {
         r->failed = true;
+        if (r->moving) r->moved = -1;
         fprintf(stderr, "tide: can't reach the relay at %s to join room %s\n", relay_url(), r->code);
     }
 }
@@ -158,6 +223,7 @@ static void relay_connect(native_room *r, const double now)
 {
     relay_close(r);
     r->ws_live = rtc_ws_open(&r->ws, relay_url(), now);
+    r->announced = false;
     if (!r->ws_live) relay_lost(r, now);
 }
 
@@ -241,18 +307,43 @@ static void on_relay(native_room *r, const char *text)
 {
     const rtc_json m = rtc_json_of(text, strlen(text));
     if (!m.text) return;
-    char code[16], json[64];
+    // What it says, but for its hello, which has the TURN server's credentials
+    rtc_debug("room %s: the relay says %.48s", r->code, rtc_json_get(m, "relay").text ? "hello" : text);
+    char code[16], json[128];
     double n = 0;
     if (rtc_json_get(m, "relay").text) {
         read_ice(r, rtc_json_get(m, "ice"));
-        snprintf(json, sizeof json, "{\"%s\":\"%s\"}", r->hosting ? "host" : "join", r->code);
+        if (r->moving) snprintf(json, sizeof json, "{\"migrate\":\"%s\",\"key\":\"%s\"}", r->code, r->key);
+        else if (r->hosting) snprintf(json, sizeof json, "{\"host\":\"%s\",\"key\":\"%s\"}", r->code, r->key);
+        else snprintf(json, sizeof json, "{\"join\":\"%s\"}", r->code);
         relay_send(r, json);
+        r->announced = true;
     } else if (rtc_json_get(m, "hosting").text) {
+        rtc_debug("room %s: the relay has it", r->code);
         r->reachable = true;
+        if (r->moving) { // The room's host was gone: this machine is now
+            r->moving = false;
+            r->hosting = true;
+            r->moved = 1;
+        }
+    } else if (rtc_json_get(m, "ended").text && r->moving) { // Its host ended the match there
+        r->moving = false;
+        r->failed = true;
+        r->moved = -2;
+    } else if (rtc_json_get(m, "taken").text && r->moving) { // Another key: not the match it was in
+        r->moving = false;
+        r->failed = true;
+        r->moved = -1;
+        fprintf(stderr, "tide: room %s has another match now\n", r->code);
     } else if (rtc_json_get(m, "taken").text) {
         new_code(r->code);
-        snprintf(json, sizeof json, "{\"host\":\"%s\"}", r->code);
+        snprintf(json, sizeof json, "{\"host\":\"%s\",\"key\":\"%s\"}", r->code, r->key);
         relay_send(r, json);
+    } else if (rtc_json_string(rtc_json_get(m, "lost"), code, sizeof code) && r->hosting) {
+        // Its players took the room over, thinking it gone: it hosts it no more
+        r->failed = true;
+        r->reachable = false;
+        fprintf(stderr, "tide: room %s has another host now\n", code);
     } else if (rtc_json_string(rtc_json_get(m, "missing"), code, sizeof code) && !r->hosting
                && rtc_now() - r->opened < 5.0) {
         // A room its host just opened, which the relay may not know yet
@@ -269,6 +360,10 @@ static void on_relay(native_room *r, const char *text)
                     code);
         }
     } else if (rtc_json_get(m, "joined").text) {
+        if (r->moving) { // The room's host is there: this machine joins it
+            r->moving = false;
+            r->moved = 2;
+        }
         if (!r->hosting && !r->peer_count && !add_peer(r, true, 0, 0)) r->failed = true;
     } else if (rtc_json_number(rtc_json_get(m, "peer"), &n)) {
         if (r->hosting) add_peer(r, false, r->next_number++, (int)n);
@@ -288,7 +383,7 @@ static void on_relay(native_room *r, const char *text)
 static void pump(native_room *r)
 {
     const double now = rtc_now();
-    const bool joining = !r->hosting && !r->connected && !r->failed && r->reconnect_at > 0.0;
+    const bool joining = !r->hosting && !r->connected && !r->failed && r->reconnect_at > 0.0; // Or migrating
     if (!r->ws_live && (r->hosting || joining) && now >= r->reconnect_at) relay_connect(r, now);
     if (r->join_again > 0.0 && now >= r->join_again) {
         r->join_again = 0.0;
@@ -312,14 +407,61 @@ static void pump(native_room *r)
             relay_send(r, wrapped);
         }
         if (p->peer->state == RTC_PEER_OPEN && !r->hosting && !r->connected) {
-            r->connected = true;
-            relay_close(r); // Joined: the relay's part is done
+            r->connected = true; // The relay closes once the host sends (backend_receive)
         } else if (p->peer->state == RTC_PEER_FAILED) {
             if (!r->hosting && !r->connected && !r->failed) {
                 r->failed = true;
                 fprintf(stderr, "tide: couldn't connect to the host of room %s\n", r->code);
             }
             remove_peer(r, i);
+        }
+    }
+}
+
+// A room whose match ended, telling the relay (see backend_end), on the
+// connection it had or a new one, which it keeps until the relay read what it
+// said (it answers the close that goes after: rtc_ws_finish), or can't be
+// reached. Every call on a room moves them along, and tide/host.h makes one
+// each frame (tide_platform_room_failed).
+typedef struct goodbye {
+    struct goodbye *next;
+    rtc_ws ws;
+    bool announced; // The connection asked the relay for the room already
+    bool said;
+    char code[TIDE_ROOM_CODE_LENGTH + 1];
+    char key[TIDE_ROOM_KEY_LENGTH + 1];
+} goodbye;
+
+static goodbye *goodbyes;
+
+static void goodbyes_update(void)
+{
+    const double now = rtc_now();
+    for (goodbye **at = &goodbyes; *at;) {
+        goodbye *g = *at;
+        rtc_ws_update(&g->ws, now);
+        if (g->ws.state == RTC_WS_OPEN && !g->said) {
+            // The relay may not know the room yet: asked for first, as it
+            // reads a connection's messages in order
+            char json[128];
+            if (!g->announced) {
+                snprintf(json, sizeof json, "{\"host\":\"%s\",\"key\":\"%s\"}", g->code, g->key);
+                rtc_ws_send(&g->ws, json, strlen(json));
+            }
+            snprintf(json, sizeof json, "{\"end\":\"%s\"}", g->code);
+            rtc_ws_send(&g->ws, json, strlen(json));
+            g->said = true;
+            rtc_ws_finish(&g->ws, now);
+            rtc_ws_update(&g->ws, now); // On its way at once
+        }
+        if (g->ws.state == RTC_WS_CLOSED) {
+            const bool told = g->said && g->ws.answered;
+            rtc_debug("room %s: %s the relay its match ended", g->code, told ? "told" : "couldn't tell");
+            rtc_ws_close(&g->ws);
+            *at = g->next;
+            free(g);
+        } else {
+            at = &g->next;
         }
     }
 }
@@ -333,16 +475,20 @@ static void backend_close(const uint32_t number)
     room = NULL;
 }
 
-static uint32_t open_room(const bool hosting, const char *code)
+static uint32_t open_room(const bool hosting, const char *code, const char *key)
 {
+    goodbyes_update();
     if (room) backend_close(room->number);
     room = calloc(1, sizeof *room);
     if (!room) return 0;
     room->number = ++rooms_opened;
     room->hosting = hosting;
+    room->moving = key != NULL;
     room->reachable = true;
     room->next_number = 1;
     room->opened = rtc_now();
+    if (key) snprintf(room->key, sizeof room->key, "%s", key);
+    else if (hosting) new_key(room->key);
     if (hosting) {
         new_code(room->code);
     } else {
@@ -357,6 +503,7 @@ static uint32_t open_room(const bool hosting, const char *code)
         }
         if (!valid || n != TIDE_ROOM_CODE_LENGTH) {
             room->failed = true;
+            if (room->moving) room->moved = -1;
             fprintf(stderr, "tide: '%s' isn't a room code: they're 6 letters and digits, like K7QF2M\n", code);
             return room->number;
         }
@@ -367,22 +514,67 @@ static uint32_t open_room(const bool hosting, const char *code)
 
 static uint32_t backend_host(void)
 {
-    return open_room(true, NULL);
+    return open_room(true, NULL, NULL);
 }
 
 static uint32_t backend_join(const char *code)
 {
-    return open_room(false, code);
+    return open_room(false, code, NULL);
+}
+
+static uint32_t backend_migrate(const char *code, const char *key)
+{
+    return open_room(false, code, key);
+}
+
+static int backend_moved(const uint32_t number)
+{
+    goodbyes_update();
+    if (!room || room->number != number) return -1;
+    if (room->moving && !room->failed) pump(room);
+    if (!room || room->number != number) return -1;
+    return room->failed && room->moved == 0 ? -1 : room->moved;
+}
+
+static void backend_key(char out[TIDE_ROOM_KEY_LENGTH + 1])
+{
+    goodbyes_update();
+    snprintf(out, TIDE_ROOM_KEY_LENGTH + 1, "%s", room && room->hosting && !room->failed ? room->key : "");
+}
+
+// The relay keeps the room as ended a while, so its players don't take it
+// over. It hears so on a connection of the room's goodbye (see goodbye): the
+// room's own, open or opening, which its closing then leaves be, or a new one.
+static void backend_end(const uint32_t number)
+{
+    if (!room || room->number != number || !room->hosting) return;
+    goodbye *g = calloc(1, sizeof *g);
+    if (!g) return;
+    snprintf(g->code, sizeof g->code, "%s", room->code);
+    snprintf(g->key, sizeof g->key, "%s", room->key);
+    if (room->ws_live && room->ws.state != RTC_WS_CLOSED) {
+        g->ws = room->ws;
+        g->announced = room->announced;
+        room->ws_live = false;
+    } else if (!rtc_ws_open(&g->ws, relay_url(), rtc_now())) {
+        free(g);
+        return;
+    }
+    g->next = goodbyes;
+    goodbyes = g;
+    goodbyes_update();
 }
 
 static void backend_code(char out[TIDE_ROOM_CODE_LENGTH + 1])
 {
+    goodbyes_update();
     const bool shown = room && !room->failed && room->reachable;
     snprintf(out, TIDE_ROOM_CODE_LENGTH + 1, "%s", shown ? room->code : "");
 }
 
 static bool backend_failed(void)
 {
+    goodbyes_update();
     return room && room->failed;
 }
 
@@ -396,13 +588,20 @@ static void backend_send(const uint32_t number, const uint32_t to, const void *d
 
 static uint32_t backend_receive(const uint32_t number, uint32_t *from, void *data, const uint32_t capacity)
 {
+    goodbyes_update();
     if (!room || room->number != number) return 0;
     for (int attempt = 0; attempt < 2; attempt++) {
         for (int k = 0; k < room->peer_count; k++) {
             const int i = (room->next_read + k) % room->peer_count;
             const size_t n = rtc_peer_receive(room->peers[i].peer, data, capacity);
             if (n) {
+                // Joined: the relay's part is done once the host sends, which
+                // it only does with its end open. Not before: the relay tells
+                // the host this one left, and a host that hasn't caught up
+                // with its own end yet takes it for a player who gave up
+                if (!room->hosting && room->ws_live) relay_close(room);
                 *from = room->peers[i].number;
+                room->arrived = room->peers[i].peer->arrived;
                 room->next_read = (i + 1) % room->peer_count;
                 return (uint32_t)n;
             }
@@ -411,6 +610,30 @@ static uint32_t backend_receive(const uint32_t number, uint32_t *from, void *dat
         if (!room || room->number != number) return 0;
     }
     return 0;
+}
+
+static double backend_arrived(void)
+{
+    return room ? room->arrived : 0.0;
+}
+
+// Only a page plays at a slow connection.
+static void backend_ping(const int32_t ping_ms, const uint32_t answer_ms)
+{
+    (void)ping_ms;
+    (void)answer_ms;
+}
+
+// ...and only a page asks for the session's numbers.
+static bool backend_netcode_wanted(void)
+{
+    return false;
+}
+
+static void backend_netcode(const double *values, const uint32_t count)
+{
+    (void)values;
+    (void)count;
 }
 
 #endif
@@ -448,6 +671,27 @@ static void room_close(void *self)
     free(r);
 }
 
+static void room_end(void *self)
+{
+    const room_transport *r = self;
+    backend_end(r->number);
+}
+
+// A ping in a room is the network's round trip (tide_transport.clock): each
+// datagram is noted as it arrives, by the system or the page, by the one clock
+// everything here has.
+static double room_clock(void *self)
+{
+    (void)self;
+    return (double)tide_time_now_ns() * 1e-9;
+}
+
+static double room_arrived(void *self)
+{
+    (void)self;
+    return backend_arrived();
+}
+
 // A transport for room `number`: false, closing it, without the memory.
 static bool transport(const uint32_t number, const uint32_t code, tide_transport *out)
 {
@@ -457,7 +701,8 @@ static bool transport(const uint32_t number, const uint32_t code, tide_transport
         return false;
     }
     *r = (room_transport){number, code};
-    *out = (tide_transport){.self = r, .send = room_send, .receive = room_receive, .close = room_close};
+    *out = (tide_transport){.self = r, .send = room_send, .receive = room_receive, .close = room_close, .end = room_end,
+                            .clock = room_clock, .arrived = room_arrived};
     return true;
 }
 
@@ -504,6 +749,53 @@ bool tide_platform_room_failed(void)
     return backend_failed();
 }
 
+void tide_platform_room_ping(const int32_t ping_ms, const uint32_t answer_ms)
+{
+    backend_ping(ping_ms, answer_ms);
+}
+
+bool tide_platform_netcode_wanted(void)
+{
+    return backend_netcode_wanted();
+}
+
+void tide_platform_netcode(const double *values, const uint32_t count)
+{
+    backend_netcode(values, count);
+}
+
+void tide_platform_room_key(char *out, const size_t size)
+{
+    char key[TIDE_ROOM_KEY_LENGTH + 1] = {0};
+    backend_key(key);
+    if (size) snprintf(out, size, "%s", key);
+}
+
+// The room being migrated to (see tide_platform_room_migrate), and its code, packed.
+static uint32_t migrating_number;
+static uint32_t migrating_code;
+
+void tide_platform_room_migrate(const char *code, const char *key)
+{
+    if (!pack(code, &migrating_code)) migrating_code = TIDE_ROOM_CODE_BIT;
+    migrating_number = backend_migrate(code, key);
+}
+
+int tide_platform_room_migrated(tide_transport *out, tide_address *server)
+{
+    if (!migrating_number) return -1;
+    const int moved = backend_moved(migrating_number);
+    if (moved <= 0) {
+        if (moved < 0) migrating_number = 0;
+        return moved;
+    }
+    const uint32_t number = migrating_number;
+    migrating_number = 0;
+    *server = (tide_address){.kind = TIDE_ADDRESS_ROOM, .host = migrating_code, .port = 0};
+    // Its host's players see it as 0, as in any room it hosts; to one joining, the host has the room's code
+    return transport(number, moved == 1 ? 0u : migrating_code, out) ? moved : -1;
+}
+
 // ---------------------------------------------------------------------------
 // Hosting: on a UDP port and in a room at once, where there's both
 
@@ -511,6 +803,7 @@ typedef struct both {
     tide_transport udp;
     tide_transport room;
     bool room_first; // Taking turns, so neither waits on the other
+    const tide_transport *gave; // Which the last datagram came on
 } both;
 
 static void both_send(void *self, const tide_address to, const void *data, const uint32_t size)
@@ -526,8 +819,26 @@ static uint32_t both_receive(void *self, tide_address *from, void *data, const u
     b->room_first = !b->room_first;
     const tide_transport *first = b->room_first ? &b->room : &b->udp;
     const tide_transport *second = b->room_first ? &b->udp : &b->room;
-    const uint32_t n = first->receive(first->self, from, data, capacity);
-    return n ? n : second->receive(second->self, from, data, capacity);
+    uint32_t n = first->receive(first->self, from, data, capacity);
+    b->gave = first;
+    if (!n) {
+        n = second->receive(second->self, from, data, capacity);
+        b->gave = second;
+    }
+    return n;
+}
+
+// Both go by the one clock, and each says when its own datagrams arrived.
+static double both_clock(void *self)
+{
+    const both *b = self;
+    return b->udp.clock(b->udp.self);
+}
+
+static double both_arrived(void *self)
+{
+    const both *b = self;
+    return b->gave ? b->gave->arrived(b->gave->self) : 0.0;
 }
 
 static void both_close(void *self)
@@ -538,6 +849,12 @@ static void both_close(void *self)
     free(b);
 }
 
+static void both_end(void *self)
+{
+    const both *b = self;
+    if (b->room.end) b->room.end(b->room.self);
+}
+
 bool tide_platform_host_open(const uint16_t port, tide_transport *out)
 {
     tide_transport udp = {0}, in_room = {0};
@@ -545,8 +862,9 @@ bool tide_platform_host_open(const uint16_t port, tide_transport *out)
     const bool has_room = tide_platform_room_host(&in_room);
     both *b = has_udp && has_room ? malloc(sizeof *b) : NULL;
     if (b) {
-        *b = (both){udp, in_room, false};
-        *out = (tide_transport){.self = b, .send = both_send, .receive = both_receive, .close = both_close};
+        *b = (both){udp, in_room, false, NULL};
+        *out = (tide_transport){.self = b, .send = both_send, .receive = both_receive, .close = both_close, .end = both_end,
+                                .clock = both_clock, .arrived = both_arrived};
         return true;
     }
     if (has_udp && has_room) {

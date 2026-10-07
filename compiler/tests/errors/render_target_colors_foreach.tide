@@ -1,0 +1,4 @@
+// expect: a target's color images are read one at a time: 'colors[1]' is its second, as a Texture
+scene Main { }
+local singleton Maps { RenderTarget scene; Texture held; DepthTexture deep; }
+view Show(mut Maps maps) { foreach (var image in maps.scene.colors) { maps.held = image; } }

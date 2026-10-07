@@ -1,0 +1,20 @@
+// warnings: 2
+// expect: local 'rest' is never used
+// expect: nothing reads what the call makes there: write 'out _' to leave it out
+// expect: local 'spare' is never used
+// A local an `out` argument declares that nothing reads: `out _` is there for
+// what a call makes that the code doesn't want.
+scene Main { }
+singleton Tally { int whole; }
+void Split(float value, out int whole, out float rest)
+{
+    whole = int(value);
+    rest = value - float(whole);
+}
+system Run(mut Tally tally)
+{
+    Split(2.5, out var whole, out var rest);
+    tally.whole = whole;
+    Split(7.5, out tally.whole, out float spare);
+    Split(9.5, out tally.whole, out _);
+}

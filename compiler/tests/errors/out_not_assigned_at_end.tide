@@ -1,0 +1,8 @@
+// expect: 'Split' can end without assigning its 'rest'
+// expect: an 'out' parameter is assigned on every path that returns: 'rest = default;' fills it where there's nothing to give
+scene Main { }
+void Split(float value, out int whole, out float rest)
+{
+    whole = int(value);
+    if (value > 0) rest = value - float(whole);
+}

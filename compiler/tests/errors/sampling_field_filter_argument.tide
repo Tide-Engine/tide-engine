@@ -1,0 +1,7 @@
+// expect: [Filter] takes how the texture is read between its cells: [Filter(Filter.Point)], [Filter(Filter.Bilinear)] or [Filter(Filter.Trilinear)]
+scene Main { }
+
+local singleton Art
+{
+    [Filter(1)] Grid2<Color> paint = Grid2(4, 4);
+}

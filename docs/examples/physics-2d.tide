@@ -1,0 +1,91 @@
+using Box2D;
+
+settings { title = "Physics in 2D"; maxPlayers = 1; }
+
+component Crate { }
+component Ball { int ticks; }
+singleton Tally { int touches; }
+
+scene Main { }
+
+event(Spawned) Build(with Main)
+{
+    // Bodies that never move: the floor and two walls, a box on each.
+    Spawn(Body { type = BodyType.Static, position = float2(0, -0.5) }, Box { size = float2(11, 1) });
+    Spawn(Body { type = BodyType.Static, position = float2(-4.8, 6) }, Box { size = float2(1, 12) });
+    Spawn(Body { type = BodyType.Static, position = float2(4.8, 6) }, Box { size = float2(1, 12) });
+    // Three stacks of crates. A body is dynamic unless it says otherwise.
+    for (var i = 0; i < 12; i++)
+        Spawn(Body { position = float2(-2.5 + 2.5 * (i / 4), 0.5 + i % 4) }, Box, Crate);
+}
+
+// What a tap asks of the match.
+command Drop { float2 at; }
+command Kick { }
+
+command(Drop drop, PlayerID sender) DropBall()
+{
+    Spawn(Body { position = drop.at }, Circle { radius = 0.3, bounce = 0.5 }, Ball);
+}
+
+// Code moves a body by writing its component: the next step pushes it, once.
+command(Kick kick, PlayerID sender) KickCrate(mut Body body, with Crate)
+{
+    body.impulse = float2(2, 7);
+}
+
+// A ball goes after ten seconds, and its body with it.
+system Expire(mut Ball ball, Time time)
+{
+    ball.ticks += 1;
+    if (ball.ticks > 10 * time.tickRate) this.Destroy();
+}
+
+// Sent to a body when it starts touching another.
+event(Touched) Count(mut Tally tally, with Ball)
+{
+    tally.touches += 1;
+}
+
+view Play(Devices devices, query (Body body, with Crate) crates)
+{
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0, 4.5), 5);
+    if (!devices.pointer.press.down) return;
+    // A tap on a crate kicks it, and a tap anywhere else drops a ball there.
+    var at = Draw.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    mut var kicked = false;
+    foreach (var crate in crates)
+    {
+        if (kicked || Math.Distance(at, crate.body.position) > 0.5) continue;
+        crate.entity.Send(Kick { });
+        kicked = true;
+    }
+    if (!kicked) Send(Drop { at = at });
+}
+
+// A view sees a body where the last step left it, blended between ticks.
+view Walls(Body body, Box box, without Crate)
+{
+    Draw.Rect(body.position, box.size, Color(0.24, 0.25, 0.27));
+}
+
+view Crates(Body body, Box box, with Crate)
+{
+    Draw.RoundRect(body.position, box.size - float2(0.06), 0.1, body.angle, Color(0.98, 0.75, 0.14));
+}
+
+// A ball has a spoke, from its middle to its edge, to show how it's turned.
+view Balls(Body body, Circle circle)
+{
+    Draw.Circle(body.position, circle.radius, Color(0.18, 0.83, 0.75));
+    var spoke = float2(Math.Cos(body.angle), Math.Sin(body.angle)) * circle.radius;
+    Draw.Line(body.position, body.position + spoke, 0.07, Color(0.086, 0.086, 0.094));
+}
+
+view Hud(Tally tally)
+{
+    Draw.SetScreen();
+    Draw.Text("Tap a crate to kick it, or anywhere else to drop a ball", float2(16, 14), 13, Color.white);
+    Draw.Text($"Balls touched something {tally.touches} times", float2(16, 34), 13, Color(0.64, 0.64, 0.68));
+}

@@ -1,0 +1,105 @@
+// expect: targets ran 9 frames
+// ticks: 4
+// draws
+
+// Render targets of sizes nothing can be: none, less than none, NaN, more
+// pixels than a GPU has; drawn into, measured in and sampled all the same,
+// after they're let go too, and one drawn into from its own picture.
+
+local singleton Buffers
+{
+    RenderTarget kept;
+    RenderTarget alias;
+    RenderTarget own;
+    Texture image;
+    List<Vertex> corners;
+    int frames;
+    float zero;
+}
+
+scene Main { }
+
+frag Copy(Vertex vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv, Filter.Point);
+}
+
+void Use(RenderTarget target, List<Vertex> corners)
+{
+    target.Clear(Color.red);
+    target.Rect(float2(0, 0), float2(1, 1), Color.white);
+    target.Text("text", float2(0, 0), 12, Color.white);
+    target.Mesh(corners, [0, 1, 2]);
+    var measured = target.MeasureText("measured", 16) + target.WorldToScreen(float2(1, 1));
+    target.Circle(measured, 2, Color.white);
+    Draw.Mesh(corners, [0, 1, 2, 2, 1, 5], target.color);
+    Draw.Mesh(corners, [0, 1, 2], target.color, Filter.Point);
+}
+
+view Targets(mut Buffers buffers)
+{
+    buffers.frames += 1;
+    var nan = buffers.zero / buffers.zero;
+    var inf = 1.0 / buffers.zero;
+    if (buffers.corners.count == 0)
+    {
+        buffers.corners = [Vertex { }, Vertex { position = float2(100, 0), uv = float2(1, 0) },
+            Vertex { position = float2(0, 100), uv = float2(0, 1) }];
+    }
+    List<float> bad = [nan, inf, -inf, 0.0, -5.0, 1e-30, 3000000000.0, 3.4028235e38, 0.4, 16385.5, 8.0];
+    foreach (var v in bad)
+    {
+        foreach (var w in bad)
+        {
+            var sized = RenderTarget(v, w);
+            Use(sized, buffers.corners);
+            var exact = RenderTarget(8, 8, v);
+            Use(exact, buffers.corners);
+            var both = RenderTarget(w, v, w);
+            Use(both, buffers.corners);
+            var part = RenderTarget.Window(v);
+            Use(part, buffers.corners);
+            sized.Resize(w, v);
+            exact.Resize(v, v);
+            part.Resize(8, 8);
+            Use(sized, buffers.corners);
+            Use(exact, buffers.corners);
+            // Let go twice, and used all the same
+            sized.Dispose();
+            sized.Dispose();
+            Use(sized, buffers.corners);
+            sized.Resize(4, 4);
+            exact.Dispose();
+            both.Dispose();
+            part.Dispose();
+            Use(part, buffers.corners);
+        }
+    }
+
+    // One that's kept, with another name for it and a picture of it, which outlive it
+    if (buffers.frames == 1)
+    {
+        buffers.kept = RenderTarget(64, 64);
+        buffers.alias = buffers.kept;
+        buffers.image = buffers.kept.color;
+        buffers.own = RenderTarget(16, 16, 1);
+    }
+    if (buffers.frames == 3) buffers.kept.Dispose();
+    if (buffers.frames == 5) buffers.kept = RenderTarget(nan, nan);
+    if (buffers.frames == 6) buffers.alias.Resize(inf, 2);
+    Use(buffers.kept, buffers.corners);
+    Use(buffers.alias, buffers.corners);
+    Draw.Mesh(buffers.corners, [0, 1, 2], buffers.image);
+    Draw.Mesh([Vertex3 { }, Vertex3 { position = float3(1, 0, 0) }, Vertex3 { position = float3(0, 1, 0) }], [0, 1, 2],
+        float4x4.identity, buffers.image);
+
+    // A target drawn into from its own picture
+    buffers.own.Mesh(buffers.corners, [0, 1, 2], buffers.own.color);
+    Use(buffers.own, buffers.corners);
+    Draw.window.Mesh(buffers.corners, [0, 1, 2], buffers.own.color);
+    Use(Draw.window, buffers.corners);
+    Draw.Blit(buffers.own.color, Draw.window, Copy);
+    Draw.Blit(buffers.kept.color, buffers.own, Copy);
+    Draw.Blit(buffers.image, buffers.alias, Copy);
+    if (buffers.frames == 9) Debug.Log($"targets ran {buffers.frames} frames");
+}

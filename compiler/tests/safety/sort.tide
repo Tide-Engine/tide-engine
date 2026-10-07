@@ -1,0 +1,76 @@
+// expect: liars 6 6 6 6 20000 4
+// expect: kept 21 21 21 21 199990000
+// expect: text 4 apple
+// expect: order [1, 3, 3, 5, 8, 9]
+
+// Sorting with a comparison that lies: always yes, always no, yes both ways,
+// another answer each time, one that reads the list being sorted. The list
+// comes out with the elements it had, in some order, and nothing else is
+// touched.
+
+struct Pair
+{
+    int key;
+    int value;
+}
+
+singleton Board
+{
+    List<int> numbers = [5, 3, 9, 1, 3, 8];
+    List<int> big;
+    List<Pair> pairs;
+    List<string> names = ["pear", "apple", "fig", "banana"];
+    int calls;
+    bool done;
+}
+
+scene Main { }
+
+int Sum(List<int> values)
+{
+    mut var total = 0;
+    foreach (var v in values) total += v;
+    return total;
+}
+
+system Run(mut Board board)
+{
+    if (board.done) return;
+    board.done = true;
+    var salt = board.calls;
+
+    mut var yes = board.numbers;
+    yes.Sort(a, b) { return true; }
+    mut var no = board.numbers;
+    no.Sort(a, b) { return false; }
+    mut var both = board.numbers;
+    both.Sort(a, b) { return a >= b; }
+    mut var noise = board.numbers;
+    noise.Sort(a, b) { return Math.Hash(int2(a + salt, b)) % 2 == 0; }
+
+    // A list in chunks, by a comparison that reads the list as it's being sorted
+    for (var i = 0; i < 20000; i++) board.big.Add(19999 - i);
+    board.big.Sort(a, b) { return board.big[a] + a < board.big[b] + b || Math.Hash(a) % 3 == 0; }
+
+    for (var i = 0; i < 4; i++) board.pairs.Add(Pair { key = i % 2, value = i });
+    board.pairs.Sort(a, b) { return a.key != b.key; }
+
+    Debug.Log($"liars {yes.count} {no.count} {both.count} {noise.count} {board.big.count} {board.pairs.count}");
+    mut var values = 0;
+    foreach (var pair in board.pairs) values += pair.value;
+    Debug.Log($"kept {Sum(yes) - 8} {Sum(no) - 8} {Sum(both) - 8} {Sum(noise) - 8} {Sum(board.big) + values - 6}");
+
+    // Text moves with its elements
+    board.names.Sort(a, b) { return a.length > b.length || b.length > 100; }
+    board.names.Sort(a, b) { return true; }
+    board.names.Sort(a, b) { return a.length < b.length; }
+    mut var found = "";
+    foreach (var name in board.names)
+    {
+        if (name == "apple") found = name;
+    }
+    Debug.Log($"text {board.names.count} {found}");
+
+    board.numbers.Sort(a, b) { return a < b; }
+    Debug.Log($"order {board.numbers}");
+}

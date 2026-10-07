@@ -34,7 +34,7 @@ event(Spawned) Setup(with Main)
 view Background(Palette palette, Time time)
 {
     Draw.Clear(palette.background);
-    Draw.Camera(float2(time.tick, 0), 10);
+    Draw.SetCamera(float2(time.tick, 0), 10);
     Draw.Text("tick", float2(0, 0), 2, Color.white);
 }
 

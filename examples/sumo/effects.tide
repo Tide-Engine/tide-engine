@@ -1,0 +1,333 @@
+// What makes Sumo feel alive is this machine's own: sparks where two balls
+// meet, crates' splinters, a blast's ring, a camera that shakes, numbers that
+// float up. None of it is in the match. The match says what happens in it
+// with events, and this machine's handlers of them add an effect here. Each
+// hears an event once, however often this machine runs its tick again, and a
+// `verified` one waits until the server has confirmed it: a point is never
+// shown for a fall this machine only predicted.
+using Box3D;
+
+// Something small that flies, glows, fades and is gone.
+struct Spark
+{
+    float3 position;
+    float3 velocity;
+    Color color = Color.white;
+    float age;
+    float life = 0.5;
+    float size = 0.08;
+    float weight; // How much of gravity pulls it
+}
+
+// A blast's edge, spreading over the floor.
+struct Wave
+{
+    float3 at;
+    float reach;
+    Color color = Color.white;
+    float age;
+}
+
+// Words that float up from a place in the ring.
+struct Label
+{
+    float3 at;
+    Color color = Color.white;
+    float age;
+    float life = 1.5;
+    string words;
+    bool big;
+}
+
+// A piece of the paper thrown over the screen, in its pixels.
+struct Bit
+{
+    float2 position;
+    float2 velocity;
+    Color color = Color.white;
+    float age;
+    float life = 1.5;
+    float size = 6;
+    float angle;
+    float spin;
+}
+
+// What flies and floats, apart from what the views draw afresh each frame.
+local singleton Air
+{
+    List<Spark> sparks;
+    List<Mote> motes;     // ...as they're drawn
+    List<Wave> waves;
+    List<Label> labels;
+    List<Bit> paper;      // In the screen's pixels, over everything
+}
+
+// How long ago the match said things, for the words on the screen (hud.tide).
+local singleton Flow
+{
+    int winner = -1;     // Who took the round that ended last: a seat, or -1 for nobody
+    int round;
+    int best;
+    float since = 100;   // Seconds since a round ended...
+    bool papered;        // ...and its winner's paper was thrown
+    int set;             // The round that was set up last...
+    float begun = 100;   // ...and how long ago
+    float go = 100;      // Seconds since a round started
+    float warned = 100;  // Seconds since the next rim was marked
+    float fell = 100;    // Seconds since this machine's player's ball fell...
+    int by = -1;         // ...and who threw it out
+    float threw = 100;   // Seconds since this machine's player threw someone out...
+    int whom = -1;       // ...and whom
+    bool rolled;         // The player has found out how to roll,
+    bool charged;        // ...and how to charge
+}
+
+void Shake(mut Fx fx, float amount)
+{
+    fx.trauma = Math.Min(1, fx.trauma + amount);
+}
+
+void Flash(mut Fx fx, Color color, float amount)
+{
+    if (amount < fx.flash) return;
+    fx.flash = amount;
+    fx.flashColor = color;
+}
+
+// How much of something a machine feels, by how far it is from what its
+// camera looks at.
+float Near(Fx fx, float3 at)
+{
+    return Math.Saturate(1.4 - Math.Distance(float2(at.x, at.z), float2(fx.focus.x, fx.focus.z)) / (fx.span + 2));
+}
+
+// Sparks thrown every way but down.
+void Sparks(mut Fx fx, mut Air air, float3 at, int count, float speed, Color color, float size)
+{
+    if (air.sparks.count > 700) return;
+    for (var i = 0; i < count; i++)
+    {
+        var way = fx.random.NextFloat3Direction();
+        var pace = fx.random.NextFloat();
+        var long = fx.random.NextFloat();
+        air.sparks.Add(Spark { position = at, velocity = float3(way.x, Math.Abs(way.y) * 0.8 + 0.25, way.z) * speed * (0.35 + pace),
+                                 color = color, life = 0.3 + long * 0.5, size = size, weight = 1 });
+    }
+}
+
+// Paper thrown over the screen.
+void Paper(mut Fx fx, mut Air air, float2 at, int count, float speed, Color color)
+{
+    if (air.paper.count > 400) return;
+    for (var i = 0; i < count; i++)
+    {
+        var turn = fx.random.NextFloat();
+        var pace = fx.random.NextFloat();
+        var long = fx.random.NextFloat();
+        var big = fx.random.NextFloat();
+        var tone = fx.random.NextFloat();
+        var angle = turn * Math.TAU;
+        air.paper.Add(Bit { position = at, velocity = float2(Math.Cos(angle), Math.Sin(angle) - 0.7) * speed * (0.25 + pace),
+                              color = tone < 0.25 ? Color.white : Shade(color, 0.7 + tone * 0.5), life = 1.2 + long * 1.2,
+                              size = 4 + big * 5, angle = angle, spin = (turn - 0.5) * 24 });
+    }
+}
+
+// Two balls met: sparks in both their colors, harder the faster they closed,
+// and the camera feels it when one of them is this machine's player's.
+local event(Clash clash) Clashed(mut Fx fx, mut Air air)
+{
+    var hard = Math.Saturate(clash.hard / 16);
+    Sparks(fx, air, clash.at, 4 + int(hard * 10), 4 + hard * 9, Mix(SeatColor(clash.a), Color.white, 0.5), 0.09);
+    Sparks(fx, air, clash.at, 4 + int(hard * 10), 4 + hard * 9, Mix(SeatColor(clash.b), Color.white, 0.5), 0.09);
+    var mine = clash.a == fx.seat || clash.b == fx.seat;
+    Shake(fx, (mine ? 0.25 + hard * 0.5 : hard * 0.2) * Near(fx, clash.at));
+    if (mine && hard > 0.3) Flash(fx, Color.white, hard * 0.12);
+}
+
+// A ball that's hit flashes, which its view lets fade: a local field of the
+// ball's.
+local event(Touched) Jolted(mut Ball ball)
+{
+    if (ball.dazed > 0) ball.flash = 1;
+}
+
+// A ball went through crates: splinters.
+local event(Smash smash) Splintered(mut Fx fx, mut Air air)
+{
+    Sparks(fx, air, smash.at, 5, 3 + smash.hard * 0.3, Color(0.75, 0.77, 0.84), 0.11);
+    if (smash.seat == fx.seat) Shake(fx, 0.08 + Math.Saturate(smash.hard / 20) * 0.12);
+}
+
+// A charge let go: a streak behind the ball, and a ring where it left from.
+local event(Burst burst) Dashed(mut Fx fx, mut Air air)
+{
+    var color = SeatColor(burst.seat);
+    air.waves.Add(Wave { at = burst.at, reach = 2.2 + burst.hard * 2, color = Mix(color, Color.white, 0.4) });
+    for (var i = 0; i < 8; i++)
+    {
+        var side = fx.random.NextFloat(-0.5, 0.5);
+        var pace = fx.random.NextFloat();
+        air.sparks.Add(Spark { position = burst.at + float3(burst.way.y * side, -0.3, -burst.way.x * side),
+                                 velocity = float3(-burst.way.x, 0.25, -burst.way.y) * (3 + pace * 6), color = Mix(color, Color.white, 0.4),
+                                 life = 0.3 + pace * 0.3, size = 0.1 });
+    }
+    if (burst.seat == fx.seat) Shake(fx, 0.12 + burst.hard * 0.15);
+}
+
+// A blast: a ring that spreads as far as it reached, sparks, and the whole
+// screen for a moment when it's near.
+local event(Boom boom) Blasted(mut Fx fx, mut Air air)
+{
+    var color = boom.seat >= 0 && boom.reach > 7 ? SeatColor(boom.seat) : ROSE;
+    air.waves.Add(Wave { at = boom.at, reach = boom.reach, color = Mix(color, Color.white, 0.3) });
+    Sparks(fx, air, boom.at + float3(0, 0.3, 0), 26, 13, Mix(color, Color.white, 0.5), 0.13);
+    Sparks(fx, air, boom.at + float3(0, 0.3, 0), 12, 6, AMBER, 0.1);
+    var near = Near(fx, boom.at);
+    Shake(fx, 0.75 * near);
+    Flash(fx, Mix(color, Color.white, 0.5), 0.22 * near);
+}
+
+local event(Taken taken) PickedUp(mut Fx fx, mut Air air)
+{
+    var color = taken.power == Power.Heavy ? PLAIN : TEAL;
+    Sparks(fx, air, taken.at, 14, 6, color, 0.1);
+    air.labels.Add(Label { at = taken.at + float3(0, 1.2, 0), color = color, words = taken.power == Power.Heavy ? "HEAVY!" : "SHOCK!",
+                             life = 1.2 });
+    if (taken.seat == fx.seat) Flash(fx, color, 0.14);
+}
+
+// A tile let go: dust where it was.
+local event(Dropped dropped) Crumbled(mut Fx fx, mut Air air)
+{
+    var at = float3(dropped.at.x, 0.1, dropped.at.y);
+    Sparks(fx, air, at, 6, 4, Color(0.5, 0.52, 0.6), 0.14);
+    Shake(fx, 0.1 * Near(fx, at));
+}
+
+local event(Shrinking shrinking) Warned(mut Flow flow)
+{
+    flow.warned = 0;
+}
+
+// A ball fell: once that's certain, the point floats up from where it went
+// over, in the color of whoever threw it out, whose score jumps.
+local event(verified RingOut out) Fallen(mut Fx fx, mut Air air, mut Flow flow)
+{
+    var color = out.by >= 0 ? SeatColor(out.by) : QUIET;
+    var at = float3(out.at.x, 0.4, out.at.z);
+    Sparks(fx, air, at, 16, 9, Mix(SeatColor(out.seat), Color.white, 0.3), 0.12);
+    if (out.by >= 0)
+    {
+        fx.pops[out.by] = 1;
+        air.labels.Add(Label { at = at, color = color, words = "+1", big = out.by == fx.seat });
+    }
+    if (out.seat == fx.seat)
+    {
+        flow.fell = 0;
+        flow.by = out.by;
+        Shake(fx, 0.6);
+        Flash(fx, ROSE, 0.2);
+    }
+    if (out.by == fx.seat && out.by >= 0)
+    {
+        flow.threw = 0;
+        flow.whom = out.seat;
+        Shake(fx, 0.3);
+        Flash(fx, color, 0.16);
+    }
+}
+
+// Who took a round is only said once it's certain.
+local event(verified RoundOver over) RoundTold(mut Flow flow)
+{
+    flow.winner = over.winner;
+    flow.round = over.round;
+    flow.best = over.best;
+    flow.since = 0;
+    flow.papered = false;
+}
+
+local event(RoundSet set) RoundShown(mut Flow flow)
+{
+    flow.set = set.round;
+    flow.begun = 0;
+    flow.go = 100;
+}
+
+local event(Go) Started(mut Flow flow, mut Fx fx)
+{
+    flow.go = 0;
+    Shake(fx, 0.2);
+}
+
+// The clocks the words go by.
+[Stage(Layers.Camera, 5)]
+view Clocks(mut Flow flow, Fx fx)
+{
+    flow.since += fx.dt;
+    flow.begun += fx.dt;
+    flow.go += fx.dt;
+    flow.warned += fx.dt;
+    flow.fell += fx.dt;
+    flow.threw += fx.dt;
+}
+
+// The blasts' rings, into the list of what's flat on the floor.
+[Stage(Layers.Gather, 5)]
+view Waves(mut Fx fx, mut Air air)
+{
+    mut var i = 0;
+    while (i < air.waves.count)
+    {
+        mut var wave = air.waves[i];
+        wave.age += fx.dt;
+        if (wave.age >= 0.5)
+        {
+            air.waves.RemoveAt(i);
+            continue;
+        }
+        air.waves[i] = wave;
+        var t = wave.age / 0.5;
+        Mark(fx, wave.at, wave.reach * 2 * EaseOut(t), Fade(wave.color, (1 - t) * 0.9), 0.1 + 0.2 * (1 - t), 1);
+        i++;
+    }
+}
+
+// The sparks, each a small cube that glows: they fall, bounce off the floor
+// and fade. All of them are one draw, added to what's behind them.
+[Stage(Layers.Effects)]
+view Glow(Fx fx, mut Air air, Models models)
+{
+    air.motes.Clear();
+    mut var i = 0;
+    while (i < air.sparks.count)
+    {
+        mut var spark = air.sparks[i];
+        spark.age += fx.dt;
+        if (spark.age >= spark.life)
+        {
+            air.sparks.RemoveAt(i);
+            continue;
+        }
+        spark.velocity.y -= 18 * spark.weight * fx.dt;
+        spark.position += spark.velocity * fx.dt;
+        if (Math.Length(float2(spark.position.x, spark.position.z)) < fx.radius && spark.position.y < 0.05 && spark.velocity.y < 0)
+        {
+            spark.position.y = 0.05;
+            spark.velocity = float3(spark.velocity.x * 0.6, -spark.velocity.y * 0.4, spark.velocity.z * 0.6);
+        }
+        air.sparks[i] = spark;
+        var left = 1 - spark.age / spark.life;
+        air.motes.Add(Mote { transform = float4x4.TRS(spark.position, quaternion.identity, float3(spark.size * (0.4 + 0.6 * left))),
+                               tint = Fade(spark.color, left * 1.6) });
+        i++;
+    }
+    // Light, which is seen through: the far sides of each cube add theirs too
+    Draw.Blend(Blend.Add),
+    Draw.Depth(Depth.Read),
+    Draw.Cull(Cull.None)
+    {
+        Draw.Instanced(models.cube, models.cubeFaces, air.motes, MoteLook);
+    }
+}

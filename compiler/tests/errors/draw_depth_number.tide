@@ -1,0 +1,8 @@
+// expect: no version of Draw.SetDepth takes (int)
+// expect: Draw.SetDepth(Depth mode)
+scene Main { }
+
+view Show()
+{
+    Draw.SetDepth(1);
+}

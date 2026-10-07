@@ -22,6 +22,15 @@
       "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
     },
     {
+      "name": "sanitize",
+      "inherits": "base",
+      "displayName": "Sanitize",
+      "description": "Linux and macOS: optimized, with AddressSanitizer and UndefinedBehaviorSanitizer on everything, for the tests of what no Tide code can do (see AGENTS.md, Language). Leaks aren't looked for: tools and tests end with what they hold.",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "TIDE_SANITIZE": "ON" },
+      "environment": { "ASAN_OPTIONS": "detect_leaks=0", "UBSAN_OPTIONS": "print_stacktrace=1" },
+      "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
       "name": "web-base",
       "hidden": true,
       "inherits": "base",
@@ -45,10 +54,50 @@
       "name": "mingw-release",
       "inherits": "base",
       "displayName": "MinGW Release",
-      "description": "Windows only: the MinGW-w64 target that tide builds games for, optimized. Its platform layer goes in the package.",
+      "description": "The MinGW-w64 target that tide builds Windows games for, optimized. Its platform layer goes in the Windows package. On another system than Windows it's a cross build, whose tests can't run.",
       "toolchainFile": "${sourceDir}/cmake/mingw-toolchain.cmake",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" },
-      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "android-base",
+      "hidden": true,
+      "inherits": "base",
+      "toolchainFile": "${sourceDir}/cmake/android-toolchain.cmake"
+    },
+    {
+      "name": "android-debug",
+      "inherits": "android-base",
+      "displayName": "Android Debug",
+      "description": "Android on x86_64, the emulator's, through clang and Android's NDK, no optimization. Tests run on a device or emulator through adb.",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "TIDE_ANDROID_ABI": "x86_64" }
+    },
+    {
+      "name": "android-release",
+      "inherits": "android-base",
+      "displayName": "Android Release",
+      "description": "Android on x86_64, the emulator's, through clang and Android's NDK, optimized. Tests run on a device or emulator through adb.",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "TIDE_ANDROID_ABI": "x86_64" }
+    },
+    {
+      "name": "android-arm64",
+      "inherits": "android-base",
+      "displayName": "Android arm64",
+      "description": "Android on arm64, phones' and tablets', optimized. Tests run on an arm64 device through adb.",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "TIDE_ANDROID_ABI": "arm64-v8a" }
+    },
+    {
+      "name": "android-package-arm64",
+      "inherits": "android-base",
+      "displayName": "Android Package arm64",
+      "description": "The tide package's Android half for phones: the platform layer for arm64.",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "TIDE_ANDROID_ABI": "arm64-v8a" }
+    },
+    {
+      "name": "android-package-x86_64",
+      "inherits": "android-base",
+      "displayName": "Android Package x86_64",
+      "description": "The tide package's Android half for the emulator: the platform layer for x86_64.",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "TIDE_ANDROID_ABI": "x86_64" }
     },
     {
       "name": "package",
@@ -63,6 +112,14 @@
       }
     },
     {
+      "name": "windows-package",
+      "inherits": "package",
+      "displayName": "Windows Package (from another system)",
+      "description": "The Windows package's native half built on Linux: tide and tidels for Windows' own target, with Microsoft's headers and libraries from xwin (cmake/windows-msvc-toolchain.cmake).",
+      "toolchainFile": "${sourceDir}/cmake/windows-msvc-toolchain.cmake",
+      "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
       "name": "web-package",
       "inherits": "web-base",
       "displayName": "Web Package",
@@ -73,18 +130,29 @@
   "buildPresets": [
     { "name": "debug", "configurePreset": "debug" },
     { "name": "release", "configurePreset": "release" },
+    { "name": "sanitize", "configurePreset": "sanitize" },
     { "name": "web-debug", "configurePreset": "web-debug" },
     { "name": "web-release", "configurePreset": "web-release" },
     { "name": "mingw-release", "configurePreset": "mingw-release" },
+    { "name": "android-debug", "configurePreset": "android-debug" },
+    { "name": "android-release", "configurePreset": "android-release" },
+    { "name": "android-arm64", "configurePreset": "android-arm64" },
+    { "name": "android-package-arm64", "configurePreset": "android-package-arm64" },
+    { "name": "android-package-x86_64", "configurePreset": "android-package-x86_64" },
     { "name": "package", "configurePreset": "package" },
+    { "name": "windows-package", "configurePreset": "windows-package" },
     { "name": "web-package", "configurePreset": "web-package" }
   ],
   "testPresets": [
     { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } },
     { "name": "release", "configurePreset": "release", "output": { "outputOnFailure": true } },
+    { "name": "sanitize", "configurePreset": "sanitize", "output": { "outputOnFailure": true } },
     { "name": "web-debug", "configurePreset": "web-debug", "output": { "outputOnFailure": true } },
     { "name": "web-release", "configurePreset": "web-release", "output": { "outputOnFailure": true } },
-    { "name": "mingw-release", "configurePreset": "mingw-release", "output": { "outputOnFailure": true } }
+    { "name": "mingw-release", "configurePreset": "mingw-release", "output": { "outputOnFailure": true } },
+    { "name": "android-debug", "configurePreset": "android-debug", "output": { "outputOnFailure": true } },
+    { "name": "android-release", "configurePreset": "android-release", "output": { "outputOnFailure": true } },
+    { "name": "android-arm64", "configurePreset": "android-arm64", "output": { "outputOnFailure": true } }
   ],
   "workflowPresets": [
     {
@@ -101,6 +169,14 @@
         { "type": "configure", "name": "release" },
         { "type": "build", "name": "release" },
         { "type": "test", "name": "release" }
+      ]
+    },
+    {
+      "name": "sanitize",
+      "steps": [
+        { "type": "configure", "name": "sanitize" },
+        { "type": "build", "name": "sanitize" },
+        { "type": "test", "name": "sanitize" }
       ]
     },
     {
@@ -125,6 +201,22 @@
         { "type": "configure", "name": "mingw-release" },
         { "type": "build", "name": "mingw-release" },
         { "type": "test", "name": "mingw-release" }
+      ]
+    },
+    {
+      "name": "android-debug",
+      "steps": [
+        { "type": "configure", "name": "android-debug" },
+        { "type": "build", "name": "android-debug" },
+        { "type": "test", "name": "android-debug" }
+      ]
+    },
+    {
+      "name": "android-release",
+      "steps": [
+        { "type": "configure", "name": "android-release" },
+        { "type": "build", "name": "android-release" },
+        { "type": "test", "name": "android-release" }
       ]
     }
   ]

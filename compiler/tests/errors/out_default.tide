@@ -1,0 +1,8 @@
+// expect: an 'out' parameter is the caller's variable, which the call makes: it takes no default
+// expect: drop the default; a call that doesn't want it passes 'out _'
+scene Main { }
+bool TryHalf(int value, out int half = 0)
+{
+    half = value / 2;
+    return value % 2 == 0;
+}

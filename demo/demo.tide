@@ -35,16 +35,16 @@ input PlayerInput
     float2 move;
     bool fire;
 
-    Sample()
+    Sample(Devices devices)
     {
-        var keys = Devices.keyboard;
+        var keys = devices.keyboard;
         if (keys.d.pressed || keys.rightArrow.pressed) move.x += 1;
         if (keys.a.pressed || keys.leftArrow.pressed) move.x -= 1;
         if (keys.w.pressed || keys.upArrow.pressed) move.y += 1;
         if (keys.s.pressed || keys.downArrow.pressed) move.y -= 1;
-        var stick = Devices.gamepad.leftStick;
+        var stick = devices.gamepad.leftStick;
         if (Math.Length(stick) > 0.2) move += stick;
-        fire = keys.space.pressed || Devices.gamepad.buttonSouth.pressed;
+        fire = keys.space.pressed || devices.gamepad.buttonSouth.pressed;
     }
 }
 
@@ -107,7 +107,11 @@ local singleton Look
 view DrawArena(Arena arena, Look look)
 {
     Draw.Clear(Color(0.08, 0.08, 0.11));
-    Draw.Camera(float2(0, 0), arena.halfSize.y * look.zoom);
+    // The arena fits the screen whatever its shape: the camera takes half the
+    // height it shows, which on a screen narrower than the arena (a phone's,
+    // upright) is the height that shows it all across.
+    var across = arena.halfSize.x * Screen.height / Screen.width;
+    Draw.SetCamera(float2(0, 0), Math.Max(arena.halfSize.y, across) * look.zoom);
     Draw.WireRect(float2(0, 0), arena.halfSize * 2, Color(0.24, 0.24, 0.31));
     var help = float2(8 - arena.halfSize.x, 26 - arena.halfSize.y);
     Draw.Text("move: WASD, arrows or left stick    fire: space or A    options: Esc or Start", help, 18,
@@ -127,9 +131,9 @@ view DrawPlayers(Body body, Aim aim, with Owner, Look look)
 
 // The GUI, over the world. The button, Escape or Start bring up the options,
 // and back (Escape or B) puts them away.
-view Options(mut Look look)
+view Options(Devices devices, mut Look look)
 {
-    if (Devices.keyboard.escape.down || Devices.gamepad.start.down) look.open = true;
+    if (devices.keyboard.escape.down || devices.gamepad.start.down) look.open = true;
     GUILayout.Area(Anchor.UpperLeft)
     {
         if (GUILayout.Button("Options")) look.open = true;

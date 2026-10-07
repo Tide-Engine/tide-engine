@@ -1,22 +1,28 @@
 # Installs tide for this user, on Windows:
 #
-#     irm https://raw.githubusercontent.com/BlenMiner/tide-engine/release/install.ps1 | iex
+#     Invoke-RestMethod https://tide-engine.dev/install.ps1 | Invoke-Expression
 #
 # Nightly versions instead: set $env:TIDE_CHANNEL = 'nightly' first.
 # tide goes in %LOCALAPPDATA%\Tide, and its bin folder on the user's PATH. No
 # admin rights needed. Once installed, `tide upgrade` keeps it up to date.
 
 $ErrorActionPreference = 'Stop'
-$repo = 'BlenMiner/tide-engine'
+$releasesUrl = 'https://tide-engine.dev/releases.json'
 $package = 'tide-windows-x64.zip'
 $channel = if ($env:TIDE_CHANNEL -eq 'nightly') { 'nightly' } else { 'stable' }
 $root = Join-Path $env:LOCALAPPDATA 'Tide'
 $bin = Join-Path $root 'bin'
+$tide = Join-Path $bin 'tide.exe'
 
-if (Test-Path (Join-Path $bin 'tide.exe')) {
+$installed = Test-Path $tide
+if ($installed) {
     Write-Host "tide is already installed in $root; upgrading it."
-    & (Join-Path $bin 'tide.exe') upgrade "--$channel"
-    return
+    # It keeps its channel, unless TIDE_CHANNEL says which.
+    $channelFile = Join-Path $root 'channel'
+    if (-not $env:TIDE_CHANNEL -and (Test-Path $channelFile)) {
+        $savedChannel = (Get-Content $channelFile -Raw).Trim()
+        if ($savedChannel -in @('stable', 'nightly')) { $channel = $savedChannel }
+    }
 }
 
 # Semantic versioning's order of two tags: -1, 0 or 1. A pre-release comes
@@ -46,26 +52,23 @@ function Compare-Version([string]$a, [string]$b) {
     return [Math]::Sign($xs.Count - $ys.Count)
 }
 
-# The channel's highest version, not the last one published (as tide upgrade
-# picks, compiler/cli/release.c). Nightly takes stable releases too, when
-# they're newer. Stable also asks for GitHub's latest release, since nightly
-# ones can push it out of the list.
+# The channel's highest version with this platform's package, not the last one
+# published (as tide upgrade picks, compiler/cli/release.c): some nightlies
+# have none for macOS. Nightly takes stable releases too, when they're newer.
 function Select-Release($releases, [string]$channel) {
     $best = $null
     foreach ($r in $releases) {
         if ($r.draft -or ($channel -eq 'stable' -and $r.prerelease) -or $r.tag_name -notmatch $versionPattern) { continue }
+        if (-not ($r.assets | Where-Object name -eq $package)) { continue }
         if (-not $best -or (Compare-Version $r.tag_name $best.tag_name) -gt 0) { $best = $r }
     }
     return $best
 }
 
 # ForEach-Object unrolls the list: Windows PowerShell returns a JSON array as one object.
-$releases = @(Invoke-RestMethod "https://api.github.com/repos/$repo/releases?per_page=100" | ForEach-Object { $_ })
-if ($channel -eq 'stable') {
-    try { $releases += Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" } catch { }
-}
+$releases = @(Invoke-RestMethod $releasesUrl | ForEach-Object { $_ })
 $release = Select-Release $releases $channel
-if (-not $release) { throw "There's no $channel release of tide yet." }
+if (-not $release) { throw "There's no $channel release of tide for this platform yet." }
 $zipUrl = ($release.assets | Where-Object name -eq $package).browser_download_url
 $sumsUrl = ($release.assets | Where-Object name -eq 'SHA256SUMS').browser_download_url
 if (-not $zipUrl -or -not $sumsUrl) { throw "Release $($release.tag_name) has no $package." }
@@ -85,6 +88,30 @@ try {
     $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
     if (-not $expected -or $actual -ne $expected.ToLowerInvariant()) {
         throw 'The download is damaged (its checksum does not match). Nothing was installed.'
+    }
+
+    if ($installed) {
+        # The installed tide's own updater takes it from here, with the files
+        # checked above: it replaces running programs safely, whichever
+        # version it is (older ones look for releases elsewhere).
+        $manifest = Join-Path $work 'releases.json'
+        $localRelease = @{
+            tag_name = $release.tag_name; draft = $false; prerelease = $release.prerelease
+            assets = @(
+                @{ name = $package; size = (Get-Item $zip).Length; browser_download_url = ([Uri]$zip).AbsoluteUri },
+                @{ name = 'SHA256SUMS'; browser_download_url = ([Uri]$sums).AbsoluteUri }
+            )
+        }
+        $localJson = ConvertTo-Json -InputObject @($localRelease) -Depth 5
+        [IO.File]::WriteAllText($manifest, $localJson)
+        $previousUrl = $env:TIDE_RELEASES_URL
+        try {
+            $env:TIDE_RELEASES_URL = ([Uri]$manifest).AbsoluteUri
+            if ($env:TIDE_CHANNEL) { & $tide upgrade "--$channel" } else { & $tide upgrade }
+            if ($LASTEXITCODE -ne 0) { throw 'tide could not finish the upgrade.' }
+            & $tide editors
+        } finally { $env:TIDE_RELEASES_URL = $previousUrl }
+        return
     }
 
     New-Item -ItemType Directory -Path $root -Force | Out-Null

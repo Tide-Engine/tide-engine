@@ -1,0 +1,4 @@
+// expect: can't return singletons
+singleton Score { int value; }
+struct Helper { Score Copy(Score score) { return score; } }
+scene Main { }

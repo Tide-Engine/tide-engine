@@ -1,0 +1,275 @@
+// The arena as this machine shows it: platforms, fighters and shots, each a
+// handful of the engine's shapes, drawn into `lens.scene`, a target the size
+// of the screen, whose bright parts then spill their light over the rest
+// (PaintLight, in effects.tide). Views can't change the match. How a fighter or a
+// shot looks beyond what the match says of it is in its local fields, which
+// this machine's handlers of the match's events set as things happen
+// (heard.tide), and these views let settle, frame by frame.
+const Color UI_BACKGROUND = Color(0.027, 0.035, 0.07);
+const Color UI_PANEL = Color(0.075, 0.1, 0.17);
+const Color UI_INK = Color(0.93, 0.96, 1);
+const Color UI_MUTED = Color(0.52, 0.62, 0.78);
+const Color UI_BLUE = Color(0.27, 0.72, 1);
+const Color UI_ORANGE = Color(1, 0.55, 0.26);
+const Color UI_OUTLINE = Color(0.02, 0.028, 0.065);
+const Color FIELD_INK = Color(0.045, 0.058, 0.118); // A field to type into, in the menu
+
+Color FighterColor(int side)
+{
+    return side == 0 ? UI_BLUE : UI_ORANGE;
+}
+
+// The room is its scene's: with no match, while one is being joined, there's only the backdrop
+[Stage(PaintStages.Arena)]
+view PaintArena(Lens lens, with Main)
+{
+    var scene = lens.scene;
+    // Shade where the room meets its walls
+    InsetOn(scene, float2(0, 30), float2(ARENA_WIDTH, ARENA_HEIGHT - 60), 0, 110, Color(0.008, 0.012, 0.035, 0.55));
+}
+
+[Stage(PaintStages.Platforms)]
+view PaintPlatforms(Platform platform, Lens lens)
+{
+    var scene = lens.scene;
+    var size = platform.half * 2;
+    var wall = platform.half.y > platform.half.x;
+    var frame = wall || platform.half.x > 300;
+    if (!frame)
+        GlowBoxOn(scene, platform.center + float2(0, -9), size - float2(14, 6), 6, 26, Color(0, 0.005, 0.02, 0.5));
+    PanelOn(scene, platform.center, size, frame ? 4 : 7, Color(0.19, 0.26, 0.42), Color(0.085, 0.115, 0.215),
+            1.6, Color(0.3, 0.41, 0.62));
+
+    // The side that faces the room is lit
+    mut var from = platform.center + float2(-platform.half.x + 7, platform.half.y - 2.4);
+    mut var to = platform.center + float2(platform.half.x - 7, platform.half.y - 2.4);
+    if (wall)
+    {
+        var inner = platform.center.x > 0 ? -platform.half.x + 2.4 : platform.half.x - 2.4;
+        from = platform.center + float2(inner, -platform.half.y + 7);
+        to = platform.center + float2(inner, platform.half.y - 7);
+    }
+    else if (platform.center.y > 200)
+    {
+        from.y = platform.center.y - platform.half.y + 2.4;
+        to.y = from.y;
+    }
+    GlowLineOn(scene, from, to, 2, 15, Color(0.45, 0.68, 1, 0.2));
+    scene.Line(from, to, 2.2, Color(0.66, 0.83, 1, 0.92));
+}
+
+// A fighter's health as the server has confirmed it. In a round this machine
+// has started and the server hasn't confirmed yet, it's whole.
+float SureHealth(Fighter fighter, Fighter sure)
+{
+    return sure.round == fighter.round ? sure.health : fighter.health;
+}
+
+[Stage(PaintStages.Fighters)]
+view PaintFighters(Body body, mut Fighter fighter, verified Fighter sure, Duel duel, Session session, Devices devices,
+    Canvas canvas, mut Fx fx, Lens lens, query (Platform box) platforms,
+    query (Body body, Fighter fighter, verified Fighter sure) fighters)
+{
+    var scene = lens.scene;
+    var color = FighterColor(fighter.side);
+    var who = fighter.side == 0 ? duel.bluePlayer : duel.orangePlayer;
+    var mine = !fighter.bot && !duel.attract && who == session.player;
+    var step = Math.Min(fx.dt, 0.033);
+    // It's down once the server says so: a knockout this machine only predicted hides nothing
+    var solid = SureHealth(fighter, sure);
+    if (solid <= 0) return;
+
+    var feet = body.position - float2(0, body.radius);
+
+    // What happened to it set these off (heard.tide): it springs back from a
+    // squash, pops in, and its flash, its recoil and what a hit took fade
+    fighter.squashSpeed += (-fighter.squash * 330 - fighter.squashSpeed * 15) * step;
+    fighter.squash = Math.Clamp(fighter.squash + fighter.squashSpeed * step, -0.4, 0.45);
+    fighter.arrive = Math.Min(1, fighter.arrive + step / 0.42);
+    fighter.hit = Math.Max(0, fighter.hit - step * 4.5);
+    fighter.recoil = Math.Max(0, fighter.recoil - step * 8);
+    if (fighter.hit <= 0) fighter.chip = Math.Max(0, fighter.chip - (14 + fighter.chip * 2.5) * step);
+
+    if (fighter.grounded && Math.Abs(body.velocity.x) > 150 && duel.phase == Phase.Fight)
+    {
+        fighter.puff -= step;
+        if (fighter.puff <= 0)
+        {
+            fighter.puff = 0.085;
+            Dust(fx, feet, float2(body.velocity.x * -0.12, 6), 1, 6.5, Color(0.72, 0.82, 1, 0.2));
+        }
+    }
+
+    var grow = EaseBack(fighter.arrive);
+    var fly = fighter.grounded ? 0 : Math.Clamp(Math.Abs(body.velocity.y) / 2600, 0, 0.14);
+    // It breathes while it stands
+    var squash = fighter.squash + (fighter.grounded ? Math.Sin(fx.now * 3.2 + fighter.side * 1.7) * 0.022 : 0);
+    var wide = body.radius * (1 + squash * 0.7) * (1 - fly * 0.8) * grow;
+    var tall = body.radius * (1 - squash * 0.7) * (1 + fly) * grow;
+    var center = body.position + float2(0, tall - body.radius * grow);
+    var aim = fighter.aim;
+    var perpendicular = float2(-aim.y, aim.x);
+
+    // Its shadow, on the highest platform under it
+    mut var ground = -10000.0;
+    foreach (var entry in platforms)
+    {
+        var top = entry.box.center.y + entry.box.half.y;
+        if (Math.Abs(body.position.x - entry.box.center.x) < entry.box.half.x + 6 && top <= feet.y + 8 && top > ground) ground = top;
+    }
+    if (ground > -9000)
+    {
+        var near = Math.Saturate(1 - (feet.y - ground) / 240);
+        GlowOvalOn(scene, float2(body.position.x, ground + 1), float2(wide * (0.5 + near * 0.45), 2.2 + near), 5,
+                   Color(0, 0.005, 0.02, 0.5 * near));
+    }
+
+    // Its own light, which adds to the room's
+    Draw.Blend(Blend.Add)
+    {
+        GlowOn(scene, center, body.radius * 0.75, 34, Fade(color, 0.2));
+    }
+
+    // Shots drop, so this machine's fighter is shown where its next one goes:
+    // up to the first platform in its way, or the first fighter still up, as
+    // a shot ends on them
+    if (mine && (duel.phase == Phase.Fight || duel.phase == Phase.Countdown) && !canvas.touchAim)
+    {
+        mut var at = body.position + aim * (body.radius + 7);
+        mut var speed = aim * fighter.build.bulletSpeed;
+        for (var i = 0; i < 9; i++)
+        {
+            speed.y -= fighter.build.gravity * 0.04;
+            mut var ends = false;
+            foreach (var entry in platforms)
+            {
+                var hit = SweepBox(at, speed * 0.04, entry.box.center, entry.box.half + 3);
+                if (hit.fraction <= 1) ends = true;
+            }
+            foreach (var other in fighters)
+            {
+                if (other.entity == this || SureHealth(other.fighter, other.sure) <= 0) continue;
+                var hit = SweepCircle(at, speed * 0.04, other.body.position,
+                                      other.body.radius + 3 + (other.fighter.blockLeft > 0 ? 10 : 0));
+                if (hit.fraction <= 1) ends = true;
+            }
+            if (ends) break;
+            at += speed * 0.04;
+            scene.Circle(at, 2.4 - i * 0.14, Fade(Mix(color, Color.white, 0.5), 0.5 - i * 0.05));
+        }
+        if (!canvas.gamepadAim)
+        {
+            // Devices count pixels from the bottom, and the screen from the top
+            var pointer = scene.ScreenToWorld(Screen.Flip(devices.pointer.position));
+            scene.WireCircle(pointer, 8, 3.4, Fade(UI_OUTLINE, 0.6));
+            scene.WireCircle(pointer, 7.6, 1.7, Fade(Color.white, 0.9));
+            scene.Circle(pointer, 1.6, Color.white);
+        }
+    }
+
+    // The gun, which kicks back as it fires
+    var grip = center + aim * (body.radius * 0.4 - fighter.recoil * 6);
+    var tip = center + aim * ((body.radius + 15) * grow - fighter.recoil * 7);
+    scene.Line(grip, tip, 10, UI_OUTLINE);
+    scene.Line(grip, tip, 5.6, Color(0.82, 0.87, 0.96));
+    scene.Line(tip - aim * 5, tip, 5.6, Color.white);
+    if (fighter.recoil > 0.55)
+    {
+        var bright = (fighter.recoil - 0.55) / 0.45;
+        Draw.Blend(Blend.Add)
+        {
+            GlowOn(scene, tip + aim * 5, 5 + bright * 7, 26, Fade(Color(1, 0.93, 0.72), 0.75 * bright));
+        }
+    }
+
+    OvalOn(scene, center, float2(wide, tall), Shade(color, 0.26), Shade(color, -0.3), 2.5, UI_OUTLINE);
+    OvalOn(scene, center + float2(-wide * 0.3, tall * 0.44), float2(wide * 0.34, tall * 0.2),
+           Fade(Color.white, 0.36), Fade(Color.white, 0.08), 0, Color.clear);
+
+    // Its eyes follow its aim, and shut when it's hit
+    var blink = Math.Frac(fx.now * 0.27 + fighter.side * 0.41) > 0.965;
+    var open = fighter.hit > 0.3 ? 0.4 : blink ? 0.12 : 1;
+    var face = center + aim * (wide * 0.34) + float2(0, tall * 0.1);
+    for (var eye = -1; eye <= 1; eye += 2)
+    {
+        var at = face + perpendicular * (eye * 5.7 * grow);
+        OvalOn(scene, at, float2(4.5, 4.5 * open) * grow, Color.white, Color(0.82, 0.87, 0.96), 0, Color.clear);
+        if (open > 0.5) scene.Circle(at + aim * 1.6, 2.2 * grow, UI_OUTLINE);
+    }
+    var hand = center + aim * (wide * 0.92 - fighter.recoil * 4);
+    OvalOn(scene, hand, float2(4.8, 4.8) * grow, Shade(color, 0.1), Shade(color, -0.35), 1.7, UI_OUTLINE);
+    if (fighter.hit > 0) OvalOn(scene, center, float2(wide, tall), Fade(Color.white, fighter.hit * 0.85),
+                                Fade(Color.white, fighter.hit * 0.85), 0, Color.clear);
+
+    // Its shield: up for a moment, then an arc that fills as it comes back
+    if (fighter.blockLeft > 0)
+    {
+        var spent = 1 - Math.Saturate(fighter.blockLeft / 0.22);
+        var reach = body.radius + 9 + 4 * EaseOut(spent * 2);
+        Draw.Blend(Blend.Add)
+        {
+            GlowOn(scene, center, reach, 18, Fade(color, 0.42 * (1 - spent * 0.5)));
+        }
+        OvalOn(scene, center, float2(reach), Fade(Color.white, 0.2), Fade(color, 0.1), 2.6, Fade(Color.white, 0.95));
+        scene.WireCircle(center, reach + 4.5, 1.6, Fade(color, 0.85));
+    }
+    else if (fighter.blockCooldown > 0)
+    {
+        scene.Arc(center, body.radius + 8.5, Math.PI * 0.5, -Math.TAU * (1 - fighter.blockCooldown / 2), 1.9, Fade(color, 0.5));
+    }
+
+    // Its health, over its head, as the server confirmed it: what a hit took lingers in white
+    var bar = center + float2(0, tall + 16);
+    var health = Math.Saturate(solid / fighter.build.maxHealth);
+    var before = Math.Saturate((solid + fighter.chip) / fighter.build.maxHealth);
+    PanelOn(scene, bar, float2(52, 10), 5, Color(0.03, 0.04, 0.09, 0.92), Color(0.03, 0.04, 0.09, 0.92), 1.2, Fade(UI_OUTLINE, 0.9));
+    if (before > health)
+        scene.RoundRect(bar + float2((before - 1) * 23, 0), float2(46 * before, 5), 2.5, Fade(Color.white, 0.92));
+    if (health > 0.01)
+        PanelOn(scene, bar + float2((health - 1) * 23, 0), float2(46 * health, 5), 2.5, Shade(color, 0.42),
+                Shade(color, -0.08), 0, Color.clear);
+    if (fighter.fireCooldown > 0.04 && duel.phase == Phase.Fight)
+    {
+        var ready = 1 - Math.Saturate(fighter.fireCooldown / fighter.build.reload);
+        scene.RoundRect(bar + float2((ready - 1) * 23, -7.5), float2(46 * ready, 2), 1, Fade(UI_INK, 0.5));
+    }
+
+    // Which one is this machine's, while there's time to look
+    if (mine && duel.phase == Phase.Countdown)
+    {
+        var mark = bar + float2(0, 13 + Math.Sin(fx.now * 7) * 2.5);
+        scene.Line(mark + float2(-7, 8), mark, 4.2, UI_OUTLINE);
+        scene.Line(mark + float2(7, 8), mark, 4.2, UI_OUTLINE);
+        scene.Line(mark + float2(-7, 8), mark, 2.4, Color.white);
+        scene.Line(mark + float2(7, 8), mark, 2.4, Color.white);
+    }
+}
+
+[Stage(PaintStages.Bullets)]
+view PaintBullets(Body body, mut Bullet bullet, mut Fx fx, Lens lens)
+{
+    var scene = lens.scene;
+    var color = FighterColor(bullet.side);
+    var speed = Math.Length(body.velocity);
+    var direction = speed > 1 ? body.velocity / speed : float2(1, 0);
+    // A shot heavier than most looks it
+    var heft = Math.Clamp(Math.Sqrt(bullet.damage / 35), 0.8, 1.7);
+    // Its trail starts where it was fired, turns where it bounced and ends where
+    // it did (heard.tide). A shot fired before this machine was in the match
+    // starts it here.
+    if (Math.LengthSq(bullet.trail) == 0) bullet.trail = body.position;
+    if (Math.DistanceSq(body.position, bullet.trail) > 49)
+    {
+        fx.streaks.Add(Streak { from = bullet.trail, to = body.position, color = color, width = 7 * heft });
+        bullet.trail = body.position;
+    }
+
+    // The light it trails and gives off adds to what's behind it; the shot itself covers it
+    Draw.Blend(Blend.Add)
+    {
+        scene.Line(bullet.trail, body.position, 6.5 * heft, Fade(color, 0.6));
+        GlowOn(scene, body.position, body.radius * heft, 30 * heft, Fade(color, 0.5));
+    }
+    scene.Line(body.position - direction * 13 * heft, body.position, (body.radius * 2 + 1) * heft, color);
+    scene.Line(body.position - direction * 5 * heft, body.position, (body.radius + 0.5) * heft, Mix(color, Color.white, 0.85));
+}

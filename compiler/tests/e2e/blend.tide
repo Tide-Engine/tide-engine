@@ -76,6 +76,7 @@ system Jump(Time time, mut Body body, with Jumper)
 
 system Cut(Time time, mut Shot shot)
 {
+    Debug.Assert(time.t == time.tick * time.dt && time.tickRate == 20);
     shot.center += float2(0, 8);
     if (time.tick != 1) return;
     shot.center = float2(0, 500);
@@ -94,8 +95,9 @@ view DrawJumper(Body body, with Jumper)
     Draw.WireRect(body.position, float2(1, 1), Color.red);
 }
 
-view Frame(Camera camera, Shot shot)
+view DrawShot(Camera camera, Shot shot, Time time)
 {
-    Draw.Camera(camera.center, 10);
+    Draw.SetCamera(camera.center, 10);
     Draw.Rect(shot.center, float2(1, 1), Color.blue);
+    Draw.Rect(float2(time.t, time.tickRate), float2(1, 1), Color.blue); // The match's seconds, between ticks too
 }

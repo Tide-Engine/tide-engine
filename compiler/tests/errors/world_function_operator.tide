@@ -1,0 +1,7 @@
+// expect: an operator works on its operands alone, so it takes no World
+scene Main { }
+struct Money
+{
+    int cents;
+    Money operator +(Money a, World world) { return a; }
+}

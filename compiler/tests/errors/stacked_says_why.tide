@@ -1,0 +1,10 @@
+// expect: calls listed with commas each take what follows as their block
+scene Main { }
+
+view Show()
+{
+    Draw.Tint(Color.red),
+    Draw.Clear(Color.black)
+    {
+    }
+}

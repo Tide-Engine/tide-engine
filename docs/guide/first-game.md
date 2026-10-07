@@ -1,3 +1,7 @@
+---
+description: "Build your first Tide game with components, systems, input and drawing, then host a multiplayer match and invite another player."
+---
+
 # Your first game
 
 This page builds a small game: a ball bouncing around, and a player for everyone who joins, which they steer with the keyboard. It takes a few minutes, and shows most of what a Tide game is made of.
@@ -52,8 +56,8 @@ system Move(mut Body body, Time time)
 
 system Bounce(mut Body body, with Ball)
 {
-    if (Math.Abs(body.position.x) > 300) body.velocity.x = -body.velocity.x;
-    if (Math.Abs(body.position.y) > 200) body.velocity.y = -body.velocity.y;
+    if (Math.Abs(body.position.x) > 160) body.velocity.x = -body.velocity.x;
+    if (Math.Abs(body.position.y) > 160) body.velocity.y = -body.velocity.y;
 }
 ```
 
@@ -80,7 +84,17 @@ In the folder:
 tide run
 ```
 
-`tide` compiles the game and opens a window with the ball bouncing. It keeps its work in a hidden `.tide` folder, which you can delete any time. Leave the window open: whenever you save, `tide` rebuilds the game and the window picks up the new code (see [hot reload](./cli.md#hot-reload)). The next part adds players.
+`tide` compiles the game and opens a window with the ball bouncing. It keeps its work in a hidden `.tide` folder, which you can delete any time. Whenever you save, `tide` rebuilds the game and the window picks up the new code (see [hot reload](../tools/cli.md#hot-reload)).
+
+This is the game so far, built for the web and running in the page:
+
+::: tide-example first-ball The game so far
+
+<<< @/examples/first-ball.tide
+
+:::
+
+The next part adds players.
 
 ## Players and input
 
@@ -91,9 +105,9 @@ input Controls
 {
     float2 move;
 
-    Sample()
+    Sample(Devices devices)
     {
-        var keys = Devices.keyboard;
+        var keys = devices.keyboard;
         if (keys.d.pressed) move.x += 1;
         if (keys.a.pressed) move.x -= 1;
         if (keys.w.pressed) move.y += 1;
@@ -118,7 +132,7 @@ A system that takes the input gets the input of the player who owns the entity i
 ```csharp
 system Steer(Controls input, mut Body body, with Owner)
 {
-    body.velocity = Math.NormalizeSafe(input.move) * 250;
+    body.velocity = Math.Normalize(input.move) * 250;
 }
 ```
 
@@ -131,6 +145,8 @@ view DrawPlayers(Body body, Owner owner, Session session)
     Draw.Circle(body.position, body.radius, color);
 }
 ```
+
+A view that's only for your own player, like a camera that follows them, picks them with a filter instead: `with ownership` (see [Your own entities](../game/views.md#your-own-entities)).
 
 Save, then type `r` and press Enter in `tide`'s terminal, and steer with `WASD`. The game carried over to the new code when you saved, but your player had joined before `AddPlayer` existed, so they had no body yet. Starting over makes them join again.
 
@@ -150,90 +166,51 @@ tide run --connect localhost
 
 Use the host's address instead of `localhost` from another machine, like `tide run --connect 192.168.1.5`. The host takes players on UDP port 7777; `--host 8000` picks another. Each player steers their own yellow body, with no input delay.
 
+No input delay means a machine doesn't wait to hear what the other players did: it guesses, by repeating their last input for a moment, and puts the match right when the server's answer arrives. That moves their body in one frame, each time they start or stop, by up to what they move in 0.15 seconds (see [What other machines guess](../game/input.md#what-other-machines-guess)). Mark the position, and views draw the correction over a few frames instead:
+
+```csharp
+component Body
+{
+    [Position] float2 position;
+    float2 velocity;
+    float radius = 20;
+}
+```
+
+Only what's drawn changes: the match is put right at once, the same on every machine (see [correction smoothing](../game/views.md#provisional-correction-smoothing)).
+
+Here are two machines in one match, each running [the whole game](#the-whole-game): the first hosts it, and the second joined its room, as `tide run --join` does with a room's code (see [Matches](../multiplayer/matches.md#rooms)). Click a frame so it has the keyboard, and steer with `WASD`: its player is yellow there, and gray in the other frame.
+
+::: tide-match first-game Two players, in one match
+:::
+
 ## Build it for the web
 
 ```sh
 tide run --web
 ```
 
-This builds the game as a web page, using WebGL 2, and opens it in your browser. `tide` serves the page on your machine and keeps running, so saving reloads the game in the page too, until you stop `tide` with Ctrl+C. For a page to put online:
+This builds the game as a web page, which draws with WebGPU (or WebGL 2 where the browser has none), and opens it in your browser. `tide` serves the page on your machine and keeps running until you stop it with Ctrl+C. Saving a file reloads the game in the page. For a page to put online:
 
 ```sh
 tide build --release --web
 ```
 
-It goes in `build/`, as one self-contained `.html` file with the game inside, which opens straight from disk. Web and desktop players play together in rooms, which they join by a code (see [Multiplayer](../language/multiplayer.md#rooms)).
+It goes in `build/`, as one self-contained `.html` file with the game inside, which opens straight from disk. Web and desktop players play together in rooms, which they join by a code (see [Matches](../multiplayer/matches.md#rooms)).
 
 ## The whole game
 
-::: details game.tide
-```csharp
-component Body
-{
-    float2 position;
-    float2 velocity;
-    float radius = 20;
-}
+Click the game so it has the keyboard, and steer with `WASD`.
 
-component Ball { }
+::: tide-example first-game game.tide
 
-input Controls
-{
-    float2 move;
+<<< @/examples/first-game.tide
 
-    Sample()
-    {
-        var keys = Devices.keyboard;
-        if (keys.d.pressed) move.x += 1;
-        if (keys.a.pressed) move.x -= 1;
-        if (keys.w.pressed) move.y += 1;
-        if (keys.s.pressed) move.y -= 1;
-    }
-}
-
-scene Main { }
-
-event(Spawned) Setup(with Main)
-{
-    Spawn(Body { velocity = float2(160, 120) }, Ball);
-}
-
-event(PlayerJoined joined) AddPlayer()
-{
-    Spawn(Body { radius = 16 }, Owner { player = joined.player });
-}
-
-system Steer(Controls input, mut Body body, with Owner)
-{
-    body.velocity = Math.NormalizeSafe(input.move) * 250;
-}
-
-system Move(mut Body body, Time time)
-{
-    body.position += body.velocity * time.dt;
-}
-
-system Bounce(mut Body body, with Ball)
-{
-    if (Math.Abs(body.position.x) > 300) body.velocity.x = -body.velocity.x;
-    if (Math.Abs(body.position.y) > 200) body.velocity.y = -body.velocity.y;
-}
-
-view DrawBalls(Body body, with Ball)
-{
-    Draw.Circle(body.position, body.radius, Color.red);
-}
-
-view DrawPlayers(Body body, Owner owner, Session session)
-{
-    var color = owner.player == session.player ? Color.yellow : Color.gray;
-    Draw.Circle(body.position, body.radius, color);
-}
-```
 :::
 
 ## Next
 
-- `tide schedule` shows which of these systems could run at the same time, and why the others wait. See [the schedule](../engine/schedule.md).
-- Learn the language a topic at a time, starting with [the basics](../language/basics.md).
-- The [demo](./demo.md) is a slightly bigger game, with firing and an options menu.
+- `tide schedule` shows which of these systems could run at the same time, and why the others wait. See [the schedule](../game/schedule.md).
+- Read what a game is made of, a topic at a time, starting with [components and entities](../game/entities.md). The language itself starts with [the basics](../language/basics.md).
+- Browse the [samples](./samples.md) for complete games to play in your browser.
+- The [Duel code tour](./duel.md) explains how a larger game separates its match rules, local effects and menus.

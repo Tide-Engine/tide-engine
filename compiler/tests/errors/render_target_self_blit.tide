@@ -1,0 +1,5 @@
+// expect: Blit can't sample the color image of its own destination
+scene Main { }
+local singleton Buffers { RenderTarget scene; }
+frag Copy(Vertex vertex, out Color color, Texture source) { color = source.Sample(vertex.uv); }
+view Show(Buffers buffers) { Draw.Blit(buffers.scene.color, buffers.scene, Copy); }

@@ -1,0 +1,18 @@
+// expect: a comparison can't spawn: it runs again and again as the list sorts, in an order nothing promises
+component Board
+{
+    List<int> numbers;
+}
+
+component Mark { }
+
+scene Main { }
+
+system Order(mut Board board)
+{
+    board.numbers.Sort(a, b)
+    {
+        Spawn(Mark);
+        return a < b;
+    }
+}

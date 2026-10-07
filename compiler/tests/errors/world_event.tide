@@ -1,0 +1,8 @@
+// expect: Get is of a component, any entity's by its handle, and 'Hit' is an event
+component Health { int value; }
+event Hit { int damage; }
+scene Main { }
+system Read(World world, with Health)
+{
+    var h = world.Get<Hit>(this);
+}

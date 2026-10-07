@@ -1,0 +1,7 @@
+// expect: Random takes a seed, like 'Random(42)', not 0 arguments
+singleton Deck { Random random; }
+scene Main { }
+system Shuffle(mut Deck deck)
+{
+    deck.random = Random();
+}

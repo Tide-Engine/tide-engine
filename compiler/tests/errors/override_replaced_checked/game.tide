@@ -1,0 +1,17 @@
+// expect: unknown name 'velocty'
+namespace Combat;
+
+component Position { float value; }
+component Velocity { float value; }
+
+virtual system Move(mut Position position, Velocity velocity)
+{
+    position.value += velocty.value;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Position, Velocity);
+}
+
+scene Main { }

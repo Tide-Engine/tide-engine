@@ -22,6 +22,16 @@ local singleton Menu
     int twice;
     int rows;
     string player = "cat";
+    bool waiting;
+    int connects;
+    int themed;
+    int look;
+    int picked = -1;
+    int picks;
+    bool locked;
+    bool menuUp;
+    int digits;
+    int others;
 }
 
 local component Tag
@@ -38,14 +48,14 @@ local event(Spawned) Setup(with Main)
 }
 
 // A container of our own: runs its content only while open.
-void Foldout(string title, mut bool open, Block content)
+void Foldout(string title, mut bool open, Action content)
 {
     GUILayout.Toggle(title, open);
     if (open) content();
 }
 
 // Runs its content twice, side by side.
-void Twice(Block content)
+void Twice(Action content)
 {
     GUILayout.Horizontal()
     {
@@ -113,4 +123,81 @@ view Rows(mut Menu menu)
 view Tags(mut Tag tag)
 {
     if (GUILayout.Button("Tag")) tag.clicks += 1;
+}
+
+// Grayed out while it waits, like a menu while it connects.
+view Connect(mut Menu menu)
+{
+    GUI.Disabled(menu.waiting)
+    {
+        if (GUI.Button(Rect(Screen.width - 210, 60, 200, 40), "Connect"))
+        {
+            menu.connects += 1;
+            menu.waiting = true;
+        }
+    }
+}
+
+// The GUI's own widgets, with a look of the game's: around some of them...
+view Look(mut Menu menu)
+{
+    GUI.Theme(GUITheme { control = Color.red, radius = 6 })
+    {
+        if (GUI.Button(Rect(700, 700, 120, 30), "Themed")) menu.themed += 1;
+    }
+    GUI.Button(Rect(830, 700, 120, 30), "Plain"); // As it was before the block
+    // A control nobody draws, asked in passing
+    if (GUI.Control(Rect(960, 700, 30, 30)).clicked) menu.themed += 10;
+}
+
+// ...and from here on, in this view and the ones after it.
+view LookSet(Menu menu)
+{
+    if (menu.look == 1) GUI.SetTheme(GUITheme { text = Color.green });
+    if (menu.look == 2) GUI.SetTheme(GUITheme { radius = 3 });
+    GUI.Label(Rect(700, 740, 120, 30), "Set here");
+}
+
+view LookAfter()
+{
+    GUI.Label(Rect(700, 780, 120, 30), "And after");
+}
+
+// What a card says, by what the player is doing with it.
+string CardLabel(GUIControl card, int slot)
+{
+    if (card.pressed) return $"card {slot} pressed";
+    if (card.focused) return $"card {slot} focused";
+    if (card.hovered) return $"card {slot} hovered";
+    return $"card {slot}";
+}
+
+// Widgets the view draws itself, made in a loop from one call: the GUI handles
+// their input, and tells them apart by their turn.
+view Cards(Devices devices, mut Menu menu)
+{
+    if (menu.menuUp) GUI.Navigate();
+    Draw.SetScreen();
+    GUI.Disabled(menu.locked)
+    {
+        for (var i = 0; i < 3; i++)
+        {
+            var rect = Rect(700 + i * 110, 900, 100, 60);
+            var card = GUI.Control(rect);
+            Draw.Text(CardLabel(card, i), float2(rect.x, rect.y), 16, Color.white);
+            if (card.clicked)
+            {
+                menu.picked = i;
+                menu.picks += 1;
+            }
+        }
+    }
+    // The keys the GUI doesn't use are this view's while a card has the focus
+    if (devices.keyboard.digit2.down) menu.digits += 1;
+}
+
+// ...and no other view's.
+view Watcher(Devices devices, mut Menu menu)
+{
+    if (devices.keyboard.digit2.down) menu.others += 1;
 }

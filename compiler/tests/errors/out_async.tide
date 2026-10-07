@@ -1,0 +1,9 @@
+// expect: an async function goes on after its call returns, so it can't make the caller's 'half'
+// expect: return what it makes instead: a struct, when it's more than one value
+scene Main { }
+async bool TryHalf(int value, out int half)
+{
+    await Wait.Ticks(1);
+    half = value / 2;
+    return value % 2 == 0;
+}

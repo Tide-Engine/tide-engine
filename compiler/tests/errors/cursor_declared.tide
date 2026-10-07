@@ -1,0 +1,3 @@
+// expect: 'Cursor' is built into the language
+component Cursor { float2 at; }
+scene Main { }

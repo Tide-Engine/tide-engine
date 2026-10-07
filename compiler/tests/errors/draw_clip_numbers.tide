@@ -1,0 +1,7 @@
+// expect: Draw.SetClip(Rect rect)
+scene Main { }
+
+view Show()
+{
+    Draw.SetClip(1, 2, 3, 4);
+}

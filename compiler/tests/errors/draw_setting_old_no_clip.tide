@@ -1,0 +1,7 @@
+// expect: Draw.NoClip() is 'Draw.SetClip()' now
+scene Main { }
+
+view Show()
+{
+    Draw.NoClip();
+}

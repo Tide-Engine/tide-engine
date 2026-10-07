@@ -1,0 +1,8 @@
+// expect: 'store' is read-only
+// expect: 'Fill' makes its 'bytes'
+// expect: declare the parameter as 'mut Store store' to write to it
+extern int Fill(out List<byte> bytes);
+singleton Store { List<byte> image; }
+singleton Sizes { int image; }
+scene Main { }
+system Run(Store store, mut Sizes sizes) { sizes.image = Fill(out store.image); }

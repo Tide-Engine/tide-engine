@@ -1,0 +1,17 @@
+// Another file of the same build: the build's symbols are here too, and the
+// game's file's own aren't.
+namespace Extra;
+
+const int BONUS = 7;
+
+#if FAST
+const int FAST_THERE = 1;
+#else
+const int FAST_THERE = 0;
+#endif
+
+#if LOCAL
+const int LOCAL_THERE = 1;
+#else
+const int LOCAL_THERE = 0;
+#endif
