@@ -4,7 +4,7 @@
 // falls away under everyone. This file is the match, which every machine runs
 // the same way. What the ring is built of each round is in arena.tide, what
 // a machine shows of it in play.tide, light.tide, effects.tide and hud.tide,
-// and which match it's in is lobby.tide's to say.
+// and which match it's in is the rooms package's menu's to say.
 //
 // Everything that moves is Box3D's (the box3d package): the game spawns
 // bodies, pushes them and reads where they are, and never moves one itself.

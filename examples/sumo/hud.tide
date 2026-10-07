@@ -1,7 +1,23 @@
 // Over the ring, in the screen's pixels: the scores, the clock, whose ball is
 // whose, the words when a round starts and ends, what to do first, and the
-// controls. None of it shows while the lobby or the menu is up (lobby.tide).
+// controls. None of it shows while the menu is up (the rooms package's),
+// which also shows who has each seat, from what Roster tells it.
 using Box3D;
+using Rooms;
+
+// What the menu's room page shows of the match: who has each seat, and the
+// bots' switch; and the commands its buttons send, a new game and the switch.
+view Roster(Ring ring, Session session, mut Lobby lobby)
+{
+    lobby.seats = SEATS;
+    lobby.manned = ring.manned;
+    lobby.bots = ring.bots;
+    lobby.mine = ring.players.TryGet(session.player, out var seat) ? seat : -1;
+    lobby.offersNewGame = true;
+    lobby.offersBots = true;
+    if (lobby.newGame) Send(Rebuild { });
+    if (lobby.toggleBots) Send(Bots { });
+}
 
 const float SCORES = 48; // The height of the scores' row
 
@@ -46,7 +62,7 @@ view Glare(Fx fx)
 view Tags(Body body, Ball ball, Fx fx, Lobby lobby)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None) return;
+    if (lobby.page != Page.Playing) return;
     var screen = float2(Screen.width, Screen.height);
     var place = Draw3D.WorldToScreen(body.position + float3(0, ball.radius + 0.9, 0));
     var mine = ball.seat == fx.seat;
@@ -84,7 +100,7 @@ view Tags(Body body, Ball ball, Fx fx, Lobby lobby)
 view Scores(verified Ring sure, Fx fx, Lobby lobby, query (verified Seat seat) seats)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None) return;
+    if (lobby.page != Page.Playing) return;
     mut var live = 0;
     mut var count = 0;
     mut var best = 0;
@@ -177,7 +193,7 @@ void Shout(float2 at, string words, float size, Color color, float age, float sh
 view Words(Ring ring, Session session, Lobby lobby, mut Flow flow, mut Fx fx, mut Air air, query (Seat seat) seats)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None) return;
+    if (lobby.page != Page.Playing) return;
     var screen = float2(Screen.width, Screen.height);
     var big = screen.x >= 640 && screen.y >= 420;
     var middle = float2(screen.x * 0.5, SCORES + (screen.y - SCORES) * 0.3);
@@ -276,7 +292,7 @@ view Floats(Lobby lobby, Fx fx, mut Air air)
         }
         air.labels[i] = label;
         i++;
-        if (lobby.page != Page.None) continue;
+        if (lobby.page != Page.Playing) continue;
         var t = label.age / label.life;
         var place = Draw3D.WorldToScreen(label.at + float3(0, EaseOut(t) * 2.2, 0));
         // One from past the screen's edge is shown at the edge
@@ -293,7 +309,7 @@ view Floats(Lobby lobby, Fx fx, mut Air air)
 view Hints(Ring ring, Devices devices, Fx fx, Flow flow, Lobby lobby)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None || fx.seat < 0 || ring.phase != Phase.Play || !fx.here) return;
+    if (lobby.page != Page.Playing || fx.seat < 0 || ring.phase != Phase.Play || !fx.here) return;
     var screen = float2(Screen.width, Screen.height);
     var touch = devices.touchscreen.connected;
     mut var words = "";
@@ -313,16 +329,17 @@ view Hints(Ring ring, Devices devices, Fx fx, Flow flow, Lobby lobby)
 // go, by another finger, the right mouse button or Space, and shows how far
 // the charge is wound and when the next one is ready. They're read here from
 // the devices as they are this frame, and the input sends them on
-// (game.tide). The Menu button is a control of the GUI's (lobby.tide). The
-// bottom right corner is the engine's stats', so the charge button is over
-// it.
+// (game.tide). The Menu button is the rooms package's, in the bottom left
+// corner. The bottom right corner is the engine's stats', so the charge
+// button is over it.
 [Stage(Layers.Hud, 40)]
-view Controls(Session session, Devices devices, mut Hand hand, mut Flow flow, Fx fx, mut Lobby lobby)
+view Controls(Session session, Devices devices, mut Hand hand, mut Flow flow, Fx fx, Lobby lobby)
 {
     Draw2D.SetScreen();
+    hand.playing = lobby.playing;
     hand.stick = float2(0);
     hand.charge = false;
-    if (lobby.page != Page.None)
+    if (lobby.page != Page.Playing)
     {
         hand.dragging = false;
         return;
@@ -403,12 +420,6 @@ view Controls(Session session, Devices devices, mut Hand hand, mut Flow flow, Fx
     else if (session.room != "")
     {
         Draw2D.Text($"ROOM {session.room}", float2(104, bottom + 22), 13, INK, Anchor.MiddleLeft, Font.Bold);
-    }
-    var menu = Pill(Rect(8, bottom, 84, 44), "MENU", INK, false, true);
-    if (menu || keys.escape.down)
-    {
-        lobby.page = Page.Room;
-        lobby.resume = true;
     }
 }
 

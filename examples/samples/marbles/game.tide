@@ -1,4 +1,4 @@
-const string SampleTitle = "Marble Rush";
+using Rooms;
 
 settings { title = "Marble Rush"; maxPlayers = 8; hostMigration = true; }
 
@@ -168,7 +168,7 @@ input Controls
 {
     [Clamp(-1, 1)] float2 move; // x is to the right on the screen, y away from the camera
 
-    Sample(Devices devices, Stick stick, SampleLobby lobby)
+    Sample(Devices devices, Stick stick, Lobby lobby)
     {
         if (!lobby.playing) return;
         var keys = devices.keyboard;
@@ -646,13 +646,11 @@ void Rank(mut List<Row> rows)
 }
 
 // The camera leans towards this machine's own marble.
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Follow(Marble marble, mut Look look, with ownership)
 {
     look.goal = float3(marble.position.x * 0.6, 0, marble.position.z * 0.6);
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Stage(mut Look look, mut Scenery scenery, mut Stick stick, mut Fx fx, Session session)
 {
     if (scenery.ground.count == 0)
@@ -715,8 +713,7 @@ view Stage(mut Look look, mut Scenery scenery, mut Stick stick, mut Fx fx, Sessi
 }
 
 // Holding the mouse or a finger on the island rolls this machine's marble that way.
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
-view Steer(Marble marble, Devices devices, mut Stick stick, SampleLobby lobby, with ownership)
+view Steer(Marble marble, Devices devices, mut Stick stick, Lobby lobby, with ownership)
 {
     if (!lobby.playing) { stick.move = float2(0); stick.held = false; return; }
     var pointer = devices.pointer;
@@ -756,7 +753,6 @@ view Steer(Marble marble, Devices devices, mut Stick stick, SampleLobby lobby, w
     stick.held = true;
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Shadows(Marble marble)
 {
     if (marble.falling) return;
@@ -770,7 +766,6 @@ view Shadows(Marble marble)
     }
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view CoinShadows(Coin coin)
 {
     Draw3D.Depth(Depth.Read)
@@ -779,7 +774,6 @@ view CoinShadows(Coin coin)
     }
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Pointing(Stick stick)
 {
     if (!stick.held) return;
@@ -789,7 +783,6 @@ view Pointing(Stick stick)
     }
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Coins(Coin coin, Look look, Scenery scenery)
 {
     float phase = coin.position.x * 1.3 + coin.position.y * 0.7;
@@ -799,7 +792,6 @@ view Coins(Coin coin, Look look, Scenery scenery)
     Draw3D.Mesh(scenery.disc, scenery.discFaces, float4x4.TRS(at, turn, float3(size)), Gold);
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Marbles(mut Marble marble, Scenery scenery)
 {
     var dt = Math.Min(Frame.dt, 0.05);
@@ -814,7 +806,6 @@ view Marbles(mut Marble marble, Scenery scenery)
     Draw3D.Mesh(scenery.ball, scenery.ballFaces, float4x4.TRS(marble.position, marble.roll, float3(RADIUS)), Glass);
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Mine(Marble marble, Look look, with ownership)
 {
     var above = Draw3D.WorldToScreen(marble.position + float3(0, RADIUS + 0.35, 0));
@@ -824,7 +815,6 @@ view Mine(Marble marble, Look look, with ownership)
     }
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Effects(mut Fx fx, Look look)
 {
     var dt = Math.Min(Frame.dt, 0.05);
@@ -871,7 +861,6 @@ view Effects(mut Fx fx, Look look)
     }
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Hud(Round round, Session session, Time time, Look look, query (Marble body, Owner owner) marbles)
 {
     mut List<Row> rows = [];
@@ -929,4 +918,11 @@ view Hud(Round round, Session session, Time time, Look look, query (Marble body,
             Draw2D.Text($"in {Clock(round.took / time.tickRate)}. Next round in {seconds}", middle + float2(0, 36), 15, Color.white, Anchor.MiddleCenter);
         }
     }
+}
+
+// The menu's button goes in the top right corner here: the bottom of the
+// screen is the hints'.
+override Rect Rooms.MenuButton(float2 screen)
+{
+    return Rect(screen.x - 92, 8, 84, 36);
 }
