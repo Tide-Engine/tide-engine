@@ -502,7 +502,7 @@ view Trails(Bullet bullet)
 }
 ```
 
-`Draw.Clear` and `Draw.Clear` fill with their color whatever the blend, and [`Draw.Blit`](#targets-and-post-processing) takes a blend of its own (`Draw.Blit(source, destination, Blend.Add, frag)`).
+`Draw.Clear`, and a target's `Clear`, fill with their color whatever the blend, and [`Draw.Blit`](#targets-and-post-processing) takes a blend of its own (`Draw.Blit(source, destination, Blend.Add, frag)`).
 
 ### Alpha
 
@@ -677,7 +677,7 @@ The operation says what becomes of the stored number at each pixel the draw is d
 - **It's cut along pixels.** A pixel is in a mask or it isn't, so what's drawn where a mask is has a stepped edge where the mask's shape is round, however smooth the shape itself would be drawn. Draw a rim over it with no test, as the example does, where that shows.
 - **A draw that fails the test changes nothing,** and neither does a 3D mesh where it's hidden behind what's nearer: the number changes only where the draw is drawn.
 - **It's for everything that draws:** shapes, text, meshes, 3D meshes and the [primitives](#primitives), with a frag or without. Draws in a row under the same stencil are still one draw.
-- **`Draw.Clear` and `Draw.Clear` set every number back to 0,** within the [clip](#clipping), whatever is set, and are tested against nothing. [`Draw.Blit`](#targets-and-post-processing) neither tests nor stores, whatever is set.
+- **`Draw.Clear`, and a target's `Clear`, set every number back to 0,** within the [clip](#clipping), whatever is set, and are tested against nothing. [`Draw.Blit`](#targets-and-post-processing) neither tests nor stores, whatever is set.
 - **A render target has its own numbers, and its own setting:** `target.Stencil(StencilTest.Equal, 1) { target.Rect(...); }`. `Draw.Stencil` is the window's, and doesn't reach what's drawn into a target; a target's doesn't reach the window.
 - **`value` is any `int`.** Under 0 it's 0, and over 255 it's 255. The test and the operation are values too: `Draw.Stencil(inside ? StencilTest.Equal : StencilTest.NotEqual, 1)`.
 - **A block's stencil replaces the one it found,** and puts it back when it ends. `Draw.SetStencil()` puts back none: every pixel passes, and nothing is stored.
