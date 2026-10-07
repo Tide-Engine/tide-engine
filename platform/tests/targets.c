@@ -1211,7 +1211,7 @@ static void copy(const tide_gpu *gpu, const tide_gpu_id pipeline, const tide_gpu
     const float settings[4] = {0, HEIGHT, depth, 0};
     gpu->use(pipeline);
     gpu->uniforms(settings, sizeof settings);
-    gpu->sample(0, texture, false, TIDE_GPU_WRAP_CLAMP);
+    gpu->sample(0, texture, TIDE_GPU_FILTER_NEAREST, TIDE_GPU_WRAP_CLAMP);
     gpu->draw(0, 3, 1);
 }
 
@@ -1232,7 +1232,7 @@ static void show(const tide_gpu *gpu, const tide_gpu_id pipeline, const tide_gpu
     const float settings[4] = {with, 0, 0, 0};
     gpu->use(pipeline);
     gpu->uniforms(settings, sizeof settings);
-    gpu->sample(0, depth, false, TIDE_GPU_WRAP_CLAMP);
+    gpu->sample(0, depth, TIDE_GPU_FILTER_NEAREST, TIDE_GPU_WRAP_CLAMP);
     gpu->draw(0, 3, 1);
 }
 
@@ -1666,7 +1666,7 @@ static void check_targets(void)
     gpu->use(pipeline);
     float settings[4] = {1, HEIGHT, 0, 0};
     gpu->uniforms(settings, sizeof settings);
-    gpu->sample(0, image, false, TIDE_GPU_WRAP_CLAMP);
+    gpu->sample(0, image, TIDE_GPU_FILTER_NEAREST, TIDE_GPU_WRAP_CLAMP);
     gpu->draw(0, 3, 1);
     gpu->end();
     gpu->target_read(scene, actual);
@@ -1695,7 +1695,7 @@ static void check_targets(void)
     gpu->use(pipeline);
     settings[0] = 2;
     gpu->uniforms(settings, sizeof settings);
-    gpu->sample(0, scene_color, false, TIDE_GPU_WRAP_CLAMP);
+    gpu->sample(0, scene_color, TIDE_GPU_FILTER_NEAREST, TIDE_GPU_WRAP_CLAMP);
     gpu->draw(0, 3, 1);
     gpu->end();
     gpu->target_read(scaled, actual);
@@ -2176,7 +2176,7 @@ static void show_scaled(const tide_gpu *gpu, const tide_gpu_id pipeline, const t
     gpu->begin(into, true);
     gpu->use(pipeline);
     gpu->uniforms(settings, sizeof settings);
-    gpu->sample(0, texture, false, TIDE_GPU_WRAP_CLAMP);
+    gpu->sample(0, texture, TIDE_GPU_FILTER_NEAREST, TIDE_GPU_WRAP_CLAMP);
     gpu->draw(0, 3, 1);
     gpu->end();
     gpu->target_read(into, actual);

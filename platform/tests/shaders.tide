@@ -2238,12 +2238,150 @@ view Values(Art art, mut PerDraw given)
     Draw.Instanced(given.square, art.faces, given.dots, SpeckAt, SpeckTint, Strip { origin = float2(0, 160) });
 }
 
+// Filter.Trilinear (pass 14): a texture drawn an eighth of its size, read
+// between its smaller images, is at each pixel the mean of the 8 by 8 it
+// covers. The stripes are 64 by 64: red in one column of each 8, green in two
+// rows of each 8, blue everywhere. Each square is 8 pixels of the window.
+local singleton Mips
+{
+    [Filter(Filter.Trilinear)]
+    Grid2<Color> stripes = Grid2(64, 64);
+    Grid2<float> heights = Grid2(64, 64); // 1 in one column of each 8
+    Texture kept;                         // The stripes, as a field holds them: it says Trilinear itself
+    [Filter(Filter.Trilinear)]
+    RenderTarget drawn;                   // Red stripes `lit` pixels wide, 8 apart, drawn again each frame
+    float lit = 2;
+    List<Vertex> small;
+    bool made;
+}
+
+// By its field, whose declaration says Trilinear: in a branch, of a uv kept in a variable
+frag MipLook(Vertex vertex, out Color color, Mips mips)
+{
+    color = Color.black;
+    if (vertex.uv.x >= 0)
+    {
+        var where = vertex.uv;
+        color = mips.stripes.Sample(where);
+    }
+}
+
+// The Texture a draw gives, read as it says: after a pixel may have been left undrawn, in a branch
+frag MipSource(Vertex vertex, out Color color, Pixel pixel, Texture source)
+{
+    color = Color.black;
+    if (vertex.uv.x > 2) pixel.Discard();
+    if (vertex.uv.y < 2) color = source.Sample(vertex.uv);
+}
+
+// ...and as the Sample says, whatever the texture does
+frag MipSaid(Vertex vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv, Filter.Trilinear);
+}
+
+// A uv that a loop changes can't be worked out as the frag starts: the texture's own pixels
+frag MipStepped(Vertex vertex, out Color color, Texture source)
+{
+    mut var uv = vertex.uv;
+    for (int i = 0; i < 2; i++) uv += float2(0, 0);
+    color = source.Sample(uv);
+}
+
+frag MipHeight(Vertex vertex, out Color color, Mips mips)
+{
+    color = Color(mips.heights.Sample(vertex.uv, Filter.Trilinear).r, 0, 0, 1);
+}
+
+vert MipNudge(mut Vertex vertex)
+{
+    vertex.position += float2(0, 0);
+}
+
+[After(Shadows)]
+view Mipmaps(Art art, mut Mips mips)
+{
+    if (art.targetPass != 14) return;
+    if (!mips.made)
+    {
+        mips.made = true;
+        for (int y = 0; y < 64; y++)
+        {
+            for (int x = 0; x < 64; x++)
+            {
+                mips.stripes[x, y] = Color(x % 8 == 0 ? 1 : 0, y % 8 < 2 ? 1 : 0, 1);
+                mips.heights[x, y] = x % 8 == 0 ? 1 : 0;
+            }
+        }
+        mips.kept = mips.stripes;
+        mips.drawn = RenderTarget(64, 64, 1);
+        mips.small = [Vertex { }, Vertex { position = float2(8, 0), uv = float2(1, 0) },
+                      Vertex { position = float2(8, 8), uv = float2(1, 1) }, Vertex { position = float2(0, 8), uv = float2(0, 1) }];
+    }
+    mips.drawn.SetPixels();
+    mips.drawn.Clear(Color.black);
+    for (int i = 0; i < 8; i++) mips.drawn.Rect(float2(i * 8 + mips.lit * 0.5, 32), float2(mips.lit, 64), Color.red);
+
+    Draw.Clear(Color.black);
+    Draw.SetPixels();
+    Draw.SetClip();
+    Draw.Transform(float2(8, 8))
+    {
+        Draw.Mesh(mips.small, art.faces, MipLook);
+    }
+    // A Texture that says Trilinear, through a frag that leaves the filter to it
+    Draw.Transform(float2(24, 8))
+    {
+        Draw.Mesh(mips.small, art.faces, mips.kept, MipSource);
+    }
+    // ...and the same frag, with a draw that says another filter: the same shader, read at its own pixels
+    Draw.Transform(float2(40, 8))
+    {
+        Draw.Mesh(mips.small, art.faces, mips.kept, Filter.Bilinear, MipSource);
+    }
+    Draw.Transform(float2(56, 8))
+    {
+        Draw.Mesh(mips.small, art.faces, mips.kept, Filter.Point, MipSaid);
+    }
+    Draw.Transform(float2(72, 8))
+    {
+        Draw.Mesh(mips.small, art.faces, mips.kept, MipStepped);
+    }
+    // With no frag: the engine's own shader, and one tidec writes for a vert alone
+    Draw.Transform(float2(88, 8))
+    {
+        Draw.Mesh(mips.small, art.faces, mips.stripes);
+    }
+    Draw.Transform(float2(104, 8))
+    {
+        Draw.Mesh(mips.small, art.faces, mips.stripes, Filter.Point);
+    }
+    Draw.Transform(float2(120, 8))
+    {
+        Draw.Mesh(mips.small, art.faces, mips.kept, MipNudge);
+    }
+    // A grid of floats
+    Draw.Transform(float2(136, 8))
+    {
+        Draw.Mesh(mips.small, art.faces, MipHeight);
+    }
+    // A target's color, as its field says: what was just drawn into it
+    Draw.Transform(float2(152, 8))
+    {
+        Draw.Mesh(mips.small, art.faces, mips.drawn.color);
+    }
+    Draw.Transform(float2(168, 8))
+    {
+        Draw.Mesh(mips.small, art.faces, mips.drawn.color, MipSource);
+    }
+}
+
 // shaders.c requests independent full-window checks after the existing grid.
 // Resource descriptors are supplied by C, without choosing a Tide lifetime API.
 [After(Manual)]
 view Targets(mut Art art)
 {
-    // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images', 11 Outputs', 12 Values' and 13 Heights'
+    // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images', 11 Outputs', 12 Values', 13 Heights' and 14 Mipmaps'
     if (art.targetPass == 0 || art.targetPass >= 6) return;
     if (art.targetPass >= 4)
     {
