@@ -150,11 +150,11 @@ child.stdio[3].on('error', () => {}); // Gone already
 let commands = 0;
 let session = null; // The page's, once attached to it
 const answers = new Map();
-function ask(method, params = {}) {
+function ask(method, params = {}, browserLevel = false) {
     return new Promise(done => {
         const id = ++commands;
         answers.set(id, done);
-        child.stdio[3].write(JSON.stringify({ id, method, params, ...(session ? { sessionId: session } : {}) }) + '\0');
+        child.stdio[3].write(JSON.stringify({ id, method, params, ...(!browserLevel && session ? { sessionId: session } : {}) }) + '\0');
     });
 }
 const short = url => String(url).replace(`http://127.0.0.1:${server.address().port}`, '');
@@ -265,6 +265,10 @@ const passed = code === '0' && seen;
 if (code === '0' && !seen) console.log(`The page never printed "${expected}".`);
 else if (code !== '0') console.log(`The page ended with: ${code}.`);
 if (!passed) {
+    if (!exited) {
+        const info = await within(ask('SystemInfo.getInfo', {}, true), 3);
+        if (info?.result?.gpu) note(`browser GPU: ${JSON.stringify(info.result.gpu)}`);
+    }
     console.log(`--- what happened, and when: seconds since the test started, ${((performance.now() - began) / 1000).toFixed(3)} now`);
     for (const line of account) console.log(line);
     // GPU initialization can fail while the browser stays alive too.
