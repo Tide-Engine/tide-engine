@@ -1409,7 +1409,8 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_PLAYER: return "A player, independent of connections. `PlayerID(0)` names a player by index.";
     case TY_COLOR: return "A color: r, g, b and a from 0 to 1. `Color(r, g, b)` or `Color(r, g, b, a)`.";
     case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter[, wrap]])`. A Blit supplies its source to a read-only Texture shader parameter.";
-    case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Screen()` is always the window's size. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture; `Draw.window` is the window destination.";
+    case TY_DEPTH_TEXTURE: return "A local reference to a render target's depth, `target.depth`, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow wants.";
+    case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Screen()` is always the window's size. Each says last what it holds when that isn't color: `Format.DepthOnly` is depth alone. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
     case TY_RECT: return "A rectangle on the screen, for the GUI: x and y from the top left, y down, then width and height.";
     case TY_STRING: return "Text, written in double quotes.";
     case TY_ACTION: return "Code the caller writes in braces after the call, run with `content();`.";
@@ -1803,6 +1804,18 @@ static const method_form texture_calls[] = {
      "way round each time (`Wrap.Mirror`). The filter and the wrap are written there, fixed for the draw."},
 };
 
+static const method_form depth_calls[] = {
+    {"Sample", "Sample(float2 uv) -> float",
+     "Reads a render target's depth in a frag or vert: how far the nearest thing drawn at `uv` is, from 0 at the "
+     "camera's near plane to 1 at its far limit, as `pixel.depth` is, and 1 where nothing was drawn since the target "
+     "was cleared. `uv` is from (0, 0) at the top left to (1, 1). It's the nearest pixel's: a depth blended between "
+     "two would be neither's."},
+    {"Compare", "Compare(float2 uv, float value) -> float",
+     "Compares a render target's depth with `value` in a frag or vert: how much of what's stored around `uv` isn't "
+     "nearer than `value`, from 0 to 1, which the GPU blends between pixels. For a shadow map, `value` is how far "
+     "the pixel is from the lamp, a little less, so what the lamp sees isn't in its own shadow: 1 is lit, 0 in shadow."},
+};
+
 static const method_form target_calls[] = {
     {"Resize", "Resize(float width, float height)", "Changes the shared image's size, in logical pixels, and discards its contents, even at the same size. It keeps its pixels per unit. Not for a target made with `RenderTarget.Screen`, which follows the window."},
     {"Dispose", "Dispose()", "Releases the shared image. All target and color aliases become invalid; repeated disposal is harmless."},
@@ -1969,6 +1982,7 @@ static const method_form *methods_of(const type t, size_t *count)
     case TY_SET: forms = set_calls; *count = sizeof set_calls / sizeof set_calls[0]; break;
     case TY_GRID: forms = grid_calls; *count = sizeof grid_calls / sizeof grid_calls[0]; break;
     case TY_TEXTURE: forms = texture_calls; *count = sizeof texture_calls / sizeof texture_calls[0]; break;
+    case TY_DEPTH_TEXTURE: forms = depth_calls; *count = sizeof depth_calls / sizeof depth_calls[0]; break;
     case TY_RENDER_TARGET: forms = target_calls; *count = sizeof target_calls / sizeof target_calls[0]; break;
     case TY_ENTITY: case TY_LOCAL_ENTITY: forms = entity_calls; *count = sizeof entity_calls / sizeof entity_calls[0]; break;
     case TY_SINGLETON: forms = singleton_calls; *count = sizeof singleton_calls / sizeof singleton_calls[0]; break;
@@ -2013,7 +2027,7 @@ static void format_method(const method_form *form, const type t, sb *out)
     const bool generic = (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID) && t.decl;
     const char *element = generic ? type_name(t.decl->fields.items[0].type) : "T";
     const char *value = generic && t.kind == TY_MAP ? type_name(t.decl->fields.items[1].type) : "V";
-    sb_put(out, generic || t.kind == TY_RECORD ? type_name(t) // Pixel.Discard()
+    sb_put(out, generic || t.kind == TY_RECORD || t.kind == TY_DEPTH_TEXTURE ? type_name(t) // Pixel.Discard()
                 : t.kind == TY_LIST ? "items"
                 : t.kind == TY_MAP || t.kind == TY_SET ? "keys"
                 : t.kind == TY_GRID ? "cells"
@@ -2051,6 +2065,7 @@ static void describe_default(const type t, sb *out)
     case TY_SET: sb_put(out, "An empty set"); break;
     case TY_GRID: sb_put(out, "An empty grid, open every way"); break;
     case TY_TEXTURE: case TY_RENDER_TARGET: sb_put(out, "An invalid image reference"); break;
+    case TY_DEPTH_TEXTURE: sb_put(out, "No target's depth: it reads as the far limit, 1"); break;
     case TY_ENUM: {
         const enum_member *zero = NULL;
         for (int i = 0; i < t.decl->members.count && !zero; i++) {
@@ -5392,6 +5407,7 @@ static bool is_swizzle(const str member, const int dim)
 static type member_type(const type t, const str member)
 {
     if (t.kind == TY_RENDER_TARGET && str_eq_c(member, "color")) return (type){TY_TEXTURE, NULL};
+    if (t.kind == TY_RENDER_TARGET && str_eq_c(member, "depth")) return (type){TY_DEPTH_TEXTURE, NULL};
     if (t.decl && (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_RECORD
                    || t.kind == TY_STRUCT || t.kind == TY_EVENT)) {
         for (int i = 0; i < t.decl->fields.count + local_field_count(t.decl); i++) {
@@ -5534,6 +5550,9 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     const bool gpu = is_shader(sc->decl);
     if (t.kind == TY_RENDER_TARGET) {
         item(c, "color", CK_PROPERTY, "Texture", "The target's GPU color image, without CPU readback.", NULL);
+        item(c, "depth", CK_PROPERTY, "DepthTexture",
+             "The target's depth, for a frag to read: kept in a field of a component or singleton the frag takes, and "
+             "read there with `Sample(uv)` or `Compare(uv, value)`.", NULL);
         if (!gpu) {
             for (size_t i = 0; i < sizeof target_calls / sizeof target_calls[0]; i++)
                 item(c, target_calls[i].name, CK_METHOD, target_calls[i].form, target_calls[i].doc,
@@ -5546,6 +5565,14 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         return;
     }
     if (gpu && (t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET)) return;
+    if (gpu && t.kind == TY_DEPTH_TEXTURE) {
+        for (size_t i = 0; i < sizeof depth_calls / sizeof depth_calls[0]; i++) {
+            sb detail = {0};
+            format_method(&depth_calls[i], t, &detail);
+            item(c, depth_calls[i].name, CK_METHOD, detail.data, depth_calls[i].doc, i == 0 ? "Sample($1)" : "Compare($1, $2)");
+        }
+        return;
+    }
     if (gpu && (t.kind == TY_GRID || t.kind == TY_TEXTURE)) {
         if (t.kind == TY_GRID && (t.decl->dims != 2 || t.decl->fields.items[0].type.kind != TY_COLOR)) return;
         const method_form *sample = t.kind == TY_TEXTURE ? &texture_calls[0]
@@ -6061,7 +6088,7 @@ static bool complete_in_namespace(completion *c, const str ns, const order_compl
 static const char *const value_types[] = {
     "bool", "byte", "int", "long", "int2", "int3", "int4", "float", "float2", "float3", "float4", "quaternion",
     "float2x2", "float3x3", "float4x4", "Entity", "LocalEntity", "PlayerID", "Color", "Rect",
-    "Texture", "RenderTarget",
+    "Texture", "DepthTexture", "RenderTarget",
 };
 
 // Which built-in types to offer: each place takes its own.
@@ -6087,8 +6114,9 @@ static void complete_value_types(completion *c, const unsigned which)
                             : t.kind == TY_LOCAL_ENTITY   ? VT_LOCAL_ENTITY
                                                           : VT_VALUES;
         // Its ints are 32 bits, and it has no handles into the world, nor rects
-        if ((which & VT_GPU) && (t.kind == TY_BYTE || t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT || t.kind == TY_RENDER_TARGET)) continue;
-        if ((t.kind == TY_TEXTURE || t.kind == TY_RENDER_TARGET) && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
+        if ((which & VT_GPU) && (t.kind == TY_BYTE || t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT || t.kind == TY_RENDER_TARGET
+                                 || t.kind == TY_DEPTH_TEXTURE)) continue; // A depth is read where it's a field, never a parameter
+        if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_RENDER_TARGET) && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
         if (which & kind) item(c, value_types[i], CK_STRUCT, "built-in type", builtin_type_doc(t.kind), NULL);
     }
     if (which & VT_TEXT) item(c, "string", CK_STRUCT, "built-in type", builtin_type_doc(TY_STRING), NULL);
@@ -8025,7 +8053,7 @@ static const char *check_new_name(const occurrence *target, const str name)
     static const char *const reserved[] = {"Math", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
-                                           "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Wrap", "Font", "Blend", "Depth", "Cull", "Draw", "DrawList", "Random",
+                                           "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Wrap", "Font", "Blend", "Depth", "Cull", "Format", "Draw", "DrawList", "Random",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "List", "Map", "Set", "Grid2", "Grid3",
                                            "string", "Sample", "Sanitize"};
     static char message[160];
@@ -8282,7 +8310,7 @@ static void visit_signature(void *user, const char *label, const char *doc)
 // Constructors and other calls that aren't in the built-in function table.
 static const struct {
     const char *name;
-    const char *forms[3];
+    const char *forms[4];
     const char *doc;
 } call_forms[] = {
     {"byte", {"byte(int value)", "byte(long value)", "byte(float value)"}, "Keeps an integer's low 8 bits. "
@@ -8304,7 +8332,10 @@ static const struct {
     {"float4x4", {"float4x4(float4 c0, float4 c1, float4 c2, float4 c3)", "float4x4(float3x3 rotation, float3 translation)"}, NULL},
     {"Color", {"Color(float r, float g, float b)", "Color(float r, float g, float b, float a)"}, "Channels from 0 to 1."},
     {"Rect", {"Rect(float x, float y, float width, float height)"}, "From the top left of the screen, y down, in GUI units."},
-    {"RenderTarget", {"RenderTarget(float width, float height)", "RenderTarget(float width, float height, float pixelsPerUnit)"}, "Creates a local image of a positive size in logical pixels, like the window's. Its image has the display's pixels in each, so it's as sharp as the window, or `pixelsPerUnit` of them: with 1, exactly `width` by `height` pixels on any display. Color and depth persist until cleared; copies share it. Dispose it when finished. `RenderTarget.Screen()` is one that's always the window's size."},
+    {"RenderTarget", {"RenderTarget(float width, float height)", "RenderTarget(float width, float height, float pixelsPerUnit)",
+                      "RenderTarget(float width, float height, Format format)",
+                      "RenderTarget(float width, float height, float pixelsPerUnit, Format format)"},
+     "Creates a local image of a positive size in logical pixels, like the window's. Its image has the display's pixels in each, so it's as sharp as the window, or `pixelsPerUnit` of them: with 1, exactly `width` by `height` pixels on any display. It holds color beside its depth, or what `format` says: `Format.DepthOnly` is depth alone, for a pass whose depth a frag reads afterwards (`target.depth`). Color and depth persist until cleared; copies share it. Dispose it when finished. `RenderTarget.Screen()` is one that's always the window's size."},
     {"PlayerID", {"PlayerID(int index)"}, "A player by index, for local play and tests."},
     {"Random", {"Random(long seed)"}, RANDOM_SEEDED_DOC},
     {"Spawn", {"Spawn(components...)"}, "Creates an entity with these components. It's added at the end of the tick."},
@@ -8515,8 +8546,12 @@ static int call_param_names(const expr *call, str *names, const int max)
             } else if (call->object) { // RenderTarget.Screen(factor)
                 builtin_signatures(call->object->name, call->name, collect_label, &list);
             } else {
-                vec_push(list.labels, call->args.count == 3 ? "RenderTarget(float width, float height, float pixelsPerUnit)"
-                                                            : "RenderTarget(float width, float height)");
+                // What it holds comes last, where the call says: the engine's function is another then
+                const bool formatted = call->c_callee && strstr(call->c_callee, "_as") != NULL;
+                vec_push(list.labels, call->args.count == 4   ? "RenderTarget(float width, float height, float pixelsPerUnit, Format format)"
+                                      : call->args.count < 3  ? "RenderTarget(float width, float height)"
+                                      : formatted             ? "RenderTarget(float width, float height, Format format)"
+                                                              : "RenderTarget(float width, float height, float pixelsPerUnit)");
             }
             break;
         }
@@ -8533,7 +8568,7 @@ static int call_param_names(const expr *call, str *names, const int max)
     case CALL_CONSTRUCT: case CALL_NEW_GRID:
         for (size_t i = 0; i < sizeof call_forms / sizeof call_forms[0]; i++) {
             if (!str_eq_c(call->name, call_forms[i].name)) continue;
-            for (int f = 0; f < 3 && call_forms[i].forms[f]; f++) vec_push(list.labels, call_forms[i].forms[f]);
+            for (int f = 0; f < 4 && call_forms[i].forms[f]; f++) vec_push(list.labels, call_forms[i].forms[f]);
         }
         break;
     case CALL_SESSION:
@@ -8764,7 +8799,7 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
     } else {
         for (size_t i = 0; i < sizeof call_forms / sizeof call_forms[0]; i++) {
             if (!str_eq_c(name, call_forms[i].name)) continue;
-            for (int f = 0; f < 3 && call_forms[i].forms[f]; f++) add_signature(&s, call_forms[i].forms[f], call_forms[i].doc);
+            for (int f = 0; f < 4 && call_forms[i].forms[f]; f++) add_signature(&s, call_forms[i].forms[f], call_forms[i].doc);
         }
     }
     if (s.shown == 0) {

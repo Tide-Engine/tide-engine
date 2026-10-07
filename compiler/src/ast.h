@@ -119,6 +119,7 @@ typedef enum type_kind {
     TY_ACTION,      // Action: a function's last parameter, the code its caller writes in braces after the call
     TY_DRAW_LIST,  // DrawList: the frame's draw list, `Draw2D.list`, which only an extern function takes
     TY_TEXTURE,    // Texture: a local reference to pixels or a render target's color image
+    TY_DEPTH_TEXTURE, // DepthTexture: a local reference to a render target's depth, which a frag or vert reads
     TY_RENDER_TARGET, // RenderTarget: a local drawing destination; Draw.window names the window
     TY_LIST,       // List<T>: decl is the list type, whose one field is its element
     TY_MAP,        // Map<K, V>: decl is the map type, whose fields are its key and its value
@@ -382,6 +383,11 @@ typedef enum decl_kind {
     DECL_ASSET,    // asset Grid2<Color> hero = "art/hero.png";: a file's contents under a name, read-only, packed with the game
 } decl_kind;
 
+// How a frag or vert reads a texture: a color, or a target's depth, as a
+// number (depth.Sample) or compared with one of its own (depth.Compare). The
+// values are tide/draw.h's tide_shader_read's.
+typedef enum shader_read { READ_COLOR, READ_DEPTH, READ_COMPARE } shader_read;
+
 // A grid a frag or vert samples: a field of one of its parameters, and how.
 typedef struct shader_sample {
     int param;    // -1 for an asset's grid
@@ -390,6 +396,7 @@ typedef struct shader_sample {
     bool blended; // Filter.Bilinear, or the nearest cell
     const struct decl *asset; // A Grid2<Color> asset sampled by name, or NULL
     int wrap;     // What a uv past 0 and 1 reads: its Wrap's number, tide_wrap's
+    shader_read read; // A DepthTexture's: which of its two ways it's read
 } shader_sample;
 
 // One of an enum's members: `Options`, or `Options = 3`.
@@ -1002,6 +1009,7 @@ typedef struct shader_texture {
     bool direct; // Supplied explicitly by Draw.Mesh or Draw.Blit, rather than a field
     const struct decl *asset; // A Grid2<Color> asset, sampled by name: neither a field nor the draw's
     int wrap;    // Its Wrap's number, tide_wrap's: 0 where the draw says (a `textured` shader's own)
+    shader_read read; // A DepthTexture field's: as a number, or compared, each a texture of its own
 } shader_texture;
 
 // A struct a vert writes for its frag, an `out` parameter of the vert's: the
@@ -1114,6 +1122,7 @@ typedef struct program {
     decl *blend;         // The built-in enum Blend, how what's drawn goes over what's there
     decl *depth;         // The built-in enum Depth, what a 3D mesh does with depth: in generated C when code names it
     decl *cull;          // The built-in enum Cull, which side of a 3D mesh's triangles isn't drawn: the same
+    decl *format;        // The built-in enum Format, what a render target holds: in generated C when code names it
     decl *io_error;      // The built-in IOError enum, shared with tide/io.h
     VEC(struct expr *) io_calls; // Checked filesystem calls, for result adapters in generated C
     bool decodes;        // grid.Decode(bytes) is called: its adapter and tide/png.h go in the generated C

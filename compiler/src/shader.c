@@ -231,6 +231,9 @@ static bool type_fits(emit *em, const type t, const loc at)
     case TY_GRID: why = "a grid on the GPU is a texture, read with 'grid.Sample(uv)' where it's a field of a parameter"; break;
     case TY_ARRAY: why = "arrays can't go to the GPU yet: pass the elements it reads as fields of their own"; break;
     case TY_TEXTURE: why = "a texture is sampled with 'texture.Sample(uv)', not kept as a GPU value"; break;
+    case TY_DEPTH_TEXTURE:
+        why = "a target's depth is read with 'depth.Sample(uv)' or 'depth.Compare(uv, value)', not kept as a GPU value";
+        break;
     case TY_RENDER_TARGET: why = "a render target belongs to the CPU: sample its color as a Texture"; break;
     case TY_ENTITY:
     case TY_LOCAL_ENTITY:
@@ -1640,15 +1643,20 @@ static void ex_construct(emit *em, const expr *e)
 
 // A texture parameter, or a grid or texture field: which binding reads it.
 // One sampled with another filter or another wrap is another binding, as a
-// backend's sampler is how a binding is read.
+// backend's sampler is how a binding is read. A DepthTexture field is a
+// binding for each way it's read, as a number (Sample) and compared
+// (Compare): the GPU reads each through a sampler of another kind.
 static void ex_sample(emit *em, const expr *e)
 {
     const expr *of = e->object;
     const decl *asset = of->bind == BIND_ASSET ? of->constant : NULL; // A Grid2<Color> asset, by name
     const bool direct = of->kind == E_NAME && !asset;
     const param *p = asset ? NULL : direct ? of->param : of->object->param;
-    const bool blended = e->args.count < 2 || e->args.items[1]->enum_member->number != 0;
-    const int wrap = e->args.count < 3 ? 0 : (int)e->args.items[2]->enum_member->number;
+    const shader_read read = of->type.kind != TY_DEPTH_TEXTURE ? READ_COLOR : str_eq_c(e->name, "Compare") ? READ_COMPARE : READ_DEPTH;
+    // A depth's nearest pixel is read, the pixels at its edge past them, and what its comparisons give, the
+    // GPU blends: none of it is the draw's to say
+    const bool blended = read == READ_COLOR && (e->args.count < 2 || e->args.items[1]->enum_member->number != 0);
+    const int wrap = read != READ_COLOR || e->args.count < 3 ? 0 : (int)e->args.items[2]->enum_member->number;
     int slot = 0;
     if (em->checking) {
         if (em->code != em->root) {
@@ -1657,29 +1665,41 @@ static void ex_sample(emit *em, const expr *e)
         }
         const decl *holds = direct || asset ? NULL : of->local_field ? p->type.decl->local_part : p->type.decl;
         const shader_sample sample = {asset ? -1 : param_index(em->root, p), direct || asset ? -1 : field_index(holds, of->field),
-                                      of->local_field && !asset, blended, asset, wrap};
+                                      of->local_field && !asset, blended, asset, wrap, read};
         bool known = false;
         for (int i = 0; i < em->root->samples.count; i++) {
             const shader_sample *s = &em->root->samples.items[i];
             known |= s->param == sample.param && s->field == sample.field && s->local == sample.local && s->blended == sample.blended
-                  && s->asset == sample.asset && s->wrap == sample.wrap;
+                  && s->asset == sample.asset && s->wrap == sample.wrap && s->read == sample.read;
         }
         if (!known) vec_push(em->root->samples, sample);
     } else {
         while (slot < em->sh->textures.count) {
             const shader_texture *t = &em->sh->textures.items[slot];
             if (t->asset == asset && t->direct == direct && t->source == (p ? p->type.decl : NULL) && t->field == of->field
-                && t->blended == blended && t->wrap == wrap) {
+                && t->blended == blended && t->wrap == wrap && t->read == read) {
                 break;
             }
             slot++;
         }
     }
     // No pixel's neighbors are asked about, so it can be sampled anywhere, in a branch or a vertex
+    if (read == READ_COMPARE) {
+        // What it's compared with is between the near plane and the far limit, as what's stored is:
+        // past them, GPUs differ in what they make of it
+        if (em->l == WGSL) sb_printf(em->o, "textureSampleCompareLevel(pixels%d, sampler%d, ", slot, slot);
+        else sb_printf(em->o, "textureLod(pixels%d, vec3(", slot);
+        ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
+        sb_put(em->o, ", clamp(");
+        ex_as(em, e->args.items[1], (type){TY_FLOAT, NULL});
+        sb_put(em->o, em->l == WGSL ? ", 0.0, 1.0))" : ", 0.0, 1.0)), 0.0)");
+        return;
+    }
     if (em->l == WGSL) sb_printf(em->o, "textureSampleLevel(pixels%d, sampler%d, ", slot, slot);
     else sb_printf(em->o, "textureLod(pixels%d, ", slot);
     ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
-    sb_put(em->o, ", 0.0)");
+    // A depth is one number: WGSL gives it as that, at a level that's an int, and GLSL as a color's red
+    sb_put(em->o, read == READ_COLOR ? ", 0.0)" : em->l == WGSL ? ", 0)" : ", 0.0).r");
 }
 
 // A call of a function or method of the game's. A mut argument is the
@@ -1778,7 +1798,7 @@ static void ex_call(emit *em, const expr *e)
         diag_note("work it out on the CPU, in the view, and keep the result in a component or a singleton the code reads");
         return;
     case CALL_GRID:
-        if (str_eq_c(e->name, "Sample")) {
+        if (str_eq_c(e->name, "Sample") || (str_eq_c(e->name, "Compare") && e->object->type.kind == TY_DEPTH_TEXTURE)) {
             ex_sample(em, e);
             return;
         }
@@ -2488,9 +2508,14 @@ static void put_uniforms(const shader *sh, const lang l, sb *o)
     for (int i = 0; i < packs(sh->uniform_ints); i++) sb_printf(o, wgsl ? "    tide_v%d: vec4i,\n" : "    ivec4 tide_v%d;\n", i);
     sb_put(o, wgsl ? "}\n@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;\n" : "};\n");
     for (int i = 0; i < sh->textures.count; i++) {
+        const shader_read read = sh->textures.items[i].read;
         if (wgsl) {
-            sb_printf(o, "@group(0) @binding(%d) var pixels%d: texture_2d<f32>;\n@group(0) @binding(%d) var sampler%d: sampler;\n",
-                      1 + 2 * i, i, 2 + 2 * i, i);
+            sb_printf(o, "@group(0) @binding(%d) var pixels%d: %s;\n@group(0) @binding(%d) var sampler%d: %s;\n",
+                      1 + 2 * i, i, read == READ_COLOR ? "texture_2d<f32>" : "texture_depth_2d", 2 + 2 * i, i,
+                      read == READ_COMPARE ? "sampler_comparison" : "sampler");
+        } else if (read != READ_COLOR) {
+            // With all of its bits: a sampler's own precision is the lowest there is, where there's a choice
+            sb_printf(o, "uniform highp %s pixels%d;\n", read == READ_COMPARE ? "sampler2DShadow" : "sampler2D", i);
         } else {
             sb_printf(o, "uniform sampler2D pixels%d;\n", i);
         }
@@ -2865,7 +2890,7 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         for (int k = 0; k < p->type.decl->fields.count; k++) {
             const field *f = &p->type.decl->fields.items[k];
             if (f->hidden || !(p->whole || (p->reads && p->reads[k]))) continue;
-            if (f->type.kind == TY_GRID || f->type.kind == TY_TEXTURE) continue; // Sampled, below
+            if (f->type.kind == TY_GRID || f->type.kind == TY_TEXTURE || f->type.kind == TY_DEPTH_TEXTURE) continue; // Sampled, below
             shader_value *v = add_value(sh, p->type.decl, f, f->type, p->type.kind == TY_COMPONENT || explicit_instance);
             if (code->is_frag) v->frag_reads = true;
             else v->vert_reads = true;
@@ -2875,7 +2900,7 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         const decl *part = p->type.decl->local_part;
         for (int k = 0; part && p->local_reads && k < part->fields.count; k++) {
             const field *f = &part->fields.items[k];
-            if (!p->local_reads[k] || f->type.kind == TY_GRID || f->type.kind == TY_TEXTURE) continue;
+            if (!p->local_reads[k] || f->type.kind == TY_GRID || f->type.kind == TY_TEXTURE || f->type.kind == TY_DEPTH_TEXTURE) continue;
             shader_value *v = add_value(sh, p->type.decl, f, f->type, p->type.kind == TY_COMPONENT);
             if (code->is_frag) v->frag_reads = true;
             else v->vert_reads = true;
@@ -2888,12 +2913,12 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         const shader_texture t = {.source = source,
                                   .field = s->field < 0 ? NULL : &(s->local ? source->local_part : source)->fields.items[s->field],
                                   .blended = s->blended, .direct = s->field < 0 && !s->asset, .asset = s->asset,
-                                  .wrap = s->wrap};
+                                  .wrap = s->wrap, .read = s->read};
         bool known = false;
         for (int k = 0; k < sh->textures.count; k++) {
             known |= sh->textures.items[k].direct == t.direct && sh->textures.items[k].source == t.source && sh->textures.items[k].field == t.field
                   && sh->textures.items[k].blended == t.blended && sh->textures.items[k].asset == t.asset
-                  && sh->textures.items[k].wrap == t.wrap;
+                  && sh->textures.items[k].wrap == t.wrap && sh->textures.items[k].read == t.read;
         }
         if (!known) vec_push(sh->textures, t);
         if (source) add_bound(sh, (decl *)source);
@@ -3048,8 +3073,8 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     }
     if (sh->textures.count > 8) {
         diag_error(call->at, "this draw samples %d grids, and a draw takes 8", sh->textures.count);
-        diag_note("a grid sampled with another filter or another wrap counts again; put several images side by side in "
-                  "one grid");
+        diag_note("a grid sampled with another filter or another wrap counts again, and so does a depth that's both read and "
+                  "compared; put several images side by side in one grid");
         return NULL;
     }
     write_glsl(prog, sh);

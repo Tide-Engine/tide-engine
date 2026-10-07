@@ -1,5 +1,6 @@
 #include "tide/draw.h"
 
+#include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -11,42 +12,74 @@ static void reindex_meshes(tide_draw_list *d);
 
 static tide_render_target_state *render_targets;
 
-// A managed target of `size`, or a dead one, having said `why`, for a size
-// there's no image of.
-static tide_render_target make_target(const tide_target_size size, const char *why)
+// A state's address leaves an id the bits its format goes in
+_Static_assert(_Alignof(max_align_t) > TIDE_RENDER_FORMAT, "a render target's state is aligned past its format's bits");
+
+// A managed target's id: its state's address, and what it holds.
+static uint64_t managed_id(const tide_render_target_state *s)
+{
+    return TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)s | s->format;
+}
+
+// A managed target of `size` that holds what `format` says, or a dead one,
+// having said `why`, for a size there's no image of. A format there's none of
+// is color.
+static tide_render_target make_target(const tide_target_size size, const tide_target_format format, const char *why)
 {
     tide_render_target_state *s = tide_alloc_zeroed(1, sizeof *s);
     *s = (tide_render_target_state){.next = render_targets, .owner = &render_targets, .size = size, .version = 1,
-                                    .alive = tide_target_size_valid(size)};
+                                    .alive = tide_target_size_valid(size),
+                                    .format = format == TIDE_TARGET_DEPTH_ONLY ? TIDE_TARGET_DEPTH_ONLY : TIDE_TARGET_COLOR};
     render_targets = s;
     if (!s->alive) {
         s->size = (tide_target_size){0};
         fprintf(stderr, "%s\n", why);
     }
-    return (tide_render_target){.id = TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)s, .size = s->size};
+    return (tide_render_target){.id = managed_id(s), .size = s->size};
+}
+
+tide_render_target tide_render_target_make_as(const float width, const float height, const tide_target_format format)
+{
+    return make_target((tide_target_size){.width = width, .height = height}, format, "RenderTarget requires positive dimensions");
+}
+
+tide_render_target tide_render_target_make_scaled_as(const float width, const float height, const float scale,
+                                                     const tide_target_format format)
+{
+    // A scale of 0 is the display's in a size, which this never asks for
+    const tide_target_size size = {.width = scale > 0.0f ? width : 0.0f, .height = height, .scale = scale};
+    return make_target(size, format, "RenderTarget requires positive dimensions and a positive number of pixels per unit");
+}
+
+tide_render_target tide_render_target_screen_as(const float factor, const tide_target_format format)
+{
+    const tide_target_size size = {.window = factor > 0.0f ? factor : 0.0f};
+    return make_target(size, format, "RenderTarget.Screen requires a positive factor of the window's size");
+}
+
+tide_render_target tide_render_target_window_as(const tide_target_format format)
+{
+    return tide_render_target_screen_as(1.0f, format);
 }
 
 tide_render_target tide_render_target_make(const float width, const float height)
 {
-    return make_target((tide_target_size){.width = width, .height = height}, "RenderTarget requires positive dimensions");
+    return tide_render_target_make_as(width, height, TIDE_TARGET_COLOR);
 }
 
 tide_render_target tide_render_target_make_scaled(const float width, const float height, const float scale)
 {
-    // A scale of 0 is the display's in a size, which this never asks for
-    const tide_target_size size = {.width = scale > 0.0f ? width : 0.0f, .height = height, .scale = scale};
-    return make_target(size, "RenderTarget requires positive dimensions and a positive number of pixels per unit");
+    return tide_render_target_make_scaled_as(width, height, scale, TIDE_TARGET_COLOR);
 }
 
 tide_render_target tide_render_target_screen(const float factor)
 {
-    const tide_target_size size = {.window = factor > 0.0f ? factor : 0.0f};
-    return make_target(size, "RenderTarget.Screen requires a positive factor of the window's size");
+    return tide_render_target_screen_as(factor, TIDE_TARGET_COLOR);
 }
 
 tide_render_target tide_render_target_window(void)
 {
-    return tide_render_target_screen(1.0f);
+    return tide_render_target_window_as(TIDE_TARGET_COLOR);
 }
 
 void tide_render_target_resize(const tide_render_target target, const float width, const float height)
@@ -90,11 +123,10 @@ tide_render_target tide_render_target_recreate(const tide_render_target previous
     if (!tide_render_target_managed(previous.id) || !tide_target_size_valid(previous.size))
         return (tide_render_target){0};
     for (const tide_render_target_state *s = render_targets; s; s = s->next) {
-        if (s->reload_id == previous.id)
-            return (tide_render_target){.id = TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)s, .size = s->size};
+        if (s->reload_id == previous.id) return (tide_render_target){.id = managed_id(s), .size = s->size};
     }
-    // As it was: its size, its scale, and whether it follows the window
-    const tide_render_target next = make_target(previous.size, "");
+    // As it was: its size, its scale, whether it follows the window, and what it holds, which its id says
+    const tide_render_target next = make_target(previous.size, tide_render_target_format(previous.id), "");
     tide_render_target_state_of(next.id)->reload_id = previous.id;
     return next;
 }
@@ -739,27 +771,32 @@ tide_draw_list *tide_draw_to_sized(tide_draw_list *d, const uint64_t id, const t
     return draw_to_version(d, id, size, tide_render_target_version(id));
 }
 
-static uint32_t target_texture_version(tide_draw_list *d, const uint64_t id, const tide_target_size size,
+// A target's image as a texture of the list's: its color (TIDE_PIXELS_TARGET) or its depth.
+static uint32_t target_texture_version(tide_draw_list *d, const uint32_t space, const uint64_t id, const tide_target_size size,
                                        const uint64_t version)
 {
     if (!id) return 0;
     for (uint32_t i = 0; i < d->texture_count; i++) {
         tide_draw_texture *t = &d->textures[i];
-        if (t->space == TIDE_PIXELS_TARGET && t->id == id && tide_target_size_same(t->target, size)
-            && t->version == version) {
+        if (t->space == space && t->id == id && tide_target_size_same(t->target, size) && t->version == version) {
             t->frame = d->frame;
             return i + 1u;
         }
     }
     d->textures = grow(d->textures, d->texture_count, &d->texture_capacity, 1, sizeof(tide_draw_texture), 8u);
     d->textures[d->texture_count] = (tide_draw_texture){
-        .id = id, .version = version, .space = TIDE_PIXELS_TARGET, .target = size, .frame = d->frame, .epoch = d->epoch};
+        .id = id, .version = version, .space = space, .target = size, .frame = d->frame, .epoch = d->epoch};
     return ++d->texture_count;
 }
 
 uint32_t tide_draw_target_texture_sized(tide_draw_list *d, const uint64_t id, const tide_target_size size)
 {
-    return target_texture_version(d, id, size, tide_render_target_version(id));
+    return target_texture_version(d, TIDE_PIXELS_TARGET, id, size, tide_render_target_version(id));
+}
+
+uint32_t tide_draw_target_depth_sized(tide_draw_list *d, const uint64_t id, const tide_target_size size)
+{
+    return target_texture_version(d, TIDE_PIXELS_TARGET_DEPTH, id, size, tide_render_target_version(id));
 }
 
 void tide_draw_clear(tide_draw_list *d, const tide_color color)
@@ -1149,6 +1186,13 @@ uint32_t tide_draw_texture_source(tide_draw_list *d, const tide_texture_ref text
     if (!texture.target.id) return texture_slot(d, &texture.image);
     const tide_render_target target = tide_render_target_resolve(texture.target);
     return tide_draw_target_texture_sized(d, target.id, target.size);
+}
+
+uint32_t tide_draw_depth_source(tide_draw_list *d, const tide_depth_ref depth)
+{
+    if (!depth.target.id) return 0;
+    const tide_render_target target = tide_render_target_resolve(depth.target);
+    return tide_draw_target_depth_sized(d, target.id, target.size);
 }
 
 // A mesh's corners as the tint and the transform leave them: apart from
@@ -1576,7 +1620,8 @@ void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, const tide_ble
         const uint32_t slot = textures[i];
         if (!slot || slot > d->texture_count || !d->target) continue;
         const tide_draw_texture *t = &d->textures[slot - 1u];
-        if (t->space == TIDE_PIXELS_TARGET && t->id == d->targets[d->target - 1u].id) {
+        if ((t->space == TIDE_PIXELS_TARGET || t->space == TIDE_PIXELS_TARGET_DEPTH)
+            && t->id == d->targets[d->target - 1u].id) {
             fprintf(stderr, "Draw.Blit cannot sample its destination\n");
             return;
         }
@@ -1719,7 +1764,9 @@ static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, co
 {
     if (!texture) return 0;
     const tide_draw_texture *t = &from->textures[texture - 1u];
-    if (t->space == TIDE_PIXELS_TARGET) return target_texture_version(d, t->id, t->target, t->version);
+    if (t->space == TIDE_PIXELS_TARGET || t->space == TIDE_PIXELS_TARGET_DEPTH) {
+        return target_texture_version(d, t->space, t->id, t->target, t->version);
+    }
     uint8_t *pixels;
     const uint32_t slot = tide_draw_texture_slot(d, t->space, t->id, t->version, t->width, t->height, &pixels);
     if (pixels) memcpy(pixels, t->pixels, (size_t)t->width * (size_t)t->height * 4u);

@@ -274,7 +274,10 @@ static decl *find_in(const program *prog, const str ns, const str name, const na
         decl *d = prog->decls.items[i];
         if (is_kind(d, kind) && str_eq(d->name, name) && str_eq(decl_ns(d), ns)) {
             // Generated C only has these in games that name them
-            if ((d == prog->random || d == prog->depth || d == prog->cull || d == prog->wrap) && builds(prog)) d->named = true;
+            if ((d == prog->random || d == prog->depth || d == prog->cull || d == prog->wrap || d == prog->format)
+                && builds(prog)) {
+                d->named = true;
+            }
             return d;
         }
     }
@@ -1051,7 +1054,7 @@ typedef struct resource_outer {
 
 static bool holds_render_resource_in(const type t, const resource_outer *outer)
 {
-    if (t.kind == TY_TEXTURE || t.kind == TY_RENDER_TARGET) return true;
+    if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_RENDER_TARGET) return true;
     if (t.kind != TY_STRUCT && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_SET
         && t.kind != TY_GRID && t.kind != TY_ARRAY && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
     for (const resource_outer *p = outer; p; p = p->previous) {
@@ -1783,6 +1786,7 @@ static bool always_returns(const stmt *s);
 static void check_stmt(checker *c, stmt *s);
 static type check_grid_method(checker *c, expr *e, type grid);
 static type check_grid_sample(const checker *c, expr *e, type grid);
+static type check_depth_read(const checker *c, expr *e);
 static type check_new_grid(checker *c, expr *e, type want);
 static bool is_new_grid(const expr *e);
 static void refuse_arg_names(const expr *e, type result);
@@ -2040,6 +2044,12 @@ static comp_mask check_component_list(checker *c, const expr *call, const char *
     return mask;
 }
 
+// Whether `t` is the built-in Format, what a render target is made to hold.
+static bool is_format(const checker *c, const type t)
+{
+    return t.kind == TY_ENUM && t.decl == c->prog->format;
+}
+
 // Constructors of built-in types: float(x), int3(1), float4(v.xy, 0, 1),
 // quaternion(x, y, z, w), float3x3(c0, c1, c2) and friends.
 static type check_construct(checker *c, expr *e, const type target)
@@ -2062,24 +2072,31 @@ static type check_construct(checker *c, expr *e, const type target)
             diag_note("leave the field at default and create its target in a view or local handler");
             return T_ERR;
         }
-        // Its size in logical pixels, like the window's, and its image's pixels in each: the display's when left out
-        bool numbers = argc == 2 || argc == 3;
-        for (int i = 0; numbers && i < argc; i++) numbers = type_assignable(T_FLOAT_, e->args.items[i]->type);
+        // Its size in logical pixels, like the window's, its image's pixels in each (the display's when left
+        // out), and last, what it holds: color beside its depth when left out
+        const bool formatted = argc > 2 && is_format(c, e->args.items[argc - 1]->type);
+        const int sizes = argc - (formatted ? 1 : 0);
+        bool numbers = sizes == 2 || sizes == 3;
+        for (int i = 0; numbers && i < sizes; i++) numbers = type_assignable(T_FLOAT_, e->args.items[i]->type);
         if (!numbers) {
             diag_error(e->at, "RenderTarget takes its width and height in logical pixels, and its pixels per unit when "
                               "it isn't the display's: 'RenderTarget(width, height)' or 'RenderTarget(width, height, 1)'");
+            diag_note("what it holds comes last, when that isn't color: 'RenderTarget(width, height, Format.DepthOnly)'");
             diag_note("'RenderTarget.Screen()' is a target that's always the window's size");
             return T_ERR;
         }
         e->call = CALL_BUILTIN;
-        e->c_callee = argc == 3 ? "tide_render_target_make_scaled" : "tide_render_target_make";
+        e->c_callee = formatted ? (sizes == 3 ? "tide_render_target_make_scaled_as" : "tide_render_target_make_as")
+                                : (sizes == 3 ? "tide_render_target_make_scaled" : "tide_render_target_make");
         e->resource_operation = true;
         reading_code(c)->calls_c = true;
-        for (int i = 0; i < argc; i++) vec_push(e->arg_want, T_FLOAT_);
+        for (int i = 0; i < sizes; i++) vec_push(e->arg_want, T_FLOAT_);
+        if (formatted) vec_push(e->arg_want, e->args.items[argc - 1]->type);
         return target;
     }
-    if (target.kind == TY_TEXTURE) {
+    if (target.kind == TY_TEXTURE || target.kind == TY_DEPTH_TEXTURE) {
         diag_error(e->at, "%s has no constructor yet", name);
+        if (target.kind == TY_DEPTH_TEXTURE) diag_note("a DepthTexture is a render target's depth: 'target.depth'");
         return T_ERR;
     }
 
@@ -4992,7 +5009,9 @@ static bool check_setting(const checker *c, const expr *e)
 }
 
 // RenderTarget.Screen(), RenderTarget.Screen(0.5): a target that's always the
-// window's size, or that part of it. Made where the constructor's are.
+// window's size, or that part of it. Made where the constructor's are, and
+// like them, it says last what it holds when that isn't color:
+// RenderTarget.Screen(Format.DepthOnly), RenderTarget.Screen(0.5, Format.DepthOnly).
 static type check_screen_target(checker *c, expr *e)
 {
     bool any_error = false;
@@ -5012,17 +5031,22 @@ static type check_screen_target(checker *c, expr *e)
         diag_note("leave the field at default and create its target in a view or local handler");
         return T_ERR;
     }
-    if (e->args.count > 1 || (e->args.count == 1 && !type_assignable(T_FLOAT_, e->args.items[0]->type))) {
+    const bool formatted = e->args.count > 0 && is_format(c, e->args.items[e->args.count - 1]->type);
+    const int factors = e->args.count - (formatted ? 1 : 0);
+    if (factors > 1 || (factors == 1 && !type_assignable(T_FLOAT_, e->args.items[0]->type))) {
         diag_error(e->at, "RenderTarget.Screen takes the part of the window's size the target is, a number, or nothing "
                           "for all of it: 'RenderTarget.Screen()' or 'RenderTarget.Screen(0.5)'");
+        diag_note("what it holds comes last, when that isn't color: 'RenderTarget.Screen(Format.DepthOnly)'");
         diag_note("a target of a size of its own is 'RenderTarget(width, height)'");
         return T_ERR;
     }
     e->call = CALL_BUILTIN;
-    e->c_callee = e->args.count ? "tide_render_target_screen" : "tide_render_target_window";
+    e->c_callee = formatted ? (factors ? "tide_render_target_screen_as" : "tide_render_target_window_as")
+                            : (factors ? "tide_render_target_screen" : "tide_render_target_window");
     e->resource_operation = true;
     reading_code(c)->calls_c = true;
-    for (int i = 0; i < e->args.count; i++) vec_push(e->arg_want, T_FLOAT_);
+    for (int i = 0; i < factors; i++) vec_push(e->arg_want, T_FLOAT_);
+    if (formatted) vec_push(e->arg_want, e->args.items[e->args.count - 1]->type);
     return (type){TY_RENDER_TARGET, NULL};
 }
 
@@ -5202,6 +5226,17 @@ static type check_method(checker *c, expr *e)
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         if (str_eq_c(e->name, "Sample")) return check_grid_sample(c, e, obj);
         diag_error(e->at, "a Texture has Sample(uv[, filter[, wrap]]), not '" STR_FMT "'", STR_ARG(e->name));
+        if (str_eq_c(e->name, "Compare")) diag_note("Compare reads a render target's depth, a DepthTexture: 'target.depth'");
+        return T_ERR;
+    }
+    if (obj.kind == TY_DEPTH_TEXTURE) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        if (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "Compare")) return check_depth_read(c, e);
+        diag_error(e->at, "a DepthTexture has Sample(uv) and Compare(uv, value), not '" STR_FMT "'", STR_ARG(e->name));
+        suggestion sg = suggest_start(e->name);
+        suggest_consider_c(&sg, "Sample");
+        suggest_consider_c(&sg, "Compare");
+        suggest_note(&sg);
         return T_ERR;
     }
     if (obj.kind == TY_RENDER_TARGET) {
@@ -6065,7 +6100,10 @@ static type check_member(checker *c, expr *e)
 
     if (obj.kind == TY_RENDER_TARGET) {
         if (gpu_code(c)) {
-            gpu_refuses(c, e->at, "read a RenderTarget", "the view supplies its color image as a Texture instead");
+            gpu_refuses(c, e->at, "read a RenderTarget",
+                        str_eq_c(e->member, "depth") ? "the view keeps its depth in a DepthTexture field of a component or singleton "
+                                                       "this takes, 'lamp.shadow = lamp.map.depth;', which it reads there"
+                                                     : "the view supplies its color image as a Texture instead");
             return T_ERR;
         }
         if (str_eq_c(e->member, "color")) {
@@ -6075,7 +6113,14 @@ static type check_member(checker *c, expr *e)
             }
             return (type){TY_TEXTURE, NULL};
         }
-        diag_error(e->at, "a RenderTarget has 'color', not '" STR_FMT "'", STR_ARG(e->member));
+        if (str_eq_c(e->member, "depth")) {
+            if (e->object->kind == E_MEMBER && e->object->c_constant && str_eq_c(e->object->member, "window")) {
+                diag_error(e->at, "Draw.window has no depth image to sample: draw into a RenderTarget first");
+                return T_ERR;
+            }
+            return (type){TY_DEPTH_TEXTURE, NULL};
+        }
+        diag_error(e->at, "a RenderTarget has 'color' and 'depth', not '" STR_FMT "'", STR_ARG(e->member));
         return T_ERR;
     }
 
@@ -7050,6 +7095,61 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
     e->call = CALL_GRID;
     e->type_decl = grid.decl;
     return (type){TY_COLOR, NULL};
+}
+
+// shadow.Sample(uv) and shadow.Compare(uv, value): a render target's depth,
+// read in a frag or a vert. Sample gives how far the nearest thing drawn at
+// `uv` is, from 0 at the camera's near plane to 1 at its far limit, as
+// pixel.depth is: the nearest pixel's, as a depth blended between two pixels
+// is neither's. Compare gives how much of what's stored around `uv` isn't
+// nearer than `value`, from 0 to 1, which the GPU works out between pixels:
+// what a shadow's edge wants. The DepthTexture is a field of a component or a
+// singleton the frag takes, where a view put a target's `depth`.
+static type check_depth_read(const checker *c, expr *e)
+{
+    const bool compare = str_eq_c(e->name, "Compare");
+    const char *form = compare ? "Compare(uv, value)" : "Sample(uv)";
+    const decl *shader = gpu_code(c);
+    if (!shader) {
+        diag_error(e->at, "%s reads a render target's depth on the GPU: in a frag or a vert", compare ? "Compare" : "Sample");
+        return T_ERR;
+    }
+    const expr *of = e->object;
+    if (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
+        || of->object->param->function_param) {
+        diag_error(of->at, "a %s reads a DepthTexture that's a field of a component or singleton it takes, like 'lamp.shadow.%s'",
+                   shader_word(shader), form);
+        diag_note("a view puts a target's depth there: 'lamp.shadow = lamp.map.depth;'");
+        return T_ERR;
+    }
+    if (of->object->param->type.kind == TY_STRUCT) {
+        diag_error(of->at, "a texture is shared by an instanced draw: keep the sampled DepthTexture in a component or singleton");
+        return T_ERR;
+    }
+    if (!order_named_args(e, compare ? "uv, value" : "uv", 0)) return T_ERR;
+    const int wanted = compare ? 2 : 1;
+    const type uv = e->args.count >= 1 ? e->args.items[0]->type : T_ERR;
+    const type value = e->args.count >= 2 ? e->args.items[1]->type : T_ERR;
+    bool reported = false; // An argument that's wrong said so already
+    for (int i = 0; i < e->args.count; i++) reported |= e->args.items[i]->type.kind == TY_ERROR;
+    if (e->args.count != wanted || uv.kind != TY_FLOAT2 || (compare && !type_assignable(T_FLOAT_, value))) {
+        if (reported && e->args.count == wanted) return T_ERR;
+        if (!compare && e->args.count == 2 && value.kind == TY_ENUM && value.decl == c->prog->filter) {
+            diag_error(e->args.items[1]->at, "a depth is read at its nearest pixel: Sample takes where to read, and no Filter");
+            diag_note("a depth blended between two pixels would be neither's: 'Compare(uv, value)' compares each, and blends "
+                      "what that gives");
+        } else if (compare) {
+            diag_error(e->at, "Compare takes where to read, a float2 from (0, 0) to (1, 1), and the depth to compare what's "
+                              "stored there with, a number from 0 to 1: 'shadow.Compare(uv, depth)'");
+        } else {
+            diag_error(e->at, "Sample takes where to read, a float2 from (0, 0) to (1, 1): 'shadow.Sample(uv)'");
+            diag_note("it gives the depth stored there, a float; 'shadow.Compare(uv, depth)' compares it with one");
+        }
+        return T_ERR;
+    }
+    e->call = CALL_GRID;
+    e->type_decl = NULL;
+    return T_FLOAT_;
 }
 
 // grid.Decode(bytes): a Grid2<Color> becomes the PNG in a List<byte>, sized
@@ -8896,7 +8996,7 @@ static void check_var(checker *c, stmt *s)
         }
         if (!c->method && !local_code(c)) {
             diag_error(s->type_at.line ? s->type_at : s->at, "rendering resources belong to this machine, so the match can't keep them in a local");
-            diag_note("keep the Texture or RenderTarget in local state and use it in a view");
+            diag_note("keep the Texture, DepthTexture or RenderTarget in local state and use it in a view");
             s->type = T_ERR;
         }
     }
@@ -10017,7 +10117,8 @@ static void check_fields(checker *c, const decl *d)
             const loc at = f->type_qual_at.line ? f->type_qual_at : f->type_at.line ? f->type_at : f->at;
             if (d->kind != DECL_STRUCT && !d->is_local) {
                 diag_error(at, "'" STR_FMT "' can't hold rendering resources in match state", STR_ARG(d->name));
-                diag_note("Texture and RenderTarget belong to this machine: keep the field local, or use a local component or singleton");
+                diag_note("Texture, DepthTexture and RenderTarget belong to this machine: keep the field local, or use a local component "
+                          "or singleton");
             } else if (f->type.kind == TY_LIST || f->type.kind == TY_MAP || f->type.kind == TY_SET || f->type.kind == TY_GRID) {
                 diag_error(at, "containers can't hold rendering resources, including inside a struct");
             }
@@ -11039,6 +11140,11 @@ static void check_shader_decl(const checker *c, decl *d)
                     instance_data = p;
                 }
                 p->function_param = false; // Supplied by the draw: its instances, or its vert
+            } else if (value.kind == TY_DEPTH_TEXTURE) {
+                diag_error(at, "a %s reads a DepthTexture that's a field of a component or singleton it takes, not a "
+                               "parameter of its own", word);
+                diag_note("keep it in local state, 'local singleton Lamp { DepthTexture shadow; }', which a view sets, "
+                          "'lamp.shadow = lamp.map.depth;', and read it there: 'lamp.shadow.Compare(uv, depth)'");
             } else {
                 refuse_shader_value(d, p);
             }
@@ -12383,6 +12489,19 @@ static void add_builtins(program *prog)
         vec_push(wrap->members, m);
     }
     prog->wrap = wrap;
+    // enum Format { Color, DepthOnly }: what a render target holds beside its depth, said when
+    // it's made, with tide/draw.h's tide_target_format's values. Like Depth, generated C
+    // has it only in a game whose code names it.
+    static const char *const formats[] = {"Color", "DepthOnly"};
+    decl *format = NEW(decl);
+    format->kind = DECL_ENUM;
+    format->name = str_from("Format");
+    format->builtin = true;
+    for (int i = 0; i < (int)(sizeof formats / sizeof formats[0]); i++) {
+        const enum_member m = {str_from(formats[i]), {0, 0, 0}, NULL, i};
+        vec_push(format->members, m);
+    }
+    prog->format = format;
 
     // This machine's part in a match (see tide/session.h, whose enums have the
     // same values): local singleton Session { SessionState state; PlayerID
@@ -12450,6 +12569,7 @@ static void add_builtins(program *prog)
     vec_push(decls, depth);
     vec_push(decls, cull);
     vec_push(decls, wrap);
+    vec_push(decls, format);
     vec_push(decls, font);
     vec_push(decls, state);
     vec_push(decls, reason);
@@ -14003,7 +14123,8 @@ static void check_render_resource_calls(const checker *c)
             || site->from->kind == DECL_SHADER || is_local_code(site->from)) continue;
         diag_error(site->call->at, "'" STR_FMT "' uses rendering resources, which belong to this machine: the match can't call it",
                    STR_ARG(site->to->name));
-        diag_note_at(site->to->render_resources_at, "it uses a Texture or RenderTarget on line %d", site->to->render_resources_at.line);
+        diag_note_at(site->to->render_resources_at, "it uses a Texture, DepthTexture or RenderTarget on line %d",
+                     site->to->render_resources_at.line);
     }
     for (int i = 0; i < c->prog->decls.count; i++) {
         decl *d = c->prog->decls.items[i];
@@ -14984,6 +15105,7 @@ bool check(program *prog)
 
     add_builtins(prog);
     builtins_use(prog->anchor, prog->shape, prog->blend, prog->depth, prog->cull, prog->font);
+    builtins_use_format(prog->format);
     builtins_use_gui(prog->gui_theme, prog->gui_control);
     add_device_records(prog);
     collect_decls(prog);

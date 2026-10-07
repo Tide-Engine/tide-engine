@@ -20,6 +20,8 @@ bool builtin_draw_owner(str name);
 void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *cull,
                   const decl *font);
 void builtins_use_io(const decl *bytes, const decl *paths);
+// Its Format enum, which RenderTarget.Screen takes, the same way.
+void builtins_use_format(const decl *format);
 // Its GUITheme and GUIControl structs, which GUI.SetTheme and GUI.Theme take
 // and GUI.Control gives, the same way.
 void builtins_use_gui(const decl *theme, const decl *control);
