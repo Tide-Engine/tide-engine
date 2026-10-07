@@ -111,6 +111,16 @@ TIDE_TEST(resident_commits_what_was_touched_and_restores_it)
     TIDE_CHECK(tide_arena_differs(a, &r1) >= 1); // Past the header's page
     blocks[4][7] ^= 1u;
 
+    // A read-side operation may write scratch inside the arena. Its page
+    // identity still matches, but an uncommitted write must be restored too.
+    TIDE_CHECK(tide_arena_is(a, &r1));
+    blocks[4][7] ^= 1u;
+    tide_arena_touch(a, &blocks[4][7], 1);
+    TIDE_CHECK(!tide_arena_is(a, &r1));
+    tide_arena_restore(a, &r1);
+    TIDE_CHECK(filled(blocks[4], 3000, 14u));
+    TIDE_CHECK(tide_arena_is(a, &r1) && tide_arena_differs(a, &r1) == -1);
+
     // Back to the first state, and to the second
     tide_arena_restore(a, &r2);
     TIDE_CHECK(tide_arena_stamp(a) == 1);
@@ -236,4 +246,74 @@ TIDE_TEST(resident_registry_is_adopted_with_its_arenas)
     bool there = false;
     for (int i = 0; i < TIDE_RESIDENT_KINDS; i++) there = there || table.arena[i] == a;
     TIDE_CHECK(there);
+    memset(&table, 0, sizeof table);
+    tide_residents_adopt(&table); // Reinitializing the adopted table keeps the process's arenas
+    TIDE_CHECK(tide_resident_arena(tide_resident_kind_of("kept")) == a);
+    tide_residents_release(&table);
+    memset(&table, 0xa5, sizeof table);
+    TIDE_CHECK(tide_resident_arena(tide_resident_kind_of("kept")) == a);
+}
+
+static void pack_arena_value(void *context, const tide_resident *r, tide_writer *w)
+{
+    tide_arena *a = context;
+    tide_arena_restore(a, r);
+    uint64_t value;
+    memcpy(&value, tide_arena_user(a), sizeof value);
+    tide_write_u64(w, value);
+}
+
+TIDE_TEST(resident_canonical_size_cache_keeps_the_state_it_sized)
+{
+    const uint64_t kind = tide_resident_kind_of("cache");
+    tide_arena *a = tide_resident_arena(kind);
+    const tide_resident_kind k = {.name = "cache", .pack = pack_arena_value, .context = a};
+    tide_resident_register(&k);
+    tide_resident r = {0};
+    uint64_t value = 11;
+    memcpy(tide_arena_user(a), &value, sizeof value);
+    tide_arena_commit(a, &r, 1, value);
+    TIDE_CHECK(tide_resident_packed_size(&r) == 20);
+    tide_resident_pages *sized = r.pages;
+    TIDE_CHECK(sized->refs == 2); // The size cache holds the old table until it is replaced or written
+
+    value = 22;
+    memcpy(tide_arena_user(a), &value, sizeof value);
+    tide_arena_commit(a, &r, 1, value); // Another state at the same stamp, as a different prediction can be
+    TIDE_CHECK(r.pages != sized);
+    uint8_t bytes[20];
+    tide_writer out = {bytes, sizeof bytes, 0, false, false};
+    tide_resident_pack(&r, &out);
+    tide_reader in = {bytes, out.size, 0, false};
+    TIDE_CHECK(tide_read_u64(&in) == kind);
+    TIDE_CHECK(tide_read_u32(&in) == sizeof value);
+    TIDE_CHECK(tide_read_u64(&in) == value && !in.failed);
+    TIDE_CHECK(r.pages->refs == 1); // Writing released the cache's table
+    TIDE_CHECK(tide_resident_packed_size(&r) == 20 && r.pages->refs == 2);
+    const tide_resident empty = {0};
+    out.size = 0;
+    tide_resident_pack(&empty, &out);
+    TIDE_CHECK(out.size == 12 && r.pages->refs == 1); // An empty pack releases the previous cache too
+    tide_resident_free(&r);
+}
+
+static void pack_digest(void *context, const tide_resident *r, tide_writer *w)
+{
+    (void)context;
+    tide_write_u64(w, r->digest);
+}
+
+TIDE_TEST(resident_canonical_size_cache_checks_the_digest_without_pages)
+{
+    const tide_resident_kind k = {.name = "digest-cache", .pack = pack_digest};
+    tide_resident r = {.kind = tide_resident_register(&k), .stamp = 1, .digest = 11};
+    TIDE_CHECK(tide_resident_packed_size(&r) == 20);
+    r.digest = 22;
+    uint8_t bytes[20];
+    tide_writer out = {bytes, sizeof bytes, 0, false, false};
+    tide_resident_pack(&r, &out);
+    tide_reader in = {bytes, out.size, 0, false};
+    TIDE_CHECK(tide_read_u64(&in) == r.kind);
+    TIDE_CHECK(tide_read_u32(&in) == sizeof r.digest);
+    TIDE_CHECK(tide_read_u64(&in) == 22 && !in.failed);
 }

@@ -26,6 +26,31 @@ static uint64_t tick(tide_world *w)
     return tide_world_hash(w);
 }
 
+TIDE_TEST(resident_arenas_survive_local_state_reinitialization)
+{
+    tide_world_init(&world, 1.0f / 60.0f);
+    tick(&world);
+    tide_arena *arena = resident_test_arena();
+    const uint64_t kind = world.Tally.state.kind;
+    const uint64_t hash = tide_world_hash(&world);
+    tide_local local = {0};
+    tide_local_init(&local);
+    TIDE_CHECK(tide_resident_arena(kind) == arena);
+    tide_local_init(&local); // Clears the same local registry the engine adopted
+    TIDE_CHECK(tide_resident_arena(kind) == arena);
+    tide_local_free(&local);
+    memset(&local, 0xa5, sizeof local); // The registry no longer belongs to the engine
+    TIDE_CHECK(tide_resident_arena(kind) == arena);
+    tide_local next = {0};
+    tide_local_init(&next);
+    TIDE_CHECK(tide_resident_arena(kind) == arena);
+    bool kept = false;
+    for (int i = 0; i < TIDE_RESIDENT_KINDS; i++) kept = kept || next.tide_residents.arena[i] == arena;
+    TIDE_CHECK(kept && tide_world_hash(&world) == hash);
+    tide_local_free(&next);
+    tide_world_free(&world);
+}
+
 static bool same_cells(const tide_resident *a, const tide_resident *b)
 {
     for (int i = 0; i < 8; i++) {

@@ -2891,9 +2891,9 @@ bool b3World_Restore( b3WorldId worldId, const uint8_t* image, int size, const u
 // ---------------------------------------------------------------------------------------------------------
 // Tide: resident state (see ../TIDE.md). The world's state lives in an arena whose pages are copied as they're
 // touched: this says what may have been written since the last time, from the same marks an image in parts goes
-// by, and the rest whole. What holds nothing between steps isn't said: the stack and the workers' arenas, which
-// are scratch (core.h), the events, which a step clears before it writes them, the trees' rebuild scratch and
-// the debug sets.
+// by, and the rest whole. The stack, the workers' arenas and OS objects are scratch outside the arena (core.h).
+// The events and task buffers are in it, even though an image skips them. A rebuild says which of its scratch
+// it wrote, and which old tree becomes its spare (dynamic_tree.c), so a skipped rebuild touches neither.
 
 static void b3TouchArray( const void* data, int count, size_t elementSize )
 {
@@ -2920,14 +2920,6 @@ static void b3TouchTree( const b3DynamicTree* tree )
 	b3TouchArray( tree->nodes, tree->nodeCapacity, sizeof( b3TreeNode ) );
 	b3TouchArray( tree->parents, tree->nodeCapacity, sizeof( int32_t ) );
 	b3TouchArray( tree->proxies, tree->proxyCapacity, sizeof( b3TreeProxy ) ); // The free list runs through them
-	// Its rebuild's scratch: written by a rebuild on a worker thread, and the nodes it builds into are swapped
-	// for the tree's, so the block that was the tree's is this one next time
-	b3TouchArray( tree->swapNodes, tree->nodeCapacity, sizeof( b3TreeNode ) );
-	b3TouchArray( tree->leafIndices, tree->rebuildCapacity, sizeof( int32_t ) );
-	b3TouchArray( tree->leafNodes, tree->rebuildCapacity, sizeof( b3TreeNode ) );
-	b3TouchArray( tree->leafCenters, tree->rebuildCapacity, sizeof( b3Vec3 ) );
-	b3TouchArray( tree->leafBoxes, tree->rebuildCapacity, sizeof( b3AABB ) );
-	b3TouchArray( tree->binIndices, tree->rebuildCapacity, sizeof( int32_t ) );
 }
 
 static void b3TouchShape( const b3Shape* shape )
@@ -3061,8 +3053,33 @@ bool b3World_TouchChanged( b3WorldId worldId )
 		b3TouchArray( geometry->entries, geometry->capacity, sizeof( b3SnapGeometryEntry ) );
 		b3TouchArray( geometry->buckets, geometry->bucketCount, sizeof( int ) );
 	}
+	B3_TOUCH_ARRAY( world->bodyMoveEvents );
+	B3_TOUCH_ARRAY( world->contactBeginEvents );
+	B3_TOUCH_ARRAY( world->contactHitEvents );
+	B3_TOUCH_ARRAY( world->sensorBeginEvents );
+	B3_TOUCH_ARRAY( world->jointEvents );
+	for ( int i = 0; i < 2; ++i )
+	{
+		B3_TOUCH_ARRAY( world->contactEndEvents[i] );
+		B3_TOUCH_ARRAY( world->sensorEndEvents[i] );
+	}
 	B3_TOUCH_ARRAY( world->taskContexts );
 	B3_TOUCH_ARRAY( world->sensorTaskContexts );
+	for ( int i = 0; i < world->taskContexts.count; ++i )
+	{
+		const b3TaskContext* context = world->taskContexts.data + i;
+		B3_TOUCH_ARRAY( context->sensorHits );
+		B3_TOUCH_ARRAY( context->pairKeys );
+		b3TouchArray( context->contactStateBitSet.bits, context->contactStateBitSet.blockCapacity, sizeof( uint64_t ) );
+		b3TouchArray( context->jointStateBitSet.bits, context->jointStateBitSet.blockCapacity, sizeof( uint64_t ) );
+		b3TouchArray( context->hitEventBitSet.bits, context->hitEventBitSet.blockCapacity, sizeof( uint64_t ) );
+		b3TouchArray( context->awakeIslandBitSet.bits, context->awakeIslandBitSet.blockCapacity, sizeof( uint64_t ) );
+	}
+	for ( int i = 0; i < world->sensorTaskContexts.count; ++i )
+	{
+		const b3SensorTaskContext* context = world->sensorTaskContexts.data + i;
+		b3TouchArray( context->eventBits.bits, context->eventBits.blockCapacity, sizeof( uint64_t ) );
+	}
 	// The marks start over, as after an image: what's awake now is what the next ones go on from
 	track->setsTouched = false;
 	track->pairsTouched = false;

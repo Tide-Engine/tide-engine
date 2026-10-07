@@ -1,3 +1,7 @@
+#if !defined(_WIN32) && !defined(__wasm__) && !defined(__APPLE__)
+#define _DEFAULT_SOURCE
+#endif
+
 #include "tide/resident.h"
 
 #include <stdio.h>
@@ -92,8 +96,11 @@ static uint8_t *reserve(size_t bytes)
     uint8_t *raw = tide_alloc(bytes + TIDE_ARENA_PAGE);
     return (uint8_t *)(((uintptr_t)raw + TIDE_ARENA_PAGE - 1u) & ~(uintptr_t)(TIDE_ARENA_PAGE - 1u));
 #else
-    void *p = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-    return p == MAP_FAILED ? NULL : p;
+    // mmap promises the system's page alignment, which can be smaller than
+    // the 16 KiB pages the allocator promises for its large blocks.
+    void *p = mmap(NULL, bytes + TIDE_ARENA_PAGE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (p == MAP_FAILED) return NULL;
+    return (uint8_t *)(((uintptr_t)p + TIDE_ARENA_PAGE - 1u) & ~(uintptr_t)(TIDE_ARENA_PAGE - 1u));
 #endif
 }
 
@@ -285,6 +292,11 @@ void *tide_arena_user(tide_arena *a)
     return header(a)->user;
 }
 
+const void *tide_arena_user_read(const tide_arena *a)
+{
+    return header(a)->user;
+}
+
 uint64_t tide_arena_stamp(const tide_arena *a)
 {
     return a->stamp;
@@ -399,7 +411,7 @@ bool tide_arena_is(const tide_arena *a, const tide_resident *r)
     const tide_resident_pages *t = r->pages;
     if (!t) return false;
     for (uint32_t i = 0; i < a->pages; i++) {
-        if (a->live[i] != (i < t->count ? t->page[i] : NULL)) return false;
+        if (a->touched[i] || a->live[i] != (i < t->count ? t->page[i] : NULL)) return false;
     }
     return true;
 }
@@ -410,7 +422,7 @@ void tide_arena_restore(tide_arena *a, const tide_resident *r)
     const uint32_t count = t ? t->count : 0;
     for (uint32_t i = 0; i < count; i++) {
         tide_page *p = t->page[i];
-        if (a->live[i] == p) continue;
+        if (a->live[i] == p && !a->touched[i]) continue;
         if (p) {
             commit_to(a, (size_t)(i + 1u) << TIDE_ARENA_PAGE_SHIFT);
             memcpy(a->base + ((size_t)i << TIDE_ARENA_PAGE_SHIFT), tide_page_data(p), TIDE_ARENA_PAGE);
@@ -445,7 +457,7 @@ int64_t tide_arena_differs(const tide_arena *a, const tide_resident *r)
 static tide_resident_kind kinds[TIDE_RESIDENT_KINDS];
 static char kind_names[TIDE_RESIDENT_KINDS][64];
 static uint32_t kind_count;
-static tide_residents own_table;
+static tide_residents own_table; // A durable copy: an adopted local world may be cleared or freed
 static tide_residents *table = &own_table;
 static bool relinked[TIDE_RESIDENT_KINDS]; // This build has taken the kind's arena over
 
@@ -484,35 +496,42 @@ static const tide_resident_kind *kind_at(const uint64_t number)
 
 void tide_residents_adopt(tide_residents *t)
 {
-    if (!t || t == table) return;
+    if (!t) return;
     bool empty = true;
     for (uint32_t i = 0; i < TIDE_RESIDENT_KINDS; i++) empty = empty && !t->arena[i];
-    if (empty) *t = *table; // What this process has already is what the host keeps from here
+    if (empty) *t = own_table; // What this process has already is what the host keeps from here
+    else own_table = *t;
+    if (t != table) memset(relinked, 0, sizeof relinked);
     table = t;
-    memset(relinked, 0, sizeof relinked);
+}
+
+void tide_residents_release(tide_residents *t)
+{
+    if (table == t) table = &own_table;
 }
 
 tide_arena *tide_resident_arena(const uint64_t kind)
 {
     uint32_t i = 0;
-    while (i < TIDE_RESIDENT_KINDS && table->arena[i] && table->kind[i] != kind) i++;
+    while (i < TIDE_RESIDENT_KINDS && own_table.arena[i] && own_table.kind[i] != kind) i++;
     if (i == TIDE_RESIDENT_KINDS) {
         fprintf(stderr, "tide: no room for another resident's arena: a process has %d\n", TIDE_RESIDENT_KINDS);
         fflush(stderr);
         abort();
     }
     const tide_resident_kind *k = kind_at(kind);
-    if (!table->arena[i]) {
+    if (!own_table.arena[i]) {
         char name[64];
         snprintf(name, sizeof name, "%s", k ? k->name : "resident");
-        table->kind[i] = kind;
-        table->arena[i] = arena_new(kind, name, k && k->arena_bytes ? k->arena_bytes : TIDE_ARENA_DEFAULT);
+        own_table.kind[i] = kind;
+        own_table.arena[i] = arena_new(kind, name, k && k->arena_bytes ? k->arena_bytes : TIDE_ARENA_DEFAULT);
+        if (table != &own_table) *table = own_table;
         relinked[i] = true;
     } else if (!relinked[i]) { // Made by another build of the library: it holds what that build left
         relinked[i] = true;
-        if (k && k->relink) k->relink(k->context, table->arena[i]);
+        if (k && k->relink) k->relink(k->context, own_table.arena[i]);
     }
-    return table->arena[i];
+    return own_table.arena[i];
 }
 
 // ---------------------------------------------------------------------------
@@ -535,14 +554,20 @@ void tide_resident_free(tide_resident *r)
 // The canonical bytes of the last state packed, so that asking their size
 // and then writing them is one call of the library's.
 static struct {
-    const tide_resident_pages *pages;
-    uint64_t kind, stamp;
+    tide_resident_pages *pages; // Retained: a commit parts from the cached table before it changes any page
+    uint64_t kind, stamp, digest;
     tide_writer bytes;
+    bool valid;
 } packed;
 
 static const tide_writer *canonical(const tide_resident *r)
 {
-    if (packed.bytes.data && packed.pages == r->pages && packed.kind == r->kind && packed.stamp == r->stamp) return &packed.bytes;
+    if (packed.valid && packed.pages == r->pages && packed.kind == r->kind && packed.stamp == r->stamp && packed.digest == r->digest) {
+        return &packed.bytes;
+    }
+    pages_release(packed.pages);
+    packed.pages = NULL;
+    packed.valid = false;
     const tide_resident_kind *k = kind_at(r->kind);
     packed.bytes.size = 0;
     packed.bytes.overflow = false;
@@ -550,8 +575,11 @@ static const tide_writer *canonical(const tide_resident *r)
     if (k && k->pack) k->pack(k->context, r, &packed.bytes);
     if (!packed.bytes.data) packed.bytes.data = tide_alloc(1); // Nothing: still a cache entry
     packed.pages = r->pages;
+    if (packed.pages) packed.pages->refs++;
     packed.kind = r->kind;
     packed.stamp = r->stamp;
+    packed.digest = r->digest;
+    packed.valid = true;
     return &packed.bytes;
 }
 
@@ -566,12 +594,17 @@ void tide_resident_pack(const tide_resident *r, tide_writer *w)
     tide_write_u64(w, r->kind);
     if (!r->kind) {
         tide_write_u32(w, 0);
+        pages_release(packed.pages);
+        packed.pages = NULL;
+        packed.valid = false;
         return;
     }
     const tide_writer *c = canonical(r);
     tide_write_u32(w, c->size);
     tide_write_bytes(w, c->data, c->size);
-    packed.pages = NULL; // The world that's packed may be about to go, and its table's address come round again
+    pages_release(packed.pages);
+    packed.pages = NULL;
+    packed.valid = false;
 }
 
 bool tide_resident_unpack(tide_resident *r, tide_reader *rd)
