@@ -1,16 +1,16 @@
 # Builds the docs site (docs/, VitePress), with the web demo in it, and
-# publishes it to GitHub Pages on pushes to dev. Pull requests only build it,
-# which also checks its links.
+# publishes it to GitHub Pages when run by hand on dev. Other branches only
+# build it, which also checks its links.
 name: Docs
 
 on:
-  push:
-    branches: [dev]
-  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+
+env:
+  TIDE_HIDDEN: '1'
 
 concurrency:
   group: docs-${{ github.ref }}
@@ -19,7 +19,7 @@ concurrency:
 jobs:
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v7
@@ -50,15 +50,15 @@ jobs:
           npm run build
 
       - uses: actions/upload-pages-artifact@v5
-        if: github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/dev'
         with:
           path: docs/.vitepress/dist
 
   deploy:
     name: Deploy
     needs: build
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
-    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/dev'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       pages: write
       id-token: write

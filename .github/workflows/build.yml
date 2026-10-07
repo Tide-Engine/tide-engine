@@ -1,21 +1,34 @@
 # Builds, tests and publishes tide (see AGENTS.md, Packaging).
 #
-# - Pull requests: build and test on Windows, Linux and macOS.
-# - Pushes to dev: also publish a nightly pre-release, like 0.2.0-nightly.3.
-# - Pushes to release: also publish a stable release, and commit the new VERSION.
+# Run by hand with an action:
+# - check: build packages and run every test suite; publish nothing.
+# - nightly, on dev: build and try packages, then publish a nightly pre-release.
+# - stable, on release: run every test suite, publish a stable release, and
+#   commit the new VERSION.
 #
 # semantic-release picks the version from conventional commits (feat:, fix:,
-# see .releaserc.json). A push with neither publishes nothing.
+# see .releaserc.json). A release run with neither publishes nothing.
 name: Build
+run-name: Build (${{ inputs.action }}, ${{ github.ref_name }})
 
 on:
-  push:
-    branches: [dev, release]
-  pull_request:
   workflow_dispatch:
+    inputs:
+      action:
+        description: What to run
+        type: choice
+        required: true
+        default: check
+        options:
+          - check
+          - nightly
+          - stable
 
 permissions:
   contents: write
+
+env:
+  TIDE_HIDDEN: '1'
 
 concurrency:
   group: build-${{ github.ref }}
@@ -23,17 +36,26 @@ concurrency:
 jobs:
   version:
     name: Version
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       version: ${{ steps.next.outputs.new_release_version }}
       published: ${{ steps.next.outputs.new_release_published }}
     steps:
+      - name: Check action and branch
+        shell: bash
+        env:
+          ACTION: ${{ inputs.action }}
+        run: |
+          case "$ACTION:$GITHUB_REF" in
+            check:*|nightly:refs/heads/dev|stable:refs/heads/release) ;;
+            *) echo 'Nightly releases require dev; stable releases require release.' >&2; exit 1 ;;
+          esac
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Next version
         id: next
-        if: github.event_name == 'push'
+        if: inputs.action != 'check'
         uses: cycjimmy/semantic-release-action@v4
         with:
           dry_run: true
@@ -51,11 +73,11 @@ jobs:
       matrix:
         include:
           - platform: windows-x64
-            os: windows-latest
+            os: blacksmith-4vcpu-windows-2025
           - platform: linux-x64
-            os: ubuntu-latest
+            os: blacksmith-4vcpu-ubuntu-2404
           - platform: macos-arm64
-            os: macos-latest
+            os: blacksmith-6vcpu-macos-latest
     runs-on: ${{ matrix.os }}
     # macOS is new: until it's reliable, its failures don't hold back releases.
     continue-on-error: ${{ matrix.platform == 'macos-arm64' }}
@@ -112,15 +134,17 @@ jobs:
       # The demo's smoke test opens a window, which needs a GPU the runners
       # don't have; the web one runs in headless Chrome.
       - name: Test (native)
+        if: inputs.action != 'nightly'
         run: |
           cmake --preset release
           cmake --build --preset release
           ctest --preset release -E demo_smoke
       - name: Test (web)
+        if: inputs.action != 'nightly'
         run: cmake --workflow --preset web-release
       # The target tide builds Windows games for; its platform layer goes in the package.
       - name: Test (MinGW)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && inputs.action != 'nightly'
         run: |
           cmake --preset mingw-release
           cmake --build --preset mingw-release
@@ -153,7 +177,7 @@ jobs:
   jetbrains:
     name: JetBrains plugin
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       TIDE_VERSION: ${{ needs.version.outputs.version || '0.0.0-dev' }}
     defaults:
@@ -181,8 +205,10 @@ jobs:
   release:
     name: Release
     needs: [version, build, jetbrains]
-    if: github.event_name == 'push' && needs.version.outputs.published == 'true'
-    runs-on: ubuntu-latest
+    if: inputs.action != 'check' && needs.version.outputs.published == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    outputs:
+      published: ${{ steps.publish.outputs.new_release_published }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -194,6 +220,7 @@ jobs:
       - name: Checksums
         run: cat dist/*.sha256 > dist/SHA256SUMS && cat dist/SHA256SUMS
       - name: Publish
+        id: publish
         uses: cycjimmy/semantic-release-action@v4
         with:
           extra_plugins: |
@@ -208,8 +235,8 @@ jobs:
   marketplace:
     name: JetBrains Marketplace
     needs: [version, release]
-    if: github.ref_name == 'release'
-    runs-on: ubuntu-latest
+    if: inputs.action == 'stable' && needs.release.outputs.published == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
