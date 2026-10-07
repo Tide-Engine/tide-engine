@@ -35,7 +35,7 @@
 #define TIDE_AUDIO_SAMPLES (2u * TIDE_AUDIO_BLOCK)  // Floats a block: interleaved stereo
 #define TIDE_AUDIO_BUSES 16u                         // Bus 0 is the master, which every other goes through
 #define TIDE_AUDIO_STATE_BYTES 4096u                 // The most an effect's state takes
-#define TIDE_AUDIO_KNOBS_BYTES 1024u                 // The most an effect's knobs take
+#define TIDE_AUDIO_KNOBS_BYTES 256u                  // The most an effect's knobs take: what Tide's Effect holds
 
 // Sound to play: interleaved samples of `channels` (1 or 2) at `rate` frames
 // a second, which stay where they are until no voice plays them: the mixer

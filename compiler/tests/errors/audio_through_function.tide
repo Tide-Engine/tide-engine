@@ -1,0 +1,17 @@
+// expect: 'Shout' runs on the audio thread, so it can't play sounds
+asset Clip beep = "../e2e/assets/beep.wav";
+
+void Thud()
+{
+    Audio.Play(beep);
+}
+
+audio Shout(mut Samples samples)
+{
+    samples.values[0] = 1;
+    Thud();
+}
+
+scene Main
+{
+}

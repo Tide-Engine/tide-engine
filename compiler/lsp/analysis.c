@@ -632,7 +632,7 @@ static const decl *walk_arg_of;
 // each is a use of its parameter.
 static void walk_args(const expr *e)
 {
-    const decl *m = e->call == CALL_METHOD || e->call == CALL_FUNCTION ? e->method : NULL;
+    const decl *m = e->call == CALL_METHOD || e->call == CALL_FUNCTION || e->call == CALL_EFFECT ? e->method : NULL;
     for (int i = 0; i < written_count(e); i++) {
         const str name = written_name(e, i);
         const int k = written_param(e, i);
@@ -849,7 +849,7 @@ static void walk_value(const expr *e)
             o.kind = OCC_TYPE; // Random(seed): the type it makes
             o.decl = A.prog->random;
             add_occ(o);
-        } else if (e->call == CALL_METHOD || e->call == CALL_FUNCTION) { // IsDead() in a method, or Heal(...)
+        } else if (e->call == CALL_METHOD || e->call == CALL_FUNCTION || e->call == CALL_EFFECT) { // IsDead() in a method, or Heal(...)
             o.kind = e->call == CALL_METHOD ? OCC_METHOD : OCC_FUNCTION;
             o.decl = e->method;
             add_occ(o);
@@ -920,7 +920,7 @@ static void walk_value(const expr *e)
             o.kind = OCC_FUNCTION;
             o.owner = str_from("Wait");
             add_occ(o);
-        } else if (e->call == CALL_METHOD || e->call == CALL_FUNCTION) { // stats.IsDead(), Combat.Heal(...)
+        } else if (e->call == CALL_METHOD || e->call == CALL_FUNCTION || e->call == CALL_EFFECT) { // stats.IsDead(), Combat.Heal(...)
             o.kind = e->call == CALL_METHOD ? OCC_METHOD : OCC_FUNCTION;
             o.decl = e->method;
             add_occ(o);
@@ -3858,7 +3858,7 @@ static void assign_first_actions(const fix *f, jbuf *out, int *written)
     int calls = 0;
     for (int i = 0; i < A.calls.count; i++) {
         const expr *call = A.calls.items[i];
-        if ((call->call != CALL_FUNCTION && call->call != CALL_METHOD) || call->method != m || k >= call->args.count) continue;
+        if ((call->call != CALL_FUNCTION && call->call != CALL_METHOD && call->call != CALL_EFFECT) || call->method != m || k >= call->args.count) continue;
         const expr *arg = call->args.items[k];
         if (!arg->is_out) continue; // Wrong already, and said so
         if (arg->out_local) return; // It makes the variable there
@@ -8817,7 +8817,7 @@ static const struct {
 static int call_param_names(const expr *call, str *names, const int max)
 {
     int count = 0;
-    if (call->call == CALL_METHOD || call->call == CALL_FUNCTION) {
+    if (call->call == CALL_METHOD || call->call == CALL_FUNCTION || call->call == CALL_EFFECT) {
         const decl *m = call->method;
         for (; count < m->params.count && count < max; count++) names[count] = m->params.items[count].name;
         return count;

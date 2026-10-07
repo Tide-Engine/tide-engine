@@ -1,0 +1,10 @@
+// expect: Bus marks the enum of the game's audio buses, and 'Mix' isn't an enum
+[Bus]
+local singleton Mix
+{
+    float music;
+}
+
+scene Main
+{
+}

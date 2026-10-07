@@ -1,0 +1,10 @@
+// expect: 'Shout' runs on the audio thread, so it can't make text, lists, maps, sets or read grids
+audio Shout(mut Samples samples)
+{
+    var name = "loud";
+    samples.values[0] = float(name.length);
+}
+
+scene Main
+{
+}

@@ -1,0 +1,21 @@
+// expect: a bus is one of 'Bus', the game's [Bus] enum, not int
+[Bus]
+enum Bus
+{
+    Master,
+    Music,
+}
+
+local singleton Mix
+{
+    float music;
+}
+
+view Levels(Mix mix)
+{
+    Audio.SetVolume(1, mix.music);
+}
+
+scene Main
+{
+}
