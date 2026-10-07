@@ -930,10 +930,15 @@ TIDE_TEST(sumo_effects_come_from_what_the_match_sends)
     frame(&world);
     frame(&world);
     TIDE_CHECK(local.Fx.seat == 0 && local.Fx.here && tide_list_read_count(&local.heap, local.Air.sparks) == 0);
-    // Every crate is in the list that's drawn at once, and casts its shadow from it; every tile is in the floor's
+    // Every crate is in the list that's drawn at once, every tile in the floor's, and each ball in the balls'.
+    // They're drawn for the window, and once more into the lamp's image, which is their shadows: one target,
+    // of depth alone, that the frame's draws go to before the window's
     TIDE_CHECK(tide_list_read_count(&local.heap, local.Fx.solids) == count(&world, tide_has_Crate));
     TIDE_CHECK(tide_list_read_count(&local.heap, local.Fx.tiles) == TILES);
     TIDE_CHECK(tide_list_read_count(&local.heap, local.Fx.rounds) == 2);
+    TIDE_CHECK(local.Shadow.made && tide_render_target_format(local.Shadow.map.id) == TIDE_TARGET_DEPTH_ONLY);
+    TIDE_CHECK(draw.target_count == 1 && draw.targets[0].id == local.Shadow.map.id);
+    TIDE_CHECK(draw.commands[0].kind == TIDE_DRAW_TARGET && draw.commands[0].target == 1);
 
     // This machine's player's ball goes into a stack: splinters, and the camera feels it
     hold(0, 0.5f, 1, true);
