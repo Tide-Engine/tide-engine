@@ -1,9 +1,12 @@
 #include "tide/audio.h"
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/jobs.h"
 #include "tide/pack.h"
+#include "tide/vorbis.h"
 #include "tide/page.h"
 #include "tide/wav.h"
 
@@ -136,10 +139,12 @@ void tide_audio_set_bus_effect(tide_audio_frame *f, const uint32_t bus, const ti
 // The pack's clips, decoded
 
 // A file's samples, by what's in the file: two declarations of one file are
-// one entry, and a file edited under `tide run` is another beside it.
+// one entry, and a file edited under `tide run` is another beside it. An Ogg
+// Vorbis file longer than tide_clips_whole_seconds is kept to stream instead.
 typedef struct decoded_clip {
     uint64_t version;
     tide_sound sound;
+    tide_vorbis *stream;
 } decoded_clip;
 
 static struct {
@@ -147,36 +152,136 @@ static struct {
     uint32_t count, capacity;
 } clips;
 
+uint32_t tide_clips_whole_seconds = 10;
+
+// Decodes the file's bytes into the entry, whichever kind they are
+static void decode_clip(decoded_clip *d, const uint8_t *bytes, const uint32_t size)
+{
+    if (tide_wav_decode(bytes, size, &d->sound)) return;
+    tide_vorbis *v = tide_vorbis_open(bytes, size, NULL);
+    if (!v) return; // Checked as the game was built: a pack by hand
+    if (tide_vorbis_frames(v) <= (uint64_t)tide_clips_whole_seconds * tide_vorbis_rate(v)) {
+        tide_vorbis_reader *r = tide_vorbis_reader_open(v);
+        const uint32_t ch = tide_vorbis_channels(v);
+        const uint32_t most = (uint32_t)tide_vorbis_frames(v);
+        float *samples = tide_alloc(((size_t)most + 1u) * ch * sizeof *samples);
+        uint32_t frames = 0;
+        for (;;) {
+            const uint32_t got = tide_vorbis_read(r, samples + (size_t)frames * ch, most - frames);
+            if (!got) break;
+            frames += got;
+        }
+        d->sound = (tide_sound){.samples = samples, .frames = frames, .channels = ch, .rate = tide_vorbis_rate(v)};
+        tide_vorbis_reader_close(r);
+        tide_vorbis_close(v);
+        return;
+    }
+    d->stream = v;
+}
+
+static decoded_clip *clip_entry(const uint64_t version)
+{
+    for (uint32_t i = 0; i < clips.count; i++) {
+        if (clips.items[i].version == version) return &clips.items[i];
+    }
+    return NULL;
+}
+
+static decoded_clip *add_clip_entry(const uint64_t version)
+{
+    if (clips.count == clips.capacity) {
+        const uint32_t c = clips.capacity ? clips.capacity * 2 : 16;
+        clips.items = tide_realloc(clips.items, clips.capacity * sizeof *clips.items, c * sizeof *clips.items);
+        clips.capacity = c;
+    }
+    decoded_clip *d = &clips.items[clips.count++];
+    *d = (decoded_clip){.version = version};
+    return d;
+}
+
+static tide_clip clip_from(const decoded_clip *d, const uint64_t name)
+{
+    if (d->stream) {
+        const uint64_t frames = tide_vorbis_frames(d->stream);
+        return (tide_clip){.stream = d->stream, .frames = frames > UINT32_MAX ? UINT32_MAX : (uint32_t)frames,
+                           .channels = tide_vorbis_channels(d->stream), .rate = tide_vorbis_rate(d->stream), .id = d->version,
+                           .name = name};
+    }
+    return (tide_clip){.samples = d->sound.samples, .frames = d->sound.frames, .channels = d->sound.channels, .rate = d->sound.rate,
+                       .id = d->version, .name = name};
+}
+
 tide_clip tide_clip_of(const tide_clip_ref ref)
 {
     const uint8_t *bytes;
     uint32_t size;
     uint64_t version;
     if (!ref.name || !tide_pack_clip_find(ref.name, &bytes, &size, &version)) return (tide_clip){.name = ref.name};
-    decoded_clip *d = NULL;
-    for (uint32_t i = 0; i < clips.count; i++) {
-        if (clips.items[i].version == version) {
-            d = &clips.items[i];
-            break;
-        }
-    }
+    decoded_clip *d = clip_entry(version);
     if (!d) {
-        if (clips.count == clips.capacity) {
-            const uint32_t c = clips.capacity ? clips.capacity * 2 : 16;
-            clips.items = tide_realloc(clips.items, clips.capacity * sizeof *clips.items, c * sizeof *clips.items);
-            clips.capacity = c;
-        }
-        d = &clips.items[clips.count++];
-        d->version = version;
-        if (!tide_wav_decode(bytes, size, &d->sound)) d->sound = (tide_sound){0}; // Checked as the game was built: a pack by hand
+        d = add_clip_entry(version);
+        decode_clip(d, bytes, size);
     }
-    return (tide_clip){.samples = d->sound.samples, .frames = d->sound.frames, .channels = d->sound.channels,
-                       .rate = d->sound.rate, .id = version, .name = ref.name};
+    return clip_from(d, ref.name);
+}
+
+// What tide_clips_prepare has to decode: the pack's clips the cache hasn't got, each file once
+typedef struct pending_clip {
+    const uint8_t *bytes;
+    uint32_t size;
+    decoded_clip *entry;
+} pending_clip;
+
+typedef struct preparing {
+    pending_clip *items;
+    uint32_t count, capacity;
+    _Atomic uint32_t next;
+} preparing;
+
+static void gather_clip(const uint8_t *bytes, const uint32_t size, const uint64_t version, void *context)
+{
+    preparing *p = context;
+    if (clip_entry(version)) return;
+    if (p->count == p->capacity) {
+        const uint32_t c = p->capacity ? p->capacity * 2 : 16;
+        p->items = tide_realloc(p->items, p->capacity * sizeof *p->items, c * sizeof *p->items);
+        p->capacity = c;
+    }
+    p->items[p->count++] = (pending_clip){.bytes = bytes, .size = size, .entry = add_clip_entry(version)};
+}
+
+static void prepare_work(void *context, const uint32_t thread)
+{
+    (void)thread;
+    preparing *p = context;
+    for (;;) {
+        const uint32_t i = atomic_fetch_add_explicit(&p->next, 1u, memory_order_relaxed);
+        if (i >= p->count) return;
+        decode_clip(p->items[i].entry, p->items[i].bytes, p->items[i].size);
+    }
+}
+
+void tide_clips_prepare(const tide_jobs *jobs)
+{
+    preparing p = {0};
+    tide_pack_clips_each(gather_clip, &p); // Adds the entries on this thread: the threads only fill them
+    if (p.count) {
+        if (jobs && jobs->threads > 1 && p.count > 1) {
+            jobs->run(jobs->self, prepare_work, &p);
+            tide_memory_sync();
+        } else {
+            prepare_work(&p, 0);
+        }
+    }
+    free(p.items);
 }
 
 void tide_clips_free(void)
 {
-    for (uint32_t i = 0; i < clips.count; i++) tide_sound_free(&clips.items[i].sound);
+    for (uint32_t i = 0; i < clips.count; i++) {
+        tide_sound_free(&clips.items[i].sound);
+        tide_vorbis_close(clips.items[i].stream);
+    }
     free(clips.items);
     memset(&clips, 0, sizeof clips);
 }

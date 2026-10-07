@@ -197,6 +197,9 @@ tide_clip_ref tide_pack_clip_of(const tide_pack_entry *e);
 // and a version that's what's in them (the file's hash). False when the pack
 // has no sound under that name.
 bool tide_pack_clip_find(uint64_t named, const uint8_t **bytes, uint32_t *size, uint64_t *version);
+// Calls `fn` for each clip the loaded pack has, with its file's bytes and
+// version (two declarations of one file are two calls with one version).
+void tide_pack_clips_each(void (*fn)(const uint8_t *bytes, uint32_t size, uint64_t version, void *context), void *context);
 
 // Maps the loaded region into this thread's scratch slots, if it hasn't since
 // the last load: generated code calls it wherever it sets the thread's heaps

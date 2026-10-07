@@ -107,7 +107,8 @@ typedef struct asset_site {
     bool glob;
     bool url;
     bool many;          // A List or Map: a glob's matches
-    const char *format; // The files it takes: ".png" for a Grid2<Color> and a Texture; NULL for any
+    const char *format;
+    const char *format2; // A second kind of file the asset can be, or NULL // The files it takes: ".png" for a Grid2<Color> and a Texture; NULL for any
 } asset_site;
 
 // A path to write at a site whose file is missing, fixing its diagnostic.
@@ -2752,8 +2753,8 @@ static void describe(const occurrence *o, sb *out)
                             "too wherever one is drawn with.");
             }
             if (o->decl->asset_kind == ASSET_CLIP) {
-                sb_put(out, " A `Clip` is a sound to play, this machine's: `Audio.Play(name)` in a view or a local handler plays "
-                            "it, and the match can't use it.");
+                sb_put(out, " A `Clip` is a sound to play, this machine's (a WAV, or Ogg Vorbis): `Audio.Play(name)` in a view "
+                            "or a local handler plays it, and the match can't use it.");
             }
             if (o->decl->sample_raw) {
                 sb_put(out, "\n\nIt's `[Raw]`: its pixels are numbers, kept as the file has them, which a frag or a vert reads "
@@ -9933,6 +9934,7 @@ static void collect_assets(void)
         site.many = d->asset_many || d->asset_kind == ASSET_CUBEMAP; // A cube's path is a glob too: its six faces
         site.format = d->asset_kind == ASSET_GRID || d->asset_kind == ASSET_TEXTURE || d->asset_kind == ASSET_CUBEMAP ? ".png"
                     : d->asset_kind == ASSET_CLIP ? ".wav" : NULL;
+        site.format2 = d->asset_kind == ASSET_CLIP ? ".ogg" : NULL; // A clip is either
         site.glob = asset_path_is_glob(site.path.ptr, (size_t)site.path.len);
         site.url = asset_path_is_url(site.path.ptr, (size_t)site.path.len);
         char *folder = asset_path_folder(A.files[f].src.path);
@@ -10281,7 +10283,7 @@ static void complete_asset_path(completion *c, const int tok, const loc at)
     for (int i = 0; i < entries.files.count; i++) {
         const char *name = entries.files.items[i];
         if (ends_with_fold(name, ".tide")) continue;
-        if (site->format && !ends_with_fold(name, site->format)) continue;
+        if (site->format && !ends_with_fold(name, site->format) && !(site->format2 && ends_with_fold(name, site->format2))) continue;
         asset_item(c, name, KIND_FILE, start, at, name, NULL, '3');
     }
     free(base);

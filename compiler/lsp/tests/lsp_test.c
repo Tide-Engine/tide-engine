@@ -8120,10 +8120,13 @@ TIDE_TEST(lsp_asset_path_completion)
     static const char main_file[] = "asset Grid2<Color> hero = \"\";\n"
                                     "asset List<Grid2<Color>> run = \"art/\";\n"
                                     "asset string notes = \"art/\";\n"
+                                    "asset Clip shot = \"art/\";\n"
                                     "scene Main { }\n";
     write_file("lsp_cp/main.tide", main_file);
     write_bytes("lsp_cp/art/hero.png", "png", 3);
     write_file("lsp_cp/art/other.txt", "text");
+    write_bytes("lsp_cp/art/shot.wav", "wav", 3);
+    write_bytes("lsp_cp/art/music.ogg", "ogg", 3);
     write_file("lsp_cp/readme.txt", "text");
     char root[700], uri_main[700];
     const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
@@ -8152,6 +8155,11 @@ TIDE_TEST(lsp_asset_path_completion)
     completion = request_at(uri_main, "textDocument/completion", 2, 26, "");
     TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "other.txt"));
     TIDE_CHECK(!offers(completion, "*") && !offers(completion, "**/*"));
+
+    // A clip is a WAV or an Ogg
+    completion = request_at(uri_main, "textDocument/completion", 3, 23, "");
+    TIDE_CHECK(offers(completion, "shot.wav") && offers(completion, "music.ogg"));
+    TIDE_CHECK(!offers(completion, "hero.png") && !offers(completion, "other.txt"));
 
     // Part of a name typed: the item replaces it
     open_uri(uri_main, "asset Grid2<Color> hero = \"art/he\";\nscene Main { }\n");

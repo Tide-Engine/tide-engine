@@ -3,9 +3,27 @@ file(GLOB TIDE_TEST_SOURCES CONFIGURE_DEPENDS *.c)
 
 # The PNG reader's tests read what the platform layer's writer wrote: the
 # writer's one file comes along, with no window or GPU in it.
+# The Vorbis reader's references (tests/audio): three files ffmpeg encoded, and
+# its decodes of them as floats, each as a C array, in a library the platform's
+# audio test links too.
+set(TIDE_AUDIO_REFS)
+foreach(ref tone low noise)
+    foreach(ext ogg pcm)
+        set(out "${CMAKE_CURRENT_BINARY_DIR}/ref_${ref}_${ext}.c")
+        add_custom_command(OUTPUT "${out}"
+            COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/audio/${ref}.${ext}" "-DOUTPUT=${out}"
+                -DNAME=tide_ref_${ref}_${ext} -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+            DEPENDS audio/${ref}.${ext} "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+            COMMENT "The audio test's ${ref}.${ext} as C"
+            VERBATIM)
+        list(APPEND TIDE_AUDIO_REFS "${out}")
+    endforeach()
+endforeach()
+add_library(tide_audio_refs STATIC ${TIDE_AUDIO_REFS})
+
 add_executable(tide_tests ${TIDE_TEST_SOURCES} "${PROJECT_SOURCE_DIR}/platform/src/png.c")
 target_include_directories(tide_tests PRIVATE "${PROJECT_SOURCE_DIR}/platform/src")
-target_link_libraries(tide_tests PRIVATE tide)
+target_link_libraries(tide_tests PRIVATE tide tide_audio_refs)
 
 add_test(NAME tide_tests COMMAND tide_tests)
 
