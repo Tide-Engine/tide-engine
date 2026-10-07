@@ -386,6 +386,7 @@ typedef struct shader_sample {
     bool local;   // The field is one of its type's local fields (its local_part's)
     bool blended; // Filter.Bilinear, or the nearest cell
     const struct decl *asset; // A Grid2<Color> asset sampled by name, or NULL
+    int wrap;     // What a uv past 0 and 1 reads: its Wrap's number, tide_wrap's
 } shader_sample;
 
 // One of an enum's members: `Options`, or `Options = 3`.
@@ -997,6 +998,7 @@ typedef struct shader_texture {
     bool blended;
     bool direct; // Supplied explicitly by Draw.Mesh or Draw.Blit, rather than a field
     const struct decl *asset; // A Grid2<Color> asset, sampled by name: neither a field nor the draw's
+    int wrap;    // Its Wrap's number, tide_wrap's: 0 where the draw says (a `textured` shader's own)
 } shader_texture;
 
 // What draws a mesh: a vertex struct with a vert, a frag, both or neither, one
@@ -1009,6 +1011,7 @@ typedef struct shader {
     struct decl *frag;   // NULL: the vertex's color times the texture
     int dims;            // 2 or 3: its position's
     bool textured;       // No frag, and a texture given at the draw
+    bool wrapped;        // ...and one of its draws says how it wraps, so its function takes a wrap
     bool direct_texture; // The draw supplies a Texture to its shader stages
     bool source_grid;    // Blit's explicit source is uploaded from a Grid2<Color> at recording time
     bool blit;           // A full destination overwrite with a fixed Vertex quad
@@ -1094,6 +1097,7 @@ typedef struct program {
     decl *gui_theme;     // The built-in struct GUITheme, how the GUI's widgets look
     decl *gui_control;   // The built-in struct GUIControl, what GUI.Control says of a control
     decl *filter;        // The built-in enum Filter, how mesh draw samples its texture
+    decl *wrap;          // The built-in enum Wrap, what a uv past a texture's edges reads: in generated C when code names it
     decl *blend;         // The built-in enum Blend, how what's drawn goes over what's there
     decl *depth;         // The built-in enum Depth, what a 3D mesh does with depth: in generated C when code names it
     decl *io_error;      // The built-in IOError enum, shared with tide/io.h

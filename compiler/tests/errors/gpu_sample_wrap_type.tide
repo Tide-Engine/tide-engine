@@ -1,0 +1,18 @@
+// expect: Sample takes where to read, a float2 from (0, 0) to (1, 1), then how, a Filter, then what's past the edges, a Wrap
+scene Main { }
+
+local singleton Models
+{
+    List<Vertex> corners;
+    Grid2<Color> wood = Grid2(4, 4);
+}
+
+frag Shade(Vertex vertex, mut Color color, Models models)
+{
+    color = models.wood.Sample(vertex.uv, Filter.Point, Filter.Bilinear);
+}
+
+view Show(Models models)
+{
+    Draw2D.Mesh(models.corners, [0, 1, 2], Shade);
+}

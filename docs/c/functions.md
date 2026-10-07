@@ -419,8 +419,8 @@ A `DrawList` parameter is for extern functions only, and takes `Draw2D.list` or 
 C has everything Tide's drawing APIs have, as `tide_draw_circle`, `tide_draw_text`, `tide_draw_set_camera`, `tide_draw_set_screen` and the rest, and meshes:
 
 - `tide_vertex` is Tide's `Vertex`: a position, a uv and a color of four floats. Indices are `uint32_t`.
-- `tide_draw_mesh(list, vertices, vertex_count, indices, index_count, texture, filter)` draws triangles, like `Draw2D.Mesh`. `texture` is NULL for none.
-- `tide_draw_vertices` and `tide_draw_triangles` are the same in two steps, for vertices several batches share: the first copies them into the list and returns where they start, and the second draws triangles of them.
+- `tide_draw_mesh(list, vertices, vertex_count, indices, index_count, texture, filter)` draws triangles, like `Draw2D.Mesh`. `texture` is NULL for none. `tide_draw_mesh_wrapped` takes a `tide_wrap` after the filter, for what a uv [past the texture's edges](../game/views.md#past-the-edges) reads: `TIDE_WRAP_REPEAT` or `TIDE_WRAP_MIRROR`, where `tide_draw_mesh` reads the pixels at the edge (`TIDE_WRAP_CLAMP`).
+- `tide_draw_vertices` and `tide_draw_triangles` are the same in two steps, for vertices several batches share: the first copies them into the list and returns where they start, and the second draws triangles of them. `tide_draw_triangles_wrapped` takes a wrap too.
 - The [draw settings](../game/views.md#draw-settings) have their two forms in C too. `tide_draw_set_clip(list, rect)` is `Draw2D.SetClip(rect)`, and `tide_draw_unset_clip(list)` is `Draw2D.SetClip()`; the others are `tide_draw_set_blend`, `tide_draw_set_tint`, `tide_draw_set_depth`, `tide_draw_set_transform`, `tide_draw_set_camera` and `tide_draw_set_screen`, each with its `tide_draw_unset_`. A block is two calls: `tide_draw_push_clip(list, rect)` (and `tide_draw_push_blend`, `tide_draw_push_tint`, `tide_draw_push_depth`...) returns a mark, and `tide_draw_pop(list, mark)` puts back what it found, along with whatever was pushed since:
 
   ```c
@@ -434,7 +434,7 @@ C has everything Tide's drawing APIs have, as `tide_draw_circle`, `tide_draw_tex
 - `tide_draw_text(list, text, position, size, color)` is `Draw2D.Text` at its top left corner in the regular weight, and `tide_draw_text_at(list, text, position, size, color, anchor, font)` takes [an anchor and a weight](../game/views.md#text): a `tide_anchor` (`TIDE_ANCHOR_MIDDLE_CENTER`) and `TIDE_FONT_REGULAR` or `TIDE_FONT_BOLD`. C names a weight by its font file, so a program whose C says `TIDE_FONT_BOLD` carries the bold weight's file, as a game that says `Font.Bold` does.
 - The [smooth shapes](../game/views.md#smooth-shapes) are `tide_draw_round_rect`, `tide_draw_ellipse`, `tide_draw_arc` and the rest, with `_rotated` for the turned ones and `tide_draw_thick_line`, `tide_draw_thick_wire_rect` and `tide_draw_thick_wire_circle` for the ones that take a width. `tide_shape` is Tide's `Shape`, for `tide_draw_shape(list, shape)`, with `outline_color` for `outlineColor`. Start one from `TIDE_SHAPE_WHITE` rather than from zeros: its `color2` is `TIDE_COLOR_NONE`, Tide's `Color.none`, where a zeroed one is a clear color the fill would fade to.
 - `tide_vertex3` is Tide's `Vertex3`. `tide_draw_set_camera_3d(list, position, rotation, field_of_view)` and `tide_draw_set_camera_matrices(list, transform, projection)` are `Draw3D.SetCamera`.
-- `tide_draw_mesh_3d(list, &mesh, transform, texture, filter)` draws a 3D mesh, a `tide_mesh`: its vertices and indices, and a version (see below). Instances of one mesh drawn in a row, with one texture and filter, are drawn at once.
+- `tide_draw_mesh_3d(list, &mesh, transform, texture, filter)` draws a 3D mesh, a `tide_mesh`: its vertices and indices, and a version (see below). Instances of one mesh drawn in a row, with one texture, filter and wrap, are drawn at once. `tide_draw_mesh_3d_wrapped` takes a `tide_wrap` after the filter.
 
 ### C's own pixels
 

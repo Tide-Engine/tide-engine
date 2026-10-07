@@ -1438,7 +1438,13 @@
             groupLayouts.push(device.createBindGroupLayout({ entries }));
             pipelineLayouts.push(device.createPipelineLayout({ bindGroupLayouts: [groupLayouts[count]] }));
         }
-        samplers = ['nearest', 'linear'].map(filter => device.createSampler({ magFilter: filter, minFilter: filter }));
+        // By how it's read between pixels, then past its edges: 2 * tide_gpu_wrap's number + whether it's blended
+        samplers = [];
+        for (const wrap of ['clamp-to-edge', 'repeat', 'mirror-repeat']) {
+            for (const filter of ['nearest', 'linear']) {
+                samplers.push(device.createSampler({ magFilter: filter, minFilter: filter, addressModeU: wrap, addressModeV: wrap }));
+            }
+        }
     }
 
     // A pass's uniforms go into the uniform buffer one after the other, each
@@ -1457,16 +1463,16 @@
         uniformsUsed = 0;
         bindGroups.clear();
     }
-    function bindGroup(count, textures, blended) {
+    function bindGroup(count, textures, sampled) {
         let key = 'plain';
-        for (let i = 0; i < count; i++) key = (i ? key + ',' : '') + textures[i] + ':' + blended[i];
+        for (let i = 0; i < count; i++) key = (i ? key + ',' : '') + textures[i] + ':' + sampled[i];
         let group = bindGroups.get(key);
         if (!group) {
             const entries = [{ binding: 0, resource: { buffer: uniformBuffer, size: UNIFORM_BYTES } }];
             for (let i = 0; i < count; i++) {
                 const t = gpuTables.texture[textures[i]];
                 entries.push({ binding: 1 + 2 * i, resource: t.view });
-                entries.push({ binding: 2 + 2 * i, resource: samplers[blended[i]] });
+                entries.push({ binding: 2 + 2 * i, resource: samplers[sampled[i]] });
                 t.groups.add(key); // Which go when it does
             }
             group = device.createBindGroup({ layout: groupLayouts[count], entries });
@@ -1588,13 +1594,13 @@
         }, () => { slot.busy = false; }); // A reset or device loss cancelled it
     }
     // What the next draw draws with: its pipeline, and each texture it samples, by its slot
-    const drawing = { pipeline: null, textures: new Array(MAX_TEXTURES).fill(0), blended: new Array(MAX_TEXTURES).fill(0),
+    const drawing = { pipeline: null, textures: new Array(MAX_TEXTURES).fill(0), sampled: new Array(MAX_TEXTURES).fill(0),
         bound: false };
 
     function beforeDraw() {
         drew = true;
         if (drawing.bound) return;
-        pass.setBindGroup(0, bindGroup(drawing.pipeline.textures, drawing.textures, drawing.blended), [uniformsAt]);
+        pass.setBindGroup(0, bindGroup(drawing.pipeline.textures, drawing.textures, drawing.sampled), [uniformsAt]);
         drawing.bound = true;
     }
 
@@ -1771,9 +1777,9 @@
             uniformsUsed += slots;
             drawing.bound = false;
         },
-        gpu_sample(slot, id, blended) {
+        gpu_sample(slot, id, blended, wrap) {
             drawing.textures[slot] = id;
-            drawing.blended[slot] = blended ? 1 : 0;
+            drawing.sampled[slot] = (wrap === 1 || wrap === 2 ? 2 * wrap : 0) + (blended ? 1 : 0); // Its place in `samplers`
             drawing.bound = false;
         },
         gpu_vertices: (slot, id, offset) => pass.setVertexBuffer(slot, gpuTables.buffer[id], offset),

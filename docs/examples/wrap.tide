@@ -1,0 +1,65 @@
+settings { title = "Wrap"; }
+
+local scene Main { }
+
+local singleton Tiles
+{
+    Grid2<Color> tile = Grid2(8, 8);
+    bool ready;
+    Wrap wrap = Wrap.Repeat;
+    bool scroll;
+    float slide;
+}
+
+view Show(mut Tiles tiles)
+{
+    Draw2D.Clear(Color(0.086, 0.086, 0.094));
+    Draw2D.SetCamera(float2(0, -0.1), 2);
+    if (!tiles.ready)
+    {
+        // A frame, an L and a dot: each copy shows which way round it is.
+        foreach (var at in tiles.tile)
+        {
+            bool frame = at.x == 0 || at.y == 0 || at.x == 7 || at.y == 7;
+            bool letter = (at.x == 2 && at.y >= 2 && at.y <= 5) || (at.y == 5 && at.x >= 2 && at.x <= 5);
+            bool dot = at.x == 5 && at.y == 2;
+            tiles.tile[at] = letter ? Color(0.98, 0.75, 0.14) : dot ? Color(0.18, 0.83, 0.75)
+                           : frame ? Color(0.24, 0.25, 0.27) : Color(0.13, 0.13, 0.15);
+        }
+        tiles.ready = true;
+    }
+    if (tiles.scroll) tiles.slide += Frame.dt * 0.25;
+    if (tiles.slide >= 2) tiles.slide -= 2;
+
+    // Its uvs go three times across and three times down. The grid's own cells
+    // are where they go from 0 to 1, and the wrap says what the rest reads.
+    var first = float2(tiles.slide - 1, -1);
+    var last = first + float2(3, 3);
+    List<Vertex> corners = [
+        Vertex { position = float2(-1.5, 1.5), uv = first },
+        Vertex { position = float2(1.5, 1.5), uv = float2(last.x, first.y) },
+        Vertex { position = float2(1.5, -1.5), uv = last },
+        Vertex { position = float2(-1.5, -1.5), uv = float2(first.x, last.y) },
+    ];
+    Draw2D.Mesh(corners, [0, 1, 2, 0, 2, 3], tiles.tile, Filter.Point, tiles.wrap);
+
+    // Where the uvs are from 0 to 1.
+    Draw2D.Clip(Rect(-1.5, -1.5, 3, 3))
+    {
+        Draw2D.WireRect(float2(-tiles.slide, 0), float2(1, 1), 0.03, Color.white);
+    }
+
+    Draw2D.SetScreen();
+    Draw2D.Text($"Wrap.{tiles.wrap}", float2(16, 14), 16, Color.white);
+    GUI.SetTheme(GUITheme { radius = 6 });
+    GUILayout.Area(Rect(12, Screen.height - 52, Screen.width - 24, 40))
+    {
+        GUILayout.Horizontal()
+        {
+            if (GUILayout.Button("Clamp")) tiles.wrap = Wrap.Clamp;
+            if (GUILayout.Button("Repeat")) tiles.wrap = Wrap.Repeat;
+            if (GUILayout.Button("Mirror")) tiles.wrap = Wrap.Mirror;
+            GUILayout.Toggle("Scroll", tiles.scroll);
+        }
+    }
+}

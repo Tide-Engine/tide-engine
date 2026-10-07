@@ -1,0 +1,19 @@
+// expect: a wrap comes after the filter: 'texture.Sample(uv, Filter.Bilinear, Wrap.Repeat)'
+// expect: 'Filter.Bilinear' is the filter of a Sample that says none
+scene Main { }
+
+local singleton Models
+{
+    List<Vertex> corners;
+    Grid2<Color> wood = Grid2(4, 4);
+}
+
+frag Shade(Vertex vertex, mut Color color, Models models)
+{
+    color = models.wood.Sample(vertex.uv, Wrap.Repeat);
+}
+
+view Show(Models models)
+{
+    Draw2D.Mesh(models.corners, [0, 1, 2], Shade);
+}

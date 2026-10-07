@@ -155,7 +155,8 @@ static void check_render_list(void)
                                      {{8, 17}, {0, 0}, TIDE_COLOR_WHITE}};
     const uint32_t indices[6] = {0, 1, 2, 0, 2, 3};
     tide_draw_triangles_with(&render_list, tide_draw_vertices(&render_list, vertices, 4), indices, 6,
-                             tide_draw_target_texture(&render_list, TARGET_A, WIDTH, HEIGHT), TIDE_FILTER_POINT);
+                             tide_draw_target_texture(&render_list, TARGET_A, WIDTH, HEIGHT), TIDE_FILTER_POINT,
+                             TIDE_WRAP_CLAMP);
     tide_draw_to(&render_list, 0, 0, 0);
     blit_image(TARGET_B, WIDTH * 2, HEIGHT * 2, 0);
     tide_draw_rect(&render_list, tide_f2(100 + screen.x * (0.5f - 1.0f / (WIDTH * 4)),
@@ -720,7 +721,7 @@ static void copy(const tide_gpu *gpu, const tide_gpu_id pipeline, const tide_gpu
     const float settings[4] = {0, HEIGHT, depth, 0};
     gpu->use(pipeline);
     gpu->uniforms(settings, sizeof settings);
-    gpu->sample(0, texture, false);
+    gpu->sample(0, texture, false, TIDE_GPU_WRAP_CLAMP);
     gpu->draw(0, 3, 1);
 }
 
@@ -790,7 +791,7 @@ static void check_targets(void)
     gpu->use(pipeline);
     float settings[4] = {1, HEIGHT, 0, 0};
     gpu->uniforms(settings, sizeof settings);
-    gpu->sample(0, image, false);
+    gpu->sample(0, image, false, TIDE_GPU_WRAP_CLAMP);
     gpu->draw(0, 3, 1);
     gpu->end();
     gpu->target_read(scene, actual);
@@ -819,7 +820,7 @@ static void check_targets(void)
     gpu->use(pipeline);
     settings[0] = 2;
     gpu->uniforms(settings, sizeof settings);
-    gpu->sample(0, scene_color, false);
+    gpu->sample(0, scene_color, false, TIDE_GPU_WRAP_CLAMP);
     gpu->draw(0, 3, 1);
     gpu->end();
     gpu->target_read(scaled, actual);

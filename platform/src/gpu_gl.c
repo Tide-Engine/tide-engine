@@ -57,9 +57,16 @@ static uint32_t texture_names;
 
 static GLuint upload_vao;     // What index buffers are bound in while they're written, in no pipeline's place
 static GLuint uniform_buffer; // Every pipeline's uniform block, as the last draw's was set
-// How a unit samples the texture it has: the nearest pixel, or blended. A
-// texture's own way would be the same in every unit that has it.
-static GLuint samplers[2];
+// How a unit samples the texture it has: the nearest pixel or blended, by
+// each tide_gpu_wrap (sampler_for). A texture's own way would be the same in
+// every unit that has it.
+enum { WRAPS = TIDE_GPU_WRAP_MIRROR + 1 };
+static GLuint samplers[2 * WRAPS];
+
+static GLuint sampler_for(const bool blended, const tide_gpu_wrap wrap)
+{
+    return samplers[(blended ? WRAPS : 0) + ((uint32_t)wrap < WRAPS ? (int)wrap : TIDE_GPU_WRAP_CLAMP)];
+}
 static const gl_pipeline *current;
 static GLenum index_type;
 static int pass_height; // The pass's target's, in its pixels
@@ -415,13 +422,17 @@ static void gl_begin(const tide_gpu_id target, const bool clear)
         glGenBuffers(1, &uniform_buffer);
         glBindBuffer(GL_UNIFORM_BUFFER, uniform_buffer);
         glBufferData(GL_UNIFORM_BUFFER, TIDE_GPU_MAX_UNIFORMS, NULL, GL_DYNAMIC_DRAW);
-        glGenSamplers(2, samplers);
+        static const GLint wraps[WRAPS] = {GL_CLAMP_TO_EDGE, GL_REPEAT, GL_MIRRORED_REPEAT}; // By tide_gpu_wrap
+        glGenSamplers(2 * WRAPS, samplers);
         for (int blended = 0; blended < 2; blended++) {
             const GLint filter = blended ? GL_LINEAR : GL_NEAREST;
-            glSamplerParameteri(samplers[blended], GL_TEXTURE_MIN_FILTER, filter);
-            glSamplerParameteri(samplers[blended], GL_TEXTURE_MAG_FILTER, filter);
-            glSamplerParameteri(samplers[blended], GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glSamplerParameteri(samplers[blended], GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            for (int wrap = 0; wrap < WRAPS; wrap++) {
+                const GLuint sampler = sampler_for(blended != 0, (tide_gpu_wrap)wrap);
+                glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, filter);
+                glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, filter);
+                glSamplerParameteri(sampler, GL_TEXTURE_WRAP_S, wraps[wrap]);
+                glSamplerParameteri(sampler, GL_TEXTURE_WRAP_T, wraps[wrap]);
+            }
         }
     }
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, uniform_buffer);
@@ -482,11 +493,11 @@ static void gl_uniforms(const void *data, const size_t size)
     glBufferSubData(GL_UNIFORM_BUFFER, 0, (GLsizeiptr)size, data);
 }
 
-static void gl_sample(const uint32_t slot, const tide_gpu_id texture, const bool blended)
+static void gl_sample(const uint32_t slot, const tide_gpu_id texture, const bool blended, const tide_gpu_wrap wrap)
 {
     glActiveTexture(GL_TEXTURE0 + slot);
     glBindTexture(GL_TEXTURE_2D, texture);
-    glBindSampler(slot, samplers[blended]);
+    glBindSampler(slot, sampler_for(blended, wrap));
 }
 
 static void gl_vertices(const uint32_t slot, const tide_gpu_id buffer, const size_t offset)
