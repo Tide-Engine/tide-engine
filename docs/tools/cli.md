@@ -42,7 +42,7 @@ tide <command> [folder] [options]
 
 `tide build --release --web` makes one self-contained `.html` file with the game inside. It opens straight from disk, and can be put online as it is.
 
-`tide run` builds and plays once. Add `--watch` for [hot reload](#hot-reload), on desktop, the web or Android.
+`tide run` builds and plays once. Add `--watch` for [hot reload](#hot-reload), on desktop, the web or Android. On desktop, closing the game window ends the command too, with or without `--watch`.
 
 A game's [assets](../game/assets.md) (its `asset` declarations) are packed with it: beside the program as `<name>.pack`, which has to stay next to it; inside the web page; and in the APK. Nothing else in the folder goes in. Under `tide run --watch`, a file an asset names is watched like the game's code, and a saved image is in the running game within a moment, with no rebuild.
 
