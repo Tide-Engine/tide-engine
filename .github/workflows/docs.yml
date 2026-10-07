@@ -45,6 +45,7 @@ jobs:
           npm ci
           npm run test:grammar
           npm run test:access
+          npm run test:releases
       - name: Install tools
         if: runner.environment == 'github-hosted'
         run: |
