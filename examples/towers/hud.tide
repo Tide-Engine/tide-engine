@@ -1,8 +1,67 @@
 // Over the world, in the screen's pixels: how high everyone is, the brick
 // that comes next, what a tower has earned, the words when something happens,
-// and what to do first. None of it shows while the lobby or the menu is up
-// (lobby.tide).
+// and what to do first. None of it shows while the menu is up (the rooms
+// package's), which also shows who has each seat, from what Roster tells it.
 using Box2D;
+using Rooms;
+
+float2 Middle(Rect rect)
+{
+    return float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
+}
+
+// A button of the game's own: a control, whose input the GUI handles (the
+// pointer's, the keyboard's and a gamepad's alike), drawn here. A solid one is
+// the main way on. Returns whether it was pressed.
+bool Pill(Rect rect, string label, Color tint, bool solid, bool enabled)
+{
+    mut var pill = GUIControl { };
+    GUI.Disabled(!enabled)
+    {
+        pill = GUI.Control(rect);
+    }
+    var over = pill.hovered || pill.focused;
+    var center = Middle(rect) + float2(0, pill.pressed && pill.hovered ? 1.5 : 0);
+    var size = float2(rect.width, rect.height);
+    var radius = Math.Min(rect.height * 0.5, 12);
+    var faint = enabled ? 1.0 : 0.4;
+    if (solid)
+    {
+        var fill = over ? Mix(tint, Color.white, 0.28) : tint;
+        Draw2D.Shape(Shape { center = center + float2(0, 3), size = size, radius = radius, color = Fade(Shade(tint, 0.4), faint) });
+        Draw2D.Shape(Shape { center = center, size = size, radius = radius, color = Fade(fill, faint),
+                             color2 = Fade(Shade(fill, 0.86), faint), outline = pill.focused ? 2.5 : 0.0,
+                             outlineColor = Color.white });
+        Draw2D.Text(label, center, rect.height >= 50 ? 20 : 15, Fade(BACK, faint), Anchor.MiddleCenter, Font.Bold);
+        return pill.clicked;
+    }
+    Draw2D.Shape(Shape { center = center, size = size, radius = radius,
+                         color = Fade(over ? Color(0.225, 0.23, 0.25) : RAISED, 0.97 * faint),
+                         outline = pill.focused ? 2.2 : 1.5,
+                         outlineColor = pill.focused ? Color.white : Fade(over ? tint : LINE, faint) });
+    Draw2D.Text(label, center, 14, Fade(tint, faint), Anchor.MiddleCenter, Font.Bold);
+    return pill.clicked;
+}
+
+// What the menu's room page shows of the match: who has each seat, and the
+// bots' switch; and the commands its buttons send, a new game and the switch.
+view Roster(Towers towers, Session session, mut Lobby lobby)
+{
+    lobby.seats = SEATS;
+    lobby.manned = 0;
+    lobby.mine = -1;
+    foreach (var entry in towers.seats)
+    {
+        lobby.manned |= 1 << entry.value;
+        if (entry.key == session.player) lobby.mine = entry.value;
+    }
+    lobby.bots = towers.bots;
+    lobby.offersNewGame = true;
+    lobby.offersBots = true;
+    // A game of its own, from its start: the bots had every tower meanwhile
+    if (lobby.newGame) Send(Rebuild { });
+    if (lobby.toggleBots) Send(Bots { });
+}
 
 const float HEADROOM = 48; // The height of the row along the top, which the camera keeps the brick under
 const float FOOT = 62;     // ...and of the buttons along the bottom, which it keeps the tower's top over
@@ -88,7 +147,7 @@ view Glare(Fx fx, Flow flow)
 view Chips(verified Towers sure, Fx fx, Flow flow, Lobby lobby, query (verified Seat seat) seats)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None) return;
+    if (lobby.page != Page.Playing) return;
     // Side by side in the screen's middle, as wide as a narrow one lets them be
     var slot = Math.Min(Screen.width / SEATS, 112);
     var first = (Screen.width - slot * SEATS) * 0.5;
@@ -137,7 +196,7 @@ view Chips(verified Towers sure, Fx fx, Flow flow, Lobby lobby, query (verified 
 view Race(Towers towers, Fx fx, Lobby lobby, query (Seat seat) seats)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None) return;
+    if (lobby.page != Page.Playing) return;
     var top = HEADROOM + 22;
     var bottom = Screen.height - FOOT - 14;
     if (bottom - top < 80) return;
@@ -178,7 +237,7 @@ view Race(Towers towers, Fx fx, Lobby lobby, query (Seat seat) seats)
 view Tray(Seat seat, Session session, Devices devices, Towers towers, Fx fx, Lobby lobby, with ownership)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None) return;
+    if (lobby.page != Page.Playing) return;
     var screen = float2(Screen.width, Screen.height);
     var at = float2(screen.x - 38, HEADROOM + 36);
     Draw2D.Shape(Shape { center = at, size = float2(60, 56), radius = 10, color = Color(0.115, 0.118, 0.13, 0.9), outline = 1,
@@ -236,7 +295,7 @@ void Band(float2 middle, float open, bool big, Color tint, string words, string 
 view Words(Towers towers, Session session, Lobby lobby, mut Flow flow, mut Fx fx, query (Seat seat) seats)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None) return;
+    if (lobby.page != Page.Playing) return;
     var screen = float2(Screen.width, Screen.height);
     var big = screen.x >= 640 && screen.y >= 420;
     var middle = float2(screen.x * 0.5, HEADROOM + (screen.y - HEADROOM) * 0.3);
@@ -331,7 +390,7 @@ view Words(Towers towers, Session session, Lobby lobby, mut Flow flow, mut Fx fx
 view Hints(Towers towers, Devices devices, Fx fx, Hand hand, Lobby lobby)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None || fx.seat < 0 || towers.phase != Phase.Play || !hand.playing) return;
+    if (lobby.page != Page.Playing || fx.seat < 0 || towers.phase != Phase.Play || !hand.playing) return;
     var screen = float2(Screen.width, Screen.height);
     var touch = devices.touchscreen.connected;
     mut var words = "";
@@ -348,25 +407,15 @@ view Hints(Towers towers, Devices devices, Fx fx, Hand hand, Lobby lobby)
     Draw2D.Text(words, at + float2(0, bob), 13, INK, Anchor.MiddleCenter);
 }
 
-// The way to the menu, and the room this machine is in, for whoever asks.
-// The bottom right corner is the engine's stats'.
+// The room this machine is in, for whoever asks: over the menu's button, in
+// the bottom left corner. The bottom right corner is the engine's stats'.
 [Stage(Layers.Hud, 40)]
-view Corner(Session session, Devices devices, mut Lobby lobby)
+view Corner(Session session, Lobby lobby)
 {
     Draw2D.SetScreen();
-    if (lobby.page != Page.None) return;
-    var bottom = Screen.height;
-    if (session.room != "")
-    {
-        // Over the button, out of the way of what the tower earned
-        Draw2D.Text($"ROOM {session.room}", float2(10, bottom - 62), 10, QUIET, Anchor.MiddleLeft, Font.Bold);
-    }
-    var pressed = Pill(Rect(8, bottom - 52, 84, 44), "MENU", INK, false, true);
-    if (pressed || devices.keyboard.escape.down)
-    {
-        lobby.page = Page.Room;
-        lobby.resume = true;
-    }
+    if (lobby.page != Page.Playing || session.room == "") return;
+    // Over the button, out of the way of what the tower earned
+    Draw2D.Text($"ROOM {session.room}", float2(10, Screen.height - 62), 10, QUIET, Anchor.MiddleLeft, Font.Bold);
 }
 
 // Paper for a round's winner, over everything but the menu.

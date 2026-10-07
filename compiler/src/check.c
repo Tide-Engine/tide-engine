@@ -3735,8 +3735,8 @@ static type check_session_call(checker *c, expr *e)
         diag_error(e->at, "Session." STR_FMT " is a statement of its own", STR_ARG(e->name));
     }
     e->call = CALL_SESSION;
-    const int least = start || join || connect || kick ? 1 : 0;
-    const int most = connect || kick ? 2 : open || kick_all ? 1 : least;
+    const int least = join || connect || kick ? 1 : 0;
+    const int most = connect || kick ? 2 : open || kick_all || start ? 1 : least;
     const char *named = start ? "scene" : join ? "code" : connect ? "address, port" : open ? "port" : kick ? "player, message"
                         : kick_all ? "message" : "";
     if (!order_named_args(e, named, most - least)) {
@@ -3745,7 +3745,8 @@ static type check_session_call(checker *c, expr *e)
     }
     if (e->args.count < least || e->args.count > most) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-        diag_error(e->at, "%s", start     ? "Session.Start takes the scene the match starts in: 'Session.Start(Arena)'"
+        diag_error(e->at, "%s", start     ? "Session.Start takes the scene the match starts in, or nothing for Main: "
+                                           "'Session.Start(Arena)' or 'Session.Start()'"
                                : open    ? "Session.Open takes nothing, or the port to take players on: "
                                            "'Session.Open()' or 'Session.Open(7777)'"
                                : join    ? "Session.Join takes the room's code: 'Session.Join(\"K7QF2M\")'"
@@ -3800,7 +3801,24 @@ static type check_session_call(checker *c, expr *e)
         }
     }
     if (!start) return T_VOID_;
-    decl *scene = check_start_scene(c, e->args.items[0], "Session.Start");
+    decl *scene = NULL;
+    if (e->args.count == 0) {
+        // Session.Start(): a match of this machine's own, in Main, which a
+        // package's code can't name (the game's Main may be in a namespace)
+        scene = c->prog->main;
+        if (!scene) {
+            diag_error(e->at, "Session.Start() starts a match in Main, and the program has no 'scene Main'");
+            diag_note("name the scene the match starts in, like 'Session.Start(Arena)'");
+            return T_ERR;
+        }
+        if (scene->is_local) {
+            diag_error(e->at, "Session.Start() starts a match in Main, which is local here: the program starts outside any match");
+            diag_note("name one of the match's scenes, like 'Session.Start(Arena)'");
+            return T_ERR;
+        }
+    } else {
+        scene = check_start_scene(c, e->args.items[0], "Session.Start");
+    }
     if (!scene) return T_ERR;
     // The match's world starts with it: it needs an archetype there.
     e->type_decl = scene;
@@ -6074,7 +6092,11 @@ static type check_member(checker *c, expr *e)
 {
     // quaternion.identity, Math.PI
     if (names_builtin_owner(c, e->object)) {
-        if (str_eq_c(e->object->name, "Application") && !check_io_use(c, e->at, "Application paths", false)) return T_ERR;
+        if (str_eq_c(e->object->name, "Application") && !str_eq_c(e->member, "title")
+            && !check_io_use(c, e->at, "Application paths", false)) {
+            return T_ERR;
+        }
+        if (str_eq_c(e->object->name, "Application") && str_eq_c(e->member, "title")) c->prog->uses_title = true;
         if (str_eq_c(e->object->name, "Draw") && !str_eq_c(e->member, "window")) {
             diag_error(e->at, "Draw has no member '" STR_FMT "'", STR_ARG(e->member));
             diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Blit and window. Shapes, text and meshes are theirs");

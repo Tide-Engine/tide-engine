@@ -1696,9 +1696,9 @@ static const method_form scene_calls[] = {
 
 // Session's calls, from views and local handlers.
 static const method_form session_calls[] = {
-    {"Start", "Session.Start(scene)",
-     "Starts a match on this machine, in `scene`: it runs the server, and no one else joins until it's opened. It leaves "
-     "the match it's in first."},
+    {"Start", "Session.Start(scene = Main)",
+     "Starts a match on this machine, in `scene`, or in `Main` with nothing named: it runs the server, and no one else "
+     "joins until it's opened. It leaves the match it's in first."},
     {"Open", "Session.Open(int port = 7777)",
      "Lets others join the match this machine runs: in a room, whose code is `Session.room`, and on `port` too (7777 "
      "unless it says), except on the web."},

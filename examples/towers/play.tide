@@ -2,8 +2,9 @@
 // and the pieces. Views read the match and never change it: what they write
 // is this machine's own (Hand, Fx, and the local fields of a brick). The dust
 // and the numbers are in effects.tide, the race and the words in hud.tide, and
-// the lobby in lobby.tide.
+// the menu is the rooms package's.
 using Box2D;
+using Rooms;
 
 // The docs site's colors.
 const Color BACK = Color(0.086, 0.086, 0.094);
@@ -20,7 +21,7 @@ const Color STONE = Color(0.56, 0.57, 0.62); // A brick that's set solid
 const Color GOLD = Color(1, 0.86, 0.36);     // The finish line, and a crown
 
 // What draws over what, whichever file a view is in.
-enum Layers { Camera, Scenery, Bricks, Falling, Effects, Hud, Menu }
+enum Layers { Camera, Scenery, Bricks, Falling, Effects, Hud }
 
 // What this machine's player wants of their falling brick, which its input
 // sends: views work it out, a frame at a time, from the keys, the mouse and
@@ -170,7 +171,7 @@ view Look(Towers towers, Lobby lobby, mut Fx fx)
     for (var seat = 0; seat < SEATS; seat++) tallest = Math.Max(tallest, Of(towers.tops, seat));
     mut var half = Math.Max(all / aspect, (tallest + DROP + 6 - GROUND) * 0.5);
     mut var center = float2(0, GROUND - 2 + half);
-    if (fx.seat >= 0 && lobby.page == Page.None && towers.phase == Phase.Play)
+    if (fx.seat >= 0 && lobby.page == Page.Playing && towers.phase == Phase.Play)
     {
         var under = Math.Min(3 + Math.Max(fx.top, 0) * 0.3, 12);
         var meter = Math.Min(Math.Max(height - HEADROOM - FOOT, 100) / (DROP + 2 + under), width / 13);
@@ -228,8 +229,9 @@ view Look(Towers towers, Lobby lobby, mut Fx fx)
 // down, S or space drops it. A drag steps it across by how far it goes, a tap
 // turns it, and a swipe down or a press that stays put drops it.
 [Stage(Layers.Camera, 4)]
-view Hands(Devices devices, mut Fx fx, mut Hand hand)
+view Hands(Devices devices, Lobby lobby, mut Fx fx, mut Hand hand)
 {
+    hand.playing = lobby.playing;
     var keys = devices.keyboard;
     var pointer = devices.pointer;
     var at = Screen.Flip(pointer.position);

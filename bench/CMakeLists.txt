@@ -28,11 +28,12 @@ add_subdirectory(versus)
 # timing assertion in CTest. Its machines share a pool capped at four threads.
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     set(lag_sumo_sources "")
-    foreach(file arena effects game hud light lobby play)
+    foreach(file arena effects game hud light play)
         list(APPEND lag_sumo_sources "${PROJECT_SOURCE_DIR}/examples/sumo/${file}.tide")
     endforeach()
     tide_add_game(bench_lag_native SOURCES ${lag_sumo_sources} "${PROJECT_SOURCE_DIR}/packages/box3d/bridge.c" NAME game
-        PACKAGES Box3D "${PROJECT_SOURCE_DIR}/packages/box3d/box3d.tide" HOST lag_native.c lag_wait.c)
+        PACKAGES Box3D "${PROJECT_SOURCE_DIR}/packages/box3d/box3d.tide" Rooms "${PROJECT_SOURCE_DIR}/packages/rooms/rooms.tide"
+        HOST lag_native.c lag_wait.c)
     target_sources(bench_lag_native PRIVATE "${PROJECT_SOURCE_DIR}/platform/src/jobs.c")
     target_compile_definitions(bench_lag_native PRIVATE MOST_THREADS=4)
     target_link_libraries(bench_lag_native PRIVATE tide_platform tide_box3d)

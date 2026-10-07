@@ -1,4 +1,4 @@
-const string SampleTitle = "Tower Defense";
+using Rooms;
 
 // Tower defense for up to four friends. Creeps walk the road to the base, and
 // everyone places and upgrades towers to stop them. Each player has a cursor,
@@ -622,7 +622,6 @@ void DrawHeart(float2 center, float size, Color color)
 }
 
 // First each frame: the screen is laid out from its size, around the board.
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Begin(Session session, mut Layout layout, mut Hand hand)
 {
     Draw2D.Clear(BG);
@@ -642,7 +641,6 @@ view Begin(Session session, mut Layout layout, mut Hand hand)
     Draw2D.Text("Joining the game...", float2(w, h) * 0.5, 18 * ui, QUIET, Anchor.MiddleCenter);
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Me(Builder builder, mut Hand hand, with ownership)
 {
     hand.seat = builder.seat;
@@ -650,8 +648,7 @@ view Me(Builder builder, mut Hand hand, with ownership)
 
 // The keyboard, the mouse and fingers all move one cursor, and a press on a
 // tile goes to the match as a command.
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
-view Play(Devices devices, Session session, Game game, Team team, Board board, World world, Layout layout, mut Hand hand, SampleLobby lobby)
+view Play(Devices devices, Session session, Game game, Team team, Board board, World world, Layout layout, mut Hand hand, Lobby lobby)
 {
     if (!lobby.playing) { hand.hold = 0; return; }
     var dt = Math.Min(Frame.dt, 0.05);
@@ -765,7 +762,6 @@ view Play(Devices devices, Session session, Game game, Team team, Board board, W
     Send(Act { x = hand.cell.x, y = hand.cell.y, kind = hand.kind, upgrade = hand.tower });
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawBoard(Game game, Layout layout)
 {
     var c = layout.cell;
@@ -809,7 +805,6 @@ view DrawBoard(Game game, Layout layout)
 
 // The base, at the road's end: creeps walk in under it.
 [After(DrawCreeps)]
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawBase(Game game, Layout layout, Fx fx)
 {
     var c = layout.cell;
@@ -822,7 +817,6 @@ view DrawBase(Game game, Layout layout, Fx fx)
     Draw2D.Text($"{game.lives}", home + float2(0, c * 0.22), Math.Max(10, c * 0.3), Color.white, Anchor.MiddleCenter);
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawTowers(mut Tower tower, Layout layout)
 {
     var dt = Math.Min(Frame.dt, 0.05);
@@ -841,7 +835,6 @@ view DrawTowers(mut Tower tower, Layout layout)
     }
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawCreeps(mut Creep creep, Layout layout)
 {
     creep.flash = Math.Max(0, creep.flash - Frame.dt);
@@ -882,7 +875,6 @@ view DrawCreeps(mut Creep creep, Layout layout)
 }
 
 // Where the friends point.
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawCursors(Builder builder, Layout layout, without ownership)
 {
     var center = ToScreen(layout, float2(builder.cell));
@@ -900,7 +892,6 @@ view DrawCursors(Builder builder, Layout layout, without ownership)
 }
 
 // This player's cursor: the tower it would build, and how far that reaches.
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawHand(Team team, Layout layout, Hand hand)
 {
     if (hand.seat < 0) return;
@@ -926,7 +917,6 @@ view DrawHand(Team team, Layout layout, Hand hand)
     Draw2D.WireRoundRect(center, float2(c * 0.98), c * 0.2, 2, Color.white);
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawFx(mut Fx fx, Layout layout)
 {
     var dt = Math.Min(Frame.dt, 0.05);
@@ -1013,7 +1003,6 @@ view DrawFx(mut Fx fx, Layout layout)
 }
 
 // Over everything: who's winning, the gold, the towers to pick from, and how to play.
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Hud(Devices devices, Session session, Game game, Team team, Layout layout, Hand hand, mut Fx fx)
 {
     Draw2D.SetClip();
@@ -1213,4 +1202,11 @@ local event(WaveCleared cleared) ShowCleared(mut Fx fx)
     fx.banner = 2;
     fx.title = cleared.clean ? "WAVE CLEARED" : "WAVE SURVIVED";
     fx.sub = $"+{cleared.bonus} gold for the team";
+}
+
+// The menu's button goes in the top right corner here: the bottom of the
+// screen is the hints'.
+override Rect Rooms.MenuButton(float2 screen)
+{
+    return Rect(screen.x - 92, 8, 84, 36);
 }

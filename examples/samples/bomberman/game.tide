@@ -1,4 +1,4 @@
-const string SampleTitle = "Bomb Buddies";
+using Rooms;
 
 // Bomb Buddies: a Bomberman arena for up to eight friends.
 // Everyone who opens the link drops in at a corner. Blast crates for power-ups,
@@ -108,7 +108,7 @@ input Controls
     [Clamp(-1, 1)] int y;
     bool bomb;
 
-    Sample(Devices devices, Pad pad, SampleLobby lobby)
+    Sample(Devices devices, Pad pad, Lobby lobby)
     {
         if (!lobby.playing) return;
         var keys = devices.keyboard;
@@ -714,8 +714,7 @@ local event(Scored scored) ShowScore(Bomber bomber, mut Fx fx)
 }
 
 // The pointer: a drag steers, a tap drops a bomb, and so does a second finger.
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
-view Thumb(Devices devices, mut Pad pad, SampleLobby lobby)
+view Thumb(Devices devices, mut Pad pad, Lobby lobby)
 {
     if (!lobby.playing)
     {
@@ -762,7 +761,6 @@ view Thumb(Devices devices, mut Pad pad, SampleLobby lobby)
 }
 
 // The board, through a camera that fits it between the scores and the hints.
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Board(Arena arena, Time time, mut Fx fx, mut Lens lens)
 {
     // The scores above the board and the hints under it. A tall screen, like a phone's,
@@ -867,7 +865,6 @@ view Board(Arena arena, Time time, mut Fx fx, mut Lens lens)
     }
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawGhosts(Ghost ghost, Time time)
 {
     var at = ghost.position + float2(0, Math.Sin(time.t * 6 + ghost.position.x + ghost.position.y) * 0.04);
@@ -882,7 +879,6 @@ view DrawGhosts(Ghost ghost, Time time)
     Draw2D.Circle(at + float2(0.12, 0.1) + look, 0.08, Color(0.15, 0.1, 0.3));
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawBombers(Bomber bomber, Owner owner, Session session, Time time)
 {
     if (bomber.dead > 0) return;
@@ -906,7 +902,6 @@ view DrawBombers(Bomber bomber, Owner owner, Session session, Time time)
     if (mine && bomber.shield > 0) Draw2D.Text("YOU", at + float2(0, 0.6), 0.42, Color.white, Anchor.LowerCenter, Font.Bold);
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Sparkle(mut Fx fx)
 {
     var dt = Math.Min(Frame.dt, 0.05);
@@ -953,7 +948,6 @@ view Sparkle(mut Fx fx)
     }
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Hud(Arena arena, Session session, Pad pad, Lens lens, query (Bomber bomber, Owner owner) bombers)
 {
     Draw2D.SetScreen();
@@ -1028,10 +1022,16 @@ view Hud(Arena arena, Session session, Pad pad, Lens lens, query (Bomber bomber,
     }
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Joining(Session session)
 {
     if (session.state == SessionState.Connected) return;
     Draw2D.SetScreen();
     Draw2D.Text("Joining the game...", float2(Screen.width, Screen.height) * 0.5, 18, Color.white, Anchor.MiddleCenter);
+}
+
+// The menu's button goes in the top right corner here: the bottom of the
+// screen is the hints'.
+override Rect Rooms.MenuButton(float2 screen)
+{
+    return Rect(screen.x - 92, 8, 84, 36);
 }
