@@ -2888,6 +2888,9 @@ static void check_render_samples(const int32_t samples)
 
     tide_render_target_dispose(scene);
     tide_render_target_dispose(flat);
+    // The list forgotten first, as wherever a registry is freed: the renderer's images of these targets are
+    // found by their states' addresses, which a later target can be given
+    tide_draw_forget(&render_list);
     tide_render_targets_free();
 }
 

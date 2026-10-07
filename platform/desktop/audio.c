@@ -115,9 +115,17 @@ bool tide_audio_out_open(void)
     atomic_store(&wasapi.ok, false);
     wasapi.event = CreateEventW(NULL, FALSE, FALSE, NULL);
     wasapi.opened = CreateEventW(NULL, TRUE, FALSE, NULL);
-    wasapi.thread = CreateThread(NULL, 0, wasapi_thread, NULL, 0, NULL);
-    if (!wasapi.thread || !wasapi.event || !wasapi.opened) {
+    // The mixer is made, and told a thread renders, before there's a thread:
+    // the device asks for its first block as soon as it's started, which is
+    // before this function knows it was
+    tide_mixer_rendered_elsewhere(true);
+    if (wasapi.event && wasapi.opened) wasapi.thread = CreateThread(NULL, 0, wasapi_thread, NULL, 0, NULL);
+    if (!wasapi.thread) {
         fprintf(stderr, "tide: no audio: the device's thread couldn't start\n");
+        if (wasapi.event) CloseHandle(wasapi.event);
+        if (wasapi.opened) CloseHandle(wasapi.opened);
+        memset(&wasapi, 0, sizeof wasapi);
+        tide_mixer_rendered_elsewhere(false);
         return false;
     }
     WaitForSingleObject(wasapi.opened, 5000);
@@ -126,7 +134,6 @@ bool tide_audio_out_open(void)
         tide_audio_out_close();
         return false;
     }
-    tide_mixer_rendered_elsewhere(true);
     return true;
 }
 
