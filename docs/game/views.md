@@ -58,7 +58,7 @@ render.card  = RenderTarget(200, 300);     // A size of its own, in logical pixe
 render.small = RenderTarget(320, 180, 1);  // A size of its own, in exactly these pixels
 ```
 
-A target's size is in logical pixels, like the window's, and its image is made at the display's scale. So drawing into a target is the same as drawing into the window: on a display scaled to 150%, a target of 200 by 300 has 300 by 450 pixels, its text is fitted to them, its shapes' edges are one of them wide, and `target.Pixels()`, clips, conversions like `WorldToScreen` and a frag's `pixel.position` are all in logical pixels. A pass over the whole screen that goes through a target comes out as sharp as the window.
+A target's size is in logical pixels, like the window's, and its image is made at the display's scale. So drawing into a target is the same as drawing into the window: on a display scaled to 150%, a target of 200 by 300 has 300 by 450 pixels, its text is fitted to them, its shapes' edges are one of them wide, and `target.Screen()`, clips, conversions like `WorldToScreen` and a frag's `pixel.position` are all in logical pixels. A pass over the whole screen that goes through a target comes out as sharp as the window.
 
 - `RenderTarget.Window()` is for exactly that: a target that's always the window's size. `RenderTarget.Window(factor)` is always that part of it, for the smaller targets a blur or a glow goes through. The engine makes them again when the window's size changes, so there's nothing to resize and nothing to forget. What was drawn in one is lost then, which doesn't matter for a target a view draws again every frame. `Resize` on one is refused.
 - `RenderTarget(width, height)` is a target of a size of its own. `Resize(width, height)` changes it for every alias and discards its contents, even at the same size.
@@ -333,7 +333,7 @@ view Corpse(Body body, with verified Dead)
 
 view Board(verified Duel duel)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Text($"Round {duel.round}", float2(20, 20), 24, Color.white);
 }
 ```
@@ -397,7 +397,7 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw.Stencil(test, value, operation) { ... }` | What's drawn in the block is drawn only where a number kept for each pixel passes a test, and changes that number where it draws: masks, cut-outs, counting (see [Stencil](#stencil)) |
 | `Draw.Transform(offset, rotation, scale) { ... }` | Moves, turns and scales what's drawn in the block (see [Transforms](#transforms)) |
 | `Draw.Clip(rect) { ... }` | Only what's inside `rect` draws, in the block (see [Clipping](#clipping)) |
-| `Draw.Pixels() { ... }` | The calls in the block are in the screen's pixels, from the top left, with `y` down (see [On the screen](#on-the-screen)) |
+| `Draw.Screen() { ... }` | The calls in the block are in the screen's pixels, from the top left, with `y` down (see [On the screen](#on-the-screen)) |
 | `Draw.SetCamera(position, rotation, fieldOfView)` | Sets the 3D camera for the 3D meshes after it (see [3D](#_3d)) |
 | `Draw.Depth(mode) { ... }` | What the 3D meshes drawn in the block do with depth: hide and are hidden, are only hidden, or neither (see [Depth](#depth)) |
 | `Draw.Cull(side) { ... }` | Which side of the triangles of the 3D meshes drawn in the block isn't drawn: the back, the front, or neither (see [Which side draws](#which-side-draws)) |
@@ -440,7 +440,7 @@ view Follow(Player player, with ownership)
 | `Draw.Transform(...)`, `Draw.Transform(transform)` | `Draw.SetTransform(...)`, `Draw.SetTransform(transform)` | Where draws land: moved, turned, scaled (see [Transforms](#transforms)) |
 | `Draw.Clip(rect)` | `Draw.SetClip(rect)` | The rectangle draws are kept inside (see [Clipping](#clipping)) |
 | `Draw.Camera(center, size)`, `Draw.Camera(...)` | `Draw.SetCamera(center, size)`, `Draw.SetCamera(...)` | The camera |
-| `Draw.Pixels()` | `Draw.SetPixels()` | The screen's pixels in the camera's place (see [On the screen](#on-the-screen)) |
+| `Draw.Screen()` | `Draw.SetScreen()` | The screen's pixels in the camera's place (see [On the screen](#on-the-screen)) |
 | `Draw.Depth(mode)` | `Draw.SetDepth(mode)` | What 3D meshes do with depth: whether they're hidden behind what's nearer, and whether they hide what's behind them (see [Depth](#depth)) |
 | `Draw.Cull(side)` | `Draw.SetCull(side)` | Which side of a 3D mesh's triangles isn't drawn: the back, unless this says otherwise (see [Which side draws](#which-side-draws)) |
 
@@ -527,7 +527,7 @@ A tint multiplies the color of everything drawn inside, alpha too. `Color(1, 1, 
 ```csharp
 view Menu(MenuState menu)
 {
-    Draw.Pixels(),
+    Draw.Screen(),
     Draw.Tint(Color(1, 1, 1, menu.shown))
     {
         Draw.RoundRect(float2(200, 120), float2(320, 160), 12, Color(0.1, 0.1, 0.15));
@@ -756,7 +756,7 @@ The scene is drawn into a [`Format.Rgba16f`](#what-a-target-holds) target, where
 ```csharp
 view Bar(Health health)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     var middle = float2(120, 40);
     Draw.RoundRect(middle, float2(200, 24), 12, Color(0, 0, 0, 0.6));                 // A pill
     Draw.RoundRect(float2(22 + health.left * 98, 40), float2(health.left * 196, 20), 10, Color.red);
@@ -810,7 +810,7 @@ struct Shape // Built in
 ```csharp
 view Card(Deal deal)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     // A shadow first: a dark shape whose edge fades outwards
     Draw.Shape(Shape { center = deal.at + float2(0, 6), size = float2(180, 240), radius = 16,
                          color = Color(0, 0, 0, 0.5), soft = 18 });
@@ -1049,7 +1049,7 @@ view Floor(mut Art art)
 
 ### Six of them, as a cube
 
-A `Cubemap` is six images that are read by a direction where a `Texture` is read by a `uv`: a sky, or what a mirror sees. It isn't a mesh's texture; a frag reads it, `sky.Sample(direction)`. An asset's is six files, and `RenderTarget.Cube(size)` is one whose six faces are render targets, `cube.faces[0]` to `cube.faces[5]`. See [Skybox and reflections](./shaders.md#skybox-and-reflections).
+A `Cubemap` is six images that are read by a direction where a `Texture` is read by a `uv`: a sky, or what a mirror sees. It isn't a mesh's texture; a frag reads it, `sky.Sample(direction)`. An asset's is six files, and `Cubemap(size)` is one whose six faces are render targets, `cube.faces[0]` to `cube.faces[5]`. See [Skybox and reflections](./shaders.md#skybox-and-reflections).
 
 ## Clipping
 
@@ -1058,7 +1058,7 @@ A `Cubemap` is six images that are read by a direction where a `Texture` is read
 ```csharp
 view Panel()
 {
-    Draw.Pixels(),
+    Draw.Screen(),
     Draw.Clip(Rect(20, 20, 200, 100))
     {
         Draw.Clear(Color.black); // The panel only
@@ -1073,13 +1073,13 @@ A clip in a clip's block only narrows it: what draws is inside both, which is wh
 
 ## On the screen
 
-In `Draw.Pixels() { ... }`, Draw calls are in the screen's pixels: from the top left, with `y` down, as the GUI's are, `Screen.width` by `Screen.height`. After the block, the camera is what it was, so a view of the world can draw a label in pixels and leave the world's camera alone for the views after it:
+In `Draw.Screen() { ... }`, Draw calls are in the screen's pixels: from the top left, with `y` down, as the GUI's are, `Screen.width` by `Screen.height`. After the block, the camera is what it was, so a view of the world can draw a label in pixels and leave the world's camera alone for the views after it:
 
 ```csharp
 view Nameplates(Player player, Body body)
 {
     var above = Draw.WorldToScreen(body.position + float2(0, 1.5));
-    Draw.Pixels()
+    Draw.Screen()
     {
         var size = Draw.MeasureText(player.name, 14);
         Draw.Text(player.name, above - float2(size.x * 0.5, size.y), 14, Color.white);
@@ -1087,12 +1087,12 @@ view Nameplates(Player player, Body body)
 }
 ```
 
-A view that only draws on the screen can set it for the views that follow instead, with `Draw.SetPixels()`:
+A view that only draws on the screen can set it for the views that follow instead, with `Draw.SetScreen()`:
 
 ```csharp
 view Health(Stats stats)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Rect(float2(110, 30), float2(200, 20), Color.gray);
     Draw.Rect(float2(10 + stats.health, 30), float2(stats.health * 2, 20), Color.red);
 }
@@ -1113,7 +1113,7 @@ Without more, `position` is the text's top left corner. An `Anchor` after the co
 ```csharp
 view Banner(Round round)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     var middle = float2(Screen.width, Screen.height) * 0.5;
     Draw.Text("FIGHT!", middle, 64, Color.white, Anchor.MiddleCenter);
     Draw.Text($"Round {round.number}", float2(Screen.width - 16, 16), 24, Color.gray, Anchor.UpperRight);
@@ -1146,7 +1146,7 @@ To fit a panel around a text, or to put something beside it, ask how big it will
 ```csharp
 view Banner(Round round)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     var middle = float2(Screen.width, Screen.height) * 0.5;
     var size = Draw.MeasureText(round.message, 48, Font.Bold);
     Draw.Rect(middle, size + float2(32, 16), Color.black);
@@ -1290,7 +1290,7 @@ Whatever set the camera, a view reads it back as the matrices the GPU draws thro
 - A render target has the same four, for its own cameras: `target.WorldToClip()`.
 - `WorldToClip()` is what a 3D mesh's positions are multiplied by, exactly: the camera's transform undone, z turned around (a camera looks along its `+z`, and clip space along `-z`), then the projection, fitted to the shape of the window or the target. A point through it is in clip space: once divided by its `w`, `x` and `y` go from -1 to 1 across what the camera sees, `y` up, and `z` from -1 at the near plane to 1 at the far limit. It's what a frag needs to find a pixel in another camera's image, as a [shadow map](./shaders.md#a-shadow-map) does with its lamp's.
 - `CameraTransform()` and `CameraProjection()` are the two `SetCamera(transform, projection)` takes, so `Draw.SetCamera(Draw.CameraTransform(), Draw.CameraProjection())` sets the camera there already was. A camera set with a field of view has them too, its projection with the screen's shape in it.
-- `WorldToScreenMatrix()` does to `float3(x, y, 1)` what `Draw.WorldToScreen` does to a `float2`. It's the identity inside `Draw.Pixels`.
+- `WorldToScreenMatrix()` does to `float3(x, y, 1)` what `Draw.WorldToScreen` does to a `float2`. It's the identity inside `Draw.Screen`.
 - [`Draw.Transform`](#transforms) is no part of any of them: they're the camera's alone.
 
 ```csharp
@@ -1307,7 +1307,7 @@ A game's C draws 3D meshes too, with vertices of its own, like a model a library
 
 ## Screen and world coordinates
 
-The conversion helpers use the currently selected camera, including a camera set earlier in the same frame. Their screen coordinates are logical pixels from the top left, with `y` down, as `Draw.Pixels` and the GUI's are.
+The conversion helpers use the currently selected camera, including a camera set earlier in the same frame. Their screen coordinates are logical pixels from the top left, with `y` down, as `Draw.Screen` and the GUI's are.
 
 `Screen.width` and `Screen.height` are the window's size in those pixels. Both are floats, so `Screen.width / Screen.height` is the screen's shape with nothing rounded away. Views, and the functions they call, read them.
 
@@ -1322,7 +1322,7 @@ The conversion helpers use the currently selected camera, including a camera set
 
 In 3D, depth is the depth buffer's value: 0 at the near plane and 1 at the far limit, rather than a distance in world units. The standard perspective camera has an infinite far limit, so depth 1 has no finite world position. The ray helpers work with perspective and orthographic cameras, including custom projection matrices. Intersect the ray with your game's objects or a plane to pick a world position; a pixel alone has no unique 3D position.
 
-The devices count pixels the other way: from the bottom left, with `y` up, as Unity's Input System does. `Screen.Flip(position)` gives the same point counted from the screen's other edge, so it turns a device's position into a screen position, for these helpers, `Draw.Pixels()` and a `Rect` of the GUI's. It's its own inverse: it turns a screen position into a device's too.
+The devices count pixels the other way: from the bottom left, with `y` up, as Unity's Input System does. `Screen.Flip(position)` gives the same point counted from the screen's other edge, so it turns a device's position into a screen position, for these helpers, `Draw.Screen()` and a `Rect` of the GUI's. It's its own inverse: it turns a screen position into a device's too.
 
 ```csharp
 view Pointer(Devices devices)
@@ -1344,7 +1344,7 @@ view Pointer(Devices devices)
 
 The cameras these go through are there as matrices too: see [A camera as matrices](#a-camera-as-matrices).
 
-On the screen (`Draw.Pixels`, `Draw.SetPixels`), its conversion helpers are identity mappings. A viewport with no size, a singular camera matrix, or a point whose projection has no finite position returns zero.
+On the screen (`Draw.Screen`, `Draw.SetScreen`), its conversion helpers are identity mappings. A viewport with no size, a singular camera matrix, or a point whose projection has no finite position returns zero.
 
 ## Looking around
 

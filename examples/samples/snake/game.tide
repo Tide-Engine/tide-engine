@@ -750,7 +750,7 @@ void Banner(float2 middle, string title, Color color, string line)
 view Hud(Round round, verified Round sure, Session session, mut Fx fx,
          query (Snake snake, Owner owner, verified Snake confirmed) snakes)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     float width = Screen.width;
     float height = Screen.height;
     var quiet = Color(0.62, 0.65, 0.72);
@@ -877,7 +877,7 @@ view Hud(Round round, verified Round sure, Session session, mut Fx fx,
 view Joining(Session session, Fx fx)
 {
     if (session.state == SessionState.Connected) return;
-    Draw.Pixels()
+    Draw.Screen()
     {
         var gone = session.state == SessionState.Offline && fx.farewell != "";
         Draw.Text(gone ? fx.farewell : "Connecting...", float2(Screen.width * 0.5, Screen.height * 0.5), 18, Color.white,

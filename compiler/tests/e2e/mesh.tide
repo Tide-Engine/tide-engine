@@ -1,5 +1,5 @@
 // Meshes: Draw.Mesh with lists of Vertex and of int, a grid of colors as the
-// texture, Draw.Clip, Draw.Pixels, and C that draws into the view's list.
+// texture, Draw.Clip, Draw.Screen, and C that draws into the view's list.
 
 local singleton Art
 {
@@ -61,7 +61,7 @@ view Meshes(mut Art art)
     Draw.Mesh(art.kept, [2, 1, 0, 0, 1, 7], art.checker, Filter.Point);
     Draw.Mesh(art.kept, [0, 1, 2], art.open); // No size, so no texture
     Draw.SetClip();
-    Draw.SetPixels();
+    Draw.SetScreen();
     var before = Count(Draw.list);
     DrawFan(Draw.list, art.frames, Color.cyan);
     Draw.Text($"{Count(Draw.list) - before}", float2(0, 0), 10, Color.white);

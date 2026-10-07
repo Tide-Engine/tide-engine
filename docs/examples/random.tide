@@ -28,7 +28,7 @@ view Scatter(mut Dice dice)
     mut var rolls = $"Random({dice.seed}) rolls";
     for (var i = 0; i < 8; i++) rolls += $" {die.NextInt(1, 7)}";
 
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Text(rolls, float2(16, 14), 16, Color.white);
     GUI.SetTheme(GUITheme { radius = 6 });
     GUILayout.Area(Rect(12, Screen.height - 86, Screen.width - 24, 74))

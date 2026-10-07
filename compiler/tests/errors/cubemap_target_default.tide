@@ -2,4 +2,4 @@
 // expect: leave the field at default and create its cube in a view or local handler
 // ...nor does a field's default
 scene Main { }
-local singleton Room { Cubemap reflection = RenderTarget.Cube(64); }
+local singleton Room { Cubemap reflection = Cubemap(64); }

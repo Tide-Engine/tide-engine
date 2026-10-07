@@ -71,6 +71,16 @@ static bool drew(const char *text)
     return false;
 }
 
+// Whether it drew the GPU's line, whose label has the frame's draw calls in it.
+static bool drew_gpu(void)
+{
+    for (uint32_t i = 0; i < tide_run_over.count; i++) {
+        const tide_draw_command *c = &tide_run_over.commands[i];
+        if (c->kind == TIDE_DRAW_TEXT && strncmp(tide_run_over.text + c->text, "gpu (", 5) == 0) return true;
+    }
+    return false;
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)seconds;
@@ -105,7 +115,7 @@ static int frame(void *user, const float seconds)
         wait = 1;
         break;
     case 2:
-        check(drawer->open && drew("60 fps") && drew("threads") && drew(tide_platform_renderer()) && drew("tick"),
+        check(drawer->open && drew("60 fps") && drew("threads") && drew(tide_platform_renderer()) && drew("entities") && drew("network"),
               "F8 opens them: the list is above the line");
         check(measured == &tide_run_profiler.profile && tide_run_memory > 0, "and what the list shows is measured from then on");
         check(seen->key, "the game sees the key too");
@@ -115,7 +125,7 @@ static int frame(void *user, const float seconds)
     case 3:
         check(drew("cpu") && drew("Count"), "the list has what a frame's work takes, and the game's system by name");
         check(drew("render"), "rendering CPU time is shown separately from the frame's total work");
-        check(!drew("gpu") || strcmp(tide_platform_renderer(), "WebGPU") == 0,
+        check(!drew_gpu() || strcmp(tide_platform_renderer(), "WebGPU") == 0,
               "GPU time is shown only on a backend with a timer");
         mouse_event("mousedown", x, y);
         break;
@@ -129,7 +139,7 @@ static int frame(void *user, const float seconds)
         wait = 1;
         break;
     case 6:
-        check(!measured && tide_platform_gpu_ms() < 0.0 && !drew("render") && !drew("gpu"),
+        check(!measured && tide_platform_gpu_ms() < 0.0 && !drew("render") && !drew_gpu(),
               "closed again, nothing is measured");
         finger_event("pointerdown", x, y);
         break;

@@ -56,7 +56,7 @@ view Graph(mut Plot plot)
     // The same number, moving something.
     Draw.Circle(float2(1.25, y), 0.06, Color(0.18, 0.83, 0.75));
 
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Text(Formula(plot.curve), float2(16, 14), 15, Color.white);
     GUI.SetTheme(GUITheme { radius = 6 });
     GUILayout.Area(Rect(12, Screen.height - 52, Screen.width - 24, 40))

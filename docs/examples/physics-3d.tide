@@ -62,6 +62,6 @@ view Balls(Body body, Sphere sphere)
 
 view Hud()
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Text("Tap to throw a ball", float2(16, 14), 16, Color.white);
 }
