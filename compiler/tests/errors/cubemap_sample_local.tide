@@ -1,5 +1,5 @@
 // expect: a frag samples a Cubemap that's an asset by its name, or a field of a component or singleton it takes, like 'room.reflection.Sample(direction)'
-// expect: a view puts a cube there: 'room.reflection = RenderTarget.Cube(256);'
+// expect: a view puts a cube there: 'room.reflection = Cubemap(256);'
 // A cube is sampled where it's a field or an asset, not a local
 scene Main { }
 local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }

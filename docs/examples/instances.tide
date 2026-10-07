@@ -70,7 +70,7 @@ view Show(mut Swarm swarm)
         Draw.Instanced(swarm.quad, swarm.faces, swarm.motes, Place, Glow);
     }
 
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Text($"{swarm.motes.count} motes, in one draw", float2(16, 14), 16, Color.white);
     GUI.SetTheme(GUITheme { radius = 6 });
     GUI.IntSlider(Rect(16, Screen.height - 48, Screen.width - 32, 32), "Motes", swarm.count, 1, 5000);

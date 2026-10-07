@@ -1321,7 +1321,7 @@ view Flat(Art art)
     Draw.SetCamera(-Spot(1, 4), Screen.height / 2);
     Draw.Mesh(art.flat, art.faces, Hand2, Take2);
 
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Mesh(art.onScreen, art.faces, Stripe);
     Draw.SetCamera(float2(0, 0), Screen.height / 2);
 }
@@ -1443,19 +1443,19 @@ view ScreenTargets(mut Art art)
     art.window = float2(w, h);
     // Where each of its pixels is, then a square in its top right corner: in logical pixels, as in the window
     Draw.Blit(art.uploaded, art.full, Where);
-    art.full.SetPixels();
+    art.full.SetScreen();
     art.full.Rect(float2(w - 16, 16), float2(32), Color.blue);
     // Half the window, so its own left half is a quarter of the window across
-    art.half.SetPixels();
+    art.half.SetScreen();
     art.half.Clear(Color.black);
     art.half.Rect(float2(w * 0.125, h * 0.25), float2(w * 0.25, h * 0.5), Color.green);
     // Four pixels by four on any display, the first one white
-    art.exact.SetPixels();
+    art.exact.SetScreen();
     art.exact.Clear(Color.black);
     art.exact.Rect(float2(0.5), float2(1), Color.white);
 
     Draw.Blit(art.full.color, Draw.window, TargetCopy);
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.SetClip();
     // The half one over the window's bottom right quarter, pixel for pixel
     Draw.Mesh([Vertex { position = float2(w * 0.5, h * 0.5) },
@@ -1492,7 +1492,7 @@ view Wraps(mut Art art)
         art.tilePlaces = [float4x4.Translate(Cell(2, 7)), float4x4.Translate(Cell(3, 7))];
         art.tiled = true;
     }
-    art.tiles.SetPixels();
+    art.tiles.SetScreen();
     art.tiles.Clear(Color.black);
     art.tiles.Rect(float2(0.5, 0.5), float2(1), Color.red);
     art.tiles.Rect(float2(1.5, 0.5), float2(1), Color.green);
@@ -1500,7 +1500,7 @@ view Wraps(mut Art art)
     art.tiles.Rect(float2(1.5, 1.5), float2(1), Color.white);
 
     Draw.Clear(Color.black);
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.SetClip();
     // The engine's own vertices: the draw says the wrap, after the filter, and none is the cells at the edge
     Draw.Transform(float2(8, 8))
@@ -1650,7 +1650,7 @@ view Shadows(Art art, mut Shadow shadow)
     shadow.toLamp = shadow.map.WorldToClip();
     shadow.map.Mesh(shadow.slab, art.faces, float4x4.identity);
     shadow.map.Mesh(shadow.grate, art.faces, float4x4.identity, Grate);
-    shadow.map.SetPixels();
+    shadow.map.SetScreen();
     shadow.map.Rect(float2(128, 128), float2(256), Color.blue);
 
     // The window, from straight above: x to the right and z up, 8 by 8
@@ -1660,7 +1660,7 @@ view Shadows(Art art, mut Shadow shadow)
     Draw.Mesh(shadow.floor, art.faces, float4x4.identity, Shadowed);
     Draw.Mesh(shadow.slab, art.faces, float4x4.identity, Shadowed);
     // ...and what the lamp's target holds, as a picture
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Mesh(shadow.readout, art.faces, LampDepth);
 }
 
@@ -1710,7 +1710,7 @@ view Masks(Art art, mut Mask mask)
     }
     Draw.SetClip();
     Draw.Clear(Color.blue); // ...and every pixel's number is 0
-    Draw.SetPixels();
+    Draw.SetScreen();
 
     // A circle drawn clear stores where it is, and shows nothing; a rect over it is drawn where it stored
     Draw.Stencil(StencilTest.Always, 1, StencilOp.Replace)
@@ -1777,7 +1777,7 @@ view Masks(Art art, mut Mask mask)
     Draw.Stencil(StencilTest.Never, 0)
     {
         mask.target.Clear(Color.black);
-        mask.target.SetPixels();
+        mask.target.SetScreen();
         mask.target.Stencil(StencilTest.Always, 1, StencilOp.Replace)
         {
             mask.target.Rect(float2(16, 32), float2(32, 64), Color.clear);
@@ -1844,7 +1844,7 @@ view Images(mut Art art)
         art.bricked = true;
     }
     Draw.Clear(Color.black);
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.SetClip();
     // By its name: its declaration's filter and wrap
     Draw.Transform(float2(8, 8))
@@ -1941,7 +1941,7 @@ view Heights(mut Art art)
         art.heighted = true;
     }
     Draw.Clear(Color.black);
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.SetClip();
     // In a frag, by its field
     Draw.Transform(float2(8, 8))
@@ -2009,11 +2009,11 @@ view Alphas(Art art, mut Clears clears)
                          Vertex { position = float2(48, 48), uv = float2(1, 1) }, Vertex { position = float2(0, 48), uv = float2(0, 1) }];
     Color glass = Color(0, 0.5, 1, 0.5);
     clears.layer.Clear(Color(0, 0, 0, 0));
-    clears.layer.SetPixels();
+    clears.layer.SetScreen();
     clears.layer.Rect(float2(24, 24), float2(48, 48), glass);
 
     Draw.Clear(Color.white);
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.SetClip();
     // Blended towards its clear pixel, over white
     Draw.Transform(float2(8, 8))
@@ -2090,7 +2090,7 @@ view Raws(Art art, mut Numbers numbers)
     List<Vertex> tile = [Vertex { }, Vertex { position = float2(32, 0), uv = float2(1, 0) },
                          Vertex { position = float2(32, 32), uv = float2(1, 1) }, Vertex { position = float2(0, 32), uv = float2(0, 1) }];
     Draw.Clear(Color.black);
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.SetClip();
     for (var read = 0; read < 6; read++)
     {
@@ -2203,7 +2203,7 @@ view Outputs(Art art, mut Several several)
     // A clear fills every image. Then three outputs over the top three quarters; two over a corner, which
     // leaves the third there; a frag that discards half of a square; and a shape of the engine's own,
     // which has one color and writes the first image alone
-    several.scene.SetPixels();
+    several.scene.SetScreen();
     several.scene.Clear(Color(0.5, 0.25, 1));
     several.scene.Mesh(several.top, art.faces, Fill);
     several.scene.Mesh(several.corner, art.faces, Two);
@@ -2211,7 +2211,7 @@ view Outputs(Art art, mut Several several)
     several.scene.Rect(float2(56, 8), float2(16), Color.green);
 
     // Floats add up past 1: three times white over the right half, with the target's own blend
-    several.bright.SetPixels();
+    several.bright.SetScreen();
     several.bright.Clear(Color.black);
     several.bright.Blend(Blend.Add)
     {
@@ -2224,7 +2224,7 @@ view Outputs(Art art, mut Several several)
     // into it (where its first is the pixel's and the others go nowhere), the bright target, and
     // an image the scene hasn't got, whose draw is passed by
     Draw.SetClip();
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Clear(Color.black);
     Draw.Mesh(several.panel, art.faces, ShowFirst);
     Draw.Transform(float2(64, 0))
@@ -2347,7 +2347,7 @@ view Values(Art art, mut PerDraw given)
     Draw.Blit(given.source.color, given.second, Blend.Add, Rinsed, Rinse { tint = Color(0, 0, 0.25) });
 
     Draw.SetClip();
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Clear(Color.black);
     Draw.Mesh(given.left, art.faces, given.first.color, Filter.Point);
     Draw.Mesh(given.right, art.faces, given.second.color, Filter.Point);
@@ -2448,12 +2448,12 @@ view Mipmaps(Art art, mut Mips mips)
         mips.small = [Vertex { }, Vertex { position = float2(8, 0), uv = float2(1, 0) },
                       Vertex { position = float2(8, 8), uv = float2(1, 1) }, Vertex { position = float2(0, 8), uv = float2(0, 1) }];
     }
-    mips.drawn.SetPixels();
+    mips.drawn.SetScreen();
     mips.drawn.Clear(Color.black);
     for (int i = 0; i < 8; i++) mips.drawn.Rect(float2(i * 8 + mips.lit * 0.5, 32), float2(mips.lit, 64), Color.red);
 
     Draw.Clear(Color.black);
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.SetClip();
     Draw.Transform(float2(8, 8))
     {
@@ -2624,9 +2624,9 @@ view CubeFaces(Art art, mut Cubes cubes)
     if (!cubes.made)
     {
         cubes.made = true;
-        cubes.painted = RenderTarget.Cube(64);
-        cubes.bright = RenderTarget.Cube(8, Format.Rgba16f);
-        cubes.scene = RenderTarget.Cube(32);
+        cubes.painted = Cubemap(64);
+        cubes.bright = Cubemap(8, Format.Rgba16f);
+        cubes.scene = Cubemap(32);
         cubes.kept = skyFaces;
         cubes.small = [Vertex { }, Vertex { position = float2(8, 0), uv = float2(1, 0) },
                        Vertex { position = float2(8, 8), uv = float2(1, 1) }, Vertex { position = float2(0, 8), uv = float2(0, 1) }];
@@ -2638,7 +2638,7 @@ view CubeFaces(Art art, mut Cubes cubes)
     for (int face = 0; face < 6; face++)
     {
         var into = cubes.painted.faces[face];
-        into.SetPixels();
+        into.SetScreen();
         if (face == 0)
         {
             into.Clear(Color.black);
@@ -2652,7 +2652,7 @@ view CubeFaces(Art art, mut Cubes cubes)
     }
     // Floats hold what's added past 1
     var glow = cubes.bright.faces[5];
-    glow.SetPixels();
+    glow.SetScreen();
     glow.Clear(Color.black);
     glow.Blend(Blend.Add)
     {
@@ -2680,7 +2680,7 @@ view CubeReads(Art art, Cubes cubes)
 {
     if (art.targetPass != 17) return;
     Draw.Clear(Color(0.5, 0.5, 0.5));
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.SetClip();
     for (int face = 0; face < 6; face++)
     {
@@ -2757,7 +2757,7 @@ view Targets(mut Art art)
     if (art.targetPass == 0 || art.targetPass >= 6) return;
     if (art.targetPass >= 4)
     {
-        Draw.SetPixels();
+        Draw.SetScreen();
         if (art.targetPass == 4)
             Draw.Mesh(art.targetQuad, art.faces, art.uploaded, Filter.Point, TextureChecks);
         else
@@ -2765,7 +2765,7 @@ view Targets(mut Art art)
         return;
     }
 
-    art.sourceTarget.SetPixels();
+    art.sourceTarget.SetScreen();
     art.sourceTarget.Clear(Color.black);
     art.sourceTarget.Rect(float2(8, 8), float2(16), Color.red);
     art.sourceTarget.Rect(float2(24, 8), float2(16), Color.green);

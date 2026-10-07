@@ -68,6 +68,6 @@ view Show(Devices devices, Heat heat, mut Brush brush)
         float hot = heat.cells[at] / 4000.0;
         if (hot > 0.004) Draw.Rect(float2(at) + 0.5, float2(1), Color(Math.Sqrt(hot), hot * hot * 0.75, 0.14 - hot * 0.1));
     }
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Text("Drag to heat the cells", float2(16, 14), 16, Color.white);
 }

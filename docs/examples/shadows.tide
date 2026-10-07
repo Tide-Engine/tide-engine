@@ -129,7 +129,7 @@ view Show(mut Stage stage)
     Draw.SetCamera(eye, quaternion.LookRotation(Math.Normalize(float3(0, -1.6, 0) - eye), float3(0, 1, 0)), 45);
     Draw.Instanced(stage.cube, stage.faces, stage.blocks, Lit);
 
-    Draw.SetPixels();
+    Draw.SetScreen();
     if (stage.showDepth) Draw.Mesh(stage.corner, [0, 1, 2, 0, 2, 3], LampDepth);
 
     GUI.SetTheme(GUITheme { radius = 6 });

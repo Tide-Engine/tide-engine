@@ -1928,6 +1928,23 @@ static void ex_sample(emit *em, const expr *e)
         diag_note("the GPU picks between a texture's smaller images by how fast the uv changes from one pixel to the next, "
                   "which it's asked before any branch or loop: make the uv of the frag's parameters, constants and "
                   "variables declared with 'var' and never assigned again, or sample with Filter.Bilinear here");
+    } else if (lifts && !grad && em->checking) {
+        // The texture may say Trilinear, and this read can't: said, not left to be found in a shimmer
+        const expr *named = direct ? of : of->object && of->object->kind == E_NAME ? of->object : NULL;
+        char which[160];
+        if (direct) snprintf(which, sizeof which, "'" STR_FMT "'", STR_ARG(of->name));
+        else if (named) snprintf(which, sizeof which, "'" STR_FMT "." STR_FMT "'", STR_ARG(named->name), STR_ARG(of->member));
+        else snprintf(which, sizeof which, "this texture");
+        diag_warning(e->args.items[0]->at, "%s may say Filter.Trilinear, which this Sample can't read: its uv is made of a "
+                                           "variable that changes, or of one a loop counts, so it reads the texture's own pixels",
+                     which);
+        diag_note("make the uv of the frag's parameters, constants and variables declared with 'var' and never assigned "
+                  "again, so the GPU can be asked how fast it changes as the frag starts; or write the filter here, "
+                  "'Sample(uv, Filter.Bilinear)', which is what's read anyway");
+        if (em->code != em->root) {
+            diag_note_at(em->root->at, "%s '" STR_FMT "' runs on the GPU, and '" STR_FMT "' with it, as it calls it",
+                         shader_word(em->root), STR_ARG(em->root->name), STR_ARG(em->code->name));
+        }
     }
     const int wrap = read != READ_COLOR ? 0 : says_wrap ? (int)e->args.items[2]->enum_member->number : declared_wrap > 0 ? declared_wrap : 0;
     int slot = 0;

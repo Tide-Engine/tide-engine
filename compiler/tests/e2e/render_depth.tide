@@ -84,7 +84,7 @@ view Casters(mut Caster caster, Lamp lamp)
     lamp.map.SetCamera(float4x4.identity, lamp.toLamp);
     lamp.map.Mesh(lamp.mesh, lamp.faces, float4x4.Translate(caster.position));
     lamp.map.Mesh(lamp.mesh, lamp.faces, float4x4.Translate(caster.position), Seen);
-    lamp.map.SetPixels();
+    lamp.map.SetScreen();
     lamp.map.Rect(float2(8, 8), float2(16), Color.red);
 }
 

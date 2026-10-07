@@ -61,7 +61,7 @@ view Background()
 
 view Movers(Mover mover)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Rect(float2(20 + mover.steps * 4, 180), float2(20, 20), Color(1, 0, 0));
 }
 
@@ -71,7 +71,7 @@ view Movers(Mover mover)
 // every run.
 view Rolled(Dice dice, Time time)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     var seed = time.seed;
     Draw.Rect(float2(280, 100), float2(20, 20),
                 Color(float(seed & 255) / 255, float((seed >> 8) & 255) / 255, float((seed >> 16) & 255) / 255));
@@ -88,7 +88,7 @@ view Panel(Devices devices, mut Seen seen)
     if (seen.look) Cursor.Lock();
     if (Cursor.locked) seen.turned += devices.mouse.delta.x;
 
-    Draw.SetPixels();
+    Draw.SetScreen();
     if (seen.pressed) Draw.Rect(float2(200, 40), float2(40, 40), Color(0, 1, 0));
     if (seen.typed == "K7QF2M") Draw.Rect(float2(280, 40), float2(40, 40), Color(1, 1, 1));
 

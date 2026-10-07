@@ -290,7 +290,7 @@ local singleton Draft
 
 view Cards(mut Draft draft)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     for (var slot = 0; slot < 3; slot++)
     {
         var rect = Rect(Screen.width * 0.5 - 330 + slot * 220, 200, 200, 280);

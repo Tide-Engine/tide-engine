@@ -790,7 +790,7 @@ view Ships(mut Ship ship, Owner owner, Session session, mut Look look)
 
     // Its label, in pixels, so it reads at any size of window
     var under = Draw.WorldToScreen(ship.position - float2(0, 0.85));
-    Draw.Pixels()
+    Draw.Screen()
     {
         if (ship.down)
             Draw.Text(mine ? "you: SOS" : "SOS", under, 12, ALARM, Anchor.UpperCenter, Font.Bold);
@@ -835,7 +835,7 @@ view Effects(mut Look look)
         }
         look.popups[p] = popup;
         var at = Draw.WorldToScreen(popup.at + float2(0, 0.5 + popup.age * 1.4));
-        Draw.Pixels()
+        Draw.Screen()
         {
             Draw.Text($"+{popup.points}", at, 14, Faded(Tint(popup.tint), 1 - popup.age / 0.9),
                         Anchor.MiddleCenter, Font.Bold);
@@ -864,7 +864,7 @@ void Chip(float2 at, Color color, int score, int hull, bool down, bool mine)
 view Hud(Game game, Session session, Look look, query (Ship ship, Owner owner) crew)
 {
     Draw.SetClip();
-    Draw.SetPixels();
+    Draw.SetScreen();
     var w = Screen.width;
     var h = Screen.height;
     var field = 2 * ARENA * look.pixels;   // The field's side, in pixels
@@ -974,7 +974,7 @@ view Stick(Pointer pointer)
 {
     if (!pointer.held) return;
     Draw.SetClip();
-    Draw.SetPixels();
+    Draw.SetScreen();
     var far = Math.Length(pointer.pull);
     var powered = far > STICK_RING;
     var from = Screen.Flip(pointer.start);
@@ -990,7 +990,7 @@ view Joining(Session session)
 {
     if (session.state == SessionState.Connected) return;
     Draw.SetClip();
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Text(session.state == SessionState.Connecting ? "Joining the crew..." : "The game is gone.\nReload the page to fly again.",
                 float2(Screen.width, Screen.height) * 0.5, 20, Color.white, Anchor.MiddleCenter);
 }
