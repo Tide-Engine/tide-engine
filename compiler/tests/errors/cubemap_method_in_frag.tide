@@ -1,0 +1,6 @@
+// expect: a Cubemap has Sample(direction[, filter]), and one that's drawn into has Resize(size) and Dispose(), not 'Compare'
+// A cube has one read
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+frag Look(Vertex3 vertex, out Color color, Room room) { color = Color(room.reflection.Compare(vertex.position, 1), 0, 0); }
+view Show(Room room) { Draw.Mesh(room.ball, [0, 1, 2], float4x4.identity, Look); }

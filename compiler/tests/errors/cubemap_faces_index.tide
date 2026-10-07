@@ -1,0 +1,5 @@
+// expect: a cube has six faces: 'faces[0]' to 'faces[5]', in the order +x, -x, +y, -y, +z, -z
+// There are six
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+view Show(mut Room room) { room.side = room.reflection.faces[6]; }

@@ -28,8 +28,16 @@ typedef struct packed_texture {
     uint64_t named;   // The declaration, and for one of a glob's, its place or its key: never 0
     uint64_t version; // What's in it: the file's hash
     uint32_t offset;
-    int32_t width, height;
+    int32_t width, height; // An image's; a clip's (`clip`) has its file's size in `width`
+    bool clip;
 } packed_texture;
+
+// An entry of a map from text to clips, as generated code lays it out.
+typedef struct clip_entry {
+    uint32_t live;
+    uint32_t key;
+    tide_clip_ref value;
+} clip_entry;
 
 // An entry of a map from text to textures, as generated code lays it out:
 // live, the key, the value (the builder's has a handle where the value is).
@@ -45,6 +53,14 @@ typedef struct handle_entry {
     uint32_t value;
 } handle_entry;
 
+// A cube as a declaration names it: its faces' pixels, where the region has them.
+typedef struct packed_cube {
+    uint64_t named;
+    uint64_t version; // What's in its six faces
+    int32_t size;
+    const uint8_t *faces[TIDE_CUBE_FACES];
+} packed_cube;
+
 static struct {
     uint8_t *region;
     uint32_t size;
@@ -55,6 +71,8 @@ static struct {
     // taken, each found from its name's low bits and on from there
     packed_texture *textures;
     uint32_t texture_count, texture_places;
+    packed_cube *cubes; // Its cubes, of which a game has a few: looked through
+    uint32_t cube_count;
 } pack;
 
 static TIDE_THREAD_LOCAL uint32_t mapped_epoch;
@@ -127,6 +145,21 @@ static uint32_t count_at(const uint8_t *region, const uint32_t size, const uint3
     return (uint64_t)offset + sizeof b + (uint64_t)b.a * element <= size ? b.a : 0;
 }
 
+// The clip block at `offset` of a region of `size` bytes, or false for a
+// block that isn't whole there.
+static bool clip_at(const uint8_t *region, const uint32_t size, const uint32_t offset, packed_texture *t)
+{
+    if ((uint64_t)offset + sizeof(tide_block) + sizeof(uint32_t) > size) return false;
+    tide_block b;
+    uint32_t bytes;
+    memcpy(&b, region + offset, sizeof b);
+    memcpy(&bytes, region + offset + sizeof b, sizeof bytes);
+    if ((uint64_t)offset + sizeof b + sizeof bytes + bytes > size) return false;
+    *t = (packed_texture){.version = (uint64_t)b.a | (uint64_t)b.b << 32, .offset = offset, .width = (int32_t)(bytes & 0x7FFFFFFFu),
+                          .clip = true};
+    return bytes <= 0x7FFFFFFFu;
+}
+
 // A block's bytes with its header, as the builder pads them.
 static uint64_t padded(const uint64_t bytes)
 {
@@ -144,6 +177,10 @@ static uint64_t textures_room(const uint8_t *region, const uint32_t size, const 
             room += padded((uint64_t)count_at(region, size, e->offset, sizeof(uint32_t)) * sizeof(tide_texture_ref));
         } else if (e->kind == TIDE_PACK_TEXTURES) {
             room += padded((uint64_t)count_at(region, size, e->offset, sizeof(handle_entry)) * sizeof(texture_entry));
+        } else if (e->kind == TIDE_PACK_LIST && e->extra == TIDE_PACK_CLIP) {
+            room += padded((uint64_t)count_at(region, size, e->offset, sizeof(uint32_t)) * sizeof(tide_clip_ref));
+        } else if (e->kind == TIDE_PACK_CLIPS) {
+            room += padded((uint64_t)count_at(region, size, e->offset, sizeof(handle_entry)) * sizeof(clip_entry));
         }
     }
     return room;
@@ -173,12 +210,9 @@ static packed_texture *texture_place(const uint64_t named)
     return &pack.textures[i];
 }
 
-// Notes the image at `offset` of the file's `file` bytes under what a Texture names it by, and gives that
-// Texture: the default one for a block that isn't whole, which nothing is noted for.
-static tide_texture_ref note_texture(const uint64_t named, const uint32_t offset, const uint32_t file)
+// Puts `t` in the table under `named`, growing it as it needs.
+static void note_named(packed_texture t, const uint64_t named)
 {
-    packed_texture t;
-    if (offset == UINT32_MAX || !texture_at(pack.region, file, offset, &t)) return (tide_texture_ref){0};
     t.named = named;
     if ((pack.texture_count + 1u) * 2u > pack.texture_places) {
         packed_texture *had = pack.textures;
@@ -193,7 +227,25 @@ static tide_texture_ref note_texture(const uint64_t named, const uint32_t offset
     packed_texture *place = texture_place(named);
     if (!place->named) pack.texture_count++;
     *place = t;
+}
+
+// Notes the image at `offset` of the file's `file` bytes under what a Texture names it by, and gives that
+// Texture: the default one for a block that isn't whole, which nothing is noted for.
+static tide_texture_ref note_texture(const uint64_t named, const uint32_t offset, const uint32_t file)
+{
+    packed_texture t;
+    if (offset == UINT32_MAX || !texture_at(pack.region, file, offset, &t)) return (tide_texture_ref){0};
+    note_named(t, named);
     return (tide_texture_ref){.image = {.pixels = NULL, .width = t.width, .height = t.height, .version = named}};
+}
+
+// The same for a clip's block, and the Clip that names it.
+static tide_clip_ref note_clip(const uint64_t named, const uint32_t offset, const uint32_t file)
+{
+    packed_texture t;
+    if (offset == UINT32_MAX || !clip_at(pack.region, file, offset, &t)) return (tide_clip_ref){0};
+    note_named(t, named);
+    return (tide_clip_ref){.name = named};
 }
 
 // Lays the lists and maps of textures out as Tide reads them, after the
@@ -229,7 +281,68 @@ static void lay_textures(const uint32_t file)
             }
             e->offset = at;
             e->extra = e->extra > count ? count : e->extra; // Its live count
+        } else if (e->kind == TIDE_PACK_CLIP) {
+            note_clip(texture_name(e->name, ALONE, NULL, 0), e->offset, file);
+        } else if (e->kind == TIDE_PACK_LIST && e->extra == TIDE_PACK_CLIP) {
+            const uint32_t count = count_at(pack.region, file, e->offset, sizeof(uint32_t));
+            const uint32_t at = lay_block(count, (uint64_t)count * sizeof(tide_clip_ref));
+            const uint32_t *handles = (const uint32_t *)(const void *)(pack.region + e->offset + sizeof(tide_block));
+            tide_clip_ref *out = (tide_clip_ref *)(void *)(pack.region + at + sizeof(tide_block));
+            for (uint32_t k = 0; k < count; k++) {
+                out[k] = note_clip(texture_name(e->name, k, NULL, 0), place_of(handles[k], file), file);
+            }
+            e->offset = at;
+            e->size = count;
+        } else if (e->kind == TIDE_PACK_CLIPS) {
+            const uint32_t count = count_at(pack.region, file, e->offset, sizeof(handle_entry));
+            const uint32_t at = lay_block(count, (uint64_t)count * sizeof(clip_entry));
+            const handle_entry *from = (const handle_entry *)(const void *)(pack.region + e->offset + sizeof(tide_block));
+            clip_entry *out = (clip_entry *)(void *)(pack.region + at + sizeof(tide_block));
+            for (uint32_t k = 0; k < count; k++) {
+                uint32_t key_size;
+                const uint8_t *key = text_at(pack.region, file, place_of(from[k].key, file), &key_size);
+                out[k].live = from[k].live;
+                out[k].key = from[k].key;
+                out[k].value = note_clip(texture_name(e->name, KEYED, key, key_size), place_of(from[k].value, file), file);
+            }
+            e->offset = at;
+            e->extra = e->extra > count ? count : e->extra;
         }
+    }
+}
+
+// Notes the cubes the entries name: each one's six faces, where they're whole, square and of one size.
+static void note_cubes(void)
+{
+    uint32_t most = 0;
+    for (uint32_t i = 0; i < pack.entry_count; i++) most += pack.entries[i].kind == TIDE_PACK_CUBEMAP;
+    if (!most) return;
+    pack.cubes = tide_alloc_zeroed(most, sizeof *pack.cubes);
+    for (uint32_t i = 0; i < pack.entry_count; i++) {
+        const tide_pack_entry *e = &pack.entries[i];
+        if (e->kind != TIDE_PACK_CUBEMAP || count_at(pack.region, pack.size, e->offset, sizeof(uint32_t)) != TIDE_CUBE_FACES) continue;
+        uint32_t handles[TIDE_CUBE_FACES];
+        memcpy(handles, pack.region + e->offset + sizeof(tide_block), sizeof handles);
+        packed_cube cube = {.named = texture_name(e->name, ALONE, NULL, 0)};
+        tide_sha256 s;
+        tide_sha256_init(&s);
+        bool whole = true;
+        for (uint32_t face = 0; face < TIDE_CUBE_FACES && whole; face++) {
+            packed_texture t;
+            const uint32_t at = place_of(handles[face], pack.size);
+            whole = at != UINT32_MAX && texture_at(pack.region, pack.size, at, &t) && t.width == t.height
+                 && (face == 0 || t.width == cube.size);
+            if (!whole) break;
+            cube.size = t.width;
+            cube.faces[face] = pack.region + at + sizeof(tide_block) + 2u * sizeof(int32_t);
+            tide_sha256_add(&s, &t.version, sizeof t.version);
+        }
+        if (!whole) continue;
+        uint8_t out[32];
+        tide_sha256_end(&s, out);
+        memcpy(&cube.version, out, sizeof cube.version);
+        if (!cube.version) cube.version = 1u;
+        pack.cubes[pack.cube_count++] = cube;
     }
 }
 
@@ -259,6 +372,7 @@ bool tide_pack_load(const uint8_t *bytes, const size_t size)
     memcpy(pack.entries, entries, (size_t)h.entries * sizeof(tide_pack_entry));
     pack.entry_count = h.entries;
     lay_textures(h.region_size);
+    note_cubes(); // Once nothing more is laid out: the region is where it stays
     pack.epoch++;
     tide_pack_region_slots = slots;
     tide_pack_use();
@@ -270,6 +384,9 @@ void tide_pack_unload(void)
     free(pack.region);
     free(pack.entries);
     free(pack.textures);
+    free(pack.cubes);
+    pack.cubes = NULL;
+    pack.cube_count = 0;
     pack.region = NULL;
     pack.entries = NULL;
     pack.textures = NULL;
@@ -321,12 +438,32 @@ tide_map tide_pack_map_of(const tide_pack_entry *e)
     return (tide_map){{tagged(e->offset)}, {tagged(e->size)}, e->extra};
 }
 
+tide_clip_ref tide_pack_clip_of(const tide_pack_entry *e)
+{
+    if (!e || e->kind != TIDE_PACK_CLIP || !pack.texture_places) return (tide_clip_ref){0};
+    const uint64_t named = texture_name(e->name, ALONE, NULL, 0);
+    const packed_texture *t = texture_place(named);
+    if (t->named != named || !t->clip) return (tide_clip_ref){0};
+    return (tide_clip_ref){.name = named};
+}
+
+bool tide_pack_clip_find(const uint64_t named, const uint8_t **bytes, uint32_t *size, uint64_t *version)
+{
+    if (!named || !pack.texture_places) return false;
+    const packed_texture *t = texture_place(named);
+    if (t->named != named || !t->clip) return false;
+    *bytes = pack.region + t->offset + sizeof(tide_block) + sizeof(uint32_t);
+    *size = (uint32_t)t->width;
+    *version = t->version;
+    return true;
+}
+
 tide_texture_ref tide_pack_texture_of(const tide_pack_entry *e)
 {
     if (!e || e->kind != TIDE_PACK_TEXTURE || !pack.texture_places) return (tide_texture_ref){0};
     const uint64_t named = texture_name(e->name, ALONE, NULL, 0);
     const packed_texture *t = texture_place(named); // Noted as the pack was loaded, if its block is whole
-    if (t->named != named) return (tide_texture_ref){0};
+    if (t->named != named || t->clip) return (tide_texture_ref){0};
     return (tide_texture_ref){.image = {.pixels = NULL, .width = t->width, .height = t->height, .version = named}};
 }
 
@@ -334,10 +471,28 @@ bool tide_pack_texture_find(const uint64_t named, tide_texture *image)
 {
     if (!named || !pack.texture_places) return false;
     const packed_texture *t = texture_place(named);
-    if (t->named != named) return false;
+    if (t->named != named || t->clip) return false;
     *image = (tide_texture){.pixels = pack.region + t->offset + sizeof(tide_block) + 2u * sizeof(int32_t),
                             .width = t->width, .height = t->height, .version = t->version};
     return true;
+}
+
+tide_cubemap_ref tide_pack_cubemap_of(const tide_pack_entry *e)
+{
+    if (!e || e->kind != TIDE_PACK_CUBEMAP) return (tide_cubemap_ref){0};
+    return (tide_cubemap_ref){.named = texture_name(e->name, ALONE, NULL, 0)};
+}
+
+bool tide_pack_cubemap_find(const uint64_t named, int32_t *size, uint64_t *version, const uint8_t *const **faces)
+{
+    for (uint32_t i = 0; named && i < pack.cube_count; i++) {
+        if (pack.cubes[i].named != named) continue;
+        *size = pack.cubes[i].size;
+        *version = pack.cubes[i].version;
+        *faces = pack.cubes[i].faces;
+        return true;
+    }
+    return false;
 }
 
 uint64_t tide_pack_grid_version(const tide_grid g)

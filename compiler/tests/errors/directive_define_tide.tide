@@ -1,0 +1,3 @@
+// expect: 'TIDE_0_9_OR_NEWER' is tide's to say: symbols that start with TIDE_ are its versions, and with PACKAGE_ the packages the game builds with
+#define TIDE_0_9_OR_NEWER
+scene Main { }

@@ -260,6 +260,23 @@ if (parts.status === 0) {
     check(a && b && c && all && a.frames === 3 * 800 && b.frames === 2 * 800 && c.frames === 3 * 800 && all.frames === 8 * 800,
           `each takes what played since the last, and --capture-audio the whole run (${[a, b, c, all].map(w => w && w.frames).join(', ')})`);
 }
+// A sound the game plays is in what's captured: P at frame 3 plays 400 frames
+// at half amplitude, on both channels, from the first whole block of 256 not
+// yet rendered when frame 3 ran (frames 2 and 3 are 1600 frames of audio,
+// 6.25 blocks, so the 7th was rendered with frame 2: the clip starts at the
+// 8th, 1792) to 400 frames on; the same bytes in a second run.
+const pinged = run(['--script', script('ping.txt', ['3 key p', '6 quit']), '--capture-audio', 'played.wav', '--size', '64', '64']);
+check(pinged.status === 0, `a run that plays a clip ends with exit code 0 (${pinged.status})`);
+if (pinged.status === 0) {
+    const b = readFileSync(join(scratch, 'played.wav'));
+    const sample = (frame, channel) => b.readInt16LE(44 + frame * 4 + channel * 2);
+    const w = wav('played.wav');
+    check(w && w.frames === 6 * 800 && !w.silent, `six frames of audio, with sound in them (${w && w.frames})`);
+    check(sample(1791, 0) === 0 && sample(1792, 0) === 16384 && sample(1792, 1) === 16384 && sample(2191, 0) === 16384
+          && sample(2192, 0) === 0, `the clip plays from frame 1792 to 2192 (${sample(1791, 0)}, ${sample(1792, 0)}, ${sample(2191, 0)}, ${sample(2192, 0)})`);
+    const playedAgain = run(['--script', script('ping.txt', ['3 key p', '6 quit']), '--capture-audio', 'played2.wav', '--size', '64', '64']);
+    check(playedAgain.status === 0 && readFileSync(join(scratch, 'played2.wav')).equals(b), 'and the same bytes again');
+}
 const lostAudio = run(['--frames', '2', '--capture-audio', join(scratch, 'no', 'such', 'folder.wav')]);
 check(lostAudio.status === 1 && lostAudio.err.includes("can't write"), `audio that can't be written is exit code 1 (${lostAudio.status})`);
 

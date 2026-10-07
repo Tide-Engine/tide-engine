@@ -49,7 +49,26 @@ typedef struct tide_clip {
     uint32_t channels;
     uint32_t rate;
     uint64_t id;
+    uint64_t name; // The Clip it came from, where it's the pack's (tide_clip_of); 0 otherwise
 } tide_clip;
+
+// Tide's `Clip`: a sound of the game's pack, named by its declaration (as a
+// Texture of the pack's names its image: a number made of the declaration's
+// name, and for one of a glob's, of its place in the list or its key in the
+// map), so a copy a field keeps goes on naming what the declaration does,
+// the file as it is now, through `tide run`'s packs. 0 is `Clip.none`.
+typedef struct tide_clip_ref {
+    uint64_t name;
+} tide_clip_ref;
+
+// The samples a Clip names, as the loaded pack has them: decoded from the
+// file's bytes the first time each file is asked for, and kept, so a voice
+// that plays them is never left with a pack that's gone (tide run packs
+// again when a file changes: the new file is other samples beside the old).
+// A name the pack hasn't got is a clip with no samples. The samples stay
+// until tide_clips_free, which a host calls once the mixer let go of them.
+tide_clip tide_clip_of(tide_clip_ref ref);
+void tide_clips_free(void);
 
 // Code the audio thread runs once a block: `samples` is the block, TIDE_AUDIO_SAMPLES
 // floats it reads and writes; `state` is `state_size` bytes of the voice's (or
@@ -107,7 +126,8 @@ typedef struct tide_audio_frame {
 } tide_audio_frame;
 
 // Empties the frame for a new one, with every bus at volume 1, no effects and
-// no listener said. It keeps its memory.
+// no listener said. It keeps its memory. Every function below records
+// nothing into a NULL frame: local code run by a host that gave it none.
 void tide_audio_reset(tide_audio_frame *f);
 void tide_audio_free(tide_audio_frame *f);
 
@@ -115,6 +135,13 @@ void tide_audio_free(tide_audio_frame *f);
 void tide_audio_play(tide_audio_frame *f, tide_clip clip, float volume, float pitch);
 // ...placed at `position` under the listener.
 void tide_audio_play_at(tide_audio_frame *f, tide_clip clip, tide_float3 position, float volume, float pitch);
+
+// ...at a float2, which is a float3 with z 0 (Tide's 2D form).
+static inline void tide_audio_play_at2(tide_audio_frame *f, const tide_clip clip, const tide_float2 position, const float volume,
+                                       const float pitch)
+{
+    tide_audio_play_at(f, clip, (tide_float3){position.x, position.y, 0.0f}, volume, pitch);
+}
 
 // Names a voice this frame, as `voice` says. Its `id` has to be above 0 (0
 // records a one-shot that nothing can stop, as tide_audio_play does). The

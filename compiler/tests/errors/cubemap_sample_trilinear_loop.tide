@@ -1,0 +1,12 @@
+// expect: a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this direction is made of a variable that changes, or of one a loop counts
+// expect: the GPU picks between a cube's smaller images by how fast the direction changes from one pixel to the next, which it's asked before any branch or loop: make it of the frag's parameters, constants and variables declared with 'var' and never assigned again, or sample with Filter.Bilinear here
+// Trilinear reads a direction the frag can work out as it starts
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+frag Look(Vertex3 vertex, out Color color, Room room)
+{
+    mut var way = vertex.position;
+    for (int i = 0; i < 2; i++) way += float3(0, 1, 0);
+    color = room.reflection.Sample(way, Filter.Trilinear);
+}
+view Show(Room room) { Draw.Mesh(room.ball, [0, 1, 2], float4x4.identity, Look); }

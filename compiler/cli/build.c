@@ -1402,7 +1402,8 @@ static bool generate(build *b, const char *gen, const bool layout)
     char *pack = pack_of(gen);
     // The game's folder is where its .tide/ is: the hashes of the files its assets name, and fetched URLs, are kept there
     const codegen_options codegen = {.name = "game", .out_dir = gen, .line_directives = true, .layout = layout, .externs = &b->externs,
-                                     .info = &b->info, .game_folder = b->folder, .pack = pack};
+                                     .info = &b->info, .game_folder = b->folder, .pack = pack,
+                                     .defines = b->opts->defines, .define_count = b->opts->define_count};
     const bool ok = compile_inputs(inputs, count, &codegen, NULL);
     free(pack);
     free(inputs);
@@ -2326,15 +2327,16 @@ int tide_run_android(const char *root, const build_options *opts, const char *co
     return seen ? 0 : 1;
 }
 
-bool tide_schedule(const char *folder_arg, const bool shaders)
+bool tide_schedule(const build_options *opts, const bool shaders)
 {
-    char *folder = path_absolute(folder_arg);
+    char *folder = path_absolute(opts->folder);
     game_packages packages = {0};
     file_list paths;
     int count = 0;
     compile_input *inputs = find_packages(folder, &packages) ? game_inputs(folder, &packages, &paths, &count) : NULL;
     if (!inputs) return false;
-    const codegen_options codegen = {.name = game_name(folder), .line_directives = true, .shaders = shaders, .game_folder = folder};
+    const codegen_options codegen = {.name = game_name(folder), .line_directives = true, .shaders = shaders, .game_folder = folder,
+                                     .defines = opts->defines, .define_count = opts->define_count};
     sb text = {0};
     if (!compile_inputs(inputs, count, &codegen, &text)) return false;
     fputs(text.data, stdout);

@@ -1,0 +1,6 @@
+// expect: a Cubemap's filter is said where it's sampled, and it has no edge to wrap past: 'sky' takes no [Filter]
+// expect: 'sky.Sample(direction, Filter.Trilinear)' reads it between its smaller images; one that says none reads it blended, Filter.Bilinear
+// A cube's filter is its Sample's to say
+[Filter(Filter.Trilinear)]
+asset Cubemap sky = "../e2e/cubes/sky/*.png";
+scene Main { }

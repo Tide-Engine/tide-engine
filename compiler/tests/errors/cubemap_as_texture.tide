@@ -1,0 +1,10 @@
+// expect: no version of Draw.Mesh takes (List<Vertex>, List<int>, Cubemap)
+// expect: Draw.Mesh(List<Vertex> vertices, List<int> indices)
+// expect: Draw.Mesh(List<Vertex> vertices, List<int> indices, Texture texture, Filter filter = the texture's, Wrap wrap = the texture's)
+// expect: Draw.Mesh(List<Vertex3> vertices, List<int> indices, float4x4 transform)
+// expect: Draw.Mesh(List<Vertex3> vertices, List<int> indices, float4x4 transform, Texture texture, Filter filter = the texture's, Wrap wrap = the texture's)
+// A cube is no Texture: a mesh isn't drawn with one
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+local singleton Flat { List<Vertex> quad; }
+view Show(Room room, Flat flat) { Draw.Mesh(flat.quad, [0, 1, 2], room.reflection); }

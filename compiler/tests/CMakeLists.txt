@@ -3,13 +3,13 @@
 # WARNINGS are the ones tidec has to give, and PACKAGES the files of packages
 # the game builds with, each after its package's name, as for tide_add_game.
 function(tide_e2e_test name)
-    cmake_parse_arguments(ARG "" "" "SOURCES;WARNINGS;PACKAGES" ${ARGN})
+    cmake_parse_arguments(ARG "" "" "SOURCES;WARNINGS;PACKAGES;DEFINES" ${ARGN})
     set(sources "e2e/${name}.tide")
     if(ARG_SOURCES)
         set(sources ${ARG_SOURCES})
     endif()
     set(target tidec_e2e_${name})
-    tide_add_game(${target} SOURCES ${sources} NAME game WARNINGS ${ARG_WARNINGS} PACKAGES ${ARG_PACKAGES}
+    tide_add_game(${target} SOURCES ${sources} NAME game WARNINGS ${ARG_WARNINGS} PACKAGES ${ARG_PACKAGES} DEFINES ${ARG_DEFINES}
         HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/${name}_test.c")
     target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     add_test(NAME ${target} COMMAND ${target})
@@ -69,6 +69,7 @@ tide_e2e_test(mipmaps) # Filter.Trilinear, wherever a filter is said: what a dra
 tide_e2e_test(assets) # Files a game is built with, read by name: each type, globs, a grid drawn and sampled, match code
 tide_e2e_test(assets_plain) # ...and the same game with none: its world is the same bytes
 tide_e2e_test(asset_textures) # Texture assets, and [Filter] and [Wrap] on a texture's declaration
+tide_e2e_test(audio) # Clip assets, and Audio.Play from views, local handlers and the functions they call
 tide_e2e_test(textures) # Texture as the one type a draw and a Sample take: grids of colors and of floats as textures, and the sampling a Texture carries
 tide_e2e_test(stages) # Enum phases, local offsets and whole-phase ordering in every schedule
 tide_e2e_test(render_targets) # Target receivers, explicit Texture sources and distributed rendering phases
@@ -76,6 +77,7 @@ tide_e2e_test(render_lifecycle) # Shared target copies, resizing and explicit di
 tide_e2e_test(render_depth) # What a target holds, said when it's made, and a target's depth as frags and verts read it
 tide_e2e_test(render_colors) # Targets of several color images, a format each, and frags that write them all
 tide_e2e_test(render_samples) # A target's samples, said by name where it's made and kept in its id through a reload
+tide_e2e_test(cubemaps) # Cubemaps: an asset's six files and a cube a view draws into a face at a time, read by a direction
 tide_e2e_test(ownership) # Views `with ownership` and `without ownership`: this machine's player's entities, and the others
 tide_e2e_test(conditional)
 tide_e2e_test(input_bounds)
@@ -174,6 +176,9 @@ tide_e2e_test(view_corrections) # Tagged presentation fields: correction accumul
 tide_e2e_test(big_world)
 tide_e2e_test(crlf) # Windows line endings, kept by .gitattributes
 tide_e2e_test(directives) # #if and the rest: what other versions of tide read is left out
+# #define and #undef, and the build's symbols: --define's, DEBUG, and PACKAGE_<NAME> for each of its packages
+tide_e2e_test(defines SOURCES e2e/defines/game.tide PACKAGES Extra e2e/defines/Extra/extra.tide DEFINES FAST WIDE)
+target_compile_definitions(tidec_e2e_defines PRIVATE DEFINES_DEBUG=$<IF:$<CONFIG:Debug>,1,0>)
 tide_e2e_test(multi_file SOURCES e2e/multi_file/a_physics.tide e2e/multi_file/b_main.tide
     e2e/multi_file/c_combat.tide e2e/multi_file/d_items.tide)
 # What a game declares itself comes before what a namespace it imports has by that name

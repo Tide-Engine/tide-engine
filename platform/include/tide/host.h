@@ -68,6 +68,9 @@ typedef struct tide_host_game {
     // (tide_session_events), which the game's local handlers hear as the frame
     // starts. It leaves `events` empty. Optional for C hosts.
     void (*events)(void *local, tide_event_log *events);
+    // tide_local_audio, before `frame`: the frame's audio list, which Audio.Play records into (tide/audio.h).
+    // NULL for a game that plays no sound.
+    void (*audio)(void *local, tide_audio_frame *frame);
     // How long this frame is, before `frame`: local tasks' Wait.Seconds counts it down
     void (*frame_time)(void *local, float seconds);
     bool (*take_request)(void *local, tide_session_request *request, void *start);
@@ -782,6 +785,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_gui_begin(&tide_run_gui, seen, tide_platform_screen_size(), tide_platform_measure_text);
     // What the match sent since the last frame: its local handlers run first
     if (heard) game->events(tide_run_local, heard);
+    if (game->audio) game->audio(tide_run_local, &tide_run_audio);
     game->frame(match, view.previous, view.alpha, view.verified, tide_run_local, &tide_run_draw, &tide_run_gui);
     tide_session_mark_presented(s);
     tide_gui_end(&tide_run_gui, &tide_run_draw);

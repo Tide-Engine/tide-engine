@@ -1,0 +1,5 @@
+// expect: '../e2e/assets/run/0.png' isn't named for a face of the cube: a face's file ends in px, nx, py, ny, pz or nz before its extension
+// expect: like 'sky_px.png' for the face +x points at, 'sky_nx.png' for -x's, and so on: a glob that matches only the six, like "sky_??.png", leaves other files out
+// Each file's name says which face it is
+asset Cubemap sky = "../e2e/assets/run/*.png";
+scene Main { }
