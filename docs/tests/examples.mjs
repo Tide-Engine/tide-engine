@@ -171,7 +171,9 @@ try {
     for (const page of pages) {
         // The page's `backend=` goes on to its games.
         await command('Page.navigate', { url: `${origin}${page}?backend=${backend}` });
-        await until(`location.pathname === '${page}' && document.querySelector('.tide-example')`, `${page} page`);
+        // The whole page, not what of it has arrived: its examples are listed
+        // next, and the last of a long page's comes after the first.
+        await until(`location.pathname === '${page}' && document.readyState !== 'loading' && document.querySelector('.tide-example')`, `${page} page`);
         const ids = await evaluate(`Array.from(document.querySelectorAll('.tide-example'), e => e.dataset.exampleSrc.split('/')[2])`);
         const sourced = new Set(); // The examples whose source this page shows
         for (const [index, id] of ids.entries()) {
@@ -217,7 +219,7 @@ try {
     // The Samples gallery: a card for each game, which links to the game's
     // own page, where it draws.
     await command('Page.navigate', { url: `${origin}/guide/samples` });
-    await until(`location.pathname === '/guide/samples' && document.querySelectorAll('a.sample-card[data-sample]').length > 0`, 'samples page');
+    await until(`location.pathname === '/guide/samples' && document.readyState !== 'loading' && document.querySelectorAll('a.sample-card[data-sample]').length > 0`, 'samples page');
     const cards = await evaluate(`Array.from(document.querySelectorAll('a.sample-card[data-sample]'), a => ({ id: a.dataset.sample, path: new URL(a.href).pathname }))`);
     for (const { id, path } of cards) {
         if (only && !only.has(id)) continue;
