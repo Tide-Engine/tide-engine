@@ -1,0 +1,8 @@
+// expect: a list or a map can't hold rendering resources, including inside a struct
+// expect: but for an asset's: 'asset List<Texture> frames = "art/run_*.png";'
+scene Main { }
+
+local singleton Art
+{
+    List<Texture> frames;
+}

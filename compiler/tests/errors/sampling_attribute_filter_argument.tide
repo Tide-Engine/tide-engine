@@ -1,0 +1,5 @@
+// expect: Filter takes how the texture is read between its cells: [Filter(Filter.Point)] or [Filter(Filter.Bilinear)]
+[Filter(Wrap.Repeat)]
+asset Texture hero = "../e2e/assets/hero.png";
+
+scene Main { }

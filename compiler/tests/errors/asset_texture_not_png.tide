@@ -1,0 +1,7 @@
+// expect: '../e2e/assets/bad.png' isn't a PNG that decodes
+// expect: a Texture asset is a PNG; for the file's bytes as they are, read it as a List<byte>
+asset Texture hero = "../e2e/assets/bad.png";
+
+scene Main
+{
+}
