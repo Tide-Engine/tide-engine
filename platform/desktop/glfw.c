@@ -191,6 +191,9 @@ bool tide_window_open(const tide_window_desc *desc)
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE); // The only core contexts macOS makes
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);              // Shown once it's in its place
+    // With depth and stencil, as every render target has: what draws in the window draws the same in one
+    glfwWindowHint(GLFW_DEPTH_BITS, 24);
+    glfwWindowHint(GLFW_STENCIL_BITS, 8);
     // Tests keep the size they asked for.
     glfwWindowHint(GLFW_RESIZABLE, hidden ? GLFW_FALSE : GLFW_TRUE);
     // Pixels are the display's logical ones (see tide/platform.h): the size

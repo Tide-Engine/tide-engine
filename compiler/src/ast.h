@@ -1123,6 +1123,8 @@ typedef struct program {
     decl *depth;         // The built-in enum Depth, what a 3D mesh does with depth: in generated C when code names it
     decl *cull;          // The built-in enum Cull, which side of a 3D mesh's triangles isn't drawn: the same
     decl *format;        // The built-in enum Format, what a render target holds: in generated C when code names it
+    decl *stencil_test;  // The built-in enum StencilTest, the test a draw's stencil number passes: the same
+    decl *stencil_op;    // The built-in enum StencilOp, what becomes of the stored number where a draw draws: the same
     decl *io_error;      // The built-in IOError enum, shared with tide/io.h
     VEC(struct expr *) io_calls; // Checked filesystem calls, for result adapters in generated C
     bool decodes;        // grid.Decode(bytes) is called: its adapter and tide/png.h go in the generated C

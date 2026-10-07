@@ -1,0 +1,8 @@
+// expect: Draw.Stencil sets it around a block: 'Draw.Stencil(...) { ... }'
+// expect: to set it for the draws that follow, write 'Draw.SetStencil(...);'
+scene Main { }
+
+view Show()
+{
+    Draw.Stencil(StencilTest.Equal, 1);
+}

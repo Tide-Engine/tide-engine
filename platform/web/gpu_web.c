@@ -22,7 +22,9 @@ TIDE_WEB_IMPORT(gpu_texture_free) void tide_web_gpu_texture_free(tide_gpu_id tex
 TIDE_WEB_IMPORT(gpu_pipeline_begin) void tide_web_gpu_pipeline_begin(const char *name, const char *wgsl, uint32_t uniform_size,
                                                              uint32_t texture_count, uint32_t reads, tide_gpu_blend blend,
                                                              tide_gpu_depth depth, tide_gpu_cull cull,
-                                                             tide_gpu_target_format into);
+                                                             tide_gpu_target_format into,
+                                                             tide_gpu_stencil_test stencil_test,
+                                                             tide_gpu_stencil_op stencil_op);
 TIDE_WEB_IMPORT(gpu_pipeline_slot) void tide_web_gpu_pipeline_slot(uint32_t stride, bool per_instance);
 TIDE_WEB_IMPORT(gpu_pipeline_attribute) void tide_web_gpu_pipeline_attribute(uint32_t slot, tide_gpu_attribute_format format,
                                                                      uint32_t offset);
@@ -38,6 +40,7 @@ TIDE_WEB_IMPORT(gpu_begin) void tide_web_gpu_begin(tide_gpu_id target, bool clea
 TIDE_WEB_IMPORT(gpu_end) void tide_web_gpu_end(void);
 TIDE_WEB_IMPORT(gpu_scissor) void tide_web_gpu_scissor(int x, int y, int width, int height);
 TIDE_WEB_IMPORT(gpu_use) void tide_web_gpu_use(tide_gpu_id pipeline);
+TIDE_WEB_IMPORT(gpu_stencil) void tide_web_gpu_stencil(uint32_t value);
 TIDE_WEB_IMPORT(gpu_uniforms) void tide_web_gpu_uniforms(const void *data, size_t size);
 TIDE_WEB_IMPORT(gpu_sample) void tide_web_gpu_sample(uint32_t slot, tide_gpu_id texture, bool blended, tide_gpu_wrap wrap);
 TIDE_WEB_IMPORT(gpu_vertices) void tide_web_gpu_vertices(uint32_t slot, tide_gpu_id buffer, size_t offset);
@@ -50,7 +53,7 @@ static tide_gpu_id tide_web_gpu_pipeline(const tide_gpu_pipeline_desc *desc)
     uint32_t reads = 0;
     for (uint32_t i = 0; i < desc->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) reads |= (uint32_t)desc->reads[i] << (2u * i);
     tide_web_gpu_pipeline_begin(desc->name, desc->wgsl, desc->uniform_size, desc->texture_count, reads, desc->blend, desc->depth,
-                                desc->cull, desc->into);
+                                desc->cull, desc->into, desc->stencil_test, desc->stencil_op);
     for (uint32_t i = 0; i < desc->slot_count; i++) tide_web_gpu_pipeline_slot(desc->slots[i].stride, desc->slots[i].per_instance);
     for (uint32_t i = 0; i < desc->attribute_count; i++) {
         tide_web_gpu_pipeline_attribute(desc->attributes[i].slot, desc->attributes[i].format, desc->attributes[i].offset);
@@ -83,6 +86,7 @@ const tide_gpu tide_gpu_webgpu = {
     .end = tide_web_gpu_end,
     .scissor = tide_web_gpu_scissor,
     .use = tide_web_gpu_use,
+    .stencil = tide_web_gpu_stencil,
     .uniforms = tide_web_gpu_uniforms,
     .sample = tide_web_gpu_sample,
     .vertices = tide_web_gpu_vertices,

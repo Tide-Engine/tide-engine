@@ -27,7 +27,7 @@
 
 typedef struct gl_pipeline {
     GLuint program, vao;         // No program: a place that's free
-    tide_gpu_pipeline_desc desc; // Its slots and attributes, how it blends and tests depth, and which side it draws
+    tide_gpu_pipeline_desc desc; // Its slots and attributes, how it blends and tests depth and stencil, and which side it draws
     GLint target_height;         // 0 on the window, its height when drawing top-first into a texture
 } gl_pipeline;
 
@@ -72,6 +72,26 @@ static const gl_pipeline *current;
 static GLenum index_type;
 static int pass_height; // The pass's target's, in its pixels
 static bool pass_texture; // Its rows go from the top, as uploaded textures' do
+static GLint pass_stencil; // The number its pipelines' stencil tests compare with (gl_stencil)
+
+// A pipeline's stencil test and what it stores, as OpenGL has them, with the
+// pass's number. OpenGL keeps the number with the test, so this is called for
+// a new pipeline and for a new number.
+static void set_stencil(const gl_pipeline *p)
+{
+    static const GLenum tests[] = { // By tide_gpu_stencil_test
+        GL_ALWAYS, GL_NEVER, GL_LESS, GL_EQUAL, GL_LEQUAL, GL_GREATER, GL_NOTEQUAL, GL_GEQUAL};
+    static const GLenum ops[] = {GL_KEEP, GL_REPLACE, GL_INCR, GL_DECR, GL_ZERO, GL_INVERT}; // By tide_gpu_stencil_op
+    const uint32_t test = (uint32_t)p->desc.stencil_test, op = (uint32_t)p->desc.stencil_op;
+    if (test == TIDE_GPU_STENCIL_ALWAYS && op == TIDE_GPU_STENCIL_KEEP) {
+        glDisable(GL_STENCIL_TEST);
+        return;
+    }
+    glEnable(GL_STENCIL_TEST);
+    glStencilFunc(tests[test < sizeof tests / sizeof tests[0] ? test : 0], pass_stencil, 0xFFu);
+    // Only where the draw draws: a pixel that fails either test keeps its number
+    glStencilOp(GL_KEEP, GL_KEEP, ops[op < sizeof ops / sizeof ops[0] ? op : 0]);
+}
 
 #if !defined(__wasm__) && !defined(__ANDROID__)
 enum { GL_TIME_SAMPLES = 4 };
@@ -436,6 +456,8 @@ static void gl_begin(const tide_gpu_id target, const bool clear)
     // target's pass or, on the web, the program this one took over from.
     glViewport(0, 0, width, height);
     glDisable(GL_CULL_FACE); // Either side of a triangle draws, until a pipeline says otherwise (gl_use)
+    glDisable(GL_STENCIL_TEST); // ...and no stencil test
+    pass_stencil = 0;
     glEnable(GL_SCISSOR_TEST);
     glScissor(0, 0, width, height);
     if (!uniform_buffer) { // The first pass: what every pipeline draws with
@@ -468,7 +490,8 @@ static void gl_begin(const tide_gpu_id target, const bool clear)
     if (clear) {
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glDepthMask(GL_TRUE); // A clear only reaches the depth that's written: the last pipeline may have read it alone
-        glClear(color ? GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT : GL_DEPTH_BUFFER_BIT);
+        glClear(color ? GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT
+                      : GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     }
 }
 
@@ -523,6 +546,13 @@ static void gl_use(const tide_gpu_id pipeline)
         // counterclockwise for OpenGL
         glFrontFace(pass_texture ? GL_CCW : GL_CW);
     }
+    set_stencil(current);
+}
+
+static void gl_stencil(const uint32_t value)
+{
+    pass_stencil = (GLint)(value < 255u ? value : 255u);
+    if (current) set_stencil(current);
 }
 
 static void gl_uniforms(const void *data, const size_t size)
@@ -611,6 +641,7 @@ const tide_gpu tide_gpu_gl = {
     .end = gl_end,
     .scissor = gl_scissor,
     .use = gl_use,
+    .stencil = gl_stencil,
     .uniforms = gl_uniforms,
     .sample = gl_sample,
     .vertices = gl_vertices,
