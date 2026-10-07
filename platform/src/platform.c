@@ -485,15 +485,17 @@ typedef struct mesh_vertex {
 
 // What a list comes to, in order: runs of shapes, clears, runs of text, runs
 // of triangles, clips, runs of instances of 3D meshes, and runs of instances
-// of meshes through shaders of the game's.
+// of meshes through shaders of the game's. A STEP_STENCIL only ends the run
+// before it: the steps after it have another stencil than the ones before.
 enum { STEP_SHAPES, STEP_CLEAR, STEP_TEXT, STEP_MESH, STEP_CLIP, STEP_NO_CLIP, STEP_MESH_3D, STEP_SHADED,
-       STEP_TARGET, STEP_BLIT };
+       STEP_TARGET, STEP_BLIT, STEP_STENCIL };
 
 typedef struct draw_step {
     uint32_t kind;    // STEP_*
     uint32_t blend;   // How it goes over what's there: tide_blend
     uint32_t depth;   // STEP_MESH_3D, and a STEP_SHADED through a 3D shader: what it does with depth, tide_depth
     uint32_t cull;    // ...and which of its triangles don't draw, as they reach the GPU: tide_gpu_cull
+    uint32_t stencil; // What it does with its destination's stencil: a tide_stencil, packed. None, for a clear and a blit
     uint32_t target;  // The destination: 0 for the window, 1 + its place in the list's targets
     uint32_t first;   // STEP_SHAPES: its shapes; STEP_TEXT and STEP_MESH: its vertices;
                       // STEP_MESH_3D: its instances' transforms in the list's matrices;
@@ -525,6 +527,7 @@ static draw_step *steps;
 static uint32_t step_count, step_capacity;
 static uint32_t draw_target;
 static uint32_t draw_blend; // How the command being turned into steps blends: tide_blend
+static uint32_t draw_stencil; // What the selected destination's commands do with its stencil, by now: a tide_stencil, packed
 static uint32_t draw_calls; // What the last list drawn took, the overlay's aside (tide_platform_draw_calls)
 
 // A target's cameras and clip belong to it for the whole frame, including
@@ -533,6 +536,7 @@ typedef struct frame_target {
     camera through, world;
     uint32_t camera_3d, fit;
     bool mirrored; // Its 3D camera mirrors what it sees, so triangles reach the GPU wound the other way
+    uint32_t stencil; // What its commands do with its stencil, as the last one turned into steps found it
     draw_step clipping;
     tide_gpu_id gpu;
     float width, height;           // Its logical pixels, as the window's
@@ -670,7 +674,9 @@ static draw_step *add_step(const uint32_t kind)
         step_capacity = capacity;
     }
     draw_step *s = &steps[step_count++];
-    *s = (draw_step){.kind = kind, .blend = draw_blend, .target = draw_target};
+    // A clear sets stencil back whatever is set, and a blit is its destination's whatever is
+    *s = (draw_step){.kind = kind, .blend = draw_blend, .target = draw_target,
+                     .stencil = kind == STEP_CLEAR || kind == STEP_BLIT ? 0u : draw_stencil};
     return s;
 }
 
@@ -947,6 +953,71 @@ static void add_text_turned(const char *text, const tide_float2 at, const float 
 enum { PIPELINE_SHAPES, PIPELINE_SMOOTH_SHAPES, PIPELINE_MESHES, PIPELINE_TEXT, PIPELINE_MESHES_3D, PIPELINE_KINDS };
 enum { BLENDS = TIDE_BLEND_REPLACE + 1, DEPTHS = TIDE_DEPTH_NONE + 1, CULLS = TIDE_GPU_CULL_FRONT + 1 };
 
+// Stencil's numbers are the draw list's all the way down.
+_Static_assert((int)TIDE_GPU_STENCIL_ALWAYS == (int)TIDE_STENCIL_ALWAYS && (int)TIDE_GPU_STENCIL_NEVER == (int)TIDE_STENCIL_NEVER
+               && (int)TIDE_GPU_STENCIL_LESS == (int)TIDE_STENCIL_LESS && (int)TIDE_GPU_STENCIL_EQUAL == (int)TIDE_STENCIL_EQUAL
+               && (int)TIDE_GPU_STENCIL_LESS_EQUAL == (int)TIDE_STENCIL_LESS_EQUAL
+               && (int)TIDE_GPU_STENCIL_GREATER == (int)TIDE_STENCIL_GREATER
+               && (int)TIDE_GPU_STENCIL_NOT_EQUAL == (int)TIDE_STENCIL_NOT_EQUAL
+               && (int)TIDE_GPU_STENCIL_GREATER_EQUAL == (int)TIDE_STENCIL_GREATER_EQUAL,
+               "a pipeline's stencil tests are tide_stencil_test's");
+_Static_assert((int)TIDE_GPU_STENCIL_KEEP == (int)TIDE_STENCIL_KEEP && (int)TIDE_GPU_STENCIL_REPLACE == (int)TIDE_STENCIL_REPLACE
+               && (int)TIDE_GPU_STENCIL_INCREMENT == (int)TIDE_STENCIL_INCREMENT
+               && (int)TIDE_GPU_STENCIL_DECREMENT == (int)TIDE_STENCIL_DECREMENT
+               && (int)TIDE_GPU_STENCIL_ZERO == (int)TIDE_STENCIL_ZERO && (int)TIDE_GPU_STENCIL_INVERT == (int)TIDE_STENCIL_INVERT,
+               "a pipeline's stencil operations are tide_stencil_op's");
+
+// What of a step's stencil is its pipeline's: its test and what it stores (a
+// tide_stencil_test, and a tide_stencil_op from the fourth bit). Its number
+// is set at the draw (tide_gpu.stencil), so no pipeline is made for one.
+static uint32_t stencil_state(const uint32_t stencil)
+{
+    return stencil & 255u;
+}
+
+// ...and its number.
+static uint32_t stencil_value(const uint32_t stencil)
+{
+    return stencil >> 8 & 255u;
+}
+
+// Whether a step that draws changes the numbers stored where it draws.
+static bool stencil_stores(const uint32_t stencil)
+{
+    return (stencil >> 4 & 15u) != TIDE_STENCIL_KEEP;
+}
+
+// The engine's pipelines that test or store stencil, each made the first time
+// a list draws with it, like the others: by kind, blend, depth and cull, by
+// the stencil's test and what it stores, and by what they draw into. Few
+// games have more than a handful, so they're a list, looked through.
+typedef struct stencil_pipeline {
+    uint8_t kind, blend, depth, cull, state;
+    tide_gpu_target_format into; // What the targets it draws into hold
+    tide_gpu_id pipeline;
+} stencil_pipeline;
+
+static stencil_pipeline *stencil_pipelines;
+static uint32_t stencil_pipeline_count, stencil_pipeline_capacity;
+
+// The number the pass's stencil tests compare with, as the backend has it: 0 as a pass begins.
+static uint32_t pass_stencil;
+
+// A pass a list's steps draw in.
+static void begin_pass(const tide_gpu_id target, const bool clear)
+{
+    gpu->begin(target, clear);
+    pass_stencil = 0;
+}
+
+// A step's pipeline, for the draws after it, with the step's stencil number where the pass has another.
+static void use_pipeline(const draw_step *s)
+{
+    gpu->use(s->pipeline);
+    const uint32_t value = stencil_value(s->stencil);
+    if (value != pass_stencil) gpu->stencil(pass_stencil = value);
+}
+
 // What a pipeline does with depth for each tide_depth.
 static const tide_gpu_depth gpu_depths[DEPTHS] = {
     [TIDE_DEPTH_READ_WRITE] = TIDE_GPU_DEPTH_TEST, [TIDE_DEPTH_READ] = TIDE_GPU_DEPTH_READ,
@@ -985,7 +1056,9 @@ static struct {
 // a pixel, first, and another for each kind a list draws into. They draw one
 // color, into a target's first color image, and leave the others it has
 // alone, but for the clears', which fill every one. Into depth alone, only
-// the 3D meshes' and the clears' leave anything (writes_depth).
+// the 3D meshes' and the clears' leave anything, and what stores stencil
+// (writes_depth). The ones that test or store stencil are apart, a list of
+// their own (stencil_pipelines), by what their targets hold too.
 typedef struct engine_pipelines {
     tide_gpu_target_format into;
     tide_gpu_id made[PIPELINE_KINDS][BLENDS][DEPTHS][CULLS]; // Only the 3D meshes' have more than the first depth and cull
@@ -1025,6 +1098,9 @@ static tide_gpu_target_format gpu_target_format(const uint64_t id)
 // which is how they know where a pixel ends; and `fix`, whose first is 1 for
 // what multiplies what's there (TIDE_BLEND_MULTIPLY), 0 otherwise: there a
 // color goes to white as its alpha goes to 0, so what's clear changes nothing.
+// Its second is 1 for a step that stores stencil: there a pixel is drawn, and
+// stores, wherever the draw touches it, a clear shape's too, and none of the
+// text's quads' that no glyph covers is.
 // A run of the plain shapes alone has `screen` only.
 typedef struct screen_uniforms {
     float screen[16];
@@ -1210,6 +1286,7 @@ typedef struct shader_pipeline {
     uint8_t blend;  // How it goes over what's there: a pipeline for each way a shader is drawn (tide_blend)
     uint8_t depth;  // ...and for each thing a 3D one does with depth (tide_depth): 0 for a 2D one, and a blit
     uint8_t cull;   // ...and each side of a triangle it leaves out (tide_gpu_cull): none, for those too
+    uint8_t state;  // ...and each thing it does with stencil (stencil_state): nothing, for a blit
     bool blit;      // The whole destination, leaving its depth alone, rather than an ordinary mesh
     // What the targets it draws into hold, which a pipeline is made for. Into depth alone, its blend is the
     // first, as none is read
@@ -1242,6 +1319,7 @@ static bool gpu_ready(void)
     gpu_target_count = 0;
     engine_made_count = 0;
     shader_pipeline_count = 0;
+    stencil_pipeline_count = 0;
     if (shader_index) memset(shader_index, 0, shader_index_capacity * sizeof(uint32_t));
     gpu_epoch = epoch;
     return true;
@@ -1273,21 +1351,45 @@ static tide_gpu_cull gpu_cull(const uint32_t cull, const bool mirrored)
     return back != (((cull & TIDE_DRAW_MIRRORED) != 0) != mirrored) ? TIDE_GPU_CULL_BACK : TIDE_GPU_CULL_FRONT;
 }
 
-// One of the engine's pipelines, for one way of blending and, for the 3D
-// meshes', one thing done with depth and one side left out, into targets that
-// hold what `into` says: made if there's none. Into targets of depth alone,
-// it's the 3D meshes', which read and write depth and nothing else there.
+// One of the engine's pipelines, for one way of blending, one thing done with
+// stencil (`state`: stencil_state) and, for the 3D meshes', one thing done
+// with depth and one side left out, into targets that hold what `into` says:
+// made if there's none. Into targets of depth alone, where a color has nowhere
+// to go, it's the 3D meshes' that write depth, and whatever stores stencil.
 static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t depth, uint32_t cull,
-                                   const tide_gpu_target_format into)
+                                   const tide_gpu_target_format into, const uint32_t state)
 {
     static const tide_gpu_blend blends[BLENDS] = {
         [TIDE_BLEND_ALPHA] = TIDE_GPU_BLEND_ALPHA, [TIDE_BLEND_ADD] = TIDE_GPU_BLEND_ADD,
         [TIDE_BLEND_MULTIPLY] = TIDE_GPU_BLEND_MULTIPLY, [TIDE_BLEND_REPLACE] = TIDE_GPU_BLEND_REPLACE};
     const bool bare = into == TIDE_GPU_TARGET_DEPTH;
+    if (blend >= BLENDS || bare) blend = TIDE_BLEND_ALPHA; // None is read where there's no color
     if (kind != PIPELINE_MESHES_3D || depth >= DEPTHS) depth = TIDE_DEPTH_READ_WRITE;
     if (kind != PIPELINE_MESHES_3D || cull >= CULLS) cull = TIDE_GPU_CULL_NONE; // Nothing in 2D has a back
-    if (blend >= BLENDS || bare) blend = TIDE_BLEND_ALPHA; // None is read where there's no color
-    tide_gpu_id *made = &pipelines_into(into)->made[kind][blend][depth][cull];
+    tide_gpu_id *made;
+    if (state) { // One that tests or stores stencil: among the few of those
+        made = NULL;
+        for (uint32_t i = 0; i < stencil_pipeline_count && !made; i++) {
+            stencil_pipeline *p = &stencil_pipelines[i];
+            if (p->kind == kind && p->blend == blend && p->depth == depth && p->cull == cull && p->state == state
+                && p->into == into) {
+                made = &p->pipeline;
+            }
+        }
+        if (!made) {
+            if (stencil_pipeline_count == stencil_pipeline_capacity) {
+                const uint32_t capacity = stencil_pipeline_capacity ? stencil_pipeline_capacity * 2u : 16u;
+                stencil_pipelines = tide_realloc(stencil_pipelines, stencil_pipeline_capacity * sizeof(stencil_pipeline),
+                                                 capacity * sizeof(stencil_pipeline));
+                stencil_pipeline_capacity = capacity;
+            }
+            stencil_pipelines[stencil_pipeline_count] = (stencil_pipeline){
+                (uint8_t)kind, (uint8_t)blend, (uint8_t)depth, (uint8_t)cull, (uint8_t)state, into, 0};
+            made = &stencil_pipelines[stencil_pipeline_count++].pipeline;
+        }
+    } else {
+        made = &pipelines_into(into)->made[kind][blend][depth][cull];
+    }
     if (*made) return *made;
     tide_gpu_pipeline_desc desc;
     switch (kind) {
@@ -1369,14 +1471,17 @@ static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t dept
         break;
     }
     desc.blend = blends[blend];
+    desc.stencil_test = (tide_gpu_stencil_test)(state & 15u);
+    desc.stencil_op = (tide_gpu_stencil_op)(state >> 4);
     desc.into = into;
     desc.outputs = 1; // The one color they have: a target's first image, whatever else it holds
-    if (bare) desc.name = "3D meshes into depth alone";
+    if (bare && kind == PIPELINE_MESHES_3D) desc.name = "3D meshes into depth alone";
     return *made = gpu->pipeline(&desc);
 }
 
 // A clear, in a version for each kind of target: a triangle over it, which
-// sets depth back, and fills each color image it has with the clear's color.
+// sets depth back and stencil to 0, and fills each color image it has with
+// the clear's color.
 static tide_gpu_id clear_pipeline(const tide_gpu_target_format into)
 {
     tide_gpu_id *made = &pipelines_into(into)->clear;
@@ -1390,6 +1495,7 @@ static tide_gpu_id clear_pipeline(const tide_gpu_target_format into)
         .uniform_size = 4 * sizeof(float),
         .blend = TIDE_GPU_BLEND_REPLACE,
         .depth = TIDE_GPU_DEPTH_RESET,
+        .stencil_op = TIDE_GPU_STENCIL_ZERO,
         .into = into,
         .outputs = several ? TIDE_GPU_MAX_COLORS : 1u,
     });
@@ -1406,18 +1512,20 @@ static void renderer_start(void)
 }
 
 // Whether a step leaves anything in a target of depth alone, where a color
-// has nowhere to go: a clear, which sets depth back, and a 3D mesh that
-// writes depth, through a shader of the game's or not. Everything else draws
-// colors, which such a target has none of, and is passed by there.
+// has nowhere to go: a clear, which sets depth and stencil back, a 3D mesh
+// that writes depth, through a shader of the game's or not, and whatever
+// draws and stores stencil. Everything else only draws colors, which such a
+// target has none of, and is passed by there.
 static bool writes_depth(const tide_draw_list *list, const draw_step *s)
 {
     switch (s->kind) {
+    case STEP_BLIT: return false;
     case STEP_SHAPES:
     case STEP_TEXT:
-    case STEP_MESH:
-    case STEP_BLIT: return false;
-    case STEP_MESH_3D: return s->depth == TIDE_DEPTH_READ_WRITE;
-    case STEP_SHADED: return list->runs[s->first].shader->dims == 3 && s->depth == TIDE_DEPTH_READ_WRITE;
+    case STEP_MESH: return stencil_stores(s->stencil);
+    case STEP_MESH_3D: return s->depth == TIDE_DEPTH_READ_WRITE || stencil_stores(s->stencil);
+    case STEP_SHADED:
+        return (list->runs[s->first].shader->dims == 3 && s->depth == TIDE_DEPTH_READ_WRITE) || stencil_stores(s->stencil);
     default: return true; // A clear, and what only says where the steps after it go
     }
 }
@@ -1435,13 +1543,16 @@ static void find_pipelines(const tide_draw_list *list)
         draw_step *s = &steps[i];
         if (!frame_targets[s->target].valid || leaves_nothing(list, s)) continue;
         const tide_gpu_target_format into = frame_targets[s->target].into;
+        const uint32_t state = stencil_state(s->stencil);
         switch (s->kind) {
         case STEP_SHAPES:
-            s->pipeline = engine_pipeline(s->smooth ? PIPELINE_SMOOTH_SHAPES : PIPELINE_SHAPES, s->blend, 0, 0, into);
+            s->pipeline = engine_pipeline(s->smooth ? PIPELINE_SMOOTH_SHAPES : PIPELINE_SHAPES, s->blend, 0, 0, into, state);
             break;
-        case STEP_MESH: s->pipeline = engine_pipeline(PIPELINE_MESHES, s->blend, 0, 0, into); break;
-        case STEP_TEXT: s->pipeline = engine_pipeline(PIPELINE_TEXT, s->blend, 0, 0, into); break;
-        case STEP_MESH_3D: s->pipeline = engine_pipeline(PIPELINE_MESHES_3D, s->blend, s->depth, s->cull, into); break;
+        case STEP_MESH: s->pipeline = engine_pipeline(PIPELINE_MESHES, s->blend, 0, 0, into, state); break;
+        case STEP_TEXT: s->pipeline = engine_pipeline(PIPELINE_TEXT, s->blend, 0, 0, into, state); break;
+        case STEP_MESH_3D:
+            s->pipeline = engine_pipeline(PIPELINE_MESHES_3D, s->blend, s->depth, s->cull, into, state);
+            break;
         case STEP_CLEAR: s->pipeline = clear_pipeline(into); break;
         default: break;
         }
@@ -1551,17 +1662,19 @@ static void forget_meshes_3d(void)
     }
 }
 
-// Where the pipeline of the shader `id`, blending as `blend`, doing `depth` with depth and leaving
-// `cull` out, into targets that hold what `into` says, is in the index, or would go.
+// Where the pipeline of the shader `id`, blending as `blend`, doing `depth` with depth and `state`
+// with stencil and leaving `cull` out, into targets that hold what `into` says, is in the index, or
+// would go.
 static uint32_t shader_slot(const uint64_t id, const bool blit, const uint8_t blend, const uint8_t depth,
-                            const uint8_t cull, const tide_gpu_target_format into)
+                            const uint8_t cull, const uint8_t state, const tide_gpu_target_format into)
 {
     const uint32_t mask = shader_index_capacity - 1u;
     uint32_t i = (uint32_t)(id ^ id >> 32 ^ (blit ? 0x9e3779b9u : 0u) ^ blend * 0x85ebca6bu ^ depth * 0xc2b2ae35u
-                            ^ cull * 0x27d4eb2fu ^ into * 0x165667b1u) & mask;
+                            ^ cull * 0x27d4eb2fu ^ state * 0x2545f491u ^ into * 0x165667b1u) & mask;
     while (shader_index[i]) {
         const shader_pipeline *p = &shader_pipelines[shader_index[i] - 1u];
-        if (p->id == id && p->blit == blit && p->blend == blend && p->depth == depth && p->cull == cull && p->into == into) {
+        if (p->id == id && p->blit == blit && p->blend == blend && p->depth == depth && p->cull == cull
+            && p->state == state && p->into == into) {
             break;
         }
         i = (i + 1u) & mask;
@@ -1583,20 +1696,21 @@ static void index_shaders(void)
     }
     for (uint32_t i = 0; i < shader_pipeline_count; i++) {
         const shader_pipeline *p = &shader_pipelines[i];
-        shader_index[shader_slot(p->id, p->blit, p->blend, p->depth, p->cull, p->into)] = i + 1u;
+        shader_index[shader_slot(p->id, p->blit, p->blend, p->depth, p->cull, p->state, p->into)] = i + 1u;
     }
 }
 
-// The pipeline of a shader of the game's for one way of blending and, for a
-// 3D one, one thing done with depth and one side left out, made if there's
-// none: it reads a mesh's vertices as they are from the first slot, and from
-// the second an instance's bytes, a float4 or an int4 an attribute. It's for
-// targets that hold what `into` says, whose color images its frag's outputs go
-// to in order: one with no image in its place goes nowhere (into depth alone,
-// that's all of them; the frag still runs, as it may discard the pixel), and
-// the images past them are left as they were.
+// The pipeline of a shader of the game's for one way of blending, one thing
+// done with stencil (`state`: stencil_state) and, for a 3D one, one thing done
+// with depth and one side left out, made if there's none: it reads a mesh's
+// vertices as they are from the first slot, and from the second an instance's
+// bytes, a float4 or an int4 an attribute. It's for targets that hold what
+// `into` says, whose color images its frag's outputs go to in order: one with
+// no image in its place goes nowhere (into depth alone, that's all of them;
+// the frag still runs, as it may discard the pixel), and the images past them
+// are left as they were.
 static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint32_t blend, uint32_t depth,
-                                uint32_t cull, const tide_gpu_target_format into)
+                                uint32_t cull, const tide_gpu_target_format into, uint32_t state)
 {
     static const tide_gpu_blend blends[BLENDS] = {
         [TIDE_BLEND_ALPHA] = TIDE_GPU_BLEND_ALPHA, [TIDE_BLEND_ADD] = TIDE_GPU_BLEND_ADD,
@@ -1607,8 +1721,9 @@ static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint
     const bool deep = !blit && shader->dims == 3;
     if (!deep || depth >= DEPTHS) depth = TIDE_DEPTH_READ_WRITE;
     if (!deep || cull >= CULLS) cull = TIDE_GPU_CULL_NONE; // ...and only a 3D mesh's triangles have a back
+    if (blit) state = 0; // A blit neither tests stencil nor stores any
     if (shader_pipeline_count >= shader_index_capacity / 2u) index_shaders();
-    const uint32_t slot = shader_slot(shader->id, blit, (uint8_t)blend, (uint8_t)depth, (uint8_t)cull, into);
+    const uint32_t slot = shader_slot(shader->id, blit, (uint8_t)blend, (uint8_t)depth, (uint8_t)cull, (uint8_t)state, into);
     if (shader_index[slot]) {
         shader_pipeline *p = &shader_pipelines[shader_index[slot] - 1u];
         p->frame = gpu_frame;
@@ -1633,6 +1748,8 @@ static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint
         .blend = blends[blend],
         .depth = deep ? gpu_depths[depth] : TIDE_GPU_DEPTH_NONE,
         .cull = (tide_gpu_cull)cull,
+        .stencil_test = (tide_gpu_stencil_test)(state & 15u),
+        .stencil_op = (tide_gpu_stencil_op)(state >> 4),
         .into = into,
         .outputs = tide_shader_outputs(shader),
     };
@@ -1657,7 +1774,7 @@ static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint
     }
     const tide_gpu_id pipeline = gpu->pipeline(&desc);
     shader_pipelines[shader_pipeline_count] = (shader_pipeline){shader->id, pipeline, gpu_frame, (uint8_t)blend,
-                                                                (uint8_t)depth, (uint8_t)cull, blit, into};
+                                                                (uint8_t)depth, (uint8_t)cull, (uint8_t)state, blit, into};
     shader_index[slot] = ++shader_pipeline_count;
     return pipeline;
 }
@@ -1717,7 +1834,8 @@ static bool upload_shaded(const tide_draw_list *list)
         any = true;
         mesh_for(list, run->mesh);
         steps[i].pipeline = pipeline_for(run->shader, steps[i].kind == STEP_BLIT, steps[i].blend, steps[i].depth,
-                                         steps[i].cull, frame_targets[steps[i].target].into);
+                                         steps[i].cull, frame_targets[steps[i].target].into,
+                                         stencil_state(steps[i].stencil));
         // A shader that reads a depth it may not be given reads the far one: made here, outside any pass
         for (uint32_t t = 0; t < run->shader->texture_count && !gpu_state.far; t++) {
             if (gpu_read(run->shader, t) == TIDE_GPU_READ_COLOR) continue;
@@ -2012,7 +2130,7 @@ static void draw_shaded(const tide_draw_list *list, const draw_step *s)
     block.engine.tint[0] = run->tint.r, block.engine.tint[1] = run->tint.g;
     block.engine.tint[2] = run->tint.b, block.engine.tint[3] = run->tint.a;
     if (own) memcpy(block.bytes + sizeof(shaded_uniforms), list->uniforms + run->uniforms, own);
-    gpu->use(s->pipeline);
+    use_pipeline(s);
     gpu->uniforms(&block, sizeof(shaded_uniforms) + own);
     for (uint32_t i = 0; i < shader->texture_count; i++) {
         gpu->sample(i, texture_to_read(list, run->textures[i], gpu_read(shader, i)), tide_sampling_blended(run->sampling, i),
@@ -2030,7 +2148,7 @@ static void draw_mesh_3d(const tide_draw_list *list, const draw_step *s)
     const mesh_3d_uniforms uniforms = {.camera = camera_3d_to_clip(list, s),
                                        .tint = {s->tint.r, s->tint.g, s->tint.b, s->tint.a},
                                        .fix = {s->blend == TIDE_BLEND_MULTIPLY ? 1.0f : 0.0f}};
-    gpu->use(s->pipeline);
+    use_pipeline(s);
     gpu->uniforms(&uniforms, sizeof uniforms);
     sample_step_texture(list, s);
     gpu->vertices(0, g->vertices, 0);
@@ -2112,6 +2230,7 @@ static void select_target(const uint32_t at)
 {
     const frame_target *f = &frame_targets[at];
     draw_target = at;
+    draw_stencil = f->stencil;
     draw_width = f->width;
     draw_height = f->height;
     draw_pixel_width = f->pixel_width;
@@ -2132,10 +2251,12 @@ static screen_uniforms target_uniforms(void)
     return u;
 }
 
-// The uniforms of a step that draws shapes, a mesh or text: the target's, and how the step blends.
+// The uniforms of a step that draws shapes, a mesh or text: the target's, how the step blends, and whether it
+// stores stencil.
 static const screen_uniforms *step_uniforms(screen_uniforms *of_target, const draw_step *s)
 {
     of_target->fix[0] = s->blend == TIDE_BLEND_MULTIPLY ? 1.0f : 0.0f;
+    of_target->fix[1] = stencil_stores(s->stencil) ? 1.0f : 0.0f;
     return of_target;
 }
 
@@ -2275,6 +2396,11 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         case TIDE_DRAW_NO_CLIP:
             add_step(STEP_NO_CLIP);
             break;
+        case TIDE_DRAW_STENCIL:
+            // A destination's own, for the steps after it: what's drawn next starts a run of its own
+            f->stencil = draw_stencil = tide_stencil_packed(tide_stencil_unpacked(c->stencil));
+            add_step(STEP_STENCIL);
+            break;
         case TIDE_DRAW_CIRCLE:
         case TIDE_DRAW_WIRE_CIRCLE: {
             const tide_float2 p = to_screen(cam, c->a);
@@ -2328,7 +2454,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     // Start after the CPU expanded the list and prepared/uploaded resources.
     // Otherwise a desktop GPU waiting for that work would time the CPU too.
     if (timed && gpu->time_begin) gpu->time_begin();
-    gpu->begin(target, !over); // Every frame starts black; Draw2D.Clear picks another color
+    begin_pass(target, !over); // Every frame starts black; Draw2D.Clear picks another color
     bool pass_active = true;
     uint32_t calls = 0; // The steps that draw, a draw call each
     for (uint32_t i = 0; i < step_count; i++) {
@@ -2346,7 +2472,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
                 const gpu_target *g = target_for(f->id, f->size, f->version);
                 f->gpu = g ? g->target : 0;
             }
-            gpu->begin(f->gpu, false);
+            begin_pass(f->gpu, false);
             pass_active = true;
             uniforms = target_uniforms();
             clip(&frame_targets[draw_target].clipping);
@@ -2366,15 +2492,16 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         if (prepare_source_targets(list, s, true)) {
             gpu->end();
             prepare_source_targets(list, s, false);
-            gpu->begin(frame_targets[draw_target].gpu, false);
+            begin_pass(frame_targets[draw_target].gpu, false);
             clip(&frame_targets[draw_target].clipping);
         }
         switch (s->kind) {
         case STEP_TARGET:
+        case STEP_STENCIL:
             break;
         case STEP_SHAPES:
             // A run with smooth shapes goes through the pipeline that draws every kind, with their extras
-            gpu->use(s->pipeline);
+            use_pipeline(s);
             if (s->smooth) {
                 gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
                 gpu->vertices(2, gpu_state.shape_extras, (size_t)(s->smooth - 1u) * sizeof(shape_extra));
@@ -2387,10 +2514,10 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             calls++;
             break;
         case STEP_CLEAR: {
-            // A triangle over the target, which the clip cuts, and which sets depth back too
+            // A triangle over the target, which the clip cuts, and which sets depth and stencil back too
             const float color[4] = {(float)s->color.r / 255.0f, (float)s->color.g / 255.0f, (float)s->color.b / 255.0f,
                                     (float)s->color.a / 255.0f};
-            gpu->use(s->pipeline);
+            use_pipeline(s);
             gpu->uniforms(color, sizeof color);
             gpu->draw(0, 3, 1);
             calls++;
@@ -2398,7 +2525,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         }
         case STEP_MESH:
             if (s->count == 0) break;
-            gpu->use(s->pipeline);
+            use_pipeline(s);
             gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
             sample_step_texture(list, s);
             gpu->vertices(0, gpu_state.mesh_vertices, 0);
@@ -2426,7 +2553,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             break;
         default: // Text
             if (s->count == 0 || !gpu_state.atlas) break;
-            gpu->use(s->pipeline);
+            use_pipeline(s);
             gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
             // Stretched glyphs blend; the others land on the target's pixels
             gpu->sample(0, gpu_state.atlas, true, TIDE_GPU_WRAP_CLAMP);

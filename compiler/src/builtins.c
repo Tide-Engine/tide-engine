@@ -14,6 +14,7 @@
 // map to tide/draw.h, and GUI and GUILayout to tide/gui.h.
 
 static const type T_F = {TY_FLOAT, NULL};
+static const type T_WHOLE = {TY_INT, NULL};
 static const type T_F2 = {TY_FLOAT2, NULL};
 static const type T_F3 = {TY_FLOAT3, NULL};
 static const type T_COLOR = {TY_COLOR, NULL};
@@ -58,6 +59,18 @@ static const decl *format_decl;
 void builtins_use_format(const decl *format)
 {
     format_decl = format;
+}
+
+// ...and the StencilTest and StencilOp enums, which Draw.Stencil takes.
+static decl stencil_test_enum, stencil_op_enum;
+static const type T_STENCIL_TEST = {TY_ENUM, &stencil_test_enum};
+static const type T_STENCIL_OP = {TY_ENUM, &stencil_op_enum};
+static const decl *stencil_test_decl, *stencil_op_decl;
+
+void builtins_use_stencil(const decl *test, const decl *op)
+{
+    stencil_test_decl = test;
+    stencil_op_decl = op;
 }
 
 // The GUITheme and GUIControl structs, which the GUI takes and gives, the same way.
@@ -144,6 +157,8 @@ static type real_type(const type t)
     if (t.decl == &depth_enum && depth_decl) return (type){TY_ENUM, (decl *)depth_decl};
     if (t.decl == &cull_enum && cull_decl) return (type){TY_ENUM, (decl *)cull_decl};
     if (t.decl == &format_enum && format_decl) return (type){TY_ENUM, (decl *)format_decl};
+    if (t.decl == &stencil_test_enum && stencil_test_decl) return (type){TY_ENUM, (decl *)stencil_test_decl};
+    if (t.decl == &stencil_op_enum && stencil_op_decl) return (type){TY_ENUM, (decl *)stencil_op_decl};
     if (t.decl == &text_font && font_decl) return (type){TY_ENUM, (decl *)font_decl};
     if (t.decl == &theme_struct && theme_decl) return (type){TY_STRUCT, (decl *)theme_decl};
     if (t.decl == &control_struct && control_decl) return (type){TY_STRUCT, (decl *)control_decl};
@@ -174,6 +189,8 @@ static const char *signature_type_name(const type t)
     if (t.decl == &depth_enum) return "Depth";
     if (t.decl == &cull_enum) return "Cull";
     if (t.decl == &format_enum) return "Format";
+    if (t.decl == &stencil_test_enum) return "StencilTest";
+    if (t.decl == &stencil_op_enum) return "StencilOp";
     if (t.decl == &text_font) return "Font";
     if (t.decl == &theme_struct) return "GUITheme";
     if (t.decl == &control_struct) return "GUIControl";
@@ -536,6 +553,18 @@ static void build_signatures(void)
                 "Wherever it's drawn. In a block, it multiplies the tint there is.",
                 1, &T_COLOR);
     add_unset("Draw", "SetTint", "tide_draw_unset_tint", "No tint, as each frame starts.");
+    // Stencil is the window's, as a target has its own: both forms, with or without what's stored
+    static const char stencil_doc[] =
+        "What the draws do with stencil, a number from 0 to 255 for each pixel beside its depth: they draw only where "
+        "`test` passes, `value` against the number stored there (`StencilTest.Equal`: where it's `value`; "
+        "`StencilTest.Less`: where `value` is less than it; `StencilTest.Always`, each frame's first: everywhere), and "
+        "where they draw, `operation` says what becomes of the stored number.";
+    add_setting("Draw", "Stencil", "tide_draw_push_stencil", "tide_draw_set_stencil", "tide_stencil_tested", "test, value",
+                stencil_doc, 2, &T_STENCIL_TEST, &T_WHOLE);
+    add_setting("Draw", "Stencil", "tide_draw_push_stencil", "tide_draw_set_stencil", "tide_stencil_stored",
+                "test, value, operation", stencil_doc, 3, &T_STENCIL_TEST, &T_WHOLE, &T_STENCIL_OP);
+    add_unset("Draw", "SetStencil", "tide_draw_unset_stencil",
+              "No stencil test, and nothing stored, as each frame starts.");
     static const char transform_doc[] =
         "Moves, turns and scales the Draw2D calls, in the units they're in, about (0, 0): scaled, then turned by "
         "`rotation` (radians, from +x towards +y), then moved by `offset`. Shapes stay shapes; text that's only moved "
@@ -1344,11 +1373,11 @@ type resolve_builtin_call(const str owner, expr *e)
                 if (drawing && str_eq_c(e->name, signatures[i].name)) theirs = signatures[i].owner;
             }
             if (theirs) {
-                diag_note("it's %s's: '%s." STR_FMT "(...)'. Draw has what Draw2D and Draw3D share: Blend, Tint, Blit and "
-                          "window", theirs, theirs, STR_ARG(e->name));
+                diag_note("it's %s's: '%s." STR_FMT "(...)'. Draw has what Draw2D and Draw3D share: Blend, Tint, Stencil, "
+                          "Blit and window", theirs, theirs, STR_ARG(e->name));
             } else {
-                diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Blit and window. Shapes, text and meshes "
-                          "are theirs");
+                diag_note("Draw has what Draw2D and Draw3D share: Blend, Tint, Stencil, Blit and window. Shapes, text and "
+                          "meshes are theirs");
             }
         } else if (str_eq_c(owner, "Draw2D") || str_eq_c(owner, "Draw3D")) {
             // What another of the three has, asked of this one: Draw3D.SetBlend, Draw2D.Depth, Draw2D.Cull, target.Tint
@@ -1360,7 +1389,13 @@ type resolve_builtin_call(const str owner, expr *e)
                 if (!shared && strcmp(s->owner, "Draw") == 0) shared = s;
                 if (!theirs && strcmp(s->owner, other) == 0) theirs = s;
             }
-            if (shared) {
+            if (shared && (str_eq_c(e->name, "Stencil") || str_eq_c(e->name, "SetStencil"))) {
+                // The window's stencil: what a target's own method was asked of gets the same note, under Draw2D's name
+                diag_note("it's Draw's, as 2D and 3D draws both take it: 'Draw." STR_FMT "(...)%s' for the window's stencil, "
+                          "and a render target has its own, 'target." STR_FMT "(...)%s'", STR_ARG(e->name),
+                          shared->gui & DRAW_BLOCK ? " { ... }" : ";", STR_ARG(e->name),
+                          shared->gui & DRAW_BLOCK ? " { ... }" : ";");
+            } else if (shared) {
                 diag_note("it's Draw's, the same wherever it's drawn, the window or a target: 'Draw." STR_FMT "(...)%s'",
                           STR_ARG(e->name), shared->gui & DRAW_BLOCK ? " { ... }" : ";");
             } else if (theirs && (str_eq_c(e->name, "Depth") || str_eq_c(e->name, "SetDepth"))) {

@@ -27,7 +27,7 @@
 
 typedef struct gl_pipeline {
     GLuint program, vao;         // No program: a place that's free
-    tide_gpu_pipeline_desc desc; // Its slots and attributes, how it blends and tests depth, and which side it draws
+    tide_gpu_pipeline_desc desc; // Its slots and attributes, how it blends and tests depth and stencil, and which side it draws
     GLint target_height;         // 0 on the window, its height when drawing top-first into a texture
 } gl_pipeline;
 
@@ -37,6 +37,7 @@ typedef struct gl_target {
     uint32_t color_count;
     uint32_t drawn; // How many of them the framebuffer's draw buffers name (see draw_into)
     bool bytes;     // Its first color image is 4 bytes a pixel: what's read back
+    tide_gpu_target_format format; // What it was made to hold, which the pipelines that draw into it are made for
     int width, height;
 } gl_target;
 
@@ -79,6 +80,26 @@ static bool pass_texture; // Its rows go from the top, as uploaded textures' do
 static gl_target *pass_target; // What the pass draws into: NULL for the window
 
 bool tide_gpu_gl_no_floats;
+static GLint pass_stencil; // The number its pipelines' stencil tests compare with (gl_stencil)
+
+// A pipeline's stencil test and what it stores, as OpenGL has them, with the
+// pass's number. OpenGL keeps the number with the test, so this is called for
+// a new pipeline and for a new number.
+static void set_stencil(const gl_pipeline *p)
+{
+    static const GLenum tests[] = { // By tide_gpu_stencil_test
+        GL_ALWAYS, GL_NEVER, GL_LESS, GL_EQUAL, GL_LEQUAL, GL_GREATER, GL_NOTEQUAL, GL_GEQUAL};
+    static const GLenum ops[] = {GL_KEEP, GL_REPLACE, GL_INCR, GL_DECR, GL_ZERO, GL_INVERT}; // By tide_gpu_stencil_op
+    const uint32_t test = (uint32_t)p->desc.stencil_test, op = (uint32_t)p->desc.stencil_op;
+    if (test == TIDE_GPU_STENCIL_ALWAYS && op == TIDE_GPU_STENCIL_KEEP) {
+        glDisable(GL_STENCIL_TEST);
+        return;
+    }
+    glEnable(GL_STENCIL_TEST);
+    glStencilFunc(tests[test < sizeof tests / sizeof tests[0] ? test : 0], pass_stencil, 0xFFu);
+    // Only where the draw draws: a pixel that fails either test keeps its number
+    glStencilOp(GL_KEEP, GL_KEEP, ops[op < sizeof ops / sizeof ops[0] ? op : 0]);
+}
 
 #if !defined(__wasm__) && !defined(__ANDROID__)
 enum { GL_TIME_SAMPLES = 4 };
@@ -422,7 +443,8 @@ static tide_gpu_id gl_target_make(const tide_gpu_target_format format, const int
         floats = false;
     }
     gl_target *t = &targets[place]; // After the float images were looked for, which makes textures of its own
-    *t = (gl_target){.width = width, .height = height, .color_count = colors, .drawn = colors ? 1u : 0u,
+    *t = (gl_target){.width = width, .height = height, .format = format, .color_count = colors,
+                     .drawn = colors ? 1u : 0u,
                      .bytes = colors && !(floats && tide_gpu_target_color(format, 0) == TIDE_GPU_COLOR_FLOAT)};
     glGenFramebuffers(1, &t->framebuffer);
     for (uint32_t i = 0; i < colors; i++) {
@@ -517,6 +539,8 @@ static void gl_begin(const tide_gpu_id target, const bool clear)
     // target's pass or, on the web, the program this one took over from.
     glViewport(0, 0, width, height);
     glDisable(GL_CULL_FACE); // Either side of a triangle draws, until a pipeline says otherwise (gl_use)
+    glDisable(GL_STENCIL_TEST); // ...and no stencil test
+    pass_stencil = 0;
     glEnable(GL_SCISSOR_TEST);
     glScissor(0, 0, width, height);
     if (!uniform_buffer) { // The first pass: what every pipeline draws with
@@ -549,7 +573,8 @@ static void gl_begin(const tide_gpu_id target, const bool clear)
     if (clear) {
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glDepthMask(GL_TRUE); // A clear only reaches the depth that's written: the last pipeline may have read it alone
-        glClear(color ? GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT : GL_DEPTH_BUFFER_BIT);
+        glClear(color ? GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT
+                      : GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     }
 }
 
@@ -567,6 +592,14 @@ static void gl_scissor(const int x, const int y, const int width, const int heig
 static void gl_use(const tide_gpu_id pipeline)
 {
     current = &pipelines[pipeline - 1u];
+    // A pipeline is for one kind of target, as WebGPU has it: OpenGL would draw all the same, with the
+    // colors of one kind into another's images
+    const tide_gpu_target_format kind = pass_target ? pass_target->format : TIDE_GPU_TARGET_COLOR;
+    if (current->desc.into != kind) {
+        fprintf(stderr, "tide: the pipeline of %s is for targets that hold something else than the one it draws into "
+                        "(tide_gpu_pipeline_desc.into)\n", current->desc.name ? current->desc.name : "a shader");
+        abort();
+    }
     glUseProgram(current->program);
     glUniform1i(current->target_height, pass_texture ? pass_height : 0);
     glBindVertexArray(current->vao);
@@ -610,6 +643,13 @@ static void gl_use(const tide_gpu_id pipeline)
         // counterclockwise for OpenGL
         glFrontFace(pass_texture ? GL_CCW : GL_CW);
     }
+    set_stencil(current);
+}
+
+static void gl_stencil(const uint32_t value)
+{
+    pass_stencil = (GLint)(value < 255u ? value : 255u);
+    if (current) set_stencil(current);
 }
 
 static void gl_uniforms(const void *data, const size_t size)
@@ -699,6 +739,7 @@ const tide_gpu tide_gpu_gl = {
     .end = gl_end,
     .scissor = gl_scissor,
     .use = gl_use,
+    .stencil = gl_stencil,
     .uniforms = gl_uniforms,
     .sample = gl_sample,
     .vertices = gl_vertices,

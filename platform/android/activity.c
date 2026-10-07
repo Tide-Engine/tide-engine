@@ -913,8 +913,9 @@ bool tide_window_open(const tide_window_desc *desc)
         fprintf(stderr, "tide: no EGL display\n");
         return false;
     }
+    // With depth and stencil, as every render target has: what draws in the window draws the same in one
     const EGLint wanted[] = {EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT, EGL_SURFACE_TYPE, EGL_WINDOW_BIT, EGL_RED_SIZE, 8,
-                             EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_DEPTH_SIZE, 24, EGL_NONE};
+                             EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_DEPTH_SIZE, 24, EGL_STENCIL_SIZE, 8, EGL_NONE};
     EGLint found = 0;
     if (!eglChooseConfig(app.display, wanted, &app.config, 1, &found) || found < 1) {
         fprintf(stderr, "tide: this device has no OpenGL ES 3\n");

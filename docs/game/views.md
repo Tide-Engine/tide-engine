@@ -47,7 +47,7 @@ An offset such as `[Stage(RenderStages.Objects, 10)]` runs later within `Objects
 
 ## Targets and post-processing
 
-`RenderTarget` names a local drawing destination. Call the drawing methods on it explicitly; ordinary `Draw2D`/`Draw3D` calls draw into `Draw.window`. Camera and clip belong to each destination and are shared across views within the frame. Switching destinations preserves color and depth, and a clear resets both, within that destination's clip.
+`RenderTarget` names a local drawing destination. Call the drawing methods on it explicitly; ordinary `Draw2D`/`Draw3D` calls draw into `Draw.window`. Camera and clip belong to each destination and are shared across views within the frame. Switching destinations preserves color, depth and [stencil](#stencil), and a clear resets all three, within that destination's clip.
 
 There are three ways to make one:
 
@@ -66,7 +66,7 @@ A target's size is in logical pixels, like the window's, and its image is made a
 
 When the display's scale changes (the window moves to another monitor, a browser zooms), the targets at the display's scale are made again, empty. One with pixels per unit of its own is left alone. There's no way to read the display's scale, and nothing here needs it.
 
-Otherwise a target's color and depth persist across frames until cleared. Copies share the image, including copies of `.color`. Call `Dispose()` when finished; every alias becomes invalid, and disposing again is harmless. A default target is invalid. Creation and lifetime methods run in views or local handlers and their helpers; field defaults cannot allocate targets.
+Otherwise a target's color, depth and stencil persist across frames until cleared. Copies share the image, including copies of `.color`. Call `Dispose()` when finished; every alias becomes invalid, and disposing again is harmless. A default target is invalid. Creation and lifetime methods run in views or local handlers and their helpers; field defaults cannot allocate targets.
 
 ### What a target holds
 
@@ -125,10 +125,11 @@ view Make(mut Deferred deferred)
 
 The formats are the constructor's last arguments, after its pixels per unit when it says them: `RenderTarget(1024, 1024, 1, Format.Color, Format.Float)`.
 
-A target of depth alone is drawn into like any other: it has its `Clear`, its cameras and its `Mesh`. A color has nowhere to go there, so the only things that leave anything are the ones that write depth:
+A target of depth alone is drawn into like any other: it has its `Clear`, its cameras and its `Mesh`. A color has nowhere to go there, so the only things that leave anything are the ones that write depth, or [stencil](#stencil), which it has too:
 
-- **A clear** sets its depth back to the far limit. It takes a color like any clear, which goes nowhere.
+- **A clear** sets its depth back to the far limit, and its stencil to 0. It takes a color like any clear, which goes nowhere.
 - **A 3D mesh** writes how far it is, with a frag or without. A mesh drawn with no frag has the engine's own look, as anywhere, and in this target that look's color is dropped: what a draw writes is said by where it's drawn, never by what it leaves out. A frag still runs for each pixel, as it may leave some out with `pixel.Discard()`, which is how a fence or a leaf casts a shadow with holes in it.
+- **A draw that stores stencil** stores it, whatever it is: a shape, text, a mesh. Its color goes nowhere.
 - **Everything else draws nothing there:** shapes, text, 2D meshes, a `Draw.Blit` into it, and 3D meshes under [`Depth.Read` or `Depth.None`](#depth).
 
 ### A target's depth
@@ -349,6 +350,7 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw2D.Mesh(vertices, indices, texture)` | Triangles drawn with a grid of colors, read with a filter and a wrap (see [Textures](#textures)) |
 | `Draw.Blend(mode) { ... }` | How what's drawn in the block goes over what's there: added, multiplied, replaced (see [Blending](#blending)) |
 | `Draw.Tint(color) { ... }` | Fades or colors what's drawn in the block (see [Tints](#tints)) |
+| `Draw.Stencil(test, value, operation) { ... }` | What's drawn in the block is drawn only where a number kept for each pixel passes a test, and changes that number where it draws: masks, cut-outs, counting (see [Stencil](#stencil)) |
 | `Draw2D.Transform(offset, rotation, scale) { ... }` | Moves, turns and scales what's drawn in the block (see [Transforms](#transforms)) |
 | `Draw2D.Clip(rect) { ... }` | Only what's inside `rect` draws, in the block (see [Clipping](#clipping)) |
 | `Draw2D.Screen() { ... }` | The calls in the block are in the screen's pixels, from the top left, with `y` down (see [On the screen](#on-the-screen)) |
@@ -366,7 +368,7 @@ Each frame starts black, with the camera at the origin and one world unit per pi
 
 ## Draw settings
 
-A setting changes how everything drawn after it comes out: how it blends, what tints it, what it does with depth, which side of it shows, where it lands. Each has two forms, and its name says which.
+A setting changes how everything drawn after it comes out: how it blends, what tints it, what it does with depth and stencil, which side of it shows, where it lands. Each has two forms, and its name says which.
 
 The plain name wraps a block. It's set for the draws in the block, and when the block ends, what it found is back:
 
@@ -390,6 +392,7 @@ view Follow(Player player, with ownership)
 |---|---|---|
 | `Draw.Blend(mode)` | `Draw.SetBlend(mode)` | How colors go over what's there (see [Blending](#blending)) |
 | `Draw.Tint(color)` | `Draw.SetTint(color)` | A color everything is multiplied by (see [Tints](#tints)) |
+| `Draw.Stencil(test, value)`, `Draw.Stencil(test, value, operation)` | `Draw.SetStencil(test, value)`, `Draw.SetStencil(test, value, operation)` | The test draws pass, against a number kept for each pixel, and what becomes of that number where they draw (see [Stencil](#stencil)) |
 | `Draw2D.Transform(...)`, `Draw3D.Transform(transform)` | `Draw2D.SetTransform(...)`, `Draw3D.SetTransform(transform)` | Where draws land: moved, turned, scaled (see [Transforms](#transforms)) |
 | `Draw2D.Clip(rect)` | `Draw2D.SetClip(rect)` | The rectangle draws are kept inside (see [Clipping](#clipping)) |
 | `Draw2D.Camera(center, size)`, `Draw3D.Camera(...)` | `Draw2D.SetCamera(center, size)`, `Draw3D.SetCamera(...)` | The camera |
@@ -397,7 +400,7 @@ view Follow(Player player, with ownership)
 | `Draw3D.Depth(mode)` | `Draw3D.SetDepth(mode)` | What 3D meshes do with depth: whether they're hidden behind what's nearer, and whether they hide what's behind them (see [Depth](#depth)) |
 | `Draw3D.Cull(side)` | `Draw3D.SetCull(side)` | Which side of a 3D mesh's triangles isn't drawn: the back, unless this says otherwise (see [Which side draws](#which-side-draws)) |
 
-Every frame starts from the defaults, so a `Set` never outlives its frame, and the GUI and the stats are never drawn with what a game set. A `Set` with no arguments puts the default back early: `Draw.SetTint()`, `Draw2D.SetClip()`, `Draw2D.SetCamera()`, `Draw3D.SetDepth()`, `Draw3D.SetCull()`.
+Every frame starts from the defaults, so a `Set` never outlives its frame, and the GUI and the stats are never drawn with what a game set. A `Set` with no arguments puts the default back early: `Draw.SetTint()`, `Draw.SetStencil()`, `Draw2D.SetClip()`, `Draw2D.SetCamera()`, `Draw3D.SetDepth()`, `Draw3D.SetCull()`.
 
 Writing one form as the other is a compile error that names the right one: `Draw.Blend(Blend.Add);` with no block says to write `Draw.SetBlend`, and `Draw.SetBlend(Blend.Add) { }` says `Draw.Blend`. Your editor offers the rename.
 
@@ -413,8 +416,10 @@ Draw.Tint(Color(1, 1, 1, 0.5))
 
 `Draw.Blend` and `Draw.Tint` say how a draw comes out, wherever it's drawn: the window or a [render target](#targets-and-post-processing). The others belong to what they draw into: `Draw2D`'s and `Draw3D`'s are the window's, and a target has its own, by the same names (`target.Clip(rect) { ... }`, `target.SetCamera(...)`, `target.Depth(mode) { ... }`, `target.Cull(side) { ... }`). `Draw3D`'s are for 3D meshes alone, which is why depth and cull are there: nothing in 2D has depth, or a back.
 
+`Draw.Stencil` is `Draw`'s because shapes, text and meshes all take it, in 2D and in 3D. It belongs to what's drawn into all the same, as the numbers it's about do: `Draw.Stencil` is the window's, and a target has its own, `target.Stencil(...) { ... }`.
+
 ::: info
-Which settings are `Draw`'s and which belong to a destination, what a `Set` with no arguments does, how one nests in another, `Draw3D.Depth`'s name and its three modes', and `Cull`'s three names and which way round a triangle's front goes, are provisional: they're how it works today, and may still change.
+Which settings are `Draw`'s and which belong to a destination, what a `Set` with no arguments does, how one nests in another, `Draw3D.Depth`'s name and its three modes', `Cull`'s three names and which way round a triangle's front goes, and how `Draw.Stencil` is written, its tests' and operations' names and each of its rules, are provisional: they're how it works today, and may still change.
 :::
 
 ### Several at once
@@ -553,6 +558,86 @@ view Leaves(Leaf leaf, Scenery scenery)
 - **It's for 3D meshes of every kind:** `Draw3D.Mesh`, the primitives, meshes through a frag or a vert and `Draw3D.Instanced`. Instances drawn in a row with the same setting are still one draw.
 - **A render target has its own,** as it has its own depth setting: `target.Cull(Cull.None) { target.Mesh(...); }`. A triangle's front is the same side there.
 - **Nothing in 2D has a back,** which is why it's `Draw3D`'s: `Draw2D.Mesh` draws its triangles whichever way they're wound.
+
+### Stencil
+
+Beside its color and its depth, every pixel has a whole number from 0 to 255, its stencil. Nothing shows it. Draws store numbers there, and other draws are drawn only where the number passes a test, which is how one thing is cut to the shape of another: a view through a porthole, a map inside a round frame, a mirror that shows its reflection only where the glass is, an outline around whatever is selected.
+
+`Draw.Stencil(test, value, operation)` says both things for the draws in its block: the test they pass to be drawn at a pixel, their `value` against the number stored there, and what becomes of the stored number where they are drawn. It usually takes two steps. Something stores a number where it is, then something else is drawn where that number is:
+
+```csharp
+view Porthole(Ship ship)
+{
+    // The glass stores 1 where it is. It's drawn clear: it's there for what it stores
+    Draw.Stencil(StencilTest.Always, 1, StencilOp.Replace)
+    {
+        Draw2D.Circle(ship.window, 3, Color.clear);
+    }
+    // The sea is drawn where the number is 1, and nowhere else
+    Draw.Stencil(StencilTest.Equal, 1)
+    {
+        DrawSea(ship);
+    }
+}
+```
+
+Move the lens below. The wall is drawn where the lens didn't store its number, and the pipes where it did:
+
+::: tide-example stencil A lens, cut out of a wall
+
+<<< @/examples/stencil.tide
+
+:::
+
+The test is between the draw's `value`, on the left, and the stored number:
+
+| Test | A pixel is drawn where |
+|---|---|
+| `StencilTest.Always` | Everywhere: no test, which is what every frame starts with |
+| `StencilTest.Never` | Nowhere |
+| `StencilTest.Equal` | The stored number is `value` |
+| `StencilTest.NotEqual` | It's any other |
+| `StencilTest.Less` | `value` is less than the stored number |
+| `StencilTest.LessEqual` | `value` is less than it, or the same |
+| `StencilTest.Greater` | `value` is greater than the stored number |
+| `StencilTest.GreaterEqual` | `value` is greater than it, or the same |
+
+The operation says what becomes of the stored number at each pixel the draw is drawn at. Without one it stays as it is, so `Draw.Stencil(test, value)` only tests:
+
+| Operation | The stored number becomes |
+|---|---|
+| `StencilOp.Keep` | What it was: the draw only tests |
+| `StencilOp.Replace` | `value` |
+| `StencilOp.Increment` | One more, 255 at the most |
+| `StencilOp.Decrement` | One less, 0 at the least |
+| `StencilOp.Zero` | 0 |
+| `StencilOp.Invert` | 255 less it: each of its 8 bits the other way |
+
+- **Every pixel's number is 0 when a frame starts,** in the window. A [render target](#targets-and-post-processing) keeps its numbers from frame to frame, as it keeps its colors, until it's cleared.
+- **A draw stores where it's drawn, whatever its color.** `Color.clear` stores and shows nothing, which is how to lay a mask down without painting anything. That's so under every [blend](#blending) but `Blend.Replace`, which puts the clear color there.
+- **Where it's drawn is every pixel it touches:** all of a rect, a circle out to its edge, a smooth shape to the pixels its edge only partly covers, text where its glyphs are (not the boxes around them), and all of a mesh's triangles, whatever its texture's alpha is there. For a mask the shape of a picture, draw it through a [frag](./shaders.md) that leaves out what's clear with `pixel.Discard()`: a pixel a frag discards stores nothing.
+- **It's cut along pixels.** A pixel is in a mask or it isn't, so what's drawn where a mask is has a stepped edge where the mask's shape is round, however smooth the shape itself would be drawn. Draw a rim over it with no test, as the example does, where that shows.
+- **A draw that fails the test changes nothing,** and neither does a 3D mesh where it's hidden behind what's nearer: the number changes only where the draw is drawn.
+- **It's for everything that draws:** shapes, text, meshes, 3D meshes and the [primitives](#primitives), with a frag or without. Draws in a row under the same stencil are still one draw.
+- **`Draw2D.Clear` and `Draw3D.Clear` set every number back to 0,** within the [clip](#clipping), whatever is set, and are tested against nothing. [`Draw.Blit`](#targets-and-post-processing) neither tests nor stores, whatever is set.
+- **A render target has its own numbers, and its own setting:** `target.Stencil(StencilTest.Equal, 1) { target.Rect(...); }`. `Draw.Stencil` is the window's, and doesn't reach what's drawn into a target; a target's doesn't reach the window.
+- **`value` is any `int`.** Under 0 it's 0, and over 255 it's 255. The test and the operation are values too: `Draw.Stencil(inside ? StencilTest.Equal : StencilTest.NotEqual, 1)`.
+- **A block's stencil replaces the one it found,** and puts it back when it ends. `Draw.SetStencil()` puts back none: every pixel passes, and nothing is stored.
+
+Counting is the other use. Each of these adds one where it's drawn, so afterwards a pixel's number is how many of them cover it, and a draw under `StencilTest.Less` with a `value` of 1 is drawn where more than one does:
+
+```csharp
+Draw.Stencil(StencilTest.Always, 0, StencilOp.Increment)
+{
+    foreach (var zone in zones.list) Draw2D.Circle(zone.center, zone.radius, Color.clear);
+}
+Draw.Stencil(StencilTest.Less, 1) // Where 1 is less than the count: two zones or more
+{
+    Draw2D.Rect(zones.middle, zones.size, Color(1, 0.2, 0.2, 0.5));
+}
+```
+
+What a GPU's stencil has beyond this isn't here: a setting for each side of a triangle, one for what happens where a mesh is hidden, and masks over the number's bits.
 
 ### Transforms
 

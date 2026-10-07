@@ -359,7 +359,8 @@ static tide_draw_place *place_of(tide_draw_list *d, const uint32_t target)
 static void refresh(tide_draw_list *d)
 {
     const tide_draw_place *p = &d->place;
-    d->unsettled = p->camera_2d != p->played_2d || p->camera_3d != p->played_3d || p->clip != p->played_clip;
+    d->unsettled = p->camera_2d != p->played_2d || p->camera_3d != p->played_3d || p->clip != p->played_clip
+                || p->stencil != p->played_stencil;
     d->altered = d->tinted || (p->moved & TIDE_DRAW_MOVED) != 0;
 }
 
@@ -372,8 +373,8 @@ static tide_draw_command *push_state(tide_draw_list *d, const tide_draw_kind kin
     return c;
 }
 
-// The commands that leave a renderer with the selected destination's cameras
-// and clip as its place has them.
+// The commands that leave a renderer with the selected destination's cameras,
+// clip and stencil as its place has them.
 static __attribute__((noinline)) void settle(tide_draw_list *d)
 {
     tide_draw_place *p = &d->place;
@@ -402,6 +403,10 @@ static __attribute__((noinline)) void settle(tide_draw_list *d)
     if (p->clip != p->played_clip) {
         push_state(d, p->clip ? TIDE_DRAW_CLIP : TIDE_DRAW_NO_CLIP)->clip = p->clip;
         p->played_clip = p->clip;
+    }
+    if (p->stencil != p->played_stencil) {
+        push_state(d, TIDE_DRAW_STENCIL)->stencil = p->stencil;
+        p->played_stencil = p->stencil;
     }
     d->unsettled = 0;
 }
@@ -463,6 +468,7 @@ void tide_draw_pop(tide_draw_list *d, const uint32_t mark)
             case TIDE_DRAW_SAVED_CLIP: p->clip = s->value; break;
             case TIDE_DRAW_SAVED_DEPTH: p->depth = s->value; break;
             case TIDE_DRAW_SAVED_CULL: p->cull = s->value; break;
+            case TIDE_DRAW_SAVED_STENCIL: p->stencil = s->value; break;
             case TIDE_DRAW_SAVED_CAMERA_2D: p->camera_2d = s->value; break;
             default: p->camera_3d = s->value; break;
             }
@@ -524,6 +530,28 @@ uint32_t tide_draw_push_cull(tide_draw_list *d, const tide_cull cull)
     const uint32_t mark = d->saved_count;
     save(d, TIDE_DRAW_SAVED_CULL)->value = d->place.cull;
     tide_draw_set_cull(d, cull);
+    return mark;
+}
+
+// What the selected destination's commands do with its stencil: its own, as the stencil is. It
+// reaches a renderer as cameras and clips do, in a command before the next one that draws.
+void tide_draw_set_stencil(tide_draw_list *d, const tide_stencil stencil)
+{
+    d->place.stencil = tide_stencil_packed(tide_stencil_stored(stencil.test, stencil.value, stencil.operation));
+    refresh(d);
+}
+
+void tide_draw_unset_stencil(tide_draw_list *d)
+{
+    d->place.stencil = 0;
+    refresh(d);
+}
+
+uint32_t tide_draw_push_stencil(tide_draw_list *d, const tide_stencil stencil)
+{
+    const uint32_t mark = d->saved_count;
+    save(d, TIDE_DRAW_SAVED_STENCIL)->value = d->place.stencil;
+    tide_draw_set_stencil(d, stencil);
     return mark;
 }
 
@@ -788,7 +816,7 @@ void tide_draw_defaults(tide_draw_list *d)
     d->tinted = 0;
     for (uint32_t i = 0; i <= d->target_count; i++) {
         tide_draw_place *p = i ? &d->targets[i - 1u].place : &d->place;
-        p->camera_2d = p->camera_3d = p->clip = p->moved = 0;
+        p->camera_2d = p->camera_3d = p->clip = p->moved = p->stencil = 0;
         p->depth = TIDE_DEPTH_READ_WRITE;
         p->cull = TIDE_CULL_BACK;
     }
@@ -1877,7 +1905,7 @@ static uint32_t append_clip(tide_draw_list *d, const tide_draw_list *from, const
     return d->remap[clip - 1u] = ++d->clip_count;
 }
 
-// What `from` had its destination's cameras and clip as, for `d`'s selected one.
+// What `from` had its destination's cameras, clip and stencil as, for `d`'s selected one.
 static void append_place(tide_draw_list *d, const tide_draw_list *from, const tide_draw_place *place)
 {
     tide_draw_place *p = &d->place;
@@ -1889,6 +1917,7 @@ static void append_place(tide_draw_list *d, const tide_draw_list *from, const ti
         p->camera_3d = 0;
     }
     p->clip = append_clip(d, from, place->clip);
+    p->stencil = place->stencil;
     refresh(d);
 }
 
@@ -1921,6 +1950,9 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
             }
         } else if (c->kind == TIDE_DRAW_CLIP || c->kind == TIDE_DRAW_NO_CLIP) {
             d->place.clip = c->kind == TIDE_DRAW_CLIP ? append_clip(d, from, c->clip) : 0;
+            refresh(d);
+        } else if (c->kind == TIDE_DRAW_STENCIL) {
+            d->place.stencil = tide_stencil_packed(tide_stencil_unpacked(c->stencil));
             refresh(d);
         } else if (c->kind == TIDE_DRAW_TEXT) {
             const uint32_t turned = c->words.turned;
@@ -1968,7 +2000,8 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
     const uint32_t ended = d->target;
     for (uint32_t i = 0; i <= from->target_count; i++) {
         const tide_draw_place *place = i == from->target ? &from->place : i ? &from->targets[i - 1u].place : &from->window;
-        if (place->camera_2d == place->played_2d && place->camera_3d == place->played_3d && place->clip == place->played_clip) {
+        if (place->camera_2d == place->played_2d && place->camera_3d == place->played_3d && place->clip == place->played_clip
+            && place->stencil == place->played_stencil) {
             continue;
         }
         const tide_draw_target_data *t = i ? &from->targets[i - 1u] : NULL;

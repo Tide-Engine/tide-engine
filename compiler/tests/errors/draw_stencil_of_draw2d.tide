@@ -1,0 +1,11 @@
+// expect: Draw2D has no function 'Stencil'
+// expect: it's Draw's, as 2D and 3D draws both take it: 'Draw.Stencil(...) { ... }' for the window's stencil, and a render target has its own, 'target.Stencil(...) { ... }'
+scene Main { }
+
+view Show()
+{
+    Draw2D.Stencil(StencilTest.Equal, 1)
+    {
+        Draw2D.Circle(float2(0, 0), 20, Color.white);
+    }
+}

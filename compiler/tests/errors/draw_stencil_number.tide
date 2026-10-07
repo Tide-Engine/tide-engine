@@ -1,0 +1,9 @@
+// expect: no version of Draw.SetStencil takes (int, int)
+// expect: Draw.SetStencil(StencilTest test, int value)
+// expect: Draw.SetStencil(StencilTest test, int value, StencilOp operation)
+scene Main { }
+
+view Show()
+{
+    Draw.SetStencil(3, 1);
+}
