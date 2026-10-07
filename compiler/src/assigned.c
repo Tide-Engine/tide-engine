@@ -134,8 +134,10 @@ static int field_slot(const flow *f, const expr *e)
     if (!e || e->kind != E_MEMBER || !e->field || e->swizzle_len > 0) return -1;
     const int v = var_of(f, e->object);
     const decl *of = v < 0 ? NULL : f->structs.items[v];
-    if (!of || e->field < of->fields.items || e->field >= of->fields.items + of->fields.count) return -1;
-    return f->firsts.items[v] + (int)(e->field - of->fields.items);
+    for (int i = 0; of && i < of->fields.count; i++) {
+        if (&of->fields.items[i] == e->field) return f->firsts.items[v] + i;
+    }
+    return -1;
 }
 
 // What an `out` argument or a plain assignment's target names: a whole
