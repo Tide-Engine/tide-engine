@@ -111,6 +111,12 @@ typedef void b3LogFcn( const char* message );
 ///	set during application startup.
 B3_API void b3SetAllocator( b3AllocFcn* allocFcn, b3FreeFcn* freeFcn );
 
+/// Tide: what of the state may have been written, said to whoever keeps the memory b3SetAllocator's allocator
+/// gives (see ../../../TIDE.md, Resident state): a range, or everything.
+typedef void b3TouchFcn( void* context, const void* mem, size_t size );
+typedef void b3TouchAllFcn( void* context );
+B3_API void b3SetTouchHooks( b3TouchFcn* touch, b3TouchAllFcn* touchAll, void* context );
+
 /// Total bytes allocated by Box3D
 B3_API int64_t b3GetByteCount( void );
 

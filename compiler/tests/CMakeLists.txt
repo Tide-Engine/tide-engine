@@ -135,6 +135,7 @@ tide_e2e_test(lists_held) # Lists in structs, and what stands in for lists insid
 tide_e2e_test(lists_big SOURCES e2e/lists_big.tide e2e/lists_big_c.c) # Lists in chunks, and C reading them
 tide_e2e_test(lists_resize) # Resize: a list sized in one call, a few elements or chunks of them
 tide_e2e_test(lists_out SOURCES e2e/lists_out.tide e2e/lists_out_c.c) # `out List<T>`: lists C makes
+tide_e2e_test(resident SOURCES e2e/resident.tide e2e/resident_c.c) # A match singleton's Resident field: a C library's state as the world's pages
 tide_e2e_test(out_params SOURCES e2e/out_params.tide e2e/out_params_c.c) # `out` parameters and arguments, as C#'s
 tide_e2e_test(grids SOURCES e2e/grids.tide e2e/grids_c.c) # Grids
 tide_e2e_test(parallel) # Parallel loops over grids and lists

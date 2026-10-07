@@ -16,7 +16,15 @@
 #include "tide/math.h"
 #include "tide/net.h"
 #include "tide/time.h"
+#include "tide/resident.h"
 #include "tide_test.h"
+
+// What the match holds of Box3D's state: the pages its resident keeps (tide/resident.h), in bytes
+static int physics_bytes(const tide_world *w)
+{
+    return w->Box3D_Physics.state.pages ? (int)w->Box3D_Physics.state.pages->count * TIDE_ARENA_PAGE : 0;
+}
+
 
 // bridge.c
 void b3t_forget(void);
@@ -301,8 +309,8 @@ TIDE_TEST(box3d_gravity_that_changes_wakes_the_world)
 
 // The match of sensors after its 330 ticks, on every platform and in every
 // configuration: what a sensor holds of its visitors is in Box3D's image.
-#define SENSORS_HASH UINT64_C(0x0878e66ee9aa94d4)
-#define SENSORS_IMAGES_HASH UINT64_C(0x397d6641bed325cf)
+#define SENSORS_HASH UINT64_C(0xe1e3b5e462d549fa)
+#define SENSORS_IMAGES_HASH UINT64_C(0x89649dd00e4d3a13)
 
 enum { SENSOR_TICKS = 330, LOOK = 150, SPRING = 250, RELEASE = 280 };
 
@@ -465,7 +473,7 @@ static const tide_entity nobody = {0};
 // ---------------------------------------------------------------------------
 // Shapes on entities of their own
 
-#define PARTS_HASH UINT64_C(0x05e9d5cf2c5c2346)
+#define PARTS_HASH UINT64_C(0xd0aca56ee29d1953)
 
 enum { PART_TICKS = 460, SAW = 200, CLEAR = 340 };
 
@@ -561,7 +569,7 @@ TIDE_TEST(box3d_parts_are_shapes_on_entities_of_their_own)
 // ---------------------------------------------------------------------------
 // A body's type, and how it's to be, written after it's made
 
-#define CHANGES_HASH UINT64_C(0x63034269a0ab3899)
+#define CHANGES_HASH UINT64_C(0xef6431fa71e0c0d7)
 
 enum { CHANGE_TICKS = 900 };
 
@@ -709,7 +717,7 @@ TIDE_TEST(box3d_a_bodys_type_and_settings_change)
 // ---------------------------------------------------------------------------
 // How the world is tuned, and what meets hard
 
-#define TUNING_HASH UINT64_C(0xa2211000e1ab815c)
+#define TUNING_HASH UINT64_C(0x8401e7ce7e0f03ac)
 
 enum { TUNE_TICKS = 150 };
 
@@ -885,7 +893,7 @@ TIDE_TEST(box3d_the_world_is_tuned_by_its_fields)
 // ---------------------------------------------------------------------------
 // What code asks of the world
 
-#define ASKING_HASH UINT64_C(0xf4d6c0f656558e3d)
+#define ASKING_HASH UINT64_C(0xbdba0584bbc1db3f)
 #define ANSWERS_HASH UINT64_C(0xdc5da4ff7c55ceb8)
 
 enum { ASK_TICKS = 260, DOOM = 120 };
@@ -1079,7 +1087,7 @@ TIDE_TEST(box3d_asking_costs)
     }
     printf("    a view that asks 13 questions of a world of %d bodies takes %.1f us, and %.1f when C's world is made from the image first "
            "(%d bytes)\n",
-           (int)a.Box3D_Physics.bodies, (double)there / 1e3, (double)made / 1e3, (int)a.Box3D_Physics.size);
+           (int)a.Box3D_Physics.bodies, (double)there / 1e3, (double)made / 1e3, physics_bytes(&a));
     tide_local_free(&local);
     tide_world_free(&a);
 }

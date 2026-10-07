@@ -24,6 +24,11 @@ typedef struct b3NameCache
 	void* map;
 } b3NameCache;
 
+// Tide: the map's bytes, for what a snapshot has to keep of it (the struct, then its buckets): see ../TIDE.md
+void b3NameCacheMapRange( const b3NameCache* cache, int which, const void** start, size_t* size );
+// Tide: an empty map points at this build's constants: made empty again in a world another build left
+void b3NameCacheRelink( b3NameCache* cache );
+
 b3NameCache b3CreateNameCache( void );
 void b3DestroyNameCache( b3NameCache* cache );
 

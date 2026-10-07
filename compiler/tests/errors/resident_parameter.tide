@@ -1,0 +1,2 @@
+// expect: C takes resident state by address: write 'in Resident' to read it, or 'mut Resident' to step it
+extern void Keep(Resident state);

@@ -208,6 +208,150 @@ static void b3DestroyWorkerContexts( b3World* world )
 	b3Array_Destroy( world->sensorTaskContexts );
 }
 
+
+// Tide: resident state (see ../TIDE.md). A world's struct is in b3_worlds, outside the arena its state lives
+// in, so a snapshot takes a copy of it (b3World_StructSave) and a restore puts it back (b3World_StructLoad).
+// What's in it that isn't state, the scratch (the stack, the workers' arenas, the mutex), which the system
+// allocates, and this build's callbacks, are set again after (b3World_Relink): the live scratch is mirrored
+// here after every step, so a restored struct gets the scratch this process has, whatever it had when the
+// snapshot was taken, and a build that takes a world over from another makes scratch of its own.
+typedef struct b3ScratchMirror
+{
+	bool valid;
+	int workers;
+	b3Stack stack;
+	b3Arena arenas[B3_MAX_WORKERS];
+	b3Mutex* mutex;
+} b3ScratchMirror;
+
+static b3ScratchMirror b3_scratch[B3_MAX_WORLDS];
+
+static void b3MirrorScratch( b3World* world )
+{
+	b3ScratchMirror* m = b3_scratch + world->worldId;
+	m->valid = true;
+	m->workers = world->taskContexts.count;
+	m->stack = world->stack;
+	for ( int i = 0; i < world->taskContexts.count; ++i )
+	{
+		m->arenas[i] = world->taskContexts.data[i].arena;
+	}
+	m->mutex = world->manifoldAllocatorMutex;
+}
+
+int b3World_StructSize( void )
+{
+	return (int)sizeof( b3World );
+}
+
+void b3World_StructSave( b3WorldId worldId, void* out )
+{
+	b3World* world = b3GetWorldFromId( worldId );
+	memcpy( out, world, sizeof( b3World ) );
+}
+
+b3WorldId b3World_StructLoad( int worldId, const void* in )
+{
+	B3_ASSERT( 0 <= worldId && worldId < B3_MAX_WORLDS );
+	b3World* world = b3_worlds + worldId;
+	if ( world->inUse == false )
+	{
+		int oldCount = b3AtomicFetchAddInt( &b3_worldCount, 1 );
+		b3_maxWorldCount = b3MaxInt( b3_maxWorldCount, oldCount + 1 );
+	}
+	memcpy( world, in, sizeof( b3World ) );
+	world->inUse = true;
+	world->locked = false;
+	return (b3WorldId){ (uint16_t)( worldId + 1 ), world->generation };
+}
+
+void b3World_Relink( b3WorldId worldId, b3EnqueueTaskCallback* enqueue, b3FinishTaskCallback* finish, void* context )
+{
+	b3World* world = b3GetWorldFromId( worldId );
+	b3InitializeContactRegisters();
+	b3ScratchMirror* m = b3_scratch + world->worldId;
+	int count = world->taskContexts.count;
+	if ( m->valid == false )
+	{
+		// Another build's scratch, or none: this one's own, with the room the state had come to need
+		world->stack = b3CreateStack( world->stack.capacity > 0 ? world->stack.capacity : 2048 );
+		for ( int i = 0; i < count; ++i )
+		{
+			int capacity = world->taskContexts.data[i].arena.capacity;
+			world->taskContexts.data[i].arena = b3CreateArena( capacity > 0 ? capacity : 128 * 1024 );
+		}
+		world->manifoldAllocatorMutex = b3CreateMutex();
+	}
+	else
+	{
+		world->stack = m->stack;
+		for ( int i = 0; i < count && i < m->workers; ++i )
+		{
+			world->taskContexts.data[i].arena = m->arenas[i];
+		}
+		for ( int i = m->workers; i < count; ++i ) // The restored state has more workers than the scratch
+		{
+			world->taskContexts.data[i].arena = b3CreateArena( 128 * 1024 );
+		}
+		for ( int i = count; i < m->workers; ++i ) // ...or fewer
+		{
+			b3DestroyArena( &m->arenas[i] );
+		}
+		world->manifoldAllocatorMutex = m->mutex;
+	}
+	world->stack.index = 0;
+	world->stack.allocation = 0;
+	world->stack.entryCount = 0;
+	b3MirrorScratch( world );
+	// This build's own
+	world->enqueueTaskFcn = enqueue;
+	world->finishTaskFcn = finish;
+	world->userTaskContext = context;
+	world->frictionCallback = b3DefaultFrictionCallback;
+	world->restitutionCallback = b3DefaultRestitutionCallback;
+	world->preSolveFcn = NULL;
+	world->preSolveContext = NULL;
+	world->customFilterFcn = NULL;
+	world->customFilterContext = NULL;
+	world->createDebugShape = NULL;
+	world->destroyDebugShape = NULL;
+	world->userDebugShapeContext = NULL;
+	world->userTreeTask = NULL;
+	world->scheduler = NULL;
+	world->recording = NULL;
+	world->userData = NULL;
+	world->simdWidth = b3GetSIMDWidth();
+	// An empty map points at the constants of the build that made it empty
+	b3HullMap* database = world->hullDatabase;
+	if ( database != NULL && database->buckets_mask == 0 )
+	{
+		b3HullMap_init( database );
+	}
+	b3NameCacheRelink( &world->names );
+}
+
+void b3World_HullMapRange( b3WorldId worldId, int which, const void** start, size_t* size )
+{
+	b3World* world = b3GetWorldFromId( worldId );
+	b3HullMap* database = world->hullDatabase;
+	*start = NULL;
+	*size = 0;
+	if ( database == NULL )
+	{
+		return;
+	}
+	if ( which == 0 )
+	{
+		*start = database;
+		*size = sizeof( b3HullMap );
+	}
+	else if ( database->buckets_mask != 0 )
+	{
+		*start = database->buckets;
+		*size = b3HullMapByteCount( database ) - sizeof( b3HullMap ); // The buckets' allocation, after the map's own bytes
+	}
+}
+
 b3WorldId b3CreateWorld( const b3WorldDef* def )
 {
 	B3_CHECK_DEF( def );
@@ -393,6 +537,7 @@ b3WorldId b3CreateWorld( const b3WorldDef* def )
 	}
 
 	b3CreateWorkerContexts( world );
+	b3MirrorScratch( world ); // Tide
 
 	world->debugBodySet = b3CreateBitSet( 256 );
 	world->debugJointSet = b3CreateBitSet( 256 );
@@ -433,6 +578,7 @@ void b3DestroyWorld( b3WorldId worldId )
 	b3DestroyBitSet( &world->debugIslandSet );
 
 	b3DestroyWorkerContexts( world );
+	b3_scratch[world->worldId].valid = false; // Tide
 
 	b3Array_Destroy( world->bodyMoveEvents );
 	b3Array_Destroy( world->sensorBeginEvents );
@@ -1176,6 +1322,7 @@ void b3World_Step( b3WorldId worldId, float timeStep, int subStepCount )
 
 	// Ensure stack is large enough
 	b3GrowStack( &world->stack );
+	b3MirrorScratch( world ); // Tide: the scratch as the step left it
 
 	// Make sure all tasks that were started were also finished
 	B3_ASSERT( world->activeTaskCount == 0 );
@@ -2294,6 +2441,7 @@ void b3World_SetWorkerCount( b3WorldId worldId, int count )
 	b3DestroyWorkerContexts( world );
 	world->workerCount = b3ClampInt( count, 1, B3_MAX_WORKERS );
 	b3CreateWorkerContexts( world );
+	b3MirrorScratch( world ); // Tide
 }
 
 int b3World_GetWorkerCount( b3WorldId worldId )

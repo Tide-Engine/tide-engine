@@ -1,0 +1,10 @@
+// expect: a match holds at most 8 Resident fields
+singleton A { Resident state; }
+singleton B { Resident state; }
+singleton C { Resident state; }
+singleton D { Resident state; }
+singleton E { Resident state; }
+singleton F { Resident state; }
+singleton G { Resident state; }
+singleton H { Resident state; }
+singleton I { Resident state; }

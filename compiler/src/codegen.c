@@ -1472,6 +1472,7 @@ static void gen_default(gen *g, sb *o, const type t)
     case TY_LIST: sb_put(o, "((tide_list){0})"); return;
     case TY_MAP:
     case TY_SET: sb_put(o, "((tide_map){0})"); return;
+    case TY_RESIDENT: sb_put(o, "((tide_resident){0})"); return;
     case TY_COMPONENT:
     case TY_SINGLETON:
     case TY_INPUT:
@@ -5926,6 +5927,30 @@ static void collect_tasks(gen *g)
 // compare memory directly. Every built-in type is 4-byte aligned with a size
 // that's a multiple of 4, except bool and byte; long is 8-byte aligned.
 
+// The match singletons' Resident fields (tide/resident.h), in the order their
+// canonical bytes go after the tables of local fields in a packed world.
+typedef struct resident_field {
+    const decl *singleton;
+    const field *f;
+} resident_field;
+
+static int resident_fields(const program *prog, resident_field *out, const int most)
+{
+    int n = 0;
+    for (int i = 0; i < prog->singletons.count; i++) {
+        const decl *d = prog->singletons.items[i];
+        if (d->is_local) continue;
+        for (int k = 0; k < d->fields.count; k++) {
+            if (d->fields.items[k].type.kind != TY_RESIDENT) continue;
+            if (n < most) out[n] = (resident_field){d, &d->fields.items[k]};
+            n++;
+        }
+    }
+    return n;
+}
+
+enum { RESIDENTS_MOST = MAX_RESIDENT_FIELDS };
+
 static layout type_layout(const type t)
 {
     if (t.kind == TY_BOOL || t.kind == TY_BYTE) return (layout){1, 1};
@@ -5937,6 +5962,7 @@ static layout type_layout(const type t)
     if (t.kind == TY_DEPTH_TEXTURE) return (layout){24, 8}; // tide_depth_ref: a target
     if (t.kind == TY_CUBEMAP) return (layout){32, 8};       // tide_cubemap_ref: a target, then a name
     if (t.kind == TY_CLIP) return (layout){8, 8};           // tide_clip_ref: a name
+    if (t.kind == TY_RESIDENT) return (layout){32, 8};      // tide_resident: its pages, then what the hash covers
     if (t.kind == TY_MAP || t.kind == TY_SET) return (layout){12, 4}; // tide_map: two lists and a count
     if (t.kind == TY_ARRAY) {
         const layout e = type_layout(t.decl->fields.items[0].type);
@@ -6210,6 +6236,7 @@ static void gen_header(gen *g)
               "#include \"tide/grid.h\"\n#include \"tide/gui.h\"\n#include \"tide/math.h\"\n#include \"tide/list.h\"\n#include \"tide/map.h\"\n#include \"tide/mesh.h\"\n#include \"tide/player.h\"\n#include \"tide/session.h\"\n"
               "#include \"tide/jobs.h\"\n#include \"tide/table.h\"\n#include \"tide/attached.h\"\n#include \"tide/text.h\"\n#include \"tide/debug.h\"\n#include \"tide/io.h\"\n");
     if (prog->decodes) sb_put(o, "#include \"tide/png.h\"\n"); // grid.Decode: only in a game that calls it
+    if (prog->uses_resident) sb_put(o, "#include \"tide/resident.h\"\n"); // A Resident field: only in a game that has one
     sb_put(o, "\n");
     if (prog->random->named) sb_put(o, "#include \"tide/random.h\"\n\n"); // Random, in the games that have one
     sb_put(o, "// How many players the game's matches take: its maxPlayers setting. The world keeps\n");
@@ -6465,6 +6492,7 @@ static void gen_header(gen *g)
     gen_task_tables(g, true);
     if (world_has_tasks(g, true)) sb_put(o, "    int32_t tide_frames;       // Frames so far, which local tasks count\n");
     sb_put(o, "    float tide_frame_seconds;  // This frame's length (tide_local_frame_time): Frame.dt, which local tasks count down\n");
+    if (prog->uses_resident) sb_put(o, "    tide_residents tide_residents; // The arenas of resident state (tide/resident.h), which the host keeps across reloads\n");
     if (world_heap(prog, true)) sb_put(o, "    tide_heap heap;\n");
     sb_put(o, "    tide_session_request tide_request; // What local code asked of the session: Session.Start and the like\n");
     sb_put(o, "    tide_start tide_request_start;\n");
@@ -14155,6 +14183,7 @@ static void gen_api(gen *g)
     }
 
     sb_put(o, "void tide_local_init(tide_local *local)\n{\n    tide_local_free(local);\n");
+    if (prog->uses_resident) sb_put(o, "    tide_residents_adopt(&local->tide_residents);\n");
     if (prog->assets.count) sb_put(o, "    tide_pack_use();\n");
     if (world_heap(prog, true)) sb_put(o, "    tide_text_use(NULL, &local->heap);\n");
     for (int i = 0; i < prog->singletons.count; i++) {
@@ -14539,6 +14568,11 @@ static void gen_world_bytes(gen *g, const bool local)
     const char *world = world_type(local);
     const char *prefix = local ? "tide_local_" : "tide_world_";
     sb_printf(o, "void %sfree(%s *w)\n{\n    tide_entities_free(&w->entities);\n", prefix, world);
+    resident_field residents[RESIDENTS_MOST];
+    const int resident_count = local ? 0 : resident_fields(prog, residents, RESIDENTS_MOST);
+    for (int i = 0; i < resident_count; i++) {
+        sb_printf(o, "    tide_resident_free(&w->%s.%s);\n", type_cname(residents[i].singleton), field_cname(residents[i].f));
+    }
     if (local && program_corrects(prog)) sb_put(o, "    tide_corrections_reset(w);\n");
     if (local && prog->command_types.count) sb_put(o, "    tide_local_clear_outgoing(w);\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
@@ -14566,6 +14600,7 @@ static void gen_world_bytes(gen *g, const bool local)
     if (world_heap(prog, local)) sb_put(o, "    tide_heap_free(&w->heap);\n");
     if (local && program_hears(prog)) sb_put(o, "    tide_event_log_free(&w->tide_heard);\n");
     if (local) sb_put(o, "    const tide_io *io = w->tide_io;\n");
+    if (local && prog->uses_resident) sb_put(o, "    tide_residents_release(&w->tide_residents);\n");
     sb_put(o, "    memset(w, 0, sizeof *w);\n");
     if (local) sb_put(o, "    w->tide_io = io;\n");
     sb_put(o, "}\n\n");
@@ -14584,6 +14619,9 @@ static void gen_world_bytes(gen *g, const bool local)
     for (int i = 0; i < fields.count; i++) {
         sb_printf(o, "    size += tide_attached_packed_size(&w->%s, %s);\n", fields_table(fields.items[i]), fields_columns(fields.items[i]));
     }
+    for (int i = 0; i < resident_count; i++) {
+        sb_printf(o, "    size += tide_resident_packed_size(&w->%s.%s);\n", type_cname(residents[i].singleton), field_cname(residents[i].f));
+    }
     if (world_heap(prog, local)) sb_put(o, "    size += tide_heap_packed_size(&w->heap);\n");
     if (local && prog->command_types.count) { // The commands waiting: each its channel, size and bytes
         sb_put(o, "    size += tide_varint_bytes(w->tide_outgoing_count);\n"
@@ -14598,6 +14636,9 @@ static void gen_world_bytes(gen *g, const bool local)
     // What the match sent is a frame's: none of it is the local state's to keep
     if (local && program_hears(prog)) sb_put(o, "    memset(&header.tide_heard, 0, sizeof header.tide_heard);\n");
     sb_put(o, "    memset(&header.entities, 0, sizeof header.entities);\n");
+    for (int i = 0; i < resident_count; i++) { // Its pages are this machine's; its kind, stamp and digest go with the struct
+        sb_printf(o, "    header.%s.%s.pages = NULL;\n", type_cname(residents[i].singleton), field_cname(residents[i].f));
+    }
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a) == local) sb_printf(o, "    memset(&header.%s, 0, sizeof header.%s);\n", arch_name(g, a), arch_name(g, a));
     }
@@ -14642,6 +14683,9 @@ static void gen_world_bytes(gen *g, const bool local)
     }
     for (int i = 0; i < fields.count; i++) {
         sb_printf(o, "    tide_attached_pack(&w->%s, %s, &bytes);\n", fields_table(fields.items[i]), fields_columns(fields.items[i]));
+    }
+    for (int i = 0; i < resident_count; i++) {
+        sb_printf(o, "    tide_resident_pack(&w->%s.%s, &bytes);\n", type_cname(residents[i].singleton), field_cname(residents[i].f));
     }
     if (world_heap(prog, local)) sb_put(o, "    tide_heap_pack(&w->heap, &bytes);\n");
     sb_put(o, "    return bytes.size;\n}\n\n");
@@ -14694,6 +14738,9 @@ static void gen_world_bytes(gen *g, const bool local)
     for (int i = 0; i < fields.count; i++) {
         sb_printf(o, "    memset(&w->%s, 0, sizeof w->%s);\n", fields_table(fields.items[i]), fields_table(fields.items[i]));
     }
+    for (int i = 0; i < resident_count; i++) {
+        sb_printf(o, "    w->%s.%s.pages = NULL;\n", type_cname(residents[i].singleton), field_cname(residents[i].f));
+    }
     if (world_heap(prog, local)) sb_put(o, "    memset(&w->heap, 0, sizeof w->heap);\n");
     sb_put(o, "    tide_reader bytes = {data, size, sizeof *w, false};\n");
     if (local && prog->command_types.count) { // The commands waiting, each checked as the session would
@@ -14731,6 +14778,9 @@ static void gen_world_bytes(gen *g, const bool local)
     for (int i = 0; i < fields.count; i++) {
         sb_printf(o, "    ok = ok && tide_attached_unpack(&w->%s, %s, &bytes);\n", fields_table(fields.items[i]), fields_columns(fields.items[i]));
     }
+    for (int i = 0; i < resident_count; i++) {
+        sb_printf(o, "    ok = ok && tide_resident_unpack(&w->%s.%s, &bytes);\n", type_cname(residents[i].singleton), field_cname(residents[i].f));
+    }
     if (world_heap(prog, local)) sb_put(o, "    ok = ok && tide_heap_unpack(&w->heap, &bytes);\n");
     sb_put(o, "    ok = ok && bytes.at == size;\n");
     sb_printf(o, "    ok = ok && %splaced(w);\n", prefix);
@@ -14760,6 +14810,11 @@ static void gen_world_delta(gen *g)
     for (int i = 0; i < tasks.count; i++) {
         sb_printf(o, "    memset(&w->tide_tasks_%s, 0, sizeof w->tide_tasks_%s);\n", tasks.items[i], tasks.items[i]);
     }
+    resident_field residents[RESIDENTS_MOST];
+    const int resident_count = resident_fields(prog, residents, RESIDENTS_MOST);
+    for (int i = 0; i < resident_count; i++) {
+        sb_printf(o, "    w->%s.%s.pages = NULL;\n", type_cname(residents[i].singleton), field_cname(residents[i].f));
+    }
     if (prog->uses_heap) sb_put(o, "    memset(&w->heap, 0, sizeof w->heap);\n");
     sb_put(o, "}\n\n");
     sb_put(o, "static void tide_world_header(tide_world *header, const tide_world *w)\n{\n");
@@ -14786,6 +14841,9 @@ static void gen_world_delta(gen *g)
         sb_printf(o, "    tide_table_pack_delta(&w->tide_tasks_%s, base ? &base->tide_tasks_%s : NULL, &tide_columns_tasks_%s, &d);\n",
                   id, id, id);
     }
+    for (int i = 0; i < resident_count; i++) { // Whole, as the queue goes: never against a base
+        sb_printf(o, "    tide_resident_pack(&w->%s.%s, &d.bytes);\n", type_cname(residents[i].singleton), field_cname(residents[i].f));
+    }
     if (prog->uses_heap) sb_put(o, "    tide_heap_pack_delta(&w->heap, base ? &base->heap : NULL, &d);\n");
     sb_put(o, "    return tide_delta_end(&d, size);\n}\n\n");
 
@@ -14808,6 +14866,9 @@ static void gen_world_delta(gen *g)
         const char *id = tasks.items[i];
         sb_printf(o, "    ok = ok && tide_table_unpack_delta(&w->tide_tasks_%s, base ? &base->tide_tasks_%s : NULL, &tide_columns_tasks_%s, &d);\n",
                   id, id, id);
+    }
+    for (int i = 0; i < resident_count; i++) {
+        sb_printf(o, "    ok = ok && tide_resident_unpack(&w->%s.%s, &d.bytes);\n", type_cname(residents[i].singleton), field_cname(residents[i].f));
     }
     if (prog->uses_heap) sb_put(o, "    ok = ok && tide_heap_unpack_delta(&w->heap, base ? &base->heap : NULL, &d);\n");
     sb_put(o, "    ok = ok && d.bytes.at == size && tide_world_placed(w) && tide_world_hash(w) == hash;\n");
@@ -14848,6 +14909,12 @@ static void gen_world_copy(gen *g)
     const program *prog = g->prog;
     sb *o = &g->c;
     sb_put(o, "void tide_world_copy(tide_world *restrict to, const tide_world *restrict from)\n{\n");
+    resident_field residents[RESIDENTS_MOST];
+    const int resident_count = resident_fields(prog, residents, RESIDENTS_MOST);
+    for (int i = 0; i < resident_count; i++) { // Before the singletons are assigned over: it lets go of what `to` held
+        sb_printf(o, "    tide_resident_copy(&to->%s.%s, &from->%s.%s);\n", type_cname(residents[i].singleton), field_cname(residents[i].f),
+                  type_cname(residents[i].singleton), field_cname(residents[i].f));
+    }
     for (int i = 0; i < prog->singletons.count; i++) {
         if (prog->singletons.items[i]->is_local) continue;
         const char *name = type_cname(prog->singletons.items[i]);
@@ -14873,9 +14940,23 @@ static void gen_world_copy(gen *g)
 
     sb_put(o, "uint64_t tide_world_hash(const tide_world *w)\n{\n    uint64_t h = TIDE_HASH_START;\n");
     for (int i = 0; i < prog->singletons.count; i++) {
-        if (prog->singletons.items[i]->is_local) continue;
-        const char *name = type_cname(prog->singletons.items[i]);
-        sb_printf(o, "    h = tide_hash_more(h, &w->%s, sizeof w->%s);\n", name, name);
+        const decl *d = prog->singletons.items[i];
+        if (d->is_local) continue;
+        const char *name = type_cname(d);
+        const field *resident = NULL;
+        for (int k = 0; k < d->fields.count; k++) {
+            if (d->fields.items[k].type.kind == TY_RESIDENT) resident = &d->fields.items[k];
+        }
+        if (!resident) {
+            sb_printf(o, "    h = tide_hash_more(h, &w->%s, sizeof w->%s);\n", name, name);
+            continue;
+        }
+        // Around its resident, whose pages are this machine's: the stamp and digest alone
+        sb_printf(o, "    h = tide_hash_more(h, &w->%s, offsetof(%s, %s));\n", name, name, field_cname(resident));
+        sb_printf(o, "    h = tide_resident_hash(h, &w->%s.%s);\n", name, field_cname(resident));
+        sb_printf(o, "    h = tide_hash_more(h, (const uint8_t *)&w->%s + offsetof(%s, %s) + sizeof(tide_resident),\n"
+                     "                       sizeof w->%s - offsetof(%s, %s) - sizeof(tide_resident));\n",
+                  name, name, field_cname(resident), name, name, field_cname(resident));
     }
     sb_put(o, "    h = tide_entities_hash(h, &w->entities);\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
@@ -15355,6 +15436,7 @@ static void gen_rebind_resources(gen *g)
     const program *prog = g->prog;
     sb *o = &g->c;
     sb_put(o, "void tide_local_rebind_resources(tide_local *l, const bool same_memory)\n{\n    (void)l;\n    (void)same_memory;\n");
+    if (prog->uses_resident) sb_put(o, "    tide_residents_adopt(&l->tide_residents); // The arenas the last build left, at their addresses\n");
     gen_reset_io_tables(g, "l", "    ", true);
     for (int i = 0; i < prog->singletons.count; i++) {
         const decl *d = prog->singletons.items[i];
@@ -15825,6 +15907,17 @@ static void gen_layout_world(gen *g, const layout_decls *types, const bool local
     }
     if (attached) sb_put(o, "};\n\n");
 
+    {
+        resident_field residents[RESIDENTS_MOST];
+        const int count = local ? 0 : resident_fields(prog, residents, RESIDENTS_MOST);
+        if (count) {
+            sb_put(o, "static const char *const tide_layout_match_residents[] = {\n");
+            for (int i = 0; i < count; i++) {
+                sb_printf(o, "    \"" STR_FMT "." STR_FMT "\",\n", STR_ARG(residents[i].singleton->qualified), STR_ARG(residents[i].f->name));
+            }
+            sb_put(o, "};\n\n");
+        }
+    }
     sb_printf(o, "#define TIDE_LAYOUT_%s {sizeof(%s), %d, ", local ? "LOCAL" : "MATCH", world, singletons);
     if (singletons) sb_printf(o, "tide_layout_%s_singletons, ", side);
     else sb_put(o, "NULL, ");
@@ -15844,7 +15937,11 @@ static void gen_layout_world(gen *g, const layout_decls *types, const bool local
     } else {
         sb_put(o, "0, NULL, 0, 0, ");
     }
-    if (attached) sb_printf(o, "%d, tide_layout_local_attached}\n\n", attached);
+    if (attached) sb_printf(o, "%d, tide_layout_local_attached, ", attached);
+    else sb_put(o, "0, NULL, ");
+    resident_field residents[RESIDENTS_MOST];
+    const int resident_count = local ? 0 : resident_fields(prog, residents, RESIDENTS_MOST);
+    if (resident_count) sb_printf(o, "%d, tide_layout_match_residents}\n\n", resident_count);
     else sb_put(o, "0, NULL}\n\n");
 }
 
