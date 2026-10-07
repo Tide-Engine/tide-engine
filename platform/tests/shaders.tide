@@ -806,6 +806,9 @@ struct Rest
     float4 edges;
     float2 wrong;     // Bounds the wrong way around
     int2 wrongInts;
+    float4 perlins;   // Noise in each size, with a seed and without
+    float4 simplexes;
+    float4 cells;
 }
 
 local singleton Probe
@@ -1019,6 +1022,13 @@ Rest RestOf(Given given)
     // Clamp with its bounds the wrong way around gives the lower one
     rest.wrong = float2(Math.Clamp(5.0, 3, 1), Math.Clamp(given.wide, two, 1));
     rest.wrongInts = int2(Math.Clamp(5, 3, 1), Math.Clamp(given.one, 7, given.one));
+
+    // Noise, at points well away from the cells' edges, where a GPU's rounding could put a point in the next cell
+    float2 n2 = p2 * 0.37 + 0.11;
+    float3 n3 = q3 * 0.83 + 0.37;
+    rest.perlins = float4(Math.Perlin(n2), Math.Perlin(n2, given.one), Math.Perlin(n3), Math.Perlin(n3, given.big));
+    rest.simplexes = float4(Math.Simplex(n2), Math.Simplex(n2, given.one), Math.Simplex(n3), Math.Simplex(n3, given.big));
+    rest.cells = float4(Math.Cellular(n2), Math.Cellular(n3, given.one));
     return rest;
 }
 
@@ -1029,6 +1039,7 @@ bool SameRest(Rest a, Rest b)
     same = same && Close4(a.saturated, b.saturated) && Close2(a.capped, b.capped) && Close4(a.bad, b.bad) && Close4(a.bad2, b.bad2) && Close3(a.badVector, b.badVector);
     same = same && Close4(a.none, b.none) && Close4(a.turnedPowers, b.turnedPowers) && Close4(a.corners, b.corners);
     same = same && Close4(a.edges, b.edges) && Close2(a.wrong, b.wrong);
+    same = same && Close4(a.perlins, b.perlins) && Close4(a.simplexes, b.simplexes) && Close4(a.cells, b.cells);
     return same && a.wrongInts.x == b.wrongInts.x && a.wrongInts.y == b.wrongInts.y;
 }
 

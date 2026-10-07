@@ -95,6 +95,34 @@ Put a seed in the value to get other numbers for the same cell: `Math.Hash(int3(
 
 It gives the same numbers in a [frag or vert](../game/shaders.md#math), so a pattern drawn from it is the same on every GPU. Only a `long`'s hash stays on the CPU.
 
+## Noise
+
+Noise is random that's smooth: a number for every point, with nearby points nearby. It's what terrain, clouds, water and wear are made of. Each function takes a `float2` or a `float3` and a seed, which a call can leave out (it's 0 then), and keeps no state, so it works anywhere a hash does: in a system, a parallel loop or a frag.
+
+| Function | Gives | What it's like |
+|---|---|---|
+| `Math.Perlin(point[, seed])` | A float from -1 to 1 | Gradient noise: smooth hills, 0 at every whole number, so the features are about a unit across |
+| `Math.Simplex(point[, seed])` | A float from about -1 to 1 | The same kind of hills with no grid showing through, cheaper in 3D |
+| `Math.Cellular(point[, seed])` | A `float2`: the distances to the nearest feature point and the next, from 0 to about 1.4 | Cells, like a dry lake bed or a cobbled road: there's a feature point in every unit cell, `.x` is 0 on one, and `.y - .x` is 0 on the borders between cells |
+
+The point's scale sets the features' size: `Math.Perlin(position * 0.1)` has hills about ten units across. Octaves add detail: each twice as fine and half as strong, summed.
+
+```csharp
+// Terrain: three octaves of Perlin noise, from -1 to 1, the same on every machine
+float Height(float2 at, int seed)
+{
+    return Math.Perlin(at * 0.05, seed) * 0.57 + Math.Perlin(at * 0.1, seed + 1) * 0.29 + Math.Perlin(at * 0.2, seed + 2) * 0.14;
+}
+```
+
+Every one of them is built from the basic operations and `Math.Hash`, so a point gives the same bits on every machine: noise can be in the match, and a cell of terrain is the same for every player. Another seed is another field of noise, so [`Time.seed`](#the-match-s-seed) gives each match its own world. They go to the GPU too (next), with the same cells, so a frag that shades a tile by its noise shades it as the match computed it.
+
+::: tide-example noise Noise, drawn by the GPU
+
+<<< @/examples/noise.tide
+
+:::
+
 ## Random numbers
 
 `Math.Hash` keeps no state. A `Random` does: it's a random number generator whose state is 8 bytes of data, which live wherever the game puts them. Each `Next` call gives a number and steps the state.
@@ -244,6 +272,7 @@ Everywhere else, results match Unity.Mathematics. The transcendental functions (
 Everything on this page works in a [frag or vert](../game/shaders.md#math) too, unless it makes no sense there: the types, what builds them, and every `Math` function, quaternions and matrix inverses included. The same function runs in a system and in a frag, and gives the same answer up to how the GPU rounds.
 
 - `Math.Hash` is integers, so the GPU's number is exactly the CPU's.
+- `Math.Perlin`, `Simplex` and `Cellular` take their cells and gradients from `Math.Hash`, so a frag draws the cells the match computed, and their floats come out as the GPU rounds, like any.
 - Floats follow the same formulas with the GPU's own rounding, which differs from one GPU to the next, most for big numbers. They're only ever drawn: nothing a GPU works out reaches the match.
 - It's forgiving in the same ways: `Normalize`, `Min`, `Max`, `Clamp` and `Saturate` do there what [Forgiving with bad values](#forgiving-with-bad-values) says.
 - `Math.Hash` of a `long` is the one function that isn't there, as a GPU's ints are 32 bits. `Math.Hash(int2(int(x), int(x >> 32)))` is the same number as `Math.Hash(x)`: split the long on the CPU, and hash its halves in the frag.

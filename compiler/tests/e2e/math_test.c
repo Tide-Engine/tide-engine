@@ -120,3 +120,20 @@ TIDE_TEST(math_hash)
     TIDE_CHECK(r.hashed4 == tide_hash_i4(tide_i4(1, 2, 3, 4)));
     TIDE_CHECK(r.hashed2 != r.hashed3);
 }
+
+// Noise is noise.c's, bit for bit, with 0 for a seed the call leaves out
+TIDE_TEST(math_noise)
+{
+    const Results r = results();
+    TIDE_REQUIRE(tide_has_Results(&world, THING));
+    const tide_float2 at = tide_f2(1.0f * 0.37f + 0.11f, 2.0f * 0.37f + 0.11f);
+    const tide_float3 deep = tide_f3(1.0f * 0.83f, 2.0f * 0.83f, 3.0f * 0.83f);
+    TIDE_CHECK(r.perlins.x == tide_perlin_f2(at, 0) && r.perlins.y == tide_perlin_f2(at, 7));
+    TIDE_CHECK(r.perlins.z == tide_perlin_f3(deep, 0) && r.perlins.w == tide_perlin_f3(deep, -3));
+    TIDE_CHECK(r.simplexes.x == tide_simplex_f2(at, 0) && r.simplexes.y == tide_simplex_f2(at, 7));
+    TIDE_CHECK(r.simplexes.z == tide_simplex_f3(deep, 0) && r.simplexes.w == tide_simplex_f3(deep, -3));
+    const tide_float2 c2 = tide_cellular_f2(at, 0);
+    const tide_float2 c3 = tide_cellular_f3(deep, 7);
+    TIDE_CHECK(r.cells.x == c2.x && r.cells.y == c2.y && r.cells.z == c3.x && r.cells.w == c3.y);
+    TIDE_CHECK(r.perlins.x != r.perlins.y && r.perlins.x != 0.0f && r.simplexes.z != r.simplexes.w);
+}
