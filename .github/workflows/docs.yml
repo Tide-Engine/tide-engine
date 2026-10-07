@@ -20,8 +20,8 @@ concurrency:
 jobs:
   build:
     name: Build
-    # The owner's machine, for now: see build.yml.
-    runs-on: tide-linux
+    # The owner's home server, for now: see build.yml.
+    runs-on: tide-linux-home
     env:
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CCACHE_DIR: ${{ github.workspace }}/build/ccache
