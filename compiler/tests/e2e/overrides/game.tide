@@ -178,7 +178,7 @@ virtual vert Wave(mut Corner vertex)
     vertex.position.x += 0.75;
 }
 
-virtual frag Shade(Corner vertex, mut Color color)
+virtual frag Shade(Corner vertex, out Color color)
 {
     color = Color(vertex.color.r * 0.875, vertex.color.g, vertex.color.b, vertex.color.a);
 }

@@ -7,7 +7,7 @@ local singleton Models
     Grid2<Color> wood = Grid2(4, 4);
 }
 
-frag Shade(Vertex vertex, mut Color color, Models models)
+frag Shade(Vertex vertex, out Color color, Models models)
 {
     color = models.wood.Sample(vertex.uv, wrap: Wrap.Repeat);
 }

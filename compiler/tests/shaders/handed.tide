@@ -1,0 +1,109 @@
+// What tidec writes for a vert that hands its frag a struct, an `out`
+// parameter of the vert's: the vert's function takes it as it takes its
+// vertex (inout, or a pointer in WGSL), and the fields the frag reads go from
+// the mesh's corners to its pixels, blended, one value each. A field no frag
+// reads isn't carried, nor a struct the draw's frag doesn't take. A frag takes
+// what its vert wrote beside an instance's struct, which the draw's list
+// supplies, and they're told apart by their types.
+
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+}
+
+struct FromLamp
+{
+    float3 place;
+    float glow;
+    Color tint;
+}
+
+struct Fog
+{
+    float depth;
+    float2 drift;
+}
+
+struct Flake
+{
+    float2 position;
+}
+
+struct Crate
+{
+    float4x4 transform;
+    Color paint = Color.white;
+}
+
+singleton Sun
+{
+    float3 at = float3(0, 4, 0);
+    float3 direction = float3(0, -1, 0);
+}
+
+local singleton Models
+{
+    List<Corner> crate;
+    List<int> faces;
+    List<Crate> crates;
+    List<Flake> flakes;
+}
+
+// A function the vert passes what it writes on to: `out` there too
+void Light(float3 from, float3 normal, out float glow)
+{
+    glow = Math.Max(Math.Dot(normal, Math.Normalize(-from)), 0);
+}
+
+float Haze(Fog fog)
+{
+    return Math.Saturate(fog.depth * 0.1 + fog.drift.x);
+}
+
+vert Place(mut Corner corner, out FromLamp lamp, out Fog fog, Sun sun)
+{
+    corner.position.y += 0.1;
+    lamp.place = corner.position - sun.at;
+    Light(lamp.place, corner.normal, out lamp.glow);
+    lamp.tint = Color(1, 0.9, 0.8);
+    fog = Fog { depth = corner.position.z, drift = corner.uv };
+}
+
+// Reads some of FromLamp, and none of Fog
+frag Look(Corner corner, FromLamp lamp, out Color color, Pixel pixel)
+{
+    if (lamp.glow <= 0) pixel.Discard();
+    color = lamp.tint * lamp.glow;
+    color.a = corner.uv.x;
+}
+
+// Reads both, one of them whole, and an instance's struct beside them
+frag Misty(Corner corner, out Color color, Fog fog, Crate crate, FromLamp lamp)
+{
+    color = crate.paint * (1 - Haze(fog)) * Math.Length(lamp.place);
+}
+
+// A 2D mesh's vert hands on the same way
+vert Fall(mut Flake flake, out Fog fog, Time time)
+{
+    flake.position.y -= time.t;
+    fog.depth = flake.position.y;
+    fog.drift = flake.position;
+}
+
+frag Snow(Flake flake, Fog fog, out Color color)
+{
+    color = Color(1, 1, 1, Math.Saturate(fog.depth));
+}
+
+view Show(Models models)
+{
+    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Place, Look);
+    Draw3D.Instanced(models.crate, models.faces, models.crates, Place, Misty);
+    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Place); // What it writes goes nowhere
+    Draw2D.Mesh(models.flakes, models.faces, Fall, Snow);
+}

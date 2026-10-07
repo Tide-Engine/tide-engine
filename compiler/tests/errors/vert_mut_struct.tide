@@ -1,0 +1,5 @@
+// expect: a vert changes its vertex, its first parameter; what it writes for its frag is 'out': 'out FromLamp lamp'
+scene Main { }
+struct Corner { float2 position; }
+struct FromLamp { float glow; }
+vert Wave(mut Corner corner, mut FromLamp lamp) { lamp.glow = corner.position.x; }

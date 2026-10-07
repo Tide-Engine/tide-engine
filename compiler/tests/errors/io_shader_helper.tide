@@ -1,7 +1,7 @@
 // expect: file and directory access belongs to local CPU code
 scene Main { }
 bool Present() { return File.Exists("save"); }
-frag Shade(Vertex vertex, mut Color color)
+frag Shade(Vertex vertex, out Color color)
 {
     color = Present() ? vertex.color : Color.black;
 }

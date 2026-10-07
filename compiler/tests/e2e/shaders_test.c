@@ -174,7 +174,22 @@ TIDE_TEST(shaders_a_frag_or_a_vert_alone_and_neither)
     const tide_draw_run *made = run(9);
     TIDE_REQUIRE(made && made->shader == flat->shader && made->mesh != flat->mesh);
     TIDE_CHECK(((const Corner *)draw.meshes[made->mesh - 1u].bytes)[1].position.x == 2.0f);
-    TIDE_CHECK(run(10) == NULL);
+
+    // A vert that writes a struct for its frag: the draw sends what the two read of the game's, and nothing
+    // for the struct, whose fields the frag reads go from the mesh's corners to its pixels
+    const tide_draw_run *handed = run(10);
+    TIDE_REQUIRE(handed && handed->shader);
+    const tide_shader *h = handed->shader;
+    TIDE_CHECK(strcmp(h->name, "Fan and Take on Corner") == 0 && handed->mesh == flat->mesh);
+    TIDE_CHECK(h->instance_floats == 0 && h->instance_ints == 0 && h->uniform_floats == 1 && h->uniform_ints == 0);
+    TIDE_CHECK(uniform_float(handed, 0) == 0.25f); // Models.fade, which the vert reads
+    TIDE_CHECK(strstr(h->glsl_vertex, "out float tide_h0_0;") && strstr(h->glsl_fragment, "in float tide_h0_0;"));
+    TIDE_CHECK(strstr(h->glsl_vertex, "out vec4 tide_h0_2;") && strstr(h->glsl_fragment, "in vec4 tide_h0_2;"));
+    TIDE_CHECK(!strstr(h->glsl_vertex, "tide_h0_1") && !strstr(h->glsl_fragment, "tide_h0_1")); // No frag reads it
+#ifdef __wasm__ // A shader has its WGSL on the web
+    TIDE_CHECK(strstr(h->wgsl, "tide_h0_0: f32") && strstr(h->wgsl, "tide_h0_2: vec4f") && !strstr(h->wgsl, "tide_h0_1"));
+#endif
+    TIDE_CHECK(run(11) == NULL);
 
     // The next frame draws the same meshes and textures: nothing is copied again
     const uint32_t meshes = draw.mesh_count, textures = draw.texture_count;

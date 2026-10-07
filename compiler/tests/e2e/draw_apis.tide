@@ -17,8 +17,8 @@ local singleton Probe
 struct Corner2 { float2 position; }
 struct Corner3 { float3 position; }
 
-frag Shade2(Corner2 vertex, mut Color color) { color = Color(vertex.position.x, 0, 0); }
-frag Shade3(Corner3 vertex, mut Color color) { color = Color(vertex.position.x, 0, 0); }
+frag Shade2(Corner2 vertex, out Color color) { color = Color(vertex.position.x, 0, 0); }
+frag Shade3(Corner3 vertex, out Color color) { color = Color(vertex.position.x, 0, 0); }
 
 scene Main { }
 

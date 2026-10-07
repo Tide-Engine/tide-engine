@@ -2133,20 +2133,48 @@ static bool vertex_is_3d(const decl *vertex)
     return false;
 }
 
+// Whether a struct is one a vert of the game writes for its frag, `out
+// FromLamp lamp`: a frag's parameter of that type is what the vert it's drawn
+// with hands it, and one of any other type an instance's.
+static bool vert_writes(const decl *type)
+{
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        for (int k = 1; is_shader(d) && !d->is_frag && k < d->params.count; k++) {
+            const param *p = &d->params.items[k];
+            if (p->is_out && p->type.kind == TY_STRUCT && p->type.decl == type) return true;
+        }
+    }
+    return false;
+}
+
+// A frag's struct that the vert it's drawn with writes for it.
+static bool handed_param(const decl *d, const param *p)
+{
+    return d->is_frag && p->type.kind == TY_STRUCT && !p->is_out && vert_writes(p->type.decl);
+}
+
 // A frag or vert: when it runs, and what it reads, grouped as the engine
 // sends it to the GPU: components' fields for each instance drawn,
-// singletons' for each draw, grids as textures, and of a frag's vertex, the
-// fields the mesh's corners pass on to its pixels.
+// singletons' for each draw, grids as textures, and of a frag's vertex and of
+// what its vert wrote for it, the fields the mesh's corners pass on to its
+// pixels.
 static void describe_shader(const decl *d, sb *out)
 {
     const bool three_d = d->params.count && vertex_is_3d(d->params.items[0].type.decl);
     bool instanced = false;
-    for (int i = 1; i < d->params.count; i++) instanced |= d->params.items[i].type.kind == TY_STRUCT;
+    bool hands = false;
+    for (int i = 1; i < d->params.count; i++) {
+        const param *p = &d->params.items[i];
+        instanced |= p->type.kind == TY_STRUCT && !p->is_out && !handed_param(d, p);
+        hands |= p->type.kind == TY_STRUCT && p->is_out;
+    }
     sb_printf(out, d->is_frag ? "\n\nRuns on the GPU, for each pixel of a mesh a view draws through it: `Draw%dD.%s(..., "
-                                STR_FMT ")`. What its `mut Color` holds when it ends is the pixel."
+                                STR_FMT ")`. What it writes to its `out Color` is the pixel."
                               : "\n\nRuns on the GPU, for each vertex of a mesh a view draws through it: `Draw%dD.%s(..., "
                                 STR_FMT ")`. It changes the vertex in place, before its triangles are drawn.",
               three_d ? 3 : 2, instanced ? "Instanced" : "Mesh", STR_ARG(d->name));
+    if (hands) sb_put(out, " What it writes to a struct it takes as `out`, the frag it's drawn with reads, blended across the triangle.");
     if (!shader_planned(d)) {
         sb_put(out, "\n\nWhat it reads is worked out once the game has no errors.");
         return;
@@ -2155,10 +2183,16 @@ static void describe_shader(const decl *d, sb *out)
     sb draw = {0};
     sb textures = {0};
     sb vertex = {0};
+    sb handed = {0};
     for (int i = 0; i < d->params.count; i++) {
         const param *p = &d->params.items[i];
         if (i == 0) { // A vert has its whole vertex
             if (d->is_frag) put_reads(p, "", true, &vertex);
+            continue;
+        }
+        if (p->type.kind == TY_STRUCT && p->is_out) continue; // What a vert writes for its frag: nothing sends it
+        if (handed_param(d, p)) { // ...and what the frag reads of it comes from the mesh's corners
+            put_reads(p, type_prefix(p), true, &handed);
             continue;
         }
         const bool component = p->type.kind == TY_COMPONENT;
@@ -2168,7 +2202,7 @@ static void describe_shader(const decl *d, sb *out)
         put_reads(p, type_prefix(p), false, component || transform || data ? &instance : &draw);
         put_samples(d, i, type_prefix(p), &textures);
     }
-    if (!instance.len && !draw.len && !textures.len && !vertex.len) {
+    if (!instance.len && !draw.len && !textures.len && !vertex.len && !handed.len) {
         sb_put(out, "\n\nIt reads nothing the engine sends.");
         return;
     }
@@ -2177,6 +2211,7 @@ static void describe_shader(const decl *d, sb *out)
     if (draw.len) sb_printf(out, "\n- for each draw: %s", draw.data);
     if (textures.len) sb_printf(out, "\n- as textures: %s", textures.data);
     if (vertex.len) sb_printf(out, "\n- of its vertex, blended across the triangle: %s", vertex.data);
+    if (handed.len) sb_printf(out, "\n- of what its vert wrote for it, blended across the triangle: %s", handed.data);
 }
 
 // A frag's or vert's parameter: what it is to the GPU, and for a component
@@ -2200,9 +2235,24 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
         return;
     }
     if (p->mode == PARAM_MUT && p->type.kind == TY_COLOR) {
-        sb_put(out, "\n\nThe pixel's color, which the frag writes. It starts as `Color.white`: it isn't what's on the "
-                    "screen already, which a GPU doesn't let a frag read. When the frag ends, what it holds is blended "
-                    "over what's behind it by its alpha.");
+        sb_put(out, "\n\nThe pixel's color, which the frag writes. It starts with no value: the frag writes it on every "
+                    "path that ends, before it reads it, and a path that ends in `pixel.Discard()` draws no pixel. It "
+                    "isn't what's on the screen already, which a GPU doesn't let a frag read. What the frag wrote is "
+                    "blended over what's behind it by its alpha.");
+        return;
+    }
+    if (p->is_out && p->type.kind == TY_STRUCT) {
+        sb_printf(out, "\n\nWhat the vert writes for the frag it's drawn with. It starts with no value: the vert writes each "
+                       "of its fields, on every path. A frag that takes a `" STR_FMT "` reads it blended across the "
+                       "triangle from its three corners, and only the fields it reads go from the corners to the pixels.",
+                  STR_ARG(t->name));
+        return;
+    }
+    if (handed_param(d, p)) {
+        sb_put(out, "\n\nWhat the vert this frag is drawn with wrote for it, an `out` parameter of the vert's, blended "
+                    "across the triangle from its three corners. A draw whose vert writes none is an error at the draw.");
+        if (planned) put_reads(p, "", true, &fields);
+        if (fields.len) sb_printf(out, " Fields this code reads, which the corners pass on: %s.", fields.data);
         return;
     }
     if (shader_record_doc(t)) {
@@ -2353,6 +2403,10 @@ static void describe_enum_conversion(const decl *d, sb *out)
 // anything else through a pointer.
 static void describe_out_param(const param *p, const decl *of, sb *out)
 {
+    if (is_shader(of)) { // What a frag or a vert writes: nothing calls it with an argument
+        describe_shader_param(of, p, out);
+        return;
+    }
     if (of && of->is_extern && p->type.kind == TY_LIST) {
         sb_put(out, "\n\nParameter, the caller's list, which C makes: it gets a `tide_list_out`, asks it for room, fills it, "
                     "and says how many elements there are (`tide/list.h`). What the list held isn't passed.");
@@ -3563,6 +3617,13 @@ static void namespace_actions(const int start_line, const int end_line, jbuf *ou
 // the parameter as `mut`, to read what the caller has, with the word gone
 // from every call. The second isn't offered where a call declares the
 // variable there (`out var x`, `out _`), which a `mut` parameter can't take.
+// What fills an `out` parameter where the code has nothing to give: its type's
+// default, or for a frag's color white, which is what `mut Color color` started as.
+static const char *filler(const decl *code, const param *p)
+{
+    return is_shader(code) && code->is_frag && p->type.kind == TY_COLOR ? "Color.white" : "default";
+}
+
 static void assign_first_actions(const fix *f, jbuf *out, int *written)
 {
     const param *p = f->param;
@@ -3573,19 +3634,21 @@ static void assign_first_actions(const fix *f, jbuf *out, int *written)
         const token *next = &DOC->toks[open + 1]; // The body's first statement
         sb title = {0};
         sb text = {0};
-        sb_printf(&title, "Assign '" STR_FMT " = default;' first", STR_ARG(p->name));
+        const char *value = filler(m, p);
+        if (is_shader(m)) sb_printf(&title, "Write '" STR_FMT " = %s;' first", STR_ARG(p->name), value);
+        else sb_printf(&title, "Assign '" STR_FMT " = %s;' first", STR_ARG(p->name), value);
         if (next->at.line > m->body->at.line) { // On a line of its own, as far in as the statement after it
             const str line = doc_line(next->at.line);
             const int indent = next->at.col - 1 < line.len ? next->at.col - 1 : line.len;
-            sb_printf(&text, "%.*s" STR_FMT " = default;\n", indent, line.ptr, STR_ARG(p->name));
+            sb_printf(&text, "%.*s" STR_FMT " = %s;\n", indent, line.ptr, STR_ARG(p->name), value);
             const loc at = {next->at.line, 1, A.doc};
             quick_fix(out, written, title.data, true, d, at, at, text.data);
         } else {
-            sb_printf(&text, STR_FMT " = default; ", STR_ARG(p->name));
+            sb_printf(&text, STR_FMT " = %s; ", STR_ARG(p->name), value);
             quick_fix(out, written, title.data, true, d, next->at, next->at, text.data);
         }
     }
-    if (p->out_at.line == 0) return;
+    if (p->out_at.line == 0 || is_shader(m)) return; // What a frag or a vert writes is `out`, and nothing else
     const int k = (int)(p - m->params.items);
     text_edits edits = {0};
     const text_edit word = {p->out_at, {p->out_at.line, p->out_at.col + 3, p->out_at.file}, "mut"};
@@ -3786,7 +3849,8 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
             const loc where = at_end ? f->method->end : f->at; // Its closing brace, or the return
             const int t = where.file == A.doc ? token_at(where) : -1;
             if (t <= 0) continue;
-            sb_printf(&title, "Assign '" STR_FMT " = default;'", STR_ARG(p->name));
+            const char *value = filler(f->method, p);
+            sb_printf(&title, "%s '" STR_FMT " = %s;'", is_shader(f->method) ? "Write" : "Assign", STR_ARG(p->name), value);
             fixed = diagnostic_at(f->at);
             // A return that's an if's or a loop's body with no braces has to stay one statement: in braces, with
             // the assignment before it
@@ -3800,7 +3864,7 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
                     else if (k == T_RPAREN || k == T_RBRACKET || k == T_RBRACE) depth--;
                 }
                 if (at_end || last >= DOC->tok_count || DOC->toks[last].kind != T_SEMI) continue;
-                sb_printf(&text, "{ " STR_FMT " = default; ", STR_ARG(p->name));
+                sb_printf(&text, "{ " STR_FMT " = %s; ", STR_ARG(p->name), value);
                 const loc after = token_end(&DOC->toks[last]);
                 text_edits both = {0};
                 const text_edit opens = {where, where, text.data};
@@ -3817,11 +3881,11 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
             start = end = where;
             if (first && at_end) { // A step in from the brace
                 start = end = (loc){where.line, 1, A.doc};
-                sb_printf(&text, "%.*s    " STR_FMT " = default;\n", indent, line.ptr, STR_ARG(p->name));
+                sb_printf(&text, "%.*s    " STR_FMT " = %s;\n", indent, line.ptr, STR_ARG(p->name), value);
             } else if (first) {
-                sb_printf(&text, STR_FMT " = default;\n%.*s", STR_ARG(p->name), indent, line.ptr);
+                sb_printf(&text, STR_FMT " = %s;\n%.*s", STR_ARG(p->name), value, indent, line.ptr);
             } else {
-                sb_printf(&text, STR_FMT " = default; ", STR_ARG(p->name));
+                sb_printf(&text, STR_FMT " = %s; ", STR_ARG(p->name), value);
             }
             break;
         }
@@ -6280,9 +6344,9 @@ static void complete_declarations(completion *c)
     item(c, "system", CK_SNIPPET, "system Name(parameters) { ... }", NULL, "system ${1:Name}($2)\n{\n    $0\n}");
     item(c, "view", CK_SNIPPET, "view Name(parameters) { ... }", "Runs once per frame and draws.",
          "view ${1:Name}($2)\n{\n    $0\n}");
-    item(c, "frag", CK_SNIPPET, "frag Name(Vertex vertex, mut Color color, parameters) { ... }",
+    item(c, "frag", CK_SNIPPET, "frag Name(Vertex vertex, out Color color, parameters) { ... }",
          "Runs on the GPU for each pixel of a mesh a view draws through it, and writes the pixel's color.",
-         "frag ${1:Name}(${2:Vertex} vertex, mut Color color$3)\n{\n    $0\n}");
+         "frag ${1:Name}(${2:Vertex} vertex, out Color color$3)\n{\n    $0\n}");
     item(c, "vert", CK_SNIPPET, "vert Name(mut Vertex vertex, parameters) { ... }",
          "Runs on the GPU for each vertex of a mesh a view draws through it, and changes it in place.",
          "vert ${1:Name}(mut ${2:Vertex} vertex$3)\n{\n    $0\n}");
@@ -6343,8 +6407,8 @@ static void complete_code_declarations(completion *c)
     item(c, "system", CK_SNIPPET, "system Name(parameters) { ... }", NULL, "system ${1:Name}($2)\n{\n    $0\n}");
     item(c, "view", CK_SNIPPET, "view Name(parameters) { ... }", "Runs once per frame and draws.",
          "view ${1:Name}($2)\n{\n    $0\n}");
-    item(c, "frag", CK_SNIPPET, "frag Name(Vertex vertex, mut Color color, parameters) { ... }", NULL,
-         "frag ${1:Name}(${2:Vertex} vertex, mut Color color$3)\n{\n    $0\n}");
+    item(c, "frag", CK_SNIPPET, "frag Name(Vertex vertex, out Color color, parameters) { ... }", NULL,
+         "frag ${1:Name}(${2:Vertex} vertex, out Color color$3)\n{\n    $0\n}");
     item(c, "vert", CK_SNIPPET, "vert Name(mut Vertex vertex, parameters) { ... }", NULL,
          "vert ${1:Name}(mut ${2:Vertex} vertex$3)\n{\n    $0\n}");
     item(c, "event handler", CK_SNIPPET, "event(Event e) Name(parameters) { ... }", NULL,
@@ -6492,14 +6556,18 @@ static bool game_type_named(const char *name)
 
 // A frag's or vert's parameters, in the parentheses opened at token `open`,
 // after token `last`. The vertex comes first, a struct with a position, which
-// a vert takes mut; a frag's pixel is its `mut Color`; the rest is what the
-// engine supplies: components, singletons, Pixel (a frag's) and Instance.
+// a vert takes mut; what each writes is `out`, a frag's pixel, its `out Color`,
+// and the structs a vert hands its frag; the rest is what the engine supplies:
+// components, singletons, Pixel (a frag's) and Instance.
 static void complete_shader_header(completion *c, const int open, const int last)
 {
     const token *toks = DOC->toks;
     const bool frag = str_eq_c(toks[open - 2].text, "frag");
     const bool after_mut = toks[last].kind == T_MUT;
-    const tok_kind before = toks[after_mut ? last - 1 : last].kind; // What the parameter starts after
+    // `out`, a word only here: after '(' or ',', with nothing after it yet
+    const bool after_out = toks[last].kind == T_IDENT && str_eq_c(toks[last].text, "out")
+                        && (toks[last - 1].kind == T_COMMA || toks[last - 1].kind == T_LPAREN);
+    const tok_kind before = toks[after_mut || after_out ? last - 1 : last].kind; // What the parameter starts after
     if (before != T_LPAREN && before != T_COMMA) {
         if (toks[last].kind == T_IDENT) complete_param_name(c, toks[last].text);
         return;
@@ -6517,13 +6585,27 @@ static void complete_shader_header(completion *c, const int open, const int last
         complete_namespaces(c, false);
         return;
     }
-    if (after_mut) {
-        if (frag) item(c, "Color", CK_STRUCT, "The pixel's color, which the frag writes", NULL, NULL);
+    if (after_mut) return; // Only a vert's vertex is, its first
+    if (after_out) {
+        if (frag) {
+            item(c, "Color", CK_STRUCT, "The pixel's color, which the frag writes", NULL, NULL);
+            return;
+        }
+        for (int i = 0; i < A.prog->decls.count; i++) { // What a vert can hand its frag: a struct
+            const decl *d = A.prog->decls.items[i];
+            if (d->kind == DECL_STRUCT && has_name(d)) {
+                item(c, name_for(d), CK_STRUCT, "struct", "What the vert writes for its frag, which reads it blended.", NULL);
+            }
+        }
+        complete_namespaces(c, false);
         return;
     }
-    bool writes = false; // It has its `mut Color` already
-    for (int k = open + 1; k <= last; k++) writes |= toks[k].kind == T_MUT;
-    if (frag && !writes) item(c, "mut", CK_KEYWORD, "mut Color color: the pixel's color, which the frag writes", NULL, NULL);
+    bool writes = false; // It has its `out Color` already
+    for (int k = open + 2; k <= last; k++) {
+        writes |= toks[k].kind == T_IDENT && str_eq_c(toks[k].text, "out") && toks[k - 1].kind == T_COMMA;
+    }
+    if (frag && !writes) item(c, "out", CK_KEYWORD, "out Color color: the pixel's color, which the frag writes", NULL, NULL);
+    if (!frag) item(c, "out", CK_KEYWORD, "out FromLamp lamp: a struct the vert writes for its frag, which reads it blended", NULL, NULL);
     complete_types(c, true, true, false);
     item(c, "Texture", CK_STRUCT, "Read-only image supplied by the draw", builtin_type_doc(TY_TEXTURE), NULL);
     if (frag && !game_type_named("Pixel")) item(c, "Pixel", CK_CLASS, "built-in", shader_record_doc(A.prog->pixel), NULL);
@@ -6562,7 +6644,7 @@ typedef enum header_kind {
     HEADER_TRIGGER, // A handler's trigger: event(Hit hit)
     HEADER_ROUTINE, // A function's or method's: void Heal(mut Stats stats)
     HEADER_SAMPLE,  // The input's Sample: devices and local singletons; Sanitize takes nothing
-    HEADER_SHADER,  // A frag's or vert's: frag Shade(BoxVertex vertex, mut Color color, Sun sun)
+    HEADER_SHADER,  // A frag's or vert's: frag Shade(BoxVertex vertex, out Color color, Sun sun)
     HEADER_QUERY,   // A system's second candidate set: query (Body body, with Fighter)
 } header_kind;
 
@@ -7368,7 +7450,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
             }
             break;
         }
-        if (f.header == HEADER_SHADER) { // frag Shade(BoxVertex vertex, mut Color color, Sun sun)
+        if (f.header == HEADER_SHADER) { // frag Shade(BoxVertex vertex, out Color color, Sun sun)
             complete_shader_header(&c, f.open, last);
             break;
         }

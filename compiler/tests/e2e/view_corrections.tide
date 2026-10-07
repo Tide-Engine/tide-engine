@@ -40,7 +40,7 @@ view First(Body body, Camera camera, mut Observed observed)
 
 view Second(Body body, mut Observed observed) { observed.second = body.state; }
 
-frag Shade(Vertex vertex, mut Color color, Body body, Camera camera)
+frag Shade(Vertex vertex, out Color color, Body body, Camera camera)
 {
     color = vertex.color;
     color.r = body.state.pose.scalar;

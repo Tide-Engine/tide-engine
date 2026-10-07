@@ -1,0 +1,6 @@
+// expect: a vert reads 'Box', and can't write it: drop 'out'
+// expect: what it changes is its vertex, and what it writes is a struct for its frag, 'out FromLamp lamp'
+scene Main { }
+struct Corner { float2 position; }
+component Box { float lift; }
+vert Wave(mut Corner corner, out Box box) { corner.position.y += 1; }

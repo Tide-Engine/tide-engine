@@ -1,0 +1,10 @@
+// expect: 'Placed' can't go from a vert to its frag: its 'frame' is float4x4
+// expect: what a vert hands its frag is floats, their vectors and colors, which the GPU blends across the triangle
+scene Main { }
+struct Corner { float2 position; }
+struct Placed { float4x4 frame; }
+vert Wave(mut Corner corner, out Placed placed)
+{
+    placed.frame = float4x4.identity;
+    corner.position.x += 1;
+}

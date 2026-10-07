@@ -36,7 +36,7 @@ Declarations with code: systems, views, handlers (an event's, a command's, and l
 virtual view Show(Body body) { ... }
 virtual event(Hit hit) TakeHit(mut Health health) { ... }
 virtual float Damage(float base, float multiplier = 1) { ... }
-virtual frag Shade(BoxVertex vertex, mut Color color) { ... }
+virtual frag Shade(BoxVertex vertex, out Color color) { ... }
 
 struct Stats
 {

@@ -12,7 +12,7 @@ local singleton Post
 }
 
 // Runs for every pixel of the window, with the scene's image as its source.
-frag Pixelate(Vertex vertex, mut Color color, Texture source, Post post)
+frag Pixelate(Vertex vertex, out Color color, Texture source, Post post)
 {
     mut var uv = vertex.uv;
     if (uv.x > post.split) uv = (Math.Floor(uv * post.blocks) + 0.5) / post.blocks;

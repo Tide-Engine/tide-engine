@@ -98,7 +98,7 @@ view Show(Probe probe)
 }
 
 // A frag samples an asset's grid by name, as it samples a singleton's.
-frag Shade(Vertex vertex, mut Color color)
+frag Shade(Vertex vertex, out Color color)
 {
     color = hero.Sample(vertex.uv, Filter.Point) * runOne.Sample(vertex.uv);
 }

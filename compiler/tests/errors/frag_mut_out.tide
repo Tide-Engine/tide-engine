@@ -1,0 +1,5 @@
+// expect: 'out' says the frag writes it, which 'mut' would only change: drop 'mut'
+// expect: like 'frag Shade(BoxVertex vertex, out Color color)'
+scene Main { }
+struct Corner { float2 position; }
+frag Shade(Corner corner, mut out Color color) { color = Color.white; }
