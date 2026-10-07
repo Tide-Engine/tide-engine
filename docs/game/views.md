@@ -125,6 +125,8 @@ view Make(mut Deferred deferred)
 
 The formats are the constructor's last arguments, after its pixels per unit when it says them: `RenderTarget(1024, 1024, 1, Format.Color, Format.Float)`.
 
+[Frags and verts](./shaders.md#several-outputs) has a scene drawn this way to try: one frag fills three images, and a second lights the window from them.
+
 A target of depth alone is drawn into like any other: it has its `Clear`, its cameras and its `Mesh`. A color has nowhere to go there, so the only things that leave anything are the ones that write depth, or [stencil](#stencil), which it has too:
 
 - **A clear** sets its depth back to the far limit, and its stencil to 0. It takes a color like any clear, which goes nowhere.
