@@ -8,6 +8,14 @@
 # see .releaserc.json). A push with neither publishes nothing. A build that
 # fails on any platform fails the run, and nothing is published: every release
 # has every platform's package.
+#
+# For now the jobs run on the owner's machine (the account is out of hosted
+# minutes): a runner on Windows (label tide-windows) and one in its WSL
+# (tide-linux), set up as .github/runner/README.md says. So nothing builds for
+# macOS, and releases have no macOS package until the hosted runners are back:
+# then `runs-on` goes back to windows-latest, ubuntu-latest and macos-latest,
+# with the macOS rows of the matrix. Steps that only a hosted runner needs
+# (installing tools, restoring caches) say so, and still work there.
 name: Build
 
 on:
@@ -26,7 +34,7 @@ concurrency:
 jobs:
   version:
     name: Version
-    runs-on: ubuntu-latest
+    runs-on: tide-linux
     outputs:
       version: ${{ steps.next.outputs.new_release_version }}
       published: ${{ steps.next.outputs.new_release_published }}
@@ -54,49 +62,37 @@ jobs:
       matrix:
         include:
           - platform: windows-x64
-            os: windows-latest
+            os: tide-windows
             preset: package
             test-jobs: 4
           - platform: linux-x64
-            os: ubuntu-latest
+            os: tide-linux
             preset: package
             test-jobs: 4
-          - platform: macos-arm64
-            os: macos-latest
-            preset: package
-            test-jobs: 2
           - platform: windows-x64
-            os: windows-latest
+            os: tide-windows
             preset: release
             test-jobs: 4
           - platform: windows-x64
-            os: windows-latest
+            os: tide-windows
             preset: web-release
             test-jobs: 4
           - platform: windows-x64
-            os: windows-latest
+            os: tide-windows
             preset: mingw-release
             test-jobs: 4
           - platform: linux-x64
-            os: ubuntu-latest
+            os: tide-linux
             preset: release
             test-jobs: 4
           - platform: linux-x64
-            os: ubuntu-latest
+            os: tide-linux
             preset: web-release
             test-jobs: 4
           - platform: linux-x64
-            os: ubuntu-latest
+            os: tide-linux
             preset: sanitize
             test-jobs: 4
-          - platform: macos-arm64
-            os: macos-latest
-            preset: release
-            test-jobs: 2
-          - platform: macos-arm64
-            os: macos-latest
-            preset: web-release
-            test-jobs: 2
     runs-on: ${{ matrix.os }}
     env:
       TIDE_VERSION: ${{ needs.version.outputs.version }}
@@ -112,7 +108,11 @@ jobs:
       run:
         shell: bash
     steps:
+      # A runner of our own keeps its checkout, and the build trees in it,
+      # from one job to the next: each job builds what changed.
       - uses: actions/checkout@v4
+        with:
+          clean: false
 
       # The runners' own Node is 22, whose libuv ends a Windows process, about
       # one in 500, as it starts its first TCP connection (exit code
@@ -137,9 +137,27 @@ jobs:
           version=$(sed -nE 's/^set\(TIDE_LLVM_VERSION ([0-9.]+)\).*/\1/p' cmake/LLVM.cmake)
           test -n "$version"
           echo "LLVM_VERSION=$version" >> "$GITHUB_ENV"
+      # A runner of our own has its tools installed once (.github/runner), and
+      # no compiler cache: its build trees are still there.
+      - name: Tools (our own runner)
+        if: runner.environment != 'github-hosted'
+        run: |
+          echo "CMAKE_C_COMPILER_LAUNCHER=" >> "$GITHUB_ENV"
+          echo "CMAKE_CXX_COMPILER_LAUNCHER=" >> "$GITHUB_ENV"
+          major=${LLVM_VERSION%%.*}
+          if [ "$RUNNER_OS" = Windows ]; then
+            clang="C:/Program Files/LLVM/bin/clang"
+          else
+            clang=/usr/lib/llvm-$major/bin/clang
+            echo "LLVM_ROOT=/usr/lib/llvm-$major" >> "$GITHUB_ENV"
+          fi
+          "$clang" --version
+          "$clang" --version | grep -q "clang version $major[.]" \
+            || { echo "This runner's clang isn't LLVM $major: install it (.github/runner/README.md)"; exit 1; }
+          rm -rf build/dist build/try build/try-cpp
       # LLVM's own packages, of the same major version.
       - name: Install tools (Linux)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
         run: |
           major=${LLVM_VERSION%%.*}
           codename=$(lsb_release -cs)
@@ -151,7 +169,7 @@ jobs:
           echo "LLVM_ROOT=/usr/lib/llvm-$major" >> "$GITHUB_ENV"
       - name: Cache LLVM tools (Windows)
         id: llvm-tools
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && runner.environment == 'github-hosted'
         uses: actions/cache@v4
         with:
           # Cache the build tools and their aliases, plus clang's resources.
@@ -175,7 +193,7 @@ jobs:
       # LLVM's own release, the very archive tide's package unpacks: its
       # programs and clang's headers.
       - name: Install tools (Windows)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && runner.environment == 'github-hosted'
         run: |
           choco install ninja zstandard ccache -y --no-progress
           if [ '${{ steps.llvm-tools.outputs.cache-hit }}' != true ]; then
@@ -194,17 +212,18 @@ jobs:
       # Web builds download wasi-sdk's C library (cmake/wasi-toolchain.cmake),
       # and MinGW builds llvm-mingw's (cmake/mingw-toolchain.cmake).
       - uses: actions/cache@v4
+        if: runner.environment == 'github-hosted'
         with:
           path: build/wasi-sdk-*
           key: wasi-sdk-${{ hashFiles('cmake/wasi-toolchain.cmake') }}
       - uses: actions/cache@v4
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && runner.environment == 'github-hosted'
         with:
           path: build/llvm-mingw-*
           key: llvm-mingw-${{ hashFiles('cmake/mingw-toolchain.cmake') }}
       # The package builds clang and lld into tide from LLVM's release (cmake/LLVM.cmake).
       - uses: actions/cache@v4
-        if: matrix.preset == 'package'
+        if: matrix.preset == 'package' && runner.environment == 'github-hosted'
         with:
           path: build/llvm-[0-9]*
           key: llvm-${{ runner.os }}-${{ hashFiles('cmake/LLVM.cmake') }}
@@ -224,19 +243,21 @@ jobs:
       # CMake inherits these launchers in its native host builds too. ccache
       # hashes the compiler and preprocessed source, including optional headers.
       - name: Cache compiled objects
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@v4
         with:
           path: build/ccache
           key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ env.LLVM_VERSION }}-${{ github.sha }}
           restore-keys: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ env.LLVM_VERSION }}-
       - name: Compiler cache statistics (start)
+        if: runner.environment == 'github-hosted'
         run: ccache --zero-stats
 
       # Start long native tests first. Browser workloads compete for software
       # rendering CPU when grouped together, so keep their usual ordering.
       # Only scheduling data is cached; every selected test still runs.
       - name: Cache test durations
-        if: matrix.preset == 'release' || matrix.preset == 'mingw-release'
+        if: runner.environment == 'github-hosted' && (matrix.preset == 'release' || matrix.preset == 'mingw-release')
         uses: actions/cache@v4
         with:
           path: build/${{ matrix.preset }}/Testing/Temporary/CTestCostData.txt
@@ -272,7 +293,8 @@ jobs:
       - name: Test (web)
         if: matrix.preset == 'web-release'
         run: |
-          cmake --preset web-release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
+          # The docs' examples are the Docs workflow's, which shares this tree on a runner of our own
+          cmake --preset web-release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL" -DTIDE_DOC_EXAMPLES=OFF
           cmake --build --preset web-release
           if [ "$RUNNER_OS" = Linux ]; then
             ctest --preset web-release -LE webgpu
@@ -290,12 +312,22 @@ jobs:
       # Android's tests run on its emulator, which Linux's runners accelerate
       # (KVM). Its SDK is on the runners; the emulator and its image come
       # through the SDK's manager, under Google's license.
+      # Java for the SDK's tools, and for the checks of what's made for Google
+      # Play: the hosted runners have one, a runner of our own needn't.
+      - uses: actions/setup-java@v4
+        if: runner.os == 'Linux' && matrix.preset == 'package'
+        with:
+          distribution: temurin
+          java-version: 21
       - name: Test (Android)
         if: runner.os == 'Linux' && matrix.preset == 'package'
         run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
+          # A runner of our own is in the kvm group already (.github/runner).
+          if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+            sudo udevadm control --reload-rules
+            sudo udevadm trigger --name-match=kvm
+          fi
           tools="$ANDROID_HOME/cmdline-tools/latest/bin"
           # Its yes to the licenses, without a pipe: yes ends with a broken one, which pipefail takes for failing
           "$tools/sdkmanager" --install emulator platform-tools "system-images;android-36;default;x86_64" \
@@ -407,7 +439,7 @@ jobs:
           compression-level: 0
 
       - name: Compiler cache statistics (end)
-        if: always()
+        if: always() && runner.environment == 'github-hosted'
         run: ccache --show-stats
 
   # Preserve the required Build checks. Tests and packages run together above,
@@ -418,8 +450,8 @@ jobs:
     if: always()
     strategy:
       matrix:
-        platform: [windows-x64, linux-x64, macos-arm64]
-    runs-on: ubuntu-latest
+        platform: [windows-x64, linux-x64]
+    runs-on: tide-linux
     steps:
       - name: Require every test and package
         env:
@@ -431,7 +463,7 @@ jobs:
   jetbrains:
     name: JetBrains plugin
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: tide-linux
     env:
       TIDE_VERSION: ${{ needs.version.outputs.version || '0.0.0-dev' }}
     defaults:
@@ -461,7 +493,7 @@ jobs:
     name: Release
     needs: [version, build, jetbrains]
     if: github.event_name == 'push' && needs.version.outputs.published == 'true'
-    runs-on: ubuntu-latest
+    runs-on: tide-linux
     steps:
       - uses: actions/checkout@v4
         with:
@@ -488,7 +520,7 @@ jobs:
     name: JetBrains Marketplace
     needs: [version, release]
     if: github.ref_name == 'release'
-    runs-on: ubuntu-latest
+    runs-on: tide-linux
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
