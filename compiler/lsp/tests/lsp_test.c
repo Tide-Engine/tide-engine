@@ -3393,7 +3393,7 @@ TIDE_TEST(lsp_extern_systems)
     TIDE_CHECK(has(request("textDocument/definition"), "\"range\":{\"start\":{\"line\":15,\"character\":14}"));
     // The line above it: its stage, that it's C, and why it waits
     const char *lenses = request("textDocument/codeLens");
-    TIDE_CHECK(has(lenses, "\"title\":\"stage 2 ") && has(lenses, " in C ") && has(lenses, " after Blow: it writes Speed, which this reads"));
+    TIDE_CHECK(has(lenses, "\"title\":\"stage 2 ") && has(lenses, " in C") &&has(lenses, "\"after Blow: it writes Speed, which this reads\""));
     // The outline, and nothing to fold: it has no body
     const char *symbols = request("textDocument/documentSymbol");
     TIDE_CHECK(has(symbols, "\"name\":\"Move\",\"detail\":\"extern system\",\"kind\":12"));
@@ -5984,6 +5984,17 @@ TIDE_TEST(lsp_schedule_lenses_and_fixes)
     TIDE_CHECK(has(lenses, "stage 2") && has(lenses, "after Move: both write Body"));
     TIDE_CHECK(has(lenses, "stage 3") && has(lenses, "after Look: both write Score; it writes Body, which this reads"));
     TIDE_CHECK(has(lenses, "nothing runs alongside"));
+    // Each system it waits for is a lens of its own, which goes to that system
+    TIDE_CHECK(has(lenses, "\"title\":\"after Move: both write Body\",\"command\":\"editor.action.goToLocations\","
+                           "\"arguments\":[\"file:///test.tide\",{\"line\":4,\"character\":7},[{\"uri\":\"file:///test.tide\","
+                           "\"range\":{\"start\":{\"line\":3,\"character\":7},\"end\":{\"line\":3,\"character\":11}}}],\"goto\"]"));
+    // How many places name a declaration, which lists them: not for what only the engine runs
+    TIDE_CHECK(has(lenses, "{\"range\":{\"start\":{\"line\":0,\"character\":10},\"end\":{\"line\":0,\"character\":14}},"
+                           "\"command\":{\"title\":\"4 references\",\"command\":\"editor.action.showReferences\","
+                           "\"arguments\":[\"file:///test.tide\",{\"line\":0,\"character\":10},[{\"uri\":\"file:///test.tide\","
+                           "\"range\":{\"start\":{\"line\":2,\"character\":40},\"end\":{\"line\":2,\"character\":44}}},"));
+    TIDE_CHECK(has(lenses, "\"title\":\"2 references\"") && has(lenses, "\"title\":\"1 reference\""));
+    TIDE_CHECK(count(lenses, " reference") == 3); // Body, Score and Main: no system or handler is named
 
     const char *hover = request_at("file:///test.tide", "textDocument/hover", 5, 8, "");
     TIDE_CHECK(has(hover, "**Stage 3.**") && has(hover, "`Move`: it writes `Body`, which this reads"));
@@ -8109,10 +8120,13 @@ TIDE_TEST(lsp_asset_path_completion)
     static const char main_file[] = "asset Grid2<Color> hero = \"\";\n"
                                     "asset List<Grid2<Color>> run = \"art/\";\n"
                                     "asset string notes = \"art/\";\n"
+                                    "asset Clip shot = \"art/\";\n"
                                     "scene Main { }\n";
     write_file("lsp_cp/main.tide", main_file);
     write_bytes("lsp_cp/art/hero.png", "png", 3);
     write_file("lsp_cp/art/other.txt", "text");
+    write_bytes("lsp_cp/art/shot.wav", "wav", 3);
+    write_bytes("lsp_cp/art/music.ogg", "ogg", 3);
     write_file("lsp_cp/readme.txt", "text");
     char root[700], uri_main[700];
     const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
@@ -8141,6 +8155,11 @@ TIDE_TEST(lsp_asset_path_completion)
     completion = request_at(uri_main, "textDocument/completion", 2, 26, "");
     TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "other.txt"));
     TIDE_CHECK(!offers(completion, "*") && !offers(completion, "**/*"));
+
+    // A clip is a WAV or an Ogg
+    completion = request_at(uri_main, "textDocument/completion", 3, 23, "");
+    TIDE_CHECK(offers(completion, "shot.wav") && offers(completion, "music.ogg"));
+    TIDE_CHECK(!offers(completion, "hero.png") && !offers(completion, "other.txt"));
 
     // Part of a name typed: the item replaces it
     open_uri(uri_main, "asset Grid2<Color> hero = \"art/he\";\nscene Main { }\n");
