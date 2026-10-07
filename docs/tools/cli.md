@@ -192,6 +192,7 @@ tide run --frames 300 --capture menu.png
 | Option | What it does |
 |---|---|
 | `--capture <file.png>` | Writes the run's last frame as a PNG |
+| `--capture-audio <file.wav>` | Writes everything the run played as a WAV (16-bit stereo at 48 kHz). A game with no sound gives silence, a 60th of a second a frame |
 | `--frames <n>` | Ends the run after `n` frames |
 | `--script <file>` | Input by frame from a file, which also says when to capture and when to quit (see [Scripts](#scripts)) |
 | `--scale <s>` | Draws as on a display scaled this much, like `1.5` or `2` (1 without it). Text and edges are fitted to the display's pixels, so they look different there, and [render targets](../game/views.md#targets-and-post-processing) at the display's scale have that many more pixels |
@@ -268,6 +269,7 @@ tide run --script play.txt --size 1280 720
 | `pad leftStick <x> <y>`, `pad rightStick <x> <y>` | A stick, from -1 to 1, with `y` up |
 | `pad leftTrigger <value>`, `pad rightTrigger <value>` | A trigger, from 0 to 1 |
 | `capture <file.png>` | Writes the frame, once it drew, as a PNG. A file a script names is beside the script |
+| `capture-audio <file.wav>` | Writes what played since the last such line, or since the run began, as a WAV beside the script |
 | `quit` | Ends the run once this frame drew |
 
 What a line does is in the devices at its frame, as if a player had done it since the frame before. So it goes the way a player's input goes: the GUI takes a click on one of its widgets and the game doesn't get it, and a modal keeps the keys from the game.

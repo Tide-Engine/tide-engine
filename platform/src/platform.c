@@ -12,9 +12,11 @@
 #include "tide/time.h"
 #include "font.h"
 #include "gpu.h"
+#include "mixer.h"
 #include "png.h"
 #include "script.h"
 #include "shaders.h"
+#include "wav.h"
 #include "window.h"
 
 uint8_t *tide_platform_pack(size_t *size)
@@ -75,6 +77,13 @@ static unsigned frames_counted;
 static bool headless;
 static tide_headless_desc headless_run;
 static uint32_t headless_frame; // The frame running, or the last one, counted from 1
+// What a headless window's mixer played, every frame of it, as stereo floats:
+// `played` frames so far, of which the ones from `captured` on haven't gone to
+// a capture yet. A frame is a 60th of a second, which at TIDE_AUDIO_RATE is
+// HEADLESS_AUDIO_FRAMES of audio.
+#define HEADLESS_AUDIO_FRAMES (TIDE_AUDIO_RATE / 60u)
+static float *headless_audio;
+static uint64_t played, captured, audio_capacity;
 
 // Seconds since the window opened.
 static double now(void)
@@ -150,6 +159,59 @@ void tide_platform_open_headless(const tide_headless_desc *desc)
 #endif
 }
 
+// A headless window's mixer renders a frame's worth of audio once the frame
+// ran, as a device would have asked for it meanwhile, and keeps it.
+static void headless_audio_frame(void)
+{
+    const uint64_t need = played + HEADLESS_AUDIO_FRAMES;
+    if (need > audio_capacity) {
+        uint64_t c = audio_capacity ? audio_capacity : 16u * HEADLESS_AUDIO_FRAMES;
+        while (c < need) c *= 2;
+        headless_audio = tide_realloc(headless_audio, (size_t)audio_capacity * 2 * sizeof *headless_audio,
+                                      (size_t)c * 2 * sizeof *headless_audio);
+        audio_capacity = c;
+    }
+    tide_mixer_render(headless_audio + played * 2, HEADLESS_AUDIO_FRAMES);
+    played = need;
+}
+
+// Writes what was played from frame `from` on to a WAV at `path`.
+static bool capture_audio(const char *path, const uint64_t from)
+{
+    const uint64_t frames = played - from;
+    size_t size = 0;
+    uint8_t *wav = frames <= 0xFFFFFFFFu ? tide_wav_encode(headless_audio + from * 2, (uint32_t)frames, &size) : NULL;
+    errno = 0;
+    FILE *file = wav ? fopen(path, "wb") : NULL;
+    bool written = file && fwrite(wav, 1, size, file) == size;
+    const int error = errno; // Before fclose says something else
+    if (file && fclose(file) != 0) written = false;
+    free(wav);
+    if (!written) {
+        fprintf(stderr, "tide: can't write %s: %s\n", path, error ? strerror(error) : "the file isn't whole");
+        return false;
+    }
+    printf("tide: captured %s, %.3f seconds of audio\n", path, (double)frames / (double)TIDE_AUDIO_RATE);
+    fflush(stdout);
+    return true;
+}
+
+bool tide_platform_capture_audio(const char *path)
+{
+    if (!headless) {
+        fprintf(stderr, "tide: no audio to capture: a headless window's is (tide_platform_open_headless)\n");
+        return false;
+    }
+    const uint64_t from = captured;
+    captured = played;
+    return capture_audio(path, from);
+}
+
+void tide_platform_audio(const tide_audio_frame *frame)
+{
+    tide_mixer_submit(frame);
+}
+
 // A headless run's frame, once it drew: the pictures its script and its desc
 // ask of it. TIDE_KEEP_RUNNING, or the run's exit code.
 static int headless_drawn(void)
@@ -158,6 +220,7 @@ static int headless_drawn(void)
     if (code != 0 && code != TIDE_KEEP_RUNNING) return code;
     const bool last = code == 0 || (headless_run.frames && headless_frame >= headless_run.frames);
     if (last && headless_run.capture && !tide_platform_capture(headless_run.capture)) return 1;
+    if (last && headless_run.capture_audio && !capture_audio(headless_run.capture_audio, 0)) return 1;
     return last ? 0 : TIDE_KEEP_RUNNING;
 }
 
@@ -190,6 +253,7 @@ static int step(void)
     follow_window();
     if (headless) tide_script_input(++headless_frame); // In the devices at this frame's poll
     int code = run_frame(run_user, seconds);
+    if (headless) headless_audio_frame();
     if (headless && code == TIDE_KEEP_RUNNING) code = headless_drawn();
     tide_window_present(); // Also takes the system's input
 #ifndef __wasm__
