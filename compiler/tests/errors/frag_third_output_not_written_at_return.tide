@@ -1,0 +1,9 @@
+// expect: frag 'Shade' returns here without writing 'far', its third output
+scene Main { }
+frag Shade(Vertex vertex, out Color color, out Color glow, out Color far)
+{
+    color = Color.red;
+    glow = Color.white;
+    if (vertex.uv.x > 0.5) return;
+    far = Color.black;
+}

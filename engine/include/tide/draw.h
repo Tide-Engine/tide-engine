@@ -295,14 +295,28 @@ static inline bool tide_target_size_same(const tide_target_size a, const tide_ta
 
 // What a target holds, said when it's made and never changed. Every target
 // has depth, which its 3D meshes read and write and a shader reads (see
-// tide_depth_ref), and its format says what's beside it: a color image, as
-// the window has, or none, for a target of depth alone. That one is drawn
-// into like any other, and a color has nowhere to go there: only what writes
-// depth leaves anything.
+// tide_depth_ref), and color images beside it, up to four, or none: a target
+// of depth alone, which is drawn into like any other, where a color has
+// nowhere to go and only what writes depth leaves anything. A format is what
+// one color image holds for each pixel (Tide's Format), and
+// TIDE_TARGET_DEPTH_ONLY, the one format of a target with none.
 typedef enum tide_target_format {
-    TIDE_TARGET_COLOR,
-    TIDE_TARGET_DEPTH_ONLY,
+    TIDE_TARGET_COLOR,      // 4 bytes: red, green, blue and alpha, each from 0 to 1
+    TIDE_TARGET_DEPTH_ONLY, // No color image at all
+    // Four floats of 16 bits: any number, to 3 digits or so. Where a GPU can't
+    // draw into those (an OpenGL ES 3 or a WebGL 2 without them), it's 4
+    // bytes, and the renderer says so once
+    TIDE_TARGET_FLOAT,
 } tide_target_format;
+
+enum { TIDE_TARGET_COLORS = 4 }; // The most color images a target holds: what every GPU Tide draws with has
+
+// A target's color images, in order: how many, and what each holds
+// (TIDE_TARGET_COLOR or TIDE_TARGET_FLOAT). None for a target of depth alone.
+typedef struct tide_target_formats {
+    uint8_t count;
+    uint8_t color[TIDE_TARGET_COLORS];
+} tide_target_formats;
 
 // Managed images share this state, including through a copied color reference.
 // Disposal keeps a small tombstone until the build unloads, so aliases remain
@@ -313,16 +327,24 @@ typedef struct tide_render_target_state {
     tide_target_size size;
     uint64_t version;
     uint64_t reload_id; // Temporary opaque identity while restoring another address space.
+    void *memory;       // What it was allocated in, to free: the state is on a boundary inside it
     bool alive;
-    uint8_t format; // tide_target_format
+    uint16_t holds; // What it holds, as its id says it (TIDE_RENDER_FORMAT)
 } tide_render_target_state;
 
 // A managed target's id is its state's address, with what it holds in the
-// bits that leaves free (a state is 8 bytes aligned at least): so the id
-// alone says it, to a list, to a renderer, and to another build of the game
-// that's handed the id of a target to make again (tide_render_target_recreate).
+// bits that leaves free: so the id alone says it, to a list, to a renderer,
+// and to another build of the game that's handed the id of a target to make
+// again (tide_render_target_recreate). A state is on a boundary of
+// TIDE_RENDER_BITS + 1 bytes for that. The bits are 3 for each color image in
+// order, 1 + its tide_target_format, and 0 past the last (so none at all is a
+// target of depth alone); then, in a texture's reference to one of a target's
+// color images (tide_texture_ref), 2 for which.
 #define TIDE_RENDER_MANAGED (UINT64_C(1) << 63)
-#define TIDE_RENDER_FORMAT UINT64_C(7)
+#define TIDE_RENDER_FORMAT UINT64_C(0xFFF)
+#define TIDE_RENDER_IMAGE_SHIFT 12
+#define TIDE_RENDER_IMAGE (UINT64_C(3) << TIDE_RENDER_IMAGE_SHIFT)
+#define TIDE_RENDER_BITS (TIDE_RENDER_FORMAT | TIDE_RENDER_IMAGE)
 #define TIDE_RENDER_WINDOW UINT64_MAX
 #define TIDE_RENDER_INVALID (UINT64_MAX - UINT64_C(1))
 
@@ -334,14 +356,51 @@ static inline bool tide_render_target_managed(const uint64_t id)
 static inline tide_render_target_state *tide_render_target_state_of(const uint64_t id)
 {
     return tide_render_target_managed(id)
-        ? (tide_render_target_state *)(uintptr_t)(id & ~(TIDE_RENDER_MANAGED | TIDE_RENDER_FORMAT)) : NULL;
+        ? (tide_render_target_state *)(uintptr_t)(id & ~(TIDE_RENDER_MANAGED | TIDE_RENDER_BITS)) : NULL;
 }
 
-// What the target `id` holds. The window and a borrowed target hold color.
+// What the target `id` holds. The window and a borrowed target hold one color
+// image of 4 bytes a pixel.
+static inline tide_target_formats tide_render_target_formats(const uint64_t id)
+{
+    tide_target_formats formats = {0};
+    if (!tide_render_target_managed(id)) {
+        formats.count = 1;
+        return formats;
+    }
+    for (; formats.count < TIDE_TARGET_COLORS; formats.count++) {
+        const uint32_t held = (uint32_t)(id >> (3u * formats.count)) & 7u;
+        if (!held) break;
+        formats.color[formats.count] = (uint8_t)(held - 1u);
+    }
+    return formats;
+}
+
+// How many color images it has: 0 for a target of depth alone.
+static inline uint32_t tide_render_target_colors(const uint64_t id)
+{
+    return tide_render_target_formats(id).count;
+}
+
+// What its first color image holds, or TIDE_TARGET_DEPTH_ONLY for a target
+// with none: the format a target of one image, or of none, was made with.
 static inline tide_target_format tide_render_target_format(const uint64_t id)
 {
-    return tide_render_target_managed(id) && (id & TIDE_RENDER_FORMAT) == TIDE_TARGET_DEPTH_ONLY ? TIDE_TARGET_DEPTH_ONLY
-                                                                                               : TIDE_TARGET_COLOR;
+    const tide_target_formats formats = tide_render_target_formats(id);
+    return formats.count ? (tide_target_format)formats.color[0] : TIDE_TARGET_DEPTH_ONLY;
+}
+
+// A texture's reference to one of a target's color images has which in its
+// id: the image's number, from 0, and the target's own id, which is what a
+// destination, a renderer's image and a comparison of two targets go by.
+static inline uint32_t tide_render_target_image(const uint64_t id)
+{
+    return tide_render_target_managed(id) ? (uint32_t)((id & TIDE_RENDER_IMAGE) >> TIDE_RENDER_IMAGE_SHIFT) : 0;
+}
+
+static inline uint64_t tide_render_target_whole(const uint64_t id)
+{
+    return tide_render_target_managed(id) ? id & ~TIDE_RENDER_IMAGE : id;
 }
 
 static inline bool tide_render_target_live(const uint64_t id)
@@ -392,11 +451,23 @@ tide_render_target tide_render_target_make_scaled(float width, float height, flo
 tide_render_target tide_render_target_screen(float factor);
 // ...and the window's size itself.
 tide_render_target tide_render_target_window(void);
-// The same four, holding what `format` says: the ones above hold color.
+// The same four, holding what `format` says: one color image of it, or none
+// for TIDE_TARGET_DEPTH_ONLY. The ones above hold TIDE_TARGET_COLOR.
 tide_render_target tide_render_target_make_as(float width, float height, tide_target_format format);
 tide_render_target tide_render_target_make_scaled_as(float width, float height, float scale, tide_target_format format);
 tide_render_target tide_render_target_screen_as(float factor, tide_target_format format);
 tide_render_target tide_render_target_window_as(tide_target_format format);
+// ...and holding several color images, `count` of them, TIDE_TARGET_COLORS at
+// the most: each what its format says, in order. A shader's outputs go to
+// them in that order (tide_shader.outputs), and each is read as a texture of
+// its own (tide_render_target_color_at). One format is as the four above;
+// among several, one that's no color's (TIDE_TARGET_DEPTH_ONLY) is
+// TIDE_TARGET_COLOR, having said so.
+tide_render_target tide_render_target_make_of(float width, float height, const tide_target_format *formats, uint32_t count);
+tide_render_target tide_render_target_make_scaled_of(float width, float height, float scale,
+                                                     const tide_target_format *formats, uint32_t count);
+tide_render_target tide_render_target_screen_of(float factor, const tide_target_format *formats, uint32_t count);
+tide_render_target tide_render_target_window_of(const tide_target_format *formats, uint32_t count);
 // Another size, at the scale it has, and an empty image. Not for a target that
 // follows the window, whose size is the window's to say.
 void tide_render_target_resize(tide_render_target target, float width, float height);
@@ -413,6 +484,9 @@ static inline tide_render_target tide_render_target_resolve(tide_render_target t
     return target;
 }
 
+// A target's first color image, as a texture. (Of a reference's own `target`,
+// whose id says which image it names, it's that image again: how a reference
+// is made again for another build of the game.)
 static inline tide_texture_ref tide_render_target_color(const tide_render_target target)
 {
     const tide_render_target resolved = tide_render_target_resolve(target);
@@ -421,12 +495,28 @@ static inline tide_texture_ref tide_render_target_color(const tide_render_target
                    .size = resolved.size}};
 }
 
+// ...and its color image `image`, from 0: Tide's target.colors[image]. One a
+// target hasn't got is no texture's: a draw that samples it is passed by, and
+// says so.
+static inline tide_texture_ref tide_render_target_color_at(const tide_render_target target, const int32_t image)
+{
+    tide_texture_ref color = tide_render_target_color(target);
+    if (image == 0) return color;
+    if (image < 0 || image >= TIDE_TARGET_COLORS || !tide_render_target_managed(color.target.id)) {
+        color.target.id = TIDE_RENDER_INVALID;
+    } else {
+        color.target.id = tide_render_target_whole(color.target.id) | ((uint64_t)image << TIDE_RENDER_IMAGE_SHIFT);
+    }
+    return color;
+}
+
 // ...and its depth. The window's isn't read: no shader samples the window.
 static inline tide_depth_ref tide_render_target_depth(const tide_render_target target)
 {
     const tide_render_target resolved = tide_render_target_resolve(target);
     return (tide_depth_ref){
-        .target = {.id = resolved.id && resolved.id != TIDE_RENDER_WINDOW ? resolved.id : TIDE_RENDER_INVALID,
+        .target = {.id = resolved.id && resolved.id != TIDE_RENDER_WINDOW ? tide_render_target_whole(resolved.id)
+                                                                          : TIDE_RENDER_INVALID,
                    .size = resolved.size}};
 }
 
@@ -445,8 +535,9 @@ typedef struct tide_draw_texture {
     tide_target_size target; // A target's: the rendered image's size, where the others have a width and a height
 } tide_draw_texture;
 
-// TIDE_PIXELS_TARGET is a render target's color, and TIDE_PIXELS_TARGET_DEPTH
-// its depth, which only a shader that reads that texture as depth is given
+// TIDE_PIXELS_TARGET is one of a render target's color images, the one its id
+// says (tide_render_target_image), and TIDE_PIXELS_TARGET_DEPTH its depth,
+// which only a shader that reads that texture as depth is given
 // (tide_shader.texture_reads): neither has pixels here.
 enum { TIDE_PIXELS_MEMORY, TIDE_PIXELS_GRID, TIDE_PIXELS_TARGET, TIDE_PIXELS_TARGET_DEPTH };
 
@@ -688,6 +779,12 @@ typedef enum tide_shader_read {
 //   with a `sampler` in WGSL; one that's compared is a `sampler2DShadow`, and
 //   a `texture_depth_2d` with a `sampler_comparison`.
 //
+// Its fragment stage writes `outputs` colors, at locations 0 on (one, for 0):
+// the first is the pixel's in the window and in a target's first color image,
+// and the others go to the color images after it of a target that holds
+// several (tide_render_target_make_of). Those a target has no image for go
+// nowhere, and the images past them are left as they were.
+//
 // GLSL is without its version line, its uniforms a std140 block named
 // `uniforms`. WGSL has both stages, `vertex` and `fragment`, its uniforms at
 // binding 0 of group 0, and texture i and its sampler at bindings 1 + 2i and
@@ -708,7 +805,13 @@ typedef struct tide_shader {
     uint32_t uniform_floats, uniform_ints;
     uint32_t texture_count;
     uint8_t texture_reads[TIDE_SHADER_TEXTURES]; // tide_shader_read
+    uint8_t outputs; // The colors its fragment stage writes: 1 for 0, TIDE_TARGET_COLORS at the most
 } tide_shader;
+
+static inline uint32_t tide_shader_outputs(const tide_shader *s)
+{
+    return s->outputs == 0 ? 1u : s->outputs < TIDE_TARGET_COLORS ? s->outputs : (uint32_t)TIDE_TARGET_COLORS;
+}
 
 static inline uint32_t tide_shader_instance_size(const tide_shader *s)
 {

@@ -1,0 +1,6 @@
+// expect: a target's color images are read one at a time: 'colors[1]' is its second, as a Texture
+// expect: they're counted from 0, in the order of the formats it was made with, and 'color' is the first
+// There's no list of them to keep: each is a Texture, read by its number
+scene Main { }
+local singleton Maps { RenderTarget scene; Texture held; DepthTexture deep; }
+view Show(Maps maps) { var all = maps.scene.colors; }

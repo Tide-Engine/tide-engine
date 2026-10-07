@@ -1,0 +1,4 @@
+// expect: a render target's color and depth are its own images, which what's drawn into it changes: they can't be assigned
+scene Main { }
+local singleton Maps { RenderTarget scene; Texture held; DepthTexture deep; }
+view Show(mut Maps maps) { maps.scene.color = maps.held; }

@@ -1,0 +1,8 @@
+// expect: a frag's color is an 'out' parameter: 'out Color glow'
+// Each output is 'out', the second like the first
+scene Main { }
+frag Shade(Vertex vertex, out Color color, mut Color glow)
+{
+    color = Color.red;
+    glow = Color.white;
+}

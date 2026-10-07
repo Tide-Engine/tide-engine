@@ -1,0 +1,148 @@
+// Several colors from one frag. A target says what it holds when it's made, a
+// format for each of its color images after its size, and a frag's `out Color`
+// parameters go to them in the order they're written. Each image is read as
+// a Texture, `target.colors[i]`, the first also as `target.color`.
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+    Color color;
+}
+
+// A struct that keeps a target with one of its images
+struct Pass
+{
+    RenderTarget into;
+    Texture read;
+}
+
+component Prop
+{
+    float3 at;
+    local Texture seen; // A match component's local field keeps one too
+}
+
+local singleton Stage
+{
+    RenderTarget two;      // After its size
+    RenderTarget exact;    // After its pixels per unit
+    RenderTarget screen;   // All of the window
+    RenderTarget half;     // After a screen's factor
+    RenderTarget four;     // As many as there are
+    RenderTarget bright;   // One, of floats
+    RenderTarget picked;   // Its formats from variables
+    RenderTarget odd;      // One of them isn't a color's, which is only known as it runs
+    Texture albedo;
+    Texture normals;
+    Texture last;
+    Texture byIndex;
+    Texture missing;
+    Pass pass;
+    List<Corner> crate;
+    List<Vertex> quad;
+    List<int> faces;
+    int frames;
+}
+
+// A function gives one back
+Texture Second(RenderTarget target)
+{
+    return target.colors[1];
+}
+
+// ...and one says what a target holds
+RenderTarget Wide(Format first, Format second)
+{
+    return RenderTarget(32, 16, first, second);
+}
+
+// Two outputs, in the order they're written
+frag Fill(Corner corner, out Color albedo, out Color normal)
+{
+    albedo = corner.color;
+    normal = Color(corner.normal.x, corner.normal.y, corner.normal.z);
+}
+
+// Four, with a singleton between them
+frag Split(Vertex vertex, out Color red, out Color green, Stage stage, out Color blue, out Color alpha)
+{
+    Color held = stage.albedo.Sample(vertex.uv);
+    red = Color(held.r, 0, 0);
+    green = Color(0, held.g, 0);
+    blue = Color(0, 0, held.b);
+    alpha = Color(held.a, held.a, held.a);
+}
+
+// One, which reads what the first wrote: its second image, and its last
+frag Light(Vertex vertex, out Color color, Texture source, Stage stage)
+{
+    Color normal = stage.normals.Sample(vertex.uv, Filter.Point);
+    Color far = stage.last.Sample(vertex.uv, Filter.Point, Wrap.Repeat);
+    color = source.Sample(vertex.uv) * Math.Max(normal.b, far.r);
+}
+
+// A blit of two outputs, into a target of two
+frag Both(Vertex vertex, out Color first, out Color second, Texture source)
+{
+    first = source.Sample(vertex.uv);
+    second = first * 4;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Prop { at = float3(1, 2, 3) });
+}
+
+view Make(mut Stage stage)
+{
+    stage.frames++;
+    if (stage.frames > 1) return;
+    stage.two = RenderTarget(64, 48, Format.Color, Format.Float);
+    stage.exact = RenderTarget(256, 256, 1, Format.Color, Format.Float, Format.Float);
+    stage.screen = RenderTarget.Screen(Format.Float, Format.Color);
+    stage.half = RenderTarget.Screen(0.5, Format.Color, Format.Color, Format.Float);
+    stage.four = RenderTarget(8, 8, Format.Color, Format.Color, Format.Color, Format.Color);
+    stage.bright = RenderTarget(16, 16, Format.Float);
+    Format first = Format.Float;
+    Format second = Format.Color;
+    stage.picked = Wide(first, second);
+    Format none = Format.DepthOnly;
+    stage.odd = RenderTarget(4, 4, Format.Float, none);
+
+    stage.albedo = stage.two.color;
+    stage.normals = stage.two.colors[1];
+    stage.last = stage.four.colors[3];
+    int which = 2;
+    stage.byIndex = stage.exact.colors[which];
+    stage.missing = stage.two.colors[which + 1];
+    stage.pass = Pass { into = stage.exact, read = Second(stage.exact) };
+
+    stage.crate = [Corner { position = float3(0, 0, 0) }, Corner { position = float3(1, 0, 0) },
+                   Corner { position = float3(0, 1, 0) }];
+    stage.quad = [Vertex { position = float2(0, 0) }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }];
+    stage.faces = [0, 1, 2];
+}
+
+[After(Make)]
+view Keep(mut Prop prop, Stage stage)
+{
+    prop.seen = stage.exact.colors[1];
+}
+
+[After(Keep)]
+view Show(Stage stage)
+{
+    stage.two.Clear(Color.black);
+    stage.two.Mesh(stage.crate, stage.faces, float4x4.identity, Fill);
+    stage.two.Rect(float2(4, 4), float2(8), Color.red); // The engine's own, into its first image
+    stage.four.Mesh(stage.quad, stage.faces, Split);
+    Draw.Blit(stage.bright.color, stage.exact, Both);
+    Draw.Blit(stage.albedo, Draw.window, Light);
+    // A frag of several outputs draws into the window too, where its first is the pixel's
+    Draw3D.Mesh(stage.crate, stage.faces, float4x4.identity, Fill);
+}
+
+scene Main
+{
+}

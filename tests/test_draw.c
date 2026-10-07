@@ -132,18 +132,30 @@ TIDE_TEST(draw_owned_target_aliases_capture_resize_and_disposal)
     tide_render_targets_free();
 }
 
+// A target's state as another build of the game would have made it: on the
+// boundary that leaves its id the bits what it holds goes in.
+static tide_render_target_state *foreign_state(void)
+{
+    void *memory = calloc(1, sizeof(tide_render_target_state) + (size_t)TIDE_RENDER_BITS);
+    if (!memory) return NULL;
+    tide_render_target_state *s = (tide_render_target_state *)(((uintptr_t)memory + (uintptr_t)TIDE_RENDER_BITS)
+                                                               & ~(uintptr_t)TIDE_RENDER_BITS);
+    s->memory = memory;
+    return s;
+}
+
 TIDE_TEST(draw_target_reload_adopts_tombstones_and_recreates_opaque_aliases)
 {
     // Another library's registry is a different variable pointing to shared
     // heap state. Retained disposed aliases must move before its owner unloads.
-    tide_render_target_state *foreign = calloc(1, sizeof *foreign);
-    tide_render_target_state *disposed = calloc(1, sizeof *disposed);
+    tide_render_target_state *foreign = foreign_state(), *disposed = foreign_state();
     TIDE_REQUIRE(foreign && disposed);
-    *foreign = (tide_render_target_state){.next = disposed, .owner = &foreign,
-                                         .size = {.width = 12, .height = 9}, .version = 2, .alive = true};
-    *disposed = (tide_render_target_state){.owner = &foreign, .version = 1};
-    const tide_render_target live_ref = {.id = TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)foreign};
-    const tide_render_target dead_ref = {.id = TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)disposed};
+    void *foreign_memory = foreign->memory, *disposed_memory = disposed->memory;
+    *foreign = (tide_render_target_state){.next = disposed, .owner = &foreign, .memory = foreign_memory,
+                                         .size = {.width = 12, .height = 9}, .version = 2, .alive = true, .holds = 1};
+    *disposed = (tide_render_target_state){.owner = &foreign, .memory = disposed_memory, .version = 1, .holds = 1};
+    const tide_render_target live_ref = {.id = TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)foreign | 1u};
+    const tide_render_target dead_ref = {.id = TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)disposed | 1u};
     tide_render_target_adopt(dead_ref);
     tide_render_target_adopt(live_ref);
     tide_render_target_adopt(live_ref);
@@ -151,7 +163,8 @@ TIDE_TEST(draw_target_reload_adopts_tombstones_and_recreates_opaque_aliases)
 
     // Tokens here are deliberately not pointers; recreation cannot dereference
     // the previous program's address space and must retain shared identity.
-    const tide_render_target packed = {.id = TIDE_RENDER_MANAGED | 123u, .size = {.width = 24, .height = 18, .scale = 2}};
+    const tide_render_target packed = {.id = TIDE_RENDER_MANAGED | (UINT64_C(123) << 16) | 1u,
+                                       .size = {.width = 24, .height = 18, .scale = 2}};
     const tide_render_target first = tide_render_target_recreate(packed), second = tide_render_target_recreate(packed);
     TIDE_CHECK(first.id == second.id && first.size.width == 24.0f && first.size.height == 18.0f && first.size.scale == 2.0f);
     TIDE_CHECK(tide_render_target_recreate((tide_render_target){.id = packed.id}).id == 0);
@@ -159,7 +172,7 @@ TIDE_TEST(draw_target_reload_adopts_tombstones_and_recreates_opaque_aliases)
     const tide_render_target another_restore = tide_render_target_recreate(packed);
     TIDE_CHECK(another_restore.id != first.id);
     // One that followed the window follows it again
-    const tide_render_target following = {.id = TIDE_RENDER_MANAGED | 124u, .size = {.window = 0.5f}};
+    const tide_render_target following = {.id = TIDE_RENDER_MANAGED | (UINT64_C(124) << 16) | 1u, .size = {.window = 0.5f}};
     const tide_render_target restored = tide_render_target_recreate(following);
     TIDE_CHECK(restored.id && restored.id != another_restore.id && restored.size.window == 0.5f);
     TIDE_CHECK(tide_render_target_live(restored.id));
@@ -293,14 +306,120 @@ TIDE_TEST(draw_targets_say_what_they_hold_and_lend_their_depth)
 
     // Another build makes a target again from its id and its size alone, where the id is no address
     // it can read: what it held comes with it, and every alias is the one new target
-    const tide_render_target packed = {.id = TIDE_RENDER_MANAGED | 0x1230u | TIDE_TARGET_DEPTH_ONLY,
+    const tide_render_target packed = {.id = TIDE_RENDER_MANAGED | (UINT64_C(0x123) << 16),
                                        .size = {.width = 24.0f, .height = 18.0f, .scale = 2.0f}};
-    const tide_render_target colored = {.id = TIDE_RENDER_MANAGED | 0x1240u, .size = {.window = 0.5f}};
+    const tide_render_target colored = {.id = TIDE_RENDER_MANAGED | (UINT64_C(0x124) << 16) | 1u, .size = {.window = 0.5f}};
     const tide_render_target first = tide_render_target_recreate(packed), second = tide_render_target_recreate(packed);
     const tide_render_target third = tide_render_target_recreate(colored);
     TIDE_CHECK(first.id == second.id && first.size.scale == 2.0f && tide_render_target_live(first.id));
     TIDE_CHECK(tide_render_target_format(first.id) == TIDE_TARGET_DEPTH_ONLY && tide_render_target_format(third.id) == TIDE_TARGET_COLOR);
     TIDE_CHECK(third.id != first.id && third.size.window == 0.5f);
+    tide_render_targets_recreated();
+
+    tide_draw_free(&appended);
+    tide_draw_free(&d);
+    tide_render_targets_free();
+}
+
+// A target holds up to four color images, each of a format of its own, and
+// its id says them all. A texture's reference names one of them, which the
+// list keeps apart from the others and another build finds again.
+TIDE_TEST(draw_targets_hold_several_colors_and_lend_each)
+{
+    tide_draw_list d = {0}, appended = {0};
+    const tide_target_format three[] = {TIDE_TARGET_COLOR, TIDE_TARGET_FLOAT, TIDE_TARGET_FLOAT};
+    const tide_render_target scene = tide_render_target_make_of(64.0f, 48.0f, three, 3);
+    tide_target_formats held = tide_render_target_formats(scene.id);
+    TIDE_REQUIRE(held.count == 3 && tide_render_target_colors(scene.id) == 3);
+    TIDE_CHECK(held.color[0] == TIDE_TARGET_COLOR && held.color[1] == TIDE_TARGET_FLOAT && held.color[2] == TIDE_TARGET_FLOAT);
+    TIDE_CHECK(tide_render_target_format(scene.id) == TIDE_TARGET_COLOR && tide_render_target_live(scene.id));
+    TIDE_CHECK(scene.size.width == 64.0f && scene.size.height == 48.0f && scene.size.scale == 0.0f);
+    // One float image is a target made with that format, by either function
+    const tide_render_target bright = tide_render_target_make_as(8.0f, 8.0f, TIDE_TARGET_FLOAT);
+    held = tide_render_target_formats(bright.id);
+    TIDE_CHECK(held.count == 1 && held.color[0] == TIDE_TARGET_FLOAT && tide_render_target_format(bright.id) == TIDE_TARGET_FLOAT);
+    TIDE_CHECK(tide_render_target_formats(tide_render_target_make_of(8.0f, 8.0f, &three[1], 1).id).color[0] == TIDE_TARGET_FLOAT);
+    TIDE_CHECK(tide_render_target_colors(tide_render_target_make_of(8.0f, 8.0f, (tide_target_format[]){TIDE_TARGET_DEPTH_ONLY}, 1).id) == 0);
+    // The other three ways to make one hold several too
+    const tide_render_target exact = tide_render_target_make_scaled_of(320.0f, 180.0f, 1.0f, three, 2);
+    const tide_render_target screen = tide_render_target_window_of(three, 3), half = tide_render_target_screen_of(0.5f, three, 2);
+    TIDE_CHECK(tide_render_target_colors(exact.id) == 2 && exact.size.scale == 1.0f);
+    TIDE_CHECK(tide_render_target_colors(screen.id) == 3 && screen.size.window == 1.0f);
+    TIDE_CHECK(tide_render_target_colors(half.id) == 2 && half.size.window == 0.5f);
+    // Four at the most, each a color's: among several, depth alone is a color image, and so is a format there's none of
+    const tide_target_format many[] = {TIDE_TARGET_FLOAT, TIDE_TARGET_DEPTH_ONLY, (tide_target_format)9, TIDE_TARGET_FLOAT,
+                                       TIDE_TARGET_FLOAT, TIDE_TARGET_FLOAT};
+    held = tide_render_target_formats(tide_render_target_make_of(4.0f, 4.0f, many, 6).id);
+    TIDE_REQUIRE(held.count == TIDE_TARGET_COLORS);
+    TIDE_CHECK(held.color[0] == TIDE_TARGET_FLOAT && held.color[1] == TIDE_TARGET_COLOR && held.color[2] == TIDE_TARGET_COLOR
+               && held.color[3] == TIDE_TARGET_FLOAT);
+    // The window, a borrowed target and a target that's none hold one color image
+    TIDE_CHECK(tide_render_target_colors(TIDE_RENDER_WINDOW) == 1 && tide_render_target_colors(1001) == 1);
+    TIDE_CHECK(tide_render_target_colors(TIDE_RENDER_INVALID) == 1 && tide_render_target_image(1001 | TIDE_RENDER_IMAGE) == 0);
+
+    // Each color image is a texture of its own: the first is the target's `color`
+    const tide_texture_ref first = tide_render_target_color(scene), again = tide_render_target_color_at(scene, 0);
+    const tide_texture_ref second = tide_render_target_color_at(scene, 1), third = tide_render_target_color_at(scene, 2);
+    TIDE_CHECK(first.target.id == scene.id && again.target.id == scene.id);
+    TIDE_CHECK(second.target.id != scene.id && tide_render_target_whole(second.target.id) == scene.id);
+    TIDE_CHECK(tide_render_target_image(first.target.id) == 0 && tide_render_target_image(second.target.id) == 1
+               && tide_render_target_image(third.target.id) == 2);
+    TIDE_CHECK(tide_render_target_live(second.target.id) && tide_render_target_version(third.target.id) == 1);
+    TIDE_CHECK(tide_render_target_colors(third.target.id) == 3 && second.target.size.width == 64.0f);
+    // One past what any target holds is no texture's; one this target hasn't got is named, for the renderer to refuse
+    TIDE_CHECK(tide_render_target_color_at(scene, 4).target.id == TIDE_RENDER_INVALID);
+    TIDE_CHECK(tide_render_target_color_at(scene, -1).target.id == TIDE_RENDER_INVALID);
+    TIDE_CHECK(tide_render_target_image(tide_render_target_color_at(scene, 3).target.id) == 3);
+    TIDE_CHECK(tide_render_target_color_at((tide_render_target){.id = TIDE_RENDER_WINDOW}, 1).target.id == TIDE_RENDER_INVALID);
+    TIDE_CHECK(tide_render_target_color_at((tide_render_target){.id = 1001, .size = {.width = 4, .height = 4}}, 1).target.id
+               == TIDE_RENDER_INVALID);
+    // Its depth is the target's, whichever image a reference names
+    TIDE_CHECK(tide_render_target_depth(second.target).target.id == scene.id);
+
+    const uint32_t slots[3] = {tide_draw_texture_source(&d, first), tide_draw_texture_source(&d, second),
+                               tide_draw_texture_source(&d, third)};
+    TIDE_REQUIRE(slots[0] && slots[1] && slots[2] && slots[0] != slots[1] && slots[1] != slots[2] && d.texture_count == 3);
+    TIDE_CHECK(d.textures[slots[1] - 1u].space == TIDE_PIXELS_TARGET && d.textures[slots[1] - 1u].id == second.target.id);
+    TIDE_CHECK(tide_draw_texture_source(&d, second) == slots[1] && d.texture_count == 3);
+    // A resized target's images are its new ones, each still its own
+    tide_render_target_resize(scene, 32.0f, 32.0f);
+    const uint32_t smaller = tide_draw_texture_source(&d, second);
+    TIDE_REQUIRE(smaller && smaller != slots[1]);
+    TIDE_CHECK(d.textures[smaller - 1u].version == 2 && d.textures[smaller - 1u].target.width == 32.0f);
+    TIDE_CHECK(tide_render_target_colors(scene.id) == 3);
+
+    // A blit into a target samples none of its color images, the second no more than the first
+    static const tide_shader reads = {.name = "two outputs", .dims = 2, .vertex_size = sizeof(tide_vertex), .texture_count = 1,
+                                      .outputs = 2};
+    TIDE_CHECK(tide_shader_outputs(&reads) == 2 && tide_shader_outputs(&(tide_shader){0}) == 1
+               && tide_shader_outputs(&(tide_shader){.outputs = 9}) == TIDE_TARGET_COLORS);
+    tide_draw_render_target(&d, scene);
+    const uint32_t commands = d.count;
+    tide_draw_blit(&d, &reads, TIDE_BLEND_REPLACE, NULL, NULL, &smaller, 0);
+    TIDE_CHECK(d.count == commands);
+    tide_draw_render_target(&d, bright);
+    tide_draw_blit(&d, &reads, TIDE_BLEND_REPLACE, NULL, NULL, &smaller, 0);
+    TIDE_REQUIRE(d.count == commands + 2u && d.commands[d.count - 1u].kind == TIDE_DRAW_BLIT);
+
+    // Another list has the image the run named
+    tide_draw_append(&appended, &d);
+    TIDE_REQUIRE(appended.run_count == 1);
+    const uint32_t carried = appended.runs[0].textures[0];
+    TIDE_REQUIRE(carried && carried <= appended.texture_count);
+    TIDE_CHECK(appended.textures[carried - 1u].id == second.target.id && appended.textures[carried - 1u].version == 2);
+
+    // Another build makes the target again from its id alone, with every image it had, and a
+    // texture's reference to one of them names the same image of the new target
+    const uint64_t token = TIDE_RENDER_MANAGED | (UINT64_C(0x321) << 16) | (scene.id & TIDE_RENDER_FORMAT);
+    const tide_render_target packed = {.id = token, .size = {.width = 24.0f, .height = 18.0f}};
+    const tide_render_target packed_second = {.id = token | (UINT64_C(1) << TIDE_RENDER_IMAGE_SHIFT), .size = packed.size};
+    const tide_texture_ref rebound = tide_render_target_color(tide_render_target_recreate(packed_second));
+    const tide_render_target remade = tide_render_target_recreate(packed);
+    held = tide_render_target_formats(remade.id);
+    TIDE_REQUIRE(tide_render_target_live(remade.id) && held.count == 3);
+    TIDE_CHECK(held.color[0] == TIDE_TARGET_COLOR && held.color[1] == TIDE_TARGET_FLOAT && held.color[2] == TIDE_TARGET_FLOAT);
+    TIDE_CHECK(tide_render_target_image(remade.id) == 0 && tide_render_target_image(rebound.target.id) == 1);
+    TIDE_CHECK(tide_render_target_whole(rebound.target.id) == remade.id);
     tide_render_targets_recreated();
 
     tide_draw_free(&appended);
