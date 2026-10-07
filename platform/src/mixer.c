@@ -6,6 +6,7 @@
 
 #include "tide/page.h"
 #include "tide/time.h"
+#include "tide/vorbis.h"
 
 // ---------------------------------------------------------------------------
 // What a frame hands over
@@ -49,7 +50,10 @@ typedef struct voice {
     bool ended;       // Its clip played to its end: silent until the frame starts it over, or stops naming it
     bool playing;     // The frame's `playing` as last said
     tide_clip clip;
-    double cursor;   // Frames into the clip
+    double cursor;   // Frames into the clip; for a stream, how far from frame `a` to frame `b`
+    tide_vorbis_reader *reader; // A streamed clip's decoder, made at its first block
+    float a[2], b[2];           // A stream's last two frames
+    bool drained;               // The stream gave its last frame
     bool spatial, loop;
     tide_float3 position;
     float volume, pitch;
@@ -240,10 +244,17 @@ static void gains_of(const voice *v, float *l, float *r)
     *r = volume * tide_sqrt_f((1.0f + side) * 0.5f);
 }
 
+// A slot emptied, with what its stream held let go of
+static void clear_voice(voice *v)
+{
+    tide_vorbis_reader_close(v->reader);
+    memset(v, 0, sizeof *v);
+}
+
 // Starts a voice in `slot` as `v` says, with its gains at their targets: no ramp in.
 static void start_voice(voice *slot, const tide_voice *v, const uint8_t *knobs, const bool one_shot)
 {
-    memset(slot, 0, sizeof *slot);
+    clear_voice(slot);
     slot->id = one_shot ? UINT64_MAX : v->id;
     slot->one_shot = one_shot;
     slot->playing = v->playing;
@@ -266,6 +277,9 @@ static void update_voice(voice *slot, const tide_voice *v, const uint8_t *knobs)
         slot->clip = v->clip;
         slot->cursor = 0.0;
         slot->ended = false;
+        tide_vorbis_reader_close(slot->reader); // A stream starts over with a reader made again
+        slot->reader = NULL;
+        slot->drained = false;
     } else {
         slot->clip = v->clip; // The same clip, whose samples may have moved
     }
@@ -285,7 +299,7 @@ static void update_voice(voice *slot, const tide_voice *v, const uint8_t *knobs)
 static void apply_handed(const handed *h)
 {
     if (h->forget) {
-        for (uint32_t i = 0; i < TIDE_MIXER_VOICES; i++) memset(&m.voices[i], 0, sizeof m.voices[i]);
+        for (uint32_t i = 0; i < TIDE_MIXER_VOICES; i++) clear_voice(&m.voices[i]);
         for (uint32_t b = 0; b < TIDE_AUDIO_BUSES; b++) {
             m.buses[b].effect = (tide_audio_effect){0};
             memset(m.buses[b].state, 0, sizeof m.buses[b].state);
@@ -347,12 +361,60 @@ void tide_mixer_take(void)
     atomic_store_explicit(&m.shot_tail, tail, memory_order_release);
 }
 
+// The stream's next frame into `b`: false at its end, where a loop starts over
+static bool stream_next(voice *v)
+{
+    float frame[2];
+    uint32_t got = tide_vorbis_read(v->reader, frame, 1);
+    if (!got) {
+        if (!v->loop) return false;
+        tide_vorbis_rewind(v->reader);
+        got = tide_vorbis_read(v->reader, frame, 1);
+        if (!got) return false;
+    }
+    v->b[0] = frame[0];
+    v->b[1] = v->clip.channels >= 2 ? frame[1] : frame[0];
+    return true;
+}
+
+// A streamed clip's block: decoded as it's read, two frames at a time, so a
+// pitch other than 1 and the clip's own rate go through the same interpolation
+// a decoded clip's samples do. The reader is made at the first block.
+static bool read_stream(voice *v, float *out)
+{
+    if (!v->reader) {
+        v->reader = tide_vorbis_reader_open(v->clip.stream);
+        if (!v->reader || !stream_next(v)) return false;
+        v->a[0] = v->b[0];
+        v->a[1] = v->b[1];
+        if (!stream_next(v)) v->drained = true;
+        v->cursor = 0.0;
+    }
+    const double step = (double)v->pitch * (double)v->clip.rate / (double)TIDE_AUDIO_RATE;
+    if (!(step > 0.0)) return true;
+    for (uint32_t i = 0; i < TIDE_AUDIO_BLOCK; i++) {
+        while (v->cursor >= 1.0) {
+            if (v->drained) return false; // Past the last frame
+            v->a[0] = v->b[0];
+            v->a[1] = v->b[1];
+            if (!stream_next(v)) v->drained = true; // `b` stays the last frame, held to the end
+            v->cursor -= 1.0;
+        }
+        const float t = (float)v->cursor;
+        out[2 * i] = v->a[0] + (v->b[0] - v->a[0]) * t;
+        out[2 * i + 1] = v->a[1] + (v->b[1] - v->a[1]) * t;
+        v->cursor += step;
+    }
+    return true;
+}
+
 // Reads a voice's clip for a block into m.temp, advancing its cursor. False
 // once the clip ended (and doesn't loop): the block is silence from there.
 static bool read_clip(voice *v, float *out)
 {
     memset(out, 0, TIDE_AUDIO_SAMPLES * sizeof *out);
     const tide_clip *c = &v->clip;
+    if (c->stream && c->rate && c->channels) return read_stream(v, out);
     if (!c->samples || !c->frames || c->channels == 0) return v->effect.fn != NULL; // A source goes on; silence ends
     const double step = (double)v->pitch * (double)c->rate / (double)TIDE_AUDIO_RATE;
     if (!(step > 0.0)) return true; // Held: silence, going nowhere
@@ -417,12 +479,12 @@ static void render_block(float *out)
         v->gain_r = target_r;
         m.buses[v->bus].used = true;
         if (v->releasing && target_l == 0.0f && target_r == 0.0f) {
-            memset(v, 0, sizeof *v); // Faded out
+            clear_voice(v); // Faded out
         } else if (!goes_on) {
             // Its clip ended: a one-shot is done, and a named voice stays,
             // silent, until the frame starts it over or stops naming it
             if (v->one_shot) {
-                memset(v, 0, sizeof *v);
+                clear_voice(v);
             } else {
                 v->ended = true;
             }

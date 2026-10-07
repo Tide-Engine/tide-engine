@@ -153,3 +153,40 @@ TIDE_TEST(audio_a_clip_follows_the_pack_thats_loaded)
     free(bytes);
     finish();
 }
+
+TIDE_TEST(audio_an_ogg_vorbis_clip_decodes_whole_or_streams_by_its_length)
+{
+    start();
+    const tide_clip_ref blip = tide_pack_clip_of(tide_pack_find("blip", TIDE_PACK_CLIP));
+    TIDE_CHECK(blip.name != 0);
+    // 0.3 s of a tone at 8 kHz, mono: well under the ten seconds a clip decodes whole at
+    tide_clip clip = tide_clip_of(blip);
+    TIDE_REQUIRE(clip.samples != NULL && clip.stream == NULL);
+    TIDE_CHECK(clip.frames == 2400 && clip.channels == 1 && clip.rate == 8000);
+    float loudest = 0.0f;
+    for (uint32_t i = 0; i < clip.frames; i++) {
+        const float v = clip.samples[i] < 0 ? -clip.samples[i] : clip.samples[i];
+        if (v > loudest) loudest = v;
+    }
+    TIDE_CHECK(loudest > 0.05f && loudest <= 1.0f);
+    TIDE_CHECK(tide_clip_of(blip).samples == clip.samples); // Decoded once
+    // Longer than the threshold, it's kept to stream: the same numbers, no samples
+    tide_clips_free();
+    tide_clips_whole_seconds = 0;
+    clip = tide_clip_of(blip);
+    TIDE_CHECK(clip.samples == NULL && clip.stream != NULL);
+    TIDE_CHECK(clip.frames == 2400 && clip.channels == 1 && clip.rate == 8000 && clip.id != 0);
+    TIDE_CHECK(tide_clip_of(blip).stream == clip.stream);
+    tide_clips_whole_seconds = 10;
+    // A WAV is never streamed
+    const tide_clip beep = tide_clip_of(tide_pack_clip_of(tide_pack_find("beep", TIDE_PACK_CLIP)));
+    TIDE_CHECK(beep.samples != NULL && beep.stream == NULL);
+    // Prepared at load: every clip decoded before any plays, and the same entries after
+    tide_clips_free();
+    tide_clips_prepare(NULL);
+    const tide_clip prepared = tide_clip_of(blip);
+    TIDE_CHECK(prepared.samples != NULL && prepared.frames == 2400);
+    tide_clips_prepare(NULL); // Nothing left to do
+    TIDE_CHECK(tide_clip_of(blip).samples == prepared.samples);
+    finish();
+}
