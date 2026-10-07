@@ -2282,18 +2282,23 @@ static type check_construct(checker *c, expr *e, const type target)
         return T_ERR;
     }
 
-    // Color(r, g, b) with alpha 1, or Color(r, g, b, a).
+    // Color takes scalars and vectors making RGB with alpha 1, or RGBA.
     if (target.kind == TY_COLOR) {
-        bool scalars = argc == 3 || argc == 4;
+        int total = 0;
         for (int i = 0; i < argc; i++) {
-            if (!is_scalar_number(e->args.items[i]->type)) scalars = false;
+            const type t = e->args.items[i]->type;
+            if (!type_is_numeric(t)) {
+                diag_error(e->args.items[i]->at, "Color takes numbers and vectors, not %s", type_name(t));
+                return T_ERR;
+            }
+            total += type_dim(t);
         }
-        if (scalars) {
-            e->ctor = CTOR_COLOR;
-            return target;
+        if (total != 3 && total != 4) {
+            diag_error(e->at, "Color needs 3 or 4 components, got %d", total);
+            return T_ERR;
         }
-        diag_error(e->at, "Color takes (r, g, b) or (r, g, b, a), numbers from 0 to 1");
-        return T_ERR;
+        e->ctor = CTOR_COLOR;
+        return target;
     }
 
     // Rect(x, y, width, height), from the top left.

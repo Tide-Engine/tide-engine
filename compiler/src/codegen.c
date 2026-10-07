@@ -2167,7 +2167,8 @@ static void gen_construct(gen *g, sb *o, const expr *e)
         sb_put(o, ")");
         break;
 
-    case CTOR_COMPONENTS: {
+    case CTOR_COMPONENTS:
+    case CTOR_COLOR: {
         if (t.kind == TY_QUATERNION) {
             sb_put(o, "tide_q(");
             for (int i = 0; i < e->args.count; i++) {
@@ -2177,7 +2178,7 @@ static void gen_construct(gen *g, sb *o, const expr *e)
             sb_put(o, ")");
             break;
         }
-        const bool is_float = type_is_float_based(t);
+        const bool is_float = type_is_float_based(t) || t.kind == TY_COLOR;
         sb_printf(o, "(%s){", c_type(t));
         int written = 0;
         for (int i = 0; i < e->args.count; i++) {
@@ -2203,6 +2204,7 @@ static void gen_construct(gen *g, sb *o, const expr *e)
                 sb_printf(o, "%s%s(%s).%s", written++ ? ", " : "", widen ? "(float)" : "", text, xyzw[k]);
             }
         }
+        if (e->ctor == CTOR_COLOR && written == 3) sb_put(o, ", 1.0f");
         sb_put(o, "}");
         break;
     }
@@ -2270,16 +2272,6 @@ static void gen_construct(gen *g, sb *o, const expr *e)
         sb_printf(o, "((%s)(", c_type(t));
         gen_expr(g, o, first);
         sb_put(o, "))");
-        break;
-
-    case CTOR_COLOR:
-        sb_put(o, "(tide_color){");
-        for (int i = 0; i < e->args.count; i++) {
-            if (i) sb_put(o, ", ");
-            gen_as(g, o, e->args.items[i], float_t);
-        }
-        if (e->args.count == 3) sb_put(o, ", 1.0f");
-        sb_put(o, "}");
         break;
 
     case CTOR_RECT:
@@ -4430,8 +4422,9 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
         for (int i = 0; out->strict && m && m->owner && e->kind == E_CALL && !m->is_mut_method && i < e->args.count; i++) {
             if (holds_writer(e->args.items[i])) out->forced = true;
         }
-        // A vector made from vectors reads each one's components from its text, written out again for each
-        for (int i = 0; e->call == CALL_CONSTRUCT && e->ctor == CTOR_COMPONENTS && i < e->args.count; i++) {
+        // A vector or color made from vectors reads each one's components from its text, written out again for each
+        for (int i = 0; e->call == CALL_CONSTRUCT && (e->ctor == CTOR_COMPONENTS || e->ctor == CTOR_COLOR)
+                        && i < e->args.count; i++) {
             expr *arg = e->args.items[i];
             if (type_dim(arg->type) >= 2 && holds_ordered(arg)) out->forced = true;
         }

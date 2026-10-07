@@ -460,7 +460,7 @@ static bool find_target(const char *root, const build_options *opts)
 typedef struct build {
     const char *root;
     const build_options *opts;
-    bool library; // For `tide run`: the game is a library, which a host reloads (see tide/host.h)
+    bool library; // For `tide run --watch`: the game is a library, which a host reloads (see tide/host.h)
     int abi;      // For Android: which of its CPUs is being built (android_abis)
     char *folder;
     const char *name;
@@ -1330,7 +1330,26 @@ static void strip_reloading(char *script)
     }
 }
 
-static bool make_page(const char *root, const char *program, const char *page, const char *pack)
+// The run's arguments as JavaScript strings. Quotes, backslashes and HTML
+// delimiters aren't part of its session options and are left out.
+static void page_arguments(char *text, const size_t size, const char *const *args)
+{
+    snprintf(text, size, "Tide.arguments = [");
+    for (int i = 0; args && args[i]; i++) {
+        size_t at = strlen(text);
+        if (at + strlen(args[i]) + 8 >= size) break;
+        text[at++] = i ? ',' : ' ';
+        text[at++] = '"';
+        for (const char *c = args[i]; *c; c++) {
+            if (*c != '"' && *c != '\\' && *c != '<' && (unsigned char)*c >= ' ') text[at++] = *c;
+        }
+        text[at++] = '"';
+        text[at] = '\0';
+    }
+    strcat(text, "];\n");
+}
+
+static bool make_page(const char *root, const char *program, const char *page, const char *pack, const char *const *args)
 {
     char *shell_path = path_join(root, "web/shell.html");
     char *script_path = path_join(root, "web/tide.js");
@@ -1354,6 +1373,11 @@ static bool make_page(const char *root, const char *program, const char *page, c
     }
     fwrite(shell, 1, (size_t)(slot - shell), f);
     fprintf(f, "<script>\nconst TIDE_PROGRAM = \"%s\";\n", encoded);
+    if (args && args[0]) {
+        char arguments[512];
+        page_arguments(arguments, sizeof arguments, args);
+        fputs(arguments, f);
+    }
     if (packed) {
         char *pack_encoded = base64((const unsigned char *)packed, pack_len);
         fprintf(f, "const TIDE_PACK = \"%s\";\n", pack_encoded);
@@ -1429,7 +1453,7 @@ static bool place_pack(const char *from, const char *to)
 
 static char *build_android(const char *root, const build_options *opts, char *package, size_t package_size);
 
-char *tide_build(const char *root, const build_options *opts)
+static char *build_game(const char *root, const build_options *opts, const char *const *args)
 {
     if (opts->android) return build_android(root, opts, NULL, 0);
     build b = {0};
@@ -1473,7 +1497,7 @@ char *tide_build(const char *root, const build_options *opts)
     }
     if (!link_objects(&b, &objects, &c, program, false, NULL)) return NULL;
     char *pack = pack_of(gen);
-    if (opts->web && !make_page(root, program, output, pack)) return NULL;
+    if (opts->web && !make_page(root, program, output, pack, args)) return NULL;
     if (!opts->web) { // Beside the program, as <name>.pack, which tide/run.h loads
         char file[512];
         snprintf(file, sizeof file, "%s.pack", b.name);
@@ -1488,8 +1512,13 @@ char *tide_build(const char *root, const build_options *opts)
     return output;
 }
 
+char *tide_build(const char *root, const build_options *opts)
+{
+    return build_game(root, opts, NULL);
+}
+
 // ---------------------------------------------------------------------------
-// `tide run`: the game as a library in a small host program, which swaps in
+// `tide run --watch`: the game as a library in a small host program, which swaps in
 // each new build of it (see tide/host.h), and a new build whenever one of the
 // game's files changes. Each run has a folder of its own, .tide/<configuration>/run/
 // <tide's process ID>, so two runs of one game (a server and a client) never
@@ -1732,6 +1761,32 @@ static void open_run(run *r)
     free(runs);
 }
 
+int tide_run_native(const char *root, const build_options *opts, const char *const *game_args)
+{
+    run r = {0};
+    if (!build_setup(&r.b, root, opts, false)) return 1;
+    open_run(&r);
+    char file[512];
+    snprintf(file, sizeof file, "%s%s", r.b.name, EXE_SUFFIX);
+    char *output = path_join(r.dir, file);
+    build_options standalone = *opts;
+    standalone.output = output; // Another run never links over this one's executable
+    char *program = tide_build(root, &standalone);
+    int code = 1;
+    if (program) {
+        args a = {0};
+        arg(&a, program);
+        for (int i = 0; game_args[i]; i++) arg(&a, game_args[i]);
+        code = sys_run(a.items, r.b.folder, false);
+        if (code < 0) fprintf(stderr, "tide: couldn't start %s\n", program);
+        free(a.items);
+    }
+    sys_remove_tree(r.dir);
+    free(output);
+    free(program);
+    return code < 0 ? 1 : code;
+}
+
 // Whether a line typed into tide's terminal asks to start the game over,
 // saying so either way.
 static bool typed_restart(void)
@@ -1745,7 +1800,7 @@ static bool typed_restart(void)
     return restart;
 }
 
-int tide_run_reloading(const char *root, const build_options *opts, const char *const *game_args, const bool once)
+int tide_run_reloading(const char *root, const build_options *opts, const char *const *game_args)
 {
     run r = {0};
     if (!build_setup(&r.b, root, opts, true)) return 1;
@@ -1766,12 +1821,7 @@ int tide_run_reloading(const char *root, const build_options *opts, const char *
         return 1;
     }
     int code = 0;
-    if (once) { // A run with no window: it ends by itself, as it was built, and its exit code is tide's
-        while (!sys_wait(game, 250, &code)) { }
-        sys_remove_tree(r.dir);
-        return code;
-    }
-    printf("tide: saving a .tide or C file reloads the game; type r and press Enter to start it over\n");
+    printf("tide: saving a .tide or C file reloads the game; Ctrl+R or r and Enter starts it over\n");
     fflush(stdout);
     sys_read_lines();
 
@@ -1810,7 +1860,7 @@ int tide_run_reloading(const char *root, const build_options *opts, const char *
 }
 
 // ---------------------------------------------------------------------------
-// `tide run --web`: tide serves the game's page on this machine, which asks
+// `tide run --web --watch`: tide serves the game's page on this machine, which asks
 // it for the newest build four times a second and starts each new one in the
 // running one's place (platform/web/tide.js).
 
@@ -1874,21 +1924,10 @@ static char *web_page(const char *root, const char *const *args)
         fprintf(stderr, "tide: the web page's files are missing from %s/web; reinstall tide\n", root);
         return NULL;
     }
-    // Tide.arguments = ["--join", "K7QF2M"]: letters, digits and dots, so
-    // anything else is left out rather than escaped.
-    char before[512] = "<script>\nTide.reload = true;\nTide.arguments = [";
-    for (int i = 0; args && args[i]; i++) {
-        size_t at = strlen(before);
-        if (at + strlen(args[i]) + 8 >= sizeof before) break;
-        before[at++] = i ? ',' : ' ';
-        before[at++] = '"';
-        for (const char *c = args[i]; *c; c++) {
-            if (*c != '"' && *c != '\\' && *c != '<' && (unsigned char)*c >= ' ') before[at++] = *c;
-        }
-        before[at++] = '"';
-        before[at] = '\0';
-    }
-    strcat(before, "];\n");
+    char arguments[512];
+    page_arguments(arguments, sizeof arguments, args);
+    char before[600];
+    snprintf(before, sizeof before, "<script>\nTide.reload = true;\n%s", arguments);
     const char *after = "</script>";
     const size_t n = (size_t)(slot - shell) + strlen(before) + strlen(script) + strlen(after)
                    + strlen(slot + strlen("{{{ SCRIPT }}}")) + 1;
@@ -1908,7 +1947,7 @@ static void answer_web(void *user, const char *path, serve_reply *reply)
     snprintf(pack, sizeof pack, "/pack-%u", (unsigned)w->r.packs);
     if (strcmp(path, "/") == 0) {
         *reply = (serve_reply){200, "text/html; charset=utf-8", w->page, strlen(w->page)};
-    } else if (strcmp(path, "/build") == 0) {
+    } else if (w->r.b.opts->watch && strcmp(path, "/build") == 0) {
         // The newest build, how often to start over, and the newest pack of assets (0 for none)
         snprintf(w->status, sizeof w->status, "%u %u %u", (unsigned)w->r.builds, (unsigned)w->restarts, (unsigned)w->r.packs);
         *reply = (serve_reply){200, "text/plain; charset=utf-8", w->status, strlen(w->status)};
@@ -1921,7 +1960,7 @@ static void answer_web(void *user, const char *path, serve_reply *reply)
             free(file);
         }
         if (w->pack) *reply = (serve_reply){200, "application/octet-stream", w->pack, w->pack_size};
-    } else if (strcmp(path, newest) == 0) {
+    } else if (w->r.b.opts->watch && strcmp(path, newest) == 0) {
         if (w->program_build != w->r.builds) {
             char *file = build_path(&w->r, w->r.builds, ".wasm");
             free(w->program);
@@ -1938,10 +1977,19 @@ int tide_run_web(const char *root, const build_options *opts, const bool open_pa
     web_run w = {0};
     run *r = &w.r;
     r->web = true;
-    if (!build_setup(&r->b, root, opts, false)) return 1;
-    open_run(r);
-    w.page = web_page(root, args);
-    if (!w.page || !write_web_main(r) || !build_library(r)) return 1;
+    if (opts->watch) {
+        if (!build_setup(&r->b, root, opts, false)) return 1;
+        open_run(r);
+        w.page = web_page(root, args);
+        if (!w.page || !write_web_main(r) || !build_library(r)) return 1;
+    } else {
+        char *page = build_game(root, opts, args);
+        if (!page) return 1;
+        w.page = sys_read_file(page, NULL);
+        free(page);
+        if (!w.page) return 1;
+        r->b.opts = opts;
+    }
 
     uint16_t port = 0;
     serve *server = serve_open(&port);
@@ -1952,16 +2000,18 @@ int tide_run_web(const char *root, const build_options *opts, const bool open_pa
     char url[64];
     snprintf(url, sizeof url, "http://127.0.0.1:%u/", (unsigned)port);
     printf("tide: the game is at %s\n", url); // The VS Code extension reads the address from this line
-    printf("tide: saving a .tide or C file reloads it; type r and press Enter to start it over, and Ctrl+C to stop\n");
+    if (opts->watch) printf("tide: saving a .tide or C file reloads it; Ctrl+R or r and Enter starts it over, and Ctrl+C stops\n");
+    else printf("tide: Ctrl+C stops serving the page; --watch reloads as files change\n");
     fflush(stdout);
     if (open_page && !sys_open_in_browser(url)) fprintf(stderr, "tide: couldn't open a browser; open %s in one\n", url);
-    sys_read_lines();
+    if (opts->watch) sys_read_lines();
 
-    uint64_t stamp = game_stamp(&r->b);
-    uint64_t assets = asset_stamp(&r->b);
+    uint64_t stamp = opts->watch ? game_stamp(&r->b) : 0;
+    uint64_t assets = opts->watch ? asset_stamp(&r->b) : 0;
     int64_t changed_at = -1, assets_changed_at = -1;
     for (;;) {
         serve_poll(server, 250, answer_web, &w);
+        if (!opts->watch) continue;
         if (typed_restart()) w.restarts++;
         const uint64_t now = game_stamp(&r->b);
         if (now != stamp) {
@@ -2285,24 +2335,27 @@ int tide_run_android(const char *root, const build_options *opts, const char *co
 
     // What it prints, until it ends; saving a file makes the app again and
     // starts it over, as the device can't swap code into a running app.
-    printf("Running %s on the device; its output follows. Saving a .tide or C file builds it again and starts it "
-           "over; type r and press Enter to start it over, or close it to stop.\n", package);
+    printf("Running %s on the device; its output follows.\n", package);
+    if (opts->watch) printf("Saving a .tide or C file builds it again and starts it over; type r and press Enter to start it "
+                           "over, or close it to stop.\n");
     fflush(stdout);
-    sys_read_lines();
+    if (opts->watch) sys_read_lines();
     const char *const logs[] = {adb, "logcat", "-v", "raw", "-s", "tide:V", NULL};
     sys_process *log = sys_start(logs, NULL);
     build watch = {0}; // The game's files and its packages', for their stamp
-    watch.folder = path_absolute(opts->folder);
-    find_packages(watch.folder, &watch.packages);
-    uint64_t stamp = game_stamp(&watch);
+    if (opts->watch) {
+        watch.folder = path_absolute(opts->folder);
+        find_packages(watch.folder, &watch.packages);
+    }
+    uint64_t stamp = opts->watch ? game_stamp(&watch) : 0;
     int64_t changed_at = -1;
     bool seen = false;
     int waits = 0; // Half seconds without the app, since it was started
     for (;;) {
         int code;
         if (log && sys_wait(log, 500, &code)) log = NULL;
-        bool restart = typed_restart();
-        const uint64_t now = game_stamp(&watch);
+        bool restart = opts->watch && typed_restart();
+        const uint64_t now = opts->watch ? game_stamp(&watch) : stamp;
         if (now != stamp) {
             stamp = now;
             changed_at = sys_now_ms();

@@ -119,10 +119,11 @@ typedef struct tide_host_game {
 // tide_game hash) takes over the match and the local state where they are;
 // with another, they're carried over to it by name (tide/migrate.h), or when
 // that can't be done, the game starts over. A file named `restart` in `dir`
-// starts it over too. Native builds only (platform/src/reload.c).
+// fully reloads it too, as Ctrl+R in its window does: the match, local state
+// and the library's globals start fresh. Native builds only (platform/src/reload.c).
 _Noreturn void tide_host_run_library(const tide_run_desc *desc, const char *dir);
 
-// The same on the web (tide run --web), where each new build is a program of
+// The same on the web (tide run --web --watch), where each new build is a program of
 // its own, which the page starts in the running one's place: `game` goes on
 // from what the last one left it, carried over by name, or starts as
 // tide_host_run would. Web builds only (platform/src/reload.c).
@@ -164,6 +165,9 @@ static inline void tide_run_load_assets(void)
 static void *tide_run_local;  // The game's tide_local
 static void *tide_run_start;  // A tide_start, for what local code asks
 static tide_devices tide_run_devices;
+// The watching host's shortcuts, immediately after polling and before the
+// game reads its devices. Plain hosts leave this unset.
+static void (*tide_run_input)(tide_devices *devices);
 static tide_draw_list tide_run_draw;
 static tide_audio_frame tide_run_audio; // What the frame says should be sounding (tide/audio.h)
 static tide_gui tide_run_gui;
@@ -728,6 +732,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_profiler *profiler = tide_run_profiling ? &tide_run_profiler : NULL;
     tide_profiler_begin(profiler, seconds);
     tide_platform_poll(&tide_run_devices);
+    if (tide_run_input) tide_run_input(&tide_run_devices);
     tide_run_drawer_input(stats);
     const bool timing = stats && tide_run_drawer.open;
     if (timing != tide_run_timing) {
