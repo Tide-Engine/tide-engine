@@ -21,9 +21,9 @@ curl -fsSL https://tide-engine.dev/install.sh | sh
 ```
 
 This installs `tide` for your user (in `%LOCALAPPDATA%\Tide` or `~/.tide`) and
-puts it on your `PATH`; no admin rights needed. For nightly versions, which
-follow development day by day, set `TIDE_CHANNEL=nightly` before running the
-script.
+puts it on your `PATH`; no admin rights needed. Nightly versions are previews
+published when ready. Set `TIDE_CHANNEL=nightly` before running the script to
+install them.
 
 The installers and `tide upgrade` get tide from https://tide-engine.dev, with no
 account. Running the installer again upgrades a tide that's already there,

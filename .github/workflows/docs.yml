@@ -1,13 +1,10 @@
 # Builds the docs site (docs/, SvelteKit), with its playable web examples, and
-# deploys it to Fly.io (docs/fly.toml) on pushes to dev. Pull requests only
+# deploys it to Fly.io (docs/fly.toml) when run manually on dev. Other refs only
 # build it, which also checks its links. It tests the editors' grammar first,
 # through the Shiki the site highlights Tide with.
 name: Docs
 
 on:
-  push:
-    branches: [dev]
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -83,9 +80,9 @@ jobs:
       # The image takes what the build made (docs/Dockerfile). The token is
       # a deploy token for the app: fly tokens create deploy -a tide-website
       - uses: superfly/flyctl-actions/setup-flyctl@master
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'
       - name: Deploy
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dev'
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'
         working-directory: docs
         run: flyctl deploy --remote-only --ha=false
         env:
