@@ -33,6 +33,17 @@ if(NOT WIN32)
 endif()
 add_test(NAME tide_cli_tests COMMAND tide_cli_tests)
 
+# The command must finish when its game does, with the game's exit code.
+# Exercise main's real dispatch with runs and update checks supplied by a
+# fixture, so shutdown order is checked without a game window or network.
+add_executable(tide_cli_run_exit_tests tests/run_exit_test.c sys.c)
+target_include_directories(tide_cli_run_exit_tests PRIVATE . ../lsp)
+target_link_libraries(tide_cli_run_exit_tests PRIVATE tidec_core)
+if(NOT WIN32)
+    target_link_libraries(tide_cli_run_exit_tests PRIVATE Threads::Threads)
+endif()
+add_test(NAME tide_cli_run_exit COMMAND tide_cli_run_exit_tests)
+
 # Games with packages: in folders, and from git through a folder that stands
 # in for git hosts.
 add_test(NAME tide_cli_packages
