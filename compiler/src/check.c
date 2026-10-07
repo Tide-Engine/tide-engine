@@ -4247,13 +4247,49 @@ static void note_mesh_forms(const expr *e)
               STR_ARG(owner), str_eq_c(owner, "Draw3D") ? ", transform" : "", str_eq_c(owner, "Draw3D") ? 3 : 2);
 }
 
+// Whether a vert writes a struct of this type for its frag: `out FromLamp lamp`.
+static bool shader_writes(const decl *vert, const decl *type)
+{
+    for (int i = 1; vert && i < vert->params.count; i++) {
+        const param *p = &vert->params.items[i];
+        if (p->is_out && p->type.kind == TY_STRUCT && p->type.decl == type) return true;
+    }
+    return false;
+}
+
 // A view's Draw2D.Mesh or Draw3D.Mesh through a frag or a vert: the components they read are
-// those of the entity the view runs for, so it has to have them.
+// those of the entity the view runs for, so it has to have them, and a struct
+// its frag reads is its vert's to write, or what its instances are.
 static void check_shader_binding(const checker *c, const expr *e, const expr *name, const decl *shader)
 {
     decl *view = c->system;
     for (int i = 1; i < shader->params.count; i++) {
         const param *p = &shader->params.items[i];
+        if (p->type.kind == TY_STRUCT && p->is_out) { // What a vert writes for its frag
+            if (e->instance_type == p->type.decl) {
+                diag_error(name->at, "vert '" STR_FMT "' writes a '" STR_FMT "' for its frag, and this draw's instances are '"
+                           STR_FMT "'s too: a frag that takes one couldn't tell which", STR_ARG(shader->name),
+                           STR_ARG(p->type.decl->name), STR_ARG(p->type.decl->name));
+                diag_note("what a vert hands its frag is a struct of its own, not the one the draw's instances are");
+            }
+            continue;
+        }
+        if (p->type.kind == TY_STRUCT && p->mode != PARAM_MUT && shader->is_frag) {
+            // The draw's vert writes it, or its instances are it
+            if (e->vert && shader_writes(e->vert, p->type.decl)) continue;
+            if (e->instanced && p->type.decl == e->instance_type) continue;
+            if (e->vert) {
+                diag_error(name->at, "frag '" STR_FMT "' reads a '" STR_FMT "', which vert '" STR_FMT "' doesn't write",
+                           STR_ARG(shader->name), STR_ARG(p->type.decl->name), STR_ARG(e->vert->name));
+            } else {
+                diag_error(name->at, "frag '" STR_FMT "' reads a '" STR_FMT "', and this draw names no vert that writes one",
+                           STR_ARG(shader->name), STR_ARG(p->type.decl->name));
+            }
+            diag_note("a frag's struct is what the draw's vert writes for it, 'out " STR_FMT " " STR_FMT "' among the vert's "
+                      "parameters, or an element of the list an Instanced draw is given, a List<" STR_FMT ">",
+                      STR_ARG(p->type.decl->name), STR_ARG(p->name), STR_ARG(p->type.decl->name));
+            continue;
+        }
         if (p->type.kind == TY_STRUCT && p->mode != PARAM_MUT) {
             if (!e->instanced) {
                 diag_error(name->at, "%s '" STR_FMT "' reads instance data of '" STR_FMT "': draw it with " STR_FMT ".Instanced and a List<" STR_FMT ">",
@@ -4457,7 +4493,8 @@ static type check_mesh_draw(checker *c, expr *e)
                 const decl *code = stages[stage];
                 for (int p = 1; code && p < code->params.count; p++) {
                     const param *data = &code->params.items[p];
-                    if (data->type.kind == TY_STRUCT && data->mode != PARAM_MUT) {
+                    // A frag's struct that the vert writes is the vert's, not the instances'
+                    if (data->type.kind == TY_STRUCT && data->mode != PARAM_MUT && !shader_writes(e->vert, data->type.decl)) {
                         element = data->type;
                         supplied = true;
                         break;
@@ -7725,7 +7762,8 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
                       STR_FMT " " STR_FMT ")'", STR_ARG(root->param->type_name), STR_ARG(root->name));
         } else if (gpu_code(c)) {
             diag_note("a %s reads what it's given: %s", shader_word(c->method),
-                      c->method->is_frag ? "it writes its pixel's color, 'mut Color color'" : "it changes its vertex");
+                      c->method->is_frag ? "it writes its pixel's color, 'out Color color'"
+                                         : "it changes its vertex, and writes what it takes as 'out' for its frag");
         } else if (root->param->function_param) {
             diag_note("declare the parameter as 'mut " STR_FMT " " STR_FMT "' to change the caller's variable, or copy "
                       "it into a 'mut var'", STR_ARG(root->param->type_name), STR_ARG(root->name));
@@ -8735,7 +8773,7 @@ static void check_return(checker *c, const stmt *s)
     }
     if (m->kind == DECL_SHADER && s->value) {
         diag_error(s->value->at, "a %s returns nothing: it %s", shader_word(m),
-                   m->is_frag ? "writes its pixel's color through its 'mut Color' parameter" : "changes its vertex in place");
+                   m->is_frag ? "writes its pixel's color through its 'out Color' parameter" : "changes its vertex in place");
         for (int i = 0; m->is_frag && i < m->params.count; i++) {
             const param *p = &m->params.items[i];
             if (p->mode == PARAM_MUT && p->type.kind == TY_COLOR) {
@@ -10863,16 +10901,46 @@ static void refuse_shader_value(const decl *d, const param *p)
               word, word, STR_ARG(d->name));
 }
 
-// frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun) and
-// vert Wave(mut BoxVertex vertex, Time time): the vertex first, a struct; a
-// frag's pixel, its one `mut Color`; then what the engine supplies as it does
-// to a view: the entity's components, singletons of either side, and Pixel
-// and Instance.
+// What a vert hands its frag: a struct of floats, their vectors and colors,
+// each of which the GPU blends across the triangle. Ints don't blend, and which
+// corner's a pixel would get instead differs between GPUs.
+static void check_handed_struct(const decl *vert, const param *p, const decl *t)
+{
+    int fields = 0;
+    for (int i = 0; i < t->fields.count; i++) {
+        const field *f = &t->fields.items[i];
+        if (f->hidden || f->type.kind == TY_ERROR) continue;
+        fields++;
+        const bool blends = (type_dim(f->type) > 0 && type_is_float_based(f->type)) || f->type.kind == TY_COLOR;
+        if (blends) continue;
+        diag_error(p->type_at.line ? p->type_at : p->at, "'" STR_FMT "' can't go from a vert to its frag: its '" STR_FMT "' is %s",
+                   STR_ARG(t->name), STR_ARG(f->name), type_name(f->type));
+        if (type_is_int_based(f->type) || f->type.kind == TY_BOOL || f->type.kind == TY_ENUM) {
+            diag_note("the GPU blends what a vert hands on across the triangle, and ints don't blend: keep it as a float");
+        } else {
+            diag_note("what a vert hands its frag is floats, their vectors and colors, which the GPU blends across the triangle");
+        }
+        return;
+    }
+    if (fields == 0) {
+        diag_error(p->type_at.line ? p->type_at : p->at, "'" STR_FMT "' has no fields, so vert '" STR_FMT "' would hand its frag "
+                   "nothing", STR_ARG(t->name), STR_ARG(vert->name));
+    }
+}
+
+// frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun) and
+// vert Wave(mut BoxVertex vertex, out FromLamp lamp, Time time): the vertex
+// first, a struct; what each writes, `out`: a frag's pixel, its one Color, and
+// the structs a vert hands the frag it's drawn with; then what the engine
+// supplies as it does to a view: the entity's components, singletons of either
+// side, and Pixel and Instance. A frag's read-only struct is one the draw's
+// vert writes, or an element of the list an Instanced draw is given: the draw
+// says which (check_shader_binding).
 static void check_shader_decl(const checker *c, decl *d)
 {
     const program *prog = c->prog;
     const char *word = shader_word(d);
-    const char *vertex_form = d->is_frag ? "frag Name(BoxVertex vertex, mut Color color, ...)" : "vert Name(mut BoxVertex vertex, ...)";
+    const char *vertex_form = d->is_frag ? "frag Name(BoxVertex vertex, out Color color, ...)" : "vert Name(mut BoxVertex vertex, ...)";
     d->return_type = T_VOID_;
     d->result = T_VOID_;
     d->fails = T_VOID_;
@@ -10920,10 +10988,19 @@ static void check_shader_decl(const checker *c, decl *d)
             if (vertex_dims(t, at, true) == 0) continue;
             p->type = decl_type(t);
             p->function_param = true;
-            if (d->is_frag && p->mode == PARAM_MUT) {
-                diag_error(p->at, "a frag reads its vertex, blended across the triangle; a vert changes it");
-                diag_note("drop 'mut'; the pixel it writes is its 'mut Color' parameter");
+            if (d->is_frag && p->is_out) {
+                diag_error(p->at, "a frag reads its vertex, blended across the triangle: it's no output of the frag's");
+                diag_note("drop 'out'; the pixel it writes is its 'out Color' parameter, after the vertex");
+                p->is_out = false;
                 p->mode = PARAM_READ;
+            } else if (d->is_frag && p->mode == PARAM_MUT) {
+                diag_error(p->at, "a frag reads its vertex, blended across the triangle; a vert changes it");
+                diag_note("drop 'mut'; the pixel it writes is its 'out Color' parameter");
+                p->mode = PARAM_READ;
+            } else if (p->is_out) {
+                diag_error(p->at, "a vert is handed its vertex and changes it, so it takes it 'mut', not 'out': '%s'", vertex_form);
+                suggest_replacement(p->mode_word, "mut");
+                p->is_out = false;
             } else if (!d->is_frag && p->mode != PARAM_MUT) {
                 diag_error(p->at, "a vert changes its vertex in place, so it takes it 'mut': '%s'", vertex_form);
                 p->mode = PARAM_MUT;
@@ -10935,6 +11012,7 @@ static void check_shader_decl(const checker *c, decl *d)
             if (t) value = decl_type(t);
             p->type = value;
             p->function_param = true;
+            const bool changes = p->mode == PARAM_MUT && !p->is_out; // `mut`, as written
             if (value.kind == TY_TEXTURE) {
                 if (source_texture) {
                     diag_error(p->at, "a %s takes one explicit Texture source, and this names two", word);
@@ -10942,30 +11020,70 @@ static void check_shader_decl(const checker *c, decl *d)
                     source_texture = p;
                 }
                 if (p->mode == PARAM_MUT) {
-                    diag_error(p->at, "a %s reads its Texture source: drop 'mut'", word);
+                    diag_error(p->at, "a %s reads its Texture source: drop '%s'", word, p->is_out ? "out" : "mut");
                     p->mode = PARAM_READ;
+                    p->is_out = false;
                 }
                 p->function_param = false;
-            } else if (d->is_frag && p->mode == PARAM_MUT && value.kind == TY_COLOR && !color) {
-                color = p; // The pixel it writes
-            } else if (t && t->kind == DECL_STRUCT && p->mode != PARAM_MUT) {
-                if (instance_data) {
+            } else if (d->is_frag && value.kind == TY_COLOR && p->mode == PARAM_MUT) {
+                if (changes) { // `mut Color color` was the pixel, which started white
+                    diag_error(p->at, "a frag's color is an 'out' parameter: 'out Color " STR_FMT "'", STR_ARG(p->name));
+                    diag_note("it starts with no value, where 'mut Color " STR_FMT "' started white: the frag writes it on every "
+                              "path that ends, before it reads it", STR_ARG(p->name));
+                    suggest_replacement(p->mode_word, "out");
+                    p->is_out = true; // The rest is checked as the output it's meant as
+                }
+                if (color) {
+                    diag_error(p->at, "a frag writes one color, its pixel's, for now");
+                    diag_note("a second output isn't there yet");
+                } else {
+                    color = p; // The pixel it writes
+                }
+            } else if (d->is_frag && p->is_out) {
+                diag_error(p->at, "a frag writes its pixel's color, an 'out Color', for now");
+                diag_note("an output of another type than Color isn't there yet");
+            } else if (d->is_frag && changes) {
+                diag_error(p->at, "a frag reads '" STR_FMT "', and can't change it: drop 'mut'", STR_ARG(p->name));
+                diag_note("what it writes is its pixel's color, 'out Color color'");
+                p->mode = PARAM_READ;
+            } else if (p->mode == PARAM_MUT && t && t->kind == DECL_STRUCT) { // What a vert hands its frag
+                if (changes) {
+                    diag_error(p->at, "a vert changes its vertex, its first parameter; what it writes for its frag is 'out': "
+                                      "'out " STR_FMT " " STR_FMT "'", STR_ARG(p->type_name), STR_ARG(p->name));
+                    suggest_replacement(p->mode_word, "out");
+                    p->is_out = true;
+                }
+                for (int j = 1; j < i; j++) {
+                    if (d->params.items[j].type.kind == TY_STRUCT && d->params.items[j].type.decl == t) {
+                        diag_error(p->at, "'" STR_FMT "' appears twice", STR_ARG(t->name));
+                    }
+                }
+                check_handed_struct(d, p, t);
+            } else if (p->is_out) {
+                diag_error(p->at, "a vert hands its frag a struct, and '" STR_FMT "' is %s", STR_ARG(p->name), type_name(value));
+                diag_note("put it in a struct both take, 'struct ForFrag { %s " STR_FMT "; }': 'out ForFrag forFrag' here, and "
+                          "'ForFrag forFrag' in the frag", type_name(value), STR_ARG(p->name));
+            } else if (changes) {
+                diag_error(p->at, "a vert changes its vertex, its first parameter, and nothing else");
+                diag_note("what it works out for its frag goes in a struct it takes as 'out', like 'out FromLamp lamp', which "
+                          "the frag reads blended");
+            } else if (t && t->kind == DECL_STRUCT) {
+                for (int j = 1; j < i; j++) {
+                    if (d->params.items[j].type.kind == TY_STRUCT && d->params.items[j].type.decl == t) {
+                        diag_error(p->at, "'" STR_FMT "' appears twice", STR_ARG(t->name));
+                    }
+                }
+                // A vert's is an element of the list its Instanced draw is given. A frag's is that, or what the
+                // draw's vert writes for it, and it can take both
+                if (instance_data && !d->is_frag) {
                     const type vertex = d->params.items[0].type;
                     const bool three_d = vertex.kind == TY_STRUCT && shader_dims(vertex.decl) == 3;
-                    diag_error(p->at, "a %s takes one instance struct, supplied by Draw%dD.Instanced, and this names two",
-                               word, three_d ? 3 : 2);
+                    diag_error(p->at, "a vert takes one instance struct, supplied by Draw%dD.Instanced, and this names two",
+                               three_d ? 3 : 2);
                 } else {
                     instance_data = p;
                 }
-                p->function_param = false; // Supplied by each element of the explicit instance list
-            } else if (d->is_frag && p->mode == PARAM_MUT) {
-                diag_error(p->at, value.kind == TY_COLOR ? "a frag writes one color, its pixel's, for now"
-                                                         : "a frag writes its pixel's color, a 'mut Color', for now");
-                diag_note("%s isn't there yet",
-                          value.kind == TY_COLOR ? "a second output" : "an output of another type than Color");
-            } else if (p->mode == PARAM_MUT) {
-                diag_error(p->at, "a vert changes its vertex, its first parameter, and nothing else");
-                diag_note("put what it works out in a field of the vertex, which the frag reads blended");
+                p->function_param = false; // Supplied by the draw: its instances, or its vert
             } else if (value.kind == TY_DEPTH_TEXTURE) {
                 diag_error(at, "a %s reads a DepthTexture that's a field of a component or singleton it takes, not a "
                                "parameter of its own", word);
@@ -11003,17 +11121,20 @@ static void check_shader_decl(const checker *c, decl *d)
         }
         p->type = decl_type(t);
         if (p->mode == PARAM_MUT) {
-            diag_error(p->at, "a %s reads '" STR_FMT "', and can't change it: drop 'mut'", word, STR_ARG(t->name));
-            diag_note(d->is_frag ? "what it writes is its pixel's color, 'mut Color color'" : "what it changes is its vertex");
+            diag_error(p->at, "a %s reads '" STR_FMT "', and can't %s it: drop '%s'", word, STR_ARG(t->name),
+                       p->is_out ? "write" : "change", p->is_out ? "out" : "mut");
+            diag_note(d->is_frag ? "what it writes is its pixel's color, 'out Color color'"
+                                 : "what it changes is its vertex, and what it writes is a struct for its frag, 'out FromLamp lamp'");
             p->mode = PARAM_READ;
+            p->is_out = false;
         }
     }
     if (d->params.count == 0) {
         diag_error(d->at, "a %s takes the vertex it runs on first: '%s'", word, vertex_form);
     } else if (d->is_frag && !color) {
-        diag_error(d->at, "frag '" STR_FMT "' has no pixel to write: it takes the pixel's color as 'mut Color color'", STR_ARG(d->name));
-        diag_note("like 'frag " STR_FMT "(" STR_FMT " " STR_FMT ", mut Color color, ...) { color = ...; }': what 'color' holds "
-                  "when it ends is the pixel", STR_ARG(d->name), STR_ARG(d->params.items[0].type_name),
+        diag_error(d->at, "frag '" STR_FMT "' has no pixel to write: it takes the pixel's color as 'out Color color'", STR_ARG(d->name));
+        diag_note("like 'frag " STR_FMT "(" STR_FMT " " STR_FMT ", out Color color, ...) { color = ...; }': what it writes there "
+                  "is the pixel", STR_ARG(d->name), STR_ARG(d->params.items[0].type_name),
                   STR_ARG(d->params.items[0].name));
     }
 }
@@ -11038,7 +11159,7 @@ static void check_method_body(checker *c, decl *m)
     const int outs = c->outs;
     const int errors = diag_error_count();
     check_stmt(c, m->body);
-    check_body_assigned(c, m->kind == DECL_SHADER ? NULL : m, m->body, outs, errors);
+    check_body_assigned(c, m, m->body, outs, errors);
     const type_kind ret = m->return_type.kind;
     if (ret != TY_VOID && ret != TY_ERROR && !always_returns(m->body)) {
         diag_error(m->at, "'" STR_FMT "' doesn't return a value on every path", STR_ARG(m->name));

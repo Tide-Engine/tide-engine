@@ -1,7 +1,7 @@
 // expect: a frag reads a DepthTexture that's a field of a component or singleton it takes, like 'lamp.shadow.Compare(uv, value)'
 scene Main { }
 local singleton Lamp { RenderTarget map; DepthTexture shadow; }
-frag Shade(Vertex vertex, mut Color color, Lamp lamp)
+frag Shade(Vertex vertex, out Color color, Lamp lamp)
 {
     DepthTexture shadow = lamp.shadow;
     float lit = shadow.Compare(vertex.uv, 0.5);

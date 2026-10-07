@@ -1,0 +1,24 @@
+// expect: this draw's pixels read 16 values from the mesh's corners, and a GPU carries 15 between them
+// expect: each field of the vertex the frag reads is one, each it reads of what the vert wrote for it another, its place in the world another, and every 4 floats or 4 ints it reads of the entity's components another: read fewer, or keep what every entity shares in a singleton
+scene Main { }
+struct Corner { float2 position; float2 uv; }
+struct Wide
+{
+    float f0; float f1; float f2; float f3; float f4; float f5; float f6; float f7;
+    float f8; float f9; float f10; float f11; float f12; float f13; float f14;
+}
+local singleton Shapes { List<Corner> corners; }
+vert Spread(mut Corner corner, out Wide wide)
+{
+    wide = default;
+    wide.f0 = corner.uv.x;
+}
+frag Shade(Corner corner, Wide wide, out Color color)
+{
+    color = Color.white * (wide.f0 + wide.f1 + wide.f2 + wide.f3 + wide.f4 + wide.f5 + wide.f6 + wide.f7 + wide.f8 + wide.f9 + wide.f10
+                           + wide.f11 + wide.f12 + wide.f13 + wide.f14 + corner.uv.y);
+}
+view Show(Shapes shapes)
+{
+    Draw2D.Mesh(shapes.corners, [0, 1, 2], Spread, Shade);
+}

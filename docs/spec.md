@@ -276,14 +276,15 @@ system Aim(mut Turret turret, Position position) { ... }
 **Following C# here is agreed**, and so is the pattern it's for: a function that returns whether it has something, and gives it through `out`, or the default. The points marked Provisional are picks the owner hasn't confirmed.
 
 - **Declaring.** `out` before a parameter's type makes the call give the caller's variable its value: `bool TryHalf(int value, out int half)`. Functions, methods and `extern` functions have them. The word is a name like any other everywhere else, as `in` is.
-  - What the engine calls itself takes none, since nothing would take what's made: systems, views, event and command handlers, frags and verts. Neither do operators, `Interpolate` or, as in C#, async functions, whose call returns before the task has made anything: they return a struct instead.
+  - What the engine calls itself takes none, since nothing would take what's made: systems, views, and event and command handlers. Neither do operators, `Interpolate` or, as in C#, async functions, whose call returns before the task has made anything: they return a struct instead.
+  - A frag and a vert have them for what the GPU takes: a frag's color, and the structs a vert writes for its frag (see Views and drawing). What's said below of the code in the function holds there, with the GPU in the caller's place.
   - Provisional: an `out` parameter is of any type a parameter can be, but the devices and an `Action`.
   - It has no default, and `mut out` is an error that says to drop `mut`. A parameter after one with a default needs a default too, so `out` parameters come before those.
 - **In the function.** An `out` parameter starts unassigned: what the caller's variable held isn't passed in. The code assigns it before it reads it, and on every path that returns. This is C#'s definite assignment:
   - A path is what the code can run through: an `if` assigns it when both sides do, `&&`, `||`, `?:` and `??` only run their right sides sometimes, a `while (true)` only ends at its breaks, and where a `return` or a `break` leaves, what follows isn't reached. A condition that's `true` or `false` as written counts as that.
   - A loop may run no rounds, so what its body assigns isn't assigned after it. Provisional: the same goes for a block written after a call (see Calls that take a block), which its call runs when it does.
   - Passing it on as another call's `out` argument assigns it, once that call has run.
-  - Provisional: it's assigned whole. `pair.a = 1` before `pair = ...` reads a variable that has no value yet, where C# would let a struct be filled a field at a time.
+  - Provisional: a struct is assigned whole, or a field at a time, as in C#: it has a value once each of its fields does, on every path, and a field is read once it's assigned. `pair.a = 1; pair.b = 2;` fills a `Pair`, a field can be another call's `out` argument (`Half(seed, out pair.a)`), and reading `pair.b`, or all of `pair`, before `pair.b` is assigned is an error that names the field. That's a struct's own fields: a field of a struct in it (`pair.inner.x = 1`) is a part of `pair.inner`, which is assigned whole first, and so is a component of a vector or a color (`v.x = 1` before `v = ...` reads a `v` with no value). It was whole assignment only until a vert's struct for its frag was built, whose agreed example fills it a field at a time: one rule for both.
   - `default` is how a path with nothing to give fills it: `health = default;`.
   - **Provisional: `fail` owes it nothing**, and neither does a `try` that passes an error on. C# has nothing to follow here. After a call that failed, each of its `out` variables is what the function assigned before it failed, or its type's default, never what the variable held before: nothing the code wrote is undone, and nothing is left unset.
 - **At the call.** The argument for an `out` parameter says `out`, and no other argument does:
@@ -1721,7 +1722,7 @@ local singleton Lamp
     float4x4 toLamp;       // From the world to the lamp's clip space
 }
 
-frag Lit(BoxVertex vertex, mut Color color, Pixel pixel, Lamp lamp)
+frag Lit(BoxVertex vertex, out Color color, Pixel pixel, Lamp lamp)
 {
     float4 seen = Math.Mul(lamp.toLamp, float4(pixel.world, 1));
     float2 uv = float2(seen.x * 0.5 + 0.5, 0.5 - seen.y * 0.5);
@@ -1754,8 +1755,8 @@ vert Wave(mut BoxVertex vertex, Time time)
     vertex.position.y += Math.Sin(time.t * 2 + vertex.position.x) * 0.1;
 }
 
-// Once per pixel: the triangle's three vertices blended at that pixel, and the pixel's color to write
-frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun, Models models)
+// Once per pixel: the triangle's three vertices blended at that pixel, and the pixel's color, which it writes
+frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models)
 {
     float light = Math.Max(Math.Dot(Math.Normalize(vertex.normal), -sun.direction), 0.1);
     color = models.wood.Sample(vertex.uv) * box.tint * light;
@@ -1768,8 +1769,26 @@ view DrawBox(Box box, Models models)
 ```
 
   - The first parameter is the vertex: a struct of the game's, or the built-in `Vertex` or `Vertex3`, which is what the mesh's list holds. A mesh draw that names a frag or vert whose vertex isn't its list's is an error. A vert takes it `mut` and changes it in place; the engine then applies the transform and the camera. A frag gets it blended across the triangle, and can't change it.
-  - A frag writes its output through `mut`, as a vert writes its vertex and a system its components: `mut Color color` is the pixel's color. A frag currently takes exactly one `mut` parameter, a `Color`: another type, or a second output, isn't there yet. What `color` holds when the frag ends is blended over what's behind it by its alpha, not premultiplied, as meshes are (or as `Draw.Blend` says, times `Draw.Tint`: see Draw settings).
-  - The other parameters are bound as a view's are: components are those of the entity the view that draws runs for, and it's an error at the `Draw2D.Mesh` when that view doesn't guarantee its entity has one; singletons, the match's or local ones, and `Time`. None is `mut`. One read-only `Texture` parameter per stage may receive an explicit draw source; both stages receive the same source when both take it.
+  - **A frag's outputs are `out` parameters, its color among them** (agreed 2026-10-07, the owner's idea): `out Color color` is the pixel's color. It starts with no value, as any `out` parameter does (see Out parameters): the frag writes it before it reads it, and on every path that ends, so a frag that leaves a path without writing its color is an error. A frag takes exactly one `out` parameter for now, a `Color`: another type, or a second output, isn't there yet (see What the GPU side gains). What the frag wrote there is blended over what's behind it by its alpha, not premultiplied, as meshes are (or as `Draw.Blend` says, times `Draw.Tint`: see Draw settings).
+    - `mut Color color`, which is what a frag's color was, and which started as `Color.white`, is an error that names `out`, with the change as a quick fix. A frag that leaned on the white writes it: the editor offers `color = Color.white;` where a path writes nothing, and where the color is read first.
+    - A vert's vertex stays `mut`: it's handed a vertex and changes it. `out` there is an error that says so.
+  - **A vert hands its frag a struct of its own** (agreed 2026-10-07): an `out` parameter of the vert's, a struct, which the GPU blends across the triangle and the frag it's drawn with reads as a read-only parameter, so what a vert works out needs no field in every vertex of the mesh. Verts and frags stay declarations of their own, paired where a draw names them, and a frag that reads a struct the draw's vert doesn't write, or in a draw with no vert, is an error at the draw.
+
+```csharp
+struct FromLamp { float3 place; }
+
+vert Place(mut Corner corner, out FromLamp lamp, Sun sun)
+{
+    lamp.place = corner.position - sun.at;
+}
+
+frag Look(Corner corner, FromLamp lamp, out Color color)
+{
+    color = Color.white * Math.Saturate(1 - Math.Length(lamp.place) * 0.1);
+}
+```
+
+  - The other parameters are bound as a view's are: components are those of the entity the view that draws runs for, and it's an error at the `Draw2D.Mesh` when that view doesn't guarantee its entity has one; singletons, the match's or local ones, and `Time`. None is `mut` or `out`. One read-only `Texture` parameter per stage may receive an explicit draw source; both stages receive the same source when both take it.
   - There are no individual plain value arguments to bind: what a frag or vert reads lives in a component, a singleton (local ones included), or the ordinary instance struct supplied by `Draw2D.Instanced`/`Draw3D.Instanced`.
   - A grid in what they take is a texture: `models.wood.Sample(uv)` on a `Grid2<Color>`.
   - With no vert, the vertices are used as they are. With no frag, a pixel is its vertex's `color` times the texture's at its `uv`, where the vertex struct has them: white, and untextured, where it doesn't. So a struct with only a `position` draws with no code of the game's, at 12 bytes a vertex.
@@ -1889,19 +1908,26 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
 - **Which side of a triangle draws is a setting of `Draw3D`'s,** with both forms, and the default is that the back doesn't: `Draw3D.Cull(...) { }` and `Draw3D.SetCull(...)`. `Draw2D` never culls.
 - **How `uv` wraps is chosen where a texture is sampled,** as the filter is.
 - **Stencil is there as it is on a GPU:** a whole number from 0 to 255 for each pixel, beside its depth. A draw compares it with a number of its own, by a test it names, and doesn't draw where that fails, and it says what becomes of the stored number where it draws. It's a draw setting with both forms. It's built last.
-- **A frag's outputs are `out` parameters,** its color among them: `out Color color`, so a frag that leaves a path without writing it is an error, where `mut Color color` started as white. A vert's vertex stays `mut`: it's handed a vertex and changes it. `mut Color color` becomes an error that names `out`.
-- **A frag has more outputs than one color,** each an `out` parameter, into a target made to hold as many.
-- **A vert hands its frag a struct of its own:** an `out` parameter of the vert's, which the GPU blends across the triangle and the frag reads, so what a vert works out needs no field in every vertex of the mesh. Verts and frags stay declarations of their own, paired where a draw names them, and a frag that reads what the draw's vert doesn't write is an error at the draw.
+- **A frag has more outputs than one color,** each an `out` parameter, into a target made to hold as many. Its color is `out` already, and a second output is an error until targets hold several colors.
+- Built since, and in the rules above (Code the GPU runs): a frag's color as `out Color color`, and a vert's struct for its frag. Their picks are under Provisional.
 - The names and details are picks, to confirm as each is built:
   - The front of a triangle is the side its corners go clockwise on, as Unity's; the enum `Cull` with `Back`, `Front` and `None`.
   - `Wrap` as an argument of `Sample`, after the filter.
   - `Draw.Stencil(test, value[, operation])`, with enums for the test and the operation (keep, replace, increment, decrement, zero, invert), and none of a GPU's other stencil state (each side of a triangle apart, what a failed depth test does, bit masks).
-  - A vert's struct and the frag's are matched by type, as a system finds a component.
 - Left for later: mipmaps (a level the GPU picks can't be sampled in every branch, which code can rely on today), cube maps and 3D textures, a depth bias as state (a frag subtracts one where it compares), and reading a target's pixels back into Tide.
 - Open: a `shader Name { ... }` block that groups a vert and a frag under one name, maybe with the two unnamed inside. It would only add a name for a pair that's checked already, so it can come once naming two at a draw gets tedious.
 
 ### Provisional
 
+- What a frag and a vert write, where the agreed rules leave a choice (built 2026-10-07, to confirm):
+  - **By type.** A vert's struct and the frag's parameter are matched by type, as a system finds a component: `out FromLamp lamp` in the vert, `FromLamp lamp` in the frag, whatever each names it. So a frag and a vert each take a struct type once.
+  - **A vert can write several structs,** each its own `out` parameter, and a frag take any of them: nothing limits it to one but the 15 values a GPU carries from a mesh's corners to its pixels, which the draw checks. Only the fields a frag reads are carried, each one value: a field no frag reads costs nothing, and neither does a struct the draw's frag doesn't take, or a draw with no frag.
+  - **What the struct holds** is what blends across a triangle: floats, their vectors and colors. A struct with an int, a bool, an enum, a matrix, a quaternion or a struct in it is an error where the vert takes it as `out`. A vertex's ints can't be read by a frag for the same reason, but a vertex can have them, as a vert reads them; a struct only a frag reads has no use for one. Passing an int unblended (the value of one of the triangle's corners) was left out: which corner differs between GPUs.
+  - **The vert writes all of it:** each field, on every path that ends, a field at a time or the whole struct at once, before reading it (see Out parameters). `lamp = default;` fills it where there's nothing to give.
+  - **A path that ends in `pixel.Discard()` owes the frag's color nothing,** as `fail` owes an `out` parameter nothing: no pixel is drawn.
+  - **A frag's struct is the vert's or the instances'.** A frag's read-only struct was an element of the list `Instanced` draws; it's now that, or what the draw's vert writes, by its type, and a frag can take one of each. A draw whose vert writes a struct of the type its instances are is an error at the draw, as a frag couldn't tell them apart. A vert's read-only struct is an instance's, as before, and it takes one.
+  - **In the shaders,** a frag's color still starts as white where the GPU's compiler sees it, so the text tidec writes is what it was: the checker is what knows it's written first.
+  - `mut` on a vert's struct is an error that names `out`, with the quick fix, and so is `mut out` in either.
 - Draw settings, where the decided rules above leave a choice (to confirm):
   - **Where each lives.** What says how a draw comes out is the same wherever it's drawn, and is `Draw`'s: `Draw.Blend` and `Draw.Tint`, which `Draw2D` and `Draw3D` share. What says where a draw lands belongs to its destination, as cameras and clips already did: `Draw2D.Transform`, `Draw2D.Clip`, `Draw2D.Camera`, `Draw2D.Screen`, `Draw3D.Transform` and `Draw3D.Camera` are the window's, and so is `Draw3D.Depth`, which is `Draw3D`'s because only 3D meshes have depth (below), and a render target has each as a method, in both forms (`target.Clip(rect) { ... }`, `target.SetCamera(...)`), its own for the frame. A target's 2D and 3D forms are told apart by their arguments. So a blend or a tint around draws into a target applies to them, and the window's clip or transform doesn't.
   - **Putting a `Set` back.** A `Set` with no arguments sets what each frame starts with: `Draw.SetBlend()` is `Blend.Alpha`, `Draw.SetTint()` no tint, `Draw3D.SetDepth()` is `Depth.ReadWrite`, `Draw2D.SetTransform()` and `Draw3D.SetTransform()` no transform, `Draw2D.SetClip()` no clip, `Draw2D.SetCamera()` the first camera (the origin at the middle of the screen, a world unit a pixel, which is also how to leave the screen's pixels) and `Draw3D.SetCamera()` the first 3D one. On a target, `target.SetCamera()` and `target.SetTransform()` put back both the 2D and the 3D one, and `target.SetDepth()` the target's own depth setting. `Draw2D.NoClip()` is gone: it's `Draw2D.SetClip()`.
@@ -2113,7 +2139,7 @@ view DrawHud(Arena arena)
 - `verified World`: the confirmed world's other entities, by their handles.
 - Queries in local code: `mut` on a binding, to write a row's local fields, and reading them through a row; `with ownership` in a query; a local handler's rows as each event's turn left things, where they're the tick's once it's done.
 - Views reading input, for example to draw where the local player aims before the tick runs.
-- GPU code: which side of a triangle a pixel is on; the camera; a frag's output of another type than a `Color`; code that computes rather than draws; `while` and `switch` there; SPIR-V, with Vulkan. What's agreed and not built yet (cull, wrap, stencil, `out` outputs, a vert's struct for its frag) is in What the GPU side gains.
+- GPU code: which side of a triangle a pixel is on; the camera; a frag's output of another type than a `Color`; code that computes rather than draws; `while` and `switch` there; SPIR-V, with Vulkan. What's agreed and not built yet (cull, wrap, stencil, several outputs from a frag) is in What the GPU side gains.
 - A camera's matrix from the world to its clip space, as a function: a frag that looks a point up in another camera's image (a shadow map's lamp) needs the matrix the engine draws through, and works it out itself today, the turn of z included (see Provisional, Target formats and depth). And a `DepthTexture` as a draw's own source, for a pass over the screen that reads a scene's depth with no singleton between.
 - 3D: meshes in the grid's chunks, for voxels.
 - The cursor: hiding it without locking it, keeping it in the window without hiding it, and images for it; its lock on Android.

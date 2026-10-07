@@ -69,7 +69,7 @@ struct BoxVertex { float2 position; Color color; }
 
 local singleton Mesh { List<BoxVertex> vertices; List<int> indices; }
 
-virtual frag Shade(BoxVertex vertex, mut Color color)
+virtual frag Shade(BoxVertex vertex, out Color color)
 {
     color = vertex.color;
 }

@@ -33,6 +33,11 @@
 // instance, as float4 and int4 vertex attributes, and a singleton's for each
 // draw, as float4s and int4s of one uniform block. A value is words of those,
 // floats and ints apart (value_text), so both languages lay them out alike.
+//
+// What each writes is an `out` parameter: a frag's color, and the structs a
+// vert writes for the frag it's drawn with (shader_handed), whose fields the
+// frag reads go from the mesh's corners to its pixels as its vertex's do,
+// blended. The checker saw each written on every path (assigned.c).
 
 typedef enum lang { GLSL, WGSL } lang;
 
@@ -943,11 +948,23 @@ static int field_index(const decl *d, const field *f)
     return (int)(f - d->fields.items);
 }
 
+// A frag's struct parameter `p` among what the shader's vert writes for its
+// frag, or NULL: for one the draw's instances supply, and while checking,
+// when no draw has said which it is.
+static const shader_handed *handed_to(const shader *sh, const param *p)
+{
+    for (int i = 0; sh && i < sh->handed.count; i++) {
+        if (sh->handed.items[i].to == p) return &sh->handed.items[i];
+    }
+    return NULL;
+}
+
 // Whether `p` is a parameter of the frag or vert that the engine supplies: a
-// component, a singleton, Pixel or Instance.
+// component, a singleton, Pixel, Instance or an instance's struct. What the
+// vert wrote for the frag is a value the frag is called with, like its vertex.
 static bool is_bound(const emit *em, const param *p)
 {
-    return em->code == em->root && !p->function_param;
+    return em->code == em->root && !p->function_param && !handed_to(em->sh, p);
 }
 
 static int param_index(const decl *d, const param *p)
@@ -2418,7 +2435,7 @@ static void need_function(emit *em, decl *fn, const loc at)
     }
     for (int i = 0; i < fn->params.count; i++) {
         const param *p = &fn->params.items[i];
-        if (shader && !p->function_param) continue; // The engine supplies it
+        if (shader && !p->function_param && !handed_to(em->sh, p)) continue; // The engine supplies it
         if (!type_fits(em, p->type, p->type_at.line ? p->type_at : p->at)) continue;
         if (!first) sb_put(&head, ", ");
         first = false;
@@ -2511,8 +2528,9 @@ static const field *field_called(const decl *d, const char *name)
 }
 
 // What the vertex stage passes on to the pixels, as each language declares
-// it: the vertex's fields the pixels read, where they are in the world, and
-// the instance's float4s and int4s, which don't blend.
+// it: the vertex's fields the pixels read, the fields they read of what the
+// vert wrote for them, where they are in the world, and the instance's
+// float4s and int4s, which don't blend.
 static void put_varyings(emit *em, sb *o, const char *direction)
 {
     const shader *sh = em->sh;
@@ -2523,6 +2541,15 @@ static void put_varyings(emit *em, sb *o, const char *direction)
         const char *t = ty(em, as_float(sh->vertex->fields.items[i].type));
         if (wgsl) sb_printf(o, "    @location(%d) tide_s%d: %s,\n", location++, i, t);
         else sb_printf(o, "%s %s tide_s%d;\n", direction, t, i);
+    }
+    for (int h = 0; h < sh->handed.count; h++) {
+        const shader_handed *handed = &sh->handed.items[h];
+        for (int i = 0; i < handed->type->fields.count; i++) {
+            if (!handed->fields[i]) continue;
+            const char *t = ty(em, as_float(handed->type->fields.items[i].type));
+            if (wgsl) sb_printf(o, "    @location(%d) tide_h%d_%d: %s,\n", location++, h, i, t);
+            else sb_printf(o, "%s %s tide_h%d_%d;\n", direction, t, h, i);
+        }
     }
     if (sh->frag_world) {
         if (wgsl) sb_printf(o, "    @location(%d) tide_world: vec3f,\n", location++);
@@ -2567,7 +2594,19 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
     sb_printf(o, wgsl ? "    var tide_vertex: %s = %s(" : "    %s tide_vertex = %s(", ty(em, vertex), ty(em, vertex));
     for (int i = 0; i < v->fields.count; i++) sb_printf(o, "%s%stide_a%d", i ? ", " : "", in, i);
     sb_put(o, ");\n");
-    if (sh->vert) sb_printf(o, "    %s(%stide_vertex);\n", function_name(sh->vert), wgsl ? "&" : "");
+    // What the vert writes for the frag: a variable each, in the order it takes them
+    for (int h = 0; h < sh->handed.count; h++) {
+        const type handed = {TY_STRUCT, (decl *)sh->handed.items[h].type};
+        if (wgsl) sb_printf(o, "    var tide_handed%d: %s = ", h, ty(em, handed));
+        else sb_printf(o, "    %s tide_handed%d = ", ty(em, handed), h);
+        put_zero(em, handed);
+        sb_put(o, ";\n");
+    }
+    if (sh->vert) {
+        sb_printf(o, "    %s(%stide_vertex", function_name(sh->vert), wgsl ? "&" : "");
+        for (int h = 0; h < sh->handed.count; h++) sb_printf(o, ", %stide_handed%d", wgsl ? "&" : "", h);
+        sb_put(o, ");\n");
+    }
     const char *position = field_name(field_called(v, "position"));
     if (sh->dims == 3) {
         sb_printf(o, wgsl ? "    let tide_place = " : "    vec4 tide_place = ");
@@ -2586,6 +2625,13 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
     for (int i = 0; i < v->fields.count; i++) {
         if (sh->frag_fields[i]) sb_printf(o, "    %stide_s%d = tide_vertex.%s;\n", out, i, field_name(&v->fields.items[i]));
     }
+    for (int h = 0; h < sh->handed.count; h++) {
+        const shader_handed *handed = &sh->handed.items[h];
+        for (int i = 0; i < handed->type->fields.count; i++) {
+            if (!handed->fields[i]) continue;
+            sb_printf(o, "    %stide_h%d_%d = tide_handed%d.%s;\n", out, h, i, h, field_name(&handed->type->fields.items[i]));
+        }
+    }
     if (sh->frag_world) sb_printf(o, "    %stide_world = tide_place.xyz;\n", out);
     for (int ints = 0; ints < 2; ints++) {
         const int words = ints ? sh->frag_ints : sh->frag_floats;
@@ -2603,10 +2649,14 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
 }
 
 // The fragment stage's own: the vertex as the pixel sees it, blended, then
-// the frag, or with none, the vertex's color times the texture. What it
-// leaves is the draw's to finish: times its tint (Draw.Tint), and for a draw
-// that multiplies what's there (Blend.Multiply, which `tide_screen.w` says),
-// towards white as it clears, so what's clear changes nothing.
+// the frag, or with none, the vertex's color times the texture. The frag is
+// called with what it takes as values, in its parameters' order: its vertex,
+// what the vert wrote for it, blended too, and the color it writes, which the
+// checker saw it write on every path that ends (the white it starts as here is
+// for the shader's compiler, which didn't). What it leaves is the draw's to
+// finish: times its tint (Draw.Tint), and for a draw that multiplies what's
+// there (Blend.Multiply, which `tide_screen.w` says), towards white as it
+// clears, so what's clear changes nothing.
 static void put_fragment_main(emit *em, sb *o, const char *in, const char *result)
 {
     const shader *sh = em->sh;
@@ -2624,7 +2674,27 @@ static void put_fragment_main(emit *em, sb *o, const char *in, const char *resul
             if (sh->frag_fields[i]) sb_printf(o, "%stide_s%d", in, i);
             else put_zero(em, v->fields.items[i].type);
         }
-        sb_printf(o, "), %stide_color);\n", wgsl ? "&" : "");
+        sb_put(o, ")");
+        for (int i = 1; i < sh->frag->params.count; i++) {
+            const param *p = &sh->frag->params.items[i];
+            const shader_handed *handed = handed_to(sh, p);
+            if (handed) {
+                sb_printf(o, ", %s(", ty(em, p->type));
+                bool first = true;
+                for (int k = 0; k < handed->type->fields.count; k++) {
+                    const field *f = &handed->type->fields.items[k];
+                    if (f->hidden) continue;
+                    if (!first) sb_put(o, ", ");
+                    first = false;
+                    if (handed->fields[k]) sb_printf(o, "%stide_h%d_%d", in, (int)(handed - sh->handed.items), k);
+                    else put_zero(em, f->type);
+                }
+                sb_put(o, ")");
+            } else if (p->function_param) {
+                sb_printf(o, ", %stide_color", wgsl ? "&" : "");
+            }
+        }
+        sb_put(o, ");\n");
     } else {
         const field *color = field_called(v, "color");
         const field *uv = field_called(v, "uv");
@@ -2935,9 +3005,27 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
             sh->frag_ints += v->ints;
         }
     }
+    // What the vert writes for the frag, each struct it takes as `out`, and what
+    // of it the frag's parameter of that type reads: only that goes on
+    int varyings = (sh->frag_world ? 1 : 0) + packs(sh->frag_floats) + packs(sh->frag_ints);
+    for (int i = 1; sh->vert && i < sh->vert->params.count; i++) {
+        const param *from = &sh->vert->params.items[i];
+        if (!from->is_out || from->type.kind != TY_STRUCT) continue;
+        shader_handed handed = {.type = from->type.decl, .from = from};
+        handed.fields = arena_alloc((size_t)(handed.type->fields.count + 1) * sizeof(bool));
+        for (int k = 1; sh->frag && k < sh->frag->params.count; k++) {
+            const param *to = &sh->frag->params.items[k];
+            if (to->type.kind != TY_STRUCT || to->type.decl != handed.type || to->mode == PARAM_MUT) continue;
+            handed.to = to;
+            for (int f = 0; f < handed.type->fields.count; f++) {
+                handed.fields[f] = !handed.type->fields.items[f].hidden && (to->whole || (to->reads && to->reads[f]));
+                varyings += handed.fields[f];
+            }
+        }
+        vec_push(sh->handed, handed);
+    }
     // What the pixels read of the vertex: the frag's fields, or with none, its color and its uv
     sh->frag_fields = arena_alloc((size_t)(vertex->fields.count + 1) * sizeof(bool));
-    int varyings = (sh->frag_world ? 1 : 0) + packs(sh->frag_floats) + packs(sh->frag_ints);
     for (int i = 0; i < vertex->fields.count; i++) {
         const field *f = &vertex->fields.items[i];
         if (sh->frag) {
@@ -2966,8 +3054,9 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     if (varyings > 15) {
         diag_error(call->at, "this draw's pixels read %d values from the mesh's corners, and a GPU carries 15 between them",
                    varyings);
-        diag_note("each field of the vertex the frag reads is one, its place in the world another, and every 4 floats or 4 ints "
-                  "it reads of the entity's components another: read fewer, or keep what every entity shares in a singleton");
+        diag_note("each field of the vertex the frag reads is one, each it reads of what the vert wrote for it another, its "
+                  "place in the world another, and every 4 floats or 4 ints it reads of the entity's components another: read "
+                  "fewer, or keep what every entity shares in a singleton");
         return NULL;
     }
     if (uniform_bytes > 3984) { // TIDE_SHADER_UNIFORM_BYTES

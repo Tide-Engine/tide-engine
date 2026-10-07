@@ -6,7 +6,7 @@ override float Dim(float value)
 }
 
 // It reads nothing of the Sun, which the draw then doesn't send
-override frag Tint(Vertex vertex, mut Color color, Sun sun)
+override frag Tint(Vertex vertex, out Color color, Sun sun)
 {
     color = vertex.color;
     color.g = Dim(vertex.color.g) + 0.125;

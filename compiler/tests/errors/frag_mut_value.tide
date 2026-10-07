@@ -1,0 +1,6 @@
+// expect: a frag reads 'tint', and can't change it: drop 'mut'
+// expect: what it writes is its pixel's color, 'out Color color'
+scene Main { }
+struct Corner { float2 position; }
+struct Paint { Color tint; }
+frag Shade(Corner corner, out Color color, mut Paint tint) { color = Color.red; }

@@ -112,7 +112,7 @@ A draw into a target can't read that target's depth, any more than its color: th
 local singleton RenderState { RenderTarget scene; bool made; }
 enum RenderStages { Prepare, Objects, Effects }
 
-frag Present(Vertex vertex, mut Color color, Texture source)
+frag Present(Vertex vertex, out Color color, Texture source)
 {
     color = source.Sample(vertex.uv);
 }

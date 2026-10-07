@@ -204,12 +204,12 @@ component Mesh
 view Bake(mut Mesh mesh) { var local = mesh.local; }
 
 // Frags and verts: their words start a declaration, and are names anywhere else.
-frag Shade(BoxVertex vertex, mut Color color, Box box, Pixel pixel)
+frag Shade(BoxVertex vertex, out Color color, Box box, Pixel pixel)
 {
     color = box.wood.Sample(vertex.uv) * box.tint;
     if (pixel.position.x < 10) pixel.Discard();
 }
-vert Wave(mut BoxVertex vertex, Time time, Instance instance) { }
+vert Wave(mut BoxVertex vertex, out FromLamp lamp, Time time, Instance instance) { }
 float Blend(float frag, float vert)
 {
     float both = frag + vert;
@@ -344,7 +344,7 @@ override command(Rename rename, PlayerID sender) Combat.OnRename(mut Name name) 
 virtual float Hurt(float base) { return base; }
 override float Combat.Harm(float base) { return base; }
 override mut void Stats.Wound(float amount) { }
-override frag Effects.Glow(Corner vertex, mut Color color) { }
+override frag Effects.Glow(Corner vertex, out Color color) { }
 struct Probed
 {
     float health;

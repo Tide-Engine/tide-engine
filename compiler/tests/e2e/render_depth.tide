@@ -32,7 +32,7 @@ event(Spawned) Setup(with Main)
     Spawn(Caster { position = float3(0, 1, 0) });
 }
 
-frag Lit(Vertex3 vertex, mut Color color, Pixel pixel, Lamp lamp)
+frag Lit(Vertex3 vertex, out Color color, Pixel pixel, Lamp lamp)
 {
     float4 seen = Math.Mul(lamp.toLamp, float4(pixel.world, 1));
     float lit = lamp.shadow.Compare(float2(seen.x * 0.5 + 0.5, 0.5 - seen.y * 0.5), seen.z * 0.5 + 0.5 - 0.01);
@@ -46,7 +46,7 @@ vert Sink(mut Vertex3 vertex, Lamp lamp)
     vertex.position.y -= lamp.shadow.Sample(vertex.uv);
 }
 
-frag Seen(Vertex3 vertex, mut Color color, Caster caster)
+frag Seen(Vertex3 vertex, out Color color, Caster caster)
 {
     float lit = caster.seen.Compare(vertex.uv, 0.25);
     color = Color(lit, lit, lit);
