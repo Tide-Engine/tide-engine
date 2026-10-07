@@ -33,6 +33,7 @@ static const struct {
     {"Cubemap", TY_CUBEMAP, "cubemap", "tide_cubemap_ref"},
     {"RenderTarget", TY_RENDER_TARGET, "target", "tide_render_target"},
     {"Clip", TY_CLIP, "clip", "tide_clip_ref"},
+    {"Resident", TY_RESIDENT, "resident", "tide_resident"},
 };
 
 #define BUILTIN_COUNT (sizeof builtins / sizeof builtins[0])

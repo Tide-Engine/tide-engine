@@ -123,6 +123,7 @@ typedef enum type_kind {
     TY_CUBEMAP,    // Cubemap: a local reference to six images a frag or vert reads by a direction: an asset's, or one drawn into
     TY_RENDER_TARGET, // RenderTarget: a local drawing destination; Draw.window names the window
     TY_CLIP,       // Clip: a sound of the game's pack, this machine's to play (an asset's, or a copy of one)
+    TY_RESIDENT,   // Resident: a C library's state the world keeps as pages (tide/resident.h): a match singleton's field, which only C reads
     TY_LIST,       // List<T>: decl is the list type, whose one field is its element
     TY_MAP,        // Map<K, V>: decl is the map type, whose fields are its key and its value
     TY_SET,        // Set<K>: decl is the set type, whose one field is its key
@@ -1196,6 +1197,7 @@ typedef struct program {
     // (its title setting, or the program's name), and no other game's does.
     bool uses_title;
     bool uses_audio;     // Some code plays sounds: the local state carries the frame's audio list
+    bool uses_resident;  // A match singleton has a Resident field: the worlds carry its pages, the local state the arenas' registry
     bool quiet_names;    // While a built-in struct's own fields resolve: what they name isn't the game naming it
     VEC(mesh_draw) mesh_draws; // Every mesh draw that draws through a shader
     VEC(shader *) shaders;     // ...and the shaders they draw through, once each
