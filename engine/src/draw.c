@@ -251,8 +251,7 @@ void tide_draw_reset(tide_draw_list *d)
     d->target_count = d->target = 0;
     // Every setting is back where a frame starts
     d->place = d->window = (tide_draw_place){0};
-    d->unsettled = d->altered = d->tinted = 0;
-    d->blend = TIDE_BLEND_ALPHA;
+    d->unsettled = d->altered = 0;
     d->camera_count = d->camera_3d_count = d->clip_count = d->turn_count = d->saved_count = 0;
     d->bold = NULL;
     // The textures the frame drew with stay, for the next to find its pixels
@@ -369,7 +368,7 @@ static void refresh(tide_draw_list *d)
     const tide_draw_place *p = &d->place;
     d->unsettled = p->camera_2d != p->played_2d || p->camera_3d != p->played_3d || p->clip != p->played_clip
                 || p->stencil != p->played_stencil;
-    d->altered = d->tinted || (p->moved & TIDE_DRAW_MOVED) != 0;
+    d->altered = d->place.tinted || (p->moved & TIDE_DRAW_MOVED) != 0;
 }
 
 // A command that sets something for the commands after it, and draws nothing.
@@ -436,7 +435,7 @@ static inline __attribute__((always_inline)) tide_draw_command *push(tide_draw_l
     if (__builtin_expect(d->unsettled != 0, 0)) settle(d);
     if (__builtin_expect(d->count == d->capacity, 0)) more_commands(d);
     tide_draw_command *c = &d->commands[d->count++];
-    *c = (tide_draw_command){.kind = (uint8_t)kind, .blend = (uint8_t)d->blend, .a = a, .b = b, .color = color};
+    *c = (tide_draw_command){.kind = (uint8_t)kind, .blend = (uint8_t)d->place.blend, .a = a, .b = b, .color = color};
     return c;
 }
 
@@ -452,16 +451,15 @@ void tide_draw_pop(tide_draw_list *d, const uint32_t mark)
 {
     while (d->saved_count > mark) {
         const tide_draw_saved *s = &d->saved[--d->saved_count];
-        if (s->setting == TIDE_DRAW_SAVED_BLEND) {
-            d->blend = s->value;
-        } else if (s->setting == TIDE_DRAW_SAVED_TINT) {
-            d->tint = s->tint;
-            d->tinted = 1;
-        } else if (s->setting == TIDE_DRAW_SAVED_NO_TINT) {
-            d->tinted = 0;
-        } else if (s->target <= d->target_count) { // Its destination's, wherever commands go by now
+        if (s->target <= d->target_count) { // Its destination's, wherever commands go by now
             tide_draw_place *p = place_of(d, s->target);
             switch (s->setting) {
+            case TIDE_DRAW_SAVED_BLEND: p->blend = s->value; break;
+            case TIDE_DRAW_SAVED_TINT:
+                p->tint = s->tint;
+                p->tinted = 1;
+                break;
+            case TIDE_DRAW_SAVED_NO_TINT: p->tinted = 0; break;
             case TIDE_DRAW_SAVED_TRANSFORM:
                 p->transform = s->transform;
                 p->moved = (p->moved & MOVED_3D) | s->moved;
@@ -485,20 +483,21 @@ void tide_draw_pop(tide_draw_list *d, const uint32_t mark)
     refresh(d);
 }
 
+// How the selected destination's commands go over what's there: its own, as its cameras are.
 void tide_draw_set_blend(tide_draw_list *d, const tide_blend blend)
 {
-    d->blend = (uint32_t)blend <= TIDE_BLEND_REPLACE ? (uint32_t)blend : TIDE_BLEND_ALPHA;
+    d->place.blend = (uint32_t)blend <= TIDE_BLEND_REPLACE ? (uint32_t)blend : TIDE_BLEND_ALPHA;
 }
 
 void tide_draw_unset_blend(tide_draw_list *d)
 {
-    d->blend = TIDE_BLEND_ALPHA;
+    d->place.blend = TIDE_BLEND_ALPHA;
 }
 
 uint32_t tide_draw_push_blend(tide_draw_list *d, const tide_blend blend)
 {
     const uint32_t mark = d->saved_count;
-    save(d, TIDE_DRAW_SAVED_BLEND)->value = d->blend;
+    save(d, TIDE_DRAW_SAVED_BLEND)->value = d->place.blend;
     tide_draw_set_blend(d, blend);
     return mark;
 }
@@ -563,23 +562,24 @@ uint32_t tide_draw_push_stencil(tide_draw_list *d, const tide_stencil stencil)
     return mark;
 }
 
+// What the selected destination's commands have their colors multiplied by: its own too.
 void tide_draw_set_tint(tide_draw_list *d, const tide_color tint)
 {
-    d->tint = tint;
-    d->tinted = !(tint.r == 1.0f && tint.g == 1.0f && tint.b == 1.0f && tint.a == 1.0f);
+    d->place.tint = tint;
+    d->place.tinted = !(tint.r == 1.0f && tint.g == 1.0f && tint.b == 1.0f && tint.a == 1.0f);
     refresh(d);
 }
 
 void tide_draw_unset_tint(tide_draw_list *d)
 {
-    d->tinted = 0;
+    d->place.tinted = 0;
     refresh(d);
 }
 
 uint32_t tide_draw_push_tint(tide_draw_list *d, const tide_color tint)
 {
     const uint32_t mark = d->saved_count;
-    if (d->tinted) save(d, TIDE_DRAW_SAVED_TINT)->tint = d->tint;
+    if (d->place.tinted) save(d, TIDE_DRAW_SAVED_TINT)->tint = d->place.tint;
     else save(d, TIDE_DRAW_SAVED_NO_TINT);
     tide_draw_set_tint(d, tide_mul_color(tide_draw_tint(d), tint)); // Inside the one there is
     return mark;
@@ -820,11 +820,10 @@ uint32_t tide_draw_push_clip(tide_draw_list *d, const tide_rect rect)
 void tide_draw_defaults(tide_draw_list *d)
 {
     tide_draw_to(d, 0, 0, 0);
-    d->blend = TIDE_BLEND_ALPHA;
-    d->tinted = 0;
     for (uint32_t i = 0; i <= d->target_count; i++) {
         tide_draw_place *p = i ? &d->targets[i - 1u].place : &d->place;
-        p->camera_2d = p->camera_3d = p->clip = p->moved = p->stencil = 0;
+        p->camera_2d = p->camera_3d = p->clip = p->moved = p->stencil = p->tinted = 0;
+        p->blend = TIDE_BLEND_ALPHA;
         p->depth = TIDE_DEPTH_READ_WRITE;
         p->cull = TIDE_CULL_BACK;
     }
@@ -955,7 +954,7 @@ static __attribute__((noinline)) void plain_altered(tide_draw_list *d, const tid
                                           .outline_color = color});
         return;
     }
-    if (d->tinted) color = tide_mul_color(color, d->tint);
+    if (d->place.tinted) color = tide_mul_color(color, d->place.tint);
     if (moved) {
         a = moved_point(t, a);
         b = kind == TIDE_DRAW_LINE ? moved_point(t, b) : circle ? tide_f2(b.x * p->scale, 0.0f) : tide_f2(b.x * t->x.x, b.y * t->y.y);
@@ -1019,10 +1018,10 @@ static tide_shape_form ellipse_form(const tide_float2 size, float *radius)
 static __attribute__((noinline)) void alter_shape(const tide_draw_list *d, tide_float2 *center, tide_float2 *size, tide_color *color,
                         tide_draw_shape_data *shape)
 {
-    if (d->tinted) {
-        *color = tide_mul_color(*color, d->tint);
-        shape->color2 = tide_mul_color(shape->color2, d->tint);
-        shape->outline_color = tide_mul_color(shape->outline_color, d->tint);
+    if (d->place.tinted) {
+        *color = tide_mul_color(*color, d->place.tint);
+        shape->color2 = tide_mul_color(shape->color2, d->place.tint);
+        shape->outline_color = tide_mul_color(shape->outline_color, d->place.tint);
     }
     const tide_draw_place *p = &d->place;
     if (!(p->moved & TIDE_DRAW_MOVED)) return;
@@ -1232,7 +1231,7 @@ void tide_draw_text_at(tide_draw_list *d, const char *text, tide_float2 position
         push_text(d, text, position, size, color, anchor, font, NULL);
         return;
     }
-    if (d->tinted) color = tide_mul_color(color, d->tint);
+    if (d->place.tinted) color = tide_mul_color(color, d->place.tint);
     if (!(p->moved & TIDE_DRAW_MOVED)) {
         push_text(d, text, position, size, color, anchor, font, NULL);
         return;
@@ -1359,7 +1358,7 @@ static __attribute__((noinline)) void alter_vertices(tide_draw_list *d, const ui
     const tide_draw_place *p = &d->place;
     const bool moved = (p->moved & TIDE_DRAW_MOVED) != 0;
     for (tide_vertex *v = d->vertices + base, *end = v + count; v < end; v++) {
-        if (d->tinted) v->color = tide_mul_color(v->color, d->tint);
+        if (d->place.tinted) v->color = tide_mul_color(v->color, d->place.tint);
         if (moved) v->position = moved_point(&p->transform, v->position);
     }
 }
@@ -1394,7 +1393,7 @@ void tide_draw_triangles_with(tide_draw_list *d, const uint32_t base, const uint
     if (d->index_count == first) return;
     // More of the mesh before it, when nothing came between them
     tide_draw_command *last = d->count && !d->unsettled ? &d->commands[d->count - 1u] : NULL;
-    if (last && last->kind == TIDE_DRAW_MESH && last->blend == d->blend && last->mesh.texture == slot
+    if (last && last->kind == TIDE_DRAW_MESH && last->blend == d->place.blend && last->mesh.texture == slot
         && last->mesh.filter == (uint16_t)filter && last->mesh.wrap == (uint16_t)wrap
         && last->mesh.first + last->mesh.count == first) {
         last->mesh.count += d->index_count - first;
@@ -1751,7 +1750,7 @@ void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, co
     if (!shader || shader->dims != 3 || p->cull == TIDE_CULL_NONE || shader->instance_floats < 4u || !instances
         || count == 0) {
         shaded_instances(d, shader, mesh, instances, count, uniforms, textures, sampling, TIDE_DRAW_SHADED,
-                         (tide_blend)d->blend, (tide_depth)p->depth, p->cull, &with, through);
+                         (tide_blend)d->place.blend, (tide_depth)p->depth, p->cull, &with, through);
         return;
     }
     const bool turned = through && (p->moved & TIDE_DRAW_MOVED_MIRROR);
@@ -1762,7 +1761,7 @@ void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, co
         const bool next = i < count ? instance_mirrors(bytes + (size_t)i * size) != turned : !mirrored;
         if (next == mirrored) continue;
         shaded_instances(d, shader, mesh, bytes + (size_t)first * size, i - first, uniforms, textures, sampling,
-                         TIDE_DRAW_SHADED, (tide_blend)d->blend, (tide_depth)p->depth,
+                         TIDE_DRAW_SHADED, (tide_blend)d->place.blend, (tide_depth)p->depth,
                          p->cull | (mirrored ? TIDE_DRAW_MIRRORED : 0u), &with, through);
         first = i;
         mirrored = next;
@@ -1874,7 +1873,7 @@ void tide_draw_instance(tide_draw_list *d, const uint32_t mesh, const tide_float
 {
     const tide_draw_place *p = &d->place;
     const tide_float4x4 *through = p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL;
-    mesh_instances(d, mesh, &transform, 1, texture, filter, wrap, (tide_blend)d->blend, (tide_depth)p->depth, p->cull,
+    mesh_instances(d, mesh, &transform, 1, texture, filter, wrap, (tide_blend)d->place.blend, (tide_depth)p->depth, p->cull,
                    tide_draw_tint(d), through, through && (p->moved & TIDE_DRAW_MOVED_MIRROR));
 }
 
@@ -1883,7 +1882,7 @@ void tide_draw_instances(tide_draw_list *d, const uint32_t mesh, const tide_floa
 {
     const tide_draw_place *p = &d->place;
     const tide_float4x4 *through = p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL;
-    mesh_instances(d, mesh, transforms, count, texture, filter, wrap, (tide_blend)d->blend, (tide_depth)p->depth,
+    mesh_instances(d, mesh, transforms, count, texture, filter, wrap, (tide_blend)d->place.blend, (tide_depth)p->depth,
                    p->cull, tide_draw_tint(d), through, through && (p->moved & TIDE_DRAW_MOVED_MIRROR));
 }
 
@@ -1976,7 +1975,7 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
     const uint32_t base = tide_draw_vertices(d, from->vertices, from->vertex_count);
     for (uint32_t i = 0; i < from->count; i++) {
         const tide_draw_command *c = &from->commands[i];
-        d->blend = c->blend;
+        d->place.blend = c->blend;
         if (c->kind == TIDE_DRAW_TARGET) {
             if (c->target > from->target_count) {
                 draw_to_version(d, TIDE_RENDER_INVALID, (tide_target_size){0}, 0);
@@ -2041,7 +2040,7 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
             push(d, (tide_draw_kind)c->kind, c->a, c->b, c->color);
         }
     }
-    d->blend = TIDE_BLEND_ALPHA;
+    for (uint32_t i = 0; i <= d->target_count; i++) place_of(d, i)->blend = TIDE_BLEND_ALPHA;
     // What `from` set after the last command that drew isn't in its commands: its destinations' places have it
     const uint32_t ended = d->target;
     for (uint32_t i = 0; i <= from->target_count; i++) {

@@ -65,19 +65,19 @@ bool Pill(Rect rect, string label, Color tint, bool solid, bool enabled)
     if (solid)
     {
         var fill = over ? Mix(tint, Color.white, 0.28) : tint;
-        Draw2D.Shape(Shape { center = center + float2(0, 3), size = size, radius = radius, color = Fade(Shade(tint, 0.4), faint) });
-        Draw2D.Shape(Shape { center = center, size = size, radius = radius, color = Fade(fill, faint),
+        Draw.Shape(Shape { center = center + float2(0, 3), size = size, radius = radius, color = Fade(Shade(tint, 0.4), faint) });
+        Draw.Shape(Shape { center = center, size = size, radius = radius, color = Fade(fill, faint),
                              color2 = Fade(Shade(fill, 0.86), faint), outline = pill.focused ? 2.5 : 0.0,
                              outlineColor = Color.white });
-        Draw2D.Text(label, center, rect.height >= 50 ? 20 : 15, Fade(BACK, faint), Anchor.MiddleCenter, Font.Bold);
+        Draw.Text(label, center, rect.height >= 50 ? 20 : 15, Fade(BACK, faint), Anchor.MiddleCenter, Font.Bold);
         return pill.clicked;
     }
     // One that can't be pressed is darker, and still hides what's behind it
-    Draw2D.Shape(Shape { center = center, size = size, radius = radius,
+    Draw.Shape(Shape { center = center, size = size, radius = radius,
                          color = Shade(Fade(over ? Color(0.225, 0.23, 0.25) : RAISED, 0.97), enabled ? 1 : 0.7),
                          outline = pill.focused ? 2.2 : 1.5,
                          outlineColor = pill.focused ? Color.white : Fade(over ? tint : LINE, faint) });
-    Draw2D.Text(label, center, 14, Fade(tint, faint), Anchor.MiddleCenter, Font.Bold);
+    Draw.Text(label, center, 14, Fade(tint, faint), Anchor.MiddleCenter, Font.Bold);
     return pill.clicked;
 }
 
@@ -100,12 +100,12 @@ void SeatRow(Lobby lobby, int seat, float2 at, float wide)
     var mine = seat == lobby.mine;
     var bot = !manned && Live(lobby.manned, lobby.bots, seat);
     var color = manned || bot ? SeatColor(seat) : Shade(SeatColor(seat), 0.4);
-    Draw2D.Shape(Shape { center = at + float2(wide * 0.5, 0), size = float2(wide, 26), radius = 8,
+    Draw.Shape(Shape { center = at + float2(wide * 0.5, 0), size = float2(wide, 26), radius = 8,
                          color = mine ? Color(0.21, 0.215, 0.235) : Color(0.14, 0.143, 0.157),
                          outline = mine ? 1.5 : 0.0, outlineColor = Fade(Color.white, 0.7) });
-    Draw2D.Circle(at + float2(15, 0), 6, color);
-    Draw2D.Text(SeatName(seat), at + float2(29, 0), 12, color, Anchor.MiddleLeft, Font.Bold);
-    Draw2D.Text(mine ? "YOU" : manned ? "PLAYER" : bot ? "BOT" : "OPEN", at + float2(wide - 10, 0), 11,
+    Draw.Circle(at + float2(15, 0), 6, color);
+    Draw.Text(SeatName(seat), at + float2(29, 0), 12, color, Anchor.MiddleLeft, Font.Bold);
+    Draw.Text(mine ? "YOU" : manned ? "PLAYER" : bot ? "BOT" : "OPEN", at + float2(wide - 10, 0), 11,
                 mine ? Color.white : Fade(QUIET, manned ? 1 : bot ? 0.7 : 0.45), Anchor.MiddleRight, mine ? Font.Bold : Font.Regular);
 }
 
@@ -137,7 +137,7 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand ha
         return;
     }
 
-    Draw2D.SetScreen();
+    Draw.SetScreen();
     var screen = float2(Screen.width, Screen.height);
     var middle = screen * 0.5;
     // The whole screen is the page's: a drag between two buttons isn't the
@@ -153,8 +153,8 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand ha
     var connected = session.state == SessionState.Connected;
 
     // The match goes on behind the page, dimmed, and darker where the page's words are
-    Draw2D.Rect(middle, screen, Fade(BACK, 0.62 * lobby.shown));
-    Draw2D.Shape(Shape { center = middle, size = float2(wide - 60, Math.Min(screen.y, 420) - 160), radius = 40,
+    Draw.Rect(middle, screen, Fade(BACK, 0.62 * lobby.shown));
+    Draw.Shape(Shape { center = middle, size = float2(wide - 60, Math.Min(screen.y, 420) - 160), radius = 40,
                          color = Fade(Color(0.04, 0.04, 0.045), 0.85 * lobby.shown), soft = 110 });
 
     Draw.Tint(Fade(Color.white, lobby.shown))
@@ -173,16 +173,16 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand ha
                 var color = SeatColor(seat);
                 var push = seat == 1 ? 1 : seat == 2 ? -1 : 0;
                 var at = float2(middle.x + (seat - 1.5) * 26 + push * (3 + Math.Sin(fx.beat * 2) * 3), y + 13);
-                Draw2D.Circle(at + float2(0, 2), 9.5, Color(0.03, 0.03, 0.035));
-                Draw2D.Circle(at, 9.5, color);
-                Draw2D.Rect(at, float2(19, 4.5), fx.beat * (seat % 2 == 0 ? 1 : -1) + seat, Color.white);
-                Draw2D.WireCircle(at, 9.5, 2, Shade(color, 0.6));
+                Draw.Circle(at + float2(0, 2), 9.5, Color(0.03, 0.03, 0.035));
+                Draw.Circle(at, 9.5, color);
+                Draw.Rect(at, float2(19, 4.5), fx.beat * (seat % 2 == 0 ? 1 : -1) + seat, Color.white);
+                Draw.WireCircle(at, 9.5, 2, Shade(color, 0.6));
             }
             y += 30;
-            Draw2D.Text("SUMO", float2(middle.x, y + title * 0.5 + 3), title, Color(0.03, 0.03, 0.035), Anchor.MiddleCenter, Font.Bold);
-            Draw2D.Text("SUMO", float2(middle.x, y + title * 0.5), title, Color.white, Anchor.MiddleCenter, Font.Bold);
+            Draw.Text("SUMO", float2(middle.x, y + title * 0.5 + 3), title, Color(0.03, 0.03, 0.035), Anchor.MiddleCenter, Font.Bold);
+            Draw.Text("SUMO", float2(middle.x, y + title * 0.5), title, Color.white, Anchor.MiddleCenter, Font.Bold);
             y += title;
-            Draw2D.Text("Ram them. Shove them out of the ring.", float2(middle.x, y + (short ? 8 : 12)), 13, QUIET, Anchor.MiddleCenter);
+            Draw.Text("Ram them. Shove them out of the ring.", float2(middle.x, y + (short ? 8 : 12)), 13, QUIET, Anchor.MiddleCenter);
             y += short ? 24 : 36;
 
             var play = Pill(Rect(left, y, wide, main), "PLAY", AMBER, true, connected);
@@ -191,8 +191,8 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand ha
             y += row + gap;
             var join = Pill(Rect(left, y, wide, row), "JOIN A ROOM", INK, false, true);
             y += row;
-            if (lobby.message != "") Draw2D.Text(lobby.message, float2(middle.x, y + 18), 13, ROSE, Anchor.MiddleCenter);
-            else Draw2D.Text("Up to eight players, in a room.", float2(middle.x, y + 18), 12, Fade(QUIET, 0.8), Anchor.MiddleCenter);
+            if (lobby.message != "") Draw.Text(lobby.message, float2(middle.x, y + 18), 13, ROSE, Anchor.MiddleCenter);
+            else Draw.Text("Up to eight players, in a room.", float2(middle.x, y + 18), 12, Fade(QUIET, 0.8), Anchor.MiddleCenter);
 
             if (play)
             {
@@ -220,14 +220,14 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand ha
             var row = 50.0;
             var total = 34 + 26 + row + 34 + 48;
             mut var y = Math.Max(8, (screen.y - total) * 0.42);
-            Draw2D.Text(busy ? "JOINING" : "JOIN A ROOM", float2(middle.x, y + 14), 26, Color.white, Anchor.MiddleCenter, Font.Bold);
+            Draw.Text(busy ? "JOINING" : "JOIN A ROOM", float2(middle.x, y + 14), 26, Color.white, Anchor.MiddleCenter, Font.Bold);
             y += 34;
             if (busy)
             {
                 var room = session.room != "" ? session.room : lobby.code.Trim().Substring(0, 12);
-                Draw2D.Text(room == "" ? "Waiting for the match" : $"Room {room}", float2(middle.x, y + 8), 14, QUIET, Anchor.MiddleCenter);
+                Draw.Text(room == "" ? "Waiting for the match" : $"Room {room}", float2(middle.x, y + 8), 14, QUIET, Anchor.MiddleCenter);
                 y += 26;
-                Draw2D.Arc(float2(middle.x, y + row * 0.5), 16, lobby.turn * Math.TAU, Math.TAU * 0.7, 4, AMBER);
+                Draw.Arc(float2(middle.x, y + row * 0.5), 16, lobby.turn * Math.TAU, Math.TAU * 0.7, 4, AMBER);
                 y += row + 34;
                 if (Pill(Rect(middle.x - 90, y, 180, 48), "CANCEL", INK, false, true))
                 {
@@ -238,11 +238,11 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand ha
             }
             else
             {
-                Draw2D.Text("Type the code of your friend's room.", float2(middle.x, y + 8), 13, QUIET, Anchor.MiddleCenter);
+                Draw.Text("Type the code of your friend's room.", float2(middle.x, y + 8), 13, QUIET, Anchor.MiddleCenter);
                 y += 26;
                 // The code is typed into a field of the GUI's, in the page's colors: its frame is drawn here, under it
                 var frame = Rect(left, y, wide - 108, row);
-                Draw2D.Shape(Shape { center = Middle(frame), size = float2(frame.width, frame.height), radius = 12,
+                Draw.Shape(Shape { center = Middle(frame), size = float2(frame.width, frame.height), radius = 12,
                                      color = Color(0.06, 0.06, 0.066), outline = 1.5, outlineColor = LINE });
                 // Enter in the field joins, as the button beside it does
                 mut var entered = false;
@@ -256,8 +256,8 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand ha
                 var code = lobby.code.Trim();
                 var go = (Pill(Rect(left + wide - 100, y, 100, row), "JOIN", AMBER, true, code != "") || entered) && code != "";
                 y += row;
-                if (lobby.message != "") Draw2D.Text(lobby.message, float2(middle.x, y + 17), 13, ROSE, Anchor.MiddleCenter);
-                else Draw2D.Text("Six letters and digits, like K7QF2M.", float2(middle.x, y + 17), 12, Fade(QUIET, 0.8), Anchor.MiddleCenter);
+                if (lobby.message != "") Draw.Text(lobby.message, float2(middle.x, y + 17), 13, ROSE, Anchor.MiddleCenter);
+                else Draw.Text("Six letters and digits, like K7QF2M.", float2(middle.x, y + 17), 12, Fade(QUIET, 0.8), Anchor.MiddleCenter);
                 y += 34;
                 var back = Pill(Rect(middle.x - 90, y, 180, 48), "BACK", INK, false, true);
                 if (go)
@@ -284,23 +284,23 @@ view Pages(Session session, Devices devices, Fx fx, mut Lobby lobby, mut Hand ha
             mut var copy = false;
             if (alone)
             {
-                Draw2D.Text("PLAYING ALONE", float2(left + 2, y + 8), 11, QUIET, Anchor.MiddleLeft, Font.Bold);
+                Draw.Text("PLAYING ALONE", float2(left + 2, y + 8), 11, QUIET, Anchor.MiddleLeft, Font.Bold);
                 invite = Pill(Rect(left, y + 20, wide, 44), "INVITE FRIENDS", AMBER, false, connected);
             }
             else
             {
-                Draw2D.Text(session.server ? "YOUR ROOM" : "ROOM", float2(left + 2, y + 8), 11, QUIET, Anchor.MiddleLeft, Font.Bold);
-                Draw2D.Shape(Shape { center = float2(middle.x, y + 42), size = float2(wide, 46), radius = 12, color = Color(0.06, 0.06, 0.066),
+                Draw.Text(session.server ? "YOUR ROOM" : "ROOM", float2(left + 2, y + 8), 11, QUIET, Anchor.MiddleLeft, Font.Bold);
+                Draw.Shape(Shape { center = float2(middle.x, y + 42), size = float2(wide, 46), radius = 12, color = Color(0.06, 0.06, 0.066),
                                      outline = 1.5, outlineColor = Fade(AMBER, 0.7) });
                 if (session.room != "")
                 {
-                    Draw2D.Text(session.room, float2(left + 16, y + 42), 30, Color.white, Anchor.MiddleLeft, Font.Bold);
+                    Draw.Text(session.room, float2(left + 16, y + 42), 30, Color.white, Anchor.MiddleLeft, Font.Bold);
                     copy = Pill(Rect(left + wide - 91, y + 20, 90, 44), lobby.copied < 1.5 ? "COPIED" : "COPY", AMBER, false, true);
                 }
                 else
                 {
-                    Draw2D.Arc(float2(left + 26, y + 42), 9, lobby.turn * Math.TAU, Math.TAU * 0.7, 3, AMBER);
-                    Draw2D.Text("Opening a room...", float2(left + 46, y + 42), 14, QUIET, Anchor.MiddleLeft);
+                    Draw.Arc(float2(left + 26, y + 42), 9, lobby.turn * Math.TAU, Math.TAU * 0.7, 3, AMBER);
+                    Draw.Text("Opening a room...", float2(left + 46, y + 42), 14, QUIET, Anchor.MiddleLeft);
                 }
             }
             y += 72;

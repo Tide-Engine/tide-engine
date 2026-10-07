@@ -16,5 +16,5 @@ frag Look(Corner corner, FromLamp lamp, out Color color)
 
 view Show(Models models)
 {
-    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Look);
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Look);
 }

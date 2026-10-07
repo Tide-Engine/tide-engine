@@ -358,19 +358,19 @@ TIDE_TEST(lsp_complete_builtin_owners)
     TIDE_CHECK(offers(math, "Normalize"));
     TIDE_CHECK(!offers(math, "NormalizeSafe")); // Gone: Normalize is the safe one
 
-    const char *draw = complete(GAME_TYPES "view V(Body body)\n{\n    Draw2D.$\n}\n");
+    const char *draw = complete(GAME_TYPES "view V(Body body)\n{\n    Draw.$\n}\n");
     TIDE_CHECK(offers(draw, "Circle"));
     TIDE_CHECK(has(draw, "Circle(${1:center}, ${2:radius}, ${3:color})"));
-    TIDE_CHECK(offers(draw, "WorldToScreen") && offers(draw, "ScreenToWorld") && offers(draw, "Instanced") && !offers(draw, "Cube"));
+    TIDE_CHECK(offers(draw, "WorldToScreen") && offers(draw, "ScreenToWorld") && offers(draw, "Instanced"));
     TIDE_CHECK(has(draw, "MeasureText(${1:text}, ${2:size})"));
 
-    const char *draw3 = complete(GAME_TYPES "view V(Body body)\n{\n    Draw3D.$\n}\n");
-    TIDE_CHECK(offers(draw3, "Cube") && offers(draw3, "Sphere") && offers(draw3, "Cylinder") && offers(draw3, "Plane"));
-    TIDE_CHECK(offers(draw3, "WorldToScreen") && offers(draw3, "ScreenToWorld") && offers(draw3, "ScreenRayOrigin")
-               && offers(draw3, "ScreenRayDirection") && offers(draw3, "Instanced") && offers(draw3, "list"));
-    TIDE_CHECK(!offers(draw3, "Circle") && !offers(draw3, "Rect") && !offers(draw3, "Screen"));
+    // The 3D draws are Draw's too, beside the 2D ones, and so are the settings and its members
+    TIDE_CHECK(offers(draw, "Cube") && offers(draw, "Sphere") && offers(draw, "Cylinder") && offers(draw, "Plane"));
+    TIDE_CHECK(offers(draw, "ScreenRayOrigin") && offers(draw, "ScreenRayDirection") && offers(draw, "list") && offers(draw, "window"));
+    TIDE_CHECK(offers(draw, "Rect") && offers(draw, "Screen") && offers(draw, "Camera") && offers(draw, "Blend") && offers(draw, "Depth"));
+    TIDE_CHECK(offers(draw, "Blit") && !offers(draw, "Draw2D") && !offers(draw, "Draw3D"));
 
-    const char *color = complete(GAME_TYPES "view V(Body body)\n{\n    Draw2D.Circle(body.position, 1, Color.$);\n}\n");
+    const char *color = complete(GAME_TYPES "view V(Body body)\n{\n    Draw.Circle(body.position, 1, Color.$);\n}\n");
     TIDE_CHECK(offers(color, "red"));
 }
 
@@ -378,12 +378,10 @@ TIDE_TEST(lsp_complete_draw_only_in_views)
 {
     start();
     const char *system = complete(GAME_TYPES "system S(mut Body body)\n{\n    $\n}\n");
-    TIDE_CHECK(!offers(system, "Draw2D"));
-    TIDE_CHECK(!offers(system, "Draw3D"));
+    TIDE_CHECK(!offers(system, "Draw"));
     TIDE_CHECK(offers(system, "Spawn"));
     const char *view = complete(GAME_TYPES "view V(Body body)\n{\n    $\n}\n");
-    TIDE_CHECK(offers(view, "Draw2D"));
-    TIDE_CHECK(offers(view, "Draw3D") && !offers(view, "Draw"));
+    TIDE_CHECK(offers(view, "Draw") && !offers(view, "Draw2D") && !offers(view, "Draw3D"));
     TIDE_CHECK(!offers(view, "Body")); // Views spawn local entities, never the match's
 }
 
@@ -613,14 +611,14 @@ TIDE_TEST(lsp_hover)
     TIDE_CHECK(has(type, "component Body"));
     TIDE_CHECK(has(type, "float radius = 10;"));
 
-    open_document(GAME_TYPES "view V(Body body)\n{\n    Draw2D.Cir$cle(body.position, 1, Color.red);\n}\n");
+    open_document(GAME_TYPES "view V(Body body)\n{\n    Draw.Cir$cle(body.position, 1, Color.red);\n}\n");
     const char *function = request("textDocument/hover");
-    TIDE_CHECK(has(function, "Draw2D.Circle(float2 center, float radius, Color color)"));
+    TIDE_CHECK(has(function, "Draw.Circle(float2 center, float radius, Color color)"));
     TIDE_CHECK(has(function, "A filled circle."));
 
-    open_document(GAME_TYPES "view V(Body body)\n{\n    Draw2D.Circle(Draw2D.Measure$Text(\"a\", 12), 1, Color.red);\n}\n");
+    open_document(GAME_TYPES "view V(Body body)\n{\n    Draw.Circle(Draw.Measure$Text(\"a\", 12), 1, Color.red);\n}\n");
     const char *measure = request("textDocument/hover");
-    TIDE_CHECK(has(measure, "Draw2D.MeasureText(string text, float size, Font font = Font.Regular) -> float2"));
+    TIDE_CHECK(has(measure, "Draw.MeasureText(string text, float size, Font font = Font.Regular) -> float2"));
     TIDE_CHECK(has(measure, "the width of its widest line in x and the height of its lines in y"));
 
     open_document(GAME_TYPES "system Move(mut Body body)\n{\n    body.position = Math.Nor$malize(body.position);\n}\n");
@@ -677,7 +675,7 @@ static const char *c_definition(const char *marked)
     return definition_line();
 }
 
-// Meshes: Draw2D.Mesh, Draw2D.Clip and Draw2D.Screen, the built-in Vertex and
+// Meshes: Draw.Mesh, Draw.Clip and Draw.Screen, the built-in Vertex and
 // Filter, and the draw list a view passes to C.
 TIDE_TEST(lsp_meshes)
 {
@@ -686,20 +684,20 @@ TIDE_TEST(lsp_meshes)
     "scene Main { }\n"                                                             \
     "extern void DrawUI(DrawList list);\n"                                         \
     "local singleton Art\n{\n    Grid2<Color> pixels = Grid2(4, 4);\n    List<Vertex> corners;\n}\n"
-    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw2D.SetScreen();\n    Draw2D.SetClip(Rect(0, 0, 4, 4));\n"
-                             "    Draw2D.Mesh(art.corners, [0, 1, 2], art.pixels, Filter.Point);\n"
-                             "    Draw2D.Mesh([Vertex { position = float2(1, 2) }], [0, 0, 0]);\n"
-                             "    Draw3D.SetCamera(float3(0, 0, -5), quaternion.identity, 60);\n"
-                             "    Draw3D.Mesh([Vertex3 { position = float3(1, 2, 3) }], [0, 0, 0], float4x4.identity);\n"
-                             "    Draw2D.SetClip();\n    DrawUI(Draw2D.list);\n}\n");
+    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.SetScreen();\n    Draw.SetClip(Rect(0, 0, 4, 4));\n"
+                             "    Draw.Mesh(art.corners, [0, 1, 2], art.pixels, Filter.Point);\n"
+                             "    Draw.Mesh([Vertex { position = float2(1, 2) }], [0, 0, 0]);\n"
+                             "    Draw.SetCamera(float3(0, 0, -5), quaternion.identity, 60);\n"
+                             "    Draw.Mesh([Vertex3 { position = float3(1, 2, 3) }], [0, 0, 0], float4x4.identity);\n"
+                             "    Draw.SetClip();\n    DrawUI(Draw.list);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    const char *draw = complete(MESH_TYPES "view V(Art art)\n{\n    Draw2D.$\n}\n");
+    const char *draw = complete(MESH_TYPES "view V(Art art)\n{\n    Draw.$\n}\n");
     TIDE_CHECK(offers(draw, "Mesh") && offers(draw, "Clip") && offers(draw, "Screen") && offers(draw, "list"));
     TIDE_CHECK(offers(draw, "SetClip") && offers(draw, "SetScreen") && offers(draw, "SetCamera") && offers(draw, "Transform"));
     TIDE_CHECK(has(draw, "Mesh(${1:vertices}, ${2:indices})"));
-    TIDE_CHECK(has(draw, "Draw2D.list: DrawList"));
-    const char *filter = complete(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Mesh(art.corners, [0, 1, 2], art.pixels, Filter.$);\n}\n");
+    TIDE_CHECK(has(draw, "Draw.list: DrawList"));
+    const char *filter = complete(MESH_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, [0, 1, 2], art.pixels, Filter.$);\n}\n");
     TIDE_CHECK(offers(filter, "Point") && offers(filter, "Bilinear"));
     const char *corner = complete(MESH_TYPES "view V(Art art)\n{\n    var v = Vertex { $ };\n}\n");
     TIDE_CHECK(offers(corner, "position") && offers(corner, "uv") && offers(corner, "color"));
@@ -710,39 +708,40 @@ TIDE_TEST(lsp_meshes)
     const char *tide_param = complete(MESH_TYPES "void Paint($) { }\n"); // Only C takes one
     TIDE_CHECK(!offers(tide_param, "DrawList") && offers(tide_param, "Vertex"));
 
-    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Me$sh(art.corners, [0, 1, 2], art.pixels);\n}\n");
+    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.Me$sh(art.corners, [0, 1, 2], art.pixels);\n}\n");
     const char *mesh = request("textDocument/hover");
-    TIDE_CHECK(has(mesh, "Draw2D.Mesh(List<Vertex> vertices, List<int> indices, Grid2<Color> texture, Filter filter = Filter.Bilinear, "
+    TIDE_CHECK(has(mesh, "Draw.Mesh(List<Vertex> vertices, List<int> indices, Grid2<Color> texture, Filter filter = Filter.Bilinear, "
                          "Wrap wrap = Wrap.Clamp)"));
-    TIDE_CHECK(has(mesh, "Triangles: three of `indices` each"));
-    // Each version's doc, 2D and 3D
-    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw3D.SetCam$era(float3(0, 0, 0), quaternion.identity, 60);\n}\n");
+    TIDE_CHECK(has(mesh, "triangles, three of `indices` each"));
+    // Every version, 2D and 3D, with each one's doc once: one Draw has both cameras
+    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.SetCam$era(float3(0, 0, 0), quaternion.identity, 60);\n}\n");
     const char *camera = request("textDocument/hover");
-    TIDE_CHECK(has(camera, "Draw3D.SetCamera(float3 position, quaternion rotation, float fieldOfView)"));
-    TIDE_CHECK(has(camera, "The 3D camera the 3D meshes go through") && !has(camera, "orthographic size"));
-    open_document(MESH_TYPES "view V(Art art)\n{\n    DrawUI(Draw2D.li$st);\n}\n");
-    TIDE_CHECK(has(request("textDocument/hover"), "Draw2D.list: DrawList"));
+    TIDE_CHECK(has(camera, "Draw.SetCamera(float3 position, quaternion rotation, float fieldOfView)"));
+    TIDE_CHECK(has(camera, "Draw.SetCamera(float2 center, float size)") && has(camera, "Draw.SetCamera()"));
+    TIDE_CHECK(has(camera, "The 3D camera the 3D meshes go through") && has(camera, "orthographic size"));
+    open_document(MESH_TYPES "view V(Art art)\n{\n    DrawUI(Draw.li$st);\n}\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "Draw.list: DrawList"));
     // Its two forms, a 2D mesh's first for a List<Vertex>, and each parameter by what's written before it
-    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Mesh(art.corners, $\n}\n");
+    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, $\n}\n");
     const char *indices = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(indices, "\"label\":\"Draw2D.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag])\""));
-    TIDE_CHECK(!has(indices, "\"label\":\"Draw3D.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]][, vert][, frag])\""));
+    TIDE_CHECK(has(indices, "\"label\":\"Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag])\""));
+    TIDE_CHECK(!has(indices, "\"label\":\"Draw.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]][, vert][, frag])\""));
     TIDE_CHECK(has(indices, "\"activeSignature\":0,\"activeParameter\":1"));
-    TIDE_CHECK(has(indices, "{\"label\":[22,29],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A `List<int>`"));
-    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Mesh(art.corners, [0, 1, 2], $\n}\n"); // A list's commas aren't the call's
+    TIDE_CHECK(has(indices, "{\"label\":[20,27],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A `List<int>`"));
+    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, [0, 1, 2], $\n}\n"); // A list's commas aren't the call's
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeSignature\":0,\"activeParameter\":2"));
-    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Mesh(art.corners, [0, 1, 2], art.pixels, $\n}\n");
+    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, [0, 1, 2], art.pixels, $\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeSignature\":0,\"activeParameter\":3"));
-    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw3D.Mesh([Vertex3 { position = float3(1, 2, 3) }], [0, 0, 0], $\n}\n");
+    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.Mesh([Vertex3 { position = float3(1, 2, 3) }], [0, 0, 0], $\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeSignature\":0,\"activeParameter\":2"));
-    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Mesh($\n}\n");
+    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.Mesh($\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeSignature\":0,\"activeParameter\":0"));
 
-    TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Me$sh(art.corners, [0, 1, 2]);\n}\n"),
+    TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw.Me$sh(art.corners, [0, 1, 2]);\n}\n"),
                    "void tide_draw_mesh_lists("));
-    TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw2D.SetCl$ip();\n}\n"), "void tide_draw_unset_clip("));
-    TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw2D.SetScr$een();\n}\n"), "void tide_draw_set_screen("));
-    TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Cl$ip(Rect(0, 0, 4, 4))\n    {\n    }\n}\n"),
+    TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw.SetCl$ip();\n}\n"), "void tide_draw_unset_clip("));
+    TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw.SetScr$een();\n}\n"), "void tide_draw_set_screen("));
+    TIDE_CHECK(has(c_definition(MESH_TYPES "view V(Art art)\n{\n    Draw.Cl$ip(Rect(0, 0, 4, 4))\n    {\n    }\n}\n"),
                    "uint32_t tide_draw_push_clip("));
 #undef MESH_TYPES
 }
@@ -753,8 +752,8 @@ TIDE_TEST(lsp_draw_settings)
 {
     start();
     open_document("scene Main { }\nview V()\n{\n    Draw.Blend(Blend.Add),\n    Draw.Tint(Color(1, 1, 1, 0.5)),\n"
-                  "    Draw2D.Transform(float2(1, 2), 0.5, 2)\n    {\n        Draw2D.Rect(float2(0, 0), float2(1, 1), Color.red);\n"
-                  "    }\n    Draw.SetBlend(Blend.Multiply);\n    Draw.SetBlend();\n    Draw3D.SetTransform(float4x4.identity);\n}\n");
+                  "    Draw.Transform(float2(1, 2), 0.5, 2)\n    {\n        Draw.Rect(float2(0, 0), float2(1, 1), Color.red);\n"
+                  "    }\n    Draw.SetBlend(Blend.Multiply);\n    Draw.SetBlend();\n    Draw.SetTransform(float4x4.identity);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
     // Both forms, the block's with its braces
@@ -773,143 +772,137 @@ TIDE_TEST(lsp_draw_settings)
     TIDE_CHECK(has(set, "Draw.SetTint(Color color)") && has(set, "Draw.SetTint()") && has(set, "For the draws after it"));
 
     // The block's form with no block is its Set form, and the other way round: each a rename away
-    open_document("scene Main { }\nview V()\n{\n    Draw2D.Camera(float2(0, 0), 5);\n}\n");
-    TIDE_CHECK(has(last_sent(), "Draw2D.Camera sets it around a block") && has(last_sent(), "Draw2D.SetCamera(...);"));
+    open_document("scene Main { }\nview V()\n{\n    Draw.Camera(float2(0, 0), 5);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw.Camera sets it around a block") && has(last_sent(), "Draw.SetCamera(...);"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetCamera'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
     open_document("scene Main { }\nview V()\n{\n    Draw.SetBlend(Blend.Add)\n    {\n    }\n}\n");
     TIDE_CHECK(has(last_sent(), "Draw.SetBlend sets it for the draws that follow, and takes no block"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Blend'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
     // What put the clip back before there were two forms
-    open_document("scene Main { }\nview V()\n{\n    Draw2D.Clip();\n    Draw2D.NoClip();\n}\n");
-    TIDE_CHECK(has(last_sent(), "Draw2D.Clip() is 'Draw2D.SetClip()' now") && has(last_sent(), "Draw2D.NoClip() is 'Draw2D.SetClip()' now"));
+    open_document("scene Main { }\nview V()\n{\n    Draw.Clip();\n    Draw.NoClip();\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw.Clip() is 'Draw.SetClip()' now") && has(last_sent(), "Draw.NoClip() is 'Draw.SetClip()' now"));
     TIDE_CHECK(has(actions_at(3), "Change to 'SetClip'") && has(actions_at(4), "Change to 'SetClip'"));
 }
 
-// What 3D meshes do with depth is a setting of the same family, Draw3D's: both
-// forms, its modes, what each is on hover, each form's mistake a rename away,
-// and where it is for whoever asks Draw or Draw2D.
+// What 3D meshes do with depth is a setting of the same family: both forms,
+// its modes, what each is on hover, each form's mistake a rename away, and the
+// old owners' spellings a rename away too.
 TIDE_TEST(lsp_draw_depth)
 {
     start();
     open_document("scene Main { }\nlocal singleton Look { RenderTarget target; }\nview V(Look look)\n{\n"
-                  "    Draw.Blend(Blend.Add),\n    Draw3D.Depth(Depth.Read)\n    {\n"
-                  "        Draw3D.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.red);\n    }\n"
-                  "    Draw3D.SetDepth(Depth.None);\n    Draw3D.SetDepth();\n"
+                  "    Draw.Blend(Blend.Add),\n    Draw.Depth(Depth.Read)\n    {\n"
+                  "        Draw.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.red);\n    }\n"
+                  "    Draw.SetDepth(Depth.None);\n    Draw.SetDepth();\n"
                   "    look.target.Depth(Depth.Read)\n    {\n"
                   "        look.target.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.red);\n    }\n"
                   "    look.target.SetDepth();\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    const char *three = complete("scene Main { }\nview V()\n{\n    Draw3D.$\n}\n");
+    const char *three = complete("scene Main { }\nview V()\n{\n    Draw.$\n}\n");
     TIDE_CHECK(offers(three, "Depth") && offers(three, "SetDepth") && offers(three, "Transform"));
     TIDE_CHECK(has(three, "Depth(${1:mode})\\n{\\n\\t$0\\n}") && has(three, "\"SetDepth(${1:mode})\""));
-    // It's neither Draw's nor Draw2D's: only 3D meshes have depth
-    const char *shared = complete("scene Main { }\nview V()\n{\n    Draw.$\n}\n");
-    TIDE_CHECK(!offers(shared, "Depth") && !offers(shared, "SetDepth") && offers(shared, "Blend"));
-    const char *two = complete("scene Main { }\nview V()\n{\n    Draw2D.$\n}\n");
-    TIDE_CHECK(!offers(two, "Depth") && !offers(two, "SetDepth") && offers(two, "Clip"));
-    const char *modes = complete("scene Main { }\nview V()\n{\n    Draw3D.SetDepth(Depth.$);\n}\n");
+    TIDE_CHECK(offers(three, "Blend") && offers(three, "Clip")); // Beside every other setting: one Draw
+    const char *modes = complete("scene Main { }\nview V()\n{\n    Draw.SetDepth(Depth.$);\n}\n");
     TIDE_CHECK(offers(modes, "ReadWrite") && offers(modes, "Read") && offers(modes, "None"));
 
-    open_document("scene Main { }\nview V()\n{\n    Draw3D.De$pth(Depth.Read)\n    {\n    }\n}\n");
+    open_document("scene Main { }\nview V()\n{\n    Draw.De$pth(Depth.Read)\n    {\n    }\n}\n");
     const char *around = request("textDocument/hover");
-    TIDE_CHECK(has(around, "Draw3D.Depth(Depth mode, Block content)") && has(around, "For the draws in its block"));
+    TIDE_CHECK(has(around, "Draw.Depth(Depth mode, Block content)") && has(around, "For the draws in its block"));
     TIDE_CHECK(has(around, "nearer, and hides nothing") && has(around, "Only 3D meshes have depth"));
-    open_document("scene Main { }\nview V()\n{\n    Draw3D.SetDe$pth(Depth.Read);\n}\n");
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetDe$pth(Depth.Read);\n}\n");
     const char *set = request("textDocument/hover");
-    TIDE_CHECK(has(set, "Draw3D.SetDepth(Depth mode)") && has(set, "Draw3D.SetDepth()") && has(set, "For the draws after it"));
+    TIDE_CHECK(has(set, "Draw.SetDepth(Depth mode)") && has(set, "Draw.SetDepth()") && has(set, "For the draws after it"));
 
     // Each form written as the other is a rename away
-    open_document("scene Main { }\nview V()\n{\n    Draw3D.Depth(Depth.Read);\n}\n");
-    TIDE_CHECK(has(last_sent(), "Draw3D.Depth sets it around a block") && has(last_sent(), "Draw3D.SetDepth(...);"));
+    open_document("scene Main { }\nview V()\n{\n    Draw.Depth(Depth.Read);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw.Depth sets it around a block") && has(last_sent(), "Draw.SetDepth(...);"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetDepth'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
-    open_document("scene Main { }\nview V()\n{\n    Draw3D.SetDepth(Depth.Read)\n    {\n    }\n}\n");
-    TIDE_CHECK(has(last_sent(), "Draw3D.SetDepth sets it for the draws that follow, and takes no block"));
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetDepth(Depth.Read)\n    {\n    }\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw.SetDepth sets it for the draws that follow, and takes no block"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Depth'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
-    // Asked of Draw or of Draw2D, the note says whose it is
-    open_document("scene Main { }\nview V()\n{\n    Draw.SetDepth(Depth.Read);\n}\n");
-    TIDE_CHECK(has(last_sent(), "Draw has no function 'SetDepth'") && has(last_sent(), "it's Draw3D's: 'Draw3D.SetDepth(...)'"));
+    // The owners from before there was one Draw are a rename away, in either form
+    open_document("scene Main { }\nview V()\n{\n    Draw3D.SetDepth(Depth.Read);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw3D.SetDepth is 'Draw.SetDepth' now") && has(last_sent(), "Draw2D and Draw3D are gone"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Draw'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
     open_document("scene Main { }\nview V()\n{\n    Draw2D.Depth(Depth.Read)\n    {\n    }\n}\n");
-    TIDE_CHECK(has(last_sent(), "Draw2D has no function 'Depth'") && has(last_sent(), "Only 3D meshes have depth"));
-    // ...as for a setting of Draw's asked of a destination
+    TIDE_CHECK(has(last_sent(), "Draw2D.Depth is 'Draw.Depth' now"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Draw'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
     open_document("scene Main { }\nview V()\n{\n    Draw3D.SetBlend(Blend.Add);\n}\n");
-    TIDE_CHECK(has(last_sent(), "Draw3D has no function 'SetBlend'") && has(last_sent(), "'Draw.SetBlend(...);'"));
+    TIDE_CHECK(has(last_sent(), "Draw3D.SetBlend is 'Draw.SetBlend' now"));
     // A game can't rename one of its own to the enum's name
     open_document("scene Main { }\ncomponent Lay$er { int z; }\n");
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Depth\""), "built into"));
 }
 
-// Which side of a 3D mesh's triangles draws is one too, and Draw3D's as its
-// depth is: both forms, its sides, what the front is on hover, each form's
-// mistake a rename away, and where it is for whoever asks Draw or Draw2D.
+// Which side of a 3D mesh's triangles draws is one too, as its depth is: both
+// forms, its sides, what the front is on hover, each form's mistake a rename
+// away, and the old owners' spellings a rename away too.
 TIDE_TEST(lsp_draw_cull)
 {
     start();
     open_document("scene Main { }\nlocal singleton Look { RenderTarget target; Cull kept = Cull.Front; }\nview V(Look look)\n{\n"
-                  "    Draw3D.Depth(Depth.Read),\n    Draw3D.Cull(Cull.None)\n    {\n"
-                  "        Draw3D.Plane(float3(0, 0, 5), float2(1, 1), Color.red);\n    }\n"
-                  "    Draw3D.SetCull(look.kept);\n    Draw3D.SetCull();\n"
+                  "    Draw.Depth(Depth.Read),\n    Draw.Cull(Cull.None)\n    {\n"
+                  "        Draw.Plane(float3(0, 0, 5), float2(1, 1), Color.red);\n    }\n"
+                  "    Draw.SetCull(look.kept);\n    Draw.SetCull();\n"
                   "    look.target.Cull(Cull.Front)\n    {\n"
                   "        look.target.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.red);\n    }\n"
                   "    look.target.SetCull();\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    const char *three = complete("scene Main { }\nview V()\n{\n    Draw3D.$\n}\n");
+    const char *three = complete("scene Main { }\nview V()\n{\n    Draw.$\n}\n");
     TIDE_CHECK(offers(three, "Cull") && offers(three, "SetCull") && offers(three, "Depth"));
     TIDE_CHECK(has(three, "Cull(${1:side})\\n{\\n\\t$0\\n}") && has(three, "\"SetCull(${1:side})\""));
-    // It's neither Draw's nor Draw2D's: only 3D meshes' triangles have a back
-    const char *shared = complete("scene Main { }\nview V()\n{\n    Draw.$\n}\n");
-    TIDE_CHECK(!offers(shared, "Cull") && !offers(shared, "SetCull") && offers(shared, "Tint"));
-    const char *two = complete("scene Main { }\nview V()\n{\n    Draw2D.$\n}\n");
-    TIDE_CHECK(!offers(two, "Cull") && !offers(two, "SetCull") && offers(two, "Clip"));
-    const char *sides = complete("scene Main { }\nview V()\n{\n    Draw3D.SetCull(Cull.$);\n}\n");
+    TIDE_CHECK(offers(three, "Tint") && offers(three, "Clip")); // Beside every other setting: one Draw
+    const char *sides = complete("scene Main { }\nview V()\n{\n    Draw.SetCull(Cull.$);\n}\n");
     TIDE_CHECK(offers(sides, "Back") && offers(sides, "Front") && offers(sides, "None"));
     // A target has both, as it has its depth's
     const char *target = complete("scene Main { }\nlocal singleton Look { RenderTarget target; }\nview V(Look look)\n{\n"
                                   "    look.target.$\n}\n");
     TIDE_CHECK(offers(target, "Cull") && offers(target, "SetCull"));
 
-    open_document("scene Main { }\nview V()\n{\n    Draw3D.Cu$ll(Cull.None)\n    {\n    }\n}\n");
+    open_document("scene Main { }\nview V()\n{\n    Draw.Cu$ll(Cull.None)\n    {\n    }\n}\n");
     const char *around = request("textDocument/hover");
-    TIDE_CHECK(has(around, "Draw3D.Cull(Cull side, Block content)") && has(around, "For the draws in its block"));
+    TIDE_CHECK(has(around, "Draw.Cull(Cull side, Block content)") && has(around, "For the draws in its block"));
     TIDE_CHECK(has(around, "the side its corners go clockwise on") && has(around, "usually a triangle wound the other way"));
-    open_document("scene Main { }\nview V()\n{\n    Draw3D.SetCu$ll(Cull.None);\n}\n");
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetCu$ll(Cull.None);\n}\n");
     const char *set = request("textDocument/hover");
-    TIDE_CHECK(has(set, "Draw3D.SetCull(Cull side)") && has(set, "Draw3D.SetCull()") && has(set, "For the draws after it"));
+    TIDE_CHECK(has(set, "Draw.SetCull(Cull side)") && has(set, "Draw.SetCull()") && has(set, "For the draws after it"));
 
     // Each form written as the other is a rename away
-    open_document("scene Main { }\nview V()\n{\n    Draw3D.Cull(Cull.None);\n}\n");
-    TIDE_CHECK(has(last_sent(), "Draw3D.Cull sets it around a block") && has(last_sent(), "Draw3D.SetCull(...);"));
+    open_document("scene Main { }\nview V()\n{\n    Draw.Cull(Cull.None);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw.Cull sets it around a block") && has(last_sent(), "Draw.SetCull(...);"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetCull'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
-    open_document("scene Main { }\nview V()\n{\n    Draw3D.SetCull(Cull.None)\n    {\n    }\n}\n");
-    TIDE_CHECK(has(last_sent(), "Draw3D.SetCull sets it for the draws that follow, and takes no block"));
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetCull(Cull.None)\n    {\n    }\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw.SetCull sets it for the draws that follow, and takes no block"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Cull'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
-    // Asked of Draw or of Draw2D, the note says whose it is
-    open_document("scene Main { }\nview V()\n{\n    Draw.SetCull(Cull.None);\n}\n");
-    TIDE_CHECK(has(last_sent(), "Draw has no function 'SetCull'") && has(last_sent(), "it's Draw3D's: 'Draw3D.SetCull(...)'"));
+    // The owners from before there was one Draw are a rename away
+    open_document("scene Main { }\nview V()\n{\n    Draw3D.SetCull(Cull.None);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw3D.SetCull is 'Draw.SetCull' now"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Draw'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
     open_document("scene Main { }\nview V()\n{\n    Draw2D.Cull(Cull.None)\n    {\n    }\n}\n");
-    TIDE_CHECK(has(last_sent(), "Draw2D has no function 'Cull'") && has(last_sent(), "Only 3D meshes' triangles have a back"));
+    TIDE_CHECK(has(last_sent(), "Draw2D.Cull is 'Draw.Cull' now"));
     // A side that isn't one says the three there are
-    open_document("scene Main { }\nview V()\n{\n    Draw3D.SetCull(Cull.Both);\n}\n");
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetCull(Cull.Both);\n}\n");
     TIDE_CHECK(has(last_sent(), "enum 'Cull' has no member 'Both'") && has(last_sent(), "'Cull.None'"));
     // A game can't rename one of its own to the enum's name
     open_document("scene Main { }\ncomponent Fa$ce { int z; }\n");
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Cull\""), "built into"));
 }
 
-// Stencil is a draw setting too, and Draw's, as 2D and 3D draws both take it,
-// with a render target's own beside it: both forms, with what's stored or
-// without, its two enums, each form's mistake a rename away, and where it is
-// for whoever asks Draw2D or Draw3D.
+// Stencil is a draw setting too, which 2D and 3D draws both take, with a render
+// target's own beside it: both forms, with what's stored or without, its two
+// enums, each form's mistake a rename away, and the old owners' spellings a
+// rename away too.
 TIDE_TEST(lsp_draw_stencil)
 {
     start();
     open_document("scene Main { }\nlocal singleton Look { RenderTarget target; StencilOp kept = StencilOp.Invert; }\n"
                   "view V(Look look)\n{\n"
                   "    Draw.Stencil(StencilTest.Always, 1, StencilOp.Replace)\n    {\n"
-                  "        Draw2D.Circle(float2(0, 0), 20, Color(0, 0, 0, 0));\n    }\n"
+                  "        Draw.Circle(float2(0, 0), 20, Color(0, 0, 0, 0));\n    }\n"
                   "    Draw.Blend(Blend.Add),\n    Draw.Stencil(StencilTest.Equal, 1)\n    {\n"
-                  "        Draw3D.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.red);\n    }\n"
+                  "        Draw.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.red);\n    }\n"
                   "    Draw.SetStencil(StencilTest.NotEqual, 1, look.kept);\n    Draw.SetStencil();\n"
                   "    look.target.Stencil(StencilTest.Less, 2)\n    {\n"
                   "        look.target.Rect(float2(0, 0), float2(8, 8), Color.red);\n    }\n"
@@ -919,11 +912,7 @@ TIDE_TEST(lsp_draw_stencil)
     const char *shared = complete("scene Main { }\nview V()\n{\n    Draw.$\n}\n");
     TIDE_CHECK(offers(shared, "Stencil") && offers(shared, "SetStencil") && offers(shared, "Blend"));
     TIDE_CHECK(has(shared, "Stencil(${1:test}, ${2:value})\\n{\\n\\t$0\\n}") && has(shared, "\"SetStencil(${1:test}, ${2:value})\""));
-    // It's neither Draw2D's nor Draw3D's: both of theirs take it
-    const char *two = complete("scene Main { }\nview V()\n{\n    Draw2D.$\n}\n");
-    TIDE_CHECK(!offers(two, "Stencil") && !offers(two, "SetStencil") && offers(two, "Clip"));
-    const char *three = complete("scene Main { }\nview V()\n{\n    Draw3D.$\n}\n");
-    TIDE_CHECK(!offers(three, "Stencil") && !offers(three, "SetStencil") && offers(three, "Cull"));
+    TIDE_CHECK(offers(shared, "Clip") && offers(shared, "Cull")); // Beside every other setting: one Draw
     const char *tests = complete("scene Main { }\nview V()\n{\n    Draw.SetStencil(StencilTest.$, 1);\n}\n");
     TIDE_CHECK(offers(tests, "Always") && offers(tests, "Never") && offers(tests, "Less") && offers(tests, "Equal"));
     TIDE_CHECK(offers(tests, "LessEqual") && offers(tests, "Greater") && offers(tests, "NotEqual"));
@@ -931,11 +920,12 @@ TIDE_TEST(lsp_draw_stencil)
     const char *ops = complete("scene Main { }\nview V()\n{\n    Draw.SetStencil(StencilTest.Always, 1, StencilOp.$);\n}\n");
     TIDE_CHECK(offers(ops, "Keep") && offers(ops, "Replace") && offers(ops, "Increment") && offers(ops, "Decrement"));
     TIDE_CHECK(offers(ops, "Zero") && offers(ops, "Invert"));
-    // A target has its own, and none of what's the same wherever a draw goes
+    // A target has its own, and its own blend and tint too: every setting is a destination's; a blit names its target
     const char *target = complete("scene Main { }\nlocal singleton Look { RenderTarget target; }\nview V(Look look)\n{\n"
                                   "    look.target.$\n}\n");
     TIDE_CHECK(offers(target, "Stencil") && offers(target, "SetStencil") && offers(target, "Cull"));
-    TIDE_CHECK(!offers(target, "Blend") && !offers(target, "Tint") && !offers(target, "Blit"));
+    TIDE_CHECK(offers(target, "Blend") && offers(target, "Tint") && offers(target, "SetBlend") && !offers(target, "Blit"));
+    TIDE_CHECK(!offers(target, "window") && !offers(target, "list"));
 
     open_document("scene Main { }\nview V()\n{\n    Draw.Sten$cil(StencilTest.Equal, 1)\n    {\n    }\n}\n");
     const char *around = request("textDocument/hover");
@@ -961,12 +951,13 @@ TIDE_TEST(lsp_draw_stencil)
     open_document("scene Main { }\nview V()\n{\n    Draw.SetStencil(StencilTest.Equal, 1)\n    {\n    }\n}\n");
     TIDE_CHECK(has(last_sent(), "Draw.SetStencil sets it for the draws that follow, and takes no block"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Stencil'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
-    // Asked of Draw2D or of Draw3D, the note says whose it is, and that a target has its own
+    // The owners from before there was one Draw are a rename away, and so is their list member
     open_document("scene Main { }\nview V()\n{\n    Draw2D.SetStencil(StencilTest.Equal, 1);\n}\n");
-    TIDE_CHECK(has(last_sent(), "Draw2D has no function 'SetStencil'"));
-    TIDE_CHECK(has(last_sent(), "it's Draw's, as 2D and 3D draws both take it: 'Draw.SetStencil(...);'"));
-    open_document("scene Main { }\nview V()\n{\n    Draw3D.Stencil(StencilTest.Equal, 1)\n    {\n    }\n}\n");
-    TIDE_CHECK(has(last_sent(), "Draw3D has no function 'Stencil'") && has(last_sent(), "a render target has its own"));
+    TIDE_CHECK(has(last_sent(), "Draw2D.SetStencil is 'Draw.SetStencil' now"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Draw'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    open_document("extern void Over(DrawList list);\nscene Main { }\nview V()\n{\n    Over(Draw3D.list);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw3D.list is 'Draw.list' now"));
+    TIDE_CHECK(has(actions_at(4), "\"title\":\"Change to 'Draw'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
     // A test or an operation that isn't one says the ones there are
     open_document("scene Main { }\nview V()\n{\n    Draw.SetStencil(StencilTest.Same, 1);\n}\n");
     TIDE_CHECK(has(last_sent(), "enum 'StencilTest' has no member 'Same'") && has(last_sent(), "'GreaterEqual'"));
@@ -994,19 +985,19 @@ TIDE_TEST(lsp_wrap)
     open_document(WRAP_TYPES "frag Ti$le(Corner vertex, out Color color, Art art)\n{\n"
                              "    color = art.tiles.Sample(vertex.uv, Filter.Point, Wrap.Repeat) * art.tiles.Sample(vertex.uv);\n}\n"
                              "view V(Art art)\n{\n"
-                             "    Draw2D.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.Repeat);\n"
-                             "    Draw2D.Mesh(art.flat, [0, 1, 2], art.target.color, Filter.Bilinear, art.kept);\n"
-                             "    Draw3D.Mesh(art.solid, [0, 1, 2], float4x4.identity, art.tiles, Filter.Point, Wrap.Mirror);\n"
+                             "    Draw.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.Repeat);\n"
+                             "    Draw.Mesh(art.flat, [0, 1, 2], art.target.color, Filter.Bilinear, art.kept);\n"
+                             "    Draw.Mesh(art.solid, [0, 1, 2], float4x4.identity, art.tiles, Filter.Point, Wrap.Mirror);\n"
                              "    art.target.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.Repeat);\n"
-                             "    Draw2D.Mesh(art.corners, [0, 1, 2], art.tiles, Filter.Point, Wrap.Repeat);\n"
-                             "    Draw2D.Mesh(art.corners, [0, 1, 2], Tile);\n}\n");
+                             "    Draw.Mesh(art.corners, [0, 1, 2], art.tiles, Filter.Point, Wrap.Repeat);\n"
+                             "    Draw.Mesh(art.corners, [0, 1, 2], Tile);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     // What a frag samples, with how: on its hover
     const char *frag = request("textDocument/hover");
     TIDE_CHECK(has(frag, "`Art.tiles` (`Filter.Point`) (`Wrap.Repeat`)") && has(frag, ", `Art.tiles`"));
 
     // Its members, where a draw or a Sample takes one, and the type where a field is declared
-    const char *members = complete(IN_VIEW("Draw2D.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.$);"));
+    const char *members = complete(IN_VIEW("Draw.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.$);"));
     TIDE_CHECK(offers(members, "Clamp") && offers(members, "Repeat") && offers(members, "Mirror") && !offers(members, "Point"));
     const char *sampled = complete(IN_FRAG("color = art.tiles.Sample(vertex.uv, Filter.Point, Wrap.$);"));
     TIDE_CHECK(offers(sampled, "Clamp") && offers(sampled, "Repeat") && offers(sampled, "Mirror"));
@@ -1014,20 +1005,20 @@ TIDE_TEST(lsp_wrap)
     TIDE_CHECK(offers(types, "Wrap") && offers(types, "Filter"));
 
     // A draw's two that a call can leave out, and what each is
-    open_document(IN_VIEW("Draw2D.Me$sh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.Repeat);"));
+    open_document(IN_VIEW("Draw.Me$sh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.Repeat);"));
     const char *mesh = request("textDocument/hover");
     TIDE_CHECK(has(mesh, "Grid2<Color> texture, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp)"));
     TIDE_CHECK(has(mesh, "the texture again (`Wrap.Repeat`)"));
-    open_document(IN_VIEW("Draw3D.Me$sh(art.solid, [0, 1, 2], float4x4.identity, art.target.color, Filter.Point, Wrap.Repeat);"));
+    open_document(IN_VIEW("Draw.Me$sh(art.solid, [0, 1, 2], float4x4.identity, art.target.color, Filter.Point, Wrap.Repeat);"));
     TIDE_CHECK(has(request("textDocument/hover"), "float4x4 transform, Texture texture, Filter filter = Filter.Bilinear, "
                                                  "Wrap wrap = Wrap.Clamp)"));
-    open_document(IN_VIEW("Draw2D.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, $"));
+    open_document(IN_VIEW("Draw.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, $"));
     const char *after = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(after, "\"label\":\"Draw2D.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag])\""));
+    TIDE_CHECK(has(after, "\"label\":\"Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag])\""));
     TIDE_CHECK(has(after, "\"activeParameter\":4") && has(after, "What a `uv` past 0 or 1 reads, written after the filter"));
-    open_document(IN_VIEW("Draw3D.Mesh(art.solid, [0, 1, 2], float4x4.identity, art.tiles, Filter.Point, Wrap.Re$peat);"));
+    open_document(IN_VIEW("Draw.Mesh(art.solid, [0, 1, 2], float4x4.identity, art.tiles, Filter.Point, Wrap.Re$peat);"));
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":5"));
-    open_document(IN_VIEW("Draw2D.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, art.ke$pt);")); // A value that's one
+    open_document(IN_VIEW("Draw.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, art.ke$pt);")); // A value that's one
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":4"));
     // ...and a Sample's
     open_document(IN_FRAG("color = art.tiles.Sample(vertex.uv, Filter.Point, $"));
@@ -1036,13 +1027,13 @@ TIDE_TEST(lsp_wrap)
     TIDE_CHECK(has(sample, "\"activeParameter\":2") && has(sample, "the grid again (`Wrap.Repeat`)"));
 
     // Written before the filter, or where the GPU can't be told
-    open_document(IN_VIEW("Draw2D.Mesh(art.flat, [0, 1, 2], art.tiles, Wrap.Repeat);"));
+    open_document(IN_VIEW("Draw.Mesh(art.flat, [0, 1, 2], art.tiles, Wrap.Repeat);"));
     TIDE_CHECK(has(last_sent(), "a mesh's wrap comes after its filter") && has(last_sent(), "'Filter.Bilinear' is the filter of a draw"));
     open_document(IN_FRAG("color = art.tiles.Sample(vertex.uv, Wrap.Repeat);"));
     TIDE_CHECK(has(last_sent(), "a wrap comes after the filter: 'texture.Sample(uv, Filter.Bilinear, Wrap.Repeat)'"));
     open_document(IN_FRAG("color = art.tiles.Sample(vertex.uv, Filter.Point, art.kept);"));
     TIDE_CHECK(has(last_sent(), "the wrap is written here, 'Wrap.Clamp', 'Wrap.Repeat' or 'Wrap.Mirror'"));
-    open_document(IN_VIEW("Draw2D.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.Tile);"));
+    open_document(IN_VIEW("Draw.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.Tile);"));
     TIDE_CHECK(has(last_sent(), "enum 'Wrap' has no member 'Tile'") && has(last_sent(), "the texture again, 'Wrap.Repeat'"));
     // The name is the engine's: a game's own function or type takes another, and no rename gives it
     open_document("scene Main { }\nfloat Wrap(float value)\n{\n    return value;\n}\n");
@@ -1059,11 +1050,11 @@ TIDE_TEST(lsp_format_stacked_calls)
 {
     start();
     static const char messy[] = "scene Main { }\nview V()\n{\nDraw.Blend(Blend.Add), Draw.Tint(Color.red),\n"
-                                "        Draw2D.Clip(Rect(0, 0, 4, 4)) {\nDraw2D.Rect(float2(0, 0), float2(1, 1), Color.red);\n}\n"
+                                "        Draw.Clip(Rect(0, 0, 4, 4)) {\nDraw.Rect(float2(0, 0), float2(1, 1), Color.red);\n}\n"
                                 "    GUILayout.Area(Anchor.MiddleCenter),\nGUI.Disabled(true)\n{\nGUILayout.Label(\"a\");\n}\n}\n";
     static const char expected[] = "scene Main { }\nview V()\n{\n    Draw.Blend(Blend.Add),\n    Draw.Tint(Color.red),\n"
-                                   "    Draw2D.Clip(Rect(0, 0, 4, 4))\n    {\n"
-                                   "        Draw2D.Rect(float2(0, 0), float2(1, 1), Color.red);\n    }\n"
+                                   "    Draw.Clip(Rect(0, 0, 4, 4))\n    {\n"
+                                   "        Draw.Rect(float2(0, 0), float2(1, 1), Color.red);\n    }\n"
                                    "    GUILayout.Area(Anchor.MiddleCenter),\n    GUI.Disabled(true)\n    {\n"
                                    "        GUILayout.Label(\"a\");\n    }\n}\n";
     format_reply(messy);
@@ -1078,18 +1069,18 @@ TIDE_TEST(lsp_format_stacked_calls)
     TIDE_CHECK(has(format_reply(others), "\"result\":[]"));
 }
 
-// The shapes with smooth edges: their Draw2D functions, the built-in Shape and Color.none
+// The shapes with smooth edges: their Draw functions, the built-in Shape and Color.none
 TIDE_TEST(lsp_shapes)
 {
     start();
 #define SHAPE_VIEW(body) "scene Main { }\nview V()\n{\n" body "\n}\n"
-    open_document(SHAPE_VIEW("    Draw2D.RoundRect(float2(0, 0), float2(4, 2), 1, Color.red);\n"
-                             "    Draw2D.Line(float2(0, 0), float2(4, 2), 0.5, Color.red);\n"
-                             "    Draw2D.Arc(float2(0, 0), 4, 0, Math.PI, 1, Color.red);\n"
-                             "    Draw2D.Shape(Shape { size = float2(4, 2), color2 = Color.none, soft = 2 });"));
+    open_document(SHAPE_VIEW("    Draw.RoundRect(float2(0, 0), float2(4, 2), 1, Color.red);\n"
+                             "    Draw.Line(float2(0, 0), float2(4, 2), 0.5, Color.red);\n"
+                             "    Draw.Arc(float2(0, 0), 4, 0, Math.PI, 1, Color.red);\n"
+                             "    Draw.Shape(Shape { size = float2(4, 2), color2 = Color.none, soft = 2 });"));
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    const char *draw = complete(SHAPE_VIEW("    Draw2D.$"));
+    const char *draw = complete(SHAPE_VIEW("    Draw.$"));
     TIDE_CHECK(offers(draw, "RoundRect") && offers(draw, "WireRoundRect") && offers(draw, "Ellipse"));
     TIDE_CHECK(offers(draw, "WireEllipse") && offers(draw, "Arc") && offers(draw, "Shape"));
     const char *fields = complete(SHAPE_VIEW("    var s = Shape { $ };"));
@@ -1098,52 +1089,52 @@ TIDE_TEST(lsp_shapes)
     TIDE_CHECK(offers(complete(SHAPE_VIEW("    var c = Color.$")), "none"));
 
     // Every version of a function, the thick one too
-    open_document(SHAPE_VIEW("    Draw2D.Li$ne(float2(0, 0), float2(4, 2), 0.5, Color.red);"));
+    open_document(SHAPE_VIEW("    Draw.Li$ne(float2(0, 0), float2(4, 2), 0.5, Color.red);"));
     const char *line = request("textDocument/hover");
-    TIDE_CHECK(has(line, "Draw2D.Line(float2 from, float2 to, Color color)"));
-    TIDE_CHECK(has(line, "Draw2D.Line(float2 from, float2 to, float width, Color color)") && has(line, "round ends"));
-    open_document(SHAPE_VIEW("    Draw2D.Shape(Sh$ape { size = float2(4, 2) });"));
-    TIDE_CHECK(has(request("textDocument/hover"), "What `Draw2D.Shape` draws"));
-    open_document(SHAPE_VIEW("    Draw2D.Shape(Shape { size = float2(4, 2), so$ft = 2 });"));
+    TIDE_CHECK(has(line, "Draw.Line(float2 from, float2 to, Color color)"));
+    TIDE_CHECK(has(line, "Draw.Line(float2 from, float2 to, float width, Color color)") && has(line, "round ends"));
+    open_document(SHAPE_VIEW("    Draw.Shape(Sh$ape { size = float2(4, 2) });"));
+    TIDE_CHECK(has(request("textDocument/hover"), "What `Draw.Shape` draws"));
+    open_document(SHAPE_VIEW("    Draw.Shape(Shape { size = float2(4, 2), so$ft = 2 });"));
     TIDE_CHECK(has(request("textDocument/hover"), "How far its edge fades"));
     open_document(SHAPE_VIEW("    var c = Color.no$ne;"));
     TIDE_CHECK(has(request("textDocument/hover"), "No color, where one can be left out"));
 
-    TIDE_CHECK(has(c_definition(SHAPE_VIEW("    Draw2D.Sh$ape(Shape { size = float2(4, 2) });")), "void tide_draw_shape("));
-    TIDE_CHECK(has(c_definition(SHAPE_VIEW("    Draw2D.Round$Rect(float2(0, 0), float2(4, 2), 1, Color.red);")),
+    TIDE_CHECK(has(c_definition(SHAPE_VIEW("    Draw.Sh$ape(Shape { size = float2(4, 2) });")), "void tide_draw_shape("));
+    TIDE_CHECK(has(c_definition(SHAPE_VIEW("    Draw.Round$Rect(float2(0, 0), float2(4, 2), 1, Color.red);")),
                    "void tide_draw_round_rect("));
 #undef SHAPE_VIEW
 }
 
-// Text at an anchor and in a weight: every version of Draw2D.Text, and the built-in Font
+// Text at an anchor and in a weight: every version of Draw.Text, and the built-in Font
 TIDE_TEST(lsp_text_anchor_and_font)
 {
     start();
 #define TEXT_VIEW(body) "scene Main { }\nview V()\n{\n" body "\n}\n"
-    open_document(TEXT_VIEW("    Draw2D.Text(\"DUEL\", float2(0, 0), 88, Color.white, Anchor.MiddleCenter, Font.Bold);\n"
+    open_document(TEXT_VIEW("    Draw.Text(\"DUEL\", float2(0, 0), 88, Color.white, Anchor.MiddleCenter, Font.Bold);\n"
                             "    Font weight = Font.Regular;\n"
-                            "    var size = Draw2D.MeasureText(\"DUEL\", 88, weight);\n"
-                            "    Draw2D.Text(\"DUEL\", size, 88, Color.white, weight);"));
+                            "    var size = Draw.MeasureText(\"DUEL\", 88, weight);\n"
+                            "    Draw.Text(\"DUEL\", size, 88, Color.white, weight);"));
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
     const char *weights = complete(TEXT_VIEW("    var weight = Font.$"));
     TIDE_CHECK(offers(weights, "Regular") && offers(weights, "Bold"));
 
-    open_document(TEXT_VIEW("    Draw2D.Te$xt(\"DUEL\", float2(0, 0), 88, Color.white, Font.Bold);"));
+    open_document(TEXT_VIEW("    Draw.Te$xt(\"DUEL\", float2(0, 0), 88, Color.white, Font.Bold);"));
     const char *text = request("textDocument/hover");
-    TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color)"));
-    TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color, Font font)"));
-    TIDE_CHECK(has(text, "Draw2D.Text(string text, float2 position, float size, Color color, Anchor anchor, Font font = Font.Regular)"));
+    TIDE_CHECK(has(text, "Draw.Text(string text, float2 position, float size, Color color)"));
+    TIDE_CHECK(has(text, "Draw.Text(string text, float2 position, float size, Color color, Font font)"));
+    TIDE_CHECK(has(text, "Draw.Text(string text, float2 position, float size, Color color, Anchor anchor, Font font = Font.Regular)"));
     TIDE_CHECK(has(text, "Anchor.MiddleCenter") && has(text, "Font.Bold"));
-    open_document(TEXT_VIEW("    var size = Draw2D.Measure$Text(\"DUEL\", 88, Font.Bold);\n    Draw2D.Rect(size, size, Color.white);"));
-    TIDE_CHECK(has(request("textDocument/hover"), "Draw2D.MeasureText(string text, float size, Font font = Font.Regular) -> float2"));
-    open_document(TEXT_VIEW("    Draw2D.Text(\"DUEL\", float2(0, 0), 88, Color.white, Fo$nt.Bold);"));
+    open_document(TEXT_VIEW("    var size = Draw.Measure$Text(\"DUEL\", 88, Font.Bold);\n    Draw.Rect(size, size, Color.white);"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Draw.MeasureText(string text, float size, Font font = Font.Regular) -> float2"));
+    open_document(TEXT_VIEW("    Draw.Text(\"DUEL\", float2(0, 0), 88, Color.white, Fo$nt.Bold);"));
     TIDE_CHECK(has(request("textDocument/hover"), "A game only carries the bold weight's file when its code says"));
-    open_document(TEXT_VIEW("    Draw2D.Text(\"DUEL\", float2(0, 0), 88, Color.white, Anc$hor.MiddleCenter);"));
+    open_document(TEXT_VIEW("    Draw.Text(\"DUEL\", float2(0, 0), 88, Color.white, Anc$hor.MiddleCenter);"));
     TIDE_CHECK(has(request("textDocument/hover"), "which place of a text's box is at the position"));
 
     // Its C, which takes both
-    TIDE_CHECK(has(c_definition(TEXT_VIEW("    Draw2D.Te$xt(\"DUEL\", float2(0, 0), 88, Color.white, Font.Bold);")),
+    TIDE_CHECK(has(c_definition(TEXT_VIEW("    Draw.Te$xt(\"DUEL\", float2(0, 0), 88, Color.white, Font.Bold);")),
                    "void tide_draw_text_at("));
 #undef TEXT_VIEW
 }
@@ -1162,29 +1153,29 @@ TIDE_TEST(lsp_instanced_drawing)
     "local singleton Art { List<Corner2> flat; List<Corner3> space; List<int> faces; List<Item2> items2; List<Item3> items3; }\n" \
     "vert Place2(mut Corner2 vertex, Item2 item) { vertex.position += item.offset; }\n" \
     "frag Shade3(Corner3 vertex, out Color color, Item3 item) { color = item.tint * vertex.position.x; }\n"
-    open_document(INSTANCE_TYPES "view Show(Art art) { Draw2D.Instanced(art.flat, art.faces, art.items2, Place2); "
-                                 "Draw3D.Instanced(art.space, art.faces, art.items3, Shade3); }\n");
+    open_document(INSTANCE_TYPES "view Show(Art art) { Draw.Instanced(art.flat, art.faces, art.items2, Place2); "
+                                 "Draw.Instanced(art.space, art.faces, art.items3, Shade3); }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    open_document(INSTANCE_TYPES "view Show(Art art) { Draw2D.Instanced(art.flat, art.faces, $\n}\n");
+    open_document(INSTANCE_TYPES "view Show(Art art) { Draw.Instanced(art.flat, art.faces, $\n}\n");
     const char *flat = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(flat, "Draw2D.Instanced(vertices, indices, instances["));
+    TIDE_CHECK(has(flat, "Draw.Instanced(vertices, indices, instances["));
     TIDE_CHECK(has(flat, "\"activeParameter\":2") && has(flat, "A List<T> of instance structs"));
-    open_document(INSTANCE_TYPES "view Show(Art art) { Draw3D.Instanced(art.space, art.faces, $\n}\n");
+    open_document(INSTANCE_TYPES "view Show(Art art) { Draw.Instanced(art.space, art.faces, $\n}\n");
     const char *space = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(space, "Draw3D.Instanced(vertices, indices, instances["));
+    TIDE_CHECK(has(space, "Draw.Instanced(vertices, indices, instances["));
     TIDE_CHECK(has(space, "\"activeParameter\":2") && has(space, "A List<float4x4> of transforms"));
     TIDE_CHECK(!has(space, "indices, transform["));
-    const char *shaders = complete(INSTANCE_TYPES "view Show(Art art) { Draw2D.Instanced(art.flat, art.faces, art.items2, $); }\n");
+    const char *shaders = complete(INSTANCE_TYPES "view Show(Art art) { Draw.Instanced(art.flat, art.faces, art.items2, $); }\n");
     TIDE_CHECK(offers(shaders, "Place2") && !offers(shaders, "Shade3"));
-    open_document(INSTANCE_TYPES "view Show(Art art) { Draw3D.Instanced(art.space, art.faces, art.items3, Shade3); }\n");
-    TIDE_CHECK(has(hover_at(7, 6), "Draw3D.Instanced"));
+    open_document(INSTANCE_TYPES "view Show(Art art) { Draw.Instanced(art.space, art.faces, art.items3, Shade3); }\n");
+    TIDE_CHECK(has(hover_at(7, 6), "Draw.Instanced"));
     TIDE_CHECK(has(hover_at(7, 52), "An element of the draw's instance list"));
 #undef INSTANCE_TYPES
 }
 
 // Frags and verts: code the GPU runs for a mesh's pixels and vertices, which a
-// view names last at Draw2D.Mesh. SHADER_TYPES is 31 lines; in SHADERS the vert
-// is on line 31, the frag on line 35 and the view's Draw2D.Mesh on line 43.
+// view names last at Draw.Mesh. SHADER_TYPES is 31 lines; in SHADERS the vert
+// is on line 31, the frag on line 35 and the view's Draw.Mesh on line 43.
 #define SHADER_TYPES                                                                                                  \
     "scene Main { }\n"                                                                                                \
     "struct BoxVertex\n{\n    float3 position;\n    float3 normal;\n    float2 uv;\n}\n"                              \
@@ -1207,7 +1198,7 @@ TIDE_TEST(lsp_instanced_drawing)
 #define SHADERS                                                                                                       \
     SHADER_CODE                                                                                                       \
     "view DrawBox(with Box, Models models)\n{\n"                                                                      \
-    "    Draw3D.Mesh(models.crate, models.faces, float4x4.Translate(float3(0, 0, 5)), Wave, Shade);\n}\n"
+    "    Draw.Mesh(models.crate, models.faces, float4x4.Translate(float3(0, 0, 5)), Wave, Shade);\n}\n"
 
 static const char *rename_at(const int line, const int character, const char *name)
 {
@@ -1218,7 +1209,7 @@ static const char *rename_at(const int line, const int character, const char *na
 
 // Completion: `frag` and `vert` where declarations start, what their
 // parameters can be, what the GPU has in their code, and their names where a
-// Draw2D.Mesh takes them.
+// Draw.Mesh takes them.
 TIDE_TEST(lsp_shaders_complete)
 {
     start();
@@ -1266,13 +1257,13 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(offers(code, "vertex") && offers(code, "color") && offers(code, "box") && offers(code, "pixel") && offers(code, "glow"));
     TIDE_CHECK(offers(code, "Math") && offers(code, "Lit") && offers(code, "float3") && offers(code, "bool") && offers(code, "BoxVertex"));
     TIDE_CHECK(offers(code, "if") && offers(code, "for") && offers(code, "var"));
-    TIDE_CHECK(!offers(code, "Draw2D") && !offers(code, "GUI") && !offers(code, "Spawn") && !offers(code, "Send"));
+    TIDE_CHECK(!offers(code, "Draw") && !offers(code, "GUI") && !offers(code, "Spawn") && !offers(code, "Send"));
     TIDE_CHECK(!offers(code, "Devices") && !offers(code, "Scene") && !offers(code, "Debug") && !offers(code, "Cursor"));
     TIDE_CHECK(!offers(code, "while") && !offers(code, "foreach") && !offers(code, "switch") && !offers(code, "this"));
     TIDE_CHECK(!offers(code, "byte") && !offers(code, "long") && !offers(code, "Entity") && !offers(code, "string") && !offers(code, "List"));
     TIDE_CHECK(!offers(code, "Noise") && !offers(code, "Box")); // C runs on the CPU, and nothing spawns here
     const char *value = complete(IN_FRAG("color = $"));
-    TIDE_CHECK(offers(value, "box") && offers(value, "Math") && offers(value, "Lit") && !offers(value, "Draw2D") && !offers(value, "null"));
+    TIDE_CHECK(offers(value, "box") && offers(value, "Math") && offers(value, "Lit") && !offers(value, "Draw") && !offers(value, "null"));
     TIDE_CHECK(!offers(complete(IN_FRAG("mut $")), "Entity") && offers(complete(IN_FRAG("mut $")), "float3"));
 
     const char *pixel = complete(IN_FRAG("var x = pixel.$"));
@@ -1285,7 +1276,7 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(!offers(list, "Add") && !offers(list, "count")); // The GPU has no lists
     TIDE_CHECK(offers(complete(IN_FRAG("color = box.$")), "tint"));
     TIDE_CHECK(offers(complete(IN_FRAG("color = Color.$")), "white") && offers(complete(IN_FRAG("var s = Math.$")), "Sin"));
-    TIDE_CHECK(!offers(complete(IN_FRAG("Draw2D.$")), "Circle") && !offers(complete(IN_FRAG("var k = Devices.$")), "keyboard"));
+    TIDE_CHECK(!offers(complete(IN_FRAG("Draw.$")), "Circle") && !offers(complete(IN_FRAG("var k = Devices.$")), "keyboard"));
     TIDE_CHECK(offers(complete(IN_FRAG("color = models.wood.Sample(vertex.uv, Filter.$")), "Point"));
 #undef IN_FRAG
     const char *instance = complete(SHADER_TYPES "vert Wave(mut BoxVertex vertex, Instance instance)\n{\n    var m = instance.$\n}\n");
@@ -1294,28 +1285,28 @@ TIDE_TEST(lsp_shaders_complete)
     const char *cells = complete(SHADER_TYPES "view V(mut Models models)\n{\n    models.wood.$\n}\n");
     TIDE_CHECK(offers(cells, "Clear") && offers(cells, "size") && !offers(cells, "Sample"));
 
-    // After a mesh's lists, at Draw2D.Mesh: the verts and frags that run on its vertex, by name
+    // After a mesh's lists, at Draw.Mesh: the verts and frags that run on its vertex, by name
 #define IN_VIEW(code)                                                                                                 \
     SHADER_CODE "struct FlatVertex { float2 position; }\n"                                                            \
     "frag Flat(FlatVertex vertex, out Color color)\n{\n    color = Color.red;\n}\n"                                   \
     "view DrawBox(with Box, Models models)\n{\n    " code "\n}\n"
-    const char *named = complete(IN_VIEW("Draw3D.Mesh(models.crate, models.faces, float4x4.identity, $);"));
+    const char *named = complete(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, $);"));
     TIDE_CHECK(offers(named, "Wave") && offers(named, "Shade") && !offers(named, "Flat") && offers(named, "models"));
     TIDE_CHECK(has(named, "{\"label\":\"Wave\",\"kind\":3,\"detail\":\"vert Wave(mut BoxVertex vertex, Time time, Instance instance)\""));
     // ...while the call is still being typed too, but not before its lists, nor in another call
-    TIDE_CHECK(offers(complete(IN_VIEW("Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Wave, $")), "Shade"));
-    TIDE_CHECK(!offers(complete(IN_VIEW("Draw3D.Mesh(models.crate, $")), "Shade"));
-    TIDE_CHECK(!offers(complete(IN_VIEW("Draw2D.Circle(float2(0, 0), 1, $")), "Shade"));
+    TIDE_CHECK(offers(complete(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, Wave, $")), "Shade"));
+    TIDE_CHECK(!offers(complete(IN_VIEW("Draw.Mesh(models.crate, $")), "Shade"));
+    TIDE_CHECK(!offers(complete(IN_VIEW("Draw.Circle(float2(0, 0), 1, $")), "Shade"));
 #undef IN_VIEW
     // ...nor in a function: the components they read are those of the entity a view runs for
     TIDE_CHECK(!offers(complete(SHADER_CODE "void Paint(Models models)\n{\n"
-                                            "    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, $\n}\n"),
+                                            "    Draw.Mesh(models.crate, models.faces, float4x4.identity, $\n}\n"),
                        "Shade"));
     // ...and by its namespace
     const char *qualified = complete("namespace Effects;\nscene Main { }\nstruct V { float2 position; }\n"
                                      "local singleton Art { List<V> corners; List<int> faces; }\n"
                                      "frag Tint(V vertex, out Color color) { color = Color.red; }\n"
-                                     "view Show(Art art) { Draw2D.Mesh(art.corners, art.faces, Effects.$); }\n");
+                                     "view Show(Art art) { Draw.Mesh(art.corners, art.faces, Effects.$); }\n");
     TIDE_CHECK(has(qualified, "{\"label\":\"Tint\",\"kind\":3,\"detail\":\"frag\"}"));
 }
 
@@ -1332,7 +1323,7 @@ TIDE_TEST(lsp_shaders_hover)
     TIDE_CHECK(has(frag, "- for each instance: `Box.tint`\\n- for each draw: `Sun.direction`\\n- as textures: `Models.wood`\\n"
                          "- of its vertex, blended across the triangle: `normal`, `uv`"));
     TIDE_CHECK(!has(frag, "glow") && !has(frag, "strength") && !has(frag, "Runs once per tick"));
-    // ...and where a Draw2D.Mesh names it
+    // ...and where a Draw.Mesh names it
     const char *vert = hover_at(43, 82);
     TIDE_CHECK(has(vert, "vert Wave(mut BoxVertex vertex, Time time, Instance instance)") && has(vert, "for each vertex"));
     TIDE_CHECK(has(vert, "- for each instance: `Instance.transform`\\n- for each draw: `Time.dt`, `Time.tick`"));
@@ -1365,7 +1356,7 @@ TIDE_TEST(lsp_shaders_hover)
     TIDE_CHECK(has(hover_at(35, 86), "A frag's parameter: where its pixel is"));
     TIDE_CHECK(has(hover_at(31, 45), "record Instance") && has(hover_at(31, 54), "how the mesh was drawn"));
     TIDE_CHECK(has(hover_at(39, 15), "Field of record `Pixel`. Where the pixel is on the screen"));
-    TIDE_CHECK(has(hover_at(33, 66), "The transform `Draw3D.Mesh` was given"));
+    TIDE_CHECK(has(hover_at(33, 66), "The transform `Draw.Mesh` was given"));
     const char *discard = hover_at(39, 38);
     TIDE_CHECK(has(discard, "Pixel.Discard()") && has(discard, "Leaves the pixel undrawn"));
     const char *sample = hover_at(38, 25);
@@ -1413,24 +1404,24 @@ TIDE_TEST(lsp_shaders_hover)
     TIDE_CHECK(has(hover_at(35, 51), "Which of its fields this code reads is worked out once the game has no errors."));
 }
 
-// A frag's or vert's name at Draw2D.Mesh is its declaration's: definitions,
+// A frag's or vert's name at Draw.Mesh is its declaration's: definitions,
 // usages, highlights, renames and the call hierarchy go both ways.
 TIDE_TEST(lsp_shaders_names)
 {
     start();
     open_document(SHADERS);
-    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 43, 88, ""),
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 43, 86, ""),
                    "\"range\":{\"start\":{\"line\":35,\"character\":5},\"end\":{\"line\":35,\"character\":10}}"));
     const char *usages = request_at("file:///test.tide", "textDocument/references", 35, 6,
                                     "\"context\":{\"includeDeclaration\":false}");
-    TIDE_CHECK(count(usages, "\"uri\"") == 1 && has(usages, "{\"line\":43,\"character\":87}"));
-    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 43, 82, "\"context\":{\"includeDeclaration\":true}"),
+    TIDE_CHECK(count(usages, "\"uri\"") == 1 && has(usages, "{\"line\":43,\"character\":85}"));
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 43, 80, "\"context\":{\"includeDeclaration\":true}"),
                      "\"uri\"") == 2);
-    const char *highlights = request_at("file:///test.tide", "textDocument/documentHighlight", 43, 82, "");
+    const char *highlights = request_at("file:///test.tide", "textDocument/documentHighlight", 43, 80, "");
     TIDE_CHECK(has(highlights, "{\"range\":{\"start\":{\"line\":31,\"character\":5},\"end\":{\"line\":31,\"character\":9}},\"kind\":3}"));
-    TIDE_CHECK(has(highlights, "{\"range\":{\"start\":{\"line\":43,\"character\":81},\"end\":{\"line\":43,\"character\":85}},\"kind\":2}"));
+    TIDE_CHECK(has(highlights, "{\"range\":{\"start\":{\"line\":43,\"character\":79},\"end\":{\"line\":43,\"character\":83}},\"kind\":2}"));
 
-    // Renamed from the Draw2D.Mesh that names it, and from its declaration
+    // Renamed from the Draw.Mesh that names it, and from its declaration
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareRename", 43, 88, ""), "\"result\":{\"start\""));
     rename_at(43, 88, "Tint");
     const char *renamed = apply_reply(SHADERS, "file:///test.tide");
@@ -1456,7 +1447,7 @@ TIDE_TEST(lsp_shaders_names)
     static const char effects[] = "namespace Effects;\nscene Main { }\nstruct V { float2 position; }\n"
                                   "local singleton Art { List<V> corners; List<int> faces; }\n"
                                   "frag Tint(V vertex, out Color color) { color = Color.red; }\n"
-                                  "view Show(Art art) { Draw2D.Mesh(art.corners, art.faces, Effects.Tint); }\n";
+                                  "view Show(Art art) { Draw.Mesh(art.corners, art.faces, Effects.Tint); }\n";
     open_document(effects);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 5, 66, ""),
@@ -1477,7 +1468,7 @@ TIDE_TEST(lsp_shaders_names)
            "{\"line\":40,\"character\":1}},\"selectionRange\":{\"start\":{\"line\":35,\"character\":5},\"end\":"
            "{\"line\":35,\"character\":10}}}}}");
     TIDE_CHECK(has(last_sent(), "{\"from\":{\"name\":\"DrawBox\",\"kind\":12,\"detail\":\"view DrawBox(with Box, Models models)\""));
-    TIDE_CHECK(has(last_sent(), "\"fromRanges\":[{\"start\":{\"line\":43,\"character\":87},\"end\":{\"line\":43,\"character\":92}}]"));
+    TIDE_CHECK(has(last_sent(), "\"fromRanges\":[{\"start\":{\"line\":43,\"character\":85},\"end\":{\"line\":43,\"character\":90}}]"));
     clear_sent();
     handle("{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"callHierarchy/outgoingCalls\",\"params\":{\"item\":{\"name\":\"DrawBox\","
            "\"kind\":12,\"uri\":\"file:///test.tide\",\"range\":{\"start\":{\"line\":41,\"character\":0},\"end\":"
@@ -1522,7 +1513,7 @@ TIDE_TEST(lsp_shaders_symbols_and_tokens)
     // `frag`, Shade, its vertex, then its pixel: `out`, a keyword there, Color, and `color`, which it writes
     TIDE_CHECK(has(tokens, ",2,0,4,11,0,0,5,5,9,1,0,6,9,2,0,0,10,6,5,3,0,8,3,11,0,0,4,5,1,8,0,6,5,5,1,"));
     TIDE_CHECK(has(tokens, ",0,8,5,1,8,0,6,5,5,3,")); // Pixel pixel
-    TIDE_CHECK(has(tokens, ",4,9,0,0,6,5,9,0]"));     // Wave and Shade at Draw2D.Mesh: functions
+    TIDE_CHECK(has(tokens, ",4,9,0,0,6,5,9,0]"));     // Wave and Shade at Draw.Mesh: functions
 
     // Anywhere else, the two words are names
     open_document("scene Main { }\nint Twice(int frag)\n{\n    var vert = frag * 2;\n    return vert;\n}\n");
@@ -1530,31 +1521,31 @@ TIDE_TEST(lsp_shaders_symbols_and_tokens)
     TIDE_CHECK(has(hover_at(1, 15), "int frag") && has(hover_at(3, 9), "int vert"));
 }
 
-// Signature help at Draw2D.Mesh goes by what each argument is, as what follows
+// Signature help at Draw.Mesh goes by what each argument is, as what follows
 // a mesh's lists can be left out; Sample has its own.
 TIDE_TEST(lsp_shaders_signature_help)
 {
     start();
 #define IN_VIEW(code) SHADER_CODE "view DrawBox(with Box, Models models)\n{\n    " code "\n}\n"
-    open_document(IN_VIEW("Draw3D.Mesh(models.crate, $"));
+    open_document(IN_VIEW("Draw.Mesh(models.crate, $"));
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeSignature\":0,\"activeParameter\":1")); // 3D: its position is a float3
-    open_document(IN_VIEW("Draw3D.Mesh(models.crate, models.faces, $"));
+    open_document(IN_VIEW("Draw.Mesh(models.crate, models.faces, $"));
     const char *transform = request("textDocument/signatureHelp");
     TIDE_CHECK(has(transform, "\"activeSignature\":0,\"activeParameter\":2"));
-    TIDE_CHECK(has(transform, "{\"label\":[31,40],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A `float4x4`: where the mesh is "
+    TIDE_CHECK(has(transform, "{\"label\":[29,38],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A `float4x4`: where the mesh is "
                               "in the world.\"}}"));
-    open_document(IN_VIEW("Draw3D.Mesh(models.crate, models.faces, float4x4.identity, $"));
+    open_document(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, $"));
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeSignature\":0,\"activeParameter\":3")); // A texture, at the earliest
-    open_document(IN_VIEW("Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Wave, $"));
+    open_document(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, Wave, $"));
     const char *frag = request("textDocument/signatureHelp");
     TIDE_CHECK(has(frag, "\"activeSignature\":0,\"activeParameter\":7")); // After a vert, the frag
-    TIDE_CHECK(has(frag, "{\"label\":[72,76],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A vert, by name"));
-    TIDE_CHECK(has(frag, "{\"label\":[80,84],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A frag, by name"));
+    TIDE_CHECK(has(frag, "{\"label\":[70,74],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A vert, by name"));
+    TIDE_CHECK(has(frag, "{\"label\":[78,82],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A frag, by name"));
     TIDE_CHECK(has(frag, "A vert and a frag, named last, run on the GPU"));
     // In a call that's whole, each name is what it is
-    open_document(IN_VIEW("Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Wa$ve, Shade);"));
+    open_document(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, Wa$ve, Shade);"));
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":6"));
-    open_document(IN_VIEW("Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Sha$de);"));
+    open_document(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, Sha$de);"));
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":7"));
 #undef IN_VIEW
 
@@ -1603,12 +1594,12 @@ TIDE_TEST(lsp_shaders_format_fold_and_move)
                          "\"newText\":\"\"}"));
     TIDE_CHECK(has(actions_at(32), "Move 'Wave' to Wave.tide") && !has(actions_at(42), "Move '"));
 
-    // A local's type, as in any code; and a name at Draw2D.Mesh isn't taken for its texture
+    // A local's type, as in any code; and a name at Draw.Mesh isn't taken for its texture
     open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, Models models)\n{\n"
                                "    var texel = models.wood.Sample(vertex.uv);\n"
                                "    color = texel * Lit(vertex.normal, float3(0, -1, 0));\n}\n"
                                "view DrawBox(with Box, Models models)\n{\n"
-                               "    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Shade);\n}\n");
+                               "    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
                                    "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":50,\"character\":0}}");
@@ -1638,9 +1629,9 @@ TIDE_TEST(lsp_shaders_diagnostics)
     open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, Sun sun)\n{\n    color = Color.red;\n}\n");
     TIDE_CHECK(diagnosed(31, 50, 3, 2, "'sun' is never used") && has(last_sent(), "\"tags\":[1]"));
     // What only the CPU does: on the call
-    open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color)\n{\n    Draw2D.Clear(Color.red);\n"
+    open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color)\n{\n    Draw.Clear(Color.red);\n"
                                "    color = Color.red;\n}\n");
-    TIDE_CHECK(diagnosed(33, 11, 5, 1, "a frag runs on the GPU, for each pixel, so it can't draw"));
+    TIDE_CHECK(diagnosed(33, 9, 5, 1, "a frag runs on the GPU, for each pixel, so it can't draw"));
     // In a function a frag calls: where it is, with the frag that reaches it as a note there
     open_document(SHADER_TYPES "float Count(float to)\n{\n    mut float x = 0;\n    while (x < to) x += 1;\n    return x;\n}\n"
                                "frag Shade(BoxVertex vertex, out Color color)\n{\n"
@@ -1654,13 +1645,13 @@ TIDE_TEST(lsp_shaders_diagnostics)
     open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, mut Box box)\n{\n}\n");
     TIDE_CHECK(diagnosed(31, 5, 5, 1, "frag 'Shade' has no pixel to write"));
     TIDE_CHECK(diagnosed(31, 29, 3, 1, "a frag reads 'Box', and can't change it: drop 'mut'"));
-    // At Draw2D.Mesh: on the name that's out of place, or whose frag the view can't supply
+    // At Draw.Mesh: on the name that's out of place, or whose frag the view can't supply
     open_document(SHADER_CODE "view DrawBox(with Box, Models models)\n{\n"
-                              "    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Shade, Wave);\n}\n");
-    TIDE_CHECK(diagnosed(43, 63, 5, 1, "the vert comes before the frag"));
+                              "    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade, Wave);\n}\n");
+    TIDE_CHECK(diagnosed(43, 61, 5, 1, "the vert comes before the frag"));
     open_document(SHADER_CODE "view DrawBox(Models models)\n{\n"
-                              "    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Wave, Shade);\n}\n");
-    TIDE_CHECK(diagnosed(43, 69, 5, 1, "view 'DrawBox' doesn't guarantee its entity has a 'Box', which frag 'Shade' reads"));
+                              "    Draw.Mesh(models.crate, models.faces, float4x4.identity, Wave, Shade);\n}\n");
+    TIDE_CHECK(diagnosed(43, 67, 5, 1, "view 'DrawBox' doesn't guarantee its entity has a 'Box', which frag 'Shade' reads"));
     // What the GPU can't hold, found once the rest of the game is right: on the index
     open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, Models models)\n{\n"
                                "    color = models.wood[0, 0];\n}\n");
@@ -1751,8 +1742,8 @@ TIDE_TEST(lsp_definition_in_c)
     start();
 #define IN_SYSTEM(code) GAME_TYPES "system S(mut Body body, Time time)\n{\n    " code "\n}\n"
 #define IN_VIEW(code) GAME_TYPES "view V(Body body)\n{\n    " code "\n}\n"
-    TIDE_CHECK(has(c_definition(IN_VIEW("Draw2D.Cir$cle(body.position, 1, Color.red);")), "void tide_draw_circle("));
-    TIDE_CHECK(has(c_definition(IN_VIEW("Draw2D.Circle(body.position, 1, Color.r$ed);")), "#define TIDE_COLOR_RED"));
+    TIDE_CHECK(has(c_definition(IN_VIEW("Draw.Cir$cle(body.position, 1, Color.red);")), "void tide_draw_circle("));
+    TIDE_CHECK(has(c_definition(IN_VIEW("Draw.Circle(body.position, 1, Color.r$ed);")), "#define TIDE_COLOR_RED"));
     TIDE_CHECK(has(c_definition(IN_VIEW("Dr$aw2D.Clear(Color.red);")), "#pragma once"));
     TIDE_CHECK(has(c_definition(IN_SYSTEM("body.radius = Math.S$in(body.radius);")), "tide_sin_f("));
     TIDE_CHECK(has(c_definition(IN_SYSTEM("body.position = Math.S$in(body.position);")), "TIDE_MAP1(float, f, sin, f)"));
@@ -2052,7 +2043,7 @@ TIDE_TEST(lsp_local_fields)
     TIDE_CHECK(has(actions_at(13), "Declare 'box' as mut"));
     TIDE_CHECK(has(apply_first_action(read_only), "view Show(mut Box box) { box.bakes += 1; }"));
     // ...and one that takes it mut and writes none: remove it
-    static const char unused[] = LOCAL_FIELDS "view Show(mut Box box) { if (box.bakes > 0) Draw2D.Clear(Color.black); }\n";
+    static const char unused[] = LOCAL_FIELDS "view Show(mut Box box) { if (box.bakes > 0) Draw.Clear(Color.black); }\n";
     open_document(unused);
     TIDE_CHECK(has(last_sent(), "'box' is declared mut but never written"));
     TIDE_CHECK(has(actions_at(13), "Remove 'mut' from 'box'"));
@@ -2349,7 +2340,7 @@ TIDE_TEST(lsp_settings)
 TIDE_TEST(lsp_default_value)
 {
     start();
-    open_document("scene Main { }\nview Render(with Main)\n{\n    Draw2D.Circle(def$ault, 5, Color.yellow);\n}\n");
+    open_document("scene Main { }\nview Render(with Main)\n{\n    Draw.Circle(def$ault, 5, Color.yellow);\n}\n");
     TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
     const char *hover = request("textDocument/hover");
     TIDE_CHECK(has(hover, "default: float2"));
@@ -2518,7 +2509,7 @@ TIDE_TEST(lsp_gui)
     const char *screen = complete("scene Main { }\nview V()\n{\n    Screen.$\n}\n");
     TIDE_CHECK(offers(screen, "width") && offers(screen, "height") && offers(screen, "Flip"));
     TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    Screen.$\n}\n"), "Flip"));
-    open_document("scene Main { }\nview V(Devices devices)\n{\n    Draw2D.Circle(Screen.Fl$ip(devices.pointer.position), 4, Color.white);\n}\n");
+    open_document("scene Main { }\nview V(Devices devices)\n{\n    Draw.Circle(Screen.Fl$ip(devices.pointer.position), 4, Color.white);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *flip = request("textDocument/hover");
     TIDE_CHECK(has(flip, "Screen.Flip(float2 position) -> float2"));
@@ -2541,13 +2532,13 @@ TIDE_TEST(lsp_gui)
     const char *in_match = complete("scene Main { }\nsystem S()\n{\n    Cursor.$\n}\n");
     TIDE_CHECK(!offers(in_match, "locked") && !offers(in_match, "Lock"));
     static const char camera[] = "input In\n{\n    float2 look;\n    Sample(Devices devices) { if (Cursor.locked) look = devices.mouse.delta; }\n}\n"
-                                 "scene Main { }\nview Look()\n{\n    Cursor.Lo$ck();\n    if (Cursor.locked) Draw2D.Clear(Color.black);\n}\n";
+                                 "scene Main { }\nview Look()\n{\n    Cursor.Lo$ck();\n    if (Cursor.locked) Draw.Clear(Color.black);\n}\n";
     open_document(camera);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *lock = request("textDocument/hover");
     TIDE_CHECK(has(lock, "Cursor.Lock()"));
     TIDE_CHECK(has(lock, "Call it every frame the game wants the mouse"));
-    open_document("scene Main { }\nview Look()\n{\n    Cursor.Lock();\n    if (Cursor.loc$ked) Draw2D.Clear(Color.black);\n}\n");
+    open_document("scene Main { }\nview Look()\n{\n    Cursor.Lock();\n    if (Cursor.loc$ked) Draw.Clear(Color.black);\n}\n");
     const char *locked = request("textDocument/hover");
     TIDE_CHECK(has(locked, "Cursor.locked: bool"));
     TIDE_CHECK(has(locked, "what the system says"));
@@ -3597,7 +3588,7 @@ TIDE_TEST(lsp_ownership)
     TIDE_CHECK(!offers(complete(GAME_TYPES "event(Spawned) Grow(mut Body body, without $)\n{\n}\n"), "ownership"));
     TIDE_CHECK(!offers(complete(GAME_TYPES "view Mine($)\n{\n}\n"), "ownership"));
 
-    open_document(GAME_TYPES "view Mine(Body body, with owner$ship)\n{\n    Draw2D.Circle(body.position, 1, Color.red);\n}\n");
+    open_document(GAME_TYPES "view Mine(Body body, with owner$ship)\n{\n    Draw.Circle(body.position, 1, Color.red);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *hover = request("textDocument/hover");
     TIDE_CHECK(has(hover, "with ownership"));
@@ -3606,7 +3597,7 @@ TIDE_TEST(lsp_ownership)
     TIDE_CHECK(has(request("textDocument/semanticTokens/full"), ",0,11,9,11,0,"));
     TIDE_CHECK(has(request("textDocument/prepareRename"), "'ownership' is a keyword after 'with' and 'without'"));
     // The view's own hover shows its filter
-    open_document(GAME_TYPES "view Re$st(Body body, with Owner, without ownership)\n{\n    Draw2D.Circle(body.position, 1, Color.red);\n}\n");
+    open_document(GAME_TYPES "view Re$st(Body body, with Owner, without ownership)\n{\n    Draw.Circle(body.position, 1, Color.red);\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "view Rest(Body body, with Owner, without ownership)"));
 
     // In the match it's an error that says what to write, which a quick fix does
@@ -3621,8 +3612,8 @@ TIDE_TEST(lsp_ownership)
     // The formatter keeps the filter as it is
     static const char messy[] = "component Body { float x; }\nscene Main { }\n"
                                 "event(Spawned) Setup(with Main) { Spawn(Body, Owner); }\n"
-                                "view Mine( Body body,with   ownership ){ Draw2D.Circle(float2(body.x, 0), 1, Color.red); }\n"
-                                "view Rest(Body body ,without ownership) { Draw2D.Circle(float2(body.x, 0), 1, Color.red); }\n";
+                                "view Mine( Body body,with   ownership ){ Draw.Circle(float2(body.x, 0), 1, Color.red); }\n"
+                                "view Rest(Body body ,without ownership) { Draw.Circle(float2(body.x, 0), 1, Color.red); }\n";
     format_reply(messy);
     const char *formatted = apply_reply(messy, NULL);
     TIDE_CHECK(has(formatted, "view Mine(Body body, with ownership) { "));
@@ -3631,7 +3622,7 @@ TIDE_TEST(lsp_ownership)
     // Anywhere else `ownership` is a name: a singleton's, a field's, a parameter's
     open_document("local singleton ownership { int ownership = 3; }\nscene Main { }\n"
                   "int Twice(int ownership) { return ownership * 2; }\n"
-                  "view Share(owner$ship ownership)\n{\n    if (Twice(ownership.ownership) > 1) Draw2D.Clear(Color.black);\n}\n");
+                  "view Share(owner$ship ownership)\n{\n    if (Twice(ownership.ownership) > 1) Draw.Clear(Color.black);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request("textDocument/hover"), "local singleton ownership"));
     const char *tokens = request("textDocument/semanticTokens/full");
@@ -3752,7 +3743,7 @@ TIDE_TEST(lsp_verified)
     // Anywhere else `verified` is a name: a singleton's, a field's, a parameter's
     open_document("local singleton verified { int verified = 3; }\nscene Main { }\n"
                   "int Twice(int verified) { return verified * 2; }\n"
-                  "view Share(veri$fied trust)\n{\n    if (Twice(trust.verified) > 1) Draw2D.Clear(Color.black);\n}\n");
+                  "view Share(veri$fied trust)\n{\n    if (Twice(trust.verified) > 1) Draw.Clear(Color.black);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request("textDocument/hover"), "local singleton verified"));
     const char *tokens = request("textDocument/semanticTokens/full");
@@ -3996,7 +3987,7 @@ TIDE_TEST(lsp_shader_outputs)
     "frag Look(Corner corner, FromLamp lamp, Crate crate, out Color color)\n{\n"                                      \
     "    color = crate.paint * lamp.glow;\n}\n"
     static const char whole[] = OUTPUTS "view Show(Models models)\n{\n"
-                                        "    Draw3D.Instanced(models.crate, models.faces, models.crates, Place, Look);\n}\n";
+                                        "    Draw.Instanced(models.crate, models.faces, models.crates, Place, Look);\n}\n";
     open_document(whole);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *vert = hover_at(6, 6);
@@ -4007,7 +3998,7 @@ TIDE_TEST(lsp_shader_outputs)
     TIDE_CHECK(has(writes, "out FromLamp lamp") && has(writes, "What the vert writes for the frag it's drawn with"));
     TIDE_CHECK(has(hover_at(6, 32), "What the vert writes for the frag it's drawn with")); // On `out`
     const char *frag = hover_at(11, 6);
-    TIDE_CHECK(has(frag, "Draw3D.Instanced(..., Look)") && has(frag, "What it writes to its `out Color` is the pixel"));
+    TIDE_CHECK(has(frag, "Draw.Instanced(..., Look)") && has(frag, "What it writes to its `out Color` is the pixel"));
     TIDE_CHECK(has(frag, "- for each instance: `Crate.paint`"));
     TIDE_CHECK(has(frag, "- of what its vert wrote for it, blended across the triangle: `FromLamp.glow`") && !has(frag, "FromLamp.place"));
     const char *lamp = hover_at(11, 35);
@@ -4018,18 +4009,18 @@ TIDE_TEST(lsp_shader_outputs)
     TIDE_CHECK(has(tokens, ",0,8,3,11,0,0,4,8,2,0,0,9,4,5,1,")); // , out FromLamp lamp: what it writes
     // The draw pairs them: a frag's struct that its vert doesn't write, or with no vert
     static const char lone[] = OUTPUTS "view Show(Models models)\n{\n"
-                                       "    Draw3D.Instanced(models.crate, models.faces, models.crates, Look);\n}\n";
+                                       "    Draw.Instanced(models.crate, models.faces, models.crates, Look);\n}\n";
     open_document(lone);
     TIDE_CHECK(has(last_sent(), "frag 'Look' reads a 'FromLamp', and this draw names no vert that writes one"));
     TIDE_CHECK(has(last_sent(), "'out FromLamp lamp' among the vert's parameters"));
     static const char other[] = OUTPUTS "vert Lift(mut Corner corner)\n{\n    corner.position.y += 1;\n}\n"
                                         "view Show(Models models)\n{\n"
-                                        "    Draw3D.Instanced(models.crate, models.faces, models.crates, Lift, Look);\n}\n";
+                                        "    Draw.Instanced(models.crate, models.faces, models.crates, Lift, Look);\n}\n";
     open_document(other);
     TIDE_CHECK(has(last_sent(), "frag 'Look' reads a 'FromLamp', which vert 'Lift' doesn't write"));
     // Where the draw's vert goes, both are offered, and where its frag goes, the frag
     const char *named = complete(OUTPUTS "view Show(Models models)\n{\n"
-                                         "    Draw3D.Instanced(models.crate, models.faces, models.crates, $);\n}\n");
+                                         "    Draw.Instanced(models.crate, models.faces, models.crates, $);\n}\n");
     TIDE_CHECK(offers(named, "Place") && offers(named, "Look"));
 #undef OUTPUTS
 #undef OUTPUT_TYPES
@@ -4173,7 +4164,7 @@ TIDE_TEST(lsp_move_to_file)
 TIDE_TEST(lsp_references)
 {
     start();
-    open_document(USES_RADIUS "view V(Body body)\n{\n    Draw2D.Circle(body.position, body.rad$ius, Color.red);\n}\n");
+    open_document(USES_RADIUS "view V(Body body)\n{\n    Draw.Circle(body.position, body.rad$ius, Color.red);\n}\n");
     // The declaration, `body.radius += 1`, the literal and the view.
     TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 4);
     TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":false}"), "\"uri\"") == 3);
@@ -4191,8 +4182,8 @@ TIDE_TEST(lsp_references)
 TIDE_TEST(lsp_rename)
 {
     start();
-    static const char program[] = USES_RADIUS "view V(Body body)\n{\n    Draw2D.Circle(body.position, body.radius, Color.red);\n}\n";
-    open_document(USES_RADIUS "view V(Body body)\n{\n    Draw2D.Circle(body.position, body.rad$ius, Color.red);\n}\n");
+    static const char program[] = USES_RADIUS "view V(Body body)\n{\n    Draw.Circle(body.position, body.radius, Color.red);\n}\n";
+    open_document(USES_RADIUS "view V(Body body)\n{\n    Draw.Circle(body.position, body.rad$ius, Color.red);\n}\n");
     TIDE_CHECK(has(request("textDocument/prepareRename"), "\"result\":{\"start\""));
     request_with("textDocument/rename", "\"newName\":\"size\"");
     const char *renamed = apply_reply(program, "file:///test.tide");
@@ -4259,13 +4250,13 @@ TIDE_TEST(lsp_rename_namespace)
 TIDE_TEST(lsp_rename_refusals)
 {
     start();
-    open_document(USES_RADIUS "view V(Body body)\n{\n    Draw2D.Circle(body.position, body.rad$ius, Color.red);\n}\n");
+    open_document(USES_RADIUS "view V(Body body)\n{\n    Draw.Circle(body.position, body.rad$ius, Color.red);\n}\n");
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"position\""), "'position' is already declared"));
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"return\""), "keyword"));
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"float3\""), "built into the language"));
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"2fast\""), "start with a letter"));
 
-    open_document(USES_RADIUS "view V(Body body)\n{\n    Draw2D.Cir$cle(body.position, body.radius, Color.red);\n}\n");
+    open_document(USES_RADIUS "view V(Body body)\n{\n    Draw.Cir$cle(body.position, body.radius, Color.red);\n}\n");
     TIDE_CHECK(has(request("textDocument/prepareRename"), "Built-in names can't be renamed"));
 
     open_document(GAME_TYPES "system Mo$ve(mut Body body)\n{\n    body.radius = ;\n}\n");
@@ -4329,8 +4320,8 @@ TIDE_TEST(lsp_built_in_methods)
     open_document("singleton Field { Grid2<int> cells = Grid2(8, $ }\nscene Main { }\n");
     const char *grid = request("textDocument/signatureHelp");
     TIDE_CHECK(has(grid, "Grid2(int width = 0, int height = 0)") && has(grid, "\"activeParameter\":1"));
-    open_document("scene Main { }\nview V()\n{\n    Draw2D.Text(\"a\", $\n}\n");
-    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Draw2D.Text(string text, float2 position, float size, Color color)"));
+    open_document("scene Main { }\nview V()\n{\n    Draw.Text(\"a\", $\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Draw.Text(string text, float2 position, float size, Color color)"));
 
     // References: a grid's Clear, not a list's; and Snap and Grid2 are found at all
     static const char program[] = BUILT_IN_METHODS "system S(mut Field field, with Body)\n{\n    field.cells.Clear();\n"
@@ -4351,14 +4342,14 @@ TIDE_TEST(lsp_inlay_hints_for_built_ins)
 {
     start();
     open_document("local singleton Menu { float volume; }\nscene Main { }\n"
-                  "view V(mut Menu menu)\n{\n    Draw2D.Circle(float2(1, 2), 3, Color.red);\n"
+                  "view V(mut Menu menu)\n{\n    Draw.Circle(float2(1, 2), 3, Color.red);\n"
                   "    menu.volume = Math.Clamp(0.5, 0, menu.volume);\n"
                   "    GUILayout.Slider(\"Volume\", menu.volume, 0, 1);\n    Session.Open(7777);\n"
                   "    var c = Color(1, 0.5, 0);\n}\n");
     TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
     const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
                                    "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":20,\"character\":0}}");
-    TIDE_CHECK(has(hints, "{\"position\":{\"line\":4,\"character\":32},\"label\":\"radius:\",\"kind\":2"));
+    TIDE_CHECK(has(hints, "{\"position\":{\"line\":4,\"character\":30},\"label\":\"radius:\",\"kind\":2"));
     TIDE_CHECK(!has(hints, "\"label\":\"center:\"") && !has(hints, "\"label\":\"color:\"")); // Not literals
     TIDE_CHECK(has(hints, "\"label\":\"label:\"") && has(hints, "\"label\":\"min:\"") && has(hints, "\"label\":\"max:\""));
     TIDE_CHECK(has(hints, "\"label\":\"port:\""));
@@ -4454,12 +4445,12 @@ TIDE_TEST(lsp_highlights_writes)
 TIDE_TEST(lsp_signature_help)
 {
     start();
-    open_document(GAME_TYPES "view V(Body body)\n{\n    Draw2D.Circle(body.position, $\n}\n");
+    open_document(GAME_TYPES "view V(Body body)\n{\n    Draw.Circle(body.position, $\n}\n");
     const char *circle = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(circle, "\"label\":\"Draw2D.Circle(float2 center, float radius, Color color)\""));
+    TIDE_CHECK(has(circle, "\"label\":\"Draw.Circle(float2 center, float radius, Color color)\""));
     TIDE_CHECK(has(circle, "\"activeParameter\":1"));
-    // "Draw2D.Circle(" is 14 characters: `float2 center` is 14 to 27.
-    TIDE_CHECK(has(circle, "\"parameters\":[{\"label\":[14,27]}"));
+    // "Draw.Circle(" is 14 characters: `float2 center` is 14 to 27.
+    TIDE_CHECK(has(circle, "\"parameters\":[{\"label\":[12,25]}"));
 
     open_document(GAME_TYPES "system S()\n{\n    var v = float3(float2(1, 2), $\n}\n");
     const char *vector = request("textDocument/signatureHelp");
@@ -4636,7 +4627,7 @@ TIDE_TEST(lsp_format_keeps_tokens)
         "else body.radius=Math.Clamp(body.radius,1,-2) ;\n"
         "    var e=Spawn(Body{position=float2(1,2)});e.Destroy();\n}\n"
         "view DrawBody(Body body, Arena arena)\n{\n"
-        "Draw2D.Text(\"a  b   \\\"c\\\"\", body.position,12,Color(1,0.5,0));\n}\n";
+        "Draw.Text(\"a  b   \\\"c\\\"\", body.position,12,Color(1,0.5,0));\n}\n";
     format_reply(program);
     char formatted[8192];
     snprintf(formatted, sizeof formatted, "%s", apply_reply(program, NULL));
@@ -4729,8 +4720,8 @@ TIDE_TEST(lsp_every_prefix_is_safe)
         "event Hit\n{\n    int damage = 1;\n}\n"
         "event(Hit hit) TakeHit(mut Body body)\n{\n    body.radius -= hit.damage;\n}\n"
         "view DrawBody(Body body, Arena arena)\n{\n"
-        "    Draw2D.Text(\"hi \\\"there\\\"\", body.position, 12, Color(1, 0.5, 0));\n"
-        "    Draw2D.Circle(body.position, body.radius, Color.red);\n}\n"
+        "    Draw.Text(\"hi \\\"there\\\"\", body.position, 12, Color(1, 0.5, 0));\n"
+        "    Draw.Circle(body.position, body.radius, Color.red);\n}\n"
         "enum ParseError { Empty }\n"
         "int Parse(string t) fails ParseError\n{\n    if (t == \"\") fail ParseError.Empty;\n    return 1;\n}\n"
         "int? Find(int x)\n{\n    if (x > 0) return x;\n    return null;\n}\n"
@@ -4797,7 +4788,7 @@ TIDE_TEST(lsp_render_targets_texture_members_and_blit)
     TIDE_CHECK(has(last_sent(), "\"activeParameter\":1"));
     snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Cl$ear(Color.black);\n}\n", types);
     open_document(program);
-    TIDE_CHECK(has(request("textDocument/hover"), "Draw2D.Clear"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Draw.Clear"));
     snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Mesh([], [], $\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "[, texture[, filter[, wrap]]]"));
@@ -4840,7 +4831,7 @@ TIDE_TEST(lsp_render_target_formats_and_depth)
                                       "    lamp.map = RenderTarget.Screen(Format.DepthOnly);\n"
                                       "    lamp.map = RenderTarget.Screen(0.5, Format.Color);\n"
                                       "    lamp.shadow = lamp.map.depth;\n"
-                                      "    Draw3D.Mesh([Vertex3 { }], [0, 0, 0], float4x4.identity, Lit);\n}\n", types);
+                                      "    Draw.Mesh([Vertex3 { }], [0, 0, 0], float4x4.identity, Lit);\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
@@ -6305,7 +6296,7 @@ TIDE_TEST(lsp_built_in_defaults)
                   "    Debug.Ass$ert(menu.open);\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Debug.Assert(bool condition, string message = \\\"\\\")"));
     // Names on the engine's functions, in any order
-    open_document("scene Main { }\nview Show()\n{\n    Draw2D.Circle(radius: 2, center: float2(3, 4), color: Color.red);\n}\n");
+    open_document("scene Main { }\nview Show()\n{\n    Draw.Circle(radius: 2, center: float2(3, 4), color: Color.red);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 }
 
@@ -7874,10 +7865,10 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
                                     "view V(mut Art art)\n"
                                     "{\n"
                                     "    art.kept = tiles;\n"
-                                    "    Draw2D.Mesh(art.flat, [0, 1, 2], tiles);\n"
-                                    "    Draw2D.Mesh(art.flat, [0, 1, 2], glass);\n"
-                                    "    Draw2D.Mesh(art.flat, [0, 1, 2], art.paint);\n"
-                                    "    Draw2D.Mesh(art.flat, [0, 1, 2], plain);\n"
+                                    "    Draw.Mesh(art.flat, [0, 1, 2], tiles);\n"
+                                    "    Draw.Mesh(art.flat, [0, 1, 2], glass);\n"
+                                    "    Draw.Mesh(art.flat, [0, 1, 2], art.paint);\n"
+                                    "    Draw.Mesh(art.flat, [0, 1, 2], plain);\n"
                                     "}\n";
     write_file("lsp_tx/main.tide", main_file);
     write_bytes("lsp_tx/art/tile.png", (const char *)png, sizeof png);

@@ -1,4 +1,4 @@
-// expect: a Texture field holds whichever image it's given, so how 'kept' is sampled is said where it's drawn: 'Draw2D.Mesh(vertices, indices, texture, Filter.Point, Wrap.Repeat)'
+// expect: a Texture field holds whichever image it's given, so how 'kept' is sampled is said where it's drawn: 'Draw.Mesh(vertices, indices, texture, Filter.Point, Wrap.Repeat)'
 // expect: an image of the game's says it on its own declaration: '[Filter(Filter.Point)] asset Texture tiles = "art/tiles.png";'
 scene Main { }
 

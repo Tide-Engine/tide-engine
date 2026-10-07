@@ -5,6 +5,6 @@ extern void Paint(DrawList list);
 
 view Show()
 {
-    var list = Draw2D.list;
+    var list = Draw.list;
     Paint(list);
 }

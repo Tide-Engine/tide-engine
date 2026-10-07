@@ -3,5 +3,5 @@ scene Main { }
 
 view Show()
 {
-    Draw2D.Text("FIGHT!", float2(0), 64, Anchor.MiddleCenter);
+    Draw.Text("FIGHT!", float2(0), 64, Anchor.MiddleCenter);
 }

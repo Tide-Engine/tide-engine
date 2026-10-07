@@ -464,8 +464,8 @@ local event(Connected) Joined(mut Fx fx)
 [After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Backdrop(mut Lens lens, mut Fx fx)
 {
-    Draw2D.Clear(BACKGROUND);
-    Draw2D.SetScreen();
+    Draw.Clear(BACKGROUND);
+    Draw.SetScreen();
     float w = Screen.width;
     float h = Screen.height;
     var dt = Math.Min(Frame.dt, 0.05);
@@ -527,17 +527,17 @@ view Point(Devices devices, Lens lens, mut Hand hand, SampleLobby lobby)
 view DrawTable(Lens lens, Fx fx)
 {
     var size = Span(lens, float2(2 * HALF_W, 2 * HALF_H));
-    Draw2D.RoundRect(lens.origin, size + float2(6, 6), 9, EDGE);
-    Draw2D.RoundRect(lens.origin, size, 6, PANEL);
-    if (fx.flash > 0) Draw2D.RoundRect(lens.origin, size, 6, Fade(SideColor(fx.flashSide), 0.35 * fx.flash));
+    Draw.RoundRect(lens.origin, size + float2(6, 6), 9, EDGE);
+    Draw.RoundRect(lens.origin, size, 6, PANEL);
+    if (fx.flash > 0) Draw.RoundRect(lens.origin, size, 6, Fade(SideColor(fx.flashSide), 0.35 * fx.flash));
     // The line down the middle
     for (var i = -5; i < 5; i++)
     {
-        Draw2D.Rect(ToScreen(lens, float2(0, i + 0.5)), Span(lens, float2(0.07, 0.46)), EDGE);
+        Draw.Rect(ToScreen(lens, float2(0, i + 0.5)), Span(lens, float2(0.07, 0.46)), EDGE);
     }
     // Each end in its player's color
-    Draw2D.Rect(ToScreen(lens, float2(-HALF_W + 0.09, 0)), Span(lens, float2(0.1, 2 * HALF_H - 0.7)), Fade(GOLD, 0.55));
-    Draw2D.Rect(ToScreen(lens, float2(HALF_W - 0.09, 0)), Span(lens, float2(0.1, 2 * HALF_H - 0.7)), Fade(TEAL, 0.55));
+    Draw.Rect(ToScreen(lens, float2(-HALF_W + 0.09, 0)), Span(lens, float2(0.1, 2 * HALF_H - 0.7)), Fade(GOLD, 0.55));
+    Draw.Rect(ToScreen(lens, float2(HALF_W - 0.09, 0)), Span(lens, float2(0.1, 2 * HALF_H - 0.7)), Fade(TEAL, 0.55));
 }
 
 [After(SampleLobbyBegin), Before(SampleLobbyPages)]
@@ -551,9 +551,9 @@ view DrawPaddles(mut Paddle paddle, Lens lens)
     if (paddle.side == lens.mine)
     {
         // This machine's own paddle glows
-        Draw2D.Shape(Shape { center = center, size = size, radius = radius, color = Fade(color, 0.5), soft = 9 * lens.unit });
+        Draw.Shape(Shape { center = center, size = size, radius = radius, color = Fade(color, 0.5), soft = 9 * lens.unit });
     }
-    Draw2D.RoundRect(center, size, radius, paddle.flash > 0 ? Color.white : color);
+    Draw.RoundRect(center, size, radius, paddle.flash > 0 ? Color.white : color);
 }
 
 [After(SampleLobbyBegin), Before(SampleLobbyPages)]
@@ -561,7 +561,7 @@ view DrawSparks(mut Fx fx, Lens lens)
 {
     var dt = Math.Min(Frame.dt, 0.05);
     var field = Span(lens, float2(2 * HALF_W, 2 * HALF_H));
-    Draw2D.Clip(Rect(lens.origin.x - field.x * 0.5, lens.origin.y - field.y * 0.5, field.x, field.y)),
+    Draw.Clip(Rect(lens.origin.x - field.x * 0.5, lens.origin.y - field.y * 0.5, field.x, field.y)),
     Draw.Blend(Blend.Add)
     {
         mut var i = 0;
@@ -577,7 +577,7 @@ view DrawSparks(mut Fx fx, Lens lens)
             spark.position += spark.velocity * dt;
             fx.sparks[i] = spark;
             var left = 1 - spark.age / spark.life;
-            Draw2D.Circle(ToScreen(lens, spark.position), spark.size * lens.scale * left, Fade(spark.color, left));
+            Draw.Circle(ToScreen(lens, spark.position), spark.size * lens.scale * left, Fade(spark.color, left));
             i++;
         }
     }
@@ -596,12 +596,12 @@ view DrawBall(Ball ball, Court court, Time time, Lens lens, mut Fx fx)
     if (court.rally >= 4)
     {
         var under = lens.origin + float2(0, field.y * 0.5 - 14 * lens.unit);
-        Draw2D.RoundRect(under, float2(74, 18) * lens.unit, 9 * lens.unit, PANEL);
-        Draw2D.Text($"rally {court.rally}", under, 12 * lens.unit, Fade(hot, 0.8), Anchor.MiddleCenter);
+        Draw.RoundRect(under, float2(74, 18) * lens.unit, 9 * lens.unit, PANEL);
+        Draw.Text($"rally {court.rally}", under, 12 * lens.unit, Fade(hot, 0.8), Anchor.MiddleCenter);
     }
-    Draw2D.Clip(Rect(lens.origin.x - field.x * 0.5, lens.origin.y - field.y * 0.5, field.x, field.y))
+    Draw.Clip(Rect(lens.origin.x - field.x * 0.5, lens.origin.y - field.y * 0.5, field.x, field.y))
     {
-        Draw2D.Circle(at, radius, hot);
+        Draw.Circle(at, radius, hot);
         if (court.phase == Phase.Rally)
         {
             // A trail, which fades behind it
@@ -611,13 +611,13 @@ view DrawBall(Ball ball, Court court, Time time, Lens lens, mut Fx fx)
         {
             // A ring that runs out as the serve comes, and an arrow the way it will go
             var wait = Math.Saturate(court.timer / float(time.tickRate));
-            Draw2D.Arc(at, radius * 2.6, -Math.PI * 0.5, Math.TAU * wait, 2 * lens.unit, QUIET);
+            Draw.Arc(at, radius * 2.6, -Math.PI * 0.5, Math.TAU * wait, 2 * lens.unit, QUIET);
             var ahead = Math.Normalize(ToScreen(lens, float2(court.serve, 0)) - ToScreen(lens, float2(0, 0)));
             var side = float2(-ahead.y, ahead.x);
             var tip = at + ahead * radius * 5.2;
             var color = SideColor(court.serve > 0 ? 0 : 1);
-            Draw2D.Line(tip, tip - ahead * radius + side * radius, 2 * lens.unit, color);
-            Draw2D.Line(tip, tip - ahead * radius - side * radius, 2 * lens.unit, color);
+            Draw.Line(tip, tip - ahead * radius + side * radius, 2 * lens.unit, color);
+            Draw.Line(tip, tip - ahead * radius - side * radius, 2 * lens.unit, color);
         }
     }
 }
@@ -636,16 +636,16 @@ view DrawHud(verified Court court, Time time, Lens lens, Session session, Fx fx)
     var x0 = w * 0.5 - half + 4;
     var x1 = w * 0.5 + half - 4;
 
-    Draw2D.Text(SeatName(court.left, session.player, watching, "GOLD"), float2(x0, row + 4 * u), 16 * u, GOLD, Anchor.UpperLeft, Font.Bold);
-    Draw2D.Text(SeatName(court.right, session.player, watching, "TEAL"), float2(x1, row + 4 * u), 16 * u, TEAL, Anchor.UpperRight, Font.Bold);
-    Draw2D.Text($"{court.scoreLeft}", float2(w * 0.5 - 14 * u, row), 36 * u, GOLD, Anchor.UpperRight, Font.Bold);
-    Draw2D.Text(":", float2(w * 0.5, row - 2 * u), 36 * u, QUIET, Anchor.UpperCenter, Font.Bold);
-    Draw2D.Text($"{court.scoreRight}", float2(w * 0.5 + 14 * u, row), 36 * u, TEAL, Anchor.UpperLeft, Font.Bold);
+    Draw.Text(SeatName(court.left, session.player, watching, "GOLD"), float2(x0, row + 4 * u), 16 * u, GOLD, Anchor.UpperLeft, Font.Bold);
+    Draw.Text(SeatName(court.right, session.player, watching, "TEAL"), float2(x1, row + 4 * u), 16 * u, TEAL, Anchor.UpperRight, Font.Bold);
+    Draw.Text($"{court.scoreLeft}", float2(w * 0.5 - 14 * u, row), 36 * u, GOLD, Anchor.UpperRight, Font.Bold);
+    Draw.Text(":", float2(w * 0.5, row - 2 * u), 36 * u, QUIET, Anchor.UpperCenter, Font.Bold);
+    Draw.Text($"{court.scoreRight}", float2(w * 0.5 + 14 * u, row), 36 * u, TEAL, Anchor.UpperLeft, Font.Bold);
     // A dot for each point it takes to win
     for (var i = 0; i < WIN_SCORE; i++)
     {
-        Draw2D.Circle(float2(x0 + (4 + i * 11) * u, row + 32 * u), 3.5 * u, i < court.scoreLeft ? GOLD : EDGE);
-        Draw2D.Circle(float2(x1 - (4 + i * 11) * u, row + 32 * u), 3.5 * u, i < court.scoreRight ? TEAL : EDGE);
+        Draw.Circle(float2(x0 + (4 + i * 11) * u, row + 32 * u), 3.5 * u, i < court.scoreLeft ? GOLD : EDGE);
+        Draw.Circle(float2(x1 - (4 + i * 11) * u, row + 32 * u), 3.5 * u, i < court.scoreRight ? TEAL : EDGE);
     }
 
     // How to play, and where things stand
@@ -669,8 +669,8 @@ view DrawHud(verified Court court, Time time, Lens lens, Session session, Fx fx)
     {
         status = $"First to {WIN_SCORE} wins, and the loser swaps out";
     }
-    Draw2D.Text(status, float2(w * 0.5, foot), 14 * u, Color.white, Anchor.UpperCenter);
-    Draw2D.Text(how, float2(w * 0.5, foot + 20 * u), 12 * u, QUIET, Anchor.UpperCenter);
+    Draw.Text(status, float2(w * 0.5, foot), 14 * u, Color.white, Anchor.UpperCenter);
+    Draw.Text(how, float2(w * 0.5, foot + 20 * u), 12 * u, QUIET, Anchor.UpperCenter);
 
     if (court.phase == Phase.Over)
     {
@@ -678,19 +678,19 @@ view DrawHud(verified Court court, Time time, Lens lens, Session session, Fx fx)
         mut var title = court.winner == 0 ? "GOLD WINS" : "TEAL WINS";
         if (!watching) title = court.winner == lens.mine ? "YOU WIN!" : "YOU LOSE";
         var box = float2(230, 92) * u;
-        Draw2D.Shape(Shape { center = lens.origin, size = box, radius = 14 * u, color = Fade(BACKGROUND, 0.94),
+        Draw.Shape(Shape { center = lens.origin, size = box, radius = 14 * u, color = Fade(BACKGROUND, 0.94),
                              outline = 2 * u, outlineColor = color });
-        Draw2D.Text(title, lens.origin - float2(0, 12 * u), 32 * u, color, Anchor.MiddleCenter, Font.Bold);
-        Draw2D.Text($"{court.scoreLeft} : {court.scoreRight}   next game in {court.timer / time.tickRate + 1}",
+        Draw.Text(title, lens.origin - float2(0, 12 * u), 32 * u, color, Anchor.MiddleCenter, Font.Bold);
+        Draw.Text($"{court.scoreLeft} : {court.scoreRight}   next game in {court.timer / time.tickRate + 1}",
                     lens.origin + float2(0, 24 * u), 13 * u, QUIET, Anchor.MiddleCenter);
     }
     else if (fx.toastTime > 0)
     {
         var fade = Math.Saturate(fx.toastTime * 2);
         var at = lens.origin - float2(0, (lens.tall ? HALF_W : HALF_H) * lens.scale * 0.55);
-        var size = Draw2D.MeasureText(fx.toast, 14 * u, Font.Bold) + float2(22, 12) * u;
-        Draw2D.RoundRect(at, size, size.y * 0.5, Fade(BACKGROUND, 0.9 * fade));
-        Draw2D.Text(fx.toast, at, 14 * u, Fade(Color.white, fade), Anchor.MiddleCenter, Font.Bold);
+        var size = Draw.MeasureText(fx.toast, 14 * u, Font.Bold) + float2(22, 12) * u;
+        Draw.RoundRect(at, size, size.y * 0.5, Fade(BACKGROUND, 0.9 * fade));
+        Draw.Text(fx.toast, at, 14 * u, Fade(Color.white, fade), Anchor.MiddleCenter, Font.Bold);
     }
 }
 
@@ -702,6 +702,6 @@ view DrawStatus(Session session, Fx fx, Lens lens)
     mut var text = "Joining the game...";
     if (session.state == SessionState.Offline) text = fx.notice == "" ? "Not in a game" : fx.notice;
     var u = lens.unit;
-    Draw2D.Text("PONG", float2(Screen.width * 0.5, 14 * u + 52), 30 * u, GOLD, Anchor.UpperCenter, Font.Bold);
-    Draw2D.Text(text, lens.origin, 16 * u, Color.white, Anchor.MiddleCenter, Font.Bold);
+    Draw.Text("PONG", float2(Screen.width * 0.5, 14 * u + 52), 30 * u, GOLD, Anchor.UpperCenter, Font.Bold);
+    Draw.Text(text, lens.origin, 16 * u, Color.white, Anchor.MiddleCenter, Font.Bold);
 }

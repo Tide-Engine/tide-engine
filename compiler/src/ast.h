@@ -117,7 +117,7 @@ typedef enum type_kind {
     TY_STRING,     // Text: literals, and function parameters and locals that hold them
     TY_RECT,       // Rect: a GUI rectangle, x and y from the top left, width and height
     TY_ACTION,      // Action: a function's last parameter, the code its caller writes in braces after the call
-    TY_DRAW_LIST,  // DrawList: the frame's draw list, `Draw2D.list`, which only an extern function takes
+    TY_DRAW_LIST,  // DrawList: the frame's draw list, `Draw.list`, which only an extern function takes
     TY_TEXTURE,    // Texture: a local reference to pixels or a render target's color image
     TY_DEPTH_TEXTURE, // DepthTexture: a local reference to a render target's depth, which a frag or vert reads
     TY_RENDER_TARGET, // RenderTarget: a local drawing destination; Draw.window names the window
@@ -688,7 +688,7 @@ typedef enum builtin_call {
     CALL_NONE,
     CALL_CONSTRUCT, // float3(...), int(...), quaternion(...), float4x4(...), and an enum's Card(number)
     CALL_BUILTIN,   // Math.Dot(...), quaternion.AxisAngle(...): calls c_callee
-    CALL_DRAW,      // Draw2D.Circle(...): calls c_callee with the view's draw list first
+    CALL_DRAW,      // Draw.Circle(...): calls c_callee with the view's draw list first
     CALL_SPAWN,
     CALL_ADD,
     CALL_REMOVE,
@@ -846,7 +846,7 @@ struct expr {
     bool path_operation;     // Pure Path operation: receives tide_str, rather than a C string
     bool storage_flush;      // Storage.Flush, awaited through a provider completion ticket
     bool web_fetch;          // Web.Fetch, awaited the same way: its body is the task's value
-    int draw_dims;        // CALL_DRAW: the drawing API's dimensions, or a target mesh's vertex dimensions
+    int draw_dims;        // CALL_DRAW: 0 for a call that selects no destination; else the window's, and a mesh's vertex dimensions
     struct decl *instance_type; // Its List<T> element struct; NULL for List<float4x4>
     struct decl *frag;
     struct shader *shader; // ...and what draws it, once planned: NULL for a List<Vertex> or List<Vertex3> with neither
@@ -1129,7 +1129,7 @@ typedef struct program {
     bool names_bold;
     decl *vertex;        // The built-in struct Vertex, a corner of what mesh draw draws
     decl *vertex3;       // The built-in struct Vertex3, a corner of a 3D mesh
-    decl *shape;         // The built-in struct Shape, what Draw2D.Shape draws
+    decl *shape;         // The built-in struct Shape, what Draw.Shape draws
     decl *gui_theme;     // The built-in struct GUITheme, how the GUI's widgets look
     decl *gui_control;   // The built-in struct GUIControl, what GUI.Control says of a control
     decl *filter;        // The built-in enum Filter, how mesh draw samples its texture

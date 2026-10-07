@@ -55,9 +55,9 @@ local singleton Pointing
 
 view Begin(Devices devices, mut Pointing pointing)
 {
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw2D.SetCamera(float2(0), 2.2);
-    pointing.world = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0), 2.2);
+    pointing.world = Draw.ScreenToWorld(Screen.Flip(devices.pointer.position));
     pointing.down = devices.pointer.press.down;
     pointing.onBall = false;
     pointing.balls = 0;
@@ -67,7 +67,7 @@ view Begin(Devices devices, mut Pointing pointing)
 view Healthy(Ball ball, Health health, mut Pointing pointing, without Poisoned)
 {
     var size = ball.radius * (0.4 + health.value * 0.006);
-    Draw2D.Circle(ball.position, size, Color(0.98, 0.75, 0.14));
+    Draw.Circle(ball.position, size, Color(0.98, 0.75, 0.14));
     pointing.balls += 1;
     if (Math.Distance(pointing.world, ball.position) > ball.radius) return;
     pointing.onBall = true;
@@ -77,8 +77,8 @@ view Healthy(Ball ball, Health health, mut Pointing pointing, without Poisoned)
 view Sick(Ball ball, Health health, mut Pointing pointing, with Poisoned)
 {
     var size = ball.radius * (0.4 + health.value * 0.006);
-    Draw2D.Circle(ball.position, size, Color(0.18, 0.83, 0.75));
-    Draw2D.WireCircle(ball.position, ball.radius, 0.03, Color(0.18, 0.83, 0.75));
+    Draw.Circle(ball.position, size, Color(0.18, 0.83, 0.75));
+    Draw.WireCircle(ball.position, ball.radius, 0.03, Color(0.18, 0.83, 0.75));
     pointing.balls += 1;
     pointing.poisoned += 1;
     if (Math.Distance(pointing.world, ball.position) > ball.radius) return;
@@ -89,8 +89,8 @@ view Sick(Ball ball, Health health, mut Pointing pointing, with Poisoned)
 view Ground(Pointing pointing)
 {
     if (pointing.down && !pointing.onBall) Send(Drop { at = pointing.world });
-    Draw2D.SetScreen();
-    Draw2D.Text($"{pointing.balls} entities, {pointing.poisoned} with Poisoned", float2(16, 14), 18, Color.white);
-    Draw2D.Text("Tap a ball to poison or cure it. Tap the ground to spawn one.",
+    Draw.SetScreen();
+    Draw.Text($"{pointing.balls} entities, {pointing.poisoned} with Poisoned", float2(16, 14), 18, Color.white);
+    Draw.Text("Tap a ball to poison or cure it. Tap the ground to spawn one.",
                 float2(16, Screen.height - 30), 13, Color(0.64, 0.64, 0.68));
 }

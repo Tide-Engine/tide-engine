@@ -1,9 +1,9 @@
-// expect: write 'Draw2D.Transform(...) { ... }'
+// expect: write 'Draw.Transform(...) { ... }'
 scene Main { }
 
 view Show()
 {
-    Draw2D.SetTransform(float2(1, 2))
+    Draw.SetTransform(float2(1, 2))
     {
     }
 }

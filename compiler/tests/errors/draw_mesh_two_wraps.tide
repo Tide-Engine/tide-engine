@@ -1,4 +1,4 @@
-// expect: Draw2D.Mesh takes one wrap, for both of its texture's axes, and this is a second
+// expect: Draw.Mesh takes one wrap, for both of its texture's axes, and this is a second
 scene Main { }
 
 local singleton Art
@@ -9,5 +9,5 @@ local singleton Art
 
 view Show(Art art)
 {
-    Draw2D.Mesh(art.corners, [0, 1, 2], art.tiles, Filter.Point, Wrap.Repeat, Wrap.Clamp);
+    Draw.Mesh(art.corners, [0, 1, 2], art.tiles, Filter.Point, Wrap.Repeat, Wrap.Clamp);
 }

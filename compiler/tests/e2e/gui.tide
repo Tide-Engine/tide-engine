@@ -177,14 +177,14 @@ string CardLabel(GUIControl card, int slot)
 view Cards(Devices devices, mut Menu menu)
 {
     if (menu.menuUp) GUI.Navigate();
-    Draw2D.SetScreen();
+    Draw.SetScreen();
     GUI.Disabled(menu.locked)
     {
         for (var i = 0; i < 3; i++)
         {
             var rect = Rect(700 + i * 110, 900, 100, 60);
             var card = GUI.Control(rect);
-            Draw2D.Text(CardLabel(card, i), float2(rect.x, rect.y), 16, Color.white);
+            Draw.Text(CardLabel(card, i), float2(rect.x, rect.y), 16, Color.white);
             if (card.clicked)
             {
                 menu.picked = i;

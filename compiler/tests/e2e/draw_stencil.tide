@@ -53,27 +53,27 @@ view Blocks(mut Look look)
         look.corners = [Corner { }, Corner { position = float3(0, 1, 0) }, Corner { position = float3(1, 0, 0) }];
         look.faces = [0, 1, 2];
     }
-    Draw2D.Rect(float2(0, 9), float2(1, 1), Color.white);
+    Draw.Rect(float2(0, 9), float2(1, 1), Color.white);
     Draw.Stencil(StencilTest.Always, 1, StencilOp.Replace)
     {
-        Draw2D.Circle(float2(0, 8), 1, Color.white);
+        Draw.Circle(float2(0, 8), 1, Color.white);
         Draw.Stencil(StencilTest.Equal, 1)
         {
-            Draw2D.Rect(float2(0, 7), float2(1, 1), Color.white);
+            Draw.Rect(float2(0, 7), float2(1, 1), Color.white);
         }
-        Draw2D.Rect(float2(0, 6), float2(1, 1), Color.white);
+        Draw.Rect(float2(0, 6), float2(1, 1), Color.white);
     }
-    Draw2D.Rect(float2(0, 5), float2(1, 1), Color.white);
+    Draw.Rect(float2(0, 5), float2(1, 1), Color.white);
 
     // Listed with commas, beside the other settings: 3D meshes and text take it as shapes do
     Draw.Blend(Blend.Add),
     Draw.Stencil(StencilTest.Less, 2),
-    Draw3D.Depth(Depth.Read)
+    Draw.Depth(Depth.Read)
     {
-        Draw3D.Cube(float3(0, 0, 4), float3(1, 1, 1), Color.white);
-        Draw2D.Text("in", float2(0, 4), 8, Color.white);
+        Draw.Cube(float3(0, 0, 4), float3(1, 1, 1), Color.white);
+        Draw.Text("in", float2(0, 4), 8, Color.white);
     }
-    Draw2D.Rect(float2(0, 3), float2(1, 1), Color.white);
+    Draw.Rect(float2(0, 3), float2(1, 1), Color.white);
 }
 
 // The same setting around each entity's shape: said once, and nothing between them.
@@ -81,7 +81,7 @@ view Panes(Pane pane)
 {
     Draw.Stencil(StencilTest.Equal, 3)
     {
-        Draw2D.Rect(pane.position, float2(1, 1), Color.white);
+        Draw.Rect(pane.position, float2(1, 1), Color.white);
     }
 }
 
@@ -91,7 +91,7 @@ void Guarded(bool leave) fails Trouble
     Draw.Blend(Blend.Add)
     {
         try Hide(leave); // Its error leaves through both
-        Draw2D.Rect(float2(1, 9), float2(1, 1), Color.white);
+        Draw.Rect(float2(1, 9), float2(1, 1), Color.white);
     }
 }
 
@@ -117,7 +117,7 @@ view Early(Look look)
             if (i == 2) break;
         }
     }
-    Draw2D.Rect(float2(counted, 8), float2(1, 1), Color.white);
+    Draw.Rect(float2(counted, 8), float2(1, 1), Color.white);
 }
 
 frag Flat(Corner vertex, out Color color)
@@ -130,19 +130,19 @@ view Values(Look look)
 {
     Draw.Stencil(look.kept, look.layer, look.does)
     {
-        Draw3D.Mesh(look.corners, look.faces, float4x4.identity, Flat);
+        Draw.Mesh(look.corners, look.faces, float4x4.identity, Flat);
     }
     Draw.Stencil(default, 7, StencilOp.Increment) // Every pixel passes: its number is read by nothing
     {
-        Draw2D.Rect(float2(2, 9), float2(1, 1), Color.white);
+        Draw.Rect(float2(2, 9), float2(1, 1), Color.white);
     }
     Draw.Stencil(StencilTest.Always, 9) // Neither tests nor stores: no stencil at all
     {
-        Draw2D.Rect(float2(2, 8), float2(1, 1), Color.white);
+        Draw.Rect(float2(2, 8), float2(1, 1), Color.white);
     }
     Draw.Stencil(operation: StencilOp.Replace, test: StencilTest.Always, value: look.layer - 294)
     {
-        Draw2D.Rect(float2(2, 7), float2(1, 1), Color.white);
+        Draw.Rect(float2(2, 7), float2(1, 1), Color.white);
     }
 }
 
@@ -161,7 +161,7 @@ view Targets(Look look)
         look.target.Rect(float2(3, 7), float2(1, 1), Color.white);
         look.target.SetStencil();
         look.target.Rect(float2(3, 6), float2(1, 1), Color.white);
-        Draw2D.Rect(float2(3, 5), float2(1, 1), Color.white); // ...and a target's is nothing to the window's
+        Draw.Rect(float2(3, 5), float2(1, 1), Color.white); // ...and a target's is nothing to the window's
     }
 }
 
@@ -174,7 +174,7 @@ view Sets()
 [After(Sets)]
 view Later()
 {
-    Draw2D.Rect(float2(4, 9), float2(1, 1), Color.white);
+    Draw.Rect(float2(4, 9), float2(1, 1), Color.white);
     Draw.SetStencil();
-    Draw2D.Rect(float2(4, 8), float2(1, 1), Color.white);
+    Draw.Rect(float2(4, 8), float2(1, 1), Color.white);
 }

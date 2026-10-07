@@ -13,7 +13,7 @@ asset string rules = "rules.txt";           // UTF-8 text
 asset List<byte> table = "data/table.bin";  // Any file, as its bytes
 ```
 
-Code reads `hero` wherever it reads a `Grid2<Color>`: a system indexes its cells, a view draws it as a texture with `Draw2D.Mesh`, and a frag samples it by name, `hero.Sample(uv)`, as it samples a singleton's grid. The four types are the ones there are for now: `string`, `List<byte>`, `Grid2<Color>` and `Texture`.
+Code reads `hero` wherever it reads a `Grid2<Color>`: a system indexes its cells, a view draws it as a texture with `Draw.Mesh`, and a frag samples it by name, `hero.Sample(uv)`, as it samples a singleton's grid. The four types are the ones there are for now: `string`, `List<byte>`, `Grid2<Color>` and `Texture`.
 
 ::: tide-example assets A sprite from a file
 <<< @/examples/assets.tide
@@ -40,10 +40,10 @@ local singleton Player
 
 view Show(mut Player player)
 {
-    Draw2D.Mesh(corners, faces, hero);
-    Draw2D.Mesh(corners, faces, run[player.frame % run.count], Filter.Point);
+    Draw.Mesh(corners, faces, hero);
+    Draw.Mesh(corners, faces, run[player.frame % run.count], Filter.Point);
     player.badge = icons["art/icons/star.png"];
-    Draw2D.Mesh(small, faces, player.badge);
+    Draw.Mesh(small, faces, player.badge);
 }
 ```
 
@@ -78,7 +78,7 @@ asset List<Texture> frames = "art/walk/*.png";              // Images to draw wi
 
 A map's keys are the paths as you'd have written them, `"art/tiles/grass.png"`, so a game finds a file by name: `tiles["art/tiles/grass.png"]`, `tiles.Has(name)`. A glob that matches nothing is an error, and so is a glob for a type that holds one file, or one file for a type that holds many.
 
-A frag samples an asset by its own name: it can't index a list of them (`run[1].Sample(uv)` is an error), so declare the one it samples as an asset of its own, or for a `Texture`, give the draw that one as the frag's source: `Draw2D.Mesh(corners, faces, frames[1], Shade)`.
+A frag samples an asset by its own name: it can't index a list of them (`run[1].Sample(uv)` is an error), so declare the one it samples as an asset of its own, or for a `Texture`, give the draw that one as the frag's source: `Draw.Mesh(corners, faces, frames[1], Shade)`.
 
 ### URLs
 

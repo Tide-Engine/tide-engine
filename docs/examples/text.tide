@@ -12,21 +12,21 @@ local singleton Label
 
 view Show(mut Label label)
 {
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw2D.SetScreen();
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetScreen();
     var at = float2(Screen.width * 0.5, Screen.height * 0.3);
     var anchor = Anchor(label.anchor);
     var font = label.bold ? Font.Bold : Font.Regular;
 
     // The box MeasureText gives is the one an anchor names a place of.
-    var size = Draw2D.MeasureText(label.words, label.size, font);
+    var size = Draw.MeasureText(label.words, label.size, font);
     var corner = at - float2(size.x * (label.anchor % 3) * 0.5, size.y * (label.anchor / 3) * 0.5);
-    Draw2D.WireRect(corner + size * 0.5, size, Color(0.3, 0.3, 0.33));
-    Draw2D.Text(label.words, at, label.size, Color.white, anchor, font);
+    Draw.WireRect(corner + size * 0.5, size, Color(0.3, 0.3, 0.33));
+    Draw.Text(label.words, at, label.size, Color.white, anchor, font);
 
     // The position the text was given.
-    Draw2D.Line(at - float2(10, 0), at + float2(10, 0), 2, Color(0.98, 0.75, 0.14));
-    Draw2D.Line(at - float2(0, 10), at + float2(0, 10), 2, Color(0.98, 0.75, 0.14));
+    Draw.Line(at - float2(10, 0), at + float2(10, 0), 2, Color(0.98, 0.75, 0.14));
+    Draw.Line(at - float2(0, 10), at + float2(0, 10), 2, Color(0.98, 0.75, 0.14));
 
     GUI.SetTheme(GUITheme { radius = 6 });
     GUILayout.Area(Rect(12, Screen.height - 178, Screen.width - 24, 166))

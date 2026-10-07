@@ -32,8 +32,8 @@ void Use(RenderTarget target, List<Vertex> corners)
     target.Mesh(corners, [0, 1, 2]);
     var measured = target.MeasureText("measured", 16) + target.WorldToScreen(float2(1, 1));
     target.Circle(measured, 2, Color.white);
-    Draw2D.Mesh(corners, [0, 1, 2, 2, 1, 5], target.color);
-    Draw2D.Mesh(corners, [0, 1, 2], target.color, Filter.Point);
+    Draw.Mesh(corners, [0, 1, 2, 2, 1, 5], target.color);
+    Draw.Mesh(corners, [0, 1, 2], target.color, Filter.Point);
 }
 
 view Targets(mut Buffers buffers)
@@ -89,8 +89,8 @@ view Targets(mut Buffers buffers)
     if (buffers.frames == 6) buffers.alias.Resize(inf, 2);
     Use(buffers.kept, buffers.corners);
     Use(buffers.alias, buffers.corners);
-    Draw2D.Mesh(buffers.corners, [0, 1, 2], buffers.image);
-    Draw3D.Mesh([Vertex3 { }, Vertex3 { position = float3(1, 0, 0) }, Vertex3 { position = float3(0, 1, 0) }], [0, 1, 2],
+    Draw.Mesh(buffers.corners, [0, 1, 2], buffers.image);
+    Draw.Mesh([Vertex3 { }, Vertex3 { position = float3(1, 0, 0) }, Vertex3 { position = float3(0, 1, 0) }], [0, 1, 2],
         float4x4.identity, buffers.image);
 
     // A target drawn into from its own picture

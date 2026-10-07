@@ -39,5 +39,5 @@ frag Spread(Corner corner, out Color color, Art art)
 
 view Show(Art art)
 {
-    Draw2D.Mesh(art.quad, art.faces, Spread);
+    Draw.Mesh(art.quad, art.faces, Spread);
 }

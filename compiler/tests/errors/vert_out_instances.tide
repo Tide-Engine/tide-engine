@@ -17,5 +17,5 @@ frag Look(Corner corner, FromLamp lamp, out Color color)
 }
 view Show(Models models, Lamps lamps)
 {
-    Draw3D.Instanced(models.crate, models.faces, lamps.all, Place, Look);
+    Draw.Instanced(models.crate, models.faces, lamps.all, Place, Look);
 }

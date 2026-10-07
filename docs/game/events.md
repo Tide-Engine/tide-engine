@@ -145,7 +145,7 @@ local event(Hit hit) ShowHit(Body body, mut Fighter fighter, mut Fx fx)
 view DrawFighter(Body body, mut Fighter fighter)
 {
     fighter.flash = Math.Max(0, fighter.flash - Frame.dt);
-    Draw2D.Circle(body.position, 0.5, fighter.flash > 0 ? Color.white : Color.red);
+    Draw.Circle(body.position, 0.5, fighter.flash > 0 ? Color.white : Color.red);
 }
 ```
 

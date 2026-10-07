@@ -123,16 +123,16 @@ A shape is read once, when it's put on its body, the tick after it's spawned or 
 
 A shape with `sensor` touches nothing and reports what's in it: see [Sensors](#sensors).
 
-`Draw3D` has a cube and a sphere to draw the first two with, as the example does. A capsule is a cylinder and a sphere at each end:
+`Draw` has a cube and a sphere to draw the first two with, as the example does. A capsule is a cylinder and a sphere at each end:
 
 ```csharp
 view Capsules(Body body, Capsule capsule)
 {
     var straight = capsule.height - 2 * capsule.radius;
     var end = Math.Rotate(body.rotation, float3(0, straight / 2, 0));
-    Draw3D.Cylinder(body.position, capsule.radius, straight, body.rotation, Color.white);
-    Draw3D.Sphere(body.position + end, capsule.radius, Color.white);
-    Draw3D.Sphere(body.position - end, capsule.radius, Color.white);
+    Draw.Cylinder(body.position, capsule.radius, straight, body.rotation, Color.white);
+    Draw.Sphere(body.position + end, capsule.radius, Color.white);
+    Draw.Sphere(body.position - end, capsule.radius, Color.white);
 }
 ```
 
@@ -465,9 +465,9 @@ They can be asked from a system, an event's or a command's handler, a [view](../
 view Aim(Physics physics, Devices devices)
 {
     var screen = Screen.Flip(devices.pointer.position);
-    var from = Draw3D.ScreenRayOrigin(screen);
-    if (Raycast(physics, from, from + Draw3D.ScreenRayDirection(screen) * 100, out var hit))
-        Draw3D.Sphere(hit.point, 0.05, Color.white);
+    var from = Draw.ScreenRayOrigin(screen);
+    if (Raycast(physics, from, from + Draw.ScreenRayDirection(screen) * 100, out var hit))
+        Draw.Sphere(hit.point, 0.05, Color.white);
 }
 ```
 

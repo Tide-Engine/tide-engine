@@ -57,7 +57,7 @@ system Count(mut Log log)
 
 virtual view Show(Position position)
 {
-    Draw2D.Circle(float2(position.value, 0), 1, Color.white);
+    Draw.Circle(float2(position.value, 0), 1, Color.white);
 }
 
 virtual event(Spawned) Setup(with Main)

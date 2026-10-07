@@ -31,5 +31,5 @@ event(Spawned) Setup(with Main)
 
 view Show(Models models)
 {
-    Draw2D.Clear(models.wood.Sample(float2(0, 0)));
+    Draw.Clear(models.wood.Sample(float2(0, 0)));
 }

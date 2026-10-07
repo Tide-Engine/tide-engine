@@ -91,9 +91,9 @@ scene Main
 view Show(Probe probe)
 {
     var w = float(probe.heroWidth);
-    Draw2D.Mesh([Vertex { }, Vertex { position = float2(w, 0), uv = float2(1, 0) }, Vertex { position = float2(0, 1), uv = float2(0, 1) }],
+    Draw.Mesh([Vertex { }, Vertex { position = float2(w, 0), uv = float2(1, 0) }, Vertex { position = float2(0, 1), uv = float2(0, 1) }],
                 [0, 1, 2], hero);
-    Draw2D.Mesh([Vertex { }, Vertex { position = float2(1, 0), uv = float2(1, 0) }, Vertex { position = float2(0, 1), uv = float2(0, 1) }],
+    Draw.Mesh([Vertex { }, Vertex { position = float2(1, 0), uv = float2(1, 0) }, Vertex { position = float2(0, 1), uv = float2(0, 1) }],
                 [0, 1, 2], Shade);
 }
 

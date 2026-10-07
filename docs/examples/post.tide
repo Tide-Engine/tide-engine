@@ -30,7 +30,7 @@ view DrawScene(mut Post post)
     post.turn += Math.Min(Frame.dt, 0.05);
     if (post.turn > Math.TAU) post.turn -= Math.TAU;
 
-    // A target has the drawing methods Draw2D has, and a camera of its own.
+    // A target has the drawing methods Draw has, and settings of its own.
     post.scene.Clear(Color(0.086, 0.086, 0.094));
     post.scene.SetCamera(float2(0), 2);
     for (var i = 0; i < 7; i++)
@@ -47,9 +47,9 @@ view DrawScene(mut Post post)
 
 view Controls(mut Post post)
 {
-    Draw2D.SetScreen();
-    Draw2D.Text("As drawn", float2(16, 14), 16, Color.white);
-    Draw2D.Text("Through the frag", float2(Screen.width - 16, 14), 16, Color.white, Anchor.UpperRight);
+    Draw.SetScreen();
+    Draw.Text("As drawn", float2(16, 14), 16, Color.white);
+    Draw.Text("Through the frag", float2(Screen.width - 16, 14), 16, Color.white, Anchor.UpperRight);
     GUI.SetTheme(GUITheme { radius = 6 });
     GUILayout.Area(Rect(12, Screen.height - 86, Screen.width - 24, 74))
     {

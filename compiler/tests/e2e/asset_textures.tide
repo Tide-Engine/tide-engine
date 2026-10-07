@@ -76,44 +76,44 @@ view Fill(mut Art art)
 // Drawn by name, as one of a list, by a key, and as the value a field holds
 view Images(Art art)
 {
-    Draw2D.Mesh(art.flat, art.faces, hero);
-    Draw2D.Mesh(art.flat, art.faces, heroAgain, Filter.Point);            // The same image: one texture
-    Draw2D.Mesh(art.flat, art.faces, run[2], Filter.Point);
-    Draw2D.Mesh(art.flat, art.faces, runByName["assets/run/1.png"]);
-    Draw2D.Mesh(art.flat, art.faces, art.kept, Filter.Point);             // run[1] again
-    Draw2D.Mesh(art.flat, art.faces, runByName["assets/run/9.png"]);      // No such key: the default Texture, which is none
-    Draw2D.Mesh(art.flat, art.faces, run[7], Filter.Point);               // Past the list's end: the same
-    Draw3D.Mesh(art.solid, art.faces, float4x4.identity, hero);
-    foreach (var frame in run) Draw2D.Mesh(art.flat, art.faces, frame, Filter.Point, Wrap.Mirror);
+    Draw.Mesh(art.flat, art.faces, hero);
+    Draw.Mesh(art.flat, art.faces, heroAgain, Filter.Point);            // The same image: one texture
+    Draw.Mesh(art.flat, art.faces, run[2], Filter.Point);
+    Draw.Mesh(art.flat, art.faces, runByName["assets/run/1.png"]);
+    Draw.Mesh(art.flat, art.faces, art.kept, Filter.Point);             // run[1] again
+    Draw.Mesh(art.flat, art.faces, runByName["assets/run/9.png"]);      // No such key: the default Texture, which is none
+    Draw.Mesh(art.flat, art.faces, run[7], Filter.Point);               // Past the list's end: the same
+    Draw.Mesh(art.solid, art.faces, float4x4.identity, hero);
+    foreach (var frame in run) Draw.Mesh(art.flat, art.faces, frame, Filter.Point, Wrap.Mirror);
     art.target.Mesh(art.flat, art.faces, hero);
 }
 
 // What a declaration says, wherever a draw that names it doesn't
 view Declared(Art art)
 {
-    Draw2D.Rect(float2(0, 0), float2(1, 1), Color.white);
-    Draw2D.Mesh(art.flat, art.faces, tiles);                              // Both its declaration's
-    Draw2D.Mesh(art.flat, art.faces, tiles, Filter.Bilinear);             // The draw's filter, the declaration's wrap
-    Draw2D.Mesh(art.flat, art.faces, tiles, Filter.Bilinear, Wrap.Clamp); // Both the draw's
-    Draw2D.Mesh(art.flat, art.faces, glass);                              // A grid's asset
-    Draw2D.Mesh(art.flat, art.faces, crisp[0]);                           // One of a list
-    Draw2D.Mesh(art.flat, art.faces, tiled["assets/run/2.png"]);          // ...and of a map
-    Draw2D.Mesh(art.flat, art.faces, art.paint);                          // A grid's field
-    Draw2D.Mesh(art.flat, art.faces, art.bare);                           // One that says nothing
-    Draw2D.Mesh(art.flat, art.faces, art.keptTiles);                      // A value in a field names no declaration
-    Draw3D.Mesh(art.solid, art.faces, float4x4.identity, tiles);
+    Draw.Rect(float2(0, 0), float2(1, 1), Color.white);
+    Draw.Mesh(art.flat, art.faces, tiles);                              // Both its declaration's
+    Draw.Mesh(art.flat, art.faces, tiles, Filter.Bilinear);             // The draw's filter, the declaration's wrap
+    Draw.Mesh(art.flat, art.faces, tiles, Filter.Bilinear, Wrap.Clamp); // Both the draw's
+    Draw.Mesh(art.flat, art.faces, glass);                              // A grid's asset
+    Draw.Mesh(art.flat, art.faces, crisp[0]);                           // One of a list
+    Draw.Mesh(art.flat, art.faces, tiled["assets/run/2.png"]);          // ...and of a map
+    Draw.Mesh(art.flat, art.faces, art.paint);                          // A grid's field
+    Draw.Mesh(art.flat, art.faces, art.bare);                           // One that says nothing
+    Draw.Mesh(art.flat, art.faces, art.keptTiles);                      // A value in a field names no declaration
+    Draw.Mesh(art.solid, art.faces, float4x4.identity, tiles);
     art.target.Mesh(art.flat, art.faces, tiles);
-    foreach (var frame in crisp) Draw2D.Mesh(art.flat, art.faces, frame); // Each of a list, as a loop goes through it
+    foreach (var frame in crisp) Draw.Mesh(art.flat, art.faces, frame); // Each of a list, as a loop goes through it
 }
 
 // A vertex of the game's with no frag: its color times the texture, read as its declaration says
 view Corners(Art art)
 {
-    Draw2D.Rect(float2(0, 0), float2(1, 1), Color.white);
-    Draw2D.Mesh(art.corners, art.faces, tiles);
-    Draw2D.Mesh(art.corners, art.faces, tiles, Filter.Bilinear);
-    Draw2D.Mesh(art.corners, art.faces, art.paint);
-    Draw2D.Mesh(art.corners, art.faces, hero);
+    Draw.Rect(float2(0, 0), float2(1, 1), Color.white);
+    Draw.Mesh(art.corners, art.faces, tiles);
+    Draw.Mesh(art.corners, art.faces, tiles, Filter.Bilinear);
+    Draw.Mesh(art.corners, art.faces, art.paint);
+    Draw.Mesh(art.corners, art.faces, hero);
 }
 
 // A frag samples an image by its name, as it samples a grid's asset: each as its declaration says, or as it says
@@ -147,14 +147,14 @@ frag Given3(Vertex3 vertex, out Color color, Texture source)
 
 view Shaded(Art art)
 {
-    Draw2D.Mesh(art.corners, art.faces, Named);
-    Draw2D.Mesh(art.corners, art.faces, tiles, Given);
-    Draw2D.Mesh(art.corners, art.faces, hero, Given);          // No declared sampling: blended, the cells at the edge
-    Draw2D.Mesh(art.corners, art.faces, art.keptTiles, Given); // A value names no declaration
+    Draw.Mesh(art.corners, art.faces, Named);
+    Draw.Mesh(art.corners, art.faces, tiles, Given);
+    Draw.Mesh(art.corners, art.faces, hero, Given);          // No declared sampling: blended, the cells at the edge
+    Draw.Mesh(art.corners, art.faces, art.keptTiles, Given); // A value names no declaration
     Draw.Blit(tiles, art.target, Copied);
     Draw.Blit(art.paint, art.target, Copied);
     Draw.Blit(hero, art.target, Copied);
     // A list's instances: through a frag, and the engine's own
-    Draw3D.Instanced(art.solid, art.faces, art.places, tiles, Given3);
-    Draw3D.Instanced(art.solid, art.faces, art.places, tiles, Filter.Bilinear);
+    Draw.Instanced(art.solid, art.faces, art.places, tiles, Given3);
+    Draw.Instanced(art.solid, art.faces, art.places, tiles, Filter.Bilinear);
 }

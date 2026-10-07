@@ -185,7 +185,7 @@ TIDE_TEST(font_text_is_as_wide_as_its_glyphs_go)
                > tide_font_measure(TIDE_FONT_REGULAR, "Right button erases", 16.0f, 1.0f));
 }
 
-// What a game measures to lay text out (Draw2D.MeasureText): a line is as
+// What a game measures to lay text out (Draw.MeasureText): a line is as
 // high as its size, each newline adds the whole pixels lines are apart, and
 // the width is the widest line's.
 TIDE_TEST(font_text_is_as_high_as_its_lines_go)

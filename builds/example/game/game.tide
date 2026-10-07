@@ -61,18 +61,18 @@ system Bounce(mut Body body, with Ball)
 
 view Background()
 {
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw2D.WireRect(float2(0), float2(360), Color(0.24, 0.25, 0.27));
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.WireRect(float2(0), float2(360), Color(0.24, 0.25, 0.27));
 }
 
 // A mod can draw the ball its own way: virtual says this can be replaced.
 virtual view DrawBalls(Body body, with Ball)
 {
-    Draw2D.Circle(body.position, body.radius, Color(0.98, 0.44, 0.52));
+    Draw.Circle(body.position, body.radius, Color(0.98, 0.44, 0.52));
 }
 
 view DrawPlayers(Body body, Owner owner, Session session)
 {
     var color = owner.player == session.player ? Color(0.98, 0.75, 0.14) : Color(0.64, 0.64, 0.68);
-    Draw2D.Circle(body.position, body.radius, color);
+    Draw.Circle(body.position, body.radius, color);
 }

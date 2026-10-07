@@ -1,3 +1,0 @@
-// expect: Draw2D can only be used in views, and in functions they call
-scene Main { }
-system Show() { var point = Draw2D.ScreenToWorld(float2(0)); }

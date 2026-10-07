@@ -6,7 +6,7 @@
 #include "tide/grid.h"
 #include "tide/list.h"
 
-// Tide's Draw2D.Mesh/Draw3D.Mesh, as generated code calls it: lists of `Vertex` and of int,
+// Tide's Draw.Mesh/Draw.Mesh, as generated code calls it: lists of `Vertex` and of int,
 // and a `Grid2<Color>` to draw with, whose cell (0, 0) is the texture's first
 // pixel.
 //
@@ -32,7 +32,7 @@ void tide_draw_mesh_texture_wrapped(tide_draw_list *d, tide_list vertices, tide_
                                     tide_texture_ref texture, int32_t filter, int32_t wrap);
 
 // The same in 3D, with lists of `Vertex3` and a transform: Tide's
-// Draw3D.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]]). The lists are
+// Draw.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]]). The lists are
 // a mesh the draw list keeps (see tide_draw_mesh_slot): a list that doesn't
 // change costs a hash of its pages' hashes to draw again, not a copy.
 void tide_draw_mesh3_lists(tide_draw_list *d, tide_list vertices, tide_list indices, tide_float4x4 transform);
@@ -45,7 +45,7 @@ void tide_draw_mesh3_texture(tide_draw_list *d, tide_list vertices, tide_list in
 void tide_draw_mesh3_texture_wrapped(tide_draw_list *d, tide_list vertices, tide_list indices, tide_float4x4 transform,
                                      tide_texture_ref texture, int32_t filter, int32_t wrap);
 
-// Draw3D.Instanced with a list of float4x4 transforms. The mesh and texture
+// Draw.Instanced with a list of float4x4 transforms. The mesh and texture
 // are found once, and all transforms copied into one run, in list order.
 // An empty transform list records nothing and copies no resources.
 void tide_draw_mesh3_instances_lists(tide_draw_list *d, tide_list vertices, tide_list indices, tide_list transforms);
@@ -72,7 +72,7 @@ uint32_t tide_draw_grid_texture(tide_draw_list *d, tide_grid texture, const tide
 void tide_draw_mesh_shaded(tide_draw_list *d, const tide_shader *shader, tide_list vertices, tide_list indices,
                            const void *instance, const void *uniforms, const uint32_t *textures, uint32_t sampling);
 
-// Draw2D.Instanced and Draw3D.Instanced through a shader: generated code packs the list's values
+// Draw.Instanced and Draw.Instanced through a shader: generated code packs the list's values
 // into `count` instances, tide_shader_instance_size bytes each. The mesh
 // is found once, then all instance bytes copied into one run.
 void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shader, tide_list vertices, tide_list indices,

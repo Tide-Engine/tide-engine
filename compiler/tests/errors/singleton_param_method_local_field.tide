@@ -6,5 +6,5 @@ scene Main { }
 view Show(Score score)
 {
     var helper = Helper { };
-    if (helper.Painted(score) > 0) Draw2D.Clear(Color.black);
+    if (helper.Painted(score) > 0) Draw.Clear(Color.black);
 }

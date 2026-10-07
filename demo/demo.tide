@@ -106,27 +106,27 @@ local singleton Look
 
 view DrawArena(Arena arena, Look look)
 {
-    Draw2D.Clear(Color(0.08, 0.08, 0.11));
+    Draw.Clear(Color(0.08, 0.08, 0.11));
     // The arena fits the screen whatever its shape: the camera takes half the
     // height it shows, which on a screen narrower than the arena (a phone's,
     // upright) is the height that shows it all across.
     var across = arena.halfSize.x * Screen.height / Screen.width;
-    Draw2D.SetCamera(float2(0, 0), Math.Max(arena.halfSize.y, across) * look.zoom);
-    Draw2D.WireRect(float2(0, 0), arena.halfSize * 2, Color(0.24, 0.24, 0.31));
+    Draw.SetCamera(float2(0, 0), Math.Max(arena.halfSize.y, across) * look.zoom);
+    Draw.WireRect(float2(0, 0), arena.halfSize * 2, Color(0.24, 0.24, 0.31));
     var help = float2(8 - arena.halfSize.x, 26 - arena.halfSize.y);
-    Draw2D.Text("move: WASD, arrows or left stick    fire: space or A    options: Esc or Start", help, 18,
+    Draw.Text("move: WASD, arrows or left stick    fire: space or A    options: Esc or Start", help, 18,
               Color(0.43, 0.43, 0.51));
 }
 
 view DrawBalls(Body body, Ball ball)
 {
-    Draw2D.Circle(body.position, body.radius, ball.color);
+    Draw.Circle(body.position, body.radius, ball.color);
 }
 
 view DrawPlayers(Body body, Aim aim, with Owner, Look look)
 {
-    Draw2D.Circle(body.position, body.radius, look.player);
-    if (look.aim) Draw2D.Line(body.position, body.position + aim.direction * (body.radius + 12), look.player);
+    Draw.Circle(body.position, body.radius, look.player);
+    if (look.aim) Draw.Line(body.position, body.position + aim.direction * (body.radius + 12), look.player);
 }
 
 // The GUI, over the world. The button, Escape or Start bring up the options,

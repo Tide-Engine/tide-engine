@@ -13,13 +13,13 @@ local singleton Lens
 // The wall: rows of bricks, each row half a brick along from the last.
 void Wall()
 {
-    Draw2D.Rect(float2(Screen.width, Screen.height) * 0.5, float2(Screen.width, Screen.height), Color(0.24, 0.25, 0.27));
+    Draw.Rect(float2(Screen.width, Screen.height) * 0.5, float2(Screen.width, Screen.height), Color(0.24, 0.25, 0.27));
     for (var row = 0; row < 17; row++)
     {
         for (var column = -1; column < 8; column++)
         {
             var corner = float2(column * 56 + (row % 2) * 28, row * 24);
-            Draw2D.RoundRect(corner + float2(28, 12), float2(52, 20), 3, Color(0.13, 0.13, 0.15));
+            Draw.RoundRect(corner + float2(28, 12), float2(52, 20), 3, Color(0.13, 0.13, 0.15));
         }
     }
 }
@@ -27,25 +27,25 @@ void Wall()
 // What's behind it: pipes, and what flows through them.
 void Pipes(float time)
 {
-    Draw2D.Rect(float2(Screen.width, Screen.height) * 0.5, float2(Screen.width, Screen.height), Color(0.05, 0.05, 0.06));
+    Draw.Rect(float2(Screen.width, Screen.height) * 0.5, float2(Screen.width, Screen.height), Color(0.05, 0.05, 0.06));
     for (var pipe = 0; pipe < 4; pipe++)
     {
         var y = 60 + pipe * 80;
         var color = pipe % 2 == 0 ? Color(0.18, 0.83, 0.75) : Color(0.98, 0.44, 0.52);
-        Draw2D.Line(float2(0, y), float2(Screen.width, y), 18, Color(0.24, 0.25, 0.27));
+        Draw.Line(float2(0, y), float2(Screen.width, y), 18, Color(0.24, 0.25, 0.27));
         for (var drop = 0; drop < 6; drop++)
         {
             var along = Math.Frac(time * (0.12 + pipe * 0.03) + drop / 6.0);
             var x = pipe % 2 == 0 ? along * Screen.width : (1 - along) * Screen.width;
-            Draw2D.Circle(float2(x, y), 6, color);
+            Draw.Circle(float2(x, y), 6, color);
         }
     }
 }
 
 view Show(mut Lens lens, Devices devices)
 {
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw2D.SetScreen();
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetScreen();
     lens.time += Frame.dt;
     var pointer = Screen.Flip(devices.pointer.position);
     if (pointer.y < Screen.height - 64) lens.at = pointer;
@@ -54,7 +54,7 @@ view Show(mut Lens lens, Devices devices)
     // It's drawn clear, so nothing of it shows: it's there for what it stores.
     Draw.Stencil(StencilTest.Always, 1, StencilOp.Replace)
     {
-        Draw2D.Circle(lens.at, lens.radius, Color.clear);
+        Draw.Circle(lens.at, lens.radius, Color.clear);
     }
     // The wall is drawn where the number isn't the lens's...
     Draw.Stencil(lens.outside ? StencilTest.Equal : StencilTest.NotEqual, 1)
@@ -67,7 +67,7 @@ view Show(mut Lens lens, Devices devices)
         Pipes(lens.time);
     }
     // With no test again: the lens's rim, over both.
-    Draw2D.WireCircle(lens.at, lens.radius, 3, Color(0.98, 0.75, 0.14));
+    Draw.WireCircle(lens.at, lens.radius, 3, Color(0.98, 0.75, 0.14));
 
     GUI.SetTheme(GUITheme { radius = 6 });
     GUILayout.Area(Rect(12, Screen.height - 52, Screen.width - 24, 40))

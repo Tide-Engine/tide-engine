@@ -1,4 +1,4 @@
-// expect: no version of Draw2D.Mesh takes (List<Vertex>, List<int>, Filter)
+// expect: no version of Draw.Mesh takes (List<Vertex>, List<int>, Filter)
 scene Main { }
 
 local singleton Art
@@ -8,5 +8,5 @@ local singleton Art
 
 view Show(Art art)
 {
-    Draw2D.Mesh(art.corners, [0, 1, 2], Filter.Point);
+    Draw.Mesh(art.corners, [0, 1, 2], Filter.Point);
 }

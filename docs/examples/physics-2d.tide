@@ -49,11 +49,11 @@ event(Touched) Count(mut Tally tally, with Ball)
 
 view Play(Devices devices, query (Body body, with Crate) crates)
 {
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw2D.SetCamera(float2(0, 4.5), 5);
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0, 4.5), 5);
     if (!devices.pointer.press.down) return;
     // A tap on a crate kicks it, and a tap anywhere else drops a ball there.
-    var at = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    var at = Draw.ScreenToWorld(Screen.Flip(devices.pointer.position));
     mut var kicked = false;
     foreach (var crate in crates)
     {
@@ -67,25 +67,25 @@ view Play(Devices devices, query (Body body, with Crate) crates)
 // A view sees a body where the last step left it, blended between ticks.
 view Walls(Body body, Box box, without Crate)
 {
-    Draw2D.Rect(body.position, box.size, Color(0.24, 0.25, 0.27));
+    Draw.Rect(body.position, box.size, Color(0.24, 0.25, 0.27));
 }
 
 view Crates(Body body, Box box, with Crate)
 {
-    Draw2D.RoundRect(body.position, box.size - float2(0.06), 0.1, body.angle, Color(0.98, 0.75, 0.14));
+    Draw.RoundRect(body.position, box.size - float2(0.06), 0.1, body.angle, Color(0.98, 0.75, 0.14));
 }
 
 // A ball has a spoke, from its middle to its edge, to show how it's turned.
 view Balls(Body body, Circle circle)
 {
-    Draw2D.Circle(body.position, circle.radius, Color(0.18, 0.83, 0.75));
+    Draw.Circle(body.position, circle.radius, Color(0.18, 0.83, 0.75));
     var spoke = float2(Math.Cos(body.angle), Math.Sin(body.angle)) * circle.radius;
-    Draw2D.Line(body.position, body.position + spoke, 0.07, Color(0.086, 0.086, 0.094));
+    Draw.Line(body.position, body.position + spoke, 0.07, Color(0.086, 0.086, 0.094));
 }
 
 view Hud(Tally tally)
 {
-    Draw2D.SetScreen();
-    Draw2D.Text("Tap a crate to kick it, or anywhere else to drop a ball", float2(16, 14), 13, Color.white);
-    Draw2D.Text($"Balls touched something {tally.touches} times", float2(16, 34), 13, Color(0.64, 0.64, 0.68));
+    Draw.SetScreen();
+    Draw.Text("Tap a crate to kick it, or anywhere else to drop a ball", float2(16, 14), 13, Color.white);
+    Draw.Text($"Balls touched something {tally.touches} times", float2(16, 34), 13, Color(0.64, 0.64, 0.68));
 }

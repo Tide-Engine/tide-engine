@@ -1,3 +1,0 @@
-// expect: Draw2D.Instanced draws 2D vertices, and 'Vertex3' has a float3 position
-scene Main { }
-view Show() { Draw2D.Instanced([Vertex3 { }], [0, 0, 0], [float4x4.identity]); }

@@ -92,5 +92,5 @@ view Casters(mut Caster caster, Lamp lamp)
 view Show(Lamp lamp)
 {
     lamp.scene.Mesh(lamp.mesh, lamp.faces, float4x4.identity, Sink, Lit);
-    Draw3D.Mesh(lamp.mesh, lamp.faces, float4x4.identity, Lit);
+    Draw.Mesh(lamp.mesh, lamp.faces, float4x4.identity, Lit);
 }

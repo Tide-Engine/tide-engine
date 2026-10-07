@@ -132,11 +132,11 @@ view Show(mut Stage stage, Devices devices)
     Draw.Blit(stage.scene.color, Draw.window, Light);
 
     // The lamp, and the spot on the floor right under it
-    Draw2D.SetScreen();
+    Draw.SetScreen();
     var under = stage.scene.WorldToScreen(float3(stage.lamp.x, 0, stage.lamp.z));
-    Draw2D.Line(float2(under.x, under.y), stage.at, 1, Color(0.64, 0.64, 0.68));
-    Draw2D.Circle(stage.at, 7, Color(0.086, 0.086, 0.094));
-    Draw2D.Circle(stage.at, 5, Color(0.98, 0.75, 0.14));
+    Draw.Line(float2(under.x, under.y), stage.at, 1, Color(0.64, 0.64, 0.68));
+    Draw.Circle(stage.at, 7, Color(0.086, 0.086, 0.094));
+    Draw.Circle(stage.at, 5, Color(0.98, 0.75, 0.14));
 
     mut string shown = "Lit, from all three images";
     if (stage.show == 1) shown = "The first image: paint";

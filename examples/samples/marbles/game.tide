@@ -630,8 +630,8 @@ frag Bump(Corner corner, out Color color, Dome dome, Instance instance)
 
 void Caption(string text, float2 at, float size, Color color, Anchor anchor, Font font = Font.Regular)
 {
-    Draw2D.Text(text, at + float2(1, 1), size, Color(0, 0, 0, 0.55), anchor, font);
-    Draw2D.Text(text, at, size, color, anchor, font);
+    Draw.Text(text, at + float2(1, 1), size, Color(0, 0, 0, 0.55), anchor, font);
+    Draw.Text(text, at, size, color, anchor, font);
 }
 
 // Seconds as a stopwatch shows them.
@@ -678,14 +678,14 @@ view Stage(mut Look look, mut Scenery scenery, mut Stick stick, mut Fx fx, Sessi
     look.scale = Math.Clamp(Math.Min(Screen.width, Screen.height) / 380.0, 1, 1.7);
     var rotation = quaternion.LookRotation(Math.Normalize(look.focus + float3(0, 0, -1) - look.eye), float3(0, 1, 0));
 
-    Draw2D.Clear(Color(0.5, 0.76, 0.95));
-    Draw2D.Screen()
+    Draw.Clear(Color(0.5, 0.76, 0.95));
+    Draw.Screen()
     {
-        Draw2D.Shape(Shape { center = float2(Screen.width, Screen.height) * 0.5, size = float2(Screen.width, Screen.height),
+        Draw.Shape(Shape { center = float2(Screen.width, Screen.height) * 0.5, size = float2(Screen.width, Screen.height),
                              color = Color(0.3, 0.56, 0.9), color2 = Color(0.72, 0.88, 0.98) });
     }
-    Draw3D.SetCamera(look.eye, rotation, fov);
-    Draw3D.Mesh(scenery.ground, scenery.groundFaces, float4x4.identity, Ground);
+    Draw.SetCamera(look.eye, rotation, fov);
+    Draw.Mesh(scenery.ground, scenery.groundFaces, float4x4.identity, Ground);
 
     for (var i = 0; i < BUMPERS; i++)
     {
@@ -696,7 +696,7 @@ view Stage(mut Look look, mut Scenery scenery, mut Stick stick, mut Fx fx, Sessi
             transform = float4x4.TRS(float3(bumper.x, Height(bumper.xy), bumper.y), quaternion.identity, float3(bumper.z * (1 + lit * 0.15))),
             glow = lit };
     }
-    Draw3D.Instanced(scenery.ball, scenery.ballFaces, scenery.domes, Bump);
+    Draw.Instanced(scenery.ball, scenery.ballFaces, scenery.domes, Bump);
 
     stick.move = float2(0);
     stick.held = false;
@@ -707,7 +707,7 @@ view Stage(mut Look look, mut Scenery scenery, mut Stick stick, mut Fx fx, Sessi
         var words = !look.joined ? "Joining the game..."
                   : session.state == SessionState.Connecting ? "Finding the game again..."
                   : "The game is over.\nOpen the link again to play.";
-        Draw2D.Screen()
+        Draw.Screen()
         {
             Caption(words, float2(Screen.width, Screen.height) * 0.5, 20 * look.scale, Color.white, Anchor.MiddleCenter);
         }
@@ -722,8 +722,8 @@ view Steer(Marble marble, Devices devices, mut Stick stick, SampleLobby lobby, w
     var pointer = devices.pointer;
     if (!pointer.press.pressed || marble.falling) return;
     var screen = Screen.Flip(pointer.position);
-    var origin = Draw3D.ScreenRayOrigin(screen);
-    var direction = Draw3D.ScreenRayDirection(screen);
+    var origin = Draw.ScreenRayOrigin(screen);
+    var direction = Draw.ScreenRayDirection(screen);
     if (direction.y > -0.001) return;
     // Where the pointer is on the ground, kept on the island: holding the sky rolls to the rim, not off it
     mut var target = origin + direction * ((marble.position.y - RADIUS - origin.y) / direction.y);
@@ -764,18 +764,18 @@ view Shadows(Marble marble)
     var up = Math.Normalize(float3(-slope.x, 1, -slope.y));
     var lie = quaternion.LookRotation(Math.Normalize(Math.Cross(float3(1, 0, 0), up)), up);
     // A disc is a cylinder too thin to have a side: seen from above, its top is all that's drawn
-    Draw3D.Depth(Depth.Read)
+    Draw.Depth(Depth.Read)
     {
-        Draw3D.Cylinder(float3(marble.position.x, Height(marble.position.xz) + 0.04, marble.position.z), RADIUS * 0.95, 0.01, lie, Color(0, 0, 0, 0.51));
+        Draw.Cylinder(float3(marble.position.x, Height(marble.position.xz) + 0.04, marble.position.z), RADIUS * 0.95, 0.01, lie, Color(0, 0, 0, 0.51));
     }
 }
 
 [After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view CoinShadows(Coin coin)
 {
-    Draw3D.Depth(Depth.Read)
+    Draw.Depth(Depth.Read)
     {
-        Draw3D.Cylinder(float3(coin.position.x, Height(coin.position) + 0.04, coin.position.y), 0.3, 0.01, Color(0, 0, 0, 0.39));
+        Draw.Cylinder(float3(coin.position.x, Height(coin.position) + 0.04, coin.position.y), 0.3, 0.01, Color(0, 0, 0, 0.39));
     }
 }
 
@@ -783,9 +783,9 @@ view CoinShadows(Coin coin)
 view Pointing(Stick stick)
 {
     if (!stick.held) return;
-    Draw3D.Depth(Depth.Read)
+    Draw.Depth(Depth.Read)
     {
-        Draw3D.Cylinder(stick.target + float3(0, 0.05, 0), 0.4, 0.01, Color(1, 1, 1, 0.7));
+        Draw.Cylinder(stick.target + float3(0, 0.05, 0), 0.4, 0.01, Color(1, 1, 1, 0.7));
     }
 }
 
@@ -796,7 +796,7 @@ view Coins(Coin coin, Look look, Scenery scenery)
     float size = coin.value > 1 ? 0.6 : 0.4;
     var at = float3(coin.position.x, Height(coin.position) + size + 0.2 + Math.Sin(look.clock * 3 + phase) * 0.1, coin.position.y);
     var turn = quaternion.AxisAngle(float3(0, 1, 0), look.clock * 2 + phase);
-    Draw3D.Mesh(scenery.disc, scenery.discFaces, float4x4.TRS(at, turn, float3(size)), Gold);
+    Draw.Mesh(scenery.disc, scenery.discFaces, float4x4.TRS(at, turn, float3(size)), Gold);
 }
 
 [After(SampleLobbyBegin), Before(SampleLobbyPages)]
@@ -811,14 +811,14 @@ view Marbles(mut Marble marble, Scenery scenery)
         var axis = float3(marble.velocity.z, 0, -marble.velocity.x) / pace;
         marble.roll = Math.Normalize(Math.Mul(quaternion.AxisAngle(axis, pace * dt / RADIUS), marble.roll));
     }
-    Draw3D.Mesh(scenery.ball, scenery.ballFaces, float4x4.TRS(marble.position, marble.roll, float3(RADIUS)), Glass);
+    Draw.Mesh(scenery.ball, scenery.ballFaces, float4x4.TRS(marble.position, marble.roll, float3(RADIUS)), Glass);
 }
 
 [After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Mine(Marble marble, Look look, with ownership)
 {
-    var above = Draw3D.WorldToScreen(marble.position + float3(0, RADIUS + 0.35, 0));
-    Draw2D.Screen()
+    var above = Draw.WorldToScreen(marble.position + float3(0, RADIUS + 0.35, 0));
+    Draw.Screen()
     {
         Caption("you", above.xy, 13 * look.scale, Color.white, Anchor.LowerCenter, Font.Bold);
     }
@@ -828,7 +828,7 @@ view Mine(Marble marble, Look look, with ownership)
 view Effects(mut Fx fx, Look look)
 {
     var dt = Math.Min(Frame.dt, 0.05);
-    Draw2D.Screen()
+    Draw.Screen()
     {
         mut var i = 0;
         while (i < fx.sparks.count)
@@ -844,10 +844,10 @@ view Effects(mut Fx fx, Look look)
             spark.position += spark.velocity * dt;
             fx.sparks[i] = spark;
             var left = 1 - spark.age / spark.life;
-            var on = Draw3D.WorldToScreen(spark.position);
+            var on = Draw.WorldToScreen(spark.position);
             mut var paint = spark.color;
             paint.a = Math.Saturate(left * 2);
-            Draw2D.Circle(on.xy, spark.size * look.scale * (0.5 + 0.5 * left), paint);
+            Draw.Circle(on.xy, spark.size * look.scale * (0.5 + 0.5 * left), paint);
             i++;
         }
         mut var p = 0;
@@ -861,11 +861,11 @@ view Effects(mut Fx fx, Look look)
                 continue;
             }
             fx.popups[p] = popup;
-            var on = Draw3D.WorldToScreen(popup.at + float3(0, popup.age * 1.6, 0));
+            var on = Draw.WorldToScreen(popup.at + float3(0, popup.age * 1.6, 0));
             mut var color = popup.color;
             color.a = Math.Saturate(2 - popup.age * 2);
-            Draw2D.Text(popup.text, on.xy + float2(1, 1), 20 * look.scale, Color(0, 0, 0, color.a * 0.5), Anchor.MiddleCenter, Font.Bold);
-            Draw2D.Text(popup.text, on.xy, 20 * look.scale, color, Anchor.MiddleCenter, Font.Bold);
+            Draw.Text(popup.text, on.xy + float2(1, 1), 20 * look.scale, Color(0, 0, 0, color.a * 0.5), Anchor.MiddleCenter, Font.Bold);
+            Draw.Text(popup.text, on.xy, 20 * look.scale, color, Anchor.MiddleCenter, Font.Bold);
             p++;
         }
     }
@@ -884,19 +884,19 @@ view Hud(Round round, Session session, Time time, Look look, query (Marble body,
     // Laid out for a small window, and scaled up in a big one.
     float width = Screen.width / look.scale;
     float height = Screen.height / look.scale;
-    Draw2D.Screen(),
-    Draw2D.Transform(float2(0), 0, look.scale)
+    Draw.Screen(),
+    Draw.Transform(float2(0), 0, look.scale)
     {
         // Who has how many, the leader first
         mut var y = 8.0;
         foreach (var row in rows)
         {
             float full = Math.Min(1.0 * row.coins / GOAL, 1);
-            Draw2D.RoundRect(float2(64, y + 11), float2(112, 20), 10, Color(0, 0, 0, row.mine ? 0.6 : 0.36));
-            Draw2D.RoundRect(float2(10 + 54 * full, y + 11), float2(108 * full, 16), 8, SeatColor(row.seat) * Color(1, 1, 1, 0.45));
-            Draw2D.Circle(float2(19, y + 11), 6, SeatColor(row.seat));
-            Draw2D.Text(row.mine ? "You" : SeatName(row.seat), float2(31, y + 11), 13, Color.white, Anchor.MiddleLeft);
-            Draw2D.Text($"{row.coins}", float2(112, y + 11), 13, Color(1, 0.88, 0.4), Anchor.MiddleRight, Font.Bold);
+            Draw.RoundRect(float2(64, y + 11), float2(112, 20), 10, Color(0, 0, 0, row.mine ? 0.6 : 0.36));
+            Draw.RoundRect(float2(10 + 54 * full, y + 11), float2(108 * full, 16), 8, SeatColor(row.seat) * Color(1, 1, 1, 0.45));
+            Draw.Circle(float2(19, y + 11), 6, SeatColor(row.seat));
+            Draw.Text(row.mine ? "You" : SeatName(row.seat), float2(31, y + 11), 13, Color.white, Anchor.MiddleLeft);
+            Draw.Text($"{row.coins}", float2(112, y + 11), 13, Color(1, 0.88, 0.4), Anchor.MiddleRight, Font.Bold);
             y += 23;
         }
         Caption($"First to {GOAL} coins wins", float2(width - 10, 10 + 52 / look.scale), 14, Color.white, Anchor.UpperRight, Font.Bold);
@@ -908,10 +908,10 @@ view Hud(Round round, Session session, Time time, Look look, query (Marble body,
         var foot = float2(width * 0.5, height - 12);
         var how = "Roll: WASD or arrows, or hold where to go";
         var why = "Grab coins. A fall off the edge drops 3!";
-        var wide = Math.Max(Draw2D.MeasureText(how, 13).x, Draw2D.MeasureText(why, 13).x);
-        Draw2D.RoundRect(foot - float2(0, 16), float2(wide + 24, 42), 12, Color(0, 0, 0, 0.42));
-        Draw2D.Text(how, foot - float2(0, 17), 13, Color.white, Anchor.LowerCenter);
-        Draw2D.Text(why, foot, 13, Color(1, 0.9, 0.5), Anchor.LowerCenter);
+        var wide = Math.Max(Draw.MeasureText(how, 13).x, Draw.MeasureText(why, 13).x);
+        Draw.RoundRect(foot - float2(0, 16), float2(wide + 24, 42), 12, Color(0, 0, 0, 0.42));
+        Draw.Text(how, foot - float2(0, 17), 13, Color.white, Anchor.LowerCenter);
+        Draw.Text(why, foot, 13, Color(1, 0.9, 0.5), Anchor.LowerCenter);
 
         if (round.over)
         {
@@ -922,11 +922,11 @@ view Hud(Round round, Session session, Time time, Look look, query (Marble body,
                 if (row.mine && row.seat == round.winner) won = true;
             }
             var title = won ? "You win!" : $"{SeatName(round.winner)} wins!";
-            var size = Draw2D.MeasureText(title, 40, Font.Bold);
-            Draw2D.RoundRect(middle + float2(0, 12), size + float2(48, 56), 16, Color(0, 0, 0, 0.6));
-            Draw2D.Text(title, middle, 40, SeatColor(round.winner), Anchor.MiddleCenter, Font.Bold);
+            var size = Draw.MeasureText(title, 40, Font.Bold);
+            Draw.RoundRect(middle + float2(0, 12), size + float2(48, 56), 16, Color(0, 0, 0, 0.6));
+            Draw.Text(title, middle, 40, SeatColor(round.winner), Anchor.MiddleCenter, Font.Bold);
             var seconds = (round.until - time.tick) / time.tickRate + 1;
-            Draw2D.Text($"in {Clock(round.took / time.tickRate)}. Next round in {seconds}", middle + float2(0, 36), 15, Color.white, Anchor.MiddleCenter);
+            Draw.Text($"in {Clock(round.took / time.tickRate)}. Next round in {seconds}", middle + float2(0, 36), 15, Color.white, Anchor.MiddleCenter);
         }
     }
 }

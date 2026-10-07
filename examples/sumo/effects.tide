@@ -325,9 +325,9 @@ view Glow(Fx fx, mut Air air, Models models)
     }
     // Light, which is seen through: the far sides of each cube add theirs too
     Draw.Blend(Blend.Add),
-    Draw3D.Depth(Depth.Read),
-    Draw3D.Cull(Cull.None)
+    Draw.Depth(Depth.Read),
+    Draw.Cull(Cull.None)
     {
-        Draw3D.Instanced(models.cube, models.cubeFaces, air.motes, MoteLook);
+        Draw.Instanced(models.cube, models.cubeFaces, air.motes, MoteLook);
     }
 }

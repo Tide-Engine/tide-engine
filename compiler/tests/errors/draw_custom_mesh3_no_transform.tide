@@ -1,0 +1,6 @@
+// expect: a 3D mesh takes the transform that places it in the world, a float4x4, after its indices
+// expect: like 'Draw.Mesh(vertices, indices, float4x4.Translate(position));': 'Corner' is a 3D mesh's vertex, as its 'position' is a float3
+struct Corner { float3 position; }
+frag Shade(Corner vertex, out Color color) { color = Color(vertex.position.x, 0, 0); }
+scene Main { }
+view Show() { Draw.Mesh([Corner { }], [0, 0, 0], Shade); }

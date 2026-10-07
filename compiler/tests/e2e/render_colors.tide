@@ -140,7 +140,7 @@ view Show(Stage stage)
     Draw.Blit(stage.bright.color, stage.exact, Both);
     Draw.Blit(stage.albedo, Draw.window, Light);
     // A frag of several outputs draws into the window too, where its first is the pixel's
-    Draw3D.Mesh(stage.crate, stage.faces, float4x4.identity, Fill);
+    Draw.Mesh(stage.crate, stage.faces, float4x4.identity, Fill);
 }
 
 scene Main

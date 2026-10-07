@@ -68,25 +68,25 @@ system Run(mut Runner runner, Round round, Time time)
 
 view Track(Round round)
 {
-    Draw2D.Clear(Color(0.086, 0.086, 0.094));
-    Draw2D.SetCamera(float2(0, -0.2), 2.3);
-    Draw2D.WireCircle(float2(0), 1.5, 0.03, Color(0.24, 0.25, 0.27));
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0, -0.2), 2.3);
+    Draw.WireCircle(float2(0), 1.5, 0.03, Color(0.24, 0.25, 0.27));
     var word = round.count > 0 ? $"{round.count}" : round.running ? "GO" : "";
-    Draw2D.Text(word, float2(0), 0.9, Color.white, Anchor.MiddleCenter, Font.Bold);
+    Draw.Text(word, float2(0), 0.9, Color.white, Anchor.MiddleCenter, Font.Bold);
 }
 
 view Runners(Runner runner, Round round, Devices devices)
 {
     var at = float2(Math.Cos(runner.angle), Math.Sin(runner.angle)) * 1.5;
-    Draw2D.Circle(at, 0.16, runner.speed > 1 ? Color.white : Color(0.98, 0.75, 0.14));
-    var pointer = Draw2D.ScreenToWorld(Screen.Flip(devices.pointer.position));
+    Draw.Circle(at, 0.16, runner.speed > 1 ? Color.white : Color(0.98, 0.75, 0.14));
+    var pointer = Draw.ScreenToWorld(Screen.Flip(devices.pointer.position));
     if (round.running && devices.pointer.press.down && Math.Distance(pointer, at) < 0.4) this.Send(Dash { });
 }
 
 view Controls(Round round)
 {
-    Draw2D.SetScreen();
-    Draw2D.Text(round.running ? "Tap a runner to make it dash" : "A round is a task that waits",
+    Draw.SetScreen();
+    Draw.Text(round.running ? "Tap a runner to make it dash" : "A round is a task that waits",
                 float2(16, 14), 16, Color.white);
     GUI.SetTheme(GUITheme { radius = 6 });
     GUI.Disabled(round.busy)

@@ -1,6 +1,6 @@
 # Frags and verts
 
-A mesh's pixels and vertices can run code of yours on the GPU, written in Tide: a `frag` runs once for each pixel a mesh covers, and a `vert` once for each of its vertices. They're declarations, like [views](./views.md), and a `Draw2D.Mesh` or `Draw3D.Mesh` names them:
+A mesh's pixels and vertices can run code of yours on the GPU, written in Tide: a `frag` runs once for each pixel a mesh covers, and a `vert` once for each of its vertices. They're declarations, like [views](./views.md), and a `Draw.Mesh` or `Draw.Mesh` names them:
 
 ```csharp
 struct BoxVertex
@@ -26,7 +26,7 @@ frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models)
 
 view DrawBox(Box box, Models models)
 {
-    Draw3D.Mesh(models.crate, models.faces, float4x4.Translate(box.pos), Wave, Shade);
+    Draw.Mesh(models.crate, models.faces, float4x4.Translate(box.pos), Wave, Shade);
 }
 ```
 
@@ -44,22 +44,22 @@ Change the wave height to move the mesh's vertices, and the stripe count to chan
 
 A mesh's vertices are a list of a struct, and the struct can be yours:
 
-- It has a `position`: a `float2` makes a 2D mesh, drawn through the 2D camera in order with the other Draw calls, and a `float3` a 3D one, which `Draw3D.Mesh` places with a transform.
+- It has a `position`: a `float2` makes a 2D mesh, drawn through the 2D camera in order with the other Draw calls, and a `float3` a 3D one, which `Draw.Mesh` places with a transform.
 - Its other fields are whatever the mesh needs: floats, ints, their vectors and colors, 12 fields at most. The GPU reads them from the list as they are, so a vertex costs what its struct does: a struct with only a `position` is 12 bytes a vertex.
 
-`Draw2D.Mesh` and `Draw3D.Mesh` take a list of it, with or without a vert and a frag:
+`Draw.Mesh` and `Draw.Mesh` take a list of it, with or without a vert and a frag:
 
 ```csharp
-Draw2D.Mesh(vertices, indices);                           // 2D
-Draw3D.Mesh(vertices, indices, transform);                // 3D
-Draw3D.Mesh(vertices, indices, transform, Shade);         // A frag
-Draw3D.Mesh(vertices, indices, transform, Wave);          // A vert
-Draw3D.Mesh(vertices, indices, transform, Wave, Shade);   // Both: the vert first
+Draw.Mesh(vertices, indices);                           // 2D
+Draw.Mesh(vertices, indices, transform);                // 3D
+Draw.Mesh(vertices, indices, transform, Shade);         // A frag
+Draw.Mesh(vertices, indices, transform, Wave);          // A vert
+Draw.Mesh(vertices, indices, transform, Wave, Shade);   // Both: the vert first
 ```
 
 With no frag, a pixel is its vertex's `color` times the draw's texture at its `uv`, as the built-in `Vertex` and `Vertex3` draw: a struct with no `Color color` draws white, and a texture needs a `float2 uv` to be read at. With no vert, the vertices are used as they are.
 
-Frags and verts can share a name when their parameters differ. A draw then names the one it means with its parameters' types, as [`[After]` names a system](./systems.md#order): `Draw2D.Mesh(vertices, indices, Tint(Vertex, Color, Sun))`.
+Frags and verts can share a name when their parameters differ. A draw then names the one it means with its parameters' types, as [`[After]` names a system](./systems.md#order): `Draw.Mesh(vertices, indices, Tint(Vertex, Color, Sun))`.
 
 ## A frag
 
@@ -74,7 +74,7 @@ frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun)
 - **The vertex comes first.** It's the struct the mesh's list holds, and the frag gets it blended across the triangle: at each pixel, a mix of the triangle's three vertices by how near each is. It can't change it. Its ints don't blend, so a frag can't read them.
 - **`out Color color` is the pixel.** A frag writes its output through an [`out` parameter](../language/functions.md#out-parameters), and returns nothing. What it wrote there when it ends is the pixel's color, blended over what's behind it by its alpha.
 - **It starts with no value, so the frag writes it.** On every path that ends, and before reading it: `color.a = 1` alone, with nothing written first, is an error, and so is a frag whose only write is inside an `if` with no `else`. It isn't the pixel already on the screen either: a GPU doesn't let a frag read that. A path that ends in [`pixel.Discard()`](#where-the-pixel-is) draws no pixel, and owes it nothing.
-- **The draw's [settings](./views.md#draw-settings) apply to it.** Inside `Draw.Blend(Blend.Add) { ... }` the pixel is added instead, and inside `Draw.Tint(...)` it's multiplied by the tint after the frag ran, so a faded menu fades its shaded meshes too, with nothing for the frag to do. A 2D mesh's vertices go through `Draw2D.Transform` after its vert, and a 3D one's transform goes through `Draw3D.Transform`. A 3D mesh does with depth what [`Draw3D.Depth`](./views.md#depth) says: inside `Draw3D.Depth(Depth.Read) { ... }` it's hidden behind what's nearer and hides nothing itself, which is how something see-through is drawn. And its triangles are drawn from the side [`Draw3D.Cull`](./views.md#which-side-draws) says, their front unless it says otherwise: a vert that mirrors its mesh, or turns it inside out, has them reach the screen the other way round, and is drawn inside `Draw3D.Cull(Cull.Front)`. Under [`Draw.Stencil`](./views.md#stencil) it's drawn where its pixels pass the test, and it stores where it's drawn: a pixel the frag leaves out with `pixel.Discard()` stores nothing, which is how a mask gets the shape of a picture.
+- **The draw's [settings](./views.md#draw-settings) apply to it.** Inside `Draw.Blend(Blend.Add) { ... }` the pixel is added instead, and inside `Draw.Tint(...)` it's multiplied by the tint after the frag ran, so a faded menu fades its shaded meshes too, with nothing for the frag to do. A 2D mesh's vertices go through `Draw.Transform` after its vert, and a 3D one's transform goes through `Draw.Transform`. A 3D mesh does with depth what [`Draw.Depth`](./views.md#depth) says: inside `Draw.Depth(Depth.Read) { ... }` it's hidden behind what's nearer and hides nothing itself, which is how something see-through is drawn. And its triangles are drawn from the side [`Draw.Cull`](./views.md#which-side-draws) says, their front unless it says otherwise: a vert that mirrors its mesh, or turns it inside out, has them reach the screen the other way round, and is drawn inside `Draw.Cull(Cull.Front)`. Under [`Draw.Stencil`](./views.md#stencil) it's drawn where its pixels pass the test, and it stores where it's drawn: a pixel the frag leaves out with `pixel.Discard()` stores nothing, which is how a mask gets the shape of a picture.
 - **Light the color, not its alpha.** A color times a number scales its alpha too, so `box.tint * light` alone leaves a pixel in the shade see-through, and what was drawn behind the mesh shows in it, its own far side too. The frag above sets `color.a` back.
 - A frag can write more than one color, each an `out Color` of its own: see [Several outputs](#several-outputs). An output of another type than `Color` isn't there yet.
 
@@ -169,7 +169,7 @@ frag Look(Corner corner, FromLamp lamp, out Color color)
 
 view DrawRoom(Models models)
 {
-    Draw3D.Mesh(models.room, models.faces, float4x4.identity, Place, Look);
+    Draw.Mesh(models.room, models.faces, float4x4.identity, Place, Look);
 }
 ```
 
@@ -187,7 +187,7 @@ After the vertex, and what each writes (a frag's color, the structs a vert hands
 - **Singletons**, the match's or [local](./local-state.md) ones, and `Time`. `time.t`, the match's seconds, is blended between ticks like every float a view sees, so what moves by it moves every frame.
 - None is `mut` or `out`: the GPU reads the game's state, and changes none of it.
 - A [`local` field](./local-state.md) of the match's component or singleton is read like any other: `box.highlight`, which a view set for the entity under the mouse.
-- With [`Draw2D.Instanced`/`Draw3D.Instanced`](#instances-from-a-list), an ordinary struct parameter takes the current item of the instance list. It is read-only too. (A frag's struct of a type its draw's vert writes is [the vert's](#from-a-vert-to-its-frag) instead.)
+- With [`Draw.Instanced`/`Draw.Instanced`](#instances-from-a-list), an ordinary struct parameter takes the current item of the instance list. It is read-only too. (A frag's struct of a type its draw's vert writes is [the vert's](#from-a-vert-to-its-frag) instead.)
 - A read-only `Texture` parameter receives the explicit image passed to either namespace's `Mesh` or `Instanced` or [`Draw.Blit`](./views.md#targets-and-post-processing). Each stage takes at most one; when both stages take it, they receive the same source. `source.Sample(vertex.uv[, Filter.Point[, Wrap.Repeat]])` uses the same top-left UVs as grid sampling. Local component and singleton `Texture` fields can be sampled too.
 
 The view needn't take them itself. It has to run for entities that have the components, so `with Box` is enough, and it's an error at the mesh draw when it doesn't:
@@ -195,13 +195,13 @@ The view needn't take them itself. It has to run for entities that have the comp
 ```csharp
 view DrawBoxes(with Box, Models models)
 {
-    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Shade); // Shade reads Box and Sun
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade); // Shade reads Box and Sun
 }
 ```
 
 What a frag sees of the match is what a view sees: [blended between ticks](./views.md#smooth-at-any-tick-rate), so it's smooth at any tick rate.
 
-There are no free-standing value arguments to bind. A number a frag needs lives in a component, a singleton, or the instance struct supplied to `Draw2D.Instanced` or `Draw3D.Instanced`, and a local singleton is the place for what only this machine's drawing cares about:
+There are no free-standing value arguments to bind. A number a frag needs lives in a component, a singleton, or the instance struct supplied to `Draw.Instanced` or `Draw.Instanced`, and a local singleton is the place for what only this machine's drawing cares about:
 
 ```csharp
 local singleton Look
@@ -235,10 +235,10 @@ Past 0 and 1, `uv` reads what the [wrap](./views.md#past-the-edges) after the fi
 
 - The filter and the wrap are written in the call, `Filter.Point` and `Wrap.Repeat`, never read from a variable: the GPU is told how a texture is read before any pixel runs.
 - A wrap comes after a filter, so a `Sample` that says how it wraps says both. The names work too: `Sample(uv: vertex.uv, filter: Filter.Bilinear, wrap: Wrap.Repeat)`.
-- What a `Sample` leaves out is the texture's own to say, where its declaration does ([`[Filter]` and `[Wrap]`](./views.md#saying-it-once-on-the-texture)): `models.wood.Sample(uv)` is read as the field `wood` says, and `tiles.Sample(uv)` as the asset `tiles` says. A direct `Texture` parameter is read as its draw's source says, so `Draw2D.Mesh(corners, faces, tiles, Shade)` gives `source.Sample(uv)` the sampling `tiles` declared, and a `Texture` that's a value (a field's, a target's color) the usual: blended, the cells at the edge.
+- What a `Sample` leaves out is the texture's own to say, where its declaration does ([`[Filter]` and `[Wrap]`](./views.md#saying-it-once-on-the-texture)): `models.wood.Sample(uv)` is read as the field `wood` says, and `tiles.Sample(uv)` as the asset `tiles` says. A direct `Texture` parameter is read as its draw's source says, so `Draw.Mesh(corners, faces, tiles, Shade)` gives `source.Sample(uv)` the sampling `tiles` declared, and a `Texture` that's a value (a field's, a target's color) the usual: blended, the cells at the edge.
 - An image file of the game's is sampled by its name, with no parameter for it: `asset Texture tiles = "art/tiles.png";` and then `tiles.Sample(vertex.uv)` (see [Assets](./assets.md#images-to-draw-with)).
 - One grid can be read several ways in one frag, clamped here and repeated there. Each way counts as one of the 8 textures a draw samples, and the same way twice counts once.
-- A draw through a frag takes no filter and no wrap of its own: `Draw2D.Mesh(corners, faces, image, Filter.Point, Shade)` is an error that says to write them at `Sample`.
+- A draw through a frag takes no filter and no wrap of its own: `Draw.Mesh(corners, faces, image, Filter.Point, Shade)` is an error that says to write them at `Sample`.
 
 ## A target's depth
 
@@ -324,7 +324,7 @@ The sphere below has a vertex of its own, with a normal, and a frag that lights 
 - `Instance instance`, in a frag or a vert: `instance.transform` is the `float4x4` the draw was given, so `Math.Rotate(instance.transform, vertex.normal)` is a normal in the world.
 - `Pixel pixel`, in a frag:
   - `pixel.world`, a `float3`: where on the mesh the pixel is, in the world.
-  - `pixel.position`, a `float2`: where it is on the screen, in pixels from the top left, as [`Draw2D.Screen`](./views.md#on-the-screen)'s.
+  - `pixel.position`, a `float2`: where it is on the screen, in pixels from the top left, as [`Draw.Screen`](./views.md#on-the-screen)'s.
   - `pixel.depth`: how far it is, from 0 at the camera's near side to 1.
   - `pixel.Discard()` leaves the pixel undrawn, and ends the frag there: for holes, and edges cut out of a texture. Nothing is written for it: no color, no depth and no [stencil](./views.md#stencil).
 
@@ -336,14 +336,14 @@ frag Leaves(BoxVertex vertex, out Color color, Models models, Pixel pixel)
 }
 ```
 
-The camera isn't given: keep where yours is in a singleton, where the view that calls `Draw3D.SetCamera` reads it too, and take that.
+The camera isn't given: keep where yours is in a singleton, where the view that calls `Draw.SetCamera` reads it too, and take that.
 
 ## What the GPU runs
 
 Code for the GPU is ordinary Tide, less what a GPU doesn't have:
 
 - **It has** bools, ints, floats, vectors, quaternions, matrices, colors, enums and structs of those; locals, `if`, `?:`, and `for` loops that count (`for (int i = 0; i < 8; i++)`), with `break` and `continue`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; and sampling a grid, a texture or a target's depth, 8 of them to a draw.
-- **It doesn't have** lists, maps, text, entities, `this`, spawning and sending, `Draw2D` and `Draw3D`, the GUI, `Devices`, `Debug`, C, tasks, errors, or recursion. `while` and `switch` aren't there yet: write `for` with a bound, and `if`.
+- **It doesn't have** lists, maps, text, entities, `this`, spawning and sending, `Draw`, the GUI, `Devices`, `Debug`, C, tasks, errors, or recursion. `while` and `switch` aren't there yet: write `for` with a bound, and `if`.
 
 Each of those is an error where it's written, which says what to do instead. A function a frag calls has to fit too, and the error says which frag reaches it; the same function still runs on the CPU for the code that calls it there.
 
@@ -391,7 +391,7 @@ Instances of one mesh drawn in a row through the same vert and frag are one draw
 ```csharp
 view DrawBoxes(Box box, Models models)
 {
-    Draw3D.Mesh(models.crate, models.faces, float4x4.Translate(box.pos), Shade);
+    Draw.Mesh(models.crate, models.faces, float4x4.Translate(box.pos), Shade);
 }
 ```
 
@@ -408,15 +408,15 @@ vert Place(mut Sprite vertex, Body body)
 
 ### Instances from a list
 
-`Draw2D.Instanced(vertices, indices, instances)` and `Draw3D.Instanced(vertices, indices, instances)` draw one mesh for every item in a list, without needing an entity for each. Grass, scenery and visual particles can live in a local list instead.
+`Draw.Instanced(vertices, indices, instances)` and `Draw.Instanced(vertices, indices, instances)` draw one mesh for every item in a list, without needing an entity for each. Grass, scenery and visual particles can live in a local list instead.
 
 For a 3D mesh, a `List<float4x4>` supplies its transforms:
 
 ```csharp
-Draw3D.Instanced(models.crate, models.faces, scenery.transforms);
-Draw3D.Instanced(models.crate, models.faces, scenery.transforms, models.wood, Filter.Point);
-Draw3D.Instanced(models.crate, models.faces, scenery.transforms, models.wood, Filter.Point, Wrap.Repeat);
-Draw3D.Instanced(models.crate, models.faces, scenery.transforms, Wave, Shade);
+Draw.Instanced(models.crate, models.faces, scenery.transforms);
+Draw.Instanced(models.crate, models.faces, scenery.transforms, models.wood, Filter.Point);
+Draw.Instanced(models.crate, models.faces, scenery.transforms, models.wood, Filter.Point, Wrap.Repeat);
+Draw.Instanced(models.crate, models.faces, scenery.transforms, Wave, Shade);
 ```
 
 For data of your own, use a `List` of an ordinary struct. A vert or frag takes that struct after its vertex (and the frag's color), and receives the current list item. Either shader can take it, or both can:
@@ -447,7 +447,7 @@ frag Grass(BoxVertex vertex, out Color color, Blade blade, Sun sun)
 
 view GrassField(Foliage foliage, Models models)
 {
-    Draw3D.Instanced(models.blade, models.faces, foliage.blades, Bend, Grass);
+    Draw.Instanced(models.blade, models.faces, foliage.blades, Bend, Grass);
 }
 ```
 
@@ -455,7 +455,7 @@ view GrassField(Foliage foliage, Models models)
 - For a 2D mesh, the instance list holds an ordinary struct and a vert places its vertices, as `Place` does above. A field named `transform` is ordinary data there; the engine doesn't apply it, and `Instance.transform` remains identity.
 - Components still come from the calling view's entity, and singletons are shared by the draw. The list items don't have to be entities and don't add any.
 - Only the instance fields the shaders read are sent, beside the 3D transform. Unread fields take no GPU space. The fields that are read follow the same GPU type and attribute limits as components.
-- Textures, filters, wraps, verts and frags go after the instance list, in the same order as `Mesh`: `Draw3D.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag])`. A frag can sample fields of its parameters, or receive an explicit `Texture` through its read-only `Texture` parameter.
+- Textures, filters, wraps, verts and frags go after the instance list, in the same order as `Mesh`: `Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag])`. A frag can sample fields of its parameters, or receive an explicit `Texture` through its read-only `Texture` parameter.
 - An empty instance list draws nothing. Items draw in list order, in one instanced draw; adjacent compatible calls can join the same run.
 
 Every mote below is an item of a list, and none is an entity. A vert places the quad's four corners for each, with that mote's own center, size and phase, and a frag makes a soft dot of it in its tint. The slider changes how many the list holds: they're one draw either way.
@@ -466,7 +466,7 @@ Every mote below is an item of a list, and none is an entity. A vert places the 
 
 :::
 
-An ordinary instance parameter is supplied only by `Draw2D.Instanced` or `Draw3D.Instanced`: using that shader with `Mesh`, or with a list of another type, is an error.
+An ordinary instance parameter is supplied only by `Draw.Instanced` or `Draw.Instanced`: using that shader with `Mesh`, or with a list of another type, is an error.
 
 ## Looking at what's generated
 

@@ -59,7 +59,7 @@ tide_e2e_test(crossplatform)
 tide_e2e_test(evaluation_order SOURCES e2e/evaluation_order.tide e2e/evaluation_order_c.c) # Left to right, whatever order C would pick
 tide_e2e_test(random) # Random's state in the world, and the match's seed: the same bits on every platform
 tide_e2e_test(views)
-tide_e2e_test(shapes) # The shapes with smooth edges: each Draw2D call, the general Shape, and target receivers
+tide_e2e_test(shapes) # The shapes with smooth edges: each Draw call, the general Shape, and target receivers
 tide_e2e_test(draw_settings) # Blend, tint, transform, clip and cameras: around blocks, listed with commas, and set
 tide_e2e_test(draw_depth) # ...and what 3D meshes do with depth: the setting that's in a game's C only when it names it
 tide_e2e_test(draw_cull) # ...and which side of their triangles draws, with the instances a transform mirrors told apart
@@ -147,8 +147,8 @@ endforeach()
 tide_e2e_test(mesh SOURCES e2e/mesh.tide e2e/mesh_c.c) # Meshes, grids as textures, and C that draws
 tide_e2e_test(mesh3d) # 3D meshes, their cameras, and instances
 tide_e2e_test(draw_apis SOURCES e2e/draw_apis.tide e2e/draw_apis_c.c) # Separate drawing APIs and coordinates
-tide_e2e_test(measure_text) # Draw2D.MeasureText: on the screen, under a camera and in a render target
-tide_e2e_test(text) # Draw2D.Text at an anchor and in a weight, and measuring in one
+tide_e2e_test(measure_text) # Draw.MeasureText: on the screen, under a camera and in a render target
+tide_e2e_test(text) # Draw.Text at an anchor and in a weight, and measuring in one
 tide_e2e_test(shaders) # frag and vert: what a mesh draw through them records
 tide_e2e_test(instancing) # Instanced: lists of transforms and ordinary instance structs
 tide_e2e_test(crossplatform_text)

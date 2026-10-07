@@ -1,4 +1,4 @@
-// expect: Draw2D.Mesh(List<Vertex> vertices, List<int> indices, Grid2<Color> texture, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp)
+// expect: Draw.Mesh(List<Vertex> vertices, List<int> indices, Grid2<Color> texture, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp)
 scene Main { }
 
 local singleton Art
@@ -9,5 +9,5 @@ local singleton Art
 
 view Show(Art art)
 {
-    Draw2D.Mesh(art.corners, [0, 1, 2], art.cells);
+    Draw.Mesh(art.corners, [0, 1, 2], art.cells);
 }
