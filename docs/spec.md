@@ -3310,6 +3310,12 @@ Picks made as `Clip` assets and `Audio.Play` were built (2026-10-07, the second 
 - **A host that gives no audio list** (a C host of its own) records nothing, and nothing breaks.
 - **A hot reload stops every sound**: the old build's clips are its own, so the host has the mixer forget before it unloads the library (`tide_platform_audio_forget`). A pack loaded again (a saved file under `tide run`) stops nothing.
 
+Picks made as `Sound` fields and the listener were built (2026-10-07, the third card), awaiting the owner too:
+
+- **`Sound` is a built-in struct**, `{ Clip clip; float3 position; bool spatial; float volume = 1; float pitch = 1; bool loop; bool playing; }`, in generated C only for a game that names it, as `Depth` is. It's a resource of this machine's, as it holds a `Clip`: local singletons, local components, a match component's `local` fields and structs in those, and never the match's or a list's. `bus`, `effect` and `knobs` join it with their cards.
+- **The frame names every `Sound` that plays, itself** (`tide_local_sounds`, at the end of `tide_frame`, after the views and the local commands they queued, so an entity spawned or destroyed in a frame is counted that frame): a view only writes the fields. A voice is named by its field's path (hashed) and, for a row's, the entity's bits, so the same field on the same entity is the same voice frame after frame, and another entity's another voice. A `Sound` that isn't `playing` isn't named, so the mixer fades it out as it fades one whose field is gone; `playing` false then true, or another clip, starts over (the mixer's rule). Nothing of a `Sound`'s state is in the field but what the game wrote: where the clip is up to is the mixer's.
+- **The listener and the falloff are `Set` forms alone for now**: `Audio.SetListener(position, rotation)`, `Audio.SetListener(center)` (2D: z 0, facing +z) and `Audio.SetFalloff(near, far)`, each a frame's setting that holds from where it's set to the frame's end, and every frame starts from the defaults. The block forms (`Audio.Listener(...) { }`), and the listener defaulting to the frame's camera, aren't built: the default is the origin.
+
 ### Open
 
 - Effects a game can't write itself: a reverb, which needs more state than a struct of plain fields (a `float[N]` delay line fits once arrays are in `audio` state structs, which is the first thing to try), and sends to a shared reverb bus.

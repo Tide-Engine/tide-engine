@@ -151,6 +151,12 @@ void tide_audio_voice(tide_audio_frame *f, const tide_voice *voice);
 // Where the listener is and which way it faces (its right is +x turned by
 // `rotation`), for the spatial sounds of this frame on.
 void tide_audio_set_listener(tide_audio_frame *f, tide_float3 position, tide_quaternion rotation);
+// ...at a 2D place, z 0, facing +z with its right at +x (Tide's 2D form).
+static inline void tide_audio_set_listener2(tide_audio_frame *f, const tide_float2 center)
+{
+    tide_audio_set_listener(f, (tide_float3){center.x, center.y, 0.0f}, tide_identity_q());
+}
+
 // How a spatial sound's volume falls off: at its volume within `near`,
 // silent past `far`.
 void tide_audio_set_falloff(tide_audio_frame *f, float near, float far);
