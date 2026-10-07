@@ -1641,14 +1641,13 @@ view Shadows(Art art, mut Shadow shadow)
     quaternion slant = Math.Mul(quaternion.AxisAngle(float3(0, 0, 1), Math.PI * 0.25), down);
     float4x4 lamp = float4x4.TRS(Math.Mul(slant, float3(0, 0, -10)), slant, float3(1));
     float4x4 sees = float4x4.Ortho(16, 16, 0.1, 30);
-    // A camera looks along its +z, and clip space along -z: the world to the lamp's clip space is its
-    // projection, after z turned around, after the lamp's transform undone
-    shadow.toLamp = Math.Mul(sees, Math.Mul(float4x4.TRS(float3(0), quaternion.identity, float3(1, 1, -1)), Math.Inverse(lamp)));
 
     // What casts, into the lamp's target: as far as a clear leaves it, then each caster's depth. The
     // slab has no frag, and the grate's leaves half of it out; neither's color goes anywhere there
     shadow.map.Clear(Color.white);
     shadow.map.SetCamera(lamp, sees);
+    // The world to the lamp's clip space is the target's own camera, as the GPU has it
+    shadow.toLamp = shadow.map.WorldToClip();
     shadow.map.Mesh(shadow.slab, art.faces, float4x4.identity);
     shadow.map.Mesh(shadow.grate, art.faces, float4x4.identity, Grate);
     shadow.map.SetPixels();

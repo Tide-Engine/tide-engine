@@ -843,6 +843,7 @@ struct expr {
     bool targeted;       // A RenderTarget receiver supplies this draw's destination
     bool resource_operation; // RenderTarget creation, resize or disposal: ordered local side effects
     int target_formats;      // RenderTarget(...) of several color images: how many of its last arguments are their formats
+    bool target_samples;     // ...which `samples: n` comes after: the call's last argument, and its formats go to C as several, however many
     bool io_operation;       // File/Directory operation: gets this machine's provider
     bool path_operation;     // Pure Path operation: receives tide_str, rather than a C string
     bool storage_flush;      // Storage.Flush, awaited through a provider completion ticket

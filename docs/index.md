@@ -16,8 +16,8 @@ hero:
       text: Browse samples
       link: /guide/samples
     - theme: alt
-      text: Request access
-      link: /request-access
+      text: Install
+      link: /guide/install
 
 features:
   - title: Multiplayer by default
@@ -35,8 +35,6 @@ features:
 ---
 
 ## A whole game
-
-Access to Tide is currently limited to whitelisted users. [Request access](/request-access), or try the [samples](./guide/samples.md) in your browser.
 
 A game is a folder of `.tide` files, and needs no other code. This one bounces a ball:
 

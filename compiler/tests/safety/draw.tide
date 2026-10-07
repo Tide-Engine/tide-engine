@@ -72,6 +72,9 @@ void Texts(float v, float w, int number)
     var deep = Draw.WorldToScreen(float3(v, w, v)) + Draw.ScreenToWorld(float3(w, v, w)) + Draw.ScreenRayOrigin(there)
         + Draw.ScreenRayDirection(float2(v, w));
     Draw.Circle(there, deep.x, Color.white);
+    var seen = Math.Mul(Draw.WorldToClip(), float4(v, w, v, 1)) + Math.Mul(Draw.CameraProjection(), Math.Mul(Draw.CameraTransform(), float4(w)));
+    var flat = Math.Mul(Draw.WorldToScreenMatrix(), float3(v, w, 1));
+    Draw.Circle(flat.xy, seen.x, Color.white);
 }
 
 void Settings(float v, float w, int number)

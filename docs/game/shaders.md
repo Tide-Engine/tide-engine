@@ -361,11 +361,11 @@ The scene below does it. **Lamp** turns the lamp, **Soft edges** takes four comp
 
 - **What casts is drawn with no frag,** and has the engine's own look, as anywhere: in a target of depth alone, a color has nowhere to go, and how far each pixel is, is what's kept. A caster with holes in it names a frag that calls `pixel.Discard()` for them.
 - **The lamp's camera is an ordinary one:** `target.SetCamera(transform, projection)`, with `float4x4.Ortho` for a lamp that's far away, like a sun, and `float4x4.PerspectiveFov` for one that's near.
-- **Where a pixel is in the lamp's image is yours to work out,** from the matrix that takes the world to the lamp's clip space. A camera looks along its `+z`, and clip space along `-z`, so that matrix is the projection, after z turned around, after the camera's transform undone:
+- **Where a pixel is in the lamp's image is yours to work out,** from the matrix that takes the world to the lamp's clip space. That's the lamp's camera, which the target gives back as the GPU has it: [`target.WorldToClip()`](./views.md#a-camera-as-matrices), asked once the camera is set, and kept where the frag reads it:
 
   ```csharp
-  float4x4 flip = float4x4.TRS(float3(0), quaternion.identity, float3(1, 1, -1));
-  lamp.toLamp = Math.Mul(projection, Math.Mul(flip, Math.Inverse(transform)));
+  lamp.map.SetCamera(transform, projection);
+  lamp.toLamp = lamp.map.WorldToClip();
   ```
 
   ```csharp
@@ -379,6 +379,7 @@ The scene below does it. **Lamp** turns the lamp, **Soft edges** takes four comp
 - **Compare a little nearer than the pixel is,** `depth - 0.003`: a surface the lamp sees is exactly as far as what's stored there, to the rounding, and would be in its own shadow in stripes. How much it takes goes with how slanted the surface is to the lamp and how few pixels the lamp's image has across what it sees.
 - **A target with pixels of its own** (`RenderTarget(1024, 1024, 1, ...)`) casts the same shadows on every display. The fewer pixels it has across what the lamp sees, the blockier a shadow's edge.
 - **The target that's read isn't the one drawn into.** A draw into a target that reads that target's depth is passed by, with a line that says so.
+- **The target that's read has no `samples`.** A target made with [`samples`](./views.md#smooth-edges) keeps several depths a pixel, which no frag reads: a draw that reads its depth is passed by the same way.
 
 ## Where the pixel is
 

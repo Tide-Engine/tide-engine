@@ -415,6 +415,7 @@ typedef enum tide_target_format {
 } tide_target_format;
 
 enum { TIDE_TARGET_COLORS = 4 }; // The most color images a target holds: what every GPU Tide draws with has
+enum { TIDE_TARGET_SAMPLES = 8 }; // The most samples a pixel of a target is drawn with (tide_render_target_make_sampled)
 
 // A target's color images, in order: how many, and what each holds
 // (TIDE_TARGET_RGBA8 or TIDE_TARGET_RGBA16F). None for a target of depth alone.
@@ -434,7 +435,7 @@ typedef struct tide_render_target_state {
     uint64_t reload_id; // Temporary opaque identity while restoring another address space.
     void *memory;       // What it was allocated in, to free: the state is on a boundary inside it
     bool alive;
-    uint16_t holds; // What it holds, as its id says it (TIDE_RENDER_FORMAT)
+    uint16_t holds; // What it holds and its samples, as its id says them (TIDE_RENDER_FORMAT, TIDE_RENDER_SAMPLES)
 } tide_render_target_state;
 
 // A managed target's id is its state's address, with what it holds in the
@@ -444,12 +445,15 @@ typedef struct tide_render_target_state {
 // TIDE_RENDER_BITS + 1 bytes for that. The bits are 3 for each color image in
 // order, 1 + its tide_target_format, and 0 past the last (so none at all is a
 // target of depth alone); then, in a texture's reference to one of a target's
-// color images (tide_texture_ref), 2 for which.
+// color images (tide_texture_ref), 2 for which; then 2 for how many samples
+// each of its pixels is drawn with: 1, 2, 4 or 8, as that power of two.
 #define TIDE_RENDER_MANAGED (UINT64_C(1) << 63)
 #define TIDE_RENDER_FORMAT UINT64_C(0xFFF)
 #define TIDE_RENDER_IMAGE_SHIFT 12
 #define TIDE_RENDER_IMAGE (UINT64_C(3) << TIDE_RENDER_IMAGE_SHIFT)
-#define TIDE_RENDER_BITS (TIDE_RENDER_FORMAT | TIDE_RENDER_IMAGE)
+#define TIDE_RENDER_SAMPLES_SHIFT 14
+#define TIDE_RENDER_SAMPLES (UINT64_C(3) << TIDE_RENDER_SAMPLES_SHIFT)
+#define TIDE_RENDER_BITS (TIDE_RENDER_FORMAT | TIDE_RENDER_IMAGE | TIDE_RENDER_SAMPLES)
 #define TIDE_RENDER_WINDOW UINT64_MAX
 #define TIDE_RENDER_INVALID (UINT64_MAX - UINT64_C(1))
 
@@ -495,8 +499,16 @@ static inline tide_target_format tide_render_target_format(const uint64_t id)
     return formats.count ? (tide_target_format)formats.color[0] : TIDE_TARGET_DEPTH;
 }
 
+// How many samples each pixel of the target `id` is drawn with, as it was
+// asked for: 1 (the window's, a borrowed target's, and any target's that
+// didn't say), 2, 4 or 8. A device may have fewer, and gives what it has.
+static inline uint32_t tide_render_target_samples(const uint64_t id)
+{
+    return tide_render_target_managed(id) ? 1u << ((id & TIDE_RENDER_SAMPLES) >> TIDE_RENDER_SAMPLES_SHIFT) : 1u;
+}
+
 // A texture's reference to one of a target's color images has which in its
-// id: the image's number, from 0, and the target's own id, which is what a
+// id:the image's number, from 0, and the target's own id, which is what a
 // destination, a renderer's image and a comparison of two targets go by.
 static inline uint32_t tide_render_target_image(const uint64_t id)
 {
@@ -654,6 +666,23 @@ tide_render_target tide_render_target_make_scaled_of(float width, float height, 
                                                      const tide_target_format *formats, uint32_t count);
 tide_render_target tide_render_target_screen_of(float factor, const tide_target_format *formats, uint32_t count);
 tide_render_target tide_render_target_window_of(const tide_target_format *formats, uint32_t count);
+// ...and drawn with `samples` samples a pixel, which smooths the edges of the
+// triangles drawn into it: 1, 2, 4 or 8 (TIDE_TARGET_SAMPLES at the most).
+// Each pixel keeps that many colors and depths while it's drawn into, and its
+// color images are what those come to, one color a pixel, each time a pass on
+// it ends: they're sampled like any target's. Its depth isn't a shader's to
+// read (a draw that reads tide_render_target_depth of one is passed by), so a
+// target of depth alone has one sample, having said so. Another number is the
+// one of those under it, having said so; a device with fewer has what it has
+// (the renderer says so once), and 1 is the functions above. NULL and 0 for
+// the formats is one image of TIDE_TARGET_RGBA8.
+tide_render_target tide_render_target_make_sampled(float width, float height, const tide_target_format *formats,
+                                                   uint32_t count, int32_t samples);
+tide_render_target tide_render_target_make_scaled_sampled(float width, float height, float scale,
+                                                          const tide_target_format *formats, uint32_t count, int32_t samples);
+tide_render_target tide_render_target_screen_sampled(float factor, const tide_target_format *formats, uint32_t count,
+                                                     int32_t samples);
+tide_render_target tide_render_target_window_sampled(const tide_target_format *formats, uint32_t count, int32_t samples);
 // Another size, at the scale it has, and an empty image. Not for a target that
 // follows the window, whose size is the window's to say.
 void tide_render_target_resize(tide_render_target target, float width, float height);
@@ -823,6 +852,9 @@ typedef struct tide_draw_camera_data {
 // A 3D camera a list was given: from the world to clip space, as OpenGL's.
 typedef struct tide_draw_camera_3d_data {
     tide_float4x4 matrix;
+    // Its parts, which the matrix is made of: where the camera is in the world (it looks along its +z),
+    // and what takes what it sees to clip space, looking down -z, for a square screen when `fit` says so
+    tide_float4x4 transform, projection;
     uint32_t fit;      // 1: it's for a square screen (see TIDE_DRAW_CAMERA_3D)
     uint32_t mirrored; // 1: it shows the world mirrored, as a looking glass does
 } tide_draw_camera_3d_data;
@@ -1475,6 +1507,14 @@ tide_float4x4 tide_draw_camera_3d_matrix(tide_float3 position, tide_quaternion r
 void tide_draw_set_camera_matrices(tide_draw_list *d, tide_float4x4 transform, tide_float4x4 projection);
 uint32_t tide_draw_push_camera_matrices(tide_draw_list *d, tide_float4x4 transform, tide_float4x4 projection);
 
+// The camera each frame starts with, as tide_draw_set_camera_3d would record it.
+tide_draw_camera_3d_data tide_draw_first_camera_3d(void);
+
+// A matrix that's for a square screen (TIDE_DRAW_CAMERA_3D's `fit`, or such a
+// camera's `projection`), for one `width` by `height`: x divided by the
+// width over the height. It's what a renderer does to such a camera.
+tide_float4x4 tide_draw_camera_fit(tide_float4x4 matrix, float width, float height);
+
 // A 3D mesh, placed in the world by `transform`: each pixel is its corners'
 // colors blended across the triangle, times `texture`'s at their uvs (NULL
 // for none), sampled with `filter`, and for uvs past 0 and 1, the pixels at
@@ -1606,6 +1646,25 @@ tide_float3 tide_draw_screen_to_world_3d(const tide_draw_list *d, tide_float3 po
 // perspective cameras and orthographic or other matrix projections.
 tide_float3 tide_draw_screen_ray_origin(const tide_draw_list *d, tide_float2 point, tide_float2 screen_size);
 tide_float3 tide_draw_screen_ray_direction(const tide_draw_list *d, tide_float2 point, tide_float2 screen_size);
+
+// The selected destination's 3D camera as it's set, for the commands recorded
+// next, fitted to the destination's shape: the matrices a renderer draws its
+// 3D meshes through, so a point through tide_draw_world_to_clip is where the
+// GPU puts it (clip space as OpenGL's: x and y from -1 to 1 with y up, z from
+// -1 at the near plane to 1 at the far one, before the division by w).
+// tide_draw_camera_transform is where the camera is in the world, and
+// tide_draw_camera_projection what takes what it sees to clip space: the two
+// tide_draw_set_camera_matrices takes, which given back to it set the same
+// camera. Nothing of a transform (tide_draw_set_transform_3d) is in them.
+// A destination with no size has zeros for the first and the last.
+tide_float4x4 tide_draw_world_to_clip(const tide_draw_list *d, tide_float2 screen_size);
+tide_float4x4 tide_draw_camera_transform(const tide_draw_list *d, tide_float2 screen_size);
+tide_float4x4 tide_draw_camera_projection(const tide_draw_list *d, tide_float2 screen_size);
+
+// The selected destination's 2D camera as a matrix: what
+// tide_draw_world_to_screen does to a point (x, y, 1). The identity on the
+// screen, and zeros where tide_draw_world_to_screen gives zeros for every point.
+tide_float3x3 tide_draw_world_to_screen_matrix(const tide_draw_list *d, tide_float2 screen_size);
 
 // All coordinate helpers return a zero vector when an input is non-finite,
 // screen size is non-positive, the camera is singular, or a homogeneous
