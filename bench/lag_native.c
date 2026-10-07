@@ -120,10 +120,11 @@ static void frame(FILE *raw, const int who, const uint64_t origin, tide_loopback
     tide_gui_end(&m->gui, &m->draw);
     const double work_ms = (double)(tide_time_now_ns() - began) * 1e-6;
     // Same frame layout as lag.mjs: time, then tide_run_netcode's values.
-    fprintf(raw, "[%d,[%.3f,%u,%d,%u,%u,%u,%u,%u,%u,%.3f,%u,%u,%u,%u,%u,%u,%u,%.6f,%.6f]]\n", who,
+    fprintf(raw, "[%d,[%.3f,%u,%d,%u,%u,%u,%u,%u,%u,%.3f,%u,%u,%u,%u,%u,%u,%u,%.6f,%.6f,%.3f,%.3f,%.3f]]\n", who,
         now * 1000.0, (unsigned)c->state, status.server ? 1 : 0, c->ping_ms, c->answer_ms, c->verified_tick,
         c->predicted_tick, c->server_tick, c->delay_ticks, (double)c->early_ms, c->late_ticks, c->again_ticks,
-        c->run_ticks, c->ahead_ticks, c->resyncs, m->corrections, m->resets, update_ms, work_ms);
+        c->run_ticks, c->ahead_ticks, c->resyncs, m->corrections, m->resets, update_ms, work_ms, (double)c->rollback_ms,
+        (double)c->rollback_most_ms, (double)c->resim_ms);
 }
 
 int main(const int argc, char **argv)

@@ -176,7 +176,7 @@ What each player controls is up to the `Owner` component (see [Input](../game/in
 
 By default there is none: a player's own input applies at once. Clients run ahead of the server, by about half the round trip, so their input arrives in time. Only other players' inputs are ever guessed, and when a guess is wrong, the client rolls back and runs the ticks again. See [Networking](./networking.md#prediction-and-rollback) for how.
 
-Running ticks again costs time, about as many ticks as the client is ahead, every frame on a busy match. A client that can't afford it delays its input instead: a tick at a time, until what's left to run again fits in its budget, and back again once there's room to spare. `tide run --stats` shows the delay when there is one.
+Running ticks again costs time: a wrong guess runs about as many ticks again as the client is ahead, and on a busy match that's most ticks. A client measures what its rollbacks cost and keeps its delay at the least where they fit: one rollback may take up to about a frame, and never less than a 60th of a second, and all of them together up to a budget an update (4 ms, unless the host says otherwise), on average. Past either it delays its input a tick at a time, and takes the delay back within a second or two of there being room again, or of there being no rollback at all. A client whose guesses are right pays no delay for ticks it never runs again, and the player on the server's own machine never has any. `tide run --stats` shows the delay when there is one.
 
 A game can ask for delay in place of prediction altogether:
 

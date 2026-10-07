@@ -369,6 +369,13 @@ typedef struct tide_client_status {
     uint32_t predicted_tick;       // Ticks run, predicted ones included
     uint32_t server_tick;          // The server's tick as it last said: the ticks before it are the ones it has run
     uint32_t delay_ticks;          // Ticks this machine's input is delayed by (tide_prediction)
+    // What the delay goes by, in milliseconds: what running its predicted
+    // ticks again would cost now, were a guess wrong, the most one such
+    // rollback may take a frame, and what rollbacks have cost an update of
+    // late, on the whole. 0 where it doesn't predict, or has no clock.
+    float rollback_ms;
+    float rollback_most_ms;
+    float resim_ms;
     float early_ms;                // How long this machine's inputs waited at the server before their ticks ran, as it last said: under 0, too late
     uint32_t late_ticks;           // Ticks the server ran without an input this machine sampled for them, which came too late, so far
     uint32_t again_ticks;          // Predicted ticks it ran again so far, after one went otherwise than it guessed
