@@ -167,6 +167,8 @@ TIDE_TEST(profiler_says_where_a_frame_and_a_tick_went)
 {
     static tide_profiler p;
     measured(&p, 12);
+    p.memory = 48u * 1024u * 1024u;
+    p.gpu_memory = 12u * 1024u * 1024u;
     tide_profiler_end(&p, 130); // 30 predicted ticks run again since
     enum { FRAME, TICK };
 
@@ -186,6 +188,10 @@ TIDE_TEST(profiler_says_where_a_frame_and_a_tick_went)
     const tide_profiler_row *match = row_named(&p, FRAME, "Match");
     TIDE_CHECK(match->depth == 1 && match->share > 0.099f && match->share < 0.101f && ticks->depth == 2);
     TIDE_CHECK(row_named(&p, FRAME, "Other") && row_named(&p, FRAME, "Swap, idle"));
+    // The memory is the frame's last row, with no time and no bar
+    const tide_profiler_row *memory = row_named(&p, FRAME, "Memory");
+    TIDE_REQUIRE(memory && memory == &p.rows[FRAME][p.row_count[FRAME] - 1u]);
+    TIDE_CHECK(strcmp(memory->note, "48 MB in RAM, 12 MB on the GPU") == 0 && !memory->value[0] && memory->share == 0.0f && memory->depth == 0);
 
     const tide_profiler_row *tick = row_named(&p, TICK, "Tick");
     TIDE_REQUIRE(tick && tick == &p.rows[TICK][0]);
