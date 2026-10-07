@@ -61,12 +61,12 @@ static void finger_event(const char *type, const float x, const float y)
     tide_web_eval(script);
 }
 
-// Whether the last frame's drawer had a line that starts with `text`.
+// Whether the last frame's drawer drew `text`: a label, a value, or its one line.
 static bool drew(const char *text)
 {
     for (uint32_t i = 0; i < tide_run_over.count; i++) {
         const tide_draw_command *c = &tide_run_over.commands[i];
-        if (c->kind == TIDE_DRAW_TEXT && strncmp(tide_run_over.text + c->text, text, strlen(text)) == 0) return true;
+        if (c->kind == TIDE_DRAW_TEXT && strcmp(tide_run_over.text + c->text, text) == 0) return true;
     }
     return false;
 }
@@ -105,7 +105,7 @@ static int frame(void *user, const float seconds)
         wait = 1;
         break;
     case 2:
-        check(drawer->open && drew("60 fps") && drew("threads") && drew(tide_platform_renderer()) && drew("tick "),
+        check(drawer->open && drew("60 fps") && drew("threads") && drew(tide_platform_renderer()) && drew("tick"),
               "F8 opens them: the list is above the line");
         check(measured == &tide_run_profiler.profile && tide_run_memory > 0, "and what the list shows is measured from then on");
         check(seen->key, "the game sees the key too");
@@ -113,9 +113,9 @@ static int frame(void *user, const float seconds)
         wait = 70; // More than a second: the host takes stock of what it timed
         break;
     case 3:
-        check(drew("cpu ") && drew("Count "), "the list has what a frame's work takes, and the game's system by name");
-        check(drew("render cpu "), "rendering CPU time is shown separately from the frame's total work");
-        check(!drew("gpu ") || strcmp(tide_platform_renderer(), "WebGPU") == 0,
+        check(drew("cpu") && drew("Count"), "the list has what a frame's work takes, and the game's system by name");
+        check(drew("render"), "rendering CPU time is shown separately from the frame's total work");
+        check(!drew("gpu") || strcmp(tide_platform_renderer(), "WebGPU") == 0,
               "GPU time is shown only on a backend with a timer");
         mouse_event("mousedown", x, y);
         break;
@@ -129,7 +129,7 @@ static int frame(void *user, const float seconds)
         wait = 1;
         break;
     case 6:
-        check(!measured && tide_platform_gpu_ms() < 0.0 && !drew("render cpu ") && !drew("gpu "),
+        check(!measured && tide_platform_gpu_ms() < 0.0 && !drew("render") && !drew("gpu"),
               "closed again, nothing is measured");
         finger_event("pointerdown", x, y);
         break;
@@ -162,12 +162,12 @@ static int frame(void *user, const float seconds)
         tide_draw_forget(&tide_run_draw); // A retained host with a new build's draw list
         break;
     case 13:
-        check(tide_run_work_ms < 0.0 && tide_run_render_ms < 0.0 && tide_run_gpu_ms < 0.0 && !drew("Count "),
+        check(tide_run_work_ms < 0.0 && tide_run_render_ms < 0.0 && tide_run_gpu_ms < 0.0 && !drew("Count"),
               "a reload discards the old build's timing averages and system order");
         wait = 40;
         break;
     default:
-        check(drew("cpu ") && drew("render cpu ") && drew("Count "),
+        check(drew("cpu") && drew("render") && drew("Count"),
               "fresh averaged timings return after the new build runs");
         return failures == 0 ? 0 : 1;
     }
