@@ -19,6 +19,7 @@
 //     331 pad leftStick 0.5 1        ...its sticks, from -1 to 1, y up...
 //     332 pad rightTrigger 1         ...and its triggers, from 0 to 1
 //     400 capture fight.png          the frame, once it drew, as a PNG beside the script
+//     401 capture-audio fight.wav    what played since the last such line (or the start), as a WAV beside it
 //     500 quit                       the run ends once this frame drew, with exit code 0
 //
 // What a line does at a frame is in the devices at that frame's poll, as a
@@ -156,6 +157,7 @@ typedef enum event_kind {
     EVENT_PAD_STICK,
     EVENT_PAD_TRIGGER,
     EVENT_CAPTURE, // A script's own, from here on: not input
+    EVENT_CAPTURE_AUDIO,
     EVENT_QUIT,
 } event_kind;
 
@@ -251,6 +253,7 @@ static void apply(const event *e)
         else made.pad.right_trigger = e->x;
         break;
     case EVENT_CAPTURE:
+    case EVENT_CAPTURE_AUDIO:
     case EVENT_QUIT:
         break;
     }
@@ -498,11 +501,18 @@ static bool parse(const char *text, event *e, char *error, const size_t size)
         if (!e->text[0]) return fail(error, size, "`capture` takes the file the frame goes to: `capture menu.png`");
         return true;
     }
+    if (strcmp(verb, "capture-audio") == 0) {
+        e->kind = EVENT_CAPTURE_AUDIO;
+        e->text = rest(at);
+        if (!e->text[0]) return fail(error, size, "`capture-audio` takes the file what played goes to: `capture-audio shot.wav`");
+        return true;
+    }
     if (strcmp(verb, "quit") == 0) {
         e->kind = EVENT_QUIT;
         return ended(&at, error, size);
     }
-    return fail(error, size, "'%s' isn't something a line does: that's key, button, mouse, move, scroll, text, touch, pad, capture or quit",
+    return fail(error, size, "'%s' isn't something a line does: that's key, button, mouse, move, scroll, text, touch, pad, capture, "
+                             "capture-audio or quit",
                 verb);
 }
 
@@ -510,7 +520,7 @@ bool tide_script_event(const char *text, char *error, const size_t error_size)
 {
     event e = {0};
     bool ok = parse(text, &e, error, error_size);
-    if (ok && e.kind >= EVENT_CAPTURE) ok = fail(error, error_size, "`capture` and `quit` are a script's lines, not input");
+    if (ok && e.kind >= EVENT_CAPTURE) ok = fail(error, error_size, "`capture`, `capture-audio` and `quit` are a script's lines, not input");
     if (ok) apply(&e);
     free(e.text);
     return ok;
@@ -632,9 +642,9 @@ int tide_script_drawn(const uint32_t frame)
     for (; script.next_drawn < script.count && script.events[script.next_drawn].frame <= frame; script.next_drawn++) {
         const event *e = &script.events[script.next_drawn];
         if (e->kind == EVENT_QUIT) quit = true;
-        if (e->kind != EVENT_CAPTURE) continue;
+        if (e->kind != EVENT_CAPTURE && e->kind != EVENT_CAPTURE_AUDIO) continue;
         char *path = beside_script(e->text);
-        const bool written = tide_platform_capture(path);
+        const bool written = e->kind == EVENT_CAPTURE ? tide_platform_capture(path) : tide_platform_capture_audio(path);
         free(path);
         if (!written) return 1;
     }

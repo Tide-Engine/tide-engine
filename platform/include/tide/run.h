@@ -42,6 +42,8 @@
 //                                             when to capture and quit (docs/tools/cli.md)
 //     game --capture big.png --frames 60 --scale 2
 //                                             as on a display scaled to 200%
+//     game --frames 300 --capture-audio run.wav
+//                                             everything the run played, as a WAV
 //     game --script play.txt --seed 7         the same input, in a match that rolls otherwise
 //
 // Such a run ends with exit code 0 at --frames or the script's `quit`, with

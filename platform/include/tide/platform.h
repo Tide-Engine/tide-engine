@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "tide/audio.h"
 #include "tide/devices.h"
 #include "tide/draw.h"
 #include "tide/gui.h"
@@ -66,6 +67,8 @@ typedef struct tide_headless_desc {
     float scale;       // Pixels to a logical one, each way, as a display scaled to 150% has 1.5; default 1
     uint32_t frames;   // The run ends once this many drew; 0 for when its script quits
     const char *capture; // The file the run's last frame goes to, as a PNG; NULL for none
+    // The file everything the run played goes to, as a WAV (tide_platform_capture_audio); NULL for none
+    const char *capture_audio;
     // A file of input by frame, of pictures to take and of when the run ends:
     // lines like `120 key d down`, `400 capture fight.png` and `500 quit`
     // (docs/tools/cli.md, Scripts, has every kind); NULL for none. A file it
@@ -95,6 +98,21 @@ const uint8_t *tide_platform_frame_pixels(int *width, int *height);
 // says so on stdout. False, having said why, when there's no frame or the
 // file can't be written; folders aren't made for it.
 bool tide_platform_capture(const char *path);
+
+// What a frame says should be sounding (tide/audio.h): a host hands it over
+// once a frame, after the frame drew, and the mixer plays it on the system's
+// audio thread. A headless window has no device: its mixer runs all the same,
+// as many blocks a frame as a 60th of a second takes at TIDE_AUDIO_RATE, and
+// keeps what it played for tide_platform_capture_audio. Nothing of a clock's
+// is in that, so a headless run plays the same bytes on every machine.
+void tide_platform_audio(const tide_audio_frame *frame);
+
+// Writes what a headless window played since the last such call (or since the
+// run began) to the file at `path`, as a WAV of 16-bit stereo PCM, and says
+// so on stdout. False, having said why, when the window isn't headless or
+// the file can't be written. `tide_headless_desc.capture_audio` writes the
+// whole run as it ends, whatever these took out of it.
+bool tide_platform_capture_audio(const char *path);
 
 // Returned by a frame function to keep going. Any other value ends the program
 // with that exit code.

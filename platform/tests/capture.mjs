@@ -71,11 +71,14 @@ if (mode === 'refused') {
     line('5 pad leftStick 1', 'a stick takes where');
     line('5 text', '`text` takes the characters');
     line('5 capture', '`capture` takes the file');
+    line('5 capture-audio', '`capture-audio` takes the file');
+    line('5 captur-audio x.wav', "'captur-audio' isn't something a line does", 'capture-audio or quit');
     line('5', 'nothing happens');
     refused('a script that is no file', ['--script', join(scratch, 'none.txt')], "can't read the script", 'none.txt');
     refused('a run nothing ends', ['--capture', 'x.png'], 'nothing ends this run', '--frames');
     refused('a script that never quits', ['--script', script('endless.txt', ['3 key d'])], 'nothing ends this run', '`quit`');
     refused('--frames with no number', ['--frames'], '--frames takes how many frames');
+    refused('--capture-audio with no file', ['--frames', '2', '--capture-audio'], '--capture-audio takes the file');
     refused('--frames that is no number', ['--frames', 'many'], "not 'many'");
     refused('--size with one number', ['--frames', '2', '--size', '320'], '--size takes');
     refused('--scale without a run it is for', ['--scale', '2'], '--scale is for a run with no window');
@@ -86,7 +89,7 @@ if (mode === 'refused') {
     refused('a seed past the last one', ['--frames', '2', '--seed', '2147483648'], "not '2147483648'");
     refused('a seed under 0', ['--frames', '2', '--seed', '-1'], "not '-1'");
     refused('a seed that is no whole number', ['--frames', '2', '--seed', '1.5'], "not '1.5'");
-    check(!existsSync(join(scratch, 'x.png')), 'and wrote no picture');
+    check(!existsSync(join(scratch, 'x.png')) && !existsSync(join(scratch, 'x.wav')), 'and wrote no picture, and no audio');
     process.exit(failures ? 1 : 0);
 }
 
@@ -223,6 +226,42 @@ if (plain.status === 0) {
     check(png.width === 450 && png.height === 150, `300 by 100 at scale 1.5 is 450 by 150 pixels (${png.width} by ${png.height})`);
     check(same(png.at(225, 140), blue), 'and it is the game there');
 }
+
+// What a run played, as a WAV: a game with no sound plays silence, a 60th of
+// a second a frame at 48 kHz, and a script's `capture-audio` line takes what
+// played since the last one. The mixer is the engine's own float code, so the
+// bytes are the same on every machine.
+const wav = name => {
+    const b = readFileSync(join(scratch, name));
+    const ok = b.length >= 44 && b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WAVE'
+        && b.toString('latin1', 12, 16) === 'fmt ' && b.toString('latin1', 36, 40) === 'data';
+    if (!ok) return null;
+    const frames = b.readUInt32LE(40) / 4;
+    let silent = true;
+    for (let i = 44; i < b.length; i += 2) if (b.readInt16LE(i) !== 0) { silent = false; break; }
+    return { channels: b.readUInt16LE(22), rate: b.readUInt32LE(24), bits: b.readUInt16LE(34), frames, silent, size: b.length };
+};
+const heard = run(['--frames', '10', '--capture-audio', 'run.wav', '--size', '64', '64']);
+check(heard.status === 0 && heard.out.includes('captured run.wav'), `--capture-audio ends with exit code 0 and says so (${heard.status})`);
+if (heard.status === 0) {
+    const w = wav('run.wav');
+    check(w && w.channels === 2 && w.rate === 48000 && w.bits === 16, 'and the file is a WAV of 16-bit stereo at 48 kHz');
+    check(w && w.frames === 10 * 800 && w.size === 44 + 10 * 800 * 4, `with a 60th of a second a frame (${w && w.frames} frames)`);
+    check(w && w.silent, 'silent, for a game with no sound');
+    const heardAgain = run(['--frames', '10', '--capture-audio', 'again.wav', '--size', '64', '64']);
+    check(heardAgain.status === 0 && readFileSync(join(scratch, 'again.wav')).equals(readFileSync(join(scratch, 'run.wav'))),
+          'and the same bytes again');
+}
+const parts = run(['--script', script('parts.txt', ['3 capture-audio a.wav', '5 capture-audio b.wav', '8 capture-audio c.wav', '8 quit']),
+                   '--capture-audio', 'all.wav', '--size', '64', '64']);
+check(parts.status === 0, `a script's capture-audio lines end with exit code 0 (${parts.status})`);
+if (parts.status === 0) {
+    const [a, b, c, all] = ['a.wav', 'b.wav', 'c.wav', 'all.wav'].map(wav);
+    check(a && b && c && all && a.frames === 3 * 800 && b.frames === 2 * 800 && c.frames === 3 * 800 && all.frames === 8 * 800,
+          `each takes what played since the last, and --capture-audio the whole run (${[a, b, c, all].map(w => w && w.frames).join(', ')})`);
+}
+const lostAudio = run(['--frames', '2', '--capture-audio', join(scratch, 'no', 'such', 'folder.wav')]);
+check(lostAudio.status === 1 && lostAudio.err.includes("can't write"), `audio that can't be written is exit code 1 (${lostAudio.status})`);
 
 // A picture that can't be written fails the run
 const lost = run(['--frames', '2', '--capture', join(scratch, 'no', 'such', 'folder.png')]);

@@ -38,7 +38,7 @@ bool tide_script_quits(void);
 // Before frame `frame` (they count from 1): its lines' input, into the devices.
 void tide_script_input(uint32_t frame);
 
-// Once the frame drew: writes the pictures its lines ask for
-// (tide_platform_capture). TIDE_KEEP_RUNNING, or the run's exit code: 0 at
-// its `quit`, 1 when a picture couldn't be written.
+// Once the frame drew: writes the pictures and the audio its lines ask for
+// (tide_platform_capture, tide_platform_capture_audio). TIDE_KEEP_RUNNING, or
+// the run's exit code: 0 at its `quit`, 1 when a file couldn't be written.
 int tide_script_drawn(uint32_t frame);
