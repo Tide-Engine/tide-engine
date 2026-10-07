@@ -8,7 +8,7 @@ RUN apk add --no-cache su-exec
 
 WORKDIR /site
 ENV NODE_ENV=production PORT=3000
-COPY package.json headers.js server.js ./
+COPY package.json headers.js releases.js server.js ./
 COPY build ./build
 
 EXPOSE 3000

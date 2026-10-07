@@ -2,9 +2,9 @@
 
 #include <stdbool.h>
 
-// Updating tide from GitHub Releases. Stable versions come from the release
-// branch, nightly ones (pre-releases) from dev; both are published by
-// .github/workflows/build.yml.
+// Updating tide from its releases, which the site lists (docs/releases.js).
+// Stable versions come from the release branch, nightly ones (pre-releases)
+// from dev; both are published by .github/workflows/build.yml.
 
 // The channel tide follows: "stable" or "nightly".
 const char *tide_channel(const char *root);
