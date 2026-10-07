@@ -1468,8 +1468,10 @@ static tide_float4x4 turn_z(tide_float4x4 m)
 // change, or a new one. `mirrored` says it shows the world as a looking glass
 // would, which whoever made the matrix knows of its parts: asked of the
 // matrix itself, a camera far from the origin would answer by its rounding.
-static void camera_3d(tide_draw_list *d, const tide_float4x4 world_to_clip, const bool fit, const bool mirrored)
+static void camera_3d(tide_draw_list *d, const tide_draw_camera_3d_data camera)
 {
+    const tide_float4x4 world_to_clip = camera.matrix;
+    const bool fit = camera.fit != 0, mirrored = camera.mirrored != 0;
     tide_draw_place *p = &d->place;
     const uint32_t known[2] = {p->played_3d, p->camera_3d};
     for (int i = 0; i < 2; i++) {
@@ -1482,14 +1484,23 @@ static void camera_3d(tide_draw_list *d, const tide_float4x4 world_to_clip, cons
         }
     }
     d->cameras_3d = grow(d->cameras_3d, d->camera_3d_count, &d->camera_3d_capacity, 1, sizeof(tide_draw_camera_3d_data), 8u);
-    d->cameras_3d[d->camera_3d_count] = (tide_draw_camera_3d_data){.matrix = world_to_clip, .fit = fit,
-                                                                   .mirrored = mirrored};
+    d->cameras_3d[d->camera_3d_count] = camera;
     p->camera_3d = ++d->camera_3d_count;
     refresh(d);
 }
 
-tide_float4x4 tide_draw_camera_3d_matrix(const tide_float3 position, const tide_quaternion rotation,
-                                         const float field_of_view)
+// A camera of which only the matrix is known, as a command has it: one at the
+// origin whose projection is all of it.
+static tide_draw_camera_3d_data camera_of_matrix(const tide_float4x4 world_to_clip, const bool fit, const bool mirrored)
+{
+    tide_float4x4 projection = world_to_clip;
+    projection.c2 = tide_neg_f4(projection.c2);
+    return (tide_draw_camera_3d_data){.matrix = world_to_clip, .transform = tide_identity_f4x4(),
+                                      .projection = projection, .fit = fit, .mirrored = mirrored};
+}
+
+static tide_draw_camera_3d_data perspective_camera(const tide_float3 position, const tide_quaternion rotation,
+                                                   const float field_of_view)
 {
     // The world as the camera sees it: moved and turned the other way
     const tide_quaternion back = tide_conjugate_q(tide_normalize_q(rotation));
@@ -1502,13 +1513,37 @@ tide_float4x4 tide_draw_camera_3d_matrix(const tide_float3 position, const tide_
                                       {0.0f, f, 0.0f, 0.0f},
                                       {0.0f, 0.0f, -1.0f, -1.0f},
                                       {0.0f, 0.0f, -2.0f * near_z, 0.0f}};
-    return tide_mul_f4x4(projection, turn_z(view));
+    return (tide_draw_camera_3d_data){
+        .matrix = tide_mul_f4x4(projection, turn_z(view)),
+        .transform = tide_trs_f4x4(position, tide_normalize_q(rotation), tide_f3(1.0f, 1.0f, 1.0f)),
+        .projection = projection,
+        .fit = 1,
+    };
+}
+
+tide_float4x4 tide_draw_camera_3d_matrix(const tide_float3 position, const tide_quaternion rotation,
+                                         const float field_of_view)
+{
+    return perspective_camera(position, rotation, field_of_view).matrix;
+}
+
+tide_draw_camera_3d_data tide_draw_first_camera_3d(void)
+{
+    return perspective_camera(tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 60.0f);
+}
+
+tide_float4x4 tide_draw_camera_fit(tide_float4x4 matrix, const float width, const float height)
+{
+    const float across = height / width;
+    matrix.c0.x *= across, matrix.c1.x *= across;
+    matrix.c2.x *= across, matrix.c3.x *= across;
+    return matrix;
 }
 
 void tide_draw_set_camera_3d(tide_draw_list *d, const tide_float3 position, const tide_quaternion rotation,
                              const float field_of_view)
 {
-    camera_3d(d, tide_draw_camera_3d_matrix(position, rotation, field_of_view), true, false);
+    camera_3d(d, perspective_camera(position, rotation, field_of_view));
 }
 
 void tide_draw_unset_camera_3d(tide_draw_list *d)
@@ -1524,7 +1559,8 @@ void tide_draw_set_camera_matrices(tide_draw_list *d, const tide_float4x4 transf
     // (a camera placed by a matrix that mirrors, a projection upside down, or the identity's, which
     // looks back along z), and a triangle's front is still its front there
     const bool mirrored = mirrors(&transform) != (tide_determinant_f4x4(projection) > 0.0f);
-    camera_3d(d, tide_mul_f4x4(projection, turn_z(tide_inverse_f4x4(transform))), false, mirrored);
+    camera_3d(d, (tide_draw_camera_3d_data){.matrix = tide_mul_f4x4(projection, turn_z(tide_inverse_f4x4(transform))),
+                                            .transform = transform, .projection = projection, .mirrored = mirrored});
 }
 
 uint32_t tide_draw_push_camera_3d(tide_draw_list *d, const tide_float3 position, const tide_quaternion rotation,
@@ -1972,7 +2008,7 @@ static void append_place(tide_draw_list *d, const tide_draw_list *from, const ti
     p->camera_2d = append_camera(d, from, place->camera_2d);
     if (place->camera_3d && place->camera_3d <= from->camera_3d_count) {
         const tide_draw_camera_3d_data *c = &from->cameras_3d[place->camera_3d - 1u];
-        camera_3d(d, c->matrix, c->fit != 0, c->mirrored != 0);
+        camera_3d(d, *c);
     } else {
         p->camera_3d = 0;
     }
@@ -2006,7 +2042,7 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
         } else if (c->kind == TIDE_DRAW_CAMERA_3D) {
             if (c->camera.matrix == TIDE_DRAW_FIRST_CAMERA) tide_draw_unset_camera_3d(d);
             else if (c->camera.matrix < from->matrix_count) {
-                camera_3d(d, from->matrices[c->camera.matrix], c->camera.fit != 0, c->camera.mirrored != 0);
+                camera_3d(d, camera_of_matrix(from->matrices[c->camera.matrix], c->camera.fit != 0, c->camera.mirrored != 0));
             }
         } else if (c->kind == TIDE_DRAW_CLIP || c->kind == TIDE_DRAW_NO_CLIP) {
             d->place.clip = c->kind == TIDE_DRAW_CLIP ? append_clip(d, from, c->clip) : 0;

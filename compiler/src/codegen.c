@@ -3320,6 +3320,10 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
                                 || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection"))) {
         sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height)");
     }
+    if (e->call == CALL_DRAW && (str_eq_c(e->name, "WorldToClip") || str_eq_c(e->name, "CameraTransform")
+                                || str_eq_c(e->name, "CameraProjection") || str_eq_c(e->name, "WorldToScreenMatrix"))) {
+        sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height)"); // As the conversions: the camera fitted to the window
+    }
     if (e->call == CALL_BUILTIN && strcmp(e->c_callee, "tide_draw_screen_flip") == 0) { // Screen.Flip: in the window
         sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height)");
     }

@@ -2079,14 +2079,9 @@ static void sample_step_texture(const tide_draw_list *list, const draw_step *s)
 // shape: x divided by its width over its height.
 static tide_float4x4 camera_3d_to_clip(const tide_draw_list *list, const draw_step *s)
 {
-    tide_float4x4 world_to_clip = s->camera ? list->matrices[s->camera - 1u]
+    const tide_float4x4 world_to_clip = s->camera ? list->matrices[s->camera - 1u]
                                             : tide_draw_camera_3d_matrix(tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 60.0f);
-    if (!s->camera || s->fit) {
-        const float across = draw_height / draw_width;
-        world_to_clip.c0.x *= across, world_to_clip.c1.x *= across;
-        world_to_clip.c2.x *= across, world_to_clip.c3.x *= across;
-    }
-    return world_to_clip;
+    return !s->camera || s->fit ? tide_draw_camera_fit(world_to_clip, draw_width, draw_height) : world_to_clip;
 }
 
 // A camera as a matrix, from the units its commands are in to clip space:
