@@ -107,6 +107,8 @@ static const check checks[] = {
     {0, 5, 0, 0, 0, 1, 0, "a frag's numbers, vectors, matrices, structs, functions and loops come out as on the CPU"},
     {1, 5, 0, 0, 0, 1, 0, "a vert reads its vertex's ints, samples a grid, and changes the color its pixels get"},
     {2, 5, 0, 0, 0, 1, 0, "and so do its matrices, int vectors, assignments, counting loops, structs in structs and the rest of Math"},
+    {6, 4, -6, -6, 0.27f, 0.27f, 0, "Color(uv.xy, 0) writes uv.x and uv.y as red and green, with blue 0 and alpha 1"},
+    {6, 4, 6, 6, 0.77f, 0.77f, 0, "and follows the uv across the triangle"},
     // Math, against what the CPU worked out
     {3, 3, 0, 0, 0, 1, 0, "Math.Hash in a frag is the CPU's number, for an int and each int vector, of constants too"},
     {4, 3, 0, 0, 0, 1, 0, "quaternions in a frag: products, rotations, slerps, and what builds one"},
