@@ -1144,6 +1144,51 @@ static void check_depth_targets(void)
     tide_render_targets_free();
 }
 
+// A target of depth alone is drawn into from the side its own cull says, as
+// any target is: a mesh seen from the back leaves no depth there, unless the
+// target says the back is drawn. A lamp's image is made that way.
+static void check_depth_cull(void)
+{
+    enum { WIDE = WIDTH * 2, HIGH = HEIGHT * 2 };
+    static const uint32_t indices[6] = {0, 1, 2, 0, 2, 3};
+    // Over the target's left half, 2 away from a camera that looks along +z: seen from the front, and from the back
+    const tide_vertex3 front_vertices[4] = {{{-1, 1, 2}, {0, 0}, TIDE_COLOR_RED}, {{0, 1, 2}, {1, 0}, TIDE_COLOR_RED},
+                                           {{0, -1, 2}, {1, 1}, TIDE_COLOR_RED}, {{-1, -1, 2}, {0, 1}, TIDE_COLOR_RED}};
+    const tide_vertex3 back_vertices[4] = {{{-1, 1, 2}, {0, 0}, TIDE_COLOR_RED}, {{-1, -1, 2}, {0, 1}, TIDE_COLOR_RED},
+                                          {{0, -1, 2}, {1, 1}, TIDE_COLOR_RED}, {{0, 1, 2}, {1, 0}, TIDE_COLOR_RED}};
+    const tide_mesh front = {front_vertices, 4, indices, 6, 1}, back = {back_vertices, 4, indices, 6, 1};
+    const tide_float4x4 identity = tide_identity_f4x4(), across = tide_ortho_f4x4(2, 2, 0.1f, 10);
+    const tide_render_target lamp = tide_render_target_make_scaled_as(WIDE, HIGH, 1, TIDE_TARGET_DEPTH_ONLY);
+    const tide_depth_ref lamp_depth = tide_render_target_depth(lamp);
+    struct {
+        const tide_mesh *mesh;
+        int cull; // -1: as a frame starts
+        bool written;
+        const char *what;
+    } const cases[] = {
+        {&front, -1, true, "a mesh seen from the front leaves its depth in a target of depth alone"},
+        {&back, -1, false, "and one seen from the back leaves none"},
+        {&back, TIDE_CULL_NONE, true, "unless the target draws both sides"},
+        {&back, TIDE_CULL_FRONT, true, "or the back alone"},
+        {&front, TIDE_CULL_FRONT, false, "where one seen from the front leaves none"},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        tide_draw_reset(&render_list);
+        tide_draw_render_target(&render_list, lamp);
+        tide_draw_clear(&render_list, TIDE_COLOR_BLACK);
+        tide_draw_set_camera_matrices(&render_list, identity, across);
+        if (cases[i].cull >= 0) tide_draw_set_cull(&render_list, (tide_cull)cases[i].cull);
+        tide_draw_mesh_3d(&render_list, cases[i].mesh, identity, NULL, TIDE_FILTER_POINT);
+        tide_draw_to(&render_list, 0, 0, 0);
+        blit_compared(lamp_depth, 0.9f); // Black where something nearer than that is stored
+        read_window(WIDE, HIGH, 1.0f);
+        if (cases[i].written) expect_halves(0x000000ffu, 0xffffffffu, cases[i].what);
+        else expect_all(0xffffffffu, cases[i].what);
+    }
+    tide_draw_forget(&render_list);
+    tide_render_targets_free();
+}
+
 static void expect(const uint8_t *actual, const uint8_t *source, const int scale, const char *what)
 {
     const int width = WIDTH * scale, height = HEIGHT * scale;
@@ -1461,6 +1506,7 @@ static int frame(void *user, const float seconds)
     check_scales_and_window();
     checked("targets under a window and a display that change");
     check_depth_targets();
+    check_depth_cull();
     checked("the renderer's depth");
     if (failures) return 1;
 #ifdef __wasm__
