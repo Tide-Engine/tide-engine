@@ -32,6 +32,7 @@ singleton Size
     int made;
     bool calm; // Nothing is pushed any more: what's there comes to rest
     bool flip; // The pushed crate is another type every tick, for what that costs
+    bool lull; // ...or put to sleep and woken in turn
 }
 
 system Stack(mut Size size)
@@ -80,6 +81,12 @@ system Push(mut Body body, mut Pushed pushed, Size size)
 system Flip(mut Body body, Size size, with Pushed)
 {
     if (size.flip) body.type = body.type == BodyType.Dynamic ? BodyType.Kinematic : BodyType.Dynamic;
+}
+
+// ...and putting a body to sleep, or waking one, is followed: what changed is what's written
+system Lull(mut Body body, Size size, with Pushed)
+{
+    if (size.lull) body.asleep = !body.asleep;
 }
 
 system Doom(mut Doomed doomed)

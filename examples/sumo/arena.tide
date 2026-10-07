@@ -3,8 +3,9 @@
 // machine builds the same ring from the round's number and the match's seed.
 //
 // Everything stacked is a body of its own, standing still until something
-// hits it. Box3D puts a body that has come to rest to sleep, so two thousand
-// crates cost a tick next to nothing until a ball gets to them.
+// hits it. A body at rest is asleep, and a ring is put to sleep as soon as
+// it's stacked (Settle), so two thousand crates cost a tick next to nothing
+// until a ball gets to them.
 //
 // What's stacked is square to the floor, and a column of crates stands a
 // hand's width from the next. That's for what the match carries: Box3D keeps
@@ -16,6 +17,10 @@
 using Box3D;
 
 const float PITCH = 0.96;        // From a column's middle to the next one's: a crate, and the gap
+
+// A crate that was just stacked, until it's put to sleep (Settle)
+[Sparse]
+component Fresh { }
 
 // One crate, plank, beam or keg of a ring that's being planned: a box, where
 // it stands and how it's turned.
@@ -226,9 +231,31 @@ system Raise(Ring ring, Time time)
         var turn = brick.turned ? quarter : quaternion.identity;
         if (brick.kind == Kind.Keg)
             Spawn(Body { position = brick.at, rotation = turn }, Box { size = brick.size, density = CRATE_DENSITY },
-                  Crate { kind = brick.kind }, Loose { mass = mass }, Keg);
+                  Crate { kind = brick.kind }, Loose { mass = mass }, Keg, Fresh);
         else
             Spawn(Body { position = brick.at, rotation = turn }, Box { size = brick.size, density = CRATE_DENSITY },
-                  Crate { kind = brick.kind, tone = brick.tone }, Loose { mass = mass });
+                  Crate { kind = brick.kind, tone = brick.tone }, Loose { mass = mass }, Fresh);
     }
+}
+
+// What a ring is stacked of is put to sleep once it has had one step. It's
+// stacked where it rests, so there's nothing for it to do until a ball gets to
+// it, and left to itself Box3D would step all of it for a second before it let
+// it sleep. The one step is for Box3D to find what rests on what: a stack then
+// sleeps as one, and wakes as one when something hits it. Spawned asleep, each
+// crate would sleep by itself, and a stack that's hit would wake a crate a
+// tick, from where it was hit.
+//
+// It runs for the crates that were just stacked, which is none of them in
+// nearly every tick, so it takes Body to read and puts the ones it changed
+// back through the World: taking it `mut` would have every crate's body
+// copied and compared in every tick, for the tick that writes them.
+[After(PhysicsStages.Step)]
+system Settle(Body body, mut World world, with Fresh)
+{
+    if (body.id == 0) return; // Spawned this tick: its body is made in the next
+    mut var lulled = body;
+    lulled.asleep = true;
+    world.Set<Body>(this, lulled);
+    this.Remove(Fresh);
 }

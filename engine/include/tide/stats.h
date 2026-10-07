@@ -80,6 +80,7 @@ typedef struct tide_stats_line {
     char value[32];
     bool indent; // Under the line before it, as a part of it: `render` under `cpu`
     bool gap;    // A little space before it: the first line of a group
+    bool arrows; // The value is two numbers, two spaces apart, drawn with an up arrow before the first and a down arrow before the second
 } tide_stats_line;
 
 // A finger that touched the drawer.

@@ -785,7 +785,7 @@ static bool is_decl_word(const str text)
     return str_eq_c(text, "input") || str_eq_c(text, "view") || str_eq_c(text, "struct") || str_eq_c(text, "event") || str_eq_c(text, "command")
         || str_eq_c(text, "enum") || str_eq_c(text, "scene") || str_eq_c(text, "local") || str_eq_c(text, "namespace")
         || str_eq_c(text, "using") || str_eq_c(text, "extern") || str_eq_c(text, "const") || str_eq_c(text, "frag")
-        || str_eq_c(text, "vert") || str_eq_c(text, "asset");
+        || str_eq_c(text, "vert") || str_eq_c(text, "asset") || str_eq_c(text, "audio");
 }
 
 // Keywords that only start declarations, and the contextual ones at the start
@@ -2017,6 +2017,22 @@ static decl *parse_shader(parser *p, const bool is_frag)
     return d;
 }
 
+// audio Lowpass(mut Samples samples, mut State state, Knobs knobs) { ... }: a
+// function the audio thread runs once a block, on a voice's or a bus's samples.
+static decl *parse_audio(parser *p)
+{
+    decl *m = new_named_decl(p, DECL_FUNCTION, "audio name");
+    m->unit = p->unit;
+    m->is_audio = true;
+    m->audio_state = m->audio_knobs = -1;
+    m->return_type_name = str_from("void");
+    parse_routine_params(p, m);
+    m->body_at = m->at;
+    m->body = parse_block(p);
+    m->end = m->body->end;
+    return m;
+}
+
 // event(Hit hit) TakeHit(mut Health health) { ... }: runs when a Hit is sent.
 // The trigger is the first parameter; an event without fields needs no name.
 static decl *parse_handler(parser *p, const bool command)
@@ -2413,6 +2429,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "view")) d = parse_system(&p, true);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "frag")) d = parse_shader(&p, true);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "vert")) d = parse_shader(&p, false);
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "audio")) d = parse_audio(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "struct")) d = parse_data_decl(&p, DECL_STRUCT);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "event")) d = parse_data_decl(&p, DECL_EVENT);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "command")) {

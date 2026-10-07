@@ -58,6 +58,7 @@ component Body
     float3 angularVelocity;           // Radians a second, by axis
     float3 impulse;                   // A push at the next step, once
     float3 angularImpulse;            // The same, around
+    bool asleep;                      // At rest, and not stepped until something wakes it
     float gravityScale = 1;           // 0 for a body that floats
     float linearDamping;              // How fast it slows by itself
     float angularDamping;             // And how fast its spin does
@@ -70,13 +71,13 @@ component Body
 - A **dynamic** body is moved by gravity, by what it touches and by what code pushes it with.
 - A **bullet** is checked against the other moving bodies all along its way, so that a small fast body doesn't pass through a thin one between two steps. It costs more, so it's for the few bodies that need it.
 
-After each step, `position`, `rotation`, `velocity` and `angularVelocity` are where Box3D left the body. Code reads them like any component's fields, and [writing them moves the body](#moving-a-body). A rotation that code writes is made of length 1 if it isn't.
+After each step, `position`, `rotation`, `velocity` and `angularVelocity` are where Box3D left the body, and `asleep` says whether it's [at rest](#bodies-at-rest). Code reads them like any component's fields, and [writing them moves the body](#moving-a-body), or puts it to sleep, or wakes it. A rotation that code writes is made of length 1 if it isn't.
 
 [Views](../game/views.md) see a body between its last two ticks, as they see any component. The package says what two of the fields are, for that: `position` is a `[Position]` and `rotation` a `[Rotation]` (see [correction smoothing](../game/views.md#provisional-correction-smoothing)). So when the server corrects where this machine had predicted a body, a view sees it get there over a few frames, turning the short way, where it would jump. It changes nothing of the match.
 
 `type` and the fields from `gravityScale` down say how the body is to be. They're set where the entity is spawned, and [can be written later](#changing-how-a-body-is).
 
-The rest of the component is the package's own, and not for a game to write: `id` is Box3D's handle to the body, 0 until its first step; `stepPosition`, `stepRotation`, `stepVelocity` and `stepAngularVelocity` are where the last step left it, which is how the package tells what code wrote since; and `stepType`, `stepGravityScale`, `stepLinearDamping`, `stepAngularDamping` and `stepBullet` are what Box3D has of how the body is to be.
+The rest of the component is the package's own, and not for a game to write: `id` is Box3D's handle to the body, 0 until its first step; `stepPosition`, `stepRotation`, `stepVelocity`, `stepAngularVelocity` and `stepAsleep` are how the last step left it, which is how the package tells what code wrote since; and `stepType`, `stepGravityScale`, `stepLinearDamping`, `stepAngularDamping` and `stepBullet` are what Box3D has of how the body is to be.
 
 ## Shapes
 
@@ -254,13 +255,70 @@ event(Touched touched) Sink(mut Body body, World world)
 
 ### Bodies at rest
 
-Box3D stops moving a body that has come to rest: it's asleep, and costs nothing, until something touches it or pushes it. Whatever code writes into a sleeping body wakes it:
+Box3D stops moving a body that has come to rest: it's asleep, and costs nothing, until something touches it or code wakes it. `asleep` says which it is, after each step, and code that writes it puts the body to sleep or wakes it, at the next step:
+
+```csharp
+component Boulder { }
+
+// The boulder hangs over the path, asleep from the tick it's spawned
+event(Spawned) Build(with Main)
+{
+    Spawn(Body { position = float3(4, 9, 0), asleep = true }, Sphere { radius = 1 }, Boulder);
+}
+
+// ...until the game's own event says the trap was sprung
+event(Sprung) Drop(mut Body body, with Boulder)
+{
+    body.asleep = false;
+}
+
+// The round is over: everything stops where it is
+system Freeze(mut Body body, Round round)
+{
+    if (round.over && !body.asleep) body.asleep = true;
+}
+```
+
+- **A body that's put to sleep stops where it is**, in the air too: its `velocity` and its `angularVelocity` are zero from then on, and none of its speed comes back when it wakes.
+- **It takes what it touches with it.** Box3D sleeps and wakes bodies an *island* at a time: the bodies that touch each other, and the ones those touch, as the last step found them. So the bottom crate of a stack that's put to sleep takes the stack with it, and a crate that's sliding along a plank stops where it is when the plank is put to sleep. A kinematic body is one of them: a lift goes to sleep with what stands on it. A static body isn't: two crates on the same floor are two islands.
+- **What hasn't touched it yet stays awake.** A crate that's still on its way down to a sleeping stack goes on falling, and wakes the stack when it lands.
+- **Waking is the same**: `asleep = false` wakes the body and all of what it fell asleep with.
+- **A static body is never asleep.** Its `asleep` reads false, whatever is written into it, and so does a sleeping body's once it's made `Static`.
+- **It works where bodies don't fall asleep by themselves** ([`sleeping`](#the-world) off): one that code puts to sleep sleeps all the same, until something wakes it.
+
+A sleeping body wakes by itself, with its island, when something awake touches it. And whatever else code writes into it wakes it too:
 
 - A `velocity` or an `angularVelocity` that isn't zero, an `impulse` or an `angularImpulse`.
 - A `position` or a `rotation`: the body is moved and wakes, so a crate at rest that's put in the air falls. What was touching it wakes too: a platform that's moved away, a static one as well, drops what stood on it.
 - Its `type`, `gravityScale`, `linearDamping`, `angularDamping` or `bullet`: a ball asleep in the air with no gravity on it falls once it has some.
 
-A world where everything is asleep and nothing was written isn't stepped at all (see [What it costs](#what-it-costs)).
+So does a body beside it that's destroyed, and [a new gravity](#the-world). After the step, `asleep` reads false.
+
+**What code puts to sleep in a tick is asleep as that tick's step starts**, whatever else was written that tick, into it or into a body it touches. A push or a speed written with it is lost. A `position` written with it is where it sleeps: a body that's put somewhere else and to sleep at once hangs there. A new gravity in that tick doesn't wake it. What does is another body running into it in that very step.
+
+That's for a body that was awake. Writing `asleep = true` into one that's asleep already writes nothing, so a sleeping body that code moves wakes like any other: `asleep` is false after that tick, and code that wants it asleep where it put it says so then.
+
+A body that's **spawned asleep** starts where it's spawned, with none of the speed or the push it was spawned with. Bodies spawned asleep on each other are each asleep by themselves, as no step has seen them touch: one that's hit wakes, and the ones resting on it a step after each other. That's fine for a few. For a great many stacked on each other it's better to spawn them awake and put them to sleep a tick later, once they have had a step: they then sleep and wake a stack at a time, which costs less when a lot of them wake at once. [Sumo](../guide/sumo.md) does that with the two thousand crates of its ring, which took a second to come to rest by themselves:
+
+```csharp
+[Sparse]
+component Fresh { }
+
+// Spawned with Fresh, and awake for the one step in which Box3D finds what rests on what
+[After(PhysicsStages.Step)]
+system Settle(Body body, mut World world, with Fresh)
+{
+    if (body.id == 0) return; // Spawned this tick: its body is made in the next
+    mut var lulled = body;
+    lulled.asleep = true;
+    world.Set<Body>(this, lulled);
+    this.Remove(Fresh);
+}
+```
+
+It reads `Body` and puts the few it changes back through the [`World`](../game/systems.md#other-entities-the-world), as it runs for none of them in nearly every tick: a system that takes every crate's `Body` as `mut` has them all looked over in every tick.
+
+A world where everything is asleep and nothing was written isn't stepped at all (see [What it costs](#what-it-costs)), and a body that's put to sleep costs what one that fell asleep does: nothing.
 
 ## When things happen in a tick
 
@@ -559,5 +617,5 @@ Measured on a release build, with 2,400 crates in stacks, on one thread, with th
 - A shape's fields don't follow later changes: its size, its `density`, `friction` and `bounce`, and whether it's a sensor. A [part](#parts) that's destroyed and spawned again is how a shape changes.
 - Removing `Body` from an entity that stays leaves its body in the world, and removing a shape's component leaves the shape on it.
 - What's asked of the world takes no filter, and finds the nearest thing only, not everything on the way.
-- Whether one body may sleep, and locks on the axes a body moves and turns on.
+- Whether one body may fall asleep by itself, and locks on the axes a body moves and turns on.
 - Box3D keeps what a box of each size is made of, in `Physics`, and never lets one go: a game that makes boxes of ever new sizes keeps them all.

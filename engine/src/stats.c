@@ -20,6 +20,7 @@ static const float MARK = 16.0f;  // What the arrow takes before the line that's
 static const float GAP = 24.0f;   // Between the labels' column and the values'
 static const float GROUP = 8.0f;  // Between one group of lines and the next
 static const float INDENT = 12.0f; // A line that's a part of the one before it
+static const float ARROW = 11.0f;  // An arrow before a number, the room after it included
 
 static void reset_times(tide_stats *s)
 {
@@ -378,8 +379,9 @@ static void fill(tide_stats *s, const tide_stats_values *v)
         } else if (v->delay_ticks) {
             line(s, "delay", "%u ticks", (unsigned)v->delay_ticks);
         }
-        // Up and down on one line, an arrow each (U+2191 and U+2193, which the font has)
-        line(s, "network", "\xE2\x86\x91%.1f  \xE2\x86\x93%.1f KB/s", v->up / 1024.0, v->down / 1024.0);
+        // Up and down on one line, an arrow each, drawn by the drawer: the
+        // font's are too thin to tell from a 1 at this size
+        line(s, "network", "%.1f  %.1f KB/s", v->up / 1024.0, v->down / 1024.0)->arrows = true;
         line(s, "entities", "%u", (unsigned)v->entities);
         group(s, from);
     }
@@ -395,6 +397,49 @@ static float width_of(const tide_measure_fn measure, const char *text)
 {
     if (!text[0]) return 0.0f;
     return measure ? tide_ceil_f(measure(text, TEXT, NULL, TIDE_FONT_REGULAR).x) : (float)strlen(text) * TEXT * 0.5f;
+}
+
+// A value of two numbers with arrows: the first number's text (in `first`,
+// NUL-terminated) and the second's, and how wide each is.
+typedef struct arrowed {
+    char first[32];
+    const char *second;
+    float first_width, second_width;
+} arrowed;
+
+static arrowed split_arrowed(const tide_stats_line *l, const tide_measure_fn measure)
+{
+    arrowed a = {.second = l->value};
+    const char *at = strstr(l->value, "  ");
+    if (at) {
+        const size_t n = (size_t)(at - l->value) < sizeof a.first - 1 ? (size_t)(at - l->value) : sizeof a.first - 1;
+        memcpy(a.first, l->value, n);
+        a.first[n] = 0;
+        a.second = at + 2;
+    }
+    a.first_width = width_of(measure, a.first);
+    a.second_width = width_of(measure, a.second);
+    return a;
+}
+
+// How wide a value draws: its text, or its two numbers with an arrow before each.
+static float value_width(const tide_stats_line *l, const tide_measure_fn measure)
+{
+    if (!l->arrows) return width_of(measure, l->value);
+    const arrowed a = split_arrowed(l, measure);
+    return ARROW + a.first_width + GAP * 0.5f + ARROW + a.second_width;
+}
+
+// An arrow in a slot ARROW wide whose left is `x`, on a line whose text top
+// is `y`: up or down, a shaft with a head, as the drawer's chevron is drawn.
+static void draw_arrow(tide_draw_list *list, const float x, const float y, const bool up, const tide_color color)
+{
+    const float mid = x + 4.0f;
+    const float top = y + 2.0f, bottom = y + TEXT - 2.0f;
+    const float tip = up ? top : bottom, back = up ? 3.5f : -3.5f;
+    tide_draw_thick_line(list, tide_f2(mid, top), tide_f2(mid, bottom), 1.5f, color);
+    tide_draw_thick_line(list, tide_f2(mid - 3.5f, tip + back), tide_f2(mid, tip), 1.5f, color);
+    tide_draw_thick_line(list, tide_f2(mid, tip), tide_f2(mid + 3.5f, tip + back), 1.5f, color);
 }
 
 // A label in `most` pixels: how wide it is, once what doesn't fit is cut from
@@ -442,7 +487,7 @@ void tide_stats_draw(tide_stats *s, const tide_stats_values *values, tide_draw_l
     if (most < MARK + TEXT) most = MARK + TEXT;
     float values_width = 0.0f;
     for (uint32_t i = 1; i < s->line_count; i++) {
-        const float w = width_of(measure, s->lines[i].value);
+        const float w = value_width(&s->lines[i], measure);
         if (w > values_width) values_width = w;
     }
     float labels_most = most - (s->line_count > 1 ? GAP + values_width : 0.0f);
@@ -483,7 +528,20 @@ void tide_stats_draw(tide_stats *s, const tide_stats_values *values, tide_draw_l
         const float y = top + PAD_Y + line_top(s, i) + inset;
         // Labels in a dimmer column on the left, so the numbers stand out beside them
         tide_draw_text(list, l->label, tide_f2(left + PAD_X + (l->indent ? INDENT : 0.0f), y), TEXT, dim);
-        tide_draw_text(list, l->value, tide_f2(right - width_of(measure, l->value), y), TEXT, plain);
+        if (l->arrows) {
+            // From the right: the second number with its arrow before it, then the first with its own
+            const arrowed a = split_arrowed(l, measure);
+            float x = right - a.second_width;
+            tide_draw_text(list, a.second, tide_f2(x, y), TEXT, plain);
+            x -= ARROW;
+            draw_arrow(list, x, y, false, plain);
+            x -= GAP * 0.5f + a.first_width;
+            tide_draw_text(list, a.first, tide_f2(x, y), TEXT, plain);
+            x -= ARROW;
+            draw_arrow(list, x, y, true, plain);
+        } else {
+            tide_draw_text(list, l->value, tide_f2(right - width_of(measure, l->value), y), TEXT, plain);
+        }
     }
     // The line that's always there, under the list, and before it an arrow:
     // up while there's a list to open, down while it's open

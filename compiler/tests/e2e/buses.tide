@@ -1,0 +1,30 @@
+// Buses: a game's [Bus] enum, a Sound's bus and a bus's volume for the frames after.
+
+asset Clip hum = "assets/beep.wav";
+
+[Bus]
+enum Bus
+{
+    Master,
+    Music,
+    Sfx,
+}
+
+local singleton Mix
+{
+    Sound track;
+    float music;
+    bool quiet;
+}
+
+scene Main { }
+
+view Levels(mut Mix mix)
+{
+    mix.track.clip = hum;
+    mix.track.loop = true;
+    mix.track.playing = true;
+    mix.track.bus = Bus.Music;
+    Audio.SetVolume(Bus.Music, mix.music);
+    if (mix.quiet) Audio.SetVolume(Bus.Sfx, 0);
+}

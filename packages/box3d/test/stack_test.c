@@ -35,8 +35,8 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took);
 
 // The match after 300 ticks, on every platform and in every configuration:
 // Box3D's own math, SIMD or not, and its image, byte for byte.
-#define SETTLED_HASH UINT64_C(0x76f7511ffdebb0d8)
-#define IMAGES_HASH UINT64_C(0x4023dc69612197b9)
+#define SETTLED_HASH UINT64_C(0xce9944063d975f1f)
+#define IMAGES_HASH UINT64_C(0x0b0635eabd4b5ce2)
 // Box3D's own image at each of the 300 ticks, apart from everything else the
 // match holds: its state, byte for byte. A change to what the match keeps
 // beside it (a field of Physics, a component of the package's) moves the two
@@ -311,6 +311,10 @@ TIDE_TEST(box3d_costs)
     a.Size.flip = true;
     cost(&a, "a type changed:", 60);
     a.Size.flip = false;
+    // ...and what is followed costs what changed: the same crate, put to sleep and woken in turn
+    a.Size.lull = true;
+    cost(&a, "a crate put to sleep:", 60);
+    a.Size.lull = false;
     printf("    %d crates; the image is %d bytes, and its geometry %d\n", CRATES, (int)a.Box3D_Physics.size,
            (int)b3t_geometry_size());
     tide_world_free(&a);
