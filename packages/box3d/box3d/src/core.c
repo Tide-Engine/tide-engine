@@ -248,6 +248,70 @@ void* b3AllocZero( size_t size )
 	return mem;
 }
 
+// Tide: scratch is the system's (see core.h)
+void* b3AllocScratch( size_t size )
+{
+	if ( size == 0 )
+	{
+		return NULL;
+	}
+	size_t alignedSize = ( ( size - 1 ) | ( B3_ALIGNMENT - 1 ) ) + 1;
+#ifdef B3_PLATFORM_WINDOWS
+	void* ptr = _aligned_malloc( alignedSize, B3_ALIGNMENT );
+#elif defined( B3_PLATFORM_ANDROID )
+	void* ptr = NULL;
+	if ( posix_memalign( &ptr, B3_ALIGNMENT, alignedSize ) != 0 )
+	{
+		exit( EXIT_FAILURE );
+	}
+#else
+	void* ptr = aligned_alloc( B3_ALIGNMENT, alignedSize );
+#endif
+	B3_ASSERT( ptr != NULL );
+	return ptr;
+}
+
+void b3FreeScratch( void* mem, size_t size )
+{
+	(void)size;
+	if ( mem == NULL )
+	{
+		return;
+	}
+#ifdef B3_PLATFORM_WINDOWS
+	_aligned_free( mem );
+#else
+	free( mem );
+#endif
+}
+
+static b3TouchFcn* b3_touchFcn = NULL;
+static b3TouchAllFcn* b3_touchAllFcn = NULL;
+static void* b3_touchContext = NULL;
+
+void b3SetTouchHooks( b3TouchFcn* touch, b3TouchAllFcn* touchAll, void* context )
+{
+	b3_touchFcn = touch;
+	b3_touchAllFcn = touchAll;
+	b3_touchContext = context;
+}
+
+void b3Touch( const void* mem, size_t size )
+{
+	if ( b3_touchFcn != NULL && mem != NULL && size > 0 )
+	{
+		b3_touchFcn( b3_touchContext, mem, size );
+	}
+}
+
+void b3TouchAll( void )
+{
+	if ( b3_touchAllFcn != NULL )
+	{
+		b3_touchAllFcn( b3_touchContext );
+	}
+}
+
 // Not used. Keeping around in case I need this.
 void b3StrCpy( char* dst, int size, const char* src )
 {

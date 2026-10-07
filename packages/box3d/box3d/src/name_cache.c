@@ -153,3 +153,34 @@ void b3LoadName( b3NameCache* cache, uint32_t id, char* name, int length )
 	b3Array_Push( cache->entries, entry );
 	b3NameMap_insert( map, id, index );
 }
+
+// Tide: see name_cache.h
+void b3NameCacheMapRange( const b3NameCache* cache, int which, const void** start, size_t* size )
+{
+	const b3NameMap* map = cache->map;
+	*start = NULL;
+	*size = 0;
+	if ( map == NULL )
+	{
+		return;
+	}
+	if ( which == 0 )
+	{
+		*start = map;
+		*size = sizeof( b3NameMap );
+	}
+	else if ( map->buckets_mask != 0 )
+	{
+		*start = map->buckets;
+		*size = b3NameMap_total_alloc_size( (b3NameMap*)cache->map );
+	}
+}
+
+void b3NameCacheRelink( b3NameCache* cache )
+{
+	b3NameMap* map = cache->map;
+	if ( map != NULL && map->buckets_mask == 0 )
+	{
+		b3NameMap_init( map );
+	}
+}

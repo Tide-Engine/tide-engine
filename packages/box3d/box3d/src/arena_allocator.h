@@ -49,9 +49,14 @@ b3DeclareArray( b3OverflowBlock );
 // b3Arena is passed by value so its bump pointer auto-restores on
 // function return, but overflow tracking and watermarks must persist
 // across copies -- hence this pointer-shared block.
+// Tide: the overflow blocks are a table of the shared state's own, not an array the state's allocator holds
+// from a struct that's scratch (see ../TIDE.md, Resident state)
+#define B3_ARENA_OVERFLOWS 64
+
 typedef struct b3ArenaSharedState
 {
-	b3Array( b3OverflowBlock ) overflows;
+	b3OverflowBlock overflows[B3_ARENA_OVERFLOWS];
+	int overflowCount;
 	int maxIndex;          // high water mark of the bump pointer this step
 	int overflowBytes;     // total bytes in overflow blocks this step
 	int peakDemand;        // all-time peak of (maxIndex + overflowBytes), survives sync

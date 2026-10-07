@@ -308,6 +308,18 @@ uint32_t tide_arena_pages(const tide_arena *a)
     return header(a)->pages_used;
 }
 
+uint32_t tide_arena_touched(const tide_arena *a)
+{
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < header(a)->pages_used; i++) n += a->touched[i] ? 1u : 0u;
+    return n;
+}
+
+const void *tide_arena_page_at(const tide_arena *a, const uint32_t i)
+{
+    return a->base + ((size_t)i << TIDE_ARENA_PAGE_SHIFT);
+}
+
 // ---------------------------------------------------------------------------
 // Commits and restores.
 
@@ -377,6 +389,16 @@ void tide_arena_commit(tide_arena *a, tide_resident *r, const uint64_t stamp, co
     r->kind = a->kind;
     r->stamp = stamp;
     r->digest = digest;
+}
+
+bool tide_arena_is(const tide_arena *a, const tide_resident *r)
+{
+    const tide_resident_pages *t = r->pages;
+    if (!t) return false;
+    for (uint32_t i = 0; i < a->pages; i++) {
+        if (a->live[i] != (i < t->count ? t->page[i] : NULL)) return false;
+    }
+    return true;
 }
 
 void tide_arena_restore(tide_arena *a, const tide_resident *r)

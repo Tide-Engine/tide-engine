@@ -92,4 +92,5 @@ void b3FreeElement( b3BlockAllocator* allocator, void* element )
 	// Push onto free list
 	*(void**)element = allocator->freeList;
 	allocator->freeList = element;
+	b3Touch( element, sizeof( void* ) ); // Tide: a write the state's marks don't cover (see ../TIDE.md, Resident state)
 }
