@@ -38,6 +38,7 @@ Some examples put two players side by side. Each frame is a machine of its own, 
 ## What a machine shows
 
 - [A view draws the world](../game/views.md): cameras, and screen and world coordinates.
+- [Opacity in 2D and 3D](../game/views.md#transparency): a shape and two translucent panes, with solid objects behind and in front.
 - [Five ticks a second, drawn every frame](../game/views.md#smooth-at-any-tick-rate): what views see between ticks.
 - [Smooth shapes](../game/views.md#smooth-shapes): round rects, ellipses, arcs, outlines and soft edges.
 - [A sprite from a file](../game/assets.md#declaring-an-asset): a PNG packed with the game, drawn as a texture and read by the match.
