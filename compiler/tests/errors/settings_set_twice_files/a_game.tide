@@ -1,0 +1,7 @@
+settings
+{
+    title = "Asteroids";
+    hostMigration = true;
+}
+
+scene Main { }

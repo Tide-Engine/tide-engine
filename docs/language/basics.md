@@ -105,7 +105,7 @@ system Regenerate(mut Health health, Time time)
 
 ## Settings
 
-`settings` sets the engine's settings for the game. It goes at the top level of any one of the game's files:
+`settings` sets the engine's settings for the game. It goes at the top level of any of the game's files:
 
 ```csharp
 settings
@@ -128,7 +128,8 @@ settings
 | `debugViews` | The engine's [debug views](../tools/debug-views.md) are on: F7 shows the profiler, which says where a frame's time and a tick's go. `--debug-views` turns them on too, whatever this says | `false` |
 
 - Settings are set without a type, to constant expressions, which can name constants. A game's own values go in constants, not settings.
-- A game has one `settings` block. The editors complete the settings' names and show what each one does.
+- A game can have several `settings` blocks, in any of its files, so a setting can be written beside the code it's about: each block sets what the others don't. A setting that's set twice, in one block or in two, is an error that says where the other one is.
+- The editors complete the names of the settings the game doesn't set yet, and show what each one does.
 - Settings are part of the build. The machine that runs a match decides its tick rate, and every player ticks at that rate. Under `tide run`, a new `tickRate` takes effect when a match starts.
 - `--title` goes over the `title` setting (see [The tide command](../tools/cli.md)).
 
