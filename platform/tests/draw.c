@@ -1201,6 +1201,146 @@ static void shaded(void)
     shaded_checks();
 }
 
+// ---------------------------------------------------------------------------
+// What a uv past a texture's edges reads: the pixels at its edge, the texture
+// again, or again the other way round each time
+
+// A quad from `top_left` to `bottom_right`, as the list's units have them, with
+// the red, green, blue and white texture: its uvs go from `first` at its top
+// left to `last` at its bottom right.
+static void tiled(const tide_float2 top_left, const tide_float2 bottom_right, const tide_float2 first, const tide_float2 last,
+                  const tide_filter filter, const tide_wrap wrap)
+{
+    const tide_vertex vertices[4] = {
+        {top_left, first, white},
+        {{bottom_right.x, top_left.y}, {last.x, first.y}, white},
+        {bottom_right, last, white},
+        {{top_left.x, bottom_right.y}, {first.x, last.y}, white},
+    };
+    tide_draw_mesh_wrapped(&list, vertices, 4, quad_indices, 6, &quarters_texture, filter, wrap);
+}
+
+// A square 48 pixels across around window pixel (x, y), through the camera
+// primitive_scene sets: a 3D mesh whose uvs go from 0 to 2 both ways.
+static void tiled_3d(const float x, const float y, const tide_wrap wrap)
+{
+    static const tide_vertex3 corners[4] = {{{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f}, {1, 1, 1, 1}}, {{0.5f, 0.5f, 0.0f}, {2.0f, 0.0f}, {1, 1, 1, 1}},
+                                            {{0.5f, -0.5f, 0.0f}, {2.0f, 2.0f}, {1, 1, 1, 1}}, {{-0.5f, -0.5f, 0.0f}, {0.0f, 2.0f}, {1, 1, 1, 1}}};
+    const tide_mesh mesh = {corners, 4, quad_indices, 6, 1};
+    tide_draw_mesh_3d_wrapped(&list, &mesh, tide_trs_f4x4(primitive_at(x, y, 10), tide_identity_q(), tide_f3_splat(4.8f)),
+                              &quarters_texture, TIDE_FILTER_POINT, wrap);
+}
+
+// The commands the 3D squares came to, which wrap_scene counts.
+static uint32_t wrapped_commands;
+
+static void wrap_scene(void)
+{
+    static const tide_wrap wraps[3] = {TIDE_WRAP_CLAMP, TIDE_WRAP_REPEAT, TIDE_WRAP_MIRROR};
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    for (int i = 0; i < 3; i++) {
+        const float left = 8.0f + 84.0f * (float)i;
+        // Three times across and three times down, a pixel of the texture 12 of the window's
+        tiled(at(left, 16), at(left + 72, 88), tide_f2(0, 0), tide_f2(3, 3), TIDE_FILTER_POINT, wraps[i]);
+        // Before 0 too: its top row, from -1
+        tiled(at(left, 96), at(left + 24, 108), tide_f2(-1, 0.25f), tide_f2(0, 0.25f), TIDE_FILTER_POINT, wraps[i]);
+        // Blended, twice across its top row, a pixel of the texture 32 of the window's: what a pixel at its edge is
+        // blended with is what the wrap says is past it
+        const float top = 116.0f + 16.0f * (float)i;
+        tiled(at(16, top), at(144, top + 12), tide_f2(0, 0.25f), tide_f2(2, 0.25f), TIDE_FILTER_BILINEAR, wraps[i]);
+    }
+
+    // One texture read two ways in one draw, through a shader: its left half one way and its right half another
+    const tide_float2 corner = at(16, 168), far_corner = at(80, 240), second = at(96, 168), far_second = at(160, 240);
+    const uv_vertex both[4] = {{{corner.x, corner.y}, {0, 0}}, {{far_corner.x, corner.y}, {1, 0}},
+                               {{far_corner.x, far_corner.y}, {1, 3}}, {{corner.x, far_corner.y}, {0, 3}}};
+    const uv_vertex neither[4] = {{{second.x, second.y}, {0, 0}}, {{far_second.x, second.y}, {1, 0}},
+                                  {{far_second.x, far_second.y}, {1, 3}}, {{second.x, far_second.y}, {0, 3}}};
+    const uint32_t slot = texture_slot(&quarters_texture);
+    tide_draw_shaded(&list, &halves_shader, quad_mesh(21, both, sizeof both[0]), NULL, NULL,
+                     (const uint32_t[TIDE_SHADER_TEXTURES]){slot, slot},
+                     tide_sampling_wrapped(0, TIDE_WRAP_REPEAT) | tide_sampling_wrapped(1, TIDE_WRAP_MIRROR));
+    tide_draw_shaded(&list, &halves_shader, quad_mesh(22, neither, sizeof neither[0]), NULL, NULL,
+                     (const uint32_t[TIDE_SHADER_TEXTURES]){slot, slot}, 0);
+
+    // 3D meshes: each wrap its own draw, and two with one wrap a run of instances
+    tide_draw_set_camera_matrices(&list, tide_identity_f4x4(), tide_ortho_f4x4(screen.x / 10.0f, screen.y / 10.0f, 0.3f, 100.0f));
+    const uint32_t before = list.count;
+    for (int i = 0; i < 3; i++) tiled_3d(40.0f + 56.0f * (float)i, 280, wraps[i]);
+    tiled_3d(208, 280, TIDE_WRAP_MIRROR);
+    wrapped_commands = 0;
+    for (uint32_t i = before; i < list.count; i++) wrapped_commands += list.commands[i].kind == TIDE_DRAW_MESH_3D;
+}
+
+static void wraps(void)
+{
+    const tide_color olive = {0.5f, 0.5f, 0.0f, 1.0f};
+    // The pixel of the window at the middle of a quad's cell: 12 across each, from its top left
+#define CELL(left, top, column, row) (left) + 6.0f + 12.0f * (float)(column), (top) + 6.0f + 12.0f * (float)(row)
+    const check checks[] = {
+        {CELL(8, 16, 0, 0), red, "a texture's first pixel, whatever is past its edges"},
+        {CELL(8, 16, 1, 1), white, "and its last"},
+        {CELL(8, 16, 2, 0), green, "past its right edge, the pixel at that edge"},
+        {CELL(8, 16, 5, 0), green, "however far past"},
+        {CELL(8, 16, 0, 3), blue, "and past its bottom edge, the one at that"},
+        {CELL(8, 16, 2, 3), white, "past both, its last"},
+        {CELL(92, 16, 1, 1), white, "a texture that repeats: its own pixels"},
+        {CELL(92, 16, 2, 0), red, "then its first again"},
+        {CELL(92, 16, 3, 0), green, "and the one beside it"},
+        {CELL(92, 16, 0, 2), red, "down as across"},
+        {CELL(92, 16, 0, 3), blue, "row after row"},
+        {CELL(92, 16, 2, 3), blue, "both ways at once"},
+        {CELL(92, 16, 4, 4), red, "a third time"},
+        {CELL(176, 16, 1, 1), white, "a texture that mirrors: its own pixels"},
+        {CELL(176, 16, 2, 0), green, "then the last one again, the other way round"},
+        {CELL(176, 16, 3, 0), red, "back to its first"},
+        {CELL(176, 16, 4, 0), red, "which starts it over"},
+        {CELL(176, 16, 0, 2), blue, "down as across"},
+        {CELL(176, 16, 0, 3), red, "and back"},
+        {CELL(176, 16, 2, 3), green, "both ways at once"},
+        {CELL(8, 96, 0, 0), red, "before 0, the pixel at that edge"},
+        {CELL(8, 96, 1, 0), red, "all the way"},
+        {CELL(92, 96, 0, 0), red, "before 0, a texture that repeats: from its first"},
+        {CELL(92, 96, 1, 0), green, "to its last, which 0 follows"},
+        {CELL(176, 96, 0, 0), green, "before 0, a texture that mirrors: its last"},
+        {CELL(176, 96, 1, 0), red, "then its first, which 0 follows"},
+        {16, 122, red, "blended, a texture's first pixel is itself at its edge"},
+        {80, 122, green, "its last too, and past it"},
+        {143, 122, green, "to the end"},
+        {48, 122, olive, "and between them, both"},
+        {16, 138, olive, "blended, a texture that repeats: its first pixel with its last at its edge"},
+        {80, 138, olive, "its last with its first where it starts again"},
+        {143, 138, olive, "and where it would a third time"},
+        {32, 138, red, "each its own at its middle"},
+        {64, 138, green, "like this"},
+        {16, 154, red, "blended, a texture that mirrors: its first pixel is itself at its edge"},
+        {80, 154, green, "its last with itself, where it turns round"},
+        {143, 154, red, "and its first with itself, where it turns again"},
+        {112, 154, olive, "between them, both"},
+        {CELL(16, 168, 0, 2), red, "one texture in a shader's first place, which repeats"},
+        {CELL(16, 168, 0, 3), blue, "row after row"},
+        {CELL(48, 168, 0, 2), blue, "and in its second, which mirrors, in the same draw"},
+        {CELL(48, 168, 0, 3), red, "row before row"},
+        {CELL(96, 168, 0, 2), blue, "and in a draw that says neither, its last row"},
+        {CELL(128, 168, 0, 3), blue, "in both"},
+        {CELL(40 - 24, 280 - 24, 2, 0), green, "a 3D mesh's texture, past its right edge"},
+        {CELL(40 - 24, 280 - 24, 0, 3), blue, "and past its bottom one"},
+        {CELL(96 - 24, 280 - 24, 2, 0), red, "a 3D mesh's texture that repeats"},
+        {CELL(96 - 24, 280 - 24, 3, 3), white, "both ways"},
+        {CELL(152 - 24, 280 - 24, 3, 0), red, "a 3D mesh's texture that mirrors"},
+        {CELL(152 - 24, 280 - 24, 2, 3), green, "both ways"},
+        {CELL(208 - 24, 280 - 24, 3, 0), red, "and another instance of it"},
+    };
+#undef CELL
+    // Twice: the second frame draws with what the first uploaded
+    for (int frame = 0; frame < 2; frame++) {
+        wrap_scene();
+        check_pixels(checks, (int)(sizeof checks / sizeof checks[0]));
+    }
+    expect(wrapped_commands == 3, "3D meshes are a run while their texture's wrap is the same, and another when it isn't");
+}
+
 // Rects side by side, a cell each as a grid's view draws them, leave no gap
 // between them at any scale: not even where their shared edge falls exactly
 // on a row or column of pixel centers, as it does every 8 cells at 3.125
@@ -2819,6 +2959,7 @@ static int frame(void *user, const float seconds)
         meshes_3d();
         primitives();
         shaded();
+        wraps();
         smooth_shapes();
         themed_gui();
         tiles_leave_no_gaps();
@@ -2833,6 +2974,7 @@ static int frame(void *user, const float seconds)
     meshes_3d();
     primitives();
     shaded();
+    wraps();
     smooth_shapes();
     themed_gui();
     tiles_leave_no_gaps();

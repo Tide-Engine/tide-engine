@@ -136,6 +136,14 @@ local singleton Art
     RenderTarget exact;
     bool sized;
     float2 window;
+    // What a uv past a texture's edges reads (pass 7)
+    RenderTarget tiles; // Two pixels by two, as `four`
+    bool tiled;
+    List<Vertex> tile;        // 48 pixels across from its corner, its uvs to (2, 2)
+    List<Vertex> wideTile;    // 96 across and 24 down
+    List<Corner2> cornerTile; // ...of a vertex of the game's
+    List<Vertex3> tile3;      // 24 across, around its middle
+    List<float4x4> tilePlaces;
 }
 
 float3 Cell(int column, int row)
@@ -1082,6 +1090,57 @@ frag Where(Vertex vertex, out Color color, Texture source, Pixel pixel, Art art)
     color = Color(pixel.position.x / art.window.x, pixel.position.y / art.window.y, 0);
 }
 
+// What a uv past a texture's edges reads, said where it's sampled (pass 7).
+frag Clamped(Vertex vertex, out Color color, Art art)
+{
+    color = art.four.Sample(vertex.uv, Filter.Point, Wrap.Clamp);
+}
+
+frag Repeated(Vertex vertex, out Color color, Art art)
+{
+    color = art.four.Sample(vertex.uv, Filter.Point, Wrap.Repeat);
+}
+
+frag Mirrored(Vertex vertex, out Color color, Art art)
+{
+    color = art.four.Sample(vertex.uv, Filter.Point, Wrap.Mirror);
+}
+
+// The Texture its draw gives it: a target's color
+frag SourceMirrored(Vertex vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv, Filter.Point, Wrap.Mirror);
+}
+
+// One grid read two ways in one frag: its left half repeats, and its right half mirrors
+frag BothWays(Vertex vertex, out Color color, Art art)
+{
+    if (vertex.uv.x < 1) color = art.four.Sample(vertex.uv, Filter.Point, Wrap.Repeat);
+    else color = art.four.Sample(vertex.uv, Filter.Point, Wrap.Mirror);
+}
+
+// Blended: what a cell at the edge blends with is what the wrap says is past it
+frag SmoothRepeated(Vertex vertex, out Color color, Art art)
+{
+    color = art.four.Sample(vertex.uv, Filter.Bilinear, Wrap.Repeat);
+}
+
+frag SmoothMirrored(Vertex vertex, out Color color, Art art)
+{
+    color = art.four.Sample(vertex.uv, Filter.Bilinear, Wrap.Mirror);
+}
+
+// A vert samples past the edges too
+vert TileChecks(mut Vertex vertex, Art art)
+{
+    Color repeated = art.four.Sample(float2(1.25, 0.25), Filter.Point, Wrap.Repeat); // As (0.25, 0.25): red
+    Color mirrored = art.four.Sample(float2(1.25, 0.25), Filter.Point, Wrap.Mirror); // As (0.75, 0.25): green
+    Color clamped = art.four.Sample(float2(1.25, 1.25), Filter.Point);               // Its last cell: white
+    bool correct = repeated.r > 0.99 && repeated.g < 0.01 && mirrored.g > 0.99 && mirrored.r < 0.01
+                && clamped.r > 0.99 && clamped.b > 0.99;
+    vertex.color = correct ? Color.white : Color.magenta;
+}
+
 vert TextureChecks(mut Vertex vertex, Texture source)
 {
     Color nearest = source.Sample(float2(0.25, 0.25), Filter.Point);
@@ -1390,12 +1449,112 @@ view ScreenTargets(mut Art art)
                  Vertex { position = float2(0, h), uv = float2(0, 1) }], art.faces, art.exact.color);
 }
 
+// What a uv past a texture's edges reads (pass 7): squares in the screen's
+// pixels whose uvs go to (2, 2), so each shows its texture twice across and
+// twice down, or what its wrap makes of that. The grid and the target are red,
+// green, blue and white, two by two.
+[After(ScreenTargets)]
+view Wraps(mut Art art)
+{
+    if (art.targetPass != 7) return;
+    if (!art.tiled)
+    {
+        art.tiles = RenderTarget(2, 2, 1);
+        art.tile = [Vertex { }, Vertex { position = float2(48, 0), uv = float2(2, 0) },
+                    Vertex { position = float2(48, 48), uv = float2(2, 2) }, Vertex { position = float2(0, 48), uv = float2(0, 2) }];
+        // Twice across its top row alone
+        art.wideTile = [Vertex { uv = float2(0, 0.25) }, Vertex { position = float2(96, 0), uv = float2(2, 0.25) },
+                        Vertex { position = float2(96, 24), uv = float2(2, 0.25) }, Vertex { position = float2(0, 24), uv = float2(0, 0.25) }];
+        art.cornerTile = [Corner2 { }, Corner2 { position = float2(48, 0), uv = float2(2, 0) },
+                          Corner2 { position = float2(48, 48), uv = float2(2, 2) }, Corner2 { position = float2(0, 48), uv = float2(0, 2) }];
+        art.tile3 = [Vertex3 { position = float3(-12, 12, 0) }, Vertex3 { position = float3(12, 12, 0), uv = float2(2, 0) },
+                     Vertex3 { position = float3(12, -12, 0), uv = float2(2, 2) }, Vertex3 { position = float3(-12, -12, 0), uv = float2(0, 2) }];
+        art.tilePlaces = [float4x4.Translate(Cell(2, 7)), float4x4.Translate(Cell(3, 7))];
+        art.tiled = true;
+    }
+    art.tiles.SetScreen();
+    art.tiles.Clear(Color.black);
+    art.tiles.Rect(float2(0.5, 0.5), float2(1), Color.red);
+    art.tiles.Rect(float2(1.5, 0.5), float2(1), Color.green);
+    art.tiles.Rect(float2(0.5, 1.5), float2(1), Color.blue);
+    art.tiles.Rect(float2(1.5, 1.5), float2(1), Color.white);
+
+    Draw2D.Clear(Color.black);
+    Draw2D.SetScreen();
+    Draw2D.SetClip();
+    // The engine's own vertices: the draw says the wrap, after the filter, and none is the cells at the edge
+    Draw2D.Transform(float2(8, 8))
+    {
+        Draw2D.Mesh(art.tile, art.faces, art.four, Filter.Point);
+    }
+    Draw2D.Transform(float2(64, 8))
+    {
+        Draw2D.Mesh(art.tile, art.faces, art.four, Filter.Point, Wrap.Repeat);
+    }
+    Draw2D.Transform(float2(120, 8))
+    {
+        Draw2D.Mesh(art.tile, art.faces, art.four, Filter.Point, Wrap.Mirror);
+    }
+    // A render target's color wraps as a grid does
+    Draw2D.Transform(float2(176, 8))
+    {
+        Draw2D.Mesh(art.tile, art.faces, art.tiles.color, Filter.Point, Wrap.Repeat);
+    }
+    // A frag says it where it samples
+    Draw2D.Transform(float2(8, 64))
+    {
+        Draw2D.Mesh(art.tile, art.faces, Clamped);
+    }
+    Draw2D.Transform(float2(64, 64))
+    {
+        Draw2D.Mesh(art.tile, art.faces, Repeated);
+    }
+    Draw2D.Transform(float2(120, 64))
+    {
+        Draw2D.Mesh(art.tile, art.faces, Mirrored);
+    }
+    Draw2D.Transform(float2(176, 64))
+    {
+        Draw2D.Mesh(art.tile, art.faces, art.tiles.color, SourceMirrored);
+    }
+    Draw2D.Transform(float2(8, 120))
+    {
+        Draw2D.Mesh(art.tile, art.faces, BothWays);
+    }
+    Draw2D.Transform(float2(64, 120))
+    {
+        Draw2D.Mesh(art.tile, art.faces, TileChecks);
+    }
+    // A vertex of the game's with no frag: one shader, whose draws say the wrap or leave it out
+    Draw2D.Transform(float2(120, 120))
+    {
+        Draw2D.Mesh(art.cornerTile, art.faces, art.four, Filter.Point, Wrap.Mirror);
+    }
+    Draw2D.Transform(float2(176, 120))
+    {
+        Draw2D.Mesh(art.cornerTile, art.faces, art.four, Filter.Point);
+    }
+    Draw2D.Transform(float2(8, 176))
+    {
+        Draw2D.Mesh(art.wideTile, art.faces, SmoothRepeated);
+    }
+    Draw2D.Transform(float2(120, 176))
+    {
+        Draw2D.Mesh(art.wideTile, art.faces, SmoothMirrored);
+    }
+    // 3D meshes, and a list's instances with a target's color
+    Draw3D.Mesh(art.tile3, art.faces, float4x4.Translate(Cell(0, 7)), art.four, Filter.Point, Wrap.Repeat);
+    Draw3D.Mesh(art.tile3, art.faces, float4x4.Translate(Cell(1, 7)), art.four, Filter.Point, Wrap.Mirror);
+    Draw3D.Instanced(art.tile3, art.faces, art.tilePlaces, art.tiles.color, Filter.Point, Wrap.Repeat);
+    Draw3D.Mesh(art.tile3, art.faces, float4x4.Translate(Cell(4, 7)), art.uploaded, Filter.Point, Wrap.Mirror);
+}
+
 // shaders.c requests independent full-window checks after the existing grid.
 // Resource descriptors are supplied by C, without choosing a Tide lifetime API.
 [After(Manual)]
 view Targets(mut Art art)
 {
-    if (art.targetPass == 0 || art.targetPass == 6) return; // 6 is ScreenTargets'
+    if (art.targetPass == 0 || art.targetPass >= 6) return; // 6 is ScreenTargets', and 7 Wraps'
     if (art.targetPass >= 4)
     {
         Draw2D.SetScreen();

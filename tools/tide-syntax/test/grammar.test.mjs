@@ -233,6 +233,7 @@ const cases = {
         ['Random dice = Random(7);', [['Random', 'support.class']]],
         ['var roll = dice.NextInt(6);', [['NextInt', 'entity.name.function.call']]],
         ['Draw2D.Mesh([corner]', [['Mesh', 'entity.name.function.call'], ['Filter', 'support.class']]],
+        ['Draw3D.Mesh([corner3]', [['Mesh', 'entity.name.function.call'], ['Filter', 'support.class'], ['Wrap', 'support.class']]],
         ['Draw.Blend(Blend.Add),', [['Draw', 'support.class'], ['Blend', 'entity.name.function.call'], ['Blend', '!support.class'],
                                     ['Blend', 'support.class', 2]]],
         ['Draw2D.Clip(Rect(0, 0, 4, 4))', [['Clip', 'entity.name.function.call'], ['Rect', 'storage.type.primitive']]],

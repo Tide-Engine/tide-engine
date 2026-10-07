@@ -274,7 +274,7 @@ static decl *find_in(const program *prog, const str ns, const str name, const na
         decl *d = prog->decls.items[i];
         if (is_kind(d, kind) && str_eq(d->name, name) && str_eq(decl_ns(d), ns)) {
             // Generated C only has these in games that name them
-            if ((d == prog->random || d == prog->depth || d == prog->cull) && builds(prog)) d->named = true;
+            if ((d == prog->random || d == prog->depth || d == prog->cull || d == prog->wrap) && builds(prog)) d->named = true;
             return d;
         }
     }
@@ -4084,7 +4084,7 @@ static type check_clipboard_call(checker *c, expr *e)
 }
 
 // Draw2D.Mesh and Draw3D.Mesh take the program's own vertex lists and
-// List<int>, its Grid2<Color> if it has one, and its Filter.
+// List<int>, its Grid2<Color> if it has one, and its Filter and Wrap.
 static void use_mesh_types(checker *c)
 {
     const decl *pixels = NULL;
@@ -4094,7 +4094,7 @@ static void use_mesh_types(checker *c)
     }
     builtins_use_mesh(list_of(c->prog, decl_type(c->prog->vertex)).decl,
                       list_of(c->prog, decl_type(c->prog->vertex3)).decl, list_of(c->prog, (type){TY_INT, NULL}).decl,
-                      pixels, c->prog->filter, list_of(c->prog, (type){TY_FLOAT4X4, NULL}).decl);
+                      pixels, c->prog->filter, c->prog->wrap, list_of(c->prog, (type){TY_FLOAT4X4, NULL}).decl);
 }
 
 // The frag or vert an argument of Draw2D.Mesh names, or NULL: `Shade`, or
@@ -4219,17 +4219,18 @@ static const field *field_called(const decl *d, const char *name)
 static void note_mesh_forms(const expr *e)
 {
     if (e->targeted) {
-        diag_note(e->instanced ? "target.Instanced(vertices, indices, instances) draws a 2D or 3D mesh; then come a texture and its filter, or a vert and a frag by name"
-                               : "target.Mesh(vertices, indices[, transform]) draws a 2D or 3D mesh; then come a texture and its filter, or a vert and a frag by name");
+        diag_note(e->instanced ? "target.Instanced(vertices, indices, instances) draws a 2D or 3D mesh; then come a texture, its filter and its wrap, or a vert and a frag by name"
+                               : "target.Mesh(vertices, indices[, transform]) draws a 2D or 3D mesh; then come a texture, its filter and its wrap, or a vert and a frag by name");
         return;
     }
     const str owner = e->object->name;
     if (e->instanced) {
-        diag_note(STR_FMT ".Instanced(vertices, indices, instances) draws a %dD mesh; then come a texture and its filter, "
-                  "or a vert and a frag by name", STR_ARG(owner), str_eq_c(owner, "Draw3D") ? 3 : 2);
+        diag_note(STR_FMT ".Instanced(vertices, indices, instances) draws a %dD mesh; then come a texture, its filter and "
+                  "its wrap, or a vert and a frag by name", STR_ARG(owner), str_eq_c(owner, "Draw3D") ? 3 : 2);
         return;
     }
-    diag_note(STR_FMT ".Mesh(vertices, indices%s) draws a %dD mesh; then come a texture and its filter, or a vert and a frag by name",
+    diag_note(STR_FMT ".Mesh(vertices, indices%s) draws a %dD mesh; then come a texture, its filter and its wrap, or a vert and a "
+              "frag by name",
               STR_ARG(owner), str_eq_c(owner, "Draw3D") ? ", transform" : "", str_eq_c(owner, "Draw3D") ? 3 : 2);
 }
 
@@ -4394,7 +4395,7 @@ static type check_blit(checker *c, expr *e)
     return T_VOID_;
 }
 
-// Draw2D.Mesh(vertices, indices[, transform][, texture[, filter]][, vert][, frag]).
+// Draw2D.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]][, vert][, frag]).
 // A List<Vertex> or a List<Vertex3> with no vert and no frag is the built-in
 // call it always was. Anything else draws through a shader tidec writes (see
 // shader.c): a vertex struct of the game's, a vert, a frag.
@@ -4498,6 +4499,24 @@ static type check_mesh_draw(checker *c, expr *e)
         }
     }
     if (!vertex) return T_ERR;
+    // A wrap is written after a filter, whichever way the mesh is drawn
+    for (int i = 2; i < count; i++) {
+        const expr *arg = e->args.items[i];
+        if (arg->type.kind != TY_ENUM || arg->type.decl != prog->wrap) continue;
+        const type before = e->args.items[i - 1]->type;
+        if (before.kind == TY_ENUM && before.decl == prog->filter) continue;
+        if (before.kind == TY_ERROR) return T_ERR; // Said already
+        if (before.kind == TY_ENUM && before.decl == prog->wrap) {
+            diag_error(arg->at, "%s takes one wrap, for both of its texture's axes, and this is a second", draw_name);
+            return T_ERR;
+        }
+        const bool sampled = before.kind == TY_GRID || before.kind == TY_TEXTURE;
+        diag_error(arg->at, sampled ? "a mesh's wrap comes after its filter: '%s(..., texture, Filter.Bilinear, Wrap.Repeat)'"
+                                    : "a mesh's wrap comes after its texture and its filter: '%s(..., texture, Filter.Bilinear, "
+                                      "Wrap.Repeat)'", draw_name);
+        if (sampled) diag_note("'Filter.Bilinear' is the filter of a draw that says none");
+        return T_ERR;
+    }
 
     const int dims = vertex_dims(vertex, vertices->at, true);
     if (dims == 0) return T_ERR;
@@ -4571,10 +4590,11 @@ static type check_mesh_draw(checker *c, expr *e)
         diag_note("'" STR_FMT "' is a 2D mesh's vertex, as its 'position' is a float2", STR_ARG(vertex->name));
         return T_ERR;
     }
-    // A texture and its filter: grids retain their original no-frag form,
-    // while an explicit Texture also supplies a shader's Texture parameter.
+    // A texture, its filter and its wrap: grids retain their original no-frag
+    // form, while an explicit Texture also supplies a shader's Texture parameter.
     const expr *texture = NULL;
     const expr *draw_filter = NULL;
+    const expr *draw_wrap = NULL;
     if (at < count && (e->args.items[at]->type.kind == TY_GRID || e->args.items[at]->type.kind == TY_TEXTURE)) {
         texture = e->args.items[at++];
         const decl *grid = texture->type.decl;
@@ -4584,6 +4604,9 @@ static type check_mesh_draw(checker *c, expr *e)
         }
         if (at < count && e->args.items[at]->type.kind == TY_ENUM && e->args.items[at]->type.decl == prog->filter) {
             draw_filter = e->args.items[at++];
+            if (at < count && e->args.items[at]->type.kind == TY_ENUM && e->args.items[at]->type.decl == prog->wrap) {
+                draw_wrap = e->args.items[at++];
+            }
         }
     }
     if (at < count) {
@@ -4606,7 +4629,12 @@ static type check_mesh_draw(checker *c, expr *e)
         ok = false;
     }
     if (e->frag && draw_filter) {
-        diag_error(draw_filter->at, "a frag chooses its texture filter at Sample: leave the draw's filter out");
+        diag_error(draw_filter->at, draw_wrap ? "a frag chooses its texture's filter and wrap at Sample: leave the draw's out"
+                                              : "a frag chooses its texture filter at Sample: leave the draw's filter out");
+        if (draw_wrap) {
+            diag_note("like 'color = source.Sample(vertex.uv, Filter.Bilinear, Wrap.Repeat);' in '" STR_FMT "'",
+                      STR_ARG(e->frag->name));
+        }
         ok = false;
     }
     // With no frag, a pixel is its vertex's color times the texture at its uv
@@ -5173,7 +5201,7 @@ static type check_method(checker *c, expr *e)
     if (obj.kind == TY_TEXTURE) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         if (str_eq_c(e->name, "Sample")) return check_grid_sample(c, e, obj);
-        diag_error(e->at, "a Texture has Sample(uv[, filter]), not '" STR_FMT "'", STR_ARG(e->name));
+        diag_error(e->at, "a Texture has Sample(uv[, filter[, wrap]]), not '" STR_FMT "'", STR_ARG(e->name));
         return T_ERR;
     }
     if (obj.kind == TY_RENDER_TARGET) {
@@ -5822,6 +5850,10 @@ static type check_enum_member(expr *e, decl *d)
     if (d->builtin && str_eq_c(d->name, "Cull")) {
         diag_note("a 3D mesh's triangles aren't drawn from the back, 'Cull.Back', as each frame starts; or from the "
                   "front, 'Cull.Front'; or they're drawn from both sides, 'Cull.None'");
+    }
+    if (d->builtin && str_eq_c(d->name, "Wrap")) {
+        diag_note("a uv past a texture's edges reads the cells at its edge, 'Wrap.Clamp'; the texture again, 'Wrap.Repeat'; "
+                  "or again the other way round each time, 'Wrap.Mirror'");
     }
     return T_ERR;
 }
@@ -6948,10 +6980,10 @@ static type check_new_grid(checker *c, expr *e, const type want)
 }
 
 // cells.Clear(): a grid's one method, every cell back to zero.
-// texture.Sample(uv) and texture.Sample(uv, Filter.Point): a grid of colors
-// read as a texture, in a frag or vert. The grid is a field of one of its
-// parameters, and the filter is written there: the GPU is told both before
-// any pixel runs.
+// texture.Sample(uv), texture.Sample(uv, Filter.Point) and texture.Sample(uv,
+// Filter.Point, Wrap.Repeat): a grid of colors read as a texture, in a frag or
+// vert. The grid is a field of one of its parameters, and the filter and the
+// wrap are written there: the GPU is told all three before any pixel runs.
 static type check_grid_sample(const checker *c, expr *e, const type grid)
 {
     const decl *shader = gpu_code(c);
@@ -6984,19 +7016,35 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
                    grid.kind == TY_TEXTURE ? "Texture" : "grid");
         return T_ERR;
     }
-    if (!order_named_args(e, "uv, filter", 1)) return T_ERR;
+    if (!order_named_args(e, "uv, filter, wrap", 2)) return T_ERR;
+    for (int i = 0; i < e->args.count; i++) {
+        if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR; // Said already
+    }
     const type uv = e->args.count >= 1 ? e->args.items[0]->type : T_ERR;
-    const bool filter_ok = e->args.count < 2 || (e->args.items[1]->type.kind == TY_ENUM && e->args.items[1]->type.decl == c->prog->filter);
-    if (e->args.count < 1 || e->args.count > 2 || (uv.kind != TY_ERROR && uv.kind != TY_FLOAT2) || !filter_ok) {
-        if (uv.kind != TY_ERROR || e->args.count != 1) {
-            diag_error(e->at, "Sample takes where to read, a float2 from (0, 0) to (1, 1), and how, a Filter: "
-                              "'texture.Sample(uv)' or 'texture.Sample(uv, Filter.Point)'");
-        }
+    const type how = e->args.count >= 2 ? e->args.items[1]->type : T_ERR;
+    const type past = e->args.count >= 3 ? e->args.items[2]->type : T_ERR;
+    // A wrap where the filter goes: the filter is said first
+    if (e->args.count == 2 && uv.kind == TY_FLOAT2 && how.kind == TY_ENUM && how.decl == c->prog->wrap) {
+        diag_error(e->args.items[1]->at, "a wrap comes after the filter: 'texture.Sample(uv, Filter.Bilinear, Wrap.Repeat)'");
+        diag_note("'Filter.Bilinear' is the filter of a Sample that says none");
         return T_ERR;
     }
-    if (e->args.count == 2 && !e->args.items[1]->enum_member) {
+    const bool filter_ok = e->args.count < 2 || (how.kind == TY_ENUM && how.decl == c->prog->filter);
+    const bool wrap_ok = e->args.count < 3 || (past.kind == TY_ENUM && past.decl == c->prog->wrap);
+    if (e->args.count < 1 || e->args.count > 3 || uv.kind != TY_FLOAT2 || !filter_ok || !wrap_ok) {
+        diag_error(e->at, "Sample takes where to read, a float2 from (0, 0) to (1, 1), then how, a Filter, then what's past "
+                          "the edges, a Wrap: 'texture.Sample(uv)', 'texture.Sample(uv, Filter.Point)' or "
+                          "'texture.Sample(uv, Filter.Point, Wrap.Repeat)'");
+        return T_ERR;
+    }
+    if (e->args.count >= 2 && !e->args.items[1]->enum_member) {
         diag_error(e->args.items[1]->at, "the filter is written here, 'Filter.Point' or 'Filter.Bilinear': the GPU is told how a "
                                          "texture is read before any pixel runs");
+        return T_ERR;
+    }
+    if (e->args.count == 3 && !e->args.items[2]->enum_member) {
+        diag_error(e->args.items[2]->at, "the wrap is written here, 'Wrap.Clamp', 'Wrap.Repeat' or 'Wrap.Mirror': the GPU is told "
+                                         "how a texture is read before any pixel runs");
         return T_ERR;
     }
     e->call = CALL_GRID;
@@ -12322,6 +12370,19 @@ static void add_builtins(program *prog)
         vec_push(cull->members, m);
     }
     prog->cull = cull;
+    // enum Wrap { Clamp, Repeat, Mirror }: what a uv past a texture's edges
+    // reads, where the texture is sampled, with tide/draw.h's tide_wrap's values.
+    // Generated C has it only in a game whose code names it, as Depth.
+    static const char *const wraps[] = {"Clamp", "Repeat", "Mirror"};
+    decl *wrap = NEW(decl);
+    wrap->kind = DECL_ENUM;
+    wrap->name = str_from("Wrap");
+    wrap->builtin = true;
+    for (int i = 0; i < (int)(sizeof wraps / sizeof wraps[0]); i++) {
+        const enum_member m = {str_from(wraps[i]), {0, 0, 0}, NULL, i};
+        vec_push(wrap->members, m);
+    }
+    prog->wrap = wrap;
 
     // This machine's part in a match (see tide/session.h, whose enums have the
     // same values): local singleton Session { SessionState state; PlayerID
@@ -12388,6 +12449,7 @@ static void add_builtins(program *prog)
     vec_push(decls, blend);
     vec_push(decls, depth);
     vec_push(decls, cull);
+    vec_push(decls, wrap);
     vec_push(decls, font);
     vec_push(decls, state);
     vec_push(decls, reason);

@@ -1,0 +1,126 @@
+// What a uv past a texture's edges reads, said where the texture is sampled:
+// a mesh draw's wrap after its filter, in 2D and 3D, for a grid, a Texture and
+// a render target's color, into the window and into a target; as a value like
+// any other enum's; through a shader with no frag, whose draw says it; and in
+// a frag, where each filter and wrap of one grid is a texture of its own.
+
+scene Main { }
+
+// A mesh's corner of the game's own: its draws go through a shader
+struct Corner
+{
+    float2 position;
+    float2 uv;
+    Color color = Color.white;
+}
+
+local singleton Art
+{
+    RenderTarget target;
+    Grid2<Color> tiles = Grid2(2, 2);
+    List<Vertex> flat;
+    List<Vertex3> solid;
+    List<Corner> corners;
+    List<int> faces;
+    List<float4x4> places;
+    Wrap kept = Wrap.Mirror; // A value like any other enum's
+    bool tiled = true;
+    int frames;
+}
+
+view Fill(mut Art art)
+{
+    art.frames += 1;
+    if (art.frames > 1) return;
+    art.flat = [Vertex { }, Vertex { position = float2(1, 0), uv = float2(2, 0) }, Vertex { position = float2(0, 1), uv = float2(0, 2) }];
+    art.solid = [Vertex3 { }, Vertex3 { position = float3(1, 0, 0), uv = float2(2, 0) },
+                 Vertex3 { position = float3(0, 1, 0), uv = float2(0, 2) }];
+    art.corners = [Corner { }, Corner { position = float2(1, 0), uv = float2(2, 0) }, Corner { position = float2(0, 1), uv = float2(0, 2) }];
+    art.faces = [0, 1, 2];
+    art.places = [float4x4.identity, float4x4.Translate(float3(2, 0, 0))];
+    art.tiles[0, 0] = Color.red;
+}
+
+// The engine's own vertices: a wrap after the filter, and none for the cells at the edge
+view Flat(Art art)
+{
+    Draw2D.Mesh(art.flat, art.faces, art.tiles);
+    Draw2D.Mesh(art.flat, art.faces, art.tiles, Filter.Point);
+    Draw2D.Mesh(art.flat, art.faces, art.tiles, Filter.Point, Wrap.Clamp); // Said outright: the same, so one command with the last
+    Draw2D.Mesh(art.flat, art.faces, art.tiles, Filter.Point, Wrap.Repeat);
+    Draw2D.Mesh(art.flat, art.faces, art.tiles, Filter.Point, Wrap.Repeat); // More of the same: one command
+    Draw2D.Mesh(art.flat, art.faces, art.tiles, Filter.Bilinear, Wrap.Mirror);
+    // A render target's color is a texture like any other
+    Draw2D.Mesh(art.flat, art.faces, art.target.color, Filter.Point, Wrap.Repeat);
+}
+
+// A wrap is a value: kept in a field, picked, made of a number, and one that's no wrap's
+view Values(Art art)
+{
+    Draw2D.Rect(float2(0, 0), float2(1, 1), Color.white);
+    Draw2D.Mesh(art.flat, art.faces, art.tiles, Filter.Point, art.kept);
+    Draw2D.Mesh(art.flat, art.faces, art.tiles, Filter.Point, art.tiled ? Wrap.Repeat : Wrap.Clamp);
+    Draw2D.Mesh(art.flat, art.faces, art.tiles, Filter.Point, Wrap(2));
+    Draw2D.Mesh(art.flat, art.faces, art.tiles, Filter.Point, Wrap(7));
+}
+
+view Solid(Art art)
+{
+    Draw3D.Mesh(art.solid, art.faces, float4x4.identity, art.tiles, Filter.Point);
+    Draw3D.Mesh(art.solid, art.faces, float4x4.identity, art.tiles, Filter.Point, Wrap.Mirror);
+    Draw3D.Mesh(art.solid, art.faces, float4x4.identity, art.target.color, Filter.Bilinear, Wrap.Repeat);
+    Draw3D.Instanced(art.solid, art.faces, art.places, art.tiles, Filter.Point, Wrap.Repeat);
+    Draw3D.Instanced(art.solid, art.faces, art.places, art.target.color, Filter.Point, Wrap.Mirror);
+}
+
+// Into a target, by its own methods
+view Into(Art art)
+{
+    art.target.Mesh(art.flat, art.faces, art.tiles, Filter.Point, Wrap.Repeat);
+    art.target.Mesh(art.solid, art.faces, float4x4.identity, art.tiles, Filter.Bilinear, Wrap.Mirror);
+}
+
+vert Shift(mut Corner vertex)
+{
+    vertex.position.x += 1;
+}
+
+// A vertex of the game's with no frag: its color times the texture, read as the draw says
+view Corners(Art art)
+{
+    Draw2D.Mesh(art.corners, art.faces, art.tiles);
+    Draw2D.Mesh(art.corners, art.faces, art.tiles, Filter.Point);
+    Draw2D.Mesh(art.corners, art.faces, art.tiles, Filter.Point, Wrap.Repeat);
+    Draw2D.Mesh(art.corners, art.faces, art.tiles, Filter.Bilinear, art.kept);
+    Draw2D.Mesh(art.corners, art.faces, art.target.color, Filter.Point, Wrap.Repeat, Shift);
+}
+
+// A frag says both where it samples: each way a grid is read is a texture of its own
+frag Tiled(Corner vertex, out Color color, Art art)
+{
+    color = art.tiles.Sample(vertex.uv)
+          * art.tiles.Sample(vertex.uv, Filter.Point, Wrap.Repeat)
+          * art.tiles.Sample(vertex.uv, Filter.Bilinear, Wrap.Mirror)
+          * art.tiles.Sample(vertex.uv, Filter.Point, Wrap.Repeat)                      // The second again
+          * art.tiles.Sample(vertex.uv, Filter.Bilinear, Wrap.Clamp)                    // The first, said outright
+          * art.tiles.Sample(uv: vertex.uv, filter: Filter.Point, wrap: Wrap.Mirror);   // By name
+}
+
+// ...and the Texture its draw gives it
+frag Framed(Corner vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv, Filter.Point, Wrap.Mirror) * source.Sample(vertex.uv);
+}
+
+// A vert samples too
+vert Lifted(mut Corner vertex, Art art)
+{
+    vertex.position.y += art.tiles.Sample(vertex.uv, Filter.Point, Wrap.Repeat).r;
+}
+
+view Shaded(Art art)
+{
+    Draw2D.Mesh(art.corners, art.faces, Tiled);
+    Draw2D.Mesh(art.corners, art.faces, art.target.color, Framed);
+    Draw2D.Mesh(art.corners, art.faces, Lifted);
+}

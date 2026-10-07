@@ -26,10 +26,10 @@ void builtins_use_gui(const decl *theme, const decl *control);
 
 // The types Draw2D.Mesh and Draw3D.Mesh take, as the program has them: List<Vertex>,
 // List<Vertex3>, List<int>, Grid2<Color> (NULL when the program has no such
-// grid, so nothing is one), Filter, and List<float4x4> for Draw3D.Instanced.
+// grid, so nothing is one), Filter, Wrap, and List<float4x4> for Draw3D.Instanced.
 // Call before resolving a draw call.
 void builtins_use_mesh(const decl *vertices, const decl *vertices3, const decl *indices, const decl *pixels,
-                       const decl *filter, const decl *transforms);
+                       const decl *filter, const decl *wrap, const decl *transforms);
 
 // The list type owner.name takes as its argument `index`, when every version
 // of it that has one takes the same: what `[a, b, c]` written there is. When
