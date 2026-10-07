@@ -1,0 +1,4 @@
+// expect: DepthTexture has no constructor yet
+// expect: a DepthTexture is a render target's depth: 'target.depth'
+scene Main { }
+view Show() { var shadow = DepthTexture(); }

@@ -1408,8 +1408,9 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_LOCAL_ENTITY: return "A handle to an entity of the local world: this machine's own, which only local code holds.";
     case TY_PLAYER: return "A player, independent of connections. `PlayerID(0)` names a player by index.";
     case TY_COLOR: return "A color: r, g, b and a from 0 to 1. `Color(r, g, b)` or `Color(r, g, b, a)`.";
-    case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter])`. A Blit supplies its source to a read-only Texture shader parameter.";
-    case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Screen()` is always the window's size. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture; `Draw.window` is the window destination.";
+    case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter[, wrap]])`. A Blit supplies its source to a read-only Texture shader parameter.";
+    case TY_DEPTH_TEXTURE: return "A local reference to a render target's depth, `target.depth`, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow wants.";
+    case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Screen()` is always the window's size. Each says last what it holds when that isn't color: `Format.DepthOnly` is depth alone. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
     case TY_RECT: return "A rectangle on the screen, for the GUI: x and y from the top left, y down, then width and height.";
     case TY_STRING: return "Text, written in double quotes.";
     case TY_ACTION: return "Code the caller writes in braces after the call, run with `content();`.";
@@ -1787,16 +1788,32 @@ static const method_form set_calls[] = {
 
 static const method_form grid_calls[] = {
     {"Clear", "Clear()", "Sets every cell back to zero, keeping the size."},
-    {"Sample", "Sample(float2 uv, Filter filter = Filter.Bilinear) -> Color",
+    {"Sample", "Sample(float2 uv, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color",
      "Reads the grid as a texture, in a frag or vert: its color at `uv`, from (0, 0) at its first cell to (1, 1) past "
-     "its last, blended between cells (`Filter.Bilinear`, the default) or the nearest cell's (`Filter.Point`). The "
-     "grid is a `Grid2<Color>` field of a component or singleton the frag or vert takes, and the filter is written "
-     "there: the GPU is told both before any pixel runs."},
+     "its last, blended between cells (`Filter.Bilinear`, the default) or the nearest cell's (`Filter.Point`). A "
+     "`uv` past 0 or 1 reads the cells at the grid's edge (`Wrap.Clamp`, the default), the grid again "
+     "(`Wrap.Repeat`), or again the other way round each time (`Wrap.Mirror`). The grid is a `Grid2<Color>` field "
+     "of a component or singleton the frag or vert takes, and the filter and the wrap are written there: the GPU is "
+     "told all three before any pixel runs."},
 };
 
 static const method_form texture_calls[] = {
-    {"Sample", "Sample(float2 uv, Filter filter = Filter.Bilinear) -> Color",
-     "Samples this image in a frag or vert, with top-left UVs from (0, 0) to (1, 1). The filter is fixed for the draw."},
+    {"Sample", "Sample(float2 uv, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color",
+     "Samples this image in a frag or vert, with top-left UVs from (0, 0) to (1, 1). A `uv` past them reads the "
+     "pixels at the image's edge (`Wrap.Clamp`, the default), the image again (`Wrap.Repeat`), or again the other "
+     "way round each time (`Wrap.Mirror`). The filter and the wrap are written there, fixed for the draw."},
+};
+
+static const method_form depth_calls[] = {
+    {"Sample", "Sample(float2 uv) -> float",
+     "Reads a render target's depth in a frag or vert: how far the nearest thing drawn at `uv` is, from 0 at the "
+     "camera's near plane to 1 at its far limit, as `pixel.depth` is, and 1 where nothing was drawn since the target "
+     "was cleared. `uv` is from (0, 0) at the top left to (1, 1). It's the nearest pixel's: a depth blended between "
+     "two would be neither's."},
+    {"Compare", "Compare(float2 uv, float value) -> float",
+     "Compares a render target's depth with `value` in a frag or vert: how much of what's stored around `uv` isn't "
+     "nearer than `value`, from 0 to 1, which the GPU blends between pixels. For a shadow map, `value` is how far "
+     "the pixel is from the lamp, a little less, so what the lamp sees isn't in its own shadow: 1 is lit, 0 in shadow."},
 };
 
 static const method_form target_calls[] = {
@@ -1965,6 +1982,7 @@ static const method_form *methods_of(const type t, size_t *count)
     case TY_SET: forms = set_calls; *count = sizeof set_calls / sizeof set_calls[0]; break;
     case TY_GRID: forms = grid_calls; *count = sizeof grid_calls / sizeof grid_calls[0]; break;
     case TY_TEXTURE: forms = texture_calls; *count = sizeof texture_calls / sizeof texture_calls[0]; break;
+    case TY_DEPTH_TEXTURE: forms = depth_calls; *count = sizeof depth_calls / sizeof depth_calls[0]; break;
     case TY_RENDER_TARGET: forms = target_calls; *count = sizeof target_calls / sizeof target_calls[0]; break;
     case TY_ENTITY: case TY_LOCAL_ENTITY: forms = entity_calls; *count = sizeof entity_calls / sizeof entity_calls[0]; break;
     case TY_SINGLETON: forms = singleton_calls; *count = sizeof singleton_calls / sizeof singleton_calls[0]; break;
@@ -2009,7 +2027,7 @@ static void format_method(const method_form *form, const type t, sb *out)
     const bool generic = (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID) && t.decl;
     const char *element = generic ? type_name(t.decl->fields.items[0].type) : "T";
     const char *value = generic && t.kind == TY_MAP ? type_name(t.decl->fields.items[1].type) : "V";
-    sb_put(out, generic || t.kind == TY_RECORD ? type_name(t) // Pixel.Discard()
+    sb_put(out, generic || t.kind == TY_RECORD || t.kind == TY_DEPTH_TEXTURE ? type_name(t) // Pixel.Discard()
                 : t.kind == TY_LIST ? "items"
                 : t.kind == TY_MAP || t.kind == TY_SET ? "keys"
                 : t.kind == TY_GRID ? "cells"
@@ -2047,6 +2065,7 @@ static void describe_default(const type t, sb *out)
     case TY_SET: sb_put(out, "An empty set"); break;
     case TY_GRID: sb_put(out, "An empty grid, open every way"); break;
     case TY_TEXTURE: case TY_RENDER_TARGET: sb_put(out, "An invalid image reference"); break;
+    case TY_DEPTH_TEXTURE: sb_put(out, "No target's depth: it reads as the far limit, 1"); break;
     case TY_ENUM: {
         const enum_member *zero = NULL;
         for (int i = 0; i < t.decl->members.count && !zero; i++) {
@@ -2105,8 +2124,9 @@ static void put_samples(const decl *d, const int index, const char *prefix, sb *
         const shader_sample *s = &d->samples.items[i];
         if (s->param != index) continue;
         const field *f = &(s->local ? t->local_part : t)->fields.items[s->field];
-        sb_printf(out, "%s`%s" STR_FMT "`%s", out->len ? ", " : "", prefix, STR_ARG(f->name),
-                  s->blended ? "" : " (`Filter.Point`)");
+        static const char *const wraps[] = {"", " (`Wrap.Repeat`)", " (`Wrap.Mirror`)"}; // By its number
+        sb_printf(out, "%s`%s" STR_FMT "`%s%s", out->len ? ", " : "", prefix, STR_ARG(f->name),
+                  s->blended ? "" : " (`Filter.Point`)", wraps[s->wrap >= 0 && s->wrap < 3 ? s->wrap : 0]);
     }
 }
 
@@ -2128,20 +2148,48 @@ static bool vertex_is_3d(const decl *vertex)
     return false;
 }
 
+// Whether a struct is one a vert of the game writes for its frag, `out
+// FromLamp lamp`: a frag's parameter of that type is what the vert it's drawn
+// with hands it, and one of any other type an instance's.
+static bool vert_writes(const decl *type)
+{
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        for (int k = 1; is_shader(d) && !d->is_frag && k < d->params.count; k++) {
+            const param *p = &d->params.items[k];
+            if (p->is_out && p->type.kind == TY_STRUCT && p->type.decl == type) return true;
+        }
+    }
+    return false;
+}
+
+// A frag's struct that the vert it's drawn with writes for it.
+static bool handed_param(const decl *d, const param *p)
+{
+    return d->is_frag && p->type.kind == TY_STRUCT && !p->is_out && vert_writes(p->type.decl);
+}
+
 // A frag or vert: when it runs, and what it reads, grouped as the engine
 // sends it to the GPU: components' fields for each instance drawn,
-// singletons' for each draw, grids as textures, and of a frag's vertex, the
-// fields the mesh's corners pass on to its pixels.
+// singletons' for each draw, grids as textures, and of a frag's vertex and of
+// what its vert wrote for it, the fields the mesh's corners pass on to its
+// pixels.
 static void describe_shader(const decl *d, sb *out)
 {
     const bool three_d = d->params.count && vertex_is_3d(d->params.items[0].type.decl);
     bool instanced = false;
-    for (int i = 1; i < d->params.count; i++) instanced |= d->params.items[i].type.kind == TY_STRUCT;
+    bool hands = false;
+    for (int i = 1; i < d->params.count; i++) {
+        const param *p = &d->params.items[i];
+        instanced |= p->type.kind == TY_STRUCT && !p->is_out && !handed_param(d, p);
+        hands |= p->type.kind == TY_STRUCT && p->is_out;
+    }
     sb_printf(out, d->is_frag ? "\n\nRuns on the GPU, for each pixel of a mesh a view draws through it: `Draw%dD.%s(..., "
-                                STR_FMT ")`. What its `mut Color` holds when it ends is the pixel."
+                                STR_FMT ")`. What it writes to its `out Color` is the pixel."
                               : "\n\nRuns on the GPU, for each vertex of a mesh a view draws through it: `Draw%dD.%s(..., "
                                 STR_FMT ")`. It changes the vertex in place, before its triangles are drawn.",
               three_d ? 3 : 2, instanced ? "Instanced" : "Mesh", STR_ARG(d->name));
+    if (hands) sb_put(out, " What it writes to a struct it takes as `out`, the frag it's drawn with reads, blended across the triangle.");
     if (!shader_planned(d)) {
         sb_put(out, "\n\nWhat it reads is worked out once the game has no errors.");
         return;
@@ -2150,10 +2198,16 @@ static void describe_shader(const decl *d, sb *out)
     sb draw = {0};
     sb textures = {0};
     sb vertex = {0};
+    sb handed = {0};
     for (int i = 0; i < d->params.count; i++) {
         const param *p = &d->params.items[i];
         if (i == 0) { // A vert has its whole vertex
             if (d->is_frag) put_reads(p, "", true, &vertex);
+            continue;
+        }
+        if (p->type.kind == TY_STRUCT && p->is_out) continue; // What a vert writes for its frag: nothing sends it
+        if (handed_param(d, p)) { // ...and what the frag reads of it comes from the mesh's corners
+            put_reads(p, type_prefix(p), true, &handed);
             continue;
         }
         const bool component = p->type.kind == TY_COMPONENT;
@@ -2163,7 +2217,7 @@ static void describe_shader(const decl *d, sb *out)
         put_reads(p, type_prefix(p), false, component || transform || data ? &instance : &draw);
         put_samples(d, i, type_prefix(p), &textures);
     }
-    if (!instance.len && !draw.len && !textures.len && !vertex.len) {
+    if (!instance.len && !draw.len && !textures.len && !vertex.len && !handed.len) {
         sb_put(out, "\n\nIt reads nothing the engine sends.");
         return;
     }
@@ -2172,6 +2226,7 @@ static void describe_shader(const decl *d, sb *out)
     if (draw.len) sb_printf(out, "\n- for each draw: %s", draw.data);
     if (textures.len) sb_printf(out, "\n- as textures: %s", textures.data);
     if (vertex.len) sb_printf(out, "\n- of its vertex, blended across the triangle: %s", vertex.data);
+    if (handed.len) sb_printf(out, "\n- of what its vert wrote for it, blended across the triangle: %s", handed.data);
 }
 
 // A frag's or vert's parameter: what it is to the GPU, and for a component
@@ -2195,9 +2250,24 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
         return;
     }
     if (p->mode == PARAM_MUT && p->type.kind == TY_COLOR) {
-        sb_put(out, "\n\nThe pixel's color, which the frag writes. It starts as `Color.white`: it isn't what's on the "
-                    "screen already, which a GPU doesn't let a frag read. When the frag ends, what it holds is blended "
-                    "over what's behind it by its alpha.");
+        sb_put(out, "\n\nThe pixel's color, which the frag writes. It starts with no value: the frag writes it on every "
+                    "path that ends, before it reads it, and a path that ends in `pixel.Discard()` draws no pixel. It "
+                    "isn't what's on the screen already, which a GPU doesn't let a frag read. What the frag wrote is "
+                    "blended over what's behind it by its alpha.");
+        return;
+    }
+    if (p->is_out && p->type.kind == TY_STRUCT) {
+        sb_printf(out, "\n\nWhat the vert writes for the frag it's drawn with. It starts with no value: the vert writes each "
+                       "of its fields, on every path. A frag that takes a `" STR_FMT "` reads it blended across the "
+                       "triangle from its three corners, and only the fields it reads go from the corners to the pixels.",
+                  STR_ARG(t->name));
+        return;
+    }
+    if (handed_param(d, p)) {
+        sb_put(out, "\n\nWhat the vert this frag is drawn with wrote for it, an `out` parameter of the vert's, blended "
+                    "across the triangle from its three corners. A draw whose vert writes none is an error at the draw.");
+        if (planned) put_reads(p, "", true, &fields);
+        if (fields.len) sb_printf(out, " Fields this code reads, which the corners pass on: %s.", fields.data);
         return;
     }
     if (shader_record_doc(t)) {
@@ -2348,6 +2418,10 @@ static void describe_enum_conversion(const decl *d, sb *out)
 // anything else through a pointer.
 static void describe_out_param(const param *p, const decl *of, sb *out)
 {
+    if (is_shader(of)) { // What a frag or a vert writes: nothing calls it with an argument
+        describe_shader_param(of, p, out);
+        return;
+    }
     if (of && of->is_extern && p->type.kind == TY_LIST) {
         sb_put(out, "\n\nParameter, the caller's list, which C makes: it gets a `tide_list_out`, asks it for room, fills it, "
                     "and says how many elements there are (`tide/list.h`). What the list held isn't passed.");
@@ -3558,6 +3632,13 @@ static void namespace_actions(const int start_line, const int end_line, jbuf *ou
 // the parameter as `mut`, to read what the caller has, with the word gone
 // from every call. The second isn't offered where a call declares the
 // variable there (`out var x`, `out _`), which a `mut` parameter can't take.
+// What fills an `out` parameter where the code has nothing to give: its type's
+// default, or for a frag's color white, which is what `mut Color color` started as.
+static const char *filler(const decl *code, const param *p)
+{
+    return is_shader(code) && code->is_frag && p->type.kind == TY_COLOR ? "Color.white" : "default";
+}
+
 static void assign_first_actions(const fix *f, jbuf *out, int *written)
 {
     const param *p = f->param;
@@ -3568,19 +3649,21 @@ static void assign_first_actions(const fix *f, jbuf *out, int *written)
         const token *next = &DOC->toks[open + 1]; // The body's first statement
         sb title = {0};
         sb text = {0};
-        sb_printf(&title, "Assign '" STR_FMT " = default;' first", STR_ARG(p->name));
+        const char *value = filler(m, p);
+        if (is_shader(m)) sb_printf(&title, "Write '" STR_FMT " = %s;' first", STR_ARG(p->name), value);
+        else sb_printf(&title, "Assign '" STR_FMT " = %s;' first", STR_ARG(p->name), value);
         if (next->at.line > m->body->at.line) { // On a line of its own, as far in as the statement after it
             const str line = doc_line(next->at.line);
             const int indent = next->at.col - 1 < line.len ? next->at.col - 1 : line.len;
-            sb_printf(&text, "%.*s" STR_FMT " = default;\n", indent, line.ptr, STR_ARG(p->name));
+            sb_printf(&text, "%.*s" STR_FMT " = %s;\n", indent, line.ptr, STR_ARG(p->name), value);
             const loc at = {next->at.line, 1, A.doc};
             quick_fix(out, written, title.data, true, d, at, at, text.data);
         } else {
-            sb_printf(&text, STR_FMT " = default; ", STR_ARG(p->name));
+            sb_printf(&text, STR_FMT " = %s; ", STR_ARG(p->name), value);
             quick_fix(out, written, title.data, true, d, next->at, next->at, text.data);
         }
     }
-    if (p->out_at.line == 0) return;
+    if (p->out_at.line == 0 || is_shader(m)) return; // What a frag or a vert writes is `out`, and nothing else
     const int k = (int)(p - m->params.items);
     text_edits edits = {0};
     const text_edit word = {p->out_at, {p->out_at.line, p->out_at.col + 3, p->out_at.file}, "mut"};
@@ -3781,7 +3864,8 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
             const loc where = at_end ? f->method->end : f->at; // Its closing brace, or the return
             const int t = where.file == A.doc ? token_at(where) : -1;
             if (t <= 0) continue;
-            sb_printf(&title, "Assign '" STR_FMT " = default;'", STR_ARG(p->name));
+            const char *value = filler(f->method, p);
+            sb_printf(&title, "%s '" STR_FMT " = %s;'", is_shader(f->method) ? "Write" : "Assign", STR_ARG(p->name), value);
             fixed = diagnostic_at(f->at);
             // A return that's an if's or a loop's body with no braces has to stay one statement: in braces, with
             // the assignment before it
@@ -3795,7 +3879,7 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
                     else if (k == T_RPAREN || k == T_RBRACKET || k == T_RBRACE) depth--;
                 }
                 if (at_end || last >= DOC->tok_count || DOC->toks[last].kind != T_SEMI) continue;
-                sb_printf(&text, "{ " STR_FMT " = default; ", STR_ARG(p->name));
+                sb_printf(&text, "{ " STR_FMT " = %s; ", STR_ARG(p->name), value);
                 const loc after = token_end(&DOC->toks[last]);
                 text_edits both = {0};
                 const text_edit opens = {where, where, text.data};
@@ -3812,11 +3896,11 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
             start = end = where;
             if (first && at_end) { // A step in from the brace
                 start = end = (loc){where.line, 1, A.doc};
-                sb_printf(&text, "%.*s    " STR_FMT " = default;\n", indent, line.ptr, STR_ARG(p->name));
+                sb_printf(&text, "%.*s    " STR_FMT " = %s;\n", indent, line.ptr, STR_ARG(p->name), value);
             } else if (first) {
-                sb_printf(&text, STR_FMT " = default;\n%.*s", STR_ARG(p->name), indent, line.ptr);
+                sb_printf(&text, STR_FMT " = %s;\n%.*s", STR_ARG(p->name), value, indent, line.ptr);
             } else {
-                sb_printf(&text, STR_FMT " = default; ", STR_ARG(p->name));
+                sb_printf(&text, STR_FMT " = %s; ", STR_ARG(p->name), value);
             }
             break;
         }
@@ -5323,6 +5407,7 @@ static bool is_swizzle(const str member, const int dim)
 static type member_type(const type t, const str member)
 {
     if (t.kind == TY_RENDER_TARGET && str_eq_c(member, "color")) return (type){TY_TEXTURE, NULL};
+    if (t.kind == TY_RENDER_TARGET && str_eq_c(member, "depth")) return (type){TY_DEPTH_TEXTURE, NULL};
     if (t.decl && (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_RECORD
                    || t.kind == TY_STRUCT || t.kind == TY_EVENT)) {
         for (int i = 0; i < t.decl->fields.count + local_field_count(t.decl); i++) {
@@ -5465,6 +5550,9 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     const bool gpu = is_shader(sc->decl);
     if (t.kind == TY_RENDER_TARGET) {
         item(c, "color", CK_PROPERTY, "Texture", "The target's GPU color image, without CPU readback.", NULL);
+        item(c, "depth", CK_PROPERTY, "DepthTexture",
+             "The target's depth, for a frag to read: kept in a field of a component or singleton the frag takes, and "
+             "read there with `Sample(uv)` or `Compare(uv, value)`.", NULL);
         if (!gpu) {
             for (size_t i = 0; i < sizeof target_calls / sizeof target_calls[0]; i++)
                 item(c, target_calls[i].name, CK_METHOD, target_calls[i].form, target_calls[i].doc,
@@ -5477,6 +5565,14 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         return;
     }
     if (gpu && (t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET)) return;
+    if (gpu && t.kind == TY_DEPTH_TEXTURE) {
+        for (size_t i = 0; i < sizeof depth_calls / sizeof depth_calls[0]; i++) {
+            sb detail = {0};
+            format_method(&depth_calls[i], t, &detail);
+            item(c, depth_calls[i].name, CK_METHOD, detail.data, depth_calls[i].doc, i == 0 ? "Sample($1)" : "Compare($1, $2)");
+        }
+        return;
+    }
     if (gpu && (t.kind == TY_GRID || t.kind == TY_TEXTURE)) {
         if (t.kind == TY_GRID && (t.decl->dims != 2 || t.decl->fields.items[0].type.kind != TY_COLOR)) return;
         const method_form *sample = t.kind == TY_TEXTURE ? &texture_calls[0]
@@ -5992,7 +6088,7 @@ static bool complete_in_namespace(completion *c, const str ns, const order_compl
 static const char *const value_types[] = {
     "bool", "byte", "int", "long", "int2", "int3", "int4", "float", "float2", "float3", "float4", "quaternion",
     "float2x2", "float3x3", "float4x4", "Entity", "LocalEntity", "PlayerID", "Color", "Rect",
-    "Texture", "RenderTarget",
+    "Texture", "DepthTexture", "RenderTarget",
 };
 
 // Which built-in types to offer: each place takes its own.
@@ -6018,8 +6114,9 @@ static void complete_value_types(completion *c, const unsigned which)
                             : t.kind == TY_LOCAL_ENTITY   ? VT_LOCAL_ENTITY
                                                           : VT_VALUES;
         // Its ints are 32 bits, and it has no handles into the world, nor rects
-        if ((which & VT_GPU) && (t.kind == TY_BYTE || t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT || t.kind == TY_RENDER_TARGET)) continue;
-        if ((t.kind == TY_TEXTURE || t.kind == TY_RENDER_TARGET) && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
+        if ((which & VT_GPU) && (t.kind == TY_BYTE || t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT || t.kind == TY_RENDER_TARGET
+                                 || t.kind == TY_DEPTH_TEXTURE)) continue; // A depth is read where it's a field, never a parameter
+        if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_RENDER_TARGET) && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
         if (which & kind) item(c, value_types[i], CK_STRUCT, "built-in type", builtin_type_doc(t.kind), NULL);
     }
     if (which & VT_TEXT) item(c, "string", CK_STRUCT, "built-in type", builtin_type_doc(TY_STRING), NULL);
@@ -6275,9 +6372,9 @@ static void complete_declarations(completion *c)
     item(c, "system", CK_SNIPPET, "system Name(parameters) { ... }", NULL, "system ${1:Name}($2)\n{\n    $0\n}");
     item(c, "view", CK_SNIPPET, "view Name(parameters) { ... }", "Runs once per frame and draws.",
          "view ${1:Name}($2)\n{\n    $0\n}");
-    item(c, "frag", CK_SNIPPET, "frag Name(Vertex vertex, mut Color color, parameters) { ... }",
+    item(c, "frag", CK_SNIPPET, "frag Name(Vertex vertex, out Color color, parameters) { ... }",
          "Runs on the GPU for each pixel of a mesh a view draws through it, and writes the pixel's color.",
-         "frag ${1:Name}(${2:Vertex} vertex, mut Color color$3)\n{\n    $0\n}");
+         "frag ${1:Name}(${2:Vertex} vertex, out Color color$3)\n{\n    $0\n}");
     item(c, "vert", CK_SNIPPET, "vert Name(mut Vertex vertex, parameters) { ... }",
          "Runs on the GPU for each vertex of a mesh a view draws through it, and changes it in place.",
          "vert ${1:Name}(mut ${2:Vertex} vertex$3)\n{\n    $0\n}");
@@ -6338,8 +6435,8 @@ static void complete_code_declarations(completion *c)
     item(c, "system", CK_SNIPPET, "system Name(parameters) { ... }", NULL, "system ${1:Name}($2)\n{\n    $0\n}");
     item(c, "view", CK_SNIPPET, "view Name(parameters) { ... }", "Runs once per frame and draws.",
          "view ${1:Name}($2)\n{\n    $0\n}");
-    item(c, "frag", CK_SNIPPET, "frag Name(Vertex vertex, mut Color color, parameters) { ... }", NULL,
-         "frag ${1:Name}(${2:Vertex} vertex, mut Color color$3)\n{\n    $0\n}");
+    item(c, "frag", CK_SNIPPET, "frag Name(Vertex vertex, out Color color, parameters) { ... }", NULL,
+         "frag ${1:Name}(${2:Vertex} vertex, out Color color$3)\n{\n    $0\n}");
     item(c, "vert", CK_SNIPPET, "vert Name(mut Vertex vertex, parameters) { ... }", NULL,
          "vert ${1:Name}(mut ${2:Vertex} vertex$3)\n{\n    $0\n}");
     item(c, "event handler", CK_SNIPPET, "event(Event e) Name(parameters) { ... }", NULL,
@@ -6487,14 +6584,18 @@ static bool game_type_named(const char *name)
 
 // A frag's or vert's parameters, in the parentheses opened at token `open`,
 // after token `last`. The vertex comes first, a struct with a position, which
-// a vert takes mut; a frag's pixel is its `mut Color`; the rest is what the
-// engine supplies: components, singletons, Pixel (a frag's) and Instance.
+// a vert takes mut; what each writes is `out`, a frag's pixel, its `out Color`,
+// and the structs a vert hands its frag; the rest is what the engine supplies:
+// components, singletons, Pixel (a frag's) and Instance.
 static void complete_shader_header(completion *c, const int open, const int last)
 {
     const token *toks = DOC->toks;
     const bool frag = str_eq_c(toks[open - 2].text, "frag");
     const bool after_mut = toks[last].kind == T_MUT;
-    const tok_kind before = toks[after_mut ? last - 1 : last].kind; // What the parameter starts after
+    // `out`, a word only here: after '(' or ',', with nothing after it yet
+    const bool after_out = toks[last].kind == T_IDENT && str_eq_c(toks[last].text, "out")
+                        && (toks[last - 1].kind == T_COMMA || toks[last - 1].kind == T_LPAREN);
+    const tok_kind before = toks[after_mut || after_out ? last - 1 : last].kind; // What the parameter starts after
     if (before != T_LPAREN && before != T_COMMA) {
         if (toks[last].kind == T_IDENT) complete_param_name(c, toks[last].text);
         return;
@@ -6512,13 +6613,27 @@ static void complete_shader_header(completion *c, const int open, const int last
         complete_namespaces(c, false);
         return;
     }
-    if (after_mut) {
-        if (frag) item(c, "Color", CK_STRUCT, "The pixel's color, which the frag writes", NULL, NULL);
+    if (after_mut) return; // Only a vert's vertex is, its first
+    if (after_out) {
+        if (frag) {
+            item(c, "Color", CK_STRUCT, "The pixel's color, which the frag writes", NULL, NULL);
+            return;
+        }
+        for (int i = 0; i < A.prog->decls.count; i++) { // What a vert can hand its frag: a struct
+            const decl *d = A.prog->decls.items[i];
+            if (d->kind == DECL_STRUCT && has_name(d)) {
+                item(c, name_for(d), CK_STRUCT, "struct", "What the vert writes for its frag, which reads it blended.", NULL);
+            }
+        }
+        complete_namespaces(c, false);
         return;
     }
-    bool writes = false; // It has its `mut Color` already
-    for (int k = open + 1; k <= last; k++) writes |= toks[k].kind == T_MUT;
-    if (frag && !writes) item(c, "mut", CK_KEYWORD, "mut Color color: the pixel's color, which the frag writes", NULL, NULL);
+    bool writes = false; // It has its `out Color` already
+    for (int k = open + 2; k <= last; k++) {
+        writes |= toks[k].kind == T_IDENT && str_eq_c(toks[k].text, "out") && toks[k - 1].kind == T_COMMA;
+    }
+    if (frag && !writes) item(c, "out", CK_KEYWORD, "out Color color: the pixel's color, which the frag writes", NULL, NULL);
+    if (!frag) item(c, "out", CK_KEYWORD, "out FromLamp lamp: a struct the vert writes for its frag, which reads it blended", NULL, NULL);
     complete_types(c, true, true, false);
     item(c, "Texture", CK_STRUCT, "Read-only image supplied by the draw", builtin_type_doc(TY_TEXTURE), NULL);
     if (frag && !game_type_named("Pixel")) item(c, "Pixel", CK_CLASS, "built-in", shader_record_doc(A.prog->pixel), NULL);
@@ -6557,7 +6672,7 @@ typedef enum header_kind {
     HEADER_TRIGGER, // A handler's trigger: event(Hit hit)
     HEADER_ROUTINE, // A function's or method's: void Heal(mut Stats stats)
     HEADER_SAMPLE,  // The input's Sample: devices and local singletons; Sanitize takes nothing
-    HEADER_SHADER,  // A frag's or vert's: frag Shade(BoxVertex vertex, mut Color color, Sun sun)
+    HEADER_SHADER,  // A frag's or vert's: frag Shade(BoxVertex vertex, out Color color, Sun sun)
     HEADER_QUERY,   // A system's second candidate set: query (Body body, with Fighter)
 } header_kind;
 
@@ -6825,9 +6940,10 @@ static type names_type(const scope *sc, const int first, const int last)
 }
 
 // Draw2D.Mesh's parameters, in the order they're written:
-// Draw2D.Mesh(vertices, indices[, transform][, texture[, filter]][, vert][, frag]).
+// Draw2D.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]][, vert][, frag]).
 // A 3D mesh has its transform, and a 2D one none.
-enum { MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_VERT, MESH_FRAG, MESH_INSTANCES, MESH_PARAMS };
+enum { MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_INSTANCES,
+       MESH_PARAMS };
 
 // What an argument of Draw2D.Mesh after its indices is, from what's written at
 // tokens `first` to `last`: which of those parameters, or MESH_PARAMS where
@@ -6846,10 +6962,12 @@ static int mesh_argument(const scope *sc, const int first, const int last)
         const decl *d = A.prog->decls.items[i];
         if (is_shader(d) && (str_eq_c(written, name_for(d)) || str_eq(written, d->qualified))) return d->is_frag ? MESH_FRAG : MESH_VERT;
     }
-    // float4x4.Translate(...), Filter.Point
+    // float4x4.Translate(...), Filter.Point, Wrap.Repeat
     if (str_eq_c(toks[first].text, "float4x4")) return MESH_TRANSFORM;
     if (str_eq_c(toks[first].text, "Filter") && last == first + 2) return MESH_FILTER;
+    if (str_eq_c(toks[first].text, "Wrap") && last == first + 2) return MESH_WRAP;
     const type t = names_type(sc, first, last);
+    if (t.kind == TY_ENUM) return t.decl == A.prog->wrap ? MESH_WRAP : t.decl == A.prog->filter ? MESH_FILTER : MESH_PARAMS;
     return t.kind == TY_FLOAT4X4 ? MESH_TRANSFORM : t.kind == TY_GRID || t.kind == TY_TEXTURE ? MESH_TEXTURE : MESH_PARAMS;
 }
 
@@ -7360,7 +7478,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
             }
             break;
         }
-        if (f.header == HEADER_SHADER) { // frag Shade(BoxVertex vertex, mut Color color, Sun sun)
+        if (f.header == HEADER_SHADER) { // frag Shade(BoxVertex vertex, out Color color, Sun sun)
             complete_shader_header(&c, f.open, last);
             break;
         }
@@ -7935,7 +8053,7 @@ static const char *check_new_name(const occurrence *target, const str name)
     static const char *const reserved[] = {"Math", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
-                                           "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Font", "Blend", "Depth", "Draw", "DrawList", "Random",
+                                           "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Wrap", "Font", "Blend", "Depth", "Cull", "Format", "Draw", "DrawList", "Random",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "List", "Map", "Set", "Grid2", "Grid3",
                                            "string", "Sample", "Sanitize"};
     static char message[160];
@@ -8192,7 +8310,7 @@ static void visit_signature(void *user, const char *label, const char *doc)
 // Constructors and other calls that aren't in the built-in function table.
 static const struct {
     const char *name;
-    const char *forms[3];
+    const char *forms[4];
     const char *doc;
 } call_forms[] = {
     {"byte", {"byte(int value)", "byte(long value)", "byte(float value)"}, "Keeps an integer's low 8 bits. "
@@ -8214,7 +8332,10 @@ static const struct {
     {"float4x4", {"float4x4(float4 c0, float4 c1, float4 c2, float4 c3)", "float4x4(float3x3 rotation, float3 translation)"}, NULL},
     {"Color", {"Color(float r, float g, float b)", "Color(float r, float g, float b, float a)"}, "Channels from 0 to 1."},
     {"Rect", {"Rect(float x, float y, float width, float height)"}, "From the top left of the screen, y down, in GUI units."},
-    {"RenderTarget", {"RenderTarget(float width, float height)", "RenderTarget(float width, float height, float pixelsPerUnit)"}, "Creates a local image of a positive size in logical pixels, like the window's. Its image has the display's pixels in each, so it's as sharp as the window, or `pixelsPerUnit` of them: with 1, exactly `width` by `height` pixels on any display. Color and depth persist until cleared; copies share it. Dispose it when finished. `RenderTarget.Screen()` is one that's always the window's size."},
+    {"RenderTarget", {"RenderTarget(float width, float height)", "RenderTarget(float width, float height, float pixelsPerUnit)",
+                      "RenderTarget(float width, float height, Format format)",
+                      "RenderTarget(float width, float height, float pixelsPerUnit, Format format)"},
+     "Creates a local image of a positive size in logical pixels, like the window's. Its image has the display's pixels in each, so it's as sharp as the window, or `pixelsPerUnit` of them: with 1, exactly `width` by `height` pixels on any display. It holds color beside its depth, or what `format` says: `Format.DepthOnly` is depth alone, for a pass whose depth a frag reads afterwards (`target.depth`). Color and depth persist until cleared; copies share it. Dispose it when finished. `RenderTarget.Screen()` is one that's always the window's size."},
     {"PlayerID", {"PlayerID(int index)"}, "A player by index, for local play and tests."},
     {"Random", {"Random(long seed)"}, RANDOM_SEEDED_DOC},
     {"Spawn", {"Spawn(components...)"}, "Creates an entity with these components. It's added at the end of the tick."},
@@ -8347,13 +8468,13 @@ static void collect_label(void *user, const char *label, const char *doc)
 // a List<Vertex> and a List<Vertex3> with no vert and no frag; the checker
 // takes the rest itself (check_mesh_draw).
 static const char *const mesh_labels[2] = {
-    "Draw2D.Mesh(vertices, indices[, texture[, filter]][, vert][, frag])",
-    "Draw3D.Mesh(vertices, indices, transform[, texture[, filter]][, vert][, frag])",
+    "Draw2D.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag])",
+    "Draw3D.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]][, vert][, frag])",
 };
 
 static const char *const instanced_labels[2] = {
-    "Draw2D.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])",
-    "Draw3D.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])",
+    "Draw2D.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag])",
+    "Draw3D.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag])",
 };
 
 // Each of its parameters: what it's called in those, and what it takes, in a
@@ -8370,6 +8491,10 @@ static const struct {
     [MESH_TEXTURE] = {"texture",
                       {"A `Grid2<Color>` or `Texture`, read at each corner's `uv`. A frag with a Texture parameter receives the explicit Texture source."}},
     [MESH_FILTER] = {"filter", {"How the texture is read between cells: `Filter.Bilinear` (the default) or `Filter.Point`."}},
+    [MESH_WRAP] = {"wrap",
+                   {"What a `uv` past 0 or 1 reads, written after the filter: the cells at the texture's edge (`Wrap.Clamp`, "
+                    "the default), the texture again (`Wrap.Repeat`), or again the other way round each time "
+                    "(`Wrap.Mirror`)."}},
     [MESH_VERT] = {"vert", {"A vert, by name: it runs on the GPU for each vertex, and changes it in place."}},
     [MESH_FRAG] = {"frag", {"A frag, by name: it runs on the GPU for each pixel, and writes its color."}},
     [MESH_INSTANCES] = {"instances",
@@ -8400,6 +8525,7 @@ static int call_param_names(const expr *call, str *names, const int max)
                             : arg->bind == BIND_SHADER && arg->type_decl ? (arg->type_decl->is_frag ? MESH_FRAG : MESH_VERT)
                             : t.kind == TY_FLOAT4X4                      ? MESH_TRANSFORM
                             : t.kind == TY_GRID || t.kind == TY_TEXTURE   ? MESH_TEXTURE
+                            : t.kind == TY_ENUM && t.decl == A.prog->wrap ? MESH_WRAP
                             : t.kind == TY_ENUM                          ? MESH_FILTER
                                                                          : MESH_PARAMS;
             names[count] = param == MESH_PARAMS ? (str){"", 0} : str_from(mesh_params[param].name);
@@ -8420,8 +8546,12 @@ static int call_param_names(const expr *call, str *names, const int max)
             } else if (call->object) { // RenderTarget.Screen(factor)
                 builtin_signatures(call->object->name, call->name, collect_label, &list);
             } else {
-                vec_push(list.labels, call->args.count == 3 ? "RenderTarget(float width, float height, float pixelsPerUnit)"
-                                                            : "RenderTarget(float width, float height)");
+                // What it holds comes last, where the call says: the engine's function is another then
+                const bool formatted = call->c_callee && strstr(call->c_callee, "_as") != NULL;
+                vec_push(list.labels, call->args.count == 4   ? "RenderTarget(float width, float height, float pixelsPerUnit, Format format)"
+                                      : call->args.count < 3  ? "RenderTarget(float width, float height)"
+                                      : formatted             ? "RenderTarget(float width, float height, Format format)"
+                                                              : "RenderTarget(float width, float height, float pixelsPerUnit)");
             }
             break;
         }
@@ -8438,7 +8568,7 @@ static int call_param_names(const expr *call, str *names, const int max)
     case CALL_CONSTRUCT: case CALL_NEW_GRID:
         for (size_t i = 0; i < sizeof call_forms / sizeof call_forms[0]; i++) {
             if (!str_eq_c(call->name, call_forms[i].name)) continue;
-            for (int f = 0; f < 3 && call_forms[i].forms[f]; f++) vec_push(list.labels, call_forms[i].forms[f]);
+            for (int f = 0; f < 4 && call_forms[i].forms[f]; f++) vec_push(list.labels, call_forms[i].forms[f]);
         }
         break;
     case CALL_SESSION:
@@ -8521,9 +8651,9 @@ static void collect_mesh_doc(void *user, const char *label, const char *doc)
 static void mesh_signature_help(const int open, const int commas, const loc at, jbuf *out)
 {
     static const int forms[3][MESH_PARAMS] = {
-        {MESH_VERTICES, MESH_INDICES, MESH_TEXTURE, MESH_FILTER, MESH_VERT, MESH_FRAG},
-        {MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_VERT, MESH_FRAG},
-        {MESH_VERTICES, MESH_INDICES, MESH_INSTANCES, MESH_TEXTURE, MESH_FILTER, MESH_VERT, MESH_FRAG},
+        {MESH_VERTICES, MESH_INDICES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG},
+        {MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG},
+        {MESH_VERTICES, MESH_INDICES, MESH_INSTANCES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG},
     };
     const scope sc = scope_at(at);
     call_args args;
@@ -8532,7 +8662,7 @@ static void mesh_signature_help(const int open, const int commas, const loc at, 
     const bool three_d = str_eq_c(owner, "Draw3D");
     const bool instanced = str_eq_c(DOC->toks[open - 1].text, "Instanced");
     const int *order = forms[instanced ? 2 : three_d ? 1 : 0];
-    const int count = instanced || three_d ? 7 : 6;
+    const int count = instanced || three_d ? 8 : 7;
     const int fixed = instanced || three_d ? 3 : 2; // Lists, and an ordinary 3D mesh's transform
 
     int active = 0;
@@ -8669,7 +8799,7 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
     } else {
         for (size_t i = 0; i < sizeof call_forms / sizeof call_forms[0]; i++) {
             if (!str_eq_c(name, call_forms[i].name)) continue;
-            for (int f = 0; f < 3 && call_forms[i].forms[f]; f++) add_signature(&s, call_forms[i].forms[f], call_forms[i].doc);
+            for (int f = 0; f < 4 && call_forms[i].forms[f]; f++) add_signature(&s, call_forms[i].forms[f], call_forms[i].doc);
         }
     }
     if (s.shown == 0) {

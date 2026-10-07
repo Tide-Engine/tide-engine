@@ -1,5 +1,5 @@
-// expect: a frag returns nothing: it writes its pixel's color through its 'mut Color' parameter
-// The pixel is written through 'mut', not returned
+// expect: a frag returns nothing: it writes its pixel's color through its 'out Color' parameter
+// The pixel is written through 'out', not returned
 scene Main { }
 
 struct V
@@ -30,7 +30,7 @@ event(Spawned) Setup(with Main)
     Spawn(Box);
 }
 
-frag Shade(V vertex, mut Color color)
+frag Shade(V vertex, out Color color)
 {
     return Color.red;
 }

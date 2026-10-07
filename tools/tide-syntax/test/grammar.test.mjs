@@ -233,6 +233,7 @@ const cases = {
         ['Random dice = Random(7);', [['Random', 'support.class']]],
         ['var roll = dice.NextInt(6);', [['NextInt', 'entity.name.function.call']]],
         ['Draw2D.Mesh([corner]', [['Mesh', 'entity.name.function.call'], ['Filter', 'support.class']]],
+        ['Draw3D.Mesh([corner3]', [['Mesh', 'entity.name.function.call'], ['Filter', 'support.class'], ['Wrap', 'support.class']]],
         ['Draw.Blend(Blend.Add),', [['Draw', 'support.class'], ['Blend', 'entity.name.function.call'], ['Blend', '!support.class'],
                                     ['Blend', 'support.class', 2]]],
         ['Draw2D.Clip(Rect(0, 0, 4, 4))', [['Clip', 'entity.name.function.call'], ['Rect', 'storage.type.primitive']]],
@@ -240,6 +241,9 @@ const cases = {
         ['Draw3D.Depth(Depth.Read)', [['Draw3D', 'support.class'], ['Depth', 'entity.name.function.call'], ['Depth', '!support.class'],
                                       ['Depth', 'support.class', 2]]],
         ['Draw3D.SetDepth(Depth.None);', [['SetDepth', 'entity.name.function.call'], ['Depth', 'support.class']]],
+        ['Draw3D.Cull(Cull.None)', [['Draw3D', 'support.class'], ['Cull', 'entity.name.function.call'], ['Cull', '!support.class'],
+                                    ['Cull', 'support.class', 2]]],
+        ['Draw3D.SetCull(Cull.Front);', [['SetCull', 'entity.name.function.call'], ['Cull', 'support.class']]],
         ['Draw2D.Text("DUEL"', [['Text', 'entity.name.function.call'], ['Anchor', 'support.class'], ['Font', 'support.class']]],
         ['extern void DrawUI(DrawList list);', [['DrawList', 'storage.type.primitive']]],
         ['RenderTarget scene; Texture image;', [['RenderTarget', 'storage.type.primitive'], ['Texture', 'storage.type.primitive']]],
@@ -387,12 +391,13 @@ const cases = {
     'frag and vert are keywords only where a declaration starts': [
         ['frag Shade(', [
             ['frag', 'storage.type'], ['Shade', 'entity.name.function'], ['Shade', '!entity.name.function.call'],
-            ['BoxVertex', 'entity.name.type'], ['mut', 'storage.modifier'], ['Color', 'storage.type.primitive'],
+            ['BoxVertex', 'entity.name.type'], ['out', 'storage.modifier'], ['Color', 'storage.type.primitive'],
             ['Box', 'entity.name.type'], ['Pixel', 'entity.name.type'], ['pixel', '!entity'],
         ]],
         ['vert Wave(', [
             ['vert', 'storage.type'], ['Wave', 'entity.name.function'], ['Wave', '!entity.name.function.call'],
-            ['mut', 'storage.modifier'], ['Time', 'support.class'], ['Instance', 'entity.name.type'],
+            ['mut', 'storage.modifier'], ['out', 'storage.modifier'], ['FromLamp', 'entity.name.type'], ['lamp', '!storage'],
+            ['Time', 'support.class'], ['Instance', 'entity.name.type'],
         ]],
         ['float Blend(', [['Blend', 'entity.name.function'], ['frag', '!storage'], ['vert', '!storage']]],
         ['float both = frag + vert;', [['frag', '!storage'], ['frag', '!entity'], ['vert', '!storage'], ['vert', '!entity']]],

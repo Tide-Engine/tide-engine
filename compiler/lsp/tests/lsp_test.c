@@ -712,7 +712,8 @@ TIDE_TEST(lsp_meshes)
 
     open_document(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Me$sh(art.corners, [0, 1, 2], art.pixels);\n}\n");
     const char *mesh = request("textDocument/hover");
-    TIDE_CHECK(has(mesh, "Draw2D.Mesh(List<Vertex> vertices, List<int> indices, Grid2<Color> texture, Filter filter = Filter.Bilinear)"));
+    TIDE_CHECK(has(mesh, "Draw2D.Mesh(List<Vertex> vertices, List<int> indices, Grid2<Color> texture, Filter filter = Filter.Bilinear, "
+                         "Wrap wrap = Wrap.Clamp)"));
     TIDE_CHECK(has(mesh, "Triangles: three of `indices` each"));
     // Each version's doc, 2D and 3D
     open_document(MESH_TYPES "view V(Art art)\n{\n    Draw3D.SetCam$era(float3(0, 0, 0), quaternion.identity, 60);\n}\n");
@@ -724,8 +725,8 @@ TIDE_TEST(lsp_meshes)
     // Its two forms, a 2D mesh's first for a List<Vertex>, and each parameter by what's written before it
     open_document(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Mesh(art.corners, $\n}\n");
     const char *indices = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(indices, "\"label\":\"Draw2D.Mesh(vertices, indices[, texture[, filter]][, vert][, frag])\""));
-    TIDE_CHECK(!has(indices, "\"label\":\"Draw3D.Mesh(vertices, indices, transform[, texture[, filter]][, vert][, frag])\""));
+    TIDE_CHECK(has(indices, "\"label\":\"Draw2D.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag])\""));
+    TIDE_CHECK(!has(indices, "\"label\":\"Draw3D.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]][, vert][, frag])\""));
     TIDE_CHECK(has(indices, "\"activeSignature\":0,\"activeParameter\":1"));
     TIDE_CHECK(has(indices, "{\"label\":[22,29],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A `List<int>`"));
     open_document(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Mesh(art.corners, [0, 1, 2], $\n}\n"); // A list's commas aren't the call's
@@ -838,6 +839,140 @@ TIDE_TEST(lsp_draw_depth)
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Depth\""), "built into"));
 }
 
+// Which side of a 3D mesh's triangles draws is one too, and Draw3D's as its
+// depth is: both forms, its sides, what the front is on hover, each form's
+// mistake a rename away, and where it is for whoever asks Draw or Draw2D.
+TIDE_TEST(lsp_draw_cull)
+{
+    start();
+    open_document("scene Main { }\nlocal singleton Look { RenderTarget target; Cull kept = Cull.Front; }\nview V(Look look)\n{\n"
+                  "    Draw3D.Depth(Depth.Read),\n    Draw3D.Cull(Cull.None)\n    {\n"
+                  "        Draw3D.Plane(float3(0, 0, 5), float2(1, 1), Color.red);\n    }\n"
+                  "    Draw3D.SetCull(look.kept);\n    Draw3D.SetCull();\n"
+                  "    look.target.Cull(Cull.Front)\n    {\n"
+                  "        look.target.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.red);\n    }\n"
+                  "    look.target.SetCull();\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    const char *three = complete("scene Main { }\nview V()\n{\n    Draw3D.$\n}\n");
+    TIDE_CHECK(offers(three, "Cull") && offers(three, "SetCull") && offers(three, "Depth"));
+    TIDE_CHECK(has(three, "Cull(${1:side})\\n{\\n\\t$0\\n}") && has(three, "\"SetCull(${1:side})\""));
+    // It's neither Draw's nor Draw2D's: only 3D meshes' triangles have a back
+    const char *shared = complete("scene Main { }\nview V()\n{\n    Draw.$\n}\n");
+    TIDE_CHECK(!offers(shared, "Cull") && !offers(shared, "SetCull") && offers(shared, "Tint"));
+    const char *two = complete("scene Main { }\nview V()\n{\n    Draw2D.$\n}\n");
+    TIDE_CHECK(!offers(two, "Cull") && !offers(two, "SetCull") && offers(two, "Clip"));
+    const char *sides = complete("scene Main { }\nview V()\n{\n    Draw3D.SetCull(Cull.$);\n}\n");
+    TIDE_CHECK(offers(sides, "Back") && offers(sides, "Front") && offers(sides, "None"));
+    // A target has both, as it has its depth's
+    const char *target = complete("scene Main { }\nlocal singleton Look { RenderTarget target; }\nview V(Look look)\n{\n"
+                                  "    look.target.$\n}\n");
+    TIDE_CHECK(offers(target, "Cull") && offers(target, "SetCull"));
+
+    open_document("scene Main { }\nview V()\n{\n    Draw3D.Cu$ll(Cull.None)\n    {\n    }\n}\n");
+    const char *around = request("textDocument/hover");
+    TIDE_CHECK(has(around, "Draw3D.Cull(Cull side, Block content)") && has(around, "For the draws in its block"));
+    TIDE_CHECK(has(around, "the side its corners go clockwise on") && has(around, "usually a triangle wound the other way"));
+    open_document("scene Main { }\nview V()\n{\n    Draw3D.SetCu$ll(Cull.None);\n}\n");
+    const char *set = request("textDocument/hover");
+    TIDE_CHECK(has(set, "Draw3D.SetCull(Cull side)") && has(set, "Draw3D.SetCull()") && has(set, "For the draws after it"));
+
+    // Each form written as the other is a rename away
+    open_document("scene Main { }\nview V()\n{\n    Draw3D.Cull(Cull.None);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw3D.Cull sets it around a block") && has(last_sent(), "Draw3D.SetCull(...);"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetCull'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    open_document("scene Main { }\nview V()\n{\n    Draw3D.SetCull(Cull.None)\n    {\n    }\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw3D.SetCull sets it for the draws that follow, and takes no block"));
+    TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Cull'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    // Asked of Draw or of Draw2D, the note says whose it is
+    open_document("scene Main { }\nview V()\n{\n    Draw.SetCull(Cull.None);\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw has no function 'SetCull'") && has(last_sent(), "it's Draw3D's: 'Draw3D.SetCull(...)'"));
+    open_document("scene Main { }\nview V()\n{\n    Draw2D.Cull(Cull.None)\n    {\n    }\n}\n");
+    TIDE_CHECK(has(last_sent(), "Draw2D has no function 'Cull'") && has(last_sent(), "Only 3D meshes' triangles have a back"));
+    // A side that isn't one says the three there are
+    open_document("scene Main { }\nview V()\n{\n    Draw3D.SetCull(Cull.Both);\n}\n");
+    TIDE_CHECK(has(last_sent(), "enum 'Cull' has no member 'Both'") && has(last_sent(), "'Cull.None'"));
+    // A game can't rename one of its own to the enum's name
+    open_document("scene Main { }\ncomponent Fa$ce { int z; }\n");
+    TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Cull\""), "built into"));
+}
+
+// What a uv past a texture's edges reads: the built-in Wrap, after the filter in
+// a mesh draw and in a frag's Sample, in completion, hovers and signature help,
+// with what's wrong said where it's written the other way round.
+TIDE_TEST(lsp_wrap)
+{
+    start();
+#define WRAP_TYPES                                                                                    \
+    "scene Main { }\n"                                                                                \
+    "struct Corner\n{\n    float2 position;\n    float2 uv;\n}\n"                                      \
+    "local singleton Art\n{\n    Grid2<Color> tiles = Grid2(4, 4);\n    RenderTarget target;\n"        \
+    "    List<Vertex> flat;\n    List<Vertex3> solid;\n    List<Corner> corners;\n    Wrap kept = Wrap.Mirror;\n}\n"
+#define IN_VIEW(code) WRAP_TYPES "view V(Art art)\n{\n    " code "\n}\n"
+#define IN_FRAG(code) WRAP_TYPES "frag Tile(Corner vertex, out Color color, Art art)\n{\n    " code "\n}\n"
+    open_document(WRAP_TYPES "frag Ti$le(Corner vertex, out Color color, Art art)\n{\n"
+                             "    color = art.tiles.Sample(vertex.uv, Filter.Point, Wrap.Repeat) * art.tiles.Sample(vertex.uv);\n}\n"
+                             "view V(Art art)\n{\n"
+                             "    Draw2D.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.Repeat);\n"
+                             "    Draw2D.Mesh(art.flat, [0, 1, 2], art.target.color, Filter.Bilinear, art.kept);\n"
+                             "    Draw3D.Mesh(art.solid, [0, 1, 2], float4x4.identity, art.tiles, Filter.Point, Wrap.Mirror);\n"
+                             "    art.target.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.Repeat);\n"
+                             "    Draw2D.Mesh(art.corners, [0, 1, 2], art.tiles, Filter.Point, Wrap.Repeat);\n"
+                             "    Draw2D.Mesh(art.corners, [0, 1, 2], Tile);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // What a frag samples, with how: on its hover
+    const char *frag = request("textDocument/hover");
+    TIDE_CHECK(has(frag, "`Art.tiles` (`Filter.Point`) (`Wrap.Repeat`)") && has(frag, ", `Art.tiles`"));
+
+    // Its members, where a draw or a Sample takes one, and the type where a field is declared
+    const char *members = complete(IN_VIEW("Draw2D.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.$);"));
+    TIDE_CHECK(offers(members, "Clamp") && offers(members, "Repeat") && offers(members, "Mirror") && !offers(members, "Point"));
+    const char *sampled = complete(IN_FRAG("color = art.tiles.Sample(vertex.uv, Filter.Point, Wrap.$);"));
+    TIDE_CHECK(offers(sampled, "Clamp") && offers(sampled, "Repeat") && offers(sampled, "Mirror"));
+    const char *types = complete(WRAP_TYPES "local singleton More\n{\n    $\n}\n");
+    TIDE_CHECK(offers(types, "Wrap") && offers(types, "Filter"));
+
+    // A draw's two that a call can leave out, and what each is
+    open_document(IN_VIEW("Draw2D.Me$sh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.Repeat);"));
+    const char *mesh = request("textDocument/hover");
+    TIDE_CHECK(has(mesh, "Grid2<Color> texture, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp)"));
+    TIDE_CHECK(has(mesh, "the texture again (`Wrap.Repeat`)"));
+    open_document(IN_VIEW("Draw3D.Me$sh(art.solid, [0, 1, 2], float4x4.identity, art.target.color, Filter.Point, Wrap.Repeat);"));
+    TIDE_CHECK(has(request("textDocument/hover"), "float4x4 transform, Texture texture, Filter filter = Filter.Bilinear, "
+                                                 "Wrap wrap = Wrap.Clamp)"));
+    open_document(IN_VIEW("Draw2D.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, $"));
+    const char *after = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(after, "\"label\":\"Draw2D.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag])\""));
+    TIDE_CHECK(has(after, "\"activeParameter\":4") && has(after, "What a `uv` past 0 or 1 reads, written after the filter"));
+    open_document(IN_VIEW("Draw3D.Mesh(art.solid, [0, 1, 2], float4x4.identity, art.tiles, Filter.Point, Wrap.Re$peat);"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":5"));
+    open_document(IN_VIEW("Draw2D.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, art.ke$pt);")); // A value that's one
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":4"));
+    // ...and a Sample's
+    open_document(IN_FRAG("color = art.tiles.Sample(vertex.uv, Filter.Point, $"));
+    const char *sample = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(sample, "Grid2<Color>.Sample(float2 uv, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color"));
+    TIDE_CHECK(has(sample, "\"activeParameter\":2") && has(sample, "the grid again (`Wrap.Repeat`)"));
+
+    // Written before the filter, or where the GPU can't be told
+    open_document(IN_VIEW("Draw2D.Mesh(art.flat, [0, 1, 2], art.tiles, Wrap.Repeat);"));
+    TIDE_CHECK(has(last_sent(), "a mesh's wrap comes after its filter") && has(last_sent(), "'Filter.Bilinear' is the filter of a draw"));
+    open_document(IN_FRAG("color = art.tiles.Sample(vertex.uv, Wrap.Repeat);"));
+    TIDE_CHECK(has(last_sent(), "a wrap comes after the filter: 'texture.Sample(uv, Filter.Bilinear, Wrap.Repeat)'"));
+    open_document(IN_FRAG("color = art.tiles.Sample(vertex.uv, Filter.Point, art.kept);"));
+    TIDE_CHECK(has(last_sent(), "the wrap is written here, 'Wrap.Clamp', 'Wrap.Repeat' or 'Wrap.Mirror'"));
+    open_document(IN_VIEW("Draw2D.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.Tile);"));
+    TIDE_CHECK(has(last_sent(), "enum 'Wrap' has no member 'Tile'") && has(last_sent(), "the texture again, 'Wrap.Repeat'"));
+    // The name is the engine's: a game's own function or type takes another, and no rename gives it
+    open_document("scene Main { }\nfloat Wrap(float value)\n{\n    return value;\n}\n");
+    TIDE_CHECK(has(last_sent(), "'Wrap' is built into the engine"));
+    open_document("scene Main { }\nfloat Aro$und(float value)\n{\n    return value;\n}\n");
+    TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Wrap\""), "built into"));
+#undef IN_FRAG
+#undef IN_VIEW
+#undef WRAP_TYPES
+}
+
 // Calls listed with commas before one block: one to a line, each starting where the first does, the brace under them.
 TIDE_TEST(lsp_format_stacked_calls)
 {
@@ -945,7 +1080,7 @@ TIDE_TEST(lsp_instanced_drawing)
     "struct Item2 { float2 offset; }\nstruct Item3 { Color tint; }\n" \
     "local singleton Art { List<Corner2> flat; List<Corner3> space; List<int> faces; List<Item2> items2; List<Item3> items3; }\n" \
     "vert Place2(mut Corner2 vertex, Item2 item) { vertex.position += item.offset; }\n" \
-    "frag Shade3(Corner3 vertex, mut Color color, Item3 item) { color = item.tint * vertex.position.x; }\n"
+    "frag Shade3(Corner3 vertex, out Color color, Item3 item) { color = item.tint * vertex.position.x; }\n"
     open_document(INSTANCE_TYPES "view Show(Art art) { Draw2D.Instanced(art.flat, art.faces, art.items2, Place2); "
                                  "Draw3D.Instanced(art.space, art.faces, art.items3, Shade3); }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
@@ -983,7 +1118,7 @@ TIDE_TEST(lsp_instanced_drawing)
     SHADER_TYPES                                                                                                      \
     "vert Wave(mut BoxVertex vertex, Time time, Instance instance)\n{\n"                                              \
     "    vertex.position.y += Math.Sin(time.tick * time.dt + instance.transform.c3.x) * 0.1;\n}\n"                    \
-    "frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun, Models models, Pixel pixel)\n{\n"                \
+    "frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models, Pixel pixel)\n{\n"                \
     "    float light = Lit(vertex.normal, sun.direction);\n"                                                          \
     "    color = models.wood.Sample(vertex.uv) * box.tint * light;\n"                                                 \
     "    if (pixel.position.x < 10) pixel.Discard();\n}\n"
@@ -1008,7 +1143,7 @@ TIDE_TEST(lsp_shaders_complete)
     start();
     const char *top = complete(SHADER_TYPES "\n$");
     TIDE_CHECK(offers(top, "frag") && offers(top, "vert"));
-    TIDE_CHECK(has(top, "frag ${1:Name}(${2:Vertex} vertex, mut Color color$3)"));
+    TIDE_CHECK(has(top, "frag ${1:Name}(${2:Vertex} vertex, out Color color$3)"));
     TIDE_CHECK(has(top, "vert ${1:Name}(mut ${2:Vertex} vertex$3)"));
 
     // The vertex first: a struct with a position, which a vert takes mut
@@ -1018,19 +1153,25 @@ TIDE_TEST(lsp_shaders_complete)
     const char *changed = complete(SHADER_TYPES "vert Wave($)\n{\n}\n");
     TIDE_CHECK(offers(changed, "mut") && offers(changed, "BoxVertex"));
     TIDE_CHECK(offers(complete(SHADER_TYPES "vert Wave(mut $)\n{\n}\n"), "BoxVertex"));
-    // Then a frag's pixel, and what the engine supplies: components, singletons, Pixel and Instance
+    // Then a frag's pixel, `out`, and what the engine supplies: components, singletons, Pixel and Instance
     const char *frag = complete(SHADER_TYPES "frag Shade(BoxVertex vertex, $)\n{\n}\n");
-    TIDE_CHECK(offers(frag, "mut") && offers(frag, "Box") && offers(frag, "Sun") && offers(frag, "Models") && offers(frag, "Time"));
+    TIDE_CHECK(offers(frag, "out") && !offers(frag, "mut"));
+    TIDE_CHECK(offers(frag, "Box") && offers(frag, "Sun") && offers(frag, "Models") && offers(frag, "Time"));
     TIDE_CHECK(offers(frag, "Pixel") && offers(frag, "Instance"));
     TIDE_CHECK(!offers(frag, "with") && !offers(frag, "without") && !offers(frag, "World") && !offers(frag, "Devices"));
     TIDE_CHECK(!offers(frag, "BoxVertex") && !offers(frag, "float3"));
-    const char *written = complete(SHADER_TYPES "frag Shade(BoxVertex vertex, mut $)\n{\n}\n");
-    TIDE_CHECK(offers(written, "Color") && !offers(written, "Box") && !offers(written, "Pixel"));
-    const char *rest = complete(SHADER_TYPES "frag Shade(BoxVertex vertex, mut Color color, $)\n{\n}\n");
-    TIDE_CHECK(!offers(rest, "mut") && offers(rest, "Pixel") && offers(rest, "Sun"));
+    const char *written = complete(SHADER_TYPES "frag Shade(BoxVertex vertex, out $)\n{\n}\n");
+    TIDE_CHECK(offers(written, "Color") && !offers(written, "Box") && !offers(written, "Pixel") && !offers(written, "BoxVertex"));
+    TIDE_CHECK(!offers(complete(SHADER_TYPES "frag Shade(BoxVertex vertex, mut $)\n{\n}\n"), "Color")); // Nothing of a frag's is
+    const char *rest = complete(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, $)\n{\n}\n");
+    TIDE_CHECK(!offers(rest, "mut") && !offers(rest, "out") && offers(rest, "Pixel") && offers(rest, "Sun"));
+    // A vert's `out` is a struct it writes for its frag
     const char *vert = complete(SHADER_TYPES "vert Wave(mut BoxVertex vertex, $)\n{\n}\n");
     TIDE_CHECK(offers(vert, "Instance") && offers(vert, "Time") && !offers(vert, "Pixel") && !offers(vert, "mut"));
-    TIDE_CHECK(offers(complete(SHADER_TYPES "frag Shade(BoxVertex vertex, mut Color color, Pixel $)\n{\n}\n"), "pixel"));
+    TIDE_CHECK(offers(vert, "out"));
+    const char *hands = complete(SHADER_TYPES "struct FromLamp { float glow; }\nvert Wave(mut BoxVertex vertex, out $)\n{\n}\n");
+    TIDE_CHECK(offers(hands, "FromLamp") && !offers(hands, "Color") && !offers(hands, "Box") && !offers(hands, "Time"));
+    TIDE_CHECK(offers(complete(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, Pixel $)\n{\n}\n"), "pixel"));
     // A game's own Pixel is the game's
     const char *own = complete(SHADER_TYPES "component Pixel { float x; }\nfrag Shade(BoxVertex vertex, $)\n{\n}\n");
     TIDE_CHECK(has(own, "{\"label\":\"Pixel\",\"kind\":22,\"detail\":\"component\"}") && !has(own, "where its pixel is"));
@@ -1038,7 +1179,7 @@ TIDE_TEST(lsp_shaders_complete)
     // In its code: what it takes, its locals, the game's functions and Math; nothing of the world or the frame
 #define IN_FRAG(code)                                                                                                 \
     SHADER_TYPES "extern float Noise(float x);\n"                                                                     \
-    "frag Shade(BoxVertex vertex, mut Color color, Box box, Models models, Pixel pixel)\n{\n    " code "\n}\n"
+    "frag Shade(BoxVertex vertex, out Color color, Box box, Models models, Pixel pixel)\n{\n    " code "\n}\n"
     const char *code = complete(IN_FRAG("var glow = box.glow;\n    $"));
     TIDE_CHECK(offers(code, "vertex") && offers(code, "color") && offers(code, "box") && offers(code, "pixel") && offers(code, "glow"));
     TIDE_CHECK(offers(code, "Math") && offers(code, "Lit") && offers(code, "float3") && offers(code, "bool") && offers(code, "BoxVertex"));
@@ -1057,7 +1198,7 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(has(pixel, "Where the pixel is on the screen"));
     const char *grid = complete(IN_FRAG("color = models.wood.$"));
     TIDE_CHECK(offers(grid, "Sample") && !offers(grid, "Clear") && !offers(grid, "size"));
-    TIDE_CHECK(has(grid, "Grid2<Color>.Sample(float2 uv, Filter filter = Filter.Bilinear) -> Color"));
+    TIDE_CHECK(has(grid, "Grid2<Color>.Sample(float2 uv, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color"));
     const char *list = complete(IN_FRAG("var n = models.crate.$"));
     TIDE_CHECK(!offers(list, "Add") && !offers(list, "count")); // The GPU has no lists
     TIDE_CHECK(offers(complete(IN_FRAG("color = box.$")), "tint"));
@@ -1074,7 +1215,7 @@ TIDE_TEST(lsp_shaders_complete)
     // After a mesh's lists, at Draw2D.Mesh: the verts and frags that run on its vertex, by name
 #define IN_VIEW(code)                                                                                                 \
     SHADER_CODE "struct FlatVertex { float2 position; }\n"                                                            \
-    "frag Flat(FlatVertex vertex, mut Color color)\n{\n    color = Color.red;\n}\n"                                   \
+    "frag Flat(FlatVertex vertex, out Color color)\n{\n    color = Color.red;\n}\n"                                   \
     "view DrawBox(with Box, Models models)\n{\n    " code "\n}\n"
     const char *named = complete(IN_VIEW("Draw3D.Mesh(models.crate, models.faces, float4x4.identity, $);"));
     TIDE_CHECK(offers(named, "Wave") && offers(named, "Shade") && !offers(named, "Flat") && offers(named, "models"));
@@ -1091,7 +1232,7 @@ TIDE_TEST(lsp_shaders_complete)
     // ...and by its namespace
     const char *qualified = complete("namespace Effects;\nscene Main { }\nstruct V { float2 position; }\n"
                                      "local singleton Art { List<V> corners; List<int> faces; }\n"
-                                     "frag Tint(V vertex, mut Color color) { color = Color.red; }\n"
+                                     "frag Tint(V vertex, out Color color) { color = Color.red; }\n"
                                      "view Show(Art art) { Draw2D.Mesh(art.corners, art.faces, Effects.$); }\n");
     TIDE_CHECK(has(qualified, "{\"label\":\"Tint\",\"kind\":3,\"detail\":\"frag\"}"));
 }
@@ -1104,7 +1245,7 @@ TIDE_TEST(lsp_shaders_hover)
     open_document(SHADERS);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *frag = hover_at(35, 6);
-    TIDE_CHECK(has(frag, "frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun, Models models, Pixel pixel)"));
+    TIDE_CHECK(has(frag, "frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models, Pixel pixel)"));
     TIDE_CHECK(has(frag, "Runs on the GPU, for each pixel of a mesh a view draws through it"));
     TIDE_CHECK(has(frag, "- for each instance: `Box.tint`\\n- for each draw: `Sun.direction`\\n- as textures: `Models.wood`\\n"
                          "- of its vertex, blended across the triangle: `normal`, `uv`"));
@@ -1117,9 +1258,11 @@ TIDE_TEST(lsp_shaders_hover)
 
     // A frag's pixel, where it's declared and where it's written
     const char *color = hover_at(35, 40);
-    TIDE_CHECK(has(color, "mut Color color") && has(color, "The pixel's color, which the frag writes"));
-    TIDE_CHECK(has(color, "starts as `Color.white`") && has(color, "isn't what's on the screen already"));
+    TIDE_CHECK(has(color, "out Color color") && has(color, "The pixel's color, which the frag writes"));
+    TIDE_CHECK(has(color, "starts with no value") && has(color, "isn't what's on the screen already"));
     TIDE_CHECK(has(color, "blended over what's behind it by its alpha"));
+    const char *word = hover_at(35, 30); // On `out`
+    TIDE_CHECK(has(word, "out Color color") && has(word, "The pixel's color, which the frag writes"));
     TIDE_CHECK(has(hover_at(38, 5), "The pixel's color, which the frag writes"));
     // What the engine supplies: how often it's sent, and the fields this code reads
     const char *box = hover_at(35, 51);
@@ -1144,7 +1287,7 @@ TIDE_TEST(lsp_shaders_hover)
     const char *discard = hover_at(39, 38);
     TIDE_CHECK(has(discard, "Pixel.Discard()") && has(discard, "Leaves the pixel undrawn"));
     const char *sample = hover_at(38, 25);
-    TIDE_CHECK(has(sample, "Grid2<Color>.Sample(float2 uv, Filter filter = Filter.Bilinear) -> Color") && has(sample, "Reads the grid as a texture"));
+    TIDE_CHECK(has(sample, "Grid2<Color>.Sample(float2 uv, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color") && has(sample, "Reads the grid as a texture"));
     TIDE_CHECK(has(hover_at(43, 12), "A vert and a frag, named last, run on the GPU"));
     // They're the GPU's: no C to go to
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 35, 80, ""), "\"result\":null"));
@@ -1153,7 +1296,7 @@ TIDE_TEST(lsp_shaders_hover)
 
     // A component a function takes whole is sent whole, and one never read not at all
     open_document(SHADER_TYPES "float Glow(Box box) { return box.glow; }\n"
-                  "frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun, Pixel pixel)\n{\n"
+                  "frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Pixel pixel)\n{\n"
                   "    color = Color.white * Glow(box) * pixel.depth * pixel.world.x;\n}\n");
     TIDE_CHECK(has(last_sent(), "'sun' is never used") && !has(last_sent(), "\"severity\":1"));
     TIDE_CHECK(has(hover_at(32, 51), "the only ones sent: `tint`, `glow`."));
@@ -1165,7 +1308,7 @@ TIDE_TEST(lsp_shaders_hover)
     SHADER_TYPES "component Crate\n{\n    float worn;\n    local float fade = 1;\n}\n"                                \
     "singleton Fog\n{\n    float density;\n    local Color tone = Color.white;\n"                                      \
     "    local Grid2<Color> noise = Grid2(4, 4);\n}\n"
-    open_document(LOCAL_FIELDS "frag Fade(BoxVertex vertex, mut Color color, Crate crate, Fog fog)\n{\n"
+    open_document(LOCAL_FIELDS "frag Fade(BoxVertex vertex, out Color color, Crate crate, Fog fog)\n{\n"
                                "    color = fog.noise.Sample(vertex.uv) * fog.tone * crate.fade;\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *local = hover_at(42, 6);
@@ -1174,7 +1317,7 @@ TIDE_TEST(lsp_shaders_hover)
     TIDE_CHECK(has(hover_at(42, 52), "for each instance drawn") && has(hover_at(42, 52), "the only ones sent: `fade`."));
     const char *fog = hover_at(42, 63);
     TIDE_CHECK(has(fog, "the only ones sent: `tone`.") && has(fog, "Grids it samples, sent as textures: `noise`."));
-    const char *fields = complete(LOCAL_FIELDS "frag Fade(BoxVertex vertex, mut Color color, Crate crate)\n{\n"
+    const char *fields = complete(LOCAL_FIELDS "frag Fade(BoxVertex vertex, out Color color, Crate crate)\n{\n"
                                                "    color = Color.white * crate.$\n}\n");
     TIDE_CHECK(offers(fields, "worn") && offers(fields, "fade") && has(fields, "A frag or vert reads it like any other field"));
 #undef LOCAL_FIELDS
@@ -1209,7 +1352,7 @@ TIDE_TEST(lsp_shaders_names)
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareRename", 43, 88, ""), "\"result\":{\"start\""));
     rename_at(43, 88, "Tint");
     const char *renamed = apply_reply(SHADERS, "file:///test.tide");
-    TIDE_CHECK(has(renamed, "frag Tint(BoxVertex vertex, mut Color color,") && has(renamed, ", Wave, Tint);"));
+    TIDE_CHECK(has(renamed, "frag Tint(BoxVertex vertex, out Color color,") && has(renamed, ", Wave, Tint);"));
     TIDE_CHECK(!has(renamed, "Shade"));
     char copy[8192];
     snprintf(copy, sizeof copy, "%s", renamed);
@@ -1230,7 +1373,7 @@ TIDE_TEST(lsp_shaders_names)
     // A qualified name: its last part
     static const char effects[] = "namespace Effects;\nscene Main { }\nstruct V { float2 position; }\n"
                                   "local singleton Art { List<V> corners; List<int> faces; }\n"
-                                  "frag Tint(V vertex, mut Color color) { color = Color.red; }\n"
+                                  "frag Tint(V vertex, out Color color) { color = Color.red; }\n"
                                   "view Show(Art art) { Draw2D.Mesh(art.corners, art.faces, Effects.Tint); }\n";
     open_document(effects);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
@@ -1243,7 +1386,7 @@ TIDE_TEST(lsp_shaders_names)
     // The call hierarchy: a view calls the vert and the frag it names, and they the game's functions
     open_document(SHADERS);
     const char *item = request_at("file:///test.tide", "textDocument/prepareCallHierarchy", 43, 88, "");
-    TIDE_CHECK(has(item, "{\"name\":\"Shade\",\"kind\":12,\"detail\":\"frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun, "
+    TIDE_CHECK(has(item, "{\"name\":\"Shade\",\"kind\":12,\"detail\":\"frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, "
                          "Models models, Pixel pixel)\""));
     TIDE_CHECK(has(item, "\"selectionRange\":{\"start\":{\"line\":35,\"character\":5},\"end\":{\"line\":35,\"character\":10}}"));
     clear_sent();
@@ -1294,8 +1437,8 @@ TIDE_TEST(lsp_shaders_symbols_and_tokens)
     // `vert` a keyword (11), Wave a function (9) declared, its vertex a parameter it writes (5, not readonly),
     // Time a class of the engine's (3, 8) and Instance a type of the engine's (1, 8)
     TIDE_CHECK(has(tokens, ",2,0,4,11,0,0,5,4,9,1,0,9,9,2,0,0,10,6,5,1,0,8,4,3,8,0,5,4,5,3,0,6,8,1,8,0,9,8,5,3,"));
-    // `frag`, Shade, its vertex, then its pixel: Color, and `color`, which it writes
-    TIDE_CHECK(has(tokens, ",2,0,4,11,0,0,5,5,9,1,0,6,9,2,0,0,10,6,5,3,0,12,5,1,8,0,6,5,5,1,"));
+    // `frag`, Shade, its vertex, then its pixel: `out`, a keyword there, Color, and `color`, which it writes
+    TIDE_CHECK(has(tokens, ",2,0,4,11,0,0,5,5,9,1,0,6,9,2,0,0,10,6,5,3,0,8,3,11,0,0,4,5,1,8,0,6,5,5,1,"));
     TIDE_CHECK(has(tokens, ",0,8,5,1,8,0,6,5,5,3,")); // Pixel pixel
     TIDE_CHECK(has(tokens, ",4,9,0,0,6,5,9,0]"));     // Wave and Shade at Draw2D.Mesh: functions
 
@@ -1322,21 +1465,21 @@ TIDE_TEST(lsp_shaders_signature_help)
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeSignature\":0,\"activeParameter\":3")); // A texture, at the earliest
     open_document(IN_VIEW("Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Wave, $"));
     const char *frag = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(frag, "\"activeSignature\":0,\"activeParameter\":6")); // After a vert, the frag
-    TIDE_CHECK(has(frag, "{\"label\":[64,68],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A vert, by name"));
-    TIDE_CHECK(has(frag, "{\"label\":[72,76],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A frag, by name"));
+    TIDE_CHECK(has(frag, "\"activeSignature\":0,\"activeParameter\":7")); // After a vert, the frag
+    TIDE_CHECK(has(frag, "{\"label\":[72,76],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A vert, by name"));
+    TIDE_CHECK(has(frag, "{\"label\":[80,84],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A frag, by name"));
     TIDE_CHECK(has(frag, "A vert and a frag, named last, run on the GPU"));
     // In a call that's whole, each name is what it is
     open_document(IN_VIEW("Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Wa$ve, Shade);"));
-    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":5"));
-    open_document(IN_VIEW("Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Sha$de);"));
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":6"));
+    open_document(IN_VIEW("Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Sha$de);"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":7"));
 #undef IN_VIEW
 
-    open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, mut Color color, Models models)\n{\n"
+    open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, Models models)\n{\n"
                                "    color = models.wood.Sample(vertex.uv, $\n}\n");
     const char *sample = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(sample, "\"label\":\"Grid2<Color>.Sample(float2 uv, Filter filter = Filter.Bilinear) -> Color\"") && has(sample, "\"activeParameter\":1"));
+    TIDE_CHECK(has(sample, "\"label\":\"Grid2<Color>.Sample(float2 uv, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color\"") && has(sample, "\"activeParameter\":1"));
 }
 
 // Formatting, folding, selection, inlay hints and moving one to a file of its
@@ -1344,10 +1487,10 @@ TIDE_TEST(lsp_shaders_signature_help)
 TIDE_TEST(lsp_shaders_format_fold_and_move)
 {
     start();
-    static const char messy[] = SHADER_TYPES "frag Shade( BoxVertex vertex,mut Color color,Box box ){\ncolor=box.tint;\n"
+    static const char messy[] = SHADER_TYPES "frag Shade( BoxVertex vertex,out Color color,Box box ){\ncolor=box.tint;\n"
                                              "if(vertex.uv.x>0.5){color=Color.red;}\n}\n"
                                              "vert Wave(mut BoxVertex vertex,Time time) {\nvertex.position.y+=time.dt;\n}\n";
-    static const char expected[] = SHADER_TYPES "frag Shade(BoxVertex vertex, mut Color color, Box box)\n{\n"
+    static const char expected[] = SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, Box box)\n{\n"
                                                 "    color = box.tint;\n"
                                                 "    if (vertex.uv.x > 0.5) { color = Color.red; }\n}\n"
                                                 "vert Wave(mut BoxVertex vertex, Time time)\n{\n"
@@ -1372,14 +1515,14 @@ TIDE_TEST(lsp_shaders_format_fold_and_move)
     // Nothing orders frags and verts by their files, so they move, as functions do
     const char *move = actions_at(35);
     TIDE_CHECK(has(move, "\"title\":\"Move 'Shade' to Shade.tide\",\"kind\":\"refactor.move\""));
-    TIDE_CHECK(has(move, "\"newText\":\"frag Shade(BoxVertex vertex, mut Color color, Box box, Sun sun, Models models, "
+    TIDE_CHECK(has(move, "\"newText\":\"frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models, "
                          "Pixel pixel)\\n{\\n"));
     TIDE_CHECK(has(move, "{\"range\":{\"start\":{\"line\":35,\"character\":0},\"end\":{\"line\":41,\"character\":0}},"
                          "\"newText\":\"\"}"));
     TIDE_CHECK(has(actions_at(32), "Move 'Wave' to Wave.tide") && !has(actions_at(42), "Move '"));
 
     // A local's type, as in any code; and a name at Draw2D.Mesh isn't taken for its texture
-    open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, mut Color color, Models models)\n{\n"
+    open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, Models models)\n{\n"
                                "    var texel = models.wood.Sample(vertex.uv);\n"
                                "    color = texel * Lit(vertex.normal, float3(0, -1, 0));\n}\n"
                                "view DrawBox(with Box, Models models)\n{\n"
@@ -1410,15 +1553,15 @@ TIDE_TEST(lsp_shaders_diagnostics)
 {
     start_with("{\"capabilities\":{\"textDocument\":{\"publishDiagnostics\":{\"relatedInformation\":true}}}}");
     // A parameter never used: on its name, marked unnecessary
-    open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, mut Color color, Sun sun)\n{\n    color = Color.red;\n}\n");
+    open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, Sun sun)\n{\n    color = Color.red;\n}\n");
     TIDE_CHECK(diagnosed(31, 50, 3, 2, "'sun' is never used") && has(last_sent(), "\"tags\":[1]"));
     // What only the CPU does: on the call
-    open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, mut Color color)\n{\n    Draw2D.Clear(Color.red);\n"
+    open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color)\n{\n    Draw2D.Clear(Color.red);\n"
                                "    color = Color.red;\n}\n");
     TIDE_CHECK(diagnosed(33, 11, 5, 1, "a frag runs on the GPU, for each pixel, so it can't draw"));
     // In a function a frag calls: where it is, with the frag that reaches it as a note there
     open_document(SHADER_TYPES "float Count(float to)\n{\n    mut float x = 0;\n    while (x < to) x += 1;\n    return x;\n}\n"
-                               "frag Shade(BoxVertex vertex, mut Color color)\n{\n"
+                               "frag Shade(BoxVertex vertex, out Color color)\n{\n"
                                "    color = Color.white * Count(vertex.uv.x);\n}\n");
     TIDE_CHECK(diagnosed(34, 4, 5, 1, "a loop the GPU runs counts"));
     TIDE_CHECK(has(last_sent(), "\"relatedInformation\":[{\"location\":{\"uri\":\"file:///test.tide\",\"range\":{\"start\":{\"line\":37,"
@@ -1437,7 +1580,7 @@ TIDE_TEST(lsp_shaders_diagnostics)
                               "    Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Wave, Shade);\n}\n");
     TIDE_CHECK(diagnosed(43, 69, 5, 1, "view 'DrawBox' doesn't guarantee its entity has a 'Box', which frag 'Shade' reads"));
     // What the GPU can't hold, found once the rest of the game is right: on the index
-    open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, mut Color color, Models models)\n{\n"
+    open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, Models models)\n{\n"
                                "    color = models.wood[0, 0];\n}\n");
     TIDE_CHECK(diagnosed(33, 23, 1, 1, "the GPU has no lists, maps, arrays or grids to index or make"));
 }
@@ -3446,7 +3589,7 @@ TIDE_TEST(lsp_verified)
     TIDE_CHECK(!offers(complete(VERIFIED_TYPES "system Move(mut Body body, with $)\n{\n}\n"), "verified"));
     TIDE_CHECK(!offers(complete(VERIFIED_TYPES "event(Spawned) Grow(mut Body body, $)\n{\n}\n"), "verified"));
     TIDE_CHECK(!offers(complete(VERIFIED_TYPES "local event(Spawned) Grow(Body body, $)\n{\n}\n"), "verified"));
-    TIDE_CHECK(!offers(complete(VERIFIED_TYPES "frag Shade(Vertex vertex, mut Color color, $)\n{\n}\n"), "verified"));
+    TIDE_CHECK(!offers(complete(VERIFIED_TYPES "frag Shade(Vertex vertex, out Color color, $)\n{\n}\n"), "verified"));
     TIDE_CHECK(!offers(complete(VERIFIED_TYPES "void Heal(Body body, $)\n{\n}\n"), "verified"));
     // It's offered where a parameter starts, as `mut` is, and not after one, though its type is: `mut verified Box box`
     TIDE_CHECK(!offers(complete(VERIFIED_TYPES "view Bar(mut $)\n{\n}\n"), "verified"));
@@ -3683,6 +3826,131 @@ static const char *apply_fix(const char *original, const char *title)
     }
     json_release();
     return fixed;
+}
+
+// What a frag and a vert write, `out`: the spelling there was before as a
+// change, a color nothing wrote or that's read first as an assignment (white,
+// which is what it started as), what a vert writes for its frag in hovers, and
+// a frag's struct that its draw's vert doesn't write.
+TIDE_TEST(lsp_shader_outputs)
+{
+    start();
+#define OUTPUT_TYPES                                                                                                  \
+    "scene Main { }\n"                                                                                                \
+    "struct Corner { float3 position; float2 uv; }\n"                                                                 \
+    "struct FromLamp { float3 place; float glow; }\n"                                                                 \
+    "struct Crate { Color paint; }\n"                                                                                 \
+    "singleton Sun { float3 at; }\n"                                                                                  \
+    "local singleton Models { List<Corner> crate; List<int> faces; List<Crate> crates; }\n"
+    // `mut Color color` was the pixel: the word changes
+    static const char old[] = OUTPUT_TYPES "frag Shade(Corner corner, mut Color color)\n{\n    color = Color.red;\n}\n";
+    open_document(old);
+    TIDE_CHECK(has(last_sent(), "a frag's color is an 'out' parameter: 'out Color color'"));
+    TIDE_CHECK(has(last_sent(), "where 'mut Color color' started white"));
+    actions_at(6);
+    const char *respelled = apply_fix(old, "Change to 'out'");
+    TIDE_REQUIRE(respelled != NULL);
+    TIDE_CHECK(has(respelled, "frag Shade(Corner corner, out Color color)\n"));
+    open_document(respelled);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // ...and a vert's struct for its frag, written as what it changes
+    static const char changed[] = OUTPUT_TYPES "vert Place(mut Corner corner, mut FromLamp lamp)\n{\n"
+                                               "    lamp.place = corner.position;\n    lamp.glow = 1;\n}\n";
+    open_document(changed);
+    TIDE_CHECK(has(last_sent(), "what it writes for its frag is 'out': 'out FromLamp lamp'"));
+    actions_at(6);
+    const char *handed = apply_fix(changed, "Change to 'out'");
+    TIDE_REQUIRE(handed != NULL);
+    TIDE_CHECK(has(handed, "vert Place(mut Corner corner, out FromLamp lamp)\n"));
+    open_document(handed);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // `out` on a vert's vertex is `mut`
+    static const char vertex[] = OUTPUT_TYPES "vert Place(out Corner corner)\n{\n    corner.position = float3(0);\n}\n";
+    open_document(vertex);
+    TIDE_CHECK(has(last_sent(), "a vert is handed its vertex and changes it, so it takes it 'mut', not 'out'"));
+    actions_at(6);
+    const char *taken = apply_fix(vertex, "Change to 'mut'");
+    TIDE_REQUIRE(taken != NULL);
+    TIDE_CHECK(has(taken, "vert Place(mut Corner corner)\n"));
+
+    // A path that writes no color: white there, which is what the pixel was. No `mut` to take it as
+    static const char unwritten[] = OUTPUT_TYPES "frag Shade(Corner corner, out Color color)\n{\n"
+                                                 "    if (corner.uv.x > 0.5) color = Color.red;\n}\n";
+    open_document(unwritten);
+    TIDE_CHECK(has(last_sent(), "frag 'Shade' can end without writing its pixel's color, 'color'"));
+    TIDE_CHECK(has(last_sent(), "leaves the pixel with 'pixel.Discard();'"));
+    const char *ends = actions_at(6);
+    TIDE_CHECK(has(ends, "\"title\":\"Write 'color = Color.white;'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    const char *whitened = apply_fix(unwritten, "Write 'color = Color.white;'");
+    TIDE_REQUIRE(whitened != NULL);
+    TIDE_CHECK(has(whitened, "    if (corner.uv.x > 0.5) color = Color.red;\n    color = Color.white;\n}\n"));
+    // Read before it's written: white first
+    static const char early[] = OUTPUT_TYPES "frag Shade(Corner corner, out Color color)\n{\n    color.a = corner.uv.x;\n}\n";
+    open_document(early);
+    TIDE_CHECK(has(last_sent(), "'color' is read before it's written"));
+    const char *reads = actions_at(8);
+    TIDE_CHECK(has(reads, "Write 'color = Color.white;' first") && !has(reads, "as 'mut'"));
+    const char *started = apply_fix(early, "Write 'color = Color.white;' first");
+    TIDE_REQUIRE(started != NULL);
+    TIDE_CHECK(has(started, "{\n    color = Color.white;\n    color.a = corner.uv.x;\n}\n"));
+    open_document(started);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // What a vert writes for its frag, a field left on a path: the struct's default
+    static const char partly[] = OUTPUT_TYPES "vert Place(mut Corner corner, out FromLamp lamp, Sun sun)\n{\n"
+                                              "    lamp.place = corner.position - sun.at;\n"
+                                              "    if (corner.uv.x > 0) lamp.glow = 1;\n}\n";
+    open_document(partly);
+    TIDE_CHECK(has(last_sent(), "vert 'Place' can end without writing 'lamp.glow'"));
+    actions_at(6);
+    const char *filled = apply_fix(partly, "Write 'lamp = default;'");
+    TIDE_REQUIRE(filled != NULL);
+    TIDE_CHECK(has(filled, "    if (corner.uv.x > 0) lamp.glow = 1;\n    lamp = default;\n}\n"));
+
+    // Hovers: what a vert writes, and the frag's struct of that type against one its instances are
+#define OUTPUTS                                                                                                       \
+    OUTPUT_TYPES                                                                                                      \
+    "vert Place(mut Corner corner, out FromLamp lamp, Sun sun)\n{\n"                                                  \
+    "    lamp.place = corner.position - sun.at;\n    lamp.glow = 1;\n}\n"                                             \
+    "frag Look(Corner corner, FromLamp lamp, Crate crate, out Color color)\n{\n"                                      \
+    "    color = crate.paint * lamp.glow;\n}\n"
+    static const char whole[] = OUTPUTS "view Show(Models models)\n{\n"
+                                        "    Draw3D.Instanced(models.crate, models.faces, models.crates, Place, Look);\n}\n";
+    open_document(whole);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *vert = hover_at(6, 6);
+    TIDE_CHECK(has(vert, "vert Place(mut Corner corner, out FromLamp lamp, Sun sun)"));
+    TIDE_CHECK(has(vert, "What it writes to a struct it takes as `out`, the frag it's drawn with reads, blended across the triangle"));
+    TIDE_CHECK(has(vert, "- for each draw: `Sun.at`") && !has(vert, "FromLamp."));
+    const char *writes = hover_at(6, 45);
+    TIDE_CHECK(has(writes, "out FromLamp lamp") && has(writes, "What the vert writes for the frag it's drawn with"));
+    TIDE_CHECK(has(hover_at(6, 32), "What the vert writes for the frag it's drawn with")); // On `out`
+    const char *frag = hover_at(11, 6);
+    TIDE_CHECK(has(frag, "Draw3D.Instanced(..., Look)") && has(frag, "What it writes to its `out Color` is the pixel"));
+    TIDE_CHECK(has(frag, "- for each instance: `Crate.paint`"));
+    TIDE_CHECK(has(frag, "- of what its vert wrote for it, blended across the triangle: `FromLamp.glow`") && !has(frag, "FromLamp.place"));
+    const char *lamp = hover_at(11, 35);
+    TIDE_CHECK(has(lamp, "What the vert this frag is drawn with wrote for it") && has(lamp, "which the corners pass on: `glow`."));
+    TIDE_CHECK(has(hover_at(11, 47), "An element of the draw's instance list"));
+    // Its tokens: `out` is a keyword in both
+    const char *tokens = request("textDocument/semanticTokens/full");
+    TIDE_CHECK(has(tokens, ",0,8,3,11,0,0,4,8,2,0,0,9,4,5,1,")); // , out FromLamp lamp: what it writes
+    // The draw pairs them: a frag's struct that its vert doesn't write, or with no vert
+    static const char lone[] = OUTPUTS "view Show(Models models)\n{\n"
+                                       "    Draw3D.Instanced(models.crate, models.faces, models.crates, Look);\n}\n";
+    open_document(lone);
+    TIDE_CHECK(has(last_sent(), "frag 'Look' reads a 'FromLamp', and this draw names no vert that writes one"));
+    TIDE_CHECK(has(last_sent(), "'out FromLamp lamp' among the vert's parameters"));
+    static const char other[] = OUTPUTS "vert Lift(mut Corner corner)\n{\n    corner.position.y += 1;\n}\n"
+                                        "view Show(Models models)\n{\n"
+                                        "    Draw3D.Instanced(models.crate, models.faces, models.crates, Lift, Look);\n}\n";
+    open_document(other);
+    TIDE_CHECK(has(last_sent(), "frag 'Look' reads a 'FromLamp', which vert 'Lift' doesn't write"));
+    // Where the draw's vert goes, both are offered, and where its frag goes, the frag
+    const char *named = complete(OUTPUTS "view Show(Models models)\n{\n"
+                                         "    Draw3D.Instanced(models.crate, models.faces, models.crates, $);\n}\n");
+    TIDE_CHECK(offers(named, "Place") && offers(named, "Look"));
+#undef OUTPUTS
+#undef OUTPUT_TYPES
 }
 
 // A local nothing reads: a warning that editors fade, with a fix that removes
@@ -4436,10 +4704,10 @@ TIDE_TEST(lsp_render_targets_texture_members_and_blit)
     TIDE_CHECK(!offers(members, "list") && !offers(members, "Blit"));
     TIDE_CHECK(offers(complete("scene Main { }\nview V() { Draw.window.$ }\n"), "Camera"));
     TIDE_CHECK(offers(complete("scene Main { }\nview V() { Draw.$ }\n"), "Blit"));
-    TIDE_CHECK(offers(complete("scene Main { }\nfrag Copy(Vertex v, mut Color color, $"), "Texture"));
-    TIDE_CHECK(offers(complete("scene Main { }\nfrag Copy(Vertex v, mut Color color, Texture source)\n"
+    TIDE_CHECK(offers(complete("scene Main { }\nfrag Copy(Vertex v, out Color color, $"), "Texture"));
+    TIDE_CHECK(offers(complete("scene Main { }\nfrag Copy(Vertex v, out Color color, Texture source)\n"
                               "{\n    color = source.$\n}\n"), "Sample"));
-    snprintf(program, sizeof program, "%sfrag Copy(Vertex v, mut Color color, Texture source)\n"
+    snprintf(program, sizeof program, "%sfrag Copy(Vertex v, out Color color, Texture source)\n"
                                       "{ color = source.Sample(v.uv); }\n"
                                       "view V(Buffers buffers)\n{\n    Draw.Blit(buffers.scene.color, $\n}\n", types);
     open_document(program);
@@ -4450,7 +4718,7 @@ TIDE_TEST(lsp_render_targets_texture_members_and_blit)
     TIDE_CHECK(has(request("textDocument/hover"), "Draw2D.Clear"));
     snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Mesh([], [], $\n}\n", types);
     open_document(program);
-    TIDE_CHECK(has(request("textDocument/signatureHelp"), "[, texture[, filter]]"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "[, texture[, filter[, wrap]]]"));
     snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Resize(16, $\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "Resize(float width, float height)"));
@@ -4470,6 +4738,75 @@ TIDE_TEST(lsp_render_targets_texture_members_and_blit)
     snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Dis$pose();\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "All target and color aliases"));
+}
+
+// What a target holds is said where it's made, a Format last, and a target's
+// depth is a DepthTexture a frag reads: the enum's members, each form of the
+// constructor and of Screen, `depth` beside `color`, and Sample and Compare
+// where a frag has one.
+TIDE_TEST(lsp_render_target_formats_and_depth)
+{
+    start();
+    static const char types[] = "scene Main { }\nlocal singleton Lamp { RenderTarget map; DepthTexture shadow; }\n";
+    char program[2048];
+    snprintf(program, sizeof program, "%sfrag Lit(Vertex3 vertex, out Color color, Lamp lamp)\n{\n"
+                                      "    float lit = lamp.shadow.Compare(vertex.uv, 0.5) * lamp.shadow.Sample(vertex.uv);\n"
+                                      "    color = Color(lit, lit, lit);\n}\n"
+                                      "view V(mut Lamp lamp)\n{\n"
+                                      "    lamp.map = RenderTarget(64, 64, Format.DepthOnly);\n"
+                                      "    lamp.map = RenderTarget(64, 64, 1, Format.DepthOnly);\n"
+                                      "    lamp.map = RenderTarget.Screen(Format.DepthOnly);\n"
+                                      "    lamp.map = RenderTarget.Screen(0.5, Format.Color);\n"
+                                      "    lamp.shadow = lamp.map.depth;\n"
+                                      "    Draw3D.Mesh([Vertex3 { }], [0, 0, 0], float4x4.identity, Lit);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.map = RenderTarget(64, 64, Format.$);\n}\n", types);
+    const char *formats = complete(program);
+    TIDE_CHECK(offers(formats, "Color") && offers(formats, "DepthOnly"));
+    snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.map = RenderTarget(64, 64, $\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget(float width, float height, Format format)"));
+    TIDE_CHECK(has(last_sent(), "RenderTarget(float width, float height, float pixelsPerUnit, Format format)"));
+    TIDE_CHECK(has(last_sent(), "depth alone"));
+    snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.map = RenderTarget.Screen($\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Format format") && has(last_sent(), "float factor, Format format"));
+
+    // A target's depth, beside its color
+    snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.shadow = lamp.map.$\n}\n", types);
+    const char *members = complete(program);
+    TIDE_CHECK(offers(members, "depth") && offers(members, "color") && has(members, "DepthTexture"));
+    snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    var shadow = lamp.map.depth;\n    lamp.shadow = sha$dow;\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "DepthTexture"));
+    // The type, where local state is declared
+    TIDE_CHECK(offers(complete("scene Main { }\nlocal singleton Lamp { $ }\n"), "DepthTexture"));
+
+    // In a frag, a DepthTexture field has its two ways of being read
+    snprintf(program, sizeof program, "%sfrag Lit(Vertex3 vertex, out Color color, Lamp lamp)\n{\n    float lit = lamp.shadow.$\n}\n", types);
+    const char *reads = complete(program);
+    TIDE_CHECK(offers(reads, "Sample") && offers(reads, "Compare"));
+    TIDE_CHECK(has(reads, "DepthTexture.Compare(float2 uv, float value) -> float") && has(reads, "DepthTexture.Sample(float2 uv) -> float"));
+    snprintf(program, sizeof program, "%sfrag Lit(Vertex3 vertex, out Color color, Lamp lamp)\n{\n"
+                                      "    float lit = lamp.shadow.Compare(vertex.uv, $\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "DepthTexture.Compare(float2 uv, float value) -> float"));
+    TIDE_CHECK(has(last_sent(), "\"activeParameter\":1"));
+    snprintf(program, sizeof program, "%sfrag Lit(Vertex3 vertex, out Color color, Lamp lamp)\n{\n"
+                                      "    float lit = lamp.shadow.Com$pare(vertex.uv, 0.5);\n    color = Color(lit, lit, lit);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "isn't nearer than"));
+    snprintf(program, sizeof program, "%sfrag Lit(Vertex3 vertex, out Color color, Lamp lamp)\n{\n"
+                                      "    float far = lamp.shadow.Sam$ple(vertex.uv);\n    color = Color(far, far, far);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "the nearest thing drawn"));
+
+    // A frag takes it through a component or a singleton, never as a parameter of its own
+    snprintf(program, sizeof program, "%sfrag Lit(Vertex3 vertex, out Color color, DepthTexture shadow)\n{\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "a field of a component or singleton it takes"));
 }
 
 // ---------------------------------------------------------------------------

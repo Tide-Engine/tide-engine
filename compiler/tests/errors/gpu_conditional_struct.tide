@@ -29,7 +29,7 @@ event(Spawned) Setup(with Main)
     Spawn(Box);
 }
 
-frag Shade(V vertex, mut Color color)
+frag Shade(V vertex, out Color color)
 {
     V other = vertex.uv.x > 0.5 ? vertex : V { };
     color = Color.white * other.uv.x;

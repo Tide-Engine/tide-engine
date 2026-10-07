@@ -1,0 +1,231 @@
+// Which side of a 3D mesh's triangles draws, as a draw setting of Draw3D's:
+// around a block and set for the views that follow, listed with other
+// settings, around each entity's mesh, left early, kept in a value, through a
+// frag and for a list's instances, whose transforms may mirror them. A render
+// target has its own, as it has its own depth. And what has no back: the 2D
+// calls and a clear.
+
+enum Trouble
+{
+    Hidden,
+}
+
+struct Corner
+{
+    float3 position;
+    Color color = Color.white;
+}
+
+struct Spot
+{
+    float4x4 transform = float4x4.identity;
+    Color tint = Color.white;
+}
+
+component Pane
+{
+    float3 position;
+}
+
+local singleton Look
+{
+    RenderTarget target;
+    bool leave;             // The blocks are left early
+    Cull kept = Cull.Front; // A value like any other enum's
+    List<Vertex3> plain;
+    List<Corner> corners;
+    List<int> faces;
+    List<Spot> spots;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Pane { position = float3(0, 0, 5) });
+    Spawn(Pane { position = float3(1, 0, 5) });
+    Spawn(Pane { position = float3(2, 0, 5) });
+}
+
+void Hide(bool yes) fails Trouble
+{
+    if (yes) fail Trouble.Hidden;
+}
+
+float4x4 Mirror(float z)
+{
+    return float4x4.TRS(float3(0, 0, z), quaternion.identity, float3(-1, 1, 1));
+}
+
+// As a frame starts: no back. Around a block, and back after it.
+view Blocks(mut Look look)
+{
+    if (look.corners.count == 0)
+    {
+        look.plain = [Vertex3 { }, Vertex3 { position = float3(0, 1, 0) }, Vertex3 { position = float3(1, 0, 0) }];
+        look.corners = [Corner { }, Corner { position = float3(0, 1, 0) }, Corner { position = float3(1, 0, 0) }];
+        look.faces = [0, 1, 2];
+        look.spots = [Spot { }, Spot { transform = Mirror(1) }, Spot { transform = float4x4.Translate(float3(3, 0, 0)) }];
+    }
+    Draw3D.Cube(float3(0, 0, 9), float3(1, 1, 1), Color.white);
+    Draw3D.Cull(Cull.Front)
+    {
+        Draw3D.Cube(float3(0, 0, 8), float3(1, 1, 1), Color.white);
+        Draw3D.Cull(Cull.None)
+        {
+            Draw3D.Cube(float3(0, 0, 7), float3(1, 1, 1), Color.white);
+        }
+        Draw3D.Cube(float3(0, 0, 6), float3(1, 1, 1), Color.white);
+    }
+    Draw3D.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.white);
+
+    // Listed with commas, beside the other settings
+    Draw.Blend(Blend.Add),
+    Draw3D.Cull(Cull.None),
+    Draw3D.Depth(Depth.Read)
+    {
+        Draw3D.Cube(float3(0, 0, 4), float3(1, 1, 1), Color.white);
+    }
+    Draw3D.Cube(float3(0, 0, 3), float3(1, 1, 1), Color.white);
+}
+
+// The same setting around each entity's mesh: still one run of instances.
+view Panes(Pane pane)
+{
+    Draw3D.Cull(Cull.Front)
+    {
+        Draw3D.Sphere(pane.position, 1, Color.white);
+    }
+}
+
+// A mesh that's mirrored, by its own transform or by the one it's drawn
+// inside, has its front where it was: the list says which were.
+view Mirrors(Look look)
+{
+    Draw3D.Mesh(look.plain, look.faces, float4x4.Translate(float3(0, 0, 9)));
+    Draw3D.Mesh(look.plain, look.faces, Mirror(8));
+    Draw3D.Transform(Mirror(0))
+    {
+        Draw3D.Mesh(look.plain, look.faces, float4x4.Translate(float3(0, 0, 7)));
+        Draw3D.Mesh(look.plain, look.faces, Mirror(6)); // Mirrored twice
+    }
+    // With both sides drawn there's nothing to tell them apart by
+    Draw3D.Cull(Cull.None)
+    {
+        Draw3D.Mesh(look.plain, look.faces, float4x4.Translate(float3(0, 0, 5)));
+        Draw3D.Mesh(look.plain, look.faces, Mirror(4));
+    }
+}
+
+void Guarded(bool leave) fails Trouble
+{
+    Draw3D.Cull(Cull.None),
+    Draw.Blend(Blend.Add)
+    {
+        try Hide(leave); // Its error leaves through both
+        Draw3D.Cube(float3(1, 0, 9), float3(1, 1, 1), Color.white);
+    }
+}
+
+int Counted(bool leave)
+{
+    Draw3D.Cull(Cull.Front)
+    {
+        if (leave) return 1;
+    }
+    return 2;
+}
+
+// Left early, a block still puts back what it found.
+view Early(Look look)
+{
+    Guarded(look.leave)!;
+    var counted = Counted(look.leave);
+    for (var i = 0; i < 3; i++)
+    {
+        Draw3D.Cull(Cull.None)
+        {
+            if (i == 0) continue;
+            if (i == 2) break;
+        }
+    }
+    Draw3D.Cube(float3(counted, 0, 8), float3(1, 1, 1), Color.white);
+}
+
+frag Flat(Corner vertex, out Color color)
+{
+    color = vertex.color;
+}
+
+frag Dot(Corner vertex, out Color color, Spot spot)
+{
+    color = spot.tint;
+}
+
+frag Plain(Vertex vertex, out Color color)
+{
+    color = vertex.color;
+}
+
+// A mesh through a frag, and a list's instances, are drawn from the side the draw says.
+view Shaded(Look look)
+{
+    Draw3D.Cull(look.kept)
+    {
+        Draw3D.Mesh(look.corners, look.faces, float4x4.identity, Flat);
+    }
+    // The one in the middle is mirrored: a run of its own, between the others
+    Draw3D.Instanced(look.corners, look.faces, look.spots, Dot);
+    Draw3D.Cull(Cull.None)
+    {
+        Draw3D.Instanced(look.corners, look.faces, look.spots, Dot);
+    }
+}
+
+// Nothing else has a back: what's set changes none of these.
+view Flats()
+{
+    Draw3D.Cull(Cull.None)
+    {
+        Draw2D.Rect(float2(1, 1), float2(1, 1), Color.white);
+        Draw2D.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], Plain);
+        Draw2D.Clear(Color.black);
+    }
+}
+
+// Set, it holds for the views that follow.
+view Sets()
+{
+    Draw3D.SetCull(Cull.Front);
+}
+
+view Follows()
+{
+    Draw3D.Cube(float3(2, 0, 9), float3(1, 1, 1), Color.white);
+    // Set inside a block, it's for the rest of the block
+    Draw3D.Cull(Cull.Back)
+    {
+        Draw3D.SetCull(Cull.None);
+        Draw3D.Cube(float3(2, 0, 7), float3(1, 1, 1), Color.white);
+    }
+    Draw3D.Cube(float3(2, 0, 6), float3(1, 1, 1), Color.white);
+}
+
+// A target's own: the window's isn't its, nor its the window's.
+view Targets(Look look)
+{
+    look.target.Cube(float3(3, 0, 9), float3(1, 1, 1), Color.white);
+    look.target.Cull(Cull.None)
+    {
+        look.target.Cube(float3(3, 0, 8), float3(1, 1, 1), Color.white);
+        Draw3D.Cube(float3(3, 0, 7), float3(1, 1, 1), Color.white);
+    }
+    look.target.SetCull(Cull.Front);
+    look.target.Cube(float3(3, 0, 6), float3(1, 1, 1), Color.white);
+    // With no arguments, a Set puts back what each frame starts with
+    look.target.SetCull();
+    look.target.Cube(float3(3, 0, 5), float3(1, 1, 1), Color.white);
+    Draw3D.SetCull();
+    Draw3D.Cube(float3(3, 0, 4), float3(1, 1, 1), Color.white);
+    Draw3D.SetCull(Cull.None); // Left set by the last view: the next frame starts over
+}

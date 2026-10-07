@@ -6,7 +6,7 @@ view Show()
     Draw2D.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], Shade);
 }
 
-frag Shade(Vertex vertex, mut Color color)
+frag Shade(Vertex vertex, out Color color)
 {
     color = frames[1].Sample(vertex.uv);
 }

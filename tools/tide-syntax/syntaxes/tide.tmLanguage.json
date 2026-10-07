@@ -496,7 +496,7 @@
           }
         },
         {
-          "comment": "extern void Fill(in Stats stats): a parameter C reads where it is; bool TryHalf(int value, out int half): a parameter the call makes, a function's, a method's or an extern function's. A word of its own where a parameter starts, before its type and its name. A name anywhere else: Buffer out, out.size, out is Stats made",
+          "comment": "extern void Fill(in Stats stats): a parameter C reads where it is; bool TryHalf(int value, out int half): a parameter the call makes, a function's, a method's or an extern function's; frag Shade(BoxVertex vertex, out Color color) and vert Place(mut BoxVertex vertex, out FromLamp lamp): what a frag or a vert writes. A word of its own where a parameter starts, before its type and its name. A name anywhere else: Buffer out, out.size, out is Stats made",
           "match": "(?:(?<=[(,])|^)\\s*(in|out)(?=\\s+(?!is\\b)[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<[^<>]*>)?\\??\\s+[A-Za-z_])",
           "captures": {
             "1": { "name": "storage.modifier.tide" }
@@ -668,7 +668,7 @@
         {
           "comment": "Built-in singletons, components, events, enums, records, the World, generic types and function groups. Not after a '.': GUI.Button is a function",
           "name": "support.class.tide",
-          "match": "(?<!\\.)\\b(Time|Math|Draw|Draw2D|Draw3D|GUI|GUILayout|Screen|Cursor|Frame|Anchor|Vertex|Vertex3|Shape|GUITheme|GUIControl|Filter|Font|Blend|Depth|Random|Owner|World|Devices|Keyboard|Mouse|Gamepad|Button|Dpad|Spawned|Destroyed|PlayerJoined|PlayerLeft|Scene|SceneVisibility|Prediction|Debug|Session|SessionState|DisconnectReason|Connected|Disconnected|Wait|Clipboard|File|Directory|Path|Application|Storage|IOError|List|Map|Set|Grid2|Grid3)\\b"
+          "match": "(?<!\\.)\\b(Time|Math|Draw|Draw2D|Draw3D|GUI|GUILayout|Screen|Cursor|Frame|Anchor|Vertex|Vertex3|Shape|GUITheme|GUIControl|Filter|Wrap|Font|Blend|Depth|Cull|Random|Owner|World|Devices|Keyboard|Mouse|Gamepad|Button|Dpad|Spawned|Destroyed|PlayerJoined|PlayerLeft|Scene|SceneVisibility|Prediction|Debug|Session|SessionState|DisconnectReason|Connected|Disconnected|Wait|Clipboard|File|Directory|Path|Application|Storage|IOError|List|Map|Set|Grid2|Grid3)\\b"
         },
         {
           "comment": "Spawn(...), Send(...)",

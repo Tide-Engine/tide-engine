@@ -34,7 +34,7 @@ vert Place(mut Corner vertex, BatchItem item, Instance instance)
     vertex.position += item.offset;
     vertex.normal = Math.Rotate(instance.transform, vertex.normal);
 }
-frag Tint(Corner vertex, mut Color color, BatchItem item, Lighting light)
+frag Tint(Corner vertex, out Color color, BatchItem item, Lighting light)
 {
     float gain = Math.Max(Math.Dot(vertex.normal, -light.direction), 0.1);
     color = item.surface.tint * (item.surface.gain * gain);

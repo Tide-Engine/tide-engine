@@ -452,7 +452,9 @@ local event(Won won) ShowWin(Marble marble, mut Fx fx)
     Burst(fx, won.at + float3(0, 1, 0), Color(1, 0.85, 0.3), 40, 5);
 }
 
-// A ball of radius 1, whose corners' normals are where they are.
+// A ball of radius 1, whose corners' normals are where they are. Its
+// triangles' corners go clockwise as they're seen from outside: that's the
+// side a triangle is drawn from.
 void BuildBall(mut Scenery scenery)
 {
     for (var ring = 0; ring <= 12; ring++)
@@ -467,11 +469,11 @@ void BuildBall(mut Scenery scenery)
             {
                 int first = ring * 21 + step;
                 scenery.ballFaces.Add(first);
-                scenery.ballFaces.Add(first + 21);
-                scenery.ballFaces.Add(first + 1);
                 scenery.ballFaces.Add(first + 1);
                 scenery.ballFaces.Add(first + 21);
+                scenery.ballFaces.Add(first + 1);
                 scenery.ballFaces.Add(first + 22);
+                scenery.ballFaces.Add(first + 21);
             }
         }
     }
@@ -492,9 +494,10 @@ void BuildDisc(mut Scenery scenery)
             scenery.disc.Add(Corner { position = float3(Math.Cos(angle), Math.Sin(angle), side * thick), normal = float3(0, 0, side) });
             if (step < 20)
             {
+                // Each face is seen from its own side: the near one's corners go the other way round
                 scenery.discFaces.Add(middle);
-                scenery.discFaces.Add(middle + 1 + step);
-                scenery.discFaces.Add(middle + 2 + step);
+                scenery.discFaces.Add(middle + (face == 0 ? 2 : 1) + step);
+                scenery.discFaces.Add(middle + (face == 0 ? 1 : 2) + step);
             }
         }
     }
@@ -509,11 +512,11 @@ void BuildDisc(mut Scenery scenery)
         {
             int first = rim + step * 2;
             scenery.discFaces.Add(first);
-            scenery.discFaces.Add(first + 1);
-            scenery.discFaces.Add(first + 2);
             scenery.discFaces.Add(first + 2);
             scenery.discFaces.Add(first + 1);
+            scenery.discFaces.Add(first + 2);
             scenery.discFaces.Add(first + 3);
+            scenery.discFaces.Add(first + 1);
         }
     }
 }
@@ -547,8 +550,9 @@ void BuildGround(mut Scenery scenery)
         var outward = side == 0 ? float3(0, 0, -1) : side == 1 ? float3(1, 0, 0) : side == 2 ? float3(0, 0, 1) : float3(-1, 0, 0);
         for (var i = 0; i <= cells; i++)
         {
+            // Along the side with the island on the right, so that every side's triangles are wound alike
             float along = i * step - HALF;
-            var at = float2(outward.x, outward.z) * HALF + float2(Math.Abs(outward.z), Math.Abs(outward.x)) * along;
+            var at = float2(outward.x, outward.z) * HALF + float2(outward.z, -outward.x) * along;
             int first = scenery.ground.count;
             scenery.ground.Add(Corner { position = float3(at.x, 0, at.y), normal = outward });
             scenery.ground.Add(Corner { position = float3(at.x, -4, at.y), normal = outward });
@@ -566,7 +570,7 @@ void BuildGround(mut Scenery scenery)
 }
 
 // Grass in squares, lighter on the hills, with a sandy path around the rim.
-frag Ground(Corner corner, mut Color color)
+frag Ground(Corner corner, out Color color)
 {
     float3 normal = Math.Normalize(corner.normal);
     float light = 0.5 + 0.5 * Math.Max(Math.Dot(normal, SUN), 0);
@@ -589,7 +593,7 @@ frag Ground(Corner corner, mut Color color)
 }
 
 // A marble in its player's color, with a white band and a spot that show it rolling.
-frag Glass(Corner corner, mut Color color, Instance instance, Pixel pixel, Marble marble, Look look)
+frag Glass(Corner corner, out Color color, Instance instance, Pixel pixel, Marble marble, Look look)
 {
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
     float diffuse = Math.Max(Math.Dot(normal, SUN), 0);
@@ -602,7 +606,7 @@ frag Glass(Corner corner, mut Color color, Instance instance, Pixel pixel, Marbl
     color.a = 1;
 }
 
-frag Gold(Corner corner, mut Color color, Instance instance, Pixel pixel, Look look)
+frag Gold(Corner corner, out Color color, Instance instance, Pixel pixel, Look look)
 {
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
     float diffuse = Math.Abs(Math.Dot(normal, SUN));
@@ -615,7 +619,7 @@ frag Gold(Corner corner, mut Color color, Instance instance, Pixel pixel, Look l
     color.a = 1;
 }
 
-frag Bump(Corner corner, mut Color color, Dome dome, Instance instance)
+frag Bump(Corner corner, out Color color, Dome dome, Instance instance)
 {
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
     float light = 0.45 + 0.55 * Math.Max(Math.Dot(normal, SUN), 0);
@@ -759,9 +763,10 @@ view Shadows(Marble marble)
     var slope = Slope(marble.position.xz);
     var up = Math.Normalize(float3(-slope.x, 1, -slope.y));
     var lie = quaternion.LookRotation(Math.Normalize(Math.Cross(float3(1, 0, 0), up)), up);
+    // A disc is a cylinder too thin to have a side: seen from above, its top is all that's drawn
     Draw3D.Depth(Depth.Read)
     {
-        Draw3D.Cylinder(float3(marble.position.x, Height(marble.position.xz) + 0.04, marble.position.z), RADIUS * 0.95, 0.01, lie, Color(0, 0, 0, 0.3));
+        Draw3D.Cylinder(float3(marble.position.x, Height(marble.position.xz) + 0.04, marble.position.z), RADIUS * 0.95, 0.01, lie, Color(0, 0, 0, 0.51));
     }
 }
 
@@ -770,7 +775,7 @@ view CoinShadows(Coin coin)
 {
     Draw3D.Depth(Depth.Read)
     {
-        Draw3D.Cylinder(float3(coin.position.x, Height(coin.position) + 0.04, coin.position.y), 0.3, 0.01, Color(0, 0, 0, 0.22));
+        Draw3D.Cylinder(float3(coin.position.x, Height(coin.position) + 0.04, coin.position.y), 0.3, 0.01, Color(0, 0, 0, 0.39));
     }
 }
 
@@ -780,7 +785,7 @@ view Pointing(Stick stick)
     if (!stick.held) return;
     Draw3D.Depth(Depth.Read)
     {
-        Draw3D.Cylinder(stick.target + float3(0, 0.05, 0), 0.4, 0.01, Color(1, 1, 1, 0.45));
+        Draw3D.Cylinder(stick.target + float3(0, 0.05, 0), 0.4, 0.01, Color(1, 1, 1, 0.7));
     }
 }
 

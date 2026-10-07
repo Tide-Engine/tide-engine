@@ -1,4 +1,4 @@
-// expect: frag 'Tint' reads instance data of 'BatchItem', which this draw's instances don't supply
+// expect: frag 'Tint' reads a 'BatchItem', and this draw names no vert that writes one
 scene Main { }
 struct BatchItem { Color tint; }
 struct WrongItem { Color tint; }
@@ -8,7 +8,7 @@ local singleton Mesh
     List<int> indices;
     List<WrongItem> instances;
 }
-frag Tint(Vertex3 vertex, mut Color color, BatchItem item)
+frag Tint(Vertex3 vertex, out Color color, BatchItem item)
 {
     color = item.tint;
 }
