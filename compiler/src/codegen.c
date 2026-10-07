@@ -3314,6 +3314,13 @@ static void gen_expr(gen *g, sb *o, const expr *e)
 
 // Math.Dot(a, b), Draw.Circle(center, radius, color): c_callee, with the
 // frame's draw list first for a call that draws.
+// Math.Perlin, Simplex and Cellular (tide/math.h): a point and a seed, 0 where the call leaves it out.
+static bool noise_call(const char *c_callee)
+{
+    return c_callee && (strncmp(c_callee, "tide_perlin_", 12) == 0 || strncmp(c_callee, "tide_simplex_", 13) == 0
+                        || strncmp(c_callee, "tide_cellular_", 14) == 0);
+}
+
 static void gen_builtin_call(gen *g, sb *o, const expr *e)
 {
     // Draw.Shape goes through the helper that turns a Shape into a tide_shape
@@ -3364,6 +3371,7 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
         const int takes = strcmp(e->c_callee, "tide_audio_play") == 0 ? 3 : 4;
         for (int i = e->args.count; i < takes; i++) sb_put(o, ", 1.0f");
     }
+    if (e->call == CALL_BUILTIN && noise_call(e->c_callee) && e->args.count == 1) sb_put(o, ", 0"); // Its seed, left out
     if ((text_at || measure_text) && !weighted) sb_put(o, ", TIDE_FONT_REGULAR");
     if (e->call == CALL_DRAW && (str_eq_c(e->name, "WorldToScreen") || str_eq_c(e->name, "ScreenToWorld")
                                 || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection"))) {
