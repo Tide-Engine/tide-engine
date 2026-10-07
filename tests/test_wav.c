@@ -14,6 +14,7 @@ typedef struct bytes {
 
 static void put(bytes *b, const void *data, const size_t size)
 {
+    if (!size) return;
     b->data = realloc(b->data, b->size + size);
     memcpy(b->data + b->size, data, size);
     b->size += size;

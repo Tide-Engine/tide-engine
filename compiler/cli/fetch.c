@@ -71,8 +71,21 @@ static char *download_dir(void)
 
 static bool curl(const char *url, const char *path, const char *timeout)
 {
-    const char *const argv[] = {sys_tool("curl"), "-fsSL", "--retry", "2", "-m", timeout, "-o", path, url, NULL};
-    return sys_run(argv, NULL, false) == 0;
+    const char *tool = sys_tool("curl");
+    const char *const argv[] = {tool, "-fsSL", "--retry", "2", "-m", timeout, "-o", path, url, NULL};
+    const int code = sys_run(argv, NULL, false);
+    const bool written = sys_exists(path);
+    if (code != 0 || !written) {
+        fprintf(stderr, "tide: download tool %s exited with %d%s\n", tool, code,
+                written ? "" : " and wrote no output file");
+        if (code == 0) {
+            const char *const version[] = {tool, "--version", NULL};
+            sys_run(version, NULL, false);
+        }
+    }
+    // curl 8.14's --retry can report success after a failed transfer (#17554).
+    // A download has to leave its output before anything can unpack or read it.
+    return code == 0 && written;
 }
 
 typedef struct entry {
