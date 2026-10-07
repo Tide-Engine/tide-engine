@@ -458,6 +458,15 @@ bool tide_pack_clip_find(const uint64_t named, const uint8_t **bytes, uint32_t *
     return true;
 }
 
+void tide_pack_clips_each(void (*fn)(const uint8_t *bytes, uint32_t size, uint64_t version, void *context), void *context)
+{
+    for (uint32_t i = 0; i < pack.texture_places; i++) {
+        const packed_texture *t = &pack.textures[i];
+        if (!t->named || !t->clip) continue;
+        fn(pack.region + t->offset + sizeof(tide_block) + sizeof(uint32_t), (uint32_t)t->width, t->version, context);
+    }
+}
+
 tide_texture_ref tide_pack_texture_of(const tide_pack_entry *e)
 {
     if (!e || e->kind != TIDE_PACK_TEXTURE || !pack.texture_places) return (tide_texture_ref){0};

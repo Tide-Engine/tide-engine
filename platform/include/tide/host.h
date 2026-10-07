@@ -146,6 +146,7 @@ static inline void tide_run_assets_from(uint8_t *bytes, const size_t size)
     if (tide_run_game->assets && bytes && !tide_run_game->assets(bytes, size)) {
         fprintf(stderr, "tide: the game's pack isn't one: its assets read as empty\n");
     }
+    tide_clips_prepare(tide_platform_jobs()); // Its clips decoded now, on the pool's threads, not at their first play
 }
 
 // The pack the build left with the program, for a game that has assets.

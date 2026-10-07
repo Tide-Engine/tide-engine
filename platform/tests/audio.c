@@ -9,6 +9,7 @@
 #include "audio_out.h"
 #include "mixer.h"
 #include "tide/net.h"
+#include "tide/vorbis.h"
 #include "tide/wav.h"
 #include "tide_test.h"
 
@@ -451,4 +452,72 @@ TIDE_TEST(audio_a_device_is_filled_at_its_rate_and_channels)
         TIDE_CHECK(out[6 * i + 2] == 0.0f && out[6 * i + 5] == 0.0f);
     }
     tide_audio_free(&f);
+}
+
+extern const unsigned char tide_ref_noise_ogg[];
+extern const unsigned int tide_ref_noise_ogg_size;
+
+TIDE_TEST(audio_a_streamed_clip_plays_as_its_decode_does_and_loops)
+{
+    // Stereo noise at the mixer's rate: streamed at pitch 1 it's the decode's own
+    // samples, frame for frame, and a loop starts the file over at its granule
+    tide_sound whole;
+    TIDE_REQUIRE(tide_vorbis_decode(tide_ref_noise_ogg, tide_ref_noise_ogg_size, &whole));
+    TIDE_REQUIRE(whole.frames == 28800 && whole.channels == 2 && whole.rate == TIDE_AUDIO_RATE);
+    tide_vorbis *file = tide_vorbis_open(tide_ref_noise_ogg, tide_ref_noise_ogg_size, NULL);
+    TIDE_REQUIRE(file != NULL);
+    const tide_clip clip = {.stream = file, .frames = 28800, .channels = 2, .rate = TIDE_AUDIO_RATE, .id = 77};
+    fresh();
+    tide_audio_frame f = {0};
+    tide_audio_reset(&f);
+    tide_audio_voice(&f, &(tide_voice){.id = 9, .clip = clip, .loop = true, .playing = true, .volume = 1.0f, .pitch = 1.0f});
+    tide_mixer_submit(&f);
+    const uint32_t frames = 28800 + 3 * BLOCK;
+    float *out = calloc((size_t)frames * 2, sizeof(float));
+    tide_mixer_render(out, frames);
+    uint32_t wrong = 0;
+    for (uint32_t i = 0; i < frames; i++) {
+        const uint32_t j = i % 28800u; // Looped
+        if (out[2 * i] != whole.samples[2 * j] || out[2 * i + 1] != whole.samples[2 * j + 1]) wrong++;
+    }
+    TIDE_CHECK(wrong == 0);
+    TIDE_CHECK(tide_mixer_voices() == 1);
+    // Not looping, as a one-shot: it ends at the file's end, and the voice is gone
+    fresh();
+    tide_audio_reset(&f);
+    tide_audio_play(&f, clip, 1.0f, 1.0f);
+    tide_mixer_submit(&f);
+    tide_mixer_render(out, frames);
+    wrong = 0;
+    for (uint32_t i = 0; i < 28800; i++) {
+        if (out[2 * i] != whole.samples[2 * i] || out[2 * i + 1] != whole.samples[2 * i + 1]) wrong++;
+    }
+    TIDE_CHECK(wrong == 0);
+    TIDE_CHECK(silent(out + 2 * (28800 + BLOCK), 2 * BLOCK)); // Silence from the block after the end
+    TIDE_CHECK(tide_mixer_voices() == 0);
+    // At another pitch it goes through the same interpolation a decoded clip's samples do
+    const tide_clip decoded = {.samples = whole.samples, .frames = whole.frames, .channels = 2, .rate = TIDE_AUDIO_RATE, .id = 78};
+    float *a = calloc(4 * SAMPLES, sizeof(float)), *b = calloc(4 * SAMPLES, sizeof(float));
+    fresh();
+    tide_audio_reset(&f);
+    tide_audio_voice(&f, &(tide_voice){.id = 9, .clip = clip, .playing = true, .volume = 1.0f, .pitch = 1.37f});
+    tide_mixer_submit(&f);
+    tide_mixer_render(a, 4 * BLOCK);
+    fresh();
+    tide_audio_reset(&f);
+    tide_audio_voice(&f, &(tide_voice){.id = 9, .clip = decoded, .playing = true, .volume = 1.0f, .pitch = 1.37f});
+    tide_mixer_submit(&f);
+    tide_mixer_render(b, 4 * BLOCK);
+    wrong = 0;
+    for (uint32_t i = 0; i < 4 * SAMPLES; i++)
+        if (fabsf(a[i] - b[i]) > 1e-6f) wrong++;
+    TIDE_CHECK(wrong == 0);
+    // A forget lets the stream's reader go; the file is the engine's to close after
+    fresh();
+    free(a);
+    free(b);
+    free(out);
+    tide_audio_free(&f);
+    tide_vorbis_close(file);
+    tide_sound_free(&whole);
 }
