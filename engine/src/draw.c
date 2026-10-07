@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "tide/mesh.h"
 #include "tide/net.h"
 #include "tide/pack.h"
 #include "tide/page.h"
@@ -1256,9 +1257,15 @@ void tide_draw_text(tide_draw_list *d, const char *text, const tide_float2 posit
 uint32_t tide_draw_texture_slot(tide_draw_list *d, const uint32_t space, const uint64_t id, const uint64_t version,
                                 const int32_t width, const int32_t height, uint8_t **pixels)
 {
+    return tide_draw_texture_slot_as(d, space, id, version, width, height, TIDE_TEXELS_BYTES, pixels);
+}
+
+uint32_t tide_draw_texture_slot_as(tide_draw_list *d, const uint32_t space, const uint64_t id, const uint64_t version,
+                                   const int32_t width, const int32_t height, const uint32_t format, uint8_t **pixels)
+{
     *pixels = NULL;
     if (width <= 0 || height <= 0) return 0;
-    const uint64_t bytes = (uint64_t)width * (uint64_t)height * 4u;
+    const uint64_t bytes = (uint64_t)width * (uint64_t)height * tide_texels_bytes(format);
     if (bytes > UINT32_MAX) tide_out_of_memory();
     tide_draw_texture *t = NULL;
     for (uint32_t i = 0; i < d->texture_count && !t; i++) {
@@ -1268,7 +1275,7 @@ uint32_t tide_draw_texture_slot(tide_draw_list *d, const uint32_t space, const u
         d->textures = grow(d->textures, d->texture_count, &d->texture_capacity, 1, sizeof(tide_draw_texture), 8u);
         t = &d->textures[d->texture_count++];
         *t = (tide_draw_texture){.id = id, .space = space, .epoch = d->epoch};
-    } else if (t->version == version && t->width == width && t->height == height) {
+    } else if (t->version == version && t->width == width && t->height == height && t->format == format) {
         t->frame = d->frame;
         return (uint32_t)(t - d->textures) + 1u;
     }
@@ -1277,6 +1284,7 @@ uint32_t tide_draw_texture_slot(tide_draw_list *d, const uint32_t space, const u
         t->capacity = (uint32_t)bytes;
     }
     t->version = version;
+    t->format = format;
     t->width = width;
     t->height = height;
     t->frame = d->frame;
@@ -1317,6 +1325,7 @@ static uint32_t pack_texture(tide_draw_list *d, const uint64_t version, const in
         *t = (tide_draw_texture){.id = version, .space = TIDE_PIXELS_PACK, .epoch = d->epoch};
     }
     t->version = version;
+    t->format = TIDE_TEXELS_BYTES;
     t->width = width;
     t->height = height;
     t->frame = d->frame;
@@ -1333,13 +1342,19 @@ static uint32_t pack_texture(tide_draw_list *d, const uint64_t version, const in
 static uint32_t pack_slot(tide_draw_list *d, const tide_texture *texture)
 {
     tide_texture image;
-    if (!tide_pack_texture_find(texture->version, &image)) return 0;
+    if (!tide_pack_texture_find(texture->version & TIDE_TEXTURE_NAME, &image)) return 0;
     return pack_texture(d, image.version, image.width, image.height, image.pixels);
 }
 
 uint32_t tide_draw_texture_source(tide_draw_list *d, const tide_texture_ref texture)
 {
-    if (!texture.target.id) return texture.image.pixels ? texture_slot(d, &texture.image) : pack_slot(d, &texture.image);
+    if (!texture.target.id) {
+        if (texture.image.pixels) return texture_slot(d, &texture.image);
+        tide_grid grid;
+        tide_grid_shape shape;
+        if (tide_texture_grid(texture, &grid, &shape)) return tide_draw_grid_texture(d, grid, &shape);
+        return pack_slot(d, &texture.image);
+    }
     const tide_render_target target = tide_render_target_resolve(texture.target);
     return tide_draw_target_texture_sized(d, target.id, target.size);
 }
@@ -1925,8 +1940,8 @@ static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, co
     }
     if (t->space == TIDE_PIXELS_PACK) return pack_texture(d, t->id, t->width, t->height, t->pixels);
     uint8_t *pixels;
-    const uint32_t slot = tide_draw_texture_slot(d, t->space, t->id, t->version, t->width, t->height, &pixels);
-    if (pixels) memcpy(pixels, t->pixels, (size_t)t->width * (size_t)t->height * 4u);
+    const uint32_t slot = tide_draw_texture_slot_as(d, t->space, t->id, t->version, t->width, t->height, t->format, &pixels);
+    if (pixels) memcpy(pixels, t->pixels, (size_t)t->width * (size_t)t->height * tide_texels_bytes(t->format));
     return slot;
 }
 

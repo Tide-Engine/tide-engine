@@ -149,6 +149,13 @@ type matrix_type(const int dim)
     return (type){kinds[dim], NULL};
 }
 
+bool type_is_texture_grid(const type t)
+{
+    if (t.kind != TY_GRID || !t.decl || t.decl->dims != 2 || t.decl->fields.count < 1) return false;
+    const type_kind cell = t.decl->fields.items[0].type.kind;
+    return cell == TY_COLOR || cell == TY_FLOAT;
+}
+
 bool type_assignable(const type to, const type from)
 {
     if (to.kind == TY_ERROR || from.kind == TY_ERROR) return true;
@@ -158,6 +165,7 @@ bool type_assignable(const type to, const type from)
         return type_assignable(to.decl->fields.items[0].type, from);
     }
     if (from.kind == TY_BYTE && (to.kind == TY_INT || to.kind == TY_LONG || to.kind == TY_FLOAT)) return true;
+    if (to.kind == TY_TEXTURE) return type_is_texture_grid(from); // A grid of colors or of floats is a texture
     if (to.kind == TY_LONG) return from.kind == TY_INT; // An int fits a long; floats convert explicitly, both ways
     return type_is_float_based(to) && type_is_int_based(from) && type_dim(to) == type_dim(from);
 }

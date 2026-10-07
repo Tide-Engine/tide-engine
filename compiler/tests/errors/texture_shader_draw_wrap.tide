@@ -1,6 +1,0 @@
-// expect: a frag chooses its texture's filter and wrap at Sample: leave the draw's out
-// expect: like 'color = source.Sample(vertex.uv, Filter.Bilinear, Wrap.Repeat);' in 'Copy'
-scene Main { }
-local singleton Image { Texture source; }
-frag Copy(Vertex vertex, out Color color, Texture source) { color = source.Sample(vertex.uv); }
-view Show(Image image) { Draw.Mesh([Vertex { position = float2(0), uv = float2(0), color = Color.white }], [0, 0, 0], image.source, Filter.Point, Wrap.Repeat, Copy); }

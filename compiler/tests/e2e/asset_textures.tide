@@ -100,7 +100,7 @@ view Declared(Art art)
     Draw.Mesh(art.flat, art.faces, tiled["assets/run/2.png"]);          // ...and of a map
     Draw.Mesh(art.flat, art.faces, art.paint);                          // A grid's field
     Draw.Mesh(art.flat, art.faces, art.bare);                           // One that says nothing
-    Draw.Mesh(art.flat, art.faces, art.keptTiles);                      // A value in a field names no declaration
+    Draw.Mesh(art.flat, art.faces, art.keptTiles);                      // A value in a field: sampled as tiles says
     Draw.Mesh(art.solid, art.faces, float4x4.identity, tiles);
     art.target.Mesh(art.flat, art.faces, tiles);
     foreach (var frame in crisp) Draw.Mesh(art.flat, art.faces, frame); // Each of a list, as a loop goes through it
@@ -150,7 +150,7 @@ view Shaded(Art art)
     Draw.Mesh(art.corners, art.faces, Named);
     Draw.Mesh(art.corners, art.faces, tiles, Given);
     Draw.Mesh(art.corners, art.faces, hero, Given);          // No declared sampling: blended, the cells at the edge
-    Draw.Mesh(art.corners, art.faces, art.keptTiles, Given); // A value names no declaration
+    Draw.Mesh(art.corners, art.faces, art.keptTiles, Given); // A value in a field: as tiles
     Draw.Blit(tiles, art.target, Copied);
     Draw.Blit(art.paint, art.target, Copied);
     Draw.Blit(hero, art.target, Copied);

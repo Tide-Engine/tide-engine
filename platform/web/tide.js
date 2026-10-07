@@ -1131,7 +1131,8 @@
     function pixels(type, ptr) {
         switch (type) {
         case 0x1406: return [f32(), ptr >> 2]; // FLOAT
-        case 0x1403: return [new Uint16Array(memory.buffer), ptr >> 1]; // UNSIGNED_SHORT
+        case 0x1403: // UNSIGNED_SHORT
+        case 0x140B: return [new Uint16Array(memory.buffer), ptr >> 1]; // HALF_FLOAT
         case 0x1405: return [new Uint32Array(memory.buffer), ptr >> 2]; // UNSIGNED_INT
         default: return [u8(), ptr];
         }
@@ -1682,9 +1683,10 @@
             gpuRemove('buffer', id);
         },
         gpu_texture(format, width, height, ptr) {
-            const texture = device.createTexture({ size: [width, height], format: format === 0 ? 'rgba8unorm' : 'r8unorm',
+            // By tide_gpu_format's numbers: a change to the enum goes here
+            const texture = device.createTexture({ size: [width, height], format: ['rgba8unorm', 'r8unorm', 'r16float'][format],
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
-            const id = gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * (format === 0 ? 4 : 1),
+            const id = gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * [4, 1, 2][format],
                 groups: new Set() }); // The bind groups it's in, by their keys
             if (ptr) platform.gpu_texture_write(id, ptr);
             return id;

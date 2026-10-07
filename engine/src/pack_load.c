@@ -78,6 +78,7 @@ static uint64_t texture_name(const uint8_t name[32], const uint32_t place, const
     tide_sha256_end(&s, out);
     uint64_t named;
     memcpy(&named, out, sizeof named);
+    named &= TIDE_TEXTURE_NAME; // Its top bits are how a Texture is sampled (tide_texture_sampling)
     return named ? named : 1u;
 }
 
@@ -341,6 +342,27 @@ bool tide_pack_texture_find(const uint64_t named, tide_texture *image)
 
 uint64_t tide_pack_grid_version(const tide_grid g)
 {
-    const tide_block *b = tide_block_at(g.at);
+    const tide_block *b = (const tide_block *)(const void *)tide_pack_span(g.at & 0x3FFFFFFFu, sizeof(tide_block));
     return b ? (uint64_t)b->a | (uint64_t)b->b << 32 : 0u;
+}
+
+const uint8_t *tide_pack_span(const uint32_t offset, const uint64_t bytes)
+{
+    if (!pack.region || offset < TIDE_PACK_BASE) return NULL;
+    const uint64_t at = offset - TIDE_PACK_BASE;
+    return at + bytes <= pack.size ? pack.region + at : NULL;
+}
+
+void tide_pack_sample_textures(const tide_pack_entry *e, const uint32_t sampling)
+{
+    // Its elements as loading laid them out (lay_textures), whose entry is one of the loaded pack's own
+    if (!e || e < pack.entries || e >= pack.entries + pack.entry_count) return;
+    if (e->kind == TIDE_PACK_LIST && e->extra == TIDE_PACK_TEXTURE) {
+        tide_texture_ref *out = (tide_texture_ref *)(void *)(pack.region + e->offset + sizeof(tide_block));
+        for (uint32_t k = 0; k < e->size; k++) out[k] = tide_texture_sampled(out[k], sampling);
+    } else if (e->kind == TIDE_PACK_TEXTURES) {
+        const tide_block *b = (const tide_block *)(const void *)(pack.region + e->offset);
+        texture_entry *out = (texture_entry *)(void *)(pack.region + e->offset + sizeof(tide_block));
+        for (uint32_t k = 0; k < b->a; k++) out[k].value = tide_texture_sampled(out[k].value, sampling);
+    }
 }

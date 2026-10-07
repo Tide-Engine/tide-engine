@@ -421,7 +421,7 @@ static void run_image_checks(const char *when)
         {176, 8, 12, 0, 1, 0, 0, 1, "one of a list of images"},
         {176, 8, 12, 2, 0, 0, 1, 0, "which says nothing: the pixel at its edge"},
         {8, 64, 12, 1, 0, 0, 1, 0, "the image a field was given"},
-        {8, 64, 12, 2, 0, 0, 1, 0, "a value, which names no declaration: the pixel at its edge"},
+        {8, 64, 12, 2, 0, 1, 0, 0, "a value, which is sampled as the image it was given says: repeated"},
         {8, 64, 12, 0, 3, 0, 0, 1, "down as across"},
         {64, 64, 12, 2, 0, 1, 0, 0, "a frag samples an image by its name, as its declaration says: repeated"},
         {64, 64, 12, 3, 3, 1, 1, 1, "both ways"},
@@ -664,6 +664,71 @@ static void run_output_checks(const char *when)
     }
 }
 
+// Grids of floats as textures (pass 12, `Heights` in shaders.tide): one
+// channel, read as red with green and blue 0 and alpha 1, whose numbers are
+// the grid's own (2 is 2, and -1 is -1, where a byte would hold 1 and 0), and
+// a Texture a field holds of one, which carries how it's sampled. Squares as
+// the images' (run_image_checks): the grid is 0.5 and 1 over 2 and -1.
+static void run_height_checks(const char *when)
+{
+    static const struct {
+        float left, top, cell;
+        int column, row;
+        float r, g, b;
+        const char *what;
+    } wanted[] = {
+        {8, 8, 12, 0, 0, 0.25f, 0.25f, 0, "a frag samples a grid of floats: its first cell as red, green and blue 0, alpha 1"},
+        {8, 8, 12, 1, 0, 0.5f, 0.25f, 0, "the next"},
+        {8, 8, 12, 0, 1, 1, 0.25f, 0, "a cell that's 2 is 2: more than a byte holds"},
+        {8, 8, 12, 1, 1, 0, 0.25f, 0, "and one under 0"},
+        {8, 8, 12, 3, 0, 0.5f, 0.25f, 0, "past its edge, the cell at its edge"},
+        {64, 8, 12, 0, 0, 0.5f, 0, 0, "a mesh with no frag draws a grid of floats as red"},
+        {64, 8, 12, 1, 0, 1, 0, 0, "cell by cell"},
+        {64, 8, 12, 1, 1, 0, 0, 0, "black where it's under 0"},
+        {120, 8, 24, 0, 0, 0.54f, 0, 0, "between two cells, a grid of floats blends, by how near each is"},
+        {120, 8, 4, 0, 1, 0, 0, 0, "from the one"},
+        {120, 8, 4, 5, 1, 1, 0, 0, "to the other"},
+        {176, 8, 12, 2, 0, 0.25f, 0, 1, "the Texture a field holds of a grid, with the draw's wrap: repeated"},
+        {176, 8, 12, 3, 1, 0, 0, 1, "both ways"},
+        {176, 8, 12, 2, 1, 1, 0, 1, "cell by cell"},
+        {8, 64, 12, 2, 0, 0.5f, 0, 1, "and as it says itself: the cell at its edge"},
+        {8, 64, 12, 0, 3, 1, 0, 1, "down as across"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    local.Art.targetPass = 12;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[COUNT];
+    uint32_t got[COUNT];
+    for (int i = 0; i < COUNT; i++) {
+        points[i] = tide_f2(wanted[i].left + wanted[i].cell * ((float)wanted[i].column + 0.5f),
+                            wanted[i].top + wanted[i].cell * ((float)wanted[i].row + 0.5f));
+    }
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
+    for (int i = 0; i < COUNT; i++) {
+        const uint8_t want[3] = {byte(wanted[i].r), byte(wanted[i].g), byte(wanted[i].b)};
+        bool ok = true;
+        for (int c = 0; c < 3; c++) {
+            const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - (int)want[c];
+            ok = ok && d >= -8 && d <= 8;
+        }
+        printf("%s: %s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, when, (unsigned)got[i],
+               want[0], want[1], want[2]);
+        if (!ok) failures++;
+    }
+    // The list has the grid as floats of 16 bits, one a cell
+    bool halves = false;
+    for (uint32_t i = 0; i < list.texture_count; i++) {
+        const tide_draw_texture *t = &list.textures[i];
+        halves = halves || (t->space == TIDE_PIXELS_GRID && t->format == TIDE_TEXELS_HALF && t->width == 2 && t->height == 2);
+    }
+    printf("%s: a grid of floats goes to the GPU as a float of 16 bits a cell%s\n", halves ? "ok" : "FAIL", when);
+    if (!halves) failures++;
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -689,6 +754,7 @@ static int frame(void *user, const float seconds)
         run_shadow_checks(", on another device");
         run_stencil_checks(", on another device");
         run_output_checks(", on another device");
+        run_height_checks(", on another device");
         return failures;
     }
 #endif
@@ -706,6 +772,7 @@ static int frame(void *user, const float seconds)
     run_shadow_checks(", again");
     run_stencil_checks("");
     run_output_checks("");
+    run_height_checks("");
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");

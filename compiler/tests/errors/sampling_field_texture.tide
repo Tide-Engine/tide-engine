@@ -1,5 +1,5 @@
-// expect: a Texture field holds whichever image it's given, so how 'kept' is sampled is said where it's drawn: 'Draw.Mesh(vertices, indices, texture, Filter.Point, Wrap.Repeat)'
-// expect: an image of the game's says it on its own declaration: '[Filter(Filter.Point)] asset Texture tiles = "art/tiles.png";'
+// expect: a Texture says how it's sampled itself, and a field holds whichever it's given: 'kept' takes no [Filter]
+// expect: say it where the texture is made, '[Filter(Filter.Point)] asset Texture tiles = "art/tiles.png";' or on the grid or the RenderTarget it comes from, or where it's drawn: 'Draw.Mesh(vertices, indices, texture, Filter.Point, Wrap.Repeat)'
 scene Main { }
 
 local singleton Art

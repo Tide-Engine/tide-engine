@@ -172,6 +172,16 @@ void tide_pack_use(void);
 // block header, where the builder put it.
 uint64_t tide_pack_grid_version(tide_grid g);
 
+// `bytes` bytes of the loaded region at a scratch offset (a handle's low 30
+// bits), where they're all in it: NULL otherwise, as for a handle kept from a
+// pack that's gone.
+const uint8_t *tide_pack_span(uint32_t offset, uint64_t bytes);
+
+// Has every texture of a list's or a map's entry sampled as `sampling` says
+// (tide_sampling_bits): what the asset's declaration says of them, which
+// generated code gives after each load.
+void tide_pack_sample_textures(const tide_pack_entry *e, uint32_t sampling);
+
 // How many scratch slots the loaded region takes, from TIDE_PACK_BASE: 0 for
 // none. The scratch area stops short of them (text.c).
 extern uint32_t tide_pack_region_slots;

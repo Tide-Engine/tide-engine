@@ -1,4 +1,4 @@
-// expect: a texture is a Grid2<Color>, and this is a Grid2<int>
+// expect: a texture is a Texture, a Grid2<Color> or a Grid2<float>, and this is a Grid2<int>
 scene Main { }
 
 struct V

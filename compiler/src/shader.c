@@ -1664,10 +1664,17 @@ void declared_sampling(const expr *texture, int *filter, int *wrap)
         && named->local->value->bind == BIND_ASSET) {
         named = named->local->value;
     }
+    // target.color, target.colors[1]: a RenderTarget field's color images, as the field says
+    if (named->kind == E_INDEX && named->object && named->object->kind == E_MEMBER && named->object->target_colors) {
+        named = named->object->object;
+    } else if (named->kind == E_MEMBER && named->object && named->object->type.kind == TY_RENDER_TARGET
+               && named->type.kind == TY_TEXTURE) {
+        named = named->object;
+    }
     if (named->bind == BIND_ASSET && named->constant) {
         *filter = named->constant->sample_filter - 1;
         *wrap = named->constant->sample_wrap - 1;
-    } else if (named->kind == E_MEMBER && named->field && named->type.kind == TY_GRID) {
+    } else if (named->kind == E_MEMBER && named->field && (named->type.kind == TY_GRID || named->type.kind == TY_RENDER_TARGET)) {
         *filter = field_sampling(named->field, "Filter");
         *wrap = field_sampling(named->field, "Wrap");
     }
@@ -1687,13 +1694,15 @@ static void ex_sample(emit *em, const expr *e)
     const shader_read read = of->type.kind != TY_DEPTH_TEXTURE ? READ_COLOR : str_eq_c(e->name, "Compare") ? READ_COMPARE : READ_DEPTH;
     // A depth's nearest pixel is read, the pixels at its edge past them, and what its comparisons give, the
     // GPU blends: none of it is the draw's to say
-    // A Sample that doesn't say its filter or its wrap has its texture's declaration's ([Filter], [Wrap]), and
-    // without one, blended and the cells at the edge. A direct Texture parameter has no declaration here: what
-    // its Sample leaves unsaid is its draw's source's to say (shader.sourced)
+    // A Sample that doesn't say its filter or its wrap has its texture's own. A grid field's and an asset's
+    // by name are their declaration's ([Filter], [Wrap]), and without one, blended and the cells at the edge:
+    // known here. A Texture's that's no asset's (the frag's own Texture parameter, a Texture field) is
+    // whichever texture it's given, which says how it's sampled: that's each draw's run's to carry
     int declared_filter, declared_wrap;
     declared_sampling(of, &declared_filter, &declared_wrap);
     const bool says_filter = e->args.count >= 2, says_wrap = e->args.count >= 3;
-    const bool filter_said = read != READ_COLOR || !direct || says_filter, wrap_said = read != READ_COLOR || !direct || says_wrap;
+    const bool carried = read == READ_COLOR && !asset && of->type.kind == TY_TEXTURE;
+    const bool filter_said = !carried || says_filter, wrap_said = !carried || says_wrap;
     const bool blended = read == READ_COLOR && (says_filter ? e->args.items[1]->enum_member->number != 0 : declared_filter != 0);
     const int wrap = read != READ_COLOR ? 0 : says_wrap ? (int)e->args.items[2]->enum_member->number : declared_wrap > 0 ? declared_wrap : 0;
     int slot = 0;
@@ -3049,12 +3058,11 @@ static void list_bound(const shader *sh, sb *out, const bool per_instance)
 // error, reported at the call.
 static shader *plan(program *prog, const expr *call, const decl *vertex, const bool textured, const bool direct_texture)
 {
-    const bool source_grid = call->blit && call->args.items[0]->type.kind == TY_GRID;
     for (int i = 0; i < prog->shaders.count; i++) {
         shader *s = prog->shaders.items[i];
         if (s->vertex == vertex && s->vert == call->vert && s->frag == call->frag && s->textured == textured
             && s->instanced == call->instanced && s->instance_type == call->instance_type
-            && s->blit == call->blit && s->direct_texture == direct_texture && s->source_grid == source_grid) return s;
+            && s->blit == call->blit && s->direct_texture == direct_texture) return s;
     }
     shader *sh = NEW(shader);
     sh->index = prog->shaders.count;
@@ -3064,7 +3072,6 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     sh->textured = textured;
     sh->blit = call->blit;
     sh->direct_texture = direct_texture;
-    sh->source_grid = source_grid;
     sh->instanced = call->instanced;
     sh->instance_type = call->instance_type;
     const field *position = field_called(vertex, "position");
@@ -3085,7 +3092,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     plan_reads(prog, sh, sh->vert);
     plan_reads(prog, sh, sh->frag);
     if (textured) {
-        const shader_texture t = {.blended = true}; // How it's read is the draw's to say
+        const shader_texture t = {.blended = true}; // How it's read is the texture's to say, which the draw gives
         vec_push(sh->textures, t);
     }
     for (int i = 0; i < sh->values.count; i++) {
@@ -3166,9 +3173,9 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         return NULL;
     }
     if (sh->textures.count > 8) {
-        diag_error(call->at, "this draw samples %d grids, and a draw takes 8", sh->textures.count);
-        diag_note("a grid sampled with another filter or another wrap counts again, and so does a depth that's both read and "
-                  "compared; put several images side by side in one grid");
+        diag_error(call->at, "this draw samples %d textures, and a draw takes 8", sh->textures.count);
+        diag_note("a texture sampled with another filter or another wrap counts again, and so does a depth that's both read "
+                  "and compared; put several images side by side in one texture");
         return NULL;
     }
     write_glsl(prog, sh);
@@ -3190,31 +3197,16 @@ void plan_shaders(program *prog)
         const mesh_draw *draw = &prog->mesh_draws.items[i];
         expr *call = draw->call;
         const decl *vertex = call->blit ? prog->vertex : call->args.items[0]->type.decl->fields.items[0].type.decl;
-        // A texture is the value argument after the indices, or after a 3D mesh's transform
+        // A texture is the value argument after the indices, or after a 3D mesh's transform: a Texture, or a
+        // grid, which is one there
         bool textured = false, direct_texture = call->blit;
         for (int a = 2; !call->blit && a < call->args.count; a++) {
             const type_kind kind = call->args.items[a]->type.kind;
             textured |= !call->frag && (kind == TY_GRID || kind == TY_TEXTURE);
-            direct_texture |= kind == TY_TEXTURE;
+            direct_texture |= kind == TY_GRID || kind == TY_TEXTURE;
         }
         shader *sh = plan(prog, call, vertex, textured, direct_texture);
         if (!sh) continue;
-        // A draw that says how its texture wraps, or whose texture's declaration does: the shader's function
-        // takes it, for all its draws
-        const expr *source = call->blit ? call->args.items[0] : NULL;
-        for (int a = 2; !call->blit && a < call->args.count; a++) {
-            const type given = call->args.items[a]->type;
-            if (given.kind == TY_GRID || given.kind == TY_TEXTURE) source = call->args.items[a];
-            sh->wrapped |= textured && given.kind == TY_ENUM && given.decl == prog->wrap;
-        }
-        int declared_filter, declared_wrap;
-        declared_sampling(source, &declared_filter, &declared_wrap);
-        sh->wrapped |= textured && declared_wrap > 0;
-        // ...and a source its stages take as a Texture, where their Samples leave it to the source
-        for (int t = 0; t < sh->textures.count && (declared_filter >= 0 || declared_wrap >= 0); t++) {
-            const shader_texture *taken = &sh->textures.items[t];
-            sh->sourced |= taken->direct && (!taken->filter_said || !taken->wrap_said);
-        }
         call->shader = sh;
         // What the view has to hand over that it doesn't take itself
         decl *view = draw->in;

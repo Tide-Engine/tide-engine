@@ -117,7 +117,6 @@ static decl mesh_vertices, mesh_vertices3, mesh_indices, mesh_pixels, mesh_filte
 static const type T_VERTICES = {TY_LIST, &mesh_vertices};
 static const type T_VERTICES3 = {TY_LIST, &mesh_vertices3};
 static const type T_INDICES = {TY_LIST, &mesh_indices};
-static const type T_PIXELS = {TY_GRID, &mesh_pixels};
 static const type T_FILTER = {TY_ENUM, &mesh_filter};
 static const type T_WRAP = {TY_ENUM, &mesh_wrap};
 static const type T_TRANSFORMS = {TY_LIST, &mesh_transforms};
@@ -304,8 +303,8 @@ static signature *sampled(signature *s, const int argc)
     s->params[argc] = T_FILTER;
     s->params[argc + 1] = T_WRAP;
     s->optional = 2;
-    s->defaults[argc] = "Filter.Bilinear";
-    s->defaults[argc + 1] = "Wrap.Clamp";
+    s->defaults[argc] = "the texture's";
+    s->defaults[argc + 1] = "the texture's";
     return s;
 }
 
@@ -701,28 +700,26 @@ static void build_signatures(void)
     static const char mesh_doc[] =
         "A 2D mesh, drawn where its vertices are, through the 2D camera: triangles, three of `indices` each, places "
         "in `vertices`. Each pixel is its corners' colors blended "
-        "across the triangle, times `texture`'s at their uvs: a grid of colors with a size, whose cell (0, 0) is at "
-        "uv (0, 0). `filter` is how it's read between cells: `Filter.Bilinear` (the default) or `Filter.Point`. "
-        "`wrap`, after the filter, is what a uv past 0 or 1 reads: the cells at the texture's edge (`Wrap.Clamp`, "
-        "the default), the texture again (`Wrap.Repeat`), or again the other way round each time (`Wrap.Mirror`).";
+        "across the triangle, times `texture`'s at their uvs: a Texture, which an asset, a render target's color "
+        "and a grid of colors or of floats with a size are (a grid's cell (0, 0) is at uv (0, 0)). `filter` is how "
+        "it's read between pixels, `Filter.Bilinear` or `Filter.Point`, and `wrap`, after the filter, what a uv past "
+        "0 or 1 reads: the pixels at the texture's edge (`Wrap.Clamp`), the texture again (`Wrap.Repeat`), or again "
+        "the other way round each time (`Wrap.Mirror`). A call that leaves one out has the texture's own, which is "
+        "what its declaration says (`[Filter]`, `[Wrap]`), and blended and clamped without one.";
     describe(add("Draw", "Mesh", T_NONE, "tide_draw_mesh_lists", 2, T_VERTICES, T_INDICES, T_NONE),
              "vertices, indices", mesh_doc);
-    // With a wrap, generated code calls each of these textured ones' `_wrapped` twin (gen_expr)
-    describe(sampled(add("Draw", "Mesh", T_NONE, "tide_draw_mesh_grid", 3, T_VERTICES, T_INDICES, T_PIXELS), 3),
-             "vertices, indices, texture, filter, wrap", mesh_doc);
+    // The texture is a Texture, which a Grid2<Color> and a Grid2<float> are where one is wanted; its filter
+    // and its wrap, where the call says them, are the texture's for this draw (gen_expr)
     describe(sampled(add("Draw", "Mesh", T_NONE, "tide_draw_mesh_texture", 3, T_VERTICES, T_INDICES, T_TEXTURE), 3),
              "vertices, indices, texture, filter, wrap", mesh_doc);
     static const char mesh3_doc[] =
         "A 3D mesh, placed in the world by `transform`, through the 3D camera: triangles, three of `indices` each, "
         "places in `vertices`, the nearest in front. Each pixel is its corners' colors blended across the "
-        "triangle, times `texture`'s at their uvs, read with `filter` between its cells and, for a uv past 0 or 1, "
-        "as `wrap` says (`Wrap.Clamp`, the default: the cells at its edge). Lists that don't change aren't copied "
+        "triangle, times `texture`'s at their uvs, read with `filter` between its pixels and, for a uv past 0 or 1, "
+        "as `wrap` says: the texture's own where the call leaves them out. Lists that don't change aren't copied "
         "again, and a mesh drawn again and again in a row is drawn at once.";
     describe(add("Draw", "Mesh", T_NONE, "tide_draw_mesh3_lists", 3, T_VERTICES3, T_INDICES, T_F4X4),
              "vertices, indices, transform", mesh3_doc);
-    signature *sampled3 = add("Draw", "Mesh", T_NONE, "tide_draw_mesh3_grid", 3, T_VERTICES3, T_INDICES, T_F4X4);
-    sampled3->params[3] = T_PIXELS;
-    describe(sampled(sampled3, 4), "vertices, indices, transform, texture, filter, wrap", mesh3_doc);
     signature *texture_sampled3 = add("Draw", "Mesh", T_NONE, "tide_draw_mesh3_texture", 3, T_VERTICES3, T_INDICES, T_F4X4);
     texture_sampled3->params[3] = T_TEXTURE;
     describe(sampled(texture_sampled3, 4), "vertices, indices, transform, texture, filter, wrap", mesh3_doc);
@@ -732,10 +729,6 @@ static void build_signatures(void)
         "transform places it; without one it uses the identity. A vert places 2D instances.";
     describe(add("Draw", "Instanced", T_NONE, "tide_draw_mesh3_instances_lists", 3, T_VERTICES3, T_INDICES, T_TRANSFORMS),
              "vertices, indices, instances", instanced_doc);
-    signature *instances_sampled = add("Draw", "Instanced", T_NONE, "tide_draw_mesh3_instances_grid", 3,
-                                       T_VERTICES3, T_INDICES, T_TRANSFORMS);
-    instances_sampled->params[3] = T_PIXELS;
-    describe(sampled(instances_sampled, 4), "vertices, indices, instances, texture, filter, wrap", instanced_doc);
     signature *instances_texture_sampled = add("Draw", "Instanced", T_NONE, "tide_draw_mesh3_instances_texture", 3,
                                               T_VERTICES3, T_INDICES, T_TRANSFORMS);
     instances_texture_sampled->params[3] = T_TEXTURE;

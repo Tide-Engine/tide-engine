@@ -398,9 +398,10 @@ typedef struct shader_sample {
     const struct decl *asset; // A Grid2<Color> or Texture asset sampled by name, or NULL
     int wrap;     // What a uv past 0 and 1 reads: its Wrap's number, tide_wrap's
     shader_read read; // A DepthTexture's: which of its two ways it's read
-    // Whether the Sample says its filter and its wrap. A field's or an asset's that doesn't has its
-    // declaration's, worked into `blended` and `wrap` (declared_sampling), so these are true for it. A direct
-    // Texture parameter's that doesn't has its draw's source's, which is each draw's to say
+    // Whether how it's read is known here: the Sample says its filter and its wrap, or it's of a grid field
+    // or an asset by name, whose declaration's it then has, worked into `blended` and `wrap`
+    // (declared_sampling). A Texture's that isn't (a frag's own Texture parameter, a Texture field) is read as
+    // the Texture it's given says, which each draw's run carries (tide_draw_run.sampling)
     bool filter_said, wrap_said;
 } shader_sample;
 
@@ -1021,7 +1022,7 @@ typedef struct shader_texture {
     const struct decl *asset; // A Grid2<Color> or Texture asset, sampled by name: neither a field nor the draw's
     int wrap;    // Its Wrap's number, tide_wrap's: 0 where the draw says (a `textured` shader's own)
     shader_read read; // A DepthTexture field's: as a number, or compared, each a texture of its own
-    bool filter_said, wrap_said; // As its samples' (shader_sample): false for what a direct one leaves to its draw's source
+    bool filter_said, wrap_said; // As its samples' (shader_sample): false for what's left to the Texture it's given
 } shader_texture;
 
 // A struct a vert writes for its frag, an `out` parameter of the vert's: the
@@ -1042,13 +1043,8 @@ typedef struct shader {
     struct decl *vert;   // NULL: the vertices as they are
     struct decl *frag;   // NULL: the vertex's color times the texture
     int dims;            // 2 or 3: its position's
-    bool textured;       // No frag, and a texture given at the draw
-    bool wrapped;        // ...and one of its draws says how it wraps, so its function takes a wrap
-    // One of its draws gives its stages a source whose declaration says how it's sampled ([Filter], [Wrap]),
-    // and a Sample of that source leaves it unsaid: its function takes the source's filter and wrap
-    bool sourced;
-    bool direct_texture; // The draw supplies a Texture to its shader stages
-    bool source_grid;    // Blit's explicit source is uploaded from a Grid2<Color> at recording time
+    bool textured;       // No frag, and a texture given at the draw, read as that texture says
+    bool direct_texture; // The draw supplies a Texture: the one it draws with, or its shader stages' source
     bool blit;           // A full destination overwrite with a fixed Vertex quad
     bool instanced;      // Its draw supplies a list of instances
     struct decl *instance_type; // Explicit instance data, or NULL for transforms only

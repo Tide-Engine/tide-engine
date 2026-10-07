@@ -1,0 +1,128 @@
+// Texture is the one type a draw's texture and a Sample take (docs/spec.md,
+// Views and drawing, Textures). A Grid2<Color> and a Grid2<float> are one
+// where one is wanted: a draw's texture, a blit's source, a Texture field, a
+// local or a parameter. And a Texture carries how it's sampled, from where it
+// was made: a grid field's [Filter] and [Wrap], a RenderTarget field's for its
+// color, which a draw's own filter and wrap, and a Sample's, take the place of.
+
+scene Main { }
+
+// A mesh's corner of the game's own: its draws go through a shader
+struct Corner
+{
+    float2 position;
+    float2 uv;
+    Color color = Color.white;
+}
+
+local singleton Art
+{
+    List<Vertex> flat;
+    List<Vertex3> solid;
+    List<Corner> corners;
+    List<int> faces;
+    List<float4x4> places;
+    [Filter(Filter.Point), Wrap(Wrap.Repeat)]
+    Grid2<Color> tiles = Grid2(2, 2);
+    Grid2<Color> plain = Grid2(4, 2);
+    [Wrap(Wrap.Mirror)]
+    Grid2<float> heights = Grid2(3, 3);
+    [Filter(Filter.Point)]
+    RenderTarget small;
+    RenderTarget target;
+    Texture kept;        // tiles, as a value
+    Texture keptHeights; // heights
+    Texture keptColor;   // small's color
+    Texture none;
+    int frames;
+}
+
+// A Texture goes through a function as any value does, and a grid is one there
+void Put(List<Vertex> flat, List<int> faces, Texture texture)
+{
+    Draw.Mesh(flat, faces, texture);
+}
+
+Texture Pick(Texture first, Texture second, bool takeFirst)
+{
+    return takeFirst ? first : second;
+}
+
+view Fill(mut Art art)
+{
+    art.frames += 1;
+    if (art.frames > 1) return;
+    art.flat = [Vertex { }, Vertex { position = float2(1, 0), uv = float2(2, 0) }, Vertex { position = float2(0, 1), uv = float2(0, 2) }];
+    art.solid = [Vertex3 { }, Vertex3 { position = float3(1, 0, 0), uv = float2(2, 0) },
+                 Vertex3 { position = float3(0, 1, 0), uv = float2(0, 2) }];
+    art.corners = [Corner { }, Corner { position = float2(1, 0), uv = float2(2, 0) }, Corner { position = float2(0, 1), uv = float2(0, 2) }];
+    art.faces = [0, 1, 2];
+    art.places = [float4x4.identity, float4x4.Translate(float3(2, 0, 0))];
+    art.tiles[0, 0] = Color.red;
+    art.plain[3, 1] = Color.white;
+    art.heights[0, 0] = 1;
+    art.heights[1, 0] = 0.5;
+    art.heights[2, 0] = -2;
+    art.heights[0, 1] = 1000000; // Past what 16 bits hold: the most they do
+    art.heights[1, 1] = 0.1;
+    // A grid where a Texture goes is the texture it is, and what a field keeps is that texture
+    art.kept = art.tiles;
+    art.keptHeights = art.heights;
+    art.keptColor = art.small.color;
+}
+
+view Draws(Art art)
+{
+    Draw.Mesh(art.flat, art.faces, art.tiles);                                  // 0: as its field says
+    Draw.Mesh(art.flat, art.faces, art.tiles, Filter.Bilinear);                 // 1: the draw's filter, the field's wrap
+    Draw.Mesh(art.flat, art.faces, art.tiles, Filter.Bilinear, Wrap.Clamp);     // 2: both the draw's
+    Draw.Mesh(art.flat, art.faces, art.kept);                                   // 3: the value, as tiles
+    Draw.Mesh(art.flat, art.faces, art.kept, Filter.Bilinear, Wrap.Mirror);     // 4: the draw's, over the value's
+    Draw.Mesh(art.flat, art.faces, art.plain);                                  // 5: nothing said
+    Draw.Mesh(art.flat, art.faces, art.heights);                                // 6: a grid of floats
+    Draw.Mesh(art.flat, art.faces, art.keptHeights, Filter.Point);              // 7
+    Draw.Mesh(art.flat, art.faces, art.small.color);                            // 8: a target's color, as its field says
+    Draw.Mesh(art.flat, art.faces, art.target.color);                           // 9: one that says nothing
+    Draw.Mesh(art.flat, art.faces, art.keptColor);                              // 10: small's color, kept
+    Draw.Mesh(art.flat, art.faces, art.none);                                   // 11: the default Texture, which is none
+    Texture mine = art.tiles;
+    Draw.Mesh(art.flat, art.faces, mine);                                       // 12: through a local
+    Draw.Mesh(art.flat, art.faces, Pick(art.tiles, art.plain, false));          // 13: what a function gave
+    Put(art.flat, art.faces, art.tiles);                                        // 14: through a parameter
+    Draw.Mesh(art.solid, art.faces, float4x4.identity, art.tiles);              // 15: in 3D
+    Draw.Instanced(art.solid, art.faces, art.places, art.kept, Filter.Bilinear); // 16
+    art.target.Mesh(art.flat, art.faces, art.tiles);                            // 17: into a target
+    Draw.Mesh(art.flat, art.faces, art.small.colors[0], Filter.Bilinear);       // 18: one of a target's colors
+}
+
+// The Texture its draw gives it: what a Sample leaves unsaid is that texture's own
+frag Given(Corner vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv) * source.Sample(vertex.uv, Filter.Bilinear, Wrap.Clamp);
+}
+
+// A Texture in a field is whichever it was given, read as that one says; a grid's field as its declaration says
+frag Fields(Corner vertex, out Color color, Art art)
+{
+    color = art.kept.Sample(vertex.uv)
+          * art.kept.Sample(vertex.uv, Filter.Bilinear)
+          * art.heights.Sample(vertex.uv)
+          * art.plain.Sample(vertex.uv, Filter.Point);
+}
+
+frag Copied(Vertex vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv);
+}
+
+view Shaded(Art art)
+{
+    Draw.Mesh(art.corners, art.faces, art.tiles);                               // 19: no frag
+    Draw.Mesh(art.corners, art.faces, art.kept, Filter.Bilinear);               // 20
+    Draw.Mesh(art.corners, art.faces, art.tiles, Given);                        // 21
+    Draw.Mesh(art.corners, art.faces, art.plain, Given);                        // 22: the same frag, another run
+    Draw.Mesh(art.corners, art.faces, art.tiles, Filter.Bilinear, Wrap.Mirror, Given); // 23: the draw's, for what Samples leave
+    Draw.Mesh(art.corners, art.faces, Fields);                                  // 24
+    Draw.Blit(art.heights, art.target, Copied);                                 // 25
+    Draw.Blit(art.kept, art.target, Copied);                                    // 26
+}
