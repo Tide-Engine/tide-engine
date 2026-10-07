@@ -50,6 +50,9 @@ component Results
     int hashed2;
     int hashed3;
     int hashed4;
+    float4 perlins;   // Noise: each size, with a seed and without
+    float4 simplexes;
+    float4 cells;
 }
 
 scene Main { }
@@ -111,4 +114,10 @@ system Compute(mut Body body, mut Results r)
     r.hashed2 = Math.Hash(body.cell);
     r.hashed3 = Math.Hash(int3(body.cell, 9));
     r.hashed4 = Math.Hash(int4(1, 2, 3, 4));
+
+    float2 at = body.position.xy * 0.37 + 0.11;
+    float3 deep = body.position * 0.83;
+    r.perlins = float4(Math.Perlin(at), Math.Perlin(at, 7), Math.Perlin(deep), Math.Perlin(deep, -3));
+    r.simplexes = float4(Math.Simplex(at), Math.Simplex(at, 7), Math.Simplex(deep), Math.Simplex(deep, -3));
+    r.cells = float4(Math.Cellular(at), Math.Cellular(deep, 7));
 }

@@ -157,6 +157,32 @@ TIDE_TEST(crossplatform_geometry)
     expect_hash("geometry", h, 0xA244CB549F91E603ull);
 }
 
+// Noise (noise.c): every function, at game-sized points and at any float,
+// with seeds of every kind.
+TIDE_TEST(crossplatform_noise)
+{
+    uint64_t h = 0xCBF29CE484222325ull;
+    rng = 400;
+    for (int i = 0; i < SAMPLES; i++) {
+        const tide_float3 v = game_f3();
+        const int32_t seed = (int32_t)next_bits();
+        h = hash_float(h, tide_perlin_f2(tide_f2(v.x, v.y), seed));
+        h = hash_float(h, tide_perlin_f3(v, seed));
+        h = hash_float(h, tide_simplex_f2(tide_f2(v.y, v.z), seed));
+        h = hash_float(h, tide_simplex_f3(v, seed));
+        const tide_float2 c2 = tide_cellular_f2(tide_f2(v.z, v.x), seed);
+        const tide_float2 c3 = tide_cellular_f3(v, seed);
+        h = hash_float(hash_float(h, c2.x), c2.y);
+        h = hash_float(hash_float(h, c3.x), c3.y);
+        const float a = any_float();
+        const float b = any_float();
+        h = hash_float(h, tide_perlin_f2(tide_f2(a, b), 0));
+        h = hash_float(h, tide_simplex_f2(tide_f2(b, a), 0));
+        h = hash_float(h, tide_cellular_f2(tide_f2(a, b), 0).x);
+    }
+    expect_hash("noise", h, 0xEDCBD182F357DC40ull);
+}
+
 // Random numbers (tide/random.h): the same sequence everywhere, from a seed,
 // from a state of zero and from what the engine seeds, through every method.
 TIDE_TEST(crossplatform_random)

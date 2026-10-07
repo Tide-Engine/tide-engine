@@ -65,6 +65,7 @@ Some examples put two players side by side. Each frame is a machine of its own, 
 ## The language
 
 - [Curves from Math](../language/math.md#functions): a few of `Math`'s functions, plotted.
+- [Noise, drawn by the GPU](../language/math.md#noise): Perlin, simplex and cellular noise, with octaves and a seed.
 - [The same seed, the same numbers](../language/math.md#seeds): a `Random` and its seed.
 - [A list, changed and sorted](../language/text-and-lists.md#sorting): a list's members, a button each.
 
