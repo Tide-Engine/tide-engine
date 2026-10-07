@@ -1,0 +1,5 @@
+// expect: a render target's samples are 1, 2, 4 or 8, and this says 3
+// expect: each of its pixels is drawn with that many samples, which smooths the edges of the triangles drawn into it: 'RenderTarget(width, height, samples: 4)'; a device that has fewer draws it with what it has
+// A GPU has those counts and no others
+scene Main { }
+view Show() { var target = RenderTarget(64, 64, samples: 3); }

@@ -358,6 +358,7 @@ The scene below does it. **Lamp** turns the lamp, **Soft edges** takes four comp
 - **Compare a little nearer than the pixel is,** `depth - 0.003`: a surface the lamp sees is exactly as far as what's stored there, to the rounding, and would be in its own shadow in stripes. How much it takes goes with how slanted the surface is to the lamp and how few pixels the lamp's image has across what it sees.
 - **A target with pixels of its own** (`RenderTarget(1024, 1024, 1, ...)`) casts the same shadows on every display. The fewer pixels it has across what the lamp sees, the blockier a shadow's edge.
 - **The target that's read isn't the one drawn into.** A draw into a target that reads that target's depth is passed by, with a line that says so.
+- **The target that's read has no `samples`.** A target made with [`samples`](./views.md#smooth-edges) keeps several depths a pixel, which no frag reads: a draw that reads its depth is passed by the same way.
 
 ## Where the pixel is
 

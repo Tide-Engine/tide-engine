@@ -50,10 +50,30 @@ enum { TIDE_GPU_MAX_COLORS = 4 }; // The most color images a target has: what Op
 // What a target holds beside its depth, which every target has: its color
 // images in order, 4 bits each (tide_gpu_color), and 0 past the last. So 0 is
 // a target of depth alone, and 1 a target of one image of 4 bytes a pixel,
-// which is also what the window is.
+// which is also what the window is. Past its colors' 16 bits, how many
+// samples each of its pixels is drawn with (tide_gpu_target_samples): 0, which
+// is 1, for what isn't multisampled, as the window isn't. It's one number so
+// that whatever is made for a kind of target (a pipeline's `into`) is made
+// for its samples too, which a pipeline is on WebGPU.
 typedef uint32_t tide_gpu_target_format;
 #define TIDE_GPU_TARGET_DEPTH 0u
 #define TIDE_GPU_TARGET_COLOR 1u
+#define TIDE_GPU_TARGET_SAMPLES_SHIFT 16u
+enum { TIDE_GPU_MAX_SAMPLES = 8 }; // The most any device is asked for
+
+// How many samples a pixel of such a target is drawn with: 1, 2, 4 or 8.
+static inline uint32_t tide_gpu_target_samples(const tide_gpu_target_format format)
+{
+    const uint32_t samples = format >> TIDE_GPU_TARGET_SAMPLES_SHIFT & 15u;
+    return samples > 1u ? samples : 1u;
+}
+
+// ...and the format with `samples` of them (1 is none said, so two formats
+// of as many samples are the same number).
+static inline tide_gpu_target_format tide_gpu_target_sampled(const tide_gpu_target_format format, const uint32_t samples)
+{
+    return (format & 0xFFFFu) | (samples > 1u ? (samples & 15u) << TIDE_GPU_TARGET_SAMPLES_SHIFT : 0u);
+}
 
 // A target's color image `color`, from 0: TIDE_GPU_COLOR_NONE for one it hasn't got.
 static inline tide_gpu_color tide_gpu_target_color(const tide_gpu_target_format format, const uint32_t color)
@@ -203,7 +223,8 @@ typedef struct tide_gpu_pipeline_desc {
     tide_gpu_stencil_op stencil_op;
     // What the targets it draws into hold: a pipeline is for one kind, and
     // the window is of the kind TIDE_GPU_TARGET_COLOR. One for targets of
-    // depth alone writes no color, and its blend isn't read.
+    // depth alone writes no color, and its blend isn't read. The kind has
+    // the targets' samples in it, as the device gives them (target_samples).
     tide_gpu_target_format into;
     // How many colors its fragment shader writes, at locations 0 on: one, for
     // 0. They go to the target's color images in that order, each blended the
@@ -257,8 +278,24 @@ typedef struct tide_gpu {
     // textures are 0, nothing is read back from it, and the pipelines that
     // draw into it are made for that (tide_gpu_pipeline_desc.into), as those
     // into every other kind of target are.
+    //
+    // A format with samples (tide_gpu_target_sampled, which has to be what
+    // target_samples gives for it) is a multisampled target: each pixel has
+    // that many colors, depths and stencils while it's drawn into, kept from
+    // pass to pass, and a triangle's edge covers some of them. Its color
+    // textures have one color a pixel, what its samples come to, as each
+    // pass on it ends (`end` resolves them): those are what's sampled and
+    // read back. Its depth is no texture (target_depth is 0): no backend
+    // here resolves one. It takes that many times the memory, and its color
+    // textures beside.
     tide_gpu_id (*target)(tide_gpu_target_format format, int width, int height);
     int (*target_limit)(void); // The most pixels a side one has, on this device
+    // How many samples a target that holds `format`, whose samples are what's
+    // asked for, has on this device: no more than asked but where the device
+    // has no such count and has a higher one (WebGPU has 1 and 4: 2 is 4),
+    // and 1 where it has none. What a format given to `target`, and a
+    // pipeline's `into`, say.
+    uint32_t (*target_samples)(tide_gpu_target_format format);
     // Whether a color image of floats (TIDE_GPU_COLOR_FLOAT) is one on this
     // device. Where it isn't (an OpenGL ES 3 or a WebGL 2 with no way to draw
     // into floats), such an image is 4 bytes a pixel, having said so once:
@@ -278,7 +315,8 @@ typedef struct tide_gpu {
     // image it has, a float one too), depth too and stencil to 0, or over
     // what's there. One at a time; everything below is inside one.
     void (*begin)(tide_gpu_id target, bool clear);
-    void (*end)(void);
+    void (*end)(void); // A multisampled target's color textures are what it holds from here
+
     // Only what's inside the rect draws from here on: the whole target, to
     // draw everywhere. It's inside the target.
     void (*scissor)(int x, int y, int width, int height);

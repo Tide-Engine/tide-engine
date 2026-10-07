@@ -1,0 +1,4 @@
+// expect: a render target's samples are a whole number, 1, 2, 4 or 8, not float
+// expect: each of its pixels is drawn with that many samples, which smooths the edges of the triangles drawn into it: 'RenderTarget(width, height, samples: 4)'
+scene Main { }
+view Show() { var target = RenderTarget(64, 64, Format.Rgba8, samples: 0.5); }
