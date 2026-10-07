@@ -1046,6 +1046,38 @@ TIDE_TEST(lsp_wrap)
 #undef WRAP_TYPES
 }
 
+// Filter.Trilinear: a member like the others, on a frag's hover where it samples so, and the error for a uv a
+// frag can't work out as it starts.
+TIDE_TEST(lsp_trilinear)
+{
+    start();
+#define MIP_TYPES                                                                                      \
+    "scene Main { }\n"                                                                                 \
+    "local singleton Art\n{\n    [Filter(Filter.Trilinear)]\n    Grid2<Color> tiles = Grid2(64, 64);\n" \
+    "    Grid2<Color> plain = Grid2(4, 4);\n    List<Vertex> flat;\n}\n"
+#define IN_FRAG(code) MIP_TYPES "frag Tile(Vertex vertex, out Color color, Art art)\n{\n    " code "\n}\n"
+    open_document(MIP_TYPES "frag Ti$le(Vertex vertex, out Color color, Art art)\n{\n"
+                            "    color = art.tiles.Sample(vertex.uv) * art.plain.Sample(vertex.uv, Filter.Trilinear, Wrap.Repeat);\n}\n"
+                            "view V(Art art)\n{\n"
+                            "    Draw.Mesh(art.flat, [0, 1, 2], art.plain, Filter.Trilinear);\n"
+                            "    Draw.Mesh(art.flat, [0, 1, 2], Tile);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *frag = request("textDocument/hover");
+    TIDE_CHECK(has(frag, "`Art.tiles` (`Filter.Trilinear`)") && has(frag, "`Art.plain` (`Filter.Trilinear`) (`Wrap.Repeat`)"));
+    const char *members = complete(IN_FRAG("color = art.plain.Sample(vertex.uv, Filter.$);"));
+    TIDE_CHECK(offers(members, "Point") && offers(members, "Bilinear") && offers(members, "Trilinear"));
+    open_document(IN_FRAG("color = art.plain.Sam$ple(vertex.uv, Filter.Trilinear);"));
+    TIDE_CHECK(has(request("textDocument/hover"), "smaller images too"));
+    // A uv that changes can't be asked about as the frag starts
+    open_document(IN_FRAG("mut var uv = vertex.uv;\n    uv.x += 1;\n    color = art.tiles.Sample(uv);"));
+    TIDE_CHECK(has(last_sent(), "a Sample that's Filter.Trilinear reads where the frag can work out as it starts"));
+    TIDE_CHECK(has(last_sent(), "or sample with Filter.Bilinear here"));
+    open_document(IN_FRAG("mut var uv = vertex.uv;\n    uv.x += 1;\n    color = art.tiles.Sample(uv, Filter.Bilinear);"));
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+#undef IN_FRAG
+#undef MIP_TYPES
+}
+
 // Calls listed with commas before one block: one to a line, each starting where the first does, the brace under them.
 TIDE_TEST(lsp_format_stacked_calls)
 {
@@ -8096,6 +8128,39 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     open_uri(uri_main, "scene Main { }\nlocal singleton Art\n{\n    List<Texture> frames;\n}\n");
     TIDE_CHECK(has(last_sent(), "a list or a map can't hold rendering resources"));
     TIDE_CHECK(has(last_sent(), "asset List<Texture> frames"));
+
+    // [Raw]: a texture of numbers, which a frag reads by its name and nothing draws
+    static const char raw_file[] = "[Raw] asset Texture masks = \"art/tile.png\";\n"
+                                   "scene Main { }\n"
+                                   "local singleton Art\n"
+                                   "{\n"
+                                   "    [Raw] Grid2<Color> kept = Grid2(2, 2);\n"
+                                   "}\n"
+                                   "frag Read(Vertex vertex, out Color color, Art art)\n"
+                                   "{\n"
+                                   "    color = masks.Sample(vertex.uv) + art.kept.Sample(vertex.uv);\n"
+                                   "}\n"
+                                   "view V()\n"
+                                   "{\n"
+                                   "    Draw.Mesh([Vertex { }], [0, 0, 0], Read);\n"
+                                   "}\n";
+    open_uri(uri_main, raw_file);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    hover = request_at(uri_main, "textDocument/hover", 0, 2, "");
+    TIDE_CHECK(has(hover, "[Raw]") && has(hover, "pixels are numbers, not colors to draw"));
+    hover = request_at(uri_main, "textDocument/hover", 0, 21, "");
+    TIDE_CHECK(has(hover, "asset Texture masks") && has(hover, "It's `[Raw]`"));
+    hover = request_at(uri_main, "textDocument/hover", 4, 6, "");
+    TIDE_CHECK(has(hover, "[Raw]") && has(hover, "no alpha worked into them"));
+    open_uri(uri_main, "[] asset Texture masks = \"art/tile.png\";\nscene Main { }\nlocal singleton Art\n{\n    [] Grid2<Color> kept = Grid2(2, 2);\n}\n");
+    completion = request_at(uri_main, "textDocument/completion", 0, 1, "");
+    TIDE_CHECK(offers(completion, "Raw") && offers(completion, "Filter"));
+    completion = request_at(uri_main, "textDocument/completion", 4, 5, "");
+    TIDE_CHECK(offers(completion, "Raw") && offers(completion, "Wrap"));
+    open_uri(uri_main, "[Raw] asset Texture masks = \"art/tile.png\";\nscene Main { }\nview V()\n{\n"
+                       "    Draw.Mesh([Vertex { }], [0, 0, 0], masks);\n}\n");
+    TIDE_CHECK(has(last_sent(), "'masks' is [Raw], its pixels numbers and not colors to draw"));
+    TIDE_CHECK(has(last_sent(), "read it in a frag or a vert, by its name"));
 
     remove_game_file("lsp_tx/main.tide");
     remove_game_file("lsp_tx/art/tile.png");

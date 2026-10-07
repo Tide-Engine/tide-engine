@@ -60,6 +60,7 @@ enum {
     H_NORMALIZE_Q, H_MUL_Q, H_ROTATE_Q, H_INVERSE_Q, H_CONJUGATE_Q, H_NLERP_Q, H_SLERP_Q, H_ANGLE_Q, H_AXISANGLE_Q, H_EULER_Q,
     H_Q_FROM_M3, H_LOOKROTATION_Q, H_M3_FROM_Q, H_M4_FROM_M3, H_TRS, H_PERSPECTIVE, H_ORTHO,
     H_INVERSE2, H_INVERSE3, H_INVERSE4,
+    H_STRAIGHT, // tide_straight(c): a texture's pixel, which has its alpha worked into its color, as the color it is
     H_COUNT
 };
 
@@ -77,6 +78,11 @@ typedef struct emit {
     int defuse;        // Inside an expression whose literals go through tide_f and tide_i
     int temps;
     const expr *statement; // The call a statement makes: its mut arguments can go through copies
+    // What a frag works out as it starts, before any branch: for each Sample that may read between a texture's
+    // smaller images, where it reads and how fast that changes from one pixel to the next (ex_sample)
+    sb grads;
+    int grad_count;
+    int lifting; // Writing one of those: a local is written as what it was declared as
     VEC(const decl *) structs; // The structs the code names, each after the ones it holds
     VEC(const decl *) done;    // The functions written, callees first
     sb functions;
@@ -435,6 +441,12 @@ static const char *const family_scalars[FAMILY_COUNT] = {
 };
 
 static const char *const helper_texts[H_COUNT] = {
+    // A texture holds colors times their alpha, so that what's blended between two pixels is right (a clear
+    // pixel's color counts for nothing). Code reads the color itself. A pixel with no alpha has none
+    [H_STRAIGHT] = "vec4 tide_straight(vec4 c) {\n"
+                   "    if (c.a == 0.0) { return vec4(0.0); }\n"
+                   "    return vec4(c.rgb / c.a, c.a);\n"
+                   "}\n",
     [H_F] = "float tide_f(float x) {\n"
             "    return x;\n"
             "}\n",
@@ -1046,6 +1058,12 @@ static void ex_name(emit *em, const expr *e)
 {
     switch (e->bind) {
     case BIND_LOCAL:
+        if (em->lifting) { // Before it's declared: its value, which nothing changed (liftable)
+            sb_put(em->o, "(");
+            ex_as(em, e->local->value, e->local->type);
+            sb_put(em->o, ")");
+            return;
+        }
         sb_put(em->o, local_name(e->local->name));
         return;
     case BIND_PARAM: {
@@ -1654,6 +1672,21 @@ static int field_sampling(const field *f, const char *name)
     return -1;
 }
 
+bool field_is_raw(const field *f)
+{
+    for (int i = 0; f && i < f->attributes.count; i++) {
+        if (str_eq_c(f->attributes.items[i].name, "Raw")) return true;
+    }
+    return false;
+}
+
+bool declared_raw(const expr *texture)
+{
+    if (!texture) return false;
+    if (texture->bind == BIND_ASSET && texture->constant) return texture->constant->sample_raw;
+    return texture->kind == E_MEMBER && texture->field && texture->type.kind == TY_GRID && field_is_raw(texture->field);
+}
+
 void declared_sampling(const expr *texture, int *filter, int *wrap)
 {
     *filter = *wrap = -1;
@@ -1681,6 +1714,94 @@ void declared_sampling(const expr *texture, int *filter, int *wrap)
     }
 }
 
+// How a Sample's texture is read between its pixels where that's known as
+// the game is compiled: its Filter's number, or -1 for a Texture's that's no
+// asset's by name, which is whichever texture a draw gives.
+static int known_filter(const expr *e)
+{
+    const expr *of = e->object;
+    if (of->type.kind == TY_DEPTH_TEXTURE) return 0;
+    if (e->args.count >= 2) return e->args.items[1]->enum_member ? (int)e->args.items[1]->enum_member->number : 1;
+    if (of->bind != BIND_ASSET && of->type.kind == TY_TEXTURE) return -1;
+    int filter, wrap;
+    declared_sampling(of, &filter, &wrap);
+    return filter == 0 || filter == 2 ? filter : 1;
+}
+
+// Whether a frag can work an expression out as it starts, before any branch:
+// it's made of the frag's parameters, constants, locals that are never
+// assigned again and whose own values are so, and what changes nothing
+// (arithmetic, Math, constructors, functions that take everything by value,
+// and a texture read at its own pixels). A frag asks how fast a Sample's uv
+// changes from pixel to pixel there, which a GPU only answers outside
+// branches and loops.
+static bool liftable(const emit *em, const expr *e, const int depth)
+{
+    if (!e || depth > 64) return false;
+    switch (e->kind) {
+    case E_INT:
+    case E_FLOAT:
+    case E_BOOL:
+    case E_DEFAULT:
+        return true;
+    case E_NAME:
+        if (e->bind == BIND_CONST) return true;
+        if (e->bind == BIND_PARAM) return em->code == em->root && e->param->mode != PARAM_MUT && !e->param->is_out;
+        if (e->bind == BIND_LOCAL) {
+            const stmt *s = e->local;
+            return s && s->kind == S_VAR && !s->is_mut && !s->loop_var && !s->out_decl && !s->assigned && s->value
+                && liftable(em, s->value, depth + 1);
+        }
+        return false;
+    case E_MEMBER:
+        if (e->constant || e->enum_member || e->c_constant) return true;
+        return liftable(em, e->object, depth + 1);
+    case E_BINARY:
+    case E_UNARY:
+        if (e->method) {
+            for (int i = 0; i < e->method->params.count; i++) {
+                if (e->method->params.items[i].mode == PARAM_MUT) return false;
+            }
+        }
+        return liftable(em, e->lhs, depth + 1) && (e->kind == E_UNARY || liftable(em, e->rhs, depth + 1));
+    case E_CONDITIONAL:
+        return liftable(em, e->cond, depth + 1) && liftable(em, e->lhs, depth + 1) && liftable(em, e->rhs, depth + 1);
+    case E_LITERAL:
+        for (int i = 0; i < e->inits.count; i++) {
+            if (!liftable(em, e->inits.items[i].value, depth + 1)) return false;
+        }
+        return true;
+    case E_CALL:
+    case E_METHOD: {
+        const bool on_value = e->kind == E_METHOD && e->object && !(e->object->kind == E_NAME && e->object->bind != BIND_LOCAL
+                                                                    && e->object->bind != BIND_PARAM && e->object->bind != BIND_CONST);
+        if (e->call == CALL_GRID) { // A texture read at its own pixels asks nothing of the pixels around
+            const int filter = known_filter(e);
+            return (str_eq_c(e->name, "Sample") || str_eq_c(e->name, "Compare")) && (filter == 0 || filter == 1)
+                && liftable(em, e->args.items[0], depth + 1) && (e->args.count < 2 || e->object->type.kind != TY_DEPTH_TEXTURE
+                                                                 || liftable(em, e->args.items[1], depth + 1));
+        }
+        if (e->call == CALL_FUNCTION || e->call == CALL_METHOD) {
+            const decl *fn = e->method;
+            if (!fn || fn->is_extern || fn->is_mut_method) return false;
+            for (int i = 0; i < fn->params.count; i++) { // One with the pixel could leave it undrawn
+                const param *p = &fn->params.items[i];
+                if (p->mode == PARAM_MUT || p->is_out || p->type.decl == em->prog->pixel) return false;
+            }
+        } else if (e->call != CALL_CONSTRUCT && e->call != CALL_BUILTIN) {
+            return false;
+        }
+        if (on_value && !liftable(em, e->object, depth + 1)) return false;
+        for (int i = 0; i < e->args.count; i++) {
+            if (!liftable(em, e->args.items[i], depth + 1)) return false;
+        }
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 // A texture parameter, or a grid or texture field: which binding reads it.
 // One sampled with another filter or another wrap is another binding, as a
 // backend's sampler is how a binding is read. A DepthTexture field is a
@@ -1704,7 +1825,25 @@ static void ex_sample(emit *em, const expr *e)
     const bool says_filter = e->args.count >= 2, says_wrap = e->args.count >= 3;
     const bool carried = read == READ_COLOR && !asset && of->type.kind == TY_TEXTURE;
     const bool filter_said = !carried || says_filter, wrap_said = !carried || says_wrap;
-    const bool blended = read == READ_COLOR && (says_filter ? e->args.items[1]->enum_member->number != 0 : declared_filter != 0);
+    const int said = read != READ_COLOR ? 0 : says_filter ? (int)e->args.items[1]->enum_member->number : declared_filter;
+    const int filter = read != READ_COLOR || said == 0 ? 0 : said == 2 ? 2 : 1;
+    // Between a texture's smaller images (Filter.Trilinear), a GPU reads by how fast the uv changes from one
+    // pixel to the next, which it only answers for outside branches and loops, where code here samples. So a
+    // frag works the uv out a first time as it starts, asks there, and reads with the answer wherever the
+    // Sample is: for one that says Trilinear, and for one that leaves its filter to the Texture it's given in a
+    // game that names Trilinear at all. A uv that can't be worked out there (it reads a variable that changes)
+    // is an error where the Sample says Trilinear, and reads the texture's own pixels where a Texture might.
+    // A vert has no pixels to compare: it reads the texture's own.
+    const bool lifts = read == READ_COLOR && em->root->is_frag && em->code == em->root && !em->lifting
+                    && (filter == 2 || (!filter_said && em->prog->names_trilinear));
+    const bool grad = lifts && liftable(em, e->args.items[0], 0);
+    if (lifts && !grad && filter == 2 && em->checking) {
+        refuse(em, e->args.items[0]->at, "a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this "
+                                         "uv is made of a variable that changes, or of one a loop counts");
+        diag_note("the GPU picks between a texture's smaller images by how fast the uv changes from one pixel to the next, "
+                  "which it's asked before any branch or loop: make the uv of the frag's parameters, constants and "
+                  "variables declared with 'var' and never assigned again, or sample with Filter.Bilinear here");
+    }
     const int wrap = read != READ_COLOR ? 0 : says_wrap ? (int)e->args.items[2]->enum_member->number : declared_wrap > 0 ? declared_wrap : 0;
     int slot = 0;
     if (em->checking) {
@@ -1714,11 +1853,11 @@ static void ex_sample(emit *em, const expr *e)
         }
         const decl *holds = direct || asset ? NULL : of->local_field ? p->type.decl->local_part : p->type.decl;
         const shader_sample sample = {asset ? -1 : param_index(em->root, p), direct || asset ? -1 : field_index(holds, of->field),
-                                      of->local_field && !asset, blended, asset, wrap, read, filter_said, wrap_said};
+                                      of->local_field && !asset, filter, asset, wrap, read, filter_said, wrap_said};
         bool known = false;
         for (int i = 0; i < em->root->samples.count; i++) {
             const shader_sample *s = &em->root->samples.items[i];
-            known |= s->param == sample.param && s->field == sample.field && s->local == sample.local && s->blended == sample.blended
+            known |= s->param == sample.param && s->field == sample.field && s->local == sample.local && s->filter == sample.filter
                   && s->asset == sample.asset && s->wrap == sample.wrap && s->read == sample.read
                   && s->filter_said == sample.filter_said && s->wrap_said == sample.wrap_said;
         }
@@ -1727,7 +1866,7 @@ static void ex_sample(emit *em, const expr *e)
         while (slot < em->sh->textures.count) {
             const shader_texture *t = &em->sh->textures.items[slot];
             if (t->asset == asset && t->direct == direct && t->source == (p ? p->type.decl : NULL) && t->field == of->field
-                && t->blended == blended && t->wrap == wrap && t->read == read && t->filter_said == filter_said
+                && t->filter == filter && t->wrap == wrap && t->read == read && t->filter_said == filter_said
                 && t->wrap_said == wrap_said) {
                 break;
             }
@@ -1746,11 +1885,44 @@ static void ex_sample(emit *em, const expr *e)
         sb_put(em->o, em->l == WGSL ? ", 0.0, 1.0))" : ", 0.0, 1.0)), 0.0)");
         return;
     }
+    // The color itself, where the texture has it times its alpha. One that's [Raw] is numbers, as they are
+    const bool straight = read == READ_COLOR && !declared_raw(of);
+    if (straight) {
+        need(em, H_STRAIGHT);
+        sb_put(em->o, "tide_straight(");
+    }
+    if (grad) {
+        // As the frag starts: the uv, and what it changes by a pixel across and a pixel down
+        const int at = em->grad_count++;
+        sb *const out = em->o;
+        const int defuse = em->defuse;
+        const expr *statement = em->statement;
+        em->o = &em->grads;
+        em->defuse = 0;
+        em->statement = NULL;
+        em->lifting++;
+        sb_printf(em->o, em->l == WGSL ? "    let tide_uv%d: vec2f = " : "    vec2 tide_uv%d = ", at);
+        ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
+        if (em->l == WGSL) {
+            sb_printf(em->o, ";\n    let tide_dx%d: vec2f = dpdx(tide_uv%d);\n    let tide_dy%d: vec2f = dpdy(tide_uv%d);\n", at, at, at, at);
+        } else {
+            sb_printf(em->o, ";\n    vec2 tide_dx%d = dFdx(tide_uv%d);\n    vec2 tide_dy%d = dFdy(tide_uv%d);\n", at, at, at, at);
+        }
+        em->lifting--;
+        em->o = out;
+        em->defuse = defuse;
+        em->statement = statement;
+        if (em->l == WGSL) sb_printf(em->o, "textureSampleGrad(pixels%d, sampler%d, ", slot, slot);
+        else sb_printf(em->o, "textureGrad(pixels%d, ", slot);
+        ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
+        sb_printf(em->o, ", tide_dx%d, tide_dy%d)%s", at, at, straight ? ")" : "");
+        return;
+    }
     if (em->l == WGSL) sb_printf(em->o, "textureSampleLevel(pixels%d, sampler%d, ", slot, slot);
     else sb_printf(em->o, "textureLod(pixels%d, ", slot);
     ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
     // A depth is one number: WGSL gives it as that, at a level that's an int, and GLSL as a color's red
-    sb_put(em->o, read == READ_COLOR ? ", 0.0)" : em->l == WGSL ? ", 0)" : ", 0.0).r");
+    sb_put(em->o, straight ? ", 0.0))" : read == READ_COLOR ? ", 0.0)" : em->l == WGSL ? ", 0)" : ", 0.0).r");
 }
 
 // A call of a function or method of the game's. A mut argument is the
@@ -2458,6 +2630,10 @@ static void need_function(emit *em, decl *fn, const loc at)
     sb body = {0};
     sb *const out = em->o;
     decl *const code = em->code;
+    const sb grads = em->grads;
+    const int grad_count = em->grad_count;
+    em->grads = (sb){0};
+    em->grad_count = 0;
     const int indent = em->indent, defuse = em->defuse;
     const expr *statement = em->statement;
     const bool failed = em->failed;
@@ -2520,6 +2696,9 @@ static void need_function(emit *em, decl *fn, const loc at)
     em->statement = statement;
     em->failed = failed || bad;
     sb_put(&em->functions, head.data);
+    if (em->grads.data) sb_put(&em->functions, em->grads.data); // What its Samples ask as it starts
+    em->grads = grads;
+    em->grad_count = grad_count;
     if (body.data) sb_put(&em->functions, body.data);
     sb_put(&em->functions, "}\n\n");
 }
@@ -2727,9 +2906,11 @@ static const char *output_name(const bool pixel, const int k)
 // what the vert wrote for it, blended too, and the colors it writes, each of
 // which the checker saw it write on every path that ends (the white they
 // start as here is for the shader's compiler, which didn't). What it leaves
-// is the draw's to finish: each times its tint (Draw.Tint), and for a draw
-// that multiplies what's there (Blend.Multiply, which `tide_screen.w` says),
-// towards white as it clears, so what's clear changes nothing. A frag's
+// is the draw's to finish: each times its tint (Draw.Tint), then its color
+// times its alpha, which is how every blend takes it (see tide_gpu_blend),
+// and for a draw that multiplies what's there (Blend.Multiply, which
+// `tide_screen.w` says), towards white as it clears, so what's clear changes
+// nothing. A frag's
 // outputs go out at the locations of their order, the pixel's color at 0.
 static void put_fragment_main(emit *em, sb *o, const char *in, const char *result)
 {
@@ -2782,24 +2963,34 @@ static void put_fragment_main(emit *em, sb *o, const char *in, const char *resul
                && (sh->textures.items[texture].source || sh->textures.items[texture].direct || sh->textures.items[texture].asset)) {
             texture++;
         }
-        if (sh->textured && wgsl) {
-            sb_printf(o, "    tide_color = tide_color * textureSampleLevel(pixels%d, sampler%d, %stide_s%d, 0.0);\n",
+        if (sh->textured) need(em, H_STRAIGHT); // The color itself, where the texture has it times its alpha
+        // The draw's own texture is read as it says. In a game that names Filter.Trilinear that can be between
+        // its smaller images, which the GPU picks by itself here, before any branch
+        if (sh->textured && em->prog->names_trilinear && wgsl) {
+            sb_printf(o, "    tide_color = tide_color * tide_straight(textureSample(pixels%d, sampler%d, %stide_s%d));\n",
+                      texture, texture, in, field_index(v, uv));
+        } else if (sh->textured && em->prog->names_trilinear) {
+            sb_printf(o, "    tide_color = tide_color * tide_straight(texture(pixels%d, %stide_s%d));\n", texture, in, field_index(v, uv));
+        } else if (sh->textured && wgsl) {
+            sb_printf(o, "    tide_color = tide_color * tide_straight(textureSampleLevel(pixels%d, sampler%d, %stide_s%d, 0.0));\n",
                       texture, texture, in, field_index(v, uv));
         } else if (sh->textured) {
-            sb_printf(o, "    tide_color = tide_color * textureLod(pixels%d, %stide_s%d, 0.0);\n", texture, in, field_index(v, uv));
+            sb_printf(o, "    tide_color = tide_color * tide_straight(textureLod(pixels%d, %stide_s%d, 0.0));\n", texture, in, field_index(v, uv));
         }
     }
     for (int k = 0; k < outputs; k++) {
         const char *color = output_name(false, k);
         if (wgsl) {
             sb_printf(o, "    %s = %s * tide_block.tide_tint;\n"
+                         "    %s = vec4f(%s.rgb * %s.a, %s.a);\n"
                          "    if (tide_block.tide_screen.w > 0.0) {\n"
-                         "        %s = vec4f(%s.rgb * %s.a + (1.0 - %s.a), %s.a);\n"
-                         "    }\n", color, color, color, color, color, color, color);
+                         "        %s = vec4f(%s.rgb + (1.0 - %s.a), %s.a);\n"
+                         "    }\n", color, color, color, color, color, color, color, color, color, color);
         } else {
             sb_printf(o, "    %s = %s * tide_tint;\n"
-                         "    if (tide_screen.w > 0.0) %s.rgb = %s.rgb * %s.a + (1.0 - %s.a);\n",
-                      color, color, color, color, color, color);
+                         "    %s.rgb = %s.rgb * %s.a;\n"
+                         "    if (tide_screen.w > 0.0) %s.rgb = %s.rgb + (1.0 - %s.a);\n",
+                      color, color, color, color, color, color, color, color);
         }
     }
     if (outputs == 1) {
@@ -3017,12 +3208,12 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         const decl *source = s->asset ? NULL : code->params.items[s->param].type.decl;
         const shader_texture t = {.source = source,
                                   .field = s->field < 0 ? NULL : &(s->local ? source->local_part : source)->fields.items[s->field],
-                                  .blended = s->blended, .direct = s->field < 0 && !s->asset, .asset = s->asset,
+                                  .filter = s->filter, .direct = s->field < 0 && !s->asset, .asset = s->asset,
                                   .wrap = s->wrap, .read = s->read, .filter_said = s->filter_said, .wrap_said = s->wrap_said};
         bool known = false;
         for (int k = 0; k < sh->textures.count; k++) {
             known |= sh->textures.items[k].direct == t.direct && sh->textures.items[k].source == t.source && sh->textures.items[k].field == t.field
-                  && sh->textures.items[k].blended == t.blended && sh->textures.items[k].asset == t.asset
+                  && sh->textures.items[k].filter == t.filter && sh->textures.items[k].asset == t.asset
                   && sh->textures.items[k].wrap == t.wrap && sh->textures.items[k].read == t.read
                   && sh->textures.items[k].filter_said == t.filter_said && sh->textures.items[k].wrap_said == t.wrap_said;
         }
@@ -3101,7 +3292,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     plan_reads(prog, sh, sh->vert);
     plan_reads(prog, sh, sh->frag);
     if (textured) {
-        const shader_texture t = {.blended = true}; // How it's read is the texture's to say, which the draw gives
+        const shader_texture t = {.filter = 1}; // How it's read is the texture's to say, which the draw gives
         vec_push(sh->textures, t);
     }
     for (int i = 0; i < sh->values.count; i++) {

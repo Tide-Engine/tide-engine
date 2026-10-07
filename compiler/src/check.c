@@ -15,6 +15,7 @@
 
 typedef struct checker {
     program *prog;
+    VEC(expr *) raw_uses;     // Each place a [Raw] Texture asset is named: the object of a Sample, or an error (check_raw_uses)
     bool fields_ordered;      // Every struct's fields are resolved, and infinitely big containment was refused.
     const unit *unit;         // The file being checked: its namespace and `using`s decide what names mean.
     decl *system;             // Whose parameters are in scope: a system or view, a method, or the input when checking its Sample.
@@ -1838,6 +1839,39 @@ static bool fold_int(const expr *e, int64_t *out);
 
 // An expression where a value of `want` goes, which may be a T? or a failable
 // call's value: [a, b], `default` and `null` take their type from it.
+// [Raw] says a texture's pixels are numbers: they're kept as the file or the
+// grid has them, with no alpha worked into them, and a Sample gives them as
+// they are. Everything that draws a texture takes it for colors with how much
+// of each there is, and a Texture handed on doesn't say which it is, so a raw
+// one is read in a frag or a vert, by its name, and goes nowhere else.
+static void raw_note(void)
+{
+    diag_note("read it in a frag or a vert, by its name: 'color = masks.Sample(vertex.uv);' gives its numbers as they are. "
+              "A texture that's drawn, or handed to a frag as its Texture, is a color and how much of it there is: "
+              "declare that one without [Raw]");
+}
+
+// A [Raw] grid where a Texture goes: false, and said.
+static bool refuse_raw_grid(const expr *e)
+{
+    if (!e || e->type.kind != TY_GRID || !declared_raw(e)) return true;
+    diag_error(e->at, "this grid is [Raw], its cells numbers and not colors to draw: it's no Texture to draw with or hand on");
+    raw_note();
+    return false;
+}
+
+// Every [Raw] Texture asset's name that wasn't a Sample's object.
+static void check_raw_uses(const checker *c)
+{
+    for (int i = 0; i < c->raw_uses.count; i++) {
+        const expr *e = c->raw_uses.items[i];
+        if (e->raw_sampled) continue;
+        diag_error(e->at, "'" STR_FMT "' is [Raw], its pixels numbers and not colors to draw: it's no Texture to draw with or "
+                   "hand on", STR_ARG(e->constant->name));
+        raw_note();
+    }
+}
+
 static type check_expr_want_any(checker *c, expr *e, const type want)
 {
     // As in C#, `default` of a T? is nothing.
@@ -1860,6 +1894,7 @@ static type check_expr_want_any(checker *c, expr *e, const type want)
         return e->type = T_ERR;
     }
     const type t = check_expr_any(c, e);
+    if (inner.kind == TY_TEXTURE && !refuse_raw_grid(e)) return e->type = T_ERR;
     // As in C#, int constants fit a byte where the expected type supplies it.
     int64_t value;
     if (inner.kind == TY_BYTE && t.kind == TY_INT && fold_int(e, &value) && value >= 0 && value <= 255) {
@@ -4554,7 +4589,7 @@ static type check_blit(checker *c, expr *e)
         return T_ERR;
     }
     const type source = e->args.items[0]->type;
-    bool ok = true;
+    bool ok = refuse_raw_grid(e->args.items[0]);
     if (source.kind != TY_TEXTURE && !type_is_texture_grid(source) && source.kind != TY_ERROR) {
         diag_error(e->args.items[0]->at, "Blit's source is a Texture, which a Grid2<Color> and a Grid2<float> are too, not %s",
                    type_name(source));
@@ -4783,6 +4818,7 @@ static type check_mesh_draw(checker *c, expr *e)
     // A grid that's no texture, where the texture goes: said here, for every way the mesh is drawn
     for (int i = 2; i < count; i++) {
         const expr *arg = e->args.items[i];
+        if (!refuse_raw_grid(arg)) return T_ERR;
         if (arg->type.kind != TY_GRID || type_is_texture_grid(arg->type)) continue;
         diag_error(arg->at, "a texture is a Texture, a Grid2<Color> or a Grid2<float>, and this is a %s", type_name(arg->type));
         diag_note("a grid of colors is its pixels, and one of floats a texture of one channel, which a frag reads as red");
@@ -6375,6 +6411,8 @@ static type check_member(checker *c, expr *e)
         const type member = check_enum_member(e, enum_decl);
         // Font.Bold: the game draws in bold, so it carries the bold's file
         if (enum_decl == c->prog->font && e->enum_member && e->enum_member->number == 1) c->prog->names_bold = true;
+        // Filter.Trilinear: the game's textures can be read between their smaller images
+        if (enum_decl == c->prog->filter && e->enum_member && e->enum_member->number == 2) c->prog->names_trilinear = true;
         return member;
     }
 
@@ -7368,6 +7406,7 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
         diag_error(e->at, "a texture is a Texture, a Grid2<Color> or a Grid2<float>, and this is a %s", type_name(grid));
         return T_ERR;
     }
+    e->object->raw_sampled = true; // A [Raw] Texture asset is read here, and nowhere else (check_raw_uses)
     const expr *of = e->object;
     const bool direct = grid.kind == TY_TEXTURE && of->kind == E_NAME && of->bind == BIND_PARAM
                         && of->param->type.kind == TY_TEXTURE;
@@ -7414,7 +7453,7 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
         return T_ERR;
     }
     if (e->args.count >= 2 && !e->args.items[1]->enum_member) {
-        diag_error(e->args.items[1]->at, "the filter is written here, 'Filter.Point' or 'Filter.Bilinear': the GPU is told how a "
+        diag_error(e->args.items[1]->at, "the filter is written here, 'Filter.Point', 'Filter.Bilinear' or 'Filter.Trilinear': the GPU is told how a "
                                          "texture is read before any pixel runs");
         return T_ERR;
     }
@@ -10010,9 +10049,9 @@ static type use_constant(checker *c, expr *e, decl *k)
 // path couldn't be resolved is still that type, so the code around it checks.
 static type use_asset(checker *c, expr *e, decl *k)
 {
-    (void)c;
     e->bind = BIND_ASSET;
     e->constant = k;
+    if (k->sample_raw && k->return_type.kind == TY_TEXTURE && builds(c->prog)) vec_push(c->raw_uses, e);
     return k->return_type;
 }
 
@@ -10060,8 +10099,45 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
 // (decl.sample_filter and sample_wrap, which declared_sampling reads). An
 // asset's are read with its declaration, before any code is checked: the
 // shaders are planned from them.
+static void check_raw_attribute(decl *d, const attribute *attr)
+{
+    const char *usage = "it goes before an asset that's one Texture or one Grid2<Color>, like '[Raw] asset Texture masks = "
+                        "\"art/masks.png\";', or before a field that's a Grid2<Color>";
+    if (d->kind != DECL_ASSET) {
+        diag_error(attr->at, "Raw says a texture's pixels are numbers, and '" STR_FMT "' isn't a texture", STR_ARG(d->name));
+        diag_note("%s", usage);
+        return;
+    }
+    if (d->return_type.kind == TY_ERROR) return; // Its type said why
+    if (d->asset_kind != ASSET_TEXTURE && d->asset_kind != ASSET_GRID) {
+        diag_error(attr->at, "Raw says a texture's pixels are numbers, and '" STR_FMT "' is %s", STR_ARG(d->name),
+                   type_name(d->return_type));
+        diag_note("%s", usage);
+        return;
+    }
+    if (d->asset_many) {
+        diag_error(attr->at, "a [Raw] texture is read in a frag or a vert by its own name, which one of '" STR_FMT "' hasn't got",
+                   STR_ARG(d->name));
+        diag_note("declare each as an asset of its own: '[Raw] asset Texture masks = \"art/masks.png\";'");
+        return;
+    }
+    if (attr->args.count || attr->values.count) {
+        diag_error(attr->at, "Raw takes nothing: '[Raw]'");
+        return;
+    }
+    if (d->sample_raw) {
+        diag_error(attr->at, "'" STR_FMT "' already has a Raw", STR_ARG(d->name));
+        return;
+    }
+    d->sample_raw = true;
+}
+
 static void check_sampling_attribute(checker *c, decl *d, attribute *attr)
 {
+    if (str_eq_c(attr->name, "Raw")) {
+        check_raw_attribute(d, attr);
+        return;
+    }
     const bool filter = str_eq_c(attr->name, "Filter");
     const char *name = filter ? "Filter" : "Wrap";
     const char *usage = filter ? "Filter(Filter.Point)" : "Wrap(Wrap.Repeat)";
@@ -10092,14 +10168,15 @@ static void check_sampling_attribute(checker *c, decl *d, attribute *attr)
             for (int i = 0; i < wanted->members.count; i++) {
                 if (!str_eq(wanted->members.items[i].name, member_name)) continue;
                 *said = 1 + (int)wanted->members.items[i].number;
+                if (filter && wanted->members.items[i].number == 2) c->prog->names_trilinear = true;
                 attr->args.items[0].decl = wanted; // For editors: what the name is
                 attr->args.items[0].enum_member = &wanted->members.items[i];
                 return;
             }
         }
     }
-    diag_error(attr->at, filter ? "Filter takes how the texture is read between its cells: [Filter(Filter.Point)] or "
-                                  "[Filter(Filter.Bilinear)]"
+    diag_error(attr->at, filter ? "Filter takes how the texture is read between its cells: [Filter(Filter.Point)], "
+                                  "[Filter(Filter.Bilinear)] or [Filter(Filter.Trilinear)]"
                                 : "Wrap takes what a uv past the texture's edges reads: [Wrap(Wrap.Clamp)], [Wrap(Wrap.Repeat)] or "
                                   "[Wrap(Wrap.Mirror)]");
 }
@@ -10121,7 +10198,9 @@ static void check_asset_decl(checker *c, decl *k)
     k->asset_many = many;
     for (int a = 0; a < k->attributes.count; a++) {
         attribute *attr = &k->attributes.items[a];
-        if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap")) check_sampling_attribute(c, k, attr);
+        if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap") || str_eq_c(attr->name, "Raw")) {
+            check_sampling_attribute(c, k, attr);
+        }
     }
     const expr *path = NULL;
     const bool constant = is_constant(c, k->value);
@@ -10237,6 +10316,27 @@ static void check_absolute_attribute(const decl *d, const field *f, const attrib
 // (declared_sampling reads them). A Texture field holds whichever texture
 // it's given, which says how it's sampled itself, so it has nothing to say
 // for it.
+static void check_field_raw(const field *f, const attribute *a)
+{
+    if (f->type.kind == TY_ERROR) return;
+    const bool colors = type_is_texture_grid(f->type) && f->type.decl->fields.items[0].type.kind == TY_COLOR;
+    if (!colors) {
+        diag_error(a->at, "[Raw] says a texture's pixels are numbers with no alpha worked into them, and '" STR_FMT "' is %s",
+                   STR_ARG(f->name), type_name(f->type));
+        diag_note(f->type.kind == TY_GRID && type_is_texture_grid(f->type)
+                      ? "a Grid2<float> has no alpha: its numbers are kept as they are already"
+                      : "it goes on a field that's a Grid2<Color>, or before an asset that's a Texture or a Grid2<Color>");
+        return;
+    }
+    for (const attribute *before = f->attributes.items; before < a; before++) {
+        if (str_eq(before->name, a->name)) {
+            diag_error(a->at, "field '" STR_FMT "' already has a [Raw]", STR_ARG(f->name));
+            return;
+        }
+    }
+    if (a->args.count || a->values.count) diag_error(a->at, "Raw takes nothing: '[Raw]'");
+}
+
 static void check_field_sampling(checker *c, const field *f, attribute *a)
 {
     const bool filter = str_eq_c(a->name, "Filter");
@@ -10270,8 +10370,8 @@ static void check_field_sampling(checker *c, const field *f, attribute *a)
         if (t.kind == TY_ERROR) return;
         if (t.kind == TY_ENUM && t.decl == wanted && value->enum_member) return;
     }
-    diag_error(a->at, filter ? "[Filter] takes how the texture is read between its cells: [Filter(Filter.Point)] or "
-                               "[Filter(Filter.Bilinear)]"
+    diag_error(a->at, filter ? "[Filter] takes how the texture is read between its cells: [Filter(Filter.Point)], "
+                               "[Filter(Filter.Bilinear)] or [Filter(Filter.Trilinear)]"
                              : "[Wrap] takes what a uv past the texture's edges reads: [Wrap(Wrap.Clamp)], [Wrap(Wrap.Repeat)] or "
                                "[Wrap(Wrap.Mirror)]");
 }
@@ -10323,6 +10423,10 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
             check_field_sampling(c, f, a);
             continue;
         }
+        if (str_eq_c(a->name, "Raw")) {
+            check_field_raw(f, a);
+            continue;
+        }
         if (!clamp && !min && !max) {
             diag_error(a->at, "unknown field attribute '" STR_FMT "'", STR_ARG(a->name));
             suggestion s = suggest_start(a->name);
@@ -10335,6 +10439,7 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
             suggest_consider_c(&s, "Rotation");
             suggest_consider_c(&s, "Filter");
             suggest_consider_c(&s, "Wrap");
+            suggest_consider_c(&s, "Raw");
             suggest_note(&s);
             continue;
         }
@@ -12763,8 +12868,8 @@ static void add_builtins(program *prog)
 
     // struct Vertex { float2 position; float2 uv; Color color = Color.white; }:
     // a corner of what Draw.Mesh draws, as tide/draw.h's tide_vertex. And
-    // enum Filter { Point, Bilinear }: how it reads its texture between cells,
-    // with tide_filter's values, which are Unity's FilterMode's.
+    // enum Filter { Point, Bilinear, Trilinear }: how it reads its texture
+    // between cells, with tide_filter's values, which are Unity's FilterMode's.
     decl *vertex = NEW(decl);
     vertex->kind = DECL_STRUCT;
     vertex->name = str_from("Vertex");
@@ -12874,7 +12979,8 @@ static void add_builtins(program *prog)
         vec_push(control->fields, f);
     }
     prog->gui_control = control;
-    static const char *const filters[] = {"Point", "Bilinear"};
+    // Trilinear is in generated C only for a game that names it (program.names_trilinear)
+    static const char *const filters[] = {"Point", "Bilinear", "Trilinear"};
     decl *filter = NEW(decl);
     filter->kind = DECL_ENUM;
     filter->name = str_from("Filter");
@@ -14147,7 +14253,7 @@ static void check_attributes(checker *c)
                 check_channel_attribute(c, d, attr);
                 continue;
             }
-            if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap")) {
+            if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap") || str_eq_c(attr->name, "Raw")) {
                 if (d->kind != DECL_ASSET) check_sampling_attribute(c, d, attr); // An asset's were read with it
                 continue;
             }
@@ -14175,6 +14281,7 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "Unordered");
                 suggest_consider_c(&s, "Filter");
                 suggest_consider_c(&s, "Wrap");
+            suggest_consider_c(&s, "Raw");
                 suggest_note(&s);
                 diag_note("the attributes are Before and After, which order systems: [After(Physics.Integrate)], "
                           "Stage, which assigns an enum phase: [Stage(RenderStages.Objects)], "
@@ -15731,6 +15838,7 @@ bool check(program *prog)
     resolve_tasks(&c);
     check_this_calls(&c);
     check_drawing_calls(&c);
+    check_raw_uses(&c);
     check_local_field_calls(&c);
     check_world_passing(&c);
     if (diag_error_count() == 0) plan_shaders(prog);

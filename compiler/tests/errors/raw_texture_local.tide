@@ -1,0 +1,12 @@
+// expect: 'masks' is [Raw], its pixels numbers and not colors to draw: it's no Texture to draw with or hand on
+[Raw] asset Texture masks = "../e2e/assets/hero.png";
+
+view Show()
+{
+    var mask = masks;
+    Draw.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], mask);
+}
+
+scene Main
+{
+}

@@ -1,0 +1,67 @@
+// Filter.Trilinear: a member of Filter like the others, wherever a filter is
+// said: a draw's argument, a Sample's, a declaration's [Filter], and what a
+// Texture carries. What each draw records of it.
+scene Main { }
+
+struct Corner
+{
+    float2 position;
+    float2 uv;
+}
+
+local singleton Art
+{
+    [Filter(Filter.Trilinear), Wrap(Wrap.Repeat)]
+    Grid2<Color> tiles = Grid2(4, 4);
+    Grid2<Color> plain = Grid2(4, 4);
+    [Filter(Filter.Trilinear)]
+    RenderTarget target;
+    Texture kept;
+    Filter how = Filter.Trilinear;
+    List<Vertex> flat;
+    List<Vertex3> solid;
+    List<Corner> corners;
+    List<int> faces;
+    string said;
+}
+
+vert Lift(mut Corner vertex, Art art)
+{
+    vertex.position.y += art.tiles.Sample(vertex.uv).r;
+}
+
+frag Tile(Corner vertex, out Color color, Art art, Texture source)
+{
+    color = art.tiles.Sample(vertex.uv)
+          * art.plain.Sample(vertex.uv, Filter.Trilinear, Wrap.Mirror)
+          * art.plain.Sample(vertex.uv)
+          * source.Sample(vertex.uv)
+          * source.Sample(vertex.uv, Filter.Point);
+}
+
+view Show(mut Art art)
+{
+    if (art.faces.count == 0)
+    {
+        art.flat = [Vertex { }, Vertex { position = float2(1, 0), uv = float2(1, 0) }, Vertex { position = float2(0, 1), uv = float2(0, 1) }];
+        art.solid = [Vertex3 { }, Vertex3 { position = float3(1, 0, 0), uv = float2(1, 0) },
+                     Vertex3 { position = float3(0, 1, 0), uv = float2(0, 1) }];
+        art.corners = [Corner { }, Corner { position = float2(1, 0), uv = float2(1, 0) }, Corner { position = float2(0, 1), uv = float2(0, 1) }];
+        art.faces = [0, 1, 2];
+    }
+    art.kept = art.tiles;
+    art.said = $"{art.how} {Filter.Bilinear} {Filter(0)}";
+    // The engine's vertices: as the draw says, as the texture says, and a filter kept in a field
+    Draw.Mesh(art.flat, art.faces, art.plain, Filter.Trilinear);
+    Draw.Mesh(art.flat, art.faces, art.tiles);
+    Draw.Mesh(art.flat, art.faces, art.kept, Filter.Bilinear);
+    Draw.Mesh(art.flat, art.faces, art.plain, art.how, Wrap.Mirror);
+    Draw.Mesh(art.flat, art.faces, art.target.color);
+    Draw.Mesh(art.solid, art.faces, float4x4.identity, art.kept);
+    // Through a frag: its samples by name are known as the game is compiled, and its source's is the draw's
+    Draw.Mesh(art.corners, art.faces, art.kept, Lift, Tile);
+    Draw.Mesh(art.corners, art.faces, art.plain, Lift, Tile);
+    Draw.Mesh(art.corners, art.faces, art.plain, Filter.Trilinear, Lift, Tile);
+    // With no frag, the draw's texture as it says
+    Draw.Mesh(art.corners, art.faces, art.kept, Lift);
+}

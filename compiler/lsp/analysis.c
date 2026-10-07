@@ -1796,7 +1796,9 @@ static const method_form grid_calls[] = {
     {"Clear", "Clear()", "Sets every cell back to zero, keeping the size."},
     {"Sample", "Sample(float2 uv, Filter filter = the grid's, Wrap wrap = the grid's) -> Color",
      "Reads the grid as the texture it is, in a frag or vert: its color at `uv`, from (0, 0) at its first cell to "
-     "(1, 1) past its last, blended between cells (`Filter.Bilinear`) or the nearest cell's (`Filter.Point`). A "
+     "(1, 1) past its last, blended between cells (`Filter.Bilinear`), the nearest cell's (`Filter.Point`), or "
+     "blended between the grid's smaller images too where it's drawn smaller than it is (`Filter.Trilinear`, in a "
+     "frag, of a `uv` the frag can work out as it starts). A "
      "`uv` past 0 or 1 reads the cells at the grid's edge (`Wrap.Clamp`), the grid again (`Wrap.Repeat`), or again "
      "the other way round each time (`Wrap.Mirror`). A Sample that leaves one out has what the grid's declaration "
      "says (`[Filter]`, `[Wrap]`), and blended and clamped without one. A `Grid2<float>` is a texture of one "
@@ -1811,7 +1813,10 @@ static const method_form texture_calls[] = {
      "pixels at its edge (`Wrap.Clamp`), the texture again (`Wrap.Repeat`), or again the other way round each time "
      "(`Wrap.Mirror`). A Sample that leaves the filter or the wrap out reads the texture as it says itself: what "
      "its declaration says (`[Filter]`, `[Wrap]`), or what the draw that gave it says, and blended and clamped with "
-     "neither. Written here, they're fixed for the draw."},
+     "neither. Written here, they're fixed for the draw. `Filter.Trilinear` also reads the texture's smaller "
+     "images (its mipmaps) where it's drawn smaller than it is, so it doesn't shimmer: in a frag, of a `uv` made of "
+     "the frag's parameters, constants and variables that are never assigned again. A vert reads the texture's own "
+     "pixels."},
 };
 
 static const method_form depth_calls[] = {
@@ -2138,7 +2143,7 @@ static void put_samples(const decl *d, const int index, const char *prefix, sb *
         const field *f = &(s->local ? t->local_part : t)->fields.items[s->field];
         static const char *const wraps[] = {"", " (`Wrap.Repeat`)", " (`Wrap.Mirror`)"}; // By its number
         sb_printf(out, "%s`%s" STR_FMT "`%s%s", out->len ? ", " : "", prefix, STR_ARG(f->name),
-                  s->blended ? "" : " (`Filter.Point`)", wraps[s->wrap >= 0 && s->wrap < 3 ? s->wrap : 0]);
+                  s->filter == 0 ? " (`Filter.Point`)" : s->filter == 2 ? " (`Filter.Trilinear`)" : "", wraps[s->wrap >= 0 && s->wrap < 3 ? s->wrap : 0]);
     }
 }
 
@@ -2669,6 +2674,10 @@ static void describe(const occurrence *o, sb *out)
                             "can't use it. For cells code reads, the same file is a `Grid2<Color>`, which is a Texture "
                             "too wherever one is drawn with.");
             }
+            if (o->decl->sample_raw) {
+                sb_put(out, "\n\nIt's `[Raw]`: its pixels are numbers, kept as the file has them, which a frag or a vert reads "
+                            "by this name. It's no texture to draw with or hand on.");
+            }
             if (o->decl->sample_filter || o->decl->sample_wrap) { // [Filter] and [Wrap] before it
                 sb_put(out, "\n\nWhere a draw or a `Sample` doesn't say, it's sampled with ");
                 const decl *enums[2] = {A.prog->filter, A.prog->wrap};
@@ -3024,10 +3033,17 @@ static void describe(const occurrence *o, sb *out)
              "commands sent earlier, exactly once."},
             {"Filter", "[Filter(Filter.Point)]",
              "How this texture is read between its cells wherever a draw or a `Sample` doesn't say: `Filter.Point` "
-             "for the nearest cell, `Filter.Bilinear` (what's read without it) for the four around, blended. It goes "
+             "for the nearest cell, `Filter.Bilinear` (what's read without it) for the four around, blended, "
+             "`Filter.Trilinear` for that and between the texture's smaller images where it's drawn smaller. It goes "
              "before an asset that's a `Texture` or a `Grid2<Color>` (alone, or a list or a map of them) and before a "
              "field that's a `Grid2<Color>`, a `Grid2<float>` or a `RenderTarget` (for its color). The `Texture` made "
              "there carries it: one kept in a field or a local, or passed to a function, is sampled the same."},
+            {"Raw", "[Raw]",
+             "This texture's pixels are numbers, not colors to draw: they're kept as the file or the grid has them, with "
+             "no alpha worked into them, and a `Sample` gives them as they are. A texture of colors has no color in a "
+             "pixel whose alpha is 0, which is what a mask or a lookup table kept beside an alpha can't have. It goes "
+             "before an asset that's one `Texture` or one `Grid2<Color>` and before a field that's a `Grid2<Color>`. "
+             "A frag or a vert reads it by its name, `masks.Sample(uv)`: it's no `Texture` to draw with or hand on."},
             {"Wrap", "[Wrap(Wrap.Repeat)]",
              "What a `uv` past this texture's edges reads wherever a draw or a `Sample` doesn't say: `Wrap.Clamp` "
              "(what's read without it) for the cells at the edge, `Wrap.Repeat` for the texture over again, "
@@ -7547,6 +7563,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "Wrap", CK_FUNCTION, "[Wrap(Wrap.Repeat)]",
                  "What a uv past the edges of an asset that's a Texture or a Grid2<Color> reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
+            item(&c, "Raw", CK_FUNCTION, "[Raw]",
+                 "An asset that's a Texture or a Grid2<Color> of numbers, kept as the file has them: a frag reads it by its name.",
+                 "Raw");
         }
         break;
 
@@ -7568,6 +7587,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "Wrap", CK_FUNCTION, "[Wrap(Wrap.Repeat)]",
                  "What a uv past the edges of this grid, or of this RenderTarget's color, reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
+            item(&c, "Raw", CK_FUNCTION, "[Raw]",
+                 "This Grid2<Color>'s cells are numbers, kept as they are as a texture: a frag reads it by its name.", "Raw");
         }
         break;
 
@@ -8641,7 +8662,7 @@ static const struct {
     [MESH_TEXTURE] = {"texture",
                       {"A `Texture`, read at each corner's `uv`: an asset's, a render target's color, or a `Grid2<Color>` or "
                        "`Grid2<float>`, which is one here. A frag or vert with a Texture parameter receives it as its source."}},
-    [MESH_FILTER] = {"filter", {"How the texture is read between cells, `Filter.Bilinear` or `Filter.Point`: the texture's own "
+    [MESH_FILTER] = {"filter", {"How the texture is read between cells, `Filter.Bilinear`, `Filter.Point` or `Filter.Trilinear`: the texture's own "
                                 "where the draw leaves it out."}},
     [MESH_WRAP] = {"wrap",
                    {"What a `uv` past 0 or 1 reads, written after the filter: the cells at the texture's edge (`Wrap.Clamp`), "

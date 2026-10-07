@@ -37,6 +37,10 @@ struct tt_Corner {
 int tide_i(int x) {
     return x;
 }
+vec4 tide_straight(vec4 c) {
+    if (c.a == 0.0) { return vec4(0.0); }
+    return vec4(c.rgb / c.a, c.a);
+}
 int tf_Twice(int t_n) {
     return (t_n * 2);
 }
@@ -44,20 +48,20 @@ int tf_Twice(int t_n) {
 void ts_Spread(tt_Corner t_corner, inout vec4 t_color) {
     vec4 t_sum = vec4(0.0, 0.0, 0.0, 0.0);
     for (int t_x = (-1); (t_x <= 1); t_x = (t_x + 1)) {
-        t_sum = (t_sum + textureLod(pixels0, (t_corner.m_uv + (vec2(float(t_x), 0.0) * 0.25)), 0.0));
+        t_sum = (t_sum + tide_straight(textureLod(pixels0, (t_corner.m_uv + (vec2(float(t_x), 0.0) * 0.25)), 0.0)));
     }
     {
         int t_0from0 = (-tide_i(2));
         int t_0to1 = (tide_i(6) / tide_i(2));
         int t_0by2 = (tide_i(4) / tide_i(2));
         for (int t_y = t_0from0; (t_y < t_0to1); t_y = (t_y + t_0by2)) {
-            t_sum = (t_sum + textureLod(pixels0, (t_corner.m_uv + (vec2(0.0, float(t_y)) * 0.25)), 0.0));
+            t_sum = (t_sum + tide_straight(textureLod(pixels0, (t_corner.m_uv + (vec2(0.0, float(t_y)) * 0.25)), 0.0)));
         }
     }
     {
         int t_0from3 = tf_Twice(1);
         for (int t_i = t_0from3; (t_i < tide_v0.x); t_i = (t_i + 1)) {
-            t_sum = (t_sum + textureLod(pixels0, t_corner.m_uv, 0.0));
+            t_sum = (t_sum + tide_straight(textureLod(pixels0, t_corner.m_uv, 0.0)));
         }
     }
     t_color = (t_sum * 0.125);
@@ -67,7 +71,8 @@ void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Spread(tt_Corner(vec2(0.0), tide_s1), tide_color);
     tide_color = tide_color * tide_tint;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -94,6 +99,10 @@ struct tt_Corner {
 fn tide_i(x: i32) -> i32 {
     return x;
 }
+fn tide_straight(c: vec4f) -> vec4f {
+    if (c.a == 0.0) { return vec4f(0.0); }
+    return vec4f(c.rgb / c.a, c.a);
+}
 fn tf_Twice(t_n: i32) -> i32 {
     return (t_n * 2);
 }
@@ -101,20 +110,20 @@ fn tf_Twice(t_n: i32) -> i32 {
 fn ts_Spread(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
     var t_sum: vec4f = vec4f(0.0, 0.0, 0.0, 0.0);
     for (var t_x: i32 = (-1); (t_x <= 1); t_x = (t_x + 1)) {
-        t_sum = (t_sum + textureSampleLevel(pixels0, sampler0, (t_corner.m_uv + (vec2f(f32(t_x), 0.0) * 0.25)), 0.0));
+        t_sum = (t_sum + tide_straight(textureSampleLevel(pixels0, sampler0, (t_corner.m_uv + (vec2f(f32(t_x), 0.0) * 0.25)), 0.0)));
     }
     {
         var t_0from0: i32 = (-tide_i(2));
         var t_0to1: i32 = (tide_i(6) / tide_i(2));
         var t_0by2: i32 = (tide_i(4) / tide_i(2));
         for (var t_y: i32 = t_0from0; (t_y < t_0to1); t_y = (t_y + t_0by2)) {
-            t_sum = (t_sum + textureSampleLevel(pixels0, sampler0, (t_corner.m_uv + (vec2f(0.0, f32(t_y)) * 0.25)), 0.0));
+            t_sum = (t_sum + tide_straight(textureSampleLevel(pixels0, sampler0, (t_corner.m_uv + (vec2f(0.0, f32(t_y)) * 0.25)), 0.0)));
         }
     }
     {
         var t_0from3: i32 = tf_Twice(1);
         for (var t_i: i32 = t_0from3; (t_i < tide_block.tide_v0.x); t_i = (t_i + 1)) {
-            t_sum = (t_sum + textureSampleLevel(pixels0, sampler0, t_corner.m_uv, 0.0));
+            t_sum = (t_sum + tide_straight(textureSampleLevel(pixels0, sampler0, t_corner.m_uv, 0.0)));
         }
     }
     (*t_color) = (t_sum * 0.125);
@@ -134,8 +143,9 @@ fn ts_Spread(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Spread(tt_Corner(vec2f(), in.tide_s1), &tide_color);
     tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
     if (tide_block.tide_screen.w > 0.0) {
-        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
     }
     return tide_color;
 }

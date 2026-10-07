@@ -214,6 +214,11 @@ static uint8_t four[2 * 2 * 4] = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255
 static const uint8_t two[2 * 1 * 4] = {255, 255, 0, 255, 0, 0, 0, 0};
 static tide_texture four_texture = {four, 2, 2, 1};
 static const tide_texture two_texture = {two, 2, 1, 1};
+// White beside a clear pixel that has a color of its own, as a paint program leaves them, and a half-clear red
+static const uint8_t edge[2 * 1 * 4] = {255, 255, 255, 255, 255, 0, 255, 0};
+static const uint8_t half[1 * 1 * 4] = {255, 0, 0, 128};
+static const tide_texture edge_texture = {edge, 2, 1, 1};
+static const tide_texture half_texture = {half, 1, 1, 1};
 
 static void mesh_scene(void)
 {
@@ -228,6 +233,10 @@ static void mesh_scene(void)
     quad(at(176, 16), at(240, 80), white, white, &four_texture, TIDE_FILTER_BILINEAR, false);
     quad(at(16, 96), at(80, 160), gray, gray, &four_texture, TIDE_FILTER_POINT, true);
     quad(at(96, 96), at(160, 128), white, white, &two_texture, TIDE_FILTER_POINT, true);
+    // Blended towards a clear pixel, over white: a clear pixel's color counts for nothing
+    tide_draw_rect(&list, at(128, 148), tide_f2(64, 24), white);
+    quad(at(96, 136), at(160, 160), white, white, &edge_texture, TIDE_FILTER_BILINEAR, true);
+    quad(at(120, 162), at(136, 174), white, white, &half_texture, TIDE_FILTER_POINT, true);
 
     // A clip, in the world's units: what's drawn after it only shows inside
     // it, a clear and shapes too
@@ -273,6 +282,7 @@ static void meshes(void)
 {
     const tide_color dim = {0.5f, 0.0f, 0.0f, 1.0f}, pale = {0.5f, 1.0f, 1.0f, 1.0f};
     const tide_color between = {0.5f, 0.0f, 0.5f, 1.0f}, blend = {0.5f, 0.5f, 0.5f, 1.0f};
+    const tide_color half_red = {background.r * 0.5f + 0.5f, background.g * 0.5f, background.b * 0.5f, 1.0f};
     mesh_scene();
     const check checks[] = {
         {17, 48, red, "a mesh's left corners' color"},
@@ -288,6 +298,10 @@ static void meshes(void)
         {64, 144, pale, "and another"},
         {112, 112, yellow, "another texture, wider than it's tall"},
         {144, 112, background, "and its clear pixel"},
+        {128, 148, white, "white blended halfway to a clear pixel, over white, is white: no fringe of the clear one's color"},
+        {120, 148, white, "and a quarter of the way"},
+        {156, 148, white, "and what's under shows where it's clear"},
+        {128, 168, half_red, "a half-clear pixel of C's, over what's there by half"},
         {196, 116, magenta, "a mesh inside the clip"},
         {180, 100, cyan, "a clear fills the clip"},
         {170, 116, background, "and nothing outside it"},
@@ -583,7 +597,8 @@ static void primitives(void)
     "out vec4 pixel;\n"                                                                                                \
     "void main() {\n"                                                                                                  \
     "    vec4 c = tint * tide_tint;\n"                                                                                 \
-    "    if (tide_screen.w > 0.0) c.rgb = c.rgb * c.a + (1.0 - c.a);\n"                                                \
+    "    c.rgb = c.rgb * c.a;\n" /* As every blend takes a color: times its alpha */                              \
+    "    if (tide_screen.w > 0.0) c.rgb = c.rgb + (1.0 - c.a);\n"                                                \
     "    pixel = c;\n"                                                                                                 \
     "}\n"
 #define WGSL_TINT_CORNER                                                                                               \
@@ -594,7 +609,8 @@ static void primitives(void)
 #define WGSL_TINT_FRAGMENT                                                                                             \
     "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"                                                      \
     "    var c = in.tint * u.tide_tint;\n"                                                                             \
-    "    if (u.tide_screen.w > 0.0) { c = vec4f(c.rgb * c.a + (1.0 - c.a), c.a); }\n"                                  \
+    "    c = vec4f(c.rgb * c.a, c.a);\n"                                                                           \
+    "    if (u.tide_screen.w > 0.0) { c = vec4f(c.rgb + (1.0 - c.a), c.a); }\n"                                  \
     "    return c;\n"                                                                                                  \
     "}\n"
 
@@ -696,7 +712,7 @@ static const tide_shader picked_shader = {
                      "    vec4 c = tint;\n"
                      "    if (pick.x == 1) c = c.gbra;\n"
                      "    if (pick.w == -3) c.rgb = 1.0 - c.rgb;\n"
-                     "    pixel = c;\n"
+                     "    pixel = vec4(c.rgb * c.a, c.a);\n"
                      "}\n",
     .wgsl = WGSL(WGSL_UNIFORMS("tint: vec4f, pick: vec4i ")
         "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
@@ -707,7 +723,7 @@ static const tide_shader picked_shader = {
         "    var c = u.tint;\n"
         "    if (u.pick.x == 1) { c = c.gbra; }\n"
         "    if (u.pick.w == -3) { c = vec4f(1.0 - c.rgb, c.a); }\n"
-        "    return c;\n"
+        "    return vec4f(c.rgb * c.a, c.a);\n"
         "}\n"),
     .id = 0x7E570003,
     .dims = 2,
@@ -739,7 +755,7 @@ static const tide_shader many_shader = {
     .glsl_fragment = MANY_GLSL_UNIFORMS
                      "out vec4 pixel;\n"
                      "void main() {\n"
-                     "    pixel = colors[pick.x];\n"
+                     "    pixel = vec4(colors[pick.x].rgb * colors[pick.x].a, colors[pick.x].a);\n"
                      "}\n",
     .wgsl = WGSL(WGSL_UNIFORMS("colors: array<vec4f, 248>, pick: vec4i ")
         "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
@@ -747,7 +763,7 @@ static const tide_shader many_shader = {
         "    return vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
         "}\n"
         "@fragment fn fragment() -> @location(0) vec4f {\n"
-        "    return u.colors[u.pick.x];\n"
+        "    return vec4f(u.colors[u.pick.x].rgb * u.colors[u.pick.x].a, u.colors[u.pick.x].a);\n"
         "}\n"),
     .id = 0x7E570008,
     .dims = 2,
@@ -1341,6 +1357,94 @@ static void wraps(void)
     expect(wrapped_commands == 3, "3D meshes are a run while their texture's wrap is the same, and another when it isn't");
 }
 
+// ---------------------------------------------------------------------------
+// A texture drawn smaller than it is, read between its smaller images
+// (TIDE_FILTER_TRILINEAR): a pixel is the mean of what it covers, where one
+// read at its own pixels is whichever of them is under the pixel's middle
+
+// 64 by 64, of stripes 8 pixels apart: red in the columns that start a
+// stripe (the first `lit` of each 8), green in each stripe's first two rows,
+// and blue everywhere. So 8 by 8 of them are (lit / 8, 1 / 4, 1) on the whole.
+static uint8_t striped[64 * 64 * 4];
+static tide_texture striped_texture = {striped, 64, 64, 1};
+
+static void stripe(const int lit)
+{
+    for (int y = 0; y < 64; y++) {
+        for (int x = 0; x < 64; x++) {
+            uint8_t *pixel = &striped[(y * 64 + x) * 4];
+            pixel[0] = x % 8 < lit ? 255 : 0;
+            pixel[1] = y % 8 < 2 ? 255 : 0;
+            pixel[2] = pixel[3] = 255;
+        }
+    }
+    striped_texture.version++;
+}
+
+// All of the striped texture, in a square `size` pixels across from window pixel (x, y).
+static void striped_quad(const float x, const float y, const float size, const tide_filter filter)
+{
+    const tide_float2 top_left = at(x, y), bottom_right = at(x + size, y + size);
+    const tide_vertex vertices[4] = {
+        {top_left, {0, 0}, white},
+        {{bottom_right.x, top_left.y}, {1, 0}, white},
+        {bottom_right, {1, 1}, white},
+        {{top_left.x, bottom_right.y}, {0, 1}, white},
+    };
+    tide_draw_mesh(&list, vertices, 4, quad_indices, 6, &striped_texture, filter);
+}
+
+static void mipmap_scene(void)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    striped_quad(16, 16, 8, TIDE_FILTER_TRILINEAR);  // An eighth of its size: a pixel is 8 by 8 of its own
+    striped_quad(32, 16, 8, TIDE_FILTER_BILINEAR);   // The same, at its own pixels
+    striped_quad(48, 16, 16, TIDE_FILTER_TRILINEAR); // A quarter: a pixel is 4 by 4
+    striped_quad(16, 48, 64, TIDE_FILTER_TRILINEAR); // Its own size: its own pixels
+    // A 3D mesh's, an eighth of its size
+    static const tide_vertex3 corners[4] = {{{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f}, {1, 1, 1, 1}}, {{0.5f, 0.5f, 0.0f}, {1.0f, 0.0f}, {1, 1, 1, 1}},
+                                            {{0.5f, -0.5f, 0.0f}, {1.0f, 1.0f}, {1, 1, 1, 1}}, {{-0.5f, -0.5f, 0.0f}, {0.0f, 1.0f}, {1, 1, 1, 1}}};
+    const tide_mesh mesh = {corners, 4, quad_indices, 6, 2};
+    tide_draw_set_camera_matrices(&list, tide_identity_f4x4(), tide_ortho_f4x4(screen.x / 10.0f, screen.y / 10.0f, 0.3f, 100.0f));
+    tide_draw_mesh_3d(&list, &mesh, tide_trs_f4x4(primitive_at(100, 20, 10), tide_identity_q(), tide_f3_splat(0.8f)),
+                      &striped_texture, TIDE_FILTER_TRILINEAR);
+}
+
+static void mipmaps(void)
+{
+    const tide_color eighth = {0.125f, 0.25f, 1.0f, 1.0f}, twice = {0.25f, 0.25f, 1.0f, 1.0f}, bare = {0.0f, 0.0f, 1.0f, 1.0f};
+    const tide_color quarter_lit = {0.25f, 0.5f, 1.0f, 1.0f}, quarter_dark = {0.0f, 0.0f, 1.0f, 1.0f};
+    const tide_color own = {1.0f, 1.0f, 1.0f, 1.0f}, own_blue = {0.0f, 0.0f, 1.0f, 1.0f};
+    stripe(1);
+    const check checks[] = {
+        {16.5f, 16.5f, eighth, "a texture drawn an eighth of its size, read between its smaller images: the mean of the 8 by 8 a pixel covers"},
+        {20.5f, 19.5f, eighth, "at every pixel"},
+        {23.5f, 23.5f, eighth, "to its last"},
+        {36.5f, 19.5f, bare, "and read at its own pixels beside it, in the same frame: the ones under the pixel's middle"},
+        {48.5f, 16.5f, quarter_lit, "drawn a quarter of its size, the mean of the 4 by 4 that have its stripes"},
+        {49.5f, 17.5f, quarter_dark, "and of the 4 by 4 that have none"},
+        {16.5f, 48.5f, own, "drawn its own size, its own pixels: a stripe"},
+        {19.5f, 51.5f, own_blue, "and between two"},
+        {100.5f, 20.5f, eighth, "a 3D mesh's texture, an eighth of its size"},
+    };
+    // Twice: the second frame draws with the smaller images the first made
+    for (int frame = 0; frame < 2; frame++) {
+        mipmap_scene();
+        check_pixels(checks, (int)(sizeof checks / sizeof checks[0]));
+    }
+    // Other pixels: its smaller images are made again of them
+    stripe(2);
+    const check changed[] = {
+        {16.5f, 16.5f, twice, "a texture whose pixels changed has its smaller images made of them"},
+        {22.5f, 21.5f, twice, "all of them"},
+        {36.5f, 19.5f, bare, "and is still its own pixels where it's read so"},
+        {100.5f, 20.5f, twice, "in a 3D mesh's draw too"},
+    };
+    mipmap_scene();
+    check_pixels(changed, (int)(sizeof changed / sizeof changed[0]));
+}
+
 // Rects side by side, a cell each as a grid's view draws them, leave no gap
 // between them at any scale: not even where their shared edge falls exactly
 // on a row or column of pixel centers, as it does every 8 cells at 3.125
@@ -1886,7 +1990,7 @@ static tide_color blended(const tide_blend blend)
     case TIDE_BLEND_MULTIPLY:
         return (tide_color){under.r * (ink.r * a + 1.0f - a), under.g * (ink.g * a + 1.0f - a),
                             under.b * (ink.b * a + 1.0f - a), 1.0f};
-    case TIDE_BLEND_REPLACE: return (tide_color){ink.r, ink.g, ink.b, 1.0f};
+    case TIDE_BLEND_REPLACE: return (tide_color){ink.r * a, ink.g * a, ink.b * a, 1.0f}; // Its color times its alpha is what's kept
     default:
         return (tide_color){under.r + (ink.r - under.r) * a, under.g + (ink.g - under.g) * a,
                             under.b + (ink.b - under.b) * a, 1.0f};
@@ -2960,6 +3064,7 @@ static int frame(void *user, const float seconds)
         primitives();
         shaded();
         wraps();
+        mipmaps();
         smooth_shapes();
         themed_gui();
         tiles_leave_no_gaps();
@@ -2975,6 +3080,7 @@ static int frame(void *user, const float seconds)
     primitives();
     shaded();
     wraps();
+    mipmaps();
     smooth_shapes();
     themed_gui();
     tiles_leave_no_gaps();

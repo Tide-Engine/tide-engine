@@ -283,11 +283,23 @@ typedef struct tide_vertex {
 } tide_vertex;
 
 // How a mesh samples its texture between pixels. Tide's `Filter` has the same
-// values, which are Unity's FilterMode's.
+// values, which are Unity's FilterMode's. Trilinear also reads the texture's
+// smaller images (its mipmaps, each half the last's size, which the renderer
+// makes of its pixels and makes again when they change): where it's drawn
+// smaller than it is, a pixel is blended from the two nearest that size, so
+// it's the mean of what it covers and doesn't shimmer. A texture read so in
+// no draw has none.
 typedef enum tide_filter {
-    TIDE_FILTER_POINT,    // The nearest pixel: hard edges
-    TIDE_FILTER_BILINEAR, // Blended with its neighbors
+    TIDE_FILTER_POINT,     // The nearest pixel: hard edges
+    TIDE_FILTER_BILINEAR,  // Blended with its neighbors
+    TIDE_FILTER_TRILINEAR, // ...and between its smaller images, where it's drawn smaller
 } tide_filter;
+
+// A filter from any number, as a Tide enum's value can be: what isn't one is TIDE_FILTER_BILINEAR.
+static inline tide_filter tide_filter_of(const int32_t filter)
+{
+    return filter == TIDE_FILTER_POINT || filter == TIDE_FILTER_TRILINEAR ? (tide_filter)filter : TIDE_FILTER_BILINEAR;
+}
 
 // What a mesh samples of its texture where a uv is past 0 or 1, on both axes.
 // Tide's `Wrap` has the same values. Blended, a pixel at the texture's edge
@@ -308,8 +320,10 @@ static inline tide_wrap tide_wrap_of(const int32_t wrap)
 // tide_draw_run's `sampling`): bit i is set for texture i read blended with
 // its neighbors, and clear for the nearest pixel, and the two bits from
 // TIDE_SAMPLING_WRAP + 2 * i are its tide_wrap. So a word with only its low
-// bits set clamps every texture.
+// bits set clamps every texture. Bit TIDE_SAMPLING_MIPS + i is set, with bit
+// i, for one read between its smaller images too (TIDE_FILTER_TRILINEAR).
 #define TIDE_SAMPLING_WRAP 8u
+#define TIDE_SAMPLING_MIPS 24u
 
 static inline uint32_t tide_sampling_wrapped(const uint32_t texture, const int32_t wrap)
 {
@@ -321,6 +335,19 @@ static inline bool tide_sampling_blended(const uint32_t sampling, const uint32_t
     return (sampling >> texture & 1u) != 0;
 }
 
+// Texture `texture`'s filter in the word, and the word's bits for a filter.
+static inline tide_filter tide_sampling_filter(const uint32_t sampling, const uint32_t texture)
+{
+    if (!(sampling >> texture & 1u)) return TIDE_FILTER_POINT;
+    return sampling >> (TIDE_SAMPLING_MIPS + texture) & 1u ? TIDE_FILTER_TRILINEAR : TIDE_FILTER_BILINEAR;
+}
+
+static inline uint32_t tide_sampling_filtered(const uint32_t texture, const int32_t filter)
+{
+    const tide_filter how = tide_filter_of(filter);
+    return (how != TIDE_FILTER_POINT ? 1u << texture : 0u) | (how == TIDE_FILTER_TRILINEAR ? 1u << (TIDE_SAMPLING_MIPS + texture) : 0u);
+}
+
 static inline tide_wrap tide_sampling_wrap(const uint32_t sampling, const uint32_t texture)
 {
     return tide_wrap_of((int32_t)(sampling >> (TIDE_SAMPLING_WRAP + 2u * texture) & 3u));
@@ -329,7 +356,9 @@ static inline tide_wrap tide_sampling_wrap(const uint32_t sampling, const uint32
 // Pixels to draw with, where the game keeps them. Nothing holds a texture on
 // the GPU: a mesh names its pixels, the list copies them when it hasn't got
 // them as they are, and the renderer uploads from that copy. So C can keep
-// its pixels wherever it likes, and say when they changed.
+// its pixels wherever it likes, and say when they changed. A pixel's color is
+// as it is, with its alpha beside it. The list's copy has each color times
+// its alpha, which is how a renderer blends them: that's the list's to do.
 typedef struct tide_texture {
     const void *pixels; // width * height of them: red, green, blue, alpha, a byte each, rows from the first
     int32_t width, height;
@@ -534,7 +563,8 @@ typedef struct tide_texture_ref {
 } tide_texture_ref;
 
 // A reference's sampling: bit 0 for the nearest pixel (none: blended, as a
-// draw that says nothing is), and its tide_wrap from bit 2. The rest of
+// draw that says nothing is), bit 1 for its smaller images too
+// (TIDE_FILTER_TRILINEAR), and its tide_wrap from bit 2. The rest of
 // `image.version` is TIDE_TEXTURE_NAME: a pack image's name, or a grid's
 // place and cells.
 #define TIDE_TEXTURE_SAMPLING_SHIFT 60u
@@ -543,7 +573,7 @@ typedef struct tide_texture_ref {
 
 static inline uint32_t tide_sampling_bits(const int32_t filter, const int32_t wrap)
 {
-    return (filter == TIDE_FILTER_POINT ? 1u : 0u) | (uint32_t)tide_wrap_of(wrap) << 2;
+    return (filter == TIDE_FILTER_POINT ? 1u : filter == TIDE_FILTER_TRILINEAR ? 2u : 0u) | (uint32_t)tide_wrap_of(wrap) << 2;
 }
 
 static inline uint32_t tide_texture_sampling(const tide_texture_ref texture)
@@ -557,7 +587,8 @@ static inline uint32_t tide_texture_sampling(const tide_texture_ref texture)
 
 static inline tide_filter tide_texture_filter(const tide_texture_ref texture)
 {
-    return tide_texture_sampling(texture) & 1u ? TIDE_FILTER_POINT : TIDE_FILTER_BILINEAR;
+    const uint32_t sampling = tide_texture_sampling(texture);
+    return sampling & 1u ? TIDE_FILTER_POINT : sampling & 2u ? TIDE_FILTER_TRILINEAR : TIDE_FILTER_BILINEAR;
 }
 
 static inline tide_wrap tide_texture_wrap(const tide_texture_ref texture)
@@ -580,7 +611,7 @@ static inline tide_texture_ref tide_texture_sampled(tide_texture_ref texture, co
 // with. Tide's `Filter` and `Wrap`, as any number an enum's value can be.
 static inline tide_texture_ref tide_texture_filtered(const tide_texture_ref texture, const int32_t filter)
 {
-    return tide_texture_sampled(texture, (tide_texture_sampling(texture) & ~1u) | (filter == TIDE_FILTER_POINT ? 1u : 0u));
+    return tide_texture_sampled(texture, (tide_texture_sampling(texture) & ~3u) | tide_sampling_bits(filter, TIDE_WRAP_CLAMP));
 }
 
 static inline tide_texture_ref tide_texture_wrapped(const tide_texture_ref texture, const int32_t wrap)
@@ -592,7 +623,7 @@ static inline tide_texture_ref tide_texture_wrapped(const tide_texture_ref textu
 // read as its reference says: its filter's bit, or its wrap's.
 static inline uint32_t tide_sampling_filter_of(const uint32_t texture, const tide_texture_ref from)
 {
-    return tide_texture_filter(from) != TIDE_FILTER_POINT ? 1u << texture : 0u;
+    return tide_sampling_filtered(texture, (int32_t)tide_texture_filter(from));
 }
 
 static inline uint32_t tide_sampling_wrap_of(const uint32_t texture, const tide_texture_ref from)

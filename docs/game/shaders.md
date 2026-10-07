@@ -278,6 +278,7 @@ view Crates(Models models)
 ```
 
 - **A field**: a `Texture`, a `Grid2<Color>` or a `Grid2<float>` of a component or a singleton the frag takes.
+- **`Sample` gives the color itself**, with its alpha beside it, blended between pixels so that a clear pixel counts for none of the color (see [Alpha](./views.md#alpha)). A pixel with no alpha reads as `Color(0, 0, 0, 0)`. What a frag writes is a color as it is too: `Color(1, 0, 0, 0.5)` is red, half clear.
 - **An asset**, by its name, with no parameter for it: `asset Texture tiles = "art/tiles.png";` and then `tiles.Sample(uv)` (see [Assets](./assets.md#images-to-draw-with)).
 - **Its own `Texture` parameter**, one at the most, which is whatever texture the draw gives after its mesh: an asset, a target's color, a grid, a `Texture` a field holds. A [`Draw.Blit`](./views.md#targets-and-post-processing)'s source is its frag's.
 
@@ -299,6 +300,52 @@ Past 0 and 1, `uv` reads what the [wrap](./views.md#past-the-edges) says: the pi
 - A wrap comes after a filter, so a `Sample` that says how it wraps says both. The names work too: `Sample(uv: corner.uv, filter: Filter.Bilinear, wrap: Wrap.Repeat)`.
 - One texture can be read several ways in one frag, clamped here and repeated there. Each way counts as one of the 8 textures a draw samples, and the same way twice counts once. A `Sample` that says nothing and one that says the default are two ways for a `Texture` parameter or field, since the texture may say otherwise.
 - A draw gives a texture to a frag that takes one, and none to a frag that doesn't: `Draw.Mesh(corners, faces, models.wood, Shade)` is an error where `Shade` has no `Texture` parameter.
+
+`Filter.Trilinear` reads between the texture's smaller copies too, so it's smooth where the texture ends up [smaller than it is](./views.md#drawn-smaller):
+
+```csharp
+frag Ground(Corner corner, out Color color, Land land)
+{
+    var uv = corner.uv * land.tiling;            // Worked out from what the frag is given
+    color = Color.black;
+    if (corner.height > 0)
+    {
+        color = land.grass.Sample(uv, Filter.Trilinear, Wrap.Repeat);   // In a branch, as any Sample
+    }
+}
+```
+
+The GPU picks which copies to read by how fast the `uv` changes from one pixel to the next, and it only knows that before any branch or loop. So a frag works such a `uv` out a first time as it starts, asks there, and reads with the answer wherever the `Sample` is. You write nothing for it, and the `Sample` goes where it would anyway: in a branch, in a loop, after `pixel.Discard()`. What it asks of you is a `uv` it can work out as it starts:
+
+- **Made of** the frag's parameters (its vertex, what its vert wrote for it, components, singletons, the draw's values, the pixel), constants, `Math`, constructors, your own functions that take everything by value, another texture read at its own pixels, and variables declared with `var` that are never assigned again.
+- **Not of** a variable that changes (`mut var`, one a loop counts): `tiles.Sample(corner.uv + float2(i * 0.01, 0), Filter.Trilinear)` in a loop is an error, which says so. Sample those with `Filter.Bilinear`, or work each `uv` out before the loop.
+- Where the filter is the texture's to say (a frag's `Texture` parameter, a `Texture` field) and the `uv` can't be worked out as the frag starts, the `Sample` reads the texture's own pixels, as `Filter.Bilinear` would, whatever the texture says.
+- A vert has no pixels to compare, so there `Filter.Trilinear` reads the texture's own pixels.
+
+### Textures that are numbers
+
+A texture is colors, each with how much of it there is: where a pixel's alpha is 0 it has no color, and a `Sample` there gives `Color(0, 0, 0, 0)` (see [Alpha](./views.md#alpha)). That's wrong for an image whose channels are four numbers of their own: a mask in alpha beside a roughness in red, a lookup table, a flow map. `[Raw]` says so where the texture is declared:
+
+```csharp
+[Raw] asset Texture masks = "art/masks.png";     // Kept as the file has it
+
+local singleton Terrain
+{
+    [Raw] Grid2<Color> blend = Grid2(64, 64);    // ...or as code wrote its cells
+}
+
+frag Ground(Vertex vertex, out Color color, Terrain terrain)
+{
+    Color mask = masks.Sample(vertex.uv);                 // Four numbers, as they are
+    Color weights = terrain.blend.Sample(vertex.uv);      // Blended between cells as numbers
+    color = Color(mask.r * weights.r, mask.g, mask.b * weights.a);
+}
+```
+
+- It goes before an asset that's one `Texture` or one `Grid2<Color>`, and on a field that's a `Grid2<Color>`. A `Grid2<float>` needs none: it has no alpha.
+- A frag or a vert reads it **by its name**, as above. It isn't a texture to draw with, to give a draw for its frag's `Texture` parameter, or to keep in a `Texture` field: each is an error that says so, as everything that draws a texture takes it for colors, and a `Texture` handed on doesn't say which kind it is.
+- The same file can be declared twice, once `[Raw]` and once not: they're two textures.
+- `[Filter]` and `[Wrap]` go beside it as on any texture, and code reads a `[Raw]` grid's cells as it reads any grid's.
 
 ## A target's depth
 
@@ -403,7 +450,7 @@ The camera isn't given: keep where yours is in a singleton, where the view that 
 
 Code for the GPU is ordinary Tide, less what a GPU doesn't have:
 
-- **It has** bools, ints, floats, vectors, quaternions, matrices, colors, enums and structs of those; locals, `if`, `?:`, and `for` loops that count (`for (int i = 0; i < 8; i++)`), with `break` and `continue`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; and sampling a grid, a texture or a target's depth, 8 of them to a draw.
+- **It has** bools, ints, floats, vectors, quaternions, matrices, colors, enums and structs of those; locals, `if`, `?:`, and `for` loops that count (`for (int i = 0; i < 8; i++)`), with `break` and `continue`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; and sampling a grid, a texture or a target's depth, 8 of them to a draw, anywhere in the code: in a branch, in a loop, in a vert.
 - **It doesn't have** lists, maps, text, entities, `this`, spawning and sending, `Draw`, the GUI, `Devices`, `Debug`, C, tasks, errors, or recursion. `while` and `switch` aren't there yet: write `for` with a bound, and `if`.
 
 Each of those is an error where it's written, which says what to do instead. A function a frag calls has to fit too, and the error says which frag reaches it; the same function still runs on the CPU for the code that calls it there.
