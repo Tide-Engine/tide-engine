@@ -535,6 +535,7 @@ static struct {
     uint32_t next_input; // The first whose frame hasn't started
     uint32_t next_drawn; // The first whose frame hasn't drawn
     bool quits;
+    uint32_t last_audio; // 1 + the place of its last capture-audio line: 0 for none
     char *folder; // The script's own, which its captures' files are named from: "" or ending with a slash
 } script;
 
@@ -619,6 +620,7 @@ bool tide_script_load(const char *path)
             script.capacity = grown;
         }
         script.events[script.count++] = e;
+        if (e.kind == EVENT_CAPTURE_AUDIO) script.last_audio = script.count;
     }
     free(text);
     return ok;
@@ -627,6 +629,11 @@ bool tide_script_load(const char *path)
 bool tide_script_quits(void)
 {
     return script.quits;
+}
+
+bool tide_script_captures_audio(void)
+{
+    return script.next_drawn < script.last_audio;
 }
 
 void tide_script_input(const uint32_t frame)

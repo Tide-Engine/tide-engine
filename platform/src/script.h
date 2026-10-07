@@ -35,6 +35,9 @@ bool tide_script_load(const char *path);
 // Whether the script loaded ends the run: it has a `quit` line.
 bool tide_script_quits(void);
 
+// Whether a `capture-audio` line is still to come: what plays until it has to be kept.
+bool tide_script_captures_audio(void);
+
 // Before frame `frame` (they count from 1): its lines' input, into the devices.
 void tide_script_input(uint32_t frame);
 
