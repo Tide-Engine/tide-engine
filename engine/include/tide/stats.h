@@ -55,6 +55,7 @@ typedef struct tide_stats_values {
     bool gpu_known;
     uint32_t threads;     // What ticks run on
     uint64_t memory;      // Bytes the program has; 0 where the system doesn't say
+    uint64_t gpu_memory;  // Bytes the renderer has on the GPU, by its own count; 0 for no line
     const char *renderer; // What draws, like "WebGPU"; NULL for no line
     uint32_t draw_calls;  // ...and in how many draw calls
     // The match's, while there's one
