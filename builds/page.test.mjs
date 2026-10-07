@@ -19,7 +19,7 @@
 //
 //   TIDE_BUILDS_URL  the service, like https://builds.tide-engine.dev
 //   TIDE_GAME_KEY    the key of a game there
-//   TIDE_BUILDS_MOD  the mod's line, like "github.com/BlenMiner/tide-engine//builds/example/mod <commit>"
+//   TIDE_BUILDS_MOD  the mod's line, like "github.com/Tide-Engine/tide-engine//builds/example/mod <commit>"
 //
 // Nothing is timed: the test waits for the build's builder to say how it
 // went, for the page's own promise of its first frame, and for the line the

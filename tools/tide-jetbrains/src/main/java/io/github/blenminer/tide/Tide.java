@@ -12,7 +12,7 @@ import java.nio.file.Path;
 
 // The programs that come with tide.
 final class Tide {
-    static final String INSTALL = "https://github.com/BlenMiner/tide-engine#install";
+    static final String INSTALL = "https://tide-engine.dev/guide/install";
 
     private Tide() {}
 
