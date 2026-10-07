@@ -187,7 +187,8 @@ After the vertex, and what each writes (a frag's color, the structs a vert hands
 - **Singletons**, the match's or [local](./local-state.md) ones, and `Time`. `time.t`, the match's seconds, is blended between ticks like every float a view sees, so what moves by it moves every frame.
 - None is `mut` or `out`: the GPU reads the game's state, and changes none of it.
 - A [`local` field](./local-state.md) of the match's component or singleton is read like any other: `box.highlight`, which a view set for the entity under the mouse.
-- With [`Draw.Instanced`/`Draw.Instanced`](#instances-from-a-list), an ordinary struct parameter takes the current item of the instance list. It is read-only too. (A frag's struct of a type its draw's vert writes is [the vert's](#from-a-vert-to-its-frag) instead.)
+- With [`Draw.Instanced`](#instances-from-a-list), an ordinary struct parameter takes the current item of the instance list. It is read-only too. (A frag's struct of a type its draw's vert writes is [the vert's](#from-a-vert-to-its-frag) instead.)
+- An ordinary struct parameter also takes [the values a draw gives](#values-for-one-draw) after its vert and frag: `Draw.Blit(source, destination, Blur, BlurStep { along = float2(1, 0) })`.
 - A read-only `Texture` parameter receives the explicit image passed to either namespace's `Mesh` or `Instanced` or [`Draw.Blit`](./views.md#targets-and-post-processing). Each stage takes at most one; when both stages take it, they receive the same source. `source.Sample(vertex.uv[, Filter.Point[, Wrap.Repeat]])` uses the same top-left UVs as grid sampling. Local component and singleton `Texture` fields can be sampled too.
 
 The view needn't take them itself. It has to run for entities that have the components, so `with Box` is enough, and it's an error at the mesh draw when it doesn't:
@@ -201,7 +202,7 @@ view DrawBoxes(with Box, Models models)
 
 What a frag sees of the match is what a view sees: [blended between ticks](./views.md#smooth-at-any-tick-rate), so it's smooth at any tick rate.
 
-There are no free-standing value arguments to bind. A number a frag needs lives in a component, a singleton, or the instance struct supplied to `Draw.Instanced` or `Draw.Instanced`, and a local singleton is the place for what only this machine's drawing cares about:
+A frag takes no loose numbers. What it needs lives in a component, a singleton, the instance struct supplied to `Draw.Instanced`, or [a struct the draw gives it](#values-for-one-draw). A local singleton is the place for what only this machine's drawing cares about, and every draw of the frame shares:
 
 ```csharp
 local singleton Look
@@ -218,6 +219,45 @@ frag Fog(BoxVertex vertex, out Color color, Look look, Pixel pixel)
 ```
 
 Only the fields the code reads go to the GPU: a component's with each entity drawn, and a singleton's once for the draw. A big component costs nothing for the fields a frag doesn't name.
+
+## Values for one draw
+
+A singleton is the same for every draw of a frame. What differs from one draw to the next, with the same frag, is a struct the draw gives after the vert and the frag it names. The frag, the vert or both take it as a read-only parameter of that struct's type:
+
+```csharp
+struct BlurStep
+{
+    float2 along; // From one sample of the blur to the next
+}
+
+frag Blur(Vertex vertex, out Color color, Texture source, BlurStep step)
+{
+    var near = step.along * 1.3846;
+    var far = step.along * 3.2308;
+    var sum = source.Sample(vertex.uv) * 0.227
+            + (source.Sample(vertex.uv + near) + source.Sample(vertex.uv - near)) * 0.3162
+            + (source.Sample(vertex.uv + far) + source.Sample(vertex.uv - far)) * 0.0703;
+    color = Color(sum.r, sum.g, sum.b, 1);
+}
+
+view PaintLight(Lens lens)
+{
+    // Across, then down: one frag, and each Blit says its own direction
+    Draw.Blit(lens.bright.color, lens.spread, Blur, BlurStep { along = float2(lens.pixel.x * 4, 0) });
+    Draw.Blit(lens.spread.color, lens.bright, Blur, BlurStep { along = float2(0, lens.pixel.y * 4) });
+}
+```
+
+That's [Duel](../guide/duel.md)'s blur. Without it, the direction would be a field of a singleton that the view writes between the two Blits.
+
+- It goes last, after the vert and the frag, in `Draw.Mesh`, `Draw.Instanced`, [`Draw.Blit`](./views.md#targets-and-post-processing) and a target's `Mesh` and `Instanced`: `Draw.Mesh(vertices, indices, transform, Wave, Shade, Swell { height = 2 })`. Any expression of the struct's type will do: a literal, a local, a field, a function's result.
+- It's found by its type, as a component is, whatever the parameter is called. A draw gives one struct. Group what the vert and the frag each need in it: each reads the fields it wants.
+- It's sent once for the draw, with what the code reads of singletons, and only the fields the vert and the frag read. A field neither reads costs nothing, and needn't be a type a GPU has.
+- Draws in a row with the same mesh, the same vert and frag and the same values are still one draw call. Other values start another.
+- With [`Draw.Instanced`](#instances-from-a-list), a frag can take both: the list's struct, which each instance has its own of, and the draw's, which they share. The two have to be different types, and neither can be the type the draw's vert [writes for its frag](#from-a-vert-to-its-frag).
+- It holds no texture to sample. A draw's image is its `Texture` argument, or a field of a component or singleton.
+
+It's an error at the draw when its frag or vert takes a struct that nothing supplies (not the draw's vert, its instances or its values), and when the draw gives a struct neither takes.
 
 ## Textures
 
@@ -466,7 +506,7 @@ Every mote below is an item of a list, and none is an entity. A vert places the 
 
 :::
 
-An ordinary instance parameter is supplied only by `Draw.Instanced` or `Draw.Instanced`: using that shader with `Mesh`, or with a list of another type, is an error.
+A struct parameter that's meant as an instance's is supplied by `Draw.Instanced` and a list of that type. With `Mesh`, or a list of another type, the draw is an error, unless it gives a struct of that type as [its values](#values-for-one-draw), which every instance then shares.
 
 ## Looking at what's generated
 

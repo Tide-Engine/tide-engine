@@ -1,5 +1,5 @@
 // expect: frag 'Shade' reads a 'V', and this draw names no vert that writes one
-// expect: a frag's struct is what the draw's vert writes for it, 'out V other' among the vert's parameters, or an element of the list an Instanced draw is given, a List<V>
+// expect: a frag's struct is what the draw's vert writes for it, 'out V other' among the vert's parameters, an element of the list an Instanced draw is given, a List<V>, or the values the draw gives after its frag, 'Draw.Mesh(..., Shade, V { ... })'
 scene Main { }
 
 struct V

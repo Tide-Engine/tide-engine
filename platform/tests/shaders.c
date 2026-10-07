@@ -664,6 +664,65 @@ static void run_output_checks(const char *when)
     }
 }
 
+// A draw's values (pass 12): blits of one frag with values of their own,
+// meshes whose vert and frag read theirs, the same values twice as one draw,
+// and instances beside them. A point is a pixel of the window.
+static void run_values_checks(const char *when)
+{
+    static const struct {
+        float x, y;
+        int want[3];
+        const char *what;
+    } wanted[] = {
+        {16, 16, {255, 128, 64}, "a blit's frag reads the values the blit gives"},
+        {48, 16, {191, 128, 191}, "another blit of the same frag has its own, an int among them, and a third adds over it with its own"},
+        {8, 72, {255, 0, 0}, "a mesh's vert and frag read the values its draw gives"},
+        {40, 72, {0, 128, 0}, "the next draw of the same mesh and frag has other values"},
+        {24, 72, {0, 0, 0}, "and each is where its own values put it"},
+        {72, 72, {128, 128, 128}, "the same values twice are two instances of one draw"},
+        {8, 136, {128, 0, 0}, "an instance's struct is its own, and the draw's values every instance's"},
+        {40, 136, {0, 0, 128}, "the second instance has its own color and the same values"},
+        {8, 168, {255, 0, 0}, "another draw of the same instances has other values"},
+        {40, 168, {0, 0, 255}, "for each of its instances"},
+        {24, 152, {0, 0, 0}, "and nothing is drawn between them"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    local.Art.targetPass = 12;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[COUNT];
+    uint32_t got[COUNT];
+    for (int i = 0; i < COUNT; i++) points[i] = tide_f2(wanted[i].x + 0.5f, wanted[i].y + 0.5f);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
+    for (int i = 0; i < COUNT; i++) {
+        bool ok = true;
+        for (int c = 0; c < 3; c++) {
+            const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - wanted[i].want[c];
+            ok = ok && d >= -2 && d <= 2;
+        }
+        printf("%s: %s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, when, (unsigned)got[i],
+               (unsigned)wanted[i].want[0], (unsigned)wanted[i].want[1], (unsigned)wanted[i].want[2]);
+        if (!ok) failures++;
+    }
+    // One draw call for the two that share their values, and one for each of the others: three blits; two
+    // meshes and the pair; two draws of instances
+    int blits = 0, meshes = 0, instanced = 0;
+    for (uint32_t i = 0; i < list.run_count; i++) {
+        const tide_shader *shader = list.runs[i].shader;
+        if (!shader) continue;
+        blits += strcmp(shader->name, "Rinsed on Vertex") == 0;
+        meshes += strcmp(shader->name, "PutAt and PutTint on Vertex") == 0;
+        instanced += strcmp(shader->name, "SpeckAt and SpeckTint on Vertex") == 0;
+    }
+    const bool runs = blits == 3 && meshes == 3 && instanced == 2;
+    printf("%s: draws with the same values in a row are one run, and others their own%s (%d, %d and %d runs)\n",
+           runs ? "ok" : "FAIL", when, blits, meshes, instanced);
+    if (!runs) failures++;
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -689,6 +748,7 @@ static int frame(void *user, const float seconds)
         run_shadow_checks(", on another device");
         run_stencil_checks(", on another device");
         run_output_checks(", on another device");
+        run_values_checks(", on another device");
         return failures;
     }
 #endif
@@ -706,6 +766,8 @@ static int frame(void *user, const float seconds)
     run_shadow_checks(", again");
     run_stencil_checks("");
     run_output_checks("");
+    run_values_checks("");
+    run_values_checks(", again");
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");
