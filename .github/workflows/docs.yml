@@ -47,26 +47,14 @@ jobs:
           npm run test:access
           npm run test:releases
       - name: Install tools
-        if: runner.environment == 'github-hosted'
         run: |
           sudo apt-get update
           sudo apt-get install -y clang lld ninja-build ccache
-      # A runner of our own keeps its build tree, and has no compiler cache.
-      # Its clang is LLVM's own package, of the version tide's comes from.
-      - name: Tools (our own runner)
-        if: runner.environment != 'github-hosted'
-        run: |
-          echo "CMAKE_C_COMPILER_LAUNCHER=" >> "$GITHUB_ENV"
-          major=$(sed -nE 's/^set\(TIDE_LLVM_VERSION ([0-9]+)\..*/\1/p' cmake/LLVM.cmake)
-          test -x "/usr/lib/llvm-$major/bin/clang"
-          echo "LLVM_ROOT=/usr/lib/llvm-$major" >> "$GITHUB_ENV"
       - uses: actions/cache@v4
-        if: runner.environment == 'github-hosted'
         with:
           path: build/wasi-sdk-*
           key: wasi-sdk-${{ hashFiles('cmake/wasi-toolchain.cmake') }}
       - name: Cache compiled examples
-        if: runner.environment == 'github-hosted'
         uses: actions/cache@v4
         with:
           path: build/ccache
