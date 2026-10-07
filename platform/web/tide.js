@@ -2814,7 +2814,7 @@
     await deviceAsked;
 
     // <tide run>
-    // Hot reloading: tide run --web serves the page, and says which build is
+    // Hot reloading: tide run --web --watch serves the page, and says which build is
     // the newest. Each new one starts in the running one's place, carrying
     // over what the running one leaves it (platform/src/reload.c).
     let resumeWith = null;
@@ -2878,7 +2878,15 @@
     // second. When tide has stopped, the page stays as it is.
     if (config.reload) {
         let build = 0, restarts = 0, bytes = null, pack = 0;
+        let busy = false, freshRequested = false;
+        const startFresh = async () => {
+            freshRequested = false;
+            await replace(bytes, true);
+            print('tide: started over');
+        };
         const poll = async () => {
+            if (busy) return;
+            busy = true;
             try {
                 const [newest, restart, packs] = (await (await fetch('build', { cache: 'no-store' })).text())
                     .trim().split(' ').map(Number);
@@ -2895,22 +2903,43 @@
                     const response = await fetch(`game-${newest}.wasm`, { cache: 'no-store' });
                     if (response.ok) {
                         const next = new Uint8Array(await response.arrayBuffer());
-                        const fresh = !bytes;
+                        const fresh = !bytes || freshRequested || restart !== restarts;
+                        freshRequested = false;
                         build = newest;
                         restarts = restart;
                         bytes = next;
                         await replace(bytes, fresh);
                     }
-                } else if (bytes && restart !== restarts) {
+                } else if (bytes && (freshRequested || restart !== restarts)) {
                     restarts = restart;
-                    await replace(bytes, true);
+                    await startFresh();
                 }
             } catch (error) {
                 if (!(error instanceof TypeError)) printErr('tide: ' + (error && error.stack || error)); // TypeError: tide isn't there
+                // The last good program can still start fresh after tide
+                // stops serving. Ctrl+R keeps working with its cached bytes.
+                if (bytes && freshRequested) {
+                    try { await startFresh(); }
+                    catch (error) { printErr('tide: ' + (error && error.stack || error)); }
+                }
+            } finally {
+                busy = false;
             }
-            setTimeout(poll, 250);
         };
-        poll();
+        addEventListener('keydown', event => {
+            if (event.code !== 'KeyR' || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+            event.preventDefault();
+            const key = keyIndex.get('KeyR');
+            if (key !== undefined) { keysHeld[key] = 0; keysTapped[key] = 0; }
+            if (event.repeat) return;
+            freshRequested = true;
+            poll();
+        });
+        const tick = async () => {
+            await poll();
+            setTimeout(tick, 250);
+        };
+        tick();
         return;
     }
     // </tide run>

@@ -1,4 +1,4 @@
-// Hot reloading, for `tide run` (see tide/host.h). tide rebuilds the game as a
+// Hot reloading, for `tide run --watch` (see tide/host.h). tide rebuilds the game as a
 // library whenever a .tide file changes: game-1, game-2 and so on, each renamed
 // into place once it's whole. Between two frames, the host loads the newest
 // and runs it from then on. A file of its own, since it includes the operating
@@ -302,15 +302,24 @@ static void library_error(char *out, const size_t size)
 static struct {
     const char *dir;
     uint32_t running;  // The build running: game-<running>
+    uint32_t loaded;   // The build successfully loaded (a newer one may have failed)
     uint32_t pack;     // The pack loaded: pack-<pack>, 0 for none
     void *library;     // ...and its library
     float since_check; // Seconds since `dir` was last looked at
     float dropped_for; // Seconds since the match ended without this machine leaving it
+    bool r_held;
+    bool r_down; // A tap already seen but still pending the game's next input sample
+    bool restart_requested;
 } reload;
 
 static void library_path(const uint32_t build, char *out, const size_t size)
 {
     snprintf(out, size, "%s/game-%u" LIBRARY_SUFFIX, reload.dir, (unsigned)build);
+}
+
+static void loaded_path(const uint32_t build, char *out, const size_t size)
+{
+    snprintf(out, size, "%s/loaded-%u" LIBRARY_SUFFIX, reload.dir, (unsigned)build);
 }
 
 static void pack_path(const uint32_t n, char *out, const size_t size)
@@ -345,22 +354,55 @@ static void check_pack(void)
     else free(bytes);
 }
 
-// Loads a build: its game, or NULL after saying why.
-static const tide_host_game *load(const uint32_t build, void **library)
+// The CLI keeps only two published builds. The active library's own copy
+// stays available for a full reload even if newer builds fail to load.
+static bool keep_library(const char *from, const char *to)
+{
+    FILE *source = fopen(from, "rb");
+    if (!source) return false;
+    FILE *target = fopen(to, "wb");
+    bool ok = target != NULL;
+    if (target) {
+        uint8_t bytes[16384];
+        size_t n;
+        while ((n = fread(bytes, 1, sizeof bytes, source)) != 0) {
+            if (fwrite(bytes, 1, n, target) != n) { ok = false; break; }
+        }
+        ok = ok && !ferror(source);
+        if (fclose(target) != 0) ok = false;
+    }
+    fclose(source);
+    if (!ok) remove(to);
+    return ok;
+}
+
+// Loads a build: its game, or NULL after saying why. A new build first
+// gets its own copy; a full reload reopens that copy.
+static const tide_host_game *load(const uint32_t build, void **library, const bool fresh)
 {
     char path[4096];
-    library_path(build, path, sizeof path);
+    loaded_path(build, path, sizeof path);
+    if (fresh) {
+        char published[4096];
+        library_path(build, published, sizeof published);
+        if (!keep_library(published, path)) {
+            fprintf(stderr, "tide: can't keep %s for reloading\n", published);
+            return NULL;
+        }
+    }
     void *opened = library_open(path);
     if (!opened) {
         char error[512];
         library_error(error, sizeof error);
         fprintf(stderr, "tide: can't load %s (%s)\n", path, error);
+        if (fresh) remove(path);
         return NULL;
     }
     const library_fn game = library_find(opened, TIDE_HOST_LIBRARY);
     if (!game) {
         fprintf(stderr, "tide: %s isn't a game's library: it has no %s\n", path, TIDE_HOST_LIBRARY);
         library_close(opened);
+        if (fresh) remove(path);
         return NULL;
     }
     *library = opened;
@@ -486,8 +528,42 @@ static void swap(const tide_host_game *next, void *library)
     tide_platform_audio_forget(); // The samples the old build's voices play are its own, and go with it
     old->unload();
     library_close(reload.library);
+    char path[4096];
+    loaded_path(reload.loaded, path, sizeof path);
+    remove(path);
     reload.library = library;
     tide_draw_forget(&tide_run_draw); // The pixels the old build's C named were its own
+}
+
+// A full reload also resets C and C++ globals: nothing of the old library
+// can survive its unloading. The window and the host's filesystem stay open.
+static void restart(void)
+{
+    const tide_host_game *old = tide_run_game;
+    tide_run_end();
+    tide_platform_audio_forget();
+    old->unload();
+    library_close(reload.library);
+    reload.library = NULL;
+    tide_run_game = load(reload.loaded, &reload.library, false);
+    if (!tide_run_game) exit(1);
+    if (tide_run_game->assets && tide_run_pack) tide_run_game->assets(tide_run_pack, tide_run_pack_size);
+    tide_clips_prepare(tide_platform_jobs());
+    tide_devices_consume(&tide_run_devices);
+    reload.r_down = false;
+    reload.dropped_for = 0.0f;
+    tide_run_begin();
+    printf("tide: started over\n");
+    fflush(stdout);
+}
+
+static void restart_input(tide_devices *devices)
+{
+    tide_keyboard *k = &devices->keyboard;
+    const bool ctrl = k->leftCtrl.held || k->rightCtrl.held;
+    if (ctrl && !reload.r_held && (k->r.held || (k->r.down && !reload.r_down))) reload.restart_requested = true;
+    reload.r_held = k->r.held;
+    if (ctrl) k->r = (tide_button){0};
 }
 
 // Swaps in the newest build, if there's a newer one, and starts over if tide
@@ -505,15 +581,17 @@ static void check(void)
     if (newest != reload.running) {
         reload.running = newest; // A build that doesn't load isn't tried again
         void *library = NULL;
-        const tide_host_game *next = load(newest, &library);
-        if (next) swap(next, library);
+        const tide_host_game *next = load(newest, &library, true);
+        if (next) {
+            swap(next, library);
+            reload.loaded = newest;
+        }
     }
 
     snprintf(path, sizeof path, "%s/restart", reload.dir);
     if (file_exists(path)) {
         remove(path);
-        tide_run_end();
-        tide_run_begin();
+        reload.restart_requested = true;
     }
 }
 
@@ -543,6 +621,12 @@ static int reload_frame(void *user, const float seconds)
         check();
     }
     const int code = tide_run_frame(user, seconds);
+    reload.r_down = tide_run_devices.keyboard.r.down;
+    if (reload.restart_requested) {
+        check(); // A new build, if one is ready, is the one to start fresh.
+        restart();
+        reload.restart_requested = false;
+    }
     rejoin(seconds);
     tide_platform_next_frame(0.1 - reload.since_check); // New builds, whatever the tick rate
     return code;
@@ -552,9 +636,11 @@ _Noreturn void tide_host_run_library(const tide_run_desc *desc, const char *dir)
 {
     reload.dir = dir;
     reload.running = 1;
-    const tide_host_game *game = load(1, &reload.library);
+    reload.loaded = 1;
+    const tide_host_game *game = load(1, &reload.library, true);
     if (!game) exit(1);
     tide_run_game = game;
+    tide_run_input = restart_input;
     tide_run_open(desc);
     check_pack(); // The pack tide wrote with the first build, where the game has assets
     tide_run_begin();
