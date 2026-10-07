@@ -1695,7 +1695,7 @@ view Board(verified Duel duel) { ... }
   - With a predicted `Body`, an entity is gone from a view the moment the prediction destroys it, whatever a `verified` parameter beside it says. To hold a death until it's confirmed, a game makes the death a state of a living entity (a field or a tag), takes everything `verified` in that view, or shows it from `local event(verified Destroyed)`.
   - A local handler takes it on its event: `local event(verified Died died)` (see Events).
 - Meshes are the general shape: `Draw2D.Mesh(vertices, indices)` draws triangles with a position, a texture coordinate and a color at each corner, three indices each, in order with other drawing calls. `Draw3D` also supplies cube, sphere, cylinder and plane helpers.
-- `Texture` is a local, read-only image reference. `RenderTarget` is a local drawing destination whose `.color` is a `Texture`. Target receiver methods (`scene.Clear`, `scene.SetCamera`, `scene.Mesh` and the other drawing methods) make the destination explicit. Ordinary `Draw2D`/`Draw3D` calls draw into `Draw.window`; the window has no sampleable `.color`. Each target has independent frame camera and clip state, shared across views, and switching passes preserves color and depth. A clear resets both within its clip.
+- `Texture` is a local, read-only image reference. `RenderTarget` is a local drawing destination whose `.color` is a `Texture`, and whose `.depth` a frag reads too (below). Target receiver methods (`scene.Clear`, `scene.SetCamera`, `scene.Mesh` and the other drawing methods) make the destination explicit. Ordinary `Draw2D`/`Draw3D` calls draw into `Draw.window`; the window has no sampleable `.color`. Each target has independent frame camera and clip state, shared across views, and switching passes preserves color and depth. A clear resets both within its clip.
 - A render target's size is in logical pixels, like the window's, and its image is made at the display's scale: `RenderTarget(width, height)` creates one in local code, of a positive width and height. Drawing into a target is then the same as drawing into the window: `target.Screen()` is in logical pixels, text is fitted to the image's real pixels, shapes' edges are smooth over one of them, and conversions (`WorldToScreen` and the others), clips and a frag's `pixel.position` are in logical pixels.
   - A third argument is its pixels per unit, the display's scale when left out: `RenderTarget(320, 180, 1)` is exactly 320 by 180 pixels whatever the display, for pixel art and anything that must not depend on the display.
   - `RenderTarget.Screen()` is a target that's always the window's size, and `RenderTarget.Screen(factor)` one that's always that part of it: `RenderTarget.Screen(0.5)` is half as wide and half as high. The engine makes it again when the window's size or the display's scale changes, and the game never calls `Resize` on it. What was drawn in it is lost then, which doesn't matter for a target a game draws again every frame.
@@ -1704,6 +1704,39 @@ view Board(verified Duel duel) { ... }
   - A target's color and depth persist across frames otherwise. Copies, including `.color` references, share the image. `target.Resize(width, height)` changes the size of a target that isn't the window's to size, and discards its contents, even at the same size. `target.Dispose()` invalidates all aliases and releases its attachments; repeated disposal is harmless. A default target is invalid. These operations cannot run in field defaults or the match. Invalid destinations and disposed sources skip drawing with a diagnostic, including already-recorded uses of an image disposed in the frame. `Draw.window` cannot be resized or disposed. Hot reload retains managed sizes, pixels per unit, whether a target follows the window, and shared aliases, adopting their state natively and recreating their images on the web; borrowed references are cleared and rendered contents are discarded. Device loss discards GPU contents.
 - `Grid2<Color>` remains a CPU pixel source: `Draw2D.Mesh(vertices, indices, texture)` accepts a sized grid or a `Texture`. Grid pixels can be local or match state and are uploaded again when their cells change. Rendering into a target never writes CPU grid cells.
 - `Draw.Blit(source, destination, frag)` has explicit source and destination. It runs a frag taking `Vertex` and one read-only `Texture` source parameter over a full destination quad, replacing color and alpha, preserving depth, and temporarily ignoring camera and clip (and the other draw settings, below, where it also takes a blend of its own). The source is a `Texture` or `Grid2<Color>`. Sampling the destination's own image is an error. GUI and stats stay on the window. Target storage is recreated after resize, hot reload and device loss; its previous rendered contents are lost.
+- **A target says what it holds when it's made** (agreed 2026-10-07), and never changes it. Every target has depth, which its 3D meshes read and write, and its format says what color image is beside it, if any: the color there always was, or none, for a target of depth alone. `RenderTarget(1024, 1024, 1, Format.DepthOnly)` is one (the enum, its members' names and where the format goes are picks: see Provisional).
+  - A target of depth alone is drawn into like any other: its `Clear`, its cameras, its clip and its `Mesh` are a target's. A color has nowhere to go there, so only what writes depth leaves anything: a clear, which sets it back to the far limit, and a 3D mesh that writes depth, with a frag or without. A mesh's frag still runs there, as it may leave pixels out (`pixel.Discard()`); what it writes to its color is dropped.
+  - A draw with no frag keeps the engine's default look, and never means "depth only": what a draw writes is said, never implied. Here it's said by where it's drawn.
+  - There's no setting for whether a draw writes color: a target of depth alone covers it.
+- **A frag reads a target's depth,** as it reads its color: `target.depth` beside `target.color` (agreed 2026-10-07). Every target has it, with color or without, and `Draw.window` has none to read.
+  - Read plainly, it's a number: how far the nearest thing drawn there is, from 0 at the camera's near plane to 1 at its far limit, as `pixel.depth` is, and 1 where nothing was drawn since a clear.
+  - Read the second way, it's compared with a number of the frag's, which gives how much of what's stored there is further, from 0 to 1, filtered by the GPU: what a shadow's edge wants.
+  - It's the same way up as the target's color, with the same `uv`, and the same number on every backend (to the GPU's own rounding, as everything a frag computes is).
+
+```csharp
+local singleton Lamp
+{
+    RenderTarget map;      // What's nearest the lamp: depth alone
+    DepthTexture shadow;   // ...as frags read it
+    float4x4 toLamp;       // From the world to the lamp's clip space
+}
+
+frag Lit(BoxVertex vertex, mut Color color, Pixel pixel, Lamp lamp)
+{
+    float4 seen = Math.Mul(lamp.toLamp, float4(pixel.world, 1));
+    float2 uv = float2(seen.x * 0.5 + 0.5, 0.5 - seen.y * 0.5);
+    // 1 where nothing is nearer the lamp than this pixel, 0 in shadow, and between the two along a shadow's edge
+    float lit = lamp.shadow.Compare(uv, seen.z * 0.5 + 0.5 - 0.01);
+    color = Color(lit, lit, lit);
+}
+
+view Casters(Box box, Models models, mut Lamp lamp)
+{
+    // No frag, and the engine's own look: in a target of depth alone, its depth is what's kept
+    lamp.map.Mesh(models.crate, models.faces, float4x4.Translate(box.pos));
+}
+```
+
 - Filtering is how a draw reads the pixels, not part of them: `Draw2D.Mesh(vertices, indices, texture, Filter.Point)`. Left out, it's `Filter.Bilinear`, as Unity's default.
 - **Code the GPU runs is written in Tide: `frag` and `vert`.** They're declaration kinds, like `view`: a `frag` runs once for each pixel a mesh covers, and a `vert` once for each of its vertices. Their signature says what they read, and the engine supplies it. Neither returns a value. A `Draw2D.Mesh` or `Draw3D.Mesh` names them after its other arguments, the vert first, and both are optional.
 
@@ -1848,23 +1881,18 @@ view Sparks(Spark spark, Hud hud)
 }
 ```
 
-#### What the GPU side gains (agreed, not built)
+#### What the GPU side gains (agreed, built in part)
 
 Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build any technique itself (shadow maps were what started it), with no lighting or shadows of the engine's own. Nearly every technique draws into an image and reads that image in a later frag, so the pieces are what an image holds, what a draw's state is, what a frag reads and what it writes.
 
-- A draw with no frag keeps the engine's default look. It never means "depth only": what a draw writes is said, never implied.
-- **A target says what it holds when it's made.** Every target has depth, and its format says what color image is beside it, if any: the color there is today, or none, for a target of depth alone. A target of depth alone is drawn into like any other, and a frag's color has nowhere to go there.
-- **A frag reads a target's depth,** as it reads its color: `target.depth` beside `target.color`. Reading it gives a number, how far the nearest thing drawn there is, from 0 to 1 as `pixel.depth` is. A second way to read it compares it with a number of the frag's and gives how much of what's stored is further, from 0 to 1, filtered by the GPU: what a shadow's edge wants.
+- **Built, where the rest of this list isn't yet:** a target says what it holds when it's made, a target of depth alone among them, and a frag reads a target's depth, plainly or compared with a number. Their rules are with the render targets' above (Views and drawing), and what was picked to build them is under Provisional (Target formats and depth).
 - **Which side of a triangle draws is a setting of `Draw3D`'s,** with both forms, and the default is that the back doesn't: `Draw3D.Cull(...) { }` and `Draw3D.SetCull(...)`. `Draw2D` never culls.
 - **How `uv` wraps is chosen where a texture is sampled,** as the filter is.
 - **Stencil is there as it is on a GPU:** a whole number from 0 to 255 for each pixel, beside its depth. A draw compares it with a number of its own, by a test it names, and doesn't draw where that fails, and it says what becomes of the stored number where it draws. It's a draw setting with both forms. It's built last.
 - **A frag's outputs are `out` parameters,** its color among them: `out Color color`, so a frag that leaves a path without writing it is an error, where `mut Color color` started as white. A vert's vertex stays `mut`: it's handed a vertex and changes it. `mut Color color` becomes an error that names `out`.
 - **A frag has more outputs than one color,** each an `out` parameter, into a target made to hold as many.
 - **A vert hands its frag a struct of its own:** an `out` parameter of the vert's, which the GPU blends across the triangle and the frag reads, so what a vert works out needs no field in every vertex of the mesh. Verts and frags stay declarations of their own, paired where a draw names them, and a frag that reads what the draw's vert doesn't write is an error at the draw.
-- There's no setting for whether a draw writes color: a target of depth alone covers it.
 - The names and details are picks, to confirm as each is built:
-  - `Format.DepthOnly` as a target's last argument, and what the format of a target with color is called.
-  - `target.depth` as a type of its own (the generated shader differs for it, so the compiler has to know), with `Sample(uv)` giving a `float` and `Compare(uv, value)`.
   - The front of a triangle is the side its corners go clockwise on, as Unity's; the enum `Cull` with `Back`, `Front` and `None`.
   - `Wrap` as an argument of `Sample`, after the filter.
   - `Draw.Stencil(test, value[, operation])`, with enums for the test and the operation (keep, replace, increment, decrement, zero, invert), and none of a GPU's other stencil state (each side of a triangle apart, what a failed depth test does, bit masks).
@@ -1905,6 +1933,20 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
   - **`Draw.Blit`** is its destination's, whatever is set: no blend, tint, depth, transform, camera or clip changes it. It takes a blend of its own before its frag, `Draw.Blit(source, destination, Blend.Add, frag)`, and replaces what's there without one. So a pass over the screen doesn't change with what an earlier view left set.
   - A setting that's set to what it was, or set and put back with nothing drawn, costs nothing: what's drawn on either side of it is still drawn at once. A tint and a 2D transform are worked into shapes and text as they're recorded, so shapes with a tint or a transform each are still one draw call. A mesh through a `frag` gets its tint and its 2D transform with its draw, so instances with different ones are different draws.
   - In C (`tide/draw.h`), `tide_draw_set_*` are the `Set` forms (`tide_draw_set_camera`, `tide_draw_set_clip`, `tide_draw_set_screen`, `tide_draw_set_blend`, `tide_draw_set_depth`...), `tide_draw_unset_*` the ones with no arguments, and `tide_draw_push_*` with `tide_draw_pop(list, mark)` the blocks. The former `tide_draw_camera`, `tide_draw_camera_3d`, `tide_draw_camera_matrices`, `tide_draw_clip`, `tide_draw_no_clip` and `tide_draw_screen` were renamed to match.
+- **Target formats and depth** (built 2026-10-07; that a target says what it holds when it's made, that one can hold depth alone, and that a frag reads a target's depth plainly or compared are decided, above; everything here is a pick, to confirm):
+  - **`Format`** is a built-in enum with two members: `Format.Color`, a color image beside the depth, which is what a target holds when nothing is said and the name for what targets always were, and `Format.DepthOnly`. A game can't declare the name outside a namespace. It's a value like any enum's: a variable or a function's parameter says it too.
+  - **It's the last argument where a target is made:** `RenderTarget(width, height, format)`, `RenderTarget(width, height, pixelsPerUnit, format)`, `RenderTarget.Screen(format)` and `RenderTarget.Screen(factor, format)`. Anywhere else among them is an error that says it comes last. `Resize` keeps it, and so does a hot reload, with the target's size and scale.
+  - **What draws into depth alone.** A clear and a 3D mesh under `Depth.ReadWrite` (`target.Mesh`, the primitives, `target.Instanced`, through a frag or not). Shapes, text, 2D meshes, a `Draw.Blit` into it, and 3D meshes under `Depth.Read` or `Depth.None` draw nothing there, and say nothing: it's what the target is for. Its `Clear` takes a color like any target's, which goes nowhere.
+  - **`target.depth` is a `DepthTexture`,** a type of its own, as the code the GPU runs differs for it and the compiler has to know which it's writing. It's a local reference like `Texture`: kept only in local state (a local component's or singleton's field, a match one's `local` field, a struct of those, a local), copied freely, with no constructor. A default one is no target's, and reads as the far limit: `Sample` gives 1, and `Compare` 1.
+  - **A frag or a vert reads one where it's a field of a component or a singleton it takes,** `lamp.shadow.Compare(uv, depth)`, as it reads a `Grid2<Color>` or a `Texture` field: a view puts a target's depth there, `lamp.shadow = lamp.map.depth;`. It isn't a parameter of the frag's own, and no draw supplies one as its texture (`Draw3D.Mesh`'s, or `Draw.Blit`'s source): those are a color's. Reading it through the target, `lamp.map.depth.Sample(uv)`, is an error, as a frag doesn't read a `RenderTarget`.
+  - **`depth.Sample(uv)`** gives a `float`, the nearest pixel's. It takes no `Filter`: a depth blended between two pixels is neither's.
+  - **`depth.Compare(uv, value)`** gives a `float` from 0 to 1. At each of the pixels around `uv` it's 1 where what's stored isn't nearer than `value`, the test a mesh passes to be drawn there, so a pixel compared with its own depth passes; what that gives at each is blended by how near `uv` is to it. `value` is kept between 0 and 1 first: past the far limit is the far limit. A frag takes its own bias off `value`; there's none as state.
+  - `uv` is a color's: (0, 0) at the target's top left corner, (1, 1) at its bottom right, and past them, the pixels at the edge.
+  - **A draw into a target that reads that target's depth is passed by,** with a line that says so, when it's drawn: what a frag reads comes through a field, which the compiler can't follow to a target. It's what a draw that samples its own destination's color through a field gets, where `Draw.Blit(target.color, target, frag)` is refused as it's written. So is a draw that samples the `color` of a target of depth alone, which has none.
+  - A depth is 24 bits, with 8 bits of stencil beside it for the stencil that's agreed and to come.
+  - Each way a frag reads a depth is one of the draw's 8 textures: a depth it both samples and compares counts twice.
+  - **Not there:** a `DepthTexture` as a draw's own source or a frag's own parameter; a comparison other than "isn't nearer"; writing a pixel's depth from a frag; reading a depth back into Tide; and skipping a frag that can't discard in a target of depth alone, which a backend may do some day and changes no picture.
+  - **Where a point of the world is in a target's image is the game's to work out,** for a frag that looks one up (a shadow map does): the camera's projection, after z turned around (a camera looks along its `+z`, and clip space along `-z`), after its transform undone, `Math.Mul(projection, Math.Mul(float4x4.TRS(float3(0), quaternion.identity, float3(1, 1, -1)), Math.Inverse(transform)))`; then `uv` is `(x * 0.5 + 0.5, 0.5 - y * 0.5)` of that point and its depth `z * 0.5 + 0.5`, each over `w` under a perspective. A function that gives a camera's matrix, so a game doesn't spell the turn of z itself, is Open.
 - **`verified` in views**, beyond what's decided:
   - Any `verified` component or filter asks for the entity in the confirmed world: `without verified Dead` is "confirmed, and not `Dead` there", so an entity whose spawn isn't confirmed yet is skipped by it too.
   - The same entity is told by what each was born as, where this machine knows it of both, and by its handle otherwise (an entity that came with a world the server sent).
@@ -2071,7 +2113,8 @@ view DrawHud(Arena arena)
 - `verified World`: the confirmed world's other entities, by their handles.
 - Queries in local code: `mut` on a binding, to write a row's local fields, and reading them through a row; `with ownership` in a query; a local handler's rows as each event's turn left things, where they're the tick's once it's done.
 - Views reading input, for example to draw where the local player aims before the tick runs.
-- GPU code: which side of a triangle a pixel is on; the camera; a frag's output of another type than a `Color`; code that computes rather than draws; `while` and `switch` there; SPIR-V, with Vulkan. What's agreed and not built yet (a target's format and its depth read, cull, wrap, stencil, `out` outputs, a vert's struct for its frag) is in What the GPU side gains.
+- GPU code: which side of a triangle a pixel is on; the camera; a frag's output of another type than a `Color`; code that computes rather than draws; `while` and `switch` there; SPIR-V, with Vulkan. What's agreed and not built yet (cull, wrap, stencil, `out` outputs, a vert's struct for its frag) is in What the GPU side gains.
+- A camera's matrix from the world to its clip space, as a function: a frag that looks a point up in another camera's image (a shadow map's lamp) needs the matrix the engine draws through, and works it out itself today, the turn of z included (see Provisional, Target formats and depth). And a `DepthTexture` as a draw's own source, for a pass over the screen that reads a scene's depth with no singleton between.
 - 3D: meshes in the grid's chunks, for voxels.
 - The cursor: hiding it without locking it, keeping it in the window without hiding it, and images for it; its lock on Android.
 - Layers, and a sprite in one call (a textured rectangle is a mesh of four corners for now).

@@ -220,6 +220,94 @@ TIDE_TEST(draw_targets_record_their_scale_and_whether_they_follow_the_window)
     tide_render_targets_free();
 }
 
+// What a target holds is said when it's made, and its id says it from then on:
+// to a list, to a renderer, and to another build that makes the target again.
+// Its depth is a texture of a kind of its own, beside its color's.
+TIDE_TEST(draw_targets_say_what_they_hold_and_lend_their_depth)
+{
+    tide_draw_list d = {0}, appended = {0};
+    const tide_render_target scene = tide_render_target_make(64.0f, 48.0f);
+    const tide_render_target shadow = tide_render_target_make_as(64.0f, 48.0f, TIDE_TARGET_DEPTH_ONLY);
+    const tide_render_target exact = tide_render_target_make_scaled_as(256.0f, 256.0f, 1.0f, TIDE_TARGET_DEPTH_ONLY);
+    const tide_render_target screen = tide_render_target_window_as(TIDE_TARGET_DEPTH_ONLY);
+    const tide_render_target half = tide_render_target_screen_as(0.5f, TIDE_TARGET_DEPTH_ONLY);
+    TIDE_CHECK(tide_render_target_format(scene.id) == TIDE_TARGET_COLOR);
+    TIDE_CHECK(tide_render_target_format(shadow.id) == TIDE_TARGET_DEPTH_ONLY && tide_render_target_format(exact.id) == TIDE_TARGET_DEPTH_ONLY);
+    TIDE_CHECK(tide_render_target_format(screen.id) == TIDE_TARGET_DEPTH_ONLY && tide_render_target_format(half.id) == TIDE_TARGET_DEPTH_ONLY);
+    TIDE_CHECK(exact.size.scale == 1.0f && screen.size.window == 1.0f && half.size.window == 0.5f);
+    // The same four with color, by name and by the ones there always were
+    TIDE_CHECK(tide_render_target_format(tide_render_target_make_as(4.0f, 4.0f, TIDE_TARGET_COLOR).id) == TIDE_TARGET_COLOR);
+    TIDE_CHECK(tide_render_target_format(tide_render_target_window().id) == TIDE_TARGET_COLOR);
+    // The window, a target that's none, a borrowed one, and a format there's none of, hold color
+    TIDE_CHECK(tide_render_target_format(TIDE_RENDER_WINDOW) == TIDE_TARGET_COLOR);
+    TIDE_CHECK(tide_render_target_format(TIDE_RENDER_INVALID) == TIDE_TARGET_COLOR && tide_render_target_format(0) == TIDE_TARGET_COLOR);
+    TIDE_CHECK(tide_render_target_format(1001) == TIDE_TARGET_COLOR);
+    TIDE_CHECK(tide_render_target_format(tide_render_target_make_as(4.0f, 4.0f, (tide_target_format)9).id) == TIDE_TARGET_COLOR);
+
+    // Its state is found whatever it holds: it's live, resized and disposed like any other
+    TIDE_CHECK(tide_render_target_live(shadow.id) && tide_render_target_version(shadow.id) == 1);
+    tide_render_target_resize(shadow, 32.0f, 24.0f);
+    const tide_render_target resized = tide_render_target_resolve(shadow);
+    TIDE_CHECK(resized.id == shadow.id && resized.size.width == 32.0f && tide_render_target_version(shadow.id) == 2);
+    TIDE_CHECK(tide_render_target_format(resized.id) == TIDE_TARGET_DEPTH_ONLY);
+
+    // A target's depth and its color are two textures of the list's, each found again
+    const tide_depth_ref depth = tide_render_target_depth(scene);
+    TIDE_CHECK(depth.target.id == scene.id && depth.target.size.width == 64.0f);
+    const uint32_t color_slot = tide_draw_texture_source(&d, tide_render_target_color(scene));
+    const uint32_t depth_slot = tide_draw_depth_source(&d, depth);
+    TIDE_REQUIRE(color_slot && depth_slot && color_slot != depth_slot && d.texture_count == 2);
+    TIDE_CHECK(d.textures[color_slot - 1u].space == TIDE_PIXELS_TARGET && d.textures[depth_slot - 1u].space == TIDE_PIXELS_TARGET_DEPTH);
+    TIDE_CHECK(d.textures[depth_slot - 1u].id == scene.id && d.textures[depth_slot - 1u].pixels == NULL);
+    TIDE_CHECK(d.textures[depth_slot - 1u].target.width == 64.0f && d.textures[depth_slot - 1u].target.height == 48.0f);
+    TIDE_CHECK(tide_draw_depth_source(&d, depth) == depth_slot && tide_draw_target_depth(&d, scene.id, 64.0f, 48.0f) == depth_slot);
+    TIDE_CHECK(tide_draw_texture_source(&d, tide_render_target_color(scene)) == color_slot && d.texture_count == 2);
+    // The window has none to lend, and a depth that's no target's is no texture
+    TIDE_CHECK(tide_render_target_depth((tide_render_target){.id = TIDE_RENDER_WINDOW}).target.id == TIDE_RENDER_INVALID);
+    TIDE_CHECK(tide_draw_depth_source(&d, (tide_depth_ref){0}) == 0 && d.texture_count == 2);
+    // A resized target's depth is its new image's
+    tide_render_target_resize(scene, 16.0f, 16.0f);
+    const uint32_t smaller = tide_draw_depth_source(&d, depth);
+    TIDE_REQUIRE(smaller && smaller != depth_slot);
+    TIDE_CHECK(d.textures[smaller - 1u].target.width == 16.0f && d.textures[smaller - 1u].version == 2);
+
+    // A blit doesn't read the depth of what it draws into, any more than its color
+    static const tide_shader reads_depth = {.name = "depth read", .dims = 2, .vertex_size = sizeof(tide_vertex), .texture_count = 1,
+                                            .texture_reads = {TIDE_SHADER_READ_DEPTH}};
+    tide_draw_render_target(&d, scene);
+    const uint32_t commands = d.count;
+    tide_draw_blit(&d, &reads_depth, TIDE_BLEND_REPLACE, NULL, NULL, &smaller, 0);
+    TIDE_CHECK(d.count == commands);
+    tide_draw_render_target(&d, shadow);
+    tide_draw_blit(&d, &reads_depth, TIDE_BLEND_REPLACE, NULL, NULL, &smaller, 0);
+    TIDE_REQUIRE(d.count == commands + 2u && d.commands[d.count - 1u].kind == TIDE_DRAW_BLIT);
+    TIDE_CHECK(d.runs[d.commands[d.count - 1u].shaded.run].textures[0] == smaller);
+
+    // Another list has each as what it was
+    tide_draw_append(&appended, &d);
+    TIDE_REQUIRE(appended.run_count == 1 && appended.target_count == 2);
+    const uint32_t carried = appended.runs[0].textures[0];
+    TIDE_REQUIRE(carried && carried <= appended.texture_count);
+    TIDE_CHECK(appended.textures[carried - 1u].space == TIDE_PIXELS_TARGET_DEPTH && appended.textures[carried - 1u].id == scene.id);
+    TIDE_CHECK(tide_render_target_format(appended.targets[1].id) == TIDE_TARGET_DEPTH_ONLY);
+
+    // Another build makes a target again from its id and its size alone, where the id is no address
+    // it can read: what it held comes with it, and every alias is the one new target
+    const tide_render_target packed = {.id = TIDE_RENDER_MANAGED | 0x1230u | TIDE_TARGET_DEPTH_ONLY,
+                                       .size = {.width = 24.0f, .height = 18.0f, .scale = 2.0f}};
+    const tide_render_target colored = {.id = TIDE_RENDER_MANAGED | 0x1240u, .size = {.window = 0.5f}};
+    const tide_render_target first = tide_render_target_recreate(packed), second = tide_render_target_recreate(packed);
+    const tide_render_target third = tide_render_target_recreate(colored);
+    TIDE_CHECK(first.id == second.id && first.size.scale == 2.0f && tide_render_target_live(first.id));
+    TIDE_CHECK(tide_render_target_format(first.id) == TIDE_TARGET_DEPTH_ONLY && tide_render_target_format(third.id) == TIDE_TARGET_COLOR);
+    TIDE_CHECK(third.id != first.id && third.size.window == 0.5f);
+    tide_render_targets_recreated();
+
+    tide_draw_free(&appended);
+    tide_draw_free(&d);
+    tide_render_targets_free();
+}
+
 static const tide_vertex quad[4] = {
     {{0.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
     {{8.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
