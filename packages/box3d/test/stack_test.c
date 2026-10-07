@@ -12,7 +12,15 @@
 #include "tide/net.h"
 #include "tide/profile.h"
 #include "tide/time.h"
+#include "tide/resident.h"
 #include "tide_test.h"
+
+// What the match holds of Box3D's state: the pages its resident keeps (tide/resident.h), in bytes
+static int physics_bytes(const tide_world *w)
+{
+    return w->Box3D_Physics.state.pages ? (int)w->Box3D_Physics.state.pages->count * TIDE_ARENA_PAGE : 0;
+}
+
 
 #ifdef BOX3D_TEST_JOBS
 #include "tide/platform.h"
@@ -24,7 +32,6 @@ void b3t_narrow(bool on);
 void b3t_check(bool on, bool whenever);
 void b3t_images(int32_t *whole, int32_t *in_parts);
 uint64_t b3t_image_hash(void);   // Of the image the last tick's world wrote
-int32_t b3t_image_bytes(uint8_t *bytes, int32_t room);
 int32_t b3t_geometry_size(void); // Of the world the last tick had
 int32_t b3t_shared_steps(void);
 int32_t b3t_restores(void);
@@ -35,13 +42,13 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took);
 
 // The match after 300 ticks, on every platform and in every configuration:
 // Box3D's own math, SIMD or not, and its image, byte for byte.
-#define SETTLED_HASH UINT64_C(0xce9944063d975f1f)
-#define IMAGES_HASH UINT64_C(0x0b0635eabd4b5ce2)
+#define SETTLED_HASH UINT64_C(0x7d8c8cd18a765812)
+#define IMAGES_HASH UINT64_C(0x7f7788db1545a3f5)
 // Box3D's own image at each of the 300 ticks, apart from everything else the
 // match holds: its state, byte for byte. A change to what the match keeps
 // beside it (a field of Physics, a component of the package's) moves the two
 // above and leaves this one.
-#define OWN_HASH UINT64_C(0x5fb58e8f083d76cd)
+#define OWN_HASH UINT64_C(0x2c0f0b8554356083)
 // Where the crates are and how fast, at each of the 300 ticks: the simulation
 // alone. A change to what the image holds of a world moves the three above and
 // leaves this one; a change to how the world steps moves all four.
@@ -133,25 +140,13 @@ TIDE_TEST(box3d_steps_a_match)
         }
         printf("    %s: %d crates, %d at rest; %d touches began and %d ended; the image is %d bytes, and its geometry %d\n",
                narrow ? "4 at a time" : "as this CPU does", crates, resting, (int)a.Tally.touched, (int)a.Tally.parted,
-               (int)a.Box3D_Physics.size, (int)b3t_geometry_size());
+               physics_bytes(&a), (int)0);
         TIDE_CHECK(crates == 22); // 12 stacked, 8 thrown, 1 pushed, 1 capsule: the doomed one went
         TIDE_CHECK(a.Box3D_Physics.bodies == 24 && a.Box3D_Physics.shapes == 24);
         TIDE_CHECK(a.Tally.touched > 20 && a.Tally.parted > 0);
         printf("    the world's hash is %016llx, its 300 images' %016llx, and its bodies' %016llx\n",
                (unsigned long long)tide_world_hash(&a), (unsigned long long)tide_hash_end(images), (unsigned long long)tide_hash_end(bodies));
         printf("    Box3D's own images, apart from the match: %016llx\n", (unsigned long long)tide_hash_end(bytes));
-        // The last image into a file, for two builds that disagree about it to compare (box3d/TIDE.md)
-        if (narrow == 0 && getenv("B3T_DUMP")) {
-            const int32_t size = b3t_image_bytes(NULL, 0);
-            uint8_t *image = malloc((size_t)size);
-            b3t_image_bytes(image, size);
-            FILE *file = fopen(getenv("B3T_DUMP"), "wb");
-            if (file) {
-                fwrite(image, 1, (size_t)size, file);
-                fclose(file);
-            }
-            free(image);
-        }
         TIDE_CHECK(tide_world_hash(&a) == SETTLED_HASH);
         TIDE_CHECK(tide_hash_end(images) == IMAGES_HASH);
         TIDE_CHECK(tide_hash_end(bytes) == OWN_HASH);
@@ -237,8 +232,8 @@ TIDE_TEST(box3d_joins)
     TIDE_REQUIRE(tide_world_unpack(&b, bytes, size));
     tick(&b, 100);
     TIDE_CHECK(tide_world_hash(&b) == went);
-    printf("    the world is %u bytes packed, %d of them Box3D's image and %d its geometry\n", (unsigned)size, (int)b.Box3D_Physics.size,
-           (int)b3t_geometry_size());
+    printf("    the world is %u bytes packed, %d of them Box3D's image and %d its geometry\n", (unsigned)size, physics_bytes(&b),
+           (int)0);
     free(bytes);
     tide_world_free(&a);
     tide_world_free(&b);
@@ -315,8 +310,8 @@ TIDE_TEST(box3d_costs)
     a.Size.lull = true;
     cost(&a, "a crate put to sleep:", 60);
     a.Size.lull = false;
-    printf("    %d crates; the image is %d bytes, and its geometry %d\n", CRATES, (int)a.Box3D_Physics.size,
-           (int)b3t_geometry_size());
+    printf("    %d crates; the image is %d bytes, and its geometry %d\n", CRATES, physics_bytes(&a),
+           (int)0);
     tide_world_free(&a);
     tide_world_free(&kept);
 }
@@ -371,7 +366,7 @@ TIDE_TEST(box3d_threads_change_nothing)
                on ? (unsigned)jobs->threads : 1u, on ? "s" : "", (double)ticks[on] / (TICKS * 1e6), (double)steps[on] / (TICKS * 1e6),
                (double)images[on] / (TICKS * 1e6), (double)(ticks[on] - steps[on] - images[on]) / (TICKS * 1e6));
     }
-    printf("    %d steps were shared out; the image is %d bytes\n", (int)(b3t_shared_steps() - before), (int)a.Box3D_Physics.size);
+    printf("    %d steps were shared out; the image is %d bytes\n", (int)(b3t_shared_steps() - before), physics_bytes(&a));
     TIDE_CHECK(b3t_shared_steps() - before > TICKS / 2);
 
     // What a rollback pays once: C's world made from the match's image

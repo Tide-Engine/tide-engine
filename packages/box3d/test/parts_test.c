@@ -15,8 +15,16 @@
 
 #include "tide/jobs.h"
 #include "tide/net.h"
+#include "tide/resident.h"
 #include "tide_test.h"
 #include "yard.h"
+
+// What the match holds of Box3D's state: the pages its resident keeps (tide/resident.h), in bytes
+static int physics_bytes(const tide_world *w)
+{
+    return w->Box3D_Physics.state.pages ? (int)w->Box3D_Physics.state.pages->count * TIDE_ARENA_PAGE : 0;
+}
+
 
 #ifdef BOX3D_TEST_JOBS
 #include "tide/platform.h"
@@ -85,7 +93,7 @@ TIDE_TEST(box3d_parts_are_the_whole_image)
         images_since(&whole, &in_parts);
         printf("    %s: %d images written whole and %d in parts; %d touches began and %d ended; the image is %d bytes\n",
                usual ? "as a match has them" : "in parts whenever", (int)whole, (int)in_parts, (int)a.Tally.touched, (int)a.Tally.parted,
-               (int)a.Box3D_Physics.size);
+               physics_bytes(&a));
         // What the script is for happened: bodies came and went, and things touched
         TIDE_CHECK(a.Box3D_Physics.bodies == 40 && a.Box3D_Physics.shapes == 45 && a.Tally.touched > 30 && a.Tally.parted > 5);
         TIDE_CHECK(a.Box3D_Physics.parts.live == 0); // Every part that came went again

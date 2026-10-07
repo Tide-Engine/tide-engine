@@ -127,6 +127,9 @@ void tide_arena_touch_all(tide_arena *a);
 // `digest` too), and clears the touches. `r` is the world's that ticked.
 void tide_arena_commit(tide_arena *a, tide_resident *r, uint64_t stamp, uint64_t digest);
 
+// Whether the arena holds exactly the pages `r` has: nothing a restore would copy.
+bool tide_arena_is(const tide_arena *a, const tide_resident *r);
+
 // Makes the arena the state `r` holds: the pages that differ from what it
 // holds are copied in. Nothing may be touched and uncommitted. A resident
 // with no pages empties the arena.
@@ -136,9 +139,12 @@ void tide_arena_restore(tide_arena *a, const tide_resident *r);
 // byte for byte, and which page differs first (-1 for none).
 int64_t tide_arena_differs(const tide_arena *a, const tide_resident *r);
 
-// What's been handed out, in bytes, and the arena's pages in use.
+// What's been handed out, in bytes, and the arena's pages in use; how many of
+// those are touched and uncommitted; and where page `i` starts.
 size_t tide_arena_used(const tide_arena *a);
 uint32_t tide_arena_pages(const tide_arena *a);
+uint32_t tide_arena_touched(const tide_arena *a);
+const void *tide_arena_page_at(const tide_arena *a, uint32_t i);
 
 // ---------------------------------------------------------------------------
 // What generated code calls for the field.

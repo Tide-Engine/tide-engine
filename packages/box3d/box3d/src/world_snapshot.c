@@ -25,6 +25,8 @@
 #include "shape.h"
 #include "solver_set.h"
 #include "table.h"
+#include "hull.h"
+#include "name_cache.h"
 
 #include "box3d/box3d.h"
 #include "box3d/collision.h"
@@ -2884,4 +2886,402 @@ bool b3World_Restore( b3WorldId worldId, const uint8_t* image, int size, const u
 		b3SnapFollow( world, reader.bases );
 	}
 	return true;
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Tide: resident state (see ../TIDE.md). The world's state lives in an arena whose pages are copied as they're
+// touched: this says what may have been written since the last time, from the same marks an image in parts goes
+// by, and the rest whole. What holds nothing between steps isn't said: the stack and the workers' arenas, which
+// are scratch (core.h), the events, which a step clears before it writes them, the trees' rebuild scratch and
+// the debug sets.
+
+static void b3TouchArray( const void* data, int count, size_t elementSize )
+{
+	if ( data != NULL && count > 0 )
+	{
+		b3Touch( data, (size_t)count * elementSize );
+	}
+}
+
+// Its room, not its count: a step that takes elements out writes past where the count ends up
+#define B3_TOUCH_ARRAY( a ) b3TouchArray( ( a ).data, ( a ).capacity, sizeof( *( a ).data ) )
+
+static void b3TouchSet( const b3SolverSet* set )
+{
+	B3_TOUCH_ARRAY( set->bodySims );
+	B3_TOUCH_ARRAY( set->bodyStates );
+	B3_TOUCH_ARRAY( set->jointSims );
+	B3_TOUCH_ARRAY( set->contactIndices );
+	B3_TOUCH_ARRAY( set->islandSims );
+}
+
+static void b3TouchTree( const b3DynamicTree* tree )
+{
+	b3TouchArray( tree->nodes, tree->nodeCapacity, sizeof( b3TreeNode ) );
+	b3TouchArray( tree->parents, tree->nodeCapacity, sizeof( int32_t ) );
+	b3TouchArray( tree->proxies, tree->proxyCapacity, sizeof( b3TreeProxy ) ); // The free list runs through them
+	// Its rebuild's scratch: written by a rebuild on a worker thread, and the nodes it builds into are swapped
+	// for the tree's, so the block that was the tree's is this one next time
+	b3TouchArray( tree->swapNodes, tree->nodeCapacity, sizeof( b3TreeNode ) );
+	b3TouchArray( tree->leafIndices, tree->rebuildCapacity, sizeof( int32_t ) );
+	b3TouchArray( tree->leafNodes, tree->rebuildCapacity, sizeof( b3TreeNode ) );
+	b3TouchArray( tree->leafCenters, tree->rebuildCapacity, sizeof( b3Vec3 ) );
+	b3TouchArray( tree->leafBoxes, tree->rebuildCapacity, sizeof( b3AABB ) );
+	b3TouchArray( tree->binIndices, tree->rebuildCapacity, sizeof( int32_t ) );
+}
+
+static void b3TouchShape( const b3Shape* shape )
+{
+	b3Touch( shape, sizeof( b3Shape ) );
+	if ( shape->materials != NULL )
+	{
+		b3TouchArray( shape->materials, shape->materialCount, sizeof( b3SurfaceMaterial ) );
+	}
+}
+
+static void b3TouchContact( const b3Contact* contact )
+{
+	b3Touch( contact, sizeof( b3Contact ) );
+	if ( contact->manifolds != NULL )
+	{
+		b3TouchArray( contact->manifolds, contact->manifoldCount, sizeof( b3Manifold ) );
+	}
+	if ( contact->flags & b3_simMeshContact )
+	{
+		B3_TOUCH_ARRAY( contact->meshContact.triangleCache );
+	}
+}
+
+// Every id a set marks, below `count`
+#define B3_FOR_MARKED( set, count, id )                                                                                     \
+	for ( int b3_block = 0; b3_block < ( set ).blockCount; ++b3_block )                                                     \
+		for ( uint64_t b3_bits = ( set ).bits[b3_block]; b3_bits != 0; b3_bits &= b3_bits - 1 )                             \
+			if ( ( id = b3_block * 64 + b3CTZ64( b3_bits ) ) < ( count ) )
+
+bool b3World_TouchChanged( b3WorldId worldId )
+{
+	b3World* world = b3GetWorldFromId( worldId );
+	b3SnapTrack* track = &world->snapTrack;
+	B3_ASSERT( world->locked == false );
+	const bool everything = track->sparse == false;
+	if ( track->sparse == false )
+	{
+		// Something was done to the world that isn't followed, or most of it is awake: all of it
+		b3TouchAll();
+	}
+	else
+	{
+		b3SnapSeed( world );
+		int id;
+		B3_FOR_MARKED( track->bodies, world->bodies.count, id )
+		{
+			b3Touch( world->bodies.data + id, sizeof( b3Body ) );
+		}
+		B3_FOR_MARKED( track->shapes, world->shapes.count, id )
+		{
+			b3TouchShape( world->shapes.data + id );
+		}
+		B3_FOR_MARKED( track->contacts, world->contacts.count, id )
+		{
+			b3TouchContact( world->contacts.data + id );
+		}
+		// The sets: the static and disabled ones and the awake one whole every time (an image writes them so),
+		// the sleeping ones only when something was done to one
+		B3_TOUCH_ARRAY( world->solverSets );
+		for ( int i = 0; i < world->solverSets.count; ++i )
+		{
+			if ( i < b3_firstSleepingSet || track->setsTouched )
+			{
+				b3TouchSet( world->solverSets.data + i );
+			}
+		}
+		if ( track->pairsTouched )
+		{
+			b3TouchArray( world->broadPhase.pairSet.items, (int)world->broadPhase.pairSet.capacity, sizeof( b3SetItem ) );
+		}
+	}
+	// The rest, whole: small, or written every step anyway
+	B3_TOUCH_ARRAY( world->manifoldAllocators );
+	for ( int i = 0; i < world->manifoldAllocators.count; ++i )
+	{
+		B3_TOUCH_ARRAY( world->manifoldAllocators.data[i].blocks );
+	}
+	B3_TOUCH_ARRAY( world->bodyIdPool.freeArray );
+	B3_TOUCH_ARRAY( world->solverSetIdPool.freeArray );
+	B3_TOUCH_ARRAY( world->jointIdPool.freeArray );
+	B3_TOUCH_ARRAY( world->contactIdPool.freeArray );
+	B3_TOUCH_ARRAY( world->islandIdPool.freeArray );
+	B3_TOUCH_ARRAY( world->shapeIdPool.freeArray );
+	B3_TOUCH_ARRAY( world->joints );
+	B3_TOUCH_ARRAY( world->fatAABBs );
+	B3_TOUCH_ARRAY( world->islands );
+	for ( int i = 0; i < world->islands.count; ++i )
+	{
+		B3_TOUCH_ARRAY( world->islands.data[i].bodies );
+		B3_TOUCH_ARRAY( world->islands.data[i].contacts );
+		B3_TOUCH_ARRAY( world->islands.data[i].joints );
+	}
+	B3_TOUCH_ARRAY( world->sensors );
+	for ( int i = 0; i < world->sensors.count; ++i )
+	{
+		B3_TOUCH_ARRAY( world->sensors.data[i].hits );
+		B3_TOUCH_ARRAY( world->sensors.data[i].overlaps1 );
+		B3_TOUCH_ARRAY( world->sensors.data[i].overlaps2 );
+	}
+	for ( int i = 0; i < b3_bodyTypeCount; ++i )
+	{
+		b3TouchTree( world->broadPhase.trees + i );
+	}
+	for ( int i = 0; i < B3_GRAPH_COLOR_COUNT; ++i )
+	{
+		const b3GraphColor* color = world->constraintGraph.colors + i;
+		b3TouchArray( color->bodySet.bits, (int)color->bodySet.blockCapacity, sizeof( uint64_t ) );
+		B3_TOUCH_ARRAY( color->jointSims );
+		B3_TOUCH_ARRAY( color->convexContacts );
+		B3_TOUCH_ARRAY( color->contacts );
+	}
+	for ( int which = 0; which < 2; ++which )
+	{
+		const void* start;
+		size_t size;
+		b3World_HullMapRange( worldId, which, &start, &size );
+		b3Touch( start, size );
+		b3NameCacheMapRange( &world->names, which, &start, &size );
+		b3Touch( start, size );
+	}
+	B3_TOUCH_ARRAY( world->names.entries );
+	b3SnapGeometry* geometry = world->snapGeometry;
+	if ( geometry != NULL )
+	{
+		b3Touch( geometry, sizeof( b3SnapGeometry ) );
+		b3TouchArray( geometry->entries, geometry->capacity, sizeof( b3SnapGeometryEntry ) );
+		b3TouchArray( geometry->buckets, geometry->bucketCount, sizeof( int ) );
+	}
+	B3_TOUCH_ARRAY( world->taskContexts );
+	B3_TOUCH_ARRAY( world->sensorTaskContexts );
+	// The marks start over, as after an image: what's awake now is what the next ones go on from
+	track->setsTouched = false;
+	track->pairsTouched = false;
+	track->sparse = b3SnapMostlyAsleep( world );
+	b3SnapClearSet( &track->bodies );
+	b3SnapClearSet( &track->shapes );
+	b3SnapClearSet( &track->contacts );
+	if ( track->sparse )
+	{
+		b3SnapSeed( world );
+	}
+	b3TouchArray( track->bodies.bits, track->bodies.blockCount, sizeof( uint64_t ) );
+	b3TouchArray( track->shapes.bits, track->shapes.blockCount, sizeof( uint64_t ) );
+	b3TouchArray( track->contacts.bits, track->contacts.blockCount, sizeof( uint64_t ) );
+	return everything;
+}
+
+// A mix of 64-bit words, the same everywhere: what b3World_Digest is made with
+static uint64_t b3DigestWords( uint64_t h, const void* data, size_t size )
+{
+	const uint8_t* p = data;
+	while ( size >= 8 )
+	{
+		uint64_t w;
+		memcpy( &w, p, 8 );
+		h = ( h ^ w ) * 0x9E3779B97F4A7C15ull;
+		h ^= h >> 29;
+		p += 8;
+		size -= 8;
+	}
+	if ( size > 0 )
+	{
+		uint64_t w = 0;
+		memcpy( &w, p, size );
+		h = ( h ^ w ) * 0x9E3779B97F4A7C15ull;
+		h ^= h >> 29;
+	}
+	return h;
+}
+
+uint64_t b3World_Digest( b3WorldId worldId )
+{
+	b3World* world = b3GetWorldFromId( worldId );
+	const b3SolverSet* awake = world->solverSets.data + b3_awakeSet;
+	uint64_t h = 0x2545F4914F6CDD1Dull;
+	int counts[5] = { world->bodies.count, world->shapes.count, world->contacts.count, awake->bodySims.count, world->islands.count };
+	h = b3DigestWords( h, counts, sizeof( counts ) );
+	// The awake bodies as the solver has them (no holes: asserted where the image is written), and the impulses
+	// their contacts carry, which the next step starts from. A contact of two awake bodies goes in twice.
+	for ( int i = 0; i < awake->bodySims.count; ++i )
+	{
+		const b3BodySim* sim = awake->bodySims.data + i;
+		h = b3DigestWords( h, sim, sizeof( b3BodySim ) );
+		const b3Body* body = world->bodies.data + sim->bodyId;
+		int contactKey = body->headContactKey;
+		while ( contactKey != B3_NULL_INDEX )
+		{
+			int contactId = contactKey >> 1;
+			const b3Contact* contact = world->contacts.data + contactId;
+			for ( int m = 0; m < contact->manifoldCount && contact->manifolds != NULL; ++m )
+			{
+				const b3Manifold* manifold = contact->manifolds + m;
+				for ( int k = 0; k < manifold->pointCount; ++k )
+				{
+					const b3ManifoldPoint* point = manifold->points + k;
+					float impulses[3] = { point->normalImpulse, point->totalNormalImpulse, point->separation };
+					h = b3DigestWords( h, impulses, sizeof( impulses ) );
+				}
+				h = b3DigestWords( h, &manifold->twistImpulse, sizeof( float ) );
+				h = b3DigestWords( h, &manifold->frictionImpulse, sizeof( b3Vec3 ) );
+				h = b3DigestWords( h, &manifold->rollingImpulse, sizeof( b3Vec3 ) );
+			}
+			contactKey = contact->edges[contactKey & 1].nextKey;
+		}
+	}
+	h ^= h >> 32;
+	h *= 0xD6E8FEB86659FD93ull;
+	h ^= h >> 32;
+	return h;
+}
+
+static bool b3Within( const void* at, const void* start, size_t size )
+{
+	return start != NULL && (const char*)at >= (const char*)start && (const char*)at < (const char*)start + size;
+}
+
+#define B3_DESCRIBE_ARRAY( a, name )                                                                                        \
+	if ( b3Within( at, ( a ).data, (size_t)( a ).capacity * sizeof( *( a ).data ) ) )                                        \
+	{                                                                                                                       \
+		return snprintf( out, (size_t)capacity, "%s[%d]", name,                                                             \
+						 (int)( ( (const char*)at - (const char*)( a ).data ) / sizeof( *( a ).data ) ) );                   \
+	}
+
+int b3World_Describe( b3WorldId worldId, const void* at, char* out, int capacity )
+{
+	b3World* world = b3GetWorldFromId( worldId );
+	B3_DESCRIBE_ARRAY( world->bodies, "bodies" );
+	B3_DESCRIBE_ARRAY( world->shapes, "shapes" );
+	B3_DESCRIBE_ARRAY( world->contacts, "contacts" );
+	B3_DESCRIBE_ARRAY( world->joints, "joints" );
+	B3_DESCRIBE_ARRAY( world->islands, "islands" );
+	B3_DESCRIBE_ARRAY( world->fatAABBs, "fatAABBs" );
+	B3_DESCRIBE_ARRAY( world->sensors, "sensors" );
+	B3_DESCRIBE_ARRAY( world->solverSets, "solverSets" );
+	B3_DESCRIBE_ARRAY( world->taskContexts, "taskContexts" );
+	B3_DESCRIBE_ARRAY( world->sensorTaskContexts, "sensorTaskContexts" );
+	B3_DESCRIBE_ARRAY( world->manifoldAllocators, "manifoldAllocators" );
+	B3_DESCRIBE_ARRAY( world->names.entries, "names.entries" );
+	B3_DESCRIBE_ARRAY( world->bodyMoveEvents, "bodyMoveEvents" );
+	B3_DESCRIBE_ARRAY( world->contactBeginEvents, "contactBeginEvents" );
+	B3_DESCRIBE_ARRAY( world->contactHitEvents, "contactHitEvents" );
+	B3_DESCRIBE_ARRAY( world->sensorBeginEvents, "sensorBeginEvents" );
+	B3_DESCRIBE_ARRAY( world->jointEvents, "jointEvents" );
+	for ( int k = 0; k < 2; ++k )
+	{
+		B3_DESCRIBE_ARRAY( world->contactEndEvents[k], "contactEndEvents" );
+		B3_DESCRIBE_ARRAY( world->sensorEndEvents[k], "sensorEndEvents" );
+	}
+	for ( int i = 0; i < world->manifoldAllocators.count; ++i )
+	{
+		const b3BlockAllocator* a = world->manifoldAllocators.data + i;
+		B3_DESCRIBE_ARRAY( a->blocks, "manifoldAllocators[].blocks" );
+		for ( int b = 0; b < a->blocks.count; ++b )
+		{
+			if ( b3Within( at, a->blocks.data[b].memory, (size_t)B3_BLOCK_SIZE * (size_t)a->elementSize ) )
+			{
+				int element = (int)( ( (const char*)at - a->blocks.data[b].memory ) / a->elementSize );
+				return snprintf( out, (size_t)capacity, "manifold allocator %d (%d manifolds), block %d, element %d", i,
+								 a->elementSize / (int)sizeof( b3Manifold ), b, element );
+			}
+		}
+	}
+	for ( int i = 0; i < world->solverSets.count; ++i )
+	{
+		const b3SolverSet* set = world->solverSets.data + i;
+		char name[64];
+		snprintf( name, sizeof( name ), "set %d bodySims", i );
+		B3_DESCRIBE_ARRAY( set->bodySims, name );
+		snprintf( name, sizeof( name ), "set %d bodyStates", i );
+		B3_DESCRIBE_ARRAY( set->bodyStates, name );
+		snprintf( name, sizeof( name ), "set %d jointSims", i );
+		B3_DESCRIBE_ARRAY( set->jointSims, name );
+		snprintf( name, sizeof( name ), "set %d contactIndices", i );
+		B3_DESCRIBE_ARRAY( set->contactIndices, name );
+		snprintf( name, sizeof( name ), "set %d islandSims", i );
+		B3_DESCRIBE_ARRAY( set->islandSims, name );
+	}
+	for ( int i = 0; i < world->islands.count; ++i )
+	{
+		B3_DESCRIBE_ARRAY( world->islands.data[i].bodies, "island bodies" );
+		B3_DESCRIBE_ARRAY( world->islands.data[i].contacts, "island contacts" );
+		B3_DESCRIBE_ARRAY( world->islands.data[i].joints, "island joints" );
+	}
+	for ( int i = 0; i < world->sensors.count; ++i )
+	{
+		B3_DESCRIBE_ARRAY( world->sensors.data[i].hits, "sensor hits" );
+		B3_DESCRIBE_ARRAY( world->sensors.data[i].overlaps1, "sensor overlaps1" );
+		B3_DESCRIBE_ARRAY( world->sensors.data[i].overlaps2, "sensor overlaps2" );
+	}
+	for ( int i = 0; i < b3_bodyTypeCount; ++i )
+	{
+		const b3DynamicTree* tree = world->broadPhase.trees + i;
+		if ( b3Within( at, tree->nodes, (size_t)tree->nodeCapacity * sizeof( b3TreeNode ) ) ) return snprintf( out, (size_t)capacity, "tree %d nodes", i );
+		if ( b3Within( at, tree->parents, (size_t)tree->nodeCapacity * sizeof( int32_t ) ) ) return snprintf( out, (size_t)capacity, "tree %d parents", i );
+		if ( b3Within( at, tree->proxies, (size_t)tree->proxyCapacity * sizeof( b3TreeProxy ) ) ) return snprintf( out, (size_t)capacity, "tree %d proxies", i );
+		if ( b3Within( at, tree->swapNodes, (size_t)tree->nodeCapacity * sizeof( b3TreeNode ) ) ) return snprintf( out, (size_t)capacity, "tree %d swapNodes", i );
+		if ( b3Within( at, tree->leafIndices, (size_t)tree->rebuildCapacity * sizeof( int32_t ) ) ) return snprintf( out, (size_t)capacity, "tree %d leafIndices", i );
+		if ( b3Within( at, tree->leafNodes, (size_t)tree->rebuildCapacity * sizeof( b3TreeNode ) ) ) return snprintf( out, (size_t)capacity, "tree %d leafNodes", i );
+		if ( b3Within( at, tree->leafBoxes, (size_t)tree->rebuildCapacity * sizeof( b3AABB ) ) ) return snprintf( out, (size_t)capacity, "tree %d leafBoxes", i );
+		if ( b3Within( at, tree->leafCenters, (size_t)tree->rebuildCapacity * sizeof( b3Vec3 ) ) ) return snprintf( out, (size_t)capacity, "tree %d leafCenters", i );
+		if ( b3Within( at, tree->binIndices, (size_t)tree->rebuildCapacity * sizeof( int32_t ) ) ) return snprintf( out, (size_t)capacity, "tree %d binIndices", i );
+	}
+	if ( b3Within( at, world->broadPhase.pairSet.items, world->broadPhase.pairSet.capacity * sizeof( b3SetItem ) ) ) return snprintf( out, (size_t)capacity, "pairSet" );
+	for ( int i = 0; i < B3_GRAPH_COLOR_COUNT; ++i )
+	{
+		const b3GraphColor* color = world->constraintGraph.colors + i;
+		if ( b3Within( at, color->bodySet.bits, (size_t)color->bodySet.blockCapacity * sizeof( uint64_t ) ) ) return snprintf( out, (size_t)capacity, "color %d bodySet", i );
+		B3_DESCRIBE_ARRAY( color->jointSims, "color jointSims" );
+		B3_DESCRIBE_ARRAY( color->convexContacts, "color convexContacts" );
+		B3_DESCRIBE_ARRAY( color->contacts, "color contacts" );
+	}
+	for ( int which = 0; which < 2; ++which )
+	{
+		const void* start;
+		size_t size;
+		b3World_HullMapRange( worldId, which, &start, &size );
+		if ( b3Within( at, start, size ) ) return snprintf( out, (size_t)capacity, "hull database %s", which ? "buckets" : "map" );
+		b3NameCacheMapRange( &world->names, which, &start, &size );
+		if ( b3Within( at, start, size ) ) return snprintf( out, (size_t)capacity, "name map %s", which ? "buckets" : "map" );
+	}
+	const b3SnapGeometry* geometry = world->snapGeometry;
+	if ( geometry != NULL )
+	{
+		if ( b3Within( at, geometry, sizeof( b3SnapGeometry ) ) ) return snprintf( out, (size_t)capacity, "snapGeometry" );
+		if ( b3Within( at, geometry->entries, (size_t)geometry->capacity * sizeof( b3SnapGeometryEntry ) ) ) return snprintf( out, (size_t)capacity, "snapGeometry entries" );
+		if ( b3Within( at, geometry->buckets, (size_t)geometry->bucketCount * sizeof( int ) ) ) return snprintf( out, (size_t)capacity, "snapGeometry buckets" );
+		for ( int i = 0; i < geometry->count; ++i )
+		{
+			if ( b3Within( at, geometry->entries[i].bytes, (size_t)geometry->entries[i].byteCount ) ) return snprintf( out, (size_t)capacity, "geometry %d bytes", i );
+		}
+	}
+	const b3SnapTrack* track = &world->snapTrack;
+	if ( b3Within( at, track->bodies.bits, (size_t)track->bodies.blockCount * 8 ) ) return snprintf( out, (size_t)capacity, "snapTrack bodies" );
+	if ( b3Within( at, track->shapes.bits, (size_t)track->shapes.blockCount * 8 ) ) return snprintf( out, (size_t)capacity, "snapTrack shapes" );
+	if ( b3Within( at, track->contacts.bits, (size_t)track->contacts.blockCount * 8 ) ) return snprintf( out, (size_t)capacity, "snapTrack contacts" );
+	for ( int i = 0; i < world->taskContexts.count; ++i )
+	{
+		const b3TaskContext* c = world->taskContexts.data + i;
+		B3_DESCRIBE_ARRAY( c->sensorHits, "taskContext sensorHits" );
+		B3_DESCRIBE_ARRAY( c->pairKeys, "taskContext pairKeys" );
+		if ( b3Within( at, c->contactStateBitSet.bits, (size_t)c->contactStateBitSet.blockCapacity * 8 ) ) return snprintf( out, (size_t)capacity, "taskContext %d contactStateBitSet", i );
+		if ( b3Within( at, c->jointStateBitSet.bits, (size_t)c->jointStateBitSet.blockCapacity * 8 ) ) return snprintf( out, (size_t)capacity, "taskContext %d jointStateBitSet", i );
+		if ( b3Within( at, c->hitEventBitSet.bits, (size_t)c->hitEventBitSet.blockCapacity * 8 ) ) return snprintf( out, (size_t)capacity, "taskContext %d hitEventBitSet", i );
+		if ( b3Within( at, c->awakeIslandBitSet.bits, (size_t)c->awakeIslandBitSet.blockCapacity * 8 ) ) return snprintf( out, (size_t)capacity, "taskContext %d awakeIslandBitSet", i );
+	}
+	for ( int i = 0; i < world->sensorTaskContexts.count; ++i )
+	{
+		const b3SensorTaskContext* c = world->sensorTaskContexts.data + i;
+		if ( b3Within( at, c->eventBits.bits, (size_t)c->eventBits.blockCapacity * 8 ) ) return snprintf( out, (size_t)capacity, "sensorTaskContext %d eventBits", i );
+	}
+	if ( b3Within( at, world->debugBodySet.bits, (size_t)world->debugBodySet.blockCapacity * 8 ) ) return snprintf( out, (size_t)capacity, "debugBodySet" );
+	if ( b3Within( at, world->debugJointSet.bits, (size_t)world->debugJointSet.blockCapacity * 8 ) ) return snprintf( out, (size_t)capacity, "debugJointSet" );
+	if ( b3Within( at, world->debugContactSet.bits, (size_t)world->debugContactSet.blockCapacity * 8 ) ) return snprintf( out, (size_t)capacity, "debugContactSet" );
+	if ( b3Within( at, world->debugIslandSet.bits, (size_t)world->debugIslandSet.blockCapacity * 8 ) ) return snprintf( out, (size_t)capacity, "debugIslandSet" );
+	return snprintf( out, (size_t)capacity, "nothing the world names" );
 }

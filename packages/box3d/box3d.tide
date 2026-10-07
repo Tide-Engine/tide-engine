@@ -207,11 +207,9 @@ singleton Physics
     bool sleeping = true; // Bodies at rest fall asleep
     int bodies; // Made so far
     int shapes;
-    long stamp; // Which state `image` is, by all that was ever done to the world: what C's world is told apart by
-    int size; // The image's bytes
+    long stamp; // Which state `state` is, by all that was ever done to the world: what C's world is told apart by
+    Resident state; // Box3D's whole state after the last step, as pages of the world's (tide/resident.h): C's alone
     bool moved; // The last tick stepped the world: nothing awake and nothing done to it, and it doesn't
-    List<byte> image; // Box3D's whole state after the last step
-    List<byte> geometry; // The hulls the image names, each once: only ever added to
     List<long> gone; // Bodies whose entities were destroyed, until the next step
     Map<long, Entity> owners; // Each body's entity
     List<long> goneShapes; // Parts' shapes whose entities were destroyed, until the next step
@@ -256,10 +254,8 @@ struct Sensors
 }
 
 [NativeName("b3t_open")]
-extern bool OpenWorld(long stamp);
+extern bool OpenWorld(mut Resident state);
 
-[NativeName("b3t_restore")]
-extern void RestoreWorld(List<byte> image, int size, List<byte> geometry, int geometrySize, long stamp);
 
 [NativeName("b3t_gone")]
 extern void RemoveBodies(List<long> bodies, int count);
@@ -292,17 +288,9 @@ extern long AttachSphere(long body, in Sphere sphere);
 extern long AttachCapsule(long body, in Capsule capsule);
 
 [NativeName("b3t_step")]
-extern long StepWorld(float dt, int substeps, float3 gravity, float contactStiffness, float contactDamping, float contactSpeed,
+extern long StepWorld(mut Resident state, float dt, int substeps, float3 gravity, float contactStiffness, float contactDamping, float contactSpeed,
                       float bounceSpeed, float hitSpeed, bool sleeping);
 
-[NativeName("b3t_image")]
-extern int WriteImage(out List<byte> image);
-
-[NativeName("b3t_geometry_size")]
-extern int GeometrySize();
-
-[NativeName("b3t_geometry")]
-extern void WriteGeometry(out List<byte> geometry);
 
 [NativeName("b3t_touches")]
 extern int CountTouches(long stamp);
@@ -320,7 +308,7 @@ extern Strike ReadHit(int index);
 extern bool FindWorld(long stamp);
 
 [NativeName("b3t_rebuild")]
-extern void RebuildWorld(List<byte> image, int size, List<byte> geometry, int geometrySize, long stamp);
+extern void RebuildWorld(in Resident state);
 
 [NativeName("b3t_ray")]
 extern Found CastRay(long stamp, float3 from, float3 to, List<long> gone, int goneCount, List<long> goneShapes, int goneShapeCount);
@@ -364,10 +352,7 @@ extern void SensorBodies(out List<long> bodies, long stamp, long first, long sec
 [Stage(PhysicsStages.Step, 0)]
 system Begin(mut Physics physics)
 {
-    if (!OpenWorld(physics.stamp))
-    {
-        RestoreWorld(physics.image, physics.size, physics.geometry, physics.geometry.count, physics.stamp);
-    }
+    OpenWorld(physics.state);
     if (physics.parts.count > 0)
     {
         for (int i = 0; i < physics.gone.count; i++)
@@ -544,14 +529,11 @@ system AttachCapsuleParts(Capsule capsule, mut Part part, World world, mut Physi
 [Stage(PhysicsStages.Step, 9)]
 system Simulate(Time time, mut Physics physics)
 {
-    long stamp = StepWorld(time.dt, physics.substeps, physics.gravity, physics.contactStiffness, physics.contactDamping,
+    long stamp = StepWorld(physics.state, time.dt, physics.substeps, physics.gravity, physics.contactStiffness, physics.contactDamping,
                            physics.contactSpeed, physics.bounceSpeed, physics.hitSpeed, physics.sleeping);
     physics.moved = stamp != physics.stamp;
     if (!physics.moved) return;
     physics.stamp = stamp;
-    physics.size = WriteImage(out physics.image);
-    // A hull the image names for the first time: a box of a new size
-    if (GeometrySize() != physics.geometry.count) WriteGeometry(out physics.geometry);
 }
 
 // Where the step left each body that it moved, into the fields that say so.
@@ -637,7 +619,7 @@ bool Ready(Physics physics)
     if (physics.stamp == 0) return false;
     if (!FindWorld(physics.stamp))
     {
-        RebuildWorld(physics.image, physics.size, physics.geometry, physics.geometry.count, physics.stamp);
+        RebuildWorld(physics.state);
     }
     return true;
 }
