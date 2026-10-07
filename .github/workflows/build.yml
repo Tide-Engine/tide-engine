@@ -34,6 +34,9 @@ env:
 
 concurrency:
   group: build-${{ github.ref }}
+  # Finish the current nightly, then build only the newest waiting commit.
+  # Each new run replaces the older pending run in this branch's group.
+  queue: single
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
