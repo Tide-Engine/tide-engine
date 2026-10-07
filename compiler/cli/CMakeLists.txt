@@ -44,6 +44,16 @@ if(NOT WIN32)
 endif()
 add_test(NAME tide_cli_run_exit COMMAND tide_cli_run_exit_tests)
 
+# A download tool can report success without writing its output. Fetching
+# must reject that result before it tries to unpack a nonexistent archive.
+add_executable(tide_cli_fetch_tests tests/fetch_download_test.c sys.c)
+target_include_directories(tide_cli_fetch_tests PRIVATE . ../lsp)
+target_link_libraries(tide_cli_fetch_tests PRIVATE tide_flags)
+if(NOT WIN32)
+    target_link_libraries(tide_cli_fetch_tests PRIVATE Threads::Threads)
+endif()
+add_test(NAME tide_cli_fetch COMMAND tide_cli_fetch_tests)
+
 # Games with packages: in folders, and from git through a folder that stands
 # in for git hosts.
 add_test(NAME tide_cli_packages

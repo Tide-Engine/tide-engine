@@ -1,5 +1,10 @@
 # Each invocation is another process, as players joining a match are.
 file(MAKE_DIRECTORY "${OUT}")
+if(EMULATOR MATCHES "run_android\\.mjs")
+    # Each device process has its own folder. Carry this one file through the
+    # host's test folder so the next process can read what the writer saved.
+    list(APPEND EMULATOR --fixture state.bin)
+endif()
 foreach(mode write read delta)
     execute_process(COMMAND ${EMULATOR} "${PROGRAM}" "${mode}" state.bin
         WORKING_DIRECTORY "${OUT}"

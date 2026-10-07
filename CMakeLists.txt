@@ -118,6 +118,8 @@ if(TIDE_NODE)
     add_test(NAME relay COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/relay/relay.test.mjs")
     # The build service (builds/), the same way, with a tide that stands in for one.
     add_test(NAME builds COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/builds/builds.test.mjs")
+    # The Android wrapper's file transfers, with adb mocked and no device.
+    add_test(NAME tide_android_runner COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_android.test.mjs")
 endif()
 
 if(TIDE_PLATFORM)

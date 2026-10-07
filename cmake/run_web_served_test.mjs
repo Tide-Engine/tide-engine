@@ -110,6 +110,8 @@ const flags = webgl ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']
     : ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader'];
 if (!webgl && process.platform === 'win32') flags.push('--use-angle=d3d11-warp');
 if (!webgl && process.env.TIDE_WEBGPU_FLAGS) flags.splice(0, flags.length, ...process.env.TIDE_WEBGPU_FLAGS.split(' '));
+note(`browser: ${browser}`);
+note(`GPU flags: ${flags.join(' ')}`);
 
 // Absolute, and there already: otherwise Chrome shows a dialog about it, even headless
 const profileDir = resolve(profile);
@@ -202,6 +204,9 @@ child.stdio[4].on('data', data => {
     }
 });
 async function open() {
+    ask('Browser.getVersion').then(answer => {
+        if (answer.result) note(`browser version: ${answer.result.product} (${answer.result.revision})`);
+    }).catch(error => note(`couldn't read the browser version: ${error.message}`));
     ask('Target.setDiscoverTargets', { discover: true });
     const target = await attached;
     const { result } = await ask('Target.attachToTarget', { targetId: target, flatten: true });
@@ -262,8 +267,8 @@ else if (code !== '0') console.log(`The page ended with: ${code}.`);
 if (!passed) {
     console.log(`--- what happened, and when: seconds since the test started, ${((performance.now() - began) / 1000).toFixed(3)} now`);
     for (const line of account) console.log(line);
-    // What the browser wrote of itself matters when it's the browser that went
-    if (exited && complaints.trim()) console.log(`--- the browser's own last words:\n${complaints.trim()}`);
+    // GPU initialization can fail while the browser stays alive too.
+    if (complaints.trim()) console.log(`--- the browser's own last words:\n${complaints.trim()}`);
 }
 
 const said = () => new Promise(done => process.stdout.write('', done)); // Once everything printed so far is out
