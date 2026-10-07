@@ -176,6 +176,27 @@ uint32_t tide_pack_grid(tide_pack_builder *b, const uint8_t content[32], const i
     return at;
 }
 
+uint32_t tide_pack_texture(tide_pack_builder *b, const uint8_t content[32], const int32_t width, const int32_t height,
+                           const uint8_t *rgba)
+{
+    const tide_pack_shared *had = find_shared(b, content, TIDE_PACK_TEXTURE);
+    if (had) return had->offset;
+    const uint64_t bytes = (uint64_t)(width > 0 ? width : 0) * (uint64_t)(height > 0 ? height : 0) * 4u;
+    if (bytes + 2u * sizeof(int32_t) > TIDE_PACK_BASE) tide_out_of_memory(); // Past what a handle can say
+    const uint32_t at = block(b, (uint32_t)(2u * sizeof(int32_t) + bytes));
+    tide_block *h = header(b, at);
+    uint64_t version = 0;
+    memcpy(&version, content, sizeof version);
+    if (!version) version = 1u; // 0 is no image's
+    h->a = (uint32_t)version;
+    h->b = (uint32_t)(version >> 32);
+    const int32_t size[2] = {width, height};
+    memcpy(h + 1, size, sizeof size);
+    if (bytes) memcpy((uint8_t *)(h + 1) + sizeof size, rgba, (size_t)bytes);
+    add_shared(b, content, TIDE_PACK_TEXTURE, at, (uint32_t)bytes, 0);
+    return at;
+}
+
 uint32_t tide_pack_list(tide_pack_builder *b, const uint32_t *offsets, const uint32_t count)
 {
     const uint32_t at = block(b, count * (uint32_t)sizeof(uint32_t));

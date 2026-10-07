@@ -22,15 +22,215 @@ static uint32_t tagged(const uint32_t offset)
 uint32_t tide_pack_region_slots;
 tide_heap tide_pack_still;
 
+// An image as a declaration names it: what a Texture names it by, and where
+// its block is, with what the block says of it.
+typedef struct packed_texture {
+    uint64_t named;   // The declaration, and for one of a glob's, its place or its key: never 0
+    uint64_t version; // What's in it: the file's hash
+    uint32_t offset;
+    int32_t width, height;
+} packed_texture;
+
+// An entry of a map from text to textures, as generated code lays it out:
+// live, the key, the value (the builder's has a handle where the value is).
+typedef struct texture_entry {
+    uint32_t live;
+    uint32_t key;
+    tide_texture_ref value;
+} texture_entry;
+
+typedef struct handle_entry {
+    uint32_t live;
+    uint32_t key;
+    uint32_t value;
+} handle_entry;
+
 static struct {
     uint8_t *region;
     uint32_t size;
     tide_pack_entry *entries;
     uint32_t entry_count;
     uint32_t epoch; // Counts the loads, so threads see a new one
+    // Its images by what a Texture names one by: a table of a power of two of places, under half of them
+    // taken, each found from its name's low bits and on from there
+    packed_texture *textures;
+    uint32_t texture_count, texture_places;
 } pack;
 
 static TIDE_THREAD_LOCAL uint32_t mapped_epoch;
+
+// What a Texture names an image by: the declaration (its name's hash, as its
+// entry has it), and for one of a glob's, its place in the list or its key
+// in the map. Not what's in the image: a Texture a field keeps goes on
+// naming the declaration's image when the pack is loaded again with the file
+// edited, as the declaration's own name does. Never 0.
+#define ALONE UINT32_MAX
+#define KEYED (UINT32_MAX - 1u)
+static uint64_t texture_name(const uint8_t name[32], const uint32_t place, const void *key, const uint32_t key_size)
+{
+    tide_sha256 s;
+    tide_sha256_init(&s);
+    tide_sha256_add(&s, name, 32);
+    const uint8_t where[4] = {(uint8_t)place, (uint8_t)(place >> 8), (uint8_t)(place >> 16), (uint8_t)(place >> 24)};
+    tide_sha256_add(&s, where, sizeof where);
+    if (key_size) tide_sha256_add(&s, key, key_size);
+    uint8_t out[32];
+    tide_sha256_end(&s, out);
+    uint64_t named;
+    memcpy(&named, out, sizeof named);
+    return named ? named : 1u;
+}
+
+// The texture block at `offset` of a region of `size` bytes: its size and
+// what's in it, or false for a block that isn't whole there.
+static bool texture_at(const uint8_t *region, const uint32_t size, const uint32_t offset, packed_texture *t)
+{
+    if ((uint64_t)offset + sizeof(tide_block) + 2u * sizeof(int32_t) > size) return false;
+    tide_block b; // Copied out: a file's bytes are wherever its reader put them
+    int32_t wide[2];
+    memcpy(&b, region + offset, sizeof b);
+    memcpy(wide, region + offset + sizeof b, sizeof wide);
+    if (wide[0] <= 0 || wide[1] <= 0) return false;
+    const uint64_t bytes = (uint64_t)wide[0] * (uint64_t)wide[1] * 4u;
+    if ((uint64_t)offset + sizeof b + sizeof wide + bytes > size) return false;
+    *t = (packed_texture){.version = (uint64_t)b.a | (uint64_t)b.b << 32, .offset = offset, .width = wide[0], .height = wide[1]};
+    return true;
+}
+
+// A text block's bytes, or NULL with none for one that isn't whole in the region.
+static const uint8_t *text_at(const uint8_t *region, const uint32_t size, const uint32_t offset, uint32_t *bytes)
+{
+    *bytes = 0;
+    if (offset == UINT32_MAX || (uint64_t)offset + sizeof(tide_block) > size) return NULL;
+    tide_block b;
+    memcpy(&b, region + offset, sizeof b);
+    if ((uint64_t)offset + sizeof b + b.a > size) return NULL;
+    *bytes = b.a;
+    return region + offset + sizeof b;
+}
+
+// Where a handle of the file's points in its region, or UINT32_MAX for one that points nowhere in it.
+static uint32_t place_of(const uint32_t handle, const uint32_t size)
+{
+    const uint32_t offset = OFFSET(handle);
+    return handle >> 30 == TIDE_IN_SCRATCH && offset >= TIDE_PACK_BASE && offset - TIDE_PACK_BASE < size ? offset - TIDE_PACK_BASE
+                                                                                                         : UINT32_MAX;
+}
+
+// How many elements the list block at `offset` has, each `element` bytes, or 0 for one that isn't whole in the region.
+static uint32_t count_at(const uint8_t *region, const uint32_t size, const uint32_t offset, const uint32_t element)
+{
+    if ((uint64_t)offset + sizeof(tide_block) > size) return 0;
+    tide_block b;
+    memcpy(&b, region + offset, sizeof b);
+    return (uint64_t)offset + sizeof b + (uint64_t)b.a * element <= size ? b.a : 0;
+}
+
+// A block's bytes with its header, as the builder pads them.
+static uint64_t padded(const uint64_t bytes)
+{
+    return (sizeof(tide_block) + bytes + 15u) & ~15ull;
+}
+
+// The lists and maps of textures the entries name, which Tide reads as
+// Textures side by side: how many bytes they take laid out so.
+static uint64_t textures_room(const uint8_t *region, const uint32_t size, const tide_pack_entry *entries, const uint32_t count)
+{
+    uint64_t room = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        const tide_pack_entry *e = &entries[i];
+        if (e->kind == TIDE_PACK_LIST && e->extra == TIDE_PACK_TEXTURE) {
+            room += padded((uint64_t)count_at(region, size, e->offset, sizeof(uint32_t)) * sizeof(tide_texture_ref));
+        } else if (e->kind == TIDE_PACK_TEXTURES) {
+            room += padded((uint64_t)count_at(region, size, e->offset, sizeof(handle_entry)) * sizeof(texture_entry));
+        }
+    }
+    return room;
+}
+
+// A block after the ones there, as the builder makes one: its offset.
+static uint32_t lay_block(const uint32_t count, const uint64_t bytes)
+{
+    const uint32_t at = pack.size;
+    uint32_t c = 0;
+    while (c + 1 < TIDE_HEAP_CLASSES && ((uint64_t)16 << c) < sizeof(tide_block) + bytes) c++;
+    memset(pack.region + at, 0, (size_t)padded(bytes));
+    tide_block *b = (tide_block *)(void *)(pack.region + at);
+    b->size_class = c;
+    b->a = count;
+    b->b = count;
+    pack.size += (uint32_t)padded(bytes);
+    return at;
+}
+
+// The table's place for the image named so: the image's, or the free one it would take.
+static packed_texture *texture_place(const uint64_t named)
+{
+    const uint32_t mask = pack.texture_places - 1u;
+    uint32_t i = (uint32_t)named & mask;
+    while (pack.textures[i].named && pack.textures[i].named != named) i = (i + 1u) & mask;
+    return &pack.textures[i];
+}
+
+// Notes the image at `offset` of the file's `file` bytes under what a Texture names it by, and gives that
+// Texture: the default one for a block that isn't whole, which nothing is noted for.
+static tide_texture_ref note_texture(const uint64_t named, const uint32_t offset, const uint32_t file)
+{
+    packed_texture t;
+    if (offset == UINT32_MAX || !texture_at(pack.region, file, offset, &t)) return (tide_texture_ref){0};
+    t.named = named;
+    if ((pack.texture_count + 1u) * 2u > pack.texture_places) {
+        packed_texture *had = pack.textures;
+        const uint32_t had_places = pack.texture_places;
+        pack.texture_places = had_places ? had_places * 2u : 32u;
+        pack.textures = tide_alloc_zeroed(pack.texture_places, sizeof *pack.textures);
+        for (uint32_t i = 0; i < had_places; i++) {
+            if (had[i].named) *texture_place(had[i].named) = had[i];
+        }
+        free(had);
+    }
+    packed_texture *place = texture_place(named);
+    if (!place->named) pack.texture_count++;
+    *place = t;
+    return (tide_texture_ref){.image = {.pixels = NULL, .width = t.width, .height = t.height, .version = named}};
+}
+
+// Lays the lists and maps of textures out as Tide reads them, after the
+// file's region (whose `file` bytes they're made from), and has their entries
+// name those. Notes every image on the way.
+static void lay_textures(const uint32_t file)
+{
+    for (uint32_t i = 0; i < pack.entry_count; i++) {
+        tide_pack_entry *e = &pack.entries[i];
+        if (e->kind == TIDE_PACK_TEXTURE) {
+            note_texture(texture_name(e->name, ALONE, NULL, 0), e->offset, file);
+        } else if (e->kind == TIDE_PACK_LIST && e->extra == TIDE_PACK_TEXTURE) {
+            const uint32_t count = count_at(pack.region, file, e->offset, sizeof(uint32_t));
+            const uint32_t at = lay_block(count, (uint64_t)count * sizeof(tide_texture_ref));
+            const uint32_t *handles = (const uint32_t *)(const void *)(pack.region + e->offset + sizeof(tide_block));
+            tide_texture_ref *out = (tide_texture_ref *)(void *)(pack.region + at + sizeof(tide_block));
+            for (uint32_t k = 0; k < count; k++) {
+                out[k] = note_texture(texture_name(e->name, k, NULL, 0), place_of(handles[k], file), file);
+            }
+            e->offset = at;
+            e->size = count;
+        } else if (e->kind == TIDE_PACK_TEXTURES) {
+            const uint32_t count = count_at(pack.region, file, e->offset, sizeof(handle_entry));
+            const uint32_t at = lay_block(count, (uint64_t)count * sizeof(texture_entry));
+            const handle_entry *from = (const handle_entry *)(const void *)(pack.region + e->offset + sizeof(tide_block));
+            texture_entry *out = (texture_entry *)(void *)(pack.region + at + sizeof(tide_block));
+            for (uint32_t k = 0; k < count; k++) {
+                uint32_t key_size;
+                const uint8_t *key = text_at(pack.region, file, place_of(from[k].key, file), &key_size);
+                out[k].live = from[k].live;
+                out[k].key = from[k].key;
+                out[k].value = note_texture(texture_name(e->name, KEYED, key, key_size), place_of(from[k].value, file), file);
+            }
+            e->offset = at;
+            e->extra = e->extra > count ? count : e->extra; // Its live count
+        }
+    }
+}
 
 bool tide_pack_load(const uint8_t *bytes, const size_t size)
 {
@@ -44,16 +244,20 @@ bool tide_pack_load(const uint8_t *bytes, const size_t size)
     for (uint32_t i = 0; i < h.entries; i++) {
         if (entries[i].offset >= h.region_size && h.region_size) return false;
     }
+    // Its lists and maps of textures are laid out after the file's region, as Tide reads them
+    const uint64_t whole = (uint64_t)h.region_size + textures_room(bytes + h.region_at, h.region_size, entries, h.entries);
+    if (whole > TIDE_PACK_BASE) return false;
     tide_pack_unload();
     // The region in memory of its own, a whole number of slots, so that the
     // last slot's pointer reaches memory wherever an offset in it points
-    const uint32_t slots = (h.region_size + TIDE_SCRATCH_BYTES - 1u) >> TIDE_SCRATCH_SHIFT;
+    const uint32_t slots = (uint32_t)((whole + TIDE_SCRATCH_BYTES - 1u) >> TIDE_SCRATCH_SHIFT);
     pack.region = tide_alloc(slots ? (size_t)slots << TIDE_SCRATCH_SHIFT : 16u);
     memcpy(pack.region, bytes + h.region_at, h.region_size);
     pack.size = h.region_size;
     pack.entries = tide_alloc(h.entries ? h.entries * sizeof(tide_pack_entry) : 16u);
     memcpy(pack.entries, entries, (size_t)h.entries * sizeof(tide_pack_entry));
     pack.entry_count = h.entries;
+    lay_textures(h.region_size);
     pack.epoch++;
     tide_pack_region_slots = slots;
     tide_pack_use();
@@ -64,8 +268,11 @@ void tide_pack_unload(void)
 {
     free(pack.region);
     free(pack.entries);
+    free(pack.textures);
     pack.region = NULL;
     pack.entries = NULL;
+    pack.textures = NULL;
+    pack.texture_count = pack.texture_places = 0;
     pack.size = 0;
     pack.entry_count = 0;
     pack.epoch++;
@@ -111,6 +318,25 @@ tide_map tide_pack_map_of(const tide_pack_entry *e)
 {
     if (!e) return (tide_map){0};
     return (tide_map){{tagged(e->offset)}, {tagged(e->size)}, e->extra};
+}
+
+tide_texture_ref tide_pack_texture_of(const tide_pack_entry *e)
+{
+    if (!e || e->kind != TIDE_PACK_TEXTURE || !pack.texture_places) return (tide_texture_ref){0};
+    const uint64_t named = texture_name(e->name, ALONE, NULL, 0);
+    const packed_texture *t = texture_place(named); // Noted as the pack was loaded, if its block is whole
+    if (t->named != named) return (tide_texture_ref){0};
+    return (tide_texture_ref){.image = {.pixels = NULL, .width = t->width, .height = t->height, .version = named}};
+}
+
+bool tide_pack_texture_find(const uint64_t named, tide_texture *image)
+{
+    if (!named || !pack.texture_places) return false;
+    const packed_texture *t = texture_place(named);
+    if (t->named != named) return false;
+    *image = (tide_texture){.pixels = pack.region + t->offset + sizeof(tide_block) + 2u * sizeof(int32_t),
+                            .width = t->width, .height = t->height, .version = t->version};
+    return true;
 }
 
 uint64_t tide_pack_grid_version(const tide_grid g)

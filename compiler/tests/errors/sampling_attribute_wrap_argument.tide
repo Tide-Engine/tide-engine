@@ -1,0 +1,5 @@
+// expect: Wrap takes what a uv past the texture's edges reads: [Wrap(Wrap.Clamp)], [Wrap(Wrap.Repeat)] or [Wrap(Wrap.Mirror)]
+[Wrap]
+asset Grid2<Color> hero = "../e2e/assets/hero.png";
+
+scene Main { }

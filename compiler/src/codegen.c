@@ -945,6 +945,18 @@ static bool program_corrects(const program *prog)
     return false;
 }
 
+// tide/draw.h's names for a filter and a wrap, by their numbers: what a draw
+// that doesn't say one is given, its texture's declaration's or the engine's.
+static const char *filter_cname(const int filter)
+{
+    return filter == 0 ? "TIDE_FILTER_POINT" : "TIDE_FILTER_BILINEAR";
+}
+
+static const char *wrap_cname(const int wrap)
+{
+    return wrap == 1 ? "TIDE_WRAP_REPEAT" : wrap == 2 ? "TIDE_WRAP_MIRROR" : "TIDE_WRAP_CLAMP";
+}
+
 // Whether `d` is an enum generated C has: every one but the built-in Depth,
 // Cull, Wrap, Format, StencilTest and StencilOp in a game no code of which
 // names them, whose C is then what it was without them.
@@ -3116,6 +3128,7 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             // Draw2D.Mesh through a shader: its values, then what the frag and the vert read of the view's
             const shader *sh = e->shader;
             bool filter = false, wrap = false;
+            const expr *source = sh->blit ? e->args.items[0] : NULL; // The texture it's given, which may say how it's sampled
             sb_printf(o, "tide_shade_%d(", sh->index);
             if (sh->blit) sb_put(o, "tide_draw");
             else gen_draw_list(g, o, e);
@@ -3127,10 +3140,16 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                 // A blit's enum is how it blends, which it always takes
                 filter |= arg->type.kind == TY_ENUM && arg->type.decl == g->prog->filter && !sh->blit;
                 wrap |= arg->type.kind == TY_ENUM && arg->type.decl == g->prog->wrap && !sh->blit;
+                if (!sh->blit && i >= 2 && (arg->type.kind == TY_GRID || arg->type.kind == TY_TEXTURE)) source = arg;
             }
+            // What the call leaves out is its texture's declaration's ([Filter], [Wrap]), and the engine's without
+            int declared_filter, declared_wrap;
+            declared_sampling(source, &declared_filter, &declared_wrap);
             if (sh->blit && e->args.count < 4) sb_put(o, ", TIDE_BLEND_REPLACE"); // In its destination's place
-            if (sh->textured && !filter) sb_put(o, ", TIDE_FILTER_BILINEAR");
-            if (sh->wrapped && !wrap) sb_put(o, ", TIDE_WRAP_CLAMP"); // Another of its draws says a wrap
+            if (sh->textured && !filter) sb_printf(o, ", %s", filter_cname(declared_filter));
+            if (sh->wrapped && !wrap) sb_printf(o, ", %s", wrap_cname(declared_wrap)); // Another of its draws says a wrap
+            // ...and what its stages' Samples of the source leave out
+            if (sh->sourced) sb_printf(o, ", %s, %s", filter_cname(declared_filter), wrap_cname(declared_wrap));
             for (int b = 0; b < sh->bound.count; b++) {
                 // The view's own parameter of it: the one that isn't `verified`, where it takes it both ways
                 const param *from = NULL;
@@ -3156,7 +3175,12 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             // takes it last
             const int texture = strcmp(e->c_callee, "tide_draw_mesh_grid") == 0
                              || strcmp(e->c_callee, "tide_draw_mesh_texture") == 0 ? 2 : 3;
-            sb_printf(o, "%s%s(", e->c_callee, e->args.count == texture + 3 ? "_wrapped" : "");
+            // What the call leaves out is its texture's declaration's ([Filter], [Wrap]), and the engine's without
+            int declared_filter, declared_wrap;
+            declared_sampling(e->args.items[texture], &declared_filter, &declared_wrap);
+            const bool says_filter = e->args.count > texture + 1, says_wrap = e->args.count == texture + 3;
+            const bool wrapped = says_wrap || declared_wrap > 0;
+            sb_printf(o, "%s%s(", e->c_callee, wrapped ? "_wrapped" : "");
             gen_draw_list(g, o, e);
             for (int i = 0; i < e->args.count; i++) {
                 sb_put(o, ", ");
@@ -3164,7 +3188,9 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                 if (i == texture && e->args.items[i]->type.kind == TY_GRID)
                     sb_printf(o, ", &%s", grid_shape_name(e->args.items[texture]->type.decl));
             }
-            sb_put(o, e->args.count == texture + 1 ? ", TIDE_FILTER_BILINEAR)" : ")");
+            if (!says_filter) sb_printf(o, ", %s", filter_cname(declared_filter));
+            if (wrapped && !says_wrap) sb_printf(o, ", %s", wrap_cname(declared_wrap));
+            sb_put(o, ")");
         } else if (e->call == CALL_BUILTIN && e->c_callee && strcmp(e->c_callee, "tide_debug_assert") == 0) {
             // Debug.Assert(condition, message): with where it is, and its source line, for the message when it fails
             sb_put(o, "tide_debug_assert(");
@@ -13573,14 +13599,16 @@ static uint32_t asset_pack_kind(const type t)
 {
     if (t.kind == TY_STRING) return TIDE_PACK_TEXT;
     if (t.kind == TY_GRID) return TIDE_PACK_GRID;
-    if (t.kind == TY_MAP) return TIDE_PACK_MAP;
+    if (t.kind == TY_TEXTURE) return TIDE_PACK_TEXTURE;
+    if (t.kind == TY_MAP) return t.decl->fields.items[1].type.kind == TY_TEXTURE ? TIDE_PACK_TEXTURES : TIDE_PACK_MAP;
     if (t.kind == TY_LIST && list_elem(t.decl).kind == TY_BYTE) return TIDE_PACK_BYTES;
     return TIDE_PACK_LIST;
 }
 
 static const char *asset_ctype(const type t)
 {
-    return t.kind == TY_STRING ? "tide_str" : t.kind == TY_GRID ? "tide_grid" : t.kind == TY_MAP ? "tide_map" : "tide_list";
+    return t.kind == TY_STRING ? "tide_str" : t.kind == TY_GRID ? "tide_grid" : t.kind == TY_TEXTURE ? "tide_texture_ref"
+         : t.kind == TY_MAP ? "tide_map" : "tide_list";
 }
 
 static void gen_assets(gen *g)
@@ -13604,6 +13632,7 @@ static void gen_assets(gen *g)
         sb_printf(o, "    e = tide_pack_find(\"" STR_FMT "\", %uu);\n    if (!e) tide_asset_missing(\"" STR_FMT "\");\n",
                   STR_ARG(d->qualified), (unsigned)kind, STR_ARG(d->qualified));
         if (d->return_type.kind == TY_STRING) sb_printf(o, "    %s = tide_pack_text(e);\n", asset_cname(d));
+        else if (d->return_type.kind == TY_TEXTURE) sb_printf(o, "    %s = tide_pack_texture_of(e);\n", asset_cname(d));
         else if (d->return_type.kind == TY_MAP) sb_printf(o, "    %s = tide_pack_map_of(e);\n", asset_cname(d));
         else sb_printf(o, "    %s = (%s){tide_pack_handle(e)};\n", asset_cname(d), asset_ctype(d->return_type));
     }
@@ -13618,10 +13647,31 @@ static tide_grid_shape asset_grid_shape(const decl *grid)
     return (tide_grid_shape){(uint32_t)cell, (uint32_t)grid->dims, {(uint32_t)shift[0], (uint32_t)shift[1], (uint32_t)shift[2]}};
 }
 
+// A color's channel as a byte, as the draw list makes a grid's cell one (mesh.c).
+static uint8_t channel_byte(const float v)
+{
+    if (!(v > 0.0f)) return 0;
+    if (v >= 1.0f) return 255;
+    return (uint8_t)(v * 255.0f + 0.5f);
+}
+
 // One item of an asset into the pack: its block's offset.
 static uint32_t pack_item(tide_pack_builder *b, const asset_match *item, const asset_kind kind, const decl *grid, uint32_t *extra)
 {
     *extra = 0;
+    if (kind == ASSET_TEXTURE) { // An image to draw with: a byte a channel, which is all a GPU's copy has
+        const size_t pixels = (size_t)item->image.width * (size_t)item->image.height;
+        uint8_t *rgba = malloc(pixels ? pixels * 4u : 1u);
+        if (!rgba) abort();
+        for (size_t i = 0; i < pixels; i++) {
+            const tide_color c = item->image.pixels[i];
+            rgba[i * 4u] = channel_byte(c.r), rgba[i * 4u + 1u] = channel_byte(c.g);
+            rgba[i * 4u + 2u] = channel_byte(c.b), rgba[i * 4u + 3u] = channel_byte(c.a);
+        }
+        const uint32_t at = tide_pack_texture(b, item->hash, (int32_t)item->image.width, (int32_t)item->image.height, rgba);
+        free(rgba);
+        return at;
+    }
     if (kind == ASSET_GRID) {
         const tide_grid_shape shape = asset_grid_shape(grid);
         return tide_pack_grid(b, item->hash, (int32_t)item->image.width, (int32_t)item->image.height, item->image.pixels, &shape);
@@ -13684,11 +13734,12 @@ static bool write_pack(gen *g)
                 keys[k] = tide_pack_bytes(&b, hash, v->items[k].key, (uint32_t)strlen(v->items[k].key), &extra);
             }
         }
-        const uint32_t element_kind = v->kind == ASSET_TEXT ? TIDE_PACK_TEXT : v->kind == ASSET_BYTES ? TIDE_PACK_BYTES : TIDE_PACK_GRID;
+        const uint32_t element_kind = v->kind == ASSET_TEXT ? TIDE_PACK_TEXT : v->kind == ASSET_BYTES ? TIDE_PACK_BYTES
+                                    : v->kind == ASSET_TEXTURE ? TIDE_PACK_TEXTURE : TIDE_PACK_GRID;
         if (v->is_map) {
             uint32_t index;
             const uint32_t at = tide_pack_map(&b, keys, offsets, (uint32_t)v->count, &index);
-            tide_pack_name(&b, qualified, TIDE_PACK_MAP, at, index, (uint32_t)v->count);
+            tide_pack_name(&b, qualified, kind, at, index, (uint32_t)v->count); // TIDE_PACK_MAP, or TIDE_PACK_TEXTURES
         } else {
             const uint32_t at = tide_pack_list(&b, offsets, (uint32_t)v->count);
             tide_pack_name(&b, qualified, TIDE_PACK_LIST, at, (uint32_t)v->count, element_kind);
@@ -15624,6 +15675,7 @@ static void gen_shaders(gen *g)
         if (sh->textured) sb_put(o, ", int32_t tide_filter");
         if (sh->wrapped) sb_put(o, ", int32_t tide_wrap");
         if (sh->blit) sb_put(o, ", tide_render_target tide_destination, int32_t tide_over");
+        if (sh->sourced) sb_put(o, ", int32_t tide_source_filter, int32_t tide_source_wrap");
         for (int b = 0; b < sh->bound.count; b++) {
             const decl *d = sh->bound.items[b];
             sb_printf(o, ", const %s *tide_b%d", type_cname(d), b);
@@ -15690,9 +15742,17 @@ static void gen_shaders(gen *g)
         }
         sb_put(o, "    uint32_t tide_textures[TIDE_SHADER_TEXTURES] = {0};\n");
         int draw_texture = -1;
+        sb from_source = {0}; // What its Samples of the draw's source leave to the source: its filter's and its wrap's bits
         for (int t = 0; t < sh->textures.count; t++) {
             const shader_texture *texture = &sh->textures.items[t];
-            blended |= (unsigned)texture->wrap << (8 + 2 * t); // TIDE_SAMPLING_WRAP: none for the draw's own
+            const bool sourced = sh->sourced && texture->direct;
+            if (sourced && !texture->wrap_said) sb_printf(&from_source, " | tide_sampling_wrapped(%du, tide_source_wrap)", (unsigned)t);
+            else blended |= (unsigned)texture->wrap << (8 + 2 * t); // TIDE_SAMPLING_WRAP: none for the draw's own
+            if (texture->asset && texture->asset->return_type.kind == TY_TEXTURE) { // A Texture asset, by name
+                sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, %s);\n", t, asset_cname(texture->asset));
+                if (texture->blended) blended |= 1u << t;
+                continue;
+            }
             if (texture->asset) { // A Grid2<Color> asset, by name
                 sb_printf(o, "    tide_textures[%d] = tide_draw_grid_texture(tide_draw, %s, &%s);\n", t, asset_cname(texture->asset),
                           grid_shape_name(texture->asset->return_type.decl));
@@ -15704,6 +15764,8 @@ static void gen_shaders(gen *g)
                              ? "    tide_textures[%d] = tide_draw_texture_source(tide_draw, tide_texture);\n"
                              : "    tide_textures[%d] = tide_draw_grid_texture(tide_draw, tide_texture, tide_shape);\n", t);
                 if (sh->textured && !texture->direct) draw_texture = t;
+                else if (sourced && !texture->filter_said)
+                    sb_printf(&from_source, " | (tide_source_filter != TIDE_FILTER_POINT ? 0x%xu : 0u)", 1u << t);
                 else if (texture->blended) blended |= 1u << t;
                 continue;
             }
@@ -15730,17 +15792,20 @@ static void gen_shaders(gen *g)
             snprintf(said, sizeof said, "%s", mask);
             snprintf(mask, sizeof mask, "(%s) | tide_sampling_wrapped(%du, tide_wrap)", said, (unsigned)draw_texture);
         }
+        sb sampling = {0};
+        if (from_source.len) sb_printf(&sampling, "(%s)%s", mask, from_source.data);
+        else sb_put(&sampling, mask);
         if (sh->blit)
             sb_printf(o, "    tide_draw_blit(tide_draw, &tide_shader_%d, (tide_blend)tide_over, %s, %s, tide_textures, %s);\n}\n\n",
-                      s, instance ? "&tide_instance" : "NULL", uniforms ? "&tide_uniforms" : "NULL", mask);
+                      s, instance ? "&tide_instance" : "NULL", uniforms ? "&tide_uniforms" : "NULL", sampling.data);
         else if (sh->instanced)
             sb_printf(o, "    tide_draw_mesh_shaded_instances(tide_draw, &tide_shader_%d, tide_vertices, tide_indices, %s, "
                          "(uint32_t)tide_count, %s, tide_textures, %s);\n%s}\n\n",
-                      s, instance ? "tide_instances" : "NULL", uniforms ? "&tide_uniforms" : "NULL", mask,
+                      s, instance ? "tide_instances" : "NULL", uniforms ? "&tide_uniforms" : "NULL", sampling.data,
                       instance ? "    tide_scratch_reset(tide_mark);\n" : "");
         else
             sb_printf(o, "    tide_draw_mesh_shaded(tide_draw, &tide_shader_%d, tide_vertices, tide_indices, %s, %s, tide_textures, %s);\n}\n\n",
-                      s, instance ? "&tide_instance" : "NULL", uniforms ? "&tide_uniforms" : "NULL", mask);
+                      s, instance ? "&tide_instance" : "NULL", uniforms ? "&tide_uniforms" : "NULL", sampling.data);
     }
 }
 

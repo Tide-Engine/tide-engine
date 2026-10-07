@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "tide/color.h"
+#include "tide/draw.h"
 #include "tide/grid.h"
 #include "tide/list.h"
 #include "tide/map.h"
@@ -12,9 +13,9 @@
 
 // The pack: a game's assets as the values `asset` declarations resolve to,
 // built once (by tidec, or by tide under tide run) and loaded as the game
-// starts. Text, bytes, grids of colors, and lists and maps of those, laid out
-// as the heap lays them out, in one read-only region every world can name
-// (see docs/spec.md, Assets).
+// starts. Text, bytes, grids of colors, images to draw with, and lists and
+// maps of those, laid out as the heap lays them out, in one read-only region
+// every world can name (see docs/spec.md, Assets).
 //
 // Where the region is: the top of the scratch area's offsets, from
 // TIDE_PACK_BASE on (tide/text.h), so a handle into it is a scratch handle
@@ -40,7 +41,11 @@ enum {
     TIDE_PACK_BYTES = 2, // List<byte>: the same block, read as a list
     TIDE_PACK_GRID = 3,  // Grid2<Color>: a directory and its chunks
     TIDE_PACK_LIST = 4,  // List<T> of a glob: a block of handles; `extra` is the elements' kind
-    TIDE_PACK_MAP = 5,   // Map<string, T> of a glob: its entries and its index (tide_map); `extra` is the values' kind
+    TIDE_PACK_MAP = 5,   // Map<string, T> of a glob: its entries and its index (tide_map); `extra` is its live count
+    // Texture: an image to draw with, a byte a channel (tide_pack_texture). No code reads its pixels: only the
+    // draw list does, so it's a quarter of a grid's memory. A list's elements' kind too (`extra`)
+    TIDE_PACK_TEXTURE = 6,
+    TIDE_PACK_TEXTURES = 7, // Map<string, Texture> of a glob: as TIDE_PACK_MAP, its values' blocks textures
 };
 
 typedef struct tide_pack_entry {
@@ -89,6 +94,12 @@ uint32_t tide_pack_bytes(tide_pack_builder *b, const uint8_t content[32], const 
 uint32_t tide_pack_grid(tide_pack_builder *b, const uint8_t content[32], int32_t width, int32_t height, const tide_color *pixels,
                         const tide_grid_shape *shape);
 
+// An image of `width` by `height` pixels to draw with: red, green, blue and
+// alpha, a byte each, rows from the top, shared by `content`. Its block's
+// offset: the version the draw list tells it by in its header (the content's
+// first bytes, never 0), then its width and its height, then its pixels.
+uint32_t tide_pack_texture(tide_pack_builder *b, const uint8_t content[32], int32_t width, int32_t height, const uint8_t *rgba);
+
 // A list of `count` handles (offsets of blocks in this pack, which it tags):
 // its block's offset. Not shared: a declaration's own.
 uint32_t tide_pack_list(tide_pack_builder *b, const uint32_t *offsets, uint32_t count);
@@ -126,6 +137,31 @@ const tide_pack_entry *tide_pack_find(const char *qualified, uint32_t kind);
 uint32_t tide_pack_handle(const tide_pack_entry *e);
 tide_str tide_pack_text(const tide_pack_entry *e);
 tide_map tide_pack_map_of(const tide_pack_entry *e);
+
+// A texture's entry as the value the game reads: a Texture of the pack's,
+// which has no pixels of its own (`image.pixels` is NULL) and names its image
+// by its declaration (`image.version`: a number made of the declaration's
+// name, and for one of a glob's, of its place in the list or its key in the
+// map), with the size it has in this pack. So a copy of one kept through
+// another load (tide run packs again when a file changes) is never a place
+// in a pack that's gone, and goes on naming what the declaration does: the
+// file as it is now. tide_draw_texture_source looks the image up in the pack
+// that's loaded then. The default Texture for no entry.
+//
+// A list or a map of textures is a block of handles in the file, like one of
+// grids, as a file is the same on every platform. Tide reads their elements
+// as these values, whose layout is the platform's, so loading lays them out
+// after the file's region, and the entries name those.
+tide_texture_ref tide_pack_texture_of(const tide_pack_entry *e);
+
+// The loaded pack's image that a Texture names (`named`: its
+// `image.version`), as pixels: width * height * 4 bytes, rows from the top,
+// and a version that's what's in them (the file's hash). False when the
+// pack has no image under that name. The pixels stay where they are until
+// another pack is loaded or this one is let go, and a draw list draws with
+// them there (TIDE_PIXELS_PACK), with no copy of its own: a list that drew
+// with one isn't rendered after its pack went.
+bool tide_pack_texture_find(uint64_t named, tide_texture *image);
 
 // Maps the loaded region into this thread's scratch slots, if it hasn't since
 // the last load: generated code calls it wherever it sets the thread's heaps

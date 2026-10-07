@@ -22,6 +22,10 @@
 
 #define SIZE 256
 
+// The game's pack, as C (tide_add_game's for HOST programs)
+extern const unsigned char tide_game_pack[];
+extern const size_t tide_game_pack_size;
+
 static tide_world world;
 static tide_local local;
 static tide_draw_list list;
@@ -391,6 +395,88 @@ static void run_wrap_checks(const char *when)
     }
 }
 
+// Images of the game's own (pass 10): a Texture asset is drawn with the pack's
+// pixels, and a texture is sampled as its declaration says ([Filter], [Wrap])
+// wherever a draw or a Sample that names it doesn't say. Squares as the wraps'
+// (run_wrap_checks), each cell a pixel of a texture that's red, green, blue
+// and white, two by two.
+static void run_image_checks(const char *when)
+{
+    static const struct {
+        float left, top, cell;
+        int column, row;
+        float r, g, b;
+        const char *what;
+    } wanted[] = {
+        {8, 8, 12, 0, 0, 1, 0, 0, "an image of the pack, drawn by its name: its first pixel"},
+        {8, 8, 12, 1, 1, 1, 1, 1, "and its last"},
+        {8, 8, 12, 2, 0, 1, 0, 0, "which repeats, as its declaration says"},
+        {8, 8, 12, 3, 0, 0, 1, 0, "pixel by pixel"},
+        {8, 8, 12, 2, 3, 0, 0, 1, "both ways"},
+        {64, 8, 12, 2, 0, 0, 1, 0, "one whose declaration says no wrap: the pixel at its edge"},
+        {64, 8, 12, 3, 3, 1, 1, 1, "its last, past both"},
+        {120, 8, 12, 2, 0, 0, 1, 0, "a draw that says its wrap, over the declaration's: mirrored"},
+        {120, 8, 12, 3, 0, 1, 0, 0, "back to its first"},
+        {176, 8, 12, 0, 1, 0, 0, 1, "one of a list of images"},
+        {176, 8, 12, 2, 0, 0, 1, 0, "which says nothing: the pixel at its edge"},
+        {8, 64, 12, 1, 0, 0, 1, 0, "the image a field was given"},
+        {8, 64, 12, 2, 0, 0, 1, 0, "a value, which names no declaration: the pixel at its edge"},
+        {8, 64, 12, 0, 3, 0, 0, 1, "down as across"},
+        {64, 64, 12, 2, 0, 1, 0, 0, "a frag samples an image by its name, as its declaration says: repeated"},
+        {64, 64, 12, 3, 3, 1, 1, 1, "both ways"},
+        {120, 64, 12, 2, 0, 1, 0, 0, "the Texture a draw gives a frag, read as its source's declaration says: repeated"},
+        {120, 64, 12, 3, 2, 0, 1, 0, "both ways"},
+        {176, 64, 12, 2, 0, 0, 1, 0, "the same frag with another source: the pixel at its edge"},
+        {176, 64, 12, 0, 2, 0, 0, 1, "down as across"},
+        {8, 120, 12, 2, 0, 0, 1, 0, "a grid's asset in a mesh draw, as its declaration says: mirrored"},
+        {8, 120, 12, 3, 0, 1, 0, 0, "back to its first"},
+        {64, 120, 12, 2, 3, 0, 1, 0, "and in a frag, by its name"},
+        {64, 120, 12, 3, 0, 1, 0, 0, "the same"},
+        {120, 120, 12, 2, 0, 1, 0, 0, "a grid's field in a mesh draw, as its declaration says: repeated"},
+        {120, 120, 12, 2, 3, 0, 0, 1, "both ways"},
+        {176, 120, 12, 3, 0, 0, 1, 0, "and in a frag"},
+        {176, 120, 12, 2, 2, 1, 0, 0, "the same"},
+        // 3D: Cell(column, 7)'s square, 24 across, a cell 6
+        {4, 228, 6, 2, 0, 1, 0, 0, "a 3D mesh with an image of the pack, as its declaration says: repeated"},
+        {4, 228, 6, 3, 3, 1, 1, 1, "both ways"},
+        {36, 228, 6, 2, 0, 0, 1, 0, "and one that says no wrap: the pixel at its edge"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    local.Art.targetPass = 10;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[COUNT];
+    uint32_t got[COUNT];
+    for (int i = 0; i < COUNT; i++) {
+        points[i] = tide_f2(wanted[i].left + wanted[i].cell * ((float)wanted[i].column + 0.5f),
+                            wanted[i].top + wanted[i].cell * ((float)wanted[i].row + 0.5f));
+    }
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
+    for (int i = 0; i < COUNT; i++) {
+        const uint8_t want[3] = {byte(wanted[i].r), byte(wanted[i].g), byte(wanted[i].b)};
+        bool ok = true;
+        for (int c = 0; c < 3; c++) {
+            const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - (int)want[c];
+            ok = ok && d >= -8 && d <= 8;
+        }
+        printf("%s: %s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, when, (unsigned)got[i],
+               want[0], want[1], want[2]);
+        if (!ok) failures++;
+    }
+    // The list drew the pack's own pixels: no copy of them
+    bool own = false, copied = false;
+    for (uint32_t i = 0; i < list.texture_count; i++) {
+        if (list.textures[i].space != TIDE_PIXELS_PACK) continue;
+        own = true;
+        copied = copied || list.textures[i].capacity != 0;
+    }
+    printf("%s: the pack's images are drawn where the pack has them%s\n", own && !copied ? "ok" : "FAIL", when);
+    if (!own || copied) failures++;
+}
+
 // A shadow map written in Tide (pass 8): casters drawn into a target of depth
 // alone through a lamp's camera, a frag that compares each pixel's distance
 // from the lamp with what's stored, and the stored depth read as a number.
@@ -525,6 +611,7 @@ static int frame(void *user, const float seconds)
         run_target_checks(", on another device");
         run_screen_target_checks(", on another device");
         run_wrap_checks(", on another device");
+        run_image_checks(", on another device");
         run_shadow_checks(", on another device");
         run_stencil_checks(", on another device");
         return failures;
@@ -538,6 +625,8 @@ static int frame(void *user, const float seconds)
     run_screen_target_checks("");
     run_wrap_checks("");
     run_wrap_checks(", again");
+    run_image_checks("");
+    run_image_checks(", again");
     run_shadow_checks("");
     run_shadow_checks(", again");
     run_stencil_checks("");
@@ -553,6 +642,10 @@ static int frame(void *user, const float seconds)
 
 int main(void)
 {
+    if (!tide_assets_load(tide_game_pack, tide_game_pack_size)) {
+        printf("FAIL: the game's pack doesn't load\n");
+        return 1;
+    }
     tide_world_init(&world, 1.0f / 60.0f);
     tide_world_tick(&world); // The entities are there
     tide_local_init(&local);
