@@ -1088,6 +1088,21 @@ static tide_gpu_target_format gpu_target_format(const uint64_t id)
     for (uint32_t i = 0; i < held.count; i++) {
         format = tide_gpu_target_with(format, held.color[i] == TIDE_TARGET_RGBA16F ? TIDE_GPU_COLOR_FLOAT : TIDE_GPU_COLOR_BYTES);
     }
+    // ...and its samples, as this device has them for what it asked for
+    const uint32_t asked = tide_render_target_samples(id);
+    if (asked > 1u && held.count) {
+        const uint32_t samples = gpu->target_samples(tide_gpu_target_sampled(format, asked));
+        if (samples < asked) {
+            static bool said;
+            if (!said) {
+                fprintf(stderr, "tide: a render target asked for %u samples a pixel, and this device's %s has %u for "
+                                "what it holds: it's drawn with %u\n", (unsigned)asked, gpu->name, (unsigned)samples,
+                        (unsigned)samples);
+            }
+            said = true;
+        }
+        format = tide_gpu_target_sampled(format, samples);
+    }
     return format;
 }
 
@@ -2009,7 +2024,11 @@ static const char *unavailable_texture(const tide_draw_list *list, const uint32_
     const tide_draw_texture *t = &list->textures[texture - 1u];
     if (!of_target(t)) return NULL;
     if (!tide_render_target_live(t->id) || !tide_target_size_valid(t->target)) return "source render target is invalid or disposed";
-    if (t->space != TIDE_PIXELS_TARGET) return NULL;
+    if (t->space == TIDE_PIXELS_TARGET_DEPTH) {
+        // By what it asked for, whatever this device gave it: the same draws are passed by everywhere
+        return tide_render_target_samples(t->id) > 1u
+            ? "source render target is multisampled: its depth has several samples a pixel, which no shader reads" : NULL;
+    }
     const uint32_t colors = tide_render_target_colors(t->id);
     if (colors == 0) return "source render target holds depth alone: it has no color to sample";
     if (tide_render_target_image(t->id) >= colors) {
@@ -2140,14 +2159,9 @@ static void sample_step_texture(const tide_draw_list *list, const draw_step *s)
 // shape: x divided by its width over its height.
 static tide_float4x4 camera_3d_to_clip(const tide_draw_list *list, const draw_step *s)
 {
-    tide_float4x4 world_to_clip = s->camera ? list->matrices[s->camera - 1u]
+    const tide_float4x4 world_to_clip = s->camera ? list->matrices[s->camera - 1u]
                                             : tide_draw_camera_3d_matrix(tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 60.0f);
-    if (!s->camera || s->fit) {
-        const float across = draw_height / draw_width;
-        world_to_clip.c0.x *= across, world_to_clip.c1.x *= across;
-        world_to_clip.c2.x *= across, world_to_clip.c3.x *= across;
-    }
-    return world_to_clip;
+    return !s->camera || s->fit ? tide_draw_camera_fit(world_to_clip, draw_width, draw_height) : world_to_clip;
 }
 
 // A camera as a matrix, from the units its commands are in to clip space:

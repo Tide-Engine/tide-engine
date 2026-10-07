@@ -1440,7 +1440,7 @@ Picks made as `Texture` assets were built (2026-10-07), awaiting the owner. That
 
 ### Open
 
-- Audio, meshes, fonts and JPEG as assets, each with its type.
+- Meshes, fonts and JPEG as assets, each with its type. Audio's is `Clip` (see Audio).
 - A pack kept beside a web page rather than inside it, fetched from wherever it's hosted (the option's name, and whether a page waits for it).
 - Load order, streaming and lazy loading within the pack, and what a web page fetches first.
 - Decoding off the frame's thread for what a machine loads at runtime (a 4K PNG takes a frame).
@@ -1929,6 +1929,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
 - **Built, where the rest of this list isn't yet:** a target says what it holds when it's made, a target of depth alone among them, and a frag reads a target's depth, plainly or compared with a number. Their rules are with the render targets' above (Views and drawing), and what was picked to build them is under Provisional (Target formats and depth).
 - How `uv` wraps was agreed with these, and is built: see Decided above, and `Wrap` under Provisional.
 - **A frag has more outputs than one color,** each an `out` parameter, into a target made to hold as many. Built: its rules are with the render targets' and with Code the GPU runs, above, and what was picked to build it is under Provisional (Several colors and float images).
+- **A target's samples** (multisampling, agreed 2026-10-07 as item 8 of the drawing surface's reshaping: "MSAA on render targets, a `samples` argument", as 3D mesh edges have no antialiasing). Built: what was picked to build it is under Provisional (A target's samples).
 - **Float color formats** were agreed as wanted with these (light past white, and positions and normals for deferred shading), and what the OpenGL fallback does about them was decided as they were built: see A color image can be floats, above.
 - Built since: a frag's color as `out Color color` and a vert's struct for its frag, which are in the rules above (Code the GPU runs), which side of a triangle draws, which is among the Draw settings, above (`Draw.Cull`), and stencil, which is among them too (`Draw.Stencil`). Their picks are under Provisional.
 - Built since: mipmaps, as a filter, `Filter.Trilinear`, with the level's derivatives asked as a frag starts so that code still samples in any branch. What was picked to build it is under Provisional (Mipmaps).
@@ -1964,6 +1965,15 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
   - **Depth and cull around 2D draws alone change nothing, and are no error** (decided): the setting is recorded and reaches no command. Only 3D meshes have depth or a back.
   - **`Draw2D` and `Draw3D` stay reserved names**, which a game can't declare: that's what lets `Draw2D.Circle(...)` be the error "Draw2D.Circle is 'Draw.Circle' now", with the quick fix on the owner's name, and `Draw2D.list` the same for `Draw.list`.
   - **Editors list every version of an overloaded function** on hover, with each one's doc once: `Draw.SetCamera` shows its four forms.
+- The cameras as matrices (built 2026-10-07, card 5 of the reshaping of the drawing surface. That a view reads the matrices of the camera a destination has, the window's and a target's, so a shadow map's frag isn't handed a matrix the game built by hand, is the owner's; the shape, the names and each rule are Claude's picks, not yet confirmed):
+  - **Four functions of `Draw`, and so of a render target**, with no arguments, beside the conversions they belong with: `Draw.WorldToClip()`, `Draw.CameraTransform()` and `Draw.CameraProjection()`, each a `float4x4`, for the 3D camera, and `Draw.WorldToScreenMatrix()`, a `float3x3`, for the 2D one. Functions, and not a built-in struct read as a member (`Draw.camera3D`): a target has every function `Draw` has and none of its members, so a function is on both with no rule of its own, and a struct of three matrices would be worked out whole for the one that's read.
+  - **They read the destination's camera as it's set when they're called**, in this frame: what a `SetCamera` left, or the block they're in, or the camera each frame starts with. Nothing is recorded for the asking.
+  - **`WorldToClip()` is the matrix the renderer multiplies a 3D mesh's positions by**: the camera's transform undone, z turned around, the projection, and for a camera set with a field of view, the fitting to the destination's shape (x divided by its width over its height). Clip space is OpenGL's on every backend: `z / w` from -1 at the near plane to 1 at the far limit, so a depth as a target stores it is `z / w * 0.5 + 0.5`. The fitting is one function the renderer and these share.
+  - **`CameraTransform()` and `CameraProjection()` are the arguments of `Camera(transform, projection)`**: given back to it, they set the same camera. A camera set that way gives them back bit for bit. One set with a position, a rotation and a field of view gives its position and its rotation, normalized, as a matrix with no scale, and the engine's projection (from 0.3 units on, with no far side), fitted to the destination's shape as `WorldToClip()` is.
+  - **`WorldToScreenMatrix()`** does to `(x, y, 1)` what `WorldToScreen(float2)` does: into logical pixels from the top left, y down, so it has the destination's size in it. The identity inside `Pixels`. A `float3x3`, as `Draw.Transform` takes one.
+  - **A transform is no part of them**, as it's none of the conversions.
+  - **A destination with no size** (a target that was disposed) has zeros for `WorldToClip()`, `CameraProjection()` and `WorldToScreenMatrix()`, as the conversions give zeros there. A camera that's singular or not finite is given as it is: it's what the renderer would draw through.
+  - **Local code only, as the conversions are**, and not in code the GPU runs: a view works a matrix out and keeps it where its frag reads it.
 - One word for the window, and formats by what they store (built 2026-10-07; that the target which follows the window is `RenderTarget.Window()` and `RenderTarget.Window(factor)`, that drawing in the screen's pixels is `Draw.Pixels() { ... }` and `Draw.SetPixels()`, that `Screen` is the window's measurements alone (`Screen.width`, `Screen.height`, `Screen.Flip`), that `Draw.window` stays, that depth alone is `Format.Depth`, and that formats are named by what they store are decided; what follows was picked to build it, to confirm):
   - **The formats are `Format.Rgba8`, `Format.Depth` and `Format.Rgba16f`.** A color format's name is its channels, the bits of each, and `f` where they're floats: four channels of a byte each, and four floats of 16 bits. So the ones to come have their names already (`R8`, `Rg8`, `R16f`, `Rgba32f`), with no word to find for each. `Depth` says no bits: what a target's depth has is the GPU's (24 bits and 8 of stencil today), and nothing reads it by its size.
   - **No `Format.Color` beside `Format.Rgba8`.** One name for one thing: an alias would be a second spelling of the same number in every example, and the question of which to write. What it would have been friendlier for is the first target someone makes, and that one says no format at all: `RenderTarget(width, height)` holds one `Rgba8` image.
@@ -2103,7 +2113,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
   - A depth is 24 bits, with the 8 bits of stencil beside it, in every target and in the window.
   - Each way a frag reads a depth is one of the draw's 8 textures: a depth it both samples and compares counts twice.
   - **Not there:** a `DepthTexture` as a draw's own source or a frag's own parameter; a comparison other than "isn't nearer"; writing a pixel's depth from a frag; reading a depth back into Tide; and skipping a frag that can't discard in a target of depth alone, which a backend may do some day and changes no picture.
-  - **Where a point of the world is in a target's image is the game's to work out,** for a frag that looks one up (a shadow map does): the camera's projection, after z turned around (a camera looks along its `+z`, and clip space along `-z`), after its transform undone, `Math.Mul(projection, Math.Mul(float4x4.TRS(float3(0), quaternion.identity, float3(1, 1, -1)), Math.Inverse(transform)))`; then `uv` is `(x * 0.5 + 0.5, 0.5 - y * 0.5)` of that point and its depth `z * 0.5 + 0.5`, each over `w` under a perspective. A function that gives a camera's matrix, so a game doesn't spell the turn of z itself, is Open.
+  - **Where a point of the world is in a target's image is the game's to work out,** for a frag that looks one up (a shadow map does): through the target's camera as a matrix, `target.WorldToClip()` (see The cameras as matrices, above: the projection, after z turned around, after the camera's transform undone, which a game spelled out itself until that was built); then `uv` is `(x * 0.5 + 0.5, 0.5 - y * 0.5)` of that point and its depth `z * 0.5 + 0.5`, each over `w` under a perspective.
 - **Several colors and float images** (built 2026-10-07; a format for each color image after a target's size, four at the most, `target.colors[i]`, a frag's outputs to them by their order with the rest of either dropped or left, and floats where a GPU draws into them with bytes and a line where one doesn't, are decided, above; everything here is a pick, to confirm):
   - **`Format.Rgba16f`** is the enum's third member, and the one float format there is: four floats of 16 bits a pixel, each any number to three digits or so (up to about 65,000, in steps of a thousandth near 1). It's the one every backend that has float images draws into, blends and reads blended between pixels, so a `Format.Rgba16f` image behaves as a `Format.Rgba8` one does but for what it keeps. It takes twice the memory. Floats of 32 bits, and images of one or two channels, are Open.
   - **Where the formats are written:** after the size and, where it's said, the pixels per unit, `RenderTarget(width, height, pixelsPerUnit, Format.Rgba8, Format.Rgba16f)`, and after a screen's factor. A fifth is an error, and so is `Format.Depth` written among several: every target has depth, so it's said alone. A format is a value like any enum's, so one that's only known as it runs, and isn't a color's among several, is a `Format.Rgba8` image, with a line that says so.
@@ -2118,6 +2128,18 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
   - **A draw into a target samples none of that target's color images,** the second no more than the first, whichever of them it writes: it's passed by, with the line a draw that samples its own color gets.
   - **On a GPU that can't draw into floats** (the decided fallback), the line is the engine's, on the game's output, once for a run. Nothing lets a game ask: see Open.
   - **Not there:** an output of another type than a `Color`; reading how many color images a target has; a `Format` for each output's blend or for a clear; a target's color image as another target's (each target owns its images).
+- **A target's samples** (built 2026-10-07; that render targets have multisampling, said with a `samples` argument, is decided, above; everything here is a pick, to confirm):
+  - **It's a named argument, the last, where a target is made:** `RenderTarget(width, height, samples: 4)`, `RenderTarget(width, height, pixelsPerUnit, Format.Rgba8, Format.Rgba16f, samples: 4)`, `RenderTarget.Window(samples: 4)`, `RenderTarget.Window(0.5, Format.Rgba16f, samples: 4)`. By name because a target's other arguments are told apart by their types and their order (numbers, then formats), and a bare `4` after them would read as nothing: after `RenderTarget(64, 64` it would be the pixels per unit. It's the one argument of a target's that's named, and it's only written with its name: any other name is an error, and so is `samples:` before another argument.
+  - **1, 2, 4 or 8.** 1 is a target that says nothing. A number that's known as the game is compiled and is none of those is an error; one that's only known as it runs is the one of those under it (5 is 4, 100 is 8, 0 is 1), with a line that says so.
+  - **A device with fewer draws it with what it has,** and the engine says so once, on the game's output: the most of 8, 4 and 2 that's no more than asked and that the device has for what the target holds. WebGPU has 1 and 4 and nothing else, so there 2 is 4 (more than asked, where the other choice was no smoothing at all) and 8 is 4. Nothing lets a game ask what it got.
+  - **What it's for:** each of the target's pixels keeps that many colors, depths and stencils while it's drawn into, and a triangle's edge covers some of them, so the edges of 3D meshes, and of 2D ones, are smooth. A frag still runs once for a pixel a triangle covers, not once a sample. The smooth shapes and text are smooth by themselves, and are as they were.
+  - **Its color images are what its samples come to,** one color a pixel, each time drawing into it ends (a pass): `target.color` and `target.colors[i]` are textures like any target's, sampled, blitted and blended between pixels the same way, of any format. What's drawn into it is kept from frame to frame, sample for sample, until it's cleared, as any target's is.
+  - **Its depth isn't read.** A GPU keeps several depths a pixel there, and none of the backends resolves them into one texture a frag could sample (OpenGL could, by picking a sample; WebGPU can't without a shader of the engine's own that reads each sample and writes a depth). So `target.depth` of a multisampled target is refused, over a resolve that costs a pass on every frame for every such target whether its depth is read or not: a draw that reads it is passed by, with a line that says so, when it's drawn, as a draw that samples an image a target hasn't got is (a `DepthTexture` comes through a field, which the compiler can't follow to a target). It's by what the target asked for, whatever the device gave it, so the same draws are passed by on every machine. A game that wants both draws its depth into a target with no samples.
+  - **A target of depth alone has none:** `Format.Depth` with `samples` above 1 is an error where both are written, as nothing could be read of it, and where either is only known as it runs the target has one sample, with a line that says so.
+  - **The window has none.** A game that wants an antialiased frame draws it into `RenderTarget.Window(samples: 4)` and brings it to the window with `Draw.Blit`. The window's own framebuffer would take a setting that's the game's and three ways to ask for it that can each be refused (GLFW's hint before the window is made, the WebGL context's `antialias`, which a browser may ignore, and an EGL config on Android), a canvas on WebGPU has no samples of its own at all, and the GUI, the stats and the smooth shapes drawn there gain nothing from it.
+  - **It takes that many times the memory:** `samples` colors and depths a pixel, and one more color a pixel for each image they come to. A 4-sample target of the window's size at 1920 by 1080 is about 75 MB where one with none is 17.
+  - **Everything else is as for any target:** every draw goes into it, the engine's own, a frag's, a clear, a blit and stencil among them; `Resize` keeps its samples; a hot reload makes it again with them.
+  - **Not there:** asking how many samples a target has, or a device's most; a frag that runs for each sample, or reads one; alpha to coverage; a resolve other than the GPU's own (the mean of a pixel's samples, which is wrong for light past white in a `Format.Rgba16f` image: a bright edge stays jagged until tone mapping is done before the resolve); samples for the window.
 - **`verified` in views**, beyond what's decided:
   - Any `verified` component or filter asks for the entity in the confirmed world: `without verified Dead` is "confirmed, and not `Dead` there", so an entity whose spawn isn't confirmed yet is skipped by it too.
   - The same entity is told by what each was born as, where this machine knows it of both, and by its handle otherwise (an entity that came with a world the server sent).
@@ -2287,7 +2309,8 @@ view DrawHud(Arena arena)
 - GPU code: which side of a triangle a pixel is on; the camera; a frag's output of another type than a `Color`; code that computes rather than draws; `while` and `switch` there; SPIR-V, with Vulkan. What was agreed of the GPU side, built since, is in What the GPU side gains.
 - Target formats beyond the three: floats of 32 bits, which keep a place in a big world where 16 bits don't (WebGPU neither blends them nor reads them blended without features a device may lack, and OpenGL ES 3 needs more extensions for the same, so they'd be read at the nearest pixel and replace what's there, everywhere); images of one or two channels, which take less memory for a mask, a speed or a shadow's two moments; and a byte format that isn't a color's.
 - A blend for each of a frag's outputs (OpenGL ES 3 and WebGL 2 have one for a draw); a clear's color for each of a target's images, and past 1 for a float one; and whether a game can ask if `Format.Rgba16f` images are floats on this machine, to draw another way where they aren't, which would be the first thing a game reads of the machine it runs on.
-- A camera's matrix from the world to its clip space, as a function: a frag that looks a point up in another camera's image (a shadow map's lamp) needs the matrix the engine draws through, and works it out itself today, the turn of z included (see Provisional, Target formats and depth). And a `DepthTexture` as a draw's own source, for a pass over the screen that reads a scene's depth with no singleton between.
+- A `DepthTexture` as a draw's own source, for a pass over the screen that reads a scene's depth with no singleton between.
+- The cameras' matrices (see Provisional, The cameras as matrices): a camera's matrix in code the GPU runs with nothing handed over (`pixel` or a built-in for the draw's own camera); the inverses, from clip space back to the world; whether a 2D camera should also give a `float4x4` to clip space, for a 2D shader's own arithmetic.
 - 3D: meshes in the grid's chunks, for voxels.
 - The cursor: hiding it without locking it, keeping it in the window without hiding it, and images for it; its lock on Android.
 - Layers, and a sprite in one call (a textured rectangle is a mesh of four corners for now).
@@ -3165,6 +3188,85 @@ Questions:
 - What else a mod's code can't call, beyond `Session.Connect` and `Clipboard.Copy`.
 - How long a build runs offline before the service is asked again.
 - Whether a modded game on a phone is its web build in the system's web view.
+
+## Audio
+
+Planned 2026-10-07. Nothing of it is built.
+
+### Decided
+
+- **Audio is presentation, never the match.** Like drawing, it reads the world and writes nothing to it: no sound is in a snapshot, a hash, a delta or a world sent to a joiner. Everything here is local code's and the platform layer's, and the simulation never includes an audio header.
+- **One-shot sounds come from local handlers of match events.** `local event(Hit hit) HitSound(...)` is heard once under rollback: a sound plays late when a correction brings its event in, and never twice. A `verified` handler plays a sound only once the server confirmed the event.
+- **Continuous sounds come from views**, which run every frame and see blended positions: a view says what should be sounding this frame, as it says what should be drawn.
+- **Two ways to play**, both wanted: a quick sound that's fired and forgotten (`Audio.Play`), and a sound source a game keeps track of to change its pitch, volume and position as it plays (a `Sound` value in a local field).
+- **Procedural audio**: a game modifies sound with code of its own, as Unity's `OnAudioFilterRead` lets it, and can make sound from nothing (a synth) or from a stream (a microphone). It's a declaration of its own, `audio`, compiled to C that runs on the audio thread, with the same shape as code the GPU runs: its parameters say what it reads.
+- **Formats:** WAV and Ogg Vorbis, both, with decoders of the engine's own written from the specifications, as the PNG reader was, so games carry no license terms.
+- **Small and fast**: the pack stays as small as the author's files, and what plays is fast to reach at runtime. The pack keeps the file's bytes as they are; short clips are decoded to PCM at load, long ones streamed.
+- **Headless runs have audio**: a run with no window mixes as a device would, and what played can be captured beside the frame's picture.
+- **The block a filter sees is wrapped**, not a bare `float[512]` a game has to remember the size of: a built-in `Samples` that holds the array and says its size.
+
+```csharp
+struct Knobs { float cutoff; }
+struct LowpassState { float last; }
+
+audio Lowpass(mut Samples samples, mut LowpassState state, Knobs knobs)
+{
+    for (var i = 0; i < samples.count; i++)
+    {
+        state.last += (samples[i] - state.last) * knobs.cutoff;
+        samples[i] = state.last;
+    }
+}
+
+local singleton Engine
+{
+    Sound hum;
+}
+
+[Stage(Layers.World)]
+view Engines(Body body, Throttle throttle, mut Engine engine)
+{
+    engine.hum.clip = engineLoop;
+    engine.hum.position = body.position;
+    engine.hum.pitch = 0.8 + throttle.amount * 0.6;
+    engine.hum.effect = Lowpass;
+    engine.hum.knobs = Knobs { cutoff = 0.2 + throttle.amount * 0.5 };
+    engine.hum.playing = true;
+}
+
+local event(Hit hit) HitSound(Body body)
+{
+    Audio.Play(hitClip, body.position, 0.8);
+}
+```
+
+### Provisional
+
+Picks made to plan it, awaiting the owner. The names, the numbers and each rule below are proposals.
+
+- **`Audio.Play(clip[, volume[, pitch]])` and `Audio.Play(clip, position[, volume[, pitch]])`** start a one-shot the mixer then owns: nothing comes back, and nothing can stop it. A `float2` position places it under the 2D listener, a `float3` under the 3D one. It's a call that does something, so it keeps its turn in evaluation order and is refused in match code, as drawing is.
+- **`Sound` is a built-in struct**, a value kept in a local field: `clip` (a `Clip`), `position` (a `float3`; a 2D sound is one with `z` 0, under the 2D listener where no 3D camera is set), `volume`, `pitch`, `loop`, `bus`, `playing`, `effect` (an `audio` declaration, or none) and `knobs` (the struct that declaration reads). A view writes it each frame. The mixer keeps a voice for each `Sound` a frame names, told apart as GUI widgets are (by the field and the entity), and fades a voice out over a few milliseconds when a frame stops naming it, so a destroyed entity's sound doesn't hang. `playing = false` stops it the same way; writing `clip` to another clip starts over. A `Sound` has no methods: the fields are the API.
+- **The listener** is a frame's setting, with both forms like the draw settings: `Audio.Listener(position, rotation) { ... }` and `Audio.SetListener(...)`, defaulting to the 3D camera, or to the 2D camera's center where none is set. Volume falls off with distance by one curve with a game-set reference distance (`Audio.SetFalloff(near, far)`), and pans by the listener's right.
+- **Buses are a game's enum**, `[Bus] enum Bus { Master, Music, Sfx, Voice }`: `Audio.SetVolume(Bus.Music, 0.5)` holds for the frames after until it's set again, and a bus can have an `effect` too (`Audio.SetEffect(Bus.Master, Compress, knobs)`). Every voice goes through its bus and then `Master`. No graph, no sends, no reverb zones in v1.
+- **`audio` declarations** run on the audio thread, once a block, for the voice or bus they're set on. Their parameters: the block, `mut Samples`; at most one `mut` struct, the voice's own state, which persists between blocks and nothing else reads or writes (plain fields only, as a frag's); and read-only structs, the knobs, which the frame writes into the `Sound` (or the bus) and the mixer hands the thread with its next block, so the thread reads a copy, never the local world. What's refused is what the GPU refuses, and for the same reason: the `World`, text, lists, maps, grids, allocation, `Debug.Log`, events, tasks, anything that reaches outside; `Math` all works; the functions it calls are checked the same way (`refuse` in the shader writer's checking pass is most of the rule). A declaration given as a `Sound`'s `effect` filters that voice; one set on a bus filters the mix; one given to a `Sound` whose clip is `Clip.none` is a **source**: its block starts as silence and what it leaves is what plays (a synth). One `audio` per voice or bus in v1; chains are functions it calls.
+- **`Samples`** is a built-in struct holding one `float[512]`: `samples[i]` (a float, interleaved left then right, with an array's bounds rule: past the end reads zero and writes nothing), `count` (512), `frames` (256), `channels` (2), `rate` (48000), each a constant, and `Frame(i)` as a `float2` with `SetFrame(i, value)`. In generated C it's the array, so a filter's loop vectorizes. If the block ever changes size, every filter still compiles.
+- **The mixer is stereo at 48 kHz in blocks of 256 frames**, in floats, on the system's audio thread. A clip is resampled to 48 kHz at load and a mono clip plays as a stereo voice; a device that wants another rate or block size is adapted to behind the mixer, which is a backend's job. Pitch is linear resampling. The frame hands the thread its commands (voices named, knobs, bus volumes, one-shots) through a lock-free queue, double-buffered by frame: the frame never blocks on audio and the thread never waits for a frame.
+- **The microphone is a source**: `Clip.Microphone` as a `Sound`'s clip gives the voice the capture device's frames, which its `effect` can filter and its bus plays or mutes (`volume` 0 to only process). Capture starts when a frame first names such a `Sound` and stops when none does. On phones and the web the system asks the player; until they say yes the source is silence. Nothing of it reaches the network in v1: voice chat is a package later, over the data channel.
+- **Assets:** `asset Clip shot = "sfx/shot.wav";`, alone or as a glob's `List<Clip>` or `Map<string, Clip>`, WAV (PCM of 8, 16, 24 or 32 bits, or floats) and Ogg Vorbis, each checked as the game is built (a file that isn't one is an error at the path). The pack keeps the file's bytes as they are, so Vorbis stays about a tenth of PCM. At load the platform decodes clips up to about 10 seconds to PCM at 48 kHz, on the pool's threads, once (Vorbis decodes at roughly a hundred times real time a core, so a library of effects is tens of milliseconds, behind the web's wait for its GPU device); longer clips are streamed, the mixer decoding a block ahead. A `Clip` is a value that names its declaration's sound, as a `Texture` names its image, so under `tide run` a saved file plays through the copies a game kept; one the pack hasn't got plays nothing. `Clip.none` is the default and plays nothing. A `Clip` has `length` in seconds and nothing else to read; it's local code's, as a `Texture` is.
+- **Headless:** a run with no window mixes exactly the blocks a device would ask for at the frame loop's made-up 60th of a second (at 48 kHz a frame is 800 frames of audio, 3.125 blocks of 256: the mixer runs as many whole blocks as the time reached), and `--capture-audio <file.wav>` writes the run's whole mix as 16-bit stereo PCM beside `--capture`'s PNG. Nothing in it is a device's or a clock's, and the mixer is the engine's own float code, so a headless run's audio is the same bytes on every machine, which its pictures can't be. A script line, `300 capture-audio hit.wav`, writes what played since the last such line. Tests compare the mixer's output exactly, on every platform, with no device.
+- **Backends**, one mixer against a small `platform/src/audio.h` (a device that asks for stereo frames at a rate, and a capture device that gives them): WASAPI on Windows, CoreAudio on macOS, ALSA loaded at run time on Linux (as OpenGL and X11 are, so games link nothing), AAudio on Android, and on the web an `AudioWorklet` fed from a ring buffer the program fills in shared memory, in `tide.js` as the GPU's objects are. A machine with no device (CI, a server) runs the null backend: the mixer still runs, so `Clip.length` and captures work. Phones and browsers start audio only after a player's gesture, and a phone in the background loses its device: the activity and the page handle both, and nothing in the API says "failed". **Hot reload:** voices live in the platform layer, which outlives the game's library on desktop, so sounds keep playing across a reload; on the web they go with the page's state, as the stats drawer does. An `audio` declaration whose code changed is swapped at the next block.
+- **Stats:** the drawer's open list gains one line, voices playing and the mixer's time a block, measured only while it's open.
+- **The order to build it in:** the mixer, the null backend and `--capture-audio` with tests; WAV assets and `Audio.Play` from a local handler; `Sound` fields and the listener; buses; `audio` declarations with state and knobs; backends, desktop first, the web second, Android last; Vorbis; the microphone.
+
+### Open
+
+- Effects a game can't write itself: a reverb, which needs more state than a struct of plain fields (a `float[N]` delay line fits once arrays are in `audio` state structs, which is the first thing to try), and sends to a shared reverb bus.
+- A chain of `audio` declarations on one voice (`List<Effect>`), where v1 has one.
+- 3D audio beyond panning and distance: HRTF, occlusion, doppler (`pitch` by hand does the last).
+- Streaming a clip from a URL or a file at runtime (`Web.Fetch` gives the bytes; a `Clip` made of bytes is the missing piece), and recording to a file.
+- Voice chat as a package over the data channel, with the microphone as its source.
+- Sample-accurate scheduling (a sound that starts at a tick's exact time, music synced to the match's beat): `Audio.Play` starts at the next block.
+- Whether the simulation should ever hear audio (a rhythm game's match reading the music's position): today it reads `Time.t` and the view keeps the music to it.
 
 ## Conditional compilation
 

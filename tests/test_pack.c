@@ -411,7 +411,10 @@ TIDE_TEST(pack_textures_are_drawn_where_the_pack_has_them)
     bytes = build_textures(&size, true, 1);
     TIDE_REQUIRE(tide_pack_load(bytes, size));
     const tide_texture_ref again = tide_pack_texture_of(tide_pack_find("Game.hero", TIDE_PACK_TEXTURE));
-    TIDE_CHECK(memcmp(&again, &hero, sizeof hero) == 0);
+    // Field by field: the bytes between a reference's fields are nobody's
+    TIDE_CHECK(again.image.pixels == hero.image.pixels && again.image.width == hero.image.width &&
+               again.image.height == hero.image.height && again.image.version == hero.image.version &&
+               again.target.id == hero.target.id);
     tide_draw_reset(&draw);
     const uint32_t found_again = tide_draw_texture_source(&draw, hero);
     TIDE_REQUIRE(found_again != 0);

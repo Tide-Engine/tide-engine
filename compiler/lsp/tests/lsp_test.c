@@ -1209,6 +1209,36 @@ TIDE_TEST(lsp_instanced_drawing)
 // A draw's values: the struct a mesh draw or a Blit gives after its vert and
 // frag, which they read through a parameter of its type. VALUE_TYPES is 8
 // lines: the vert is on line 5, the frags on lines 6 and 7.
+// The cameras as matrices: Draw's functions, and a target's.
+TIDE_TEST(lsp_camera_matrices)
+{
+    start();
+#define CAMERA_GAME \
+    "scene Main { }\nlocal singleton Lamp { RenderTarget map; float4x4 toLamp; float4x4 place; float3x3 flat; }\n"
+    open_document(CAMERA_GAME "view Cast(mut Lamp lamp)\n{\n"
+                              "    lamp.toLamp = lamp.map.WorldToClip();\n"
+                              "    lamp.place = Draw.CameraTransform();\n"
+                              "    lamp.place = Draw.CameraProjection();\n"
+                              "    lamp.flat = Draw.WorldToScreenMatrix();\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *to_clip = hover_at(4, 28);
+    TIDE_CHECK(has(to_clip, "float4x4") && has(to_clip, "from the world to clip space") && has(to_clip, "the turn of z included"));
+    TIDE_CHECK(has(hover_at(5, 24), "Where the current 3D camera is in the world"));
+    TIDE_CHECK(has(hover_at(6, 24), "fitted to the shape of what it draws into"));
+    const char *flat = hover_at(7, 24);
+    TIDE_CHECK(has(flat, "float3x3") && has(flat, "The identity inside `Pixels`"));
+
+    const char *draw = complete(CAMERA_GAME "view V(mut Lamp lamp)\n{\n    Draw.$\n}\n");
+    TIDE_CHECK(offers(draw, "WorldToClip") && offers(draw, "CameraTransform") && offers(draw, "CameraProjection")
+               && offers(draw, "WorldToScreenMatrix"));
+    const char *target = complete(CAMERA_GAME "view V(mut Lamp lamp)\n{\n    lamp.map.$\n}\n");
+    TIDE_CHECK(offers(target, "WorldToClip") && offers(target, "CameraProjection") && offers(target, "WorldToScreenMatrix"));
+
+    // The match has no camera
+    open_document(CAMERA_GAME "singleton Rules { float4x4 seen; }\nsystem S(mut Rules rules)\n{\n    rules.seen = Draw.WorldToClip();\n}\n");
+    TIDE_CHECK(!has(last_sent(), "\"diagnostics\":[]"));
+}
+
 TIDE_TEST(lsp_draw_values)
 {
     start();
@@ -4977,6 +5007,53 @@ TIDE_TEST(lsp_render_target_formats_and_depth)
 
 // A target of several color images, a format each; its `colors`, read one at
 // a time; and a frag's outputs after the pixel's color.
+TIDE_TEST(lsp_render_target_samples)
+{
+    start();
+    static const char types[] = "scene Main { }\nlocal singleton Maps { RenderTarget scene; DepthTexture deep; }\n";
+    char program[2048];
+    snprintf(program, sizeof program, "%sconst int SMOOTH = 4;\nview V(mut Maps maps)\n{\n"
+                                      "    maps.scene = RenderTarget(64, 64, samples: 4);\n"
+                                      "    maps.scene = RenderTarget(64, 64, 1, Format.Rgba8, Format.Rgba16f, samples: SMOOTH);\n"
+                                      "    maps.scene = RenderTarget.Window(samples: 2);\n"
+                                      "    maps.scene = RenderTarget.Window(0.5, Format.Rgba16f, samples: 8);\n"
+                                      "    maps.deep = maps.scene.depth;\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    // What the constructor's help says of them, and the type's
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(64, 64, $\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "samples: 4") && has(last_sent(), "smooths the edges"));
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget.Window($\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget.Window(samples: 4)"));
+    snprintf(program, sizeof program, "%slocal singleton Other { Render$Target scene; }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "samples: 4"));
+
+    // A call that says them names its other arguments as they are: its samples aren't taken for one of them
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(64, 48, 2, Format.Rgba16f, samples: 4);\n"
+                                      "    maps.scene = RenderTarget.Window(0.5, samples: 4);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
+                                   "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":20,\"character\":0}}");
+    TIDE_CHECK(has(hints, "\"label\":\"width:\"") && has(hints, "\"label\":\"pixelsPerUnit:\"") && has(hints, "\"label\":\"factor:\""));
+    TIDE_CHECK(!has(hints, "\"label\":\"samples:\"")); // Written with its name already
+
+    // What's refused, where it's written
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(64, 64, samples: 3);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "samples are 1, 2, 4 or 8, and this says 3"));
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(64, 64, Format.Depth, samples: 4);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "a multisampled target's depth can't be read"));
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget.Window(factor: 0.5);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "without names, but for its samples"));
+}
+
 TIDE_TEST(lsp_render_target_colors_and_frag_outputs)
 {
     start();

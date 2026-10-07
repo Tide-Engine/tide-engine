@@ -10,8 +10,7 @@ target_link_libraries(tide_cli PRIVATE tidec_core)
 set_target_properties(tide_cli PROPERTIES OUTPUT_NAME tide)
 target_compile_definitions(tide_cli PRIVATE
     "TIDE_VERSION=\"${TIDE_VERSION}\""
-    "TIDE_CHANNEL=\"${TIDE_CHANNEL}\""
-    "TIDE_REPOSITORY=\"${TIDE_REPOSITORY}\"")
+    "TIDE_CHANNEL=\"${TIDE_CHANNEL}\"")
 if(WIN32)
     target_link_libraries(tide_cli PRIVATE ws2_32) # Serves the page of tide run --web
 else()
@@ -25,7 +24,7 @@ install(TARGETS tide_cli RUNTIME DESTINATION bin COMPONENT tide)
 # and tags say, without the network, Android apps as Android checks them, and
 # zips.
 add_executable(tide_cli_tests tests/release_test.c tests/install_test.c tests/libraries_test.c tests/packages_test.c tests/apk_test.c
-    tests/unzip_test.c tests/rsa_test.c tests/upgrade_auth_test.c release.c install.c libraries.c fetch.c sys.c unzip.c ${TIDE_APK_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c"
+    tests/unzip_test.c tests/rsa_test.c release.c install.c libraries.c fetch.c sys.c unzip.c ${TIDE_APK_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/json.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/../lsp/packages.c" "${PROJECT_SOURCE_DIR}/tests/test_main.c")
 target_include_directories(tide_cli_tests PRIVATE . ../lsp "${PROJECT_SOURCE_DIR}/tests" "${PROJECT_SOURCE_DIR}/platform/src/rtc")
 target_link_libraries(tide_cli_tests PRIVATE tide tidec_core)
@@ -58,7 +57,7 @@ add_test(NAME tide_cli_editors
     COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/editors_test"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/editors_test.cmake")
 
-# tide upgrade, with a folder that stands in for GitHub's releases.
+# tide upgrade, with a folder that stands in for the site's releases.
 add_test(NAME tide_cli_upgrade
     COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/upgrade_test"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/upgrade_test.cmake")

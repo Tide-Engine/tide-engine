@@ -1,4 +1,4 @@
-// The installers against fake GitHub requests and an older installed tide.
+// The installers against a made-up site's releases and an installed tide.
 // Stop a fresh install before unpacking: no tools, profiles or user PATH change.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -15,41 +15,28 @@ const sum = createHash('sha256').update(payload).digest('hex');
 const shells = process.platform === 'win32' ? ['powershell'] : ['sh'];
 if (process.env.INSTALL_TEST_SH) shells.push('sh');
 const cases = [
-    { name: 'public releases without credentials' },
-    { name: 'GH_TOKEN takes precedence', ghToken: 'fixture-first', githubToken: 'fixture-second', login: 'fixture-login', auth: 'fixture-first' },
-    { name: 'GITHUB_TOKEN takes precedence over gh login', githubToken: 'fixture-second', login: 'fixture-login', auth: 'fixture-second' },
-    { name: 'gh login supplies authentication', login: 'fixture-login', auth: 'fixture-login' },
-    { name: 'token control characters are refused', ghToken: 'fixture\nheader', invalid: true },
-    { name: 'token trailing newline is refused', ghToken: 'fixture\n', invalid: true },
-    { name: 'non-ASCII token is refused', ghToken: 'fixture-é', invalid: true },
-    { name: 'asset URL on another host never receives credentials', ghToken: 'fixture-first', auth: 'fixture-first', remoteAssets: true },
-    { name: 'checksum failure refuses installation', ghToken: 'fixture-first', auth: 'fixture-first', damaged: true },
-    { name: 'old installed updater receives checked local files on its channel', ghToken: 'fixture-first', auth: 'fixture-first', installed: true, nightly: true },
-    { name: 'explicit channel is passed to the old updater', ghToken: 'fixture-first', auth: 'fixture-first', installed: true, nightly: true, channel: 'stable' },
-    { name: 'public installed updater keeps its existing path', installed: true },
-    { name: 'public installed updater failure is reported', installed: true, failUpgrade: true },
-    { name: 'authenticated installed updater failure restores the override', ghToken: 'fixture-first', auth: 'fixture-first', installed: true, failUpgrade: true },
-    { name: 'checksum failure never invokes an installed updater', ghToken: 'fixture-first', auth: 'fixture-first', installed: true, damaged: true },
+    { name: 'a fresh install takes the stable release' },
+    { name: 'a fresh install takes the nightly channel when asked', channel: 'nightly' },
+    { name: 'checksum failure refuses installation', damaged: true },
+    { name: 'installed updater receives checked local files on its channel', installed: true, nightly: true },
+    { name: 'explicit channel is passed to the installed updater', installed: true, nightly: true, channel: 'stable' },
+    { name: 'installed stable updater stays on stable', installed: true },
+    { name: 'installed updater failure is reported, and the override restored', installed: true, failUpgrade: true },
+    { name: 'checksum failure never invokes an installed updater', installed: true, damaged: true },
 ];
 
 const powershell = String.raw`
 $ErrorActionPreference = 'Stop'
 $null = Get-Command Get-FileHash
 function Record($entry) { $entry | ConvertTo-Json -Compress -Depth 8 | Add-Content $env:TEST_LOG }
-function gh {
-    Record @{ op = 'gh'; args = @($args) }
-    if ($env:TEST_LOGIN) { $global:LASTEXITCODE = 0; $env:TEST_LOGIN }
-    else { $global:LASTEXITCODE = 1; Write-Error 'Not logged in.' }
-}
 function Invoke-RestMethod {
     param($Uri, $Headers)
-    Record @{ op = 'request'; url = $Uri; auth = $Headers.Authorization; accept = $Headers.Accept }
-    if ($Uri.EndsWith('/latest')) { Get-Content $env:TEST_LATEST -Raw | ConvertFrom-Json }
-    else { Get-Content $env:TEST_LIST -Raw | ConvertFrom-Json }
+    Record @{ op = 'request'; url = $Uri; auth = $Headers.Authorization }
+    Get-Content $env:TEST_LIST -Raw | ConvertFrom-Json
 }
 function Invoke-WebRequest {
     param($Uri, $Headers, $OutFile, [switch]$UseBasicParsing)
-    Record @{ op = 'request'; url = $Uri; auth = $Headers.Authorization; accept = $Headers.Accept; output = $OutFile }
+    Record @{ op = 'request'; url = $Uri; auth = $Headers.Authorization; output = $OutFile }
     if ($OutFile.EndsWith('SHA256SUMS')) { [IO.File]::WriteAllText($OutFile, $env:TEST_SUMS) }
     else { [IO.File]::WriteAllText($OutFile, $env:TEST_PAYLOAD) }
 }
@@ -61,15 +48,12 @@ function Expand-Archive {
 $testTide = Join-Path $env:LOCALAPPDATA 'Tide/bin/tide.exe'
 Set-Item -LiteralPath "Function:$testTide" -Value {
     if ($args[0] -eq 'upgrade') {
-        $manifest = $null
-        if ($env:TEST_AUTH) {
-            $manifestText = [IO.File]::ReadAllText(([Uri]$env:TIDE_RELEASES_URL).LocalPath)
-            if (-not $manifestText.TrimStart().StartsWith('[')) { throw 'The local manifest must be an array.' }
-            $manifest = $manifestText | ConvertFrom-Json
-            foreach ($asset in $manifest.assets) {
-                if (-not $asset.browser_download_url.StartsWith('file:')) { throw 'The old updater received a remote URL.' }
-                if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath ([Uri]$asset.browser_download_url).LocalPath)) { throw 'The old updater received a missing asset.' }
-            }
+        $manifestText = [IO.File]::ReadAllText(([Uri]$env:TIDE_RELEASES_URL).LocalPath)
+        if (-not $manifestText.TrimStart().StartsWith('[')) { throw 'The local manifest must be an array.' }
+        $manifest = $manifestText | ConvertFrom-Json
+        foreach ($asset in $manifest.assets) {
+            if (-not $asset.browser_download_url.StartsWith('file:')) { throw 'The updater received a remote URL.' }
+            if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath ([Uri]$asset.browser_download_url).LocalPath)) { throw 'The updater received a missing asset.' }
         }
         Record @{ op = 'upgrade'; args = @($args); manifestText = $manifestText }
         if ($env:TEST_FAIL_UPGRADE) { $global:LASTEXITCODE = 17; return }
@@ -94,37 +78,25 @@ import json, sys
 print(json.dumps(dict(zip(sys.argv[1::2], sys.argv[2::2]))))
 PY
 }
-gh() {
-    record op gh
-    [ -n "$TEST_LOGIN" ] || { echo 'Not logged in.' >&2; return 1; }
-    printf '%s\n' "$TEST_LOGIN"
-}
 uname() { case "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac; }
 mktemp() { printf '%s\n' "$TEST_WORK"; }
 curl() {
-    url= auth= accept= output=
+    url= output=
     while [ "$#" -gt 0 ]; do
         case "$1" in
             -o) output="$2"; shift ;;
-            -H)
-                case "$2" in
-                    @*) auth="$(cat "$(printf '%s' "$2" | cut -c2-)" | cut -c16-)" ;;
-                    'Accept: '*) accept="$(printf '%s' "$2" | cut -c9-)" ;;
-                    *) echo 'Credentials were put on the command line.' >&2; return 1 ;;
-                esac
-                shift ;;
+            -H) echo 'The installer sent a header of its own.' >&2; return 1 ;;
             --proto-redir) shift ;;
             -q|-fsSL) ;;
             *) url="$1" ;;
         esac
         shift
     done
-    record op request url "$url" auth "$auth" accept "$accept"
+    record op request url "$url"
     case "$url" in
-        */releases/latest) cp "$TEST_LATEST" "$output" ;;
-        *'/releases?per_page=100') cp "$TEST_LIST" "$output" ;;
-        */assets/102|*/SHA256SUMS) printf '%s' "$TEST_SUMS" > "$output" ;;
-        */assets/101|*.tar.gz) printf '%s' "$TEST_PAYLOAD" > "$output" ;;
+        */releases.json) cp "$TEST_LIST" "$output" ;;
+        */SHA256SUMS) printf '%s' "$TEST_SUMS" > "$output" ;;
+        *.tar.gz) printf '%s' "$TEST_PAYLOAD" > "$output" ;;
         *) echo 'Unexpected request.' >&2; return 1 ;;
     esac
 }
@@ -136,14 +108,12 @@ const oldTide = String.raw`#!/bin/sh
 if [ "$1" = upgrade ]; then
     "$TEST_PYTHON" - "$@" >> "$TEST_LOG" <<'PY'
 import json, os, pathlib, sys, urllib.parse, urllib.request
-manifest = None
-if os.environ.get('TEST_AUTH'):
-    url = urllib.parse.urlparse(os.environ['TIDE_RELEASES_URL'])
-    manifest = json.loads(pathlib.Path(urllib.request.url2pathname(url.path)).read_text())
-    for asset in manifest[0]['assets']:
-        local = urllib.parse.urlparse(asset['browser_download_url'])
-        assert local.scheme == 'file'
-        assert pathlib.Path(urllib.request.url2pathname(local.path)).is_file()
+url = urllib.parse.urlparse(os.environ['TIDE_RELEASES_URL'])
+manifest = json.loads(pathlib.Path(urllib.request.url2pathname(url.path)).read_text())
+for asset in manifest[0]['assets']:
+    local = urllib.parse.urlparse(asset['browser_download_url'])
+    assert local.scheme == 'file'
+    assert pathlib.Path(urllib.request.url2pathname(local.path)).is_file()
 print(json.dumps({'op': 'upgrade', 'args': sys.argv[1:], 'manifest': manifest}))
 PY
     [ -z "$TEST_FAIL_UPGRADE" ] || exit 17
@@ -157,14 +127,14 @@ for (const runtime of shells) for (const c of cases) {
         const work = mkdtempSync(join(tmpdir(), 'tide-installers-test-'));
         try {
             const packageName = runtime === 'powershell' ? 'tide-windows-x64.zip' : 'tide-linux-x64.tar.gz';
+            const site = 'https://tide-engine.dev/releases';
             const release = (tag, prerelease = false) => ({
                 tag_name: tag, prerelease, draft: false, assets: [
-                    { name: packageName, url: `https://${c.remoteAssets ? 'api.github.com.other.example' : 'api.github.com'}/repos/fixture/private/releases/assets/101`, browser_download_url: `https://github.com/fixture/public/releases/download/${tag}/${packageName}` },
-                    { name: 'SHA256SUMS', url: `https://${c.remoteAssets ? 'api.github.com.other.example' : 'api.github.com'}/repos/fixture/private/releases/assets/102`, browser_download_url: `https://github.com/fixture/public/releases/download/${tag}/SHA256SUMS` },
+                    { name: packageName, size: payload.length, browser_download_url: `${site}/${tag}/${packageName}` },
+                    { name: 'SHA256SUMS', size: 1, browser_download_url: `${site}/${tag}/SHA256SUMS` },
                 ],
             });
-            writeFileSync(join(work, 'list.json'), JSON.stringify([release('v1.2.0'), release('v1.3.0-nightly.1', true)]));
-            writeFileSync(join(work, 'latest.json'), JSON.stringify(release('v1.2.1')));
+            writeFileSync(join(work, 'list.json'), JSON.stringify([release('v1.3.0-nightly.1', true), release('v1.2.0'), release('v1.2.1')]));
             mkdirSync(join(work, 'temporary'));
             const installation = runtime === 'powershell' ? join(work, 'local', 'Tide') : join(work, 'user', '.tide');
             if (c.installed) {
@@ -175,17 +145,16 @@ for (const runtime of shells) for (const c of cases) {
                     chmodSync(join(installation, 'bin', 'tide'), 0o755);
                 } else writeFileSync(join(installation, 'bin', 'tide.exe'), '');
             }
-            const env = { ...process.env, GH_TOKEN: c.ghToken || '', GITHUB_TOKEN: c.githubToken || '',
+            const env = { ...process.env, GH_TOKEN: 'a-token-nobody-is-sent', GITHUB_TOKEN: 'another-token-nobody-is-sent',
                 TIDE_CHANNEL: c.channel || '', TIDE_RELEASES_URL: 'file:///original-override.json',
                 LOCALAPPDATA: join(work, 'local'), HOME: join(work, 'user'),
                 TEST_LOG: join(work, 'requests.jsonl'), TEST_WORK: join(work, 'temporary'),
                 TEST_INSTALLER: join(source, `install.${runtime === 'powershell' ? 'ps1' : 'sh'}`),
-                TEST_LIST: join(work, 'list.json'), TEST_LATEST: join(work, 'latest.json'),
-                TEST_LOGIN: c.login || '', TEST_AUTH: c.auth || '', TEST_INSTALLED: c.installed ? 'yes' : '',
+                TEST_LIST: join(work, 'list.json'), TEST_INSTALLED: c.installed ? 'yes' : '',
                 TEST_FAIL_UPGRADE: c.failUpgrade ? 'yes' : '',
                 TEST_PAYLOAD: payload, TEST_SUMS: `${c.damaged ? '0'.repeat(64) : sum}  ${packageName}\n`,
                 TEST_PYTHON: process.env.INSTALL_TEST_PYTHON || 'python3', TIDE_HIDDEN: '1' };
-            if (runtime === 'sh') for (const key of ['HOME', 'TEST_LOG', 'TEST_WORK', 'TEST_INSTALLER', 'TEST_LIST', 'TEST_LATEST']) env[key] = env[key].replaceAll('\\', '/');
+            if (runtime === 'sh') for (const key of ['HOME', 'TEST_LOG', 'TEST_WORK', 'TEST_INSTALLER', 'TEST_LIST']) env[key] = env[key].replaceAll('\\', '/');
             // Windows PowerShell must discover its own modules when the test
             // runner was started by PowerShell 7.
             if (runtime === 'powershell') for (const key of Object.keys(env)) if (key.toUpperCase() === 'PSMODULEPATH') delete env[key];
@@ -196,36 +165,29 @@ for (const runtime of shells) for (const c of cases) {
             const result = spawnSync(executable, args, { env, encoding: 'utf8', windowsHide: true, timeout: 30_000 });
             assert.ifError(result.error);
             const said = `${result.stdout}\n${result.stderr}`;
-            const expectedStatus = c.invalid ? 1 : runtime === 'sh' && c.failUpgrade ? 17 : runtime === 'sh' && c.damaged ? 1 : runtime === 'sh' && !c.installed ? 87 : 0;
+            const expectedStatus = runtime === 'sh' && c.failUpgrade ? 17 : runtime === 'sh' && c.damaged ? 1 : runtime === 'sh' && !c.installed ? 87 : 0;
             assert.equal(result.status, expectedStatus, said);
-            for (const credential of [c.ghToken, c.githubToken, c.login].filter(Boolean)) assert.ok(!said.includes(credential), 'Credentials appeared in installer output.');
+            assert.ok(!said.includes('nobody-is-sent'), 'A token appeared in installer output.');
             const entries = existsSync(env.TEST_LOG) ? readFileSync(env.TEST_LOG, 'utf8').trim().split(/\r?\n/).map((line) => JSON.parse(line)) : [];
-            assert.equal(entries.filter((entry) => entry.op === 'gh').length, c.ghToken || c.githubToken ? 0 : 1);
             const requests = entries.filter((entry) => entry.op === 'request');
             for (const request of requests) if (request.output) assert.ok(!existsSync(request.output), 'The temporary download was not removed.');
-            const delegates = c.installed && !c.auth;
-            assert.equal(requests.length, delegates || c.invalid ? 0 : c.installed && c.nightly && !c.channel ? 3 : 4);
-            for (const request of requests) {
-                const authenticated = c.auth && request.url.startsWith('https://api.github.com/');
-                assert.equal(request.auth || '', authenticated ? `Bearer ${c.auth}` : '');
-                if (request.url.includes('/assets/')) assert.equal(request.accept || '', authenticated ? 'application/octet-stream' : '');
-                else if (c.auth) assert.equal(request.accept, 'application/vnd.github+json');
-            }
-            if (!delegates && !c.invalid) assert.equal(requests.filter((request) => request.url.includes('/assets/')).length, c.auth ? 2 : 0);
+            // The list, the package and its checksums, from the site, with no credentials.
+            const wanted = c.channel === 'nightly' || (c.nightly && !c.channel) ? 'v1.3.0-nightly.1' : 'v1.2.1';
+            assert.deepEqual(requests.map((request) => request.url).sort(),
+                [`${site}.json`, `${site}/${wanted}/${packageName}`, `${site}/${wanted}/SHA256SUMS`].sort());
+            for (const request of requests) assert.equal(request.auth || '', '');
             const upgrades = entries.filter((entry) => entry.op === 'upgrade');
             assert.equal(upgrades.length, c.installed && !c.damaged ? 1 : 0);
             if (upgrades.length) {
                 assert.deepEqual(upgrades[0].args, c.channel ? ['upgrade', `--${c.channel}`] : ['upgrade']);
-                if (c.auth) {
-                    const manifest = runtime === 'powershell' ? JSON.parse(upgrades[0].manifestText)[0] : upgrades[0].manifest[0];
-                    assert.equal(manifest.tag_name, c.nightly && !c.channel ? 'v1.3.0-nightly.1' : 'v1.2.1');
-                    assert.equal(manifest.assets.length, 2);
-                }
+                const manifest = runtime === 'powershell' ? JSON.parse(upgrades[0].manifestText)[0] : upgrades[0].manifest[0];
+                assert.equal(manifest.tag_name, wanted);
+                assert.equal(manifest.assets.length, 2);
             }
             if (runtime === 'powershell' && c.failUpgrade) assert.ok(said.includes('Upgrade refused.'), said);
             assert.equal(entries.filter((entry) => entry.op === 'editors').length, c.installed && !c.damaged && !c.failUpgrade ? 1 : 0);
-            assert.equal(entries.filter((entry) => entry.op === 'unpack').length, !c.installed && !c.damaged && !c.invalid ? 1 : 0);
-            if (runtime === 'sh' && !delegates && !c.invalid) assert.ok(!existsSync(env.TEST_WORK), 'The temporary credentials were not removed.');
+            assert.equal(entries.filter((entry) => entry.op === 'unpack').length, !c.installed && !c.damaged ? 1 : 0);
+            if (runtime === 'sh') assert.ok(!existsSync(env.TEST_WORK), 'The temporary downloads were not removed.');
         } finally { rmSync(work, { recursive: true, force: true }); }
     });
 }
