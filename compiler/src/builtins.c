@@ -124,6 +124,7 @@ static const type T_TRANSFORMS = {TY_LIST, &mesh_transforms};
 static const type T_INSTANCES = {TY_LIST, &mesh_instances};
 static const type T_RECT = {TY_RECT, NULL};
 static const type T_TEXTURE = {TY_TEXTURE, NULL};
+static const type T_CLIP = {TY_CLIP, NULL};
 static const type T_TARGET = {TY_RENDER_TARGET, NULL};
 
 void builtins_use_mesh(const decl *vertices, const decl *vertices3, const decl *indices, const decl *pixels,
@@ -534,6 +535,34 @@ static void build_signatures(void)
     describe(ortho, "width, height, near, far",
              "An orthographic projection, for `Draw.Camera(transform, projection)`: a box `width` by `height` "
              "around the camera's axis, from `near` to `far`, with no perspective.");
+
+    // Sound, in local code: tide/audio.h. Codegen passes the frame's audio list first, and a Clip through
+    // tide_clip_of, which finds its samples in the pack.
+    {
+        signature *play = add("Audio", "Play", T_NONE, "tide_audio_play", 3, T_CLIP, T_F, T_F);
+        play->optional = 2;
+        play->defaults[1] = "1";
+        play->defaults[2] = "1";
+        describe(play, "clip, volume, pitch",
+                 "Plays a clip once, from its start: a one-shot the mixer owns from then on, with nothing to stop it. `volume` "
+                 "1 is the clip as it is, and `pitch` 1 its own speed (2 an octave up). Plain stereo, from nowhere in particular.");
+        signature *flat = add("Audio", "Play", T_NONE, "tide_audio_play_at2", 4, T_CLIP, T_F2, T_F);
+        flat->params[3] = T_F;
+        flat->optional = 2;
+        flat->defaults[2] = "1";
+        flat->defaults[3] = "1";
+        describe(flat, "clip, position, volume, pitch",
+                 "Plays a clip once from `position` in the world (z 0): heard from the side it's on against the listener, "
+                 "and quieter with its distance (at its volume within 1 unit, silent past 50, unless the view sets a falloff).");
+        signature *placed = add("Audio", "Play", T_NONE, "tide_audio_play_at", 4, T_CLIP, T_F3, T_F);
+        placed->params[3] = T_F;
+        placed->optional = 2;
+        placed->defaults[2] = "1";
+        placed->defaults[3] = "1";
+        describe(placed, "clip, position, volume, pitch",
+                 "Plays a clip once from `position` in the world: heard from the side it's on against the listener, and quieter "
+                 "with its distance (at its volume within 1 unit, silent past 50, unless the view sets a falloff).");
+    }
 
     // Drawing, in views: tide/draw.h. Codegen passes the view's draw list first.
     describe(add("Draw", "Clear", T_NONE, "tide_draw_clear", 1, T_COLOR, T_NONE, T_NONE),
@@ -1074,7 +1103,7 @@ bool builtin_owner(const str name)
     return str_eq_c(name, "Math") || builtin_draw_owner(name) || builtin_old_draw_owner(name) || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout")
         || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor") || str_eq_c(name, "Frame") || str_eq_c(name, "Debug")
         || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
-        || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web")
+        || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web") || str_eq_c(name, "Audio")
         || builtin_type_named(name, &ignored);
 }
 

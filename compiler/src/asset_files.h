@@ -18,6 +18,7 @@ typedef enum asset_kind {
     ASSET_BYTES, // List<byte>: any file
     ASSET_GRID,  // Grid2<Color>: a PNG, decoded
     ASSET_TEXTURE, // Texture: a PNG, decoded, kept a byte a channel to draw with
+    ASSET_CLIP,    // Clip: a WAV, checked here and kept as it is; the engine decodes it as it's first played
 } asset_kind;
 
 typedef struct asset_match {

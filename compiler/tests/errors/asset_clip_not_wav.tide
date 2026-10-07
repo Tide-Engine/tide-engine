@@ -1,0 +1,7 @@
+// expect: '../e2e/assets/badclip.wav' isn't a WAV that decodes
+// expect: a Clip asset is a WAV of PCM or floats, of one or two channels (Ogg Vorbis is to come); for the file's bytes as they are, read it as a List<byte>
+asset Clip broken = "../e2e/assets/badclip.wav";
+
+scene Main
+{
+}

@@ -8,7 +8,7 @@
 
 #include "mixer.h"
 #include "tide/net.h"
-#include "wav.h"
+#include "tide/wav.h"
 #include "tide_test.h"
 
 #define BLOCK TIDE_AUDIO_BLOCK
@@ -398,21 +398,24 @@ TIDE_TEST(audio_wav_holds_the_mix_as_16_bit_pcm)
 {
     const float stereo[] = {0.0f, 1.0f, -1.0f, 0.5f, 2.0f, -3.0f, 0.00001f, -0.00001f};
     size_t size = 0;
-    uint8_t *wav = tide_wav_encode(stereo, 4, &size);
+    uint8_t *wav = tide_wav_encode(stereo, 4, TIDE_AUDIO_RATE, &size);
     TIDE_REQUIRE(wav != NULL);
     TIDE_CHECK(size == 44 + 16);
-    uint32_t channels = 0, rate = 0, frames = 0;
-    const int16_t *samples = NULL;
-    TIDE_REQUIRE(tide_wav_header(wav, size, &channels, &rate, &frames, &samples));
-    TIDE_CHECK(channels == 2 && rate == TIDE_AUDIO_RATE && frames == 4);
-    TIDE_CHECK(samples[0] == 0 && samples[1] == 32767 && samples[2] == -32767);
-    TIDE_CHECK(samples[3] == 16384); // 0.5 * 32767 = 16383.5, rounded away from zero
-    TIDE_CHECK(samples[4] == 32767 && samples[5] == -32767); // Clamped
-    TIDE_CHECK(samples[6] == 0 && samples[7] == 0);
-    TIDE_CHECK(!tide_wav_header(wav, 20, &channels, &rate, &frames, &samples)); // Cut short
+    // The samples as 16 bits, little-endian, after the 44-byte header
+    const int16_t s3 = (int16_t)(wav[44 + 6] | (wav[44 + 7] << 8));
+    TIDE_CHECK(s3 == 16384); // 0.5 * 32767 = 16383.5, rounded away from zero
+    tide_sound back;
+    TIDE_REQUIRE(tide_wav_decode(wav, size, &back));
+    TIDE_CHECK(back.channels == 2 && back.rate == TIDE_AUDIO_RATE && back.frames == 4);
+    TIDE_CHECK(back.samples[0] == 0.0f && near(back.samples[1], 32767.0f / 32768.0f) && near(back.samples[2], -32767.0f / 32768.0f));
+    TIDE_CHECK(near(back.samples[4], 32767.0f / 32768.0f) && near(back.samples[5], -32767.0f / 32768.0f)); // Clamped
+    TIDE_CHECK(back.samples[6] == 0.0f && back.samples[7] == 0.0f);
+    tide_sound_free(&back);
+    TIDE_CHECK(!tide_wav_decode(wav, 20, &back)); // Cut short
     free(wav);
-    uint8_t *empty = tide_wav_encode(NULL, 0, &size);
+    uint8_t *empty = tide_wav_encode(NULL, 0, TIDE_AUDIO_RATE, &size);
     TIDE_REQUIRE(empty != NULL);
-    TIDE_CHECK(size == 44 && tide_wav_header(empty, size, &channels, &rate, &frames, &samples) && frames == 0);
+    TIDE_CHECK(size == 44 && tide_wav_decode(empty, size, &back) && back.frames == 0);
+    tide_sound_free(&back);
     free(empty);
 }

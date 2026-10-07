@@ -466,6 +466,19 @@ void tide_mixer_render(float *out, uint32_t frames)
     }
 }
 
+void tide_mixer_forget(void)
+{
+    tide_mixer_init();
+    tide_audio_frame f = {0};
+    tide_audio_reset(&f);
+    f.forget = true;
+    tide_mixer_submit(&f);
+    tide_audio_free(&f);
+    // No device renders on a thread of its own yet: the frame's thread is the renderer, and takes it now.
+    // A backend that does will wait here for its thread to have taken it.
+    tide_mixer_take();
+}
+
 void tide_mixer_flush(void)
 {
     tide_mixer_init();
