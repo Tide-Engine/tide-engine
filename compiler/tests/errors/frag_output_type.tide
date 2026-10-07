@@ -1,5 +1,5 @@
 // expect: a frag's outputs are colors: 'out Color depth'
-// expect: an output of another type than Color isn't there yet: a Color holds four floats, of which a target made with Format.Float keeps any number
+// expect: an output of another type than Color isn't there yet: a Color holds four floats, of which a target made with Format.Rgba16f keeps any number
 // Every output is a Color
 scene Main { }
 frag Shade(Vertex vertex, out Color color, out float depth)

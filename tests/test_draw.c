@@ -240,29 +240,29 @@ TIDE_TEST(draw_targets_say_what_they_hold_and_lend_their_depth)
 {
     tide_draw_list d = {0}, appended = {0};
     const tide_render_target scene = tide_render_target_make(64.0f, 48.0f);
-    const tide_render_target shadow = tide_render_target_make_as(64.0f, 48.0f, TIDE_TARGET_DEPTH_ONLY);
-    const tide_render_target exact = tide_render_target_make_scaled_as(256.0f, 256.0f, 1.0f, TIDE_TARGET_DEPTH_ONLY);
-    const tide_render_target screen = tide_render_target_window_as(TIDE_TARGET_DEPTH_ONLY);
-    const tide_render_target half = tide_render_target_screen_as(0.5f, TIDE_TARGET_DEPTH_ONLY);
-    TIDE_CHECK(tide_render_target_format(scene.id) == TIDE_TARGET_COLOR);
-    TIDE_CHECK(tide_render_target_format(shadow.id) == TIDE_TARGET_DEPTH_ONLY && tide_render_target_format(exact.id) == TIDE_TARGET_DEPTH_ONLY);
-    TIDE_CHECK(tide_render_target_format(screen.id) == TIDE_TARGET_DEPTH_ONLY && tide_render_target_format(half.id) == TIDE_TARGET_DEPTH_ONLY);
+    const tide_render_target shadow = tide_render_target_make_as(64.0f, 48.0f, TIDE_TARGET_DEPTH);
+    const tide_render_target exact = tide_render_target_make_scaled_as(256.0f, 256.0f, 1.0f, TIDE_TARGET_DEPTH);
+    const tide_render_target screen = tide_render_target_window_as(TIDE_TARGET_DEPTH);
+    const tide_render_target half = tide_render_target_screen_as(0.5f, TIDE_TARGET_DEPTH);
+    TIDE_CHECK(tide_render_target_format(scene.id) == TIDE_TARGET_RGBA8);
+    TIDE_CHECK(tide_render_target_format(shadow.id) == TIDE_TARGET_DEPTH && tide_render_target_format(exact.id) == TIDE_TARGET_DEPTH);
+    TIDE_CHECK(tide_render_target_format(screen.id) == TIDE_TARGET_DEPTH && tide_render_target_format(half.id) == TIDE_TARGET_DEPTH);
     TIDE_CHECK(exact.size.scale == 1.0f && screen.size.window == 1.0f && half.size.window == 0.5f);
     // The same four with color, by name and by the ones there always were
-    TIDE_CHECK(tide_render_target_format(tide_render_target_make_as(4.0f, 4.0f, TIDE_TARGET_COLOR).id) == TIDE_TARGET_COLOR);
-    TIDE_CHECK(tide_render_target_format(tide_render_target_window().id) == TIDE_TARGET_COLOR);
+    TIDE_CHECK(tide_render_target_format(tide_render_target_make_as(4.0f, 4.0f, TIDE_TARGET_RGBA8).id) == TIDE_TARGET_RGBA8);
+    TIDE_CHECK(tide_render_target_format(tide_render_target_window().id) == TIDE_TARGET_RGBA8);
     // The window, a target that's none, a borrowed one, and a format there's none of, hold color
-    TIDE_CHECK(tide_render_target_format(TIDE_RENDER_WINDOW) == TIDE_TARGET_COLOR);
-    TIDE_CHECK(tide_render_target_format(TIDE_RENDER_INVALID) == TIDE_TARGET_COLOR && tide_render_target_format(0) == TIDE_TARGET_COLOR);
-    TIDE_CHECK(tide_render_target_format(1001) == TIDE_TARGET_COLOR);
-    TIDE_CHECK(tide_render_target_format(tide_render_target_make_as(4.0f, 4.0f, (tide_target_format)9).id) == TIDE_TARGET_COLOR);
+    TIDE_CHECK(tide_render_target_format(TIDE_RENDER_WINDOW) == TIDE_TARGET_RGBA8);
+    TIDE_CHECK(tide_render_target_format(TIDE_RENDER_INVALID) == TIDE_TARGET_RGBA8 && tide_render_target_format(0) == TIDE_TARGET_RGBA8);
+    TIDE_CHECK(tide_render_target_format(1001) == TIDE_TARGET_RGBA8);
+    TIDE_CHECK(tide_render_target_format(tide_render_target_make_as(4.0f, 4.0f, (tide_target_format)9).id) == TIDE_TARGET_RGBA8);
 
     // Its state is found whatever it holds: it's live, resized and disposed like any other
     TIDE_CHECK(tide_render_target_live(shadow.id) && tide_render_target_version(shadow.id) == 1);
     tide_render_target_resize(shadow, 32.0f, 24.0f);
     const tide_render_target resized = tide_render_target_resolve(shadow);
     TIDE_CHECK(resized.id == shadow.id && resized.size.width == 32.0f && tide_render_target_version(shadow.id) == 2);
-    TIDE_CHECK(tide_render_target_format(resized.id) == TIDE_TARGET_DEPTH_ONLY);
+    TIDE_CHECK(tide_render_target_format(resized.id) == TIDE_TARGET_DEPTH);
 
     // A target's depth and its color are two textures of the list's, each found again
     const tide_depth_ref depth = tide_render_target_depth(scene);
@@ -302,7 +302,7 @@ TIDE_TEST(draw_targets_say_what_they_hold_and_lend_their_depth)
     const uint32_t carried = appended.runs[0].textures[0];
     TIDE_REQUIRE(carried && carried <= appended.texture_count);
     TIDE_CHECK(appended.textures[carried - 1u].space == TIDE_PIXELS_TARGET_DEPTH && appended.textures[carried - 1u].id == scene.id);
-    TIDE_CHECK(tide_render_target_format(appended.targets[1].id) == TIDE_TARGET_DEPTH_ONLY);
+    TIDE_CHECK(tide_render_target_format(appended.targets[1].id) == TIDE_TARGET_DEPTH);
 
     // Another build makes a target again from its id and its size alone, where the id is no address
     // it can read: what it held comes with it, and every alias is the one new target
@@ -312,7 +312,7 @@ TIDE_TEST(draw_targets_say_what_they_hold_and_lend_their_depth)
     const tide_render_target first = tide_render_target_recreate(packed), second = tide_render_target_recreate(packed);
     const tide_render_target third = tide_render_target_recreate(colored);
     TIDE_CHECK(first.id == second.id && first.size.scale == 2.0f && tide_render_target_live(first.id));
-    TIDE_CHECK(tide_render_target_format(first.id) == TIDE_TARGET_DEPTH_ONLY && tide_render_target_format(third.id) == TIDE_TARGET_COLOR);
+    TIDE_CHECK(tide_render_target_format(first.id) == TIDE_TARGET_DEPTH && tide_render_target_format(third.id) == TIDE_TARGET_RGBA8);
     TIDE_CHECK(third.id != first.id && third.size.window == 0.5f);
     tide_render_targets_recreated();
 
@@ -327,19 +327,19 @@ TIDE_TEST(draw_targets_say_what_they_hold_and_lend_their_depth)
 TIDE_TEST(draw_targets_hold_several_colors_and_lend_each)
 {
     tide_draw_list d = {0}, appended = {0};
-    const tide_target_format three[] = {TIDE_TARGET_COLOR, TIDE_TARGET_FLOAT, TIDE_TARGET_FLOAT};
+    const tide_target_format three[] = {TIDE_TARGET_RGBA8, TIDE_TARGET_RGBA16F, TIDE_TARGET_RGBA16F};
     const tide_render_target scene = tide_render_target_make_of(64.0f, 48.0f, three, 3);
     tide_target_formats held = tide_render_target_formats(scene.id);
     TIDE_REQUIRE(held.count == 3 && tide_render_target_colors(scene.id) == 3);
-    TIDE_CHECK(held.color[0] == TIDE_TARGET_COLOR && held.color[1] == TIDE_TARGET_FLOAT && held.color[2] == TIDE_TARGET_FLOAT);
-    TIDE_CHECK(tide_render_target_format(scene.id) == TIDE_TARGET_COLOR && tide_render_target_live(scene.id));
+    TIDE_CHECK(held.color[0] == TIDE_TARGET_RGBA8 && held.color[1] == TIDE_TARGET_RGBA16F && held.color[2] == TIDE_TARGET_RGBA16F);
+    TIDE_CHECK(tide_render_target_format(scene.id) == TIDE_TARGET_RGBA8 && tide_render_target_live(scene.id));
     TIDE_CHECK(scene.size.width == 64.0f && scene.size.height == 48.0f && scene.size.scale == 0.0f);
     // One float image is a target made with that format, by either function
-    const tide_render_target bright = tide_render_target_make_as(8.0f, 8.0f, TIDE_TARGET_FLOAT);
+    const tide_render_target bright = tide_render_target_make_as(8.0f, 8.0f, TIDE_TARGET_RGBA16F);
     held = tide_render_target_formats(bright.id);
-    TIDE_CHECK(held.count == 1 && held.color[0] == TIDE_TARGET_FLOAT && tide_render_target_format(bright.id) == TIDE_TARGET_FLOAT);
-    TIDE_CHECK(tide_render_target_formats(tide_render_target_make_of(8.0f, 8.0f, &three[1], 1).id).color[0] == TIDE_TARGET_FLOAT);
-    TIDE_CHECK(tide_render_target_colors(tide_render_target_make_of(8.0f, 8.0f, (tide_target_format[]){TIDE_TARGET_DEPTH_ONLY}, 1).id) == 0);
+    TIDE_CHECK(held.count == 1 && held.color[0] == TIDE_TARGET_RGBA16F && tide_render_target_format(bright.id) == TIDE_TARGET_RGBA16F);
+    TIDE_CHECK(tide_render_target_formats(tide_render_target_make_of(8.0f, 8.0f, &three[1], 1).id).color[0] == TIDE_TARGET_RGBA16F);
+    TIDE_CHECK(tide_render_target_colors(tide_render_target_make_of(8.0f, 8.0f, (tide_target_format[]){TIDE_TARGET_DEPTH}, 1).id) == 0);
     // The other three ways to make one hold several too
     const tide_render_target exact = tide_render_target_make_scaled_of(320.0f, 180.0f, 1.0f, three, 2);
     const tide_render_target screen = tide_render_target_window_of(three, 3), half = tide_render_target_screen_of(0.5f, three, 2);
@@ -347,12 +347,12 @@ TIDE_TEST(draw_targets_hold_several_colors_and_lend_each)
     TIDE_CHECK(tide_render_target_colors(screen.id) == 3 && screen.size.window == 1.0f);
     TIDE_CHECK(tide_render_target_colors(half.id) == 2 && half.size.window == 0.5f);
     // Four at the most, each a color's: among several, depth alone is a color image, and so is a format there's none of
-    const tide_target_format many[] = {TIDE_TARGET_FLOAT, TIDE_TARGET_DEPTH_ONLY, (tide_target_format)9, TIDE_TARGET_FLOAT,
-                                       TIDE_TARGET_FLOAT, TIDE_TARGET_FLOAT};
+    const tide_target_format many[] = {TIDE_TARGET_RGBA16F, TIDE_TARGET_DEPTH, (tide_target_format)9, TIDE_TARGET_RGBA16F,
+                                       TIDE_TARGET_RGBA16F, TIDE_TARGET_RGBA16F};
     held = tide_render_target_formats(tide_render_target_make_of(4.0f, 4.0f, many, 6).id);
     TIDE_REQUIRE(held.count == TIDE_TARGET_COLORS);
-    TIDE_CHECK(held.color[0] == TIDE_TARGET_FLOAT && held.color[1] == TIDE_TARGET_COLOR && held.color[2] == TIDE_TARGET_COLOR
-               && held.color[3] == TIDE_TARGET_FLOAT);
+    TIDE_CHECK(held.color[0] == TIDE_TARGET_RGBA16F && held.color[1] == TIDE_TARGET_RGBA8 && held.color[2] == TIDE_TARGET_RGBA8
+               && held.color[3] == TIDE_TARGET_RGBA16F);
     // The window, a borrowed target and a target that's none hold one color image
     TIDE_CHECK(tide_render_target_colors(TIDE_RENDER_WINDOW) == 1 && tide_render_target_colors(1001) == 1);
     TIDE_CHECK(tide_render_target_colors(TIDE_RENDER_INVALID) == 1 && tide_render_target_image(1001 | TIDE_RENDER_IMAGE) == 0);
@@ -417,7 +417,7 @@ TIDE_TEST(draw_targets_hold_several_colors_and_lend_each)
     const tide_render_target remade = tide_render_target_recreate(packed);
     held = tide_render_target_formats(remade.id);
     TIDE_REQUIRE(tide_render_target_live(remade.id) && held.count == 3);
-    TIDE_CHECK(held.color[0] == TIDE_TARGET_COLOR && held.color[1] == TIDE_TARGET_FLOAT && held.color[2] == TIDE_TARGET_FLOAT);
+    TIDE_CHECK(held.color[0] == TIDE_TARGET_RGBA8 && held.color[1] == TIDE_TARGET_RGBA16F && held.color[2] == TIDE_TARGET_RGBA16F);
     TIDE_CHECK(tide_render_target_image(remade.id) == 0 && tide_render_target_image(rebound.target.id) == 1);
     TIDE_CHECK(tide_render_target_whole(rebound.target.id) == remade.id);
     tide_render_targets_recreated();

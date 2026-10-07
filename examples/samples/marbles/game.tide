@@ -677,7 +677,7 @@ view Stage(mut Look look, mut Scenery scenery, mut Stick stick, mut Fx fx, Sessi
     var rotation = quaternion.LookRotation(Math.Normalize(look.focus + float3(0, 0, -1) - look.eye), float3(0, 1, 0));
 
     Draw.Clear(Color(0.5, 0.76, 0.95));
-    Draw.Screen()
+    Draw.Pixels()
     {
         Draw.Shape(Shape { center = float2(Screen.width, Screen.height) * 0.5, size = float2(Screen.width, Screen.height),
                              color = Color(0.3, 0.56, 0.9), color2 = Color(0.72, 0.88, 0.98) });
@@ -705,7 +705,7 @@ view Stage(mut Look look, mut Scenery scenery, mut Stick stick, mut Fx fx, Sessi
         var words = !look.joined ? "Joining the game..."
                   : session.state == SessionState.Connecting ? "Finding the game again..."
                   : "The game is over.\nOpen the link again to play.";
-        Draw.Screen()
+        Draw.Pixels()
         {
             Caption(words, float2(Screen.width, Screen.height) * 0.5, 20 * look.scale, Color.white, Anchor.MiddleCenter);
         }
@@ -809,7 +809,7 @@ view Marbles(mut Marble marble, Scenery scenery)
 view Mine(Marble marble, Look look, with ownership)
 {
     var above = Draw.WorldToScreen(marble.position + float3(0, RADIUS + 0.35, 0));
-    Draw.Screen()
+    Draw.Pixels()
     {
         Caption("you", above.xy, 13 * look.scale, Color.white, Anchor.LowerCenter, Font.Bold);
     }
@@ -818,7 +818,7 @@ view Mine(Marble marble, Look look, with ownership)
 view Effects(mut Fx fx, Look look)
 {
     var dt = Math.Min(Frame.dt, 0.05);
-    Draw.Screen()
+    Draw.Pixels()
     {
         mut var i = 0;
         while (i < fx.sparks.count)
@@ -873,7 +873,7 @@ view Hud(Round round, Session session, Time time, Look look, query (Marble body,
     // Laid out for a small window, and scaled up in a big one.
     float width = Screen.width / look.scale;
     float height = Screen.height / look.scale;
-    Draw.Screen(),
+    Draw.Pixels(),
     Draw.Transform(float2(0), 0, look.scale)
     {
         // Who has how many, the leader first

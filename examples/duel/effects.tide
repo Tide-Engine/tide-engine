@@ -231,11 +231,11 @@ view BeginFrame(mut Canvas canvas, mut Fx fx, mut Sky sky, mut Lens lens)
     if (!lens.made)
     {
         // The window's size, whatever it becomes, at the display's own pixels: nothing here resizes them
-        lens.scene = RenderTarget.Screen();
-        lens.bright = RenderTarget.Screen(0.25);
-        lens.spread = RenderTarget.Screen(0.25);
-        lens.wide = RenderTarget.Screen(0.125);
-        lens.wider = RenderTarget.Screen(0.125);
+        lens.scene = RenderTarget.Window();
+        lens.bright = RenderTarget.Window(0.25);
+        lens.spread = RenderTarget.Window(0.25);
+        lens.wide = RenderTarget.Window(0.125);
+        lens.wider = RenderTarget.Window(0.125);
         lens.made = true;
     }
     var scene = lens.scene;
@@ -268,7 +268,7 @@ view BeginFrame(mut Canvas canvas, mut Fx fx, mut Sky sky, mut Lens lens)
     sky.shock.z += fx.dt * 1.35;
     sky.shock2.z += fx.dt * 1.35;
     scene.Clear(UI_BACKGROUND);
-    scene.SetScreen();
+    scene.SetPixels();
     scene.Mesh(sky.quad, sky.faces, PlaceSky, PaintSky);
 
     // The arena's camera, and the window's too: what's drawn there over a fighter finds it with the same one
@@ -605,7 +605,7 @@ view PaintLight(mut Lens lens)
 [Stage(PaintStages.Overlay)]
 view PaintOverlay(mut Fx fx)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     var screen = float2(Screen.width, Screen.height);
 
     mut var i = 0;

@@ -1,0 +1,4 @@
+// expect: RenderTarget.Window takes the part of the window's size the target is, a number, or nothing for all of it
+// expect: what it holds comes last, when that isn't one color image: 'RenderTarget.Window(Format.Depth)', or a format for each, 'RenderTarget.Window(Format.Rgba8, Format.Rgba16f)'
+scene Main { }
+view Show() { var target = RenderTarget.Window(Format.Depth, 0.5); }

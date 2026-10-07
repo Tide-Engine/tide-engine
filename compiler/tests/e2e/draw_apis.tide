@@ -41,7 +41,7 @@ view Show(mut Probe probe, Devices devices)
     probe.flippedTwice = Screen.Flip(Screen.Flip(devices.pointer.position));
     Draw.Mesh([], []);
     Draw.Mesh([Corner2 { position = float2(1, 0) }], [0, 0, 0], Shade2);
-    Draw.SetScreen();
+    Draw.SetPixels();
     probe.overlay = Draw.WorldToScreen(float2(12, 34));
 
     Draw.Clear(Color.black);

@@ -117,7 +117,7 @@ view Show(Models models, Deferred deferred)
 
 - **Each is owed on every path,** as the pixel's color is: a frag that can end without writing its second output is an error that names it, and `pixel.Discard()` owes none of them anything.
 - **They're matched by their order,** not their names: `out Color albedo, out Color normal` writes a target's first image and its second, whatever the frag calls them, and wherever they are among its other parameters.
-- **A `Color` is four floats,** and an output holds any number. What's kept of it is the image's to say: a [`Format.Color`](./views.md#what-a-target-holds) image keeps each channel from 0 to 1, and a `Format.Float` one keeps it as it is, which is what a normal, a place or light brighter than white needs.
+- **A `Color` is four floats,** and an output holds any number. What's kept of it is the image's to say: a [`Format.Rgba8`](./views.md#what-a-target-holds) image keeps each channel from 0 to 1, and a `Format.Rgba16f` one keeps it as it is, which is what a normal, a place or light brighter than white needs.
 - **`Color(x, y, z)` has an alpha of 1.** Each output is blended over what's in its image by its own alpha, as the draw's blend says, so an output that's data is written with an alpha of 1, or inside `Draw.Blend(Blend.Replace) { ... }`.
 - **Where there's no image for it, an output goes nowhere.** Drawn into the window, or into a target of one color image, such a frag is its first output alone; into a target of depth alone, none of them. So one frag serves a pass that fills three images and a pass that only casts a shadow.
 - **A target's other images are left alone** by a frag with fewer outputs than the target has images, and by everything the engine draws itself, which has one color.
@@ -249,7 +249,7 @@ local singleton Lamp { RenderTarget map; DepthTexture shadow; float4x4 toLamp; }
 
 view Make(mut Lamp lamp)
 {
-    lamp.map = RenderTarget(1024, 1024, 1, Format.DepthOnly);
+    lamp.map = RenderTarget(1024, 1024, 1, Format.Depth);
     lamp.shadow = lamp.map.depth;
 }
 ```
@@ -324,7 +324,7 @@ The sphere below has a vertex of its own, with a normal, and a frag that lights 
 - `Instance instance`, in a frag or a vert: `instance.transform` is the `float4x4` the draw was given, so `Math.Rotate(instance.transform, vertex.normal)` is a normal in the world.
 - `Pixel pixel`, in a frag:
   - `pixel.world`, a `float3`: where on the mesh the pixel is, in the world.
-  - `pixel.position`, a `float2`: where it is on the screen, in pixels from the top left, as [`Draw.Screen`](./views.md#on-the-screen)'s.
+  - `pixel.position`, a `float2`: where it is on the screen, in pixels from the top left, as [`Draw.Pixels`](./views.md#on-the-screen)'s.
   - `pixel.depth`: how far it is, from 0 at the camera's near side to 1.
   - `pixel.Discard()` leaves the pixel undrawn, and ends the frag there: for holes, and edges cut out of a texture. Nothing is written for it: no color, no depth and no [stencil](./views.md#stencil).
 

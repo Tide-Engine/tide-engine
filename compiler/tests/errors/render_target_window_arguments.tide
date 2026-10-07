@@ -1,0 +1,3 @@
+// expect: RenderTarget.Window takes the part of the window's size the target is, a number, or nothing for all of it
+scene Main { }
+view Show() { var target = RenderTarget.Window(1280, 720); }

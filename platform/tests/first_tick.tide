@@ -56,7 +56,7 @@ view Menu(Devices devices)
 // tick, and the mouse's movement in the first
 view Blocks(Read read)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     if (read.ticks > 0) Draw.Rect(float2(40, 40), float2(40, 40), Color(0, 1, 0));
     if (read.jumps > 0) Draw.Rect(float2(100, 40), float2(40, 40), Color(1, 0, 0));
     if (read.ticks > 0 && read.holds == read.ticks) Draw.Rect(float2(160, 40), float2(40, 40), Color(1, 1, 0));
