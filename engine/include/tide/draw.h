@@ -932,7 +932,9 @@ static inline tide_draw_list *tide_draw_to(tide_draw_list *d, const uint64_t id,
 static inline tide_draw_list *tide_draw_render_target(tide_draw_list *d, const tide_render_target target)
 {
     const tide_render_target resolved = tide_render_target_resolve(target);
-    return tide_draw_to_sized(d, resolved.id == TIDE_RENDER_WINDOW ? 0 : resolved.id ? resolved.id : TIDE_RENDER_INVALID,
+    // The target itself, whichever of its color images a reference it came from names
+    return tide_draw_to_sized(d, resolved.id == TIDE_RENDER_WINDOW ? 0 : resolved.id ? tide_render_target_whole(resolved.id)
+                                                                                     : TIDE_RENDER_INVALID,
                               resolved.size);
 }
 
