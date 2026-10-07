@@ -52,6 +52,7 @@ typedef enum tide_draw_kind {
     TIDE_DRAW_TARGET,    // target: destination for subsequent commands; 0 is the window
     TIDE_DRAW_BLIT,      // shaded: a fullscreen shaded run, replacing its destination
     TIDE_DRAW_SHAPE,     // a = center, b = size, color, shape: a shape with smooth edges
+    TIDE_DRAW_STENCIL,   // stencil: what the commands after it do with their destination's stencil
 } tide_draw_kind;
 
 // How what a command draws goes over what's there. Tide's `Blend` has the same
@@ -79,6 +80,82 @@ typedef enum tide_cull {
     TIDE_CULL_NONE,  // Both sides are drawn: what's flat, or see-through
 } tide_cull;
 
+// Stencil: a whole number from 0 to 255 for each of a destination's pixels,
+// beside its depth, which draws compare with a number of their own and
+// change. It's 0 everywhere as a frame starts in the window, and in a target
+// until something draws into it, as its depth is the far limit.
+//
+// The test a draw passes to draw at a pixel: its own number, on the left,
+// against the one stored there, as a GPU has it. TIDE_STENCIL_LESS draws where
+// its number is less than the stored one. Tide's `StencilTest` has the same
+// values.
+typedef enum tide_stencil_test {
+    TIDE_STENCIL_ALWAYS, // Everywhere: no test
+    TIDE_STENCIL_NEVER,
+    TIDE_STENCIL_LESS,
+    TIDE_STENCIL_EQUAL,
+    TIDE_STENCIL_LESS_EQUAL,
+    TIDE_STENCIL_GREATER,
+    TIDE_STENCIL_NOT_EQUAL,
+    TIDE_STENCIL_GREATER_EQUAL,
+} tide_stencil_test;
+
+// What becomes of the stored number at each pixel a draw draws at: the ones
+// that pass its stencil test and, for a 3D mesh that reads depth, aren't
+// hidden. Everywhere else it stays. Tide's `StencilOp` has the same values.
+typedef enum tide_stencil_op {
+    TIDE_STENCIL_KEEP,      // As it is
+    TIDE_STENCIL_REPLACE,   // The draw's number
+    TIDE_STENCIL_INCREMENT, // One more, 255 at the most
+    TIDE_STENCIL_DECREMENT, // One less, 0 at the least
+    TIDE_STENCIL_ZERO,      // 0
+    TIDE_STENCIL_INVERT,    // Each of its 8 bits the other way: 255 less it
+} tide_stencil_op;
+
+// What draws do with stencil: a test, their number, and what becomes of the
+// stored one. A zeroed one is a frame's first: every pixel passes, and
+// nothing is stored.
+typedef struct tide_stencil {
+    uint8_t test;      // tide_stencil_test
+    uint8_t operation; // tide_stencil_op
+    uint8_t value;     // The draw's number
+    uint8_t unused;
+} tide_stencil;
+
+// One that tests and stores, of what Tide passes: an enum's value can be any
+// number, and one that's no member's is the first; `value` is kept from 0 to
+// 255. What nothing reads is 0, so that two that do the same are the same: the
+// number of a test every pixel passes, unless it's what's stored, and all of
+// one no pixel passes, which draws nothing and so stores nothing.
+static inline tide_stencil tide_stencil_stored(const int32_t test, const int32_t value, const int32_t operation)
+{
+    tide_stencil s = {
+        .test = (uint32_t)test <= TIDE_STENCIL_GREATER_EQUAL ? (uint8_t)test : (uint8_t)TIDE_STENCIL_ALWAYS,
+        .operation = (uint32_t)operation <= TIDE_STENCIL_INVERT ? (uint8_t)operation : (uint8_t)TIDE_STENCIL_KEEP,
+        .value = (uint8_t)(value < 0 ? 0 : value > 255 ? 255 : value),
+    };
+    if (s.test == TIDE_STENCIL_NEVER) s.operation = TIDE_STENCIL_KEEP, s.value = 0;
+    if (s.test == TIDE_STENCIL_ALWAYS && s.operation != TIDE_STENCIL_REPLACE) s.value = 0;
+    return s;
+}
+
+// One that only tests: what's stored stays.
+static inline tide_stencil tide_stencil_tested(const int32_t test, const int32_t value)
+{
+    return tide_stencil_stored(test, value, TIDE_STENCIL_KEEP);
+}
+
+// A tide_stencil as one number, which places and commands keep: 0 for a frame's first.
+static inline uint32_t tide_stencil_packed(const tide_stencil s)
+{
+    return (uint32_t)s.test | (uint32_t)s.operation << 4 | (uint32_t)s.value << 8;
+}
+
+static inline tide_stencil tide_stencil_unpacked(const uint32_t packed)
+{
+    return tide_stencil_stored((int32_t)(packed & 15u), (int32_t)(packed >> 8 & 255u), (int32_t)(packed >> 4 & 15u));
+}
+
 // With a command's tide_cull: its instances' transforms mirror the mesh, so
 // its triangles reach the camera wound the other way, and a renderer takes
 // the other winding for their front. A run of instances is all one or the
@@ -97,6 +174,7 @@ typedef struct tide_draw_command {
     union {
         uint32_t target; // TIDE_DRAW_TARGET: 1 + its place in tide_draw_list.targets, or 0
         uint32_t clip;   // TIDE_DRAW_CLIP: 1 + its place in tide_draw_list.clips
+        uint32_t stencil; // TIDE_DRAW_STENCIL: a tide_stencil, packed (tide_stencil_packed)
         struct {
             tide_float2 a;
             tide_float2 b;
@@ -486,10 +564,11 @@ static inline tide_draw_transform tide_draw_transform_matrix(const tide_float3x3
 }
 
 // The settings that say where a destination's commands land, what its 3D
-// meshes do with its depth and which side of their triangles draws, which
-// each destination has its own of (see Settings, below). A zeroed one is a
-// frame's first: the first cameras, no clip, no transform, depth read and
-// written, and no triangle drawn from the back.
+// meshes do with its depth and which side of their triangles draws, and what
+// its draws do with its stencil, which each destination has its own of (see
+// Settings, below). A zeroed one is a frame's first: the first cameras, no
+// clip, no transform, depth read and written, no triangle drawn from the
+// back, and no stencil test.
 typedef struct tide_draw_place {
     // What the commands to come are drawn through: 1 + its place in tide_draw_list.cameras and
     // cameras_3d, or 0 for the camera each frame starts with...
@@ -497,10 +576,11 @@ typedef struct tide_draw_place {
     uint32_t clip;  // ...and 1 + its place in tide_draw_list.clips, or 0 for none
     uint32_t depth; // tide_depth: what the 3D meshes to come do with depth
     uint32_t cull;  // tide_cull: which side of their triangles isn't drawn
+    uint32_t stencil; // A tide_stencil, packed: what the commands to come do with stencil
     // What the commands recorded so far leave a renderer with. Where it isn't the above, the commands
     // that say so are recorded before the next one that draws: a setting that's set and put back with
     // nothing drawn records nothing, and neither does one that's set to what it was.
-    uint32_t played_2d, played_3d, played_clip;
+    uint32_t played_2d, played_3d, played_clip, played_stencil;
     uint32_t moved;                // TIDE_DRAW_MOVED_*: what of the transforms below there is, for the others are unset
     float scale;                   // How many times as big `transform` makes what has no direction: a radius, a width
     tide_draw_transform transform; // What 2D commands go through before the camera
@@ -551,7 +631,7 @@ typedef struct tide_draw_saved {
     uint32_t setting; // Which one: TIDE_DRAW_SAVED_*
     uint32_t target;  // Whose, for a destination's own: 0 for the window, or 1 + its place in tide_draw_list.targets
     union {
-        uint32_t value; // A blend, or what a place has for a camera, a clip, its depth or its cull
+        uint32_t value; // A blend, or what a place has for a camera, a clip, its depth, its cull or its stencil
         tide_color tint;
         struct {
             tide_draw_transform transform;
@@ -574,6 +654,7 @@ enum {
     TIDE_DRAW_SAVED_CAMERA_3D,
     TIDE_DRAW_SAVED_DEPTH,
     TIDE_DRAW_SAVED_CULL,
+    TIDE_DRAW_SAVED_STENCIL,
 };
 
 // A 3D mesh's corner, as a mesh's but in 3D. Tide's `Vertex3` is the same.
@@ -867,8 +948,9 @@ void tide_draw_clear(tide_draw_list *d, tide_color color);
 // how it blends (tide_draw_set_blend) and what tints it (tide_draw_set_tint).
 // Where it lands belongs to its destination, the window or a target, each
 // with its own for the frame: its cameras, its clip, its transforms, what its
-// 3D meshes do with its depth, and which side of their triangles draws. Those
-// are set, and pushed, for the destination that's selected (tide_draw_to).
+// 3D meshes do with its depth, which side of their triangles draws, and what
+// its draws do with its stencil. Those are set, and pushed, for the
+// destination that's selected (tide_draw_to).
 //
 // Each has two forms. tide_draw_set_* sets it for the commands to come, until
 // it's set again, and tide_draw_unset_* puts it back as each frame starts.
@@ -940,6 +1022,26 @@ uint32_t tide_draw_push_depth(tide_draw_list *d, tide_depth depth);
 void tide_draw_set_cull(tide_draw_list *d, tide_cull cull);
 void tide_draw_unset_cull(tide_draw_list *d);
 uint32_t tide_draw_push_cull(tide_draw_list *d, tide_cull cull);
+
+// What the selected destination's commands after it do with its stencil
+// (tide_stencil): the test they pass to draw at a pixel, their number against
+// the one stored there, and what becomes of the stored one where they draw.
+// None, each frame's first: every pixel passes and nothing is stored. It's
+// for everything that draws, in 2D and 3D, through a shader of the game's or
+// not, and a destination's own, as its stencil is.
+//
+// A draw draws, and stores, at the pixels it touches, whatever its color: a
+// clear one stores and leaves the colors there as they are, under every blend
+// but TIDE_BLEND_REPLACE. A shape's pixels are the ones it covers any part
+// of, and text's the ones its glyphs do; a mesh's are all of its triangles',
+// whatever its texture's alpha, and a shader's the ones its fragment stage
+// doesn't discard.
+//
+// A clear sets the stored numbers back to 0, within the clip, whatever this
+// says, and a blit neither tests nor stores. A push replaces what's there.
+void tide_draw_set_stencil(tide_draw_list *d, tide_stencil stencil);
+void tide_draw_unset_stencil(tide_draw_list *d);
+uint32_t tide_draw_push_stencil(tide_draw_list *d, tide_stencil stencil);
 
 // Both of the selected destination's transforms, and both of its cameras, as each frame starts.
 void tide_draw_unset_transforms(tide_draw_list *d);

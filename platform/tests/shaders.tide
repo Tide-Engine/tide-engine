@@ -1652,12 +1652,141 @@ view Shadows(Art art, mut Shadow shadow)
     Draw2D.Mesh(shadow.readout, art.faces, LampDepth);
 }
 
+// ---------------------------------------------------------------------------
+// Stencil (pass 9): a number for each pixel, which draws store and are tested
+// against, in the window and in a target of the game's.
+
+local singleton Mask
+{
+    RenderTarget target;  // 64 pixels by 64 whatever the display
+    List<Vertex> square;  // 64 across from its corner, green
+    List<Vertex> picture; // ...and white, for a texture
+    bool made;
+}
+
+// A sheet that leaves its right half out: what it stores, it stores on the left.
+frag LeftHalf(Vertex vertex, out Color color, Pixel pixel)
+{
+    if (vertex.uv.x > 0.5) pixel.Discard();
+    color = Color.clear;
+}
+
+frag Own(Vertex vertex, out Color color)
+{
+    color = vertex.color;
+}
+
+// Half as big, about its corner.
+vert Halved(mut Vertex vertex)
+{
+    vertex.position = vertex.position * 0.5;
+}
+
+[After(Shadows)]
+view Masks(Art art, mut Mask mask)
+{
+    if (art.targetPass != 9) return;
+    if (!mask.made)
+    {
+        mask.made = true;
+        mask.target = RenderTarget(64, 64, 1);
+        mask.square = [Vertex { color = Color.green }, Vertex { position = float2(64, 0), uv = float2(1, 0), color = Color.green },
+                       Vertex { position = float2(64, 64), uv = float2(1, 1), color = Color.green },
+                       Vertex { position = float2(0, 64), uv = float2(0, 1), color = Color.green }];
+        mask.picture = [Vertex { }, Vertex { position = float2(64, 0), uv = float2(1, 0) },
+                        Vertex { position = float2(64, 64), uv = float2(1, 1) }, Vertex { position = float2(0, 64), uv = float2(0, 1) }];
+    }
+    Draw2D.SetClip();
+    Draw2D.Clear(Color.blue); // ...and every pixel's number is 0
+    Draw2D.SetScreen();
+
+    // A circle drawn clear stores where it is, and shows nothing; a rect over it is drawn where it stored
+    Draw.Stencil(StencilTest.Always, 1, StencilOp.Replace)
+    {
+        Draw2D.Circle(float2(48, 48), 32, Color.clear);
+    }
+    Draw.Stencil(StencilTest.Equal, 1)
+    {
+        Draw2D.Rect(float2(48, 48), float2(96, 96), Color.white);
+    }
+
+    // Through a frag, a mesh stores where its pixels weren't discarded; one through another, and a vert, is tested
+    Draw2D.Transform(float2(128, 16))
+    {
+        Draw.Stencil(StencilTest.Always, 2, StencilOp.Replace)
+        {
+            Draw2D.Mesh(mask.square, art.faces, LeftHalf);
+        }
+        Draw.Stencil(StencilTest.Equal, 2)
+        {
+            Draw2D.Mesh(mask.square, art.faces, Own);
+            // Half as big, drawn where the number isn't the sheet's: its right half, past the sheet's
+            Draw.SetStencil(StencilTest.NotEqual, 2);
+            Draw2D.Transform(float2(48, 48))
+            {
+                Draw2D.Mesh(mask.picture, art.faces, Halved, Own);
+            }
+        }
+    }
+
+    // Two rects that count one more each: where both are, it's 2
+    Draw.Stencil(StencilTest.Always, 0, StencilOp.Increment)
+    {
+        Draw2D.Rect(float2(48, 160), float2(64, 64), Color.clear);
+        Draw2D.Rect(float2(80, 160), float2(64, 64), Color.clear);
+    }
+    Draw.Stencil(StencilTest.Equal, 2)
+    {
+        Draw2D.Rect(float2(64, 160), float2(128, 64), Color(1, 1, 0));
+    }
+    Draw.Stencil(StencilTest.Equal, 1)
+    {
+        Draw2D.Rect(float2(64, 160), float2(128, 64), Color.magenta);
+    }
+
+    // 3D meshes store and are tested as 2D draws are: a square stores, a rect is drawn where it did, and a
+    // square twice as big around it only where it didn't
+    Draw3D.SetCamera(float4x4.TRS(float3(0, 0, -10), quaternion.identity, float3(1)), float4x4.Ortho(256, 256, 0.1, 30));
+    Draw.Stencil(StencilTest.Always, 5, StencilOp.Replace)
+    {
+        Draw3D.Mesh(art.quad, art.faces, float4x4.Translate(Cell(5, 4)), Bare);
+    }
+    Draw.Stencil(StencilTest.Equal, 5)
+    {
+        Draw2D.Rect(float2(176, 144), float2(64, 64), Color.red);
+    }
+    Draw.Stencil(StencilTest.NotEqual, 5)
+    {
+        Draw3D.Mesh(art.quad, art.faces, float4x4.TRS(Cell(5, 4), quaternion.identity, float3(2, 2, 1)), Bare);
+    }
+
+    // A target's stencil is its own, and so is what its draws do with it: the window's, which lets nothing
+    // through here, is nothing to them
+    Draw.Stencil(StencilTest.Never, 0)
+    {
+        mask.target.Clear(Color.black);
+        mask.target.SetScreen();
+        mask.target.Stencil(StencilTest.Always, 1, StencilOp.Replace)
+        {
+            mask.target.Rect(float2(16, 32), float2(32, 64), Color.clear);
+        }
+        mask.target.Stencil(StencilTest.Equal, 1)
+        {
+            mask.target.Rect(float2(32, 32), float2(64, 64), Color.green);
+        }
+    }
+    Draw2D.Transform(float2(192, 192))
+    {
+        Draw2D.Mesh(mask.picture, art.faces, mask.target.color, Filter.Point);
+    }
+}
+
 // shaders.c requests independent full-window checks after the existing grid.
 // Resource descriptors are supplied by C, without choosing a Tide lifetime API.
 [After(Manual)]
 view Targets(mut Art art)
 {
-    if (art.targetPass == 0 || art.targetPass >= 6) return; // 6 is ScreenTargets', 7 Wraps' and 8 Shadows'
+    if (art.targetPass == 0 || art.targetPass >= 6) return; // 6 is ScreenTargets', 7 Wraps', 8 Shadows' and 9 Masks'
     if (art.targetPass >= 4)
     {
         Draw2D.SetScreen();

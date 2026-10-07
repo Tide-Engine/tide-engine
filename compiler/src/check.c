@@ -259,6 +259,15 @@ static const decl_index *decls_by(const program *prog, const bool c_names)
     return index;
 }
 
+// Whether `d` is one of the built-in enums generated C has only in a game
+// whose code names it (decl.named), so that the others' is what it was before
+// there was one: Depth, Cull, Wrap, Format, StencilTest and StencilOp.
+static bool named_only(const program *prog, const decl *d)
+{
+    return d == prog->depth || d == prog->cull || d == prog->wrap || d == prog->format || d == prog->stencil_test
+        || d == prog->stencil_op;
+}
+
 // The first declaration in the bucket of a name in generated C: -1 for none.
 static int first_c_named(const decl_index *index, const char *bytes, const size_t len)
 {
@@ -274,10 +283,7 @@ static decl *find_in(const program *prog, const str ns, const str name, const na
         decl *d = prog->decls.items[i];
         if (is_kind(d, kind) && str_eq(d->name, name) && str_eq(decl_ns(d), ns)) {
             // Generated C only has these in games that name them
-            if ((d == prog->random || d == prog->depth || d == prog->cull || d == prog->wrap || d == prog->format)
-                && builds(prog)) {
-                d->named = true;
-            }
+            if ((d == prog->random || named_only(prog, d)) && builds(prog)) d->named = true;
             return d;
         }
     }
@@ -1805,6 +1811,8 @@ static type check_default_value(checker *c, expr *e, const type want)
     }
     e->type = want;
     if (want.kind == TY_STRING || want.kind == TY_LIST || want.kind == TY_MAP || want.kind == TY_SET) c->prog->uses_text = true;
+    // Generated C writes the type of an enum's default, so it has the enum: `Draw3D.SetDepth(default)` names Depth
+    if (want.kind == TY_ENUM && want.decl && named_only(c->prog, want.decl) && builds(c->prog)) want.decl->named = true;
     return want;
 }
 
@@ -4952,6 +4960,8 @@ static str target_draw_owner(const expr *e)
         || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection")
         || str_eq_c(e->name, "Depth") || str_eq_c(e->name, "SetDepth") // Only 3D meshes have depth...
         || str_eq_c(e->name, "Cull") || str_eq_c(e->name, "SetCull");  // ...and triangles with a back
+    // What its 2D and 3D draws both take is neither's: Draw's, of which a target has its own
+    if (str_eq_c(e->name, "Stencil") || str_eq_c(e->name, "SetStencil")) return str_from("Draw");
     const bool camera = str_eq_c(e->name, "Camera") || str_eq_c(e->name, "SetCamera");
     const bool transform = str_eq_c(e->name, "Transform") || str_eq_c(e->name, "SetTransform");
     if (e->args.count && (camera || transform || str_eq_c(e->name, "WorldToScreen") || str_eq_c(e->name, "ScreenToWorld"))) {
@@ -5156,9 +5166,10 @@ static type check_method(checker *c, expr *e)
             e->path_operation = true;
             c->prog->uses_text = true;
         }
-        if (draws) { // Draw's own are neither's: they go to no destination
+        if (draws) { // Draw's own are neither's: they go to no destination, but for the window's stencil
+            const bool stencil = str_eq_c(e->name, "Stencil") || str_eq_c(e->name, "SetStencil");
             e->call = CALL_DRAW;
-            e->draw_dims = str_eq_c(owner, "Draw3D") ? 3 : builtin_draw_owner(owner) ? 2 : 0;
+            e->draw_dims = str_eq_c(owner, "Draw3D") ? 3 : builtin_draw_owner(owner) || stencil ? 2 : 0;
         }
         if (gui || cursor) return check_gui_call(c, e, result); // The cursor's lock is a frame's ask, which the GUI collects
         return result;
@@ -5889,6 +5900,15 @@ static type check_enum_member(expr *e, decl *d)
     if (d->builtin && str_eq_c(d->name, "Wrap")) {
         diag_note("a uv past a texture's edges reads the cells at its edge, 'Wrap.Clamp'; the texture again, 'Wrap.Repeat'; "
                   "or again the other way round each time, 'Wrap.Mirror'");
+    }
+    if (d->builtin && str_eq_c(d->name, "StencilTest")) {
+        diag_note("a draw's number against the one stored at a pixel: 'Always' (no test, as each frame starts), 'Never', "
+                  "'Less', 'Equal', 'LessEqual', 'Greater', 'NotEqual' or 'GreaterEqual'. 'StencilTest.Less' draws where "
+                  "the draw's number is less than the stored one");
+    }
+    if (d->builtin && str_eq_c(d->name, "StencilOp")) {
+        diag_note("what becomes of the stored number where a draw draws: 'Keep' (as it is), 'Replace' (the draw's "
+                  "number), 'Increment', 'Decrement', 'Zero' or 'Invert'");
     }
     return T_ERR;
 }
@@ -12502,6 +12522,32 @@ static void add_builtins(program *prog)
         vec_push(format->members, m);
     }
     prog->format = format;
+    // enum StencilTest { Always, Never, Less, Equal, LessEqual, Greater, NotEqual, GreaterEqual }: the test a
+    // draw passes to draw at a pixel, its number against the stored one (Draw.Stencil), with tide/draw.h's
+    // tide_stencil_test's values, and enum StencilOp { Keep, Replace, Increment, Decrement, Zero, Invert }:
+    // what becomes of the stored number where it draws, with tide_stencil_op's. Like Depth, generated C
+    // has each only in a game whose code names it.
+    static const char *const stencil_tests[] = {"Always", "Never", "Less", "Equal", "LessEqual", "Greater", "NotEqual",
+                                                "GreaterEqual"};
+    decl *stencil_test = NEW(decl);
+    stencil_test->kind = DECL_ENUM;
+    stencil_test->name = str_from("StencilTest");
+    stencil_test->builtin = true;
+    for (int i = 0; i < (int)(sizeof stencil_tests / sizeof stencil_tests[0]); i++) {
+        const enum_member m = {str_from(stencil_tests[i]), {0, 0, 0}, NULL, i};
+        vec_push(stencil_test->members, m);
+    }
+    prog->stencil_test = stencil_test;
+    static const char *const stencil_ops[] = {"Keep", "Replace", "Increment", "Decrement", "Zero", "Invert"};
+    decl *stencil_op = NEW(decl);
+    stencil_op->kind = DECL_ENUM;
+    stencil_op->name = str_from("StencilOp");
+    stencil_op->builtin = true;
+    for (int i = 0; i < (int)(sizeof stencil_ops / sizeof stencil_ops[0]); i++) {
+        const enum_member m = {str_from(stencil_ops[i]), {0, 0, 0}, NULL, i};
+        vec_push(stencil_op->members, m);
+    }
+    prog->stencil_op = stencil_op;
 
     // This machine's part in a match (see tide/session.h, whose enums have the
     // same values): local singleton Session { SessionState state; PlayerID
@@ -12570,6 +12616,8 @@ static void add_builtins(program *prog)
     vec_push(decls, cull);
     vec_push(decls, wrap);
     vec_push(decls, format);
+    vec_push(decls, stencil_test);
+    vec_push(decls, stencil_op);
     vec_push(decls, font);
     vec_push(decls, state);
     vec_push(decls, reason);
@@ -15106,6 +15154,7 @@ bool check(program *prog)
     add_builtins(prog);
     builtins_use(prog->anchor, prog->shape, prog->blend, prog->depth, prog->cull, prog->font);
     builtins_use_format(prog->format);
+    builtins_use_stencil(prog->stencil_test, prog->stencil_op);
     builtins_use_gui(prog->gui_theme, prog->gui_control);
     add_device_records(prog);
     collect_decls(prog);

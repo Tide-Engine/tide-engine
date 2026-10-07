@@ -599,7 +599,7 @@
                 device = null;
             }
             if (wantedBackend === 'webgpu') return 0; // Asked for, and not to be had
-            gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: true, stencil: false });
+            gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: true, stencil: true });
             return gl ? 1 : 0;
         },
         canvas_width: () => size.width,
@@ -1249,6 +1249,8 @@
         glReadBuffer: source => gl.readBuffer(source),
         glSamplerParameteri: (s, pname, param) => gl.samplerParameteri(get('sampler', s), pname, param),
         glScissor: (x, y, w, h) => gl.scissor(x, y, w, h),
+        glStencilFunc: (func, reference, mask) => gl.stencilFunc(func, reference, mask),
+        glStencilOp: (failed, hidden, drawn) => gl.stencilOp(failed, hidden, drawn),
         glShaderSource(s, count, stringsPtr, lengthsPtr) {
             let source = '';
             for (let i = 0; i < count; i++) {
@@ -1529,6 +1531,10 @@
         { depthWriteEnabled: true, depthCompare: 'always' },
     ];
     const culls = ['none', 'back', 'front']; // tide_gpu_cull, of a front that goes clockwise
+    // tide_gpu_stencil_test, the pass's number (gpu_stencil) against the stored one, and tide_gpu_stencil_op,
+    // what becomes of the stored one where a draw draws: it stays where either test fails
+    const stencilTests = ['always', 'never', 'less', 'equal', 'less-equal', 'greater', 'not-equal', 'greater-equal'];
+    const stencilOps = ['keep', 'replace', 'increment-clamp', 'decrement-clamp', 'zero', 'invert'];
     const attributeFormats = ['float32', 'float32x2', 'float32x3', 'float32x4', 'unorm8x4',
         'sint32', 'sint32x2', 'sint32x3', 'sint32x4']; // tide_gpu_attribute_format
     let building = null; // The pipeline being described
@@ -1681,8 +1687,9 @@
             gpuRemove('texture', id);
             for (const key of t.groups) bindGroups.delete(key);
         },
-        gpu_pipeline_begin(namePtr, codePtr, uniformSize, textures, reads, blend, depth, cull, into) {
+        gpu_pipeline_begin(namePtr, codePtr, uniformSize, textures, reads, blend, depth, cull, into, stencilTest, stencilOp) {
             building = { name: string(namePtr), code: string(codePtr), textures, blend, depth, cull, slots: [], attributes: [],
+                stencil: { compare: stencilTests[stencilTest] || 'always', passOp: stencilOps[stencilOp] || 'keep' },
                 reads: Array.from({ length: textures }, (unused, i) => reads >> 2 * i & 3), // 2 bits each: tide_gpu_read
                 bare: into !== 0 }; // For targets of depth alone (TIDE_GPU_TARGET_DEPTH)
         },
@@ -1710,7 +1717,9 @@
                     blend: blends[b.blend] }] },
                 // A triangle's front goes clockwise as it's seen, in the canvas and in a target alike
                 primitive: { topology: 'triangle-list', cullMode: culls[b.cull], frontFace: 'cw' },
-                depthStencil: { format: depthFormat, ...depths[b.depth] },
+                // Either side of a triangle tests stencil the same way, against all 8 bits
+                depthStencil: { format: depthFormat, ...depths[b.depth], stencilFront: b.stencil, stencilBack: b.stencil,
+                    stencilReadMask: 0xFF, stencilWriteMask: 0xFF },
             });
             return gpuAdd('pipeline', { pipeline, textures: b.textures, reads: b.reads, layout });
         },
@@ -1806,6 +1815,7 @@
             drawing.bound = false;
             pass.setPipeline(drawing.pipeline.pipeline);
         },
+        gpu_stencil: value => pass.setStencilReference(Math.min(value, 255)),
         gpu_uniforms(ptr, size) {
             const slots = Math.ceil(size / UNIFORM_SLOT);
             if (uniformsUsed + slots > uniformSlots) growUniforms();

@@ -36,6 +36,18 @@
 // changes nothing: `fix.x` is 1 for those and 0 for the others, whose colors
 // it leaves as they are. A run of plain shapes that multiplies goes through
 // the second pipeline, so the first's shaders have none of it.
+//
+// Each is also made for each thing a draw does with stencil, from the same
+// shaders again. Where a draw stores stencil, the pixels it stores at are the
+// ones it draws at, so those have to be the ones it touches, whatever its
+// color: `fix.y` is 1 for those draws and 0 for the others. A smooth shape
+// that's clear is drawn then, where it's otherwise passed by, and text's
+// pixels that no glyph covers aren't, where they're otherwise drawn clear.
+// The plain kinds already draw exactly the pixels they touch. A pixel counts
+// as touched from a 255th of it on, the least a color shows: a smooth shape
+// whose edge is on the pixels' own is then the same pixels on every GPU,
+// where the pixel just past it, which it covers none of, could come out as a
+// millionth on one of them.
 
 #define SHAPE_GLSL_UNIFORMS "layout(std140) uniform uniforms { mat4 screen; vec2 texel; vec2 scale; vec4 fix; };\n"
 
@@ -220,13 +232,17 @@ static const char smooth_shape_glsl_fragment[] =
     "        float glow = clamp(1.0 + (d * px - 0.5) / (1.0 - look.z * px), 0.0, 1.0);\n"
     "        cover *= glow * glow;\n"
     "    }\n"
-    "    if (cover <= 0.0) discard;\n"
+    "    if (cover <= fix.y * 0.004) discard;\n"
     "    float down = clamp(local.y / max(extent.y, 0.000001) * 0.5 + 0.5, 0.0, 1.0);\n" // 0 at its top
     "    vec4 paint = mix(vec4(tint.rgb * tint.a, tint.a), vec4(tint2.rgb * tint2.a, tint2.a), down);\n"
     "    if (outline > 0.0) {\n"
     "        paint = mix(vec4(rim.rgb * rim.a, rim.a), paint, clamp(0.5 - (d + outline) * px, 0.0, 1.0));\n"
     "    }\n"
-    "    if (paint.a <= 0.0) discard;\n"
+    "    if (paint.a <= 0.0) {\n" // Clear: nothing to draw, unless it's drawn for what it stores
+    "        if (fix.y < 0.5) discard;\n"
+    "        pixel = whiten(vec4(0.0), fix.x);\n"
+    "        return;\n"
+    "    }\n"
     "    pixel = whiten(vec4(paint.rgb / paint.a, paint.a * cover), fix.x);\n"
     "}\n";
 
@@ -387,13 +403,16 @@ static const char *const smooth_shape_wgsl_fragment = WGSL(
     "        let glow = clamp(1.0 + (d * px - 0.5) / (1.0 - in.look.z * px), 0.0, 1.0);\n"
     "        cover *= glow * glow;\n"
     "    }\n"
-    "    if (cover <= 0.0) { discard; }\n"
+    "    if (cover <= u.fix.y * 0.004) { discard; }\n"
     "    let down = clamp(in.local.y / max(in.extent.y, 0.000001) * 0.5 + 0.5, 0.0, 1.0);\n"
     "    var paint = mix(vec4f(in.tint.rgb * in.tint.a, in.tint.a), vec4f(in.tint2.rgb * in.tint2.a, in.tint2.a), down);\n"
     "    if (outline > 0.0) {\n"
     "        paint = mix(vec4f(in.rim.rgb * in.rim.a, in.rim.a), paint, clamp(0.5 - (d + outline) * px, 0.0, 1.0));\n"
     "    }\n"
-    "    if (paint.a <= 0.0) { discard; }\n"
+    "    if (paint.a <= 0.0) {\n"
+    "        if (u.fix.y < 0.5) { discard; }\n"
+    "        return whiten(vec4f(0.0), u.fix.x);\n"
+    "    }\n"
     "    return whiten(vec4f(paint.rgb / paint.a, paint.a * cover), u.fix.x);\n"
     "}\n");
 
@@ -474,6 +493,7 @@ static const char text_glsl_fragment[] =
     GLSL_WHITEN
     "void main() {\n"
     "    float cover = texture(pixels0, at * texel).r;\n"
+    "    if (fix.y > 0.5 && cover < 0.002) discard;\n" // Where it stores stencil: only where a glyph is
     "    float light = dot(tint.rgb, vec3(0.2126, 0.7152, 0.0722));\n"
     "    if (cover > 0.0) cover = pow(cover, 1.0 - 0.45 * light);\n"
     "    pixel = whiten(vec4(tint.rgb, tint.a * cover), white);\n"
@@ -482,6 +502,7 @@ static const char text_glsl_fragment[] =
 static const char *const text_wgsl = WGSL(MESH_WGSL_VERTEX
     "@fragment fn fragment(in: Corner) -> @location(0) vec4f {\n"
     "    var cover = textureSample(pixels0, how0, in.at * u.texel).r;\n"
+    "    if (u.fix.y > 0.5 && cover < 0.002) { discard; }\n"
     "    let light = dot(in.tint.rgb, vec3f(0.2126, 0.7152, 0.0722));\n"
     "    if (cover > 0.0) { cover = pow(cover, 1.0 - 0.45 * light); }\n"
     "    return whiten(vec4f(in.tint.rgb, in.tint.a * cover), u.fix.x);\n"
