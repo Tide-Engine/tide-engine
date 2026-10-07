@@ -66,5 +66,6 @@ set(CMAKE_SYSROOT "${TIDE_MINGW_SYSROOT}")
 # (what clang links by default for MinGW, and what CMake adds on Windows): LLVM's
 # releases default to GCC's runtime for this target, and don't include ours.
 set(CMAKE_EXE_LINKER_FLAGS_INIT "-fuse-ld=lld -nodefaultlibs")
+set(CMAKE_SHARED_LINKER_FLAGS_INIT "-fuse-ld=lld -nodefaultlibs")
 set(CMAKE_C_STANDARD_LIBRARIES "-lmingw32 -lmingwex -lmoldname -lmsvcrt -lkernel32 -luser32 -lgdi32 -lwinspool \
 -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32 \"${TIDE_MINGW_BUILTINS}\"")
