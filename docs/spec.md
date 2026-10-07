@@ -622,13 +622,23 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 
 ### Namespaces
 
-- `namespace Game.Combat;` at the top of a file puts everything in the file in that namespace. A file has at most one namespace; files without one are in the global namespace. Namespaces can be dotted.
-- `using Physics;` at the top of a file lets it name Physics' declarations without the prefix. `namespace` and `using` come before any declaration.
-- A plain name is looked up in the file's namespace, then the namespaces around it out to the global namespace, then the `using` namespaces, as in C# (agreed 2026-10-05). So what a game declares itself is what its code means, whatever a namespace it imports also has by that name: a game with a `Body` of its own that says `using Physics;` means its own by `Body`, and writes `Physics.Body` for the other. If two `using` namespaces both have a name and nothing nearer does, it's ambiguous: write the namespace.
+- `namespace Game.Combat;` at the top of a file puts everything in the file in that namespace. A file has at most one such line; files without one are in the global namespace. Namespaces can be dotted.
+- `namespace Combat { ... }` puts the declarations between its braces in that namespace (agreed 2026-10-07, to separate concerns within one file; the rules under it are Provisional). It goes wherever a declaration does, so a file can have several, and one inside another.
+  - A block's name is inside the namespace it's written in: in a file of `namespace Game;`, `namespace Combat { }` is `Game.Combat`, and a block inside it named `Rules` is `Game.Combat.Rules`. A block's name can be dotted too.
+  - A namespace is a set of names, not a place: the same one can be a block twice in a file, a block in several files, and a file's own namespace in another. What any of them declares is one namespace's.
+  - What's inside a block is declared as anywhere: its order among the file's declarations is where it's written, so a block changes no system's order.
+  - Provisional: `using` stays at the top of the file, and is every block's of the file. A `using` inside a block is an error.
+  - Provisional: the line form comes before any declaration, a block being one: a file says its own namespace first, and blocks after it are inside that.
+  - Provisional: a block takes no attributes, `local`, `virtual` or `override`: they go before the declarations inside it.
+  - Provisional: a qualified name is still exact, from the global namespace: inside `Combat`, the block `Rules`' function is `Combat.Rules.Cap`, not `Rules.Cap`. (C# also reads a qualified name's first part from the namespaces around the code. Not built.)
+  - Provisional: a package's blocks are in its namespace or one inside it, as its files are: a package file with no namespace line can have everything in `namespace Package { ... }`.
+  - Where a file is half typed, editors and the errors after a first one tell where a block's declarations start by their column: the first line's after the `{`, which the formatter makes one step in from the block's `namespace`.
+- `using Physics;` at the top of a file lets it name Physics' declarations without the prefix. `namespace Name;` and `using` come before any declaration.
+- A plain name is looked up in the namespace of the code that writes it (its block's, or its file's), then the namespaces around it out to the global namespace, then the `using` namespaces, as in C# (agreed 2026-10-05). So what a game declares itself is what its code means, whatever a namespace it imports also has by that name: a game with a `Body` of its own that says `using Physics;` means its own by `Body`, and writes `Physics.Body` for the other. If two `using` namespaces both have a name and nothing nearer does, it's ambiguous: write the namespace.
 - Qualified names work wherever a type is named: parameters (`mut Combat.Health health`), `with` and `without`, component values (`Combat.Health { value = 10 }`), `Spawn`, `Add` and `Remove`.
 - The same name can be declared in different namespaces. Built-in names can't start a namespace (`namespace Math;` is an error).
 - In generated C, namespaced declarations are prefixed with their namespace: `Combat.Health` is `Combat_Health`, read with `tide_get_Combat_Health`.
-- There's exactly one `Main` in a game, in any file or namespace. `namespace` and `using` are only keywords at the top of a file.
+- There's exactly one `Main` in a game, in any file or namespace. `namespace` and `using` are only keywords where a declaration can start: anywhere else they're names like any other.
 
 ```csharp
 // combat.tide
@@ -644,6 +654,36 @@ scene Main { }
 event(Spawned) Setup(with Main)
 {
     Spawn(Health, Items.Health { value = 3 });
+}
+```
+
+```csharp
+// One file, two namespaces, and the global one around them
+namespace Combat
+{
+    component Health { int value = 100; }
+
+    namespace Rules
+    {
+        int Cap(int value) { return Math.Min(value, 100); }
+    }
+
+    system Heal(mut Health health)
+    {
+        health.value = Combat.Rules.Cap(health.value + 1);
+    }
+}
+
+namespace Items
+{
+    component Bag { int coins; }
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Combat.Health, Items.Bag);
 }
 ```
 
@@ -1761,7 +1801,7 @@ view Casters(Box box, Models models, mut Lamp lamp)
 - Filtering is how a draw reads the pixels, not part of them: `Draw.Mesh(vertices, indices, texture, Filter.Point)`. Left out, it's `Filter.Bilinear`, as Unity's default. `Filter.Trilinear` is the third (Provisional: see Mipmaps).
 - **What a `uv` past 0 and 1 reads is chosen where a texture is sampled, as the filter is** (agreed 2026-10-07): it's how a draw reads the pixels too, so one texture is read one way in one draw and another way in the next, or both ways in one frag. How it's written, and each rule of it, are picks: see `Wrap`, under Provisional.
 - **A texture's declaration can say how it's sampled, for wherever nothing else does** (agreed 2026-10-07, of `[Filter(Filter.Point), Wrap(Wrap.Repeat)]` before an `asset Texture` and an `asset Grid2<Color>`: "also add those attributes for both"). It's a default: a draw or a `Sample` that says its filter or its wrap still has what it says. It's the sampling the `Texture` made there is born with, which the value carries (agreed the same day, above). Where else the attributes go is a pick: see Declared sampling, under Provisional.
-- **Code the GPU runs is written in Tide: `frag` and `vert`.** They're declaration kinds, like `view`: a `frag` runs once for each pixel a mesh covers, and a `vert` once for each of its vertices. Their signature says what they read, and the engine supplies it. Neither returns a value. A `Draw.Mesh` or `Draw.Mesh` names them after its other arguments, the vert first, and both are optional.
+- **Code the GPU runs is written in Tide: `frag` and `vert`.** They're declaration kinds, like `view`: a `frag` runs once for each pixel a mesh covers, and a `vert` once for each of its vertices. Their signature says what they read, and the engine supplies it. Neither returns a value. A `Draw.Mesh`, or a target's `Mesh`, names them after its other arguments, the vert first, and both are optional.
 
 ```csharp
 struct BoxVertex
@@ -2005,7 +2045,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
     - **It's a destination's own**, as every setting is: `Draw.Depth` and `Draw.SetDepth` are the window's, and a render target has `target.Depth(mode) { ... }` and `target.SetDepth(mode);` for its meshes, each target's its own for the frame. So `Draw.Depth(Depth.Read) { target.Mesh(...); }` leaves the target's mesh as the target has it, and `target.SetDepth()` puts the target's back. Each target has its own depth, as before, which a mesh drawn into it reads and writes as its setting says.
     - **It's for 3D meshes of every kind**: `Draw.Mesh`, the primitives, a mesh through a `frag` or a `vert` whose vertex has a `float3 position`, and `Draw.Instanced`, and a target's.
     - **The 2D calls have no depth**, whatever is set: shapes, text, 2D meshes, and 2D meshes through a `frag` neither read nor write it, and draw over what's there in order. Nothing gives a 2D call a depth; that would come with layers (see Open). `Draw.Depth` around 2D draws alone changes nothing, and isn't an error.
-    - **`Draw.Clear` and `Draw.Clear`** clear depth whatever is set, within the clip. **`Draw.Blit`** leaves depth as it is, whatever is set.
+    - **`Draw.Clear`, and a target's `Clear`,** clear depth whatever is set, within the clip. **`Draw.Blit`** leaves depth as it is, whatever is set.
     - A block's depth replaces the one it found, and puts it back when it ends.
     - Instances drawn in a row with the same depth are still one draw, with the setting around each or around them all; another depth is another draw.
     - A `Depth` is a value like any enum's: a field, a local, a parameter. One made of a number that's none of the three (`Depth(40)`) is `Depth.ReadWrite`.
@@ -2036,7 +2076,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
     - **Stencil has no part pixels:** a pixel is in a mask or isn't. So what's drawn where a mask is has a stepped edge where the mask's is round. Where a draw only tests (`StencilOp.Keep`), its own edges are as smooth as ever.
     - **Where a draw isn't drawn, nothing is stored:** where its test fails, and for a 3D mesh, where it's hidden behind what's nearer.
     - **It's for everything that draws:** shapes, text, 2D meshes, 3D meshes and the primitives, with a frag or a vert or without, and `Instanced`.
-    - **`Draw.Clear` and `Draw.Clear`** set the stored numbers back to 0, within the clip, whatever is set, and nothing tests them: a clear under `StencilTest.Never` still clears. **`Draw.Blit`** neither tests nor stores, whatever is set.
+    - **`Draw.Clear`, and a target's `Clear`,** set the stored numbers back to 0, within the clip, whatever is set, and nothing tests them: a clear under `StencilTest.Never` still clears. **`Draw.Blit`** neither tests nor stores, whatever is set.
     - A block's stencil replaces the one it found, and puts it back when it ends.
     - Draws in a row under the same stencil are still one draw, with the setting around each or around them all; another stencil is another draw. A test and a number nothing reads are no stencil at all: `Draw.Stencil(StencilTest.Always, 9)` is none, and costs nothing.
     - **A target of depth alone has stencil too.** What stores it is drawn there, shapes, text and 2D meshes among it, though their colors go nowhere; what only tests it and writes no depth still leaves nothing.
@@ -2129,7 +2169,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
   - **A clip under a transform** is the upright rect around what its rect becomes: clips don't turn.
   - **`frag` and `vert`**: a mesh drawn through them blends as the setting says, its frag's color is multiplied by the tint, and a 2D one's vertices go through the transform after its vert, before the camera. A 3D one's `instance.transform` is its own through `Draw.Transform`.
   - A draw's singletons' fields are 3984 bytes at most, where they were 4000: the tint is sent with them, and with it 4000 would make a block of uniforms that some OpenGL ES drivers don't link (Android's emulator takes 255 float4s in a vertex shader's block, and not 256).
-  - **`Draw.Clear` and `Draw.Clear`** fill what the clip leaves with their color as it is: no blend, tint, stencil or transform changes a clear.
+  - **`Draw.Clear`, and a target's `Clear`,** fill what the clip leaves with their color as it is: no blend, tint, stencil or transform changes a clear.
   - **`Draw.Blit`** is its destination's, whatever is set: no blend, tint, depth, cull, stencil, transform, camera or clip changes it. It takes a blend of its own before its frag, `Draw.Blit(source, destination, Blend.Add, frag)`, and replaces what's there without one. So a pass over the screen doesn't change with what an earlier view left set.
   - A setting that's set to what it was, or set and put back with nothing drawn, costs nothing: what's drawn on either side of it is still drawn at once. A tint and a 2D transform are worked into shapes and text as they're recorded, so shapes with a tint or a transform each are still one draw call. A mesh through a `frag` gets its tint and its 2D transform with its draw, so instances with different ones are different draws.
   - In C (`tide/draw.h`), `tide_draw_set_*` are the `Set` forms (`tide_draw_set_camera`, `tide_draw_set_clip`, `tide_draw_set_screen`, `tide_draw_set_blend`, `tide_draw_set_depth`, `tide_draw_set_cull`, `tide_draw_set_stencil`...), `tide_draw_unset_*` the ones with no arguments, and `tide_draw_push_*` with `tide_draw_pop(list, mark)` the blocks. The former `tide_draw_camera`, `tide_draw_camera_3d`, `tide_draw_camera_matrices`, `tide_draw_clip`, `tide_draw_no_clip` and `tide_draw_screen` were renamed to match.
@@ -2264,7 +2304,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
 - 3D meshes go through a camera of their own, which the 2D one and the screen leave as it is, and the other calls go through theirs whatever the 3D camera is.
 - GPU code (`frag`, `vert` and the functions they call):
   - **`color` starts as `Color.white`** (to confirm). It isn't the pixel already on the screen, which a GPU doesn't let a frag read, though `mut` elsewhere means reading what's there and changing it. A frag that never writes it draws white.
-  - `frag` and `vert` are keywords only at the start of a declaration, like `view`. They share their names with functions: a frag and a function can't have the same name. Nothing calls one, and its name is no value: `Draw.Mesh`, `Draw.Mesh`, either namespace's `Instanced`, and `Draw.Blit` name it. `local` before one is an error, as it's local already.
+  - `frag` and `vert` are keywords only at the start of a declaration, like `view`. They share their names with functions: a frag and a function can't have the same name. Nothing calls one, and its name is no value: `Draw.Mesh`, `Draw.Instanced`, a target's `Mesh` and `Instanced`, and `Draw.Blit` name it. `local` before one is an error, as it's local already.
   - `Draw.Mesh(vertices, indices[, texture[, filter]][, vert][, frag])` draws a 2D mesh, and `Draw.Mesh(vertices, indices, transform[, texture[, filter]][, vert][, frag])` a 3D one. The vertices are a list of a struct with a `position`: a `float2` makes the mesh 2D and a `float3` 3D. Its other fields are floats, ints, their vectors and colors, 12 fields at most, and the GPU reads them from the list as they are. A 3D mesh takes its transform, and a 2D one takes none. Without a frag, the texture and filter sample the vertex's `float2 uv`. A frag or vert with a read-only `Texture` parameter receives an explicit Texture argument; a frag without that parameter samples only its component/singleton fields and rejects an explicit source. With no frag, a field named `color` has to be a `Color`. A `List<Vertex>` or a `List<Vertex3>` with neither a vert nor a frag is drawn as it was before.
   - `Draw.Instanced(vertices, indices, instances[, texture[, filter]][, vert][, frag])` replaces `Draw.Mesh`'s single 3D transform with a list. A `List<T>` of an ordinary struct supplies each item to the vert or frag's read-only `T` parameter after its vertex (and a frag's color); either stage can take it, or both. A `List<float4x4>` supplies transforms for a 3D mesh. The instance parameter's type is the list's element type; a struct parameter of another type is the draw's values (above), or an error at the draw. `Mesh` supplies no instance parameter. Other component and singleton parameters bind as before.
   - A 3D instance struct's field named `transform`, when present, is a `float4x4`, applied by the engine and available as `Instance.transform`; without one, the transform is identity. A 2D instance list holds ordinary structs, whose fields a vert can use to place the vertices. Their `transform` field is ordinary data, not applied by the engine, and `Instance.transform` is identity. Only fields the shaders read go to the GPU, plus a 3D transform; unread fields can have types the GPU cannot use. Reading a field or passing the instance whole follows the same rules as component reads. An empty instance list records nothing. Items draw in list order, in one instanced run, which adjacent compatible mesh draws can join.
@@ -2898,11 +2938,11 @@ Implemented, awaiting approval:
 - `appId` is text written out, or a constant that is: what Android and iOS, and their app stores, know the app by, like `com.studio.game`, the same for every version. It's two parts or more between dots, of letters and digits, each starting with a letter: what Android and iOS both take. Without it, apps are `dev.tide.<the game's name>`, which is fine to test with; an app made to ship (`tide build --android --release`) needs one.
 - `stats` is true or false, or a constant that is. With it, the window shows the stats in its bottom right corner with no option asking for them, as `tide run --stats` and CMake's `STATS` do. It's part of the build like every setting, so what `tide build` makes shows them too: a game takes it out before players get it, unless the frame rate is theirs to see. Under `tide run`, setting it or taking it out shows at the next reload. In generated C it's `tide_game_api.stats`, which the standard host reads beside its own `tide_run_desc.stats`.
 - The stats are a drawer (`tide/stats.h`), which the standard host draws over the game:
-  - Closed, it's one line: the frame rate, and in a match another machine runs, the ping (`60 fps   ping 34 ms`). A click or a tap on it, or F8, opens it: the rest is listed above that line, which stays where it is, so a click in the same place closes it again. The list: what a frame's work takes on its thread (`cpu`: everything but the wait for the display), the ping of a match this machine runs, the input delay when there is one, the bandwidth, the tick, the entity count, the threads ticks run on, the memory the program has (as the system counts it; on the web, its WebAssembly memory), what draws and in how many draw calls, and the three systems that took longest on average per measured run over the last half second, with their order held between updates. Outside a match it has the lines that aren't a match's, and on a screen too low for all of it, the lines there's room for, from its top.
+  - Closed, it's one line: the frame rate, and in a match another machine runs, the ping (`60 fps   ping 34 ms`). A click or a tap on it, or F8, opens it: the rest is listed above that line, which stays where it is, so a click in the same place closes it again. The list is two columns, a label on the left and its value on the right, in groups: what a frame's work takes on its thread (`cpu`: everything but the wait for the display, with `render`, the part of it that's rendering, listed under it, and `gpu` beside them); the match's (the ping of a match this machine runs, the input delay when there is one, the bandwidth, the tick, the entity count); the machine's (the threads ticks run on, the memory the program has (as the system counts it; on the web, its WebAssembly memory), what draws and in how many draw calls); and the three systems that took longest on average per measured run over the last half second, each keeping its row while it stays among them. Open, the panel keeps the widest it has been, so its edge doesn't jump. Outside a match it has the lines that aren't a match's, and on a screen too low for all of it, the lines there's room for, from its top.
   - It starts closed when the game's setting, `tide build --stats` or CMake's `STATS` asks for the stats, and open under `tide run --stats` (`tide_run_desc.stats_open`). Open or closed is the host's own, whatever build of the game runs, so a reload keeps it.
   - A press that lands on it is the drawer's until it's let go, wherever it goes meanwhile: the mouse's buttons, and any finger. The game's input never samples it and its views and GUI never read it, from the frame it lands in. A press that began elsewhere stays the game's when it crosses the drawer, and a mouse whose cursor is locked is on nothing. The game reads F8 like any key.
-  - Closed, the host measures nothing for it: the frame rate is frames counted, and the ping is the session's. A frame's work, the systems' times and the memory are measured while the list is open. Timing averages update every half second; rendering's CPU cost is part of the CPU total and has its own `render cpu` line. Desktop OpenGL and WebGPU devices with timestamp queries show asynchronous `gpu` drawing time, including render targets and excluding the drawer and display wait (WebGPU sums pass durations). Unsupported backends show no GPU line. CPU and GPU overlap, so their times aren't added. Closing or reloading discards old timings.
-  - What's picked, to confirm: that it's a drawer at all, and closed by default; the key, F8, beside the profiler's F7; what the one line says, and that the ping is in it only when another machine runs the match; that `tide run --stats` alone starts it open; that it shows outside a match too, where the stats showed nothing before; that a game can't ask where it is, and leaves the corner free by its own numbers (about 80 by 40 pixels, 190 wide with a ping); and the names in C (`tide/stats.h`, `tide_run_desc.stats_open`, `tide_platform_draw_over`).
+  - Closed, the host measures nothing for it: the frame rate is frames counted, and the ping is the session's. A frame's work, the systems' times and the memory are measured while the list is open. Timing averages update every half second; rendering's CPU cost is part of the CPU total and has its own `render` line, indented under `cpu`. Desktop OpenGL and WebGPU devices with timestamp queries show asynchronous `gpu` drawing time, including render targets and excluding the drawer and display wait (WebGPU sums pass durations). Unsupported backends show no GPU line. CPU and GPU overlap, so their times aren't added. Closing or reloading discards old timings.
+  - What's picked, to confirm: that it's a drawer at all, and closed by default; the key, F8, beside the profiler's F7; what the one line says, and that the ping is in it only when another machine runs the match; that `tide run --stats` alone starts it open; that it shows outside a match too, where the stats showed nothing before; that a game can't ask where it is, and leaves the corner free by its own numbers (about 80 by 40 pixels, 190 wide with a ping); the two columns, the groups, `render` under `cpu`, a system keeping its row, and the panel's width that only grows while it's open (2026-10-07, for the owner's ask that it read better and shift less); and the names in C (`tide/stats.h`, `tide_run_desc.stats_open`, `tide_platform_draw_over`).
 - `version` is text written out, or a constant that is: the version people see, like `1.2.0`, one to three numbers between dots, which Android and iOS both take (iOS's version has to be). Without it, it's `1.0`. The number app stores order updates by is each build's own: on Android, the minutes since 2020.
 - A setting that's set twice, a name that isn't a setting, and a type written before one are errors. The last two say that a game's own values are constants.
 - In generated C, the settings are in `tide_game_api` (`tick_rate` and `title`), in the `.c` rather than the header, so they don't change the game's hash.
@@ -3345,10 +3385,20 @@ const int SLOTS = 4;
 Implemented, awaiting approval:
 
 - C#'s directives: `#if`, `#elif`, `#else` and `#endif`, each on a line of its own (spaces before it are fine, and a `//` comment after it), nesting. Conditions take symbols, `true`, `false`, `!`, `&&`, `||`, `==`, `!=` and parentheses.
-- The symbols are tide's versions: `TIDE_0_4_OR_NEWER` is true in tide 0.4 and after, `TIDE_0_4_2_OR_NEWER` in 0.4.2 and after. Only a version's numbers count: a pre-release (0.4.0-nightly.3) is the version it comes before. Any other symbol is an error, so a misspelling doesn't quietly leave code out.
+- Tide's versions are symbols: `TIDE_0_4_OR_NEWER` is true in tide 0.4 and after, `TIDE_0_4_2_OR_NEWER` in 0.4.2 and after. Only a version's numbers count: a pre-release (0.4.0-nightly.3) is the version it comes before. Any other symbol that starts with `TIDE_` is an error, so a misspelled version doesn't quietly leave code out.
 - Lines a directive leaves out aren't read, only looked through for the directives that end them, as in C#: they can hold anything, like code with syntax a newer tide reads. A directive inside a `/* */` comment in code that's read is part of the comment.
-- There are no symbols for platforms, debug and release, or anything else that differs between the machines of a match, which all have to run the same code.
 - Editors show the lines left out as comments, fold each branch, and the formatter leaves directives and those lines as they are.
+
+Symbols beyond tide's versions (the owner, 2026-10-07: `#if` with no `#define` isn't much, symbols from the command line, `#if DEBUG`, and knowing whether a package is installed; everything below is Claude's pick of how):
+
+- A symbol is defined or not, with no value, as in C#. One that nothing defines is false, and no error: `#if STEAM` has to compile in the build that doesn't define it.
+- `#define NAME` and `#undef NAME` are C#'s: for the file they're in, and before its first token, as they're for all of it; after code they're an error. `#undef` takes away a build's symbol too, in that file. A line in a branch that's left out isn't read.
+- `--define NAME` on `tide run`, `build`, `schedule` and `shaders` (and tidec, and a line of its `@list`; `DEFINES` in `tide_add_game`) defines a symbol for every file of the game and its packages. No `-D`, no `NAME=value`, no setting or `tide.packages` line for it.
+- `DEBUG` is defined in every build but `tide`'s `--release` (in this repo's CMake builds: in the Debug configuration). Nothing else is predefined: no `RELEASE`, no symbols for `--web` or `--android`, and none for platforms, as a game is one code for all of them.
+- `PACKAGE_<NAME>` is defined for each package the game builds with: its name (the `package Name` of its `tide.packages`, its namespace) in capitals, anything that's no letter or digit as `_`. No versions of packages.
+- `TIDE_` and `PACKAGE_` names, `true` and `false` can't be defined, by a file or a command line.
+- **The build's symbols that conditions read are part of the game's identity.** Each one a condition reads (not a file's own, not tide's versions) is listed in the generated header with whether it's defined, so it's in the game's hash: a debug and a release build of a game that says `#if DEBUG`, or builds with other `--define`s that the game reads, are different games and join none of each other's matches, where they'd otherwise connect and correct each other every tick. A game that reads none has the header it had. The alternative that was weighed: refusing those symbols in match code, which a lexer can't tell.
+- Editors read `DEBUG` as defined and know the game's packages; what a command line defines they don't, and read as not defined.
 
 ## Open
 

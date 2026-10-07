@@ -7,6 +7,7 @@
 #include "build.h"
 #include "editors.h"
 #include "install.h"
+#include "lexer.h"
 #include "packages.h"
 #include "packages_cmd.h"
 #include "publish.h"
@@ -54,6 +55,8 @@ static void usage(void)
            "  --release          optimized, the way players get it\n"
            "  --web              a web page (WebGPU, or WebGL 2 where the browser has none), with clang's WebAssembly target\n"
            "  --android          an Android app (.apk); run installs it on the phone or emulator connected\n"
+           "  --define <SYMBOL>  a symbol the game's #if lines read as defined, like `--define FAST`; as many as needed.\n"
+           "                     DEBUG is defined without --release, and PACKAGE_<NAME> for each of the game's packages\n"
            "  --title <title>    the window's title (default: the game's title setting, or the folder's name)\n"
            "  --stats            show the stats in a corner, as the game's stats setting does: the frame rate, and at a\n"
            "                     click or F8 the rest (cpu time, ping, bandwidth, memory, draw calls, the slowest\n"
@@ -281,7 +284,17 @@ int main(const int argc, char **argv)
         else if (strcmp(a, "--android") == 0) opts.android = true;
         else if (strcmp(a, "--stats") == 0) opts.stats = true;
         else if (strcmp(a, "--debug-views") == 0) opts.debug_views = true;
-        else if (strcmp(a, "--title") == 0 && i + 1 < argc) opts.title = argv[++i];
+        else if (strcmp(a, "--define") == 0) {
+            const char *name = left >= 1 ? argv[++i] : "";
+            if (!lex_symbol_ok(name) || opts.define_count >= 63) {
+                fprintf(stderr, "tide: --define takes a symbol for the game's #if lines, like `--define FAST`%s\n",
+                        strncmp(name, "TIDE_", 5) == 0 || strncmp(name, "PACKAGE_", 8) == 0
+                            ? ": symbols that start with TIDE_ and PACKAGE_ are tide's to say"
+                            : "");
+                return 2;
+            }
+            opts.defines[opts.define_count++] = name;
+        } else if (strcmp(a, "--title") == 0 && i + 1 < argc) opts.title = argv[++i];
         else if (strcmp(a, "-o") == 0 && i + 1 < argc && build) opts.output = argv[++i];
         else if (a[0] != '-') opts.folder = a;
         else {
@@ -293,6 +306,8 @@ int main(const int argc, char **argv)
     // Whoever runs a game with --stats wants to read them: they start open. What a build shows its players
     // starts as one line.
     opts.stats_open = run && opts.stats;
+    // DEBUG is every build's but --release's
+    if (!opts.release) opts.defines[opts.define_count++] = "DEBUG";
     if (opts.web && opts.android) {
         fprintf(stderr, "tide: a build is for the web or for Android, not both at once\n");
         return 2;
@@ -313,7 +328,7 @@ int main(const int argc, char **argv)
     }
     int code = 0;
     if (schedule) {
-        code = tide_schedule(opts.folder, shaders) ? 0 : 1;
+        code = tide_schedule(&opts, shaders) ? 0 : 1;
     } else if (run && opts.android) {
         code = tide_run_android(root, &opts, game_args);
     } else if (run && !opts.web) {

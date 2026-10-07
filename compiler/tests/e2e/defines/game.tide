@@ -1,0 +1,64 @@
+// A file's own symbols, the build's (--define, DEBUG), and its packages'.
+#define LOCAL
+#define DROPPED // One that's taken back
+#undef DROPPED
+#undef FAST // The build defines it; this file says otherwise
+  #define SPACED
+
+#if LOCAL && SPACED && !DROPPED
+const int OWN = 1;
+#else
+const int OWN = 0;
+#endif
+
+#if FAST
+const int FAST_HERE = 1;
+#else
+const int FAST_HERE = 0;
+#endif
+
+#if WIDE
+const int FROM_BUILD = 1;
+#else
+const int FROM_BUILD = 0;
+#endif
+
+#if NEVER_DEFINED || local
+const int UNKNOWN = 1;
+#else
+const int UNKNOWN = 0; // A symbol nothing defines is false, and names are told apart by case
+#endif
+
+#if DEBUG
+const int DEBUGGING = 1;
+#else
+const int DEBUGGING = 0;
+#endif
+
+#if PACKAGE_EXTRA
+const int WITH_EXTRA = Extra.BONUS;
+#else
+const int WITH_EXTRA = 0;
+#endif
+
+#if PACKAGE_BOX2D
+using Box2D; // A package the game doesn't build with: nothing here is read
+const int WITH_BOX2D = 1;
+#else
+const int WITH_BOX2D = 0;
+#endif
+
+singleton Picked
+{
+    int own = OWN;
+    int fastHere = FAST_HERE;
+    int fromBuild = FROM_BUILD;
+    int unknown = UNKNOWN;
+    int debugging = DEBUGGING;
+    int withExtra = WITH_EXTRA;
+    int withBox2D = WITH_BOX2D;
+    int fastThere = Extra.FAST_THERE;
+    int localThere = Extra.LOCAL_THERE;
+}
+
+scene Main { }
