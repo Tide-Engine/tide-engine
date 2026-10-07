@@ -66,13 +66,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # What the run's jobs are: the packages always, and the test suites when
-      # the run was asked for by hand or is a stable release's.
+      # the run was asked for by hand or is a stable release's. Windows'
+      # package is built on Linux too (the Package step); its tests are Windows'.
       - name: Checks
         id: checks
         shell: bash
         run: |
           row() { printf '{"platform":"%s","os":"%s","preset":"%s","test-jobs":4}' "$1" "$2" "$3"; }
-          rows="$(row windows-x64 tide-windows package),$(row linux-x64 tide-linux-home package)"
+          rows="$(row windows-x64 tide-linux-home package),$(row linux-x64 tide-linux-home package)"
           tests=false
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || [ "$GITHUB_REF_NAME" = release ]; then
             tests=true
@@ -312,12 +313,12 @@ jobs:
       # Java for the SDK's tools, and for the checks of what's made for Google
       # Play: the hosted runners have one, a runner of our own needn't.
       - uses: actions/setup-java@v4
-        if: runner.os == 'Linux' && matrix.preset == 'package'
+        if: matrix.platform == 'linux-x64' && matrix.preset == 'package'
         with:
           distribution: temurin
           java-version: 21
       - name: Test (Android)
-        if: runner.os == 'Linux' && matrix.preset == 'package' && env.TIDE_TESTS == 'true'
+        if: matrix.platform == 'linux-x64' && matrix.preset == 'package' && env.TIDE_TESTS == 'true'
         run: |
           # A runner of our own is in the kvm group already (.github/runner).
           if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
@@ -355,28 +356,36 @@ jobs:
 
       # The package's Android half is the platform layer for each CPU, built
       # with the runner's NDK (ANDROID_NDK_HOME).
+      # Windows' package on another system is cross builds: its tide and tidels
+      # for Windows' own target, with Microsoft's headers and libraries from
+      # xwin (cmake/windows-msvc-toolchain.cmake), and the rest as on Windows.
       - name: Package
         if: matrix.preset == 'package'
         run: |
-          # MinGW stages its tools before the native tools replace them.
-          if [ "$RUNNER_OS" = Windows ]; then
+          platform=${{ matrix.platform }}
+          native=package
+          if [ "$platform" = windows-x64 ]; then
+            # MinGW stages its tools before the native tools replace them.
             cmake --preset mingw-release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
             cmake --build --preset mingw-release --target tide_cli tidels tide_platform
+            if [ "$RUNNER_OS" != Windows ]; then native=windows-package; fi
           fi
-          cmake --preset package -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
+          cmake --preset $native -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
           targets=(tide_cli tidels tide_vscode)
-          if [ "$RUNNER_OS" != Windows ]; then targets+=(tide_platform); fi
-          cmake --build --preset package --target "${targets[@]}"
+          if [ "$platform" != windows-x64 ]; then targets+=(tide_platform); fi
+          cmake --build --preset $native --target "${targets[@]}"
           cmake --preset web-package -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
           cmake --build --preset web-package --target tide_platform
           for abi in arm64 x86_64; do
             cmake --preset android-package-$abi
             cmake --build --preset android-package-$abi --target tide_platform
           done
-          cmake -DNAME=tide-${{ matrix.platform }} -P cmake/package.cmake
-      # Build a game with the package, as a user would.
+          cmake -DNAME=tide-$platform -DNATIVE=build/$native -P cmake/package.cmake
+      # Build a game with the package, as a user would, where the package is
+      # this system's: nothing on Linux runs Windows' tide, whose package goes
+      # out untried (the owner's choice, for packages that build fast).
       - name: Try the package
-        if: matrix.preset == 'package'
+        if: matrix.preset == 'package' && (runner.os == 'Windows') == (matrix.platform == 'windows-x64')
         run: |
           mkdir -p build/try
           cp demo/demo.tide build/try/
@@ -388,16 +397,16 @@ jobs:
       # its builders run: the example game published, built with its mod, and
       # the page played in headless Chrome.
       - name: Try the package (build service)
-        if: runner.os == 'Linux' && matrix.preset == 'package' && env.TIDE_TESTS == 'true'
+        if: matrix.platform == 'linux-x64' && matrix.preset == 'package' && env.TIDE_TESTS == 'true'
         run: TIDE=build/dist/tide/bin/tide node --test builds/page.test.mjs
       # A game's C++, which builds with no C++ runtime: that it builds for each
       # target with the package's own compiler and headers, and what tide says
       # when it can't.
       - name: Try the package (C++)
-        if: matrix.preset == 'package'
+        if: matrix.preset == 'package' && (runner.os == 'Windows') == (matrix.platform == 'windows-x64')
         run: cmake -DTIDE=build/dist/tide/bin/tide -DWORK=build/try-cpp -DANDROID=ON -P compiler/cli/tests/cpp_test.cmake
       - name: Try the package (incremental builds)
-        if: matrix.preset == 'package'
+        if: matrix.preset == 'package' && (runner.os == 'Windows') == (matrix.platform == 'windows-x64')
         run: node compiler/cli/tests/cache_test.mjs --tide build/dist/tide/bin/tide --web
       # Its app and bundle made to ship, checked with Google's tools: apksigner,
       # Java's JAR signatures, and bundletool (pinned), which Play runs on what
@@ -405,7 +414,7 @@ jobs:
       # tide's key as Play signs with its own, play on the emulator, which the
       # Android tests started.
       - name: Try the package (Google Play)
-        if: runner.os == 'Linux' && matrix.preset == 'package' && env.TIDE_TESTS == 'true'
+        if: matrix.platform == 'linux-x64' && matrix.preset == 'package' && env.TIDE_TESTS == 'true'
         run: |
           printf 'settings\n{\n    appId = "dev.tide.trydemo";\n}\n' > build/try/settings.tide
           build/dist/tide/bin/tide build build/try --android --release
