@@ -11,7 +11,7 @@ the Tide language, which compiles to C and then to native code or WebAssembly.
 Windows, in PowerShell:
 
 ```powershell
-irm https://tide-engine.dev/install.ps1 | iex
+Invoke-RestMethod https://tide-engine.dev/install.ps1 | Invoke-Expression
 ```
 
 Linux and macOS:
