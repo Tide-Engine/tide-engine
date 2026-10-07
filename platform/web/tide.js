@@ -667,19 +667,21 @@
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return 0;
         if (!audio && !audioOpen()) return 0;
         const context = audio.context;
-        capture = { context, stream: null, source: null, node: null };
+        const opened = capture = { context, stream: null, source: null, node: null };
         navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-            if (!capture || capture.context !== context) {
+            // Closing and reopening capture keeps the output's context: only
+            // this request may attach the stream the browser eventually gives it.
+            if (capture !== opened) {
                 stream.getTracks().forEach(track => track.stop());
                 return;
             }
-            capture.stream = stream;
+            opened.stream = stream;
             audio.module.then(() => {
-                if (!capture || capture.context !== context) return;
-                capture.source = context.createMediaStreamSource(stream);
-                capture.node = new AudioWorkletNode(context, 'tide-input', { numberOfInputs: 1, numberOfOutputs: 0 });
-                capture.node.port.onmessage = event => audioCaptured(event.data);
-                capture.source.connect(capture.node);
+                if (capture !== opened) return;
+                opened.source = context.createMediaStreamSource(stream);
+                opened.node = new AudioWorkletNode(context, 'tide-input', { numberOfInputs: 1, numberOfOutputs: 0 });
+                opened.node.port.onmessage = event => { if (capture === opened) audioCaptured(event.data); };
+                opened.source.connect(opened.node);
             }).catch(() => {});
         }).catch(() => {}); // Not allowed: silence
         return 1;

@@ -180,11 +180,11 @@ local singleton Voice
 view Listen(Devices devices, mut Voice voice)
 {
     voice.ear.clip = Clip.Microphone;
-    voice.ear.effect = Robot { };
+    voice.ear.effect = Robot();
     if (devices.keyboard.v.down) voice.ear.playing = !voice.ear.playing;
 }
 ```
 
-The device is open while a frame names such a `Sound` playing, and closed when none does. Phones and browsers ask the player the first time: until they allow it, and in a browser until they've touched the page, the sound is silence, and the game tries again every second. An Android app only asks if the game says `Clip.Microphone` somewhere (its manifest then has `RECORD_AUDIO`); a macOS app needs a bundle that says why it listens (`NSMicrophoneUsageDescription`), which `tide build` doesn't make yet. Pitch doesn't apply to the microphone: it plays at the device's own pace, a few blocks behind it.
+The device is open while a frame names such a `Sound` playing, and closed when none does. Phones and browsers ask the player the first time: until they allow it, and in a browser until they've touched the page, the sound is silence. A device that couldn't be opened is tried again every second; after declining a browser request, stop and start the `Sound` to ask again. An Android app only asks if the game says `Clip.Microphone` somewhere (its manifest then has `RECORD_AUDIO`); a macOS app needs a bundle that says why it listens (`NSMicrophoneUsageDescription`), which `tide build` doesn't make yet. Pitch doesn't apply to the microphone: it plays at the device's own pace, a few blocks behind it.
 
 A run with no window has no device: `--microphone voice.wav` plays a file into it instead, looped, so a test hears what a player would say (see [the command line](../tools/cli.md)). Nothing of what's heard reaches the match or the network: voice chat is a package for later, with the microphone as its source.
