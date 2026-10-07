@@ -319,7 +319,7 @@ The GPU picks which copies to read by how fast the `uv` changes from one pixel t
 
 - **Made of** the frag's parameters (its vertex, what its vert wrote for it, components, singletons, the draw's values, the pixel), constants, `Math`, constructors, your own functions that take everything by value, another texture read at its own pixels, and variables declared with `var` that are never assigned again.
 - **Not of** a variable that changes (`mut var`, one a loop counts): `tiles.Sample(corner.uv + float2(i * 0.01, 0), Filter.Trilinear)` in a loop is an error, which says so. Sample those with `Filter.Bilinear`, or work each `uv` out before the loop.
-- Where the filter is the texture's to say (a frag's `Texture` parameter, a `Texture` field) and the `uv` can't be worked out as the frag starts, the `Sample` reads the texture's own pixels, as `Filter.Bilinear` would, whatever the texture says.
+- Where the filter is the texture's to say (a frag's `Texture` parameter, a `Texture` field) and the `uv` can't be worked out as the frag starts, the `Sample` reads the texture's own pixels, as `Filter.Bilinear` would, whatever the texture says, and tidec warns about it: write `Filter.Bilinear` there to say that's what you want, or make the `uv` one the frag can work out as it starts.
 - A vert has no pixels to compare, so there `Filter.Trilinear` reads the texture's own pixels.
 
 ### Textures that are numbers
@@ -429,14 +429,14 @@ There are two kinds, and a frag reads both the same way.
 
 **An asset's** is six files that a glob matches, each named for its face by how its name ends before the extension: `px`, `nx`, `py`, `ny`, `pz` and `nz`, the faces `+x`, `-x`, `+y`, `-y`, `+z` and `-z` point at. Each is a PNG, a square, and all six are one size (see [Assets](./assets.md#cubemaps)).
 
-**One a view draws into** is `RenderTarget.Cube(size)`: six images of `size` pixels a side, each a [render target](./views.md#targets-and-post-processing) to draw into.
+**One a view draws into** is `Cubemap(size)`: six images of `size` pixels a side, each a [render target](./views.md#targets-and-post-processing) to draw into.
 
 ```csharp
 local singleton Room { Cubemap around; bool made; }
 
 view Reflect(mut Room room)
 {
-    if (!room.made) room.around = RenderTarget.Cube(256);
+    if (!room.made) room.around = Cubemap(256);
     room.made = true;
     for (var face = 0; face < 6; face++)
     {
@@ -449,7 +449,7 @@ view Reflect(mut Room room)
 
 - **`cube.faces[0]` to `cube.faces[5]`** are `RenderTarget`s, in the order `+x`, `-x`, `+y`, `-y`, `+z`, `-z`. Each has everything a target has: its own camera, clip and settings, `Clear`, `Mesh`, `Instanced` and the rest, and depth of its own.
 - **A face is what a camera at the cube's middle sees along the face's axis,** with a field of view of 90: `+y` is up for the four around, and for the one above and the one below, `-z` and `+z`. That's six rotations, which the example below has as `Facing`.
-- `RenderTarget.Cube(size, Format.Rgba16f)` holds floats, which keep what's brighter than 1, where the device draws into them.
+- `Cubemap(size, Format.Rgba16f)` holds floats, which keep what's brighter than 1, where the device draws into them.
 - Its size is in pixels, whatever the display. `cube.Resize(size)` gives it another, with empty images, and `cube.Dispose()` lets it go. Copies share it, as a target's do.
 - **A draw into a face doesn't read that face's cube.** It's passed by, with a line that says so. What reflects itself in itself takes two cubes.
 - A face has no `color` or `depth` of its own to hand out: the cube is what's read.
@@ -492,7 +492,7 @@ The sphere below has a vertex of its own, with a normal, and a frag that lights 
 - `Instance instance`, in a frag or a vert: `instance.transform` is the `float4x4` the draw was given, so `Math.Rotate(instance.transform, vertex.normal)` is a normal in the world.
 - `Pixel pixel`, in a frag:
   - `pixel.world`, a `float3`: where on the mesh the pixel is, in the world.
-  - `pixel.position`, a `float2`: where it is on the screen, in pixels from the top left, as [`Draw.Pixels`](./views.md#on-the-screen)'s.
+  - `pixel.position`, a `float2`: where it is on the screen, in pixels from the top left, as [`Draw.Screen`](./views.md#on-the-screen)'s.
   - `pixel.depth`: how far it is, from 0 at the camera's near side to 1.
   - `pixel.Discard()` leaves the pixel undrawn, and ends the frag there: for holes, and edges cut out of a texture. Nothing is written for it: no color, no depth and no [stencil](./views.md#stencil).
 

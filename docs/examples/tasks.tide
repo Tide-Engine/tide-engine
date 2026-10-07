@@ -85,7 +85,7 @@ view Runners(Runner runner, Round round, Devices devices)
 
 view Controls(Round round)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Text(round.running ? "Tap a runner to make it dash" : "A round is a task that waits",
                 float2(16, 14), 16, Color.white);
     GUI.SetTheme(GUITheme { radius = 6 });

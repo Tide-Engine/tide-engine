@@ -1,5 +1,5 @@
 // expect: an asset's Cubemap is the pack's images, which nothing draws into: its faces are no targets
-// expect: a cube that's drawn into is made in a view: 'RenderTarget.Cube(256)'
+// expect: a cube that's drawn into is made in a view: 'Cubemap(256)'
 // An asset's faces are the pack's images: no targets
 asset Cubemap sky = "../e2e/cubes/sky/*.png";
 scene Main { }

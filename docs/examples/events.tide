@@ -116,6 +116,6 @@ view Sparks(mut Fx fx)
         Draw.Circle(spark.position, 0.04, Color(1, 0.9, 0.5, 1 - spark.age * 2));
         i++;
     }
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Text("Tap a ball three times", float2(16, 14), 18, Color.white);
 }

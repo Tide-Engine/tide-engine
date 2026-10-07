@@ -1470,7 +1470,7 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_COLOR: return "A color: r, g, b and a from 0 to 1. `Color(r, g, b)` or `Color(r, g, b, a)`.";
     case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter[, wrap]])`. A Blit supplies its source to a read-only Texture shader parameter.";
     case TY_DEPTH_TEXTURE: return "A local reference to a render target's depth, `target.depth`, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow wants.";
-    case TY_CUBEMAP: return "A local reference to a cube of six images, which a frag or vert reads by a direction from its middle, `Sample(direction)`, where it's an asset by its name or a field of a component or singleton it takes. An asset's is six files a glob matches, named for their faces: `asset Cubemap sky = \"art/sky_??.png\";`. `RenderTarget.Cube(size)` is one a view draws into, a face at a time: `cube.faces[0]` to `cube.faces[5]` are RenderTargets, in the order +x, -x, +y, -y, +z, -z.";
+    case TY_CUBEMAP: return "A local reference to a cube of six images, which a frag or vert reads by a direction from its middle, `Sample(direction)`, where it's an asset by its name or a field of a component or singleton it takes. An asset's is six files a glob matches, named for their faces: `asset Cubemap sky = \"art/sky_??.png\";`. `Cubemap(size)` is one a view draws into, a face at a time: `cube.faces[0]` to `cube.faces[5]` are RenderTargets, in the order +x, -x, +y, -y, +z, -z.";
     case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Window()` is always the window's size. `samples: 4`, after everything else, draws each of its pixels with that many samples, which smooths the edges of the triangles drawn into it. Each says last what it holds when that isn't one color image: `Format.Depth` is depth alone, and a format for each makes several, `RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)`, which a frag's `out Color` parameters go to in order. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture, `target.colors[1]` its second color image's, and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
     case TY_RECT: return "A rectangle on the screen, for the GUI: x and y from the top left, y down, then width and height.";
     case TY_CLIP: return "A sound of the game's pack, this machine's to play: an `asset Clip` by its name, or a copy of one. `Audio.Play(clip[, position][, volume[, pitch]])` plays it once, from views, local handlers and the functions they call; a `Sound` field keeps one playing. The match can't use it.";
@@ -1895,9 +1895,9 @@ static const method_form cube_calls[] = {
      "direction made of the frag's parameters, constants and variables that are never assigned again. The cube "
      "is an asset by its name, or a field of a component or singleton the frag or vert takes."},
     {"Resize", "Resize(float size)",
-     "Another side for all six faces of a cube made with `RenderTarget.Cube`, in pixels, and empty images."},
+     "Another side for all six faces of a cube made with `Cubemap(size)`, in pixels, and empty images."},
     {"Dispose", "Dispose()",
-     "Lets a cube made with `RenderTarget.Cube` go, its six faces with it. Every copy of it then names no cube."},
+     "Lets a cube made with `Cubemap(size)` go, its six faces with it. Every copy of it then names no cube."},
 };
 
 static const method_form target_calls[] = {
@@ -5770,7 +5770,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         }
         if (!gpu) {
             item(c, "faces", CK_PROPERTY, "RenderTarget, by its number",
-                 "The six faces of a cube made with `RenderTarget.Cube`, each a target to draw into: `faces[0]` to "
+                 "The six faces of a cube made with `Cubemap(size)`, each a target to draw into: `faces[0]` to "
                  "`faces[5]`, in the order +x, -x, +y, -y, +z, -z. A face is what a camera at the cube's middle sees "
                  "along that axis with a field of view of 90: +y is up for the four around, and for the one above "
                  "and the one below, -z and +z.", "faces[$1]");
@@ -8639,6 +8639,12 @@ static const struct {
                       "RenderTarget(float width, float height, Format formats...)",
                       "RenderTarget(float width, float height, float pixelsPerUnit, Format formats...)"},
      "Creates a local image of a positive size in logical pixels, like the window's. Its image has the display's pixels in each, so it's as sharp as the window, or `pixelsPerUnit` of them: with 1, exactly `width` by `height` pixels on any display. It holds one color image beside its depth, or what its formats say, one for each color image, four at the most: `Format.Rgba8` is 4 bytes a pixel and `Format.Rgba16f` four floats, which keep any number. A frag's `out Color` parameters go to them in order, and `target.colors[1]` reads the second. `Format.Depth`, by itself, is depth alone, for a pass whose depth a frag reads afterwards (`target.depth`). Last, by name, its samples: `RenderTarget(width, height, samples: 4)` draws each pixel with 4 samples (1, 2, 4 or 8; a device with fewer draws it with what it has), which smooths the edges of the triangles drawn into it, for that many times the memory; its color is read as any target's, and its depth isn't a frag's to read. Color and depth persist until cleared; copies share it. Dispose it when finished. `RenderTarget.Window()` is one that's always the window's size."},
+    {"Cubemap", {"Cubemap(float size)", "Cubemap(float size, Format format)"},
+     "A Cubemap that's drawn into: six square images of `size` pixels a side, each a destination, `cube.faces[0]` "
+     "to `cube.faces[5]` in the order +x, -x, +y, -y, +z, -z, with depth of its own, and all six what a frag "
+     "reads by a direction, `cube.Sample(direction)`. A face is what a camera at the cube's middle sees along "
+     "its axis with a field of view of 90. Its faces hold `Format.Rgba8`, or `Format.Rgba16f`, floats that keep "
+     "any number. It starts black; copies share it, and `Dispose()` lets it go."},
     {"PlayerID", {"PlayerID(int index)"}, "A player by index, for local play and tests."},
     {"Random", {"Random(long seed)"}, RANDOM_SEEDED_DOC},
     {"Spawn", {"Spawn(components...)"}, "Creates an entity with these components. It's added at the end of the tick."},
@@ -8855,6 +8861,8 @@ static int call_param_names(const expr *call, str *names, const int max)
             } else if (call->object && call->object->type.kind == TY_CUBEMAP) { // cube.Resize(size)
                 const method_form *form = find_form(cube_calls, sizeof cube_calls / sizeof cube_calls[0], call->name);
                 if (form) vec_push(list.labels, form->form);
+            } else if (!call->object && call->type.kind == TY_CUBEMAP) { // Cubemap(size[, format])
+                vec_push(list.labels, call->args.count > 1 ? "Cubemap(float size, Format format)" : "Cubemap(float size)");
             } else if (call->object && !call->target_samples) { // RenderTarget.Window(factor)
                 builtin_signatures(call->object->name, call->name, collect_label, &list);
             } else {

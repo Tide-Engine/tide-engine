@@ -53,7 +53,7 @@ float2 Seat(int seat)
 view Backdrop(Roster roster)
 {
     Draw.Clear(Color(0.086, 0.086, 0.094));
-    Draw.SetPixels();
+    Draw.SetScreen();
     GUI.SetTheme(GUITheme { radius = 6 }); // For the views after this one too
     Draw.Text($"Commands the match refused: {roster.refused}", float2(16, Screen.height - 30), 14, Color(0.64, 0.64, 0.68));
 }

@@ -78,7 +78,7 @@ view Mine(Body body, with ownership)
 
 view Hud(Session session)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Text(session.server ? "This machine runs the server" : $"{session.ping} ms round trip to the server",
                 float2(12, 10), 15, Color.white);
     Draw.Text("disc: predicted here   ring: confirmed", float2(12, 30), 13, Color(0.64, 0.64, 0.68));

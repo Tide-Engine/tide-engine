@@ -1,0 +1,31 @@
+// warnings: 1
+// expect: 'source' may say Filter.Trilinear, which this Sample can't read: its uv is made of a variable that changes, or of one a loop counts, so it reads the texture's own pixels
+// expect: write the filter here, 'Sample(uv, Filter.Bilinear)', which is what's read anyway
+// A frag's Texture parameter is whichever texture the draw gives, which may
+// say Filter.Trilinear. Where this Sample's uv can't be worked out as the frag
+// starts, it reads the texture's own pixels whatever the texture says: that's
+// said, as a warning, rather than found as a shimmer.
+scene Main { }
+
+local singleton Art
+{
+    [Filter(Filter.Trilinear)]
+    Grid2<Color> tiles = Grid2(4, 4);
+    List<Vertex> flat;
+}
+
+frag Stepped(Vertex vertex, out Color color, Texture source)
+{
+    mut var uv = vertex.uv;
+    for (int i = 0; i < 2; i++) uv += float2(0, 0);
+    color = source.Sample(uv);
+}
+
+view Show(mut Art art)
+{
+    if (art.flat.count == 0)
+    {
+        art.flat = [Vertex { }, Vertex { position = float2(1, 0), uv = float2(1, 0) }, Vertex { position = float2(0, 1), uv = float2(0, 1) }];
+    }
+    Draw.Mesh(art.flat, [0, 1, 2], art.tiles, Stepped);
+}

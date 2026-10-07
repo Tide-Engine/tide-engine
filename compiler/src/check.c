@@ -2203,6 +2203,8 @@ static int target_formats(const checker *c, const expr *e, const int tail, const
     return formats;
 }
 
+static type check_cube_target(checker *c, expr *e);
+
 // Constructors of built-in types: float(x), int3(1), float4(v.xy, 0, 1),
 // quaternion(x, y, z, w), float3x3(c0, c1, c2) and friends.
 static type check_construct(checker *c, expr *e, const type target)
@@ -2258,13 +2260,11 @@ static type check_construct(checker *c, expr *e, const type target)
         if (sampled) vec_push(e->arg_want, T_INT_);
         return target;
     }
-    if (target.kind == TY_TEXTURE || target.kind == TY_DEPTH_TEXTURE || target.kind == TY_CUBEMAP) {
+    // Cubemap(256), Cubemap(256, Format.Rgba16f): a cube that's drawn into, a face at a time
+    if (target.kind == TY_CUBEMAP) return check_cube_target(c, e);
+    if (target.kind == TY_TEXTURE || target.kind == TY_DEPTH_TEXTURE) {
         diag_error(e->at, "%s has no constructor yet", name);
         if (target.kind == TY_DEPTH_TEXTURE) diag_note("a DepthTexture is a render target's depth: 'target.depth'");
-        if (target.kind == TY_CUBEMAP) {
-            diag_note("a Cubemap is an asset's six files, 'asset Cubemap sky = \"art/sky_??.png\";', or one that's drawn "
-                      "into, 'RenderTarget.Cube(256)'");
-        }
         return T_ERR;
     }
 
@@ -5286,13 +5286,13 @@ static type old_draw_owner(checker *c, expr *e)
 // Draw.NoClip() put the clip back. Reports them, with what they are now.
 static bool old_setting(const expr *e)
 {
-    const bool set_screen = str_eq_c(e->name, "SetScreen");
-    if (set_screen || (str_eq_c(e->name, "Screen") && e->args.count == 0)) { // From before the window had one word
+    const bool set_pixels = str_eq_c(e->name, "SetPixels");
+    if (set_pixels || str_eq_c(e->name, "Pixels")) { // From the afternoon the screen's pixel space was called Pixels
         const char *on = draw_receiver(e);
-        const char *now = set_screen ? "SetPixels" : "Pixels";
+        const char *now = set_pixels ? "SetScreen" : "Screen";
         diag_error(e->at, "%s." STR_FMT " is '%s.%s' now", on, STR_ARG(e->name), on, now);
-        diag_note("it draws in the screen's pixels, from the top left with y down: '%s.Pixels() { ... }' around some "
-                  "draws, or '%s.SetPixels();' for the draws that follow", on, on);
+        diag_note("it draws in the screen's pixels, from the top left with y down: '%s.Screen() { ... }' around some "
+                  "draws, or '%s.SetScreen();' for the draws that follow", on, on);
         suggest_replacement(e->name, now);
         return true;
     }
@@ -5327,13 +5327,13 @@ static bool check_setting(const checker *c, const expr *e)
     const char *around = str_to_cstr((str){e->name.ptr + 3, e->name.len - 3}); // Without its "Set"
     diag_error(e->at, "%s." STR_FMT " sets it for the draws that follow, and takes no block", on, STR_ARG(e->name));
     diag_note("to set it around some draws, and have it put back after them, write '%s.%s(%s) { ... }'", on, around,
-              e->args.count || !str_eq_c(e->name, "SetPixels") ? "..." : "");
+              e->args.count || !str_eq_c(e->name, "SetScreen") ? "..." : "");
     suggest_replacement(e->name, around);
     return false;
 }
 
-// RenderTarget.Cube(256), RenderTarget.Cube(256, Format.Rgba16f): a Cubemap
-// that's drawn into, six images of that many pixels a side, each a
+// Cubemap(256), Cubemap(256, Format.Rgba16f): a cube that's drawn into (a
+// constructor, as RenderTarget's is), six images of that many pixels a side, each a
 // destination, 'cube.faces[i]', and all of them what a frag reads by a
 // direction, 'cube.Sample(direction)'. Its arguments are checked already.
 static type check_cube_target(checker *c, expr *e)
@@ -5348,8 +5348,8 @@ static type check_cube_target(checker *c, expr *e)
     const type format = argc == 2 ? e->args.items[1]->type : T_ERR;
     if (argc < 1 || argc > 2 || !type_assignable(T_FLOAT_, e->args.items[0]->type)
         || (argc == 2 && !(format.kind == TY_ENUM && format.decl == c->prog->format))) {
-        diag_error(e->at, "RenderTarget.Cube takes its faces' side in pixels, and what each holds when that isn't "
-                          "Format.Rgba8: 'RenderTarget.Cube(256)' or 'RenderTarget.Cube(256, Format.Rgba16f)'");
+        diag_error(e->at, "Cubemap takes its faces' side in pixels, and what each holds when that isn't "
+                          "Format.Rgba8: 'Cubemap(256)' or 'Cubemap(256, Format.Rgba16f)'");
         diag_note("a cube's six faces are squares of one size and one format, each with depth of its own");
         return T_ERR;
     }
@@ -5386,11 +5386,16 @@ static type check_window_target(checker *c, expr *e)
         suggest_replacement(e->name, "Window");
         return T_ERR;
     }
-    if (str_eq_c(e->name, "Cube")) return any_error ? T_ERR : check_cube_target(c, e);
+    if (str_eq_c(e->name, "Cube")) { // From the afternoon a cube was made through RenderTarget
+        diag_error(e->at, "RenderTarget.Cube is 'Cubemap' now: a Cubemap has a constructor of its own, as RenderTarget has");
+        diag_note("'Cubemap(256)' is a cube whose six faces are drawn into, and 'Cubemap(256, Format.Rgba16f)' one that "
+                  "holds floats");
+        return T_ERR;
+    }
     if (!str_eq_c(e->name, "Window")) {
-        diag_error(e->at, "RenderTarget has no '" STR_FMT "'; it has Window and Cube", STR_ARG(e->name));
+        diag_error(e->at, "RenderTarget has no '" STR_FMT "'; it has Window", STR_ARG(e->name));
         diag_note("'RenderTarget.Window()' is a target that's always the window's size, 'RenderTarget(width, height)' "
-                  "one of a size of its own, and 'RenderTarget.Cube(size)' a Cubemap whose six faces are drawn into");
+                  "one of a size of its own, and 'Cubemap(size)' a cube whose six faces are drawn into");
         return T_ERR;
     }
     if (any_error) return T_ERR;
@@ -7094,7 +7099,7 @@ static type check_index(checker *c, expr *e)
         }
         if (e->object->object->bind == BIND_ASSET) {
             diag_error(e->at, "an asset's Cubemap is the pack's images, which nothing draws into: its faces are no targets");
-            diag_note("a cube that's drawn into is made in a view: 'RenderTarget.Cube(256)'");
+            diag_note("a cube that's drawn into is made in a view: 'Cubemap(256)'");
             return T_ERR;
         }
         return (type){TY_RENDER_TARGET, NULL};
@@ -7705,7 +7710,7 @@ static type check_cube_sample(const checker *c, expr *e)
                    || of->object->param->function_param)) {
         diag_error(of->at, "a %s samples a Cubemap that's an asset by its name, or a field of a component or singleton it takes, "
                            "like 'room.reflection.Sample(direction)'", shader_word(shader));
-        diag_note("a view puts a cube there: 'room.reflection = RenderTarget.Cube(256);'");
+        diag_note("a view puts a cube there: 'room.reflection = Cubemap(256);'");
         return T_ERR;
     }
     if (!asset && of->object->param->type.kind == TY_STRUCT) {

@@ -13,7 +13,7 @@ local scene Main { }
 view TryControls(mut Controls controls)
 {
     Draw.Clear(Color(0.086, 0.086, 0.094));
-    Draw.SetPixels();
+    Draw.SetScreen();
 
     GUILayout.Area(Rect(12, 12, Screen.width - 24, 250))
     {

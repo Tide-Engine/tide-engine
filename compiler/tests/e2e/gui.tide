@@ -177,7 +177,7 @@ string CardLabel(GUIControl card, int slot)
 view Cards(Devices devices, mut Menu menu)
 {
     if (menu.menuUp) GUI.Navigate();
-    Draw.SetPixels();
+    Draw.SetScreen();
     GUI.Disabled(menu.locked)
     {
         for (var i = 0; i < 3; i++)
