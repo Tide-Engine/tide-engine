@@ -8309,7 +8309,7 @@ TIDE_TEST(lsp_cubemaps)
     TIDE_CHECK(has(last_sent(), "not a parameter of its own"));
     snprintf(program, sizeof program, "scene Main { }\ncomponent Prop { Cubemap around; }\n");
     open_document(program);
-    TIDE_CHECK(has(last_sent(), "Cubemap and RenderTarget belong to this machine"));
+    TIDE_CHECK(has(last_sent(), "Cubemap, RenderTarget, Clip and Sound belong to this machine"));
 }
 
 // A game with no asset: nothing is registered and no .tide/ is made. An
