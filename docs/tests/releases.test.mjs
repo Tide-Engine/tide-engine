@@ -33,11 +33,18 @@ function github() {
         latest: release('v0.2.0', false, [asset(6, 'tide-linux-x64.tar.gz')]),
         old: release('v0.1.0', false, [asset(7, 'tide-macos-arm64.tar.gz')]),
     };
+    const named = `https://api.github.com/repos/${repo}`;
+    const moved = 'https://api.github.com/repositories/42';
     state.fetch = async (url, options) => {
         asked.push(url);
+        assert.ok(url.startsWith('https://api.github.com/'), 'the token goes to GitHub\'s API alone');
         assert.equal(options.headers.authorization, 'Bearer the-token');
         if (state.down) return new Response('no', { status: 500 });
-        const path = url.slice(`https://api.github.com/repos/${repo}`.length);
+        // A repository that moved says where it is now, which a fetch that
+        // follows redirects never sees.
+        if (state.moved && url.startsWith(named) && options.redirect === 'manual')
+            return new Response(null, { status: 301, headers: { location: state.moved + url.slice(named.length) } });
+        const path = url.slice((url.startsWith(moved) ? moved : named).length);
         if (path === '/releases?per_page=100') return Response.json(state.list);
         if (path === '/releases/latest') return state.latest ? Response.json(state.latest) : new Response('', { status: 404 });
         if (path === '/releases/tags/v0.1.0') return Response.json(state.old);
@@ -94,6 +101,23 @@ test('a download is GitHub\'s link, asked for once while it lasts', async () => 
     assert.ok(hub.asked.length > asked, 'the list is asked for again after a minute');
     time += 180_000;
     assert.notEqual((await get(handle, '/releases/v0.3.0-nightly.2/tide-windows-x64.zip')).headers.location, first.headers.location);
+});
+
+test('a repository that moved is followed to where it is, on GitHub\'s API alone', async () => {
+    const hub = github();
+    hub.moved = 'https://api.github.com/repositories/42';
+    const handle = createReleases({ token: 'the-token', repo, fetch: hub.fetch });
+    const answer = await get(handle, '/releases/v0.3.0-nightly.2/tide-windows-x64.zip');
+    assert.equal(answer.status, 302);
+    assert.match(answer.headers.location, /^https:\/\/storage\.example\/1\?/);
+    assert.deepEqual(hub.asked.filter((url) => url.includes('/assets/')), [
+        `https://api.github.com/repos/${repo}/releases/assets/1`, 'https://api.github.com/repositories/42/releases/assets/1']);
+
+    // Anywhere else isn't asked, with the token or without.
+    hub.moved = 'https://elsewhere.example/repositories/42';
+    const astray = await get(handle, '/releases/v0.3.0-nightly.2/SHA256SUMS');
+    assert.equal(astray.status, 502);
+    assert.doesNotMatch(astray.body, /someone|secret-repo|github|elsewhere/i);
 });
 
 test('the list is asked for once a minute, and kept while GitHub is away', async () => {
