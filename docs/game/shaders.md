@@ -123,6 +123,14 @@ view Show(Models models, Deferred deferred)
 - **A target's other images are left alone** by a frag with fewer outputs than the target has images, and by everything the engine draws itself, which has one color.
 - A frag reads the images another draw wrote as it reads any texture, through a `Texture` field of a singleton or a component it takes: `deferred.normals = deferred.scene.colors[1];` in a view, then `deferred.normals.Sample(uv)` in the frag. It can't read an image of the target it's drawn into.
 
+The scene below is drawn once, by a frag that leaves three images: each pixel's paint, which way it faces and where it is. A second frag, over the whole window, lights every pixel from those three, with a lamp that follows the pointer, so moving the lamp draws nothing of the scene again. The slider raises the lamp, and the buttons show each image as the first pass left it.
+
+::: tide-example outputs Three images from one frag
+
+<<< @/examples/outputs.tide
+
+:::
+
 ## A vert
 
 ```csharp
