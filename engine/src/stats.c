@@ -1,6 +1,7 @@
 #include "tide/stats.h"
 
 #include <float.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +17,9 @@ static const float PAD_X = 8.0f;  // Inside the panel: beside its lines
 static const float PAD_Y = 6.0f;  // ...and above and under them
 static const float MARGIN = 8.0f; // From the screen's edges
 static const float MARK = 16.0f;  // What the arrow takes before the line that's always there
+static const float GAP = 24.0f;   // Between the labels' column and the values'
+static const float GROUP = 8.0f;  // Between one group of lines and the next
+static const float INDENT = 12.0f; // A line that's a part of the one before it
 
 static void reset_times(tide_stats *s)
 {
@@ -23,6 +27,12 @@ static void reset_times(tide_stats *s)
     s->span = 0.0;
     s->profile = NULL;
     s->system_count = 0;
+}
+
+// Closed, the panel is the one line's again, and may be as narrow as that.
+static void reset_width(tide_stats *s)
+{
+    s->held = 0.0f;
 }
 
 static bool contains(const tide_rect r, const tide_float2 p)
@@ -108,6 +118,7 @@ bool tide_stats_input(tide_stats *s, const tide_devices *d, const tide_float2 sc
     if (flipped) {
         s->open = !s->open;
         reset_times(s);
+        reset_width(s);
     }
     return flipped;
 }
@@ -152,6 +163,7 @@ void tide_stats_off(tide_stats *s)
     s->buttons = 0;
     memset(s->fingers, 0, sizeof s->fingers);
     reset_times(s);
+    reset_width(s);
 }
 
 void tide_stats_free(tide_stats *s)
@@ -247,11 +259,34 @@ void tide_stats_collect(tide_stats *s, const tide_profile *profile, const double
     // With no ticks, keep the last measured averages, rather than manufacture
     // zero measurements of systems that never ran in these frames.
     if (count) {
-        s->slow_count = count;
+        // A system that's still among the three keeps its row, and one that
+        // joins them takes a row that's free: the first time, slowest first
+        tide_stats_time rows[3] = {0};
+        bool placed[3] = {false, false, false};
+        for (uint32_t k = 0; k < s->slow_count; k++) {
+            for (uint32_t i = 0; i < count; i++) {
+                const tide_stats_system *from = &s->systems[slow[i]];
+                if (placed[i] || strncmp(s->slow[k].name, from->name, sizeof from->name) != 0) continue;
+                memcpy(rows[k].name, from->name, sizeof rows[k].name);
+                rows[k].ms = from->total_ms / (double)from->count;
+                placed[i] = true;
+                break;
+            }
+        }
         for (uint32_t i = 0; i < count; i++) {
+            if (placed[i]) continue;
             const tide_stats_system *from = &s->systems[slow[i]];
-            memcpy(s->slow[i].name, from->name, sizeof s->slow[i].name);
-            s->slow[i].ms = from->total_ms / (double)from->count;
+            for (uint32_t k = 0; k < 3; k++) {
+                if (rows[k].name[0]) continue;
+                memcpy(rows[k].name, from->name, sizeof rows[k].name);
+                rows[k].ms = from->total_ms / (double)from->count;
+                break;
+            }
+        }
+        // Fewer than before: the rows that are left close up, in their order
+        s->slow_count = 0;
+        for (uint32_t k = 0; k < 3; k++) {
+            if (rows[k].name[0]) s->slow[s->slow_count++] = rows[k];
         }
     }
     s->span = 0.0;
@@ -273,71 +308,95 @@ static tide_stats_line *add_line(tide_stats *s)
     return l;
 }
 
-#define LINE(s, ...) snprintf(add_line(s)->text, sizeof(((tide_stats_line *)0)->text), __VA_ARGS__)
+// A line of the list: its label, and its value from a format.
+static tide_stats_line *line(tide_stats *s, const char *label, const char *format, ...)
+{
+    tide_stats_line *l = add_line(s);
+    snprintf(l->label, sizeof l->label, "%s", label);
+    va_list args;
+    va_start(args, format);
+    vsnprintf(l->value, sizeof l->value, format, args);
+    va_end(args);
+    return l;
+}
 
-// The three systems that took longest on average, slowest first. Ones measured
-// below the clock's resolution have a line too, so rows don't come and go.
+// The lines from `from` on are a group of their own, with a little space
+// before it, unless they're the list's first.
+static void group(tide_stats *s, const uint32_t from)
+{
+    if (from > 1 && from < s->line_count) s->lines[from].gap = true;
+}
+
+// The three systems that took longest on average, each in its row. Ones
+// measured below the clock's resolution have a line too, so rows don't come
+// and go.
 static void add_systems(tide_stats *s)
 {
-    for (uint32_t k = 0; k < s->slow_count; k++) {
-        tide_stats_line *l = add_line(s);
-        snprintf(l->text, sizeof l->text, "%s %.2f ms", s->slow[k].name, s->slow[k].ms);
-        l->name = (uint32_t)strlen(s->slow[k].name);
-    }
+    const uint32_t from = s->line_count;
+    for (uint32_t k = 0; k < s->slow_count; k++) line(s, s->slow[k].name, "%.2f ms", s->slow[k].ms);
+    group(s, from);
 }
 
 // What the drawer shows of `v`: the line that's always there, and while it's
-// open, the list above it, from the top.
+// open, the list above it, from the top, in groups: what a frame takes, the
+// match's, the machine's, and the systems that take longest.
 static void fill(tide_stats *s, const tide_stats_values *v)
 {
     s->line_count = 0;
     // A match another machine runs has a ping to keep an eye on
-    if (v->match && v->remote) LINE(s, "%.0f fps   ping %u ms", v->fps, (unsigned)v->ping_ms);
-    else LINE(s, "%.0f fps", v->fps);
+    tide_stats_line *first = add_line(s);
+    if (v->match && v->remote) {
+        snprintf(first->label, sizeof first->label, "%.0f fps   ping %u ms", v->fps, (unsigned)v->ping_ms);
+    } else {
+        snprintf(first->label, sizeof first->label, "%.0f fps", v->fps);
+    }
     if (!s->open) {
         reset_times(s);
         return;
     }
-    if (v->work_ms >= 0.0) LINE(s, "cpu %.1f ms", v->work_ms);
-    if (v->render_known) LINE(s, "render cpu %.2f ms", v->render_ms);
-    if (v->gpu_known) LINE(s, "gpu %.2f ms", v->gpu_ms);
+    // A frame's work on its thread is the whole, and rendering a part of it,
+    // listed under it; the GPU's time is beside them, as the two overlap
+    const bool work = v->work_ms >= 0.0;
+    if (work) line(s, "cpu", "%.1f ms", v->work_ms);
+    if (v->render_known) line(s, "render", "%.2f ms", v->render_ms)->indent = work;
+    if (v->gpu_known) line(s, "gpu", "%.2f ms", v->gpu_ms);
     if (v->match) {
-        if (!v->remote) LINE(s, "ping %u ms", (unsigned)v->ping_ms);
-        if (v->delay_ticks) LINE(s, "delay %u ticks", (unsigned)v->delay_ticks);
-        LINE(s, "up %.1f KB/s", v->up / 1024.0);
-        LINE(s, "down %.1f KB/s", v->down / 1024.0);
-        LINE(s, "tick %d", (int)v->tick);
-        LINE(s, "%u entities", (unsigned)v->entities);
+        const uint32_t from = s->line_count;
+        if (!v->remote) line(s, "ping", "%u ms", (unsigned)v->ping_ms);
+        if (v->delay_ticks) line(s, "delay", "%u ticks", (unsigned)v->delay_ticks);
+        line(s, "up", "%.1f KB/s", v->up / 1024.0);
+        line(s, "down", "%.1f KB/s", v->down / 1024.0);
+        line(s, "tick", "%d", (int)v->tick);
+        line(s, "entities", "%u", (unsigned)v->entities);
+        group(s, from);
     }
-    LINE(s, "threads %u", (unsigned)(v->threads ? v->threads : 1u));
-    if (v->memory) LINE(s, "memory %.0f MB", (double)v->memory / (1024.0 * 1024.0));
-    if (v->renderer && v->renderer[0]) LINE(s, "%s", v->renderer);
-    LINE(s, "%u draw calls", (unsigned)v->draw_calls);
+    const uint32_t from = s->line_count;
+    line(s, "threads", "%u", (unsigned)(v->threads ? v->threads : 1u));
+    if (v->memory) line(s, "memory", "%.0f MB", (double)v->memory / (1024.0 * 1024.0));
+    if (v->renderer && v->renderer[0]) line(s, "renderer", "%s", v->renderer);
+    line(s, "draw calls", "%u", (unsigned)v->draw_calls);
+    group(s, from);
     if (v->match && v->profile == s->profile) add_systems(s);
 }
 
 static float width_of(const tide_measure_fn measure, const char *text)
 {
+    if (!text[0]) return 0.0f;
     return measure ? tide_ceil_f(measure(text, TEXT, NULL, TIDE_FONT_REGULAR).x) : (float)strlen(text) * TEXT * 0.5f;
 }
 
-// A line in `most` pixels: how wide it is, once what doesn't fit is cut, where
-// a character starts. A system's line loses the end of its name, and keeps
-// what the system took; any other, its end.
-static float fit(tide_stats_line *l, const float most, const tide_measure_fn measure)
+// A label in `most` pixels: how wide it is, once what doesn't fit is cut from
+// its end, where a character starts. A system's line loses the end of its
+// name and keeps what the system took.
+static float fit(char *label, const float most, const tide_measure_fn measure)
 {
     for (;;) {
-        const float width = width_of(measure, l->text);
-        size_t at = l->name > 1 ? l->name : strlen(l->text);
+        const float width = width_of(measure, label);
+        size_t at = strlen(label);
         if (width <= most || at <= 1) return width;
         do at--;
-        while (at > 1 && ((unsigned char)l->text[at] & 0xC0u) == 0x80u); // Not inside a UTF-8 character
-        if (l->name > 1) {
-            memmove(l->text + at, l->text + l->name, strlen(l->text + l->name) + 1);
-            l->name = (uint32_t)at;
-        } else {
-            l->text[at] = '\0';
-        }
+        while (at > 1 && ((unsigned char)label[at] & 0xC0u) == 0x80u); // Not inside a UTF-8 character
+        label[at] = 0;
     }
 }
 
@@ -348,32 +407,59 @@ static void rect(tide_draw_list *list, const float x, const float y, const float
     tide_draw_rect(list, tide_f2(x + width * 0.5f, y + height * 0.5f), tide_f2(width, height), color);
 }
 
+// How far down the list line `i` of it starts: the lines before it, and the
+// gaps between their groups.
+static float line_top(const tide_stats *s, const uint32_t i)
+{
+    float y = 0.0f;
+    for (uint32_t k = 1; k < i; k++) y += PITCH + (s->lines[k + 1].gap ? GROUP : 0.0f);
+    return y;
+}
+
 void tide_stats_draw(tide_stats *s, const tide_stats_values *values, tide_draw_list *list, const tide_float2 screen,
                      const tide_measure_fn measure)
 {
     fill(s, values);
     // On a low screen, the list keeps the lines it has room for, from its top
-    const float room = (screen.y - 2.0f * MARGIN - 2.0f * PAD_Y) / PITCH;
-    const uint32_t rows = room >= 2.0f ? (uint32_t)room : 1u;
-    if (s->line_count > rows) s->line_count = rows;
+    const float room = screen.y - 2.0f * MARGIN - 2.0f * PAD_Y;
+    while (s->line_count > 1 && line_top(s, s->line_count - 1) + 2.0f * PITCH > room) s->line_count--;
 
-    // As wide as its widest line, and no wider than the screen
+    // Two columns, the labels' and the values', each as wide as its widest,
+    // and no wider than the screen: a label is cut where it has to be
     float most = screen.x - 2.0f * (MARGIN + PAD_X);
     if (most < MARK + TEXT) most = MARK + TEXT;
-    float widths[TIDE_STATS_LINES];
-    widths[0] = fit(&s->lines[0], most - MARK, measure);
-    float widest = widths[0] + MARK;
+    float values_width = 0.0f;
     for (uint32_t i = 1; i < s->line_count; i++) {
-        widths[i] = fit(&s->lines[i], most, measure);
-        if (widths[i] > widest) widest = widths[i];
+        const float w = width_of(measure, s->lines[i].value);
+        if (w > values_width) values_width = w;
     }
-    const float width = widest + 2.0f * PAD_X;
-    const float height = (float)s->line_count * PITCH + 2.0f * PAD_Y;
+    float labels_most = most - (s->line_count > 1 ? GAP + values_width : 0.0f);
+    if (labels_most < TEXT) labels_most = TEXT;
+    float labels_width = 0.0f;
+    for (uint32_t i = 1; i < s->line_count; i++) {
+        tide_stats_line *l = &s->lines[i];
+        const float inset = l->indent ? INDENT : 0.0f;
+        const float w = fit(l->label, labels_most - inset, measure) + inset;
+        if (w > labels_width) labels_width = w;
+    }
+    const float first_width = fit(s->lines[0].label, most - MARK, measure);
+    float inner = first_width + MARK;
+    if (s->line_count > 1 && labels_width + GAP + values_width > inner) inner = labels_width + GAP + values_width;
+    // Open, the panel keeps the widest it has been, so its edge doesn't jump
+    // as a longer name comes into the list and goes; the screen still bounds it
+    if (s->open) {
+        if (inner > s->held) s->held = inner;
+        inner = s->held;
+    }
+    if (inner > most) inner = most;
+    const float width = inner + 2.0f * PAD_X;
+    const float height = (s->line_count > 1 ? line_top(s, s->line_count - 1) + PITCH : 0.0f) + PITCH + 2.0f * PAD_Y;
     const float left = screen.x - MARGIN - width;
     const float top = screen.y - MARGIN - height;
-    const float right = left + width - PAD_X; // Where every line ends
+    const float right = left + width - PAD_X; // Where every value ends, and the line that's always there
 
     const tide_color plain = {200.0f / 255.0f, 200.0f / 255.0f, 200.0f / 255.0f, 1.0f};
+    const tide_color dim = {150.0f / 255.0f, 150.0f / 255.0f, 150.0f / 255.0f, 1.0f};
     const tide_color bright = {1.0f, 1.0f, 1.0f, 1.0f};
     const tide_color first = s->hovered ? bright : plain; // Lit under the cursor: it's what a click is for
     tide_draw_defaults(list); // What a list had set isn't the drawer's
@@ -381,14 +467,17 @@ void tide_stats_draw(tide_stats *s, const tide_stats_values *values, tide_draw_l
     rect(list, left, top, width, height, (tide_color){0.0f, 0.0f, 0.0f, s->hovered ? 0.72f : 0.55f});
     const float inset = (PITCH - TEXT) * 0.5f; // A line's text, in the middle of its pitch
     for (uint32_t i = 1; i < s->line_count; i++) {
-        const float y = top + PAD_Y + (float)(i - 1u) * PITCH;
-        tide_draw_text(list, s->lines[i].text, tide_f2(right - widths[i], y + inset), TEXT, plain);
+        const tide_stats_line *l = &s->lines[i];
+        const float y = top + PAD_Y + line_top(s, i) + inset;
+        // Labels in a dimmer column on the left, so the numbers stand out beside them
+        tide_draw_text(list, l->label, tide_f2(left + PAD_X + (l->indent ? INDENT : 0.0f), y), TEXT, dim);
+        tide_draw_text(list, l->value, tide_f2(right - width_of(measure, l->value), y), TEXT, plain);
     }
     // The line that's always there, under the list, and before it an arrow:
     // up while there's a list to open, down while it's open
-    const float y = top + PAD_Y + (float)(s->line_count - 1u) * PITCH;
-    tide_draw_text(list, s->lines[0].text, tide_f2(right - widths[0], y + inset), TEXT, first);
-    const tide_float2 tip = tide_f2(right - widths[0] - MARK + 5.0f, y + PITCH * 0.5f + (s->open ? 2.0f : -2.0f));
+    const float y = top + height - PAD_Y - PITCH;
+    tide_draw_text(list, s->lines[0].label, tide_f2(right - first_width, y + inset), TEXT, first);
+    const tide_float2 tip = tide_f2(right - first_width - MARK + 5.0f, y + PITCH * 0.5f + (s->open ? 2.0f : -2.0f));
     const float back = s->open ? -4.0f : 4.0f;
     tide_draw_thick_line(list, tide_f2(tip.x - 4.0f, tip.y + back), tip, 1.5f, first);
     tide_draw_thick_line(list, tip, tide_f2(tip.x + 4.0f, tip.y + back), 1.5f, first);
