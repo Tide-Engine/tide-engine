@@ -1175,7 +1175,7 @@ uint32_t tide_draw_vertices(tide_draw_list *d, const tide_vertex *vertices, cons
 }
 
 void tide_draw_triangles_with(tide_draw_list *d, const uint32_t base, const uint32_t *indices, const uint32_t count,
-                              const uint32_t slot, const tide_filter filter)
+                              const uint32_t slot, const tide_filter filter, const tide_wrap wrap)
 {
     if (count < 3u || base > d->vertex_count || slot > d->texture_count) return;
     const uint32_t within = d->vertex_count - base;
@@ -1194,7 +1194,8 @@ void tide_draw_triangles_with(tide_draw_list *d, const uint32_t base, const uint
     // More of the mesh before it, when nothing came between them
     tide_draw_command *last = d->count && !d->unsettled ? &d->commands[d->count - 1u] : NULL;
     if (last && last->kind == TIDE_DRAW_MESH && last->blend == d->blend && last->mesh.texture == slot
-        && last->mesh.filter == (uint32_t)filter && last->mesh.first + last->mesh.count == first) {
+        && last->mesh.filter == (uint16_t)filter && last->mesh.wrap == (uint16_t)wrap
+        && last->mesh.first + last->mesh.count == first) {
         last->mesh.count += d->index_count - first;
         return;
     }
@@ -1202,20 +1203,35 @@ void tide_draw_triangles_with(tide_draw_list *d, const uint32_t base, const uint
     c->mesh.first = first;
     c->mesh.count = d->index_count - first;
     c->mesh.texture = slot;
-    c->mesh.filter = (uint32_t)filter;
+    c->mesh.filter = (uint16_t)filter;
+    c->mesh.wrap = (uint16_t)wrap;
+}
+
+void tide_draw_triangles_wrapped(tide_draw_list *d, const uint32_t base, const uint32_t *indices, const uint32_t count,
+                                 const tide_texture *texture, const tide_filter filter, const tide_wrap wrap)
+{
+    tide_draw_triangles_with(d, base, indices, count, texture_slot(d, texture), filter, wrap);
 }
 
 void tide_draw_triangles(tide_draw_list *d, const uint32_t base, const uint32_t *indices, const uint32_t count,
                          const tide_texture *texture, const tide_filter filter)
 {
-    tide_draw_triangles_with(d, base, indices, count, texture_slot(d, texture), filter);
+    tide_draw_triangles_wrapped(d, base, indices, count, texture, filter, TIDE_WRAP_CLAMP);
+}
+
+void tide_draw_mesh_wrapped(tide_draw_list *d, const tide_vertex *vertices, const uint32_t vertex_count,
+                            const uint32_t *indices, const uint32_t index_count, const tide_texture *texture,
+                            const tide_filter filter, const tide_wrap wrap)
+{
+    if (vertex_count == 0 || index_count < 3u) return;
+    tide_draw_triangles_wrapped(d, tide_draw_vertices(d, vertices, vertex_count), indices, index_count, texture, filter,
+                                wrap);
 }
 
 void tide_draw_mesh(tide_draw_list *d, const tide_vertex *vertices, const uint32_t vertex_count, const uint32_t *indices,
                     const uint32_t index_count, const tide_texture *texture, const tide_filter filter)
 {
-    if (vertex_count == 0 || index_count < 3u) return;
-    tide_draw_triangles(d, tide_draw_vertices(d, vertices, vertex_count), indices, index_count, texture, filter);
+    tide_draw_mesh_wrapped(d, vertices, vertex_count, indices, index_count, texture, filter, TIDE_WRAP_CLAMP);
 }
 
 // ---------------------------------------------------------------------------
@@ -1433,9 +1449,9 @@ static inline uint8_t sides(const uint32_t cull)
 }
 
 void tide_draw_shaded(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instance,
-                      const void *uniforms, const uint32_t *textures, const uint32_t blended)
+                      const void *uniforms, const uint32_t *textures, const uint32_t sampling)
 {
-    tide_draw_shaded_instances(d, shader, mesh, instance, 1, uniforms, textures, blended);
+    tide_draw_shaded_instances(d, shader, mesh, instance, 1, uniforms, textures, sampling);
 }
 
 // A run of instances through a shader. `with` says what tints it and, for a
@@ -1446,7 +1462,7 @@ void tide_draw_shaded(tide_draw_list *d, const tide_shader *shader, const uint32
 // a 2D one, and a blit, have neither.
 static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
                              const uint32_t count, const void *uniforms, const uint32_t *textures,
-                             const uint32_t blended, const tide_draw_kind kind, const tide_blend blend,
+                             const uint32_t sampling, const tide_draw_kind kind, const tide_blend blend,
                              const tide_depth depth, const uint32_t cull, const tide_draw_run *with,
                              const tide_float4x4 *through)
 {
@@ -1457,7 +1473,7 @@ static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const
     const uint32_t uniform_size = tide_shader_uniform_size(shader);
     if ((instance_size && !instances) || (uniform_size && !uniforms)) return; // Nothing to draw it with
     const uint32_t texture_count = shader->texture_count < TIDE_SHADER_TEXTURES ? shader->texture_count : TIDE_SHADER_TEXTURES;
-    tide_draw_run run = {.shader = shader, .mesh = mesh, .first = d->instance_used, .count = count, .blended = blended,
+    tide_draw_run run = {.shader = shader, .mesh = mesh, .first = d->instance_used, .count = count, .sampling = sampling,
                          .tint = with->tint, .moved = with->moved, .transform = with->transform};
     for (uint32_t i = 0; i < texture_count; i++) {
         if (textures && textures[i] <= d->texture_count) run.textures[i] = textures[i];
@@ -1485,7 +1501,7 @@ static void shaded_instances(tide_draw_list *d, const tide_shader *shader, const
         && last->depth == deep && last->cull == sided) {
         tide_draw_run *r = &d->runs[last->shaded.run];
         if ((r->shader == shader || (shader->id && r->shader && r->shader->id == shader->id))
-            && r->mesh == mesh && r->blended == blended
+            && r->mesh == mesh && r->sampling == sampling
             && r->first + (uint64_t)r->count * instance_size == run.first
             && memcmp(r->textures, run.textures, sizeof run.textures) == 0
             && same_color(r->tint, run.tint) && r->moved == run.moved
@@ -1519,7 +1535,7 @@ static bool instance_mirrors(const uint8_t *instance)
 
 void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, const uint32_t mesh, const void *instances,
                                 const uint32_t count, const void *uniforms, const uint32_t *textures,
-                                const uint32_t blended)
+                                const uint32_t sampling)
 {
     const tide_draw_place *p = &d->place;
     tide_draw_run with = {.tint = tide_draw_tint(d)};
@@ -1533,7 +1549,7 @@ void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, co
     // their own. An instance with no transform has none that could
     if (!shader || shader->dims != 3 || p->cull == TIDE_CULL_NONE || shader->instance_floats < 4u || !instances
         || count == 0) {
-        shaded_instances(d, shader, mesh, instances, count, uniforms, textures, blended, TIDE_DRAW_SHADED,
+        shaded_instances(d, shader, mesh, instances, count, uniforms, textures, sampling, TIDE_DRAW_SHADED,
                          (tide_blend)d->blend, (tide_depth)p->depth, p->cull, &with, through);
         return;
     }
@@ -1544,7 +1560,7 @@ void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, co
     for (uint32_t i = 1; i <= count; i++) {
         const bool next = i < count ? instance_mirrors(bytes + (size_t)i * size) != turned : !mirrored;
         if (next == mirrored) continue;
-        shaded_instances(d, shader, mesh, bytes + (size_t)first * size, i - first, uniforms, textures, blended,
+        shaded_instances(d, shader, mesh, bytes + (size_t)first * size, i - first, uniforms, textures, sampling,
                          TIDE_DRAW_SHADED, (tide_blend)d->blend, (tide_depth)p->depth,
                          p->cull | (mirrored ? TIDE_DRAW_MIRRORED : 0u), &with, through);
         first = i;
@@ -1553,7 +1569,7 @@ void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, co
 }
 
 void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, const tide_blend blend, const void *instance,
-                   const void *uniforms, const uint32_t *textures, const uint32_t blended)
+                   const void *uniforms, const uint32_t *textures, const uint32_t sampling)
 {
     if (!shader || shader->dims != 2 || shader->vertex_size != sizeof(tide_vertex)) return;
     for (uint32_t i = 0; textures && i < shader->texture_count && i < TIDE_SHADER_TEXTURES; i++) {
@@ -1576,7 +1592,7 @@ void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, const tide_ble
     if (fill) tide_draw_mesh_fill_bytes(d, mesh, vertices, sizeof(tide_vertex), 4, indices, 6);
     // None of the settings is a blit's: it's the whole destination, as its frag writes it
     const tide_draw_run with = {.tint = TIDE_COLOR_WHITE};
-    shaded_instances(d, shader, mesh, instance, 1, uniforms, textures, blended, TIDE_DRAW_BLIT,
+    shaded_instances(d, shader, mesh, instance, 1, uniforms, textures, sampling, TIDE_DRAW_BLIT,
                      (uint32_t)blend <= TIDE_BLEND_REPLACE ? blend : TIDE_BLEND_REPLACE, TIDE_DEPTH_READ_WRITE, 0, &with,
                      NULL);
 }
@@ -1586,15 +1602,15 @@ void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, const tide_ble
 // and it draws the same way, or a command of their own.
 static inline __attribute__((always_inline)) void mesh_run(tide_draw_list *d, const uint32_t mesh, const uint32_t at,
                                                            const uint32_t count, const uint32_t texture,
-                                                           const tide_filter filter, const tide_blend blend,
-                                                           const tide_depth depth, const uint8_t cull,
-                                                           const tide_color tint)
+                                                           const tide_filter filter, const tide_wrap wrap,
+                                                           const tide_blend blend, const tide_depth depth,
+                                                           const uint8_t cull, const tide_color tint)
 {
     tide_draw_command *last = d->count ? &d->commands[d->count - 1u] : NULL;
     if (last && last->kind == TIDE_DRAW_MESH_3D && last->blend == (uint8_t)blend && last->depth == (uint8_t)depth
         && last->cull == cull && last->mesh3.mesh == mesh && last->mesh3.texture == texture
-        && last->mesh3.filter == (uint32_t)filter && last->mesh3.first + last->mesh3.count == at
-        && same_color(last->color, tint)) {
+        && last->mesh3.filter == (uint16_t)filter && last->mesh3.wrap == (uint16_t)wrap
+        && last->mesh3.first + last->mesh3.count == at && same_color(last->color, tint)) {
         last->mesh3.count += count;
         return;
     }
@@ -1606,7 +1622,8 @@ static inline __attribute__((always_inline)) void mesh_run(tide_draw_list *d, co
     c->mesh3.first = at;
     c->mesh3.count = count;
     c->mesh3.texture = texture;
-    c->mesh3.filter = (uint32_t)filter;
+    c->mesh3.filter = (uint16_t)filter;
+    c->mesh3.wrap = (uint16_t)wrap;
 }
 
 // A run of instances of a 3D mesh, tinted by `tint`: `through` is what they
@@ -1615,8 +1632,8 @@ static inline __attribute__((always_inline)) void mesh_run(tide_draw_list *d, co
 // says all there is to say. Part of what calls it, as a frame of instances
 // spends its time here.
 static inline __attribute__((always_inline)) void mesh_instances(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 *transforms, const uint32_t count,
-                           const uint32_t texture, const tide_filter filter, const tide_blend blend,
-                           const tide_depth depth, const uint32_t cull, const tide_color tint,
+                           const uint32_t texture, const tide_filter filter, const tide_wrap wrap,
+                           const tide_blend blend, const tide_depth depth, const uint32_t cull, const tide_color tint,
                            const tide_float4x4 *through, const bool turned)
 {
     if (count == 0 || !transforms) return;
@@ -1631,7 +1648,7 @@ static inline __attribute__((always_inline)) void mesh_instances(tide_draw_list 
     d->matrix_count += count;
     // With both sides drawn there's nothing to tell of a transform, and they're one run
     if ((cull & SIDES_KNOWN) || cull == TIDE_CULL_NONE) {
-        mesh_run(d, mesh, at, count, texture, filter, blend, depth, sides(cull), tint);
+        mesh_run(d, mesh, at, count, texture, filter, wrap, blend, depth, sides(cull), tint);
         return;
     }
     // A triangle's front is its front through a transform that mirrors it, which winds it the other
@@ -1641,7 +1658,7 @@ static inline __attribute__((always_inline)) void mesh_instances(tide_draw_list 
     for (uint32_t i = 1; i <= count; i++) {
         const bool next = i < count ? mirrors(&transforms[i]) != turned : !mirrored;
         if (next == mirrored) continue;
-        mesh_run(d, mesh, at + first, i - first, texture, filter, blend, depth,
+        mesh_run(d, mesh, at + first, i - first, texture, filter, wrap, blend, depth,
                  sides(cull | (mirrored ? TIDE_DRAW_MIRRORED : 0u)), tint);
         first = i;
         mirrored = next;
@@ -1651,21 +1668,21 @@ static inline __attribute__((always_inline)) void mesh_instances(tide_draw_list 
 // One instance: what a view that runs for each entity records, so it's the
 // code above for a count of one, not a call to the one for any number.
 void tide_draw_instance(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 transform, const uint32_t texture,
-                        const tide_filter filter)
+                        const tide_filter filter, const tide_wrap wrap)
 {
     const tide_draw_place *p = &d->place;
     const tide_float4x4 *through = p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL;
-    mesh_instances(d, mesh, &transform, 1, texture, filter, (tide_blend)d->blend, (tide_depth)p->depth, p->cull,
+    mesh_instances(d, mesh, &transform, 1, texture, filter, wrap, (tide_blend)d->blend, (tide_depth)p->depth, p->cull,
                    tide_draw_tint(d), through, through && (p->moved & TIDE_DRAW_MOVED_MIRROR));
 }
 
 void tide_draw_instances(tide_draw_list *d, const uint32_t mesh, const tide_float4x4 *transforms, const uint32_t count,
-                         const uint32_t texture, const tide_filter filter)
+                         const uint32_t texture, const tide_filter filter, const tide_wrap wrap)
 {
     const tide_draw_place *p = &d->place;
     const tide_float4x4 *through = p->moved & TIDE_DRAW_MOVED_3D ? &p->transform_3d : NULL;
-    mesh_instances(d, mesh, transforms, count, texture, filter, (tide_blend)d->blend, (tide_depth)p->depth, p->cull,
-                   tide_draw_tint(d), through, through && (p->moved & TIDE_DRAW_MOVED_MIRROR));
+    mesh_instances(d, mesh, transforms, count, texture, filter, wrap, (tide_blend)d->blend, (tide_depth)p->depth,
+                   p->cull, tide_draw_tint(d), through, through && (p->moved & TIDE_DRAW_MOVED_MIRROR));
 }
 
 uint64_t tide_mesh_version(const tide_mesh *mesh)
@@ -1680,12 +1697,18 @@ uint64_t tide_mesh_version(const tide_mesh *mesh)
 void tide_draw_mesh_3d(tide_draw_list *d, const tide_mesh *mesh, const tide_float4x4 transform,
                        const tide_texture *texture, const tide_filter filter)
 {
+    tide_draw_mesh_3d_wrapped(d, mesh, transform, texture, filter, TIDE_WRAP_CLAMP);
+}
+
+void tide_draw_mesh_3d_wrapped(tide_draw_list *d, const tide_mesh *mesh, const tide_float4x4 transform,
+                               const tide_texture *texture, const tide_filter filter, const tide_wrap wrap)
+{
     if (!mesh || !mesh->vertices || !mesh->indices) return;
     bool fill;
     const uint32_t slot = tide_draw_mesh_slot(d, TIDE_MESH_MEMORY, (uint64_t)(uintptr_t)mesh->vertices,
                                               (uint64_t)(uintptr_t)mesh->indices, mesh->version, &fill);
     if (fill) tide_draw_mesh_fill(d, slot, mesh->vertices, mesh->vertex_count, mesh->indices, mesh->index_count);
-    tide_draw_instance(d, slot, transform, texture_slot(d, texture), filter);
+    tide_draw_instance(d, slot, transform, texture_slot(d, texture), filter, wrap);
 }
 
 // ---------------------------------------------------------------------------
@@ -1776,7 +1799,8 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
         } else if (c->kind == TIDE_DRAW_MESH) {
             // Its indices are places in `from`'s vertices, which are `d`'s from `base`
             tide_draw_triangles_with(d, base, from->indices + c->mesh.first, c->mesh.count,
-                                     append_texture(d, from, c->mesh.texture), (tide_filter)c->mesh.filter);
+                                     append_texture(d, from, c->mesh.texture), (tide_filter)c->mesh.filter,
+                                     (tide_wrap)c->mesh.wrap);
         } else if (c->kind == TIDE_DRAW_MESH_3D) {
             if (!c->mesh3.mesh || c->mesh3.count == 0) continue;
             const tide_draw_mesh_data *m = &from->meshes[c->mesh3.mesh - 1u];
@@ -1785,7 +1809,7 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
             if (fill) tide_draw_mesh_fill_bytes(d, slot, m->bytes, m->vertex_size, m->vertex_count, m->indices, m->index_count);
             const uint32_t texture = append_texture(d, from, c->mesh3.texture);
             mesh_instances(d, slot, from->matrices + c->mesh3.first, c->mesh3.count, texture,
-                           (tide_filter)c->mesh3.filter, (tide_blend)c->blend,
+                           (tide_filter)c->mesh3.filter, (tide_wrap)c->mesh3.wrap, (tide_blend)c->blend,
                            c->depth <= TIDE_DEPTH_NONE ? (tide_depth)c->depth : TIDE_DEPTH_READ_WRITE,
                            c->cull | SIDES_KNOWN, c->color, NULL, false);
         } else if (c->kind == TIDE_DRAW_SHADED || c->kind == TIDE_DRAW_BLIT) {
@@ -1800,7 +1824,7 @@ void tide_draw_append(tide_draw_list *d, const tide_draw_list *from)
             const uint32_t size = tide_shader_instance_size(r->shader);
             shaded_instances(d, r->shader, slot, size ? from->instances + r->first : NULL, r->count,
                              tide_shader_uniform_size(r->shader) ? from->uniforms + r->uniforms : NULL, textures,
-                             r->blended, (tide_draw_kind)c->kind, (tide_blend)c->blend, (tide_depth)c->depth, c->cull,
+                             r->sampling, (tide_draw_kind)c->kind, (tide_blend)c->blend, (tide_depth)c->depth, c->cull,
                              r, NULL);
         } else if (c->kind == TIDE_DRAW_SHAPE) {
             if (c->shape < from->shape_count) push_shape(d, c->a, c->b, c->color, from->shapes[c->shape]);

@@ -80,7 +80,7 @@ TIDE_TEST(manual_instances_are_bulk_draws_without_entities)
     TIDE_REQUIRE(custom && textured && custom->count == 257 && textured->count == 257);
     TIDE_CHECK(custom->mesh == textured->mesh && custom->mesh == batch->mesh);
     TIDE_CHECK(custom->shader->instance_floats == 4 && custom->shader->instance_ints == 0);
-    TIDE_CHECK(textured->blended == 1u && textured->textures[0] == plain->mesh3.texture);
+    TIDE_CHECK(textured->sampling == 1u && textured->textures[0] == plain->mesh3.texture);
 
     const tide_draw_run *identity = through("Identity on Corner3", false);
     TIDE_REQUIRE(identity && identity->count == 2);
@@ -103,7 +103,7 @@ TIDE_TEST(manual_instances_are_bulk_draws_without_entities)
     TIDE_CHECK(instance_float(flat, 0, 0) == 10.0f && instance_float(flat, 1, 1) == 40.0f);
     TIDE_CHECK(instance_float(flat, 0, 2) == 1.0f && instance_float(flat, 1, 3) == 1.0f);
     TIDE_CHECK(instance_int(flat, 0, 0) == 1 && instance_int(flat, 1, 0) == 2);
-    TIDE_CHECK(flat_texture->blended == 0u && flat_texture->textures[0] == plain->mesh3.texture);
+    TIDE_CHECK(flat_texture->sampling == 0u && flat_texture->textures[0] == plain->mesh3.texture);
     TIDE_CHECK(draw.run_count == 7); // Empty lists produce no runs
 
     // A second frame reuses the mesh and texture copies while drawing all

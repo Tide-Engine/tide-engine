@@ -265,7 +265,7 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw2D.Text(text, position, size, color, font)` | Text in a weight: `Font.Bold`. An anchor goes before it: `Draw2D.Text(text, position, size, color, anchor, font)` |
 | `Draw2D.MeasureText(text, size)` | Nothing: it returns how big `Draw2D.Text` would draw the text, a `float2` of its width and height (see [Measuring text](#measuring-text)). `MeasureText(text, size, font)` measures in a weight |
 | `Draw2D.Mesh(vertices, indices)` | Triangles, with a color at each corner (see [Meshes](#meshes)) |
-| `Draw2D.Mesh(vertices, indices, texture)` | Triangles drawn with a grid of colors (see [Textures](#textures)) |
+| `Draw2D.Mesh(vertices, indices, texture)` | Triangles drawn with a grid of colors, read with a filter and a wrap (see [Textures](#textures)) |
 | `Draw.Blend(mode) { ... }` | How what's drawn in the block goes over what's there: added, multiplied, replaced (see [Blending](#blending)) |
 | `Draw.Tint(color) { ... }` | Fades or colors what's drawn in the block (see [Tints](#tints)) |
 | `Draw2D.Transform(offset, rotation, scale) { ... }` | Moves, turns and scales what's drawn in the block (see [Transforms](#transforms)) |
@@ -274,7 +274,7 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw3D.SetCamera(position, rotation, fieldOfView)` | Sets the 3D camera for the 3D meshes after it (see [3D](#_3d)) |
 | `Draw3D.Depth(mode) { ... }` | What the 3D meshes drawn in the block do with depth: hide and are hidden, are only hidden, or neither (see [Depth](#depth)) |
 | `Draw3D.Cull(side) { ... }` | Which side of the triangles of the 3D meshes drawn in the block isn't drawn: the back, the front, or neither (see [Which side draws](#which-side-draws)) |
-| `Draw3D.Mesh(vertices, indices, transform)` | A 3D mesh, placed in the world by `transform`, with a texture and filter as a mesh's (see [3D](#_3d)) |
+| `Draw3D.Mesh(vertices, indices, transform)` | A 3D mesh, placed in the world by `transform`, with a texture, a filter and a wrap as a mesh's (see [3D](#_3d)) |
 | `Draw3D.Cube(center, size, color)` | A box with full widths `size.x`, `size.y` and `size.z` |
 | `Draw3D.Sphere(center, radius, color)` | A sphere |
 | `Draw3D.Cylinder(center, radius, height, color)` | A capped cylinder along its local `y` axis, with full `height` |
@@ -661,13 +661,39 @@ There's nothing to create, upload or free. The grid is ordinary state: change it
 
 The grid can be local state or the match's, like a canvas each player paints. Views read the match's grids as they are at the latest tick: cells aren't blended.
 
-The last argument says how the texture is read between cells: `Filter.Bilinear` blends them, and is what a call without it does; `Filter.Point` takes the nearest, for pixel art. Past 0 and 1, `uv` reads the cells at the edge.
+The argument after the texture says how it's read between cells: `Filter.Bilinear` blends them, and is what a call without it does; `Filter.Point` takes the nearest, for pixel art.
 
 - A cell is four floats, and the GPU's copy a byte a channel: values are clamped to 0 to 1.
 - A grid with an open axis has no size, so it's no texture: the mesh draws with its colors alone.
 - How big a texture can be is the GPU's limit: at least 2048 by 2048 wherever Tide runs.
 
 A game's C can draw meshes too, with pixels of its own, like a font atlas a library made: see [Drawing from C](../c/functions.md#drawing-from-c).
+
+### Past the edges
+
+A texture's own cells are where `uv` goes from 0 to 1. What a `uv` past those reads is the draw's to say too, with a `Wrap` after the filter:
+
+```csharp
+Draw2D.Mesh(corners, [0, 1, 2, 0, 2, 3], art.tile, Filter.Point, Wrap.Repeat);
+```
+
+- `Wrap.Clamp` reads the cells at the texture's edge. It's what a call without a wrap does.
+- `Wrap.Repeat` reads the texture again: 1.25 reads what 0.25 does. It's for tiles, and for what scrolls.
+- `Wrap.Mirror` reads the texture again, the other way round each time: 1.25 reads what 0.75 does, so no seam shows where its edges don't match.
+
+The quad below has uvs that go three times across its texture and three times down, and the white square is where they go from 0 to 1. Scroll it, and switch between the three.
+
+::: tide-example wrap A texture, past its edges
+
+<<< @/examples/wrap.tide
+
+:::
+
+- It's one wrap, for both ways across the texture, and it's written after the filter: a draw that says how it wraps says its filter too (`Filter.Bilinear` is the one a draw without has).
+- It's a value like the filter: a field, or `tiled ? Wrap.Repeat : Wrap.Clamp`.
+- It's how this draw reads the texture, and no part of the texture: one grid can be clamped in one draw and repeated in the next. So can a [render target's color](#targets-and-post-processing), and a texture of any size.
+- Blended, a cell at the edge blends with what the wrap says is past it: with `Wrap.Repeat` that's the cell at the opposite edge, which is what makes tiles meet without a seam.
+- `Wrap` is the engine's name: a game's own type or function takes another one, or a namespace.
 
 ## Clipping
 
@@ -825,7 +851,7 @@ view Crates(Crate crate, Scenery scenery)
 - 3D meshes hide each other by how far they are, whatever order they're drawn in. Everything else draws over what's there, in order, through the camera it had before: a view can draw a 3D scene and then a HUD over it, with no camera call between. `Draw2D.Clear` clears what's in front too.
 - A see-through mesh blends with what's behind it, and still hides what's drawn behind it later, unless it's drawn with [`Draw3D.Depth(Depth.Read)`](#depth): draw see-through meshes last, the farthest first.
 - A triangle is drawn from its front, the side its corners go clockwise on, and not from its back: see [Which side draws](#which-side-draws). A face that's missing is usually a triangle wound the other way.
-- Textures and filters work as a mesh's do: `Draw3D.Mesh(vertices, indices, transform, texture, filter)`.
+- Textures, filters and [wraps](#past-the-edges) work as a mesh's do: `Draw3D.Mesh(vertices, indices, transform, texture, filter, wrap)`.
 - There's no lighting built in: a pixel is its corners' colors times its texture's. A [`frag`](./shaders.md) lights it your way, with normals in a vertex struct of your own.
 - Each frame starts with the 3D camera at the origin, looking along `+z`, with a field of view of 60 degrees.
 
@@ -878,7 +904,7 @@ view Rocks(mut Rock rock)
 
 A mesh many entities share, like the crate above, is one list in a singleton, or a local one.
 
-A mesh drawn again and again in a row, from the same lists, with the same texture and filter, is drawn all at once: a view that runs for each of thousands of entities and draws one mesh costs the GPU one draw. Something drawn between them, like another mesh or a camera, starts another.
+A mesh drawn again and again in a row, from the same lists, with the same texture, filter and wrap, is drawn all at once: a view that runs for each of thousands of entities and draws one mesh costs the GPU one draw. Something drawn between them, like another mesh or a camera, starts another.
 
 ### Any projection
 

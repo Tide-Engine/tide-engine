@@ -500,7 +500,8 @@ typedef struct draw_step {
                       // STEP_SHADED: its run's place in the list's
     uint32_t count;
     uint32_t texture; // STEP_MESH and STEP_MESH_3D: 1 + its texture's place in the list's, or 0 for none
-    uint32_t filter;  // ...and how it's sampled: tide_filter
+    uint32_t filter;  // ...and how it's sampled: tide_filter...
+    uint32_t wrap;    // ...and tide_wrap
     uint32_t mesh;    // STEP_MESH_3D: 1 + its mesh's place in the list's
     uint32_t camera;  // ...and 1 + its camera's matrix's place in the list's, or 0 for the first camera:
                       // a STEP_SHADED's too, for a 3D shader
@@ -782,11 +783,12 @@ static void add_mesh(const tide_draw_list *list, const tide_draw_command *c, con
     const uint32_t count = c->mesh.count;
     mesh_vertex *out = mesh_room(count);
     draw_step *s = run_goes_on(STEP_MESH) ? &steps[step_count - 1] : NULL;
-    if (!s || s->texture != c->mesh.texture || s->filter != c->mesh.filter) {
+    if (!s || s->texture != c->mesh.texture || s->filter != c->mesh.filter || s->wrap != c->mesh.wrap) {
         s = add_step(STEP_MESH);
         s->first = mesh_vertex_count;
         s->texture = c->mesh.texture;
         s->filter = c->mesh.filter;
+        s->wrap = c->mesh.wrap;
     }
     s->count += count;
     const uint32_t *indices = list->indices + c->mesh.first;
@@ -1793,10 +1795,18 @@ static bool prepare_source_targets(const tide_draw_list *list, const draw_step *
     return needed;
 }
 
+// A list's wrap as the GPU's, which has tide_wrap's numbers: what isn't one clamps.
+static tide_gpu_wrap gpu_wrap(const uint32_t wrap)
+{
+    _Static_assert(TIDE_GPU_WRAP_REPEAT == (int)TIDE_WRAP_REPEAT && TIDE_GPU_WRAP_MIRROR == (int)TIDE_WRAP_MIRROR,
+                   "gpu.h's wraps are draw.h's");
+    return wrap == TIDE_WRAP_REPEAT || wrap == TIDE_WRAP_MIRROR ? (tide_gpu_wrap)wrap : TIDE_GPU_WRAP_CLAMP;
+}
+
 // The texture a mesh step samples, sampled as the step says.
 static void sample_step_texture(const tide_draw_list *list, const draw_step *s)
 {
-    gpu->sample(0, texture_or_white(list, s->texture), s->filter != TIDE_FILTER_POINT);
+    gpu->sample(0, texture_or_white(list, s->texture), s->filter != TIDE_FILTER_POINT, gpu_wrap(s->wrap));
 }
 
 // A step's 3D camera, from the world to clip space, fitted to the screen's
@@ -1860,7 +1870,8 @@ static void draw_shaded(const tide_draw_list *list, const draw_step *s)
     gpu->use(s->pipeline);
     gpu->uniforms(&block, sizeof(shaded_uniforms) + own);
     for (uint32_t i = 0; i < shader->texture_count; i++) {
-        gpu->sample(i, texture_or_white(list, run->textures[i]), (run->blended >> i & 1u) != 0);
+        gpu->sample(i, texture_or_white(list, run->textures[i]), tide_sampling_blended(run->sampling, i),
+                    gpu_wrap(tide_sampling_wrap(run->sampling, i)));
     }
     gpu->vertices(0, g->vertices, 0);
     if (tide_shader_instance_size(shader)) gpu->vertices(1, gpu_state.instances, run->first);
@@ -2088,6 +2099,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             s->count = c->mesh3.count;
             s->texture = c->mesh3.texture;
             s->filter = c->mesh3.filter;
+            s->wrap = c->mesh3.wrap;
             s->mesh = c->mesh3.mesh;
             s->camera = f->camera_3d;
             s->fit = f->fit;
@@ -2266,7 +2278,8 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             if (s->count == 0 || !gpu_state.atlas) break;
             gpu->use(s->pipeline);
             gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
-            gpu->sample(0, gpu_state.atlas, true); // Stretched glyphs blend; the others land on the target's pixels
+            // Stretched glyphs blend; the others land on the target's pixels
+            gpu->sample(0, gpu_state.atlas, true, TIDE_GPU_WRAP_CLAMP);
             gpu->vertices(0, gpu_state.mesh_vertices, 0);
             gpu->draw(s->first, s->count, 1);
             calls++;

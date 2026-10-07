@@ -69,6 +69,13 @@ typedef enum tide_gpu_cull {
     TIDE_GPU_CULL_FRONT, // The ones that go clockwise don't
 } tide_gpu_cull;
 
+// What a texture's uvs past 0 and 1 read, on both axes: tide_wrap's numbers.
+typedef enum tide_gpu_wrap {
+    TIDE_GPU_WRAP_CLAMP,  // The pixels at its edge
+    TIDE_GPU_WRAP_REPEAT, // The texture again
+    TIDE_GPU_WRAP_MIRROR, // The texture again, the other way round each time
+} tide_gpu_wrap;
+
 enum { TIDE_GPU_MAX_SLOTS = 3, TIDE_GPU_MAX_ATTRIBUTES = 16, TIDE_GPU_MAX_TEXTURES = 8 };
 
 // The most a pipeline's uniform block takes, in bytes.
@@ -129,7 +136,7 @@ typedef struct tide_gpu {
     void (*buffer_write)(tide_gpu_id buffer, size_t offset, const void *data, size_t size);
     void (*buffer_free)(tide_gpu_id buffer);
 
-    // A texture, which doesn't repeat past its edges. Writing takes all of it.
+    // A texture. Writing takes all of it. How it's read is each draw's to say (sample).
     tide_gpu_id (*texture)(tide_gpu_format format, int width, int height, const void *pixels);
     void (*texture_write)(tide_gpu_id texture, const void *pixels);
     void (*texture_free)(tide_gpu_id texture);
@@ -160,9 +167,11 @@ typedef struct tide_gpu {
     // The pipeline the draws after it use, then what it draws with.
     void (*use)(tide_gpu_id pipeline);
     void (*uniforms)(const void *data, size_t size);
-    // Its texture `slot`, and how it's sampled between pixels: blended with
-    // its neighbors, or the nearest. Each of a pipeline's is set before it draws.
-    void (*sample)(uint32_t slot, tide_gpu_id texture, bool blended);
+    // Its texture `slot`, and how it's sampled: between pixels, blended with
+    // its neighbors or the nearest, and past its edges, as `wrap` says. A
+    // texture of any size wraps, and one texture can be in several slots,
+    // sampled another way in each. Each of a pipeline's is set before it draws.
+    void (*sample)(uint32_t slot, tide_gpu_id texture, bool blended, tide_gpu_wrap wrap);
     void (*vertices)(uint32_t slot, tide_gpu_id buffer, size_t offset);
     void (*indices)(tide_gpu_id buffer, bool wide); // 32 bits each, or 16
     // Triangles, three vertices (or indices) each, `instances` times over.

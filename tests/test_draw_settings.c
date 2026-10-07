@@ -638,7 +638,7 @@ TIDE_TEST(draw_cull_is_the_3d_meshes_own)
     // ...and so do the ones of a list given at once, which goes on with the run before it
     const tide_float4x4 mixed[5] = {same, same, mirror, same, mirror};
     const uint32_t slot = d.commands[0].mesh3.mesh;
-    tide_draw_instances(&d, slot, mixed, 5, 0, TIDE_FILTER_BILINEAR);
+    tide_draw_instances(&d, slot, mixed, 5, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
     TIDE_REQUIRE(d.count == 6 && d.commands[2].mesh3.count == 3);
     TIDE_CHECK(d.commands[3].cull == (TIDE_CULL_BACK | TIDE_DRAW_MIRRORED) && d.commands[3].mesh3.count == 1);
     TIDE_CHECK(d.commands[4].cull == TIDE_CULL_BACK && d.commands[4].mesh3.count == 1);
@@ -648,12 +648,12 @@ TIDE_TEST(draw_cull_is_the_3d_meshes_own)
     }
     // With no front drawn they're apart the same way
     tide_draw_set_cull(&d, TIDE_CULL_FRONT);
-    tide_draw_instances(&d, slot, mixed + 1, 2, 0, TIDE_FILTER_BILINEAR);
+    tide_draw_instances(&d, slot, mixed + 1, 2, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
     TIDE_REQUIRE(d.count == 8);
     TIDE_CHECK(d.commands[6].cull == TIDE_CULL_FRONT && last(&d)->cull == (TIDE_CULL_FRONT | TIDE_DRAW_MIRRORED));
     // With both sides drawn there's nothing to tell them apart by: one run, and nothing said
     tide_draw_set_cull(&d, TIDE_CULL_NONE);
-    tide_draw_instances(&d, slot, mixed, 5, 0, TIDE_FILTER_BILINEAR);
+    tide_draw_instances(&d, slot, mixed, 5, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
     TIDE_CHECK(d.count == 9 && last(&d)->cull == TIDE_CULL_NONE && last(&d)->mesh3.count == 5);
     tide_draw_unset_cull(&d);
 
