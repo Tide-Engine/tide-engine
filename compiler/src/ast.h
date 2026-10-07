@@ -1158,6 +1158,7 @@ typedef struct program {
     // Whether code names Font.Bold, or makes a Font of a number: only then does
     // generated C name the bold weight's file, so only then does the game carry it.
     bool names_bold;
+    bool uses_microphone; // It says Clip.Microphone: its Android app asks to record
     // Whether code names Filter.Trilinear: only then does generated C have the member, and only then is a
     // Sample that leaves its filter to the Texture it's given written so that it can read between that
     // texture's smaller images. So a game that doesn't generates the C and the shaders it did.

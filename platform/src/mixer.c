@@ -32,6 +32,9 @@ typedef struct handed {
 } handed;
 
 #define PENDING_NEW 4u
+#define TIDE_MIXER_CAPTURE 16384u                       // The microphone's ring: a third of a second
+#define TIDE_MIXER_CAPTURE_PRIME (4u * TIDE_AUDIO_BLOCK) // Blocks the ring holds before the renderer starts taking from it
+#define TIDE_MIXER_CAPTURE_LAG (8u * TIDE_AUDIO_BLOCK)   // Behind by more than this, the renderer skips to the newest, a prime back
 
 // A one-shot waiting for the next block, with its effect's knobs.
 typedef struct shot {
@@ -81,6 +84,11 @@ static struct {
     shot *shots;                  // The one-shots' ring
     _Atomic uint32_t shot_head;   // The frame's: where the next one goes
     _Atomic uint32_t shot_tail;   // The renderer's: the next to take
+    float *capture;                 // The microphone's ring, TIDE_MIXER_CAPTURE mono frames
+    _Atomic uint32_t capture_head;  // The device's: where the next frame goes
+    _Atomic uint32_t capture_tail;  // The renderer's: the next to take
+    float mic[TIDE_AUDIO_BLOCK];    // The block the microphone's voices play this block
+    bool capture_primed;            // The ring had a prime's worth: taking goes on until it runs dry
     _Atomic uint32_t dropped;
     _Atomic uint32_t playing;
     _Atomic bool elsewhere;       // A device's thread renders
@@ -108,6 +116,7 @@ void tide_mixer_init(void)
     m.reader = 1;
     atomic_store(&m.pending, 2);
     m.shots = tide_alloc_zeroed(TIDE_MIXER_ONE_SHOTS, sizeof *m.shots);
+    m.capture = tide_alloc_zeroed(TIDE_MIXER_CAPTURE, sizeof *m.capture);
     m.voices = tide_alloc_zeroed(TIDE_MIXER_VOICES, sizeof *m.voices);
     for (uint32_t b = 0; b < TIDE_AUDIO_BUSES; b++) m.buses[b].volume = m.buses[b].gain = 1.0f;
     m.listener_rotation = tide_identity_q();
@@ -304,8 +313,11 @@ static void apply_handed(const handed *h)
             m.buses[b].effect = (tide_audio_effect){0};
             memset(m.buses[b].state, 0, sizeof m.buses[b].state);
         }
-        // What's queued names clips the host let go of
+        // What's queued names clips the host let go of, and what was captured is nobody's
         atomic_store_explicit(&m.shot_tail, atomic_load_explicit(&m.shot_head, memory_order_acquire), memory_order_release);
+        atomic_store_explicit(&m.capture_tail, atomic_load_explicit(&m.capture_head, memory_order_acquire), memory_order_release);
+        m.capture_primed = false;
+        memset(m.mic, 0, sizeof m.mic);
         atomic_store_explicit(&m.forget_done, h->forget_serial, memory_order_release);
         return;
     }
@@ -377,6 +389,34 @@ static bool stream_next(voice *v)
     return true;
 }
 
+// The microphone's block, from the ring, as the block begins: the newest
+// whole block when the device has run ahead by more than a few, silence when
+// it hasn't given one yet
+static void take_capture(void)
+{
+    uint32_t tail = atomic_load_explicit(&m.capture_tail, memory_order_relaxed);
+    const uint32_t head = atomic_load_explicit(&m.capture_head, memory_order_acquire);
+    const uint32_t available = head - tail;
+    if (!m.capture_primed && available >= TIDE_MIXER_CAPTURE_PRIME) m.capture_primed = true;
+    if (!m.capture_primed || available < TIDE_AUDIO_BLOCK) {
+        memset(m.mic, 0, sizeof m.mic); // Nothing yet, or run dry: silence, until there's a prime's worth again
+        m.capture_primed = false;
+        return;
+    }
+    if (available > TIDE_MIXER_CAPTURE_LAG) tail = head - TIDE_MIXER_CAPTURE_PRIME; // Far behind: skip to the newest
+    for (uint32_t i = 0; i < TIDE_AUDIO_BLOCK; i++) m.mic[i] = m.capture[(tail + i) % TIDE_MIXER_CAPTURE];
+    atomic_store_explicit(&m.capture_tail, tail + TIDE_AUDIO_BLOCK, memory_order_release);
+}
+
+void tide_mixer_capture(const float *mono, const uint32_t frames)
+{
+    tide_mixer_init();
+    uint32_t head = atomic_load_explicit(&m.capture_head, memory_order_relaxed);
+    const uint32_t tail = atomic_load_explicit(&m.capture_tail, memory_order_acquire);
+    for (uint32_t i = 0; i < frames && head - tail < TIDE_MIXER_CAPTURE; i++) m.capture[head++ % TIDE_MIXER_CAPTURE] = mono[i];
+    atomic_store_explicit(&m.capture_head, head, memory_order_release);
+}
+
 // A streamed clip's block: decoded as it's read, two frames at a time, so a
 // pitch other than 1 and the clip's own rate go through the same interpolation
 // a decoded clip's samples do. The reader is made at the first block.
@@ -414,6 +454,10 @@ static bool read_clip(voice *v, float *out)
 {
     memset(out, 0, TIDE_AUDIO_SAMPLES * sizeof *out);
     const tide_clip *c = &v->clip;
+    if (c->microphone) { // What the device captured, in both channels, at its own pace: pitch doesn't apply
+        for (uint32_t i = 0; i < TIDE_AUDIO_BLOCK; i++) out[2 * i] = out[2 * i + 1] = m.mic[i];
+        return true;
+    }
     if (c->stream && c->rate && c->channels) return read_stream(v, out);
     if (!c->samples || !c->frames || c->channels == 0) return v->effect.fn != NULL; // A source goes on; silence ends
     const double step = (double)v->pitch * (double)c->rate / (double)TIDE_AUDIO_RATE;
@@ -444,6 +488,7 @@ static bool read_clip(voice *v, float *out)
 static void render_block(float *out)
 {
     tide_mixer_take();
+    take_capture();
     for (uint32_t b = 0; b < TIDE_AUDIO_BUSES; b++) {
         m.buses[b].used = false;
         memset(m.buses[b].mix, 0, sizeof m.buses[b].mix);

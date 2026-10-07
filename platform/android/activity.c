@@ -555,6 +555,37 @@ static bool handle_key(const AInputEvent *event)
     return ours;
 }
 
+// Whether the app may record audio: Android's RECORD_AUDIO permission, which
+// the game's manifest names for a game that uses the microphone (tide build)
+// and the player grants in the system's dialog, asked for when `ask` and it
+// isn't granted yet. From the program's thread, once a second at the most.
+bool tide_android_microphone_permitted(const bool ask)
+{
+    if (!app.activity) return false;
+    JavaVM *vm = app.activity->vm;
+    JNIEnv *env = NULL;
+    if ((*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) return false;
+    (*env)->PushLocalFrame(env, 16);
+    jobject activity = app.activity->clazz;
+    jclass activity_class = (*env)->GetObjectClass(env, activity);
+    jmethodID check = (*env)->GetMethodID(env, activity_class, "checkSelfPermission", "(Ljava/lang/String;)I");
+    jstring permission = (*env)->NewStringUTF(env, "android.permission.RECORD_AUDIO");
+    bool granted = check && (*env)->CallIntMethod(env, activity, check, permission) == 0;
+    if (!granted && ask) {
+        jmethodID request = (*env)->GetMethodID(env, activity_class, "requestPermissions", "([Ljava/lang/String;I)V");
+        jclass string_class = (*env)->FindClass(env, "java/lang/String");
+        jobjectArray names = string_class ? (*env)->NewObjectArray(env, 1, string_class, permission) : NULL;
+        if (request && names) (*env)->CallVoidMethod(env, activity, request, names, 1);
+    }
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        granted = false;
+    }
+    (*env)->PopLocalFrame(env, NULL);
+    (*vm)->DetachCurrentThread(vm);
+    return granted;
+}
+
 // The system's keyboard, which Android shows for the view with the focus,
 // from its main thread: NativeActivity's own can't take it, so the window's
 // does, and its keys still come to the input queue, which has them all.

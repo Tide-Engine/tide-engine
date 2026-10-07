@@ -61,6 +61,7 @@ void tide_audio_reset(tide_audio_frame *f)
     f->listener_set = false;
     f->falloff_near = f->falloff_far = 0.0f;
     f->forget = false;
+    f->microphone = false;
     for (uint32_t b = 0; b < TIDE_AUDIO_BUSES; b++) {
         f->bus_volume[b] = 1.0f;
         f->bus_effect[b] = (tide_audio_effect){0};
@@ -78,7 +79,7 @@ void tide_audio_free(tide_audio_frame *f)
 
 void tide_audio_play(tide_audio_frame *f, const tide_clip clip, const float volume, const float pitch)
 {
-    if (!f) return;
+    if (!f || clip.microphone) return; // The microphone plays through a Sound, which says when it stops
     tide_voice *v = add_voice(f);
     v->clip = clip;
     v->playing = true;
@@ -89,7 +90,7 @@ void tide_audio_play(tide_audio_frame *f, const tide_clip clip, const float volu
 void tide_audio_play_at(tide_audio_frame *f, const tide_clip clip, const tide_float3 position, const float volume,
                         const float pitch)
 {
-    if (!f) return;
+    if (!f || clip.microphone) return;
     tide_voice *v = add_voice(f);
     v->clip = clip;
     v->playing = true;
@@ -106,6 +107,7 @@ void tide_audio_voice(tide_audio_frame *f, const tide_voice *voice)
     *v = *voice;
     if (v->bus >= TIDE_AUDIO_BUSES) v->bus = 0;
     v->knobs_at = copy_knobs(f, &v->effect);
+    if (v->clip.microphone && v->playing) f->microphone = true;
 }
 
 void tide_audio_set_listener(tide_audio_frame *f, const tide_float3 position, const tide_quaternion rotation)
@@ -213,6 +215,9 @@ static tide_clip clip_from(const decoded_clip *d, const uint64_t name)
 
 tide_clip tide_clip_of(const tide_clip_ref ref)
 {
+    if (ref.name == TIDE_CLIP_MICROPHONE_NAME) {
+        return (tide_clip){.microphone = true, .channels = 1, .rate = TIDE_AUDIO_RATE, .id = TIDE_CLIP_MICROPHONE_NAME, .name = ref.name};
+    }
     const uint8_t *bytes;
     uint32_t size;
     uint64_t version;

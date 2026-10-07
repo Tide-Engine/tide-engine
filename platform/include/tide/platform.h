@@ -69,6 +69,9 @@ typedef struct tide_headless_desc {
     const char *capture; // The file the run's last frame goes to, as a PNG; NULL for none
     // The file everything the run played goes to, as a WAV (tide_platform_capture_audio); NULL for none
     const char *capture_audio;
+    // A WAV or Ogg Vorbis file the microphone plays in the run, looped, where
+    // a real one's device would be heard (Clip.Microphone); NULL for a silent one
+    const char *microphone;
     // A file of input by frame, of pictures to take and of when the run ends:
     // lines like `120 key d down`, `400 capture fight.png` and `500 quit`
     // (docs/tools/cli.md, Scripts, has every kind); NULL for none. A file it
@@ -106,6 +109,11 @@ bool tide_platform_capture(const char *path);
 // keeps what it played for tide_platform_capture_audio. Nothing of a clock's
 // is in that, so a headless run plays the same bytes on every machine.
 void tide_platform_audio(const tide_audio_frame *frame);
+// Also: while the frame says a voice plays the microphone (`frame->microphone`),
+// the capture device is kept open and its frames reach the mixer (audio_in.h),
+// tried again every second where it couldn't be opened (a player who hasn't
+// allowed it yet); when no frame does, it's closed. A headless run has no
+// device: `tide_headless_desc.microphone` plays a file into it instead.
 
 // Writes what a headless window played since the last such call (or since the
 // run began) to the file at `path`, as a WAV of 16-bit stereo PCM, and says

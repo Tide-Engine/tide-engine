@@ -2165,6 +2165,7 @@ static char *build_android(const char *root, const build_options *opts, char *pa
     desc.icon = sys_exists(icon) ? icon : NULL;
     char *pack = pack_of(gen);
     desc.pack = sys_exists(pack) ? pack : NULL; // The game's assets, as assets/game.pack
+    desc.microphone = b.info.microphone;
     char error[512];
     apk_key key;
     bool made;

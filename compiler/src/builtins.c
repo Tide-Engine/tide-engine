@@ -1060,6 +1060,8 @@ static const struct {
     {"Color", "gray", TY_COLOR, "TIDE_COLOR_GRAY"},
     {"Color", "clear", TY_COLOR, "TIDE_COLOR_CLEAR"},
     {"Color", "none", TY_COLOR, "TIDE_COLOR_NONE"},
+    {"Clip", "none", TY_CLIP, "((tide_clip_ref){0})"},
+    {"Clip", "Microphone", TY_CLIP, "TIDE_CLIP_MICROPHONE"},
     {"Draw", "window", TY_RENDER_TARGET, "((tide_render_target){.id = TIDE_RENDER_WINDOW})"},
     {"Draw", "list", TY_DRAW_LIST, "tide_draw_render_target(tide_draw, (tide_render_target){.id = TIDE_RENDER_WINDOW})"},
     {"Screen", "width", TY_FLOAT, "tide_ui->width"},
@@ -1078,6 +1080,16 @@ static const char *member_doc(const size_t i)
     if (strcmp(members[i].owner, "Color") == 0 && strcmp(members[i].member, "none") == 0) {
         return "No color, where one can be left out: a `Shape`'s `color2` by default, for a fill of one color. It's "
                "not a color to draw with: its alpha is under 0, so nothing shows.";
+    }
+    if (strcmp(members[i].owner, "Clip") == 0 && strcmp(members[i].member, "none") == 0) {
+        return "No clip, which is a `Clip`'s default: a `Sound` with it plays nothing, or, with an `effect`, is a source "
+               "that effect makes sound for from silence.";
+    }
+    if (strcmp(members[i].owner, "Clip") == 0 && strcmp(members[i].member, "Microphone") == 0) {
+        return "The microphone, as a clip a `Sound` plays: the voice is what the capture device hears, mono, which its "
+               "`effect` can filter and its bus plays or mutes (`volume` 0 to only process). The device is open while a "
+               "frame names such a `Sound` playing, and the system asks the player first on phones and the web: until "
+               "they allow it, silence. A one-shot (`Audio.Play`) of it plays nothing.";
     }
     if (strcmp(members[i].owner, "Cursor") == 0) {
         return "Whether the window holds the mouse's cursor right now: what the system says, not what `Cursor.Lock` "

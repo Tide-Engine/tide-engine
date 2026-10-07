@@ -3,7 +3,7 @@
 Sound is presentation, like drawing: it's this machine's, and nothing of it is in the match. A view says what should be sounding as it says what should be drawn, and a local handler plays a sound when the match sends an event. Nothing in the simulation hears any of it, so a match is the same on a machine with its speakers off.
 
 ::: info
-What's here: clips as assets (WAV and Ogg Vorbis), `Audio.Play`, `Sound` fields and the listener, buses, `audio` declarations that filter and make sound, and the device on every platform. The microphone is next; see the [spec](../spec.md#audio) for the whole design and what's still open.
+What's here: clips as assets (WAV and Ogg Vorbis), `Audio.Play`, `Sound` fields and the listener, buses, `audio` declarations that filter and make sound, the device on every platform, and the microphone. See the [spec](../spec.md#audio) for the whole design and what's still open.
 :::
 
 ## Clips
@@ -166,3 +166,25 @@ tide run --frames 300 --capture-audio run.wav
 A game with a window plays through the system's default output: WASAPI on Windows, CoreAudio on macOS, ALSA on Linux (loaded at run time, so games link nothing), AAudio on Android, and the browser's audio on the web. Whatever rate and channels the device has, the mixer's stereo at 48 kHz is resampled and mapped to it. A machine with no device, or none the game can open, says so once on stderr and plays nothing; nothing else differs.
 
 On the web, and on phones, a browser only plays once the player has touched the page: the page starts its audio at the first press or key. A web game's sound runs about 90 ms behind what the frame played, as the page's audio runs on a thread the game's code can't, and the game feeds it ahead. A page that goes to the background keeps the match running (see [web builds](../tools/cli.md)) and its sound with it.
+
+## The microphone
+
+`Clip.Microphone` is the capture device as a clip. A `Sound` that plays it is what the microphone hears, mono, which its `effect` can filter (a voice changer) and its bus plays or mutes: `volume` 0 to only process what's heard. A one-shot of it plays nothing: the microphone goes through a `Sound`, which says when it stops.
+
+```csharp
+local singleton Voice
+{
+    Sound ear;
+}
+
+view Listen(Devices devices, mut Voice voice)
+{
+    voice.ear.clip = Clip.Microphone;
+    voice.ear.effect = Robot { };
+    if (devices.keyboard.v.down) voice.ear.playing = !voice.ear.playing;
+}
+```
+
+The device is open while a frame names such a `Sound` playing, and closed when none does. Phones and browsers ask the player the first time: until they allow it, and in a browser until they've touched the page, the sound is silence, and the game tries again every second. An Android app only asks if the game says `Clip.Microphone` somewhere (its manifest then has `RECORD_AUDIO`); a macOS app needs a bundle that says why it listens (`NSMicrophoneUsageDescription`), which `tide build` doesn't make yet. Pitch doesn't apply to the microphone: it plays at the device's own pace, a few blocks behind it.
+
+A run with no window has no device: `--microphone voice.wav` plays a file into it instead, looped, so a test hears what a player would say (see [the command line](../tools/cli.md)). Nothing of what's heard reaches the match or the network: voice chat is a package for later, with the microphone as its source.
