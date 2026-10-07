@@ -16,3 +16,5 @@ docs/static/towers/
 docs/static/sumo/
 docs/static/examples/
 docs/static/samples/*/index.html
+docs/static/install.sh
+docs/static/install.ps1
