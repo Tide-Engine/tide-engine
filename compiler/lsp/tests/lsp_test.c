@@ -712,7 +712,8 @@ TIDE_TEST(lsp_meshes)
 
     open_document(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Me$sh(art.corners, [0, 1, 2], art.pixels);\n}\n");
     const char *mesh = request("textDocument/hover");
-    TIDE_CHECK(has(mesh, "Draw2D.Mesh(List<Vertex> vertices, List<int> indices, Grid2<Color> texture, Filter filter = Filter.Bilinear)"));
+    TIDE_CHECK(has(mesh, "Draw2D.Mesh(List<Vertex> vertices, List<int> indices, Grid2<Color> texture, Filter filter = Filter.Bilinear, "
+                         "Wrap wrap = Wrap.Clamp)"));
     TIDE_CHECK(has(mesh, "Triangles: three of `indices` each"));
     // Each version's doc, 2D and 3D
     open_document(MESH_TYPES "view V(Art art)\n{\n    Draw3D.SetCam$era(float3(0, 0, 0), quaternion.identity, 60);\n}\n");
@@ -724,8 +725,8 @@ TIDE_TEST(lsp_meshes)
     // Its two forms, a 2D mesh's first for a List<Vertex>, and each parameter by what's written before it
     open_document(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Mesh(art.corners, $\n}\n");
     const char *indices = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(indices, "\"label\":\"Draw2D.Mesh(vertices, indices[, texture[, filter]][, vert][, frag])\""));
-    TIDE_CHECK(!has(indices, "\"label\":\"Draw3D.Mesh(vertices, indices, transform[, texture[, filter]][, vert][, frag])\""));
+    TIDE_CHECK(has(indices, "\"label\":\"Draw2D.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag])\""));
+    TIDE_CHECK(!has(indices, "\"label\":\"Draw3D.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]][, vert][, frag])\""));
     TIDE_CHECK(has(indices, "\"activeSignature\":0,\"activeParameter\":1"));
     TIDE_CHECK(has(indices, "{\"label\":[22,29],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A `List<int>`"));
     open_document(MESH_TYPES "view V(Art art)\n{\n    Draw2D.Mesh(art.corners, [0, 1, 2], $\n}\n"); // A list's commas aren't the call's
@@ -836,6 +837,82 @@ TIDE_TEST(lsp_draw_depth)
     // A game can't rename one of its own to the enum's name
     open_document("scene Main { }\ncomponent Lay$er { int z; }\n");
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Depth\""), "built into"));
+}
+
+// What a uv past a texture's edges reads: the built-in Wrap, after the filter in
+// a mesh draw and in a frag's Sample, in completion, hovers and signature help,
+// with what's wrong said where it's written the other way round.
+TIDE_TEST(lsp_wrap)
+{
+    start();
+#define WRAP_TYPES                                                                                    \
+    "scene Main { }\n"                                                                                \
+    "struct Corner\n{\n    float2 position;\n    float2 uv;\n}\n"                                      \
+    "local singleton Art\n{\n    Grid2<Color> tiles = Grid2(4, 4);\n    RenderTarget target;\n"        \
+    "    List<Vertex> flat;\n    List<Vertex3> solid;\n    List<Corner> corners;\n    Wrap kept = Wrap.Mirror;\n}\n"
+#define IN_VIEW(code) WRAP_TYPES "view V(Art art)\n{\n    " code "\n}\n"
+#define IN_FRAG(code) WRAP_TYPES "frag Tile(Corner vertex, out Color color, Art art)\n{\n    " code "\n}\n"
+    open_document(WRAP_TYPES "frag Ti$le(Corner vertex, out Color color, Art art)\n{\n"
+                             "    color = art.tiles.Sample(vertex.uv, Filter.Point, Wrap.Repeat) * art.tiles.Sample(vertex.uv);\n}\n"
+                             "view V(Art art)\n{\n"
+                             "    Draw2D.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.Repeat);\n"
+                             "    Draw2D.Mesh(art.flat, [0, 1, 2], art.target.color, Filter.Bilinear, art.kept);\n"
+                             "    Draw3D.Mesh(art.solid, [0, 1, 2], float4x4.identity, art.tiles, Filter.Point, Wrap.Mirror);\n"
+                             "    art.target.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.Repeat);\n"
+                             "    Draw2D.Mesh(art.corners, [0, 1, 2], art.tiles, Filter.Point, Wrap.Repeat);\n"
+                             "    Draw2D.Mesh(art.corners, [0, 1, 2], Tile);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // What a frag samples, with how: on its hover
+    const char *frag = request("textDocument/hover");
+    TIDE_CHECK(has(frag, "`Art.tiles` (`Filter.Point`) (`Wrap.Repeat`)") && has(frag, ", `Art.tiles`"));
+
+    // Its members, where a draw or a Sample takes one, and the type where a field is declared
+    const char *members = complete(IN_VIEW("Draw2D.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.$);"));
+    TIDE_CHECK(offers(members, "Clamp") && offers(members, "Repeat") && offers(members, "Mirror") && !offers(members, "Point"));
+    const char *sampled = complete(IN_FRAG("color = art.tiles.Sample(vertex.uv, Filter.Point, Wrap.$);"));
+    TIDE_CHECK(offers(sampled, "Clamp") && offers(sampled, "Repeat") && offers(sampled, "Mirror"));
+    const char *types = complete(WRAP_TYPES "local singleton More\n{\n    $\n}\n");
+    TIDE_CHECK(offers(types, "Wrap") && offers(types, "Filter"));
+
+    // A draw's two that a call can leave out, and what each is
+    open_document(IN_VIEW("Draw2D.Me$sh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.Repeat);"));
+    const char *mesh = request("textDocument/hover");
+    TIDE_CHECK(has(mesh, "Grid2<Color> texture, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp)"));
+    TIDE_CHECK(has(mesh, "the texture again (`Wrap.Repeat`)"));
+    open_document(IN_VIEW("Draw3D.Me$sh(art.solid, [0, 1, 2], float4x4.identity, art.target.color, Filter.Point, Wrap.Repeat);"));
+    TIDE_CHECK(has(request("textDocument/hover"), "float4x4 transform, Texture texture, Filter filter = Filter.Bilinear, "
+                                                 "Wrap wrap = Wrap.Clamp)"));
+    open_document(IN_VIEW("Draw2D.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, $"));
+    const char *after = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(after, "\"label\":\"Draw2D.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag])\""));
+    TIDE_CHECK(has(after, "\"activeParameter\":4") && has(after, "What a `uv` past 0 or 1 reads, written after the filter"));
+    open_document(IN_VIEW("Draw3D.Mesh(art.solid, [0, 1, 2], float4x4.identity, art.tiles, Filter.Point, Wrap.Re$peat);"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":5"));
+    open_document(IN_VIEW("Draw2D.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, art.ke$pt);")); // A value that's one
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":4"));
+    // ...and a Sample's
+    open_document(IN_FRAG("color = art.tiles.Sample(vertex.uv, Filter.Point, $"));
+    const char *sample = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(sample, "Grid2<Color>.Sample(float2 uv, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color"));
+    TIDE_CHECK(has(sample, "\"activeParameter\":2") && has(sample, "the grid again (`Wrap.Repeat`)"));
+
+    // Written before the filter, or where the GPU can't be told
+    open_document(IN_VIEW("Draw2D.Mesh(art.flat, [0, 1, 2], art.tiles, Wrap.Repeat);"));
+    TIDE_CHECK(has(last_sent(), "a mesh's wrap comes after its filter") && has(last_sent(), "'Filter.Bilinear' is the filter of a draw"));
+    open_document(IN_FRAG("color = art.tiles.Sample(vertex.uv, Wrap.Repeat);"));
+    TIDE_CHECK(has(last_sent(), "a wrap comes after the filter: 'texture.Sample(uv, Filter.Bilinear, Wrap.Repeat)'"));
+    open_document(IN_FRAG("color = art.tiles.Sample(vertex.uv, Filter.Point, art.kept);"));
+    TIDE_CHECK(has(last_sent(), "the wrap is written here, 'Wrap.Clamp', 'Wrap.Repeat' or 'Wrap.Mirror'"));
+    open_document(IN_VIEW("Draw2D.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.Tile);"));
+    TIDE_CHECK(has(last_sent(), "enum 'Wrap' has no member 'Tile'") && has(last_sent(), "the texture again, 'Wrap.Repeat'"));
+    // The name is the engine's: a game's own function or type takes another, and no rename gives it
+    open_document("scene Main { }\nfloat Wrap(float value)\n{\n    return value;\n}\n");
+    TIDE_CHECK(has(last_sent(), "'Wrap' is built into the engine"));
+    open_document("scene Main { }\nfloat Aro$und(float value)\n{\n    return value;\n}\n");
+    TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Wrap\""), "built into"));
+#undef IN_FRAG
+#undef IN_VIEW
+#undef WRAP_TYPES
 }
 
 // Calls listed with commas before one block: one to a line, each starting where the first does, the brace under them.
@@ -1063,7 +1140,7 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(has(pixel, "Where the pixel is on the screen"));
     const char *grid = complete(IN_FRAG("color = models.wood.$"));
     TIDE_CHECK(offers(grid, "Sample") && !offers(grid, "Clear") && !offers(grid, "size"));
-    TIDE_CHECK(has(grid, "Grid2<Color>.Sample(float2 uv, Filter filter = Filter.Bilinear) -> Color"));
+    TIDE_CHECK(has(grid, "Grid2<Color>.Sample(float2 uv, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color"));
     const char *list = complete(IN_FRAG("var n = models.crate.$"));
     TIDE_CHECK(!offers(list, "Add") && !offers(list, "count")); // The GPU has no lists
     TIDE_CHECK(offers(complete(IN_FRAG("color = box.$")), "tint"));
@@ -1152,7 +1229,7 @@ TIDE_TEST(lsp_shaders_hover)
     const char *discard = hover_at(39, 38);
     TIDE_CHECK(has(discard, "Pixel.Discard()") && has(discard, "Leaves the pixel undrawn"));
     const char *sample = hover_at(38, 25);
-    TIDE_CHECK(has(sample, "Grid2<Color>.Sample(float2 uv, Filter filter = Filter.Bilinear) -> Color") && has(sample, "Reads the grid as a texture"));
+    TIDE_CHECK(has(sample, "Grid2<Color>.Sample(float2 uv, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color") && has(sample, "Reads the grid as a texture"));
     TIDE_CHECK(has(hover_at(43, 12), "A vert and a frag, named last, run on the GPU"));
     // They're the GPU's: no C to go to
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 35, 80, ""), "\"result\":null"));
@@ -1330,21 +1407,21 @@ TIDE_TEST(lsp_shaders_signature_help)
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeSignature\":0,\"activeParameter\":3")); // A texture, at the earliest
     open_document(IN_VIEW("Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Wave, $"));
     const char *frag = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(frag, "\"activeSignature\":0,\"activeParameter\":6")); // After a vert, the frag
-    TIDE_CHECK(has(frag, "{\"label\":[64,68],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A vert, by name"));
-    TIDE_CHECK(has(frag, "{\"label\":[72,76],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A frag, by name"));
+    TIDE_CHECK(has(frag, "\"activeSignature\":0,\"activeParameter\":7")); // After a vert, the frag
+    TIDE_CHECK(has(frag, "{\"label\":[72,76],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A vert, by name"));
+    TIDE_CHECK(has(frag, "{\"label\":[80,84],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A frag, by name"));
     TIDE_CHECK(has(frag, "A vert and a frag, named last, run on the GPU"));
     // In a call that's whole, each name is what it is
     open_document(IN_VIEW("Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Wa$ve, Shade);"));
-    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":5"));
-    open_document(IN_VIEW("Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Sha$de);"));
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":6"));
+    open_document(IN_VIEW("Draw3D.Mesh(models.crate, models.faces, float4x4.identity, Sha$de);"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":7"));
 #undef IN_VIEW
 
     open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, Models models)\n{\n"
                                "    color = models.wood.Sample(vertex.uv, $\n}\n");
     const char *sample = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(sample, "\"label\":\"Grid2<Color>.Sample(float2 uv, Filter filter = Filter.Bilinear) -> Color\"") && has(sample, "\"activeParameter\":1"));
+    TIDE_CHECK(has(sample, "\"label\":\"Grid2<Color>.Sample(float2 uv, Filter filter = Filter.Bilinear, Wrap wrap = Wrap.Clamp) -> Color\"") && has(sample, "\"activeParameter\":1"));
 }
 
 // Formatting, folding, selection, inlay hints and moving one to a file of its
@@ -4583,7 +4660,7 @@ TIDE_TEST(lsp_render_targets_texture_members_and_blit)
     TIDE_CHECK(has(request("textDocument/hover"), "Draw2D.Clear"));
     snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Mesh([], [], $\n}\n", types);
     open_document(program);
-    TIDE_CHECK(has(request("textDocument/signatureHelp"), "[, texture[, filter]]"));
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "[, texture[, filter[, wrap]]]"));
     snprintf(program, sizeof program, "%sview V(Buffers buffers)\n{\n    buffers.scene.Resize(16, $\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "Resize(float width, float height)"));

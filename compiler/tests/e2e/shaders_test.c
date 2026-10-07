@@ -111,7 +111,7 @@ TIDE_TEST(shaders_a_draw_sends_what_its_frag_and_vert_read)
 
     // The grids it samples are textures: wood blended, moss the nearest cell
     TIDE_CHECK(s->texture_count == 2 && boxes->textures[0] != 0 && boxes->textures[1] != 0);
-    TIDE_CHECK(boxes->textures[0] != boxes->textures[1] && boxes->blended == 1u);
+    TIDE_CHECK(boxes->textures[0] != boxes->textures[1] && boxes->sampling == 1u);
     const tide_draw_texture *wood = &draw.textures[boxes->textures[0] - 1u];
     TIDE_CHECK(wood->width == 2 && wood->height == 2 && wood->pixels[0] == 255 && wood->pixels[1] == 0);
 
@@ -139,7 +139,7 @@ TIDE_TEST(shaders_a_frag_or_a_vert_alone_and_neither)
     const tide_draw_run *waved = run(2);
     TIDE_REQUIRE(waved && waved->shader);
     TIDE_CHECK(strcmp(waved->shader->name, "Wave on BoxVertex") == 0 && waved->shader->texture_count == 1);
-    TIDE_CHECK(waved->textures[0] == run(0)->textures[0] && waved->blended == 0u);
+    TIDE_CHECK(waved->textures[0] == run(0)->textures[0] && waved->sampling == 0u);
     TIDE_CHECK(waved->shader->uniform_floats == 1 && waved->shader->uniform_ints == 1); // Time
 
     // Neither: a mesh of 12 bytes a vertex, drawn as it is
@@ -162,7 +162,7 @@ TIDE_TEST(shaders_a_frag_or_a_vert_alone_and_neither)
 
     const tide_draw_run *textured = run(7);
     TIDE_REQUIRE(textured && textured->shader);
-    TIDE_CHECK(textured->shader != flat->shader && textured->shader->texture_count == 1 && textured->blended == 1u);
+    TIDE_CHECK(textured->shader != flat->shader && textured->shader->texture_count == 1 && textured->sampling == 1u);
     TIDE_CHECK(textured->mesh == flat->mesh);
 
     const tide_draw_run *tinted = run(8);

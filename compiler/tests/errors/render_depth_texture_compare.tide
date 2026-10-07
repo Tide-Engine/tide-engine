@@ -1,4 +1,4 @@
-// expect: a Texture has Sample(uv[, filter]), not 'Compare'
+// expect: a Texture has Sample(uv[, filter[, wrap]]), not 'Compare'
 // expect: Compare reads a render target's depth, a DepthTexture: 'target.depth'
 scene Main { }
 local singleton Lamp { Texture image; }

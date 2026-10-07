@@ -75,7 +75,7 @@ TIDE_TEST(render_depth_targets_say_what_they_hold_and_frags_read_their_depth)
         TIDE_CHECK(t->space == TIDE_PIXELS_TARGET_DEPTH && t->pixels == NULL);
         TIDE_CHECK(t->id == (i == 1 ? lamp->scene.id : lamp->map.id));
     }
-    TIDE_CHECK(lit->textures[0] == lit->textures[2] && lit->blended == 0);
+    TIDE_CHECK(lit->textures[0] == lit->textures[2] && lit->sampling == 0);
     // A vert's come first
     const tide_draw_run *sunk = run_through("Sink and Lit on Vertex3");
     TIDE_REQUIRE(sunk && sunk->shader->texture_count == 3);
