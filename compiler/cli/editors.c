@@ -178,7 +178,7 @@ int tide_editors(const char *root, const bool only_updates)
     }
     if (found == 0 && !only_updates) {
         printf("tide found no editor to add Tide to (VS Code, Cursor, VSCodium or Windsurf).\n"
-               "For JetBrains IDEs and others, see https://github.com/BlenMiner/tide-engine#editors\n");
+               "For JetBrains IDEs and others, see https://tide-engine.dev/tools/editors\n");
     }
     free(vsix);
     return failed > 0 ? 1 : 0;

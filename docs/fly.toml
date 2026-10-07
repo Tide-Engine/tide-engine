@@ -20,6 +20,10 @@ primary_region = 'fra'
   ADDRESS_HEADER = 'Fly-Client-IP'
   BODY_SIZE_LIMIT = '16K'
   TIDE_ACCESS_FILE = '/data/access-requests.jsonl'
+  # Whose releases /releases gives (releases.js). The token that reads them is
+  # a secret: fly secrets set TIDE_RELEASES_TOKEN=<a token that can only read
+  # that repository's contents>
+  TIDE_RELEASES_REPO = 'BlenMiner/tide-engine'
 
 [[mounts]]
   source = 'access_requests'
