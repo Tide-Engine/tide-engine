@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "tide/net.h"
+#include "tide/pack.h"
 #include "tide/page.h"
 
 static void reindex_meshes(tide_draw_list *d);
@@ -145,6 +146,13 @@ void tide_render_targets_free(void)
     }
 }
 
+// Lets a texture's pixels go, where they're the list's own copy: an image of
+// the pack's is drawn where the pack has it (pack_texture), and stays there.
+static void free_pixels(const tide_draw_texture *t)
+{
+    if (t->capacity) free(t->pixels);
+}
+
 void tide_draw_reset(tide_draw_list *d)
 {
     d->count = 0;
@@ -169,7 +177,7 @@ void tide_draw_reset(tide_draw_list *d)
     for (uint32_t i = 0; i < d->texture_count; i++) {
         tide_draw_texture *t = &d->textures[i];
         if (t->frame != d->frame) {
-            free(t->pixels);
+            free_pixels(t);
             continue;
         }
         d->textures[kept++] = *t;
@@ -206,7 +214,7 @@ static void free_meshes(tide_draw_list *d)
 
 void tide_draw_free(tide_draw_list *d)
 {
-    for (uint32_t i = 0; i < d->texture_count; i++) free(d->textures[i].pixels);
+    for (uint32_t i = 0; i < d->texture_count; i++) free_pixels(&d->textures[i]);
     free_meshes(d);
     free(d->commands);
     free(d->text);
@@ -714,7 +722,7 @@ void tide_draw_defaults(tide_draw_list *d)
 void tide_draw_forget(tide_draw_list *d)
 {
     const bool had_targets = d->target_count != 0;
-    for (uint32_t i = 0; i < d->texture_count; i++) free(d->textures[i].pixels);
+    for (uint32_t i = 0; i < d->texture_count; i++) free_pixels(&d->textures[i]);
     d->texture_count = 0;
     // The window's cameras stay. Its clip goes, and what blocks saved, as
     // none is open between two frames.
@@ -1181,9 +1189,46 @@ static uint32_t texture_slot(tide_draw_list *d, const tide_texture *texture)
     return slot;
 }
 
+// The list's texture for an image of the game's pack, whose pixels are where
+// the pack has them: nothing is copied. They're noted again each time a
+// command names the image, so a frame's textures point into the pack that's
+// loaded while the frame is recorded.
+static uint32_t pack_texture(tide_draw_list *d, const uint64_t version, const int32_t width, const int32_t height,
+                             const uint8_t *pixels)
+{
+    tide_draw_texture *t = NULL;
+    for (uint32_t i = 0; i < d->texture_count && !t; i++) {
+        if (d->textures[i].id == version && d->textures[i].space == TIDE_PIXELS_PACK) t = &d->textures[i];
+    }
+    if (!t) {
+        d->textures = grow(d->textures, d->texture_count, &d->texture_capacity, 1, sizeof(tide_draw_texture), 8u);
+        t = &d->textures[d->texture_count++];
+        *t = (tide_draw_texture){.id = version, .space = TIDE_PIXELS_PACK, .epoch = d->epoch};
+    }
+    t->version = version;
+    t->width = width;
+    t->height = height;
+    t->frame = d->frame;
+    t->pixels = (uint8_t *)(uintptr_t)pixels; // The pack's own: `capacity` stays 0, and nothing here frees them
+    return (uint32_t)(t - d->textures) + 1u;
+}
+
+// An image of the game's pack, which a Texture names by its declaration
+// (tide_pack_texture_of): whatever the pack that's loaded has under that
+// name, as it is now. The list's texture is told by what's in the image, so
+// two names of one file are one texture, and a file that changed is another.
+// A name the pack has no image under (a Texture kept from another build's) is
+// no texture, as the default Texture is.
+static uint32_t pack_slot(tide_draw_list *d, const tide_texture *texture)
+{
+    tide_texture image;
+    if (!tide_pack_texture_find(texture->version, &image)) return 0;
+    return pack_texture(d, image.version, image.width, image.height, image.pixels);
+}
+
 uint32_t tide_draw_texture_source(tide_draw_list *d, const tide_texture_ref texture)
 {
-    if (!texture.target.id) return texture_slot(d, &texture.image);
+    if (!texture.target.id) return texture.image.pixels ? texture_slot(d, &texture.image) : pack_slot(d, &texture.image);
     const tide_render_target target = tide_render_target_resolve(texture.target);
     return tide_draw_target_texture_sized(d, target.id, target.size);
 }
@@ -1767,6 +1812,7 @@ static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, co
     if (t->space == TIDE_PIXELS_TARGET || t->space == TIDE_PIXELS_TARGET_DEPTH) {
         return target_texture_version(d, t->space, t->id, t->target, t->version);
     }
+    if (t->space == TIDE_PIXELS_PACK) return pack_texture(d, t->id, t->width, t->height, t->pixels);
     uint8_t *pixels;
     const uint32_t slot = tide_draw_texture_slot(d, t->space, t->id, t->version, t->width, t->height, &pixels);
     if (pixels) memcpy(pixels, t->pixels, (size_t)t->width * (size_t)t->height * 4u);

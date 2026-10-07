@@ -7674,6 +7674,115 @@ TIDE_TEST(lsp_asset_path_completion)
     lsp_free(&server);
 }
 
+// Texture assets, and [Filter] and [Wrap] before a texture's declaration:
+// hovers, what's offered in the brackets, PNGs in a Texture's path, and the
+// checker's diagnostics.
+TIDE_TEST(lsp_asset_textures_and_declared_sampling)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_tx");
+    make_folder("lsp_tx/art");
+    // A PNG of 2 by 2 pixels
+    static const unsigned char png[] = {
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00,
+        0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x06, 0x00, 0x00, 0x00, 0x72, 0xb6, 0x0d, 0x24, 0x00, 0x00, 0x00, 0x12, 0x49,
+        0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0x0c, 0x81, 0x34, 0x18, 0x00, 0x00, 0x49, 0xc8,
+        0x09, 0xf7, 0x03, 0xd9, 0x64, 0xf1, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
+    static const char main_file[] = "[Filter(Filter.Point), Wrap(Wrap.Repeat)]\n"
+                                    "asset Texture tiles = \"art/tile.png\";\n"
+                                    "[Wrap(Wrap.Mirror)]\n"
+                                    "asset Grid2<Color> glass = \"art/tile.png\";\n"
+                                    "asset Texture plain = \"art/tile.png\";\n"
+                                    "scene Main { }\n"
+                                    "local singleton Art\n"
+                                    "{\n"
+                                    "    List<Vertex> flat;\n"
+                                    "    [Filter(Filter.Point)] Grid2<Color> paint = Grid2(2, 2);\n"
+                                    "    Texture kept;\n"
+                                    "}\n"
+                                    "view V(mut Art art)\n"
+                                    "{\n"
+                                    "    art.kept = tiles;\n"
+                                    "    Draw2D.Mesh(art.flat, [0, 1, 2], tiles);\n"
+                                    "    Draw2D.Mesh(art.flat, [0, 1, 2], glass);\n"
+                                    "    Draw2D.Mesh(art.flat, [0, 1, 2], art.paint);\n"
+                                    "    Draw2D.Mesh(art.flat, [0, 1, 2], plain);\n"
+                                    "}\n";
+    write_file("lsp_tx/main.tide", main_file);
+    write_bytes("lsp_tx/art/tile.png", (const char *)png, sizeof png);
+    write_file("lsp_tx/art/other.txt", "text");
+    char root[700], uri_main[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_tx", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_tx/main.tide", dir);
+
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    open_uri(uri_main, main_file);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    // The attributes, and the enum member each names
+    const char *hover = request_at(uri_main, "textDocument/hover", 0, 3, "");
+    TIDE_CHECK(has(hover, "[Filter(Filter.Point)]") && has(hover, "How this texture is read between its cells"));
+    hover = request_at(uri_main, "textDocument/hover", 0, 17, "");
+    TIDE_CHECK(has(hover, "Filter.Point = 0"));
+    hover = request_at(uri_main, "textDocument/hover", 0, 24, "");
+    TIDE_CHECK(has(hover, "[Wrap(Wrap.Repeat)]") && has(hover, "past this texture's edges"));
+    hover = request_at(uri_main, "textDocument/hover", 0, 34, "");
+    TIDE_CHECK(has(hover, "Wrap.Repeat = 1"));
+    hover = request_at(uri_main, "textDocument/hover", 9, 7, "");
+    TIDE_CHECK(has(hover, "[Filter(Filter.Point)]"));
+
+    // An asset says what it is, and how it's sampled where a draw doesn't say
+    hover = request_at(uri_main, "textDocument/hover", 1, 16, "");
+    TIDE_CHECK(has(hover, "asset Texture tiles") && has(hover, "an image to draw with"));
+    TIDE_CHECK(has(hover, "it's sampled with `Filter.Point` and `Wrap.Repeat`."));
+    hover = request_at(uri_main, "textDocument/hover", 3, 21, "");
+    TIDE_CHECK(has(hover, "asset Grid2<Color> glass") && has(hover, "it's sampled with `Wrap.Mirror`.") && !has(hover, "an image to draw with"));
+    hover = request_at(uri_main, "textDocument/hover", 4, 16, "");
+    TIDE_CHECK(has(hover, "asset Texture plain") && !has(hover, "it's sampled with"));
+    hover = request_at(uri_main, "textDocument/hover", 15, 39, ""); // ...where a draw names it too
+    TIDE_CHECK(has(hover, "asset Texture tiles") && has(hover, "`Filter.Point` and `Wrap.Repeat`"));
+
+    // A Texture's path takes PNGs, and a list of them the globs
+    static const char paths[] = "asset Texture one = \"art/\";\n"
+                                "asset List<Texture> many = \"art/\";\n"
+                                "scene Main { }\n";
+    open_uri(uri_main, paths);
+    const char *completion = request_at(uri_main, "textDocument/completion", 0, 25, "");
+    TIDE_CHECK(offers(completion, "tile.png") && !offers(completion, "other.txt") && !offers(completion, "*.png"));
+    completion = request_at(uri_main, "textDocument/completion", 1, 32, "");
+    TIDE_CHECK(offers(completion, "tile.png") && !offers(completion, "other.txt"));
+    TIDE_CHECK(offers(completion, "*.png") && offers(completion, "**/*.png"));
+
+    // Where one can't go, the checker says where it does
+    open_uri(uri_main, "scene Main { }\nlocal singleton Art\n{\n    [Filter(Filter.Point)] Texture kept;\n}\n");
+    TIDE_CHECK(has(last_sent(), "a Texture field holds whichever image it's given"));
+    TIDE_CHECK(has(last_sent(), "an image of the game's says it on its own declaration"));
+    open_uri(uri_main, "[Wrap(Wrap.Repeat), Wrap(Wrap.Mirror)]\nasset Texture tiles = \"art/tile.png\";\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "'tiles' already has a Wrap"));
+    open_uri(uri_main, "scene Main { }\nlocal singleton Art\n{\n    List<Texture> frames;\n}\n");
+    TIDE_CHECK(has(last_sent(), "a list or a map can't hold rendering resources"));
+    TIDE_CHECK(has(last_sent(), "asset List<Texture> frames"));
+
+    remove_game_file("lsp_tx/main.tide");
+    remove_game_file("lsp_tx/art/tile.png");
+    remove_game_file("lsp_tx/art/other.txt");
+    remove_game_file("lsp_tx/.tide/assets.sha256");
+    remove_game_file("lsp_tx/.tide/.gitignore");
+    remove_folder("lsp_tx/.tide");
+    remove_folder("lsp_tx/art");
+    remove_folder("lsp_tx");
+    clear_sent();
+    lsp_free(&server);
+
+    // In the brackets: before a declaration and before a field
+    start();
+    const char *before = complete("[$]\nsingleton Rules\n{\n    int rounds;\n}\nscene Main { }\n");
+    TIDE_CHECK(offers(before, "Filter") && offers(before, "Wrap") && offers(before, "Stage"));
+    const char *field = complete("scene Main { }\nlocal singleton Art\n{\n    [$] Grid2<Color> paint = Grid2(2, 2);\n}\n");
+    TIDE_CHECK(offers(field, "Filter") && offers(field, "Wrap") && offers(field, "Snap"));
+}
+
 // A game with no asset: nothing is registered and no .tide/ is made. An
 // editor that takes no registration is asked about every rename.
 TIDE_TEST(lsp_game_without_assets_changes_nothing)

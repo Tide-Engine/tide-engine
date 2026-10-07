@@ -1,0 +1,17 @@
+// expect: rendering resources belong to this machine, so the match can't use them
+asset Texture hero = "../e2e/assets/hero.png";
+
+singleton Probe
+{
+    int frames;
+}
+
+system Count(mut Probe probe)
+{
+    var image = hero;
+    probe.frames += 1;
+}
+
+scene Main
+{
+}
