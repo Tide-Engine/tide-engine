@@ -21,6 +21,7 @@ typedef enum asset_kind {
     // Cubemap: six PNGs a glob matches, each named for its face by how its name ends before the extension (px,
     // nx, py, ny, pz, nz), decoded: its items are the six in that order
     ASSET_CUBEMAP,
+    ASSET_CLIP,    // Clip: a WAV, checked here and kept as it is; the engine decodes it as it's first played
 } asset_kind;
 
 typedef struct asset_match {

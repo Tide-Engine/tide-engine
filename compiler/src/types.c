@@ -32,6 +32,7 @@ static const struct {
     {"DepthTexture", TY_DEPTH_TEXTURE, "depth", "tide_depth_ref"},
     {"Cubemap", TY_CUBEMAP, "cubemap", "tide_cubemap_ref"},
     {"RenderTarget", TY_RENDER_TARGET, "target", "tide_render_target"},
+    {"Clip", TY_CLIP, "clip", "tide_clip_ref"},
 };
 
 #define BUILTIN_COUNT (sizeof builtins / sizeof builtins[0])

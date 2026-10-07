@@ -1,0 +1,17 @@
+// expect: the match runs the same on every machine, so it can't play sounds
+asset Clip beep = "../e2e/assets/beep.wav";
+
+singleton Probe
+{
+    int ticks;
+}
+
+system Count(mut Probe probe)
+{
+    probe.ticks += 1;
+    Audio.Play(beep);
+}
+
+scene Main
+{
+}
