@@ -2938,7 +2938,8 @@ Implemented, awaiting approval:
 
 - `settings { ... }` sets the engine's settings for the game. Each is set without a type: `tickRate = 30;`. The game's own values are constants (see Constants).
 - `settings` is a keyword only at the top level of a file, so it still works as a name everywhere else.
-- Every setting has a default, so the block only lists what it changes. A game has at most one block, in any of its files.
+- Every setting has a default, so a block only lists what it changes.
+- A game can have several blocks, in any of its files, and together they're one list of what it sets: each sets what the others don't. A setting that two of them set is an error, as one set twice in a block is. A second block is no error by itself: what clashes is two that set the same thing.
 - Values are constant expressions, and can name constants.
 - Settings are part of the build, so every machine in a match has the same ones.
 - The editor completes the settings' names and shows each one's default and what it does. A name that isn't a setting is an error that says which one was meant.
@@ -2974,7 +2975,7 @@ Implemented, awaiting approval:
   - Closed, the host measures nothing for it: the frame rate is frames counted, and the ping is the session's. A frame's work, the systems' times and the memory are measured while the list is open. Timing averages update every half second; rendering's CPU cost is part of the CPU total and has its own `render` line, indented under `cpu`. Desktop OpenGL and WebGPU devices with timestamp queries show asynchronous `gpu` drawing time, including render targets and excluding the drawer and display wait (WebGPU sums pass durations). Unsupported backends show no GPU line. CPU and GPU overlap, so their times aren't added. Closing or reloading discards old timings.
   - What's picked, to confirm: that it's a drawer at all, and closed by default; the key, F8, beside the profiler's F7; what the one line says, and that the ping is in it only when another machine runs the match; that `tide run --stats` alone starts it open; that it shows outside a match too, where the stats showed nothing before; that a game can't ask where it is, and leaves the corner free by its own numbers (about 80 by 40 pixels, 190 wide with a ping); the two columns, the groups, `render` under `cpu`, a system keeping its row, and the panel's width that only grows while it's open (2026-10-07, for the owner's ask that it read better and shift less; the draw calls in the GPU line's label, the bandwidth on one line and no tick line were their own asks); and the names in C (`tide/stats.h`, `tide_run_desc.stats_open`, `tide_platform_draw_over`).
 - `version` is text written out, or a constant that is: the version people see, like `1.2.0`, one to three numbers between dots, which Android and iOS both take (iOS's version has to be). Without it, it's `1.0`. The number app stores order updates by is each build's own: on Android, the minutes since 2020.
-- A setting that's set twice, a name that isn't a setting, and a type written before one are errors. The last two say that a game's own values are constants.
+- A setting that's set twice, a name that isn't a setting, and a type written before one are errors. The first is at the second place the setting is set, in the same block or in another, and says where the other one is, with its file when that's another. Set twice to the same value, it's still an error. The last two say that a game's own values are constants.
 - In generated C, the settings are in `tide_game_api` (`tick_rate` and `title`), in the `.c` rather than the header, so they don't change the game's hash.
 
 ### Open

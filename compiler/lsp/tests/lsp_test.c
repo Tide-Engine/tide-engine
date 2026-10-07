@@ -2477,6 +2477,14 @@ TIDE_TEST(lsp_settings)
     TIDE_CHECK(offers(complete("const int RATE = 30;\nsettings\n{\n    tickRate = $\n}\nscene Main { }\n"), "RATE"));
     TIDE_CHECK(offers(complete("scene Main { }\n$\n"), "settings"));
 
+    // A game's blocks are one list: each sets what the others don't, and is offered what none does
+    open_document("settings { tickRate = 30; }\nsettings { title = \"x\"; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *other = complete("settings { tickRate = 30; }\nsettings\n{\n    stats = true;\n    $\n}\nscene Main { }\n");
+    TIDE_CHECK(!offers(other, "tickRate") && !offers(other, "stats"));
+    TIDE_CHECK(offers(other, "title"));
+    TIDE_CHECK(offers(complete("settings\n{\n    $\n}\nsettings { tickRate = 30; }\nscene Main { }\n"), "title"));
+
     open_document(game);
     const char *symbols = request("textDocument/documentSymbol");
     TIDE_CHECK(has(symbols, "\"name\":\"settings\",\"detail\":\"the engine's\",\"kind\":19"));
@@ -4329,16 +4337,16 @@ TIDE_TEST(lsp_unused_locals)
 // marked as unnecessary.
 TIDE_TEST(lsp_diagnostic_notes_and_tags)
 {
-    static const char twice[] = "settings { tickRate = 30; }\nsettings { title = \"x\"; }\nscene Main { }\n";
+    static const char twice[] = "settings { tickRate = 30; }\nsettings { tickRate = 20; }\nscene Main { }\n";
     start_with("{\"capabilities\":{\"textDocument\":{\"publishDiagnostics\":{\"relatedInformation\":true}}}}");
     open_document(twice);
-    TIDE_CHECK(has(last_sent(), "\"message\":\"a game has one 'settings' block\",\"relatedInformation\":[{\"location\":"
-                                "{\"uri\":\"file:///test.tide\",\"range\":{\"start\":{\"line\":0,\"character\":0}"));
-    TIDE_CHECK(has(last_sent(), "\"message\":\"the other one is in /test.tide, on line 1\"}]"));
+    TIDE_CHECK(has(last_sent(), "\"message\":\"'tickRate' is set twice\",\"relatedInformation\":[{\"location\":"
+                                "{\"uri\":\"file:///test.tide\",\"range\":{\"start\":{\"line\":0,\"character\":11}"));
+    TIDE_CHECK(has(last_sent(), "\"message\":\"the other one is on line 1\"}]"));
     TIDE_CHECK(!has(last_sent(), "\\nnote: the other one"));
     start(); // An editor that doesn't show them keeps them in the message
     open_document(twice);
-    TIDE_CHECK(has(last_sent(), "a game has one 'settings' block\\nnote: the other one is in"));
+    TIDE_CHECK(has(last_sent(), "'tickRate' is set twice\\nnote: the other one is on"));
 
     open_document("component Body { float2 position; }\nsingleton Score { int total; }\n"
                   "event(Spawned) Setup(with Main) { Spawn(Body); }\n"

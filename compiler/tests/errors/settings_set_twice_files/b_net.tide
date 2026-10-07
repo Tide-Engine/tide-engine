@@ -1,0 +1,7 @@
+// expect: 'hostMigration' is set twice
+// expect: a_game.tide, on line 4
+settings
+{
+    tickRate = 30;
+    hostMigration = true;
+}

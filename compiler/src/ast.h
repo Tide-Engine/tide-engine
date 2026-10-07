@@ -1241,7 +1241,7 @@ typedef struct program {
     VEC(struct fix) fixes;     // Quick fixes for editors
 
     // The engine's settings for the game (builtins.h), from `settings { ... }`
-    VEC(decl *) settings;      // Each block written, though a game has one
+    VEC(decl *) settings;      // Each block written: a game's are one list, a setting set once among them
     VEC(decl *) assets;        // Every asset declaration, in source order: what the pack holds
     const char *game_folder;   // Where the game's .tide/ is (tide says; NULL for tidec on its own): asset hashes and fetched URLs are kept there
     uint32_t tick_rate;        // tickRate, or 0 where it isn't set

@@ -6342,8 +6342,9 @@ static void complete_assets(completion *c, const bool gpu)
     }
 }
 
-// In settings { ... } between tokens `open` and `last`: each setting it
-// doesn't set yet.
+// In settings { ... } between tokens `open` and `last`: each setting the game
+// doesn't set yet, in this block so far or in another of its blocks, in any
+// of its files.
 static void complete_settings(completion *c, const int open, const int last)
 {
     int count;
@@ -6352,6 +6353,11 @@ static void complete_settings(completion *c, const int open, const int last)
         bool set = false;
         for (int k = open + 1; k <= last && !set; k++) {
             set = DOC->toks[k].kind == T_IDENT && DOC->toks[k + 1].kind == T_ASSIGN && str_eq_c(DOC->toks[k].text, all[i].name);
+        }
+        for (int b = 0; b < A.prog->settings.count && !set; b++) {
+            const decl *block = A.prog->settings.items[b];
+            if (block->at.file == A.doc && loc_cmp(block->at, DOC->toks[open - 1].at) == 0) continue; // This one, read above
+            for (int f = 0; f < block->fields.count && !set; f++) set = str_eq_c(block->fields.items[f].name, all[i].name);
         }
         if (set) continue;
         sb detail = {0};

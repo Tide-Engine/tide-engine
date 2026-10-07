@@ -114,7 +114,7 @@ github.com/someone/tide-math 9f2c1e07d4b8a3f6e5c2d1b0a9f8e7d6c5b4a392
 ```
 
 - Every file of the package puts what it declares in its namespace, `namespace Physics;`, or in one inside it, like `namespace Physics.Joints;`.
-- What a game has one of is the game's: a package can't declare `Main`, the input or the settings. Its systems can take `Devices`, which the game's input sends with its own fields.
+- What's the game's own stays the game's: a package can't declare `Main`, the input or settings. Its systems can take `Devices`, which the game's input sends with its own fields.
 - `tide 0.3` is the oldest `tide` it builds with. With an older one, a game that uses it says so, and to run `tide upgrade`.
 - Its other lines are the packages it needs, as a game lists them. One from git only needs packages from git and packages that come with `tide`, since a folder on your machine isn't on anyone else's.
 - Its C goes in its folder, as a game's does (see [Calling C](../c/functions.md)), and compiles with the game.

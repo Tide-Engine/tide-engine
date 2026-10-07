@@ -10303,20 +10303,30 @@ static bool valid_version(const str v)
     return digits > 0 && parts <= 3;
 }
 
+// Where the setting that field `i` of block `b` sets was set before it: in that
+// block, or in one before it. NULL when it's the first.
+static const field *set_before(const program *prog, const int b, const int i)
+{
+    const str name = prog->settings.items[b]->fields.items[i].name;
+    for (int k = 0; k <= b; k++) {
+        const decl *block = prog->settings.items[k];
+        const int count = k == b ? i : block->fields.count;
+        for (int j = 0; j < count; j++) {
+            if (str_eq(block->fields.items[j].name, name)) return &block->fields.items[j];
+        }
+    }
+    return NULL;
+}
+
 // settings { tickRate = 30; }: the engine's settings for the game (builtins.h),
-// each set to a constant of its type. A game has one block.
+// each set to a constant of its type. A game's blocks are one list of what it
+// sets, wherever they're written: a setting is set once among them all.
 static void check_settings(checker *c)
 {
     program *prog = c->prog;
     for (int b = 0; b < prog->settings.count; b++) {
         const decl *block = prog->settings.items[b];
         c->unit = block->unit;
-        if (b > 0) {
-            diag_error(block->at, "a game has one 'settings' block");
-            const decl *first = prog->settings.items[0];
-            const source *src = diag_source(first->at.file);
-            if (src) diag_note_at(first->at, "the other one is in %s, on line %d", src->path, first->at.line);
-        }
         for (int i = 0; i < block->fields.count; i++) {
             field *f = &block->fields.items[i];
             const setting *s = setting_named(f->name);
@@ -10333,10 +10343,15 @@ static void check_settings(checker *c)
             }
             // An enum setting is one of the engine's enums: `prediction` a Prediction
             f->type = (type){s->kind, s->kind == TY_ENUM ? prog->prediction : NULL};
-            bool twice = false;
-            for (int j = 0; j < i; j++) twice |= str_eq(block->fields.items[j].name, f->name);
-            if (twice) {
+            const field *other = set_before(prog, b, i);
+            if (other) {
                 diag_error(f->at, "'" STR_FMT "' is set twice", STR_ARG(f->name));
+                const source *src = diag_source(other->at.file);
+                if (src && other->at.file != f->at.file) {
+                    diag_note_at(other->at, "the other one is in %s, on line %d", src->path, other->at.line);
+                } else {
+                    diag_note_at(other->at, "the other one is on line %d", other->at.line);
+                }
                 continue;
             }
             expr *value = f->default_value;
@@ -10352,7 +10367,6 @@ static void check_settings(checker *c)
                 diag_error(value->at, "'" STR_FMT "' is %s, not %s", STR_ARG(f->name), type_name(f->type), type_name(t));
                 continue;
             }
-            if (b > 0) continue; // Only the first block counts
             if (str_eq_c(f->name, "tickRate")) {
                 int64_t rate;
                 if (!fold_int(value, &rate)) {
@@ -14588,7 +14602,7 @@ static bool only_packages(const program *prog)
 }
 
 // A package's files put what they declare in its namespace, or one inside it,
-// and leave what a game has one of (Main, its input and its settings) to the
+// and leave what's the game's alone (Main, its input and its settings) to the
 // game.
 static void check_packages(const program *prog)
 {
