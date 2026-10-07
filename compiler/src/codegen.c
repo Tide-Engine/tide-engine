@@ -13752,7 +13752,8 @@ static uint8_t channel_byte(const float v, const float alpha)
 }
 
 // One item of an asset into the pack: its block's offset.
-static uint32_t pack_item(tide_pack_builder *b, const asset_match *item, const asset_kind kind, const decl *grid, uint32_t *extra)
+static uint32_t pack_item(tide_pack_builder *b, const asset_match *item, const asset_kind kind, const decl *grid, const bool raw,
+                          uint32_t *extra)
 {
     *extra = 0;
     if (kind == ASSET_TEXTURE) { // An image to draw with: a byte a channel, which is all a GPU's copy has
@@ -13761,10 +13762,15 @@ static uint32_t pack_item(tide_pack_builder *b, const asset_match *item, const a
         if (!rgba) abort();
         for (size_t i = 0; i < pixels; i++) {
             const tide_color c = item->image.pixels[i];
-            rgba[i * 4u] = channel_byte(c.r, c.a), rgba[i * 4u + 1u] = channel_byte(c.g, c.a);
-            rgba[i * 4u + 2u] = channel_byte(c.b, c.a), rgba[i * 4u + 3u] = channel_byte(1.0f, c.a);
+            const float worked = raw ? 1.0f : c.a; // [Raw]: numbers, as the file has them
+            rgba[i * 4u] = channel_byte(c.r, worked), rgba[i * 4u + 1u] = channel_byte(c.g, worked);
+            rgba[i * 4u + 2u] = channel_byte(c.b, worked), rgba[i * 4u + 3u] = channel_byte(1.0f, c.a);
         }
-        const uint32_t at = tide_pack_texture(b, item->hash, (int32_t)item->image.width, (int32_t)item->image.height, rgba);
+        // The same file as a color and as numbers is two images: other bytes, told apart by what names them
+        uint8_t content[32];
+        memcpy(content, item->hash, sizeof content);
+        if (raw) content[0] ^= 0x52u, content[31] ^= 0x52u;
+        const uint32_t at = tide_pack_texture(b, content, (int32_t)item->image.width, (int32_t)item->image.height, rgba);
         free(rgba);
         return at;
     }
@@ -13820,7 +13826,7 @@ static bool write_pack(gen *g)
         }
         if (!v->many) {
             uint32_t extra;
-            const uint32_t at = pack_item(&b, &v->items[0], v->kind, grid, &extra);
+            const uint32_t at = pack_item(&b, &v->items[0], v->kind, grid, d->sample_raw, &extra);
             tide_pack_name(&b, qualified, kind, at, (uint32_t)v->items[0].size, extra);
             continue;
         }
@@ -13829,7 +13835,7 @@ static bool write_pack(gen *g)
         if (!offsets || !keys) abort();
         for (int k = 0; k < v->count; k++) {
             uint32_t extra;
-            offsets[k] = pack_item(&b, &v->items[k], v->kind, grid, &extra);
+            offsets[k] = pack_item(&b, &v->items[k], v->kind, grid, false, &extra);
             if (v->is_map) {
                 uint8_t hash[32];
                 tide_sha256_of(v->items[k].key, strlen(v->items[k].key), hash);
@@ -15901,7 +15907,8 @@ static void gen_shaders(gen *g)
                 continue;
             }
             if (texture->asset) { // A Grid2<Color> asset, by name
-                sb_printf(o, "    tide_textures[%d] = tide_draw_grid_texture(tide_draw, %s, &%s);\n", t, asset_cname(texture->asset),
+                sb_printf(o, "    tide_textures[%d] = tide_draw_grid_texture%s(tide_draw, %s, &%s);\n", t,
+                          texture->asset->sample_raw ? "_raw" : "", asset_cname(texture->asset),
                           grid_shape_name(texture->asset->return_type.decl));
                 continue;
             }
@@ -15918,8 +15925,8 @@ static void gen_shaders(gen *g)
                 sb_printf(o, "    tide_textures[%d] = tide_draw_depth_source(tide_draw, tide_%sb%d->%s);\n", t,
                           texture->field->is_local ? "l" : "", b, field_cname(texture->field));
             else
-                sb_printf(o, "    tide_textures[%d] = tide_draw_grid_texture(tide_draw, tide_%sb%d->%s, &%s);\n", t,
-                          texture->field->is_local ? "l" : "", b, field_cname(texture->field), grid_shape_name(texture->field->type.decl));
+                sb_printf(o, "    tide_textures[%d] = tide_draw_grid_texture%s(tide_draw, tide_%sb%d->%s, &%s);\n", t,
+                          field_is_raw(texture->field) ? "_raw" : "", texture->field->is_local ? "l" : "", b, field_cname(texture->field), grid_shape_name(texture->field->type.decl));
         }
         sb sampling = {0};
         sb_printf(&sampling, "0x%xu%s", blended, carried.data ? carried.data : "");

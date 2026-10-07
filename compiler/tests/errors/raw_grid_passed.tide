@@ -1,0 +1,20 @@
+// expect: this grid is [Raw], its cells numbers and not colors to draw: it's no Texture to draw with or hand on
+local singleton Art
+{
+    [Raw] Grid2<Color> paint = Grid2(4, 4);
+    Texture kept;
+}
+
+void Stamp(Texture image)
+{
+    Draw.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], image);
+}
+
+view Show(Art art)
+{
+    Stamp(art.paint);
+}
+
+scene Main
+{
+}

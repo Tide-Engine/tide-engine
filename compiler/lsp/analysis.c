@@ -2696,6 +2696,10 @@ static void describe(const occurrence *o, sb *out)
                             "can't use it. For cells code reads, the same file is a `Grid2<Color>`, which is a Texture "
                             "too wherever one is drawn with.");
             }
+            if (o->decl->sample_raw) {
+                sb_put(out, "\n\nIt's `[Raw]`: its pixels are numbers, kept as the file has them, which a frag or a vert reads "
+                            "by this name. It's no texture to draw with or hand on.");
+            }
             if (o->decl->sample_filter || o->decl->sample_wrap) { // [Filter] and [Wrap] before it
                 sb_put(out, "\n\nWhere a draw or a `Sample` doesn't say, it's sampled with ");
                 const decl *enums[2] = {A.prog->filter, A.prog->wrap};
@@ -3056,6 +3060,12 @@ static void describe(const occurrence *o, sb *out)
              "before an asset that's a `Texture` or a `Grid2<Color>` (alone, or a list or a map of them) and before a "
              "field that's a `Grid2<Color>`, a `Grid2<float>` or a `RenderTarget` (for its color). The `Texture` made "
              "there carries it: one kept in a field or a local, or passed to a function, is sampled the same."},
+            {"Raw", "[Raw]",
+             "This texture's pixels are numbers, not colors to draw: they're kept as the file or the grid has them, with "
+             "no alpha worked into them, and a `Sample` gives them as they are. A texture of colors has no color in a "
+             "pixel whose alpha is 0, which is what a mask or a lookup table kept beside an alpha can't have. It goes "
+             "before an asset that's one `Texture` or one `Grid2<Color>` and before a field that's a `Grid2<Color>`. "
+             "A frag or a vert reads it by its name, `masks.Sample(uv)`: it's no `Texture` to draw with or hand on."},
             {"Wrap", "[Wrap(Wrap.Repeat)]",
              "What a `uv` past this texture's edges reads wherever a draw or a `Sample` doesn't say: `Wrap.Clamp` "
              "(what's read without it) for the cells at the edge, `Wrap.Repeat` for the texture over again, "
@@ -7593,6 +7603,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "Wrap", CK_FUNCTION, "[Wrap(Wrap.Repeat)]",
                  "What a uv past the edges of an asset that's a Texture or a Grid2<Color> reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
+            item(&c, "Raw", CK_FUNCTION, "[Raw]",
+                 "An asset that's a Texture or a Grid2<Color> of numbers, kept as the file has them: a frag reads it by its name.",
+                 "Raw");
         }
         break;
 
@@ -7614,6 +7627,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "Wrap", CK_FUNCTION, "[Wrap(Wrap.Repeat)]",
                  "What a uv past the edges of this grid, or of this RenderTarget's color, reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
+            item(&c, "Raw", CK_FUNCTION, "[Raw]",
+                 "This Grid2<Color>'s cells are numbers, kept as they are as a texture: a frag reads it by its name.", "Raw");
         }
         break;
 

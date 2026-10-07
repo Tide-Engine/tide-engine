@@ -76,7 +76,7 @@ static bool chunk_place(const tide_grid_record *record, const tide_grid_shape *s
 // The grid's cells as pixels: its chunks' colors, a byte a channel, or its
 // floats, 16 bits each, and zeros where it has no chunk.
 static void grid_pixels(const int32_t width, const int32_t height, const tide_grid_record *records, const uint32_t count,
-                        const tide_heap *heap, const tide_grid_shape *s, uint8_t *pixels)
+                        const tide_heap *heap, const tide_grid_shape *s, const bool raw, uint8_t *pixels)
 {
     const bool colors = s->cell == sizeof(tide_color);
     const size_t pixel = colors ? 4u : 2u;
@@ -92,10 +92,10 @@ static void grid_pixels(const int32_t width, const int32_t height, const tide_gr
             if (colors) {
                 const tide_color *row = (const tide_color *)(const void *)in;
                 for (int32_t x = 0; x < across && x0 + x < width; x++, out += 4) {
-                    const float alpha = unit(row[x].a);
-                    out[0] = channel(row[x].r, alpha);
-                    out[1] = channel(row[x].g, alpha);
-                    out[2] = channel(row[x].b, alpha);
+                    const float alpha = unit(row[x].a), worked = raw ? 1.0f : alpha;
+                    out[0] = channel(row[x].r, worked);
+                    out[1] = channel(row[x].g, worked);
+                    out[2] = channel(row[x].b, worked);
                     out[3] = channel(1.0f, alpha);
                 }
             } else {
@@ -109,7 +109,7 @@ static void grid_pixels(const int32_t width, const int32_t height, const tide_gr
     }
 }
 
-uint32_t tide_draw_grid_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s)
+static uint32_t grid_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s, const bool raw)
 {
     const bool colors = s->cell == sizeof(tide_color);
     // A chunk is a page at the most, which is also what keeps its size in an int
@@ -155,10 +155,21 @@ uint32_t tide_draw_grid_texture(tide_draw_list *d, const tide_grid g, const tide
         }
         version = tide_hash_end(version);
     }
+    if (raw) version ^= UINT64_C(0x5241575241575241); // Other bytes than the same cells as colors
     uint8_t *pixels;
     const uint32_t slot = tide_draw_texture_slot_as(d, TIDE_PIXELS_GRID, g.at, version, dir.size[0], dir.size[1], format, &pixels);
-    if (pixels) grid_pixels(dir.size[0], dir.size[1], records, dir.records, packed ? NULL : heap, s, pixels);
+    if (pixels) grid_pixels(dir.size[0], dir.size[1], records, dir.records, packed ? NULL : heap, s, raw, pixels);
     return slot;
+}
+
+uint32_t tide_draw_grid_texture(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s)
+{
+    return grid_texture(d, g, s, false);
+}
+
+uint32_t tide_draw_grid_texture_raw(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s)
+{
+    return grid_texture(d, g, s, true);
 }
 
 static void mesh_lists(tide_draw_list *d, const tide_list vertices, const tide_list indices, const uint32_t slot,

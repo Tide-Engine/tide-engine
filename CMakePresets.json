@@ -54,10 +54,9 @@
       "name": "mingw-release",
       "inherits": "base",
       "displayName": "MinGW Release",
-      "description": "Windows only: the MinGW-w64 target that tide builds games for, optimized. Its platform layer goes in the package.",
+      "description": "The MinGW-w64 target that tide builds Windows games for, optimized. Its platform layer goes in the Windows package. On another system than Windows it's a cross build, whose tests can't run.",
       "toolchainFile": "${sourceDir}/cmake/mingw-toolchain.cmake",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" },
-      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
     },
     {
       "name": "android-base",
@@ -113,6 +112,14 @@
       }
     },
     {
+      "name": "windows-package",
+      "inherits": "package",
+      "displayName": "Windows Package (from another system)",
+      "description": "The Windows package's native half built on Linux: tide and tidels for Windows' own target, with Microsoft's headers and libraries from xwin (cmake/windows-msvc-toolchain.cmake).",
+      "toolchainFile": "${sourceDir}/cmake/windows-msvc-toolchain.cmake",
+      "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
       "name": "web-package",
       "inherits": "web-base",
       "displayName": "Web Package",
@@ -133,6 +140,7 @@
     { "name": "android-package-arm64", "configurePreset": "android-package-arm64" },
     { "name": "android-package-x86_64", "configurePreset": "android-package-x86_64" },
     { "name": "package", "configurePreset": "package" },
+    { "name": "windows-package", "configurePreset": "windows-package" },
     { "name": "web-package", "configurePreset": "web-package" }
   ],
   "testPresets": [

@@ -322,6 +322,31 @@ The GPU picks which copies to read by how fast the `uv` changes from one pixel t
 - Where the filter is the texture's to say (a frag's `Texture` parameter, a `Texture` field) and the `uv` can't be worked out as the frag starts, the `Sample` reads the texture's own pixels, as `Filter.Bilinear` would, whatever the texture says.
 - A vert has no pixels to compare, so there `Filter.Trilinear` reads the texture's own pixels.
 
+### Textures that are numbers
+
+A texture is colors, each with how much of it there is: where a pixel's alpha is 0 it has no color, and a `Sample` there gives `Color(0, 0, 0, 0)` (see [Alpha](./views.md#alpha)). That's wrong for an image whose channels are four numbers of their own: a mask in alpha beside a roughness in red, a lookup table, a flow map. `[Raw]` says so where the texture is declared:
+
+```csharp
+[Raw] asset Texture masks = "art/masks.png";     // Kept as the file has it
+
+local singleton Terrain
+{
+    [Raw] Grid2<Color> blend = Grid2(64, 64);    // ...or as code wrote its cells
+}
+
+frag Ground(Vertex vertex, out Color color, Terrain terrain)
+{
+    Color mask = masks.Sample(vertex.uv);                 // Four numbers, as they are
+    Color weights = terrain.blend.Sample(vertex.uv);      // Blended between cells as numbers
+    color = Color(mask.r * weights.r, mask.g, mask.b * weights.a);
+}
+```
+
+- It goes before an asset that's one `Texture` or one `Grid2<Color>`, and on a field that's a `Grid2<Color>`. A `Grid2<float>` needs none: it has no alpha.
+- A frag or a vert reads it **by its name**, as above. It isn't a texture to draw with, to give a draw for its frag's `Texture` parameter, or to keep in a `Texture` field: each is an error that says so, as everything that draws a texture takes it for colors, and a `Texture` handed on doesn't say which kind it is.
+- The same file can be declared twice, once `[Raw]` and once not: they're two textures.
+- `[Filter]` and `[Wrap]` go beside it as on any texture, and code reads a `[Raw]` grid's cells as it reads any grid's.
+
 ## A target's depth
 
 A [render target](./views.md#what-a-target-holds) keeps how far the nearest thing drawn at each of its pixels is, and a frag reads that as it reads a color: `target.depth`, a `DepthTexture`, which a view keeps in a field of a singleton or a component the frag takes.

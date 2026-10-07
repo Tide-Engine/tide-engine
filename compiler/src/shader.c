@@ -1673,6 +1673,21 @@ static int field_sampling(const field *f, const char *name)
     return -1;
 }
 
+bool field_is_raw(const field *f)
+{
+    for (int i = 0; f && i < f->attributes.count; i++) {
+        if (str_eq_c(f->attributes.items[i].name, "Raw")) return true;
+    }
+    return false;
+}
+
+bool declared_raw(const expr *texture)
+{
+    if (!texture) return false;
+    if (texture->bind == BIND_ASSET && texture->constant) return texture->constant->sample_raw;
+    return texture->kind == E_MEMBER && texture->field && texture->type.kind == TY_GRID && field_is_raw(texture->field);
+}
+
 void declared_sampling(const expr *texture, int *filter, int *wrap)
 {
     *filter = *wrap = -1;
@@ -1955,7 +1970,9 @@ static void ex_sample(emit *em, const expr *e)
         sb_put(em->o, em->l == WGSL ? ", 0.0, 1.0))" : ", 0.0, 1.0)), 0.0)");
         return;
     }
-    if (read == READ_COLOR) { // The color itself, where the texture has it times its alpha
+    // The color itself, where the texture has it times its alpha. One that's [Raw] is numbers, as they are
+    const bool straight = read == READ_COLOR && !declared_raw(of);
+    if (straight) {
         need(em, H_STRAIGHT);
         sb_put(em->o, "tide_straight(");
     }
@@ -1983,14 +2000,14 @@ static void ex_sample(emit *em, const expr *e)
         if (em->l == WGSL) sb_printf(em->o, "textureSampleGrad(pixels%d, sampler%d, ", slot, slot);
         else sb_printf(em->o, "textureGrad(pixels%d, ", slot);
         ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
-        sb_printf(em->o, ", tide_dx%d, tide_dy%d)%s", at, at, read == READ_COLOR ? ")" : "");
+        sb_printf(em->o, ", tide_dx%d, tide_dy%d)%s", at, at, straight ? ")" : "");
         return;
     }
     if (em->l == WGSL) sb_printf(em->o, "textureSampleLevel(pixels%d, sampler%d, ", slot, slot);
     else sb_printf(em->o, "textureLod(pixels%d, ", slot);
     ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
     // A depth is one number: WGSL gives it as that, at a level that's an int, and GLSL as a color's red
-    sb_put(em->o, read == READ_COLOR ? ", 0.0))" : em->l == WGSL ? ", 0)" : ", 0.0).r");
+    sb_put(em->o, straight ? ", 0.0))" : read == READ_COLOR ? ", 0.0)" : em->l == WGSL ? ", 0)" : ", 0.0).r");
 }
 
 // A call of a function or method of the game's. A mut argument is the

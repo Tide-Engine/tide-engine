@@ -8129,6 +8129,39 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     TIDE_CHECK(has(last_sent(), "a list or a map can't hold rendering resources"));
     TIDE_CHECK(has(last_sent(), "asset List<Texture> frames"));
 
+    // [Raw]: a texture of numbers, which a frag reads by its name and nothing draws
+    static const char raw_file[] = "[Raw] asset Texture masks = \"art/tile.png\";\n"
+                                   "scene Main { }\n"
+                                   "local singleton Art\n"
+                                   "{\n"
+                                   "    [Raw] Grid2<Color> kept = Grid2(2, 2);\n"
+                                   "}\n"
+                                   "frag Read(Vertex vertex, out Color color, Art art)\n"
+                                   "{\n"
+                                   "    color = masks.Sample(vertex.uv) + art.kept.Sample(vertex.uv);\n"
+                                   "}\n"
+                                   "view V()\n"
+                                   "{\n"
+                                   "    Draw.Mesh([Vertex { }], [0, 0, 0], Read);\n"
+                                   "}\n";
+    open_uri(uri_main, raw_file);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    hover = request_at(uri_main, "textDocument/hover", 0, 2, "");
+    TIDE_CHECK(has(hover, "[Raw]") && has(hover, "pixels are numbers, not colors to draw"));
+    hover = request_at(uri_main, "textDocument/hover", 0, 21, "");
+    TIDE_CHECK(has(hover, "asset Texture masks") && has(hover, "It's `[Raw]`"));
+    hover = request_at(uri_main, "textDocument/hover", 4, 6, "");
+    TIDE_CHECK(has(hover, "[Raw]") && has(hover, "no alpha worked into them"));
+    open_uri(uri_main, "[] asset Texture masks = \"art/tile.png\";\nscene Main { }\nlocal singleton Art\n{\n    [] Grid2<Color> kept = Grid2(2, 2);\n}\n");
+    completion = request_at(uri_main, "textDocument/completion", 0, 1, "");
+    TIDE_CHECK(offers(completion, "Raw") && offers(completion, "Filter"));
+    completion = request_at(uri_main, "textDocument/completion", 4, 5, "");
+    TIDE_CHECK(offers(completion, "Raw") && offers(completion, "Wrap"));
+    open_uri(uri_main, "[Raw] asset Texture masks = \"art/tile.png\";\nscene Main { }\nview V()\n{\n"
+                       "    Draw.Mesh([Vertex { }], [0, 0, 0], masks);\n}\n");
+    TIDE_CHECK(has(last_sent(), "'masks' is [Raw], its pixels numbers and not colors to draw"));
+    TIDE_CHECK(has(last_sent(), "read it in a frag or a vert, by its name"));
+
     remove_game_file("lsp_tx/main.tide");
     remove_game_file("lsp_tx/art/tile.png");
     remove_game_file("lsp_tx/art/other.txt");
