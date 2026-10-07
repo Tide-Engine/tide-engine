@@ -329,7 +329,9 @@ static inline tide_wrap tide_sampling_wrap(const uint32_t sampling, const uint32
 // Pixels to draw with, where the game keeps them. Nothing holds a texture on
 // the GPU: a mesh names its pixels, the list copies them when it hasn't got
 // them as they are, and the renderer uploads from that copy. So C can keep
-// its pixels wherever it likes, and say when they changed.
+// its pixels wherever it likes, and say when they changed. A pixel's color is
+// as it is, with its alpha beside it. The list's copy has each color times
+// its alpha, which is how a renderer blends them: that's the list's to do.
 typedef struct tide_texture {
     const void *pixels; // width * height of them: red, green, blue, alpha, a byte each, rows from the first
     int32_t width, height;

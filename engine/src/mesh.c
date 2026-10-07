@@ -5,11 +5,18 @@
 #include "tide/net.h"
 #include "tide/pack.h"
 
-static uint8_t channel(const float v)
+static float unit(const float v)
 {
-    if (!(v > 0.0f)) return 0; // Also NaN
-    if (v >= 1.0f) return 255;
-    return (uint8_t)(v * 255.0f + 0.5f);
+    if (!(v > 0.0f)) return 0.0f; // Also NaN
+    return v >= 1.0f ? 1.0f : v;
+}
+
+// A color's channel as a texture has it: times the color's alpha (see
+// tide_gpu_blend), so that what a GPU blends between two pixels is right,
+// whatever color a clear one has.
+static uint8_t channel(const float v, const float alpha)
+{
+    return (uint8_t)(unit(v) * alpha * 255.0f + 0.5f);
 }
 
 uint16_t tide_half_from_float(const float value)
@@ -85,10 +92,11 @@ static void grid_pixels(const int32_t width, const int32_t height, const tide_gr
             if (colors) {
                 const tide_color *row = (const tide_color *)(const void *)in;
                 for (int32_t x = 0; x < across && x0 + x < width; x++, out += 4) {
-                    out[0] = channel(row[x].r);
-                    out[1] = channel(row[x].g);
-                    out[2] = channel(row[x].b);
-                    out[3] = channel(row[x].a);
+                    const float alpha = unit(row[x].a);
+                    out[0] = channel(row[x].r, alpha);
+                    out[1] = channel(row[x].g, alpha);
+                    out[2] = channel(row[x].b, alpha);
+                    out[3] = channel(1.0f, alpha);
                 }
             } else {
                 const float *row = (const float *)(const void *)in;

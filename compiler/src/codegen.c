@@ -13721,12 +13721,14 @@ static tide_grid_shape asset_grid_shape(const decl *grid)
     return (tide_grid_shape){(uint32_t)cell, (uint32_t)grid->dims, {(uint32_t)shift[0], (uint32_t)shift[1], (uint32_t)shift[2]}};
 }
 
-// A color's channel as a byte, as the draw list makes a grid's cell one (mesh.c).
-static uint8_t channel_byte(const float v)
+// A color's channel as a byte, times the color's alpha, as the draw list makes
+// a grid's cell one (mesh.c): what a GPU blends between two pixels is then
+// right, whatever color the file gives its clear ones.
+static uint8_t channel_byte(const float v, const float alpha)
 {
-    if (!(v > 0.0f)) return 0;
-    if (v >= 1.0f) return 255;
-    return (uint8_t)(v * 255.0f + 0.5f);
+    const float a = !(alpha > 0.0f) ? 0.0f : alpha >= 1.0f ? 1.0f : alpha;
+    const float c = !(v > 0.0f) ? 0.0f : v >= 1.0f ? 1.0f : v;
+    return (uint8_t)(c * a * 255.0f + 0.5f);
 }
 
 // One item of an asset into the pack: its block's offset.
@@ -13739,8 +13741,8 @@ static uint32_t pack_item(tide_pack_builder *b, const asset_match *item, const a
         if (!rgba) abort();
         for (size_t i = 0; i < pixels; i++) {
             const tide_color c = item->image.pixels[i];
-            rgba[i * 4u] = channel_byte(c.r), rgba[i * 4u + 1u] = channel_byte(c.g);
-            rgba[i * 4u + 2u] = channel_byte(c.b), rgba[i * 4u + 3u] = channel_byte(c.a);
+            rgba[i * 4u] = channel_byte(c.r, c.a), rgba[i * 4u + 1u] = channel_byte(c.g, c.a);
+            rgba[i * 4u + 2u] = channel_byte(c.b, c.a), rgba[i * 4u + 3u] = channel_byte(1.0f, c.a);
         }
         const uint32_t at = tide_pack_texture(b, item->hash, (int32_t)item->image.width, (int32_t)item->image.height, rgba);
         free(rgba);

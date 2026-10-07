@@ -1520,11 +1520,11 @@
     let reader = null; // A 2D canvas, which a target is drawn into to read it back without waiting
 
     // tide_gpu_blend: by its alpha, added, what's there times it, or in its place (none)
-    const alphaBlend = { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' };
+    const alphaBlend = { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' };
     const blends = [
         { color: alphaBlend, alpha: alphaBlend },
-        { color: { srcFactor: 'src-alpha', dstFactor: 'one', operation: 'add' },
-          alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' } },
+        { color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+          alpha: { srcFactor: 'one-minus-dst-alpha', dstFactor: 'one', operation: 'add' } },
         { color: { srcFactor: 'dst', dstFactor: 'zero', operation: 'add' },
           alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' } },
         undefined,

@@ -1970,6 +1970,78 @@ view Heights(mut Art art)
     }
 }
 
+// Alpha (pass 14). A texture holds each color times its alpha, and every blend
+// takes colors that way, with none of it written here: a pixel blended towards
+// a clear one keeps its own color, whatever color the clear one has; a Sample
+// gives the color itself; and what's drawn into a clear target and then drawn
+// from it is what drawing it straight gives.
+local singleton Clears
+{
+    Grid2<Color> edge = Grid2(2, 1); // White beside a clear pixel that's magenta, as a paint program leaves one
+    RenderTarget layer;
+    bool made;
+}
+
+// Halfway between the two: all of white's color, and half its alpha
+frag EdgeRead(Vertex vertex, out Color color, Clears clears)
+{
+    Color between = clears.edge.Sample(float2(0.5, 0.5));
+    color = Color(between.g, between.a, 0);
+}
+
+frag LayerCopy(Vertex vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv);
+}
+
+[After(Heights)]
+view Alphas(Art art, mut Clears clears)
+{
+    if (art.targetPass != 14) return;
+    if (!clears.made)
+    {
+        clears.made = true;
+        clears.edge[0, 0] = Color.white;
+        clears.edge[1, 0] = Color(1, 0, 1, 0);
+        clears.layer = RenderTarget(48, 48, 1);
+    }
+    List<Vertex> tile = [Vertex { }, Vertex { position = float2(48, 0), uv = float2(1, 0) },
+                         Vertex { position = float2(48, 48), uv = float2(1, 1) }, Vertex { position = float2(0, 48), uv = float2(0, 1) }];
+    Color glass = Color(0, 0.5, 1, 0.5);
+    clears.layer.Clear(Color(0, 0, 0, 0));
+    clears.layer.SetPixels();
+    clears.layer.Rect(float2(24, 24), float2(48, 48), glass);
+
+    Draw.Clear(Color.white);
+    Draw.SetPixels();
+    Draw.SetClip();
+    // Blended towards its clear pixel, over white
+    Draw.Transform(float2(8, 8))
+    {
+        Draw.Mesh(tile, art.faces, clears.edge);
+    }
+    // What a frag reads between the two
+    Draw.Transform(float2(64, 8))
+    {
+        Draw.Mesh(tile, art.faces, EdgeRead);
+    }
+    // Half-clear, straight onto the window
+    Draw.Transform(float2(120, 8))
+    {
+        Draw.Rect(float2(24, 24), float2(48, 48), glass);
+    }
+    // ...and through the clear target
+    Draw.Transform(float2(176, 8))
+    {
+        Draw.Mesh(tile, art.faces, clears.layer.color);
+    }
+    // ...and through a frag that copies it
+    Draw.Transform(float2(8, 64))
+    {
+        Draw.Mesh(tile, art.faces, clears.layer.color, LayerCopy);
+    }
+}
+
 // Several colors from one frag (pass 11). A target made to hold three color
 // images, the second and third of floats, is drawn into by frags that write
 // three colors, two, and one, and by the engine's own shapes; then each image

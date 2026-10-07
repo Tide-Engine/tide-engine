@@ -185,6 +185,8 @@ TIDE_TEST(asset_textures_are_values_drawn_where_the_pack_has_them)
     TIDE_CHECK(hero->pixels == image_of(hero_named, NULL) && hero->version == hero_image);
     TIDE_CHECK(hero->pixels[(2 * 8 + 1) * 4] == 30 && hero->pixels[(2 * 8 + 1) * 4 + 1] == 80 && hero->pixels[(2 * 8 + 1) * 4 + 2] == 100);
     TIDE_CHECK(hero->pixels[(5 * 8 + 7) * 4 + 3] == 0); // The last column is clear
+    // The file gives its clear pixels a color (210, 200, 100). The pack has each color times its alpha, so none of it
+    TIDE_CHECK(hero->pixels[(5 * 8 + 7) * 4] == 0 && hero->pixels[(5 * 8 + 7) * 4 + 1] == 0 && hero->pixels[(5 * 8 + 7) * 4 + 2] == 0);
     const tide_draw_texture *one = &draw.textures[run_texture[1] - 1];
     TIDE_CHECK(one->width == 2 && one->height == 2 && one->pixels[(0 * 2 + 1) * 4] == 50 && one->pixels[(0 * 2 + 1) * 4 + 2] == 100);
     TIDE_CHECK(draw.textures[run_texture[2] - 1].pixels[(0 * 2 + 1) * 4] == 100);

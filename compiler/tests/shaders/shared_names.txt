@@ -52,7 +52,8 @@ void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Tint_3_0Vertex_0Color(tt_Vertex(vec2(0.0), vec2(0.0), tide_s2), tide_color);
     tide_color = tide_color * tide_tint;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -103,8 +104,9 @@ fn ts_Tint_3_0Vertex_0Color(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) 
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Tint_3_0Vertex_0Color(tt_Vertex(vec2f(), vec2f(), in.tide_s2), &tide_color);
     tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
     if (tide_block.tide_screen.w > 0.0) {
-        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
     }
     return tide_color;
 }
@@ -154,7 +156,8 @@ void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Tint_3_0Vertex_0Color_0Sun(tt_Vertex(vec2(0.0), vec2(0.0), tide_s2), tide_color);
     tide_color = tide_color * tide_tint;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -195,8 +198,9 @@ fn ts_Tint_3_0Vertex_0Color_0Sun(t_vertex: tt_Vertex, t_color: ptr<function, vec
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Tint_3_0Vertex_0Color_0Sun(tt_Vertex(vec2f(), vec2f(), in.tide_s2), &tide_color);
     tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
     if (tide_block.tide_screen.w > 0.0) {
-        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
     }
     return tide_color;
 }

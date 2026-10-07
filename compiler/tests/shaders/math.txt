@@ -80,7 +80,8 @@ void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Stars(tt_SkyVertex(vec2(0.0), tide_s1), tide_color);
     tide_color = tide_color * tide_tint;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -160,8 +161,9 @@ fn ts_Stars(t_vertex: tt_SkyVertex, t_color: ptr<function, vec4f>) {
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Stars(tt_SkyVertex(vec2f(), in.tide_s1), &tide_color);
     tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
     if (tide_block.tide_screen.w > 0.0) {
-        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
     }
     return tide_color;
 }
@@ -450,7 +452,8 @@ void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Calm(tt_SkyVertex(vec2(0.0), tide_s1), tide_color);
     tide_color = tide_color * tide_tint;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -720,8 +723,9 @@ fn ts_Calm(t_vertex: tt_SkyVertex, t_color: ptr<function, vec4f>) {
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Calm(tt_SkyVertex(vec2f(), in.tide_s1), &tide_color);
     tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
     if (tide_block.tide_screen.w > 0.0) {
-        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
     }
     return tide_color;
 }

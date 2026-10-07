@@ -40,15 +40,20 @@ struct tt_Corner {
     vec2 m_position;
     vec2 m_uv;
 };
+vec4 tide_straight(vec4 c) {
+    if (c.a == 0.0) { return vec4(0.0); }
+    return vec4(c.rgb / c.a, c.a);
+}
 void ts_Named(tt_Corner t_vertex, inout vec4 t_color) {
-    t_color = (((((textureLod(pixels0, t_vertex.m_uv, 0.0) * textureLod(pixels0, t_vertex.m_uv, 0.0)) * textureLod(pixels1, t_vertex.m_uv, 0.0)) * textureLod(pixels2, t_vertex.m_uv, 0.0)) * textureLod(pixels3, t_vertex.m_uv, 0.0)) * textureLod(pixels4, t_vertex.m_uv, 0.0));
+    t_color = (((((tide_straight(textureLod(pixels0, t_vertex.m_uv, 0.0)) * tide_straight(textureLod(pixels0, t_vertex.m_uv, 0.0))) * tide_straight(textureLod(pixels1, t_vertex.m_uv, 0.0))) * tide_straight(textureLod(pixels2, t_vertex.m_uv, 0.0))) * tide_straight(textureLod(pixels3, t_vertex.m_uv, 0.0))) * tide_straight(textureLod(pixels4, t_vertex.m_uv, 0.0)));
 }
 
 void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Named(tt_Corner(vec2(0.0), tide_s1), tide_color);
     tide_color = tide_color * tide_tint;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -79,8 +84,12 @@ struct tt_Corner {
     m_position: vec2f,
     m_uv: vec2f,
 }
+fn tide_straight(c: vec4f) -> vec4f {
+    if (c.a == 0.0) { return vec4f(0.0); }
+    return vec4f(c.rgb / c.a, c.a);
+}
 fn ts_Named(t_vertex: tt_Corner, t_color: ptr<function, vec4f>) {
-    (*t_color) = (((((textureSampleLevel(pixels0, sampler0, t_vertex.m_uv, 0.0) * textureSampleLevel(pixels0, sampler0, t_vertex.m_uv, 0.0)) * textureSampleLevel(pixels1, sampler1, t_vertex.m_uv, 0.0)) * textureSampleLevel(pixels2, sampler2, t_vertex.m_uv, 0.0)) * textureSampleLevel(pixels3, sampler3, t_vertex.m_uv, 0.0)) * textureSampleLevel(pixels4, sampler4, t_vertex.m_uv, 0.0));
+    (*t_color) = (((((tide_straight(textureSampleLevel(pixels0, sampler0, t_vertex.m_uv, 0.0)) * tide_straight(textureSampleLevel(pixels0, sampler0, t_vertex.m_uv, 0.0))) * tide_straight(textureSampleLevel(pixels1, sampler1, t_vertex.m_uv, 0.0))) * tide_straight(textureSampleLevel(pixels2, sampler2, t_vertex.m_uv, 0.0))) * tide_straight(textureSampleLevel(pixels3, sampler3, t_vertex.m_uv, 0.0))) * tide_straight(textureSampleLevel(pixels4, sampler4, t_vertex.m_uv, 0.0)));
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f) -> tide_corner {
@@ -97,8 +106,9 @@ fn ts_Named(t_vertex: tt_Corner, t_color: ptr<function, vec4f>) {
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Named(tt_Corner(vec2f(), in.tide_s1), &tide_color);
     tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
     if (tide_block.tide_screen.w > 0.0) {
-        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
     }
     return tide_color;
 }
@@ -139,15 +149,20 @@ struct tt_Corner {
     vec2 m_position;
     vec2 m_uv;
 };
+vec4 tide_straight(vec4 c) {
+    if (c.a == 0.0) { return vec4(0.0); }
+    return vec4(c.rgb / c.a, c.a);
+}
 void ts_Given(tt_Corner t_vertex, inout vec4 t_color) {
-    t_color = (textureLod(pixels0, t_vertex.m_uv, 0.0) * textureLod(pixels1, t_vertex.m_uv, 0.0));
+    t_color = (tide_straight(textureLod(pixels0, t_vertex.m_uv, 0.0)) * tide_straight(textureLod(pixels1, t_vertex.m_uv, 0.0)));
 }
 
 void main() {
     vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
     ts_Given(tt_Corner(vec2(0.0), tide_s1), tide_color);
     tide_color = tide_color * tide_tint;
-    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb * tide_color.a + (1.0 - tide_color.a);
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
     tide_pixel = tide_color;
 }
 
@@ -172,8 +187,12 @@ struct tt_Corner {
     m_position: vec2f,
     m_uv: vec2f,
 }
+fn tide_straight(c: vec4f) -> vec4f {
+    if (c.a == 0.0) { return vec4f(0.0); }
+    return vec4f(c.rgb / c.a, c.a);
+}
 fn ts_Given(t_vertex: tt_Corner, t_color: ptr<function, vec4f>) {
-    (*t_color) = (textureSampleLevel(pixels0, sampler0, t_vertex.m_uv, 0.0) * textureSampleLevel(pixels1, sampler1, t_vertex.m_uv, 0.0));
+    (*t_color) = (tide_straight(textureSampleLevel(pixels0, sampler0, t_vertex.m_uv, 0.0)) * tide_straight(textureSampleLevel(pixels1, sampler1, t_vertex.m_uv, 0.0)));
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f) -> tide_corner {
@@ -190,8 +209,9 @@ fn ts_Given(t_vertex: tt_Corner, t_color: ptr<function, vec4f>) {
     var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
     ts_Given(tt_Corner(vec2f(), in.tide_s1), &tide_color);
     tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
     if (tide_block.tide_screen.w > 0.0) {
-        tide_color = vec4f(tide_color.rgb * tide_color.a + (1.0 - tide_color.a), tide_color.a);
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
     }
     return tide_color;
 }

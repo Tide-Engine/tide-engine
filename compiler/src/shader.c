@@ -60,6 +60,7 @@ enum {
     H_NORMALIZE_Q, H_MUL_Q, H_ROTATE_Q, H_INVERSE_Q, H_CONJUGATE_Q, H_NLERP_Q, H_SLERP_Q, H_ANGLE_Q, H_AXISANGLE_Q, H_EULER_Q,
     H_Q_FROM_M3, H_LOOKROTATION_Q, H_M3_FROM_Q, H_M4_FROM_M3, H_TRS, H_PERSPECTIVE, H_ORTHO,
     H_INVERSE2, H_INVERSE3, H_INVERSE4,
+    H_STRAIGHT, // tide_straight(c): a texture's pixel, which has its alpha worked into its color, as the color it is
     H_COUNT
 };
 
@@ -435,6 +436,12 @@ static const char *const family_scalars[FAMILY_COUNT] = {
 };
 
 static const char *const helper_texts[H_COUNT] = {
+    // A texture holds colors times their alpha, so that what's blended between two pixels is right (a clear
+    // pixel's color counts for nothing). Code reads the color itself. A pixel with no alpha has none
+    [H_STRAIGHT] = "vec4 tide_straight(vec4 c) {\n"
+                   "    if (c.a == 0.0) { return vec4(0.0); }\n"
+                   "    return vec4(c.rgb / c.a, c.a);\n"
+                   "}\n",
     [H_F] = "float tide_f(float x) {\n"
             "    return x;\n"
             "}\n",
@@ -1746,11 +1753,15 @@ static void ex_sample(emit *em, const expr *e)
         sb_put(em->o, em->l == WGSL ? ", 0.0, 1.0))" : ", 0.0, 1.0)), 0.0)");
         return;
     }
+    if (read == READ_COLOR) { // The color itself, where the texture has it times its alpha
+        need(em, H_STRAIGHT);
+        sb_put(em->o, "tide_straight(");
+    }
     if (em->l == WGSL) sb_printf(em->o, "textureSampleLevel(pixels%d, sampler%d, ", slot, slot);
     else sb_printf(em->o, "textureLod(pixels%d, ", slot);
     ex_as(em, e->args.items[0], (type){TY_FLOAT2, NULL});
     // A depth is one number: WGSL gives it as that, at a level that's an int, and GLSL as a color's red
-    sb_put(em->o, read == READ_COLOR ? ", 0.0)" : em->l == WGSL ? ", 0)" : ", 0.0).r");
+    sb_put(em->o, read == READ_COLOR ? ", 0.0))" : em->l == WGSL ? ", 0)" : ", 0.0).r");
 }
 
 // A call of a function or method of the game's. A mut argument is the
@@ -2727,9 +2738,11 @@ static const char *output_name(const bool pixel, const int k)
 // what the vert wrote for it, blended too, and the colors it writes, each of
 // which the checker saw it write on every path that ends (the white they
 // start as here is for the shader's compiler, which didn't). What it leaves
-// is the draw's to finish: each times its tint (Draw.Tint), and for a draw
-// that multiplies what's there (Blend.Multiply, which `tide_screen.w` says),
-// towards white as it clears, so what's clear changes nothing. A frag's
+// is the draw's to finish: each times its tint (Draw.Tint), then its color
+// times its alpha, which is how every blend takes it (see tide_gpu_blend),
+// and for a draw that multiplies what's there (Blend.Multiply, which
+// `tide_screen.w` says), towards white as it clears, so what's clear changes
+// nothing. A frag's
 // outputs go out at the locations of their order, the pixel's color at 0.
 static void put_fragment_main(emit *em, sb *o, const char *in, const char *result)
 {
@@ -2782,24 +2795,27 @@ static void put_fragment_main(emit *em, sb *o, const char *in, const char *resul
                && (sh->textures.items[texture].source || sh->textures.items[texture].direct || sh->textures.items[texture].asset)) {
             texture++;
         }
+        if (sh->textured) need(em, H_STRAIGHT);
         if (sh->textured && wgsl) {
-            sb_printf(o, "    tide_color = tide_color * textureSampleLevel(pixels%d, sampler%d, %stide_s%d, 0.0);\n",
+            sb_printf(o, "    tide_color = tide_color * tide_straight(textureSampleLevel(pixels%d, sampler%d, %stide_s%d, 0.0));\n",
                       texture, texture, in, field_index(v, uv));
         } else if (sh->textured) {
-            sb_printf(o, "    tide_color = tide_color * textureLod(pixels%d, %stide_s%d, 0.0);\n", texture, in, field_index(v, uv));
+            sb_printf(o, "    tide_color = tide_color * tide_straight(textureLod(pixels%d, %stide_s%d, 0.0));\n", texture, in, field_index(v, uv));
         }
     }
     for (int k = 0; k < outputs; k++) {
         const char *color = output_name(false, k);
         if (wgsl) {
             sb_printf(o, "    %s = %s * tide_block.tide_tint;\n"
+                         "    %s = vec4f(%s.rgb * %s.a, %s.a);\n"
                          "    if (tide_block.tide_screen.w > 0.0) {\n"
-                         "        %s = vec4f(%s.rgb * %s.a + (1.0 - %s.a), %s.a);\n"
-                         "    }\n", color, color, color, color, color, color, color);
+                         "        %s = vec4f(%s.rgb + (1.0 - %s.a), %s.a);\n"
+                         "    }\n", color, color, color, color, color, color, color, color, color, color);
         } else {
             sb_printf(o, "    %s = %s * tide_tint;\n"
-                         "    if (tide_screen.w > 0.0) %s.rgb = %s.rgb * %s.a + (1.0 - %s.a);\n",
-                      color, color, color, color, color, color);
+                         "    %s.rgb = %s.rgb * %s.a;\n"
+                         "    if (tide_screen.w > 0.0) %s.rgb = %s.rgb + (1.0 - %s.a);\n",
+                      color, color, color, color, color, color, color, color);
         }
     }
     if (outputs == 1) {
