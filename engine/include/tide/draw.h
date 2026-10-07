@@ -25,6 +25,13 @@
 // they are, whatever their order. Everything else draws over what's there, in order. A clear
 // clears depth too. Each frame starts with a 3D camera at the origin, looking
 // along +z with a field of view of 60 degrees.
+//
+// They're also the only commands with sides. The front of a triangle is the
+// side its corners go clockwise on, as its mesh has them, and unless its
+// destination's tide_draw_set_cull says otherwise, a triangle seen from the
+// back isn't drawn. That's so whatever the mesh goes through on its way to
+// the screen, a transform or a camera that mirrors too. Nothing in 2D has a
+// back.
 
 typedef enum tide_draw_kind {
     TIDE_DRAW_CLEAR,       // color
@@ -64,10 +71,25 @@ typedef enum tide_depth {
     TIDE_DEPTH_NONE,       // Neither: drawn over whatever is there
 } tide_depth;
 
+// Which side of a 3D mesh's triangles isn't drawn. Tide's `Cull` has the same
+// values. The front is the side a triangle's corners go clockwise on.
+typedef enum tide_cull {
+    TIDE_CULL_BACK,  // The back isn't: what's solid, seen from outside
+    TIDE_CULL_FRONT, // The front isn't: the inside of a shell
+    TIDE_CULL_NONE,  // Both sides are drawn: what's flat, or see-through
+} tide_cull;
+
+// With a command's tide_cull: its instances' transforms mirror the mesh, so
+// its triangles reach the camera wound the other way, and a renderer takes
+// the other winding for their front. A run of instances is all one or the
+// other.
+#define TIDE_DRAW_MIRRORED 4u
+
 typedef struct tide_draw_command {
-    uint16_t kind;  // tide_draw_kind
+    uint8_t kind;   // tide_draw_kind
     uint8_t blend;  // tide_blend, for a command that draws
     uint8_t depth;  // tide_depth, for one that draws a 3D mesh; 0 for every other
+    uint8_t cull;   // tide_cull, for one that draws a 3D mesh, with TIDE_DRAW_MIRRORED where it is; 0 for every other
     union {
         uint32_t text;  // TIDE_DRAW_TEXT: offset of the text in tide_draw_list.text
         uint32_t shape; // TIDE_DRAW_SHAPE: the rest of it, its place in tide_draw_list.shapes
@@ -89,6 +111,7 @@ typedef struct tide_draw_command {
             uint32_t matrix; // Its place in tide_draw_list.matrices: from the world to clip space, as OpenGL's.
                              // TIDE_DRAW_FIRST_CAMERA: the one each frame starts with
             uint32_t fit;    // 1: it's for a square screen, and renderers divide x by the screen's width over its height
+            uint32_t mirrored; // 1: it shows the world mirrored, so triangles reach the screen wound the other way
         } camera;
         struct {              // TIDE_DRAW_MESH_3D
             uint32_t mesh;    // 1 + its place in tide_draw_list.meshes, or 0 for none (see tide_draw_forget)
@@ -372,16 +395,18 @@ static inline tide_draw_transform tide_draw_transform_matrix(const tide_float3x3
     return (tide_draw_transform){{m.c0.x, m.c0.y}, {m.c1.x, m.c1.y}, {m.c2.x, m.c2.y}};
 }
 
-// The settings that say where a destination's commands land, and what its 3D
-// meshes do with its depth, which each destination has its own of (see
-// Settings, below). A zeroed one is a frame's first: the first cameras, no
-// clip, no transform, and depth read and written.
+// The settings that say where a destination's commands land, what its 3D
+// meshes do with its depth and which side of their triangles draws, which
+// each destination has its own of (see Settings, below). A zeroed one is a
+// frame's first: the first cameras, no clip, no transform, depth read and
+// written, and no triangle drawn from the back.
 typedef struct tide_draw_place {
     // What the commands to come are drawn through: 1 + its place in tide_draw_list.cameras and
     // cameras_3d, or 0 for the camera each frame starts with...
     uint32_t camera_2d, camera_3d;
     uint32_t clip;  // ...and 1 + its place in tide_draw_list.clips, or 0 for none
     uint32_t depth; // tide_depth: what the 3D meshes to come do with depth
+    uint32_t cull;  // tide_cull: which side of their triangles isn't drawn
     // What the commands recorded so far leave a renderer with. Where it isn't the above, the commands
     // that say so are recorded before the next one that draws: a setting that's set and put back with
     // nothing drawn records nothing, and neither does one that's set to what it was.
@@ -398,6 +423,7 @@ enum {
     TIDE_DRAW_MOVED_EVEN = 4,    // ...both by as much: text is fitted to pixels
     TIDE_DRAW_MOVED_3D = 8,      // `transform_3d` isn't the identity
     TIDE_DRAW_MOVED_ROUND = 16,  // `transform` scales as much every way, turned or mirrored as it may: a circle stays one
+    TIDE_DRAW_MOVED_MIRROR = 32, // `transform_3d` mirrors: what goes through it comes out wound the other way
 };
 
 // A 2D camera a list was given, or the screen.
@@ -410,7 +436,8 @@ typedef struct tide_draw_camera_data {
 // A 3D camera a list was given: from the world to clip space, as OpenGL's.
 typedef struct tide_draw_camera_3d_data {
     tide_float4x4 matrix;
-    uint32_t fit; // 1: it's for a square screen (see TIDE_DRAW_CAMERA_3D)
+    uint32_t fit;      // 1: it's for a square screen (see TIDE_DRAW_CAMERA_3D)
+    uint32_t mirrored; // 1: it shows the world mirrored, as a looking glass does
 } tide_draw_camera_3d_data;
 
 // A clip: a rect, inside the clip it was made in.
@@ -434,7 +461,7 @@ typedef struct tide_draw_saved {
     uint32_t setting; // Which one: TIDE_DRAW_SAVED_*
     uint32_t target;  // Whose, for a destination's own: 0 for the window, or 1 + its place in tide_draw_list.targets
     union {
-        uint32_t value; // A blend, or what a place has for a camera, a clip or its depth
+        uint32_t value; // A blend, or what a place has for a camera, a clip, its depth or its cull
         tide_color tint;
         struct {
             tide_draw_transform transform;
@@ -456,6 +483,7 @@ enum {
     TIDE_DRAW_SAVED_CAMERA_2D,
     TIDE_DRAW_SAVED_CAMERA_3D,
     TIDE_DRAW_SAVED_DEPTH,
+    TIDE_DRAW_SAVED_CULL,
 };
 
 // A 3D mesh's corner, as a mesh's but in 3D. Tide's `Vertex3` is the same.
@@ -721,9 +749,9 @@ void tide_draw_clear(tide_draw_list *d, tide_color color);
 // There are two kinds. How a command comes out is the same wherever it draws:
 // how it blends (tide_draw_set_blend) and what tints it (tide_draw_set_tint).
 // Where it lands belongs to its destination, the window or a target, each
-// with its own for the frame: its cameras, its clip, its transforms, and what
-// its 3D meshes do with its depth. Those are set, and pushed, for the
-// destination that's selected (tide_draw_to).
+// with its own for the frame: its cameras, its clip, its transforms, what its
+// 3D meshes do with its depth, and which side of their triangles draws. Those
+// are set, and pushed, for the destination that's selected (tide_draw_to).
 //
 // Each has two forms. tide_draw_set_* sets it for the commands to come, until
 // it's set again, and tide_draw_unset_* puts it back as each frame starts.
@@ -781,6 +809,20 @@ uint32_t tide_draw_push_transform_3d(tide_draw_list *d, tide_float4x4 transform)
 void tide_draw_set_depth(tide_draw_list *d, tide_depth depth);
 void tide_draw_unset_depth(tide_draw_list *d);
 uint32_t tide_draw_push_depth(tide_draw_list *d, tide_depth depth);
+
+// Which side of the triangles of the selected destination's 3D meshes after
+// it isn't drawn (tide_cull), through a shader of the game's or not: the
+// back, each frame's first. The front of a triangle is the side its corners
+// go clockwise on, as its mesh has them, whatever it's drawn through: an
+// instance's transform that mirrors it, tide_draw_set_transform_3d's or a
+// camera's leave its front its front. A transform that flattens a mesh has
+// none to keep: such a mesh is drawn with TIDE_CULL_NONE. A shader's vertex
+// stage that turns triangles round itself is the game's to draw with
+// TIDE_CULL_FRONT. Nothing in 2D has a back: 2D commands, clears and blits
+// draw whatever this says.
+void tide_draw_set_cull(tide_draw_list *d, tide_cull cull);
+void tide_draw_unset_cull(tide_draw_list *d);
+uint32_t tide_draw_push_cull(tide_draw_list *d, tide_cull cull);
 
 // Both of the selected destination's transforms, and both of its cameras, as each frame starts.
 void tide_draw_unset_transforms(tide_draw_list *d);

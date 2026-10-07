@@ -1184,6 +1184,7 @@
         },
         glCreateProgram: () => add('program', gl.createProgram()),
         glCreateShader: type => add('shader', gl.createShader(type)),
+        glCullFace: side => gl.cullFace(side),
         glDeleteBuffers: (n, ptr) => remove('buffer', o => gl.deleteBuffer(o), n, ptr),
         glDeleteFramebuffers: (n, ptr) => remove('framebuffer', o => gl.deleteFramebuffer(o), n, ptr),
         glDeleteProgram(p) {
@@ -1223,6 +1224,7 @@
             gl.framebufferRenderbuffer(target, attachment, rbTarget, get('renderbuffer', r)),
         glFramebufferTexture2D: (target, attachment, textureTarget, t, level) =>
             gl.framebufferTexture2D(target, attachment, textureTarget, get('texture', t), level),
+        glFrontFace: winding => gl.frontFace(winding),
         glGenBuffers: (n, ptr) => generate('buffer', () => gl.createBuffer(), n, ptr),
         glGenFramebuffers: (n, ptr) => generate('framebuffer', () => gl.createFramebuffer(), n, ptr),
         glGenRenderbuffers: (n, ptr) => generate('renderbuffer', () => gl.createRenderbuffer(), n, ptr),
@@ -1506,6 +1508,7 @@
         { depthWriteEnabled: false, depthCompare: 'less-equal' },
         { depthWriteEnabled: true, depthCompare: 'always' },
     ];
+    const culls = ['none', 'back', 'front']; // tide_gpu_cull, of a front that goes clockwise
     const attributeFormats = ['float32', 'float32x2', 'float32x3', 'float32x4', 'unorm8x4',
         'sint32', 'sint32x2', 'sint32x3', 'sint32x4']; // tide_gpu_attribute_format
     let building = null; // The pipeline being described
@@ -1658,8 +1661,9 @@
             gpuRemove('texture', id);
             for (const key of t.groups) bindGroups.delete(key);
         },
-        gpu_pipeline_begin(namePtr, codePtr, uniformSize, textures, blend, depth) {
-            building = { name: string(namePtr), code: string(codePtr), textures, blend, depth, slots: [], attributes: [] };
+        gpu_pipeline_begin(namePtr, codePtr, uniformSize, textures, blend, depth, cull) {
+            building = { name: string(namePtr), code: string(codePtr), textures, blend, depth, cull, slots: [],
+                attributes: [] };
         },
         gpu_pipeline_slot: (stride, perInstance) => { building.slots.push({ stride, perInstance: !!perInstance }); },
         gpu_pipeline_attribute: (slot, format, offset) => { building.attributes.push({ slot, format, offset }); },
@@ -1681,7 +1685,8 @@
                 vertex: { module, entryPoint: 'vertex', buffers },
                 fragment: { module, entryPoint: 'fragment', targets: [{ format: gpuFormat,
                     blend: blends[b.blend] }] },
-                primitive: { topology: 'triangle-list', cullMode: 'none' }, // Either side of a triangle draws
+                // A triangle's front goes clockwise as it's seen, in the canvas and in a target alike
+                primitive: { topology: 'triangle-list', cullMode: culls[b.cull], frontFace: 'cw' },
                 depthStencil: { format: 'depth24plus', ...depths[b.depth] },
             });
             return gpuAdd('pipeline', { pipeline, textures: b.textures });

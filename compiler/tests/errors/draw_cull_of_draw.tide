@@ -1,0 +1,11 @@
+// expect: Draw has no function 'Cull'
+// expect: it's Draw3D's: 'Draw3D.Cull(...)'
+scene Main { }
+
+view Show()
+{
+    Draw.Cull(Cull.None)
+    {
+        Draw3D.Cube(float3(0, 0, 5), float3(1, 1, 1), Color.white);
+    }
+}

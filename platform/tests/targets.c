@@ -210,7 +210,9 @@ static void check_render_list(void)
 static void check_render_depth_alpha(void)
 {
     uint32_t expected[WIDTH * HEIGHT * 4];
-    const uint32_t indices[6] = {0, 1, 2, 0, 2, 3};
+    // Through a projection that's the identity, which looks back along z: these face +z, so their
+    // corners go clockwise as that camera has them, which shows the world mirrored
+    const uint32_t indices[6] = {0, 2, 1, 0, 3, 2};
     const tide_vertex3 near_vertices[4] = {{{-1, 1, 0.5f}, {0, 0}, TIDE_COLOR_RED},
                                           {{1, 1, 0.5f}, {1, 0}, TIDE_COLOR_RED},
                                           {{1, -1, 0.5f}, {1, 1}, TIDE_COLOR_RED},
@@ -340,6 +342,71 @@ static void check_render_depth_alpha(void)
     blit_image(TARGET_A, WIDTH, HEIGHT, 0);
     for (int i = 0; i < WIDTH * HEIGHT * 4; i++) expected[i] = 0x000000ffu;
     render_expect(expected, "hot reload discards old target storage");
+}
+
+// Which side of a triangle draws is a target's own too, and a triangle's front
+// is the side its corners go clockwise on in a target as in the window,
+// whichever way up a backend keeps a target's rows.
+static void check_render_cull(void)
+{
+    uint32_t expected[WIDTH * HEIGHT * 4];
+    static const uint32_t indices[6] = {0, 1, 2, 0, 2, 3};
+    // Over the whole target, 1 away from a camera that looks along +z: seen from the front, and from the back
+    const tide_vertex3 front_vertices[4] = {{{-1, 1, 1}, {0, 0}, TIDE_COLOR_GREEN}, {{1, 1, 1}, {1, 0}, TIDE_COLOR_GREEN},
+                                           {{1, -1, 1}, {1, 1}, TIDE_COLOR_GREEN}, {{-1, -1, 1}, {0, 1}, TIDE_COLOR_GREEN}};
+    const tide_vertex3 back_vertices[4] = {{{-1, 1, 1}, {0, 0}, TIDE_COLOR_RED}, {{-1, -1, 1}, {0, 1}, TIDE_COLOR_RED},
+                                          {{1, -1, 1}, {1, 1}, TIDE_COLOR_RED}, {{1, 1, 1}, {1, 0}, TIDE_COLOR_RED}};
+    const tide_mesh front = {front_vertices, 4, indices, 6, 1}, back = {back_vertices, 4, indices, 6, 1};
+    const tide_float4x4 identity = tide_identity_f4x4(), across = tide_ortho_f4x4(2, 2, 0.1f, 10);
+    const tide_float4x4 mirrored = tide_trs_f4x4(tide_f3(0, 0, 0), tide_identity_q(), tide_f3(-1, 1, 1));
+    const uint32_t black = 0x000000ffu, green = 0x00ff00ffu, red = 0xff0000ffu;
+    struct {
+        const tide_mesh *mesh;
+        const tide_float4x4 *transform;
+        int cull; // -1: as a frame starts
+        uint32_t color;
+        const char *what;
+    } const cases[] = {
+        {&front, &identity, -1, green, "a target's mesh seen from the front is drawn"},
+        {&back, &identity, -1, black, "and seen from the back it isn't"},
+        {&front, &mirrored, -1, green, "one its own transform mirrors is still seen from the front"},
+        {&back, &mirrored, -1, black, "or from the back"},
+        {&back, &identity, TIDE_CULL_FRONT, red, "a target's own cull: with no front drawn, one seen from the back is"},
+        {&front, &identity, TIDE_CULL_FRONT, black, "and one seen from the front isn't"},
+        {&back, &identity, TIDE_CULL_NONE, red, "and with both sides drawn, one seen from the back is"},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        tide_draw_reset(&render_list);
+        // The window's own says the opposite, which is nothing to a target
+        tide_draw_set_cull(&render_list, cases[i].cull == TIDE_CULL_FRONT ? TIDE_CULL_BACK : TIDE_CULL_FRONT);
+        tide_draw_to(&render_list, TARGET_A, WIDTH, HEIGHT);
+        tide_draw_clear(&render_list, TIDE_COLOR_BLACK);
+        tide_draw_set_camera_matrices(&render_list, identity, across);
+        const uint32_t mark = render_list.saved_count;
+        if (cases[i].cull >= 0) tide_draw_push_cull(&render_list, (tide_cull)cases[i].cull);
+        tide_draw_mesh_3d(&render_list, cases[i].mesh, *cases[i].transform, NULL, TIDE_FILTER_POINT);
+        tide_draw_pop(&render_list, mark);
+        tide_draw_to(&render_list, 0, 0, 0);
+        blit_image(TARGET_A, WIDTH, HEIGHT, 0);
+        for (int p = 0; p < WIDTH * HEIGHT * 4; p++) expected[p] = cases[i].color;
+        render_expect(expected, cases[i].what);
+    }
+
+    // ...and a target's is nothing to the window: with both sides drawn in the
+    // target, a mesh seen from the back in the window still isn't
+    tide_draw_reset(&render_list);
+    tide_draw_to(&render_list, TARGET_A, WIDTH, HEIGHT);
+    tide_draw_clear(&render_list, TIDE_COLOR_BLACK);
+    tide_draw_set_cull(&render_list, TIDE_CULL_NONE);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_image(TARGET_A, WIDTH, HEIGHT, 0);
+    tide_draw_set_camera_matrices(&render_list, identity, across);
+    tide_draw_mesh_3d(&render_list, &back, identity, NULL, TIDE_FILTER_POINT);
+    for (int p = 0; p < WIDTH * HEIGHT * 4; p++) expected[p] = black;
+    render_expect(expected, "a target's cull is its own: the window's meshes aren't drawn from the back for it");
+    tide_draw_mesh_3d(&render_list, &front, identity, NULL, TIDE_FILTER_POINT);
+    for (int p = 0; p < WIDTH * HEIGHT * 4; p++) expected[p] = green;
+    render_expect(expected, "and are from the front");
 }
 
 static void check_owned_targets(void)
@@ -862,6 +929,7 @@ static int frame(void *user, const float seconds)
     checked("the backend's targets");
     check_render_list();
     check_render_depth_alpha();
+    check_render_cull();
     check_owned_targets();
     checked("the renderer's targets");
     static const float scales[] = {1.0f, 2.0f, 1.5f, 3.0f, 1.25f};

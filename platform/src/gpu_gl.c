@@ -27,7 +27,7 @@
 
 typedef struct gl_pipeline {
     GLuint program, vao;         // No program: a place that's free
-    tide_gpu_pipeline_desc desc; // Its slots and attributes, and how it blends and tests depth
+    tide_gpu_pipeline_desc desc; // Its slots and attributes, how it blends and tests depth, and which side it draws
     GLint target_height;         // 0 on the window, its height when drawing top-first into a texture
 } gl_pipeline;
 
@@ -408,7 +408,7 @@ static void gl_begin(const tide_gpu_id target, const bool clear)
     // What a pass draws with is set here, whatever drew before: another
     // target's pass or, on the web, the program this one took over from.
     glViewport(0, 0, width, height);
-    glDisable(GL_CULL_FACE); // Either side of a triangle draws
+    glDisable(GL_CULL_FACE); // Either side of a triangle draws, until a pipeline says otherwise (gl_use)
     glEnable(GL_SCISSOR_TEST);
     glScissor(0, 0, width, height);
     if (!uniform_buffer) { // The first pass: what every pipeline draws with
@@ -473,6 +473,16 @@ static void gl_use(const tide_gpu_id pipeline)
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(current->desc.depth == TIDE_GPU_DEPTH_RESET ? GL_ALWAYS : GL_LEQUAL);
         glDepthMask(current->desc.depth == TIDE_GPU_DEPTH_READ ? GL_FALSE : GL_TRUE);
+    }
+    if (current->desc.cull == TIDE_GPU_CULL_NONE) {
+        glDisable(GL_CULL_FACE);
+    } else {
+        glEnable(GL_CULL_FACE);
+        glCullFace(current->desc.cull == TIDE_GPU_CULL_BACK ? GL_BACK : GL_FRONT);
+        // A triangle's front goes clockwise as it's seen. A target's pass is
+        // drawn the other way up (compile), where the same triangle goes
+        // counterclockwise for OpenGL
+        glFrontFace(pass_texture ? GL_CCW : GL_CW);
     }
 }
 

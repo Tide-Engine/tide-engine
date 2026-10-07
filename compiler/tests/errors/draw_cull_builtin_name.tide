@@ -1,0 +1,3 @@
+// expect: 'Cull' is built into the engine
+enum Cull { Near, Far }
+scene Main { }
