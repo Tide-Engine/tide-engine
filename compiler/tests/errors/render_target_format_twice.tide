@@ -1,4 +1,0 @@
-// expect: RenderTarget takes its width and height in logical pixels, and its pixels per unit when it isn't the display's
-// expect: what it holds comes last, when that isn't color: 'RenderTarget(width, height, Format.DepthOnly)'
-scene Main { }
-view Show() { var target = RenderTarget(64, 64, Format.DepthOnly, Format.Color); }

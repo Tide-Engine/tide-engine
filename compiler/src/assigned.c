@@ -400,7 +400,13 @@ static void flow_leave(const flow *f, const loc at, const uint8_t *st, const boo
         if (missing) sb_printf(&what, "'" STR_FMT "." STR_FMT "'", STR_ARG(p->name), STR_ARG(missing->name));
         else sb_printf(&what, "%s'" STR_FMT "'", gpu(f) ? "" : "its ", STR_ARG(p->name));
         const char *ends = at_end ? "can end" : "returns here";
-        if (gpu(f) && f->code->is_frag) {
+        if (gpu(f) && f->code->is_frag && p->output > 0) { // One of its outputs after the pixel's color
+            static const char *const which[] = {"first", "second", "third", "fourth"};
+            diag_error(at, "frag '" STR_FMT "' %s without writing %s, its %s output", STR_ARG(f->code->name), ends, what.data,
+                       which[p->output < 4 ? p->output : 3]);
+            diag_note("a frag writes each of its outputs on every path that ends; one that draws nothing leaves the pixel "
+                      "with 'pixel.Discard();', through a 'Pixel pixel' parameter");
+        } else if (gpu(f) && f->code->is_frag) {
             diag_error(at, "frag '" STR_FMT "' %s without writing its pixel's color, %s", STR_ARG(f->code->name), ends, what.data);
             diag_note("a frag writes its color on every path that ends; one that draws nothing leaves the pixel with "
                       "'pixel.Discard();', through a 'Pixel pixel' parameter");

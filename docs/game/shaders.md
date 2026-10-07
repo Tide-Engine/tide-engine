@@ -76,10 +76,59 @@ frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun)
 - **It starts with no value, so the frag writes it.** On every path that ends, and before reading it: `color.a = 1` alone, with nothing written first, is an error, and so is a frag whose only write is inside an `if` with no `else`. It isn't the pixel already on the screen either: a GPU doesn't let a frag read that. A path that ends in [`pixel.Discard()`](#where-the-pixel-is) draws no pixel, and owes it nothing.
 - **The draw's [settings](./views.md#draw-settings) apply to it.** Inside `Draw.Blend(Blend.Add) { ... }` the pixel is added instead, and inside `Draw.Tint(...)` it's multiplied by the tint after the frag ran, so a faded menu fades its shaded meshes too, with nothing for the frag to do. A 2D mesh's vertices go through `Draw2D.Transform` after its vert, and a 3D one's transform goes through `Draw3D.Transform`. A 3D mesh does with depth what [`Draw3D.Depth`](./views.md#depth) says: inside `Draw3D.Depth(Depth.Read) { ... }` it's hidden behind what's nearer and hides nothing itself, which is how something see-through is drawn. And its triangles are drawn from the side [`Draw3D.Cull`](./views.md#which-side-draws) says, their front unless it says otherwise: a vert that mirrors its mesh, or turns it inside out, has them reach the screen the other way round, and is drawn inside `Draw3D.Cull(Cull.Front)`. Under [`Draw.Stencil`](./views.md#stencil) it's drawn where its pixels pass the test, and it stores where it's drawn: a pixel the frag leaves out with `pixel.Discard()` stores nothing, which is how a mask gets the shape of a picture.
 - **Light the color, not its alpha.** A color times a number scales its alpha too, so `box.tint * light` alone leaves a pixel in the shade see-through, and what was drawn behind the mesh shows in it, its own far side too. The frag above sets `color.a` back.
-- A frag has one output for now, a `Color`. More, and other types, aren't there yet.
+- A frag can write more than one color, each an `out Color` of its own: see [Several outputs](#several-outputs). An output of another type than `Color` isn't there yet.
 
 ::: tip It used to be mut
 A frag's color used to be `mut Color color`, which started white. That spelling is an error now, and the editor offers the change to `out`. A frag that leaned on the white writes it itself, `color = Color.white;`, which the editor offers too where a path is missing it.
+:::
+
+### Several outputs
+
+A frag writes up to four colors at once, each an `out Color` parameter, into a [render target made to hold as many](./views.md#several-colors). They go to the target's color images in the order they're written: the first is the pixel's color, as ever, and each one after it goes to the next image.
+
+```csharp
+// One pass over the scene leaves what it looks like, which way it faces and where it is
+frag Fill(Corner corner, out Color albedo, out Color normal, out Color place, Pixel pixel)
+{
+    albedo = corner.color;
+    normal = Color(corner.normal.x, corner.normal.y, corner.normal.z);
+    place = Color(pixel.world.x, pixel.world.y, pixel.world.z);
+}
+
+// ...and a second one, over the whole screen, lights it from what the first left: its
+// first image is the Blit's source, and the others are Texture fields of a singleton
+frag Lit(Vertex vertex, out Color color, Texture source, Deferred deferred, Lamp lamp)
+{
+    Color albedo = source.Sample(vertex.uv, Filter.Point);
+    Color normal = deferred.normals.Sample(vertex.uv, Filter.Point);
+    Color place = deferred.places.Sample(vertex.uv, Filter.Point);
+    float3 toward = lamp.position - float3(place.r, place.g, place.b);
+    float facing = Math.Max(Math.Dot(float3(normal.r, normal.g, normal.b), Math.Normalize(toward)), 0);
+    color = Color(albedo.r * facing, albedo.g * facing, albedo.b * facing);
+}
+
+view Show(Models models, Deferred deferred)
+{
+    deferred.scene.Clear(Color.black);
+    deferred.scene.Mesh(models.room, models.faces, float4x4.identity, Fill);
+    Draw.Blit(deferred.scene.color, Draw.window, Lit);
+}
+```
+
+- **Each is owed on every path,** as the pixel's color is: a frag that can end without writing its second output is an error that names it, and `pixel.Discard()` owes none of them anything.
+- **They're matched by their order,** not their names: `out Color albedo, out Color normal` writes a target's first image and its second, whatever the frag calls them, and wherever they are among its other parameters.
+- **A `Color` is four floats,** and an output holds any number. What's kept of it is the image's to say: a [`Format.Color`](./views.md#what-a-target-holds) image keeps each channel from 0 to 1, and a `Format.Float` one keeps it as it is, which is what a normal, a place or light brighter than white needs.
+- **`Color(x, y, z)` has an alpha of 1.** Each output is blended over what's in its image by its own alpha, as the draw's blend says, so an output that's data is written with an alpha of 1, or inside `Draw.Blend(Blend.Replace) { ... }`.
+- **Where there's no image for it, an output goes nowhere.** Drawn into the window, or into a target of one color image, such a frag is its first output alone; into a target of depth alone, none of them. So one frag serves a pass that fills three images and a pass that only casts a shadow.
+- **A target's other images are left alone** by a frag with fewer outputs than the target has images, and by everything the engine draws itself, which has one color.
+- A frag reads the images another draw wrote as it reads any texture, through a `Texture` field of a singleton or a component it takes: `deferred.normals = deferred.scene.colors[1];` in a view, then `deferred.normals.Sample(uv)` in the frag. It can't read an image of the target it's drawn into.
+
+The scene below is drawn once, by a frag that leaves three images: each pixel's paint, which way it faces and where it is. A second frag, over the whole window, lights every pixel from those three, with a lamp that follows the pointer, so moving the lamp draws nothing of the scene again. The slider raises the lamp, and the buttons show each image as the first pass left it.
+
+::: tide-example outputs Three images from one frag
+
+<<< @/examples/outputs.tide
+
 :::
 
 ## A vert

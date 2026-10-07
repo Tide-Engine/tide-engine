@@ -1418,7 +1418,7 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_COLOR: return "A color: r, g, b and a from 0 to 1. `Color(r, g, b)` or `Color(r, g, b, a)`.";
     case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter[, wrap]])`. A Blit supplies its source to a read-only Texture shader parameter.";
     case TY_DEPTH_TEXTURE: return "A local reference to a render target's depth, `target.depth`, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow wants.";
-    case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Screen()` is always the window's size. Each says last what it holds when that isn't color: `Format.DepthOnly` is depth alone. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
+    case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Screen()` is always the window's size. Each says last what it holds when that isn't one color image: `Format.DepthOnly` is depth alone, and a format for each makes several, `RenderTarget(width, height, Format.Color, Format.Float)`, which a frag's `out Color` parameters go to in order. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture, `target.colors[1]` its second color image's, and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
     case TY_RECT: return "A rectangle on the screen, for the GUI: x and y from the top left, y down, then width and height.";
     case TY_STRING: return "Text, written in double quotes.";
     case TY_ACTION: return "Code the caller writes in braces after the call, run with `content();`.";
@@ -2255,6 +2255,17 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
     if (index == 0) {
         sb_put(out, "\n\nThe vertex the vert runs for, which it changes in place: what it leaves in it is what the "
                     "triangle is drawn with, and what a frag reads of it, blended.");
+        return;
+    }
+    if (p->mode == PARAM_MUT && p->type.kind == TY_COLOR && d->is_frag && p->output > 0) {
+        static const char *const which[] = {"first", "second", "third", "fourth"};
+        const int at = p->output < 4 ? p->output : 3;
+        sb_printf(out, "\n\nThe frag's %s output: a color it writes beside the pixel's. It goes to the %s color image of "
+                       "a target made to hold as many, `RenderTarget(width, height, Format.Color, Format.Float)`, which "
+                       "`target.colors[%d]` reads; in the window, or in a target with fewer images, it goes nowhere. It "
+                       "starts with no value: the frag writes it on every path that ends, before it reads it. It's "
+                       "blended over what's in its image by its alpha, as the pixel's color is: `Color(x, y, z)` has "
+                       "an alpha of 1, and replaces it.", which[at], which[at], at);
         return;
     }
     if (p->mode == PARAM_MUT && p->type.kind == TY_COLOR) {
@@ -5594,7 +5605,14 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     // In a frag or vert: the GPU has no text, lists, maps or sets, and a grid there is a texture
     const bool gpu = is_shader(sc->decl);
     if (t.kind == TY_RENDER_TARGET) {
-        item(c, "color", CK_PROPERTY, "Texture", "The target's GPU color image, without CPU readback.", NULL);
+        item(c, "color", CK_PROPERTY, "Texture",
+             "The target's GPU color image, without CPU readback: its first, where it holds several.", NULL);
+        if (!gpu) {
+            item(c, "colors", CK_PROPERTY, "Texture, by its number",
+                 "The target's color images, in the order of the formats it was made with: `colors[1]` is its second, "
+                 "as a Texture, and `colors[0]` is `color`. A frag's `out Color` parameters go to them in that order.",
+                 "colors[$1]");
+        }
         item(c, "depth", CK_PROPERTY, "DepthTexture",
              "The target's depth, for a frag to read: kept in a field of a component or singleton the frag takes, and "
              "read there with `Sample(uv)` or `Compare(uv, value)`.", NULL);
@@ -6662,7 +6680,8 @@ static void complete_shader_header(completion *c, const int open, const int last
     if (after_mut) return; // Only a vert's vertex is, its first
     if (after_out) {
         if (frag) {
-            item(c, "Color", CK_STRUCT, "The pixel's color, which the frag writes", NULL, NULL);
+            item(c, "Color", CK_STRUCT,
+                 "A color the frag writes: the pixel's, then one for each color image after its target's first", NULL, NULL);
             return;
         }
         for (int i = 0; i < A.prog->decls.count; i++) { // What a vert can hand its frag: a struct
@@ -6674,11 +6693,15 @@ static void complete_shader_header(completion *c, const int open, const int last
         complete_namespaces(c, false);
         return;
     }
-    bool writes = false; // It has its `out Color` already
+    bool writes = false; // It has its `out Color` already: another is one more output
     for (int k = open + 2; k <= last; k++) {
         writes |= toks[k].kind == T_IDENT && str_eq_c(toks[k].text, "out") && toks[k - 1].kind == T_COMMA;
     }
     if (frag && !writes) item(c, "out", CK_KEYWORD, "out Color color: the pixel's color, which the frag writes", NULL, NULL);
+    if (frag && writes) {
+        item(c, "out", CK_KEYWORD, "out Color glow: one more color the frag writes, into the next color image of its target",
+             NULL, NULL);
+    }
     if (!frag) item(c, "out", CK_KEYWORD, "out FromLamp lamp: a struct the vert writes for its frag, which reads it blended", NULL, NULL);
     complete_types(c, true, true, false);
     item(c, "Texture", CK_STRUCT, "Read-only image supplied by the draw", builtin_type_doc(TY_TEXTURE), NULL);
@@ -8391,9 +8414,9 @@ static const struct {
     {"Color", {"Color(float r, float g, float b)", "Color(float r, float g, float b, float a)"}, "Channels from 0 to 1."},
     {"Rect", {"Rect(float x, float y, float width, float height)"}, "From the top left of the screen, y down, in GUI units."},
     {"RenderTarget", {"RenderTarget(float width, float height)", "RenderTarget(float width, float height, float pixelsPerUnit)",
-                      "RenderTarget(float width, float height, Format format)",
-                      "RenderTarget(float width, float height, float pixelsPerUnit, Format format)"},
-     "Creates a local image of a positive size in logical pixels, like the window's. Its image has the display's pixels in each, so it's as sharp as the window, or `pixelsPerUnit` of them: with 1, exactly `width` by `height` pixels on any display. It holds color beside its depth, or what `format` says: `Format.DepthOnly` is depth alone, for a pass whose depth a frag reads afterwards (`target.depth`). Color and depth persist until cleared; copies share it. Dispose it when finished. `RenderTarget.Screen()` is one that's always the window's size."},
+                      "RenderTarget(float width, float height, Format formats...)",
+                      "RenderTarget(float width, float height, float pixelsPerUnit, Format formats...)"},
+     "Creates a local image of a positive size in logical pixels, like the window's. Its image has the display's pixels in each, so it's as sharp as the window, or `pixelsPerUnit` of them: with 1, exactly `width` by `height` pixels on any display. It holds one color image beside its depth, or what its formats say, one for each color image, four at the most: `Format.Color` is 4 bytes a pixel and `Format.Float` four floats, which keep any number. A frag's `out Color` parameters go to them in order, and `target.colors[1]` reads the second. `Format.DepthOnly`, by itself, is depth alone, for a pass whose depth a frag reads afterwards (`target.depth`). Color and depth persist until cleared; copies share it. Dispose it when finished. `RenderTarget.Screen()` is one that's always the window's size."},
     {"PlayerID", {"PlayerID(int index)"}, "A player by index, for local play and tests."},
     {"Random", {"Random(long seed)"}, RANDOM_SEEDED_DOC},
     {"Spawn", {"Spawn(components...)"}, "Creates an entity with these components. It's added at the end of the tick."},

@@ -32,7 +32,12 @@ typedef struct gl_pipeline {
 } gl_pipeline;
 
 typedef struct gl_target {
-    GLuint framebuffer, color, depth; // No framebuffer: a place that's free. No color: a target of depth alone
+    GLuint framebuffer, depth; // No framebuffer: a place that's free
+    GLuint colors[TIDE_GPU_MAX_COLORS]; // Its color images, in order: none for a target of depth alone
+    uint32_t color_count;
+    uint32_t drawn; // How many of them the framebuffer's draw buffers name (see draw_into)
+    bool bytes;     // Its first color image is 4 bytes a pixel: what's read back
+    tide_gpu_target_format format; // What it was made to hold, which the pipelines that draw into it are made for
     int width, height;
 } gl_target;
 
@@ -72,6 +77,9 @@ static const gl_pipeline *current;
 static GLenum index_type;
 static int pass_height; // The pass's target's, in its pixels
 static bool pass_texture; // Its rows go from the top, as uploaded textures' do
+static gl_target *pass_target; // What the pass draws into: NULL for the window
+
+bool tide_gpu_gl_no_floats;
 static GLint pass_stencil; // The number its pipelines' stencil tests compare with (gl_stencil)
 
 // A pipeline's stencil test and what it stores, as OpenGL has them, with the
@@ -360,6 +368,60 @@ static void gl_pipeline_free(const tide_gpu_id pipeline)
     current = NULL;
 }
 
+// A texture of four floats of 16 bits a pixel, for a target to draw into: no
+// pixels of ours go into one.
+static GLuint float_texture(const int width, const int height)
+{
+    GLuint texture = 0;
+    glGenTextures(1, &texture);
+    textures = room(textures, &texture_names, texture, sizeof(gl_texture));
+    textures[texture] = (gl_texture){.format = TIDE_GPU_RGBA8, .width = width, .height = height};
+    bind_texture(texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_HALF_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    return texture;
+}
+
+// Whether this OpenGL draws into floats. OpenGL 3.3 does, and OpenGL ES 3.2;
+// an older OpenGL ES 3 and WebGL 2 do where they have it as an extension,
+// which adds no function (the page asks WebGL for it as it makes the
+// context), so it's found out by making a framebuffer of them, once. Such a
+// texture is blended between pixels on all of them.
+static bool gl_float_targets(void)
+{
+    static int found; // 0 until it's known, then 1 for floats and -1 for none
+    if (tide_gpu_gl_no_floats) return false;
+    if (!found) {
+        GLuint framebuffer = 0;
+        glGenFramebuffers(1, &framebuffer);
+        glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+        const GLuint texture = float_texture(1, 1);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+        found = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE ? 1 : -1;
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glDeleteFramebuffers(1, &framebuffer);
+        glDeleteTextures(1, &texture);
+    }
+    return found > 0;
+}
+
+// Which of the bound target's color images the draws that follow write: its
+// first `count`, in order. A fragment shader's output with no image in its
+// place goes nowhere, but an image with no output in its place would get
+// anything at all (and WebGL refuses the draw), so the images past a
+// pipeline's outputs are taken out of the draw buffers.
+static void draw_into(gl_target *t, const uint32_t count)
+{
+    if (t->drawn == count) return;
+    GLenum buffers[TIDE_GPU_MAX_COLORS];
+    for (uint32_t i = 0; i < t->color_count; i++) buffers[i] = i < count ? GL_COLOR_ATTACHMENT0 + i : GL_NONE;
+    if (t->color_count) glDrawBuffers((GLsizei)t->color_count, buffers);
+    t->drawn = count;
+}
+
 static tide_gpu_id gl_target_make(const tide_gpu_target_format format, const int width, const int height)
 {
     uint32_t place = 0;
@@ -368,14 +430,32 @@ static tide_gpu_id gl_target_make(const tide_gpu_target_format format, const int
         targets = tide_realloc(targets, target_count * sizeof(gl_target), (target_count + 1u) * sizeof(gl_target));
         target_count++;
     }
-    gl_target *t = &targets[place];
-    *t = (gl_target){.width = width, .height = height};
+    const uint32_t colors = tide_gpu_target_colors(format);
+    bool floats = false;
+    for (uint32_t i = 0; i < colors; i++) floats |= tide_gpu_target_color(format, i) == TIDE_GPU_COLOR_FLOAT;
+    if (floats && !gl_float_targets()) {
+        static bool said;
+        if (!said) {
+            fprintf(stderr, "tide: this device's " GL_NAME " can't draw into float images: a render target's "
+                            "Format.Float image is 4 bytes a pixel here, and keeps what's drawn into it from 0 to 1\n");
+        }
+        said = true;
+        floats = false;
+    }
+    gl_target *t = &targets[place]; // After the float images were looked for, which makes textures of its own
+    *t = (gl_target){.width = width, .height = height, .format = format, .color_count = colors,
+                     .drawn = colors ? 1u : 0u,
+                     .bytes = colors && !(floats && tide_gpu_target_color(format, 0) == TIDE_GPU_COLOR_FLOAT)};
     glGenFramebuffers(1, &t->framebuffer);
+    for (uint32_t i = 0; i < colors; i++) {
+        t->colors[i] = floats && tide_gpu_target_color(format, i) == TIDE_GPU_COLOR_FLOAT
+            ? float_texture(width, height) : gl_texture_make(TIDE_GPU_RGBA8, width, height, NULL);
+    }
     glBindFramebuffer(GL_FRAMEBUFFER, t->framebuffer);
-    if (format == TIDE_GPU_TARGET_COLOR) {
-        t->color = gl_texture_make(TIDE_GPU_RGBA8, width, height, NULL);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t->color, 0);
-    } else { // Nothing to draw colors into, or to read them from: OpenGL 3.3 wants that said
+    for (uint32_t i = 0; i < colors; i++) {
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_TEXTURE_2D, t->colors[i], 0);
+    }
+    if (!colors) { // Nothing to draw colors into, or to read them from: OpenGL 3.3 wants that said
         glDrawBuffers(1, (const GLenum[]){GL_NONE});
         glReadBuffer(GL_NONE);
     }
@@ -408,14 +488,15 @@ static void gl_target_free(const tide_gpu_id target)
 {
     gl_target *t = &targets[target - 1u];
     glDeleteFramebuffers(1, &t->framebuffer);
-    if (t->color) gl_texture_free(t->color);
+    for (uint32_t i = 0; i < t->color_count; i++) gl_texture_free(t->colors[i]);
     glDeleteTextures(1, &t->depth);
     *t = (gl_target){0};
 }
 
-static tide_gpu_id gl_target_texture(const tide_gpu_id target)
+static tide_gpu_id gl_target_texture(const tide_gpu_id target, const uint32_t color)
 {
-    return targets[target - 1u].color;
+    const gl_target *t = &targets[target - 1u];
+    return color < t->color_count ? t->colors[color] : 0;
 }
 
 static tide_gpu_id gl_target_depth(const tide_gpu_id target)
@@ -426,7 +507,7 @@ static tide_gpu_id gl_target_depth(const tide_gpu_id target)
 static void gl_target_read(const tide_gpu_id target, uint8_t *rgba)
 {
     const gl_target *t = &targets[target - 1u];
-    if (!t->color) { // Depth alone: no pixels to read
+    if (!t->bytes) { // Depth alone, or floats first: no bytes to read
         memset(rgba, 0, (size_t)t->width * (size_t)t->height * 4u);
         return;
     }
@@ -441,11 +522,13 @@ static void gl_begin(const tide_gpu_id target, const bool clear)
 {
     int width, height;
     bool color = true;
+    pass_target = target ? &targets[target - 1u] : NULL;
     if (target) {
-        const gl_target *t = &targets[target - 1u];
+        gl_target *t = pass_target;
         glBindFramebuffer(GL_FRAMEBUFFER, t->framebuffer);
         width = t->width, height = t->height;
-        color = t->color != 0;
+        color = t->color_count != 0;
+        if (clear) draw_into(t, t->color_count); // A clear reaches the images the draw buffers name: all of them
     } else {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         tide_window_pixel_size(&width, &height);
@@ -498,6 +581,7 @@ static void gl_begin(const tide_gpu_id target, const bool clear)
 static void gl_end(void)
 {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    pass_target = NULL;
 }
 
 static void gl_scissor(const int x, const int y, const int width, const int height)
@@ -508,9 +592,22 @@ static void gl_scissor(const int x, const int y, const int width, const int heig
 static void gl_use(const tide_gpu_id pipeline)
 {
     current = &pipelines[pipeline - 1u];
+    // A pipeline is for one kind of target, as WebGPU has it: OpenGL would draw all the same, with the
+    // colors of one kind into another's images
+    const tide_gpu_target_format kind = pass_target ? pass_target->format : TIDE_GPU_TARGET_COLOR;
+    if (current->desc.into != kind) {
+        fprintf(stderr, "tide: the pipeline of %s is for targets that hold something else than the one it draws into "
+                        "(tide_gpu_pipeline_desc.into)\n", current->desc.name ? current->desc.name : "a shader");
+        abort();
+    }
     glUseProgram(current->program);
     glUniform1i(current->target_height, pass_texture ? pass_height : 0);
     glBindVertexArray(current->vao);
+    // Its outputs go to the target's color images in order, and the images past them are left alone
+    if (pass_target && pass_target->color_count > 1) {
+        const uint32_t outputs = current->desc.outputs ? current->desc.outputs : 1u;
+        draw_into(pass_target, outputs < pass_target->color_count ? outputs : pass_target->color_count);
+    }
     switch (current->desc.blend) {
     case TIDE_GPU_BLEND_ALPHA:
         glEnable(GL_BLEND);
@@ -633,6 +730,7 @@ const tide_gpu tide_gpu_gl = {
     .pipeline_free = gl_pipeline_free,
     .target = gl_target_make,
     .target_limit = gl_target_limit,
+    .float_targets = gl_float_targets,
     .target_texture = gl_target_texture,
     .target_depth = gl_target_depth,
     .target_free = gl_target_free,

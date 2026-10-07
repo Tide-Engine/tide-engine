@@ -2680,6 +2680,20 @@ static void gen_draw_list(gen *g, sb *o, const expr *e)
 
 static void gen_builtin_call(gen *g, sb *o, const expr *e);
 
+// RenderTarget(width, height, Format.Color, Format.Float): its color images'
+// formats, the call's last arguments, as C takes several: an array of them,
+// and how many. Writes argument `i` if it's one of them, and says whether.
+static bool gen_target_format(gen *g, sb *o, const expr *e, const int i)
+{
+    const int from = e->target_formats ? e->args.count - e->target_formats : e->args.count;
+    if (i < from) return false;
+    if (i == from) sb_put(o, "(const tide_target_format[]){");
+    sb_put(o, "(tide_target_format)");
+    gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
+    if (i == e->args.count - 1) sb_printf(o, "}, %d", e->target_formats);
+    return true;
+}
+
 static void gen_expr(gen *g, sb *o, const expr *e)
 {
     if (e->hoisted) {
@@ -2722,6 +2736,14 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         gen_interp(g, o, e);
         break;
     case E_INDEX: // items[i], or its zero past the end
+        if (e->object->kind == E_MEMBER && e->object->target_colors) { // target.colors[1]: that color image, as a Texture
+            sb_put(o, "tide_render_target_color_at(");
+            gen_expr(g, o, e->object);
+            sb_put(o, ", ");
+            gen_as(g, o, e->lhs, (type){TY_INT, NULL});
+            sb_put(o, ")");
+            break;
+        }
         if (g->par_flat && e->object->type.kind == TY_LIST && same_list_place(e->object, g->par_loop->value)) {
             sb_printf(o, "tide_list%d_flatget(tide_in, tide_count, ", e->object->type.decl->index);
             gen_expr(g, o, e->lhs);
@@ -2866,6 +2888,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         }
         break;
     case E_MEMBER: {
+        if (e->target_colors) { // target.colors: the target, of whose color images an index reads one (E_INDEX)
+            gen_expr(g, o, e->object);
+            break;
+        }
         if (e->object->type.kind == TY_RENDER_TARGET) { // target.color, target.depth
             sb_put(o, e->type.kind == TY_DEPTH_TEXTURE ? "tide_render_target_depth(" : "tide_render_target_color(");
             gen_expr(g, o, e->object);
@@ -2949,7 +2975,7 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                 sb_printf(o, "%s(", e->c_callee);
                 for (int i = 0; i < e->args.count; i++) {
                     if (i) sb_put(o, ", ");
-                    gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
+                    if (!gen_target_format(g, o, e, i)) gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
                 }
                 sb_put(o, ")");
             }
@@ -3243,6 +3269,7 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
     for (int i = 0; i < e->args.count; i++) {
         if (i || (!e->c_pack && (e->call == CALL_DRAW || receiver))) sb_put(o, ", ");
         const type want = e->arg_want.items[i];
+        if (gen_target_format(g, o, e, i)) continue; // RenderTarget.Screen(Format.Color, Format.Float)
         if (e->call == CALL_DRAW && want.kind == TY_ENUM && want.decl == g->prog->font) {
             if (text_at && !anchored) sb_put(o, "TIDE_ANCHOR_UPPER_LEFT, ");
             sb_put(o, "tide_font_file(");
@@ -15670,6 +15697,8 @@ static void gen_shaders(gen *g)
             }
             sb_put(o, "},\n");
         }
+        // The colors its frag writes, where that's more than the pixel's: one for each color image of a target
+        if (sh->frag && sh->frag->outputs > 1) sb_printf(o, "    .outputs = %d,\n", sh->frag->outputs);
         sb_put(o, "};\n\n");
 
         // Draws a mesh through it: what its frag and vert read goes with the instance and the draw

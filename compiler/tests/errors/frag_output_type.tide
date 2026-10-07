@@ -1,36 +1,9 @@
-// expect: a frag writes its pixel's color, an 'out Color', for now
-// The output is a Color
+// expect: a frag's outputs are colors: 'out Color depth'
+// expect: an output of another type than Color isn't there yet: a Color holds four floats, of which a target made with Format.Float keeps any number
+// Every output is a Color
 scene Main { }
-
-struct V
+frag Shade(Vertex vertex, out Color color, out float depth)
 {
-    float3 position;
-    float2 uv;
-}
-
-component Box
-{
-    Color tint = Color.white;
-}
-
-singleton Sun
-{
-    float3 direction = float3(0, -1, 0);
-}
-
-local singleton Models
-{
-    List<V> crate;
-    List<int> faces;
-    Grid2<Color> wood = Grid2(4, 4);
-}
-
-event(Spawned) Setup(with Main)
-{
-    Spawn(Box);
-}
-
-frag Shade(V vertex, out float depth)
-{
+    color = Color.red;
     depth = 1;
 }

@@ -36,6 +36,7 @@ typedef struct checker {
     VEC(expr *) sends;        // Send calls, checked against the handlers at the end.
     VEC(struct call_site) calls; // Calls of functions and methods: which draw, and which read devices.
     const expr *device_whole_ok; // A device record about to be checked that isn't read whole: a.b's a, or an argument
+    const expr *colors_indexed;  // A 'target.colors' about to be checked that an index reads one of: target.colors[1]'s
     const expr *awaiting;     // The call an `await` is checking: an async call it waits for, not a task it starts
     const expr *statement_call; // The call a statement makes: an async one starts a task
     int block_depth;          // Inside a block written after a call, which runs where the function runs it
@@ -2063,6 +2064,35 @@ static bool is_format(const checker *c, const type t)
     return t.kind == TY_ENUM && t.decl == c->prog->format;
 }
 
+enum { TARGET_COLORS = 4 }; // The most color images a render target holds, and outputs a frag writes: TIDE_TARGET_COLORS
+
+// How many of a call's last arguments are formats: where a render target is
+// made, what it holds comes last, a format for each of its color images.
+// Too many, and Format.DepthOnly written among several, are said here; -1
+// then. `made` is how the target is made, for the notes: "RenderTarget(width,
+// height" or "RenderTarget.Screen(".
+static int target_formats(const checker *c, const expr *e, const char *made)
+{
+    int formats = 0;
+    while (formats < e->args.count && is_format(c, e->args.items[e->args.count - 1 - formats]->type)) formats++;
+    const char *sep = made[strlen(made) - 1] == '(' ? "" : ", ";
+    if (formats > TARGET_COLORS) {
+        diag_error(e->args.items[e->args.count - formats + TARGET_COLORS]->at,
+                   "a render target holds %d color images at the most, and this names %d formats", TARGET_COLORS, formats);
+        diag_note("each format after its size is one color image: '%s%sFormat.Color, Format.Float)' holds two", made, sep);
+        return -1;
+    }
+    for (int i = 0; formats > 1 && i < formats; i++) {
+        const expr *format = e->args.items[e->args.count - formats + i];
+        if (!format->enum_member || !str_eq_c(format->enum_member->name, "DepthOnly")) continue;
+        diag_error(format->at, "Format.DepthOnly is a target with no color image, so it's a target's only format");
+        diag_note("every target has depth beside its color images, which 'target.depth' reads: '%s%sFormat.Color, "
+                  "Format.Float)' holds two colors and its depth", made, sep);
+        return -1;
+    }
+    return formats;
+}
+
 // Constructors of built-in types: float(x), int3(1), float4(v.xy, 0, 1),
 // quaternion(x, y, z, w), float3x3(c0, c1, c2) and friends.
 static type check_construct(checker *c, expr *e, const type target)
@@ -2086,25 +2116,29 @@ static type check_construct(checker *c, expr *e, const type target)
             return T_ERR;
         }
         // Its size in logical pixels, like the window's, its image's pixels in each (the display's when left
-        // out), and last, what it holds: color beside its depth when left out
-        const bool formatted = argc > 2 && is_format(c, e->args.items[argc - 1]->type);
-        const int sizes = argc - (formatted ? 1 : 0);
+        // out), and last, what it holds, a format for each of its color images: one of Format.Color when left out
+        const int formats = argc > 2 ? target_formats(c, e, "RenderTarget(width, height") : 0;
+        if (formats < 0) return T_ERR;
+        const int sizes = argc - formats;
         bool numbers = sizes == 2 || sizes == 3;
         for (int i = 0; numbers && i < sizes; i++) numbers = type_assignable(T_FLOAT_, e->args.items[i]->type);
         if (!numbers) {
             diag_error(e->at, "RenderTarget takes its width and height in logical pixels, and its pixels per unit when "
                               "it isn't the display's: 'RenderTarget(width, height)' or 'RenderTarget(width, height, 1)'");
-            diag_note("what it holds comes last, when that isn't color: 'RenderTarget(width, height, Format.DepthOnly)'");
+            diag_note("what it holds comes last, when that isn't one color image: 'RenderTarget(width, height, "
+                      "Format.DepthOnly)', or a format for each, 'RenderTarget(width, height, Format.Color, Format.Float)'");
             diag_note("'RenderTarget.Screen()' is a target that's always the window's size");
             return T_ERR;
         }
         e->call = CALL_BUILTIN;
-        e->c_callee = formatted ? (sizes == 3 ? "tide_render_target_make_scaled_as" : "tide_render_target_make_as")
-                                : (sizes == 3 ? "tide_render_target_make_scaled" : "tide_render_target_make");
+        e->c_callee = formats > 1 ? (sizes == 3 ? "tide_render_target_make_scaled_of" : "tide_render_target_make_of")
+                    : formats ? (sizes == 3 ? "tide_render_target_make_scaled_as" : "tide_render_target_make_as")
+                              : (sizes == 3 ? "tide_render_target_make_scaled" : "tide_render_target_make");
+        e->target_formats = formats > 1 ? formats : 0;
         e->resource_operation = true;
         reading_code(c)->calls_c = true;
         for (int i = 0; i < sizes; i++) vec_push(e->arg_want, T_FLOAT_);
-        if (formatted) vec_push(e->arg_want, e->args.items[argc - 1]->type);
+        for (int i = sizes; i < argc; i++) vec_push(e->arg_want, e->args.items[i]->type);
         return target;
     }
     if (target.kind == TY_TEXTURE || target.kind == TY_DEPTH_TEXTURE) {
@@ -5043,8 +5077,9 @@ static bool check_setting(const checker *c, const expr *e)
 
 // RenderTarget.Screen(), RenderTarget.Screen(0.5): a target that's always the
 // window's size, or that part of it. Made where the constructor's are, and
-// like them, it says last what it holds when that isn't color:
-// RenderTarget.Screen(Format.DepthOnly), RenderTarget.Screen(0.5, Format.DepthOnly).
+// like them, it says last what it holds when that isn't one color image:
+// RenderTarget.Screen(Format.DepthOnly), RenderTarget.Screen(0.5, Format.DepthOnly),
+// RenderTarget.Screen(Format.Color, Format.Float).
 static type check_screen_target(checker *c, expr *e)
 {
     bool any_error = false;
@@ -5064,22 +5099,26 @@ static type check_screen_target(checker *c, expr *e)
         diag_note("leave the field at default and create its target in a view or local handler");
         return T_ERR;
     }
-    const bool formatted = e->args.count > 0 && is_format(c, e->args.items[e->args.count - 1]->type);
-    const int factors = e->args.count - (formatted ? 1 : 0);
+    const int formats = target_formats(c, e, "RenderTarget.Screen(");
+    if (formats < 0) return T_ERR;
+    const int factors = e->args.count - formats;
     if (factors > 1 || (factors == 1 && !type_assignable(T_FLOAT_, e->args.items[0]->type))) {
         diag_error(e->at, "RenderTarget.Screen takes the part of the window's size the target is, a number, or nothing "
                           "for all of it: 'RenderTarget.Screen()' or 'RenderTarget.Screen(0.5)'");
-        diag_note("what it holds comes last, when that isn't color: 'RenderTarget.Screen(Format.DepthOnly)'");
+        diag_note("what it holds comes last, when that isn't one color image: 'RenderTarget.Screen(Format.DepthOnly)', or "
+                  "a format for each, 'RenderTarget.Screen(Format.Color, Format.Float)'");
         diag_note("a target of a size of its own is 'RenderTarget(width, height)'");
         return T_ERR;
     }
     e->call = CALL_BUILTIN;
-    e->c_callee = formatted ? (factors ? "tide_render_target_screen_as" : "tide_render_target_window_as")
-                            : (factors ? "tide_render_target_screen" : "tide_render_target_window");
+    e->c_callee = formats > 1 ? (factors ? "tide_render_target_screen_of" : "tide_render_target_window_of")
+                : formats ? (factors ? "tide_render_target_screen_as" : "tide_render_target_window_as")
+                          : (factors ? "tide_render_target_screen" : "tide_render_target_window");
+    e->target_formats = formats > 1 ? formats : 0;
     e->resource_operation = true;
     reading_code(c)->calls_c = true;
     for (int i = 0; i < factors; i++) vec_push(e->arg_want, T_FLOAT_);
-    if (formatted) vec_push(e->arg_want, e->args.items[e->args.count - 1]->type);
+    for (int i = factors; i < e->args.count; i++) vec_push(e->arg_want, e->args.items[i]->type);
     return (type){TY_RENDER_TARGET, NULL};
 }
 
@@ -6167,7 +6206,20 @@ static type check_member(checker *c, expr *e)
             }
             return (type){TY_DEPTH_TEXTURE, NULL};
         }
-        diag_error(e->at, "a RenderTarget has 'color' and 'depth', not '" STR_FMT "'", STR_ARG(e->member));
+        if (str_eq_c(e->member, "colors")) { // Its color images, in the order it was made with: an index reads one
+            if (e->object->kind == E_MEMBER && e->object->c_constant && str_eq_c(e->object->member, "window")) {
+                diag_error(e->at, "Draw.window has no sampleable color image: draw into a RenderTarget first");
+                return T_ERR;
+            }
+            if (c->colors_indexed != e) {
+                diag_error(e->at, "a target's color images are read one at a time: 'colors[1]' is its second, as a Texture");
+                diag_note("they're counted from 0, in the order of the formats it was made with, and 'color' is the first");
+                return T_ERR;
+            }
+            e->target_colors = true;
+            return obj; // What check_index makes a Texture of
+        }
+        diag_error(e->at, "a RenderTarget has 'color', 'colors' and 'depth', not '" STR_FMT "'", STR_ARG(e->member));
         return T_ERR;
     }
 
@@ -6618,7 +6670,24 @@ static type check_conditional(checker *c, expr *e)
 static type check_index(checker *c, expr *e)
 {
     c->device_whole_ok = e->object; // devices.touchscreen.touches[0] reads the one it names
+    c->colors_indexed = e->object;  // target.colors[1] reads the one it names
     const type obj = check_expr(c, e->object);
+    c->colors_indexed = NULL;
+    if (obj.kind == TY_RENDER_TARGET && e->object->kind == E_MEMBER && e->object->target_colors) {
+        // target.colors[1]: one of its color images, as a Texture. Which ones it has is the target's to say, when
+        // it's made, so one it hasn't got is found out as it's sampled: that draw is passed by, and says so
+        const type index = check_expr(c, e->lhs);
+        if (index.kind != TY_ERROR && !type_assignable(T_INT_, index)) {
+            diag_error(e->lhs->at, "a target's color images are counted from 0, with an int, not %s", type_name(index));
+            return T_ERR;
+        }
+        if (e->lhs->kind == E_INT && (e->lhs->int_value < 0 || e->lhs->int_value >= TARGET_COLORS)) {
+            diag_error(e->lhs->at, "a render target holds %d color images at the most: 'colors[0]' to 'colors[%d]'",
+                       TARGET_COLORS, TARGET_COLORS - 1);
+            return T_ERR;
+        }
+        return (type){TY_TEXTURE, NULL};
+    }
     if (obj.kind == TY_GRID) { // cells[int2(x, y)], or cells[x, y], which the parser makes the same
         const bool flat = obj.decl->dims == 2;
         const type position = check_expr(c, e->lhs);
@@ -7797,6 +7866,16 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
             // touches[i], even of a copy
             diag_error(target->at, "devices can only be read");
             diag_note("copy the touch into a 'mut var' to change it");
+            return false;
+        }
+        // target.color, target.colors[1], target.depth: the target's own images, which a Texture only names
+        const expr *of_target = part->kind == E_INDEX ? part->object : part;
+        if (of_target->kind == E_MEMBER && of_target->object->type.kind == TY_RENDER_TARGET && !of_target->c_constant
+            && (of_target->target_colors || part->type.kind == TY_TEXTURE || part->type.kind == TY_DEPTH_TEXTURE)) {
+            diag_error(target->at, "a render target's color and depth are its own images, which what's drawn into it changes: "
+                                   "they can't be assigned");
+            diag_note("draw into the target, 'target.Mesh(...)' or 'Draw.Blit(source, target, frag)'; a Texture field keeps "
+                      "which image a draw reads, 'held = target.color;'");
             return false;
         }
     }
@@ -11140,7 +11219,8 @@ static void check_handed_struct(const decl *vert, const param *p, const decl *t)
 
 // frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun) and
 // vert Wave(mut BoxVertex vertex, out FromLamp lamp, Time time): the vertex
-// first, a struct; what each writes, `out`: a frag's pixel, its one Color, and
+// first, a struct; what each writes, `out`: a frag's pixel, a Color, with one
+// more for each color image after the first of a target it draws into, and
 // the structs a vert hands the frag it's drawn with; then what the engine
 // supplies as it does to a view: the entity's components, singletons of either
 // side, and Pixel and Instance. A frag's read-only struct is one the draw's
@@ -11154,6 +11234,7 @@ static void check_shader_decl(const checker *c, decl *d)
     d->return_type = T_VOID_;
     d->result = T_VOID_;
     d->fails = T_VOID_;
+    d->outputs = 0;
     const param *color = NULL;
     const param *instance_data = NULL;
     const param *source_texture = NULL;
@@ -11243,15 +11324,19 @@ static void check_shader_decl(const checker *c, decl *d)
                     suggest_replacement(p->mode_word, "out");
                     p->is_out = true; // The rest is checked as the output it's meant as
                 }
-                if (color) {
-                    diag_error(p->at, "a frag writes one color, its pixel's, for now");
-                    diag_note("a second output isn't there yet");
+                // The pixel it writes: the first is its color in the window and in a target's first color image,
+                // and the ones after it go to the color images after that of a target made to hold several
+                if (d->outputs == TARGET_COLORS) {
+                    diag_error(p->at, "a frag writes %d colors at the most, as many as a render target holds", TARGET_COLORS);
+                    diag_note("each 'out Color' goes to one of its target's color images, in the order they're written");
                 } else {
-                    color = p; // The pixel it writes
+                    if (!color) color = p;
+                    p->output = d->outputs++;
                 }
             } else if (d->is_frag && p->is_out) {
-                diag_error(p->at, "a frag writes its pixel's color, an 'out Color', for now");
-                diag_note("an output of another type than Color isn't there yet");
+                diag_error(p->at, "a frag's outputs are colors: 'out Color " STR_FMT "'", STR_ARG(p->name));
+                diag_note("an output of another type than Color isn't there yet: a Color holds four floats, of which a "
+                          "target made with Format.Float keeps any number");
             } else if (d->is_frag && changes) {
                 diag_error(p->at, "a frag reads '" STR_FMT "', and can't change it: drop 'mut'", STR_ARG(p->name));
                 diag_note("what it writes is its pixel's color, 'out Color color'");
@@ -12643,10 +12728,10 @@ static void add_builtins(program *prog)
         vec_push(wrap->members, m);
     }
     prog->wrap = wrap;
-    // enum Format { Color, DepthOnly }: what a render target holds beside its depth, said when
-    // it's made, with tide/draw.h's tide_target_format's values. Like Depth, generated C
-    // has it only in a game whose code names it.
-    static const char *const formats[] = {"Color", "DepthOnly"};
+    // enum Format { Color, DepthOnly, Float }: what a render target holds beside its depth, said
+    // when it's made, a format for each of its color images, with tide/draw.h's
+    // tide_target_format's values. Like Depth, generated C has it only in a game whose code names it.
+    static const char *const formats[] = {"Color", "DepthOnly", "Float"};
     decl *format = NEW(decl);
     format->kind = DECL_ENUM;
     format->name = str_from("Format");

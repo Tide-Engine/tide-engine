@@ -279,6 +279,7 @@ typedef struct param {
     // across the triangle: the same rules for the code, with the GPU in the caller's place
     bool is_out;
     loc out_at; // ...the word
+    int output; // A frag's `out Color`: which of its outputs it is, from 0, in the order they're written
     struct expr *default_value; // ...and what a call that leaves it out passes, `float multiplier = 1`: a constant expression, or NULL
     str default_text;           // ...as its declaration writes it, for messages and editors: "1"
     str mode_word;       // `mut` or `out` as a system, view, handler, frag or vert writes it, for what editors offer in its place
@@ -641,6 +642,7 @@ typedef struct decl {
 
     // Frags and verts (DECL_SHADER), and the functions they call
     bool is_frag;                 // A frag; else a vert
+    int outputs;                  // A frag: the colors it writes, its `out Color` parameters, which go to a target's color images in that order
     VEC(shader_sample) samples;   // The grids it samples, once each
     int gpu_state;                // Code checked for the GPU: 1 while it is, 2 once it fits, 3 if it doesn't
     VEC(struct decl *) bound;     // Views: components and singletons the frags and verts of its mesh draw calls read, which it doesn't take itself
@@ -799,6 +801,7 @@ struct expr {
     const enum_member *enum_member; // Page.Title: the member (type_decl is its enum)
     bool typed_text;       // keyboard.text: what was typed, which C keeps as code points
     bool local_field;      // box.verts: a local field of a match component or singleton, in its local part (`field` is that one's)
+    bool target_colors;    // target.colors: a render target's color images, of which an index reads one (target.colors[1])
 
 
     // E_CALL, E_METHOD
@@ -838,6 +841,7 @@ struct expr {
     bool blit;           // Draw.Blit: source texture, destination target and a frag
     bool targeted;       // A RenderTarget receiver supplies this draw's destination
     bool resource_operation; // RenderTarget creation, resize or disposal: ordered local side effects
+    int target_formats;      // RenderTarget(...) of several color images: how many of its last arguments are their formats
     bool io_operation;       // File/Directory operation: gets this machine's provider
     bool path_operation;     // Pure Path operation: receives tide_str, rather than a C string
     bool storage_flush;      // Storage.Flush, awaited through a provider completion ticket

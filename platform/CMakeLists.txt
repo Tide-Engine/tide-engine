@@ -353,6 +353,7 @@ endif()
 # warning, and give the pixels tests/shaders.c expects.
 if(NOT TIDE_ANDROID)
     tide_add_game(tide_platform_shaders SOURCES tests/shaders.tide NAME game HOST tests/shaders.c)
+    target_include_directories(tide_platform_shaders PRIVATE src)
     target_link_libraries(tide_platform_shaders PRIVATE tide_platform)
     if(TIDE_WEB)
         tide_web_page(tide_platform_shaders SHELL web/test_shell.html)
@@ -365,6 +366,7 @@ else()
     # An app there too, to install and start by hand: OpenGL ES 3 has to
     # compile what tidec writes as the others do (`adb logcat -s tide`).
     tide_add_game(tide_platform_shaders_app SOURCES tests/shaders.tide NAME game HOST tests/shaders.c WINDOW)
+    target_include_directories(tide_platform_shaders_app PRIVATE src)
 endif()
 
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)

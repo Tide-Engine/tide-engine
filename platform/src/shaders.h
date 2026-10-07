@@ -583,3 +583,30 @@ static const char *const clear_wgsl = WGSL(
     "@fragment fn fragment() -> @location(0) vec4f {\n"
     "    return u.color;\n"
     "}\n");
+
+// A clear of a target of several color images: the same color into each of
+// them, as many as it has.
+static const char clear_all_glsl_fragment[] =
+    "layout(std140) uniform uniforms { vec4 color; };\n"
+    "layout(location = 0) out vec4 pixel0;\n"
+    "layout(location = 1) out vec4 pixel1;\n"
+    "layout(location = 2) out vec4 pixel2;\n"
+    "layout(location = 3) out vec4 pixel3;\n"
+    "void main() {\n"
+    "    pixel0 = color;\n"
+    "    pixel1 = color;\n"
+    "    pixel2 = color;\n"
+    "    pixel3 = color;\n"
+    "}\n";
+
+static const char *const clear_all_wgsl = WGSL(
+    "struct Uniforms { color: vec4f }\n"
+    "struct Colors { @location(0) a: vec4f, @location(1) b: vec4f, @location(2) c: vec4f, @location(3) d: vec4f }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+    "    let corner = vec2f(f32((i << 1u) & 2u), f32(i & 2u));\n"
+    "    return vec4f(corner * 2.0 - 1.0, 1.0, 1.0);\n"
+    "}\n"
+    "@fragment fn fragment() -> Colors {\n"
+    "    return Colors(u.color, u.color, u.color, u.color);\n"
+    "}\n");

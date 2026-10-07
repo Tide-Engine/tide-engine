@@ -1900,12 +1900,162 @@ view Images(mut Art art)
     Draw3D.Mesh(art.brickTile3, art.faces, float4x4.Translate(Cell(1, 7)), plainBricks);
 }
 
+// Several colors from one frag (pass 11). A target made to hold three color
+// images, the second and third of floats, is drawn into by frags that write
+// three colors, two, and one, and by the engine's own shapes; then each image
+// is read back by a frag of its own, which brings what floats hold (numbers
+// past 1, and under 0) into what a window shows.
+local singleton Several
+{
+    RenderTarget scene;    // Three color images, 64 pixels by 64 whatever the display: bytes, then floats twice
+    RenderTarget bright;   // One, of floats, 16 by 16
+    Texture first;         // The scene's images, as frags read them
+    Texture second;
+    Texture third;
+    Texture none;          // One the scene hasn't got
+    Texture glow;          // The bright one's
+    List<Vertex> top;      // The scene's top three quarters
+    List<Vertex> corner;   // Its top left corner, 16 by 16
+    List<Vertex> middle;   // A square in its middle, 16 by 16
+    List<Vertex> panel;    // 64 by 64 in the window, at the transform it's drawn under
+    bool made;
+}
+
+// Three colors at once: where the pixel is, a number past 1, and one under 0.
+frag Fill(Vertex vertex, out Color albedo, out Color big, out Color signed)
+{
+    albedo = Color(vertex.uv.x, vertex.uv.y, 0);
+    big = Color(4 * vertex.uv.x, 2, 0.5);
+    signed = Color(-1, 0.25, vertex.uv.y - 2);
+}
+
+// Two, into a target of three: its third is left as it was.
+frag Two(Vertex vertex, out Color albedo, out Color big)
+{
+    albedo = Color.blue;
+    big = Color(8, 4, 0.25);
+}
+
+// A frag of several outputs leaves a pixel out like any other: none of them is written there.
+frag Holes(Vertex vertex, out Color albedo, out Color big, Pixel pixel)
+{
+    if (vertex.uv.x < 0.5) pixel.Discard();
+    albedo = Color.white;
+    big = Color(6, 6, 1);
+}
+
+frag ShowFirst(Vertex vertex, out Color color, Several several)
+{
+    color = several.first.Sample(vertex.uv, Filter.Point);
+}
+
+// Up to 8, in what a byte holds
+frag ShowSecond(Vertex vertex, out Color color, Several several)
+{
+    Color held = several.second.Sample(vertex.uv, Filter.Point);
+    color = Color(held.r / 8, held.g / 8, held.b);
+}
+
+// What's under 0, the other way up
+frag ShowThird(Vertex vertex, out Color color, Several several)
+{
+    Color held = several.third.Sample(vertex.uv, Filter.Point);
+    color = Color(-held.r, held.g, held.b + 2);
+}
+
+frag ShowNone(Vertex vertex, out Color color, Several several)
+{
+    color = several.none.Sample(vertex.uv, Filter.Point);
+}
+
+// Blended between its pixels, as any texture is
+frag ShowGlow(Vertex vertex, out Color color, Several several)
+{
+    Color held = several.glow.Sample(vertex.uv);
+    color = Color(held.r / 4, held.g / 4, held.b / 4);
+}
+
+[After(Shadows)]
+view Outputs(Art art, mut Several several)
+{
+    if (art.targetPass != 11) return;
+    if (!several.made)
+    {
+        several.made = true;
+        several.scene = RenderTarget(64, 64, 1, Format.Color, Format.Float, Format.Float);
+        several.bright = RenderTarget(16, 16, 1, Format.Float);
+        several.first = several.scene.colors[0];
+        several.second = several.scene.colors[1];
+        several.third = several.scene.colors[2];
+        several.none = several.scene.colors[3];
+        several.glow = several.bright.color;
+        several.top = [Vertex { position = float2(0, 0) }, Vertex { position = float2(64, 0), uv = float2(1, 0) },
+                       Vertex { position = float2(64, 48), uv = float2(1, 1) }, Vertex { position = float2(0, 48), uv = float2(0, 1) }];
+        several.corner = [Vertex { position = float2(0, 0) }, Vertex { position = float2(16, 0), uv = float2(1, 0) },
+                          Vertex { position = float2(16, 16), uv = float2(1, 1) }, Vertex { position = float2(0, 16), uv = float2(0, 1) }];
+        several.middle = [Vertex { position = float2(24, 24) }, Vertex { position = float2(40, 24), uv = float2(1, 0) },
+                          Vertex { position = float2(40, 40), uv = float2(1, 1) }, Vertex { position = float2(24, 40), uv = float2(0, 1) }];
+        several.panel = [Vertex { position = float2(0, 0) }, Vertex { position = float2(64, 0), uv = float2(1, 0) },
+                         Vertex { position = float2(64, 64), uv = float2(1, 1) }, Vertex { position = float2(0, 64), uv = float2(0, 1) }];
+    }
+
+    // A clear fills every image. Then three outputs over the top three quarters; two over a corner, which
+    // leaves the third there; a frag that discards half of a square; and a shape of the engine's own,
+    // which has one color and writes the first image alone
+    several.scene.SetScreen();
+    several.scene.Clear(Color(0.5, 0.25, 1));
+    several.scene.Mesh(several.top, art.faces, Fill);
+    several.scene.Mesh(several.corner, art.faces, Two);
+    several.scene.Mesh(several.middle, art.faces, Holes);
+    several.scene.Rect(float2(56, 8), float2(16), Color.green);
+
+    // Floats add up past 1: three times white over the right half
+    several.bright.SetScreen();
+    several.bright.Clear(Color.black);
+    Draw.Blend(Blend.Add)
+    {
+        several.bright.Rect(float2(12, 8), float2(8, 16), Color.white);
+        several.bright.Rect(float2(12, 8), float2(8, 16), Color.white);
+        several.bright.Rect(float2(12, 8), float2(8, 16), Color.white);
+    }
+
+    // The window: each image through a frag that reads it, the frag of three outputs drawn straight
+    // into it (where its first is the pixel's and the others go nowhere), the bright target, and
+    // an image the scene hasn't got, whose draw is passed by
+    Draw2D.SetClip();
+    Draw2D.SetScreen();
+    Draw2D.Clear(Color.black);
+    Draw2D.Mesh(several.panel, art.faces, ShowFirst);
+    Draw2D.Transform(float2(64, 0))
+    {
+        Draw2D.Mesh(several.panel, art.faces, ShowSecond);
+    }
+    Draw2D.Transform(float2(128, 0))
+    {
+        Draw2D.Mesh(several.panel, art.faces, ShowThird);
+    }
+    Draw2D.Transform(float2(192, 0))
+    {
+        Draw2D.Mesh(several.panel, art.faces, Fill);
+    }
+    Draw2D.Transform(float2(0, 64))
+    {
+        Draw2D.Mesh(several.panel, art.faces, ShowGlow);
+    }
+    Draw2D.Rect(float2(96, 96), float2(64), Color.magenta);
+    Draw2D.Transform(float2(64, 64))
+    {
+        Draw2D.Mesh(several.panel, art.faces, ShowNone);
+    }
+}
+
 // shaders.c requests independent full-window checks after the existing grid.
 // Resource descriptors are supplied by C, without choosing a Tide lifetime API.
 [After(Manual)]
 view Targets(mut Art art)
 {
-    if (art.targetPass == 0 || art.targetPass >= 6) return; // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks' and 10 Images'
+    // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images' and 11 Outputs'
+    if (art.targetPass == 0 || art.targetPass >= 6) return;
     if (art.targetPass >= 4)
     {
         Draw2D.SetScreen();
