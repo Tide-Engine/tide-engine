@@ -800,10 +800,10 @@ Tide draws in the order your views and calls give it; it **doesn't sort transpar
 Leaves, a fence or a sprite standing in a 3D world often want solid pixels with holes between them. A frag can discard pixels below an alpha threshold and keep the rest opaque:
 
 ```csharp
-frag Cutout(Vertex3 vertex, out Color color, Texture image, Pixel pixel)
+frag Cutout(Vertex3 vertex, out Color color, Texture image)
 {
     color = image.Sample(vertex.uv);
-    if (color.a < 0.5) pixel.Discard();
+    if (color.a < 0.5) this.Discard();
     color.a = 1;
 }
 
@@ -811,7 +811,7 @@ frag Cutout(Vertex3 vertex, out Color color, Texture image, Pixel pixel)
 Draw.Mesh(vertices, indices, transform, texture, Cutout);
 ```
 
-[`pixel.Discard()`](./shaders.md#where-the-pixel-is) ends the frag and writes no color, depth or stencil for that pixel. The surviving pixels can use the usual opaque draw order. The threshold gives a hard edge; use the translucent recipe above when you want partial opacity at the edge instead.
+[`this.Discard()`](./shaders.md#where-the-pixel-is) ends the frag and writes no color, depth or stencil for that pixel. The surviving pixels can use the usual opaque draw order. The threshold gives a hard edge; use the translucent recipe above when you want partial opacity at the edge instead.
 
 ## Smooth shapes
 
