@@ -114,6 +114,11 @@ void tide_platform_audio(const tide_audio_frame *frame);
 // whole run as it ends, whatever these took out of it.
 bool tide_platform_capture_audio(const char *path);
 
+// Stops every sound at once and has the mixer let go of every clip and
+// effect, before what they point at goes: a host calls it before it unloads
+// a game's library. Returns once the mixer has.
+void tide_platform_audio_forget(void);
+
 // Returned by a frame function to keep going. Any other value ends the program
 // with that exit code.
 #define TIDE_KEEP_RUNNING (-1)

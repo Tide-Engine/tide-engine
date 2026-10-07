@@ -24,7 +24,7 @@ _Static_assert(TIDE_RENDER_SAMPLES_SHIFT == TIDE_RENDER_IMAGE_SHIFT + 2 && (1 <<
 // A managed target's id: its state's address, and what it holds.
 static uint64_t managed_id(const tide_render_target_state *s)
 {
-    return TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)s | s->holds;
+    return TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)s | s->holds | (s->cube ? TIDE_RENDER_CUBE : 0u);
 }
 
 // What a target of these color images holds, as its id's bits say it: for
@@ -231,6 +231,10 @@ tide_render_target tide_render_target_window(void)
 void tide_render_target_resize(const tide_render_target target, const float width, const float height)
 {
     tide_render_target_state *s = tide_render_target_state_of(target.id);
+    if (s && s->cube) {
+        fprintf(stderr, "RenderTarget.Resize: a cube's face has its cube's size: 'cube.Resize(size)' resizes all six\n");
+        return;
+    }
     if (s && s->alive && s->size.window > 0.0f) {
         fprintf(stderr, "RenderTarget.Resize: a target made with RenderTarget.Window follows the window's size, and "
                         "keeps it\n");
@@ -248,8 +252,53 @@ void tide_render_target_resize(const tide_render_target target, const float widt
 void tide_render_target_dispose(const tide_render_target target)
 {
     tide_render_target_state *s = tide_render_target_state_of(target.id);
-    if (s) s->alive = false;
+    if (s && s->cube) fprintf(stderr, "RenderTarget.Dispose: a cube's face goes with its cube: 'cube.Dispose()' lets all six go\n");
+    else if (s) s->alive = false;
     else if (target.id) fprintf(stderr, "RenderTarget.Dispose requires an owned target\n");
+}
+
+tide_cubemap_ref tide_cubemap_make(const float size)
+{
+    return tide_cubemap_make_as(size, TIDE_TARGET_RGBA8);
+}
+
+tide_cubemap_ref tide_cubemap_make_as(const float size, const tide_target_format format)
+{
+    const tide_render_target made = make_target((tide_target_size){.width = size, .height = size, .scale = 1.0f},
+                                                one_format(format == TIDE_TARGET_RGBA16F ? TIDE_TARGET_RGBA16F : TIDE_TARGET_RGBA8),
+                                                "RenderTarget.Cube requires a positive size, its faces' side in pixels");
+    tide_render_target_state *s = tide_render_target_state_of(made.id);
+    if ((uint64_t)(uintptr_t)s & (TIDE_RENDER_CUBE | TIDE_RENDER_FACE)) { // Its id says which face there
+        fprintf(stderr, "tide: a cube's state is at an address past what its id has room for\n");
+        abort();
+    }
+    s->cube = true;
+    return (tide_cubemap_ref){.target = {.id = managed_id(s), .size = s->size}};
+}
+
+void tide_cubemap_resize(const tide_cubemap_ref cube, const float size)
+{
+    tide_render_target_state *s = tide_render_target_state_of(cube.target.id);
+    const tide_target_size sized = {.width = size, .height = size, .scale = 1.0f};
+    if (!s || !s->cube || !s->alive || !tide_target_size_valid(sized)) {
+        fprintf(stderr, "Cubemap.Resize requires a live cube made with RenderTarget.Cube and a positive size\n");
+        return;
+    }
+    s->size = sized;
+    s->version++;
+}
+
+void tide_cubemap_dispose(const tide_cubemap_ref cube)
+{
+    tide_render_target_state *s = tide_render_target_state_of(cube.target.id);
+    if (s && s->cube) s->alive = false;
+    else fprintf(stderr, "Cubemap.Dispose requires a cube made with RenderTarget.Cube: an asset's is the pack's\n");
+}
+
+tide_cubemap_ref tide_cubemap_recreate(const tide_cubemap_ref previous)
+{
+    if (!previous.target.id) return previous; // The pack's: its name is the same in every build
+    return (tide_cubemap_ref){.target = tide_render_target_recreate(previous.target)};
 }
 
 void tide_render_target_adopt(const tide_render_target target)
@@ -268,17 +317,20 @@ tide_render_target tide_render_target_recreate(const tide_render_target previous
 {
     if (!tide_render_target_managed(previous.id) || !tide_target_size_valid(previous.size))
         return (tide_render_target){0};
-    // A texture's reference names one of its target's color images, and its new one names the same
-    const uint64_t whole = tide_render_target_whole(previous.id), image = previous.id & TIDE_RENDER_IMAGE;
+    // A texture's reference names one of its target's color images, and its new one names the same; a
+    // cube's face is that face of the new cube
+    const uint64_t image = previous.id & (TIDE_RENDER_IMAGE | TIDE_RENDER_FACE), whole = previous.id & ~image;
     for (const tide_render_target_state *s = render_targets; s; s = s->next) {
         if (s->reload_id == whole) return (tide_render_target){.id = managed_id(s) | image, .size = s->size};
     }
-    // As it was: its size, its scale, whether it follows the window, and what it holds and its samples, which
-    // its id says
+    // As it was: its size, its scale, whether it follows the window, and what it holds, its samples and
+    // whether it's a cube, which its id says
     tide_render_target next = make_target_sampled(previous.size, tide_render_target_formats(whole),
                                                   (uint16_t)(whole & TIDE_RENDER_SAMPLES), "");
-    tide_render_target_state_of(next.id)->reload_id = whole;
-    next.id |= image;
+    tide_render_target_state *s = tide_render_target_state_of(next.id);
+    s->reload_id = whole;
+    s->cube = (whole & TIDE_RENDER_CUBE) != 0;
+    next.id = managed_id(s) | image;
     return next;
 }
 
@@ -1441,6 +1493,41 @@ uint32_t tide_draw_depth_source(tide_draw_list *d, const tide_depth_ref depth)
     return tide_draw_target_depth_sized(d, target.id, target.size);
 }
 
+// The list's texture for a cube of the pack's, whose faces' pixels are where the pack has them, as an image's are.
+static uint32_t pack_cube(tide_draw_list *d, const uint64_t version, const int32_t size, const uint8_t *const *faces)
+{
+    tide_draw_texture *t = NULL;
+    for (uint32_t i = 0; i < d->texture_count && !t; i++) {
+        if (d->textures[i].id == version && d->textures[i].space == TIDE_PIXELS_PACK_CUBE) t = &d->textures[i];
+    }
+    if (!t) {
+        d->textures = grow(d->textures, d->texture_count, &d->texture_capacity, 1, sizeof(tide_draw_texture), 8u);
+        t = &d->textures[d->texture_count++];
+        *t = (tide_draw_texture){.id = version, .space = TIDE_PIXELS_PACK_CUBE, .epoch = d->epoch};
+    }
+    t->version = version;
+    t->format = TIDE_TEXELS_BYTES;
+    t->width = t->height = size;
+    t->frame = d->frame;
+    t->pixels = (uint8_t *)(uintptr_t)faces; // The pack's six pointers: `capacity` stays 0, and nothing here frees them
+    return (uint32_t)(t - d->textures) + 1u;
+}
+
+uint32_t tide_draw_cube_source(tide_draw_list *d, const tide_cubemap_ref cube)
+{
+    if (!cube.target.id) {
+        int32_t size;
+        uint64_t version;
+        const uint8_t *const *faces;
+        if (!tide_pack_cubemap_find(cube.named, &size, &version, &faces)) return 0;
+        return pack_cube(d, version, size, faces);
+    }
+    const tide_render_target target = tide_render_target_resolve(cube.target);
+    if (!tide_render_target_cubic(target.id)) return 0;
+    const uint64_t id = tide_render_target_cube_of(target.id);
+    return target_texture_version(d, TIDE_PIXELS_TARGET_CUBE, id, target.size, tide_render_target_version(id));
+}
+
 // A mesh's corners as the tint and the transform leave them: apart from
 // tide_draw_vertices, which a frame of meshes with neither spends its time in.
 static __attribute__((noinline)) void alter_vertices(tide_draw_list *d, const uint32_t base, const uint32_t count)
@@ -1902,8 +1989,9 @@ void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, const tide_ble
         const uint32_t slot = textures[i];
         if (!slot || slot > d->texture_count || !d->target) continue;
         const tide_draw_texture *t = &d->textures[slot - 1u];
-        if ((t->space == TIDE_PIXELS_TARGET || t->space == TIDE_PIXELS_TARGET_DEPTH)
-            && tide_render_target_whole(t->id) == d->targets[d->target - 1u].id) { // Any of its color images, or its depth
+        if (((t->space == TIDE_PIXELS_TARGET || t->space == TIDE_PIXELS_TARGET_DEPTH)
+             && tide_render_target_whole(t->id) == d->targets[d->target - 1u].id) // Any of its color images, or its depth
+            || (t->space == TIDE_PIXELS_TARGET_CUBE && t->id == tide_render_target_cube_of(d->targets[d->target - 1u].id))) {
             fprintf(stderr, "Draw.Blit cannot sample its destination\n");
             return;
         }
@@ -2046,10 +2134,11 @@ static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, co
 {
     if (!texture) return 0;
     const tide_draw_texture *t = &from->textures[texture - 1u];
-    if (t->space == TIDE_PIXELS_TARGET || t->space == TIDE_PIXELS_TARGET_DEPTH) {
+    if (t->space == TIDE_PIXELS_TARGET || t->space == TIDE_PIXELS_TARGET_DEPTH || t->space == TIDE_PIXELS_TARGET_CUBE) {
         return target_texture_version(d, t->space, t->id, t->target, t->version);
     }
     if (t->space == TIDE_PIXELS_PACK) return pack_texture(d, t->id, t->width, t->height, t->pixels);
+    if (t->space == TIDE_PIXELS_PACK_CUBE) return pack_cube(d, t->id, t->width, (const uint8_t *const *)(uintptr_t)t->pixels);
     uint8_t *pixels;
     const uint32_t slot = tide_draw_texture_slot_as(d, t->space, t->id, t->version, t->width, t->height, t->format, &pixels);
     if (pixels) memcpy(pixels, t->pixels, (size_t)t->width * (size_t)t->height * tide_texels_bytes(t->format));

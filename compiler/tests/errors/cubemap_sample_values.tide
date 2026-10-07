@@ -1,0 +1,7 @@
+// expect: a struct a draw supplies, its instances' or its values', carries no texture: keep the sampled Cubemap in a component or singleton
+// A draw's values carry none
+scene Main { }
+struct Given { Cubemap cube; }
+local singleton Room { List<Vertex3> ball; }
+frag Look(Vertex3 vertex, out Color color, Given given) { color = given.cube.Sample(vertex.position); }
+view Show(Room room) { Draw.Mesh(room.ball, [0, 1, 2], float4x4.identity, Look, Given { }); }

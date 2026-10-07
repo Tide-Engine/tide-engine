@@ -1,0 +1,6 @@
+// expect: a Cubemap has 'faces', its six sides as targets to draw into, not 'color'
+// expect: the cube itself is what a frag reads: 'cube.Sample(direction)', where it's a field of a component or a singleton the frag takes
+// It has no color of its own
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+view Show(Room room) { var image = room.reflection.color; }

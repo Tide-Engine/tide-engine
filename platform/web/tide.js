@@ -1448,6 +1448,8 @@
     const UNIFORM_BYTES = 4096; // The most a pipeline's uniforms take (TIDE_GPU_MAX_UNIFORMS), which every pipeline is bound
     const MAX_TEXTURES = 8;     // TIDE_GPU_MAX_TEXTURES
     const READ_COMPARE = 2;     // TIDE_GPU_READ_COMPARE, after a color's 0 and a depth's 1
+    const READ_CUBE = 3;        // TIDE_GPU_READ_CUBE: a cube's color, read by a direction
+    const readsDepth = read => read === 1 || read === READ_COMPARE;
     // Samplers: the nearest pixel past no edge first, and after the nine of colors, a depth compared
     const NEAREST = 0, LINEAR = 1, MIPMAPS = 2, COMPARED = 9;
     let layouts = null, samplers = null, mipPipelines = null;
@@ -1477,10 +1479,11 @@
             const stages = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
             const entries = [{ binding: 0, visibility: stages, buffer: { type: 'uniform', hasDynamicOffset: true } }];
             reads.forEach((read, i) => {
-                entries.push({ binding: 1 + 2 * i, visibility: stages, texture: { sampleType: read ? 'depth' : 'float' } });
+                entries.push({ binding: 1 + 2 * i, visibility: stages, texture: read === READ_CUBE
+                    ? { sampleType: 'float', viewDimension: 'cube' } : { sampleType: readsDepth(read) ? 'depth' : 'float' } });
                 // A depth is whole only at its nearest pixel, which a sampler that blends none reads
                 entries.push({ binding: 2 + 2 * i, visibility: stages,
-                    sampler: { type: read === READ_COMPARE ? 'comparison' : read ? 'non-filtering' : 'filtering' } });
+                    sampler: { type: read === READ_COMPARE ? 'comparison' : readsDepth(read) ? 'non-filtering' : 'filtering' } });
             });
             const group = device.createBindGroupLayout({ entries });
             layout = { key, group, pipeline: device.createPipelineLayout({ bindGroupLayouts: [group] }) };
@@ -1507,7 +1510,7 @@
     }
     function bindGroup(p, textures, sampled) {
         let key = p.layout.key + ';';
-        for (let i = 0; i < p.textures; i++) key += textures[i] + ':' + (p.reads[i] ? 0 : sampled[i]) + ',';
+        for (let i = 0; i < p.textures; i++) key += textures[i] + ':' + (readsDepth(p.reads[i]) ? 0 : sampled[i]) + ',';
         let group = bindGroups.get(key);
         if (!group) {
             const entries = [{ binding: 0, resource: { buffer: uniformBuffer, size: UNIFORM_BYTES } }];
@@ -1515,7 +1518,9 @@
                 const t = gpuTables.texture[textures[i]];
                 const read = p.reads[i];
                 entries.push({ binding: 1 + 2 * i, resource: t.view });
-                entries.push({ binding: 2 + 2 * i, resource: samplers[read === READ_COMPARE ? COMPARED : read ? NEAREST : sampled[i]] });
+                // A cube has no edge to be read past: its sampler is the one that clamps, by its filter alone
+                entries.push({ binding: 2 + 2 * i, resource: samplers[read === READ_COMPARE ? COMPARED : read === READ_CUBE ? sampled[i] % 3
+                    : read ? NEAREST : sampled[i]] });
                 t.groups.add(key); // Which go when it does
             }
             group = device.createBindGroup({ layout: p.layout.group, entries });
@@ -1746,8 +1751,72 @@
             device.queue.writeTexture({ texture: t.texture }, data, { offset, bytesPerRow: t.row, rowsPerImage: t.height },
                 [t.width, t.height]);
         },
+        gpu_cube(color, size, facesPtr) {
+            // Six layers, with a view of them as a cube, which is what's sampled, and one of each layer's every
+            // image, which a pass on a face draws into and its smaller images are made through. It has room for
+            // those from the start: the samplers that read none of them keep to its own pixels. A change to
+            // tide_gpu_color goes here
+            // One that's drawn into has the canvas's own bytes, as a target's image has: the pipelines into it are made for those
+            const format = color === 2 ? 'rgba16float' : facesPtr ? 'rgba8unorm' : gpuFormat;
+            const levels = 1 + Math.floor(Math.log2(size));
+            const texture = device.createTexture({ size: [size, size, 6], format, mipLevelCount: levels,
+                usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT });
+            const faces = [];
+            for (let face = 0; face < 6; face++) {
+                const images = [];
+                for (let level = 0; level < levels; level++) {
+                    images.push(texture.createView({ dimension: '2d', baseArrayLayer: face, arrayLayerCount: 1,
+                        baseMipLevel: level, mipLevelCount: 1 }));
+                }
+                faces.push(images);
+            }
+            if (facesPtr && color !== 2) {
+                const at = new Uint32Array(memory.buffer, facesPtr, 6);
+                for (let face = 0; face < 6; face++) {
+                    const [data, offset] = memoryBytes(at[face], size * size * 4);
+                    device.queue.writeTexture({ texture, origin: [0, 0, face] }, data,
+                        { offset, bytesPerRow: size * 4, rowsPerImage: size }, [size, size]);
+                }
+            }
+            return gpuAdd('texture', { texture, view: texture.createView({ dimension: 'cube' }), width: size, height: size,
+                row: size * 4, format, cube: faces, bytes: color !== 2, groups: new Set() });
+        },
+        gpu_cube_face(cube, face) {
+            // What a pass draws into is the face's own image; the texture is the cube's to destroy
+            const of = gpuTables.texture[cube];
+            const view = of.cube[face < 6 ? face : 0][0];
+            const color = gpuAdd('texture', { texture: of.texture, view, first: view, layer: face, width: of.width,
+                height: of.height, row: of.width * 4, groups: new Set() });
+            const texture = depthFor(of.width, of.height, true);
+            const depth = gpuAdd('texture', { texture, view: texture.createView({ aspect: 'depth-only' }),
+                whole: texture.createView(), width: of.width, height: of.height, row: 0, groups: new Set() });
+            return gpuAdd('target', { colors: [color], bytes: of.bytes, depth, width: of.width, height: of.height, canvas: null,
+                context: null, face: true });
+        },
         gpu_mipmaps(id) {
             const t = gpuTables.texture[id];
+            if (t.cube) { // Each face's, one from the other, as a texture's are
+                if (t.cube[0].length < 2) return;
+                const pipeline = mipPipeline(t.format);
+                if (!t.halving) {
+                    t.halving = t.cube.map(images => images.slice(0, -1).map(from => device.createBindGroup({
+                        layout: pipeline.getBindGroupLayout(0),
+                        entries: [{ binding: 0, resource: from }, { binding: 1, resource: samplers[LINEAR] }] })));
+                }
+                const encoder = device.createCommandEncoder();
+                for (let face = 0; face < 6; face++) {
+                    for (let level = 1; level < t.cube[face].length; level++) {
+                        const halve = encoder.beginRenderPass({ colorAttachments: [{ view: t.cube[face][level], loadOp: 'clear', storeOp: 'store' }] });
+                        halve.setPipeline(pipeline);
+                        halve.setBindGroup(0, t.halving[face][level - 1]);
+                        halve.draw(3);
+                        halve.end();
+                    }
+                }
+                device.queue.submit([encoder.finish()]);
+                t.mipped = true;
+                return;
+            }
             const levels = 1 + Math.floor(Math.log2(Math.max(t.width, t.height)));
             if (!t.format || levels < 2) return;
             const pipeline = mipPipeline(t.format);
@@ -1864,11 +1933,14 @@
             return gpuAdd('target', { colors, bytes: formats[0] === gpuFormat, depth, width, height, canvas: null, context: null });
         },
         gpu_target_limit: () => device.limits.maxTextureDimension2D,
-        gpu_target_texture: (id, color) => gpuTables.target[id].colors[color] || 0,
+        gpu_target_texture: (id, color) => gpuTables.target[id].face ? 0 : gpuTables.target[id].colors[color] || 0,
         gpu_target_depth: id => gpuTables.target[id].depth,
         gpu_target_free(id) {
             const t = gpuTables.target[id];
-            for (const color of t.colors) platform.gpu_texture_free(color);
+            for (const color of t.colors) {
+                if (t.face) gpuRemove('texture', color); // The cube's own texture, which stays
+                else platform.gpu_texture_free(color);
+            }
             if (t.sampled) {
                 for (const many of t.sampled) many.texture.destroy();
                 t.sampledDepth.texture.destroy();
@@ -1893,7 +1965,8 @@
                     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST });
             }
             const copy = device.createCommandEncoder();
-            copy.copyTextureToTexture({ texture: gpuTables.texture[t.colors[0]].texture },
+            const first = gpuTables.texture[t.colors[0]]; // A cube's face is one of its texture's layers
+            copy.copyTextureToTexture({ texture: first.texture, origin: [0, 0, first.layer || 0] },
                 { texture: t.context.getCurrentTexture() }, [t.width, t.height]);
             device.queue.submit([copy.finish()]);
             if (!reader) reader = new OffscreenCanvas(t.width, t.height).getContext('2d', { willReadFrequently: true });
@@ -1959,6 +2032,10 @@
         },
         gpu_sample(slot, id, filter, wrap) {
             drawing.textures[slot] = id;
+            // A cube has room for its smaller images from the start, with nothing in them until they're made:
+            // read between them before that, it's its own pixels, as a texture with none is
+            const t = gpuTables.texture[id];
+            if (filter === MIPMAPS && t && t.cube && !t.mipped) filter = LINEAR;
             // Its place in `samplers`
             drawing.sampled[slot] = (wrap === 1 || wrap === 2 ? 3 * wrap : 0) + (filter === NEAREST || filter === MIPMAPS ? filter : LINEAR);
             drawing.bound = false;

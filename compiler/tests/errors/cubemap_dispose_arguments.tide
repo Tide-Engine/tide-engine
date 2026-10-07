@@ -1,0 +1,5 @@
+// expect: Dispose takes no arguments: 'cube.Dispose()'
+// Dispose takes nothing
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+view Show(Room room) { room.reflection.Dispose(1); }

@@ -83,6 +83,13 @@ static inline void tide_run_views(const void *world, const void *previous, const
     tide_frame(world, previous, alpha, verified, local, draw, gui);
 }
 
+#ifdef TIDE_HAS_AUDIO
+static inline void tide_run_audio_set(void *local, tide_audio_frame *frame)
+{
+    tide_local_audio(local, frame);
+}
+#endif
+
 static inline void tide_run_events(void *local, tide_event_log *events)
 {
     tide_local_events(local, events);
@@ -150,6 +157,9 @@ static inline void tide_run_unload(void)
 #ifdef TIDE_HAS_ASSETS
     tide_pack_unload();
 #endif
+#ifdef TIDE_HAS_AUDIO
+    tide_clips_free(); // Once the host had the mixer let go of them (tide_platform_audio_forget)
+#endif
     tide_pages_free();
 }
 
@@ -199,6 +209,9 @@ static const tide_host_game tide_host_game_api = {
 #endif
     .frame = tide_run_views,
     .events = tide_run_events,
+#ifdef TIDE_HAS_AUDIO
+    .audio = tide_run_audio_set,
+#endif
     .frame_time = tide_run_frame_time,
     .take_request = tide_run_take_request,
 #ifdef TIDE_HAS_COMMANDS

@@ -1,0 +1,4 @@
+// expect: '../e2e/cubes/wide/w_py.png' is 4 by 2 pixels: a cube's face is square
+// A face is square
+asset Cubemap sky = "../e2e/cubes/wide/*.png";
+scene Main { }

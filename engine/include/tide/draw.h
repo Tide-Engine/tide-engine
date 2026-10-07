@@ -437,6 +437,7 @@ typedef struct tide_render_target_state {
     uint64_t reload_id; // Temporary opaque identity while restoring another address space.
     void *memory;       // What it was allocated in, to free: the state is on a boundary inside it
     bool alive;
+    bool cube; // A cube's: six images of its size, a face each (TIDE_RENDER_CUBE)
     uint16_t holds; // What it holds and its samples, as its id says them (TIDE_RENDER_FORMAT, TIDE_RENDER_SAMPLES)
 } tide_render_target_state;
 
@@ -458,6 +459,17 @@ typedef struct tide_render_target_state {
 #define TIDE_RENDER_BITS (TIDE_RENDER_FORMAT | TIDE_RENDER_IMAGE | TIDE_RENDER_SAMPLES)
 #define TIDE_RENDER_WINDOW UINT64_MAX
 #define TIDE_RENDER_INVALID (UINT64_MAX - UINT64_C(1))
+// A cube's (tide_cubemap_ref): six square color images that are read by a
+// direction, each drawn into as a target of its own. Its id says so above
+// where an address ends, in bits no state's has (a cube is refused one that
+// has): that it's a cube's, and for one of its faces as a destination, which,
+// 1 + its number. A face is a target to draw into, with the cube's state,
+// its version and its size, and depth of its own; the cube's own id, with no
+// face, is what's sampled.
+#define TIDE_RENDER_FACE_SHIFT 48
+#define TIDE_RENDER_FACE (UINT64_C(7) << TIDE_RENDER_FACE_SHIFT)
+#define TIDE_RENDER_CUBE (UINT64_C(1) << 51)
+enum { TIDE_CUBE_FACES = 6 }; // +x, -x, +y, -y, +z, -z
 
 static inline bool tide_render_target_managed(const uint64_t id)
 {
@@ -467,7 +479,26 @@ static inline bool tide_render_target_managed(const uint64_t id)
 static inline tide_render_target_state *tide_render_target_state_of(const uint64_t id)
 {
     return tide_render_target_managed(id)
-        ? (tide_render_target_state *)(uintptr_t)(id & ~(TIDE_RENDER_MANAGED | TIDE_RENDER_BITS)) : NULL;
+        ? (tide_render_target_state *)(uintptr_t)(id & ~(TIDE_RENDER_MANAGED | TIDE_RENDER_BITS | TIDE_RENDER_CUBE | TIDE_RENDER_FACE))
+        : NULL;
+}
+
+// Whether the target `id` is a cube, or one of a cube's faces.
+static inline bool tide_render_target_cubic(const uint64_t id)
+{
+    return tide_render_target_managed(id) && (id & TIDE_RENDER_CUBE);
+}
+
+// Which of its cube's faces the destination `id` is, from 0, or -1 for what's no face: any other target, and a cube itself.
+static inline int32_t tide_render_target_face(const uint64_t id)
+{
+    return tide_render_target_cubic(id) ? (int32_t)((id & TIDE_RENDER_FACE) >> TIDE_RENDER_FACE_SHIFT) - 1 : -1;
+}
+
+// The cube a face is of: the cube's own id, which is what a renderer's cube and a comparison of two go by.
+static inline uint64_t tide_render_target_cube_of(const uint64_t id)
+{
+    return tide_render_target_cubic(id) ? id & ~(TIDE_RENDER_FACE | TIDE_RENDER_IMAGE) : id;
 }
 
 // What the target `id` holds. The window and a borrowed target hold one color
@@ -707,8 +738,10 @@ static inline tide_render_target tide_render_target_resolve(tide_render_target t
 static inline tide_texture_ref tide_render_target_color(const tide_render_target target)
 {
     const tide_render_target resolved = tide_render_target_resolve(target);
+    // A cube's face has no color of two dimensions to hand out: the cube is what's sampled
     return (tide_texture_ref){
-        .target = {.id = resolved.id && resolved.id != TIDE_RENDER_WINDOW ? resolved.id : TIDE_RENDER_INVALID,
+        .target = {.id = resolved.id && resolved.id != TIDE_RENDER_WINDOW && !tide_render_target_cubic(resolved.id)
+                             ? resolved.id : TIDE_RENDER_INVALID,
                    .size = resolved.size}};
 }
 
@@ -732,10 +765,45 @@ static inline tide_depth_ref tide_render_target_depth(const tide_render_target t
 {
     const tide_render_target resolved = tide_render_target_resolve(target);
     return (tide_depth_ref){
-        .target = {.id = resolved.id && resolved.id != TIDE_RENDER_WINDOW ? tide_render_target_whole(resolved.id)
-                                                                          : TIDE_RENDER_INVALID,
+        .target = {.id = resolved.id && resolved.id != TIDE_RENDER_WINDOW && !tide_render_target_cubic(resolved.id)
+                             ? tide_render_target_whole(resolved.id) : TIDE_RENDER_INVALID,
                    .size = resolved.size}};
 }
+
+// A cube of images, for a shader to read by a direction from its middle:
+// Tide's Cubemap. One of the game's pack (an `asset Cubemap`: no target, and
+// `named`, which names its declaration as a pack Texture's version does, so a
+// copy kept through another load goes on naming what the declaration does),
+// or one that's drawn into (tide_cubemap_make: `target` is the cube's
+// own, whose faces are destinations). Copying it never copies an image, and
+// a zeroed one is no cube: it reads as black.
+typedef struct tide_cubemap_ref {
+    tide_render_target target; // A cube that's drawn into; its id is 0 for the pack's
+    uint64_t named;            // The pack's: what its declaration is named by
+} tide_cubemap_ref;
+
+// A cube to draw into: six images of `size` by `size` pixels (exactly: a
+// cube's faces aren't the window's to scale), each of `format`, a color's
+// (TIDE_TARGET_RGBA8 for anything but TIDE_TARGET_RGBA16F), black until
+// they're drawn into, with depth of their own. A dead one, having said so,
+// for a size there's no image of.
+tide_cubemap_ref tide_cubemap_make_as(float size, tide_target_format format);
+tide_cubemap_ref tide_cubemap_make(float size); // ...of TIDE_TARGET_RGBA8
+// Its face `face` (0 to 5: +x, -x, +y, -y, +z, -z) as a destination: what a
+// camera at the cube's middle that looks along that axis with a field of
+// view of 90 degrees sees, with +y up for the four around, and for the one
+// above and the one below, -z and +z. No destination (draws into it are
+// passed by) for a face there's none of, and for a cube of the pack's.
+static inline tide_render_target tide_cubemap_face(const tide_cubemap_ref cube, const int32_t face)
+{
+    const tide_render_target resolved = tide_render_target_resolve(cube.target);
+    if (!tide_render_target_cubic(resolved.id) || face < 0 || face >= TIDE_CUBE_FACES) return (tide_render_target){.id = TIDE_RENDER_INVALID};
+    return (tide_render_target){.id = tide_render_target_cube_of(resolved.id) | (uint64_t)(face + 1) << TIDE_RENDER_FACE_SHIFT,
+                                .size = resolved.size};
+}
+void tide_cubemap_resize(tide_cubemap_ref cube, float size); // Another size, and empty images
+void tide_cubemap_dispose(tide_cubemap_ref cube);
+tide_cubemap_ref tide_cubemap_recreate(tide_cubemap_ref previous); // Web reload: as tide_render_target_recreate
 
 // A texture the list has, for the commands that draw with it: a copy of the
 // pixels as they were when a mesh last named them. One no command of a frame
@@ -761,7 +829,19 @@ typedef struct tide_draw_texture {
 // (tide_shader.texture_reads): neither has pixels here.
 // TIDE_PIXELS_PACK is an image of the game's pack (tide/pack.h), whose `id` is its version: what's in it,
 // the file's hash.
-enum { TIDE_PIXELS_MEMORY, TIDE_PIXELS_GRID, TIDE_PIXELS_TARGET, TIDE_PIXELS_TARGET_DEPTH, TIDE_PIXELS_PACK };
+// TIDE_PIXELS_TARGET_CUBE is a cube that's drawn into (its id is the cube's own), and TIDE_PIXELS_PACK_CUBE one
+// of the pack's, whose `id` is its version, whose width is a face's side, and whose `pixels` is the pack's six
+// pointers to its faces' pixels (a `const uint8_t *const *`, noted again by each frame as a pack image's are).
+// Only a shader that reads that texture as a cube is given either (TIDE_SHADER_READ_CUBE).
+enum {
+    TIDE_PIXELS_MEMORY,
+    TIDE_PIXELS_GRID,
+    TIDE_PIXELS_TARGET,
+    TIDE_PIXELS_TARGET_DEPTH,
+    TIDE_PIXELS_PACK,
+    TIDE_PIXELS_TARGET_CUBE,
+    TIDE_PIXELS_PACK_CUBE,
+};
 
 // What a list's texture holds for each pixel: red, green, blue and alpha, a
 // byte each, or one float of 16 bits (IEEE 754's half), which a shader reads
@@ -987,6 +1067,7 @@ typedef enum tide_shader_read {
     TIDE_SHADER_READ_COLOR,
     TIDE_SHADER_READ_DEPTH,
     TIDE_SHADER_READ_COMPARE,
+    TIDE_SHADER_READ_CUBE, // A cube's color, by a direction: a `samplerCube`, and a `texture_cube<f32>` with a `sampler`
 } tide_shader_read;
 
 // The most bytes of the game's a shader's uniforms hold, after the engine's
@@ -1197,6 +1278,10 @@ uint32_t tide_draw_texture_source(tide_draw_list *d, tide_texture_ref texture);
 
 // A target's depth: 0, no texture, for one that's no target's.
 uint32_t tide_draw_depth_source(tide_draw_list *d, tide_depth_ref depth);
+
+// A cube, for a shader that reads that texture as one: 0, no texture, for one that's no cube, and for one of
+// the pack's that the loaded pack hasn't got.
+uint32_t tide_draw_cube_source(tide_draw_list *d, tide_cubemap_ref cube);
 
 // Fills the whole screen, or what the clip leaves of it, with `color` as it
 // is: no blend, tint or transform changes a clear.
