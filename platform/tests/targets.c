@@ -1633,7 +1633,9 @@ static void check_stencil(void)
     if (!tide_web_eval("(() => { const c = document.getElementById('canvas');"
                        " const r = new OffscreenCanvas(c.width, c.height).getContext('2d'); r.drawImage(c, 0, 0);"
                        " const a = r.getImageData(1, 1, 1, 1).data, b = r.getImageData(c.width - 2, c.height - 2, 1, 1).data;"
-                       " return a[0] === 255 && a[1] === 0 && a[2] === 255 && b[0] === 0 && b[1] === 0 && b[2] === 0; })()")) {
+                       " const okay = a[0] === 255 && a[1] === 0 && a[2] === 255 && b[0] === 0 && b[1] === 0 && b[2] === 0;"
+                       " if (!okay) console.error('window stencil snapshot: ' + JSON.stringify({ width: c.width, height: c.height,"
+                       " left: Array.from(a), right: Array.from(b) })); return okay; })()")) {
         failures++;
         fprintf(stderr, "the window's own stencil: a draw that passes only on the left half isn't only there\n");
     }
