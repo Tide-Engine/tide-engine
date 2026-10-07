@@ -17,7 +17,8 @@ bool builtin_draw_owner(str name);
 // The program's Anchor enum, which GUILayout.Area and Draw2D.Text take, its
 // Shape struct, which Draw2D.Shape does, its Blend enum, which Draw.Blend
 // does, and its Font enum, a text's weight. Call before resolving calls.
-void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *font);
+void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *cull,
+                  const decl *font);
 void builtins_use_io(const decl *bytes, const decl *paths);
 // Its GUITheme and GUIControl structs, which GUI.SetTheme and GUI.Theme take
 // and GUI.Control gives, the same way.

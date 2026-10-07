@@ -303,5 +303,6 @@ void MakeModels(mut Models models)
                     Corner { position = float3(0.5, 0, -0.5), normal = float3(0, 1, 0) },
                     Corner { position = float3(0.5, 0, 0.5), normal = float3(0, 1, 0) },
                     Corner { position = float3(-0.5, 0, 0.5), normal = float3(0, 1, 0) }];
-    models.plateFaces = [0, 1, 2, 0, 2, 3];
+    // Seen from above, where a triangle's corners have to go clockwise for it to be drawn
+    models.plateFaces = [0, 2, 1, 0, 3, 2];
 }

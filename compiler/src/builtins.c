@@ -42,6 +42,10 @@ static const decl *blend_decl;
 static decl depth_enum;
 static const type T_DEPTH = {TY_ENUM, &depth_enum};
 static const decl *depth_decl;
+// ...and the Cull enum, which Draw3D.Cull does.
+static decl cull_enum;
+static const type T_CULL = {TY_ENUM, &cull_enum};
+static const decl *cull_decl;
 // And the Font enum, which Draw2D.Text and Draw2D.MeasureText take.
 static decl text_font;
 static const type T_FONT = {TY_ENUM, &text_font};
@@ -71,12 +75,14 @@ void builtins_use_io(const decl *bytes, const decl *paths)
     paths_decl = paths;
 }
 
-void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *font)
+void builtins_use(const decl *anchor, const decl *shape, const decl *blend, const decl *depth, const decl *cull,
+                  const decl *font)
 {
     anchor_decl = anchor;
     shape_decl = shape;
     blend_decl = blend;
     depth_decl = depth;
+    cull_decl = cull;
     font_decl = font;
     // Another program's: this one's come with its first mesh draw
     vertices_decl = vertices3_decl = indices_decl = pixels_decl = filter_decl = transforms_decl = NULL;
@@ -125,6 +131,7 @@ static type real_type(const type t)
     if (t.decl == &shape_struct && shape_decl) return (type){TY_STRUCT, (decl *)shape_decl};
     if (t.decl == &blend_enum && blend_decl) return (type){TY_ENUM, (decl *)blend_decl};
     if (t.decl == &depth_enum && depth_decl) return (type){TY_ENUM, (decl *)depth_decl};
+    if (t.decl == &cull_enum && cull_decl) return (type){TY_ENUM, (decl *)cull_decl};
     if (t.decl == &text_font && font_decl) return (type){TY_ENUM, (decl *)font_decl};
     if (t.decl == &theme_struct && theme_decl) return (type){TY_STRUCT, (decl *)theme_decl};
     if (t.decl == &control_struct && control_decl) return (type){TY_STRUCT, (decl *)control_decl};
@@ -151,6 +158,7 @@ static const char *signature_type_name(const type t)
     if (t.decl == &shape_struct) return "Shape";
     if (t.decl == &blend_enum) return "Blend";
     if (t.decl == &depth_enum) return "Depth";
+    if (t.decl == &cull_enum) return "Cull";
     if (t.decl == &text_font) return "Font";
     if (t.decl == &theme_struct) return "GUITheme";
     if (t.decl == &control_struct) return "GUIControl";
@@ -531,6 +539,15 @@ static void build_signatures(void)
                 "what's there, in order.",
                 1, &T_DEPTH);
     add_unset("Draw3D", "SetDepth", "tide_draw_unset_depth", "Back to `Depth.ReadWrite`, as each frame starts.");
+    add_setting("Draw3D", "Cull", "tide_draw_push_cull", "tide_draw_set_cull", NULL, "side",
+                "Which side of the 3D meshes' triangles isn't drawn: `Cull.Back` (each frame's first: a triangle seen "
+                "from behind isn't drawn, so what's solid costs half its triangles), `Cull.Front` (only the backs are: "
+                "the inside of a shell) or `Cull.None` (both sides: what's flat or see-through, like a leaf or a "
+                "pane). The front of a triangle is the side its corners go clockwise on, whatever transform or camera "
+                "it's drawn through, one that mirrors too. A face that's missing is usually a triangle wound the other "
+                "way. The Draw2D calls have no back.",
+                1, &T_CULL);
+    add_unset("Draw3D", "SetCull", "tide_draw_unset_cull", "Back to `Cull.Back`, as each frame starts.");
     add_setting("Draw2D", "Camera", "tide_draw_push_camera", "tide_draw_set_camera", NULL, "center, size",
                 "The camera the Draw2D calls go through: `center` is the world position at the middle of the screen and "
                 "`size` is half the visible height, like Unity's orthographic size.",
@@ -1303,7 +1320,7 @@ type resolve_builtin_call(const str owner, expr *e)
                           "are theirs");
             }
         } else if (str_eq_c(owner, "Draw2D") || str_eq_c(owner, "Draw3D")) {
-            // What another of the three has, asked of this one: Draw3D.SetBlend, Draw2D.Depth, target.Tint
+            // What another of the three has, asked of this one: Draw3D.SetBlend, Draw2D.Depth, Draw2D.Cull, target.Tint
             const char *other = str_eq_c(owner, "Draw2D") ? "Draw3D" : "Draw2D";
             const signature *shared = NULL, *theirs = NULL;
             for (int i = 0; i < signature_count; i++) {
@@ -1318,6 +1335,10 @@ type resolve_builtin_call(const str owner, expr *e)
             } else if (theirs && (str_eq_c(e->name, "Depth") || str_eq_c(e->name, "SetDepth"))) {
                 diag_note("it's Draw3D's: 'Draw3D." STR_FMT "(...)%s'. Only 3D meshes have depth: the Draw2D calls draw "
                           "over what's there, in order", STR_ARG(e->name), theirs->gui & DRAW_BLOCK ? " { ... }" : ";");
+            } else if (theirs && (str_eq_c(e->name, "Cull") || str_eq_c(e->name, "SetCull"))) {
+                diag_note("it's Draw3D's: 'Draw3D." STR_FMT "(...)%s'. Only 3D meshes' triangles have a back: the Draw2D "
+                          "calls draw whichever way they're wound", STR_ARG(e->name),
+                          theirs->gui & DRAW_BLOCK ? " { ... }" : ";");
             } else if (theirs) {
                 diag_note("it's %s's: '%s." STR_FMT "(...)'", other, other, STR_ARG(e->name));
             }

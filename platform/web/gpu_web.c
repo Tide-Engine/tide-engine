@@ -20,7 +20,7 @@ TIDE_WEB_IMPORT(gpu_texture_free) void tide_web_gpu_texture_free(tide_gpu_id tex
 // A pipeline, piece by piece: its slots and attributes in order, between begin and end
 TIDE_WEB_IMPORT(gpu_pipeline_begin) void tide_web_gpu_pipeline_begin(const char *name, const char *wgsl, uint32_t uniform_size,
                                                              uint32_t texture_count, tide_gpu_blend blend,
-                                                             tide_gpu_depth depth);
+                                                             tide_gpu_depth depth, tide_gpu_cull cull);
 TIDE_WEB_IMPORT(gpu_pipeline_slot) void tide_web_gpu_pipeline_slot(uint32_t stride, bool per_instance);
 TIDE_WEB_IMPORT(gpu_pipeline_attribute) void tide_web_gpu_pipeline_attribute(uint32_t slot, tide_gpu_attribute_format format,
                                                                      uint32_t offset);
@@ -44,7 +44,8 @@ TIDE_WEB_IMPORT(gpu_draw_indexed) void tide_web_gpu_draw_indexed(uint32_t count,
 
 static tide_gpu_id tide_web_gpu_pipeline(const tide_gpu_pipeline_desc *desc)
 {
-    tide_web_gpu_pipeline_begin(desc->name, desc->wgsl, desc->uniform_size, desc->texture_count, desc->blend, desc->depth);
+    tide_web_gpu_pipeline_begin(desc->name, desc->wgsl, desc->uniform_size, desc->texture_count, desc->blend, desc->depth,
+                                desc->cull);
     for (uint32_t i = 0; i < desc->slot_count; i++) tide_web_gpu_pipeline_slot(desc->slots[i].stride, desc->slots[i].per_instance);
     for (uint32_t i = 0; i < desc->attribute_count; i++) {
         tide_web_gpu_pipeline_attribute(desc->attributes[i].slot, desc->attributes[i].format, desc->attributes[i].offset);

@@ -274,7 +274,7 @@ static decl *find_in(const program *prog, const str ns, const str name, const na
         decl *d = prog->decls.items[i];
         if (is_kind(d, kind) && str_eq(d->name, name) && str_eq(decl_ns(d), ns)) {
             // Generated C only has these in games that name them
-            if ((d == prog->random || d == prog->depth) && builds(prog)) d->named = true;
+            if ((d == prog->random || d == prog->depth || d == prog->cull) && builds(prog)) d->named = true;
             return d;
         }
     }
@@ -4868,7 +4868,8 @@ static str target_draw_owner(const expr *e)
     bool three = str_eq_c(e->name, "Cube") || str_eq_c(e->name, "Sphere")
         || str_eq_c(e->name, "Cylinder") || str_eq_c(e->name, "Plane")
         || str_eq_c(e->name, "ScreenRayOrigin") || str_eq_c(e->name, "ScreenRayDirection")
-        || str_eq_c(e->name, "Depth") || str_eq_c(e->name, "SetDepth"); // Only 3D meshes have depth
+        || str_eq_c(e->name, "Depth") || str_eq_c(e->name, "SetDepth") // Only 3D meshes have depth...
+        || str_eq_c(e->name, "Cull") || str_eq_c(e->name, "SetCull");  // ...and triangles with a back
     const bool camera = str_eq_c(e->name, "Camera") || str_eq_c(e->name, "SetCamera");
     const bool transform = str_eq_c(e->name, "Transform") || str_eq_c(e->name, "SetTransform");
     if (e->args.count && (camera || transform || str_eq_c(e->name, "WorldToScreen") || str_eq_c(e->name, "ScreenToWorld"))) {
@@ -5780,6 +5781,10 @@ static type check_enum_member(expr *e, decl *d)
     if (d->builtin && str_eq_c(d->name, "Depth")) {
         diag_note("a 3D mesh reads depth and writes it, 'Depth.ReadWrite', as each frame starts; only reads it, "
                   "'Depth.Read', hidden behind what's nearer and hiding nothing; or does neither, 'Depth.None'");
+    }
+    if (d->builtin && str_eq_c(d->name, "Cull")) {
+        diag_note("a 3D mesh's triangles aren't drawn from the back, 'Cull.Back', as each frame starts; or from the "
+                  "front, 'Cull.Front'; or they're drawn from both sides, 'Cull.None'");
     }
     return T_ERR;
 }
@@ -12183,6 +12188,19 @@ static void add_builtins(program *prog)
         vec_push(depth->members, m);
     }
     prog->depth = depth;
+    // enum Cull { Back, Front, None }: which side of a 3D mesh's triangles
+    // isn't drawn (Draw3D.Cull), with tide/draw.h's tide_cull's values. In
+    // generated C as Depth is: only in a game whose code names it.
+    static const char *const culls[] = {"Back", "Front", "None"};
+    decl *cull = NEW(decl);
+    cull->kind = DECL_ENUM;
+    cull->name = str_from("Cull");
+    cull->builtin = true;
+    for (int i = 0; i < (int)(sizeof culls / sizeof culls[0]); i++) {
+        const enum_member m = {str_from(culls[i]), {0, 0, 0}, NULL, i};
+        vec_push(cull->members, m);
+    }
+    prog->cull = cull;
 
     // This machine's part in a match (see tide/session.h, whose enums have the
     // same values): local singleton Session { SessionState state; PlayerID
@@ -12248,6 +12266,7 @@ static void add_builtins(program *prog)
     vec_push(decls, filter);
     vec_push(decls, blend);
     vec_push(decls, depth);
+    vec_push(decls, cull);
     vec_push(decls, font);
     vec_push(decls, state);
     vec_push(decls, reason);
@@ -14781,7 +14800,7 @@ bool check(program *prog)
     c.prog = prog;
 
     add_builtins(prog);
-    builtins_use(prog->anchor, prog->shape, prog->blend, prog->depth, prog->font);
+    builtins_use(prog->anchor, prog->shape, prog->blend, prog->depth, prog->cull, prog->font);
     builtins_use_gui(prog->gui_theme, prog->gui_control);
     add_device_records(prog);
     collect_decls(prog);
