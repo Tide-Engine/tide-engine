@@ -1,0 +1,8 @@
+// expect: Session.Start() starts a match in Main, which is local here: the program starts outside any match
+// expect: name one of the match's scenes, like 'Session.Start(Arena)'
+local scene Main { }
+scene Arena { }
+view Start()
+{
+    if (GUILayout.Button("Play")) Session.Start();
+}
