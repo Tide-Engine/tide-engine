@@ -1,0 +1,62 @@
+settings { title = "Transparency"; }
+
+local scene Main { }
+
+local singleton Glass
+{
+    float opacity = 0.5;
+    List<Vertex3> pane = [
+        Vertex3 { position = float3(-1.3, -1.4, 0) },
+        Vertex3 { position = float3(-1.3, 0.5, 0) },
+        Vertex3 { position = float3(1.3, 0.5, 0) },
+        Vertex3 { position = float3(1.3, -1.4, 0) }
+    ];
+    List<int> faces = [0, 1, 2, 0, 2, 3];
+}
+
+view Solid()
+{
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float3(0, 0, -7), quaternion.identity, 50);
+
+    // Solid geometry comes first, with the default Depth.ReadWrite.
+    Draw.Cube(float3(-0.5, -0.35, 2), float3(1.5),
+              quaternion.Euler(float3(0, 0.35, 0)), Color(0.98, 0.75, 0.14));
+    Draw.Cube(float3(0.8, -0.45, -1), float3(0.5, 1.8, 0.5), Color(0.64, 0.64, 0.68));
+}
+
+view Panes(Glass glass)
+{
+    // The camera is fixed: z = 1 is farther away than z = 0.
+    // Read opaque depth, but let later translucent draws show through.
+    Draw.Depth(Depth.Read)
+    {
+        Draw.Tint(Color(0.98, 0.44, 0.52, glass.opacity))
+        {
+            Draw.Mesh(glass.pane, glass.faces, float4x4.Translate(float3(-0.2, 0.15, 1)));
+        }
+        Draw.Tint(Color(0.18, 0.83, 0.75, glass.opacity))
+        {
+            Draw.Mesh(glass.pane, glass.faces, float4x4.Translate(float3(0.2, 0, 0)));
+        }
+    }
+}
+
+view Overlay(mut Glass glass)
+{
+    Draw.SetScreen();
+    Draw.Text("2D: alpha blends over the background", float2(16, 16), 16, Color.white);
+    var width = (Screen.width - 32) / 8;
+    for (var i = 0; i < 8; i++)
+    {
+        var shade = i % 2 == 0 ? 0.2 : 0.35;
+        Draw.Rect(float2(16 + (i + 0.5) * width, 85), float2(width, 54), Color(shade, shade, shade));
+    }
+    Draw.Rect(float2(Screen.width * 0.5, 85), float2(Screen.width - 64, 36),
+              Color(0.98, 0.44, 0.52, glass.opacity));
+
+    Draw.Text("3D: solids, then panes from far to near", float2(16, 132), 16, Color.white);
+    Draw.Text("The pillar hides both panes", float2(16, Screen.height - 80), 14, Color(0.64, 0.64, 0.68));
+    GUI.SetTheme(GUITheme { radius = 6 });
+    GUI.Slider(Rect(16, Screen.height - 48, Screen.width - 32, 32), "Opacity", glass.opacity, 0, 1);
+}
