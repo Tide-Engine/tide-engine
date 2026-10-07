@@ -1,0 +1,3 @@
+// expect: Color needs 3 or 4 components, got 5
+component Tint { Color color = Color(float3(1, 0, 1), float2(0, 1)); }
+scene Main { }

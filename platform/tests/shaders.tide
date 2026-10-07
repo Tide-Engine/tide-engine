@@ -244,6 +244,13 @@ frag Normal(Corner3 vertex, out Color color)
     color = Color(vertex.normal.x * 0.5 + 0.5, vertex.normal.y * 0.5 + 0.5, vertex.normal.z * 0.5 + 0.5);
 }
 
+// Color's numeric arguments contribute channels in order, as vectors' do.
+frag ColoredUV(Corner3 vertex, out Color color)
+{
+    float2 uv = vertex.uv;
+    color = Color(uv.xy, 0);
+}
+
 frag Placed(Corner3 vertex, out Color color, Instance instance, Marks marks)
 {
     color = instance.transform.c3.x == marks.placed ? Color.cyan : Color.red;
@@ -430,6 +437,11 @@ bool Near(float a, float b)
     return Math.Abs(a - b) < 0.001;
 }
 
+bool SameColor(Color a, Color b)
+{
+    return Near(a.r, b.r) && Near(a.g, b.g) && Near(a.b, b.b) && Near(a.a, b.a);
+}
+
 // Halfway between two colors a byte each: a GPU that blends in bytes gives 127
 // or 128 of 255, where one that blends in floats gives a half.
 bool Halfway(float a)
@@ -508,6 +520,26 @@ frag Sink(Corner3 vertex, out Color color, Marks marks)
     // Colors
     Color tint = Color(0.5, 0.25, 1) * Color.white * 2 - Color(0, 0, 1, 1) + Color.clear;
     if (!Near(tint.g, 0.5) || !Near(tint.a, 1)) ok = false;
+    float2 rg = float2(0.25, 0.5);
+    float3 rgb = float3(rg, 0.75);
+    float4 rgba = float4(rgb, 0.125);
+    if (!SameColor(Color(rg, 0.75), Color(0.25, 0.5, 0.75))) ok = false;
+    if (!SameColor(Color(0.25, rgb.yz), Color(0.25, 0.5, 0.75))) ok = false;
+    if (!SameColor(Color(rgb), Color(0.25, 0.5, 0.75))) ok = false;
+    if (!SameColor(Color(rgb, 0.125), Color(0.25, 0.5, 0.75, 0.125))) ok = false;
+    if (!SameColor(Color(rgba), Color(0.25, 0.5, 0.75, 0.125))) ok = false;
+    if (!SameColor(Color(rg, rgba.zw), Color(0.25, 0.5, 0.75, 0.125))) ok = false;
+    if (!SameColor(Color(rg, 0.75, 0.125), Color(0.25, 0.5, 0.75, 0.125))) ok = false;
+    if (!SameColor(Color(0.25, rgb.yz, 0.125), Color(0.25, 0.5, 0.75, 0.125))) ok = false;
+    if (!SameColor(Color(0.25, 0.5, rgba.zw), Color(0.25, 0.5, 0.75, 0.125))) ok = false;
+    if (!SameColor(Color(0.25, rgba.yzw), Color(0.25, 0.5, 0.75, 0.125))) ok = false;
+    if (!SameColor(Color(int2(2, 3), 4), Color(2, 3, 4))) ok = false;
+    if (!SameColor(Color(int3(2, 3, 4)), Color(2, 3, 4))) ok = false;
+    if (!SameColor(Color(int3(2, 3, 4), 0.125), Color(2, 3, 4, 0.125))) ok = false;
+    if (!SameColor(Color(int4(2, 3, 4, 5)), Color(2, 3, 4, 5))) ok = false;
+    if (!SameColor(Color(2, int2(3, 4)), Color(2, 3, 4))) ok = false;
+    if (!SameColor(Color(2, int3(3, 4, 5)), Color(2, 3, 4, 5))) ok = false;
+    if (!SameColor(Color(int2(2, 3), float2(0.75, 0.125)), Color(2, 3, 0.75, 0.125))) ok = false;
 
     color = ok ? Color.green : Color.red;
 }
@@ -1284,6 +1316,7 @@ view Singles(Art art)
     var turned = float4x4.TRS(Cell(4, 2), quaternion.AxisAngle(float3(0, 0, 1), Math.Radians(90)), float3(1));
     Draw.Mesh(art.quad, art.faces, turned, Turn, Normal);
     Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(5, 2)), Placed);
+    Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(6, 4)), ColoredUV);
 
     Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(0, 5)), Sink);
     Draw.Mesh(art.quad, art.faces, float4x4.Translate(Cell(1, 5)), Checks);

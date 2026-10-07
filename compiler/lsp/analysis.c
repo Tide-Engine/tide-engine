@@ -1468,7 +1468,7 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_ENTITY: return "A handle to an entity. It stays safe to use after the entity is destroyed.";
     case TY_LOCAL_ENTITY: return "A handle to an entity of the local world: this machine's own, which only local code holds.";
     case TY_PLAYER: return "A player, independent of connections. `PlayerID(0)` names a player by index.";
-    case TY_COLOR: return "A color: r, g, b and a from 0 to 1. `Color(r, g, b)` or `Color(r, g, b, a)`.";
+    case TY_COLOR: return "A color: r, g, b and a from 0 to 1. Its constructor takes numbers and vectors totaling 3 or 4 channels, in order: `Color(uv.xy, 0)` or `Color(rgb)` has alpha 1; `Color(rgb, a)` or `Color(rgba)` supplies it. Ints and int vectors widen to floats.";
     case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter[, wrap]])`. A Blit supplies its source to a read-only Texture shader parameter.";
     case TY_DEPTH_TEXTURE: return "A local reference to a render target's depth, `target.depth`, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow wants.";
     case TY_CUBEMAP: return "A local reference to a cube of six images, which a frag or vert reads by a direction from its middle, `Sample(direction)`, where it's an asset by its name or a field of a component or singleton it takes. An asset's is six files a glob matches, named for their faces: `asset Cubemap sky = \"art/sky_??.png\";`. `Cubemap(size)` is one a view draws into, a face at a time: `cube.faces[0]` to `cube.faces[5]` are RenderTargets, in the order +x, -x, +y, -y, +z, -z.";
@@ -2116,7 +2116,7 @@ static void format_method(const method_form *form, const type t, sb *out)
     const char *element = generic ? type_name(t.decl->fields.items[0].type) : "T";
     const char *value = generic && t.kind == TY_MAP ? type_name(t.decl->fields.items[1].type) : "V";
     sb_put(out, t.kind == TY_RECORD && t.decl == A.prog->pixel ? "this"
-                : generic || t.kind == TY_RECORD || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP ? type_name(t)
+                : generic || t.kind == TY_RECORD || t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP ? type_name(t)
                 : t.kind == TY_LIST ? "items"
                 : t.kind == TY_MAP || t.kind == TY_SET ? "keys"
                 : t.kind == TY_GRID ? "cells"
@@ -5284,7 +5284,11 @@ static void classify(const occurrence *o, int *type, int *mods)
         if (!is_routine(o->decl)) *mods |= SM_DEFAULT_LIBRARY | SM_STATIC;
         break;
     case OCC_CONSTANT: *type = ST_ENUM_MEMBER; *mods |= SM_DEFAULT_LIBRARY | SM_STATIC | SM_READONLY; break;
-    case OCC_CONST: *type = ST_ENUM_MEMBER; *mods |= SM_STATIC | SM_READONLY; break; // Like Math.PI
+    case OCC_CONST:
+        *type = o->decl && o->decl->kind == DECL_ASSET ? ST_VARIABLE : ST_ENUM_MEMBER;
+        *mods |= SM_READONLY;
+        if (!o->decl || o->decl->kind != DECL_ASSET) *mods |= SM_STATIC; // Constants, like Math.PI
+        break;
     case OCC_SETTING: *type = ST_PROPERTY; *mods |= SM_DEFAULT_LIBRARY; break;
     case OCC_METHOD:
         if (is_operator_decl(o->decl)) {
@@ -5292,7 +5296,8 @@ static void classify(const occurrence *o, int *type, int *mods)
             *mods = 0;
         } else if (is_routine(o->decl)) {
             *type = ST_METHOD;
-        } else if (str_eq_c(o->name, "Sample") || str_eq_c(o->name, "Sanitize")) { // The input's own members
+        } else if (o->decl && o->decl->kind == DECL_INPUT
+                   && (str_eq_c(o->name, "Sample") || str_eq_c(o->name, "Sanitize"))) { // The input's own members
             *type = ST_KEYWORD;
             *mods = 0;
         } else {
@@ -5667,6 +5672,10 @@ static type name_type(const scope *sc, const str name, const param **param_out)
         for (int i = 0; i < sc->fields_of->fields.count; i++) {
             if (str_eq(sc->fields_of->fields.items[i].name, name)) return sc->fields_of->fields.items[i].type;
         }
+    }
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (d->kind == DECL_ASSET && str_eq_c(name, name_for(d))) return d->return_type;
     }
     return (type){TY_ERROR, NULL};
 }
@@ -6136,10 +6145,11 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             }
             return;
         }
-        // ORIGIN. or Tuning.ORIGIN.: a constant's members
+        // ORIGIN. or Tuning.ORIGIN.: a constant's members; an asset's too
         for (int i = 0; i < A.prog->decls.count; i++) {
             const decl *d = A.prog->decls.items[i];
-            if (d->kind != DECL_CONST || (strcmp(name_for(d), written.data) != 0 && !str_eq_c(d->qualified, written.data))) {
+            if ((d->kind != DECL_CONST && d->kind != DECL_ASSET)
+                || (strcmp(name_for(d), written.data) != 0 && !str_eq_c(d->qualified, written.data))) {
                 continue;
             }
             list_members(c, d->return_type, false, &sc);
@@ -6317,6 +6327,21 @@ static void complete_constants(completion *c, const type_kind only)
     }
 }
 
+// Assets are values by name too. The GPU reads one image or cube; the CPU
+// can also read text, bytes and the lists and maps made from a glob.
+static void complete_assets(completion *c, const bool gpu)
+{
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (d->kind != DECL_ASSET) continue;
+        if (gpu && (d->asset_many || (d->asset_kind != ASSET_GRID && d->asset_kind != ASSET_TEXTURE
+                                     && d->asset_kind != ASSET_CUBEMAP))) continue;
+        sb detail = {0};
+        sb_printf(&detail, "asset " STR_FMT, STR_ARG(d->return_type_name));
+        item(c, name_for(d), CK_VARIABLE, detail.data, NULL, NULL);
+    }
+}
+
 // In settings { ... } between tokens `open` and `last`: each setting it
 // doesn't set yet.
 static void complete_settings(completion *c, const int open, const int last)
@@ -6398,8 +6423,12 @@ static bool complete_in_namespace(completion *c, const str ns, const order_compl
         if (order == ORDER_OFFSET && (d->kind != DECL_CONST || d->return_type.kind != TY_INT)) continue;
         const int kind = d->kind == DECL_COMPONENT || d->kind == DECL_STRUCT ? CK_STRUCT : d->kind == DECL_INPUT ? CK_INTERFACE
                        : d->kind == DECL_EVENT ? CK_EVENT : d->kind == DECL_ENUM ? CK_ENUM
-                       : d->kind == DECL_SYSTEM || is_shader(d) ? CK_FUNCTION : d->kind == DECL_CONST ? CK_CONSTANT : CK_CLASS;
-        item(c, str_to_cstr(d->name), kind, decl_keyword(d), NULL, NULL);
+                       : d->kind == DECL_SYSTEM || is_shader(d) ? CK_FUNCTION : d->kind == DECL_CONST ? CK_CONSTANT
+                       : d->kind == DECL_ASSET ? CK_VARIABLE : CK_CLASS;
+        sb detail = {0};
+        sb_put(&detail, decl_keyword(d));
+        if (d->kind == DECL_ASSET) sb_printf(&detail, " " STR_FMT, STR_ARG(d->return_type_name));
+        item(c, str_to_cstr(d->name), kind, detail.data, NULL, NULL);
     }
     return any;
 }
@@ -6504,6 +6533,7 @@ static void complete_shader_code(completion *c, const scope *sc, const bool stat
         if (gpu_callable(d)) complete_routine(c, d, name_for(d));
     }
     complete_constants(c, TY_ERROR);
+    complete_assets(c, true);
     complete_value_types(c, VT_VALUES | VT_GPU | (statement ? VT_BOOL : 0));
     complete_structs(c);
     item(c, "Math", CK_MODULE, "Math functions and constants", NULL, NULL);
@@ -6628,6 +6658,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
         if (d->kind == DECL_FUNCTION && has_name(d)) complete_routine(c, d, name_for(d));
     }
     complete_constants(c, TY_ERROR);
+    complete_assets(c, false);
 
     const bool routine = sc.decl && (sc.decl->kind == DECL_METHOD || sc.decl->kind == DECL_FUNCTION);
     if (sc.decl && !sc.in_input && !routine) {
@@ -8731,7 +8762,10 @@ static const struct {
     {"float2x2", {"float2x2(float2 c0, float2 c1)", "float2x2(float m00, float m01, float m10, float m11)"}, "Columns, or numbers row by row."},
     {"float3x3", {"float3x3(float3 c0, float3 c1, float3 c2)", "float3x3(quaternion rotation)"}, NULL},
     {"float4x4", {"float4x4(float4 c0, float4 c1, float4 c2, float4 c3)", "float4x4(float3x3 rotation, float3 translation)"}, NULL},
-    {"Color", {"Color(float r, float g, float b)", "Color(float r, float g, float b, float a)"}, "Channels from 0 to 1."},
+    {"Color", {"Color(float r, float g, float b)", "Color(float r, float g, float b, float a)",
+               "Color(float2 rg, float b)", "Color(float3 rgb, float a = 1)"},
+     "Channels from 0 to 1. Any mix of numbers and vectors totaling 3 or 4 channels, in order. "
+     "Three channels have alpha 1; four supply it. Ints and int vectors widen to floats."},
     {"Rect", {"Rect(float x, float y, float width, float height)"}, "From the top left of the screen, y down, in GUI units."},
     {"RenderTarget", {"RenderTarget(float width, float height)", "RenderTarget(float width, float height, float pixelsPerUnit)",
                       "RenderTarget(float width, float height, Format formats...)",
@@ -8771,6 +8805,14 @@ static type receiver_type(const int dot, const loc at)
     if (t.kind == TY_ERROR) t = loop_variable_type(&sc, first);
     if (t.kind == TY_ERROR) t = out_variable_type(first, at);
     for (int k = first + 2; k < dot && t.kind != TY_ERROR; k += 2) t = member_type(t, DOC->toks[k].text);
+    if (t.kind == TY_ERROR) {
+        const token *last = &DOC->toks[dot - 1];
+        const str written = {DOC->toks[first].text.ptr, (int)(last->text.ptr + last->text.len - DOC->toks[first].text.ptr)};
+        for (int i = 0; i < A.prog->decls.count; i++) {
+            const decl *d = A.prog->decls.items[i];
+            if (d->kind == DECL_ASSET && (str_eq_c(written, name_for(d)) || str_eq(written, d->qualified))) return d->return_type;
+        }
+    }
     return t;
 }
 

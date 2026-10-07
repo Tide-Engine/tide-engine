@@ -769,7 +769,7 @@ typedef enum ctor_form {
     CTOR_MAT_FROM_QUAT,  // float3x3(quaternion)
     CTOR_MAT_FROM_ROT_T, // float4x4(float3x3 rotation, float3 translation)
     CTOR_PLAYER,         // PlayerID(index)
-    CTOR_COLOR,          // Color(r, g, b) or Color(r, g, b, a)
+    CTOR_COLOR,          // Color(v.xy, b): 3 or 4 components from scalars and vectors; alpha 1 for 3
     CTOR_RECT,           // Rect(x, y, width, height)
     CTOR_ENUM,           // Card(number), Combat.Stance(number): the enum's value with that number; type_decl is the enum
 } ctor_form;
