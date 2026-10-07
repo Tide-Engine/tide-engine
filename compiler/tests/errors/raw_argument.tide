@@ -1,0 +1,6 @@
+// expect: Raw takes nothing: '[Raw]'
+[Raw(1)] asset Texture masks = "../e2e/assets/hero.png";
+
+scene Main
+{
+}

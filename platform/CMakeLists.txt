@@ -207,6 +207,12 @@ target_include_directories(tide_platform_font PRIVATE "${PROJECT_SOURCE_DIR}/tes
 target_link_libraries(tide_platform_font PRIVATE tide_platform)
 add_test(NAME tide_platform_font COMMAND tide_platform_font)
 
+# The mixer and the WAV writer, with no device: the same bytes on every platform.
+add_executable(tide_platform_audio tests/audio.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+target_include_directories(tide_platform_audio PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+target_link_libraries(tide_platform_audio PRIVATE tide_platform)
+add_test(NAME tide_platform_audio COMMAND tide_platform_audio)
+
 # A game carries the bold weight's file when it says Font.Bold, and only then:
 # two games as tide_add_game builds them, read as the build left them. No
 # window or GPU, so every platform's tests run it. tide_platform_text is also

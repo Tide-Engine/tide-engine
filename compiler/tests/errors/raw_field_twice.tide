@@ -1,0 +1,9 @@
+// expect: field 'paint' already has a [Raw]
+local singleton Art
+{
+    [Raw, Raw] Grid2<Color> paint = Grid2(4, 4);
+}
+
+scene Main
+{
+}

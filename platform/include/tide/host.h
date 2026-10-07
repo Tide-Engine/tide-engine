@@ -161,6 +161,7 @@ static void *tide_run_local;  // The game's tide_local
 static void *tide_run_start;  // A tide_start, for what local code asks
 static tide_devices tide_run_devices;
 static tide_draw_list tide_run_draw;
+static tide_audio_frame tide_run_audio; // What the frame says should be sounding (tide/audio.h)
 static tide_gui tide_run_gui;
 // The profiler, and in it how long each system and view took, measured while
 // it's shown or the stats' drawer is open
@@ -498,6 +499,10 @@ static inline void tide_run_configure(const tide_run_desc *desc)
         } else if (strcmp(arg, "--capture") == 0) {
             tide_run_headless_desc.capture = tide_run_value(&i, arg, "the file the run's last frame goes to, like --capture menu.png");
             tide_run_headless = true;
+        } else if (strcmp(arg, "--capture-audio") == 0) {
+            tide_run_headless_desc.capture_audio =
+                tide_run_value(&i, arg, "the file everything the run plays goes to, like --capture-audio run.wav");
+            tide_run_headless = true;
         } else if (strcmp(arg, "--script") == 0) {
             tide_run_headless_desc.script = tide_run_value(&i, arg, "a file of input by frame, like --script play.txt");
             tide_run_headless = true;
@@ -765,6 +770,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     const tide_view_worlds view = tide_session_view(s);
     const void *match = view.current;
     tide_draw_reset(&tide_run_draw);
+    tide_audio_reset(&tide_run_audio);
     // The GUI and the views read the devices, less a press that's on the stats
     const tide_devices *seen = &tide_run_devices;
     tide_devices kept;
@@ -790,6 +796,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     }
     const uint64_t render_began = timing ? tide_time_now_ns() : 0;
     tide_platform_draw(&tide_run_draw);
+    tide_platform_audio(&tide_run_audio);
     const uint64_t rendered = timing ? tide_time_now_ns() : 0;
     tide_profiler_mark(profiler, TIDE_FRAME_RENDER);
     if (measured_netcode) tide_run_netcode(&status, update_ns, tide_time_now_ns() - frame_began);
