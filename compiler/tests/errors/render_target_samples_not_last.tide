@@ -1,0 +1,4 @@
+// expect: a render target's samples come last, after its size and what it holds
+// expect: 'RenderTarget(width, height, Format.Rgba16f, samples: 4)'
+scene Main { }
+view Show() { var target = RenderTarget(64, 64, samples: 4, format: Format.Rgba8); }

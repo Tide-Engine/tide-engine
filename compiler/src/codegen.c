@@ -2708,14 +2708,23 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e);
 // RenderTarget(width, height, Format.Rgba8, Format.Rgba16f): its color images'
 // formats, the call's last arguments, as C takes several: an array of them,
 // and how many. Writes argument `i` if it's one of them, and says whether.
+// With `samples: n` after them, that's the call's last argument, which C
+// takes after the formats: none of those is no array at all.
 static bool gen_target_format(gen *g, sb *o, const expr *e, const int i)
 {
-    const int from = e->target_formats ? e->args.count - e->target_formats : e->args.count;
+    if (!e->target_formats && !e->target_samples) return false;
+    const int end = e->args.count - (e->target_samples ? 1 : 0); // Past the last format
+    const int from = end - e->target_formats;
     if (i < from) return false;
+    if (i == end) {
+        if (!e->target_formats) sb_put(o, "NULL, 0, ");
+        gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
+        return true;
+    }
     if (i == from) sb_put(o, "(const tide_target_format[]){");
     sb_put(o, "(tide_target_format)");
     gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
-    if (i == e->args.count - 1) sb_printf(o, "}, %d", e->target_formats);
+    if (i == end - 1) sb_printf(o, "}, %d", e->target_formats);
     return true;
 }
 
