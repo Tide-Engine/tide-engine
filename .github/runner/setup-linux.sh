@@ -22,7 +22,7 @@ sudo apt-get install -y wget ca-certificates
 wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
 echo "deb http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$major main" | sudo tee /etc/apt/sources.list.d/llvm.list
 sudo apt-get update
-sudo apt-get install -y "clang-$major" "lld-$major" "llvm-$major" ninja-build zstd unzip cmake git curl xvfb \
+sudo apt-get install -y "clang-$major" "lld-$major" "llvm-$major" ninja-build zstd unzip cmake git curl xvfb gh \
     build-essential python3 libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev \
     openjdk-21-jdk-headless
 
@@ -53,6 +53,25 @@ else
 fi
 "$sdk/cmdline-tools/latest/bin/sdkmanager" --install platform-tools emulator "build-tools;36.0.0" \
     "ndk;30.0.16248370" "system-images;android-36;default;x86_64"
+
+# Microsoft's headers and libraries, which Windows' package links its tide
+# with (cmake/windows-msvc-toolchain.cmake): xwin fetches them from Microsoft
+# under Visual Studio's license, which TIDE_ACCEPT_MICROSOFT_LICENSE accepts.
+# Without it they're left out, and this machine builds no Windows package.
+xwin_version=0.10.0
+xwin_hash=d870eb4b2f390878af6da1ccd3cf321d22fcb72720984853b4be732ae597fc88
+if [ -n "${TIDE_ACCEPT_MICROSOFT_LICENSE:-}" ] && [ ! -d "$HOME/xwin/VC" ]; then
+    mkdir -p "$HOME/xwin-tool"
+    wget -qO "$HOME/xwin-tool/xwin.tar.gz"         "https://github.com/Jake-Shadle/xwin/releases/download/$xwin_version/xwin-$xwin_version-x86_64-unknown-linux-musl.tar.gz"
+    echo "$xwin_hash  $HOME/xwin-tool/xwin.tar.gz" | sha256sum -c
+    tar xzf "$HOME/xwin-tool/xwin.tar.gz" -C "$HOME/xwin-tool" --strip-components=1
+    "$HOME/xwin-tool/xwin" --accept-license --cache-dir "$HOME/xwin-tool/cache" splat --use-winsysroot-style         --output "$HOME/xwin"
+    rm -rf "$HOME/xwin-tool/cache" "$HOME/xwin-tool/xwin.tar.gz"
+    # clang looks for the libraries of x64 by that name.
+    for dir in "$HOME"/xwin/VC/Tools/MSVC/*/lib "$HOME/xwin/Windows Kits/10/Lib"/*/um "$HOME/xwin/Windows Kits/10/Lib"/*/ucrt; do
+        [ -e "$dir/x64" ] || ln -s x86_64 "$dir/x64"
+    done
+fi
 
 # Jobs find the SDK through the runner's environment.
 env="$HOME/tide-runner/.env"

@@ -1,0 +1,7 @@
+// expect: a frag reads a Cubemap that's an asset by its name, or a field of a component or singleton it takes, not a parameter of its own
+// expect: keep it in local state, 'local singleton Room { Cubemap reflection; }', which a view sets, and read it there: 'room.reflection.Sample(direction)'
+// ...and not a frag's own parameter
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+frag Look(Vertex3 vertex, out Color color, Cubemap sky) { color = Color.white; }
+view Show(Room room) { Draw.Mesh(room.ball, [0, 1, 2], float4x4.identity, Look); }

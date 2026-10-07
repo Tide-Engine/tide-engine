@@ -1,0 +1,6 @@
+// expect: Cubemap can't go to the GPU: a cube is read with 'cube.Sample(direction)', not kept as a GPU value
+// It isn't kept as a GPU value
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+frag Look(Vertex3 vertex, out Color color, Room room) { var cube = room.reflection; color = Color.white; }
+view Show(Room room) { Draw.Mesh(room.ball, [0, 1, 2], float4x4.identity, Look); }

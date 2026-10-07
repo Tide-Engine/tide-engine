@@ -1,0 +1,5 @@
+// expect: Resize takes the faces' side in pixels, a number: 'cube.Resize(size)'
+// Resize takes one side
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+view Show(Room room) { room.reflection.Resize(64, 64); }

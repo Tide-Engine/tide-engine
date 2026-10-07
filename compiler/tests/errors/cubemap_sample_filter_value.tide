@@ -1,0 +1,6 @@
+// expect: the filter is written here, 'Filter.Point', 'Filter.Bilinear' or 'Filter.Trilinear': the GPU is told how a texture is read before any pixel runs
+// The filter is written there
+scene Main { }
+local singleton Room { Cubemap reflection; List<Vertex3> ball; Filter how; }
+frag Look(Vertex3 vertex, out Color color, Room room) { color = room.reflection.Sample(vertex.position, room.how); }
+view Show(Room room) { Draw.Mesh(room.ball, [0, 1, 2], float4x4.identity, Look); }

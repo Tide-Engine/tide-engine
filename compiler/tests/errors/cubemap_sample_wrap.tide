@@ -1,0 +1,7 @@
+// expect: a cube has no edge to read past: its Sample takes a direction and a Filter, and no Wrap
+// expect: one face goes on in the next, whichever way the direction points
+// It has no edge: no Wrap
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+frag Look(Vertex3 vertex, out Color color, Room room) { color = room.reflection.Sample(vertex.position, Wrap.Repeat); }
+view Show(Room room) { Draw.Mesh(room.ball, [0, 1, 2], float4x4.identity, Look); }

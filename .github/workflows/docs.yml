@@ -20,8 +20,8 @@ concurrency:
 jobs:
   build:
     name: Build
-    # The owner's machine, for now: see build.yml.
-    runs-on: tide-linux
+    # The owner's home server, for now: see build.yml.
+    runs-on: tide-linux-home
     env:
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CCACHE_DIR: ${{ github.workspace }}/build/ccache
@@ -52,9 +52,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang lld ninja-build ccache
       # A runner of our own keeps its build tree, and has no compiler cache.
+      # Its clang is LLVM's own package, of the version tide's comes from.
       - name: Tools (our own runner)
         if: runner.environment != 'github-hosted'
-        run: echo "CMAKE_C_COMPILER_LAUNCHER=" >> "$GITHUB_ENV"
+        run: |
+          echo "CMAKE_C_COMPILER_LAUNCHER=" >> "$GITHUB_ENV"
+          major=$(sed -nE 's/^set\(TIDE_LLVM_VERSION ([0-9]+)\..*/\1/p' cmake/LLVM.cmake)
+          test -x "/usr/lib/llvm-$major/bin/clang"
+          echo "LLVM_ROOT=/usr/lib/llvm-$major" >> "$GITHUB_ENV"
       - uses: actions/cache@v4
         if: runner.environment == 'github-hosted'
         with:

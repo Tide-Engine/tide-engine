@@ -102,7 +102,12 @@ static inline tide_gpu_target_format tide_gpu_target_with(const tide_gpu_target_
 // limit, the nearest pixel's; or compared with a number of the shader's,
 // which gives how much of the depth stored around there isn't nearer than it,
 // from 0 to 1, as the GPU filters it.
-typedef enum tide_gpu_read { TIDE_GPU_READ_COLOR, TIDE_GPU_READ_DEPTH, TIDE_GPU_READ_COMPARE } tide_gpu_read;
+// A cube (tide_gpu.cube) is read by a direction, as a color.
+typedef enum tide_gpu_read { TIDE_GPU_READ_COLOR, TIDE_GPU_READ_DEPTH, TIDE_GPU_READ_COMPARE, TIDE_GPU_READ_CUBE } tide_gpu_read;
+
+// A cube's six faces, in the order it has them: the one each axis points at,
+// +x, -x, +y, -y, +z, -z.
+enum { TIDE_GPU_CUBE_FACES = 6 };
 
 // What a vertex attribute is in its buffer: floats, 4 bytes read as 0 to 1, or
 // ints of 32 bits, which a shader reads as ints.
@@ -210,6 +215,7 @@ typedef struct tide_gpu_pipeline_desc {
     // A texture read as depth is a `sampler2D` whose red is the depth, and a
     // `texture_depth_2d` with a `sampler`; one that's compared is a
     // `sampler2DShadow`, and a `texture_depth_2d` with a `sampler_comparison`.
+    // A cube is a `samplerCube`, and a `texture_cube<f32>` with a `sampler`.
     const char *glsl_vertex, *glsl_fragment;
     const char *wgsl;
     // The vertex buffers it reads, by slot: how far apart their elements are,
@@ -285,6 +291,31 @@ typedef struct tide_gpu {
     // and is read as TIDE_GPU_FILTER_LINEAR.
     void (*mipmaps)(tide_gpu_id texture);
     void (*texture_free)(tide_gpu_id texture);
+
+    // A cube: six square images of `size` pixels a side, each as `color` says
+    // (4 bytes a pixel, or four floats of 16 bits, with a device's bytes
+    // where it draws into no floats), which a pipeline reads by a direction
+    // from its middle (TIDE_GPU_READ_CUBE) and never as a texture of two
+    // dimensions. `faces` is their pixels, 4 bytes each, in the order +x, -x,
+    // +y, -y, +z, -z, each as it's seen from the cube's middle with its rows
+    // from the top: +y is up for the four around, away from +z for the one
+    // above and towards it for the one below, and +x is to the right of +z
+    // (a left-handed world's, as the cameras here are). NULL for a cube
+    // that's drawn into, which starts black. Between two faces it's read
+    // across the edge. It's a texture to `sample` (whose wrap isn't read),
+    // `mipmaps` and `texture_free`, and to nothing else.
+    tide_gpu_id (*cube)(tide_gpu_color color, int size, const void *const *faces);
+    // A target whose one color image is the face `face` (0 to 5: +x, -x, +y,
+    // -y, +z, -z) of a cube that was made with no pixels, with depth and
+    // stencil of its own. What a camera
+    // at the cube's middle that looks along the face's axis sees is drawn
+    // into it as into any target, rows from the top. Its kind is a target's
+    // of one image of the cube's `color`. Its color isn't a texture by itself
+    // (target_texture is 0: the cube is what's sampled, never in a pass on
+    // one of its faces), its depth is, and target_read reads the face.
+    // target_free frees it, and leaves the cube, which is freed after its
+    // faces' targets.
+    tide_gpu_id (*cube_face)(tide_gpu_id cube, uint32_t face);
 
     tide_gpu_id (*pipeline)(const tide_gpu_pipeline_desc *desc);
     void (*pipeline_free)(tide_gpu_id pipeline);
