@@ -502,6 +502,14 @@ static bool is_operator_decl(const decl *d)
 }
 
 // A frag or vert: code the GPU runs, which a Draw2D.Mesh names.
+// Whose function a draw call on a render target is: Draw2D's or Draw3D's, by
+// what it draws, or Draw's for the target's stencil, which both take.
+static str target_owner(const expr *e)
+{
+    if (str_eq_c(e->name, "Stencil") || str_eq_c(e->name, "SetStencil")) return str_from("Draw");
+    return str_from(e->draw_dims == 3 ? "Draw3D" : "Draw2D");
+}
+
 static bool is_shader(const decl *d)
 {
     return d && d->kind == DECL_SHADER;
@@ -842,7 +850,7 @@ static void walk_value(const expr *e)
                    || e->call == CALL_RANDOM) {
             o.kind = OCC_FUNCTION;
             o.owner = e->call == CALL_TEXT ? str_from("string") : e->call == CALL_RANDOM ? str_from("Random")
-                      : e->targeted ? str_from(e->draw_dims == 3 ? "Draw3D" : "Draw2D") : e->object->name;
+                      : e->targeted ? target_owner(e) : e->object->name;
             o.c_name = e->c_callee;
             add_occ(o);
         } else if (e->call == CALL_ADD || e->call == CALL_REMOVE || e->call == CALL_DESTROY || e->call == CALL_SEND
@@ -5540,6 +5548,13 @@ static void add_target_member(void *user, const builtin_member *m)
     item(c, m->name, CK_METHOD, m->detail, m->doc, m->snippet);
 }
 
+// Of Draw's own, a target has what's a destination's: its stencil. How a draw
+// blends and what tints it are the same wherever it goes.
+static void add_target_stencil(void *user, const builtin_member *m)
+{
+    if (strcmp(m->name, "Stencil") == 0 || strcmp(m->name, "SetStencil") == 0) add_target_member(user, m);
+}
+
 static int label_split(const char *label, int starts[16], int ends[16]);
 
 // What a built-in method's call starts as: its name and parentheses, with the
@@ -5591,6 +5606,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         if (!gpu && sc->decl && (sc->decl->is_view || sc->decl->kind == DECL_FUNCTION)) {
             builtin_list_members(str_from("Draw2D"), add_target_member, c);
             builtin_list_members(str_from("Draw3D"), add_target_member, c);
+            builtin_list_members(str_from("Draw"), add_target_stencil, c);
         }
         return;
     }
@@ -8095,7 +8111,7 @@ static const char *check_new_name(const occurrence *target, const str name)
     static const char *const reserved[] = {"Math", "Draw2D", "Draw3D", "Devices", "Time", "Owner", "Spawn", "Send", "Spawned",
                                            "Destroyed", "PlayerJoined", "PlayerLeft", "Scene", "SceneVisibility", "Prediction", "Debug",
                                            "GUI", "GUILayout", "Screen", "Cursor", "Frame", "Anchor", "Action", "Session", "SessionState", "Clipboard",
-                                           "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Wrap", "Font", "Blend", "Depth", "Cull", "Format", "Draw", "DrawList", "Random",
+                                           "Vertex", "Vertex3", "Shape", "GUITheme", "GUIControl", "Filter", "Wrap", "Font", "Blend", "Depth", "Cull", "Format", "StencilTest", "StencilOp", "Draw", "DrawList", "Random",
                                            "DisconnectReason", "Connected", "Disconnected", "Wait", "File", "Directory", "Path", "Application", "Storage", "IOError", "List", "Map", "Set", "Grid2", "Grid3",
                                            "string", "Sample", "Sanitize"};
     static char message[160];
@@ -8602,7 +8618,7 @@ static int call_param_names(const expr *call, str *names, const int max)
             break;
         }
         const str owner = call->call == CALL_TEXT ? str_from("string") : call->call == CALL_RANDOM ? str_from("Random")
-                          : call->targeted ? str_from(call->draw_dims == 3 ? "Draw3D" : "Draw2D")
+                          : call->targeted ? target_owner(call)
                           : call->object ? call->object->name : (str){"", 0};
         builtin_signatures(owner, call->name, collect_label, &list);
         break;
@@ -8829,6 +8845,10 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
         } else if (t.kind == TY_RENDER_TARGET && !form) {
             builtin_signatures(str_from("Draw2D"), name, visit_signature, &s);
             builtin_signatures(str_from("Draw3D"), name, visit_signature, &s);
+            // Its stencil is Draw's, as 2D and 3D draws both take it
+            if (str_eq_c(name, "Stencil") || str_eq_c(name, "SetStencil")) {
+                builtin_signatures(str_from("Draw"), name, visit_signature, &s);
+            }
         } else if (form && t.kind == TY_WORLD) {
             sb label = {0};
             format_world_method(form, type_open >= 0 ? component_written(type_open, open - 1) : NULL, &label);

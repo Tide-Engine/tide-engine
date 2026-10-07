@@ -1,6 +1,6 @@
 # Sumo walkthrough
 
-This walkthrough explains how a Box3D match drives balls with impulses, replaces floor bodies when tiles fall and keeps a large arena deterministic. It also covers [the lobby](#the-lobby), [instanced rendering and shadows](#what-a-machine-shows), and [the cost of simulation and rollback](#what-it-costs).
+This walkthrough explains how a Box3D match drives balls with impulses, replaces floor bodies when tiles fall and keeps a large arena deterministic. It also covers [the lobby](#the-lobby), [instanced rendering](#what-a-machine-shows), [the shadow map](#the-shadows), and [the cost of simulation and rollback](#what-it-costs).
 
 You are a heavy ball, in a ring in the sky that's stacked with two thousand crates, and so are up to seven others. Plough through what's in your way, ram the others over the edge, and stay on yourself while the floor falls away under everyone. A game made with Tide to push its 3D physics in a match: every crate is in the same place on every machine, whatever their pings, with [Box3D](../physics/box3d.md) under all of it. Play it alone against bots, or with friends in a room.
 
@@ -66,7 +66,7 @@ Sumo has seven files of Tide, and a `tide.packages` that says `box3d`.
 
 - `game.tide` is the match, which every machine runs the same way, and `arena.tide` what a round's ring is built of. Both are on this page, [whole](#the-match-whole).
 - `play.tide` is what one machine shows of it: the camera, and the ring and what's on it.
-- `light.tide` has the meshes and the frags that light them, `effects.tide` the sparks and the words that float up, and `hud.tide` the scores, the clock and the controls.
+- `light.tide` has the meshes, the frags that light them and what the shadows are made of, `effects.tide` the sparks and the words that float up, and `hud.tide` the scores, the clock and the controls.
 - `lobby.tide` is the lobby and the menu: which match this machine is in.
 
 ### The physics
@@ -176,13 +176,65 @@ A match that ends, or a room that can't be joined, comes back as the built-in `D
 ### What a machine shows
 
 - **The crates are one draw.** A view runs for every crate and adds a box to a list, where the body is between its last two ticks. One [`Draw3D.Instanced`](../game/shaders.md#instances-from-a-list) draws the list, through a [frag](../game/shaders.md) that paints a frame around each face and lights it. A frame of a full ring is under thirty draw calls.
-- **A shadow is the thing itself, flattened.** The same list is drawn once more inside [`Draw3D.Transform`](../game/views.md#transforms), with a matrix that slides every point along the lamp's light until it's on the floor. Its frag paints the floor's own look there, darker, so a tower's shadow is as long as the tower is high, and where two shadows overlap they're the same paint. It's inside [`Draw3D.Depth(Depth.Read)`](../game/views.md#depth), as the rings under the balls are: what stands in front hides them, and they hide nothing. And it's inside [`Draw3D.Cull(Cull.None)`](../game/views.md#which-side-draws): laid flat, a box has no side that's its front any more.
-- **The floor is a texture of 15 cells by 15.** A view writes each tile into a local grid, there or about to go, and the frags [sample it](../game/shaders.md#textures): the floor's paint has a line of light along an edge with no tile past it, and a shadow that falls past the rim falls on nothing.
+- **The floor is a texture of 15 cells by 15.** A view writes each tile into a local grid, there or about to go, and the frags [sample it](../game/shaders.md#textures): the floor's paint has a line of light along an edge with no tile past it, and the rings under the balls stop where the floor does. Those rings are drawn inside [`Draw3D.Depth(Depth.Read)`](../game/views.md#depth): what stands in front hides them, and they hide nothing.
 - **There's no lighting built in,** so everything is a mesh whose corners have a normal, made once in a local singleton, and lit by one function that every frag calls. A ball's frag gives it a white band and a dark cap, so that its roll shows.
 - **The camera shows the whole ring when a ball is still big enough to find at that size,** and as much of it as that takes otherwise, around your ball and towards the middle, where the others are. It always looks from the same side, so up on the screen is the same way in the ring for every player, and for the stick.
 - **The scores are read [`verified`](../game/views.md#confirmed-state):** what the server has confirmed, never a fall this machine only predicted. They're on the seats, so the view goes through them with a [query](../game/views.md#other-entities).
 - **The sparks, the blasts' rings and the camera's shake come from events.** The match says what happens in it: two balls met, a ball went through crates, a charge was let go, a keg went off, a tile dropped, a ball fell. Nothing in the match handles those, so they [cost it nothing](../game/events.md#events-only-local-code-handles), and each machine's [local handlers](../game/events.md#local-handlers) make an effect of them, once, however often it runs the tick again. The point that floats up from where a ball fell and a round's winner wait for the server, with [`verified` handlers](../game/events.md#verified-handlers).
 - **Views see every body between its last two ticks,** and gliding through a correction, because the package tags a `Body`'s `position` and `rotation` for it (see [correction smoothing](../game/views.md#provisional-correction-smoothing)).
+
+### The shadows
+
+The engine has no shadows either. It has the pieces of a [shadow map](../game/shaders.md#a-shadow-map): a [render target that holds depth alone](../game/views.md#what-a-target-holds), and a frag that [reads a target's depth](../game/shaders.md#a-target-s-depth). So a tower's shadow falls across the tiles behind it, and across the crates, the balls and the towers that stand there.
+
+**What casts is drawn once more, through a camera where the lamp is.** The lists the window's frame is drawn from go into a target of depth alone first, with no frag, as no color goes anywhere there: the tiles, the crates and the pickups that are boxes in one draw, and the balls in another. What's left in the target is how far the lamp sees along each of its pixels:
+
+```csharp
+[Stage(Layers.Lamp)]
+view Cast(Fx fx, Models models, mut Shadow shadow)
+{
+    if (!shadow.made)
+    {
+        shadow.made = true;
+        shadow.map = RenderTarget(LAMP_PIXELS, LAMP_PIXELS, 1, Format.DepthOnly);
+        shadow.depth = shadow.map.depth;
+    }
+    var turned = quaternion.LookRotation(-Lamp(), float3(0, 1, 0));
+    var lamp = float4x4.TRS(Math.Mul(turned, float3(0, LAMP_RAISED, -LAMP_AWAY)), turned, float3(1));
+    var sees = float4x4.Ortho(LAMP_SPAN, LAMP_SPAN, 0, LAMP_FAR);
+    shadow.toLamp = Math.Mul(sees, Math.Mul(float4x4.TRS(float3(0), quaternion.identity, float3(1, 1, -1)), Math.Inverse(lamp)));
+
+    shadow.map.Clear(Color.white);
+    shadow.map.SetCamera(lamp, sees);
+    shadow.map.Instanced(models.cube, models.cubeFaces, fx.tiles);
+    shadow.map.Instanced(models.cube, models.cubeFaces, fx.solids);
+    ...
+}
+```
+
+That view comes before anything is drawn to the window, the window's own clear too: everything drawn there asks the lamp's image, so the image is whole first.
+
+**Every frag that lights a pixel asks the lamp's image.** It works out where its pixel is in that image, and compares how far the pixel is from the lamp with what's stored there. Only a frag reads a target's depth, so each of the four that light something asks for itself, four times around its pixel, which blends a shadow's edge, and hands the one function that does the lighting how much of the lamp's light arrives:
+
+```csharp
+frag CrateLook(Corner corner, out Color color, Solid solid, Instance instance, Pixel pixel, Room room, Shadow shadow)
+{
+    ...
+    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 seen = FromLamp(pixel.world, normal, shadow.toLamp);
+    float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
+               + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
+    color = Lit(paint, normal, pixel.world, room, 0.25, sun);
+}
+```
+
+In shadow, the lamp's light and its shine are gone, with a little of the sky's blue in their place, and the sky's own light and the cool one from the far side stay. A face that looks away from the lamp had none of the lamp's light to lose, so it's the same in a shadow and out of one.
+
+- **The lamp's image is 1,024 pixels a side, of the whole ring.** It sees a box 40 meters across with no perspective, as a sun's light has none, so a pixel of it is 4 centimeters of the ring. In this page's frame the camera shows 30 meters across 375 pixels, 8 centimeters each, so a shadow's edge is finer than the screen's pixels there, and about as fine as them in a window of 1080 lines that shows the whole ring. Half as many pixels a side blur a crate's shadow. Twice as many are four times the drawing, for an edge that's only sharper where a screen's pixel is smaller than the image's.
+- **It never moves.** The ring gets smaller through a round, and an image that followed it would be finer by the end. But the lamp's pixels would then slide over the ring as it shrank, and the edge of every shadow would crawl. Fixed to the ring as a round starts, the shadow of what stands still is still.
+- **A pixel looks from a little off its surface.** What the lamp stored for a surface is how far it is at the middle of one of the image's pixels, which on a surface that slants away from the lamp is a way off, nearer or further. Compared as it is, such a surface is in its own shadow, in stripes. So `FromLamp` moves the pixel along its normal first, by 0.4 of one of the image's pixels and up to 1.8 more as the surface slants, which is as far as the four looks reach: with none of it everything lit is striped, and with half of it a tumbling crate still shimmers. It's off the surface, not nearer the lamp, so the floor beside a crate is still behind the crate's side, and a shadow starts where its crate does.
+- **What's outside the image is lit.** Past its edges, a depth reads the pixels at the edge, so a crate thrown across one would smear its shadow over everything beyond. `FromLamp` gives such a pixel a depth of 0, nearer than anything stored.
+- **What's flat on the floor isn't lit,** so it's the same in a shadow: the rings under the balls, and the line of light along the floor's edge, are their own light.
 
 ### What it costs
 
@@ -202,7 +254,8 @@ Measured on a release build, on one thread, with the world kept and hashed after
 - **Keeping that state costs about as much as the physics.** With four bots at a full ring, Box3D's own step is 0.3 ms of a tick. Writing what changed of its state into the match is 0.2 more, and hashing the world after is 0.12 for one thread: about half of the state's 16 kilobyte blocks have a byte that changed, since what's moving is scattered through it. So the engine calls a few more threads in to hash, where the machine has them and the page lets it use them, which takes it to 0.06. The game's own systems, and the package's that read bodies in and out, are 0.03 together.
 - **A player who joins downloads it:** 2.4 megabytes as the match packs it, with the rest of the world.
 - **A client that guessed wrong runs ticks again,** from the last one the server confirmed: Box3D's world is made again from the state in the match, and the ticks since run again. Five ticks take 5 ms on a desktop and 7 in a browser, and ten take 7 and 8.5. Where the ticks a client is ahead by would take more than 4 ms to run again, by what its ticks took of late, the engine [delays the player's input](../multiplayer/matches.md#input-delay) a tick at a time instead. With four bots at a full ring that's past about seven ticks ahead on a desktop, which is where a client is at a ping of about 90 milliseconds, and past four in a browser, which is still at most pings. Later in a round, with less in the ring, there's room for more.
-- **A frame's views** take 0.2 ms with a full ring standing, for under thirty draw calls.
+- **A frame's views** take 0.2 ms with a full ring standing, for under thirty draw calls: 22 with four balls in the ring, three of them the lamp's image.
+- **The shadows cost a GPU next to nothing.** A frame of a full ring is 0.1 ms of a desktop GPU's time in a window of 1080 lines, and 0.2 in a browser on WebGPU. In this page's frame it's 0.08 ms, of which the lamp's image is about 0.01, as it is whatever the window's size. Where a browser draws with no GPU at all, the shadows are a tenth of a frame's drawing.
 
 That's about as much as a match takes, with the package as it is: a ring twice the size is twice the state to hold, to send and to read again for every wrong guess.
 

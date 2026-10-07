@@ -395,7 +395,7 @@ static void run_wrap_checks(const char *when)
     }
 }
 
-// Images of the game's own (pass 9): a Texture asset is drawn with the pack's
+// Images of the game's own (pass 10): a Texture asset is drawn with the pack's
 // pixels, and a texture is sampled as its declaration says ([Filter], [Wrap])
 // wherever a draw or a Sample that names it doesn't say. Squares as the wraps'
 // (run_wrap_checks), each cell a pixel of a texture that's red, green, blue
@@ -442,7 +442,7 @@ static void run_image_checks(const char *when)
         {36, 228, 6, 2, 0, 0, 1, 0, "and one that says no wrap: the pixel at its edge"},
     };
     enum { COUNT = sizeof wanted / sizeof wanted[0] };
-    local.Art.targetPass = 9;
+    local.Art.targetPass = 10;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
     tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
@@ -530,6 +530,64 @@ static void run_shadow_checks(const char *when)
     local.Art.targetPass = 0;
 }
 
+// Stencil, from Tide (pass 9): shapes, meshes through frags and a vert, and 3D
+// meshes that store a number for each pixel and are tested against it, in the
+// window and in a target of the game's, which has its own. The window is blue
+// where nothing was drawn.
+static void run_stencil_checks(const char *when)
+{
+    static const struct {
+        float x, y; // In logical pixels
+        int r, g, b;
+        const char *what;
+    } wanted[] = {
+        {48, 48, 255, 255, 255, "a rect drawn where a clear circle stored: at its middle"},
+        {70, 48, 255, 255, 255, "and towards its edge"},
+        {48, 10, 0, 0, 255, "and not above the circle, where the rect is too"},
+        {20, 20, 0, 0, 255, "nor past its round side"},
+        {140, 48, 0, 255, 0, "a mesh through a frag, drawn where another's frag stored"},
+        {170, 48, 0, 0, 255, "and not where that one discarded its pixels"},
+        {180, 70, 255, 255, 255, "a mesh through a vert, drawn where the number is another: past the sheet's left half"},
+        {210, 70, 0, 0, 255, "and only as far as its vert leaves it"},
+        {64, 160, 255, 255, 0, "two rects that each store one more: 2 where both are"},
+        {30, 160, 255, 0, 255, "and 1 where only the first is"},
+        {100, 160, 255, 0, 255, "or only the second"},
+        {120, 160, 0, 0, 255, "and 0 past them"},
+        {176, 144, 255, 0, 0, "a rect drawn where a 3D mesh stored"},
+        {158, 144, 255, 255, 255, "a 3D mesh around it, drawn where the first didn't store: beside it"},
+        {176, 126, 255, 255, 255, "and above it"},
+        {210, 144, 0, 0, 255, "and nothing past both"},
+        {200, 224, 0, 255, 0, "a target's own stencil: a rect drawn where its own draws stored, whatever the window's says"},
+        {240, 224, 0, 0, 0, "and not where they didn't"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    static const float scales[] = {1.0f, 2.0f, 1.5f};
+    for (size_t k = 0; k < sizeof scales / sizeof scales[0]; k++) {
+        const float scale = scales[k];
+        local.Art.targetPass = 9;
+        tide_draw_reset(&list);
+        tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+        tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+        tide_gui_end(&gui, &list);
+        tide_float2 points[COUNT];
+        uint32_t got[COUNT];
+        for (int i = 0; i < COUNT; i++) points[i] = tide_f2((wanted[i].x + 0.5f) * scale, (wanted[i].y + 0.5f) * scale);
+        tide_platform_read_pixels_as(&list, SIZE, SIZE, scale, points, COUNT, got);
+        for (int i = 0; i < COUNT; i++) {
+            const int channels[3] = {wanted[i].r, wanted[i].g, wanted[i].b};
+            bool ok = true;
+            for (int c = 0; c < 3; c++) {
+                const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - channels[c];
+                ok = ok && d >= -5 && d <= 5;
+            }
+            printf("%s: %s, at scale %g%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what,
+                   (double)scale, when, (unsigned)got[i], (unsigned)wanted[i].r, (unsigned)wanted[i].g, (unsigned)wanted[i].b);
+            if (!ok) failures++;
+        }
+    }
+    local.Art.targetPass = 0;
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -553,6 +611,7 @@ static int frame(void *user, const float seconds)
         run_wrap_checks(", on another device");
         run_image_checks(", on another device");
         run_shadow_checks(", on another device");
+        run_stencil_checks(", on another device");
         return failures;
     }
 #endif
@@ -568,6 +627,8 @@ static int frame(void *user, const float seconds)
     run_image_checks(", again");
     run_shadow_checks("");
     run_shadow_checks(", again");
+    run_stencil_checks("");
+    run_stencil_checks(", again");
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");
