@@ -1249,8 +1249,6 @@
         glReadBuffer: source => gl.readBuffer(source),
         glSamplerParameteri: (s, pname, param) => gl.samplerParameteri(get('sampler', s), pname, param),
         glScissor: (x, y, w, h) => gl.scissor(x, y, w, h),
-        glStencilFunc: (func, reference, mask) => gl.stencilFunc(func, reference, mask),
-        glStencilOp: (failed, hidden, drawn) => gl.stencilOp(failed, hidden, drawn),
         glShaderSource(s, count, stringsPtr, lengthsPtr) {
             let source = '';
             for (let i = 0; i < count; i++) {
@@ -1260,6 +1258,8 @@
             }
             gl.shaderSource(get('shader', s), source);
         },
+        glStencilFunc: (func, reference, mask) => gl.stencilFunc(func, reference, mask),
+        glStencilOp: (failed, hidden, drawn) => gl.stencilOp(failed, hidden, drawn),
         glTexImage2D(target, level, internal, w, h, border, format, type, ptr) {
             if (!ptr) {
                 gl.texImage2D(target, level, internal, w, h, border, format, type, null);
