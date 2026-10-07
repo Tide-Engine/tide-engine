@@ -68,6 +68,46 @@ When the display's scale changes (the window moves to another monitor, a browser
 
 Otherwise a target's color and depth persist across frames until cleared. Copies share the image, including copies of `.color`. Call `Dispose()` when finished; every alias becomes invalid, and disposing again is harmless. A default target is invalid. Creation and lifetime methods run in views or local handlers and their helpers; field defaults cannot allocate targets.
 
+### What a target holds
+
+Every target has depth, which its 3D meshes read and write, and a color image beside it. A target says otherwise when it's made, with a `Format` as its last argument, and keeps what it said from then on:
+
+```csharp
+lamp.map    = RenderTarget(1024, 1024, 1, Format.DepthOnly);  // Depth alone, in exactly these pixels
+lamp.map    = RenderTarget(512, 512, Format.DepthOnly);       // ...or at the display's resolution
+lamp.screen = RenderTarget.Screen(Format.DepthOnly);          // ...or the window's size, or part of it:
+lamp.half   = RenderTarget.Screen(0.5, Format.DepthOnly);
+```
+
+| Format | What the target holds | For |
+|---|---|---|
+| `Format.Color` | A color image and depth: what's made when nothing is said | Everything that's looked at |
+| `Format.DepthOnly` | Depth alone | What only a later frag reads: a shadow map, a pass that lays down depth |
+
+A target of depth alone is drawn into like any other: it has its `Clear`, its cameras and its `Mesh`. A color has nowhere to go there, so the only things that leave anything are the ones that write depth:
+
+- **A clear** sets its depth back to the far limit. It takes a color like any clear, which goes nowhere.
+- **A 3D mesh** writes how far it is, with a frag or without. A mesh drawn with no frag has the engine's own look, as anywhere, and in this target that look's color is dropped: what a draw writes is said by where it's drawn, never by what it leaves out. A frag still runs for each pixel, as it may leave some out with `pixel.Discard()`, which is how a fence or a leaf casts a shadow with holes in it.
+- **Everything else draws nothing there:** shapes, text, 2D meshes, a `Draw.Blit` into it, and 3D meshes under [`Depth.Read` or `Depth.None`](#depth).
+
+### A target's depth
+
+A frag reads a target's depth as it reads its color: `target.depth` beside `target.color`. It's a `DepthTexture`, which a view keeps in local state, and a frag reads where it's a field of a component or a singleton it takes (see [Frags and verts](./shaders.md#a-target-s-depth)):
+
+```csharp
+local singleton Lamp { RenderTarget map; DepthTexture shadow; }
+
+view Make(mut Lamp lamp)
+{
+    lamp.map = RenderTarget(1024, 1024, 1, Format.DepthOnly);
+    lamp.shadow = lamp.map.depth;   // A reference, like a Texture: copies share the image
+}
+```
+
+Every target has one, with color or without, and `Draw.window` has none to read. A depth is how far the nearest thing drawn at a pixel is, from 0 at the camera's near plane to 1 at its far limit, and 1 where nothing was drawn since the target was cleared.
+
+A draw into a target can't read that target's depth, any more than its color: the draw is passed by, with a line that says so. Draw what reads it into another target, or the window.
+
 ```csharp
 local singleton RenderState { RenderTarget scene; bool made; }
 enum RenderStages { Prepare, Objects, Effects }
@@ -116,7 +156,7 @@ A Blit replaces what's in its destination, and nothing blends two images for you
 
 A frag has no way to ask how many pixels a texture has. It doesn't need to: a step of a blur is a logical pixel, `1 / Screen.width` across the screen's texture and `1 / Screen.height` down, which the view puts in a singleton for the frag, and the blur is then as wide on every display.
 
-Target color is GPU data: `.color` gives a `Texture` reference and does no readback. `Texture` has no constructor; CPU pixel sources remain `Grid2<Color>`, and C can supply a CPU texture reference. `Draw.window` has no sampleable color and cannot be resized or disposed by the game. Texture references and targets can be stored only in local state. The GUI and stats draw onto the window. Hot reload preserves managed references, their sizes and pixels per unit, whether they follow the window, and shared aliases, recreating their images on the web; it discards rendered contents and clears borrowed references supplied by the old build. Device loss also discards rendered contents. Drawing with an invalid or disposed target is skipped with a diagnostic; disposal also invalidates uses already recorded in the frame.
+Target color is GPU data: `.color` gives a `Texture` reference and does no readback, and so is its depth, a `DepthTexture`. Neither has a constructor; CPU pixel sources remain `Grid2<Color>`, and C can supply a CPU texture reference. `Draw.window` has no sampleable color or depth and cannot be resized or disposed by the game. Texture references, depth references and targets can be stored only in local state. The GUI and stats draw onto the window. Hot reload preserves managed references, their sizes and pixels per unit, whether they follow the window, what they hold, and shared aliases, recreating their images on the web; it discards rendered contents and clears borrowed references supplied by the old build. Device loss also discards rendered contents. Drawing with an invalid or disposed target is skipped with a diagnostic; disposal also invalidates uses already recorded in the frame.
 
 A view's `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are all local: views can change this machine's own state, like particles or a menu, but not the match (see [Local state](./local-state.md)). Only views, and the functions they call, can draw.
 

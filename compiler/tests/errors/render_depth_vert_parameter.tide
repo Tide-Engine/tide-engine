@@ -1,0 +1,3 @@
+// expect: a vert reads a DepthTexture that's a field of a component or singleton it takes, not a parameter of its own
+scene Main { }
+vert Sink(mut Vertex vertex, DepthTexture shadow) { }

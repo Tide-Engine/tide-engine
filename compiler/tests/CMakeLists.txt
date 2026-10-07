@@ -69,6 +69,7 @@ tide_e2e_test(assets_plain) # ...and the same game with none: its world is the s
 tide_e2e_test(stages) # Enum phases, local offsets and whole-phase ordering in every schedule
 tide_e2e_test(render_targets) # Target receivers, explicit Texture sources and distributed rendering phases
 tide_e2e_test(render_lifecycle) # Shared target copies, resizing and explicit disposal from local code
+tide_e2e_test(render_depth) # What a target holds, said when it's made, and a target's depth as frags and verts read it
 tide_e2e_test(ownership) # Views `with ownership` and `without ownership`: this machine's player's entities, and the others
 tide_e2e_test(conditional)
 tide_e2e_test(input_bounds)

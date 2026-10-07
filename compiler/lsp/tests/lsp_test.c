@@ -4740,6 +4740,75 @@ TIDE_TEST(lsp_render_targets_texture_members_and_blit)
     TIDE_CHECK(has(request("textDocument/hover"), "All target and color aliases"));
 }
 
+// What a target holds is said where it's made, a Format last, and a target's
+// depth is a DepthTexture a frag reads: the enum's members, each form of the
+// constructor and of Screen, `depth` beside `color`, and Sample and Compare
+// where a frag has one.
+TIDE_TEST(lsp_render_target_formats_and_depth)
+{
+    start();
+    static const char types[] = "scene Main { }\nlocal singleton Lamp { RenderTarget map; DepthTexture shadow; }\n";
+    char program[2048];
+    snprintf(program, sizeof program, "%sfrag Lit(Vertex3 vertex, out Color color, Lamp lamp)\n{\n"
+                                      "    float lit = lamp.shadow.Compare(vertex.uv, 0.5) * lamp.shadow.Sample(vertex.uv);\n"
+                                      "    color = Color(lit, lit, lit);\n}\n"
+                                      "view V(mut Lamp lamp)\n{\n"
+                                      "    lamp.map = RenderTarget(64, 64, Format.DepthOnly);\n"
+                                      "    lamp.map = RenderTarget(64, 64, 1, Format.DepthOnly);\n"
+                                      "    lamp.map = RenderTarget.Screen(Format.DepthOnly);\n"
+                                      "    lamp.map = RenderTarget.Screen(0.5, Format.Color);\n"
+                                      "    lamp.shadow = lamp.map.depth;\n"
+                                      "    Draw3D.Mesh([Vertex3 { }], [0, 0, 0], float4x4.identity, Lit);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.map = RenderTarget(64, 64, Format.$);\n}\n", types);
+    const char *formats = complete(program);
+    TIDE_CHECK(offers(formats, "Color") && offers(formats, "DepthOnly"));
+    snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.map = RenderTarget(64, 64, $\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget(float width, float height, Format format)"));
+    TIDE_CHECK(has(last_sent(), "RenderTarget(float width, float height, float pixelsPerUnit, Format format)"));
+    TIDE_CHECK(has(last_sent(), "depth alone"));
+    snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.map = RenderTarget.Screen($\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Format format") && has(last_sent(), "float factor, Format format"));
+
+    // A target's depth, beside its color
+    snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.shadow = lamp.map.$\n}\n", types);
+    const char *members = complete(program);
+    TIDE_CHECK(offers(members, "depth") && offers(members, "color") && has(members, "DepthTexture"));
+    snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    var shadow = lamp.map.depth;\n    lamp.shadow = sha$dow;\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "DepthTexture"));
+    // The type, where local state is declared
+    TIDE_CHECK(offers(complete("scene Main { }\nlocal singleton Lamp { $ }\n"), "DepthTexture"));
+
+    // In a frag, a DepthTexture field has its two ways of being read
+    snprintf(program, sizeof program, "%sfrag Lit(Vertex3 vertex, out Color color, Lamp lamp)\n{\n    float lit = lamp.shadow.$\n}\n", types);
+    const char *reads = complete(program);
+    TIDE_CHECK(offers(reads, "Sample") && offers(reads, "Compare"));
+    TIDE_CHECK(has(reads, "DepthTexture.Compare(float2 uv, float value) -> float") && has(reads, "DepthTexture.Sample(float2 uv) -> float"));
+    snprintf(program, sizeof program, "%sfrag Lit(Vertex3 vertex, out Color color, Lamp lamp)\n{\n"
+                                      "    float lit = lamp.shadow.Compare(vertex.uv, $\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "DepthTexture.Compare(float2 uv, float value) -> float"));
+    TIDE_CHECK(has(last_sent(), "\"activeParameter\":1"));
+    snprintf(program, sizeof program, "%sfrag Lit(Vertex3 vertex, out Color color, Lamp lamp)\n{\n"
+                                      "    float lit = lamp.shadow.Com$pare(vertex.uv, 0.5);\n    color = Color(lit, lit, lit);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "isn't nearer than"));
+    snprintf(program, sizeof program, "%sfrag Lit(Vertex3 vertex, out Color color, Lamp lamp)\n{\n"
+                                      "    float far = lamp.shadow.Sam$ple(vertex.uv);\n    color = Color(far, far, far);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "the nearest thing drawn"));
+
+    // A frag takes it through a component or a singleton, never as a parameter of its own
+    snprintf(program, sizeof program, "%sfrag Lit(Vertex3 vertex, out Color color, DepthTexture shadow)\n{\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "a field of a component or singleton it takes"));
+}
+
 // ---------------------------------------------------------------------------
 // A game of several files, found through the manifest tide_add_game writes
 
