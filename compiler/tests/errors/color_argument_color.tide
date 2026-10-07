@@ -1,0 +1,3 @@
+// expect: Color takes numbers and vectors, not Color
+component Tint { Color color = Color(Color.white); }
+scene Main { }

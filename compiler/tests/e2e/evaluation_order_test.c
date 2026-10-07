@@ -96,6 +96,22 @@ TIDE_TEST(evaluation_order_reads_keep_their_turn_beside_writes)
     TIDE_CHECK(r.external == 1);
 }
 
+TIDE_TEST(evaluation_order_color_vectors_run_once_left_to_right)
+{
+    one_tick();
+    const Colors c = world.Colors;
+    TIDE_CHECK(c.once.r == 1 && c.once.g == 2 && c.once.b == 2 && c.once.a == 1);
+    TIDE_CHECK(c.onceCount == 2);
+    TIDE_CHECK(c.middle.r == 1 && c.middle.g == 2 && c.middle.b == 4 && c.middle.a == 3);
+    TIDE_CHECK(c.middleCount == 3);
+    TIDE_CHECK(c.paired.r == 1 && c.paired.g == 2 && c.paired.b == 2 && c.paired.a == 4);
+    TIDE_CHECK(c.pairedCount == 2);
+    TIDE_CHECK(c.external.r == 1 && c.external.g == 2 && c.external.b == 2 && c.external.a == 1);
+    TIDE_CHECK(c.externalCount == 2);
+    TIDE_CHECK(c.before.r == 1 && c.before.g == 2 && c.before.b == 0 && c.before.a == 1);
+    TIDE_CHECK(c.after.r == 0 && c.after.g == 3 && c.after.b == 4 && c.after.a == 1);
+}
+
 TIDE_TEST(evaluation_order_methods_read_their_value_as_they_run)
 {
     one_tick();
