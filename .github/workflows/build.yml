@@ -151,6 +151,7 @@ jobs:
       TIDE_TESTS: ${{ needs.version.outputs.tests }}
       TIDE_VERSION: ${{ needs.version.outputs.version }}
       TIDE_CHANNEL: ${{ github.ref_name == 'release' && 'stable' || 'nightly' }}
+      TIDE_WEB_CHROME_VERSION: '155.0.8059.39'
       CTEST_PARALLEL_LEVEL: ${{ matrix.test-jobs }}
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
@@ -316,6 +317,35 @@ jobs:
           cmake --preset sanitize -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
           cmake --build --preset sanitize
           ctest --preset sanitize -LE gpu -E '^(relay|tide_platform_rooms)$'
+      # Pin the Windows web tests' browser independently of the runner image.
+      # The archive is portable; native jobs keep the runner's browser.
+      - name: Cache Chrome (Windows web)
+        if: runner.os == 'Windows' && matrix.preset == 'web-release'
+        uses: actions/cache@v4
+        with:
+          path: build/chrome-for-testing/${{ env.TIDE_WEB_CHROME_VERSION }}/chrome-win64
+          key: chrome-for-testing-Windows-win64-${{ env.TIDE_WEB_CHROME_VERSION }}
+      - name: Install Chrome (Windows web)
+        if: runner.os == 'Windows' && matrix.preset == 'web-release'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $chromeRoot = Join-Path $env:GITHUB_WORKSPACE "build/chrome-for-testing/$env:TIDE_WEB_CHROME_VERSION"
+          $chromePath = Join-Path $chromeRoot 'chrome-win64/chrome.exe'
+          if (-not (Test-Path -LiteralPath $chromePath)) {
+            New-Item -Path $chromeRoot -ItemType Directory -Force | Out-Null
+            $chromeArchive = Join-Path $chromeRoot 'chrome-win64.zip'
+            Invoke-WebRequest "https://storage.googleapis.com/chrome-for-testing-public/$env:TIDE_WEB_CHROME_VERSION/win64/chrome-win64.zip" -OutFile $chromeArchive
+            Expand-Archive -LiteralPath $chromeArchive -DestinationPath $chromeRoot -Force
+            Remove-Item -LiteralPath $chromeArchive
+          }
+          $chromeVersion = (Get-Item -LiteralPath $chromePath).VersionInfo.ProductVersion
+          if ($chromeVersion -ne $env:TIDE_WEB_CHROME_VERSION) {
+            throw "Expected Chrome $env:TIDE_WEB_CHROME_VERSION, found $chromeVersion."
+          }
+          Write-Output "Web browser: $chromePath ($chromeVersion)"
+          "TIDE_WEB_BROWSER=$($chromePath.Replace('\', '/'))" >> $env:GITHUB_ENV
+
       # The WebGPU ones (label webgpu) run on the browser's software WebGPU.
       # Linux's runners leave them out: without a GPU, Chrome there draws with
       # WebGPU but gives nothing back when the test reads its pixels.
@@ -323,7 +353,12 @@ jobs:
         if: matrix.preset == 'web-release'
         run: |
           # The docs' examples are the Docs workflow's.
-          cmake --preset web-release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL" -DTIDE_DOC_EXAMPLES=OFF
+          browser=()
+          if [ "$RUNNER_OS" = Windows ]; then
+            test -f "$TIDE_WEB_BROWSER"
+            browser=(-DTIDE_BROWSER="$TIDE_WEB_BROWSER")
+          fi
+          cmake --preset web-release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL" -DTIDE_DOC_EXAMPLES=OFF "${browser[@]}"
           cmake --build --preset web-release
           if [ "$RUNNER_OS" = Linux ]; then
             ctest --preset web-release -LE webgpu
