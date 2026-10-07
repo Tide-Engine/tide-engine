@@ -1,9 +1,12 @@
-# The runners on the owner's machines
+# The former runners on the owner's machines
 
-While the account has no hosted minutes, the workflows run on two GitHub
-Actions runners of the owner's: one on the Windows PC (label `tide-windows`)
-and one on the home server, which is Linux (label `tide-linux-home`). Nothing
-builds for macOS meanwhile.
+The workflows now use GitHub-hosted runners: `windows-latest`, `ubuntu-latest`
+and `macos-latest`. Normal pushes and pull requests build the three packages
+with their existing package checks; full test suites still run only by hand
+or for stable releases, on Windows and Linux. Docs runs on `ubuntu-latest`.
+
+The setup below records the two self-hosted runners used while the account
+had no hosted minutes. Neither workflow currently selects them.
 
 ## Windows (the PC)
 
@@ -49,6 +52,6 @@ builds for macOS meanwhile.
   cache steps. A build tree that went wrong is deleted by hand, in
   `_work/tide-engine/tide-engine/build`.
 - One runner an OS runs one job at a time, and both workflows share a checkout.
-- Going back to hosted runners: the `runs-on` labels, the labels and macOS's
-  rows in the Version job's Checks step in `build.yml`, and `runs-on` in
-  `docs.yml`. The steps for hosted runners are still there.
+- The hosted workflows install their tools and restore caches on fresh
+  checkouts. Their test selection is the Version job's Checks step in
+  `build.yml`; macOS has a package row only.

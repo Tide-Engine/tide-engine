@@ -11,14 +11,87 @@ them with no include path, which a game's C has none of.
 
 ## What's changed
 
-Each change is marked `Tide:` where it is. All but two are for one thing: a
-world's image is kept in the match, where it's hashed and sent between players,
-so it has to be the same bytes on every machine for the same state, and one
-machine's has to load on another. The two that aren't are for how long a step
-takes in a browser: WebAssembly's SIMD (the last under The same bytes whatever
-the CPU, as it had to leave them the same) and workers that sleep (the last
-under Threads where upstream knows none), and for a body that's put to sleep
-in a world that was just made from an image.
+Each change is marked `Tide:` where it is. A match keeps Box3D's state through
+resident pages for local snapshots and rollback, and sends a canonical image
+and its geometry between players. The state a step computes and the image it
+sends have to be the same on every supported platform, and one machine's
+image has to load on another. Other changes reduce a step's cost in a browser
+(WebAssembly's SIMD and workers that sleep), or fix a body put to sleep in a
+world that was just restored.
+
+### Resident state
+
+The package's `Physics.state` is a `Resident` (`tide/resident.h`). After a
+step it holds the arena pages Box3D wrote, with a stamp and a digest. A local
+snapshot shares its page table; committing copies the pages marked as
+possibly written and keeps the other pages shared. Before another tick or a
+question reads a different snapshot, the arena restores the pages whose
+identities differ. The stamp alone isn't used to decide whether a restore is
+needed: two runs of one tick can have different local pages.
+
+- **`core.h`, `core.c`: state and scratch have different allocators.**
+  `b3Alloc` and `b3Free` use the allocator given to `b3SetAllocator`. The
+  bridge supplies `tide_arena_alloc` and `tide_arena_free`: the arena keeps
+  the allocator's own state and all the allocations a restored world needs,
+  including geometry. New allocations are marked whole. The bridge marks a
+  released block whole before freeing it, as it may have been written before
+  it grew or was destroyed, and the later touch pass sees only its
+  replacement. Restoring an older snapshot must put those old bytes back
+  too. `b3FreeElement` (`block_allocator.c`) marks the free-list link it
+  writes into a released manifold.
+
+  `b3AllocScratch` and `b3FreeScratch` always use the system. The stack,
+  workers' arenas and OS objects hold nothing a later step needs, and their
+  memory is outside the resident arena.
+- **`physics_world.c`, `box3d.h`: the world's struct is saved and relinked.**
+  Box3D's world structs are in its global world slots, outside the arena.
+  `b3World_StructSave` copies the active one into an arena allocation, and
+  `b3World_StructLoad` puts it back after a restore. `b3World_Relink` replaces
+  its scratch, callbacks and references to this build's constants. A mirror
+  keeps the scratch this process has after every step, so restoring old
+  pages doesn't restore old system allocations. A build taking over an arena
+  makes scratch of its own and supplies its own callbacks.
+- **`world_snapshot.c`: `b3World_TouchChanged` reuses the image writer's
+  marks.** It marks the bodies, shapes and contacts that may have changed,
+  with their materials and manifolds, and the other arrays that may have
+  been written. A removed element can leave a write above its array's final
+  count, so these arrays are marked to capacity. Sleeping sets and the pair
+  set are marked only when their existing tracking says they were touched.
+  A call whose writes aren't followed, or a world with most bodies awake,
+  marks the whole arena. Destroyed shapes and contacts are marked as records
+  without reading the old allocations their fields still name.
+
+  The arena also keeps event arrays and task buffers, even where the
+  canonical image omits them or a step clears them before use. Their writes
+  are marked too: a local restore and the full-arena check preserve every
+  byte the allocator has handed out. The system scratch above is the part
+  that is relinked instead.
+- **`dynamic_tree.c`: a rebuild marks its own scratch writes.** Its old node
+  array is marked before it becomes the spare, as the tick may already have
+  written it. Its leaf indices, leaf nodes and the active heuristic's arrays
+  are marked only through the number of leaves gathered, rather than their
+  capacity. The new node array becomes the current tree and is marked by
+  `b3World_TouchChanged`. A rebuild that exits without doing work marks none
+  of its spare or scratch. The touch hooks support calls from workers.
+- **`bridge.c`: network bytes remain canonical.** The resident packer writes
+  the stamp, Box3D's image with its sections placed consecutively, and the
+  geometry the image names. Receiving it builds a world from those bytes and
+  commits its arena into the resident. Raw arena pages and pointers stay on
+  their own machine; a join or network delta uses the packer.
+
+  The world hash includes the resident stamp and digest, without
+  reading the arena pages. The stamp follows the previous stamp and the
+  operations performed since it. `b3World_Digest` mixes the counts, awake
+  body simulations and the contact impulses they carry into the next step.
+  It is a check of that state, rather than a hash of every arena byte; other
+  differences are expected to show as bodies step. Tree rebuild scratch,
+  event buffers and allocation addresses aren't in that digest.
+
+`b3t_check` compares every committed arena page with the live arena, byte for
+byte, and reports the first page changed without a mark. It includes spare
+and released storage, which a canonical image skips. The package's rollback,
+sleep and course tests use the check; the image-in-parts tests below still
+exercise the canonical writer and its tracking independently.
 
 ### Calls to take an image and to restore one
 
@@ -52,13 +125,13 @@ match has no recording, and a player who joins has only the match's bytes.
   `b3World_GetSnapshotGeometry` writes it: a kind, a size and the bytes for
   each, which is all a restore needs beside the image.
 
-  It's beside the image and not in it, as a second list in the match
-  (`Physics.geometry`), because it's the one part of a world's state that
-  almost never changes: in the image, every hull would be written, compared
-  and kept again every tick, and a mesh is megabytes. Beside it, a tick's
-  image is as small as it was and the list is written when a shape of new
-  geometry is made, and then only at its end: it's only ever added to, so no
-  byte of it ever moves.
+  It's beside the canonical image and not in it. Before resident state it
+  was a second list in the match (`Physics.geometry`), because it almost
+  never changes: writing every hull into each tick's image would keep and
+  compare it again every tick, and a mesh is megabytes. Now the geometry
+  lives in the resident arena and its pages stay shared until written; the
+  network packer still writes it after the image. The geometry bytes are
+  only ever added to, so no byte of that canonical list ever moves.
 
   It's the same bytes on every machine because the order is: images are taken
   of the same worlds at the same ticks everywhere, shape by shape, and a world
@@ -203,9 +276,10 @@ match has no recording, and a player who joins has only the match's bytes.
   and the reader goes where the table says (`b3SnapSeek`). A section that runs
   into the next one's place is reported, with every section's size, and the
   caller places them again. The sections are in upstream's order, and an image
-  without the table reads as before. `bridge.c` keeps each section where it
-  was while that leaves it between none and a quarter of the one before it to
-  spare.
+  without the table reads as before. The bridge's earlier image-based state
+  kept each section where it was while that left it between none and a
+  quarter of the one before it to spare. The resident packer uses the same
+  format with consecutive sections, as it writes a whole image for transfer.
 - **`world_snapshot.c`: every shape, and every contact, takes the same room.**
   Upstream writes each shape's materials and geometry after it, and each
   contact's manifolds after it, so one that changes (a contact that starts
@@ -228,17 +302,18 @@ match has no recording, and a player who joins has only the match's bytes.
   byte written wherever that was. The package puts bodies to sleep
   (`Body.asleep`), and a client that runs a tick again does it in a world
   that was just made. The body says it has no event from there on either
-  way, so its bytes in the next image are the same. `tide_box3d_sleep` makes
-  its world again before every tick of a match that puts bodies to sleep.
+  way, so its bytes in the next image are the same. `tide_box3d_sleep` restores
+  its world before every tick of a match that puts bodies to sleep.
 
 ### An image as what changed of the last one
 
-A match takes an image after every step, and most steps change little of a
-world: a few bodies are awake. Writing all of it, and comparing all of it with
-the last one, goes by how big the world is. Here a world can say what changed
-instead, and the image the parts make is, byte for byte, the image written
-whole: `tide_box3d_stack`'s pinned hashes are of both, and `tide_box3d_parts`
-compares the two after every step.
+Before resident state, the package took an image after every step. Most steps
+change little of a world: a few bodies are awake. Writing all of it, and
+comparing all of it with the last one, goes by how big the world is. These
+APIs let a world say what changed instead, and the image the parts make is,
+byte for byte, the image written whole. `tide_box3d_parts` compares the two
+after every step. The resident touch pass uses the same marks, while the
+package's ticks keep pages instead of writing images.
 
 - **`world_snapshot.c`, `box3d.h`: `b3World_GetSnapshotParts`,
   `b3SnapshotPart`, `b3World_SetSnapshotAwakeShare`,
@@ -416,7 +491,7 @@ Box3D has to be read for them again:
 - **What a sensor has in it is in the image** (its three arrays of visitors),
   and the events of a step aren't: a world made from an image has the same
   begins and ends to say after its next step as the world the image was taken
-  of. `tide_box3d_course` makes its world again before every tick to see that.
+  of. `tide_box3d_course` restores its world before every tick to see that.
 - **`b3Body_SetTransform` doesn't wake a body, or what rests on it.** The
   package wakes both when code moves a body, with `b3Body_SetAwake`, for the
   ones that are asleep (`b3Body_GetContactData` says what touches a body;
@@ -527,9 +602,10 @@ Box3D has to be read for them again:
 
 Copy the two folders over, apply the changes again, and run `tide_box3d_stack`
 and `tide_box3d_course` natively, in debug and release, and for the web: their
-pinned hashes are of the simulation and of every image, so a field that isn't
-the same everywhere shows there. A new version steps differently, so the
-hashes change with it, and so do games' matches. `tide_box3d_course` also pins
+pinned hashes cover the simulation and the per-step resident digests. The
+full-arena check also finds writes the resident marks missed. A new version
+steps differently, so the hashes change with it, and so do games' matches.
+`tide_box3d_course` also pins
 what every question was answered (`ANSWERS_HASH`): a cast or an overlap test
 that rounds another way somewhere shows there. And the casts have to be read
 again for whether their answers go by how far the search is cut off (What the
@@ -561,8 +637,8 @@ them, falling asleep with the first, and the two places a sleeping body's mass
 says its set changed. The rest weren't tried together.
 
 When two builds disagree, print the world's hash after every tick on both to
-find the first tick that differs, and there the bytes of `Physics.image` on
-both. The table after the image's header (16 bytes in, 17 offsets) says which
-section a byte is in, and each section starts with a count, so a byte's place
+find the first tick that differs, and compare the canonical images of their
+resident states. The table after the image's header (16 bytes in, 17 offsets)
+says which section a byte is in, and each section starts with a count, so a byte's place
 says which body, shape or contact it's in and which field. That's how the two
 changes above that weren't for layout were found.

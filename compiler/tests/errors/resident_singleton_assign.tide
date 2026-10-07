@@ -1,0 +1,6 @@
+// expect: a singleton with resident state can't be assigned whole
+singleton Physics { Resident state; int count; }
+void Copy(Physics from, mut Physics to)
+{
+    to = from;
+}

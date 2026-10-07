@@ -1,3 +1,7 @@
+---
+description: "Set up Tide in VS Code or JetBrains IDEs with language server support for completion, errors, quick fixes, navigation and refactoring."
+---
+
 # Editors
 
 Tide's language server, `tidels`, comes with `tide`. Open your game's folder, the one you run `tide run` in, and every `.tide` file in it is one game, with its [packages](packages.md). Across all of them, editors get:
@@ -34,11 +38,11 @@ In a folder you haven't trusted (VS Code's Restricted Mode), nothing from it run
 
 The play button above a `.tide` file runs its game, which is the folder you opened, or the folder of the game it's in when that has a `tide.packages` of its own; a [package](packages.md)'s file runs the open game that lists it:
 
-- **Tide: Run** plays it in a window of its own, as `tide run --watch` does.
+- **Tide: Run** plays it in a window of its own, as `tide run` does.
 - **Tide: Run on the Web** plays it in a browser tab beside your code: VS Code's integrated browser, or the Simple Browser in editors without it. A game only gets keys while its tab has focus, and the editor may pause it while its tab is hidden, so keep it in a group of its own.
-- **Tide: Run on Android** plays it on the Android phone or emulator that's connected, as `tide run --android --watch` does (see [Android](cli.md#android)).
+- **Tide: Run on Android** plays it on the Android phone or emulator that's connected, as `tide run --android` does (see [Android](cli.md#android)).
 
-Each runs `tide run --watch` in a terminal of its own, so saving a file reloads the game (on Android, builds it again and starts it over), and typing `r` and Enter in that terminal starts it over. Running it again starts the game over. The first run on Android may ask to download Android's tools from Google: type `y` and Enter in that terminal to accept. The `tide.path` setting runs another `tide`.
+Each runs `tide run` in a terminal of its own, so saving a file reloads the game (on Android, builds it again and starts it over), and typing `r` and Enter in that terminal starts it over. Running it again starts the game over. The first run on Android may ask to download Android's tools from Google: type `y` and Enter in that terminal to accept. The `tide.path` setting runs another `tide`.
 
 On the web, each reload says what it did in the page's console: **Tide: Game Developer Tools** shows it.
 
@@ -61,11 +65,11 @@ JetBrains' dark color schemes draw type names like plain text, so Tide's types s
 
 Right-click a `.tide` file and pick **Run**, or press Ctrl+Shift+F10 in it (Ctrl+Shift+R on macOS), to run its game, which is the project's folder, or the folder of the game it's in when that has a `tide.packages` of its own; a [package](packages.md)'s file runs the project's game when it lists the package. The run is named after the folder, like `mygame`:
 
-- **mygame** plays it in a window of its own, as `tide run --watch` does.
+- **mygame** plays it in a window of its own, as `tide run` does.
 - **mygame (web)** plays it on the web, in the **Tide Game** tool window. Its **Open DevTools** button shows the page's console, where each reload says what it did. The game only gets keys while the tool window has focus.
-- **mygame (Android)** plays it on the Android phone or emulator that's connected, as `tide run --android --watch` does (see [Android](cli.md#android)).
+- **mygame (Android)** plays it on the Android phone or emulator that's connected, as `tide run --android` does (see [Android](cli.md#android)).
 
-They're Tide run configurations, which you can also make and edit under **Run > Edit Configurations**, where **Play it** picks among the three. They use `tide run --watch`. `tide`'s output is in the Run tool window, where an error's place links to the file: saving a file reloads the game (on Android, builds it again and starts it over), and typing `r` and Enter there starts it over. The first run on Android may ask to download Android's tools from Google: type `y` and Enter there to accept. A run configuration can run another `tide`.
+They're Tide run configurations, which you can also make and edit under **Run > Edit Configurations**, where **Play it** picks among the three. They use `tide run`. `tide`'s output is in the Run tool window, where an error's place links to the file: saving a file reloads the game (on Android, builds it again and starts it over), and typing `r` and Enter there starts it over. The first run on Android may ask to download Android's tools from Google: type `y` and Enter there to accept. A run configuration can run another `tide`.
 
 ## Other editors
 

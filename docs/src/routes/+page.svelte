@@ -1,17 +1,12 @@
 <script lang="ts">
+    import Seo from '#lib/components/Seo.svelte';
+
     let { data } = $props();
 
     const external = (link: string) => /^https?:/.test(link);
-    const description = $derived(`${data.hero.text}. ${data.hero.tagline}`);
 </script>
 
-<svelte:head>
-    <title>{data.hero.name}: {data.hero.text.toLowerCase()}</title>
-    <meta name="description" content={description} />
-    <meta property="og:title" content="{data.hero.name}: {data.hero.text.toLowerCase()}" />
-    <meta property="og:description" content={description} />
-    <link rel="canonical" href="https://tide-engine.dev/" />
-</svelte:head>
+<Seo title={`${data.hero.name}: ${data.hero.text.toLowerCase()}`} description={data.description} path="/" />
 
 <main id="content">
     <section class="hero">

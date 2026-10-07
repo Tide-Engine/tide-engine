@@ -1,3 +1,7 @@
+---
+description: "Play WAV and Ogg Vorbis assets in Tide, control spatial sound and buses, and create audio filters while keeping sound local to each machine."
+---
+
 # Audio
 
 Sound is presentation, like drawing: it's this machine's, and nothing of it is in the match. A view says what should be sounding as it says what should be drawn, and a local handler plays a sound when the match sends an event. Nothing in the simulation hears any of it, so a match is the same on a machine with its speakers off.
@@ -21,7 +25,7 @@ A `Clip` is a WAV (PCM of 8, 16, 24 or 32 bits, or floats) or an Ogg Vorbis file
 
 Both decoders are the engine's own, written from the formats' specifications, so a game carries no license terms for them; a file that isn't one is an error at the path, and for an Ogg file the error says what's wrong with it. A clip has one or two channels: a surround file is refused.
 
-A `Clip` is a value: keep it in a local field, pass it to a function, pick one from the glob's list or map. It names the declaration's file, so under `tide run --watch` a saved file plays through every copy the game kept. The match can't use one: a `Clip` is this machine's, as a `Texture` is.
+A `Clip` is a value: keep it in a local field, pass it to a function, pick one from the glob's list or map. It names the declaration's file, so under `tide run` a saved file plays through every copy the game kept. The match can't use one: a `Clip` is this machine's, as a `Texture` is.
 
 ## Playing a sound
 

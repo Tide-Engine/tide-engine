@@ -37,7 +37,7 @@ import java.nio.file.Path;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-// `tide run --watch` on a game's folder, in the Run tool window: tide's output and the
+// `tide run` on a game's folder, in the Run tool window: tide's output and the
 // game's, where errors link to their place, and what's typed there goes to
 // tide (r and Enter starts the game over, and y answers whether to download
 // Android's tools). On the web, tide serves the page without opening a
@@ -169,7 +169,7 @@ public final class TideRunConfiguration extends LocatableConfigurationBase<TideR
         }
         // TIDE_INTERACTIVE: someone can answer tide's questions here, though its
         // input isn't a terminal.
-        final GeneralCommandLine command = new GeneralCommandLine(tide.toString(), "run", "--watch")
+        final GeneralCommandLine command = new GeneralCommandLine(tide.toString(), "run")
             .withWorkDirectory(options.getFolder())
             .withCharset(StandardCharsets.UTF_8)
             .withEnvironment("TIDE_INTERACTIVE", "1");

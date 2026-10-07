@@ -1,0 +1,5 @@
+// expect: Resident state is a match singleton's field, for the C of a package that comes with tide: a struct can't hold one
+struct Holder
+{
+    Resident state;
+}

@@ -1,3 +1,7 @@
+---
+description: "Explore runnable Tide examples with their complete source, covering ECS systems, drawing, physics and two-player multiplayer matches."
+---
+
 # Live examples
 
 Many pages of these docs have a small game beside the code they explain. The source shown is the whole program, built for the web as it is, and it runs in the page. An example starts when you scroll to it and stops once it's well off screen, so only what you're looking at runs. **Restart** starts it over, and **Stop** ends it until you press **Run** again.

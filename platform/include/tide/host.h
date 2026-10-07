@@ -123,7 +123,7 @@ typedef struct tide_host_game {
 // and the library's globals start fresh. Native builds only (platform/src/reload.c).
 _Noreturn void tide_host_run_library(const tide_run_desc *desc, const char *dir);
 
-// The same on the web (tide run --web --watch), where each new build is a program of
+// The same on the web (tide run --web), where each new build is a program of
 // its own, which the page starts in the running one's place: `game` goes on
 // from what the last one left it, carried over by name, or starts as
 // tide_host_run would. Web builds only (platform/src/reload.c).

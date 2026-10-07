@@ -460,7 +460,7 @@ static bool find_target(const char *root, const build_options *opts)
 typedef struct build {
     const char *root;
     const build_options *opts;
-    bool library; // For `tide run --watch`: the game is a library, which a host reloads (see tide/host.h)
+    bool library; // For interactive `tide run`: the game is a library, which a host reloads (see tide/host.h)
     int abi;      // For Android: which of its CPUs is being built (android_abis)
     char *folder;
     const char *name;
@@ -1518,7 +1518,7 @@ char *tide_build(const char *root, const build_options *opts)
 }
 
 // ---------------------------------------------------------------------------
-// `tide run --watch`: the game as a library in a small host program, which swaps in
+// Interactive `tide run`: the game as a library in a small host program, which swaps in
 // each new build of it (see tide/host.h), and a new build whenever one of the
 // game's files changes. Each run has a folder of its own, .tide/<configuration>/run/
 // <tide's process ID>, so two runs of one game (a server and a client) never
@@ -1860,7 +1860,7 @@ int tide_run_reloading(const char *root, const build_options *opts, const char *
 }
 
 // ---------------------------------------------------------------------------
-// `tide run --web --watch`: tide serves the game's page on this machine, which asks
+// `tide run --web`: tide serves the game's page on this machine, which asks
 // it for the newest build four times a second and starts each new one in the
 // running one's place (platform/web/tide.js).
 
@@ -2001,7 +2001,7 @@ int tide_run_web(const char *root, const build_options *opts, const bool open_pa
     snprintf(url, sizeof url, "http://127.0.0.1:%u/", (unsigned)port);
     printf("tide: the game is at %s\n", url); // The VS Code extension reads the address from this line
     if (opts->watch) printf("tide: saving a .tide or C file reloads it; Ctrl+R or r and Enter starts it over, and Ctrl+C stops\n");
-    else printf("tide: Ctrl+C stops serving the page; --watch reloads as files change\n");
+    else printf("tide: Ctrl+C stops serving the page\n");
     fflush(stdout);
     if (open_page && !sys_open_in_browser(url)) fprintf(stderr, "tide: couldn't open a browser; open %s in one\n", url);
     if (opts->watch) sys_read_lines();

@@ -321,6 +321,8 @@ typedef struct old_world {
     uint32_t *task_counts;
     const uint8_t **attached_rows; // Each table of local fields': its entities, their values, then what each was born as
     uint32_t *attached_counts;
+    const uint8_t **resident_parts; // Each resident's canonical bytes, with their kind and size before them
+    uint32_t *resident_sizes;
     const uint8_t *heap;  // Its heap's bytes, the rest of them
     uint32_t heap_size;
 } old_world;
@@ -334,6 +336,8 @@ static void free_old(old_world *w)
     free(w->task_counts);
     free(w->attached_rows);
     free(w->attached_counts);
+    free(w->resident_parts);
+    free(w->resident_sizes);
 }
 
 // The old table of local fields that `p`'s carries over from: the one of the
@@ -356,6 +360,15 @@ static int32_t old_tasks(const tide_layout_world *fw, const tide_layout_tasks *t
     return -1;
 }
 
+// The old resident `name` carries over from: the one of the same name, or -1.
+static int32_t old_resident(const tide_layout_world *fw, const char *name)
+{
+    for (uint32_t i = 0; i < fw->resident_count; i++) {
+        if (strcmp(fw->residents[i], name) == 0) return (int32_t)i;
+    }
+    return -1;
+}
+
 static bool read_old(const tide_layout *l, const tide_layout_world *fw, const uint8_t *from, const uint32_t size,
                      old_world *w, tide_migration *m)
 {
@@ -365,7 +378,10 @@ static bool read_old(const tide_layout *l, const tide_layout_world *fw, const ui
     w->task_counts = calloc(fw->task_count ? fw->task_count : 1u, sizeof *w->task_counts);
     w->attached_rows = calloc(fw->attached_count ? fw->attached_count : 1u, sizeof *w->attached_rows);
     w->attached_counts = calloc(fw->attached_count ? fw->attached_count : 1u, sizeof *w->attached_counts);
-    if (!w->rows || !w->counts || !w->task_rows || !w->task_counts || !w->attached_rows || !w->attached_counts) {
+    w->resident_parts = calloc(fw->resident_count ? fw->resident_count : 1u, sizeof *w->resident_parts);
+    w->resident_sizes = calloc(fw->resident_count ? fw->resident_count : 1u, sizeof *w->resident_sizes);
+    if (!w->rows || !w->counts || !w->task_rows || !w->task_counts || !w->attached_rows || !w->attached_counts || !w->resident_parts
+        || !w->resident_sizes) {
         snprintf(m->failed, sizeof m->failed, "there wasn't enough memory");
         return false;
     }
@@ -395,6 +411,17 @@ static bool read_old(const tide_layout *l, const tide_layout_world *fw, const ui
                              * (sizeof(tide_entity) + l->types[fw->attached[t].type].size + sizeof(uint32_t));
         ok = !r.failed && bytes <= r.size - r.at;
         if (ok) w->attached_rows[t] = tide_read_bytes(&r, (uint32_t)bytes);
+    }
+    for (uint32_t t = 0; ok && t < fw->resident_count; t++) { // Its kind, its size, its bytes
+        const uint32_t start = r.at;
+        (void)tide_read_u64(&r);
+        const uint32_t bytes = tide_read_u32(&r);
+        ok = !r.failed && bytes <= r.size - r.at;
+        if (ok) {
+            tide_read_bytes(&r, bytes);
+            w->resident_parts[t] = from + start;
+            w->resident_sizes[t] = r.at - start;
+        }
     }
     w->heap = from + r.at;
     w->heap_size = ok ? size - r.at : 0u;
@@ -473,6 +500,10 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
         const int32_t t = old_attached(&c, fw, &tw->attached[k]);
         const uint64_t row = sizeof(tide_entity) + to_layout->types[tw->attached[k].type].size + sizeof(uint32_t);
         size += 4u + (t >= 0 ? old.attached_counts[t] * row : 0u);
+    }
+    for (uint32_t k = 0; ok && k < tw->resident_count; k++) {
+        const int32_t t = old_resident(fw, tw->residents[k]);
+        size += t >= 0 ? old.resident_sizes[t] : 12u;
     }
     if (tw->heap) size += fw->heap ? old.heap_size : empty_heap;
     uint8_t *to = ok && size <= UINT32_MAX ? calloc(1, (size_t)size) : NULL;
@@ -582,6 +613,16 @@ bool tide_migrate_world(const tide_layout *from_layout, const tide_layout_world 
         }
         tide_write_bytes(&w, values + (size_t)count * old_size, count * (uint32_t)sizeof(uint32_t));
     }
+    // Resident state carries over as its canonical bytes, by its field's name; a new one holds nothing
+    for (uint32_t k = 0; k < tw->resident_count; k++) {
+        const int32_t t = old_resident(fw, tw->residents[k]);
+        if (t >= 0) {
+            tide_write_bytes(&w, old.resident_parts[t], old.resident_sizes[t]);
+        } else {
+            tide_write_u64(&w, 0);
+            tide_write_u32(&w, 0);
+        }
+    }
     if (tw->heap && fw->heap) tide_write_bytes(&w, old.heap, old.heap_size);
     else if (tw->heap) take(&w, empty_heap); // Zeros: an empty heap
 
@@ -686,6 +727,9 @@ static void pack_world(packer *p, const uint32_t at, const tide_layout_world *w)
         put_string(p, tasks + i * (uint32_t)sizeof(tide_layout_tasks) + offsetof(tide_layout_tasks, name), w->tasks[i].name);
     }
     put_array(p, at + offsetof(tide_layout_world, attached), w->attached, w->attached_count, sizeof *w->attached);
+    const uint32_t residents = put_array(p, at + offsetof(tide_layout_world, residents), w->residents, w->resident_count,
+                                         sizeof *w->residents);
+    for (uint32_t i = 0; i < w->resident_count; i++) put_string(p, residents + i * (uint32_t)sizeof(const char *), w->residents[i]);
 }
 
 void *tide_layout_pack(const tide_layout *l, uint32_t *size)
@@ -764,7 +808,13 @@ static bool unpack_world(uint8_t *b, const uint32_t size, tide_layout_world *w)
     for (uint32_t i = 0; i < w->task_count; i++) {
         if (!unpack_string(b, size, &tasks[i].name)) return false;
     }
-    return unpack_pointer(b, size, (void *)&w->attached, w->attached_count, sizeof *w->attached);
+    if (!unpack_pointer(b, size, (void *)&w->attached, w->attached_count, sizeof *w->attached)) return false;
+    if (!unpack_pointer(b, size, (void *)&w->residents, w->resident_count, sizeof *w->residents)) return false;
+    const char **residents = (const char **)w->residents;
+    for (uint32_t i = 0; i < w->resident_count; i++) {
+        if (!unpack_string(b, size, &residents[i])) return false;
+    }
+    return true;
 }
 
 const tide_layout *tide_layout_unpack(void *block, const uint32_t size)

@@ -1,3 +1,7 @@
+---
+description: "Write Tide ECS systems that query entities each tick, declare data access and control execution order in a deterministic simulation."
+---
+
 # Systems
 
 A system is code that runs every tick. Its parameters say which entities it runs for, and what it does with their data.

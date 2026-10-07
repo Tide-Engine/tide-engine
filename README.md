@@ -87,8 +87,7 @@ Then, in that folder:
 
 | Command | What it does |
 |---|---|
-| `tide run` | Builds the game and plays it |
-| `tide run --watch` | Plays it and reloads when you save |
+| `tide run` | Builds the game, plays it and reloads when you save |
 | `tide run --web` | Builds it as a web page and opens it |
 | `tide build` | Builds the game into `build/` |
 | `tide build --release --web` | An optimized, self-contained `.html` (WebGPU, or WebGL 2 where the browser has none) |

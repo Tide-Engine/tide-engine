@@ -1,0 +1,36 @@
+// Resident state (tide/resident.h): a match singleton's `Resident` field,
+// which the C of a library keeps its state in as pages of the world's
+// (resident_c.c stands in for one: a few counters in an arena). Tide code
+// never reads the field; the systems written in C around it do, and the host
+// (resident_test.c) snapshots, rolls back, packs and sends the world.
+
+singleton Tally
+{
+    Resident state;
+    int steps;
+    int which;
+    long seen; // What C said the state's digest was, to show the match sees a plain field beside it
+}
+
+// Adds `which` to the counter at which % 8 in the arena, and commits
+extern system Step(mut Tally tally);
+
+system Count(mut Tally tally)
+{
+    tally.steps += 1;
+    tally.which = (tally.which * 7 + 3) % 11;
+}
+
+scene Main
+{
+}
+
+// The field goes to C as the argument of an extern's Resident parameter, and
+// nowhere else: a read of the counter the state holds, by address
+[NativeName("resident_test_cell")]
+extern long CellOf(in Resident state, int i);
+
+system Peek(mut Tally tally)
+{
+    tally.seen = CellOf(tally.state, 3);
+}

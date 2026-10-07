@@ -1,3 +1,7 @@
+---
+description: "Learn Tide language syntax, types, variables, operators and control flow, plus enums, attributes and settings for your game."
+---
+
 # Basics
 
 Tide is a language of its own. Its basics are the familiar kind, braces and semicolons, so if you've programmed before, most of this page will read as you expect. It covers what's the same everywhere in the language: values, variables and control flow. What's special to Tide starts with [components and entities](../game/entities.md).
@@ -97,7 +101,7 @@ system Regenerate(mut Health health, Time time)
 - They work anywhere a constant value is needed: field defaults, `[Clamp]` bounds, `case` labels and the values of enum members. In the last two, int constants and operators on them work: `case MAX_LEVEL + 1:`.
 - A constant can be a number, vector, matrix, quaternion, `bool`, `Color`, `Rect`, `PlayerID`, text, struct or enum. It can't be a list or an entity.
 - A constant in a namespace belongs to it: code outside writes `Combat.CRIT_MULTIPLIER` (see [Namespaces and files](./namespaces.md)).
-- Changing a constant under `tide run --watch` reloads the game and keeps the match where it is.
+- Changing a constant under `tide run` reloads the game and keeps the match where it is.
 
 ## Settings
 
@@ -125,7 +129,7 @@ settings
 
 - Settings are set without a type, to constant expressions, which can name constants. A game's own values go in constants, not settings.
 - A game has one `settings` block. The editors complete the settings' names and show what each one does.
-- Settings are part of the build. The machine that runs a match decides its tick rate, and every player ticks at that rate. Under `tide run --watch`, a new `tickRate` takes effect when a match starts.
+- Settings are part of the build. The machine that runs a match decides its tick rate, and every player ticks at that rate. Under `tide run`, a new `tickRate` takes effect when a match starts.
 - `--title` goes over the `title` setting (see [The tide command](../tools/cli.md)).
 
 ## Logging and asserting

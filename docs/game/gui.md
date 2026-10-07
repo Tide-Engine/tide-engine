@@ -1,3 +1,7 @@
+---
+description: "Build Tide menus and controls with immediate mode GUI widgets, layouts, themes, modals, keyboard navigation and gamepad input."
+---
+
 # GUI
 
 The GUI is immediate mode, like drawing: views call widgets every frame, and they're drawn over the world. It follows Unity's IMGUI.
