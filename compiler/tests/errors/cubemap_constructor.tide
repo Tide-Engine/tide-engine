@@ -1,6 +1,0 @@
-// expect: Cubemap has no constructor yet
-// expect: a Cubemap is an asset's six files, 'asset Cubemap sky = "art/sky_??.png";', or one that's drawn into, 'RenderTarget.Cube(256)'
-// It has no constructor
-scene Main { }
-local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
-view Show(mut Room room) { room.reflection = Cubemap(64); }

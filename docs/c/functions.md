@@ -393,7 +393,7 @@ extern void DrawUI(DrawList list);
 
 view UI()
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     DrawUI(Draw.list);
 }
 ```

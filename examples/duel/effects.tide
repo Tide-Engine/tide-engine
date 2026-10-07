@@ -273,7 +273,7 @@ view BeginFrame(mut Canvas canvas, mut Fx fx, mut Sky sky, mut Lens lens)
     sky.shock.z += fx.dt * 1.35;
     sky.shock2.z += fx.dt * 1.35;
     scene.Clear(UI_BACKGROUND);
-    scene.SetPixels();
+    scene.SetScreen();
     scene.Mesh(sky.quad, sky.faces, PlaceSky, PaintSky);
 
     // The arena's camera, and the window's too: what's drawn there over a fighter finds it with the same one
@@ -606,7 +606,7 @@ view PaintLight(mut Lens lens)
 [Stage(PaintStages.Overlay)]
 view PaintOverlay(mut Fx fx)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     var screen = float2(Screen.width, Screen.height);
 
     mut var i = 0;

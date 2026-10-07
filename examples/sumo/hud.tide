@@ -43,7 +43,7 @@ void Crown(float2 at, float size, Color color)
 [Stage(Layers.Hud)]
 view Glare(Fx fx)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     var screen = float2(Screen.width, Screen.height);
     Draw.Blend(Blend.Add)
     {
@@ -61,7 +61,7 @@ view Glare(Fx fx)
 [Stage(Layers.Hud, 5)]
 view Tags(Body body, Ball ball, Fx fx, Lobby lobby)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     if (lobby.page != Page.Playing) return;
     var screen = float2(Screen.width, Screen.height);
     var place = Draw.WorldToScreen(body.position + float3(0, ball.radius + 0.9, 0));
@@ -99,7 +99,7 @@ view Tags(Body body, Ball ball, Fx fx, Lobby lobby)
 [Stage(Layers.Hud, 10)]
 view Scores(verified Ring sure, Fx fx, Lobby lobby, query (verified Seat seat) seats)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     if (lobby.page != Page.Playing) return;
     mut var live = 0;
     mut var count = 0;
@@ -192,7 +192,7 @@ void Shout(float2 at, string words, float size, Color color, float age, float sh
 [Stage(Layers.Hud, 20)]
 view Words(Ring ring, Session session, Lobby lobby, mut Flow flow, mut Fx fx, mut Air air, query (Seat seat) seats)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     if (lobby.page != Page.Playing) return;
     var screen = float2(Screen.width, Screen.height);
     var big = screen.x >= 640 && screen.y >= 420;
@@ -278,7 +278,7 @@ view Words(Ring ring, Session session, Lobby lobby, mut Flow flow, mut Fx fx, mu
 [Stage(Layers.Hud, 25)]
 view Floats(Lobby lobby, Fx fx, mut Air air)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     var screen = float2(Screen.width, Screen.height);
     mut var i = 0;
     while (i < air.labels.count)
@@ -308,7 +308,7 @@ view Floats(Lobby lobby, Fx fx, mut Air air)
 [Stage(Layers.Hud, 30)]
 view Hints(Ring ring, Devices devices, Fx fx, Flow flow, Lobby lobby)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     if (lobby.page != Page.Playing || fx.seat < 0 || ring.phase != Phase.Play || !fx.here) return;
     var screen = float2(Screen.width, Screen.height);
     var touch = devices.touchscreen.connected;
@@ -335,7 +335,7 @@ view Hints(Ring ring, Devices devices, Fx fx, Flow flow, Lobby lobby)
 [Stage(Layers.Hud, 40)]
 view Controls(Session session, Devices devices, mut Hand hand, mut Flow flow, Fx fx, Lobby lobby)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     hand.playing = lobby.playing;
     hand.stick = float2(0);
     hand.charge = false;
@@ -427,7 +427,7 @@ view Controls(Session session, Devices devices, mut Hand hand, mut Flow flow, Fx
 [Stage(Layers.Hud, 50)]
 view Confetti(Fx fx, mut Air air)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     mut var i = 0;
     while (i < air.paper.count)
     {

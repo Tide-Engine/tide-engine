@@ -21,7 +21,7 @@ local singleton Trail
 view Emit(Devices devices, mut Trail trail)
 {
     Draw.Clear(Color(0.086, 0.086, 0.094));
-    Draw.SetPixels();
+    Draw.SetScreen();
     var at = Screen.Flip(devices.pointer.position);
     if (Math.Distance(at, trail.last) > 6)
     {

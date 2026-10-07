@@ -85,7 +85,7 @@ view Balls(Body body, Circle circle)
 
 view Hud(Tally tally)
 {
-    Draw.SetPixels();
+    Draw.SetScreen();
     Draw.Text("Tap a crate to kick it, or anywhere else to drop a ball", float2(16, 14), 13, Color.white);
     Draw.Text($"Balls touched something {tally.touches} times", float2(16, 34), 13, Color(0.64, 0.64, 0.68));
 }

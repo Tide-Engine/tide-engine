@@ -266,7 +266,7 @@ tide_cubemap_ref tide_cubemap_make_as(const float size, const tide_target_format
 {
     const tide_render_target made = make_target((tide_target_size){.width = size, .height = size, .scale = 1.0f},
                                                 one_format(format == TIDE_TARGET_RGBA16F ? TIDE_TARGET_RGBA16F : TIDE_TARGET_RGBA8),
-                                                "RenderTarget.Cube requires a positive size, its faces' side in pixels");
+                                                "Cubemap(size) requires a positive size, its faces' side in pixels");
     tide_render_target_state *s = tide_render_target_state_of(made.id);
     if ((uint64_t)(uintptr_t)s & (TIDE_RENDER_CUBE | TIDE_RENDER_FACE)) { // Its id says which face there
         fprintf(stderr, "tide: a cube's state is at an address past what its id has room for\n");
@@ -281,7 +281,7 @@ void tide_cubemap_resize(const tide_cubemap_ref cube, const float size)
     tide_render_target_state *s = tide_render_target_state_of(cube.target.id);
     const tide_target_size sized = {.width = size, .height = size, .scale = 1.0f};
     if (!s || !s->cube || !s->alive || !tide_target_size_valid(sized)) {
-        fprintf(stderr, "Cubemap.Resize requires a live cube made with RenderTarget.Cube and a positive size\n");
+        fprintf(stderr, "Cubemap.Resize requires a live cube made with Cubemap(size) and a positive size\n");
         return;
     }
     s->size = sized;
@@ -292,7 +292,7 @@ void tide_cubemap_dispose(const tide_cubemap_ref cube)
 {
     tide_render_target_state *s = tide_render_target_state_of(cube.target.id);
     if (s && s->cube) s->alive = false;
-    else fprintf(stderr, "Cubemap.Dispose requires a cube made with RenderTarget.Cube: an asset's is the pack's\n");
+    else fprintf(stderr, "Cubemap.Dispose requires a cube made with Cubemap(size): an asset's is the pack's\n");
 }
 
 tide_cubemap_ref tide_cubemap_recreate(const tide_cubemap_ref previous)

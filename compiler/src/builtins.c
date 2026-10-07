@@ -647,7 +647,7 @@ static void build_signatures(void)
                 "middle of the screen and `size` is half the visible height, like Unity's orthographic size. The 3D "
                 "camera is the version with a position, a rotation and a field of view, or with matrices.",
                 2, &T_F2, &T_F);
-    add_setting("Draw", "Pixels", "tide_draw_push_screen", "tide_draw_set_screen", NULL, "",
+    add_setting("Draw", "Screen", "tide_draw_push_screen", "tide_draw_set_screen", NULL, "",
                 "The 2D draws are in the screen's pixels: from the top left, with y down, as the GUI's are.", 0);
     add_setting("Draw", "Camera", "tide_draw_push_camera_3d", "tide_draw_set_camera_3d", NULL,
                 "position, rotation, fieldOfView",
@@ -805,18 +805,6 @@ static void build_signatures(void)
     describe(add("RenderTarget", "Window", T_TARGET, "tide_render_target_screen_as", 2, T_F, T_FORMAT, T_NONE), "factor, format",
              window_format_doc);
 
-    // For editors: the checker takes the call itself (check_cube_target)
-    static const type T_CUBEMAP = {TY_CUBEMAP, NULL};
-    static const char cube_target_doc[] =
-        "A Cubemap that's drawn into: six square images of `size` pixels a side, each a destination, `cube.faces[0]` "
-        "to `cube.faces[5]` in the order +x, -x, +y, -y, +z, -z, with depth of its own, and all six what a frag "
-        "reads by a direction, `cube.Sample(direction)`. A face is what a camera at the cube's middle sees along "
-        "its axis with a field of view of 90. Its faces hold `Format.Rgba8`, or `Format.Rgba16f`, floats that keep "
-        "any number. It starts black; copies share it, and `Dispose()` lets it go.";
-    describe(add("RenderTarget", "Cube", T_CUBEMAP, "tide_cubemap_make", 1, T_F, T_NONE, T_NONE), "size", cube_target_doc);
-    describe(add("RenderTarget", "Cube", T_CUBEMAP, "tide_cubemap_make_as", 2, T_F, T_FORMAT, T_NONE), "size, format",
-             cube_target_doc);
-
     describe(add("Draw", "Cube", T_NONE, "tide_draw_cube", 3, T_F3, T_F3, T_COLOR),
              "center, size, color", "A filled cube, centered in the world, with the full size along each axis.");
     signature *cube = add("Draw", "Cube", T_NONE, "tide_draw_cube_rotated", 3, T_F3, T_F3, T_Q);
@@ -870,7 +858,7 @@ static void build_signatures(void)
              "sees, looking down -z, to clip space, as `float4x4.PerspectiveFov` and `float4x4.Ortho` make them.");
     describe(add("Draw", "WorldToScreenMatrix", T_F3X3, "tide_draw_world_to_screen_matrix", 0, T_NONE, T_NONE, T_NONE),
              "", "The current 2D camera as a matrix: what `WorldToScreen` does to a float2 as (x, y, 1), into screen "
-             "pixels from the top left, with y down. The identity inside `Pixels`.");
+             "pixels from the top left, with y down. The identity inside `Screen`.");
     // The window's height comes with the call (see gen_expr)
     describe(add("Screen", "Flip", T_F2, "tide_draw_screen_flip", 1, T_F2, T_NONE, T_NONE),
              "position", "The same point counted from the screen's other edge. Devices count pixels from the bottom "
@@ -1435,7 +1423,7 @@ type resolve_builtin_call(const str owner, expr *e)
                    STR_ARG(e->name));
         if (str_eq_c(owner, "Draw")) {
             diag_note("Draw has the window's shapes, text, meshes and primitives, its settings (Blend, Tint, Transform, "
-                      "Clip, Camera, Pixels, Depth, Cull, Stencil), the conversions, the cameras' matrices, MeasureText, Blit, "
+                      "Clip, Camera, Screen, Depth, Cull, Stencil), the conversions, the cameras' matrices, MeasureText, Blit, "
                       "window and list; "
                       "a render target has the same, as its methods");
         }

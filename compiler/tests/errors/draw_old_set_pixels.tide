@@ -1,0 +1,7 @@
+// expect: Draw.SetPixels is 'Draw.SetScreen' now
+scene Main { }
+
+view Show()
+{
+    Draw.SetPixels();
+}
