@@ -1,4 +1,4 @@
-// The next nightly's version, for a push to dev (.github/workflows/build.yml):
+// The next nightly's version, for a manual release from dev (build.yml):
 // prints `version=<v>` and `published=<true|false>`, as a step's outputs.
 //
 // It's the highest version there's a tag of, one further: 0.3.0-nightly.7

@@ -41,7 +41,7 @@ The installer also adds Tide to the editors it finds (see [Editors](../tools/edi
 
 ## Nightly versions
 
-Stable versions come out now and then. Nightly versions follow development day by day. For a nightly version, set `TIDE_CHANNEL` before running the installer:
+Stable versions come out now and then. Nightly versions are previews published when ready. For a nightly version, set `TIDE_CHANNEL` before running the installer:
 
 ::: code-group
 

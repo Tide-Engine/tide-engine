@@ -1,15 +1,14 @@
 # Builds, tests and publishes tide (see AGENTS.md, Packaging).
 #
-# - Pushes to dev: build each platform's package, try it, and publish a nightly
-#   pre-release, like 0.2.0-nightly.3. No test suite runs: nightlies follow dev
-#   as fast as packages build.
-# - Run by hand (Run workflow, or `gh workflow run build.yml --ref dev`): the
-#   packages and every test suite, and nothing is published.
-# - Pushes to release: the packages and every test suite, then a stable
+# Run workflow (or gh workflow run) chooses what to do:
+# - check (default): the packages and every test suite; nothing is published.
+# - nightly, on dev: build each platform's package, try it, and publish a
+#   pre-release, like 0.2.0-nightly.3. No test suite runs.
+# - stable, on release: the packages and every test suite, then a stable
 #   release, and the new VERSION committed. A stable release waits for its tests.
-# - Pull requests: the packages.
+# Pushes and pull requests start nothing.
 #
-# A release's version comes from conventional commits (feat:, fix:), and a push
+# A release's version comes from conventional commits (feat:, fix:), and a run
 # with neither publishes nothing: semantic-release says for a stable one
 # (.releaserc.json), and .github/next-nightly.mjs for a nightly, which is
 # published by this workflow itself. A job that fails fails the run, and
@@ -17,14 +16,22 @@
 #
 # Jobs run on fresh Blacksmith runners. Each platform builds its own package;
 # macOS adds a package, while the existing Windows and Linux test suites
-# keep the same manual-run and stable-release gates.
+# keep their full-check and stable-release gates.
 name: Build
+run-name: ${{ inputs.action }} (${{ github.ref_name }})
 
 on:
-  push:
-    branches: [dev, release]
-  pull_request:
   workflow_dispatch:
+    inputs:
+      action:
+        description: 'Check only, publish a nightly from dev, or publish a stable from release'
+        type: choice
+        required: true
+        default: check
+        options:
+          - check
+          - nightly
+          - stable
 
 permissions:
   contents: write
@@ -34,10 +41,9 @@ env:
 
 concurrency:
   group: build-${{ github.ref }}
-  # Finish the current nightly, then build only the newest waiting commit.
-  # Each new run replaces the older pending run in this branch's group.
+  # Finish the current manual run, then take the newest waiting request.
   queue: single
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 jobs:
   version:
@@ -49,6 +55,15 @@ jobs:
       tests: ${{ steps.checks.outputs.tests }}
       matrix: ${{ steps.checks.outputs.matrix }}
     steps:
+      - name: Check release branch
+        shell: bash
+        env:
+          BUILD_ACTION: ${{ inputs.action }}
+        run: |
+          case "$BUILD_ACTION:$GITHUB_REF" in
+            check:*|nightly:refs/heads/dev|stable:refs/heads/release) ;;
+            *) echo "::error::Use dev for a nightly, release for a stable, or check on any ref."; exit 1 ;;
+          esac
       - uses: useblacksmith/checkout@v1
         with:
           fetch-depth: 0
@@ -61,12 +76,12 @@ jobs:
       # dev's rarely is by the time its packages are built.
       - name: Next nightly
         id: nightly
-        if: github.event_name == 'push' && github.ref_name == 'dev'
+        if: inputs.action == 'nightly'
         shell: bash
         run: node .github/next-nightly.mjs | tee -a "$GITHUB_OUTPUT"
       - name: Next version
         id: next
-        if: github.event_name == 'push' && github.ref_name == 'release'
+        if: inputs.action == 'stable'
         uses: cycjimmy/semantic-release-action@v4
         with:
           dry_run: true
@@ -75,17 +90,18 @@ jobs:
             @semantic-release/git
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # What the run's jobs are: the packages always, and the test suites when
-      # the run was asked for by hand or is a stable release's. macOS only
-      # builds and tries its package; it adds no test-suite rows.
+      # The packages always, and the test suites for check and stable.
+      # macOS only builds and tries its package; it adds no test-suite rows.
       - name: Checks
         id: checks
         shell: bash
+        env:
+          BUILD_ACTION: ${{ inputs.action }}
         run: |
           row() { printf '{"platform":"%s","os":"%s","preset":"%s","test-jobs":4}' "$1" "$2" "$3"; }
           rows="$(row windows-x64 blacksmith-4vcpu-windows-2025 package),$(row linux-x64 blacksmith-4vcpu-ubuntu-2404 package),$(row macos-arm64 blacksmith-6vcpu-macos-latest package)"
           tests=false
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || [ "$GITHUB_REF_NAME" = release ]; then
+          if [ "$BUILD_ACTION" != nightly ]; then
             tests=true
             for preset in release web-release mingw-release; do rows="$rows,$(row windows-x64 blacksmith-4vcpu-windows-2025 $preset)"; done
             for preset in release web-release sanitize; do rows="$rows,$(row linux-x64 blacksmith-4vcpu-ubuntu-2404 $preset)"; done
@@ -127,7 +143,7 @@ jobs:
         with:
           node-version: 24
 
-      # A push that releases nothing builds as this repo's version, as builds
+      # A run that releases nothing builds as this repo's version, as builds
       # here do: the package's tests check `#if TIDE_0_1_OR_NEWER` against it.
       - name: Version
         if: env.TIDE_VERSION == ''
@@ -435,7 +451,7 @@ jobs:
   build:
     name: Build (${{ matrix.platform }})
     needs: checks
-    if: always()
+    if: always() && needs.checks.result != 'skipped'
     strategy:
       matrix:
         platform: [windows-x64, linux-x64, macos-arm64]
@@ -481,8 +497,10 @@ jobs:
   release:
     name: Release
     needs: [version, build, jetbrains]
-    if: github.event_name == 'push' && needs.version.outputs.published == 'true'
+    if: (inputs.action == 'nightly' || inputs.action == 'stable') && needs.version.outputs.published == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    outputs:
+      published: ${{ steps.publish.outputs.new_release_published }}
     steps:
       - uses: useblacksmith/checkout@v1
         with:
@@ -500,7 +518,7 @@ jobs:
       # of its tags (which channel it's on, so a stable release still reads
       # the history rightly), and the release with what was built.
       - name: Publish (nightly)
-        if: github.ref_name == 'dev'
+        if: inputs.action == 'nightly'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -518,7 +536,8 @@ jobs:
           if [ -f dist/tide-macos-arm64.tar.gz ]; then assets+=("dist/tide-macos-arm64.tar.gz#tide for macOS (Apple Silicon)"); fi
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --title "$TAG" --generate-notes "${assets[@]}"
       - name: Publish
-        if: github.ref_name == 'release'
+        id: publish
+        if: inputs.action == 'stable'
         uses: cycjimmy/semantic-release-action@v4
         with:
           extra_plugins: |
@@ -533,7 +552,7 @@ jobs:
   marketplace:
     name: JetBrains Marketplace
     needs: [version, release]
-    if: github.ref_name == 'release'
+    if: inputs.action == 'stable' && needs.release.outputs.published == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: useblacksmith/checkout@v1
