@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "tide/page.h"
+#include "tide/time.h"
 
 // ---------------------------------------------------------------------------
 // What a frame hands over
@@ -26,6 +27,7 @@ typedef struct handed {
     tide_audio_effect bus_effect[TIDE_AUDIO_BUSES];
     uint32_t bus_knobs_at[TIDE_AUDIO_BUSES];
     bool forget;
+    uint32_t forget_serial; // Which forget it is, for the ask that waits for it
 } handed;
 
 #define PENDING_NEW 4u
@@ -77,6 +79,9 @@ static struct {
     _Atomic uint32_t shot_tail;   // The renderer's: the next to take
     _Atomic uint32_t dropped;
     _Atomic uint32_t playing;
+    _Atomic bool elsewhere;       // A device's thread renders
+    uint32_t forget_asked;        // The frame's: forgets asked so far
+    _Atomic uint32_t forget_done; // The renderer's: the last it applied
     voice *voices;
     bus buses[TIDE_AUDIO_BUSES];
     tide_float3 listener_position;
@@ -151,6 +156,7 @@ void tide_mixer_submit(const tide_audio_frame *f)
     h->falloff_near = f->falloff_near;
     h->falloff_far = f->falloff_far;
     h->forget = f->forget;
+    h->forget_serial = f->forget ? m.forget_asked : 0;
     for (uint32_t b = 0; b < TIDE_AUDIO_BUSES; b++) {
         h->bus_volume[b] = f->bus_volume[b];
         h->bus_effect[b] = f->bus_effect[b];
@@ -286,6 +292,7 @@ static void apply_handed(const handed *h)
         }
         // What's queued names clips the host let go of
         atomic_store_explicit(&m.shot_tail, atomic_load_explicit(&m.shot_head, memory_order_acquire), memory_order_release);
+        atomic_store_explicit(&m.forget_done, h->forget_serial, memory_order_release);
         return;
     }
     // Every frame starts from the defaults, as a frame's draw settings do
@@ -472,11 +479,25 @@ void tide_mixer_forget(void)
     tide_audio_frame f = {0};
     tide_audio_reset(&f);
     f.forget = true;
+    const uint32_t serial = ++m.forget_asked;
     tide_mixer_submit(&f);
     tide_audio_free(&f);
-    // No device renders on a thread of its own yet: the frame's thread is the renderer, and takes it now.
-    // A backend that does will wait here for its thread to have taken it.
-    tide_mixer_take();
+    if (!atomic_load_explicit(&m.elsewhere, memory_order_acquire)) {
+        tide_mixer_take(); // The frame's thread is the renderer: it takes it now
+        return;
+    }
+    // The device's thread takes it at its next block; a device that stalled isn't waited for forever
+    const uint64_t began = tide_time_now_ns();
+    while (atomic_load_explicit(&m.forget_done, memory_order_acquire) != serial) {
+        if (tide_time_now_ns() - began > UINT64_C(500000000)) break;
+        tide_yield();
+    }
+}
+
+void tide_mixer_rendered_elsewhere(const bool elsewhere)
+{
+    tide_mixer_init();
+    atomic_store_explicit(&m.elsewhere, elsewhere, memory_order_release);
 }
 
 void tide_mixer_flush(void)
