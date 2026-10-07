@@ -3,7 +3,7 @@
 Sound is presentation, like drawing: it's this machine's, and nothing of it is in the match. A view says what should be sounding as it says what should be drawn, and a local handler plays a sound when the match sends an event. Nothing in the simulation hears any of it, so a match is the same on a machine with its speakers off.
 
 ::: info
-What's here so far: clips as assets, `Audio.Play`, `Sound` fields and the listener, buses, and `audio` declarations that filter and make sound. The device backends are coming; see the [spec](../spec.md#audio) for the whole design. Until they land, a game with a window is silent, and a run with no window captures what it played (below).
+What's here: clips as assets, `Audio.Play`, `Sound` fields and the listener, buses, `audio` declarations that filter and make sound, and the device on every platform. Ogg Vorbis and the microphone are next; see the [spec](../spec.md#audio) for the whole design and what's still open.
 :::
 
 ## Clips
@@ -157,3 +157,9 @@ tide run --frames 300 --capture-audio run.wav
 ```
 
 `--capture-audio` writes the whole run as a WAV of 16-bit stereo at 48 kHz, and a script's `capture-audio hit.wav` line writes what played since the last such line. The mixer is the engine's own arithmetic, so a run plays the same bytes on every machine.
+
+## The device
+
+A game with a window plays through the system's default output: WASAPI on Windows, CoreAudio on macOS, ALSA on Linux (loaded at run time, so games link nothing), AAudio on Android, and the browser's audio on the web. Whatever rate and channels the device has, the mixer's stereo at 48 kHz is resampled and mapped to it. A machine with no device, or none the game can open, says so once on stderr and plays nothing; nothing else differs.
+
+On the web, and on phones, a browser only plays once the player has touched the page: the page starts its audio at the first press or key. A web game's sound runs about 90 ms behind what the frame played, as the page's audio runs on a thread the game's code can't, and the game feeds it ahead. A page that goes to the background keeps the match running (see [web builds](../tools/cli.md)) and its sound with it.

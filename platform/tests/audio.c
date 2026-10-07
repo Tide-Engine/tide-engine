@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "audio_out.h"
 #include "mixer.h"
 #include "tide/net.h"
 #include "tide/wav.h"
@@ -418,4 +419,36 @@ TIDE_TEST(audio_wav_holds_the_mix_as_16_bit_pcm)
     TIDE_CHECK(size == 44 && tide_wav_decode(empty, size, &back) && back.frames == 0);
     tide_sound_free(&back);
     free(empty);
+}
+
+TIDE_TEST(audio_a_device_is_filled_at_its_rate_and_channels)
+{
+    // A ramp playing at the mixer's rate comes out a frame late, as the pull
+    // interpolates between the last two frames; at half the rate every other
+    // frame; mono averaged; six channels the two and silence
+    fresh();
+    tide_audio_frame f = {0};
+    tide_audio_reset(&f);
+    tide_audio_voice(&f, &(tide_voice){.id = 3, .clip = ramp(), .loop = true, .playing = true, .volume = 1.0f, .pitch = 1.0f});
+    tide_mixer_submit(&f);
+    float out[6 * 300];
+    tide_audio_out_fill(out, 300, TIDE_AUDIO_RATE, 2);
+    TIDE_CHECK(out[0] == 0.0f && out[1] == 0.0f); // Before the mixer's first frame
+    for (uint32_t i = 1; i < 300; i++) {
+        TIDE_CHECK(out[2 * i] == ramp_samples[2 * (i - 1)]);
+        TIDE_CHECK(out[2 * i + 1] == ramp_samples[2 * (i - 1) + 1]);
+    }
+    // Half the rate: the mixer's frames 299, 301, 303... (one late, then every other)
+    tide_audio_out_fill(out, 100, TIDE_AUDIO_RATE / 2, 2);
+    TIDE_CHECK(out[0] == ramp_samples[2 * 299] && out[2] == ramp_samples[2 * 301] && out[2 * 99] == ramp_samples[2 * 497]);
+    // Mono: the two averaged, which for the ramp is always a half
+    tide_audio_out_fill(out, 10, TIDE_AUDIO_RATE, 1);
+    for (uint32_t i = 0; i < 10; i++) TIDE_CHECK(near(out[i], 0.5f));
+    // Six channels: left, right, then silence
+    tide_audio_out_fill(out, 4, TIDE_AUDIO_RATE, 6);
+    for (uint32_t i = 0; i < 4; i++) {
+        TIDE_CHECK(out[6 * i] + out[6 * i + 1] > 0.99f && out[6 * i] + out[6 * i + 1] < 1.01f);
+        TIDE_CHECK(out[6 * i + 2] == 0.0f && out[6 * i + 5] == 0.0f);
+    }
+    tide_audio_free(&f);
 }

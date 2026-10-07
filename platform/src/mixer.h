@@ -47,9 +47,14 @@ uint32_t tide_mixer_dropped(void);
 void tide_mixer_take(void);
 
 // The frame's: stops every voice at once, with no fade, and drops every clip
-// and effect, then returns once the renderer has let go of them. With no
-// device rendering elsewhere (a run with none), that's at once.
+// and effect, then returns once the renderer has let go of them: at once with
+// no device rendering on a thread of its own, and else when that thread has
+// taken it (or half a second passed, for a device that stalled).
 void tide_mixer_forget(void);
+
+// A backend says a thread of its own renders (tide_mixer_render) from here on,
+// or no longer: what tide_mixer_forget waits for.
+void tide_mixer_rendered_elsewhere(bool elsewhere);
 
 // The renderer's: drops what's left of the last block, so the next render
 // starts a new one. For a device that starts over, and for tests.

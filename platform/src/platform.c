@@ -12,6 +12,7 @@
 #include "tide/time.h"
 #include "tide/wav.h"
 #include "font.h"
+#include "audio_out.h"
 #include "gpu.h"
 #include "mixer.h"
 #include "png.h"
@@ -125,6 +126,7 @@ void tide_platform_open(const tide_window_desc *desc)
 #ifdef __wasm__
     web_timer_frames = desc->hidden;
 #endif
+    tide_audio_out_open(); // With none, it said so, and the mixer goes unheard
 }
 
 void tide_platform_open_headless(const tide_headless_desc *desc)
@@ -232,6 +234,7 @@ static int headless_drawn(void)
 _Noreturn static void finish(const int code)
 {
     tide_platform_gpu_timing(false);
+    tide_audio_out_close();
 #ifdef __wasm__
     tide_web_stop();
 #endif
