@@ -1241,6 +1241,13 @@ void analysis_run(const analysis_file *files, const int count)
     A.files = arena_alloc(sizeof(afile) * (size_t)(count > 0 ? count : 1));
     A.prog = program_new();
     A.prog->game_folder = asset_roots.game_folder; // The checker keeps the assets' hashes and fetched URLs there
+    // The symbols #if lines read, as `tide run` has them: DEBUG, and the game's packages. What a
+    // command line would --define isn't known here, and reads as not defined.
+    lex_symbols_reset();
+    lex_define("DEBUG");
+    for (int i = 0; i < count; i++) {
+        if (files[i].package) lex_define_package(files[i].package);
+    }
     for (int i = 0; i < count; i++) {
         afile *f = &A.files[i];
         char *copy = arena_alloc(files[i].len + 1);
@@ -4740,6 +4747,8 @@ void analysis_folding_ranges(jbuf *out)
         }
         const bool opens = text.len >= 2 && memcmp(text.ptr, "if", 2) == 0 && (text.len == 2 || !isalnum((unsigned char)text.ptr[2]));
         const bool ends = text.len >= 5 && memcmp(text.ptr, "endif", 5) == 0;
+        // #define and #undef are lines of their own, in no branch
+        if ((text.len >= 6 && memcmp(text.ptr, "define", 6) == 0) || (text.len >= 5 && memcmp(text.ptr, "undef", 5) == 0)) continue;
         if (!opens && branches > 0) folding_range(out, &written, branch[--branches], line - 1, "region");
         if (!ends) branch[branches++] = line;
     }

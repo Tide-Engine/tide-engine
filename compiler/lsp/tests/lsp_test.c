@@ -3578,6 +3578,23 @@ TIDE_TEST(lsp_directives)
     TIDE_CHECK(has(folds, "{\"startLine\":3,\"endLine\":4,\"kind\":\"region\"}")); // #else to #endif
     open_document("scene Main { }\n#if false\nthis is no$t code\n#endif\n");
     TIDE_CHECK(has(request("textDocument/completion"), "\"items\":[]"));
+
+    // A file's own symbols, and DEBUG, which an editor reads as `tide run` does. A symbol only a
+    // command line could define reads as not defined.
+    static const char symbols[] = "#define MINE\n"
+                                  "#if MINE && DEBUG && !FROM_A_COMMAND_LINE\n"
+                                  "scene Main { }\n"
+                                  "#else\n"
+                                  "not code\n"
+                                  "#endif\n";
+    open_document(symbols);
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    TIDE_CHECK(has(format_reply(symbols), "\"result\":[]"));
+    const char *branches = request("textDocument/foldingRange");
+    TIDE_CHECK(has(branches, "{\"startLine\":1,\"endLine\":2,\"kind\":\"region\"}")); // #define starts no branch
+    TIDE_CHECK(!has(branches, "\"startLine\":0"));
+    open_document("scene Main { }\n#define LATE\n");
+    TIDE_CHECK(has(sent[0], "comes after code"));
 }
 
 TIDE_TEST(lsp_folding)
