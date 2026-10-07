@@ -56,8 +56,8 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took);
 // The server's world in the match below, on every platform and in every
 // configuration: Box3D's math, its image and the netcode, byte for byte.
 // Once in the middle of a round, and once after a new game was asked for.
-#define BRAWL_HASH UINT64_C(0x078a08607a9ecaeb)
-#define MATCH_HASH UINT64_C(0x125b73931212efe7)
+#define BRAWL_HASH UINT64_C(0x2ebf3fc65c3d4944)
+#define MATCH_HASH UINT64_C(0x5365a353a1194bda)
 
 // Timings of a build that isn't optimized say nothing, so there the test that
 // measures does a tenth of it: enough to show that it runs.
@@ -699,10 +699,10 @@ TIDE_TEST(sumo_bots_stay_on_and_fight_and_the_next_round_is_raised)
     // They stay on: while the whole floor is there, hardly any fall. And they find each other, through what's stacked
     TIDE_CHECK(early <= 3 && met == 15 && count(&world, tide_has_Crate) < crates - 100);
     // The round's last half second: it's over for five seconds, and then the next ring is raised, another arrangement
-    const int total = seat_of(&world, 0).score;
     played(ROUND - 30);
     tick(31);
     TIDE_CHECK(world.Ring.phase == Phase_Over);
+    const int total = seat_of(&world, 0).score; // A ring-out scores only while the round is on
     tick(OVER + 2);
     TIDE_CHECK(world.Ring.round == 2 && world.Ring.phase == Phase_Ready && world.Ring.gone == 0);
     TIDE_CHECK(count(&world, tide_has_Tile) == TILES && count(&world, tide_has_Crate) > 2000 && knocked(&world) == 0);
@@ -783,7 +783,7 @@ static bool drives(void)
 
 static bool says_something(void)
 {
-    return tide_text_read(&local.heap, local.Lobby.message).bytes > 0;
+    return tide_text_read(&local.heap, local.Rooms_Lobby.message).bytes > 0;
 }
 
 // What local code asked of the session since it was last asked
@@ -802,8 +802,8 @@ TIDE_TEST(sumo_opens_on_its_lobby_unless_it_was_told_which_match)
     machine(TIDE_SESSION_CONNECTED, 0, true, false, "");
     frame(&world);
     frame(&world);
-    TIDE_CHECK(local.Lobby.page == Page_Title && !local.Hand.playing && sampled().away && !sampled().charge);
-    TIDE_CHECK(local.Lobby.players == 3 && local.Lobby.mine == 0 && local.Lobby.manned == 7 && local.Lobby.bots);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Title && !local.Hand.playing && sampled().away && !sampled().charge);
+    TIDE_CHECK(local.Rooms_Lobby.seats == 8 && local.Rooms_Lobby.mine == 0 && local.Rooms_Lobby.manned == 7 && local.Rooms_Lobby.bots);
     TIDE_CHECK(asked() == TIDE_REQUEST_NONE);
     tide_local_free(&local);
 
@@ -811,16 +811,12 @@ TIDE_TEST(sumo_opens_on_its_lobby_unless_it_was_told_which_match)
     machine(TIDE_SESSION_CONNECTED, 0, true, true, "K7QF2M");
     frame(&world);
     frame(&world);
-    TIDE_CHECK(local.Lobby.page == Page_None && local.Hand.playing && drives());
-    // The button is held as the menu closes: the player's hands aren't on the ball until it's let go
-    local.Lobby.page = Page_Room;
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Playing && local.Hand.playing && drives());
+    // A page up over the match: the hands are off the ball until it closes
+    local.Rooms_Lobby.page = Rooms_Page_Room;
     frame(&world);
     TIDE_CHECK(!drives());
-    local.Lobby.page = Page_None;
-    devices.pointer.press.pressed = devices.pointer.press.held = true;
-    frame(&world);
-    TIDE_CHECK(!drives());
-    devices.pointer.press.pressed = devices.pointer.press.held = false;
+    local.Rooms_Lobby.page = Rooms_Page_Playing;
     frame(&world);
     TIDE_CHECK(drives());
     tide_local_free(&local);
@@ -828,20 +824,20 @@ TIDE_TEST(sumo_opens_on_its_lobby_unless_it_was_told_which_match)
     // --join <code>, or ?join=<code>: joining by the first frame. The page says so until the match's world is here
     machine(TIDE_SESSION_CONNECTING, -1, false, false, "K7QF2M");
     frame(NULL);
-    TIDE_CHECK(local.Lobby.page == Page_Join && local.Lobby.joining && sampled().away);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Join && local.Rooms_Lobby.joining && sampled().away);
     tide_local_connected(&local);
     tide_local_set_session(&local, TIDE_SESSION_CONNECTED, player(1), 30, false, false, "K7QF2M");
     frame(&world); // The page closes as this frame ends...
     frame(&world); // ...and the frame after it says nothing of what's held
     frame(&world);
-    TIDE_CHECK(local.Lobby.page == Page_None && !local.Lobby.joining && drives());
-    TIDE_CHECK(local.Lobby.mine == 1 && local.Fx.seat == 1);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Playing && !local.Rooms_Lobby.joining && drives());
+    TIDE_CHECK(local.Rooms_Lobby.mine == 1 && local.Fx.seat == 1);
     // That match ends: back on the title, with a line that says so, and a match of its own asked for
     tide_local_disconnected(&local, TIDE_DISCONNECT_ENDED, "");
     tide_local_set_session(&local, TIDE_SESSION_OFFLINE, (tide_player_id){0}, 0, false, false, "");
     frame(NULL);
     frame(NULL);
-    TIDE_CHECK(local.Lobby.page == Page_Title && says_something() && sampled().away);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Title && says_something() && sampled().away);
     TIDE_CHECK(asked() == TIDE_REQUEST_START);
     tide_local_free(&local);
 
@@ -852,13 +848,13 @@ TIDE_TEST(sumo_opens_on_its_lobby_unless_it_was_told_which_match)
     tide_local_set_session(&local, TIDE_SESSION_OFFLINE, (tide_player_id){0}, 0, false, false, "");
     frame(NULL);
     frame(NULL);
-    TIDE_CHECK(local.Lobby.page == Page_Join && !local.Lobby.joining && says_something());
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Join && !local.Rooms_Lobby.joining && says_something());
     TIDE_CHECK(asked() == TIDE_REQUEST_START);
     // This machine leaving a match, as when it starts or joins another, says nothing
     tide_local_disconnected(&local, TIDE_DISCONNECT_LEFT, "");
     frame(NULL);
     frame(NULL);
-    TIDE_CHECK(local.Lobby.page == Page_Join && asked() == TIDE_REQUEST_NONE);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Join && asked() == TIDE_REQUEST_NONE);
     tide_local_free(&local);
     tide_draw_free(&draw);
     tide_world_free(&world);
@@ -876,32 +872,26 @@ static void hosted(const tide_world *w)
     devices.keyboard.text.count = 0;
 }
 
-// Typing a room's code into the lobby's field, and Enter: the room is asked
-// for, as the Join button beside the field asks for it.
+// Typing a room's code into the menu's field, and Enter: the room is asked
+// for, as the Join button under the field asks for it.
 TIDE_TEST(sumo_enter_joins_the_room_whose_code_was_typed)
 {
     start_with(BARE, 1, true);
     machine(TIDE_SESSION_CONNECTED, 0, true, false, "");
     hosted(&world);
-    local.Lobby.page = Page_Join;
+    local.Rooms_Lobby.page = Rooms_Page_Join;
     hosted(&world);
-    // A click in the field, where the page's layout puts it: the pointer comes, presses and lets go, a frame each
-    const float y = (400.0f - (34 + 26 + 50 + 34 + 48)) * 0.42f + 34 + 26 + 25;
-    devices.mouse.position = tide_f2(100, 400 - y);
-    hosted(&world);
-    tide_button_set(&devices.mouse.left, true);
-    hosted(&world);
-    tide_button_set(&devices.mouse.left, false);
+    // The page's field is its first widget, which takes the focus as the page comes up: what's typed goes into it
     hosted(&world);
     for (const char *c = "k7qf2m"; *c; c++) devices.keyboard.text.chars[devices.keyboard.text.count++] = (uint32_t)*c;
     hosted(&world);
-    const tide_str typed = tide_text_read(&local.heap, local.Lobby.code);
+    const tide_str typed = tide_text_read(&local.heap, local.Rooms_Lobby.code);
     TIDE_CHECK(typed.bytes == 6 && memcmp(typed.ptr, "K7QF2M", 6) == 0 && asked() == TIDE_REQUEST_NONE);
     tide_button_set(&devices.keyboard.enter, true);
     hosted(&world);
     tide_button_set(&devices.keyboard.enter, false);
     hosted(&world);
-    TIDE_CHECK(local.Lobby.joining && asked() == TIDE_REQUEST_JOIN);
+    TIDE_CHECK(local.Rooms_Lobby.joining && asked() == TIDE_REQUEST_JOIN);
     tide_local_free(&local);
     tide_draw_free(&draw);
     tide_world_free(&world);

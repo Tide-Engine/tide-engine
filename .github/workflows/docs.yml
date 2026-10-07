@@ -20,7 +20,8 @@ concurrency:
 jobs:
   build:
     name: Build
-    runs-on: ubuntu-latest
+    # The owner's machine, for now: see build.yml.
+    runs-on: tide-linux
     env:
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CCACHE_DIR: ${{ github.workspace }}/build/ccache
@@ -29,6 +30,8 @@ jobs:
       CCACHE_NODIRECT: 'true'
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: false
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -43,14 +46,21 @@ jobs:
           npm run test:grammar
           npm run test:access
       - name: Install tools
+        if: runner.environment == 'github-hosted'
         run: |
           sudo apt-get update
           sudo apt-get install -y clang lld ninja-build ccache
+      # A runner of our own keeps its build tree, and has no compiler cache.
+      - name: Tools (our own runner)
+        if: runner.environment != 'github-hosted'
+        run: echo "CMAKE_C_COMPILER_LAUNCHER=" >> "$GITHUB_ENV"
       - uses: actions/cache@v4
+        if: runner.environment == 'github-hosted'
         with:
           path: build/wasi-sdk-*
           key: wasi-sdk-${{ hashFiles('cmake/wasi-toolchain.cmake') }}
       - name: Cache compiled examples
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@v4
         with:
           path: build/ccache

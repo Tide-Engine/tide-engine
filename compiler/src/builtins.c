@@ -990,6 +990,7 @@ static const struct {
     type_kind kind;
     const char *c_constant;
 } members[] = {
+    {"Application", "title", TY_STRING, "tide_str_from_cstr(tide_game_title)"},
     {"Application", "persistentDataPath", TY_STRING, "tide_application_persistent_data_path(tide_l->tide_io)"},
     {"Application", "temporaryCachePath", TY_STRING, "tide_application_temporary_cache_path(tide_l->tide_io)"},
     {"Math", "PI", TY_FLOAT, "TIDE_PI_F"},

@@ -1,4 +1,4 @@
-const string SampleTitle = "Snake Pit";
+using Rooms;
 
 // Snake Pit: every player's snake on one board. The last one alive takes the round.
 
@@ -63,8 +63,7 @@ void Press(mut Pad pad, int dir)
     pad.serial += 1;
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
-view Steering(Devices devices, mut Pad pad, SampleLobby lobby)
+view Steering(Devices devices, mut Pad pad, Lobby lobby)
 {
     if (!lobby.playing) { pad.swiped = true; pad.finger = false; return; }
     var keys = devices.keyboard;
@@ -582,7 +581,6 @@ float CellPixels()
     return Math.Max(Math.Min((width - 16) / COLS, (height - TOP - BOTTOM - 8) / ROWS), 1);
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Backdrop(mut Fx fx)
 {
     var dt = Math.Min(Frame.dt, 0.05);
@@ -610,8 +608,7 @@ view Backdrop(mut Fx fx)
 
 // A finger's tap turns this player's snake towards the side of its head that was tapped.
 // Not a mouse's click: that's how a page's game gets the keyboard.
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
-view Taps(Snake snake, Devices devices, mut Pad pad, SampleLobby lobby, with ownership)
+view Taps(Snake snake, Devices devices, mut Pad pad, Lobby lobby, with ownership)
 {
     if (!lobby.playing) return;
     var pointer = devices.pointer;
@@ -623,7 +620,6 @@ view Taps(Snake snake, Devices devices, mut Pad pad, SampleLobby lobby, with own
     else Press(pad, reach.x > 0 ? 0 : 2);
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawFood(Board board, Fx fx)
 {
     foreach (var cell in board.food)
@@ -638,7 +634,6 @@ view DrawFood(Board board, Fx fx)
 // `snake` is the snake as this machine predicts it, and `sure` as the server last confirmed it. A crash
 // only shows once it's confirmed: this machine guesses that the other snakes go straight on, so one
 // that turned at the last moment is, for an instant, in the wall here.
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawSnake(Snake snake, verified Snake sure, Owner owner, Session session, Round round, Time time, Fx fx)
 {
     var count = snake.body.count;
@@ -709,7 +704,6 @@ view DrawSnake(Snake snake, verified Snake sure, Owner owner, Session session, R
     Draw.Text("YOU", head + float2(0, 1.5), 1.1, Color.white, Anchor.LowerCenter, Font.Bold);
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawSparks(mut Fx fx)
 {
     var dt = Math.Min(Frame.dt, 0.05);
@@ -753,7 +747,6 @@ void Banner(float2 middle, string title, Color color, string line)
     Draw.Text(line, middle + float2(0, size.y * 0.5 - 14), 14, Color(0.8, 0.82, 0.88), Anchor.LowerCenter);
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Hud(Round round, verified Round sure, Session session, mut Fx fx,
          query (Snake snake, Owner owner, verified Snake confirmed) snakes)
 {
@@ -881,7 +874,6 @@ view Hud(Round round, verified Round sure, Session session, mut Fx fx,
 }
 
 // Before the match's world has arrived, and after it's gone
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Joining(Session session, Fx fx)
 {
     if (session.state == SessionState.Connected) return;
@@ -891,4 +883,11 @@ view Joining(Session session, Fx fx)
         Draw.Text(gone ? fx.farewell : "Connecting...", float2(Screen.width * 0.5, Screen.height * 0.5), 18, Color.white,
                     Anchor.MiddleCenter);
     }
+}
+
+// The menu's button goes in the top right corner here: the bottom of the
+// screen is the hints'.
+override Rect Rooms.MenuButton(float2 screen)
+{
+    return Rect(screen.x - 92, 8, 84, 36);
 }

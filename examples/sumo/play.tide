@@ -2,8 +2,9 @@
 // Views read the match and never change it: what they write is this machine's
 // own (Hand, Fx, Room, Ground, Shadow, and a ball's local fields). The light is in
 // light.tide, the sparks and the numbers in effects.tide, the scores and the
-// controls in hud.tide, and the lobby in lobby.tide.
+// controls in hud.tide, and the menu is the rooms package's.
 using Box3D;
+using Rooms;
 
 // The docs site's colors, and a few more for eight players.
 const Color BACK = Color(0.086, 0.086, 0.094);
@@ -25,7 +26,7 @@ const Color GOLD = Color(1, 0.86, 0.36);
 // What draws over what, whichever file a view is in. The lamp's image is
 // drawn before anything goes to the window, as everything there asks it where
 // the shadows are.
-enum Layers { Camera, Gather, Lamp, Floor, Marks, Pieces, Effects, Hud, Menu }
+enum Layers { Camera, Gather, Lamp, Floor, Marks, Pieces, Effects, Hud }
 
 // How far over the floor what's flat on it is drawn, so that the floor, which
 // is in the same place, doesn't show through it.
