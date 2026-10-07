@@ -524,7 +524,7 @@ string Who(Roster roster, int team, PlayerID me)
 view Backdrop(Session session)
 {
     Draw.Clear(BACK);
-    Draw.SetScreen();
+    Draw.SetPixels();
     if (session.state == SessionState.Connected) return;
     var words = session.state == SessionState.Connecting ? "Joining the game..." : "The game is over. Reload to play again.";
     Draw.Text(words, float2(Screen.width, Screen.height) * 0.5, 16, Color.white, Anchor.MiddleCenter);

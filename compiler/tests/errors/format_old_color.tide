@@ -1,0 +1,4 @@
+// expect: Format.Color is 'Format.Rgba8' now
+// expect: a format is named by what an image stores: Format.Rgba8 is four channels of a byte each, Format.Rgba16f four floats of 16 bits, and Format.Depth depth alone, with no color image
+scene Main { }
+view Show() { var target = RenderTarget(8, 8, Format.Color); }

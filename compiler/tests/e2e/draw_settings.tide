@@ -154,7 +154,7 @@ view Follows()
 {
     Draw.Rect(float2(1, 1), float2(1, 1), Color.white);
     // The screen, for a label: the camera is back after it
-    Draw.Screen()
+    Draw.Pixels()
     {
         Draw.Text("label", float2(4, 4), 8, Color.white);
     }
@@ -187,7 +187,7 @@ view Targets(Look look)
     }
     look.target.Rect(float2(3, 3), float2(1, 1), Color.white);
     look.target.SetTransform(float4x4.Translate(float3(0, 0, 5)));
-    look.target.SetScreen();
+    look.target.SetPixels();
     look.target.SetCamera();
     look.target.SetTransform();
     Draw.Transform(float4x4.Translate(float3(1, 0, 0)))

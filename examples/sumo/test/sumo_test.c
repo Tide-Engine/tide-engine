@@ -926,7 +926,7 @@ TIDE_TEST(sumo_effects_come_from_what_the_match_sends)
     TIDE_CHECK(tide_list_read_count(&local.heap, local.Fx.solids) == count(&world, tide_has_Crate));
     TIDE_CHECK(tide_list_read_count(&local.heap, local.Fx.tiles) == TILES);
     TIDE_CHECK(tide_list_read_count(&local.heap, local.Fx.rounds) == 2);
-    TIDE_CHECK(local.Shadow.made && tide_render_target_format(local.Shadow.map.id) == TIDE_TARGET_DEPTH_ONLY);
+    TIDE_CHECK(local.Shadow.made && tide_render_target_format(local.Shadow.map.id) == TIDE_TARGET_DEPTH);
     TIDE_CHECK(draw.target_count == 1 && draw.targets[0].id == local.Shadow.map.id);
     TIDE_CHECK(draw.commands[0].kind == TIDE_DRAW_TARGET && draw.commands[0].target == 1);
 

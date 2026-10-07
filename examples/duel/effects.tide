@@ -107,7 +107,12 @@ local singleton Lens
     Texture glow;  // What the frag that composes the frame adds to the arena: the light close to what's bright
     Texture haze;  // ...and the light far around it
     float2 pixel;  // One of the screen's pixels, as textures count: 1 over its size
-    float2 along;  // From one sample of a blur to the next
+}
+
+// What one pass of a blur is given, beside its source: each Blit says its own
+struct BlurStep
+{
+    float2 along; // From one sample of the blur to the next
 }
 
 float EaseOut(float t)
@@ -231,11 +236,11 @@ view BeginFrame(mut Canvas canvas, mut Fx fx, mut Sky sky, mut Lens lens)
     if (!lens.made)
     {
         // The window's size, whatever it becomes, at the display's own pixels: nothing here resizes them
-        lens.scene = RenderTarget.Screen();
-        lens.bright = RenderTarget.Screen(0.25);
-        lens.spread = RenderTarget.Screen(0.25);
-        lens.wide = RenderTarget.Screen(0.125);
-        lens.wider = RenderTarget.Screen(0.125);
+        lens.scene = RenderTarget.Window();
+        lens.bright = RenderTarget.Window(0.25);
+        lens.spread = RenderTarget.Window(0.25);
+        lens.wide = RenderTarget.Window(0.125);
+        lens.wider = RenderTarget.Window(0.125);
         lens.made = true;
     }
     var scene = lens.scene;
@@ -268,7 +273,7 @@ view BeginFrame(mut Canvas canvas, mut Fx fx, mut Sky sky, mut Lens lens)
     sky.shock.z += fx.dt * 1.35;
     sky.shock2.z += fx.dt * 1.35;
     scene.Clear(UI_BACKGROUND);
-    scene.SetScreen();
+    scene.SetPixels();
     scene.Mesh(sky.quad, sky.faces, PlaceSky, PaintSky);
 
     // The arena's camera, and the window's too: what's drawn there over a fighter finds it with the same one
@@ -546,10 +551,10 @@ frag Brights(Vertex vertex, out Color color, Texture source, Lens lens)
 
 // A blur along one axis, as wide as nine pixels of its target, in five
 // samples: each of the outer four is between two pixels and reads both.
-frag Blur(Vertex vertex, out Color color, Texture source, Lens lens)
+frag Blur(Vertex vertex, out Color color, Texture source, BlurStep step)
 {
-    var near = lens.along * 1.3846;
-    var far = lens.along * 3.2308;
+    var near = step.along * 1.3846;
+    var far = step.along * 3.2308;
     var sum = source.Sample(vertex.uv) * 0.227
             + (source.Sample(vertex.uv + near) + source.Sample(vertex.uv - near)) * 0.3162
             + (source.Sample(vertex.uv + far) + source.Sample(vertex.uv - far)) * 0.0703;
@@ -584,16 +589,12 @@ view PaintLight(mut Lens lens)
     lens.pixel = float2(1 / Screen.width, 1 / Screen.height);
     Draw.Blit(lens.scene.color, lens.bright, Brights);
     // A step of a blur is a pixel of its target, which is four of the screen's here
-    lens.along = float2(lens.pixel.x * 4, 0);
-    Draw.Blit(lens.bright.color, lens.spread, Blur);
-    lens.along = float2(0, lens.pixel.y * 4);
-    Draw.Blit(lens.spread.color, lens.bright, Blur);
+    Draw.Blit(lens.bright.color, lens.spread, Blur, BlurStep { along = float2(lens.pixel.x * 4, 0) });
+    Draw.Blit(lens.spread.color, lens.bright, Blur, BlurStep { along = float2(0, lens.pixel.y * 4) });
     // ...and eight there
     Draw.Blit(lens.bright.color, lens.wide, Halve);
-    lens.along = float2(lens.pixel.x * 8, 0);
-    Draw.Blit(lens.wide.color, lens.wider, Blur);
-    lens.along = float2(0, lens.pixel.y * 8);
-    Draw.Blit(lens.wider.color, lens.wide, Blur);
+    Draw.Blit(lens.wide.color, lens.wider, Blur, BlurStep { along = float2(lens.pixel.x * 8, 0) });
+    Draw.Blit(lens.wider.color, lens.wide, Blur, BlurStep { along = float2(0, lens.pixel.y * 8) });
 
     lens.glow = lens.bright.color;
     lens.haze = lens.wide.color;
@@ -605,7 +606,7 @@ view PaintLight(mut Lens lens)
 [Stage(PaintStages.Overlay)]
 view PaintOverlay(mut Fx fx)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     var screen = float2(Screen.width, Screen.height);
 
     mut var i = 0;

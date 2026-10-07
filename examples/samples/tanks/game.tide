@@ -785,7 +785,7 @@ view Mine(Devices devices, Tank tank, mut Pad pad, Fx fx, Lobby lobby, with owne
             if (i > 6 && i % 4 == 0) Draw.Circle(at, 0.055, Color(1, 1, 1, 0.6 * (1 - i / 92.0)));
         }
     }
-    Draw.Screen()
+    Draw.Pixels()
     {
         if (!tank.alive && tank.respawn > 0.4)
         {
@@ -847,7 +847,7 @@ view Sparks(mut Fx fx)
 // The scoreboard has a place for every seat, and the scores are what the server confirmed.
 view Hud(Round round, Pad pad, Fx fx, query (verified Tank tank) tanks)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     var pitch = Math.Min(60.0, (Screen.width - 12) / float(SEATS));
     var left = (Screen.width - pitch * SEATS) * 0.5;
     var line = fx.top - 34; // Right over the arena, wherever the window's shape left it

@@ -246,7 +246,7 @@ view RememberAimDevice(Devices devices, mut Canvas canvas)
 view PaintMenu(Duel duel, Session session, Devices devices, Fx fx, mut DuelMenu menu)
 {
     if (!duel.attract) return;
-    Draw.SetScreen();
+    Draw.SetPixels();
     // A menu, though a match goes on behind it: the arrows and a gamepad move between its buttons
     GUI.Navigate();
     var screen = float2(Screen.width, Screen.height);
@@ -359,7 +359,7 @@ view PaintMenu(Duel duel, Session session, Devices devices, Fx fx, mut DuelMenu 
 view PaintCorner(Duel duel, Session session, Devices devices, mut DuelMenu menu)
 {
     if (duel.attract || duel.phase == Phase.Draft || duel.phase == Phase.Finished) return;
-    Draw.SetScreen();
+    Draw.SetPixels();
     var slim = Screen.height < 640 && Screen.width >= 720;
     var two = duel.bluePlayer != default && duel.orangePlayer != default;
     // In the top right corner: on a low screen, under the health bar that's there.
@@ -449,7 +449,7 @@ view PaintDraft(Fighter fighter, Duel duel, Session session, Devices devices, Fl
         menu.picked = -1;
         return;
     }
-    Draw.SetScreen();
+    Draw.SetPixels();
     var screen = float2(Screen.width, Screen.height);
     var middle = screen * 0.5;
     // The whole screen is the draft's: a click between two cards isn't a shot
@@ -562,7 +562,7 @@ view PaintResult(Duel duel, Session session, Devices devices, Flow flow, mut Due
         menu.rematch = -1;
         return;
     }
-    Draw.SetScreen();
+    Draw.SetPixels();
     var screen = float2(Screen.width, Screen.height);
     var middle = screen * 0.5;
     GUI.ClaimPointer(Rect(0, 0, screen.x, screen.y));
@@ -632,7 +632,7 @@ view PaintResult(Duel duel, Session session, Devices devices, Flow flow, mut Due
 view PaintConnecting(Session session, mut DuelMenu menu)
 {
     if (session.state != SessionState.Connecting) return;
-    Draw.SetScreen();
+    Draw.SetPixels();
     GUI.Navigate();
     var screen = float2(Screen.width, Screen.height);
     var middle = screen * 0.5;

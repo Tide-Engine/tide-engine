@@ -1,0 +1,3 @@
+// expect: RenderTarget has no 'Wide'; it has Window
+scene Main { }
+view Show() { var target = RenderTarget.Wide(); }

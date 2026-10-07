@@ -1,0 +1,22 @@
+// expect: this draw's instances are 'Glow's, and it gives a 'Glow' after its vert and frag too: one that takes a 'Glow' couldn't tell which
+// expect: what's the same for every instance goes in a struct of its own, and what differs in the list's
+scene Main { }
+struct Corner { float3 position; float2 uv; }
+struct Glow { Color tint; float gain; }
+struct Lift { float3 by; }
+local singleton Models
+{
+    List<Corner> crate;
+    List<int> faces;
+    List<Glow> glows;
+    RenderTarget bright;
+    RenderTarget spread;
+}
+frag Shade(Corner corner, out Color color, Glow glow)
+{
+    color = glow.tint * glow.gain;
+}
+view Show(Models models)
+{
+    Draw.Instanced(models.crate, models.faces, models.glows, Shade, Glow { gain = 2 });
+}

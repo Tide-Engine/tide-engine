@@ -601,7 +601,7 @@
             if (wantedBackend === 'webgpu') return 0; // Asked for, and not to be had
             gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: true, stencil: true });
             // The one thing asked of WebGL beyond what every WebGL 2 has: drawing into float images (a render
-            // target's Format.Float), which it only does once it's asked for. It adds no function, and the
+            // target's Format.Rgba16f), which it only does once it's asked for. It adds no function, and the
             // program finds out whether it's there by making one (gl_float_targets in gpu_gl.c)
             if (gl && !gl.getExtension('EXT_color_buffer_float')) gl.getExtension('EXT_color_buffer_half_float');
             return gl ? 1 : 0;

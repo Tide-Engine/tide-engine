@@ -1,0 +1,22 @@
+// expect: frag 'Shade' reads a 'Glow', and this draw names no vert that writes one
+// expect: a frag's struct is what the draw's vert writes for it, 'out Glow glow' among the vert's parameters, an element of the list an Instanced draw is given, a List<Glow>, or the values the draw gives after its frag, 'Draw.Mesh(..., Shade, Glow { ... })'
+scene Main { }
+struct Corner { float3 position; float2 uv; }
+struct Glow { Color tint; float gain; }
+struct Lift { float3 by; }
+local singleton Models
+{
+    List<Corner> crate;
+    List<int> faces;
+    List<Glow> glows;
+    RenderTarget bright;
+    RenderTarget spread;
+}
+frag Shade(Corner corner, out Color color, Glow glow)
+{
+    color = glow.tint;
+}
+view Show(Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade, Lift { by = float3(0, 1, 0) });
+}

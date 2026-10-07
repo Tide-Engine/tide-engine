@@ -1,0 +1,22 @@
+// expect: vert 'Raise' reads a 'Lift', which this draw doesn't supply
+// expect: a vert's struct is an element of the list an Instanced draw is given, a List<Lift>, or the values a draw gives after its vert and frag, 'Draw.Mesh(..., Raise, Lift { ... })'
+scene Main { }
+struct Corner { float3 position; float2 uv; }
+struct Glow { Color tint; float gain; }
+struct Lift { float3 by; }
+local singleton Models
+{
+    List<Corner> crate;
+    List<int> faces;
+    List<Glow> glows;
+    RenderTarget bright;
+    RenderTarget spread;
+}
+vert Raise(mut Corner corner, Lift lift)
+{
+    corner.position += lift.by;
+}
+view Show(Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Raise);
+}

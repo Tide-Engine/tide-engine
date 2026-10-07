@@ -960,7 +960,8 @@ static const shader_handed *handed_to(const shader *sh, const param *p)
 }
 
 // Whether `p` is a parameter of the frag or vert that the engine supplies: a
-// component, a singleton, Pixel, Instance or an instance's struct. What the
+// component, a singleton, Pixel, Instance, an instance's struct or the one
+// the draw gives after its vert and frag. What the
 // vert wrote for the frag is a value the frag is called with, like its vertex.
 static bool is_bound(const emit *em, const param *p)
 {
@@ -2988,7 +2989,9 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         }
         if (p->type.decl == prog->pixel && p->reads && p->reads[2]) sh->frag_world = true;
         const bool explicit_instance = p->type.kind == TY_STRUCT && p->type.decl == sh->instance_type;
-        if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON && !explicit_instance) continue;
+        // The struct the draw gives after its vert and frag: once for the draw, as a singleton's fields
+        const bool given = p->type.kind == TY_STRUCT && !p->is_out && sh->values_type && p->type.decl == sh->values_type;
+        if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON && !explicit_instance && !given) continue;
         for (int k = 0; k < p->type.decl->fields.count; k++) {
             const field *f = &p->type.decl->fields.items[k];
             if (f->hidden || !(p->whole || (p->reads && p->reads[k]))) continue;
@@ -2996,7 +2999,7 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
             shader_value *v = add_value(sh, p->type.decl, f, f->type, p->type.kind == TY_COMPONENT || explicit_instance);
             if (code->is_frag) v->frag_reads = true;
             else v->vert_reads = true;
-            if (!explicit_instance) add_bound(sh, p->type.decl);
+            if (!explicit_instance && !given) add_bound(sh, p->type.decl);
         }
         // Its local fields, which this machine keeps beside the match's
         const decl *part = p->type.decl->local_part;
@@ -3046,6 +3049,10 @@ static void list_bound(const shader *sh, sb *out, const bool per_instance)
         sb_printf(out, STR_FMT, STR_ARG(sh->instance_type->name));
         n++;
     }
+    if (!per_instance && sh->values_type) {
+        sb_printf(out, STR_FMT, STR_ARG(sh->values_type->name));
+        n++;
+    }
     for (int i = 0; i < sh->bound.count; i++) {
         const decl *d = sh->bound.items[i];
         if ((d->kind == DECL_COMPONENT) != per_instance) continue;
@@ -3062,6 +3069,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         shader *s = prog->shaders.items[i];
         if (s->vertex == vertex && s->vert == call->vert && s->frag == call->frag && s->textured == textured
             && s->instanced == call->instanced && s->instance_type == call->instance_type
+            && s->values_type == call->values_type
             && s->blit == call->blit && s->direct_texture == direct_texture) return s;
     }
     shader *sh = NEW(shader);
@@ -3074,6 +3082,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     sh->direct_texture = direct_texture;
     sh->instanced = call->instanced;
     sh->instance_type = call->instance_type;
+    sh->values_type = call->values_type;
     const field *position = field_called(vertex, "position");
     sh->dims = position->type.kind == TY_FLOAT3 ? 3 : 2;
     if (sh->instance_type && sh->dims == 3) sh->instance_transform = field_called(sh->instance_type, "transform");
@@ -3167,8 +3176,8 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     if (uniform_bytes > 3984) { // TIDE_SHADER_UNIFORM_BYTES
         sb from = {0};
         list_bound(sh, &from, false);
-        diag_error(call->at, "this draw reads %d bytes of singletons (%s), and a draw's hold 3984", uniform_bytes,
-                   from.data ? from.data : "");
+        diag_error(call->at, "this draw reads %d bytes of singletons%s (%s), and a draw's hold 3984", uniform_bytes,
+                   sh->values_type ? " and of the values it gives" : "", from.data ? from.data : "");
         diag_note("read fewer of their fields in the frag and the vert: only what they read is sent");
         return NULL;
     }

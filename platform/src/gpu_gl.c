@@ -438,7 +438,7 @@ static tide_gpu_id gl_target_make(const tide_gpu_target_format format, const int
         static bool said;
         if (!said) {
             fprintf(stderr, "tide: this device's " GL_NAME " can't draw into float images: a render target's "
-                            "Format.Float image is 4 bytes a pixel here, and keeps what's drawn into it from 0 to 1\n");
+                            "Format.Rgba16f image is 4 bytes a pixel here, and keeps what's drawn into it from 0 to 1\n");
         }
         said = true;
         floats = false;

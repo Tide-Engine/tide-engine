@@ -89,7 +89,7 @@ view Sick(Ball ball, Health health, mut Pointing pointing, with Poisoned)
 view Ground(Pointing pointing)
 {
     if (pointing.down && !pointing.onBall) Send(Drop { at = pointing.world });
-    Draw.SetScreen();
+    Draw.SetPixels();
     Draw.Text($"{pointing.balls} entities, {pointing.poisoned} with Poisoned", float2(16, 14), 18, Color.white);
     Draw.Text("Tap a ball to poison or cure it. Tap the ground to spawn one.",
                 float2(16, Screen.height - 30), 13, Color(0.64, 0.64, 0.68));

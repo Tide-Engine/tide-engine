@@ -47,7 +47,7 @@ view DrawScene(mut Post post)
 
 view Controls(mut Post post)
 {
-    Draw.SetScreen();
+    Draw.SetPixels();
     Draw.Text("As drawn", float2(16, 14), 16, Color.white);
     Draw.Text("Through the frag", float2(Screen.width - 16, 14), 16, Color.white, Anchor.UpperRight);
     GUI.SetTheme(GUITheme { radius = 6 });

@@ -89,7 +89,7 @@ void Settings(float v, float w, int number)
         }
         Draw.Clip(Rect(w, v, v, w))
         {
-            Draw.Screen()
+            Draw.Pixels()
             {
                 Draw.Rect(float2(v, v), float2(1, 1), Color.red);
             }
@@ -164,7 +164,7 @@ view Meshes(Art art)
     Draw.SetTint();
     Draw.SetTransform();
     Draw.SetClip();
-    Draw.SetScreen();
+    Draw.SetPixels();
     List<Vertex> none = [];
     List<int> nothing = [];
     // Indices that point at nothing, and too few of them for a triangle

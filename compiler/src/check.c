@@ -2068,9 +2068,9 @@ enum { TARGET_COLORS = 4 }; // The most color images a render target holds, and 
 
 // How many of a call's last arguments are formats: where a render target is
 // made, what it holds comes last, a format for each of its color images.
-// Too many, and Format.DepthOnly written among several, are said here; -1
+// Too many, and Format.Depth written among several, are said here; -1
 // then. `made` is how the target is made, for the notes: "RenderTarget(width,
-// height" or "RenderTarget.Screen(".
+// height" or "RenderTarget.Window(".
 static int target_formats(const checker *c, const expr *e, const char *made)
 {
     int formats = 0;
@@ -2079,15 +2079,15 @@ static int target_formats(const checker *c, const expr *e, const char *made)
     if (formats > TARGET_COLORS) {
         diag_error(e->args.items[e->args.count - formats + TARGET_COLORS]->at,
                    "a render target holds %d color images at the most, and this names %d formats", TARGET_COLORS, formats);
-        diag_note("each format after its size is one color image: '%s%sFormat.Color, Format.Float)' holds two", made, sep);
+        diag_note("each format after its size is one color image: '%s%sFormat.Rgba8, Format.Rgba16f)' holds two", made, sep);
         return -1;
     }
     for (int i = 0; formats > 1 && i < formats; i++) {
         const expr *format = e->args.items[e->args.count - formats + i];
-        if (!format->enum_member || !str_eq_c(format->enum_member->name, "DepthOnly")) continue;
-        diag_error(format->at, "Format.DepthOnly is a target with no color image, so it's a target's only format");
-        diag_note("every target has depth beside its color images, which 'target.depth' reads: '%s%sFormat.Color, "
-                  "Format.Float)' holds two colors and its depth", made, sep);
+        if (!format->enum_member || !str_eq_c(format->enum_member->name, "Depth")) continue;
+        diag_error(format->at, "Format.Depth is a target with no color image, so it's a target's only format");
+        diag_note("every target has depth beside its color images, which 'target.depth' reads: '%s%sFormat.Rgba8, "
+                  "Format.Rgba16f)' holds two colors and its depth", made, sep);
         return -1;
     }
     return formats;
@@ -2116,7 +2116,7 @@ static type check_construct(checker *c, expr *e, const type target)
             return T_ERR;
         }
         // Its size in logical pixels, like the window's, its image's pixels in each (the display's when left
-        // out), and last, what it holds, a format for each of its color images: one of Format.Color when left out
+        // out), and last, what it holds, a format for each of its color images: one of Format.Rgba8 when left out
         const int formats = argc > 2 ? target_formats(c, e, "RenderTarget(width, height") : 0;
         if (formats < 0) return T_ERR;
         const int sizes = argc - formats;
@@ -2126,8 +2126,8 @@ static type check_construct(checker *c, expr *e, const type target)
             diag_error(e->at, "RenderTarget takes its width and height in logical pixels, and its pixels per unit when "
                               "it isn't the display's: 'RenderTarget(width, height)' or 'RenderTarget(width, height, 1)'");
             diag_note("what it holds comes last, when that isn't one color image: 'RenderTarget(width, height, "
-                      "Format.DepthOnly)', or a format for each, 'RenderTarget(width, height, Format.Color, Format.Float)'");
-            diag_note("'RenderTarget.Screen()' is a target that's always the window's size");
+                      "Format.Depth)', or a format for each, 'RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)'");
+            diag_note("'RenderTarget.Window()' is a target that's always the window's size");
             return T_ERR;
         }
         e->call = CALL_BUILTIN;
@@ -4305,11 +4305,12 @@ static void note_mesh_forms(const expr *e)
     const char *on = draw_receiver(e);
     if (e->instanced) {
         diag_note("%s.Instanced(vertices, indices, instances) draws a 2D or 3D mesh, by its vertices' position; then come a "
-                  "texture, its filter and its wrap, or a vert and a frag by name", on);
+                  "texture, its filter and its wrap, or a vert and a frag by name, and after those a struct of values they read", on);
         return;
     }
     diag_note("%s.Mesh(vertices, indices) draws a 2D mesh, and %s.Mesh(vertices, indices, transform) a 3D one, by its "
-              "vertices' position; then come a texture, its filter and its wrap, or a vert and a frag by name", on, on);
+              "vertices' position; then come a texture, its filter and its wrap, or a vert and a frag by name, and after those "
+              "a struct of values they read", on, on);
 }
 
 // Whether a vert writes a struct of this type for its frag: `out FromLamp lamp`.
@@ -4322,15 +4323,35 @@ static bool shader_writes(const decl *vert, const decl *type)
     return false;
 }
 
+// Whether a frag or vert reads a struct of this type that a draw supplies: its
+// instances', or the values it gives after its vert and frag.
+static bool shader_takes_struct(const decl *code, const decl *type)
+{
+    for (int i = 1; code && i < code->params.count; i++) {
+        const param *p = &code->params.items[i];
+        if (p->type.kind == TY_STRUCT && p->mode != PARAM_MUT && p->type.decl == type) return true;
+    }
+    return false;
+}
+
 // A view's Draw.Mesh through a frag or a vert: the components they read are
 // those of the entity the view runs for, so it has to have them, and a struct
-// its frag reads is its vert's to write, or what its instances are.
+// its frag reads is its vert's to write, what its instances are, or the
+// values the draw gives after their names.
 static void check_shader_binding(const checker *c, const expr *e, const expr *name, const decl *shader)
 {
     decl *view = c->system;
+    const char *draw = e->blit ? "Draw.Blit" : e->targeted ? (e->instanced ? "target.Instanced" : "target.Mesh")
+                     : e->instanced ? "Draw.Instanced" : "Draw.Mesh";
     for (int i = 1; i < shader->params.count; i++) {
         const param *p = &shader->params.items[i];
         if (p->type.kind == TY_STRUCT && p->is_out) { // What a vert writes for its frag
+            if (e->values_type == p->type.decl) {
+                diag_error(name->at, "vert '" STR_FMT "' writes a '" STR_FMT "' for its frag, and this draw gives a '"
+                           STR_FMT "' too: a frag that takes one couldn't tell which", STR_ARG(shader->name),
+                           STR_ARG(p->type.decl->name), STR_ARG(p->type.decl->name));
+                diag_note("what a vert hands its frag is a struct of its own, not the one the draw gives after their names");
+            }
             if (e->instance_type == p->type.decl) {
                 diag_error(name->at, "vert '" STR_FMT "' writes a '" STR_FMT "' for its frag, and this draw's instances are '"
                            STR_FMT "'s too: a frag that takes one couldn't tell which", STR_ARG(shader->name),
@@ -4343,6 +4364,7 @@ static void check_shader_binding(const checker *c, const expr *e, const expr *na
             // The draw's vert writes it, or its instances are it
             if (e->vert && shader_writes(e->vert, p->type.decl)) continue;
             if (e->instanced && p->type.decl == e->instance_type) continue;
+            if (p->type.decl == e->values_type) continue;
             if (e->vert) {
                 diag_error(name->at, "frag '" STR_FMT "' reads a '" STR_FMT "', which vert '" STR_FMT "' doesn't write",
                            STR_ARG(shader->name), STR_ARG(p->type.decl->name), STR_ARG(e->vert->name));
@@ -4351,19 +4373,20 @@ static void check_shader_binding(const checker *c, const expr *e, const expr *na
                            STR_ARG(shader->name), STR_ARG(p->type.decl->name));
             }
             diag_note("a frag's struct is what the draw's vert writes for it, 'out " STR_FMT " " STR_FMT "' among the vert's "
-                      "parameters, or an element of the list an Instanced draw is given, a List<" STR_FMT ">",
-                      STR_ARG(p->type.decl->name), STR_ARG(p->name), STR_ARG(p->type.decl->name));
+                      "parameters, an element of the list an Instanced draw is given, a List<" STR_FMT ">, or the values the "
+                      "draw gives after its frag, '%s(..., " STR_FMT ", " STR_FMT " { ... })'",
+                      STR_ARG(p->type.decl->name), STR_ARG(p->name), STR_ARG(p->type.decl->name), draw, STR_ARG(shader->name),
+                      STR_ARG(p->type.decl->name));
             continue;
         }
-        if (p->type.kind == TY_STRUCT && p->mode != PARAM_MUT) {
-            if (!e->instanced) {
-                diag_error(name->at, "%s '" STR_FMT "' reads instance data of '" STR_FMT "': draw it with " STR_FMT ".Instanced and a List<" STR_FMT ">",
-                           shader_word(shader), STR_ARG(shader->name), STR_ARG(p->type.decl->name), STR_ARG(e->object->name), STR_ARG(p->type.decl->name));
-            } else if (p->type.decl != e->instance_type) {
-                diag_error(name->at, "%s '" STR_FMT "' reads instance data of '" STR_FMT "', which this draw's instances don't supply",
-                           shader_word(shader), STR_ARG(shader->name), STR_ARG(p->type.decl->name));
-                diag_note("its read-only struct parameter has to be the element type of the draw's instance list");
-            }
+        if (p->type.kind == TY_STRUCT && p->mode != PARAM_MUT) { // A vert's: its instances', or the draw's values
+            if (e->instanced && p->type.decl == e->instance_type) continue;
+            if (p->type.decl == e->values_type) continue;
+            diag_error(name->at, "vert '" STR_FMT "' reads a '" STR_FMT "', which this draw doesn't supply",
+                       STR_ARG(shader->name), STR_ARG(p->type.decl->name));
+            diag_note("a vert's struct is an element of the list an Instanced draw is given, a List<" STR_FMT ">, or the "
+                      "values a draw gives after its vert and frag, '%s(..., " STR_FMT ", " STR_FMT " { ... })'",
+                      STR_ARG(p->type.decl->name), draw, STR_ARG(shader->name), STR_ARG(p->type.decl->name));
             continue;
         }
         if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON) continue;
@@ -4397,21 +4420,63 @@ static bool shader_takes_texture(const decl *code)
     return false;
 }
 
+// The values a draw gives its vert and frag, written after their names: a
+// struct's, which a vert or frag takes as a read-only parameter of that type.
+// They're sent once for the draw, as a singleton's fields are.
+static bool check_draw_values(checker *c, expr *e, expr *values)
+{
+    e->values = values;
+    const type t = check_expr(c, values);
+    if (t.kind == TY_ERROR) return false;
+    if (t.kind != TY_STRUCT) {
+        diag_error(values->at, "what a draw gives after its vert and frag is a struct's value, which they read through a "
+                   "parameter of its type, and this is %s", type_name(t));
+        diag_note("like 'Draw.Blit(source, destination, Blur, BlurParams { direction = float2(1, 0) })', for a "
+                  "'frag Blur(Vertex vertex, out Color color, Texture source, BlurParams params)'");
+        return false;
+    }
+    e->values_type = t.decl;
+    return true;
+}
+
+// ...which one of them has to take, or the draw gave them for nothing.
+static bool check_values_taken(const expr *e)
+{
+    if (!e->values_type || shader_takes_struct(e->vert, e->values_type) || shader_takes_struct(e->frag, e->values_type)) return true;
+    const str type = e->values_type->name;
+    if (e->vert && e->frag) {
+        diag_error(e->values->at, "this draw gives a '" STR_FMT "', which neither vert '" STR_FMT "' nor frag '" STR_FMT "' takes",
+                   STR_ARG(type), STR_ARG(e->vert->name), STR_ARG(e->frag->name));
+    } else {
+        const decl *code = e->vert ? e->vert : e->frag;
+        diag_error(e->values->at, "this draw gives a '" STR_FMT "', which %s '" STR_FMT "' doesn't take", STR_ARG(type),
+                   shader_word(code), STR_ARG(code->name));
+    }
+    diag_note("a vert or a frag reads a draw's values through a read-only parameter of their type, '" STR_FMT " values', "
+              "after its vertex", STR_ARG(type));
+    return false;
+}
+
 // A blit has a fixed full-destination Vertex quad. Its frag receives the
 // explicit source as a Texture, alongside the usual entity and singleton data.
 static type check_blit(checker *c, expr *e)
 {
     e->blit = true;
-    // Draw.Blit(source, destination[, blend], frag)
-    const int last = e->args.count - 1;
-    decl *frag = e->args.count == 3 || e->args.count == 4 ? named_shader(c, e->args.items[last]) : NULL;
-    for (int i = 0; i < e->args.count; i++) {
+    // Draw.Blit(source, destination[, blend], frag[, values])
+    int count = e->args.count;
+    decl *frag = count >= 3 ? named_shader(c, e->args.items[count - 1]) : NULL;
+    expr *values = NULL;
+    if (!frag && count >= 4 && (frag = named_shader(c, e->args.items[count - 2])) != NULL) values = e->args.items[--count];
+    const int last = count - 1;
+    for (int i = 0; i < count; i++) {
         if (i != last || !frag) check_expr(c, e->args.items[i]);
     }
+    const bool values_ok = !values || check_draw_values(c, e, values);
     if (!check_frame_use(c, e->at, "Draw")) return T_ERR;
-    if (e->args.count != 3 && e->args.count != 4) {
+    if (count != 3 && count != 4) {
         diag_error(e->at, "Blit takes an explicit source texture, destination target and frag: 'Draw.Blit(source, destination, Blur)'");
-        diag_note("and how it goes over the destination, before the frag: 'Draw.Blit(source, destination, Blend.Add, Blur)'");
+        diag_note("and how it goes over the destination, before the frag: 'Draw.Blit(source, destination, Blend.Add, Blur)'; "
+                  "and after the frag, a struct of values it reads: 'Draw.Blit(source, destination, Blur, BlurParams { ... })'");
         return T_ERR;
     }
     const type source = e->args.items[0]->type;
@@ -4431,7 +4496,7 @@ static type check_blit(checker *c, expr *e)
         diag_error(source_expr->at, "Blit can't sample the color image of its own destination");
         ok = false;
     }
-    if (e->args.count == 4) {
+    if (count == 4) {
         const type blend = e->args.items[2]->type;
         if (blend.kind != TY_ERROR && !(blend.kind == TY_ENUM && blend.decl == c->prog->blend)) {
             diag_error(e->args.items[2]->at, "Blit's third of four is how it goes over its destination, a Blend like Blend.Add, "
@@ -4441,9 +4506,11 @@ static type check_blit(checker *c, expr *e)
     }
     if (!frag || !frag->is_frag) {
         diag_error(e->args.items[last]->at, "Blit names a frag last, like 'Draw.Blit(source, destination, Blur)'");
+        diag_note("or before the struct of values it gives the frag: 'Draw.Blit(source, destination, Blur, BlurParams { ... })'");
         return T_ERR;
     }
     e->frag = frag;
+    if (!values_ok) ok = false;
     if (!frag->params.count || frag->params.items[0].type.kind != TY_STRUCT
         || frag->params.items[0].type.decl != c->prog->vertex) {
         diag_error(e->args.items[last]->at, "Blit's frag runs on Vertex, its full-destination quad");
@@ -4459,21 +4526,21 @@ static type check_blit(checker *c, expr *e)
     } else if (ok) {
         const int errors = diag_error_count();
         check_shader_binding(c, e, e->args.items[last], frag);
-        ok = diag_error_count() == errors;
+        ok = diag_error_count() == errors && check_values_taken(e);
     }
     if (!ok || source.kind == TY_ERROR || e->args.items[1]->type.kind == TY_ERROR) return T_ERR;
-    if (e->args.count == 4 && e->args.items[2]->type.kind == TY_ERROR) return T_ERR;
+    if (count == 4 && e->args.items[2]->type.kind == TY_ERROR) return T_ERR;
     e->call = CALL_DRAW;
     e->draw_dims = 2;
     vec_push(e->arg_want, ((type){TY_TEXTURE, NULL})); // A grid is the texture it is
     vec_push(e->arg_want, e->args.items[1]->type);
-    if (e->args.count == 4) vec_push(e->arg_want, e->args.items[2]->type);
+    if (count == 4) vec_push(e->arg_want, e->args.items[2]->type);
     const mesh_draw draw = {e, c->system};
     vec_push(c->prog->mesh_draws, draw);
     return T_VOID_;
 }
 
-// Draw.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]][, vert][, frag]).
+// Draw.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]][, vert][, frag][, values]).
 // Whether the mesh is 2D or 3D is its vertices' to say, by their position: a
 // float2's goes through the 2D camera, a float3's takes a transform and goes
 // through the 3D one. A List<Vertex> or a List<Vertex3> with no vert and no
@@ -4486,12 +4553,19 @@ static type check_mesh_draw(checker *c, expr *e)
     const bool instanced = e->instanced = str_eq_c(e->name, "Instanced");
     const char *draw_name = e->targeted ? (instanced ? "target.Instanced" : "target.Mesh")
                                         : (instanced ? "Draw.Instanced" : "Draw.Mesh");
-    // The vert and the frag it names come last, the vert first
+    // The vert and the frag it names come last, the vert first, and after
+    // them a struct of values they read, the same for the whole draw
     int count = e->args.count;
     bool order_said = false;
+    expr *values = NULL;
     while (count > 0) {
         expr *name = e->args.items[count - 1];
         decl *shader = named_shader(c, name);
+        if (!shader && count == e->args.count && count > 2) { // Its values, if a vert or a frag is named before them
+            values = name;
+            count--;
+            continue;
+        }
         if (!shader) break;
         decl **slot = shader->is_frag ? &e->frag : &e->vert;
         if (*slot) {
@@ -4507,6 +4581,12 @@ static type check_mesh_draw(checker *c, expr *e)
         count--;
     }
     const bool shaded = e->vert || e->frag;
+    if (values && !shaded) { // An argument like the others
+        values = NULL;
+        count = e->args.count;
+    }
+    const int named_end = e->args.count - (values ? 1 : 0); // Past the vert and the frag
+    const bool values_ok = !values || check_draw_values(c, e, values);
     if (!check_frame_use(c, e->at, "Draw")) {
         for (int i = 0; i < count; i++) {
             if (e->args.items[i]->kind != E_DEFAULT) check_expr(c, e->args.items[i]);
@@ -4566,7 +4646,9 @@ static type check_mesh_draw(checker *c, expr *e)
                 for (int p = 1; code && p < code->params.count; p++) {
                     const param *data = &code->params.items[p];
                     // A frag's struct that the vert writes is the vert's, not the instances'
-                    if (data->type.kind == TY_STRUCT && data->mode != PARAM_MUT && !shader_writes(e->vert, data->type.decl)) {
+                    // ...and one of the type the draw gives after their names is the draw's
+                    if (data->type.kind == TY_STRUCT && data->mode != PARAM_MUT && !shader_writes(e->vert, data->type.decl)
+                        && data->type.decl != e->values_type) {
                         element = data->type;
                         supplied = true;
                         break;
@@ -4673,6 +4755,13 @@ static type check_mesh_draw(checker *c, expr *e)
             return T_ERR;
         }
         e->instance_type = transforms ? NULL : element.decl;
+        if (e->instance_type && e->instance_type == e->values_type) {
+            diag_error(values->at, "this draw's instances are '" STR_FMT "'s, and it gives a '" STR_FMT "' after its vert and "
+                       "frag too: one that takes a '" STR_FMT "' couldn't tell which", STR_ARG(element.decl->name),
+                       STR_ARG(element.decl->name), STR_ARG(element.decl->name));
+            diag_note("what's the same for every instance goes in a struct of its own, and what differs in the list's");
+            return T_ERR;
+        }
         if (e->instance_type && dims == 3) {
             const field *transform = field_called(e->instance_type, "transform");
             if (transform && transform->type.kind != TY_FLOAT4X4) {
@@ -4696,10 +4785,23 @@ static type check_mesh_draw(checker *c, expr *e)
         }
     }
     if (at < count) {
-        diag_error(e->args.items[at]->at, "%s doesn't take %s here", draw_name, type_name(e->args.items[at]->type));
-        note_mesh_forms(e);
+        const type extra = e->args.items[at]->type;
+        if (extra.kind == TY_STRUCT && shaded) {
+            diag_error(e->args.items[at]->at, "the values a draw gives its vert and frag come after their names: '%s(..., "
+                       STR_FMT ", " STR_FMT " { ... })'", draw_name, STR_ARG((e->frag ? e->frag : e->vert)->name),
+                       STR_ARG(extra.decl->name));
+        } else if (extra.kind == TY_STRUCT) {
+            diag_error(e->args.items[at]->at, "%s doesn't take a '" STR_FMT "' here: a draw's values are read by the vert or the "
+                       "frag it names before them, and this names neither", draw_name, STR_ARG(extra.decl->name));
+            diag_note("like '%s(..., Shade, " STR_FMT " { ... })', for a frag that takes a '" STR_FMT "' parameter", draw_name,
+                      STR_ARG(extra.decl->name), STR_ARG(extra.decl->name));
+        } else {
+            diag_error(e->args.items[at]->at, "%s doesn't take %s here", draw_name, type_name(extra));
+            note_mesh_forms(e);
+        }
         return T_ERR;
     }
+    if (!values_ok) ok = false;
     const bool direct = shader_takes_texture(e->vert) || shader_takes_texture(e->frag);
     if (direct && !texture) {
         diag_error(e->at, "this mesh's shader takes a Texture source: supply one after the mesh arguments");
@@ -4728,7 +4830,7 @@ static type check_mesh_draw(checker *c, expr *e)
         }
     }
     // The vert and the frag run on this mesh's vertex
-    for (int i = count; i < e->args.count; i++) {
+    for (int i = count; i < named_end; i++) {
         const expr *name = e->args.items[i];
         const decl *shader = name->type_decl;
         const type on = shader->params.count ? shader->params.items[0].type : T_ERR;
@@ -4748,8 +4850,8 @@ static type check_mesh_draw(checker *c, expr *e)
         ok = false;
     } else if (shaded && ok) {
         const int errors = diag_error_count();
-        for (int i = count; i < e->args.count; i++) check_shader_binding(c, e, e->args.items[i], e->args.items[i]->type_decl);
-        ok = diag_error_count() == errors;
+        for (int i = count; i < named_end; i++) check_shader_binding(c, e, e->args.items[i], e->args.items[i]->type_decl);
+        ok = diag_error_count() == errors && check_values_taken(e);
     }
     if (!ok) return T_ERR;
 
@@ -5027,6 +5129,16 @@ static type old_draw_owner(checker *c, expr *e)
 // Draw.NoClip() put the clip back. Reports them, with what they are now.
 static bool old_setting(const expr *e)
 {
+    const bool set_screen = str_eq_c(e->name, "SetScreen");
+    if (set_screen || (str_eq_c(e->name, "Screen") && e->args.count == 0)) { // From before the window had one word
+        const char *on = draw_receiver(e);
+        const char *now = set_screen ? "SetPixels" : "Pixels";
+        diag_error(e->at, "%s." STR_FMT " is '%s.%s' now", on, STR_ARG(e->name), on, now);
+        diag_note("it draws in the screen's pixels, from the top left with y down: '%s.Pixels() { ... }' around some "
+                  "draws, or '%s.SetPixels();' for the draws that follow", on, on);
+        suggest_replacement(e->name, now);
+        return true;
+    }
     if (!str_eq_c(e->name, "NoClip") && !(str_eq_c(e->name, "Clip") && e->args.count == 0 && !e->block)) return false;
     const char *on = draw_receiver(e);
     diag_error(e->at, "%s." STR_FMT "() is '%s.SetClip()' now", on, STR_ARG(e->name), on);
@@ -5058,25 +5170,32 @@ static bool check_setting(const checker *c, const expr *e)
     const char *around = str_to_cstr((str){e->name.ptr + 3, e->name.len - 3}); // Without its "Set"
     diag_error(e->at, "%s." STR_FMT " sets it for the draws that follow, and takes no block", on, STR_ARG(e->name));
     diag_note("to set it around some draws, and have it put back after them, write '%s.%s(%s) { ... }'", on, around,
-              e->args.count || !str_eq_c(e->name, "SetScreen") ? "..." : "");
+              e->args.count || !str_eq_c(e->name, "SetPixels") ? "..." : "");
     suggest_replacement(e->name, around);
     return false;
 }
 
-// RenderTarget.Screen(), RenderTarget.Screen(0.5): a target that's always the
+// RenderTarget.Window(), RenderTarget.Window(0.5): a target that's always the
 // window's size, or that part of it. Made where the constructor's are, and
 // like them, it says last what it holds when that isn't one color image:
-// RenderTarget.Screen(Format.DepthOnly), RenderTarget.Screen(0.5, Format.DepthOnly),
-// RenderTarget.Screen(Format.Color, Format.Float).
-static type check_screen_target(checker *c, expr *e)
+// RenderTarget.Window(Format.Depth), RenderTarget.Window(0.5, Format.Depth),
+// RenderTarget.Window(Format.Rgba8, Format.Rgba16f).
+static type check_window_target(checker *c, expr *e)
 {
     bool any_error = false;
     for (int i = 0; i < e->args.count; i++) {
         if (check_expr(c, e->args.items[i]).kind == TY_ERROR) any_error = true;
     }
-    if (!str_eq_c(e->name, "Screen")) {
-        diag_error(e->at, "RenderTarget has no '" STR_FMT "'; it has Screen", STR_ARG(e->name));
-        diag_note("'RenderTarget.Screen()' is a target that's always the window's size, and 'RenderTarget(width, height)' "
+    if (str_eq_c(e->name, "Screen")) { // From before the window had one word
+        diag_error(e->at, "RenderTarget.Screen is 'RenderTarget.Window' now");
+        diag_note("a target that's always the window's size is named for the window, as 'Draw.window' is; 'Screen' is "
+                  "the window's measurements alone, 'Screen.width' and 'Screen.height'");
+        suggest_replacement(e->name, "Window");
+        return T_ERR;
+    }
+    if (!str_eq_c(e->name, "Window")) {
+        diag_error(e->at, "RenderTarget has no '" STR_FMT "'; it has Window", STR_ARG(e->name));
+        diag_note("'RenderTarget.Window()' is a target that's always the window's size, and 'RenderTarget(width, height)' "
                   "one of a size of its own");
         return T_ERR;
     }
@@ -5087,14 +5206,14 @@ static type check_screen_target(checker *c, expr *e)
         diag_note("leave the field at default and create its target in a view or local handler");
         return T_ERR;
     }
-    const int formats = target_formats(c, e, "RenderTarget.Screen(");
+    const int formats = target_formats(c, e, "RenderTarget.Window(");
     if (formats < 0) return T_ERR;
     const int factors = e->args.count - formats;
     if (factors > 1 || (factors == 1 && !type_assignable(T_FLOAT_, e->args.items[0]->type))) {
-        diag_error(e->at, "RenderTarget.Screen takes the part of the window's size the target is, a number, or nothing "
-                          "for all of it: 'RenderTarget.Screen()' or 'RenderTarget.Screen(0.5)'");
-        diag_note("what it holds comes last, when that isn't one color image: 'RenderTarget.Screen(Format.DepthOnly)', or "
-                  "a format for each, 'RenderTarget.Screen(Format.Color, Format.Float)'");
+        diag_error(e->at, "RenderTarget.Window takes the part of the window's size the target is, a number, or nothing "
+                          "for all of it: 'RenderTarget.Window()' or 'RenderTarget.Window(0.5)'");
+        diag_note("what it holds comes last, when that isn't one color image: 'RenderTarget.Window(Format.Depth)', or "
+                  "a format for each, 'RenderTarget.Window(Format.Rgba8, Format.Rgba16f)'");
         diag_note("a target of a size of its own is 'RenderTarget(width, height)'");
         return T_ERR;
     }
@@ -5165,7 +5284,7 @@ static type check_method(checker *c, expr *e)
                 builtins_use_io(bytes.decl, paths.decl);
             }
         }
-        if (str_eq_c(owner, "RenderTarget")) return check_screen_target(c, e);
+        if (str_eq_c(owner, "RenderTarget")) return check_window_target(c, e);
         if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Blit")) return check_blit(c, e);
         // Draw is the window's drawing: what a render target has as its methods
         const bool draws = builtin_draw_owner(owner);
@@ -5920,6 +6039,14 @@ static bool is_input_field(const expr *e)
     return e->kind == E_NAME && e->bind == BIND_PARAM && e->param->type.kind == TY_INPUT;
 }
 
+// Format.Color, Format.DepthOnly, Format.Float: the formats' names from before
+// they said what an image stores. What each is now, or NULL.
+static const char *old_format_member(const decl *d, const str member)
+{
+    if (!d->builtin || !str_eq_c(d->name, "Format")) return NULL;
+    return str_eq_c(member, "Color") ? "Rgba8" : str_eq_c(member, "DepthOnly") ? "Depth" : str_eq_c(member, "Float") ? "Rgba16f" : NULL;
+}
+
 // Page.Title, or Game.Page.Title: one of an enum's members.
 static type check_enum_member(expr *e, decl *d)
 {
@@ -5933,6 +6060,14 @@ static type check_enum_member(expr *e, decl *d)
             e->enum_member = &d->members.items[i];
             return (type){TY_ENUM, d};
         }
+    }
+    const char *format_now = old_format_member(d, e->member);
+    if (format_now) {
+        diag_error(e->at, "Format." STR_FMT " is 'Format.%s' now", STR_ARG(e->member), format_now);
+        diag_note("a format is named by what an image stores: Format.Rgba8 is four channels of a byte each, "
+                  "Format.Rgba16f four floats of 16 bits, and Format.Depth depth alone, with no color image");
+        suggest_replacement(e->member, format_now);
+        return T_ERR;
     }
     diag_error(e->at, "enum '" STR_FMT "' has no member '" STR_FMT "'", STR_ARG(d->name), STR_ARG(e->member));
     suggestion s = suggest_start(e->member);
@@ -7172,8 +7307,8 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
         return T_ERR;
     }
     if (!direct && !asset && of->object->param->type.kind == TY_STRUCT) {
-        diag_error(of->at, "a texture is shared by an instanced draw: keep the sampled %s in a component or singleton",
-                   grid.kind == TY_TEXTURE ? "Texture" : "grid");
+        diag_error(of->at, "a struct a draw supplies, its instances' or its values', carries no texture: keep the sampled "
+                   "%s in a component or singleton", grid.kind == TY_TEXTURE ? "Texture" : "grid");
         return T_ERR;
     }
     if (!order_named_args(e, "uv, filter, wrap", 2)) return T_ERR;
@@ -7239,7 +7374,8 @@ static type check_depth_read(const checker *c, expr *e)
         return T_ERR;
     }
     if (of->object->param->type.kind == TY_STRUCT) {
-        diag_error(of->at, "a texture is shared by an instanced draw: keep the sampled DepthTexture in a component or singleton");
+        diag_error(of->at, "a struct a draw supplies, its instances' or its values', carries no texture: keep the sampled "
+                   "DepthTexture in a component or singleton");
         return T_ERR;
     }
     if (!order_named_args(e, compare ? "uv, value" : "uv", 0)) return T_ERR;
@@ -11236,7 +11372,6 @@ static void check_shader_decl(const checker *c, decl *d)
     d->fails = T_VOID_;
     d->outputs = 0;
     const param *color = NULL;
-    const param *instance_data = NULL;
     const param *source_texture = NULL;
     for (int i = 0; i < d->params.count; i++) {
         param *p = &d->params.items[i];
@@ -11336,7 +11471,7 @@ static void check_shader_decl(const checker *c, decl *d)
             } else if (d->is_frag && p->is_out) {
                 diag_error(p->at, "a frag's outputs are colors: 'out Color " STR_FMT "'", STR_ARG(p->name));
                 diag_note("an output of another type than Color isn't there yet: a Color holds four floats, of which a "
-                          "target made with Format.Float keeps any number");
+                          "target made with Format.Rgba16f keeps any number");
             } else if (d->is_frag && changes) {
                 diag_error(p->at, "a frag reads '" STR_FMT "', and can't change it: drop 'mut'", STR_ARG(p->name));
                 diag_note("what it writes is its pixel's color, 'out Color color'");
@@ -11368,14 +11503,9 @@ static void check_shader_decl(const checker *c, decl *d)
                         diag_error(p->at, "'" STR_FMT "' appears twice", STR_ARG(t->name));
                     }
                 }
-                // A vert's is an element of the list its Instanced draw is given. A frag's is that, or what the
-                // draw's vert writes for it, and it can take both
-                if (instance_data && !d->is_frag) {
-                    diag_error(p->at, "a vert takes one instance struct, supplied by Draw.Instanced, and this names two");
-                } else {
-                    instance_data = p;
-                }
-                p->function_param = false; // Supplied by the draw: its instances, or its vert
+                // A vert's is an element of the list its Instanced draw is given, or the values its draw gives
+                // after its name. A frag's is either, or what the draw's vert writes for it. The draw says which
+                p->function_param = false; // Supplied by the draw: its instances, its values, or its vert
             } else if (value.kind == TY_DEPTH_TEXTURE) {
                 diag_error(at, "a %s reads a DepthTexture that's a field of a component or singleton it takes, not a "
                                "parameter of its own", word);
@@ -12725,10 +12855,10 @@ static void add_builtins(program *prog)
         vec_push(wrap->members, m);
     }
     prog->wrap = wrap;
-    // enum Format { Color, DepthOnly, Float }: what a render target holds beside its depth, said
+    // enum Format { Rgba8, Depth, Rgba16f }: what a render target holds, named by what an image stores, said
     // when it's made, a format for each of its color images, with tide/draw.h's
     // tide_target_format's values. Like Depth, generated C has it only in a game whose code names it.
-    static const char *const formats[] = {"Color", "DepthOnly", "Float"};
+    static const char *const formats[] = {"Rgba8", "Depth", "Rgba16f"};
     decl *format = NEW(decl);
     format->kind = DECL_ENUM;
     format->name = str_from("Format");

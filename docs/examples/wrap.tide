@@ -49,7 +49,7 @@ view Show(mut Tiles tiles)
         Draw.WireRect(float2(-tiles.slide, 0), float2(1, 1), 0.03, Color.white);
     }
 
-    Draw.SetScreen();
+    Draw.SetPixels();
     Draw.Text($"Wrap.{tiles.wrap}", float2(16, 14), 16, Color.white);
     GUI.SetTheme(GUITheme { radius = 6 });
     GUILayout.Area(Rect(12, Screen.height - 52, Screen.width - 24, 40))

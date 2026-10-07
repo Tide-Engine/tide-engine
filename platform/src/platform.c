@@ -545,7 +545,7 @@ typedef struct frame_target {
     uint64_t version;
     tide_target_size size; // As the list recorded it
     bool valid;
-    bool bare; // It holds depth alone (TIDE_TARGET_DEPTH_ONLY): a color has nowhere to go there
+    bool bare; // It holds depth alone (TIDE_TARGET_DEPTH): a color has nowhere to go there
     tide_gpu_target_format into; // What it holds, which the pipelines that draw into it are made for
 } frame_target;
 
@@ -1086,7 +1086,7 @@ static tide_gpu_target_format gpu_target_format(const uint64_t id)
     const tide_target_formats held = tide_render_target_formats(id);
     tide_gpu_target_format format = TIDE_GPU_TARGET_DEPTH;
     for (uint32_t i = 0; i < held.count; i++) {
-        format = tide_gpu_target_with(format, held.color[i] == TIDE_TARGET_FLOAT ? TIDE_GPU_COLOR_FLOAT : TIDE_GPU_COLOR_BYTES);
+        format = tide_gpu_target_with(format, held.color[i] == TIDE_TARGET_RGBA16F ? TIDE_GPU_COLOR_FLOAT : TIDE_GPU_COLOR_BYTES);
     }
     return format;
 }

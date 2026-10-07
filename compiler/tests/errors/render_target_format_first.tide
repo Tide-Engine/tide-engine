@@ -1,4 +1,4 @@
 // expect: RenderTarget takes its width and height in logical pixels, and its pixels per unit when it isn't the display's
-// expect: what it holds comes last, when that isn't one color image: 'RenderTarget(width, height, Format.DepthOnly)', or a format for each, 'RenderTarget(width, height, Format.Color, Format.Float)'
+// expect: what it holds comes last, when that isn't one color image: 'RenderTarget(width, height, Format.Depth)', or a format for each, 'RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)'
 scene Main { }
-view Show() { var target = RenderTarget(Format.DepthOnly, 64, 64); }
+view Show() { var target = RenderTarget(Format.Depth, 64, 64); }

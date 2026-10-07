@@ -1,0 +1,3 @@
+// expect: Format.Float is 'Format.Rgba16f' now
+scene Main { }
+view Show() { var target = RenderTarget.Window(Format.Float); }

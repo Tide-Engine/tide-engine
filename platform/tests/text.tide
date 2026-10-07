@@ -45,7 +45,7 @@ void Anchored(float2 at, Anchor anchor, Font font, Color color, Color mark)
 view Specimen()
 {
     Draw.Clear(Color(0.07, 0.08, 0.11));
-    Draw.SetScreen();
+    Draw.SetPixels();
     Draw.Rect(float2(Screen.width * 0.75, Screen.height * 0.5), float2(Screen.width * 0.5, Screen.height), Color(0.93, 0.93, 0.9));
     Column(0, Color.white);
     Column(Screen.width * 0.5, Color(0.08, 0.08, 0.1));
