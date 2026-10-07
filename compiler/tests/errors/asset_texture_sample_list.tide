@@ -1,0 +1,17 @@
+// expect: a frag samples a Texture that's a field of a component or singleton it takes, like 'models.wood.Sample(uv)', its direct Texture parameter, or a Texture asset by its name
+// expect: the GPU can't index a list of assets: declare the one to sample as an asset of its own, 'asset Texture name = "...";', or give the draw this one for the frag's Texture parameter
+asset List<Texture> frames = "../e2e/assets/run/*.png";
+
+view Show()
+{
+    Draw2D.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], Shade);
+}
+
+frag Shade(Vertex vertex, out Color color)
+{
+    color = frames[1].Sample(vertex.uv);
+}
+
+scene Main
+{
+}

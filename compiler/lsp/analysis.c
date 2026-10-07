@@ -107,7 +107,7 @@ typedef struct asset_site {
     bool glob;
     bool url;
     bool many;          // A List or Map: a glob's matches
-    const char *format; // The files it takes: ".png" for a Grid2<Color>; NULL for any
+    const char *format; // The files it takes: ".png" for a Grid2<Color> and a Texture; NULL for any
 } asset_site;
 
 // A path to write at a site whose file is missing, fixing its diagnostic.
@@ -2640,6 +2640,25 @@ static void describe(const occurrence *o, sb *out)
             code_block(out, code.data);
             sb_put(out, "\n\nAsset: the file's contents, read as the game is built and packed with it, the same on every machine. "
                         "Any code can read it, and nothing can change it.");
+            if (o->decl->asset_kind == ASSET_TEXTURE) {
+                sb_put(out, " A `Texture` is an image to draw with, this machine's: no code reads its pixels, and the match "
+                            "can't use it. For cells code reads, the same file is a `Grid2<Color>`.");
+            }
+            if (o->decl->sample_filter || o->decl->sample_wrap) { // [Filter] and [Wrap] before it
+                sb_put(out, "\n\nWhere a draw or a `Sample` that names it doesn't say, it's sampled with ");
+                const decl *enums[2] = {A.prog->filter, A.prog->wrap};
+                const int said[2] = {o->decl->sample_filter, o->decl->sample_wrap};
+                bool first = true;
+                for (int k = 0; k < 2; k++) {
+                    for (int m = 0; said[k] && enums[k] && m < enums[k]->members.count; m++) {
+                        const enum_member *member = &enums[k]->members.items[m];
+                        if (member->number != said[k] - 1) continue;
+                        sb_printf(out, "%s`" STR_FMT "." STR_FMT "`", first ? "" : " and ", STR_ARG(enums[k]->name), STR_ARG(member->name));
+                        first = false;
+                    }
+                }
+                sb_put(out, ".");
+            }
             break;
         }
         sb_printf(&code, "const " STR_FMT " " STR_FMT, STR_ARG(o->decl->return_type_name), STR_ARG(o->decl->name));
@@ -2975,6 +2994,17 @@ static void describe(const occurrence *o, sb *out)
             {"Unordered", "[Unordered]",
              "The command after it has no order at all: the server handles it in whichever tick it arrives, before or after "
              "commands sent earlier, exactly once."},
+            {"Filter", "[Filter(Filter.Point)]",
+             "How this texture is read between its cells wherever a draw or a `Sample` that names it doesn't say: "
+             "`Filter.Point` for the nearest cell, `Filter.Bilinear` (what's read without it) for the four around, "
+             "blended. It goes before an asset that's a `Texture` or a `Grid2<Color>` (alone, or a list or a map of "
+             "them) and before a `Grid2<Color>` field. A `Texture` kept in a field or a local is a value, which names "
+             "no declaration: it's read as the draw says."},
+            {"Wrap", "[Wrap(Wrap.Repeat)]",
+             "What a `uv` past this texture's edges reads wherever a draw or a `Sample` that names it doesn't say: "
+             "`Wrap.Clamp` (what's read without it) for the cells at the edge, `Wrap.Repeat` for the texture over "
+             "again, `Wrap.Mirror` for it the other way round each time. It goes before an asset that's a `Texture` "
+             "or a `Grid2<Color>` and before a `Grid2<Color>` field."},
         };
         for (size_t i = 0; i < sizeof attributes / sizeof attributes[0]; i++) {
             if (!str_eq_c(o->name, attributes[i].name)) continue;
@@ -7451,6 +7481,12 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "Unordered", CK_FUNCTION, "[Unordered]",
                  "The command has no order at all: handled in the tick it arrives, before or after commands sent earlier, once.",
                  "Unordered");
+            item(&c, "Filter", CK_FUNCTION, "[Filter(Filter.Point)]",
+                 "How an asset that's a Texture or a Grid2<Color> is read between its cells, where a draw that names it doesn't say.",
+                 "Filter(Filter.${1:Point})");
+            item(&c, "Wrap", CK_FUNCTION, "[Wrap(Wrap.Repeat)]",
+                 "What a uv past the edges of an asset that's a Texture or a Grid2<Color> reads, where a draw that names it doesn't say.",
+                 "Wrap(Wrap.${1:Repeat})");
         }
         break;
 
@@ -7466,6 +7502,12 @@ void analysis_completion(const int line, const int character, jbuf *out)
             item(&c, "Snap", CK_FUNCTION, "[Snap]", "Views see the field as it is, not blended between ticks.", "Snap");
             item(&c, "Position", CK_FUNCTION, "[Position]", "Provisional: linear tick interpolation with smooth visual correction error.", "Position");
             item(&c, "Rotation", CK_FUNCTION, "[Rotation]", "Provisional: shortest rotation interpolation and smooth correction error: float radians or quaternion.", "Rotation");
+            item(&c, "Filter", CK_FUNCTION, "[Filter(Filter.Point)]",
+                 "How this Grid2<Color> is read between its cells, where a draw that names it doesn't say.",
+                 "Filter(Filter.${1:Point})");
+            item(&c, "Wrap", CK_FUNCTION, "[Wrap(Wrap.Repeat)]",
+                 "What a uv past this Grid2<Color>'s edges reads, where a draw that names it doesn't say.",
+                 "Wrap(Wrap.${1:Repeat})");
         }
         break;
 
@@ -9555,7 +9597,7 @@ static void collect_assets(void)
         site.string = tok;
         site.path = A.files[f].toks[tok].text;
         site.many = d->asset_many;
-        site.format = d->asset_kind == ASSET_GRID ? ".png" : NULL;
+        site.format = d->asset_kind == ASSET_GRID || d->asset_kind == ASSET_TEXTURE ? ".png" : NULL;
         site.glob = asset_path_is_glob(site.path.ptr, (size_t)site.path.len);
         site.url = asset_path_is_url(site.path.ptr, (size_t)site.path.len);
         char *folder = asset_path_folder(A.files[f].src.path);

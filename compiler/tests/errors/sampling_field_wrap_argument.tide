@@ -1,0 +1,7 @@
+// expect: [Wrap] takes what a uv past the texture's edges reads: [Wrap(Wrap.Clamp)], [Wrap(Wrap.Repeat)] or [Wrap(Wrap.Mirror)]
+scene Main { }
+
+local singleton Art
+{
+    [Wrap(Wrap.Repeat, Wrap.Mirror)] Grid2<Color> paint = Grid2(4, 4);
+}

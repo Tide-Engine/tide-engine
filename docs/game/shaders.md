@@ -227,6 +227,8 @@ Past 0 and 1, `uv` reads what the [wrap](./views.md#past-the-edges) after the fi
 
 - The filter and the wrap are written in the call, `Filter.Point` and `Wrap.Repeat`, never read from a variable: the GPU is told how a texture is read before any pixel runs.
 - A wrap comes after a filter, so a `Sample` that says how it wraps says both. The names work too: `Sample(uv: vertex.uv, filter: Filter.Bilinear, wrap: Wrap.Repeat)`.
+- What a `Sample` leaves out is the texture's own to say, where its declaration does ([`[Filter]` and `[Wrap]`](./views.md#saying-it-once-on-the-texture)): `models.wood.Sample(uv)` is read as the field `wood` says, and `tiles.Sample(uv)` as the asset `tiles` says. A direct `Texture` parameter is read as its draw's source says, so `Draw2D.Mesh(corners, faces, tiles, Shade)` gives `source.Sample(uv)` the sampling `tiles` declared, and a `Texture` that's a value (a field's, a target's color) the usual: blended, the cells at the edge.
+- An image file of the game's is sampled by its name, with no parameter for it: `asset Texture tiles = "art/tiles.png";` and then `tiles.Sample(vertex.uv)` (see [Assets](./assets.md#images-to-draw-with)).
 - One grid can be read several ways in one frag, clamped here and repeated there. Each way counts as one of the 8 textures a draw samples, and the same way twice counts once.
 - A draw through a frag takes no filter and no wrap of its own: `Draw2D.Mesh(corners, faces, image, Filter.Point, Shade)` is an error that says to write them at `Sample`.
 
