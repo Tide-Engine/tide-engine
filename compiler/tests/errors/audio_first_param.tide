@@ -1,0 +1,13 @@
+// expect: an audio declaration's first parameter is the block it works on, 'mut Samples samples'
+struct Knobs
+{
+    float gain;
+}
+
+audio Scale(Knobs knobs)
+{
+}
+
+scene Main
+{
+}

@@ -1,0 +1,71 @@
+// Audio declarations: code the audio thread runs on a voice's or a bus's
+// block, with state kept between blocks and knobs the frame gives. The host
+// (effects_test.c) calls what the frame recorded, as the mixer would.
+
+asset Clip hum = "assets/beep.wav";
+
+struct Knobs
+{
+    float gain;
+    float add;
+}
+
+struct Counter
+{
+    int blocks;
+    float last;
+}
+
+// Scales the block, adds a number, and counts the blocks it saw
+audio Scale(mut Samples samples, mut Counter counter, Knobs knobs)
+{
+    counter.blocks += 1;
+    for (var i = 0; i < samples.values.count; i++)
+    {
+        samples.values[i] = samples.values[i] * knobs.gain + knobs.add;
+        counter.last = samples.values[i];
+    }
+}
+
+// A source: makes a square wave from nothing, with no knobs
+audio Square(mut Samples samples, mut Counter counter)
+{
+    for (var i = 0; i < samples.values.count; i++)
+    {
+        samples.values[i] = (i / 2) % 100 < 50 ? 0.5 : -0.5;
+    }
+    counter.blocks += 1;
+    Halve(samples);
+}
+
+void Halve(mut Samples samples)
+{
+    for (var i = 0; i < samples.values.count; i++) samples.values[i] = samples.values[i] * 0.5;
+}
+
+[Bus]
+enum Bus
+{
+    Master,
+    Music,
+}
+
+local singleton Mix
+{
+    Sound track;
+    Sound synth;
+    float gain;
+}
+
+scene Main { }
+
+view Levels(mut Mix mix)
+{
+    mix.track.clip = hum;
+    mix.track.loop = true;
+    mix.track.playing = true;
+    mix.track.effect = Scale(Knobs { gain = mix.gain, add = 0.25 });
+    mix.synth.playing = true; // No clip: a source
+    mix.synth.effect = Square();
+    Audio.SetEffect(Bus.Music, Scale(Knobs { gain = 2, add = 0 }));
+}

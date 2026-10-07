@@ -71,6 +71,8 @@ tide_e2e_test(assets_plain) # ...and the same game with none: its world is the s
 tide_e2e_test(asset_textures) # Texture assets, and [Filter] and [Wrap] on a texture's declaration
 tide_e2e_test(audio) # Clip assets, and Audio.Play from views, local handlers and the functions they call
 tide_e2e_test(sound) # Sound fields the frame names to the mixer while they play, and the listener
+tide_e2e_test(buses) # A game's [Bus] enum, a Sound's bus and Audio.SetVolume
+tide_e2e_test(effects) # Audio declarations: code the audio thread runs, with state and knobs, on a Sound and a bus
 tide_e2e_test(textures) # Texture as the one type a draw and a Sample take: grids of colors and of floats as textures, and the sampling a Texture carries
 tide_e2e_test(stages) # Enum phases, local offsets and whole-phase ordering in every schedule
 tide_e2e_test(render_targets) # Target receivers, explicit Texture sources and distributed rendering phases

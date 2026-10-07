@@ -1,0 +1,14 @@
+// expect: a bus is a number from 0 to 15 (0 is the master), or a member of the game's [Bus] enum, not float
+local singleton Mix
+{
+    float music;
+}
+
+view Levels(Mix mix)
+{
+    Audio.SetVolume(1.5, mix.music);
+}
+
+scene Main
+{
+}
