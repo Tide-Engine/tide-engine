@@ -702,7 +702,8 @@ static void build_signatures(void)
         "in `vertices`. Each pixel is its corners' colors blended "
         "across the triangle, times `texture`'s at their uvs: a Texture, which an asset, a render target's color "
         "and a grid of colors or of floats with a size are (a grid's cell (0, 0) is at uv (0, 0)). `filter` is how "
-        "it's read between pixels, `Filter.Bilinear` or `Filter.Point`, and `wrap`, after the filter, what a uv past "
+        "it's read between pixels, `Filter.Bilinear`, `Filter.Point` or `Filter.Trilinear` (its smaller images too, "
+        "where it's drawn smaller than it is), and `wrap`, after the filter, what a uv past "
         "0 or 1 reads: the pixels at the texture's edge (`Wrap.Clamp`), the texture again (`Wrap.Repeat`), or again "
         "the other way round each time (`Wrap.Mirror`). A call that leaves one out has the texture's own, which is "
         "what its declaration says (`[Filter]`, `[Wrap]`), and blended and clamped without one.";
@@ -747,7 +748,9 @@ static void build_signatures(void)
         "A render target that's always the window's size, or that part of it (`RenderTarget.Window(0.5)` is half as "
         "wide and half as high), at the display's full resolution. It's made again, empty, whenever the window's "
         "size or the display's scale changes, so it's for what a view draws again every frame, like a pass over "
-        "the whole screen, and it's never resized by hand.";
+        "the whole screen, and it's never resized by hand. `RenderTarget.Window(samples: 4)` draws each of its pixels "
+        "with 4 samples (1, 2, 4 or 8), which smooths the edges of the triangles drawn into it: a frame drawn into "
+        "one and brought to the window with `Draw.Blit` is an antialiased frame.";
     describe(add("RenderTarget", "Window", T_TARGET, "tide_render_target_window", 0, T_NONE, T_NONE, T_NONE), NULL,
              window_target_doc);
     describe(add("RenderTarget", "Window", T_TARGET, "tide_render_target_screen", 1, T_F, T_NONE, T_NONE), "factor",
@@ -757,7 +760,8 @@ static void build_signatures(void)
         "for each of its color images, four at the most: `RenderTarget.Window(Format.Rgba8, Format.Rgba16f)` holds "
         "two, which a frag's `out Color` parameters go to in order. `Format.Depth`, by itself, is depth alone, "
         "with no color image, for a pass whose depth a frag reads afterwards (`target.depth`). It's made again, "
-        "empty, whenever the window's size or the display's scale changes.";
+        "empty, whenever the window's size or the display's scale changes. Its samples come last, by name: "
+        "`RenderTarget.Window(Format.Rgba16f, samples: 4)`.";
     describe(add("RenderTarget", "Window", T_TARGET, "tide_render_target_window_as", 1, T_FORMAT, T_NONE, T_NONE), "format",
              window_format_doc);
     describe(add("RenderTarget", "Window", T_TARGET, "tide_render_target_screen_as", 2, T_F, T_FORMAT, T_NONE), "factor, format",

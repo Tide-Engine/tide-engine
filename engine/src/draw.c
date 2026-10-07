@@ -17,6 +17,9 @@ static tide_render_target_state *render_targets;
 _Static_assert(TIDE_TARGET_COLORS * 3 == TIDE_RENDER_IMAGE_SHIFT && TIDE_TARGET_RGBA16F + 1 <= 7
                && TIDE_TARGET_COLORS - 1 <= (int)(TIDE_RENDER_IMAGE >> TIDE_RENDER_IMAGE_SHIFT),
                "a target's id has 3 bits for each color image's format, then which image a texture names");
+_Static_assert(TIDE_RENDER_SAMPLES_SHIFT == TIDE_RENDER_IMAGE_SHIFT + 2 && (1 << 3) == TIDE_TARGET_SAMPLES
+               && TIDE_RENDER_BITS == UINT64_C(0xFFFF),
+               "...then 2 bits for its samples, as a power of two: all of it in what a uint16_t holds");
 
 // A managed target's id: its state's address, and what it holds.
 static uint64_t managed_id(const tide_render_target_state *s)
@@ -65,22 +68,50 @@ static tide_target_formats several_formats(const tide_target_format *formats, co
     return held;
 }
 
+// The bits of a target's id for `samples` a pixel: 1, 2, 4 or 8, any other
+// number being the one of those under it (1 for what's under 1), having said
+// so. A target with no color image has 1: nothing reads a multisampled depth.
+static uint16_t samples_of(const int32_t samples, const tide_target_formats formats)
+{
+    uint32_t power = 0;
+    while (power < 3u && (2 << power) <= samples) power++;
+    if (samples != 1 << power) {
+        fprintf(stderr, "RenderTarget: a target's samples are 1, 2, 4 or 8, and this asked for %d: it has %d\n",
+                (int)samples, 1 << power);
+    }
+    if (power && formats.count == 0) {
+        fprintf(stderr, "RenderTarget: a target of depth alone (Format.Depth) has one sample a pixel, and this asked "
+                        "for %d: a multisampled target's depth can't be read, so nothing could be read of it\n",
+                1 << power);
+        power = 0;
+    }
+    return (uint16_t)(power << TIDE_RENDER_SAMPLES_SHIFT);
+}
+
 // A managed target of `size` that holds `formats`, or a dead one, having said
 // `why`, for a size there's no image of. Its state is on a boundary that
-// leaves its id the bits what it holds goes in.
-static tide_render_target make_target(const tide_target_size size, const tide_target_formats formats, const char *why)
+// leaves its id the bits what it holds goes in. `sampled` is its samples, as
+// those bits (samples_of).
+static tide_render_target make_target_sampled(const tide_target_size size, const tide_target_formats formats,
+                                              const uint16_t sampled, const char *why)
 {
     void *memory = tide_alloc_zeroed(1, sizeof(tide_render_target_state) + (size_t)TIDE_RENDER_BITS);
     tide_render_target_state *s = (tide_render_target_state *)(((uintptr_t)memory + (uintptr_t)TIDE_RENDER_BITS)
                                                                & ~(uintptr_t)TIDE_RENDER_BITS);
     *s = (tide_render_target_state){.next = render_targets, .owner = &render_targets, .size = size, .version = 1,
-                                    .memory = memory, .alive = tide_target_size_valid(size), .holds = holds_of(formats)};
+                                    .memory = memory, .alive = tide_target_size_valid(size),
+                                    .holds = (uint16_t)(holds_of(formats) | sampled)};
     render_targets = s;
     if (!s->alive) {
         s->size = (tide_target_size){0};
         fprintf(stderr, "%s\n", why);
     }
     return (tide_render_target){.id = managed_id(s), .size = s->size};
+}
+
+static tide_render_target make_target(const tide_target_size size, const tide_target_formats formats, const char *why)
+{
+    return make_target_sampled(size, formats, 0, why);
 }
 
 static tide_render_target make_sized(const float width, const float height, const tide_target_formats formats)
@@ -143,6 +174,38 @@ tide_render_target tide_render_target_screen_of(const float factor, const tide_t
 tide_render_target tide_render_target_window_of(const tide_target_format *formats, const uint32_t count)
 {
     return tide_render_target_screen_of(1.0f, formats, count);
+}
+
+tide_render_target tide_render_target_make_sampled(const float width, const float height, const tide_target_format *formats,
+                                                   const uint32_t count, const int32_t samples)
+{
+    const tide_target_formats held = several_formats(formats, count);
+    return make_target_sampled((tide_target_size){.width = width, .height = height}, held, samples_of(samples, held),
+                               "RenderTarget requires positive dimensions");
+}
+
+tide_render_target tide_render_target_make_scaled_sampled(const float width, const float height, const float scale,
+                                                          const tide_target_format *formats, const uint32_t count,
+                                                          const int32_t samples)
+{
+    const tide_target_formats held = several_formats(formats, count);
+    const tide_target_size size = {.width = scale > 0.0f ? width : 0.0f, .height = height, .scale = scale};
+    return make_target_sampled(size, held, samples_of(samples, held),
+                               "RenderTarget requires positive dimensions and a positive number of pixels per unit");
+}
+
+tide_render_target tide_render_target_screen_sampled(const float factor, const tide_target_format *formats,
+                                                     const uint32_t count, const int32_t samples)
+{
+    const tide_target_formats held = several_formats(formats, count);
+    return make_target_sampled((tide_target_size){.window = factor > 0.0f ? factor : 0.0f}, held, samples_of(samples, held),
+                               "RenderTarget.Window requires a positive factor of the window's size");
+}
+
+tide_render_target tide_render_target_window_sampled(const tide_target_format *formats, const uint32_t count,
+                                                     const int32_t samples)
+{
+    return tide_render_target_screen_sampled(1.0f, formats, count, samples);
 }
 
 tide_render_target tide_render_target_make(const float width, const float height)
@@ -210,8 +273,10 @@ tide_render_target tide_render_target_recreate(const tide_render_target previous
     for (const tide_render_target_state *s = render_targets; s; s = s->next) {
         if (s->reload_id == whole) return (tide_render_target){.id = managed_id(s) | image, .size = s->size};
     }
-    // As it was: its size, its scale, whether it follows the window, and what it holds, which its id says
-    tide_render_target next = make_target(previous.size, tide_render_target_formats(whole), "");
+    // As it was: its size, its scale, whether it follows the window, and what it holds and its samples, which
+    // its id says
+    tide_render_target next = make_target_sampled(previous.size, tide_render_target_formats(whole),
+                                                  (uint16_t)(whole & TIDE_RENDER_SAMPLES), "");
     tide_render_target_state_of(next.id)->reload_id = whole;
     next.id |= image;
     return next;

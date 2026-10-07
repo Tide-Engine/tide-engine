@@ -1088,6 +1088,21 @@ static tide_gpu_target_format gpu_target_format(const uint64_t id)
     for (uint32_t i = 0; i < held.count; i++) {
         format = tide_gpu_target_with(format, held.color[i] == TIDE_TARGET_RGBA16F ? TIDE_GPU_COLOR_FLOAT : TIDE_GPU_COLOR_BYTES);
     }
+    // ...and its samples, as this device has them for what it asked for
+    const uint32_t asked = tide_render_target_samples(id);
+    if (asked > 1u && held.count) {
+        const uint32_t samples = gpu->target_samples(tide_gpu_target_sampled(format, asked));
+        if (samples < asked) {
+            static bool said;
+            if (!said) {
+                fprintf(stderr, "tide: a render target asked for %u samples a pixel, and this device's %s has %u for "
+                                "what it holds: it's drawn with %u\n", (unsigned)asked, gpu->name, (unsigned)samples,
+                        (unsigned)samples);
+            }
+            said = true;
+        }
+        format = tide_gpu_target_sampled(format, samples);
+    }
     return format;
 }
 
@@ -1186,6 +1201,7 @@ typedef struct gpu_texture {
     uint32_t epoch; // Its list's when it copied them (see tide_draw_forget)
     tide_gpu_id texture;
     uint32_t frame; // The frame that last drew with it
+    bool mipped;    // Its smaller images are of these pixels: made when a draw first reads it between them (prepare_mipmaps)
 } gpu_texture;
 
 static gpu_texture *gpu_textures;
@@ -1202,6 +1218,10 @@ typedef struct gpu_target {
     uint64_t version;
     int width, height; // Its image's pixels
     tide_gpu_id target;
+    // How many passes have drawn into it, and for each color image, how many had when its smaller images
+    // were last made: they're made again for a draw that reads between them once more have (prepare_mipmaps)
+    uint32_t drawn;
+    uint32_t mipped[TIDE_GPU_MAX_COLORS];
 } gpu_target;
 
 static gpu_target *gpu_targets;
@@ -1250,6 +1270,7 @@ static gpu_target *target_for(const uint64_t id, const tide_target_size size, co
         g->version = version;
         // What it holds is its id's to say: the same for as long as it's this target
         g->target = gpu->target(gpu_target_format(id), width, height);
+        g->drawn++;
         gpu->begin(g->target, true);
         gpu->end();
         if (limited) {
@@ -1911,6 +1932,7 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
         && g->format == t->format && g->epoch == t->epoch) {
         return g;
     }
+    g->mipped = false;
     if (g->texture && g->width == t->width && g->height == t->height && g->format == t->format) {
         gpu->texture_write(g->texture, t->pixels);
     } else {
@@ -2002,7 +2024,11 @@ static const char *unavailable_texture(const tide_draw_list *list, const uint32_
     const tide_draw_texture *t = &list->textures[texture - 1u];
     if (!of_target(t)) return NULL;
     if (!tide_render_target_live(t->id) || !tide_target_size_valid(t->target)) return "source render target is invalid or disposed";
-    if (t->space != TIDE_PIXELS_TARGET) return NULL;
+    if (t->space == TIDE_PIXELS_TARGET_DEPTH) {
+        // By what it asked for, whatever this device gave it: the same draws are passed by everywhere
+        return tide_render_target_samples(t->id) > 1u
+            ? "source render target is multisampled: its depth has several samples a pixel, which no shader reads" : NULL;
+    }
     const uint32_t colors = tide_render_target_colors(t->id);
     if (colors == 0) return "source render target holds depth alone: it has no color to sample";
     if (tide_render_target_image(t->id) >= colors) {
@@ -2061,6 +2087,60 @@ static bool prepare_source_targets(const tide_draw_list *list, const draw_step *
     return needed;
 }
 
+// A texture that's read between its smaller images (Filter.Trilinear) has
+// them made of its pixels as they are, outside a pass: an uploaded texture's
+// once for each upload, and a target's color image's once more passes have
+// drawn into the target. So one that's never read so has none, and one that
+// doesn't change makes them once. Whether any was to be made; with `check`,
+// nothing is.
+static bool prepare_mipmaps(const tide_draw_list *list, const uint32_t texture, const tide_filter filter, const bool check)
+{
+    if (filter != TIDE_FILTER_TRILINEAR || !texture || texture > list->texture_count) return false;
+    const tide_draw_texture *t = &list->textures[texture - 1u];
+    if (t->space == TIDE_PIXELS_TARGET_DEPTH) return false;
+    if (of_target(t)) {
+        gpu_target *g = find_target(tide_render_target_whole(t->id));
+        const uint32_t image = tide_render_target_image(t->id);
+        const tide_gpu_id color = g && g->target && image < TIDE_GPU_MAX_COLORS ? gpu->target_texture(g->target, image) : 0;
+        if (!color || g->mipped[image] == g->drawn) return false;
+        if (!check) {
+            gpu->mipmaps(color);
+            g->mipped[image] = g->drawn;
+        }
+        return true;
+    }
+    gpu_texture *g = texture_for(t);
+    if (!g->texture || g->mipped) return false;
+    if (!check) {
+        gpu->mipmaps(g->texture);
+        g->mipped = true;
+    }
+    return true;
+}
+
+static bool prepare_step_mipmaps(const tide_draw_list *list, const draw_step *s, const bool check)
+{
+    bool needed = false;
+    if (s->kind == STEP_SHADED || s->kind == STEP_BLIT) {
+        const tide_draw_run *run = &list->runs[s->first];
+        for (uint32_t i = 0; i < run->shader->texture_count; i++) {
+            if (gpu_read(run->shader, i) != TIDE_GPU_READ_COLOR) continue;
+            needed |= prepare_mipmaps(list, run->textures[i], tide_sampling_filter(run->sampling, i), check);
+        }
+    } else if (s->kind == STEP_MESH || s->kind == STEP_MESH_3D) {
+        needed = prepare_mipmaps(list, s->texture, tide_filter_of((int32_t)s->filter), check);
+    }
+    return needed;
+}
+
+// A list's filter as the GPU's, which has tide_filter's numbers: what isn't one is blended.
+static tide_gpu_filter gpu_filter(const tide_filter filter)
+{
+    _Static_assert(TIDE_GPU_FILTER_NEAREST == (int)TIDE_FILTER_POINT && TIDE_GPU_FILTER_LINEAR == (int)TIDE_FILTER_BILINEAR
+                   && TIDE_GPU_FILTER_MIPMAPS == (int)TIDE_FILTER_TRILINEAR, "gpu.h's filters are draw.h's");
+    return (tide_gpu_filter)tide_filter_of((int32_t)filter);
+}
+
 // A list's wrap as the GPU's, which has tide_wrap's numbers: what isn't one clamps.
 static tide_gpu_wrap gpu_wrap(const uint32_t wrap)
 {
@@ -2072,7 +2152,7 @@ static tide_gpu_wrap gpu_wrap(const uint32_t wrap)
 // The texture a mesh step samples, sampled as the step says.
 static void sample_step_texture(const tide_draw_list *list, const draw_step *s)
 {
-    gpu->sample(0, texture_to_read(list, s->texture, TIDE_GPU_READ_COLOR), s->filter != TIDE_FILTER_POINT, gpu_wrap(s->wrap));
+    gpu->sample(0, texture_to_read(list, s->texture, TIDE_GPU_READ_COLOR), gpu_filter((tide_filter)s->filter), gpu_wrap(s->wrap));
 }
 
 // A step's 3D camera, from the world to clip space, fitted to the screen's
@@ -2131,8 +2211,8 @@ static void draw_shaded(const tide_draw_list *list, const draw_step *s)
     use_pipeline(s);
     gpu->uniforms(&block, sizeof(shaded_uniforms) + own);
     for (uint32_t i = 0; i < shader->texture_count; i++) {
-        gpu->sample(i, texture_to_read(list, run->textures[i], gpu_read(shader, i)), tide_sampling_blended(run->sampling, i),
-                    gpu_wrap(tide_sampling_wrap(run->sampling, i)));
+        gpu->sample(i, texture_to_read(list, run->textures[i], gpu_read(shader, i)),
+                    gpu_filter(tide_sampling_filter(run->sampling, i)), gpu_wrap(tide_sampling_wrap(run->sampling, i)));
     }
     gpu->vertices(0, g->vertices, 0);
     if (tide_shader_instance_size(shader)) gpu->vertices(1, gpu_state.instances, run->first);
@@ -2467,8 +2547,9 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
                 continue;
             }
             if (draw_target) {
-                const gpu_target *g = target_for(f->id, f->size, f->version);
+                gpu_target *g = target_for(f->id, f->size, f->version);
                 f->gpu = g ? g->target : 0;
+                if (g) g->drawn++; // What reads between its smaller images after this pass has them made again
             }
             begin_pass(f->gpu, false);
             pass_active = true;
@@ -2490,6 +2571,12 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         if (prepare_source_targets(list, s, true)) {
             gpu->end();
             prepare_source_targets(list, s, false);
+            begin_pass(frame_targets[draw_target].gpu, false);
+            clip(&frame_targets[draw_target].clipping);
+        }
+        if (prepare_step_mipmaps(list, s, true)) { // Made outside a pass, as a backend draws them
+            gpu->end();
+            prepare_step_mipmaps(list, s, false);
             begin_pass(frame_targets[draw_target].gpu, false);
             clip(&frame_targets[draw_target].clipping);
         }
@@ -2554,7 +2641,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             use_pipeline(s);
             gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
             // Stretched glyphs blend; the others land on the target's pixels
-            gpu->sample(0, gpu_state.atlas, true, TIDE_GPU_WRAP_CLAMP);
+            gpu->sample(0, gpu_state.atlas, TIDE_GPU_FILTER_LINEAR, TIDE_GPU_WRAP_CLAMP);
             gpu->vertices(0, gpu_state.mesh_vertices, 0);
             gpu->draw(s->first, s->count, 1);
             calls++;

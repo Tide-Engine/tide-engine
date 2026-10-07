@@ -1,0 +1,4 @@
+// expect: a render target takes its arguments in order, without names, but for its samples
+// expect: remove 'pixelsPerUnit:'; its samples come last, by name: 'RenderTarget(width, height, samples: 4)'
+scene Main { }
+view Show() { var target = RenderTarget(64, 64, pixelsPerUnit: 1); }

@@ -2066,24 +2066,91 @@ static bool is_format(const checker *c, const type t)
 
 enum { TARGET_COLORS = 4 }; // The most color images a render target holds, and outputs a frag writes: TIDE_TARGET_COLORS
 
-// How many of a call's last arguments are formats: where a render target is
-// made, what it holds comes last, a format for each of its color images.
+static str arg_name(const expr *e, int i);
+static bool fold_int(const expr *e, int64_t *out);
+
+// A render target's samples, `samples: 4`: the one argument of its making
+// that's named, and its last, after what it holds. 1 for a call with one, 0
+// for one without, and -1 having said what's wrong. `said` is the number
+// where it's known as the game is compiled, and 0 otherwise. `made` is how
+// the target is made, for the notes.
+static int target_samples(expr *e, const char *made, int64_t *said)
+{
+    *said = 0;
+    if (e->arg_names.count == 0) return 0;
+    const char *sep = made[strlen(made) - 1] == '(' ? "" : ", ";
+    const int last = e->args.count - 1;
+    for (int i = 0; i <= last; i++) {
+        const str name = arg_name(e, i);
+        if (name.len == 0) continue;
+        if (!str_eq_c(name, "samples")) {
+            diag_error(e->arg_name_at.items[i], "a render target takes its arguments in order, without names, but for its samples");
+            diag_note("remove '" STR_FMT ":'; its samples come last, by name: '%s%ssamples: 4)'", STR_ARG(name), made, sep);
+            return -1;
+        }
+        if (i != last) {
+            diag_error(e->arg_name_at.items[i], "a render target's samples come last, after its size and what it holds");
+            diag_note("'%s%sFormat.Rgba16f, samples: 4)'", made, sep);
+            return -1;
+        }
+    }
+    const expr *samples = e->args.items[last];
+    if (!type_is_integer(samples->type)) {
+        diag_error(samples->at, "a render target's samples are a whole number, 1, 2, 4 or 8, not %s", type_name(samples->type));
+        diag_note("each of its pixels is drawn with that many samples, which smooths the edges of the triangles drawn "
+                  "into it: '%s%ssamples: 4)'", made, sep);
+        return -1;
+    }
+    int64_t n = 0;
+    if (fold_int(samples, &n)) {
+        if (n != 1 && n != 2 && n != 4 && n != 8) {
+            diag_error(samples->at, "a render target's samples are 1, 2, 4 or 8, and this says %lld", (long long)n);
+            diag_note("each of its pixels is drawn with that many samples, which smooths the edges of the triangles "
+                      "drawn into it: '%s%ssamples: 4)'; a device that has fewer draws it with what it has", made, sep);
+            return -1;
+        }
+        *said = n;
+    }
+    e->names_taken = true;
+    return 1;
+}
+
+// A target of depth alone with samples: nothing could be read of it, as a
+// multisampled target's depth isn't a shader's to read. Said where the
+// samples are known as the game is compiled; true then.
+static bool depth_alone_sampled(const expr *e, const int formats, const int64_t said)
+{
+    if (formats != 1 || said <= 1) return false;
+    const expr *format = e->args.items[e->args.count - 2];
+    if (!format->enum_member || !str_eq_c(format->enum_member->name, "Depth")) return false;
+    diag_error(e->args.items[e->args.count - 1]->at, "a target of depth alone has one sample a pixel: a multisampled "
+                                                     "target's depth can't be read");
+    diag_note("'target.depth' of a target with samples isn't a shader's to read (a GPU keeps several depths a pixel "
+              "there), so nothing could be read of this one: leave 'samples' out, as a shadow map does, or give the "
+              "target a color image, whose edges the samples smooth");
+    return true;
+}
+
+// How many of a call's last arguments are formats, before the `tail` after
+// them (its samples, where it says them): where a render target is made,
+// what it holds comes last, a format for each of its color images.
 // Too many, and Format.Depth written among several, are said here; -1
 // then. `made` is how the target is made, for the notes: "RenderTarget(width,
 // height" or "RenderTarget.Window(".
-static int target_formats(const checker *c, const expr *e, const char *made)
+static int target_formats(const checker *c, const expr *e, const int tail, const char *made)
 {
     int formats = 0;
-    while (formats < e->args.count && is_format(c, e->args.items[e->args.count - 1 - formats]->type)) formats++;
+    const int count = e->args.count - tail;
+    while (formats < count && is_format(c, e->args.items[count - 1 - formats]->type)) formats++;
     const char *sep = made[strlen(made) - 1] == '(' ? "" : ", ";
     if (formats > TARGET_COLORS) {
-        diag_error(e->args.items[e->args.count - formats + TARGET_COLORS]->at,
+        diag_error(e->args.items[count - formats + TARGET_COLORS]->at,
                    "a render target holds %d color images at the most, and this names %d formats", TARGET_COLORS, formats);
         diag_note("each format after its size is one color image: '%s%sFormat.Rgba8, Format.Rgba16f)' holds two", made, sep);
         return -1;
     }
     for (int i = 0; formats > 1 && i < formats; i++) {
-        const expr *format = e->args.items[e->args.count - formats + i];
+        const expr *format = e->args.items[count - formats + i];
         if (!format->enum_member || !str_eq_c(format->enum_member->name, "Depth")) continue;
         diag_error(format->at, "Format.Depth is a target with no color image, so it's a target's only format");
         diag_note("every target has depth beside its color images, which 'target.depth' reads: '%s%sFormat.Rgba8, "
@@ -2117,9 +2184,13 @@ static type check_construct(checker *c, expr *e, const type target)
         }
         // Its size in logical pixels, like the window's, its image's pixels in each (the display's when left
         // out), and last, what it holds, a format for each of its color images: one of Format.Rgba8 when left out
-        const int formats = argc > 2 ? target_formats(c, e, "RenderTarget(width, height") : 0;
-        if (formats < 0) return T_ERR;
-        const int sizes = argc - formats;
+        // ...and after that, by name, its samples: 'samples: 4'
+        int64_t said;
+        const int sampled = target_samples(e, "RenderTarget(width, height", &said);
+        if (sampled < 0) return T_ERR;
+        const int formats = argc - sampled > 2 ? target_formats(c, e, sampled, "RenderTarget(width, height") : 0;
+        if (formats < 0 || depth_alone_sampled(e, formats, said)) return T_ERR;
+        const int sizes = argc - sampled - formats;
         bool numbers = sizes == 2 || sizes == 3;
         for (int i = 0; numbers && i < sizes; i++) numbers = type_assignable(T_FLOAT_, e->args.items[i]->type);
         if (!numbers) {
@@ -2131,14 +2202,17 @@ static type check_construct(checker *c, expr *e, const type target)
             return T_ERR;
         }
         e->call = CALL_BUILTIN;
-        e->c_callee = formats > 1 ? (sizes == 3 ? "tide_render_target_make_scaled_of" : "tide_render_target_make_of")
+        e->c_callee = sampled ? (sizes == 3 ? "tide_render_target_make_scaled_sampled" : "tide_render_target_make_sampled")
+                    : formats > 1 ? (sizes == 3 ? "tide_render_target_make_scaled_of" : "tide_render_target_make_of")
                     : formats ? (sizes == 3 ? "tide_render_target_make_scaled_as" : "tide_render_target_make_as")
                               : (sizes == 3 ? "tide_render_target_make_scaled" : "tide_render_target_make");
-        e->target_formats = formats > 1 ? formats : 0;
+        e->target_formats = sampled || formats > 1 ? formats : 0; // With samples, C takes any number of formats as several
+        e->target_samples = sampled != 0;
         e->resource_operation = true;
         reading_code(c)->calls_c = true;
         for (int i = 0; i < sizes; i++) vec_push(e->arg_want, T_FLOAT_);
-        for (int i = sizes; i < argc; i++) vec_push(e->arg_want, e->args.items[i]->type);
+        for (int i = sizes; i < argc - sampled; i++) vec_push(e->arg_want, e->args.items[i]->type);
+        if (sampled) vec_push(e->arg_want, T_INT_);
         return target;
     }
     if (target.kind == TY_TEXTURE || target.kind == TY_DEPTH_TEXTURE) {
@@ -5206,9 +5280,12 @@ static type check_window_target(checker *c, expr *e)
         diag_note("leave the field at default and create its target in a view or local handler");
         return T_ERR;
     }
-    const int formats = target_formats(c, e, "RenderTarget.Window(");
-    if (formats < 0) return T_ERR;
-    const int factors = e->args.count - formats;
+    int64_t said;
+    const int sampled = target_samples(e, "RenderTarget.Window(", &said);
+    if (sampled < 0) return T_ERR;
+    const int formats = target_formats(c, e, sampled, "RenderTarget.Window(");
+    if (formats < 0 || depth_alone_sampled(e, formats, said)) return T_ERR;
+    const int factors = e->args.count - sampled - formats;
     if (factors > 1 || (factors == 1 && !type_assignable(T_FLOAT_, e->args.items[0]->type))) {
         diag_error(e->at, "RenderTarget.Window takes the part of the window's size the target is, a number, or nothing "
                           "for all of it: 'RenderTarget.Window()' or 'RenderTarget.Window(0.5)'");
@@ -5218,14 +5295,17 @@ static type check_window_target(checker *c, expr *e)
         return T_ERR;
     }
     e->call = CALL_BUILTIN;
-    e->c_callee = formats > 1 ? (factors ? "tide_render_target_screen_of" : "tide_render_target_window_of")
+    e->c_callee = sampled ? (factors ? "tide_render_target_screen_sampled" : "tide_render_target_window_sampled")
+                : formats > 1 ? (factors ? "tide_render_target_screen_of" : "tide_render_target_window_of")
                 : formats ? (factors ? "tide_render_target_screen_as" : "tide_render_target_window_as")
                           : (factors ? "tide_render_target_screen" : "tide_render_target_window");
-    e->target_formats = formats > 1 ? formats : 0;
+    e->target_formats = sampled || formats > 1 ? formats : 0;
+    e->target_samples = sampled != 0;
     e->resource_operation = true;
     reading_code(c)->calls_c = true;
     for (int i = 0; i < factors; i++) vec_push(e->arg_want, T_FLOAT_);
-    for (int i = factors; i < e->args.count; i++) vec_push(e->arg_want, e->args.items[i]->type);
+    for (int i = factors; i < e->args.count - sampled; i++) vec_push(e->arg_want, e->args.items[i]->type);
+    if (sampled) vec_push(e->arg_want, T_INT_);
     return (type){TY_RENDER_TARGET, NULL};
 }
 
@@ -6295,6 +6375,8 @@ static type check_member(checker *c, expr *e)
         const type member = check_enum_member(e, enum_decl);
         // Font.Bold: the game draws in bold, so it carries the bold's file
         if (enum_decl == c->prog->font && e->enum_member && e->enum_member->number == 1) c->prog->names_bold = true;
+        // Filter.Trilinear: the game's textures can be read between their smaller images
+        if (enum_decl == c->prog->filter && e->enum_member && e->enum_member->number == 2) c->prog->names_trilinear = true;
         return member;
     }
 
@@ -7334,7 +7416,7 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
         return T_ERR;
     }
     if (e->args.count >= 2 && !e->args.items[1]->enum_member) {
-        diag_error(e->args.items[1]->at, "the filter is written here, 'Filter.Point' or 'Filter.Bilinear': the GPU is told how a "
+        diag_error(e->args.items[1]->at, "the filter is written here, 'Filter.Point', 'Filter.Bilinear' or 'Filter.Trilinear': the GPU is told how a "
                                          "texture is read before any pixel runs");
         return T_ERR;
     }
@@ -10012,14 +10094,15 @@ static void check_sampling_attribute(checker *c, decl *d, attribute *attr)
             for (int i = 0; i < wanted->members.count; i++) {
                 if (!str_eq(wanted->members.items[i].name, member_name)) continue;
                 *said = 1 + (int)wanted->members.items[i].number;
+                if (filter && wanted->members.items[i].number == 2) c->prog->names_trilinear = true;
                 attr->args.items[0].decl = wanted; // For editors: what the name is
                 attr->args.items[0].enum_member = &wanted->members.items[i];
                 return;
             }
         }
     }
-    diag_error(attr->at, filter ? "Filter takes how the texture is read between its cells: [Filter(Filter.Point)] or "
-                                  "[Filter(Filter.Bilinear)]"
+    diag_error(attr->at, filter ? "Filter takes how the texture is read between its cells: [Filter(Filter.Point)], "
+                                  "[Filter(Filter.Bilinear)] or [Filter(Filter.Trilinear)]"
                                 : "Wrap takes what a uv past the texture's edges reads: [Wrap(Wrap.Clamp)], [Wrap(Wrap.Repeat)] or "
                                   "[Wrap(Wrap.Mirror)]");
 }
@@ -10190,8 +10273,8 @@ static void check_field_sampling(checker *c, const field *f, attribute *a)
         if (t.kind == TY_ERROR) return;
         if (t.kind == TY_ENUM && t.decl == wanted && value->enum_member) return;
     }
-    diag_error(a->at, filter ? "[Filter] takes how the texture is read between its cells: [Filter(Filter.Point)] or "
-                               "[Filter(Filter.Bilinear)]"
+    diag_error(a->at, filter ? "[Filter] takes how the texture is read between its cells: [Filter(Filter.Point)], "
+                               "[Filter(Filter.Bilinear)] or [Filter(Filter.Trilinear)]"
                              : "[Wrap] takes what a uv past the texture's edges reads: [Wrap(Wrap.Clamp)], [Wrap(Wrap.Repeat)] or "
                                "[Wrap(Wrap.Mirror)]");
 }
@@ -12683,8 +12766,8 @@ static void add_builtins(program *prog)
 
     // struct Vertex { float2 position; float2 uv; Color color = Color.white; }:
     // a corner of what Draw.Mesh draws, as tide/draw.h's tide_vertex. And
-    // enum Filter { Point, Bilinear }: how it reads its texture between cells,
-    // with tide_filter's values, which are Unity's FilterMode's.
+    // enum Filter { Point, Bilinear, Trilinear }: how it reads its texture
+    // between cells, with tide_filter's values, which are Unity's FilterMode's.
     decl *vertex = NEW(decl);
     vertex->kind = DECL_STRUCT;
     vertex->name = str_from("Vertex");
@@ -12794,7 +12877,8 @@ static void add_builtins(program *prog)
         vec_push(control->fields, f);
     }
     prog->gui_control = control;
-    static const char *const filters[] = {"Point", "Bilinear"};
+    // Trilinear is in generated C only for a game that names it (program.names_trilinear)
+    static const char *const filters[] = {"Point", "Bilinear", "Trilinear"};
     decl *filter = NEW(decl);
     filter->kind = DECL_ENUM;
     filter->name = str_from("Filter");

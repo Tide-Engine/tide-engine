@@ -3,6 +3,7 @@
 // Then targets of depth alone, and a target's depth as a shader reads it: as
 // a number, and compared. Then stencil: each test and each thing a draw does
 // with what's stored, in targets and, on the web, the window's own canvas.
+// Then targets of several color images, and multisampled ones.
 #include <math.h>
 #include <stdio.h>
 #include <stddef.h>
@@ -1212,7 +1213,7 @@ static void copy(const tide_gpu *gpu, const tide_gpu_id pipeline, const tide_gpu
     const float settings[4] = {0, HEIGHT, depth, 0};
     gpu->use(pipeline);
     gpu->uniforms(settings, sizeof settings);
-    gpu->sample(0, texture, false, TIDE_GPU_WRAP_CLAMP);
+    gpu->sample(0, texture, TIDE_GPU_FILTER_NEAREST, TIDE_GPU_WRAP_CLAMP);
     gpu->draw(0, 3, 1);
 }
 
@@ -1233,7 +1234,7 @@ static void show(const tide_gpu *gpu, const tide_gpu_id pipeline, const tide_gpu
     const float settings[4] = {with, 0, 0, 0};
     gpu->use(pipeline);
     gpu->uniforms(settings, sizeof settings);
-    gpu->sample(0, depth, false, TIDE_GPU_WRAP_CLAMP);
+    gpu->sample(0, depth, TIDE_GPU_FILTER_NEAREST, TIDE_GPU_WRAP_CLAMP);
     gpu->draw(0, 3, 1);
 }
 
@@ -1667,7 +1668,7 @@ static void check_targets(void)
     gpu->use(pipeline);
     float settings[4] = {1, HEIGHT, 0, 0};
     gpu->uniforms(settings, sizeof settings);
-    gpu->sample(0, image, false, TIDE_GPU_WRAP_CLAMP);
+    gpu->sample(0, image, TIDE_GPU_FILTER_NEAREST, TIDE_GPU_WRAP_CLAMP);
     gpu->draw(0, 3, 1);
     gpu->end();
     gpu->target_read(scene, actual);
@@ -1696,7 +1697,7 @@ static void check_targets(void)
     gpu->use(pipeline);
     settings[0] = 2;
     gpu->uniforms(settings, sizeof settings);
-    gpu->sample(0, scene_color, false, TIDE_GPU_WRAP_CLAMP);
+    gpu->sample(0, scene_color, TIDE_GPU_FILTER_NEAREST, TIDE_GPU_WRAP_CLAMP);
     gpu->draw(0, 3, 1);
     gpu->end();
     gpu->target_read(scaled, actual);
@@ -2177,7 +2178,7 @@ static void show_scaled(const tide_gpu *gpu, const tide_gpu_id pipeline, const t
     gpu->begin(into, true);
     gpu->use(pipeline);
     gpu->uniforms(settings, sizeof settings);
-    gpu->sample(0, texture, false, TIDE_GPU_WRAP_CLAMP);
+    gpu->sample(0, texture, TIDE_GPU_FILTER_NEAREST, TIDE_GPU_WRAP_CLAMP);
     gpu->draw(0, 3, 1);
     gpu->end();
     gpu->target_read(into, actual);
@@ -2526,6 +2527,314 @@ static void check_render_colors(const bool plain)
     tide_render_targets_free();
 }
 
+// ---------------------------------------------------------------------------
+// Multisampled targets: each pixel drawn with several samples, which a
+// triangle's edge covers some of, and color images that are what those come
+// to when a pass ends.
+
+enum { EDGE = 8 }; // A square target a triangle's edge crosses from corner to corner, or near enough
+
+// A triangle over the target's lower left half, its long edge a little short
+// of the diagonal, so that it goes through no pixel's middle: a pixel on it is
+// covered in part, whatever samples a device has there.
+static const char edge_vertex[] =
+    "layout(std140) uniform uniforms { vec4 settings; };\n"
+    "void main() {\n"
+    "    gl_Position = vec4(gl_VertexID == 1 ? 0.9 : -1.0, gl_VertexID == 2 ? 0.9 : -1.0, 0, 1);\n"
+    "}\n";
+
+static const char edge_fragment[] =
+    "layout(std140) uniform uniforms { vec4 settings; };\n"
+    "out vec4 color;\n"
+    "void main() { color = settings; }\n";
+
+static const char edge_wgsl[] =
+    "struct Uniforms { settings: vec4f }\n"
+    "@group(0) @binding(0) var<uniform> u: Uniforms;\n"
+    "@vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {\n"
+    "    var points = array<vec2f, 3>(vec2f(-1, -1), vec2f(0.9, -1), vec2f(-1, 0.9));\n"
+    "    return vec4f(points[i], 0.5, 1);\n"
+    "}\n"
+    "@fragment fn fragment() -> @location(0) vec4f { return u.settings; }\n";
+
+// The triangle, in one color
+static void edge(const tide_gpu *gpu, const tide_gpu_id pipeline, const float r, const float g, const float b)
+{
+    const float settings[4] = {r, g, b, 1};
+    gpu->use(pipeline);
+    gpu->uniforms(settings, sizeof settings);
+    gpu->draw(0, 3, 1);
+}
+
+// Whether a channel is neither none of a color nor all of it: a pixel a triangle's edge covers part of.
+static bool between(const uint8_t v)
+{
+    return v >= 24 && v <= 231;
+}
+
+// How many of the EDGE by EDGE pixels read back have a channel `c` that's in between.
+static int edge_pixels(const uint8_t *actual, const int c, const int from_x, const int to_x)
+{
+    int count = 0;
+    for (int y = 0; y < EDGE; y++) {
+        for (int x = from_x; x < to_x; x++) count += between(actual[(y * EDGE + x) * 4 + c]);
+    }
+    return count;
+}
+
+static void expect_edge(const uint8_t *actual, const int x, const int y, const uint8_t r, const uint8_t g, const uint8_t b,
+                        const char *what)
+{
+    const uint8_t *got = actual + (y * EDGE + x) * 4;
+    if (got[0] + 1 >= r && got[0] <= r + 1 && got[1] + 1 >= g && got[1] <= g + 1 && got[2] + 1 >= b && got[2] <= b + 1) return;
+    if (failures++ < 6) fprintf(stderr, "%s (%d, %d): %u,%u,%u instead of %u,%u,%u\n", what, x, y, got[0], got[1], got[2], r, g, b);
+}
+
+static void check_samples(void)
+{
+    const tide_gpu *gpu = tide_window_gpu();
+    uint8_t actual[EDGE * EDGE * 4], shown[EDGE * EDGE * 4], small[WIDTH * HEIGHT * 4], other[WIDTH * HEIGHT * 4];
+    // What a format says of its samples
+    const tide_gpu_target_format asked = tide_gpu_target_sampled(TIDE_GPU_TARGET_COLOR, 4);
+    if (tide_gpu_target_samples(TIDE_GPU_TARGET_COLOR) != 1 || tide_gpu_target_samples(asked) != 4
+        || tide_gpu_target_colors(asked) != 1 || tide_gpu_target_color(asked, 0) != TIDE_GPU_COLOR_BYTES
+        || tide_gpu_target_sampled(asked, 1) != TIDE_GPU_TARGET_COLOR || tide_gpu_target_sampled(asked, 0) != TIDE_GPU_TARGET_COLOR
+        || tide_gpu_target_samples(tide_gpu_target_sampled(asked, 8)) != 8
+        || tide_gpu_target_with(tide_gpu_target_sampled(TIDE_GPU_TARGET_DEPTH, 2), TIDE_GPU_COLOR_FLOAT)
+               != tide_gpu_target_sampled(tide_gpu_target_with(TIDE_GPU_TARGET_DEPTH, TIDE_GPU_COLOR_FLOAT), 2)) {
+        failures++;
+        fprintf(stderr, "a target's format doesn't say its samples\n");
+    }
+    // What a device has for what's asked: no more, but where it has no such count; one for what asks for one,
+    // and for a target of depth alone
+    const uint32_t samples = gpu->target_samples(asked);
+    const uint32_t most = gpu->target_samples(tide_gpu_target_sampled(TIDE_GPU_TARGET_COLOR, 8));
+    if (samples < 1 || samples > 4 || (samples & (samples - 1)) || most < samples || most > 8
+        || gpu->target_samples(TIDE_GPU_TARGET_COLOR) != 1
+        || gpu->target_samples(tide_gpu_target_sampled(TIDE_GPU_TARGET_DEPTH, 4)) != 1) {
+        failures++;
+        fprintf(stderr, "a device's samples for a target aren't ones it could have: %u for 4, %u for 8\n", (unsigned)samples,
+                (unsigned)most);
+    }
+    if (samples < 2) {
+        static bool said;
+        if (!said) printf("no multisampled targets on this device: their checks are left out\n");
+        said = true;
+        return;
+    }
+    const tide_gpu_target_format smooth_format = tide_gpu_target_sampled(TIDE_GPU_TARGET_COLOR, samples);
+    tide_gpu_pipeline_desc edge_desc = {.name = "an edge", .glsl_vertex = edge_vertex, .glsl_fragment = edge_fragment,
+                                        .wgsl = edge_wgsl, .uniform_size = 16, .blend = TIDE_GPU_BLEND_REPLACE,
+                                        .into = TIDE_GPU_TARGET_COLOR};
+    const tide_gpu_id edge_plain = gpu->pipeline(&edge_desc);
+    edge_desc.into = smooth_format; // A pipeline is for its targets' samples too
+    const tide_gpu_id edge_smooth = gpu->pipeline(&edge_desc);
+    const tide_gpu_id copied = gpu->pipeline(&(tide_gpu_pipeline_desc){
+        .name = "a resolved image, sampled", .glsl_vertex = vertex, .glsl_fragment = scaled_fragment, .wgsl = scaled_wgsl,
+        .uniform_size = 16, .texture_count = 1, .blend = TIDE_GPU_BLEND_REPLACE, .into = TIDE_GPU_TARGET_COLOR,
+    });
+    const tide_gpu_id plain = gpu->target(TIDE_GPU_TARGET_COLOR, EDGE, EDGE);
+    const tide_gpu_id smooth = gpu->target(smooth_format, EDGE, EDGE);
+    const tide_gpu_id scene = gpu->target(TIDE_GPU_TARGET_COLOR, EDGE, EDGE);
+    if (!gpu->target_texture(smooth, 0) || gpu->target_texture(smooth, 1) || gpu->target_depth(smooth)
+        || !gpu->target_depth(plain)) {
+        failures++;
+        fprintf(stderr, "a multisampled target has no color texture, or has a depth to read\n");
+    }
+
+    // With one sample a pixel is in the triangle or out of it
+    gpu->begin(plain, true);
+    edge(gpu, edge_plain, 1, 1, 1);
+    gpu->end();
+    gpu->target_read(plain, actual);
+    if (edge_pixels(actual, 0, 0, EDGE) != 0) failures++, fprintf(stderr, "an edge drawn with one sample has pixels in between\n");
+    expect_edge(actual, 0, EDGE - 1, 255, 255, 255, "inside a triangle, with one sample");
+    expect_edge(actual, EDGE - 1, 0, 0, 0, 0, "outside a triangle, with one sample");
+
+    // With several, the pixels its edge crosses are covered in part, and the others are as they were
+    gpu->begin(smooth, true);
+    edge(gpu, edge_smooth, 1, 1, 1);
+    gpu->end();
+    gpu->target_read(smooth, actual);
+    const int crossed = edge_pixels(actual, 0, 0, EDGE);
+    if (crossed < EDGE / 2 || crossed > EDGE * 3) {
+        failures++;
+        fprintf(stderr, "an edge drawn with %u samples has %d pixels in between, where it crosses about %d\n",
+                (unsigned)samples, crossed, EDGE);
+    }
+    expect_edge(actual, 0, EDGE - 1, 255, 255, 255, "inside a triangle, with several samples");
+    expect_edge(actual, 1, EDGE - 2, 255, 255, 255, "inside a triangle, with several samples");
+    expect_edge(actual, EDGE - 1, 0, 0, 0, 0, "outside a triangle, with several samples");
+    expect_edge(actual, EDGE - 2, 1, 0, 0, 0, "outside a triangle, with several samples");
+    // Its color texture is what's read back: what the samples came to
+    {
+        const float settings[4] = {1, 0, 0, 0};
+        gpu->begin(scene, true);
+        gpu->use(copied);
+        gpu->uniforms(settings, sizeof settings);
+        gpu->sample(0, gpu->target_texture(smooth, 0), false, TIDE_GPU_WRAP_CLAMP);
+        gpu->draw(0, 3, 1);
+        gpu->end();
+        gpu->target_read(scene, shown);
+        for (int i = 0; i < EDGE * EDGE; i++) {
+            expect_edge(shown, i % EDGE, i / EDGE, actual[i * 4], actual[i * 4 + 1], actual[i * 4 + 2],
+                        "a multisampled target's color, sampled, is what's read back of it");
+        }
+    }
+
+    // A pass over what's there keeps every sample: blue over the left half alone, in the same triangle. Where
+    // the edge crosses there, a pixel is as much blue as it was white, and no white is left of it; the right
+    // half is as it was, whatever the pass's scissor was when it ended
+    gpu->begin(smooth, false);
+    gpu->scissor(0, 0, EDGE / 2, EDGE);
+    edge(gpu, edge_smooth, 0, 0, 1);
+    gpu->end();
+    gpu->target_read(smooth, shown);
+    for (int y = 0; y < EDGE; y++) {
+        for (int x = 0; x < EDGE; x++) {
+            const uint8_t *was = actual + (y * EDGE + x) * 4;
+            if (x < EDGE / 2) expect_edge(shown, x, y, 0, 0, was[0], "a second pass draws over the samples the first left");
+            else expect_edge(shown, x, y, was[0], was[1], was[2], "a second pass leaves what's past its scissor");
+        }
+    }
+    // ...and one that starts cleared clears them all
+    gpu->begin(smooth, true);
+    gpu->end();
+    gpu->target_read(smooth, shown);
+    for (int i = 0; i < EDGE * EDGE; i++) expect_edge(shown, i % EDGE, i / EDGE, 0, 0, 0, "a multisampled target, cleared");
+
+    // Several color images, floats among them, each what its own samples came to
+    const tide_gpu_target_format three_colors =
+        tide_gpu_target_with(tide_gpu_target_with(TIDE_GPU_TARGET_COLOR, TIDE_GPU_COLOR_FLOAT), TIDE_GPU_COLOR_FLOAT);
+    const uint32_t held_samples = gpu->target_samples(tide_gpu_target_sampled(three_colors, samples));
+    if (held_samples > 1) {
+        const bool floats = gpu->float_targets();
+        const tide_gpu_target_format held = tide_gpu_target_sampled(three_colors, held_samples);
+        const tide_gpu_id three = gpu->pipeline(&(tide_gpu_pipeline_desc){
+            .name = "three colors, multisampled", .glsl_vertex = vertex, .glsl_fragment = three_fragment, .wgsl = three_wgsl,
+            .uniform_size = 16, .blend = TIDE_GPU_BLEND_REPLACE, .into = held, .outputs = 3});
+        const tide_gpu_id several = gpu->target(held, WIDTH, HEIGHT);
+        const tide_gpu_id view = gpu->target(TIDE_GPU_TARGET_COLOR, WIDTH, HEIGHT);
+        gpu->begin(several, true);
+        gpu->scissor(0, 0, WIDTH / 2, HEIGHT);
+        fill(gpu, three);
+        gpu->end();
+        gpu->target_read(several, small);
+        for (int y = 0; y < HEIGHT; y++) {
+            for (int x = 0; x < WIDTH; x++) {
+                if (x < WIDTH / 2) expect_rgb(small, x, y, 0.25f, 0.5f, 0.75f, "a multisampled target's first output");
+                else expect_rgb(small, x, y, 0, 0, 0, "a multisampled target's first image past the scissor");
+            }
+        }
+        show_scaled(gpu, copied, view, gpu->target_texture(several, 1), 0.25f, 0.25f, small);
+        show_scaled(gpu, copied, view, gpu->target_texture(several, 2), 0.25f, 0, other);
+        expect_three(small, other, floats, 0, "a multisampled target's second and third outputs");
+        gpu->target_free(several);
+        gpu->target_free(view);
+        gpu->pipeline_free(three);
+    } else {
+        static bool said;
+        if (!said) printf("no multisampled float images on this device: their check is left out\n");
+        said = true;
+    }
+
+    gpu->target_free(plain);
+    gpu->target_free(smooth);
+    gpu->target_free(scene);
+    gpu->pipeline_free(edge_plain);
+    gpu->pipeline_free(edge_smooth);
+    gpu->pipeline_free(copied);
+}
+
+// Through the renderer: a 3D mesh turned a little, drawn into a target of the
+// window's size and brought to the window. With samples, the pixels its edges
+// cross are between its color and what's behind it; with none, each is one
+// or the other. The engine's own draws, a shader's and a clear go into one
+// like into any target, and its depth is no shader's to read.
+static void check_render_samples(const int32_t samples)
+{
+    enum { WIDE = WIDTH * 4, HIGH = HEIGHT * 2 }; // 16 by 12
+    static const uint32_t indices[6] = {0, 1, 2, 0, 2, 3};
+    // A square in the middle, 2 away from a camera that looks along +z, turned about that axis
+    const tide_vertex3 corners[4] = {{{-0.5f, 0.5f, 2}, {0, 0}, TIDE_COLOR_GREEN}, {{0.5f, 0.5f, 2}, {1, 0}, TIDE_COLOR_GREEN},
+                                     {{0.5f, -0.5f, 2}, {1, 1}, TIDE_COLOR_GREEN}, {{-0.5f, -0.5f, 2}, {0, 1}, TIDE_COLOR_GREEN}};
+    const tide_mesh square = {corners, 4, indices, 6, 1};
+    const tide_float4x4 identity = tide_identity_f4x4(), across = tide_ortho_f4x4(2.0f * WIDE / HIGH, 2, 0.1f, 10);
+    const tide_float4x4 turned = tide_trs_f4x4(tide_f3(0, 0, 0), tide_axisangle_q(tide_f3(0, 0, 1), 0.4f), tide_f3(1, 1, 1));
+    const uint32_t device = tide_window_gpu()->target_samples(tide_gpu_target_sampled(TIDE_GPU_TARGET_COLOR, (uint32_t)samples));
+    const tide_render_target scene = tide_render_target_make_scaled_sampled(WIDE, HIGH, 1, NULL, 0, samples);
+    const tide_render_target flat = tide_render_target_make_scaled(WIDE, HIGH, 1);
+    if (tide_render_target_samples(scene.id) != (uint32_t)samples || tide_render_target_samples(flat.id) != 1) {
+        failures++;
+        fprintf(stderr, "a target's id doesn't say its samples\n");
+    }
+
+    // Red, through a shader's blit, then the mesh, then a shape of the engine's over the top left corner
+    tide_draw_reset(&render_list);
+    tide_draw_render_target(&render_list, flat);
+    tide_draw_clear(&render_list, TIDE_COLOR_RED);
+    tide_draw_render_target(&render_list, scene);
+    tide_draw_clear(&render_list, TIDE_COLOR_BLUE);
+    blit_target(flat, 0);
+    tide_draw_set_camera_matrices(&render_list, identity, across);
+    tide_draw_set_cull(&render_list, TIDE_CULL_NONE);
+    tide_draw_mesh_3d(&render_list, &square, turned, NULL, TIDE_FILTER_POINT);
+    tide_draw_set_screen(&render_list);
+    tide_draw_rect(&render_list, tide_f2(1, 1), tide_f2(2, 2), TIDE_COLOR_BLUE);
+    tide_draw_to(&render_list, 0, 0, 0);
+    blit_target(scene, 0);
+    read_window(WIDE, HIGH, 1.0f);
+    int crossed = 0, green = 0, red = 0, other = 0;
+    for (int y = 0; y < HIGH; y++) {
+        for (int x = 0; x < WIDE; x++) {
+            const uint32_t pixel = window_pixels[y * WIDE + x];
+            const uint32_t r = pixel >> 24, g = pixel >> 16 & 0xffu, b = pixel >> 8 & 0xffu;
+            if (x < 2 && y < 2) {
+                expect_pixel(x, y, 0x0000ffffu, "a shape of the engine's in a multisampled target");
+            } else if (b > 1) {
+                other++;
+            } else if (r >= 254 && g <= 1) {
+                red++;
+            } else if (g >= 254 && r <= 1) {
+                green++;
+            } else if (r + g >= 250 && r + g <= 260) { // As much of the one as there's less of the other
+                crossed++;
+            } else {
+                other++;
+            }
+        }
+    }
+    expect_pixel(WIDE / 2, HIGH / 2, 0x00ff00ffu, "the middle of a mesh in a target");
+    expect_pixel(WIDE - 1, HIGH - 1, 0xff0000ffu, "past a mesh in a target, what a shader's blit left");
+    // The square is 6 pixels a side: about 36 of them, of which its edges cross about 24
+    if (other || green + crossed < 24 || green + crossed > 60 || red < 100
+        || (device > 1 ? crossed < 8 : crossed != 0)) {
+        failures++;
+        fprintf(stderr, "a mesh in a target of %d samples (%u here): %d pixels of it, %d on its edges, %d behind it, %d that "
+                        "are neither\n", (int)samples, (unsigned)device, green, crossed, red, other);
+    }
+
+    // The frame after, with nothing drawn into it: what it held is still there
+    tide_draw_reset(&render_list);
+    blit_target(scene, 0);
+    read_window(WIDE, HIGH, 1.0f);
+    expect_pixel(WIDE / 2, HIGH / 2, 0x00ff00ffu, "a target's samples are kept from frame to frame");
+    expect_pixel(0, 0, 0x0000ffffu, "a target's samples are kept from frame to frame");
+
+    // Its depth is no shader's to read, with samples: that draw is passed by, and the window is as it was cleared
+    tide_draw_reset(&render_list);
+    tide_draw_clear(&render_list, (tide_color){1, 0, 1, 1});
+    blit_depth(tide_render_target_depth(scene));
+    read_window(WIDE, HIGH, 1.0f);
+    // A depth of 1 where nothing was drawn, and of the mesh in the middle: neither is magenta
+    if (samples > 1) expect_all(0xff00ffffu, "a multisampled target's depth isn't read: its draw is passed by");
+    else expect_pixel(0, 0, gray(1.0f), "a target's depth, read, with one sample");
+
+    tide_render_target_dispose(scene);
+    tide_render_target_dispose(flat);
+    tide_render_targets_free();
+}
+
 // Only the first failures say which pixels were wrong: this says which group
 // of checks any were in, and how many.
 static void checked(const char *what)
@@ -2578,6 +2887,14 @@ static int frame(void *user, const float seconds)
     check_render_colors(false);
     if (tide_window_gpu() == &tide_gpu_gl) check_render_colors(true); // As on an OpenGL that can't draw into floats
     checked("the renderer's targets of several colors");
+    check_samples();
+    check_samples(); // Its pipelines and targets are made again
+    checked("the backend's multisampled targets");
+    check_render_samples(4);
+    check_render_samples(1); // The same scene with none: no pixel is in between
+    check_render_samples(4); // With the pipelines the first made
+    check_render_samples(8); // More than some devices have: drawn with what there is
+    checked("the renderer's multisampled targets");
     if (failures) return 1;
 #ifdef __wasm__
     if (!lost && strcmp(tide_platform_renderer(), "WebGPU") == 0) {

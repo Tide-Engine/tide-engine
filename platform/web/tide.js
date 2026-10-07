@@ -1098,7 +1098,7 @@
     // numbers, WebGL with objects, so each kind has a table from number to
     // object.
 
-    const tables = { buffer: [null], texture: [null], framebuffer: [null], vertexArray: [null],
+    const tables = { buffer: [null], texture: [null], framebuffer: [null], renderbuffer: [null], vertexArray: [null],
         program: [null], shader: [null], uniform: [null], sampler: [null] };
     function add(kind, object) {
         tables[kind].push(object);
@@ -1166,11 +1166,14 @@
         glBindBuffer: (target, b) => gl.bindBuffer(target, get('buffer', b)),
         glBindBufferBase: (target, index, b) => gl.bindBufferBase(target, index, get('buffer', b)),
         glBindFramebuffer: (target, f) => gl.bindFramebuffer(target, get('framebuffer', f)),
+        glBindRenderbuffer: (target, r) => gl.bindRenderbuffer(target, get('renderbuffer', r)),
         glBindSampler: (unit, s) => gl.bindSampler(unit, get('sampler', s)),
         glBindTexture: (target, t) => gl.bindTexture(target, get('texture', t)),
         glBindVertexArray: v => gl.bindVertexArray(get('vertexArray', v)),
         glBlendFunc: (s, d) => gl.blendFunc(s, d),
         glBlendFuncSeparate: (s, d, sa, da) => gl.blendFuncSeparate(s, d, sa, da),
+        glBlitFramebuffer: (x0, y0, x1, y1, toX0, toY0, toX1, toY1, mask, filter) =>
+            gl.blitFramebuffer(x0, y0, x1, y1, toX0, toY0, toX1, toY1, mask, filter),
         glBufferData(target, size, ptr, usage) {
             if (ptr) gl.bufferData(target, u8(), usage, ptr, size);
             else gl.bufferData(target, size, usage);
@@ -1200,6 +1203,7 @@
                 uniformIds.delete(key);
             }
         },
+        glDeleteRenderbuffers: (n, ptr) => remove('renderbuffer', o => gl.deleteRenderbuffer(o), n, ptr),
         glDeleteShader(s) {
             gl.deleteShader(get('shader', s));
             tables.shader[s] = null;
@@ -1224,15 +1228,25 @@
         },
         glEnable: cap => gl.enable(cap),
         glEnableVertexAttribArray: i => gl.enableVertexAttribArray(i),
+        glFramebufferRenderbuffer: (target, attachment, renderbufferTarget, r) =>
+            gl.framebufferRenderbuffer(target, attachment, renderbufferTarget, get('renderbuffer', r)),
         glFramebufferTexture2D: (target, attachment, textureTarget, t, level) =>
             gl.framebufferTexture2D(target, attachment, textureTarget, get('texture', t), level),
         glFrontFace: winding => gl.frontFace(winding),
         glGenBuffers: (n, ptr) => generate('buffer', () => gl.createBuffer(), n, ptr),
+        glGenerateMipmap: target => gl.generateMipmap(target),
         glGenFramebuffers: (n, ptr) => generate('framebuffer', () => gl.createFramebuffer(), n, ptr),
+        glGenRenderbuffers: (n, ptr) => generate('renderbuffer', () => gl.createRenderbuffer(), n, ptr),
         glGenSamplers: (n, ptr) => generate('sampler', () => gl.createSampler(), n, ptr),
         glGenTextures: (n, ptr) => generate('texture', () => gl.createTexture(), n, ptr),
         glGenVertexArrays: (n, ptr) => generate('vertexArray', () => gl.createVertexArray(), n, ptr),
         glGetIntegerv: (pname, ptr) => writeParameter(gl.getParameter(pname), ptr),
+        // A format's sample counts (GL_SAMPLES), the most first: as many as there's room for, and none written
+        // where the format has none
+        glGetInternalformativ(target, format, pname, count, ptr) {
+            const values = gl.getInternalformatParameter(target, format, pname) || [];
+            for (let i = 0; i < count && i < values.length; i++) i32()[(ptr >> 2) + i] = values[i];
+        },
         glGetProgramInfoLog: (p, max, lengthPtr, ptr) => writeLog(gl.getProgramInfoLog(get('program', p)), max, lengthPtr, ptr),
         glGetProgramiv: (p, pname, ptr) => writeParameter(gl.getProgramParameter(get('program', p), pname), ptr),
         glGetShaderInfoLog: (s, max, lengthPtr, ptr) => writeLog(gl.getShaderInfoLog(get('shader', s)), max, lengthPtr, ptr),
@@ -1252,6 +1266,8 @@
             gl.readPixels(x, y, w, h, format, type, array, offset);
         },
         glReadBuffer: source => gl.readBuffer(source),
+        glRenderbufferStorageMultisample: (target, samples, format, width, height) =>
+            gl.renderbufferStorageMultisample(target, samples, format, width, height),
         glSamplerParameteri: (s, pname, param) => gl.samplerParameteri(get('sampler', s), pname, param),
         glScissor: (x, y, w, h) => gl.scissor(x, y, w, h),
         glShaderSource(s, count, stringsPtr, lengthsPtr) {
@@ -1432,15 +1448,22 @@
     const UNIFORM_BYTES = 4096; // The most a pipeline's uniforms take (TIDE_GPU_MAX_UNIFORMS), which every pipeline is bound
     const MAX_TEXTURES = 8;     // TIDE_GPU_MAX_TEXTURES
     const READ_COMPARE = 2;     // TIDE_GPU_READ_COMPARE, after a color's 0 and a depth's 1
-    const NEAREST = 0, COMPARED = 6; // Samplers: the nearest pixel past no edge, and after the six of colors, a depth compared
-    let layouts = null, samplers = null;
+    // Samplers: the nearest pixel past no edge first, and after the nine of colors, a depth compared
+    const NEAREST = 0, LINEAR = 1, MIPMAPS = 2, COMPARED = 9;
+    let layouts = null, samplers = null, mipPipelines = null;
     function gpuStart() {
         layouts = new Map();
-        // By how it's read between pixels, then past its edges: 2 * tide_gpu_wrap's number + whether it's blended
+        mipPipelines = new Map();
+        // By how it's read past its edges, then between pixels: 3 * tide_gpu_wrap's number + tide_gpu_filter's.
+        // Only the last filter reads a texture's smaller images (gpu_mipmaps): the others keep to its own
+        // pixels whatever it has and however a shader asks (lodMaxClamp). A change to either enum goes here.
         samplers = [];
         for (const wrap of ['clamp-to-edge', 'repeat', 'mirror-repeat']) {
-            for (const filter of ['nearest', 'linear']) {
-                samplers.push(device.createSampler({ magFilter: filter, minFilter: filter, addressModeU: wrap, addressModeV: wrap }));
+            for (const filter of [NEAREST, LINEAR, MIPMAPS]) {
+                const between = filter === NEAREST ? 'nearest' : 'linear';
+                samplers.push(device.createSampler({ magFilter: between, minFilter: between,
+                    mipmapFilter: filter === MIPMAPS ? 'linear' : 'nearest', lodMaxClamp: filter === MIPMAPS ? 32 : 0,
+                    addressModeU: wrap, addressModeV: wrap }));
             }
         }
         // 1 where the depth that's stored isn't nearer than the shader's number (the test a mesh passes to
@@ -1501,6 +1524,28 @@
         return group;
     }
 
+    // A texture's smaller images, which WebGPU makes none of: each is drawn
+    // from the one before it, a pixel the mean of the four it's made of (one
+    // sample between them, blended). A pipeline for each format there is.
+    function mipPipeline(format) {
+        let pipeline = mipPipelines.get(format);
+        if (!pipeline) {
+            const module = device.createShaderModule({ code: `
+                @vertex fn vertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
+                    return vec4f(f32((i << 1u) & 2u) * 2.0 - 1.0, f32(i & 2u) * 2.0 - 1.0, 0.0, 1.0);
+                }
+                @group(0) @binding(0) var pixels: texture_2d<f32>;
+                @group(0) @binding(1) var between: sampler;
+                @fragment fn fragment(@builtin(position) at: vec4f) -> @location(0) vec4f {
+                    return textureSampleLevel(pixels, between, at.xy * 2.0 / vec2f(textureDimensions(pixels)), 0.0);
+                }` });
+            pipeline = device.createRenderPipeline({ layout: 'auto', vertex: { module, entryPoint: 'vertex' },
+                fragment: { module, entryPoint: 'fragment', targets: [{ format }] } });
+            mipPipelines.set(format, pipeline);
+        }
+        return pipeline;
+    }
+
     // A target: the canvas, or persistent sampleable pixels of its own, each
     // with depth, and 8 bits of stencil beside it. A target's own depth is
     // sampled too.
@@ -1538,7 +1583,9 @@
     const culls = ['none', 'back', 'front']; // tide_gpu_cull, of a front that goes clockwise
     // What a kind of target holds (tide_gpu_target_format): 4 bits for each of its color images in order, 1 for
     // 4 bytes a pixel, which is the canvas's own format, and 2 for four floats of 16 bits (tide_gpu_color), and
-    // none past the last. A change to either enum goes here.
+    // none past the last; then, from bit 16, how many samples a pixel of it is drawn with, 4 or none said (1),
+    // which a pipeline is made for too. A change to either enum goes here.
+    const samplesOf = into => (into >> 16 & 15) > 1 ? 4 : 1;
     const colorFormats = into => {
         const formats = [];
         for (; formats.length < 4 && (into >> 4 * formats.length & 15); ) {
@@ -1684,9 +1731,11 @@
         },
         gpu_texture(format, width, height, ptr) {
             // By tide_gpu_format's numbers: a change to the enum goes here
-            const texture = device.createTexture({ size: [width, height], format: ['rgba8unorm', 'r8unorm', 'r16float'][format],
-                usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
-            const id = gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * [4, 1, 2][format],
+            const usage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC;
+            const row = width * [4, 1, 2][format];
+            format = ['rgba8unorm', 'r8unorm', 'r16float'][format];
+            const texture = device.createTexture({ size: [width, height], format, usage });
+            const id = gpuAdd('texture', { texture, view: texture.createView(), width, height, row, format, usage,
                 groups: new Set() }); // The bind groups it's in, by their keys
             if (ptr) platform.gpu_texture_write(id, ptr);
             return id;
@@ -1696,6 +1745,40 @@
             const [data, offset] = memoryBytes(ptr, t.row * t.height);
             device.queue.writeTexture({ texture: t.texture }, data, { offset, bytesPerRow: t.row, rowsPerImage: t.height },
                 [t.width, t.height]);
+        },
+        gpu_mipmaps(id) {
+            const t = gpuTables.texture[id];
+            const levels = 1 + Math.floor(Math.log2(Math.max(t.width, t.height)));
+            if (!t.format || levels < 2) return;
+            const pipeline = mipPipeline(t.format);
+            if (!t.levels) {
+                // A texture has as many images as it was made with, so the first time, one with room for them
+                // takes its place: `view` is all of it, which draws sample, and `first` what a pass draws into
+                const texture = device.createTexture({ size: [t.width, t.height], format: t.format, mipLevelCount: levels,
+                    usage: t.usage | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT });
+                const copy = device.createCommandEncoder();
+                copy.copyTextureToTexture({ texture: t.texture }, { texture }, [t.width, t.height]);
+                device.queue.submit([copy.finish()]);
+                t.texture.destroy();
+                t.texture = texture;
+                t.view = texture.createView();
+                t.levels = [];
+                for (let level = 0; level < levels; level++) t.levels.push(texture.createView({ baseMipLevel: level, mipLevelCount: 1 }));
+                t.first = t.levels[0];
+                t.halving = t.levels.slice(0, -1).map(from => device.createBindGroup({ layout: pipeline.getBindGroupLayout(0),
+                    entries: [{ binding: 0, resource: from }, { binding: 1, resource: samplers[LINEAR] }] }));
+                for (const key of t.groups) bindGroups.delete(key); // They have the texture it was
+                t.groups.clear();
+            }
+            const encoder = device.createCommandEncoder();
+            for (let level = 1; level < levels; level++) {
+                const halve = encoder.beginRenderPass({ colorAttachments: [{ view: t.levels[level], loadOp: 'clear', storeOp: 'store' }] });
+                halve.setPipeline(pipeline);
+                halve.setBindGroup(0, t.halving[level - 1]);
+                halve.draw(3);
+                halve.end();
+            }
+            device.queue.submit([encoder.finish()]);
         },
         gpu_texture_free(id) {
             const t = gpuTables.texture[id];
@@ -1709,7 +1792,7 @@
                 stencil: { compare: stencilTests[stencilTest] || 'always', passOp: stencilOps[stencilOp] || 'keep' },
                 reads: Array.from({ length: textures }, (unused, i) => reads >> 2 * i & 3), // 2 bits each: tide_gpu_read
                 // What the targets it draws into hold (none: depth alone), and how many of those colors it writes
-                into: colorFormats(into), outputs };
+                into: colorFormats(into), outputs, samples: samplesOf(into) };
         },
         gpu_pipeline_slot: (stride, perInstance) => { building.slots.push({ stride, perInstance: !!perInstance }); },
         gpu_pipeline_attribute: (slot, format, offset) => { building.attributes.push({ slot, format, offset }); },
@@ -1737,6 +1820,7 @@
                     i < b.outputs ? { format, blend: blends[b.blend] } : { format, writeMask: 0 }) },
                 // A triangle's front goes clockwise as it's seen, in the canvas and in a target alike
                 primitive: { topology: 'triangle-list', cullMode: culls[b.cull], frontFace: 'cw' },
+                multisample: { count: b.samples },
                 // Either side of a triangle tests stencil the same way, against all 8 bits
                 depthStencil: { format: depthFormat, ...depths[b.depth], stencilFront: b.stencil, stencilBack: b.stencil,
                     stencilReadMask: 0xFF, stencilWriteMask: 0xFF },
@@ -1746,11 +1830,30 @@
         gpu_pipeline_free: id => gpuRemove('pipeline', id),
         gpu_target(format, width, height) {
             // Its color images, in order: none for a target of depth alone (TIDE_GPU_TARGET_DEPTH)
-            const formats = colorFormats(format);
+            const formats = colorFormats(format), samples = formats.length ? samplesOf(format) : 1;
+            if (samples > 1) {
+                // Multisampled: what's drawn into is textures of that many samples a pixel, its colors' and its
+                // depth's, kept from pass to pass, and each color image is what a pass's end resolves its samples
+                // into, a texture as any target's. Its depth is no texture of the program's
+                const colors = [], sampled = [];
+                for (const format of formats) {
+                    const many = device.createTexture({ size: [width, height], format, sampleCount: samples,
+                        usage: GPUTextureUsage.RENDER_ATTACHMENT });
+                    const texture = device.createTexture({ size: [width, height], format,
+                        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC });
+                    sampled.push({ texture: many, view: many.createView() });
+                    colors.push(gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * 4,
+                        groups: new Set() }));
+                }
+                const many = device.createTexture({ size: [width, height], format: depthFormat, sampleCount: samples,
+                    usage: GPUTextureUsage.RENDER_ATTACHMENT });
+                return gpuAdd('target', { colors, bytes: formats[0] === gpuFormat, depth: 0, width, height, canvas: null,
+                    context: null, sampled, sampledDepth: { texture: many, view: many.createView() } });
+            }
             const colors = formats.map(format => {
-                const texture = device.createTexture({ size: [width, height], format,
-                    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC });
-                return gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * 4,
+                const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC;
+                const texture = device.createTexture({ size: [width, height], format, usage });
+                return gpuAdd('texture', { texture, view: texture.createView(), width, height, row: width * 4, format, usage,
                     groups: new Set() });
             });
             // Its depth is a texture of the program's too: sampled as depth alone, and drawn into whole
@@ -1766,7 +1869,12 @@
         gpu_target_free(id) {
             const t = gpuTables.target[id];
             for (const color of t.colors) platform.gpu_texture_free(color);
-            platform.gpu_texture_free(t.depth);
+            if (t.sampled) {
+                for (const many of t.sampled) many.texture.destroy();
+                t.sampledDepth.texture.destroy();
+            } else {
+                platform.gpu_texture_free(t.depth);
+            }
             if (t.context) t.context.unconfigure();
             gpuRemove('target', id);
         },
@@ -1802,11 +1910,14 @@
             commands = device.createCommandEncoder();
             const load = clear ? 'clear' : 'load';
             // The canvas, or each of a target's color images: none for a target of depth alone
-            const views = id ? t.colors.map(color => gpuTables.texture[color].view) : [t.context.getCurrentTexture().createView()];
+            // ...of each, its own pixels, where it has smaller images too (gpu_mipmaps)
+            const views = id ? t.colors.map(color => gpuTables.texture[color].first || gpuTables.texture[color].view) : [t.context.getCurrentTexture().createView()];
+            const many = id && t.sampled; // A multisampled target's samples, which each color image is resolved from
             const descriptor = {
-                colorAttachments: views.map(view => ({ view, loadOp: load, storeOp: 'store',
+                colorAttachments: views.map((view, i) => ({ view: many ? many[i].view : view,
+                    resolveTarget: many ? view : undefined, loadOp: load, storeOp: 'store',
                     clearValue: { r: 0, g: 0, b: 0, a: 1 } })),
-                depthStencilAttachment: { view: id ? gpuTables.texture[t.depth].whole : t.depth.createView(),
+                depthStencilAttachment: { view: many ? t.sampledDepth.view : id ? gpuTables.texture[t.depth].whole : t.depth.createView(),
                     depthLoadOp: load, depthStoreOp: 'store', depthClearValue: 1,
                     stencilLoadOp: load, stencilStoreOp: 'store', stencilClearValue: 0 },
             };
@@ -1846,9 +1957,10 @@
             uniformsUsed += slots;
             drawing.bound = false;
         },
-        gpu_sample(slot, id, blended, wrap) {
+        gpu_sample(slot, id, filter, wrap) {
             drawing.textures[slot] = id;
-            drawing.sampled[slot] = (wrap === 1 || wrap === 2 ? 2 * wrap : 0) + (blended ? 1 : 0); // Its place in `samplers`
+            // Its place in `samplers`
+            drawing.sampled[slot] = (wrap === 1 || wrap === 2 ? 3 * wrap : 0) + (filter === NEAREST || filter === MIPMAPS ? filter : LINEAR);
             drawing.bound = false;
         },
         gpu_vertices: (slot, id, offset) => pass.setVertexBuffer(slot, gpuTables.buffer[id], offset),
@@ -2490,7 +2602,7 @@
     function forgetGL() {
         const destroy = {
             buffer: o => gl.deleteBuffer(o), texture: o => gl.deleteTexture(o),
-            framebuffer: o => gl.deleteFramebuffer(o),
+            framebuffer: o => gl.deleteFramebuffer(o), renderbuffer: o => gl.deleteRenderbuffer(o),
             vertexArray: o => gl.deleteVertexArray(o), program: o => gl.deleteProgram(o),
             shader: o => gl.deleteShader(o), uniform: () => {}, sampler: o => gl.deleteSampler(o),
         };
@@ -2506,6 +2618,11 @@
         gpuTimeReset();
         for (const buffer of gpuTables.buffer) if (buffer) buffer.destroy();
         for (const t of gpuTables.texture) if (t) t.texture.destroy(); // The targets' own among them
+        for (const t of gpuTables.target) { // ...and a multisampled target's samples, which are no texture of the program's
+            if (!t || !t.sampled) continue;
+            for (const many of t.sampled) many.texture.destroy();
+            t.sampledDepth.texture.destroy();
+        }
         for (const kind in gpuTables) {
             gpuTables[kind] = [null];
             gpuFree[kind] = [];

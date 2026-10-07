@@ -427,6 +427,94 @@ TIDE_TEST(draw_targets_hold_several_colors_and_lend_each)
     tide_render_targets_free();
 }
 
+TIDE_TEST(draw_targets_say_their_samples_and_keep_them_through_a_reload)
+{
+    tide_draw_list d = {0};
+    const tide_target_format two[] = {TIDE_TARGET_RGBA8, TIDE_TARGET_RGBA16F};
+
+    // A target's samples are its id's to say, beside what it holds: 1 for one that says none
+    const tide_render_target plain = tide_render_target_make(64.0f, 48.0f);
+    const tide_render_target smooth = tide_render_target_make_sampled(64.0f, 48.0f, NULL, 0, 4);
+    TIDE_REQUIRE(tide_render_target_live(plain.id) && tide_render_target_live(smooth.id));
+    TIDE_CHECK(tide_render_target_samples(plain.id) == 1 && tide_render_target_samples(smooth.id) == 4);
+    TIDE_CHECK(tide_render_target_colors(smooth.id) == 1 && tide_render_target_format(smooth.id) == TIDE_TARGET_RGBA8);
+    TIDE_CHECK(smooth.size.width == 64.0f && smooth.size.height == 48.0f && smooth.size.scale == 0.0f);
+    TIDE_CHECK(sizeof(tide_render_target) == 24); // As ever: no field of its own for them
+    // Each count there is, with each way to make a target, and what it holds beside
+    const tide_render_target one = tide_render_target_make_sampled(8.0f, 8.0f, two, 2, 1);
+    const tide_render_target pair = tide_render_target_make_scaled_sampled(320.0f, 180.0f, 1.0f, two, 2, 2);
+    const tide_render_target screen = tide_render_target_window_sampled(&two[1], 1, 8);
+    const tide_render_target half = tide_render_target_screen_sampled(0.5f, two, 2, 4);
+    TIDE_CHECK(tide_render_target_samples(one.id) == 1 && tide_render_target_colors(one.id) == 2);
+    TIDE_CHECK(tide_render_target_samples(pair.id) == 2 && tide_render_target_colors(pair.id) == 2 && pair.size.scale == 1.0f);
+    TIDE_CHECK(tide_render_target_samples(screen.id) == 8 && tide_render_target_format(screen.id) == TIDE_TARGET_RGBA16F
+               && screen.size.window == 1.0f);
+    TIDE_CHECK(tide_render_target_samples(half.id) == 4 && half.size.window == 0.5f);
+    tide_target_formats held = tide_render_target_formats(half.id);
+    TIDE_CHECK(held.count == 2 && held.color[0] == TIDE_TARGET_RGBA8 && held.color[1] == TIDE_TARGET_RGBA16F);
+    // A count there's none of is the one under it, and a target of depth alone has one: nothing reads its samples
+    TIDE_CHECK(tide_render_target_samples(tide_render_target_make_sampled(8.0f, 8.0f, NULL, 0, 3).id) == 2);
+    TIDE_CHECK(tide_render_target_samples(tide_render_target_make_sampled(8.0f, 8.0f, NULL, 0, 7).id) == 4);
+    TIDE_CHECK(tide_render_target_samples(tide_render_target_make_sampled(8.0f, 8.0f, NULL, 0, 64).id) == 8);
+    TIDE_CHECK(tide_render_target_samples(tide_render_target_make_sampled(8.0f, 8.0f, NULL, 0, 0).id) == 1);
+    TIDE_CHECK(tide_render_target_samples(tide_render_target_make_sampled(8.0f, 8.0f, NULL, 0, -4).id) == 1);
+    const tide_render_target shadow = tide_render_target_make_sampled(8.0f, 8.0f, (tide_target_format[]){TIDE_TARGET_DEPTH}, 1, 4);
+    TIDE_CHECK(tide_render_target_samples(shadow.id) == 1 && tide_render_target_colors(shadow.id) == 0);
+    // The window and a borrowed target have one
+    TIDE_CHECK(tide_render_target_samples(TIDE_RENDER_WINDOW) == 1 && tide_render_target_samples(1001) == 1);
+    TIDE_CHECK(tide_render_target_samples(TIDE_RENDER_INVALID) == 1 && tide_render_target_samples(1001 | TIDE_RENDER_SAMPLES) == 1);
+
+    // Its images' references, and its depth's, say whose they are, samples and all: the target's own id
+    const tide_texture_ref first = tide_render_target_color(half), second = tide_render_target_color_at(half, 1);
+    TIDE_CHECK(first.target.id == half.id && tide_render_target_whole(second.target.id) == half.id);
+    TIDE_CHECK(tide_render_target_image(second.target.id) == 1 && tide_render_target_samples(second.target.id) == 4);
+    TIDE_CHECK(tide_render_target_colors(second.target.id) == 2 && tide_render_target_depth(half).target.id == half.id);
+    TIDE_CHECK(tide_render_target_state_of(second.target.id) == tide_render_target_state_of(half.id));
+    // A list draws into it and reads it by that id
+    tide_draw_render_target(&d, smooth);
+    TIDE_REQUIRE(d.target_count == 1 && d.targets[0].id == smooth.id);
+    const uint32_t color = tide_draw_texture_source(&d, tide_render_target_color(smooth));
+    const uint32_t depth = tide_draw_depth_source(&d, tide_render_target_depth(smooth));
+    TIDE_REQUIRE(color && depth && color != depth);
+    TIDE_CHECK(d.textures[color - 1u].id == smooth.id && d.textures[depth - 1u].space == TIDE_PIXELS_TARGET_DEPTH);
+    // Resizing keeps them
+    tide_render_target_resize(smooth, 32.0f, 32.0f);
+    TIDE_CHECK(tide_render_target_samples(smooth.id) == 4 && tide_render_target_version(smooth.id) == 2);
+
+    // Another build makes the target again from its id alone, with the samples it had, and a
+    // texture's reference to one of its images names the same image of the new target
+    const uint64_t token = TIDE_RENDER_MANAGED | (UINT64_C(0x654) << 16) | (half.id & (TIDE_RENDER_FORMAT | TIDE_RENDER_SAMPLES));
+    const tide_render_target packed = {.id = token, .size = {.window = 0.5f}};
+    const tide_render_target packed_second = {.id = token | (UINT64_C(1) << TIDE_RENDER_IMAGE_SHIFT), .size = packed.size};
+    const tide_texture_ref rebound = tide_render_target_color(tide_render_target_recreate(packed_second));
+    const tide_render_target remade = tide_render_target_recreate(packed);
+    TIDE_REQUIRE(tide_render_target_live(remade.id) && remade.id != half.id);
+    held = tide_render_target_formats(remade.id);
+    TIDE_CHECK(tide_render_target_samples(remade.id) == 4 && held.count == 2 && held.color[1] == TIDE_TARGET_RGBA16F);
+    TIDE_CHECK(remade.size.window == 0.5f && tide_render_target_image(remade.id) == 0);
+    TIDE_CHECK(tide_render_target_whole(rebound.target.id) == remade.id && tide_render_target_image(rebound.target.id) == 1);
+    // One with none comes back with none
+    const tide_render_target bare = tide_render_target_recreate(
+        (tide_render_target){.id = TIDE_RENDER_MANAGED | (UINT64_C(0x655) << 16) | 1u, .size = {.width = 4.0f, .height = 4.0f}});
+    TIDE_CHECK(tide_render_target_samples(bare.id) == 1 && tide_render_target_colors(bare.id) == 1);
+    tide_render_targets_recreated();
+
+    // A state another build's library made is found through an id with samples in it
+    tide_render_target_state *foreign = foreign_state();
+    TIDE_REQUIRE(foreign);
+    void *foreign_memory = foreign->memory;
+    const uint16_t holds = (uint16_t)(1u | 2u << TIDE_RENDER_SAMPLES_SHIFT);
+    *foreign = (tide_render_target_state){.owner = &foreign, .memory = foreign_memory, .size = {.width = 12, .height = 9},
+                                         .version = 3, .alive = true, .holds = holds};
+    const tide_render_target adopted = {.id = TIDE_RENDER_MANAGED | (uint64_t)(uintptr_t)foreign | holds};
+    TIDE_CHECK(tide_render_target_samples(adopted.id) == 4 && tide_render_target_version(adopted.id) == 3);
+    tide_render_target_adopt(adopted);
+    TIDE_CHECK(foreign == NULL && tide_render_target_live(adopted.id) && tide_render_target_resolve(adopted).size.width == 12.0f);
+
+    tide_draw_free(&d);
+    tide_render_targets_free();
+}
+
 static const tide_vertex quad[4] = {
     {{0.0f, 0.0f}, {0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
     {{8.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
