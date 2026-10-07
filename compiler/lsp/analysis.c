@@ -107,7 +107,8 @@ typedef struct asset_site {
     bool glob;
     bool url;
     bool many;          // A List or Map: a glob's matches
-    const char *format; // The files it takes: ".png" for a Grid2<Color> and a Texture; NULL for any
+    const char *format;
+    const char *format2; // A second kind of file the asset can be, or NULL // The files it takes: ".png" for a Grid2<Color> and a Texture; NULL for any
 } asset_site;
 
 // A path to write at a site whose file is missing, fixing its diagnostic.
@@ -2752,8 +2753,8 @@ static void describe(const occurrence *o, sb *out)
                             "too wherever one is drawn with.");
             }
             if (o->decl->asset_kind == ASSET_CLIP) {
-                sb_put(out, " A `Clip` is a sound to play, this machine's: `Audio.Play(name)` in a view or a local handler plays "
-                            "it, and the match can't use it.");
+                sb_put(out, " A `Clip` is a sound to play, this machine's (a WAV, or Ogg Vorbis): `Audio.Play(name)` in a view "
+                            "or a local handler plays it, and the match can't use it.");
             }
             if (o->decl->sample_raw) {
                 sb_put(out, "\n\nIt's `[Raw]`: its pixels are numbers, kept as the file has them, which a frag or a vert reads "
@@ -3282,22 +3283,109 @@ static void describe_order(const decl *d, sb *out)
 }
 
 // ---------------------------------------------------------------------------
-// Code lenses: above each system, its stage and why it waits, above each
-// local handler of a match event, when it hears it, and above a declaration
-// an override replaced, and the override, which is which
+// Code lenses: above each system, its stage, each system it waits for and why,
+// and what runs alongside it; above each local handler of a match event, when
+// it hears it; above a declaration an override replaced, and the override,
+// which is which; and above a declaration, how many places name it. Each is a
+// lens of its own, so the ones that name declarations go to them when clicked
 
 static const char *package_text(const decl *d);
 static const char *code_name(const decl *d);
+static bool same_symbol(const occurrence *a, const occurrence *b);
+
+static void write_location(jbuf *out, const loc at, const int len)
+{
+    jb_put(out, "{\"uri\":");
+    jb_string(out, A.files[at.file].uri);
+    jb_put(out, ",\"range\":");
+    write_range(out, at, len);
+    jb_put(out, "}");
+}
+
+// A lens with `title` over the name at `at`, up to what its click does.
+static void open_lens(jbuf *out, int *written, const loc at, const int len, const char *title)
+{
+    if ((*written)++) jb_put(out, ",");
+    jb_put(out, "{\"range\":");
+    write_range(out, at, len);
+    jb_put(out, ",\"command\":{\"title\":");
+    jb_string(out, title);
+}
 
 // A lens with `title` above `d`'s name. It only says: it runs no command.
 static void write_lens(jbuf *out, int *written, const decl *d, const char *title)
 {
-    if ((*written)++) jb_put(out, ",");
-    jb_put(out, "{\"range\":");
-    write_range(out, d->at, d->name.len);
-    jb_put(out, ",\"command\":{\"title\":");
-    jb_string(out, title);
+    open_lens(out, written, d->at, d->name.len, title);
     jb_put(out, ",\"command\":\"\"}}");
+}
+
+// The editor's own command, as VS Code names it and LSP4IJ implements it, from the name at `at`: the
+// document, the position, and then the places, which the caller lists and closes.
+static void open_lens_command(jbuf *out, const char *command, const loc at)
+{
+    jb_printf(out, ",\"command\":\"%s\",\"arguments\":[", command);
+    jb_string(out, A.files[at.file].uri);
+    jb_put(out, ",");
+    write_position(out, at);
+    jb_put(out, ",[");
+}
+
+// A lens with `title` above `d`'s name, which goes to `to` when clicked: there, for one, and for several
+// a list of them to pick from.
+static void write_lens_to(jbuf *out, int *written, const decl *d, const char *title, decl *const *to, const int count)
+{
+    open_lens(out, written, d->at, d->name.len, title);
+    open_lens_command(out, "editor.action.goToLocations", d->at);
+    for (int i = 0; i < count; i++) {
+        if (i) jb_put(out, ",");
+        write_location(out, to[i]->at, to[i]->name.len);
+    }
+    jb_printf(out, "],\"%s\"]}}", count == 1 ? "goto" : "peek");
+}
+
+// Whether a declaration nothing names says so, "0 references": what code has to name to use. Not what
+// the engine runs or reads by itself, where none is the usual: a system, view or handler (which only
+// [Before] and [After] name), the input, a scene, an operator, a type's Interpolate.
+static bool unused_is_said(const occurrence *o)
+{
+    const decl *d = o->decl;
+    switch (o->kind) {
+    case OCC_SYSTEM: return is_shader(d);
+    case OCC_TYPE: return d->kind != DECL_INPUT && !d->is_scene;
+    case OCC_FUNCTION:
+    case OCC_METHOD: return !d->is_operator && !d->is_interpolate;
+    default: return true;
+    }
+}
+
+// "3 references" above each declaration of the document, which lists them when clicked.
+static void write_reference_lenses(jbuf *out, int *written)
+{
+    for (int i = 0; i < A.occs.count; i++) {
+        const occurrence *o = &A.occs.items[i];
+        if (!o->declaration || o->at.file != A.doc || !o->decl || o->decl->builtin) continue;
+        if (o->kind != OCC_TYPE && o->kind != OCC_SYSTEM && o->kind != OCC_FUNCTION && o->kind != OCC_METHOD &&
+            o->kind != OCC_CONST) continue;
+        int count = 0;
+        for (int k = 0; k < A.occs.count; k++) count += !A.occs.items[k].declaration && same_symbol(o, &A.occs.items[k]);
+        if (count == 0 && !unused_is_said(o)) continue;
+        sb title = {0};
+        sb_printf(&title, "%d reference%s", count, count == 1 ? "" : "s");
+        open_lens(out, written, o->at, o->len, title.data);
+        if (count == 0) {
+            jb_put(out, ",\"command\":\"\"}}");
+            continue;
+        }
+        open_lens_command(out, "editor.action.showReferences", o->at);
+        int listed = 0;
+        for (int k = 0; k < A.occs.count; k++) {
+            const occurrence *use = &A.occs.items[k];
+            if (use->declaration || !same_symbol(o, use)) continue;
+            if (listed++) jb_put(out, ",");
+            write_location(out, use->at, use->len);
+        }
+        jb_put(out, "]]}}");
+    }
 }
 
 // What code reads and writes of every entity's through its World and its
@@ -3334,26 +3422,29 @@ void analysis_code_lenses(jbuf *out)
         sb_printf(&title, "stage %d", d->stage);
         if (d->extern_system) sb_put(&title, " \u00B7 in C"); // Scheduled by what it declares: its code isn't read
         put_world_lens(&title, d, " \u00B7 "); // Access to every entity's, which its signature doesn't say
+        if (d->alongside_count == 0 && A.prog->systems.count > 1) sb_put(&title, " \u00B7 nothing runs alongside");
+        write_lens(out, &written, d, title.data);
         for (int k = 0; k < d->waits.count; k++) {
             const system_wait *w = &d->waits.items[k];
             if (w->through) continue; // Shown on the system it goes through
-            sb_put(&title, " \u00B7 after ");
-            put_decl_name(&title, w->on, "", d);
-            sb_put(&title, ": ");
-            describe_wait(d, w, "", &title);
+            sb wait = {0};
+            sb_put(&wait, "after ");
+            put_decl_name(&wait, w->on, "", d);
+            sb_put(&wait, ": ");
+            describe_wait(d, w, "", &wait);
+            write_lens_to(out, &written, d, wait.data, (decl *const[]){(decl *)w->on}, 1);
         }
-        if (d->alongside_count == 0 && A.prog->systems.count > 1) {
-            sb_put(&title, " \u00B7 nothing runs alongside");
-        } else if (d->alongside_count > 0) {
-            sb_put(&title, " \u00B7 alongside ");
+        if (d->alongside_count > 0) {
+            sb alongside = {0};
+            sb_put(&alongside, "alongside ");
             const int shown = d->alongside.count > 3 ? 3 : d->alongside.count;
             for (int k = 0; k < shown; k++) {
-                if (k) sb_put(&title, ", ");
-                put_decl_name(&title, d->alongside.items[k], "", d);
+                if (k) sb_put(&alongside, ", ");
+                put_decl_name(&alongside, d->alongside.items[k], "", d);
             }
-            if (d->alongside_count > shown) sb_printf(&title, " and %d more", d->alongside_count - shown);
+            if (d->alongside_count > shown) sb_printf(&alongside, " and %d more", d->alongside_count - shown);
+            write_lens_to(out, &written, d, alongside.data, d->alongside.items, d->alongside.count);
         }
-        write_lens(out, &written, d, title.data);
     }
     // A view's access to every entity's, which its signature doesn't say either
     for (int i = 0; i < A.prog->views.count; i++) {
@@ -3368,12 +3459,12 @@ void analysis_code_lenses(jbuf *out)
         if (v->at.file == A.doc) {
             sb title = {0};
             sb_printf(&title, "replaced by %s: not in the build", package_text(o));
-            write_lens(out, &written, v, title.data);
+            write_lens_to(out, &written, v, title.data, (decl *const[]){(decl *)o}, 1);
         }
         if (o->at.file == A.doc) {
             sb title = {0};
             sb_printf(&title, "replaces %s of %s", code_name(v), package_text(v));
-            write_lens(out, &written, o, title.data);
+            write_lens_to(out, &written, o, title.data, (decl *const[]){(decl *)v}, 1);
         }
     }
     // The program's handlers rather than each event's listeners, which the
@@ -3386,8 +3477,10 @@ void analysis_code_lenses(jbuf *out)
         put_decl_name(&title, h->event, "", h);
         sb_put(&title, h->listens_verified ? " once the server confirmed it" : " at the start of a frame");
         put_world_lens(&title, h, " \u00B7 ");
-        write_lens(out, &written, h, title.data);
+        if (h->event->builtin) write_lens(out, &written, h, title.data); // The engine's own: nowhere to go
+        else write_lens_to(out, &written, h, title.data, (decl *const[]){h->event}, 1);
     }
+    write_reference_lenses(out, &written);
     jb_put(out, "]");
 }
 
@@ -4377,15 +4470,6 @@ void analysis_symbols(jbuf *out)
 
 // ---------------------------------------------------------------------------
 // Type definitions and implementations
-
-static void write_location(jbuf *out, const loc at, const int len)
-{
-    jb_put(out, "{\"uri\":");
-    jb_string(out, A.files[at.file].uri);
-    jb_put(out, ",\"range\":");
-    write_range(out, at, len);
-    jb_put(out, "}");
-}
 
 void analysis_type_definition(const int line, const int character, jbuf *out)
 {
@@ -9850,6 +9934,7 @@ static void collect_assets(void)
         site.many = d->asset_many || d->asset_kind == ASSET_CUBEMAP; // A cube's path is a glob too: its six faces
         site.format = d->asset_kind == ASSET_GRID || d->asset_kind == ASSET_TEXTURE || d->asset_kind == ASSET_CUBEMAP ? ".png"
                     : d->asset_kind == ASSET_CLIP ? ".wav" : NULL;
+        site.format2 = d->asset_kind == ASSET_CLIP ? ".ogg" : NULL; // A clip is either
         site.glob = asset_path_is_glob(site.path.ptr, (size_t)site.path.len);
         site.url = asset_path_is_url(site.path.ptr, (size_t)site.path.len);
         char *folder = asset_path_folder(A.files[f].src.path);
@@ -10198,7 +10283,7 @@ static void complete_asset_path(completion *c, const int tok, const loc at)
     for (int i = 0; i < entries.files.count; i++) {
         const char *name = entries.files.items[i];
         if (ends_with_fold(name, ".tide")) continue;
-        if (site->format && !ends_with_fold(name, site->format)) continue;
+        if (site->format && !ends_with_fold(name, site->format) && !(site->format2 && ends_with_fold(name, site->format2))) continue;
         asset_item(c, name, KIND_FILE, start, at, name, NULL, '3');
     }
     free(base);

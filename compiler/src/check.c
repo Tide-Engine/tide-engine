@@ -10426,7 +10426,7 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
         *kind = ASSET_CUBEMAP;
     } else {
         diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file), a Grid2<Color> or a Texture (a PNG), a "
-                       "Cubemap (six PNGs), or a Clip (a WAV), not '" STR_FMT "'", STR_ARG(inner->text));
+                       "Cubemap (six PNGs), or a Clip (a WAV or Ogg Vorbis), not '" STR_FMT "'", STR_ARG(inner->text));
         diag_note("for the files a glob matches, a 'List<...>' of one of those, or a 'Map<string, ...>' of their paths");
         return false;
     }

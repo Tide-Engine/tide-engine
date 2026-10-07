@@ -3,6 +3,7 @@
 // each frame recorded.
 
 asset Clip beep = "assets/beep.wav";
+asset Clip blip = "assets/blip.ogg";
 asset List<Clip> hits = "assets/hits/*.wav";
 asset Map<string, Clip> named = "assets/hits/*.wav";
 
@@ -62,6 +63,7 @@ view Keeper(mut Sfx sfx)
         sfx.kept = named["assets/hits/b.wav"];
         Thud(sfx.kept);
     }
+    if (sfx.plays == 2) Audio.Play(blip); // The Ogg Vorbis clip
 }
 
 void Thud(Clip clip)
