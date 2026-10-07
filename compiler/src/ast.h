@@ -609,6 +609,11 @@ typedef struct decl {
 
     // Async functions and handlers: they run as tasks, which can wait
     bool is_async;       // `async`
+    bool is_audio;       // `audio Name(mut Samples samples, ...)`: a DECL_FUNCTION the audio thread runs once a block
+    int audio_state;     // ...the parameter that's its state (`mut`, kept between blocks), or -1
+    int audio_knobs;     // ...and the one that's its knobs (read-only, a copy the frame gave), or -1
+    bool makes_text;     // Makes text, a list, a map, a set or reads a grid, itself: scratch memory, which the audio thread has none of
+    loc makes_text_at;
     loc async_at;        // The `async` keyword
     int task_side;       // An async function's world, from what it does: TASK_EITHER, TASK_MATCH or TASK_LOCAL
     loc task_side_at;    // ...where it first decides
@@ -713,6 +718,7 @@ typedef enum builtin_call {
     CALL_BUILTIN,   // Math.Dot(...), quaternion.AxisAngle(...): calls c_callee
     CALL_DRAW,      // Draw.Circle(...): calls c_callee with the view's draw list first
     CALL_AUDIO,     // Audio.Play(...): calls c_callee with the frame's audio list first (tide_l->tide_audio)
+    CALL_EFFECT,    // Lowpass(knobs): an `audio` declaration as an Effect value, with its knobs copied in
     CALL_SPAWN,
     CALL_ADD,
     CALL_REMOVE,
@@ -1162,6 +1168,9 @@ typedef struct program {
     decl *gui_theme;     // The built-in struct GUITheme, how the GUI's widgets look
     decl *gui_control;   // The built-in struct GUIControl, what GUI.Control says of a control
     decl *sound;         // The built-in struct Sound, a sound source a local field keeps: in generated C when named
+    decl *bus_enum;      // The game's [Bus] enum, its buses in order (the first is the master); NULL for none
+    decl *samples;       // The built-in struct Samples, the block an `audio` declaration reads and writes
+    decl *effect;        // The built-in struct Effect, an `audio` declaration with its knobs, which a Sound or a bus takes
     decl *filter;        // The built-in enum Filter, how mesh draw samples its texture
     decl *wrap;          // The built-in enum Wrap, what a uv past a texture's edges reads: in generated C when code names it
     decl *blend;         // The built-in enum Blend, how what's drawn goes over what's there
@@ -1187,6 +1196,7 @@ typedef struct program {
     // (its title setting, or the program's name), and no other game's does.
     bool uses_title;
     bool uses_audio;     // Some code plays sounds: the local state carries the frame's audio list
+    bool quiet_names;    // While a built-in struct's own fields resolve: what they name isn't the game naming it
     VEC(mesh_draw) mesh_draws; // Every mesh draw that draws through a shader
     VEC(shader *) shaders;     // ...and the shaders they draw through, once each
     decl *session;       // The built-in local singleton Session: this machine's part in a match

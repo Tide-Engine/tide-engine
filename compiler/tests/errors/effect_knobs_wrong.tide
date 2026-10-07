@@ -1,0 +1,24 @@
+// expect: 'Scale' takes its knobs as a Knobs, not int
+struct Knobs
+{
+    float gain;
+}
+
+audio Scale(mut Samples samples, Knobs knobs)
+{
+    samples.values[0] = knobs.gain;
+}
+
+local singleton Mix
+{
+    Sound track;
+}
+
+view Levels(mut Mix mix)
+{
+    mix.track.effect = Scale(3);
+}
+
+scene Main
+{
+}

@@ -949,6 +949,14 @@ static bool program_corrects(const program *prog)
 // Whether `d` is an enum generated C has: every one but the built-in Depth,
 // Cull, Wrap, Format, StencilTest and StencilOp in a game no code of which
 // names them, whose C is then what it was without them.
+static bool array_unwritten(const program *prog, const decl *a);
+
+// The built-in structs that are in generated C only for a game that names them (as the enum Depth is)
+static bool builtin_struct_unnamed(const program *prog, const decl *d)
+{
+    return (d == prog->sound || d == prog->samples || d == prog->effect) && !d->named;
+}
+
 static bool enum_generated(const program *prog, const decl *d)
 {
     return d->kind == DECL_ENUM
@@ -3015,7 +3023,11 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         break;
     }
     case E_CALL:
-        if (e->call == CALL_METHOD || e->call == CALL_FUNCTION) {
+        if (e->call == CALL_EFFECT) { // Lowpass(knobs): the Effect value, its knobs copied in
+            sb_printf(o, "tide_effect_%s(", decl_cname(e->method));
+            if (e->args.count) gen_as(g, o, e->args.items[0], e->arg_want.items[0]);
+            sb_put(o, ")");
+        } else if (e->call == CALL_METHOD || e->call == CALL_FUNCTION) {
             gen_routine_call(g, o, e);
         } else if (e->call == CALL_BUILTIN) {
             if (e->hoisted) sb_put(o, e->hoisted);
@@ -3289,6 +3301,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             if (e->io_operation && str_eq_c(e->object->name, "Directory") && e->args.count == 1
                 && (str_eq_c(e->name, "GetFiles") || str_eq_c(e->name, "GetDirectories") || str_eq_c(e->name, "Delete"))) sb_put(o, ", false");
             sb_put(o, ")");
+        } else if (e->call == CALL_EFFECT) { // Lowpass(knobs): the Effect value, its knobs copied in
+            sb_printf(o, "tide_effect_%s(", decl_cname(e->method));
+            if (e->args.count) gen_as(g, o, e->args.items[0], e->arg_want.items[0]);
+            sb_put(o, ")");
         } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW || e->call == CALL_AUDIO) {
             gen_builtin_call(g, o, e);
         }
@@ -3318,6 +3334,10 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
         if (i || (!e->c_pack && (e->call == CALL_DRAW || e->call == CALL_AUDIO || receiver))) sb_put(o, ", ");
         const type want = e->arg_want.items[i];
         if (gen_target_format(g, o, e, i)) continue; // RenderTarget.Window(Format.Rgba8, Format.Rgba16f)
+        if (e->call == CALL_AUDIO && i == 0
+            && (strcmp(e->c_callee, "tide_audio_set_bus_volume") == 0 || strcmp(e->c_callee, "tide_audio_set_bus_effect_value") == 0)) {
+            sb_put(o, "(uint32_t)");
+        }
         if (want.kind == TY_CLIP) { // A Clip names a sound of the pack's: the call takes its samples
             sb_put(o, "tide_clip_of(");
             gen_as(g, o, e->args.items[i], want);
@@ -6002,6 +6022,10 @@ static void gen_array_types(const gen *g, sb *o, bool *array_done, const bool *s
             const decl *a = g->prog->arrays.items[i];
             const type e = a->fields.items[0].type;
             if (array_done[i] || !array_element_written(g, e, array_done, struct_done)) continue;
+            if (array_unwritten(g->prog, a)) {
+                array_done[i] = true; // Nothing that's written holds it
+                continue;
+            }
             const char *name = array_cname(a);
             sb_printf(o, "// " STR_FMT "\ntypedef struct %s {\n    %s at[%d];\n} %s;\n", STR_ARG(a->name), name, c_type(e),
                       a->array_length, name);
@@ -6151,6 +6175,7 @@ static void gen_task_tables(gen *g, const bool local)
 }
 
 static bool program_has_clips(const program *prog);
+static bool array_unwritten(const program *prog, const decl *a);
 
 static bool program_uses_io(const program *prog)
 {
@@ -6213,7 +6238,7 @@ static void gen_header(gen *g)
     if (prog->structs.count > 0) sb_put(o, "// Structs, each after the ones it contains\n\n");
     for (int i = 0; i < prog->structs.count; i++) {
         // Random is tide/random.h's, and Sound is in generated C only for a game that names it
-        if (prog->structs.items[i] != prog->random && (prog->structs.items[i] != prog->sound || prog->sound->named))
+        if (prog->structs.items[i] != prog->random && !builtin_struct_unnamed(prog, prog->structs.items[i]))
             gen_type(g, o, prog->structs.items[i]);
         struct_done[i] = true;
         gen_array_types(g, o, array_done, struct_done); // Of that struct, and of those
@@ -7130,14 +7155,26 @@ static void gen_grid_helpers(gen *g)
 // (nothing past the end, and nothing for an array that isn't there: an
 // element past the end of the list it's in), and its slot for an element
 // changed where it is (gen_slot).
+// An array only a built-in struct's field made is in generated C with that struct (gen_array_types)
+static bool array_unwritten(const program *prog, const decl *a)
+{
+    const bool of_samples = prog->samples->fields.items[0].type.decl == a;
+    const bool of_effect = prog->effect->fields.items[2].type.decl == a;
+    return !a->named && !(of_samples && prog->samples->named) && !(of_effect && prog->effect->named);
+}
+
 static void gen_array_helpers(gen *g)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
     if (prog->arrays.count == 0) return;
+    bool any = false;
+    for (int k = 0; k < prog->arrays.count; k++) any |= !array_unwritten(prog, prog->arrays.items[k]);
+    if (!any) return;
     sb_put(o, "// Arrays: elements side by side in whatever holds them, read and written by index\n\n");
     for (int k = 0; k < prog->arrays.count; k++) {
         const decl *a = prog->arrays.items[k];
+        if (array_unwritten(prog, a)) continue;
         const type e = a->fields.items[0].type;
         const char *name = array_cname(a);
         const char *ec = c_type(e);
@@ -7472,7 +7509,7 @@ static void gen_blend_helpers(gen *g)
     g->indent = 1;
     for (int i = 0; i < prog->structs.count; i++) {
         const decl *d = prog->structs.items[i];
-        if (!decl_blends(d) || (d == prog->sound && !d->named)) continue; // Sound: only in a game that names it
+        if (!decl_blends(d) || builtin_struct_unnamed(prog, d)) continue; // Sound and the rest: only in a game that names them
         const char *name = type_cname(d);
         sb_printf(o, "TIDE_HELPER void tide_blend_%s(%s *v, const %s *before, float t)\n{\n", name, name, name);
         gen_blend_fields(g, d);
@@ -7756,6 +7793,20 @@ static void gen_session_helpers(gen *g)
     if (g->prog->uses_audio) {
         sb_put(o, "void tide_local_audio(tide_local *l, tide_audio_frame *frame)\n{\n    l->tide_audio = frame;\n}\n\n");
         if (g->prog->sound->named) sb_put(o, "static void tide_local_sounds(tide_local *l); // After the views: below\n\n");
+    }
+    if (g->prog->effect->named) {
+        sb_printf(o, "// The effects' table and values are after the functions: below\n"
+                     "static tide_audio_effect tide_effect_of(const %s *e);\n"
+                     "static void tide_audio_set_bus_effect_value(tide_audio_frame *f, uint32_t bus, %s e);\n",
+                  type_cname(g->prog->effect), type_cname(g->prog->effect));
+        for (int i = 0; i < g->prog->decls.count; i++) {
+            const decl *d = g->prog->decls.items[i];
+            if (d->kind != DECL_FUNCTION || !d->is_audio) continue;
+            sb_printf(o, "static %s tide_effect_%s(", type_cname(g->prog->effect), decl_cname(d));
+            if (d->audio_knobs >= 0) sb_printf(o, "%s knobs);\n", type_cname(d->params.items[d->audio_knobs].type.decl));
+            else sb_put(o, "void);\n");
+        }
+        sb_put(o, "\n");
     }
 }
 
@@ -15181,19 +15232,87 @@ static void gen_sound_fields(gen *g, const decl *d, const char *path, const char
     }
 }
 
+// The `audio` declarations: each as the function tide/audio.h's mixer calls
+// once a block (its block, state and knobs cast to what the declaration
+// takes), in a table by the id its name hashes to, which an Effect value
+// names it by; and the Effect values themselves.
+static void gen_effects(gen *g)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    if (!prog->effect->named) return;
+    if (prog->samples->named) sb_printf(o, "_Static_assert(sizeof(%s) == TIDE_AUDIO_SAMPLES * sizeof(float), \"Samples is the block, and nothing else\");\n\n",
+              type_cname(prog->samples));
+    int count = 0;
+    for (int i = 0; i < prog->decls.count; i++) {
+        const decl *d = prog->decls.items[i];
+        if (d->kind != DECL_FUNCTION || !d->is_audio) continue;
+        count++;
+        sb_printf(o, "static void tide_audio_fn_%s(float *samples, void *state, const void *knobs)\n{\n", decl_cname(d));
+        if (d->audio_state < 0) sb_put(o, "    (void)state;\n");
+        if (d->audio_knobs < 0) sb_put(o, "    (void)knobs;\n");
+        sb_printf(o, "    %s(", routine_cname(d));
+        for (int k = 0; k < d->params.count; k++) {
+            const param *p = &d->params.items[k];
+            if (k) sb_put(o, ", ");
+            if (k == 0) sb_printf(o, "(%s *)(void *)samples, 0u", type_cname(prog->samples)); // ...and where its lists would be: nowhere
+            else if (k == d->audio_state) sb_printf(o, "(%s *)state, 0u", type_cname(p->type.decl));
+            else sb_printf(o, "*(const %s *)knobs", type_cname(p->type.decl));
+        }
+        sb_put(o, ");\n}\n\n");
+        // The Effect value: its id, and its knobs' bytes
+        sb_printf(o, "static %s tide_effect_%s(", type_cname(prog->effect), decl_cname(d));
+        if (d->audio_knobs >= 0) sb_printf(o, "const %s knobs", type_cname(d->params.items[d->audio_knobs].type.decl));
+        else sb_put(o, "void");
+        sb_printf(o, ")\n{\n    %s v = {0};\n    v.id = (int64_t)UINT64_C(0x%016llx);\n", type_cname(prog->effect),
+                  (unsigned long long)sound_id(decl_cname(d)));
+        if (d->audio_knobs >= 0) {
+            sb_put(o, "    _Static_assert(sizeof knobs <= TIDE_AUDIO_KNOBS_BYTES, \"an effect's knobs fit an Effect\");\n"
+                      "    v.size = (int32_t)sizeof knobs;\n    memcpy(v.knobs.at, &knobs, sizeof knobs);\n");
+        }
+        sb_put(o, "    return v;\n}\n\n");
+    }
+    sb_put(o, "// The effects by what names them, and the one an Effect value names\n"
+              "static const struct { uint64_t id; tide_audio_effect_fn fn; uint32_t state, knobs; } tide_effects[] = {\n");
+    for (int i = 0; i < prog->decls.count; i++) {
+        const decl *d = prog->decls.items[i];
+        if (d->kind != DECL_FUNCTION || !d->is_audio) continue;
+        sb state = {0}, knobs = {0};
+        if (d->audio_state >= 0) sb_printf(&state, "sizeof(%s)", type_cname(d->params.items[d->audio_state].type.decl));
+        else sb_put(&state, "0");
+        if (d->audio_knobs >= 0) sb_printf(&knobs, "sizeof(%s)", type_cname(d->params.items[d->audio_knobs].type.decl));
+        else sb_put(&knobs, "0");
+        sb_printf(o, "    {UINT64_C(0x%016llx), tide_audio_fn_%s, %s, %s},\n", (unsigned long long)sound_id(decl_cname(d)), decl_cname(d),
+                  state.data, knobs.data);
+    }
+    if (count == 0) sb_put(o, "    {0, NULL, 0, 0}, // A game that names Effect with no audio declaration: an empty table isn't C17\n");
+    sb_put(o, "};\n\n");
+    sb_printf(o, "TIDE_HELPER tide_audio_effect tide_effect_of(const %s *e)\n{\n"
+                 "    for (size_t i = 0; i < sizeof tide_effects / sizeof tide_effects[0]; i++) {\n"
+                 "        if (tide_effects[i].id == (uint64_t)e->id) {\n"
+                 "            return (tide_audio_effect){.fn = tide_effects[i].fn, .id = tide_effects[i].id, .state_size = tide_effects[i].state,\n"
+                 "                                       .knobs_size = tide_effects[i].knobs, .knobs = e->knobs.at};\n"
+                 "        }\n    }\n    return (tide_audio_effect){0};\n}\n\n"
+                 "TIDE_HELPER void tide_audio_set_bus_effect_value(tide_audio_frame *f, const uint32_t bus, const %s e)\n{\n"
+                 "    const tide_audio_effect effect = tide_effect_of(&e);\n    tide_audio_set_bus_effect(f, bus, &effect);\n}\n\n",
+              type_cname(prog->effect), type_cname(prog->effect));
+}
+
 static void gen_sounds(gen *g)
 {
     const program *prog = g->prog;
     sb *o = &g->c;
+    gen_effects(g);
     if (!prog->sound->named) return;
     sb_printf(o, "// A Sound as tide/audio.h's voice, named by its field (and its entity)\n"
-                 "static uint64_t tide_sound_entity(const tide_entity e)\n{\n"
+                 "TIDE_HELPER uint64_t tide_sound_entity(const tide_entity e)\n{\n"
                  "    return ((uint64_t)e.index << 32 | e.generation) * UINT64_C(0x9E3779B97F4A7C15);\n}\n\n"
                  "static void tide_sound_voice(tide_audio_frame *f, const %s *s, const uint64_t id)\n{\n"
                  "    tide_audio_voice(f, &(tide_voice){.id = id, .clip = tide_clip_of(s->clip), .position = s->position,\n"
                  "                                      .spatial = s->spatial, .loop = s->loop, .playing = true,\n"
-                 "                                      .volume = s->volume, .pitch = s->pitch});\n}\n\n",
-              type_cname(prog->sound));
+                 "                                      .volume = s->volume, .pitch = s->pitch, .bus = (uint32_t)s->bus,\n"
+                 "                                      .effect = %s});\n}\n\n",
+              type_cname(prog->sound), prog->effect->named ? "tide_effect_of(&s->effect)" : "(tide_audio_effect){0}");
     sb_put(o, "// Names every Sound of the local state that plays to the frame's audio list\n"
               "static void tide_local_sounds(tide_local *l)\n{\n    if (!l->tide_audio) return;\n");
     for (int i = 0; i < prog->singletons.count; i++) {
@@ -15560,7 +15679,7 @@ static layout_decls layout_types(const program *prog)
 {
     layout_decls out = {0};
     for (int i = 0; i < prog->structs.count; i++) {
-        if (prog->structs.items[i] != prog->sound || prog->sound->named) vec_push(out, prog->structs.items[i]);
+        if (!builtin_struct_unnamed(prog, prog->structs.items[i])) vec_push(out, prog->structs.items[i]);
     }
     for (int i = 0; i < prog->components.count; i++) vec_push(out, prog->components.items[i]);
     for (int i = 0; i < prog->singletons.count; i++) vec_push(out, prog->singletons.items[i]);
@@ -16121,8 +16240,31 @@ static void bind_views(const program *prog)
     }
 }
 
+// The arrays a built-in struct's field made, which nothing names, go last in
+// the program's arrays, so the game's own keep the numbers their helpers had
+static void order_arrays(program *prog)
+{
+    const int count = prog->arrays.count;
+    if (count == 0) return;
+    decl **sorted = malloc((size_t)count * sizeof *sorted);
+    if (!sorted) abort();
+    int n = 0;
+    for (int i = 0; i < count; i++) {
+        if (!array_unwritten(prog, prog->arrays.items[i])) sorted[n++] = prog->arrays.items[i];
+    }
+    for (int i = 0; i < count; i++) {
+        if (array_unwritten(prog, prog->arrays.items[i])) sorted[n++] = prog->arrays.items[i];
+    }
+    for (int i = 0; i < count; i++) {
+        prog->arrays.items[i] = sorted[i];
+        sorted[i]->index = i;
+    }
+    free(sorted);
+}
+
 bool codegen(program *prog, const codegen_options *opts)
 {
+    order_arrays(prog);
     // Filter.Trilinear is a member of the enum only in a game that names it, so the others' C is as it was
     if (!prog->names_trilinear && prog->filter && prog->filter->members.count > 2) prog->filter->members.count = 2;
     if (opts->info) {
