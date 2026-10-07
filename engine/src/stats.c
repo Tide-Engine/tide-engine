@@ -355,18 +355,31 @@ static void fill(tide_stats *s, const tide_stats_values *v)
         return;
     }
     // A frame's work on its thread is the whole, and rendering a part of it,
-    // listed under it; the GPU's time is beside them, as the two overlap
+    // listed under it; the GPU's time is beside them, as the two overlap, with
+    // the draw calls it took in its label, or on a line of their own where
+    // the backend has no GPU timer
+    char label[TIDE_PROFILE_NAME];
     const bool work = v->work_ms >= 0.0;
     if (work) line(s, "cpu", "%.1f ms", v->work_ms);
     if (v->render_known) line(s, "render", "%.2f ms", v->render_ms)->indent = work;
-    if (v->gpu_known) line(s, "gpu", "%.2f ms", v->gpu_ms);
+    if (v->gpu_known) {
+        snprintf(label, sizeof label, "gpu (%u draw calls)", (unsigned)v->draw_calls);
+        line(s, label, "%.2f ms", v->gpu_ms);
+    } else {
+        line(s, "draw calls", "%u", (unsigned)v->draw_calls);
+    }
     if (v->match) {
         const uint32_t from = s->line_count;
-        if (!v->remote) line(s, "ping", "%u ms", (unsigned)v->ping_ms);
-        if (v->delay_ticks) line(s, "delay", "%u ticks", (unsigned)v->delay_ticks);
-        line(s, "up", "%.1f KB/s", v->up / 1024.0);
-        line(s, "down", "%.1f KB/s", v->down / 1024.0);
-        line(s, "tick", "%d", (int)v->tick);
+        // The input's delay goes with the ping it comes of, where the ping is in the list
+        if (!v->remote) {
+            if (v->delay_ticks) snprintf(label, sizeof label, "ping (delay %u ticks)", (unsigned)v->delay_ticks);
+            else snprintf(label, sizeof label, "ping");
+            line(s, label, "%u ms", (unsigned)v->ping_ms);
+        } else if (v->delay_ticks) {
+            line(s, "delay", "%u ticks", (unsigned)v->delay_ticks);
+        }
+        // Up and down on one line, an arrow each (U+2191 and U+2193, which the font has)
+        line(s, "network", "\xE2\x86\x91%.1f  \xE2\x86\x93%.1f KB/s", v->up / 1024.0, v->down / 1024.0);
         line(s, "entities", "%u", (unsigned)v->entities);
         group(s, from);
     }
@@ -374,7 +387,6 @@ static void fill(tide_stats *s, const tide_stats_values *v)
     line(s, "threads", "%u", (unsigned)(v->threads ? v->threads : 1u));
     if (v->memory) line(s, "memory", "%.0f MB", (double)v->memory / (1024.0 * 1024.0));
     if (v->renderer && v->renderer[0]) line(s, "renderer", "%s", v->renderer);
-    line(s, "draw calls", "%u", (unsigned)v->draw_calls);
     group(s, from);
     if (v->match && v->profile == s->profile) add_systems(s);
 }

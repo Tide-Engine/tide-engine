@@ -63,14 +63,13 @@ typedef struct tide_stats_values {
     uint32_t ping_ms;     // The round trip to the machine that runs it
     uint32_t delay_ticks; // Ticks the input is delayed by; no line for 0
     double up, down;      // Bytes a second over the network
-    int32_t tick;
     uint32_t entities;
     // The profile collected by tide_stats_collect; NULL for no system lines
     const tide_profile *profile;
 } tide_stats_values;
 
 // The line that's always there, and every line of the list above it.
-#define TIDE_STATS_LINES 17
+#define TIDE_STATS_LINES 15
 
 // A line of the list is a label on the left and a value on the right, in two
 // columns, so the eye finds a number by its row: `cpu` and `2.1 ms`, a
@@ -78,7 +77,7 @@ typedef struct tide_stats_values {
 // its label (`60 fps   ping 34 ms`), with no value.
 typedef struct tide_stats_line {
     char label[TIDE_PROFILE_NAME]; // Cut from its end where the screen is too narrow; a value never is
-    char value[24];
+    char value[32];
     bool indent; // Under the line before it, as a part of it: `render` under `cpu`
     bool gap;    // A little space before it: the first line of a group
 } tide_stats_line;

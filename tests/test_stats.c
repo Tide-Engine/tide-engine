@@ -20,12 +20,16 @@ static tide_stats_values values;
 static tide_float2 screen;
 static tide_devices sampled; // What the last frame's sample of the game's input read
 
-// Every character 8 pixels wide.
+// Every character 8 pixels wide (a UTF-8 character, not a byte: the arrows are three).
 static tide_float2 font(const char *text, const float size, const tide_target_size *target, const unsigned char *weight)
 {
     (void)target;
     (void)weight;
-    return tide_f2((float)strlen(text) * 8.0f, size);
+    float width = 0.0f;
+    for (; *text; text++) {
+        if (((unsigned char)*text & 0xC0u) != 0x80u) width += 8.0f;
+    }
+    return tide_f2(width, size);
 }
 
 // A match this machine runs, at 60 frames a second, with four systems.
@@ -53,7 +57,6 @@ static void start(const bool open)
         .ping_ms = 34,
         .up = 2048.0,
         .down = 512.0,
-        .tick = 1234,
         .entities = 56,
         .profile = &profile,
     };
@@ -148,16 +151,18 @@ TIDE_TEST(stats_open_list_the_rest_above_their_line)
     const tide_float2 closed = text_command("60 fps")->a;
     stats.open = true;
     draw();
-    // Each line a label and a value, in groups: a frame's times, the match's,
-    // the machine's, and the three slowest systems (slowest first, the first time)
-    const char *labels[] = {"60 fps", "cpu", "ping", "up", "down", "tick", "entities",
-                            "threads", "memory", "renderer", "draw calls", "Combat.Hit", "Fall", "Move"};
-    const char *values_[] = {"", "2.1 ms", "34 ms", "2.0 KB/s", "0.5 KB/s", "1234", "56",
-                             "12", "48 MB", "OpenGL 3.3", "7", "1.50 ms", "0.31 ms", "0.20 ms"};
-    TIDE_REQUIRE(stats.line_count == 14);
-    for (uint32_t i = 0; i < 14; i++) TIDE_CHECK(line_is(i, labels[i], values_[i]) && text_command(labels[i]));
-    for (uint32_t i = 1; i < 14; i++) TIDE_CHECK(text_command(values_[i]));
-    for (uint32_t i = 1; i < 14; i++) TIDE_CHECK(stats.lines[i].gap == (i == 2 || i == 7 || i == 11) && !stats.lines[i].indent);
+    // Each line a label and a value, in groups: a frame's times (the draw
+    // calls on a line of their own, with no GPU timer), the match's (up and
+    // down on one line), the machine's, and the three slowest systems
+    // (slowest first, the first time)
+    const char *labels[] = {"60 fps", "cpu", "draw calls", "ping", "network", "entities",
+                            "threads", "memory", "renderer", "Combat.Hit", "Fall", "Move"};
+    const char *values_[] = {"", "2.1 ms", "7", "34 ms", "\xE2\x86\x91" "2.0  " "\xE2\x86\x93" "0.5 KB/s", "56",
+                             "12", "48 MB", "OpenGL 3.3", "1.50 ms", "0.31 ms", "0.20 ms"};
+    TIDE_REQUIRE(stats.line_count == 12);
+    for (uint32_t i = 0; i < 12; i++) TIDE_CHECK(line_is(i, labels[i], values_[i]) && text_command(labels[i]));
+    for (uint32_t i = 1; i < 12; i++) TIDE_CHECK(text_command(values_[i]));
+    for (uint32_t i = 1; i < 12; i++) TIDE_CHECK(stats.lines[i].gap == (i == 3 || i == 6 || i == 9) && !stats.lines[i].indent);
 
     // The line that's always there stays where it was, under the list: a
     // click in the same place closes the drawer again
@@ -170,34 +175,36 @@ TIDE_TEST(stats_open_list_the_rest_above_their_line)
     const tide_draw_command *ping = text_command("ping");
     const tide_draw_command *last = text_command("Move");
     const tide_draw_command *last_value = text_command("0.20 ms");
-    TIDE_CHECK(first->a.y == closed.y - 13.0f * 20.0f - 3.0f * 8.0f && last->a.y == closed.y - 20.0f);
-    TIDE_CHECK(ping->a.y == first->a.y + 20.0f + 8.0f);
+    TIDE_CHECK(first->a.y == closed.y - 11.0f * 20.0f - 3.0f * 8.0f && last->a.y == closed.y - 20.0f);
+    TIDE_CHECK(ping->a.y == first->a.y + 2.0f * 20.0f + 8.0f);
     TIDE_CHECK(first_value->a.y == first->a.y && last_value->a.y == last->a.y);
-    TIDE_CHECK(first->a.x == last->a.x && first->a.x == 760.0f);
+    TIDE_CHECK(first->a.x == last->a.x && first->a.x == 720.0f);
     TIDE_CHECK(first_value->a.x + 6.0f * 8.0f == closed.x + 48.0f && last_value->a.x + 7.0f * 8.0f == closed.x + 48.0f);
     const tide_rect box = panel();
-    TIDE_CHECK(box.x + box.width == 952.0f && box.y + box.height == 532.0f && box.height == 14.0f * 20.0f + 3.0f * 8.0f + 12.0f);
-    // As wide as its widest label and its widest value, with room between
-    TIDE_CHECK(box.width == 10.0f * 8.0f + 24.0f + 10.0f * 8.0f + 16.0f && stats.rect.y == box.y);
+    TIDE_CHECK(box.x + box.width == 952.0f && box.y + box.height == 532.0f && box.height == 12.0f * 20.0f + 3.0f * 8.0f + 12.0f);
+    // As wide as its widest label and its widest value (the network's, 15 characters), with room between
+    TIDE_CHECK(box.width == 10.0f * 8.0f + 24.0f + 15.0f * 8.0f + 16.0f && stats.rect.y == box.y);
 
     // What isn't known has no line: a frame's work before one was timed, the
-    // memory where the system doesn't say, a delay of no ticks
+    // memory where the system doesn't say, a delay of no ticks. A delay goes
+    // with the ping
     values.work_ms = -1.0;
     values.memory = 0;
     values.renderer = NULL;
     values.delay_ticks = 3;
     draw();
-    TIDE_CHECK(stats.line_count == 12 && line_is(1, "ping", "34 ms") && line_is(2, "delay", "3 ticks") && line_is(7, "threads", "12"));
-    TIDE_CHECK(line_is(8, "draw calls", "7") && !stats.lines[1].gap && stats.lines[7].gap);
-    // The ping of another machine's match is in the line, so not in the list too
+    TIDE_CHECK(stats.line_count == 9 && line_is(1, "draw calls", "7") && line_is(2, "ping (delay 3 ticks)", "34 ms"));
+    TIDE_CHECK(line_is(5, "threads", "12") && !stats.lines[1].gap && stats.lines[2].gap && stats.lines[5].gap);
+    // The ping of another machine's match is in the line, so not in the list
+    // too, and the delay stands alone
     values.remote = true;
     draw();
-    TIDE_CHECK(line_is(0, "60 fps   ping 34 ms", "") && line_is(1, "delay", "3 ticks") && stats.line_count == 11);
+    TIDE_CHECK(line_is(0, "60 fps   ping 34 ms", "") && line_is(2, "delay", "3 ticks") && stats.line_count == 9);
     // Outside any match, only what's the program's
     values = (tide_stats_values){.fps = 144.2, .work_ms = 0.5, .threads = 1, .draw_calls = 2, .profile = &profile};
     draw();
-    TIDE_CHECK(stats.line_count == 4 && line_is(0, "144 fps", "") && line_is(1, "cpu", "0.5 ms") && line_is(2, "threads", "1")
-               && line_is(3, "draw calls", "2") && stats.lines[2].gap);
+    TIDE_CHECK(stats.line_count == 4 && line_is(0, "144 fps", "") && line_is(1, "cpu", "0.5 ms") && line_is(2, "draw calls", "2")
+               && line_is(3, "threads", "1") && stats.lines[3].gap);
     tide_draw_free(&list);
 }
 
@@ -208,14 +215,14 @@ TIDE_TEST(stats_panel_keeps_its_width_while_open)
     start(true);
     draw();
     const float width = panel().width;
-    TIDE_CHECK(width == 200.0f);
+    TIDE_CHECK(width == 240.0f);
     tide_profile_add(&profile.systems, 1, "Combat.Projectiles.Resolve", 0, 9 * MS);
     draw();
-    TIDE_CHECK(line_is(11, "Combat.Projectiles.Resolve", "9.00 ms") && panel().width == 26.0f * 8.0f + 24.0f + 80.0f + 16.0f);
+    TIDE_CHECK(line_is(9, "Combat.Projectiles.Resolve", "9.00 ms") && panel().width == 26.0f * 8.0f + 24.0f + 120.0f + 16.0f);
     const float wider = panel().width;
     tide_profile_add(&profile.systems, 1, "Combat.Hit", 0, 9 * MS);
     draw();
-    TIDE_CHECK(line_is(11, "Combat.Hit", "9.00 ms") && panel().width == wider);
+    TIDE_CHECK(line_is(9, "Combat.Hit", "9.00 ms") && panel().width == wider);
     TIDE_CHECK(text_command("cpu")->a.x == 952.0f - wider + 8.0f); // The labels' column stays where it was
     // Closed, the panel is the one line's: the next opening starts over
     tide_touches_poll(&devices.touchscreen);
@@ -239,21 +246,21 @@ TIDE_TEST(stats_fit_a_small_screen)
     screen = tide_f2(360.0f, 202.0f);
     draw();
     TIDE_REQUIRE(stats.line_count == 7); // The groups' gaps count too
-    TIDE_CHECK(line_is(0, "60 fps", "") && line_is(1, "cpu", "2.1 ms") && line_is(6, "entities", "56"));
+    TIDE_CHECK(line_is(0, "60 fps", "") && line_is(1, "cpu", "2.1 ms") && line_is(6, "threads", "12"));
     tide_rect box = panel();
     TIDE_CHECK(box.y >= 8.0f && box.y + box.height == 194.0f && box.x >= 8.0f);
-    TIDE_CHECK(box.height == 7.0f * 20.0f + 8.0f + 12.0f && !text_command("threads"));
+    TIDE_CHECK(box.height == 7.0f * 20.0f + 2.0f * 8.0f + 12.0f && !text_command("memory"));
 
     // A narrow one: a system's name is cut, and what it took stays
     start(true);
     tide_profile_add(&profile.systems, 1, "Combat.Projectiles.ResolveEveryCollisionThereIs", 0, 9 * MS);
     screen = tide_f2(232.0f, 540.0f);
     draw();
-    TIDE_REQUIRE(stats.line_count == 14);
+    TIDE_REQUIRE(stats.line_count == 12);
     box = panel();
     TIDE_CHECK(box.x == 8.0f && box.width == 216.0f); // No wider than the screen: 200 pixels of text
-    const char *cut = stats.lines[11].label;
-    TIDE_CHECK(strcmp(cut, "Combat.Proje") == 0 && line_is(11, cut, "9.00 ms")); // What the values' column leaves
+    const char *cut = stats.lines[9].label;
+    TIDE_CHECK(strcmp(cut, "Combat.") == 0 && line_is(9, cut, "9.00 ms")); // What the values' column leaves
     TIDE_CHECK(text_command(cut) && text_command(cut)->a.x == 16.0f && text_command("9.00 ms")->a.x == 216.0f - 56.0f);
 
     // Too low for a list at all: the line alone, and still all of it
@@ -273,15 +280,18 @@ TIDE_TEST(stats_render_and_gpu_times_keep_the_three_system_rows)
     values.gpu_known = true;
     values.delay_ticks = 2;
     draw();
-    TIDE_REQUIRE(stats.line_count == 17);
-    // Rendering is a part of a frame's work, listed under it; the GPU's time is beside them
-    TIDE_CHECK(line_is(1, "cpu", "2.1 ms") && line_is(2, "render", "0.32 ms") && line_is(3, "gpu", "1.25 ms"));
+    TIDE_REQUIRE(stats.line_count == 13);
+    // Rendering is a part of a frame's work, listed under it; the GPU's time
+    // is beside them, with the frame's draw calls in its label
+    TIDE_CHECK(line_is(1, "cpu", "2.1 ms") && line_is(2, "render", "0.32 ms") && line_is(3, "gpu (7 draw calls)", "1.25 ms"));
     TIDE_CHECK(stats.lines[2].indent && !stats.lines[1].indent && !stats.lines[3].indent && stats.lines[4].gap);
-    TIDE_CHECK(text_command("render")->a.x == text_command("cpu")->a.x + 12.0f && text_command("gpu")->a.x == text_command("cpu")->a.x);
-    TIDE_CHECK(line_is(14, "Combat.Hit", "1.50 ms") && line_is(15, "Fall", "0.31 ms") && line_is(16, "Move", "0.20 ms"));
+    TIDE_CHECK(text_command("render")->a.x == text_command("cpu")->a.x + 12.0f
+               && text_command("gpu (7 draw calls)")->a.x == text_command("cpu")->a.x);
+    TIDE_CHECK(line_is(4, "ping (delay 2 ticks)", "34 ms") && !text_command("draw calls"));
+    TIDE_CHECK(line_is(10, "Combat.Hit", "1.50 ms") && line_is(11, "Fall", "0.31 ms") && line_is(12, "Move", "0.20 ms"));
     values.remote = true;
     draw();
-    TIDE_CHECK(stats.line_count == 16 && line_is(15, "Move", "0.20 ms"));
+    TIDE_CHECK(stats.line_count == 13 && line_is(4, "delay", "2 ticks") && line_is(12, "Move", "0.20 ms"));
 
     // With no frame's work timed, rendering stands on its own
     values.work_ms = -1.0;
@@ -289,11 +299,11 @@ TIDE_TEST(stats_render_and_gpu_times_keep_the_three_system_rows)
     TIDE_CHECK(line_is(1, "render", "0.32 ms") && !stats.lines[1].indent);
     values.work_ms = 2.14;
 
-    // An unsupported backend doesn't report zero GPU work, and an existing
-    // caller with none of the new fields still has the original lines.
+    // An unsupported backend doesn't report zero GPU work, and the draw calls
+    // have a line of their own there
     values.render_known = values.gpu_known = false;
     draw();
-    TIDE_CHECK(!text_command("render") && !text_command("gpu"));
+    TIDE_CHECK(!text_command("render") && !text_command("gpu (7 draw calls)") && line_is(2, "draw calls", "7"));
     tide_draw_free(&list);
 }
 
@@ -301,7 +311,7 @@ TIDE_TEST(stats_system_times_average_measurements_and_keep_their_rows)
 {
     start(true);
     draw();
-    TIDE_CHECK(line_is(11, "Combat.Hit", "1.50 ms") && line_is(12, "Fall", "0.31 ms") && line_is(13, "Move", "0.20 ms"));
+    TIDE_CHECK(line_is(9, "Combat.Hit", "1.50 ms") && line_is(10, "Fall", "0.31 ms") && line_is(11, "Move", "0.20 ms"));
 
     // Two ticks in one frame, no tick in another: average measured runs, rather
     // than frames or the last tick. Until half a second, values and rows stay.
@@ -312,7 +322,7 @@ TIDE_TEST(stats_system_times_average_measurements_and_keep_their_rows)
     tide_profile_add(&profile.systems, 3, "Move", 0, MS);
     tide_stats_collect(&stats, &profile, 0.1);
     draw_only();
-    TIDE_CHECK(line_is(11, "Combat.Hit", "1.50 ms") && line_is(12, "Fall", "0.31 ms"));
+    TIDE_CHECK(line_is(9, "Combat.Hit", "1.50 ms") && line_is(10, "Fall", "0.31 ms"));
 
     // The F7 profiler clears its totals on its own cadence. Both readers still
     // see their whole interval, including the samples measured before a clear.
@@ -323,19 +333,19 @@ TIDE_TEST(stats_system_times_average_measurements_and_keep_their_rows)
     tide_profile_add(&profile.systems, 3, "Move", 0, MS);
     tide_stats_collect(&stats, &profile, 0.1);
     draw_only();
-    TIDE_CHECK(line_is(11, "Combat.Hit", "1.50 ms"));
+    TIDE_CHECK(line_is(9, "Combat.Hit", "1.50 ms"));
     tide_stats_collect(&stats, &profile, 0.3); // No tick in this frame
     draw_only();
     // Fall is the slowest now, and each system keeps its row all the same: a
     // reader finds a system where it was, and reads its number there
-    TIDE_CHECK(line_is(11, "Combat.Hit", "3.00 ms") && line_is(12, "Fall", "5.67 ms") && line_is(13, "Move", "1.00 ms"));
+    TIDE_CHECK(line_is(9, "Combat.Hit", "3.00 ms") && line_is(10, "Fall", "5.67 ms") && line_is(11, "Move", "1.00 ms"));
     TIDE_CHECK(profile.systems.items[0].total == 1.0); // Stats didn't clear the profiler's data
 
     // Half a second with no ticks keeps the last measurements, without
     // treating each frame as another run of the last tick's timings.
     tide_stats_collect(&stats, &profile, 0.5);
     draw_only();
-    TIDE_CHECK(line_is(11, "Combat.Hit", "3.00 ms") && line_is(12, "Fall", "5.67 ms"));
+    TIDE_CHECK(line_is(9, "Combat.Hit", "3.00 ms") && line_is(10, "Fall", "5.67 ms"));
 
     // A system that joins the three takes the row of the one it replaces
     tide_profile_add(&profile.systems, 0, "Fall", 0, 0);
@@ -344,13 +354,13 @@ TIDE_TEST(stats_system_times_average_measurements_and_keep_their_rows)
     tide_profile_add(&profile.systems, 3, "Move", 0, MS);
     tide_stats_collect(&stats, &profile, 0.5);
     draw_only();
-    TIDE_CHECK(line_is(11, "Combat.Hit", "3.00 ms") && line_is(12, "Land", "2.00 ms") && line_is(13, "Move", "1.00 ms"));
+    TIDE_CHECK(line_is(9, "Combat.Hit", "3.00 ms") && line_is(10, "Land", "2.00 ms") && line_is(11, "Move", "1.00 ms"));
 
     // A measured run below the clock's resolution is still a real sample.
     tide_profile_add(&profile.systems, 2, "Land", 0, 0);
     tide_stats_collect(&stats, &profile, 0.5);
     draw_only();
-    TIDE_CHECK(stats.slow_count == 1 && line_is(11, "Land", "0.00 ms"));
+    TIDE_CHECK(stats.slow_count == 1 && line_is(9, "Land", "0.00 ms"));
     tide_draw_free(&list);
 }
 
@@ -366,32 +376,32 @@ TIDE_TEST(stats_system_times_restart_for_closed_drawers_matches_and_builds)
     stats.open = true;
     tide_stats_collect(&stats, &profile, 0.0);
     draw_only();
-    TIDE_CHECK(stats.slow_count == 0 && stats.line_count == 11);
+    TIDE_CHECK(stats.slow_count == 0 && stats.line_count == 9);
     tide_profile_add(&profile.systems, 0, "Fall", 0, 2 * MS);
     tide_stats_collect(&stats, &profile, 0.5);
     draw_only();
-    TIDE_CHECK(stats.slow_count == 1 && line_is(11, "Fall", "2.00 ms"));
+    TIDE_CHECK(stats.slow_count == 1 && line_is(9, "Fall", "2.00 ms"));
 
     // A name changed, with the same number of systems: the old ranking goes
     // immediately, then the replacement's actual measurements are averaged.
     tide_profile_add(&profile.systems, 0, "Wind", 0, 4 * MS);
     tide_stats_collect(&stats, &profile, 0.1);
     draw_only();
-    TIDE_CHECK(stats.slow_count == 0 && stats.line_count == 11);
+    TIDE_CHECK(stats.slow_count == 0 && stats.line_count == 9);
     tide_profile_add(&profile.systems, 0, "Wind", 0, 2 * MS);
     tide_stats_collect(&stats, &profile, 0.4);
     draw_only();
-    TIDE_CHECK(line_is(11, "Wind", "3.00 ms"));
+    TIDE_CHECK(line_is(9, "Wind", "3.00 ms"));
 
     // A count changed: all of the profile's counters start over.
     tide_profile_count(&profile.systems, 1);
     tide_profile_add(&profile.systems, 0, "Rain", 0, 5 * MS);
     tide_stats_collect(&stats, &profile, 0.5);
     draw_only();
-    TIDE_CHECK(stats.slow_count == 1 && line_is(11, "Rain", "5.00 ms"));
+    TIDE_CHECK(stats.slow_count == 1 && line_is(9, "Rain", "5.00 ms"));
     tide_stats_collect(&stats, NULL, 0.5); // No match
     draw_only();
-    TIDE_CHECK(stats.slow_count == 0 && stats.line_count == 11);
+    TIDE_CHECK(stats.slow_count == 0 && stats.line_count == 9);
     tide_stats_collect(&stats, &profile, 0.0);
     tide_profile_add(&profile.systems, 0, "Rain", 0, MS);
     tide_stats_collect(&stats, &profile, 0.5);
@@ -480,7 +490,7 @@ TIDE_TEST(stats_key_opens_and_closes_them)
     tide_touches_poll(&devices.touchscreen);
     tide_pointer_poll(&devices, false);
     TIDE_CHECK(frame(false, true) == 0 && !stats.open);
-    TIDE_CHECK(frame(true, true) == FLIPPED && stats.open && stats.line_count == 14); // The list is there that frame
+    TIDE_CHECK(frame(true, true) == FLIPPED && stats.open && stats.line_count == 12); // The list is there that frame
     TIDE_CHECK(frame(true, true) == 0 && stats.open); // Held: once
     TIDE_CHECK(frame(false, true) == 0 && stats.open);
     TIDE_CHECK(frame(true, true) == FLIPPED && !stats.open && stats.line_count == 1);
@@ -499,7 +509,7 @@ TIDE_TEST(stats_click_opens_them_and_is_never_the_games)
     TIDE_CHECK(tide_stats_pressed(&stats) && stats.hovered && gui.active == 0);
     TIDE_CHECK(mouse_frame(920, 516, left, true) == 0);
     TIDE_CHECK(mouse_frame(920, 516, left, false) == FLIPPED); // Let go on it: a click
-    TIDE_CHECK(stats.open && stats.line_count == 14);
+    TIDE_CHECK(stats.open && stats.line_count == 12);
     TIDE_CHECK(mouse_frame(920, 516, left, false) == 0 && !tide_stats_pressed(&stats));
     // The same place closes it again
     TIDE_CHECK(mouse_frame(920, 516, left, true) == 0);
