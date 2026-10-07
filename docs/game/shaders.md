@@ -1,6 +1,6 @@
 # Frags and verts
 
-A mesh's pixels and vertices can run code of yours on the GPU, written in Tide: a `frag` runs once for each pixel a mesh covers, and a `vert` once for each of its vertices. They're declarations, like [views](./views.md), and a `Draw.Mesh` or `Draw.Mesh` names them:
+A mesh's pixels and vertices can run code of yours on the GPU, written in Tide: a `frag` runs once for each pixel a mesh covers, and a `vert` once for each of its vertices. They're declarations, like [views](./views.md), and a `Draw.Mesh` names them:
 
 ```csharp
 struct BoxVertex
@@ -47,7 +47,7 @@ A mesh's vertices are a list of a struct, and the struct can be yours:
 - It has a `position`: a `float2` makes a 2D mesh, drawn through the 2D camera in order with the other Draw calls, and a `float3` a 3D one, which `Draw.Mesh` places with a transform.
 - Its other fields are whatever the mesh needs: floats, ints, their vectors and colors, 12 fields at most. The GPU reads them from the list as they are, so a vertex costs what its struct does: a struct with only a `position` is 12 bytes a vertex.
 
-`Draw.Mesh` and `Draw.Mesh` take a list of it, with or without a vert and a frag:
+`Draw.Mesh` takes a list of it, with or without a vert and a frag:
 
 ```csharp
 Draw.Mesh(vertices, indices);                           // 2D
@@ -189,7 +189,7 @@ After the vertex, and what each writes (a frag's color, the structs a vert hands
 - A [`local` field](./local-state.md) of the match's component or singleton is read like any other: `box.highlight`, which a view set for the entity under the mouse.
 - With [`Draw.Instanced`](#instances-from-a-list), an ordinary struct parameter takes the current item of the instance list. It is read-only too. (A frag's struct of a type its draw's vert writes is [the vert's](#from-a-vert-to-its-frag) instead.)
 - An ordinary struct parameter also takes [the values a draw gives](#values-for-one-draw) after its vert and frag: `Draw.Blit(source, destination, Blur, BlurStep { along = float2(1, 0) })`.
-- A read-only `Texture` parameter receives the explicit image passed to either namespace's `Mesh` or `Instanced` or [`Draw.Blit`](./views.md#targets-and-post-processing). Each stage takes at most one; when both stages take it, they receive the same source. `source.Sample(vertex.uv[, Filter.Point[, Wrap.Repeat]])` uses the same top-left UVs as grid sampling. Local component and singleton `Texture` fields can be sampled too.
+- A read-only `Texture` parameter receives the explicit image passed to `Draw.Mesh`, `Draw.Instanced`, a target's `Mesh` or `Instanced`, or [`Draw.Blit`](./views.md#targets-and-post-processing). Each stage takes at most one; when both stages take it, they receive the same source. `source.Sample(vertex.uv[, Filter.Point[, Wrap.Repeat]])` uses the same top-left UVs as grid sampling. Local component and singleton `Texture` fields can be sampled too.
 
 The view needn't take them itself. It has to run for entities that have the components, so `with Box` is enough, and it's an error at the mesh draw when it doesn't:
 
@@ -406,6 +406,66 @@ The scene below does it. **Lamp** turns the lamp, **Soft edges** takes four comp
 - **A target with pixels of its own** (`RenderTarget(1024, 1024, 1, ...)`) casts the same shadows on every display. The fewer pixels it has across what the lamp sees, the blockier a shadow's edge.
 - **The target that's read isn't the one drawn into.** A draw into a target that reads that target's depth is passed by, with a line that says so.
 - **The target that's read has no `samples`.** A target made with [`samples`](./views.md#smooth-edges) keeps several depths a pixel, which no frag reads: a draw that reads its depth is passed by the same way.
+
+## Skybox and reflections
+
+A `Cubemap` is six square images, the faces of a cube, which a frag reads by a direction from the cube's middle: the color of whatever is that way. It's how a sky is drawn, and what a mirror reads.
+
+```csharp
+asset Cubemap sky = "art/sky_??.png";
+
+frag Sky(Corner corner, out Color color)
+{
+    color = sky.Sample(corner.position);
+}
+```
+
+- **`Sample(direction)`** takes a `float3` of any length, in the world's axes. One face goes on in the next, so there's no edge, and nothing to [wrap](./views.md#past-the-edges).
+- **`Sample(direction, filter)`** says how it's read between its pixels, written there like a texture's: `Filter.Bilinear` when left out, `Filter.Point` for the nearest pixel, and `Filter.Trilinear` between its [smaller images](#textures) too, in a frag, of a direction the frag can work out as it starts.
+- **The cube is an asset by its name,** or a field of a component or a singleton the frag takes, where a view put one. Verts read one too. Each way a frag reads one is one of its draw's [8 textures](#what-the-gpu-runs).
+- A cube that was never set reads as black.
+
+There are two kinds, and a frag reads both the same way.
+
+**An asset's** is six files that a glob matches, each named for its face by how its name ends before the extension: `px`, `nx`, `py`, `ny`, `pz` and `nz`, the faces `+x`, `-x`, `+y`, `-y`, `+z` and `-z` point at. Each is a PNG, a square, and all six are one size (see [Assets](./assets.md#cubemaps)).
+
+**One a view draws into** is `RenderTarget.Cube(size)`: six images of `size` pixels a side, each a [render target](./views.md#targets-and-post-processing) to draw into.
+
+```csharp
+local singleton Room { Cubemap around; bool made; }
+
+view Reflect(mut Room room)
+{
+    if (!room.made) room.around = RenderTarget.Cube(256);
+    room.made = true;
+    for (var face = 0; face < 6; face++)
+    {
+        var into = room.around.faces[face];
+        into.SetCamera(float3(0), Facing(face), 90);
+        into.Mesh(corners, faces, transform, Look);
+    }
+}
+```
+
+- **`cube.faces[0]` to `cube.faces[5]`** are `RenderTarget`s, in the order `+x`, `-x`, `+y`, `-y`, `+z`, `-z`. Each has everything a target has: its own camera, clip and settings, `Clear`, `Mesh`, `Instanced` and the rest, and depth of its own.
+- **A face is what a camera at the cube's middle sees along the face's axis,** with a field of view of 90: `+y` is up for the four around, and for the one above and the one below, `-z` and `+z`. That's six rotations, which the example below has as `Facing`.
+- `RenderTarget.Cube(size, Format.Rgba16f)` holds floats, which keep what's brighter than 1, where the device draws into them.
+- Its size is in pixels, whatever the display. `cube.Resize(size)` gives it another, with empty images, and `cube.Dispose()` lets it go. Copies share it, as a target's do.
+- **A draw into a face doesn't read that face's cube.** It's passed by, with a line that says so. What reflects itself in itself takes two cubes.
+- A face has no `color` or `depth` of its own to hand out: the cube is what's read.
+
+The scene below has both. The sky is the asset, drawn on a ball around the camera. The ball in the middle reads a cube that's drawn again each frame from where it is: the sky and the three moons, a face at a time. **Reflect the moons** switches it to the sky's own files, which have no moons in them. Drag to look around.
+
+::: tide-example skybox A sky, and a ball that reflects what's around it
+
+<<< @/examples/skybox.tide
+
+:::
+
+- **The sky is a ball around the eye,** drawn from inside (`Cull.Front`) and with `Depth.None`, so everything else is in front of it. Its frag reads the cube towards each corner's own position.
+- **A reflection is `Math.Reflect`:** the way from the eye to the pixel, bounced off the pixel's normal, is the way the mirror reads.
+- **Six passes a frame is what a live reflection costs.** A cube that only holds what doesn't move is drawn once and kept: its images stay from frame to frame, like any target's.
+- **`Filter.Trilinear` reads a cube's smaller images,** which the renderer makes of what was last drawn into it when a draw reads them. That's what keeps a reflection of something far away from shimmering. There's no choosing the level yet, so a rough surface's blurred reflection isn't there.
 
 ## Where the pixel is
 

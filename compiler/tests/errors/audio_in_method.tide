@@ -1,0 +1,16 @@
+// expect: Audio can only be used in local code, and in functions it calls
+asset Clip beep = "../e2e/assets/beep.wav";
+
+struct Alarm
+{
+    int rings;
+
+    void Ring()
+    {
+        Audio.Play(beep);
+    }
+}
+
+scene Main
+{
+}

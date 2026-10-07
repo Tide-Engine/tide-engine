@@ -1,0 +1,5 @@
+// expect: Sample reads a Cubemap on the GPU: in a frag or a vert
+// Sample is the GPU's
+scene Main { }
+local singleton Room { Cubemap reflection; RenderTarget side; List<Vertex3> ball; }
+view Show(Room room) { var c = room.reflection.Sample(float3(0, 1, 0)); }

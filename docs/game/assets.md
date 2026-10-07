@@ -54,6 +54,21 @@ view Show(mut Player player)
 - What a field keeps of `hero` or of `run[2]` is that image as the files have it now: under `tide run`, a saved picture shows through the copies a game kept, as it does through `hero` itself.
 - How it's sampled can be said once, on its declaration: `[Filter(Filter.Point), Wrap(Wrap.Repeat)]` before the asset (see [Saying it once, on the texture](./views.md#saying-it-once-on-the-texture)). The `Texture` carries it: what a field keeps of `hero` is sampled as `hero` is.
 
+## Cubemaps
+
+A sky or a room's surroundings is six images, the faces of a cube, which a frag reads by a direction (see [Skybox and reflections](./shaders.md#skybox-and-reflections)). That's a `Cubemap`, and its path is a glob that matches the six files:
+
+```csharp
+asset Cubemap sky = "art/sky_??.png";
+```
+
+- **Each file is named for its face** by how its name ends before the extension: `px` and `nx` are the faces `+x` and `-x` point at, `py` and `ny` the ones above and below, `pz` and `nz` the ones ahead and behind. `sky_px.png`, `px.png` and `dusk-PX.png` are all the first.
+- **Each is a face as it's seen from the cube's middle,** the way a picture is: `+y` is up for the four around, with `+x` to the right of `+z`. The one above has `-z` at its top, and the one below `+z`.
+- Each is a PNG, a square, and all six are one size. A file that's none of the six, a face that's missing or there twice, and a size that differs are errors at the path, which name the file.
+- A file is in the pack once, as any is: a face that's also an `asset Texture` shares its pixels.
+- It's a value, like a `Texture`: a field or a local holds one, a function takes one, and a frag samples one by its name, `sky.Sample(direction)`. It's this machine's, so match code can't name one.
+- No list or map of cubes yet, and no `[Filter]` on one: a cube's filter is said where it's sampled.
+
 ## Paths
 
 A path is relative to the `.tide` file that names it, whatever that file's namespace: there's no assets folder and no root. A package's files name files beside its own code the same way. Forward slashes, on every platform.

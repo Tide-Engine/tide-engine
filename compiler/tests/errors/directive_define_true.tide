@@ -1,0 +1,3 @@
+// expect: 'true' is a condition's own word, so no symbol can have the name
+#define true
+scene Main { }

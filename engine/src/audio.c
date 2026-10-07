@@ -3,7 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/pack.h"
 #include "tide/page.h"
+#include "tide/wav.h"
 
 static uint32_t grown(const uint32_t capacity, const uint32_t least)
 {
@@ -73,6 +75,7 @@ void tide_audio_free(tide_audio_frame *f)
 
 void tide_audio_play(tide_audio_frame *f, const tide_clip clip, const float volume, const float pitch)
 {
+    if (!f) return;
     tide_voice *v = add_voice(f);
     v->clip = clip;
     v->playing = true;
@@ -83,6 +86,7 @@ void tide_audio_play(tide_audio_frame *f, const tide_clip clip, const float volu
 void tide_audio_play_at(tide_audio_frame *f, const tide_clip clip, const tide_float3 position, const float volume,
                         const float pitch)
 {
+    if (!f) return;
     tide_voice *v = add_voice(f);
     v->clip = clip;
     v->playing = true;
@@ -94,6 +98,7 @@ void tide_audio_play_at(tide_audio_frame *f, const tide_clip clip, const tide_fl
 
 void tide_audio_voice(tide_audio_frame *f, const tide_voice *voice)
 {
+    if (!f) return;
     tide_voice *v = add_voice(f);
     *v = *voice;
     if (v->bus >= TIDE_AUDIO_BUSES) v->bus = 0;
@@ -102,6 +107,7 @@ void tide_audio_voice(tide_audio_frame *f, const tide_voice *voice)
 
 void tide_audio_set_listener(tide_audio_frame *f, const tide_float3 position, const tide_quaternion rotation)
 {
+    if (!f) return;
     f->listener_position = position;
     f->listener_rotation = rotation;
     f->listener_set = true;
@@ -109,18 +115,68 @@ void tide_audio_set_listener(tide_audio_frame *f, const tide_float3 position, co
 
 void tide_audio_set_falloff(tide_audio_frame *f, const float near, const float far)
 {
+    if (!f) return;
     f->falloff_near = near;
     f->falloff_far = far;
 }
 
 void tide_audio_set_bus_volume(tide_audio_frame *f, const uint32_t bus, const float volume)
 {
-    if (bus < TIDE_AUDIO_BUSES) f->bus_volume[bus] = volume;
+    if (f && bus < TIDE_AUDIO_BUSES) f->bus_volume[bus] = volume;
 }
 
 void tide_audio_set_bus_effect(tide_audio_frame *f, const uint32_t bus, const tide_audio_effect *effect)
 {
-    if (bus >= TIDE_AUDIO_BUSES) return;
+    if (!f || bus >= TIDE_AUDIO_BUSES) return;
     f->bus_effect[bus] = *effect;
     f->bus_knobs_at[bus] = copy_knobs(f, &f->bus_effect[bus]);
+}
+
+// ---------------------------------------------------------------------------
+// The pack's clips, decoded
+
+// A file's samples, by what's in the file: two declarations of one file are
+// one entry, and a file edited under `tide run` is another beside it.
+typedef struct decoded_clip {
+    uint64_t version;
+    tide_sound sound;
+} decoded_clip;
+
+static struct {
+    decoded_clip *items;
+    uint32_t count, capacity;
+} clips;
+
+tide_clip tide_clip_of(const tide_clip_ref ref)
+{
+    const uint8_t *bytes;
+    uint32_t size;
+    uint64_t version;
+    if (!ref.name || !tide_pack_clip_find(ref.name, &bytes, &size, &version)) return (tide_clip){.name = ref.name};
+    decoded_clip *d = NULL;
+    for (uint32_t i = 0; i < clips.count; i++) {
+        if (clips.items[i].version == version) {
+            d = &clips.items[i];
+            break;
+        }
+    }
+    if (!d) {
+        if (clips.count == clips.capacity) {
+            const uint32_t c = clips.capacity ? clips.capacity * 2 : 16;
+            clips.items = tide_realloc(clips.items, clips.capacity * sizeof *clips.items, c * sizeof *clips.items);
+            clips.capacity = c;
+        }
+        d = &clips.items[clips.count++];
+        d->version = version;
+        if (!tide_wav_decode(bytes, size, &d->sound)) d->sound = (tide_sound){0}; // Checked as the game was built: a pack by hand
+    }
+    return (tide_clip){.samples = d->sound.samples, .frames = d->sound.frames, .channels = d->sound.channels,
+                       .rate = d->sound.rate, .id = version, .name = ref.name};
+}
+
+void tide_clips_free(void)
+{
+    for (uint32_t i = 0; i < clips.count; i++) tide_sound_free(&clips.items[i].sound);
+    free(clips.items);
+    memset(&clips, 0, sizeof clips);
 }

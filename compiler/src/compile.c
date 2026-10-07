@@ -42,6 +42,12 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
     diag_reset();
     diag_phase(NULL);
     program *prog = program_new();
+    // What every file's #if conditions read as defined: the build's own symbols, and its packages
+    lex_symbols_reset();
+    for (int i = 0; i < opts->define_count; i++) lex_define(opts->defines[i]);
+    for (int i = 0; i < count; i++) {
+        if (inputs[i].package) lex_define_package(inputs[i].package);
+    }
     for (int i = 0; i < count; i++) {
         source *src = NEW(source);
         src->path = inputs[i].path;

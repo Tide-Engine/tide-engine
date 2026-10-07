@@ -43,6 +43,7 @@ typedef struct gl_target {
     GLuint sampled[TIDE_GPU_MAX_COLORS], sampled_depth;
     GLuint resolved[TIDE_GPU_MAX_COLORS];
     bool bytes;     // Its first color image is 4 bytes a pixel: what's read back
+    bool face;      // Its color image is a cube's face (gl_cube_face), which isn't its own to free or to hand out
     tide_gpu_target_format format; // What it was made to hold, which the pipelines that draw into it are made for
     int width, height;
 } gl_target;
@@ -56,6 +57,8 @@ typedef struct gl_texture {
     uint8_t format; // tide_gpu_format
     bool floats;    // Its pixels are floats: one of ours of TIDE_GPU_R16F, or a target's float image
     bool mipped;    // It has its smaller images (gl_mipmaps): without them, a sampler that reads them reads nothing
+    bool cube;      // Six faces of `width` a side (gl_cube): bound as a cube, and sampled as one
+    bool asked_floats; // A cube's: it was asked for floats, whatever the device gave it, which is the kind its faces' targets are
     int32_t width, height;
 } gl_texture;
 
@@ -269,6 +272,35 @@ static void gl_texture_write(const tide_gpu_id texture, const void *pixels)
 static void gl_texture_free(const tide_gpu_id texture)
 {
     glDeleteTextures(1, &texture);
+    if (texture < texture_names) textures[texture] = (gl_texture){0}; // The name may be a texture of another kind next
+}
+
+static bool gl_float_targets(void);
+
+// A cube's faces are OpenGL's own six, in its order, and its rows are an
+// uploaded image's: the first is the face's top as it's seen from inside.
+static tide_gpu_id gl_cube(const tide_gpu_color color, const int size, const void *const *faces)
+{
+    const bool floats = color == TIDE_GPU_COLOR_FLOAT && gl_float_targets();
+    GLuint texture = 0;
+    glGenTextures(1, &texture);
+    textures = room(textures, &texture_names, texture, sizeof(gl_texture));
+    textures[texture] = (gl_texture){.format = TIDE_GPU_RGBA8, .floats = floats, .cube = true, .asked_floats = color == TIDE_GPU_COLOR_FLOAT,
+                                   .width = size, .height = size};
+    glActiveTexture(GL_TEXTURE0 + TIDE_GPU_MAX_TEXTURES);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, texture);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    for (uint32_t face = 0; face < TIDE_GPU_CUBE_FACES; face++) {
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, floats ? GL_RGBA16F : GL_RGBA8, size, size, 0, GL_RGBA,
+                     floats ? GL_HALF_FLOAT : GL_UNSIGNED_BYTE, faces && !floats ? faces[face] : NULL);
+    }
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+    return texture;
 }
 
 static GLuint compile(const char *name, const GLenum kind, const char *source)
@@ -428,8 +460,15 @@ static void gl_mipmaps(const tide_gpu_id texture)
     if (!texture || texture >= texture_names) return;
     gl_texture *t = &textures[texture];
     if (t->floats && !gl_float_targets()) return;
-    bind_texture(texture);
-    glGenerateMipmap(GL_TEXTURE_2D);
+    if (t->cube) {
+        glActiveTexture(GL_TEXTURE0 + TIDE_GPU_MAX_TEXTURES);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, texture);
+        glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+    } else {
+        bind_texture(texture);
+        glGenerateMipmap(GL_TEXTURE_2D);
+    }
     t->mipped = true;
 }
 
@@ -571,6 +610,42 @@ static tide_gpu_id gl_target_make(const tide_gpu_target_format format, const int
     return place + 1u;
 }
 
+// A cube's face as a target: a framebuffer of the face and a depth of its own.
+static tide_gpu_id gl_cube_face(const tide_gpu_id cube, const uint32_t face)
+{
+    uint32_t place = 0;
+    while (place < target_count && targets[place].framebuffer) place++;
+    if (place == target_count) {
+        targets = tide_realloc(targets, target_count * sizeof(gl_target), (target_count + 1u) * sizeof(gl_target));
+        target_count++;
+    }
+    const gl_texture *of = &textures[cube];
+    gl_target *t = &targets[place];
+    // The kind is the one it was asked for: a cube of floats on a device with none is bytes, as a target's float image is
+    *t = (gl_target){.width = of->width, .height = of->height, .color_count = 1, .drawn = 1, .samples = 1, .face = true,
+                     .bytes = !of->floats, .format = tide_gpu_target_with(TIDE_GPU_TARGET_DEPTH, of->asked_floats ? TIDE_GPU_COLOR_FLOAT
+                                                                                                                 : TIDE_GPU_COLOR_BYTES)};
+    t->colors[0] = cube;
+    glGenFramebuffers(1, &t->framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, t->framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + (face < TIDE_GPU_CUBE_FACES ? face : 0),
+                           cube, 0);
+    glGenTextures(1, &t->depth);
+    bind_texture(t->depth);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, t->width, t->height, 0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, t->depth, 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        fprintf(stderr, "tide: no framebuffer to render a cube's face in\n");
+        abort();
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    return place + 1u;
+}
+
 // A target is textures of its size.
 static int gl_target_limit(void)
 {
@@ -583,7 +658,7 @@ static void gl_target_free(const tide_gpu_id target)
 {
     gl_target *t = &targets[target - 1u];
     glDeleteFramebuffers(1, &t->framebuffer);
-    for (uint32_t i = 0; i < t->color_count; i++) gl_texture_free(t->colors[i]);
+    for (uint32_t i = 0; i < t->color_count && !t->face; i++) gl_texture_free(t->colors[i]);
     if (t->samples > 1u) {
         glDeleteFramebuffers((GLsizei)t->color_count, t->resolved);
         glDeleteRenderbuffers((GLsizei)t->color_count, t->sampled);
@@ -597,7 +672,7 @@ static void gl_target_free(const tide_gpu_id target)
 static tide_gpu_id gl_target_texture(const tide_gpu_id target, const uint32_t color)
 {
     const gl_target *t = &targets[target - 1u];
-    return color < t->color_count ? t->colors[color] : 0;
+    return color < t->color_count && !t->face ? t->colors[color] : 0;
 }
 
 static tide_gpu_id gl_target_depth(const tide_gpu_id target)
@@ -648,6 +723,9 @@ static void gl_begin(const tide_gpu_id target, const bool clear)
         glGenBuffers(1, &uniform_buffer);
         glBindBuffer(GL_UNIFORM_BUFFER, uniform_buffer);
         glBufferData(GL_UNIFORM_BUFFER, TIDE_GPU_MAX_UNIFORMS, NULL, GL_DYNAMIC_DRAW);
+#if !defined(__wasm__) && !defined(__ANDROID__)
+        glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS); // A cube is read across its faces' edges, as the others always read it
+#endif
         static const GLint wraps[WRAPS] = {GL_CLAMP_TO_EDGE, GL_REPEAT, GL_MIRRORED_REPEAT}; // By tide_gpu_wrap
         glGenSamplers(SAMPLERS, samplers);
         for (int filter = 0; filter < FILTERS; filter++) {
@@ -779,6 +857,11 @@ static void gl_sample(const uint32_t slot, const tide_gpu_id texture, tide_gpu_f
     // A target's depth is whole only where its nearest pixel is read, unless it's compared
     const uint8_t read = current->desc.reads[slot];
     glActiveTexture(GL_TEXTURE0 + slot);
+    if (read == TIDE_GPU_READ_CUBE) { // Past no edge: one face goes on in the next
+        glBindTexture(GL_TEXTURE_CUBE_MAP, texture);
+        glBindSampler(slot, sampler_for(filter, TIDE_GPU_WRAP_CLAMP));
+        return;
+    }
     glBindTexture(GL_TEXTURE_2D, texture);
     glBindSampler(slot, read == TIDE_GPU_READ_COMPARE ? samplers[SAMPLE_COMPARED] :
                         read == TIDE_GPU_READ_DEPTH ? sampler_for(TIDE_GPU_FILTER_NEAREST, TIDE_GPU_WRAP_CLAMP) : sampler_for(filter, wrap));
@@ -842,6 +925,8 @@ const tide_gpu tide_gpu_gl = {
     .texture = gl_texture_make,
     .texture_write = gl_texture_write,
     .texture_free = gl_texture_free,
+    .cube = gl_cube,
+    .cube_face = gl_cube_face,
     .mipmaps = gl_mipmaps,
     .pipeline = gl_pipeline_make,
     .pipeline_free = gl_pipeline_free,

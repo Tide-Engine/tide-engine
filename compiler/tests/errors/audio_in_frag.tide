@@ -1,0 +1,17 @@
+// expect: a frag runs on the GPU, for each pixel, so it can't play sounds
+asset Clip beep = "../e2e/assets/beep.wav";
+
+struct Corner
+{
+    float2 position;
+}
+
+frag Loud(Corner corner, out Color color)
+{
+    Audio.Play(beep);
+    color = Color.white;
+}
+
+scene Main
+{
+}
