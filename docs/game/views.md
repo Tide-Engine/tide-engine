@@ -92,6 +92,46 @@ A `Format.Rgba16f` image is read as it was written: `Sample` gives the numbers b
 Nearly every machine does. An old phone, or an old browser on WebGL, may not: there a `Format.Rgba16f` image is made as a `Format.Rgba8` one, and the engine says so once, in the game's output. The game runs, with what it draws there kept from 0 to 1: light stops at white, and what's under 0 is 0.
 :::
 
+### Smooth edges
+
+Text and the smooth shapes have smooth edges by themselves. A mesh's triangles don't: each pixel is in a triangle or out of it, so a slanted edge is a staircase. A target made with `samples` draws each of its pixels with that many samples, and a triangle's edge covers some of them, so the pixels along it are part the triangle's color and part what's behind it:
+
+```csharp
+render.scene = RenderTarget.Window(samples: 4);                  // The window's size, 4 samples a pixel
+render.light = RenderTarget.Window(Format.Rgba16f, samples: 4);  // ...after what it holds
+render.card  = RenderTarget(200, 300, samples: 2);               // ...or after a size of its own
+```
+
+`samples` is the last argument, and it's written with its name. It's 1, 2, 4 or 8; 1 is a target that says nothing.
+
+The window itself has none. For a frame with smooth edges, draw the scene into a target of the window's size and bring it to the window:
+
+```csharp
+view Scene(mut Render render)
+{
+    render.scene.Clear(Color.black);
+    render.scene.SetCamera(eye, look, 1.0);
+    render.scene.Mesh(render.crate, render.faces, float4x4.identity);
+}
+
+[After(Scene)]
+view Show(Render render)
+{
+    Draw.Blit(render.scene.color, Draw.window, Copy);  // What its samples came to, one color a pixel
+}
+
+frag Copy(Vertex vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv);
+}
+```
+
+- **Its color is read like any target's.** `target.color` and `target.colors[i]` are what each pixel's samples come to, worked out each time drawing into the target ends. A frag samples them, and a `Draw.Blit` reads them, as it would any other target's.
+- **Its depth can't be read.** A GPU keeps several depths a pixel there, with no one depth for a frag to sample. A draw that reads `target.depth` of a target with samples is passed by, with a line that says so in the game's output. A shadow map, or any depth a frag reads, goes into a target without `samples`. `Format.Depth` with `samples` is an error for the same reason.
+- **It costs memory:** as many colors and depths a pixel as it has samples, plus the color they come to. Four samples at the window's size is about four and a half times a plain target. A frag still runs once for each pixel a triangle covers, so drawing costs little more.
+- **A device may have fewer.** 4 is there on everything Tide draws with, for images of bytes. Where a device hasn't got what's asked, the target is drawn with the most it has under that, and the engine says so once in the game's output. WebGPU has 1 and 4 alone: 2 is 4 there, and 8 is 4.
+- **Everything draws into it** as into any target: shapes, text, meshes, frags, clears, [stencil](#stencil). What's in it persists from frame to frame, like any target's.
+
 ### Several colors
 
 A target holds up to four color images, one for each format it's made with, and a frag writes them all at once: each of its `out Color` parameters goes to the image that's its place among them (see [Frags and verts](./shaders.md#several-outputs)).
@@ -123,7 +163,7 @@ view Make(mut Deferred deferred)
 - **Each output is blended like the pixel's color:** over what's in its own image, as the draw's [blend](#blending) says, by its own alpha, after the draw's [tint](#tints). `Color(x, y, z)` has an alpha of 1, so it replaces what was there, which is what a normal or a place wants.
 - `Format.Depth` is said alone: every target has its depth already, and `target.depth` reads it whatever colors are beside it.
 
-The formats are the constructor's last arguments, after its pixels per unit when it says them: `RenderTarget(1024, 1024, 1, Format.Rgba8, Format.Rgba16f)`.
+The formats are the constructor's last arguments, after its pixels per unit when it says them: `RenderTarget(1024, 1024, 1, Format.Rgba8, Format.Rgba16f)`. Only [`samples`](#smooth-edges) comes after them.
 
 [Frags and verts](./shaders.md#several-outputs) has a scene drawn this way to try: one frag fills three images, and a second lights the window from them.
 
@@ -864,7 +904,7 @@ There's nothing to create, upload or free. The grid is ordinary state: change it
 
 The grid can be local state or the match's, like a canvas each player paints. Views read the match's grids as they are at the latest tick: cells aren't blended.
 
-The argument after the texture says how it's read between pixels: `Filter.Bilinear` blends them, `Filter.Point` takes the nearest, for pixel art. A call that leaves it out reads the texture as the texture says (see [Saying it once](#saying-it-once-on-the-texture)), which is blended unless something said otherwise.
+The argument after the texture says how it's read between pixels: `Filter.Bilinear` blends them, `Filter.Point` takes the nearest, for pixel art, and `Filter.Trilinear` blends them and stays smooth where the texture is drawn smaller than it is (see [Drawn smaller](#drawn-smaller)). A call that leaves it out reads the texture as the texture says (see [Saying it once](#saying-it-once-on-the-texture)), which is blended unless something said otherwise.
 
 - A grid with an open axis has no size, so it's no texture: the mesh draws with its colors alone. Neither is one past 16384 cells a side.
 - How big a texture can be is the GPU's limit: at least 2048 by 2048 wherever Tide runs.
@@ -949,6 +989,22 @@ The quad below has uvs that go three times across its texture and three times do
 - It's how this draw reads the texture, and changes nothing of the image: one grid can be clamped in one draw and repeated in the next. So can a [render target's color](#targets-and-post-processing), and a texture of any size.
 - Blended, a cell at the edge blends with what the wrap says is past it: with `Wrap.Repeat` that's the cell at the opposite edge, which is what makes tiles meet without a seam.
 - `Wrap` is the engine's name: a game's own type or function takes another one, or a namespace.
+
+### Drawn smaller
+
+A texture drawn smaller than it is has several of its pixels under each pixel of the screen. `Filter.Bilinear` reads the ones under the pixel's middle, and skips the rest: a tiled floor seen from far away shimmers as the camera moves, and a big image shown as a thumbnail looks grainy. `Filter.Trilinear` reads all of them:
+
+```csharp
+Draw.Mesh(floor, faces, float4x4.identity, tiles, Filter.Trilinear, Wrap.Repeat);
+```
+
+- The engine keeps smaller copies of the texture for it, each half the size of the last, down to one pixel (its mipmaps), and the GPU blends between the two nearest the size the texture is drawn at. So a pixel is the mean of what it covers.
+- Drawn at its own size or bigger, it's the same as `Filter.Bilinear`.
+- **It's a filter like the others**: a draw's argument, a `Sample`'s in a [frag](./shaders.md#textures), a declaration's `[Filter(Filter.Trilinear)]`, and what a `Texture` carries from there (below).
+- **Nothing to make or keep up to date.** The copies are made the first time a draw reads the texture this way, and again when its pixels changed: a grid whose cells were written, a [render target](#targets-and-post-processing) that was drawn into. A texture no draw reads this way has none.
+- **What it costs**: a third more memory on the GPU for that texture, and making the copies, which is quick for an image that never changes and adds up for a big grid that changes every frame.
+- It's for what's seen at a distance or at many sizes: floors and walls in 3D, a map you zoom out of, a target shown as a thumbnail. Pixel art at its own size wants `Filter.Point`.
+- A `Grid2<float>` has them wherever the device can draw into floats, which is nearly everywhere (see [float images](#what-a-target-holds)); where it can't, it's read as `Filter.Bilinear`.
 
 ### Saying it once, on the texture
 

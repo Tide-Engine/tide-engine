@@ -1416,7 +1416,7 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_COLOR: return "A color: r, g, b and a from 0 to 1. `Color(r, g, b)` or `Color(r, g, b, a)`.";
     case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter[, wrap]])`. A Blit supplies its source to a read-only Texture shader parameter.";
     case TY_DEPTH_TEXTURE: return "A local reference to a render target's depth, `target.depth`, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow wants.";
-    case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Window()` is always the window's size. Each says last what it holds when that isn't one color image: `Format.Depth` is depth alone, and a format for each makes several, `RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)`, which a frag's `out Color` parameters go to in order. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture, `target.colors[1]` its second color image's, and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
+    case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Window()` is always the window's size. `samples: 4`, after everything else, draws each of its pixels with that many samples, which smooths the edges of the triangles drawn into it. Each says last what it holds when that isn't one color image: `Format.Depth` is depth alone, and a format for each makes several, `RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)`, which a frag's `out Color` parameters go to in order. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture, `target.colors[1]` its second color image's, and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
     case TY_RECT: return "A rectangle on the screen, for the GUI: x and y from the top left, y down, then width and height.";
     case TY_STRING: return "Text, written in double quotes.";
     case TY_ACTION: return "Code the caller writes in braces after the call, run with `content();`.";
@@ -1796,7 +1796,9 @@ static const method_form grid_calls[] = {
     {"Clear", "Clear()", "Sets every cell back to zero, keeping the size."},
     {"Sample", "Sample(float2 uv, Filter filter = the grid's, Wrap wrap = the grid's) -> Color",
      "Reads the grid as the texture it is, in a frag or vert: its color at `uv`, from (0, 0) at its first cell to "
-     "(1, 1) past its last, blended between cells (`Filter.Bilinear`) or the nearest cell's (`Filter.Point`). A "
+     "(1, 1) past its last, blended between cells (`Filter.Bilinear`), the nearest cell's (`Filter.Point`), or "
+     "blended between the grid's smaller images too where it's drawn smaller than it is (`Filter.Trilinear`, in a "
+     "frag, of a `uv` the frag can work out as it starts). A "
      "`uv` past 0 or 1 reads the cells at the grid's edge (`Wrap.Clamp`), the grid again (`Wrap.Repeat`), or again "
      "the other way round each time (`Wrap.Mirror`). A Sample that leaves one out has what the grid's declaration "
      "says (`[Filter]`, `[Wrap]`), and blended and clamped without one. A `Grid2<float>` is a texture of one "
@@ -1811,7 +1813,10 @@ static const method_form texture_calls[] = {
      "pixels at its edge (`Wrap.Clamp`), the texture again (`Wrap.Repeat`), or again the other way round each time "
      "(`Wrap.Mirror`). A Sample that leaves the filter or the wrap out reads the texture as it says itself: what "
      "its declaration says (`[Filter]`, `[Wrap]`), or what the draw that gave it says, and blended and clamped with "
-     "neither. Written here, they're fixed for the draw."},
+     "neither. Written here, they're fixed for the draw. `Filter.Trilinear` also reads the texture's smaller "
+     "images (its mipmaps) where it's drawn smaller than it is, so it doesn't shimmer: in a frag, of a `uv` made of "
+     "the frag's parameters, constants and variables that are never assigned again. A vert reads the texture's own "
+     "pixels."},
 };
 
 static const method_form depth_calls[] = {
@@ -2138,7 +2143,7 @@ static void put_samples(const decl *d, const int index, const char *prefix, sb *
         const field *f = &(s->local ? t->local_part : t)->fields.items[s->field];
         static const char *const wraps[] = {"", " (`Wrap.Repeat`)", " (`Wrap.Mirror`)"}; // By its number
         sb_printf(out, "%s`%s" STR_FMT "`%s%s", out->len ? ", " : "", prefix, STR_ARG(f->name),
-                  s->blended ? "" : " (`Filter.Point`)", wraps[s->wrap >= 0 && s->wrap < 3 ? s->wrap : 0]);
+                  s->filter == 0 ? " (`Filter.Point`)" : s->filter == 2 ? " (`Filter.Trilinear`)" : "", wraps[s->wrap >= 0 && s->wrap < 3 ? s->wrap : 0]);
     }
 }
 
@@ -3024,7 +3029,8 @@ static void describe(const occurrence *o, sb *out)
              "commands sent earlier, exactly once."},
             {"Filter", "[Filter(Filter.Point)]",
              "How this texture is read between its cells wherever a draw or a `Sample` doesn't say: `Filter.Point` "
-             "for the nearest cell, `Filter.Bilinear` (what's read without it) for the four around, blended. It goes "
+             "for the nearest cell, `Filter.Bilinear` (what's read without it) for the four around, blended, "
+             "`Filter.Trilinear` for that and between the texture's smaller images where it's drawn smaller. It goes "
              "before an asset that's a `Texture` or a `Grid2<Color>` (alone, or a list or a map of them) and before a "
              "field that's a `Grid2<Color>`, a `Grid2<float>` or a `RenderTarget` (for its color). The `Texture` made "
              "there carries it: one kept in a field or a local, or passed to a function, is sampled the same."},
@@ -8485,7 +8491,7 @@ static const struct {
     {"RenderTarget", {"RenderTarget(float width, float height)", "RenderTarget(float width, float height, float pixelsPerUnit)",
                       "RenderTarget(float width, float height, Format formats...)",
                       "RenderTarget(float width, float height, float pixelsPerUnit, Format formats...)"},
-     "Creates a local image of a positive size in logical pixels, like the window's. Its image has the display's pixels in each, so it's as sharp as the window, or `pixelsPerUnit` of them: with 1, exactly `width` by `height` pixels on any display. It holds one color image beside its depth, or what its formats say, one for each color image, four at the most: `Format.Rgba8` is 4 bytes a pixel and `Format.Rgba16f` four floats, which keep any number. A frag's `out Color` parameters go to them in order, and `target.colors[1]` reads the second. `Format.Depth`, by itself, is depth alone, for a pass whose depth a frag reads afterwards (`target.depth`). Color and depth persist until cleared; copies share it. Dispose it when finished. `RenderTarget.Window()` is one that's always the window's size."},
+     "Creates a local image of a positive size in logical pixels, like the window's. Its image has the display's pixels in each, so it's as sharp as the window, or `pixelsPerUnit` of them: with 1, exactly `width` by `height` pixels on any display. It holds one color image beside its depth, or what its formats say, one for each color image, four at the most: `Format.Rgba8` is 4 bytes a pixel and `Format.Rgba16f` four floats, which keep any number. A frag's `out Color` parameters go to them in order, and `target.colors[1]` reads the second. `Format.Depth`, by itself, is depth alone, for a pass whose depth a frag reads afterwards (`target.depth`). Last, by name, its samples: `RenderTarget(width, height, samples: 4)` draws each pixel with 4 samples (1, 2, 4 or 8; a device with fewer draws it with what it has), which smooths the edges of the triangles drawn into it, for that many times the memory; its color is read as any target's, and its depth isn't a frag's to read. Color and depth persist until cleared; copies share it. Dispose it when finished. `RenderTarget.Window()` is one that's always the window's size."},
     {"PlayerID", {"PlayerID(int index)"}, "A player by index, for local play and tests."},
     {"Random", {"Random(long seed)"}, RANDOM_SEEDED_DOC},
     {"Spawn", {"Spawn(components...)"}, "Creates an entity with these components. It's added at the end of the tick."},
@@ -8641,7 +8647,7 @@ static const struct {
     [MESH_TEXTURE] = {"texture",
                       {"A `Texture`, read at each corner's `uv`: an asset's, a render target's color, or a `Grid2<Color>` or "
                        "`Grid2<float>`, which is one here. A frag or vert with a Texture parameter receives it as its source."}},
-    [MESH_FILTER] = {"filter", {"How the texture is read between cells, `Filter.Bilinear` or `Filter.Point`: the texture's own "
+    [MESH_FILTER] = {"filter", {"How the texture is read between cells, `Filter.Bilinear`, `Filter.Point` or `Filter.Trilinear`: the texture's own "
                                 "where the draw leaves it out."}},
     [MESH_WRAP] = {"wrap",
                    {"What a `uv` past 0 or 1 reads, written after the filter: the cells at the texture's edge (`Wrap.Clamp`), "
@@ -8699,15 +8705,24 @@ static int call_param_names(const expr *call, str *names, const int max)
             if (call->object && call->object->type.kind == TY_RENDER_TARGET) {
                 const method_form *form = find_form(target_calls, sizeof target_calls / sizeof target_calls[0], call->name);
                 if (form) vec_push(list.labels, form->form);
-            } else if (call->object) { // RenderTarget.Window(factor)
+            } else if (call->object && !call->target_samples) { // RenderTarget.Window(factor)
                 builtin_signatures(call->object->name, call->name, collect_label, &list);
             } else {
-                // What it holds comes last, where the call says: the engine's function is another then
-                const bool formatted = call->c_callee && strstr(call->c_callee, "_as") != NULL;
-                vec_push(list.labels, call->args.count == 4   ? "RenderTarget(float width, float height, float pixelsPerUnit, Format format)"
-                                      : call->args.count < 3  ? "RenderTarget(float width, float height)"
-                                      : formatted             ? "RenderTarget(float width, float height, Format format)"
-                                                              : "RenderTarget(float width, float height, float pixelsPerUnit)");
+                // As the call has them: its size, then what it holds, a format for each color image, where it
+                // says, then its samples, where it says those
+                const int own = call->args.count - (call->target_samples ? 1 : 0);
+                sb label = {0};
+                sb_put(&label, call->object ? "RenderTarget.Window(" : "RenderTarget(float width, float height");
+                bool first = call->object != NULL;
+                for (int at = call->object ? 0 : 2; at < own; at++) {
+                    const bool format = call->arg_want.count > at && call->arg_want.items[at].kind == TY_ENUM;
+                    sb_printf(&label, "%s%s", first ? "" : ", ",
+                              format ? "Format format" : call->object ? "float factor" : "float pixelsPerUnit");
+                    first = false;
+                }
+                if (call->target_samples) sb_printf(&label, "%sint samples", first ? "" : ", ");
+                sb_put(&label, ")");
+                vec_push(list.labels, label.data);
             }
             break;
         }

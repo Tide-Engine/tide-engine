@@ -1357,6 +1357,94 @@ static void wraps(void)
     expect(wrapped_commands == 3, "3D meshes are a run while their texture's wrap is the same, and another when it isn't");
 }
 
+// ---------------------------------------------------------------------------
+// A texture drawn smaller than it is, read between its smaller images
+// (TIDE_FILTER_TRILINEAR): a pixel is the mean of what it covers, where one
+// read at its own pixels is whichever of them is under the pixel's middle
+
+// 64 by 64, of stripes 8 pixels apart: red in the columns that start a
+// stripe (the first `lit` of each 8), green in each stripe's first two rows,
+// and blue everywhere. So 8 by 8 of them are (lit / 8, 1 / 4, 1) on the whole.
+static uint8_t striped[64 * 64 * 4];
+static tide_texture striped_texture = {striped, 64, 64, 1};
+
+static void stripe(const int lit)
+{
+    for (int y = 0; y < 64; y++) {
+        for (int x = 0; x < 64; x++) {
+            uint8_t *pixel = &striped[(y * 64 + x) * 4];
+            pixel[0] = x % 8 < lit ? 255 : 0;
+            pixel[1] = y % 8 < 2 ? 255 : 0;
+            pixel[2] = pixel[3] = 255;
+        }
+    }
+    striped_texture.version++;
+}
+
+// All of the striped texture, in a square `size` pixels across from window pixel (x, y).
+static void striped_quad(const float x, const float y, const float size, const tide_filter filter)
+{
+    const tide_float2 top_left = at(x, y), bottom_right = at(x + size, y + size);
+    const tide_vertex vertices[4] = {
+        {top_left, {0, 0}, white},
+        {{bottom_right.x, top_left.y}, {1, 0}, white},
+        {bottom_right, {1, 1}, white},
+        {{top_left.x, bottom_right.y}, {0, 1}, white},
+    };
+    tide_draw_mesh(&list, vertices, 4, quad_indices, 6, &striped_texture, filter);
+}
+
+static void mipmap_scene(void)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    striped_quad(16, 16, 8, TIDE_FILTER_TRILINEAR);  // An eighth of its size: a pixel is 8 by 8 of its own
+    striped_quad(32, 16, 8, TIDE_FILTER_BILINEAR);   // The same, at its own pixels
+    striped_quad(48, 16, 16, TIDE_FILTER_TRILINEAR); // A quarter: a pixel is 4 by 4
+    striped_quad(16, 48, 64, TIDE_FILTER_TRILINEAR); // Its own size: its own pixels
+    // A 3D mesh's, an eighth of its size
+    static const tide_vertex3 corners[4] = {{{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f}, {1, 1, 1, 1}}, {{0.5f, 0.5f, 0.0f}, {1.0f, 0.0f}, {1, 1, 1, 1}},
+                                            {{0.5f, -0.5f, 0.0f}, {1.0f, 1.0f}, {1, 1, 1, 1}}, {{-0.5f, -0.5f, 0.0f}, {0.0f, 1.0f}, {1, 1, 1, 1}}};
+    const tide_mesh mesh = {corners, 4, quad_indices, 6, 2};
+    tide_draw_set_camera_matrices(&list, tide_identity_f4x4(), tide_ortho_f4x4(screen.x / 10.0f, screen.y / 10.0f, 0.3f, 100.0f));
+    tide_draw_mesh_3d(&list, &mesh, tide_trs_f4x4(primitive_at(100, 20, 10), tide_identity_q(), tide_f3_splat(0.8f)),
+                      &striped_texture, TIDE_FILTER_TRILINEAR);
+}
+
+static void mipmaps(void)
+{
+    const tide_color eighth = {0.125f, 0.25f, 1.0f, 1.0f}, twice = {0.25f, 0.25f, 1.0f, 1.0f}, bare = {0.0f, 0.0f, 1.0f, 1.0f};
+    const tide_color quarter_lit = {0.25f, 0.5f, 1.0f, 1.0f}, quarter_dark = {0.0f, 0.0f, 1.0f, 1.0f};
+    const tide_color own = {1.0f, 1.0f, 1.0f, 1.0f}, own_blue = {0.0f, 0.0f, 1.0f, 1.0f};
+    stripe(1);
+    const check checks[] = {
+        {16.5f, 16.5f, eighth, "a texture drawn an eighth of its size, read between its smaller images: the mean of the 8 by 8 a pixel covers"},
+        {20.5f, 19.5f, eighth, "at every pixel"},
+        {23.5f, 23.5f, eighth, "to its last"},
+        {36.5f, 19.5f, bare, "and read at its own pixels beside it, in the same frame: the ones under the pixel's middle"},
+        {48.5f, 16.5f, quarter_lit, "drawn a quarter of its size, the mean of the 4 by 4 that have its stripes"},
+        {49.5f, 17.5f, quarter_dark, "and of the 4 by 4 that have none"},
+        {16.5f, 48.5f, own, "drawn its own size, its own pixels: a stripe"},
+        {19.5f, 51.5f, own_blue, "and between two"},
+        {100.5f, 20.5f, eighth, "a 3D mesh's texture, an eighth of its size"},
+    };
+    // Twice: the second frame draws with the smaller images the first made
+    for (int frame = 0; frame < 2; frame++) {
+        mipmap_scene();
+        check_pixels(checks, (int)(sizeof checks / sizeof checks[0]));
+    }
+    // Other pixels: its smaller images are made again of them
+    stripe(2);
+    const check changed[] = {
+        {16.5f, 16.5f, twice, "a texture whose pixels changed has its smaller images made of them"},
+        {22.5f, 21.5f, twice, "all of them"},
+        {36.5f, 19.5f, bare, "and is still its own pixels where it's read so"},
+        {100.5f, 20.5f, twice, "in a 3D mesh's draw too"},
+    };
+    mipmap_scene();
+    check_pixels(changed, (int)(sizeof changed / sizeof changed[0]));
+}
+
 // Rects side by side, a cell each as a grid's view draws them, leave no gap
 // between them at any scale: not even where their shared edge falls exactly
 // on a row or column of pixel centers, as it does every 8 cells at 3.125
@@ -2976,6 +3064,7 @@ static int frame(void *user, const float seconds)
         primitives();
         shaded();
         wraps();
+        mipmaps();
         smooth_shapes();
         themed_gui();
         tiles_leave_no_gaps();
@@ -2991,6 +3080,7 @@ static int frame(void *user, const float seconds)
     primitives();
     shaded();
     wraps();
+    mipmaps();
     smooth_shapes();
     themed_gui();
     tiles_leave_no_gaps();

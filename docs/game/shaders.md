@@ -301,6 +301,27 @@ Past 0 and 1, `uv` reads what the [wrap](./views.md#past-the-edges) says: the pi
 - One texture can be read several ways in one frag, clamped here and repeated there. Each way counts as one of the 8 textures a draw samples, and the same way twice counts once. A `Sample` that says nothing and one that says the default are two ways for a `Texture` parameter or field, since the texture may say otherwise.
 - A draw gives a texture to a frag that takes one, and none to a frag that doesn't: `Draw.Mesh(corners, faces, models.wood, Shade)` is an error where `Shade` has no `Texture` parameter.
 
+`Filter.Trilinear` reads between the texture's smaller copies too, so it's smooth where the texture ends up [smaller than it is](./views.md#drawn-smaller):
+
+```csharp
+frag Ground(Corner corner, out Color color, Land land)
+{
+    var uv = corner.uv * land.tiling;            // Worked out from what the frag is given
+    color = Color.black;
+    if (corner.height > 0)
+    {
+        color = land.grass.Sample(uv, Filter.Trilinear, Wrap.Repeat);   // In a branch, as any Sample
+    }
+}
+```
+
+The GPU picks which copies to read by how fast the `uv` changes from one pixel to the next, and it only knows that before any branch or loop. So a frag works such a `uv` out a first time as it starts, asks there, and reads with the answer wherever the `Sample` is. You write nothing for it, and the `Sample` goes where it would anyway: in a branch, in a loop, after `pixel.Discard()`. What it asks of you is a `uv` it can work out as it starts:
+
+- **Made of** the frag's parameters (its vertex, what its vert wrote for it, components, singletons, the draw's values, the pixel), constants, `Math`, constructors, your own functions that take everything by value, another texture read at its own pixels, and variables declared with `var` that are never assigned again.
+- **Not of** a variable that changes (`mut var`, one a loop counts): `tiles.Sample(corner.uv + float2(i * 0.01, 0), Filter.Trilinear)` in a loop is an error, which says so. Sample those with `Filter.Bilinear`, or work each `uv` out before the loop.
+- Where the filter is the texture's to say (a frag's `Texture` parameter, a `Texture` field) and the `uv` can't be worked out as the frag starts, the `Sample` reads the texture's own pixels, as `Filter.Bilinear` would, whatever the texture says.
+- A vert has no pixels to compare, so there `Filter.Trilinear` reads the texture's own pixels.
+
 ## A target's depth
 
 A [render target](./views.md#what-a-target-holds) keeps how far the nearest thing drawn at each of its pixels is, and a frag reads that as it reads a color: `target.depth`, a `DepthTexture`, which a view keeps in a field of a singleton or a component the frag takes.
@@ -359,6 +380,7 @@ The scene below does it. **Lamp** turns the lamp, **Soft edges** takes four comp
 - **Compare a little nearer than the pixel is,** `depth - 0.003`: a surface the lamp sees is exactly as far as what's stored there, to the rounding, and would be in its own shadow in stripes. How much it takes goes with how slanted the surface is to the lamp and how few pixels the lamp's image has across what it sees.
 - **A target with pixels of its own** (`RenderTarget(1024, 1024, 1, ...)`) casts the same shadows on every display. The fewer pixels it has across what the lamp sees, the blockier a shadow's edge.
 - **The target that's read isn't the one drawn into.** A draw into a target that reads that target's depth is passed by, with a line that says so.
+- **The target that's read has no `samples`.** A target made with [`samples`](./views.md#smooth-edges) keeps several depths a pixel, which no frag reads: a draw that reads its depth is passed by the same way.
 
 ## Where the pixel is
 
@@ -403,7 +425,7 @@ The camera isn't given: keep where yours is in a singleton, where the view that 
 
 Code for the GPU is ordinary Tide, less what a GPU doesn't have:
 
-- **It has** bools, ints, floats, vectors, quaternions, matrices, colors, enums and structs of those; locals, `if`, `?:`, and `for` loops that count (`for (int i = 0; i < 8; i++)`), with `break` and `continue`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; and sampling a grid, a texture or a target's depth, 8 of them to a draw.
+- **It has** bools, ints, floats, vectors, quaternions, matrices, colors, enums and structs of those; locals, `if`, `?:`, and `for` loops that count (`for (int i = 0; i < 8; i++)`), with `break` and `continue`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; and sampling a grid, a texture or a target's depth, 8 of them to a draw, anywhere in the code: in a branch, in a loop, in a vert.
 - **It doesn't have** lists, maps, text, entities, `this`, spawning and sending, `Draw`, the GUI, `Devices`, `Debug`, C, tasks, errors, or recursion. `while` and `switch` aren't there yet: write `for` with a bound, and `if`.
 
 Each of those is an error where it's written, which says what to do instead. A function a frag calls has to fit too, and the error says which frag reaches it; the same function still runs on the CPU for the code that calls it there.

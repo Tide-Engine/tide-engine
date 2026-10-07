@@ -1269,7 +1269,7 @@ static unsigned declared_sampling_bits(const expr *texture)
 {
     int filter, wrap;
     declared_sampling(texture, &filter, &wrap);
-    return (filter == 0 ? 1u : 0u) | (wrap > 0 ? (unsigned)wrap << 2 : 0u);
+    return (filter == 0 ? 1u : filter == 2 ? 2u : 0u) | (wrap > 0 ? (unsigned)wrap << 2 : 0u);
 }
 
 // A draw's texture: `texture` as the Texture it is, with the filter and the
@@ -2708,14 +2708,23 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e);
 // RenderTarget(width, height, Format.Rgba8, Format.Rgba16f): its color images'
 // formats, the call's last arguments, as C takes several: an array of them,
 // and how many. Writes argument `i` if it's one of them, and says whether.
+// With `samples: n` after them, that's the call's last argument, which C
+// takes after the formats: none of those is no array at all.
 static bool gen_target_format(gen *g, sb *o, const expr *e, const int i)
 {
-    const int from = e->target_formats ? e->args.count - e->target_formats : e->args.count;
+    if (!e->target_formats && !e->target_samples) return false;
+    const int end = e->args.count - (e->target_samples ? 1 : 0); // Past the last format
+    const int from = end - e->target_formats;
     if (i < from) return false;
+    if (i == end) {
+        if (!e->target_formats) sb_put(o, "NULL, 0, ");
+        gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
+        return true;
+    }
     if (i == from) sb_put(o, "(const tide_target_format[]){");
     sb_put(o, "(tide_target_format)");
     gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
-    if (i == e->args.count - 1) sb_printf(o, "}, %d", e->target_formats);
+    if (i == end - 1) sb_printf(o, "}, %d", e->target_formats);
     return true;
 }
 
@@ -15848,8 +15857,9 @@ static void gen_shaders(gen *g)
             else blended |= (unsigned)texture->wrap << (8 + 2 * t); // TIDE_SAMPLING_WRAP
             if (filter_carried) {
                 // Its bit comes with the texture
-            } else if (texture->blended) {
+            } else if (texture->filter) {
                 blended |= 1u << t;
+                if (texture->filter == 2) blended |= 1u << (24 + t); // TIDE_SAMPLING_MIPS
             }
             if (texture->asset && texture->asset->return_type.kind == TY_TEXTURE) { // A Texture asset, by name
                 sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, %s);\n", t, asset_cname(texture->asset));
@@ -15918,6 +15928,8 @@ static void bind_views(const program *prog)
 
 bool codegen(program *prog, const codegen_options *opts)
 {
+    // Filter.Trilinear is a member of the enum only in a game that names it, so the others' C is as it was
+    if (!prog->names_trilinear && prog->filter && prog->filter->members.count > 2) prog->filter->members.count = 2;
     if (opts->info) {
         setting_text(opts->info->title, sizeof opts->info->title, prog->title);
         setting_text(opts->info->app_id, sizeof opts->info->app_id, prog->app_id);

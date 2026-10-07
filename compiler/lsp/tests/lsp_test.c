@@ -1046,6 +1046,38 @@ TIDE_TEST(lsp_wrap)
 #undef WRAP_TYPES
 }
 
+// Filter.Trilinear: a member like the others, on a frag's hover where it samples so, and the error for a uv a
+// frag can't work out as it starts.
+TIDE_TEST(lsp_trilinear)
+{
+    start();
+#define MIP_TYPES                                                                                      \
+    "scene Main { }\n"                                                                                 \
+    "local singleton Art\n{\n    [Filter(Filter.Trilinear)]\n    Grid2<Color> tiles = Grid2(64, 64);\n" \
+    "    Grid2<Color> plain = Grid2(4, 4);\n    List<Vertex> flat;\n}\n"
+#define IN_FRAG(code) MIP_TYPES "frag Tile(Vertex vertex, out Color color, Art art)\n{\n    " code "\n}\n"
+    open_document(MIP_TYPES "frag Ti$le(Vertex vertex, out Color color, Art art)\n{\n"
+                            "    color = art.tiles.Sample(vertex.uv) * art.plain.Sample(vertex.uv, Filter.Trilinear, Wrap.Repeat);\n}\n"
+                            "view V(Art art)\n{\n"
+                            "    Draw.Mesh(art.flat, [0, 1, 2], art.plain, Filter.Trilinear);\n"
+                            "    Draw.Mesh(art.flat, [0, 1, 2], Tile);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *frag = request("textDocument/hover");
+    TIDE_CHECK(has(frag, "`Art.tiles` (`Filter.Trilinear`)") && has(frag, "`Art.plain` (`Filter.Trilinear`) (`Wrap.Repeat`)"));
+    const char *members = complete(IN_FRAG("color = art.plain.Sample(vertex.uv, Filter.$);"));
+    TIDE_CHECK(offers(members, "Point") && offers(members, "Bilinear") && offers(members, "Trilinear"));
+    open_document(IN_FRAG("color = art.plain.Sam$ple(vertex.uv, Filter.Trilinear);"));
+    TIDE_CHECK(has(request("textDocument/hover"), "smaller images too"));
+    // A uv that changes can't be asked about as the frag starts
+    open_document(IN_FRAG("mut var uv = vertex.uv;\n    uv.x += 1;\n    color = art.tiles.Sample(uv);"));
+    TIDE_CHECK(has(last_sent(), "a Sample that's Filter.Trilinear reads where the frag can work out as it starts"));
+    TIDE_CHECK(has(last_sent(), "or sample with Filter.Bilinear here"));
+    open_document(IN_FRAG("mut var uv = vertex.uv;\n    uv.x += 1;\n    color = art.tiles.Sample(uv, Filter.Bilinear);"));
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+#undef IN_FRAG
+#undef MIP_TYPES
+}
+
 // Calls listed with commas before one block: one to a line, each starting where the first does, the brace under them.
 TIDE_TEST(lsp_format_stacked_calls)
 {
@@ -4975,6 +5007,53 @@ TIDE_TEST(lsp_render_target_formats_and_depth)
 
 // A target of several color images, a format each; its `colors`, read one at
 // a time; and a frag's outputs after the pixel's color.
+TIDE_TEST(lsp_render_target_samples)
+{
+    start();
+    static const char types[] = "scene Main { }\nlocal singleton Maps { RenderTarget scene; DepthTexture deep; }\n";
+    char program[2048];
+    snprintf(program, sizeof program, "%sconst int SMOOTH = 4;\nview V(mut Maps maps)\n{\n"
+                                      "    maps.scene = RenderTarget(64, 64, samples: 4);\n"
+                                      "    maps.scene = RenderTarget(64, 64, 1, Format.Rgba8, Format.Rgba16f, samples: SMOOTH);\n"
+                                      "    maps.scene = RenderTarget.Window(samples: 2);\n"
+                                      "    maps.scene = RenderTarget.Window(0.5, Format.Rgba16f, samples: 8);\n"
+                                      "    maps.deep = maps.scene.depth;\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    // What the constructor's help says of them, and the type's
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(64, 64, $\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "samples: 4") && has(last_sent(), "smooths the edges"));
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget.Window($\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget.Window(samples: 4)"));
+    snprintf(program, sizeof program, "%slocal singleton Other { Render$Target scene; }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "samples: 4"));
+
+    // A call that says them names its other arguments as they are: its samples aren't taken for one of them
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(64, 48, 2, Format.Rgba16f, samples: 4);\n"
+                                      "    maps.scene = RenderTarget.Window(0.5, samples: 4);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
+                                   "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":20,\"character\":0}}");
+    TIDE_CHECK(has(hints, "\"label\":\"width:\"") && has(hints, "\"label\":\"pixelsPerUnit:\"") && has(hints, "\"label\":\"factor:\""));
+    TIDE_CHECK(!has(hints, "\"label\":\"samples:\"")); // Written with its name already
+
+    // What's refused, where it's written
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(64, 64, samples: 3);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "samples are 1, 2, 4 or 8, and this says 3"));
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(64, 64, Format.Depth, samples: 4);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "a multisampled target's depth can't be read"));
+    snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget.Window(factor: 0.5);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "without names, but for its samples"));
+}
+
 TIDE_TEST(lsp_render_target_colors_and_frag_outputs)
 {
     start();

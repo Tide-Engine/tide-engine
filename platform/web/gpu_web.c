@@ -42,7 +42,8 @@ TIDE_WEB_IMPORT(gpu_scissor) void tide_web_gpu_scissor(int x, int y, int width, 
 TIDE_WEB_IMPORT(gpu_use) void tide_web_gpu_use(tide_gpu_id pipeline);
 TIDE_WEB_IMPORT(gpu_stencil) void tide_web_gpu_stencil(uint32_t value);
 TIDE_WEB_IMPORT(gpu_uniforms) void tide_web_gpu_uniforms(const void *data, size_t size);
-TIDE_WEB_IMPORT(gpu_sample) void tide_web_gpu_sample(uint32_t slot, tide_gpu_id texture, bool blended, tide_gpu_wrap wrap);
+TIDE_WEB_IMPORT(gpu_sample) void tide_web_gpu_sample(uint32_t slot, tide_gpu_id texture, tide_gpu_filter filter, tide_gpu_wrap wrap);
+TIDE_WEB_IMPORT(gpu_mipmaps) void tide_web_gpu_mipmaps(tide_gpu_id texture);
 TIDE_WEB_IMPORT(gpu_vertices) void tide_web_gpu_vertices(uint32_t slot, tide_gpu_id buffer, size_t offset);
 TIDE_WEB_IMPORT(gpu_indices) void tide_web_gpu_indices(tide_gpu_id buffer, bool wide);
 TIDE_WEB_IMPORT(gpu_draw) void tide_web_gpu_draw(uint32_t first, uint32_t count, uint32_t instances);
@@ -60,6 +61,13 @@ static tide_gpu_id tide_web_gpu_pipeline(const tide_gpu_pipeline_desc *desc)
         tide_web_gpu_pipeline_attribute(desc->attributes[i].slot, desc->attributes[i].format, desc->attributes[i].offset);
     }
     return tide_web_gpu_pipeline_end();
+}
+
+// WebGPU has two sample counts, 1 and 4, for every format here: what asks for
+// more than 1 has 4. A target of depth alone has 1.
+static uint32_t tide_web_gpu_target_samples(const tide_gpu_target_format format)
+{
+    return tide_gpu_target_samples(format) > 1u && tide_gpu_target_colors(format) ? 4u : 1u;
 }
 
 // Every WebGPU draws into floats of 16 bits, blends them and reads them blended.
@@ -81,10 +89,12 @@ const tide_gpu tide_gpu_webgpu = {
     .texture = tide_web_gpu_texture,
     .texture_write = tide_web_gpu_texture_write,
     .texture_free = tide_web_gpu_texture_free,
+    .mipmaps = tide_web_gpu_mipmaps,
     .pipeline = tide_web_gpu_pipeline,
     .pipeline_free = tide_web_gpu_pipeline_free,
     .target = tide_web_gpu_target,
     .target_limit = tide_web_gpu_target_limit,
+    .target_samples = tide_web_gpu_target_samples,
     .float_targets = tide_web_gpu_float_targets,
     .target_texture = tide_web_gpu_target_texture,
     .target_depth = tide_web_gpu_target_depth,

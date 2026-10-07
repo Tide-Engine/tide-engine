@@ -65,6 +65,7 @@ tide_e2e_test(draw_depth) # ...and what 3D meshes do with depth: the setting tha
 tide_e2e_test(draw_cull) # ...and which side of their triangles draws, with the instances a transform mirrors told apart
 tide_e2e_test(draw_stencil) # ...and stencil: Draw's, for 2D and 3D draws alike, said to a renderer once before the draws it's for
 tide_e2e_test(wrap) # What a uv past a texture's edges reads: a mesh draw's wrap after its filter, and a frag's at Sample
+tide_e2e_test(mipmaps) # Filter.Trilinear, wherever a filter is said: what a draw records, and how a frag reads between a texture's smaller images
 tide_e2e_test(assets) # Files a game is built with, read by name: each type, globs, a grid drawn and sampled, match code
 tide_e2e_test(assets_plain) # ...and the same game with none: its world is the same bytes
 tide_e2e_test(asset_textures) # Texture assets, and [Filter] and [Wrap] on a texture's declaration
@@ -74,6 +75,7 @@ tide_e2e_test(render_targets) # Target receivers, explicit Texture sources and d
 tide_e2e_test(render_lifecycle) # Shared target copies, resizing and explicit disposal from local code
 tide_e2e_test(render_depth) # What a target holds, said when it's made, and a target's depth as frags and verts read it
 tide_e2e_test(render_colors) # Targets of several color images, a format each, and frags that write them all
+tide_e2e_test(render_samples) # A target's samples, said by name where it's made and kept in its id through a reload
 tide_e2e_test(ownership) # Views `with ownership` and `without ownership`: this machine's player's entities, and the others
 tide_e2e_test(conditional)
 tide_e2e_test(input_bounds)

@@ -36,6 +36,12 @@ typedef struct gl_target {
     GLuint colors[TIDE_GPU_MAX_COLORS]; // Its color images, in order: none for a target of depth alone
     uint32_t color_count;
     uint32_t drawn; // How many of them the framebuffer's draw buffers name (see draw_into)
+    // A multisampled one's (above 1): the framebuffer is of renderbuffers of that many samples a pixel, its color
+    // images' and its depth's, and each color image, a texture as any target's, is in a framebuffer of its own,
+    // which a pass's end resolves the samples into. It has no depth texture.
+    uint32_t samples;
+    GLuint sampled[TIDE_GPU_MAX_COLORS], sampled_depth;
+    GLuint resolved[TIDE_GPU_MAX_COLORS];
     bool bytes;     // Its first color image is 4 bytes a pixel: what's read back
     tide_gpu_target_format format; // What it was made to hold, which the pipelines that draw into it are made for
     int width, height;
@@ -48,6 +54,8 @@ typedef struct gl_buffer {
 
 typedef struct gl_texture {
     uint8_t format; // tide_gpu_format
+    bool floats;    // Its pixels are floats: one of ours of TIDE_GPU_R16F, or a target's float image
+    bool mipped;    // It has its smaller images (gl_mipmaps): without them, a sampler that reads them reads nothing
     int32_t width, height;
 } gl_texture;
 
@@ -62,16 +70,17 @@ static uint32_t texture_names;
 
 static GLuint upload_vao;     // What index buffers are bound in while they're written, in no pipeline's place
 static GLuint uniform_buffer; // Every pipeline's uniform block, as the last draw's was set
-// How a unit samples the texture it has: the nearest pixel or blended, by
-// each tide_gpu_wrap (sampler_for), and, for a target's depth, compared with
-// the shader's number and those blended. A texture's own way would be the
-// same in every unit that has it.
-enum { WRAPS = TIDE_GPU_WRAP_MIRROR + 1, SAMPLE_COMPARED = 2 * WRAPS, SAMPLERS };
+// How a unit samples the texture it has: by each tide_gpu_filter and each
+// tide_gpu_wrap (sampler_for), and, for a target's depth, compared with the
+// shader's number and those blended. A texture's own way would be the same
+// in every unit that has it.
+enum { WRAPS = TIDE_GPU_WRAP_MIRROR + 1, FILTERS = TIDE_GPU_FILTER_MIPMAPS + 1, SAMPLE_COMPARED = FILTERS * WRAPS, SAMPLERS };
 static GLuint samplers[SAMPLERS];
 
-static GLuint sampler_for(const bool blended, const tide_gpu_wrap wrap)
+static GLuint sampler_for(const tide_gpu_filter filter, const tide_gpu_wrap wrap)
 {
-    return samplers[(blended ? WRAPS : 0) + ((uint32_t)wrap < WRAPS ? (int)wrap : TIDE_GPU_WRAP_CLAMP)];
+    return samplers[((uint32_t)filter < FILTERS ? (int)filter : TIDE_GPU_FILTER_LINEAR) * WRAPS
+                    + ((uint32_t)wrap < WRAPS ? (int)wrap : TIDE_GPU_WRAP_CLAMP)];
 }
 static const gl_pipeline *current;
 static GLenum index_type;
@@ -240,7 +249,7 @@ static tide_gpu_id gl_texture_make(const tide_gpu_format format, const int width
     GLuint texture = 0;
     glGenTextures(1, &texture);
     textures = room(textures, &texture_names, texture, sizeof(gl_texture));
-    textures[texture] = (gl_texture){.format = (uint8_t)format, .width = width, .height = height};
+    textures[texture] = (gl_texture){.format = (uint8_t)format, .floats = format == TIDE_GPU_R16F, .width = width, .height = height};
     bind_texture(texture);
     texture_pixels(&textures[texture], pixels, false);
     // Its own way of being sampled, which a unit's sampler stands in for (gl_sample)
@@ -376,7 +385,7 @@ static GLuint float_texture(const int width, const int height)
     GLuint texture = 0;
     glGenTextures(1, &texture);
     textures = room(textures, &texture_names, texture, sizeof(gl_texture));
-    textures[texture] = (gl_texture){.format = TIDE_GPU_RGBA8, .width = width, .height = height};
+    textures[texture] = (gl_texture){.format = TIDE_GPU_RGBA8, .floats = true, .width = width, .height = height};
     bind_texture(texture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_HALF_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -409,6 +418,21 @@ static bool gl_float_targets(void)
     return found > 0;
 }
 
+// A texture's smaller images, which OpenGL makes itself, each pixel the mean
+// of the four it's made of. It makes them by drawing, so of a float texture
+// only where it draws into floats: OpenGL 3.3 does, and an OpenGL ES 3 or a
+// WebGL 2 with no way to (gl_float_targets) refuses, so such a texture has
+// none there and is read blended between its own pixels.
+static void gl_mipmaps(const tide_gpu_id texture)
+{
+    if (!texture || texture >= texture_names) return;
+    gl_texture *t = &textures[texture];
+    if (t->floats && !gl_float_targets()) return;
+    bind_texture(texture);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    t->mipped = true;
+}
+
 // Which of the bound target's color images the draws that follow write: its
 // first `count`, in order. A fragment shader's output with no image in its
 // place goes nowhere, but an image with no output in its place would get
@@ -421,6 +445,45 @@ static void draw_into(gl_target *t, const uint32_t count)
     for (uint32_t i = 0; i < t->color_count; i++) buffers[i] = i < count ? GL_COLOR_ATTACHMENT0 + i : GL_NONE;
     if (t->color_count) glDrawBuffers((GLsizei)t->color_count, buffers);
     t->drawn = count;
+}
+
+// The most samples a renderbuffer of `format` has here. OpenGL 3.3 has
+// GL_MAX_SAMPLES for every format it draws into; OpenGL ES 3 and WebGL 2 say
+// for each, and may have none for floats.
+static uint32_t most_samples(const GLenum format)
+{
+    GLint most = 0;
+#if defined(__wasm__) || defined(__ANDROID__)
+    glGetInternalformativ(GL_RENDERBUFFER, format, GL_SAMPLES, 1, &most);
+#else
+    (void)format;
+    glGetIntegerv(GL_MAX_SAMPLES, &most);
+#endif
+    return most > 1 ? (uint32_t)most : 1u;
+}
+
+// The samples a target has for the ones its format asks for: the most of 8,
+// 4 and 2 that's no more than asked and that each of its images and its depth
+// can have.
+static uint32_t gl_target_samples(const tide_gpu_target_format format)
+{
+    uint32_t samples = tide_gpu_target_samples(format);
+    const uint32_t colors = tide_gpu_target_colors(format);
+    if (samples <= 1u || colors == 0) return 1u;
+    static uint32_t bytes, floats; // 0 until it's known
+    if (!bytes) {
+        bytes = most_samples(GL_RGBA8);
+        const uint32_t depth = most_samples(GL_DEPTH24_STENCIL8);
+        if (depth < bytes) bytes = depth;
+    }
+    uint32_t most = bytes;
+    for (uint32_t i = 0; i < colors; i++) {
+        if (tide_gpu_target_color(format, i) != TIDE_GPU_COLOR_FLOAT || !gl_float_targets()) continue;
+        if (!floats) floats = most_samples(GL_RGBA16F);
+        if (floats < most) most = floats;
+    }
+    while (samples > most) samples >>= 1;
+    return samples > 1u ? samples : 1u;
 }
 
 static tide_gpu_id gl_target_make(const tide_gpu_target_format format, const int width, const int height)
@@ -444,13 +507,44 @@ static tide_gpu_id gl_target_make(const tide_gpu_target_format format, const int
         floats = false;
     }
     gl_target *t = &targets[place]; // After the float images were looked for, which makes textures of its own
+    const uint32_t samples = colors ? tide_gpu_target_samples(format) : 1u;
     *t = (gl_target){.width = width, .height = height, .format = format, .color_count = colors,
-                     .drawn = colors ? 1u : 0u,
+                     .drawn = colors ? 1u : 0u, .samples = samples,
                      .bytes = colors && !(floats && tide_gpu_target_color(format, 0) == TIDE_GPU_COLOR_FLOAT)};
     glGenFramebuffers(1, &t->framebuffer);
     for (uint32_t i = 0; i < colors; i++) {
         t->colors[i] = floats && tide_gpu_target_color(format, i) == TIDE_GPU_COLOR_FLOAT
             ? float_texture(width, height) : gl_texture_make(TIDE_GPU_RGBA8, width, height, NULL);
+    }
+    if (samples > 1u) {
+        // What's drawn into: `samples` colors, depths and stencils a pixel. The textures are what they come to
+        // (gl_end), each in a framebuffer of its own to be resolved into, and read back from
+        glGenRenderbuffers((GLsizei)colors, t->sampled);
+        glGenRenderbuffers(1, &t->sampled_depth);
+        glGenFramebuffers((GLsizei)colors, t->resolved);
+        glBindFramebuffer(GL_FRAMEBUFFER, t->framebuffer);
+        for (uint32_t i = 0; i < colors; i++) {
+            const bool wide = floats && tide_gpu_target_color(format, i) == TIDE_GPU_COLOR_FLOAT;
+            glBindRenderbuffer(GL_RENDERBUFFER, t->sampled[i]);
+            glRenderbufferStorageMultisample(GL_RENDERBUFFER, (GLsizei)samples, wide ? GL_RGBA16F : GL_RGBA8, width, height);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_RENDERBUFFER, t->sampled[i]);
+        }
+        glBindRenderbuffer(GL_RENDERBUFFER, t->sampled_depth);
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, (GLsizei)samples, GL_DEPTH24_STENCIL8, width, height);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, t->sampled_depth);
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
+        bool complete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        for (uint32_t i = 0; i < colors; i++) {
+            glBindFramebuffer(GL_FRAMEBUFFER, t->resolved[i]);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t->colors[i], 0);
+            complete &= glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        }
+        if (!complete) {
+            fprintf(stderr, "tide: no framebuffer of %u samples a pixel to render offscreen in\n", (unsigned)samples);
+            abort();
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return place + 1u;
     }
     glBindFramebuffer(GL_FRAMEBUFFER, t->framebuffer);
     for (uint32_t i = 0; i < colors; i++) {
@@ -490,7 +584,13 @@ static void gl_target_free(const tide_gpu_id target)
     gl_target *t = &targets[target - 1u];
     glDeleteFramebuffers(1, &t->framebuffer);
     for (uint32_t i = 0; i < t->color_count; i++) gl_texture_free(t->colors[i]);
-    glDeleteTextures(1, &t->depth);
+    if (t->samples > 1u) {
+        glDeleteFramebuffers((GLsizei)t->color_count, t->resolved);
+        glDeleteRenderbuffers((GLsizei)t->color_count, t->sampled);
+        glDeleteRenderbuffers(1, &t->sampled_depth);
+    } else {
+        glDeleteTextures(1, &t->depth);
+    }
     *t = (gl_target){0};
 }
 
@@ -512,7 +612,7 @@ static void gl_target_read(const tide_gpu_id target, uint8_t *rgba)
         memset(rgba, 0, (size_t)t->width * (size_t)t->height * 4u);
         return;
     }
-    glBindFramebuffer(GL_FRAMEBUFFER, t->framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, t->samples > 1u ? t->resolved[0] : t->framebuffer); // What its samples came to
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, t->width, t->height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -550,12 +650,13 @@ static void gl_begin(const tide_gpu_id target, const bool clear)
         glBufferData(GL_UNIFORM_BUFFER, TIDE_GPU_MAX_UNIFORMS, NULL, GL_DYNAMIC_DRAW);
         static const GLint wraps[WRAPS] = {GL_CLAMP_TO_EDGE, GL_REPEAT, GL_MIRRORED_REPEAT}; // By tide_gpu_wrap
         glGenSamplers(SAMPLERS, samplers);
-        for (int blended = 0; blended < 2; blended++) {
-            const GLint filter = blended ? GL_LINEAR : GL_NEAREST;
+        for (int filter = 0; filter < FILTERS; filter++) {
+            // Drawn smaller, by tide_gpu_filter: only the last reads a texture's smaller images. Drawn bigger, its own pixels
+            static const GLint smaller[FILTERS] = {GL_NEAREST, GL_LINEAR, GL_LINEAR_MIPMAP_LINEAR};
             for (int wrap = 0; wrap < WRAPS; wrap++) {
-                const GLuint sampler = sampler_for(blended != 0, (tide_gpu_wrap)wrap);
-                glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, filter);
-                glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, filter);
+                const GLuint sampler = sampler_for((tide_gpu_filter)filter, (tide_gpu_wrap)wrap);
+                glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, smaller[filter]);
+                glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, filter ? GL_LINEAR : GL_NEAREST);
                 glSamplerParameteri(sampler, GL_TEXTURE_WRAP_S, wraps[wrap]);
                 glSamplerParameteri(sampler, GL_TEXTURE_WRAP_T, wraps[wrap]);
             }
@@ -581,6 +682,18 @@ static void gl_begin(const tide_gpu_id target, const bool clear)
 
 static void gl_end(void)
 {
+    if (pass_target && pass_target->samples > 1u) {
+        // Each color image's texture is what its samples come to: all of it, whatever the pass's scissor was
+        const gl_target *t = pass_target;
+        glDisable(GL_SCISSOR_TEST);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, t->framebuffer);
+        for (uint32_t i = 0; i < t->color_count; i++) {
+            glReadBuffer(GL_COLOR_ATTACHMENT0 + i);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, t->resolved[i]);
+            glBlitFramebuffer(0, 0, t->width, t->height, 0, 0, t->width, t->height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        }
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+    }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     pass_target = NULL;
 }
@@ -659,14 +772,16 @@ static void gl_uniforms(const void *data, const size_t size)
     glBufferSubData(GL_UNIFORM_BUFFER, 0, (GLsizeiptr)size, data);
 }
 
-static void gl_sample(const uint32_t slot, const tide_gpu_id texture, const bool blended, const tide_gpu_wrap wrap)
+static void gl_sample(const uint32_t slot, const tide_gpu_id texture, tide_gpu_filter filter, const tide_gpu_wrap wrap)
 {
+    // One with no smaller images would read as nothing at all through a sampler that reads them
+    if (filter == TIDE_GPU_FILTER_MIPMAPS && !(texture < texture_names && textures[texture].mipped)) filter = TIDE_GPU_FILTER_LINEAR;
     // A target's depth is whole only where its nearest pixel is read, unless it's compared
     const uint8_t read = current->desc.reads[slot];
     glActiveTexture(GL_TEXTURE0 + slot);
     glBindTexture(GL_TEXTURE_2D, texture);
     glBindSampler(slot, read == TIDE_GPU_READ_COMPARE ? samplers[SAMPLE_COMPARED] :
-                        read == TIDE_GPU_READ_DEPTH ? sampler_for(false, TIDE_GPU_WRAP_CLAMP) : sampler_for(blended, wrap));
+                        read == TIDE_GPU_READ_DEPTH ? sampler_for(TIDE_GPU_FILTER_NEAREST, TIDE_GPU_WRAP_CLAMP) : sampler_for(filter, wrap));
 }
 
 static void gl_vertices(const uint32_t slot, const tide_gpu_id buffer, const size_t offset)
@@ -727,10 +842,12 @@ const tide_gpu tide_gpu_gl = {
     .texture = gl_texture_make,
     .texture_write = gl_texture_write,
     .texture_free = gl_texture_free,
+    .mipmaps = gl_mipmaps,
     .pipeline = gl_pipeline_make,
     .pipeline_free = gl_pipeline_free,
     .target = gl_target_make,
     .target_limit = gl_target_limit,
+    .target_samples = gl_target_samples,
     .float_targets = gl_float_targets,
     .target_texture = gl_target_texture,
     .target_depth = gl_target_depth,
