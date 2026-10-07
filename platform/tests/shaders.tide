@@ -2049,12 +2049,130 @@ view Outputs(Art art, mut Several several)
     }
 }
 
+// A draw's values (pass 12): a struct after the vert and the frag, the same
+// for the whole draw. Blits of one frag with values of their own, meshes
+// through a vert and a frag that each read some of theirs, and instances
+// whose struct is beside the draw's.
+struct Rinse
+{
+    Color tint = Color.white;
+    int steps;        // Each adds a quarter of red
+    float4x4 unread;  // Not sent
+}
+
+struct Put
+{
+    float2 by;
+    Color tint = Color.white;
+    bool dim;
+}
+
+struct Speck
+{
+    float2 offset;
+    Color tint;
+}
+
+struct Strip
+{
+    float2 origin;
+    float gain = 1;
+}
+
+local singleton PerDraw
+{
+    RenderTarget source; // White, 16 pixels by 16 whatever the display
+    RenderTarget first;  // What a blit made of it, with its values
+    RenderTarget second; // ...and another, with others, and a third over that
+    List<Vertex> square; // 16 by 16 at the origin
+    List<Vertex> left;   // 32 by 32, where each target is shown
+    List<Vertex> right;
+    List<Speck> dots;
+    bool made;
+}
+
+frag Rinsed(Vertex vertex, out Color color, Texture source, Rinse rinse)
+{
+    color = source.Sample(vertex.uv, Filter.Point) * rinse.tint;
+    for (var i = 0; i < rinse.steps; i++) color.r += 0.25;
+}
+
+vert PutAt(mut Vertex vertex, Put put)
+{
+    vertex.position += put.by;
+}
+
+frag PutTint(Vertex vertex, out Color color, Put put)
+{
+    color = put.tint;
+    if (put.dim) color = Color(color.r * 0.5, color.g * 0.5, color.b * 0.5);
+}
+
+vert SpeckAt(mut Vertex vertex, Speck speck, Strip strip)
+{
+    vertex.position += speck.offset + strip.origin;
+}
+
+frag SpeckTint(Vertex vertex, out Color color, Speck speck, Strip strip)
+{
+    color = Color(speck.tint.r * strip.gain, speck.tint.g * strip.gain, speck.tint.b * strip.gain);
+}
+
+[After(Outputs)]
+view Values(Art art, mut PerDraw given)
+{
+    if (art.targetPass != 12) return;
+    if (!given.made)
+    {
+        given.made = true;
+        given.source = RenderTarget(16, 16, 1);
+        given.first = RenderTarget(16, 16, 1);
+        given.second = RenderTarget(16, 16, 1);
+        given.square = [Vertex { position = float2(0, 0) }, Vertex { position = float2(16, 0), uv = float2(1, 0) },
+                        Vertex { position = float2(16, 16), uv = float2(1, 1) }, Vertex { position = float2(0, 16), uv = float2(0, 1) }];
+        given.left = [Vertex { position = float2(0, 0) }, Vertex { position = float2(32, 0), uv = float2(1, 0) },
+                      Vertex { position = float2(32, 32), uv = float2(1, 1) }, Vertex { position = float2(0, 32), uv = float2(0, 1) }];
+        given.right = [Vertex { position = float2(32, 0) }, Vertex { position = float2(64, 0), uv = float2(1, 0) },
+                       Vertex { position = float2(64, 32), uv = float2(1, 1) }, Vertex { position = float2(32, 32), uv = float2(0, 1) }];
+        given.dots = [Speck { tint = Color.red }, Speck { offset = float2(32, 0), tint = Color.blue }];
+    }
+    given.source.Clear(Color.white);
+    given.first.Clear(Color.black);
+    given.second.Clear(Color.black);
+
+    // One frag, three blits, each with its own values: none of them is the others'
+    Draw.Blit(given.source.color, given.first, Rinsed, Rinse { tint = Color(1, 0.5, 0.25) });
+    Draw.Blit(given.source.color, given.second, Rinsed, Rinse { tint = Color(0.25, 0.5, 0.5), steps = 2 });
+    Draw.Blit(given.source.color, given.second, Blend.Add, Rinsed, Rinse { tint = Color(0, 0, 0.25) });
+
+    Draw.SetClip();
+    Draw.SetScreen();
+    Draw.Clear(Color.black);
+    Draw.Mesh(given.left, art.faces, given.first.color, Filter.Point);
+    Draw.Mesh(given.right, art.faces, given.second.color, Filter.Point);
+
+    // Meshes: the vert reads where, the frag which color, of the same values. Two values in a row are two
+    // draws; the same values twice are one, of two instances, which add up here
+    Draw.Mesh(given.square, art.faces, PutAt, PutTint, Put { by = float2(0, 64), tint = Color.red });
+    Draw.Mesh(given.square, art.faces, PutAt, PutTint, Put { by = float2(32, 64), tint = Color.green, dim = true });
+    var gray = Put { by = float2(64, 64), tint = Color(0.25, 0.25, 0.25) };
+    Draw.Blend(Blend.Add)
+    {
+        Draw.Mesh(given.square, art.faces, PutAt, PutTint, gray);
+        Draw.Mesh(given.square, art.faces, PutAt, PutTint, gray);
+    }
+
+    // Instances: each one's own struct, and the draw's for all of them
+    Draw.Instanced(given.square, art.faces, given.dots, SpeckAt, SpeckTint, Strip { origin = float2(0, 128), gain = 0.5 });
+    Draw.Instanced(given.square, art.faces, given.dots, SpeckAt, SpeckTint, Strip { origin = float2(0, 160) });
+}
+
 // shaders.c requests independent full-window checks after the existing grid.
 // Resource descriptors are supplied by C, without choosing a Tide lifetime API.
 [After(Manual)]
 view Targets(mut Art art)
 {
-    // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images' and 11 Outputs'
+    // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images', 11 Outputs' and 12 Values'
     if (art.targetPass == 0 || art.targetPass >= 6) return;
     if (art.targetPass >= 4)
     {

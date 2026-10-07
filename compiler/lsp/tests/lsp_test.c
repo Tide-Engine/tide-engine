@@ -724,7 +724,7 @@ TIDE_TEST(lsp_meshes)
     // Its two forms, a 2D mesh's first for a List<Vertex>, and each parameter by what's written before it
     open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, $\n}\n");
     const char *indices = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(indices, "\"label\":\"Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag])\""));
+    TIDE_CHECK(has(indices, "\"label\":\"Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag][, values])\""));
     TIDE_CHECK(!has(indices, "\"label\":\"Draw.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]][, vert][, frag])\""));
     TIDE_CHECK(has(indices, "\"activeSignature\":0,\"activeParameter\":1"));
     TIDE_CHECK(has(indices, "{\"label\":[20,27],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A `List<int>`"));
@@ -1014,7 +1014,7 @@ TIDE_TEST(lsp_wrap)
                                                  "Wrap wrap = Wrap.Clamp)"));
     open_document(IN_VIEW("Draw.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, $"));
     const char *after = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(after, "\"label\":\"Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag])\""));
+    TIDE_CHECK(has(after, "\"label\":\"Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag][, values])\""));
     TIDE_CHECK(has(after, "\"activeParameter\":4") && has(after, "What a `uv` past 0 or 1 reads, written after the filter"));
     open_document(IN_VIEW("Draw.Mesh(art.solid, [0, 1, 2], float4x4.identity, art.tiles, Filter.Point, Wrap.Re$peat);"));
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":5"));
@@ -1171,6 +1171,66 @@ TIDE_TEST(lsp_instanced_drawing)
     TIDE_CHECK(has(hover_at(7, 6), "Draw.Instanced"));
     TIDE_CHECK(has(hover_at(7, 52), "An element of the draw's instance list"));
 #undef INSTANCE_TYPES
+}
+
+// A draw's values: the struct a mesh draw or a Blit gives after its vert and
+// frag, which they read through a parameter of its type. VALUE_TYPES is 8
+// lines: the vert is on line 5, the frags on lines 6 and 7.
+TIDE_TEST(lsp_draw_values)
+{
+    start();
+#define VALUE_TYPES \
+    "scene Main { }\nstruct Corner { float3 position; }\n" \
+    "struct Swell { float height; Color tint; float unread; }\nstruct BlurStep { float2 along; }\n" \
+    "local singleton Art { List<Corner> space; List<int> faces; RenderTarget bright; RenderTarget spread; }\n" \
+    "vert Wave(mut Corner vertex, Swell swell) { vertex.position.y += swell.height; }\n" \
+    "frag Shade(Corner vertex, out Color color, Swell swell) { color = swell.tint; }\n" \
+    "frag Blur(Vertex vertex, out Color color, Texture source, BlurStep step) { color = source.Sample(vertex.uv + step.along); }\n"
+#define VALUE_DRAWS \
+    VALUE_TYPES "view Show(Art art)\n{\n" \
+                "    Draw.Mesh(art.space, art.faces, float4x4.identity, Wave, Shade, Swell { height = 2 });\n" \
+                "    Draw.Blit(art.bright.color, art.spread, Blur, BlurStep { along = float2(1, 0) });\n}\n"
+    open_document(VALUE_DRAWS);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // The parameter, in the vert and in a frag: the draw's, once, and the fields each reads
+    const char *vert = hover_at(5, 36);
+    TIDE_CHECK(has(vert, "The values of the draw") && has(vert, "sent to the GPU once for the draw"));
+    TIDE_CHECK(has(vert, "height") && !has(vert, "tint") && !has(vert, "An element of the draw's instance list"));
+    const char *frag = hover_at(6, 50);
+    TIDE_CHECK(has(frag, "The values of the draw") && has(frag, "tint") && !has(frag, "unread"));
+    TIDE_CHECK(has(hover_at(7, 68), "The values of the draw"));
+    // The frag itself lists them with what's sent for each draw, and is a Mesh's, not an Instanced draw's
+    const char *shade = hover_at(6, 6);
+    TIDE_CHECK(has(shade, "for each draw: ") && has(shade, "Draw.Mesh(..., Shade)") && !has(shade, "for each instance"));
+    // The draws
+    TIDE_CHECK(has(hover_at(10, 10), "A struct's value after them is the draw's values"));
+    TIDE_CHECK(has(hover_at(11, 10), "[, Blend blend], frag shader[, values])") && has(hover_at(11, 10), "this blit's values"));
+
+    // Signature help: after the frag, the values
+    open_document(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Mesh(art.space, art.faces, float4x4.identity, Wave, Shade, $\n}\n");
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "[, vert][, frag][, values])") && has(help, "\"activeParameter\":8"));
+    TIDE_CHECK(has(help, "A struct's value, after the vert and the frag"));
+    open_document(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Mesh(art.space, art.faces, float4x4.identity, Shade, Swell { height = 2 }$);\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":8"));
+    open_document(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Blit(art.bright.color, art.spread, Blur, $\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "frag shader[, values])"));
+
+    // Completion: after a vert or a frag, the structs it takes, as values to fill in
+    const char *mesh = complete(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Mesh(art.space, art.faces, float4x4.identity, Shade, $);\n}\n");
+    TIDE_CHECK(offers(mesh, "Swell") && has(mesh, "Swell { $1 }") && has(mesh, "The values this draw gives frag `Shade`"));
+    TIDE_CHECK(!has(mesh, "BlurStep { $1 }"));
+    const char *blit = complete(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Blit(art.bright.color, art.spread, Blur, $);\n}\n");
+    TIDE_CHECK(offers(blit, "BlurStep") && has(blit, "BlurStep { $1 }") && !has(blit, "Swell { $1 }"));
+    const char *before = complete(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Mesh(art.space, art.faces, float4x4.identity, $);\n}\n");
+    TIDE_CHECK(offers(before, "Shade") && !has(before, "Swell { $1 }"));
+
+    // A value of the wrong type says what the frag reads, at the frag
+    open_document(VALUE_TYPES "view Show(Art art)\n{\n"
+                              "    Draw.Blit(art.bright.color, art.spread, Blur, Swell { height = 2 });\n}\n");
+    TIDE_CHECK(has(last_sent(), "frag 'Blur' reads a 'BlurStep'") && has(last_sent(), "or the values the draw gives after its frag"));
+#undef VALUE_DRAWS
+#undef VALUE_TYPES
 }
 
 // Frags and verts: code the GPU runs for a mesh's pixels and vertices, which a

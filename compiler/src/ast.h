@@ -848,6 +848,8 @@ struct expr {
     bool web_fetch;          // Web.Fetch, awaited the same way: its body is the task's value
     int draw_dims;        // CALL_DRAW: 0 for a call that selects no destination; else the window's, and a mesh's vertex dimensions
     struct decl *instance_type; // Its List<T> element struct; NULL for List<float4x4>
+    struct expr *values;        // mesh draw and Blit: the struct it gives its vert and frag after their names, or NULL
+    struct decl *values_type;   // ...and its type: sent once, for the draw
     struct decl *frag;
     struct shader *shader; // ...and what draws it, once planned: NULL for a List<Vertex> or List<Vertex3> with neither
     str type_arg;         // E_METHOD: the type written in <> after its name, world.Get<Health>(e), or empty
@@ -1052,6 +1054,7 @@ typedef struct shader {
     bool blit;           // A full destination overwrite with a fixed Vertex quad
     bool instanced;      // Its draw supplies a list of instances
     struct decl *instance_type; // Explicit instance data, or NULL for transforms only
+    struct decl *values_type;   // The struct its draws give after their vert and frag, sent once for each draw, or NULL
     const field *instance_transform; // The instance struct's optional float4x4 transform
     VEC(shader_value) values;
     VEC(shader_texture) textures;

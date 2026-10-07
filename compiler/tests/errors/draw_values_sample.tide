@@ -1,0 +1,18 @@
+// expect: a struct a draw supplies, its instances' or its values', carries no texture: keep the sampled Texture in a component or singleton
+scene Main { }
+struct Corner { float3 position; float2 uv; }
+struct Glow { Color tint; float gain; }
+struct Lift { float3 by; }
+local singleton Models
+{
+    List<Corner> crate;
+    List<int> faces;
+    List<Glow> glows;
+    RenderTarget bright;
+    RenderTarget spread;
+}
+struct Skin { Texture paint; }
+frag Shade(Corner corner, out Color color, Skin skin)
+{
+    color = skin.paint.Sample(corner.uv);
+}

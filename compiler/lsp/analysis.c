@@ -1827,15 +1827,17 @@ static const method_form target_calls[] = {
     {"Dispose", "Dispose()", "Releases the shared image. All target and color aliases become invalid; repeated disposal is harmless."},
 };
 
-#define BLIT_FORM "Draw.Blit(Texture source, RenderTarget destination[, Blend blend], frag shader)"
-#define BLIT_DOC "Runs the frag over the whole destination, supplying its Texture parameter from source. No setting changes it: not the camera, the clip, the transform, the tint nor Draw.Blend. It replaces the destination's color, or goes over it as `blend` says (`Blend.Add`), and preserves depth. Source cannot be destination.color."
+#define BLIT_FORM "Draw.Blit(Texture source, RenderTarget destination[, Blend blend], frag shader[, values])"
+#define BLIT_DOC "Runs the frag over the whole destination, supplying its Texture parameter from source. No setting changes it: not the camera, the clip, the transform, the tint nor Draw.Blend. It replaces the destination's color, or goes over it as `blend` says (`Blend.Add`), and preserves depth. Source cannot be destination.color. A struct's value after the frag is this blit's values, which the frag reads through a parameter of its type: `Draw.Blit(source, destination, Blur, BlurStep { along = float2(1, 0) })`."
 
 // What Draw.Mesh takes beside the built-in signatures' lists of Vertex and
 // Vertex3 (builtins.c): the checker takes those itself.
 #define MESH_SHADER_DOC                                                                                                \
     "`vertices` can be a list of a struct of the game's too, one with a `position`: a float2 for a 2D mesh, a float3 " \
     "for a 3D one. A vert and a frag, named last, run on the GPU for each of the mesh's vertices and pixels: "         \
-    "`Draw.Mesh(vertices, indices, transform, Wave, Shade)`."
+    "`Draw.Mesh(vertices, indices, transform, Wave, Shade)`. A struct's value after them is the draw's values, "       \
+    "which they read through a parameter of its type, the same for the whole draw: "                                   \
+    "`Draw.Mesh(vertices, indices, transform, Wave, Shade, Swell { height = 2 })`."
 
 static bool is_mesh_draw(const str owner, const str name)
 {
@@ -2175,6 +2177,23 @@ static bool handed_param(const decl *d, const param *p)
     return d->is_frag && p->type.kind == TY_STRUCT && !p->is_out && vert_writes(p->type.decl);
 }
 
+// Whether a struct is one a draw of the game gives after its vert and frag,
+// `Draw.Blit(source, destination, Blur, BlurStep { ... })`: a frag's or vert's
+// parameter of that type is the draw's values, sent once for the draw.
+static bool draw_gives(const decl *type)
+{
+    for (int i = 0; i < A.prog->mesh_draws.count; i++) {
+        if (A.prog->mesh_draws.items[i].call->values_type == type) return true;
+    }
+    return false;
+}
+
+// A frag's or vert's struct that the draws it's drawn with give as their values.
+static bool values_param(const decl *d, const param *p)
+{
+    return p->type.kind == TY_STRUCT && !p->is_out && !handed_param(d, p) && draw_gives(p->type.decl);
+}
+
 // A frag or vert: when it runs, and what it reads, grouped as the engine
 // sends it to the GPU: components' fields for each instance drawn,
 // singletons' for each draw, grids as textures, and of a frag's vertex and of
@@ -2187,7 +2206,7 @@ static void describe_shader(const decl *d, sb *out)
     bool hands = false;
     for (int i = 1; i < d->params.count; i++) {
         const param *p = &d->params.items[i];
-        instanced |= p->type.kind == TY_STRUCT && !p->is_out && !handed_param(d, p);
+        instanced |= p->type.kind == TY_STRUCT && !p->is_out && !handed_param(d, p) && !values_param(d, p);
         hands |= p->type.kind == TY_STRUCT && p->is_out;
     }
     sb_printf(out, d->is_frag ? "\n\nRuns on the GPU, for each pixel of a mesh a view draws through it: `Draw.%s(..., "
@@ -2218,8 +2237,9 @@ static void describe_shader(const decl *d, sb *out)
         }
         const bool component = p->type.kind == TY_COMPONENT;
         const bool transform = p->type.kind == TY_RECORD && p->type.decl == A.prog->instance;
-        const bool data = p->type.kind == TY_STRUCT;
-        if (!component && !transform && !data && p->type.kind != TY_SINGLETON) continue; // Its pixel, which nothing sends
+        const bool values = values_param(d, p); // The draw's own, once for the draw, as a singleton's
+        const bool data = p->type.kind == TY_STRUCT && !values;
+        if (!component && !transform && !data && !values && p->type.kind != TY_SINGLETON) continue; // Its pixel, which nothing sends
         put_reads(p, type_prefix(p), false, component || transform || data ? &instance : &draw);
         put_samples(d, i, type_prefix(p), &textures);
     }
@@ -2295,7 +2315,9 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
         sb_put(out, "\n\nParameter, read-only.");
         return;
     }
-    sb_put(out, p->type.kind == TY_STRUCT ? "\n\nAn element of the draw's instance list, sent to the GPU for each instance drawn."
+    sb_put(out, values_param(d, p)        ? "\n\nThe values of the draw: the struct a `Draw.Mesh`, `Draw.Instanced` or `Draw.Blit` "
+                                            "gives after its vert and frag, sent to the GPU once for the draw."
+              : p->type.kind == TY_STRUCT ? "\n\nAn element of the draw's instance list, sent to the GPU for each instance drawn."
               : p->type.kind == TY_COMPONENT ? "\n\nA component of the entity the view that draws the mesh runs for, sent "
                                                "to the GPU for each instance drawn."
                                              : "\n\nA singleton, sent to the GPU once for each draw.");
@@ -6720,6 +6742,26 @@ static void complete_shaders(completion *c, const decl *vertex)
     }
 }
 
+// The values a draw can give the vert or the frag it names, after their
+// names: each struct one of them takes as a read-only parameter that no vert
+// writes, as `Swell { }`.
+static void complete_draw_values(completion *c, const decl *shader)
+{
+    for (int k = 1; shader && k < shader->params.count; k++) {
+        const param *p = &shader->params.items[k];
+        if (p->type.kind != TY_STRUCT || p->is_out || p->mode == PARAM_MUT || handed_param(shader, p)) continue;
+        sb detail = {0};
+        sb_printf(&detail, "%s { ... }", name_for(p->type.decl));
+        sb doc = {0};
+        sb_printf(&doc, "The values this draw gives %s `%s`, which reads them through its `" STR_FMT "` parameter: the same "
+                        "for the whole draw, and only the fields it reads are sent.", shader->is_frag ? "frag" : "vert",
+                  name_for(shader), STR_ARG(p->name));
+        sb snippet = {0};
+        sb_printf(&snippet, "%s { $1 }", name_for(p->type.decl));
+        item(c, name_for(p->type.decl), CK_STRUCT, detail.data, doc.data, snippet.data);
+    }
+}
+
 // Contexts the cursor can be in, found by scanning tokens.
 typedef enum context_kind {
     CTX_TOP, CTX_DATA, CTX_HEADER, CTX_CODE, CTX_LITERAL, CTX_ATTRIBUTE, CTX_ATTRIBUTE_ARGS,
@@ -7004,24 +7046,43 @@ static type names_type(const scope *sc, const int first, const int last)
 // Draw.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]][, vert][, frag]).
 // A 3D mesh has its transform, and a 2D one none.
 enum { MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_INSTANCES,
-       MESH_PARAMS };
+       MESH_VALUES, MESH_PARAMS };
 
 // What an argument of Draw.Mesh after its indices is, from what's written at
 // tokens `first` to `last`: which of those parameters, or MESH_PARAMS where
 // that doesn't say.
+// The vert or frag the tokens `first` to `last` name: what the checker bound
+// them to, or the game's one of that name. NULL for anything else.
+static const decl *shader_written(const int first, const int last)
+{
+    const token *toks = DOC->toks;
+    if (first > last || toks[first].kind != T_IDENT) return NULL;
+    const occurrence *o = occurrence_at(toks[last].at);
+    if (o && loc_cmp(o->at, toks[last].at) == 0 && o->kind == OCC_SYSTEM && is_shader(o->decl)) return o->decl;
+    const str written = {toks[first].text.ptr, (int)(toks[last].text.ptr + toks[last].text.len - toks[first].text.ptr)};
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (is_shader(d) && (str_eq_c(written, name_for(d)) || str_eq(written, d->qualified))) return d;
+    }
+    return NULL;
+}
+
 static int mesh_argument(const scope *sc, const int first, const int last)
 {
     const token *toks = DOC->toks;
     if (first > last || toks[first].kind != T_IDENT) return MESH_PARAMS;
     // A vert or a frag, by name: what the checker bound it to, or the game's one of that name
-    const occurrence *o = occurrence_at(toks[last].at);
-    if (o && loc_cmp(o->at, toks[last].at) == 0 && o->kind == OCC_SYSTEM && is_shader(o->decl)) {
-        return o->decl->is_frag ? MESH_FRAG : MESH_VERT;
-    }
-    const str written = {toks[first].text.ptr, (int)(toks[last].text.ptr + toks[last].text.len - toks[first].text.ptr)};
-    for (int i = 0; i < A.prog->decls.count; i++) {
-        const decl *d = A.prog->decls.items[i];
-        if (is_shader(d) && (str_eq_c(written, name_for(d)) || str_eq(written, d->qualified))) return d->is_frag ? MESH_FRAG : MESH_VERT;
+    const decl *shader = shader_written(first, last);
+    if (shader) return shader->is_frag ? MESH_FRAG : MESH_VERT;
+    // Swell { height = 2 }: the draw's values, a struct's
+    for (int brace = first + 1; brace <= last; brace++) {
+        if (toks[brace].kind != T_LBRACE) continue;
+        const str written = {toks[first].text.ptr, (int)(toks[brace - 1].text.ptr + toks[brace - 1].text.len - toks[first].text.ptr)};
+        for (int i = 0; i < A.prog->decls.count; i++) {
+            const decl *d = A.prog->decls.items[i];
+            if (d->kind == DECL_STRUCT && (str_eq_c(written, name_for(d)) || str_eq(written, d->qualified))) return MESH_VALUES;
+        }
+        break;
     }
     // float4x4.Translate(...), Filter.Point, Wrap.Repeat
     if (str_eq_c(toks[first].text, "float4x4")) return MESH_TRANSFORM;
@@ -7029,7 +7090,8 @@ static int mesh_argument(const scope *sc, const int first, const int last)
     if (str_eq_c(toks[first].text, "Wrap") && last == first + 2) return MESH_WRAP;
     const type t = names_type(sc, first, last);
     if (t.kind == TY_ENUM) return t.decl == A.prog->wrap ? MESH_WRAP : t.decl == A.prog->filter ? MESH_FILTER : MESH_PARAMS;
-    return t.kind == TY_FLOAT4X4 ? MESH_TRANSFORM : t.kind == TY_GRID || t.kind == TY_TEXTURE ? MESH_TEXTURE : MESH_PARAMS;
+    return t.kind == TY_FLOAT4X4 ? MESH_TRANSFORM : t.kind == TY_GRID || t.kind == TY_TEXTURE ? MESH_TEXTURE
+         : t.kind == TY_STRUCT ? MESH_VALUES : MESH_PARAMS;
 }
 
 // The vertex struct of the mesh a Draw.Mesh draws, from its first argument,
@@ -7866,7 +7928,17 @@ void analysis_completion(const int line, const int character, jbuf *out)
             call_args args;
             call_arguments(call, &args);
             const decl *vertex = mesh_vertex(&sc, args.first[0], args.last[0]);
+            // ...and after them, the values they take
+            for (int a = 2; sc.decl && sc.decl->is_view && a < args.count && a < commas; a++) {
+                complete_draw_values(&c, shader_written(args.first[a], args.last[a]));
+            }
             if (sc.decl && sc.decl->is_view) complete_shaders(&c, vertex);
+        } else if (call >= 3 && commas >= 3 && DOC->toks[call - 1].kind == T_IDENT && str_eq_c(DOC->toks[call - 1].text, "Blit")
+                   && DOC->toks[call - 2].kind == T_DOT && str_eq_c(DOC->toks[call - 3].text, "Draw")) {
+            // Draw.Blit(source, destination, Blur, ...: the values its frag takes
+            call_args args;
+            call_arguments(call, &args);
+            for (int a = 2; a < args.count && a < commas; a++) complete_draw_values(&c, shader_written(args.first[a], args.last[a]));
         }
         // Damage(10, : the names its other parameters can be passed by
         if (call >= 1 && (pk == T_LPAREN || pk == T_COMMA)) complete_argument_names(&c, call, last);
@@ -8540,13 +8612,13 @@ static void collect_label(void *user, const char *label, const char *doc)
 // a List<Vertex> and a List<Vertex3> with no vert and no frag; the checker
 // takes the rest itself (check_mesh_draw).
 static const char *const mesh_labels[2] = {
-    "Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag])",
-    "Draw.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]][, vert][, frag])",
+    "Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag][, values])",
+    "Draw.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]][, vert][, frag][, values])",
 };
 
 static const char *const instanced_labels[2] = {
-    "Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag])",
-    "Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag])",
+    "Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag][, values])",
+    "Draw.Instanced(vertices, indices, instances[, texture[, filter[, wrap]]][, vert][, frag][, values])",
 };
 
 // Each of its parameters: what it's called in those, and what it takes, in a
@@ -8573,6 +8645,9 @@ static const struct {
                         {"A List<T> of instance structs, one for each mesh. A vert or frag reads each through a read-only T parameter.",
                          "A List<float4x4> of transforms, or a List<T> of instance structs. A struct's float4x4 transform places "
                          "the mesh; without one, it uses the identity."}},
+    [MESH_VALUES] = {"values",
+                     {"A struct's value, after the vert and the frag: they read it through a read-only parameter of its type. "
+                      "It's sent once for the draw, and only the fields they read."}},
 };
 
 // The names of the parameters a checked call's arguments go to, in order:
@@ -8593,6 +8668,7 @@ static int call_param_names(const expr *call, str *names, const int max)
             const expr *arg = call->args.items[count];
             const type t = call->arg_want.count > count ? call->arg_want.items[count] : arg->type;
             const int param = count < 2                                  ? count
+                            : arg == call->values                         ? MESH_VALUES
                             : count == 2 && call->instanced               ? MESH_INSTANCES
                             : arg->bind == BIND_SHADER && arg->type_decl ? (arg->type_decl->is_frag ? MESH_FRAG : MESH_VERT)
                             : t.kind == TY_FLOAT4X4                      ? MESH_TRANSFORM
@@ -8724,9 +8800,9 @@ static void collect_mesh_doc(void *user, const char *label, const char *doc)
 static void mesh_signature_help(const int open, const int commas, const loc at, jbuf *out)
 {
     static const int forms[3][MESH_PARAMS] = {
-        {MESH_VERTICES, MESH_INDICES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG},
-        {MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG},
-        {MESH_VERTICES, MESH_INDICES, MESH_INSTANCES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG},
+        {MESH_VERTICES, MESH_INDICES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES},
+        {MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES},
+        {MESH_VERTICES, MESH_INDICES, MESH_INSTANCES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES},
     };
     const scope sc = scope_at(at);
     call_args args;
@@ -8737,7 +8813,7 @@ static void mesh_signature_help(const int open, const int commas, const loc at, 
                                : args.count > 2 && mesh_argument(&sc, args.first[2], args.last[2]) == MESH_TRANSFORM;
     const bool instanced = str_eq_c(DOC->toks[open - 1].text, "Instanced");
     const int *order = forms[instanced ? 2 : three_d ? 1 : 0];
-    const int count = instanced || three_d ? 8 : 7;
+    const int count = instanced || three_d ? 9 : 8;
     const int fixed = instanced || three_d ? 3 : 2; // Lists, and an ordinary 3D mesh's transform
 
     int active = 0;
