@@ -94,6 +94,9 @@ typedef struct tide_residents {
 } tide_residents;
 
 void tide_residents_adopt(tide_residents *table);
+// Stops using this local registry before its storage is cleared or freed.
+// The process keeps its arenas, which the next adopted registry takes over.
+void tide_residents_release(tide_residents *table);
 
 // The kind's arena, made the first time it's asked for. A kind nothing
 // registered gets one of the default size.
@@ -116,6 +119,7 @@ void *tide_arena_realloc(tide_arena *a, void *p, size_t old_size, size_t size);
 // Whether `p` is in the arena.
 bool tide_arena_holds(const tide_arena *a, const void *p);
 void *tide_arena_user(tide_arena *a);
+const void *tide_arena_user_read(const tide_arena *a);
 uint64_t tide_arena_stamp(const tide_arena *a); // What the arena holds: the last commit's or restore's stamp, 0 for nothing
 
 // What may have been written: `size` bytes from `p`, from any thread.
@@ -131,7 +135,7 @@ void tide_arena_commit(tide_arena *a, tide_resident *r, uint64_t stamp, uint64_t
 bool tide_arena_is(const tide_arena *a, const tide_resident *r);
 
 // Makes the arena the state `r` holds: the pages that differ from what it
-// holds are copied in. Nothing may be touched and uncommitted. A resident
+// holds are copied in, discarding any touched, uncommitted writes. A resident
 // with no pages empties the arena.
 void tide_arena_restore(tide_arena *a, const tide_resident *r);
 

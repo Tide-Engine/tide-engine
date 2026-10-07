@@ -105,6 +105,15 @@ static bool has_fields(const type t)
         || t.kind == TY_STRUCT || t.kind == TY_EVENT;
 }
 
+static bool singleton_has_resident(const type t)
+{
+    if (t.kind != TY_SINGLETON) return false;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        if (t.decl->fields.items[i].type.kind == TY_RESIDENT) return true;
+    }
+    return false;
+}
+
 // A local field of a match component or singleton, by name: one of its local
 // part's (decl.local_part).
 static field *local_field_of(const decl *d, const str name)
@@ -9172,6 +9181,11 @@ static void check_assign(checker *c, const stmt *s)
     c->write_root = outer_root;
     const type value = check_expr_want(c, s->value, target);
     if (target.kind == TY_ERROR) return;
+    if (singleton_has_resident(target)) {
+        diag_error(s->target->at, "a singleton with resident state can't be assigned whole");
+        diag_note("set its other fields one by one: only the package's C writes its Resident field");
+        return;
+    }
     // world.Get<Health>(e).value = 5: a copy of the entity's component
     const expr *got = s->target;
     while (got->kind == E_MEMBER || got->kind == E_INDEX) got = got->object;
@@ -9706,6 +9720,12 @@ static void check_var(checker *c, stmt *s)
             diag_error(s->value->at, "can't initialize %s with %s", type_name(s->type), type_name(value));
             note_conversion(s->type, value);
         }
+    }
+
+    if (singleton_has_resident(s->type)) {
+        diag_error(s->type_at.line ? s->type_at : s->value->at, "a local can't hold a singleton with resident state");
+        diag_note("read its other fields through the singleton, or pass it to a function: its Resident field stays in the match");
+        s->type = T_ERR;
     }
 
     // A grid stays where it's made: a local would be a copy of every chunk
@@ -11390,6 +11410,25 @@ static void check_signature(checker *c, decl *m)
             diag_error(p->at, "an Action can't be 'mut'; it's code, run with '" STR_FMT "();'", STR_ARG(p->name));
         } else {
             m->takes_action = true;
+        }
+    }
+    if (!m->is_extern) {
+        for (int k = 0; k < m->params.count; k++) {
+            const param *p = &m->params.items[k];
+            if (!singleton_has_resident(p->type)) continue;
+            // There is one instance of each singleton. A read parameter copies
+            // its page references, which a mut parameter could release.
+            bool mixed = m->owner && !m->is_operator && !m->is_interpolate
+                && same_type(p->type, decl_type(m->owner))
+                && (p->mode == PARAM_MUT) != m->is_mut_method;
+            for (int j = 0; !mixed && j < k; j++) {
+                const param *other = &m->params.items[j];
+                mixed = same_type(p->type, other->type) && p->mode != other->mode;
+            }
+            if (mixed) {
+                diag_error(p->at, "a function can't take the same singleton with resident state both by value and mut");
+                diag_note("read its other fields before the mut call, or pass the singleton only as mut");
+            }
         }
     }
     if (m->takes_action && m->return_type.kind != TY_VOID && m->return_type.kind != TY_ERROR) {
@@ -16331,6 +16370,16 @@ bool check(program *prog)
     for (int i = 0; i < prog->local_parts.count; i++) {
         c.unit = prog->local_parts.items[i]->unit;
         resolve_field_types(&c, prog->local_parts.items[i]);
+    }
+    int residents = 0;
+    for (int i = 0; i < prog->singletons.count; i++) {
+        const decl *d = prog->singletons.items[i];
+        for (int k = 0; k < d->fields.count; k++) {
+            const field *f = &d->fields.items[k];
+            if (f->type.kind == TY_RESIDENT && ++residents > MAX_RESIDENT_FIELDS) {
+                diag_error(f->at, "a match holds at most %d Resident fields", MAX_RESIDENT_FIELDS);
+            }
+        }
     }
     for (int i = 0; i < prog->decls.count; i++) {
         if (prog->decls.items[i]->kind == DECL_CONST) check_constant(&c, prog->decls.items[i]);

@@ -1880,6 +1880,10 @@ int b3DynamicTree_Rebuild( b3DynamicTree* tree, bool fullBuild )
 		return 0;
 	}
 
+	// Tide: the old tree may have been written before this rebuild. It becomes the spare below,
+	// so the end-of-step touch pass will no longer see those writes (see ../TIDE.md, Resident state).
+	b3Touch( tree->nodes, (size_t)tree->nodeCapacity * sizeof( b3TreeNode ) );
+
 	if ( tree->swapNodes == NULL )
 	{
 		tree->swapNodes = b3AllocZero( tree->nodeCapacity * sizeof( b3TreeNode ) );
@@ -1975,6 +1979,20 @@ int b3DynamicTree_Rebuild( b3DynamicTree* tree, bool fullBuild )
 	B3_ASSERT( 0 < leafCount && leafCount <= proxyCount );
 
 	b3BuildTree( tree, leafCount );
+
+	// Tide: a rebuild writes only this prefix of its scratch, not its whole capacity. The new nodes
+	// become the current tree, which the end-of-step touch pass marks; a skipped rebuild writes nothing.
+	b3Touch( tree->leafIndices, (size_t)leafCount * sizeof( int32_t ) );
+	b3Touch( tree->leafNodes, (size_t)leafCount * sizeof( b3TreeNode ) );
+#if B3_TREE_HEURISTIC == 0
+	b3Touch( tree->leafCenters, (size_t)leafCount * sizeof( b3Vec3 ) );
+#else
+	b3Touch( tree->leafBoxes, (size_t)leafCount * sizeof( b3AABB ) );
+	if ( leafCount > 1 )
+	{
+		b3Touch( tree->binIndices, (size_t)leafCount * sizeof( int32_t ) );
+	}
+#endif
 
 	// The spare is now the tree and the old array is the spare. The build is dense, so the
 	// stale tail of the old array sits above the end and is never read.

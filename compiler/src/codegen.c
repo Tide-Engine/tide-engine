@@ -5948,7 +5948,7 @@ static int resident_fields(const program *prog, resident_field *out, const int m
     return n;
 }
 
-enum { RESIDENTS_MOST = 8 };
+enum { RESIDENTS_MOST = MAX_RESIDENT_FIELDS };
 
 static layout type_layout(const type t)
 {
@@ -14599,6 +14599,7 @@ static void gen_world_bytes(gen *g, const bool local)
     if (world_heap(prog, local)) sb_put(o, "    tide_heap_free(&w->heap);\n");
     if (local && program_hears(prog)) sb_put(o, "    tide_event_log_free(&w->tide_heard);\n");
     if (local) sb_put(o, "    const tide_io *io = w->tide_io;\n");
+    if (local && prog->uses_resident) sb_put(o, "    tide_residents_release(&w->tide_residents);\n");
     sb_put(o, "    memset(w, 0, sizeof *w);\n");
     if (local) sb_put(o, "    w->tide_io = io;\n");
     sb_put(o, "}\n\n");

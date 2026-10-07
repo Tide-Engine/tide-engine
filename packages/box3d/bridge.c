@@ -1,27 +1,20 @@
 // The C side of box3d.tide: Box3D's worlds, and what the package's systems ask
 // of them.
 //
-// A match's Box3D state is in the match, as an image (Physics.image), the
-// geometry the image names (Physics.geometry) and a stamp that names it. C's
-// worlds here are only where that state is stepped. Each is at a stamp, a tick
-// finds the one at its match's stamp or has one made from the image, and the
-// step leaves it at the next. So a rollback, a join, a reload or another match
-// in the same program each just find no world at their stamp, and get one. Two
-// matches at the same stamp are at the same state, and either's world serves
-// both.
+// A match keeps Box3D's state as resident pages (Physics.state). C steps it
+// in a fixed-address arena, commits touched pages after each step, and brings
+// another world's pages back by identity before stepping or querying it.
+// Network joins and layout migrations use a canonical image and geometry;
+// ordinary ticks and rollbacks copy pages without serializing the world.
 //
 // A stamp is the stamp before it and everything that was done to the world
 // since, hashed: Box3D's next state is its last and what's done to it, and
-// nothing else. So it costs what was done, and the image is never read to
-// name it.
+// nothing else. So it costs what was done, and the arena pages are never read
+// to name it.
 //
-// After a step, the image goes into the match as what changed of the last
-// one, where Box3D can say (b3t_image): the match's list keeps the rest, and
-// no copy of the image is kept here. What a world says changed is of the last
-// image it wrote, which was of the state its stamp names. The match that has
-// the world for a tick is at that stamp, so its list holds that image, byte
-// for byte, whichever match's list it was written into. A world made from an
-// image goes on from that image, which is the one its match's list holds.
+// The operation stamp and the library's deterministic digest are hashed.
+// Arena bytes contain pointers and allocator order and are never hashed or
+// sent. The marks that served images in parts now guide resident commits.
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -319,17 +312,17 @@ static int32_t shared_steps;
 static int32_t restores;
 static int32_t rebuilds;      // ...of them, the ones a question asked for (b3t_rebuild)
 static bool measuring; // No clock is read otherwise
-static bool checking;  // Every image written in parts is compared with the image written whole
-static bool always;    // ...and images are written in parts whatever is awake
-static bool wholly;    // Every image is written whole, though it could be written in parts
+static bool checking;  // Every committed resident page is compared with the live arena
+static bool always;    // ...and sparse commits are tried whatever is awake
+static bool wholly;    // Every arena page is marked, though the commit could be sparse
 static int32_t images_whole;
 static uint64_t digests; // A running hash of every digest committed (b3t_image_hash)
 static int32_t images_in_parts;
 static uint64_t step_ns;
-static uint64_t image_ns;
-static uint64_t blocks_changed; // Of the images taken while measuring: their 16 KiB blocks that weren't as the image before had them
-static uint64_t blocks_in_all;
-static uint64_t counting_ns; // What that counting took, which no match pays
+static uint64_t image_ns; // Resident restore and commit time; the measurement API keeps its old name
+static uint64_t blocks_changed; // Arena pages marked as touched in measured commits, even if their bytes stayed the same
+static uint64_t blocks_in_all; // Arena pages in use at those commits
+static uint64_t counting_ns; // What the optional full-arena check took, which no match pays
 
 // ---------------------------------------------------------------------------
 // Box3D's tasks are the tick's (tide/jobs.h)
@@ -377,6 +370,10 @@ static void *allocate(const size_t size, const int32_t alignment)
 
 static void release(void *memory, const size_t size)
 {
+    // The array may have been changed before it grew or was destroyed. The
+    // touch pass only sees its replacement; snapshots still need these bytes
+    // restored when their pages are brought back.
+    tide_arena_touch(arena, memory, size);
     tide_arena_free(arena, memory, size);
 }
 
@@ -397,12 +394,19 @@ static bool unpack_state(void *context, tide_resident *r, tide_reader *rd, uint3
 static void relink_arena(void *context, tide_arena *a);
 static void commit(tide_resident *state);
 
-// The arena, registered and taken the first time anything needs it
+// A fresh joining process unpacks a world before it runs any tick. Its
+// reader must know the kind then, as must a newly loaded game's library.
+__attribute__((constructor)) static void register_state(void)
+{
+    const tide_resident_kind k = {.name = RESIDENT_KIND, .pack = pack_state, .unpack = unpack_state, .relink = relink_arena};
+    kind = tide_resident_register(&k);
+}
+
+// The arena is taken the first time anything needs it.
 static void ready(void)
 {
     if (arena) return;
-    const tide_resident_kind k = {.name = RESIDENT_KIND, .pack = pack_state, .unpack = unpack_state, .relink = relink_arena};
-    kind = tide_resident_register(&k);
+    if (!kind) register_state();
     b3SetAllocator(allocate, release);
     b3SetTouchHooks(touched, touched_all, NULL);
     arena = tide_resident_arena(kind); // Which relinks a world another build left in it
@@ -435,7 +439,7 @@ static void save_struct(void)
 
 static void load_struct(void)
 {
-    const arena_user *u = tide_arena_user(arena);
+    const arena_user *u = tide_arena_user_read(arena);
     if (u->magic != ARENA_MAGIC || !u->struct_offset) {
         fprintf(stderr, "Box3D: the arena holds no world to take over\n");
         abort();
@@ -514,8 +518,8 @@ static b3ShapeId shape_of(const world *w, const int64_t id)
     return (b3ShapeId){(int32_t)(uint32_t)id, (uint16_t)(w->id.index1 - 1), (uint16_t)((uint64_t)id >> 32)};
 }
 
-// A body's or a shape's handle without its world, which is whichever of C's
-// worlds the match's state is in.
+// A body's or a shape's handle without its world, which is C's live world
+// after the match's resident state has been restored into it.
 static int64_t handle(const int32_t index1, const uint16_t generation)
 {
     return (int64_t)((uint64_t)(uint32_t)index1 | (uint64_t)generation << 32);
@@ -674,21 +678,20 @@ void b3t_narrow(const bool on)
     narrow = on;
 }
 
-// For tests: every image that's written as what changed of the last one is
-// also taken whole, and the two compared. One byte apart ends the program,
-// saying where: the image is in the match's hash, and a player who joins makes
-// their world from it. With `whenever`, the worlds made from here on write
-// their images in parts whenever they can, where they'd write them whole
-// while most of their bodies are awake: more for the check to see.
+// For tests: every committed resident page is compared with the live arena.
+// One byte apart ends the program, saying where Box3D wrote without a mark.
+// With `whenever`, worlds made from here on try sparse marks even when most
+// bodies are awake, where they'd normally mark the whole arena: more for the
+// check to see.
 void b3t_check(const bool on, const bool whenever)
 {
     checking = on;
     always = on && whenever;
 }
 
-// For tests: the images from here on are written whole, where they'd be
-// written in parts: what a match's list holds has to be the same bytes either
-// way, which a match played both ways says.
+// For tests: the arena is marked whole where its commits could be sparse.
+// The match's resident state has to be the same either way, which a match
+// played both ways says.
 void b3t_whole(const bool on)
 {
     wholly = on;
@@ -701,8 +704,9 @@ void b3t_share_from(const int32_t bodies)
     share_from = bodies > 0 ? bodies : SHARED_BODIES;
 }
 
-// How many images were written whole, and how many as what changed of the
-// last one, since the program started: tests read it to see they test both.
+// How many resident commits marked the whole arena, and how many used sparse
+// marks, since the program started: tests read it to see they test both. The
+// function's image name is kept for existing tests and benchmarks.
 void b3t_images(int32_t *whole, int32_t *in_parts)
 {
     *whole = images_whole;
@@ -717,8 +721,8 @@ uint64_t b3t_image_hash(void)
     return digests ? tide_hash_end(digests) : 0;
 }
 
-// How many steps were shared out over threads, and how many times a world was
-// made from an image: what tests and benchmarks read.
+// How many steps were shared out over threads, and how many times another
+// resident state was restored or received: what tests and benchmarks read.
 int32_t b3t_shared_steps(void)
 {
     return shared_steps;
@@ -737,8 +741,9 @@ int32_t b3t_rebuilds(void)
 }
 
 // Where a tick's time goes, for a benchmark that asks: Box3D's own step, and
-// its state into an image or back out of one. Nanoseconds since the last call;
-// the first starts the measuring.
+// resident restores and commits (including marks and digest). Nanoseconds
+// since the last call; the first starts measuring. The second output keeps
+// its old image name.
 void b3t_measure(uint64_t *step, uint64_t *image)
 {
     measuring = true;
@@ -748,12 +753,10 @@ void b3t_measure(uint64_t *step, uint64_t *image)
     image_ns = 0;
 }
 
-// Of the images since the last call, how many of their 16 KiB blocks changed
-// from one image to the next, and how many there were: what a match's
-// snapshots can't share, and what's hashed again. Counting keeps a copy of
-// each image and compares the next with it, inside the tick, which only a
-// measured run does: `took` is the nanoseconds of that, to take off the
-// tick's.
+// Arena pages touched by commits since the last call, and the pages in use
+// at those commits. A touched page is copied even if its bytes stayed the
+// same. `took` is the optional full-arena check's nanoseconds, to take off a
+// measured tick; no match pays it. The API keeps its old block names.
 void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took)
 {
     *took = counting_ns;
@@ -768,8 +771,8 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took)
 // Bodies and shapes
 
 // A body that's asleep is awake from here on, with all of what it fell asleep
-// with. It's a call an image in parts follows (box3d/TIDE.md): what wakes is
-// written, and the rest of the image is the last one's.
+// with. The snapshot tracking follows it (box3d/TIDE.md): what wakes is
+// marked, and untouched resident pages stay shared.
 static void wake(const b3BodyId id)
 {
     if (b3Body_GetType(id) != b3_staticBody && !b3Body_IsAwake(id)) b3Body_SetAwake(id, true);
@@ -831,8 +834,8 @@ static bool sync_body(body *b)
         id = body_of(w, b->id);
         if (!b3Body_IsValid(id)) return 0;
         // Another type first, so that a speed written with it is the new type's to have: a body that never
-        // moved takes none. It's the one call here an image in parts doesn't follow (box3d/TIDE.md), so the
-        // next image is written whole. Box3D wakes the body, lets go of everything it touches, and finds
+        // moved takes none. It's the one call here the sparse tracking doesn't follow (box3d/TIDE.md), so the
+        // next resident commit marks the whole arena. Box3D wakes the body, lets go of everything it touches, and finds
         // what still does in the step
         if (b->type != b->step_type) {
             b3Body_SetType(id, (b3BodyType)b->type);
@@ -1199,7 +1202,7 @@ static void note_left(const world *w)
 // their shapes are on them and they weigh something: as an impulse written
 // into a body that's there is, a tick sooner. In the order the bodies were
 // made, and noted with them (sync_body), so nothing is noted here. They're
-// calls an image in parts follows, as the ones Enter makes are.
+// calls the snapshot tracking follows, as the ones Enter makes are.
 static void push_new(const world *w)
 {
     for (int32_t i = 0; i < made_count; i++) {
@@ -1218,7 +1221,7 @@ static void push_new(const world *w)
 // the ones those touch, wherever they are and however fast: what they have of
 // speed is gone, and each stays where it is until something wakes it. In the
 // order Enter came to them, and noted with them (sync_body), so nothing is
-// noted here. It's a call an image in parts follows. Whether any was.
+// noted here. It's a call the snapshot tracking follows. Whether any was.
 static bool put_to_sleep(const world *w)
 {
     const bool any = sleep_count > 0;
@@ -1246,7 +1249,7 @@ int64_t b3t_step(tide_resident *state, const float dt, const int32_t substeps, c
                  const bool sleeping)
 {
     world *w = active;
-    // Gravity that isn't what the world's last step had: the world's own is in its image, so it's the
+    // Gravity that isn't what the world's last step had: the world's own is in its resident state, so it's the
     // last step's wherever the world came from
     const bool turned = !same(float3(b3World_GetGravity(w->id)), gravity);
     // ...and bodies that may sleep no more, where they might: the world's own says, the same way
@@ -1270,16 +1273,16 @@ int64_t b3t_step(tide_resident *state, const float dt, const int32_t substeps, c
     note('s', &gravity, sizeof gravity);
     note('s', &tuned, sizeof tuned);
     push_new(w);
-    // The world's settings are the match's, every step: each of these is a number of the world's that
-    // every image writes, and a call an image in parts follows (box3d/TIDE.md)
+    // The world's settings are the match's, every step: each is saved with the world's struct,
+    // and the snapshot tracking follows these calls (box3d/TIDE.md)
     b3World_SetGravity(w->id, vec(gravity));
     b3World_SetContactTuning(w->id, contact_stiffness, contact_damping, contact_speed);
     b3World_SetRestitutionThreshold(w->id, bounce_speed);
     b3World_SetHitEventThreshold(w->id, hit_speed);
     // Everything is awake to feel a gravity that changed: a body at rest would stay where the old one
     // left it. Box3D wakes every body when sleeping is turned off, and has no other call for it. It
-    // follows from the gravity, which every step notes. Turning sleeping off or on is no call an image
-    // in parts follows, so the next image is written whole, as it would be with everything awake; one
+    // follows from the gravity, which every step notes. The sparse tracking doesn't follow turning sleeping
+    // off or on, so the next resident commit marks the whole arena, as with everything awake; one
     // that leaves it as it is does nothing.
     if (turned || roused) b3World_EnableSleeping(w->id, false);
     b3World_EnableSleeping(w->id, sleeping);
@@ -1318,7 +1321,7 @@ static void commit(tide_resident *state)
     const uint32_t changed = tide_arena_touched(arena);
     tide_arena_commit(arena, state, (uint64_t)w->stamp, digest);
     digests = tide_hash_more(digests ? digests : TIDE_HASH_START, &digest, sizeof digest);
-    if (everything) images_whole++; // As an image written whole was: nothing the marks said, everything copied
+    if (everything) images_whole++; // The arena was marked whole; the counters keep their old image names
     else images_in_parts++;
     if (measuring) {
         blocks_changed += changed;
@@ -1330,8 +1333,12 @@ static void commit(tide_resident *state)
         const int64_t page = tide_arena_differs(arena, state);
         if (page >= 0) {
             char what[128];
-            b3World_Describe(w->id, tide_arena_page_at(arena, (uint32_t)page), what, sizeof what);
-            fprintf(stderr, "Box3D wrote page %lld of its arena without saying so: it starts at %s\n", (long long)page, what);
+            const uint8_t *now = tide_arena_page_at(arena, (uint32_t)page);
+            const uint8_t *was = tide_page_data(state->pages->page[page]);
+            uint32_t offset = 0;
+            while (offset < TIDE_ARENA_PAGE && now[offset] == was[offset]) offset++;
+            b3World_Describe(w->id, now + offset, what, sizeof what);
+            fprintf(stderr, "Box3D wrote page %lld of its arena without saying so: byte %u is in %s\n", (long long)page, offset, what);
             abort();
         }
         if (measuring) counting_ns += tide_time_now_ns() - counting;
@@ -1484,9 +1491,9 @@ static bool same_shapes(const b3ShapeId a, const b3ShapeId b, const b3ShapeId c,
 // What the tick's step says started touching and stopped, as Box3D has it:
 // the contacts between solid shapes that began and ended, and then the same
 // of its sensors, each with a shape that came into it or left it. They're the
-// step's own, read in the tick that stepped, and a world that's made from its
-// image has the same ones to say after its next step: what each sensor has in
-// it is in the image. Asking changes nothing of the world. How many there
+// step's own, read in the tick that stepped, and a world restored from its
+// resident has the same ones to say after its next step: each sensor's state
+// is kept with it. Asking changes nothing of the world. How many there
 // are, for b3t_touch to give each.
 //
 // In a tick that changed a body's type, two shapes that parted and met are
@@ -1554,9 +1561,9 @@ strike b3t_hit(const int32_t index)
 //
 // What code asks of the world without changing it: what a ray, or a shape
 // that's moved, meets first; what a shape overlaps; and what's in a sensor.
-// Each is asked of the state a stamp names, in whichever of C's worlds is at
-// it (at), and none of them does anything to that world: Box3D's own queries
-// write nothing, so the world's next image is what it would have been.
+// Each is asked of the state a stamp names, when C's live world is at it
+// (at), and none of them does anything to that world: Box3D's own queries
+// write nothing, so its resident state stays as it was.
 //
 // An answer is the same on every machine for the same state, and doesn't go
 // by how Box3D happens to have its shapes in its trees:
@@ -1576,10 +1583,10 @@ strike b3t_hit(const int32_t index)
 // lists both (Physics.gone, Physics.goneShapes), and they're passed by.
 //
 // Systems that ask run on the tick's threads, several at once, so nothing
-// here keeps anything between calls but which worlds there are, and a world
-// is only made (b3t_rebuild) one thread at a time.
+// here keeps anything between calls but the live world, and another resident
+// state is restored (b3t_rebuild) one thread at a time.
 
-static uint32_t rebuilding; // A lock: 1 while a thread makes a world for a question
+static uint32_t rebuilding; // A lock: 1 while a thread restores a world for a question
 
 // C's world at this state, or NULL.
 static world *at(const int64_t stamp)
@@ -1906,8 +1913,8 @@ void b3t_overlap_capsule(tide_list_out *out, const int64_t stamp, const capsule 
 }
 
 // The bodies with a shape in a sensor, as the last step found them: Box3D
-// keeps each sensor's, and they're in the world's image, so a world made from
-// one says the same. Of up to three sensors, an entity's.
+// keeps each sensor's, and they're in the world's resident state, so a world
+// restored from it says the same. Of up to three sensors, an entity's.
 void b3t_inside(tide_list_out *out, const int64_t stamp, const int64_t first, const int64_t second, const int64_t third,
                 const int64_t *gone, const int32_t gone_count, const int64_t *gone_shapes, const int32_t gone_shape_count)
 {
@@ -1967,6 +1974,13 @@ static void pack_state(void *context, const tide_resident *r, tide_writer *w)
     tide_write_u32(w, (uint32_t)geometry);
     uint8_t *bytes = tide_write_space(w, (uint32_t)geometry);
     if (bytes && geometry > 0) b3World_GetSnapshotGeometry(live.id, bytes, geometry);
+    // Serialization interns geometry and changes the snapshot tracking in
+    // the native world. Packing is a read of r: discard that temporary work,
+    // including dirty pages whose last committed identity did not change.
+    tide_arena_restore(arena, r);
+    load_struct();
+    live.stamp = (int64_t)r->stamp;
+    live.chain = r->stamp;
 }
 
 // The arena's state from canonical bytes, committed into `r`: a world made
@@ -2006,7 +2020,7 @@ static void relink_arena(void *context, tide_arena *a)
 {
     (void)context;
     arena = a;
-    const arena_user *u = tide_arena_user(a);
+    const arena_user *u = tide_arena_user_read(a);
     if (u->magic != ARENA_MAGIC || tide_arena_stamp(a) == 0) return; // Nothing in it yet
     load_struct();
     live.stamp = (int64_t)tide_arena_stamp(a);

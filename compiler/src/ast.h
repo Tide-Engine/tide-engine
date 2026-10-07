@@ -8,6 +8,7 @@
 #define MAX_COMPONENTS 256
 #define MAX_ARCHETYPES 1024
 #define COMP_WORDS (MAX_COMPONENTS / 64)
+#define MAX_RESIDENT_FIELDS 8 // Match singleton fields, matching tide/resident.h's resident kinds
 
 typedef struct comp_mask {
     uint64_t w[COMP_WORDS];

@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "game.h"
@@ -34,9 +35,10 @@ static int physics_bytes(const tide_world *w)
 #include "tide/platform.h"
 #endif
 
-// The package's bridge: C's worlds, which a test starts without, and what it
-// says of the images it wrote and the worlds it made again
+// The package's bridge: C's world, which a test starts without, and what it
+// says of resident commits and states it restored
 void b3t_forget(void);
+void b3t_check(bool on, bool whenever);
 void b3t_images(int32_t *whole, int32_t *in_parts);
 int32_t b3t_restores(void);
 void b3t_measure(uint64_t *step, uint64_t *image);
@@ -62,7 +64,7 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took);
 #define BARE 0
 
 // The server's world in the match below, on every platform and in every
-// configuration: Box3D's math, its image and the netcode, byte for byte.
+// configuration: Box3D's math, its resident stamp and digest, and the netcode.
 // Once in the middle of a round, and once after a new game was asked for.
 #define BRAWL_HASH UINT64_C(0xca47def5177fd07e)
 #define MATCH_HASH UINT64_C(0xcfa8f9a0e94757ef)
@@ -1198,7 +1200,7 @@ TIDE_TEST(sumo_three_players_stay_in_one_match_over_a_bad_network)
     }
 
     const uint64_t hash = tide_world_hash(authority);
-    printf("    Box3D's world was made again from an image %d times\n", (int)b3t_restores());
+    printf("    Box3D's resident state was restored or received %d times\n", (int)b3t_restores());
     printf("    the server's world at tick %u: 0x%016llx\n", tide_server_tick(m.server), (unsigned long long)hash);
     TIDE_CHECK(tide_server_tick(m.server) == 880);
     TIDE_CHECK(hash == MATCH_HASH);
@@ -1243,10 +1245,9 @@ TIDE_TEST(sumo_a_player_joins_a_whole_ring_that_bots_are_bringing_down)
     tide_loopback_destroy(m.net);
 }
 
-// What the bridge spent, since this was last asked, on what only a measured
-// run does: a copy of each image, to count how much of it the next changes.
-// It's inside the ticks, and no match's to pay, so what's timed has it taken
-// off.
+// What the bridge spent, since this was last asked, on the optional
+// full-arena check. It's inside the ticks, and no match's to pay, so what's
+// timed has it taken off.
 static uint64_t counted(void)
 {
     uint64_t blocks, of, took;
@@ -1266,9 +1267,9 @@ static void no_work(void *context, const uint32_t thread)
 // checked, as machines differ too much. A tick with the world kept and hashed
 // after it, as a client's is: with a fresh ring at rest, while four bots are
 // at it, and at the worst, a shock beside the middle's pyramid. How much of
-// Box3D's image a tick changes is counted too, in the 16 KiB blocks a match
-// keeps it in: those are what a tick copies and what's hashed after it. The
-// counting is inside the tick and no match's to pay, so it's taken off.
+// Box3D's arena pages touched by a commit are counted too: those are copied
+// into the resident even if their bytes didn't change. The optional
+// full-arena check is inside the tick and no match's to pay, so it's taken off.
 //
 // Where the program has the platform's threads, every other tick's world is
 // hashed with what changed of it shared out over them, as a session with
@@ -1327,17 +1328,17 @@ static void spend(const int ticks, const char *what, const bool away)
     b3t_measure(&step_ns, &image_ns);
     b3t_images(&whole, &parts);
     const int images = whole - whole0 + parts - parts0;
-    printf("    %s: %.3f ms a tick (Box3D's step %.3f, its image %.3f), %.2f at the most, and %.3f to keep and hash the world", what,
+    printf("    %s: %.3f ms a tick (Box3D's step %.3f, resident restore/commit %.3f), %.2f at the most, and %.3f to keep and hash the world", what,
            (double)ticking / ticks / 1e6, (double)step_ns / ticks / 1e6, (double)image_ns / ticks / 1e6, (double)slowest / 1e6,
            alone ? (double)keeping / alone / 1e6 : 0.0);
     if (shared) printf(" (%.3f with a few of the pool's %u threads called in to hash)", (double)sharing / shared / 1e6, (unsigned)jobs->threads);
-    printf("; %d images written whole and %d in parts, %.0f of an image's %.0f blocks changed\n", whole - whole0, parts - parts0,
+    printf("; %d resident commits whole and %d sparse, %.0f of the arena's %.0f pages touched per commit\n", whole - whole0, parts - parts0,
            images ? (double)changed / images : 0.0, images ? (double)in_all / images : 0.0);
     tide_world_free(&kept);
 }
 
 // What a client pays when it guessed another player's input wrong: its world
-// as it was `ahead` ticks ago, Box3D's made again from the image in it, and
+// as it was `ahead` ticks ago, Box3D's resident pages are restored, and
 // those ticks run again with another input, each kept and hashed. The world
 // it's done to is a copy: the match goes on as it was. The least of the
 // times it's done says the most on a machine that's busy with other things.
@@ -1394,6 +1395,8 @@ static void rerun(const int ahead, const int times, const char *what)
 
 TIDE_TEST(sumo_costs)
 {
+    setvbuf(stdout, NULL, _IONBF, 0);
+    b3t_check(getenv("B3T_CHECK_RESIDENT") != NULL, false);
 #ifndef __OPTIMIZE__
     printf("    this build isn't optimized: each of these is measured over a tenth of the time it says, to show that it runs\n");
 #endif
@@ -1414,9 +1417,9 @@ TIDE_TEST(sumo_costs)
     world.Ring.bots = false;
     tick(READY - 2 - settling + RESPAWN);
     spend(MEASURED(120), "a fresh ring at rest, one ball that nobody drives", false);
-    // A world made again from its image, as a client that predicted wrong does before it runs its ticks again
+    // A world restored from its resident pages, as a client that predicted wrong does before rerunning ticks
     double again = 1e9;
-    double restore = 1e9; // Of which Box3D's restore, and the image in parts the tick writes after it
+    double restore = 1e9; // Of which Box3D's resident restore and the tick's commit
     for (int i = 0; i < 5; i++) {
         b3t_forget();
         (void)counted();
@@ -1429,7 +1432,7 @@ TIDE_TEST(sumo_costs)
         if (took < again) again = took;
         if ((double)image_ns / 1e6 < restore) restore = (double)image_ns / 1e6;
     }
-    printf("    a tick that makes Box3D's world again from the match's image (%d bytes): %.2f ms, of which the restore %.2f\n",
+    printf("    a tick that restores Box3D's resident state (%d bytes): %.2f ms, of which resident restore/commit %.2f\n",
            physics_bytes(&world), again, restore);
     world.Ring.bots = true;
     tick(4);

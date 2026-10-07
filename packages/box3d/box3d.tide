@@ -2,13 +2,12 @@
 // box3d/TIDE.md lists), for a match: bodies and their shapes are components,
 // and every tick steps them.
 //
-// Box3D keeps its world in C's memory, where a match's rollbacks, joins and
-// reloads don't reach. So after each step its whole state goes into the match
-// as bytes (Physics.image, and Physics.geometry for the hulls it names), and
-// before each step C's world is either at that state already or is made from
-// it again. Everything that changes Box3D's world happens in these systems,
-// from what the components say: code that wants a body to move writes its
-// component.
+// Box3D's state lives in an arena, whose resident pages (Physics.state) the
+// match keeps after each step. Before a tick C's world is either at that
+// state already or its pages are restored. Joins and layout migrations use
+// a canonical image and its geometry. Everything that changes Box3D's world
+// happens in these systems, from what the components say: code that wants a
+// body to move writes its component.
 
 namespace Box3D;
 
@@ -342,8 +341,8 @@ extern void SensorBodies(out List<long> bodies, long stamp, long first, long sec
                          List<long> goneShapes, int goneShapeCount);
 
 // C's world for this match, at the state the match is in: the one it has, or
-// one made from the image. Then what went since the last step goes from it:
-// the parts of the bodies that went are destroyed with them, the shapes of the
+// the state restored from its resident pages. Then what went since the last
+// step goes from it: the parts of the bodies that went are destroyed with them, the shapes of the
 // parts that went by themselves, and the bodies.
 //
 // Each of these systems says where it is in the stage, so that nothing a game
@@ -612,7 +611,7 @@ event(Destroyed) RemovePart(Part part, mut Physics physics)
 // since isn't there yet, nor a body that was spawned since, and an entity
 // that was destroyed since is found no more.
 
-// Whether C has the match's world to ask: it's made from the match's image
+// Whether C has the match's world to ask: its resident pages are restored
 // when it doesn't, as before a tick. False for a match no step was taken in.
 bool Ready(Physics physics)
 {
