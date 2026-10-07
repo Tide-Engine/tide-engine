@@ -318,38 +318,33 @@ jobs:
           cmake --build --preset sanitize
           ctest --preset sanitize -LE gpu -E '^(relay|tide_platform_rooms)$'
       # Pin the Windows web tests' browser independently of the runner image.
-      # The archive is portable; native jobs keep the runner's browser.
-      - name: Cache Chrome (Windows web)
+      # Headless Shell draws offscreen; native jobs keep the runner's browser.
+      - name: Cache Chrome Headless Shell (Windows web)
         if: runner.os == 'Windows' && matrix.preset == 'web-release'
         uses: actions/cache@v4
         with:
-          path: build/chrome-for-testing/${{ env.TIDE_WEB_CHROME_VERSION }}/chrome-win64
-          key: chrome-for-testing-Windows-win64-${{ env.TIDE_WEB_CHROME_VERSION }}
-      - name: Install Chrome (Windows web)
+          path: build/chrome-for-testing/${{ env.TIDE_WEB_CHROME_VERSION }}/chrome-headless-shell-win64
+          key: chrome-headless-shell-Windows-win64-${{ env.TIDE_WEB_CHROME_VERSION }}
+      - name: Install Chrome Headless Shell (Windows web)
         if: runner.os == 'Windows' && matrix.preset == 'web-release'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $chromeRoot = Join-Path $env:GITHUB_WORKSPACE "build/chrome-for-testing/$env:TIDE_WEB_CHROME_VERSION"
-          $chromePath = Join-Path $chromeRoot 'chrome-win64/chrome.exe'
+          $chromePath = Join-Path $chromeRoot 'chrome-headless-shell-win64/chrome-headless-shell.exe'
           if (-not (Test-Path -LiteralPath $chromePath)) {
             New-Item -Path $chromeRoot -ItemType Directory -Force | Out-Null
-            $chromeArchive = Join-Path $chromeRoot 'chrome-win64.zip'
-            Invoke-WebRequest "https://storage.googleapis.com/chrome-for-testing-public/$env:TIDE_WEB_CHROME_VERSION/win64/chrome-win64.zip" -OutFile $chromeArchive
+            $chromeArchive = Join-Path $chromeRoot 'chrome-headless-shell-win64.zip'
+            Invoke-WebRequest "https://storage.googleapis.com/chrome-for-testing-public/$env:TIDE_WEB_CHROME_VERSION/win64/chrome-headless-shell-win64.zip" -OutFile $chromeArchive
             Expand-Archive -LiteralPath $chromeArchive -DestinationPath $chromeRoot -Force
             Remove-Item -LiteralPath $chromeArchive
           }
-          # CfT's setup grants Chrome's install-file capabilities read/execute access.
-          # Cached files need it too; the archive does not preserve NTFS ACLs.
-          $chromeDirectory = Split-Path -Path $chromePath -Parent
-          $chromeSetup = Join-Path $chromeDirectory 'setup.exe'
-          $chromeConfig = Start-Process -FilePath $chromeSetup -ArgumentList "--configure-browser-in-directory=`"$chromeDirectory`"" -WindowStyle Hidden -Wait -PassThru
-          if ($chromeConfig.ExitCode -ne 78) { throw "Could not configure Chrome's sandbox permissions (exit $($chromeConfig.ExitCode))." }
-          $chromeVersion = (Get-Item -LiteralPath $chromePath).VersionInfo.ProductVersion
-          if ($chromeVersion -ne $env:TIDE_WEB_CHROME_VERSION) {
-            throw "Expected Chrome $env:TIDE_WEB_CHROME_VERSION, found $chromeVersion."
+          $chromeVersion = (& $chromePath --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $chromeVersion -ne "Google Chrome for Testing $env:TIDE_WEB_CHROME_VERSION") {
+            throw "Expected Chrome Headless Shell $env:TIDE_WEB_CHROME_VERSION, found $chromeVersion."
           }
           Write-Output "Web browser: $chromePath ($chromeVersion)"
+          Write-Output "Windows process session: $((Get-Process -Id $PID).SessionId)"
           "TIDE_WEB_BROWSER=$($chromePath.Replace('\', '/'))" >> $env:GITHUB_ENV
 
       # The WebGPU ones (label webgpu) run on the browser's software WebGPU.
