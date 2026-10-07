@@ -1980,13 +1980,6 @@ static type check_literal(checker *c, expr *e)
         for (int j = 0; j < d->fields.count; j++) {
             if (str_eq(d->fields.items[j].name, init->name) && !d->fields.items[j].hidden) init->field = &d->fields.items[j];
         }
-        if (init->field && init->field->type.kind == TY_RESIDENT) {
-            diag_error(init->at, "'" STR_FMT "' is resident state, which the C of the package that keeps it fills: a value leaves it out",
-                       STR_ARG(init->name));
-            init->field = NULL;
-            check_expr_any(c, init->value);
-            continue;
-        }
         const type value = check_expr_want(c, init->value, init->field ? init->field->type : T_ERR);
         if (!init->field && local_field_of(d, init->name)) {
             diag_error(init->at, "'" STR_FMT "' is a local field of '" STR_FMT "', so a value of it doesn't have it",
