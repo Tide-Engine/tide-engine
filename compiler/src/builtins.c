@@ -46,6 +46,15 @@ static const decl *depth_decl;
 static decl text_font;
 static const type T_FONT = {TY_ENUM, &text_font};
 static const decl *font_decl;
+// ...and the Format enum, what a render target is made to hold.
+static decl format_enum;
+static const type T_FORMAT = {TY_ENUM, &format_enum};
+static const decl *format_decl;
+
+void builtins_use_format(const decl *format)
+{
+    format_decl = format;
+}
 
 // The GUITheme and GUIControl structs, which the GUI takes and gives, the same way.
 static decl theme_struct, control_struct;
@@ -125,6 +134,7 @@ static type real_type(const type t)
     if (t.decl == &shape_struct && shape_decl) return (type){TY_STRUCT, (decl *)shape_decl};
     if (t.decl == &blend_enum && blend_decl) return (type){TY_ENUM, (decl *)blend_decl};
     if (t.decl == &depth_enum && depth_decl) return (type){TY_ENUM, (decl *)depth_decl};
+    if (t.decl == &format_enum && format_decl) return (type){TY_ENUM, (decl *)format_decl};
     if (t.decl == &text_font && font_decl) return (type){TY_ENUM, (decl *)font_decl};
     if (t.decl == &theme_struct && theme_decl) return (type){TY_STRUCT, (decl *)theme_decl};
     if (t.decl == &control_struct && control_decl) return (type){TY_STRUCT, (decl *)control_decl};
@@ -151,6 +161,7 @@ static const char *signature_type_name(const type t)
     if (t.decl == &shape_struct) return "Shape";
     if (t.decl == &blend_enum) return "Blend";
     if (t.decl == &depth_enum) return "Depth";
+    if (t.decl == &format_enum) return "Format";
     if (t.decl == &text_font) return "Font";
     if (t.decl == &theme_struct) return "GUITheme";
     if (t.decl == &control_struct) return "GUIControl";
@@ -692,6 +703,14 @@ static void build_signatures(void)
              screen_target_doc);
     describe(add("RenderTarget", "Screen", T_TARGET, "tide_render_target_screen", 1, T_F, T_NONE, T_NONE), "factor",
              screen_target_doc);
+    static const char screen_format_doc[] =
+        "A render target that's always the window's size, or that part of it, which holds what `format` says: "
+        "`Format.DepthOnly` is depth alone, with no color image, for a pass whose depth a frag reads afterwards "
+        "(`target.depth`). It's made again, empty, whenever the window's size or the display's scale changes.";
+    describe(add("RenderTarget", "Screen", T_TARGET, "tide_render_target_window_as", 1, T_FORMAT, T_NONE, T_NONE), "format",
+             screen_format_doc);
+    describe(add("RenderTarget", "Screen", T_TARGET, "tide_render_target_screen_as", 2, T_F, T_FORMAT, T_NONE), "factor, format",
+             screen_format_doc);
 
     describe(add("Draw3D", "Cube", T_NONE, "tide_draw_cube", 3, T_F3, T_F3, T_COLOR),
              "center, size, color", "A filled cube, centered in the world, with the full size along each axis.");

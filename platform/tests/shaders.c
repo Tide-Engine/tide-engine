@@ -279,6 +279,59 @@ static void run_screen_target_checks(const char *when)
     local.Art.targetPass = 0;
 }
 
+// A shadow map written in Tide (pass 7): casters drawn into a target of depth
+// alone through a lamp's camera, a frag that compares each pixel's distance
+// from the lamp with what's stored, and the stored depth read as a number.
+// The window looks straight down on a floor 8 by 8, 32 pixels a unit, x to
+// the right; the lamp slants along +x, so a shadow falls as far to the right
+// as what casts it is high. The target has pixels of its own, so the picture
+// is the same in logical pixels on any display.
+static void run_shadow_checks(const char *when)
+{
+    static const struct {
+        float x, y;      // In logical pixels
+        int r, g, b;
+        const char *what;
+    } wanted[] = {
+        {144, 128, 255, 255, 255, "a floor the lamp sees is lit"},
+        {112, 128, 64, 64, 64, "under a slab one above it, a floor is in shadow, one to the right"},
+        {112, 80, 255, 255, 255, "and lit past the slab's side"},
+        {64, 128, 255, 0, 0, "the slab itself is lit: it's the nearest thing to the lamp there"},
+        {240, 192, 64, 64, 64, "a caster through a frag casts where its pixels were drawn"},
+        {208, 192, 255, 255, 255, "and nothing where its frag discarded them"},
+        {29, 32, 67, 67, 67, "a depth read as a number: the slab's, from the lamp"},
+        {42, 40, 83, 83, 83, "and the grate's, a little farther"},
+        {38, 40, 255, 255, 255, "the far limit where the grate's frag discarded"},
+        {10, 10, 255, 255, 255, "and where nothing was drawn since the clear, whatever colors were"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    static const float scales[] = {1.0f, 2.0f, 1.5f};
+    for (size_t k = 0; k < sizeof scales / sizeof scales[0]; k++) {
+        const float scale = scales[k];
+        local.Art.targetPass = 7;
+        tide_draw_reset(&list);
+        tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+        tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+        tide_gui_end(&gui, &list);
+        tide_float2 points[COUNT];
+        uint32_t got[COUNT];
+        for (int i = 0; i < COUNT; i++) points[i] = tide_f2((wanted[i].x + 0.5f) * scale, (wanted[i].y + 0.5f) * scale);
+        tide_platform_read_pixels_as(&list, SIZE, SIZE, scale, points, COUNT, got);
+        for (int i = 0; i < COUNT; i++) {
+            const int channels[3] = {wanted[i].r, wanted[i].g, wanted[i].b};
+            bool ok = true;
+            for (int c = 0; c < 3; c++) {
+                const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - channels[c];
+                ok = ok && d >= -5 && d <= 5;
+            }
+            printf("%s: %s, at scale %g%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what,
+                   (double)scale, when, (unsigned)got[i], (unsigned)wanted[i].r, (unsigned)wanted[i].g, (unsigned)wanted[i].b);
+            if (!ok) failures++;
+        }
+    }
+    local.Art.targetPass = 0;
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -299,6 +352,7 @@ static int frame(void *user, const float seconds)
         run_checks(", on another device");
         run_target_checks(", on another device");
         run_screen_target_checks(", on another device");
+        run_shadow_checks(", on another device");
         return failures;
     }
 #endif
@@ -308,6 +362,8 @@ static int frame(void *user, const float seconds)
     run_checks(", again");
     run_target_checks(", again");
     run_screen_target_checks("");
+    run_shadow_checks("");
+    run_shadow_checks(", again");
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");

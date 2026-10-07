@@ -945,11 +945,12 @@ static bool program_corrects(const program *prog)
     return false;
 }
 
-// Whether `d` is an enum generated C has: every one but the built-in Depth in
-// a game no code of which names it, whose C is then what it was without it.
+// Whether `d` is an enum generated C has: every one but the built-in Depth
+// and Format in a game no code of which names it, whose C is then what it was
+// without it.
 static bool enum_generated(const program *prog, const decl *d)
 {
-    return d->kind == DECL_ENUM && (d != prog->depth || d->named);
+    return d->kind == DECL_ENUM && ((d != prog->depth && d != prog->format) || d->named);
 }
 
 // Local fields and correction errors stay with what was spawned, rather than
@@ -2851,8 +2852,8 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         }
         break;
     case E_MEMBER: {
-        if (e->object->type.kind == TY_RENDER_TARGET) {
-            sb_put(o, "tide_render_target_color(");
+        if (e->object->type.kind == TY_RENDER_TARGET) { // target.color, target.depth
+            sb_put(o, e->type.kind == TY_DEPTH_TEXTURE ? "tide_render_target_depth(" : "tide_render_target_color(");
             gen_expr(g, o, e->object);
             sb_put(o, ")");
             break;
@@ -5791,6 +5792,7 @@ static layout type_layout(const type t)
     if (t.kind == TY_LONG) return (layout){8, 8};
     if (t.kind == TY_RENDER_TARGET) return (layout){24, 8}; // tide_render_target: its id, then its size, four floats
     if (t.kind == TY_TEXTURE) return (layout){48, 8};       // tide_texture_ref: an image, then a target
+    if (t.kind == TY_DEPTH_TEXTURE) return (layout){24, 8}; // tide_depth_ref: a target
     if (t.kind == TY_MAP || t.kind == TY_SET) return (layout){12, 4}; // tide_map: two lists and a count
     if (t.kind == TY_ARRAY) {
         const layout e = type_layout(t.decl->fields.items[0].type);
@@ -14863,7 +14865,7 @@ static bool resource_fields(const decl *d)
 
 static bool resource_type(const type t)
 {
-    if (t.kind == TY_TEXTURE || t.kind == TY_RENDER_TARGET) return true;
+    if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_RENDER_TARGET) return true;
     if (t.kind == TY_STRUCT || t.kind == TY_OPTIONAL || t.kind == TY_FAILABLE) return resource_fields(t.decl);
     return false; // Containers cannot keep rendering references.
 }
@@ -14876,15 +14878,16 @@ static void gen_resource_fields(gen *g, const decl *d, const char *path, const c
         if (!resource_type(f->type)) continue;
         sb at = {0};
         sb_printf(&at, "%s.%s", path, field_cname(f));
-        if (f->type.kind == TY_TEXTURE || f->type.kind == TY_RENDER_TARGET) {
-            const bool texture = f->type.kind == TY_TEXTURE;
+        if (f->type.kind == TY_TEXTURE || f->type.kind == TY_DEPTH_TEXTURE || f->type.kind == TY_RENDER_TARGET) {
+            const bool texture = f->type.kind != TY_RENDER_TARGET; // A target's color, or its depth
             sb_printf(o, "%sif (tide_render_target_managed(%s.%s)) {\n", pad, at.data, texture ? "target.id" : "id");
             if (texture) {
                 // Its size, its scale and whether it follows the window come with it
                 sb_printf(o, "%s    tide_render_target target = %s.target;\n", pad, at.data);
                 sb_printf(o, "%s    if (same_memory) tide_render_target_adopt(target);\n", pad);
                 sb_printf(o, "%s    else target = tide_render_target_recreate(target);\n", pad);
-                sb_printf(o, "%s    %s = tide_render_target_color(target);\n", pad, at.data);
+                sb_printf(o, "%s    %s = tide_render_target_%s(target);\n", pad, at.data,
+                          f->type.kind == TY_DEPTH_TEXTURE ? "depth" : "color");
             } else {
                 sb_printf(o, "%s    if (same_memory) {\n%s        tide_render_target_adopt(%s);\n", pad, pad, at.data);
                 sb_printf(o, "%s        %s = tide_render_target_resolve(%s);\n%s    } else %s = tide_render_target_recreate(%s);\n",
@@ -15589,9 +15592,21 @@ static void gen_shaders(gen *g)
                       dim - 1, vertex, field_cname(f));
         }
         sb_printf(o, "},\n    .instance_floats = %d,\n    .instance_ints = %d,\n    .uniform_floats = %d,\n"
-                     "    .uniform_ints = %d,\n    .texture_count = %d,\n};\n\n",
+                     "    .uniform_ints = %d,\n    .texture_count = %d,\n",
                   word_packs(sh->instance_floats), word_packs(sh->instance_ints), word_packs(sh->uniform_floats),
                   word_packs(sh->uniform_ints), sh->textures.count);
+        // How each texture is read, where any isn't a color: a target's depth, as a number or compared
+        bool depths = false;
+        for (int t = 0; t < sh->textures.count; t++) depths |= sh->textures.items[t].read != READ_COLOR;
+        if (depths) {
+            sb_put(o, "    .texture_reads = {");
+            for (int t = 0; t < sh->textures.count; t++) {
+                const shader_read read = sh->textures.items[t].read;
+                sb_printf(o, "%sTIDE_SHADER_READ_%s", t ? ", " : "", read == READ_COMPARE ? "COMPARE" : read == READ_DEPTH ? "DEPTH" : "COLOR");
+            }
+            sb_put(o, "},\n");
+        }
+        sb_put(o, "};\n\n");
 
         // Draws a mesh through it: what its frag and vert read goes with the instance and the draw
         sb_printf(o, "TIDE_HELPER void tide_shade_%d(tide_draw_list *tide_draw", s);
@@ -15688,6 +15703,9 @@ static void gen_shaders(gen *g)
             while (sh->bound.items[b] != texture->source) b++;
             if (texture->field->type.kind == TY_TEXTURE)
                 sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, tide_%sb%d->%s);\n", t,
+                          texture->field->is_local ? "l" : "", b, field_cname(texture->field));
+            else if (texture->field->type.kind == TY_DEPTH_TEXTURE)
+                sb_printf(o, "    tide_textures[%d] = tide_draw_depth_source(tide_draw, tide_%sb%d->%s);\n", t,
                           texture->field->is_local ? "l" : "", b, field_cname(texture->field));
             else
                 sb_printf(o, "    tide_textures[%d] = tide_draw_grid_texture(tide_draw, tide_%sb%d->%s, &%s);\n", t,
