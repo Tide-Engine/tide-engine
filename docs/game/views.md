@@ -1047,6 +1047,10 @@ view Floor(mut Art art)
 - A texture with nothing said is blended and clamped.
 - What a draw says is for that draw, in the place of the texture's own, each of the two apart. In a frag, a `Sample` that says its filter or its wrap has what it says, and one that doesn't reads the texture as the texture says (see [Sampling a texture](./shaders.md#textures)).
 
+### Six of them, as a cube
+
+A `Cubemap` is six images that are read by a direction where a `Texture` is read by a `uv`: a sky, or what a mirror sees. It isn't a mesh's texture; a frag reads it, `sky.Sample(direction)`. An asset's is six files, and `RenderTarget.Cube(size)` is one whose six faces are render targets, `cube.faces[0]` to `cube.faces[5]`. See [Skybox and reflections](./shaders.md#skybox-and-reflections).
+
 ## Clipping
 
 `Draw.Clip(rect) { ... }` keeps what's drawn in its block inside a rectangle: meshes, shapes, text, and `Draw.Clear`, which then fills the rectangle.
