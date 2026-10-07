@@ -302,9 +302,29 @@ local event(Spawned) CrateLanded(Body body, with Crate)
 ```
 
 - **`Spawned` and `Destroyed` are sent in both worlds.** A local handler of one hears the match's when it takes something of the match, a component, a filter or a singleton, or when it's `verified`. One that takes only local state hears this machine's local entities'. One that takes a local component and something of the match is an error.
-- **A machine hears what's sent from the tick it joins in**: its own `PlayerJoined`, and every later one. The entities that were in the world by then, those the match was set up with as it started among them, have no `Spawned` for it. What every entity needs, however this machine learned of it, goes in a view and the entity's [local fields](./local-state.md#local-fields) instead.
-- **Ticks that were skipped say nothing**: when a client's world went wrong and the server sent it again, the ticks in between were never run there.
-- **A match that changes hands** goes on from the new host's last confirmed tick (see [Host migration](../multiplayer/matches.md#host-migration)), so the ticks after it are heard again on a machine that had heard them.
+- **A machine hears what's sent from the tick it joins in**: its own `PlayerJoined`, and every later one. Nothing is made up for what happened before: the hits, the joins and the entities that came and went.
+- **`Spawned` is the exception: a machine hears it once for every entity it comes to have.** The entities that are in the world a machine is sent, those the match was set up with as it started among them, are new to that machine, so their `Spawned` is heard as the world arrives, with their components as they are by then. That makes it the place to set up what a machine keeps for an entity, like its [local fields](./local-state.md#local-fields):
+
+  ```csharp
+  asset Texture crate = "art/crate.png";
+
+  component Box
+  {
+      float3 position;
+      local Texture skin; // This machine's
+  }
+
+  // For every Box this machine comes to have: spawned in a tick, there as
+  // the match started, or already in the match it joined
+  local event(Spawned) Dress(mut Box box)
+  {
+      box.skin = crate;
+  }
+  ```
+
+  A handler that shows something happening, a puff where a crate lands, runs for the crates that were there when a player joins too.
+- **Ticks that were skipped say nothing**: when a client's world went wrong and the server sent it again, the ticks in between were never run there. What was spawned meanwhile and is still there is heard as that world arrives, and nothing a machine had is heard again.
+- **A match that changes hands** goes on from the new host's last confirmed tick (see [Host migration](../multiplayer/matches.md#host-migration)), so the ticks after it are heard again on a machine that had heard them. The entities it had before aren't new to it, and aren't heard again.
 
 ### What isn't there yet
 

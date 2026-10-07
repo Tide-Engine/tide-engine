@@ -11,6 +11,9 @@
 
 static tide_loopback *net;
 static tide_session *machines[MACHINES];
+static tide_local locals[MACHINES]; // Each machine's local state, which hears what its match sends
+static tide_draw_list draw;
+static tide_gui gui;
 static bool frozen[MACHINES]; // Not updated: a machine that stopped answering
 static int connected[MACHINES];
 static int disconnected[MACHINES];
@@ -31,6 +34,7 @@ static void setup(void)
     tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.02});
     for (int i = 0; i < MACHINES; i++) {
         machines[i] = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .sample = sample});
+        tide_local_init(&locals[i]);
         frozen[i] = false;
         connected[i] = disconnected[i] = 0;
     }
@@ -38,8 +42,38 @@ static void setup(void)
 
 static void teardown(void)
 {
-    for (int i = 0; i < MACHINES; i++) tide_session_destroy(machines[i]);
+    for (int i = 0; i < MACHINES; i++) {
+        tide_session_destroy(machines[i]);
+        tide_local_free(&locals[i]);
+    }
     tide_loopback_destroy(net);
+}
+
+// A frame on a machine, as a host has them: what its session heard of the
+// match goes to its local handlers, asked for before the update.
+static void frame(const int i)
+{
+    tide_event_log *heard = tide_session_events(machines[i]);
+    tide_session_update(machines[i], now);
+    const tide_view_worlds view = tide_session_view(machines[i]);
+    tide_local_events(&locals[i], heard);
+    tide_draw_reset(&draw);
+    tide_frame(view.current, view.previous, view.alpha, view.verified, &locals[i], &draw, &gui);
+}
+
+// Whether machine `i` heard each of the `count` movers its match has spawn
+// exactly once.
+static bool heard_each_once(const int i, const uint32_t count)
+{
+    const tide_world *w = tide_session_world(machines[i]);
+    uint32_t movers = 0;
+    for (uint32_t slot = 0; w && slot < w->entities.next_unused; slot++) {
+        const tide_entity e = tide_entity_in_slot(&w->entities, slot);
+        if (!tide_has_Mover(w, e)) continue;
+        if (tide_get_Mover_local(&locals[i], e).heard != 1) return false;
+        movers++;
+    }
+    return movers == count;
 }
 
 static void run(const double seconds)
@@ -50,7 +84,7 @@ static void run(const double seconds)
         tide_loopback_set_time(net, now);
         for (int i = 0; i < MACHINES; i++) {
             if (frozen[i]) continue;
-            tide_session_update(machines[i], now);
+            frame(i);
             tide_session_event e;
             while (tide_session_next_event(machines[i], &e)) {
                 if (e.kind == TIDE_SESSION_CONNECTED_EVENT) {
@@ -125,6 +159,8 @@ TIDE_TEST(handover_a_player_takes_the_match_over_when_its_host_leaves)
     const uint32_t player1 = status(1).client.player.id;
     const uint32_t player2 = status(2).client.player.id;
     const int32_t ticks = server_world(0)->Match.ticks;
+    // Each machine heard each player's entity spawn: those the world it was sent had, as it came
+    for (int i = 0; i < 3; i++) TIDE_CHECK(heard_each_once(i, 3));
     tide_session_close(machines[0]); // Closed: no one new, but its players come back
     run(0.5);                        // ...which its players hear
 
@@ -150,6 +186,8 @@ TIDE_TEST(handover_a_player_takes_the_match_over_when_its_host_leaves)
     TIDE_CHECK(w->Match.joined == 3); // No one joined again
     TIDE_CHECK(w->Match.left == 1);   // The last host's player
     TIDE_CHECK(w->Match.ticks > ticks + 100); // The match went on
+    // The world each came back to is one it had: none of its entities is heard again
+    TIDE_CHECK(heard_each_once(1, 3) && heard_each_once(2, 3));
     // Local code saw it connect once, and never leave
     TIDE_CHECK(connected[1] == 1 && disconnected[1] == 0);
     TIDE_CHECK(connected[2] == 1 && disconnected[2] == 0);
@@ -190,6 +228,7 @@ TIDE_TEST(handover_happens_again_and_when_the_host_stops_answering)
     TIDE_CHECK(status(2).client.player.id == player2);
     TIDE_CHECK(server_world(2)->Match.left == 2);
     TIDE_CHECK(connected[2] == 1 && disconnected[2] == 0);
+    TIDE_CHECK(heard_each_once(2, 3)); // Through both handovers
     teardown();
 }
 

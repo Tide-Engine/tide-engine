@@ -150,6 +150,7 @@ A local field lives outside the match. It's never sent, hashed, snapshotted or r
 - **Every entity with the component has them**, on every machine, however that machine learned of the entity: it ran the spawn, joined later, took over as host, or hot reloaded. Nothing attaches or removes them. Each starts at its default, and takes memory only once a view writes it.
 - **Views read and write them through their parameter.** `Box box` reads them, and `mut Box box` writes them, and only them: the match's fields stay a blended copy the view can't change. A function that takes the component gets them with it, like `Bake` above, and then only views, local handlers and functions like it can call it.
 - **A local handler of one of the match's events writes them too**, through `mut`, for the entity the event was sent to: a hit's handler sets the flash the entity's view then fades (see [Events](./events.md#local-handlers)).
+- **A local handler of `Spawned` sets them up.** A machine hears `Spawned` once for every entity it comes to have, those that were in the match when it joined too, so `local event(Spawned) Dress(mut Box box)` is where a `Box` gets what this machine keeps for it (see [The engine's events](./events.md#the-engine-s-events)).
 - **The match can't see them.** Reading or writing one in a system, a match handler or a task is an error, and so is naming one in a `Spawn` or a component value. A component's value is the match's part: a copy, `var b = box;`, has no local fields.
 - **They go with the entity**, once it's in neither the world views draw nor the last one the server confirmed. So a destroy this machine predicted wrong, which the server undoes, takes nothing with it, and a spawn it predicted that never happened leaves nothing behind. Losing the component loses them, and a match that's over takes them all.
 
@@ -229,7 +230,7 @@ local scene Main { }
 
 ### A frame, in order
 
-1. The local handlers of the match's events run, for each tick this machine simulated since the last frame.
+1. The local handlers of the match's events run, for each tick this machine simulated since the last frame, and for the entities of a world that arrived since.
 2. The local fields of entities that are gone go, with [`Forgotten`](#letting-go) first where a handler asked for it.
 3. The views run.
 4. What handlers and views spawned, changed and sent locally is handled.

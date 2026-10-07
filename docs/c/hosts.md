@@ -161,6 +161,15 @@ tide_event_log_free(&events);
 
 With one world and no server, what it ticks is all there is, so a tick's events are heard by both kinds of handler at the next frame, those of `verified` events too. A frame after several ticks hears them all, in order.
 
+The entities a world starts with were spawned in no tick, and a game's local handlers hear every entity's `Spawned`. A session says so for the worlds its machine is sent. A host with a world of its own does it once the world has started:
+
+```c
+tide_world_init(&world, 1.0f / 60.0f);
+if (tide_game_api.hear_arrived) tide_game_api.hear_arrived(&world, NULL, &events);
+```
+
+`hear_arrived(world, had, events)` records a `Spawned` for each entity `world` has that `had` doesn't, or for every one with `NULL`. It's `NULL` itself in a game with no local handler of the match's `Spawned`.
+
 ## Without a window
 
 To see what a game draws without a window on screen, or to run it where nobody watches, a host opens a headless window in `tide_platform_open`'s place. Its frame function stays as it is:

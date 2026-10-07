@@ -2311,6 +2311,10 @@ struct tide_client {
     uint32_t answered_number;
     uint32_t lacks_size;
     uint8_t lacks[LACKS_BYTES];
+    // The world it was given (tide_client_desc.base) as it was, until its
+    // first world comes, where its host listens: one this machine had, so what
+    // the match's world has beyond it is all that's new here (hear_arrived).
+    void *had;
 
     // Snapshots: the world at each tick from `verified`, the last the server
     // confirmed, to `ahead`, the last it predicted, at worlds[tick % ring], and
@@ -2609,6 +2613,13 @@ static void drop_base(tide_client *c)
     free(c->base);
     c->base = NULL;
     c->answered = false;
+}
+
+static void drop_had(tide_client *c)
+{
+    free_world(c->game, c->had);
+    free(c->had);
+    c->had = NULL;
 }
 
 // Whether it can start the match itself, to have a world to build the
@@ -3496,6 +3507,46 @@ static void catch_up_room(tide_client *c)
     c->began_now = 0;
 }
 
+// What `world` has that `had` doesn't goes out to the handlers `as` says, as
+// spawned in `tick`.
+static void hear_beyond(tide_client *c, const void *world, const void *had, const uint32_t tick, const uint8_t as)
+{
+    tide_event_log fresh = {0};
+    c->game->hear_arrived(world, had, &fresh);
+    for (uint32_t at = 0; at < fresh.size;) {
+        tide_heard *heard = (tide_heard *)(fresh.bytes + at);
+        at += heard->size;
+        heard->tick = tick; // The session's count, as its ticks' events have
+        if (heard->wants & as) tide_event_log_copy(c->desc.events, &fresh, heard, as);
+    }
+    tide_event_log_free(&fresh);
+}
+
+// `world` came for `tick`, and isn't among its worlds yet. The entities in it
+// that this machine didn't have were spawned in no tick it ran: its local
+// handlers hear them now, as the world has them (tide_game.hear_arrived).
+// Which it had: before its first world, those of the world it was made with
+// (tide_client_desc.base), if any. After, for the handlers that hear ticks as
+// this machine runs them, those of its own world at that tick, as it has heard
+// the ticks up to it; and for the handlers that hear ticks once they're
+// confirmed, those of its last confirmed world, as the ticks since never were.
+static void hear_arrived(tide_client *c, const void *world, const uint32_t tick)
+{
+    const tide_event_log *out = c->desc.events;
+    if (!c->game->hear_arrived || !out || !out->taken) return;
+    const void *ran = c->had, *sure = c->had;
+    if (c->loaded) { // Its worlds are those from `verified` to `ahead`
+        ran = world_at(c, tick < c->verified ? c->verified : tick > c->ahead ? c->ahead : tick);
+        sure = world_at(c, c->verified);
+    }
+    if (ran == sure) {
+        hear_beyond(c, world, ran, tick, TIDE_HEARD_PREDICTED | TIDE_HEARD_VERIFIED);
+        return;
+    }
+    hear_beyond(c, world, ran, tick, TIDE_HEARD_PREDICTED);
+    hear_beyond(c, world, sure, tick, TIDE_HEARD_VERIFIED);
+}
+
 static void load_snapshot(tide_client *c)
 {
     const tide_game *g = c->game;
@@ -3520,6 +3571,8 @@ static void load_snapshot(tide_client *c)
     // behind, and catches up with the ticks since before it predicts (fall_behind).
     reset_view_correction(c);
     c->let_go = UINT32_MAX;
+    hear_arrived(c, world, tick); // Against the worlds it has, before this one takes the place of one
+    drop_had(c);
     void **slot = &c->worlds[tick % c->ring];
     free_world(g, *slot);
     free(*slot);
@@ -4238,6 +4291,10 @@ tide_client *tide_client_create(const tide_client_desc *desc, const double now)
     if (desc->base) { // Kept as it is now: the server's hashes say what it lacks
         c->base = calloc(1, g->world_size);
         if (c->base) g->copy_world(c->base, desc->base);
+        // ...and once more for what its local handlers hear of the world that comes: the one above
+        // goes when a world built from it comes out wrong. Without it, every entity is heard.
+        if (desc->events && g->hear_arrived) c->had = calloc(1, g->world_size);
+        if (c->had) g->copy_world(c->had, desc->base);
     }
     return c;
 }
@@ -4256,6 +4313,7 @@ void tide_client_destroy(tide_client *c)
     discard_view_correction(c);
     tide_hearing_free(&c->hearing);
     drop_base(c);
+    drop_had(c);
     free(c->handover_bytes);
     free_commands(&c->commands);
     stop_upload_client(c);
@@ -5074,6 +5132,7 @@ static void commit_client(tide_client *c, const tide_game *g, client_migration *
     }
     stop_receiving(c); // A world it was receiving is the old build's: the server sends it again
     drop_base(c);      // ...and so is the one it would have built it from
+    drop_had(c);       // ...and the one it had: every entity of its first world is heard
     tide_hearing_rebuilt(&c->hearing); // ...and what its ticks sent, as its handlers heard it
     c->game = g;
     c->desc.game = g;
