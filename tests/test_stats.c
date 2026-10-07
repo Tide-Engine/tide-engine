@@ -157,12 +157,24 @@ TIDE_TEST(stats_open_list_the_rest_above_their_line)
     // (slowest first, the first time)
     const char *labels[] = {"60 fps", "cpu", "draw calls", "ping", "network", "entities",
                             "threads", "memory", "renderer", "Combat.Hit", "Fall", "Move"};
-    const char *values_[] = {"", "2.1 ms", "7", "34 ms", "\xE2\x86\x91" "2.0  " "\xE2\x86\x93" "0.5 KB/s", "56",
+    const char *values_[] = {"", "2.1 ms", "7", "34 ms", "2.0  0.5 KB/s", "56",
                              "12", "48 MB", "OpenGL 3.3", "1.50 ms", "0.31 ms", "0.20 ms"};
     TIDE_REQUIRE(stats.line_count == 12);
     for (uint32_t i = 0; i < 12; i++) TIDE_CHECK(line_is(i, labels[i], values_[i]) && text_command(labels[i]));
-    for (uint32_t i = 1; i < 12; i++) TIDE_CHECK(text_command(values_[i]));
+    for (uint32_t i = 1; i < 12; i++) TIDE_CHECK(i == 4 || text_command(values_[i]));
     for (uint32_t i = 1; i < 12; i++) TIDE_CHECK(stats.lines[i].gap == (i == 3 || i == 6 || i == 9) && !stats.lines[i].indent);
+    // The network's two numbers are drawn apart, an arrow of the drawer's own before each: its
+    // shaft is a thick line that stands upright, in the 11 pixels before the number
+    TIDE_CHECK(stats.lines[4].arrows && text_command("2.0") && text_command("0.5 KB/s"));
+    const tide_draw_command *up = text_command("2.0"), *down = text_command("0.5 KB/s");
+    TIDE_CHECK(down->a.x + 8.0f * 8.0f == 944.0f && up->a.x == down->a.x - 11.0f - 12.0f - 3.0f * 8.0f);
+    int shafts = 0;
+    for (uint32_t i = 0; i < list.count; i++) {
+        const tide_draw_command *c = &list.commands[i];
+        if (c->kind != TIDE_DRAW_SHAPE || c->a.y != up->a.y + 8.0f) continue; // A shaft's middle, on the line
+        shafts += c->a.x == up->a.x - 11.0f + 4.0f || c->a.x == down->a.x - 11.0f + 4.0f;
+    }
+    TIDE_CHECK(shafts == 2);
 
     // The line that's always there stays where it was, under the list: a
     // click in the same place closes the drawer again
@@ -178,12 +190,12 @@ TIDE_TEST(stats_open_list_the_rest_above_their_line)
     TIDE_CHECK(first->a.y == closed.y - 11.0f * 20.0f - 3.0f * 8.0f && last->a.y == closed.y - 20.0f);
     TIDE_CHECK(ping->a.y == first->a.y + 2.0f * 20.0f + 8.0f);
     TIDE_CHECK(first_value->a.y == first->a.y && last_value->a.y == last->a.y);
-    TIDE_CHECK(first->a.x == last->a.x && first->a.x == 720.0f);
+    TIDE_CHECK(first->a.x == last->a.x && first->a.x == 718.0f);
     TIDE_CHECK(first_value->a.x + 6.0f * 8.0f == closed.x + 48.0f && last_value->a.x + 7.0f * 8.0f == closed.x + 48.0f);
     const tide_rect box = panel();
     TIDE_CHECK(box.x + box.width == 952.0f && box.y + box.height == 532.0f && box.height == 12.0f * 20.0f + 3.0f * 8.0f + 12.0f);
-    // As wide as its widest label and its widest value (the network's, 15 characters), with room between
-    TIDE_CHECK(box.width == 10.0f * 8.0f + 24.0f + 15.0f * 8.0f + 16.0f && stats.rect.y == box.y);
+    // As wide as its widest label and its widest value (the network's: two numbers, two arrows of 11 pixels and the room between), with room between
+    TIDE_CHECK(box.width == 10.0f * 8.0f + 24.0f + 122.0f + 16.0f && stats.rect.y == box.y);
 
     // What isn't known has no line: a frame's work before one was timed, the
     // memory where the system doesn't say, a delay of no ticks. A delay goes
@@ -215,10 +227,10 @@ TIDE_TEST(stats_panel_keeps_its_width_while_open)
     start(true);
     draw();
     const float width = panel().width;
-    TIDE_CHECK(width == 240.0f);
+    TIDE_CHECK(width == 242.0f);
     tide_profile_add(&profile.systems, 1, "Combat.Projectiles.Resolve", 0, 9 * MS);
     draw();
-    TIDE_CHECK(line_is(9, "Combat.Projectiles.Resolve", "9.00 ms") && panel().width == 26.0f * 8.0f + 24.0f + 120.0f + 16.0f);
+    TIDE_CHECK(line_is(9, "Combat.Projectiles.Resolve", "9.00 ms") && panel().width == 26.0f * 8.0f + 24.0f + 122.0f + 16.0f);
     const float wider = panel().width;
     tide_profile_add(&profile.systems, 1, "Combat.Hit", 0, 9 * MS);
     draw();
@@ -258,10 +270,10 @@ TIDE_TEST(stats_fit_a_small_screen)
     draw();
     TIDE_REQUIRE(stats.line_count == 12);
     box = panel();
-    TIDE_CHECK(box.x == 8.0f && box.width == 216.0f); // No wider than the screen: 200 pixels of text
+    TIDE_CHECK(box.x == 14.0f && box.width == 210.0f); // The labels cut to what the values leave of the screen
     const char *cut = stats.lines[9].label;
-    TIDE_CHECK(strcmp(cut, "Combat.") == 0 && line_is(9, cut, "9.00 ms")); // What the values' column leaves
-    TIDE_CHECK(text_command(cut) && text_command(cut)->a.x == 16.0f && text_command("9.00 ms")->a.x == 216.0f - 56.0f);
+    TIDE_CHECK(strcmp(cut, "Combat") == 0 && line_is(9, cut, "9.00 ms")); // What the values' column leaves
+    TIDE_CHECK(text_command(cut) && text_command(cut)->a.x == 22.0f && text_command("9.00 ms")->a.x == 216.0f - 56.0f);
 
     // Too low for a list at all: the line alone, and still all of it
     start(true);
