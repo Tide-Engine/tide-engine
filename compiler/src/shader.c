@@ -57,6 +57,7 @@ enum {
     H_FAMILIES, // tide_min<n> and the other families, for n = 1 to 4, a family after another: family_helper
     H_NORMALIZE2 = H_FAMILIES + 4 * FAMILY_COUNT, H_NORMALIZE3, H_NORMALIZE4,
     H_XXH, H_HASH1, H_HASH2, H_HASH3, H_HASH4,
+    H_FADE, H_GRAD2, H_GRAD3, H_PERLIN2, H_PERLIN3, H_SIMPLEX2, H_SIMPLEX3, H_NEAREST, H_CELLULAR2, H_CELLULAR3, // noise.c's
     H_NORMALIZE_Q, H_MUL_Q, H_ROTATE_Q, H_INVERSE_Q, H_CONJUGATE_Q, H_NLERP_Q, H_SLERP_Q, H_ANGLE_Q, H_AXISANGLE_Q, H_EULER_Q,
     H_Q_FROM_M3, H_LOOKROTATION_Q, H_M3_FROM_Q, H_M4_FROM_M3, H_TRS, H_PERSPECTIVE, H_ORTHO,
     H_INVERSE2, H_INVERSE3, H_INVERSE4,
@@ -492,6 +493,260 @@ static const char *const helper_texts[H_COUNT] = {
                 "    return tide_xxh_end(((a << 1) | (a >> 31)) + ((b << 7) | (b >> 25)) + ((c << 12) | (c >> 20)) + "
                 "((d << 18) | (d >> 14)) + 16u);\n"
                 "}\n",
+    // Noise (engine/src/noise.c), the same lines as the CPU's, so a frag draws what the match computed, up to the
+    // GPU's rounding. A cell's gradient, or its feature point, is the hash of the cell and the seed, as there
+    [H_FADE] = "float tide_fade(float t) {\n"
+               "    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);\n"
+               "}\n",
+    // A unit gradient in 8 directions, the axes and the diagonals, dotted with (x, y)
+    [H_GRAD2] = "float tide_grad2(int h, float x, float y) {\n"
+                "    float gx = 1.0;\n"
+                "    float gy = 0.0;\n"
+                "    if ((h & 4) != 0) {\n"
+                "        gx = 0.70710678;\n"
+                "        gy = 0.70710678;\n"
+                "        if ((h & 1) != 0) { gx = -0.70710678; }\n"
+                "        if ((h & 2) != 0) { gy = -0.70710678; }\n"
+                "    } else if ((h & 2) != 0) {\n"
+                "        gx = 0.0;\n"
+                "        gy = 1.0;\n"
+                "        if ((h & 1) != 0) { gy = -1.0; }\n"
+                "    } else if ((h & 1) != 0) {\n"
+                "        gx = -1.0;\n"
+                "    }\n"
+                "    return gx * x + gy * y;\n"
+                "}\n",
+    // A gradient along one of a cube's 12 edges (Perlin's 16, four of them twice), dotted with (x, y, z)
+    [H_GRAD3] = "float tide_grad3(int h, float x, float y, float z) {\n"
+                "    int k = h & 15;\n"
+                "    float u = x;\n"
+                "    float v = y;\n"
+                "    if (k >= 8) { u = y; }\n"
+                "    if (k >= 4) { v = z; }\n"
+                "    if (k == 12 || k == 14) { v = x; }\n"
+                "    if ((k & 1) != 0) { u = -u; }\n"
+                "    if ((k & 2) != 0) { v = -v; }\n"
+                "    return u + v;\n"
+                "}\n",
+    [H_PERLIN2] = "float tide_perlin2(vec2 p, int seed) {\n"
+                  "    vec2 f = floor(p);\n"
+                  "    ivec2 i = ivec2(f);\n"
+                  "    ivec2 j = i + 1;\n"
+                  "    float x = p.x - f.x;\n"
+                  "    float y = p.y - f.y;\n"
+                  "    float u = tide_fade(x);\n"
+                  "    float v = tide_fade(y);\n"
+                  "    float n00 = tide_grad2(tide_hash3(ivec3(i.x, i.y, seed)), x, y);\n"
+                  "    float n10 = tide_grad2(tide_hash3(ivec3(j.x, i.y, seed)), x - 1.0, y);\n"
+                  "    float n01 = tide_grad2(tide_hash3(ivec3(i.x, j.y, seed)), x, y - 1.0);\n"
+                  "    float n11 = tide_grad2(tide_hash3(ivec3(j.x, j.y, seed)), x - 1.0, y - 1.0);\n"
+                  "    float a = n00 + u * (n10 - n00);\n"
+                  "    float b = n01 + u * (n11 - n01);\n"
+                  "    return (a + v * (b - a)) * 1.41421356;\n"
+                  "}\n",
+    [H_PERLIN3] = "float tide_perlin3(vec3 p, int seed) {\n"
+                  "    vec3 f = floor(p);\n"
+                  "    ivec3 i = ivec3(f);\n"
+                  "    ivec3 j = i + 1;\n"
+                  "    float x = p.x - f.x;\n"
+                  "    float y = p.y - f.y;\n"
+                  "    float z = p.z - f.z;\n"
+                  "    float u = tide_fade(x);\n"
+                  "    float v = tide_fade(y);\n"
+                  "    float w = tide_fade(z);\n"
+                  "    float n000 = tide_grad3(tide_hash4(ivec4(i.x, i.y, i.z, seed)), x, y, z);\n"
+                  "    float n100 = tide_grad3(tide_hash4(ivec4(j.x, i.y, i.z, seed)), x - 1.0, y, z);\n"
+                  "    float n010 = tide_grad3(tide_hash4(ivec4(i.x, j.y, i.z, seed)), x, y - 1.0, z);\n"
+                  "    float n110 = tide_grad3(tide_hash4(ivec4(j.x, j.y, i.z, seed)), x - 1.0, y - 1.0, z);\n"
+                  "    float n001 = tide_grad3(tide_hash4(ivec4(i.x, i.y, j.z, seed)), x, y, z - 1.0);\n"
+                  "    float n101 = tide_grad3(tide_hash4(ivec4(j.x, i.y, j.z, seed)), x - 1.0, y, z - 1.0);\n"
+                  "    float n011 = tide_grad3(tide_hash4(ivec4(i.x, j.y, j.z, seed)), x, y - 1.0, z - 1.0);\n"
+                  "    float n111 = tide_grad3(tide_hash4(ivec4(j.x, j.y, j.z, seed)), x - 1.0, y - 1.0, z - 1.0);\n"
+                  "    float a0 = n000 + u * (n100 - n000);\n"
+                  "    float a1 = n010 + u * (n110 - n010);\n"
+                  "    float b0 = n001 + u * (n101 - n001);\n"
+                  "    float b1 = n011 + u * (n111 - n011);\n"
+                  "    float a = a0 + v * (a1 - a0);\n"
+                  "    float b = b0 + v * (b1 - b0);\n"
+                  "    return a + w * (b - a);\n"
+                  "}\n",
+    // A simplex's corner: its bump, times its gradient dotted with the offset from it
+    [H_SIMPLEX2] = "float tide_corner2(int h, float x, float y) {\n"
+                   "    float t = 0.5 - x * x - y * y;\n"
+                   "    if (t < 0.0) { return 0.0; }\n"
+                   "    float tt = t * t;\n"
+                   "    return tt * tt * tide_grad2(h, x, y);\n"
+                   "}\n"
+                   "float tide_simplex2(vec2 p, int seed) {\n"
+                   "    float s = (p.x + p.y) * 0.36602540;\n"
+                   "    float fi = floor(p.x + s);\n"
+                   "    float fj = floor(p.y + s);\n"
+                   "    float t = (fi + fj) * 0.21132487;\n"
+                   "    float x0 = p.x - (fi - t);\n"
+                   "    float y0 = p.y - (fj - t);\n"
+                   "    int i1 = 0;\n"
+                   "    int j1 = 1;\n"
+                   "    if (x0 > y0) {\n"
+                   "        i1 = 1;\n"
+                   "        j1 = 0;\n"
+                   "    }\n"
+                   "    float x1 = x0 - float(i1) + 0.21132487;\n"
+                   "    float y1 = y0 - float(j1) + 0.21132487;\n"
+                   "    float x2 = x0 - 1.0 + 0.42264973;\n"
+                   "    float y2 = y0 - 1.0 + 0.42264973;\n"
+                   "    int i = int(fi);\n"
+                   "    int j = int(fj);\n"
+                   "    float n0 = tide_corner2(tide_hash3(ivec3(i, j, seed)), x0, y0);\n"
+                   "    float n1 = tide_corner2(tide_hash3(ivec3(i + i1, j + j1, seed)), x1, y1);\n"
+                   "    float n2 = tide_corner2(tide_hash3(ivec3(i + 1, j + 1, seed)), x2, y2);\n"
+                   "    return (n0 + n1 + n2) * 99.2;\n"
+                   "}\n",
+    [H_SIMPLEX3] = "float tide_corner3(int h, float x, float y, float z) {\n"
+                   "    float t = 0.6 - x * x - y * y - z * z;\n"
+                   "    if (t < 0.0) { return 0.0; }\n"
+                   "    float tt = t * t;\n"
+                   "    return tt * tt * tide_grad3(h, x, y, z);\n"
+                   "}\n"
+                   "float tide_simplex3(vec3 p, int seed) {\n"
+                   "    float s = (p.x + p.y + p.z) * 0.33333334;\n"
+                   "    float fi = floor(p.x + s);\n"
+                   "    float fj = floor(p.y + s);\n"
+                   "    float fk = floor(p.z + s);\n"
+                   "    float t = (fi + fj + fk) * 0.16666667;\n"
+                   "    float x0 = p.x - (fi - t);\n"
+                   "    float y0 = p.y - (fj - t);\n"
+                   "    float z0 = p.z - (fk - t);\n"
+                   "    int i1 = 0;\n"
+                   "    int j1 = 0;\n"
+                   "    int k1 = 0;\n"
+                   "    int i2 = 0;\n"
+                   "    int j2 = 0;\n"
+                   "    int k2 = 0;\n"
+                   "    if (x0 >= y0) {\n"
+                   "        if (y0 >= z0) {\n"
+                   "            i1 = 1;\n"
+                   "            i2 = 1;\n"
+                   "            j2 = 1;\n"
+                   "        } else if (x0 >= z0) {\n"
+                   "            i1 = 1;\n"
+                   "            i2 = 1;\n"
+                   "            k2 = 1;\n"
+                   "        } else {\n"
+                   "            k1 = 1;\n"
+                   "            i2 = 1;\n"
+                   "            k2 = 1;\n"
+                   "        }\n"
+                   "    } else {\n"
+                   "        if (y0 < z0) {\n"
+                   "            k1 = 1;\n"
+                   "            j2 = 1;\n"
+                   "            k2 = 1;\n"
+                   "        } else if (x0 < z0) {\n"
+                   "            j1 = 1;\n"
+                   "            j2 = 1;\n"
+                   "            k2 = 1;\n"
+                   "        } else {\n"
+                   "            j1 = 1;\n"
+                   "            i2 = 1;\n"
+                   "            j2 = 1;\n"
+                   "        }\n"
+                   "    }\n"
+                   "    float x1 = x0 - float(i1) + 0.16666667;\n"
+                   "    float y1 = y0 - float(j1) + 0.16666667;\n"
+                   "    float z1 = z0 - float(k1) + 0.16666667;\n"
+                   "    float x2 = x0 - float(i2) + 0.33333334;\n"
+                   "    float y2 = y0 - float(j2) + 0.33333334;\n"
+                   "    float z2 = z0 - float(k2) + 0.33333334;\n"
+                   "    float x3 = x0 - 0.5;\n"
+                   "    float y3 = y0 - 0.5;\n"
+                   "    float z3 = z0 - 0.5;\n"
+                   "    int i = int(fi);\n"
+                   "    int j = int(fj);\n"
+                   "    int k = int(fk);\n"
+                   "    float n0 = tide_corner3(tide_hash4(ivec4(i, j, k, seed)), x0, y0, z0);\n"
+                   "    float n1 = tide_corner3(tide_hash4(ivec4(i + i1, j + j1, k + k1, seed)), x1, y1, z1);\n"
+                   "    float n2 = tide_corner3(tide_hash4(ivec4(i + i2, j + j2, k + k2, seed)), x2, y2, z2);\n"
+                   "    float n3 = tide_corner3(tide_hash4(ivec4(i + 1, j + 1, k + 1, seed)), x3, y3, z3);\n"
+                   "    return (n0 + n1 + n2 + n3) * 32.5;\n"
+                   "}\n",
+    // The two shortest squared distances so far, with d among them
+    [H_NEAREST] = "vec2 tide_nearest(vec2 best, float d) {\n"
+                  "    if (d < best.x) { return vec2(d, best.x); }\n"
+                  "    if (d < best.y) { return vec2(best.x, d); }\n"
+                  "    return best;\n"
+                  "}\n",
+    // The squared distance to the feature point of the cell (ox, oy) over from the point's, which is at (fx, fy) in its own
+    [H_CELLULAR2] = "float tide_feature2(ivec2 i, int ox, int oy, int seed, float fx, float fy) {\n"
+                    "    int h = tide_hash3(ivec3(i.x + ox, i.y + oy, seed));\n"
+                    "    float px = float(ox) + float(h & 32767) * 0.000030518509;\n"
+                    "    float py = float(oy) + float((h >> 15) & 32767) * 0.000030518509;\n"
+                    "    float dx = px - fx;\n"
+                    "    float dy = py - fy;\n"
+                    "    return dx * dx + dy * dy;\n"
+                    "}\n"
+                    "vec2 tide_cellular2(vec2 p, int seed) {\n"
+                    "    vec2 f = floor(p);\n"
+                    "    ivec2 i = ivec2(f);\n"
+                    "    float x = p.x - f.x;\n"
+                    "    float y = p.y - f.y;\n"
+                    "    vec2 best = vec2(8.0, 8.0);\n"
+                    "    best = tide_nearest(best, tide_feature2(i, -1, -1, seed, x, y));\n"
+                    "    best = tide_nearest(best, tide_feature2(i, 0, -1, seed, x, y));\n"
+                    "    best = tide_nearest(best, tide_feature2(i, 1, -1, seed, x, y));\n"
+                    "    best = tide_nearest(best, tide_feature2(i, -1, 0, seed, x, y));\n"
+                    "    best = tide_nearest(best, tide_feature2(i, 0, 0, seed, x, y));\n"
+                    "    best = tide_nearest(best, tide_feature2(i, 1, 0, seed, x, y));\n"
+                    "    best = tide_nearest(best, tide_feature2(i, -1, 1, seed, x, y));\n"
+                    "    best = tide_nearest(best, tide_feature2(i, 0, 1, seed, x, y));\n"
+                    "    best = tide_nearest(best, tide_feature2(i, 1, 1, seed, x, y));\n"
+                    "    return vec2(sqrt(best.x), sqrt(best.y));\n"
+                    "}\n",
+    [H_CELLULAR3] = "float tide_feature3(ivec3 i, int ox, int oy, int oz, int seed, float fx, float fy, float fz) {\n"
+                    "    int h = tide_hash4(ivec4(i.x + ox, i.y + oy, i.z + oz, seed));\n"
+                    "    float px = float(ox) + float(h & 1023) * 0.00097751711;\n"
+                    "    float py = float(oy) + float((h >> 10) & 1023) * 0.00097751711;\n"
+                    "    float pz = float(oz) + float((h >> 20) & 1023) * 0.00097751711;\n"
+                    "    float dx = px - fx;\n"
+                    "    float dy = py - fy;\n"
+                    "    float dz = pz - fz;\n"
+                    "    return dx * dx + dy * dy + dz * dz;\n"
+                    "}\n"
+                    "vec2 tide_cellular3(vec3 p, int seed) {\n"
+                    "    vec3 f = floor(p);\n"
+                    "    ivec3 i = ivec3(f);\n"
+                    "    float x = p.x - f.x;\n"
+                    "    float y = p.y - f.y;\n"
+                    "    float z = p.z - f.z;\n"
+                    "    vec2 best = vec2(8.0, 8.0);\n"
+                    "    best = tide_nearest(best, tide_feature3(i, -1, -1, -1, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, 0, -1, -1, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, 1, -1, -1, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, -1, 0, -1, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, 0, 0, -1, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, 1, 0, -1, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, -1, 1, -1, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, 0, 1, -1, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, 1, 1, -1, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, -1, -1, 0, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, 0, -1, 0, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, 1, -1, 0, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, -1, 0, 0, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, 0, 0, 0, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, 1, 0, 0, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, -1, 1, 0, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, 0, 1, 0, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, 1, 1, 0, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, -1, -1, 1, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, 0, -1, 1, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, 1, -1, 1, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, -1, 0, 1, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, 0, 0, 1, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, 1, 0, 1, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, -1, 1, 1, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, 0, 1, 1, seed, x, y, z));\n"
+                    "    best = tide_nearest(best, tide_feature3(i, 1, 1, 1, seed, x, y, z));\n"
+                    "    return vec2(sqrt(best.x), sqrt(best.y));\n"
+                    "}\n",
     // The identity for one too short, as a zeroed one is no rotation
     [H_NORMALIZE_Q] = "vec4 tide_normalize_q(vec4 q) {\n"
                       "    float l = dot(q, q);\n"
@@ -719,6 +974,32 @@ static void need(emit *em, const int h)
     case H_HASH3:
     case H_HASH4:
         need(em, H_XXH);
+        break;
+    case H_PERLIN2:
+        need(em, H_HASH3);
+        need(em, H_FADE);
+        need(em, H_GRAD2);
+        break;
+    case H_PERLIN3:
+        need(em, H_HASH4);
+        need(em, H_FADE);
+        need(em, H_GRAD3);
+        break;
+    case H_SIMPLEX2:
+        need(em, H_HASH3);
+        need(em, H_GRAD2);
+        break;
+    case H_SIMPLEX3:
+        need(em, H_HASH4);
+        need(em, H_GRAD3);
+        break;
+    case H_CELLULAR2:
+        need(em, H_HASH3);
+        need(em, H_NEAREST);
+        break;
+    case H_CELLULAR3:
+        need(em, H_HASH4);
+        need(em, H_NEAREST);
         break;
     case H_NLERP_Q:
         need(em, H_NORMALIZE_Q);
@@ -1508,6 +1789,16 @@ static void ex_math(emit *em, const expr *e)
             put_component(em, e, 3);
             sb_put(em->o, "))");
         }
+    } else if (str_eq_c(e->name, "Perlin") || str_eq_c(e->name, "Simplex") || str_eq_c(e->name, "Cellular")) {
+        // noise.c's lines, so a frag draws the cells the match computed; the seed is 0 where the call leaves it out
+        const bool perlin = str_eq_c(e->name, "Perlin"), simplex = str_eq_c(e->name, "Simplex");
+        need(em, (perlin ? H_PERLIN2 : simplex ? H_SIMPLEX2 : H_CELLULAR2) + dim - 2);
+        sb_printf(em->o, "tide_%s%d(", perlin ? "perlin" : simplex ? "simplex" : "cellular", dim);
+        put_arg(em, e, 0);
+        sb_put(em->o, ", ");
+        if (e->args.count > 1) put_arg(em, e, 1);
+        else sb_put(em->o, "0");
+        sb_put(em->o, ")");
     } else if (str_eq_c(e->name, "Hash")) { // Integers: the CPU's number
         char name[32];
         snprintf(name, sizeof name, "tide_hash%d", type_dim(first));

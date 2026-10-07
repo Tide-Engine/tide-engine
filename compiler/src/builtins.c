@@ -447,6 +447,25 @@ static void build_signatures(void)
              "long's 8 bytes, without the top bit. A GPU has no long: a frag or vert hashes its halves, "
              "`Math.Hash(int2(int(x), int(x >> 32)))`, which is the same number.");
 
+    // Noise (engine/src/noise.c): a point, and a seed a call can leave out.
+    // On the GPU it's the same formulas (shader.c), so a frag draws what the match computed.
+    for (int n = 2; n <= 3; n++) {
+        const type v = vector_type(true, n);
+        describe(defaulted(add("Math", "Perlin", T_F, c_function("perlin", v), 2, v, T_WHOLE, T_NONE), "0"), "point, seed",
+                 "Gradient (Perlin) noise at a point: smooth, from -1 to 1, and 0 at every whole number, so its features "
+                 "are about a unit across. Scale the point for finer or coarser noise, and add octaves for detail. "
+                 "The same point gives the same number on every machine, and on every GPU up to its rounding; another "
+                 "seed is another field of noise.");
+        describe(defaulted(add("Math", "Simplex", T_F, c_function("simplex", v), 2, v, T_WHOLE, T_NONE), "0"), "point, seed",
+                 "Simplex noise at a point: smooth, about -1 to 1, with no grid showing through, and cheaper than "
+                 "Perlin in 3D. Its features are about a unit across. The same point gives the same number on every "
+                 "machine; another seed is another field of noise.");
+        describe(defaulted(add("Math", "Cellular", T_F2, c_function("cellular", v), 2, v, T_WHOLE, T_NONE), "0"), "point, seed",
+                 "Cellular (Worley) noise at a point: a feature point in every unit cell, and the distances to the nearest "
+                 "one (x) and the next nearest (y), from 0 to about 1.4. `y - x` is 0 on the borders between cells. "
+                 "The same point gives the same distances on every machine; another seed moves every feature point.");
+    }
+
     // A Random's methods: tide/random.h, with the generator first, by address,
     // as each steps it. Formulas follow Unity.Mathematics' Random.
     const type r_int = {TY_INT, NULL};

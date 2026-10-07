@@ -62,8 +62,22 @@ frag Calm(SkyVertex vertex, out Color color, Wind wind)
     color = Color(most.x * eased, held.y * raised, Math.Cmin(held) + turned, 1) * (capped / 9.0);
 }
 
+// Noise: a frag's and a vert's are the CPU's lines, in each size, with a seed and without
+frag Clouds(SkyVertex vertex, out Color color, Wind wind)
+{
+    float cover = Math.Perlin(vertex.uv * 8) * 0.5 + Math.Simplex(float3(vertex.uv, wind.strength), wind.seed) * 0.5;
+    float2 cells = Math.Cellular(vertex.uv * 4, wind.seed);
+    color = Color(cover, cells.y - cells.x, Math.Cellular(float3(vertex.uv, 1)).x, 1);
+}
+
+vert Ripple(mut SkyVertex vertex, Wind wind)
+{
+    vertex.position.y += Math.Perlin(float3(vertex.position, wind.strength), wind.seed) + Math.Simplex(vertex.position);
+}
+
 view Show(Sky sky)
 {
     Draw.Mesh(sky.corners, sky.faces, Stars);
     Draw.Mesh(sky.corners, sky.faces, Blow, Calm);
+    Draw.Mesh(sky.corners, sky.faces, Ripple, Clouds);
 }

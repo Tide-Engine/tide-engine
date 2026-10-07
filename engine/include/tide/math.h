@@ -416,6 +416,21 @@ static inline int32_t tide_hash_i4(const tide_int4 v)
 }
 
 // ---------------------------------------------------------------------------
+// Noise (noise.c): gradient (Perlin), simplex and cellular noise of a point
+// and a seed, from the hashes above, so a cell is the same on every machine
+// and the GPU draws the same cells (compiler/src/shader.c). Perlin and
+// simplex noise go from -1 to 1, and are 0 at the whole numbers for Perlin;
+// cellular noise is the distances to the nearest feature point and the next,
+// from 0 up. Another seed is another field of noise.
+
+float tide_perlin_f2(tide_float2 p, int32_t seed);
+float tide_perlin_f3(tide_float3 p, int32_t seed);
+float tide_simplex_f2(tide_float2 p, int32_t seed);
+float tide_simplex_f3(tide_float3 p, int32_t seed);
+tide_float2 tide_cellular_f2(tide_float2 p, int32_t seed);
+tide_float2 tide_cellular_f3(tide_float3 p, int32_t seed);
+
+// ---------------------------------------------------------------------------
 // Vectors: geometry
 
 static inline float tide_dot_f2(const tide_float2 a, const tide_float2 b) { return a.x * b.x + a.y * b.y; }

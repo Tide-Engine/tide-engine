@@ -536,6 +536,7 @@ frag Stars(BoxVertex vertex, out Color color)
 }
 ```
 
+- **Noise is the match's cells.** `Math.Perlin`, `Simplex` and `Cellular` take each cell's gradient or feature point from `Math.Hash`, so a frag shades a tile with the noise the match computed for it, up to the GPU's rounding of the floats between. [Noise](../language/math.md#noise) shows them, drawn by a frag.
 - **Floats come out as the GPU rounds them.** `Sin`, `Pow`, a quaternion's `Slerp` and a matrix's `Inverse` follow the same formulas as on the CPU, and each GPU rounds them its own way. Big numbers lose the most: the sine of a number in the thousands is wherever that GPU's rounding puts it, so the old trick of a hash made from a sine comes out striped on some machines. `Math.Hash` is what that's for.
 - **It's as forgiving as on the CPU** (see [Forgiving with bad values](../language/math.md#forgiving-with-bad-values)): `Normalize` gives zero for a vector with no direction and the identity for a quaternion with none, `Min` and `Max` with one NaN give the other, and `Clamp` and `Saturate` always give a value in range.
 - **It gives a number wherever the CPU does.** A GPU's own functions leave some answers open, and Tide's don't: a whole power of a number under 0 (`Math.Pow(-2, 2)` is 4), anything to the power of 0 (1), `Math.Atan2(0, 0)` (0), and `Math.SmoothStep` from an edge down to a lower one (it falls where the other way around rises). Where the CPU has no number to give either (the square root of a number under 0, the inverse of a matrix that has none), the GPU gives whatever it gives.
