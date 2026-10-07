@@ -1,4 +1,4 @@
-const string SampleTitle = "Sumo";
+using Rooms;
 
 settings { title = "Sumo"; maxPlayers = 8; hostMigration = true; }
 
@@ -110,7 +110,7 @@ input Controls
     [Clamp(-1, 1)] float2 move;
     bool dash;
 
-    Sample(Devices devices, Pad pad, SampleLobby lobby)
+    Sample(Devices devices, Pad pad, Lobby lobby)
     {
         if (!lobby.playing) return;
         var keys = devices.keyboard;
@@ -525,8 +525,7 @@ local event(verified Scored) ShowPoint(Wrestler w, mut Fx fx)
     fx.popups.Add(Popup { text = "+1", position = w.position + float2(0, BODY + 0.5), tone = Tone(w.color) });
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
-view Stage(Devices devices, Bout bout, mut Layout layout, mut Pad pad, mut Me me, mut Fx fx, SampleLobby lobby)
+view Stage(Devices devices, Bout bout, mut Layout layout, mut Pad pad, mut Me me, mut Fx fx, Lobby lobby)
 {
     // The scores are above the ring and the hints under it, whatever the window.
     var top = 102.0;
@@ -599,7 +598,6 @@ view Stage(Devices devices, Bout bout, mut Layout layout, mut Pad pad, mut Me me
     pad.dashHold = dash ? 0.1 : Math.Max(0, pad.dashHold - dt);
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Shadows(Wrestler w)
 {
     if (w.out || w.safe > 0) return;
@@ -658,13 +656,11 @@ void DrawWrestler(Wrestler w, bool mine)
     }
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Rivals(Wrestler w, without ownership)
 {
     DrawWrestler(w, false);
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Mine(Wrestler w, mut Me me, mut Pad pad, Layout layout, with ownership)
 {
     me.self = this;
@@ -692,7 +688,6 @@ view Mine(Wrestler w, mut Me me, mut Pad pad, Layout layout, with ownership)
     }
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Effects(mut Fx fx)
 {
     var dt = Math.Min(Frame.dt, 0.05);
@@ -736,7 +731,6 @@ view Effects(mut Fx fx)
     }
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Hud(Bout bout, Me me, Layout layout, mut Fx fx, query (Wrestler w) all)
 {
     Draw.SetScreen();
@@ -815,4 +809,11 @@ view Hud(Bout bout, Me me, Layout layout, mut Fx fx, query (Wrestler w) all)
     Draw.RoundRect(middle + float2(0, 8), box + float2(32, 48), 16, Color(0.06, 0.05, 0.07, 0.82));
     Draw.Text(word, middle, big, Tone(bout.winner), Anchor.MiddleCenter, Font.Bold);
     Draw.Text("Next bout in a moment", middle + float2(0, box.y * 0.5 + 12), 13, Color.white, Anchor.MiddleCenter);
+}
+
+// The menu's button goes in the top right corner here: the bottom of the
+// screen is the hints'.
+override Rect Rooms.MenuButton(float2 screen)
+{
+    return Rect(screen.x - 92, 8, 84, 36);
 }

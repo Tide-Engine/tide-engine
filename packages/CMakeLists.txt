@@ -126,6 +126,14 @@ target_link_libraries(tide_box2d_sleep PRIVATE tide_box2d)
 add_test(NAME tide_box2d_sleep COMMAND tide_box2d_sleep)
 set_tests_properties(tide_box2d_sleep PROPERTIES TIMEOUT 120)
 
+# Rooms: the menu a game opens on and the way back to it, in Tide alone. Its
+# test's game is built with the package as tide builds one that lists it.
+tide_add_game(tide_rooms_lobby SOURCES rooms/test/game.tide NAME game PACKAGES Rooms rooms/rooms.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" rooms/test/rooms_test.c)
+target_include_directories(tide_rooms_lobby PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_rooms_lobby COMMAND tide_rooms_lobby)
+set_tests_properties(tide_rooms_lobby PROPERTIES TIMEOUT 120)
+
 # Box3D's, the same way, and with the same flags for the same reason. Its tests'
 # games are each built with the package as tide builds a game that lists it,
 # the package's files before their own: a game needn't use all of a package.

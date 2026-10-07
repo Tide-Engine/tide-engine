@@ -62,13 +62,13 @@ Only the players' inputs go over the network: where each wants their brick, how 
 
 ## The code
 
-Towers has six files of Tide, and a `tide.packages` that says `box2d`.
+Towers has five files of Tide, and a `tide.packages` that says `box2d` and `rooms`.
 
 - `game.tide` is the match, which every machine runs the same way. It's on this page, [whole](#the-match-whole).
 - `bots.tide` is how a tower nobody steers gets built: a plan for each brick, from how high the tower stands in each column.
 - `play.tide` is what one machine shows of it: the hand on the brick, the camera and the pieces.
 - `effects.tide` has the dust, the pieces and the words that float up, and `hud.tide` the race, the next brick and the words over the world.
-- `lobby.tide` is the lobby and the menu: which match this machine is in. It's on this page too, [whole](#the-lobby-whole).
+- The lobby and the menu are the `rooms` package's, [the menu that comes with tide](../multiplayer/matches.md#a-menu-that-comes-with-tide): which match this machine is in is its to say.
 
 ### The physics
 
@@ -212,42 +212,28 @@ A view works those out a frame at a time, from the keys, the mouse and fingers, 
 
 ### The lobby
 
-The lobby isn't a scene, and nothing of it is in the match. `Main` is the match's scene, so a match of this machine's own starts with the program, closed, and the lobby is a [local singleton](../game/local-state.md) and a view drawn over it. Its three ways in are three [session calls](../multiplayer/matches.md#starting-a-match-from-code), or none:
+The lobby isn't the game's: it's the `rooms` package, [the menu that comes with tide](../multiplayer/matches.md#a-menu-that-comes-with-tide), which the game lists in its `tide.packages`. `Main` is the match's scene, so a match of this machine's own starts with the program, closed, and the menu is drawn over it: **Play** closes it, **Host a room** opens that match to others, and **Join a room** leaves it for someone else's. A machine that was told which match to be in, with `--host` or `--join` on its command line or `?host` or `?join=` in its page's address, has no menu in its way.
 
-- **Play** closes the lobby. The match is there already.
-- **Host a room** opens that match to others, with `Session.Open()`, and `Session.room` is the code to show.
-- **Join a room** leaves it for someone else's, with `Session.Join(code)`.
-
-A machine that was told which match to be in has no lobby in its way. With `--host` or `--join` on its command line, or `?host` or `?join=` in its page's address, the session is open or joining by the first frame, and the lobby starts closed:
+What the game adds is in `hud.tide`. While a page is up, the player's hands are off their brick: the input reads the menu's `Lobby.playing` and says so (`hands`), and the match builds their tower for them, as it does a tower nobody has. And a view tells the room's page about the match, who has each seat and whether bots play the rest, and sends the game's commands when the page's **New game** and **Bots** buttons say so:
 
 ```csharp
-if (!lobby.started)
+view Roster(Towers towers, Session session, mut Lobby lobby)
 {
-    lobby.started = true;
-    lobby.joining = !session.server && session.state == SessionState.Connecting;
-    lobby.page = lobby.joining ? Page.Join : session.server && session.open ? Page.None : Page.Title;
+    lobby.seats = SEATS;
+    lobby.manned = 0;
+    lobby.mine = -1;
+    foreach (var entry in towers.seats)
+    {
+        lobby.manned |= 1 << entry.value;
+        if (entry.key == session.player) lobby.mine = entry.value;
+    }
+    lobby.bots = towers.bots;
+    lobby.offersNewGame = true;
+    lobby.offersBots = true;
+    if (lobby.newGame) Send(Rebuild { });
+    if (lobby.toggleBots) Send(Bots { });
 }
 ```
-
-While a page is up, the player's hands are off their brick: the input says so (`hands`), and the match builds their tower for them, as it does a tower nobody has. A match that ends, or a room that can't be joined, comes back as the built-in `Disconnected` event, whose handler starts a match of this machine's own again and leaves a line for the lobby to show:
-
-```csharp
-local event(Disconnected gone) BackToLobby(mut Lobby lobby)
-{
-    if (gone.reason == DisconnectReason.Left) return;
-    lobby.message = gone.reason == DisconnectReason.Failed ? (lobby.joining ? "No room has that code." : "Couldn't reach the room.")
-                  : gone.reason == DisconnectReason.Refused ? "That room is full, or closed."
-                  : gone.reason == DisconnectReason.TimedOut ? (lobby.joining ? "That room didn't answer." : "Lost the connection to the room.")
-                  : gone.reason == DisconnectReason.Kicked ? (gone.message != "" ? gone.message : "The host sent you out of the room.")
-                  : "The match ended.";
-    lobby.started = true;
-    lobby.page = lobby.joining ? Page.Join : Page.Title;
-    lobby.joining = false;
-    Session.Start(Main);
-}
-```
-
-Its buttons are [controls](../game/gui.md#widgets-of-your-own): the game draws them, and the GUI handles their input, so the pointer, a finger, the keyboard and a gamepad all work them. The field for a room's code is the GUI's own, in a [theme](../game/gui.md#themes) that matches, and it [says when Enter ends the typing](../game/gui.md#when-a-field-is-entered), which joins as the button does.
 
 ### What a machine shows
 
@@ -270,7 +256,3 @@ Box2D's whole state is in the match, about 250 KB here, so a rollback, a player 
 ### The match, whole
 
 <<< @/../examples/towers/game.tide
-
-### The lobby, whole
-
-<<< @/../examples/towers/lobby.tide

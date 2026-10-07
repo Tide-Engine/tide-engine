@@ -17,3 +17,6 @@ packages/box2d/box2d/** -text
 
 # Box3D, the same (packages/box3d/box3d/TIDE.md).
 packages/box3d/box3d/** -text
+
+# The Linux runner's setup runs in WSL from a Windows checkout.
+.github/runner/*.sh text eol=lf

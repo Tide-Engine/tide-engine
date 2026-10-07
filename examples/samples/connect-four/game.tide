@@ -1,4 +1,4 @@
-const string SampleTitle = "Connect Four";
+using Rooms;
 
 // Connect Four, for everyone who has the link.
 //
@@ -521,7 +521,6 @@ string Who(Roster roster, int team, PlayerID me)
     return members.count == 1 ? first : $"{first} +{members.count - 1}";
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Backdrop(Session session)
 {
     Draw.Clear(BACK);
@@ -534,8 +533,7 @@ view Backdrop(Session session)
 // The pointer and the keys: where this player aims, and when they let a disc go.
 // It asks for a drop by the board the server has confirmed, so the server, which is
 // never behind that, doesn't get a move for a turn it hasn't come to yet.
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
-view Point(Devices devices, verified Board board, verified Roster roster, Session session, mut Aim aim, SampleLobby lobby)
+view Point(Devices devices, verified Board board, verified Roster roster, Session session, mut Aim aim, Lobby lobby)
 {
     if (!lobby.playing)
     {
@@ -593,7 +591,6 @@ view Point(Devices devices, verified Board board, verified Roster roster, Sessio
     aim.wait = 0.35;
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view DrawBoard(Board board, Roster roster, Session session, Fx fx, Aim aim)
 {
     var fit = Measure();
@@ -678,7 +675,6 @@ view DrawBoard(Board board, Roster roster, Session session, Fx fx, Aim aim)
 }
 
 // The disc of another player whose turn it is, over the column they aim at.
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Hands(Hand hand, Owner owner, Board board, Roster roster, Fx fx, without ownership)
 {
     if (board.winner != PLAYING || board.fresh) return;
@@ -688,7 +684,6 @@ view Hands(Hand hand, Owner owner, Board board, Roster roster, Fx fx, without ow
     Disc(Spot(fit, hand.x, ROWS) + bob, fit.cell * 0.41, board.turn);
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Effects(mut Fx fx)
 {
     var fit = Measure();
@@ -800,7 +795,6 @@ void Plate(Fit fit, int team, string name, int wins, bool active, bool mine)
                 team == RED ? Anchor.MiddleRight : Anchor.MiddleLeft, Font.Bold);
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Hud(Board board, Roster roster, Session session, Fx fx)
 {
     var fit = Measure();
@@ -866,4 +860,11 @@ view Hud(Board board, Roster roster, Session session, Fx fx)
     else
         Draw.Text(alone ? "Four in a row wins. Host a room to play a friend!" : "Four in a row wins: across, up or diagonal",
                     float2(w * 0.5, h - 11 * s), 12 * s, QUIET, Anchor.MiddleCenter);
+}
+
+// The menu's button goes in the top right corner here: the bottom of the
+// screen is the hints'.
+override Rect Rooms.MenuButton(float2 screen)
+{
+    return Rect(screen.x - 92, 8, 84, 36);
 }

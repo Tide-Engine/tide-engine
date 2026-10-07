@@ -67,7 +67,7 @@ Sumo has seven files of Tide, and a `tide.packages` that says `box3d`.
 - `game.tide` is the match, which every machine runs the same way, and `arena.tide` what a round's ring is built of. Both are on this page, [whole](#the-match-whole).
 - `play.tide` is what one machine shows of it: the camera, and the ring and what's on it.
 - `light.tide` has the meshes, the frags that light them and what the shadows are made of, `effects.tide` the sparks and the words that float up, and `hud.tide` the scores, the clock and the controls.
-- `lobby.tide` is the lobby and the menu: which match this machine is in.
+- The lobby and the menu are the `rooms` package's, [the menu that comes with tide](../multiplayer/matches.md#a-menu-that-comes-with-tide): which match this machine is in is its to say.
 
 ### The physics
 
@@ -150,28 +150,9 @@ That field is marked [`[Absolute]`](../game/input.md#what-other-machines-guess):
 
 ### The lobby
 
-The lobby isn't a scene, and nothing of it is in the match. `Main` is the match's scene, so a match of this machine's own starts with the program, closed, and the lobby is a [local singleton](../game/local-state.md) and a view drawn over it. **Play** closes the lobby, as the match is there already, **Host a room** opens that match to others with `Session.Open()`, and **Join a room** leaves it for someone else's with `Session.Join(code)`.
+The lobby isn't the game's: it's the `rooms` package, [the menu that comes with tide](../multiplayer/matches.md#a-menu-that-comes-with-tide), which the game lists in its `tide.packages`. `Main` is the match's scene, so a match of this machine's own starts with the program, closed, and the menu is drawn over it: **Play** closes it, **Host a room** opens that match to others, and **Join a room** leaves it for someone else's. A machine that was told which match to be in, with `--host` or `--join` on its command line or `?host` or `?join=` in its page's address, has no menu in its way.
 
-A machine that was told which match to be in has no lobby in its way. With `--host` or `--join` on its command line, or `?host` or `?join=` in its page's address, the session is open or joining by the first frame, and the lobby starts closed:
-
-```csharp
-if (!lobby.started)
-{
-    lobby.started = true;
-    lobby.joining = !session.server && session.state == SessionState.Connecting;
-    lobby.page = lobby.joining ? Page.Join : session.server && session.open ? Page.None : Page.Title;
-}
-```
-
-The room's code is typed into a field of the GUI's, which [says when Enter ends the typing](../game/gui.md#when-a-field-is-entered), so the keyboard joins as the button beside it does:
-
-```csharp
-GUI.TextField(Rect(frame.x + 4, frame.y + 4, frame.width - 8, frame.height - 8), "", lobby.code, out entered);
-...
-var go = (Pill(Rect(left + wide - 100, y, 100, row), "JOIN", AMBER, true, code != "") || entered) && code != "";
-```
-
-A match that ends, or a room that can't be joined, comes back as the built-in `Disconnected` event, whose handler starts a match of this machine's own again and leaves a line for the lobby to show. The lobby's buttons are [controls](../game/gui.md#widgets-of-your-own): the game draws them, and the GUI handles their input, so the pointer, a finger, the keyboard and a gamepad all work them. [Towers](./towers.md#the-lobby) has the same lobby, with its file whole.
+What the game adds is in `hud.tide`: the input reads the menu's `Lobby.playing`, and says the player is away while a page is up, so their ball plays by itself; and a view tells the room's page who has each seat and whether bots play the rest, and sends `Rebuild` and `Bots` when the page's **New game** and **Bots** buttons say so. [Towers](./towers.md#the-lobby) does the same.
 
 ### What a machine shows
 

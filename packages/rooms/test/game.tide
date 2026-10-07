@@ -1,0 +1,60 @@
+// The game the package's tests run: a match with a Main of its own, an input
+// that sends nothing while a page is up, seats and a bots' switch for the
+// room's page, and the title's line replaced.
+using Rooms;
+
+settings { title = "Rooms test"; maxPlayers = 4; }
+
+scene Main { }
+
+singleton Tally
+{
+    int ticks;
+    int played; // Ticks in which this machine's player's hands were on the game
+}
+
+input Controls
+{
+    bool playing;
+
+    Sample(Devices devices, Lobby lobby)
+    {
+        playing = lobby.playing;
+    }
+}
+
+system Count(mut Tally tally, Controls controls)
+{
+    tally.ticks += 1;
+    if (controls.playing) tally.played += 1;
+}
+
+// What the game saw of the pages' buttons: where it would send its commands
+local singleton Seen
+{
+    int newGames;
+    int toggles;
+    bool bots = true;
+}
+
+// What the room's page shows of this match
+view Seats(mut Seen seen, mut Lobby lobby)
+{
+    lobby.seats = 3;
+    lobby.manned = 1;
+    lobby.mine = 0;
+    lobby.bots = seen.bots;
+    lobby.offersNewGame = true;
+    lobby.offersBots = true;
+    if (lobby.newGame) seen.newGames += 1;
+    if (lobby.toggleBots)
+    {
+        seen.toggles += 1;
+        seen.bots = !seen.bots;
+    }
+}
+
+override string Rooms.Tagline()
+{
+    return "A test.";
+}

@@ -1,4 +1,4 @@
-const string SampleTitle = "Ricochet Tanks";
+using Rooms;
 
 // When whoever opened the link first goes, another player's machine carries the match on.
 settings { title = "Ricochet Tanks"; maxPlayers = 8; hostMigration = true; }
@@ -217,7 +217,7 @@ input Controls
     [Absolute, Clamp(-1, 1)] float2 aim; // A direction, which another machine's guess keeps
     bool fire;
 
-    Sample(Devices devices, Pad pad, SampleLobby lobby)
+    Sample(Devices devices, Pad pad, Lobby lobby)
     {
         if (!lobby.playing) return;
         var keys = devices.keyboard;
@@ -634,7 +634,6 @@ local event(Scored) ShowScore(Tank tank, mut Fx fx)
 }
 
 // The arena, fitted between the scoreboard and the hints whatever the window's shape.
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Backdrop(mut Fx fx)
 {
     fx.shake = Math.Max(0, fx.shake - Math.Min(Frame.dt, 0.05));
@@ -664,7 +663,6 @@ view Backdrop(mut Fx fx)
     }
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Bullets(Bullet bullet)
 {
     var paint = Paint(bullet.slot);
@@ -674,7 +672,6 @@ view Bullets(Bullet bullet)
     Draw.Circle(bullet.position, BULLET_R - 0.05, Color.white);
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Tanks(mut Tank tank)
 {
     tank.kick = Math.Max(0, tank.kick - Frame.dt);
@@ -704,8 +701,7 @@ view Tanks(mut Tank tank)
 }
 
 // This machine's own tank: where its hands point it, and the marks that say it's yours.
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
-view Mine(Devices devices, Tank tank, mut Pad pad, Fx fx, SampleLobby lobby, with ownership)
+view Mine(Devices devices, Tank tank, mut Pad pad, Fx fx, Lobby lobby, with ownership)
 {
     pad.seat = tank.slot;
     if (!lobby.playing)
@@ -808,7 +804,6 @@ view Mine(Devices devices, Tank tank, mut Pad pad, Fx fx, SampleLobby lobby, wit
     }
 }
 
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Sparks(mut Fx fx)
 {
     var dt = Math.Min(Frame.dt, 0.05);
@@ -850,7 +845,6 @@ view Sparks(mut Fx fx)
 }
 
 // The scoreboard has a place for every seat, and the scores are what the server confirmed.
-[After(SampleLobbyBegin), Before(SampleLobbyPages)]
 view Hud(Round round, Pad pad, Fx fx, query (verified Tank tank) tanks)
 {
     Draw.SetScreen();
@@ -898,4 +892,11 @@ view Hud(Round round, Pad pad, Fx fx, query (verified Tank tank) tanks)
         Draw.Text(word, middle, size, Paint(round.winner), Anchor.MiddleCenter, Font.Bold);
         Draw.Text("Next round in a moment", middle + float2(0, box.y * 0.5 + 22), 13, Color.white, Anchor.UpperCenter);
     }
+}
+
+// The menu's button goes in the top right corner here: the bottom of the
+// screen is the hints'.
+override Rect Rooms.MenuButton(float2 screen)
+{
+    return Rect(screen.x - 92, 8, 84, 36);
 }
