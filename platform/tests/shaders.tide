@@ -2839,6 +2839,7 @@ local singleton Tables
     Swatch[2] pair;
     int[3] order;
     List<Band> strips;     // A list whose elements have an array each
+    float[2][3] rows;       // An array of arrays: a quarter, a half and three quarters, then one, a half and a quarter
 }
 
 component Tagged
@@ -3008,6 +3009,72 @@ frag ArrayInList(Vertex vertex, out Color color, Tables tables)
     color = Color(strip.rgb[0], tables.strips[1].rgb[1], strip.rgb[2] + tables.strips[0].rgb[2] + tables.strips[2].rgb[0]);
 }
 
+// An array of arrays: an element of a row by places only known as the code runs, past either's end, and how many
+frag RowsRead(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    color = Color(tables.rows[choice.at][0], tables.rows[1][choice.at + 1],
+                  tables.rows[choice.at + 5][0] + tables.rows[0][7] + tables.rows.count / 4.0 + tables.rows[0].count / 12.0);
+}
+
+float Total3(float[3] values)
+{
+    mut var sum = 0.0;
+    foreach (var value in values) sum += value;
+    return sum;
+}
+
+// A copy of one, written an element and a row at a time, inside it and past its ends; a row as a value of its own
+frag RowsLocal(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    mut var mine = tables.rows;
+    mine[choice.at][0] = 0.5;
+    mine[0][choice.at + 1] = 1;
+    mine[choice.at + 1][0] = 1;
+    mine[0][9] = 1;
+    mine[1][choice.at - 5] += 1;
+    mut var row = mine[0];
+    row[1] = 0;
+    mine[1] = row;
+    mine[choice.at + 3] = row;
+    mut float[2][2] made = [[1, 2], [3, 4]];
+    made[choice.at][choice.at] = 6;
+    mut var sum = 0.0;
+    foreach (var each in mine)
+    {
+        foreach (var value in each) sum += value;
+    }
+    color = Color(sum / 4, Total3(mine[choice.at]) / 5, (made[1][choice.at - 1] + made[1][1]) / 18.0);
+}
+
+// A for whose step writes an array's element, which a continue still comes to, and one that starts by writing one
+frag StepWrites(Vertex vertex, out Color color)
+{
+    mut int[3] tally = [0, 0, 0];
+    mut var i = 0;
+    for (mut var k = 0; k < 6; tally[i]++)
+    {
+        k++;
+        if (k == 2) continue;
+        i = k % 3;
+    }
+    mut var turns = 0;
+    for (tally[2] = 4; tally[2] < 6; tally[2] += 1) turns++;
+    color = Color(tally[0] / 4.0, tally[1] / 4.0, (tally[2] + turns) / 32.0);
+}
+
+// '?:' between structs, arrays, rows and matrices
+frag Picks(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    var on = choice.at == 1;
+    var swatch = on ? tables.pair[1] : tables.pair[0];
+    mut float[4] none = [0, 0, 0, 0];
+    var weights = on ? none : tables.weights;
+    var turn = on ? float2x2(0.25, 0, 0, 0.25) : float2x2.identity;
+    var moved = Math.Mul(turn, float2(1, 1));
+    var row = on ? tables.rows[1] : tables.rows[0];
+    color = Color(swatch.gain, weights[1] + moved.x, row[0]);
+}
+
 [After(CubeReads)]
 view ListReads(Art art, mut Tables tables)
 {
@@ -3036,6 +3103,7 @@ view ListReads(Art art, mut Tables tables)
         tables.pair = [Swatch { gain = 0.25, on = true }, Swatch { gain = 0.5, on = true }];
         tables.order = [1, 0, 1];
         tables.strips = [Band { }, Band { rgb = [1, 0.5, 0.25] }];
+        tables.rows = [[0.25, 0.5, 0.75], [1, 0.5, 0.25]];
     }
     tables.colors[0] = Color(1, tables.turn, 0);
     Draw.Clear(Color(0.5, 0.5, 0.5));
@@ -3124,6 +3192,27 @@ view ListReads(Art art, mut Tables tables)
     Draw.Transform(float2(72, 88))
     {
         Draw.Mesh(tables.small, art.faces, Loops);
+    }
+    // Row 7: arrays of arrays, a for whose step writes an element, and '?:' between what isn't a number
+    Draw.Transform(float2(8, 104))
+    {
+        Draw.Mesh(tables.small, art.faces, RowsRead, Choice { at = 1 });
+    }
+    Draw.Transform(float2(24, 104))
+    {
+        Draw.Mesh(tables.small, art.faces, RowsLocal, Choice { at = 1 });
+    }
+    Draw.Transform(float2(40, 104))
+    {
+        Draw.Mesh(tables.small, art.faces, StepWrites);
+    }
+    Draw.Transform(float2(56, 104))
+    {
+        Draw.Mesh(tables.small, art.faces, Picks, Choice { at = 1 });
+    }
+    Draw.Transform(float2(72, 104))
+    {
+        Draw.Mesh(tables.small, art.faces, Picks, Choice { at = 0 });
     }
 }
 

@@ -1,6 +1,8 @@
 // Arrays of a fixed length on the GPU: fields of a singleton, a component and
 // a struct, sent as their elements' words; locals, elements read and
-// written, a count, foreach, and an array handed to a function.
+// written, a count, foreach, and an array handed to a function; arrays of
+// arrays, which are rows in structs in GLSL; a for whose step writes an
+// element; and '?:' between structs, arrays and matrices.
 scene Main { }
 
 struct Corner
@@ -18,6 +20,7 @@ singleton Ramp
     Stop[3] stops;
     float[4] weights;
     int[2] picks;
+    float[2][3] rows;
 }
 component Bones
 {
@@ -39,6 +42,30 @@ float Total(float[4] values)
 void Double(mut float value)
 {
     value *= 2;
+}
+
+frag Rows(Corner corner, out Color color, Ramp ramp)
+{
+    mut var mine = ramp.rows;
+    mine[ramp.picks[0]][ramp.picks[1]] = 1;
+    mine[1][5] = 1;
+    mut var row = mine[ramp.picks[0]];
+    mine[0] = row;
+    mut int[2][2] made = [[1, 2], [3, 4]];
+    for (mut var k = 0; k < 4; made[1][k % 2]++)
+    {
+        if (k == 1) continue;
+        k += 2;
+    }
+    var stop = corner.uv.x > 0.5 ? ramp.stops[0] : ramp.stops[1];
+    var turn = corner.uv.y > 0.5 ? float2x2.identity : float2x2(0, 1, 1, 0);
+    var picked = corner.uv.x > 0.5 ? mine : ramp.rows;
+    mut var sum = 0.0;
+    foreach (var each in picked)
+    {
+        foreach (var value in each) sum += value;
+    }
+    color = stop.color * sum * Math.Mul(turn, corner.uv).x * made[1][0] * Total(ramp.weights);
 }
 
 vert Bend(mut Corner corner, Bones bones)
@@ -72,4 +99,5 @@ event(Spawned) Setup(with Main)
 view Show(Stage stage, with Bones)
 {
     Draw.Mesh(stage.corners, stage.faces, float4x4.identity, Bend, Shade);
+    Draw.Mesh(stage.corners, stage.faces, float4x4.identity, Rows);
 }
