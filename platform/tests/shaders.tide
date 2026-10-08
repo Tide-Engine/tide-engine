@@ -2822,7 +2822,10 @@ local singleton Tables
     List<Color> none;
     List<Swatch> swatches;  // Three pixels an element
     List<Swatch> many;      // 700 of them: more than a row of the list's texture, and one across two rows
-    List<float> big;        // 3000 floats: three rows
+    List<float> big;        // 9000 floats, four to a pixel: three rows
+    List<byte> bytes;       // 300 of them, four to a pixel
+    Grid2<Color> cells = Grid2(70, 3); // Wider than a chunk of it
+    Grid2<int> tallies = Grid2(5, 2);
     List<int2> steps;
     float[4] weights;       // Arrays of a fixed length: a quarter, a half, three quarters and one
     Swatch[2] pair;
@@ -2854,7 +2857,7 @@ frag ListPick(Vertex vertex, out Color color, Tables tables, Choice choice)
 
 frag ListCounts(Vertex vertex, out Color color, Tables tables)
 {
-    color = Color(tables.colors.count / 8.0, tables.none.count + 0.25, tables.big.count / 6000.0);
+    color = Color(tables.colors.count / 8.0, tables.none.count + 0.25, tables.big.count / 18000.0);
 }
 
 frag ListSum(Vertex vertex, out Color color, Tables tables)
@@ -2905,6 +2908,58 @@ frag ListOwn(Vertex vertex, out Color color, Tagged tagged)
 frag ListGiven(Vertex vertex, out Color color, Palette palette)
 {
     color = palette.colors[palette.pick];
+}
+
+// Bytes are ints from 0 to 255 there, and keep to that as they're added to
+frag ListBytes(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    var value = tables.bytes[choice.at];
+    mut byte more = value;
+    more += 100;
+    color = Color(value / 255.0, more / 255.0, tables.bytes.count / 600.0);
+}
+
+// A grid's cells by their place, in another chunk than its first, and past its edges, where there's nothing
+frag GridCell(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    color = tables.cells[choice.at, 2] + tables.cells[70, 0] + tables.cells[int2(-1, 0)];
+}
+
+frag GridSize(Vertex vertex, out Color color, Tables tables)
+{
+    color = Color(tables.cells.size.x / 140.0, tables.cells.size.y / 6.0, tables.tallies[3, 1] / 10.0);
+}
+
+// An asset's grid, by its name
+frag AssetCell(Vertex vertex, out Color color, Choice choice)
+{
+    color = brickCells[choice.at, 0];
+    if (brickCells.size.x != 2 || brickCells.size.y != 2) color = Color.black;
+}
+
+// Loops of every kind: a while, a for that doesn't count by ones, and one that only a break ends
+frag Loops(Vertex vertex, out Color color, Tables tables)
+{
+    mut var i = 0;
+    mut var sum = 0.0;
+    while (i < tables.colors.count)
+    {
+        sum += tables.colors[i].b;
+        i++;
+    }
+    mut var steps = 0;
+    for (mut var x = 1.0; x < 20; x *= 2)
+    {
+        if (steps == 3) continue;
+        steps++;
+    }
+    mut var turns = 0;
+    while (true)
+    {
+        turns++;
+        if (turns >= 4) break;
+    }
+    color = Color(sum * 0.5, steps / 4.0, turns / 16.0);
 }
 
 // Arrays: an element by a place that's only known as the code runs, one past the end, and how many
@@ -2964,7 +3019,10 @@ view ListReads(Art art, mut Tables tables)
             tables.many.Add(Swatch { tint = Color((i & 255) / 255.0, 0.5, 0), gain = 1, extra = float3(0, 0, 0.25), shift = i,
                                      on = true, tone = Tone.Cool });
         }
-        for (int i = 0; i < 3000; i++) tables.big.Add((i & 255) / 255.0);
+        for (int i = 0; i < 9000; i++) tables.big.Add((i & 255) / 255.0);
+        for (int i = 0; i < 300; i++) tables.bytes.Add(byte(i));
+        tables.cells[66, 2] = Color(0.25, 0.5, 0.75);
+        tables.tallies[3, 1] = 10;
         tables.steps = [int2(0, 0), int2(3, 16)];
         tables.weights = [0.25, 0.5, 0.75, 1];
         tables.pair = [Swatch { gain = 0.25, on = true }, Swatch { gain = 0.5, on = true }];
@@ -2994,7 +3052,7 @@ view ListReads(Art art, mut Tables tables)
     }
     Draw.Transform(float2(40, 24))
     {
-        Draw.Mesh(tables.small, art.faces, ListFar, Choice { at = 2500 });
+        Draw.Mesh(tables.small, art.faces, ListFar, Choice { at = 8500 });
     }
     Draw.Transform(float2(56, 24))
     {
@@ -3037,6 +3095,27 @@ view ListReads(Art art, mut Tables tables)
     Draw.Transform(float2(56, 72))
     {
         Draw.Mesh(tables.small, art.faces, ArrayInList);
+    }
+    // Row 6: bytes, a grid's cells and size, an asset's grid, and loops
+    Draw.Transform(float2(8, 88))
+    {
+        Draw.Mesh(tables.small, art.faces, ListBytes, Choice { at = 200 });
+    }
+    Draw.Transform(float2(24, 88))
+    {
+        Draw.Mesh(tables.small, art.faces, GridCell, Choice { at = 66 });
+    }
+    Draw.Transform(float2(40, 88))
+    {
+        Draw.Mesh(tables.small, art.faces, GridSize);
+    }
+    Draw.Transform(float2(56, 88))
+    {
+        Draw.Mesh(tables.small, art.faces, AssetCell, Choice { at = 1 });
+    }
+    Draw.Transform(float2(72, 88))
+    {
+        Draw.Mesh(tables.small, art.faces, Loops);
     }
 }
 

@@ -33,7 +33,7 @@ event(Spawned) Setup(with Main)
 float Count(float to)
 {
     mut float x = 0;
-    while (x < to) x += 1;
+    string label = "far";
     return x;
 }
 

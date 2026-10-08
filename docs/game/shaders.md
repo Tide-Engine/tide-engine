@@ -296,12 +296,32 @@ frag Lit(BoxVertex vertex, out Color color, Lights lights)
 
 - `lights.items[i]` is an element, `lights.items.count` how many, and `foreach` goes through them in order. A list has no fixed size: it's as long as the view left it, thousands of elements if it likes, and the frag loops over what's there.
 - An element past the end, or before the start, is zeros, as it is on the CPU.
-- Elements are what the GPU has values of: numbers, vectors, colors, matrices, enums, bools, structs of those, and [arrays](#arrays) in them. Not text, bytes, longs, entities or other lists.
+- Elements are what the GPU has values of: numbers, bytes, vectors, colors, matrices, enums, bools, structs of those, and [arrays](#arrays) in them. Not text, longs, entities or other lists.
 - The GPU reads a list, and changes none: there's no `Add` there. A view or a system fills it.
 - It's read where the frag or vert takes it. Take an element into a local, `var light = lights.items[i];`, and pass that on to a function; the list itself isn't a value to keep or pass.
 - Each list a draw's code reads is one of its 8 textures, as that's how its numbers travel: an image of numbers, read by an element's place. A list that didn't change since the last frame isn't sent again.
 - A component's list is its entity's own, so entities with lists are drawn one by one, not all in one draw call. What many entities share belongs in a singleton, with each entity saying where its part starts.
 - The struct [`Draw.Instanced`](#instances-from-a-list) takes for each instance can't hold a list the code reads: a draw sends one list for all of them.
+
+### A grid's cells
+
+A `Grid2` is read the same way, a cell by its place, beside [sampling it](#textures) as a picture: `cells[x, y]`, `cells[at]` for an `int2`, and `cells.size`. It's the cell as the grid has it, exactly, of any type the GPU has values of, where `Sample` gives a color blended between cells.
+
+```csharp
+local singleton Board
+{
+    Grid2<int> owner = Grid2(64, 64);
+}
+
+frag Tiles(BoxVertex vertex, out Color color, Board board)
+{
+    var at = int2(int(vertex.uv.x * board.owner.size.x), int(vertex.uv.y * board.owner.size.y));
+    color = board.owner[at] == 1 ? Color.red : Color.blue;
+}
+```
+
+- A cell outside the grid is zeros. The grid is a field of what the frag or vert takes, or an [asset](./assets.md) by its name, and counts as one of the draw's 8 textures, once more if it's also sampled.
+- A grid with no size on an axis isn't sent, and reads as zeros everywhere. A `Grid3` isn't read there yet.
 
 ### Arrays
 
@@ -580,16 +600,17 @@ The camera isn't given: keep where yours is in a singleton, where the view that 
 
 Code for the GPU is ordinary Tide, less what a GPU doesn't have:
 
-- **It has** bools, ints, floats, vectors, quaternions, matrices, colors, enums, structs of those and [arrays](#arrays) of them; locals, `if`, `?:`, `switch` on an int or an enum, and `for` loops that count (`for (int i = 0; i < 8; i++)`), with `break` and `continue`; [lists](#lists-and-arrays) that are fields of what it takes, read by an element, a count or `foreach`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; and sampling a grid, a texture or a target's depth, 8 of them to a draw, anywhere in the code: in a branch, in a loop, in a vert.
-- **It doesn't have** maps, sets, text, entities, spawning and sending, `Draw`, the GUI, `Devices`, `Debug`, C, tasks, errors, or recursion. It makes and changes no list. A frag's `this` is its pixel; verts and ordinary functions have no `this`. There's no `while`, which could go on forever: write `for` with a bound, and `break` out of it.
+- **It has** bools, bytes, ints, floats, vectors, quaternions, matrices, colors, enums, structs of those and [arrays](#arrays) of them; locals, `if`, `?:`, `switch` on an int or an enum, `for`, `while` and `foreach`, with `break` and `continue`; [lists and grids](#lists-and-arrays) that are fields of what it takes, read by an element, a count or `foreach`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; and sampling a grid, a texture or a target's depth, 8 of them to a draw, anywhere in the code: in a branch, in a loop, in a vert.
+- **It doesn't have** maps, sets, text, entities, spawning and sending, `Draw`, the GUI, `Devices`, `Debug`, C, tasks, errors, or recursion. It makes and changes no list. A frag's `this` is its pixel; verts and ordinary functions have no `this`. A `long` has no place there, as a GPU's ints are 32 bits.
 
 Each of those is an error where it's written, which says what to do instead. A function a frag calls has to fit too, and the error says which frag reaches it; the same function still runs on the CPU for the code that calls it there.
 
 ```
-error: a loop the GPU runs counts, so it's known how far it goes: 'while' could go on forever
-  = note: frag 'Shade' runs on the GPU, and 'Falloff' with it, as it calls it
-  = note: write it as a for with a bound, and 'break' out of it: 'for (int i = 0; i < 8; i++) { ... }'
+error: string can't go to the GPU: text is the CPU's
+  = note: frag 'Shade' runs on the GPU, and 'Label' with it, as it calls it
 ```
+
+A loop that never ends hangs the GPU as it hangs a system: nothing stops it for you.
 
 ### Math
 

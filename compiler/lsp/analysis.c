@@ -5890,7 +5890,10 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         return;
     }
     if (gpu && (t.kind == TY_GRID || t.kind == TY_TEXTURE)) {
-        if (t.kind == TY_GRID && (t.decl->dims != 2 || t.decl->fields.items[0].type.kind != TY_COLOR)) return;
+        // A Grid2's cells are read by their place there, with its size; one of colors or floats is sampled too
+        if (t.kind == TY_GRID && t.decl->dims == 2) item(c, "size", CK_PROPERTY, "int2", GRID_SIZE_FIELD_DOC, NULL);
+        if (t.kind == TY_GRID && (t.decl->dims != 2 || (t.decl->fields.items[0].type.kind != TY_COLOR
+                                                         && t.decl->fields.items[0].type.kind != TY_FLOAT))) return;
         const method_form *sample = t.kind == TY_TEXTURE ? &texture_calls[0]
             : find_form(grid_calls, sizeof grid_calls / sizeof grid_calls[0], str_from("Sample"));
         sb detail = {0};
@@ -6474,7 +6477,7 @@ static void complete_value_types(completion *c, const unsigned which)
                             : t.kind == TY_LOCAL_ENTITY   ? VT_LOCAL_ENTITY
                                                           : VT_VALUES;
         // Its ints are 32 bits, and it has no handles into the world, nor rects
-        if ((which & VT_GPU) && (t.kind == TY_BYTE || t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT || t.kind == TY_RENDER_TARGET
+        if ((which & VT_GPU) && (t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT || t.kind == TY_RENDER_TARGET
                                  || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP)) continue; // A depth and a cube are read where they're a field, never a parameter
         if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET)
             && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
@@ -6517,13 +6520,13 @@ static bool gpu_callable(const decl *d)
 
 // Names and keywords in a frag or vert, which the GPU runs: what it takes, its
 // locals, the game's functions and constants, Math, and the types the GPU has
-// values of. No while, which could go on forever; nothing of the world or the
+// values of. Nothing of the world or the
 // frame, like Spawn, Draw or Devices.
 static void complete_shader_code(completion *c, const scope *sc, const bool statement)
 {
     if (sc->decl->is_frag) item(c, "this", CK_KEYWORD, "Pixel", shader_record_doc(A.prog->pixel), NULL);
     if (statement) {
-        static const char *const keywords[] = {"if", "else", "return", "var", "mut", "for", "foreach", "switch", "case", "break",
+        static const char *const keywords[] = {"if", "else", "return", "var", "mut", "for", "while", "foreach", "switch", "case", "break",
                                                "continue"};
         for (size_t i = 0; i < sizeof keywords / sizeof keywords[0]; i++) item(c, keywords[i], CK_KEYWORD, NULL, NULL, NULL);
     }

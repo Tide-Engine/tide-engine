@@ -16161,7 +16161,9 @@ static void gen_shader_value(sb *o, const char *to, const type t, const char *ac
     const int dim = type_dim(t);
     const int n = matrix_dim(t);
     const int floats = dim > 0 && type_is_float_based(t) ? dim : t.kind == TY_COLOR || t.kind == TY_QUATERNION ? 4 : n * n;
-    if (floats > 0) {
+    if (t.kind == TY_BYTE) {
+        sb_printf(o, "    %s.i[%d] = (int32_t)%s;\n", to, (*i)++, access);
+    } else if (floats > 0) {
         sb_printf(o, "    memcpy(&%s.f[%d], &%s, %d * sizeof(float));\n", to, *f, access, floats);
         *f += floats;
     } else if (dim > 0) {
@@ -16193,7 +16195,8 @@ static void shader_words(const type t, int *floats, int *ints)
 {
     const int dim = type_dim(t);
     const int n = matrix_dim(t);
-    if (dim > 0) *(type_is_float_based(t) ? floats : ints) += dim;
+    if (t.kind == TY_BYTE) *ints += 1;
+    else if (dim > 0) *(type_is_float_based(t) ? floats : ints) += dim;
     else if (n > 0) *floats += n * n;
     else if (t.kind == TY_COLOR || t.kind == TY_QUATERNION) *floats += 4;
     else if (t.kind == TY_BOOL || t.kind == TY_ENUM) *ints += 1;
@@ -16291,7 +16294,7 @@ static void gen_shaders(gen *g)
         for (int t = 0; t < sh->textures.count; t++) {
             const shader_texture *texture = &sh->textures.items[t];
             if (texture->read != READ_DATA) continue;
-            const type element = list_elem(texture->field->type.decl);
+            const type element = list_elem(texture->asset ? texture->asset->return_type.decl : texture->field->type.decl);
             int floats = 0, ints = 0;
             shader_words(element, &floats, &ints);
             sb_printf(o, "static void tide_shader_%d_words_%d(const void *tide_in, int32_t *tide_out)\n{\n"
@@ -16408,16 +16411,25 @@ static void gen_shaders(gen *g)
                 if (texture->filter == 2) blended |= 1u << (24 + t); // TIDE_SAMPLING_MIPS
             }
             if (texture->read == READ_DATA) { // A list: its elements as numbers, and how many, for the draw
-                const type element = list_elem(texture->field->type.decl);
+                const decl *holds = texture->asset ? texture->asset->return_type.decl : texture->field->type.decl;
+                const type element = list_elem(holds);
                 int floats = 0, ints = 0;
                 shader_words(element, &floats, &ints);
                 sb list = {0};
-                if (sh->values_type && texture->source == sh->values_type) {
+                if (texture->asset) {
+                    sb_put(&list, asset_cname(texture->asset));
+                } else if (sh->values_type && texture->source == sh->values_type) {
                     sb_printf(&list, "tide_values.%s", field_cname(texture->field));
                 } else {
                     int b = 0;
                     while (sh->bound.items[b] != texture->source) b++;
                     sb_printf(&list, "tide_%sb%d->%s", texture->field->is_local ? "l" : "", b, field_cname(texture->field));
+                }
+                if (holds->kind == DECL_GRID || texture->asset || texture->field->type.kind == TY_GRID) { // A grid: its cells, and its size
+                    sb_printf(o, "    tide_textures[%d] = tide_draw_grid_data(tide_draw, %s, &%s, %du, tide_shader_%d_words_%d, "
+                                 "&tide_uniforms.i[%d]);\n", t, list.data, grid_shape_name(holds), (unsigned)(floats + ints), s, t,
+                              texture->count_at);
+                    continue;
                 }
                 sb_printf(o, "    tide_textures[%d] = tide_draw_list_data(tide_draw, %s, sizeof(%s), %du, tide_shader_%d_words_%d, "
                              "&tide_uniforms.i[%d]);\n", t, list.data, elem_ctype(element), (unsigned)(floats + ints), s, t,
