@@ -585,6 +585,15 @@
           ]
         },
         {
+          "comment": "'a': one character, or one of the escapes \\' \\\" \\\\ \\n \\r \\t and \\0",
+          "name": "string.quoted.single.tide",
+          "match": "'(?:(\\\\['\"\\\\nrt0])|(\\\\.)|[^'\\\\])'",
+          "captures": {
+            "1": { "name": "constant.character.escape.tide" },
+            "2": { "name": "invalid.illegal.unknown-escape.tide" }
+          }
+        },
+        {
           "name": "constant.numeric.integer.hexadecimal.tide",
           "match": "\\b0[xX][0-9A-Fa-f_]*[0-9A-Fa-f]\\b"
         },
@@ -679,7 +688,7 @@
         {
           "comment": "Built-in value types, void for what a method or function returns, text, Actions and the draw list C takes, and what an enum is stored as (enum Voxel : byte). Not after a '.': Draw.Rect is a function",
           "name": "storage.type.primitive.tide",
-          "match": "(?<!\\.)\\b(void|bool|int[234]?|long|float(?:2x2|3x3|4x4|[234])?|quaternion|Entity|LocalEntity|PlayerID|Color|Rect|Texture|RenderTarget|string|Action|DrawList|byte|ushort)\\b"
+          "match": "(?<!\\.)\\b(void|bool|int[234]?|long|float(?:2x2|3x3|4x4|[234])?|quaternion|Entity|LocalEntity|PlayerID|Color|Rect|Texture|RenderTarget|string|Action|DrawList|byte|ushort|char)\\b"
         },
         {
           "comment": "Built-in singletons, components, events, enums, records, the World, generic types and function groups. Not after a '.': GUI.Button is a function",

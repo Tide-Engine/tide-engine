@@ -703,7 +703,7 @@ void Caption(string line, float2 at, float size, Color tone, float room)
         var middle = line.length / 2;
         for (var i = 0; i < line.length; i++)
         {
-            if (line.Substring(i, 1) != " ") continue;
+            if (line[i] != ' ') continue;
             if (cut < 0 || Math.Abs(i - middle) < Math.Abs(cut - middle)) cut = i;
         }
     }

@@ -29,7 +29,7 @@ system Paint(Brush brush, mut Canvas canvas)
 }
 ```
 
-Cells are plain values: numbers, bools, enums, vectors, quaternions, matrices, colors, rects, entities, players and structs of those. Text, lists and grids can't be cells: keep them elsewhere, and a number for them in the cell. A cell is a copy, as a list's element is, so a struct cell is taken out, changed and put back:
+Cells are plain values: numbers, bools, chars, enums, vectors, quaternions, matrices, colors, rects, entities, players and structs of those. Text, lists and grids can't be cells: keep them elsewhere, and a number for them in the cell. A cell is a copy, as a list's element is, so a struct cell is taken out, changed and put back:
 
 ```csharp
 mut var cell = field.cells[p];

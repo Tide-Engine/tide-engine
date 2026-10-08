@@ -98,6 +98,7 @@ typedef enum type_kind {
     TY_VOID,
     TY_BOOL,
     TY_BYTE,      // byte: an unsigned 8-bit integer; arithmetic promotes to int
+    TY_CHAR,      // char: one character, a Unicode code point in an int's 32 bits. It goes where an int does; an int becomes one with char(n)
     TY_INT,
     TY_LONG,       // long: a 64-bit int. An int converts to it implicitly; floats convert both ways only explicitly
     TY_INT2,
@@ -810,6 +811,7 @@ typedef enum ctor_form {
     CTOR_COLOR,          // Color(v.xy, b): 3 or 4 components from scalars and vectors; alpha 1 for 3
     CTOR_RECT,           // Rect(x, y, width, height)
     CTOR_ENUM,           // Card(number), Combat.Stance(number): the enum's value with that number; type_decl is the enum
+    CTOR_CHAR,           // char(number): the character with that code point, or '\0' for a number none has
 } ctor_form;
 
 typedef enum binding_kind {
@@ -847,6 +849,7 @@ struct expr {
     str text;
     int64_t int_value;
     bool is_long; // E_INT: a long literal (an L suffix, or a value past int's range)
+    bool is_char; // E_INT: a char literal, 'a', whose value is its code point
 
     // E_BOOL
     bool bool_value;

@@ -175,6 +175,12 @@ void Escapes()
     string braces = $"{{ {value:F2} }}";
     string lone = $"a } b";
     string badValue = $"tab \t {value}";
+    char letter = 'a';
+    char quote = '\'';
+    char tab = '\t';
+    char wrong = '\q';
+    bool same = letter == 'é' && quote != '"';
+    char brace = '{';
 }
 
 // Directives.

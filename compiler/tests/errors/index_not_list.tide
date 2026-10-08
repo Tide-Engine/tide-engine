@@ -1,0 +1,4 @@
+// expect: only lists, arrays, maps and text have elements to index, and this is int
+scene Main { }
+singleton Seen { int n; string name = "ab"; char mark; }
+system S(mut Seen seen) { seen.n = seen.n[0]; }

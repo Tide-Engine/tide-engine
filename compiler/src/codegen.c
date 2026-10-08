@@ -1411,7 +1411,7 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
         sb_printf(o, ", &%s, %uu)", grid_shape_name(have.decl), declared_sampling_bits(e));
         return;
     }
-    if (want.kind == TY_FLOAT && (have.kind == TY_INT || have.kind == TY_BYTE)) {
+    if (want.kind == TY_FLOAT && (have.kind == TY_INT || have.kind == TY_BYTE || have.kind == TY_CHAR)) {
         if (e->kind == E_INT) {
             // Same rounding as a runtime conversion, but reads as a plain literal.
             sb_printf(o, "%lld.0f", (long long)e->int_value);
@@ -1424,7 +1424,7 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
         }
         return;
     }
-    if (want.kind == TY_LONG && (have.kind == TY_INT || have.kind == TY_BYTE)) { // An int or byte widens to a long
+    if (want.kind == TY_LONG && (have.kind == TY_INT || have.kind == TY_BYTE || have.kind == TY_CHAR)) { // An int, byte or char widens to a long
         if (e->kind == E_INT) {
             gen_long_literal(o, e->int_value);
         } else if (e->kind == E_UNARY && e->op == T_MINUS && e->lhs->kind == E_INT && e->lhs->int_value >= 0) {
@@ -1551,6 +1551,7 @@ static void gen_default(gen *g, sb *o, const type t)
     switch (t.kind) {
     case TY_BOOL: sb_put(o, "false"); return;
     case TY_BYTE:
+    case TY_CHAR:
     case TY_INT: sb_put(o, "0"); return;
     case TY_LONG: sb_put(o, "0LL"); return;
     case TY_FLOAT: sb_put(o, "0.0f"); return;
@@ -2019,7 +2020,8 @@ static bool same_list_place(const expr *a, const expr *b)
 
 static bool scalar_kind(const type t)
 {
-    return t.kind == TY_BOOL || t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_FLOAT || t.kind == TY_ENUM;
+    return t.kind == TY_BOOL || t.kind == TY_BYTE || t.kind == TY_CHAR || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_FLOAT
+        || t.kind == TY_ENUM;
 }
 
 // Whether working `e` out costs little and can do nothing but give its value:
@@ -2207,6 +2209,12 @@ static void gen_construct(gen *g, sb *o, const expr *e)
     expr *first = e->args.count > 0 ? e->args.items[0] : NULL;
 
     switch (e->ctor) {
+    case CTOR_CHAR: // char(n): a char given is the char it is
+        if (first->type.kind != TY_CHAR) sb_put(o, "tide_char_of(");
+        gen_expr(g, o, first);
+        if (first->type.kind != TY_CHAR) sb_put(o, ")");
+        break;
+
     case CTOR_SCALAR:
         if (t.kind == TY_BYTE) {
             sb_put(o, "(uint8_t)(");
@@ -2499,6 +2507,7 @@ static void gen_text_add_c(gen *g, sb *o, const char *so_far, const type t, cons
     case TY_MAP:
     case TY_SET: sb_printf(o, "tide_text_map%d(%s, %s)", t.decl->index, so_far, v); return;
     case TY_STRING: sb_printf(o, "tide_str_add(%s, %s)", so_far, v); return;
+    case TY_CHAR: sb_printf(o, "tide_str_add_char(%s, %s)", so_far, v); return; // The character, and nothing for the one that's none
     case TY_BYTE:
     case TY_INT: sb_printf(o, "tide_str_add_int(%s, %s, %s)", so_far, v, f); return;
     case TY_LONG: sb_printf(o, "tide_str_add_long(%s, %s, %s)", so_far, v, f); return;
@@ -2889,6 +2898,14 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, "tide_win[");
             gen_window_index(g, o, e);
             sb_put(o, "]");
+            break;
+        }
+        if (e->object->type.kind == TY_STRING) { // name[i]: its character there, or the one that's none past either end
+            sb_put(o, "tide_str_char(");
+            gen_expr(g, o, e->object);
+            sb_put(o, ", ");
+            gen_as(g, o, e->lhs, (type){TY_INT, NULL});
+            sb_put(o, ")");
             break;
         }
         if (e->object->type.kind == TY_MAP) { // scores[key], or zero where the key isn't
@@ -4840,7 +4857,7 @@ static void hoist_unit(gen *g, expr *e, const char *name)
 // converts expressions: int to float, int vectors to float vectors.
 static void gen_c_as(sb *o, const char *text, const type have, const type want)
 {
-    if (want.kind == TY_FLOAT && (have.kind == TY_INT || have.kind == TY_BYTE)) {
+    if (want.kind == TY_FLOAT && (have.kind == TY_INT || have.kind == TY_BYTE || have.kind == TY_CHAR)) {
         sb_printf(o, "(float)(%s)", text);
     } else if (type_dim(want) >= 2 && type_dim(have) == type_dim(want) && type_is_float_based(want) && type_is_int_based(have)) {
         sb_printf(o, "tide_%s_from_%s(%s)", type_suffix(want), type_suffix(have), text);
@@ -5528,6 +5545,41 @@ static void gen_stmt(gen *g, const stmt *s)
             g->indent++;
             const int round = task_mark(g);
             line(g, o, "%s %s = %s.at[%s];", elem_vtype(s->type), local_cname(g, s->name), all, index);
+            line(g, o, "(void)%s;", local_cname(g, s->name));
+            task_declare(g, local_cname(g, s->name), s->type);
+            const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false, false};
+            vec_push(g->targets, loop);
+            gen_body_stmt(g, s->then_stmt);
+            const gen_target done = g->targets.items[--g->targets.count];
+            if (done.next_used) line(g, o, "%s:;", done.next);
+            task_pop(g, round);
+            g->indent--;
+            line(g, o, "}");
+            if (done.end_used) line(g, o, "%s:;", done.end);
+            g->indent--;
+            line(g, o, "}");
+            task_pop(g, mark);
+            break;
+        }
+        if (s->value->type.kind == TY_STRING) {
+            // Text: the value as the loop found it, then each character, from the byte the one before ended at, so
+            // text of any length is gone through once. As many rounds as it has characters
+            const int mark = task_mark(g);
+            const char *all = made_up(g, "all");
+            const char *at = made_up(g, "at");
+            const char *index = made_up(g, "i");
+            line(g, o, "{");
+            g->indent++;
+            line(g, o, "tide_str %s = %s;", all, expr_text(g, s->value));
+            task_declare(g, all, s->value->type);
+            line(g, o, "int32_t %s = 0;", at);
+            task_declare(g, at, (type){TY_INT, NULL});
+            line(g, o, "int32_t %s = 0;", index);
+            task_declare(g, index, (type){TY_INT, NULL});
+            line(g, o, "for (; %s < %s.chars; %s++) {", index, all, index);
+            g->indent++;
+            const int round = task_mark(g);
+            line(g, o, "%s %s = tide_str_next(%s, &%s);", elem_vtype(s->type), local_cname(g, s->name), all, at);
             line(g, o, "(void)%s;", local_cname(g, s->name));
             task_declare(g, local_cname(g, s->name), s->type);
             const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false, false};
@@ -6872,7 +6924,7 @@ static void gen_list_helpers(gen *g, const bool bodies)
         const bool paths = prog->lists.items[k]->paths; // rows[i].x: read through a pointer at the element
         char held[32] = "";
         if (container) snprintf(held, sizeof held, "tide_%s%d", e.kind == TY_LIST ? "list" : "map", e.decl->index);
-        const bool compares = e.kind == TY_BYTE || e.kind == TY_INT || e.kind == TY_LONG || e.kind == TY_FLOAT || e.kind == TY_BOOL || e.kind == TY_ENUM
+        const bool compares = e.kind == TY_BYTE || e.kind == TY_CHAR || e.kind == TY_INT || e.kind == TY_LONG || e.kind == TY_FLOAT || e.kind == TY_BOOL || e.kind == TY_ENUM
                            || e.kind == TY_ENTITY || e.kind == TY_LOCAL_ENTITY || e.kind == TY_PLAYER || e.kind == TY_STRING;
         if (!bodies) {
             sb_printf(o, "// List<%s>\n", type_name(e));
@@ -7443,6 +7495,10 @@ static void gen_show_part(gen *g, sb *o, const type t, const char *v)
     if (t.kind == TY_STRING) {
         sb_printf(o, "    a = tide_str_add_cstr(a, \"\\\"\");\n    a = tide_str_add(a, %s);\n", v);
         sb_put(o, "    a = tide_str_add_cstr(a, \"\\\"\");\n");
+        return;
+    }
+    if (t.kind == TY_CHAR) { // In its quotes, so the one that's no character still shows: '\0'
+        sb_printf(o, "    a = tide_str_add_char_quoted(a, %s);\n", v);
         return;
     }
     sb_put(o, "    a = ");
@@ -9455,7 +9511,7 @@ static capture_list par_captures(gen *g, const decl *sys, const stmt *loop)
 static bool flat_list_value(const type t)
 {
     switch (t.kind) {
-    case TY_BOOL: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4:
+    case TY_BOOL: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4:
     case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4: case TY_QUATERNION:
     case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_COLOR: case TY_RECT:
     case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_ENUM: return true;
@@ -12274,10 +12330,11 @@ static bool has_floats(const type t)
 }
 
 // Whether a type holds enums, which input from other machines could set to a
-// value that isn't one of their members.
+// value that isn't one of their members, or chars, which it could set to a
+// number that's no character's.
 static bool has_enums(const type t)
 {
-    if (t.kind == TY_ENUM) return true;
+    if (t.kind == TY_ENUM || t.kind == TY_CHAR) return true;
     if (t.kind != TY_STRUCT && t.kind != TY_ARRAY) return false;
     for (int i = 0; i < t.decl->fields.count; i++) {
         if (has_enums(t.decl->fields.items[i].type)) return true;
@@ -12347,6 +12404,8 @@ static void gen_repair_value(gen *g, const char *in, const char *def, const type
             sb_printf(&g->c, " case %s:", enum_member_cname(t.decl, &t.decl->members.items[i]));
         }
         sb_printf(&g->c, " break; default: %s = %s; break; }\n", in, def);
+    } else if (t.kind == TY_CHAR) { // A number no character has, which char(n) never gives
+        line(g, &g->c, "if (tide_char_of(%s) != %s) %s = %s;", in, in, in, def);
     } else if (t.kind == TY_FLOAT) {
         line(g, &g->c, "if (!tide_is_finite_f(%s)) %s = %s;", in, in, def);
     } else if (columns > 0) {
@@ -13935,6 +13994,7 @@ static void gen_print_value(sb *o, const type t, const char *access)
     case TY_SET: sb_printf(o, "        printf(\"%s(%%d)\", (int)tide_map_count(%s));\n", t.kind == TY_SET ? "Set" : "Map", access); return;
     case TY_BOOL: sb_printf(o, "        printf(\"%%s\", %s ? \"true\" : \"false\");\n", access); return;
     case TY_BYTE:
+    case TY_CHAR:
     case TY_INT: sb_printf(o, "        printf(\"%%d\", (int)%s);\n", access); return;
     case TY_LONG: sb_printf(o, "        printf(\"%%lld\", (long long)%s);\n", access); return;
     case TY_FLOAT: sb_printf(o, "        printf(\"%%g\", (double)%s);\n", access); return;
@@ -14779,7 +14839,7 @@ static bool write_file(const char *path, const sb *b)
 typedef enum bits_mode { BITS_WRITE, BITS_READ, BITS_WRITE_DELTA, BITS_READ_DELTA } bits_mode;
 
 // Packs or unpacks one value of an input, `in->` `at`, as bits: bools take
-// one, floats 32, byte and ushort enums 8 and 16, ints, other enums, players
+// one, floats 32, chars 21, byte and ushort enums 8 and 16, ints, other enums, players
 // and entities a varint (zig-zagged where it can be negative), which small
 // numbers keep short, and a button of the devices whether it's held. As a
 // delta from `base->` `at`, a bool is whether it flipped, and anything else
@@ -14807,6 +14867,10 @@ static void gen_bits(gen *g, const char *at, const type t, const bits_mode mode,
         width = 8;
         put = "(uint32_t)%s";
         get = "(uint8_t)tide_bits_get(&b, 8)";
+    } else if (t.kind == TY_CHAR) { // A code point: 21 bits hold the highest, U+10FFFF
+        width = 21;
+        put = "(uint32_t)%s";
+        get = "(int32_t)tide_bits_get(&b, 21)";
     } else if (t.kind == TY_ENUM && (t.decl->width == 1 || t.decl->width == 2)) { // A byte or a ushort: 8 or 16 bits
         width = 8 * t.decl->width;
         put = "(uint32_t)%s";
@@ -14886,7 +14950,7 @@ static void gen_bits(gen *g, const char *at, const type t, const bits_mode mode,
         else if (mode == BITS_WRITE_DELTA) line(g, o, "tide_bits_put_bool(&b, in->%s != base->%s);", at, at);
         else line(g, o, "in->%s = base->%s != tide_bits_get_bool(&b);", at, at);
         *bits += 1;
-    } else if (t.kind == TY_FLOAT || t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_ENUM) {
+    } else if (t.kind == TY_FLOAT || t.kind == TY_BYTE || t.kind == TY_CHAR || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_ENUM) {
         char now[600];
         char was[600];
         const bool wide = t.kind == TY_LONG;
@@ -16517,7 +16581,7 @@ static void gen_shader_value(sb *o, const char *to, const type t, const char *ac
         *i += dim;
     } else if (t.kind == TY_BOOL) {
         sb_printf(o, "    %s.i[%d] = %s ? 1 : 0;\n", to, (*i)++, access);
-    } else if (t.kind == TY_ENUM) {
+    } else if (t.kind == TY_ENUM || t.kind == TY_CHAR) { // An int there: a member's number, a character's code point
         sb_printf(o, "    %s.i[%d] = (int32_t)%s;\n", to, (*i)++, access);
     } else if (t.kind == TY_ARRAY) {
         for (int k = 0; k < t.decl->array_length; k++) {

@@ -280,6 +280,7 @@ static bool type_words(const type t, int *floats, int *ints)
         return true;
     case TY_BOOL:
     case TY_ENUM:
+    case TY_CHAR:
         *ints += 1;
         return true;
     case TY_STRUCT:
@@ -493,7 +494,7 @@ static const char *ty(emit *em, const type t)
     if (matrix_dim(t)) return (wgsl ? wgsl_m : glsl_m)[matrix_dim(t)];
     if (t.kind == TY_COLOR || t.kind == TY_QUATERNION) return wgsl ? "vec4f" : "vec4";
     if (t.kind == TY_BOOL) return "bool";
-    if (t.kind == TY_ENUM) return wgsl ? "i32" : "int";
+    if (t.kind == TY_ENUM || t.kind == TY_CHAR) return wgsl ? "i32" : "int"; // A char is its code point there
     if (t.kind == TY_ARRAY) {
         sb b = {0};
         const type element = t.decl->fields.items[0].type;
@@ -543,7 +544,7 @@ static void put_int(emit *em, const long long value)
 
 static long long int_literal(const expr *e)
 {
-    if (e->text.len == 0) return e->int_value; // The 1 of i++
+    if (e->text.len == 0 || e->is_char) return e->int_value; // The 1 of i++, and a char's code point
     char text[64];
     int n = 0;
     for (int i = 0; i < e->text.len && n < 63; i++) {
@@ -601,7 +602,7 @@ static void put_zero(emit *em, const type t)
         return;
     }
     if (t.kind == TY_BOOL) sb_put(em->o, "false");
-    else if (t.kind == TY_INT || t.kind == TY_ENUM || t.kind == TY_BYTE) sb_put(em->o, "0");
+    else if (t.kind == TY_INT || t.kind == TY_ENUM || t.kind == TY_BYTE || t.kind == TY_CHAR) sb_put(em->o, "0");
     else if (t.kind == TY_FLOAT) sb_put(em->o, "0.0");
     else if (type_is_int_based(t)) sb_printf(em->o, "%s(0)", ty(em, t));
     else sb_printf(em->o, "%s(0.0)", ty(em, t));
@@ -1571,7 +1572,7 @@ static void put_value(emit *em, const type t, const char floats, const char ints
         put_word(em, ints, *i);
         sb_put(em->o, " != 0)");
         *i += 1;
-    } else if (t.kind == TY_ENUM) {
+    } else if (t.kind == TY_ENUM || t.kind == TY_CHAR) {
         put_word(em, ints, *i);
         *i += 1;
     } else if (t.kind == TY_ARRAY) {
@@ -1735,7 +1736,7 @@ static bool map_fits(emit *em, const type t, const loc at)
     const type key = t.decl->fields.items[0].type;
     const char *why = NULL;
     switch (key.kind) {
-    case TY_INT: case TY_BYTE: case TY_ENUM: break;
+    case TY_INT: case TY_BYTE: case TY_ENUM: case TY_CHAR: break;
     case TY_STRING: why = "text is the CPU's"; break;
     case TY_LONG: why = "the GPU's ints are 32 bits"; break;
     default: why = "it's a handle into the world, which the GPU doesn't have"; break;
@@ -2148,7 +2149,7 @@ static void ex_map_call(emit *em, const expr *e)
     }
     const int t = data.texture < 0 ? 0 : data.texture;
     const type key = data.map->fields.items[0].type;
-    if (key.kind != TY_INT && key.kind != TY_BYTE && key.kind != TY_ENUM) return; // Said, where the map was named
+    if (key.kind != TY_INT && key.kind != TY_BYTE && key.kind != TY_ENUM && key.kind != TY_CHAR) return; // Said, where the map was named
     if (str_eq_c(e->name, "Has")) {
         need_find(em, &data);
         sb_printf(em->o, "(tide_find%d(", t);
@@ -2638,6 +2639,16 @@ static void ex_as(emit *em, const expr *e, const type want)
         sb_put(em->o, ")");
         return;
     }
+    if (have.kind == TY_CHAR && want.kind == TY_FLOAT) { // A char where a float goes: its code point, an int here
+        if (e->kind == E_INT) {
+            put_float(em, (double)int_literal(e));
+            return;
+        }
+        sb_printf(em->o, "%s(", ty(em, want));
+        ex(em, e);
+        sb_put(em->o, ")");
+        return;
+    }
     if (have_dim == 0 || want_dim == 0 || (have.kind == want.kind)) {
         ex(em, e);
         return;
@@ -3008,6 +3019,31 @@ static void ex_construct(emit *em, const expr *e)
         ex_as(em, e->args.items[0], vector_type(floats, 1));
         sb_put(em->o, ")");
         return;
+    case CTOR_CHAR: { // char(n): n, or 0 for a number no character has, as tide_char_of gives on the CPU
+        const expr *n = e->args.items[0];
+        if (n->type.kind == TY_CHAR) {
+            ex(em, n);
+            return;
+        }
+        sb_put(em->o, em->l == WGSL ? "select(" : "((");
+        if (em->l == WGSL) {
+            ex(em, n);
+            sb_put(em->o, ", 0, (");
+        }
+        ex(em, n);
+        sb_put(em->o, " < 0 || ");
+        ex(em, n);
+        sb_put(em->o, " > 1114111 || (");
+        ex(em, n);
+        sb_put(em->o, " >= 55296 && ");
+        ex(em, n);
+        sb_put(em->o, em->l == WGSL ? " < 57344)))" : " < 57344)) ? 0 : ");
+        if (em->l != WGSL) {
+            ex(em, n);
+            sb_put(em->o, ")");
+        }
+        return;
+    }
     case CTOR_ENUM: { // An enum is an int here whatever it's stored as: one stored as less keeps its low bits, as on the CPU
         const int width = t.decl->width;
         if (width != 1 && width != 2) {
@@ -4013,7 +4049,7 @@ static void ex(emit *em, const expr *e)
         const bool named = data_of(em, e->object, &data);
         if (named && data.map) { // map[key]: its value, or zeros, as an entry past the end reads
             const type key = data.map->fields.items[0].type;
-            if (data.map->is_set || (key.kind != TY_INT && key.kind != TY_BYTE && key.kind != TY_ENUM)) { // Said already
+            if (data.map->is_set || (key.kind != TY_INT && key.kind != TY_BYTE && key.kind != TY_ENUM && key.kind != TY_CHAR)) { // Said already
                 no_element(em, e);
                 return;
             }
@@ -4732,13 +4768,13 @@ static void st_foreach(emit *em, const stmt *s, const data_ref *list)
     sb_put(em->o, "}\n");
 }
 
-// A switch on an int or an enum, as each language has its own: a section's
-// labels are constants, and no section goes on into the next.
+// A switch on an int, a char or an enum, as each language has its own: a
+// section's labels are constants, and no section goes on into the next.
 static void st_switch(emit *em, const stmt *s)
 {
     const bool wgsl = em->l == WGSL;
-    if (s->cond->type.kind != TY_INT && s->cond->type.kind != TY_ENUM) {
-        refuse(em, s->cond->at, "a switch the GPU runs is on an int or an enum, and this is %s", type_name(s->cond->type));
+    if (s->cond->type.kind != TY_INT && s->cond->type.kind != TY_ENUM && s->cond->type.kind != TY_CHAR) {
+        refuse(em, s->cond->at, "a switch the GPU runs is on an int, a char or an enum, and this is %s", type_name(s->cond->type));
         diag_note("write it as 'if' and 'else if'");
         return;
     }

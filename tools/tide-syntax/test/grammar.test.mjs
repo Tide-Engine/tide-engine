@@ -281,6 +281,14 @@ const cases = {
         ['string lone =', [['}', 'invalid.illegal']]],
         ['string badValue =', [['\\t', 'invalid.illegal'], ['value', 'meta.interpolation']]],
     ],
+    'characters': [
+        ['char letter =', [['char', 'storage.type.primitive'], ["'a'", 'string.quoted.single'], ['letter', '!string']]],
+        ['char quote =', [["'\\''", 'string.quoted.single'], ["\\'", 'constant.character.escape'], [';', '!string']]],
+        ['char tab =', [['\\t', 'constant.character.escape'], ['\\t', '!invalid']]],
+        ['char wrong =', [['\\q', 'invalid.illegal']]],
+        ['bool same =', [["'é'", 'string.quoted.single'], ["'\"'", 'string.quoted.single'], ['quote', '!string'], ['&&', '!string']]],
+        ['char brace =', [["'{'", 'string.quoted.single']]],
+    ],
     'directives': [
         ['#if TIDE_0_3_OR_NEWER', [
             ['#if', 'keyword.preprocessor'], ['TIDE_0_3_OR_NEWER', 'entity.name.variable.preprocessor.symbol'],
@@ -503,6 +511,8 @@ test('indenting ignores braces in text and comments', () => {
         ['system Foo()', false],
         ['component A { int x; }', false],
         ['    Foo("{");', false],
+        ["    char open = '{';", false],
+        ["    if (c == '{') {", true],
         ['    string s = $"{x}";', false],
         ['    string s = $"{{";', false],
         ['    // see {', false],

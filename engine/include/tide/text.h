@@ -102,6 +102,57 @@ tide_str tide_str_to_lower(tide_str a);
 tide_str tide_str_trim(tide_str a);
 tide_str tide_str_replace(tide_str a, tide_str from, tide_str to);
 
+// ---------------------------------------------------------------------------
+// Tide's `char`: one character, a Unicode code point, as an int32_t. 0 is no
+// character: what reading past a text's ends gives, and what text shows as
+// nothing. A character of text is a byte that starts one and the bytes that
+// continue it, which is how a text's length counts them; bytes that are no
+// character's UTF-8 read as U+FFFD.
+
+// char(code): the character with that code point, or 0 for a number none has:
+// under 0, past U+10FFFF, or half of a UTF-16 pair.
+static inline int32_t tide_char_of(const int32_t code)
+{
+    return code < 0 || code > 0x10FFFF || (code >= 0xD800 && code < 0xE000) ? 0 : code;
+}
+
+// What the two below do for text that isn't a byte a character.
+int32_t tide_str_char_wide(tide_str a, int32_t index);
+int32_t tide_str_next_wide(tide_str a, int32_t *at);
+
+// text[index]: the character there, counting characters, or 0 past either
+// end. Text of a byte a character (its two counts say so) has it at that
+// byte; any other is walked to it.
+static inline int32_t tide_str_char(const tide_str a, const int32_t index)
+{
+    if (a.bytes == a.chars && (uint32_t)index < (uint32_t)a.bytes && (unsigned char)a.ptr[index] < 0x80u) return a.ptr[index];
+    return tide_str_char_wide(a, index);
+}
+
+// foreach over text: the character that starts at byte `*at`, which moves to
+// the one after it. 0 once the text is done.
+static inline int32_t tide_str_next(const tide_str a, int32_t *at)
+{
+    const uint32_t from = (uint32_t)*at;
+    if (a.bytes == a.chars && from < (uint32_t)a.bytes && (unsigned char)a.ptr[from] < 0x80u) {
+        *at = (int32_t)from + 1;
+        return a.ptr[from];
+    }
+    return tide_str_next_wide(a, at);
+}
+
+// Joining: `a` followed by the character, and nothing for 0. Quoted is how a
+// value shows one inside it, 'a', with '\0' for 0.
+tide_str tide_str_add_char(tide_str a, int32_t c);
+tide_str tide_str_add_char_quoted(tide_str a, int32_t c);
+
+// Text's members that take text, taking a character.
+bool tide_str_contains_char(tide_str a, int32_t c);
+bool tide_str_starts_with_char(tide_str a, int32_t c);
+bool tide_str_ends_with_char(tide_str a, int32_t c);
+int32_t tide_str_index_of_char(tide_str a, int32_t c); // -1 if it's not there
+tide_str tide_str_replace_char(tide_str a, int32_t from, int32_t to);
+
 // Counts the characters of UTF-8 text.
 int32_t tide_utf8_chars(const char *bytes, int32_t count);
 
