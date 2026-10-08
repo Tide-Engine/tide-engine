@@ -1071,6 +1071,11 @@ static void run_list_checks(const float turn, const char *when)
         {104, 136, {0, 191, 128}, "an empty map, and a map keyed by bytes"},
         {120, 136, {0, 255, 255}, "a map the draw gives, made along the way"},
         {136, 136, {255, 255, 0}, "a map under locals' names, and a map and a set as a function's parameters"},
+        {8, 152, {255, 64, 191}, "an array of arrays, read inside it and past either's end, and how many each has"},
+        {24, 152, {191, 64, 128}, "a copy of one written an element and a row at a time, inside it and past its ends"},
+        {40, 152, {128, 191, 64}, "a for whose step writes an array's element, through a continue, and one that starts by writing one"},
+        {56, 152, {128, 64, 255}, "'?:' between structs, arrays, rows and matrices, its first side"},
+        {72, 152, {64, 255, 64}, "and its second"},
     };
     enum { COUNT = sizeof wanted / sizeof wanted[0] };
     local.Art.targetPass = 18;
@@ -1159,7 +1164,7 @@ static void roll_tint(const float dx, const float dy, const int32_t rolled, cons
 
 static void run_roll_checks(const int64_t state, const char *when)
 {
-    enum { BYTES, FIRST, SECOND, RANGES, TINT, SEED, OVER, FILL };
+    enum { BYTES, FIRST, SECOND, RANGES, TINT, SEED, OVER, FILL, PICK };
     static const struct {
         int kind, x, y; // The pixel
         const char *what;
@@ -1184,6 +1189,8 @@ static void run_roll_checks(const int64_t state, const char *when)
         {FILL, 200, 60, "a blit's frag rolls for each pixel of its destination, over the image it reads"},
         {FILL, 201, 60, "the next pixel"},
         {FILL, 60, 200, "and one where the image is another color"},
+        {PICK, 27, 27, "a '?:' that rolls on both sides makes both rolls, the first side's first"},
+        {PICK, 30, 29, "at another pixel"},
     };
     enum { COUNT = sizeof wanted / sizeof wanted[0], SEEDED = 0x00ABCDEF };
     local.Art.targetPass = 19;
@@ -1203,8 +1210,9 @@ static void run_roll_checks(const int64_t state, const char *when)
     const tide_shader *tint = shader_named("RollTint on Vertex");
     const tide_shader *over = shader_named("RollTint and RollOver on Vertex");
     const tide_shader *fill = shader_named("RollFill on Vertex");
+    const tide_shader *pick = shader_named("RollPick on Vertex");
     uint32_t instances = 0;
-    const bool drawn = bytes && placed && tint && over && fill
+    const bool drawn = bytes && placed && tint && over && fill && pick
                     && runs_through("SpotPlace and RollBytes on Vertex", &instances) == 1 && instances == 2;
     printf("%s: frags and verts that roll draw, two instances in one draw%s\n", drawn ? "ok" : "FAIL", when);
     if (!drawn) {
@@ -1241,6 +1249,13 @@ static void run_roll_checks(const int64_t state, const char *when)
             roll_bytes(x, y, 0, rolled, roll_site(fill->glsl_fragment), want);
             want[2] = y < SIZE / 2 ? 0 : 255;
             break;
+        case PICK: { // The first roll is picked, the second made and left, and the third is what's rolled after
+            uint32_t pixel = (uint32_t)tide_hash_i4((tide_int4){x, y, 0, rolled ^ roll_site(pick->glsl_fragment)});
+            want[0] = (float)gpu_roll_below(&pixel, 256);
+            (void)gpu_roll_below(&pixel, 256);
+            want[1] = (float)gpu_roll_below(&pixel, 256), want[2] = 0;
+            break;
+        }
         default: break;
         }
         bool ok = true;

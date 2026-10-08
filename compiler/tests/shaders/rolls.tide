@@ -36,7 +36,9 @@ frag Grain(Corner corner, out Color color, Sun sun)
     var spot = Random.NextFloat2() + Random.NextFloat2(float2(0, 0), corner.uv) + Random.NextFloat2Direction();
     var place = Random.NextFloat3() + Random.NextFloat3(float3(0, 0, 0), corner.position) + Random.NextFloat3Direction();
     var turn = Random.NextQuaternionRotation();
-    if (Random.NextBool()) this.Discard();
+    // A '?:' with a roll in it works both sides out, in the same order in both languages
+    var either = corner.uv.x > 0.5 ? Random.NextFloat() : 0.25;
+    if (Random.NextBool() || either > 2) this.Discard();
     color = Color(part + Jitter(sun.glow), spot.x + place.y, Math.Rotate(turn, place).z, float(whole % 2));
 }
 

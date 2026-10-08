@@ -411,7 +411,9 @@ frag Shade(BoxVertex vertex, out Color color, Ramp ramp)
 
 - `a[i]` reads an element, zeros past the ends; `a[i] = v` writes one, and does nothing past the ends; `a.count` is its length; `foreach` goes through it.
 - An array is sent whole, with a draw's other values: those hold 3,984 bytes, about 249 float4s, for everything a draw reads of singletons. Past a few dozen elements, a list is the better fit.
-- No arrays of arrays there: keep the rows side by side in one array.
+- An array of arrays is one too: `float[4][8] rows`, with `rows[i][j]` read and written by the same rules at each index, and `rows[i]` a row to keep, pass on, assign or `foreach` through.
+- `?:` picks between arrays, as between structs and matrices: `var stops = night ? ramp.dark : ramp.light;`. Both sides are worked out, as everywhere on the GPU.
+- A `for`'s step can write an element (`for (var k = 0; k < 6; counts[k % 3]++)`), and a `continue` still comes to it.
 
 ## Textures
 
@@ -744,7 +746,7 @@ There's nothing to set up and nothing to pass: a function a frag calls rolls too
 What's different from rolling on the CPU:
 
 - **They aren't the CPU's numbers.** A GPU's ints are 32 bits, so its generator is a smaller one than a system's. What each roll gives is the same: `NextInt(6)` is 0 to 5, `NextFloat()` never gives 1, and a range with nothing in it gives its start.
-- **Order is a statement's.** Rolls on separate lines come in that order. Two rolls in one expression come in whichever order that GPU works the expression out, so where it matters which is which, give each a line. (`NextFloat2()` and the other vectors always roll x first.)
+- **Order is a statement's.** Rolls on separate lines come in that order. Two rolls in one expression come in whichever order that GPU works the expression out, so where it matters which is which, give each a line. (`NextFloat2()` and the other vectors always roll x first.) A `?:` with a roll in it makes the rolls of both its sides, whichever it picks.
 - **A `Random` you keep doesn't go there.** A field, a local or a parameter of type `Random` is the CPU's: its state is 64 bits. On the GPU, roll on the type.
 - **`Filter.Trilinear` can't sample at a place a roll made.** The frag works such a place out once more as it starts, to ask the GPU how fast it changes, and a roll made twice is two numbers. Sample there with `Filter.Bilinear`.
 - **A frag that rolls carries one more value** from the mesh's corners to its pixels, of the 15 a draw has: which instance.

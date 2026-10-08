@@ -109,7 +109,9 @@ typedef struct emit {
     sb grads;
     int grad_count;
     int lifting; // Writing one of those: a local is written as what it was declared as
-    VEC(const decl *) structs; // The structs the code names, each after the ones it holds
+    // The structs the code names, each after the ones it holds. An array type among them is a row: GLSL has no arrays
+    // of arrays, so there an array that's another's element is a struct of that one array (need_row)
+    VEC(const decl *) structs;
     VEC(shader_function) done; // The functions written, callees first, each for the lists and grids it's called with
     sb functions;
     bool helpers[H_COUNT];
@@ -119,6 +121,7 @@ typedef struct emit {
     VEC(data_alias) aliases;   // The locals of the code being written that name a list or a grid (data_of)
     const data_ref *spec;      // By the parameter of the function being written: the list or grid it's called with
     VEC(const decl *) arrays;  // The array types whose element reader is written (need_array)
+    VEC(type) picks;           // The types whose '?:' is a function (need_pick)
     int raw; // Writing what an assignment stores into: an array's element is the element itself, in range already
     VEC(const field *) hoisted; // Arrays the engine supplies that the function being written made a variable of as it starts
 } emit;
@@ -223,10 +226,10 @@ static bool type_words(const type t, int *floats, int *ints)
         *ints += 1;
         return true;
     }
-    if (t.kind == TY_ARRAY) { // Its elements, one after the other. Neither GLSL has arrays of arrays
+    if (t.kind == TY_ARRAY) { // Its elements, one after the other, an array's own among them
         const type element = t.decl->fields.items[0].type;
         int f = 0, i = 0;
-        if (element.kind == TY_ARRAY || !type_words(element, &f, &i)) return false;
+        if (!type_words(element, &f, &i)) return false;
         *floats += f * t.decl->array_length;
         *ints += i * t.decl->array_length;
         return true;
@@ -307,9 +310,7 @@ static bool type_fits(emit *em, const type t, const loc at)
                   "that takes a 'Grid2<int>'");
         return false;
     case TY_ARRAY:
-        why = t.decl->fields.items[0].type.kind == TY_ARRAY
-            ? "the GPU has no arrays of arrays: keep the rows side by side in one array, or each row in a struct"
-            : "an array the GPU has is of bools, ints, floats, vectors, matrices, colors or structs of those";
+        why = "an array the GPU has is of bools, ints, floats, vectors, matrices, colors, structs of those, or arrays of them";
         break;
     case TY_TEXTURE: why = "a texture is sampled with 'texture.Sample(uv)', not kept as a GPU value"; break;
     case TY_DEPTH_TEXTURE:
@@ -339,16 +340,61 @@ static bool type_fits(emit *em, const type t, const loc at)
     return false;
 }
 
+static void need_struct(emit *em, const decl *d);
+
+// Whether an array's elements of type `element` are rows: arrays, each in a
+// struct of its own, as GLSL has no arrays of arrays. WGSL has them as they are.
+static bool in_rows(const emit *em, const type element)
+{
+    return em->l == GLSL && element.kind == TY_ARRAY;
+}
+
+// The structs a value of type `t` is made of, before whatever holds it.
+static void need_held(emit *em, const type t)
+{
+    if (is_struct_like(t)) {
+        need_struct(em, t.decl);
+    } else if (t.kind == TY_ARRAY) {
+        const type element = t.decl->fields.items[0].type;
+        if (in_rows(em, element)) need_struct(em, element.decl);
+        else need_held(em, element);
+    }
+}
+
+// A struct, or an array type as a row.
 static void need_struct(emit *em, const decl *d)
 {
     for (int i = 0; i < em->structs.count; i++) {
         if (em->structs.items[i] == d) return;
     }
-    for (int i = 0; i < d->fields.count; i++) {
-        const field *f = &d->fields.items[i];
-        if (!f->hidden && is_struct_like(f->type)) need_struct(em, f->type.decl);
+    if (d->kind == DECL_ARRAY) {
+        need_held(em, (type){TY_ARRAY, (decl *)d});
+    } else {
+        for (int i = 0; i < d->fields.count; i++) {
+            const field *f = &d->fields.items[i];
+            if (!f->hidden) need_held(em, f->type);
+        }
     }
     vec_push(em->structs, d);
+}
+
+// The struct that holds one array of type `array`, where it's another's element in GLSL: its name.
+static const char *need_row(emit *em, const decl *array)
+{
+    need_struct(em, array);
+    int at = 0;
+    while (em->structs.items[at] != array) at++;
+    sb b = {0};
+    sb_printf(&b, "tide_row%d", at);
+    return b.data;
+}
+
+// "tide_row3(" before an element that's a row, which the caller closes: whether it was written.
+static bool put_row(emit *em, const type element)
+{
+    if (!in_rows(em, element)) return false;
+    sb_printf(em->o, "%s(", need_row(em, element.decl));
+    return true;
 }
 
 static const char *ty(emit *em, const type t)
@@ -369,7 +415,9 @@ static const char *ty(emit *em, const type t)
     if (t.kind == TY_ENUM) return wgsl ? "i32" : "int";
     if (t.kind == TY_ARRAY) {
         sb b = {0};
-        sb_printf(&b, wgsl ? "array<%s, %d>" : "%s[%d]", ty(em, t.decl->fields.items[0].type), t.decl->array_length);
+        const type element = t.decl->fields.items[0].type;
+        sb_printf(&b, wgsl ? "array<%s, %d>" : "%s[%d]", in_rows(em, element) ? need_row(em, element.decl) : ty(em, element),
+                  t.decl->array_length);
         return b.data;
     }
     if (is_struct_like(t)) {
@@ -464,7 +512,9 @@ static void put_zero(emit *em, const type t)
         sb_printf(em->o, "%s(", ty(em, t));
         for (int i = 0; i < t.decl->array_length; i++) {
             if (i) sb_put(em->o, ", ");
+            const bool row = put_row(em, t.decl->fields.items[0].type);
             put_zeros(em, t.decl->fields.items[0].type);
+            if (row) sb_put(em->o, ")");
         }
         sb_put(em->o, ")");
         return;
@@ -1433,7 +1483,9 @@ static void put_value(emit *em, const type t, const char floats, const char ints
         sb_printf(em->o, "%s(", ty(em, t));
         for (int k = 0; k < t.decl->array_length; k++) {
             if (k) sb_put(em->o, ", ");
+            const bool row = put_row(em, t.decl->fields.items[0].type);
             put_value(em, t.decl->fields.items[0].type, floats, ints, f, i);
+            if (row) sb_put(em->o, ")");
         }
         sb_put(em->o, ")");
     } else if (is_struct_like(t)) {
@@ -1897,9 +1949,33 @@ static int need_array(emit *em, const decl *array)
         sb_printf(&text, "%s tide_el%d(%s tide_a, int tide_i) {\n    if (tide_i < 0 || tide_i >= %d) {\n        return ", t, n, a,
                   array->array_length);
         put_zeros(em, element);
-        sb_put(&text, ";\n    }\n    return tide_a[tide_i];\n}\n\n");
+        // The place is kept inside the array where it's read too: a compiler that puts the function where it's
+        // called, with a number for the place, refuses one past the ends though the line above keeps it from running
+        sb_printf(&text, ";\n    }\n    return tide_a[clamp(tide_i, 0, %d)]%s;\n}\n\n", array->array_length - 1,
+                  in_rows(em, element) ? ".v" : "");
     }
     em->o = out;
+    sb_put(&em->functions, text.data);
+    return n;
+}
+
+// The function that picks between two values of type `t`, a struct, a matrix
+// or an array, for '?:': written before the code that calls it.
+static int need_pick(emit *em, const type t)
+{
+    for (int i = 0; i < em->picks.count; i++) {
+        if (em->picks.items[i].kind == t.kind && em->picks.items[i].decl == t.decl) return i;
+    }
+    vec_push(em->picks, t);
+    const int n = em->picks.count - 1;
+    const char *name = ty(em, t);
+    sb text = {0};
+    if (em->l == WGSL) {
+        sb_printf(&text, "fn tide_pick%d(tide_c: bool, tide_a: %s, tide_b: %s) -> %s {\n", n, name, name, name);
+    } else {
+        sb_printf(&text, "%s tide_pick%d(bool tide_c, %s tide_a, %s tide_b) {\n", name, n, name, name);
+    }
+    sb_put(&text, "    if (tide_c) {\n        return tide_a;\n    }\n    return tide_b;\n}\n\n");
     sb_put(&em->functions, text.data);
     return n;
 }
@@ -1915,9 +1991,11 @@ static void ex_array_index(emit *em, const expr *e)
         em->raw = 0; // What says which element is read like anything else
         const bool folds = e->lhs->kind != E_INT && is_const(e->lhs);
         if (folds) em->defuse++;
-        sb_put(em->o, "[");
+        const bool kept = folds && em->l == GLSL; // A constant past the ends is refused there, in code that never runs too
+        sb_put(em->o, kept ? "[clamp(" : "[");
         ex_as(em, e->lhs, (type){TY_INT, NULL});
-        sb_put(em->o, "]");
+        if (kept) sb_printf(em->o, ", 0, %d)", array.decl->array_length - 1);
+        sb_put(em->o, in_rows(em, array.decl->fields.items[0].type) ? "].v" : "]");
         if (folds) em->defuse--;
         em->raw = raw;
         return;
@@ -2793,20 +2871,32 @@ static int known_filter(const expr *e)
     return filter == 0 || filter == 2 ? filter : 1;
 }
 
-// Whether working `e` out rolls with Random: a roll, a call of what rolls, or a local made of one.
-static bool has_roll(const expr *e, const int depth)
+// Whether working `e` out rolls with Random: a roll, or a call of what rolls. With `made`, a local made of one
+// counts too: what the expression is made of was rolled, though it rolls nothing itself.
+static bool rolls_in(const expr *e, const bool made, const int depth)
 {
     if (!e || depth > 64) return false;
     if (e->call == CALL_ROLL || (e->method && e->method->rolls)) return true;
-    if (e->kind == E_NAME && e->bind == BIND_LOCAL && e->local && e->local->kind == S_VAR && has_roll(e->local->value, depth + 1)) return true;
-    if (has_roll(e->object, depth + 1) || has_roll(e->lhs, depth + 1) || has_roll(e->rhs, depth + 1) || has_roll(e->cond, depth + 1)) return true;
+    if (made && e->kind == E_NAME && e->bind == BIND_LOCAL && e->local && e->local->kind == S_VAR
+        && rolls_in(e->local->value, made, depth + 1)) {
+        return true;
+    }
+    if (rolls_in(e->object, made, depth + 1) || rolls_in(e->lhs, made, depth + 1) || rolls_in(e->rhs, made, depth + 1)
+        || rolls_in(e->cond, made, depth + 1)) {
+        return true;
+    }
     for (int i = 0; i < e->args.count; i++) {
-        if (has_roll(e->args.items[i], depth + 1)) return true;
+        if (rolls_in(e->args.items[i], made, depth + 1)) return true;
     }
     for (int i = 0; i < e->inits.count; i++) {
-        if (has_roll(e->inits.items[i].value, depth + 1)) return true;
+        if (rolls_in(e->inits.items[i].value, made, depth + 1)) return true;
     }
     return false;
+}
+
+static bool has_roll(const expr *e, const int depth)
+{
+    return rolls_in(e, true, depth);
 }
 
 // Whether a frag can work an expression out as it starts, before any branch:
@@ -3344,14 +3434,20 @@ static void ex(emit *em, const expr *e)
         return;
     case E_CONDITIONAL:
         if (!type_fits(em, e->type, e->at)) return;
-        if (em->l == WGSL || em->checking) {
-            // WGSL's select picks between numbers, vectors and bools, and works both sides out
-            if (is_struct_like(e->type) || matrix_dim(e->type) || e->type.kind == TY_ARRAY) {
-                refuse(em, e->at, "'?:' picks between numbers, vectors and colors in code the GPU runs, and this is %s",
-                       type_name(e->type));
-                diag_note("write it as 'if' and 'else', assigning a variable");
-                return;
-            }
+        // WGSL's select picks between numbers, vectors and bools, and GLSL's '?:' not between arrays everywhere: a
+        // struct, a matrix or an array is picked by a function of its type. Both sides are worked out either way
+        // ...and so is one with a roll in it, whatever its type: select works both sides out and GLSL's '?:' one, and
+        // each in an order of its own. A function's arguments are worked out left to right in both, so the rolls a
+        // pixel makes there are the same numbers on every backend
+        if (is_struct_like(e->type) || matrix_dim(e->type) || e->type.kind == TY_ARRAY || rolls_in(e, false, 0)) {
+            sb_printf(em->o, "tide_pick%d(", need_pick(em, e->type));
+            ex(em, e->cond);
+            sb_put(em->o, ", ");
+            ex_as(em, e->lhs, e->type);
+            sb_put(em->o, ", ");
+            ex_as(em, e->rhs, e->type);
+            sb_put(em->o, ")");
+            return;
         }
         if (em->l == WGSL) {
             sb_put(em->o, "select(");
@@ -3436,7 +3532,9 @@ static void ex(emit *em, const expr *e)
             sb_printf(em->o, "%s(", ty(em, e->type));
             for (int i = 0; i < e->args.count; i++) {
                 if (i) sb_put(em->o, ", ");
+                const bool row = put_row(em, e->type.decl->fields.items[0].type);
                 ex_as(em, e->args.items[i], e->type.decl->fields.items[0].type);
+                if (row) sb_put(em->o, ")");
             }
             sb_put(em->o, ")");
             return;
@@ -3938,6 +4036,22 @@ static void st_steps(emit *em, const stmt *s, expr *e, const bool sometimes, ste
 
 static void st_one(emit *em, const stmt *s);
 
+// Whether GLSL's for takes `s` on its line as it is: not a write into an
+// array, which is a statement there (st_assign), nor a call that changes
+// something in one, which goes through a copy (st_call).
+static bool on_a_line(const stmt *s)
+{
+    if (!s || s->kind == S_VAR) return true;
+    if (s->kind == S_ASSIGN) return !in_array(s->target);
+    if (s->kind != S_EXPR) return false;
+    const expr *e = s->value;
+    if (e->object && in_array(e->object)) return false;
+    for (int i = 0; i < e->args.count; i++) {
+        if (in_array(e->args.items[i])) return false;
+    }
+    return true;
+}
+
 // A for that isn't one that counts (st_for): whatever it starts with, goes on
 // while and steps by. GLSL's own for; in WGSL, whose for takes less on its
 // line, a loop with its step where a `continue` still reaches it.
@@ -3982,9 +4096,51 @@ static void st_loop(emit *em, const stmt *s)
         sb_put(em->o, "}\n");
         return;
     }
-    if (s->step && s->step->kind == S_ASSIGN && in_array(s->step->target)) {
-        refuse(em, s->step->at, "a for's step that writes an array's element is written at the end of the loop's body in code "
-                                "the GPU runs");
+    if (!on_a_line(s->init) || !on_a_line(s->step)) {
+        // What it starts with or steps by is more than GLSL's for takes on its line (a write of an array's element,
+        // which only happens for an element the array has): a loop that steps as each round but the first starts,
+        // which a `continue` comes round to
+        const int first = em->temps++;
+        sb_put(em->o, "{\n");
+        em->indent++;
+        if (s->init) st(em, s->init);
+        line(em);
+        sb_printf(em->o, "bool tide_first%d = true;\n", first);
+        line(em);
+        sb_put(em->o, "while (true) {\n");
+        em->indent++;
+        if (s->step) {
+            line(em);
+            sb_printf(em->o, "if (!tide_first%d) {\n", first);
+            em->indent++;
+            st(em, s->step);
+            em->indent--;
+            line(em);
+            sb_put(em->o, "}\n");
+        }
+        line(em);
+        sb_printf(em->o, "tide_first%d = false;\n", first);
+        if (s->cond) {
+            line(em);
+            sb_put(em->o, "if (!(");
+            ex(em, s->cond);
+            sb_put(em->o, ")) {\n");
+            em->indent++;
+            line(em);
+            sb_put(em->o, "break;\n");
+            em->indent--;
+            line(em);
+            sb_put(em->o, "}\n");
+        }
+        line(em);
+        st_body(em, s->then_stmt);
+        sb_put(em->o, "\n");
+        em->indent--;
+        line(em);
+        sb_put(em->o, "}\n");
+        em->indent--;
+        line(em);
+        sb_put(em->o, "}\n");
         return;
     }
     sb_put(em->o, "for (");
@@ -4376,6 +4532,10 @@ static void put_structs(emit *em, sb *o)
     const bool wgsl = em->l == WGSL;
     for (int i = 0; i < em->structs.count; i++) {
         const decl *d = em->structs.items[i];
+        if (d->kind == DECL_ARRAY) { // A row
+            sb_printf(o, "struct tide_row%d {\n    %s v;\n};\n", i, ty(em, (type){TY_ARRAY, (decl *)d}));
+            continue;
+        }
         sb_printf(o, "struct %s {\n", struct_name(d));
         for (int k = 0; k < d->fields.count; k++) {
             const field *f = &d->fields.items[k];
