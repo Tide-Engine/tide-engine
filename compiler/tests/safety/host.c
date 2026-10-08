@@ -66,12 +66,13 @@ static uint32_t frames;
 
 #ifdef TIDE_HAS_AUDIO
 // What a frame plays, the host runs as the mixer would (tide/audio.h): each
-// voice's and each bus's effect on a block, with state of the bytes the mixer
-// has for one, zeros as the code starts and kept from frame to frame, and a
+// voice's and each bus's effect on a block, with state of the bytes the effect
+// says it keeps, zeros as the code starts and kept from frame to frame, and a
 // copy of the knobs the frame gave, in the bytes the mixer has for those. The
 // block and each state are between bytes that have to stay as they were made:
-// in the mixer, what's past a voice's state is the next voice. The knobs are
-// only read, so theirs is an allocation of its own, which a sanitizer watches.
+// in the mixer, what's past a state is the next voice's, or memory that's
+// nobody's. The knobs are only read, so theirs is an allocation of its own,
+// which a sanitizer watches.
 #define GUARD 256u
 #define GUARDED 0xA5u
 #define KEPT 16u
@@ -81,7 +82,8 @@ typedef struct kept_state {
     uint64_t voice;  // The voice's id, or for a bus, its number from the last id down
     uint64_t code;   // The effect's id: other code starts the state over
     uint32_t played; // The frame it last played in: a voice that stopped starts over too
-    _Alignas(16) uint8_t bytes[GUARD + TIDE_AUDIO_STATE_BYTES + GUARD]; // Aligned for whatever a state holds
+    uint32_t size;   // The effect's state_size
+    uint8_t *bytes;  // A guard, the state, a guard: malloc's, so aligned for whatever a state holds (GUARD keeps that)
 } kept_state;
 
 static tide_audio_frame audio;
@@ -118,8 +120,11 @@ static void run_effect(const uint64_t voice, const tide_audio_effect *effect, co
         k->code = 0;
     }
     if (k->code != effect->id || k->played + 1u != audio.frame) {
-        guard(k->bytes, TIDE_AUDIO_STATE_BYTES);
-        memset(k->bytes + GUARD, 0, TIDE_AUDIO_STATE_BYTES);
+        free(k->bytes);
+        k->size = effect->state_size;
+        k->bytes = calloc(1, (size_t)GUARD + k->size + GUARD);
+        if (!k->bytes) exit(1);
+        guard(k->bytes, k->size);
         k->code = effect->id;
     }
     k->played = audio.frame;
@@ -132,7 +137,7 @@ static void run_effect(const uint64_t voice, const tide_audio_effect *effect, co
     for (uint32_t i = 0; i < TIDE_AUDIO_SAMPLES; i++) samples[i] = 0.25f;
     effect->fn(samples, k->bytes + GUARD, knobs);
     guarded(block, BLOCK_BYTES, "block");
-    guarded(k->bytes, TIDE_AUDIO_STATE_BYTES, "state");
+    guarded(k->bytes, k->size, "state");
     free(knobs);
     effects_run++;
 }
@@ -299,6 +304,7 @@ int main(const int argc, char **argv)
     tide_event_log_free(&events);
 #ifdef TIDE_HAS_AUDIO
     tide_audio_free(&audio);
+    for (uint32_t i = 0; i < kept_count; i++) free(kept[i].bytes);
     if (effects_run) fprintf(stderr, "safety: effects kept to their state\n");
 #endif
     fprintf(stderr, "safety: ran to the end\n");

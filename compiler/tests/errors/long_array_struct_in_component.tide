@@ -1,0 +1,15 @@
+// expect: a component's field can't be 'Tail': it holds an array of more than 4096 elements, which only an audio declaration's state does
+struct Tail
+{
+    int at;
+    float[96000] line;
+}
+
+component Body
+{
+    Tail tail;
+}
+
+scene Main
+{
+}

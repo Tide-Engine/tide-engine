@@ -673,7 +673,7 @@ The camera isn't given: keep where yours is in a singleton, where the view that 
 
 Code for the GPU is ordinary Tide, less what a GPU doesn't have:
 
-- **It has** bools, bytes, ints, floats, vectors, quaternions, matrices, colors, enums, structs of those and [arrays](#arrays) of them; locals, `if`, `?:`, `switch` on an int or an enum, `for`, `while` and `foreach`, with `break` and `continue`; [lists and grids](#lists-and-arrays) that are fields of what it takes, read by an element, a count or `foreach`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; and sampling a grid, a texture or a target's depth, 8 of them to a draw, anywhere in the code: in a branch, in a loop, in a vert.
+- **It has** bools, bytes, ints, floats, vectors, quaternions, matrices, colors, enums, structs of those and [arrays](#arrays) of them; locals, `if`, `?:`, `switch` on an int or an enum, `for`, `while` and `foreach`, with `break` and `continue`; [lists and grids](#lists-and-arrays) that are fields of what it takes, read by an element, a count or `foreach`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; [`Random`'s rolls](#random-numbers); and sampling a grid, a texture or a target's depth, 8 of them to a draw, anywhere in the code: in a branch, in a loop, in a vert.
 - **It doesn't have** text, entities, spawning and sending, `Draw`, the GUI, `Devices`, `Debug`, C, tasks, errors, or recursion. It makes and changes no list, map or set. A frag's `this` is its pixel; verts and ordinary functions have no `this`. A `long` has no place there, as a GPU's ints are 32 bits.
 
 Each of those is an error where it's written, which says what to do instead. A function a frag calls has to fit too, and the error says which frag reaches it; the same function still runs on the CPU for the code that calls it there.
@@ -711,11 +711,50 @@ What's left out is left out for a reason, and its error says what to write inste
 |---|---|---|
 | `Math.Hash` of a `long` | A GPU's ints are 32 bits, so no `long` gets there | `Math.Hash(int2(low, high))` is the same number, for the long's halves: `int(x)` and `int(x >> 32)`, split on the CPU and kept in fields the frag reads |
 
-A [`Random`](../language/math.md#not-on-the-gpu) isn't there either: its state is the CPU's, so a frag reads a number the view rolled, or hashes.
+A `Random` of your own isn't there either: its state is 64 bits. [Rolls on the type](#random-numbers) are.
 
 ::: warning The GPU's numbers aren't the match's
 Every machine's GPU rounds a little differently, so what a frag or a vert works out never reaches the match: they're local code, as views are, and what `Math` makes of floats there is that GPU's own. Only its integers, `Math.Hash`, are the same everywhere. Anything the match depends on is worked out in a system.
 :::
+
+### Random numbers
+
+[`Random`'s rolls](../language/math.md#random-numbers) work in a frag and in a vert, with the same calls as anywhere: `Random.NextFloat()`, `Random.NextInt(6)`, `Random.NextFloat2Direction()` and the rest.
+
+```csharp
+// Film grain over the frame: a blit's frag, which rolls for each pixel
+frag Grain(Vertex vertex, out Color color, Texture source)
+{
+    var seen = source.Sample(vertex.uv);
+    var speck = (Random.NextFloat() - 0.5) * 0.08;
+    color = Color(seen.r + speck, seen.g + speck, seen.b + speck);
+}
+```
+
+There's nothing to set up and nothing to pass: a function a frag calls rolls too.
+
+- **A pixel rolls its own numbers, and so does a vertex.** Each time a frag runs, it has a generator made for that pixel: from where the pixel is in what's drawn into (the window's own pixels, or a target's), and which instance of its draw it belongs to. A vert's is made from which vertex of the mesh it is, and which instance. Rolls in the same run follow each other, as in a system.
+- **Every frame is other numbers.** The frame rolls one number with this machine's generator, the one [views roll with](../language/math.md#where-rolls-work), and every pixel's and vertex's generator is made with it. So grain moves, static flickers, and a sparkle is somewhere else the next frame.
+- **To hold still, hash.** `Math.Hash(int2(this.position))` is the same number for a pixel every frame, and `Math.Hash` of a cell is the same for the cell wherever it's drawn. [Noise](../language/math.md#noise) is that, smoothed.
+- **Two frags roll apart.** Which frag or vert is rolling goes into the generator too, so two that draw over the same pixel don't roll the same there.
+- **Draws still join.** The frame's number is the same for every draw of the frame, so rolling doesn't split [instances drawn in a row](#many-at-once) into draws of their own. Two draws that don't join each count their instances from the first, so where they cover the same pixel through the same frag, they roll the same there.
+- **`Random.seed` is the match's seed**, as in a view: 0 with no match. With it a frag draws what the match made from its seed, like `Math.Perlin(cell, Random.seed)`.
+
+::: tide-example grain Grain and sparks, rolled by the GPU
+
+<<< @/examples/grain.tide
+
+:::
+
+What's different from rolling on the CPU:
+
+- **They aren't the CPU's numbers.** A GPU's ints are 32 bits, so its generator is a smaller one than a system's. What each roll gives is the same: `NextInt(6)` is 0 to 5, `NextFloat()` never gives 1, and a range with nothing in it gives its start.
+- **Order is a statement's.** Rolls on separate lines come in that order. Two rolls in one expression come in whichever order that GPU works the expression out, so where it matters which is which, give each a line. (`NextFloat2()` and the other vectors always roll x first.) A `?:` with a roll in it makes the rolls of both its sides, whichever it picks.
+- **A `Random` you keep doesn't go there.** A field, a local or a parameter of type `Random` is the CPU's: its state is 64 bits. On the GPU, roll on the type.
+- **`Filter.Trilinear` can't sample at a place a roll made.** The frag works such a place out once more as it starts, to ask the GPU how fast it changes, and a roll made twice is two numbers. Sample there with `Filter.Bilinear`.
+- **A frag that rolls carries one more value** from the mesh's corners to its pixels, of the 15 a draw has: which instance.
+
+The generator is whole numbers, so `Random.NextInt` gives a pixel the same number on every GPU, for the same frame. Like everything a frag works out, it never reaches the match.
 
 ## Many at once
 

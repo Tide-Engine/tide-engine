@@ -1184,6 +1184,16 @@ static bool handlers_roll(const program *prog)
     return false;
 }
 
+// Whether a shader a draw draws through rolls with Random (`seed` false), or reads Random.seed (true):
+// its draws send the frame's number, or the seed, with their uniforms (gen_shaders).
+static bool shaders_roll(const program *prog, const bool seed)
+{
+    for (int s = 0; s < prog->shaders.count; s++) {
+        if ((seed ? prog->shaders.items[s]->seed_at : prog->shaders.items[s]->rolled_at) >= 0) return true;
+    }
+    return false;
+}
+
 // tide_method_Stats_IsDead for Stats.IsDead, tide_function_Combat_Heal for
 // Combat.Heal, and tide_operator_Money_add_2 for Money's + (numbered, as a
 // struct can have several).
@@ -7292,8 +7302,12 @@ static void gen_array_helpers(gen *g)
         const type e = a->fields.items[0].type;
         const char *name = array_cname(a);
         const char *ec = c_type(e);
-        sb_printf(o, "TIDE_HELPER %s tide_array%d_get(const %s a, const int32_t i)\n{\n"
-                     "    return (uint32_t)i < %du ? a.at[i] : (%s){0};\n}\n\n", ec, k, name, a->array_length, ec);
+        // A long array (types.h) is only ever read where it is, through tide_array%d_ref: with no reader that
+        // takes one by value, code that would copy it, hundreds of kilobytes on the audio thread's stack, doesn't compile
+        if (!type_holds_long_array((type){TY_ARRAY, (decl *)a})) {
+            sb_printf(o, "TIDE_HELPER %s tide_array%d_get(const %s a, const int32_t i)\n{\n"
+                         "    return (uint32_t)i < %du ? a.at[i] : (%s){0};\n}\n\n", ec, k, name, a->array_length, ec);
+        }
         sb_printf(o, "TIDE_HELPER void tide_array%d_set(%s *a, const int32_t i, const %s v)\n{\n"
                      "    if (a && (uint32_t)i < %du) a->at[i] = v;\n}\n\n", k, name, ec, a->array_length);
         sb_printf(o, "TIDE_HELPER %s *tide_array%d_slot(%s *a, const int32_t i)\n{\n"
@@ -14409,6 +14423,10 @@ static void gen_api(gen *g)
               "                tide_local *local, tide_draw_list *draw, tide_gui *gui)\n{\n");
     sb_put(o, "    (void)previous;\n    (void)alpha;\n    (void)verified;\n");
     if (prog->seed_local) sb_put(o, "    local->tide_match_seed = w ? w->Time.seed : 0;\n");
+    // What the frame's draws send for code the GPU runs that rolls or reads the seed: one roll of this
+    // machine's generator, which every draw of the frame has (so they still join), and the drawn world's seed
+    if (shaders_roll(prog, false)) sb_put(o, "    tide_gpu_rolled = tide_random_next(&local->tide_dice);\n");
+    if (shaders_roll(prog, true)) sb_put(o, "    tide_gpu_seed = w ? w->Time.seed : 0;\n");
     if (prog->uses_heap) {
         // Views only read the match, so its heap is theirs to read, not change.
         if (prog->assets.count) sb_put(o, "    tide_pack_use();\n");
@@ -15514,6 +15532,16 @@ static void gen_sound_fields(gen *g, const decl *d, const char *path, const char
     }
 }
 
+// Where an audio declaration that rolls keeps its generator in its voice's
+// state, in C: after its own state, on the next 8 bytes.
+static const char *rolled_at(const decl *d)
+{
+    if (d->audio_state < 0) return "0u";
+    sb at = {0};
+    sb_printf(&at, "((sizeof(%s) + 7u) & ~(size_t)7u)", type_cname(d->params.items[d->audio_state].type.decl));
+    return at.data;
+}
+
 // The `audio` declarations: each as the function tide/audio.h's mixer calls
 // once a block (its block, state and knobs cast to what the declaration
 // takes), in a table by the id its name hashes to, which an Effect value
@@ -15528,8 +15556,9 @@ static void gen_effects(gen *g)
     int count = 0;
     bool rolls = false;
     for (int i = 0; i < prog->decls.count; i++) rolls |= prog->decls.items[i]->kind == DECL_FUNCTION && prog->decls.items[i]->is_audio && prog->decls.items[i]->rolls;
-    // An audio declaration that rolls keeps its generator in the last bytes of its voice's state, which start
-    // as zeros: each voice's is seeded as it first runs, by how many were before it. One thread renders.
+    // An audio declaration that rolls keeps its generator right after its own state, on 8 bytes, in what the
+    // mixer keeps for its voice (the effect's state is both), which starts as zeros: each voice's is seeded as
+    // it first runs, by how many were before it. One thread renders.
     if (rolls) sb_put(o, "static uint32_t tide_audio_rolled;\n\n");
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
@@ -15539,13 +15568,11 @@ static void gen_effects(gen *g)
         if (d->audio_state < 0 && !d->rolls) sb_put(o, "    (void)state;\n");
         if (d->audio_knobs < 0) sb_put(o, "    (void)knobs;\n");
         if (d->rolls) {
-            if (d->audio_state >= 0) {
-                sb_printf(o, "    _Static_assert(sizeof(%s) <= TIDE_AUDIO_STATE_BYTES - sizeof(tide_random), \"the state leaves room for what it rolls with\");\n",
-                          type_cname(d->params.items[d->audio_state].type.decl));
-            }
-            sb_put(o, "    uint8_t *const tide_kept = (uint8_t *)state + (TIDE_AUDIO_STATE_BYTES - sizeof(tide_random));\n"
-                      "    tide_random tide_rolled;\n    memcpy(&tide_rolled, tide_kept, sizeof tide_rolled);\n"
-                      "    if (tide_rolled.state == 0) tide_rolled = tide_random_seeded((int64_t)++tide_audio_rolled);\n");
+            sb_printf(o, "    _Static_assert(%s + sizeof(tide_random) <= TIDE_AUDIO_STATE_BYTES, \"the state leaves room for what it rolls with\");\n"
+                         "    uint8_t *const tide_kept = (uint8_t *)state + %s;\n"
+                         "    tide_random tide_rolled;\n    memcpy(&tide_rolled, tide_kept, sizeof tide_rolled);\n"
+                         "    if (tide_rolled.state == 0) tide_rolled = tide_random_seeded((int64_t)++tide_audio_rolled);\n",
+                      rolled_at(d), rolled_at(d));
         }
         sb_printf(o, "    %s(%s", routine_cname(d), d->rolls ? "&tide_rolled, " : "");
         for (int k = 0; k < d->params.count; k++) {
@@ -15576,7 +15603,7 @@ static void gen_effects(gen *g)
         const decl *d = prog->decls.items[i];
         if (d->kind != DECL_FUNCTION || !d->is_audio) continue;
         sb state = {0}, knobs = {0};
-        if (d->rolls) sb_put(&state, "TIDE_AUDIO_STATE_BYTES"); // With its generator at the end
+        if (d->rolls) sb_printf(&state, "%s + sizeof(tide_random)", rolled_at(d)); // With its generator after it
         else if (d->audio_state >= 0) sb_printf(&state, "sizeof(%s)", type_cname(d->params.items[d->audio_state].type.decl));
         else sb_put(&state, "0");
         if (d->audio_knobs >= 0) sb_printf(&knobs, "sizeof(%s)", type_cname(d->params.items[d->audio_knobs].type.decl));
@@ -16357,6 +16384,15 @@ static void gen_shaders(gen *g)
     sb *o = &g->c;
     if (prog->shaders.count == 0) return;
     sb_put(o, "// Shaders: what Draw.Mesh draws a vertex struct of the game's through, with its vert and frag\n\n");
+    if (shaders_roll(prog, false)) {
+        sb_put(o, "// What the generators of frags and verts that roll with Random are made of this frame: a number tide_frame\n"
+                  "// rolls as it starts, the same for every draw of the frame, so draws still join into runs\n"
+                  "static TIDE_THREAD_LOCAL uint32_t tide_gpu_rolled;\n\n");
+    }
+    if (shaders_roll(prog, true)) {
+        sb_put(o, "// The seed of the match the frame draws, for frags and verts that read Random.seed: 0 with no match\n"
+                  "static TIDE_THREAD_LOCAL int32_t tide_gpu_seed;\n\n");
+    }
     for (int s = 0; s < prog->shaders.count; s++) {
         const shader *sh = prog->shaders.items[s];
         const char *vertex = type_cname(sh->vertex);
@@ -16461,6 +16497,9 @@ static void gen_shaders(gen *g)
         for (int b = 0; b < sh->bound.count; b++) sb_printf(o, "    (void)tide_b%d;\n", b);
         const bool instance = gen_shader_words(o, "tide_instance", sh->instance_floats, sh->instance_ints);
         const bool uniforms = gen_shader_words(o, "tide_uniforms", sh->uniform_floats, sh->uniform_ints);
+        // What its code's rolls are made of this frame, and the seed it reads: the frame's (tide_frame)
+        if (sh->rolled_at >= 0) sb_printf(o, "    tide_uniforms.i[%d] = (int32_t)tide_gpu_rolled;\n", sh->rolled_at);
+        if (sh->seed_at >= 0) sb_printf(o, "    tide_uniforms.i[%d] = tide_gpu_seed;\n", sh->seed_at);
         unsigned blended = 0; // How its textures are sampled, but the draw's own: tide_draw_run's `sampling`
         for (int v = 0; v < sh->values.count; v++) {
             const shader_value *value = &sh->values.items[v];

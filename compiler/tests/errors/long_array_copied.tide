@@ -1,0 +1,17 @@
+// expect: 'Tail' is never copied: it holds an array of more than 4096 elements, which stays where it is, in its audio declaration's state
+// expect: read or write an element, like 'tail[i]', go through it with 'for (var i = 0; i < tail.count; i++)'
+struct Tail
+{
+    int at;
+    float[96000] line;
+}
+
+audio Echo(mut Samples samples, mut Tail tail)
+{
+    var copy = tail;
+    samples.values[0] = copy.line[0];
+}
+
+scene Main
+{
+}

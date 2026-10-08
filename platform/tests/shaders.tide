@@ -3576,13 +3576,173 @@ view ListOwners(Art art, Tables tables, Tagged tagged)
     }
 }
 
+// Rolls (pass 19): Random's rolls on the type in frags and verts, and
+// Random.seed. Each square is 8 pixels of the window. A pixel's rolls are its
+// own, an instance's pixels roll apart, a vertex's are its own, and all of them
+// are other numbers the next frame: shaders.c works out the same numbers.
+struct RollSpot
+{
+    float2 at;
+}
+
+local singleton Dice
+{
+    bool made;
+    List<Vertex> small;
+    List<RollSpot> spots;
+}
+
+// Reached by a vert and by a frag: it rolls with whichever's generator runs it
+int Dither(int below)
+{
+    return Random.NextInt(below);
+}
+
+// Three rolls, a statement each: whole numbers, so the same bytes on every GPU
+frag RollBytes(Vertex vertex, out Color color)
+{
+    var r = Random.NextInt(256);
+    var g = Random.NextInt(100, 200);
+    var b = Random.NextInt() % 256;
+    color = Color(r / 255.0, g / 255.0, b / 255.0);
+}
+
+vert SpotPlace(mut Vertex vertex, RollSpot spot)
+{
+    vertex.position += spot.at;
+}
+
+// Every roll there is, within what it says it gives: green where they all are
+frag RollRanges(Vertex vertex, out Color color)
+{
+    mut var ok = true;
+    mut var sum = 0.0;
+    mut var heads = 0;
+    for (int i = 0; i < 24; i++)
+    {
+        var part = Random.NextFloat();
+        sum += part;
+        if (part < 0 || part >= 1) ok = false;
+        var under = Random.NextFloat(3);
+        if (under < 0 || under >= 3) ok = false;
+        var between = Random.NextFloat(-2, 5);
+        if (between < -2 || between >= 5) ok = false;
+        var whole = Random.NextInt();
+        if (whole < 0) ok = false;
+        var die = Random.NextInt(7);
+        if (die < 0 || die > 6) ok = false;
+        var span = Random.NextInt(-5, 5);
+        if (span < -5 || span > 4) ok = false;
+        if (Random.NextBool()) heads += 1;
+        var spot = Random.NextFloat2();
+        if (Math.Cmin(spot) < 0 || Math.Cmax(spot) >= 1) ok = false;
+        var boxed = Random.NextFloat2(float2(1, 2), float2(2, 4));
+        if (boxed.x < 1 || boxed.x >= 2 || boxed.y < 2 || boxed.y >= 4) ok = false;
+        var place = Random.NextFloat3();
+        if (Math.Cmin(place) < 0 || Math.Cmax(place) >= 1) ok = false;
+        var room = Random.NextFloat3(float3(-1, -1, -1), float3(0, 1, 2));
+        if (room.x < -1 || room.x >= 0 || room.y < -1 || room.y >= 1 || room.z < -1 || room.z >= 2) ok = false;
+        if (Math.Abs(Math.Length(Random.NextFloat2Direction()) - 1) > 0.001) ok = false;
+        if (Math.Abs(Math.Length(Random.NextFloat3Direction()) - 1) > 0.001) ok = false;
+        var turn = Random.NextQuaternionRotation();
+        if (Math.Abs(Math.Length(turn.value) - 1) > 0.001 || turn.value.w < 0) ok = false;
+    }
+    // With nothing between the two, or with them the wrong way around: the first
+    if (Random.NextInt(5, 5) != 5) ok = false;
+    if (Random.NextInt(9, 2) != 9) ok = false;
+    if (Random.NextInt(0) != 0) ok = false;
+    if (Random.NextFloat(4, 4) != 4) ok = false;
+    var mean = sum / 24;
+    if (mean < 0.2 || mean > 0.8 || heads < 2 || heads > 22) ok = false;
+    color = ok ? Color(0, 1, 0) : Color(1, 0, 0);
+}
+
+// A vert's rolls are each vertex's own: a color a corner, which the pixels blend between
+vert RollTint(mut Vertex vertex)
+{
+    var r = Dither(256);
+    var g = Dither(256);
+    var b = Dither(256);
+    vertex.color = Color(r / 255.0, g / 255.0, b / 255.0);
+}
+
+// ...and behind one, a frag that rolls too: each stage with a generator of its own
+frag RollOver(Vertex vertex, out Color color)
+{
+    color = Color(Dither(256) / 255.0, vertex.color.g, 0);
+}
+
+// A blit's frag rolls for each pixel of its destination: grain over the image it reads
+frag RollFill(Vertex vertex, out Color color, Texture source)
+{
+    var r = Random.NextInt(256);
+    var g = Random.NextInt(100, 200);
+    color = Color(r / 255.0, g / 255.0, source.Sample(vertex.uv, Filter.Point).b);
+}
+
+// A '?:' with rolls in it makes both, the first side's first, whichever it picks: the roll after it is the pixel's third
+frag RollPick(Vertex vertex, out Color color)
+{
+    var picked = vertex.uv.x < 2 ? Random.NextInt(256) : Random.NextInt(256);
+    var after = Random.NextInt(256);
+    color = Color(picked / 255.0, after / 255.0, 0);
+}
+
+// The match's seed, a byte a channel
+frag RollSeed(Vertex vertex, out Color color)
+{
+    color = Color((Random.seed & 255) / 255.0, ((Random.seed >> 8) & 255) / 255.0, ((Random.seed >> 16) & 255) / 255.0);
+}
+
+view Rolls(Art art, mut Dice dice)
+{
+    if (art.targetPass != 19) return;
+    if (!dice.made)
+    {
+        dice.made = true;
+        dice.small = [Vertex { }, Vertex { position = float2(8, 0), uv = float2(1, 0) },
+                      Vertex { position = float2(8, 8), uv = float2(1, 1) }, Vertex { position = float2(0, 8), uv = float2(0, 1) }];
+        dice.spots = [RollSpot { at = float2(24, 8) }, RollSpot { at = float2(40, 8) }];
+    }
+    // The whole window first, through a blit: red, green, blue and white cells, whose blue it keeps
+    Draw.Blit(art.four, Draw.window, RollFill);
+    Draw.SetScreen();
+    Draw.SetClip();
+    Draw.Transform(float2(8, 8))
+    {
+        Draw.Mesh(dice.small, art.faces, RollBytes);
+    }
+    // Two instances of one draw
+    Draw.Instanced(dice.small, art.faces, dice.spots, SpotPlace, RollBytes);
+    Draw.Transform(float2(56, 8))
+    {
+        Draw.Mesh(dice.small, art.faces, RollRanges);
+    }
+    Draw.Transform(float2(72, 8))
+    {
+        Draw.Mesh(dice.small, art.faces, RollTint);
+    }
+    Draw.Transform(float2(88, 8))
+    {
+        Draw.Mesh(dice.small, art.faces, RollSeed);
+    }
+    Draw.Transform(float2(8, 24))
+    {
+        Draw.Mesh(dice.small, art.faces, RollTint, RollOver);
+    }
+    Draw.Transform(float2(24, 24))
+    {
+        Draw.Mesh(dice.small, art.faces, RollPick);
+    }
+}
+
 // shaders.c requests independent full-window checks after the existing grid.
 // Resource descriptors are supplied by C, without choosing a Tide lifetime API.
 [After(Manual)]
 view Targets(mut Art art)
 {
     // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images', 11 Outputs', 12 Values', 13 Heights', 14 Mipmaps',
-    // 15 Alphas', 16 Raws', 17 the cubes' and 18 the lists'
+    // 15 Alphas', 16 Raws', 17 the cubes', 18 the lists' and 19 the rolls'
     if (art.targetPass == 0 || art.targetPass >= 6) return;
     if (art.targetPass >= 4)
     {

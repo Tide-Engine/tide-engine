@@ -1,0 +1,914 @@
+// Shake and Grain on Corner: GLSL, vertex
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    vec4 tide_u0;
+    ivec4 tide_v0;
+};
+layout(location = 0) in vec3 tide_a0;
+layout(location = 1) in vec2 tide_a1;
+layout(location = 2) in vec4 tide_n0;
+layout(location = 3) in vec4 tide_n1;
+layout(location = 4) in vec4 tide_n2;
+layout(location = 5) in vec4 tide_n3;
+out vec3 tide_s0;
+out vec2 tide_s1;
+flat out int tide_nth;
+uint tide_dice;
+struct tt_Corner {
+    vec3 m_position;
+    vec2 m_uv;
+};
+int tide_i(int x) {
+    return x;
+}
+uint tide_xxh_word(uint h, int w) {
+    uint k = h + uint(w) * 0xC2B2AE3Du;
+    return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;
+}
+uint tide_xxh_lane(uint h, int w) {
+    uint k = h + uint(w) * 0x85EBCA77u;
+    return ((k << 13) | (k >> 19)) * 0x9E3779B1u;
+}
+int tide_xxh_end(uint h) {
+    uint k = h ^ (h >> 15);
+    k = k * 0x85EBCA77u;
+    k = k ^ (k >> 13);
+    k = k * 0xC2B2AE3Du;
+    k = k ^ (k >> 16);
+    return int(k & 0x7FFFFFFFu);
+}
+int tide_hash1(int v) {
+    return tide_xxh_end(tide_xxh_word(0x165667B5u, v));
+}
+int tide_hash3(ivec3 v) {
+    return tide_xxh_end(tide_xxh_word(tide_xxh_word(tide_xxh_word(0x165667BDu, v.x), v.y), v.z));
+}
+uint tide_roll() {
+    tide_dice = tide_dice * 747796405u + 2891336453u;
+    uint w = ((tide_dice >> ((tide_dice >> 28) + 4u)) ^ tide_dice) * 277803737u;
+    return (w >> 22) ^ w;
+}
+float tide_roll_float() {
+    return float(tide_roll() >> 8) * (1.0 / 16777216.0);
+}
+float tide_roll_float_between(float a, float b) {
+    float v = a + (b - a) * tide_roll_float();
+    if (v < b) { return v; }
+    return a;
+}
+vec3 tide_roll_float3_direction() {
+    float z = tide_roll_float() * 2.0 - 1.0;
+    float w = tide_roll_float() * 6.28318531;
+    float s = sqrt(max(1.0 - z * z, 0.0));
+    return vec3(cos(w) * s, sin(w) * s, z);
+}
+float tf_Jitter(float t_by) {
+    return (tide_roll_float_between((-t_by), t_by) + float((tide_hash1(tide_v0.y) % tide_i(2))));
+}
+
+void ts_Shake(inout tt_Corner t_corner) {
+    t_corner.m_position = (t_corner.m_position + (tide_roll_float3_direction() * tf_Jitter(0.1)));
+}
+
+void main() {
+    tide_dice = uint(tide_hash3(ivec3(gl_VertexID, gl_InstanceID, tide_v0.x ^ 1751002781)));
+    tt_Corner tide_vertex = tt_Corner(tide_a0, tide_a1);
+    ts_Shake(tide_vertex);
+    vec4 tide_place = mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(tide_vertex.m_position, 1.0);
+    gl_Position = tide_camera * tide_place;
+    tide_s0 = tide_vertex.m_position;
+    tide_s1 = tide_vertex.m_uv;
+    tide_nth = gl_InstanceID;
+}
+
+// Shake and Grain on Corner: GLSL, fragment
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    vec4 tide_u0;
+    ivec4 tide_v0;
+};
+in vec3 tide_s0;
+in vec2 tide_s1;
+flat in int tide_nth;
+out vec4 tide_pixel;
+uint tide_dice;
+struct tt_Corner {
+    vec3 m_position;
+    vec2 m_uv;
+};
+int tide_i(int x) {
+    return x;
+}
+uint tide_xxh_word(uint h, int w) {
+    uint k = h + uint(w) * 0xC2B2AE3Du;
+    return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;
+}
+uint tide_xxh_lane(uint h, int w) {
+    uint k = h + uint(w) * 0x85EBCA77u;
+    return ((k << 13) | (k >> 19)) * 0x9E3779B1u;
+}
+int tide_xxh_end(uint h) {
+    uint k = h ^ (h >> 15);
+    k = k * 0x85EBCA77u;
+    k = k ^ (k >> 13);
+    k = k * 0xC2B2AE3Du;
+    k = k ^ (k >> 16);
+    return int(k & 0x7FFFFFFFu);
+}
+int tide_hash1(int v) {
+    return tide_xxh_end(tide_xxh_word(0x165667B5u, v));
+}
+int tide_hash4(ivec4 v) {
+    uint a = tide_xxh_lane(0x24234428u, v.x);
+    uint b = tide_xxh_lane(0x85EBCA77u, v.y);
+    uint c = tide_xxh_lane(0u, v.z);
+    uint d = tide_xxh_lane(0x61C8864Fu, v.w);
+    return tide_xxh_end(((a << 1) | (a >> 31)) + ((b << 7) | (b >> 25)) + ((c << 12) | (c >> 20)) + ((d << 18) | (d >> 14)) + 16u);
+}
+vec3 tide_rotate_q(vec4 q, vec3 v) {
+    vec3 t = 2.0 * cross(q.xyz, v);
+    return v + q.w * t + cross(q.xyz, t);
+}
+uint tide_roll() {
+    tide_dice = tide_dice * 747796405u + 2891336453u;
+    uint w = ((tide_dice >> ((tide_dice >> 28) + 4u)) ^ tide_dice) * 277803737u;
+    return (w >> 22) ^ w;
+}
+uint tide_mul_high(uint a, uint b) {
+    uint p = (a & 0xFFFFu) * (b & 0xFFFFu);
+    uint q = (a >> 16) * (b & 0xFFFFu) + (p >> 16);
+    uint s = (a & 0xFFFFu) * (b >> 16) + (q & 0xFFFFu);
+    return (a >> 16) * (b >> 16) + (q >> 16) + (s >> 16);
+}
+int tide_roll_int() {
+    return int(tide_roll() >> 1);
+}
+int tide_roll_int_between(int a, int b) {
+    uint k = tide_roll();
+    if (b <= a) { return a; }
+    return int(uint(a) + tide_mul_high(k, uint(b) - uint(a)));
+}
+int tide_roll_int_below(int b) {
+    return tide_roll_int_between(0, b);
+}
+float tide_roll_float() {
+    return float(tide_roll() >> 8) * (1.0 / 16777216.0);
+}
+float tide_roll_float_between(float a, float b) {
+    float v = a + (b - a) * tide_roll_float();
+    if (v < b) { return v; }
+    return a;
+}
+float tide_roll_float_below(float b) {
+    return tide_roll_float_between(0.0, b);
+}
+bool tide_roll_bool() {
+    return (tide_roll() >> 31) != 0u;
+}
+vec2 tide_roll_float2() {
+    float x = tide_roll_float();
+    float y = tide_roll_float();
+    return vec2(x, y);
+}
+vec2 tide_roll_float2_between(vec2 a, vec2 b) {
+    float x = tide_roll_float_between(a.x, b.x);
+    float y = tide_roll_float_between(a.y, b.y);
+    return vec2(x, y);
+}
+vec3 tide_roll_float3() {
+    float x = tide_roll_float();
+    float y = tide_roll_float();
+    float z = tide_roll_float();
+    return vec3(x, y, z);
+}
+vec3 tide_roll_float3_between(vec3 a, vec3 b) {
+    float x = tide_roll_float_between(a.x, b.x);
+    float y = tide_roll_float_between(a.y, b.y);
+    float z = tide_roll_float_between(a.z, b.z);
+    return vec3(x, y, z);
+}
+vec2 tide_roll_float2_direction() {
+    float w = tide_roll_float() * 6.28318531;
+    return vec2(cos(w), sin(w));
+}
+vec3 tide_roll_float3_direction() {
+    float z = tide_roll_float() * 2.0 - 1.0;
+    float w = tide_roll_float() * 6.28318531;
+    float s = sqrt(max(1.0 - z * z, 0.0));
+    return vec3(cos(w) * s, sin(w) * s, z);
+}
+vec4 tide_roll_quaternion_rotation() {
+    float t = tide_roll_float() * 6.28318531;
+    float p = tide_roll_float() * 6.28318531;
+    float u = tide_roll_float();
+    float i = sqrt(1.0 - u);
+    float j = sqrt(u);
+    vec4 q = vec4(i * sin(t), i * cos(t), j * sin(p), j * cos(p));
+    if (q.w < 0.0) { return -q; }
+    return q;
+}
+float tide_pick0(bool tide_c, float tide_a, float tide_b) {
+    if (tide_c) {
+        return tide_a;
+    }
+    return tide_b;
+}
+
+float tf_Jitter(float t_by) {
+    return (tide_roll_float_between((-t_by), t_by) + float((tide_hash1(tide_v0.y) % tide_i(2))));
+}
+
+void ts_Grain(tt_Corner t_corner, inout vec4 t_color) {
+    int t_whole = ((tide_roll_int() + tide_roll_int_below(6)) + tide_roll_int_between((-3), 3));
+    float t_part = ((tide_roll_float() + tide_roll_float_below(2.0)) + tide_roll_float_between(1.0, 2.0));
+    vec2 t_spot = ((tide_roll_float2() + tide_roll_float2_between(vec2(0.0, 0.0), t_corner.m_uv)) + tide_roll_float2_direction());
+    vec3 t_place = ((tide_roll_float3() + tide_roll_float3_between(vec3(0.0, 0.0, 0.0), t_corner.m_position)) + tide_roll_float3_direction());
+    vec4 t_turn = tide_roll_quaternion_rotation();
+    float t_either = tide_pick0((t_corner.m_uv.x > 0.5), tide_roll_float(), 0.25);
+    if ((tide_roll_bool() || (t_either > 2.0))) {
+        discard;
+    }
+    t_color = vec4((t_part + tf_Jitter(tide_u0.x)), (t_spot.x + t_place.y), tide_rotate_q(t_turn, t_place).z, float((t_whole % tide_i(2))));
+}
+
+void main() {
+    tide_dice = uint(tide_hash4(ivec4(ivec2(gl_FragCoord.x, tide_screen.z - gl_FragCoord.y), tide_nth, tide_v0.x ^ 1305142580)));
+    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
+    ts_Grain(tt_Corner(tide_s0, tide_s1), tide_color);
+    tide_color = tide_color * tide_tint;
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
+    tide_pixel = tide_color;
+}
+
+// Shake and Grain on Corner: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_u0: vec4f,
+    tide_v0: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+var<private> tide_n0: vec4f;
+var<private> tide_n1: vec4f;
+var<private> tide_n2: vec4f;
+var<private> tide_n3: vec4f;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+var<private> tide_dice: u32;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s0: vec3f,
+    @location(1) tide_s1: vec2f,
+    @location(2) @interpolate(flat) tide_nth: i32,
+}
+struct tt_Corner {
+    m_position: vec3f,
+    m_uv: vec2f,
+}
+fn tide_i(x: i32) -> i32 {
+    return x;
+}
+fn tide_xxh_word(h: u32, w: i32) -> u32 {
+    var k: u32 = h + u32(w) * 0xC2B2AE3Du;
+    return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;
+}
+fn tide_xxh_lane(h: u32, w: i32) -> u32 {
+    var k: u32 = h + u32(w) * 0x85EBCA77u;
+    return ((k << 13) | (k >> 19)) * 0x9E3779B1u;
+}
+fn tide_xxh_end(h: u32) -> i32 {
+    var k: u32 = h ^ (h >> 15);
+    k = k * 0x85EBCA77u;
+    k = k ^ (k >> 13);
+    k = k * 0xC2B2AE3Du;
+    k = k ^ (k >> 16);
+    return i32(k & 0x7FFFFFFFu);
+}
+fn tide_hash1(v: i32) -> i32 {
+    return tide_xxh_end(tide_xxh_word(0x165667B5u, v));
+}
+fn tide_hash3(v: vec3i) -> i32 {
+    return tide_xxh_end(tide_xxh_word(tide_xxh_word(tide_xxh_word(0x165667BDu, v.x), v.y), v.z));
+}
+fn tide_hash4(v: vec4i) -> i32 {
+    var a: u32 = tide_xxh_lane(0x24234428u, v.x);
+    var b: u32 = tide_xxh_lane(0x85EBCA77u, v.y);
+    var c: u32 = tide_xxh_lane(0u, v.z);
+    var d: u32 = tide_xxh_lane(0x61C8864Fu, v.w);
+    return tide_xxh_end(((a << 1) | (a >> 31)) + ((b << 7) | (b >> 25)) + ((c << 12) | (c >> 20)) + ((d << 18) | (d >> 14)) + 16u);
+}
+fn tide_rotate_q(q: vec4f, v: vec3f) -> vec3f {
+    var t: vec3f = 2.0 * cross(q.xyz, v);
+    return v + q.w * t + cross(q.xyz, t);
+}
+fn tide_roll() -> u32 {
+    tide_dice = tide_dice * 747796405u + 2891336453u;
+    var w: u32 = ((tide_dice >> ((tide_dice >> 28) + 4u)) ^ tide_dice) * 277803737u;
+    return (w >> 22) ^ w;
+}
+fn tide_mul_high(a: u32, b: u32) -> u32 {
+    var p: u32 = (a & 0xFFFFu) * (b & 0xFFFFu);
+    var q: u32 = (a >> 16) * (b & 0xFFFFu) + (p >> 16);
+    var s: u32 = (a & 0xFFFFu) * (b >> 16) + (q & 0xFFFFu);
+    return (a >> 16) * (b >> 16) + (q >> 16) + (s >> 16);
+}
+fn tide_roll_int() -> i32 {
+    return i32(tide_roll() >> 1);
+}
+fn tide_roll_int_between(a: i32, b: i32) -> i32 {
+    var k: u32 = tide_roll();
+    if (b <= a) { return a; }
+    return i32(u32(a) + tide_mul_high(k, u32(b) - u32(a)));
+}
+fn tide_roll_int_below(b: i32) -> i32 {
+    return tide_roll_int_between(0, b);
+}
+fn tide_roll_float() -> f32 {
+    return f32(tide_roll() >> 8) * (1.0 / 16777216.0);
+}
+fn tide_roll_float_between(a: f32, b: f32) -> f32 {
+    var v: f32 = a + (b - a) * tide_roll_float();
+    if (v < b) { return v; }
+    return a;
+}
+fn tide_roll_float_below(b: f32) -> f32 {
+    return tide_roll_float_between(0.0, b);
+}
+fn tide_roll_bool() -> bool {
+    return (tide_roll() >> 31) != 0u;
+}
+fn tide_roll_float2() -> vec2f {
+    var x: f32 = tide_roll_float();
+    var y: f32 = tide_roll_float();
+    return vec2f(x, y);
+}
+fn tide_roll_float2_between(a: vec2f, b: vec2f) -> vec2f {
+    var x: f32 = tide_roll_float_between(a.x, b.x);
+    var y: f32 = tide_roll_float_between(a.y, b.y);
+    return vec2f(x, y);
+}
+fn tide_roll_float3() -> vec3f {
+    var x: f32 = tide_roll_float();
+    var y: f32 = tide_roll_float();
+    var z: f32 = tide_roll_float();
+    return vec3f(x, y, z);
+}
+fn tide_roll_float3_between(a: vec3f, b: vec3f) -> vec3f {
+    var x: f32 = tide_roll_float_between(a.x, b.x);
+    var y: f32 = tide_roll_float_between(a.y, b.y);
+    var z: f32 = tide_roll_float_between(a.z, b.z);
+    return vec3f(x, y, z);
+}
+fn tide_roll_float2_direction() -> vec2f {
+    var w: f32 = tide_roll_float() * 6.28318531;
+    return vec2f(cos(w), sin(w));
+}
+fn tide_roll_float3_direction() -> vec3f {
+    var z: f32 = tide_roll_float() * 2.0 - 1.0;
+    var w: f32 = tide_roll_float() * 6.28318531;
+    var s: f32 = sqrt(max(1.0 - z * z, 0.0));
+    return vec3f(cos(w) * s, sin(w) * s, z);
+}
+fn tide_roll_quaternion_rotation() -> vec4f {
+    var t: f32 = tide_roll_float() * 6.28318531;
+    var p: f32 = tide_roll_float() * 6.28318531;
+    var u: f32 = tide_roll_float();
+    var i: f32 = sqrt(1.0 - u);
+    var j: f32 = sqrt(u);
+    var q: vec4f = vec4f(i * sin(t), i * cos(t), j * sin(p), j * cos(p));
+    if (q.w < 0.0) { return -q; }
+    return q;
+}
+fn tf_Jitter(t_by: f32) -> f32 {
+    return (tide_roll_float_between((-t_by), t_by) + f32((tide_hash1(tide_block.tide_v0.y) % tide_i(2))));
+}
+
+fn ts_Shake(t_corner: ptr<function, tt_Corner>) {
+    (*t_corner).m_position = ((*t_corner).m_position + (tide_roll_float3_direction() * tf_Jitter(0.1)));
+}
+
+fn tide_pick0(tide_c: bool, tide_a: f32, tide_b: f32) -> f32 {
+    if (tide_c) {
+        return tide_a;
+    }
+    return tide_b;
+}
+
+fn ts_Grain(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
+    var t_whole: i32 = ((tide_roll_int() + tide_roll_int_below(6)) + tide_roll_int_between((-3), 3));
+    var t_part: f32 = ((tide_roll_float() + tide_roll_float_below(2.0)) + tide_roll_float_between(1.0, 2.0));
+    var t_spot: vec2f = ((tide_roll_float2() + tide_roll_float2_between(vec2f(0.0, 0.0), t_corner.m_uv)) + tide_roll_float2_direction());
+    var t_place: vec3f = ((tide_roll_float3() + tide_roll_float3_between(vec3f(0.0, 0.0, 0.0), t_corner.m_position)) + tide_roll_float3_direction());
+    var t_turn: vec4f = tide_roll_quaternion_rotation();
+    var t_either: f32 = tide_pick0((t_corner.m_uv.x > 0.5), tide_roll_float(), 0.25);
+    if ((tide_roll_bool() || (t_either > 2.0))) {
+        discard;
+        return;
+    }
+    (*t_color) = vec4f((t_part + tf_Jitter(tide_block.tide_u0.x)), (t_spot.x + t_place.y), tide_rotate_q(t_turn, t_place).z, f32((t_whole % tide_i(2))));
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec2f, @location(2) tide_in0: vec4f, @location(3) tide_in1: vec4f, @location(4) tide_in2: vec4f, @location(5) tide_in3: vec4f, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+    tide_n0 = tide_in0;
+    tide_n1 = tide_in1;
+    tide_n2 = tide_in2;
+    tide_n3 = tide_in3;
+    tide_dice = u32(tide_hash3(vec3i(i32(tide_vertex_index), i32(tide_instance_index), tide_block.tide_v0.x ^ 1751002781)));
+    var tide_vertex: tt_Corner = tt_Corner(tide_a0, tide_a1);
+    ts_Shake(&tide_vertex);
+    let tide_place = mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f(tide_vertex.m_position, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s0 = tide_vertex.m_position;
+    out.tide_s1 = tide_vertex.m_uv;
+    out.tide_nth = i32(tide_instance_index);
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    tide_dice = u32(tide_hash4(vec4i(vec2i(tide_at.xy), in.tide_nth, tide_block.tide_v0.x ^ 1305142580)));
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Grain(tt_Corner(in.tide_s0, in.tide_s1), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// Shake on Corner: GLSL, vertex
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+};
+layout(location = 0) in vec3 tide_a0;
+layout(location = 1) in vec2 tide_a1;
+layout(location = 2) in vec4 tide_n0;
+layout(location = 3) in vec4 tide_n1;
+layout(location = 4) in vec4 tide_n2;
+layout(location = 5) in vec4 tide_n3;
+uint tide_dice;
+struct tt_Corner {
+    vec3 m_position;
+    vec2 m_uv;
+};
+int tide_i(int x) {
+    return x;
+}
+uint tide_xxh_word(uint h, int w) {
+    uint k = h + uint(w) * 0xC2B2AE3Du;
+    return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;
+}
+uint tide_xxh_lane(uint h, int w) {
+    uint k = h + uint(w) * 0x85EBCA77u;
+    return ((k << 13) | (k >> 19)) * 0x9E3779B1u;
+}
+int tide_xxh_end(uint h) {
+    uint k = h ^ (h >> 15);
+    k = k * 0x85EBCA77u;
+    k = k ^ (k >> 13);
+    k = k * 0xC2B2AE3Du;
+    k = k ^ (k >> 16);
+    return int(k & 0x7FFFFFFFu);
+}
+int tide_hash1(int v) {
+    return tide_xxh_end(tide_xxh_word(0x165667B5u, v));
+}
+int tide_hash3(ivec3 v) {
+    return tide_xxh_end(tide_xxh_word(tide_xxh_word(tide_xxh_word(0x165667BDu, v.x), v.y), v.z));
+}
+uint tide_roll() {
+    tide_dice = tide_dice * 747796405u + 2891336453u;
+    uint w = ((tide_dice >> ((tide_dice >> 28) + 4u)) ^ tide_dice) * 277803737u;
+    return (w >> 22) ^ w;
+}
+float tide_roll_float() {
+    return float(tide_roll() >> 8) * (1.0 / 16777216.0);
+}
+float tide_roll_float_between(float a, float b) {
+    float v = a + (b - a) * tide_roll_float();
+    if (v < b) { return v; }
+    return a;
+}
+vec3 tide_roll_float3_direction() {
+    float z = tide_roll_float() * 2.0 - 1.0;
+    float w = tide_roll_float() * 6.28318531;
+    float s = sqrt(max(1.0 - z * z, 0.0));
+    return vec3(cos(w) * s, sin(w) * s, z);
+}
+float tf_Jitter(float t_by) {
+    return (tide_roll_float_between((-t_by), t_by) + float((tide_hash1(tide_v0.y) % tide_i(2))));
+}
+
+void ts_Shake(inout tt_Corner t_corner) {
+    t_corner.m_position = (t_corner.m_position + (tide_roll_float3_direction() * tf_Jitter(0.1)));
+}
+
+void main() {
+    tide_dice = uint(tide_hash3(ivec3(gl_VertexID, gl_InstanceID, tide_v0.x ^ 1751002781)));
+    tt_Corner tide_vertex = tt_Corner(tide_a0, tide_a1);
+    ts_Shake(tide_vertex);
+    vec4 tide_place = mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(tide_vertex.m_position, 1.0);
+    gl_Position = tide_camera * tide_place;
+}
+
+// Shake on Corner: GLSL, fragment
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+};
+out vec4 tide_pixel;
+void main() {
+    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
+    tide_color = tide_color * tide_tint;
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
+    tide_pixel = tide_color;
+}
+
+// Shake on Corner: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_v0: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+var<private> tide_n0: vec4f;
+var<private> tide_n1: vec4f;
+var<private> tide_n2: vec4f;
+var<private> tide_n3: vec4f;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+var<private> tide_dice: u32;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+}
+struct tt_Corner {
+    m_position: vec3f,
+    m_uv: vec2f,
+}
+fn tide_i(x: i32) -> i32 {
+    return x;
+}
+fn tide_xxh_word(h: u32, w: i32) -> u32 {
+    var k: u32 = h + u32(w) * 0xC2B2AE3Du;
+    return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;
+}
+fn tide_xxh_lane(h: u32, w: i32) -> u32 {
+    var k: u32 = h + u32(w) * 0x85EBCA77u;
+    return ((k << 13) | (k >> 19)) * 0x9E3779B1u;
+}
+fn tide_xxh_end(h: u32) -> i32 {
+    var k: u32 = h ^ (h >> 15);
+    k = k * 0x85EBCA77u;
+    k = k ^ (k >> 13);
+    k = k * 0xC2B2AE3Du;
+    k = k ^ (k >> 16);
+    return i32(k & 0x7FFFFFFFu);
+}
+fn tide_hash1(v: i32) -> i32 {
+    return tide_xxh_end(tide_xxh_word(0x165667B5u, v));
+}
+fn tide_hash3(v: vec3i) -> i32 {
+    return tide_xxh_end(tide_xxh_word(tide_xxh_word(tide_xxh_word(0x165667BDu, v.x), v.y), v.z));
+}
+fn tide_roll() -> u32 {
+    tide_dice = tide_dice * 747796405u + 2891336453u;
+    var w: u32 = ((tide_dice >> ((tide_dice >> 28) + 4u)) ^ tide_dice) * 277803737u;
+    return (w >> 22) ^ w;
+}
+fn tide_roll_float() -> f32 {
+    return f32(tide_roll() >> 8) * (1.0 / 16777216.0);
+}
+fn tide_roll_float_between(a: f32, b: f32) -> f32 {
+    var v: f32 = a + (b - a) * tide_roll_float();
+    if (v < b) { return v; }
+    return a;
+}
+fn tide_roll_float3_direction() -> vec3f {
+    var z: f32 = tide_roll_float() * 2.0 - 1.0;
+    var w: f32 = tide_roll_float() * 6.28318531;
+    var s: f32 = sqrt(max(1.0 - z * z, 0.0));
+    return vec3f(cos(w) * s, sin(w) * s, z);
+}
+fn tf_Jitter(t_by: f32) -> f32 {
+    return (tide_roll_float_between((-t_by), t_by) + f32((tide_hash1(tide_block.tide_v0.y) % tide_i(2))));
+}
+
+fn ts_Shake(t_corner: ptr<function, tt_Corner>) {
+    (*t_corner).m_position = ((*t_corner).m_position + (tide_roll_float3_direction() * tf_Jitter(0.1)));
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec2f, @location(2) tide_in0: vec4f, @location(3) tide_in1: vec4f, @location(4) tide_in2: vec4f, @location(5) tide_in3: vec4f, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+    tide_n0 = tide_in0;
+    tide_n1 = tide_in1;
+    tide_n2 = tide_in2;
+    tide_n3 = tide_in3;
+    tide_dice = u32(tide_hash3(vec3i(i32(tide_vertex_index), i32(tide_instance_index), tide_block.tide_v0.x ^ 1751002781)));
+    var tide_vertex: tt_Corner = tt_Corner(tide_a0, tide_a1);
+    ts_Shake(&tide_vertex);
+    let tide_place = mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f(tide_vertex.m_position, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// Tinted on Vertex: GLSL, vertex
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+};
+layout(location = 0) in vec2 tide_a0;
+layout(location = 1) in vec2 tide_a1;
+layout(location = 2) in vec4 tide_a2;
+out vec2 tide_s1;
+struct tt_Vertex {
+    vec2 m_position;
+    vec2 m_uv;
+    vec4 m_color;
+};
+void main() {
+    tt_Vertex tide_vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    vec4 tide_place = vec4(tide_vertex.m_position, 0.0, 1.0);
+    gl_Position = tide_camera * tide_place;
+    tide_s1 = tide_vertex.m_uv;
+}
+
+// Tinted on Vertex: GLSL, fragment
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+};
+in vec2 tide_s1;
+out vec4 tide_pixel;
+struct tt_Vertex {
+    vec2 m_position;
+    vec2 m_uv;
+    vec4 m_color;
+};
+float tide_f(float x) {
+    return x;
+}
+int tide_i(int x) {
+    return x;
+}
+void ts_Tinted(tt_Vertex t_vertex, inout vec4 t_color) {
+    t_color = vec4((float((tide_v0.x % tide_i(256))) / tide_f(255.0)), t_vertex.m_uv.x, t_vertex.m_uv.y, 1.0);
+}
+
+void main() {
+    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
+    ts_Tinted(tt_Vertex(vec2(0.0), tide_s1, vec4(0.0)), tide_color);
+    tide_color = tide_color * tide_tint;
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
+    tide_pixel = tide_color;
+}
+
+// Tinted on Vertex: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_v0: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s1: vec2f,
+}
+struct tt_Vertex {
+    m_position: vec2f,
+    m_uv: vec2f,
+    m_color: vec4f,
+}
+fn tide_f(x: f32) -> f32 {
+    return x;
+}
+fn tide_i(x: i32) -> i32 {
+    return x;
+}
+fn ts_Tinted(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
+    (*t_color) = vec4f((f32((tide_block.tide_v0.x % tide_i(256))) / tide_f(255.0)), t_vertex.m_uv.x, t_vertex.m_uv.y, 1.0);
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f) -> tide_corner {
+    var tide_vertex: tt_Vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_uv;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Tinted(tt_Vertex(vec2f(), in.tide_s1, vec4f()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// Wobble on Vertex: GLSL, vertex
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+};
+layout(location = 0) in vec2 tide_a0;
+layout(location = 1) in vec2 tide_a1;
+layout(location = 2) in vec4 tide_a2;
+out vec4 tide_s2;
+uint tide_dice;
+struct tt_Vertex {
+    vec2 m_position;
+    vec2 m_uv;
+    vec4 m_color;
+};
+uint tide_xxh_word(uint h, int w) {
+    uint k = h + uint(w) * 0xC2B2AE3Du;
+    return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;
+}
+uint tide_xxh_lane(uint h, int w) {
+    uint k = h + uint(w) * 0x85EBCA77u;
+    return ((k << 13) | (k >> 19)) * 0x9E3779B1u;
+}
+int tide_xxh_end(uint h) {
+    uint k = h ^ (h >> 15);
+    k = k * 0x85EBCA77u;
+    k = k ^ (k >> 13);
+    k = k * 0xC2B2AE3Du;
+    k = k ^ (k >> 16);
+    return int(k & 0x7FFFFFFFu);
+}
+int tide_hash3(ivec3 v) {
+    return tide_xxh_end(tide_xxh_word(tide_xxh_word(tide_xxh_word(0x165667BDu, v.x), v.y), v.z));
+}
+uint tide_roll() {
+    tide_dice = tide_dice * 747796405u + 2891336453u;
+    uint w = ((tide_dice >> ((tide_dice >> 28) + 4u)) ^ tide_dice) * 277803737u;
+    return (w >> 22) ^ w;
+}
+float tide_roll_float() {
+    return float(tide_roll() >> 8) * (1.0 / 16777216.0);
+}
+float tide_roll_float_between(float a, float b) {
+    float v = a + (b - a) * tide_roll_float();
+    if (v < b) { return v; }
+    return a;
+}
+vec2 tide_roll_float2_between(vec2 a, vec2 b) {
+    float x = tide_roll_float_between(a.x, b.x);
+    float y = tide_roll_float_between(a.y, b.y);
+    return vec2(x, y);
+}
+void ts_Wobble(inout tt_Vertex t_vertex) {
+    t_vertex.m_position = (t_vertex.m_position + tide_roll_float2_between(vec2(float((-1)), float((-1))), vec2(1.0, 1.0)));
+}
+
+void main() {
+    tide_dice = uint(tide_hash3(ivec3(gl_VertexID, gl_InstanceID, tide_v0.x ^ 838500456)));
+    tt_Vertex tide_vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    ts_Wobble(tide_vertex);
+    vec4 tide_place = vec4(tide_vertex.m_position, 0.0, 1.0);
+    gl_Position = tide_camera * tide_place;
+    tide_s2 = tide_vertex.m_color;
+}
+
+// Wobble on Vertex: GLSL, fragment
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+};
+in vec4 tide_s2;
+out vec4 tide_pixel;
+void main() {
+    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
+    tide_color = tide_s2;
+    tide_color = tide_color * tide_tint;
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
+    tide_pixel = tide_color;
+}
+
+// Wobble on Vertex: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_v0: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+var<private> tide_dice: u32;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s2: vec4f,
+}
+struct tt_Vertex {
+    m_position: vec2f,
+    m_uv: vec2f,
+    m_color: vec4f,
+}
+fn tide_xxh_word(h: u32, w: i32) -> u32 {
+    var k: u32 = h + u32(w) * 0xC2B2AE3Du;
+    return ((k << 17) | (k >> 15)) * 0x27D4EB2Fu;
+}
+fn tide_xxh_lane(h: u32, w: i32) -> u32 {
+    var k: u32 = h + u32(w) * 0x85EBCA77u;
+    return ((k << 13) | (k >> 19)) * 0x9E3779B1u;
+}
+fn tide_xxh_end(h: u32) -> i32 {
+    var k: u32 = h ^ (h >> 15);
+    k = k * 0x85EBCA77u;
+    k = k ^ (k >> 13);
+    k = k * 0xC2B2AE3Du;
+    k = k ^ (k >> 16);
+    return i32(k & 0x7FFFFFFFu);
+}
+fn tide_hash3(v: vec3i) -> i32 {
+    return tide_xxh_end(tide_xxh_word(tide_xxh_word(tide_xxh_word(0x165667BDu, v.x), v.y), v.z));
+}
+fn tide_roll() -> u32 {
+    tide_dice = tide_dice * 747796405u + 2891336453u;
+    var w: u32 = ((tide_dice >> ((tide_dice >> 28) + 4u)) ^ tide_dice) * 277803737u;
+    return (w >> 22) ^ w;
+}
+fn tide_roll_float() -> f32 {
+    return f32(tide_roll() >> 8) * (1.0 / 16777216.0);
+}
+fn tide_roll_float_between(a: f32, b: f32) -> f32 {
+    var v: f32 = a + (b - a) * tide_roll_float();
+    if (v < b) { return v; }
+    return a;
+}
+fn tide_roll_float2_between(a: vec2f, b: vec2f) -> vec2f {
+    var x: f32 = tide_roll_float_between(a.x, b.x);
+    var y: f32 = tide_roll_float_between(a.y, b.y);
+    return vec2f(x, y);
+}
+fn ts_Wobble(t_vertex: ptr<function, tt_Vertex>) {
+    (*t_vertex).m_position = ((*t_vertex).m_position + tide_roll_float2_between(vec2f(f32((-1)), f32((-1))), vec2f(1.0, 1.0)));
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+    tide_dice = u32(tide_hash3(vec3i(i32(tide_vertex_index), i32(tide_instance_index), tide_block.tide_v0.x ^ 838500456)));
+    var tide_vertex: tt_Vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    ts_Wobble(&tide_vertex);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s2 = tide_vertex.m_color;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    tide_color = in.tide_s2;
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+

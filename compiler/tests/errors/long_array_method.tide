@@ -1,0 +1,16 @@
+// expect: 'Tail' holds an array of more than 4096 elements, so it has no methods: 'this' would be a copy of it
+// expect: write a function that takes it as a 'mut' parameter, like 'void Push(mut Tail state, float sample)'
+struct Tail
+{
+    int at;
+    float[96000] line;
+
+    float First()
+    {
+        return line[0];
+    }
+}
+
+scene Main
+{
+}

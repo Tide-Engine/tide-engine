@@ -55,6 +55,52 @@ void Halve(mut Samples samples)
     for (var i = 0; i < samples.values.count; i++) samples.values[i] = samples.values[i] * 0.5;
 }
 
+// An echo: a delay line of a second of stereo, far longer than any other array
+// is, which only an audio declaration's state holds. It's read and written
+// where it is, here and in the function it's passed on to.
+struct Tail
+{
+    int at;
+    float[96000] line;
+}
+
+struct Delay
+{
+    int frames;
+    float wet;
+}
+
+audio Echo(mut Samples samples, mut Tail tail, Delay delay)
+{
+    for (var i = 0; i < samples.values.count; i += 2)
+    {
+        var from = (tail.at + 48000 - delay.frames) % 48000;
+        var left = samples.values[i];
+        var right = samples.values[i + 1];
+        samples.values[i] += tail.line[2 * from] * delay.wet;
+        samples.values[i + 1] += tail.line[2 * from + 1] * delay.wet;
+        Push(tail, left, right);
+    }
+    tail.line[95999] += 0; // Its last element, and none past it
+    tail.line[96000] = 1;
+    tail.line[-1] = 1;
+}
+
+void Push(mut Tail tail, float left, float right)
+{
+    tail.line[2 * tail.at] = left;
+    tail.line[2 * tail.at + 1] = right;
+    tail.at = (tail.at + 1) % (tail.line.count / 2);
+}
+
+// ...and one that rolls beside a long state: its generator is after it
+audio Crackle(mut Samples samples, mut Tail tail)
+{
+    tail.at = (tail.at + 1) % tail.line.count;
+    tail.line[tail.at] = Grain();
+    samples.values[0] = tail.line[tail.at];
+}
+
 [Bus]
 enum Bus
 {
@@ -66,7 +112,10 @@ local singleton Mix
 {
     Sound track;
     Sound synth;
+    Sound far;
+    Sound crackle;
     float gain;
+    bool echoes;
 }
 
 scene Main { }
@@ -81,4 +130,9 @@ view Levels(mut Mix mix)
     mix.synth.effect = Square();
     Audio.SetEffect(Bus.Music, Scale(Knobs { gain = 2, add = 0 }));
     Audio.SetEffect(Bus.Master, Hiss());
+    if (!mix.echoes) return;
+    mix.far.playing = true;
+    mix.far.effect = Echo(Delay { frames = 512, wet = 0.5 });
+    mix.crackle.playing = true;
+    mix.crackle.effect = Crackle();
 }

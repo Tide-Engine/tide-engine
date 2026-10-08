@@ -1,0 +1,15 @@
+// expect: float[96000] is never copied: an array of more than 4096 elements stays where it is, in its audio declaration's state
+struct Tail
+{
+    int at;
+    float[96000] line;
+}
+
+void Show(mut Tail tail)
+{
+    Debug.Log($"{tail.line}");
+}
+
+scene Main
+{
+}
