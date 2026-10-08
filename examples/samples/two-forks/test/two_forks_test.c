@@ -12,7 +12,6 @@
 #include <string.h>
 
 #include "game.h"
-#include "tide/list.h"
 #include "tide/net.h"
 #include "tide/session.h"
 #include "tide_test.h"
@@ -21,7 +20,6 @@
 #define W 12
 #define STEP 8       // Ticks a move takes
 #define HOLD 15      // Ticks a key is held before it repeats
-#define CHEER 190    // Ticks a cooked level is looked at
 
 enum { NORTH, EAST, SOUTH, WEST };
 
@@ -42,7 +40,6 @@ static void start(const int players)
 {
     tide_world_free(&world);
     tide_world_init(&world, DT);
-    world.Kitchen.travelling = false;
     for (int i = 0; i < players; i++) tide_world_player_joined(&world, player(i));
     tide_world_tick(&world);
 }
@@ -533,7 +530,6 @@ TIDE_TEST(two_forks_a_level_starts_over_and_that_is_taken_back_too)
 
 static void go_to(const int level)
 {
-    world.Kitchen.travelling = false;
     world.Kitchen.level = level;
     world.Kitchen.laid = false;
     tide_world_tick(&world);
@@ -544,49 +540,6 @@ static int levels(void)
 {
     go_to(1000);
     return world.Kitchen.level + 1;
-}
-
-TIDE_TEST(two_forks_a_cooked_level_returns_to_the_map_and_goto_skips)
-{
-    start(2);
-    const int count = levels();
-    TIDE_REQUIRE(count >= 2);
-    go_to(0);
-    TIDE_CHECK(command(TIDE_COMMAND_ID_Goto, 0, 1));
-    tide_world_tick(&world);
-    TIDE_CHECK(world.Kitchen.level == 1 && world.Kitchen.done == 0 && !world.Kitchen.travelling);
-    TIDE_CHECK(command(TIDE_COMMAND_ID_Goto, 0, count));
-    tide_world_tick(&world);
-    TIDE_CHECK(world.Kitchen.level == 1);
-
-    // Cooked: it's looked at for a while, with no more moves, and then the chefs return to the map.
-    lay("e.|##./..|##E");
-    move(0, EAST);
-    move(0, EAST);
-    TIDE_REQUIRE(world.Kitchen.cleared != 0);
-    TIDE_CHECK(world.Kitchen.done == 1 << 1);
-    move(1, WEST);
-    TIDE_CHECK(chef_at(1, 5, 1, EAST));
-    tick(CHEER);
-    TIDE_CHECK(world.Kitchen.travelling && world.Kitchen.level == 1 && world.Kitchen.done == 1 << 1);
-    TIDE_CHECK(world.Kitchen.cleared == 0 && world.Kitchen.board.count == 0);
-
-    // Goto is the testing shortcut: even on the map it enters immediately, with no cooking credit.
-    TIDE_CHECK(command(TIDE_COMMAND_ID_Goto, 1, count - 1));
-    tide_world_tick(&world);
-    TIDE_CHECK(!world.Kitchen.travelling && world.Kitchen.level == count - 1 && world.Kitchen.done == 1 << 1);
-    TIDE_CHECK(world.Kitchen.moves == 0 && world.Kitchen.cleared == 0 && tide_list_count(world.Kitchen.past) == 0);
-
-    // The last kitchen returns to the same map too, preserving all completion credit.
-    go_to(count - 1);
-    lay("e.|##./..|##E");
-    move(0, EAST);
-    move(0, EAST);
-    tick(CHEER);
-    TIDE_CHECK(world.Kitchen.travelling && world.Kitchen.level == count - 1);
-    TIDE_CHECK(world.Kitchen.done == ((1 << 1) | (1 << (count - 1))));
-
-    tide_world_free(&world);
 }
 
 // ------------------------------------------------- every position of a level

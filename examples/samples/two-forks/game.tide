@@ -70,9 +70,6 @@ struct Past
 {
     Chef[2] chefs;
     Sausage[SAUSAGES] sausages;
-    int2 meatball;
-    int ballRolling;
-    int selection;
 }
 
 int2 Way(int facing)
@@ -420,15 +417,7 @@ singleton Kitchen
 {
     Board board;
     int level;
-    bool travelling = true;
-    bool journeyStarted;
-    int routeRegion;
-    int2 meatball;
-    int ballRolling;
-    int selection = -1;
-    Chef[2] campers;     // Where both chefs left the shared world map
-    int bridges;        // Bridges opened by standing on both of their plates
-    int layout;         // Revision of the displayed board, including map gates
+    int layout;          // Revision of the displayed kitchen
     bool laid;           // The level is laid out
     int moves;
     int cleared;         // The tick the level was cooked at: 0 while it isn't
@@ -459,9 +448,6 @@ event Laid { }
 command Undo { int level; }
 command Restart { int level; }
 command Goto { int level; }
-command EnterKitchen { int level; }
-command BackToMap { int level; }
-command Traverse { int route; }
 
 // This machine's pointer, for a screen with no keys: the arrow it holds, and
 // a tap on the button that changes chefs.
@@ -514,9 +500,6 @@ event(Destroyed) FreeSeat(Hand hand, mut Kitchen kitchen)
 
 void Open(mut Kitchen kitchen, int level)
 {
-    var region = Region(level);
-    if (!kitchen.journeyStarted || kitchen.routeRegion != region) StartTrail(kitchen, region);
-    kitchen.travelling = false;
     kitchen.layout += 1;
     kitchen.level = Math.Clamp(level, 0, LEVELS - 1);
     LayOut(kitchen.board, Plan(kitchen.level));
@@ -567,14 +550,13 @@ system Serve(mut Kitchen kitchen, Time time)
 {
     if (!kitchen.laid)
     {
-        if (kitchen.travelling) ReturnToMap(kitchen);
-        else Open(kitchen, kitchen.level);
+        Open(kitchen, kitchen.level);
         Send(Laid { });
     }
     if (kitchen.cleared != 0)
     {
         if (time.tick - kitchen.cleared < CHEER) return;
-        ReturnToMap(kitchen);
+        Open(kitchen, NextKitchen(kitchen.level));
         Send(Laid { });
         return;
     }
@@ -599,16 +581,14 @@ system Serve(mut Kitchen kitchen, Time time)
         }
         if (way != 0)
         {
-            var before = Past { chefs = kitchen.board.chefs, sausages = kitchen.board.sausages,
-                                meatball = kitchen.meatball, ballRolling = kitchen.ballRolling, selection = kitchen.selection };
+            var before = Past { chefs = kitchen.board.chefs, sausages = kitchen.board.sausages };
             var lit = GasOn(kitchen.board);
-            var moved = kitchen.travelling ? StepRoute(kitchen, who, way - 1) : Step(kitchen.board, who, way - 1);
-            if (moved)
+            if (Step(kitchen.board, who, way - 1))
             {
                 grip.wait = STEP;
                 Remember(kitchen, before);
                 kitchen.moves += 1;
-                mut var pushed = kitchen.travelling && !Same(before.meatball, kitchen.meatball);
+                mut var pushed = false;
                 for (var i = 0; i < kitchen.board.count; i++)
                 {
                     var was = before.sausages[i];
@@ -632,18 +612,7 @@ system Serve(mut Kitchen kitchen, Time time)
         kitchen.grips[who] = grip;
     }
 
-    if (kitchen.travelling)
-    {
-        kitchen.campers = kitchen.board.chefs;
-        if (OpenBridges(kitchen)) Send(Laid { });
-        var chosen = NearbyCamp(kitchen);
-        if (chosen >= 0)
-        {
-            Open(kitchen, chosen);
-            Send(Laid { });
-        }
-    }
-    else if (Cooked(kitchen.board))
+    if (Cooked(kitchen.board))
     {
         kitchen.cleared = time.tick;
         kitchen.done |= 1 << kitchen.level;
@@ -660,9 +629,6 @@ command(Undo undo, PlayerID sender) TakeBack(mut Kitchen kitchen)
     kitchen.past.RemoveAt(kitchen.past.count - 1);
     kitchen.board.chefs = last.chefs;
     kitchen.board.sausages = last.sausages;
-    kitchen.meatball = last.meatball;
-    kitchen.ballRolling = last.ballRolling;
-    kitchen.selection = last.selection;
     kitchen.moves -= 1;
     Send(Rewound { });
 }
@@ -671,16 +637,8 @@ command(Undo undo, PlayerID sender) TakeBack(mut Kitchen kitchen)
 command(Restart restart, PlayerID sender) StartOver(mut Kitchen kitchen)
 {
     if (!kitchen.hands.Has(sender) || restart.level != kitchen.level) return;
-    if (kitchen.travelling)
-    {
-        StartTrail(kitchen, kitchen.routeRegion);
-        ReturnToMap(kitchen);
-        Send(Laid { });
-        return;
-    }
     if (kitchen.cleared != 0 || kitchen.moves == 0) return;
-    var before = Past { chefs = kitchen.board.chefs, sausages = kitchen.board.sausages,
-                        meatball = kitchen.meatball, ballRolling = kitchen.ballRolling, selection = kitchen.selection };
+    var before = Past { chefs = kitchen.board.chefs, sausages = kitchen.board.sausages };
     var moves = kitchen.moves;
     LayOut(kitchen.board, Plan(kitchen.level));
     Remember(kitchen, before);
