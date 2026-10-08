@@ -2834,6 +2834,11 @@ local singleton Tables
     List<byte> bytes;       // 300 of them, four to a pixel
     Grid2<Color> cells = Grid2(70, 3); // Wider than a chunk of it
     Grid2<int> tallies = Grid2(5, 2);
+    Grid3<Color> block = Grid3(40, 9, 20); // Past a chunk of it along every axis
+    Grid3<int> counts = Grid3(3, 2, 70);
+    Grid2<Color> open;                     // No size: its cells are wherever they're set
+    Grid3<int> shaft = Grid3(4, 0, 4);     // Open up and down
+    Grid2<int> never;                      // Open, with nothing in it
     List<int2> steps;
     float[4] weights;       // Arrays of a fixed length: a quarter, a half, three quarters and one
     Swatch[2] pair;
@@ -2962,6 +2967,38 @@ frag GridCell(Vertex vertex, out Color color, Tables tables, Choice choice)
 frag GridSize(Vertex vertex, out Color color, Tables tables)
 {
     color = Color(tables.cells.size.x / 140.0, tables.cells.size.y / 6.0, tables.tallies[3, 1] / 10.0);
+}
+
+// A Grid3's cells, in other chunks and layers than its first, and past its edges
+frag Grid3Cell(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    color = tables.block[choice.at, 7, 17] + tables.block[40, 0, 0] + tables.block[int3(0, -1, 0)] + tables.block[33, 7, 20];
+}
+
+frag Grid3Size(Vertex vertex, out Color color, Tables tables)
+{
+    color = Color(tables.block.size.x / 80.0, tables.block.size.z / 40.0, tables.counts[2, 1, 69] / 10.0);
+    if (tables.block.size.y != 9 || tables.counts.size.x != 3 || tables.counts.size.y != 2 || tables.counts.size.z != 70)
+    {
+        color = Color.black;
+    }
+}
+
+// A grid with no size: cells before 0 and far from each other, nothing between them or as far off as an int goes
+frag OpenCells(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    color = tables.open[-70, 200] + tables.open[choice.at, -3] + tables.open[0, 0] + tables.open[-2000000000, 2000000000]
+          + tables.open[2000000000, -2000000000];
+    if (tables.open.size.x != 0 || tables.open.size.y != 0) color = Color.black;
+}
+
+// A Grid3 that's open along one axis, and a grid nothing was ever set in
+frag OpenShaft(Vertex vertex, out Color color, Tables tables)
+{
+    color = Color(tables.shaft[2, -100, 3] / 12.0, tables.shaft[1, 50, 0] / 8.0,
+                  (tables.shaft[2, -100, 4] + tables.shaft[2, 0, 3] + tables.never[3, 3] + 1) / 4.0);
+    if (tables.shaft.size.x != 4 || tables.shaft.size.y != 0 || tables.shaft.size.z != 4) color = Color.black;
+    if (tables.never.size.x != 0) color = Color.black;
 }
 
 // An asset's grid, by its name
@@ -3275,6 +3312,14 @@ view ListReads(Art art, mut Tables tables)
         for (int i = 0; i < 300; i++) tables.bytes.Add(byte(i));
         tables.cells[66, 2] = Color(0.25, 0.5, 0.75);
         tables.tallies[3, 1] = 10;
+        tables.block[33, 7, 17] = Color(0.25, 0.5, 0.75);
+        tables.block[1, 7, 17] = Color.white;
+        tables.counts[2, 1, 69] = 10;
+        tables.counts[2, 1, 68] = 3;
+        tables.open[-70, 200] = Color(0.5, 0.25, 0, 0.5);
+        tables.open[5, -3] = Color(0.25, 0.5, 0.75, 0.5);
+        tables.shaft[2, -100, 3] = 6;
+        tables.shaft[1, 50, 0] = 4;
         tables.steps = [int2(0, 0), int2(3, 16)];
         tables.weights = [0.25, 0.5, 0.75, 1];
         tables.pair = [Swatch { gain = 0.25, on = true }, Swatch { gain = 0.5, on = true }];
@@ -3500,6 +3545,23 @@ view ListReads(Art art, mut Tables tables)
     Draw.Transform(float2(72, 152))
     {
         Draw.Mesh(tables.small, art.faces, Picks, Choice { at = 0 });
+    }
+    // Row 11: a Grid3's cells and size, and grids with no size
+    Draw.Transform(float2(8, 168))
+    {
+        Draw.Mesh(tables.small, art.faces, Grid3Cell, Choice { at = 33 });
+    }
+    Draw.Transform(float2(24, 168))
+    {
+        Draw.Mesh(tables.small, art.faces, Grid3Size);
+    }
+    Draw.Transform(float2(40, 168))
+    {
+        Draw.Mesh(tables.small, art.faces, OpenCells, Choice { at = 5 });
+    }
+    Draw.Transform(float2(56, 168))
+    {
+        Draw.Mesh(tables.small, art.faces, OpenShaft);
     }
 }
 

@@ -109,12 +109,22 @@ static inline uint32_t tide_data_stride(const uint32_t words)
 uint32_t tide_draw_list_data(tide_draw_list *d, tide_list list, uint32_t element_size, uint32_t words,
                              tide_list_words_fn *write, int32_t *count);
 
-// A Grid2's cells the same way, a row of cells a row of pixels: cell (x, y)
-// starts at int x * tide_data_stride(words) of row y. `size` gets the grid's
-// (two ints): zeros, and no texture, for a grid with no size on an axis or
-// one wider than a texture is.
+// A grid's cells the same way, a row of cells a row of pixels. What's sent is
+// the box its chunks take up, within its size: outside it every cell is zero,
+// as where it has no chunk. Cell (x, y, z) of the box starts at int
+// x * tide_data_stride(words) of its row, and a Grid3's layers are side by
+// side, `across` of them, and then under each other: layer z's rows start
+// (z % across) * wide pixels along and (z / across) * (the box's rows) down,
+// `wide` the pixels a row of the box's cells takes. `info` gets the grid's
+// size (0 on an axis where it's open), then where the box starts, then how
+// many cells it is along each axis, and for a Grid3 `across`:
+// TIDE_GRID2_DATA_INTS or TIDE_GRID3_DATA_INTS ints. No texture, and a box of
+// no cells, for a grid with nothing in it and for one whose box is more than
+// TIDE_GRID_TEXTURE_MOST pixels a side or TIDE_GRID_DATA_PIXELS in all, which
+// is said once on stderr.
+enum { TIDE_GRID2_DATA_INTS = 6, TIDE_GRID3_DATA_INTS = 10, TIDE_GRID_DATA_PIXELS = 4096 * 4096 };
 uint32_t tide_draw_grid_data(tide_draw_list *d, tide_grid grid, const tide_grid_shape *shape, uint32_t words,
-                             tide_list_words_fn *write, int32_t *size);
+                             tide_list_words_fn *write, int32_t *info);
 
 // A map's or a set's live entries the same way, in the order their keys were
 // added, and after them, from the next pixel on, an index a shader finds a key

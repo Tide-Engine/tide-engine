@@ -1,0 +1,939 @@
+{
+  "date": "2026-10-08",
+  "source_commit": "fdd132dd2dc595265b6300767f92a1a53aa0497d",
+  "question": "How long games take to compile at this commit, beside the runs saved on 2026-10-04 and 2026-10-06.",
+  "machine": {
+    "os": "Windows 11",
+    "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
+    "physical_cores": 12,
+    "logical_cpus": 24
+  },
+  "installations": {
+    "package": {
+      "what": "The package as users get it: clang and lld 23.1.2 built into tide (package preset with LLVM's release libraries, mingw-release and web-package for the platform layers, cmake/package.cmake). No Android trees.",
+      "cli": {
+        "bytes": 105273344,
+        "sha256": "62df1d7e2fe1c773ae5526e85b1bdeed81053080a548d3f8f7954e41ab3b8667"
+      }
+    },
+    "external": {
+      "what": "The same files with the release preset's tide, which runs C:/Program Files/LLVM/bin/clang.exe 23.1.2: the kind of installation the saved runs of 2026-10-04 and 2026-10-06 used.",
+      "cli": {
+        "bytes": 1822208,
+        "sha256": "3ff85025a4c7058d1104923394e424c5f4e701eac5050e97ae3b76ceaa178d48"
+      }
+    }
+  },
+  "protocol": {
+    "ledger": "bench/results/compile.jsonl, labels status-1008-external, status-1008-package, and the same with -large and -a4",
+    "commands": [
+      "node bench/compile.mjs --tide <external> --tidec build/release/bin/tidec.exe --targets native,web --configs debug,release --repeat 5 --save status-1008-external",
+      "node bench/compile.mjs --tide <package> --targets native,web --configs debug,release --repeat 5 --save status-1008-package",
+      "the same two with --repeat 1, three times in turn, each started once the CPU was under 20% or two minutes had passed",
+      "node bench/compile.mjs --tide <each> --sizes 1000 --files 1000 --repeat 3 --save status-1008-<each>-large",
+      "node bench/compile.mjs --tide <each> --loops 100 --archetypes 4 --targets native,web --configs debug,release --repeat 3 --save status-1008-<each>-a4"
+    ],
+    "gate": "Local\\TideClaudeContinuationBenchmark, held for every batch",
+    "cpu_percent_at_batch_boundaries": {
+      "least": 11.2,
+      "median": 32.5,
+      "most": 97.7,
+      "samples": 49
+    }
+  },
+  "interpretation": {
+    "noise": "Other sessions were building and running test suites on the machine throughout: five-second CPU averages at the batches' boundaries are above. tide compiles one file at a time, so contention shows as whole builds up to twice as long. Compare by the least of a cell's samples, not its median, and expect a quiet machine to be somewhat faster than the least here.",
+    "cold_builds": "A cold build compiles the engine's sources into the game's cache: 23 files on 2026-10-04, 33 on 2026-10-06, 38 at this commit, and a package's C after them (Box2D 44 files, Box3D 53)."
+  },
+  "real_games": {
+    "what": "tide build on copies of the repo's games in a temporary folder, with the package installation: cold (no .tide), unchanged, and after changing a number in the body of a system added to the copy for it (verified by game.o's contents). Five samples a cell, in two passes. Measured by a script outside the repository, with the harness's method.",
+    "sizes": {
+      "duel": {
+        "tide_files": 8,
+        "tide_lines": 2926
+      },
+      "towers": {
+        "tide_files": 5,
+        "tide_lines": 2135
+      },
+      "sumo": {
+        "tide_files": 6,
+        "tide_lines": 2643
+      },
+      "tower-defense": {
+        "tide_files": 1,
+        "tide_lines": 1213
+      }
+    },
+    "cells": [
+      {
+        "game": "duel",
+        "target": "native",
+        "config": "debug",
+        "scenario": "cold",
+        "objects": 40,
+        "least_ms": 3307,
+        "median_ms": 4874,
+        "wall_ms": [
+          3430,
+          3307,
+          6338,
+          5045,
+          4874
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "native",
+        "config": "debug",
+        "scenario": "unchanged",
+        "objects": 40,
+        "least_ms": 120,
+        "median_ms": 191,
+        "wall_ms": [
+          120,
+          170,
+          484,
+          259,
+          191
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "native",
+        "config": "debug",
+        "scenario": "tide-body",
+        "objects": 40,
+        "least_ms": 431,
+        "median_ms": 539,
+        "wall_ms": [
+          431,
+          709,
+          727,
+          539,
+          488
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "native",
+        "config": "release",
+        "scenario": "cold",
+        "objects": 40,
+        "least_ms": 9796,
+        "median_ms": 12536,
+        "wall_ms": [
+          12606,
+          14378,
+          12536,
+          9796,
+          12173
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "native",
+        "config": "release",
+        "scenario": "unchanged",
+        "objects": 40,
+        "least_ms": 214,
+        "median_ms": 224,
+        "wall_ms": [
+          220,
+          351,
+          230,
+          224,
+          214
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "native",
+        "config": "release",
+        "scenario": "tide-body",
+        "objects": 40,
+        "least_ms": 2376,
+        "median_ms": 2858,
+        "wall_ms": [
+          2667,
+          3029,
+          2889,
+          2376,
+          2858
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "web",
+        "config": "debug",
+        "scenario": "cold",
+        "objects": 40,
+        "least_ms": 3690,
+        "median_ms": 5703,
+        "wall_ms": [
+          6302,
+          5703,
+          3690,
+          5548,
+          6269
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "web",
+        "config": "debug",
+        "scenario": "unchanged",
+        "objects": 40,
+        "least_ms": 284,
+        "median_ms": 371,
+        "wall_ms": [
+          510,
+          284,
+          293,
+          371,
+          469
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "web",
+        "config": "debug",
+        "scenario": "tide-body",
+        "objects": 40,
+        "least_ms": 695,
+        "median_ms": 966,
+        "wall_ms": [
+          1054,
+          695,
+          722,
+          966,
+          1410
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "web",
+        "config": "release",
+        "scenario": "cold",
+        "objects": 40,
+        "least_ms": 7561,
+        "median_ms": 8433,
+        "wall_ms": [
+          8433,
+          7561,
+          8216,
+          13987,
+          10949
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "web",
+        "config": "release",
+        "scenario": "unchanged",
+        "objects": 40,
+        "least_ms": 259,
+        "median_ms": 303,
+        "wall_ms": [
+          315,
+          263,
+          259,
+          408,
+          303
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "web",
+        "config": "release",
+        "scenario": "tide-body",
+        "objects": 40,
+        "least_ms": 1820,
+        "median_ms": 2028,
+        "wall_ms": [
+          1820,
+          2220,
+          2028,
+          2726,
+          1954
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "native",
+        "config": "debug",
+        "scenario": "cold",
+        "objects": 84,
+        "least_ms": 7407,
+        "median_ms": 8130,
+        "wall_ms": [
+          8130,
+          14371,
+          13522,
+          7407,
+          7980
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "native",
+        "config": "debug",
+        "scenario": "unchanged",
+        "objects": 84,
+        "least_ms": 152,
+        "median_ms": 192,
+        "wall_ms": [
+          192,
+          278,
+          242,
+          152,
+          160
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "native",
+        "config": "debug",
+        "scenario": "tide-body",
+        "objects": 84,
+        "least_ms": 714,
+        "median_ms": 851,
+        "wall_ms": [
+          869,
+          966,
+          851,
+          770,
+          714
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "native",
+        "config": "release",
+        "scenario": "cold",
+        "objects": 84,
+        "least_ms": 16010,
+        "median_ms": 19312,
+        "wall_ms": [
+          24205,
+          16681,
+          16010,
+          19312,
+          21792
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "native",
+        "config": "release",
+        "scenario": "unchanged",
+        "objects": 84,
+        "least_ms": 134,
+        "median_ms": 145,
+        "wall_ms": [
+          145,
+          241,
+          135,
+          188,
+          134
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "native",
+        "config": "release",
+        "scenario": "tide-body",
+        "objects": 84,
+        "least_ms": 2957,
+        "median_ms": 3190,
+        "wall_ms": [
+          3100,
+          3190,
+          2957,
+          3910,
+          3230
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "web",
+        "config": "debug",
+        "scenario": "cold",
+        "objects": 84,
+        "least_ms": 8945,
+        "median_ms": 10709,
+        "wall_ms": [
+          8945,
+          10658,
+          16259,
+          11515,
+          10709
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "web",
+        "config": "debug",
+        "scenario": "unchanged",
+        "objects": 84,
+        "least_ms": 347,
+        "median_ms": 443,
+        "wall_ms": [
+          368,
+          463,
+          591,
+          347,
+          443
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "web",
+        "config": "debug",
+        "scenario": "tide-body",
+        "objects": 84,
+        "least_ms": 964,
+        "median_ms": 1212,
+        "wall_ms": [
+          964,
+          1424,
+          1434,
+          1212,
+          1137
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "web",
+        "config": "release",
+        "scenario": "cold",
+        "objects": 84,
+        "least_ms": 14637,
+        "median_ms": 20363,
+        "wall_ms": [
+          22318,
+          22711,
+          14835,
+          20363,
+          14637
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "web",
+        "config": "release",
+        "scenario": "unchanged",
+        "objects": 84,
+        "least_ms": 263,
+        "median_ms": 361,
+        "wall_ms": [
+          862,
+          295,
+          441,
+          361,
+          263
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "web",
+        "config": "release",
+        "scenario": "tide-body",
+        "objects": 84,
+        "least_ms": 2878,
+        "median_ms": 3301,
+        "wall_ms": [
+          5942,
+          2935,
+          3868,
+          3301,
+          2878
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "native",
+        "config": "debug",
+        "scenario": "cold",
+        "objects": 93,
+        "least_ms": 8516,
+        "median_ms": 11277,
+        "wall_ms": [
+          11277,
+          12417,
+          17147,
+          8780,
+          8516
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "native",
+        "config": "debug",
+        "scenario": "unchanged",
+        "objects": 93,
+        "least_ms": 160,
+        "median_ms": 207,
+        "wall_ms": [
+          207,
+          432,
+          541,
+          160,
+          161
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "native",
+        "config": "debug",
+        "scenario": "tide-body",
+        "objects": 93,
+        "least_ms": 588,
+        "median_ms": 858,
+        "wall_ms": [
+          858,
+          1276,
+          1610,
+          588,
+          629
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "native",
+        "config": "release",
+        "scenario": "cold",
+        "objects": 93,
+        "least_ms": 18473,
+        "median_ms": 34432,
+        "wall_ms": [
+          34432,
+          44933,
+          37187,
+          18473,
+          28292
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "native",
+        "config": "release",
+        "scenario": "unchanged",
+        "objects": 93,
+        "least_ms": 140,
+        "median_ms": 388,
+        "wall_ms": [
+          267,
+          964,
+          388,
+          140,
+          522
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "native",
+        "config": "release",
+        "scenario": "tide-body",
+        "objects": 93,
+        "least_ms": 2226,
+        "median_ms": 4277,
+        "wall_ms": [
+          3703,
+          8230,
+          4277,
+          2226,
+          4384
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "web",
+        "config": "debug",
+        "scenario": "cold",
+        "objects": 93,
+        "least_ms": 8558,
+        "median_ms": 14183,
+        "wall_ms": [
+          22699,
+          14183,
+          14943,
+          9909,
+          8558
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "web",
+        "config": "debug",
+        "scenario": "unchanged",
+        "objects": 93,
+        "least_ms": 330,
+        "median_ms": 461,
+        "wall_ms": [
+          565,
+          461,
+          522,
+          330,
+          429
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "web",
+        "config": "debug",
+        "scenario": "tide-body",
+        "objects": 93,
+        "least_ms": 896,
+        "median_ms": 1252,
+        "wall_ms": [
+          1407,
+          1606,
+          1252,
+          896,
+          1211
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "web",
+        "config": "release",
+        "scenario": "cold",
+        "objects": 93,
+        "least_ms": 21334,
+        "median_ms": 27845,
+        "wall_ms": [
+          43127,
+          27845,
+          33682,
+          25728,
+          21334
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "web",
+        "config": "release",
+        "scenario": "unchanged",
+        "objects": 93,
+        "least_ms": 347,
+        "median_ms": 432,
+        "wall_ms": [
+          941,
+          372,
+          510,
+          347,
+          432
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "web",
+        "config": "release",
+        "scenario": "tide-body",
+        "objects": 93,
+        "least_ms": 2494,
+        "median_ms": 2741,
+        "wall_ms": [
+          6487,
+          2494,
+          3928,
+          2638,
+          2741
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "native",
+        "config": "debug",
+        "scenario": "cold",
+        "objects": 40,
+        "least_ms": 3266,
+        "median_ms": 4175,
+        "wall_ms": [
+          5347,
+          4646,
+          4175,
+          3381,
+          3266
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "native",
+        "config": "debug",
+        "scenario": "unchanged",
+        "objects": 40,
+        "least_ms": 114,
+        "median_ms": 179,
+        "wall_ms": [
+          142,
+          278,
+          429,
+          114,
+          179
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "native",
+        "config": "debug",
+        "scenario": "tide-body",
+        "objects": 40,
+        "least_ms": 322,
+        "median_ms": 335,
+        "wall_ms": [
+          442,
+          500,
+          335,
+          324,
+          322
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "native",
+        "config": "release",
+        "scenario": "cold",
+        "objects": 40,
+        "least_ms": 7442,
+        "median_ms": 8467,
+        "wall_ms": [
+          8627,
+          8467,
+          11100,
+          7442,
+          7515
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "native",
+        "config": "release",
+        "scenario": "unchanged",
+        "objects": 40,
+        "least_ms": 103,
+        "median_ms": 175,
+        "wall_ms": [
+          402,
+          107,
+          184,
+          103,
+          175
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "native",
+        "config": "release",
+        "scenario": "tide-body",
+        "objects": 40,
+        "least_ms": 897,
+        "median_ms": 970,
+        "wall_ms": [
+          970,
+          1029,
+          1225,
+          897,
+          953
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "web",
+        "config": "debug",
+        "scenario": "cold",
+        "objects": 40,
+        "least_ms": 3673,
+        "median_ms": 5701,
+        "wall_ms": [
+          5701,
+          6751,
+          7529,
+          3673,
+          4174
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "web",
+        "config": "debug",
+        "scenario": "unchanged",
+        "objects": 40,
+        "least_ms": 240,
+        "median_ms": 380,
+        "wall_ms": [
+          380,
+          775,
+          785,
+          240,
+          275
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "web",
+        "config": "debug",
+        "scenario": "tide-body",
+        "objects": 40,
+        "least_ms": 503,
+        "median_ms": 1135,
+        "wall_ms": [
+          1350,
+          1397,
+          1135,
+          503,
+          561
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "web",
+        "config": "release",
+        "scenario": "cold",
+        "objects": 40,
+        "least_ms": 6781,
+        "median_ms": 8881,
+        "wall_ms": [
+          13104,
+          9642,
+          8881,
+          7468,
+          6781
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "web",
+        "config": "release",
+        "scenario": "unchanged",
+        "objects": 40,
+        "least_ms": 239,
+        "median_ms": 301,
+        "wall_ms": [
+          301,
+          334,
+          326,
+          239,
+          240
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "web",
+        "config": "release",
+        "scenario": "tide-body",
+        "objects": 40,
+        "least_ms": 1006,
+        "median_ms": 1280,
+        "wall_ms": [
+          1555,
+          1280,
+          1405,
+          1006,
+          1012
+        ]
+      }
+    ]
+  },
+  "where_a_cold_build_goes": {
+    "what": "One cold build each, by the gaps between its objects' write times, which is each file's compile as tide runs them one after another. Taken while the CPU was at 20% to 95%, so the shares mean more than the seconds.",
+    "builds": [
+      {
+        "game": "sumo",
+        "config": "native debug",
+        "total_ms": 22830,
+        "engine_ms": 7849,
+        "box3d_ms": 13682,
+        "game_o_ms": 856,
+        "main_o_ms": 182,
+        "after_last_object_ms": 260
+      },
+      {
+        "game": "sumo",
+        "config": "native release",
+        "total_ms": 24694,
+        "engine_ms": 9009,
+        "box3d_ms": 12473,
+        "game_o_ms": 2811,
+        "main_o_ms": 236,
+        "after_last_object_ms": 166
+      },
+      {
+        "game": "sumo",
+        "config": "web release",
+        "total_ms": 18696,
+        "engine_ms": 5774,
+        "box3d_ms": 10600,
+        "game_o_ms": 1925,
+        "main_o_ms": 135,
+        "after_last_object_ms": 261
+      },
+      {
+        "game": "duel",
+        "config": "native debug",
+        "total_ms": 5342,
+        "engine_ms": 4679,
+        "game_o_ms": 392,
+        "main_o_ms": 157,
+        "after_last_object_ms": 114
+      },
+      {
+        "game": "duel",
+        "config": "native release",
+        "total_ms": 15190,
+        "engine_ms": 11872,
+        "game_o_ms": 3002,
+        "main_o_ms": 205,
+        "after_last_object_ms": 110
+      }
+    ]
+  },
+  "compiles_at_once": {
+    "what": "Sumo's 93 compiles (38 engine files, 53 of Box3D, game.c, main.c) replayed with tide's own compiler and flags, one at a time as tide runs them and several at a time, three rounds in turn. Seconds.",
+    "native_debug": {
+      "1": [
+        14.47,
+        11.69,
+        12.61
+      ],
+      "6": [
+        3.04,
+        2.05,
+        2.64
+      ],
+      "12": [
+        1.88,
+        1.5,
+        2.39
+      ],
+      "24": [
+        1.84,
+        1.61,
+        2.01
+      ]
+    },
+    "native_release": {
+      "1": [
+        29.69,
+        36.95,
+        27.81
+      ],
+      "6": [
+        6.71,
+        8.66,
+        6.49
+      ],
+      "12": [
+        4.85,
+        6.33,
+        4.52
+      ],
+      "24": [
+        4.32,
+        5.05,
+        4.05
+      ]
+    }
+  }
+}

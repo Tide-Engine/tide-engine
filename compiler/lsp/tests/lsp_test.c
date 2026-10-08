@@ -1453,6 +1453,11 @@ TIDE_TEST(lsp_shaders_complete)
     // Outside a frag or vert, a grid has its own methods, and no Sample
     const char *cells = complete(SHADER_TYPES "view V(mut Models models)\n{\n    models.wood.$\n}\n");
     TIDE_CHECK(offers(cells, "Clear") && offers(cells, "size") && !offers(cells, "Sample"));
+    // A Grid3's cells are read by their place in a frag, with its size: nothing samples one
+    const char *solid = complete("scene Main { }\nstruct Corner { float2 position; }\nlocal singleton Land { Grid3<int> solid; }\n"
+                                 "frag Dig(Corner corner, out Color color, Land land)\n{\n    var s = land.solid.$\n}\n");
+    TIDE_CHECK(offers(solid, "size") && !offers(solid, "Sample") && !offers(solid, "Clear"));
+    TIDE_CHECK(has(solid, "int3"));
 
     // After a mesh's lists, at Draw.Mesh: the verts and frags that run on its vertex, by name
 #define IN_VIEW(code)                                                                                                 \
