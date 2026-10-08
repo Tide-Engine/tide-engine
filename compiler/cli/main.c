@@ -75,6 +75,10 @@ static void usage(void)
     printf("run, with no window, to see what the game draws (not on the web or Android). The game runs once, in\n"
            "made-up time, a 60th of a second a frame, so a run repeats exactly, and tide ends with its exit code:\n"
            "  --capture <file.png>  the run's last frame, as a PNG\n"
+           "  --capture-audio <file.wav>\n"
+           "                        everything the run played, as a WAV\n"
+           "  --microphone <file>   a WAV or Ogg Vorbis file the run's microphone plays, looped: it hears nothing\n"
+           "                        without it\n"
            "  --frames <n>          the run ends after this many frames\n"
            "  --script <file>       input by frame, and when to capture and quit: lines like `120 key d down`,\n"
            "                        `200 mouse 640 360`, `201 button left`, `400 capture fight.png` and `500 quit`\n"
@@ -224,17 +228,18 @@ int main(const int argc, char **argv)
 
     build_options opts = {.folder = "."};
     // What the game's own command line takes (tide/run.h), which run passes on: --host [port], --join <code> or
-    // --connect <address>, the window's size, its matches' seed, and a run with no window
-    const char *game_args[24] = {NULL};
+    // --connect <address>, the window's size, its matches' seed, and a run with no window. Each of them once is 25
+    // arguments
+    const char *game_args[32] = {NULL};
     int game_arg_count = 0;
     bool open_page = true; // run --web opens the page in a browser
-    bool headless = false; // --capture, --frames or --script: the game runs with no window
+    bool headless = false; // --capture, --capture-audio, --frames, --microphone or --script: the game runs with no window
     bool players = false;  // --players: several players, which only such a run has
     bool sized = false;
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
         const int left = argc - i - 1; // Arguments after this one
-        if (run && game_arg_count > 20) { // Room for the longest of them yet
+        if (run && game_arg_count > 28) { // Room for the longest of them yet, --size's 3, and the NULL after them
             fprintf(stderr, "tide: run takes each of its options once\n");
             return 2;
         }
@@ -244,9 +249,14 @@ int main(const int argc, char **argv)
         } else if (run && (strcmp(a, "--join") == 0 || strcmp(a, "--connect") == 0) && left >= 1) {
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = argv[++i];
-        } else if (run && (strcmp(a, "--capture") == 0 || strcmp(a, "--script") == 0)) {
+        } else if (run && (strcmp(a, "--capture") == 0 || strcmp(a, "--capture-audio") == 0 || strcmp(a, "--script") == 0 ||
+                           strcmp(a, "--microphone") == 0)) {
             if (left < 1) {
-                fprintf(stderr, "tide: %s takes a file, like `%s`\n", a, a[2] == 'c' ? "--capture menu.png" : "--script play.txt");
+                const char *like = "--capture menu.png";
+                if (a[2] == 's') like = "--script play.txt";
+                else if (a[2] == 'm') like = "--microphone voice.wav";
+                else if (a[9]) like = "--capture-audio run.wav"; // What's after --capture
+                fprintf(stderr, "tide: %s takes a file, like `%s`\n", a, like);
                 return 2;
             }
             // The game runs in its own folder: the file is where the command says, from here
