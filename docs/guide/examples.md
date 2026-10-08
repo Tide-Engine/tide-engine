@@ -42,16 +42,16 @@ Some examples put two players side by side. Each frame is a machine of its own, 
 ## What a machine shows
 
 - [A view draws the world](../game/views.md): cameras, and screen and world coordinates.
-- [Opacity in 2D and 3D](../game/views.md#transparency): a shape and two translucent panes, with solid objects behind and in front.
+- [Opacity in 2D and 3D](../game/draw-settings.md#transparency): a shape and two translucent panes, with solid objects behind and in front.
 - [Five ticks a second, drawn every frame](../game/views.md#smooth-at-any-tick-rate): what views see between ticks.
 - [Smooth shapes](../game/views.md#smooth-shapes): round rects, ellipses, arcs, outlines and soft edges.
 - [A sprite from a file](../game/assets.md#declaring-an-asset): a PNG packed with the game, drawn as a texture and read by the match.
 - [Anchors, sizes and weights](../game/views.md#measuring-text): text, where it's placed and how big it is.
-- [A grid, drawn as a texture](../game/views.md#textures): a `Grid2<Color>` to paint on.
-- [A texture, past its edges](../game/views.md#past-the-edges): clamped, repeated and mirrored.
-- [A lens, cut out of a wall](../game/views.md#stencil): a shape stored in stencil, and what's drawn inside it and outside it.
-- [Primitives through a 3D camera](../game/views.md#primitives): cubes, a sphere, a cylinder and a plane.
-- [A scene through a frag](../game/views.md#targets-and-post-processing): a render target, blitted to the window.
+- [A grid, drawn as a texture](../game/meshes-and-textures.md#textures): a `Grid2<Color>` to paint on.
+- [A texture, past its edges](../game/meshes-and-textures.md#past-the-edges): clamped, repeated and mirrored.
+- [A lens, cut out of a wall](../game/draw-settings.md#stencil): a shape stored in stencil, and what's drawn inside it and outside it.
+- [Primitives through a 3D camera](../game/3d.md#primitives): cubes, a sphere, a cylinder and a plane.
+- [A scene through a frag](../game/render-targets.md#post-processing): a render target, blitted to the window.
 - [A frag and a vert](../game/shaders.md): code of the game's on the GPU.
 - [Lighting, in a frag](../game/shaders.md#where-the-pixel-is): a vertex with a normal, lit pixel by pixel.
 - [A shadow map](../game/shaders.md#a-shadow-map): what casts drawn into a target of depth alone, and a frag that compares.

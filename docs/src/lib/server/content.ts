@@ -61,12 +61,45 @@ function describe(text: string): string {
     return `${cut.slice(0, cut.lastIndexOf(' '))}…`;
 }
 
+// A page that was split keeps its address, and the sections that left it are
+// on the pages after `to`. A link from before the split, `/game/views#stencil`,
+// names an anchor its page no longer has, so the page sends it on to the one
+// that has that heading now (the docs' +page.svelte). `gone` is for a heading
+// that became its page's title: the anchor it had, and that page.
+const split: Record<string, { to: string[]; gone: Record<string, string> }> = {
+    '/game/views': {
+        to: ['/game/views-and-the-match', '/game/draw-settings', '/game/meshes-and-textures', '/game/3d', '/game/cameras', '/game/render-targets'],
+        gone: { 'targets-and-post-processing': '/game/render-targets', _3d: '/game/3d' },
+    },
+};
+
+/** Where the anchors a split page no longer has lead, by anchor. */
+function moved(at: string, own: string[]): Record<string, string> | undefined {
+    const parts = split[at];
+    if (!parts) return undefined;
+    const result: Record<string, string> = {};
+    for (const [id, to] of Object.entries(parts.gone)) {
+        if (!files.has(to)) throw new Error(`${at}#${id} moved to ${to}, which is no page`);
+        if (own.includes(id)) throw new Error(`${at}#${id} is said to have moved to ${to}, and is still a heading of ${at}`);
+        result[id] = to;
+    }
+    for (const to of parts.to) {
+        if (!files.has(to)) throw new Error(`${at}'s sections moved to ${to}, which is no page`);
+        for (const id of renderFile(files.get(to)!).ids) {
+            if (!own.includes(id)) result[id] ??= `${to}#${id}`;
+        }
+    }
+    return result;
+}
+
 export interface Page {
     path: string;
     title: string;
     description: string;
     html: string;
     headings: Heading[];
+    /** Anchors this page had before its sections went to other pages, and where each is now. */
+    moved?: Record<string, string>;
     prev?: Link;
     next?: Link;
 }
@@ -88,6 +121,7 @@ export function page(slug: string): Page {
                 : describe(rendered.sections.find((section) => section.text.trim())?.text ?? `Learn about ${rendered.title} in Tide Engine.`),
             html: rendered.html,
             headings: rendered.headings,
+            moved: moved(at, rendered.ids),
             prev: pages[index - 1],
             next: pages[index + 1],
         };

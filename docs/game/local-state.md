@@ -204,7 +204,7 @@ It takes the one component or singleton whose local fields are going, and local 
 No mistake here can reach a running game, because the compiler enforces the boundary:
 
 - **Match code** (systems, match event handlers, match scenes) can't read or write anything local, a component's [local fields](#local-fields) included, and can't read this machine's `Devices`: it takes a `Devices` parameter, the owner's, which the input sends.
-- **Local code** (views, local event handlers, local scenes) can read the match, but never change it directly: `mut` on one of the match's components or singletons only writes its local fields. It can send [commands](./commands.md) for a match handler to check and act on; it cannot spawn match entities or send match events. Views read the match as it's drawn, or as the server [confirmed](./views.md#confirmed-state) it, and a local handler [hears its events](./events.md#local-handlers).
+- **Local code** (views, local event handlers, local scenes) can read the match, but never change it directly: `mut` on one of the match's components or singletons only writes its local fields. It can send [commands](./commands.md) for a match handler to check and act on; it cannot spawn match entities or send match events. Views read the match as it's drawn, or as the server [confirmed](./views-and-the-match.md#confirmed-state) it, and a local handler [hears its events](./events.md#local-handlers).
 - The input's `Sample` reads this machine's devices and local singletons, and writes only the input.
 
 Input and commands carry local actions into the match. Starting, joining and leaving a match are session calls, which never touch a running match (see [Matches](../multiplayer/matches.md)). The errors say where to go instead:
