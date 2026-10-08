@@ -1458,6 +1458,85 @@ static void run_model_checks(const char *when)
     }
 }
 
+// Places (pass 22): verts that put their vertices themselves, `out float4`,
+// from where the engine would have, `this.clip`. Each square is read inside
+// where it has to be and outside it, which is often where its transform
+// alone would have drawn it.
+static void run_place_checks(const char *when)
+{
+    static const float black[3] = {0, 0, 0}, red[3] = {1, 0, 0}, green[3] = {0, 1, 0}, blue[3] = {0, 0, 1}, white[3] = {1, 1, 1};
+    // Where the square moved to the right is in the world, half a pixel from its middle: its transform's place, at pixel (56, 176)
+    static const float where[3] = {(56.5f - 128.0f) / 256.0f + 0.5f, (128.0f - 176.5f) / 256.0f + 0.5f, 0};
+    static const struct {
+        float x, y; // The pixel
+        const float *is;
+        const char *what;
+    } wanted[] = {
+        // With perspective, a unit 10 away is 22.17 pixels: a square with no vert from 17.1 to 61.5, each way...
+        {39.5f, 39.5f, red, "a square with no vert, under a camera with perspective"},
+        {20.5f, 39.5f, red, "its left edge"},
+        {13.5f, 39.5f, black, "and nothing left of it"},
+        {57.5f, 39.5f, red, "its right edge"},
+        {65.5f, 39.5f, black, "and nothing right of it"},
+        // ...and its mirror image, through a vert that writes this.clip back, from 194.5 to 238.9
+        {216.5f, 39.5f, green, "a vert that writes this.clip back draws where the engine would have, under perspective"},
+        {235.5f, 39.5f, green, "its right edge"},
+        {242.5f, 39.5f, black, "and nothing right of it"},
+        {198.5f, 39.5f, green, "its left edge"},
+        {190.5f, 39.5f, black, "and nothing left of it"},
+        {216.5f, 20.5f, green, "its top"},
+        {216.5f, 13.5f, black, "and nothing above it"},
+        {216.5f, 58.5f, green, "its bottom"},
+        {216.5f, 65.5f, black, "and nothing below it"},
+        // One from 110.3 to 154.6 across and 72.6 to 116.9 down, moved onto a grid of 32 pixels: 96 to 160, and 64 to 128
+        {99.5f, 100.5f, blue, "a corner moved onto its frame's pixel: left of where the square was"},
+        {92.5f, 100.5f, black, "and no further"},
+        {157.5f, 100.5f, blue, "right of where it was"},
+        {163.5f, 100.5f, black, "and no further"},
+        {128.5f, 67.5f, blue, "above where it was"},
+        {128.5f, 60.5f, black, "and no further"},
+        {128.5f, 124.5f, blue, "below where it was"},
+        {128.5f, 131.5f, black, "and no further"},
+        // A unit to a pixel
+        {24.5f, 176.5f, red, "a vert that writes this.clip back, a unit to a pixel"},
+        {40.5f, 176.5f, black, "and nothing beside it"},
+        {88.5f, 176.5f, where, "a square its vert moved 32 pixels right: its frag's this.world is still its transform's place"},
+        {56.5f, 176.5f, black, "and nothing is drawn where its transform alone would have put it"},
+        {120.5f, 152.5f, blue, "this.clip read after the vert changed its vertex: 24 pixels up"},
+        {120.5f, 176.5f, black, "and nothing where it was"},
+        {168.5f, 176.5f, green, "a square behind another, whose vert says its depth is nearer"},
+        {200.5f, 176.5f, red, "and one whose vert leaves its depth: hidden"},
+        {56.5f, 216.5f, green, "an Instanced draw's item, by its own transform and its own push to the right"},
+        {24.5f, 216.5f, black, "and nothing where its transform is"},
+        {88.5f, 216.5f, green, "the next item, pushed to the left"},
+        {120.5f, 216.5f, black, "and nothing where its transform is"},
+        {200.5f, 216.5f, white, "a 2D mesh's place, through its camera and Draw.Transform: 32 pixels right"},
+        {168.5f, 216.5f, black, "and nothing where its transform alone would have put it"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    local.Art.targetPass = 22;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[COUNT];
+    uint32_t got[COUNT];
+    for (int i = 0; i < COUNT; i++) points[i] = tide_f2(wanted[i].x, wanted[i].y);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
+    for (int i = 0; i < COUNT; i++) {
+        const uint8_t want[3] = {byte(wanted[i].is[0]), byte(wanted[i].is[1]), byte(wanted[i].is[2])};
+        bool ok = true;
+        for (int c = 0; c < 3; c++) {
+            const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - (int)want[c];
+            ok = ok && d >= -3 && d <= 3;
+        }
+        printf("%s: %s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, when, (unsigned)got[i],
+               want[0], want[1], want[2]);
+        if (!ok) failures++;
+    }
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -1493,6 +1572,7 @@ static int frame(void *user, const float seconds)
         run_roll_checks(555, ", on another device");
         run_normal_checks(", on another device");
         run_model_checks(", on another device");
+        run_place_checks(", on another device");
         return failures;
     }
 #endif
@@ -1530,6 +1610,8 @@ static int frame(void *user, const float seconds)
     run_normal_checks("");
     run_model_checks("");
     run_model_checks(", again");
+    run_place_checks("");
+    run_place_checks(", again");
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");
