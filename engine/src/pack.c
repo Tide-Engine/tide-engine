@@ -283,6 +283,21 @@ uint32_t tide_pack_mesh_list(tide_pack_builder *b, const uint32_t *offsets, cons
     return at;
 }
 
+uint32_t tide_pack_skinned_list(tide_pack_builder *b, const uint32_t *offsets, const uint32_t count)
+{
+    const uint64_t bytes = (uint64_t)count * sizeof(tide_skinned_lists);
+    if (bytes + sizeof(tide_block) > TIDE_PACK_BASE) tide_out_of_memory();
+    const uint32_t at = block(b, (uint32_t)bytes);
+    tide_block *h = header(b, at);
+    h->a = count;
+    h->b = count;
+    tide_skinned_lists *models = (tide_skinned_lists *)(void *)(h + 1);
+    for (uint32_t i = 0; i < count; i++) {
+        models[i] = (tide_skinned_lists){{tagged(offsets[3u * i])}, {tagged(offsets[3u * i + 1u])}, {tagged(offsets[3u * i + 2u])}};
+    }
+    return at;
+}
+
 uint32_t tide_pack_list(tide_pack_builder *b, const uint32_t *offsets, const uint32_t count)
 {
     const uint32_t at = block(b, count * (uint32_t)sizeof(uint32_t));
@@ -351,6 +366,33 @@ uint32_t tide_pack_mesh_map(tide_pack_builder *b, const uint32_t *keys, const ui
         entries[i].live = (int64_t)i + 1;
         entries[i].key = tagged(keys[i]);
         entries[i].value = (tide_mesh_lists){{tagged(offsets[2u * i])}, {tagged(offsets[2u * i + 1u])}};
+    }
+    *index = text_index(b, keys, count);
+    return at;
+}
+
+typedef struct skinned_entry {
+    int64_t live;
+    uint32_t key;
+    tide_skinned_lists value;
+} skinned_entry;
+
+_Static_assert(sizeof(skinned_entry) == 24u && offsetof(skinned_entry, key) == 8u && offsetof(skinned_entry, value) == 12u,
+               "packed skinned map entries must match the generated map layout");
+
+uint32_t tide_pack_skinned_map(tide_pack_builder *b, const uint32_t *keys, const uint32_t *offsets, const uint32_t count,
+                              uint32_t *index)
+{
+    const uint64_t bytes = (uint64_t)count * sizeof(skinned_entry);
+    if (bytes + sizeof(tide_block) > TIDE_PACK_BASE) tide_out_of_memory();
+    const uint32_t at = block(b, (uint32_t)bytes);
+    tide_block *h = header(b, at);
+    h->a = count;
+    h->b = count;
+    skinned_entry *entries = (skinned_entry *)(void *)(h + 1);
+    for (uint32_t i = 0; i < count; i++) {
+        entries[i] = (skinned_entry){(int64_t)i + 1, tagged(keys[i]), {{tagged(offsets[3u * i])}, {tagged(offsets[3u * i + 1u])},
+                                                        {tagged(offsets[3u * i + 2u])}}};
     }
     *index = text_index(b, keys, count);
     return at;

@@ -1,0 +1,1335 @@
+// meshes of Vertex3: GLSL, vertex
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+};
+uniform highp isampler2D pixels0;
+uniform highp isampler2D pixels1;
+layout(location = 0) in vec3 tide_a0;
+layout(location = 1) in vec2 tide_a1;
+layout(location = 2) in vec4 tide_a2;
+layout(location = 3) in vec4 tide_n0;
+layout(location = 4) in vec4 tide_n1;
+layout(location = 5) in vec4 tide_n2;
+layout(location = 6) in vec4 tide_n3;
+out vec4 tide_s2;
+struct tt_Vertex3 {
+    vec3 m_position;
+    vec2 m_uv;
+    vec4 m_color;
+};
+ivec4 tide_skin_words0(int p) {
+    return texelFetch(pixels0, ivec2(p & 1023, p >> 10), 0);
+}
+ivec4 tide_skin_words1(int p) {
+    return texelFetch(pixels1, ivec2(p & 1023, p >> 10), 0);
+}
+mat4 tide_skin_matrix(int i) {
+    if (i < 0 || i >= tide_v0.x) return mat4(1.0);
+    int p = i * 4;
+    return mat4(intBitsToFloat(tide_skin_words0(p + 0)), intBitsToFloat(tide_skin_words0(p + 1)), intBitsToFloat(tide_skin_words0(p + 2)), intBitsToFloat(tide_skin_words0(p + 3)));
+}
+mat4 tide_skinning(int vertex) {
+    if (vertex < 0 || vertex >= tide_v0.y) return mat4(1.0);
+    ivec2 range = tide_skin_words1(vertex).xy;
+    int entries = tide_v0.z;
+    if (range.x < 0 || range.y < 0 || range.x > entries || range.y > entries - range.x) return mat4(1.0);
+    vec4 c0 = vec4(0.0);
+    vec4 c1 = vec4(0.0);
+    vec4 c2 = vec4(0.0);
+    vec4 c3 = vec4(0.0);
+    float total = 0.0;
+    for (int n = 0; n < range.y; n++) {
+        int i = range.x + n;
+        ivec4 pair = tide_skin_words1(tide_v0.y + (i >> 1));
+        int joint = (i & 1) == 0 ? pair.x : pair.z;
+        float weight = intBitsToFloat((i & 1) == 0 ? pair.y : pair.w);
+        mat4 matrix = tide_skin_matrix(joint);
+        c0 = c0 + matrix[0] * weight;
+        c1 = c1 + matrix[1] * weight;
+        c2 = c2 + matrix[2] * weight;
+        c3 = c3 + matrix[3] * weight;
+        total = total + weight;
+    }
+    if (!(total > 0.0)) return mat4(1.0);
+    return mat4(c0 / total, c1 / total, c2 / total, c3 / total);
+}
+void main() {
+    tt_Vertex3 tide_vertex = tt_Vertex3(tide_a0, tide_a1, tide_a2);
+    mat4 tide_skin = tide_skinning(gl_VertexID);
+    tide_vertex.m_position = (tide_skin * vec4(tide_vertex.m_position, 1.0)).xyz;
+    vec4 tide_place = mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(tide_vertex.m_position, 1.0);
+    gl_Position = tide_camera * tide_place;
+    tide_s2 = tide_vertex.m_color;
+}
+
+// meshes of Vertex3: GLSL, fragment
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+};
+uniform highp isampler2D pixels0;
+uniform highp isampler2D pixels1;
+in vec4 tide_s2;
+out vec4 tide_pixel;
+void main() {
+    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
+    tide_color = tide_s2;
+    tide_color = tide_color * tide_tint;
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
+    tide_pixel = tide_color;
+}
+
+// meshes of Vertex3: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_v0: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(1) var pixels0: texture_2d<i32>;
+@group(0) @binding(3) var pixels1: texture_2d<i32>;
+var<private> tide_n0: vec4f;
+var<private> tide_n1: vec4f;
+var<private> tide_n2: vec4f;
+var<private> tide_n3: vec4f;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s2: vec4f,
+}
+struct tt_Vertex3 {
+    m_position: vec3f,
+    m_uv: vec2f,
+    m_color: vec4f,
+}
+fn tide_skin_words0(p: i32) -> vec4i {
+    return textureLoad(pixels0, vec2i(p & 1023, p >> 10), 0);
+}
+fn tide_skin_words1(p: i32) -> vec4i {
+    return textureLoad(pixels1, vec2i(p & 1023, p >> 10), 0);
+}
+fn tide_skin_matrix(i: i32) -> mat4x4f {
+    if (i < 0 || i >= tide_block.tide_v0.x) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    let p = i * 4;
+    return mat4x4f(bitcast<vec4f>(tide_skin_words0(p + 0)), bitcast<vec4f>(tide_skin_words0(p + 1)), bitcast<vec4f>(tide_skin_words0(p + 2)), bitcast<vec4f>(tide_skin_words0(p + 3)));
+}
+fn tide_skinning(vertex: i32) -> mat4x4f {
+    if (vertex < 0 || vertex >= tide_block.tide_v0.y) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    let range = tide_skin_words1(vertex).xy;
+    let entries = tide_block.tide_v0.z;
+    if (range.x < 0 || range.y < 0 || range.x > entries || range.y > entries - range.x) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    var c0 = vec4f(0.0);
+    var c1 = vec4f(0.0);
+    var c2 = vec4f(0.0);
+    var c3 = vec4f(0.0);
+    var total = 0.0;
+    for (var n = 0; n < range.y; n++) {
+        let i = range.x + n;
+        let pair = tide_skin_words1(tide_block.tide_v0.y + (i >> 1));
+        let joint = select(pair.x, pair.z, (i & 1) != 0);
+        let weight = bitcast<f32>(select(pair.y, pair.w, (i & 1) != 0));
+        let matrix = tide_skin_matrix(joint);
+        c0 = c0 + matrix[0] * weight;
+        c1 = c1 + matrix[1] * weight;
+        c2 = c2 + matrix[2] * weight;
+        c3 = c3 + matrix[3] * weight;
+        total = total + weight;
+    }
+    if (!(total > 0.0)) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    return mat4x4f(c0 / total, c1 / total, c2 / total, c3 / total);
+}
+@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f, @location(3) tide_in0: vec4f, @location(4) tide_in1: vec4f, @location(5) tide_in2: vec4f, @location(6) tide_in3: vec4f, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+    tide_n0 = tide_in0;
+    tide_n1 = tide_in1;
+    tide_n2 = tide_in2;
+    tide_n3 = tide_in3;
+    var tide_vertex: tt_Vertex3 = tt_Vertex3(tide_a0, tide_a1, tide_a2);
+    let tide_skin = tide_skinning(i32(tide_vertex_index));
+    tide_vertex.m_position = (tide_skin * vec4f(tide_vertex.m_position, 1.0)).xyz;
+    let tide_place = mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f(tide_vertex.m_position, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s2 = tide_vertex.m_color;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    tide_color = in.tide_s2;
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// meshes of Vertex3: GLSL, vertex
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+};
+uniform sampler2D pixels0;
+uniform highp isampler2D pixels1;
+uniform highp isampler2D pixels2;
+layout(location = 0) in vec3 tide_a0;
+layout(location = 1) in vec2 tide_a1;
+layout(location = 2) in vec4 tide_a2;
+layout(location = 3) in vec4 tide_n0;
+layout(location = 4) in vec4 tide_n1;
+layout(location = 5) in vec4 tide_n2;
+layout(location = 6) in vec4 tide_n3;
+out vec2 tide_s1;
+out vec4 tide_s2;
+struct tt_Vertex3 {
+    vec3 m_position;
+    vec2 m_uv;
+    vec4 m_color;
+};
+ivec4 tide_skin_words0(int p) {
+    return texelFetch(pixels1, ivec2(p & 1023, p >> 10), 0);
+}
+ivec4 tide_skin_words1(int p) {
+    return texelFetch(pixels2, ivec2(p & 1023, p >> 10), 0);
+}
+mat4 tide_skin_matrix(int i) {
+    if (i < 0 || i >= tide_v0.x) return mat4(1.0);
+    int p = i * 4;
+    return mat4(intBitsToFloat(tide_skin_words0(p + 0)), intBitsToFloat(tide_skin_words0(p + 1)), intBitsToFloat(tide_skin_words0(p + 2)), intBitsToFloat(tide_skin_words0(p + 3)));
+}
+mat4 tide_skinning(int vertex) {
+    if (vertex < 0 || vertex >= tide_v0.y) return mat4(1.0);
+    ivec2 range = tide_skin_words1(vertex).xy;
+    int entries = tide_v0.z;
+    if (range.x < 0 || range.y < 0 || range.x > entries || range.y > entries - range.x) return mat4(1.0);
+    vec4 c0 = vec4(0.0);
+    vec4 c1 = vec4(0.0);
+    vec4 c2 = vec4(0.0);
+    vec4 c3 = vec4(0.0);
+    float total = 0.0;
+    for (int n = 0; n < range.y; n++) {
+        int i = range.x + n;
+        ivec4 pair = tide_skin_words1(tide_v0.y + (i >> 1));
+        int joint = (i & 1) == 0 ? pair.x : pair.z;
+        float weight = intBitsToFloat((i & 1) == 0 ? pair.y : pair.w);
+        mat4 matrix = tide_skin_matrix(joint);
+        c0 = c0 + matrix[0] * weight;
+        c1 = c1 + matrix[1] * weight;
+        c2 = c2 + matrix[2] * weight;
+        c3 = c3 + matrix[3] * weight;
+        total = total + weight;
+    }
+    if (!(total > 0.0)) return mat4(1.0);
+    return mat4(c0 / total, c1 / total, c2 / total, c3 / total);
+}
+void main() {
+    tt_Vertex3 tide_vertex = tt_Vertex3(tide_a0, tide_a1, tide_a2);
+    mat4 tide_skin = tide_skinning(gl_VertexID);
+    tide_vertex.m_position = (tide_skin * vec4(tide_vertex.m_position, 1.0)).xyz;
+    vec4 tide_place = mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(tide_vertex.m_position, 1.0);
+    gl_Position = tide_camera * tide_place;
+    tide_s1 = tide_vertex.m_uv;
+    tide_s2 = tide_vertex.m_color;
+}
+
+// meshes of Vertex3: GLSL, fragment
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+};
+uniform sampler2D pixels0;
+uniform highp isampler2D pixels1;
+uniform highp isampler2D pixels2;
+in vec2 tide_s1;
+in vec4 tide_s2;
+out vec4 tide_pixel;
+vec4 tide_straight(vec4 c) {
+    if (c.a == 0.0) { return vec4(0.0); }
+    return vec4(c.rgb / c.a, c.a);
+}
+void main() {
+    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
+    tide_color = tide_s2;
+    tide_color = tide_color * tide_straight(textureLod(pixels0, tide_s1, 0.0));
+    tide_color = tide_color * tide_tint;
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
+    tide_pixel = tide_color;
+}
+
+// meshes of Vertex3: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_v0: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(1) var pixels0: texture_2d<f32>;
+@group(0) @binding(2) var sampler0: sampler;
+@group(0) @binding(3) var pixels1: texture_2d<i32>;
+@group(0) @binding(5) var pixels2: texture_2d<i32>;
+var<private> tide_n0: vec4f;
+var<private> tide_n1: vec4f;
+var<private> tide_n2: vec4f;
+var<private> tide_n3: vec4f;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s1: vec2f,
+    @location(1) tide_s2: vec4f,
+}
+struct tt_Vertex3 {
+    m_position: vec3f,
+    m_uv: vec2f,
+    m_color: vec4f,
+}
+fn tide_straight(c: vec4f) -> vec4f {
+    if (c.a == 0.0) { return vec4f(0.0); }
+    return vec4f(c.rgb / c.a, c.a);
+}
+fn tide_skin_words0(p: i32) -> vec4i {
+    return textureLoad(pixels1, vec2i(p & 1023, p >> 10), 0);
+}
+fn tide_skin_words1(p: i32) -> vec4i {
+    return textureLoad(pixels2, vec2i(p & 1023, p >> 10), 0);
+}
+fn tide_skin_matrix(i: i32) -> mat4x4f {
+    if (i < 0 || i >= tide_block.tide_v0.x) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    let p = i * 4;
+    return mat4x4f(bitcast<vec4f>(tide_skin_words0(p + 0)), bitcast<vec4f>(tide_skin_words0(p + 1)), bitcast<vec4f>(tide_skin_words0(p + 2)), bitcast<vec4f>(tide_skin_words0(p + 3)));
+}
+fn tide_skinning(vertex: i32) -> mat4x4f {
+    if (vertex < 0 || vertex >= tide_block.tide_v0.y) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    let range = tide_skin_words1(vertex).xy;
+    let entries = tide_block.tide_v0.z;
+    if (range.x < 0 || range.y < 0 || range.x > entries || range.y > entries - range.x) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    var c0 = vec4f(0.0);
+    var c1 = vec4f(0.0);
+    var c2 = vec4f(0.0);
+    var c3 = vec4f(0.0);
+    var total = 0.0;
+    for (var n = 0; n < range.y; n++) {
+        let i = range.x + n;
+        let pair = tide_skin_words1(tide_block.tide_v0.y + (i >> 1));
+        let joint = select(pair.x, pair.z, (i & 1) != 0);
+        let weight = bitcast<f32>(select(pair.y, pair.w, (i & 1) != 0));
+        let matrix = tide_skin_matrix(joint);
+        c0 = c0 + matrix[0] * weight;
+        c1 = c1 + matrix[1] * weight;
+        c2 = c2 + matrix[2] * weight;
+        c3 = c3 + matrix[3] * weight;
+        total = total + weight;
+    }
+    if (!(total > 0.0)) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    return mat4x4f(c0 / total, c1 / total, c2 / total, c3 / total);
+}
+@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f, @location(3) tide_in0: vec4f, @location(4) tide_in1: vec4f, @location(5) tide_in2: vec4f, @location(6) tide_in3: vec4f, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+    tide_n0 = tide_in0;
+    tide_n1 = tide_in1;
+    tide_n2 = tide_in2;
+    tide_n3 = tide_in3;
+    var tide_vertex: tt_Vertex3 = tt_Vertex3(tide_a0, tide_a1, tide_a2);
+    let tide_skin = tide_skinning(i32(tide_vertex_index));
+    tide_vertex.m_position = (tide_skin * vec4f(tide_vertex.m_position, 1.0)).xyz;
+    let tide_place = mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f(tide_vertex.m_position, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_uv;
+    out.tide_s2 = tide_vertex.m_color;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    tide_color = in.tide_s2;
+    tide_color = tide_color * tide_straight(textureSampleLevel(pixels0, sampler0, in.tide_s1, 0.0));
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// Deform and Inspect on Corner: GLSL, vertex
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+};
+uniform highp isampler2D pixels0;
+uniform highp isampler2D pixels1;
+layout(location = 0) in vec3 tide_a0;
+layout(location = 1) in vec3 tide_a1;
+layout(location = 2) in vec4 tide_a2;
+layout(location = 3) in vec4 tide_a3;
+layout(location = 4) in float tide_a4;
+layout(location = 5) in vec4 tide_n0;
+layout(location = 6) in vec4 tide_n1;
+layout(location = 7) in vec4 tide_n2;
+layout(location = 8) in vec4 tide_n3;
+out vec3 tide_s1;
+out vec4 tide_s3;
+flat out vec3 tide_normals0;
+flat out vec3 tide_normals1;
+flat out vec3 tide_normals2;
+struct tt_Corner {
+    vec3 m_position;
+    vec3 m_normal;
+    vec4 m_tangent;
+    vec4 m_color;
+    float m_glow;
+};
+vec3 tide_normalize3(vec3 v) {
+    float l = dot(v, v);
+    if (l > 1.17549435e-38) { return v * inversesqrt(l); }
+    return vec3(0.0);
+}
+mat3 tide_normals(mat4 m) {
+    vec3 a = cross(m[1].xyz, m[2].xyz);
+    vec3 b = cross(m[2].xyz, m[0].xyz);
+    vec3 c = cross(m[0].xyz, m[1].xyz);
+    if (dot(m[0].xyz, a) < 0.0) {
+        return mat3(-a, -b, -c);
+    }
+    return mat3(a, b, c);
+}
+void ts_Deform(inout tt_Corner t_corner) {
+    t_corner.m_position = (t_corner.m_position + (t_corner.m_normal * t_corner.m_glow));
+    t_corner.m_color = vec4(((t_corner.m_tangent.xyz * 0.5) + vec3(0.5)), 1.0);
+}
+
+ivec4 tide_skin_words0(int p) {
+    return texelFetch(pixels0, ivec2(p & 1023, p >> 10), 0);
+}
+ivec4 tide_skin_words1(int p) {
+    return texelFetch(pixels1, ivec2(p & 1023, p >> 10), 0);
+}
+mat4 tide_skin_matrix(int i) {
+    if (i < 0 || i >= tide_v0.x) return mat4(1.0);
+    int p = i * 4;
+    return mat4(intBitsToFloat(tide_skin_words0(p + 0)), intBitsToFloat(tide_skin_words0(p + 1)), intBitsToFloat(tide_skin_words0(p + 2)), intBitsToFloat(tide_skin_words0(p + 3)));
+}
+mat4 tide_skinning(int vertex) {
+    if (vertex < 0 || vertex >= tide_v0.y) return mat4(1.0);
+    ivec2 range = tide_skin_words1(vertex).xy;
+    int entries = tide_v0.z;
+    if (range.x < 0 || range.y < 0 || range.x > entries || range.y > entries - range.x) return mat4(1.0);
+    vec4 c0 = vec4(0.0);
+    vec4 c1 = vec4(0.0);
+    vec4 c2 = vec4(0.0);
+    vec4 c3 = vec4(0.0);
+    float total = 0.0;
+    for (int n = 0; n < range.y; n++) {
+        int i = range.x + n;
+        ivec4 pair = tide_skin_words1(tide_v0.y + (i >> 1));
+        int joint = (i & 1) == 0 ? pair.x : pair.z;
+        float weight = intBitsToFloat((i & 1) == 0 ? pair.y : pair.w);
+        mat4 matrix = tide_skin_matrix(joint);
+        c0 = c0 + matrix[0] * weight;
+        c1 = c1 + matrix[1] * weight;
+        c2 = c2 + matrix[2] * weight;
+        c3 = c3 + matrix[3] * weight;
+        total = total + weight;
+    }
+    if (!(total > 0.0)) return mat4(1.0);
+    return mat4(c0 / total, c1 / total, c2 / total, c3 / total);
+}
+void main() {
+    tt_Corner tide_vertex = tt_Corner(tide_a0, tide_a1, tide_a2, tide_a3, tide_a4);
+    mat4 tide_skin = tide_skinning(gl_VertexID);
+    tide_vertex.m_position = (tide_skin * vec4(tide_vertex.m_position, 1.0)).xyz;
+    tide_vertex.m_normal = tide_normalize3(tide_normals(tide_skin) * tide_vertex.m_normal);
+    vec3 tide_tangent = (tide_skin * vec4(tide_vertex.m_tangent.xyz, 0.0)).xyz;
+    tide_tangent = tide_tangent - tide_vertex.m_normal * dot(tide_vertex.m_normal, tide_tangent);
+    float tide_side = dot(tide_skin[0].xyz, cross(tide_skin[1].xyz, tide_skin[2].xyz)) < 0.0 ? -1.0 : 1.0;
+    tide_vertex.m_tangent = vec4(tide_normalize3(tide_tangent), tide_vertex.m_tangent.w * tide_side);
+    ts_Deform(tide_vertex);
+    vec4 tide_place = mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(tide_vertex.m_position, 1.0);
+    gl_Position = tide_camera * tide_place;
+    tide_s1 = tide_vertex.m_normal;
+    tide_s3 = tide_vertex.m_color;
+    mat3 tide_turned = tide_normals(mat4(tide_n0, tide_n1, tide_n2, tide_n3));
+    tide_normals0 = tide_turned[0];
+    tide_normals1 = tide_turned[1];
+    tide_normals2 = tide_turned[2];
+}
+
+// Deform and Inspect on Corner: GLSL, fragment
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+};
+uniform highp isampler2D pixels0;
+uniform highp isampler2D pixels1;
+in vec3 tide_s1;
+in vec4 tide_s3;
+flat in vec3 tide_normals0;
+flat in vec3 tide_normals1;
+flat in vec3 tide_normals2;
+out vec4 tide_pixel;
+struct tt_Corner {
+    vec3 m_position;
+    vec3 m_normal;
+    vec4 m_tangent;
+    vec4 m_color;
+    float m_glow;
+};
+float tide_f(float x) {
+    return x;
+}
+bool tide_nan(float x) {
+    return (floatBitsToInt(x) & 0x7fffffff) > 0x7f800000;
+}
+float tide_max1(float a, float b) {
+    if (tide_nan(b)) { return a; }
+    if (tide_nan(a)) { return b; }
+    if (a > b) { return a; }
+    return b;
+}
+vec3 tide_normalize3(vec3 v) {
+    float l = dot(v, v);
+    if (l > 1.17549435e-38) { return v * inversesqrt(l); }
+    return vec3(0.0);
+}
+void ts_Inspect(tt_Corner t_corner, inout vec4 t_color) {
+    t_color = (t_corner.m_color * tide_max1(tide_normalize3(mat3(tide_normals0, tide_normals1, tide_normals2) * (t_corner.m_normal)).y, tide_f(0.1)));
+}
+
+void main() {
+    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
+    ts_Inspect(tt_Corner(vec3(0.0), tide_s1, vec4(0.0), tide_s3, 0.0), tide_color);
+    tide_color = tide_color * tide_tint;
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
+    tide_pixel = tide_color;
+}
+
+// Deform and Inspect on Corner: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_v0: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(1) var pixels0: texture_2d<i32>;
+@group(0) @binding(3) var pixels1: texture_2d<i32>;
+var<private> tide_n0: vec4f;
+var<private> tide_n1: vec4f;
+var<private> tide_n2: vec4f;
+var<private> tide_n3: vec4f;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+var<private> tide_normals0: vec3f;
+var<private> tide_normals1: vec3f;
+var<private> tide_normals2: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s1: vec3f,
+    @location(1) tide_s3: vec4f,
+    @location(2) @interpolate(flat) tide_normals0: vec3f,
+    @location(3) @interpolate(flat) tide_normals1: vec3f,
+    @location(4) @interpolate(flat) tide_normals2: vec3f,
+}
+struct tt_Corner {
+    m_position: vec3f,
+    m_normal: vec3f,
+    m_tangent: vec4f,
+    m_color: vec4f,
+    m_glow: f32,
+}
+fn tide_f(x: f32) -> f32 {
+    return x;
+}
+fn tide_nan(x: f32) -> bool {
+    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
+}
+fn tide_max1(a: f32, b: f32) -> f32 {
+    if (tide_nan(b)) { return a; }
+    if (tide_nan(a)) { return b; }
+    if (a > b) { return a; }
+    return b;
+}
+fn tide_normalize3(v: vec3f) -> vec3f {
+    var l: f32 = dot(v, v);
+    if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
+    return vec3f(0.0);
+}
+fn tide_normals(m: mat4x4f) -> mat3x3f {
+    var a: vec3f = cross(m[1].xyz, m[2].xyz);
+    var b: vec3f = cross(m[2].xyz, m[0].xyz);
+    var c: vec3f = cross(m[0].xyz, m[1].xyz);
+    if (dot(m[0].xyz, a) < 0.0) {
+        return mat3x3f(-a, -b, -c);
+    }
+    return mat3x3f(a, b, c);
+}
+fn ts_Deform(t_corner: ptr<function, tt_Corner>) {
+    (*t_corner).m_position = ((*t_corner).m_position + ((*t_corner).m_normal * (*t_corner).m_glow));
+    (*t_corner).m_color = vec4f((((*t_corner).m_tangent.xyz * 0.5) + vec3f(0.5)), 1.0);
+}
+
+fn tide_skin_words0(p: i32) -> vec4i {
+    return textureLoad(pixels0, vec2i(p & 1023, p >> 10), 0);
+}
+fn tide_skin_words1(p: i32) -> vec4i {
+    return textureLoad(pixels1, vec2i(p & 1023, p >> 10), 0);
+}
+fn tide_skin_matrix(i: i32) -> mat4x4f {
+    if (i < 0 || i >= tide_block.tide_v0.x) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    let p = i * 4;
+    return mat4x4f(bitcast<vec4f>(tide_skin_words0(p + 0)), bitcast<vec4f>(tide_skin_words0(p + 1)), bitcast<vec4f>(tide_skin_words0(p + 2)), bitcast<vec4f>(tide_skin_words0(p + 3)));
+}
+fn tide_skinning(vertex: i32) -> mat4x4f {
+    if (vertex < 0 || vertex >= tide_block.tide_v0.y) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    let range = tide_skin_words1(vertex).xy;
+    let entries = tide_block.tide_v0.z;
+    if (range.x < 0 || range.y < 0 || range.x > entries || range.y > entries - range.x) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    var c0 = vec4f(0.0);
+    var c1 = vec4f(0.0);
+    var c2 = vec4f(0.0);
+    var c3 = vec4f(0.0);
+    var total = 0.0;
+    for (var n = 0; n < range.y; n++) {
+        let i = range.x + n;
+        let pair = tide_skin_words1(tide_block.tide_v0.y + (i >> 1));
+        let joint = select(pair.x, pair.z, (i & 1) != 0);
+        let weight = bitcast<f32>(select(pair.y, pair.w, (i & 1) != 0));
+        let matrix = tide_skin_matrix(joint);
+        c0 = c0 + matrix[0] * weight;
+        c1 = c1 + matrix[1] * weight;
+        c2 = c2 + matrix[2] * weight;
+        c3 = c3 + matrix[3] * weight;
+        total = total + weight;
+    }
+    if (!(total > 0.0)) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    return mat4x4f(c0 / total, c1 / total, c2 / total, c3 / total);
+}
+fn ts_Inspect(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
+    (*t_color) = (t_corner.m_color * tide_max1(tide_normalize3(mat3x3f(tide_normals0, tide_normals1, tide_normals2) * (t_corner.m_normal)).y, tide_f(0.1)));
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec3f, @location(2) tide_a2: vec4f, @location(3) tide_a3: vec4f, @location(4) tide_a4: f32, @location(5) tide_in0: vec4f, @location(6) tide_in1: vec4f, @location(7) tide_in2: vec4f, @location(8) tide_in3: vec4f, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+    tide_n0 = tide_in0;
+    tide_n1 = tide_in1;
+    tide_n2 = tide_in2;
+    tide_n3 = tide_in3;
+    var tide_vertex: tt_Corner = tt_Corner(tide_a0, tide_a1, tide_a2, tide_a3, tide_a4);
+    let tide_skin = tide_skinning(i32(tide_vertex_index));
+    tide_vertex.m_position = (tide_skin * vec4f(tide_vertex.m_position, 1.0)).xyz;
+    tide_vertex.m_normal = tide_normalize3(tide_normals(tide_skin) * tide_vertex.m_normal);
+    var tide_tangent = (tide_skin * vec4f(tide_vertex.m_tangent.xyz, 0.0)).xyz;
+    tide_tangent = tide_tangent - tide_vertex.m_normal * dot(tide_vertex.m_normal, tide_tangent);
+    let tide_side = select(1.0, -1.0, dot(tide_skin[0].xyz, cross(tide_skin[1].xyz, tide_skin[2].xyz)) < 0.0);
+    tide_vertex.m_tangent = vec4f(tide_normalize3(tide_tangent), tide_vertex.m_tangent.w * tide_side);
+    ts_Deform(&tide_vertex);
+    let tide_place = mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f(tide_vertex.m_position, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_normal;
+    out.tide_s3 = tide_vertex.m_color;
+    let tide_turned = tide_normals(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3));
+    out.tide_normals0 = tide_turned[0];
+    out.tide_normals1 = tide_turned[1];
+    out.tide_normals2 = tide_turned[2];
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    tide_normals0 = in.tide_normals0;
+    tide_normals1 = in.tide_normals1;
+    tide_normals2 = in.tide_normals2;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Inspect(tt_Corner(vec3f(), in.tide_s1, vec4f(), in.tide_s3, f32()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// Deform on Corner: GLSL, vertex
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+};
+uniform highp isampler2D pixels0;
+uniform highp isampler2D pixels1;
+layout(location = 0) in vec3 tide_a0;
+layout(location = 1) in vec3 tide_a1;
+layout(location = 2) in vec4 tide_a2;
+layout(location = 3) in vec4 tide_a3;
+layout(location = 4) in float tide_a4;
+layout(location = 5) in vec4 tide_n0;
+layout(location = 6) in vec4 tide_n1;
+layout(location = 7) in vec4 tide_n2;
+layout(location = 8) in vec4 tide_n3;
+out vec4 tide_s3;
+struct tt_Corner {
+    vec3 m_position;
+    vec3 m_normal;
+    vec4 m_tangent;
+    vec4 m_color;
+    float m_glow;
+};
+vec3 tide_normalize3(vec3 v) {
+    float l = dot(v, v);
+    if (l > 1.17549435e-38) { return v * inversesqrt(l); }
+    return vec3(0.0);
+}
+mat3 tide_normals(mat4 m) {
+    vec3 a = cross(m[1].xyz, m[2].xyz);
+    vec3 b = cross(m[2].xyz, m[0].xyz);
+    vec3 c = cross(m[0].xyz, m[1].xyz);
+    if (dot(m[0].xyz, a) < 0.0) {
+        return mat3(-a, -b, -c);
+    }
+    return mat3(a, b, c);
+}
+void ts_Deform(inout tt_Corner t_corner) {
+    t_corner.m_position = (t_corner.m_position + (t_corner.m_normal * t_corner.m_glow));
+    t_corner.m_color = vec4(((t_corner.m_tangent.xyz * 0.5) + vec3(0.5)), 1.0);
+}
+
+ivec4 tide_skin_words0(int p) {
+    return texelFetch(pixels0, ivec2(p & 1023, p >> 10), 0);
+}
+ivec4 tide_skin_words1(int p) {
+    return texelFetch(pixels1, ivec2(p & 1023, p >> 10), 0);
+}
+mat4 tide_skin_matrix(int i) {
+    if (i < 0 || i >= tide_v0.x) return mat4(1.0);
+    int p = i * 4;
+    return mat4(intBitsToFloat(tide_skin_words0(p + 0)), intBitsToFloat(tide_skin_words0(p + 1)), intBitsToFloat(tide_skin_words0(p + 2)), intBitsToFloat(tide_skin_words0(p + 3)));
+}
+mat4 tide_skinning(int vertex) {
+    if (vertex < 0 || vertex >= tide_v0.y) return mat4(1.0);
+    ivec2 range = tide_skin_words1(vertex).xy;
+    int entries = tide_v0.z;
+    if (range.x < 0 || range.y < 0 || range.x > entries || range.y > entries - range.x) return mat4(1.0);
+    vec4 c0 = vec4(0.0);
+    vec4 c1 = vec4(0.0);
+    vec4 c2 = vec4(0.0);
+    vec4 c3 = vec4(0.0);
+    float total = 0.0;
+    for (int n = 0; n < range.y; n++) {
+        int i = range.x + n;
+        ivec4 pair = tide_skin_words1(tide_v0.y + (i >> 1));
+        int joint = (i & 1) == 0 ? pair.x : pair.z;
+        float weight = intBitsToFloat((i & 1) == 0 ? pair.y : pair.w);
+        mat4 matrix = tide_skin_matrix(joint);
+        c0 = c0 + matrix[0] * weight;
+        c1 = c1 + matrix[1] * weight;
+        c2 = c2 + matrix[2] * weight;
+        c3 = c3 + matrix[3] * weight;
+        total = total + weight;
+    }
+    if (!(total > 0.0)) return mat4(1.0);
+    return mat4(c0 / total, c1 / total, c2 / total, c3 / total);
+}
+void main() {
+    tt_Corner tide_vertex = tt_Corner(tide_a0, tide_a1, tide_a2, tide_a3, tide_a4);
+    mat4 tide_skin = tide_skinning(gl_VertexID);
+    tide_vertex.m_position = (tide_skin * vec4(tide_vertex.m_position, 1.0)).xyz;
+    tide_vertex.m_normal = tide_normalize3(tide_normals(tide_skin) * tide_vertex.m_normal);
+    vec3 tide_tangent = (tide_skin * vec4(tide_vertex.m_tangent.xyz, 0.0)).xyz;
+    tide_tangent = tide_tangent - tide_vertex.m_normal * dot(tide_vertex.m_normal, tide_tangent);
+    float tide_side = dot(tide_skin[0].xyz, cross(tide_skin[1].xyz, tide_skin[2].xyz)) < 0.0 ? -1.0 : 1.0;
+    tide_vertex.m_tangent = vec4(tide_normalize3(tide_tangent), tide_vertex.m_tangent.w * tide_side);
+    ts_Deform(tide_vertex);
+    vec4 tide_place = mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(tide_vertex.m_position, 1.0);
+    gl_Position = tide_camera * tide_place;
+    tide_s3 = tide_vertex.m_color;
+}
+
+// Deform on Corner: GLSL, fragment
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+};
+uniform highp isampler2D pixels0;
+uniform highp isampler2D pixels1;
+in vec4 tide_s3;
+out vec4 tide_pixel;
+void main() {
+    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
+    tide_color = tide_s3;
+    tide_color = tide_color * tide_tint;
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
+    tide_pixel = tide_color;
+}
+
+// Deform on Corner: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_v0: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(1) var pixels0: texture_2d<i32>;
+@group(0) @binding(3) var pixels1: texture_2d<i32>;
+var<private> tide_n0: vec4f;
+var<private> tide_n1: vec4f;
+var<private> tide_n2: vec4f;
+var<private> tide_n3: vec4f;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s3: vec4f,
+}
+struct tt_Corner {
+    m_position: vec3f,
+    m_normal: vec3f,
+    m_tangent: vec4f,
+    m_color: vec4f,
+    m_glow: f32,
+}
+fn tide_normalize3(v: vec3f) -> vec3f {
+    var l: f32 = dot(v, v);
+    if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
+    return vec3f(0.0);
+}
+fn tide_normals(m: mat4x4f) -> mat3x3f {
+    var a: vec3f = cross(m[1].xyz, m[2].xyz);
+    var b: vec3f = cross(m[2].xyz, m[0].xyz);
+    var c: vec3f = cross(m[0].xyz, m[1].xyz);
+    if (dot(m[0].xyz, a) < 0.0) {
+        return mat3x3f(-a, -b, -c);
+    }
+    return mat3x3f(a, b, c);
+}
+fn ts_Deform(t_corner: ptr<function, tt_Corner>) {
+    (*t_corner).m_position = ((*t_corner).m_position + ((*t_corner).m_normal * (*t_corner).m_glow));
+    (*t_corner).m_color = vec4f((((*t_corner).m_tangent.xyz * 0.5) + vec3f(0.5)), 1.0);
+}
+
+fn tide_skin_words0(p: i32) -> vec4i {
+    return textureLoad(pixels0, vec2i(p & 1023, p >> 10), 0);
+}
+fn tide_skin_words1(p: i32) -> vec4i {
+    return textureLoad(pixels1, vec2i(p & 1023, p >> 10), 0);
+}
+fn tide_skin_matrix(i: i32) -> mat4x4f {
+    if (i < 0 || i >= tide_block.tide_v0.x) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    let p = i * 4;
+    return mat4x4f(bitcast<vec4f>(tide_skin_words0(p + 0)), bitcast<vec4f>(tide_skin_words0(p + 1)), bitcast<vec4f>(tide_skin_words0(p + 2)), bitcast<vec4f>(tide_skin_words0(p + 3)));
+}
+fn tide_skinning(vertex: i32) -> mat4x4f {
+    if (vertex < 0 || vertex >= tide_block.tide_v0.y) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    let range = tide_skin_words1(vertex).xy;
+    let entries = tide_block.tide_v0.z;
+    if (range.x < 0 || range.y < 0 || range.x > entries || range.y > entries - range.x) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    var c0 = vec4f(0.0);
+    var c1 = vec4f(0.0);
+    var c2 = vec4f(0.0);
+    var c3 = vec4f(0.0);
+    var total = 0.0;
+    for (var n = 0; n < range.y; n++) {
+        let i = range.x + n;
+        let pair = tide_skin_words1(tide_block.tide_v0.y + (i >> 1));
+        let joint = select(pair.x, pair.z, (i & 1) != 0);
+        let weight = bitcast<f32>(select(pair.y, pair.w, (i & 1) != 0));
+        let matrix = tide_skin_matrix(joint);
+        c0 = c0 + matrix[0] * weight;
+        c1 = c1 + matrix[1] * weight;
+        c2 = c2 + matrix[2] * weight;
+        c3 = c3 + matrix[3] * weight;
+        total = total + weight;
+    }
+    if (!(total > 0.0)) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    return mat4x4f(c0 / total, c1 / total, c2 / total, c3 / total);
+}
+@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec3f, @location(2) tide_a2: vec4f, @location(3) tide_a3: vec4f, @location(4) tide_a4: f32, @location(5) tide_in0: vec4f, @location(6) tide_in1: vec4f, @location(7) tide_in2: vec4f, @location(8) tide_in3: vec4f, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+    tide_n0 = tide_in0;
+    tide_n1 = tide_in1;
+    tide_n2 = tide_in2;
+    tide_n3 = tide_in3;
+    var tide_vertex: tt_Corner = tt_Corner(tide_a0, tide_a1, tide_a2, tide_a3, tide_a4);
+    let tide_skin = tide_skinning(i32(tide_vertex_index));
+    tide_vertex.m_position = (tide_skin * vec4f(tide_vertex.m_position, 1.0)).xyz;
+    tide_vertex.m_normal = tide_normalize3(tide_normals(tide_skin) * tide_vertex.m_normal);
+    var tide_tangent = (tide_skin * vec4f(tide_vertex.m_tangent.xyz, 0.0)).xyz;
+    tide_tangent = tide_tangent - tide_vertex.m_normal * dot(tide_vertex.m_normal, tide_tangent);
+    let tide_side = select(1.0, -1.0, dot(tide_skin[0].xyz, cross(tide_skin[1].xyz, tide_skin[2].xyz)) < 0.0);
+    tide_vertex.m_tangent = vec4f(tide_normalize3(tide_tangent), tide_vertex.m_tangent.w * tide_side);
+    ts_Deform(&tide_vertex);
+    let tide_place = mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f(tide_vertex.m_position, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s3 = tide_vertex.m_color;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    tide_color = in.tide_s3;
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// Deform and Inspect on Corner: GLSL, vertex
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+};
+layout(location = 0) in vec3 tide_a0;
+layout(location = 1) in vec3 tide_a1;
+layout(location = 2) in vec4 tide_a2;
+layout(location = 3) in vec4 tide_a3;
+layout(location = 4) in float tide_a4;
+layout(location = 5) in vec4 tide_n0;
+layout(location = 6) in vec4 tide_n1;
+layout(location = 7) in vec4 tide_n2;
+layout(location = 8) in vec4 tide_n3;
+out vec3 tide_s1;
+out vec4 tide_s3;
+flat out vec3 tide_normals0;
+flat out vec3 tide_normals1;
+flat out vec3 tide_normals2;
+struct tt_Corner {
+    vec3 m_position;
+    vec3 m_normal;
+    vec4 m_tangent;
+    vec4 m_color;
+    float m_glow;
+};
+mat3 tide_normals(mat4 m) {
+    vec3 a = cross(m[1].xyz, m[2].xyz);
+    vec3 b = cross(m[2].xyz, m[0].xyz);
+    vec3 c = cross(m[0].xyz, m[1].xyz);
+    if (dot(m[0].xyz, a) < 0.0) {
+        return mat3(-a, -b, -c);
+    }
+    return mat3(a, b, c);
+}
+void ts_Deform(inout tt_Corner t_corner) {
+    t_corner.m_position = (t_corner.m_position + (t_corner.m_normal * t_corner.m_glow));
+    t_corner.m_color = vec4(((t_corner.m_tangent.xyz * 0.5) + vec3(0.5)), 1.0);
+}
+
+void main() {
+    tt_Corner tide_vertex = tt_Corner(tide_a0, tide_a1, tide_a2, tide_a3, tide_a4);
+    ts_Deform(tide_vertex);
+    vec4 tide_place = mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(tide_vertex.m_position, 1.0);
+    gl_Position = tide_camera * tide_place;
+    tide_s1 = tide_vertex.m_normal;
+    tide_s3 = tide_vertex.m_color;
+    mat3 tide_turned = tide_normals(mat4(tide_n0, tide_n1, tide_n2, tide_n3));
+    tide_normals0 = tide_turned[0];
+    tide_normals1 = tide_turned[1];
+    tide_normals2 = tide_turned[2];
+}
+
+// Deform and Inspect on Corner: GLSL, fragment
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+};
+in vec3 tide_s1;
+in vec4 tide_s3;
+flat in vec3 tide_normals0;
+flat in vec3 tide_normals1;
+flat in vec3 tide_normals2;
+out vec4 tide_pixel;
+struct tt_Corner {
+    vec3 m_position;
+    vec3 m_normal;
+    vec4 m_tangent;
+    vec4 m_color;
+    float m_glow;
+};
+float tide_f(float x) {
+    return x;
+}
+bool tide_nan(float x) {
+    return (floatBitsToInt(x) & 0x7fffffff) > 0x7f800000;
+}
+float tide_max1(float a, float b) {
+    if (tide_nan(b)) { return a; }
+    if (tide_nan(a)) { return b; }
+    if (a > b) { return a; }
+    return b;
+}
+vec3 tide_normalize3(vec3 v) {
+    float l = dot(v, v);
+    if (l > 1.17549435e-38) { return v * inversesqrt(l); }
+    return vec3(0.0);
+}
+void ts_Inspect(tt_Corner t_corner, inout vec4 t_color) {
+    t_color = (t_corner.m_color * tide_max1(tide_normalize3(mat3(tide_normals0, tide_normals1, tide_normals2) * (t_corner.m_normal)).y, tide_f(0.1)));
+}
+
+void main() {
+    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
+    ts_Inspect(tt_Corner(vec3(0.0), tide_s1, vec4(0.0), tide_s3, 0.0), tide_color);
+    tide_color = tide_color * tide_tint;
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
+    tide_pixel = tide_color;
+}
+
+// Deform and Inspect on Corner: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+var<private> tide_n0: vec4f;
+var<private> tide_n1: vec4f;
+var<private> tide_n2: vec4f;
+var<private> tide_n3: vec4f;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+var<private> tide_normals0: vec3f;
+var<private> tide_normals1: vec3f;
+var<private> tide_normals2: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s1: vec3f,
+    @location(1) tide_s3: vec4f,
+    @location(2) @interpolate(flat) tide_normals0: vec3f,
+    @location(3) @interpolate(flat) tide_normals1: vec3f,
+    @location(4) @interpolate(flat) tide_normals2: vec3f,
+}
+struct tt_Corner {
+    m_position: vec3f,
+    m_normal: vec3f,
+    m_tangent: vec4f,
+    m_color: vec4f,
+    m_glow: f32,
+}
+fn tide_f(x: f32) -> f32 {
+    return x;
+}
+fn tide_nan(x: f32) -> bool {
+    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
+}
+fn tide_max1(a: f32, b: f32) -> f32 {
+    if (tide_nan(b)) { return a; }
+    if (tide_nan(a)) { return b; }
+    if (a > b) { return a; }
+    return b;
+}
+fn tide_normalize3(v: vec3f) -> vec3f {
+    var l: f32 = dot(v, v);
+    if (l > 1.17549435e-38) { return v * inverseSqrt(l); }
+    return vec3f(0.0);
+}
+fn tide_normals(m: mat4x4f) -> mat3x3f {
+    var a: vec3f = cross(m[1].xyz, m[2].xyz);
+    var b: vec3f = cross(m[2].xyz, m[0].xyz);
+    var c: vec3f = cross(m[0].xyz, m[1].xyz);
+    if (dot(m[0].xyz, a) < 0.0) {
+        return mat3x3f(-a, -b, -c);
+    }
+    return mat3x3f(a, b, c);
+}
+fn ts_Deform(t_corner: ptr<function, tt_Corner>) {
+    (*t_corner).m_position = ((*t_corner).m_position + ((*t_corner).m_normal * (*t_corner).m_glow));
+    (*t_corner).m_color = vec4f((((*t_corner).m_tangent.xyz * 0.5) + vec3f(0.5)), 1.0);
+}
+
+fn ts_Inspect(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
+    (*t_color) = (t_corner.m_color * tide_max1(tide_normalize3(mat3x3f(tide_normals0, tide_normals1, tide_normals2) * (t_corner.m_normal)).y, tide_f(0.1)));
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec3f, @location(2) tide_a2: vec4f, @location(3) tide_a3: vec4f, @location(4) tide_a4: f32, @location(5) tide_in0: vec4f, @location(6) tide_in1: vec4f, @location(7) tide_in2: vec4f, @location(8) tide_in3: vec4f) -> tide_corner {
+    tide_n0 = tide_in0;
+    tide_n1 = tide_in1;
+    tide_n2 = tide_in2;
+    tide_n3 = tide_in3;
+    var tide_vertex: tt_Corner = tt_Corner(tide_a0, tide_a1, tide_a2, tide_a3, tide_a4);
+    ts_Deform(&tide_vertex);
+    let tide_place = mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f(tide_vertex.m_position, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_normal;
+    out.tide_s3 = tide_vertex.m_color;
+    let tide_turned = tide_normals(mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3));
+    out.tide_normals0 = tide_turned[0];
+    out.tide_normals1 = tide_turned[1];
+    out.tide_normals2 = tide_turned[2];
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    tide_normals0 = in.tide_normals0;
+    tide_normals1 = in.tide_normals1;
+    tide_normals2 = in.tide_normals2;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Inspect(tt_Corner(vec3f(), in.tide_s1, vec4f(), in.tide_s3, f32()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// Explicit and Placed on Vertex3: GLSL, vertex
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+};
+uniform highp isampler2D pixels0;
+uniform highp isampler2D pixels1;
+layout(location = 0) in vec3 tide_a0;
+layout(location = 1) in vec2 tide_a1;
+layout(location = 2) in vec4 tide_a2;
+layout(location = 3) in vec4 tide_n0;
+layout(location = 4) in vec4 tide_n1;
+layout(location = 5) in vec4 tide_n2;
+layout(location = 6) in vec4 tide_n3;
+out float tide_h0_0;
+out vec3 tide_world;
+struct tt_Vertex3 {
+    vec3 m_position;
+    vec2 m_uv;
+    vec4 m_color;
+};
+struct tt_PlacedInfo {
+    float m_posed;
+};
+void ts_Explicit(inout tt_Vertex3 t_corner, inout tt_PlacedInfo t_info, inout vec4 t_clip) {
+    t_corner.m_position = (t_corner.m_position + vec3(8.0, 0.0, 0.0));
+    t_info.m_posed = t_corner.m_position.x;
+    t_clip = (tide_camera * (mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(t_corner.m_position, 1.0)));
+    t_corner.m_position = (t_corner.m_position + vec3(64.0, 0.0, 0.0));
+}
+
+ivec4 tide_skin_words0(int p) {
+    return texelFetch(pixels0, ivec2(p & 1023, p >> 10), 0);
+}
+ivec4 tide_skin_words1(int p) {
+    return texelFetch(pixels1, ivec2(p & 1023, p >> 10), 0);
+}
+mat4 tide_skin_matrix(int i) {
+    if (i < 0 || i >= tide_v0.x) return mat4(1.0);
+    int p = i * 4;
+    return mat4(intBitsToFloat(tide_skin_words0(p + 0)), intBitsToFloat(tide_skin_words0(p + 1)), intBitsToFloat(tide_skin_words0(p + 2)), intBitsToFloat(tide_skin_words0(p + 3)));
+}
+mat4 tide_skinning(int vertex) {
+    if (vertex < 0 || vertex >= tide_v0.y) return mat4(1.0);
+    ivec2 range = tide_skin_words1(vertex).xy;
+    int entries = tide_v0.z;
+    if (range.x < 0 || range.y < 0 || range.x > entries || range.y > entries - range.x) return mat4(1.0);
+    vec4 c0 = vec4(0.0);
+    vec4 c1 = vec4(0.0);
+    vec4 c2 = vec4(0.0);
+    vec4 c3 = vec4(0.0);
+    float total = 0.0;
+    for (int n = 0; n < range.y; n++) {
+        int i = range.x + n;
+        ivec4 pair = tide_skin_words1(tide_v0.y + (i >> 1));
+        int joint = (i & 1) == 0 ? pair.x : pair.z;
+        float weight = intBitsToFloat((i & 1) == 0 ? pair.y : pair.w);
+        mat4 matrix = tide_skin_matrix(joint);
+        c0 = c0 + matrix[0] * weight;
+        c1 = c1 + matrix[1] * weight;
+        c2 = c2 + matrix[2] * weight;
+        c3 = c3 + matrix[3] * weight;
+        total = total + weight;
+    }
+    if (!(total > 0.0)) return mat4(1.0);
+    return mat4(c0 / total, c1 / total, c2 / total, c3 / total);
+}
+void main() {
+    tt_Vertex3 tide_vertex = tt_Vertex3(tide_a0, tide_a1, tide_a2);
+    mat4 tide_skin = tide_skinning(gl_VertexID);
+    tide_vertex.m_position = (tide_skin * vec4(tide_vertex.m_position, 1.0)).xyz;
+    tt_PlacedInfo tide_handed0 = tt_PlacedInfo(0.0);
+    vec4 tide_moved = vec4(0.0);
+    ts_Explicit(tide_vertex, tide_handed0, tide_moved);
+    vec4 tide_place = mat4(tide_n0, tide_n1, tide_n2, tide_n3) * vec4(tide_vertex.m_position, 1.0);
+    gl_Position = tide_moved;
+    tide_h0_0 = tide_handed0.m_posed;
+    tide_world = tide_place.xyz;
+}
+
+// Explicit and Placed on Vertex3: GLSL, fragment
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+};
+uniform highp isampler2D pixels0;
+uniform highp isampler2D pixels1;
+in float tide_h0_0;
+in vec3 tide_world;
+out vec4 tide_pixel;
+struct tt_Vertex3 {
+    vec3 m_position;
+    vec2 m_uv;
+    vec4 m_color;
+};
+struct tt_PlacedInfo {
+    float m_posed;
+};
+float tide_f(float x) {
+    return x;
+}
+void ts_Placed(tt_Vertex3 t_corner, tt_PlacedInfo t_info, inout vec4 t_color) {
+    t_color = vec4((t_info.m_posed / tide_f(128.0)), (tide_world.x / tide_f(128.0)), 1.0, 1.0);
+}
+
+void main() {
+    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
+    ts_Placed(tt_Vertex3(vec3(0.0), vec2(0.0), vec4(0.0)), tt_PlacedInfo(tide_h0_0), tide_color);
+    tide_color = tide_color * tide_tint;
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
+    tide_pixel = tide_color;
+}
+
+// Explicit and Placed on Vertex3: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_v0: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(1) var pixels0: texture_2d<i32>;
+@group(0) @binding(3) var pixels1: texture_2d<i32>;
+var<private> tide_n0: vec4f;
+var<private> tide_n1: vec4f;
+var<private> tide_n2: vec4f;
+var<private> tide_n3: vec4f;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_h0_0: f32,
+    @location(1) tide_world: vec3f,
+}
+struct tt_Vertex3 {
+    m_position: vec3f,
+    m_uv: vec2f,
+    m_color: vec4f,
+}
+struct tt_PlacedInfo {
+    m_posed: f32,
+}
+fn tide_f(x: f32) -> f32 {
+    return x;
+}
+fn ts_Explicit(t_corner: ptr<function, tt_Vertex3>, t_info: ptr<function, tt_PlacedInfo>, t_clip: ptr<function, vec4f>) {
+    (*t_corner).m_position = ((*t_corner).m_position + vec3f(8.0, 0.0, 0.0));
+    (*t_info).m_posed = (*t_corner).m_position.x;
+    (*t_clip) = (tide_block.tide_camera * (mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f((*t_corner).m_position, 1.0)));
+    (*t_corner).m_position = ((*t_corner).m_position + vec3f(64.0, 0.0, 0.0));
+}
+
+fn tide_skin_words0(p: i32) -> vec4i {
+    return textureLoad(pixels0, vec2i(p & 1023, p >> 10), 0);
+}
+fn tide_skin_words1(p: i32) -> vec4i {
+    return textureLoad(pixels1, vec2i(p & 1023, p >> 10), 0);
+}
+fn tide_skin_matrix(i: i32) -> mat4x4f {
+    if (i < 0 || i >= tide_block.tide_v0.x) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    let p = i * 4;
+    return mat4x4f(bitcast<vec4f>(tide_skin_words0(p + 0)), bitcast<vec4f>(tide_skin_words0(p + 1)), bitcast<vec4f>(tide_skin_words0(p + 2)), bitcast<vec4f>(tide_skin_words0(p + 3)));
+}
+fn tide_skinning(vertex: i32) -> mat4x4f {
+    if (vertex < 0 || vertex >= tide_block.tide_v0.y) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    let range = tide_skin_words1(vertex).xy;
+    let entries = tide_block.tide_v0.z;
+    if (range.x < 0 || range.y < 0 || range.x > entries || range.y > entries - range.x) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    var c0 = vec4f(0.0);
+    var c1 = vec4f(0.0);
+    var c2 = vec4f(0.0);
+    var c3 = vec4f(0.0);
+    var total = 0.0;
+    for (var n = 0; n < range.y; n++) {
+        let i = range.x + n;
+        let pair = tide_skin_words1(tide_block.tide_v0.y + (i >> 1));
+        let joint = select(pair.x, pair.z, (i & 1) != 0);
+        let weight = bitcast<f32>(select(pair.y, pair.w, (i & 1) != 0));
+        let matrix = tide_skin_matrix(joint);
+        c0 = c0 + matrix[0] * weight;
+        c1 = c1 + matrix[1] * weight;
+        c2 = c2 + matrix[2] * weight;
+        c3 = c3 + matrix[3] * weight;
+        total = total + weight;
+    }
+    if (!(total > 0.0)) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }
+    return mat4x4f(c0 / total, c1 / total, c2 / total, c3 / total);
+}
+fn ts_Placed(t_corner: tt_Vertex3, t_info: tt_PlacedInfo, t_color: ptr<function, vec4f>) {
+    (*t_color) = vec4f((t_info.m_posed / tide_f(128.0)), (tide_world.x / tide_f(128.0)), 1.0, 1.0);
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec3f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f, @location(3) tide_in0: vec4f, @location(4) tide_in1: vec4f, @location(5) tide_in2: vec4f, @location(6) tide_in3: vec4f, @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32) -> tide_corner {
+    tide_n0 = tide_in0;
+    tide_n1 = tide_in1;
+    tide_n2 = tide_in2;
+    tide_n3 = tide_in3;
+    var tide_vertex: tt_Vertex3 = tt_Vertex3(tide_a0, tide_a1, tide_a2);
+    let tide_skin = tide_skinning(i32(tide_vertex_index));
+    tide_vertex.m_position = (tide_skin * vec4f(tide_vertex.m_position, 1.0)).xyz;
+    var tide_handed0: tt_PlacedInfo = tt_PlacedInfo(f32());
+    var tide_moved: vec4f = vec4f();
+    ts_Explicit(&tide_vertex, &tide_handed0, &tide_moved);
+    let tide_place = mat4x4f(tide_n0, tide_n1, tide_n2, tide_n3) * vec4f(tide_vertex.m_position, 1.0);
+    let tide_clip = tide_moved;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_h0_0 = tide_handed0.m_posed;
+    out.tide_world = tide_place.xyz;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    tide_world = in.tide_world;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Placed(tt_Vertex3(vec3f(), vec2f(), vec4f()), tt_PlacedInfo(in.tide_h0_0), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+

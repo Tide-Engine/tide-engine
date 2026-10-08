@@ -4,6 +4,8 @@
 #include <string.h>
 
 #include "asset_files.h"
+#include "assets.h"
+#include "model_metadata.h"
 #include "ast.h"
 #include "builtins.h"
 #include "tide/audio.h" // How many bytes an audio declaration's state and knobs have
@@ -1667,6 +1669,33 @@ static type resolve_generic(const checker *c, const type_ref *r, const loc at, c
 // glob's list or map, and the type of what passes one on within a frame: a
 // local, a loop's variable, a function's parameter or what it returns.
 // Nothing keeps one, so it's no field's type, and no constant's.
+#include "skinned_types.inc"
+
+static void skinned_contract_catalogs(program *prog, decl *mesh, loc at);
+
+static type resolve_skinned_mesh(const checker *c, const type_ref *r, const loc at)
+{
+    const type vertex = resolve_type(c, r->args.items[0], ARG_ELEMENT, at);
+    if (vertex.kind == TY_ERROR) return T_ERR;
+    if (vertex.kind != TY_STRUCT) {
+        diag_error(at, "a SkinnedMesh's vertices are a struct with a 'float3 position', like 'SkinnedMesh<Vertex3>'");
+        return T_ERR;
+    }
+    decl *contract = NULL;
+    if (r->args.count == 2) {
+        const type required = resolve_type(c, r->args.items[1], ARG_ELEMENT, at);
+        if (required.kind == TY_ERROR) return T_ERR;
+        if (required.kind != TY_STRUCT || required.decl->skin_kind) {
+            diag_error(at, "a SkinnedMesh's contract is a struct of required Animation and Bone fields");
+            return T_ERR;
+        }
+        contract = required.decl;
+    }
+    const type model = skinned_mesh_of(c->prog, vertex, contract);
+    if (c->fields_ordered) skinned_contract_catalogs(c->prog, model.decl, at);
+    return model;
+}
+
 static type resolve_mesh(const checker *c, const type_ref *r, const type_place place, const loc at)
 {
     const type vertex = resolve_type(c, r->args.items[0], ARG_ELEMENT, at);
@@ -1752,6 +1781,7 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
 {
     const str name = r->name;
     type t;
+    if (r->args.count > 0 && str_eq_c(name, "SkinnedMesh")) return resolve_skinned_mesh(c, r, at);
     if (r->args.count > 0 && str_eq_c(name, "Mesh")) return resolve_mesh(c, r, place, at);
     if (r->args.count > 0) return resolve_generic(c, r, at, place == PLACE_ASSET);
     if (builtin_type_named(name, &t)) {
@@ -1762,6 +1792,10 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
         return t;
     }
     if (str_eq_c(name, "string")) return (type){TY_STRING, NULL};
+    // Existing user types keep their names; the model value types are supplied
+    // only when ordinary type lookup has no declaration for that name.
+    decl *const d = find_type(c, name, at);
+    if (!d && skinned_type_named(c->prog, name, &t)) return t;
     if (routine_place(place) || place == PLACE_FIELD || place == PLACE_LOCAL) {
         if (str_eq_c(name, "Action")) return (type){TY_ACTION, NULL};
         if (str_eq_c(name, "DrawList")) return (type){TY_DRAW_LIST, NULL};
@@ -1772,7 +1806,6 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
             if (str_eq(c->prog->records.items[i]->name, name)) return (type){TY_RECORD, c->prog->records.items[i]};
         }
     }
-    decl *const d = find_type(c, name, at);
     if (d) return decl_type(d);
     // The engine's World where a value's type goes: the place says where it belongs (world_misplaced)
     if ((routine_place(place) || place == PLACE_FIELD || place == PLACE_LOCAL) && str_eq_c(name, "World")) return (type){TY_WORLD, NULL};
@@ -2167,6 +2200,8 @@ static comp_mask bit(const decl *component)
 static type check_literal(checker *c, expr *e)
 {
     decl *d = find_type(c, e->name, e->at);
+    type builtin;
+    if (!d && skinned_type_named(c->prog, e->name, &builtin)) d = builtin.decl;
     if (!d || (d->kind != DECL_COMPONENT && d->kind != DECL_STRUCT && d->kind != DECL_EVENT)) {
         if (d) {
             diag_error(e->at, "'" STR_FMT "' isn't a component, struct or event; only those have values like this",
@@ -5244,8 +5279,9 @@ static type check_mesh_draw(checker *c, expr *e)
 {
     program *prog = c->prog;
     const bool instanced = e->instanced = str_eq_c(e->name, "Instanced");
-    const char *draw_name = e->targeted ? (instanced ? "target.Instanced" : "target.Mesh")
-                                        : (instanced ? "Draw.Instanced" : "Draw.Mesh");
+    const bool skinned = e->skinned = str_eq_c(e->name, "SkinnedMesh");
+    const char *draw_name = e->targeted ? (skinned ? "target.SkinnedMesh" : instanced ? "target.Instanced" : "target.Mesh")
+                                        : (skinned ? "Draw.SkinnedMesh" : instanced ? "Draw.Instanced" : "Draw.Mesh");
     // The vert and the frag it names come last, the vert first, and after
     // them a struct of values they read, the same for the whole draw
     int count = e->args.count;
@@ -5285,7 +5321,18 @@ static type check_mesh_draw(checker *c, expr *e)
         expr *mesh = e->args.items[0];
         const type whole = check_expr(c, mesh);
         checked = 1;
-        if (whole.kind == TY_MESH) {
+        if (skinned && (whole.kind != TY_STRUCT || whole.decl->skin_kind != SKIN_MESH)) {
+            for (int i = 1; i < count; i++) check_expr(c, e->args.items[i]);
+            if (whole.kind != TY_ERROR) diag_error(mesh->at, "%s takes a SkinnedMesh<V> first, and this is %s", draw_name,
+                                                  type_name(whole));
+            return T_ERR;
+        }
+        if (skinned && count < 3) {
+            for (int i = 1; i < count; i++) check_expr(c, e->args.items[i]);
+            diag_error(e->at, "%s takes a skinned mesh, its float4x4 transform, and a Pose first", draw_name);
+            return T_ERR;
+        }
+        if (whole.kind == TY_MESH || skinned) {
             const int had = e->args.count;
             expr **given = e->args.items;
             e->written.items = given;
@@ -5299,14 +5346,33 @@ static type check_mesh_draw(checker *c, expr *e)
                 of->at = mesh->at;
                 of->object = mesh;
                 of->member = str_from(part == 1 ? "vertices" : "indices");
-                of->type = part == 1 ? list_of(prog, mesh_vertex(whole)) : list_of(prog, T_INT_);
+                of->type = part == 1 ? list_of(prog, skinned ? whole.decl->skin_vertex : mesh_vertex(whole)) : list_of(prog, T_INT_);
+                if (skinned) of->field = (field *)field_called(whole.decl, part == 1 ? "vertices" : "indices");
                 of->mesh_part = part;
                 vec_push(e->args, of);
             }
-            for (int i = 1; i < had; i++) vec_push(e->args, given[i]);
-            count++;
+            for (int i = 1; i < had; i++) {
+                if (skinned && i == 2) {
+                    const type pose = check_expr(c, given[i]);
+                    if (pose.kind != TY_STRUCT || pose.decl->skin_kind != SKIN_POSE) {
+                        if (pose.kind != TY_ERROR) diag_error(given[i]->at, "%s takes a Pose after its transform, and this is %s",
+                                                             draw_name, type_name(pose));
+                        return T_ERR;
+                    }
+                    e->skin_mesh = mesh;
+                    e->skin_pose = given[i];
+                    continue;
+                }
+                vec_push(e->args, given[i]);
+            }
+            count += skinned ? 0 : 1;
             checked = 2;
         }
+    }
+    if (skinned && !e->skin_mesh) {
+        for (int i = checked; i < count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "%s takes a skinned mesh, its float4x4 transform, and a Pose first", draw_name);
+        return T_ERR;
     }
     const int named_end = e->args.count - (values ? 1 : 0); // Past the vert and the frag
     const bool values_ok = !values || check_draw_values(c, e, values);
@@ -5440,7 +5506,7 @@ static type check_mesh_draw(checker *c, expr *e)
         return T_ERR;
     }
 
-    if ((vertex == prog->vertex || vertex == prog->vertex3) && !shaded && !instanced) {
+    if ((vertex == prog->vertex || vertex == prog->vertex3) && !shaded && !instanced && !skinned) {
         use_mesh_types(c);
         const type result = resolve_builtin_call(str_from("Draw"), e);
         if (result.kind == TY_ERROR) return result;
@@ -6002,8 +6068,14 @@ static type check_window_target(checker *c, expr *e)
     return (type){TY_RENDER_TARGET, NULL};
 }
 
+static bool mesh_vertex_ok(const decl *vertex, loc at);
+#include "skinned_ops.inc"
+
 static type check_method(checker *c, expr *e)
 {
+    bool static_skin_handled = false;
+    const type static_skin = check_skinned_static(c, e, &static_skin_handled);
+    if (static_skin_handled) return static_skin;
     // world.Get<Health>(e): the World parameter's methods
     if (e->object->kind == E_NAME && !find_local(c, e->object->name)) {
         param *world = find_param(c, e->object->name);
@@ -6063,7 +6135,7 @@ static type check_method(checker *c, expr *e)
         if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Blit")) return check_blit(c, e);
         // Draw is the window's drawing: what a render target has as its methods
         const bool draws = builtin_draw_owner(owner);
-        if (draws && (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced"))) return check_mesh_draw(c, e);
+        if (draws && (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced") || str_eq_c(e->name, "SkinnedMesh"))) return check_mesh_draw(c, e);
         // `default` takes its type from the version of the function the other arguments pick,
         // and [a, b, c] is the list the function takes there. An `out` argument is the variable
         // a version with an `out` parameter makes (check_gui_call): of the others, nothing takes one,
@@ -6192,6 +6264,9 @@ static type check_method(checker *c, expr *e)
         return check_instance_call(e);
     }
     if (obj.kind == TY_LIST) return check_list_method(c, e, obj);
+    bool skin_handled;
+    const type skin_result = check_skinned_method(c, e, obj, &skin_handled);
+    if (skin_handled) return skin_result;
     if (obj.kind == TY_MAP || obj.kind == TY_SET) return check_map_method(c, e, obj);
     if (obj.kind == TY_GRID) return check_grid_method(c, e, obj);
     if (obj.kind == TY_TEXTURE) {
@@ -6276,7 +6351,7 @@ static type check_method(checker *c, expr *e)
         }
         // A target's methods are Draw's, told apart by the receiver alone: the window is a target too
         e->targeted = true;
-        if (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced")) return check_mesh_draw(c, e);
+        if (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced") || str_eq_c(e->name, "SkinnedMesh")) return check_mesh_draw(c, e);
         if (str_eq_c(e->name, "Blit")) {
             for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
             diag_error(e->at, "a render target has no Blit: a blit names the target it goes into, 'Draw.Blit(source, target, frag)'");
@@ -6941,6 +7016,10 @@ static decl *named_enum(const checker *c, const expr *e)
         return NULL;
     }
     decl *d = find_type(c, text, e->at);
+    if (!d && str_eq_c(text, "Playback")) {
+        skinned_builtins(c->prog);
+        d = c->prog->playback;
+    }
     return d && d->kind == DECL_ENUM ? d : NULL;
 }
 
@@ -7163,6 +7242,10 @@ static type check_member(checker *c, expr *e)
     c->member_object = e->object;
     const type obj = check_expr(c, e->object);
     if (obj.kind == TY_ERROR) return T_ERR;
+
+    bool skin_handled;
+    const type skin_result = check_skinned_member(c, e, obj, &skin_handled);
+    if (skin_handled) return skin_result;
 
     if (obj.kind == TY_RENDER_TARGET) {
         if (gpu_code(c)) {
@@ -7710,6 +7793,9 @@ static type check_index(checker *c, expr *e)
     c->colors_indexed = e->object;  // target.colors[1] reads the one it names
     const type obj = check_expr(c, e->object);
     c->colors_indexed = NULL;
+    bool skin_handled;
+    const type skin_result = check_skinned_index(c, e, obj, &skin_handled);
+    if (skin_handled) return skin_result;
     if (obj.kind == TY_RENDER_TARGET && e->object->kind == E_MEMBER && e->object->target_colors) {
         // target.colors[1]: one of its color images, as a Texture. Which ones it has is the target's to say, when
         // it's made, so one it hasn't got is found out as it's sampled: that draw is passed by, and says so
@@ -9050,6 +9136,11 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         return false;
     }
     for (const expr *part = target; part->kind == E_MEMBER || part->kind == E_INDEX; part = part->object) {
+        if (part->kind == E_MEMBER && part->object->type.kind == TY_STRUCT
+            && part->object->type.decl->skin_kind && part->object->type.decl->skin_kind != SKIN_TRANSFORM) {
+            diag_error(target->at, "model members are read-only; edit a Pose's local transforms through a Bone");
+            return false;
+        }
         // mesh.vertices and mesh.indices, whatever holds the Mesh: a local's too, which only names the pack's
         if (part->kind == E_MEMBER && part->object->type.kind == TY_MESH) {
             diag_error(target->at, "a Mesh's vertices and indices are read-only: they're the file it names, as the game was built");
@@ -9455,6 +9546,10 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
     case CALL_NONE: case CALL_BUILTIN: case CALL_CONSTRUCT: case CALL_TEXT:
     case CALL_ROLL: // A step rolls for its own cell, whichever thread runs it
         break;
+    case CALL_SKINNED:
+        if ((e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND)
+            && (!e->object || !step_own(e->object, loop))) return false;
+        break; // Read-only sampling and step-local poses use the executing thread's scratch area.
     case CALL_FUNCTION:
         if (e->method && (e->method->calls_c || e->method->is_async || e->method->draws)) return false;
         if (e->method && (e->method->acts[0] || e->method->acts[1])) return false; // What it sends and spawns is recorded in order
@@ -10440,6 +10535,7 @@ static bool stands_alone(const expr *e)
         || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD || call == CALL_SCENE_PLAYER
         || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD || call == CALL_AUDIO
         || call == CALL_SNAP || call == CALL_DISCARD
+        || (call == CALL_SKINNED && (called->skin_operation == SKIN_OP_POSE_SAMPLE || called->skin_operation == SKIN_OP_POSE_BLEND))
         || called->io_operation
         || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
         || (call == CALL_MAP && !str_eq_c(called->name, "Has") && !str_eq_c(called->name, "Get"))
@@ -11123,6 +11219,7 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     else if (str_eq_c(inner->text, "Texture")) *kind = ASSET_TEXTURE;
     else if (str_eq_c(inner->text, "Clip")) *kind = ASSET_CLIP;
     else if (str_eq_c(inner->name, "Mesh") && inner->args.count == 1 && !inner->optional) *kind = ASSET_MESH;
+    else if (str_eq_c(inner->name, "SkinnedMesh") && inner->args.count >= 1 && !inner->optional) *kind = ASSET_SKINNED;
     else if (str_eq_c(inner->text, "Mesh")) {
         diag_error(at, "a Mesh says what its vertices are: 'Mesh<Vertex3>', or 'Mesh<...>' of a struct of the game's with a "
                        "'float3 position'");
@@ -11280,8 +11377,11 @@ static bool mesh_vertex_ok(const decl *vertex, const loc at)
 static decl *asset_mesh_vertex(const type t)
 {
     const type inner = t.kind == TY_LIST ? list_element(t) : t.kind == TY_MAP ? map_value(t) : t;
-    return inner.kind == TY_MESH ? mesh_vertex(inner).decl : NULL;
+    return inner.kind == TY_MESH ? mesh_vertex(inner).decl
+         : inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_MESH ? inner.decl->skin_vertex.decl : NULL;
 }
+
+#include "skinned_catalogs.inc"
 
 // Checks an asset declaration: its type, its path (a constant text) and the
 // files the path resolves to, read and decoded (asset_files.h), which codegen
@@ -11298,7 +11398,7 @@ static void check_asset_decl(checker *c, decl *k)
     if (!typed) k->return_type = T_ERR;
     // A Mesh's vertex has to be one a file can fill: with one that isn't, the name still reads as its type, and
     // nothing is packed for it
-    const bool fills = !typed || kind != ASSET_MESH
+    const bool fills = !typed || (kind != ASSET_MESH && kind != ASSET_SKINNED)
                     || mesh_vertex_ok(asset_mesh_vertex(k->return_type), k->return_type_qual_at.line ? k->return_type_qual_at : k->return_type_at);
     k->asset_kind = kind;
     k->asset_many = many;
@@ -11320,7 +11420,10 @@ static void check_asset_decl(checker *c, decl *k)
         diag_note("the dependency tree is static: the compiler reads every file an asset names as the game is built");
     }
     if (typed && fills && path) {
-        k->asset = asset_resolve(k->unit->src->path, path->text, kind, many, is_map, path->at, c->prog->game_folder);
+        if (!c->prog->asset_metadata_only || kind != ASSET_SKINNED) {
+            k->asset = asset_resolve(k->unit->src->path, path->text, kind, many, is_map, path->at, c->prog->game_folder);
+        }
+        if (kind == ASSET_SKINNED) skinned_asset_catalogs(c, k, path);
     }
     k->index = 2;
     vec_push(c->prog->assets, k);
@@ -11517,6 +11620,15 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
     for (int i = 0; i < f->attributes.count; i++) has_snap |= str_eq_c(f->attributes.items[i].name, "Snap");
     for (int i = 0; i < f->attributes.count; i++) {
         attribute *a = &f->attributes.items[i];
+        if (str_eq_c(a->name, "Name")) {
+            if (d->kind != DECL_STRUCT || f->type.kind != TY_STRUCT
+                || (f->type.decl->skin_kind != SKIN_ANIMATION && f->type.decl->skin_kind != SKIN_BONE)) {
+                diag_error(a->at, "[Name] names an Animation or Bone field of a model contract");
+            } else if (a->args.count || a->values.count != 1 || !text_literal(a->values.items[0])) {
+                diag_error(a->at, "Name takes the exported name in quotes: [Name(\"Idle\")]");
+            }
+            continue;
+        }
         const bool clamp = str_eq_c(a->name, "Clamp");
         const bool min = str_eq_c(a->name, "Min");
         const bool max = str_eq_c(a->name, "Max");
@@ -13908,6 +14020,7 @@ static bool call_acts(const expr *e)
     case CALL_CLIPBOARD: case CALL_AUDIO: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM: case CALL_ROLL:
         return true;
     case CALL_DRAW: return e->type.kind == TY_VOID; // Draw.MeasureText and the conversions only give a value
+    case CALL_SKINNED: return e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND;
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get");
     case CALL_WORLD: return str_eq_c(e->name, "Set") || str_eq_c(e->name, "TryGet");
@@ -17518,6 +17631,12 @@ bool check(program *prog)
     for (int i = 0; i < prog->local_parts.count; i++) {
         c.unit = prog->local_parts.items[i]->unit;
         resolve_field_types(&c, prog->local_parts.items[i]);
+    }
+    // Field references can instantiate a model before a later contract's
+    // fields resolve. Build their checked catalogs once all field types exist.
+    for (int i = 0; i < prog->skinned_types.count; i++) {
+        decl *mesh = prog->skinned_types.items[i];
+        if (mesh->skin_kind == SKIN_MESH) skinned_contract_catalogs(prog, mesh, mesh->at);
     }
     int residents = 0;
     for (int i = 0; i < prog->singletons.count; i++) {

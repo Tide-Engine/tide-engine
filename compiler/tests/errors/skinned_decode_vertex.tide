@@ -1,0 +1,6 @@
+// expect: 'Wrong' can't be a mesh's vertex: its 'position' is float4
+struct Wrong { float4 position; }
+SkinnedMesh<Wrong> Read(List<byte> bytes) fails IOError
+{
+    return SkinnedMesh<Wrong>.Decode(bytes)!;
+}

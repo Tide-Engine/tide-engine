@@ -9,6 +9,7 @@
 
 #include "tide/page.h"
 #include "tide/sha256.h"
+#include "tide/skinned_data.h"
 
 #define OFFSET(at) ((at) & 0x3FFFFFFFu)
 
@@ -233,6 +234,130 @@ static void check_meshes(void)
     }
 }
 
+typedef struct skinned_entry {
+    int64_t live;
+    uint32_t key;
+    tide_skinned_lists value;
+} skinned_entry;
+
+_Static_assert(sizeof(skinned_entry) == 24u && offsetof(skinned_entry, key) == 8u && offsetof(skinned_entry, value) == 12u,
+               "packed skinned map entries must match the generated map layout");
+
+// Skinned records, byte data and map indices are flat immutable lists. Their
+// block headers must agree with the storage, including the room and alignment.
+static bool flat_in(const uint8_t *region, const uint32_t size, const uint32_t offset, const uint32_t element, uint32_t *count)
+{
+    *count = 0;
+    if ((offset & 15u) || (uint64_t)offset + sizeof(tide_block) > size) return false;
+    tide_block b;
+    memcpy(&b, region + offset, sizeof b);
+    if (b.a != b.b || b.a > INT32_MAX || (uint64_t)offset + sizeof b + (uint64_t)b.a * element > size) return false;
+    *count = b.a;
+    return true;
+}
+
+static bool flat_at(const uint32_t offset, const uint32_t element, uint32_t *count)
+{
+    return flat_in(pack.region, pack.size, offset, element, count);
+}
+
+static bool skinned_at(const tide_skinned_lists *model, const bool full, uint32_t *vertex, uint32_t *count)
+{
+    const uint32_t data = place_of(model->data.at, pack.size), vertices = place_of(model->vertices.at, pack.size);
+    const uint32_t indices = place_of(model->indices.at, pack.size);
+    uint32_t bytes, index_count, index_size;
+    uint64_t version;
+    tide_skinned_data_view view;
+    if (!flat_at(data, 1u, &bytes) || (vertices & 15u) || (indices & 15u)
+        || !tide_skinned_data_open(pack.region + data + sizeof(tide_block), bytes, &view)
+        || (full && !tide_skinned_data_validate(view.data, bytes))
+        || !mesh_at(pack.region, pack.size, vertices, indices, vertex, count) || !*vertex
+        || !versioned_at(pack.region, pack.size, indices, &index_count, &index_size, &version)
+        || *count != view.vertices || index_count != view.indices) return false;
+    if (full) {
+        // Typed geometry and the influence table address the same vertices.
+        // The separately packed indices must also match the canonical ones.
+        for (uint32_t i = 0; i < index_count; i++) {
+            uint32_t actual, expected;
+            memcpy(&actual, pack.region + indices + sizeof(tide_block) + (size_t)i * sizeof actual, sizeof actual);
+            if (!tide_skinned_data_index(&view, i, &expected) || actual != expected) return false;
+        }
+    }
+    return true;
+}
+
+static bool skinned_map_index_in(const uint8_t *region, const uint32_t size, const tide_pack_entry *e, const uint32_t count)
+{
+    uint32_t slots, records;
+    if (!flat_in(region, size, e->offset, sizeof(skinned_entry), &records) || records != count
+        || !flat_in(region, size, e->size, sizeof(uint32_t), &slots) || slots < 8u || (slots & (slots - 1u))
+        || (uint64_t)count * 2u > slots) return false;
+    const uint8_t *index = region + e->size + sizeof(tide_block);
+    uint32_t live = 0;
+    for (uint32_t i = 0; i < slots; i++) {
+        uint32_t at;
+        memcpy(&at, index + (size_t)i * sizeof at, sizeof at);
+        if (at > count) return false;
+        if (at) live++;
+    }
+    if (live != count) return false;
+    for (uint32_t i = 0; i < count; i++) {
+        const uint8_t *row = region + e->offset + sizeof(tide_block) + (size_t)i * sizeof(skinned_entry);
+        int64_t order;
+        uint32_t key, length;
+        memcpy(&order, row, sizeof order);
+        memcpy(&key, row + offsetof(skinned_entry, key), sizeof key);
+        const uint32_t at = place_of(key, size);
+        const uint8_t *text = (at & 15u) ? NULL : text_at(region, size, at, &length);
+        if (order != (int64_t)i + 1 || !text) return false;
+        // Every key must reach its own row before an empty slot. Together
+        // with the live-slot count this also refuses duplicates and omissions.
+        uint32_t slot = tide_map_hash_bytes(text, length) & (slots - 1u);
+        for (;;) {
+            uint32_t number;
+            memcpy(&number, index + (size_t)slot * sizeof number, sizeof number);
+            if (!number) return false;
+            if (number == i + 1u) break;
+            slot = (slot + 1u) & (slots - 1u);
+        }
+    }
+    return true;
+}
+
+static bool skinned_map_index(const tide_pack_entry *e, const uint32_t count)
+{
+    return skinned_map_index_in(pack.region, pack.size, e, count);
+}
+
+static void check_skinned(void)
+{
+    for (uint32_t i = 0; i < pack.entry_count; i++) {
+        tide_pack_entry *e = &pack.entries[i];
+        const bool map = e->kind == TIDE_PACK_SKINNED_MAP;
+        if (!map && e->kind != TIDE_PACK_SKINNED && e->kind != TIDE_PACK_SKINNEDS) continue;
+        const uint32_t each = map ? (uint32_t)sizeof(skinned_entry) : (uint32_t)sizeof(tide_skinned_lists);
+        uint32_t count;
+        if (!flat_at(e->offset, each, &count) || (e->kind == TIDE_PACK_SKINNED && count != 1u)
+            || (map && !skinned_map_index(e, count))) {
+            e->offset = UINT32_MAX;
+            if (!map) e->size = 0;
+            continue;
+        }
+        for (uint32_t k = 0; k < count; k++) {
+            uint8_t *row = pack.region + e->offset + sizeof(tide_block) + (size_t)k * each;
+            tide_skinned_lists model;
+            const uint32_t value_at = map ? (uint32_t)offsetof(skinned_entry, value) : 0u;
+            memcpy(&model, row + value_at, sizeof model);
+            uint32_t vertex, vertices;
+            if (!skinned_at(&model, true, &vertex, &vertices)) {
+                model = (tide_skinned_lists){0};
+                memcpy(row + value_at, &model, sizeof model);
+            }
+        }
+        if (!map) e->size = count;
+    }
+}
+
 // A block's bytes with its header, as the builder pads them.
 static uint64_t padded(const uint64_t bytes)
 {
@@ -446,6 +571,7 @@ bool tide_pack_load(const uint8_t *bytes, const size_t size)
     pack.entry_count = h.entries;
     lay_textures(h.region_size);
     check_meshes();
+    check_skinned();
     note_cubes(); // Once nothing more is laid out: the region is where it stays
     pack.epoch++;
     tide_pack_region_slots = slots;
@@ -545,6 +671,112 @@ void *tide_pack_mesh_open(const tide_pack_entry *e, const uint32_t k, const uint
     if (!mesh_at(pack.region, pack.size, vertices, indices, &said, &there) || said != vertex) return &none;
     *count = there;
     return pack.region + vertices + sizeof(tide_block);
+}
+
+// Locate a record only through an entry of the current pack. Comparisons use
+// integer addresses, so a stale or separately copied entry is safe to reject.
+static bool skinned_record(const tide_pack_entry *e, const uint32_t k, tide_skinned_lists *model)
+{
+    const uintptr_t at = (uintptr_t)e, first = (uintptr_t)pack.entries;
+    if (!e || !pack.entries || at < first || at - first >= (size_t)pack.entry_count * sizeof *e
+        || (at - first) % sizeof *e) return false;
+    const bool map = e->kind == TIDE_PACK_SKINNED_MAP;
+    if (!map && e->kind != TIDE_PACK_SKINNED && e->kind != TIDE_PACK_SKINNEDS) return false;
+    const uint32_t each = map ? (uint32_t)sizeof(skinned_entry) : (uint32_t)sizeof(tide_skinned_lists);
+    uint32_t count;
+    if (!flat_at(e->offset, each, &count) || k >= count) return false;
+    const uint8_t *row = pack.region + e->offset + sizeof(tide_block) + (size_t)k * each;
+    memcpy(model, row + (map ? offsetof(skinned_entry, value) : 0u), sizeof *model);
+    return true;
+}
+
+tide_skinned_lists tide_pack_skinned_of(const tide_pack_entry *e, const uint32_t vertex)
+{
+    tide_skinned_lists model;
+    uint32_t said, count;
+    if (!skinned_record(e, 0u, &model) || e->kind != TIDE_PACK_SKINNED || !skinned_at(&model, false, &said, &count)
+        || said != vertex) return (tide_skinned_lists){0};
+    return model;
+}
+
+tide_map tide_pack_skinned_map_of(const tide_pack_entry *e)
+{
+    tide_skinned_lists unused;
+    uint32_t count;
+    if (!e || e->kind != TIDE_PACK_SKINNED_MAP || !flat_at(e->offset, sizeof(skinned_entry), &count)
+        || (count && !skinned_record(e, 0u, &unused)) || !skinned_map_index(e, count)) return (tide_map){0};
+    return (tide_map){.entries = {tagged(e->offset)}, .index = {tagged(e->size)}, .live = count, .last_order = count};
+}
+
+void *tide_pack_skinned_open(const tide_pack_entry *e, const uint32_t k, const uint32_t vertex, uint32_t *count)
+{
+    static uint8_t none;
+    *count = 0;
+    tide_skinned_lists model;
+    if (!skinned_record(e, k, &model)) return NULL;
+    uint32_t said, there;
+    if (!skinned_at(&model, false, &said, &there) || said != vertex) return &none;
+    *count = there;
+    return pack.region + place_of(model.vertices.at, pack.size) + sizeof(tide_block);
+}
+
+bool tide_pack_skinned_content(const uint8_t *bytes, const size_t size, const char *qualified, const uint32_t kind,
+                               const uint32_t layout, const uint8_t *hashes, const uint32_t count)
+{
+    if (!bytes || !qualified || (!hashes && count) || size < sizeof(tide_pack_header)
+        || (kind != TIDE_PACK_SKINNED && kind != TIDE_PACK_SKINNEDS && kind != TIDE_PACK_SKINNED_MAP)
+        || (kind == TIDE_PACK_SKINNED && count != 1u)) return false;
+    tide_pack_header header;
+    memcpy(&header, bytes, sizeof header);
+    const uint64_t table_end = (uint64_t)sizeof header + (uint64_t)header.entries * sizeof(tide_pack_entry);
+    if (memcmp(header.magic, TIDE_PACK_MAGIC, sizeof header.magic) || header.version != TIDE_PACK_VERSION
+        || table_end > header.region_at || (header.region_at & 15u) || header.region_size > TIDE_PACK_BASE
+        || (uint64_t)header.region_at + header.region_size != size) return false;
+    uint8_t named[32];
+    tide_sha256_of(qualified, strlen(qualified), named);
+    tide_pack_entry found = {0};
+    bool had = false;
+    for (uint32_t i = 0; i < header.entries; i++) {
+        tide_pack_entry e;
+        memcpy(&e, bytes + sizeof header + (size_t)i * sizeof e, sizeof e);
+        if (memcmp(e.name, named, sizeof named)) continue;
+        if (had || e.kind != kind || e.extra != layout) return false;
+        found = e;
+        had = true;
+    }
+    if (!had) return false;
+    const uint8_t *region = bytes + header.region_at;
+    const bool map = kind == TIDE_PACK_SKINNED_MAP;
+    const uint32_t each = map ? (uint32_t)sizeof(skinned_entry) : (uint32_t)sizeof(tide_skinned_lists);
+    uint32_t records;
+    if (!flat_in(region, header.region_size, found.offset, each, &records) || records != count
+        || (!map && found.size != count)) return false;
+    if (map && !skinned_map_index_in(region, header.region_size, &found, count)) return false;
+    for (uint32_t i = 0; i < count; i++) {
+        const uint8_t *row = region + found.offset + sizeof(tide_block) + (size_t)i * each;
+        tide_sha256 content;
+        tide_sha256_init(&content);
+        if (map) {
+            uint32_t key, length;
+            memcpy(&key, row + offsetof(skinned_entry, key), sizeof key);
+            const uint32_t at = place_of(key, header.region_size);
+            const uint8_t *text = (at & 15u) ? NULL : text_at(region, header.region_size, at, &length);
+            if (!text) return false;
+            tide_sha256_add(&content, text, length);
+        }
+        tide_skinned_lists model;
+        memcpy(&model, row + (map ? offsetof(skinned_entry, value) : 0u), sizeof model);
+        const uint32_t at = place_of(model.data.at, header.region_size);
+        uint32_t length;
+        tide_skinned_data_view view;
+        if (!flat_in(region, header.region_size, at, 1u, &length)
+            || !tide_skinned_data_open(region + at + sizeof(tide_block), length, &view)) return false;
+        uint8_t actual[32];
+        tide_sha256_add(&content, view.data, length);
+        tide_sha256_end(&content, actual);
+        if (memcmp(actual, hashes + (size_t)i * sizeof actual, sizeof actual)) return false;
+    }
+    return true;
 }
 
 bool tide_pack_list_version(const tide_list list, const uint32_t element, uint64_t *version)
