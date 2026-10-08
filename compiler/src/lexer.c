@@ -712,7 +712,17 @@ static bool lex_char(lexer *lx, const loc start)
         if (ch >= 0x80) { // UTF-8: a lead byte and its continuation bytes
             const int more = ch >= 0xF0 && ch < 0xF5 ? 3 : ch >= 0xE0 ? 2 : ch >= 0xC2 && ch < 0xE0 ? 1 : -1;
             bool valid = more > 0;
-            for (int i = 1; valid && i <= more; i++) valid = p + i < line_end && ((unsigned char)p[i] & 0xC0u) == 0x80u;
+            uint32_t code = more == 3 ? ch & 0x07u : more == 2 ? ch & 0x0Fu : ch & 0x1Fu;
+            for (int i = 1; valid && i <= more; i++) {
+                valid = p + i < line_end && ((unsigned char)p[i] & 0xC0u) == 0x80u;
+                if (valid) code = code << 6 | ((unsigned char)p[i] & 0x3Fu);
+            }
+            // A char is a character or none: not a longer form than the shortest, half of a UTF-16 pair, or a
+            // number past the last one, which text's bytes can be but no char is
+            if (valid && ((more == 2 && code < 0x800u) || (more == 3 && code < 0x10000u) || code > 0x10FFFFu
+                          || (code >= 0xD800u && code < 0xE000u))) {
+                valid = false;
+            }
             if (!valid) {
                 diag_error(start, "a char must be UTF-8, and this isn't");
                 lx->p = p + 1;
