@@ -1403,8 +1403,8 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(offers(code, "if") && offers(code, "for") && offers(code, "var"));
     TIDE_CHECK(!offers(code, "Draw") && !offers(code, "GUI") && !offers(code, "Spawn") && !offers(code, "Send"));
     TIDE_CHECK(!offers(code, "Devices") && !offers(code, "Scene") && !offers(code, "Debug") && !offers(code, "Cursor"));
-    TIDE_CHECK(!offers(code, "while") && offers(code, "foreach") && offers(code, "switch"));
-    TIDE_CHECK(!offers(code, "byte") && !offers(code, "long") && !offers(code, "Entity") && !offers(code, "string") && !offers(code, "List"));
+    TIDE_CHECK(offers(code, "while") && offers(code, "foreach") && offers(code, "switch"));
+    TIDE_CHECK(offers(code, "byte") && !offers(code, "long") && !offers(code, "Entity") && !offers(code, "string") && !offers(code, "List"));
     TIDE_CHECK(!offers(code, "Noise") && !offers(code, "Box")); // C runs on the CPU, and nothing spawns here
     const char *value = complete(IN_FRAG("color = $"));
     TIDE_CHECK(offers(value, "box") && offers(value, "Math") && offers(value, "Lit") && !offers(value, "Draw") && !offers(value, "null"));
@@ -1419,7 +1419,7 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(offers(world, "x") && offers(world, "y") && offers(world, "z"));
     TIDE_CHECK(offers(complete(IN_FRAG("var x = this.world.xy.$")), "x"));
     const char *grid = complete(IN_FRAG("color = models.wood.$"));
-    TIDE_CHECK(offers(grid, "Sample") && !offers(grid, "Clear") && !offers(grid, "size"));
+    TIDE_CHECK(offers(grid, "Sample") && !offers(grid, "Clear") && offers(grid, "size"));
     TIDE_CHECK(has(grid, "Grid2<Color>.Sample(float2 uv, Filter filter = the grid's, Wrap wrap = the grid's) -> Color"));
     const char *list = complete(IN_FRAG("var n = models.crate.$"));
     TIDE_CHECK(!offers(list, "Add") && offers(list, "count")); // The GPU reads a list, and changes none
@@ -1783,10 +1783,10 @@ TIDE_TEST(lsp_shaders_diagnostics)
                                "    color = Color.red;\n}\n");
     TIDE_CHECK(diagnosed(33, 9, 5, 1, "a frag runs on the GPU, for each pixel, so it can't draw"));
     // In a function a frag calls: where it is, with the frag that reaches it as a note there
-    open_document(SHADER_TYPES "float Count(float to)\n{\n    mut float x = 0;\n    while (x < to) x += 1;\n    return x;\n}\n"
+    open_document(SHADER_TYPES "float Count(float to)\n{\n    mut float x = 0;\n    string label = \"far\";\n    return x + to;\n}\n"
                                "frag Shade(BoxVertex vertex, out Color color)\n{\n"
                                "    color = Color.white * Count(vertex.uv.x);\n}\n");
-    TIDE_CHECK(diagnosed(34, 4, 5, 1, "a loop the GPU runs counts"));
+    TIDE_CHECK(diagnosed(34, 11, 5, 1, "string can't go to the GPU"));
     TIDE_CHECK(has(last_sent(), "\"relatedInformation\":[{\"location\":{\"uri\":\"file:///test.tide\",\"range\":{\"start\":{\"line\":37,"
                                 "\"character\":5},\"end\":{\"line\":37,\"character\":10}}},\"message\":\"frag 'Shade' runs on the GPU, "
                                 "and 'Count' with it, as it calls it\"}]"));
@@ -1804,8 +1804,8 @@ TIDE_TEST(lsp_shaders_diagnostics)
     TIDE_CHECK(diagnosed(43, 67, 5, 1, "view 'DrawBox' doesn't guarantee its entity has a 'Box', which frag 'Shade' reads"));
     // What the GPU can't hold, found once the rest of the game is right: on the index
     open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, Models models)\n{\n"
-                               "    color = models.wood[0, 0];\n}\n");
-    TIDE_CHECK(diagnosed(33, 23, 1, 1, "the GPU indexes arrays, and lists that are fields of what the frag or vert takes"));
+                               "    var all = models.faces;\n    color = Color.white;\n}\n");
+    TIDE_CHECK(diagnosed(33, 8, 3, 1, "a list is read where the frag or vert takes it"));
 }
 
 // The type of what's at the cursor, and an event's or the input's code.

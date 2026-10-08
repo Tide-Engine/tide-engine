@@ -1,5 +1,5 @@
-// expect: a loop the GPU runs counts on its own line, which declares nothing with 'out'
-// expect: make the call before the loop, and count to what it gave
+// expect: a for the GPU runs declares nothing with 'out' on its own line
+// expect: make the call before the loop, or in its body
 scene Main { }
 struct Corner { float2 position; float2 uv; Color color; }
 local singleton Sheet { List<Corner> corners; List<int> indices; }

@@ -25,8 +25,10 @@ float tide_list0(int tide_i) {
     if (tide_i < 0 || tide_i >= tide_v0.y) {
         return 0.0;
     }
-    int tide_first = tide_i * 1;
-    ivec4 tide_q0 = texelFetch(pixels0, ivec2((tide_first + 0) & 1023, (tide_first + 0) >> 10), 0);
+    int tide_word = tide_i * 1;
+    int tide_first = tide_word >> 2;
+    ivec4 tide_r = texelFetch(pixels0, ivec2((tide_first + 0) & 1023, (tide_first + 0) >> 10), 0);
+    ivec4 tide_q0 = ivec4(tide_r[tide_word & 3], 0, 0, 0);
     vec4 tide_p0 = intBitsToFloat(tide_q0);
     return tide_p0.x;
 }
@@ -74,7 +76,8 @@ vec4 tide_list3(int tide_i) {
     if (tide_i < 0 || tide_i >= tide_v1.x) {
         return vec4(0.0);
     }
-    int tide_first = tide_i * 1;
+    int tide_word = tide_i * 4;
+    int tide_first = tide_word >> 2;
     ivec4 tide_q0 = texelFetch(pixels3, ivec2((tide_first + 0) & 1023, (tide_first + 0) >> 10), 0);
     vec4 tide_p0 = intBitsToFloat(tide_q0);
     return tide_p0;
@@ -84,7 +87,8 @@ tt_Light tide_list1(int tide_i) {
     if (tide_i < 0 || tide_i >= tide_v0.z) {
         return tt_Light(vec3(0.0), vec4(0.0), 0.0, 0, false);
     }
-    int tide_first = tide_i * 3;
+    int tide_word = tide_i * 12;
+    int tide_first = tide_word >> 2;
     ivec4 tide_q0 = texelFetch(pixels1, ivec2((tide_first + 0) & 1023, (tide_first + 0) >> 10), 0);
     vec4 tide_p0 = intBitsToFloat(tide_q0);
     ivec4 tide_q1 = texelFetch(pixels1, ivec2((tide_first + 1) & 1023, (tide_first + 1) >> 10), 0);
@@ -117,8 +121,10 @@ ivec2 tide_list2(int tide_i) {
     if (tide_i < 0 || tide_i >= tide_v0.w) {
         return ivec2(0);
     }
-    int tide_first = tide_i * 1;
-    ivec4 tide_q0 = texelFetch(pixels2, ivec2((tide_first + 0) & 1023, (tide_first + 0) >> 10), 0);
+    int tide_word = tide_i * 2;
+    int tide_first = tide_word >> 2;
+    ivec4 tide_r = texelFetch(pixels2, ivec2((tide_first + 0) & 1023, (tide_first + 0) >> 10), 0);
+    ivec4 tide_q0 = ivec4(tide_r[tide_word & 3], tide_r[(tide_word & 3) + 1], 0, 0);
     return tide_q0.xy;
 }
 
@@ -126,8 +132,10 @@ float tide_list0(int tide_i) {
     if (tide_i < 0 || tide_i >= tide_v0.y) {
         return 0.0;
     }
-    int tide_first = tide_i * 1;
-    ivec4 tide_q0 = texelFetch(pixels0, ivec2((tide_first + 0) & 1023, (tide_first + 0) >> 10), 0);
+    int tide_word = tide_i * 1;
+    int tide_first = tide_word >> 2;
+    ivec4 tide_r = texelFetch(pixels0, ivec2((tide_first + 0) & 1023, (tide_first + 0) >> 10), 0);
+    ivec4 tide_q0 = ivec4(tide_r[tide_word & 3], 0, 0, 0);
     vec4 tide_p0 = intBitsToFloat(tide_q0);
     return tide_p0.x;
 }
@@ -204,8 +212,10 @@ fn tide_list0(tide_i: i32) -> f32 {
     if (tide_i < 0 || tide_i >= tide_block.tide_v0.y) {
         return f32();
     }
-    let tide_first = tide_i * 1;
-    let tide_q0 = textureLoad(pixels0, vec2i((tide_first + 0) & 1023, (tide_first + 0) >> 10u), 0);
+    let tide_word = tide_i * 1;
+    let tide_first = tide_word >> 2u;
+    let tide_r = textureLoad(pixels0, vec2i((tide_first + 0) & 1023, (tide_first + 0) >> 10u), 0);
+    let tide_q0 = vec4i(tide_r[tide_word & 3], 0, 0, 0);
     let tide_p0 = bitcast<vec4f>(tide_q0);
     return tide_p0.x;
 }
@@ -220,7 +230,8 @@ fn tide_list3(tide_i: i32) -> vec4f {
     if (tide_i < 0 || tide_i >= tide_block.tide_v1.x) {
         return vec4f();
     }
-    let tide_first = tide_i * 1;
+    let tide_word = tide_i * 4;
+    let tide_first = tide_word >> 2u;
     let tide_q0 = textureLoad(pixels3, vec2i((tide_first + 0) & 1023, (tide_first + 0) >> 10u), 0);
     let tide_p0 = bitcast<vec4f>(tide_q0);
     return tide_p0;
@@ -230,7 +241,8 @@ fn tide_list1(tide_i: i32) -> tt_Light {
     if (tide_i < 0 || tide_i >= tide_block.tide_v0.z) {
         return tt_Light();
     }
-    let tide_first = tide_i * 3;
+    let tide_word = tide_i * 12;
+    let tide_first = tide_word >> 2u;
     let tide_q0 = textureLoad(pixels1, vec2i((tide_first + 0) & 1023, (tide_first + 0) >> 10u), 0);
     let tide_p0 = bitcast<vec4f>(tide_q0);
     let tide_q1 = textureLoad(pixels1, vec2i((tide_first + 1) & 1023, (tide_first + 1) >> 10u), 0);
@@ -263,8 +275,10 @@ fn tide_list2(tide_i: i32) -> vec2i {
     if (tide_i < 0 || tide_i >= tide_block.tide_v0.w) {
         return vec2i();
     }
-    let tide_first = tide_i * 1;
-    let tide_q0 = textureLoad(pixels2, vec2i((tide_first + 0) & 1023, (tide_first + 0) >> 10u), 0);
+    let tide_word = tide_i * 2;
+    let tide_first = tide_word >> 2u;
+    let tide_r = textureLoad(pixels2, vec2i((tide_first + 0) & 1023, (tide_first + 0) >> 10u), 0);
+    let tide_q0 = vec4i(tide_r[tide_word & 3], tide_r[(tide_word & 3) + 1], 0, 0);
     return tide_q0.xy;
 }
 
