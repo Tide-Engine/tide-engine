@@ -59,6 +59,21 @@ void arena_reset(void)
     }
 }
 
+arena_mark arena_checkpoint(void)
+{
+    return (arena_mark){arena_head, arena_head ? arena_head->used : 0};
+}
+
+void arena_rewind(const arena_mark mark)
+{
+    while (arena_head != mark.block) {
+        arena_block *next = arena_head->next;
+        free(arena_head);
+        arena_head = next;
+    }
+    if (arena_head) arena_head->used = mark.used;
+}
+
 void *vec_grow(void *items, const size_t old_cap, const size_t new_cap, const size_t elem_size)
 {
     void *p = arena_alloc(new_cap * elem_size);

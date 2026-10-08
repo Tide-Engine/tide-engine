@@ -83,6 +83,10 @@ void analysis_set_related_information(bool shows);
 // packages'. Copied; kept until set again.
 void analysis_set_game_folders(const char *game_folder, const char *const *roots, int root_count);
 
+// A file or folder changed on disk: invalidate its asset reads and candidate
+// hashes before the next analysis, including meshes read with its buffers.
+void analysis_file_changed(const char *path);
+
 // The game's asset sites: each one's file as an absolute path with forward
 // slashes (a glob where the declaration's is; NULL for a URL), and the folder
 // of the file that names it. For the server's registrations.

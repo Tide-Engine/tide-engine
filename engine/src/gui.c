@@ -221,13 +221,33 @@ uint32_t tide_gui_id(tide_gui *g, const uint32_t seed, const uint32_t site)
 
 static const tide_gui_size *remembered(const tide_gui *g, const uint32_t id)
 {
-    const tide_gui_size *s = &g->sizes[id & (TIDE_GUI_MAX_SIZES - 1)];
-    return s->frame != 0 && s->id == id ? s : NULL;
+    uint32_t slot = id & (TIDE_GUI_MAX_SIZES - 1);
+    for (uint32_t probe = 0; probe < TIDE_GUI_MAX_SIZES; probe++) {
+        const tide_gui_size *s = &g->sizes[slot];
+        if (s->frame == 0) return NULL;
+        if (s->id == id) return s;
+        slot = (slot + 1) & (TIDE_GUI_MAX_SIZES - 1);
+    }
+    return NULL;
 }
 
 static void remember(tide_gui *g, const uint32_t id, const tide_float2 size, const float natural, const float least)
 {
-    g->sizes[id & (TIDE_GUI_MAX_SIZES - 1)] = (tide_gui_size){id, g->frame, size, natural, least};
+    uint32_t slot = id & (TIDE_GUI_MAX_SIZES - 1), oldest = slot;
+    tide_gui_size *place = NULL;
+    for (uint32_t probe = 0; probe < TIDE_GUI_MAX_SIZES; probe++) {
+        tide_gui_size *s = &g->sizes[slot];
+        if (s->frame == 0 || s->id == id) {
+            place = s;
+            break;
+        }
+        if (g->frame - s->frame > g->frame - g->sizes[oldest].frame) oldest = slot;
+        slot = (slot + 1) & (TIDE_GUI_MAX_SIZES - 1);
+    }
+    // Only a full cache evicts a container, preferably one not used recently.
+    // Occupied slots remain occupied, so lookup can still stop at an empty one.
+    if (!place) place = &g->sizes[oldest];
+    *place = (tide_gui_size){id, g->frame, size, natural, least};
 }
 
 // ---------------------------------------------------------------------------

@@ -122,6 +122,23 @@ TIDE_TEST(evaluation_order_methods_read_their_value_as_they_run)
     TIDE_CHECK(r.methodBefore == 1); // Plus(0) on 0, then Bump
 }
 
+TIDE_TEST(evaluation_order_readonly_receivers_keep_their_own_containers)
+{
+    one_tick();
+    const ReceiverCopies r = world.ReceiverCopies;
+    TIDE_CHECK(r.field == 1 && r.fieldChanged == 9);
+    TIDE_CHECK(r.local == 1 && r.localChanged == 9);
+    TIDE_CHECK(r.whole == 1 && r.wholeChanged == 9);
+    TIDE_CHECK(r.replaced == 1 && r.replacedChanged == 9);
+    TIDE_CHECK(r.own == 1 && r.ownChanged == 9);
+    TIDE_CHECK(r.nestedField == 1 && r.nestedFieldChanged == 9);
+    TIDE_CHECK(r.afterArguments == 23 && r.afterChanged == 9);
+    TIDE_CHECK(r.rows == 1 && r.rowsChanged == 9);
+    TIDE_CHECK(r.scores == 1 && r.scoresChanged == 9);
+    TIDE_CHECK(r.words && r.wordsChanged);
+    TIDE_CHECK(r.set == 1 && r.setChanged == 0);
+}
+
 TIDE_TEST(evaluation_order_failing_calls_keep_their_turn)
 {
     one_tick();

@@ -304,11 +304,16 @@ int tide_add(const char *folder, const char *what)
         return 1;
     }
 
-    char text[1024];
-    if (line.local || line.builtin) snprintf(text, sizeof text, "%s", source);
-    else snprintf(text, sizeof text, "%s%s%s %s", source, ref ? "@" : "", ref ? ref : "", line.commit);
     packages_text t = load(folder);
-    append(&t, text);
+    if (line.local || line.builtin) append(&t, source);
+    else {
+        const size_t size = strlen(source) + (ref ? strlen(ref) : 0) + strlen(line.commit) + 3;
+        char *text = malloc(size);
+        if (!text) abort();
+        snprintf(text, size, "%s%s%s %s", source, ref ? "@" : "", ref ? ref : "", line.commit);
+        append(&t, text);
+        free(text);
+    }
     if (!save(&t)) return 1;
     if (line.builtin) printf("tide: added %s, which comes with tide\n", pf.name);
     else if (line.local) printf("tide: added %s, from %s\n", pf.name, source);

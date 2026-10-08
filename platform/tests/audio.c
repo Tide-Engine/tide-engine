@@ -614,6 +614,115 @@ TIDE_TEST(audio_one_shots_from_frames_between_blocks_are_all_played)
     tide_audio_free(&f);
 }
 
+typedef struct forget_state {
+    uint32_t blocks;
+    uint8_t room[TIDE_AUDIO_STATE_SMALL];
+} forget_state;
+static uint32_t forgotten_calls, forgotten_bus_calls, replaced_calls, replacement_blocks, replacement_shot_calls;
+
+static void forgotten_effect(float *samples, void *state, const void *knobs)
+{
+    (void)knobs;
+    forgotten_calls++;
+    ((uint8_t *)state)[0]++;
+    for (uint32_t i = 0; i < SAMPLES; i++) samples[i] = 0.5f;
+}
+
+static void forgotten_bus(float *samples, void *state, const void *knobs)
+{
+    (void)samples;
+    (void)state;
+    (void)knobs;
+    forgotten_bus_calls++;
+}
+
+static void replaced_effect(float *samples, void *state, const void *knobs)
+{
+    (void)samples;
+    (void)state;
+    (void)knobs;
+    replaced_calls++;
+}
+
+static void replacement_effect(float *samples, void *state, const void *knobs)
+{
+    (void)knobs;
+    forget_state *s = state;
+    replacement_blocks = ++s->blocks;
+    for (uint32_t i = 0; i < SAMPLES; i++) samples[i] = 0.25f;
+}
+
+static void replacement_shot(float *samples, void *state, const void *knobs)
+{
+    (void)state;
+    (void)knobs;
+    replacement_shot_calls++;
+    for (uint32_t i = 0; i < SAMPLES; i++) samples[i] = 0.25f;
+}
+
+TIDE_TEST(audio_a_timed_out_forget_survives_replaced_frames)
+{
+    fresh();
+    forgotten_calls = forgotten_bus_calls = replaced_calls = replacement_blocks = replacement_shot_calls = 0;
+    tide_audio_frame f = {0};
+    tide_audio_reset(&f);
+    tide_voice old = {.id = 81, .playing = true, .loop = true, .volume = 1.0f, .pitch = 1.0f,
+                      .effect = {.fn = forgotten_effect, .id = 81, .state_size = sizeof(forget_state)}};
+    tide_audio_voice(&f, &old);
+    tide_audio_set_bus_effect(&f, 0, &(tide_audio_effect){.fn = forgotten_bus, .id = 82, .state_size = 1});
+    tide_mixer_submit(&f);
+    float out[SAMPLES];
+    tide_mixer_render(out, BLOCK);
+    TIDE_CHECK(forgotten_calls == 1 && forgotten_bus_calls == 1 && tide_mixer_states() == 1);
+    // An old one-shot has not reached the renderer when the host requests the forget.
+    tide_audio_reset(&f);
+    old.id = 0;
+    old.effect.state_size = 1;
+    tide_audio_voice(&f, &old);
+    tide_mixer_submit(&f);
+    forgotten_calls = forgotten_bus_calls = 0;
+    // Fake a stalled callback: no device is opened, and the documented wait times out.
+    tide_mixer_rendered_elsewhere(true);
+    tide_mixer_forget();
+    // The next game can replace the pending frame more than once before the callback resumes.
+    tide_audio_reset(&f);
+    tide_voice next = {.id = 83, .playing = true, .loop = true, .volume = 1.0f, .pitch = 1.0f,
+                       .effect = {.fn = replaced_effect, .id = 83, .state_size = sizeof(forget_state)}};
+    tide_audio_voice(&f, &next);
+    tide_audio_voice(&f, &(tide_voice){.playing = true, .loop = true, .volume = 1.0f, .pitch = 1.0f,
+                                     .effect = {.fn = replaced_effect, .id = 83, .state_size = 1}});
+    tide_mixer_submit(&f);
+    tide_mixer_forget(); // A second timeout also retires sounds queued after the first request.
+    tide_audio_reset(&f);
+    // Reusing both ids still starts a fresh big state, independent of the old voice's.
+    next.id = 81;
+    next.effect = (tide_audio_effect){.fn = replacement_effect, .id = 81, .state_size = sizeof(forget_state)};
+    tide_audio_voice(&f, &next);
+    tide_audio_voice(&f, &(tide_voice){.playing = true, .loop = true, .volume = 1.0f, .pitch = 1.0f,
+                                     .effect = {.fn = replacement_shot, .id = 85, .state_size = 1}});
+    tide_mixer_submit(&f);
+    tide_mixer_render(out, BLOCK);
+    TIDE_CHECK(forgotten_calls == 0 && forgotten_bus_calls == 0 && replaced_calls == 0);
+    TIDE_CHECK(replacement_blocks == 1 && replacement_shot_calls == 1 && tide_mixer_voices() == 2);
+    bool all_match = true;
+    for (uint32_t i = 0; i < SAMPLES; i++) all_match &= near(out[i], 0.5f);
+    TIDE_CHECK(all_match);
+    // After acknowledgement the next frame retains the new state and must not replay the one-shot.
+    tide_audio_reset(&f);
+    tide_audio_voice(&f, &next);
+    tide_mixer_submit(&f);
+    tide_mixer_render(out, BLOCK);
+    TIDE_CHECK(replacement_blocks == 2 && replacement_shot_calls == 2 && tide_mixer_voices() == 2);
+    TIDE_CHECK(forgotten_calls == 0 && tide_mixer_states() == 1);
+    all_match = true;
+    for (uint32_t i = 0; i < SAMPLES; i++) all_match &= near(out[i], 0.5f);
+    TIDE_CHECK(all_match);
+    tide_mixer_rendered_elsewhere(false);
+    tide_mixer_forget();
+    TIDE_CHECK(tide_mixer_states() == 0);
+    tide_audio_free(&f);
+}
+
 TIDE_TEST(audio_renders_the_same_in_any_sizes_and_the_same_bytes_everywhere)
 {
     // A scene of everything, rendered in 800-frame pieces (a 60th of a second,

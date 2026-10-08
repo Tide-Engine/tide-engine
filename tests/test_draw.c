@@ -646,6 +646,106 @@ TIDE_TEST(draw_textures_are_copied_when_they_change)
     tide_draw_free(&d);
 }
 
+TIDE_TEST(draw_texture_slots_survive_growth_and_frame_pruning)
+{
+    tide_draw_list d = {0};
+    enum { images = 1024 };
+    const uint64_t prefix = UINT64_C(0x1234567800000000);
+    uint8_t *pixels;
+    for (uint32_t i = 0; i < images; i++) {
+        for (uint32_t space = TIDE_PIXELS_MEMORY; space <= TIDE_PIXELS_GRID; space++) {
+            const uint32_t slot = tide_draw_texture_slot(&d, space, prefix + i, 7, 1, 1, &pixels);
+            TIDE_REQUIRE(slot == i * 2u + space + 1u && pixels != NULL);
+            memset(pixels, (int)(i & 255u), 4);
+        }
+    }
+    TIDE_CHECK(d.texture_count == images * 2u);
+    // Growth and repeated reads leave places and copied pixels as they were.
+    for (uint32_t i = images; i-- > 0;) {
+        for (uint32_t space = TIDE_PIXELS_MEMORY; space <= TIDE_PIXELS_GRID; space++) {
+            const uint32_t slot = tide_draw_texture_slot(&d, space, prefix + i, 7, 1, 1, &pixels);
+            TIDE_REQUIRE(slot == i * 2u + space + 1u && pixels == NULL);
+            TIDE_CHECK(d.textures[slot - 1u].pixels[0] == (uint8_t)i);
+        }
+    }
+    // An ordinary image's versions, sizes and formats all reuse its place.
+    const uint32_t changed = tide_draw_texture_slot_as(&d, TIDE_PIXELS_MEMORY, prefix + 1u, 8, 2, 1,
+                                                       TIDE_TEXELS_INTS, &pixels);
+    TIDE_REQUIRE(changed == 3u && pixels != NULL);
+    memset(pixels, 42, 32);
+    TIDE_CHECK(tide_draw_texture_slot_as(&d, TIDE_PIXELS_MEMORY, prefix + 1u, 8, 2, 1,
+                                         TIDE_TEXELS_INTS, &pixels) == changed && pixels == NULL);
+    tide_draw_reset(&d);
+    for (uint32_t i = 1; i < images; i += 3u) {
+        const uint32_t slot = tide_draw_texture_slot(&d, TIDE_PIXELS_MEMORY, prefix + i, 9, 1, 1, &pixels);
+        TIDE_REQUIRE(slot == i * 2u + 1u && pixels != NULL);
+        memset(pixels, 43, 4);
+    }
+    // Dropped entries disappear, and the surviving entries are compacted in array order.
+    tide_draw_reset(&d);
+    TIDE_REQUIRE(d.texture_count == images / 3u);
+    for (uint32_t i = images / 3u; i-- > 0;) {
+        const uint32_t slot = tide_draw_texture_slot(&d, TIDE_PIXELS_MEMORY, prefix + i * 3u + 1u, 9, 1, 1, &pixels);
+        TIDE_REQUIRE(slot == i + 1u && pixels == NULL);
+        TIDE_CHECK(d.textures[slot - 1u].pixels[0] == 43);
+    }
+    const uint32_t restored = tide_draw_texture_slot(&d, TIDE_PIXELS_GRID, prefix + 1u, 7, 1, 1, &pixels);
+    TIDE_REQUIRE(restored == images / 3u + 1u && pixels != NULL);
+    tide_draw_forget(&d);
+    TIDE_CHECK(d.texture_count == 0);
+    TIDE_CHECK(tide_draw_texture_slot(&d, TIDE_PIXELS_MEMORY, prefix + 1u, 9, 1, 1, &pixels) == 1u && pixels != NULL);
+    tide_draw_free(&d);
+    TIDE_CHECK(d.textures == NULL && d.texture_index == NULL);
+}
+
+TIDE_TEST(draw_target_texture_versions_survive_growth_pruning_and_append)
+{
+    tide_draw_list d = {0}, other = {0};
+    const tide_render_target target = tide_render_target_make(8, 6);
+    const tide_texture_ref color = tide_render_target_color(target);
+    const tide_depth_ref depth = tide_render_target_depth(target);
+    const uint32_t first = tide_draw_texture_source(&d, color);
+    const uint32_t first_depth = tide_draw_depth_source(&d, depth);
+    tide_render_target_resize(target, 8, 6);
+    const uint32_t second = tide_draw_texture_source(&d, color);
+    tide_render_target_resize(target, 16, 12);
+    const uint32_t third = tide_draw_texture_source(&d, color);
+    const tide_cubemap_ref cube = tide_cubemap_make(4);
+    const uint32_t cube_slot = tide_draw_cube_source(&d, cube);
+    TIDE_REQUIRE(first == 1u && first_depth == 2u && second == 3u && third == 4u && cube_slot == 5u);
+    for (uint32_t i = 1; i <= 256; i++) {
+        TIDE_REQUIRE(tide_draw_target_texture(&d, i, 1, 1) == i + 5u);
+    }
+    TIDE_CHECK(tide_draw_texture_source(&d, color) == third && tide_draw_cube_source(&d, cube) == cube_slot);
+    TIDE_CHECK(d.textures[first - 1u].version == 1 && d.textures[second - 1u].version == 2
+               && d.textures[third - 1u].version == 3);
+    // Replaying earlier versions through append finds each one's original place.
+    static const tide_shader reads = {.dims = 2, .vertex_size = sizeof(tide_vertex), .texture_count = 1};
+    const uint32_t slots[] = {first, first_depth, second, third, cube_slot};
+    for (uint32_t i = 0; i < 5; i++) tide_draw_blit(&d, &reads, TIDE_BLEND_REPLACE, NULL, NULL, &slots[i], 0);
+    tide_draw_append(&other, &d);
+    TIDE_REQUIRE(other.run_count == 5 && other.texture_count == 5);
+    for (uint32_t i = 0; i < 5; i++) {
+        const uint32_t carried = other.runs[i].textures[0];
+        TIDE_REQUIRE(carried == i + 1u);
+        TIDE_CHECK(other.textures[carried - 1u].space == d.textures[slots[i] - 1u].space
+                   && other.textures[carried - 1u].version == d.textures[slots[i] - 1u].version);
+    }
+    tide_draw_append(&other, &d);
+    TIDE_CHECK(other.texture_count == 5);
+    tide_draw_reset(&d);
+    TIDE_CHECK(tide_draw_texture_source(&d, color) == third && tide_draw_cube_source(&d, cube) == cube_slot);
+    tide_draw_reset(&d);
+    TIDE_REQUIRE(d.texture_count == 2);
+    TIDE_CHECK(tide_draw_texture_source(&d, color) == 1u && tide_draw_cube_source(&d, cube) == 2u);
+    TIDE_CHECK(tide_draw_depth_source(&d, depth) == 3u);
+    tide_draw_forget(&d);
+    TIDE_CHECK(tide_draw_texture_source(&d, color) == 1u && tide_draw_cube_source(&d, cube) == 2u);
+    tide_draw_free(&d);
+    tide_draw_free(&other);
+    tide_render_targets_free();
+}
+
 // Appended to another list, as the GUI's are, meshes keep their triangles and
 // their textures.
 TIDE_TEST(draw_meshes_append)

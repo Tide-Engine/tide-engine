@@ -259,6 +259,30 @@ TIDE_TEST(cubemaps_are_assets_of_six_files_and_cubes_a_view_draws_into)
     TIDE_CHECK(local.Room.resized && tide_render_target_version(cube) == before + 1u);
     TIDE_CHECK(tide_render_target_resolve(local.Room.reflection.target).size.width == 128.0f);
     TIDE_CHECK(tide_cubemap_face(local.Room.reflection, 3).size.width == 128.0f);
+    // Before saving a page's state, each cube alias takes its live size, as a
+    // RenderTarget does: a resized cube comes back at that size on every alias.
+    tide_local_rebind_resources(&local, true);
+    TIDE_CHECK(local.Room.reflection.target.size.width == 128.0f);
+    TIDE_CHECK(local.Room.probe.cube.target.size.width == 128.0f && local.Room.probe.front.size.width == 128.0f);
+    TIDE_CHECK(tide_get_Prop_local(&local, entity).around.target.size.width == 128.0f);
+    const uint32_t resized_bytes_size = tide_local_pack(&local, NULL, 0);
+    bytes = malloc(resized_bytes_size);
+    TIDE_REQUIRE(bytes != NULL);
+    TIDE_REQUIRE(tide_local_pack(&local, bytes, resized_bytes_size) == resized_bytes_size);
+    tide_local resized = {0};
+    TIDE_REQUIRE(tide_local_unpack(&resized, bytes, resized_bytes_size));
+    free(bytes);
+    tide_local_rebind_resources(&resized, false);
+    const tide_render_target resized_cube = resized.Room.reflection.target;
+    TIDE_REQUIRE(tide_render_target_cubic(resized_cube.id) && resized_cube.id != cube);
+    TIDE_CHECK(resized_cube.size.width == 128.0f && resized_cube.size.height == 128.0f && resized_cube.size.scale == 1.0f);
+    TIDE_CHECK(resized.Room.probe.cube.target.id == resized_cube.id && resized.Room.probe.cube.target.size.width == 128.0f);
+    TIDE_CHECK(tide_render_target_cube_of(resized.Room.probe.front.id) == resized_cube.id
+               && resized.Room.probe.front.size.width == 128.0f && tide_render_target_face(resized.Room.probe.front.id) == 4);
+    TIDE_CHECK(tide_get_Prop_local(&resized, entity).around.target.id == resized_cube.id);
+    TIDE_CHECK(tide_render_target_format(resized.Room.bright.target.id) == TIDE_TARGET_RGBA16F);
+    TIDE_CHECK(resized.Room.held.named == sky.named && resized.Room.held.target.id == 0 && resized.Room.none.named == 0);
+    tide_local_free(&resized);
     // A face is no target to resize or dispose by itself: the cube stays as it is
     tide_render_target_resize(tide_cubemap_face(local.Room.reflection, 0), 8.0f, 8.0f);
     tide_render_target_dispose(tide_cubemap_face(local.Room.reflection, 0));
