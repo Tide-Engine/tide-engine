@@ -82,6 +82,11 @@ TIDE_TEST(math_color_constructors)
     TIDE_CHECK(color_is(r.integerColor, 1, 0, 1, 1));
     TIDE_CHECK(color_is(r.integerRgbaColor, 1, 0, 1, 0));
     TIDE_CHECK(color_is(r.scalarColor, 0.25f, 0.5f, 0.75f, 0.5f));
+    TIDE_CHECK(color_is(r.lerpedColor, 0.25f, 0.5f, 0.75f, 0.25f));
+    TIDE_CHECK(color_is(r.perChannelColor, 0, 0.5f, 0.5f, 0.5f));
+    TIDE_CHECK(color_is(r.clampedColor, 0, 0.25f, 1, 0.75f));
+    TIDE_CHECK(color_is(r.saturatedColor, 0, 0.5f, 1, 1));
+    TIDE_CHECK(color_is(r.brighterColor, 0.25f, 0.5f, 1, 0.25f));
 }
 
 TIDE_TEST(math_conversions_saturate)

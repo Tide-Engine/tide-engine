@@ -1365,6 +1365,12 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
         }
         return;
     }
+    if (want.kind == TY_COLOR && type_dim(have) == 1) { // A number beside colors in Math: that in each channel
+        sb_put(o, "tide_c_splat(");
+        gen_as(g, o, e, (type){TY_FLOAT, NULL});
+        sb_put(o, ")");
+        return;
+    }
     const int dim = type_dim(want);
     if (dim >= 2 && type_dim(have) == 1) {
         sb_printf(o, "tide_%s_splat(", type_suffix(want));

@@ -1153,9 +1153,14 @@ static bool unify(const expr *e, const bool ints_ok, type *out)
 {
     int dim = 1;
     bool is_float = !ints_ok;
+    bool color = false;
     for (int i = 0; i < e->args.count; i++) {
         if (e->args.items[i]->kind == E_DEFAULT) continue;
         const type t = e->args.items[i]->type;
+        if (t.kind == TY_COLOR) { // Channel by channel, alpha too: with colors and numbers, never a vector
+            color = true;
+            continue;
+        }
         if (!type_is_numeric(t)) return false;
         const int d = type_dim(t);
         if (d > 1) {
@@ -1164,7 +1169,8 @@ static bool unify(const expr *e, const bool ints_ok, type *out)
         }
         if (type_is_float_based(t)) is_float = true;
     }
-    *out = vector_type(is_float, dim);
+    if (color && dim > 1) return false;
+    *out = color ? T_COLOR : vector_type(is_float, dim);
     return true;
 }
 
@@ -1394,7 +1400,8 @@ type resolve_builtin_call(const str owner, expr *e)
                 char args[256];
                 arg_list(e, args, sizeof args);
                 diag_error(e->at, "Math.%s can't take (%s)", componentwise[i].name, args);
-                diag_note("it takes numbers and vectors; vectors in one call must be the same size");
+                diag_note("it takes numbers, vectors and colors; vectors in one call must be the same size, and a color "
+                          "goes with colors and numbers");
                 return (type){TY_ERROR, NULL};
             }
             for (int a = 0; a < e->args.count; a++) vec_push(e->arg_want, target);
@@ -1606,7 +1613,7 @@ static const char *componentwise_doc(const char *name)
         {"Clamp", "Clamps `x` between `a` and `b`, component by component. NaN gives `a`."},
         {"Min", "The smaller of `a` and `b`, component by component. If one is NaN, the other."},
         {"Max", "The larger of `a` and `b`, component by component. If one is NaN, the other."},
-        {"Lerp", "Linear interpolation: `a + (b - a) * t`, component by component."},
+        {"Lerp", "Linear interpolation: `a + (b - a) * t`, component by component. Between two colors, channel by channel."},
         {"Unlerp", "The `t` for which Lerp(a, b, t) gives `x`."},
         {"SmoothStep", "Smooth Hermite interpolation between 0 and 1 as `x` goes from `a` to `b`."},
         {"Step", "1 where `x >= edge`, 0 elsewhere."},
@@ -1621,7 +1628,7 @@ static const char *componentwise_doc(const char *name)
     for (size_t i = 0; i < sizeof docs / sizeof docs[0]; i++) {
         if (strcmp(docs[i].name, name) == 0) return docs[i].doc;
     }
-    return "Component by component, on numbers and vectors.";
+    return "Component by component, on numbers, vectors and colors.";
 }
 
 static const char *componentwise_params(const int argc, const char *name)
