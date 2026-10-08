@@ -715,6 +715,7 @@ static void walk_value(const expr *e)
     case E_TRY:
     case E_DEFAULTED:
     case E_AWAIT:
+    case E_STEP:
         walk_expr(e->lhs);
         walk_expr(e->rhs);
         break;
@@ -5033,6 +5034,7 @@ static loc expr_end(const expr *e)
     case E_MEMBER: return (loc){e->at.line, e->at.col + e->member.len, e->at.file};
     case E_BINARY: case E_COALESCE: case E_CONDITIONAL: return expr_end(e->rhs);
     case E_UNARY: case E_TRY: case E_AWAIT: return expr_end(e->lhs);
+    case E_STEP: return e->postfix ? (loc){e->at.line, e->at.col + 2, e->at.file} : expr_end(e->lhs);
     case E_IS: { // x is int score: to the name, or to the type
         const stmt *b = e->binding;
         if (b) return (loc){b->name_at.line, b->name_at.col + b->name.len, e->at.file};
