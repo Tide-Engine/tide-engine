@@ -686,6 +686,15 @@ typedef struct decl {
     bool world_match;
     bool world_local;
     bool world_sets;
+    // A function or method that sends, spawns or changes entities, itself or through the functions and
+    // methods it calls, does it as the code that calls it would: in the match ([0]) or on this machine
+    // ([1]). Nothing is wrong with it by itself: a call from code that couldn't do it is (check_acts).
+    // In generated C it's handed that world, and the scene its spawns join.
+    bool acts[2];
+    loc acts_at[2];           // ...where it first does: the Send itself, or the call of what does
+    const char *acts_what[2]; // ...and what, for messages: "sends 'Hit'"
+    bool acts_spawn[2];       // ...a Spawn among it: its entities join the scene of the entity its caller runs for
+    bool acts_text;           // ...and what it sends, spawns or adds in the match holds text or lists: the match's heap
     comp_mask need_mask; // Components an entity must have (access and `with`).
     comp_mask without_mask;
     // A view's `verified` parameters and filters name the world the server has

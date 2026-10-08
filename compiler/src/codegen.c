@@ -748,6 +748,19 @@ static bool has_scenes(const program *prog, const bool local)
     return false;
 }
 
+// A function or method that spawns is handed `tide_scene`, the scene of the
+// entity its caller runs for, which its entities join: the match's, or the
+// local world's for one that only spawns there (scene_is_local).
+static bool scene_is_local(const program *prog, const decl *m)
+{
+    return !(m->acts_spawn[0] && has_scenes(prog, false));
+}
+
+static bool takes_scene(const program *prog, const decl *m)
+{
+    return (m->acts_spawn[0] && has_scenes(prog, false)) || (m->acts_spawn[1] && has_scenes(prog, true));
+}
+
 // The scene component of archetype `a`'s entities, if they're scenes.
 static const decl *arch_scene(const gen *g, const int a)
 {
@@ -1113,19 +1126,29 @@ static const char *operator_word(const decl *m)
 }
 
 // A function that's handed the local state, `tide_l`, by the local code that
-// calls it: one that reaches this machine's files, reads Frame.dt, or reaches
-// local entities' components through its World.
+// calls it: one that reaches this machine's files, reads Frame.dt, reaches
+// local entities' components through its World, or sends, spawns and changes
+// entities on this machine as its caller would.
 static bool takes_local(const decl *m)
 {
-    return m->uses_io || m->frame_time || m->world_local || m->plays;
+    return m->uses_io || m->frame_time || m->world_local || m->plays || m->acts[1];
 }
 
 // A function or method that reaches the match's entities through its World
 // parameter, itself or through the functions it passes it on to: it's handed
 // the match's world, `tide_w`, by the code that calls it, in the World's place.
+// So is one that sends, spawns and changes entities in the match as its caller
+// would: what it records goes where the caller's own would.
 static bool takes_world(const decl *m)
 {
-    return m->world_match;
+    return m->world_match || m->acts[0];
+}
+
+// Whether the match's world a function is handed is one it changes: it sets a
+// component through its World, or records in the world's queue.
+static bool changes_world(const decl *m)
+{
+    return m->world_sets || m->acts[0];
 }
 
 // The match's seed (Random.seed), as the code being generated has it: the
@@ -2683,6 +2706,10 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
         sb_printf(o, "%stide_l", args++ ? ", " : "");
     }
     if (takes_world(m)) sb_printf(o, "%stide_w", args++ ? ", " : ""); // What its World argument stands for
+    if (takes_scene(g->prog, m)) { // What it spawns joins the scene of the entity this code runs for, when that's of the same world
+        const bool same = g->has_scene && g->scene_local == scene_is_local(g->prog, m);
+        sb_printf(o, "%s%s", args++ ? ", " : "", same ? "tide_scene" : "(tide_entity){0}");
+    }
     if (m->rolls) sb_printf(o, "%stide_dice", args++ ? ", " : ""); // The generator this code rolls with
     if (m->reads_seed) sb_printf(o, "%s%s", args++ ? ", " : "", match_seed(g));
     if (m->owner && args > 0) sb_put(o, ", "); // After what it's handed, its value
@@ -4293,6 +4320,8 @@ static bool call_keeps_order(const expr *e)
     if ((e->call == CALL_FUNCTION || e->call == CALL_METHOD) && (e->method->draws || e->method->is_extern || e->method->calls_c || e->method->rolls)) {
         return true;
     }
+    // One that sends, spawns or changes entities records it in its turn, as the statement's own would be
+    if ((e->call == CALL_FUNCTION || e->call == CALL_METHOD) && (e->method->acts[0] || e->method->acts[1])) return true;
     return writes(e);
 }
 
@@ -9756,7 +9785,7 @@ static capture_list sort_captures(gen *g, const expr *sort)
         }
     } else if (fn) {
         if (takes_local(fn)) capture(&out, "tide_local *", "tide_l");
-        if (takes_world(fn)) capture(&out, fn->world_sets ? "tide_world *" : "const tide_world *", "tide_w");
+        if (takes_world(fn)) capture(&out, changes_world(fn) ? "tide_world *" : "const tide_world *", "tide_w");
         if (fn->reads_seed) capture(&out, "int32_t", "tide_match_seed");
         if (fn->draws) {
             capture(&out, "tide_draw_list *", "tide_draw");
@@ -11678,7 +11707,8 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
     if (takes_local(m)) {
         sb_printf(o, "%stide_local *tide_l", n++ ? ", " : "");
     }
-    if (takes_world(m)) sb_printf(o, "%s%stide_world *tide_w", n++ ? ", " : "", m->world_sets ? "" : "const ");
+    if (takes_world(m)) sb_printf(o, "%s%stide_world *tide_w", n++ ? ", " : "", changes_world(m) ? "" : "const ");
+    if (takes_scene(g->prog, m)) sb_printf(o, "%stide_entity tide_scene", n++ ? ", " : "");
     if (m->rolls) sb_printf(o, "%stide_random *tide_dice", n++ ? ", " : "");
     if (m->reads_seed) sb_printf(o, "%sconst int32_t tide_match_seed", n++ ? ", " : "");
     if (m->owner && !m->is_operator && !m->is_interpolate) {
@@ -11721,6 +11751,9 @@ static void gen_routine(gen *g, const decl *m)
     g->routine = m;
     g->spawn_temps = 0;
     g->call_temps = 0;
+    g->has_scene = takes_scene(g->prog, m);
+    g->scene_local = scene_is_local(g->prog, m);
+    if (g->has_scene) line(g, o, "(void)tide_scene;");
     if (m->owner && !m->is_operator && !m->is_interpolate) line(g, o, "(void)tide_self;");
     if (m->owner && m->is_mut_method) line(g, o, "(void)tide_self_where;");
     if (m->uses_this) line(g, o, "(void)tide_this;");
@@ -11752,6 +11785,7 @@ static void gen_routine(gen *g, const decl *m)
     // A function that can fail and returns nothing succeeds at its end.
     if (m->result.kind == TY_FAILABLE && m->return_type.kind == TY_VOID) line(g, o, "return (%s){.ok = true};", c_type(m->result));
     g->routine = NULL;
+    g->has_scene = false;
     g->indent = 0;
     sb_put(o, "}\n");
     line_reset(g);

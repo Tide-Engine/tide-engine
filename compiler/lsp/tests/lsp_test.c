@@ -7888,6 +7888,39 @@ TIDE_TEST(lsp_out_selection_and_calls)
     "scene Main { }\n"                                                         \
     "event(Spawned) Setup(with Main) { Spawn(Health { }); Spawn(Healer { }); }\n"
 
+// A function sends, spawns and changes entities as the code that calls it could: the editor offers
+// them in one, and the error is at a call from code that can't.
+TIDE_TEST(lsp_functions_send_and_spawn)
+{
+    start();
+#define ACTS GAME_TYPES "event Hit { int damage; }\nlocal event Blink { int n; }\n"
+    const char *code = complete(ACTS "void Wave()\n{\n    $\n}\n");
+    TIDE_CHECK(offers(code, "Spawn") && offers(code, "Send") && offers(code, "Hit") && offers(code, "Blink"));
+    TIDE_CHECK(!offers(code, "Scene")); // Loading a scene is still a system's, a view's or a handler's own to write
+    // An entity's own after its dot, in a function and in a method: not Snap, which a system says
+    const char *dot = complete(ACTS "void Kill(Entity target)\n{\n    target.$\n}\n");
+    TIDE_CHECK(offers(dot, "Destroy") && offers(dot, "Add") && offers(dot, "Remove") && offers(dot, "Send") && !offers(dot, "Snap"));
+    const char *method = complete(ACTS "struct Bell\n{\n    int tone;\n    void Ring(LocalEntity target)\n    {\n        target.$\n    }\n}\n");
+    TIDE_CHECK(offers(method, "Destroy") && offers(method, "Send"));
+    // An operator is handed its operands and nothing else
+    const char *op = complete(ACTS "struct Money\n{\n    int cents;\n    Money operator +(Money a, Money b)\n    {\n        $\n"
+                                   "        return a;\n    }\n}\n");
+    TIDE_CHECK(!offers(op, "Spawn") && !offers(op, "Send"));
+
+    // Nothing is wrong with the function, or with a system that calls it
+    open_document(ACTS "void Poke(Entity target) { target.Send(Hit { damage = 1 }); }\n"
+                       "event(Hit hit) Take(mut Body body) { body.radius -= hit.damage; }\n"
+                       "system Fight(Body body) { if (body.radius > 20) Poke(this); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // ...and a view that calls it is told at its call
+    open_document(ACTS "void Poke(Entity target) { target.Send(Hit { damage = 1 }); }\n"
+                       "event(Hit hit) Take(mut Body body) { body.radius -= hit.damage; }\n"
+                       "system Fight(Body body) { if (body.radius > 20) Poke(this); }\n"
+                       "view Show(Body body) { if (body.radius > 20) Poke(this); }\n");
+    TIDE_CHECK(has(last_sent(), "a view can't change the match, and 'Poke' sends 'Hit'"));
+#undef ACTS
+}
+
 TIDE_TEST(lsp_world_in_functions)
 {
     start();

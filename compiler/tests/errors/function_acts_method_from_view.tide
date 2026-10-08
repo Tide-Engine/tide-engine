@@ -1,0 +1,12 @@
+// expect: a view can't change the match, and 'Shout' sends 'Hit'
+event Hit { int damage; }
+component Enemy
+{
+    int hp;
+    void Shout() { this.Send(Hit { damage = hp }); }
+}
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Enemy); }
+system Fight(Enemy enemy) { enemy.Shout(); }
+event(Hit hit) Take(mut Enemy enemy) { enemy.hp -= hit.damage; }
+view Show(Enemy enemy) { enemy.Shout(); }
