@@ -174,7 +174,7 @@ The rocket below is a `.glb` as a modelling tool exports one: five meshes with a
 
 **It's two lists.** `tree.vertices` is a `List<Corner>` and `tree.indices` a `List<int>`, three for each triangle, and `Draw.Mesh(tree.vertices, tree.indices, transform, Look)` is the same draw. Any code reads them, the match too, since every machine has the same pack, to the bit: a system can build a collider from a rock's own triangles. They're read-only, like every asset; copy one to change it, `mut var mine = tree.vertices;`.
 
-**One file is one mesh.** Everything the file's scene places is in it, where its nodes place it, as one list of vertices and one of triangles, with each part's material color in its vertices' `color`. That's all a model in flat colors needs. What a game moves apart, a car's wheels from its body, is a file each, and a glob names them: `asset Map<string, Mesh<Corner>> car = "art/car/*.glb";`.
+**One file is one mesh.** Everything the file's scene places is in it, where its nodes place it, as one list of vertices and one of triangles, with each part's material color in its vertices' `color`. Only vertices its triangles use are kept; a glTF primitive that shares a larger vertex array with other materials keeps its own part of that array. That's all a model in flat colors needs. What a game moves apart, a car's wheels from its body, is a file each, and a glob names them: `asset Map<string, Mesh<Corner>> car = "art/car/*.glb";`.
 
 **What's read, and what isn't:**
 

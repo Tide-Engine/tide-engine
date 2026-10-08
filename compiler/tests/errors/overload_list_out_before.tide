@@ -1,0 +1,7 @@
+// expect: unknown name 'made'
+scene Main { }
+singleton Log { int value; }
+int Make(out int made) { made = 7; return 3; }
+int Pick(int made, List<int> values) { return values[0] + made; }
+int Pick(float made, float values) { return int(values + made); }
+system Run(mut Log log) { log.value = Pick(made: made, values: [Make(out var made)]); }

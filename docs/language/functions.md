@@ -210,6 +210,7 @@ system Halve(mut Pile pile, mut Tally tally)
 
 - A local declared this way is read-only, like a `var`. `out mut var half` declares one the code changes later.
 - It belongs to the block the call's statement is in. Declared in an `if`'s condition, it's still there in the `else` and after the `if`. Declared in a `while`'s or a `for`'s condition, it's the loop's own.
+- Later elements and arguments can read what an earlier nested call made, including a call inside a list argument. Their order is the order written, even when arguments are named or the outer function has overloads.
 - It's only read where its call has run. In `if (ready && TryHalf(8, out var half))`, `half` has a value inside the `if`, and reading it after the `if` is an error, since `ready` may have been false.
 - The type matches exactly, as for `mut`, and by name the name comes first: `TryHalf(value: 8, half: out var h)`.
 - A list's element and a swizzle of several components (`v.xy`) are copies, so neither can be an `out` argument: declare a variable, and put it in.

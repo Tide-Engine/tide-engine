@@ -1968,7 +1968,7 @@ static bool equatable(const type t)
     }
 }
 
-static type check_list_literal(checker *c, expr *e, type want);
+static type check_list_literal(checker *c, expr *e, type want, bool checked);
 static type check_list_method(checker *c, expr *e, type list);
 static type check_map_method(checker *c, expr *e, type map);
 static bool always_returns(const stmt *s);
@@ -2050,7 +2050,9 @@ static void check_raw_uses(const checker *c)
     }
 }
 
-static type check_expr_want_any(checker *c, expr *e, const type want)
+// A list argument's ordinary elements may already be checked for overload
+// resolution, while the list itself still waits for the chosen parameter's type.
+static type check_expr_want_any(checker *c, expr *e, const type want, const bool checked)
 {
     // As in C#, `default` of a T? is nothing.
     if (want.kind == TY_OPTIONAL && (e->kind == E_NULL || e->kind == E_DEFAULT)) {
@@ -2058,8 +2060,10 @@ static type check_expr_want_any(checker *c, expr *e, const type want)
         return want;
     }
     const type inner = want.kind == TY_OPTIONAL ? wrapped_value(want) : want;
-    if (e->kind == E_LIST && (inner.kind == TY_LIST || inner.kind == TY_SET || inner.kind == TY_MAP || inner.kind == TY_ARRAY || inner.kind == TY_ERROR)) {
-        return check_list_literal(c, e, inner);
+    if (e->kind == E_LIST) {
+        const bool takes_list = inner.kind == TY_LIST || inner.kind == TY_SET || inner.kind == TY_MAP || inner.kind == TY_ARRAY || inner.kind == TY_ERROR;
+        if (!takes_list) diag_error(e->at, "a list's type comes from where it goes: 'List<int> scores = [1, 2];'");
+        return check_list_literal(c, e, takes_list ? inner : T_ERR, checked);
     }
     if (is_new_grid(e)) {
         const type grid = check_new_grid(c, e, inner);
@@ -2071,7 +2075,7 @@ static type check_expr_want_any(checker *c, expr *e, const type want)
         null_error(e, want);
         return e->type = T_ERR;
     }
-    const type t = check_expr_any(c, e);
+    const type t = checked ? e->type : check_expr_any(c, e);
     if (inner.kind == TY_TEXTURE && !refuse_raw_grid(e)) return e->type = T_ERR;
     // As in C#, int constants fit a byte where the expected type supplies it.
     int64_t value;
@@ -2085,15 +2089,20 @@ static type check_expr_want_any(checker *c, expr *e, const type want)
 // An expression where a value of `want` goes: [a, b] and `default` take their
 // type from it. A T? or a failable call's value only goes where its own type
 // does; elsewhere it has to be unwrapped.
-static type check_expr_want(checker *c, expr *e, const type want)
+static type check_expr_want_checked(checker *c, expr *e, const type want, const bool checked)
 {
-    const type t = check_expr_want_any(c, e, want);
+    const type t = check_expr_want_any(c, e, want, checked);
     if (is_wrapped(t) && !(t.kind == want.kind && t.decl == want.decl)) {
         unwrap_error(e, t);
         unwrap_fix(c, e, t);
         return e->type = T_ERR; // Reported: what takes it doesn't again
     }
     return t;
+}
+
+static type check_expr_want(checker *c, expr *e, const type want)
+{
+    return check_expr_want_checked(c, e, want, false);
 }
 
 // The `default` arguments of a built-in call, which resolving it left
@@ -3771,6 +3780,19 @@ static bool untyped_arg(const expr *arg)
     return arg->kind == E_DEFAULT || arg->kind == E_NULL || arg->kind == E_LIST || is_new_grid(arg);
 }
 
+// A context-typed list doesn't choose an overload, but its elements still
+// introduce out locals in written order. Check what has its own type now;
+// apply the chosen element type later without checking those expressions again.
+static void check_untyped_items(checker *c, expr *arg)
+{
+    if (arg->kind != E_LIST) return;
+    for (int i = 0; i < arg->args.count; i++) {
+        expr *item = arg->args.items[i];
+        if (untyped_arg(item)) check_untyped_items(c, item);
+        else check_expr_any(c, item);
+    }
+}
+
 // Whether an argument, checked unless it's untyped, can go to parameter `p`.
 // An `out` argument goes to an `out` parameter, of its own type, and nothing
 // else does.
@@ -3879,7 +3901,10 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
             begin_out_arg(c, arg);
             continue;
         }
-        if (untyped_arg(arg)) continue;
+        if (untyped_arg(arg)) {
+            check_untyped_items(c, arg);
+            continue;
+        }
         c->device_whole_ok = arg;
         c->world_arg = arg;
         c->in_place_ok = arg; // Which parameter takes it isn't known yet: a long array's is 'mut', or it's said below
@@ -3924,7 +3949,7 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
     if (best < 0) {
         for (int i = 0; i < written; i++) { // What's in them is still checked
             if (e->args.items[i]->is_out) finish_out_arg(c, e->args.items[i], T_ERR);
-            else if (untyped_arg(e->args.items[i])) check_expr_want(c, e->args.items[i], T_ERR);
+            else if (untyped_arg(e->args.items[i])) check_expr_want_checked(c, e->args.items[i], T_ERR, true);
         }
         sb args = {0};
         put_arg_types(&args, e);
@@ -3959,7 +3984,7 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
             continue;
         }
         if (untyped_arg(arg)) {
-            check_expr_want(c, arg, want);
+            check_expr_want_checked(c, arg, want, true);
             continue;
         }
         const param *taken_by = &m->params.items[param_of[best][i]];
@@ -7647,19 +7672,19 @@ static type check_index(checker *c, expr *e)
 }
 
 // [a, b, c] where a List<T> or a Set<T> goes.
-static type check_list_literal(checker *c, expr *e, const type want)
+static type check_list_literal(checker *c, expr *e, const type want, const bool checked)
 {
     if (want.kind == TY_MAP) {
         diag_error(e->at, "a map starts empty; there's no map literal yet");
         diag_note("add entries one by one: 'scores[key] = value;'");
-        for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], T_ERR);
+        for (int i = 0; i < e->args.count; i++) check_expr_want_checked(c, e->args.items[i], T_ERR, checked);
         return T_ERR;
     }
     if (want.kind == TY_ARRAY) { // [1, 2, 3] where an int[3] goes: exactly that many
         const type element = array_element(want);
         for (int i = 0; i < e->args.count; i++) {
             expr *item = e->args.items[i];
-            const type t = check_expr_want(c, item, element);
+            const type t = check_expr_want_checked(c, item, element, checked);
             if (t.kind == TY_VOID) diag_error(item->at, "this doesn't produce a value to put in the array");
             else if (!type_assignable(element, t)) diag_error(item->at, "this array holds %s, not %s", type_name(element), type_name(t));
         }
@@ -7671,14 +7696,14 @@ static type check_list_literal(checker *c, expr *e, const type want)
         return want;
     }
     if (want.kind != TY_LIST && want.kind != TY_SET) {
-        for (int i = 0; i < e->args.count; i++) check_expr_want(c, e->args.items[i], T_ERR);
+        for (int i = 0; i < e->args.count; i++) check_expr_want_checked(c, e->args.items[i], T_ERR, checked);
         return T_ERR;
     }
     const bool set = want.kind == TY_SET;
     const type element = set ? map_key(want) : list_element(want);
     for (int i = 0; i < e->args.count; i++) {
         expr *item = e->args.items[i];
-        const type t = check_expr_want(c, item, element);
+        const type t = check_expr_want_checked(c, item, element, checked);
         if (t.kind == TY_VOID) diag_error(item->at, "this doesn't produce a value to put in the %s", set ? "set" : "list");
         else if (!type_assignable(element, t)) diag_error(item->at, "this %s holds %s, not %s", set ? "set" : "list", type_name(element), type_name(t));
     }
@@ -8431,7 +8456,7 @@ static type check_coalesce(checker *c, expr *e)
     const char *outer_side = c->short_circuit_side;
     c->short_circuit_depth++;
     c->short_circuit_side = "on the right side of '?\?'";
-    const type r = check_expr_want_any(c, e->rhs, value.kind == TY_VOID ? T_ERR : value);
+    const type r = check_expr_want_any(c, e->rhs, value.kind == TY_VOID ? T_ERR : value, false);
     c->short_circuit_depth--;
     c->short_circuit_side = outer_side;
     if (l.kind == TY_ERROR || r.kind == TY_ERROR) return T_ERR;
@@ -10199,7 +10224,7 @@ static void check_var(checker *c, stmt *s)
                 if (holdable) diag_note("declare a list of them as 'List<%s> " STR_FMT " = [...];'", type_name(s->type), STR_ARG(s->name));
                 else diag_note("a list's type is 'List<T>', like 'List<int> " STR_FMT " = [1, 2];'", STR_ARG(s->name));
             }
-            value = check_list_literal(c, s->value, s->type);
+            value = check_list_literal(c, s->value, s->type, false);
         } else {
             value = check_expr_want(c, s->value, s->type);
             if (s->value->kind == E_NAME && s->value->bind == BIND_TYPE) value = T_ERR;
