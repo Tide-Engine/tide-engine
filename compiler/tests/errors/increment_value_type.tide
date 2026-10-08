@@ -1,0 +1,13 @@
+// expect: '++' works on ints, longs and floats, not bool
+scene Main { }
+
+singleton Flags
+{
+    bool on;
+    int count;
+}
+
+system Toggle(mut Flags flags)
+{
+    flags.count = ++flags.on ? 1 : 0;
+}

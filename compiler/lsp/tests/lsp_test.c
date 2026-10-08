@@ -3563,6 +3563,30 @@ TIDE_TEST(lsp_operators)
 
 // #if and the rest: the formatter leaves directives and what they leave out as
 // they are, which reads as comments, and each branch folds.
+// ++i and i++ where a value goes: no diagnostic, and the formatter leaves them against their variable.
+TIDE_TEST(lsp_increments_as_values)
+{
+    start();
+    static const char messy[] = "scene Main { }\n"
+                                "singleton Count { int n; int picked; }\n"
+                                "system S(mut Count c)\n"
+                                "{\n"
+                                "c.picked=(++c.n%2==0)?c.n++:1;\n"
+                                "}\n";
+    static const char expected[] = "scene Main { }\n"
+                                   "singleton Count { int n; int picked; }\n"
+                                   "system S(mut Count c)\n"
+                                   "{\n"
+                                   "    c.picked = (++c.n % 2 == 0) ? c.n++ : 1;\n"
+                                   "}\n";
+    open_document(messy);
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    format_reply(messy);
+    const char *formatted = apply_reply(messy, NULL);
+    TIDE_CHECK(strcmp(formatted, expected) == 0);
+    if (strcmp(formatted, expected) != 0) printf("--- got:\n%s---\n", formatted);
+}
+
 TIDE_TEST(lsp_directives)
 {
     start();
