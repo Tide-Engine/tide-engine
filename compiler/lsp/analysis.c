@@ -10317,44 +10317,34 @@ static char *moved_to(const char *path, const asset_rename *renames, const int c
     return NULL;
 }
 
-void analysis_rename_files(const asset_rename *renames, const int count, jbuf *out)
+void analysis_rename_files(const asset_rename *renames, const int count, const asset_rename_edit_fn edit, void *user)
 {
-    jb_put(out, "{\"changes\":{");
-    int files_written = 0;
-    for (int file = 0; file < A.file_count; file++) {
-        int written = 0;
-        for (int i = 0; i < A.assets.count; i++) {
-            const asset_site *site = &A.assets.items[i];
-            if (site->file != file || site->glob || site->url) continue;
-            char *target = moved_to(site->abs, renames, count);
-            char *declaring = moved_to(A.files[file].src.path, renames, count);
-            if (!target && !declaring) continue;
-            char *folder = declaring ? asset_path_folder(declaring) : NULL;
-            char *relative = asset_path_relative(folder ? folder : site->folder, target ? target : site->abs);
-            const char *was = str_to_cstr(site->path);
-            if (!asset_path_same(relative, was)) {
-                if (written++ == 0) {
-                    if (files_written++) jb_put(out, ",");
-                    jb_string(out, A.files[file].uri);
-                    jb_put(out, ":[");
-                } else {
-                    jb_put(out, ",");
-                }
-                const loc start = asset_path_start(site);
-                jb_put(out, "{\"range\":");
-                write_edit_range(out, start, (loc){start.line, start.col + site->path.len, start.file});
-                jb_put(out, ",\"newText\":");
-                jb_string(out, relative);
-                jb_put(out, "}");
-            }
-            free(relative);
-            free(folder);
-            free(declaring);
-            free(target);
+    for (int i = 0; i < A.assets.count; i++) {
+        const asset_site *site = &A.assets.items[i];
+        if (site->glob || site->url) continue;
+        const int file = site->file;
+        char *target = moved_to(site->abs, renames, count);
+        char *declaring = moved_to(A.files[file].src.path, renames, count);
+        if (!target && !declaring) continue;
+        char *folder = declaring ? asset_path_folder(declaring) : NULL;
+        char *relative = asset_path_relative(folder ? folder : site->folder, target ? target : site->abs);
+        const char *was = str_to_cstr(site->path);
+        if (!asset_path_same(relative, was)) {
+            jbuf out = {0};
+            const loc start = asset_path_start(site);
+            jb_put(&out, "{\"range\":");
+            write_edit_range(&out, start, (loc){start.line, start.col + site->path.len, start.file});
+            jb_put(&out, ",\"newText\":");
+            jb_string(&out, relative);
+            jb_put(&out, "}");
+            edit(user, A.files[file].uri, A.files[file].src.path, &out);
+            jb_free(&out);
         }
-        if (written) jb_put(out, "]");
+        free(relative);
+        free(folder);
+        free(declaring);
+        free(target);
     }
-    jb_put(out, "}}");
 }
 
 // Completion inside a site's path: the folders and files where the path so

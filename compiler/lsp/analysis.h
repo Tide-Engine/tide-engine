@@ -96,4 +96,8 @@ typedef struct asset_rename {
     const char *old_path;
     const char *new_path;
 } asset_rename;
-void analysis_rename_files(const asset_rename *renames, int count, jbuf *out); // WorkspaceEdit
+// Each TextEdit is serialized before calling `edit`; its URI, path and JSON
+// are valid only during the callback. The server copies them to combine
+// games' edits, including shared files with different active #if branches.
+typedef void (*asset_rename_edit_fn)(void *user, const char *uri, const char *path, const jbuf *edit);
+void analysis_rename_files(const asset_rename *renames, int count, asset_rename_edit_fn edit, void *user);

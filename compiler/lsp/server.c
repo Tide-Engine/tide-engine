@@ -956,8 +956,60 @@ static void register_assets_of(lsp_server *s, const path_list *list)
 }
 
 // workspace/willRenameFiles: the edits that keep every asset path at its
-// file, in the game of the first file renamed (the files of one rename are
-// in one place).
+// file, across the games of the files and folders renamed in one batch.
+typedef struct renamed_document {
+    char *uri;
+    char *path;
+    char **edits;
+    int count;
+} renamed_document;
+
+typedef struct rename_edits {
+    renamed_document *documents;
+    int count;
+} rename_edits;
+
+// A shared file can have different active #if branches in different games.
+// Merge its edits, keeping each range and replacement only once. Everything
+// copied here must outlive the next analysis, which resets the arena.
+static void collect_rename_edit(void *user, const char *uri, const char *path, const jbuf *edit)
+{
+    rename_edits *all = user;
+    renamed_document *document = NULL;
+    for (int i = 0; i < all->count && !document; i++) {
+        if (same_path(all->documents[i].path, path)) document = &all->documents[i];
+    }
+    if (!document) {
+        all->documents = realloc(all->documents, sizeof(renamed_document) * (size_t)(all->count + 1));
+        if (!all->documents) abort();
+        document = &all->documents[all->count++];
+        *document = (renamed_document){copy_string(uri, strlen(uri)), copy_string(path, strlen(path)), NULL, 0};
+    }
+    for (int i = 0; i < document->count; i++) {
+        if (strcmp(document->edits[i], edit->data) == 0) return;
+    }
+    document->edits = realloc(document->edits, sizeof(char *) * (size_t)(document->count + 1));
+    if (!document->edits) abort();
+    document->edits[document->count++] = copy_string(edit->data, edit->len);
+}
+
+static bool same_rename_game(const path_list *game, const char *alone, const path_list *seen)
+{
+    if (game->game_folder || seen->game_folder) {
+        return game->game_folder && seen->game_folder && same_path(game->game_folder, seen->game_folder);
+    }
+    const int count = game->count > 0 ? game->count : 1;
+    if (count != seen->count) return false;
+    for (int i = 0; i < count; i++) {
+        const char *path = game->count > 0 ? game->items[i] : alone;
+        const char *package = game->count > 0 ? game->packages[i] : NULL;
+        if (!same_path(path, seen->items[i])) return false;
+        if ((package == NULL) != (seen->packages[i] == NULL)) return false;
+        if (package && strcmp(package, seen->packages[i]) != 0) return false;
+    }
+    return true;
+}
+
 static void will_rename_files(lsp_server *s, const json *id, const json *params)
 {
     const json *files = json_get(params, "files");
@@ -981,14 +1033,58 @@ static void will_rename_files(lsp_server *s, const json *id, const json *params)
     if (count == 0) {
         jb_put(&b, "null}");
     } else {
-        // The game it's in, found as for a Tide file there
-        jbuf there = {0};
-        jb_printf(&there, "%s/x.tide", renames[0].old_path);
-        path_list list;
-        game_of(s, there.data, &list);
-        run_game(s, &list, there.data);
-        analysis_rename_files(renames, count, &b);
-        jb_put(&b, "}");
+        jb_put(&b, "{\"changes\":{");
+        path_list *seen = NULL;
+        int seen_count = 0;
+        rename_edits edits = {0};
+        for (int i = 0; i < count; i++) {
+            // The game it's in, found as for a Tide file there. A batch can
+            // span games, whose shared package files must be edited once.
+            jbuf there = {0};
+            jb_printf(&there, "%s/x.tide", renames[i].old_path);
+            path_list list;
+            game_of(s, there.data, &list);
+            bool found = false;
+            for (int k = 0; k < seen_count && !found; k++) found = same_rename_game(&list, there.data, &seen[k]);
+            if (found) {
+                free_paths(&list);
+                jb_free(&there);
+                continue;
+            }
+            seen = realloc(seen, sizeof(path_list) * (size_t)(seen_count + 1));
+            if (!seen) abort();
+            path_list *game = &seen[seen_count++];
+            *game = (path_list){0};
+            if (list.game_folder) {
+                game->game_folder = copy_string(list.game_folder, strlen(list.game_folder));
+            } else {
+                if (list.count == 0) add_path(game, there.data);
+                for (int file = 0; file < list.count; file++) {
+                    add_path_in(game, list.items[file], list.packages[file]);
+                }
+            }
+            run_game(s, &list, there.data);
+            analysis_rename_files(renames, count, collect_rename_edit, &edits);
+        }
+        for (int i = 0; i < seen_count; i++) free_paths(&seen[i]);
+        free(seen);
+        for (int i = 0; i < edits.count; i++) {
+            renamed_document *document = &edits.documents[i];
+            if (i) jb_put(&b, ",");
+            jb_string(&b, document->uri);
+            jb_put(&b, ":[");
+            for (int k = 0; k < document->count; k++) {
+                if (k) jb_put(&b, ",");
+                jb_put(&b, document->edits[k]);
+                free(document->edits[k]);
+            }
+            jb_put(&b, "]");
+            free(document->uri);
+            free(document->path);
+            free(document->edits);
+        }
+        free(edits.documents);
+        jb_put(&b, "}}}");
     }
     send_buf(s, &b);
     jb_free(&b);
