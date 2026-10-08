@@ -1,6 +1,6 @@
 # The former runners on the owner's machines
 
-The workflows run on Blacksmith's runners, when asked to (see AGENTS.md,
+The workflows run on GitHub-hosted runners, when asked to (see AGENTS.md,
 Packaging and releases).
 
 The setup below records the two self-hosted runners used while the account

@@ -17,7 +17,7 @@
 #
 # Every run also builds the docs site, and on dev deploys it (docs.yml).
 #
-# Jobs run on fresh Blacksmith runners.
+# Jobs run on fresh GitHub-hosted runners.
 name: Build
 run-name: ${{ github.ref_name == 'dev' && 'Nightly' || github.ref_name == 'release' && 'Stable' || 'Check' }} (${{ github.ref_name }})
 
@@ -41,12 +41,12 @@ concurrency:
 jobs:
   version:
     name: Version
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.next.outputs.new_release_version || steps.nightly.outputs.version }}
       published: ${{ steps.next.outputs.new_release_published || steps.nightly.outputs.published }}
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.TIDE_PUBLISH_TOKEN || secrets.GITHUB_TOKEN }}
@@ -89,47 +89,47 @@ jobs:
       matrix:
         include:
           - platform: windows-x64
-            os: blacksmith-4vcpu-windows-2025
+            os: windows-2025
             preset: package
             test-jobs: 4
           - platform: linux-x64
-            os: blacksmith-4vcpu-ubuntu-2404
+            os: ubuntu-24.04
             preset: package
             test-jobs: 4
           - platform: macos-arm64
-            os: blacksmith-6vcpu-macos-latest
+            os: macos-latest
             preset: package
             test-jobs: 4
           - platform: windows-x64
-            os: blacksmith-4vcpu-windows-2025
+            os: windows-2025
             preset: release
             test-jobs: 4
           - platform: windows-x64
-            os: blacksmith-4vcpu-windows-2025
+            os: windows-2025
             preset: web-release
             test-jobs: 4
           - platform: windows-x64
-            os: blacksmith-4vcpu-windows-2025
+            os: windows-2025
             preset: mingw-release
             test-jobs: 4
           - platform: linux-x64
-            os: blacksmith-4vcpu-ubuntu-2404
+            os: ubuntu-24.04
             preset: release
             test-jobs: 4
           - platform: linux-x64
-            os: blacksmith-4vcpu-ubuntu-2404
+            os: ubuntu-24.04
             preset: web-release
             test-jobs: 4
           - platform: linux-x64
-            os: blacksmith-4vcpu-ubuntu-2404
+            os: ubuntu-24.04
             preset: sanitize
             test-jobs: 4
           - platform: macos-arm64
-            os: blacksmith-6vcpu-macos-latest
+            os: macos-latest
             preset: release
             test-jobs: 4
           - platform: macos-arm64
-            os: blacksmith-6vcpu-macos-latest
+            os: macos-latest
             preset: web-release
             test-jobs: 4
     runs-on: ${{ matrix.os }}
@@ -499,7 +499,7 @@ jobs:
     strategy:
       matrix:
         platform: [windows-x64, linux-x64, macos-arm64]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
       - name: Require every test and package
         env:
@@ -511,7 +511,7 @@ jobs:
   jetbrains:
     name: JetBrains plugin
     needs: version
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     env:
       TIDE_VERSION: ${{ needs.version.outputs.version || '0.0.0-dev' }}
     defaults:
@@ -519,7 +519,7 @@ jobs:
         shell: bash
         working-directory: tools/tide-jetbrains
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -542,11 +542,11 @@ jobs:
     name: Release
     needs: [version, build, jetbrains]
     if: (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/release') && needs.version.outputs.published == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     outputs:
       published: ${{ steps.publish.outputs.new_release_published }}
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.TIDE_PUBLISH_TOKEN || secrets.GITHUB_TOKEN }}
@@ -648,9 +648,9 @@ jobs:
     name: JetBrains Marketplace
     needs: [version, release]
     if: github.ref == 'refs/heads/release' && needs.release.outputs.published == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
-      - uses: useblacksmith/checkout@v1
+      - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

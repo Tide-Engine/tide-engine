@@ -172,6 +172,257 @@ static bool fingerprint_hash(const fingerprint_pack *p, uint8_t out[32])
     return pack_fingerprint(p->bytes, p->size, "chosen", &p->desc, out);
 }
 
+// Expected hashes are captured only from an intact builder fixture. The
+// runtime function stays the independent oracle for candidate pack checks.
+typedef struct fingerprint_canonical_control {
+    const char *qualified;
+    uint32_t kind, layout, count;
+    const uint8_t *hashes;
+    uint8_t logical[32];
+} fingerprint_canonical_control;
+
+static fingerprint_canonical_control fingerprint_canonical_request(fingerprint_pack *p, uint8_t hashes[2][32])
+{
+    const tide_pack_entry *e = fingerprint_entry(p);
+    const uint8_t *region = fingerprint_region(p);
+    const tide_block *records = (const tide_block *)(const void *)(region + e->offset);
+    const bool map = e->kind == TIDE_PACK_SKINNED_MAP;
+    const uint32_t stride = map ? 24u : (uint32_t)sizeof(tide_skinned_lists);
+    for (uint32_t i = 0; i < records->a; i++) {
+        const uint8_t *row = (const uint8_t *)(records + 1) + (size_t)i * stride;
+        tide_sha256 hash;
+        tide_sha256_init(&hash);
+        if (map) {
+            uint32_t key;
+            memcpy(&key, row + 8u, sizeof key);
+            const tide_block *text = (const tide_block *)(const void *)(region + (key & 0x3fffffffu) - TIDE_PACK_BASE);
+            tide_sha256_add(&hash, text + 1, text->a);
+        }
+        tide_skinned_lists model;
+        memcpy(&model, row + (map ? 12u : 0u), sizeof model);
+        const tide_block *data = (const tide_block *)(const void *)(region + (model.data.at & 0x3fffffffu) - TIDE_PACK_BASE);
+        tide_sha256_add(&hash, data + 1, data->a);
+        tide_sha256_end(&hash, hashes[i]);
+    }
+    fingerprint_canonical_control request = {.qualified = "chosen", .kind = e->kind, .layout = e->extra,
+                                             .count = records->a, .hashes = &hashes[0][0]};
+    TIDE_CHECK(fingerprint_hash(p, request.logical));
+    return request;
+}
+
+static bool fingerprint_canonical_matches_oracle(const fingerprint_pack *p, const fingerprint_canonical_control *request)
+{
+    const bool oracle = tide_pack_skinned_content(p->bytes, p->size, request->qualified, request->kind,
+                                                  request->layout, request->hashes, request->count);
+    const tide_asset_fingerprint_request selected = {request->qualified, p->desc};
+    uint32_t failed = 0;
+    const bool actual = pack_fingerprints(p->bytes, p->size, &selected, 1u, NULL,
+                                          (const uint8_t (*)[32])request->logical, &failed);
+    TIDE_CHECK(actual == oracle);
+    TIDE_CHECK(actual ? failed == UINT32_MAX : failed == 0u || failed == UINT32_MAX);
+    return actual;
+}
+
+TIDE_TEST(pack_skinned_fingerprint_preserves_canonical_record_cut_and_map_index_rejections)
+{
+    const uint32_t kinds[] = {TIDE_PACK_SKINNED, TIDE_PACK_SKINNEDS, TIDE_PACK_SKINNED_MAP};
+    for (size_t kind = 0; kind < sizeof kinds / sizeof kinds[0]; kind++) {
+        fingerprint_pack p = fingerprint_fixture(kinds[kind], 0u, true, false);
+        TIDE_REQUIRE(p.bytes != NULL);
+        uint8_t hashes[2][32];
+        const fingerprint_canonical_control request = fingerprint_canonical_request(&p, hashes);
+        TIDE_REQUIRE(fingerprint_canonical_matches_oracle(&p, &request));
+        for (size_t size = 0; size < p.size; size++) {
+            fingerprint_pack cut = p;
+            cut.size = size;
+            cut.bytes = malloc(size ? size : 1u);
+            TIDE_REQUIRE(cut.bytes != NULL);
+            memcpy(cut.bytes, p.bytes, size);
+            TIDE_CHECK(!fingerprint_canonical_matches_oracle(&cut, &request));
+            free(cut.bytes);
+        }
+        const uint8_t *region = fingerprint_region(&p);
+        const tide_pack_entry *e = fingerprint_entry(&p);
+        const uint8_t *rows = region + e->offset + sizeof(tide_block);
+        tide_skinned_lists model;
+        memcpy(&model, rows + (kinds[kind] == TIDE_PACK_SKINNED_MAP ? 12u : 0u), sizeof model);
+        const uint32_t data_at = (model.data.at & 0x3fffffffu) - TIDE_PACK_BASE;
+        for (uint32_t variant = 0; variant < 11u; variant++) {
+            fingerprint_pack malformed = p;
+            malformed.bytes = malloc(p.size);
+            TIDE_REQUIRE(malformed.bytes != NULL);
+            memcpy(malformed.bytes, p.bytes, p.size);
+            tide_pack_entry *entry = fingerprint_entry(&malformed);
+            uint8_t *body = fingerprint_region(&malformed);
+            tide_block *records = (tide_block *)(void *)(body + entry->offset);
+            switch (variant) {
+            case 0: entry->kind = TIDE_PACK_BYTES; break;
+            case 1: entry->extra++; break;
+            case 2: entry->offset++; break;
+            case 3: records->a++; break;
+            case 4: records->b++; break;
+            case 5: records->a = records->b = UINT32_MAX; break;
+            case 6: records->a = records->b = 0u; break;
+            case 7: entry->size = UINT32_MAX; break;
+            case 8: {
+                const uint32_t invalid = TIDE_PACK_BASE; // Wrong handle tag
+                memcpy(body + entry->offset + sizeof(tide_block) + (kinds[kind] == TIDE_PACK_SKINNED_MAP ? 12u : 0u),
+                       &invalid, sizeof invalid);
+                break;
+            }
+            case 9: ((tide_block *)(void *)(body + data_at))->a = UINT32_MAX; break;
+            default: body[data_at + sizeof(tide_block)] ^= 1u; break;
+            }
+            TIDE_CHECK(!fingerprint_canonical_matches_oracle(&malformed, &request));
+            free(malformed.bytes);
+        }
+        if (kinds[kind] == TIDE_PACK_SKINNED_MAP) {
+            for (uint32_t variant = 0; variant < 8u; variant++) {
+                fingerprint_pack malformed = p;
+                malformed.bytes = malloc(p.size);
+                TIDE_REQUIRE(malformed.bytes != NULL);
+                memcpy(malformed.bytes, p.bytes, p.size);
+                tide_pack_entry *entry = fingerprint_entry(&malformed);
+                uint8_t *body = fingerprint_region(&malformed);
+                tide_block *index = (tide_block *)(void *)(body + entry->size);
+                uint32_t *table = (uint32_t *)(void *)(index + 1);
+                uint8_t *row = body + entry->offset + sizeof(tide_block);
+                uint32_t first = 0, second = 0;
+                for (uint32_t i = 0; i < index->a; i++) {
+                    if (table[i] == 1u) first = i;
+                    if (table[i] == 2u) second = i;
+                }
+                switch (variant) {
+                case 0: index->a = index->b = 7u; break;
+                case 1: table[first] = 3u; break;
+                case 2: table[second] = 1u; break;
+                case 3: table[first] = 0u; break;
+                case 4: {
+                    const int64_t invalid = -1;
+                    memcpy(row, &invalid, sizeof invalid);
+                    break;
+                }
+                case 5: {
+                    const uint32_t invalid = UINT32_MAX;
+                    memcpy(row + 8u, &invalid, sizeof invalid);
+                    break;
+                }
+                case 6: {
+                    uint32_t empty = 0;
+                    while (table[empty]) empty++;
+                    table[empty] = table[first];
+                    table[first] = 0u; // Keep the live count, break the key's probe chain.
+                    break;
+                }
+                default: {
+                    uint32_t key;
+                    memcpy(&key, row + 8u, sizeof key);
+                    ((tide_block *)(void *)(body + (key & 0x3fffffffu) - TIDE_PACK_BASE))->a = UINT32_MAX;
+                    break;
+                }
+                }
+                TIDE_CHECK(!fingerprint_canonical_matches_oracle(&malformed, &request));
+                free(malformed.bytes);
+            }
+        }
+        free(p.bytes);
+    }
+}
+
+typedef struct fingerprint_default_vertex {
+    float position[3], extra;
+} fingerprint_default_vertex;
+
+static fingerprint_pack fingerprint_default_model_fixture(const uint32_t kind)
+{
+    fingerprint_pack p = {.desc = {.kind = kind, .vertex_size = sizeof(fingerprint_default_vertex)}};
+    tide_pack_builder builder = {0};
+    uint32_t offsets[6];
+    if (!fingerprint_model(&builder, true, false, offsets)) return p;
+    const tide_block *vertices = (const tide_block *)(const void *)(builder.region + offsets[1]);
+    const tide_block *indices = (const tide_block *)(const void *)(builder.region + offsets[2]);
+    const uint32_t count = vertices->a, index_count = indices->a;
+    fingerprint_default_vertex *values = calloc(count, sizeof *values);
+    uint32_t *ix = malloc((size_t)index_count * sizeof *ix);
+    if (!values || !ix) { free(values); free(ix); return p; }
+    for (uint32_t i = 0; i < count; i++)
+        memcpy(values[i].position, (const uint8_t *)(vertices + 1) + (size_t)i * 3u * sizeof(float), sizeof values[i].position);
+    memcpy(ix, indices + 1, (size_t)index_count * sizeof *ix);
+    uint8_t content[32];
+    tide_sha256_of(values, (size_t)count * sizeof *values, content);
+    tide_pack_mesh(&builder, content, values, sizeof *values, count, ix, index_count, offsets + 1u);
+    free(ix);
+    free(values);
+    memcpy(offsets + 3u, offsets, 3u * sizeof offsets[0]);
+    if (kind == TIDE_PACK_SKINNED_MAP) {
+        uint32_t keys[2], chars, index;
+        tide_sha256_of("first", 5u, content);
+        keys[0] = tide_pack_string(&builder, content, "first", 5u, &chars);
+        tide_sha256_of("second", 6u, content);
+        keys[1] = tide_pack_string(&builder, content, "second", 6u, &chars);
+        const uint32_t at = tide_pack_skinned_map(&builder, keys, offsets, 2u, &index);
+        tide_pack_name(&builder, "chosen", kind, at, index, 0x12345678u);
+    } else {
+        const uint32_t models = kind == TIDE_PACK_SKINNED ? 1u : 2u;
+        const uint32_t at = tide_pack_skinned_list(&builder, offsets, models);
+        tide_pack_name(&builder, "chosen", kind, at, models, 0x12345678u);
+    }
+    p.bytes = tide_pack_end(&builder, &p.size);
+    return p;
+}
+
+TIDE_TEST(pack_skinned_fingerprint_checks_source_vertices_before_loaded_defaults)
+{
+    const uint32_t kinds[] = {TIDE_PACK_SKINNED, TIDE_PACK_SKINNEDS, TIDE_PACK_SKINNED_MAP};
+    for (size_t kind = 0; kind < sizeof kinds / sizeof kinds[0]; kind++) {
+        fingerprint_pack p = fingerprint_default_model_fixture(kinds[kind]);
+        TIDE_REQUIRE(p.bytes != NULL);
+        uint8_t hashes[2][32];
+        const fingerprint_canonical_control control = fingerprint_canonical_request(&p, hashes);
+        const tide_asset_fingerprint_request request = {"chosen", p.desc};
+        TIDE_REQUIRE(pack_fingerprints(p.bytes, p.size, &request, 1u, NULL,
+                                        (const uint8_t (*)[32])control.logical, NULL));
+        tide_pack_entry *e = fingerprint_entry(&p);
+        uint8_t *region = fingerprint_region(&p);
+        tide_skinned_lists model;
+        memcpy(&model, region + e->offset + sizeof(tide_block) + (kinds[kind] == TIDE_PACK_SKINNED_MAP ? 12u : 0u), sizeof model);
+        const uint32_t vertex_at = (model.vertices.at & 0x3fffffffu) - TIDE_PACK_BASE;
+        tide_block *vertex_block = (tide_block *)(void *)(region + vertex_at);
+        fingerprint_default_vertex *typed = (fingerprint_default_vertex *)(void *)(vertex_block + 1);
+        const float original = typed[0].position[0];
+        typed[0].position[0] += 17.0f;
+        // Blob-only preflight accepted this changed source-filled attribute.
+        TIDE_CHECK(tide_pack_skinned_content(p.bytes, p.size, "chosen", control.kind, control.layout, control.hashes, control.count));
+        TIDE_CHECK(!pack_fingerprints(p.bytes, p.size, &request, 1u, NULL,
+                                      (const uint8_t (*)[32])control.logical, NULL));
+        typed[0].position[0] = original;
+        // Runtime cache versions and allocation padding remain irrelevant.
+        memset(region + vertex_at + vertex_block->next, 91, sizeof(uint64_t));
+        const uint32_t index_at = (model.indices.at & 0x3fffffffu) - TIDE_PACK_BASE;
+        tide_block *index_block = (tide_block *)(void *)(region + index_at);
+        const size_t payload_end = sizeof(tide_block) + (size_t)index_block->a * sizeof(uint32_t);
+        memset(region + index_at + payload_end, 73, index_block->next - payload_end);
+        TIDE_REQUIRE(pack_fingerprints(p.bytes, p.size, &request, 1u, NULL,
+                                        (const uint8_t (*)[32])control.logical, NULL));
+        for (uint32_t load = 0; load < 2u; load++) {
+            TIDE_REQUIRE(tide_pack_load(p.bytes, p.size));
+            const tide_pack_entry *loaded = tide_pack_find_mesh("chosen", kinds[kind], control.layout);
+            uint32_t count;
+            fingerprint_default_vertex *values = tide_pack_skinned_open(loaded, 0u, sizeof *values, &count);
+            TIDE_REQUIRE(values && count == vertex_block->a);
+            TIDE_CHECK(values[0].position[0] == original && values[0].extra == 0.0f);
+            for (uint32_t i = 0; i < count; i++) values[i].extra = 42.0f;
+            tide_pack_mesh_updated(values, sizeof *values);
+            TIDE_CHECK(values[0].extra == 42.0f);
+            // Default writes affect the loaded copy, so matching input packs
+            // remain valid on repeated loads and start from raw zero defaults.
+            TIDE_CHECK(pack_fingerprints(p.bytes, p.size, &request, 1u, NULL,
+                                          (const uint8_t (*)[32])control.logical, NULL));
+        }
+        free(p.bytes);
+    }
+}
+
 TIDE_TEST(pack_fingerprint_all_asset_kinds_ignore_relocation_and_cover_content)
 {
     static const uint32_t kinds[][2] = {
@@ -194,11 +445,122 @@ TIDE_TEST(pack_fingerprint_all_asset_kinds_ignore_relocation_and_cover_content)
         } else {
             TIDE_CHECK(!memcmp(a, b, sizeof a));
             TIDE_CHECK(memcmp(a, c, sizeof a) != 0);
+            // Mixed descriptors use the same payload walker in batch mode.
+            const tide_asset_fingerprint_request requests[2] = {
+                {"cosmetic", {.kind = TIDE_PACK_BYTES}}, {"chosen", moved.desc},
+            };
+            uint8_t expected[2][32], actual[2][32];
+            TIDE_REQUIRE(pack_fingerprint(moved.bytes, moved.size, "cosmetic", &requests[0].desc, expected[0]));
+            memcpy(expected[1], a, sizeof a);
+            uint32_t failed = 0;
+            TIDE_CHECK(pack_fingerprints(moved.bytes, moved.size, requests, 2u, actual, NULL, &failed));
+            TIDE_CHECK(failed == UINT32_MAX && !memcmp(actual, expected, sizeof actual));
+            TIDE_CHECK(pack_fingerprints(moved.bytes, moved.size, requests, 2u, NULL,
+                                          (const uint8_t (*)[32])expected, &failed));
         }
         free(plain.bytes);
         free(moved.bytes);
         free(changed.bytes);
     }
+}
+
+TIDE_TEST(pack_fingerprint_batch_handles_growth_collisions_and_request_order)
+{
+    const uint32_t entries = 1024u;
+    char (*names)[32] = calloc(entries, sizeof *names);
+    tide_asset_fingerprint_request *requests = calloc(entries, sizeof *requests);
+    uint8_t (*actual)[32] = calloc(entries, sizeof *actual);
+    uint8_t (*expected)[32] = calloc(entries, sizeof *expected);
+    TIDE_REQUIRE(names && requests && actual && expected);
+    tide_pack_builder builder = {0};
+    const char *values[2] = {"small", "larger value"};
+    uint32_t offsets[2], lengths[2], chars[2];
+    uint8_t content[32];
+    for (uint32_t i = 0; i < 2u; i++) {
+        lengths[i] = (uint32_t)strlen(values[i]);
+        tide_sha256_of(values[i], lengths[i], content);
+        offsets[i] = tide_pack_string(&builder, content, values[i], lengths[i], &chars[i]);
+    }
+    for (uint32_t i = 0; i < entries; i++) {
+        const int written = snprintf(names[i], sizeof names[i], "Selected.Asset%08u", i);
+        TIDE_REQUIRE(written > 0 && (size_t)written < sizeof names[i]);
+        const uint32_t value = (i / 2u) % 2u, kind = (i & 1u) ? TIDE_PACK_BYTES : TIDE_PACK_TEXT;
+        tide_pack_name(&builder, names[i], kind, offsets[value], lengths[value], chars[value]);
+    }
+    // Unselected directory duplicates stay irrelevant to this dependency set.
+    tide_pack_name(&builder, "unselected", TIDE_PACK_TEXT, offsets[0], lengths[0], chars[0]);
+    tide_pack_name(&builder, "unselected", TIDE_PACK_TEXT, offsets[1], lengths[1], chars[1]);
+    size_t size;
+    uint8_t *bytes = tide_pack_end(&builder, &size);
+    TIDE_REQUIRE(bytes != NULL);
+    uint8_t controls[4][32];
+    for (uint32_t i = 0; i < 4u; i++) {
+        const tide_asset_fingerprint_desc desc = {.kind = (i & 1u) ? TIDE_PACK_BYTES : TIDE_PACK_TEXT};
+        TIDE_REQUIRE(pack_fingerprint(bytes, size, names[i], &desc, controls[i]));
+    }
+    uint32_t count = 0;
+    for (uint32_t remaining = entries; remaining; remaining--) {
+        const uint32_t i = remaining - 1u;
+        if (i % 5u == 0u) continue;
+        requests[count] = (tide_asset_fingerprint_request){names[i], {.kind = (i & 1u) ? TIDE_PACK_BYTES : TIDE_PACK_TEXT}};
+        memcpy(expected[count++], controls[i % 4u], sizeof controls[0]);
+    }
+    uint32_t failed = 0;
+    TIDE_REQUIRE(pack_fingerprints(bytes, size, requests, count, actual, NULL, &failed));
+    TIDE_CHECK(failed == UINT32_MAX && !memcmp(actual, expected, (size_t)count * sizeof *actual));
+    TIDE_CHECK(pack_fingerprints(bytes, size, requests, count, NULL, (const uint8_t (*)[32])expected, &failed));
+    expected[count / 2u][0] ^= 1u;
+    TIDE_CHECK(!pack_fingerprints(bytes, size, requests, count, NULL, (const uint8_t (*)[32])expected, &failed));
+    TIDE_CHECK(failed == count / 2u);
+    free(bytes);
+    free(expected);
+    free(actual);
+    free(requests);
+    free(names);
+}
+
+TIDE_TEST(pack_fingerprint_batch_rejects_selected_directory_errors_and_invalid_requests)
+{
+    tide_pack_builder builder = {0};
+    uint8_t content[32];
+    tide_sha256_of("a", 1u, content);
+    uint32_t chars;
+    const uint32_t at = tide_pack_string(&builder, content, "a", 1u, &chars);
+    const char *const names[] = {"first", "second", "unselected"};
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++)
+        tide_pack_name(&builder, names[i], TIDE_PACK_TEXT, at, 1u, chars);
+    size_t size;
+    uint8_t *bytes = tide_pack_end(&builder, &size);
+    TIDE_REQUIRE(bytes != NULL);
+    tide_asset_fingerprint_request requests[2] = {{"second", {.kind = TIDE_PACK_TEXT}}, {"first", {.kind = TIDE_PACK_TEXT}}};
+    uint8_t out[2][32];
+    uint32_t failed = 0;
+    TIDE_REQUIRE(pack_fingerprints(bytes, size, requests, 2u, out, NULL, &failed));
+    TIDE_CHECK(pack_fingerprints(bytes, size, NULL, 0u, NULL, NULL, &failed));
+    TIDE_CHECK(failed == UINT32_MAX);
+    TIDE_CHECK(!pack_fingerprints(bytes, size, requests, 2u, NULL, NULL, &failed) && failed == UINT32_MAX);
+    TIDE_CHECK(!pack_fingerprints(bytes, size, requests, 2u, out, (const uint8_t (*)[32])out, &failed));
+    TIDE_CHECK(!pack_fingerprints(bytes, size, requests, UINT32_MAX, out, NULL, &failed));
+    requests[1].qualified = "missing";
+    TIDE_CHECK(!pack_fingerprints(bytes, size, requests, 2u, out, NULL, &failed) && failed == 1u);
+    requests[1].qualified = NULL;
+    TIDE_CHECK(!pack_fingerprints(bytes, size, requests, 2u, out, NULL, &failed) && failed == 1u);
+    requests[1].qualified = "second";
+    TIDE_CHECK(!pack_fingerprints(bytes, size, requests, 2u, out, NULL, &failed) && failed == 1u);
+    requests[1].qualified = "first";
+    tide_pack_entry *directory = (tide_pack_entry *)(void *)(bytes + sizeof(tide_pack_header));
+    directory[2] = directory[0]; // A duplicate selected name after its first occurrence
+    TIDE_CHECK(!pack_fingerprints(bytes, size, requests, 2u, out, NULL, &failed) && failed == 1u);
+    directory[0].kind = TIDE_PACK_BYTES; // Duplicates still fail even when the kinds differ.
+    TIDE_CHECK(!pack_fingerprints(bytes, size, requests, 2u, out, NULL, &failed) && failed == 1u);
+    tide_sha256_of("unselected", strlen("unselected"), directory[2].name);
+    TIDE_CHECK(!pack_fingerprints(bytes, size, requests, 2u, out, NULL, &failed) && failed == 1u);
+    directory[0].kind = TIDE_PACK_TEXT;
+    directory[0].offset = UINT32_MAX;
+    TIDE_CHECK(!pack_fingerprints(bytes, size, requests, 2u, out, NULL, &failed) && failed == 1u);
+    ((tide_pack_header *)(void *)bytes)->entries = UINT32_MAX;
+    TIDE_CHECK(!pack_fingerprints(bytes, size, requests, 2u, out, NULL, &failed) && failed == UINT32_MAX);
+    free(bytes);
 }
 
 TIDE_TEST(pack_fingerprint_excludes_mesh_cache_versions_and_allocation_padding)

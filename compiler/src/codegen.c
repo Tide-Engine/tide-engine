@@ -155,7 +155,8 @@ typedef struct gen {
     uint32_t taken_mask;  // Its capacity less one, a power of two
     const char **arch_names;
     VEC(asset_dependency) asset_dependencies; // Assets reached by skinned vertex defaults, including Decode's.
-    uint8_t *pack_bytes; // Built once, before the dependency hashes enter the generated header.
+    VEC(asset_dependency) skinned_fingerprints; // Imported source geometry; preflight only, never the header.
+    uint8_t *pack_bytes; // Built once, before asset compatibility hashes are computed.
     size_t pack_size;
 } gen;
 
@@ -14547,7 +14548,16 @@ static void collect_asset_dependencies(gen *g)
     asset_dependency_walk w = {0};
     for (int i = 0; i < g->prog->assets.count; i++) {
         const decl *d = g->prog->assets.items[i];
-        if (d->asset_kind == ASSET_SKINNED) dependency_vertex(&w, asset_vertex(d->return_type));
+        if (d->asset_kind == ASSET_SKINNED) {
+            const decl *vertex = asset_vertex(d->return_type);
+            dependency_vertex(&w, vertex);
+            if (d->asset) {
+                const asset_dependency dep = {.asset = d, .shape = {
+                    .kind = asset_pack_kind(d->return_type),
+                    .vertex_size = (uint32_t)type_layout((type){TY_STRUCT, (decl *)vertex}).size}};
+                vec_push(g->skinned_fingerprints, dep);
+            }
+        }
     }
     // Decode uses the same vertex defaults without requiring an imported
     // skinned asset, and can put its resulting geometry in match state too.
@@ -14578,15 +14588,22 @@ static void collect_asset_dependencies(gen *g)
     }
 }
 
-static bool fingerprint_asset_dependencies(gen *g)
+static bool fingerprint_assets(gen *g, asset_dependency *assets, const int count, const bool defaults)
 {
-    for (int i = 0; i < g->asset_dependencies.count; i++) {
-        asset_dependency *dep = &g->asset_dependencies.items[i];
-        if (!pack_fingerprint(g->pack_bytes, g->pack_size, str_to_cstr(dep->asset->qualified), &dep->shape, dep->hash)) {
-            diag_error(dep->asset->at, "couldn't fingerprint asset '" STR_FMT "' used by skinned vertex defaults", STR_ARG(dep->asset->qualified));
-            return false;
-        }
+    tide_asset_fingerprint_request *requests = arena_alloc((size_t)count * sizeof *requests);
+    uint8_t (*hashes)[32] = arena_alloc((size_t)count * sizeof *hashes);
+    for (int i = 0; i < count; i++) {
+        const asset_dependency *dep = &assets[i];
+        requests[i] = (tide_asset_fingerprint_request){str_to_cstr(dep->asset->qualified), dep->shape};
     }
+    uint32_t failed;
+    if (!pack_fingerprints(g->pack_bytes, g->pack_size, requests, (uint32_t)count, hashes, NULL, &failed)) {
+        const decl *d = assets[failed < (uint32_t)count ? failed : 0u].asset;
+        diag_error(d->at, "couldn't fingerprint asset '" STR_FMT "'%s", STR_ARG(d->qualified),
+                   defaults ? " used by skinned vertex defaults" : " imported as a skinned model");
+        return false;
+    }
+    for (int i = 0; i < count; i++) memcpy(assets[i].hash, hashes[i], sizeof hashes[i]);
     return true;
 }
 
@@ -14595,6 +14612,35 @@ static void dependency_descriptor(sb *o, const tide_asset_fingerprint_desc *d)
     sb_printf(o, "{.kind = %uu, .leaf_kind = %uu, .vertex_size = %uu, .grid_shape = {%uu, %uu, {%uu, %uu, %uu}}}",
               d->kind, d->leaf_kind, d->vertex_size, d->grid_shape.cell, d->grid_shape.dims,
               d->grid_shape.shift[0], d->grid_shape.shift[1], d->grid_shape.shift[2]);
+}
+
+static void gen_asset_fingerprint_check(sb *o, const asset_dependency *assets, const int count, const bool defaults)
+{
+    if (!count) return;
+    const char *name = defaults ? "dependencies" : "models";
+    sb_printf(o, "    { static const tide_asset_fingerprint_request %s[] = {\n", name);
+    for (int i = 0; i < count; i++) {
+        const asset_dependency *dep = &assets[i];
+        sb_printf(o, "        {\"" STR_FMT "\", ", STR_ARG(dep->asset->qualified));
+        dependency_descriptor(o, &dep->shape);
+        sb_put(o, "},\n");
+    }
+    sb_put(o, "      };\n      static const uint8_t expected[][32] = {\n");
+    for (int i = 0; i < count; i++) {
+        const asset_dependency *dep = &assets[i];
+        sb_put(o, "        {");
+        for (int n = 0; n < 32; n++) sb_printf(o, "%s0x%02x", n ? "," : "", (unsigned)dep->hash[n]);
+        sb_put(o, "},\n");
+    }
+    sb_put(o, "      };\n      uint32_t failed;\n");
+    sb_printf(o, "      if (!tide_asset_fingerprints(pack, size, %s, %uu, NULL, expected, &failed)) {\n"
+                 "          if (failed < %uu)\n"
+                 "              fprintf(stderr, \"tide: %s '%%s'%s requires its matching game build\\n\", %s[failed].qualified);\n"
+                 "          else\n"
+                 "              fputs(\"tide: %s require a valid pack for their matching game build\\n\", stderr);\n"
+                 "          return false;\n      } }\n", name, (unsigned)count, (unsigned)count,
+              defaults ? "asset" : "skinned asset", defaults ? " used by skinned vertex defaults" : "", name,
+              defaults ? "skinned vertex-default dependencies" : "skinned assets");
 }
 
 static void gen_assets(gen *g)
@@ -14607,7 +14653,7 @@ static void gen_assets(gen *g)
         const decl *d = prog->assets.items[i];
         sb_printf(o, "static %s %s; // " STR_FMT "\n", asset_ctype(d->return_type), asset_cname(d), STR_ARG(d->qualified));
     }
-    if (g->asset_dependencies.count) {
+    if (g->asset_dependencies.count || g->skinned_fingerprints.count) {
         sb_put(o, "\n");
         sb_putn(o, (const char *)tide_pack_fingerprint_source, tide_pack_fingerprint_source_size);
         sb_put(o, "\n");
@@ -14618,40 +14664,10 @@ static void gen_assets(gen *g)
     // Check actual dependency payloads before loading changes any pack state,
     // asset global or vertex default. A stale layout label alone proves none
     // of the values that a default will read from this candidate pack.
-    for (int i = 0; i < g->asset_dependencies.count; i++) {
-        const asset_dependency *dep = &g->asset_dependencies.items[i];
-        sb_put(o, "    { static const tide_asset_fingerprint_desc shape = ");
-        dependency_descriptor(o, &dep->shape);
-        sb_put(o, ";\n      static const uint8_t expected[32] = {");
-        for (int n = 0; n < 32; n++) sb_printf(o, "%s0x%02x", n ? "," : "", (unsigned)dep->hash[n]);
-        sb_printf(o, "};\n      uint8_t actual[32];\n"
-                     "      if (!tide_asset_fingerprint(pack, size, \"" STR_FMT "\", &shape, actual)\n"
-                     "          || memcmp(actual, expected, sizeof actual)) {\n"
-                     "          fprintf(stderr, \"tide: asset '" STR_FMT "' used by skinned vertex defaults requires its matching game build\\n\");\n"
-                     "          return false;\n      } }\n", STR_ARG(dep->asset->qualified), STR_ARG(dep->asset->qualified));
-    }
-    // Match code can sample these bytes, so a pack-only reload must retain
-    // the content this build checked and included in its compatibility hash.
-    for (int i = 0; i < prog->assets.count; i++) {
-        const decl *d = prog->assets.items[i];
-        if (d->asset_kind != ASSET_SKINNED || !d->asset) continue;
-        const asset_value *v = d->asset;
-        sb_put(o, "    { static const uint8_t expected[] = {");
-        if (!v->count) sb_put(o, "0");
-        for (int k = 0; k < v->count; k++) {
-            uint8_t hash[32];
-            tide_sha256 content;
-            tide_sha256_init(&content);
-            if (v->is_map) tide_sha256_add(&content, v->items[k].key, strlen(v->items[k].key));
-            tide_sha256_add(&content, v->items[k].skinned, v->items[k].skinned_size);
-            tide_sha256_end(&content, hash);
-            for (int n = 0; n < 32; n++) sb_printf(o, "%s0x%02x", k || n ? "," : "", (unsigned)hash[n]);
-        }
-        sb_printf(o, "};\n      if (!tide_pack_skinned_content(pack, size, \"" STR_FMT "\", %uu, 0x%08xu, expected, %uu)) {\n"
-                     "          fprintf(stderr, \"tide: skinned asset '" STR_FMT "' requires its matching game build\\n\");\n"
-                     "          return false;\n      } }\n", STR_ARG(d->qualified), (unsigned)asset_pack_kind(d->return_type),
-                  (unsigned)mesh_layout_number(g, asset_vertex(d->return_type)), (unsigned)v->count, STR_ARG(d->qualified));
-    }
+    gen_asset_fingerprint_check(o, g->asset_dependencies.items, g->asset_dependencies.count, true);
+    // Match code can sample typed source geometry as well as canonical model
+    // bytes. Both must match before defaults or ownership see this candidate.
+    gen_asset_fingerprint_check(o, g->skinned_fingerprints.items, g->skinned_fingerprints.count, false);
     sb_put(o, "    if (!tide_pack_load(pack, size)) return false;\n    const tide_pack_entry *e;\n");
     for (int i = 0; i < prog->assets.count; i++) {
         const decl *d = prog->assets.items[i];
@@ -14846,7 +14862,7 @@ static void build_pack(gen *g)
             }
         }
     }
-    if (!opts->pack && !opts->pack_c && !g->asset_dependencies.count) return;
+    if (!opts->pack && !opts->pack_c && !g->asset_dependencies.count && !g->skinned_fingerprints.count) return;
     tide_pack_builder b = {0};
     for (int i = 0; i < prog->assets.count; i++) {
         const decl *d = prog->assets.items[i];
@@ -17615,9 +17631,10 @@ bool codegen(program *prog, const codegen_options *opts)
     collect_heard_rows(&g);
     collect_asset_dependencies(&g);
     if (opts->info && g.asset_dependencies.count) opts->info->assets_affect_match = true;
-    if (g.asset_dependencies.count) {
+    if (g.asset_dependencies.count || g.skinned_fingerprints.count) {
         build_pack(&g);
-        if (!fingerprint_asset_dependencies(&g)) {
+        if ((g.asset_dependencies.count && !fingerprint_assets(&g, g.asset_dependencies.items, g.asset_dependencies.count, true))
+            || (g.skinned_fingerprints.count && !fingerprint_assets(&g, g.skinned_fingerprints.items, g.skinned_fingerprints.count, false))) {
             free(g.pack_bytes);
             return false;
         }
@@ -17682,7 +17699,7 @@ bool codegen(program *prog, const codegen_options *opts)
 
     sb h_path = {0};
     sb_printf(&h_path, "%s/%s.h", opts->out_dir, opts->name);
-    if (!g.asset_dependencies.count) build_pack(&g);
+    if (!g.asset_dependencies.count && !g.skinned_fingerprints.count) build_pack(&g);
     const bool ok = write_file(h_path.data, &g.h) && write_file(path.data, &g.c) && write_pack(&g);
     free(g.pack_bytes);
     return ok;

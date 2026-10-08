@@ -1,8 +1,10 @@
 // One implementation for tidec's expected hashes and generated raw-pack checks.
 // All walks have a fixed asset-kind depth; no loaded-pack state is touched.
 #include "tide/pack.h"
+#include "tide/page.h"
 #include "tide/sha256.h"
 #include "tide/skinned_data.h"
+#include <stdlib.h>
 #include <string.h>
 
 #ifndef TIDE_ASSET_FINGERPRINT_DESC_DEFINED
@@ -11,6 +13,14 @@ typedef struct tide_asset_fingerprint_desc {
     uint32_t kind, leaf_kind, vertex_size;
     tide_grid_shape grid_shape;
 } tide_asset_fingerprint_desc;
+#endif
+
+#ifndef TIDE_ASSET_FINGERPRINT_REQUEST_DEFINED
+#define TIDE_ASSET_FINGERPRINT_REQUEST_DEFINED
+typedef struct tide_asset_fingerprint_request {
+    const char *qualified;
+    tide_asset_fingerprint_desc desc;
+} tide_asset_fingerprint_request;
 #endif
 
 typedef struct tide_asset_fp_region {
@@ -299,30 +309,11 @@ static bool tide_asset_fp_map(const tide_asset_fp_region *r, const tide_pack_ent
     return true;
 }
 
-static bool tide_asset_fingerprint(const uint8_t *bytes, const size_t size, const char *qualified,
-                                    const tide_asset_fingerprint_desc *desc, uint8_t out[32])
+static bool tide_asset_fp_entry(const tide_asset_fp_region *r, const tide_pack_entry *entry,
+                                const tide_asset_fingerprint_desc *desc, uint8_t out[32])
 {
-    if (!bytes || !qualified || !desc || !out || size < sizeof(tide_pack_header)) return false;
-    tide_pack_header h;
-    memcpy(&h, bytes, sizeof h);
-    const uint64_t table_end = (uint64_t)sizeof h + (uint64_t)h.entries * sizeof(tide_pack_entry);
-    if (memcmp(h.magic, TIDE_PACK_MAGIC, sizeof h.magic) || h.version != TIDE_PACK_VERSION
-        || table_end > h.region_at || (h.region_at & 15u) || h.region_size > TIDE_PACK_BASE
-        || (uint64_t)h.region_at + h.region_size != size) return false;
-    uint8_t named[32];
-    tide_sha256_of(qualified, strlen(qualified), named);
-    tide_pack_entry e = {0};
-    bool found = false;
-    for (uint32_t i = 0; i < h.entries; i++) {
-        tide_pack_entry entry;
-        memcpy(&entry, bytes + sizeof h + (size_t)i * sizeof entry, sizeof entry);
-        if (memcmp(entry.name, named, sizeof named)) continue;
-        if (found || entry.kind != desc->kind) return false;
-        found = true;
-        e = entry;
-    }
-    if (!found) return false;
-    const tide_asset_fp_region region = {bytes + h.region_at, h.region_size};
+    const tide_pack_entry e = *entry;
+    const tide_asset_fp_region region = *r;
     tide_sha256 hash;
     tide_sha256_init(&hash);
     tide_sha256_add(&hash, "Tide asset content 1", sizeof("Tide asset content 1") - 1u);
@@ -372,5 +363,87 @@ static bool tide_asset_fingerprint(const uint8_t *bytes, const size_t size, cons
         }
     }
     if (ok) tide_sha256_end(&hash, out);
+    return ok;
+}
+
+typedef struct tide_asset_fp_selected {
+    uint8_t name[32];
+    uint32_t entry; // 0 missing, index + 1 found, UINT32_MAX duplicated
+} tide_asset_fp_selected;
+
+// Select all requested names in one directory pass. The index holds request
+// places, never pointers into a loaded pack, and survives only for this call.
+static bool tide_asset_fingerprints(const uint8_t *bytes, const size_t size,
+                                    const tide_asset_fingerprint_request *requests, const uint32_t count,
+                                    uint8_t (*out)[32], const uint8_t (*expected)[32], uint32_t *failed)
+{
+    if (failed) *failed = UINT32_MAX;
+    if (!bytes || size < sizeof(tide_pack_header)
+        || (count && (!requests || ((out == NULL) == (expected == NULL))))) return false;
+    tide_pack_header h;
+    memcpy(&h, bytes, sizeof h);
+    const uint64_t table_end = (uint64_t)sizeof h + (uint64_t)h.entries * sizeof(tide_pack_entry);
+    if (memcmp(h.magic, TIDE_PACK_MAGIC, sizeof h.magic) || h.version != TIDE_PACK_VERSION
+        || table_end > h.region_at || (h.region_at & 15u) || h.region_size > TIDE_PACK_BASE
+        || (uint64_t)h.region_at + h.region_size != size || count > h.entries) return false;
+    if (!count) return true;
+
+    uint64_t slots = 8u;
+    while (slots < (uint64_t)count * 2u) slots *= 2u;
+    const uint64_t scratch_size = (uint64_t)count * sizeof(tide_asset_fp_selected) + slots * sizeof(uint32_t);
+    if (slots > UINT32_MAX || scratch_size > SIZE_MAX || (uint64_t)count * 32u > SIZE_MAX
+        || (uint64_t)count * sizeof *requests > SIZE_MAX) return false;
+    tide_asset_fp_selected *selected = malloc((size_t)scratch_size);
+    if (!selected) return false;
+    tide_memory_sync(); // Before clearing memory a WebAssembly worker just grew
+    memset(selected, 0, (size_t)scratch_size);
+    uint32_t *index = (uint32_t *)(void *)(selected + count);
+    const uint32_t mask = (uint32_t)slots - 1u;
+    bool ok = true;
+    for (uint32_t i = 0; ok && i < count; i++) {
+        if (!requests[i].qualified) {
+            if (failed) *failed = i;
+            ok = false;
+            break;
+        }
+        tide_sha256_of(requests[i].qualified, strlen(requests[i].qualified), selected[i].name);
+        uint32_t place = tide_asset_fp_u32(selected[i].name) & mask;
+        while (index[place]) {
+            if (!memcmp(selected[index[place] - 1u].name, selected[i].name, sizeof selected[i].name)) {
+                if (failed) *failed = i;
+                ok = false; // The caller must select a set of unique names.
+                break;
+            }
+            place = (place + 1u) & mask;
+        }
+        if (ok) index[place] = i + 1u;
+    }
+    for (uint32_t i = 0; ok && i < h.entries; i++) {
+        const uint8_t *name = bytes + sizeof h + (size_t)i * sizeof(tide_pack_entry);
+        uint32_t place = tide_asset_fp_u32(name) & mask;
+        while (index[place]) {
+            tide_asset_fp_selected *s = &selected[index[place] - 1u];
+            if (!memcmp(name, s->name, sizeof s->name)) {
+                s->entry = s->entry ? UINT32_MAX : i + 1u;
+                break;
+            }
+            place = (place + 1u) & mask;
+        }
+    }
+    const tide_asset_fp_region region = {bytes + h.region_at, h.region_size};
+    for (uint32_t i = 0; ok && i < count; i++) {
+        tide_pack_entry e;
+        uint8_t digest[32];
+        if (!selected[i].entry || selected[i].entry == UINT32_MAX) ok = false;
+        else {
+            memcpy(&e, bytes + sizeof h + (size_t)(selected[i].entry - 1u) * sizeof e, sizeof e);
+            ok = e.kind == requests[i].desc.kind && tide_asset_fp_entry(&region, &e, &requests[i].desc, digest)
+                && (!expected || !memcmp(digest, expected[i], sizeof digest));
+        }
+        if (!ok) {
+            if (failed) *failed = i;
+        } else if (out) memcpy(out[i], digest, sizeof digest);
+    }
+    free(selected);
     return ok;
 }
