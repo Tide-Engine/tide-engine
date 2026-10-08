@@ -1,0 +1,5 @@
+// expect: a list's element is a copy, so 'Sample' can't change it
+void Change(mut List<Pose> poses, Animation clip)
+{
+    poses[0].Sample(clip, 0);
+}

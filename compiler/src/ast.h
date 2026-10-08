@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include "lexer.h"
+#include "skinned_language.h"
 
 // Components and archetypes a game can have. Components are bits of a mask,
 // which spawn sites, filters and archetypes are made of.
@@ -89,6 +90,20 @@ static inline bool mask_intersects(const comp_mask a, const comp_mask b)
 typedef struct decl decl;
 typedef struct expr expr;
 typedef struct stmt stmt;
+
+// Skinned values use ordinary structs and the ordinary list ownership rules.
+// Catalog members are compile-time views over the model's immutable bytes.
+typedef enum skinned_kind {
+    SKIN_NONE, SKIN_MESH, SKIN_ANIMATIONS, SKIN_SKELETON, SKIN_BONES,
+    SKIN_ANIMATION, SKIN_BONE, SKIN_POSE, SKIN_TRANSFORM,
+} skinned_kind;
+
+typedef struct skinned_member {
+    str name;
+    str source_name;
+    int index;
+    bool explicit_name; // Contract aliases use the exact export; inferred members already know it.
+} skinned_member;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -527,6 +542,16 @@ typedef struct decl {
     struct decl *array_of; // Records that are arrays of another, like Touchscreen.touches: the element
     int array_length;      // ...and how many
     int long_arrays;       // A struct: whether it holds an array of more than 4,096 elements (0 not worked out, 1 no, 2 yes: check.c, holds_long_array)
+    skinned_kind skin_kind;
+    type skin_vertex;
+    struct decl *skin_contract;
+    struct decl *skin_animations;
+    struct decl *skin_skeleton;
+    struct decl *skin_bones;
+    VEC(skinned_member) skin_catalog;
+    VEC(str) skin_sources; // Known original names, including names unavailable through dot access.
+    int skin_metadata_status; // 0 unknown, 1 known; unavailable metadata is never a missing-member error.
+    bool skin_inferred;
 
     // Components, singletons, inputs, records, structs and events
     VEC(field) fields;
@@ -791,6 +816,7 @@ typedef enum builtin_call {
     CALL_NEW_GRID,  // Grid2(1024, 1024) or Grid3(...): a grid with that size (0: open), whose type comes from where it goes
     CALL_DISCARD,   // this.Discard(), in a frag: the pixel isn't drawn
     CALL_NORMAL,    // instance.Normal(normal), in a frag or a vert: the mesh's normal as it is in the world
+    CALL_SKINNED,   // Deterministic model lookup, sampling and pose operations.
     CALL_RANDOM,    // random.NextInt(6), a Random's methods: calls c_callee with the generator's address first
     CALL_ROLL,      // Random.NextInt(6), on the type: calls c_callee with the generator its code was handed
 } builtin_call;
@@ -922,6 +948,10 @@ struct expr {
                           // call after it, and the last one's the block itself
     struct decl *vert;    // mesh draw: the vert and the frag it names, or NULL
     bool instanced;      // Instanced: its third argument supplies the instances
+    bool skinned;        // SkinnedMesh: hidden palette/influences before the user vertex stage.
+    struct expr *skin_mesh;
+    struct expr *skin_pose;
+    int skin_operation;  // Checked model/pose operation; shared with generated adapters.
     // E_MEMBER the checker made of a mesh draw's Mesh, 'Draw.Mesh(tree, ...)': 1 for its vertices and 2 for its
     // indices, in the two arguments' places. Both have the Mesh's expression as their object, the same one: it's
     // worked out for the first, and what's written of it again for the second reads what the first left
@@ -1114,6 +1144,7 @@ typedef struct shader_texture {
     shader_read read; // A DepthTexture field's: as a number, or compared, each a texture of its own
     bool filter_said, wrap_said; // As its samples' (shader_sample): false for what's left to the Texture it's given
     int count_at; // A list's (READ_DATA): the word of the uniforms' ints that says how many elements it has
+    int skin; // 0: ordinary texture; 1: skin palette; 2: hidden vertex influences
 } shader_texture;
 
 // A struct a vert writes for its frag, an `out` parameter of the vert's: the
@@ -1138,6 +1169,7 @@ typedef struct shader {
     bool direct_texture; // The draw supplies a Texture: the one it draws with, or its shader stages' source
     bool blit;           // A full destination overwrite with a fixed Vertex quad
     bool instanced;      // Its draw supplies a list of instances
+    bool skinned;        // Skin deformation before the optional user vert
     struct decl *instance_type; // Explicit instance data, or NULL for transforms only
     struct decl *values_type;   // The struct its draws give after their vert and frag, sent once for each draw, or NULL
     const field *instance_transform; // The instance struct's optional float4x4 transform
@@ -1283,6 +1315,9 @@ typedef struct program {
     VEC(decl *) grids;   // Every Grid2<T> and Grid3<T> type, one per cell type and dimensions
     VEC(decl *) arrays;  // Every T[N] type, one per element type and length
     VEC(decl *) meshes;  // Every Mesh<V> type, one per vertex struct
+    VEC(decl *) skinned_types; // Owned model values and their inferred/contracted catalog views.
+    decl *animation, *bone, *skeleton, *pose, *bone_transform, *animations, *bones, *playback;
+    bool asset_metadata_only; // tidels reads model names without importing geometry or fetching URLs.
     VEC(decl *) results; // Every T? and `T fails E` it uses, one per combination
     decl *owner;         // The built-in Owner component.
     decl *devices;       // The built-in Devices record.

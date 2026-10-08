@@ -1,0 +1,8 @@
+// expect: can't initialize SkinnedMesh<Vertex3, Missing> with SkinnedMesh<Vertex3>
+struct Missing { Animation idle; }
+asset SkinnedMesh<Vertex3> hero = "../e2e/skinned/models/a.gltf";
+Animation Read()
+{
+    SkinnedMesh<Vertex3, Missing> bad = hero;
+    return bad.animations.idle;
+}

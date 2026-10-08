@@ -396,6 +396,19 @@ else()
     target_include_directories(tide_platform_shaders_app PRIVATE src)
 endif()
 
+if(NOT TIDE_ANDROID)
+    # Variable influence streams, deterministic pose samples, generated skin stage and matching shadow draws.
+    tide_add_game(tide_platform_skinned SOURCES tests/skinned.tide NAME game HOST tests/skinned.c)
+    target_link_libraries(tide_platform_skinned PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_platform_skinned SHELL web/test_shell.html)
+        tide_add_web_test(tide_platform_skinned TARGET tide_platform_skinned WEBGPU EXPECT "renderer: WebGPU")
+    else()
+        add_test(NAME tide_platform_skinned COMMAND tide_platform_skinned)
+        set_tests_properties(tide_platform_skinned PROPERTIES LABELS gpu)
+    endif()
+endif()
+
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     # The watching host's Ctrl+R: a library is reopened so C statics reset
     # along with its local state and match. Scripted headless input, no visible window.

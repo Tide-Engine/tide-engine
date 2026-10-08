@@ -77,6 +77,8 @@ tide_e2e_test(asset_textures) # Texture assets, and [Filter] and [Wrap] on a tex
 tide_e2e_test(asset_psds) # Photoshop's saved composite images, packed as Texture and Grid2<Color> assets
 tide_e2e_test(asset_defaults) # A field's default that names an asset: the match's text and bytes, this machine's images and clips
 tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct of the game's, drawn and read by the match
+tide_e2e_test(skinned) # Checked catalogs, contracts, CPU pose edits, GLB decoding and match snapshots
+target_compile_definitions(tidec_e2e_skinned PRIVATE SKINNED_HASH=7267824136268331061ull)
 tide_e2e_test(audio) # Clip assets, and Audio.Play from views, local handlers and the functions they call
 tide_e2e_test(sound) # Sound fields the frame names to the mixer while they play, and the listener
 tide_e2e_test(buses) # A game's [Bus] enum, a Sound's bus and Audio.SetVolume
@@ -401,6 +403,11 @@ if(TARGET tidec_core)
     target_include_directories(tidec_mesh_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     target_link_libraries(tidec_mesh_files_tests PRIVATE tide tidec_core) # The engine for the harness's clock
     add_test(NAME tidec_mesh_files COMMAND tidec_mesh_files_tests)
+    add_executable(tidec_model_metadata_tests test_model_metadata.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_model_metadata_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_compile_definitions(tidec_model_metadata_tests PRIVATE MODEL_METADATA_WORK="${CMAKE_CURRENT_BINARY_DIR}/model_metadata")
+    target_link_libraries(tidec_model_metadata_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_model_metadata COMMAND tidec_model_metadata_tests)
     add_executable(tidec_psd_files_tests psd_files_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
     target_include_directories(tidec_psd_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     target_compile_definitions(tidec_psd_files_tests PRIVATE PSD_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/e2e/assets/psds")

@@ -1,0 +1,3 @@
+// expect: 'pose' is read-only
+scene Main { }
+void Change(Pose pose, Animation animation) { pose.Sample(animation, 0); }

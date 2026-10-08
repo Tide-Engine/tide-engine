@@ -286,6 +286,7 @@ static bool type_words(const type t, int *floats, int *ints)
     case TY_STRUCT:
     case TY_COMPONENT:
     case TY_SINGLETON:
+        if (t.decl->skin_kind && t.decl->skin_kind != SKIN_TRANSFORM) return false;
         for (int i = 0; i < t.decl->fields.count; i++) {
             const field *f = &t.decl->fields.items[i];
             if (!f->hidden && !type_words(f->type, floats, ints)) return false;
@@ -350,6 +351,10 @@ static int leaf_offset(const decl *d, const field *f)
 // Whether the GPU has values of type `t`; says why not, at `at`.
 static bool type_fits(emit *em, const type t, const loc at)
 {
+    if (t.kind == TY_STRUCT && t.decl->skin_kind && t.decl->skin_kind != SKIN_TRANSFORM) {
+        refuse(em, at, "%s belongs to the CPU: sample and edit a Pose before Draw.SkinnedMesh", type_name(t));
+        return false;
+    }
     int floats = 0, ints = 0;
     if (t.kind == TY_ERROR || type_words(t, &floats, &ints)) {
         if (is_struct_like(t) && floats + ints == 0) {
@@ -3847,6 +3852,9 @@ static void ex_call(emit *em, const expr *e)
 {
     const char *what = NULL;
     switch (e->call) {
+    case CALL_SKINNED:
+        refuse(em, e->at, "skeleton lookup and animation sampling run on the CPU, before Draw.SkinnedMesh");
+        return;
     case CALL_NORMAL:
         ex_normal(em, e);
         return;
@@ -5275,6 +5283,94 @@ static int frag_word_source(const shader *sh, const int word, const bool ints)
     return -1;
 }
 
+// Skin data is two ordinary READ_DATA textures: matrices, then one vertex
+// range per pixel followed by pairs of palette indices and float weight bits.
+// The user vertex schema has no joints or weights added to it.
+static void put_skin_helpers(emit *em)
+{
+    const shader *sh = em->sh;
+    if (!sh->skinned) return;
+    int palette = -1, influences = -1;
+    for (int i = 0; i < sh->textures.count; i++) {
+        if (sh->textures.items[i].skin == 1) palette = i;
+        if (sh->textures.items[i].skin == 2) influences = i;
+    }
+    if (palette < 0 || influences < 0) return;
+    const bool wgsl = em->l == WGSL;
+    sb *const old = em->o;
+    em->o = &em->functions;
+    sb *o = em->o;
+    for (int which = 0; which < 2; which++) {
+        const int slot = which ? influences : palette;
+        sb_printf(o, wgsl ? "fn tide_skin_words%d(p: i32) -> vec4i {\n    return textureLoad(pixels%d, vec2i(p & 1023, p >> 10), 0);\n}\n"
+                          : "ivec4 tide_skin_words%d(int p) {\n    return texelFetch(pixels%d, ivec2(p & 1023, p >> 10), 0);\n}\n", which, slot);
+    }
+    sb_put(o, wgsl ? "fn tide_skin_matrix(i: i32) -> mat4x4f {\n" : "mat4 tide_skin_matrix(int i) {\n");
+    sb_put(o, "    if (i < 0 || i >= ");
+    put_word(em, 'v', sh->textures.items[palette].count_at);
+    sb_put(o, wgsl ? ") { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }\n"
+                   : ") return mat4(1.0);\n");
+    sb_put(o, wgsl ? "    let p = i * 4;\n    return mat4x4f(" : "    int p = i * 4;\n    return mat4(");
+    for (int column = 0; column < 4; column++) {
+        sb_printf(o, wgsl ? "%sbitcast<vec4f>(tide_skin_words0(p + %d))" : "%sintBitsToFloat(tide_skin_words0(p + %d))",
+                  column ? ", " : "", column);
+    }
+    sb_put(o, ");\n}\n");
+    sb_put(o, wgsl ? "fn tide_skinning(vertex: i32) -> mat4x4f {\n" : "mat4 tide_skinning(int vertex) {\n");
+    sb_put(o, "    if (vertex < 0 || vertex >= ");
+    put_word(em, 'v', sh->textures.items[influences].count_at);
+    sb_put(o, wgsl ? ") { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }\n"
+                   : ") return mat4(1.0);\n");
+    sb_put(o, wgsl ? "    let range = tide_skin_words1(vertex).xy;\n    let entries = " : "    ivec2 range = tide_skin_words1(vertex).xy;\n    int entries = ");
+    put_word(em, 'v', sh->textures.items[influences].count_at + 1);
+    sb_put(o, ";\n    if (range.x < 0 || range.y < 0 || range.x > entries || range.y > entries - range.x) ");
+    sb_put(o, wgsl ? "{ return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }\n"
+                   : "return mat4(1.0);\n");
+    for (int c = 0; c < 4; c++) sb_printf(o, wgsl ? "    var c%d = vec4f(0.0);\n" : "    vec4 c%d = vec4(0.0);\n", c);
+    sb_put(o, wgsl ? "    var total = 0.0;\n    for (var n = 0; n < range.y; n++) {\n        let i = range.x + n;\n        let pair = tide_skin_words1("
+                   : "    float total = 0.0;\n    for (int n = 0; n < range.y; n++) {\n        int i = range.x + n;\n        ivec4 pair = tide_skin_words1(");
+    put_word(em, 'v', sh->textures.items[influences].count_at);
+    sb_put(o, " + (i >> 1));\n");
+    sb_put(o, wgsl ? "        let joint = select(pair.x, pair.z, (i & 1) != 0);\n        let weight = bitcast<f32>(select(pair.y, pair.w, (i & 1) != 0));\n        let matrix = tide_skin_matrix(joint);\n"
+                   : "        int joint = (i & 1) == 0 ? pair.x : pair.z;\n        float weight = intBitsToFloat((i & 1) == 0 ? pair.y : pair.w);\n        mat4 matrix = tide_skin_matrix(joint);\n");
+    for (int c = 0; c < 4; c++) sb_printf(o, "        c%d = c%d + matrix[%d] * weight;\n", c, c, c);
+    sb_put(o, "        total = total + weight;\n    }\n");
+    sb_put(o, wgsl ? "    if (!(total > 0.0)) { return mat4x4f(vec4f(1,0,0,0),vec4f(0,1,0,0),vec4f(0,0,1,0),vec4f(0,0,0,1)); }\n    return mat4x4f(c0 / total, c1 / total, c2 / total, c3 / total);\n}\n"
+                   : "    if (!(total > 0.0)) return mat4(1.0);\n    return mat4(c0 / total, c1 / total, c2 / total, c3 / total);\n}\n");
+    em->o = old;
+}
+
+static void put_skin_vertex(emit *em, sb *o)
+{
+    if (!em->sh->skinned) return;
+    put_skin_helpers(em);
+    const bool wgsl = em->l == WGSL;
+    const decl *vertex = em->sh->vertex;
+    sb_put(o, wgsl ? "    let tide_skin = tide_skinning(i32(tide_vertex_index));\n" : "    mat4 tide_skin = tide_skinning(gl_VertexID);\n");
+    sb_printf(o, "    tide_vertex.%s = (tide_skin * %s(tide_vertex.%s, 1.0)).xyz;\n",
+              field_name(field_called(vertex, "position")), wgsl ? "vec4f" : "vec4", field_name(field_called(vertex, "position")));
+    const field *normal = field_called(vertex, "normal"), *tangent = field_called(vertex, "tangent");
+    if (normal && normal->type.kind == TY_FLOAT3) {
+        need(em, H_NORMALS);
+        need(em, H_NORMALIZE3);
+        sb_printf(o, "    tide_vertex.%s = tide_normalize3(tide_normals(tide_skin) * tide_vertex.%s);\n", field_name(normal), field_name(normal));
+    }
+    if (tangent && (tangent->type.kind == TY_FLOAT3 || tangent->type.kind == TY_FLOAT4)) {
+        need(em, H_NORMALIZE3);
+        const char *name = field_name(tangent), *xyz = tangent->type.kind == TY_FLOAT4 ? ".xyz" : "";
+        sb_printf(o, wgsl ? "    var tide_tangent = (tide_skin * vec4f(tide_vertex.%s%s, 0.0)).xyz;\n"
+                          : "    vec3 tide_tangent = (tide_skin * vec4(tide_vertex.%s%s, 0.0)).xyz;\n", name, xyz);
+        if (normal && normal->type.kind == TY_FLOAT3) {
+            sb_printf(o, "    tide_tangent = tide_tangent - tide_vertex.%s * dot(tide_vertex.%s, tide_tangent);\n", field_name(normal), field_name(normal));
+        }
+        if (tangent->type.kind == TY_FLOAT4) {
+            sb_put(o, wgsl ? "    let tide_side = select(1.0, -1.0, dot(tide_skin[0].xyz, cross(tide_skin[1].xyz, tide_skin[2].xyz)) < 0.0);\n"
+                           : "    float tide_side = dot(tide_skin[0].xyz, cross(tide_skin[1].xyz, tide_skin[2].xyz)) < 0.0 ? -1.0 : 1.0;\n");
+            sb_printf(o, "    tide_vertex.%s = %s(tide_normalize3(tide_tangent), tide_vertex.%s.w * tide_side);\n", name, wgsl ? "vec4f" : "vec4", name);
+        } else sb_printf(o, "    tide_vertex.%s = tide_normalize3(tide_tangent);\n", name);
+    }
+}
+
 // The vertex stage's own code: the vertex from its attributes, through the
 // vert, placed by its instance's transform and the camera, and what goes on
 // to the pixels. `out` is how the language names what it writes: "" for
@@ -5292,6 +5388,7 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
     sb_printf(o, wgsl ? "    var tide_vertex: %s = %s(" : "    %s tide_vertex = %s(", ty(em, vertex), ty(em, vertex));
     for (int i = 0; i < v->fields.count; i++) sb_printf(o, "%s%stide_a%d", i ? ", " : "", in, i);
     sb_put(o, ");\n");
+    put_skin_vertex(em, o);
     // What the vert writes for the frag: a variable each, in the order it takes them
     for (int h = 0; h < sh->handed.count; h++) {
         const type handed = {TY_STRUCT, (decl *)sh->handed.items[h].type};
@@ -5612,7 +5709,7 @@ static void write_wgsl(program *prog, shader *sh)
     for (int i = 0; i < packs(sh->instance_floats); i++, location++) sb_printf(&o, ", @location(%d) tide_in%d: vec4f", location, i);
     for (int i = 0; i < packs(sh->instance_ints); i++, location++) sb_printf(&o, ", @location(%d) tide_ij%d: vec4i", location, i);
     // Which vertex of the mesh, and which instance of the draw: what tells a vert's runs, and an instance's pixels, apart
-    if (rolls) sb_put(&o, ", @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32");
+    if (rolls || sh->skinned) sb_put(&o, ", @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32");
     sb_put(&o, ") -> tide_corner {\n");
     for (int i = 0; i < packs(sh->instance_floats); i++) sb_printf(&o, "    tide_n%d = tide_in%d;\n", i, i);
     for (int i = 0; i < packs(sh->instance_ints); i++) sb_printf(&o, "    tide_j%d = tide_ij%d;\n", i, i);
@@ -5793,6 +5890,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         shader *s = prog->shaders.items[i];
         if (s->vertex == vertex && s->vert == call->vert && s->frag == call->frag && s->textured == textured
             && s->instanced == call->instanced && s->instance_type == call->instance_type
+            && s->skinned == call->skinned
             && s->values_type == call->values_type
             && s->blit == call->blit && s->direct_texture == direct_texture) return s;
     }
@@ -5805,6 +5903,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     sh->blit = call->blit;
     sh->direct_texture = direct_texture;
     sh->instanced = call->instanced;
+    sh->skinned = call->skinned;
     sh->instance_type = call->instance_type;
     sh->values_type = call->values_type;
     const field *position = field_called(vertex, "position");
@@ -5828,6 +5927,12 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         const shader_texture t = {.filter = 1}; // How it's read is the texture's to say, which the draw gives
         vec_push(sh->textures, t);
     }
+    if (sh->skinned) {
+        const shader_texture palette = {.read = READ_DATA, .filter_said = true, .wrap_said = true, .skin = 1};
+        const shader_texture influences = {.read = READ_DATA, .filter_said = true, .wrap_said = true, .skin = 2};
+        vec_push(sh->textures, palette);
+        vec_push(sh->textures, influences);
+    }
     for (int i = 0; i < sh->values.count; i++) {
         shader_value *v = &sh->values.items[i];
         int *floats = v->per_instance ? &sh->instance_floats : &sh->uniform_floats;
@@ -5850,6 +5955,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         // A list's count, a map's entries and its index's slots, or a grid's size and where its cells are in
         // its texture (TIDE_GRID2_DATA_INTS, TIDE_GRID3_DATA_INTS)
         t->count_at = sh->uniform_ints;
+        if (t->skin) { sh->uniform_ints += t->skin == 1 ? 1 : 2; continue; }
         const type held = t->asset ? t->asset->return_type : t->field->type;
         sh->uniform_ints += held.kind == TY_LIST ? 1 : held.kind != TY_GRID ? 2 : held.decl->dims == 3 ? 10 : 6;
     }

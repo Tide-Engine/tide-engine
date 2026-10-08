@@ -49,6 +49,7 @@ asset Texture logo = "logo.png";
 [Filter(Filter.Point)] asset Grid2<Color> tiles = "tiles.png";
 asset Map<string, Texture> frames = "run/*.png";
 asset Mesh<Corner> tree = "art/tree.glb";
+asset SkinnedMesh<Corner, Locomotion> hero = "art/hero.glb";
 audio Echo(mut Samples samples, mut Counter counter) { }
 
 struct Stats
