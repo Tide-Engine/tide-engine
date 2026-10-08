@@ -2776,12 +2776,21 @@ TIDE_TEST(lsp_gui)
     const char *frame = request("textDocument/hover");
     TIDE_CHECK(has(frame, "Frame.dt: float"));
     TIDE_CHECK(has(frame, "The seconds since this machine's previous frame started"));
+    TIDE_CHECK(has(frame, "for a clock, add it up in a field of local state"));
     open_document("local singleton Fx { float age; }\nscene Main { }\nview V(mut Fx fx) { fx.age += Fra$me.dt; }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "This machine's frame"));
+    TIDE_CHECK(has(last_sent(), "There's no clock beside it"));
     TIDE_CHECK(has(request("textDocument/prepareRename"), "Built-in names can't be renamed"));
     open_document("singleton Clock { float age; }\nscene Main { }\nsystem S(mut Clock clock)\n{\n    clock.age += Frame.dt;\n}\n");
     TIDE_CHECK(has(last_sent(), "so it can't read Frame.dt"));
     TIDE_CHECK(has(last_sent(), "time.dt"));
+    // Asked for a clock, which it hasn't: the error says what to write, and 't' isn't taken for 'dt' misspelled
+    open_document("local singleton Fx { float age; }\nscene Main { }\nview V(mut Fx fx)\n{\n    fx.age = Frame.t;\n}\n");
+    TIDE_CHECK(has(last_sent(), "Frame has no member 't'") && has(last_sent(), "add 'Frame.dt' up in a field of local state"));
+    TIDE_CHECK(has(last_sent(), "read 'time.t'") && !has(last_sent(), "did you mean"));
+    TIDE_CHECK(!has(actions_at(4), "Change to 'dt'"));
+    open_document("local singleton Fx { float age; }\nscene Main { }\nview V(mut Fx fx)\n{\n    fx.age = Frame.DT;\n}\n");
+    TIDE_CHECK(has(last_sent(), "did you mean 'dt'?") && has(actions_at(4), "Change to 'dt'"));
 
     // What an Action's caller writes is the caller's code: its names are the caller's.
     open_document("local singleton M { bool on; }\nscene Main { }\nvoid Twice(Action content) { content(); content(); }\n"

@@ -17,6 +17,11 @@ bool builtin_draw_owner(str name);
 // Draw2D and Draw3D, which Draw took the place of: a call of theirs is an error that names Draw's.
 bool builtin_old_draw_owner(str name);
 
+// Whether `name` is a clock's, as code asks Frame for one, in any case:
+// Frame.time, Frame.elapsed, Frame.Now(). Frame has 'dt' alone, so the error
+// says what to write instead.
+bool builtin_frame_clock(str name);
+
 // The program's Anchor enum, which GUILayout.Area and Draw.Text take, its
 // Shape struct, which Draw.Shape does, its Blend enum, which Draw.Blend
 // does, and its Font enum, a text's weight. Call before resolving calls.
