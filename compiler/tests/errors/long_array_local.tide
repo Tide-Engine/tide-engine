@@ -1,0 +1,17 @@
+// expect: a local can't be 'Tail': it holds an array of more than 4096 elements, which only an audio declaration's state does
+struct Tail
+{
+    int at;
+    float[96000] line;
+}
+
+audio Echo(mut Samples samples, mut Tail tail)
+{
+    mut Tail other = default;
+    other.at = 1;
+    samples.values[0] = tail.line[other.at];
+}
+
+scene Main
+{
+}

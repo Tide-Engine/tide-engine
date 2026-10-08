@@ -506,6 +506,7 @@ typedef struct decl {
     VEC(int) instances; // ...where each place it has in the devices starts in program.device_leaves
     struct decl *array_of; // Records that are arrays of another, like Touchscreen.touches: the element
     int array_length;      // ...and how many
+    int long_arrays;       // A struct: whether it holds an array of more than 4,096 elements (0 not worked out, 1 no, 2 yes: check.c, holds_long_array)
 
     // Components, singletons, inputs, records, structs and events
     VEC(field) fields;

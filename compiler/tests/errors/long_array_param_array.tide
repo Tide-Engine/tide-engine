@@ -1,0 +1,9 @@
+// expect: 'line' holds an array of more than 4096 elements, so a parameter of it is 'mut': 'mut float[96000] line'
+float Twice(float[96000] line)
+{
+    return line[0] * 2;
+}
+
+scene Main
+{
+}

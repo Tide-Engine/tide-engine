@@ -119,7 +119,7 @@ system Upgrade(mut Fighter fighter, Draft draft)
 
 ## Arrays
 
-`T[N]` is a fixed number of values side by side in whatever holds them, with nothing in the heap: `int[32] cells;`. An array is part of its component's bytes, like its other fields, so a system's loop over rows runs with SIMD, and there's no list to look up. The length is a constant: a number, or a `const` and arithmetic on it, up to 4096 elements with every level of `int[4][8]` counted together.
+`T[N]` is a fixed number of values side by side in whatever holds them, with nothing in the heap: `int[32] cells;`, of up to 4,096 elements (an [audio declaration's state](../game/audio.md#echoes-and-reverbs) holds far longer ones, for an echo's delay line). An array is part of its component's bytes, like its other fields, so a system's loop over rows runs with SIMD, and there's no list to look up. The length is a constant: a number, or a `const` and arithmetic on it, up to 4096 elements with every level of `int[4][8]` counted together.
 
 ```csharp
 const int CAP = 32;

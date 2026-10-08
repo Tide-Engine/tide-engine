@@ -1,0 +1,15 @@
+// expect: 'tail' holds an array of more than 4096 elements, so a parameter of it is 'mut': 'mut Tail tail'
+struct Tail
+{
+    int at;
+    float[96000] line;
+}
+
+void Make(out Tail tail)
+{
+    tail.at = 0;
+}
+
+scene Main
+{
+}

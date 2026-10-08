@@ -1,0 +1,16 @@
+// expect: float[96000] is never copied: an array of more than 4096 elements stays where it is, in its audio declaration's state
+struct Tail
+{
+    int at;
+    float[96000] line;
+}
+
+audio Echo(mut Samples samples, mut Tail tail)
+{
+    tail.line = default;
+    samples.values[0] = tail.line[0];
+}
+
+scene Main
+{
+}

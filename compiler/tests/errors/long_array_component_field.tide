@@ -1,0 +1,10 @@
+// expect: an array holds from 1 to 4096 elements, all of its lengths together, and this one would hold 8192
+// expect: only an audio declaration's state holds a longer one, a delay line
+component Body
+{
+    float[8192] trail;
+}
+
+scene Main
+{
+}
