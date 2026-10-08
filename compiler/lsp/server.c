@@ -961,10 +961,11 @@ static void register_assets_of(lsp_server *s, const path_list *list)
 static void will_rename_files(lsp_server *s, const json *id, const json *params)
 {
     const json *files = json_get(params, "files");
-    asset_rename renames[64];
-    char *paths[128];
+    const int capacity = files && files->kind == JSON_ARRAY ? files->count : 0;
+    asset_rename *renames = capacity > 0 ? malloc(sizeof(asset_rename) * (size_t)capacity) : NULL;
+    if (capacity > 0 && !renames) abort();
     int count = 0;
-    for (int i = 0; files && files->kind == JSON_ARRAY && i < files->count && count < 64; i++) {
+    for (int i = 0; i < capacity; i++) {
         const char *old_uri = json_str(json_get(files->items[i], "oldUri"));
         const char *new_uri = json_str(json_get(files->items[i], "newUri"));
         if (!old_uri || !new_uri) continue;
@@ -972,7 +973,6 @@ static void will_rename_files(lsp_server *s, const json *id, const json *params)
         for (int k = 0; k < 2; k++) {
             const size_t n = strlen(pair[k]);
             if (n > 1 && pair[k][n - 1] == '/') pair[k][n - 1] = '\0';
-            paths[count * 2 + k] = pair[k];
         }
         renames[count++] = (asset_rename){pair[0], pair[1]};
     }
@@ -992,7 +992,11 @@ static void will_rename_files(lsp_server *s, const json *id, const json *params)
     }
     send_buf(s, &b);
     jb_free(&b);
-    for (int i = 0; i < count * 2; i++) free(paths[i]);
+    for (int i = 0; i < count; i++) {
+        free((void *)renames[i].old_path);
+        free((void *)renames[i].new_path);
+    }
+    free(renames);
 }
 
 // Whether the editor applies edits that create files.
