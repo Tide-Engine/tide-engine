@@ -6649,6 +6649,27 @@ TIDE_TEST(lsp_random)
     // Rolling through a read-only parameter says why it can't
     open_document(DICE "system Roll(Dice dice)\n{\n    dice.random.NextInt(6);\n}\n");
     TIDE_CHECK(has(last_sent(), "'dice' is read-only") && has(last_sent(), "'NextInt' is a mut method"));
+
+    // In a frag and a vert too: each pixel and each vertex rolls with a generator of its own, and reads the seed
+#define GRAIN "scene Main { }\nlocal singleton Art { List<Vertex> corners; List<int> faces; }\n"
+#define GRAIN_DRAWN "view Show(Art art)\n{\n    Draw.Mesh(art.corners, art.faces, Grain);\n}\n"
+    const char *pixel = complete(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n    color = Color(Random.$\n}\n");
+    TIDE_CHECK(offers(pixel, "NextFloat") && offers(pixel, "NextFloat3Direction") && offers(pixel, "NextQuaternionRotation"));
+    TIDE_CHECK(offers(pixel, "seed") && !offers(pixel, "state"));
+    const char *corner = complete(GRAIN "vert Shake(mut Vertex vertex)\n{\n    vertex.position += Random.$\n}\n");
+    TIDE_CHECK(offers(corner, "NextFloat2") && offers(corner, "NextInt"));
+    TIDE_CHECK(offers(complete(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n    color = Color($\n}\n"), "Random"));
+    open_document(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n"
+                        "    color = Color(Random.NextFloat(), float(Random.seed % 2), 0);\n}\n" GRAIN_DRAWN);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    open_document(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n    color = Color(Random.Next$Float(2), 0, 0);\n}\n" GRAIN_DRAWN);
+    TIDE_CHECK(has(request("textDocument/hover"), "Random.NextFloat(float max) -> float"));
+    open_document(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n    color = Color(Random.NextInt($\n}\n" GRAIN_DRAWN);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Random.NextInt(int min, int max) -> int"));
+    // A Random the game keeps stays the CPU's: its state is 64 bits
+    open_document(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n    mut var mine = Random(7);\n"
+                        "    color = Color(mine.NextFloat(), 0, 0);\n}\n" GRAIN_DRAWN);
+    TIDE_CHECK(has(last_sent(), "so it can't make a Random") && has(last_sent(), "roll on the type, 'Random.NextInt(6)'"));
 }
 
 // Default values, arguments by name, and functions that share a name

@@ -11,6 +11,7 @@
 // phone, that's a screen of another shape.
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "game.h"
@@ -1072,6 +1073,180 @@ static void run_list_checks(const float turn, const char *when)
     }
 }
 
+// Rolls (pass 19, `Rolls` in shaders.tide): Random's rolls on the type in
+// frags and verts, and Random.seed. The GPU's generator is whole numbers, so
+// every backend rolls the same, and so does this: the state a pixel's or a
+// vertex's starts from is Math.Hash of where it is, which instance of its draw
+// it's of, and the number the frame rolled with which frag or vert it is; and
+// each roll is PCG's RXS-M-XS (put_dice and tide_roll in the compiler's
+// shader.c). `state` is where this machine's generator is as the frame starts,
+// which the frame's number is the next roll of. Squares of 8 pixels, 16 apart.
+static uint32_t gpu_roll(uint32_t *dice)
+{
+    *dice = *dice * 747796405u + 2891336453u;
+    const uint32_t w = ((*dice >> ((*dice >> 28) + 4u)) ^ *dice) * 277803737u;
+    return (w >> 22) ^ w;
+}
+
+// Random.NextInt(max), as the GPU has it
+static int gpu_roll_below(uint32_t *dice, const uint32_t max)
+{
+    return (int)(((uint64_t)gpu_roll(dice) * max) >> 32);
+}
+
+// Which frag or vert a stage's text says it is: the number its generators are made with
+static int32_t roll_site(const char *glsl)
+{
+    const char *made = strstr(glsl, "tide_dice = uint(");
+    const char *with = made ? strstr(made, " ^ ") : NULL;
+    return with ? (int32_t)strtoul(with + 3, NULL, 10) : 0;
+}
+
+static const tide_shader *shader_named(const char *name)
+{
+    for (uint32_t i = 0; i < list.run_count; i++) {
+        if (list.runs[i].shader && strcmp(list.runs[i].shader->name, name) == 0) return list.runs[i].shader;
+    }
+    return NULL;
+}
+
+// What RollBytes writes at pixel (x, y) of instance `nth` of its draw
+static void roll_bytes(const int x, const int y, const int nth, const int32_t rolled, const int32_t site, float out[3])
+{
+    uint32_t dice = (uint32_t)tide_hash_i4((tide_int4){x, y, nth, rolled ^ site});
+    out[0] = (float)gpu_roll_below(&dice, 256);
+    out[1] = (float)(100 + gpu_roll_below(&dice, 100));
+    out[2] = (float)((gpu_roll(&dice) >> 1) % 256u);
+}
+
+// What the colors RollTint rolls for the square's four corners blend to at (dx, dy) in it: its
+// triangles are corners (0, 1, 2) and (0, 2, 3)
+static void roll_tint(const float dx, const float dy, const int32_t rolled, const int32_t site, float out[3])
+{
+    const float u = dx / 8.0f, v = dy / 8.0f;
+    float weights[4] = {0};
+    if (u >= v) weights[0] = 1.0f - u, weights[1] = u - v, weights[2] = v;
+    else weights[0] = 1.0f - v, weights[2] = u, weights[3] = v - u;
+    out[0] = out[1] = out[2] = 0.0f;
+    for (int corner = 0; corner < 4; corner++) {
+        uint32_t dice = (uint32_t)tide_hash_i3((tide_int3){corner, 0, rolled ^ site});
+        for (int c = 0; c < 3; c++) out[c] += weights[corner] * (float)gpu_roll_below(&dice, 256);
+    }
+}
+
+static void run_roll_checks(const int64_t state, const char *when)
+{
+    enum { BYTES, FIRST, SECOND, RANGES, TINT, SEED, OVER, FILL };
+    static const struct {
+        int kind, x, y; // The pixel
+        const char *what;
+    } wanted[] = {
+        {BYTES, 9, 9, "a pixel's rolls in a frag"},
+        {BYTES, 10, 9, "the pixel beside it rolls its own"},
+        {BYTES, 13, 14, "and so does one across the square"},
+        {BYTES, 15, 15, "and its last"},
+        {FIRST, 27, 11, "a pixel of a draw's first instance"},
+        {FIRST, 30, 14, "another of them"},
+        {SECOND, 43, 11, "the same place in its second instance, which rolls apart"},
+        {SECOND, 46, 14, "another of those"},
+        {RANGES, 57, 9, "every roll, 24 times over, is within what it says it gives"},
+        {RANGES, 60, 12, "at another pixel"},
+        {RANGES, 62, 10, "and another"},
+        {TINT, 78, 9, "a vert's rolls are each corner's own, blended across the triangle"},
+        {TINT, 73, 14, "and across the square's other triangle"},
+        {TINT, 76, 10, "and between"},
+        {SEED, 92, 12, "the match's seed, a byte a channel"},
+        {OVER, 14, 25, "a frag that rolls behind a vert that rolls: each with a generator of its own"},
+        {OVER, 10, 29, "in the square's other triangle"},
+        {FILL, 200, 60, "a blit's frag rolls for each pixel of its destination, over the image it reads"},
+        {FILL, 201, 60, "the next pixel"},
+        {FILL, 60, 200, "and one where the image is another color"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0], SEEDED = 0x00ABCDEF };
+    local.Art.targetPass = 19;
+    local.tide_dice.state = state;
+    world.Time.seed = SEEDED;
+    tide_random dice = {state};
+    const int32_t rolled = (int32_t)tide_random_next(&dice); // What tide_frame rolls for its draws
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    world.Time.seed = 0;
+
+    const tide_shader *bytes = shader_named("RollBytes on Vertex");
+    const tide_shader *placed = shader_named("SpotPlace and RollBytes on Vertex");
+    const tide_shader *tint = shader_named("RollTint on Vertex");
+    const tide_shader *over = shader_named("RollTint and RollOver on Vertex");
+    const tide_shader *fill = shader_named("RollFill on Vertex");
+    uint32_t instances = 0;
+    const bool drawn = bytes && placed && tint && over && fill
+                    && runs_through("SpotPlace and RollBytes on Vertex", &instances) == 1 && instances == 2;
+    printf("%s: frags and verts that roll draw, two instances in one draw%s\n", drawn ? "ok" : "FAIL", when);
+    if (!drawn) {
+        failures++;
+        return;
+    }
+
+    tide_float2 points[COUNT];
+    uint32_t got[COUNT];
+    for (int i = 0; i < COUNT; i++) points[i] = tide_f2((float)wanted[i].x + 0.5f, (float)wanted[i].y + 0.5f);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
+    for (int i = 0; i < COUNT; i++) {
+        const int x = wanted[i].x, y = wanted[i].y;
+        float want[3] = {0, 255, 0}; // RANGES: green
+        int within = 1; // Whole numbers come out as they are; what's blended between corners is the GPU's rounding
+        switch (wanted[i].kind) {
+        case BYTES: roll_bytes(x, y, 0, rolled, roll_site(bytes->glsl_fragment), want); break;
+        case FIRST: roll_bytes(x, y, 0, rolled, roll_site(placed->glsl_fragment), want); break;
+        case SECOND: roll_bytes(x, y, 1, rolled, roll_site(placed->glsl_fragment), want); break;
+        case TINT:
+            roll_tint((float)(x - 72) + 0.5f, (float)(y - 8) + 0.5f, rolled, roll_site(tint->glsl_vertex), want);
+            within = 3;
+            break;
+        case SEED: want[0] = SEEDED & 255, want[1] = (SEEDED >> 8) & 255, want[2] = (SEEDED >> 16) & 255; break;
+        case OVER: {
+            float blended[3];
+            roll_tint((float)(x - 8) + 0.5f, (float)(y - 24) + 0.5f, rolled, roll_site(over->glsl_vertex), blended);
+            uint32_t pixel = (uint32_t)tide_hash_i4((tide_int4){x, y, 0, rolled ^ roll_site(over->glsl_fragment)});
+            want[0] = (float)gpu_roll_below(&pixel, 256), want[1] = blended[1], want[2] = 0;
+            within = 3;
+            break;
+        }
+        case FILL: // The image's cells are red and green above blue and white: its blue is 0 above and 1 below
+            roll_bytes(x, y, 0, rolled, roll_site(fill->glsl_fragment), want);
+            want[2] = y < SIZE / 2 ? 0 : 255;
+            break;
+        default: break;
+        }
+        bool ok = true;
+        for (int k = 0; k < 3; k++) {
+            const int d = (int)(got[i] >> (24 - 8 * k) & 0xFFu) - (int)(want[k] + 0.5f);
+            ok = ok && d >= -within && d <= within;
+        }
+        printf("%s: %s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, when, (unsigned)got[i],
+               (unsigned)(want[0] + 0.5f), (unsigned)(want[1] + 0.5f), (unsigned)(want[2] + 0.5f));
+        if (!ok) failures++;
+    }
+    // No two of the pixels that roll are alike, and a frame later they're all other colors
+    static uint32_t before[8];
+    static bool rolled_before;
+    bool apart = true, changed = true;
+    for (int i = 0; i < 8; i++) {
+        for (int k = i + 1; k < 8; k++) apart = apart && got[i] != got[k];
+        changed = changed && got[i] != before[i];
+    }
+    printf("%s: no two pixels that roll are alike%s\n", apart ? "ok" : "FAIL", when);
+    if (!apart) failures++;
+    if (rolled_before) {
+        printf("%s: and a frame later each is another color%s\n", changed ? "ok" : "FAIL", when);
+        if (!changed) failures++;
+    }
+    memcpy(before, got, sizeof before);
+    rolled_before = true;
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -1104,6 +1279,7 @@ static int frame(void *user, const float seconds)
         run_raw_checks(", on another device");
         run_cube_checks(2, ", on another device");
         run_list_checks(0, ", on another device");
+        run_roll_checks(555, ", on another device");
         return failures;
     }
 #endif
@@ -1136,6 +1312,8 @@ static int frame(void *user, const float seconds)
     run_list_checks(0, ", again");
     run_list_checks(1, ", with another element written");
     run_list_checks(0, ", and written back");
+    run_roll_checks(1234, "");
+    run_roll_checks(987654321, ", the next frame");
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");

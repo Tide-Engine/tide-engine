@@ -1,0 +1,67 @@
+// Rolls on the GPU: Random's rolls on the type, in a frag, in a vert and in a
+// function both reach. A stage that rolls has a generator of its own each time
+// it runs, tide_dice, made as its main starts: of the pixel's place and its
+// instance for a frag, of the vertex and its instance for a vert, and of the
+// number the frame rolled, a word of the draw's ints, with which frag or vert
+// it is. Random.seed is another word of them, with no generator.
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float2 uv;
+}
+singleton Sun
+{
+    float glow = 1;
+}
+local singleton Lens
+{
+    List<Corner> corners;
+    List<Vertex> flat;
+    List<int> faces;
+}
+
+// Reached by a frag and by a vert: it rolls with whichever stage's generator runs it
+float Jitter(float by)
+{
+    return Random.NextFloat(-by, by) + float(Math.Hash(Random.seed) % 2);
+}
+
+// Every roll there is
+frag Grain(Corner corner, out Color color, Sun sun)
+{
+    var whole = Random.NextInt() + Random.NextInt(6) + Random.NextInt(-3, 3);
+    var part = Random.NextFloat() + Random.NextFloat(2) + Random.NextFloat(1, 2);
+    var spot = Random.NextFloat2() + Random.NextFloat2(float2(0, 0), corner.uv) + Random.NextFloat2Direction();
+    var place = Random.NextFloat3() + Random.NextFloat3(float3(0, 0, 0), corner.position) + Random.NextFloat3Direction();
+    var turn = Random.NextQuaternionRotation();
+    if (Random.NextBool()) this.Discard();
+    color = Color(part + Jitter(sun.glow), spot.x + place.y, Math.Rotate(turn, place).z, float(whole % 2));
+}
+
+// A vert's rolls are its vertex's own
+vert Shake(mut Corner corner)
+{
+    corner.position += Random.NextFloat3Direction() * Jitter(0.1);
+}
+
+// The seed alone: a number of the draw's, and no generator
+frag Tinted(Vertex vertex, out Color color)
+{
+    color = Color(float(Random.seed % 256) / 255, vertex.uv.x, vertex.uv.y);
+}
+
+// A vert that rolls with no frag, in 2D
+vert Wobble(mut Vertex vertex)
+{
+    vertex.position += Random.NextFloat2(float2(-1, -1), float2(1, 1));
+}
+
+view Show(Lens lens)
+{
+    Draw.Mesh(lens.corners, lens.faces, float4x4.identity, Shake, Grain);
+    Draw.Mesh(lens.corners, lens.faces, float4x4.identity, Shake);
+    Draw.Mesh(lens.flat, lens.faces, Tinted);
+    Draw.Mesh(lens.flat, lens.faces, Wobble);
+}
