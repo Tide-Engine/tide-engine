@@ -2893,6 +2893,28 @@ static bool check_frame_time_use(checker *c, const loc at)
     return true;
 }
 
+// Frame.time, Frame.elapsed, Frame.Now(): code that asks the frame for a clock.
+// It has none on purpose, as a float of seconds gets coarser as it grows, so
+// the error says what to write where the code is: the match has Time's, and
+// anything else a clock of its own in local state, or Time's. No "did you
+// mean 'dt'" for 't': it's another thing. False, saying nothing, for a name
+// that's no clock's.
+static bool refuse_frame_clock(const checker *c, const loc at, const str name, const bool call)
+{
+    if (!builtin_frame_clock(name)) return false;
+    diag_error(at, "Frame has no %s '" STR_FMT "'", call ? "function" : "member", STR_ARG(name));
+    const decl *code = c->method ? c->method : c->system;
+    if (code && code->kind == DECL_SYSTEM && !is_local_code(code)) {
+        diag_note("Frame is this machine's, and has no clock: the match takes 'Time time' and reads 'time.t', the "
+                  "seconds since it started");
+        return true;
+    }
+    diag_note("Frame has no clock, because a float of seconds gets coarser as it grows: add 'Frame.dt' up in a field of "
+              "local state and wrap it where it repeats, like 'spinner.turn += Frame.dt * 4;'");
+    diag_note("for the match's time, take 'Time time' and read 'time.t', the seconds since the match started");
+    return true;
+}
+
 // `Random.NextInt(6)` and `Random.seed`, on the type. A roll steps a generator
 // its code is handed: one made for the entity the match's code runs for, from
 // the match's seed and the tick, or this machine's own in local code. Nothing
@@ -5840,6 +5862,7 @@ static type check_method(checker *c, expr *e)
         if (plays && str_eq_c(e->name, "SetVolume")) return check_audio_volume(c, e);
         if (plays && str_eq_c(e->name, "SetEffect")) return check_audio_bus_effect(c, e);
         if (str_eq_c(owner, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR; // Screen.Flip: the frame's window
+        if (str_eq_c(owner, "Frame") && refuse_frame_clock(c, e->at, e->name, true)) return T_ERR; // Frame.Now()
         if (draws && old_setting(e)) return T_ERR;
         const type result = resolve_builtin_call(owner, e);
         if (result.kind == TY_ERROR) return result;
@@ -6854,6 +6877,7 @@ static type check_member(checker *c, expr *e)
         }
         if (str_eq_c(e->object->name, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR;
         if (builtin_draw_owner(e->object->name) && !check_frame_use(c, e->at, str_to_cstr(e->object->name))) return T_ERR;
+        if (str_eq_c(e->object->name, "Frame") && refuse_frame_clock(c, e->at, e->member, false)) return T_ERR;
         const type member = resolve_builtin_member(e->object->name, e);
         if (str_eq_c(e->object->name, "Frame") && member.kind == TY_ERROR) {
             diag_note("'Frame.dt' is the seconds since this machine's previous frame started");

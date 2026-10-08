@@ -63,7 +63,7 @@ Below are two machines in one match. Move the pointer over a frame to steer that
 
 :::
 
-A view picks the entities this machine's player owns with `with ownership`, and every other one with `without ownership` (see [Your own entities](./views.md#your-own-entities)). That's for views: the match runs the same on every machine, so a system has no player of its own to ask about.
+A view picks the entities this machine's player owns with `with ownership`, and every other one with `without ownership` (see [Your own entities](./views-and-the-match.md#your-own-entities)). That's for views: the match runs the same on every machine, so a system has no player of its own to ask about.
 
 Players are `PlayerID`s, not ints or connections. Like `Entity`, a `PlayerID` is opaque, compared with `==`, and has a null value. A player who reconnects gets their `PlayerID` back, and keeps everything they owned. `PlayerID(0)` names a player by number, for local play and tests.
 
@@ -110,7 +110,7 @@ input Controls
   - `minus`, `equals`, `leftBracket`, `rightBracket`, `backslash`, `semicolon`, `quote`, `comma`, `period`, `slash`, `backquote`
   - `numpad0` to `numpad9`, `numpadEnter`, `numpadPlus`, `numpadMinus`, `numpadMultiply`, `numpadDivide`, `numpadPeriod`
   - `text`, a `string`: what was typed since the last frame, which views read (see [Typed text](#typed-text))
-- **Mouse:** `position`, `delta` and `scroll` (`float2`), and the buttons `left`, `right`, `middle`, `back` and `forward`. `position` is in window pixels from the bottom left, with `y` up, as a touch's and the pointer's are; in a view, `Screen.Flip(position)` gives it from the top left, as the screen and the GUI count (see [Screen and world coordinates](./views.md#screen-and-world-coordinates)). While the cursor is [locked](#locking-the-cursor), `position` stays where it was and `delta` is the mouse's own movement.
+- **Mouse:** `position`, `delta` and `scroll` (`float2`), and the buttons `left`, `right`, `middle`, `back` and `forward`. `position` is in window pixels from the bottom left, with `y` up, as a touch's and the pointer's are; in a view, `Screen.Flip(position)` gives it from the top left, as the screen and the GUI count (see [Screen and world coordinates](./cameras.md#screen-and-world-coordinates)). While the cursor is [locked](#locking-the-cursor), `position` stays where it was and `delta` is the mouse's own movement.
 - **Gamepad:** `connected`, `leftStick` and `rightStick` (`float2`), `leftTrigger` and `rightTrigger` (0 to 1), the face buttons by position (`buttonSouth`, `buttonEast`, `buttonWest`, `buttonNorth`, which is A, B, X and Y on Xbox), `dpad.up` and the other directions, `leftShoulder`, `rightShoulder`, `leftStickButton`, `rightStickButton`, `start` and `select`.
 - **Touchscreen:** `connected`, `primaryTouch`, and `touches`, a slot for each of 10 fingers. Each `Touch` has:
   - `press`, a button: `.down` when the finger touched, and `.up` when it lifted
@@ -167,7 +167,7 @@ Touches come from the web, on phones and desktops alike, and from touchscreens o
 
 ### Locking the cursor
 
-A camera that turns with the mouse locks the cursor: a view calls `Cursor.Lock()` every frame the game wants the mouse (see [Looking around](./views.md#looking-around)). `Cursor.locked` is whether the window holds it right now, which the system decides, not the game: the cursor goes back to the player when they press Escape, and a window that loses the focus lets it go.
+A camera that turns with the mouse locks the cursor: a view calls `Cursor.Lock()` every frame the game wants the mouse (see [Looking around](./cameras.md#looking-around)). `Cursor.locked` is whether the window holds it right now, which the system decides, not the game: the cursor goes back to the player when they press Escape, and a window that loses the focus lets it go.
 
 `Sample` reads `Cursor.locked`, so the mouse only turns the camera while the cursor is locked, and moving it over a menu doesn't:
 
