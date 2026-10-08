@@ -30,6 +30,7 @@ The editors' formatter lays code out this way (see [Editors](../tools/editors.md
 | `Color` | A color, with `r`, `g`, `b` and `a` from 0 to 1 (see [Views](../game/views.md)) |
 | `Rect` | A rectangle on the screen: `x`, `y`, `width` and `height` (see [GUI](../game/gui.md)) |
 | `string` | Text (see [Text and lists](./text-and-lists.md)) |
+| `char` | One character of text, like `'a'` (see [Characters](./text-and-lists.md#characters)) |
 | `List<T>` | A list of values (see [Text and lists](./text-and-lists.md)) |
 | `T[N]`, like `int[32]` | A fixed number of plain values, stored side by side (see [Arrays](./text-and-lists.md#arrays)) |
 | `Map<K, V>`, `Set<K>` | Values by key, and keys each once, in the order they were added (see [Text and lists](./text-and-lists.md#maps-and-sets)) |
@@ -215,7 +216,7 @@ while (fuel > 0)
 }
 ```
 
-A `for` loop's variable is read-only in its body unless it's declared `mut var`; the loop's step can change it either way. `foreach` goes through a list in order, and each element is a read-only copy; `foreach (int score in scores)` names their type. `foreach` and `parallel` go through a grid's cells too (see [Grids](./grids.md)). There's no `do ... while` yet.
+A `for` loop's variable is read-only in its body unless it's declared `mut var`; the loop's step can change it either way. `foreach` goes through a list in order, and each element is a read-only copy; `foreach (int score in scores)` names their type. `foreach` and `parallel` go through a grid's cells too (see [Grids](./grids.md)), and `foreach` through a text's characters (see [Characters](./text-and-lists.md#characters)). There's no `do ... while` yet.
 
 ## Enums and switch
 
@@ -248,7 +249,7 @@ system Advance(mut Match match)
 - `==` and `!=` compare two values of the same enum.
 - An enum and its number convert both ways, written out: `int(phase)` gives a value's number, and `Phase(5)` the value with that number. `Combat.Stance(2)` does it for an enum in a namespace. See [From a number](#from-a-number) below.
 - An enum takes four bytes, like an int. `enum Voxel : byte { ... }` takes one, for members from 0 to 255, and `: ushort` two, for 0 to 65535: worth it where there are a lot of them, like a grid's cells.
-- `switch` works on ints, longs and enums. A case is an int (or a long, for a long), an enum's member, or a constant. Every section ends with `break` or `return`, so none runs into the next.
+- `switch` works on ints, longs, [chars](./text-and-lists.md#characters) and enums. A case is an int (or a long, for a long), a char like `'a'`, an enum's member, or a constant. Every section ends with `break` or `return`, so none runs into the next.
 
 ### From a number
 

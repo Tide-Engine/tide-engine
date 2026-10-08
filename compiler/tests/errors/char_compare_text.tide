@@ -1,0 +1,5 @@
+// expect: operator '==' can't be used with char and string
+// expect: a char compares with a char, which is one character in single quotes: 'a', not "a"
+scene Main { }
+singleton Seen { int n; string name = "ab"; char mark; }
+system S(mut Seen seen) { if (seen.mark == "a") seen.n = 1; }

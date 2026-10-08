@@ -1,4 +1,0 @@
-// expect: functions can't send events; systems and event handlers do
-event Ping { }
-scene Main { }
-void Notify() { Send(Ping); }

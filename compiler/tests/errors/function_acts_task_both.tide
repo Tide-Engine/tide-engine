@@ -1,0 +1,15 @@
+// expect: but a task runs in one world
+event Ping { int n; }
+local event Blink { int n; }
+scene Main { }
+void Notify(int n) { Send(Ping { n = n }); }
+void Flash(int n) { Send(Blink { n = n }); }
+async void Later()
+{
+    await Wait.Ticks(1);
+    Notify(1);
+    Flash(2);
+}
+event(Spawned) Setup(with Main) { Later(); }
+event(Ping ping) Heard() { }
+local event(Blink blink) Seen() { }

@@ -912,12 +912,27 @@ int32_t tide_str_index_of(const tide_str a, const tide_str b)
     return at < 0 ? -1 : tide_utf8_chars(a.ptr, at);
 }
 
-// The byte where character `index` starts, or a.bytes past the end.
+// The byte where character `index` starts (0 or more), or a.bytes past the
+// end. Text of a byte a character has it at that byte, which its two counts
+// say; any other is walked from its start, eight bytes at a time.
 static int32_t byte_of_char(const tide_str a, const int32_t index)
 {
+    if (index >= a.chars) return a.bytes;
+    if (a.bytes == a.chars) return index;
+    const unsigned char *p = (const unsigned char *)a.ptr;
+    int32_t i = 0;
     int32_t chars = 0;
-    for (int32_t i = 0; i < a.bytes; i++) {
-        if (((unsigned char)a.ptr[i] & 0xC0u) != 0x80u) {
+    while (i + 8 <= a.bytes) {
+        uint64_t word;
+        memcpy(&word, p + i, 8);
+        // The bytes of it that start a character: the ones that don't begin with the bits 10
+        const int32_t starts = 8 - (int32_t)__builtin_popcountll((word >> 7 & ~(word >> 6)) & 0x0101010101010101ull);
+        if (chars + starts > index) break; // It's in these eight
+        chars += starts;
+        i += 8;
+    }
+    for (; i < a.bytes; i++) {
+        if ((p[i] & 0xC0u) != 0x80u) {
             if (chars == index) return i;
             chars++;
         }
@@ -925,6 +940,8 @@ static int32_t byte_of_char(const tide_str a, const int32_t index)
     return a.bytes;
 }
 
+// A piece of `a`, where it is: nothing is copied, so the byte after it is
+// a's next, and a NUL only at a's end (tide_str_c copies then).
 tide_str tide_str_substring(const tide_str a, int32_t start, int32_t length)
 {
     if (start < 0) start = 0;
@@ -932,9 +949,118 @@ tide_str tide_str_substring(const tide_str a, int32_t start, int32_t length)
     if (length < 0) length = 0;
     if (length > a.chars - start) length = a.chars - start;
     const int32_t from = byte_of_char(a, start);
-    const int32_t to = byte_of_char(a, start + length);
-    if (to == a.bytes) return (tide_str){a.ptr + from, a.bytes - from, a.chars - start}; // Ends with a's NUL
-    return copy(a.ptr + from, to - from);
+    const tide_str rest = {a.ptr + from, a.bytes - from, a.chars - start}; // The walk goes on from where it got to
+    return (tide_str){rest.ptr, byte_of_char(rest, length), length};
+}
+
+// ---------------------------------------------------------------------------
+// Characters
+
+// How many bytes the character that starts at byte `from` has: that one and
+// the ones that continue it.
+static int32_t char_bytes(const tide_str a, const int32_t from)
+{
+    int32_t n = 1;
+    while (from + n < a.bytes && ((unsigned char)a.ptr[from + n] & 0xC0u) == 0x80u) n++;
+    return n;
+}
+
+// The code point of the `count` bytes at `p`, one character's: U+FFFD when
+// they aren't a character's UTF-8 (a byte that starts none, too few or too
+// many after it, a longer form than the shortest, half of a UTF-16 pair).
+static int32_t decode(const unsigned char *p, const int32_t count)
+{
+    const uint32_t lead = p[0];
+    uint32_t c;
+    if (lead < 0x80u) return count == 1 ? (int32_t)lead : 0xFFFD;
+    if (count == 2 && lead >= 0xC2u && lead < 0xE0u) c = (lead & 0x1Fu) << 6 | (p[1] & 0x3Fu);
+    else if (count == 3 && lead >= 0xE0u && lead < 0xF0u) c = (lead & 0x0Fu) << 12 | (p[1] & 0x3Fu) << 6 | (p[2] & 0x3Fu);
+    else if (count == 4 && lead >= 0xF0u && lead < 0xF5u) c = (lead & 0x07u) << 18 | (p[1] & 0x3Fu) << 12 | (p[2] & 0x3Fu) << 6 | (p[3] & 0x3Fu);
+    else return 0xFFFD;
+    if ((count == 3 && c < 0x800u) || (count == 4 && c < 0x10000u) || c > 0x10FFFFu || (c >= 0xD800u && c < 0xE000u)) return 0xFFFD;
+    return (int32_t)c;
+}
+
+int32_t tide_str_char_wide(const tide_str a, const int32_t index)
+{
+    if (index < 0 || index >= a.chars) return 0;
+    const int32_t from = byte_of_char(a, index);
+    if (from >= a.bytes) return 0;
+    return decode((const unsigned char *)a.ptr + from, char_bytes(a, from));
+}
+
+int32_t tide_str_next_wide(const tide_str a, int32_t *at)
+{
+    int32_t from = *at < 0 ? 0 : *at;
+    // Bytes that continue no character, which only a text's start can have: its length counts none of them
+    while (from < a.bytes && ((unsigned char)a.ptr[from] & 0xC0u) == 0x80u) from++;
+    if (from >= a.bytes) {
+        *at = a.bytes;
+        return 0;
+    }
+    const int32_t n = char_bytes(a, from);
+    *at = from + n;
+    return decode((const unsigned char *)a.ptr + from, n);
+}
+
+// `c` as UTF-8 in `bytes` (4 at most), as text: empty for a number no
+// character has.
+static tide_str char_text(const int32_t c, char *bytes)
+{
+    const int n = c < 0 ? 0 : tide_utf8_encode((uint32_t)c, bytes);
+    return (tide_str){bytes, n, n > 0};
+}
+
+tide_str tide_str_add_char(const tide_str a, const int32_t c)
+{
+    char bytes[4];
+    if (c == 0) return a; // No character
+    return tide_str_add(a, char_text(c, bytes));
+}
+
+tide_str tide_str_add_char_quoted(tide_str a, const int32_t c)
+{
+    char bytes[4];
+    const tide_str text = char_text(c, bytes);
+    a = add_ascii(a, "'", 1);
+    a = c == 0 || text.bytes == 0 ? add_ascii(a, "\\0", 2) : tide_str_add(a, text);
+    return add_ascii(a, "'", 1);
+}
+
+bool tide_str_contains_char(const tide_str a, const int32_t c)
+{
+    char bytes[4];
+    const tide_str text = char_text(c, bytes);
+    return text.bytes > 0 && find(a, text) >= 0;
+}
+
+bool tide_str_starts_with_char(const tide_str a, const int32_t c)
+{
+    char bytes[4];
+    const tide_str text = char_text(c, bytes);
+    return text.bytes > 0 && tide_str_starts_with(a, text);
+}
+
+bool tide_str_ends_with_char(const tide_str a, const int32_t c)
+{
+    char bytes[4];
+    const tide_str text = char_text(c, bytes);
+    return text.bytes > 0 && tide_str_ends_with(a, text);
+}
+
+int32_t tide_str_index_of_char(const tide_str a, const int32_t c)
+{
+    char bytes[4];
+    const tide_str text = char_text(c, bytes);
+    return text.bytes > 0 ? tide_str_index_of(a, text) : -1;
+}
+
+tide_str tide_str_replace_char(const tide_str a, const int32_t from, const int32_t to)
+{
+    char from_bytes[4];
+    char to_bytes[4];
+    // No character to put in its place takes each `from` out, as replacing with "" does
+    return tide_str_replace(a, char_text(from, from_bytes), to == 0 ? TIDE_STR_EMPTY : char_text(to, to_bytes));
 }
 
 tide_str tide_str_substring_from(const tide_str a, const int32_t start)

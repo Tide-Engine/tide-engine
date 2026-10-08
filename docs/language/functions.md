@@ -89,7 +89,7 @@ system Regenerate(mut Unit unit)
 - A parameter can be `out`, which gives the caller's variable its value: see [Out parameters](#out-parameters).
 - A function shares its name with nothing else in its namespace but other functions, and a method never with a field.
 
-Functions work from their parameters, constants and the functions they call; methods also see their own fields. Ordinary functions and methods get no implicit world, and don't spawn entities or record structural changes. To read or update another entity's component, take the caller's [`World`](../game/systems.md#other-entities-the-world) explicitly: reads use `World`, and `Set` needs `mut World`. What the helper reaches counts toward the caller's access, and a view can't call a helper that writes the match. A function can draw and use the GUI, and then only views, and other functions like it, can call it. [Async functions](../game/tasks.md#async-functions) run as tasks and have their world's entity operations.
+Functions work from their parameters, constants and the functions they call; methods also see their own fields. To read or update another entity's component, take the caller's [`World`](../game/systems.md#other-entities-the-world) explicitly: reads use `World`, and `Set` needs `mut World`. What the helper reaches counts toward the caller's access, and a view can't call a helper that writes the match. A function can draw and use the GUI, and then only views, and other functions like it, can call it. A function can also send events, spawn and change entities, as the code that calls it could: see [Sending and spawning](#sending-and-spawning). [Async functions](../game/tasks.md#async-functions) run as tasks and have their world's entity operations.
 
 Singleton arguments are explicit values, like component arguments. The function gets no singleton lookup or access to a world. A match system or handler can pass state it can write to a `mut` parameter; a view can pass local state it can write, while its match state stays read-only. The input's `Sample` can only read local state, including through helpers. These restrictions follow calls through other helpers, and their reads and writes count toward the caller's access and scheduling.
 
@@ -117,6 +117,66 @@ A match component or singleton can also have [local fields](../game/local-state.
 Engine-owned singleton instances, such as `Time` and `Session`, stay read-only when passed to helpers. Passing `Session` grants no session operations. Ordinary helpers also can't read `session.room` or format a whole `Session` as text: pass the room code as a separate `string`.
 
 A function can also be written in C, declared with `extern` and no body: see [Calling C](../c/functions.md).
+
+## Sending and spawning
+
+A function or a method can `Send`, `Spawn`, `Add`, `Remove` and `Destroy`, written as a system writes them. It does it as the code that calls it: what a system could do itself, a function it calls can do for it.
+
+```csharp
+event Sank { int2 at; }
+event Hit { int damage; }
+
+component Crate { int from; }
+
+// Says what happened as it happens
+bool Step(mut Board board)
+{
+    board.at += int2(1, 0);
+    if (board.at.x < board.width) return true;
+    Send(Sank { at = board.at });
+    return false;
+}
+
+Entity Drop(int from)
+{
+    return Spawn(Crate { from = from });
+}
+
+void Hurt(Entity target, int damage)
+{
+    target.Send(Hit { damage = damage });
+}
+
+system Play(mut Kitchen kitchen)
+{
+    if (!Step(kitchen.board)) kitchen.last = Drop(kitchen.round);
+}
+```
+
+Nothing is wrong with such a function by itself. A call is an error only from a place that couldn't do the same thing itself, and the error names the line in the function that does it:
+
+| The function | Who can call it |
+| --- | --- |
+| Sends a match event, or spawns or changes the match's entities | Match systems, event handlers, command handlers and the match's tasks |
+| Sends a local event or a [command](../game/commands.md), or spawns or changes local entities | Views, local handlers and this machine's tasks |
+| Does neither | Anything, as before |
+
+```csharp
+view Hud(Kitchen kitchen)
+{
+    Drop(1); // Error: a view can't change the match, and 'Drop' spawns entities
+}
+```
+
+- **It follows calls.** A function that calls one that sends counts as sending too, through however many.
+- **Which world** is told by what's written: a match event or a local one, an `Entity` or a `LocalEntity`, the match's components or local ones. A `Spawn` with no components is the match's.
+- **A function has no `this`.** It takes the entity as a parameter, `Entity target`, and writes `target.Send(...)`. A component's method has `this`, the entity it's called for.
+- **What it spawns joins the scene of the entity its caller runs for**, as the caller's own spawns do.
+- **Its calls keep their order.** What a function sends is recorded where it's called, among what the caller sends itself, and `Total(First(), Second())` runs `First` first.
+- **What was sent stays sent.** A function that tries a move and takes it back should send once the move is certain.
+- **Threads change nothing.** A system that splits its entities across threads calls such functions as it sends and spawns itself (see [The schedule](../game/schedule.md#splitting-across-threads)).
+
+Some code never sends or spawns, whoever calls it: a `Sort`'s comparison and a `parallel` loop's step, the input's `Sample` and `Sanitize`, frags and verts, a struct's operators and a component's `Interpolate`. A call there of a function that does is the error.
 
 ## Default values, names and overloads
 

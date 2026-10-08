@@ -1,0 +1,4 @@
+// expect: char(...) converts one int, a character's code point
+scene Main { }
+singleton Seen { int n; string name = "ab"; char mark; }
+system S(mut Seen seen) { seen.mark = char(1, 2); }

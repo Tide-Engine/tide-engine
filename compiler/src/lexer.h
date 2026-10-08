@@ -8,6 +8,7 @@ typedef enum tok_kind {
     T_INT,
     T_FLOAT,
     T_STRING, // Text in double quotes; the token's text excludes them.
+    T_CHAR,   // A character in single quotes, 'a' or '\n'; the token's text includes them.
     // Text with values in it, $"score {score} of {max:D3}", as tokens whose text
     // is all they cover: T_INTERP is `$"score {`, then the value's own tokens,
     // then T_INTERP_PART `} of {`, ... and the last part ends with the quote,
@@ -136,6 +137,8 @@ void lex_define_package(const char *package); // PACKAGE_BOX2D for "Box2D"
 // Whether a name can be defined: an identifier that isn't a condition's own
 // word or tide's to say (TIDE_..., PACKAGE_...).
 bool lex_symbol_ok(const char *name);
+// A plain Tide identifier, excluding keyword and generated-code names.
+bool lex_identifier_ok(str name);
 
 // Each of the build's symbols a condition read since the reset, defined or
 // not, in order of their names: what the files read differently in another

@@ -250,6 +250,7 @@ static type_ref *parse_type(parser *p, const char *what)
     if (form) {
         advance(p);
         for (int i = 0; i < form->arity; i++) {
+            if (i == 1 && str_eq_c(q.text, "SkinnedMesh") && !at(p, T_COMMA)) break;
             if (i) expect(p, T_COMMA, form->comma);
             vec_push(r->args, parse_type(p, form->hints[i]));
         }
@@ -411,6 +412,28 @@ static expr *parse_primary(parser *p)
         e->text = t->text;
         return e;
     }
+    case T_CHAR: {
+        // 'a': a number that's a char, its code point, so what reads an int literal reads it
+        advance(p);
+        expr *e = new_expr(E_INT, t->at);
+        e->text = t->text;
+        e->is_char = true;
+        const unsigned char *s = (const unsigned char *)t->text.ptr + 1; // Past the quote; the lexer checked what's between
+        const int bytes = t->text.len - 2;
+        if (s[0] == '\\') {
+            const char esc = (char)s[1];
+            e->int_value = esc == 'n' ? '\n' : esc == 'r' ? '\r' : esc == 't' ? '\t' : esc == '0' ? 0 : esc;
+        } else if (bytes == 1) {
+            e->int_value = s[0];
+        } else if (bytes == 2) {
+            e->int_value = (s[0] & 0x1F) << 6 | (s[1] & 0x3F);
+        } else if (bytes == 3) {
+            e->int_value = (s[0] & 0x0F) << 12 | (s[1] & 0x3F) << 6 | (s[2] & 0x3F);
+        } else {
+            e->int_value = (s[0] & 0x07) << 18 | (s[1] & 0x3F) << 12 | (s[2] & 0x3F) << 6 | (s[3] & 0x3F);
+        }
+        return e;
+    }
     case T_THIS:
         advance(p);
         return new_expr(E_THIS, t->at);
@@ -458,6 +481,13 @@ static expr *parse_primary(parser *p)
         return e;
     }
     case T_IDENT: {
+        if (str_eq_c(t->text, "SkinnedMesh") && peek_at(p, 1)->kind == T_LT) {
+            const type_ref *model = parse_type(p, "a skinned mesh type");
+            expr *e = new_expr(E_NAME, t->at);
+            e->name = model->text;
+            e->type_arg_ref = model;
+            return e;
+        }
         advance(p);
         if (at(p, T_LPAREN)) {
             expr *e = new_expr(E_CALL, t->at);
@@ -1064,7 +1094,10 @@ static bool at_local_decl(const parser *p)
 {
     const token *t = peek(p);
     if (t->kind != T_IDENT) return false;
-    if (generic_name(t->text) && peek_at(p, 1)->kind == T_LT) return true;
+    if (generic_name(t->text) && peek_at(p, 1)->kind == T_LT) {
+        const int end = skip_type(p, 0);
+        return end > 0 && peek_at(p, end)->kind == T_IDENT;
+    }
     int next = 1;
     while (peek_at(p, next)->kind == T_DOT && peek_at(p, next + 1)->kind == T_IDENT) next += 2;
     if (peek_at(p, next)->kind == T_IDENT) return true;

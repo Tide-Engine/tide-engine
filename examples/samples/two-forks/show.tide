@@ -701,7 +701,7 @@ void Caption(string line, float2 at, float size, Color tone, float room)
         var middle = line.length / 2;
         for (var i = 0; i < line.length; i++)
         {
-            if (line.Substring(i, 1) != " ") continue;
+            if (line[i] != ' ') continue;
             if (cut < 0 || Math.Abs(i - middle) < Math.Abs(cut - middle)) cut = i;
         }
     }
@@ -771,10 +771,16 @@ view Hud(Kitchen kitchen, Devices devices, Me me, Layout layout, mut Fx fx, Pad 
         undo = true;
     }
     mut var restart = devices.keyboard.r.down || devices.gamepad.select.down;
+    mut var skip = devices.keyboard.n.down;
     if (GUI.Button(Rect(layout.buttons.x, layout.buttons.y, 84, 38), "Undo")) undo = true;
     if (GUI.Button(Rect(layout.buttons.x + 90, layout.buttons.y, 84, 38), "Restart")) restart = true;
+    // Testing shortcut: no cooking credit. On touch screens it sits above
+    // Undo, clear of the movement pad; with keys it's the next button along.
+    var skipAt = pad.touched ? layout.buttons - float2(0, 44) : layout.buttons + float2(180, 0);
+    if (GUI.Button(Rect(skipAt.x, skipAt.y, 94, 38), "Skip (N)")) skip = true;
     if (undo) Send(Undo { level = kitchen.level });
     if (restart) Send(Restart { level = kitchen.level });
+    if (skip) Send(Goto { level = (kitchen.level + 1) % LEVELS });
 
     // What to do: the level's own line while it's new, and then the keys
     var under = screen.y - layout.bottom + 6;

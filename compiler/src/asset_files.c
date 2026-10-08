@@ -20,6 +20,7 @@
 #include "tide/vorbis.h"
 #include "tide/wav.h"
 #include "tide/sha256.h"
+#include "tide/skinned_data.h"
 
 #ifdef _WIN32
 #define popen _popen
@@ -50,6 +51,13 @@ typedef struct read_file {
     char mesh_why[256], mesh_note[256];
     struct mesh_side *sides;
     int side_count;
+    bool skin_tried, skin_ok;
+    uint8_t *skin;
+    uint32_t skin_size;
+    mesh_file skin_mesh;
+    char skin_why[256], skin_note[256];
+    struct mesh_side *skin_sides;
+    int skin_side_count;
 } read_file;
 
 typedef struct mesh_side {
@@ -80,9 +88,22 @@ static void forget_mesh(read_file *f)
     f->mesh_tried = f->mesh_ok = false;
 }
 
+static void forget_skin(read_file *f)
+{
+    if (f->skin_ok) mesh_file_free(&f->skin_mesh);
+    tide_skinned_data_free(f->skin);
+    for (int i = 0; i < f->skin_side_count; i++) free(f->skin_sides[i].path);
+    free(f->skin_sides);
+    f->skin = NULL;
+    f->skin_sides = NULL;
+    f->skin_side_count = 0;
+    f->skin_tried = f->skin_ok = false;
+}
+
 static void forget_file(read_file *f)
 {
     forget_mesh(f);
+    forget_skin(f);
     free(f->path);
     free(f->data);
     free(f->image.pixels);
@@ -104,6 +125,9 @@ void asset_files_changed(const char *path)
         if (asset_path_same(f->path, path) || asset_path_under(f->path, path)) f->changed = true;
         for (int k = 0; k < f->side_count && !f->changed; k++) {
             if (asset_path_same(f->sides[k].path, path) || asset_path_under(f->sides[k].path, path)) f->changed = true;
+        }
+        for (int k = 0; k < f->skin_side_count && !f->changed; k++) {
+            if (asset_path_same(f->skin_sides[k].path, path) || asset_path_under(f->skin_sides[k].path, path)) f->changed = true;
         }
     }
 }
@@ -526,7 +550,7 @@ static int key_order(const void *a, const void *b)
 
 // The path as written, with its escapes undone and backslashes as forward
 // slashes. Arena.
-static char *written_path(const str text)
+const char *asset_written_path(const str text)
 {
     char *out = arena_alloc((size_t)text.len + 1);
     int n = 0;
@@ -545,7 +569,8 @@ static char *written_path(const str text)
 static const char *kind_name(const asset_kind kind)
 {
     return kind == ASSET_TEXT ? "string" : kind == ASSET_BYTES ? "List<byte>" : kind == ASSET_TEXTURE ? "Texture"
-         : kind == ASSET_CUBEMAP ? "Cubemap" : kind == ASSET_CLIP ? "Clip" : kind == ASSET_MESH ? "Mesh<...>" : "Grid2<Color>";
+         : kind == ASSET_CUBEMAP ? "Cubemap" : kind == ASSET_CLIP ? "Clip" : kind == ASSET_MESH ? "Mesh<...>"
+         : kind == ASSET_SKINNED ? "SkinnedMesh<...>" : "Grid2<Color>";
 }
 
 // A file a .gltf names beside it: read like any, and noted, so the mesh is
@@ -579,6 +604,38 @@ static bool sides_same(const read_file *f)
         if (size != f->sides[i].size || modified != f->sides[i].modified) return false;
     }
     return true;
+}
+
+// The portable model's geometry, in the same column layout the ordinary mesh
+// pack writer takes. Skinning keeps these vertices in geometry-local space.
+static mesh_file skin_geometry(const uint8_t *bytes, const uint32_t size)
+{
+    tide_skinned_data_view view;
+    if (!tide_skinned_data_open(bytes, size, &view)) abort();
+    mesh_file m = {0};
+    m.vertices = view.vertices;
+    m.indices = view.indices;
+    m.position = malloc(sizeof(float) * 3u * (m.vertices ? m.vertices : 1u));
+    m.normal = malloc(sizeof(float) * 3u * (m.vertices ? m.vertices : 1u));
+    m.uv = malloc(sizeof(float) * 2u * (m.vertices ? m.vertices : 1u));
+    m.uv2 = malloc(sizeof(float) * 2u * (m.vertices ? m.vertices : 1u));
+    m.color = malloc(sizeof(float) * 4u * (m.vertices ? m.vertices : 1u));
+    m.tangent = malloc(sizeof(float) * 4u * (m.vertices ? m.vertices : 1u));
+    m.index = malloc(sizeof(uint32_t) * (m.indices ? m.indices : 1u));
+    if (!m.position || !m.normal || !m.uv || !m.uv2 || !m.color || !m.tangent || !m.index) abort();
+    for (uint32_t i = 0; i < m.vertices; i++) {
+        tide_skinned_vertex_data v;
+        if (!tide_skinned_data_vertex(&view, i, &v)) abort();
+        memcpy(m.position + 3u * i, v.position, sizeof v.position);
+        memcpy(m.normal + 3u * i, v.normal, sizeof v.normal);
+        memcpy(m.uv + 2u * i, v.uv, sizeof v.uv);
+        memcpy(m.uv2 + 2u * i, v.uv2, sizeof v.uv2);
+        memcpy(m.color + 4u * i, v.color, sizeof v.color);
+        memcpy(m.tangent + 4u * i, v.tangent, sizeof v.tangent);
+    }
+    for (uint32_t i = 0; i < m.indices; i++) if (!tide_skinned_data_index(&view, i, m.index + i)) abort();
+    tide_sha256_of(bytes, size, m.hash);
+    return m;
 }
 
 // Where a missing file might be: one with the same bytes, by the hashes the
@@ -703,6 +760,46 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             if (f->vorbis_why) diag_note("as Ogg Vorbis, %s", f->vorbis_why);
             return false;
         }
+    } else if (kind == ASSET_SKINNED) {
+        const read_file sides_check = {.sides = f->skin_sides, .side_count = f->skin_side_count};
+        if (f->skin_tried && !sides_same(&sides_check)) forget_skin(f);
+        if (!f->skin_tried) {
+            char *folder = asset_path_folder(path);
+            side_reader sides = {folder, NULL, 0};
+            uint8_t *bytes = NULL;
+            uint32_t size = 0;
+            char why[256], note[256];
+            const bool ok = tide_skinned_data_decode(f->data, f->len, false, read_side, &sides, &bytes, &size, why, note);
+            free(folder);
+            f = read_at(path);
+            if (!f) {
+                tide_skinned_data_free(bytes);
+                for (int i = 0; i < sides.count; i++) free(sides.sides[i].path);
+                free(sides.sides);
+                diag_error(at, "'%s' can't be read (%s)", written, path);
+                return false;
+            }
+            f->skin_tried = true;
+            f->skin_ok = ok;
+            f->skin = bytes;
+            f->skin_size = size;
+            f->skin_sides = sides.sides;
+            f->skin_side_count = sides.count;
+            memcpy(f->skin_why, why, sizeof why);
+            memcpy(f->skin_note, note, sizeof note);
+            if (ok) f->skin_mesh = skin_geometry(bytes, size);
+        }
+        if (!f->skin_ok) {
+            diag_error(at, "'%s' %s", key, f->skin_why);
+            if (f->skin_note[0]) diag_note("%s", f->skin_note);
+            return false;
+        }
+        item->mesh = f->skin_mesh;
+        item->skinned = f->skin;
+        item->skinned_size = f->skin_size;
+        item->side_count = f->skin_side_count;
+        item->sides = arena_alloc(sizeof(char *) * (size_t)(f->skin_side_count ? f->skin_side_count : 1));
+        for (int i = 0; i < f->skin_side_count; i++) item->sides[i] = str_to_cstr(str_from(f->skin_sides[i].path));
     } else if (kind == ASSET_MESH) {
         if (f->mesh_tried && !sides_same(f)) forget_mesh(f);
         if (!f->mesh_tried) {
@@ -833,7 +930,7 @@ asset_value *asset_resolve(const char *declaring_as_given, const str path, const
                            const loc at, const char *game_folder)
 {
     char *declaring = declaring_abs(declaring_as_given);
-    const char *written = written_path(path);
+    const char *written = asset_written_path(path);
     if (!*written) {
         diag_error(at, "an asset's path can't be empty: write where the file is from this one, like \"art/hero.png\"");
         free(declaring);
@@ -924,7 +1021,7 @@ asset_value *asset_resolve(const char *declaring_as_given, const str path, const
 
 void asset_watched(const char *declaring_as_given, const str path, asset_path_fn found, void *user)
 {
-    const char *written = written_path(path);
+    const char *written = asset_written_path(path);
     if (!*written || asset_path_is_url(written, strlen(written))) return;
     char *declaring = declaring_abs(declaring_as_given);
     char *folder = asset_path_folder(declaring);
@@ -952,7 +1049,7 @@ void asset_files_save_hashes(const char *game_folder, const asset_named *named, 
     asset_hashes_load(&known, game_folder);
     for (int i = 0; i < count; i++) {
         const asset_named *n = &named[i];
-        const char *written = written_path(n->path);
+        const char *written = asset_written_path(n->path);
         if (!*written || asset_path_is_url(written, strlen(written))) continue;
         if (n->value) {
             for (int k = 0; k < n->value->count; k++) {

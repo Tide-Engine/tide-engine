@@ -1,0 +1,3 @@
+// expect: SkinnedMesh<Vertex3> has the static method Decode(bytes), not 'Find'
+scene Main { }
+Bone Read() { return SkinnedMesh<Vertex3>.Find("Idle"); }

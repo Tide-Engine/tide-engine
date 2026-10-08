@@ -128,6 +128,7 @@ const cases = {
         ['audio Echo(', [['audio', 'storage.type'], ['Echo', 'entity.name.function'], ['mut', 'storage.modifier']]],
         ['Grid2<int> cells;', [['Grid2', 'support.class'], ['<', 'punctuation.definition.typeparameters.begin'], ['>', 'punctuation.definition.typeparameters.end']]],
         ['asset Mesh<Corner> tree = "art/tree.glb";', [['asset', 'storage.modifier'], ['Mesh', 'support.class'], ['<', 'punctuation.definition.typeparameters.begin'], ['tree', 'variable.other']]],
+        ['asset SkinnedMesh<Corner, Locomotion> hero = "art/hero.glb";', [['asset', 'storage.modifier'], ['SkinnedMesh', 'support.class'], ['<', 'punctuation.definition.typeparameters.begin'], ['Locomotion', 'entity.name.type'], ['hero', 'variable.other']]],
         ['List<float> Weights()', [['Weights', 'entity.name.function'], ['Weights', '!entity.name.function.call']]],
         ['mut void Heal(', [['mut', 'storage.modifier'], ['Heal', 'entity.name.function']]],
         ['Stats operator +(', [['operator', 'keyword.other.operator'], ['+', 'keyword.operator']]],
@@ -280,6 +281,14 @@ const cases = {
         ['string braces =', [['{{', 'constant.character.escape'], ['}}', 'constant.character.escape'], [':F2', 'constant.other.format'], ['value', 'meta.interpolation']]],
         ['string lone =', [['}', 'invalid.illegal']]],
         ['string badValue =', [['\\t', 'invalid.illegal'], ['value', 'meta.interpolation']]],
+    ],
+    'characters': [
+        ['char letter =', [['char', 'storage.type.primitive'], ["'a'", 'string.quoted.single'], ['letter', '!string']]],
+        ['char quote =', [["'\\''", 'string.quoted.single'], ["\\'", 'constant.character.escape'], [';', '!string']]],
+        ['char tab =', [['\\t', 'constant.character.escape'], ['\\t', '!invalid']]],
+        ['char wrong =', [['\\q', 'invalid.illegal']]],
+        ['bool same =', [["'é'", 'string.quoted.single'], ["'\"'", 'string.quoted.single'], ['quote', '!string'], ['&&', '!string']]],
+        ['char brace =', [["'{'", 'string.quoted.single']]],
     ],
     'directives': [
         ['#if TIDE_0_3_OR_NEWER', [
@@ -503,6 +512,8 @@ test('indenting ignores braces in text and comments', () => {
         ['system Foo()', false],
         ['component A { int x; }', false],
         ['    Foo("{");', false],
+        ["    char open = '{';", false],
+        ["    if (c == '{') {", true],
         ['    string s = $"{x}";', false],
         ['    string s = $"{{";', false],
         ['    // see {', false],

@@ -1,0 +1,8 @@
+// expect: Animation belongs to the CPU: sample and edit a Pose before Draw.SkinnedMesh
+// expect: frag 'Shade' runs on the GPU, and 'Duration' with it, as it calls it
+scene Main { }
+float Duration() { Animation animation = default; return animation.duration; }
+frag Shade(Vertex vertex, out Color color)
+{
+    color = Color(Duration(), 0, 0);
+}

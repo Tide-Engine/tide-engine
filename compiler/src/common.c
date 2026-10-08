@@ -361,6 +361,15 @@ void diag_warning(const loc at, const char *fmt, ...)
     va_end(args);
 }
 
+void diag_info(const loc at, const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    if (sink) to_sink(DIAG_INFO, at, fmt, args);
+    else report(at, "info", fmt, args);
+    va_end(args);
+}
+
 // Not const: va_list is an array on some targets, and vfprintf takes it as is.
 static void note(const loc at, const char *fmt, va_list args)
 {

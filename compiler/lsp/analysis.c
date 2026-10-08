@@ -12,6 +12,7 @@
 #include "cdefs.h"
 #include "folders.h"
 #include "lexer.h"
+#include "model_metadata.h"
 #include "types.h"
 
 // Everything here points into the compiler's arena, so it all belongs to the
@@ -486,7 +487,9 @@ static void type_tree(const type_ref *r, const type t)
         add_occ((occurrence){.at = r->at, .len = r->name.len, .kind = OCC_TYPE, .name = r->name, .type = t});
         const bool holds = (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID || t.kind == TY_MESH) && t.decl;
         for (int i = 0; i < r->args.count; i++) {
-            const type part = holds && i < t.decl->fields.count ? t.decl->fields.items[i].type : (type){TY_ERROR, NULL};
+            const type part = t.kind == TY_STRUCT && t.decl && t.decl->skin_kind == SKIN_MESH
+                ? i == 0 ? t.decl->skin_vertex : t.decl->skin_contract ? (type){TY_STRUCT, t.decl->skin_contract} : (type){TY_ERROR, NULL}
+                : holds && i < t.decl->fields.count ? t.decl->fields.items[i].type : (type){TY_ERROR, NULL};
             type_tree(r->args.items[i], part);
         }
         return;
@@ -618,6 +621,7 @@ static str written_name(const expr *call, const int i)
 // The parameter a written argument goes to, by its place among them.
 static int written_param(const expr *call, const int i)
 {
+    if (call->skinned) return i; // The hidden geometry arguments replace mesh/pose; editor labels stay source ordered.
     if (!call->settled) return i;
     for (int k = 0; k < call->args.count; k++) {
         if (call->args.items[k] == call->written.items[i]) return k;
@@ -741,6 +745,10 @@ static void walk_value(const expr *e)
         break;
 
     case E_NAME: {
+        if (e->type_arg_ref) {
+            type_tree(e->type_arg_ref, e->type);
+            break;
+        }
         occurrence o = {.at = e->at, .len = e->name.len, .name = e->name, .type = e->type, .write = e == walk_written};
         switch (e->bind) {
         case BIND_PARAM:
@@ -884,7 +892,7 @@ static void walk_value(const expr *e)
             o.decl = e->type_decl;
             o.object_type = (type){TY_ERROR, NULL};
             add_occ(o);
-        } else if (e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP)) {
+        } else if (e->call == CALL_SKINNED || (e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP))) {
             o.kind = OCC_METHOD;
             add_occ(o);
         } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW || e->call == CALL_AUDIO || e->call == CALL_GUI
@@ -1292,6 +1300,7 @@ void analysis_run(const analysis_file *files, const int count)
     A.files = arena_alloc(sizeof(afile) * (size_t)(count > 0 ? count : 1));
     A.prog = program_new();
     A.prog->game_folder = asset_roots.game_folder; // The checker keeps the assets' hashes and fetched URLs there
+    A.prog->asset_metadata_only = true; // Checked model names never need geometry, side buffers or a network request.
     // The symbols #if lines read, as `tide run` has them: DEBUG, and the game's packages. What a
     // command line would --define isn't known here, and reads as not defined.
     lex_symbols_reset();
@@ -1419,7 +1428,8 @@ static void write_diagnostic(jbuf *out, const diagnostic *d)
     const loc at = d->at.line > 0 ? d->at : (loc){1, 1, d->at.file};
     jb_put(out, "{\"range\":");
     write_token_range(out, at);
-    jb_printf(out, ",\"severity\":%d,\"source\":\"tidec\",\"message\":", d->severity == DIAG_ERROR ? 1 : 2);
+    jb_printf(out, ",\"severity\":%d,\"source\":\"tidec\",\"message\":",
+              d->severity == DIAG_ERROR ? 1 : d->severity == DIAG_INFO ? 3 : 2);
     jb_string(out, d->message.data ? d->message.data : "");
     if (unused_access(d) || unused_local(d)) jb_put(out, ",\"tags\":[1]"); // Unnecessary
     if (d->related.count > 0) {
@@ -1460,6 +1470,9 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_BOOL: return "true or false.";
     case TY_BYTE: return "An unsigned 8-bit integer, from 0 to 255. Stored as one byte; arithmetic promotes to int. "
                          "byte(x) keeps the low 8 bits. Converts to int, long and float by itself.";
+    case TY_CHAR: return "One character: a Unicode code point, written in single quotes like `'a'`. It's what `text[i]` and a "
+                         "foreach over text give, and `'\\0'`, its zero, is no character. It goes where an int does, as its "
+                         "code point, so `c >= '0'` and `c - '0'` work; `char(n)` makes an int the character.";
     case TY_INT: return "A 32-bit integer. Arithmetic wraps on overflow; dividing by zero gives 0.";
     case TY_LONG: return "A 64-bit integer. Arithmetic wraps on overflow; dividing by zero gives 0. An int converts to it "
                          "by itself; floats convert with long(x) and float(x), and int(x) keeps its low 32 bits.";
@@ -1926,7 +1939,7 @@ static const method_form target_calls[] = {
 
 static bool is_mesh_draw(const str owner, const str name)
 {
-    return builtin_draw_owner(owner) && (str_eq_c(name, "Mesh") || str_eq_c(name, "Instanced"));
+    return builtin_draw_owner(owner) && (str_eq_c(name, "Mesh") || str_eq_c(name, "Instanced") || str_eq_c(name, "SkinnedMesh"));
 }
 
 // A Pixel's one method, in a frag.
@@ -2083,6 +2096,40 @@ static const method_form singleton_calls[] = {
     {"Snap", "Snap()", "It jumped, like a camera cut: views draw it as it is this tick, not blended from where it was."},
 };
 
+static const method_form animation_catalog_calls[] = {
+    {"Find", "Find(string name) -> Animation?", "Looks up an animation by its exact original name. Missing or ambiguous names give null."},
+    {"At", "At(int index) -> Animation?", "Reads an animation in source order, counting from 0. An index outside the catalog gives null."},
+};
+
+static const method_form bone_catalog_calls[] = {
+    {"Find", "Find(string name) -> Bone?", "Looks up a skeleton node by its exact original name. Missing or ambiguous names give null."},
+    {"At", "At(int index) -> Bone?", "Reads a skeleton node in skeleton order, counting from 0. An index outside the catalog gives null."},
+};
+
+static const method_form skeleton_calls[] = {
+    {"RestPose", "RestPose() -> Pose", "Makes an owned pose with this skeleton's authored rest transforms."},
+    {"Find", "Find(string name) -> Bone?", "Looks up a skeleton node by its exact original name. Missing or ambiguous names give null."},
+};
+
+static const method_form animation_calls[] = {
+    {"Sample", "Sample(float seconds, Playback playback = Playback.Clamp) -> Pose",
+     "Samples an owned pose on the CPU with deterministic math. Clamp keeps the endpoints; Loop wraps seconds by the duration."},
+};
+
+static const method_form pose_calls[] = {
+    {"Sample", "Sample(Animation animation, float seconds, Playback playback = Playback.Clamp)",
+     "Fills a writable pose with this animation, reusing its storage. Each sample starts from the authored rest pose."},
+    {"Blend", "Blend(Pose other, float weight)",
+     "Blends a writable pose toward a compatible pose in parent-local space. Weight is clamped to 0 through 1."},
+    {"Model", "Model(Bone bone) -> float4x4",
+     "Returns a node's accumulated transform in model space, without inverse-bind offsets. Use it for sockets and hitboxes."},
+};
+
+static const method_form skinned_mesh_static_calls[] = {
+    {"Decode", "Decode(List<byte> bytes) -> SkinnedMesh<V, Contract> fails IOError",
+     "Decodes a self-contained GLB from bytes with deterministic CPU math. Invalid data or a missing contract member fails with IOError.InvalidData. External resources are never fetched."},
+};
+
 // The built-in methods of what has the type `t`, or NULL: a list's, a grid's,
 // an entity's, a singleton's or a frag's Pixel's. Text's are in builtins.c,
 // with Math's.
@@ -2090,6 +2137,18 @@ static const method_form *methods_of(const type t, size_t *count)
 {
     const method_form *forms = NULL;
     *count = 0;
+    if (t.kind == TY_STRUCT && t.decl) {
+        switch (t.decl->skin_kind) {
+        case SKIN_MESH: forms = skinned_mesh_static_calls; *count = sizeof skinned_mesh_static_calls / sizeof skinned_mesh_static_calls[0]; break;
+        case SKIN_ANIMATIONS: forms = animation_catalog_calls; *count = sizeof animation_catalog_calls / sizeof animation_catalog_calls[0]; break;
+        case SKIN_BONES: forms = bone_catalog_calls; *count = sizeof bone_catalog_calls / sizeof bone_catalog_calls[0]; break;
+        case SKIN_SKELETON: forms = skeleton_calls; *count = sizeof skeleton_calls / sizeof skeleton_calls[0]; break;
+        case SKIN_ANIMATION: forms = animation_calls; *count = sizeof animation_calls / sizeof animation_calls[0]; break;
+        case SKIN_POSE: forms = pose_calls; *count = sizeof pose_calls / sizeof pose_calls[0]; break;
+        default: break;
+        }
+        if (forms) return forms;
+    }
     switch (t.kind) {
     case TY_LIST: forms = list_calls; *count = sizeof list_calls / sizeof list_calls[0]; break;
     case TY_MAP: forms = map_calls; *count = sizeof map_calls / sizeof map_calls[0]; break;
@@ -2147,7 +2206,7 @@ static void format_method(const method_form *form, const type t, sb *out)
     const char *element = generic ? type_name(t.decl->fields.items[0].type) : "T";
     const char *value = generic && t.kind == TY_MAP ? type_name(t.decl->fields.items[1].type) : "V";
     sb_put(out, t.kind == TY_RECORD && t.decl == A.prog->pixel ? "this"
-                : generic || t.kind == TY_RECORD || t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP ? type_name(t)
+                : generic || t.kind == TY_RECORD || (t.decl && t.decl->skin_kind) || t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP ? type_name(t)
                 : t.kind == TY_LIST ? "items"
                 : t.kind == TY_MAP || t.kind == TY_SET ? "keys"
                 : t.kind == TY_GRID ? "cells"
@@ -2155,6 +2214,11 @@ static void format_method(const method_form *form, const type t, sb *out)
                 : "entity");
     sb_put(out, ".");
     for (const char *p = form->form; *p; p++) {
+        if (t.decl && t.decl->skin_kind == SKIN_MESH && strncmp(p, "SkinnedMesh<V, Contract>", 24) == 0) {
+            sb_put(out, type_name(t));
+            p += 23;
+            continue;
+        }
         const bool alone = (p == form->form || !isalnum((unsigned char)p[-1])) && !isalnum((unsigned char)p[1]);
         if ((*p == 'T' || *p == 'K') && alone) sb_put(out, element);
         else if (*p == 'V' && alone) sb_put(out, value);
@@ -2177,6 +2241,7 @@ static void describe_default(const type t, sb *out)
     switch (t.kind) {
     case TY_BOOL: sb_put(out, "`false`"); break;
     case TY_BYTE: case TY_INT: case TY_LONG: case TY_FLOAT: sb_put(out, "`0`"); break;
+    case TY_CHAR: sb_put(out, "`'\\0'`, which is no character"); break;
     case TY_ENTITY: case TY_LOCAL_ENTITY: sb_put(out, "The null entity"); break;
     case TY_PLAYER: sb_put(out, "No player"); break;
     case TY_STRING: sb_put(out, "Empty text"); break;
@@ -2816,6 +2881,11 @@ static void describe(const occurrence *o, sb *out)
                     sb_printf(out, "\n\nIts path matches %d files.", v->count);
                 }
             }
+            if (o->decl->asset_kind == ASSET_SKINNED) {
+                sb_put(out, " A `SkinnedMesh` is a glTF model with immutable geometry, a skeleton and an animation catalog. "
+                            "Systems and views sample deterministic CPU poses; `Draw.SkinnedMesh` applies a pose to its vertices.");
+                sb_put(out, "\n\nThe editor inspects the glTF JSON catalog. Geometry, side buffers and uncached URLs are read by a build.");
+            }
             if (o->decl->sample_raw) {
                 sb_put(out, "\n\nIt's `[Raw]`: its pixels are numbers, kept as the file has them, which a frag or a vert reads "
                             "by this name. It's no texture to draw with or hand on.");
@@ -3130,6 +3200,21 @@ static void describe(const occurrence *o, sb *out)
     case OCC_MEMBER:
         sb_printf(&code, "%s " STR_FMT, type_name(o->type), STR_ARG(o->name));
         code_block(out, code.data);
+        if (o->object_type.decl && o->object_type.decl->skin_kind) {
+            const decl *d = o->object_type.decl;
+            for (int i = 0; i < d->skin_catalog.count; i++) {
+                const skinned_member *m = &d->skin_catalog.items[i];
+                if (str_eq(m->name, o->name)) {
+                    sb_printf(out, "\n\nChecked %s member for %s `" STR_FMT "`.",
+                              d->skin_kind == SKIN_ANIMATIONS ? "animation" : "bone",
+                              m->explicit_name ? "original source name" : "required normalized source identifier", STR_ARG(m->source_name));
+                    break;
+                }
+            }
+            if (d->skin_kind == SKIN_ANIMATION && str_eq_c(o->name, "duration")) sb_put(out, "\n\nThe animation's duration in seconds.");
+            if (d->skin_kind == SKIN_ANIMATION && str_eq_c(o->name, "name")) sb_put(out, "\n\nThis animation's original source name.");
+            if ((d->skin_kind == SKIN_ANIMATIONS || d->skin_kind == SKIN_BONES) && str_eq_c(o->name, "count")) sb_put(out, "\n\nHow many entries the immutable catalog has, including entries without checked names.");
+        }
         if (o->object_type.decl && o->object_type.decl->query_row) {
             sb_put(out, "\n\nThe entity matched by this query row, read-only.");
         }
@@ -3173,6 +3258,8 @@ static void describe(const occurrence *o, sb *out)
             {"Rotation", "[Rotation]", "Provisional: float radians or a quaternion presented through the shortest rotation, with accumulated visual correction error."},
             {"NativeName", "[NativeName(\"c_function\")]",
              "The C function the extern function after it calls, or the extern system after it is, when its name isn't the declaration's own."},
+            {"Name", "[Name(\"source name\")]",
+             "The exact original animation or node name an Animation or Bone field promises in a SkinnedMesh contract."},
             {"Channel", "[Channel(Channels.Uploads)]",
              "Puts the command after it in a channel of the game's, an enum member: a player's commands are handled in the "
              "order sent within a channel, and in no order against another channel's, so a chat line never waits behind an "
@@ -5348,7 +5435,7 @@ enum { ST_NAMESPACE, ST_TYPE, ST_STRUCT, ST_CLASS, ST_INTERFACE, ST_PARAMETER, S
 static bool is_keyword_type(const type t)
 {
     switch (t.kind) {
-    case TY_BOOL: case TY_BYTE: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2:
+    case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2:
     case TY_FLOAT3: case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4:
         return true;
     default:
@@ -5843,6 +5930,22 @@ static type list_type(const type element)
 
 static type member_type(const type t, const str member)
 {
+    if (t.kind == TY_STRUCT && t.decl && t.decl->skin_kind) {
+        const decl *d = t.decl;
+        if (d->skin_kind == SKIN_MESH && str_eq_c(member, "animations")) return (type){TY_STRUCT, d->skin_animations};
+        if (d->skin_kind == SKIN_MESH && str_eq_c(member, "skeleton")) return (type){TY_STRUCT, d->skin_skeleton};
+        if (d->skin_kind == SKIN_SKELETON && str_eq_c(member, "bones")) return (type){TY_STRUCT, d->skin_bones};
+        if ((d->skin_kind == SKIN_ANIMATIONS || d->skin_kind == SKIN_BONES) && str_eq_c(member, "count")) return (type){TY_INT, NULL};
+        if (d->skin_kind == SKIN_ANIMATION && str_eq_c(member, "name")) return (type){TY_STRING, NULL};
+        if (d->skin_kind == SKIN_ANIMATION && str_eq_c(member, "duration")) return (type){TY_FLOAT, NULL};
+        if (d->skin_kind == SKIN_ANIMATIONS || d->skin_kind == SKIN_BONES) {
+            for (int i = 0; i < d->skin_catalog.count; i++) {
+                if (str_eq(d->skin_catalog.items[i].name, member)) {
+                    return (type){TY_STRUCT, d->skin_kind == SKIN_ANIMATIONS ? A.prog->animation : A.prog->bone};
+                }
+            }
+        }
+    }
     if (t.kind == TY_MESH && t.decl && str_eq_c(member, "vertices")) return list_type(t.decl->fields.items[0].type);
     if (t.kind == TY_MESH && str_eq_c(member, "indices")) return list_type((type){TY_INT, NULL});
     if (t.kind == TY_RENDER_TARGET && str_eq_c(member, "color")) return (type){TY_TEXTURE, NULL};
@@ -5851,7 +5954,7 @@ static type member_type(const type t, const str member)
     if (t.decl && (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_RECORD
                    || t.kind == TY_STRUCT || t.kind == TY_EVENT)) {
         for (int i = 0; i < t.decl->fields.count + local_field_count(t.decl); i++) {
-            if (str_eq(field_of(t.decl, i)->name, member)) return field_of(t.decl, i)->type;
+            if (!field_of(t.decl, i)->hidden && str_eq(field_of(t.decl, i)->name, member)) return field_of(t.decl, i)->type;
         }
     }
     const int dim = type_dim(t);
@@ -5998,6 +6101,38 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     const bool gpu = is_shader(sc->decl) || (sc->decl && sc->decl->gpu_only);
     // A function samples a texture it takes: one that doesn't yet is offered what it would write
     const bool samples = gpu || (sc->decl && (sc->decl->kind == DECL_FUNCTION || sc->decl->kind == DECL_METHOD));
+    if (t.kind == TY_STRUCT && t.decl && t.decl->skin_kind) {
+        if (gpu && t.decl->skin_kind != SKIN_TRANSFORM) return;
+        const decl *d = t.decl;
+        if (d->skin_kind == SKIN_MESH) {
+            item(c, "animations", CK_PROPERTY, "Animations", "The immutable animation catalog: checked names where the asset or contract supplies them, and Find for exact source names.", NULL);
+            item(c, "skeleton", CK_PROPERTY, "Skeleton", "The immutable node hierarchy, rest transforms and bone catalog.", NULL);
+        }
+        if (d->skin_kind == SKIN_SKELETON) item(c, "bones", CK_PROPERTY, "Bones", "Named nodes for sockets, hitboxes and procedural pose edits.", NULL);
+        if (d->skin_kind == SKIN_ANIMATION) {
+            item(c, "name", CK_PROPERTY, "string", "This animation's original source name.", NULL);
+            item(c, "duration", CK_PROPERTY, "float", "The animation's duration in seconds.", NULL);
+        }
+        if (d->skin_kind == SKIN_ANIMATIONS || d->skin_kind == SKIN_BONES) {
+            item(c, "count", CK_PROPERTY, "int", "How many entries the immutable catalog has, including entries without checked names.", NULL);
+            for (int i = 0; i < d->skin_catalog.count; i++) {
+                const skinned_member *m = &d->skin_catalog.items[i];
+                sb doc = {0};
+                sb_printf(&doc, "Checked %s member for %s `" STR_FMT "`.", d->skin_kind == SKIN_ANIMATIONS ? "animation" : "bone",
+                          m->explicit_name ? "original source name" : "required normalized source identifier", STR_ARG(m->source_name));
+                item(c, str_to_cstr(m->name), CK_PROPERTY, d->skin_kind == SKIN_ANIMATIONS ? "Animation" : "Bone", doc.data, NULL);
+            }
+        }
+        size_t count;
+        const method_form *forms = methods_of(t, &count);
+        for (size_t i = 0; d->skin_kind != SKIN_MESH && i < count; i++) {
+            sb detail = {0}, snippet = {0};
+            format_method(&forms[i], t, &detail);
+            method_snippet(&forms[i], &snippet);
+            item(c, forms[i].name, CK_METHOD, detail.data, forms[i].doc, snippet.data);
+        }
+        // Ordinary visible fields still follow, such as geometry and local TRS.
+    }
     if (t.kind == TY_RENDER_TARGET) {
         item(c, "color", CK_PROPERTY, "Texture",
              "The target's GPU color image, without CPU readback: its first, where it holds several.", NULL);
@@ -6191,8 +6326,11 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     // where the code can change it, and a frag's Pixel's.
     const bool local = sc->decl && sc->decl->kind == DECL_SYSTEM && (sc->decl->is_view || sc->decl->is_local);
     const bool match = sc->decl && sc->decl->kind == DECL_SYSTEM && !local;
+    // A function or a method changes an entity as the code that calls it could, of either world
+    const bool passed = sc->decl && (sc->decl->kind == DECL_FUNCTION || sc->decl->kind == DECL_METHOD) && !sc->decl->is_operator
+                     && !sc->decl->is_interpolate && !sc->decl->is_audio && (t.kind == TY_ENTITY || t.kind == TY_LOCAL_ENTITY);
     const bool changes = (t.kind == TY_ENTITY && match) || (t.kind == TY_LOCAL_ENTITY && local)
-                      || (t.kind == TY_SINGLETON && match && !t.decl->is_local);
+                      || (t.kind == TY_SINGLETON && match && !t.decl->is_local) || passed;
     if (t.kind == TY_ENTITY && local) {
         item(c, "Send", CK_METHOD, "Send(command)", "Submits a command to this match entity; its handler checks the authenticated sender and untrusted payload.", "Send($1)");
     }
@@ -6202,6 +6340,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         const method_form *forms = methods_of(t, &count);
         for (size_t i = 0; i < count; i++) {
             if (t.kind == TY_LOCAL_ENTITY && strcmp(forms[i].name, "Snap") == 0) continue; // Local state isn't blended
+            if (passed && strcmp(forms[i].name, "Snap") == 0) continue; // A system's or a handler's own to say
             if (t.kind == TY_GRID && strcmp(forms[i].name, "Sample") == 0) continue; // A frag's or vert's, above
             sb detail = {0};
             format_method(&forms[i], t, &detail);
@@ -6237,6 +6376,18 @@ static type out_variable_type(int use, loc at);
 
 static void complete_members(completion *c, const int dot, const loc at, const order_completion order)
 {
+    if (dot >= 3 && DOC->toks[dot - 1].kind == T_GT) {
+        int open = dot - 2;
+        while (open >= 1 && (DOC->toks[open].kind == T_IDENT || DOC->toks[open].kind == T_DOT || DOC->toks[open].kind == T_COMMA)) open--;
+        if (open >= 1 && DOC->toks[open].kind == T_LT && str_eq_c(DOC->toks[open - 1].text, "SkinnedMesh")) {
+            const scope sc = scope_at(at);
+            if (!is_shader(sc.decl)) {
+                const method_form *form = &skinned_mesh_static_calls[0];
+                item(c, form->name, CK_METHOD, form->form, form->doc, "Decode($1)");
+            }
+            return;
+        }
+    }
     if (dot >= 1 && DOC->toks[dot - 1].kind == T_THIS) { // this.: the entity's methods or frag's pixel
         const scope sc = scope_at(at);
         const type t = this_type(&sc);
@@ -6642,7 +6793,7 @@ static bool complete_in_namespace(completion *c, const str ns, const order_compl
 }
 
 static const char *const value_types[] = {
-    "bool", "byte", "int", "long", "int2", "int3", "int4", "float", "float2", "float3", "float4", "quaternion",
+    "bool", "byte", "char", "int", "long", "int2", "int3", "int4", "float", "float2", "float3", "float4", "quaternion",
     "float2x2", "float3x3", "float4x4", "Entity", "LocalEntity", "PlayerID", "Color", "Rect",
     "Texture", "DepthTexture", "Cubemap", "RenderTarget", "Clip",
 };
@@ -6681,6 +6832,22 @@ static void complete_value_types(completion *c, const unsigned which)
         item(c, "List", CK_STRUCT, "List<T>", builtin_type_doc(TY_LIST), "List<$1>");
         item(c, "Map", CK_STRUCT, "Map<K, V>", builtin_type_doc(TY_MAP), "Map<$1, $2>");
         item(c, "Set", CK_STRUCT, "Set<K>", builtin_type_doc(TY_SET), "Set<$1>");
+        if (!(which & VT_GPU)) {
+            item(c, "SkinnedMesh", CK_STRUCT, "SkinnedMesh<V[, Contract]>",
+                 "An immutable glTF model with geometry, a skeleton and animation catalogs. An optional struct contract promises named Animation and Bone members.", "SkinnedMesh<$1>");
+            static const char *const names[] = {"Animation", "Skeleton", "Bone", "Pose", "BoneTransform", "Playback"};
+            static const char *const docs[] = {
+                "An immutable animation value, sampled deterministically on the CPU.",
+                "An immutable node hierarchy with authored rest transforms and a bone catalog.",
+                "A node handle tied to its skeleton, used to index poses and locate sockets.",
+                "Owned parent-local bone transforms. A writable pose can sample, blend and edit its bones.",
+                "A node's parent-local position, rotation and scale.",
+                "Clamp keeps animation endpoints; Loop wraps sample seconds by its duration.",
+            };
+            for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+                item(c, names[i], i == 5 ? CK_ENUM : CK_STRUCT, "built-in type", docs[i], NULL);
+            }
+        }
     }
     if (which & VT_GRID) {
         item(c, "Grid2", CK_STRUCT, "Grid2<T>", builtin_type_doc(TY_GRID), "Grid2<$1>");
@@ -6883,6 +7050,16 @@ static void complete_expression(completion *c, const loc at, const bool statemen
         complete_components_of(c, local);
         complete_events_of(c, local);
         item(c, "Scene", CK_MODULE, "Loads and unloads scenes", NULL, NULL);
+    }
+    // A function or a method sends and spawns as the code that calls it could, in either world
+    if (routine && !sc.decl->is_operator && !sc.decl->is_interpolate && !sc.decl->is_audio) {
+        item(c, "Spawn", CK_FUNCTION, "Spawn(components...) -> Entity",
+             "Creates an entity with these components, for the code that calls this: the match's components make an entity of "
+             "the match, and local ones a local entity.", "Spawn($1)");
+        item(c, "Send", CK_FUNCTION, "Send(event)", "Sends an event, for the code that calls this: only code that could send it itself can call this.",
+             "Send($1)");
+        complete_events_of(c, false);
+        complete_events_of(c, true);
     }
     // Session.Start and the like are statements of their own.
     if (statement && decides_session(&sc)) {
@@ -7486,7 +7663,7 @@ static type receiver_type(int dot, loc at);
 static bool opens_mesh_draw(const int open)
 {
     const token *toks = DOC->toks;
-    if (open >= 2 && toks[open - 1].kind == T_IDENT && str_eq_c(toks[open - 1].text, "Mesh")
+    if (open >= 2 && toks[open - 1].kind == T_IDENT && (str_eq_c(toks[open - 1].text, "Mesh") || str_eq_c(toks[open - 1].text, "SkinnedMesh"))
         && toks[open - 2].kind == T_DOT
         && receiver_type(open - 2, toks[open].at).kind == TY_RENDER_TARGET) return true;
     return open >= 3 && toks[open - 1].kind == T_IDENT && toks[open - 2].kind == T_DOT && toks[open - 3].kind == T_IDENT
@@ -7549,7 +7726,7 @@ static type names_type(const scope *sc, const int first, const int last)
 // Draw.Mesh(vertices, indices[, transform][, texture[, filter[, wrap]]][, vert][, frag]).
 // A 3D mesh has its transform, and a 2D one none.
 enum { MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_INSTANCES,
-       MESH_VALUES, MESH_WHOLE, MESH_PARAMS };
+       MESH_VALUES, MESH_WHOLE, MESH_SKINNED, MESH_POSE, MESH_PARAMS };
 
 // What an argument of Draw.Mesh after its indices is, from what's written at
 // tokens `first` to `last`: which of those parameters, or MESH_PARAMS where
@@ -7617,6 +7794,7 @@ static const decl *mesh_vertex(const scope *sc, const int first, const int last)
     }
     const type t = names_type(sc, first, last);
     if (t.kind == TY_MESH && t.decl) return t.decl->fields.items[0].type.decl; // A Mesh asset's
+    if (t.kind == TY_STRUCT && t.decl && t.decl->skin_kind == SKIN_MESH) return t.decl->skin_vertex.decl;
     if (t.kind != TY_LIST || !t.decl || t.decl->fields.items[0].type.kind != TY_STRUCT) return NULL;
     return t.decl->fields.items[0].type.decl;
 }
@@ -7896,6 +8074,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
             complete_asset_path(&c, last, at);
             goto done;
         }
+        if (t->kind == T_CHAR && t->at.line == at.line && at.col < t->at.col + token_len(t)) goto done; // Nor in a character
         // In text with values: not in its text, but in its values.
         const bool text_end = at.col == t->at.col + token_len(t) && t->text.ptr[t->text.len - 1] == '"';
         if ((t->kind == T_INTERP || t->kind == T_INTERP_PART) && t->at.line == at.line
@@ -8080,6 +8259,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "Wrap(Wrap.${1:Repeat})");
             item(&c, "Raw", CK_FUNCTION, "[Raw]",
                  "This Grid2<Color>'s cells are numbers, kept as they are as a texture: a frag reads it by its name.", "Raw");
+            item(&c, "Name", CK_FUNCTION, "[Name(\"source name\")]",
+                 "The exact original animation or node name an Animation or Bone field promises in a SkinnedMesh contract.",
+                 "Name(\"$1\")");
         }
         break;
 
@@ -8442,7 +8624,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
         const bool type_written = pk == T_IDENT && (builtin_type_named(prev->text, &ignored) || str_eq_c(prev->text, "string"));
         if (statement_start && type_written) break;
         // Draw.Mesh(vertices, indices, ...: the vert and the frag a view draws through, by name
-        if (call >= 0 && opens_mesh_draw(call) && commas >= (str_eq_c(DOC->toks[call - 1].text, "Instanced") ? 3 : 2)) {
+        if (call >= 0 && opens_mesh_draw(call) && commas >= (str_eq_c(DOC->toks[call - 1].text, "Instanced") || str_eq_c(DOC->toks[call - 1].text, "SkinnedMesh") ? 3 : 2)) {
             const scope sc = scope_at(at);
             call_args args;
             call_arguments(call, &args);
@@ -8984,8 +9166,11 @@ static const struct {
 } call_forms[] = {
     {"byte", {"byte(int value)", "byte(long value)", "byte(float value)"}, "Keeps an integer's low 8 bits. "
                                                                        "A float first converts with int(x), then keeps its low 8 bits."},
-    {"int", {"int(float value)", "int(long value)"}, "From a float: truncates toward zero and saturates at the int range; NaN gives 0. "
-                                                   "From a long: its low 32 bits."},
+    {"char", {"char(int code)"}, "The character with that code point, or `'\\0'`, which is no character, for a number none has: "
+                                 "under 0, past 0x10FFFF, or half of a UTF-16 pair."},
+    {"int", {"int(float value)", "int(long value)", "int(char character)"},
+     "From a float: truncates toward zero and saturates at the int range; NaN gives 0. From a long: its low 32 bits. From a char: "
+     "its code point."},
     {"long", {"long(float value)", "long(int value)"}, "From a float: truncates toward zero and saturates at the long range; NaN gives 0. "
                                                      "An int converts by itself."},
     {"float", {"float(int value)", "float(long value)"}, "A long rounds to the nearest float."},
@@ -9167,6 +9352,7 @@ static const char *const instanced_labels[2] = {
 // ...and the forms a Mesh asset is drawn by: the Mesh where its vertices and its indices go.
 static const char *const whole_mesh_label = "Draw.Mesh(mesh, transform[, texture[, filter[, wrap]]][, vert][, frag][, values])";
 static const char *const whole_instanced_label = "Draw.Instanced(mesh, instances[, texture[, filter[, wrap]]][, vert][, frag][, values])";
+static const char *const skinned_mesh_label = "Draw.SkinnedMesh(mesh, transform, pose[, texture[, filter[, wrap]]][, vert][, frag][, values])";
 
 // Each of its parameters: what it's called in those, and what it takes, in a
 // 2D mesh and, where that differs, in a 3D one.
@@ -9199,6 +9385,8 @@ static const struct {
                       "It's sent once for the draw, and only the fields they read."}},
     [MESH_WHOLE] = {"mesh", {"A `Mesh<V>`: an asset's vertices and its indices as one, like `asset Mesh<Corner> tree = "
                              "\"art/tree.glb\";`. A vert and a frag take its vertex struct, V."}},
+    [MESH_SKINNED] = {"mesh", {"An immutable `SkinnedMesh<V>` model. A vert and a frag take its ordinary vertex struct, V."}},
+    [MESH_POSE] = {"pose", {"A compatible Pose: skinning applies its transforms before the user vertex stage."}},
 };
 
 // The names of the parameters a checked call's arguments go to, in order:
@@ -9207,6 +9395,20 @@ static const struct {
 static int call_param_names(const expr *call, str *names, const int max)
 {
     int count = 0;
+    if (call->skinned) {
+        for (; count < written_count(call) && count < max; count++) {
+            const expr *arg = written_arg(call, count);
+            const type t = arg->type;
+            const int param = count == 0 ? MESH_SKINNED : count == 1 ? MESH_TRANSFORM : count == 2 ? MESH_POSE
+                : arg == call->values ? MESH_VALUES
+                : arg->bind == BIND_SHADER && arg->type_decl ? (arg->type_decl->is_frag ? MESH_FRAG : MESH_VERT)
+                : t.kind == TY_GRID || t.kind == TY_TEXTURE ? MESH_TEXTURE
+                : t.kind == TY_ENUM && t.decl == A.prog->wrap ? MESH_WRAP
+                : t.kind == TY_ENUM ? MESH_FILTER : MESH_PARAMS;
+            names[count] = param == MESH_PARAMS ? (str){"", 0} : str_from(mesh_params[param].name);
+        }
+        return count;
+    }
     if (call->call == CALL_METHOD || call->call == CALL_FUNCTION || call->call == CALL_EFFECT) {
         const decl *m = call->method;
         for (; count < m->params.count && count < max; count++) names[count] = m->params.items[count].name;
@@ -9303,6 +9505,15 @@ static int call_param_names(const expr *call, str *names, const int max)
     case CALL_CLIPBOARD:
         vec_push(list.labels, CLIPBOARD_COPY_FORM);
         break;
+    case CALL_SKINNED: {
+        size_t forms_count;
+        const method_form *forms = methods_of(call->object->type, &forms_count);
+        const method_form *form = find_form(forms, forms_count, call->name);
+        sb label = {0};
+        if (form) format_method(form, call->object->type, &label);
+        if (form) vec_push(list.labels, label.data);
+        break;
+    }
     case CALL_LIST: {
         const method_form *form = find_form(list_calls, sizeof list_calls / sizeof list_calls[0], call->name);
         sb label = {0};
@@ -9365,25 +9576,27 @@ static void collect_mesh_doc(void *user, const char *label, const char *doc)
 // argument is.
 static void mesh_signature_help(const int open, const int commas, const loc at, jbuf *out)
 {
-    static const int forms[5][MESH_PARAMS] = {
+    static const int forms[6][MESH_PARAMS] = {
         {MESH_VERTICES, MESH_INDICES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES},
         {MESH_VERTICES, MESH_INDICES, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES},
         {MESH_VERTICES, MESH_INDICES, MESH_INSTANCES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES},
         {MESH_WHOLE, MESH_TRANSFORM, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES},
         {MESH_WHOLE, MESH_INSTANCES, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES},
+        {MESH_SKINNED, MESH_TRANSFORM, MESH_POSE, MESH_TEXTURE, MESH_FILTER, MESH_WRAP, MESH_VERT, MESH_FRAG, MESH_VALUES},
     };
     const scope sc = scope_at(at);
     call_args args;
     call_arguments(open, &args);
     const str owner = str_from("Draw"); // A target's are Draw's too
     const decl *const drawn = mesh_vertex(&sc, args.first[0], args.last[0]);
+    const bool skinned = str_eq_c(DOC->toks[open - 1].text, "SkinnedMesh");
     // A Mesh asset where the vertices go: it's its indices too, and always 3D
     const bool whole = args.count > 0 && args.first[0] <= args.last[0] && DOC->toks[args.first[0]].kind == T_IDENT
                     && names_type(&sc, args.first[0], args.last[0]).kind == TY_MESH;
-    const bool three_d = whole || (drawn ? vertex_is_3d(drawn)
+    const bool three_d = skinned || whole || (drawn ? vertex_is_3d(drawn)
                                          : args.count > 2 && mesh_argument(&sc, args.first[2], args.last[2]) == MESH_TRANSFORM);
     const bool instanced = str_eq_c(DOC->toks[open - 1].text, "Instanced");
-    const int *order = forms[whole ? (instanced ? 4 : 3) : instanced ? 2 : three_d ? 1 : 0];
+    const int *order = forms[skinned ? 5 : whole ? (instanced ? 4 : 3) : instanced ? 2 : three_d ? 1 : 0];
     const int count = whole ? 8 : instanced || three_d ? 9 : 8;
     const int fixed = whole ? 2 : instanced || three_d ? 3 : 2; // The lists or the Mesh, and a 3D mesh's transform or the instances
 
@@ -9405,7 +9618,7 @@ static void mesh_signature_help(const int open, const int commas, const loc at, 
     jb_put(out, "{\"signatures\":[");
     const int form = three_d ? 1 : 0;
     {
-        const char *label = whole ? (instanced ? whole_instanced_label : whole_mesh_label) : instanced ? instanced_labels[form] : mesh_labels[form];
+        const char *label = skinned ? skinned_mesh_label : whole ? (instanced ? whole_instanced_label : whole_mesh_label) : instanced ? instanced_labels[form] : mesh_labels[form];
         sb doc = {0};
         const char *description = docs.doc[instanced ? 0 : form];
         sb_printf(&doc, "%s%s%s", description ? description : "", description ? "\n\n" : "", MESH_SHADER_DOC);
@@ -9624,7 +9837,7 @@ static const char *token_start(const token *t)
 
 static bool ends_operand(const tok_kind k)
 {
-    return k == T_IDENT || k == T_INT || k == T_FLOAT || k == T_STRING || k == T_RPAREN || k == T_RBRACKET
+    return k == T_IDENT || k == T_INT || k == T_FLOAT || k == T_STRING || k == T_CHAR || k == T_RPAREN || k == T_RBRACKET
         || k == T_TRUE || k == T_FALSE || k == T_THIS || k == T_DEFAULT || k == T_NULL || k == T_INTERP
         || k == T_INTERP_PART;
 }
@@ -9699,7 +9912,7 @@ static bool is_argument_colon(const int i)
 static bool generic_type(const str name)
 {
     return str_eq_c(name, "List") || str_eq_c(name, "Map") || str_eq_c(name, "Set") || str_eq_c(name, "Grid2")
-        || str_eq_c(name, "Grid3") || str_eq_c(name, "Mesh");
+        || str_eq_c(name, "Grid3") || str_eq_c(name, "Mesh") || str_eq_c(name, "SkinnedMesh");
 }
 
 static bool space_between(const fmt_item *a, const fmt_item *b)
@@ -10254,9 +10467,9 @@ static void collect_assets(void)
         site.path = A.files[f].toks[tok].text;
         site.many = d->asset_many || d->asset_kind == ASSET_CUBEMAP; // A cube's path is a glob too: its six faces
         site.format = d->asset_kind == ASSET_GRID || d->asset_kind == ASSET_TEXTURE || d->asset_kind == ASSET_CUBEMAP ? ".png"
-                    : d->asset_kind == ASSET_CLIP ? ".wav" : d->asset_kind == ASSET_MESH ? ".glb" : NULL;
+                    : d->asset_kind == ASSET_CLIP ? ".wav" : d->asset_kind == ASSET_MESH || d->asset_kind == ASSET_SKINNED ? ".glb" : NULL;
         site.format2 = d->asset_kind == ASSET_GRID || d->asset_kind == ASSET_TEXTURE || d->asset_kind == ASSET_CUBEMAP ? ".psd"
-                     : d->asset_kind == ASSET_CLIP ? ".ogg" : d->asset_kind == ASSET_MESH ? ".gltf" : NULL;
+                     : d->asset_kind == ASSET_CLIP ? ".ogg" : d->asset_kind == ASSET_MESH || d->asset_kind == ASSET_SKINNED ? ".gltf" : NULL;
         site.format3 = d->asset_kind == ASSET_MESH ? ".obj" : NULL;
         site.glob = asset_path_is_glob(site.path.ptr, (size_t)site.path.len);
         site.url = asset_path_is_url(site.path.ptr, (size_t)site.path.len);
