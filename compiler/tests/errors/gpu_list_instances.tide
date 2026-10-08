@@ -1,0 +1,26 @@
+// expect: this draw's instances each have a list, 'shades', that its code reads, and a draw sends one list for all of them
+// expect: keep the list in a singleton or in the values the draw gives after its frag
+scene Main { }
+
+struct Spark
+{
+    float4x4 transform;
+    List<Color> shades;
+}
+
+local singleton Models
+{
+    List<Vertex3> crate;
+    List<int> faces;
+    List<Spark> sparks;
+}
+
+frag Shade(Vertex3 vertex, out Color color, Spark spark)
+{
+    color = spark.shades[0];
+}
+
+view Show(Models models)
+{
+    Draw.Instanced(models.crate, models.faces, models.sparks, Shade);
+}

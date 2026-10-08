@@ -88,12 +88,18 @@ typedef struct emit {
     VEC(const decl *) done;    // The functions written, callees first
     sb functions;
     bool helpers[H_COUNT];
+    bool lists[8]; // The shader's textures that are lists whose reader is written (need_list)
+    VEC(const decl *) arrays;  // The array types whose element reader is written (need_array)
+    int raw; // Writing what an assignment stores into: an array's element is the element itself, in range already
+    VEC(const field *) hoisted; // Arrays the engine supplies that the function being written made a variable of as it starts
 } emit;
 
 static void ex(emit *em, const expr *e);
 static void ex_as(emit *em, const expr *e, type want);
 static void st(emit *em, const stmt *s);
 static void need_function(emit *em, decl *fn, loc at);
+static bool is_const(const expr *e);
+static int packs(int words);
 
 static const char *shader_word(const decl *d)
 {
@@ -179,6 +185,14 @@ static bool is_struct_like(const type t)
 static bool type_words(const type t, int *floats, int *ints)
 {
     if (t.kind == TY_BYTE) return false;
+    if (t.kind == TY_ARRAY) { // Its elements, one after the other. Neither GLSL has arrays of arrays
+        const type element = t.decl->fields.items[0].type;
+        int f = 0, i = 0;
+        if (element.kind == TY_ARRAY || !type_words(element, &f, &i)) return false;
+        *floats += f * t.decl->array_length;
+        *ints += i * t.decl->array_length;
+        return true;
+    }
     const int dim = type_dim(t);
     if (dim > 0) {
         *(type_is_float_based(t) ? floats : ints) += dim;
@@ -233,10 +247,18 @@ static bool type_fits(emit *em, const type t, const loc at)
     case TY_LONG: why = "the GPU's ints are 32 bits: convert it with int(x) before it gets there"; break;
     case TY_STRING: why = "text is the CPU's"; break;
     case TY_LIST:
+        refuse(em, at, "a list is read where the frag or vert takes it, an element at a time: it's not a value to keep or pass on");
+        diag_note("read it as a field of a component, a singleton or the draw's values: 'lights.items[i]', "
+                  "'lights.items.count', or 'foreach (var light in lights.items)'");
+        return false;
     case TY_MAP:
-    case TY_SET: why = "the GPU has no lists, maps or sets: it reads fields of numbers, and samples grids of colors"; break;
+    case TY_SET: why = "the GPU has no maps or sets: keep what it reads in a list, which it reads by an element's place"; break;
     case TY_GRID: why = "a grid on the GPU is a texture, read with 'grid.Sample(uv)' where it's a field of a parameter"; break;
-    case TY_ARRAY: why = "arrays can't go to the GPU yet: pass the elements it reads as fields of their own"; break;
+    case TY_ARRAY:
+        why = t.decl->fields.items[0].type.kind == TY_ARRAY
+            ? "the GPU has no arrays of arrays: keep the rows side by side in one array, or each row in a struct"
+            : "an array the GPU has is of bools, ints, floats, vectors, matrices, colors or structs of those";
+        break;
     case TY_TEXTURE: why = "a texture is sampled with 'texture.Sample(uv)', not kept as a GPU value"; break;
     case TY_DEPTH_TEXTURE:
         why = "a target's depth is read with 'depth.Sample(uv)' or 'depth.Compare(uv, value)', not kept as a GPU value";
@@ -292,6 +314,11 @@ static const char *ty(emit *em, const type t)
     if (t.kind == TY_COLOR || t.kind == TY_QUATERNION) return wgsl ? "vec4f" : "vec4";
     if (t.kind == TY_BOOL) return "bool";
     if (t.kind == TY_ENUM) return wgsl ? "i32" : "int";
+    if (t.kind == TY_ARRAY) {
+        sb b = {0};
+        sb_printf(&b, wgsl ? "array<%s, %d>" : "%s[%d]", ty(em, t.decl->fields.items[0].type), t.decl->array_length);
+        return b.data;
+    }
     if (is_struct_like(t)) {
         need_struct(em, t.decl);
         return struct_name(t.decl);
@@ -345,6 +372,7 @@ static long long int_literal(const expr *e)
 }
 
 static void put_zero(emit *em, type t);
+static void put_zeros(emit *em, type t);
 
 // The value a field, or a local with none given, starts with.
 static void put_default(emit *em, const type t)
@@ -377,6 +405,15 @@ static void put_zero(emit *em, const type t)
     }
     if (em->l == WGSL) {
         sb_printf(em->o, "%s()", ty(em, t));
+        return;
+    }
+    if (t.kind == TY_ARRAY) { // Each element, as zeros
+        sb_printf(em->o, "%s(", ty(em, t));
+        for (int i = 0; i < t.decl->array_length; i++) {
+            if (i) sb_put(em->o, ", ");
+            put_zeros(em, t.decl->fields.items[0].type);
+        }
+        sb_put(em->o, ")");
         return;
     }
     if (t.kind == TY_BOOL) sb_put(em->o, "false");
@@ -1196,6 +1233,13 @@ static void put_value(emit *em, const type t, const char floats, const char ints
     } else if (t.kind == TY_ENUM) {
         put_word(em, ints, *i);
         *i += 1;
+    } else if (t.kind == TY_ARRAY) {
+        sb_printf(em->o, "%s(", ty(em, t));
+        for (int k = 0; k < t.decl->array_length; k++) {
+            if (k) sb_put(em->o, ", ");
+            put_value(em, t.decl->fields.items[0].type, floats, ints, f, i);
+        }
+        sb_put(em->o, ")");
     } else if (is_struct_like(t)) {
         sb_printf(em->o, "%s(", ty(em, t));
         bool first = true;
@@ -1271,6 +1315,236 @@ static bool is_bound(const emit *em, const param *p)
 static int param_index(const decl *d, const param *p)
 {
     return (int)(p - d->params.items);
+}
+
+// ---------------------------------------------------------------------------
+// Lists
+//
+// A list that's a field of what the engine supplies (a component, a
+// singleton, the draw's values) is read by its elements: `items[i]`,
+// `items.count` and foreach. It reaches the GPU as a texture of four ints a
+// pixel (READ_DATA, tide_draw_list_data), an element taking the pixels its
+// words need: its floats first, by their bits, then its ints, as a value's
+// words are anywhere (put_value). How many it has is a word of the uniforms'
+// ints. An element past the list's end is zeros, as on the CPU.
+
+// `e` as such a list: which parameter's field it is.
+static bool bound_list(const emit *em, const expr *e, const param **p, const field **f)
+{
+    if (!e || e->kind != E_MEMBER || !e->field || e->type.kind != TY_LIST) return false;
+    const expr *obj = e->object;
+    if (obj->kind != E_NAME || obj->bind != BIND_PARAM || !is_bound(em, obj->param) || !is_struct_like(obj->param->type)) return false;
+    *p = obj->param;
+    *f = e->field;
+    return true;
+}
+
+static type list_element(const field *f)
+{
+    return f->type.decl->fields.items[0].type;
+}
+
+// Notes that the code reads the list, while checking, and says whether its elements are something the GPU has.
+static bool read_list(emit *em, const expr *list, const param *p, const field *f)
+{
+    if (em->checking && list->local_field) {
+        em->root->params.items[param_index(em->root, p)].local_reads[field_index(p->type.decl->local_part, f)] = true;
+    } else if (em->checking) {
+        em->root->params.items[param_index(em->root, p)].reads[field_index(p->type.decl, f)] = true;
+    }
+    return type_fits(em, list_element(f), list->at);
+}
+
+// The shader's texture that's the list, or -1 (while checking, when there's no shader).
+static int list_texture(const emit *em, const param *p, const field *f)
+{
+    for (int i = 0; em->sh && i < em->sh->textures.count; i++) {
+        const shader_texture *t = &em->sh->textures.items[i];
+        if (t->read == READ_DATA && t->source == p->type.decl && t->field == f) return i;
+    }
+    return -1;
+}
+
+// All of a value as zeros, whatever its fields' defaults are.
+static void put_zeros(emit *em, const type t)
+{
+    if (!is_struct_like(t) || em->l == WGSL) {
+        if (em->l == WGSL) sb_printf(em->o, "%s()", ty(em, t));
+        else put_zero(em, t);
+        return;
+    }
+    sb_printf(em->o, "%s(", ty(em, t));
+    bool first = true;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        if (t.decl->fields.items[i].hidden) continue;
+        if (!first) sb_put(em->o, ", ");
+        first = false;
+        put_zeros(em, t.decl->fields.items[i].type);
+    }
+    sb_put(em->o, ")");
+}
+
+// How many elements the list has: the uniforms' word that says.
+static void put_list_count(emit *em, const int texture)
+{
+    if (texture < 0) sb_put(em->o, "0");
+    else put_word(em, 'v', em->sh->textures.items[texture].count_at);
+}
+
+// The function that reads an element of the shader's list `texture`, written before the code that calls it.
+static void need_list(emit *em, const int texture, const type element)
+{
+    if (texture < 0 || em->lists[texture]) return;
+    em->lists[texture] = true;
+    const bool wgsl = em->l == WGSL;
+    int floats = 0, ints = 0;
+    type_words(element, &floats, &ints);
+    const int pixels = packs(floats + ints);
+    sb text = {0};
+    sb *const out = em->o;
+    em->o = &text;
+    const char *t = ty(em, element);
+    if (wgsl) sb_printf(&text, "fn tide_list%d(tide_i: i32) -> %s {\n    if (tide_i < 0 || tide_i >= ", texture, t);
+    else sb_printf(&text, "%s tide_list%d(int tide_i) {\n    if (tide_i < 0 || tide_i >= ", t, texture);
+    put_list_count(em, texture);
+    sb_put(&text, ") {\n        return ");
+    put_zeros(em, element);
+    sb_printf(&text, ";\n    }\n    %s tide_first = tide_i * %d;\n", wgsl ? "let" : "int", pixels);
+    for (int k = 0; k < pixels; k++) {
+        // Rows of TIDE_LIST_DATA_ACROSS pixels
+        if (wgsl) {
+            sb_printf(&text, "    let tide_q%d = textureLoad(pixels%d, vec2i((tide_first + %d) & 1023, (tide_first + %d) >> 10u), 0);\n",
+                      k, texture, k, k);
+            if (k * 4 < floats) sb_printf(&text, "    let tide_p%d = bitcast<vec4f>(tide_q%d);\n", k, k);
+        } else {
+            sb_printf(&text, "    ivec4 tide_q%d = texelFetch(pixels%d, ivec2((tide_first + %d) & 1023, (tide_first + %d) >> 10), 0);\n",
+                      k, texture, k, k);
+            if (k * 4 < floats) sb_printf(&text, "    vec4 tide_p%d = intBitsToFloat(tide_q%d);\n", k, k);
+        }
+    }
+    sb_put(&text, "    return ");
+    int f = 0, i = floats;
+    put_value(em, element, 'p', 'q', &f, &i);
+    sb_put(&text, ";\n}\n\n");
+    em->o = out;
+    sb_put(&em->functions, text.data);
+}
+
+// items[i]: an element of a list the engine supplies.
+static void ex_list_index(emit *em, const expr *e, const param *p, const field *f)
+{
+    if (!read_list(em, e->object, p, f)) return;
+    const int texture = list_texture(em, p, f);
+    need_list(em, texture, list_element(f));
+    sb_printf(em->o, "tide_list%d(", texture < 0 ? 0 : texture);
+    ex_as(em, e->lhs, (type){TY_INT, NULL});
+    sb_put(em->o, ")");
+}
+
+// ---------------------------------------------------------------------------
+// Arrays
+//
+// An array of a fixed length is a value like a struct: its elements' words,
+// one after the other, wherever a value goes. An element past its ends reads
+// as zeros, and writing one does nothing, as on the CPU.
+
+// The function that reads an element of arrays of type `array`, written before the code that calls it.
+static int need_array(emit *em, const decl *array)
+{
+    for (int i = 0; i < em->arrays.count; i++) {
+        if (em->arrays.items[i] == array) return i;
+    }
+    vec_push(em->arrays, array);
+    const int n = em->arrays.count - 1;
+    const type whole = {TY_ARRAY, (decl *)array}, element = array->fields.items[0].type;
+    sb text = {0};
+    sb *const out = em->o;
+    em->o = &text;
+    const char *a = ty(em, whole), *t = ty(em, element);
+    if (em->l == WGSL) {
+        sb_printf(&text, "fn tide_el%d(tide_a: %s, tide_i: i32) -> %s {\n    if (tide_i < 0 || tide_i >= %d) {\n        return %s();\n"
+                         "    }\n    var tide_all = tide_a;\n    return tide_all[tide_i];\n}\n\n", n, a, t, array->array_length, t);
+    } else {
+        sb_printf(&text, "%s tide_el%d(%s tide_a, int tide_i) {\n    if (tide_i < 0 || tide_i >= %d) {\n        return ", t, n, a,
+                  array->array_length);
+        put_zeros(em, element);
+        sb_put(&text, ";\n    }\n    return tide_a[tide_i];\n}\n\n");
+    }
+    em->o = out;
+    sb_put(&em->functions, text.data);
+    return n;
+}
+
+// array[i]: its element, or while an assignment's target is written, the place itself.
+static void ex_array_index(emit *em, const expr *e)
+{
+    const type array = e->object->type;
+    if (!type_fits(em, array, e->object->at)) return;
+    if (em->raw > 0) {
+        ex(em, e->object);
+        const int raw = em->raw;
+        em->raw = 0; // What says which element is read like anything else
+        const bool folds = e->lhs->kind != E_INT && is_const(e->lhs);
+        if (folds) em->defuse++;
+        sb_put(em->o, "[");
+        ex_as(em, e->lhs, (type){TY_INT, NULL});
+        sb_put(em->o, "]");
+        if (folds) em->defuse--;
+        em->raw = raw;
+        return;
+    }
+    sb_printf(em->o, "tide_el%d(", need_array(em, array.decl));
+    ex(em, e->object);
+    sb_put(em->o, ", ");
+    ex_as(em, e->lhs, (type){TY_INT, NULL});
+    sb_put(em->o, ")");
+}
+
+// Whether `e` is a place inside an array: an element, or part of one.
+static bool in_array(const expr *e)
+{
+    for (; e; e = e->object) {
+        if (e->kind == E_INDEX && e->object && e->object->type.kind == TY_ARRAY) return true;
+        if (e->kind != E_INDEX && e->kind != E_MEMBER) return false;
+    }
+    return false;
+}
+
+// How many of the elements the place `e` names are known only as the code
+// runs: one named by a number is known here. -1 when one of those is past its
+// array's ends, so the place is nowhere.
+static int unknown_elements(const expr *e)
+{
+    int unknown = 0;
+    for (; e && (e->kind == E_INDEX || e->kind == E_MEMBER); e = e->object) {
+        if (e->kind != E_INDEX || !e->object || e->object->type.kind != TY_ARRAY) continue;
+        if (e->lhs->kind == E_INT) {
+            const long long at = int_literal(e->lhs);
+            if (at < 0 || at >= e->object->type.decl->array_length) return -1;
+        } else {
+            unknown++;
+        }
+    }
+    return unknown;
+}
+
+// "(i >= 0 && i < N) && ...": that each of those elements is one its array has.
+static void put_in_range(emit *em, const expr *e)
+{
+    bool first = true;
+    for (; e && (e->kind == E_INDEX || e->kind == E_MEMBER); e = e->object) {
+        if (e->kind != E_INDEX || !e->object || e->object->type.kind != TY_ARRAY || e->lhs->kind == E_INT) continue;
+        if (!first) sb_put(em->o, " && ");
+        first = false;
+        const bool folds = is_const(e->lhs); // A constant past the ends is no error here: this is what catches it
+        if (folds) em->defuse++;
+        sb_put(em->o, "(");
+        ex_as(em, e->lhs, (type){TY_INT, NULL});
+        sb_put(em->o, " >= 0 && ");
+        ex_as(em, e->lhs, (type){TY_INT, NULL});
+        sb_printf(em->o, " < %d)", e->object->type.decl->array_length);
+        if (folds) em->defuse--;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1455,6 +1729,10 @@ static void ex_pixel(emit *em, const expr *e)
 
 static void ex_member(emit *em, const expr *e)
 {
+    if (e->object->type.kind == TY_ARRAY && str_eq_c(e->member, "count")) { // How many an array has: its type says
+        put_int(em, e->object->type.decl->array_length);
+        return;
+    }
     if (e->constant) {
         ex_as(em, e->constant->value, e->constant->return_type);
         return;
@@ -1468,6 +1746,12 @@ static void ex_member(emit *em, const expr *e)
         return;
     }
     const expr *obj = e->object;
+    const param *list_param;
+    const field *list_field;
+    if (str_eq_c(e->member, "count") && bound_list(em, obj, &list_param, &list_field)) { // How many a list has
+        if (read_list(em, obj, list_param, list_field)) put_list_count(em, list_texture(em, list_param, list_field));
+        return;
+    }
     if (obj->kind == E_THIS && obj->type.kind == TY_RECORD && obj->type.decl == em->prog->pixel) {
         if (em->checking && str_eq_c(e->member, "world")) em->root->pixel_world = true;
         ex_pixel(em, e);
@@ -1486,7 +1770,25 @@ static void ex_member(emit *em, const expr *e)
         } else if (p->type.decl == em->prog->instance) {
             put_bound(em, NULL, NULL, e->type);
         } else if (type_fits(em, e->type, e->at)) {
-            put_bound(em, p->type.decl, e->field, e->type);
+            if (e->type.kind == TY_ARRAY && !em->checking && !em->lifting) { // Made once, as the function starts
+                int at = 0;
+                while (at < em->hoisted.count && em->hoisted.items[at] != e->field) at++;
+                if (at == em->hoisted.count) {
+                    vec_push(em->hoisted, e->field);
+                    sb *const out = em->o;
+                    sb made = {0};
+                    em->o = &made;
+                    if (em->l == WGSL) sb_printf(&made, "    var tide_array%d: %s = ", at, ty(em, e->type));
+                    else sb_printf(&made, "    %s tide_array%d = ", ty(em, e->type), at);
+                    put_bound(em, p->type.decl, e->field, e->type);
+                    sb_put(&made, ";\n");
+                    em->o = out;
+                    sb_put(&em->grads, made.data);
+                }
+                sb_printf(em->o, "tide_array%d", at);
+            } else {
+                put_bound(em, p->type.decl, e->field, e->type);
+            }
         }
         return;
     }
@@ -2355,8 +2657,10 @@ static void ex_user_call(emit *em, const expr *e)
             else sb_put(em->o, pointer ? "(*tide_self)" : "tide_self");
         } else if (!fn->is_mut_method) {
             ex(em, receiver);
-        } else if (em->l == GLSL) {
+        } else if (em->l == GLSL && !in_array(receiver)) {
             ex(em, receiver);
+        } else if (em->l == GLSL && statement) {
+            sb_put(em->o, copy_name(-1));
         } else if (is_whole_variable(receiver)) {
             const bool pointer = receiver->bind == BIND_PARAM && is_pointer(em, receiver->param);
             sb_printf(em->o, "%s%s", pointer ? "" : "&", local_name(receiver->name));
@@ -2383,8 +2687,10 @@ static void ex_user_call(emit *em, const expr *e)
                    STR_ARG(p->name));
             diag_note("write the call on a line by itself, or have the function return the new value");
         }
-        if (em->l == GLSL) {
+        if (em->l == GLSL && !in_array(arg)) {
             ex(em, arg);
+        } else if (em->l == GLSL) {
+            sb_put(em->o, copy_name(i));
         } else if (is_whole_variable(arg)) {
             const bool pointer = arg->bind == BIND_PARAM && is_pointer(em, arg->param);
             sb_printf(em->o, "%s%s", pointer ? "" : "&", local_name(arg->name));
@@ -2520,7 +2826,7 @@ static void ex(emit *em, const expr *e)
         if (!type_fits(em, e->type, e->at)) return;
         if (em->l == WGSL || em->checking) {
             // WGSL's select picks between numbers, vectors and bools, and works both sides out
-            if (is_struct_like(e->type) || matrix_dim(e->type)) {
+            if (is_struct_like(e->type) || matrix_dim(e->type) || e->type.kind == TY_ARRAY) {
                 refuse(em, e->at, "'?:' picks between numbers, vectors and colors in code the GPU runs, and this is %s",
                        type_name(e->type));
                 diag_note("write it as 'if' and 'else', assigning a variable");
@@ -2573,10 +2879,37 @@ static void ex(emit *em, const expr *e)
     case E_INTERP:
         refuse(em, e->at, "text is the CPU's: code the GPU runs has none");
         return;
-    case E_INDEX:
+    case E_INDEX: {
+        const param *p;
+        const field *f;
+        if (bound_list(em, e->object, &p, &f)) {
+            ex_list_index(em, e, p, f);
+            return;
+        }
+        if (e->object->type.kind == TY_ARRAY) {
+            ex_array_index(em, e);
+            return;
+        }
+        if (e->object->type.kind == TY_LIST) {
+            type_fits(em, e->object->type, e->object->at);
+            return;
+        }
+        refuse(em, e->at, "the GPU indexes arrays, and lists that are fields of what the frag or vert takes: it has no maps "
+                          "or grids to index, and samples a grid of colors with 'grid.Sample(uv)'");
+        return;
+    }
     case E_LIST:
-        refuse(em, e->at, "the GPU has no lists, maps, arrays or grids to index or make: it reads fields of numbers, and samples a "
-                          "grid of colors with 'grid.Sample(uv)'");
+        if (e->type.kind == TY_ARRAY) { // An array's elements, written out
+            if (!type_fits(em, e->type, e->at)) return;
+            sb_printf(em->o, "%s(", ty(em, e->type));
+            for (int i = 0; i < e->args.count; i++) {
+                if (i) sb_put(em->o, ", ");
+                ex_as(em, e->args.items[i], e->type.decl->fields.items[0].type);
+            }
+            sb_put(em->o, ")");
+            return;
+        }
+        refuse(em, e->at, "the GPU makes no lists: it reads the ones that are fields of what the frag or vert takes");
         return;
     case E_THIS:
         refuse(em, e->at, "a frag's pixel is read through 'this.position', 'this.depth' and 'this.world': it's not a value "
@@ -2706,6 +3039,33 @@ static void st_assign(emit *em, const stmt *s, const bool statement)
 {
     const expr *target = s->target;
     if (!type_fits(em, target->type, target->at)) return;
+    if (statement && in_array(target) && em->raw == 0) { // An element its array hasn't got is written nowhere
+        const int unknown = unknown_elements(target);
+        if (unknown < 0) {
+            sb_put(em->o, "{\n");
+            line(em);
+            sb_put(em->o, "}\n");
+            return;
+        }
+        if (unknown > 0) {
+            sb_put(em->o, "if (");
+            put_in_range(em, target);
+            sb_put(em->o, ") {\n");
+            em->indent++;
+            line(em);
+        }
+        em->raw = 1;
+        st_assign(em, s, true);
+        em->raw = 0;
+        if (unknown > 0) {
+            em->indent--;
+            line(em);
+            sb_put(em->o, "}\n");
+        }
+        return;
+    }
+    const int raw = em->raw; // The target is the place; what's stored is read like anything else
+    em->raw = 0;
     // WGSL assigns one component at a time, not a swizzle of several
     if (em->l == WGSL && target->kind == E_MEMBER && target->swizzle_len > 1) {
         const int temp = em->temps++;
@@ -2714,13 +3074,17 @@ static void st_assign(emit *em, const stmt *s, const bool statement)
         sb_put(em->o, ";");
         for (int i = 0; i < target->swizzle_len; i++) {
             sb_put(em->o, " ");
+            em->raw = raw;
             ex(em, target->object);
+            em->raw = 0;
             sb_printf(em->o, ".%c = tide_set%d.%c;", "xyzw"[target->swizzle[i]], temp, "xyzw"[i]);
         }
         sb_put(em->o, statement ? " }\n" : " }");
         return;
     }
+    em->raw = raw;
     ex(em, target);
+    em->raw = 0;
     sb_put(em->o, " = ");
     put_assigned(em, s);
     if (statement) sb_put(em->o, ";\n");
@@ -2734,13 +3098,16 @@ static void st_call(emit *em, const stmt *s)
     const bool user = (e->call == CALL_FUNCTION || e->call == CALL_METHOD) && e->method;
     const decl *fn = user ? e->method : NULL;
     const bool method = fn && fn->owner && !fn->is_operator && !fn->is_interpolate;
-    const expr *receiver = method && fn->is_mut_method && e->kind == E_METHOD && !is_whole_variable(e->object) ? e->object : NULL;
+    // WGSL hands over whole variables; GLSL anything that's a place, which an array's element isn't here
+    const bool wgsl = em->l == WGSL;
+#define COPIED(arg) (wgsl ? !is_whole_variable(arg) : in_array(arg))
+    const expr *receiver = method && fn->is_mut_method && e->kind == E_METHOD && COPIED(e->object) ? e->object : NULL;
     bool copies = receiver != NULL;
     for (int i = 0; fn && i < e->args.count && i < fn->params.count; i++) {
-        copies |= fn->params.items[i].mode == PARAM_MUT && !is_whole_variable(e->args.items[i]);
+        copies |= fn->params.items[i].mode == PARAM_MUT && COPIED(e->args.items[i]);
     }
     em->statement = e;
-    if (em->l != WGSL || !copies) {
+    if (!copies) {
         if (em->l == WGSL && !user) sb_put(em->o, "_ = "); // A value WGSL won't let go unused
         ex(em, e);
         sb_put(em->o, ";\n");
@@ -2751,14 +3118,16 @@ static void st_call(emit *em, const stmt *s)
     em->indent++;
     if (receiver) {
         line(em);
-        sb_printf(em->o, "var %s: %s = ", copy_name(-1), ty(em, receiver->type));
+        if (wgsl) sb_printf(em->o, "var %s: %s = ", copy_name(-1), ty(em, receiver->type));
+        else sb_printf(em->o, "%s %s = ", ty(em, receiver->type), copy_name(-1));
         ex(em, receiver);
         sb_put(em->o, ";\n");
     }
     for (int i = 0; i < e->args.count && i < fn->params.count; i++) {
-        if (fn->params.items[i].mode != PARAM_MUT || is_whole_variable(e->args.items[i])) continue;
+        if (fn->params.items[i].mode != PARAM_MUT || !COPIED(e->args.items[i])) continue;
         line(em);
-        sb_printf(em->o, "var %s: %s = ", copy_name(i), ty(em, e->args.items[i]->type));
+        if (wgsl) sb_printf(em->o, "var %s: %s = ", copy_name(i), ty(em, e->args.items[i]->type));
+        else sb_printf(em->o, "%s %s = ", ty(em, e->args.items[i]->type), copy_name(i));
         ex(em, e->args.items[i]);
         sb_put(em->o, ";\n");
     }
@@ -2769,7 +3138,7 @@ static void st_call(emit *em, const stmt *s)
     // Back out, through an assignment each, so a swizzle is set as WGSL can
     for (int i = -1; i < e->args.count && i < fn->params.count; i++) {
         const expr *to = i < 0 ? receiver : e->args.items[i];
-        if (!to || (i >= 0 && (fn->params.items[i].mode != PARAM_MUT || is_whole_variable(to)))) continue;
+        if (!to || (i >= 0 && (fn->params.items[i].mode != PARAM_MUT || !COPIED(to)))) continue;
         expr copy = {.kind = E_NAME, .at = to->at, .type = to->type, .bind = BIND_LOCAL};
         stmt local = {.kind = S_VAR, .type = to->type};
         char name[32];
@@ -2784,6 +3153,7 @@ static void st_call(emit *em, const stmt *s)
     em->indent--;
     line(em);
     sb_put(em->o, "}\n");
+#undef COPIED
 }
 
 // Whether a for counts: a variable of its own, compared with a bound, that
@@ -2908,6 +3278,109 @@ static void st_outs(emit *em, const expr *e)
     for (int i = 0; i < e->args.count; i++) st_outs(em, e->args.items[i]);
 }
 
+// A foreach over a list the engine supplies: a loop that counts its elements,
+// each read as the loop comes to it.
+static void st_foreach(emit *em, const stmt *s, const param *p, const field *f)
+{
+    const bool wgsl = em->l == WGSL;
+    const int k = em->temps++;
+    if (!f) { // An array: each of its elements, by its place
+        const type array = s->value->type, element = array.decl->fields.items[0].type;
+        if (!type_fits(em, array, s->value->at)) return;
+        const int reader = need_array(em, array.decl);
+        sb_printf(em->o, wgsl ? "for (var tide_k%d: i32 = 0; tide_k%d < %d; tide_k%d++) {\n" : "for (int tide_k%d = 0; tide_k%d < %d; tide_k%d++) {\n",
+                  k, k, array.decl->array_length, k);
+        em->indent++;
+        line(em);
+        if (wgsl) sb_printf(em->o, "var %s: %s = tide_el%d(", local_name(s->name), ty(em, element), reader);
+        else sb_printf(em->o, "%s %s = tide_el%d(", ty(em, element), local_name(s->name), reader);
+        ex(em, s->value);
+        sb_printf(em->o, ", tide_k%d);\n", k);
+    } else {
+        if (!read_list(em, s->value, p, f)) return;
+        const int texture = list_texture(em, p, f);
+        const type element = list_element(f);
+        need_list(em, texture, element);
+        sb_printf(em->o, wgsl ? "for (var tide_k%d: i32 = 0; tide_k%d < " : "for (int tide_k%d = 0; tide_k%d < ", k, k);
+        put_list_count(em, texture);
+        sb_printf(em->o, "; tide_k%d++) {\n", k);
+        em->indent++;
+        line(em);
+        if (wgsl) sb_printf(em->o, "var %s: %s = tide_list%d(tide_k%d);\n", local_name(s->name), ty(em, element), texture < 0 ? 0 : texture, k);
+        else sb_printf(em->o, "%s %s = tide_list%d(tide_k%d);\n", ty(em, element), local_name(s->name), texture < 0 ? 0 : texture, k);
+    }
+    const stmt *body = s->then_stmt;
+    for (int i = 0; body && body->kind == S_BLOCK && i < body->stmts.count; i++) {
+        st(em, body->stmts.items[i]);
+        if (ends(body->stmts.items[i])) break;
+    }
+    if (body && body->kind != S_BLOCK) st(em, body);
+    em->indent--;
+    line(em);
+    sb_put(em->o, "}\n");
+}
+
+// A switch on an int or an enum, as each language has its own: a section's
+// labels are constants, and no section goes on into the next.
+static void st_switch(emit *em, const stmt *s)
+{
+    const bool wgsl = em->l == WGSL;
+    if (s->cond->type.kind != TY_INT && s->cond->type.kind != TY_ENUM) {
+        refuse(em, s->cond->at, "a switch the GPU runs is on an int or an enum, and this is %s", type_name(s->cond->type));
+        diag_note("write it as 'if' and 'else if'");
+        return;
+    }
+    sb_put(em->o, wgsl ? "switch " : "switch (");
+    ex(em, s->cond);
+    sb_put(em->o, wgsl ? " {\n" : ") {\n");
+    em->indent++;
+    bool has_default = false;
+    for (int i = 0; i < s->cases.count; i++) {
+        const switch_case *section = &s->cases.items[i];
+        line(em);
+        if (wgsl) {
+            bool first = true, cases = false;
+            for (int k = 0; k < section->labels.count; k++) cases |= section->labels.items[k] != NULL;
+            if (cases) sb_put(em->o, "case ");
+            for (int k = 0; k < section->labels.count; k++) {
+                const expr *label = section->labels.items[k];
+                if (!first) sb_put(em->o, ", ");
+                first = false;
+                if (label) sb_printf(em->o, "%lld", (long long)(label->kind == E_INT ? int_literal(label) : label->int_value));
+                else sb_put(em->o, "default");
+                has_default |= !label;
+            }
+            sb_put(em->o, " {\n");
+        } else {
+            for (int k = 0; k < section->labels.count; k++) {
+                const expr *label = section->labels.items[k];
+                if (label) sb_printf(em->o, "case %lld: ", (long long)(label->kind == E_INT ? int_literal(label) : label->int_value));
+                else sb_put(em->o, "default: ");
+                has_default |= !label;
+            }
+            sb_put(em->o, "{\n");
+        }
+        em->indent++;
+        bool ended = false;
+        for (int k = 0; k < section->body.count && !ended; k++) {
+            st(em, section->body.items[k]);
+            ended = ends(section->body.items[k]);
+        }
+        em->indent--;
+        line(em);
+        sb_put(em->o, wgsl || ended ? "}\n" : "} break;\n");
+    }
+    if (!has_default) { // WGSL wants one, and GLSL a statement after its last label
+        line(em);
+        sb_put(em->o, wgsl ? "default {\n" : "default: {\n");
+        line(em);
+        sb_put(em->o, wgsl ? "}\n" : "} break;\n");
+    }
+    em->indent--;
+    line(em);
+    sb_put(em->o, "}\n");
+}
+
 static void st(emit *em, const stmt *s)
 {
     if (s->kind == S_BLOCK) {
@@ -2989,13 +3462,26 @@ static void st(emit *em, const stmt *s)
         refuse(em, s->at, "a loop the GPU runs counts, so it's known how far it goes: 'while' could go on forever");
         diag_note("write it as a for with a bound, and 'break' out of it: 'for (int i = 0; i < 8; i++) { ... }'");
         break;
-    case S_FOREACH:
+    case S_FOREACH: {
+        const param *p;
+        const field *f;
+        if (s->value && bound_list(em, s->value, &p, &f)) {
+            st_foreach(em, s, p, f);
+            break;
+        }
+        if (s->value && s->value->type.kind == TY_ARRAY) {
+            st_foreach(em, s, NULL, NULL);
+            break;
+        }
+        refuse(em, s->at, "a foreach the GPU runs goes through an array, or a list that's a field of what the frag or vert "
+                          "takes, like 'foreach (var light in lights.items)': it has no maps, sets, queries or grids to go through");
+        break;
+    }
     case S_PARALLEL:
-        refuse(em, s->at, "the GPU has no lists or grids to go through: it reads fields of numbers, and samples a grid of "
-                          "colors with 'grid.Sample(uv)'");
+        refuse(em, s->at, "the GPU has no grids to go through: it samples a grid of colors with 'grid.Sample(uv)'");
         break;
     case S_SWITCH:
-        refuse(em, s->at, "'switch' isn't in code the GPU runs yet: write it as 'if' and 'else if'");
+        st_switch(em, s);
         break;
     case S_FAIL:
         refuse(em, s->at, "nothing fails on the GPU: handle errors on the CPU");
@@ -3041,9 +3527,10 @@ static void need_function(emit *em, decl *fn, const loc at)
     sb *const out = em->o;
     decl *const code = em->code;
     const sb grads = em->grads;
-    const int grad_count = em->grad_count;
+    const int grad_count = em->grad_count, hoisted = em->hoisted.count;
     em->grads = (sb){0};
     em->grad_count = 0;
+    em->hoisted.count = 0; // A function's own: only a frag or vert has any, and it gets its own back
     const int indent = em->indent, defuse = em->defuse;
     const expr *statement = em->statement;
     const bool failed = em->failed;
@@ -3109,6 +3596,7 @@ static void need_function(emit *em, decl *fn, const loc at)
     if (em->grads.data) sb_put(&em->functions, em->grads.data); // What its Samples ask as it starts
     em->grads = grads;
     em->grad_count = grad_count;
+    em->hoisted.count = hoisted;
     if (body.data) sb_put(&em->functions, body.data);
     sb_put(&em->functions, "}\n\n");
 }
@@ -3149,7 +3637,10 @@ static void put_uniforms(const shader *sh, const lang l, sb *o)
     sb_put(o, wgsl ? "}\n@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;\n" : "};\n");
     for (int i = 0; i < sh->textures.count; i++) {
         const shader_read read = sh->textures.items[i].read;
-        if (wgsl) {
+        if (read == READ_DATA) { // A list's numbers, with all of their bits, read through no sampler
+            sb_printf(o, wgsl ? "@group(0) @binding(%d) var pixels%d: texture_2d<i32>;\n" : "uniform highp isampler2D pixels%d;\n",
+                      wgsl ? 1 + 2 * i : i, i);
+        } else if (wgsl) {
             sb_printf(o, "@group(0) @binding(%d) var pixels%d: %s;\n@group(0) @binding(%d) var sampler%d: %s;\n",
                       1 + 2 * i, i, read == READ_COLOR ? "texture_2d<f32>" : read == READ_CUBE ? "texture_cube<f32>" : "texture_depth_2d",
                       2 + 2 * i, i, read == READ_COMPARE ? "sampler_comparison" : "sampler");
@@ -3579,6 +4070,17 @@ static void add_bound(shader *sh, decl *d)
     vec_push(sh->bound, d);
 }
 
+// A list the code reads, as one of the shader's textures.
+static void add_list(shader *sh, const decl *source, const field *f, const bool bound)
+{
+    for (int i = 0; i < sh->textures.count; i++) {
+        if (sh->textures.items[i].read == READ_DATA && sh->textures.items[i].source == source && sh->textures.items[i].field == f) return;
+    }
+    const shader_texture t = {.source = source, .field = f, .read = READ_DATA, .filter_said = true, .wrap_said = true};
+    vec_push(sh->textures, t);
+    if (bound) add_bound(sh, (decl *)source);
+}
+
 // What a frag or vert reads of the components and singletons it takes, and
 // the grids it samples, into the shader.
 static void plan_reads(const program *prog, shader *sh, const decl *code)
@@ -3599,6 +4101,11 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         for (int k = 0; k < p->type.decl->fields.count; k++) {
             const field *f = &p->type.decl->fields.items[k];
             if (f->hidden || !(p->whole || (p->reads && p->reads[k]))) continue;
+            if (f->type.kind == TY_LIST) { // Its elements, as a texture of numbers
+                if (explicit_instance) sh->instance_list = f;
+                else add_list(sh, p->type.decl, f, !given);
+                continue;
+            }
             if (f->type.kind == TY_GRID || f->type.kind == TY_TEXTURE || f->type.kind == TY_DEPTH_TEXTURE
                 || f->type.kind == TY_CUBEMAP) continue; // Sampled, below
             shader_value *v = add_value(sh, p->type.decl, f, f->type, p->type.kind == TY_COMPONENT || explicit_instance);
@@ -3610,6 +4117,10 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         const decl *part = p->type.decl->local_part;
         for (int k = 0; part && p->local_reads && k < part->fields.count; k++) {
             const field *f = &part->fields.items[k];
+            if (p->local_reads[k] && f->type.kind == TY_LIST) {
+                add_list(sh, p->type.decl, f, true);
+                continue;
+            }
             if (!p->local_reads[k] || f->type.kind == TY_GRID || f->type.kind == TY_TEXTURE || f->type.kind == TY_DEPTH_TEXTURE
                 || f->type.kind == TY_CUBEMAP) continue;
             shader_value *v = add_value(sh, p->type.decl, f, f->type, p->type.kind == TY_COMPONENT);
@@ -3725,6 +4236,17 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
             sh->frag_ints += v->ints;
         }
     }
+    // How many elements each list it reads has: a word of the draw's ints
+    for (int i = 0; i < sh->textures.count; i++) {
+        if (sh->textures.items[i].read == READ_DATA) sh->textures.items[i].count_at = sh->uniform_ints++;
+    }
+    if (sh->instance_list) {
+        diag_error(call->at, "this draw's instances each have a list, '" STR_FMT "', that its code reads, and a draw sends one "
+                   "list for all of them", STR_ARG(sh->instance_list->name));
+        diag_note("keep the list in a singleton or in the values the draw gives after its frag, and in each instance where "
+                  "its part of the list starts and how many elements that is");
+        return NULL;
+    }
     // What the vert writes for the frag, each struct it takes as `out`, and what
     // of it the frag's parameter of that type reads: only that goes on
     int varyings = (sh->frag_world ? 1 : 0) + packs(sh->frag_floats) + packs(sh->frag_ints);
@@ -3790,7 +4312,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     if (sh->textures.count > 8) {
         diag_error(call->at, "this draw samples %d textures, and a draw takes 8", sh->textures.count);
         diag_note("a texture sampled with another filter or another wrap counts again, and so does a depth that's both read "
-                  "and compared; put several images side by side in one texture");
+                  "and compared, and each list the code reads is one; put several images side by side in one texture");
         return NULL;
     }
     write_glsl(prog, sh);
