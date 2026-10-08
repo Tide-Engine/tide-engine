@@ -62,9 +62,11 @@ And these build values:
 
 ## Functions
 
-**Component by component**, on numbers and vectors:
+**Component by component**, on numbers, vectors and colors:
 
 `Abs`, `Sign`, `Min`, `Max`, `Clamp` (ints too), `Floor`, `Ceil`, `Round` (ties to even), `Trunc`, `Frac`, `Sqrt`, `Rsqrt`, `Saturate`, `Radians`, `Degrees`, `Sin`, `Cos`, `Tan`, `Asin`, `Acos`, `Atan`, `Atan2`, `Exp`, `Exp2`, `Log`, `Log2`, `Log10`, `Pow`, `Step`, `Lerp`, `Unlerp`, `SmoothStep`.
+
+A color goes through them channel by channel, alpha too, with other colors and with numbers, which count for every channel: `Math.Lerp(cold, hot, heat)` is the color that far from `cold` to `hot`, and `Math.Saturate(color)` keeps each channel from 0 to 1. A color and a vector don't mix in one call.
 
 **Vectors:**
 

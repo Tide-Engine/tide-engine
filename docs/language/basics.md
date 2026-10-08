@@ -45,7 +45,7 @@ Everything is a value: assigning copies it, and nothing is shared, text and list
 ### Numbers
 
 - `byte` stores one byte. It converts to `int`, `long` and `float` by itself, and arithmetic promotes it to `int`. Integer constants from 0 to 255 fit a byte: `byte value = 255; List<byte> bytes = [0, 128, 255];`. Other numbers need `byte(x)`, which keeps their low 8 bits; a float first converts with `int(x)`. Compound assignments and `++`/`--` wrap back into the byte range.
-- `1.5` is a `float`, and the `f` suffix is optional. An `int` converts to `float` by itself, never the other way: `int(x)` truncates toward zero.
+- `1.5` is a `float`, and the `f` suffix is optional. The zero before the point can be left out: `.5f` is `0.5`. An `int` converts to `float` by itself, never the other way: `int(x)` truncates toward zero.
 - An `int` converts to `long` by itself too, and the two mix: `total + 1` is a `long` when `total` is. A `long` and a `float` don't: write `float(x)` or `long(x)` to say which way the value goes, and `int(x)` to cut a `long` down to its low 32 bits. `5L` is a `long` literal, and so is any integer literal past the `int` range.
 - Integers can be written in decimal (`255`), hex (`0xFF`) or binary (`0b1010`), and `_` separates digits: `1_000_000`.
 - Integer arithmetic wraps on overflow, and dividing by zero gives 0. No input can crash the simulation.

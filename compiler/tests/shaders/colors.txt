@@ -38,6 +38,48 @@ struct tt_Vertex {
     vec2 m_uv;
     vec4 m_color;
 };
+float tide_f(float x) {
+    return x;
+}
+bool tide_nan(float x) {
+    return (floatBitsToInt(x) & 0x7fffffff) > 0x7f800000;
+}
+float tide_min1(float a, float b) {
+    if (tide_nan(b)) { return a; }
+    if (tide_nan(a)) { return b; }
+    if (a < b) { return a; }
+    return b;
+}
+float tide_max1(float a, float b) {
+    if (tide_nan(b)) { return a; }
+    if (tide_nan(a)) { return b; }
+    if (a > b) { return a; }
+    return b;
+}
+vec4 tide_max4(vec4 a, vec4 b) {
+    return vec4(tide_max1(a.x, b.x), tide_max1(a.y, b.y), tide_max1(a.z, b.z), tide_max1(a.w, b.w));
+}
+float tide_clamp1(float a, float b, float c) {
+    if (tide_nan(a)) { return b; }
+    return tide_max1(b, tide_min1(c, a));
+}
+vec4 tide_clamp4(vec4 a, vec4 b, vec4 c) {
+    return vec4(tide_clamp1(a.x, b.x, c.x), tide_clamp1(a.y, b.y, c.y), tide_clamp1(a.z, b.z, c.z), tide_clamp1(a.w, b.w, c.w));
+}
+float tide_saturate1(float a) {
+    if (tide_nan(a)) { return 0.0; }
+    return clamp(a, 0.0, 1.0);
+}
+vec4 tide_saturate4(vec4 a) {
+    return vec4(tide_saturate1(a.x), tide_saturate1(a.y), tide_saturate1(a.z), tide_saturate1(a.w));
+}
+float tide_smoothstep1(float a, float b, float c) {
+    float t = tide_saturate1((c - a) / (b - a));
+    return t * t * (3.0 - 2.0 * t);
+}
+vec4 tide_smoothstep4(vec4 a, vec4 b, vec4 c) {
+    return vec4(tide_smoothstep1(a.x, b.x, c.x), tide_smoothstep1(a.y, b.y, c.y), tide_smoothstep1(a.z, b.z, c.z), tide_smoothstep1(a.w, b.w, c.w));
+}
 void ts_Colors(tt_Vertex t_vertex, inout vec4 t_color) {
     vec2 t_uv = t_vertex.m_uv;
     vec3 t_rgb = vec3(t_uv, 0.75);
@@ -59,7 +101,10 @@ void ts_Colors(tt_Vertex t_vertex, inout vec4 t_color) {
     vec4 t_scalarThenIntsPair = vec4(2.0, vec2(ivec2(3, 4)), 1.0);
     vec4 t_scalarThenIntsTriple = vec4(2.0, vec3(ivec3(3, 4, 5)));
     vec4 t_mixedPairs = vec4(vec2(ivec2(2, 3)), vec2(0.75, 0.125));
-    t_color = ((((((((((((((((t_pairThenScalar + t_scalarThenPair) + t_triple) + t_tripleThenAlpha) + t_quadruple) + t_pairs) + t_pairThenScalars) + t_scalarPairScalar) + t_scalarsThenPair) + t_scalarThenTriple) + t_intsThenScalar) + t_intsTriple) + t_intsThenAlpha) + t_intsQuadruple) + t_scalarThenIntsPair) + t_scalarThenIntsTriple) + t_mixedPairs);
+    vec4 t_mixed = mix(t_triple, t_quadruple, vec4(tide_f(0.5)));
+    vec4 t_kept = tide_clamp4(tide_max4(t_mixed, vec4(tide_f(0.25))), vec4(tide_f(0.0)), t_pairs);
+    vec4 t_eased = tide_smoothstep4(t_triple, t_quadruple, tide_saturate4(t_mixed));
+    t_color = (((((((((((((((((((t_mixed + t_kept) + t_eased) + t_pairThenScalar) + t_scalarThenPair) + t_triple) + t_tripleThenAlpha) + t_quadruple) + t_pairs) + t_pairThenScalars) + t_scalarPairScalar) + t_scalarsThenPair) + t_scalarThenTriple) + t_intsThenScalar) + t_intsTriple) + t_intsThenAlpha) + t_intsQuadruple) + t_scalarThenIntsPair) + t_scalarThenIntsTriple) + t_mixedPairs);
 }
 
 void main() {
@@ -89,6 +134,48 @@ struct tt_Vertex {
     m_uv: vec2f,
     m_color: vec4f,
 }
+fn tide_f(x: f32) -> f32 {
+    return x;
+}
+fn tide_nan(x: f32) -> bool {
+    return (bitcast<i32>(x) & 0x7fffffff) > 0x7f800000;
+}
+fn tide_min1(a: f32, b: f32) -> f32 {
+    if (tide_nan(b)) { return a; }
+    if (tide_nan(a)) { return b; }
+    if (a < b) { return a; }
+    return b;
+}
+fn tide_max1(a: f32, b: f32) -> f32 {
+    if (tide_nan(b)) { return a; }
+    if (tide_nan(a)) { return b; }
+    if (a > b) { return a; }
+    return b;
+}
+fn tide_max4(a: vec4f, b: vec4f) -> vec4f {
+    return vec4f(tide_max1(a.x, b.x), tide_max1(a.y, b.y), tide_max1(a.z, b.z), tide_max1(a.w, b.w));
+}
+fn tide_clamp1(a: f32, b: f32, c: f32) -> f32 {
+    if (tide_nan(a)) { return b; }
+    return tide_max1(b, tide_min1(c, a));
+}
+fn tide_clamp4(a: vec4f, b: vec4f, c: vec4f) -> vec4f {
+    return vec4f(tide_clamp1(a.x, b.x, c.x), tide_clamp1(a.y, b.y, c.y), tide_clamp1(a.z, b.z, c.z), tide_clamp1(a.w, b.w, c.w));
+}
+fn tide_saturate1(a: f32) -> f32 {
+    if (tide_nan(a)) { return 0.0; }
+    return clamp(a, 0.0, 1.0);
+}
+fn tide_saturate4(a: vec4f) -> vec4f {
+    return vec4f(tide_saturate1(a.x), tide_saturate1(a.y), tide_saturate1(a.z), tide_saturate1(a.w));
+}
+fn tide_smoothstep1(a: f32, b: f32, c: f32) -> f32 {
+    var t: f32 = tide_saturate1((c - a) / (b - a));
+    return t * t * (3.0 - 2.0 * t);
+}
+fn tide_smoothstep4(a: vec4f, b: vec4f, c: vec4f) -> vec4f {
+    return vec4f(tide_smoothstep1(a.x, b.x, c.x), tide_smoothstep1(a.y, b.y, c.y), tide_smoothstep1(a.z, b.z, c.z), tide_smoothstep1(a.w, b.w, c.w));
+}
 fn ts_Channels(t_vertex: ptr<function, tt_Vertex>) {
     (*t_vertex).m_color = vec4f((*t_vertex).m_uv, 0.0, 1.0);
 }
@@ -114,7 +201,10 @@ fn ts_Colors(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
     var t_scalarThenIntsPair: vec4f = vec4f(2.0, vec2f(vec2i(3, 4)), 1.0);
     var t_scalarThenIntsTriple: vec4f = vec4f(2.0, vec3f(vec3i(3, 4, 5)));
     var t_mixedPairs: vec4f = vec4f(vec2f(vec2i(2, 3)), vec2f(0.75, 0.125));
-    (*t_color) = ((((((((((((((((t_pairThenScalar + t_scalarThenPair) + t_triple) + t_tripleThenAlpha) + t_quadruple) + t_pairs) + t_pairThenScalars) + t_scalarPairScalar) + t_scalarsThenPair) + t_scalarThenTriple) + t_intsThenScalar) + t_intsTriple) + t_intsThenAlpha) + t_intsQuadruple) + t_scalarThenIntsPair) + t_scalarThenIntsTriple) + t_mixedPairs);
+    var t_mixed: vec4f = mix(t_triple, t_quadruple, vec4f(tide_f(0.5)));
+    var t_kept: vec4f = tide_clamp4(tide_max4(t_mixed, vec4f(tide_f(0.25))), vec4f(tide_f(0.0)), t_pairs);
+    var t_eased: vec4f = tide_smoothstep4(t_triple, t_quadruple, tide_saturate4(t_mixed));
+    (*t_color) = (((((((((((((((((((t_mixed + t_kept) + t_eased) + t_pairThenScalar) + t_scalarThenPair) + t_triple) + t_tripleThenAlpha) + t_quadruple) + t_pairs) + t_pairThenScalars) + t_scalarPairScalar) + t_scalarsThenPair) + t_scalarThenTriple) + t_intsThenScalar) + t_intsTriple) + t_intsThenAlpha) + t_intsQuadruple) + t_scalarThenIntsPair) + t_scalarThenIntsTriple) + t_mixedPairs);
 }
 
 @vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f) -> tide_corner {

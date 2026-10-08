@@ -130,7 +130,7 @@ static void lex_digits(lexer *lx, const int base, const bool leading)
     }
 }
 
-// Numbers: 12, 1.5, 1e3, 2.5e-3, with an optional f suffix meaning float.
+// Numbers: 12, 1.5, .5, 1e3, 2.5e-3, with an optional f suffix meaning float.
 // Integers can also be hex (0x1F) or binary (0b1010). `_` separates digits.
 static tok_kind lex_number(lexer *lx)
 {
@@ -735,7 +735,8 @@ static token *lex_impl(const source *src, const bool tolerant, lex_spans *spans)
             continue;
         }
 
-        if (isdigit((unsigned char)c)) {
+        // A number can start at its point, as in C#: .5f
+        if (isdigit((unsigned char)c) || (c == '.' && lx.p + 1 < lx.end && isdigit((unsigned char)lx.p[1]))) {
             t.kind = lex_number(&lx);
             t.text = (str){start, (int)(lx.p - start)};
             // "0x" or "0b" with no digits after it.
