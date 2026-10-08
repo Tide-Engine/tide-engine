@@ -47,6 +47,8 @@ const float CLIFF = 13;
 const float VOLCANIC = 14;
 const float LEAF = 15;
 const float LAVA = 16;
+const float BELLOWS = 17;
+const float ICE = 18;
 
 // A corner of a mesh: where it is, which way its face looks, and its paint.
 struct Corner
@@ -105,6 +107,7 @@ local singleton Room
     float time;
     float gas = 1;        // How lit the gas grills are, from 0 to 1
     float heat = 1;       // How hot the coals look: they flare when something lands on them
+    float bellows;        // Ember grills burn only with both chefs on their pedals
     int region;          // Coast, countryside, mountains, volcano
     bool travelling;     // The route map shows all four regions together
     float2 grid = float2(240, 135);         // Half the frame's pixels, each way: what moves a corner onto one
@@ -207,12 +210,76 @@ float Speck(float x, float y)
     return (Math.Hash(int2(int(Math.Floor(x)), int(Math.Floor(y)))) & 255) / 255.0;
 }
 
+// The nearest floating crust plate and how far its edge is. Moving the
+// sampling coordinates carries whole plates together; their fissures stay
+// attached instead of flickering as isolated orange pixels.
+float2 LavaPlates(float2 at)
+{
+    float2 cell = Math.Floor(at);
+    mut var first = 100.0;
+    mut var second = 100.0;
+    for (var y = -1; y <= 1; y++)
+    {
+        for (var x = -1; x <= 1; x++)
+        {
+            float2 here = cell + float2(x, y);
+            float2 center = here + float2(0.04 + Speck(here.x, here.y + 113) * 0.92,
+                                          0.04 + Speck(here.x + 41, here.y) * 0.92);
+            float distance = Math.LengthSq(center - at);
+            if (distance < first)
+            {
+                second = first;
+                first = distance;
+            }
+            else if (distance < second) second = distance;
+        }
+    }
+    return float2(first, Math.Max(second - first, 0));
+}
+
+// Slow viscous flow: wide incandescent currents carry cooler crust rafts.
+// Orange depths, yellow folds and moving highlights make this liquid,
+// while the bank cools to dark rock immediately beside a kitchen.
+float3 LavaSurface(float2 place, float time, float bank)
+{
+    float clock = Math.Floor(time * 8) / 8;
+    float2 drift = place + float2(-clock * 0.046, clock * 0.027);
+    float2 bend = float2(Math.Perlin(drift * 0.41 + float2(7.3, 1.1)),
+                         Math.Perlin(drift * 0.41 + float2(2.7, 9.1)));
+    float2 flow = drift + bend * 2.2;
+    // Oblique, warped rafts avoid borrowing the puzzle's square tile grid.
+    float2 oblique = float2(flow.x * 0.866 + flow.y * 0.5, flow.y * 0.866 - flow.x * 0.5);
+    float2 plates = LavaPlates(float2(oblique.x * 0.9, oblique.y * 1.1));
+    float opening = plates.y;
+    float swirls = Math.Perlin(flow * 1.8 + float2(13, 29));
+    float soot = Speck(Math.Floor(flow.x * 12), Math.Floor(flow.y * 12) + 407);
+    float current = Math.Abs(Math.Sin(flow.y * 1.75 + Math.Perlin(flow * 0.42) * 4.3));
+    float river = 1 - Math.SmoothStep(0.42, 0.78, current);
+    float middle = 1 - Math.SmoothStep(0.08, 0.6, current);
+    float raftCover = Math.SmoothStep(0.11, 0.5, opening) * (0.76 + Math.SmoothStep(-0.25, 0.4, swirls) * 0.24);
+    float liquid = Math.Saturate(1 - raftCover * (1 - river * 0.91));
+    float fold = Math.Sin(flow.y * 8 + flow.x * 1.2 + swirls * 3.8 - clock * 0.24);
+    float ripple = Math.SmoothStep(0.7, 0.98, fold) * river;
+    float pulse = 0.94 + 0.06 * Math.Sin(clock * 0.45 + flow.x * 0.6 + flow.y * 0.5);
+    float temperature = Math.Saturate(0.28 + middle * 0.46 + swirls * 0.16 + ripple * 0.25);
+    float3 red = float3(0.63, 0.105, 0.018);
+    float3 orange = float3(0.96, 0.38, 0.055);
+    float3 gold = float3(1.0, 0.73, 0.2);
+    float3 molten = red + (orange - red) * Math.Saturate(temperature * 1.65);
+    float3 glowing = molten + (gold - molten) * Math.Saturate((temperature - 0.57) * 2.1 + ripple * 0.3);
+    float3 raft = float3(0.17, 0.077, 0.075) * (0.84 + soot * 0.22 + swirls * 0.14);
+    float coolBank = Math.SmoothStep(0.06, 0.5, bank);
+    float shown = liquid * (1 - coolBank * 0.94);
+    return raft + (glowing * pulse - raft) * shown;
+}
+
 // What a pixel of something is painted as, from its plain paint and what
 // it's made of: its color, and in its alpha how much of that is its own
 // light. `at` is where it is on what it's made of, in texels: a tile's top
 // counts them over the board, a wall along it and down it. `gas` and `heat`
-// are how lit the grills are.
-Color Material(float3 base, float kind, float2 at, float time, float gas, float heat)
+// are how lit the grills are; bellows says whether both pressure plates
+// feed the volcano's special hearths.
+Color Material(float3 base, float kind, float2 at, float time, float gas, float heat, float bellows)
 {
     mut float3 paint = base;
     mut float glow = 0;
@@ -300,20 +367,31 @@ Color Material(float3 base, float kind, float2 at, float time, float gas, float 
     }
     else if (Is(kind, LAVA))
     {
-        paint = float3(0.93, 0.27, 0.055) * (0.82 + speck * 0.2);
-        if (speck > 0.78) paint = float3(1.0, 0.58, 0.13);
+        paint = LavaSurface(at / TEXELS * 1.5, time, 0) * 1.12;
         glow = 1;
+    }
+    else if (Is(kind, ICE))
+    {
+        float2 tile = Math.Floor(at / TEXELS);
+        float2 within = at - tile * TEXELS;
+        float fracture = Math.Abs(Math.Sin(at.x * 0.18 + at.y * 0.26 + Math.Perlin(at * 0.11) * 1.9));
+        float sheen = Math.Sin((at.x - at.y) * 0.27 + time * 0.13);
+        paint = float3(0.3, 0.62, 0.74) * (0.92 + sheen * 0.08 + speck * 0.09);
+        if (fracture < 0.1) paint = float3(0.76, 0.9, 0.94);
+        if (within.x < 1 || within.y < 1) paint = float3(0.18, 0.43, 0.56);
+        if (within.x > 14 || within.y > 14) paint = float3(0.72, 0.84, 0.88);
     }
     else if (Is(kind, IRON))
     {
         paint = paint * (0.82 + speck * 0.36);
     }
-    else if (Is(kind, EMBER))
+    else if (Is(kind, EMBER) || Is(kind, BELLOWS))
     {
         // Coals: lumps two texels across, some lit, each flickering in its own time
         float lump = Speck(Math.Floor(at.x / 2), Math.Floor(at.y / 2) + 50);
         float beat = Speck(Math.Floor(at.x / 2) + Math.Floor(time * 5 + lump * 7), Math.Floor(at.y / 2) + 13);
-        float hot = lump > 0.45 ? Math.Saturate((0.45 + beat * 0.75) * heat) : 0.0;
+        float enabled = Is(kind, BELLOWS) ? bellows : 1.0;
+        float hot = lump > 0.45 ? Math.Saturate((0.45 + beat * 0.75) * heat) * enabled : 0.0;
         float3 ash = float3(0.15, 0.12, 0.12) * (0.7 + speck * 0.6);
         mut float3 fire = float3(0.86, 0.22, 0.06);
         if (hot > 0.62) fire = float3(1.0, 0.5, 0.1);
@@ -373,13 +451,19 @@ frag Baked(Corner corner, out Color color, Room room, Shadow shadow)
 {
     float3 normal = Math.Normalize(corner.normal);
     float sun = Sunlight(shadow.depth, this.world, normal, shadow.toLamp);
-    Color made = Material(float3(corner.color.r, corner.color.g, corner.color.b), corner.kind, TexelOf(this.world, normal, corner.grain), room.time, room.gas, room.heat);
+    Color made = Material(float3(corner.color.r, corner.color.g, corner.color.b), corner.kind, TexelOf(this.world, normal, corner.grain), room.time, room.gas, room.heat, room.bellows);
     if (made.a > 0.5)
     {
         color = Color(made.r, made.g, made.b, 1);
         return;
     }
     color = Lit(Color(made.r, made.g, made.b, 1), normal, corner.gloss, sun, room.region);
+    if (room.region == 3 && normal.y < 0.5)
+    {
+        // The molten surface lends the lower cliff faces a little warmth.
+        float warmth = Math.Saturate((0.25 - this.world.y) * 0.6);
+        color = Color(color.r + warmth * 0.08, color.g + warmth * 0.022, color.b, 1);
+    }
 }
 
 // Everything that moves: a mesh at its instance's place, in its instance's
@@ -401,7 +485,7 @@ frag Plain(Corner corner, out Color color, Solid solid, Instance instance, Room 
     float kind = corner.kind > 0.5 ? corner.kind : solid.kind;
     // Its texels are its mesh's own, so they go where it goes
     float2 at = float2(Math.Floor((corner.position.x + corner.position.z) * TEXELS), Math.Floor(corner.position.y * TEXELS));
-    Color made = Material(base, kind, at, room.time, room.gas, room.heat);
+    Color made = Material(base, kind, at, room.time, room.gas, room.heat, room.bellows);
     Color lit = Lit(Color(made.r, made.g, made.b, 1), normal, solid.gloss + corner.gloss, sun, room.region);
     float glow = solid.glow + corner.glow;
     color = Color(lit.r + made.r * glow, lit.g + made.g * glow, lit.b + made.b * glow, 1);
@@ -458,14 +542,14 @@ frag SeaLook(Corner corner, out Color color, Room room, Shadow shadow, Shore sho
     if (land > 0.2) water = float3(0.22, 0.48, 0.49);
     float lap = Math.Sin(beat * 1.3 + Math.Perlin(place * 0.9) * 4) * 0.07;
     if (land > 0.37 + lap) water = Speck(Math.Floor(at.x / 2), Math.Floor(at.y / 2) + Math.Floor(beat * 3)) > 0.35 ? float3(0.8, 0.88, 0.86) : float3(0.3, 0.58, 0.57);
-    if (!room.travelling && room.region == 1)
+    if (room.region == 1)
     {
         // Quiet inland water: muddy shallows and small lily-green flecks.
         water = wave > 0.95 ? float3(0.3, 0.46, 0.4) : float3(0.19, 0.34, 0.32);
         if (land > 0.12) water = float3(0.31, 0.43, 0.31);
         if (land > 0.25 && Speck(Math.Floor(at.x / 3), Math.Floor(at.y / 3)) > 0.81) water = float3(0.4, 0.53, 0.3);
     }
-    if (!room.travelling && room.region == 2)
+    if (room.region == 2)
     {
         // The mountain ledges stand above a cold sea of layered cloud.
         float mist = Math.Perlin(place * 0.33 + float2(beat * 0.025, 0));
@@ -473,20 +557,16 @@ frag SeaLook(Corner corner, out Color color, Room room, Shadow shadow, Shore sho
         if (wave > 0.93) water += float3(0.08, 0.09, 0.1);
         if (land > 0.18) water *= 0.8;
     }
-    if (!room.travelling && room.region == 3)
+    if (room.region == 3)
     {
-        // The danger stays below the tiles. Dark cooled plates divide slow
-        // ribbons of molten rock; active grills remain the brightest detail.
-        float crust = Math.Perlin(place * 1.25 + float2(beat * 0.025, beat * 0.018));
-        water = crust > -0.12 ? float3(0.19, 0.16, 0.2) : float3(0.43, 0.11, 0.045);
-        if (crust < -0.3) water = float3(0.62, 0.2, 0.055);
-        if (crust < -0.5 && Speck(at.x + Math.Floor(beat * 2), at.y) > 0.7) water = float3(0.82, 0.36, 0.08);
-        if (land > 0.2) water *= 0.66;
+        water = LavaSurface(place, room.time, land);
     }
-    if (sun < 0.5) water = water * 0.74;
+    // Molten rock supplies its own light. The coast's shadow treatment is
+    // unchanged; a kitchen's lava bank is cooled by its land mask instead.
+    if (sun < 0.5 && room.region != 3) water = water * 0.74;
     // Far out it goes to the sky's color, so that it has no edge
     float far = Math.Saturate((Math.Length(place) - 9) / 30);
-    Color horizon = RegionSky(room.travelling ? 0 : room.region);
+    Color horizon = RegionSky(room.region);
     water = water + (float3(horizon.r, horizon.g, horizon.b) - water) * far;
     color = Color(water.x, water.y, water.z, 1);
 }

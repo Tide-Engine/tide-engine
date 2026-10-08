@@ -1,5 +1,5 @@
-// Progression is exercised through the match's real commands and ticks,
-// independently of the exhaustive kitchen solver.
+// Progression and the selection meatball use the match's commands/ticks,
+// independently of the kitchen solver and the 24 concrete yard witnesses.
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -9,14 +9,26 @@
 #include "tide_test.h"
 
 static tide_world journey;
+static const int REGIONAL_LEVELS[4][6] = {
+    {0, 1, 2, 11, 12, 13}, {3, 4, 8, 14, 15, 16},
+    {5, 6, 9, 17, 18, 19}, {7, 10, 20, 21, 22, 23},
+};
 
-static void begin_journey(void)
+static int region_credit(int region, int count)
+{
+    int bits = 0;
+    for (int i = 0; i < count; i++) bits |= 1 << REGIONAL_LEVELS[region][i];
+    return bits;
+}
+
+static void begin_journey(int region)
 {
     tide_world_free(&journey);
     tide_world_init(&journey, 1.0f / 60.0f);
+    journey.Kitchen.level = REGIONAL_LEVELS[region][0];
+    for (int r = 0; r < region; r++) journey.Kitchen.done |= region_credit(r, 6);
     tide_world_player_joined(&journey, tide_player_from_index(0));
     tide_world_player_joined(&journey, tide_player_from_index(1));
-    tide_world_tick(&journey);
     tide_world_tick(&journey);
 }
 
@@ -34,9 +46,13 @@ static bool ask_journey(uint32_t id, int sender, int value)
         tide_game_api.command_sequence(&journey, player, 0) + 1, bytes, size);
 }
 
-static Tile journey_tile(int x, int y)
+static void move_yard(int who, int way)
 {
-    return journey.Kitchen.board.tiles.at[y * 12 + x];
+    const Controls keys = {.north = way == 0, .east = way == 1, .south = way == 2, .west = way == 3};
+    tide_world_set_input(&journey, tide_player_from_index(who), keys);
+    tide_world_tick(&journey);
+    tide_world_set_input(&journey, tide_player_from_index(who), (Controls){0});
+    for (int i = 0; i < 9; i++) tide_world_tick(&journey);
 }
 
 static void park(int ax, int ay, int bx, int by)
@@ -46,125 +62,142 @@ static void park(int ax, int ay, int bx, int by)
     memset(&journey.Kitchen.grips, 0, sizeof journey.Kitchen.grips);
 }
 
-TIDE_TEST(two_forks_journey_enters_together_and_remembers_the_map)
+TIDE_TEST(two_forks_journey_requires_a_rolled_meatball_and_preserves_the_yard)
 {
-    begin_journey();
-    TIDE_CHECK(journey.Kitchen.travelling && journey.Kitchen.board.count == 0);
-    TIDE_CHECK(journey_tile(3, 4) == Tile_Rock && journey_tile(6, 2) == Tile_Rock);
-    park(1, 7, 2, 8);
-    const Chef first = journey.Kitchen.board.chefs.at[0];
-    const Chef second = journey.Kitchen.board.chefs.at[1];
-    // A remote camp cannot be selected by clicking or sending its command.
-    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_EnterKitchen, 0, 1));
+    begin_journey(0);
+    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_EnterKitchen, 0, 0));
     tide_world_tick(&journey);
     TIDE_CHECK(journey.Kitchen.travelling);
-    // Either player enters a nearby camp when both chefs have gathered.
-    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_EnterKitchen, 1, 0));
-    tide_world_tick(&journey);
-    TIDE_CHECK(!journey.Kitchen.travelling && journey.Kitchen.level == 0 && journey.Kitchen.board.count == 1);
-    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_BackToMap, 0, 1));
+    // A ball goes into the middle-left pan; both chefs have to gather there.
+    move_yard(0, 0);
+    move_yard(1, 3);
+    move_yard(1, 3);
+    move_yard(1, 3);
+    TIDE_CHECK(!journey.Kitchen.travelling && journey.Kitchen.level == 1);
+    const Chef first = journey.Kitchen.campers.at[0], second = journey.Kitchen.campers.at[1];
+    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_BackToMap, 0, 0));
     tide_world_tick(&journey);
     TIDE_CHECK(!journey.Kitchen.travelling);
-    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_BackToMap, 1, 0));
+    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_BackToMap, 1, 1));
     tide_world_tick(&journey);
     TIDE_CHECK(journey.Kitchen.travelling && journey.Kitchen.done == 0);
+    TIDE_CHECK(journey.Kitchen.meatball.x == 2 && journey.Kitchen.meatball.y == 3);
     TIDE_CHECK(memcmp(&journey.Kitchen.board.chefs.at[0], &first, sizeof first) == 0);
     TIDE_CHECK(memcmp(&journey.Kitchen.board.chefs.at[1], &second, sizeof second) == 0);
-    // A stale restart must not replace the map with a kitchen plan.
+    // Returning disarms this pan: idle ticks cannot immediately re-enter.
+    for (int i = 0; i < 15; i++) tide_world_tick(&journey);
+    TIDE_CHECK(journey.Kitchen.travelling && journey.Kitchen.selection == -1);
+    tide_world_free(&journey);
+}
+
+TIDE_TEST(two_forks_journey_meatball_undo_and_reset_keep_cooking_credit)
+{
+    begin_journey(0);
+    journey.Kitchen.done = region_credit(0, 4);
+    journey.Kitchen.bridges = 1;
+    move_yard(0, 1);
+    move_yard(0, 1);
+    TIDE_CHECK(journey.Kitchen.meatball.x == 5 && journey.Kitchen.moves == 2);
+    // Blue's fork is a physical stopper for the next attempted roll.
+    move_yard(0, 1);
+    TIDE_CHECK(journey.Kitchen.meatball.x == 5 && journey.Kitchen.moves == 2);
+    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_Undo, 1, 0));
+    tide_world_tick(&journey);
+    TIDE_CHECK(journey.Kitchen.meatball.x == 4 && journey.Kitchen.moves == 1);
     TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_Restart, 0, 0));
     tide_world_tick(&journey);
-    TIDE_CHECK(journey.Kitchen.travelling && journey.Kitchen.board.count == 0);
+    TIDE_CHECK(journey.Kitchen.travelling && journey.Kitchen.moves == 0);
+    TIDE_CHECK(journey.Kitchen.done == region_credit(0, 4) && journey.Kitchen.bridges == 1);
+    TIDE_CHECK(journey.Kitchen.meatball.x == 4 && journey.Kitchen.meatball.y == 3);
+    TIDE_CHECK(journey.Kitchen.board.tiles.at[4 * 12 + 7] == Tile_Grass);
     tide_world_free(&journey);
 }
 
-TIDE_TEST(two_forks_journey_bridges_require_progress_and_both_plates)
+TIDE_TEST(two_forks_journey_ice_carries_the_ball_and_waits_for_both_chefs)
 {
-    begin_journey();
-    park(1, 5, 5, 5);
+    begin_journey(2);
+    move_yard(0, 1);
+    move_yard(0, 1);
+    TIDE_CHECK(journey.Kitchen.meatball.x == 5); // Blue's fork stops the glide.
+    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_Restart, 0, 5));
     tide_world_tick(&journey);
-    TIDE_CHECK(journey.Kitchen.bridges == 0);
-    // Any two coastal kitchens suffice; the third is an optional route.
-    journey.Kitchen.done = (1 << 0) | (1 << 2);
-    park(1, 5, 4, 5);
-    tide_world_tick(&journey);
-    TIDE_CHECK(journey.Kitchen.bridges == 0);
-    park(1, 5, 5, 5);
-    const int revision = journey.Kitchen.layout;
-    tide_world_tick(&journey);
-    TIDE_CHECK(journey.Kitchen.bridges == 1 && journey_tile(3, 4) == Tile_Grass);
-    TIDE_CHECK(journey.Kitchen.layout == revision + 1);
-    park(2, 5, 4, 5);
-    tide_world_tick(&journey);
-    TIDE_CHECK(journey_tile(3, 4) == Tile_Grass);
-    journey.Kitchen.done |= (1 << 3) | (1 << 8);
-    park(1, 0, 5, 0);
-    tide_world_tick(&journey);
-    TIDE_CHECK(journey.Kitchen.bridges == 3 && journey_tile(6, 2) == Tile_Grass);
-    journey.Kitchen.done |= (1 << 5) | (1 << 9);
-    park(7, 3, 11, 3);
-    tide_world_tick(&journey);
-    TIDE_CHECK(journey.Kitchen.bridges == 7 && journey_tile(9, 4) == Tile_Grass);
+    move_yard(1, 0); // Clear that fork.
+    move_yard(0, 1);
+    move_yard(0, 1);
+    TIDE_CHECK(journey.Kitchen.meatball.x == 6 && journey.Kitchen.selection == 4);
+    TIDE_CHECK(journey.Kitchen.travelling); // Red is still three tiles away.
+    move_yard(0, 1);
+    TIDE_CHECK(!journey.Kitchen.travelling && journey.Kitchen.level == 18);
     tide_world_free(&journey);
 }
 
-TIDE_TEST(two_forks_journey_optional_routes_skip_regions_without_credit)
+TIDE_TEST(two_forks_journey_routes_require_progress_and_gathering)
 {
-    begin_journey();
-    park(5, 6, 4, 6);
-    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_Traverse, 0, 0));
+    begin_journey(0);
+    journey.Kitchen.done = region_credit(0, 3);
+    park(1, 2, 7, 2);
     tide_world_tick(&journey);
-    TIDE_CHECK(journey.Kitchen.board.chefs.at[0].at.x == 5);
-    journey.Kitchen.done = 7;
-    park(1, 7, 4, 7);
+    TIDE_CHECK(journey.Kitchen.bridges == 0);
+    journey.Kitchen.done |= 1 << 11;
+    park(1, 2, 7, 3);
+    tide_world_tick(&journey);
+    TIDE_CHECK(journey.Kitchen.bridges == 0);
+    park(1, 2, 7, 2);
+    tide_world_tick(&journey);
+    TIDE_CHECK(journey.Kitchen.bridges == 1);
     TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_Traverse, 1, 0));
     tide_world_tick(&journey);
-    TIDE_CHECK(journey.Kitchen.board.chefs.at[0].at.x == 1);
-    park(5, 6, 4, 6);
-    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_Traverse, 1, 0));
-    tide_world_tick(&journey);
-    TIDE_CHECK(journey.Kitchen.board.chefs.at[0].at.x == 7 && journey.Kitchen.board.chefs.at[1].at.x == 9);
-    TIDE_CHECK(journey.Kitchen.done == 7 && journey.Kitchen.travelling);
-    // Ferry arrivals can enter mountain camps even before countryside clears.
-    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_EnterKitchen, 0, 6));
-    tide_world_tick(&journey);
-    TIDE_CHECK(!journey.Kitchen.travelling && journey.Kitchen.level == 6);
-    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_BackToMap, 0, 6));
-    tide_world_tick(&journey);
-    park(7, 2, 8, 3);
-    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_Traverse, 1, 0));
-    tide_world_tick(&journey);
-    TIDE_CHECK(journey.Kitchen.board.chefs.at[0].at.x == 5 && journey.Kitchen.board.chefs.at[0].at.y == 6);
-    TIDE_CHECK(journey.Kitchen.done == 7);
-    journey.Kitchen.done |= (1 << 3) | (1 << 4) | (1 << 8);
-    park(5, 2, 4, 2);
+    TIDE_CHECK(journey.Kitchen.routeRegion == 0); // Still too far from the gate.
+    park(7, 3, 6, 4);
     const int done = journey.Kitchen.done;
+    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_Traverse, 1, 0));
+    tide_world_tick(&journey);
+    TIDE_CHECK(journey.Kitchen.routeRegion == 1 && journey.Kitchen.done == done);
+    park(1, 3, 2, 5);
     TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_Traverse, 0, 1));
     tide_world_tick(&journey);
-    TIDE_CHECK(journey.Kitchen.board.chefs.at[0].at.y == 5 && journey.Kitchen.board.chefs.at[1].at.y == 5);
-    TIDE_CHECK(journey.Kitchen.done == done && journey.Kitchen.travelling);
-    park(8, 5, 9, 5);
-    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_Traverse, 1, 1));
+    TIDE_CHECK(journey.Kitchen.routeRegion == 0 && journey.Kitchen.done == done);
+    // All six coastal kitchens earn a two-way ferry past the fields.
+    journey.Kitchen.done = region_credit(0, 6);
+    park(3, 3, 5, 3);
+    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_Traverse, 0, 2));
     tide_world_tick(&journey);
-    TIDE_CHECK(journey.Kitchen.board.chefs.at[0].at.x == 5 && journey.Kitchen.board.chefs.at[0].at.y == 2);
-    TIDE_CHECK(journey.Kitchen.done == done);
+    TIDE_CHECK(journey.Kitchen.routeRegion == 2 && journey.Kitchen.done == region_credit(0, 6));
+    park(3, 3, 5, 3);
+    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_Traverse, 1, 2));
+    tide_world_tick(&journey);
+    TIDE_CHECK(journey.Kitchen.routeRegion == 0);
+    // The fields earn the same optional route to/from the crater.
+    begin_journey(1);
+    journey.Kitchen.done |= region_credit(1, 6);
+    const int fields_done = journey.Kitchen.done;
+    park(3, 3, 5, 3);
+    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_Traverse, 1, 2));
+    tide_world_tick(&journey);
+    TIDE_CHECK(journey.Kitchen.routeRegion == 3 && journey.Kitchen.done == fields_done);
+    park(3, 3, 5, 3);
+    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_Traverse, 0, 2));
+    tide_world_tick(&journey);
+    TIDE_CHECK(journey.Kitchen.routeRegion == 1 && journey.Kitchen.done == fields_done);
     tide_world_free(&journey);
 }
 
-TIDE_TEST(two_forks_journey_gate_state_survives_snapshot_restore)
+TIDE_TEST(two_forks_journey_meatball_and_progress_survive_snapshot_restore)
 {
-    begin_journey();
-    journey.Kitchen.done = 3;
-    park(1, 5, 5, 5);
-    tide_world_tick(&journey);
+    begin_journey(0);
+    journey.Kitchen.done = region_credit(0, 4);
+    journey.Kitchen.bridges = 1;
+    move_yard(0, 1);
+    move_yard(0, 1);
     tide_world saved = {0};
     tide_world_copy(&saved, &journey);
     const uint64_t hash = tide_world_hash(&saved);
-    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_Goto, 0, 10));
+    TIDE_REQUIRE(ask_journey(TIDE_COMMAND_ID_Goto, 0, 23));
     tide_world_tick(&journey);
-    TIDE_CHECK(!journey.Kitchen.travelling && journey.Kitchen.done == 3);
+    TIDE_CHECK(!journey.Kitchen.travelling && journey.Kitchen.routeRegion == 3);
     tide_world_copy(&journey, &saved);
-    TIDE_CHECK(journey.Kitchen.travelling && journey.Kitchen.bridges == 1);
-    TIDE_CHECK(journey_tile(3, 4) == Tile_Grass && tide_world_hash(&journey) == hash);
+    TIDE_CHECK(journey.Kitchen.travelling && journey.Kitchen.routeRegion == 0 && journey.Kitchen.bridges == 1);
+    TIDE_CHECK(journey.Kitchen.meatball.x == 5 && tide_world_hash(&journey) == hash);
     tide_world_free(&saved);
     tide_world_free(&journey);
 }

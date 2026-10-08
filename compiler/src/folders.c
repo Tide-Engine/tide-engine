@@ -240,7 +240,15 @@ bool folder_file_info(const char *path, unsigned long long *size, unsigned long 
     struct stat info;
     if (stat(path, &info) != 0 || !S_ISREG(info.st_mode)) return false;
     if (size) *size = (unsigned long long)info.st_size;
-    if (modified) *modified = (unsigned long long)info.st_mtime;
+    if (modified) {
+#ifdef __APPLE__
+        *modified = (unsigned long long)info.st_mtimespec.tv_sec * 1000000000u
+                  + (unsigned long long)info.st_mtimespec.tv_nsec;
+#else
+        *modified = (unsigned long long)info.st_mtim.tv_sec * 1000000000u
+                  + (unsigned long long)info.st_mtim.tv_nsec;
+#endif
+    }
     return true;
 #endif
 }
