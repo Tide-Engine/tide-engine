@@ -8732,8 +8732,8 @@ TIDE_TEST(lsp_asset_one_file_for_a_list_or_a_map)
 }
 
 // Inside an asset's path, completion offers the folders and files where the
-// path so far leads, from the declaring file: the type's files (a PNG for a
-// Grid2<Color>), and globs for a list or a map.
+// path so far leads, from the declaring file: the type's files (PNG and PSD for
+// an image), and globs for a list or a map.
 TIDE_TEST(lsp_asset_path_completion)
 {
     if (!find_game_dir()) return;
@@ -8744,9 +8744,14 @@ TIDE_TEST(lsp_asset_path_completion)
                                     "asset List<Grid2<Color>> run = \"art/\";\n"
                                     "asset string notes = \"art/\";\n"
                                     "asset Clip shot = \"art/\";\n"
+                                    "asset Texture tile = \"art/\";\n"
+                                    "asset Map<string, Texture> images = \"art/\";\n"
+                                    "asset Cubemap sky = \"art/\";\n"
                                     "scene Main { }\n";
     write_file("lsp_cp/main.tide", main_file);
     write_bytes("lsp_cp/art/hero.png", "png", 3);
+    write_bytes("lsp_cp/art/hero.psd", "psd", 3);
+    write_bytes("lsp_cp/art/tile.PSD", "psd", 3);
     write_file("lsp_cp/art/other.txt", "text");
     write_bytes("lsp_cp/art/shot.wav", "wav", 3);
     write_bytes("lsp_cp/art/music.ogg", "ogg", 3);
@@ -8759,39 +8764,53 @@ TIDE_TEST(lsp_asset_path_completion)
     start_in_with(root, ASSET_EDITOR_CAPABILITIES);
     open_uri(uri_main, main_file);
 
-    // In the empty path: the game's folders, and its PNGs, which there are none of
+    // In the empty path: the game's folders, and its images, which there are none of
     const char *completion = request_at(uri_main, "textDocument/completion", 0, 27, "");
     TIDE_CHECK(offers(completion, "art/") && offers(completion, "../"));
     TIDE_CHECK(!offers(completion, "readme.txt") && !offers(completion, "main.tide"));
-    TIDE_CHECK(!offers(completion, "*.png")); // One file
+    TIDE_CHECK(!offers(completion, "*.png") && !offers(completion, "*.psd")); // One file
     TIDE_CHECK(has(completion, "\"kind\":19")); // A folder
     TIDE_CHECK(has(completion, "\"textEdit\":{\"range\":{\"start\":{\"line\":0,\"character\":27},\"end\":{\"line\":0,\"character\":27}},\"newText\":\"art/\"}"));
 
     // After "art/": what's in it, and the globs a list takes
     completion = request_at(uri_main, "textDocument/completion", 1, 36, "");
-    TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "sub/"));
+    TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "hero.psd") && offers(completion, "tile.PSD") && offers(completion, "sub/"));
     TIDE_CHECK(!offers(completion, "other.txt"));
     TIDE_CHECK(offers(completion, "*.png") && offers(completion, "**/*.png"));
+    TIDE_CHECK(offers(completion, "*.psd") && offers(completion, "**/*.psd"));
     TIDE_CHECK(has(completion, "\"textEdit\":{\"range\":{\"start\":{\"line\":1,\"character\":36},\"end\":{\"line\":1,\"character\":36}},\"newText\":\"hero.png\"}"));
 
     // Text takes any file
     completion = request_at(uri_main, "textDocument/completion", 2, 26, "");
-    TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "other.txt"));
+    TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "hero.psd") && offers(completion, "other.txt"));
     TIDE_CHECK(!offers(completion, "*") && !offers(completion, "**/*"));
 
     // A clip is a WAV or an Ogg
     completion = request_at(uri_main, "textDocument/completion", 3, 23, "");
     TIDE_CHECK(offers(completion, "shot.wav") && offers(completion, "music.ogg"));
-    TIDE_CHECK(!offers(completion, "hero.png") && !offers(completion, "other.txt"));
+    TIDE_CHECK(!offers(completion, "hero.png") && !offers(completion, "hero.psd") && !offers(completion, "other.txt"));
+
+    // Textures and cube faces take the same image formats; only many files offer globs.
+    completion = request_at(uri_main, "textDocument/completion", 4, 26, "");
+    TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "hero.psd") && offers(completion, "tile.PSD"));
+    TIDE_CHECK(!offers(completion, "other.txt") && !offers(completion, "*.psd"));
+    completion = request_at(uri_main, "textDocument/completion", 5, 41, "");
+    TIDE_CHECK(offers(completion, "hero.psd") && offers(completion, "*.psd") && offers(completion, "**/*.psd"));
+    completion = request_at(uri_main, "textDocument/completion", 6, 25, "");
+    TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "hero.psd") && offers(completion, "*.psd"));
+    TIDE_CHECK(!offers(completion, "other.txt"));
 
     // Part of a name typed: the item replaces it
     open_uri(uri_main, "asset Grid2<Color> hero = \"art/he\";\nscene Main { }\n");
     completion = request_at(uri_main, "textDocument/completion", 0, 33, "");
     TIDE_CHECK(offers(completion, "hero.png"));
+    TIDE_CHECK(offers(completion, "hero.psd"));
     TIDE_CHECK(has(completion, "\"range\":{\"start\":{\"line\":0,\"character\":31},\"end\":{\"line\":0,\"character\":33}},\"newText\":\"hero.png\""));
 
     remove_game_file("lsp_cp/main.tide");
     remove_game_file("lsp_cp/art/hero.png");
+    remove_game_file("lsp_cp/art/hero.psd");
+    remove_game_file("lsp_cp/art/tile.PSD");
     remove_game_file("lsp_cp/art/other.txt");
     remove_game_file("lsp_cp/readme.txt");
     remove_game_file("lsp_cp/.tide/assets.sha256");

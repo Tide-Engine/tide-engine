@@ -1,4 +1,4 @@
-// expect: '../e2e/assets/bad.png' isn't a PNG that decodes
+// expect: '../e2e/assets/bad.png' isn't a PNG or a PSD that decodes
 asset Grid2<Color> hero = "../e2e/assets/bad.png";
 
 scene Main
