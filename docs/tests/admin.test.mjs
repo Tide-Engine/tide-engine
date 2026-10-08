@@ -96,6 +96,51 @@ test('missing admin password refuses both page and API instead of exposing count
     assert.equal((await get('/admin')).status, 503);
     assert.equal((await get('/admin/api')).status, 503);
     assert.equal((await login('')).status, 503);
+    assert.equal((await get('/admin/prototypes/two-forks/index.html')).status, 503);
+    assert.equal((await get('/admin/prototypes/the-last-light/game.wasm')).status, 503);
+});
+
+test('prototype files share the admin gate and retired public copies are always refused', async (t) => {
+    const { get, login } = await site(t);
+    const cookie = (await login()).headers.get('set-cookie').split(';')[0];
+    for (const route of ['/admin/prototypes', '/admin/prototypes/__data.json', '/admin/prototypes/two-forks/',
+        '/admin/prototypes/the-last-light/index.html', '/admin/prototypes/the-last-light/game.wasm',
+        '/admin/prototypes/the-last-light/game.pack', '/admin/prototypes/the-last-light/sfx/steps.ogg',
+        '/adm%69n/prototypes/two-forks/thumbnail.png', '/admin%2fprototypes%2ftwo-forks%2findex.html']) {
+        const anonymous = await get(route);
+        assert.equal(anonymous.status, 303, route);
+        assert.match(anonymous.headers.get('location'), /^\/admin\/login\?next=/);
+        assert.equal(anonymous.headers.get('cache-control'), 'private, no-store');
+        assert.equal((await get(route, cookie)).status, 200);
+    }
+    for (const route of ['/samples/two-forks/', '/samples/two-forks/index.html', '/samples/two-forks/game.wasm',
+        '/samples/thumbnails/two-forks.png', '/samples/two%2dforks/index.html', '/two-forks/',
+        '/examples/the-last-light/', '/sample_two_forks.html', '/samples/the-last-light/']) {
+        for (const session of [undefined, cookie]) {
+            const response = await get(route, session);
+            assert.equal(response.status, 404, route);
+            assert.doesNotMatch(await response.text(), /protected page/);
+        }
+    }
+});
+
+test('sign-in returns to a private game while refusing external or malformed destinations', async (t) => {
+    const { get, origin } = await site(t);
+    const next = '/admin/prototypes/the-last-light/?join=TEST';
+    const form = await (await get(`/admin/login?next=${encodeURIComponent(next)}`)).text();
+    assert.match(form, /name="next" value="\/admin\/prototypes\/the-last-light\/\?join=TEST"/);
+    const signIn = (value) => fetch(`${origin}/admin/login`, {
+        method: 'POST', redirect: 'manual', headers: { origin, 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ password: 'a-test-password', next: value }),
+    });
+    const success = await signIn(next);
+    assert.equal(success.headers.get('location'), next);
+    for (const value of ['https://other.example/', '//other.example/', '/admin/prototypes/../logout', '/admin\\prototypes\\game', '/admin/prototypes/game/\r\nX-Test: evil']) {
+        assert.equal((await signIn(value)).headers.get('location'), '/admin');
+    }
+    const html = await (await get('/admin/login?next=' + encodeURIComponent('/admin/prototypes/game/?join="<script>'))).text();
+    assert.doesNotMatch(html, /<script>/);
+    assert.match(html, /&quot;&lt;script&gt;/);
 });
 
 test('pageviews accept only same-origin known pages and exclude probes, bots and oversized data', async (t) => {

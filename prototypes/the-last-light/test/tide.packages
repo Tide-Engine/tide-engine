@@ -1,0 +1,3 @@
+# This test folder is a separate package boundary, so tide run in the game's
+# folder does not compile the test host into the playable prototype.
+rooms
