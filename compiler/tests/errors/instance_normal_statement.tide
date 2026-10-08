@@ -1,0 +1,14 @@
+// expect: this expression does nothing on its own
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+frag Shade(Corner corner, out Color color, Instance instance)
+{
+    instance.Normal(corner.normal);
+    color = Color.white;
+}

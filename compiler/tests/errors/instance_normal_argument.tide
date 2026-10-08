@@ -1,0 +1,15 @@
+// expect: Normal takes a normal of the mesh, a float3 of any length, and gives it as it is in the world, of length 1: 'instance.Normal(vertex.normal)'
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+}
+
+frag Shade(Corner corner, out Color color, Instance instance)
+{
+    float3 normal = instance.Normal(corner.uv);
+    color = Color(normal.x, normal.y, normal.z, 1);
+}

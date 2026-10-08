@@ -42,7 +42,7 @@ frag Sky(Corner corner, out Color color)
 // A moon: lit from where the sky is brightest, and by the sky above it.
 frag Painted(Corner corner, out Color color, Instance instance, Moon moon)
 {
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 normal = instance.Normal(corner.normal);
     float lit = Math.Max(Math.Dot(normal, Math.Normalize(float3(0.45, 0.35, 0.82))), 0);
     Color above = sky.Sample(normal);
     color = Color(moon.paint.r * (0.25 + 0.75 * lit) + above.r * 0.3, moon.paint.g * (0.25 + 0.75 * lit) + above.g * 0.3,
