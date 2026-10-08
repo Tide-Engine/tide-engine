@@ -1,0 +1,15 @@
+// Numeric BoneTransform literals and defaults use ordinary GPU expressions.
+scene Main { }
+
+frag Defaults(Vertex corner, out Color color)
+{
+    BoneTransform literal = BoneTransform { };
+    BoneTransform value = default;
+    color = Color(literal.scale.x, value.rotation.value.w, literal.position.x);
+}
+
+view Picture()
+{
+    Draw.Mesh([Vertex { position = float2(0) }, Vertex { position = float2(8, 0) },
+               Vertex { position = float2(0, 8) }], [0, 1, 2], Defaults);
+}

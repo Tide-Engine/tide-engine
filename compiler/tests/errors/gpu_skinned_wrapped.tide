@@ -1,0 +1,8 @@
+// expect: Holder can't go to the GPU: the GPU runs on bools, ints, floats, vectors, matrices, colors and structs of those
+scene Main { }
+struct Holder { float amount; Pose pose; }
+frag Shade(Vertex vertex, out Color color)
+{
+    Holder value = Holder { amount = 0.5 };
+    color = Color(value.amount, 0, 0);
+}

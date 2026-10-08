@@ -56,6 +56,7 @@ export const sidebar: Group[] = [
             { text: 'Draw settings', link: '/game/draw-settings' },
             { text: 'Meshes and textures', link: '/game/meshes-and-textures' },
             { text: 'Drawing in 3D', link: '/game/3d' },
+            { text: 'Skinned meshes and animation', link: '/game/animation' },
             { text: 'Cameras and coordinates', link: '/game/cameras' },
             { text: 'Render targets', link: '/game/render-targets' },
             { text: 'Frags and verts', link: '/game/shaders' },

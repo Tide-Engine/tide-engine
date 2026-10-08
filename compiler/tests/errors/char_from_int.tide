@@ -1,0 +1,5 @@
+// expect: can't assign int to char
+// expect: char(x) makes an int the character with that code point
+scene Main { }
+singleton Seen { int n; string name = "ab"; char mark; }
+system S(mut Seen seen) { seen.mark = 65; }

@@ -259,4 +259,4 @@ input PlayerInput
 
 Every input goes through these steps before the match reads it, including this machine's, so systems can rely on them without checking again. Devices are repaired the same way, since the engine knows their ranges.
 
-An input holds numbers, bools, enums, vectors and structs of those; not text or lists. A match takes as many players as the game's `maxPlayers` setting says, 16 without one (see [Matches](../multiplayer/matches.md#how-many-players)).
+An input holds numbers, bools, chars, enums, vectors and structs of those; not text or lists. A match takes as many players as the game's `maxPlayers` setting says, 16 without one (see [Matches](../multiplayer/matches.md#how-many-players)).

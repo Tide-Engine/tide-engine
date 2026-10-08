@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "lexer.h"
+#include "skinned_language.h"
 #include "types.h"
 
 #include "tide/player.h"  // How many players a game takes without a maxPlayers setting
@@ -189,6 +190,7 @@ static const char *mangle(const str name)
 // would collide.
 static const char *make_cname(const decl *d)
 {
+    if (d->skin_kind && d->c_name) return d->c_name;
     const str ns = decl_home(d) ? decl_home(d)->ns : (str){"", 0}; // An override's is that of what it replaced
     if (d->c_suffix) { // One of several that share the name: its parameters' types go on, Damage_float_Weapon
         sb b = {0};
@@ -746,6 +748,19 @@ static bool has_scenes(const program *prog, const bool local)
     return false;
 }
 
+// A function or method that spawns is handed `tide_scene`, the scene of the
+// entity its caller runs for, which its entities join: the match's, or the
+// local world's for one that only spawns there (scene_is_local).
+static bool scene_is_local(const program *prog, const decl *m)
+{
+    return !(m->acts_spawn[0] && has_scenes(prog, false));
+}
+
+static bool takes_scene(const program *prog, const decl *m)
+{
+    return (m->acts_spawn[0] && has_scenes(prog, false)) || (m->acts_spawn[1] && has_scenes(prog, true));
+}
+
 // The scene component of archetype `a`'s entities, if they're scenes.
 static const decl *arch_scene(const gen *g, const int a)
 {
@@ -1111,19 +1126,29 @@ static const char *operator_word(const decl *m)
 }
 
 // A function that's handed the local state, `tide_l`, by the local code that
-// calls it: one that reaches this machine's files, reads Frame.dt, or reaches
-// local entities' components through its World.
+// calls it: one that reaches this machine's files, reads Frame.dt, reaches
+// local entities' components through its World, or sends, spawns and changes
+// entities on this machine as its caller would.
 static bool takes_local(const decl *m)
 {
-    return m->uses_io || m->frame_time || m->world_local || m->plays;
+    return m->uses_io || m->frame_time || m->world_local || m->plays || m->acts[1];
 }
 
 // A function or method that reaches the match's entities through its World
 // parameter, itself or through the functions it passes it on to: it's handed
 // the match's world, `tide_w`, by the code that calls it, in the World's place.
+// So is one that sends, spawns and changes entities in the match as its caller
+// would: what it records goes where the caller's own would.
 static bool takes_world(const decl *m)
 {
-    return m->world_match;
+    return m->world_match || m->acts[0];
+}
+
+// Whether the match's world a function is handed is one it changes: it sets a
+// component through its World, or records in the world's queue.
+static bool changes_world(const decl *m)
+{
+    return m->world_sets || m->acts[0];
 }
 
 // The match's seed (Random.seed), as the code being generated has it: the
@@ -1403,6 +1428,13 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
         sb_put(o, ", .ok = true})");
         return;
     }
+    if (want.kind == TY_STRUCT && have.kind == TY_STRUCT && want.decl != have.decl
+        && want.decl->skin_kind == SKIN_MESH && have.decl->skin_kind == SKIN_MESH) {
+        sb_printf(o, "tide_skin_%s_from(tide_skin_%s_to(", type_cname(want.decl), type_cname(have.decl));
+        gen_expr(g, o, e);
+        sb_put(o, "))");
+        return;
+    }
     if (want.kind == TY_TEXTURE && have.kind == TY_GRID) {
         // A grid of colors or of floats where a Texture goes: the texture it is, sampled as its declaration
         // says ([Filter], [Wrap]), which the value then carries
@@ -1411,7 +1443,7 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
         sb_printf(o, ", &%s, %uu)", grid_shape_name(have.decl), declared_sampling_bits(e));
         return;
     }
-    if (want.kind == TY_FLOAT && (have.kind == TY_INT || have.kind == TY_BYTE)) {
+    if (want.kind == TY_FLOAT && (have.kind == TY_INT || have.kind == TY_BYTE || have.kind == TY_CHAR)) {
         if (e->kind == E_INT) {
             // Same rounding as a runtime conversion, but reads as a plain literal.
             sb_printf(o, "%lld.0f", (long long)e->int_value);
@@ -1424,7 +1456,7 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
         }
         return;
     }
-    if (want.kind == TY_LONG && (have.kind == TY_INT || have.kind == TY_BYTE)) { // An int or byte widens to a long
+    if (want.kind == TY_LONG && (have.kind == TY_INT || have.kind == TY_BYTE || have.kind == TY_CHAR)) { // An int, byte or char widens to a long
         if (e->kind == E_INT) {
             gen_long_literal(o, e->int_value);
         } else if (e->kind == E_UNARY && e->op == T_MINUS && e->lhs->kind == E_INT && e->lhs->int_value >= 0) {
@@ -1551,6 +1583,7 @@ static void gen_default(gen *g, sb *o, const type t)
     switch (t.kind) {
     case TY_BOOL: sb_put(o, "false"); return;
     case TY_BYTE:
+    case TY_CHAR:
     case TY_INT: sb_put(o, "0"); return;
     case TY_LONG: sb_put(o, "0LL"); return;
     case TY_FLOAT: sb_put(o, "0.0f"); return;
@@ -1761,6 +1794,7 @@ static bool pointerable(const expr *e)
         return e->field && e->swizzle_len == 0 && !e->local_field && !e->typed_text && e->edge == EDGE_NONE && !e->c_constant
             && !e->enum_member && e->object->type.kind != TY_RENDER_TARGET && pointerable(e->object);
     case E_INDEX:
+        if (e->skin_operation == SKIN_OP_POSE_INDEX) return true;
         if (e->object->type.kind == TY_LIST || e->object->type.kind == TY_MAP) return true;
         return e->object->type.kind == TY_ARRAY && pointerable(e->object);
     default: return false;
@@ -1770,6 +1804,14 @@ static bool pointerable(const expr *e)
 // A pointer to the place `e` names (pointerable), to read through.
 static void gen_ptr(gen *g, sb *o, const expr *e)
 {
+    if (e->skin_operation == SKIN_OP_POSE_INDEX && !e->kept) {
+        sb_put(o, "tide_skin_pose_ref(");
+        gen_expr(g, o, e->object);
+        sb_put(o, ", ");
+        gen_expr(g, o, e->lhs);
+        sb_put(o, ")");
+        return;
+    }
     if (e->kind == E_INDEX && e->object->type.kind == TY_LIST && !e->kept) {
         if (g->list_caches) sb_printf(o, "tide_list%d_cat(&tide_lc[%d], ", e->object->type.decl->index, cache_slot(g, e->object));
         else sb_printf(o, "tide_list%d_at(", e->object->type.decl->index);
@@ -1846,7 +1888,7 @@ static bool under_element(const expr *e)
 {
     for (; e && (e->kind == E_MEMBER || e->kind == E_INDEX); e = e->object) {
         const type_kind k = e->kind == E_INDEX ? e->object->type.kind : TY_ERROR;
-        if (k == TY_LIST || k == TY_MAP || k == TY_GRID || k == TY_ARRAY) return true;
+        if (k == TY_LIST || k == TY_MAP || k == TY_GRID || k == TY_ARRAY || e->skin_operation == SKIN_OP_POSE_INDEX) return true;
     }
     return false;
 }
@@ -1878,7 +1920,8 @@ static void gen_element_assign(gen *g, const stmt *s, expr *left)
     VEC(const expr *) chain = {0};
     const expr *first = NULL;
     for (const expr *e = target; e->kind == E_MEMBER || e->kind == E_INDEX; e = e->object) {
-        if (e->kind == E_INDEX && (e->object->type.kind == TY_LIST || e->object->type.kind == TY_MAP || e->object->type.kind == TY_ARRAY)) first = e;
+        if (e->kind == E_INDEX && (e->object->type.kind == TY_LIST || e->object->type.kind == TY_MAP || e->object->type.kind == TY_ARRAY
+                                 || e->skin_operation == SKIN_OP_POSE_INDEX)) first = e;
     }
     for (const expr *e = target; e != first; e = e->object) vec_push(chain, e);
     line(g, o, "{");
@@ -1889,7 +1932,9 @@ static void gen_element_assign(gen *g, const stmt *s, expr *left)
     const type et = first->type;
     indent(g, o);
     sb_printf(o, "%s *tide_s0 = ", c_type(et));
-    if (holder->type.kind == TY_LIST) {
+    if (first->skin_operation == SKIN_OP_POSE_INDEX) {
+        sb_put(o, "tide_skin_pose_slot(");
+    } else if (holder->type.kind == TY_LIST) {
         if (g->list_caches) sb_printf(o, "tide_list%d_cslot(&tide_lc[%d], ", holder->type.decl->index, cache_slot(g, holder));
         else sb_printf(o, "tide_list%d_slot(", holder->type.decl->index);
     } else if (holder->type.kind == TY_MAP) {
@@ -1914,15 +1959,18 @@ static void gen_element_assign(gen *g, const stmt *s, expr *left)
     for (int i = chain.count - 1; i >= 0; i--) {
         const expr *e = chain.items[i];
         if (e->kind == E_MEMBER) {
-            sb_printf(&path, "%s%s", arrow ? "->" : ".", field_cname(e->field));
+            if (e == target && e->swizzle_len > 1) continue;
+            sb_printf(&path, "%s%s", arrow ? "->" : ".",
+                      e->field ? field_cname(e->field) : e->swizzle_len == 1 ? xyzw[e->swizzle[0]] : str_to_cstr(e->member));
             arrow = false;
             continue;
         }
         // An array's element, through a slot of its own
         n++;
         indent(g, o);
-        sb_printf(o, "%s *tide_s%d = tide_array%d_slot(%s%s, ", c_type(e->type), n, e->object->type.decl->index, arrow ? "" : "&",
-                  path.data);
+        if (e->skin_operation == SKIN_OP_POSE_INDEX)
+            sb_printf(o, "%s *tide_s%d = tide_skin_pose_slot(%s%s, ", c_type(e->type), n, arrow ? "" : "&", path.data);
+        else sb_printf(o, "%s *tide_s%d = tide_array%d_slot(%s%s, ", c_type(e->type), n, e->object->type.decl->index, arrow ? "" : "&", path.data);
         gen_expr(g, o, e->lhs);
         sb_put(o, ");\n");
         line(g, o, "if (tide_s%d) {", n);
@@ -1933,11 +1981,19 @@ static void gen_element_assign(gen *g, const stmt *s, expr *left)
         arrow = true;
     }
     indent(g, o);
-    if (arrow) sb_printf(o, "*%s = ", path.data);
+    const bool swizzle = target->kind == E_MEMBER && target->swizzle_len > 1;
+    if (swizzle) sb_printf(o, "{ %s tide_t = ", c_type(target->type));
+    else if (arrow) sb_printf(o, "*%s = ", path.data);
     else sb_printf(o, "%s = ", path.data);
     if (s->op == T_ASSIGN) gen_as(g, o, s->value, target->type);
     else gen_binary(g, o, compound_op(s->op), left, s->value, target->type, s->operator_decl);
-    sb_put(o, ";\n");
+    sb_put(o, ";");
+    if (swizzle) {
+        for (int i = 0; i < target->swizzle_len; i++)
+            sb_printf(o, " %s%s%s = tide_t.%s;", path.data, arrow ? "->" : ".", xyzw[target->swizzle[i]], xyzw[i]);
+        sb_put(o, " }");
+    }
+    sb_put(o, "\n");
     for (; opened > 0; opened--) {
         g->indent--;
         line(g, o, "}");
@@ -1968,11 +2024,15 @@ static void gen_value_of(gen *g, sb *o, expr *e, const type want)
         gen_as(g, o, e, want);
         return;
     }
+    const bool skin_convert = want.kind == TY_STRUCT && e->type.kind == TY_STRUCT && want.decl != e->type.decl
+        && want.decl->skin_kind == SKIN_MESH && e->type.decl->skin_kind == SKIN_MESH;
+    if (skin_convert) sb_printf(o, "tide_skin_%s_from(tide_skin_%s_to(", type_cname(want.decl), type_cname(e->type.decl));
     if (e->type.kind == TY_LIST) sb_printf(o, "tide_list%d_copy(", e->type.decl->index);
     else if (e->type.kind == TY_MAP || e->type.kind == TY_SET) sb_printf(o, "tide_map%d_copy(", e->type.decl->index);
     else sb_printf(o, "tide_copy_%s(", type_cname(e->type.decl));
     gen_expr(g, o, e);
     sb_put(o, ")");
+    if (skin_convert) sb_put(o, "))");
 }
 
 // The field itself, as the tide_text it is.
@@ -2019,7 +2079,8 @@ static bool same_list_place(const expr *a, const expr *b)
 
 static bool scalar_kind(const type t)
 {
-    return t.kind == TY_BOOL || t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_FLOAT || t.kind == TY_ENUM;
+    return t.kind == TY_BOOL || t.kind == TY_BYTE || t.kind == TY_CHAR || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_FLOAT
+        || t.kind == TY_ENUM;
 }
 
 // Whether working `e` out costs little and can do nothing but give its value:
@@ -2207,6 +2268,12 @@ static void gen_construct(gen *g, sb *o, const expr *e)
     expr *first = e->args.count > 0 ? e->args.items[0] : NULL;
 
     switch (e->ctor) {
+    case CTOR_CHAR: // char(n): a char given is the char it is
+        if (first->type.kind != TY_CHAR) sb_put(o, "tide_char_of(");
+        gen_expr(g, o, first);
+        if (first->type.kind != TY_CHAR) sb_put(o, ")");
+        break;
+
     case CTOR_SCALAR:
         if (t.kind == TY_BYTE) {
             sb_put(o, "(uint8_t)(");
@@ -2499,6 +2566,7 @@ static void gen_text_add_c(gen *g, sb *o, const char *so_far, const type t, cons
     case TY_MAP:
     case TY_SET: sb_printf(o, "tide_text_map%d(%s, %s)", t.decl->index, so_far, v); return;
     case TY_STRING: sb_printf(o, "tide_str_add(%s, %s)", so_far, v); return;
+    case TY_CHAR: sb_printf(o, "tide_str_add_char(%s, %s)", so_far, v); return; // The character, and nothing for the one that's none
     case TY_BYTE:
     case TY_INT: sb_printf(o, "tide_str_add_int(%s, %s, %s)", so_far, v, f); return;
     case TY_LONG: sb_printf(o, "tide_str_add_long(%s, %s, %s)", so_far, v, f); return;
@@ -2658,6 +2726,10 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
         sb_printf(o, "%stide_l", args++ ? ", " : "");
     }
     if (takes_world(m)) sb_printf(o, "%stide_w", args++ ? ", " : ""); // What its World argument stands for
+    if (takes_scene(g->prog, m)) { // What it spawns joins the scene of the entity this code runs for, when that's of the same world
+        const bool same = g->has_scene && g->scene_local == scene_is_local(g->prog, m);
+        sb_printf(o, "%s%s", args++ ? ", " : "", same ? "tide_scene" : "(tide_entity){0}");
+    }
     if (m->rolls) sb_printf(o, "%stide_dice", args++ ? ", " : ""); // The generator this code rolls with
     if (m->reads_seed) sb_printf(o, "%s%s", args++ ? ", " : "", match_seed(g));
     if (m->owner && args > 0) sb_put(o, ", "); // After what it's handed, its value
@@ -2826,6 +2898,8 @@ static bool gen_target_format(gen *g, sb *o, const expr *e, const int i)
     return true;
 }
 
+#include "skinned_codegen.inc"
+
 static void gen_expr(gen *g, sb *o, const expr *e)
 {
     if (e->hoisted) {
@@ -2842,6 +2916,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
     }
     if (e->bind == BIND_ASSET) { // Its global, set as the pack is loaded
         sb_put(o, asset_cname(e->constant));
+        return;
+    }
+    if (e->skin_operation) {
+        gen_skin_expr(g, o, e);
         return;
     }
     switch (e->kind) {
@@ -2896,6 +2974,14 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, "tide_win[");
             gen_window_index(g, o, e);
             sb_put(o, "]");
+            break;
+        }
+        if (e->object->type.kind == TY_STRING) { // name[i]: its character there, or the one that's none past either end
+            sb_put(o, "tide_str_char(");
+            gen_expr(g, o, e->object);
+            sb_put(o, ", ");
+            gen_as(g, o, e->lhs, (type){TY_INT, NULL});
+            sb_put(o, ")");
             break;
         }
         if (e->object->type.kind == TY_MAP) { // scores[key], or zero where the key isn't
@@ -3031,6 +3117,11 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         }
         break;
     case E_MEMBER: {
+        // Synthesized numeric defaults are constants without a receiver.
+        if (e->c_constant) {
+            sb_put(o, strcmp(e->c_constant, "tide_match_seed") == 0 ? match_seed(g) : e->c_constant);
+            break;
+        }
         if (e->target_colors) { // target.colors: the target, of whose color images an index reads one (E_INDEX)
             gen_expr(g, o, e->object);
             break;
@@ -3082,14 +3173,6 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         }
         if (e->enum_member) {
             sb_put(o, enum_member_cname(e->type_decl, e->enum_member));
-            break;
-        }
-        if (e->c_constant && strcmp(e->c_constant, "tide_match_seed") == 0) {
-            sb_put(o, match_seed(g)); // Random.seed
-            break;
-        }
-        if (e->c_constant) {
-            sb_put(o, e->c_constant); // quaternion.identity, Math.PI
             break;
         }
         if (e->typed_text) { // Devices.keyboard.text: the characters typed, as text
@@ -3345,6 +3428,15 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                     continue;
                 }
                 gen_as(g, o, arg, e->arg_want.items[i]);
+            }
+            if (sh->skinned) {
+                sb_put(o, ", (");
+                gen_expr(g, o, e->skin_mesh);
+                sb_put(o, ").data, (");
+                gen_expr(g, o, e->skin_pose);
+                sb_put(o, ").data, (");
+                gen_expr(g, o, e->skin_pose);
+                sb_put(o, ").transforms");
             }
             if (sh->blit && given < 3) sb_put(o, ", TIDE_BLEND_REPLACE"); // In its destination's place
             if (sh->values_type) { // What it gives its vert and frag, after their names
@@ -4208,6 +4300,7 @@ static bool writes(const expr *e)
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get"); // TryGet writes its `out` argument
     case CALL_GRID: return true; // Clear
+    case CALL_SKINNED: return e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND;
     case CALL_RANDOM: case CALL_ROLL: return true; // Each of a Random's methods steps it
     case CALL_WORLD: return str_eq_c(e->name, "TryGet"); // Its `out` argument
     default: return false;
@@ -4230,7 +4323,8 @@ static bool holds_writer(const expr *e)
         }
         return false;
     }
-    if (writes(e) || holds_writer(e->object) || holds_writer(e->lhs) || holds_writer(e->rhs) || holds_writer(e->cond)) return true;
+    if (writes(e) || holds_writer(e->object) || holds_writer(e->lhs) || holds_writer(e->rhs) || holds_writer(e->cond)
+        || holds_writer(e->skin_pose)) return true;
     for (int i = 0; i < e->args.count; i++) {
         if (holds_writer(e->args.items[i])) return true;
     }
@@ -4250,6 +4344,8 @@ static bool call_keeps_order(const expr *e)
     if ((e->call == CALL_FUNCTION || e->call == CALL_METHOD) && (e->method->draws || e->method->is_extern || e->method->calls_c || e->method->rolls)) {
         return true;
     }
+    // One that sends, spawns or changes entities records it in its turn, as the statement's own would be
+    if ((e->call == CALL_FUNCTION || e->call == CALL_METHOD) && (e->method->acts[0] || e->method->acts[1])) return true;
     return writes(e);
 }
 
@@ -4431,6 +4527,9 @@ static void call_operands(expr *e, operand_list *ops)
         case CALL_LIST:
         case CALL_GRID:
         case CALL_RANDOM: operand_push(ops, e->object, writes(e) ? PLACE : use_of(e->object)); break;
+        case CALL_SKINNED:
+            if (e->skin_operation != SKIN_OP_DECODE) operand_push(ops, e->object, writes(e) ? PLACE : TAKEN);
+            break;
         case CALL_SNAP: operand_push(ops, e->object, e->type_decl ? PLACE : TAKEN); break; // A singleton counts its snaps
         case CALL_TEXT:
         case CALL_ADD:
@@ -4443,6 +4542,10 @@ static void call_operands(expr *e, operand_list *ops)
             }
             break; // Math, Scene, GUI and the like: a name, no value
         }
+    }
+    if (e->skinned && e->written.count) {
+        for (int n = 0; n < e->written.count; n++) take(ops, e->written.items[n]);
+        return;
     }
     for (int n = 0; n < e->args.count; n++) {
         const int i = arg_in_turn(e, n);
@@ -4541,7 +4644,22 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
     case E_METHOD:
     case E_CALL: {
         call_operands(e, &ops);
-        collect_operands(out, &ops, false);
+        if (e->skinned && e->written.count) {
+            // The hidden model data and the Pose reuse operands. Capture every value in the written order,
+            // including pure calls, before expanding the model into its vertices and indices.
+            out->forced = true;
+            for (int i = 0; i < ops.count; i++) {
+                expr *arg = ops.items[i].e;
+                const int had = out->items.count;
+                collect_ordered(arg, out, false);
+                if (arg->bind == BIND_SHADER || !can_keep(arg->type)) continue;
+                if (out->items.count > had && out->items.items[out->items.count - 1].e == arg) continue;
+                const ordered_item item = {arg, true};
+                vec_push(out->items, item);
+            }
+        } else {
+            collect_operands(out, &ops, false);
+        }
         const decl *m = e->call == CALL_FUNCTION || e->call == CALL_METHOD ? e->method : NULL;
         // IsDead(Hurt(1)) in a method: the value it runs on is read as it's called
         for (int i = 0; out->strict && m && m->owner && e->kind == E_CALL && !m->is_mut_method && i < e->args.count; i++) {
@@ -4847,7 +4965,7 @@ static void hoist_unit(gen *g, expr *e, const char *name)
 // converts expressions: int to float, int vectors to float vectors.
 static void gen_c_as(sb *o, const char *text, const type have, const type want)
 {
-    if (want.kind == TY_FLOAT && (have.kind == TY_INT || have.kind == TY_BYTE)) {
+    if (want.kind == TY_FLOAT && (have.kind == TY_INT || have.kind == TY_BYTE || have.kind == TY_CHAR)) {
         sb_printf(o, "(float)(%s)", text);
     } else if (type_dim(want) >= 2 && type_dim(have) == type_dim(want) && type_is_float_based(want) && type_is_int_based(have)) {
         sb_printf(o, "tide_%s_from_%s(%s)", type_suffix(want), type_suffix(have), text);
@@ -5551,6 +5669,41 @@ static void gen_stmt(gen *g, const stmt *s)
             task_pop(g, mark);
             break;
         }
+        if (s->value->type.kind == TY_STRING) {
+            // Text: the value as the loop found it, then each character, from the byte the one before ended at, so
+            // text of any length is gone through once. As many rounds as it has characters
+            const int mark = task_mark(g);
+            const char *all = made_up(g, "all");
+            const char *at = made_up(g, "at");
+            const char *index = made_up(g, "i");
+            line(g, o, "{");
+            g->indent++;
+            line(g, o, "tide_str %s = %s;", all, expr_text(g, s->value));
+            task_declare(g, all, s->value->type);
+            line(g, o, "int32_t %s = 0;", at);
+            task_declare(g, at, (type){TY_INT, NULL});
+            line(g, o, "int32_t %s = 0;", index);
+            task_declare(g, index, (type){TY_INT, NULL});
+            line(g, o, "for (; %s < %s.chars; %s++) {", index, all, index);
+            g->indent++;
+            const int round = task_mark(g);
+            line(g, o, "%s %s = tide_str_next(%s, &%s);", elem_vtype(s->type), local_cname(g, s->name), all, at);
+            line(g, o, "(void)%s;", local_cname(g, s->name));
+            task_declare(g, local_cname(g, s->name), s->type);
+            const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false, false};
+            vec_push(g->targets, loop);
+            gen_body_stmt(g, s->then_stmt);
+            const gen_target done = g->targets.items[--g->targets.count];
+            if (done.next_used) line(g, o, "%s:;", done.next);
+            task_pop(g, round);
+            g->indent--;
+            line(g, o, "}");
+            if (done.end_used) line(g, o, "%s:;", done.end);
+            g->indent--;
+            line(g, o, "}");
+            task_pop(g, mark);
+            break;
+        }
         if (s->value->type.kind == TY_MAP || s->value->type.kind == TY_SET) {
             gen_map_foreach(g, s);
             break;
@@ -5750,6 +5903,17 @@ static void gen_stmt(gen *g, const stmt *s)
         }
         if (via_element_member(target)) { // rows[i].x = v, rings[b].cells[j] = v: into the element's slot
             gen_element_assign(g, s, left);
+            break;
+        }
+        if (target->skin_operation == SKIN_OP_POSE_INDEX) {
+            indent(g, o);
+            sb_put(o, "{ tide_bone_transform *tide_to = tide_skin_pose_slot(&(");
+            gen_expr(g, o, target->object);
+            sb_put(o, "), ");
+            gen_expr(g, o, target->lhs);
+            sb_put(o, "); if (tide_to) *tide_to = ");
+            gen_as(g, o, s->value, target->type);
+            sb_put(o, "; }\n");
             break;
         }
         if (target->kind == E_INDEX && (target->object->type.kind == TY_GRID || target->object->type.kind == TY_LIST)
@@ -5966,7 +6130,7 @@ static void gen_stmt(gen *g, const stmt *s)
         } else if (s->value->call == CALL_METHOD || s->value->call == CALL_FUNCTION || s->value->call == CALL_DRAW
                    || s->value->call == CALL_GUI || s->value->call == CALL_LIST || s->value->call == CALL_MAP
                    || s->value->call == CALL_GRID || s->value->call == CALL_WORLD || s->value->call == CALL_AUDIO
-                   || s->value->call == CALL_BUILTIN) { // Debug.Log(...), Debug.Assert(...)
+                   || s->value->call == CALL_SKINNED || s->value->call == CALL_BUILTIN) { // Debug.Log(...), Debug.Assert(...)
             indent(g, o);
             gen_expr(g, o, s->value);
             sb_put(o, ";\n");
@@ -6335,6 +6499,8 @@ static void gen_task_tables(gen *g, const bool local)
 
 static bool program_has_clips(const program *prog);
 static bool array_unwritten(const program *prog, const decl *a);
+static const decl *asset_vertex(type t);
+static const char *mesh_layout(gen *g, const decl *vertex);
 
 static bool program_uses_io(const program *prog)
 {
@@ -6363,6 +6529,26 @@ static void gen_header(gen *g)
     }
     if (program_uses_io(prog)) sb_put(o, "#define TIDE_HAS_IO 1\n\n");
     if (prog->assets.count) sb_put(o, "#define TIDE_HAS_ASSETS 1\n\n");
+    if (prog->skinned_types.count) sb_put(o, "#include \"tide/skinned.h\"\n\n");
+    for (int i = 0; i < prog->assets.count; i++) {
+        const decl *asset = prog->assets.items[i];
+        if (asset->asset_kind != ASSET_SKINNED || !asset->asset) continue;
+        const decl *vertex = asset_vertex(asset->return_type);
+        const char *layout = mesh_layout(g, vertex);
+        for (int k = 0; k < asset->asset->count; k++) {
+            const asset_match *item = &asset->asset->items[k];
+            tide_sha256 hash;
+            uint8_t content[32];
+            tide_sha256_init(&hash);
+            if (asset->asset->is_map) tide_sha256_add(&hash, item->key, strlen(item->key));
+            tide_sha256_add(&hash, item->skinned, item->skinned_size);
+            tide_sha256_add(&hash, layout, strlen(layout));
+            tide_sha256_end(&hash, content);
+            sb_printf(o, "// Model content " STR_FMT " item %d: ", STR_ARG(asset->qualified), k);
+            for (int byte = 0; byte < 32; byte++) sb_printf(o, "%02x", content[byte]);
+            sb_put(o, "\n");
+        }
+    }
     if (prog->uses_audio) sb_put(o, "#define TIDE_HAS_AUDIO 1\n\n");
     sb_put(o, "#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n\n");
     if (program_has_clips(prog) || prog->sound->named || prog->uses_microphone) sb_put(o, "#include \"tide/audio.h\"\n");
@@ -6400,7 +6586,8 @@ static void gen_header(gen *g)
     if (prog->structs.count > 0) sb_put(o, "// Structs, each after the ones it contains\n\n");
     for (int i = 0; i < prog->structs.count; i++) {
         // Random is tide/random.h's, and Sound is in generated C only for a game that names it
-        if (prog->structs.items[i] != prog->random && !builtin_struct_unnamed(prog, prog->structs.items[i]))
+        if (prog->structs.items[i] != prog->random && prog->structs.items[i]->skin_kind != SKIN_TRANSFORM
+            && !builtin_struct_unnamed(prog, prog->structs.items[i]))
             gen_type(g, o, prog->structs.items[i]);
         struct_done[i] = true;
         gen_array_types(g, o, array_done, struct_done); // Of that struct, and of those
@@ -6881,7 +7068,7 @@ static void gen_list_helpers(gen *g, const bool bodies)
         const bool paths = prog->lists.items[k]->paths; // rows[i].x: read through a pointer at the element
         char held[32] = "";
         if (container) snprintf(held, sizeof held, "tide_%s%d", e.kind == TY_LIST ? "list" : "map", e.decl->index);
-        const bool compares = e.kind == TY_BYTE || e.kind == TY_INT || e.kind == TY_LONG || e.kind == TY_FLOAT || e.kind == TY_BOOL || e.kind == TY_ENUM
+        const bool compares = e.kind == TY_BYTE || e.kind == TY_CHAR || e.kind == TY_INT || e.kind == TY_LONG || e.kind == TY_FLOAT || e.kind == TY_BOOL || e.kind == TY_ENUM
                            || e.kind == TY_ENTITY || e.kind == TY_LOCAL_ENTITY || e.kind == TY_PLAYER || e.kind == TY_STRING;
         if (!bodies) {
             sb_printf(o, "// List<%s>\n", type_name(e));
@@ -7371,10 +7558,12 @@ static void gen_text_helpers(gen *g)
     gen_grid_helpers(g);
     // The program's value types, the local parts of the match's components and
     // singletons, then the maps' entries (what a foreach gives)
-    const int parts = prog->decls.count + prog->local_parts.count;
+    const int models = prog->decls.count + prog->skinned_types.count;
+    const int parts = models + prog->local_parts.count;
     for (int i = 0; i < parts + prog->maps.count; i++) {
         const decl *d = i < prog->decls.count ? prog->decls.items[i]
-                      : i < parts             ? prog->local_parts.items[i - prog->decls.count]
+                      : i < models            ? prog->skinned_types.items[i - prog->decls.count]
+                      : i < parts             ? prog->local_parts.items[i - models]
                                               : prog->maps.items[i - parts]->entry;
         if (!d) continue;
         const bool value_type = d->kind == DECL_STRUCT || d->kind == DECL_COMPONENT || d->kind == DECL_SINGLETON
@@ -7452,6 +7641,10 @@ static void gen_show_part(gen *g, sb *o, const type t, const char *v)
     if (t.kind == TY_STRING) {
         sb_printf(o, "    a = tide_str_add_cstr(a, \"\\\"\");\n    a = tide_str_add(a, %s);\n", v);
         sb_put(o, "    a = tide_str_add_cstr(a, \"\\\"\");\n");
+        return;
+    }
+    if (t.kind == TY_CHAR) { // In its quotes, so the one that's no character still shows: '\0'
+        sb_printf(o, "    a = tide_str_add_char_quoted(a, %s);\n", v);
         return;
     }
     sb_put(o, "    a = ");
@@ -7986,6 +8179,7 @@ static void gen_prelude(gen *g)
     sb_printf(o, "// Generated by tidec from %s. Do not edit.\n\n", g->from);
     sb_printf(o, "#include \"%s.h\"\n\n", g->opts->name);
     if (g->prog->assets.count) sb_put(o, "#include \"tide/pack.h\"\n");
+    if (g->prog->skinned_types.count) sb_put(o, "#include \"tide/skinned_data.h\"\n");
     sb_put(o, "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n");
     sb_put(o, "// Determinism: never fuse a*b + c, whatever flags this file is built with.\n");
     sb_put(o, "#pragma STDC FP_CONTRACT OFF\n\n");
@@ -9464,7 +9658,7 @@ static capture_list par_captures(gen *g, const decl *sys, const stmt *loop)
 static bool flat_list_value(const type t)
 {
     switch (t.kind) {
-    case TY_BOOL: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4:
+    case TY_BOOL: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4:
     case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4: case TY_QUATERNION:
     case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_COLOR: case TY_RECT:
     case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_ENUM: return true;
@@ -9654,7 +9848,7 @@ static capture_list sort_captures(gen *g, const expr *sort)
         }
     } else if (fn) {
         if (takes_local(fn)) capture(&out, "tide_local *", "tide_l");
-        if (takes_world(fn)) capture(&out, fn->world_sets ? "tide_world *" : "const tide_world *", "tide_w");
+        if (takes_world(fn)) capture(&out, changes_world(fn) ? "tide_world *" : "const tide_world *", "tide_w");
         if (fn->reads_seed) capture(&out, "int32_t", "tide_match_seed");
         if (fn->draws) {
             capture(&out, "tide_draw_list *", "tide_draw");
@@ -11576,7 +11770,8 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
     if (takes_local(m)) {
         sb_printf(o, "%stide_local *tide_l", n++ ? ", " : "");
     }
-    if (takes_world(m)) sb_printf(o, "%s%stide_world *tide_w", n++ ? ", " : "", m->world_sets ? "" : "const ");
+    if (takes_world(m)) sb_printf(o, "%s%stide_world *tide_w", n++ ? ", " : "", changes_world(m) ? "" : "const ");
+    if (takes_scene(g->prog, m)) sb_printf(o, "%stide_entity tide_scene", n++ ? ", " : "");
     if (m->rolls) sb_printf(o, "%stide_random *tide_dice", n++ ? ", " : "");
     if (m->reads_seed) sb_printf(o, "%sconst int32_t tide_match_seed", n++ ? ", " : "");
     if (m->owner && !m->is_operator && !m->is_interpolate) {
@@ -11619,6 +11814,9 @@ static void gen_routine(gen *g, const decl *m)
     g->routine = m;
     g->spawn_temps = 0;
     g->call_temps = 0;
+    g->has_scene = takes_scene(g->prog, m);
+    g->scene_local = scene_is_local(g->prog, m);
+    if (g->has_scene) line(g, o, "(void)tide_scene;");
     if (m->owner && !m->is_operator && !m->is_interpolate) line(g, o, "(void)tide_self;");
     if (m->owner && m->is_mut_method) line(g, o, "(void)tide_self_where;");
     if (m->uses_this) line(g, o, "(void)tide_this;");
@@ -11650,6 +11848,7 @@ static void gen_routine(gen *g, const decl *m)
     // A function that can fail and returns nothing succeeds at its end.
     if (m->result.kind == TY_FAILABLE && m->return_type.kind == TY_VOID) line(g, o, "return (%s){.ok = true};", c_type(m->result));
     g->routine = NULL;
+    g->has_scene = false;
     g->indent = 0;
     sb_put(o, "}\n");
     line_reset(g);
@@ -12292,10 +12491,11 @@ static bool has_floats(const type t)
 }
 
 // Whether a type holds enums, which input from other machines could set to a
-// value that isn't one of their members.
+// value that isn't one of their members, or chars, which it could set to a
+// number that's no character's.
 static bool has_enums(const type t)
 {
-    if (t.kind == TY_ENUM) return true;
+    if (t.kind == TY_ENUM || t.kind == TY_CHAR) return true;
     if (t.kind != TY_STRUCT && t.kind != TY_ARRAY) return false;
     for (int i = 0; i < t.decl->fields.count; i++) {
         if (has_enums(t.decl->fields.items[i].type)) return true;
@@ -12365,6 +12565,8 @@ static void gen_repair_value(gen *g, const char *in, const char *def, const type
             sb_printf(&g->c, " case %s:", enum_member_cname(t.decl, &t.decl->members.items[i]));
         }
         sb_printf(&g->c, " break; default: %s = %s; break; }\n", in, def);
+    } else if (t.kind == TY_CHAR) { // A number no character has, which char(n) never gives
+        line(g, &g->c, "if (tide_char_of(%s) != %s) %s = %s;", in, in, in, def);
     } else if (t.kind == TY_FLOAT) {
         line(g, &g->c, "if (!tide_is_finite_f(%s)) %s = %s;", in, in, def);
     } else if (columns > 0) {
@@ -13953,6 +14155,7 @@ static void gen_print_value(sb *o, const type t, const char *access)
     case TY_SET: sb_printf(o, "        printf(\"%s(%%d)\", (int)tide_map_count(%s));\n", t.kind == TY_SET ? "Set" : "Map", access); return;
     case TY_BOOL: sb_printf(o, "        printf(\"%%s\", %s ? \"true\" : \"false\");\n", access); return;
     case TY_BYTE:
+    case TY_CHAR:
     case TY_INT: sb_printf(o, "        printf(\"%%d\", (int)%s);\n", access); return;
     case TY_LONG: sb_printf(o, "        printf(\"%%lld\", (long long)%s);\n", access); return;
     case TY_FLOAT: sb_printf(o, "        printf(\"%%g\", (double)%s);\n", access); return;
@@ -14063,7 +14266,8 @@ static bool program_has_clips(const program *prog)
 static const decl *asset_vertex(const type t)
 {
     const type inner = t.kind == TY_LIST ? list_elem(t.decl) : t.kind == TY_MAP ? t.decl->fields.items[1].type : t;
-    return inner.kind == TY_MESH ? inner.decl->fields.items[0].type.decl : NULL;
+    return inner.kind == TY_MESH ? inner.decl->fields.items[0].type.decl
+         : inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_MESH ? inner.decl->skin_vertex.decl : NULL;
 }
 
 // Which of a mesh file's values a vertex's field is filled from, by its name: 0 for a field no file fills.
@@ -14077,6 +14281,8 @@ static int mesh_fills(const field *f)
     }
     return FILL_NONE;
 }
+
+#include "skinned_adapters.inc"
 
 // How a Mesh asset's vertices are laid out in the pack, as text: the
 // struct's size, each field's name, type and place, and the struct's
@@ -14114,6 +14320,9 @@ static uint32_t mesh_layout_number(gen *g, const decl *vertex)
 
 static uint32_t asset_pack_kind(const type t)
 {
+    const type inner = t.kind == TY_LIST ? list_elem(t.decl) : t.kind == TY_MAP ? t.decl->fields.items[1].type : t;
+    if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_MESH)
+        return t.kind == TY_LIST ? TIDE_PACK_SKINNEDS : t.kind == TY_MAP ? TIDE_PACK_SKINNED_MAP : TIDE_PACK_SKINNED;
     if (asset_vertex(t)) return t.kind == TY_MESH ? TIDE_PACK_MESH : t.kind == TY_LIST ? TIDE_PACK_MESH_LIST : TIDE_PACK_MESHES;
     if (t.kind == TY_STRING) return TIDE_PACK_TEXT;
     if (t.kind == TY_GRID) return TIDE_PACK_GRID;
@@ -14132,7 +14341,7 @@ static const char *asset_ctype(const type t)
 {
     return t.kind == TY_STRING ? "tide_str" : t.kind == TY_GRID ? "tide_grid" : t.kind == TY_TEXTURE ? "tide_texture_ref"
          : t.kind == TY_CUBEMAP ? "tide_cubemap_ref" : t.kind == TY_CLIP ? "tide_clip_ref" : t.kind == TY_MAP ? "tide_map"
-         : t.kind == TY_MESH ? "tide_mesh_lists" : "tide_list";
+         : t.kind == TY_MESH ? "tide_mesh_lists" : t.kind == TY_STRUCT ? c_type(t) : "tide_list";
 }
 
 static void gen_assets(gen *g)
@@ -14147,20 +14356,46 @@ static void gen_assets(gen *g)
     }
     sb_put(o, "\nstatic void tide_asset_missing(const char *name)\n{\n"
               "    fprintf(stderr, \"tide: the pack has no '%s', so the game reads it as empty: it was made for another build\\n\", name);\n}\n\n"
-              "bool tide_assets_load(const uint8_t *pack, const size_t size)\n{\n"
-              "    if (!tide_pack_load(pack, size)) return false;\n"
-              "    const tide_pack_entry *e;\n");
+              "bool tide_assets_load(const uint8_t *pack, const size_t size)\n{\n");
+    // Match code can sample these bytes, so a pack-only reload must retain
+    // the content this build checked and included in its compatibility hash.
+    for (int i = 0; i < prog->assets.count; i++) {
+        const decl *d = prog->assets.items[i];
+        if (d->asset_kind != ASSET_SKINNED || !d->asset) continue;
+        const asset_value *v = d->asset;
+        sb_put(o, "    { static const uint8_t expected[] = {");
+        if (!v->count) sb_put(o, "0");
+        for (int k = 0; k < v->count; k++) {
+            uint8_t hash[32];
+            tide_sha256 content;
+            tide_sha256_init(&content);
+            if (v->is_map) tide_sha256_add(&content, v->items[k].key, strlen(v->items[k].key));
+            tide_sha256_add(&content, v->items[k].skinned, v->items[k].skinned_size);
+            tide_sha256_end(&content, hash);
+            for (int n = 0; n < 32; n++) sb_printf(o, "%s0x%02x", k || n ? "," : "", (unsigned)hash[n]);
+        }
+        sb_printf(o, "};\n      if (!tide_pack_skinned_content(pack, size, \"" STR_FMT "\", %uu, 0x%08xu, expected, %uu)) {\n"
+                     "          fprintf(stderr, \"tide: skinned asset '" STR_FMT "' requires its matching game build\\n\");\n"
+                     "          return false;\n      } }\n", STR_ARG(d->qualified), (unsigned)asset_pack_kind(d->return_type),
+                  (unsigned)mesh_layout_number(g, asset_vertex(d->return_type)), (unsigned)v->count, STR_ARG(d->qualified));
+    }
+    sb_put(o, "    if (!tide_pack_load(pack, size)) return false;\n    const tide_pack_entry *e;\n");
     for (int i = 0; i < prog->assets.count; i++) {
         const decl *d = prog->assets.items[i];
         const uint32_t kind = asset_pack_kind(d->return_type);
         const decl *vertex = asset_vertex(d->return_type);
+        const bool skinned = d->asset_kind == ASSET_SKINNED;
         if (vertex) { // A Mesh, or a glob's: under its name and its vertices' layout, read where the pack has it
             sb_printf(o, "    e = tide_pack_find_mesh(\"" STR_FMT "\", %uu, 0x%08xu);\n    if (!e) tide_asset_missing(\"" STR_FMT "\");\n",
                       STR_ARG(d->qualified), (unsigned)kind, (unsigned)mesh_layout_number(g, vertex), STR_ARG(d->qualified));
-            if (d->return_type.kind == TY_MESH) {
+            if (skinned && d->return_type.kind == TY_STRUCT) {
+                sb_printf(o, "    { const tide_skinned_lists v = tide_pack_skinned_of(e, (uint32_t)sizeof(%s));\n"
+                             "      %s = (%s){.data = v.data, .vertices = v.vertices, .indices = v.indices}; }\n",
+                          type_cname(vertex), asset_cname(d), c_type(d->return_type));
+            } else if (d->return_type.kind == TY_MESH) {
                 sb_printf(o, "    %s = tide_pack_mesh_of(e, (uint32_t)sizeof(%s));\n", asset_cname(d), type_cname(vertex));
             } else if (d->return_type.kind == TY_MAP) {
-                sb_printf(o, "    %s = tide_pack_mesh_map_of(e);\n", asset_cname(d));
+                sb_printf(o, "    %s = tide_pack_%s_map_of(e);\n", asset_cname(d), skinned ? "skinned" : "mesh");
             } else {
                 sb_printf(o, "    %s = (tide_list){tide_pack_handle(e)};\n", asset_cname(d));
             }
@@ -14200,9 +14435,9 @@ static void gen_assets(gen *g)
                   type_cname(vertex));
         gen_value(g, o, vertex, NULL, 0);
         sb_printf(o, ";\n        for (uint32_t tide_k = 0;; tide_k++) {\n            uint32_t tide_n;\n"
-                     "            %s *tide_v = tide_pack_mesh_open(e, tide_k, (uint32_t)sizeof(%s), &tide_n);\n"
+                     "            %s *tide_v = tide_pack_%s_open(e, tide_k, (uint32_t)sizeof(%s), &tide_n);\n"
                      "            if (!tide_v) break;\n            for (uint32_t tide_i = 0; tide_i < tide_n; tide_i++) {\n",
-                  type_cname(vertex), type_cname(vertex));
+                  type_cname(vertex), d->asset_kind == ASSET_SKINNED ? "skinned" : "mesh", type_cname(vertex));
         for (int k = 0; k < vertex->fields.count; k++) {
             const field *f = &vertex->fields.items[k];
             if (mesh_fills(f) != FILL_NONE || !declared_default(f)) continue;
@@ -14350,19 +14585,33 @@ static bool write_pack(gen *g)
         const char *qualified = str_to_cstr(d->qualified);
         const uint32_t kind = asset_pack_kind(t);
         const decl *vertex = asset_vertex(t);
-        if (v->kind == ASSET_MESH && vertex) { // Its vertices and its triangles, as lists; a glob's, a list or a map of those
+        if ((v->kind == ASSET_MESH || v->kind == ASSET_SKINNED) && vertex) {
+            const bool skinned = v->kind == ASSET_SKINNED;
+            const int stride = skinned ? 3 : 2;
             const uint32_t laid = mesh_layout_number(g, vertex);
             if (!v->many) {
-                uint32_t at[2];
-                pack_mesh(g, &b, &v->items[0], vertex, at);
-                tide_pack_name(&b, qualified, kind, at[0], at[1], laid);
+                uint32_t at[3];
+                pack_mesh(g, &b, &v->items[0], vertex, at + (skinned ? 1 : 0));
+                if (skinned) {
+                    uint8_t hash[32];
+                    uint32_t chars;
+                    tide_sha256_of(v->items[0].skinned, v->items[0].skinned_size, hash);
+                    at[0] = tide_pack_bytes(&b, hash, v->items[0].skinned, v->items[0].skinned_size, &chars);
+                    tide_pack_name(&b, qualified, kind, tide_pack_skinned_list(&b, at, 1u), 1u, laid);
+                } else tide_pack_name(&b, qualified, kind, at[0], at[1], laid);
                 continue;
             }
-            uint32_t *meshes = malloc(sizeof(uint32_t) * 2u * (size_t)(v->count ? v->count : 1));
+            uint32_t *meshes = malloc(sizeof(uint32_t) * (size_t)stride * (size_t)(v->count ? v->count : 1));
             uint32_t *names = malloc(sizeof(uint32_t) * (size_t)(v->count ? v->count : 1));
             if (!meshes || !names) abort();
             for (int k = 0; k < v->count; k++) {
-                pack_mesh(g, &b, &v->items[k], vertex, meshes + 2 * k);
+                pack_mesh(g, &b, &v->items[k], vertex, meshes + stride * k + (skinned ? 1 : 0));
+                if (skinned) {
+                    uint8_t hash[32];
+                    uint32_t chars;
+                    tide_sha256_of(v->items[k].skinned, v->items[k].skinned_size, hash);
+                    meshes[stride * k] = tide_pack_bytes(&b, hash, v->items[k].skinned, v->items[k].skinned_size, &chars);
+                }
                 if (!v->is_map) continue;
                 uint8_t hash[32];
                 uint32_t chars;
@@ -14371,10 +14620,13 @@ static bool write_pack(gen *g)
             }
             if (v->is_map) {
                 uint32_t index;
-                const uint32_t at = tide_pack_mesh_map(&b, names, meshes, (uint32_t)v->count, &index);
+                const uint32_t at = skinned ? tide_pack_skinned_map(&b, names, meshes, (uint32_t)v->count, &index)
+                                           : tide_pack_mesh_map(&b, names, meshes, (uint32_t)v->count, &index);
                 tide_pack_name(&b, qualified, kind, at, index, laid);
             } else {
-                tide_pack_name(&b, qualified, kind, tide_pack_mesh_list(&b, meshes, (uint32_t)v->count), (uint32_t)v->count, laid);
+                const uint32_t at = skinned ? tide_pack_skinned_list(&b, meshes, (uint32_t)v->count)
+                                           : tide_pack_mesh_list(&b, meshes, (uint32_t)v->count);
+                tide_pack_name(&b, qualified, kind, at, (uint32_t)v->count, laid);
             }
             free(meshes);
             free(names);
@@ -14806,7 +15058,7 @@ static bool write_file(const char *path, const sb *b)
 typedef enum bits_mode { BITS_WRITE, BITS_READ, BITS_WRITE_DELTA, BITS_READ_DELTA } bits_mode;
 
 // Packs or unpacks one value of an input, `in->` `at`, as bits: bools take
-// one, floats 32, byte and ushort enums 8 and 16, ints, other enums, players
+// one, floats 32, chars 21, byte and ushort enums 8 and 16, ints, other enums, players
 // and entities a varint (zig-zagged where it can be negative), which small
 // numbers keep short, and a button of the devices whether it's held. As a
 // delta from `base->` `at`, a bool is whether it flipped, and anything else
@@ -14834,6 +15086,10 @@ static void gen_bits(gen *g, const char *at, const type t, const bits_mode mode,
         width = 8;
         put = "(uint32_t)%s";
         get = "(uint8_t)tide_bits_get(&b, 8)";
+    } else if (t.kind == TY_CHAR) { // A code point: 21 bits hold the highest, U+10FFFF
+        width = 21;
+        put = "(uint32_t)%s";
+        get = "(int32_t)tide_bits_get(&b, 21)";
     } else if (t.kind == TY_ENUM && (t.decl->width == 1 || t.decl->width == 2)) { // A byte or a ushort: 8 or 16 bits
         width = 8 * t.decl->width;
         put = "(uint32_t)%s";
@@ -14913,7 +15169,7 @@ static void gen_bits(gen *g, const char *at, const type t, const bits_mode mode,
         else if (mode == BITS_WRITE_DELTA) line(g, o, "tide_bits_put_bool(&b, in->%s != base->%s);", at, at);
         else line(g, o, "in->%s = base->%s != tide_bits_get_bool(&b);", at, at);
         *bits += 1;
-    } else if (t.kind == TY_FLOAT || t.kind == TY_BYTE || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_ENUM) {
+    } else if (t.kind == TY_FLOAT || t.kind == TY_BYTE || t.kind == TY_CHAR || t.kind == TY_INT || t.kind == TY_LONG || t.kind == TY_ENUM) {
         char now[600];
         char was[600];
         const bool wide = t.kind == TY_LONG;
@@ -16577,7 +16833,7 @@ static void gen_shader_value(sb *o, const char *to, const type t, const char *ac
         *i += dim;
     } else if (t.kind == TY_BOOL) {
         sb_printf(o, "    %s.i[%d] = %s ? 1 : 0;\n", to, (*i)++, access);
-    } else if (t.kind == TY_ENUM) {
+    } else if (t.kind == TY_ENUM || t.kind == TY_CHAR) { // An int there: a member's number, a character's code point
         sb_printf(o, "    %s.i[%d] = (int32_t)%s;\n", to, (*i)++, access);
     } else if (t.kind == TY_ARRAY) {
         for (int k = 0; k < t.decl->array_length; k++) {
@@ -16706,7 +16962,7 @@ static void gen_shaders(gen *g)
         // as shader.c reads them back (need_list)
         for (int t = 0; t < sh->textures.count; t++) {
             const shader_texture *texture = &sh->textures.items[t];
-            if (texture->read != READ_DATA) continue;
+            if (texture->read != READ_DATA || texture->skin) continue;
             // A map's or a set's are its entries as it stores them: a map's as its key and its value, a set's as its key
             const decl *map = !texture->asset && (texture->field->type.kind == TY_MAP || texture->field->type.kind == TY_SET)
                             ? texture->field->type.decl : NULL;
@@ -16736,6 +16992,7 @@ static void gen_shaders(gen *g)
         if (sh->instanced) sb_put(o, ", tide_list tide_items");
         else if (sh->dims == 3) sb_put(o, ", tide_float4x4 tide_transform");
         if (sh->direct_texture || sh->textured) sb_put(o, ", tide_texture_ref tide_texture");
+        if (sh->skinned) sb_put(o, ", tide_list tide_model_data, tide_list tide_pose_data, tide_list tide_pose_transforms");
         if (sh->blit) sb_put(o, ", tide_render_target tide_destination, int32_t tide_over");
         if (sh->values_type) sb_printf(o, ", %s tide_values", type_cname(sh->values_type));
         for (int b = 0; b < sh->bound.count; b++) {
@@ -16811,11 +17068,23 @@ static void gen_shaders(gen *g)
                       "               &tide_instance, sizeof tide_instance);\n    }\n");
         }
         sb_put(o, "    uint32_t tide_textures[TIDE_SHADER_TEXTURES] = {0};\n");
+        if (sh->skinned) {
+            sb_put(o, "    uint32_t tide_skin_textures[2];\n    int32_t tide_skin_info[3];\n"
+                      "    if (!tide_skinned_compatible(tide_model_data, tide_pose_data)\n"
+                      "        || !tide_draw_skinned_data(tide_draw, tide_model_data, tide_pose_transforms, tide_skin_textures, tide_skin_info)) return;\n");
+        }
         // What's read as the Texture it's given says: that texture's filter's and wrap's bits, for the draw's own
         // (a shader with no frag) all of it, and for a Sample what it leaves unsaid of a Texture that's no asset's
         sb carried = {0};
         for (int t = 0; t < sh->textures.count; t++) {
             const shader_texture *texture = &sh->textures.items[t];
+            if (texture->skin) {
+                const int slot = texture->skin - 1;
+                sb_printf(o, "    tide_textures[%d] = tide_skin_textures[%d];\n", t, slot);
+                sb_printf(o, "    tide_uniforms.i[%d] = tide_skin_info[%d];\n", texture->count_at, slot);
+                if (slot == 1) sb_printf(o, "    tide_uniforms.i[%d] = tide_skin_info[2];\n", texture->count_at + 1);
+                continue;
+            }
             const bool own = sh->textured && !texture->source && !texture->asset && !texture->direct; // The draw's own
             const bool given = own || (texture->read == READ_COLOR && !texture->asset
                                        && (texture->direct || (texture->field && texture->field->type.kind == TY_TEXTURE)));
@@ -16985,6 +17254,9 @@ bool codegen(program *prog, const codegen_options *opts)
         setting_text(opts->info->version, sizeof opts->info->version, prog->version);
         opts->info->bold = prog->names_bold;
         opts->info->microphone = prog->uses_microphone;
+        opts->info->assets_affect_match = false;
+        for (int i = 0; i < prog->assets.count; i++)
+            opts->info->assets_affect_match |= prog->assets.items[i]->asset_kind == ASSET_SKINNED;
     }
     gen g = {0};
     g.prog = prog;
@@ -17074,6 +17346,7 @@ bool codegen(program *prog, const codegen_options *opts)
     gen_io_adapters(&g);
     gen_array_helpers(&g);
     gen_text_helpers(&g);
+    gen_skinned_adapters(&g);
     gen_show_helpers(&g);
     gen_columns(&g);
     gen_component_access(&g);

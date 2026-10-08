@@ -842,6 +842,7 @@ struct Rest
     float4 simplexes;
     float4 cells;
     float4 steps;     // ++ and -- as values: a variable's value after it changed, or before
+    float4 chars;     // Chars, ints there: what they compare and add to, a switch on one, and char(n)
 }
 
 local singleton Probe
@@ -1069,6 +1070,25 @@ Rest RestOf(Given given)
     float after = ++count * 2;
     float before = level-- + 0.5;
     rest.steps = float4(after, before, count, level);
+
+    // A char is its code point, an int on the GPU: char(n) of a number no character has is the one that's none
+    char letter = char(given.quad.w + given.one);
+    char past = char(given.cell.z);
+    char under = char(given.big);
+    char half = char(given.quad.y - 9000);
+    float widened = letter;
+    mut var kind = 0;
+    switch (letter)
+    {
+        case 'd':
+            kind = 4;
+            break;
+        default:
+            kind = 9;
+            break;
+    }
+    rest.chars = float4(widened + (letter > 'a' ? 0.5 : 0), kind + (letter - 'a'), int(past) + int(under) + int(half) + 1,
+                        char(given.quad.y) == char(65536) ? 2 : 3);
     return rest;
 }
 
@@ -1080,6 +1100,7 @@ bool SameRest(Rest a, Rest b)
     same = same && Close4(a.none, b.none) && Close4(a.turnedPowers, b.turnedPowers) && Close4(a.corners, b.corners);
     same = same && Close4(a.edges, b.edges) && Close2(a.wrong, b.wrong);
     same = same && Close4(a.perlins, b.perlins) && Close4(a.simplexes, b.simplexes) && Close4(a.cells, b.cells) && Close4(a.steps, b.steps);
+    same = same && Close4(a.chars, b.chars);
     return same && a.wrongInts.x == b.wrongInts.x && a.wrongInts.y == b.wrongInts.y;
 }
 
@@ -1257,6 +1278,8 @@ view Start(mut Art art, mut Probe probe)
         Debug.Assert(probe.hashes.halves == Math.Hash(whole), "a long's hash is its halves', as an int2");
         Debug.Assert(probe.rest.bad.x == 2 && probe.rest.bad.y == 2 && probe.rest.bad.z == 1 && probe.rest.bad.w == 0,
                      "Min and Max of a NaN and a number are the number, and Clamp of a NaN its lower bound");
+        Debug.Assert(probe.rest.chars.x == 100.5 && probe.rest.chars.y == 7 && probe.rest.chars.z == 1 && probe.rest.chars.w == 2,
+                     "a char is its code point, and char(n) the one that's none for a number no character has");
 
         // A square around the origin, its uv (0, 0) at its top left corner
         art.quad = [Corner3 { position = float3(-12, 12, 0), normal = float3(1, 0, 0), color = Color.yellow, kind = 3 },

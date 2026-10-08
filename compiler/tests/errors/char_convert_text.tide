@@ -1,0 +1,5 @@
+// expect: char(...) converts an int, a character's code point, not string
+// expect: a text's character is 'text[i]', counting from 0
+scene Main { }
+singleton Seen { int n; string name = "ab"; char mark; }
+system S(mut Seen seen) { seen.mark = char(seen.name); }

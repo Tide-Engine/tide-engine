@@ -1,12 +1,12 @@
 // Package-level cache correctness, with real native/web compilation.
-// node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--gpu] [--keep]
+// node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only] [--gpu] [--keep]
 // Copies the installation before changing headers or compiler timestamps.
 import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
-const opts = { tide: null, web: false, gpu: false, keep: false };
+const opts = { tide: null, web: false, watchOnly: false, gpu: false, keep: false };
 for (let i = 2; i < process.argv.length; i++) {
     if (process.argv[i] === "--tide") {
         const value = process.argv[++i];
@@ -14,10 +14,11 @@ for (let i = 2; i < process.argv.length; i++) {
         opts.tide = resolve(value);
     }
     else if (process.argv[i] === "--web") opts.web = true;
+    else if (process.argv[i] === "--watch-only") opts.watchOnly = true;
     else if (process.argv[i] === "--gpu") opts.gpu = true;
     else if (process.argv[i] === "--keep") opts.keep = true;
     else if (process.argv[i] === "--help") {
-        console.log("Usage: node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--gpu] [--keep]");
+        console.log("Usage: node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only] [--gpu] [--keep]");
         process.exit(0);
     } else throw new Error(`unknown option ${process.argv[i]}`);
 }
@@ -93,15 +94,16 @@ async function webRunTest(tide, root) {
     mkdirSync(game);
     const source = join(game, "game.tide");
     const c = join(game, "native.c");
-    const tideText = "scene Main { }\nsingleton State { int value; }\nextern int Native(int value);\nsystem Update(mut State state) { state.value = Native(state.value) + 1; }\n";
+    const tideText = "scene Main { }\nasset string message = \"message.txt\";\nsingleton State { int value; }\nextern int Native(int value);\nsystem Update(mut State state) { state.value = Native(state.value) + 1; }\n";
     put(source, tideText);
+    put(join(game, "message.txt"), "before");
     put(c, "int Native(int value) { return value + 1; }\n");
     const child = spawn(tide, ["run", game, "--web", "--no-open", "--seed", "7"],
         { cwd: game, env, shell: false, windowsHide: true });
-    let output = "", url = null, exited = false, startError = null;
+    let output = "", url = null, exited = false, exitCode = null, startError = null;
     const closed = new Promise((accept) => {
         child.on("error", (error) => { startError = error; exited = true; accept(); });
-        child.on("close", () => { exited = true; accept(); });
+        child.on("close", (code) => { exitCode = code; exited = true; accept(); });
     });
     function read(data) {
         output += data;
@@ -113,7 +115,7 @@ async function webRunTest(tide, root) {
     async function waitFor(test, description) {
         const deadline = Date.now() + 120000;
         while (Date.now() < deadline) {
-            check(!exited, `${description}: tide exited ${startError?.message ?? ""}\n${output}`);
+            check(!exited, `${description}: tide exited ${exitCode} ${startError?.message ?? ""}\n${output}`);
             if (await test()) return;
             await pause();
         }
@@ -124,6 +126,12 @@ async function webRunTest(tide, root) {
             const response = await fetch(`${url}build`, { signal: AbortSignal.timeout(5000) });
             return response.ok ? Number((await response.text()).split(" ")[0]) : 0;
         } catch { return 0; } // The CLI cannot serve requests during a compile.
+    }
+    async function packNumber() {
+        try {
+            const response = await fetch(`${url}build`, { signal: AbortSignal.timeout(5000) });
+            return response.ok ? Number((await response.text()).split(" ")[2]) : 0;
+        } catch { return 0; }
     }
     try {
         await waitFor(() => Boolean(url), "web run startup");
@@ -144,6 +152,59 @@ async function webRunTest(tide, root) {
         put(source, tideText.replace("+ 1;", "+ 2;"));
         await waitFor(async () => await buildNumber() === 3, "Tide hot reload");
         expectWrites(cache, before, [generated], "web Tide body reload keeps launcher");
+
+        // Ordinary assets still publish only a new pack, without compilation.
+        before = mark(cache);
+        const packed = await packNumber();
+        put(join(game, "message.txt"), "after");
+        await waitFor(async () => await packNumber() > packed, "ordinary asset repack");
+        check(await buildNumber() === 3, "ordinary assets do not rebuild the game");
+        expectWrites(cache, before, [], "ordinary asset repack keeps every object");
+
+        // Models affect deterministic gameplay: a file or its external buffer
+        // must publish a build with a new identity, rather than swapping only
+        // its pack beneath the old build.
+        const floats = Buffer.alloc(36);
+        floats.writeFloatLE(1, 12);
+        floats.writeFloatLE(1, 28);
+        const model = { asset: { version: "2.0" }, scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0 }],
+            buffers: [{ uri: "actor.bin", byteLength: floats.length }],
+            bufferViews: [{ buffer: 0, byteLength: floats.length }],
+            accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: "VEC3" }],
+            meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }] };
+        put(join(game, "actor.bin"), floats);
+        put(join(game, "actor.gltf"), JSON.stringify(model));
+        put(source, tideText.replace("+ 1;", "+ 2;") + 'asset SkinnedMesh<Vertex3> actor = "actor.gltf";\n');
+        await waitFor(async () => await buildNumber() === 4, "adding a gameplay model");
+        const generatedFolder = join(cache, dirname(generated), "gen");
+        const header = join(generatedFolder, "game.h");
+        let identity = readFileSync(header, "utf8");
+        model.nodes[0].translation = [2, 0, 0];
+        put(join(game, "actor.gltf"), JSON.stringify(model));
+        await waitFor(async () => await buildNumber() === 5, "gameplay model file reload");
+        check(readFileSync(header, "utf8") !== identity, "model file changes the generated game identity");
+        identity = readFileSync(header, "utf8");
+        floats.writeFloatLE(2, 12);
+        put(join(game, "actor.bin"), floats);
+        await waitFor(async () => await buildNumber() === 6, "gameplay model buffer reload");
+        check(readFileSync(header, "utf8") !== identity, "external model buffer changes the generated game identity");
+
+        const failedPack = await packNumber();
+        const failuresBefore = output.split("the page keeps running its last build").length;
+        put(join(game, "actor.gltf"), "{");
+        await waitFor(() => output.split("the page keeps running its last build").length > failuresBefore,
+            "invalid gameplay model keeps its last build");
+        check(await buildNumber() === 6 && await packNumber() === failedPack, "invalid model publishes no build or pack");
+        put(join(game, "actor.gltf"), JSON.stringify(model));
+        await waitFor(async () => await buildNumber() === 7, "corrected gameplay model is still watched");
+
+        // Removing the last model restores the ordinary asset path.
+        put(source, tideText.replace("+ 1;", "+ 2;"));
+        await waitFor(async () => await buildNumber() === 8, "removing the gameplay model");
+        const noModelsPacked = await packNumber();
+        put(join(game, "message.txt"), "without models");
+        await waitFor(async () => await packNumber() > noModelsPacked, "ordinary asset repack after removing models");
+        check(await buildNumber() === 8, "removing models restores pack-only reload");
     } finally {
         child.kill();
         await closed;
@@ -419,10 +480,12 @@ async function main() {
         check(version.code === 0, `private installation's tide version failed:\n${version.said}`);
         const embedded = /clang:\s+built in/.test(version.said);
         if (!embedded) console.log("External compiler is unchanged; installed-header and configuration invalidation are still exercised.");
-        for (const target of opts.web ? ["native", "web"] : ["native"]) await atOnceTests(tide, root, target);
-        for (const target of opts.web ? ["native", "web"] : ["native"]) await targetTests(tide, installation, root, target, embedded);
-        if (opts.web) await webRunTest(tide, root);
-        if (opts.gpu) await nativeRunTest(tide, root);
+        if (!opts.watchOnly) {
+            for (const target of opts.web ? ["native", "web"] : ["native"]) await atOnceTests(tide, root, target);
+            for (const target of opts.web ? ["native", "web"] : ["native"]) await targetTests(tide, installation, root, target, embedded);
+        }
+        if (opts.web || opts.watchOnly) await webRunTest(tide, root);
+        if (opts.gpu && !opts.watchOnly) await nativeRunTest(tide, root);
         console.log("Cache integration tests passed.");
     } finally {
         if (opts.keep) console.log(`Kept fixtures: ${root}`);

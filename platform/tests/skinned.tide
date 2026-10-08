@@ -1,0 +1,92 @@
+scene Main { }
+
+struct SkinCorner
+{
+    float3 position;
+    float3 normal;
+    float4 tangent;
+    Color color = Color.white;
+    float glow = 0.5;
+}
+
+asset SkinnedMesh<Vertex3> model = "skinned.gltf";
+asset SkinnedMesh<SkinCorner> lit = "skinned.gltf";
+
+local singleton SkinView
+{
+    bool made;
+    RenderTarget shadow;
+    DepthTexture depth;
+}
+
+float4x4 Place(float x, float y)
+{
+    return float4x4.Translate(float3(x - 64, 64 - y, 10));
+}
+
+vert SkinObserved(mut SkinCorner corner)
+{
+    // This must see the deformed normal and tangent, and a custom vertex's default field.
+    BoneTransform literal = BoneTransform { };
+    BoneTransform value = default;
+    corner.color = Color(corner.normal.x * corner.glow, corner.normal.y,
+                         corner.tangent.x > 0.85 && corner.tangent.y < -0.4 && corner.tangent.w < 0
+                         && literal.scale.x == 1 && value.rotation.value.w == 1 && literal.position.x == 0 ? 1 : 0);
+    corner.position += float3(8, 0, 0);
+}
+
+frag SkinColor(SkinCorner corner, out Color color)
+{
+    color = corner.color;
+}
+
+struct SkinPlacement { float posed; }
+
+vert SkinPlaced(mut Vertex3 corner, out SkinPlacement info, out float4 clip)
+{
+    corner.position += float3(8, 0, 0);
+    info.posed = corner.position.x;
+    clip = this.clip;
+    // This affects this.world, while the explicit clip position stays where it was captured.
+    corner.position += float3(64, 0, 0);
+}
+
+frag SkinPlacedColor(Vertex3 corner, SkinPlacement info, out Color color)
+{
+    color = info.posed > 24 && info.posed < 40 && this.world.x > 44 && this.world.x < 60
+          ? Color.cyan : Color.red;
+}
+
+frag SkinShadow(Vertex3 corner, out Color color, SkinView state)
+{
+    float depth = state.depth.Sample(float2(this.position.x / 128, this.position.y / 128));
+    color = depth < 0.5 ? Color.magenta : Color.red;
+}
+
+view Skins(mut SkinView state)
+{
+    if (!state.made) { state.made = true; state.shadow = RenderTarget.Window(Format.Depth); }
+    Pose rest = model.skeleton.RestPose();
+    Pose moving = model.animations.move.Sample(1, Playback.Clamp);
+    Pose scaled = lit.animations.squash.Sample(1, Playback.Clamp);
+    Draw.Clear(Color.black);
+    Draw.SetCamera(float4x4.identity, float4x4.Ortho(128, 128, 0.1, 100));
+    Draw.Cull(Cull.None)
+    {
+        Draw.SkinnedMesh(model, Place(20, 20), rest);
+        Draw.SkinnedMesh(model, Place(20, 52), moving);
+        Draw.SkinnedMesh(lit, Place(100, 20), scaled, SkinObserved, SkinColor);
+        state.shadow.Clear(Color.white);
+        state.shadow.SetCamera(float4x4.identity, float4x4.Ortho(128, 128, 0.1, 100));
+        state.shadow.Cull(Cull.None)
+        {
+            state.shadow.SkinnedMesh(model, Place(20, 84), moving);
+        }
+        state.depth = state.shadow.depth;
+        Draw.SkinnedMesh(model, Place(20, 84), moving, SkinShadow);
+        // Later independent poses of the same asset cannot overwrite earlier palette captures.
+        Draw.SkinnedMesh(model, Place(84, 52), rest);
+        Draw.SkinnedMesh(model, Place(84, 84), moving);
+        Draw.SkinnedMesh(model, Place(20, 116), moving, SkinPlaced, SkinPlacedColor);
+    }
+}

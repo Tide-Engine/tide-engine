@@ -19,6 +19,7 @@ static const type T_F2 = {TY_FLOAT2, NULL};
 static const type T_F3 = {TY_FLOAT3, NULL};
 static const type T_COLOR = {TY_COLOR, NULL};
 static const type T_STR = {TY_STRING, NULL};
+static const type T_CHR = {TY_CHAR, NULL};
 static const type T_Q = {TY_QUATERNION, NULL};
 static const type T_F4X4 = {TY_FLOAT4X4, NULL};
 static const type T_F3X3 = {TY_FLOAT3X3, NULL};
@@ -795,6 +796,10 @@ static void build_signatures(void)
              "vertices, indices, instances", instanced_doc);
     describe(add("Draw", "Instanced", T_NONE, "tide_draw_mesh_shaded_instances", 3, T_VERTICES3, T_INDICES, T_INSTANCES),
              "vertices, indices, instances", instanced_doc);
+    // The checker resolves model and Pose types itself; this entry gives editors the public call's order.
+    describe(add("Draw", "SkinnedMesh", T_NONE, "tide_draw_mesh_shaded", 3, T_NONE, T_F4X4, T_NONE),
+             "model, transform, pose", "Draws a SkinnedMesh<V> at transform, deformed by pose before its vert runs. "
+             "Optional texture, vert, frag and draw values follow the pose. Reuse the same pose for color and shadow passes.");
     add_setting("Draw", "Clip", "tide_draw_push_clip", "tide_draw_set_clip", NULL, "rect",
                 "Only what's inside `rect` draws: from (x, y) to (x + width, y + height), in the units the 2D draws "
                 "are in. In a block, it's what of `rect` is inside the clip there is.",
@@ -916,6 +921,17 @@ static void build_signatures(void)
              NULL, "The text without spaces, tabs and new lines at its start and end.");
     describe(add("string", "Replace", T_STR, "tide_str_replace", 2, T_STR, T_STR, T_NONE),
              "from, to", "The text with every `from` in it replaced by `to`.");
+    // The same of one character, a char: after the text ones, which a call with text picks
+    describe(add("string", "Contains", T_BOOL, "tide_str_contains_char", 1, T_CHR, T_NONE, T_NONE),
+             "character", "Whether the character is in the text.");
+    describe(add("string", "StartsWith", T_BOOL, "tide_str_starts_with_char", 1, T_CHR, T_NONE, T_NONE),
+             "character", "Whether the text starts with the character.");
+    describe(add("string", "EndsWith", T_BOOL, "tide_str_ends_with_char", 1, T_CHR, T_NONE, T_NONE),
+             "character", "Whether the text ends with the character.");
+    describe(add("string", "IndexOf", t_int, "tide_str_index_of_char", 1, T_CHR, T_NONE, T_NONE),
+             "character", "Where the character first is in the text, counting characters from 0, or -1.");
+    describe(add("string", "Replace", T_STR, "tide_str_replace_char", 2, T_CHR, T_CHR, T_NONE),
+             "from, to", "The text with every character `from` in it replaced by `to`; `'\\0'`, which is no character, takes them out.");
 
     // The GUI, in views: tide/gui.h. Codegen passes the view's GUI first, then
     // the widget's ID, then a mut argument's address.
@@ -1179,6 +1195,7 @@ static bool unify(const expr *e, const bool ints_ok, type *out)
             color = true;
             continue;
         }
+        if (t.kind == TY_CHAR) continue; // Its code point, an int, as a char is wherever an int goes
         if (!type_is_numeric(t)) return false;
         const int d = type_dim(t);
         if (d > 1) {
@@ -1269,7 +1286,8 @@ static int param_named(const signature *s, const str name)
 // take. Mesh and Instanced go by what each argument is, so theirs stay in order.
 static bool names_args(const expr *e)
 {
-    return e->arg_names.count > 0 && !str_eq_c(e->name, "Mesh") && !str_eq_c(e->name, "Instanced");
+    return e->arg_names.count > 0 && !str_eq_c(e->name, "Mesh") && !str_eq_c(e->name, "Instanced")
+        && !str_eq_c(e->name, "SkinnedMesh");
 }
 
 // Which parameter of `s` each argument of a call is for, as in C#: in order,

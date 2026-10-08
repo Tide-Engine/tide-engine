@@ -1,0 +1,15 @@
+// expect: 'Shout' runs on the audio thread, so it can't send events, spawn or change entities
+event Ping { int n; }
+void Notify(int n) { Send(Ping { n = n }); }
+
+audio Shout(mut Samples samples)
+{
+    samples.values[0] = 1;
+    Notify(1);
+}
+
+scene Main
+{
+}
+
+event(Ping ping) Heard() { }

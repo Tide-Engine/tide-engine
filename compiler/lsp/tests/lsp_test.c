@@ -16,6 +16,7 @@
 
 #include "assets.h"
 #include "json.h"
+#include "model_metadata.h"
 #include "packages.h"
 #include "tide_test.h"
 #include "server.h"
@@ -1803,7 +1804,7 @@ TIDE_TEST(lsp_shaders_format_fold_and_move)
 }
 
 // Whether the diagnostics just published have one over `length` characters
-// from (line, character), an error (1) or a warning (2), that starts with `message`.
+// from (line, character), with LSP severity (error 1, warning 2, information 3), that starts with `message`.
 static bool diagnosed(const int line, const int character, const int length, const int severity, const char *message)
 {
     char start[512];
@@ -2655,6 +2656,38 @@ TIDE_TEST(lsp_byte_scalar_hover_and_completion)
     open_document("singleton Data { byte value; }\nscene Main { }\nsystem Reset(mut Data data) { data.value = def$ault; }\n");
     const char *hover = request("textDocument/hover");
     TIDE_CHECK(has(hover, "default: byte") && has(hover, "`0`"));
+}
+
+// char: the type's hover and completion, what a text's index and its foreach
+// give, its default, and a literal the formatter leaves as it's written, a
+// brace or a quote in it too.
+TIDE_TEST(lsp_char_hover_completion_and_format)
+{
+    start();
+    open_document("singleton Data { ch$ar mark = 'a'; string plan = \"ab\"; }\nscene Main { }\n"
+                  "system Read(mut Data data)\n{\n    var first = data.plan[0];\n"
+                  "    foreach (var each in data.plan) data.mark = each == first ? '{' : each;\n}\n");
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "One character: a Unicode code point"));
+    TIDE_CHECK(has(hover_at(4, 9), "char")); // first: what text[0] gives
+    TIDE_CHECK(has(hover_at(5, 18), "char")); // each: what a foreach over text gives
+    TIDE_CHECK(offers(complete("singleton Data { $ }\nscene Main { }\n"), "char"));
+    open_document("singleton Data { char mark; }\nscene Main { }\nsystem Reset(mut Data data) { data.mark = def$ault; }\n");
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "default: char") && has(hover, "which is no character"));
+
+    static const char messy[] =
+        "singleton Data { char mark; int n; }\nscene Main { }\nsystem S(mut Data data)\n{\n"
+        "if(data.mark=='{'||data.mark== '\\'' )data.n=data.mark-'0';\nswitch(data.mark)\n{\ncase '}' :\ndata.n=1;\nbreak;\n}\n}\n";
+    static const char expected[] =
+        "singleton Data { char mark; int n; }\nscene Main { }\nsystem S(mut Data data)\n{\n"
+        "    if (data.mark == '{' || data.mark == '\\'') data.n = data.mark - '0';\n    switch (data.mark)\n    {\n"
+        "        case '}':\n            data.n = 1;\n            break;\n    }\n}\n";
+    format_reply(messy);
+    const char *formatted = apply_reply(messy, NULL);
+    TIDE_CHECK(strcmp(formatted, expected) == 0);
+    if (strcmp(formatted, expected) != 0) printf("--- got:\n%s---\n", formatted);
+    TIDE_CHECK(has(format_reply(expected), "\"result\":[]"));
 }
 
 TIDE_TEST(lsp_format_switch)
@@ -8096,6 +8129,39 @@ TIDE_TEST(lsp_out_selection_and_calls)
     "scene Main { }\n"                                                         \
     "event(Spawned) Setup(with Main) { Spawn(Health { }); Spawn(Healer { }); }\n"
 
+// A function sends, spawns and changes entities as the code that calls it could: the editor offers
+// them in one, and the error is at a call from code that can't.
+TIDE_TEST(lsp_functions_send_and_spawn)
+{
+    start();
+#define ACTS GAME_TYPES "event Hit { int damage; }\nlocal event Blink { int n; }\n"
+    const char *code = complete(ACTS "void Wave()\n{\n    $\n}\n");
+    TIDE_CHECK(offers(code, "Spawn") && offers(code, "Send") && offers(code, "Hit") && offers(code, "Blink"));
+    TIDE_CHECK(!offers(code, "Scene")); // Loading a scene is still a system's, a view's or a handler's own to write
+    // An entity's own after its dot, in a function and in a method: not Snap, which a system says
+    const char *dot = complete(ACTS "void Kill(Entity target)\n{\n    target.$\n}\n");
+    TIDE_CHECK(offers(dot, "Destroy") && offers(dot, "Add") && offers(dot, "Remove") && offers(dot, "Send") && !offers(dot, "Snap"));
+    const char *method = complete(ACTS "struct Bell\n{\n    int tone;\n    void Ring(LocalEntity target)\n    {\n        target.$\n    }\n}\n");
+    TIDE_CHECK(offers(method, "Destroy") && offers(method, "Send"));
+    // An operator is handed its operands and nothing else
+    const char *op = complete(ACTS "struct Money\n{\n    int cents;\n    Money operator +(Money a, Money b)\n    {\n        $\n"
+                                   "        return a;\n    }\n}\n");
+    TIDE_CHECK(!offers(op, "Spawn") && !offers(op, "Send"));
+
+    // Nothing is wrong with the function, or with a system that calls it
+    open_document(ACTS "void Poke(Entity target) { target.Send(Hit { damage = 1 }); }\n"
+                       "event(Hit hit) Take(mut Body body) { body.radius -= hit.damage; }\n"
+                       "system Fight(Body body) { if (body.radius > 20) Poke(this); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // ...and a view that calls it is told at its call
+    open_document(ACTS "void Poke(Entity target) { target.Send(Hit { damage = 1 }); }\n"
+                       "event(Hit hit) Take(mut Body body) { body.radius -= hit.damage; }\n"
+                       "system Fight(Body body) { if (body.radius > 20) Poke(this); }\n"
+                       "view Show(Body body) { if (body.radius > 20) Poke(this); }\n");
+    TIDE_CHECK(has(last_sent(), "a view can't change the match, and 'Poke' sends 'Hit'"));
+#undef ACTS
+}
+
 TIDE_TEST(lsp_world_in_functions)
 {
     start();
@@ -9997,4 +10063,194 @@ TIDE_TEST(lsp_asset_meshes)
     remove_folder("lsp_mesh");
     clear_sent();
     lsp_free(&server);
+}
+
+// A name catalog is independent of geometry. The editor reads no side buffer
+// and keeps the JSON result across changed source documents and requests.
+TIDE_TEST(lsp_skinned_catalogs_use_cached_json_and_preserve_inference)
+{
+    if (!find_game_dir()) return;
+    model_metadata_forget();
+    make_folder("lsp_skin");
+    make_folder("lsp_skin/art");
+    static const char prefix[] = "struct Corner { float3 position; }\n"
+                                 "asset SkinnedMesh<Corner> hero = \"art/hero.gltf\";\n"
+                                 "scene Main { }\n";
+    static const char metadata[] = "{\"asset\":{\"version\":\"2.0\"},"
+                                   "\"animations\":[{\"name\":\"Idle\"},{\"name\":\"Run\"},{\"name\":\"bad name\"},"
+                                   "{\"name\":\"Jump\"},{\"name\":\"jump\"},{\"name\":\"for\"},{\"name\":\"Find\"}],"
+                                   "\"nodes\":[{\"name\":\"Root\",\"children\":[1]},{\"name\":\"Hand\"}],"
+                                   "\"skins\":[{\"joints\":[1]}],\"buffers\":[{\"uri\":\"must-not-read.bin\",\"byteLength\":99999999}]}";
+    write_file("lsp_skin/main.tide", prefix);
+    write_file("lsp_skin/art/hero.gltf", metadata);
+    write_file("lsp_skin/art/other.obj", "not glTF");
+    char root[700], uri_main[700], uri_model[700], text[2048];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_skin", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_skin/main.tide", dir);
+    snprintf(uri_model, sizeof uri_model, "file:///%s/lsp_skin/art/hero.gltf", dir);
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    snprintf(text, sizeof text, "%sview V()\n{\n    var model = hero;\n    model.animations.\n}\n", prefix);
+    open_uri(uri_main, text);
+    const char *completion = request_at(uri_main, "textDocument/completion", 6, 21, "");
+    TIDE_CHECK(offers(completion, "idle") && offers(completion, "run"));
+    TIDE_CHECK(offers(completion, "count") && offers(completion, "Find") && offers(completion, "At"));
+    TIDE_CHECK(!offers(completion, "Jump") && !offers(completion, "jump") && !offers(completion, "bad name")
+               && !offers(completion, "for") && !offers(completion, "data"));
+    TIDE_CHECK(has(completion, "original source name `Idle`"));
+    model_metadata_stats warm = model_metadata_statistics();
+    TIDE_CHECK(warm.parses == 1 && warm.file_reads == 1 && warm.bytes_read == sizeof metadata - 1);
+    for (int i = 0; i < 20; i++) {
+        open_uri(uri_main, text);
+        completion = request_at(uri_main, "textDocument/completion", 6, 21, "");
+        TIDE_CHECK(offers(completion, "idle"));
+    }
+    TIDE_CHECK(model_metadata_statistics().parses == warm.parses && model_metadata_statistics().file_reads == warm.file_reads);
+
+    snprintf(text, sizeof text, "%svoid Helper(SkinnedMesh<Corner> model)\n{\n    model.animations.\n}\n", prefix);
+    open_uri(uri_main, text);
+    completion = request_at(uri_main, "textDocument/completion", 5, 21, "");
+    TIDE_CHECK(offers(completion, "Find") && offers(completion, "At") && !offers(completion, "idle"));
+
+    snprintf(text, sizeof text, "%sstruct Locomotion { Animation idle; [Name(\"Run\")] Animation sprint; Bone hand; }\n"
+                               "void Helper(SkinnedMesh<Corner, Locomotion> model)\n{\n    model.animations.\n}\n", prefix);
+    open_uri(uri_main, text);
+    completion = request_at(uri_main, "textDocument/completion", 6, 21, "");
+    TIDE_CHECK(offers(completion, "idle") && offers(completion, "sprint") && offers(completion, "Find") && !offers(completion, "hand"));
+    TIDE_CHECK(has(completion, "original source name `Run`"));
+
+    snprintf(text, sizeof text, "%sview V()\n{\n    var pose = hero.animations.idle.Sample(0);\n"
+                               "    Debug.Log(hero.animations.idle.name);\n    var hand = hero.skeleton.bones.hand;\n"
+                               "    Debug.Log(\"\" + pose.Model(hand).c3.x);\n}\n", prefix);
+    open_uri(uri_main, text);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request_at(uri_main, "textDocument/hover", 5, 34, "");
+    TIDE_CHECK(has(hover, "Animation idle") && has(hover, "original source name `Idle`"));
+    hover = request_at(uri_main, "textDocument/hover", 5, 40, "");
+    TIDE_CHECK(has(hover, "Sample(float seconds, Playback playback = Playback.Clamp)") && has(hover, "deterministic math"));
+    const char *help = request_at(uri_main, "textDocument/signatureHelp", 5, 44, "");
+    TIDE_CHECK(has(help, "Playback playback = Playback.Clamp") && has(help, "activeParameter"));
+
+    snprintf(text, sizeof text, "%sview V()\n{\n    hero.skeleton.bones.\n}\n", prefix);
+    open_uri(uri_main, text);
+    completion = request_at(uri_main, "textDocument/completion", 5, 24, "");
+    TIDE_CHECK(offers(completion, "root") && offers(completion, "hand") && offers(completion, "Find") && !offers(completion, "data"));
+
+    // A watched notification invalidates even the unchanged file's size/time.
+    char changed[1024];
+    snprintf(changed, sizeof changed, "{\"jsonrpc\":\"2.0\",\"method\":\"workspace/didChangeWatchedFiles\","
+                                    "\"params\":{\"changes\":[{\"uri\":\"%s\",\"type\":2}]}}", uri_model);
+    warm = model_metadata_statistics();
+    handle(changed);
+    TIDE_CHECK(model_metadata_statistics().parses == warm.parses + 1 && model_metadata_statistics().file_reads == warm.file_reads + 1);
+    completion = request_at(uri_main, "textDocument/completion", 5, 24, "");
+    TIDE_CHECK(offers(completion, "hand"));
+    TIDE_CHECK(model_metadata_statistics().parses == warm.parses + 1);
+
+    // File path completion accepts only glTF for skinned assets.
+    completion = request_at(uri_main, "textDocument/completion", 1, 42, "");
+    TIDE_CHECK(offers(completion, "hero.gltf") && !offers(completion, "other.obj"));
+    remove_game_file("lsp_skin/main.tide");
+    remove_game_file("lsp_skin/art/hero.gltf");
+    remove_game_file("lsp_skin/art/other.obj");
+    remove_game_file("lsp_skin/.tide/assets.sha256");
+    remove_game_file("lsp_skin/.tide/.gitignore");
+    remove_folder("lsp_skin/.tide");
+    remove_folder("lsp_skin/art");
+    remove_folder("lsp_skin");
+    clear_sent();
+    lsp_free(&server);
+    model_metadata_forget();
+}
+
+TIDE_TEST(lsp_skinned_unavailable_catalogs_are_not_missing_members)
+{
+    if (!find_game_dir()) return;
+    model_metadata_forget();
+    make_folder("lsp_skin_status");
+    static const char main_file[] = "asset SkinnedMesh<Vertex3> hero = \"hero.gltf\";\n"
+                                    "scene Main { }\nview V()\n{\n    Debug.Log(hero.animations.walk.name);\n}\n";
+    write_file("lsp_skin_status/main.tide", main_file);
+    write_file("lsp_skin_status/hero.gltf", "{\"asset\":{\"version\":\"2.0\"},\"animations\":[{\"name\":\"Idle\"}]}");
+    char root[700], uri_main[700], path[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_skin_status", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_skin_status/main.tide", dir);
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    open_uri(uri_main, main_file);
+    TIDE_CHECK(has(last_sent(), "Animations has no checked member 'walk'") && !has(last_sent(), "metadata is unavailable"));
+    write_file("lsp_skin_status/hero.gltf", "{broken JSON}");
+    game_path(path, sizeof path, "lsp_skin_status/hero.gltf");
+    model_metadata_invalidate(path);
+    open_uri(uri_main, main_file);
+    TIDE_CHECK(has(last_sent(), "animation catalog metadata is invalid") && !has(last_sent(), "has no checked member 'walk'"));
+    TIDE_CHECK(diagnosed(0, (int)(strchr(main_file, '"') - main_file), 11, 1, "model catalog metadata is invalid:"));
+    remove_game_file("lsp_skin_status/hero.gltf");
+    open_uri(uri_main, main_file);
+    TIDE_CHECK(has(last_sent(), "animation catalog metadata is unavailable") && !has(last_sent(), "has no checked member 'walk'"));
+    TIDE_CHECK(diagnosed(0, (int)(strchr(main_file, '"') - main_file), 11, 3, "model catalog metadata is unavailable:"));
+
+    // Dynamic access remains usable when the editor has no cached model.
+    static const char dynamic[] = "asset SkinnedMesh<Vertex3> hero = \"https://must-never-be-contacted.invalid/model.glb\";\n"
+                                 "scene Main { }\nview V() { if (hero.animations.Find(\"Idle\") is Animation clip) Debug.Log(clip.name); }\n";
+    open_uri(uri_main, dynamic);
+    TIDE_CHECK(diagnosed(0, (int)(strchr(dynamic, '"') - dynamic), 51, 3, "model catalog metadata is unavailable:")
+               && !has(last_sent(), "\"severity\":1"));
+
+    model_metadata_forget();
+    static const char uncached[] = "asset SkinnedMesh<Vertex3> hero = \"https://must-never-be-contacted.invalid/model.glb\";\n"
+                                   "scene Main { }\nview V()\n{\n    Debug.Log(hero.animations.walk.name);\n}\n";
+    open_uri(uri_main, uncached);
+    TIDE_CHECK(has(last_sent(), "animation catalog metadata is unavailable") && !has(last_sent(), "has no checked member 'walk'"));
+    TIDE_CHECK(diagnosed(0, (int)(strchr(uncached, '"') - uncached), 51, 3, "model catalog metadata is unavailable:"));
+    TIDE_CHECK(model_metadata_statistics().file_reads == 0 && model_metadata_statistics().parses == 0);
+    static const char contracted[] = "struct Locomotion { Animation idle; }\n"
+                                     "asset SkinnedMesh<Vertex3, Locomotion> hero = \"https://must-never-be-contacted.invalid/model.glb\";\n"
+                                     "scene Main { }\nview V()\n{\n    hero.animations.\n}\n";
+    open_uri(uri_main, contracted);
+    const char *completion = request_at(uri_main, "textDocument/completion", 5, 20, "");
+    TIDE_CHECK(offers(completion, "idle") && offers(completion, "Find"));
+    TIDE_CHECK(has(completion, "required normalized source identifier `idle`"));
+    TIDE_CHECK(model_metadata_statistics().file_reads == 0 && model_metadata_statistics().parses == 0);
+    remove_game_file("lsp_skin_status/main.tide");
+    remove_game_file("lsp_skin_status/.tide/assets.sha256");
+    remove_game_file("lsp_skin_status/.tide/.gitignore");
+    remove_folder("lsp_skin_status/.tide");
+    remove_folder("lsp_skin_status");
+    clear_sent();
+    lsp_free(&server);
+    model_metadata_forget();
+}
+
+TIDE_TEST(lsp_skinned_static_decode_and_draw_forms)
+{
+    start();
+    const char *completion = complete("scene Main { }\nview V()\n{\n    var model = SkinnedMesh<Vertex3>.$\n}\n");
+    TIDE_CHECK(offers(completion, "Decode") && has(completion, "self-contained GLB"));
+    open_document("scene Main { }\nview V()\n{\n    var model = SkinnedMesh<Vertex3>.Dec$ode([byte(0)])!;\n"
+                  "    Debug.Log(\"\" + model.indices.count);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "SkinnedMesh<Vertex3>.Decode") && has(hover, "self-contained GLB") && has(hover, "fails IOError"));
+    open_document("scene Main { }\nview V()\n{\n    var model = SkinnedMesh<Vertex3>.Decode($[byte(0)])!;\n"
+                  "    Debug.Log(\"\" + model.indices.count);\n}\n");
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "Decode(List<byte> bytes)") && has(help, "SkinnedMesh<Vertex3> fails IOError"));
+    completion = complete("scene Main { }\nview V()\n{\n    SkinnedMesh<Vertex3> model = default;\n    model.$\n}\n");
+    TIDE_CHECK(offers(completion, "animations") && offers(completion, "skeleton") && !offers(completion, "Decode") && !offers(completion, "data"));
+    open_document("scene Main { }\nview V()\n{\n    SkinnedMesh<Vertex3> model = default;\n"
+                  "    Pose pose = default;\n    Draw.SkinnedMesh(model, float4x4.identity, $pose);\n}\n");
+    help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "Draw.SkinnedMesh(mesh, transform, pose[") && has(help, "\"activeParameter\":2"));
+    TIDE_CHECK(has(help, "skinning applies its transforms before the user vertex stage"));
+    completion = complete("scene Main { }\nfrag Shade(Vertex3 vertex, out Color color) { color = vertex.color; }\n"
+                          "view V()\n{\n    SkinnedMesh<Vertex3> model = default;\n    Pose pose = default;\n"
+                          "    Draw.SkinnedMesh(model, float4x4.identity, pose, $\n}\n");
+    TIDE_CHECK(offers(completion, "Shade"));
+    completion = complete("scene Main { }\nvert Shift(mut Vertex3 vertex)\n"
+                          "{\n    BoneTransform offset = default;\n    vertex.position += offset.$\n}\n");
+    TIDE_CHECK(offers(completion, "position") && offers(completion, "rotation") && offers(completion, "scale"));
+    open_document("scene Main { }\nstruct EmptyAlias { [Name(\"\")] Bone socket; }\n"
+                  "int Count(SkinnedMesh<Vertex3, EmptyAlias> model) { return model.skeleton.bones.count; }\n");
+    TIDE_CHECK(has(last_sent(), "a model contract's Name alias cannot be empty") && has(last_sent(), "\"severity\":1"));
 }

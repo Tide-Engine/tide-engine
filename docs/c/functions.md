@@ -146,6 +146,7 @@ Extern functions take and return plain data, by value:
 | --- | --- |
 | `byte` | `uint8_t` |
 | `long` | `int64_t` |
+| `char` | `int32_t`: the character's code point |
 | `int`, `float`, `bool` | `int32_t` (`int`), `float`, `bool` |
 | `float3`, `int2`, `quaternion`, `float4x4`, ... | `tide_float3`, `tide_int2`, ... from `tide/math.h` |
 | `Color`, `Rect`, `Entity`, `PlayerID` | `tide_color`, `tide_rect`, `tide_entity`, `tide_player_id` |

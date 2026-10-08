@@ -1,0 +1,13 @@
+// expect: an operator works a value out of its operands, so it can't send events
+event Ping { int n; }
+struct Money
+{
+    int cents;
+    Money operator +(Money a, Money b)
+    {
+        Send(Ping { n = a.cents });
+        return Money { cents = a.cents + b.cents };
+    }
+}
+scene Main { }
+event(Ping ping) Heard() { }

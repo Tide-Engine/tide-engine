@@ -1,0 +1,4 @@
+// expect: a char must be UTF-8, and this isn't
+scene Main { }
+singleton Seen { char mark; }
+system S(mut Seen seen) { seen.mark = 'í €'; }

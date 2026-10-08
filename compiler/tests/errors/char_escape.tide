@@ -1,0 +1,4 @@
+// expect: unknown escape '\q'; a char can use \', \", \\, \n, \r, \t and \0
+scene Main { }
+singleton Seen { char mark; }
+system S(mut Seen seen) { seen.mark = '\q'; }

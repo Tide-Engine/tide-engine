@@ -1,0 +1,5 @@
+// expect: '++' works on ints, longs and floats, not char
+// expect: the character after it is 'c = char(c + 1)
+scene Main { }
+singleton Seen { int n; string name = "ab"; char mark; }
+system S(mut Seen seen) { seen.mark++; }

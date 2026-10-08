@@ -94,6 +94,20 @@ In a system that splits its entities across threads, the handle is temporary unt
 
 That's what lets systems run side by side: nothing they do changes which entities exist until they're all done.
 
+A [function](../language/functions.md#sending-and-spawning) can `Spawn`, `Add`, `Remove` and `Destroy` too, for the code that calls it. It takes the entity it changes as a parameter:
+
+```csharp
+Entity Drop(float3 at)
+{
+    return Spawn(Transform { position = at }, Crate);
+}
+
+void Stun(Entity target)
+{
+    target.Add(Stunned { duration = 2 });
+}
+```
+
 Each ball below is an entity with a `Ball` and a `Health`. Tap one to `Add` a `Poisoned` to it: a system that takes `with Poisoned` then drains its health, and destroys it when none is left. Tap it again to `Remove` the component, and it recovers. Tapping the ground spawns a ball. A view can't change the match itself, so each tap goes in as a [command](./commands.md).
 
 ::: tide-example entities Spawn, Add, Remove and Destroy
