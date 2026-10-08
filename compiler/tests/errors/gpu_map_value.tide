@@ -1,5 +1,4 @@
-// expect: a map is read where the frag or vert takes it, a key at a time: it's not a value to keep or pass on
-// expect: read it as a field of a component, a singleton or the draw's values
+// expect: a map's local in code the GPU runs names one map, for good: 'hues' can't be 'mut'
 scene Main { }
 
 struct V
@@ -17,7 +16,7 @@ local singleton Models
 
 frag Shade(V vertex, out Color color, Models models)
 {
-    var hues = models.hues;
+    mut var hues = models.hues;
     color = hues[1];
 }
 

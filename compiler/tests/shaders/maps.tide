@@ -1,5 +1,5 @@
 // Maps and sets the GPU reads: fields of a singleton, a component's local
-// part and a draw's values, by a key, by whether a key is there, by how many
+// part and a draw's values, under a local's name and as a function's parameter, by a key, by whether a key is there, by how many
 // there are and with foreach. Each is a texture of numbers: its live entries
 // in the order their keys were added, as a list's elements are, then an index
 // of slots by Math.Hash of the key. The draw's ints say how many of each.
@@ -39,6 +39,11 @@ local singleton Stage
     List<int> faces;
 }
 
+float Height(Map<Ground, Tile> tiles, Ground ground)
+{
+    return tiles[ground].height;
+}
+
 vert Raise(mut Corner corner, Land land)
 {
     if (land.lit.Has(3)) corner.position.y += land.tiles[Ground.Rock].height;
@@ -57,6 +62,8 @@ frag Lit(Corner corner, out Color color, Land land, Body body, Legend legend)
     {
         if (ground == Ground.Rock) sum.r += 0.25;
     }
+    var tiles = land.tiles;
+    sum.g += Height(tiles, Ground.Rock);
     mut var found = Tile { };
     var there = land.tiles.TryGet(Ground.Grass, out found);
     sum.b += legend.weights[byte(legend.pick)] * land.hues.count + land.lit.count + body.seen.count;

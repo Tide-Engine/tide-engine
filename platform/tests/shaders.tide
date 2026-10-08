@@ -3033,6 +3033,89 @@ frag ArrayInList(Vertex vertex, out Color color, Tables tables)
     color = Color(strip.rgb[0], tables.strips[1].rgb[1], strip.rgb[2] + tables.strips[0].rgb[2] + tables.strips[2].rgb[0]);
 }
 
+// A list and a grid under another name: a local, and a function's parameter,
+// which is written for each list or grid it's called with
+frag ListNamed(Vertex vertex, out Color color, Tables tables)
+{
+    var colors = tables.colors;
+    var again = colors;
+    color = Color(again[2].r, colors.count / 8.0, again[2].b * 0.5);
+}
+
+float Green(List<Color> colors, int at)
+{
+    return colors[at].g * 0.5 + colors.count * 0.0625;
+}
+
+Color Greens(List<Color> first, List<Color> second)
+{
+    var kept = second;
+    mut var most = 0.0;
+    foreach (var each in first) most = Math.Max(most, each.g);
+    return Color(Green(first, 1), Green(kept, 1), Green(first, 9) * most);
+}
+
+frag ListPassed(Vertex vertex, out Color color, Tables tables, Palette palette)
+{
+    color = Greens(tables.colors, palette.colors);
+}
+
+frag ListPassedBack(Vertex vertex, out Color color, Tables tables, Palette palette)
+{
+    color = Greens(palette.colors, tables.colors);
+}
+
+int Tallied(Grid2<int> tallies, int2 at)
+{
+    var mine = tallies;
+    return mine[at.x, at.y] + mine.size.x;
+}
+
+float Shaded(Grid2<Color> cells, Grid2<int> tallies)
+{
+    return cells[66, 2].g + Tallied(tallies, int2(0, 0)) * 0.05;
+}
+
+frag GridPassed(Vertex vertex, out Color color, Tables tables)
+{
+    var cells = tables.cells;
+    color = Color(Tallied(tables.tallies, int2(3, 1)) / 20.0, Shaded(cells, tables.tallies), cells.size.y / 6.0);
+}
+
+// An asset's list and grid by their names, in functions a frag calls, and a list of bytes passed on
+asset List<byte> tableBytes = "../../compiler/tests/e2e/assets/table.bin";
+
+Color Brick(int x)
+{
+    return brickCells[x, 0];
+}
+
+float Ramp(int at)
+{
+    var bytes = tableBytes;
+    return bytes[at] / 255.0;
+}
+
+int Peek(List<byte> bytes, int at)
+{
+    return bytes[at];
+}
+
+frag AssetPassed(Vertex vertex, out Color color, Choice choice)
+{
+    color = Color(Ramp(choice.at), Brick(1).g * 0.5, tableBytes.count / 1200.0 + Peek(tableBytes, 300));
+}
+
+float Stride(List<int2> steps)
+{
+    return steps[1].y;
+}
+
+vert ListNudgedBack(mut Vertex vertex, Tables tables)
+{
+    vertex.position.y -= Stride(tables.steps);
+}
+
 // Maps and sets: a value by its key, zeros for a key that isn't there or was removed
 frag MapPick(Vertex vertex, out Color color, Tables tables, Choice choice)
 {
@@ -3085,6 +3168,21 @@ frag MapNone(Vertex vertex, out Color color, Tables tables, Choice choice)
 frag MapGiven(Vertex vertex, out Color color, Lookup lookup)
 {
     color = lookup.shades[lookup.pick];
+}
+
+// A map and a set under other names: a local, and a function's parameters
+float Blue(Map<int, Color> hues, Set<int> marked, int key)
+{
+    if (!marked.Has(key + 10)) return 0;
+    hues.TryGet(key, out var hue);
+    return hue.b + hues.count * 0.05;
+}
+
+frag MapNamed(Vertex vertex, out Color color, Tables tables)
+{
+    var hues = tables.hues;
+    var again = hues;
+    color = Color(again[2].r, Blue(hues, tables.marked, 5), Blue(again, tables.marked, 9));
 }
 
 [After(CubeReads)]
@@ -3220,70 +3318,99 @@ view ListReads(Art art, mut Tables tables)
     {
         Draw.Mesh(tables.small, art.faces, Loops);
     }
-    // Row 7: a map's values by their keys: there, removed, never there, and under zero; and what it says of a key
+    // Row 7: lists and grids by other names: locals, functions' parameters, and assets read in functions
     Draw.Transform(float2(8, 104))
     {
-        Draw.Mesh(tables.small, art.faces, MapPick, Choice { at = 0 });
+        Draw.Mesh(tables.small, art.faces, ListNamed);
     }
     Draw.Transform(float2(24, 104))
     {
-        Draw.Mesh(tables.small, art.faces, MapPick, Choice { at = 5 });
+        Draw.Mesh(tables.small, art.faces, ListPassed, Palette { colors = [Color(0, 0.5, 0), Color(0, 1, 0)] });
     }
     Draw.Transform(float2(40, 104))
     {
-        Draw.Mesh(tables.small, art.faces, MapPick, Choice { at = 3 });
+        Draw.Mesh(tables.small, art.faces, ListPassedBack, Palette { colors = [Color(0, 0.5, 0), Color(0, 1, 0)] });
     }
     Draw.Transform(float2(56, 104))
     {
-        Draw.Mesh(tables.small, art.faces, MapPick, Choice { at = 77 });
+        Draw.Mesh(tables.small, art.faces, GridPassed);
     }
     Draw.Transform(float2(72, 104))
     {
-        Draw.Mesh(tables.small, art.faces, MapPick, Choice { at = -4 });
+        Draw.Mesh(tables.small, art.faces, AssetPassed, Choice { at = 18 });
     }
     Draw.Transform(float2(88, 104))
     {
-        Draw.Mesh(tables.small, art.faces, MapAsk, Choice { at = 5 });
+        Draw.Mesh(tables.small, art.faces, ListNudgedBack);
     }
-    Draw.Transform(float2(104, 104))
-    {
-        Draw.Mesh(tables.small, art.faces, MapAsk, Choice { at = 3 });
-    }
-    // Row 8: enum keys and struct values, a map of rows, a map's order, a set, an empty map and one a draw gives
+    // Row 8: a map's values by their keys: there, removed, never there, and under zero; and what it says of a key
     Draw.Transform(float2(8, 120))
     {
-        Draw.Mesh(tables.small, art.faces, MapTiles, Wanted { ground = Ground.Rock });
+        Draw.Mesh(tables.small, art.faces, MapPick, Choice { at = 0 });
     }
     Draw.Transform(float2(24, 120))
     {
-        Draw.Mesh(tables.small, art.faces, MapTiles, Wanted { ground = Ground.Grass });
+        Draw.Mesh(tables.small, art.faces, MapPick, Choice { at = 5 });
     }
     Draw.Transform(float2(40, 120))
     {
-        Draw.Mesh(tables.small, art.faces, MapFar, Choice { at = 20993 });
+        Draw.Mesh(tables.small, art.faces, MapPick, Choice { at = 3 });
     }
     Draw.Transform(float2(56, 120))
     {
-        Draw.Mesh(tables.small, art.faces, MapOrder);
+        Draw.Mesh(tables.small, art.faces, MapPick, Choice { at = 77 });
     }
     Draw.Transform(float2(72, 120))
     {
-        Draw.Mesh(tables.small, art.faces, SetAsk, Choice { at = 15 });
+        Draw.Mesh(tables.small, art.faces, MapPick, Choice { at = -4 });
     }
     Draw.Transform(float2(88, 120))
     {
-        Draw.Mesh(tables.small, art.faces, SetAsk, Choice { at = 8 });
+        Draw.Mesh(tables.small, art.faces, MapAsk, Choice { at = 5 });
     }
     Draw.Transform(float2(104, 120))
+    {
+        Draw.Mesh(tables.small, art.faces, MapAsk, Choice { at = 3 });
+    }
+    // Row 9: enum keys and struct values, a map of rows, a map's order, a set, an empty map and one a draw gives
+    Draw.Transform(float2(8, 136))
+    {
+        Draw.Mesh(tables.small, art.faces, MapTiles, Wanted { ground = Ground.Rock });
+    }
+    Draw.Transform(float2(24, 136))
+    {
+        Draw.Mesh(tables.small, art.faces, MapTiles, Wanted { ground = Ground.Grass });
+    }
+    Draw.Transform(float2(40, 136))
+    {
+        Draw.Mesh(tables.small, art.faces, MapFar, Choice { at = 20993 });
+    }
+    Draw.Transform(float2(56, 136))
+    {
+        Draw.Mesh(tables.small, art.faces, MapOrder);
+    }
+    Draw.Transform(float2(72, 136))
+    {
+        Draw.Mesh(tables.small, art.faces, SetAsk, Choice { at = 15 });
+    }
+    Draw.Transform(float2(88, 136))
+    {
+        Draw.Mesh(tables.small, art.faces, SetAsk, Choice { at = 8 });
+    }
+    Draw.Transform(float2(104, 136))
     {
         Draw.Mesh(tables.small, art.faces, MapNone, Choice { at = 456 });
     }
     mut var lookup = Lookup { pick = 2 };
     lookup.shades[1] = Color.red;
     lookup.shades[2] = Color(0, 1, 1);
-    Draw.Transform(float2(120, 120))
+    Draw.Transform(float2(120, 136))
     {
         Draw.Mesh(tables.small, art.faces, MapGiven, lookup);
+    }
+    Draw.Transform(float2(136, 136))
+    {
+        Draw.Mesh(tables.small, art.faces, MapNamed);
     }
 }
 
