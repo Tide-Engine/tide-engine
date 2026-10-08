@@ -1047,6 +1047,21 @@ static void run_list_checks(const float turn, const char *when)
         {40, 88, {128, 128, 255}, "a grid's size, and a cell of a grid of ints"},
         {56, 88, {0, 255, 0}, "an asset's grid, a cell by its place"},
         {72, 88, {128, 191, 64}, "a while, a for that doubles, and a loop only a break ends"},
+        {8, 104, {255, (int)(turn * 255.0f), 0}, "a map's value by its key, as the view left it this frame"},
+        {24, 104, {64, 128, 191}, "another key's"},
+        {40, 104, {128, 128, 128}, "a key that was removed is nothing"},
+        {56, 104, {128, 128, 128}, "a key that never was there is nothing"},
+        {72, 104, {0, 0, 255}, "a key under zero"},
+        {88, 104, {255, 128, 191}, "TryGet and Has of a key that's there"},
+        {104, 104, {0, 0, 64}, "TryGet and Has of a key that was removed"},
+        {8, 120, {128, 128, 255}, "a map keyed by an enum, a struct for its value"},
+        {24, 120, {191, 191, 64}, "a key that isn't there: TryGet's default, and an index's zeros"},
+        {40, 120, {183, 0, 128}, "a map of 3000 keys: its last, the key after it, and how many"},
+        {56, 120, {255, 128, 64}, "a foreach over a map, in the order its keys were added, without the one removed"},
+        {72, 120, {255, 128, 128}, "a set's key, how many it has, and its keys in order"},
+        {88, 120, {0, 128, 128}, "a key removed from a set"},
+        {104, 120, {0, 191, 128}, "an empty map, and a map keyed by bytes"},
+        {120, 120, {0, 255, 255}, "a map the draw gives, made along the way"},
     };
     enum { COUNT = sizeof wanted / sizeof wanted[0] };
     local.Art.targetPass = 18;

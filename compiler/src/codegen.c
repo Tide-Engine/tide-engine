@@ -16381,16 +16381,22 @@ static void gen_shaders(gen *g)
         for (int t = 0; t < sh->textures.count; t++) {
             const shader_texture *texture = &sh->textures.items[t];
             if (texture->read != READ_DATA) continue;
-            const type element = list_elem(texture->asset ? texture->asset->return_type.decl : texture->field->type.decl);
+            // A map's or a set's are its entries as it stores them: a map's as its key and its value, a set's as its key
+            const decl *map = !texture->asset && (texture->field->type.kind == TY_MAP || texture->field->type.kind == TY_SET)
+                            ? texture->field->type.decl : NULL;
+            const type element = map ? (map->is_set ? map->fields.items[0].type : (type){TY_STRUCT, map->entry})
+                                     : list_elem(texture->asset ? texture->asset->return_type.decl : texture->field->type.decl);
             int floats = 0, ints = 0;
             shader_words(element, &floats, &ints);
+            char entry[32];
+            snprintf(entry, sizeof entry, "tide_map%d_entry", map ? map->index : 0);
             sb_printf(o, "static void tide_shader_%d_words_%d(const void *tide_in, int32_t *tide_out)\n{\n"
-                         "    const %s *tide_e = tide_in;\n    struct {", s, t, elem_ctype(element));
+                         "    const %s *tide_e = tide_in;\n    struct {", s, t, map ? entry : elem_ctype(element));
             if (floats) sb_printf(o, " float f[%d];", floats);
             if (ints) sb_printf(o, " int32_t i[%d];", ints);
             sb_put(o, " } tide_w;\n");
             int f = 0, i = 0;
-            gen_shader_value(o, "tide_w", element, "(*tide_e)", &f, &i);
+            gen_shader_value(o, "tide_w", element, map && map->is_set ? "tide_e->key" : "(*tide_e)", &f, &i);
             sb_put(o, "    memcpy(tide_out, &tide_w, sizeof tide_w);\n}\n\n");
         }
 
@@ -16499,7 +16505,8 @@ static void gen_shaders(gen *g)
             }
             if (texture->read == READ_DATA) { // A list: its elements as numbers, and how many, for the draw
                 const decl *holds = texture->asset ? texture->asset->return_type.decl : texture->field->type.decl;
-                const type element = list_elem(holds);
+                const bool map = !texture->asset && (texture->field->type.kind == TY_MAP || texture->field->type.kind == TY_SET);
+                const type element = !map ? list_elem(holds) : holds->is_set ? holds->fields.items[0].type : (type){TY_STRUCT, holds->entry};
                 int floats = 0, ints = 0;
                 shader_words(element, &floats, &ints);
                 sb list = {0};
@@ -16516,6 +16523,14 @@ static void gen_shaders(gen *g)
                     sb_printf(o, "    tide_textures[%d] = tide_draw_grid_data(tide_draw, %s, &%s, %du, tide_shader_%d_words_%d, "
                                  "&tide_uniforms.i[%d]);\n", t, list.data, grid_shape_name(holds), (unsigned)(floats + ints), s, t,
                               texture->count_at);
+                    continue;
+                }
+                if (map) { // A map or a set: its live entries, how many, and its index's slots. The key is the first of an entry's ints
+                    int value_floats = 0, value_ints = 0;
+                    if (!holds->is_set) shader_words(holds->fields.items[1].type, &value_floats, &value_ints);
+                    sb_printf(o, "    tide_textures[%d] = tide_draw_map_data(tide_draw, %s, sizeof(tide_map%d_entry), %du, %du, "
+                                 "tide_shader_%d_words_%d, &tide_uniforms.i[%d]);\n", t, list.data, holds->index,
+                              (unsigned)(floats + ints), (unsigned)value_floats, s, t, texture->count_at);
                     continue;
                 }
                 sb_printf(o, "    tide_textures[%d] = tide_draw_list_data(tide_draw, %s, sizeof(%s), %du, tide_shader_%d_words_%d, "

@@ -1,0 +1,27 @@
+// expect: a map is read where the frag or vert takes it, a key at a time: it's not a value to keep or pass on
+// expect: read it as a field of a component, a singleton or the draw's values
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    Map<int, Color> hues;
+}
+
+frag Shade(V vertex, out Color color, Models models)
+{
+    var hues = models.hues;
+    color = hues[1];
+}
+
+view Show(Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}
