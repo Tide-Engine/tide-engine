@@ -172,7 +172,10 @@ async function webRunTest(tide, root) {
             bufferViews: [{ buffer: 0, byteLength: floats.length }],
             accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: "VEC3" }],
             meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }] };
-        put(join(game, "actor.bin"), floats);
+        // Keep the buffer edits inside one fixed second, regardless of how
+        // long compilation takes: a same-size edit must not reuse stale data.
+        const buffer = join(game, "actor.bin");
+        put(buffer, floats, 1600000000.1);
         put(join(game, "actor.gltf"), JSON.stringify(model));
         put(source, tideText.replace("+ 1;", "+ 2;") + 'asset SkinnedMesh<Vertex3> actor = "actor.gltf";\n');
         await waitFor(async () => await buildNumber() === 4, "adding a gameplay model");
@@ -184,8 +187,13 @@ async function webRunTest(tide, root) {
         await waitFor(async () => await buildNumber() === 5, "gameplay model file reload");
         check(readFileSync(header, "utf8") !== identity, "model file changes the generated game identity");
         identity = readFileSync(header, "utf8");
+        const bufferBefore = statSync(buffer, { bigint: true });
         floats.writeFloatLE(2, 12);
-        put(join(game, "actor.bin"), floats);
+        put(buffer, floats, 1600000000.2);
+        const bufferAfter = statSync(buffer, { bigint: true });
+        check(bufferAfter.size === bufferBefore.size && bufferAfter.mtimeNs !== bufferBefore.mtimeNs
+            && bufferAfter.mtimeNs / 1000000000n === bufferBefore.mtimeNs / 1000000000n,
+            "model buffer edits have equal sizes and distinct timestamps within one second");
         await waitFor(async () => await buildNumber() === 6, "gameplay model buffer reload");
         check(readFileSync(header, "utf8") !== identity, "external model buffer changes the generated game identity");
 

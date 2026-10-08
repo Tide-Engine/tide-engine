@@ -402,6 +402,10 @@ endforeach()
 # what it refuses, and that a file cut or wrong anywhere is never read past
 # its bytes. The language server reads a game's files at every keystroke.
 if(TARGET tidec_core)
+    add_executable(tidec_asset_cache_tests asset_cache_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_asset_cache_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(tidec_asset_cache_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_asset_cache COMMAND tidec_asset_cache_tests)
     add_executable(tidec_mesh_files_tests mesh_files_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
     target_include_directories(tidec_mesh_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     target_link_libraries(tidec_mesh_files_tests PRIVATE tide tidec_core) # The engine for the harness's clock
