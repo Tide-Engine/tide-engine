@@ -18,6 +18,8 @@ tide run --join K7QF2M          # join the room with this code
 tide run --web --host           # on the web, in a room only
 ```
 
+To check a match with several players without opening a window for each, `tide run --players 2 --script play.txt` plays them all at once with no window, and takes a picture from each machine (see [Several players](../tools/cli.md#several-players)).
+
 ## Starting a match from code
 
 A game that starts in a menu has a local `Main`, and its local code decides which match this machine is in:
