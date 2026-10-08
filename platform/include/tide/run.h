@@ -50,6 +50,17 @@
 // 1 when a picture can't be written, and with 2, having started nothing,
 // when a flag or a line of the script is wrong. Desktop only.
 //
+// ...and with several players, each a copy of the program with no window,
+// which the first starts (with --player after its own command line). They go
+// a frame at a time together, on a network that's made up as time and input
+// are (tide_platform_players), so the run repeats exactly as a run of one
+// does. If Main is the match's, the first opens it and the others join it;
+// if it's local, the game's own code does, at the script's keys and clicks:
+//
+//     game --players 2 --script play.txt      the script's lines say whose they are
+//                                             (`120 player 2 key d down`), and a picture
+//                                             has its player's number (fight-2.png)
+//
 // Where nobody watches (TIDE_HIDDEN in the environment: tide/page.h), a game
 // shows no window, so a run with one is refused the same way, with exit code
 // 2 and what to give it instead.

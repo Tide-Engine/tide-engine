@@ -17,6 +17,7 @@
 #include "tide/vorbis.h"
 #include "gpu.h"
 #include "mixer.h"
+#include "players.h"
 #include "png.h"
 #include "script.h"
 #include "shaders.h"
@@ -182,6 +183,10 @@ void tide_platform_open_headless(const tide_headless_desc *desc)
                 headless_run.height, (double)headless_run.scale, TIDE_PNG_MAX_SIDE);
         exit(2);
     }
+    // Which player of the run this is, if it's one of several: its script's lines and its files are its own
+    tide_platform_players_configure(&headless_run);
+    if (headless_run.capture) headless_run.capture = tide_platform_players_file(headless_run.capture);
+    if (headless_run.capture_audio) headless_run.capture_audio = tide_platform_players_file(headless_run.capture_audio);
     // The script first: a line that's wrong needs no window to say so
     if (headless_run.script && !tide_script_load(headless_run.script)) exit(2);
     if (!headless_run.frames && !tide_script_quits()) {
@@ -189,7 +194,11 @@ void tide_platform_open_headless(const tide_headless_desc *desc)
                         "`quit` line\n");
         exit(2);
     }
-    if (!tide_window_open(&(tide_window_desc){.title = "", .width = 64, .height = 64, .hidden = true})) exit(1); // It said why
+    // The other players' processes, started before this one has a window or a thread for them to take after
+    tide_platform_players_start();
+    if (!tide_window_open(&(tide_window_desc){.title = "", .width = 64, .height = 64, .hidden = true})) {
+        exit(tide_platform_players_finish(1)); // It said why
+    }
     headless = true;
     gpu = tide_window_gpu();
     opened = tide_time_now_ns();
@@ -311,8 +320,9 @@ static int headless_drawn(void)
     return last ? 0 : TIDE_KEEP_RUNNING;
 }
 
-_Noreturn static void finish(const int code)
+_Noreturn static void finish(int code)
 {
+    code = tide_platform_players_finish(code); // A run of several players ends as one
     tide_platform_gpu_timing(false);
     if (mic.open) tide_audio_in_close();
     tide_audio_out_close();
@@ -344,6 +354,8 @@ static int step(void)
     int code = run_frame(run_user, seconds);
     if (headless) headless_audio_frame();
     if (headless && code == TIDE_KEEP_RUNNING) code = headless_drawn();
+    // In a run of several players: what this one sent in the frame goes, and what the others sent comes
+    if (headless && code == TIDE_KEEP_RUNNING) code = tide_platform_players_step(headless_frame);
     tide_window_present(); // Also takes the system's input
 #ifndef __wasm__
     // A window nobody sees (minimized, or an app in the background) has no

@@ -77,6 +77,16 @@ typedef struct tide_headless_desc {
     // (docs/tools/cli.md, Scripts, has every kind); NULL for none. A file it
     // names is beside it.
     const char *script;
+    // A run of several players (tide_platform_players, below): how many, each
+    // a process of its own that the first starts; 0 for a run that isn't one.
+    // The first is given the program's command line, `argc` and `argv`, and
+    // starts the others with it and `--player <player> <hub>` after it, which
+    // their descs say: which player the process is, from 2, and the port the
+    // first listens on for them.
+    uint32_t players;
+    uint32_t player, hub;
+    int argc;
+    char **argv;
 } tide_headless_desc;
 
 // Opens a headless window, in tide_platform_open's place. Ends the program
@@ -369,6 +379,38 @@ int tide_platform_room_migrated(tide_transport *out, tide_address *server);
 // any), where there's UDP, and in a room, in one transport. False only if
 // there's neither.
 bool tide_platform_host_open(uint16_t port, tide_transport *out);
+
+// A run of several players with no window (tide_headless_desc.players): how
+// many it has, 0 for any other run, and which of them this process is, from 1.
+// Each is a process of its own, as on a machine of its own, and they go a
+// frame at a time together, on a network that's made up as the run's time and
+// devices are: a datagram sent in a frame is read in the next, by whoever it's
+// for, in the same order every run. No port opens and no relay is asked, so a
+// run of several repeats exactly, as a run of one does. A host goes by what's
+// below in such a run, in the place of what's above.
+uint32_t tide_platform_players(void);
+uint32_t tide_platform_player(void);
+// Takes the players who join a match this process hosts, in
+// tide_platform_host_open's place: in its room, and on `port`.
+bool tide_platform_players_open(uint16_t port, tide_transport *out);
+// Joins the room with `code`, in tide_platform_room_join's place. False for a
+// code that's no player's of the run. A room nobody has open fails at once
+// (tide_platform_players_failed), as the relay says of a room that isn't one.
+bool tide_platform_players_join(const char *code, tide_transport *out, tide_address *server);
+// A transport to the match at `address`, in tide_platform_resolve's and
+// tide_platform_udp_open's place: the first player's whose match is open on
+// its port. Its host says nothing there, and no name is looked up. One
+// nobody has open never answers, as an address nobody is at.
+bool tide_platform_players_connect(const char *address, uint16_t default_port, tide_transport *out, tide_address *server);
+// The code of the room this process's match is in, hosted or joined, in
+// tide_platform_room_code's place: "" for none.
+void tide_platform_players_code(char *out, size_t size);
+// ...and of player `player`'s room, whether its match is open or not: six of
+// a character that's the player's own, `AAAAAA` for the first and `BBBBBB`
+// for the second. "" for a player the run doesn't have.
+void tide_platform_players_room(uint32_t player, char *out, size_t size);
+// The room joined has nobody's match open in it, in tide_platform_room_failed's place.
+bool tide_platform_players_failed(void);
 
 // Threads to run ticks on (tide/jobs.h): a pool with one for each of the
 // CPU's cores, the caller's among them, made on first use. NULL with one core.
