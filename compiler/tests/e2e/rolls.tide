@@ -1,0 +1,151 @@
+// Random's rolls on the type, with no generator of the game's: a system's for
+// the entity it runs for, a handler's, code that runs once, functions and
+// methods they call, and a view's, which are this machine's.
+
+component Walker
+{
+    int id;
+    float2 direction;
+    int first;
+    int second;
+    int looped;
+    int helped;
+    int pair;
+    int method;
+    int poked;
+    int pokes;
+}
+
+// Another system's rolls for the same entities
+component Mood
+{
+    int roll;
+}
+
+struct Bag
+{
+    int size;
+
+    int Draw()
+    {
+        return Random.NextInt(size);
+    }
+}
+
+singleton Board
+{
+    int once;
+    int seed;
+    int through;
+}
+
+event Poke
+{
+    int sides;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    for (var i = 0; i < 6; i++) Spawn(Walker { id = i }, Mood { });
+    // Twins: the same in every field, in the same tick
+    Spawn(Walker { id = 100 }, Mood { });
+    Spawn(Walker { id = 100 }, Mood { });
+}
+
+// A function that rolls is handed what its caller rolls with, and so is the one it calls
+int Deeper(int sides)
+{
+    return Random.NextInt(sides);
+}
+
+int Pick(int sides)
+{
+    return Deeper(sides) * 1000 + Random.NextInt(1000);
+}
+
+// The seed, read with no parameter, in a function too
+int Seeded()
+{
+    return Random.seed;
+}
+
+system Step(mut Walker walker)
+{
+    walker.direction = Random.NextFloat2Direction();
+    walker.first = Random.NextInt(1000000);
+    walker.second = Random.NextInt(1000000);
+    walker.looped = 0;
+    for (var i = 0; i < 4; i++) walker.looped = walker.looped * 10 + Random.NextInt(10);
+    walker.helped = Pick(1000);
+    // Rolls keep the order they're written in, through functions too, on every platform
+    walker.pair = Deeper(1000) * 1000 + Deeper(1000) - Random.NextInt(1000) * Deeper(7);
+    var bag = Bag { size = 1000000 };
+    walker.method = bag.Draw();
+}
+
+system Feel(mut Mood mood)
+{
+    mood.roll = Random.NextInt(1000000);
+}
+
+// Code that runs once a tick rolls too
+system Count(mut Board board)
+{
+    board.once = Random.NextInt(1000000);
+    board.seed = Random.seed;
+    board.through = Seeded();
+}
+
+// The same event twice to one entity in one tick: each run of the handler rolls for itself
+system Pokes(Walker walker, Time time)
+{
+    if (time.tick != 3 || walker.id != 0) return;
+    this.Send(Poke { sides = 1000 });
+    this.Send(Poke { sides = 1000 });
+}
+
+event(Poke poke) Poked(mut Walker walker)
+{
+    walker.poked = walker.poked * 1000 + Random.NextInt(poke.sides);
+    walker.pokes += 1;
+}
+
+// Local code rolls with this machine's own generator, and reads the match's seed
+local singleton Fx
+{
+    float last;
+    float helped;
+    int frames;
+    int seed;
+}
+
+float Flicker()
+{
+    return Random.NextFloat(10, 20);
+}
+
+view Glow(mut Fx fx)
+{
+    fx.last = Random.NextFloat();
+    fx.helped = Flicker();
+    fx.seed = Random.seed;
+    fx.frames += 1;
+}
+
+component Glint
+{
+    int id;
+    local int shine;
+}
+
+event(Spawned) Lights(with Main)
+{
+    for (var i = 0; i < 4; i++) Spawn(Glint { id = i });
+}
+
+view Shine(mut Glint glint)
+{
+    glint.shine = 1 + Random.NextInt(1000000);
+}

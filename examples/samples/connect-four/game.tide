@@ -256,7 +256,7 @@ system Reach(Controls controls, mut Hand hand, with Owner)
     hand.x += (controls.column - hand.x) * 0.4;
 }
 
-system Referee(mut Board board, mut Roster roster, Time time)
+system Referee(mut Board board, mut Roster roster)
 {
     if (board.fresh)
     {
@@ -289,7 +289,7 @@ system Referee(mut Board board, mut Roster roster, Time time)
     board.request = -1;
     var mine = board.turn == RED ? board.red : board.yellow;
     var theirs = board.turn == RED ? board.yellow : board.red;
-    var salt = Math.Hash(int3(board.moves, board.redTurns + board.yellowTurns, time.seed));
+    var salt = Math.Hash(int3(board.moves, board.redTurns + board.yellowTurns, Random.seed));
     if (Mover(board, roster) == default)
     {
         if (board.plan < 0 && board.clock >= BOT_PLANS) board.plan = Think(mine, theirs, salt);

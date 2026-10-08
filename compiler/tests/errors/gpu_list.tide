@@ -1,4 +1,4 @@
-// expect: List<int> can't go to the GPU: the GPU has no lists, maps or sets
+// expect: a list is read where the frag or vert takes it, an element at a time
 scene Main { }
 
 struct V
@@ -31,7 +31,8 @@ event(Spawned) Setup(with Main)
 
 frag Shade(V vertex, out Color color, Models models)
 {
-    color = Color.white * models.faces.count;
+    var faces = models.faces;
+    color = Color.white * faces.count;
 }
 
 view Show(Box box, Models models)

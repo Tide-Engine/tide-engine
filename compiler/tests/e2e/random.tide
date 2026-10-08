@@ -50,9 +50,9 @@ singleton Deck
 
 scene Main { }
 
-event(Spawned) Setup(with Main, mut Deck deck, Time time)
+event(Spawned) Setup(with Main, mut Deck deck)
 {
-    deck.seed = time.seed;
+    deck.seed = Random.seed;
     for (var i = 0; i < 8; i++) Spawn(Roller { id = i });
     // Twins: the same in every field, in the same tick
     Spawn(Roller { id = 100 });
