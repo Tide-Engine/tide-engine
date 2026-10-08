@@ -1538,6 +1538,12 @@ static void ex_as(emit *em, const expr *e, const type want)
         return;
     }
     const int have_dim = type_dim(have), want_dim = type_dim(want);
+    if (want.kind == TY_COLOR && have_dim == 1) { // A number beside colors in Math: that in each channel
+        sb_printf(em->o, "%s(", ty(em, want));
+        ex_as(em, e, (type){TY_FLOAT, NULL});
+        sb_put(em->o, ")");
+        return;
+    }
     if (have_dim == 0 || want_dim == 0 || (have.kind == want.kind)) {
         ex(em, e);
         return;
@@ -1713,7 +1719,7 @@ static void ex_math(emit *em, const expr *e)
 {
     const bool wgsl = em->l == WGSL;
     const type first = e->arg_want.count ? e->arg_want.items[0] : (type){TY_ERROR, NULL};
-    const bool floats = type_is_float_based(first);
+    const bool floats = type_is_float_based(first) || first.kind == TY_COLOR; // A color is four floats here
     const bool quaternion = first.kind == TY_QUATERNION;
     const int dim = type_dim(first) ? type_dim(first) : 4;
     if (str_eq_c(e->name, "Hash") && first.kind == TY_LONG) {

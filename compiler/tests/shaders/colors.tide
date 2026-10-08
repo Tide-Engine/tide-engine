@@ -35,7 +35,11 @@ frag Colors(Vertex vertex, out Color color)
     Color scalarThenIntsPair = Color(2, int2(3, 4));
     Color scalarThenIntsTriple = Color(2, int3(3, 4, 5));
     Color mixedPairs = Color(int2(2, 3), float2(0.75, 0.125));
-    color = pairThenScalar + scalarThenPair + triple + tripleThenAlpha + quadruple + pairs
+    // Math takes colors as it takes vectors; a number beside one is that number in every channel.
+    Color mixed = Math.Lerp(triple, quadruple, 0.5);
+    Color kept = Math.Clamp(Math.Max(mixed, 0.25), 0, pairs);
+    Color eased = Math.SmoothStep(triple, quadruple, Math.Saturate(mixed));
+    color = mixed + kept + eased + pairThenScalar + scalarThenPair + triple + tripleThenAlpha + quadruple + pairs
           + pairThenScalars + scalarPairScalar + scalarsThenPair + scalarThenTriple
           + intsThenScalar + intsTriple + intsThenAlpha + intsQuadruple + scalarThenIntsPair + scalarThenIntsTriple + mixedPairs;
 }
