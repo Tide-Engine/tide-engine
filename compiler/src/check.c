@@ -9734,7 +9734,6 @@ static type check_step_value(checker *c, expr *e)
 
 static void check_stmt(checker *c, stmt *s);
 
-static bool fold_bool(const expr *e, bool *out);
 static bool fold_int(const expr *e, int64_t *out);
 
 // Card(2) while compiling: the number, in as many bits as the enum is stored
@@ -9858,7 +9857,7 @@ static bool fold_int(const expr *e, int64_t *out)
 
 // Conditions of compile-time integer choices: bool constants, comparisons
 // of known integers and bools, and the same short-circuit logic as at runtime.
-static bool fold_bool(const expr *e, bool *out)
+bool fold_bool(const expr *e, bool *out)
 {
     if (e->kind == E_BOOL || (e->kind == E_DEFAULT && e->type.kind == TY_BOOL)) {
         *out = e->kind == E_BOOL && e->bool_value;
@@ -9916,7 +9915,11 @@ static bool breaks_out(const stmt *s, const int depth)
             if (breaks_out(s->stmts.items[i], depth)) return true;
         }
         return false;
-    case S_IF: return breaks_out(s->then_stmt, depth) || breaks_out(s->else_stmt, depth);
+    case S_IF: {
+        bool cond;
+        if (fold_bool(s->cond, &cond)) return breaks_out(cond ? s->then_stmt : s->else_stmt, depth);
+        return breaks_out(s->then_stmt, depth) || breaks_out(s->else_stmt, depth);
+    }
     case S_WHILE:
     case S_FOR:
     case S_FOREACH: return breaks_out(s->then_stmt, depth + 1);
@@ -9932,12 +9935,13 @@ static bool breaks_out(const stmt *s, const int depth)
     }
 }
 
-// `while (true)` or `for (;;)` with no break of its own: it never finishes.
+// A loop whose condition is always true, with no reachable break of its own:
+// it never finishes.
 static bool never_ends(const stmt *s)
 {
     if (s->kind != S_WHILE && s->kind != S_FOR) return false;
-    const bool forever = s->kind == S_FOR ? !s->cond || (s->cond->kind == E_BOOL && s->cond->bool_value)
-                                          : s->cond->kind == E_BOOL && s->cond->bool_value;
+    bool cond;
+    const bool forever = !s->cond || (fold_bool(s->cond, &cond) && cond);
     return forever && !breaks_out(s->then_stmt, 0);
 }
 
@@ -9957,7 +9961,11 @@ static bool always_exits(const stmt *s)
             if (always_exits(s->stmts.items[i])) return true;
         }
         return false;
-    case S_IF: return always_exits(s->then_stmt) && always_exits(s->else_stmt);
+    case S_IF: {
+        bool cond;
+        if (fold_bool(s->cond, &cond)) return always_exits(cond ? s->then_stmt : s->else_stmt);
+        return always_exits(s->then_stmt) && always_exits(s->else_stmt);
+    }
     default: return false;
     }
 }
@@ -10114,7 +10122,11 @@ static bool always_returns(const stmt *s)
             if (always_returns(s->stmts.items[i])) return true;
         }
         return false;
-    case S_IF: return always_returns(s->then_stmt) && always_returns(s->else_stmt);
+    case S_IF: {
+        bool cond;
+        if (fold_bool(s->cond, &cond)) return always_returns(cond ? s->then_stmt : s->else_stmt);
+        return always_returns(s->then_stmt) && always_returns(s->else_stmt);
+    }
     case S_SWITCH: {
         bool has_default = false;
         for (int i = 0; i < s->cases.count; i++) {

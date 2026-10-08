@@ -1,0 +1,11 @@
+// expect: 'Pick' doesn't return a value on every path
+scene Main { }
+const bool YES = true;
+int Pick()
+{
+    while (YES)
+    {
+        if (YES) break;
+        return 42;
+    }
+}

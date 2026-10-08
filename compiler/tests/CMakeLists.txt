@@ -135,6 +135,7 @@ tide_e2e_test(tasks)
 tide_e2e_test(tasks_local)
 tide_e2e_test(tasks_flow)
 tide_e2e_test(loops)
+tide_e2e_test(constant_flow) # Known bool conditions agree for returns, switch exits, loops and out assignment
 tide_e2e_test(strings)
 tide_e2e_test(show_values)
 tide_e2e_test(text_fields)

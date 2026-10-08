@@ -298,10 +298,11 @@ static void flow_cond(flow *f, const expr *e, const uint8_t *st, uint8_t *when_t
         flow_cond(f, e->lhs, st, when_false, when_true);
         return;
     }
-    if (e->kind == E_BOOL) { // No path leads where a constant isn't
+    bool known;
+    if (fold_bool(e, &known)) { // No path leads where a constant isn't
         state_set(f, when_true, st);
         state_set(f, when_false, st);
-        state_end(f, e->bool_value ? when_false : when_true);
+        state_end(f, known ? when_false : when_true);
         return;
     }
     if (e->kind == E_CONDITIONAL) {
