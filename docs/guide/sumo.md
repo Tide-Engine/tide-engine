@@ -200,16 +200,21 @@ view Cast(Fx fx, Models models, mut Shadow shadow)
 
 That view comes before anything is drawn to the window, the window's own clear too: everything drawn there asks the lamp's image, so the image is whole first.
 
-**Every frag that lights a pixel asks the lamp's image.** It works out where its pixel is in that image, and compares how far the pixel is from the lamp with what's stored there. Only a frag reads a target's depth, so each of the four that light something asks for itself, four times around its pixel, which blends a shadow's edge, and hands the one function that does the lighting how much of the lamp's light arrives:
+**Every frag that lights a pixel asks the lamp's image.** One function does the asking: it works out where a place is in that image, and compares how far the place is from the lamp with what's stored there, four times around it, which blends a shadow's edge. It [takes the depth to read](../game/shaders.md#in-a-function), which each of the four frags that light something names as it calls, and gives how much of the lamp's light arrives, which the frag hands the one function that does the lighting:
 
 ```csharp
+float Sunlight(DepthTexture depth, float3 world, float3 normal, float4x4 toLamp)
+{
+    float3 seen = FromLamp(world, normal, toLamp);
+    return (depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
+          + depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
+}
+
 frag CrateLook(Corner corner, out Color color, Solid solid, Instance instance, Room room, Shadow shadow)
 {
     ...
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
-    float3 seen = FromLamp(this.world, normal, shadow.toLamp);
-    float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
-               + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
+    float sun = Sunlight(shadow.depth, this.world, normal, shadow.toLamp);
     color = Lit(paint, normal, this.world, room, 0.25, sun);
 }
 ```

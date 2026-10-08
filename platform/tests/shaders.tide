@@ -1656,6 +1656,30 @@ frag Shadowed(Vertex3 vertex, out Color color, Shadow shadow)
     color = Color(vertex.color.r * shade, vertex.color.g * shade, vertex.color.b * shade);
 }
 
+// The same in a function, which is written for the depth it's called with:
+// a depth is no argument a shader language hands on.
+float Sunlit(DepthTexture depth, float3 at)
+{
+    return depth.Compare(at.xy, at.z - 0.01);
+}
+
+// ...which another passes on
+float LampShade(DepthTexture depth, float3 world, float4x4 toLamp)
+{
+    return 0.25 + 0.75 * Sunlit(depth, FromLamp(world, toLamp));
+}
+
+frag ShadowedThrough(Vertex3 vertex, out Color color, Shadow shadow)
+{
+    float shade = LampShade(shadow.depth, this.world, shadow.toLamp);
+    color = Color(vertex.color.r * shade, vertex.color.g * shade, vertex.color.b * shade);
+}
+
+float Far(DepthTexture depth, float2 uv)
+{
+    return depth.Sample(uv);
+}
+
 // What a caster with holes in it is: its color goes nowhere in the lamp's
 // target, and the pixels it leaves out cast nothing.
 frag Grate(Vertex3 vertex, out Color color)
@@ -1664,9 +1688,11 @@ frag Grate(Vertex3 vertex, out Color color)
     color = Color.magenta;
 }
 
+// Its left half read here, and its right half in a function
 frag LampDepth(Vertex vertex, out Color color, Shadow shadow)
 {
-    float depth = shadow.depth.Sample(vertex.uv);
+    mut float depth = shadow.depth.Sample(vertex.uv);
+    if (vertex.uv.x >= 0.5) depth = Far(shadow.depth, vertex.uv);
     color = Color(depth, depth, depth);
 }
 
@@ -1711,7 +1737,8 @@ view Shadows(Art art, mut Shadow shadow)
     Draw.SetClip();
     Draw.Clear(Color.black);
     Draw.SetCamera(float4x4.TRS(float3(0, 10, 0), down, float3(1)), float4x4.Ortho(8, 8, 0.1, 30));
-    Draw.Mesh(shadow.floor, art.faces, float4x4.identity, Shadowed);
+    // The floor's frag compares in a function, the slab's itself
+    Draw.Mesh(shadow.floor, art.faces, float4x4.identity, ShadowedThrough);
     Draw.Mesh(shadow.slab, art.faces, float4x4.identity, Shadowed);
     // ...and what the lamp's target holds, as a picture
     Draw.SetScreen();
@@ -1859,9 +1886,30 @@ asset List<Texture> brickFrames = "four*.png";
 [Filter(Filter.Point), Wrap(Wrap.Mirror)]
 asset Grid2<Color> brickCells = "four.png";
 
+// A function samples as a frag does: an asset by its name, and a texture it
+// takes, which is the one its call names. Each frag below reads its left half
+// itself and its right half through one.
+Color BrickAt(float2 uv)
+{
+    return bricks.Sample(uv);
+}
+
+// The filter is said: the wrap is left to the Texture the frag was given
+Color Bricked(Texture image, float2 uv)
+{
+    return image.Sample(uv, Filter.Point);
+}
+
+// A grid is a Texture too, read as its own declaration says
+Color PaintAt(Texture image, float2 uv)
+{
+    return image.Sample(uv);
+}
+
 frag BricksByName(Vertex vertex, out Color color)
 {
     color = bricks.Sample(vertex.uv);
+    if (vertex.uv.x >= 1) color = BrickAt(vertex.uv);
 }
 
 frag BrickCellsByName(Vertex vertex, out Color color)
@@ -1873,11 +1921,13 @@ frag BrickCellsByName(Vertex vertex, out Color color)
 frag BrickSource(Vertex vertex, out Color color, Texture source)
 {
     color = source.Sample(vertex.uv);
+    if (vertex.uv.x >= 1) color = Bricked(source, vertex.uv);
 }
 
 frag PaintedByName(Vertex vertex, out Color color, Art art)
 {
     color = art.painted.Sample(vertex.uv);
+    if (vertex.uv.x >= 1) color = PaintAt(art.painted, vertex.uv);
 }
 
 [After(ScreenTargets)]
@@ -2590,16 +2640,27 @@ frag SkyLook(Vertex vertex, out Color color, Way way)
     color = skyFaces.Sample(way.to, Filter.Point);
 }
 
-// The asset through a field, in a branch, blended
+// A function reads the cube it's called with
+Color CubeAt(Cubemap cube, float3 way)
+{
+    return cube.Sample(way);
+}
+
+Color CubeNear(Cubemap cube, float3 way)
+{
+    return cube.Sample(way, Filter.Point);
+}
+
+// The asset through a field, in a branch, blended, in a function
 frag KeptLook(Vertex vertex, out Color color, Way way, Cubes cubes)
 {
     color = Color.black;
-    if (vertex.uv.x >= 0) color = cubes.kept.Sample(way.to);
+    if (vertex.uv.x >= 0) color = CubeAt(cubes.kept, way.to);
 }
 
 frag PaintedLook(Vertex vertex, out Color color, Way way, Cubes cubes)
 {
-    color = cubes.painted.Sample(way.to, Filter.Point);
+    color = CubeNear(cubes.painted, way.to);
 }
 
 // All of the first face across the square: a pixel covers 8 by 8 of the face's
