@@ -1,0 +1,4 @@
+// expect: '../e2e/assets/psds/bad/cmyk.psd' isn't a PNG or a PSD that decodes
+// expect: as PSD, isn't RGB; convert the document to RGB before saving
+asset Texture image = "../e2e/assets/psds/bad/cmyk.psd";
+scene Main { }

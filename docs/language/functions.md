@@ -89,7 +89,7 @@ system Regenerate(mut Unit unit)
 - A parameter can be `out`, which gives the caller's variable its value: see [Out parameters](#out-parameters).
 - A function shares its name with nothing else in its namespace but other functions, and a method never with a field.
 
-Functions see their parameters and `Math`, and methods their fields too, but nothing else. Neither can spawn or change entities: systems do. To read another entity's component, a function takes the [`World`](../game/systems.md#other-entities-the-world), which the system that calls it passes its own. A function can draw and use the GUI, and then only views, and other functions like it, can call it.
+Functions work from their parameters, constants and the functions they call; methods also see their own fields. Ordinary functions and methods get no implicit world, and don't spawn entities or record structural changes. To read or update another entity's component, take the caller's [`World`](../game/systems.md#other-entities-the-world) explicitly: reads use `World`, and `Set` needs `mut World`. What the helper reaches counts toward the caller's access, and a view can't call a helper that writes the match. A function can draw and use the GUI, and then only views, and other functions like it, can call it. [Async functions](../game/tasks.md#async-functions) run as tasks and have their world's entity operations.
 
 Singleton arguments are explicit values, like component arguments. The function gets no singleton lookup or access to a world. A match system or handler can pass state it can write to a `mut` parameter; a view can pass local state it can write, while its match state stays read-only. The input's `Sample` can only read local state, including through helpers. These restrictions follow calls through other helpers, and their reads and writes count toward the caller's access and scheduling.
 
@@ -210,6 +210,7 @@ system Halve(mut Pile pile, mut Tally tally)
 
 - A local declared this way is read-only, like a `var`. `out mut var half` declares one the code changes later.
 - It belongs to the block the call's statement is in. Declared in an `if`'s condition, it's still there in the `else` and after the `if`. Declared in a `while`'s or a `for`'s condition, it's the loop's own.
+- Later elements and arguments can read what an earlier nested call made, including a call inside a list argument. Their order is the order written, even when arguments are named or the outer function has overloads.
 - It's only read where its call has run. In `if (ready && TryHalf(8, out var half))`, `half` has a value inside the `if`, and reading it after the `if` is an error, since `ready` may have been false.
 - The type matches exactly, as for `mut`, and by name the name comes first: `TryHalf(value: 8, half: out var h)`.
 - A list's element and a swizzle of several components (`v.xy`) are copies, so neither can be an `out` argument: declare a variable, and put it in.

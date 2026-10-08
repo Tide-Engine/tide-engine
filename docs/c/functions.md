@@ -47,7 +47,7 @@ extern int Mix(int a, int b);
 In the game's folder, with nothing to set up:
 
 - Every `.c` file in the folder and its subfolders compiles with the game, with the same determinism flags as the engine. Headers next to them are found as C finds them.
-- Every `.cpp` file does too, as C++ with no runtime behind it: see [C++](#c).
+- Every `.cpp`, `.cc` and `.cxx` file does too, as C++ with no runtime behind it: see [C++](#c).
 - Every prebuilt library there links with the game when it was built for the platform being built for: `.a` and `.lib` files, and `.so`, `.dll` and `.dylib` ones. tide reads each library to tell which platform and CPU it's for, so one folder holds them all, named and placed however you like (for phones, see [Android](#android)).
 - Code for one platform only goes in `#ifdef`, as in any C.
 
@@ -145,6 +145,7 @@ Extern functions take and return plain data, by value:
 | Tide | C |
 | --- | --- |
 | `byte` | `uint8_t` |
+| `long` | `int64_t` |
 | `int`, `float`, `bool` | `int32_t` (`int`), `float`, `bool` |
 | `float3`, `int2`, `quaternion`, `float4x4`, ... | `tide_float3`, `tide_int2`, ... from `tide/math.h` |
 | `Color`, `Rect`, `Entity`, `PlayerID` | `tide_color`, `tide_rect`, `tide_entity`, `tide_player_id` |

@@ -4938,6 +4938,59 @@ TIDE_TEST(lsp_singleton_function_parameters)
     TIDE_CHECK(!has(last_sent(), "can't take singletons"));
 }
 
+// A valid long signature keeps every parameter, including when the last
+// one is passed first by name. The short overload mustn't become active.
+TIDE_TEST(lsp_many_function_parameters)
+{
+    for (int named = 0; named < 2; named++) {
+        start();
+        jbuf source = {0};
+        jb_put(&source, "int Many(");
+        for (int i = 0; i < 40; i++) jb_printf(&source, "%sint value%d", i ? ", " : "", i);
+        jb_put(&source, ") { return ");
+        for (int i = 0; i < 40; i++) jb_printf(&source, "%svalue%d", i ? " + " : "", i);
+        jb_put(&source, "; }\nint Many(int single) { return single; }\n"
+                        "singleton State { int value; }\nscene Main { }\n"
+                        "system Tick(mut State state) { state.value = Many(");
+        if (named) jb_put(&source, "value39: 3$9, ");
+        for (int i = 0; i < (named ? 39 : 40); i++) {
+            if (i) jb_put(&source, ", ");
+            if (named) jb_printf(&source, "value%d: ", i);
+            if (!named && i == 39) jb_put(&source, "3$9");
+            else jb_printf(&source, "%d", i);
+        }
+        jb_put(&source, "); }\n");
+        open_document(source.data);
+        TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+        const char *reply = request("textDocument/signatureHelp");
+        const json *result = json_get(json_parse(reply, strlen(reply)), "result");
+        const json *signatures = json_get(result, "signatures");
+        const int active = json_int(json_get(result, "activeSignature"), -1);
+        TIDE_REQUIRE(signatures && active >= 0 && active < signatures->count);
+        const json *signature = signatures->items[active];
+        const json *params = json_get(signature, "parameters");
+        TIDE_REQUIRE(params && params->count == 40);
+        TIDE_CHECK(json_int(json_get(result, "activeParameter"), -1) == 39);
+        const json *span = json_get(params->items[39], "label");
+        const char *label = json_str(json_get(signature, "label"));
+        TIDE_REQUIRE(span && span->count == 2 && label);
+        const int from = json_int(span->items[0], -1);
+        const int to = json_int(span->items[1], -1);
+        TIDE_REQUIRE(from >= 0 && from <= to && to <= (int)strlen(label));
+        TIDE_CHECK(to - from == (int)strlen("int value39"));
+        TIDE_CHECK(strncmp(label + from, "int value39", strlen("int value39")) == 0);
+        json_release();
+        const char *hints = request_with("textDocument/inlayHint",
+                                         "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":10,\"character\":0}}");
+        if (named) {
+            TIDE_CHECK(has(hints, "\"result\":[]")); // The arguments already say their names
+        } else {
+            TIDE_CHECK(count(hints, "\"kind\":2") == 40 && has(hints, "\"label\":\"value39:\""));
+        }
+        jb_free(&source);
+    }
+}
+
 static const char *format_reply(const char *text)
 {
     open_document(text);
@@ -8132,6 +8185,64 @@ static void start_in_pair_with(const char *first, const char *second, const char
     jb_free(&initialize);
 }
 
+// Files searched in one game aren't the same compilation context in
+// another: a shared package sees each consumer's own PACKAGE_ symbols.
+TIDE_TEST(lsp_workspace_symbols_of_shared_package_contexts)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_symbol_contexts");
+    make_folder("lsp_symbol_contexts/a");
+    make_folder("lsp_symbol_contexts/b");
+    make_folder("lsp_symbol_contexts/pk");
+    make_folder("lsp_symbol_contexts/extra");
+    write_file("lsp_symbol_contexts/a/tide.packages", "../pk\n../extra\n");
+    write_file("lsp_symbol_contexts/b/tide.packages", "../pk\n");
+    write_file("lsp_symbol_contexts/pk/tide.packages", "package Pk\n");
+    write_file("lsp_symbol_contexts/extra/tide.packages", "package Extra\n");
+    static const char package[] = "namespace Pk;\n#if PACKAGE_EXTRA\nconst int WithExtra = 1;\n#else\n"
+                                  "const int WithoutExtra = 2;\n#endif\n"
+                                  "const int Marker = 5;\nstruct Shared { int value; int Read() { return value; } }\n";
+    write_file("lsp_symbol_contexts/pk/main.tide", package);
+    write_file("lsp_symbol_contexts/extra/main.tide", "namespace Extra;\nconst int Marker = 7;\n");
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    char root_a[700], root_b[700], uri[700];
+    snprintf(root_a, sizeof root_a, "file:///%s/lsp_symbol_contexts/a", dir);
+    snprintf(root_b, sizeof root_b, "file:///%s/lsp_symbol_contexts/b", dir);
+    snprintf(uri, sizeof uri, "file:///%s/lsp_symbol_contexts/pk/main.tide", dir);
+    for (int reverse = 0; reverse < 2; reverse++) {
+        // Each consumer is valid on its own.
+        start_in_with(reverse ? root_b : root_a, "{}");
+        open_uri(uri, package);
+        TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+        start_in_pair_with(reverse ? root_b : root_a, reverse ? root_a : root_b, "{}");
+        for (int opened = 0; opened < 2; opened++) {
+            if (opened) open_uri(uri, package); // Its context was also discovered from the roots
+            clear_sent();
+            handle("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"workspace/symbol\",\"params\":{\"query\":\"\"}}");
+            const char *symbols = last_sent();
+            TIDE_CHECK(count(symbols, "\"name\":\"WithExtra\"") == 1);
+            TIDE_CHECK(count(symbols, "\"name\":\"WithoutExtra\"") == 1);
+            TIDE_CHECK(count(symbols, "\"name\":\"Marker\"") == 2); // Same name in two namespaces stays distinct
+            TIDE_CHECK(count(symbols, "\"name\":\"Shared\"") == 1);
+            TIDE_CHECK(count(symbols, "\"name\":\"Read\"") == 1);
+            TIDE_CHECK(count(symbols, "\"location\"") == 6); // Exact duplicates stay once
+        }
+    }
+    remove_game_file("lsp_symbol_contexts/a/tide.packages");
+    remove_game_file("lsp_symbol_contexts/b/tide.packages");
+    remove_game_file("lsp_symbol_contexts/pk/tide.packages");
+    remove_game_file("lsp_symbol_contexts/pk/main.tide");
+    remove_game_file("lsp_symbol_contexts/extra/tide.packages");
+    remove_game_file("lsp_symbol_contexts/extra/main.tide");
+    remove_folder("lsp_symbol_contexts/a");
+    remove_folder("lsp_symbol_contexts/b");
+    remove_folder("lsp_symbol_contexts/pk");
+    remove_folder("lsp_symbol_contexts/extra");
+    remove_folder("lsp_symbol_contexts");
+    clear_sent();
+    lsp_free(&server);
+}
+
 static void write_bytes(const char *name, const char *bytes, const size_t len)
 {
     char path[640];
@@ -8732,8 +8843,8 @@ TIDE_TEST(lsp_asset_one_file_for_a_list_or_a_map)
 }
 
 // Inside an asset's path, completion offers the folders and files where the
-// path so far leads, from the declaring file: the type's files (a PNG for a
-// Grid2<Color>), and globs for a list or a map.
+// path so far leads, from the declaring file: the type's files (PNG and PSD for
+// an image), and globs for a list or a map.
 TIDE_TEST(lsp_asset_path_completion)
 {
     if (!find_game_dir()) return;
@@ -8744,9 +8855,14 @@ TIDE_TEST(lsp_asset_path_completion)
                                     "asset List<Grid2<Color>> run = \"art/\";\n"
                                     "asset string notes = \"art/\";\n"
                                     "asset Clip shot = \"art/\";\n"
+                                    "asset Texture tile = \"art/\";\n"
+                                    "asset Map<string, Texture> images = \"art/\";\n"
+                                    "asset Cubemap sky = \"art/\";\n"
                                     "scene Main { }\n";
     write_file("lsp_cp/main.tide", main_file);
     write_bytes("lsp_cp/art/hero.png", "png", 3);
+    write_bytes("lsp_cp/art/hero.psd", "psd", 3);
+    write_bytes("lsp_cp/art/tile.PSD", "psd", 3);
     write_file("lsp_cp/art/other.txt", "text");
     write_bytes("lsp_cp/art/shot.wav", "wav", 3);
     write_bytes("lsp_cp/art/music.ogg", "ogg", 3);
@@ -8759,39 +8875,53 @@ TIDE_TEST(lsp_asset_path_completion)
     start_in_with(root, ASSET_EDITOR_CAPABILITIES);
     open_uri(uri_main, main_file);
 
-    // In the empty path: the game's folders, and its PNGs, which there are none of
+    // In the empty path: the game's folders, and its images, which there are none of
     const char *completion = request_at(uri_main, "textDocument/completion", 0, 27, "");
     TIDE_CHECK(offers(completion, "art/") && offers(completion, "../"));
     TIDE_CHECK(!offers(completion, "readme.txt") && !offers(completion, "main.tide"));
-    TIDE_CHECK(!offers(completion, "*.png")); // One file
+    TIDE_CHECK(!offers(completion, "*.png") && !offers(completion, "*.psd")); // One file
     TIDE_CHECK(has(completion, "\"kind\":19")); // A folder
     TIDE_CHECK(has(completion, "\"textEdit\":{\"range\":{\"start\":{\"line\":0,\"character\":27},\"end\":{\"line\":0,\"character\":27}},\"newText\":\"art/\"}"));
 
     // After "art/": what's in it, and the globs a list takes
     completion = request_at(uri_main, "textDocument/completion", 1, 36, "");
-    TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "sub/"));
+    TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "hero.psd") && offers(completion, "tile.PSD") && offers(completion, "sub/"));
     TIDE_CHECK(!offers(completion, "other.txt"));
     TIDE_CHECK(offers(completion, "*.png") && offers(completion, "**/*.png"));
+    TIDE_CHECK(offers(completion, "*.psd") && offers(completion, "**/*.psd"));
     TIDE_CHECK(has(completion, "\"textEdit\":{\"range\":{\"start\":{\"line\":1,\"character\":36},\"end\":{\"line\":1,\"character\":36}},\"newText\":\"hero.png\"}"));
 
     // Text takes any file
     completion = request_at(uri_main, "textDocument/completion", 2, 26, "");
-    TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "other.txt"));
+    TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "hero.psd") && offers(completion, "other.txt"));
     TIDE_CHECK(!offers(completion, "*") && !offers(completion, "**/*"));
 
     // A clip is a WAV or an Ogg
     completion = request_at(uri_main, "textDocument/completion", 3, 23, "");
     TIDE_CHECK(offers(completion, "shot.wav") && offers(completion, "music.ogg"));
-    TIDE_CHECK(!offers(completion, "hero.png") && !offers(completion, "other.txt"));
+    TIDE_CHECK(!offers(completion, "hero.png") && !offers(completion, "hero.psd") && !offers(completion, "other.txt"));
+
+    // Textures and cube faces take the same image formats; only many files offer globs.
+    completion = request_at(uri_main, "textDocument/completion", 4, 26, "");
+    TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "hero.psd") && offers(completion, "tile.PSD"));
+    TIDE_CHECK(!offers(completion, "other.txt") && !offers(completion, "*.psd"));
+    completion = request_at(uri_main, "textDocument/completion", 5, 41, "");
+    TIDE_CHECK(offers(completion, "hero.psd") && offers(completion, "*.psd") && offers(completion, "**/*.psd"));
+    completion = request_at(uri_main, "textDocument/completion", 6, 25, "");
+    TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "hero.psd") && offers(completion, "*.psd"));
+    TIDE_CHECK(!offers(completion, "other.txt"));
 
     // Part of a name typed: the item replaces it
     open_uri(uri_main, "asset Grid2<Color> hero = \"art/he\";\nscene Main { }\n");
     completion = request_at(uri_main, "textDocument/completion", 0, 33, "");
     TIDE_CHECK(offers(completion, "hero.png"));
+    TIDE_CHECK(offers(completion, "hero.psd"));
     TIDE_CHECK(has(completion, "\"range\":{\"start\":{\"line\":0,\"character\":31},\"end\":{\"line\":0,\"character\":33}},\"newText\":\"hero.png\""));
 
     remove_game_file("lsp_cp/main.tide");
     remove_game_file("lsp_cp/art/hero.png");
+    remove_game_file("lsp_cp/art/hero.psd");
+    remove_game_file("lsp_cp/art/tile.PSD");
     remove_game_file("lsp_cp/art/other.txt");
     remove_game_file("lsp_cp/readme.txt");
     remove_game_file("lsp_cp/.tide/assets.sha256");

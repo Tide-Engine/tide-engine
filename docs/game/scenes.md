@@ -76,7 +76,7 @@ Loaded scenes share their world: the same systems, singletons and `Time`.
 
 ## Private scenes
 
-Scenes are public by default: every player in the world sees them. A private one is only seen by the server and the players given it, which is how a card game keeps each hand to its player:
+Scenes have visibility and membership metadata. They are public by default; `SceneVisibility.Private` and `Scene.AddPlayer` record who a scene is intended for:
 
 ```csharp
 scene Hand
@@ -91,8 +91,8 @@ event(PlayerJoined joined) DealIn()
 }
 ```
 
-`Scene.AddPlayer(scene, player)` and `Scene.RemovePlayer(scene, player)` change who sees it. Who sees a scene is part of the match, so the server decides it, and a player who's added receives the scene's state.
+`Scene.AddPlayer(scene, player)` and `Scene.RemovePlayer(scene, player)` change that membership. It is part of the match, so only match code changes it.
 
-A private scene with no players exists only on the server, which is where secrets like random seeds go. Code that reads a private scene only predicts correctly on machines that see it, and the server corrects the others.
-
-A client never loads match scenes on its own: it has the ones the server has it in.
+::: warning Visibility filtering isn't built yet
+Every player still receives the whole world, including scenes marked private and their entities. These calls record metadata; they do not hide cards, random seeds or other secrets from another player's machine. Selective state delivery is planned (see [Networking](../multiplayer/networking.md#who-sees-what)).
+:::

@@ -125,7 +125,7 @@ A system that splits can spawn. Its `Spawn` gives a temporary handle, which work
 
 ## Parallel loops
 
-The third kind is inside a system: a `parallel` loop goes through a grid's cells, or blocks of them, all at once (see [Grids](../language/grids.md)). Its steps spread across the threads that are free, even while other systems run, and the system goes on once they're all done. Each step reads the grid as the loop found it and changes only its own cell or block, so the result is the same as on one thread. A foreach over a grid whose steps only touch their own cell runs the same way. The system itself waits for others as any system that writes the grid's component or singleton would, and the schedule shows its loops: `Fall  (once, 1 parallel loop)`.
+The third kind is inside a system: a `parallel` loop goes through a grid's cells, or blocks of them, all at once (see [Grids](../language/grids.md)). It can also go through a [list's elements by index](../language/text-and-lists.md#going-through-every-element-at-once). Its steps spread across the threads that are free, even while other systems run, and the system goes on once they're all done. Each step reads the collection as the loop found it and changes only its own cell, element or block, so the result is the same as on one thread. A foreach over a grid whose steps only touch their own cell runs the same way. The system itself waits for others as any system that writes the collection's component or singleton would, and the schedule shows its loops: `Fall  (once, 1 parallel loop)`.
 
 ## In CMake builds
 

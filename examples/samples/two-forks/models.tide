@@ -1,0 +1,201 @@
+// The meshes of what moves in Two Forks, each made once and drawn wherever it
+// is: a chef, a fork, a sausage, the pedal's plate, a cloud, a gull, plain
+// shapes for arms and what flies, and a flat square for what's painted on the
+// ground. Each is a few dozen flat faces, and no more.
+
+local singleton Models
+{
+    List<Corner> cube;
+    List<int> cubeFaces;
+    List<Corner> ball;
+    List<int> ballFaces;
+    List<Corner> rod;     // Along z, 1 long, of radius 1: an arm, drawn from one place to another
+    List<int> rodFaces;
+    List<Corner> chef;
+    List<int> chefFaces;
+    List<Corner> fork;
+    List<int> forkFaces;
+    List<Corner> banger;
+    List<int> bangerFaces;
+    List<Corner> pedal;
+    List<int> pedalFaces;
+    List<Corner> cloud;
+    List<int> cloudFaces;
+    List<Corner> gull;
+    List<int> gullFaces;
+    List<Corner> plate;
+    List<int> plateFaces;
+    bool made;
+}
+
+const float BANGER = 0.34;   // A sausage's radius, before it's flattened
+const float FLAT = 0.84;     // How much flatter than round it is: its two sides are sides
+
+// A chef, standing at the origin and facing +z: dark trousers, a white coat
+// with a sash and a neckerchief in whatever tint it's drawn with, a head with
+// a moustache, and a toque. Its arms hold the fork, so they're drawn apart
+// (show.tide).
+void MakeChef(mut List<Corner> corners, mut List<int> faces)
+{
+    var coat = Ink(Color(0.93, 0.91, 0.86), PLAIN, 0.3);
+    var scarf = Tinted(1, 0.4);
+    var skin = Ink(Color(0.93, 0.72, 0.58), PLAIN, 0.3);
+    var dark = Ink(Color(0.17, 0.16, 0.2), PLAIN, 0.5);
+    var trousers = Ink(Color(0.25, 0.27, 0.35), PLAIN, 0.2);
+    var middle = float3(0);
+    List<float2> hips = [float2(0, 0.08), float2(0.24, 0.1), float2(0.28, 0.3)];
+    PutLathe(corners, faces, trousers, middle, hips, float2(1, 1), 7);
+    PutBox(corners, faces, dark, float3(0.12, 0.05, 0.1), float3(0.17, 0.1, 0.3));
+    PutBox(corners, faces, dark, float3(-0.12, 0.05, 0.1), float3(0.17, 0.1, 0.3));
+    // The coat: round at the belly, and in to the shoulders
+    List<float2> body = [float2(0.28, 0.3), float2(0.33, 0.42), float2(0.29, 0.6), float2(0.17, 0.73), float2(0, 0.75)];
+    PutLathe(corners, faces, coat, middle, body, float2(1, 1), 7);
+    List<float2> sash = [float2(0.285, 0.27), float2(0.345, 0.32), float2(0.34, 0.4)];
+    PutLathe(corners, faces, scarf, middle, sash, float2(1, 1), 7);
+    List<float2> knot = [float2(0.17, 0.7), float2(0.22, 0.75), float2(0.12, 0.8)];
+    PutLathe(corners, faces, scarf, middle, knot, float2(1, 1), 6);
+
+    var head = float3(0, 0.96, 0);
+    PutBlob(corners, faces, skin, head, float3(0.22, 0.21, 0.22), 0, 0, false, 4, 7);
+    PutBox(corners, faces, Ink(Color(0.88, 0.6, 0.5), PLAIN, 0.3), head + float3(0, -0.03, 0.22), float3(0.07, 0.07, 0.08));
+    PutBox(corners, faces, dark, head + float3(0.09, 0.04, 0.19), float3(0.06, 0.07, 0.05));
+    PutBox(corners, faces, dark, head + float3(-0.09, 0.04, 0.19), float3(0.06, 0.07, 0.05));
+    // A moustache, from ear to ear
+    PutBox(corners, faces, Ink(Color(0.27, 0.17, 0.11), PLAIN, 0.3), head + float3(0, -0.09, 0.2), float3(0.27, 0.055, 0.07));
+    // The toque: a band, a stripe in the chef's color, and the puff on top
+    List<float2> band = [float2(0.21, 1.07), float2(0.225, 1.28), float2(0, 1.3)];
+    PutLathe(corners, faces, coat, middle, band, float2(1, 1), 7);
+    List<float2> stripe = [float2(0.215, 1.09), float2(0.24, 1.1), float2(0.24, 1.16), float2(0.222, 1.17)];
+    PutLathe(corners, faces, scarf, middle, stripe, float2(1, 1), 7);
+    PutBlob(corners, faces, coat, float3(0, 1.4, 0), float3(0.31, 0.19, 0.31), 0, 0, false, 3, 7);
+    Facet(corners, faces);
+}
+
+// A fork, lying along +z from the hands that hold it at the origin: a wooden
+// handle, a steel neck, and three tines, a tile ahead.
+void MakeFork(mut List<Corner> corners, mut List<int> faces)
+{
+    var wood = Ink(Color(0.56, 0.37, 0.21), WOOD, 0.2);
+    var steel = Ink(Color(0.74, 0.77, 0.82), PLAIN, 1.6);
+    PutTube(corners, faces, wood, float3(0, 0, -0.18), float3(0, 0, 0.5), 0.062, 0.056, 4);
+    PutTube(corners, faces, steel, float3(0, 0, 0.48), float3(0, 0, 0.68), 0.052, 0.046, 4);
+    PutBox(corners, faces, steel, float3(0, 0, 0.7), float3(0.52, 0.1, 0.1));
+    for (var i = -1; i <= 1; i++)
+    {
+        PutTube(corners, faces, steel, float3(i * 0.21, 0, 0.7), float3(i * 0.21, 0, 1.1), 0.052, 0.02, 4);
+    }
+    Facet(corners, faces);
+}
+
+// A sausage, lying along z with its middle at the origin: two halves that
+// bulge, a waist between them, and a knot of skin at each end.
+void MakeBanger(mut List<Corner> corners, mut List<int> faces)
+{
+    // Turned on a lathe that lies down: the lathe's upright is the sausage's length
+    var skin = Placed(Ink(Color.white, PLAIN, 0), float3(0), quaternion.AxisAngle(float3(1, 0, 0), Math.PI * 0.5));
+    List<float2> profile = [float2(0, -0.93), float2(0.22, -0.87), float2(0.33, -0.66), float2(0.34, -0.26), float2(0.295, 0),
+                            float2(0.34, 0.26), float2(0.33, 0.66), float2(0.22, 0.87), float2(0, 0.93)];
+    PutLathe(corners, faces, skin, float3(0), profile, float2(BANGER / 0.34, 1), 8);
+    var tie = Ink(Color.white, PLAIN, 0);
+    PutTube(corners, faces, tie, float3(0, 0, 0.9), float3(0, 0, 1.0), 0.05, 0.085, 4);
+    PutTube(corners, faces, tie, float3(0, 0, -0.9), float3(0, 0, -1.0), 0.05, 0.085, 4);
+    Facet(corners, faces);
+}
+
+// The pedal's plate: brass, with blue enamel in its middle, the gas's color.
+void MakePedal(mut List<Corner> corners, mut List<int> faces)
+{
+    List<float2> plate = [float2(0.36, 0), float2(0.36, 0.07), float2(0.27, 0.09)];
+    PutLathe(corners, faces, Ink(Color(0.85, 0.66, 0.24), PLAIN, 1.4), float3(0), plate, float2(1, 1), 10);
+    List<float2> enamel = [float2(0.27, 0.088), float2(0.24, 0.105), float2(0, 0.105)];
+    PutLathe(corners, faces, Ink(Color(0.2, 0.45, 0.92), PLAIN, 1.4), float3(0), enamel, float2(1, 1), 10);
+    Facet(corners, faces);
+}
+
+// A cloud: three lumps run together, about three across.
+void MakeCloud(mut List<Corner> corners, mut List<int> faces)
+{
+    var white = Ink(Color.white, PLAIN, 0);
+    PutBlob(corners, faces, white, float3(0, 0, 0), float3(1.5, 0.75, 1.0), 1.3, 0.12, false, 4, 7);
+    PutBlob(corners, faces, white, float3(1.25, -0.05, 0.2), float3(0.95, 0.55, 0.8), 2.9, 0.12, false, 3, 6);
+    PutBlob(corners, faces, white, float3(-1.2, -0.1, -0.2), float3(0.9, 0.5, 0.7), 4.1, 0.12, false, 3, 6);
+    Facet(corners, faces);
+}
+
+// A gull, gliding along +z: a body, a head with a beak, and two wings, bent.
+void MakeGull(mut List<Corner> corners, mut List<int> faces)
+{
+    var white = Ink(Color(0.93, 0.93, 0.94), PLAIN, 0.2);
+    var gray = Ink(Color(0.56, 0.59, 0.66), PLAIN, 0.2);
+    PutBlob(corners, faces, white, float3(0, 0, 0), float3(0.1, 0.09, 0.26), 0, 0, false, 3, 5);
+    PutTube(corners, faces, Ink(Color(0.9, 0.62, 0.18), PLAIN, 0.4), float3(0, 0.02, 0.24), float3(0, 0, 0.38), 0.04, 0, 3);
+    for (var side = -1; side <= 1; side += 2)
+    {
+        var elbow = float3(0.3 * side, 0.1, 0.02);
+        var tip = float3(0.64 * side, 0.02, -0.08);
+        PutTriangle(corners, faces, gray, float3(0.05 * side, 0.02, 0.12), float3(0.05 * side, 0.02, -0.12), elbow, float3(0, 1, 0), float2(0), float2(0), float2(0));
+        PutTriangle(corners, faces, gray, float3(0.05 * side, 0.02, 0.12), float3(0.05 * side, 0.02, -0.12), elbow, float3(0, -1, 0), float2(0), float2(0), float2(0));
+        PutTriangle(corners, faces, gray, elbow, float3(0.28 * side, 0.08, -0.14), tip, float3(0, 1, 0), float2(0), float2(0), float2(0));
+        PutTriangle(corners, faces, gray, elbow, float3(0.28 * side, 0.08, -0.14), tip, float3(0, -1, 0), float2(0), float2(0), float2(0));
+    }
+    Facet(corners, faces);
+}
+
+void MakeModels(mut Models models)
+{
+    models.made = true;
+    var plain = Tinted(1, 0);
+    PutBox(models.cube, models.cubeFaces, plain, float3(0), float3(1));
+    PutBlob(models.ball, models.ballFaces, plain, float3(0), float3(1), 0, 0, false, 3, 6);
+    Facet(models.ball, models.ballFaces);
+    PutTube(models.rod, models.rodFaces, plain, float3(0, 0, -0.5), float3(0, 0, 0.5), 1, 1, 4);
+    Facet(models.rod, models.rodFaces);
+    MakeChef(models.chef, models.chefFaces);
+    MakeFork(models.fork, models.forkFaces);
+    MakeBanger(models.banger, models.bangerFaces);
+    MakePedal(models.pedal, models.pedalFaces);
+    MakeCloud(models.cloud, models.cloudFaces);
+    MakeGull(models.gull, models.gullFaces);
+    models.plate = [Corner { position = float3(-0.5, 0, -0.5), normal = float3(0, 1, 0) },
+                    Corner { position = float3(0.5, 0, -0.5), normal = float3(0, 1, 0) },
+                    Corner { position = float3(0.5, 0, 0.5), normal = float3(0, 1, 0) },
+                    Corner { position = float3(-0.5, 0, 0.5), normal = float3(0, 1, 0) }];
+    models.plateFaces = [0, 2, 1, 0, 3, 2];
+}
+
+// A plain shape somewhere, for what moves: a ball's size is its radii, a
+// box's its sides, and a mesh's what it's scaled by.
+Solid Piece(float3 at, quaternion turn, float3 size, Color tint, float gloss)
+{
+    return Solid { transform = float4x4.TRS(at, turn, size), tint = tint, gloss = gloss };
+}
+
+// A rod from one place to another: an arm.
+Solid Rod(float3 from, float3 to, float thick, Color tint, float gloss)
+{
+    var along = to - from;
+    var length = Math.Max(Math.Length(along), 0.0001);
+    var way = along / length;
+    var turn = quaternion.LookRotation(way, Math.Abs(way.y) > 0.95 ? float3(0, 0, 1) : float3(0, 1, 0));
+    return Piece((from + to) * 0.5, turn, float3(thick, thick, length), tint, gloss);
+}
+
+// Where a place on the board is in the world: a tile is a meter, the board's
+// middle is the world's, east is +x and north is +z. A tile's own place is its
+// middle.
+float3 Spot(int2 size, float2 at, float height)
+{
+    return float3(at.x - (size.x - 1) * 0.5, height, (size.y - 1) * 0.5 - at.y);
+}
+
+// Which way a way is in the world.
+float3 Toward(int way)
+{
+    switch (way & 3)
+    {
+        case NORTH: return float3(0, 0, 1);
+        case EAST: return float3(1, 0, 0);
+        case SOUTH: return float3(0, 0, -1);
+    }
+    return float3(-1, 0, 0);
+}

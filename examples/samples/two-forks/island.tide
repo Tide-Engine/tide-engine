@@ -1,0 +1,155 @@
+// What stands still in Two Forks: the islands of a level, with their grills,
+// the pedal's seat and the rocks, and the sea around. It's made again
+// whenever the level changes, from the board's tiles: one mesh of flat faces,
+// each corner with its own paint, an image of where the land is, for the sea
+// to be shallow by, and a few rocks out at sea.
+
+local singleton Scenery
+{
+    List<Corner> mesh;
+    List<int> faces;
+    List<Corner> sea;
+    List<int> seaFaces;
+    int level = -1;      // The level this is of
+}
+
+// A tile's top: turf, which the frag paints by where on the board it is.
+void PutTurf(mut Scenery scenery, int2 size, int2 at)
+{
+    var brush = Ink(Color.white, TURF, 0);
+    var a = Spot(size, float2(at.x - 0.5, at.y - 0.5), 0);
+    var b = Spot(size, float2(at.x + 0.5, at.y - 0.5), 0);
+    var c = Spot(size, float2(at.x + 0.5, at.y + 0.5), 0);
+    var d = Spot(size, float2(at.x - 0.5, at.y + 0.5), 0);
+    PutQuad(scenery.mesh, scenery.faces, brush, a, b, c, d, float3(0, 1, 0),
+            float2(at.x, at.y), float2(at.x + 1, at.y), float2(at.x + 1, at.y + 1), float2(at.x, at.y + 1));
+}
+
+// A grill: a pit walled in stone, its bed of coals or of burners, and iron
+// bars over it for the sausages to lie on.
+void PutGrill(mut Scenery scenery, float3 middle, bool gas)
+{
+    var stone = Ink(gas ? Color(0.5, 0.56, 0.66) : Color(0.6, 0.58, 0.55), STONE, 0.1);
+    var iron = Ink(Color(0.13, 0.13, 0.15), IRON, 1.3);
+    PutBox(scenery.mesh, scenery.faces, stone, middle + float3(0, -0.03, 0.455), float3(1, 0.1, 0.09));
+    PutBox(scenery.mesh, scenery.faces, stone, middle + float3(0, -0.03, -0.455), float3(1, 0.1, 0.09));
+    PutBox(scenery.mesh, scenery.faces, stone, middle + float3(0.455, -0.03, 0), float3(0.09, 0.1, 0.82));
+    PutBox(scenery.mesh, scenery.faces, stone, middle + float3(-0.455, -0.03, 0), float3(0.09, 0.1, 0.82));
+    var bed = Ink(Color.white, gas ? BURNER : EMBER, 0);
+    var low = middle + float3(0, -0.075, 0);
+    PutQuad(scenery.mesh, scenery.faces, bed, low + float3(-0.41, 0, -0.41), low + float3(0.41, 0, -0.41), low + float3(0.41, 0, 0.41), low + float3(-0.41, 0, 0.41),
+            float3(0, 1, 0), float2(0, 0), float2(1, 0), float2(1, 1), float2(0, 1));
+    for (var bar = -2; bar <= 2; bar++)
+    {
+        PutBox(scenery.mesh, scenery.faces, iron, middle + float3(0, -0.005, bar * 0.16), float3(0.84, 0.05, 0.055));
+    }
+}
+
+// The islands of a board, the sea, and where the land is,
+// for the sea's frag.
+void MakeScenery(mut Scenery scenery, mut Shore shore, Board board, int level)
+{
+    scenery.level = level;
+    scenery.mesh.Clear();
+    scenery.faces.Clear();
+    if (scenery.sea.count == 0)
+    {
+        scenery.sea = [Corner { position = float3(-70, SEA, -70), normal = float3(0, 1, 0) },
+                       Corner { position = float3(70, SEA, -70), normal = float3(0, 1, 0) },
+                       Corner { position = float3(70, SEA, 70), normal = float3(0, 1, 0) },
+                       Corner { position = float3(-70, SEA, 70), normal = float3(0, 1, 0) }];
+        scenery.seaFaces = [0, 2, 1, 0, 3, 2];
+    }
+
+    var size = board.size;
+    for (var y = 0; y < size.y; y++)
+    {
+        for (var x = 0; x < size.x; x++)
+        {
+            var at = int2(x, y);
+            var tile = TileAt(board, at);
+            if (tile == Tile.Water) continue;
+            var middle = Spot(size, float2(x, y), 0);
+            var grill = tile == Tile.Coal || tile == Tile.Gas;
+            if (grill) PutGrill(scenery, middle, tile == Tile.Gas);
+            else PutTurf(scenery, size, at);
+            if (tile == Tile.Rock)
+            {
+                PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.56, 0.55, 0.53), IRON, 0.1), middle + float3(0, 0.22, 0), float3(0.44, 0.42, 0.42),
+                        x * 3.7 + y * 1.9, 0.22, true, 3, 6);
+            }
+            if (tile == Tile.Pedal)
+            {
+                // The pedal's seat: an iron ring, which the plate goes down into
+                List<float2> seat = [float2(0.43, 0), float2(0.43, 0.035), float2(0.38, 0.045), float2(0.37, 0.01)];
+                PutLathe(scenery.mesh, scenery.faces, Ink(Color(0.2, 0.2, 0.23), IRON, 1.2), middle, seat, float2(1, 1), 10);
+            }
+            // Its sides, where the sea is: earth under turf, and stone under a grill
+            for (var way = 0; way < 4; way++)
+            {
+                if (TileAt(board, at + Way(way)) != Tile.Water) continue;
+                var out = Toward(way);
+                var along = float3(out.z, 0, -out.x) * 0.5;
+                var top = middle + out * 0.5 + float3(0, grill ? -0.03 : 0, 0);
+                var down = float3(0, -DEEP, 0);
+                var side = grill ? Ink(Color(0.55, 0.54, 0.52), STONE, 0.1) : Ink(Color.white, EARTH, 0);
+                PutQuad(scenery.mesh, scenery.faces, side, top - along, top + along, top + along + down, top - along + down, out,
+                        float2(0, 0), float2(1, 0), float2(1, DEEP), float2(0, DEEP));
+            }
+        }
+    }
+
+    // A few rocks out at sea, where they're in nobody's way: the same for a level every time
+    mut var dice = Random(level * 7919 + 13);
+    for (var i = 0; i < 6; i++)
+    {
+        var turn = dice.NextFloat(0, Math.TAU);
+        var far = dice.NextFloat(9.5, 15);
+        var big = dice.NextFloat(0.5, 1.3);
+        var where = float3(Math.Cos(turn) * far, SEA - 0.1, Math.Abs(Math.Sin(turn)) * far * 0.9 + 1);
+        PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.5, 0.49, 0.47), IRON, 0.1), where + float3(0, big * 0.3, 0), float3(big, big * 0.8, big * 0.9),
+                dice.NextFloat(0, 20), 0.3, true, 3, 6);
+    }
+    Facet(scenery.mesh, scenery.faces);
+
+    // Where the land is, a pixel a quarter of a meter, blurred: its blur is the shallows
+    mut List<float> land = [];
+    mut List<float> soft = [];
+    land.Resize(SHORE_W * SHORE_H);
+    soft.Resize(SHORE_W * SHORE_H);
+    for (var j = 0; j < SHORE_H; j++)
+    {
+        for (var i = 0; i < SHORE_W; i++)
+        {
+            var wx = (i + 0.5) / SHORE_W * SHORE_WIDE - SHORE_WIDE * 0.5;
+            var wz = (j + 0.5) / SHORE_H * SHORE_DEEP - SHORE_DEEP * 0.5;
+            var tile = int2(int(Math.Floor(wx + size.x * 0.5)), int(Math.Floor(size.y * 0.5 - wz)));
+            land[j * SHORE_W + i] = TileAt(board, tile) == Tile.Water ? 0.0 : 1.0;
+        }
+    }
+    for (var pass = 0; pass < 3; pass++)
+    {
+        for (var j = 0; j < SHORE_H; j++)
+        {
+            for (var i = 0; i < SHORE_W; i++)
+            {
+                mut var sum = 0.0;
+                for (var dj = -1; dj <= 1; dj++)
+                {
+                    for (var di = -1; di <= 1; di++)
+                    {
+                        var x = Math.Clamp(i + di, 0, SHORE_W - 1);
+                        var y = Math.Clamp(j + dj, 0, SHORE_H - 1);
+                        sum += land[y * SHORE_W + x];
+                    }
+                }
+                soft[j * SHORE_W + i] = sum / 9;
+            }
+        }
+        for (var k = 0; k < SHORE_W * SHORE_H; k++) land[k] = soft[k];
+    }
+    for (var j = 0; j < SHORE_H; j++)
+    {
+        for (var i = 0; i < SHORE_W; i++) shore.land[i, j] = land[j * SHORE_W + i];
+    }
+}
