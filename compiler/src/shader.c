@@ -2589,6 +2589,9 @@ static void ex(emit *em, const expr *e)
     case E_DEFAULTED:
         refuse(em, e->at, "the GPU has no values that may be missing, and nothing fails there: handle it on the CPU");
         return;
+    case E_STEP:
+        refuse(em, e->at, "'++' and '--' are statements in code the GPU runs: write 'i += 1;' before the expression that reads it");
+        return;
     case E_AWAIT:
         refuse(em, e->at, "the GPU doesn't wait: tasks are the CPU's");
         return;
