@@ -11,7 +11,6 @@
 #include "lexer.h"
 #include "types.h"
 
-#include "tide/devices.h" // tide_devices' size, which the input holds when match code reads devices
 #include "tide/player.h"  // How many players a game takes without a maxPlayers setting
 
 // Emits C for a checked program. Everything specific to the game is generated
@@ -763,14 +762,6 @@ static bool is_load_archetype(const gen *g, const int a)
     const decl *scene = arch_scene(g, a);
     return scene && mask_eq(g->prog->archetypes.items[a], mask_bit(scene->index));
 }
-
-// A type's bytes and alignment (see Generated types, below).
-typedef struct layout {
-    int size;
-    int align;
-} layout;
-
-static layout decl_layout(const decl *d);
 
 // A component's lanes in its archetypes (tide/table.h, tide_lane_width): its
 // bytes `width` at a time, each a column of its own.
@@ -6090,72 +6081,24 @@ static int resident_fields(const program *prog, resident_field *out, const int m
 
 enum { RESIDENTS_MOST = MAX_RESIDENT_FIELDS };
 
-static layout type_layout(const type t)
-{
-    if (t.kind == TY_BOOL || t.kind == TY_BYTE) return (layout){1, 1};
-    if (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_EVENT) return decl_layout(t.decl);
-    if (t.kind == TY_RECORD) return (layout){(int)sizeof(tide_devices), 4}; // The input's devices
-    if (t.kind == TY_LONG) return (layout){8, 8};
-    if (t.kind == TY_RENDER_TARGET) return (layout){24, 8}; // tide_render_target: its id, then its size, four floats
-    if (t.kind == TY_TEXTURE) return (layout){48, 8};       // tide_texture_ref: an image, then a target
-    if (t.kind == TY_DEPTH_TEXTURE) return (layout){24, 8}; // tide_depth_ref: a target
-    if (t.kind == TY_CUBEMAP) return (layout){32, 8};       // tide_cubemap_ref: a target, then a name
-    if (t.kind == TY_CLIP) return (layout){8, 8};           // tide_clip_ref: a name
-    if (t.kind == TY_RESIDENT) return (layout){32, 8};      // tide_resident: its pages, then what the hash covers
-    if (t.kind == TY_MAP || t.kind == TY_SET) return (layout){12, 4}; // tide_map: two lists and a count
-    if (t.kind == TY_ARRAY) {
-        const layout e = type_layout(t.decl->fields.items[0].type);
-        return (layout){e.size * t.decl->array_length, e.align};
-    }
-    if (type_dim(t) > 0) return (layout){4 * type_dim(t), 4};
-    if (matrix_dim(t) > 0) return (layout){4 * matrix_dim(t) * matrix_dim(t), 4};
-    switch (t.kind) {
-    case TY_QUATERNION: case TY_COLOR: case TY_RECT: return (layout){16, 4};
-    case TY_ENTITY: case TY_LOCAL_ENTITY: return (layout){8, 4};
-    case TY_PLAYER: return (layout){4, 4};
-    case TY_ENUM: { // A byte or a ushort, as `enum Voxel : byte` says, or an int
-        const int width = t.decl->width == 1 || t.decl->width == 2 ? t.decl->width : 4;
-        return (layout){width, width};
-    }
-    default: return (layout){4, 4};
-    }
-}
-
 static int round_up(const int n, const int align)
 {
     return (n + align - 1) / align * align;
 }
 
 // The padding before each field of `d` (pad[i] before field i) and after the
-// last (pad[count]).
-static int *field_padding(const decl *d, layout *out)
+// last (pad[count]): the layout itself is types.h's, which the checker reads too.
+static int *field_padding(const decl *d)
 {
     int *pad = arena_alloc(sizeof(int) * (size_t)(d->fields.count + 1));
-    layout l = {0, 1};
-    for (int i = 0; i < d->fields.count; i++) {
-        const layout f = type_layout(d->fields.items[i].type);
-        pad[i] = round_up(l.size, f.align) - l.size;
-        l.size += pad[i] + f.size;
-        if (f.align > l.align) l.align = f.align;
-    }
-    pad[d->fields.count] = round_up(l.size, l.align) - l.size;
-    l.size += pad[d->fields.count];
-    if (d->fields.count == 0) l.size = 1; // tide_empty
-    if (out) *out = l;
+    decl_layout_padded(d, pad);
     return pad;
-}
-
-static layout decl_layout(const decl *d)
-{
-    layout l;
-    field_padding(d, &l);
-    return l;
 }
 
 static void gen_fields(const gen *g, sb *o, const decl *d)
 {
     if (d->fields.count == 0) sb_put(o, "    uint8_t tide_empty; // C structs can't be empty.\n");
-    const int *pad = field_padding(d, NULL);
+    const int *pad = field_padding(d);
     int pads = 0;
     for (int i = 0; i <= d->fields.count; i++) {
         if (pad[i]) sb_printf(o, "    uint8_t tide_pad%d[%d];\n", pads++, pad[i]);
@@ -12299,7 +12242,7 @@ static bool has_enums(const type t)
 // field bounds to apply or padding to clear, in `d` or the structs it holds.
 static bool needs_repair(const decl *d)
 {
-    const int *pad = field_padding(d, NULL);
+    const int *pad = field_padding(d);
     for (int i = 0; i <= d->fields.count; i++) {
         if (pad[i]) return true;
     }
@@ -12481,7 +12424,7 @@ static void gen_bounds(gen *g, const decl *d, const char *in, const int depth)
 // be anything, and the world's bytes must only depend on its fields.
 static void gen_clear_padding(gen *g, const decl *d, const char *in, const int depth)
 {
-    const int *pad = field_padding(d, NULL);
+    const int *pad = field_padding(d);
     int pads = 0;
     for (int i = 0; i <= d->fields.count; i++) {
         if (pad[i]) line(g, &g->c, "memset(%stide_pad%d, 0, %d);", in, pads++, pad[i]);

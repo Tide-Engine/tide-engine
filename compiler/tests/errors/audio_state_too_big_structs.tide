@@ -1,0 +1,25 @@
+// expect: an audio declaration's state is 4096 bytes at the most, and 'Bank' is 4104
+// A struct's size is what its fields take with their padding: a Tap is a long
+// and a bool, 16 bytes, so 256 of them are all a voice has, and the count
+// after them is over.
+struct Tap
+{
+    long at;
+    bool on;
+}
+
+struct Bank
+{
+    Tap[256] taps;
+    int count;
+}
+
+audio Taps(mut Samples samples, mut Bank bank)
+{
+    bank.count += 1;
+    bank.taps[bank.count].on = true;
+}
+
+scene Main
+{
+}

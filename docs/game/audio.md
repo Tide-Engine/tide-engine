@@ -156,6 +156,14 @@ view Engines(mut Engine engine, Throttle throttle)
 
 An effect's state starts over when a `Sound` is given another effect. Changing the knobs each frame is the way to move a filter: the state carries on.
 
+Both have a size. The mixer keeps 4,096 bytes of state for each voice and each bus, and an `Effect` carries 256 bytes of knobs, so a state struct is 4,096 bytes at the most and a knobs struct 256. A `float` or an `int` is 4 bytes, a `long` 8, a `bool` or a `byte` 1, and an array as many as its elements: `float[1024]` is all the state there is, about 10 milliseconds of stereo. A struct that's bigger is a compile error at the parameter:
+
+```
+error: an audio declaration's state is 4096 bytes at the most, and 'Tail' is 16388
+```
+
+Make the struct smaller: a shorter array, or fewer fields. Code that rolls keeps what it rolls with in the last 8 of a voice's bytes, so its state is 4,088 at the most.
+
 ## Hearing a run with no window
 
 A [run with no window](../tools/cli.md#without-a-window) mixes what the game plays, a 60th of a second a frame, and writes it out:
