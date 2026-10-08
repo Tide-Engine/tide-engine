@@ -595,7 +595,7 @@ uint32_t tide_draw_map_data(tide_draw_list *d, const tide_map map, const uint32_
 {
     count[0] = count[1] = 0;
     const int32_t held = tide_list_count(map.entries);
-    if (map.live == 0 || held <= 0 || words == 0 || key_word >= words || entry_size < sizeof(uint32_t)) return 0;
+    if (map.live == 0 || held <= 0 || words == 0 || key_word >= words || entry_size < sizeof(int64_t)) return 0;
     const uint32_t stride = tide_data_stride(words);
     // Entries and their slots, under four an entry, have to fit
     const uint64_t most = ((uint64_t)TIDE_LIST_DATA_MOST * 4u - 16u) / (stride + 4u);

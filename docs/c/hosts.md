@@ -210,7 +210,7 @@ These names are new, and may still change.
 
 It's for desktops: there's no headless window on the web or Android. `tide_platform_read_pixels`, which tests use to check a few pixels of a draw list, works with any window.
 
-Where the `TIDE_HIDDEN` environment variable is set (see [Where nobody watches](../tools/cli.md#where-nobody-watches)), `tide_platform_open` shows no window either. A host that ends by itself, like a test, says so by opening its window `hidden`, and runs as ever. For any other window the program ends there, with exit code 2 and a message: only closing the window would end the run, and nobody could.
+Where the `TIDE_HIDDEN` environment variable is set (see [Where nobody watches](../tools/cli.md#where-nobody-watches)), `tide_platform_open` shows no window either. A host that ends by itself, like a test, says so by opening its window `hidden`, and runs as ever, but in silence: it opens no audio device and no microphone, and what it hands `tide_platform_audio` goes unheard. For any other window the program ends there, with exit code 2 and a message: only closing the window would end the run, and nobody could.
 
 ## Memory
 

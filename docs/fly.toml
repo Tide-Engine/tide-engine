@@ -1,5 +1,6 @@
 # The docs site on Fly.io, at https://tide-engine.dev. www.tide-engine.dev
-# redirects there (server.js). In the domain's DNS on Cloudflare, not proxied:
+# redirects there, as does tide-website.fly.dev (server.js). In the domain's
+# DNS on Cloudflare, not proxied:
 # A and AAAA records for tide-engine.dev, to the app's addresses, and a CNAME
 # for www to tide-website.fly.dev; certificates come from Fly (fly certs).
 #

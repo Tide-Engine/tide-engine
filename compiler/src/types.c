@@ -145,7 +145,7 @@ layout type_layout(const type t)
     if (t.kind == TY_CUBEMAP) return (layout){32, 8};       // tide_cubemap_ref: a target, then a name
     if (t.kind == TY_CLIP) return (layout){8, 8};           // tide_clip_ref: a name
     if (t.kind == TY_RESIDENT) return (layout){32, 8};      // tide_resident: its pages, then what the hash covers
-    if (t.kind == TY_MAP || t.kind == TY_SET) return (layout){12, 4}; // tide_map: two lists and a count
+    if (t.kind == TY_MAP || t.kind == TY_SET) return (layout){24, 8}; // tide_map: two lists, count, padding and insertion order
     if (t.kind == TY_MESH) return (layout){8, 4};                     // tide_mesh_lists: two lists
     if (t.kind == TY_ARRAY) {
         const layout e = type_layout(t.decl->fields.items[0].type);

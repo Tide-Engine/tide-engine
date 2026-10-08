@@ -131,6 +131,7 @@ export function page(slug: string): Page {
 }
 
 export interface Home {
+    title: string;
     description: string;
     hero: {
         name: string;
@@ -146,7 +147,11 @@ export interface Home {
 export function home(): Home {
     const { data, html } = renderFile('/index.md');
     const hero = data.hero as Home['hero'];
-    return { description: typeof data.description === 'string' ? data.description.trim() : describe(`${hero.text}. ${hero.tagline}`), hero, features: data.features as Home['features'], html };
+    return {
+        title: typeof data.title === 'string' && data.title.trim() ? data.title.trim() : `${hero.name}: ${hero.text.toLowerCase()}`,
+        description: typeof data.description === 'string' ? data.description.trim() : describe(`${hero.text}. ${hero.tagline}`),
+        hero, features: data.features as Home['features'], html,
+    };
 }
 
 export interface Entry {

@@ -302,9 +302,7 @@ view Look(Kitchen kitchen, Devices devices, mut Fx fx, mut Room room, mut Layout
              * (fx.shake * fx.shake * 0.02 * fx.back);
     room.eye = eye + jolt;
     lens.scene.SetCamera(room.eye, turned, fov);
-    // What the verts move corners onto the frame's pixels with
-    room.toClip = lens.scene.WorldToClip();
-    room.fromClip = Math.Inverse(room.toClip);
+    // What the verts move corners onto the frame's pixels by
     room.grid = lens.size * 0.5;
     Audio.SetListener(float3(0, 6, -6), quaternion.identity);
 

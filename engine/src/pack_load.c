@@ -34,7 +34,7 @@ typedef struct packed_texture {
 
 // An entry of a map from text to clips, as generated code lays it out.
 typedef struct clip_entry {
-    uint32_t live;
+    int64_t live;
     uint32_t key;
     tide_clip_ref value;
 } clip_entry;
@@ -42,13 +42,13 @@ typedef struct clip_entry {
 // An entry of a map from text to textures, as generated code lays it out:
 // live, the key, the value (the builder's has a handle where the value is).
 typedef struct texture_entry {
-    uint32_t live;
+    int64_t live;
     uint32_t key;
     tide_texture_ref value;
 } texture_entry;
 
 typedef struct handle_entry {
-    uint32_t live;
+    int64_t live;
     uint32_t key;
     uint32_t value;
 } handle_entry;
@@ -193,7 +193,7 @@ static bool mesh_at(const uint8_t *region, const uint32_t size, const uint32_t v
 
 // An entry of a map from text to meshes, as generated code lays it out.
 typedef struct mesh_entry {
-    uint32_t live;
+    int64_t live;
     uint32_t key;
     tide_mesh_lists value;
 } mesh_entry;
@@ -508,7 +508,8 @@ const tide_pack_entry *tide_pack_find_mesh(const char *qualified, const uint32_t
 tide_map tide_pack_mesh_map_of(const tide_pack_entry *e)
 {
     if (!e || e->kind != TIDE_PACK_MESHES || e->offset == UINT32_MAX) return (tide_map){0};
-    return (tide_map){{tagged(e->offset)}, {tagged(e->size)}, count_at(pack.region, pack.size, e->offset, sizeof(mesh_entry))};
+    const uint32_t count = count_at(pack.region, pack.size, e->offset, sizeof(mesh_entry));
+    return (tide_map){.entries = {tagged(e->offset)}, .index = {tagged(e->size)}, .live = count, .last_order = count};
 }
 
 tide_mesh_lists tide_pack_mesh_of(const tide_pack_entry *e, const uint32_t vertex)
@@ -563,7 +564,7 @@ tide_str tide_pack_text(const tide_pack_entry *e)
 tide_map tide_pack_map_of(const tide_pack_entry *e)
 {
     if (!e) return (tide_map){0};
-    return (tide_map){{tagged(e->offset)}, {tagged(e->size)}, e->extra};
+    return (tide_map){.entries = {tagged(e->offset)}, .index = {tagged(e->size)}, .live = e->extra, .last_order = e->extra};
 }
 
 tide_clip_ref tide_pack_clip_of(const tide_pack_entry *e)

@@ -1,0 +1,8 @@
+// expect: a vert's 'this' has no methods: 'this.clip' is where the engine would put its vertex
+// expect: a frag leaves a pixel undrawn, with 'this.Discard()': a vert has no pixels yet
+scene Main { }
+
+vert Raise(mut Vertex3 vertex)
+{
+    this.Discard();
+}

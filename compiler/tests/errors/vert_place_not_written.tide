@@ -1,0 +1,8 @@
+// expect: vert 'Snap' can end without writing where its vertex goes, 'clip'
+// expect: a vert that takes 'out float4' puts its vertex itself, on every path: 'clip = this.clip;' leaves it where the engine would put it
+scene Main { }
+
+vert Snap(mut Vertex3 vertex, out float4 clip)
+{
+    if (vertex.position.y > 0) clip = this.clip;
+}

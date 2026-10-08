@@ -1,0 +1,9 @@
+// expect: a vert hands its frag a struct, and 'place' is float3
+// expect: put it in a struct both take, 'struct ForFrag { float3 place; }': 'out ForFrag forFrag' here, and 'ForFrag forFrag' in the frag
+// expect: the one plain value a vert writes is where it puts its vertex, in clip space: 'out float4 clip'
+scene Main { }
+
+vert Snap(mut Vertex3 vertex, out float3 place)
+{
+    place = vertex.position;
+}
