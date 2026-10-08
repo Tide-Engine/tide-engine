@@ -33,7 +33,8 @@ static bool equal_key(const void *key, const void *probe)
     return tide_str_eq(tide_text_view(*(const tide_text *)key), *(const tide_str *)probe);
 }
 
-static const tide_map_kind text_grid_kind = {12u, 4u, hash_key, hash_probe, equal_key};
+// Its entries: live, the key, and a value that's a handle (a grid's, or a text's).
+static const tide_map_kind text_handle_kind = {12u, 4u, hash_key, hash_probe, equal_key};
 
 static void hash_of(const char *text, uint8_t out[32])
 {
@@ -54,12 +55,18 @@ static uint8_t *build(size_t *size)
     uint8_t h[32];
     uint32_t chars;
     hash_of("rules", h);
-    const uint32_t rules = tide_pack_bytes(&b, h, "héllo wörld", 13, &chars);
+    // Text whose characters aren't a byte each: a text's block, which says how many they are...
+    const uint32_t rules = tide_pack_string(&b, h, "héllo wörld", 13, &chars);
     TIDE_CHECK(chars == 11);
-    uint32_t again_chars;
-    TIDE_CHECK(tide_pack_bytes(&b, h, "héllo wörld", 13, &again_chars) == rules); // The same content once
+    uint32_t again_chars = 0;
+    TIDE_CHECK(tide_pack_string(&b, h, "héllo wörld", 13, &again_chars) == rules && again_chars == 11); // The same content once
+    // ...and the same file's bytes a list's, beside it: once too
+    const uint32_t rules_bytes = tide_pack_bytes(&b, h, "héllo wörld", 13, &again_chars);
+    TIDE_CHECK(rules_bytes != rules && again_chars == 11);
+    TIDE_CHECK(tide_pack_bytes(&b, h, "héllo wörld", 13, &again_chars) == rules_bytes);
+    TIDE_CHECK(tide_pack_string(&b, h, "héllo wörld", 13, &again_chars) == rules); // Still the text's, with the bytes there
     tide_pack_name(&b, "Game.rules", TIDE_PACK_TEXT, rules, 13, chars);
-    tide_pack_name(&b, "Game.rulesBytes", TIDE_PACK_BYTES, rules, 13, chars);
+    tide_pack_name(&b, "Game.rulesBytes", TIDE_PACK_BYTES, rules_bytes, 13, chars);
 
     static tide_color pixels[70 * 40];
     for (int y = 0; y < 40; y++) {
@@ -73,19 +80,36 @@ static uint8_t *build(size_t *size)
     uint8_t k1[32], k2[32];
     hash_of("a.txt", k1);
     hash_of("b.txt", k2);
-    const uint32_t a = tide_pack_bytes(&b, k1, "alpha", 5, &chars);
+    // Text of a byte a character is the block its bytes are, whichever was asked for first
+    const uint32_t a = tide_pack_string(&b, k1, "alpha", 5, &chars);
+    TIDE_CHECK(chars == 5 && tide_pack_bytes(&b, k1, "alpha", 5, &chars) == a);
     const uint32_t bb = tide_pack_bytes(&b, k2, "beta", 4, &chars);
+    TIDE_CHECK(tide_pack_string(&b, k2, "beta", 4, &chars) == bb && chars == 4);
     const uint32_t list = tide_pack_list(&b, (const uint32_t[]){a, bb, rules}, 3);
     tide_pack_name(&b, "Game.texts", TIDE_PACK_LIST, list, 3, TIDE_PACK_TEXT);
 
     uint8_t n1[32], n2[32];
     hash_of("run/0.png", n1);
     hash_of("run/1.png", n2);
-    const uint32_t key0 = tide_pack_bytes(&b, n1, "run/0.png", 9, &chars);
-    const uint32_t key1 = tide_pack_bytes(&b, n2, "run/1.png", 9, &chars);
+    const uint32_t key0 = tide_pack_string(&b, n1, "run/0.png", 9, &chars);
+    const uint32_t key1 = tide_pack_string(&b, n2, "run/1.png", 9, &chars);
     uint32_t index;
     const uint32_t map = tide_pack_map(&b, (const uint32_t[]){key0, key1}, (const uint32_t[]){hero, hero}, 2, &index);
     tide_pack_name(&b, "Game.run", TIDE_PACK_MAP, map, index, 2);
+
+    // A map from text to text, keys and values of characters that take two bytes
+    uint8_t w1[32], w2[32], w3[32];
+    hash_of("mots/clé.txt", w1);
+    hash_of("mots/été.txt", w2);
+    hash_of("ça va", w3);
+    const uint32_t word0 = tide_pack_string(&b, w1, "mots/clé.txt", 13, &chars);
+    TIDE_CHECK(chars == 12);
+    const uint32_t word1 = tide_pack_string(&b, w2, "mots/été.txt", 14, &chars);
+    TIDE_CHECK(chars == 12);
+    const uint32_t fine = tide_pack_string(&b, w3, "ça va", 6, &chars);
+    TIDE_CHECK(chars == 5);
+    const uint32_t words = tide_pack_map(&b, (const uint32_t[]){word0, word1}, (const uint32_t[]){rules, fine}, 2, &index);
+    tide_pack_name(&b, "Game.words", TIDE_PACK_MAP, words, index, 2);
     return tide_pack_end(&b, size);
 }
 
@@ -104,10 +128,15 @@ TIDE_TEST(pack_values_read_as_a_worlds_do)
     TIDE_CHECK(tide_pack_find("Game.rules", TIDE_PACK_GRID) == NULL); // Another kind: a stale pack
     TIDE_CHECK(tide_pack_find("Game.nothing", TIDE_PACK_TEXT) == NULL);
 
+    // ...which its block says too, for whatever reads it by its handle
+    const tide_str by_handle = tide_text_view((tide_text){tide_pack_handle(rules)});
+    TIDE_CHECK(by_handle.ptr == s.ptr && by_handle.bytes == 13 && by_handle.chars == 11);
+
     // Bytes: a list in the scratch area's slots, read as any list
     const tide_list bytes_list = {tide_pack_handle(tide_pack_find("Game.rulesBytes", TIDE_PACK_BYTES))};
     TIDE_CHECK(tide_pack_holds(bytes_list.at));
     TIDE_CHECK(tide_list_count(bytes_list) == 13);
+    TIDE_CHECK((const char *)tide_list_at(bytes_list, 0, 1) != s.ptr && memcmp(tide_list_at(bytes_list, 0, 1), s.ptr, 13) == 0);
     TIDE_CHECK(*(const uint8_t *)tide_list_at(bytes_list, 1, 1) == 0xC3u);
     TIDE_CHECK(tide_list_at(bytes_list, 13, 1) == NULL);
     tide_list_cache cache = {0};
@@ -153,27 +182,50 @@ TIDE_TEST(pack_values_read_as_a_worlds_do)
     TIDE_CHECK(draw.textures[slot - 1].pixels[(10 * 70 + 35) * 4 + 2] == 64); // 0.25 as a byte
     TIDE_CHECK(tide_draw_grid_texture(&draw, hero, &color_shape) == slot);
 
-    // A list of texts: handles into the region
+    // A list of texts: handles into the region, each a text with its bytes and its characters
     const tide_list texts = {tide_pack_handle(tide_pack_find("Game.texts", TIDE_PACK_LIST))};
     TIDE_CHECK(tide_list_count(texts) == 3);
+    const tide_text *first = tide_list_at(texts, 0, sizeof(tide_text));
+    TIDE_CHECK(first && tide_text_view(*first).bytes == 5 && tide_text_view(*first).chars == 5);
     const tide_text *second = tide_list_at(texts, 1, sizeof(tide_text));
-    TIDE_CHECK(second && tide_str_eq(tide_text_view(*second), tide_str_from_cstr("beta")));
+    TIDE_CHECK(second && tide_str_eq(tide_text_view(*second), tide_str_from_cstr("beta")) && tide_text_view(*second).chars == 4);
     const tide_text *third = tide_list_at(texts, 2, sizeof(tide_text));
-    TIDE_CHECK(third && tide_text_view(*third).bytes == 13);
+    TIDE_REQUIRE(third != NULL);
+    TIDE_CHECK(tide_text_view(*third).bytes == 13 && tide_text_view(*third).chars == 11); // Not its bytes: two of them take two
+    TIDE_CHECK(tide_str_eq(tide_text_view(*third), s) && tide_text_view(*third).ptr == s.ptr); // The text alone names the same block
+    const tide_str world = tide_str_substring_from(tide_text_view(*third), 6); // "wörld": what's cut from it goes by its characters
+    TIDE_CHECK(world.bytes == 6 && world.chars == 5);
 
     // A map from paths to grids: found as the game's lookups find keys
     const tide_map run = tide_pack_map_of(tide_pack_find("Game.run", TIDE_PACK_MAP));
     TIDE_CHECK(tide_map_count(run) == 2 && tide_map_entries(run) == 2);
     const tide_str probe = tide_str_from_cstr("run/1.png");
-    const int32_t found = tide_map_find(run, &text_grid_kind, &probe);
+    const int32_t found = tide_map_find(run, &text_handle_kind, &probe);
     TIDE_CHECK(found == 1);
     const tide_str missing = tide_str_from_cstr("run/2.png");
-    TIDE_CHECK(tide_map_find(run, &text_grid_kind, &missing) == -1);
-    const uint8_t *entry = tide_map_entry(run, 1, &text_grid_kind);
+    TIDE_CHECK(tide_map_find(run, &text_handle_kind, &missing) == -1);
+    const uint8_t *entry = tide_map_entry(run, 1, &text_handle_kind);
     TIDE_REQUIRE(entry != NULL);
     tide_grid value;
     memcpy(&value, entry + 8, sizeof value);
     TIDE_CHECK(value.at == hero.at);
+
+    // A map from text to text: its keys are found by their bytes, and keys and values say their characters
+    const tide_map words = tide_pack_map_of(tide_pack_find("Game.words", TIDE_PACK_MAP));
+    TIDE_CHECK(tide_map_count(words) == 2);
+    const char *const word_keys[2] = {"mots/clé.txt", "mots/été.txt"};
+    const int32_t key_bytes[2] = {13, 14}, value_bytes[2] = {13, 6}, value_chars[2] = {11, 5};
+    for (int32_t i = 0; i < 2; i++) {
+        const tide_str word = tide_str_from_cstr(word_keys[i]);
+        TIDE_CHECK(tide_map_find(words, &text_handle_kind, &word) == i);
+        const uint8_t *pair = tide_map_entry(words, i, &text_handle_kind);
+        TIDE_REQUIRE(pair != NULL);
+        tide_text key, said;
+        memcpy(&key, pair + 4, sizeof key);
+        memcpy(&said, pair + 8, sizeof said);
+        TIDE_CHECK(tide_text_view(key).bytes == key_bytes[i] && tide_text_view(key).chars == 12);
+        TIDE_CHECK(tide_text_view(said).bytes == value_bytes[i] && tide_text_view(said).chars == value_chars[i]);
+    }
 
     // The scratch area still works beside it
     const uint32_t mark = tide_scratch_mark();

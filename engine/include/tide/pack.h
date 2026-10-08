@@ -38,8 +38,11 @@
 
 // What a name's entry is: the kind the declaration's type resolves to.
 enum {
-    TIDE_PACK_TEXT = 1,  // string: a block of bytes, with a NUL after them; `extra` is its characters
-    TIDE_PACK_BYTES = 2, // List<byte>: the same block, read as a list
+    // string: a text's block (tide_pack_string), its bytes with a NUL after them; `extra` is its characters
+    TIDE_PACK_TEXT = 1,
+    // List<byte>: a file's bytes as a list's block (tide_pack_bytes), which text of the same file reads too
+    // where each of its bytes is a character
+    TIDE_PACK_BYTES = 2,
     TIDE_PACK_GRID = 3,  // Grid2<Color>: a directory and its chunks
     TIDE_PACK_LIST = 4,  // List<T> of a glob: a block of handles; `extra` is the elements' kind
     TIDE_PACK_MAP = 5,   // Map<string, T> of a glob: its entries and its index (tide_map); `extra` is its live count
@@ -85,15 +88,29 @@ typedef struct tide_pack_shared {
 typedef struct tide_pack_builder {
     uint8_t *region;
     uint32_t size, room;
-    tide_pack_shared *shared; // Blocks by their content's hash: a file in the pack once however many names it
+    // Blocks by their content's hash and their kind: a file in the pack once for each kind of block it's read
+    // as, however many name it
+    tide_pack_shared *shared;
     uint32_t shared_count, shared_room;
     tide_pack_entry *entries;
     uint32_t entry_count, entry_room;
 } tide_pack_builder;
 
 // A block of `size` bytes with a NUL after them, shared by `content` (its
-// SHA-256): its offset. *chars gets how many UTF-8 characters they are.
+// SHA-256): its offset. *chars gets how many UTF-8 characters they are. It's
+// a list's block, of as many bytes: what a List<byte> reads, and never text
+// whose characters aren't a byte each, as a text's block says its characters
+// where a list's says its room (tide_pack_string is for text).
 uint32_t tide_pack_bytes(tide_pack_builder *b, const uint8_t content[32], const void *data, uint32_t size, uint32_t *chars);
+
+// Text of `size` bytes of UTF-8, with a NUL after them, shared by `content`:
+// its block's offset, which a tide_text reads as any text's (its header says
+// its bytes and its characters), alone or as an element, a key or a value of
+// a list or a map. *chars gets its characters. Where each byte is a character
+// it's the block tide_pack_bytes gives the same content, which says the same
+// of it; otherwise a block of its own, so a file read as text and as bytes is
+// then in the pack as each.
+uint32_t tide_pack_string(tide_pack_builder *b, const uint8_t content[32], const void *data, uint32_t size, uint32_t *chars);
 
 // A grid of `width` by `height` colors, as a Grid2<Color> of `shape` is laid
 // out (its directory, then the chunks that have a color in them), shared by
@@ -117,10 +134,10 @@ uint32_t tide_pack_clip(tide_pack_builder *b, const uint8_t content[32], const v
 // its block's offset. Not shared: a declaration's own.
 uint32_t tide_pack_list(tide_pack_builder *b, const uint32_t *offsets, uint32_t count);
 
-// A map from text to values: `keys` are offsets of byte blocks, `values` of
-// the values' blocks. Its entries' block, with its index's block in *index.
-// The keys are hashed as tide_map_hash_bytes does, so the game's own lookups
-// find them.
+// A map from text to values: `keys` are offsets of text blocks
+// (tide_pack_string), `values` of the values' blocks. Its entries' block,
+// with its index's block in *index. The keys are hashed as
+// tide_map_hash_bytes does, so the game's own lookups find them.
 uint32_t tide_pack_map(tide_pack_builder *b, const uint32_t *keys, const uint32_t *values, uint32_t count, uint32_t *index);
 
 // Names a block: the declaration `qualified` (like "Game.hero") of `kind` is
