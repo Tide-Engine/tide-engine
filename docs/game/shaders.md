@@ -343,7 +343,9 @@ frag Shade(BoxVertex vertex, out Color color, Ramp ramp)
 
 - `a[i]` reads an element, zeros past the ends; `a[i] = v` writes one, and does nothing past the ends; `a.count` is its length; `foreach` goes through it.
 - An array is sent whole, with a draw's other values: those hold 3,984 bytes, about 249 float4s, for everything a draw reads of singletons. Past a few dozen elements, a list is the better fit.
-- No arrays of arrays there: keep the rows side by side in one array.
+- An array of arrays is one too: `float[4][8] rows`, with `rows[i][j]` read and written by the same rules at each index, and `rows[i]` a row to keep, pass on, assign or `foreach` through.
+- `?:` picks between arrays, as between structs and matrices: `var stops = night ? ramp.dark : ramp.light;`. Both sides are worked out, as everywhere on the GPU.
+- A `for`'s step can write an element (`for (var k = 0; k < 6; counts[k % 3]++)`), and a `continue` still comes to it.
 
 ## Textures
 

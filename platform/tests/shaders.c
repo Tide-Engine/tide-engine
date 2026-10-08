@@ -1047,6 +1047,11 @@ static void run_list_checks(const float turn, const char *when)
         {40, 88, {128, 128, 255}, "a grid's size, and a cell of a grid of ints"},
         {56, 88, {0, 255, 0}, "an asset's grid, a cell by its place"},
         {72, 88, {128, 191, 64}, "a while, a for that doubles, and a loop only a break ends"},
+        {8, 104, {255, 64, 191}, "an array of arrays, read inside it and past either's end, and how many each has"},
+        {24, 104, {191, 64, 128}, "a copy of one written an element and a row at a time, inside it and past its ends"},
+        {40, 104, {128, 191, 64}, "a for whose step writes an array's element, through a continue, and one that starts by writing one"},
+        {56, 104, {128, 64, 255}, "'?:' between structs, arrays, rows and matrices, its first side"},
+        {72, 104, {64, 255, 64}, "and its second"},
     };
     enum { COUNT = sizeof wanted / sizeof wanted[0] };
     local.Art.targetPass = 18;
