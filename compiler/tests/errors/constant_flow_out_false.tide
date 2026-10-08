@@ -1,0 +1,7 @@
+// expect: 'Fill' can end without assigning its 'value'
+scene Main { }
+const bool NO = 2 + 2 != 4;
+void Fill(out int value)
+{
+    if (NO) value = 42;
+}

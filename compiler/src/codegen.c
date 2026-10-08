@@ -1344,6 +1344,15 @@ static const char *expr_text(gen *g, const expr *e)
     return b.data ? b.data : "";
 }
 
+// The checker follows known conditions for return and assignment completeness.
+// C must see the same truth: integer helpers in the expression aren't C
+// constant expressions, even when Tide worked their result out already.
+static const char *condition_text(gen *g, const expr *e)
+{
+    bool known;
+    return fold_bool(e, &known) ? known ? "true" : "false" : expr_text(g, e);
+}
+
 // How a texture's declaration says it's sampled, as a Texture carries it
 // (tide_sampling_bits): its [Filter] and its [Wrap], 0 with neither.
 static unsigned declared_sampling_bits(const expr *texture)
@@ -5337,7 +5346,14 @@ static void gen_stmt(gen *g, const stmt *s)
     case S_ASSIGN:
         if (!bare) hoist_assign(g, s);
         break;
-    case S_IF:
+    case S_IF: {
+        // A known condition's executed path is pure; only a skipped part can
+        // hold ordered calls. Keep its declarations above, without hoisting
+        // an unused result for a condition emitted as true or false.
+        bool known;
+        if (!fold_bool(s->cond, &known)) hoist_spawns(g, s->cond);
+        break;
+    }
     case S_SWITCH: hoist_spawns(g, s->cond); break;
     case S_RETURN:
     case S_FAIL:
@@ -5360,7 +5376,7 @@ static void gen_stmt(gen *g, const stmt *s)
     case S_IF: {
         // A condition already in parentheses, like (a == b), gets no second
         // pair: clang warns about `if ((x == 1))` when x can be assigned.
-        const char *cond = expr_text(g, s->cond);
+        const char *cond = condition_text(g, s->cond);
         indent(g, o);
         if (wrapped_in_parens(cond)) sb_printf(o, "if %s {\n", cond);
         else sb_printf(o, "if (%s) {\n", cond);
@@ -5441,19 +5457,22 @@ static void gen_stmt(gen *g, const stmt *s)
             if (g->prog->out_args) declare_outs(g, s->cond);
         }
         const int round_mark = task_mark(g);
-        if (s->cond && needs_hoisting(s->cond)) {
+        bool known;
+        const bool constant_condition = s->cond && fold_bool(s->cond, &known);
+        if (s->cond && !constant_condition && needs_hoisting(s->cond)) {
             // What runs in order goes before the condition, each round.
             line(g, o, "while (true) {");
             g->indent++;
             declare_bindings(g, s->cond); // Names `is` gives, for the body
             hoist_spawns(g, s->cond);
-            line(g, o, "if (!(%s)) break;", expr_text(g, s->cond));
+            line(g, o, "if (!(%s)) break;", condition_text(g, s->cond));
         } else {
-            const char *cond = s->cond ? expr_text(g, s->cond) : "true";
+            const char *cond = s->cond ? condition_text(g, s->cond) : "true";
             indent(g, o);
             if (wrapped_in_parens(cond)) sb_printf(o, "while %s {\n", cond);
             else sb_printf(o, "while (%s) {\n", cond);
             g->indent++;
+            if (constant_condition) declare_bindings(g, s->cond); // A skipped `is` still declares its name
         }
         const gen_target loop = {g->frame, g->containers.count, true, s->kind == S_WHILE, made_up(g, "loop_end"), false,
                                  made_up(g, "next"), false, false};

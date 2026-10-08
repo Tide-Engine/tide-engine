@@ -83,7 +83,7 @@ system Regenerate(mut Unit unit)
 
 - A parameter is a read-only copy. A `mut` parameter is the caller's variable itself, which the function changes. The caller must be able to write it, so `Heal(unit.stats, 0.5)` needs `mut Unit unit`.
 - Parameters are built-in types, structs, components and singletons, and an argument's type matches exactly. Return values are built-in types, structs and components; singleton return values aren't supported.
-- A function returns a value on every path, unless it returns `void`.
+- A function returns a value on every path, unless it returns `void`. The check follows conditions known while compiling, including named bool constants and comparisons of constant integers: `if (true) return 1;` covers its only path. A loop whose condition is always true and has no reachable `break` can't end without returning.
 - A function or method can fail, with `fails` after its parameters, and its callers handle the error where they call (see [Errors](./errors.md)).
 - A parameter can have a default value, a call can pass arguments by name, and functions can share a name: see [Default values, names and overloads](#default-values-names-and-overloads).
 - A parameter can be `out`, which gives the caller's variable its value: see [Out parameters](#out-parameters).
@@ -194,7 +194,7 @@ system Halve(mut Pile pile, mut Tally tally)
 **In the function**, an `out` parameter starts with no value: what the caller's variable held isn't passed in.
 
 - The code assigns it before it reads it, and on every path that returns. A path that has nothing to give assigns `default`.
-- An `if` assigns it when both sides do. The right of `&&` and `||` only runs sometimes, and a loop may run no rounds, so what only they assign doesn't count after them.
+- An `if` assigns it when both sides do, or when the only side a constant condition can reach does. The right of `&&` and `||` only runs sometimes, and a loop may run no rounds, so what only they assign doesn't count after them unless its constant condition guarantees that path runs.
 - Passing it on as another call's `out` argument assigns it: `return scores.TryGet(key, out score);`.
 - A struct can be assigned a field at a time: it has a value once each of its fields does, and a field is read once it's assigned. `pair.a = 1; pair.b = 2;` fills a `Pair`, and reading `pair.b` between the two is an error. A vector or a color is assigned whole: `v.x = 1` before `v = ...` reads a `v` that has no value yet.
 - In a function that [fails](./errors.md), `fail` doesn't have to assign it. After a call that failed, the caller's variable is what the function assigned before it failed, or its type's default.

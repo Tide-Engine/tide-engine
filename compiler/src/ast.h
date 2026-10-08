@@ -1414,6 +1414,11 @@ bool parse_file(program *prog, const source *src, token *toks, bool recover);
 bool attributes_before_field(const token *toks, int i);
 bool check(program *prog);
 
+// A bool known from a checked expression: constants, integer and bool
+// comparisons, and their conditional and short-circuit expressions. Shared
+// by compile-time choices and control-flow checks; no game code is run.
+bool fold_bool(const expr *e, bool *out);
+
 // Definite assignment, as C#'s, for what starts unassigned: a function's or
 // method's `out` parameters, which its code assigns before it reads them and
 // on every path that returns, and the locals `out` arguments declare, which
