@@ -1,0 +1,14 @@
+// expect: a parallel loop's steps run at once, and 'Notify' sends 'Ping'
+// expect: call it before or after the loop, or in a 'for' loop, which goes in order
+event Ping { int n; }
+singleton Tally { List<int> scores; }
+scene Main { }
+void Notify(int n) { Send(Ping { n = n }); }
+system Rank(mut Tally tally)
+{
+    parallel (var i in tally.scores)
+    {
+        Notify(i);
+    }
+}
+event(Ping ping) Heard() { }

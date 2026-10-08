@@ -27,6 +27,7 @@ endif()
 tide_e2e_test(world) # Other entities' components through the World
 tide_e2e_test(world_set_own) # ...and this entity's own, beside a parameter that reads it
 tide_e2e_test(world_functions) # ...and through functions and methods the World is passed on to
+tide_e2e_test(function_acts) # Functions and methods that send, spawn and change entities, as their callers would
 tide_e2e_test(queries) # Read-only iteration over a separate entity set
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_queries PRIVATE tide_platform)
