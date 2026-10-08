@@ -1,6 +1,5 @@
 // The game stays in the world. Only room connection and an on-demand guide
 // use menus; ordinary play has no title bar, progress strip or button tray.
-const Color UI_INK = Color(0.07, 0.1, 0.11);
 const Color UI_PAPER = Color(0.94, 0.91, 0.82);
 const GUITheme QUIET_THEME = GUITheme {
     text = UI_PAPER,
@@ -64,94 +63,7 @@ void GuideWords(string words)
     if (line != "") GUILayout.Label(line);
 }
 
-// Paint rather than a screen badge: seven coarse strokes lie on the camp's
-// stone rim. The pan itself and the socket are part of the scenery.
-void CampNumber(mut Fx fx, float3 at, int number)
-{
-    var strokes = number == 1 ? 36 : number == 2 ? 93 : number == 3 ? 109
-                : number == 4 ? 46 : number == 5 ? 107 : 123;
-    for (var segment = 0; segment < 7; segment++)
-    {
-        if ((strokes & (1 << segment)) == 0) continue;
-        var across = segment == 0 || segment == 3 || segment == 6;
-        var offset = segment == 0 ? float3(0, 0, 0.13) : segment == 3 ? float3(0)
-                   : segment == 6 ? float3(0, 0, -0.13)
-                   : float3(segment == 1 || segment == 4 ? -0.075 : 0.075, 0, segment < 3 ? 0.065 : -0.065);
-        fx.boxes.Add(Piece(at + offset, quaternion.identity, across ? float3(0.18, 0.012, 0.035) : float3(0.035, 0.012, 0.12),
-                           Color(0.82, 0.8, 0.7), 0));
-    }
-}
-
-void AddRouteBall(mut Fx fx, float3 at, float rolled)
-{
-    var turn = quaternion.Euler(float3(rolled, rolled * 0.17, rolled * -0.3));
-    Mark(fx, float3(at.x, ON_FLOOR, at.z), 0.78, Color(0, 0, 0, 0.4), -1, 1);
-    fx.balls.Add(Piece(at, turn, float3(0.37, 0.35, 0.37), Color(0.53, 0.22, 0.1), 0.03));
-    // A handful of darker crusty lumps makes the ball look edible and gives
-    // its rotation something to follow without a smooth sphere's sheen.
-    for (var crumb = 0; crumb < 7; crumb++)
-    {
-        var angle = crumb * 2.4;
-        var height = -0.55 + crumb * 0.17;
-        var width = Math.Sqrt(Math.Max(0, 1 - height * height));
-        var offset = float3(Math.Cos(angle) * width, height, Math.Sin(angle) * width) * 0.31;
-        fx.balls.Add(Piece(at + Math.Mul(turn, offset), turn, float3(0.095, 0.07, 0.085),
-                           crumb % 2 == 0 ? Color(0.33, 0.12, 0.045) : Color(0.69, 0.33, 0.12), 0));
-    }
-}
-
-// Mark completed kitchens with a small living coal in the camp's stone pan.
-// No progress counter needs to follow the camera.
-[Stage(Layers.Gather, 1)]
-view Camps(Kitchen kitchen, mut Fx fx)
-{
-    if (!kitchen.travelling) return;
-    for (var index = 0; index < 6; index++)
-    {
-        var tile = MapSlot(index);
-        var at = Spot(kitchen.board.size, float2(tile.x, tile.y), 0);
-        CampNumber(fx, at + float3(0, 0.105, 0.31), index + 1);
-        var cooked = (kitchen.done & (1 << RegionLevel(kitchen.routeRegion, index))) != 0;
-        var coal = at + float3(0.33, 0.12, -0.3);
-        fx.boxes.Add(Piece(coal, quaternion.identity, float3(0.11, 0.12, 0.11), Color(0.14, 0.11, 0.08), 0));
-        if (!cooked) continue;
-        var flame = float3(0.06, 0.1 + Math.Sin(fx.beat * 4 + index) * 0.015, 0.06);
-        fx.balls.Add(Solid { transform = float4x4.TRS(coal + float3(0, 0.12, 0), quaternion.identity, flame),
-                             tint = Color(1, 0.55, 0.12), glow = 1 });
-    }
-    AddRouteBall(fx, fx.ballAt, fx.ballRoll);
-}
-
-// These words belong to a nearby object and vanish as the chefs walk away.
-// Tapping the dock itself is the touch equivalent of E, with no button box.
-[Stage(Layers.Hud, 2)]
-view WorldWords(Kitchen kitchen, Lens lens, Me me, Devices devices, Rooms.Lobby lobby, Guide guide)
-{
-    if (!kitchen.travelling || lobby.page != Rooms.Page.Playing || guide.open) return;
-    Draw.SetScreen();
-    var who = Math.Max(InHand(kitchen, me), 0);
-    var chef = kitchen.board.chefs[who].at;
-    for (var index = 0; index < 6; index++)
-    {
-        var tile = MapSlot(index);
-        if (StepsApart(chef, tile) > 1) continue;
-        var level = RegionLevel(kitchen.routeRegion, index);
-        var place = lens.scene.WorldToScreen(Spot(kitchen.board.size, float2(tile.x, tile.y), 0.45));
-        var at = float2(place.x * lens.scale.x, place.y * lens.scale.y) - float2(0, 12);
-        Whisper(Name(level), at, Math.Clamp(Screen.width / 65, 10, 13), UI_PAPER);
-    }
-    var route = NearbyTravel(kitchen);
-    if (route < 0) return;
-    var dock = TravelDock(route);
-    var place = lens.scene.WorldToScreen(Spot(kitchen.board.size, float2(dock.x, dock.y), 0.25));
-    var at = float2(place.x * lens.scale.x, place.y * lens.scale.y);
-    Whisper($"{RegionName(TargetRegion(kitchen, route))} (E)", at - float2(0, 24), 12, UI_PAPER);
-    var touched = GUI.Control(Rect(at.x - 32, at.y - 34, 64, 68));
-    if (touched.clicked || devices.keyboard.e.down || devices.keyboard.enter.down || devices.gamepad.buttonSouth.down)
-        Send(Traverse { route = route });
-}
-
-// A touch player has the same undo/reset/return actions in this guide. The
+// A touch player has the same undo/reset actions in this guide. The
 // testing skip stays out of the playfield and is revealed deliberately.
 [Stage(Layers.Hud, 3)]
 view FieldGuide(Kitchen kitchen, Devices devices, Pad pad, mut Guide guide, Rooms.Lobby lobby)
@@ -173,17 +85,11 @@ view FieldGuide(Kitchen kitchen, Devices devices, Pad pad, mut Guide guide, Room
     GUI.Navigate();
     GUILayout.Modal(Anchor.MiddleCenter, guide.open)
     {
-        GUILayout.Label(kitchen.travelling ? RegionName(kitchen.routeRegion) : Name(kitchen.level));
+        GUILayout.Label(Name(kitchen.level));
         GUILayout.Label("Arrows / WASD: move");
         GUILayout.Label("Space: change chef when alone");
-        GUILayout.Label("Z: undo. R: reset. M: camps.");
-        if (kitchen.travelling)
-        {
-            GUILayout.Label("Push the meatball into a pan.");
-            GUILayout.Label("Bring both chefs with it.");
-            GUILayout.Label("Four meals, then stand on both plates.");
-        }
-        else if (Hint(kitchen.level) != "")
+        GUILayout.Label("Z: undo. R: reset.");
+        if (Hint(kitchen.level) != "")
         {
             GUILayout.Space(6);
             GuideWords(Hint(kitchen.level));
@@ -201,20 +107,12 @@ view FieldGuide(Kitchen kitchen, Devices devices, Pad pad, mut Guide guide, Room
             Send(Restart { level = kitchen.level });
             guide.open = false;
         }
-        if (!kitchen.travelling)
-        {
-            if (GUILayout.Button("Return to the camps"))
-            {
-                Send(BackToMap { level = kitchen.level });
-                guide.open = false;
-            }
-        }
         GUILayout.Toggle("Testing shortcuts", guide.testing);
         if (guide.testing)
         {
             if (GUILayout.Button("Skip kitchen (N)"))
             {
-                Send(Goto { level = (kitchen.level + 1) % LEVELS });
+                Send(Goto { level = NextKitchen(kitchen.level) });
                 guide.open = false;
             }
         }

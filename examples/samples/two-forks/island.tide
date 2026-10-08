@@ -11,7 +11,7 @@ local singleton Scenery
     List<Corner> sea;
     List<int> seaFaces;
     int level = -1;      // The level this is of
-    int layout = -1;     // A route bridge changing also rebuilds the terrain
+    int layout = -1;     // Reopening a kitchen also rebuilds the terrain
 }
 
 // A tile's top: turf, which the frag paints by where on the board it is.
@@ -90,12 +90,8 @@ void MakeScenery(mut Scenery scenery, mut Shore shore, Board board, int level, i
             else PutTurf(scenery, size, at, tileRegion, tile == Tile.Ice);
             if (tile == Tile.Rock)
             {
-                var gate = level <= -2 && region < 3 && Same(at, int2(7, 4));
-                if (!gate)
-                {
-                    PutBlob(scenery.mesh, scenery.faces, Ink(RegionStone(tileRegion), IRON, 0.1), middle + float3(0, 0.22, 0), float3(0.44, 0.42, 0.42),
-                            x * 3.7 + y * 1.9, 0.22, true, 3, 6);
-                }
+                PutBlob(scenery.mesh, scenery.faces, Ink(RegionStone(tileRegion), IRON, 0.1), middle + float3(0, 0.22, 0), float3(0.44, 0.42, 0.42),
+                        x * 3.7 + y * 1.9, 0.22, true, 3, 6);
             }
             if (tile == Tile.Pedal)
             {
@@ -119,24 +115,6 @@ void MakeScenery(mut Scenery scenery, mut Shore shore, Board board, int level, i
     }
 
     DressRegion(scenery, size, region);
-    if (level <= -2)
-    {
-        for (var camp = 0; camp < 6; camp++)
-        {
-            var at = MapSlot(camp);
-            PutCampSocket(scenery, Spot(size, float2(at.x, at.y), 0), region);
-        }
-        if (region < 3)
-        {
-            var dock = int2(7, 4);
-            PutTravelArch(scenery, Spot(size, float2(dock.x, dock.y), 0), region, true, TileAt(board, dock) == Tile.Rock);
-        }
-        if (region > 0)
-        {
-            var dock = int2(1, 4);
-            PutTravelArch(scenery, Spot(size, float2(dock.x, dock.y), 0), region, false, false);
-        }
-    }
 
     // A few rocks out at sea, where they're in nobody's way: the same for a level every time
     mut var dice = Random(level * 7919 + 13);

@@ -109,7 +109,6 @@ local singleton Room
     float heat = 1;       // How hot the coals look: they flare when something lands on them
     float bellows;        // Ember grills burn only with both chefs on their pedals
     int region;          // Coast, countryside, mountains, volcano
-    bool travelling;     // The route map shows all four regions together
     float2 grid = float2(240, 135);         // Half the frame's pixels, each way: what moves a corner onto one
 }
 

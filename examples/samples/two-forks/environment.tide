@@ -150,54 +150,6 @@ void DressRegion(mut Scenery scenery, int2 size, int region)
     }
 }
 
-void PutCampSocket(mut Scenery scenery, float3 at, int region)
-{
-    // A shallow cooking pan lets the selector meatball roll into its socket.
-    // The low carved rim belongs to the floor, rather than a blocking prop.
-    List<float2> rim = [float2(0.42, -0.012), float2(0.44, 0.02), float2(0.39, 0.055),
-                        float2(0.34, 0.035), float2(0.33, 0.008)];
-    PutLathe(scenery.mesh, scenery.faces, Ink(RegionStone(region), IRON, 0.15), at, rim, float2(1), 8);
-    PutTube(scenery.mesh, scenery.faces, Ink(Color(0.1, 0.1, 0.12), IRON, 0), at,
-            at + float3(0, 0.007, 0), 0.335, 0.335, 8);
-    var bars = Ink(Color(0.3, 0.31, 0.32), IRON, 0.5);
-    for (var i = -1; i <= 1; i++)
-    {
-        PutBox(scenery.mesh, scenery.faces, bars, at + float3(0, 0.013, i * 0.13), float3(0.52, 0.022, 0.035));
-    }
-}
-
-void PutTravelArch(mut Scenery scenery, float3 at, int region, bool onward, bool closed)
-{
-    // The poles stand on the tile rims, with the beam above a chef's hat.
-    // Opening the real map gate removes its slats, leaving a clear doorway.
-    var frame = Ink(region >= 2 ? RegionStone(region) : Color(0.53, 0.39, 0.25), region == 2 ? STONE : region == 3 ? IRON : WOOD, 0.1);
-    for (var side = -1; side <= 1; side += 2)
-    {
-        PutBox(scenery.mesh, scenery.faces, frame, at + float3(side * 0.455, 0.74, 0), float3(0.07, 1.48, 0.09));
-    }
-    PutBox(scenery.mesh, scenery.faces, frame, at + float3(0, 1.54, 0), float3(1.01, 0.1, 0.12));
-    var paint = Ink(region == 3 ? Color(0.95, 0.68, 0.37) : Color(0.85, 0.85, 0.68), PLAIN, 0);
-    var direction = onward ? 1.0 : -1.0;
-    var mark = at + float3(0, 0.007, -0.3);
-    PutTriangle(scenery.mesh, scenery.faces, paint, mark + float3(direction * 0.22, 0, 0),
-                mark + float3(-direction * 0.15, 0, 0.14), mark + float3(-direction * 0.15, 0, -0.14), float3(0, 1, 0), float2(0), float2(0), float2(0));
-    // A small painted arrow under the lintel is visible from a distance.
-    var sign = at + float3(0, 1.53, -0.065);
-    PutTriangle(scenery.mesh, scenery.faces, paint, sign + float3(direction * 0.22, 0, 0),
-                sign + float3(-direction * 0.12, 0.07, 0), sign + float3(-direction * 0.12, -0.07, 0),
-                float3(0, 0, -1), float2(0), float2(0), float2(0));
-    if (!closed) return;
-    var bars = Ink(region == 3 ? Color(0.39, 0.32, 0.27) : Color(0.38, 0.31, 0.23), region >= 2 ? IRON : WOOD, 0.2);
-    for (var i = -2; i <= 2; i++)
-    {
-        PutBox(scenery.mesh, scenery.faces, bars, at + float3(i * 0.16, 0.58, 0), float3(0.09, 1.04, 0.07));
-    }
-    for (var i = 0; i < 2; i++)
-    {
-        PutBox(scenery.mesh, scenery.faces, frame, at + float3(0, 0.28 + i * 0.61, -0.055), float3(0.79, 0.065, 0.055));
-    }
-}
-
 local singleton Weather
 {
     List<Mote> flakes;

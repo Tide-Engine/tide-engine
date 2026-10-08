@@ -57,8 +57,6 @@ local singleton Fx
 
     int level = -1;               // The level the places below are of
     bool jump;                    // The board was laid again: nothing glides to its place
-    float3 ballAt;                // The route meatball, eased between its tiles
-    float ballRoll;
     float3[2] chefAt;
     float[2] chefTurn;
     float[2] lunge;               // A chef that met what it can't move leans into it, and back
@@ -271,9 +269,8 @@ int InHand(Kitchen kitchen, Me me)
 [Stage(Layers.Camera)]
 view Look(Kitchen kitchen, Devices devices, mut Fx fx, mut Room room, mut Layout layout, mut Pad pad, mut Scenery scenery, mut Shore shore, Lens lens, Lobby lobby)
 {
-    var shown = kitchen.travelling ? -2 - kitchen.routeRegion : kitchen.level;
-    room.travelling = kitchen.travelling;
-    room.region = kitchen.travelling ? kitchen.routeRegion : Region(kitchen.level);
+    var shown = kitchen.level;
+    room.region = Region(kitchen.level);
     room.bellows = BellowsOn(kitchen.board) ? 1 : 0;
     if (kitchen.laid && (scenery.level != shown || scenery.layout != kitchen.layout))
     {
@@ -377,7 +374,7 @@ view Gather(Kitchen kitchen, mut Fx fx, mut Room room, Me me)
 {
     var size = kitchen.board.size;
     var up = float3(0, 1, 0);
-    var shown = kitchen.travelling ? -2 - kitchen.routeRegion : kitchen.level;
+    var shown = kitchen.level;
     var jump = fx.jump || fx.level != shown;
     if (fx.level != shown) fx.hint = 0;
     fx.level = shown;
@@ -386,12 +383,6 @@ view Gather(Kitchen kitchen, mut Fx fx, mut Room room, Me me)
     fx.cheer = kitchen.cleared != 0 ? fx.cheer + fx.dt : 0;
     var glide = jump ? 1.0 : 1 - Math.Exp(-fx.dt * 20);
     var slow = jump ? 1.0 : 1 - Math.Exp(-fx.dt * 6);
-    if (kitchen.travelling)
-    {
-        var target = Spot(size, float2(kitchen.meatball.x, kitchen.meatball.y), 0.37);
-        fx.ballAt += (target - fx.ballAt) * glide;
-        fx.ballRoll += (kitchen.ballRolling * Math.PI * 0.5 - fx.ballRoll) * glide;
-    }
     var lit = GasOn(kitchen.board);
     fx.gas += ((lit ? 1.0 : 0.0) - fx.gas) * (jump ? 1.0 : 1 - Math.Exp(-fx.dt * 12));
     room.gas = fx.gas;
@@ -670,7 +661,7 @@ view Pips(Kitchen kitchen, Fx fx, Lens lens, Lobby lobby, Guide guide)
     if (lobby.page != Page.Playing) return;
     // Cooking marks are a guide overlay only. In play the meat's own faces,
     // smoke and coals say what happened; the active chef has a ground ring.
-    if (!guide.open || kitchen.travelling) return;
+    if (!guide.open) return;
     var pip = Math.Clamp(Screen.width / 110, 4.5, 7);
     for (var i = 0; i < kitchen.board.count; i++)
     {
@@ -707,9 +698,8 @@ view Hud(Kitchen kitchen, Devices devices, Me me, Layout layout, mut Fx fx, Pad 
     }
     if (undo) Send(Undo { level = kitchen.level });
     if (devices.keyboard.r.down || devices.gamepad.select.down) Send(Restart { level = kitchen.level });
-    if (!kitchen.travelling && devices.keyboard.m.down) Send(BackToMap { level = kitchen.level });
     // A development shortcut, deliberately absent from normal play's UI.
-    if (devices.keyboard.n.down) Send(Goto { level = (kitchen.level + 1) % LEVELS });
+    if (devices.keyboard.n.down) Send(Goto { level = NextKitchen(kitchen.level) });
     if (!pad.touched) return;
     var reach = layout.reach;
     for (var way = 0; way < 4; way++)
