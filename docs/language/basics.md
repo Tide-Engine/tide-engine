@@ -182,7 +182,7 @@ From the ones that bind tightest to the loosest:
 
 Operators on one line group from the left: `a - b - c` is `(a - b) - c`. `??` and `?:` group from the right: `a ?? b ?? 0` is `a ?? (b ?? 0)`.
 
-The arithmetic and bitwise operators have compound assignments: `+=`, `<<=` and the rest. `i++`, `i--`, `++i` and `--i` are the same as `i += 1` and `i -= 1`. Inside an expression they're a value too: `++i` is `i` after it changed and `i++` what it was before, so `(++count % 2 == 0) ? a : b` counts and picks in one line. They aren't there in a `parallel` loop's step or in a frag or a vert, where they stay statements of their own.
+The arithmetic and bitwise operators have compound assignments: `+=`, `<<=` and the rest. `i++`, `i--`, `++i` and `--i` are the same as `i += 1` and `i -= 1`. Inside an expression they're a value too: `++i` is `i` after it changed and `i++` what it was before, so `(++count % 2 == 0) ? a : b` counts and picks in one line. In a frag or a vert, the statement they're in reads the variable nowhere else, and they don't go on a side of `?:` or after `&&` or `||`: the compiler says so, and what to write instead.
 
 `??`, `is`, `!` after a value and `try` unwrap what a function that can fail gives, and `T?` values (see [Errors](./errors.md)).
 
