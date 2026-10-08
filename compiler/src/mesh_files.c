@@ -829,6 +829,41 @@ static bool accessor_of(gltf *g, const jnode *index, accessor *a, const char *wh
     return true;
 }
 
+typedef struct sparse_accessor {
+    uint64_t count;
+    const uint8_t *indices, *values;
+    int64_t index_type;
+    uint32_t index_bytes, element_bytes;
+} sparse_accessor;
+
+// The elements a sparse accessor replaces, with both views checked against
+// their buffers. Vertex attributes and triangle indices have the same sparse
+// representation: the selectors address elements of the accessor itself.
+static bool sparse_of(gltf *g, const accessor *a, sparse_accessor *out, const char *what)
+{
+    *out = (sparse_accessor){0};
+    const jnode *sparse = jget(a->json, "sparse");
+    if (!sparse) return true;
+    const jnode *indices = jget(sparse, "indices"), *values = jget(sparse, "values");
+    int64_t count, index_view, value_view;
+    const int64_t index_type = jwhole_or(indices, "componentType", 0);
+    if (!jwhole(jget(sparse, "count"), &count) || !jwhole(jget(indices, "bufferView"), &index_view)
+        || !jwhole(jget(values, "bufferView"), &value_view) || (index_type != 5121 && index_type != 5123 && index_type != 5125)) {
+        return fail(g->r, NULL, "has sparse %s that don't say where their numbers are", what);
+    }
+    uint64_t index_room, value_room, unused;
+    const uint8_t *index_at = view_at(g, index_view, (uint64_t)jwhole_or(indices, "byteOffset", 0), &index_room, &unused);
+    if (!index_at) return false;
+    const uint8_t *value_at = view_at(g, value_view, (uint64_t)jwhole_or(values, "byteOffset", 0), &value_room, &unused);
+    if (!value_at) return false;
+    const uint32_t index_bytes = component_bytes(index_type), element_bytes = component_bytes(a->type) * a->width;
+    if ((uint64_t)count > a->count || (uint64_t)count * index_bytes > index_room || (uint64_t)count * element_bytes > value_room) {
+        return fail(g->r, NULL, "has sparse %s that run past their buffer view's end", what);
+    }
+    *out = (sparse_accessor){(uint64_t)count, index_at, value_at, index_type, index_bytes, element_bytes};
+    return true;
+}
+
 // An accessor's elements as floats, `want` numbers each into `out`: the
 // numbers it has, and `fill` for a fourth it hasn't (a color's alpha). It has
 // to have `expect` elements.
@@ -860,30 +895,13 @@ static bool read_floats(gltf *g, const jnode *index, const uint32_t want, const 
         }
     }
     // A sparse accessor: some elements, by their numbers, given apart from the rest
-    const jnode *sparse = jget(a.json, "sparse");
-    if (sparse) {
-        const jnode *indices = jget(sparse, "indices"), *values = jget(sparse, "values");
-        int64_t count, index_view, value_view;
-        const int64_t index_type = jwhole_or(indices, "componentType", 0);
-        if (!jwhole(jget(sparse, "count"), &count) || !jwhole(jget(indices, "bufferView"), &index_view)
-            || !jwhole(jget(values, "bufferView"), &value_view) || (index_type != 5121 && index_type != 5123 && index_type != 5125)) {
-            return fail(g->r, NULL, "has sparse %s that don't say where their numbers are", what);
-        }
-        uint64_t index_room, value_room, unused;
-        const uint8_t *index_at = view_at(g, index_view, (uint64_t)jwhole_or(indices, "byteOffset", 0), &index_room, &unused);
-        if (!index_at) return false;
-        const uint8_t *value_at = view_at(g, value_view, (uint64_t)jwhole_or(values, "byteOffset", 0), &value_room, &unused);
-        if (!value_at) return false;
-        const uint32_t index_bytes = component_bytes(index_type);
-        if ((uint64_t)count > a.count || (uint64_t)count * index_bytes > index_room || (uint64_t)count * element > value_room) {
-            return fail(g->r, NULL, "has sparse %s that run past their buffer view's end", what);
-        }
-        for (uint64_t k = 0; k < (uint64_t)count; k++) {
-            const uint32_t i = whole_component(index_at + k * index_bytes, index_type);
-            if (i >= a.count) return fail(g->r, NULL, "has sparse %s for a vertex it hasn't got", what);
-            for (uint32_t c = 0; c < take; c++) {
-                out[(uint64_t)i * want + c] = component(value_at + k * element + (uint64_t)c * each, a.type, a.normalized);
-            }
+    sparse_accessor sparse;
+    if (!sparse_of(g, &a, &sparse, what)) return false;
+    for (uint64_t k = 0; k < sparse.count; k++) {
+        const uint32_t i = whole_component(sparse.indices + k * sparse.index_bytes, sparse.index_type);
+        if (i >= a.count) return fail(g->r, NULL, "has sparse %s for a vertex it hasn't got", what);
+        for (uint32_t c = 0; c < take; c++) {
+            out[(uint64_t)i * want + c] = component(sparse.values + k * sparse.element_bytes + (uint64_t)c * each, a.type, a.normalized);
         }
     }
     return true;
@@ -913,6 +931,20 @@ static uint32_t *read_indices(gltf *g, const jnode *index, uint64_t *count)
             return NULL;
         }
         for (uint64_t i = 0; i < a.count; i++) out[i] = whole_component(at + i * stride, a.type);
+    }
+    sparse_accessor sparse;
+    if (!sparse_of(g, &a, &sparse, "indices")) {
+        free(out);
+        return NULL;
+    }
+    for (uint64_t k = 0; k < sparse.count; k++) {
+        const uint32_t i = whole_component(sparse.indices + k * sparse.index_bytes, sparse.index_type);
+        if (i >= a.count) {
+            fail(g->r, NULL, "has sparse indices for an element it hasn't got");
+            free(out);
+            return NULL;
+        }
+        out[i] = whole_component(sparse.values + k * sparse.element_bytes, a.type);
     }
     *count = a.count;
     return out;
