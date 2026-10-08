@@ -15,6 +15,8 @@
 # the run, and nothing is published: every release has every platform's
 # package.
 #
+# Every run also builds the docs site, and on dev deploys it (docs.yml).
+#
 # Jobs run on fresh Blacksmith runners.
 name: Build
 run-name: ${{ github.ref_name == 'dev' && 'Nightly' || github.ref_name == 'release' && 'Stable' || 'Check' }} (${{ github.ref_name }})
@@ -629,6 +631,15 @@ jobs:
             @semantic-release/git
         env:
           GITHUB_TOKEN: ${{ secrets.TIDE_PUBLISH_TOKEN || secrets.GITHUB_TOKEN }}
+
+  # The docs site (docs.yml): built with every run, and deployed from dev. It's
+  # beside the release, not part of it: neither waits for the other, and a
+  # failure of either fails the run.
+  docs:
+    name: Docs
+    uses: ./.github/workflows/docs.yml
+    secrets:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
   # Stable releases also go to JetBrains Marketplace, once the repository has a
   # JETBRAINS_MARKETPLACE_TOKEN secret. Nightlies don't: the plugin only runs
