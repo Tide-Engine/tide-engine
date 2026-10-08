@@ -1,5 +1,7 @@
 # `tide_add_game` and the generated header
 
+Private game prototypes (2026-10-09): `TIDE_PRIVATE_PROTOTYPES`, OFF by default, adds `prototypes/cabin-nine/` only inside the platform build. Its game and tests use `tide_add_game` normally on native and web, with no docs staging or package install. The game's own notes are in `notes/cabin-nine.md`; its design and launch instructions stay beside its sources.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Building
