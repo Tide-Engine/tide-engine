@@ -43,9 +43,9 @@ input Controls
 
 scene Main { }
 
-event(Spawned) Setup(with Main, mut Table table, Time time)
+event(Spawned) Setup(with Main, mut Table table)
 {
-    table.seed = time.seed;
+    table.seed = Random.seed;
     for (var i = 0; i < 20000; i++) Spawn(Stone { });
 }
 

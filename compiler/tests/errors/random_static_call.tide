@@ -1,7 +1,0 @@
-// expect: a Random is a generator's state, which lives where the game puts it
-singleton Deck { int top; }
-scene Main { }
-system Shuffle(mut Deck deck)
-{
-    deck.top = Random.NextInt(6);
-}
