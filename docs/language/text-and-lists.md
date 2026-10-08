@@ -4,7 +4,7 @@ description: "Work with Tide strings, lists, arrays, maps and sets as values, in
 
 # Text and lists
 
-Text and lists are values, like everything else: assigning one copies it, and changing a copy never changes the original. Nothing about them fails, either: past the end, positions are clamped.
+Text and collections are values: assigning one copies it, and changing a copy never changes the original. Text clamps positions to its bounds. A list or array read outside its bounds gives zero, and a write there does nothing.
 
 ## Text
 
@@ -78,13 +78,15 @@ Past the end, a read gives the element type's zero and a write does nothing.
 
 ### Elements are copies
 
-Reading an element gives a copy of it, so `items[i].count = 1` would only change the copy. It's an error: take the element out, change it, and put it back.
+Taking a whole element into a local, an argument or a `foreach` variable gives a copy. Changing that copy never changes the list:
 
 ```csharp
 mut var slot = inventory.slots[i];
 slot.count += 1;
 inventory.slots[i] = slot;
 ```
+
+Plain fields of struct elements can also be [changed where they are](#changing-an-element-where-it-is): `inventory.slots[i].count += 1`. A `mut` method or a `mut` argument can't change an element this way; use a mutable local and put it back. A struct element's text or collection fields also need that copy-and-replace form.
 
 Changing a list needs something that can change: a `mut` component or singleton, or a `mut` local.
 
@@ -149,7 +151,7 @@ Elements are plain values: numbers, bools, enums, vectors, quaternions, matrices
 
 ## Changing an element where it is
 
-A list's element, a map's value or an array's element that's a struct is changed where it is when the field written is a plain value: `rings[i].head = 0`, `rings[i].cells[j] = v`, `trail.points[i].x += 1`. A field that holds text or a list, and anything in a list or a map inside the element, is still taken out, changed and put back (`var r = rings[i]; r.names.Add("x"); rings[i] = r;`), and so is a grid's cell. Reading `rings[i].head` or `rows[i][j]` copies nothing either way.
+A list's element, a map's value or an array's element that's a struct is changed where it is when the field written is a plain value: `rings[i].head = 0`, `rings[i].cells[j] = v`, `trail.points[i].x += 1`. A missing map key is added when its value is written this way. A field that holds text or a collection, and anything in a list or a map inside the struct element, is still taken out, changed and put back (`mut var r = rings[i]; r.names.Add("x"); rings[i] = r;`), and so is a grid's cell. Reading `rings[i].head` or `rows[i][j]` copies nothing either way.
 
 ## Lists inside lists
 
@@ -158,23 +160,25 @@ A list's elements can be lists, maps or sets, and structs that hold them, as dee
 An element that's a container is changed where it is, through any number of indexes:
 
 ```csharp
+component Item { }
+
 singleton Table
 {
     List<List<int>> rows;
     Map<int, List<Entity>> buckets;
 }
 
-system Fill(mut Table table)
+system Fill(mut Table table, with Item)
 {
     table.rows.Add([1, 2]);   // A new row
     table.rows[0].Add(3);     // Into the row where it is
     table.rows[0][1] = 20;
     table.rows[0][2] += 1;
-    table.buckets[7].Add(this); // Adds the key 7 if it isn't there, like `buckets[7] = ...`
+    table.buckets[7].Add(this); // This Item's entity; adds the key 7 if it isn't there
 }
 ```
 
-Past the end of the list it's in, such a write does nothing, as any write past the end does. A struct element is still a copy, so a list inside one is changed by taking the struct out and putting it back (`var b = bags[i]; b.parts.Add(x); bags[i] = b;`), and an inner list is sorted the same way.
+Past the end of the list it's in, such a write does nothing, as any write past the end does. A list inside a struct element is changed by taking the struct out and putting it back (`mut var b = bags[i]; b.parts.Add(x); bags[i] = b;`), and an inner list is sorted the same way.
 
 Whatever takes a whole element out copies it, its lists too: a `foreach`'s variable, a local, a map's `Get`. Changing the copy changes nothing in the list it came from. Reading `rows[i][j]` or `rows[i].count` copies nothing, so a loop that only counts or reads is best written with indexes:
 
@@ -187,7 +191,7 @@ int Cells(Table table)
 }
 ```
 
-Text shows them inside out, `[[1, 20, 4], [3]]`. They don't go to C, nor into a `parallel` loop, an input or a command, which take plain lists.
+Text shows them inside out, `[[1, 20, 4], [3]]`. Nested collections don't go to C or into a `parallel` loop, whose list elements must be plain values. Inputs hold no lists; a [command](../game/commands.md#big-commands) can hold `List<byte>` for bytes, but no other list type.
 
 Rows that all have one length need no second list: `cells[row * width + column]`, or a [grid](./grids.md).
 
@@ -311,7 +315,17 @@ if (board.byName.TryGet("last", out var stats))
 
 Where the key isn't there, the variable gets the value type's `default`.
 
-A value read out of a map is a copy, like a list's element: take it out, change it and put it back. A map taken out of a field is a copy too. Maps and sets go in components, singletons, structs and events, like lists, and not in inputs, lists, grids' cells or other maps. A map's values can't be lists, maps, sets or structs with one in them either, as a list's elements can't: see [Lists in structs](#lists-in-structs) for what to write instead.
+A whole value taken out of a map is a copy, like a list's element: take it out into a mutable local, change it and put it back. A plain field of a struct value can be [changed where it is](#changing-an-element-where-it-is), and a value that's a collection can be changed through its key: `buckets[key].Add(entity)`. A map taken out of a field is a copy too.
+
+Maps and sets go in components, singletons, structs and events. They also nest in lists and as map values, as [lists inside lists](#lists-inside-lists) do. Inputs and grid cells don't hold them. Keys stay the types listed above; a collection or a struct can't be a key.
+
+Choose a name below and add a score. A missing name joins the map; removing and adding it again puts it last in insertion order. Tagging it twice leaves one tag, and `TryGet` shows both whether its score exists and the value it gives.
+
+::: tide-example maps Scores by key, tags only once
+
+<<< @/examples/maps.tide
+
+:::
 
 ## Where they live
 
@@ -319,6 +333,6 @@ A world keeps the text, lists and maps in its components in its **heap**, which 
 
 Text and lists that code makes along the way, joining text, say, live in a scratch area that's cleared once the system, view or handler is done, and are only copied into the world when they're stored in it. The scratch area grows as it needs too, up to 1 GiB on each thread, and a list stops growing at 1 GiB of elements. A heap or a scratch area that's full ends the program, as running out of memory does.
 
-An input can't hold text or lists: what players send every tick is numbers, bools and enums.
+An input can't hold text or dynamic collections: what players send every tick is plain data, including vectors, structs and fixed-length arrays (see [Input](../game/input.md)).
 
-Systems that change the match's text or lists wait for each other, since they share one heap.
+Systems that change the match's text or collections wait for each other, since they share one heap.

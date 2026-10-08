@@ -81,6 +81,13 @@ static unsigned frames_counted;
 static bool headless;
 static tide_headless_desc headless_run;
 
+// Whether nobody hears this window: in a run nobody watches (TIDE_HIDDEN,
+// tide/page.h) nobody listens either, so it opens no output device and no
+// microphone, and its mixer is handed frames and goes unheard, as on a machine
+// with neither. Desktop only, as the variable is: a page's sound is its
+// browser's to mute.
+static bool unheard;
+
 // The microphone: open while frames name a voice of it, closed when none does
 static struct {
     bool open;
@@ -131,6 +138,7 @@ void tide_platform_open(const tide_window_desc *desc)
                         "(tide_platform_open_headless)\n");
         exit(2);
     }
+    unheard = tide_hidden(); // ...and nobody listens to it either
 #endif
     if (!tide_window_open(desc)) exit(1); // It said why
     gpu = tide_window_gpu();
@@ -139,7 +147,7 @@ void tide_platform_open(const tide_window_desc *desc)
 #ifdef __wasm__
     web_timer_frames = desc->hidden;
 #endif
-    tide_audio_out_open(); // With none, it said so, and the mixer goes unheard
+    if (!unheard) tide_audio_out_open(); // With none, it said so, and the mixer goes unheard
 }
 
 void tide_platform_open_headless(const tide_headless_desc *desc)
@@ -288,7 +296,7 @@ void tide_platform_audio(const tide_audio_frame *frame)
         if (frame->microphone) headless_microphone();
         return;
     }
-    if (frame->microphone) {
+    if (frame->microphone && !unheard) {
         if (mic.open) return;
         if (mic.retry) {
             mic.retry--;

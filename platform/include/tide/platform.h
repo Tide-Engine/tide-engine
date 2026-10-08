@@ -32,14 +32,17 @@ typedef struct tide_window_desc {
     bool hidden;
 } tide_window_desc;
 
-// Opens the window and its graphics context.
+// Opens the window and its graphics context, and the system's audio output.
 //
 // In a run nobody watches (TIDE_HIDDEN in the environment: tide_hidden,
 // tide/page.h), no window shows on a desktop, whatever asks for one. A window
-// that's `hidden` opens as ever, as a headless one does. One that isn't has
-// only its closing to end its run, which nobody could do, so the program ends
-// here instead, with exit code 2, having said why: a program that ends by
-// itself opens its window `hidden`, or headless.
+// that's `hidden` opens as ever, as a headless one does, but for its sound:
+// nobody listens either, so it opens no output device and no microphone, and
+// what tide_platform_audio is handed goes unheard, as on a machine with
+// neither. One that isn't `hidden` has only its closing to end its run, which
+// nobody could do, so the program ends here instead, with exit code 2, having
+// said why: a program that ends by itself opens its window `hidden`, or
+// headless.
 void tide_platform_open(const tide_window_desc *desc);
 
 // A headless window: none on screen, for pictures of what a game draws and
@@ -123,7 +126,9 @@ void tide_platform_audio(const tide_audio_frame *frame);
 // the capture device is kept open and its frames reach the mixer (audio_in.h),
 // tried again every second where it couldn't be opened (a player who hasn't
 // allowed it yet); when no frame does, it's closed. A headless run has no
-// device: `tide_headless_desc.microphone` plays a file into it instead.
+// device: `tide_headless_desc.microphone` plays a file into it instead. A
+// window in a run nobody watches (TIDE_HIDDEN) has none either, and its
+// microphone is silent.
 
 // Writes what a headless window played since the last such call (or since the
 // run began) to the file at `path`, as a WAV of 16-bit stereo PCM, and says

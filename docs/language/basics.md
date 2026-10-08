@@ -31,6 +31,7 @@ The editors' formatter lays code out this way (see [Editors](../tools/editors.md
 | `Rect` | A rectangle on the screen: `x`, `y`, `width` and `height` (see [GUI](../game/gui.md)) |
 | `string` | Text (see [Text and lists](./text-and-lists.md)) |
 | `List<T>` | A list of values (see [Text and lists](./text-and-lists.md)) |
+| `T[N]`, like `int[32]` | A fixed number of plain values, stored side by side (see [Arrays](./text-and-lists.md#arrays)) |
 | `Map<K, V>`, `Set<K>` | Values by key, and keys each once, in the order they were added (see [Text and lists](./text-and-lists.md#maps-and-sets)) |
 | `Grid2<T>`, `Grid3<T>` | Cells at `int2` or `int3` positions, in fields (see [Grids](./grids.md)) |
 | `Entity` | A handle to an entity (see [Components and entities](../game/entities.md)) |
@@ -41,6 +42,8 @@ The editors' formatter lays code out this way (see [Editors](../tools/editors.md
 The engine has enums of its own too, on the pages they belong to: `Anchor` ([GUI](../game/gui.md)), `Filter` ([Meshes and textures](../game/meshes-and-textures.md#textures)), `SceneVisibility` ([Scenes](../game/scenes.md)), `SessionState`, `DisconnectReason` and `Prediction` ([Matches](../multiplayer/matches.md)).
 
 Everything is a value: assigning copies it, and nothing is shared, text and lists included. That's what keeps the whole world plain data, which the engine copies to take snapshots.
+
+The type arguments in `List<T>`, `Map<K, V>` and the other containers pick what they hold. Containers can nest, such as `Map<string, List<int>>`. Declaring your own generic types or functions isn't supported yet; a struct or function names the concrete types it uses.
 
 ### Numbers
 

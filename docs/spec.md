@@ -567,7 +567,7 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 
 - A system with no component parameters runs once per tick. Otherwise it runs once per matching entity.
 - A parameter that's never used, or declared `mut` and never written, is a warning: it makes other systems wait for nothing. A component that's only there to filter entities belongs in `with`.
-- **Where the World goes.** Systems, views and event handlers take `World`, async handlers too: their tasks keep it across their waits. Functions and methods can't take it yet: the code that has it reads what they need and passes the values on. It's only ever called: it can't be stored, passed on or compared, and `world.Get<Health>(e).value = 5` is an error, since `Get` gives a copy.
+- **Where the World goes.** Systems, views and event handlers take `World`, async handlers too: their tasks keep it across their waits. Ordinary functions and methods can take the caller's `World` explicitly, and pass it through further helpers (see The World). Async functions and extern functions take none. Outside an argument to a `World` parameter it is only ever called: it can't be stored or compared, and `world.Get<Health>(e).value = 5` is an error, since `Get` gives a copy.
 - **The World in local code.** A local component is reached the same way, with a `LocalEntity`: `world.Get<Spark>(e)`. A view or a local handler with `mut World` can `Set` one, as it can change local state. Match code's `World` only reaches the match's components, and a local handler's only local ones for now. A view that reads the match through its `World` only runs in a match, as one that takes a match component does, and what `Get` gives it is the component as of the latest tick, not blended between ticks.
 - **A type in `<>`.** Only the `World`'s methods take one. A `<` after a method's name starts a type when a name, `>` and the call's `(` follow, as in C#: `a.b < c.d > (e)` would compare a `bool`, so no comparison reads that way.
 - **`Set` and text.** `Set` of a component that holds text, lists or maps copies them into the world as the entity's own, as assigning the component does. A system that does it changes the match's heap, like any that writes text.
@@ -592,7 +592,7 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
   - `t` is `tick * dt`, worked out from the tick each time and never added to, so it doesn't drift. Views see it blended between ticks like any float of the match, so it moves every frame, in the frags and verts they draw through too.
   - A float holds about 7 digits, so `t` gets coarser as the match goes on: after a day its steps are about 8 milliseconds. What has to be exact counts in `tick`.
   - `tickRate` is 1 / `dt` to the nearest whole number: the `tickRate` setting, or the rate the machine that runs the match gave it.
-  - `Time` also has `int seed`, the match's seed: see Random numbers.
+  - The match's seed is read as `Random.seed` (see Random numbers). Generated C keeps it in `Time` underneath; Tide code can't name `time.seed`.
 - `Debug.Log(text)` prints a line for whoever runs the game: the terminal under `tide run`, the browser's console on the web, the system's log on Android. `Debug.Assert(condition)` and `Debug.Assert(condition, text)` stop the program when the condition is false, naming the file, the line and the source line, and the text. Both go anywhere, and neither changes the match, so it stays the same on every machine with or without them. A tick a client runs again after a rollback logs again: a log of match state is best prefixed with `Time.tick`.
 
 ### Syntax
@@ -1280,7 +1280,7 @@ Built 2026-10-06 on that; each point beyond it is a pick, awaiting the owner.
 
 - Searching with a condition, and sorting by a key.
 - Changing a list inside a struct element where it is (`bags[i].parts.Add(x)`), and sorting an inner list in place.
-- Fixed-size arrays inside components, which need no heap.
+- Blending arrays of floats in views (fixed-size arrays in components are implemented; see Arrays).
 
 ## Maps and sets
 
@@ -1584,6 +1584,89 @@ Picks made as `Mesh` assets were built (2026-10-08), awaiting the owner. That a 
 - Pinning a URL to a hash of its contents, so a build is reproducible when the server changes the file.
 - Big media through the match: it goes player to server to everyone, so a host's upload is the file once per player. The docs say the number; a game with big files keeps a URL in the match and each machine fetches. Whether the engine should do more than say so.
 
+## Skinned meshes and animation
+
+### Decided
+
+Agreed 2026-10-08. This is the design for a feature not built yet. The current static `Mesh<V>` importer still ignores skins and animation; the examples in this section describe the planned language.
+
+- **A skinned model is a `SkinnedMesh<V>`.** It provides geometry over the game's vertex struct, its skeleton and its animations. A mesh is shared independently of playback: several characters can use the same model with different poses.
+- **A pose is separate from the mesh.** Animation produces a pose; game code can read and edit its bones, and drawing uses it to deform the mesh. Both match systems and views can sample and use poses, including for sockets, hitboxes and root motion. Sampling and blending are deterministic CPU operations using Tide's math. GPU deformation is for drawing and never supplies match results.
+- **Drawing has its own call, `Draw.SkinnedMesh`.** A pose is not another optional argument added to `Draw.Mesh`. The exact argument list and the other pose operations are proposed below.
+- **Contracts are optional.** `SkinnedMesh<V>` needs no empty contract. `SkinnedMesh<V, C>` declares required members through a contract `C`. A contract specifies a required subset of the model's content: extra clips and bones remain available for dynamic discovery and lookup. A known asset is checked during compilation; a runtime-loaded value with a contract is checked before that value is successfully made available.
+- **A known asset provides checked members without a written contract.** For an asset declared without a contract, the compiler reads its animation and bone names and exposes them as members, such as `hero.animations.idle` and `hero.skeleton.bones.head`. A missing member is a compile error. An `asset` URL is known this way too, since it is fetched during compilation as other asset URLs are. A contracted value guarantees its declared requirements; whether a known contracted asset also infers extra dot members remains open.
+- **Dynamic lookup remains available in every case.** `hero.animations.Find(name)` returns `Animation?`; bones can also be looked up dynamically, with an optional typed reference as the result. A runtime-loaded model with no contract uses lookup and enumeration. A model with inferred or declared members supports those operations as well. A clip obtained through a checked member and one found dynamically are ordinary animation values used by the same sampling and blending operations.
+- **A bone member produces a typed reference.** The reference identifies the bone within its skeleton and lets a pose reach that bone without looking up text at every edit. Name lookup resolves such a reference. The proposed type name is `Bone`, and the proposed indexing is `pose[head]`, below. Skeleton compatibility is distinct from the presence of names: two models both having an animation named `run` does not establish compatible skeletons.
+- **Inference retains known members.** `var character = hero;` keeps a known asset's inferred members. A general parameter written as `SkinnedMesh<V>` promises the common dynamic API; a helper requiring checked members declares a contract or receives the selected `Animation` or `Bone` directly. A declared contract keeps its guarantees when the model passes through helpers and collections.
+- **The editor understands these members.** Completion and hover expose inferred and contracted animations and bones, and member diagnostics agree with the compiler. Reading model metadata must keep editing responsive; ordinary completion must not wait for a full geometry import or a URL download. Cache and refresh details are proposed below.
+- **Runtime fetching follows the existing local/match boundary.** A URL fetched while playing is local, unlike an `asset` URL. Content that affects match bones or root motion must enter through synchronized match data, as other runtime files do; a system does not fetch its own copy independently.
+
+There are three forms of member access:
+
+| Model | Checked members | Dynamic access |
+|---|---|---|
+| Compile-time asset, no explicit contract | Inferred from the file | `Find` and enumeration |
+| Runtime-loaded model, no contract | None inferred from its unknown contents | `Find` and enumeration |
+| Model with an explicit contract | The declared requirements, validated before use | `Find` and enumeration, including extra content |
+
+These examples use `idle` and `run` as the model's exposed animation names and `head` as its exposed bone name. The rules for mapping exported names and aliases to these identifiers are still open.
+
+```csharp
+asset SkinnedMesh<Corner> hero = "art/hero.glb";
+
+// No written contract is needed for the known asset.
+var idle = hero.animations.idle;
+var head = hero.skeleton.bones.head;
+
+var character = hero;
+var run = character.animations.run;
+
+// Lookup is also available for names chosen while playing.
+Animation? emote = hero.animations.Find(emoteName);
+```
+
+### Open
+
+The following API is a proposal, not an implementation contract. Its exact signatures, defaults and failure behavior still need approval. An animation contract could use an ordinary struct to describe the clips a helper needs:
+
+```csharp
+struct Locomotion
+{
+    Animation idle;
+    Animation run;
+    Animation jump;
+}
+
+asset SkinnedMesh<Corner, Locomotion> hero = "art/hero.glb";
+```
+
+`Locomotion` requires those three clips; it does not exclude emotes or other clips in the model. The declaration rules for a contract that also requires bones remain open.
+
+Proposed pose use:
+
+```csharp
+mut var pose = hero.animations.idle.Sample(seconds, Playback.Loop);
+var running = hero.animations.run.Sample(runSeconds, Playback.Loop);
+pose.Blend(running, moving);
+
+var head = hero.skeleton.bones.head;
+pose[head].rotation = Math.Mul(pose[head].rotation, lookRotation);
+
+Draw.SkinnedMesh(hero, transform, pose);
+var weaponTransform = Math.Mul(transform, pose.Model(rightHand));
+Draw.Mesh(sword, weaponTransform);
+```
+
+- **Import and runtime loading.** glTF/GLB for skinned models; separate fetch and decode, as `Web.Fetch` and `grid.Decode` already do. Proposed runtime spelling: `SkinnedMesh<V>.Decode(bytes)` and `SkinnedMesh<V, C>.Decode(bytes)`, with failure for invalid data or an unmet contract. A self-contained GLB is a possible first runtime format; external-resource resolution, separate animation files and their skeleton binding, multiple skins in one file, influence counts and raw geometry access still need rules. Runtime values need persistent ownership; the current borrowed-pack lifetime of `Mesh<V>` cannot be assumed for them.
+- **Names and contracts.** How exported names become Tide identifiers, explicit aliases for punctuation or desired spelling, duplicate and unnamed clips or bones, collisions with `Find` and other operations, and whether bone lookup accepts a hierarchy path. Proposed dynamic bone spelling: `skeleton.Find(name)` returning `Bone?`. No path format or automatic name normalization has been agreed. The shape of contracts that include bones, assignment between contracted and uncontracted values, extra inferred members on a known contracted asset, and selection among several inferred catalogs remain to specify.
+- **Pose values.** Proposed names are `Skeleton`, `Animation`, `Pose`, `Bone` and a bone transform with parent-local position, rotation and scale. A pose owns its mutable transforms and can be temporary or stored in a match/local field. Sampling fills unanimated properties from the skeleton's authored defaults; blending works on local transforms, with quaternion rotation interpolation. In-place `pose.Sample(...)` reuses storage; `pose.Model(bone)` gives an accumulated model-space matrix without inverse-bind skinning offsets. Pose compatibility checks, copy behavior, derived matrix caching and incompatible hot reload still need rules.
+- **Playback and interpolation.** Explicit supplied time, clamp/loop behavior, reverse playback, transitions, masks, additive layers and whether a small optional playback value provides `Play` and `Update`. A wrapped float clock must not interpolate through the wrong part of a clip. Existing lists and arrays do not blend in views, so a persistent pose needs an explicit interpolation rule or the view must resample playback state. Long-running clock precision also needs a rule.
+- **Root motion and events.** An explicit root-motion delta over a time interval, including loop crossings, for a system to apply through its own movement rules; removal of extracted motion from the displayed pose. Root selection, translation/rotation/scale behavior and animation markers or event queries remain open. Sampling must not implicitly move entities or send events.
+- **Drawing and shaders.** Proposed order: `Draw.SkinnedMesh(mesh, transform, pose[, texture][, vert][, frag][, values])`, with the same call on a render target. A required pose and explicit `skeleton.RestPose()` are proposed. Skinning would run before the custom `vert`, producing mesh-local positions, normals and tangents before the draw transform and camera. The same pose and deformation should work in shadow passes. Nonuniform bone scale, tangent handedness, access to pre-skin vertices and an instanced call with an independent pose per instance still need rules; `Draw.SkinnedInstanced` is a suggested name.
+- **Match compatibility.** Imported skeleton and animation data used by simulation must be identical across peers. How it participates in build/content compatibility, admission of runtime content, and changing it while rollback history exists need a design before implementation.
+- **Responsive asset metadata in the editor.** A proposed dedicated reader extracts names and hierarchy from `.gltf` JSON or the JSON chunk of `.glb`, skipping binary geometry and animation sample buffers. Cache metadata by file identity/version, refresh after file changes in background work, coalesce obsolete requests and reuse the compiler's naming/contract validation. For URLs, completion uses an available cache and explicit or background refresh rather than initiating a blocking fetch. Pending or unavailable metadata must be distinguished from a known missing member. A very large JSON catalog can still cost time; verify cold reads and refreshes with large binary buffers and large name catalogs, alongside warm completion latency and cancellation behavior.
+- **Language/runtime boundary and verification.** No new generated-C runtime function has been agreed. Before implementation, agree that boundary, and pin compilation, editor behavior, runtime contract failures, skeleton compatibility, pose math and match hashes. Native and web drawing must cover custom shaders, shadow passes, independent poses and resource recreation. Retargeting between different skeletons, IK, morph targets and an automatic animation controller have not been agreed as part of this work.
+
 ## Tasks
 
 ### Decided
@@ -1734,7 +1817,7 @@ input PlayerInput
 - A system can have one input parameter.
 - Extra device members beyond the list above: mouse `back` and `forward`, gamepad `leftStickButton` and `rightStickButton`, and the full key list in `engine/include/tide/devices.h`.
 - The types inside `Devices` are `Keyboard`, `Mouse`, `Gamepad`, `Dpad`, `Touchscreen`, `Touch`, `Pointer` and `Button`. Functions take them and `Devices` as parameters, read-only, passed without a copy: `float2 Steer(Gamepad pad)`.
-- `touches` is a fixed-size array, read-only: `touches[i]` (an empty touch past the last, as forgiving as a list), `touches.count` (10: every slot, touching or not) and `foreach`, which goes through every slot. Its type has no name in Tide yet: it's the first fixed-size array, and fixed-size arrays in components (see Lists, Open) will decide how one is written.
+- `touches` is a fixed-size device array, read-only, shown by tools as `Touch[10]`: `touches[i]` (an empty touch past the last, as forgiving as a list), `touches.count` (10: every slot, touching or not) and `foreach`, which goes through every slot. Ordinary fixed-size value arrays are implemented separately (see Arrays); device records remain read-only.
 - `Sample` takes `Devices` and local singletons, read-only: `Sample(Devices devices, Settings settings)`. Either can be omitted when unused. Hosts pass the local state to `tide_input_sample`.
 - `Devices` in views is this frame's: `.down` and `.up` since the last frame, and the `delta` of the mouse, touches and the pointer, and the mouse's `scroll`, too. What the GUI is using is hidden from views, as from `Sample`, and so is what another view claimed (see GUI). Helpers take the devices or a part of them explicitly; reading `keyboard.text` still requires a frame.
 - `keyboard.text` is the characters typed since the last frame, with Shift, dead keys and a phone's keyboard applied, and what's pasted too, but for newlines and tabs. Backspace, Enter and the arrows are keys, not characters. It holds up to 32 characters a frame: the platform keeps the rest for the frames after, up to 1024, so a long paste comes over a few frames, as it does into the GUI's fields. It's empty while the GUI has the keyboard (a widget with the focus, a field being typed into, a modal). A function that reads it through a `Keyboard` or `Devices` parameter needs the frame, so `Sample` and systems can't call it. It can't be written, like the rest of the devices.
@@ -2944,6 +3027,7 @@ system Collapse(Arena arena)
 
 ### Provisional
 
+- **Current visibility implementation:** `SceneVisibility.Private`, `Scene.AddPlayer` and `Scene.RemovePlayer` record the scene's visibility and membership in match state. Selective state delivery is not built yet: every player still receives the whole world, including every private scene. The visibility rules under Decided describe the intended behavior, not a way to protect secrets in a current build.
 - `scene` and `local scene` are only keywords at the start of a declaration. A scene's component can have methods, and `Add` can give its entity other components, like any entity.
 - `Spawn`, `Add` and `Remove` of a scene's component are errors that point to `Scene.Load` and `Scene.Unload`. `Destroy` on a scene's entity unloads it, and `Scene.Unload` of an entity that isn't a scene does nothing.
 - `Scene.Load` makes its entity right away, like `Spawn`, so it follows the same evaluation order and can't be inside `?:` or on the right of `&&` and `||`.
@@ -3429,7 +3513,7 @@ Questions:
 
 ## Audio
 
-Planned 2026-10-07. Nothing of it is built.
+Built: clips, one-shots, `Sound`, buses, `audio` effects and sources, device backends and the microphone. The original design below is followed by the per-card implementation picks, which describe the current API. [Audio](./game/audio.md) has runnable examples.
 
 ### Decided
 
@@ -3442,6 +3526,8 @@ Planned 2026-10-07. Nothing of it is built.
 - **Small and fast**: the pack stays as small as the author's files, and what plays is fast to reach at runtime. The pack keeps the file's bytes as they are; short clips are decoded to PCM at load, long ones streamed.
 - **Headless runs have audio**: a run with no window mixes as a device would, and what played can be captured beside the frame's picture.
 - **The block a filter sees is wrapped**, not a bare `float[512]` a game has to remember the size of: a built-in `Samples` that holds the array and says its size.
+
+Original design sketch. The implemented API below differs; see [Audio](./game/audio.md) for current code.
 
 ```csharp
 struct Knobs { float cutoff; }
@@ -3480,7 +3566,7 @@ local event(Hit hit) HitSound(Body body)
 
 ### Provisional
 
-Picks made to plan it, awaiting the owner. The names, the numbers and each rule below are proposals.
+The following is the initial proposal, awaiting the owner. Later per-card picks below describe what is built and supersede it where they differ.
 
 - **`Audio.Play(clip[, volume[, pitch]])` and `Audio.Play(clip, position[, volume[, pitch]])`** start a one-shot the mixer then owns: nothing comes back, and nothing can stop it. A `float2` position places it under the 2D listener, a `float3` under the 3D one. It's a call that does something, so it keeps its turn in evaluation order and is refused in match code, as drawing is.
 - **`Sound` is a built-in struct**, a value kept in a local field: `clip` (a `Clip`), `position` (a `float3`; a 2D sound is one with `z` 0, under the 2D listener where no 3D camera is set), `volume`, `pitch`, `loop`, `bus`, `playing`, `effect` (an `audio` declaration, or none) and `knobs` (the struct that declaration reads). A view writes it each frame. The mixer keeps a voice for each `Sound` a frame names, told apart as GUI widgets are (by the field and the entity), and fades a voice out over a few milliseconds when a frame stops naming it, so a destroyed entity's sound doesn't hang. `playing = false` stops it the same way; writing `clip` to another clip starts over. A `Sound` has no methods: the fields are the API.

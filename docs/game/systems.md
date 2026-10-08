@@ -130,7 +130,7 @@ system Aim(mut Attacker attacker, World world)
 
 What the function reaches through it counts as the system's own, through however many functions it's passed, so nothing about the schedule changes: `Aim` reads every entity's `Health`. A function that calls `Set` takes `mut World`, and so does the system that passes it. The rules above still hold, said at the call: a system that takes `Health` can't call a function that sets `Health`, and a view can't call one that changes the match.
 
-A system changes its own entity's component through the parameter, not through `Set`: `Set<Health>` in a system that also takes `Health` is an error. Views and event handlers take a `World` too; a view only reads the match through it. A [local handler](./events.md#local-handlers) of one of the match's events takes none: it hears the match as the event left it, and the `World` is the match as it is now.
+Views and event handlers take a `World` too; a view only reads the match through it, and can change local entities with `mut World`. A [local handler](./events.md#local-handlers) of one of the match's events takes none: it hears the match as the event left it, and the `World` is the match as it is now.
 
 ## Once per entity, or once per tick
 

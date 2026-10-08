@@ -1,5 +1,5 @@
 ---
-description: "Write Tide async functions and tasks that wait for time, ticks or events, and learn how they run in the match or local presentation."
+description: "Write Tide async functions and tasks that wait for time, ticks, frames or other async calls, in the match or local presentation."
 ---
 
 # Async and tasks
@@ -89,6 +89,7 @@ For now:
 - `await` can't go in a block written after a call (an `Action`), and `Wait` only goes after `await`.
 - Tasks can't draw, or read this frame's `Devices`: that's what views do, every frame.
 - Only systems, views, handlers and async code start tasks. A plain function or method can't, as a task belongs to a world.
+- Awaiting an event and cancelling a task through a handle aren't supported yet. An event can start an async handler, which then waits for time or other async calls.
 
 ## Where tasks run
 

@@ -37,7 +37,7 @@ tide <command> [folder] [options]
 | `--stats` | Shows the [stats](#stats) in the window's corner, as the game's `stats` setting does. `run` starts them open |
 | `--debug-views` | Turns the [debug views](debug-views.md) on, as the game's `debugViews` setting does: F7 shows the profiler, which says where a frame's time and a tick's go |
 | `--size <width> <height>` | `run` only: the window's size in pixels, 960 by 540 without it (not on the web or Android) |
-| `--capture`, `--frames`, `--script`, `--scale`, `--players` | `run` only: plays the game [without a window](#without-a-window), to see what it draws, with [several players](#several-players) if you like |
+| `--capture`, `--capture-audio`, `--microphone`, `--frames`, `--script`, `--scale`, `--players` | `run` only: plays the game [without a window](#without-a-window), to see what it draws and hear what it plays, with [several players](#several-players) if you like |
 | `--seed <n>` | `run` only: the seed of the matches the game starts, [`Random.seed`](../language/math.md#the-match-s-seed), from 0 to 2147483647. Without it, every match gets another one |
 | `-o <path>` | `build` only: where the program goes |
 | `--no-open` | `run --web` only: serves the page without opening a browser |
@@ -278,6 +278,7 @@ Set the `TIDE_HIDDEN` environment variable where nobody is there to look at a wi
 - A run with no window goes as ever: `--frames`, `--capture` and `--script`.
 - Any other run is refused, with exit code 2, before anything is built or opened. Only closing its window would end it, and nobody could. The message says what to give the run instead.
 - `tide run --web` serves the page and opens no browser.
+- Nobody listens there either: a program that opens its window hidden, as a test does, opens no audio device and no microphone.
 - A game that stops says why on stderr and shows no dialog. On Windows, a debug build that stops would otherwise show one and wait for a click.
 
 A game `tide build` made follows it too, on its own. Leave the variable out of your own terminal and your editor, where you want the window.

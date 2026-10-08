@@ -76,7 +76,7 @@ view Engines(Body body, mut Engine engine)
 }
 ```
 
-A `Sound` has `clip`, `position` and `spatial` (placed in the world, or plain stereo), `volume` and `pitch` (1 each unless set), `loop` and `playing`. The frame reads every `Sound` in local state once the views ran, and names each that's `playing` to the mixer: the mixer keeps a voice for it from frame to frame, by the field it's in and the entity it's on, and moves the voice to whatever the fields say. A sound stops when `playing` goes false, or when its field goes (a destroyed entity's, say): the mixer fades the voice out over a few milliseconds. `playing` false and then true starts the clip over, and so does another clip. A looping sound goes on; one that doesn't loop plays to its end and stays silent until it's started over. Changes to the volume and the pan ramp over a few milliseconds, so a value written every frame doesn't click.
+A `Sound` has `clip`, `position` and `spatial` (placed in the world, or plain stereo), `volume` and `pitch` (1 each unless set), `loop` and `playing`. The frame reads every `Sound` in local state once the views ran, and names each that's `playing` to the mixer: the mixer keeps a voice for it from frame to frame, by the field it's in and the entity it's on, and moves the voice to whatever the fields say. A sound stops when `playing` goes false, or when its field goes (a destroyed entity's, say): the mixer fades the voice out over a few milliseconds. Stop it in one frame and start it in a later frame to play the clip over; assigning another clip starts it over too. Setting `playing` false and true within one view leaves it playing, because the mixer receives the final value. A looping sound goes on; one that doesn't loop plays to its end and stays silent until it's started over. Changes to the volume and the pan ramp over a few milliseconds, so a value written every frame doesn't click.
 
 A `Sound` lives in local singletons, local components, a match component's `local` fields and structs inside those. The match can't hold one, nor can a list.
 
@@ -115,7 +115,7 @@ view Levels(Settings settings, mut Music music)
 }
 ```
 
-A `Sound`'s `bus` is one of them (the master unless set). `Audio.SetVolume(bus, volume)` sets a bus's volume for the frames after, as a draw setting does; every frame starts with every bus at 1. A game has 16 buses at most. A game with no `[Bus]` enum has the master alone, and a bus is then a number from 0 to 15.
+A `Sound`'s `bus` is one of them (the master unless set). `Audio.SetVolume(bus, volume)` sets a bus's volume for the current frame; every frame starts with every bus at 1, so apply saved volume settings each frame. A game has 16 buses at most. Without a `[Bus]` enum, bus numbers from 0 to 15 are available and 0 is the master.
 
 ## Effects
 
@@ -129,15 +129,18 @@ struct Knobs
 
 struct LowpassState
 {
-    float last;
+    float left;
+    float right;
 }
 
 audio Lowpass(mut Samples samples, mut LowpassState state, Knobs knobs)
 {
-    for (var i = 0; i < samples.values.count; i++)
+    for (var i = 0; i < samples.values.count; i += 2)
     {
-        state.last += (samples.values[i] - state.last) * knobs.cutoff;
-        samples.values[i] = state.last;
+        state.left += (samples.values[i] - state.left) * knobs.cutoff;
+        state.right += (samples.values[i + 1] - state.right) * knobs.cutoff;
+        samples.values[i] = state.left;
+        samples.values[i + 1] = state.right;
     }
 }
 
@@ -156,9 +159,23 @@ view Engines(mut Engine engine, Throttle throttle)
 
 An effect's state starts over when a `Sound` is given another effect. Changing the knobs each frame is the way to move a filter: the state carries on.
 
+Keep a filter's left and right history separate, as above: consecutive array elements are different channels, not consecutive moments in one channel.
+
+### Making a sound
+
+A source uses the same declaration shape as a filter. Keep its phase in the state, advance it once per stereo frame, and write both channels. The frequency is a knob: changing it keeps the phase, while stopping the `Sound` and starting it again resets the state.
+
+Click or tap **Play sound** below, then change the frequency or volume. It starts silent and uses a quiet volume. The graph previews ten milliseconds of the generated wave; the view calculates it separately, because audio state belongs to the audio thread. On the web, the button press also lets the browser start audio.
+
+::: tide-example audio A small synthesizer
+
+<<< @/examples/audio.tide
+
+:::
+
 ### Echoes and reverbs
 
-An echo or a reverb remembers what played a while ago, in a delay line: an array of samples. An array holds 4,096 elements anywhere else, which is a hundredth of a second, so in an `audio` declaration's state it can be far longer, as long as the state has bytes:
+An echo or a reverb remembers what played a while ago, in a delay line: an array of samples. An ordinary array holds at most 4,096 elements, about 43 ms of stereo at 48 kHz, so in an `audio` declaration's state it can be far longer, as long as the state has bytes:
 
 ```csharp
 struct Tail
@@ -175,13 +192,16 @@ struct Delay
 
 audio Echo(mut Samples samples, mut Tail tail, Delay delay)
 {
+    var frames = Math.Clamp(delay.frames, 1, 48000);
     for (var i = 0; i < samples.values.count; i += 2)
     {
-        var from = (tail.at + 48000 - delay.frames) % 48000;
-        tail.line[2 * tail.at] = samples.values[i];
-        tail.line[2 * tail.at + 1] = samples.values[i + 1];
+        var from = (tail.at + 48000 - frames) % 48000;
+        var left = samples.values[i];
+        var right = samples.values[i + 1];
         samples.values[i] += tail.line[2 * from] * delay.wet;
         samples.values[i + 1] += tail.line[2 * from + 1] * delay.wet;
+        tail.line[2 * tail.at] = left;
+        tail.line[2 * tail.at + 1] = right;
         tail.at = (tail.at + 1) % 48000;
     }
 }
@@ -191,6 +211,8 @@ view Caves(mut Cave cave)
     cave.drip.effect = Echo(Delay { frames = 14400, wet = 0.4 });
 }
 ```
+
+This example clamps the delay to one through 48,000 stereo frames, up to one second. It reads the delayed samples before replacing them, so a full second's delay works when the read and write positions coincide.
 
 The mixer makes that memory for a sound while it plays through the effect, so only the sounds that echo pay for it, 384 KB each here. When the sound stops, its line goes with it, and the next time it plays the line starts from silence. A bus's is the same: `Audio.SetEffect(Bus.Music, Echo(delay))`, said each frame, keeps one line for everything on the bus, which is how a reverb is usually used.
 
@@ -224,7 +246,7 @@ tide run --frames 300 --capture-audio run.wav
 
 A game with a window plays through the system's default output: WASAPI on Windows, CoreAudio on macOS, ALSA on Linux (loaded at run time, so games link nothing), AAudio on Android, and the browser's audio on the web. Whatever rate and channels the device has, the mixer's stereo at 48 kHz is resampled and mapped to it. A machine with no device, or none the game can open, says so once on stderr and plays nothing; nothing else differs.
 
-On the web, and on phones, a browser only plays once the player has touched the page: the page starts its audio at the first press or key. A web game's sound runs about 90 ms behind what the frame played, as the page's audio runs on a thread the game's code can't, and the game feeds it ahead. A page that goes to the background keeps the match running (see [web builds](../tools/cli.md)) and its sound with it.
+In a browser, sound starts after the player's first press or key. A web game's sound runs about 90 ms behind what the frame played, as the page's audio runs on a thread the game's code can't, and the game feeds it ahead. Tide continues a hidden tab's match with worker timers while the browser lets the page run (see [web builds](../tools/cli.md)). A suspended or closed page cannot keep simulating or playing sound; background execution is not guaranteed on phones.
 
 ## The microphone
 
