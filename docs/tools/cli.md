@@ -278,6 +278,7 @@ Set the `TIDE_HIDDEN` environment variable where nobody is there to look at a wi
 - A run with no window goes as ever: `--frames`, `--capture` and `--script`.
 - Any other run is refused, with exit code 2, before anything is built or opened. Only closing its window would end it, and nobody could. The message says what to give the run instead.
 - `tide run --web` serves the page and opens no browser.
+- Nobody listens there either: a program that opens its window hidden, as a test does, opens no audio device and no microphone.
 - A game that stops says why on stderr and shows no dialog. On Windows, a debug build that stops would otherwise show one and wait for a click.
 
 A game `tide build` made follows it too, on its own. Leave the variable out of your own terminal and your editor, where you want the window.

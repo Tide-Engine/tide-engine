@@ -31,6 +31,21 @@ frag Inspect(Corner corner, out Color color, Instance instance)
     color = corner.color * Math.Max(instance.Normal(corner.normal).y, 0.1);
 }
 
+struct PlacedInfo { float posed; }
+
+vert Explicit(mut Vertex3 corner, out PlacedInfo info, out float4 clip)
+{
+    corner.position += float3(8, 0, 0);
+    info.posed = corner.position.x;
+    clip = this.clip;
+    corner.position += float3(64, 0, 0);
+}
+
+frag Placed(Vertex3 corner, PlacedInfo info, out Color color)
+{
+    color = Color(info.posed / 128, this.world.x / 128, 1);
+}
+
 view Models(mut Surface surface)
 {
     if (!surface.made) { surface.made = true; surface.target = RenderTarget.Window(Format.Depth); }
@@ -41,4 +56,5 @@ view Models(mut Surface surface)
     Draw.SkinnedMesh(lit, float4x4.identity, posed, Deform, Inspect);
     surface.target.SkinnedMesh(lit, float4x4.identity, posed, Deform);
     Draw.Mesh(lit.vertices, lit.indices, float4x4.identity, Deform, Inspect);
+    Draw.SkinnedMesh(model, float4x4.identity, posed, Explicit, Placed);
 }

@@ -317,6 +317,7 @@ typedef struct param {
     bool is_out;
     loc out_at; // ...the word
     int output; // A frag's `out Color`: which of its outputs it is, from 0, in the order they're written
+    bool place;  // A vert's `out float4`: where it puts its vertex itself, in clip space (decl.place)
     struct expr *default_value; // ...and what a call that leaves it out passes, `float multiplier = 1`: a constant expression, or NULL
     str default_text;           // ...as its declaration writes it, for messages and editors: "1"
     str mode_word;       // `mut` or `out` as a system, view, handler, frag or vert writes it, for what editors offer in its place
@@ -725,6 +726,7 @@ typedef struct decl {
     bool pixel_world;             // A frag reads this.world: pass the world position from its vertices
     bool world_normal;            // A frag or a vert calls instance.Normal: a frag's is handed the matrix normals go through
     int outputs;                  // A frag: the colors it writes, its `out Color` parameters, which go to a target's color images in that order
+    struct param *place;          // A vert: its `out float4`, where it puts its vertex itself, in the engine's place; NULL when the engine does
     VEC(shader_sample) samples;   // The grids it samples, once each
     int gpu_state;                // Code checked for the GPU: 1 while it is, 2 once it fits, 3 if it doesn't
     // A function or method that takes a grid or samples a texture, or calls one that does: only code the GPU runs
@@ -1268,6 +1270,7 @@ typedef struct program {
     bool decodes;        // grid.Decode(bytes) is called: its adapter and tide/png.h go in the generated C
     type decode_result;  // ...and what it gives: void fails IOError
     decl *pixel;         // The built-in record Pixel, a frag's parameter: where its pixel is
+    decl *placed;        // The built-in record a vert's `this` is: its vertex as the engine would place it
     decl *instance;      // The built-in record Instance, a frag's or vert's: how its mesh was drawn
     decl *time;          // The built-in singleton Time
     decl *random;        // The built-in struct Random: a random number generator's state

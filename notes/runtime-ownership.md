@@ -27,3 +27,5 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - `engine/include/tide/sha256.h` and `engine/src/sha256.c` (SHA-256, for sessions' cookie digests and the desktop WebRTC's crypto, which uses it through `rtc.h`) are Claude's too, on the same terms.
 - `platform/` (the platform layer), `demo/`, `bench/`, `relay/`, `builds/` and `packages/` are Claude's too, on the same terms.
   - What the platform layer does with input devices and pixels is in `notes/input-devices.md`.
+
+Map iteration calls `tide_map_next` with a last insertion order and an index hint, both ordinary locals that tasks save across waits. Reading a cursor changes no map and allocates nothing. Entry headers are signed 64-bit orders: positive live, negative removed, with the same magnitude retained until compaction. `tide_map` keeps the last order across `Clear`; copies and assignment keep it too. Its explicit reserved word stays zero. `tests/test_map.c` checks compaction after the cursor's entry is removed, removals without compaction, clear/copy/assignment, orders beyond 32 bits and at the signed limit, and unchanged heap/map/scratch state during traversal.

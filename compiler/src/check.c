@@ -6162,6 +6162,12 @@ static type check_method(checker *c, expr *e)
         e->call = CALL_DISCARD;
         return T_VOID_;
     }
+    if (obj.kind == TY_RECORD && obj.decl == c->prog->placed) { // A vert's this: it has 'clip', and no methods
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "a vert's 'this' has no methods: 'this.clip' is where the engine would put its vertex");
+        if (str_eq_c(e->name, "Discard")) diag_note("a frag leaves a pixel undrawn, with 'this.Discard()': a vert has no pixels yet");
+        return T_ERR;
+    }
     if (obj.kind == TY_RECORD && obj.decl == c->prog->instance) { // instance.Normal(vertex.normal)
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return check_instance_call(e);
@@ -7415,6 +7421,21 @@ static type check_member(checker *c, expr *e)
         }
         field *local = (obj.kind == TY_COMPONENT || obj.kind == TY_SINGLETON) ? local_field_of(obj.decl, e->member) : NULL;
         if (local) return check_local_field(c, e, local, obj);
+        if (obj.kind == TY_RECORD && obj.decl == c->prog->pixel && str_eq_c(e->member, "clip") && e->object->kind == E_THIS) {
+            diag_error(e->at, "a frag's pixel has no 'clip': it has 'position', 'depth' and 'world'");
+            diag_note("'this.clip' is a vert's, where the engine would put its vertex; a frag's pixel is where it landed, "
+                      "'this.position'");
+            return T_ERR;
+        }
+        if (obj.kind == TY_RECORD && obj.decl == c->prog->placed) {
+            diag_error(e->at, "a vert's 'this' has no '" STR_FMT "': it has 'clip', where the engine would put its vertex",
+                       STR_ARG(e->member));
+            if (field_named(c->prog->pixel, e->member)) {
+                diag_note("'this." STR_FMT "' is a frag's, of the pixel it runs for; a vert runs before there are pixels",
+                          STR_ARG(e->member));
+            }
+            return T_ERR;
+        }
         diag_error(e->at, "%s has no field '" STR_FMT "'", type_name(obj), STR_ARG(e->member));
         if (obj.kind == TY_RECORD && str_eq_c(obj.decl->name, "Button") && str_eq_c(e->member, "released")) {
             diag_note("'up' is true on the tick the button went up");
@@ -7580,11 +7601,7 @@ static type check_this(const checker *c, const expr *e)
     decl *m = c->method;
     const decl *shader = gpu_code(c);
     if (shader && shader->is_frag) return decl_type(c->prog->pixel);
-    if (shader) {
-        diag_error(e->at, "a vert runs for a vertex, so it has no pixel 'this'");
-        diag_note("read or change its vertex through the first parameter");
-        return T_ERR;
-    }
+    if (shader) return decl_type(c->prog->placed); // Its vertex, as the engine would place it: this.clip
     if (m && m->kind == DECL_FUNCTION) {
         diag_error(e->at, "functions don't run for an entity, so they have no 'this'");
         diag_note("pass it the entity as a parameter, like 'Entity entity'");
@@ -9011,6 +9028,12 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
     if (pixel->kind == E_THIS && pixel->type.kind == TY_RECORD && pixel->type.decl == c->prog->pixel) {
         diag_error(target->at, "a frag's pixel can only be read");
         diag_note("write its color through the frag's 'out Color' parameter");
+        return false;
+    }
+    if (pixel->kind == E_THIS && pixel->type.kind == TY_RECORD && pixel->type.decl == c->prog->placed) {
+        diag_error(target->at, "where the engine would put a vert's vertex can only be read");
+        diag_note("a vert that puts its vertex somewhere else takes that as a parameter, 'out float4 clip', and writes it: "
+                  "'clip = this.clip;' leaves it where it was");
         return false;
     }
     if (target->kind == E_THIS) {
@@ -12775,12 +12798,14 @@ static void check_shader_decl(const checker *c, decl *d)
     d->result = T_VOID_;
     d->fails = T_VOID_;
     d->outputs = 0;
+    d->place = NULL;
     const param *color = NULL;
     const param *source_texture = NULL;
     for (int i = 0; i < d->params.count; i++) {
         param *p = &d->params.items[i];
         const loc at = p->type_at.line ? p->type_at : p->at;
         p->type = T_ERR;
+        p->place = false;
         if (p->verified) {
             diag_error(p->verified_at, "a %s reads what the view that draws its mesh is given, so 'verified' isn't its to say", word);
             diag_note("a view of the confirmed world's entities, whose components are all 'verified', draws them as confirmed");
@@ -12880,6 +12905,23 @@ static void check_shader_decl(const checker *c, decl *d)
                 diag_error(p->at, "a frag reads '" STR_FMT "', and can't change it: drop 'mut'", STR_ARG(p->name));
                 diag_note("what it writes is its pixel's color, 'out Color color'");
                 p->mode = PARAM_READ;
+            } else if (!d->is_frag && value.kind == TY_FLOAT4 && p->mode == PARAM_MUT) {
+                // Where it puts its vertex, in clip space, in the engine's place: this.clip is where that would be
+                if (changes) {
+                    diag_error(p->at, "where a vert puts its vertex is an 'out' parameter: 'out float4 " STR_FMT "'", STR_ARG(p->name));
+                    diag_note("it starts with no value, and the vert writes it on every path: 'this.clip' is where the engine "
+                              "would put the vertex");
+                    suggest_replacement(p->mode_word, "out");
+                    p->is_out = true; // The rest is checked as the output it's meant as
+                }
+                if (d->place) {
+                    diag_error(p->at, "a vert puts its vertex in one place, and '" STR_FMT "' is that already", STR_ARG(d->place->name));
+                    diag_note("one 'out float4' is where the vertex goes, in clip space; what a vert works out for its frag "
+                              "goes in a struct, 'out FromLamp lamp'");
+                } else {
+                    d->place = p;
+                    p->place = true;
+                }
             } else if (p->mode == PARAM_MUT && t && t->kind == DECL_STRUCT) { // What a vert hands its frag
                 if (changes) {
                     diag_error(p->at, "a vert changes its vertex, its first parameter; what it writes for its frag is 'out': "
@@ -12897,6 +12939,9 @@ static void check_shader_decl(const checker *c, decl *d)
                 diag_error(p->at, "a vert hands its frag a struct, and '" STR_FMT "' is %s", STR_ARG(p->name), type_name(value));
                 diag_note("put it in a struct both take, 'struct ForFrag { %s " STR_FMT "; }': 'out ForFrag forFrag' here, and "
                           "'ForFrag forFrag' in the frag", type_name(value), STR_ARG(p->name));
+                if (type_dim(value) > 1 && type_is_float_based(value)) {
+                    diag_note("the one plain value a vert writes is where it puts its vertex, in clip space: 'out float4 clip'");
+                }
             } else if (changes) {
                 diag_error(p->at, "a vert changes its vertex, its first parameter, and nothing else");
                 diag_note("what it works out for its frag goes in a struct it takes as 'out', like 'out FromLamp lamp', which "
@@ -14043,6 +14088,18 @@ static void add_builtins(program *prog)
         vec_push(pixel->fields, f);
     }
     prog->pixel = pixel;
+    // A vert's implicit `this`: its vertex as the engine would place it, with
+    // clip, where its transform and the camera put it. Not a declaration either.
+    decl *placed = NEW(decl);
+    placed->kind = DECL_RECORD;
+    placed->name = str_from("PlacedVertex");
+    placed->builtin = true;
+    field clip = {0};
+    clip.name = str_from("clip");
+    clip.type_name = str_from("float4");
+    clip.type = (type){TY_FLOAT4, NULL};
+    vec_push(placed->fields, clip);
+    prog->placed = placed;
     decl *instance = NEW(decl);
     instance->kind = DECL_RECORD;
     instance->name = str_from("Instance");

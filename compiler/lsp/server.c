@@ -234,6 +234,14 @@ static void free_paths(path_list *list)
     *list = (path_list){0};
 }
 
+static bool contains_path(const path_list *list, const char *path)
+{
+    for (int i = 0; i < list->count; i++) {
+        if (same_path(list->items[i], path)) return true;
+    }
+    return false;
+}
+
 static bool is_folder(const char *path)
 {
     const size_t n = strlen(path);
@@ -711,6 +719,29 @@ static void unsettle(lsp_server *s, const char *uri)
     if (!s->unsettled || !copy) abort();
     strcpy(copy, uri);
     s->unsettled[s->unsettled_count++] = copy;
+}
+
+// Discarding an open buffer changes what its consumers read, even when no
+// file changed on disk. Queue just the remaining open consumers' games.
+static bool unsettle_consumers(lsp_server *s, const char *closed_uri)
+{
+    char *closed = uri_to_path(closed_uri);
+    bool affected = false;
+    for (int i = 0; i < s->doc_count; i++) {
+        const char *uri = s->docs[i].uri;
+        if (strcmp(uri, closed_uri) == 0) continue;
+        char *path = uri_to_path(uri);
+        path_list list;
+        game_of(s, path, &list);
+        if (same_path(path, closed) || contains_path(&list, closed)) {
+            unsettle(s, uri);
+            affected = true;
+        }
+        free_paths(&list);
+        free(path);
+    }
+    free(closed);
+    return affected;
 }
 
 // Diagnostics for one file: of the analysed game, or none (`file` < 0).
@@ -1492,9 +1523,16 @@ void lsp_handle(lsp_server *s, const char *message, const size_t len)
         const char *uri = json_str(json_path(params, "textDocument", "uri", NULL));
         if (uri) {
             publish_diagnostics(s, uri, -1);
-            close_doc(s, uri);
-            s->changes++;
-            s->analyzed = false; // The analysis may point at the closed document's text
+            if (find_doc(s, uri)) {
+                const bool affected = unsettle_consumers(s, uri);
+                close_doc(s, uri);
+                s->changes++;
+                s->analyzed = false; // The analysis may point at the closed document's text
+                if (affected) {
+                    unsettle(s, uri); // A closed-file marker: keep its diagnostics cleared in this batch
+                    if (!s->defer) lsp_settle(s);
+                }
+            }
         }
     } else if (strcmp(method, "textDocument/didSave") == 0) {
         // The editor's text is already ours, but saving is when other files
@@ -1569,15 +1607,28 @@ void lsp_handle(lsp_server *s, const char *message, const size_t len)
 
 void lsp_settle(lsp_server *s)
 {
+    path_list closed = {0};
+    for (int i = 0; i < s->unsettled_count; i++) {
+        if (find_doc(s, s->unsettled[i])) continue;
+        char *path = uri_to_path(s->unsettled[i]);
+        add_path(&closed, path);
+        free(path);
+    }
     bool analyzed = false;
     for (int i = 0; i < s->unsettled_count; i++) {
         const lsp_document *d = find_doc(s, s->unsettled[i]);
         if (!d) continue;                                    // Closed since
         if (analyzed && select_uri(d->uri)) continue;        // Its game is the one just analysed
         analyze(s, d->uri);
-        publish_game_diagnostics(s);
+        for (int file = 0; file < analysis_file_count(); file++) {
+            const char *uri = analysis_file_uri(file);
+            // URI spelling can change when the closed buffer is read from
+            // disk. Another open URI for the same file still gets its diagnostics.
+            if (find_doc(s, uri) || !contains_path(&closed, analysis_file_path(file))) publish_diagnostics(s, uri, file);
+        }
         analyzed = true;
     }
+    free_paths(&closed);
     forget_unsettled(s);
 }
 

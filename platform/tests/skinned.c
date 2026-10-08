@@ -34,6 +34,9 @@ static int frame(void *user, const float seconds)
         {{44, 84}, 0xff00ffffu, "render-target shadow and color use the same pose"},
         {{84, 52}, 0xffffffffu, "the same asset draws another independent rest pose"},
         {{108, 84}, 0xffffffffu, "later samples preserve earlier palette captures"},
+        {{52, 116}, 0x00ffffffu, "this.clip sees skinning and explicit placement retains posed world coordinates"},
+        {{28, 116}, 0x000000ffu, "explicit clip placement uses the posed vertex"},
+        {{116, 116}, 0x000000ffu, "the engine does not replace an explicit clip position"},
     };
     enum { COUNT = sizeof checks / sizeof checks[0] };
     for (int repeat = 0; repeat < 2; repeat++) {

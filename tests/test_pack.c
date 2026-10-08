@@ -34,8 +34,14 @@ static bool equal_key(const void *key, const void *probe)
     return tide_str_eq(tide_text_view(*(const tide_text *)key), *(const tide_str *)probe);
 }
 
-// Its entries: live, the key, and a value that's a handle (a grid's, or a text's).
-static const tide_map_kind text_handle_kind = {12u, 4u, hash_key, hash_probe, equal_key};
+// Its entries: order, the key, and a value that's a handle (a grid's, or a text's).
+typedef struct handle_entry {
+    int64_t live;
+    tide_text key;
+    uint32_t value;
+} handle_entry;
+
+static const tide_map_kind text_handle_kind = {sizeof(handle_entry), offsetof(handle_entry, key), hash_key, hash_probe, equal_key};
 
 static void hash_of(const char *text, uint8_t out[32])
 {
@@ -199,7 +205,12 @@ TIDE_TEST(pack_values_read_as_a_worlds_do)
 
     // A map from paths to grids: found as the game's lookups find keys
     const tide_map run = tide_pack_map_of(tide_pack_find("Game.run", TIDE_PACK_MAP));
-    TIDE_CHECK(tide_map_count(run) == 2 && tide_map_entries(run) == 2);
+    TIDE_CHECK(tide_map_count(run) == 2 && tide_map_entries(run) == 2 && run.last_order == 2 && run.reserved == 0);
+    int64_t order = 0;
+    int32_t next = 0;
+    TIDE_CHECK(tide_map_next(run, &text_handle_kind, &order, &next) == 0 && order == 1);
+    TIDE_CHECK(tide_map_next(run, &text_handle_kind, &order, &next) == 1 && order == 2);
+    TIDE_CHECK(tide_map_next(run, &text_handle_kind, &order, &next) == -1);
     const tide_str probe = tide_str_from_cstr("run/1.png");
     const int32_t found = tide_map_find(run, &text_handle_kind, &probe);
     TIDE_CHECK(found == 1);
@@ -208,7 +219,7 @@ TIDE_TEST(pack_values_read_as_a_worlds_do)
     const uint8_t *entry = tide_map_entry(run, 1, &text_handle_kind);
     TIDE_REQUIRE(entry != NULL);
     tide_grid value;
-    memcpy(&value, entry + 8, sizeof value);
+    memcpy(&value, entry + offsetof(handle_entry, value), sizeof value);
     TIDE_CHECK(value.at == hero.at);
 
     // A map from text to text: its keys are found by their bytes, and keys and values say their characters
@@ -222,8 +233,8 @@ TIDE_TEST(pack_values_read_as_a_worlds_do)
         const uint8_t *pair = tide_map_entry(words, i, &text_handle_kind);
         TIDE_REQUIRE(pair != NULL);
         tide_text key, said;
-        memcpy(&key, pair + 4, sizeof key);
-        memcpy(&said, pair + 8, sizeof said);
+        memcpy(&key, pair + offsetof(handle_entry, key), sizeof key);
+        memcpy(&said, pair + offsetof(handle_entry, value), sizeof said);
         TIDE_CHECK(tide_text_view(key).bytes == key_bytes[i] && tide_text_view(key).chars == 12);
         TIDE_CHECK(tide_text_view(said).bytes == value_bytes[i] && tide_text_view(said).chars == value_chars[i]);
     }
@@ -252,12 +263,77 @@ TIDE_TEST(pack_refuses_what_isnt_one)
     TIDE_CHECK(tide_pack_find("Game.rules", TIDE_PACK_TEXT) == NULL);
 }
 
+TIDE_TEST(pack_refuses_the_previous_map_format_and_keeps_the_loaded_pack)
+{
+    size_t size;
+    uint8_t *bytes = build(&size);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    tide_pack_header header;
+    memcpy(&header, bytes, sizeof header);
+    header.version = TIDE_PACK_VERSION - 1u;
+    memcpy(bytes, &header, sizeof header);
+    TIDE_CHECK(!tide_pack_load(bytes, size));
+    const tide_map run = tide_pack_map_of(tide_pack_find("Game.run", TIDE_PACK_MAP));
+    int64_t order = 0;
+    int32_t next = 0;
+    TIDE_CHECK(run.last_order == 2 && tide_map_next(run, &text_handle_kind, &order, &next) == 0 && order == 1);
+    tide_pack_unload();
+    free(bytes);
+}
+
+typedef struct sound_entry {
+    int64_t live;
+    tide_text key;
+    tide_clip_ref value;
+} sound_entry;
+
+static const tide_map_kind text_clip_kind = {sizeof(sound_entry), offsetof(sound_entry, key), hash_key, hash_probe, equal_key};
+
+TIDE_TEST(pack_clip_maps_keep_orders_when_expanded_and_copied)
+{
+    tide_pack_builder builder = {0};
+    uint8_t hash[32];
+    uint32_t keys[2], chars, index;
+    hash_of("first", hash);
+    keys[0] = tide_pack_string(&builder, hash, "first", 5, &chars);
+    hash_of("second", hash);
+    keys[1] = tide_pack_string(&builder, hash, "second", 6, &chars);
+    hash_of("clip bytes", hash);
+    const uint32_t clip = tide_pack_clip(&builder, hash, "clip bytes", 10);
+    const uint32_t entries = tide_pack_map(&builder, keys, (const uint32_t[]){clip, clip}, 2, &index);
+    tide_pack_name(&builder, "Game.sounds", TIDE_PACK_CLIPS, entries, index, 2);
+    size_t size;
+    uint8_t *bytes = tide_pack_end(&builder, &size);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    const tide_map sounds = tide_pack_map_of(tide_pack_find("Game.sounds", TIDE_PACK_CLIPS));
+    TIDE_CHECK(sounds.last_order == 2);
+    int64_t order = 0;
+    int32_t next = 0;
+    for (int32_t i = 0; i < 2; i++) {
+        TIDE_CHECK(tide_map_next(sounds, &text_clip_kind, &order, &next) == i && order == i + 1);
+        const sound_entry *e = tide_map_entry(sounds, i, &text_clip_kind);
+        TIDE_REQUIRE(e != NULL && e->value.name != 0);
+    }
+    tide_map copy = tide_map_copy(sounds, &text_clip_kind);
+    const tide_str third = tide_str_from_cstr("third");
+    bool added;
+    sound_entry *e = tide_map_insert(&copy, &text_clip_kind, &third, TIDE_IN_SCRATCH, &added);
+    TIDE_REQUIRE(added && e != NULL);
+    e->key = tide_text_temp(third);
+    e->value = ((const sound_entry *)tide_map_entry(sounds, 0, &text_clip_kind))->value;
+    TIDE_CHECK(copy.last_order == 3 && tide_map_next(copy, &text_clip_kind, &order, &next) == 2 && order == 3);
+    TIDE_CHECK(tide_map_next(copy, &text_clip_kind, &order, &next) == -1);
+    tide_pack_unload();
+    tide_scratch_free();
+    free(bytes);
+}
+
 // ---------------------------------------------------------------------------
 // Images to draw with
 
 // A map from text to textures, as generated code describes one.
 typedef struct icon_entry {
-    int32_t live;
+    int64_t live;
     tide_text key;
     tide_texture_ref value;
 } icon_entry;
@@ -399,7 +475,12 @@ TIDE_TEST(pack_textures_are_drawn_where_the_pack_has_them)
 
     // A map of them, found as the game's lookups find keys, each named by its key
     const tide_map icons = tide_pack_map_of(tide_pack_find("Game.icons", TIDE_PACK_TEXTURES));
-    TIDE_CHECK(tide_map_count(icons) == 2 && tide_map_entries(icons) == 2);
+    TIDE_CHECK(tide_map_count(icons) == 2 && tide_map_entries(icons) == 2 && icons.last_order == 2);
+    int64_t order = 0;
+    int32_t next = 0;
+    TIDE_CHECK(tide_map_next(icons, &text_texture_kind, &order, &next) == 0 && order == 1);
+    TIDE_CHECK(tide_map_next(icons, &text_texture_kind, &order, &next) == 1 && order == 2);
+    TIDE_CHECK(tide_map_next(icons, &text_texture_kind, &order, &next) == -1);
     const tide_str key_b = tide_str_from_cstr("icons/b.png");
     const int32_t found = tide_map_find(icons, &text_texture_kind, &key_b);
     TIDE_REQUIRE(found == 1);
@@ -680,7 +761,7 @@ typedef struct corner {
 
 // A map from text to meshes, as generated code describes one.
 typedef struct prop_entry {
-    int32_t live;
+    int64_t live;
     tide_text key;
     tide_mesh_lists value;
 } prop_entry;
@@ -764,7 +845,12 @@ TIDE_TEST(pack_meshes_are_two_lists_told_by_whats_in_them)
     TIDE_CHECK(tide_list_count(rock->vertices) == 3 && tide_list_count(rock->indices) == 3);
     TIDE_CHECK(second->vertices.at == tree.vertices.at && second->indices.at == tree.indices.at); // One file, in the pack once
     const tide_map named = tide_pack_mesh_map_of(tide_pack_find_mesh("Game.named", TIDE_PACK_MESHES, CORNER_LAYOUT));
-    TIDE_REQUIRE(tide_map_count(named) == 2 && tide_map_entries(named) == 2);
+    TIDE_REQUIRE(tide_map_count(named) == 2 && tide_map_entries(named) == 2 && named.last_order == 2);
+    int64_t order = 0;
+    int32_t next = 0;
+    TIDE_CHECK(tide_map_next(named, &text_mesh_kind, &order, &next) == 0 && order == 1);
+    TIDE_CHECK(tide_map_next(named, &text_mesh_kind, &order, &next) == 1 && order == 2);
+    TIDE_CHECK(tide_map_next(named, &text_mesh_kind, &order, &next) == -1);
     const tide_str key = {"art/tree.glb", 12, 12}, missing = {"art/none.glb", 12, 12};
     const int32_t found = tide_map_find(named, &text_mesh_kind, &key);
     TIDE_REQUIRE(found == 1 && tide_map_find(named, &text_mesh_kind, &missing) == -1);
@@ -892,7 +978,7 @@ TIDE_TEST(pack_meshes_cut_short_are_empty)
 
 // Skinned meshes retain typed geometry while carrying portable model bytes.
 typedef struct skinned_prop_entry {
-    uint32_t live;
+    int64_t live;
     tide_text key;
     tide_skinned_lists value;
 } skinned_prop_entry;
@@ -954,6 +1040,21 @@ static void pack_skin_blob(uint8_t data[PACK_SKIN_BYTES], const float height)
 
 static uint32_t skinned_blocks[2][3], skinned_single, skinned_list, skinned_map, skinned_index;
 
+// Keep all slots in range and the live count unchanged, but move the first
+// key behind an empty slot so a lookup starting at its hash cannot find it.
+static void misplace_skinned_index(uint8_t *bytes, const tide_pack_header *header)
+{
+    uint32_t *slots = (uint32_t *)(void *)(bytes + header->region_at + skinned_index + sizeof(tide_block));
+    uint32_t first = UINT32_MAX, empty = UINT32_MAX;
+    for (uint32_t i = 0; i < 8u; i++) {
+        if (slots[i] == 1u) first = i;
+        if (!slots[i]) empty = i;
+    }
+    TIDE_REQUIRE(first != UINT32_MAX && empty != UINT32_MAX);
+    slots[first] = 0u;
+    slots[empty] = 1u;
+}
+
 static uint8_t *build_skinned_pack(size_t *size)
 {
     tide_pack_builder b = {0};
@@ -1003,10 +1104,25 @@ TIDE_TEST(pack_skinned_lists_maps_and_vertex_defaults)
     TIDE_CHECK(first->data.at == model.data.at && first->vertices.at == model.vertices.at && second->data.at != first->data.at);
     const tide_pack_entry *mapped = tide_pack_find("Game.namedActors", TIDE_PACK_SKINNED_MAP);
     const tide_map named = tide_pack_skinned_map_of(mapped);
+    TIDE_CHECK(tide_map_count(named) == 2 && tide_map_entries(named) == 2 && named.last_order == 2 && named.reserved == 0);
+    int64_t order = 0;
+    int32_t next = 0;
+    TIDE_CHECK(tide_map_next(named, &text_skinned_kind, &order, &next) == 0 && order == 1);
+    TIDE_CHECK(tide_map_next(named, &text_skinned_kind, &order, &next) == 1 && order == 2);
+    TIDE_CHECK(tide_map_next(named, &text_skinned_kind, &order, &next) == -1);
     const tide_str key = {"second", 6, 6};
     TIDE_REQUIRE(tide_map_find(named, &text_skinned_kind, &key) == 1);
     const skinned_prop_entry *entry = tide_map_entry(named, 1, &text_skinned_kind);
     TIDE_CHECK(entry->value.data.at == second->data.at && entry->value.indices.at == second->indices.at);
+    tide_map copy = tide_map_copy(named, &text_skinned_kind);
+    const tide_str third = tide_str_from_cstr("third");
+    bool added;
+    skinned_prop_entry *new_entry = tide_map_insert(&copy, &text_skinned_kind, &third, TIDE_IN_SCRATCH, &added);
+    TIDE_REQUIRE(added && new_entry != NULL);
+    new_entry->key = tide_text_temp(third);
+    new_entry->value = model;
+    TIDE_CHECK(copy.last_order == 3 && tide_map_next(copy, &text_skinned_kind, &order, &next) == 2 && order == 3);
+    TIDE_CHECK(tide_map_next(copy, &text_skinned_kind, &order, &next) == -1);
     uint32_t count;
     corner *vertices = tide_pack_skinned_open(e, 0, sizeof(corner), &count);
     TIDE_REQUIRE(vertices && count == 3);
@@ -1022,6 +1138,7 @@ TIDE_TEST(pack_skinned_lists_maps_and_vertex_defaults)
     TIDE_CHECK(tide_pack_skinned_open(&copied, 0, sizeof(corner), &count) == NULL);
     TIDE_CHECK(!tide_pack_skinned_map_of(NULL).entries.at);
     tide_pack_unload();
+    tide_scratch_free();
     free(bytes);
 }
 
@@ -1067,6 +1184,8 @@ TIDE_TEST(pack_skinned_spans_handles_indices_and_maps_are_checked)
     TIDE_REQUIRE(copy != NULL);
     tide_pack_header header;
     memcpy(&header, bytes, sizeof header);
+    uint32_t first_slot;
+    memcpy(&first_slot, bytes + header.region_at + skinned_index + sizeof(tide_block), sizeof first_slot);
     const uint32_t changes[][2] = {
         {skinned_blocks[0][0] + offsetof(tide_block, a), UINT32_MAX}, // Byte count past the region.
         {skinned_blocks[0][1] + offsetof(tide_block, next), header.region_size}, // Vertex metadata outside the region.
@@ -1075,7 +1194,10 @@ TIDE_TEST(pack_skinned_spans_handles_indices_and_maps_are_checked)
         {skinned_single + sizeof(tide_block), TIDE_IN_MATCH << 30 | skinned_blocks[0][0]}, // A non-pack handle.
         {skinned_single + offsetof(tide_block, a), UINT32_MAX}, // Record block count exceeds its bytes.
         {skinned_index + sizeof(tide_block), 3u}, // Index points past the map's rows.
-        {skinned_map + sizeof(tide_block) + sizeof(uint32_t), UINT32_MAX}, // Key points nowhere.
+        {skinned_map + sizeof(tide_block) + offsetof(skinned_prop_entry, key), UINT32_MAX}, // Key points nowhere.
+        {skinned_map + sizeof(tide_block), 0u}, // An insertion order must be positive and match source order.
+        {skinned_map + sizeof(tide_block) + sizeof(uint32_t), UINT32_MAX}, // Invalid high bits of the signed order.
+        {skinned_index + sizeof(tide_block), first_slot == 1u ? 2u : 1u}, // An in-range slot cannot duplicate or omit a row.
     };
     for (uint32_t i = 0; i < sizeof changes / sizeof changes[0]; i++) {
         memcpy(copy, bytes, size);
@@ -1085,6 +1207,11 @@ TIDE_TEST(pack_skinned_spans_handles_indices_and_maps_are_checked)
         else TIDE_CHECK(!tide_pack_skinned_map_of(tide_pack_find("Game.namedActors", TIDE_PACK_SKINNED_MAP)).entries.at);
         tide_pack_unload();
     }
+    memcpy(copy, bytes, size);
+    misplace_skinned_index(copy, &header);
+    TIDE_REQUIRE(tide_pack_load(copy, size));
+    TIDE_CHECK(!tide_pack_skinned_map_of(tide_pack_find("Game.namedActors", TIDE_PACK_SKINNED_MAP)).entries.at);
+    tide_pack_unload();
     free(copy);
     free(bytes);
 }
@@ -1126,9 +1253,12 @@ TIDE_TEST(pack_skinned_content_preflight_keeps_the_loaded_pack)
     TIDE_CHECK(kept.data.at == original.data.at && kept.vertices.at == original.vertices.at && tide_list_count(kept.vertices) == 3);
     memcpy(copy, bytes, size);
     uint32_t key;
-    memcpy(&key, copy + header.region_at + skinned_map + sizeof(tide_block) + sizeof(uint32_t), sizeof key);
+    memcpy(&key, copy + header.region_at + skinned_map + sizeof(tide_block) + offsetof(skinned_prop_entry, key), sizeof key);
     const uint32_t key_at = (key & 0x3fffffffu) - TIDE_PACK_BASE;
     memcpy(copy + header.region_at + key_at + sizeof(tide_block), "third", 5u);
+    TIDE_CHECK(!tide_pack_skinned_content(copy, size, "Game.namedActors", TIDE_PACK_SKINNED_MAP, CORNER_LAYOUT, map_hashes, 2));
+    memcpy(copy, bytes, size);
+    misplace_skinned_index(copy, &header);
     TIDE_CHECK(!tide_pack_skinned_content(copy, size, "Game.namedActors", TIDE_PACK_SKINNED_MAP, CORNER_LAYOUT, map_hashes, 2));
     for (size_t n = 0; n < size; n++) {
         uint8_t *cut = malloc(n ? n : 1u);
@@ -1139,16 +1269,21 @@ TIDE_TEST(pack_skinned_content_preflight_keeps_the_loaded_pack)
     }
     // An entry, record or byte handle cannot redirect the hash read outside
     // the supplied region, even when the rest of the pack is whole.
+    uint32_t first_slot;
+    memcpy(&first_slot, bytes + header.region_at + skinned_index + sizeof(tide_block), sizeof first_slot);
     const uint32_t changes[][2] = {
         {header.region_at + skinned_list + offsetof(tide_block, a), UINT32_MAX},
         {header.region_at + skinned_list + sizeof(tide_block), UINT32_MAX},
         {header.region_at + skinned_blocks[0][0] + offsetof(tide_block, a), UINT32_MAX},
         {header.region_at + skinned_index + sizeof(tide_block), 3u},
+        {header.region_at + skinned_map + sizeof(tide_block), 0u},
+        {header.region_at + skinned_map + sizeof(tide_block) + sizeof(uint32_t), UINT32_MAX},
+        {header.region_at + skinned_index + sizeof(tide_block), first_slot == 1u ? 2u : 1u},
     };
     for (uint32_t i = 0; i < sizeof changes / sizeof changes[0]; i++) {
         memcpy(copy, bytes, size);
         memcpy(copy + changes[i][0], &changes[i][1], sizeof(uint32_t));
-        const bool map = i == 3u;
+        const bool map = i >= 3u;
         TIDE_CHECK(!tide_pack_skinned_content(copy, size, map ? "Game.namedActors" : "Game.actors",
                                              map ? TIDE_PACK_SKINNED_MAP : TIDE_PACK_SKINNEDS, CORNER_LAYOUT, map ? map_hashes : hashes, 2));
     }

@@ -65,6 +65,7 @@ function run(program, args, options = {}) {
 // and expressions to evaluate in it.
 async function openBrowser(profile) {
     const child = spawn(browser, ['--headless', '--no-sandbox', '--no-first-run', '--no-default-browser-check', '--disable-extensions',
+        '--mute-audio', // Headless, it still plays through the machine's device
         '--remote-debugging-pipe', `--user-data-dir=${profile}`,
         // WebGL in software: no GPU needed
         '--use-angle=swiftshader', '--enable-unsafe-swiftshader', 'about:blank'],

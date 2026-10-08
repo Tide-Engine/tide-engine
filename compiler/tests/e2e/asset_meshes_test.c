@@ -5,6 +5,7 @@
 #include "game.h"
 #include "tide/math.h"
 #include "tide/pack.h"
+#include "tide/sha256.h"
 #include "tide_test.h"
 
 // The pack, as C (tide_add_game's --pack-c for HOST programs).
@@ -77,6 +78,74 @@ static bool faces(const tide_list list, const int32_t *expected, const int32_t c
 static float display(const float linear)
 {
     return linear <= 0.0031308f ? linear * 12.92f : 1.055f * tide_pow_f(linear, 1.0f / 2.4f) - 0.055f;
+}
+
+static bool defaults_are(const char *name, const uint32_t kind, const uint32_t meshes, const uint32_t vertices,
+                         const int32_t text_length)
+{
+    const tide_pack_entry *e = tide_pack_find(name, kind);
+    if (!e) return false;
+    uint32_t total = 0, k = 0;
+    for (;; k++) {
+        uint32_t count;
+        const DefaultCorner *v = tide_pack_mesh_open(e, k, (uint32_t)sizeof(DefaultCorner), &count);
+        if (!v) break;
+        total += count;
+        for (uint32_t i = 0; i < count; i++) {
+            if (v[i].textLength != text_length || v[i].byteCount != 300 || v[i].listCount != 2 || v[i].mapCount != 2
+                || v[i].meshVertices != 4) return false;
+        }
+    }
+    return k == meshes && total == vertices;
+}
+
+static void check_defaults(const int32_t text_length)
+{
+    TIDE_CHECK(defaults_are("defaultOne", TIDE_PACK_MESH, 1, 4, text_length));
+    TIDE_CHECK(defaults_are("defaultMany", TIDE_PACK_MESH_LIST, 2, 10, text_length));
+    TIDE_CHECK(defaults_are("defaultNamed", TIDE_PACK_MESHES, 4, 18, text_length));
+}
+
+// Mesh defaults can read later assets: every global must name the current
+// pack first. Replacing its text catches defaults reading the previous load,
+// even if another test already initialized those globals.
+TIDE_TEST(mesh_assets_defaults_read_forward_assets_of_the_current_pack)
+{
+    uint8_t *other = malloc(tide_game_pack_size);
+    TIDE_REQUIRE(other);
+    memcpy(other, tide_game_pack, tide_game_pack_size);
+    const tide_pack_header *h = (const tide_pack_header *)(const void *)other;
+    tide_pack_entry *entries = (tide_pack_entry *)(void *)(other + sizeof *h);
+    uint8_t name[32];
+    tide_sha256_of("laterRules", strlen("laterRules"), name);
+    tide_pack_entry *rules = NULL;
+    for (uint32_t i = 0; i < h->entries; i++) {
+        if (entries[i].kind == TIDE_PACK_TEXT && memcmp(entries[i].name, name, sizeof name) == 0) rules = &entries[i];
+    }
+    if (!rules) {
+        free(other);
+        TIDE_REQUIRE(rules);
+    }
+    static const char changed[] = "updated";
+    const uint32_t size = sizeof changed - 1u;
+    TIDE_REQUIRE(size <= rules->size);
+    tide_block *block = (tide_block *)(void *)(other + h->region_at + rules->offset);
+    block->a = block->b = size;
+    memcpy(block + 1, changed, sizeof changed);
+    rules->size = rules->extra = size;
+
+    TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
+    check_defaults(26); // The UTF-8 text has 27 bytes and 26 characters
+    TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
+    check_defaults(26);
+    TIDE_REQUIRE(tide_assets_load(other, tide_game_pack_size));
+    check_defaults((int32_t)size);
+    TIDE_REQUIRE(tide_assets_load(other, tide_game_pack_size));
+    check_defaults((int32_t)size);
+    TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
+    check_defaults(26);
+    free(other);
+    tide_pack_unload();
 }
 
 // A .glb with everything a vertex has: each field by its name, with x turned
@@ -197,6 +266,7 @@ TIDE_TEST(mesh_assets_are_lists_and_maps_of_a_globs_files)
     const Seen *seen = &world.Seen;
     TIDE_CHECK(seen->all == 2 && seen->allCorners == 10);
     TIDE_CHECK(seen->named == 4 && seen->namedCorners == 18);
+    TIDE_CHECK(seen->defaultCorners == 32);
     const tide_str keys = tide_text_view(seen->keys);
     const char *expected = "assets/meshes/inline.gltf;assets/meshes/pair.glb;assets/meshes/quad.glb;assets/meshes/strip.gltf;";
     TIDE_CHECK(keys.bytes == (int32_t)strlen(expected) && memcmp(keys.ptr, expected, strlen(expected)) == 0);
@@ -291,6 +361,7 @@ TIDE_TEST(mesh_assets_missing_from_the_pack_read_as_empty)
     const Seen *seen = &world.Seen;
     TIDE_CHECK(tide_list_count(seen->quad) == 0 && tide_list_count(seen->quadFaces) == 0 && tide_list_count(seen->box) == 0);
     TIDE_CHECK(seen->all == 0 && seen->named == 0 && seen->one == 0 && seen->picked == 0 && !seen->has);
+    TIDE_CHECK(seen->defaultCorners == 0);
     TIDE_CHECK(seen->mine == 10); // The copy is the one vertex the code added
     frame();
     for (uint32_t i = 0; i < draw.count; i++) {
