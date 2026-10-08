@@ -3576,6 +3576,157 @@ view ListOwners(Art art, Tables tables, Tagged tagged)
     }
 }
 
+// Row 12: what's read of a list's elements is what's sent. A Gear is a dozen
+// numbers, of which each frag here reads a few, by a chain of fields, through
+// a foreach's variable, through locals that hold an element or a part of one,
+// and through a function: `skipped` is never read, and never sent. What isn't
+// sent would read as zeros, so every number that's read is one that isn't 0.
+struct Notch
+{
+    float deep;
+    int teeth;
+}
+
+struct Gear
+{
+    Color paint;
+    float3 at;
+    float3 skipped; // No frag or vert reads it
+    Notch notch;
+    int kind;
+    float[2] span;
+    bool lit;
+}
+
+local singleton Gearbox
+{
+    bool made;
+    List<Gear> gears;       // Three of them, of which the frags below read every part but `skipped`
+    List<Gear> spare;       // Only a function reads it, and of each, how deep its notch is: four elements a pixel
+    List<Gear> counted;     // Only counted: nothing of it is sent
+    Map<int, Gear> byKey;   // Its values' places, kinds and notches
+    Grid2<Gear> field = Grid2(3, 2); // Its cells' places
+}
+
+frag PartChain(Vertex vertex, out Color color, Gearbox parts)
+{
+    color = Color(parts.gears[1].notch.deep, parts.gears[2].at.y, parts.gears[0].kind / 4.0);
+}
+
+frag PartLoop(Vertex vertex, out Color color, Gearbox parts)
+{
+    mut var reach = 0.0;
+    mut var lit = 0;
+    foreach (var gear in parts.gears)
+    {
+        if (!gear.lit) continue;
+        reach += gear.span[0];
+        lit++;
+    }
+    color = Color(reach / 2, lit / 4.0, 0);
+}
+
+frag PartHeld(Vertex vertex, out Color color, Gearbox parts)
+{
+    var gear = parts.gears[2];
+    var notch = gear.notch;
+    var first = parts.gears[0].paint;
+    color = Color(notch.teeth / 8.0, gear.paint.g, first.b);
+}
+
+float Deepest(List<Gear> gears)
+{
+    mut var deep = 0.0;
+    foreach (var gear in gears) deep = Math.Max(deep, gear.notch.deep);
+    return deep;
+}
+
+frag PartPassed(Vertex vertex, out Color color, Gearbox parts)
+{
+    color = Color(Deepest(parts.spare), parts.spare.count / 4.0, parts.spare[4].notch.deep);
+}
+
+frag PartKeyed(Vertex vertex, out Color color, Gearbox parts)
+{
+    mut var sum = 0;
+    foreach (var entry in parts.byKey) sum += entry.value.kind + entry.key;
+    color = Color(parts.byKey[7].at.z, sum / 16.0, parts.byKey[2].notch.deep);
+}
+
+frag PartCell(Vertex vertex, out Color color, Gearbox parts)
+{
+    var cell = parts.field[2, 1];
+    color = Color(cell.at.x, parts.field[2, 1].at.y, parts.field[0, 0].at.z + parts.field.size.x / 8.0);
+}
+
+frag PartCounted(Vertex vertex, out Color color, Gearbox parts)
+{
+    mut var seen = 0;
+    foreach (var gear in parts.counted) seen++;
+    color = Color(parts.counted.count / 4.0, seen / 8.0, 0);
+}
+
+[After(ListOwners)]
+view ListParts(Art art, Tables tables, mut Gearbox parts)
+{
+    if (art.targetPass != 18) return;
+    if (!parts.made)
+    {
+        parts.made = true;
+        var nines = float3(9, 9, 9);
+        parts.gears = [Gear { paint = Color(0.25, 0.5, 0.75), at = float3(0.1, 0.2, 0.3), skipped = nines,
+                              notch = Notch { deep = 0.5, teeth = 2 }, kind = 1, span = [0.25, 0.5], lit = true },
+                       Gear { paint = Color(1, 0, 0), at = float3(0.5, 0.75, 1), skipped = nines,
+                              notch = Notch { deep = 0.75, teeth = 4 }, kind = 2, span = [0.5, 0.25] },
+                       Gear { paint = Color(0, 0.5, 1), at = float3(1, 0.25, 0), skipped = nines,
+                              notch = Notch { deep = 0.25, teeth = 6 }, kind = 3, span = [1, 0.5], lit = true }];
+        for (int i = 0; i < 6; i++)
+        {
+            parts.spare.Add(Gear { paint = Color.white, at = float3(1, 1, 1), skipped = nines,
+                                   notch = Notch { deep = i == 3 ? 0.5 : i == 4 ? 0.25 : 0.125, teeth = 9 }, kind = 7,
+                                   span = [1, 1], lit = true });
+        }
+        parts.counted = [Gear { kind = 1 }, Gear { kind = 2 }, Gear { kind = 3 }];
+        parts.byKey[7] = Gear { paint = Color.white, at = float3(0, 0, 0.5), skipped = nines,
+                                notch = Notch { deep = 1, teeth = 9 }, kind = 2, span = [1, 1], lit = true };
+        parts.byKey[2] = Gear { paint = Color.white, at = float3(1, 1, 1), skipped = nines,
+                                notch = Notch { deep = 0.25, teeth = 9 }, kind = 3, span = [1, 1], lit = true };
+        parts.field[2, 1] = Gear { paint = Color.white, at = float3(0.25, 0.75, 0.5), skipped = nines,
+                                   notch = Notch { deep = 1, teeth = 9 }, kind = 5, span = [1, 1], lit = true };
+        parts.field[0, 0] = Gear { paint = Color.white, at = float3(1, 1, 0.125), skipped = nines, kind = 5 };
+    }
+    Draw.SetScreen();
+    Draw.SetClip();
+    Draw.Transform(float2(8, 184))
+    {
+        Draw.Mesh(tables.small, art.faces, PartChain);
+    }
+    Draw.Transform(float2(24, 184))
+    {
+        Draw.Mesh(tables.small, art.faces, PartLoop);
+    }
+    Draw.Transform(float2(40, 184))
+    {
+        Draw.Mesh(tables.small, art.faces, PartHeld);
+    }
+    Draw.Transform(float2(56, 184))
+    {
+        Draw.Mesh(tables.small, art.faces, PartPassed);
+    }
+    Draw.Transform(float2(72, 184))
+    {
+        Draw.Mesh(tables.small, art.faces, PartKeyed);
+    }
+    Draw.Transform(float2(88, 184))
+    {
+        Draw.Mesh(tables.small, art.faces, PartCell);
+    }
+    Draw.Transform(float2(104, 184))
+    {
+        Draw.Mesh(tables.small, art.faces, PartCounted);
+    }
+}
+
 // Rolls (pass 19): Random's rolls on the type in frags and verts, and
 // Random.seed. Each square is 8 pixels of the window. A pixel's rolls are its
 // own, an instance's pixels roll apart, a vertex's are its own, and all of them

@@ -157,12 +157,25 @@ void tide_audio_out_close(void)
 
 #include <AudioToolbox/AudioToolbox.h>
 #include <AudioUnit/AudioUnit.h>
+#include <CoreAudio/CoreAudio.h>
 
 static struct {
     AudioUnit unit;
     bool open;
     double rate;
 } core;
+
+// Whether the system has a device to play through, which the unit doesn't
+// say: with none it opens and starts all the same, and waits for one, so its
+// callback never runs, and a forget would wait for a thread that never comes.
+static bool core_has_output(void)
+{
+    // Element 0 is the main one, whose name changed with macOS 12
+    const AudioObjectPropertyAddress address = {kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal, 0};
+    AudioDeviceID device = kAudioObjectUnknown;
+    UInt32 size = sizeof device;
+    return AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, NULL, &size, &device) == noErr && device != kAudioObjectUnknown;
+}
 
 static OSStatus core_render(void *in, AudioUnitRenderActionFlags *flags, const AudioTimeStamp *when, UInt32 bus,
                             UInt32 frames, AudioBufferList *data)
@@ -181,6 +194,7 @@ static OSStatus core_render(void *in, AudioUnitRenderActionFlags *flags, const A
 bool tide_audio_out_open(void)
 {
     if (core.open) return true;
+    if (!core_has_output()) goto failed;
     AudioComponentDescription want = {.componentType = kAudioUnitType_Output, .componentSubType = kAudioUnitSubType_DefaultOutput,
                                       .componentManufacturer = kAudioUnitManufacturer_Apple};
     AudioComponent component = AudioComponentFindNext(NULL, &want);

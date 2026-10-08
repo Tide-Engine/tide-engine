@@ -53,7 +53,7 @@ endif()
 if(WIN32)
     target_link_libraries(tide_platform PUBLIC ws2_32 secur32 ole32) # UDP, for sessions; TLS, for the relay; COM, for WASAPI
 elseif(APPLE)
-    target_link_libraries(tide_platform PUBLIC "-framework Security" "-framework AudioToolbox") # TLS, for the relay; the audio device
+    target_link_libraries(tide_platform PUBLIC "-framework Security" "-framework AudioToolbox" "-framework CoreAudio") # TLS, for the relay; the audio device, and whether there's one
 endif()
 if(NOT WIN32 AND NOT TIDE_WEB AND NOT TIDE_ANDROID) # Android's are in its C library
     # Threads for ticks (src/jobs.c)

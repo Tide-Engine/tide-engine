@@ -274,6 +274,23 @@ static void gl_texture_write(const tide_gpu_id texture, const void *pixels)
     texture_pixels(&textures[texture], pixels, true);
 }
 
+// Some of a texture's pixels, read where they are among all of them: its rows are the texture's own width apart.
+static void gl_texture_write_part(const tide_gpu_id texture, const void *pixels, const int x, const int y, const int width,
+                                  const int height)
+{
+    const gl_texture *t = &textures[texture];
+    const bool ints = t->format == TIDE_GPU_RGBA32I, red = t->format != TIDE_GPU_RGBA8 && !ints;
+    const GLenum format = ints ? GL_RGBA_INTEGER : red ? GL_RED : GL_RGBA;
+    const GLenum type = ints ? GL_INT : t->format == TIDE_GPU_R16F ? GL_HALF_FLOAT : GL_UNSIGNED_BYTE;
+    const uint8_t *from = (const uint8_t *)pixels
+                        + ((size_t)y * (size_t)t->width + (size_t)x) * (size_t)tide_gpu_format_bytes((tide_gpu_format)t->format);
+    bind_texture(texture);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, t->width);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, width, height, format, type, from);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+}
+
 static void gl_texture_free(const tide_gpu_id texture)
 {
     glDeleteTextures(1, &texture);
@@ -930,6 +947,7 @@ const tide_gpu tide_gpu_gl = {
     .buffer_free = gl_buffer_free,
     .texture = gl_texture_make,
     .texture_write = gl_texture_write,
+    .texture_write_part = gl_texture_write_part,
     .texture_free = gl_texture_free,
     .cube = gl_cube,
     .cube_face = gl_cube_face,

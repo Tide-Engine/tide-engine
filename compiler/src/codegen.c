@@ -6997,7 +6997,7 @@ static decl map_entry_decl(const decl *map)
     sb_printf(&name, "tide_map%d_entry", map->index);
     d.gen_name = name.data;
     d.name = str_from(name.data);
-    const field live = {str_from("tide_live"), str_from(""), {0, 0, 0}, {TY_INT, NULL}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL};
+    const field live = {str_from("tide_live"), str_from(""), {0, 0, 0}, {TY_INT, NULL}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
     vec_push(d.fields, live);
     for (int i = 0; i < map->fields.count; i++) vec_push(d.fields, map->fields.items[i]);
     return d;
@@ -16338,25 +16338,23 @@ static void gen_shader_value(sb *o, const char *to, const type t, const char *ac
     }
 }
 
-// How many floats and ints a value is, as a shader is sent it (shader.c's type_words).
-static void shader_words(const type t, int *floats, int *ints)
+// The same for an element of a list a shader reads, of which only the parts
+// `leaves` says are read are sent (shader_leaves, from *leaf on, which moves
+// past it; NULL: all of them).
+static void gen_shader_part(sb *o, const char *to, const type t, const char *access, int *f, int *i, const bool *leaves,
+                            int *leaf)
 {
-    const int dim = type_dim(t);
-    const int n = matrix_dim(t);
-    if (t.kind == TY_BYTE) *ints += 1;
-    else if (dim > 0) *(type_is_float_based(t) ? floats : ints) += dim;
-    else if (n > 0) *floats += n * n;
-    else if (t.kind == TY_COLOR || t.kind == TY_QUATERNION) *floats += 4;
-    else if (t.kind == TY_BOOL || t.kind == TY_ENUM) *ints += 1;
-    else if (t.kind == TY_ARRAY) {
-        int f = 0, i = 0;
-        shader_words(t.decl->fields.items[0].type, &f, &i);
-        *floats += f * t.decl->array_length;
-        *ints += i * t.decl->array_length;
-    } else {
-        for (int k = 0; k < t.decl->fields.count; k++) {
-            if (!t.decl->fields.items[k].hidden) shader_words(t.decl->fields.items[k].type, floats, ints);
-        }
+    if (t.kind != TY_STRUCT && t.kind != TY_COMPONENT && t.kind != TY_SINGLETON) {
+        if (!leaves || leaves[*leaf]) gen_shader_value(o, to, t, access, f, i);
+        *leaf += 1;
+        return;
+    }
+    for (int k = 0; k < t.decl->fields.count; k++) {
+        const field *fl = &t.decl->fields.items[k];
+        if (fl->hidden) continue;
+        sb inner = {0};
+        sb_printf(&inner, "%s.%s", access, field_cname(fl));
+        gen_shader_part(o, to, fl->type, inner.data, f, i, leaves, leaf);
     }
 }
 
@@ -16456,8 +16454,11 @@ static void gen_shaders(gen *g)
                             ? texture->field->type.decl : NULL;
             const type element = map ? (map->is_set ? map->fields.items[0].type : (type){TY_STRUCT, map->entry})
                                      : list_elem(texture->asset ? texture->asset->return_type.decl : texture->field->type.decl);
-            int floats = 0, ints = 0;
-            shader_words(element, &floats, &ints);
+            // Of an element, only the parts the game's frags and verts read are sent
+            const bool *leaves = shader_texture_leaves(texture);
+            int floats = 0, ints = 0, leaf = 0;
+            shader_part_words(element, leaves, &leaf, &floats, &ints);
+            if (floats + ints == 0) continue; // Its elements are only counted: there's nothing of them to write
             char entry[32];
             snprintf(entry, sizeof entry, "tide_map%d_entry", map ? map->index : 0);
             sb_printf(o, "static void tide_shader_%d_words_%d(const void *tide_in, int32_t *tide_out)\n{\n"
@@ -16466,7 +16467,8 @@ static void gen_shaders(gen *g)
             if (ints) sb_printf(o, " int32_t i[%d];", ints);
             sb_put(o, " } tide_w;\n");
             int f = 0, i = 0;
-            gen_shader_value(o, "tide_w", element, map && map->is_set ? "tide_e->key" : "(*tide_e)", &f, &i);
+            leaf = 0;
+            gen_shader_part(o, "tide_w", element, map && map->is_set ? "tide_e->key" : "(*tide_e)", &f, &i, leaves, &leaf);
             sb_put(o, "    memcpy(tide_out, &tide_w, sizeof tide_w);\n}\n\n");
         }
 
@@ -16580,8 +16582,13 @@ static void gen_shaders(gen *g)
                 const decl *holds = texture->asset ? texture->asset->return_type.decl : texture->field->type.decl;
                 const bool map = !texture->asset && (texture->field->type.kind == TY_MAP || texture->field->type.kind == TY_SET);
                 const type element = !map ? list_elem(holds) : holds->is_set ? holds->fields.items[0].type : (type){TY_STRUCT, holds->entry};
-                int floats = 0, ints = 0;
-                shader_words(element, &floats, &ints);
+                // What's sent of each: the parts of it that are read, which the layout's number is of
+                const bool *leaves = shader_texture_leaves(texture);
+                int floats = 0, ints = 0, leaf = 0;
+                shader_part_words(element, leaves, &leaf, &floats, &ints);
+                const unsigned layout = shader_layout(element, leaves);
+                char words[48] = "NULL"; // What writes them: nothing, where the elements are only counted
+                if (floats + ints) snprintf(words, sizeof words, "tide_shader_%d_words_%d", s, t);
                 sb list = {0};
                 if (texture->asset) {
                     sb_put(&list, asset_cname(texture->asset));
@@ -16593,22 +16600,21 @@ static void gen_shaders(gen *g)
                     sb_printf(&list, "tide_%sb%d->%s", texture->field->is_local ? "l" : "", b, field_cname(texture->field));
                 }
                 if (holds->kind == DECL_GRID) { // A grid: its cells, and its size
-                    sb_printf(o, "    tide_textures[%d] = tide_draw_grid_data(tide_draw, %s, &%s, %du, tide_shader_%d_words_%d, "
-                                 "&tide_uniforms.i[%d]);\n", t, list.data, grid_shape_name(holds), (unsigned)(floats + ints), s, t,
-                              texture->count_at);
+                    sb_printf(o, "    tide_textures[%d] = tide_draw_grid_data(tide_draw, %s, &%s, %du, %uu, %s, "
+                                 "&tide_uniforms.i[%d]);\n", t, list.data, grid_shape_name(holds), (unsigned)(floats + ints), layout,
+                              words, texture->count_at);
                     continue;
                 }
-                if (map) { // A map or a set: its live entries, how many, and its index's slots. The key is the first of an entry's ints
-                    int value_floats = 0, value_ints = 0;
-                    if (!holds->is_set) shader_words(holds->fields.items[1].type, &value_floats, &value_ints);
-                    sb_printf(o, "    tide_textures[%d] = tide_draw_map_data(tide_draw, %s, sizeof(tide_map%d_entry), %du, %du, "
-                                 "tide_shader_%d_words_%d, &tide_uniforms.i[%d]);\n", t, list.data, holds->index,
-                              (unsigned)(floats + ints), (unsigned)value_floats, s, t, texture->count_at);
+                if (map) { // A map or a set: its live entries, how many, and its index's slots. The key is the first of an
+                           // entry's ints, after its floats, which are its value's
+                    sb_printf(o, "    tide_textures[%d] = tide_draw_map_data(tide_draw, %s, sizeof(tide_map%d_entry), %du, %du, %uu, "
+                                 "%s, &tide_uniforms.i[%d]);\n", t, list.data, holds->index,
+                              (unsigned)(floats + ints), (unsigned)floats, layout, words, texture->count_at);
                     continue;
                 }
-                sb_printf(o, "    tide_textures[%d] = tide_draw_list_data(tide_draw, %s, sizeof(%s), %du, tide_shader_%d_words_%d, "
-                             "&tide_uniforms.i[%d]);\n", t, list.data, elem_ctype(element), (unsigned)(floats + ints), s, t,
-                          texture->count_at);
+                sb_printf(o, "    tide_textures[%d] = tide_draw_list_data(tide_draw, %s, sizeof(%s), %du, %uu, "
+                             "%s, &tide_uniforms.i[%d]);\n", t, list.data, elem_ctype(element),
+                          (unsigned)(floats + ints), layout, words, texture->count_at);
                 continue;
             }
             if (texture->read == READ_CUBE) { // A Cubemap: an asset's by name, or a field's
