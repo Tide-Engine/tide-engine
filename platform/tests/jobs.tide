@@ -328,6 +328,20 @@ system Fall(Time time, mut Sandbox sand)
 // Heat that spreads to the cells beside it, never across corners: each cell
 // gives 4 away while it has that much, and takes 1 from each neighbor that
 // does, every cell at once
+// Steps that roll: each cell's number is its place's and the tick's, whichever thread runs its step
+singleton Snow
+{
+    Grid2<int> cells = Grid2(128, 128);
+}
+
+system Crackle(mut Snow snow)
+{
+    parallel (var at in snow.cells)
+    {
+        snow.cells[at] = 1 + Random.NextInt(255);
+    }
+}
+
 singleton Heat
 {
     Grid2<int> cells = Grid2(256, 256);

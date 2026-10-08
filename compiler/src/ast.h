@@ -681,6 +681,9 @@ typedef struct decl {
     int outputs;                  // A frag: the colors it writes, its `out Color` parameters, which go to a target's color images in that order
     VEC(shader_sample) samples;   // The grids it samples, once each
     int gpu_state;                // Code checked for the GPU: 1 while it is, 2 once it fits, 3 if it doesn't
+    bool gpu_only;                // A function or method that takes a grid, or calls one that does: only code the GPU runs calls it, and no C is written for it
+    loc gpu_only_at;
+    VEC(const struct decl *) gpu_data; // A function the GPU runs: the assets whose list or grid it reads the numbers of by name, in what it calls too
     VEC(struct decl *) bound;     // Views: components and singletons the frags and verts of its mesh draw calls read, which it doesn't take itself
 } decl;
 
@@ -1213,6 +1216,7 @@ typedef struct program {
     // Random.NextInt(6) and the like, on the type: whether the match's code rolls so, and local code
     bool rolls_match;
     bool rolls_local;
+    bool seed_local; // Local code reads Random.seed: this machine's local state has the match's, as the last frame had it
     // Application.title is read: generated C has the game's title as text
     // (its title setting, or the program's name), and no other game's does.
     bool uses_title;

@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "tide/math.h"
 #include "tide/net.h"
 #include "tide/pack.h"
 
@@ -266,6 +267,52 @@ uint32_t tide_draw_list_data(tide_draw_list *d, const tide_list list, const uint
         tide_list_unflatten(list, (void *)(uintptr_t)flat, element_size, false, copied);
     }
     *count = (int32_t)elements;
+    return slot;
+}
+
+uint32_t tide_draw_map_data(tide_draw_list *d, const tide_map map, const uint32_t entry_size, const uint32_t words,
+                            const uint32_t key_word, tide_list_words_fn *write, int32_t *count)
+{
+    count[0] = count[1] = 0;
+    const int32_t held = tide_list_count(map.entries);
+    if (map.live == 0 || held <= 0 || words == 0 || key_word >= words || entry_size < sizeof(uint32_t)) return 0;
+    const uint32_t stride = tide_data_stride(words);
+    // Entries and their slots, under four an entry, have to fit
+    const uint64_t most = ((uint64_t)TIDE_LIST_DATA_MOST * 4u - 16u) / (stride + 4u);
+    const uint32_t entries = (uint64_t)map.live < most ? map.live : (uint32_t)most;
+    uint32_t slots = 8u;
+    while (slots < entries * 2u) slots *= 2u;
+    const uint32_t index_at = (entries * stride + 3u) / 4u; // The index's first pixel
+    const uint32_t pixels = index_at + slots / 4u;
+    const int32_t width = pixels < (uint32_t)TIDE_LIST_DATA_ACROSS ? (int32_t)pixels : TIDE_LIST_DATA_ACROSS;
+    const int32_t height = (int32_t)((pixels + (uint32_t)TIDE_LIST_DATA_ACROSS - 1u) / (uint32_t)TIDE_LIST_DATA_ACROSS);
+    // Its entries say all of it: the CPU's index only follows from them
+    uint64_t version = list_version(map.entries, entry_size);
+    const uint32_t shape[4] = {entry_size, words, key_word, 0x4D415053u}; // As a map's numbers, and no list's
+    version = tide_hash_end(tide_hash_more(version, shape, sizeof shape));
+    const uint64_t id = map.entries.at >> 30 == TIDE_IN_SCRATCH ? UINT64_C(1) << 63 | version >> 1 : map.entries.at;
+    uint8_t *out;
+    const uint32_t slot = tide_draw_texture_slot_as(d, TIDE_PIXELS_LIST, id, version, width, height, TIDE_TEXELS_INTS, &out);
+    if (out) {
+        memset(out, 0, (size_t)width * (size_t)height * 16u);
+        bool copied;
+        const uint8_t *flat = tide_list_flatten(map.entries, entry_size, false, &copied);
+        int32_t *to = (int32_t *)(void *)out;
+        int32_t *index = to + (size_t)index_at * 4u;
+        uint32_t made = 0;
+        for (int32_t i = 0; i < held && made < entries; i++) {
+            const uint8_t *entry = flat + (size_t)i * entry_size;
+            if (!tide_map_live(entry)) continue; // A removed key's place: the GPU's entries have none
+            int32_t *at = to + (size_t)made * stride;
+            write(entry, at);
+            uint32_t s = (uint32_t)tide_hash_i(at[key_word]) & (slots - 1u);
+            while (index[s]) s = (s + 1u) & (slots - 1u);
+            index[s] = (int32_t)++made;
+        }
+        tide_list_unflatten(map.entries, (void *)(uintptr_t)flat, entry_size, false, copied);
+    }
+    count[0] = (int32_t)entries;
+    count[1] = (int32_t)slots;
     return slot;
 }
 
