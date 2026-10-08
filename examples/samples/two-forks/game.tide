@@ -354,6 +354,11 @@ singleton Kitchen
 {
     Board board;
     int level;
+    bool travelling = true;
+    bool journeyStarted;
+    Chef[2] campers;     // Where both chefs left the shared world map
+    int bridges;        // Bridges opened by standing on both of their plates
+    int layout;         // Revision of the displayed board, including map gates
     bool laid;           // The level is laid out
     int moves;
     int cleared;         // The tick the level was cooked at: 0 while it isn't
@@ -384,6 +389,9 @@ event Laid { }
 command Undo { int level; }
 command Restart { int level; }
 command Goto { int level; }
+command EnterKitchen { int level; }
+command BackToMap { int level; }
+command Traverse { int route; }
 
 // This machine's pointer, for a screen with no keys: the arrow it holds, and
 // a tap on the button that changes chefs.
@@ -436,6 +444,8 @@ event(Destroyed) FreeSeat(Hand hand, mut Kitchen kitchen)
 
 void Open(mut Kitchen kitchen, int level)
 {
+    kitchen.travelling = false;
+    kitchen.layout += 1;
     kitchen.level = Math.Clamp(level, 0, LEVELS - 1);
     LayOut(kitchen.board, Plan(kitchen.level));
     kitchen.laid = true;
@@ -485,13 +495,14 @@ system Serve(mut Kitchen kitchen, Time time)
 {
     if (!kitchen.laid)
     {
-        Open(kitchen, kitchen.level);
+        if (kitchen.travelling) ReturnToMap(kitchen);
+        else Open(kitchen, kitchen.level);
         Send(Laid { });
     }
     if (kitchen.cleared != 0)
     {
         if (time.tick - kitchen.cleared < CHEER) return;
-        Open(kitchen, (kitchen.level + 1) % LEVELS);
+        ReturnToMap(kitchen);
         Send(Laid { });
         return;
     }
@@ -547,7 +558,12 @@ system Serve(mut Kitchen kitchen, Time time)
         kitchen.grips[who] = grip;
     }
 
-    if (Cooked(kitchen.board))
+    if (kitchen.travelling)
+    {
+        kitchen.campers = kitchen.board.chefs;
+        if (OpenBridges(kitchen)) Send(Laid { });
+    }
+    else if (Cooked(kitchen.board))
     {
         kitchen.cleared = time.tick;
         kitchen.done |= 1 << kitchen.level;
@@ -571,7 +587,7 @@ command(Undo undo, PlayerID sender) TakeBack(mut Kitchen kitchen)
 // The level starts over. That's a move too, so it can be taken back.
 command(Restart restart, PlayerID sender) StartOver(mut Kitchen kitchen)
 {
-    if (!kitchen.hands.Has(sender) || restart.level != kitchen.level) return;
+    if (!kitchen.hands.Has(sender) || kitchen.travelling || restart.level != kitchen.level) return;
     if (kitchen.cleared != 0 || kitchen.moves == 0) return;
     var before = Past { chefs = kitchen.board.chefs, sausages = kitchen.board.sausages };
     var moves = kitchen.moves;
