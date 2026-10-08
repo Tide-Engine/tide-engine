@@ -1614,7 +1614,7 @@ view DrawSparks(mut Sparks sparks)
 - **It's this machine's, not the match's.** It's there with no match, in a menu and while connecting, where a view that takes `Time` doesn't run. In a match it's the same value, whatever the tick rate.
 - **The match has `Time`.** What's in the match moves by `time.dt`, a tick's length, in systems. A view draws the match as it is, already [blended](#smooth-at-any-tick-rate) to the frame, and uses `Frame.dt` for what it adds on top. A system that reads `Frame.dt` is an error that says so.
 - **It's the frame's real length.** A frame after the window was dragged, or the page was hidden, is as long as that took. Clamp it where a big step would show: `var dt = Math.Min(Frame.dt, 0.05);`.
-- **There's no clock beside it.** A float of seconds gets coarser as it grows: after four and a half hours it counts in steps of 2 milliseconds, and whatever it animates starts to judder. Add `Frame.dt` up into a field of your own instead, and wrap it where what it drives repeats:
+- **There's no clock beside it.** No `Frame.time`: code that asks `Frame` for one is an error that says what to write. A float of seconds gets coarser as it grows: after four and a half hours it counts in steps of 2 milliseconds, and whatever it animates starts to judder. Keep a clock of your own instead, in [local state](./local-state.md): add `Frame.dt` up into a field, and wrap it where what it drives repeats:
 
 ```csharp
 local singleton Spinner
@@ -1626,8 +1626,11 @@ view Spin(mut Spinner spinner)
 {
     spinner.turn += Frame.dt * 4;
     if (spinner.turn > Math.TAU) spinner.turn -= Math.TAU;
+    Draw.Circle(float2(Math.Cos(spinner.turn), Math.Sin(spinner.turn)), 0.1, Color.white);
 }
 ```
+
+What moves with the match, the same for every player, reads the match's time instead: a view takes `Time time` and reads `time.t`, [the seconds since the match started](./entities.md#singletons), which it sees move every frame.
 
 Views read `Frame.dt`, and so does the rest of [local code](./local-state.md#time): the functions they call, local handlers and local tasks.
 
