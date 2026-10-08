@@ -53,6 +53,24 @@ static void finish(void)
 
 static bool near(const float a, const float b) { return a - b < 1e-6f && b - a < 1e-6f; }
 
+TIDE_TEST(audio_sound_defaults_set_master_volume_without_sound_fields)
+{
+    start();
+    TIDE_CHECK(local.Sfx.volume == 1.0f);
+    frame(&audio);
+    TIDE_CHECK(audio.voice_count == 0 && audio.bus_volume[0] == 1.0f);
+    local.Sfx.volume = 0.25f;
+    frame(&audio);
+    TIDE_CHECK(audio.voice_count == 0 && audio.bus_volume[0] == 0.25f);
+    frame(&audio); // The setting is applied after every audio reset
+    TIDE_CHECK(audio.voice_count == 0 && audio.bus_volume[0] == 0.25f);
+    local.Sfx.volume = 0.0f;
+    frame(&audio);
+    TIDE_CHECK(audio.voice_count == 0 && audio.bus_volume[0] == 0.0f);
+    frame(NULL); // The setting needs no audio list from a host
+    finish();
+}
+
 TIDE_TEST(audio_clip_assets_name_sounds_of_the_pack_and_decode_once)
 {
     start();

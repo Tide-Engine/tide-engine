@@ -13,6 +13,7 @@ enum Bus
 local singleton Mix
 {
     Sound track;
+    float volume = 1;
     float music;
     bool quiet;
 }
@@ -25,6 +26,7 @@ view Levels(mut Mix mix)
     mix.track.loop = true;
     mix.track.playing = true;
     mix.track.bus = Bus.Music;
+    Audio.SetVolume(Sound { }.bus, mix.volume); // The default is typed as the game's bus enum
     Audio.SetVolume(Bus.Music, mix.music);
     if (mix.quiet) Audio.SetVolume(Bus.Sfx, 0);
 }

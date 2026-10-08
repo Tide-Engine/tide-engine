@@ -2,8 +2,8 @@
 // game is playable with friends before it has a menu of its own. A game lists
 // `rooms` in its tide.packages and gets a title page (Play, Host a room, Join
 // a room), a page to type a room's code into, the room's page (its code to
-// copy, who's in it, Resume, Leave) and a Menu button in the match, all of
-// the GUI's own widgets, in whatever theme the game sets.
+// copy, who's in it, Resume, Leave), settings for the volume and a Menu
+// button in the match, all of the GUI's own widgets, in whatever theme the game sets.
 //
 // It's drawn over a live match. `Main` is the match's scene, so a match of
 // this machine's own starts with the program, closed, and runs behind the
@@ -33,7 +33,8 @@ enum Page
     Playing, // No page is up
     Title,   // The game's name, and the three ways in
     Join,    // A room's code to type, and the wait to be let in
-    Room     // The room and who's in it: the host's lobby, and the menu from a match
+    Room,    // The room and who's in it: the host's lobby, and the menu from a match
+    Settings // This machine's volume, from the title or the room's page
 }
 
 local singleton Lobby
@@ -46,6 +47,8 @@ local singleton Lobby
     string code;        // What's typed into the Join page's field
     string message;     // What became of the last match, for the page it left this machine on
     float copied = 10;  // Seconds since the room's code was copied
+    Page settingsFrom = Page.Title; // The page Settings returns to
+    float volume = 1;   // This machine's master volume: 0 mutes, 1 is full volume
 
     // For the frame a button was pressed in: Play on the title or New game,
     // and the bots' switch. The game sends its commands when it sees them.
@@ -123,6 +126,18 @@ view Pages(Session session, Devices devices, mut Lobby lobby)
     // A menu over a match: the arrows and a gamepad move between its buttons
     GUI.Navigate();
 
+    if (lobby.page == Page.Settings)
+    {
+        mut var open = true;
+        GUILayout.Modal(Anchor.MiddleCenter, open)
+        {
+            GUILayout.Label("Settings");
+            GUILayout.Slider("Volume", lobby.volume, 0, 1);
+            if (GUILayout.Button("Back")) open = false;
+        }
+        if (!open) lobby.page = lobby.settingsFrom;
+    }
+
     if (lobby.page == Page.Join)
     {
         mut var open = true;
@@ -181,6 +196,7 @@ view Pages(Session session, Devices devices, mut Lobby lobby)
                 host = GUILayout.Button("Host a room");
             }
             var join = GUILayout.Button("Join a room");
+            var settings = GUILayout.Button("Settings");
             if (lobby.message != "") GUILayout.Label(lobby.message);
             if (play)
             {
@@ -199,6 +215,11 @@ view Pages(Session session, Devices devices, mut Lobby lobby)
             {
                 lobby.page = Page.Join;
                 lobby.message = "";
+            }
+            if (settings)
+            {
+                lobby.settingsFrom = Page.Title;
+                lobby.page = Page.Settings;
             }
         }
         // Play, or Escape: into the match that's running behind the title
@@ -244,6 +265,7 @@ view Pages(Session session, Devices devices, mut Lobby lobby)
                 if (lobby.offersNewGame) fresh = GUILayout.Button("New game");
                 if (lobby.offersBots) bots = GUILayout.Button(lobby.bots ? "Bots: on" : "Bots: off");
             }
+            var settings = GUILayout.Button("Settings");
             var leave = GUILayout.Button(alone ? "Back to the title" : "Leave the room");
             if (play) open = false;
             if (fresh)
@@ -252,6 +274,11 @@ view Pages(Session session, Devices devices, mut Lobby lobby)
                 open = false;
             }
             if (bots) lobby.toggleBots = true;
+            if (settings)
+            {
+                lobby.settingsFrom = Page.Room;
+                lobby.page = Page.Settings;
+            }
             if (leave)
             {
                 // Out of the room, and into a match of this machine's own. The
@@ -265,6 +292,13 @@ view Pages(Session session, Devices devices, mut Lobby lobby)
         // Play, Resume, New game, or Escape: back to the match
         if (!open) lobby.page = Page.Playing;
     }
+}
+
+// Bus volumes start over each frame. A default sound uses the master bus,
+// with the game's own bus enum type when it declares one.
+view Volume(Lobby lobby)
+{
+    Audio.SetVolume(Sound { }.bus, lobby.volume);
 }
 
 // In a room that was joined: the wait is over.

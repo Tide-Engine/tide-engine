@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "game.h"
+#include "tide/audio.h"
 #include "tide/session.h"
 #include "tide_test.h"
 
@@ -16,6 +17,7 @@ static tide_local local;
 static tide_draw_list draw;
 static tide_gui gui;
 static tide_devices devices;
+static tide_audio_frame audio;
 
 static tide_player_id player(const int index)
 {
@@ -28,6 +30,8 @@ static void frame(const tide_world *w)
 {
     tide_local_frame_time(&local, DT);
     tide_draw_reset(&draw);
+    tide_audio_reset(&audio);
+    tide_local_audio(&local, &audio);
     tide_touches_poll(&devices.touchscreen);
     tide_pointer_poll(&devices, true);
     tide_gui_begin(&gui, &devices, tide_f2(376, 400), NULL);
@@ -71,6 +75,8 @@ static void finger(const tide_touch_phase phase, const float x, const float y)
 {
     tide_local_frame_time(&local, DT);
     tide_draw_reset(&draw);
+    tide_audio_reset(&audio);
+    tide_local_audio(&local, &audio);
     tide_touches_poll(&devices.touchscreen);
     tide_touch_event(&devices.touchscreen, phase, 1, tide_f2(x, 400.0f - y));
     tide_pointer_poll(&devices, false);
@@ -149,6 +155,7 @@ TIDE_TEST(rooms_opens_on_its_title_unless_it_was_told_which_match)
     TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Join && asked() == TIDE_REQUEST_NONE);
     tide_local_free(&local);
     tide_draw_free(&draw);
+    tide_audio_free(&audio);
     tide_world_free(&world);
 }
 
@@ -158,14 +165,14 @@ TIDE_TEST(rooms_a_finger_presses_play_with_the_mouse_on_the_title)
 {
     tide_world_init(&world, DT);
     machine(TIDE_SESSION_CONNECTED, 0, true, false, "");
-    // The title page is 184 tall, around the screen's middle: the game's name
-    // is 134 down, where the mouse is, and Play 200
-    devices.mouse.position = tide_f2(188.0f, 400.0f - 134.0f);
+    // The title page is 217 tall, around the screen's middle: the game's name
+    // is 118 down, where the mouse is, and Play 184
+    devices.mouse.position = tide_f2(188.0f, 400.0f - 118.0f);
     for (int i = 0; i < 3; i++) frame(&world);
     TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Title && gui.hot == gui.modal);
-    finger(TIDE_TOUCH_BEGAN, 188.0f, 200.0f);
+    finger(TIDE_TOUCH_BEGAN, 188.0f, 184.0f);
     TIDE_CHECK(gui.active != 0);
-    finger(TIDE_TOUCH_ENDED, 188.0f, 200.0f);
+    finger(TIDE_TOUCH_ENDED, 188.0f, 184.0f);
     TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Playing && local.Seen.newGames == 1);
     // The finger that pressed Play is let go, so the hands are on the game
     frame(&world);
@@ -173,6 +180,7 @@ TIDE_TEST(rooms_a_finger_presses_play_with_the_mouse_on_the_title)
     TIDE_CHECK(local.Rooms_Lobby.playing && plays());
     tide_local_free(&local);
     tide_draw_free(&draw);
+    tide_audio_free(&audio);
     tide_world_free(&world);
 }
 
@@ -216,9 +224,9 @@ TIDE_TEST(rooms_pages_are_driven_by_the_keyboard)
     frame(&world);
     TIDE_CHECK(local.Rooms_Lobby.playing);
     // Leave the room: the last button. The page just came up, so the first Tab only lands the focus on its first
-    // button, Copy, and four more go past Resume, New game and Bots. The title, and a match of this machine's own
+    // button, Copy, and five more go past Resume, New game, Bots and Settings. The title, and a match of this machine's own
     tap(&devices.keyboard.escape);
-    for (int i = 0; i < 5; i++) tap(&devices.keyboard.tab);
+    for (int i = 0; i < 6; i++) tap(&devices.keyboard.tab);
     tap(&devices.keyboard.enter);
     TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Title && asked() == TIDE_REQUEST_START);
     tide_local_free(&local);
@@ -245,5 +253,104 @@ TIDE_TEST(rooms_pages_are_driven_by_the_keyboard)
     TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Title && !local.Rooms_Lobby.joining && asked() == TIDE_REQUEST_START);
     tide_local_free(&local);
     tide_draw_free(&draw);
+    tide_audio_free(&audio);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(rooms_settings_control_the_master_volume_across_pages_and_matches)
+{
+    tide_world_init(&world, DT);
+    machine(TIDE_SESSION_CONNECTED, 0, true, false, "");
+    frame(&world);
+    frame(&world);
+    TIDE_CHECK(local.Rooms_Lobby.volume == 1.0f && audio.bus_volume[0] == 1.0f);
+
+    // Settings is the title's fourth button. Its slider takes the focus.
+    for (int i = 0; i < 3; i++) tap(&devices.keyboard.tab);
+    tap(&devices.keyboard.enter);
+    frame(&world);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Settings && !plays());
+    TIDE_CHECK(asked() == TIDE_REQUEST_NONE);
+
+    // A step changes the audio handed to the host in that very frame.
+    tide_button_set(&devices.keyboard.leftArrow, true);
+    frame(&world);
+    TIDE_CHECK(local.Rooms_Lobby.volume < 1.0f && local.Rooms_Lobby.volume > 0.0f);
+    TIDE_CHECK(audio.bus_volume[0] == local.Rooms_Lobby.volume);
+    TIDE_CHECK(audio.bus_volume[1] == 1.0f && audio.bus_volume[2] == 1.0f);
+    tide_button_set(&devices.keyboard.leftArrow, false);
+    frame(&world);
+
+    // The keyboard can reach mute and full volume, and stays within them.
+    for (int i = 0; i < 21; i++) tap(&devices.keyboard.leftArrow);
+    TIDE_CHECK(local.Rooms_Lobby.volume == 0.0f && audio.bus_volume[0] == 0.0f);
+    for (int i = 0; i < 21; i++) tap(&devices.keyboard.rightArrow);
+    TIDE_CHECK(local.Rooms_Lobby.volume == 1.0f && audio.bus_volume[0] == 1.0f);
+    for (int i = 0; i < 10; i++) tap(&devices.keyboard.leftArrow);
+    const float volume = local.Rooms_Lobby.volume;
+    TIDE_CHECK(volume > 0.49f && volume < 0.51f && audio.bus_volume[0] == volume);
+
+    // Back returns to the title, keeping its first button usable. Escape
+    // from settings also returns there, without starting or opening a match.
+    tap(&devices.keyboard.tab);
+    tap(&devices.keyboard.enter);
+    frame(&world);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Title && !plays());
+    TIDE_CHECK(audio.bus_volume[0] == volume && asked() == TIDE_REQUEST_NONE);
+    for (int i = 0; i < 3; i++) tap(&devices.keyboard.tab);
+    tap(&devices.keyboard.enter);
+    frame(&world);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Settings && local.Rooms_Lobby.volume == volume);
+    tap(&devices.keyboard.escape);
+    frame(&world);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Title && asked() == TIDE_REQUEST_NONE);
+
+    // Play keeps the chosen gain after the audio frame resets, and reopening
+    // the menu offers settings after Invite, Resume, New game and Bots.
+    tap(&devices.keyboard.enter);
+    frame(&world);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Playing && plays() && audio.bus_volume[0] == volume);
+    tap(&devices.keyboard.escape);
+    frame(&world);
+    for (int i = 0; i < 4; i++) tap(&devices.keyboard.tab);
+    tap(&devices.keyboard.enter);
+    frame(&world);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Settings && !plays() && audio.bus_volume[0] == volume);
+    tap(&devices.keyboard.escape);
+    frame(&world);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Room && local.Rooms_Lobby.resume && !plays());
+    TIDE_CHECK(audio.bus_volume[0] == volume && asked() == TIDE_REQUEST_NONE);
+
+    // The room's Back route returns to the room too; Escape there resumes.
+    for (int i = 0; i < 4; i++) tap(&devices.keyboard.tab);
+    tap(&devices.keyboard.enter);
+    frame(&world);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Settings);
+    tap(&devices.keyboard.tab);
+    tap(&devices.keyboard.enter);
+    frame(&world);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Room && local.Rooms_Lobby.resume && !plays());
+    tap(&devices.keyboard.escape);
+    frame(&world);
+    TIDE_CHECK(plays() && audio.bus_volume[0] == volume);
+
+    // A session that ends returns to the title and starts this machine's own
+    // match. Its local volume survives that change of match.
+    tide_local_disconnected(&local, TIDE_DISCONNECT_ENDED, "");
+    tide_local_set_session(&local, TIDE_SESSION_OFFLINE, (tide_player_id){0}, 0, false, false, "");
+    frame(NULL);
+    frame(NULL);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Title && audio.bus_volume[0] == volume);
+    TIDE_CHECK(asked() == TIDE_REQUEST_START);
+    tide_world_free(&world);
+    tide_world_init(&world, DT);
+    tide_local_set_session(&local, TIDE_SESSION_CONNECTED, player(0), 0, true, false, "");
+    frame(&world);
+    frame(&world);
+    TIDE_CHECK(local.Rooms_Lobby.volume == volume && audio.bus_volume[0] == volume);
+
+    tide_local_free(&local);
+    tide_draw_free(&draw);
+    tide_audio_free(&audio);
     tide_world_free(&world);
 }

@@ -33,6 +33,7 @@ local singleton Sfx
     int count;  // How many hits the glob matched
     int shots;  // How many the list of one file has
     bool keyed; // Whether the map of one file has it under its path, and nothing else
+    float volume = 1; // Master volume without a stored Sound or a game's bus enum
 }
 
 scene Main { }
@@ -62,6 +63,7 @@ view Engines(Body body, mut Sfx sfx)
 
 view Keeper(mut Sfx sfx)
 {
+    Audio.SetVolume(Sound { }.bus, sfx.volume);
     if (sfx.plays == 1)
     {
         sfx.kept = named["assets/hits/b.wav"];
