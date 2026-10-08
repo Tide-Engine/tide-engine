@@ -18,8 +18,11 @@
 // pixels. The draw list copies its cells, a byte a channel or 16 bits a
 // float, when they aren't what it last copied, which the hashes the grid's
 // heap keeps of its pages tell without reading the cells
-// (tide_heap_block_hash). A grid with no size on an axis is no texture: the
-// mesh draws with its colors alone.
+// (tide_heap_block_hash): a chunk whose hash is what it was is left alone,
+// and of the others the pixels that came out otherwise are the ones the list
+// says changed (tide_draw_texture_edit), which are all a renderer sends the
+// GPU. So a big grid a frame changes a little of costs that little. A grid
+// with no size on an axis is no texture: the mesh draws with its colors alone.
 
 // The texture a grid is: Tide's conversion of a Grid2<Color> or a
 // Grid2<float> to a Texture. It names the grid, by where its directory is
@@ -96,17 +99,23 @@ uint32_t tide_draw_grid_texture_raw(tide_draw_list *d, tide_grid texture, const 
 // numbers, floats by their bits, into `words` ints. An element starts
 // tide_data_stride(words) ints after the one before: one of 1 or 2 ints right
 // after it, so four or two share a pixel, and a bigger one at its own pixel,
-// with zeros after it. The texture is the list's at its version (its heap's
-// page hashes), so a list that didn't change is written once. `count` gets
-// how many elements it holds: the list's, or as many as TIDE_LIST_DATA_MOST
-// pixels take. 0, and no texture, for an empty list.
+// with zeros after it. `write` needn't write all an element holds: only what
+// a shader reads of it, which `words` then counts. `layout` is a number for
+// which of its numbers those are, 0 for all of them: two layouts of one list
+// are two textures. The texture is the list's at its version (its heap's page
+// hashes), so a list that didn't change is written once, and of one that did,
+// the chunks that changed are written again, and the elements that came out
+// otherwise sent to the GPU. `count` gets how many elements it holds: the
+// list's, or as many as TIDE_LIST_DATA_MOST pixels take. 0, and no texture,
+// for an empty list. With no `words`, where a shader only counts the
+// elements, there's no texture either, and `count` is the list's.
 enum { TIDE_LIST_DATA_ACROSS = 1024, TIDE_LIST_DATA_MOST = 1024 * 2048 };
 typedef void tide_list_words_fn(const void *element, int32_t *words);
 static inline uint32_t tide_data_stride(const uint32_t words)
 {
     return words <= 2u ? words : (words + 3u) / 4u * 4u;
 }
-uint32_t tide_draw_list_data(tide_draw_list *d, tide_list list, uint32_t element_size, uint32_t words,
+uint32_t tide_draw_list_data(tide_draw_list *d, tide_list list, uint32_t element_size, uint32_t words, uint32_t layout,
                              tide_list_words_fn *write, int32_t *count);
 
 // A Grid2's cells the same way, a row of cells a row of pixels: cell (x, y)
@@ -114,7 +123,7 @@ uint32_t tide_draw_list_data(tide_draw_list *d, tide_list list, uint32_t element
 // (two ints): zeros, and no texture, for a grid with no size on an axis or
 // one wider than a texture is.
 uint32_t tide_draw_grid_data(tide_draw_list *d, tide_grid grid, const tide_grid_shape *shape, uint32_t words,
-                             tide_list_words_fn *write, int32_t *size);
+                             uint32_t layout, tide_list_words_fn *write, int32_t *size);
 
 // A map's or a set's live entries the same way, in the order their keys were
 // added, and after them, from the next pixel on, an index a shader finds a key
@@ -124,9 +133,11 @@ uint32_t tide_draw_grid_data(tide_draw_list *d, tide_grid grid, const tide_grid_
 // of which the one at `key_word` is its key, an int. The CPU's own index isn't
 // sent: its hash is of 64 bits, which these GPUs have none of. `count` gets
 // two ints: how many entries the texture holds (the map's, or as many as
-// fit), and how many slots. Zeros, and no texture, for an empty map.
+// fit), and how many slots. Zeros, and no texture, for an empty map. A key
+// that's added or removed moves what's after it, so a map that changed is
+// made again whole, and the rows that came out otherwise sent to the GPU.
 uint32_t tide_draw_map_data(tide_draw_list *d, tide_map map, uint32_t entry_size, uint32_t words, uint32_t key_word,
-                            tide_list_words_fn *write, int32_t *count);
+                            uint32_t layout, tide_list_words_fn *write, int32_t *count);
 
 // A float as the 16 bits a TIDE_TEXELS_HALF pixel is, to the nearest, ties to
 // even: past the greatest a half holds it's that (65504, either way), and 0

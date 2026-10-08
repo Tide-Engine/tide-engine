@@ -299,7 +299,9 @@ frag Lit(BoxVertex vertex, out Color color, Lights lights)
 - Elements are what the GPU has values of: numbers, bytes, vectors, colors, matrices, enums, bools, structs of those, and [arrays](#arrays) in them. Not text, longs, entities or other lists.
 - The GPU reads a list, and changes none: there's no `Add` there. A view or a system fills it.
 - A local can name it, and a function can take it, as anywhere: see [Naming a list and passing it on](#naming-a-list-and-passing-it-on).
-- Each list a draw's code reads is one of its 8 textures, as that's how its numbers travel: an image of numbers, read by an element's place. A list that didn't change since the last frame isn't sent again.
+- Each list a draw's code reads is one of its 8 textures, as that's how its numbers travel: an image of numbers, read by an element's place.
+- **Only what's read is sent.** Of an element, the GPU gets the fields that some frag or vert of the game reads, and no others: a `Light` with a dozen fields of which the frags read `position` and `color` costs those two. It's the same whether the code writes `lights.items[i].color`, reads it off a `foreach`'s variable, or off a local that holds an element (`var light = lights.items[i];`). A struct inside an element counts field by field. Handing a whole element to a function, or returning one, reads all of it.
+- **Only what changed is sent again.** A list that didn't change since the last frame costs nothing. In one that did, the elements that changed go to the GPU and the rest stay as they are there, so a few lights moving in a list of thousands cost those few. A list that's only counted (`items.count`) sends nothing at all.
 - A component's list is its entity's own, so entities with lists are drawn one by one, not all in one draw call. What many entities share belongs in a singleton, with each entity saying where its part starts.
 - The struct [`Draw.Instanced`](#instances-from-a-list) takes for each instance can't hold a list the code reads: a draw sends one list for all of them.
 
@@ -321,6 +323,7 @@ frag Tiles(BoxVertex vertex, out Color color, Board board)
 ```
 
 - A cell outside the grid is zeros. The grid is a field of what the frag or vert takes, or an [asset](./assets.md) by its name, and counts as one of the draw's 8 textures, once more if it's also sampled.
+- As with a list, only the fields of a cell that the code reads are sent, and when cells change, only those cells go to the GPU again.
 - An asset's grid, and an asset's list, are read by name in the functions a frag or vert calls too.
 - A grid with no size on an axis isn't sent, and reads as zeros everywhere. A `Grid3` isn't read there yet.
 
@@ -354,7 +357,7 @@ frag Tiles(BoxVertex vertex, out Color color, Land land)
 - Read-only, as lists are: a view or a system fills the map. There's no `Get` there either, as it gives a value that may be missing: `TryGet` asks the same.
 - `TryGet`'s `out` argument is a local, `out var value` or a variable declared before.
 - A lookup reads a pixel or two of an index the engine sends beside the entries, however many keys the map has, so it costs about what reading two list elements does.
-- A map or a set is one of the draw's 8 textures, and isn't sent again while it doesn't change. The other rules are a list's: a local can name one and a function can take one ([below](#naming-a-list-and-passing-it-on)), a component's is its entity's own, and none in an instance's struct.
+- A map or a set is one of the draw's 8 textures, and isn't sent again while it doesn't change. Of its values, only the fields the code reads are sent, as a list's elements'. The other rules are a list's: a local can name one and a function can take one ([below](#naming-a-list-and-passing-it-on)), a component's is its entity's own, and none in an instance's struct.
 
 ### Naming a list and passing it on
 

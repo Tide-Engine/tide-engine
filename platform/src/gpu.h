@@ -286,9 +286,12 @@ typedef struct tide_gpu {
     void (*buffer_write)(tide_gpu_id buffer, size_t offset, const void *data, size_t size);
     void (*buffer_free)(tide_gpu_id buffer);
 
-    // A texture. Writing takes all of it. How it's read is each draw's to say (sample).
+    // A texture. Writing takes all of it, or the `width` by `height` pixels of it from (x, y), inside it:
+    // `pixels` is all of the texture's either way, its rows one after the other, of which a part's are read
+    // where they are. How it's read is each draw's to say (sample).
     tide_gpu_id (*texture)(tide_gpu_format format, int width, int height, const void *pixels);
     void (*texture_write)(tide_gpu_id texture, const void *pixels);
+    void (*texture_write_part)(tide_gpu_id texture, const void *pixels, int x, int y, int width, int height);
     // Its smaller images, each half the last one's size down to one pixel
     // and each pixel the mean of the four it's made of, from its pixels as
     // they are: what TIDE_GPU_FILTER_MIPMAPS reads. Outside a pass. For a
