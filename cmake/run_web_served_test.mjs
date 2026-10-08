@@ -128,6 +128,7 @@ const child = spawn(browser, [
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-extensions',
+    '--mute-audio', // Headless, it still plays through the machine's device once a page's AudioContext runs
     '--remote-debugging-pipe', // DevTools on fds 3 and 4
     `--user-data-dir=${profileDir}`,
     ...logging,

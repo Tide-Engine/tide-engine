@@ -36,20 +36,30 @@ const releases = createReleases({ token: process.env.TIDE_RELEASES_TOKEN, repo: 
     onDownload: (download) => analytics.recordDownload(download) });
 
 const server = http.createServer(async (req, res) => {
-    // www. goes to the name without it.
+    req.headers[protocolHeader] ??= req.socket instanceof TLSSocket && req.socket.encrypted ? 'https' : 'http';
+    const protocol = String(req.headers[protocolHeader]).split(',')[0].trim();
+    for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
+    // Every public host goes to the same HTTPS site. Local previews keep
+    // their own origin; Fly also redirects HTTP before it reaches us.
     const host = req.headers.host ?? '';
-    if (host === `www.${canonical}`) {
+    const hostname = host.toLowerCase().replace(/:\d+$/, '');
+    if (hostname === `www.${canonical}` || hostname === 'tide-website.fly.dev' || (hostname === canonical && protocol === 'http')) {
         res.writeHead(301, { location: `https://${canonical}${req.url}` }).end();
         return;
     }
-    req.headers[protocolHeader] ??= req.socket instanceof TLSSocket && req.socket.encrypted ? 'https' : 'http';
-    for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
+    // Search results should lead to the gallery or walkthrough, where the
+    // game has a name and explanation. Runtime HTML is a canvas-only player
+    // with a generic title. Let crawlers read noindex; keep its assets alone.
+    const pathname = (req.url ?? '/').split('?')[0];
+    if (/^\/(?:examples\/[a-z][a-z0-9-]*|samples\/[a-z][a-z0-9-]*|sand|duel|towers|sumo)(?:\/(?:index\.html)?)?$/.test(pathname)) {
+        res.setHeader('x-robots-tag', 'noindex');
+    }
     // The installers are read as text, by `irm ... | iex` too, and never kept.
     if (req.url === '/install.sh' || req.url === '/install.ps1') {
         res.setHeader('content-type', 'text/plain; charset=utf-8');
         res.setHeader('cache-control', 'no-cache');
     }
-    const origin =`${String(req.headers[protocolHeader]).split(',')[0].trim()}://${host}`;
+    const origin = `${protocol}://${host}`;
     try {
         if (await admin.handle(req, res, origin) || await releases(req, res, origin)) return;
         handler(req, res, () => {
