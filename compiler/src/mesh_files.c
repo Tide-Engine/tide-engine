@@ -866,11 +866,17 @@ static bool sparse_of(gltf *g, const accessor *a, sparse_accessor *out, const ch
     return true;
 }
 
-// An accessor's elements as floats, `want` numbers each into `out`: the
-// numbers it has, and `fill` for a fourth it hasn't (a color's alpha). It has
-// to have `expect` elements.
+typedef struct vertex_pick {
+    uint32_t count;
+    uint32_t *source; // Original accessor indices, in their original order
+    uint32_t *place; // Original index to compact index + 1, or 0 for an unused vertex
+} vertex_pick;
+
+// The selected accessor elements as floats, `want` numbers each into `out`:
+// the numbers it has, and `fill` for a fourth it hasn't (a color's alpha).
+// The whole accessor still has to have `expect` elements and fit its views.
 static bool read_floats(gltf *g, const jnode *index, const uint32_t want, const float fill, const uint64_t expect, float *out,
-                        const char *what)
+                        const vertex_pick *pick, const char *what)
 {
     accessor a;
     if (!accessor_of(g, index, &a, what)) return false;
@@ -881,7 +887,7 @@ static bool read_floats(gltf *g, const jnode *index, const uint32_t want, const 
     const uint32_t each = component_bytes(a.type);
     const uint32_t element = each * a.width;
     const uint32_t take = a.width < want ? a.width : want;
-    for (uint64_t i = 0; i < a.count; i++) {
+    for (uint32_t i = 0; i < pick->count; i++) {
         for (uint32_t c = 0; c < want; c++) out[i * want + c] = c == 3u ? fill : 0.0f;
     }
     if (a.view >= 0 && a.count) {
@@ -892,8 +898,9 @@ static bool read_floats(gltf *g, const jnode *index, const uint32_t want, const 
         if (stride < element || (a.count - 1u) * stride + element > room) {
             return fail(g->r, NULL, "has %s that run past their buffer view's end", what);
         }
-        for (uint64_t i = 0; i < a.count; i++) {
-            for (uint32_t c = 0; c < take; c++) out[i * want + c] = component(at + i * stride + (uint64_t)c * each, a.type, a.normalized);
+        for (uint32_t i = 0; i < pick->count; i++) {
+            const uint64_t from = pick->source[i];
+            for (uint32_t c = 0; c < take; c++) out[(uint64_t)i * want + c] = component(at + from * stride + (uint64_t)c * each, a.type, a.normalized);
         }
     }
     // A sparse accessor: some elements, by their numbers, given apart from the rest
@@ -902,8 +909,10 @@ static bool read_floats(gltf *g, const jnode *index, const uint32_t want, const 
     for (uint64_t k = 0; k < sparse.count; k++) {
         const uint32_t i = whole_component(sparse.indices + k * sparse.index_bytes, sparse.index_type);
         if (i >= a.count) return fail(g->r, NULL, "has sparse %s for a vertex it hasn't got", what);
+        if (!pick->place[i]) continue;
+        const uint64_t to = pick->place[i] - 1u;
         for (uint32_t c = 0; c < take; c++) {
-            out[(uint64_t)i * want + c] = component(sparse.values + k * sparse.element_bytes + (uint64_t)c * each, a.type, a.normalized);
+            out[to * want + c] = component(sparse.values + k * sparse.element_bytes + (uint64_t)c * each, a.type, a.normalized);
         }
     }
     return true;
@@ -1004,42 +1013,18 @@ static bool add_primitive(gltf *g, const jnode *primitive, const float world[16]
         return fail(r, "a mesh that big is better split into several files, each a Mesh of its own",
                     "has more than %u vertices, the most one Mesh holds", (unsigned)VERTICES_MOST);
     }
-    part p = {.count = (uint32_t)count};
+    part p = {0};
+    vertex_pick pick = {0};
     uint32_t *listed = NULL;
     bool ok = true;
-    p.position = zeroed((size_t)count, 3u * sizeof(float));
-    p.color = zeroed((size_t)count, 4u * sizeof(float));
-    ok = read_floats(g, positions, 3u, 0.0f, count, p.position, "positions");
-    const jnode *normals = jget(attributes, "NORMAL"), *tangents = jget(attributes, "TANGENT");
-    const jnode *uvs = jget(attributes, "TEXCOORD_0"), *uvs2 = jget(attributes, "TEXCOORD_1"), *colors = jget(attributes, "COLOR_0");
-    if (ok && normals) {
-        p.normal = zeroed((size_t)count, 3u * sizeof(float));
-        ok = read_floats(g, normals, 3u, 0.0f, count, p.normal, "normals");
-    }
-    if (ok && tangents) {
-        p.tangent = zeroed((size_t)count, 4u * sizeof(float));
-        ok = read_floats(g, tangents, 4u, 1.0f, count, p.tangent, "tangents");
-    }
-    if (ok && uvs) {
-        p.uv = zeroed((size_t)count, 2u * sizeof(float));
-        ok = read_floats(g, uvs, 2u, 0.0f, count, p.uv, "uvs");
-    }
-    if (ok && uvs2) {
-        p.uv2 = zeroed((size_t)count, 2u * sizeof(float));
-        ok = read_floats(g, uvs2, 2u, 0.0f, count, p.uv2, "second uvs");
-    }
-    if (ok && colors) {
-        ok = read_floats(g, colors, 4u, 1.0f, count, p.color, "colors");
-        g->b->m.has_colors = true;
-    } else {
-        for (uint64_t i = 0; i < count * 4u; i++) p.color[i] = 1.0f;
-    }
-    // Its triangles: the corners its indices name, or every three vertices in turn
+    // Its triangles: the corners its indices name, or every three vertices in turn.
+    // Pick only the vertices complete triangles use. A shared accessor can cover
+    // all of a model's materials, while this primitive uses a small part of it.
     uint64_t listed_count = count;
-    if (ok && jget(primitive, "indices")) {
+    if (jget(primitive, "indices")) {
         listed = read_indices(g, jget(primitive, "indices"), &listed_count);
         ok = listed != NULL;
-    } else if (ok) {
+    } else {
         listed = zeroed((size_t)count, sizeof *listed);
         for (uint64_t i = 0; i < count; i++) listed[i] = (uint32_t)i;
     }
@@ -1050,6 +1035,48 @@ static bool add_primitive(gltf *g, const jnode *primitive, const float world[16]
     if (ok && triangles * 3u > INDICES_MOST) {
         ok = fail(r, "a mesh that big is better split into several files, each a Mesh of its own",
                   "has more than %u triangles, the most one Mesh holds", (unsigned)(INDICES_MOST / 3u));
+    }
+    if (ok) {
+        const uint64_t used = mode == 4 ? triangles * 3u : triangles ? listed_count : 0u;
+        pick.place = zeroed((size_t)count, sizeof *pick.place);
+        for (uint64_t i = 0; i < used; i++) pick.place[listed[i]] = 1u;
+        for (uint64_t i = 0; i < count; i++) pick.count += pick.place[i];
+        pick.source = zeroed(pick.count, sizeof *pick.source);
+        uint32_t next = 0;
+        for (uint64_t i = 0; i < count; i++) {
+            if (!pick.place[i]) continue;
+            pick.source[next] = (uint32_t)i;
+            pick.place[i] = ++next;
+        }
+        for (uint64_t i = 0; i < used; i++) listed[i] = pick.place[listed[i]] - 1u;
+        p.count = pick.count;
+        p.position = zeroed(p.count, 3u * sizeof(float));
+        p.color = zeroed(p.count, 4u * sizeof(float));
+        ok = read_floats(g, positions, 3u, 0.0f, count, p.position, &pick, "positions");
+    }
+    const jnode *normals = jget(attributes, "NORMAL"), *tangents = jget(attributes, "TANGENT");
+    const jnode *uvs = jget(attributes, "TEXCOORD_0"), *uvs2 = jget(attributes, "TEXCOORD_1"), *colors = jget(attributes, "COLOR_0");
+    if (ok && normals) {
+        p.normal = zeroed(p.count, 3u * sizeof(float));
+        ok = read_floats(g, normals, 3u, 0.0f, count, p.normal, &pick, "normals");
+    }
+    if (ok && tangents) {
+        p.tangent = zeroed(p.count, 4u * sizeof(float));
+        ok = read_floats(g, tangents, 4u, 1.0f, count, p.tangent, &pick, "tangents");
+    }
+    if (ok && uvs) {
+        p.uv = zeroed(p.count, 2u * sizeof(float));
+        ok = read_floats(g, uvs, 2u, 0.0f, count, p.uv, &pick, "uvs");
+    }
+    if (ok && uvs2) {
+        p.uv2 = zeroed(p.count, 2u * sizeof(float));
+        ok = read_floats(g, uvs2, 2u, 0.0f, count, p.uv2, &pick, "second uvs");
+    }
+    if (ok && colors) {
+        ok = read_floats(g, colors, 4u, 1.0f, count, p.color, &pick, "colors");
+        g->b->m.has_colors = true;
+    } else {
+        for (uint64_t i = 0; i < (uint64_t)p.count * 4u; i++) p.color[i] = 1.0f;
     }
     if (ok && triangles) {
         // The part of the node's matrix that turns and scales, and whether it mirrors
@@ -1068,7 +1095,7 @@ static bool add_primitive(gltf *g, const jnode *primitive, const float world[16]
             if (jfloats(jget(jget(material, "pbrMetallicRoughness"), "baseColorFactor"), 4u, read)) memcpy(tint, read, sizeof tint);
             g->b->m.has_colors = true;
         }
-        for (uint64_t i = 0; i < count; i++) {
+        for (uint32_t i = 0; i < p.count; i++) {
             float *at = p.position + i * 3u;
             const float x = at[0], y = at[1], z = at[2];
             // Through the node, then x turned around: the file's world is right-handed, and Tide's isn't
@@ -1116,6 +1143,8 @@ static bool add_primitive(gltf *g, const jnode *primitive, const float world[16]
         ok = add_part(g->b, &p);
     }
     free(listed);
+    free(pick.source);
+    free(pick.place);
     free(p.index);
     free(p.position);
     free(p.normal);
