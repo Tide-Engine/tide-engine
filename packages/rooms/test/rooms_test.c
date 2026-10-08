@@ -28,6 +28,7 @@ static void frame(const tide_world *w)
 {
     tide_local_frame_time(&local, DT);
     tide_draw_reset(&draw);
+    tide_touches_poll(&devices.touchscreen);
     tide_pointer_poll(&devices, true);
     tide_gui_begin(&gui, &devices, tide_f2(376, 400), NULL);
     tide_frame(w, NULL, 1.0f, w, &local, &draw, &gui);
@@ -62,6 +63,20 @@ static uint32_t asked(void)
 {
     last_request = (tide_session_request){0};
     return tide_local_take_request(&local, &last_request, &last_start) ? last_request.kind : (uint32_t)TIDE_REQUEST_NONE;
+}
+
+// A frame in which a finger does `phase` at (x, y), from the screen's top
+// left: the mouse stays where it was
+static void finger(const tide_touch_phase phase, const float x, const float y)
+{
+    tide_local_frame_time(&local, DT);
+    tide_draw_reset(&draw);
+    tide_touches_poll(&devices.touchscreen);
+    tide_touch_event(&devices.touchscreen, phase, 1, tide_f2(x, 400.0f - y));
+    tide_pointer_poll(&devices, false);
+    tide_gui_begin(&gui, &devices, tide_f2(376, 400), NULL);
+    tide_frame(&world, NULL, 1.0f, &world, &local, &draw, &gui);
+    tide_gui_end(&gui, &draw);
 }
 
 // A key held for one frame, as a player taps it
@@ -132,6 +147,30 @@ TIDE_TEST(rooms_opens_on_its_title_unless_it_was_told_which_match)
     frame(NULL);
     frame(NULL);
     TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Join && asked() == TIDE_REQUEST_NONE);
+    tide_local_free(&local);
+    tide_draw_free(&draw);
+    tide_world_free(&world);
+}
+
+// A laptop with a touchscreen has a mouse and fingers both: a tap presses the
+// page's button wherever the mouse rests, the page's own panel included.
+TIDE_TEST(rooms_a_finger_presses_play_with_the_mouse_on_the_title)
+{
+    tide_world_init(&world, DT);
+    machine(TIDE_SESSION_CONNECTED, 0, true, false, "");
+    // The title page is 184 tall, around the screen's middle: the game's name
+    // is 134 down, where the mouse is, and Play 200
+    devices.mouse.position = tide_f2(188.0f, 400.0f - 134.0f);
+    for (int i = 0; i < 3; i++) frame(&world);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Title && gui.hot == gui.modal);
+    finger(TIDE_TOUCH_BEGAN, 188.0f, 200.0f);
+    TIDE_CHECK(gui.active != 0);
+    finger(TIDE_TOUCH_ENDED, 188.0f, 200.0f);
+    TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Playing && local.Seen.newGames == 1);
+    // The finger that pressed Play is let go, so the hands are on the game
+    frame(&world);
+    frame(&world);
+    TIDE_CHECK(local.Rooms_Lobby.playing && plays());
     tide_local_free(&local);
     tide_draw_free(&draw);
     tide_world_free(&world);
