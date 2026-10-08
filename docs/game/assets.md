@@ -266,6 +266,8 @@ Where the pack is: beside the program as `<name>.pack` on desktop, inside the se
 
 ## Loading at runtime
 
+[Skinned models](./animation.md) import as `SkinnedMesh<V>` from glTF, with checked animation and bone catalogs. They can also be loaded while playing with `SkinnedMesh<V>.Decode(bytes)` or its optional contracted form; runtime decoding accepts self-contained GLB bytes and fails with `IOError.InvalidData` for malformed data or unmet requirements.
+
 Two things bring bytes in while a game runs, both local, both failing with `IOError`:
 
 - `File.ReadAllBytes(path)` reads a file of this machine's (see [Files and directories](./files.md)).

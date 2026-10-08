@@ -1,0 +1,44 @@
+// The engine's skin stage precedes the game's vertex function in GLSL and WGSL.
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+    float4 tangent;
+    Color color = Color.white;
+    float glow = 0.5;
+}
+
+asset SkinnedMesh<Vertex3> model = "../../../platform/tests/skinned.gltf";
+asset SkinnedMesh<Corner> lit = "../../../platform/tests/skinned.gltf";
+
+local singleton Surface
+{
+    bool made;
+    Texture image;
+    RenderTarget target;
+}
+
+vert Deform(mut Corner corner)
+{
+    corner.position += corner.normal * corner.glow;
+    corner.color = Color(corner.tangent.xyz * 0.5 + float3(0.5));
+}
+
+frag Inspect(Corner corner, out Color color, Instance instance)
+{
+    color = corner.color * Math.Max(instance.Normal(corner.normal).y, 0.1);
+}
+
+view Models(mut Surface surface)
+{
+    if (!surface.made) { surface.made = true; surface.target = RenderTarget.Window(Format.Depth); }
+    Pose rest = model.skeleton.RestPose();
+    Pose posed = lit.animations.move.Sample(0.5, Playback.Loop);
+    Draw.SkinnedMesh(model, float4x4.identity, rest);
+    Draw.SkinnedMesh(model, float4x4.identity, rest, surface.image);
+    Draw.SkinnedMesh(lit, float4x4.identity, posed, Deform, Inspect);
+    surface.target.SkinnedMesh(lit, float4x4.identity, posed, Deform);
+    Draw.Mesh(lit.vertices, lit.indices, float4x4.identity, Deform, Inspect);
+}

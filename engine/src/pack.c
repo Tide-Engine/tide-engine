@@ -283,6 +283,21 @@ uint32_t tide_pack_mesh_list(tide_pack_builder *b, const uint32_t *offsets, cons
     return at;
 }
 
+uint32_t tide_pack_skinned_list(tide_pack_builder *b, const uint32_t *offsets, const uint32_t count)
+{
+    const uint64_t bytes = (uint64_t)count * sizeof(tide_skinned_lists);
+    if (bytes + sizeof(tide_block) > TIDE_PACK_BASE) tide_out_of_memory();
+    const uint32_t at = block(b, (uint32_t)bytes);
+    tide_block *h = header(b, at);
+    h->a = count;
+    h->b = count;
+    tide_skinned_lists *models = (tide_skinned_lists *)(void *)(h + 1);
+    for (uint32_t i = 0; i < count; i++) {
+        models[i] = (tide_skinned_lists){{tagged(offsets[3u * i])}, {tagged(offsets[3u * i + 1u])}, {tagged(offsets[3u * i + 2u])}};
+    }
+    return at;
+}
+
 uint32_t tide_pack_list(tide_pack_builder *b, const uint32_t *offsets, const uint32_t count)
 {
     const uint32_t at = block(b, count * (uint32_t)sizeof(uint32_t));
@@ -354,6 +369,29 @@ uint32_t tide_pack_mesh_map(tide_pack_builder *b, const uint32_t *keys, const ui
     return at;
 }
 
+typedef struct skinned_entry {
+    uint32_t live, key;
+    tide_skinned_lists value;
+} skinned_entry;
+
+uint32_t tide_pack_skinned_map(tide_pack_builder *b, const uint32_t *keys, const uint32_t *offsets, const uint32_t count,
+                              uint32_t *index)
+{
+    const uint64_t bytes = (uint64_t)count * sizeof(skinned_entry);
+    if (bytes + sizeof(tide_block) > TIDE_PACK_BASE) tide_out_of_memory();
+    const uint32_t at = block(b, (uint32_t)bytes);
+    tide_block *h = header(b, at);
+    h->a = count;
+    h->b = count;
+    skinned_entry *entries = (skinned_entry *)(void *)(h + 1);
+    for (uint32_t i = 0; i < count; i++) {
+        entries[i] = (skinned_entry){1u, tagged(keys[i]), {{tagged(offsets[3u * i])}, {tagged(offsets[3u * i + 1u])},
+                                                        {tagged(offsets[3u * i + 2u])}}};
+    }
+    *index = text_index(b, keys, count);
+    return at;
+}
+
 void tide_pack_name(tide_pack_builder *b, const char *qualified, const uint32_t kind, const uint32_t offset, const uint32_t size,
                     const uint32_t extra)
 {
@@ -389,4 +427,3 @@ uint8_t *tide_pack_end(tide_pack_builder *b, size_t *size)
     *b = (tide_pack_builder){0};
     return out;
 }
-
