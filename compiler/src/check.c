@@ -6,6 +6,7 @@
 #include "asset_files.h"
 #include "ast.h"
 #include "builtins.h"
+#include "tide/audio.h" // How many bytes an audio declaration's state and knobs have
 #include "tide/devices.h"
 #include "tide/player.h" // How many players a game can take
 #include "types.h"
@@ -15657,6 +15658,50 @@ static void check_audio_bodies(const checker *c)
     }
 }
 
+// What an audio declaration keeps between blocks is its voice's, or its bus's,
+// own bytes in the mixer (tide/audio.h): TIDE_AUDIO_STATE_BYTES of them, of
+// which the last are what it rolls with when its code rolls with Random, a
+// generator for each voice. Its knobs are the bytes an Effect value carries,
+// TIDE_AUDIO_KNOBS_BYTES. The code reads and writes them as its structs, so a
+// struct that's bigger would reach past them, into the next voice's. Sizes are
+// the generated C's (types.h); which declarations roll is known once every
+// call is (check_roll_calls).
+static void check_audio_sizes(const checker *c)
+{
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        const decl *d = c->prog->decls.items[i];
+        if (d->kind != DECL_FUNCTION || !d->is_audio) continue;
+        if (d->audio_state >= 0) {
+            const param *p = &d->params.items[d->audio_state];
+            const int size = decl_layout(p->type.decl).size;
+            const int rolled = d->rolls ? decl_layout(c->prog->random).size : 0;
+            const int most = (int)TIDE_AUDIO_STATE_BYTES - rolled;
+            if (size > most) {
+                diag_error(p->at, "an audio declaration's state is %d bytes at the most%s, and '%s' is %s%d", most,
+                           rolled ? " where it rolls with Random" : "", type_name(p->type), size == LAYOUT_MOST ? "over " : "", size);
+                if (rolled) {
+                    diag_note_at(d->rolls_at, "'" STR_FMT "' rolls on line %d, and each voice keeps what it rolls with in the last %d of its state's %d "
+                                 "bytes: make '%s' smaller, with a shorter array or fewer fields",
+                                 STR_ARG(d->name), d->rolls_at.line, rolled, (int)TIDE_AUDIO_STATE_BYTES, type_name(p->type));
+                } else {
+                    diag_note("each voice and bus '" STR_FMT "' plays on keeps its own: make '%s' smaller, with a shorter array or fewer "
+                              "fields (a float or an int is 4 bytes)", STR_ARG(d->name), type_name(p->type));
+                }
+            }
+        }
+        if (d->audio_knobs >= 0) {
+            const param *p = &d->params.items[d->audio_knobs];
+            const int size = decl_layout(p->type.decl).size;
+            if (size > (int)TIDE_AUDIO_KNOBS_BYTES) {
+                diag_error(p->at, "an audio declaration's knobs are %d bytes at the most, and '%s' is %s%d", (int)TIDE_AUDIO_KNOBS_BYTES,
+                           type_name(p->type), size == LAYOUT_MOST ? "over " : "", size);
+                diag_note("an Effect carries a copy of them, which a frame gives the mixer: make '%s' smaller, and keep what's big in "
+                          "the state, which has %d bytes", type_name(p->type), (int)TIDE_AUDIO_STATE_BYTES);
+            }
+        }
+    }
+}
+
 static void check_frame_time_calls(const checker *c)
 {
     for (bool changed = true; changed;) {
@@ -16820,6 +16865,7 @@ bool check(program *prog)
     check_gpu_only_calls(&c);
     check_audio_calls(&c);
     check_audio_bodies(&c);
+    check_audio_sizes(&c);
     resolve_tasks(&c);
     check_this_calls(&c);
     check_drawing_calls(&c);
