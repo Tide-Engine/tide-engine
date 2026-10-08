@@ -1047,6 +1047,10 @@ static void run_list_checks(const float turn, const char *when)
         {40, 88, {128, 128, 255}, "a grid's size, and a cell of a grid of ints"},
         {56, 88, {0, 255, 0}, "an asset's grid, a cell by its place"},
         {72, 88, {128, 191, 64}, "a while, a for that doubles, and a loop only a break ends"},
+        {8, 104, {64, 128, 191}, "a Grid3's cell by its place, past its first chunk and layer, with nothing past its edges"},
+        {24, 104, {128, 128, 255}, "a Grid3's size, and a cell of a Grid3 of ints in its last layer"},
+        {40, 104, {191, 191, 191}, "a grid with no size: cells before 0 and far apart, and nothing elsewhere"},
+        {56, 104, {128, 128, 64}, "a Grid3 that's open along an axis, and a grid with nothing in it"},
     };
     enum { COUNT = sizeof wanted / sizeof wanted[0] };
     local.Art.targetPass = 18;

@@ -305,7 +305,7 @@ frag Lit(BoxVertex vertex, out Color color, Lights lights)
 
 ### A grid's cells
 
-A `Grid2` is read the same way, a cell by its place, beside [sampling it](#textures) as a picture: `cells[x, y]`, `cells[at]` for an `int2`, and `cells.size`. It's the cell as the grid has it, exactly, of any type the GPU has values of, where `Sample` gives a color blended between cells.
+A grid is read the same way, a cell by its place, beside [sampling it](#textures) as a picture: `cells[x, y]`, `cells[at]` for an `int2`, and `cells.size`; for a `Grid3`, `cells[x, y, z]`, `cells[at]` for an `int3`, and a `size` of three. It's the cell as the grid has it, exactly, of any type the GPU has values of, where `Sample` gives a color blended between cells.
 
 ```csharp
 local singleton Board
@@ -321,7 +321,10 @@ frag Tiles(BoxVertex vertex, out Color color, Board board)
 ```
 
 - A cell outside the grid is zeros. The grid is a field of what the frag or vert takes, or an [asset](./assets.md) by its name, and counts as one of the draw's 8 textures, once more if it's also sampled.
-- A grid with no size on an axis isn't sent, and reads as zeros everywhere. A `Grid3` isn't read there yet.
+- A grid with no size on an axis is read like any other: its cells are wherever they were set, before 0 too, `size` is 0 on that axis as it is on the CPU, and a cell nothing set is zeros.
+- What's sent is the box around the cells that were set, never the whole space a grid spans. (A grid keeps its cells in chunks, 64 by 64 or 16 by 16 by 16 of them for a cell of one number, and the box is the chunks that have something in them, within the grid's size.) It travels as one image of numbers, a `Grid3`'s layers side by side in it.
+- So how big a grid the GPU reads goes by that box. One of 256 by 256 by 256 cells of one number each (an int, a float, a byte, an enum), or 128 by 128 by 128 colors, fits an image 2,048 pixels a side, which every GPU has. The most is an image of 16,777,216 pixels and 16,384 a side, on a GPU that has textures so big: 256 by 256 by 256 colors, or a `Grid2` of 16,384 by 4,096 numbers. A box past that isn't sent, the code reads zeros, and the game says so once in its output; two cells set a million apart in a grid with no size are such a box.
+- `foreach` over a grid's cells isn't there yet: write the loop over the places you read, `for (int y = 0; y < cells.size.y; y++)`.
 
 ### Arrays
 

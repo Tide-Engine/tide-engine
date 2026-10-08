@@ -1,5 +1,6 @@
 #include "tide/mesh.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "tide/net.h"
@@ -269,12 +270,46 @@ uint32_t tide_draw_list_data(tide_draw_list *d, const tide_list list, const uint
     return slot;
 }
 
-uint32_t tide_draw_grid_data(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s, const uint32_t words,
-                             tide_list_words_fn *write, int32_t *size)
+// A grid's cells as numbers hold the box its chunks take up, within its size:
+// what's outside it is zeros wherever it's read. Along each axis, where the
+// box starts and how many cells it is, or false for a grid with no chunk.
+static bool data_box(const tide_grid_dir *dir, const tide_grid_record *records, const tide_grid_shape *s, int64_t lo[3],
+                     int64_t extent[3])
 {
-    size[0] = size[1] = 0;
-    if (!g.at || s->dims != 2u || s->cell == 0 || words == 0 || s->shift[0] + s->shift[1] > TIDE_HEAP_PAGE_SHIFT
-        || s->shift[2] != 0u || tide_grid_chunk_bytes(s) > 1u << TIDE_HEAP_PAGE_SHIFT) {
+    int64_t hi[3] = {0, 0, 1};
+    bool any = false;
+    lo[0] = lo[1] = lo[2] = 0;
+    for (uint32_t r = 0; r < dir->records; r++) {
+        if (s->dims == 2u && records[r].chunk[2] != 0) continue;
+        for (uint32_t a = 0; a < s->dims; a++) {
+            const int64_t from = (int64_t)records[r].chunk[a] * ((int64_t)1 << s->shift[a]);
+            const int64_t to = from + ((int64_t)1 << s->shift[a]);
+            if (!any || from < lo[a]) lo[a] = from;
+            if (!any || to > hi[a]) hi[a] = to;
+        }
+        any = true;
+    }
+    for (uint32_t a = 0; a < 3u; a++) {
+        if (a < s->dims && dir->size[a] > 0) { // The grid ends where its size does
+            if (lo[a] < 0) lo[a] = 0;
+            if (hi[a] > dir->size[a]) hi[a] = dir->size[a];
+        }
+        extent[a] = hi[a] - lo[a];
+        any &= extent[a] > 0 && lo[a] >= INT32_MIN && lo[a] <= INT32_MAX;
+    }
+    return any;
+}
+
+uint32_t tide_draw_grid_data(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s, const uint32_t words,
+                             tide_list_words_fn *write, int32_t *info)
+{
+    const uint32_t dims = s->dims == 3u ? 3u : 2u;
+    memset(info, 0, (dims == 3u ? TIDE_GRID3_DATA_INTS : TIDE_GRID2_DATA_INTS) * sizeof *info);
+    // Each shift first: three of any size could add up to a small number
+    if (!g.at || (s->dims != 2u && s->dims != 3u) || s->cell == 0 || words == 0 || s->shift[0] > TIDE_HEAP_PAGE_SHIFT
+        || s->shift[1] > TIDE_HEAP_PAGE_SHIFT || s->shift[2] > TIDE_HEAP_PAGE_SHIFT
+        || s->shift[0] + s->shift[1] + s->shift[2] > TIDE_HEAP_PAGE_SHIFT || (dims == 2u && s->shift[2] != 0u)
+        || tide_grid_chunk_bytes(s) > 1u << TIDE_HEAP_PAGE_SHIFT) {
         return 0;
     }
     // As a grid that's sampled is read (grid_texture): nothing a handle names is trusted
@@ -286,17 +321,45 @@ uint32_t tide_draw_grid_data(tide_draw_list *d, const tide_grid g, const tide_gr
     if (!block) return 0;
     tide_grid_dir dir;
     memcpy(&dir, block + sizeof(tide_block), sizeof dir);
-    if (dir.dims != 2u || dir.size[0] <= 0 || dir.size[1] <= 0 || dir.records > dir.room) return 0;
-    const uint32_t stride = tide_data_stride(words);
-    const uint64_t wide = ((uint64_t)dir.size[0] * stride + 3u) / 4u; // Pixels a row
-    if (wide > TIDE_GRID_TEXTURE_MOST || dir.size[1] > TIDE_GRID_TEXTURE_MOST) return 0;
-    const uint64_t across = ((uint64_t)dir.size[0] + (1u << s->shift[0]) - 1u) >> s->shift[0];
-    const uint64_t down = ((uint64_t)dir.size[1] + (1u << s->shift[1]) - 1u) >> s->shift[1];
-    if (dir.records > across * down) return 0;
-    if (dir.flat && ((uint64_t)dir.chunks[0] != across || (uint64_t)dir.chunks[1] != down)) return 0;
+    if (dir.dims != dims || dir.size[0] < 0 || dir.size[1] < 0 || dir.size[2] < 0 || dir.records > dir.room) return 0;
     const tide_grid_record *records = (const tide_grid_record *)(const void *)
         span(heap, at + (uint32_t)(sizeof(tide_block) + sizeof(tide_grid_dir)), (uint64_t)dir.records * sizeof(tide_grid_record));
     if (dir.records && !records) return 0;
+    for (uint32_t a = 0; a < dims; a++) info[a] = dir.size[a]; // Its size is its own, whatever of it is sent
+    int64_t lo[3], extent[3];
+    if (!data_box(&dir, records, s, lo, extent)) return 0; // Nothing in it: zeros everywhere
+    // The box's layers side by side and under each other, each a row of
+    // pixels for a row of cells: as many across as make the texture's longer
+    // side the shortest
+    const uint32_t stride = tide_data_stride(words);
+    const int64_t most = TIDE_GRID_TEXTURE_MOST;
+    int64_t wide = 0, across = 1, width = 0, height = 0;
+    bool fits = extent[0] <= most * 4 && extent[1] <= most && extent[2] <= most;
+    if (fits) {
+        wide = (extent[0] * (int64_t)stride + 3) / 4; // Pixels a row of cells
+        fits = wide <= most;
+    }
+    if (fits) {
+        int64_t best = INT64_MAX;
+        for (int64_t t = 1; t <= extent[2] && t * wide <= most; t++) {
+            const int64_t down = (extent[2] + t - 1) / t * extent[1];
+            const int64_t side = t * wide > down ? t * wide : down;
+            if (side < best) best = side, across = t;
+        }
+        width = across * wide;
+        height = (extent[2] + across - 1) / across * extent[1];
+        fits = height <= most && width * height <= (int64_t)TIDE_GRID_DATA_PIXELS;
+    }
+    if (!fits) {
+        static bool said;
+        if (!said) {
+            fprintf(stderr, "a grid's cells span more than a texture of numbers holds (%lld by %lld by %lld cells, of %u ints "
+                            "each): code the GPU runs reads them as zeros\n",
+                    (long long)extent[0], (long long)extent[1], (long long)extent[2], (unsigned)stride);
+        }
+        said = true;
+        return 0;
+    }
     uint64_t version;
     if (packed) {
         version = tide_pack_grid_version(g);
@@ -311,29 +374,46 @@ uint32_t tide_draw_grid_data(tide_draw_list *d, const tide_grid g, const tide_gr
             version = tide_hash_more(version, &cells, sizeof cells);
         }
     }
-    const uint32_t shape[3] = {s->cell, words, 0x47524944u}; // Its cells as these numbers, and no list's
+    // Its cells as these numbers, laid out so, and no list's
+    const int64_t shape[7] = {s->cell, words, 0x47524944, lo[0], lo[1], lo[2], across};
     version = tide_hash_end(tide_hash_more(version, shape, sizeof shape));
     uint8_t *out;
-    const uint32_t slot = tide_draw_texture_slot_as(d, TIDE_PIXELS_LIST, g.at, version, (int32_t)wide, dir.size[1],
+    const uint32_t slot = tide_draw_texture_slot_as(d, TIDE_PIXELS_LIST, g.at, version, (int32_t)width, (int32_t)height,
                                                     TIDE_TEXELS_INTS, &out);
     if (out) {
-        memset(out, 0, (size_t)wide * (size_t)dir.size[1] * 16u);
-        const int32_t chunk_across = 1 << s->shift[0], chunk_down = 1 << s->shift[1];
+        memset(out, 0, (size_t)width * (size_t)height * 16u);
+        const int64_t side[3] = {(int64_t)1 << s->shift[0], (int64_t)1 << s->shift[1], (int64_t)1 << s->shift[2]};
         for (uint32_t r = 0; r < dir.records; r++) {
-            int32_t x0, y0;
             const uint8_t *cells = span(packed ? NULL : heap, records[r].block, tide_grid_chunk_bytes(s));
-            if (!cells || !chunk_place(&records[r], s, dir.size[0], dir.size[1], &x0, &y0)) continue;
-            for (int32_t y = 0; y < chunk_down && y0 + y < dir.size[1]; y++) {
-                int32_t *row = (int32_t *)(void *)(out + (size_t)(y0 + y) * (size_t)wide * 16u);
-                const uint8_t *in = cells + (size_t)y * (size_t)chunk_across * s->cell;
-                for (int32_t x = 0; x < chunk_across && x0 + x < dir.size[0]; x++) {
-                    write(in + (size_t)x * s->cell, row + (size_t)(x0 + x) * stride);
+            if (!cells || (dims == 2u && records[r].chunk[2] != 0)) continue;
+            // The chunk's cells that are in the box: from[a] up to to[a] of its own, and where its first is in the box
+            int64_t from[3], to[3], first[3];
+            bool some = true;
+            for (uint32_t a = 0; a < 3u; a++) {
+                first[a] = (a < dims ? (int64_t)records[r].chunk[a] * side[a] : 0) - lo[a];
+                from[a] = first[a] < 0 ? -first[a] : 0;
+                to[a] = first[a] + side[a] > extent[a] ? extent[a] - first[a] : side[a];
+                some &= from[a] < to[a];
+            }
+            if (!some) continue;
+            for (int64_t z = from[2]; z < to[2]; z++) {
+                const int64_t layer = first[2] + z;
+                const size_t left = (size_t)(layer % across * wide), top = (size_t)(layer / across * extent[1]);
+                for (int64_t y = from[1]; y < to[1]; y++) {
+                    int32_t *row = (int32_t *)(void *)(out + ((top + (size_t)(first[1] + y)) * (size_t)width + left) * 16u);
+                    const uint8_t *in = cells + (size_t)((z << (s->shift[0] + s->shift[1])) + (y << s->shift[0])) * s->cell;
+                    for (int64_t x = from[0]; x < to[0]; x++) {
+                        write(in + (size_t)x * s->cell, row + (size_t)(first[0] + x) * stride);
+                    }
                 }
             }
         }
     }
-    size[0] = dir.size[0];
-    size[1] = dir.size[1];
+    for (uint32_t a = 0; a < dims; a++) {
+        info[dims + a] = (int32_t)lo[a];
+        info[2u * dims + a] = (int32_t)extent[a];
+    }
+    if (dims == 3u) info[9] = (int32_t)across;
     return slot;
 }
 

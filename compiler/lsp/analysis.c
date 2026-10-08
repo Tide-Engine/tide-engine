@@ -5886,8 +5886,8 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         return;
     }
     if (gpu && (t.kind == TY_GRID || t.kind == TY_TEXTURE)) {
-        // A Grid2's cells are read by their place there, with its size; one of colors or floats is sampled too
-        if (t.kind == TY_GRID && t.decl->dims == 2) item(c, "size", CK_PROPERTY, "int2", GRID_SIZE_FIELD_DOC, NULL);
+        // A grid's cells are read by their place there, with its size; a Grid2 of colors or floats is sampled too
+        if (t.kind == TY_GRID) item(c, "size", CK_PROPERTY, t.decl->dims == 3 ? "int3" : "int2", GRID_SIZE_FIELD_DOC, NULL);
         if (t.kind == TY_GRID && (t.decl->dims != 2 || (t.decl->fields.items[0].type.kind != TY_COLOR
                                                          && t.decl->fields.items[0].type.kind != TY_FLOAT))) return;
         const method_form *sample = t.kind == TY_TEXTURE ? &texture_calls[0]

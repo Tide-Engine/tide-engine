@@ -1,0 +1,50 @@
+// A grid's cells by their place: a Grid2's and a Grid3's, of one int and of
+// a struct of several pixels, with their sizes. The same text reads a grid
+// with a size and one with none: where its cells are in its texture is said
+// by the draw's ints.
+
+struct Voxel
+{
+    Color tint;
+    float3 glow;
+    int kind;
+}
+
+local singleton Art
+{
+    List<Vertex> corners;
+    List<int> faces;
+}
+
+local singleton Terrain
+{
+    Grid2<int> heights;
+    Grid2<Voxel> tiles = Grid2(8, 8);
+    Grid3<int> solid = Grid3(16, 16, 16);
+    Grid3<Voxel> voxels;
+}
+
+frag Flat(Vertex vertex, out Color color, Terrain world)
+{
+    int2 at = int2(int(vertex.uv.x * 8), int(vertex.uv.y * 8));
+    Voxel tile = world.tiles[at];
+    color = tile.tint * (world.heights[at.x - 4, at.y] / 8.0);
+    if (world.tiles.size.x == 0 || world.heights.size.y != 0) color = Color.black;
+}
+
+frag Deep(Vertex vertex, out Color color, Terrain world)
+{
+    int3 at = int3(int(vertex.uv.x * 16), int(vertex.uv.y * 16), world.solid.size.z - 1);
+    Voxel voxel = world.voxels[at.x, at.y, -3];
+    color = voxel.tint;
+    if (world.solid[at] == 0) color = Color(voxel.glow.x, voxel.glow.y, voxel.glow.z);
+    if (world.voxels.size.z != 0) color = Color.black;
+}
+
+view Show(Art art)
+{
+    Draw.Mesh(art.corners, art.faces, Flat);
+    Draw.Mesh(art.corners, art.faces, Deep);
+}
+
+scene Main { }
