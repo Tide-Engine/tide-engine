@@ -267,7 +267,7 @@ It's an error at the draw when its frag or vert takes a struct that nothing supp
 
 ## Lists and arrays
 
-A frag or a vert reads a list that's a field of what it takes: a component's, a singleton's, or the values a draw gives. It reads an element by its place, how many there are, and all of them with `foreach`:
+A frag or a vert reads a list that's a field of what it takes (a component's, a singleton's, or the values a draw gives) or a `List<byte>` [asset](./assets.md) by its name. It reads an element by its place, how many there are, and all of them with `foreach`:
 
 ```csharp
 struct Light
@@ -298,7 +298,7 @@ frag Lit(BoxVertex vertex, out Color color, Lights lights)
 - An element past the end, or before the start, is zeros, as it is on the CPU.
 - Elements are what the GPU has values of: numbers, bytes, vectors, colors, matrices, enums, bools, structs of those, and [arrays](#arrays) in them. Not text, longs, entities or other lists.
 - The GPU reads a list, and changes none: there's no `Add` there. A view or a system fills it.
-- It's read where the frag or vert takes it. Take an element into a local, `var light = lights.items[i];`, and pass that on to a function; the list itself isn't a value to keep or pass.
+- A local can name it, and a function can take it, as anywhere: see [Naming a list and passing it on](#naming-a-list-and-passing-it-on).
 - Each list a draw's code reads is one of its 8 textures, as that's how its numbers travel: an image of numbers, read by an element's place. A list that didn't change since the last frame isn't sent again.
 - A component's list is its entity's own, so entities with lists are drawn one by one, not all in one draw call. What many entities share belongs in a singleton, with each entity saying where its part starts.
 - The struct [`Draw.Instanced`](#instances-from-a-list) takes for each instance can't hold a list the code reads: a draw sends one list for all of them.
@@ -321,6 +321,7 @@ frag Tiles(BoxVertex vertex, out Color color, Board board)
 ```
 
 - A cell outside the grid is zeros. The grid is a field of what the frag or vert takes, or an [asset](./assets.md) by its name, and counts as one of the draw's 8 textures, once more if it's also sampled.
+- An asset's grid, and an asset's list, are read by name in the functions a frag or vert calls too.
 - A grid with no size on an axis isn't sent, and reads as zeros everywhere. A `Grid3` isn't read there yet.
 
 ### Maps and sets
@@ -353,7 +354,42 @@ frag Tiles(BoxVertex vertex, out Color color, Land land)
 - Read-only, as lists are: a view or a system fills the map. There's no `Get` there either, as it gives a value that may be missing: `TryGet` asks the same.
 - `TryGet`'s `out` argument is a local, `out var value` or a variable declared before.
 - A lookup reads a pixel or two of an index the engine sends beside the entries, however many keys the map has, so it costs about what reading two list elements does.
-- A map or a set is one of the draw's 8 textures, and isn't sent again while it doesn't change. The other rules are a list's: read where the frag or vert takes it, a component's is its entity's own, and none in an instance's struct.
+- A map or a set is one of the draw's 8 textures, and isn't sent again while it doesn't change. The other rules are a list's: a local can name one and a function can take one ([below](#naming-a-list-and-passing-it-on)), a component's is its entity's own, and none in an instance's struct.
+
+### Naming a list and passing it on
+
+A local can name a list or a grid, and a function can take one, so the code that goes through a list is written once:
+
+```csharp
+float Brightest(List<Light> lights, float3 at)
+{
+    mut var most = 0.0;
+    foreach (var light in lights)
+    {
+        most = Math.Max(most, 1 - Math.Length(light.position - at) / light.reach);
+    }
+    return most;
+}
+
+int Owner(Grid2<int> owner, float2 uv)
+{
+    return owner[int(uv.x * owner.size.x), int(uv.y * owner.size.y)];
+}
+
+frag Lit(BoxVertex vertex, out Color color, Lights lights, Board board)
+{
+    var items = lights.items;
+    var glow = Brightest(items, this.world);
+    color = Owner(board.owner, vertex.uv) == 1 ? Color(glow, 0, 0) : Color(0, 0, glow);
+}
+```
+
+- A function that takes a `List<T>` is the same function a system or a view calls: it compiles for both.
+- On the GPU the list isn't handed over as the code runs. Which list a name stands for is settled as the shader is written, and a function is written once for each list it's called with. It costs nothing while it runs, and it's why a name there is for one list, for good:
+  - A list's or a grid's local isn't `mut`, and it's given a list by its name: a field of what the frag or vert takes, an asset, another such local, or a parameter. Not one picked as the code runs, like `flag ? a.items : b.items`: read each under its own name, and pick between what was read.
+  - A function reads the list or grid it takes: no `mut` or `out`, and none is returned, made, or kept in a struct.
+- A function that takes a grid is the GPU's alone: frags, verts and the functions they call call it. On the CPU a grid's cells are read through its component or singleton, `board.owner[x, y]`. A grid's local is in a frag, a vert or such a function.
+- `Sample` still reads a grid or a texture where the frag or vert takes it, or an asset by its name, in the frag or vert itself.
 
 ### Arrays
 

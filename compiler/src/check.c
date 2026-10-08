@@ -56,6 +56,7 @@ typedef struct checker {
     const expr *resident_arg; // ...and one an extern function's Resident parameter takes: the one place a Resident field is read
     bool world_value_ok;     // ...and the name being checked is it
     bool constants_only;     // A constant expression is being checked (check_constant_expr)
+    bool grid_param;         // Resolving a function's parameter, which can be a grid: one code the GPU runs passes it
     bool assets_constant;    // ...a field's default, where an asset's name is read as a constant is
 } checker;
 
@@ -9871,7 +9872,10 @@ static void check_var(checker *c, stmt *s)
     }
 
     // A grid stays where it's made: a local would be a copy of every chunk
-    if (holds_grid(s->type)) {
+    // In code the GPU runs, a grid's local is a name for the grid, which shader.c follows: a frag, a vert, and a
+    // function that takes a grid, which only those call
+    const bool names_grid = s->type.kind == TY_GRID && s->value && (gpu_code(c) || (c->method && c->method->gpu_only));
+    if (holds_grid(s->type) && !names_grid) {
         const loc at = s->type_at.line ? s->type_at : s->value->at;
         if (s->type.kind == TY_GRID) diag_error(at, "a local can't hold a grid");
         else diag_error(at, "a local can't hold '" STR_FMT "': it has a grid in it", STR_ARG(s->type.decl->name));
@@ -11362,8 +11366,15 @@ static type method_type(const checker *c, const type_ref *r, const loc at, const
     const type t = resolve_type(c, r, is_return ? PLACE_RETURN : PLACE_FUNCTION, at);
     switch (t.kind) {
     case TY_GRID:
-        diag_error(at, "functions can't %s grids yet", is_return ? "return" : "take");
-        diag_note("change a grid's cells in the system that has its component or singleton");
+        if (!is_return && c->grid_param) return t;
+        if (is_return) {
+            diag_error(at, "functions can't return grids");
+            diag_note("a function takes a grid to read its cells, in code the GPU runs: change a grid's cells in the system "
+                      "that has its component or singleton");
+        } else {
+            diag_error(at, "this can't take a grid");
+            diag_note("a function or a method takes one to read its cells, in code the GPU runs");
+        }
         return T_ERR;
     case TY_ACTION:
         if (!is_return) return t;
@@ -11526,8 +11537,24 @@ static void check_signature(checker *c, decl *m)
         // `World world`: its caller's World, to read any entity's components through (a game's own type of
         // that name comes first, as for a system's)
         const bool world = str_eq_c(p->type_name, "World") && !find_type(c, p->type_name, p->type_at);
+        c->grid_param = !m->is_extern && !m->is_async && !m->is_operator && !m->is_interpolate && !m->is_audio && !m->takes_action;
         p->type = world ? (type){TY_WORLD, NULL} : method_type(c, type_ref_or_text(p->type_ref, p->type_name), p->type_qual_at, false);
+        c->grid_param = false;
         if (world) check_world_param(m, p, k);
+        if (p->type.kind == TY_GRID) { // Which grid it is, the GPU's code is written for: the CPU has no call that passes one
+            if (p->mode == PARAM_MUT) {
+                diag_error(p->type_at, "a function reads the cells of a grid it takes, and never changes them: '" STR_FMT "' can't be '%s'",
+                           STR_ARG(p->name), p->is_out ? "out" : "mut");
+                diag_note("change a grid's cells in the system that has its component or singleton");
+                p->type = T_ERR;
+            } else if (p->default_value) {
+                diag_error(p->name_at, "a grid a function takes has no default: the call names the one it reads");
+                p->type = T_ERR;
+            } else if (!m->gpu_only) {
+                m->gpu_only = true;
+                m->gpu_only_at = p->type_at;
+            }
+        }
         if (holds_render_resource(p->type)) {
             if (!m->render_resources) m->render_resources_at = p->type_at;
             m->render_resources = true;
@@ -15544,6 +15571,32 @@ static void check_io_calls(const checker *c)
 // can.
 // A function that plays sounds is local code's to call, as one that reads
 // Frame.dt is.
+// A function that takes a grid is written for the grid each call names, which
+// only the GPU's code is: a frag, a vert and the functions they call. So are
+// the functions that call one.
+static void check_gpu_only_calls(const checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            if (!site->to->gpu_only || site->from->gpu_only) continue;
+            if (site->from->kind != DECL_FUNCTION && site->from->kind != DECL_METHOD) continue;
+            site->from->gpu_only = true;
+            site->from->gpu_only_at = site->call->at;
+            changed = true;
+        }
+    }
+    for (int i = 0; i < c->calls.count; i++) {
+        const call_site *site = &c->calls.items[i];
+        if (!site->to->gpu_only || site->from->gpu_only || site->from->kind == DECL_SHADER) continue;
+        diag_error(site->call->at, "'" STR_FMT "' reads a grid it's passed, which only code the GPU runs does: a frag, a vert "
+                   "and the functions they call", STR_ARG(site->to->name));
+        diag_note_at(site->to->gpu_only_at, "it takes or passes the grid on line %d; here, read the cells through the grid's "
+                     "component or singleton, like 'board.cells[x, y]'", site->to->gpu_only_at.line);
+    }
+}
+
 static void check_audio_calls(const checker *c)
 {
     for (bool changed = true; changed;) {
@@ -16764,6 +16817,7 @@ bool check(program *prog)
     check_render_resource_calls(&c);
     check_io_calls(&c);
     check_frame_time_calls(&c);
+    check_gpu_only_calls(&c);
     check_audio_calls(&c);
     check_audio_bodies(&c);
     resolve_tasks(&c);

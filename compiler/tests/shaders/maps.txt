@@ -27,7 +27,7 @@ struct tt_Tile {
     float m_height;
     int m_cost;
 };
-struct tt_Entry_4Ground_6Tile_5 {
+struct tt_Entry_5Ground_7Tile_6 {
     int m_key;
     tt_Tile m_value;
 };
@@ -85,9 +85,9 @@ int tide_find1(int tide_key) {
     return -1;
 }
 
-tt_Entry_4Ground_6Tile_5 tide_list0(int tide_i) {
+tt_Entry_5Ground_7Tile_6 tide_list0(int tide_i) {
     if (tide_i < 0 || tide_i >= tide_v0.y) {
-        return tt_Entry_4Ground_6Tile_5(0, tt_Tile(vec4(0.0), 0.0, 0));
+        return tt_Entry_5Ground_7Tile_6(0, tt_Tile(vec4(0.0), 0.0, 0));
     }
     int tide_word = tide_i * 8;
     int tide_first = tide_word >> 2;
@@ -95,7 +95,7 @@ tt_Entry_4Ground_6Tile_5 tide_list0(int tide_i) {
     vec4 tide_p0 = intBitsToFloat(tide_q0);
     ivec4 tide_q1 = texelFetch(pixels0, ivec2((tide_first + 1) & 1023, (tide_first + 1) >> 10), 0);
     vec4 tide_p1 = intBitsToFloat(tide_q1);
-    return tt_Entry_4Ground_6Tile_5(tide_q1.y, tt_Tile(tide_p0, tide_p1.x, tide_q1.z));
+    return tt_Entry_5Ground_7Tile_6(tide_q1.y, tt_Tile(tide_p0, tide_p1.x, tide_q1.z));
 }
 
 int tide_find0(int tide_key) {
@@ -154,7 +154,7 @@ struct tt_Corner {
     vec3 m_position;
     vec2 m_uv;
 };
-struct tt_Entry_4int_6Color_5 {
+struct tt_Entry_5int_7Color_6 {
     int m_key;
     vec4 m_value;
 };
@@ -163,11 +163,11 @@ struct tt_Tile {
     float m_height;
     int m_cost;
 };
-struct tt_Entry_4Ground_6Tile_5 {
+struct tt_Entry_5Ground_7Tile_6 {
     int m_key;
     tt_Tile m_value;
 };
-struct tt_Entry_4byte_6float_5 {
+struct tt_Entry_5byte_7float_6 {
     int m_key;
     float m_value;
 };
@@ -190,16 +190,16 @@ int tide_xxh_end(uint h) {
 int tide_hash1(int v) {
     return tide_xxh_end(tide_xxh_word(0x165667B5u, v));
 }
-tt_Entry_4int_6Color_5 tide_list2(int tide_i) {
+tt_Entry_5int_7Color_6 tide_list2(int tide_i) {
     if (tide_i < 0 || tide_i >= tide_v1.y) {
-        return tt_Entry_4int_6Color_5(0, vec4(0.0));
+        return tt_Entry_5int_7Color_6(0, vec4(0.0));
     }
     int tide_word = tide_i * 8;
     int tide_first = tide_word >> 2;
     ivec4 tide_q0 = texelFetch(pixels2, ivec2((tide_first + 0) & 1023, (tide_first + 0) >> 10), 0);
     vec4 tide_p0 = intBitsToFloat(tide_q0);
     ivec4 tide_q1 = texelFetch(pixels2, ivec2((tide_first + 1) & 1023, (tide_first + 1) >> 10), 0);
-    return tt_Entry_4int_6Color_5(tide_q1.x, tide_p0);
+    return tt_Entry_5int_7Color_6(tide_q1.x, tide_p0);
 }
 
 int tide_find2(int tide_key) {
@@ -226,9 +226,9 @@ int tide_find2(int tide_key) {
     return -1;
 }
 
-tt_Entry_4Ground_6Tile_5 tide_list0(int tide_i) {
+tt_Entry_5Ground_7Tile_6 tide_list0(int tide_i) {
     if (tide_i < 0 || tide_i >= tide_v0.y) {
-        return tt_Entry_4Ground_6Tile_5(0, tt_Tile(vec4(0.0), 0.0, 0));
+        return tt_Entry_5Ground_7Tile_6(0, tt_Tile(vec4(0.0), 0.0, 0));
     }
     int tide_word = tide_i * 8;
     int tide_first = tide_word >> 2;
@@ -236,7 +236,7 @@ tt_Entry_4Ground_6Tile_5 tide_list0(int tide_i) {
     vec4 tide_p0 = intBitsToFloat(tide_q0);
     ivec4 tide_q1 = texelFetch(pixels0, ivec2((tide_first + 1) & 1023, (tide_first + 1) >> 10), 0);
     vec4 tide_p1 = intBitsToFloat(tide_q1);
-    return tt_Entry_4Ground_6Tile_5(tide_q1.y, tt_Tile(tide_p0, tide_p1.x, tide_q1.z));
+    return tt_Entry_5Ground_7Tile_6(tide_q1.y, tt_Tile(tide_p0, tide_p1.x, tide_q1.z));
 }
 
 int tide_find0(int tide_key) {
@@ -284,16 +284,20 @@ int tide_list3(int tide_i) {
     return tide_q0.x;
 }
 
-tt_Entry_4byte_6float_5 tide_list4(int tide_i) {
+float tf_Height_40(int t_ground) {
+    return tide_list0(tide_find0(t_ground)).m_value.m_height;
+}
+
+tt_Entry_5byte_7float_6 tide_list4(int tide_i) {
     if (tide_i < 0 || tide_i >= tide_v2.y) {
-        return tt_Entry_4byte_6float_5(0, 0.0);
+        return tt_Entry_5byte_7float_6(0, 0.0);
     }
     int tide_word = tide_i * 2;
     int tide_first = tide_word >> 2;
     ivec4 tide_r = texelFetch(pixels4, ivec2((tide_first + 0) & 1023, (tide_first + 0) >> 10), 0);
     ivec4 tide_q0 = ivec4(tide_r[tide_word & 3], tide_r[(tide_word & 3) + 1], 0, 0);
     vec4 tide_p0 = intBitsToFloat(tide_q0);
-    return tt_Entry_4byte_6float_5(tide_q0.y, tide_p0.x);
+    return tt_Entry_5byte_7float_6(tide_q0.y, tide_p0.x);
 }
 
 int tide_find4(int tide_key) {
@@ -327,7 +331,7 @@ void ts_Lit(tt_Corner t_corner, inout vec4 t_color) {
         t_sum = (t_sum + (t_water.m_tint * float(t_water.m_cost)));
     }
     for (int tide_k0 = 0; tide_k0 < tide_v0.y; tide_k0++) {
-        tt_Entry_4Ground_6Tile_5 t_entry = tide_list0(tide_k0);
+        tt_Entry_5Ground_7Tile_6 t_entry = tide_list0(tide_k0);
         if ((t_entry.m_key == 0)) {
             continue;
         }
@@ -339,6 +343,7 @@ void ts_Lit(tt_Corner t_corner, inout vec4 t_color) {
             t_sum.r = (t_sum.r + 0.25);
         }
     }
+    t_sum.g = (t_sum.g + tf_Height_40(1));
     tt_Tile t_found = tt_Tile(vec4(0.5, 0.5, 0.5, 1.0), 0.0, 1);
     bool t_there = tide_try0(0, t_found);
     t_sum.b = (t_sum.b + (((tide_list4(tide_find4((int(tide_v0.x) & 255))).m_value * float(tide_v1.y)) + float(tide_v0.w)) + float(tide_v1.w)));
@@ -387,15 +392,15 @@ struct tt_Tile {
     m_height: f32,
     m_cost: i32,
 }
-struct tt_Entry_4Ground_6Tile_5 {
+struct tt_Entry_5Ground_7Tile_6 {
     m_key: i32,
     m_value: tt_Tile,
 }
-struct tt_Entry_4int_6Color_5 {
+struct tt_Entry_5int_7Color_6 {
     m_key: i32,
     m_value: vec4f,
 }
-struct tt_Entry_4byte_6float_5 {
+struct tt_Entry_5byte_7float_6 {
     m_key: i32,
     m_value: f32,
 }
@@ -453,9 +458,9 @@ fn tide_find1(tide_key: i32) -> i32 {
     return -1;
 }
 
-fn tide_list0(tide_i: i32) -> tt_Entry_4Ground_6Tile_5 {
+fn tide_list0(tide_i: i32) -> tt_Entry_5Ground_7Tile_6 {
     if (tide_i < 0 || tide_i >= tide_block.tide_v0.y) {
-        return tt_Entry_4Ground_6Tile_5();
+        return tt_Entry_5Ground_7Tile_6();
     }
     let tide_word = tide_i * 8;
     let tide_first = tide_word >> 2u;
@@ -463,7 +468,7 @@ fn tide_list0(tide_i: i32) -> tt_Entry_4Ground_6Tile_5 {
     let tide_p0 = bitcast<vec4f>(tide_q0);
     let tide_q1 = textureLoad(pixels0, vec2i((tide_first + 1) & 1023, (tide_first + 1) >> 10u), 0);
     let tide_p1 = bitcast<vec4f>(tide_q1);
-    return tt_Entry_4Ground_6Tile_5(tide_q1.y, tt_Tile(tide_p0, tide_p1.x, tide_q1.z));
+    return tt_Entry_5Ground_7Tile_6(tide_q1.y, tt_Tile(tide_p0, tide_p1.x, tide_q1.z));
 }
 
 fn tide_find0(tide_key: i32) -> i32 {
@@ -496,16 +501,16 @@ fn ts_Raise(t_corner: ptr<function, tt_Corner>) {
     }
 }
 
-fn tide_list2(tide_i: i32) -> tt_Entry_4int_6Color_5 {
+fn tide_list2(tide_i: i32) -> tt_Entry_5int_7Color_6 {
     if (tide_i < 0 || tide_i >= tide_block.tide_v1.y) {
-        return tt_Entry_4int_6Color_5();
+        return tt_Entry_5int_7Color_6();
     }
     let tide_word = tide_i * 8;
     let tide_first = tide_word >> 2u;
     let tide_q0 = textureLoad(pixels2, vec2i((tide_first + 0) & 1023, (tide_first + 0) >> 10u), 0);
     let tide_p0 = bitcast<vec4f>(tide_q0);
     let tide_q1 = textureLoad(pixels2, vec2i((tide_first + 1) & 1023, (tide_first + 1) >> 10u), 0);
-    return tt_Entry_4int_6Color_5(tide_q1.x, tide_p0);
+    return tt_Entry_5int_7Color_6(tide_q1.x, tide_p0);
 }
 
 fn tide_find2(tide_key: i32) -> i32 {
@@ -553,16 +558,20 @@ fn tide_list3(tide_i: i32) -> i32 {
     return tide_q0.x;
 }
 
-fn tide_list4(tide_i: i32) -> tt_Entry_4byte_6float_5 {
+fn tf_Height_40(t_ground: i32) -> f32 {
+    return tide_list0(tide_find0(t_ground)).m_value.m_height;
+}
+
+fn tide_list4(tide_i: i32) -> tt_Entry_5byte_7float_6 {
     if (tide_i < 0 || tide_i >= tide_block.tide_v2.y) {
-        return tt_Entry_4byte_6float_5();
+        return tt_Entry_5byte_7float_6();
     }
     let tide_word = tide_i * 2;
     let tide_first = tide_word >> 2u;
     let tide_r = textureLoad(pixels4, vec2i((tide_first + 0) & 1023, (tide_first + 0) >> 10u), 0);
     let tide_q0 = vec4i(tide_r[tide_word & 3], tide_r[(tide_word & 3) + 1], 0, 0);
     let tide_p0 = bitcast<vec4f>(tide_q0);
-    return tt_Entry_4byte_6float_5(tide_q0.y, tide_p0.x);
+    return tt_Entry_5byte_7float_6(tide_q0.y, tide_p0.x);
 }
 
 fn tide_find4(tide_key: i32) -> i32 {
@@ -596,7 +605,7 @@ fn ts_Lit(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
         t_sum = (t_sum + (t_water.m_tint * f32(t_water.m_cost)));
     }
     for (var tide_k0: i32 = 0; tide_k0 < tide_block.tide_v0.y; tide_k0++) {
-        var t_entry: tt_Entry_4Ground_6Tile_5 = tide_list0(tide_k0);
+        var t_entry: tt_Entry_5Ground_7Tile_6 = tide_list0(tide_k0);
         if ((t_entry.m_key == 0)) {
             continue;
         }
@@ -608,6 +617,7 @@ fn ts_Lit(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
             t_sum.r = (t_sum.r + 0.25);
         }
     }
+    t_sum.g = (t_sum.g + tf_Height_40(1));
     var t_found: tt_Tile = tt_Tile(vec4f(0.5, 0.5, 0.5, 1.0), f32(), 1);
     var t_there: bool = tide_try0(0, &t_found);
     t_sum.b = (t_sum.b + (((tide_list4(tide_find4((i32(tide_block.tide_v0.x) & 255))).m_value * f32(tide_block.tide_v1.y)) + f32(tide_block.tide_v0.w)) + f32(tide_block.tide_v1.w)));
