@@ -1,0 +1,52 @@
+settings { title = "A model from a file"; }
+
+local scene Main { }
+
+// What the file fills, by these names: where each corner is, which way its
+// face looks, and the color of the part it's in.
+struct Corner
+{
+    float3 position;
+    float3 normal;
+    Color color;
+}
+
+// A glTF: five meshes in it, a color each, placed by its nodes. Here it's one mesh.
+asset Mesh<Corner> rocket = "art/rocket.glb";
+
+local singleton Stand
+{
+    float turn = 2.4;
+    float lightAngle = 0.8;
+    bool spin = true;
+}
+
+// The engine has no lighting, so this is ours: the file's normal against a light.
+frag Lit(Corner corner, out Color color, Instance instance, Stand stand)
+{
+    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 toLight = Math.Normalize(float3(Math.Cos(stand.lightAngle), 0.6, -Math.Sin(stand.lightAngle)));
+    color = corner.color * (0.25 + 0.75 * Math.Max(Math.Dot(normal, toLight), 0));
+    color.a = 1;
+}
+
+view Show(mut Stand stand)
+{
+    if (stand.spin) stand.turn += Math.Min(Frame.dt, 0.05) * 0.6;
+    if (stand.turn > Math.TAU) stand.turn -= Math.TAU;
+
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float3(0, 0.7, -7), quaternion.identity, 45);
+    var turned = quaternion.AxisAngle(float3(0, 1, 0), stand.turn);
+    // The mesh where its vertices and its indices would go
+    Draw.Mesh(rocket, float4x4.TRS(float3(0, 1.2, 0), turned, float3(0.85)), Lit);
+
+    GUI.SetTheme(GUITheme { radius = 6 });
+    GUILayout.Area(Rect(12, Screen.height - 124, Screen.width - 24, 112))
+    {
+        // Its two lists are there to read, like any list
+        GUILayout.Label(rocket.vertices.count + " vertices, " + rocket.indices.count / 3 + " triangles");
+        GUILayout.Slider("Light", stand.lightAngle, 0, Math.TAU);
+        GUILayout.Toggle("Spin", stand.spin);
+    }
+}

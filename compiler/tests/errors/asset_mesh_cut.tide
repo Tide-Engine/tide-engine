@@ -1,0 +1,12 @@
+// expect: '../e2e/assets/meshes/bad/cut.glb' isn't a .glb that reads: it says it's longer than it is
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+asset Mesh<Corner> tree = "../e2e/assets/meshes/bad/cut.glb";
+
+scene Main
+{
+}

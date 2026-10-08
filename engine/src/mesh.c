@@ -436,6 +436,9 @@ static uint64_t list_version(const tide_list l, const uint32_t size)
     uint64_t h = tide_hash_more(TIDE_HASH_START, &count, sizeof count);
     if (count <= 0) return tide_hash_end(h);
     if (l.at >> 30 == TIDE_IN_SCRATCH) {
+        // A mesh of the pack's says what's in it (tide_pack_mesh): its file's hash, with no vertex read
+        uint64_t packed;
+        if (tide_pack_list_version(l, size, &packed)) return tide_hash_end(tide_hash_more(h, &packed, sizeof packed));
         return tide_hash_end(tide_hash_more(h, tide_list_at(l, 0, size), (size_t)count * size));
     }
     tide_heap *heap = (tide_heap *)(uintptr_t)tide_heap_read(l.at >> 30);

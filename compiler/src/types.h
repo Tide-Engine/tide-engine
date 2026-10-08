@@ -10,14 +10,16 @@ bool builtin_type_named(str name, type *out);
 // What a built-in type that takes types accepts for each: the one table the
 // parser (what's in the <>, and what a syntax error says of it) and the
 // checker (what may go there, and where one can be inside another:
-// resolve_generic in check.c) read. List<T>, Map<K, V>, Set<K>, Grid2<T> and
-// Grid3<T> take theirs in <>; `T?` and `fails E` take theirs around them.
+// resolve_generic in check.c) read. List<T>, Map<K, V>, Set<K>, Grid2<T>,
+// Grid3<T> and Mesh<V> take theirs in <>; `T?` and `fails E` take theirs
+// around them.
 typedef enum generic_arg {
     GENERIC_ELEMENT, // A list's element or a map's value: any value, containers among them, but a grid (which is never copied)
     GENERIC_KEY,     // A map's or set's key: a value with a hash and ==, of a fixed size (no containers, no text in structs)
     GENERIC_CELL,    // A grid's cell: a plain value, side by side with the others in its chunk (no containers, no text)
     GENERIC_VALUE,   // What a T? holds: any value a function can return
     GENERIC_ERROR,   // What a function fails with: a value, never a T?
+    GENERIC_VERTEX,  // A mesh's vertex: a struct of the game's with a float3 position, or Vertex3 (resolve_mesh in check.c)
 } generic_arg;
 
 typedef struct generic_form {
@@ -29,7 +31,7 @@ typedef struct generic_form {
     const char *close;    // ...and what closes it
 } generic_form;
 
-// The form a name takes types in <> with, or NULL: List, Map, Set, Grid2, Grid3.
+// The form a name takes types in <> with, or NULL: List, Map, Set, Grid2, Grid3, Mesh.
 const generic_form *generic_form_named(str name);
 
 // The forms around a type: T? and `fails E`.

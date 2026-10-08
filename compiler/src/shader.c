@@ -356,6 +356,7 @@ static bool type_fits(emit *em, const type t, const loc at)
     switch (t.kind) {
     case TY_LONG: why = "the GPU's ints are 32 bits: convert it with int(x) before it gets there"; break;
     case TY_STRING: why = "text is the CPU's"; break;
+    case TY_MESH: why = "a Mesh is drawn, 'Draw.Mesh(mesh, transform, ...)', which sends the GPU its vertices and its triangles"; break;
     case TY_LIST:
         refuse(em, at, "a list in code the GPU runs is one the frag or vert was given, by a name: it can't be made, changed, "
                        "returned, picked between or kept in a struct there");
@@ -1844,6 +1845,11 @@ static bool data_of(emit *em, const expr *e, data_ref *d)
     } else if (e->kind == E_MEMBER && e->field && e->object->kind == E_NAME && e->object->bind == BIND_PARAM
                && is_bound(em, e->object->param) && is_struct_like(e->object->param->type)) {
         p = e->object->param;
+    } else if (e->kind == E_MEMBER && e->object->type.kind == TY_MESH) { // tree.vertices, tree.indices
+        refuse(em, e->at, "a Mesh's vertices and indices aren't read as lists in code the GPU runs: the draw sends them, as the "
+                          "mesh they are");
+        diag_note("what a frag or a vert needs of them, copy into a list of a singleton it takes, which it reads by that name");
+        return true;
     } else {
         return false;
     }

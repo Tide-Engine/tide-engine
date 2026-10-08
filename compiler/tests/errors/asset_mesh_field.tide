@@ -1,0 +1,15 @@
+// expect: a field can't be a Mesh: one is an asset's, the pack's own, which code reads by the asset's name and nothing keeps
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+component Prop
+{
+    Mesh<Corner> model;
+}
+
+scene Main
+{
+}

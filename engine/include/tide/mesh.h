@@ -24,6 +24,15 @@
 // GPU. So a big grid a frame changes a little of costs that little. A grid
 // with no size on an axis is no texture: the mesh draws with its colors alone.
 
+// A Mesh<V> as Tide has one: its vertices, a list of the game's vertex struct,
+// and its indices, a list of ints, three a triangle. Both are the pack's (a
+// mesh is an asset's: tide/pack.h), so nothing writes them, and a draw takes
+// them as it takes any two lists.
+typedef struct tide_mesh_lists {
+    tide_list vertices;
+    tide_list indices;
+} tide_mesh_lists;
+
 // The texture a grid is: Tide's conversion of a Grid2<Color> or a
 // Grid2<float> to a Texture. It names the grid, by where its directory is
 // and how its cells are laid out, and is sampled as `sampling` says

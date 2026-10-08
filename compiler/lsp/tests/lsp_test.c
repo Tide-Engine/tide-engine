@@ -8890,3 +8890,108 @@ TIDE_TEST(lsp_asset_paths)
     TIDE_CHECK(asset_path_is_glob("art/*.png", 9) && asset_path_is_glob("a?.png", 6) && !asset_path_is_glob("art/hero.png", 12));
     TIDE_CHECK(asset_path_is_url("https://example.com/x", 21) && !asset_path_is_url("http/x", 6));
 }
+
+// Mesh assets: what the checker says of a file, the hover that says what a
+// file has, mesh files in a Mesh's path, its two lists after a dot, and the
+// form of a mesh draw that takes one where its vertices and indices go.
+TIDE_TEST(lsp_asset_meshes)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_mesh");
+    make_folder("lsp_mesh/art");
+    static const char main_file[] = "struct Corner\n"
+                                    "{\n"
+                                    "    float3 position;\n"
+                                    "    float3 normal;\n"
+                                    "}\n"
+                                    "asset Mesh<Corner> tree = \"art/tree.obj\";\n"
+                                    "asset List<Mesh<Corner>> props = \"art/tree.obj\";\n"
+                                    "scene Main { }\n"
+                                    "frag Paint(Corner corner, out Color color)\n"
+                                    "{\n"
+                                    "    color = Color.white;\n"
+                                    "}\n"
+                                    "view Show()\n"
+                                    "{\n"
+                                    "    Draw.Mesh(tree, float4x4.identity, Paint);\n"
+                                    "    var count = tree.vertices.count;\n"
+                                    "    Debug.Log(\"\" + count);\n"
+                                    "}\n";
+    write_file("lsp_mesh/main.tide", main_file);
+    write_file("lsp_mesh/art/tree.obj", "v 0 0 0\nv 1 0 0\nv 0 1 0\nvn 0 0 1\nf 1//1 2//1 3//1\n");
+    write_file("lsp_mesh/art/rock.glb", "not one, but named as one");
+    write_file("lsp_mesh/art/hill.gltf", "{}");
+    write_file("lsp_mesh/art/other.txt", "text");
+    char root[700], uri_main[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_mesh", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_mesh/main.tide", dir);
+
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    open_uri(uri_main, main_file);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    // The asset says what it is, and what its file has
+    const char *hover = request_at(uri_main, "textDocument/hover", 5, 20, "");
+    TIDE_CHECK(has(hover, "asset Mesh<Corner> tree") && has(hover, "as one mesh of its vertex struct"));
+    TIDE_CHECK(has(hover, "The file has 3 vertices and 1 triangles, with normals, no uvs, no colors (white) and no tangents."));
+    hover = request_at(uri_main, "textDocument/hover", 14, 15, ""); // ...where a draw names it too
+    TIDE_CHECK(has(hover, "asset Mesh<Corner> tree"));
+    // The struct in its <> is the game's, as a list's element is
+    hover = request_at(uri_main, "textDocument/hover", 5, 13, "");
+    TIDE_CHECK(has(hover, "struct Corner"));
+    hover = request_at(uri_main, "textDocument/hover", 5, 7, "");
+    TIDE_CHECK(has(hover, "An asset's mesh"));
+
+    // Its path: mesh files, and nothing else
+    const char *completion = request_at(uri_main, "textDocument/completion", 5, 31, "");
+    TIDE_CHECK(offers(completion, "tree.obj") && offers(completion, "rock.glb") && offers(completion, "hill.gltf"));
+    TIDE_CHECK(!offers(completion, "other.txt") && !offers(completion, "*.glb"));
+    completion = request_at(uri_main, "textDocument/completion", 6, 38, ""); // A list's: globs too
+    TIDE_CHECK(offers(completion, "tree.obj") && offers(completion, "*.glb") && offers(completion, "**/*.glb"));
+
+    // After its dot: its two lists
+    static char dotted[sizeof main_file + 32];
+    snprintf(dotted, sizeof dotted, "%.*s    tree.\n}\n", (int)(strstr(main_file, "    var count") - main_file), main_file);
+    open_uri(uri_main, dotted);
+    completion = request_at(uri_main, "textDocument/completion", 15, 9, "");
+    TIDE_CHECK(offers(completion, "vertices") && offers(completion, "indices") && !offers(completion, "count"));
+
+    // A draw that's given one: the Mesh, then its transform
+    static char drawing[sizeof main_file + 64];
+    snprintf(drawing, sizeof drawing, "%.*s    Draw.Mesh(tree, \n}\n", (int)(strstr(main_file, "    Draw.Mesh") - main_file), main_file);
+    open_uri(uri_main, drawing);
+    const char *help = request_at(uri_main, "textDocument/signatureHelp", 14, 20, "");
+    TIDE_CHECK(has(help, "Draw.Mesh(mesh, transform[, texture[, filter[, wrap]]][, vert][, frag][, values])"));
+    TIDE_CHECK(has(help, "\"activeParameter\":1") && has(help, "A `Mesh<V>`: an asset's vertices and its indices as one"));
+    snprintf(drawing, sizeof drawing, "%.*s    Draw.Instanced(tree, \n}\n", (int)(strstr(main_file, "    Draw.Mesh") - main_file), main_file);
+    open_uri(uri_main, drawing);
+    help = request_at(uri_main, "textDocument/signatureHelp", 14, 25, "");
+    TIDE_CHECK(has(help, "Draw.Instanced(mesh, instances[, texture") && has(help, "\"activeParameter\":1"));
+
+    // A file that's no mesh, and one a field tries to keep: the checker's words, at the path and the type
+    static const char wrong[] = "struct Corner\n{\n    float3 position;\n}\n"
+                                "asset Mesh<Corner> rock = \"art/rock.glb\";\n"
+                                "asset Mesh<Corner> hill = \"art/hill.gltf\";\n"
+                                "asset Mesh<Corner> text = \"art/other.txt\";\n"
+                                "local singleton Kept\n{\n    Mesh<Corner> one;\n}\n"
+                                "scene Main { }\n";
+    open_uri(uri_main, wrong);
+    TIDE_CHECK(has(last_sent(), "'art/rock.glb' isn't a mesh file Tide reads"));
+    TIDE_CHECK(has(last_sent(), "'art/hill.gltf' is glTF of no version, and Tide reads glTF 2.0"));
+    TIDE_CHECK(has(last_sent(), "'art/other.txt' isn't a mesh file Tide reads"));
+    TIDE_CHECK(has(last_sent(), "a field can't be a Mesh"));
+
+    remove_game_file("lsp_mesh/main.tide");
+    remove_game_file("lsp_mesh/art/tree.obj");
+    remove_game_file("lsp_mesh/art/rock.glb");
+    remove_game_file("lsp_mesh/art/hill.gltf");
+    remove_game_file("lsp_mesh/art/other.txt");
+    remove_game_file("lsp_mesh/.tide/assets.sha256");
+    remove_game_file("lsp_mesh/.tide/.gitignore");
+    remove_folder("lsp_mesh/.tide");
+    remove_folder("lsp_mesh/art");
+    remove_folder("lsp_mesh");
+    clear_sent();
+    lsp_free(&server);
+}

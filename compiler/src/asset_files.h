@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "common.h"
+#include "mesh_files.h"
 #include "tide/png.h"
 
 // The files an `asset` declaration resolves to (docs/spec.md, Assets): found
@@ -22,6 +23,9 @@ typedef enum asset_kind {
     // nx, py, ny, pz, nz), decoded: its items are the six in that order
     ASSET_CUBEMAP,
     ASSET_CLIP,    // Clip: a WAV, checked here and kept as it is; the engine decodes it as it's first played
+    // Mesh<V>: a glTF (.glb, .gltf) or an OBJ, read here as one mesh (mesh_files.h), which codegen lays out as
+    // the declaration's vertex struct
+    ASSET_MESH,
 } asset_kind;
 
 typedef struct asset_match {
@@ -31,6 +35,9 @@ typedef struct asset_match {
     size_t size;
     uint8_t hash[32];     // SHA-256 of the bytes
     tide_png_image image; // ASSET_GRID and ASSET_TEXTURE: its pixels
+    mesh_file mesh;       // ASSET_MESH: its vertices and triangles, which stay until the file changes, as its bytes do
+    const char **sides;   // ...and the files beside a .gltf that it was read with, its buffers': absolute paths
+    int side_count;
 } asset_match;
 
 typedef struct asset_value {
@@ -51,7 +58,8 @@ asset_value *asset_resolve(const char *declaring, str path, asset_kind kind, boo
 
 // The folders and files a resolved value depends on, for whoever watches
 // them: each file's path, and a glob's folder (ending in '/'). Calls `found`
-// with each, once.
+// with each, once. What a file was read with beside it (a .gltf's buffers) is
+// its value's to say: asset_match.sides.
 typedef void (*asset_path_fn)(void *user, const char *path);
 void asset_watched(const char *declaring, str path, asset_path_fn found, void *user);
 

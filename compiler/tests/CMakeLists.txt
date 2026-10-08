@@ -73,6 +73,7 @@ tide_e2e_test(assets) # Files a game is built with, read by name: each type, glo
 tide_e2e_test(assets_plain) # ...and the same game with none: its world is the same bytes
 tide_e2e_test(asset_textures) # Texture assets, and [Filter] and [Wrap] on a texture's declaration
 tide_e2e_test(asset_defaults) # A field's default that names an asset: the match's text and bytes, this machine's images and clips
+tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct of the game's, drawn and read by the match
 tide_e2e_test(audio) # Clip assets, and Audio.Play from views, local handlers and the functions they call
 tide_e2e_test(sound) # Sound fields the frame names to the mixer while they play, and the listener
 tide_e2e_test(buses) # A game's [Bus] enum, a Sound's bus and Audio.SetVolume
@@ -383,3 +384,13 @@ foreach(source IN LISTS TIDE_SHADER_TESTS)
             "-DOPTION=--shaders"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_schedule.cmake")
 endforeach()
+
+# The mesh files' reader on its own (src/mesh_files.c): the numbers it reads,
+# what it refuses, and that a file cut or wrong anywhere is never read past
+# its bytes. The language server reads a game's files at every keystroke.
+if(TARGET tidec_core)
+    add_executable(tidec_mesh_files_tests mesh_files_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_mesh_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(tidec_mesh_files_tests PRIVATE tide tidec_core) # The engine for the harness's clock
+    add_test(NAME tidec_mesh_files COMMAND tidec_mesh_files_tests)
+endif()

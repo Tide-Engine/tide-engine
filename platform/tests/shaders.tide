@@ -3887,13 +3887,88 @@ view Rolls(Art art, mut Dice dice)
     }
 }
 
+// Meshes from files (pass 20): a .glb and an .obj, each a square whose corners
+// are red, green, blue and white, as the built-in vertex, as vertex structs of
+// the game's, alone and as a glob's list and map. The files are right-handed,
+// their fronts wound the other way than Tide's: drawn with nothing said, a
+// file's front is what's seen, and its picture isn't mirrored.
+struct ModelCorner
+{
+    float3 position;
+    float3 normal;
+    Color color;
+    float glow = 0.5; // No file has one: every vertex gets the default
+}
+
+struct ModelCard
+{
+    float3 position;
+    float2 uv;
+}
+
+const string QUAD_FILE = "../../compiler/tests/e2e/assets/meshes/quad.glb";
+
+asset Mesh<Vertex3> modelQuad = QUAD_FILE;
+asset Mesh<ModelCorner> modelLit = QUAD_FILE;
+asset Mesh<ModelCard> modelCard = QUAD_FILE;
+asset Mesh<Vertex3> modelBox = "../../compiler/tests/e2e/assets/meshes/box.obj";
+asset List<Mesh<Vertex3>> modelList = "../../compiler/tests/e2e/assets/meshes/*.glb"; // pair.glb, quad.glb
+asset Map<string, Mesh<Vertex3>> modelMap = "../../compiler/tests/e2e/assets/meshes/*.glb";
+
+local singleton Shelf
+{
+    List<float4x4> places;
+}
+
+frag ModelLook(ModelCorner corner, out Color color)
+{
+    color = Color(corner.glow, corner.normal.z, corner.color.b);
+}
+
+// Where a file's square goes: its middle at pixel (x, y) of the window, 16
+// pixels across, turned to face the camera, or left as the file has it, which
+// is with its back to the camera.
+float4x4 ModelPlace(float x, float y, bool facing, float3 middle)
+{
+    var turn = facing ? quaternion.AxisAngle(float3(0, 1, 0), Math.PI) : quaternion.identity;
+    return Math.Mul(float4x4.TRS(float3(x - 128, 128 - y, 50), turn, float3(16)), float4x4.Translate(-middle));
+}
+
+view Models(Art art, mut Shelf shelf)
+{
+    if (art.targetPass != 20) return;
+    var quad = float3(-10.5, 20.5, 30); // The middle of quad.glb's square, where its node puts it
+    var box = float3(-0.5, 0.5, 0);     // ...and of box.obj's
+    Draw.Clear(Color.black);
+    Draw.SetCamera(float4x4.identity, float4x4.Ortho(Screen.width, Screen.height, 0.1, 100));
+    Draw.Mesh(modelQuad, ModelPlace(24, 24, true, quad));  // Its front: drawn, a color at each corner
+    Draw.Mesh(modelQuad, ModelPlace(56, 24, false, quad)); // Its back: not drawn
+    Draw.Cull(Cull.None)
+    {
+        Draw.Mesh(modelQuad, ModelPlace(88, 24, false, quad)); // ...unless both sides are: mirrored
+    }
+    Draw.Mesh(modelLit, ModelPlace(120, 24, true, quad), ModelLook);            // A vertex of the game's, through a frag
+    Draw.Mesh(modelCard, ModelPlace(152, 24, true, quad), art.four, Filter.Point); // Its uvs: the texture as it is
+    Draw.Mesh(modelBox, ModelPlace(184, 24, true, box));                        // An OBJ, the same square
+    if (shelf.places.count == 0)
+    {
+        shelf.places.Add(ModelPlace(24, 56, true, quad));
+        shelf.places.Add(ModelPlace(56, 56, true, quad));
+    }
+    Draw.Instanced(modelQuad, shelf.places);
+    Draw.Mesh(modelList[1], ModelPlace(88, 56, true, quad));
+    Draw.Mesh(modelMap[QUAD_FILE], ModelPlace(120, 56, true, quad));
+    Draw.Mesh(modelQuad.vertices, modelQuad.indices, ModelPlace(152, 56, true, quad)); // By its two lists
+    Draw.Mesh(modelMap["no/such.glb"], ModelPlace(184, 56, true, quad));               // No such key: nothing drawn
+}
+
 // shaders.c requests independent full-window checks after the existing grid.
 // Resource descriptors are supplied by C, without choosing a Tide lifetime API.
 [After(Manual)]
 view Targets(mut Art art)
 {
     // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images', 11 Outputs', 12 Values', 13 Heights', 14 Mipmaps',
-    // 15 Alphas', 16 Raws', 17 the cubes', 18 the lists' and 19 the rolls'
+    // 15 Alphas', 16 Raws', 17 the cubes', 18 the lists', 19 the rolls' and 20 the models'
     if (art.targetPass == 0 || art.targetPass >= 6) return;
     if (art.targetPass >= 4)
     {

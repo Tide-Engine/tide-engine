@@ -1149,6 +1149,51 @@ static type list_of(program *prog, const type element)
 }
 
 // ---------------------------------------------------------------------------
+// Meshes: Mesh<V>, an asset's vertices and its indices (docs/spec.md, Assets, Meshes)
+
+// Mesh<V>'s vertex type.
+static type mesh_vertex(const type t)
+{
+    return t.decl->fields.items[0].type;
+}
+
+// Mesh<V> for the vertex struct `vertex`: one declaration for each, so two
+// meshes of one vertex are the same type.
+static type mesh_of(program *prog, const type vertex)
+{
+    for (int i = 0; i < prog->meshes.count; i++) {
+        const type t = prog->meshes.items[i]->fields.items[0].type;
+        if (t.kind == vertex.kind && t.decl == vertex.decl) return (type){TY_MESH, prog->meshes.items[i]};
+    }
+    decl *d = NEW(decl);
+    d->kind = DECL_MESH;
+    d->builtin = true;
+    sb name = {0};
+    sb_printf(&name, "Mesh<%s>", type_name(vertex));
+    d->name = (str){name.data, (int)name.len};
+    const field item = {str_from("vertex"), str_from(""), {0, 0, 0}, vertex, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
+    vec_push(d->fields, item);
+    d->index = prog->meshes.count;
+    vec_push(prog->meshes, d);
+    return (type){TY_MESH, d};
+}
+
+// Whether a value of type `t` is a Mesh, or holds one: a list or a map of
+// them, an entry of such a map, a T? of one. It's the pack's own memory by
+// two handles, which a frame reads and passes on, and nothing keeps: a pack
+// is loaded again between frames (tide run does when a file is saved).
+static bool holds_mesh(const type t)
+{
+    if (t.kind == TY_MESH) return true;
+    if (t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_STRUCT && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE) return false;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        const type f = t.decl->fields.items[i].type;
+        if (f.kind == TY_MESH || ((f.kind == TY_LIST || f.kind == TY_MAP) && holds_mesh(f))) return true;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
 // Maps and sets
 
 // Map<K, V>'s key and value types; a Set<K>'s key.
@@ -1399,6 +1444,11 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
         diag_error(at, "a list or a map can't hold a Clip, including inside a struct");
         diag_note("but for an asset's: 'asset List<Clip> hits = \"sfx/hit_*.wav\";'");
         return false;
+    case TY_MESH: // An asset's glob of mesh files
+        if (asset) return true;
+        diag_error(at, "a %s can't hold a Mesh: one is the pack's own, which nothing keeps", key ? "map" : "list");
+        diag_note("but for an asset's: 'asset List<%s> props = \"art/props/*.glb\";'", type_name(t));
+        return false;
     case TY_GRID:
         if (asset) return true;
         diag_error(at, "a %s can't hold grids", key ? "map" : "list");
@@ -1573,12 +1623,37 @@ static type resolve_generic(const checker *c, const type_ref *r, const loc at, c
     return grid_of(c->prog, args[0], r->name.ptr[4] - '0');
 }
 
+// Mesh<V>: an asset's vertices and its indices, with V the vertex struct the
+// file fills. It's the pack's own, so it's an asset's type, alone or as a
+// glob's list or map, and the type of what passes one on within a frame: a
+// local, a loop's variable, a function's parameter or what it returns.
+// Nothing keeps one, so it's no field's type, and no constant's.
+static type resolve_mesh(const checker *c, const type_ref *r, const type_place place, const loc at)
+{
+    const type vertex = resolve_type(c, r->args.items[0], ARG_ELEMENT, at);
+    if (vertex.kind == TY_ERROR) return T_ERR;
+    if (vertex.kind != TY_STRUCT) {
+        diag_error(at, "a Mesh's vertices are a struct with a 'float3 position', like 'Mesh<Vertex3>', not %s", type_name(vertex));
+        return T_ERR;
+    }
+    if (place == PLACE_FIELD || place == PLACE_CONST || place == PLACE_IS) {
+        diag_error(at, "%s can't be a Mesh: one is an asset's, the pack's own, which code reads by the asset's name and nothing keeps",
+                   place == PLACE_FIELD ? "a field" : place == PLACE_CONST ? "a constant" : "a pattern");
+        diag_note("declare it as an asset, 'asset Mesh<" STR_FMT "> tree = \"art/tree.glb\";'; to say which of several a thing has, "
+                  "keep its place in an 'asset List<Mesh<" STR_FMT ">>', or its key in an 'asset Map<string, Mesh<" STR_FMT ">>'",
+                  STR_ARG(vertex.decl->name), STR_ARG(vertex.decl->name), STR_ARG(vertex.decl->name));
+        return T_ERR;
+    }
+    return mesh_of(c->prog, vertex);
+}
+
 // The type `r` names, written at `place`, with errors at `at` (where the
 // type starts, or for what's in <>, where the whole type starts). T_ERR for
 // one that isn't a type, which is said. What comes back is what the name
 // means: a place that can't hold it (a field no Action, a local no grid)
 // says so itself.
 static type resolve_named(const checker *c, const type_ref *r, type_place place, loc at);
+static type resolve_mesh(const checker *c, const type_ref *r, type_place place, loc at);
 static type array_type(checker *c, type element, expr *size, loc at);
 
 // An array holds TIDE_ARRAY_MOST elements at the most (types.h), all of its lengths together, but in an audio
@@ -1638,6 +1713,7 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
 {
     const str name = r->name;
     type t;
+    if (r->args.count > 0 && str_eq_c(name, "Mesh")) return resolve_mesh(c, r, place, at);
     if (r->args.count > 0) return resolve_generic(c, r, at, place == PLACE_ASSET);
     if (builtin_type_named(name, &t)) {
         if (t.kind == TY_RESIDENT && place != PLACE_FIELD && place != PLACE_FUNCTION) {
@@ -1663,6 +1739,11 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
     if ((routine_place(place) || place == PLACE_FIELD || place == PLACE_LOCAL) && str_eq_c(name, "World")) return (type){TY_WORLD, NULL};
     if (place == PLACE_FUNCTION && str_eq_c(name, "void")) {
         diag_error(at, "'void' only goes before a method that returns nothing");
+        return T_ERR;
+    }
+    if (place != PLACE_LOOP && str_eq_c(name, "Mesh")) {
+        diag_error(at, "a Mesh says what its vertices are: 'Mesh<Vertex3>', or 'Mesh<...>' of a struct of the game's with a "
+                       "'float3 position'");
         return T_ERR;
     }
     return unknown_type(c, r, at, place);
@@ -5019,16 +5100,46 @@ static type check_mesh_draw(checker *c, expr *e)
         values = NULL;
         count = e->args.count;
     }
+    // A Mesh where the vertices go is its two lists, its vertices and then its indices: the arguments become
+    // those, each a member of the same expression, and what the call wrote stays in `written`, for the editors
+    int checked = 0; // How many of the first arguments are checked already
+    if (count > 0 && e->args.items[0]->kind != E_LIST && e->args.items[0]->kind != E_DEFAULT) {
+        expr *mesh = e->args.items[0];
+        const type whole = check_expr(c, mesh);
+        checked = 1;
+        if (whole.kind == TY_MESH) {
+            const int had = e->args.count;
+            expr **given = e->args.items;
+            e->written.items = given;
+            e->written.count = e->written.cap = had;
+            e->settled = true;
+            e->args.items = NULL;
+            e->args.count = e->args.cap = 0;
+            for (int part = 1; part <= 2; part++) {
+                expr *of = NEW(expr);
+                of->kind = E_MEMBER;
+                of->at = mesh->at;
+                of->object = mesh;
+                of->member = str_from(part == 1 ? "vertices" : "indices");
+                of->type = part == 1 ? list_of(prog, mesh_vertex(whole)) : list_of(prog, T_INT_);
+                of->mesh_part = part;
+                vec_push(e->args, of);
+            }
+            for (int i = 1; i < had; i++) vec_push(e->args, given[i]);
+            count++;
+            checked = 2;
+        }
+    }
     const int named_end = e->args.count - (values ? 1 : 0); // Past the vert and the frag
     const bool values_ok = !values || check_draw_values(c, e, values);
     if (!check_frame_use(c, e->at, "Draw")) {
-        for (int i = 0; i < count; i++) {
+        for (int i = checked; i < count; i++) {
             if (e->args.items[i]->kind != E_DEFAULT) check_expr(c, e->args.items[i]);
         }
         return T_ERR;
     }
     if (count < (instanced ? 3 : 2)) {
-        for (int i = 0; i < count; i++) check_expr(c, e->args.items[i]);
+        for (int i = checked; i < count; i++) check_expr(c, e->args.items[i]);
         diag_error(e->at, instanced ? "%s takes a mesh's vertices, its indices, and a list of instances first"
                                   : "%s takes a mesh's vertices and its indices first", draw_name);
         note_mesh_forms(e);
@@ -5057,7 +5168,7 @@ static type check_mesh_draw(checker *c, expr *e)
         if (!vertex) vertex = prog->vertex;
         check_expr_want(c, vertices, list_of(prog, decl_type(vertex)));
     } else {
-        const type t = check_expr(c, vertices);
+        const type t = checked > 0 ? vertices->type : check_expr(c, vertices);
         if (t.kind == TY_LIST && t.decl->fields.items[0].type.kind == TY_STRUCT) {
             vertex = t.decl->fields.items[0].type.decl;
         } else if (t.kind != TY_ERROR) {
@@ -5067,7 +5178,8 @@ static type check_mesh_draw(checker *c, expr *e)
     }
     expr *indices = e->args.items[1];
     const type index_list = list_of(prog, T_INT_);
-    const type index_type = indices->kind == E_LIST ? check_expr_want(c, indices, index_list) : check_expr(c, indices);
+    const type index_type = checked > 1 ? indices->type : indices->kind == E_LIST ? check_expr_want(c, indices, index_list)
+                                                                                    : check_expr(c, indices);
     for (int i = 2; i < count; i++) {
         expr *arg = e->args.items[i];
         if (i == early) continue;
@@ -6965,6 +7077,16 @@ static type check_member(checker *c, expr *e)
         suggest_note(&sg);
         return T_ERR;
     }
+    if (obj.kind == TY_MESH) { // tree.vertices and tree.indices: the pack's two lists, read like any list
+        if (str_eq_c(e->member, "vertices")) return list_of(c->prog, mesh_vertex(obj));
+        if (str_eq_c(e->member, "indices")) return list_of(c->prog, T_INT_);
+        diag_error(e->at, "a Mesh has 'vertices' and 'indices', not '" STR_FMT "'", STR_ARG(e->member));
+        suggestion sg = suggest_start(e->member);
+        suggest_consider_c(&sg, "vertices");
+        suggest_consider_c(&sg, "indices");
+        suggest_note(&sg);
+        return T_ERR;
+    }
     if (obj.kind == TY_LIST) {
         if (str_eq_c(e->member, "count")) return T_INT_;
         diag_error(e->at, "a list has 'count' and methods like Add(...), not '" STR_FMT "'", STR_ARG(e->member));
@@ -8679,6 +8801,12 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         return false;
     }
     for (const expr *part = target; part->kind == E_MEMBER || part->kind == E_INDEX; part = part->object) {
+        // mesh.vertices and mesh.indices, whatever holds the Mesh: a local's too, which only names the pack's
+        if (part->kind == E_MEMBER && part->object->type.kind == TY_MESH) {
+            diag_error(target->at, "a Mesh's vertices and indices are read-only: they're the file it names, as the game was built");
+            diag_note("copy them into a list of your own to change them, like 'mut var mine = mesh.vertices;'");
+            return false;
+        }
         if (part->kind == E_INDEX && part->object->type.kind == TY_RECORD && part->object->type.decl->array_of) {
             // touches[i], even of a copy
             diag_error(target->at, "devices can only be read");
@@ -9981,6 +10109,13 @@ static void check_var(checker *c, stmt *s)
         s->type = T_ERR;
     }
 
+    if (holds_mesh(s->type) && async_code(c)) {
+        diag_error(s->type_at.line ? s->type_at : s->value->at, "a task can't keep a Mesh while it waits: it's the pack's own "
+                   "memory, which is read within a frame");
+        diag_note("read it by its asset's name where it's used, after the wait");
+        s->type = T_ERR;
+    }
+
     if (holds_render_resource(s->type) && !gpu_code(c)) {
         decl *code = reading_code(c);
         if (code) {
@@ -10396,7 +10531,7 @@ static type constant_type(const checker *c, const decl *k)
         diag_error(at, "a constant can't be an array yet");
         return T_ERR;
     }
-    if (r->args.count > 0) { // List<T>, Map<K, V>, Set<K>, Grid2<T>, Grid3<T>
+    if (r->args.count > 0 && !str_eq_c(r->name, "Mesh")) { // List<T>, Map<K, V>, Set<K>, Grid2<T>, Grid3<T>; a Mesh<V> says why itself
         const char *what = str_eq_c(r->name, "List") ? "list" : str_eq_c(r->name, "Map") ? "map" : str_eq_c(r->name, "Set") ? "set" : "grid";
         diag_error(at, "a constant can't be a %s yet", what);
         return T_ERR;
@@ -10725,7 +10860,13 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     else if (str_eq_c(inner->text, "Grid2<Color>")) *kind = ASSET_GRID;
     else if (str_eq_c(inner->text, "Texture")) *kind = ASSET_TEXTURE;
     else if (str_eq_c(inner->text, "Clip")) *kind = ASSET_CLIP;
-    else if (str_eq_c(inner->text, "Cubemap")) {
+    else if (str_eq_c(inner->name, "Mesh") && inner->args.count == 1 && !inner->optional) *kind = ASSET_MESH;
+    else if (str_eq_c(inner->text, "Mesh")) {
+        diag_error(at, "a Mesh says what its vertices are: 'Mesh<Vertex3>', or 'Mesh<...>' of a struct of the game's with a "
+                       "'float3 position'");
+        diag_note("a file's positions, normals, uvs and colors fill the struct's 'position', 'normal', 'uv' and 'color' fields");
+        return false;
+    } else if (str_eq_c(inner->text, "Cubemap")) {
         if (*many) {
             diag_error(at, "a Cubemap is six files already, which its glob matches: a list or a map of cubes isn't there yet");
             diag_note("declare each cube as an asset of its own: 'asset Cubemap sky = \"art/sky_??.png\";'");
@@ -10734,7 +10875,8 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
         *kind = ASSET_CUBEMAP;
     } else {
         diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file), a Grid2<Color> or a Texture (a PNG), a "
-                       "Cubemap (six PNGs), or a Clip (a WAV or Ogg Vorbis), not '" STR_FMT "'", STR_ARG(inner->text));
+                       "Cubemap (six PNGs), a Clip (a WAV or Ogg Vorbis), or a Mesh<V> (a glTF or an OBJ), not '" STR_FMT "'",
+                   STR_ARG(inner->text));
         diag_note("for the files a glob matches, a 'List<...>' of one of those, or a 'Map<string, ...>' of their paths");
         return false;
     }
@@ -10837,6 +10979,48 @@ static void check_sampling_attribute(checker *c, decl *d, attribute *attr)
                                   "[Wrap(Wrap.Mirror)]");
 }
 
+// What a Mesh asset's vertex struct has to be for a file to fill it: a 3D
+// mesh's vertex (vertex_dims), whose fields that a file has something for, by
+// their names, are the types the file's are. False, having said what to write.
+static bool mesh_vertex_ok(const decl *vertex, const loc at)
+{
+    static const struct {
+        const char *name;
+        type_kind kind, also;
+        const char *is;
+    } filled[] = {{"normal", TY_FLOAT3, TY_FLOAT3, "a float3"}, {"uv", TY_FLOAT2, TY_FLOAT2, "a float2"},
+                  {"uv2", TY_FLOAT2, TY_FLOAT2, "a float2"},   {"color", TY_COLOR, TY_COLOR, "a Color"},
+                  {"tangent", TY_FLOAT4, TY_FLOAT3, "a float4, its last number the side its bitangent is on"}};
+    const int dims = vertex_dims(vertex, at, true);
+    if (dims == 0) return false;
+    if (dims != 3) {
+        diag_error(at, "a Mesh asset is a 3D mesh, and '" STR_FMT "' is a 2D mesh's vertex: its 'position' is a float2",
+                   STR_ARG(vertex->name));
+        diag_note("a file's vertices are in space: a vertex for one has a 'float3 position', as the built-in Vertex3 does");
+        return false;
+    }
+    for (int i = 0; i < vertex->fields.count; i++) {
+        const field *f = &vertex->fields.items[i];
+        for (size_t k = 0; k < sizeof filled / sizeof filled[0]; k++) {
+            if (!str_eq_c(f->name, filled[k].name) || f->type.kind == filled[k].kind || f->type.kind == filled[k].also
+                || f->type.kind == TY_ERROR) continue;
+            diag_error(at, "a mesh file's '%s' is %s, and '" STR_FMT "." STR_FMT "' is %s", filled[k].name, filled[k].is,
+                       STR_ARG(vertex->name), STR_ARG(f->name), type_name(f->type));
+            diag_note("a Mesh asset fills its vertex's 'position', 'normal', 'uv', 'uv2', 'color' and 'tangent' from the file, by "
+                      "those names; a field of any other name keeps its default");
+            return false;
+        }
+    }
+    return true;
+}
+
+// The vertex struct of an asset's type that's a Mesh, alone or as a glob's list or map: NULL for any other.
+static decl *asset_mesh_vertex(const type t)
+{
+    const type inner = t.kind == TY_LIST ? list_element(t) : t.kind == TY_MAP ? map_value(t) : t;
+    return inner.kind == TY_MESH ? mesh_vertex(inner).decl : NULL;
+}
+
 // Checks an asset declaration: its type, its path (a constant text) and the
 // files the path resolves to, read and decoded (asset_files.h), which codegen
 // packs. Errors at the path say what to write.
@@ -10848,8 +11032,12 @@ static void check_asset_decl(checker *c, decl *k)
     if (k->is_local) diag_error(k->local_at, "an asset is every machine's, as the game is built with it: it can't be local");
     asset_kind kind = ASSET_BYTES;
     bool many = false, is_map = false;
-    const bool typed = asset_type(c, k, &kind, &many, &is_map);
+    bool typed = asset_type(c, k, &kind, &many, &is_map);
     if (!typed) k->return_type = T_ERR;
+    // A Mesh's vertex has to be one a file can fill: with one that isn't, the name still reads as its type, and
+    // nothing is packed for it
+    const bool fills = !typed || kind != ASSET_MESH
+                    || mesh_vertex_ok(asset_mesh_vertex(k->return_type), k->return_type_qual_at.line ? k->return_type_qual_at : k->return_type_at);
     k->asset_kind = kind;
     k->asset_many = many;
     for (int a = 0; a < k->attributes.count; a++) {
@@ -10869,7 +11057,7 @@ static void check_asset_decl(checker *c, decl *k)
         diag_error(k->value->at, "an asset's path is a constant: a string literal, or a 'const string'");
         diag_note("the dependency tree is static: the compiler reads every file an asset names as the game is built");
     }
-    if (typed && path) {
+    if (typed && fills && path) {
         k->asset = asset_resolve(k->unit->src->path, path->text, kind, many, is_map, path->at, c->prog->game_folder);
     }
     k->index = 2;
@@ -11620,6 +11808,11 @@ static void check_world_param(const decl *m, param *p, const int k)
 static void check_signature(checker *c, decl *m)
 {
     m->return_type = method_type(c, type_ref_or_text(m->return_type_ref, m->return_type_name), m->return_type_qual_at, true);
+    if (holds_mesh(m->return_type) && (m->is_extern || m->is_async)) {
+        diag_error(m->return_type_qual_at, m->is_extern ? "C can't return a Mesh: one is the pack's own, two lists of it"
+                                                        : "a task can't return a Mesh: it's the pack's own memory, which is read within a frame");
+        m->return_type = T_ERR;
+    }
     if (holds_render_resource(m->return_type)) {
         m->render_resources = true;
         m->render_resources_at = m->return_type_at;
@@ -11656,6 +11849,24 @@ static void check_signature(checker *c, decl *m)
         if (holds_render_resource(p->type)) {
             if (!m->render_resources) m->render_resources_at = p->type_at;
             m->render_resources = true;
+        }
+        if (holds_mesh(p->type)) { // The pack's own: passed on within a frame, and read
+            const char *refused = m->is_extern ? "C takes a mesh as its two lists: pass 'mesh.vertices' and 'mesh.indices'"
+                                : m->is_async ? "a task can't keep a Mesh while it waits: it's the pack's own memory, which is read within a frame"
+                                : m->is_operator ? "an operator's operands are values, and a Mesh is the pack's own"
+                                : m->is_audio ? "an audio declaration runs on the audio thread, which reads no pack" : NULL;
+            if (refused) {
+                diag_error(p->type_at, "%s", refused);
+                p->type = T_ERR;
+            } else if (p->mode == PARAM_MUT) {
+                diag_error(p->at, "a Mesh is read-only, so '" STR_FMT "' can't be '%s'", STR_ARG(p->name), p->is_out ? "out" : "mut");
+                diag_note("it's the file it names, as the game was built: a function takes one to read it or to draw it");
+                p->mode = PARAM_READ;
+                p->is_out = false;
+            } else if (p->default_value) {
+                diag_error(p->name_at, "a Mesh a function takes has no default: the call names the one it means");
+                p->type = T_ERR;
+            }
         }
         // As in C#, the parameters a call can leave out are the last ones. An
         // Action isn't an argument: it's the code after the call.
@@ -14469,6 +14680,7 @@ static void collect_decls(program *prog)
         case DECL_MAP:
         case DECL_GRID:
         case DECL_ARRAY:
+        case DECL_MESH:
         case DECL_RESULT:
         case DECL_FUNCTION:
         case DECL_CONST:

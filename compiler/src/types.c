@@ -48,6 +48,7 @@ static const generic_form generic_forms[] = {
     {"Set", 1, {GENERIC_KEY}, {"the set's key type, like 'Set<int>'"}, NULL, "'>' after the set's key type"},
     {"Grid2", 1, {GENERIC_CELL}, {"the grid's cell type, like 'Grid2<int>'"}, NULL, "'>' after the grid's cell type"},
     {"Grid3", 1, {GENERIC_CELL}, {"the grid's cell type, like 'Grid2<int>'"}, NULL, "'>' after the grid's cell type"},
+    {"Mesh", 1, {GENERIC_VERTEX}, {"the mesh's vertex type, like 'Mesh<Vertex3>'"}, NULL, "'>' after the mesh's vertex type"},
 };
 
 const generic_form generic_optional = {"?", 1, {GENERIC_VALUE}, {"the type a T? holds"}, NULL, NULL};
@@ -144,6 +145,7 @@ layout type_layout(const type t)
     if (t.kind == TY_CLIP) return (layout){8, 8};           // tide_clip_ref: a name
     if (t.kind == TY_RESIDENT) return (layout){32, 8};      // tide_resident: its pages, then what the hash covers
     if (t.kind == TY_MAP || t.kind == TY_SET) return (layout){12, 4}; // tide_map: two lists and a count
+    if (t.kind == TY_MESH) return (layout){8, 4};                     // tide_mesh_lists: two lists
     if (t.kind == TY_ARRAY) {
         const layout e = type_layout(t.decl->fields.items[0].type);
         return (layout){saturated((int64_t)e.size * t.decl->array_length), e.align};
@@ -292,6 +294,7 @@ const char *type_name(const type t)
     case TY_SET:
     case TY_GRID:
     case TY_ARRAY:
+    case TY_MESH:
     case TY_OPTIONAL:
     case TY_FAILABLE: {
         char *b = buf[next++ % 4];
@@ -313,6 +316,7 @@ const char *type_c_name(const type t)
     if (t.kind == TY_LIST) return "tide_list";
     if (t.kind == TY_MAP || t.kind == TY_SET) return "tide_map";
     if (t.kind == TY_GRID) return "tide_grid";
+    if (t.kind == TY_MESH) return "tide_mesh_lists";
     if (t.kind == TY_DRAW_LIST) return "tide_draw_list *";
     for (size_t i = 0; i < BUILTIN_COUNT; i++) {
         if (builtins[i].kind == t.kind) return builtins[i].c_name;

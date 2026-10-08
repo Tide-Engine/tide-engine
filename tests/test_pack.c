@@ -666,3 +666,225 @@ TIDE_TEST(pack_cubemaps_are_six_images_named_as_one)
     tide_draw_free(&other);
     free(bytes);
 }
+
+// ---------------------------------------------------------------------------
+// Meshes
+
+// A vertex of a game's, as generated code lays one out.
+typedef struct corner {
+    float position[3];
+    float normal[3];
+    float glow; // No file fills it: the game's default, given as the pack is loaded
+} corner;
+
+// A map from text to meshes, as generated code describes one.
+typedef struct prop_entry {
+    int32_t live;
+    tide_text key;
+    tide_mesh_lists value;
+} prop_entry;
+
+static const tide_map_kind text_mesh_kind = {sizeof(prop_entry), offsetof(prop_entry, key), hash_key, hash_probe, equal_key};
+
+#define CORNER_LAYOUT 77u // What a build makes of its vertex struct: any number
+
+static const uint32_t tree_faces[6] = {0, 2, 1, 0, 3, 2};
+static const uint32_t rock_faces[3] = {0, 1, 2};
+static uint32_t tree_blocks[2], rock_blocks[2], plain_blocks[2];
+
+// A pack with a mesh alone, a list and a map of two, and a mesh of the
+// built-in vertex. `lead` puts a block before them all, so the same meshes are
+// elsewhere in the region, and `height` is what's in the tree's file.
+static uint8_t *build_meshes(size_t *size, const bool lead, const float height)
+{
+    tide_pack_builder b = {0};
+    uint8_t h[32];
+    uint32_t chars;
+    if (lead) {
+        hash_of("lead", h);
+        tide_pack_name(&b, "Game.lead", TIDE_PACK_TEXT, tide_pack_bytes(&b, h, "moved along", 11, &chars), 11, chars);
+    }
+    const corner tree[4] = {{{0, 0, 0}, {0, 0, 1}, 0}, {{1, 0, 0}, {0, 0, 1}, 0}, {{1, height, 0}, {0, 0, 1}, 0}, {{0, height, 0}, {0, 0, 1}, 0}};
+    const corner rock[3] = {{{5, 0, 0}, {0, 1, 0}, 0}, {{6, 0, 0}, {0, 1, 0}, 0}, {{5, 0, 1}, {0, 1, 0}, 0}};
+    char named[32];
+    snprintf(named, sizeof named, "tree.glb %g", (double)height);
+    hash_of(named, h);
+    tide_pack_mesh(&b, h, tree, sizeof(corner), 4, tree_faces, 6, tree_blocks);
+    uint32_t again[2];
+    tide_pack_mesh(&b, h, tree, sizeof(corner), 4, tree_faces, 6, again); // The same file, laid out the same: the same blocks
+    TIDE_CHECK(again[0] == tree_blocks[0] && again[1] == tree_blocks[1]);
+    hash_of("rock.glb", h);
+    tide_pack_mesh(&b, h, rock, sizeof(corner), 3, rock_faces, 3, rock_blocks);
+    const tide_vertex3 plain[3] = {{.position = {0, 0, 0}}, {.position = {0, 1, 0}}, {.position = {1, 0, 0}}};
+    hash_of("plain.obj", h);
+    tide_pack_mesh(&b, h, plain, sizeof(tide_vertex3), 3, rock_faces, 3, plain_blocks);
+    tide_pack_name(&b, "Game.tree", TIDE_PACK_MESH, tree_blocks[0], tree_blocks[1], CORNER_LAYOUT);
+    tide_pack_name(&b, "Game.plain", TIDE_PACK_MESH, plain_blocks[0], plain_blocks[1], 3u);
+    const uint32_t both[4] = {rock_blocks[0], rock_blocks[1], tree_blocks[0], tree_blocks[1]};
+    tide_pack_name(&b, "Game.props", TIDE_PACK_MESH_LIST, tide_pack_mesh_list(&b, both, 2), 2, CORNER_LAYOUT);
+    uint32_t keys[2], index;
+    hash_of("art/rock.glb", h);
+    keys[0] = tide_pack_string(&b, h, "art/rock.glb", 12, &chars);
+    hash_of("art/tree.glb", h);
+    keys[1] = tide_pack_string(&b, h, "art/tree.glb", 12, &chars);
+    const uint32_t entries = tide_pack_mesh_map(&b, keys, both, 2, &index);
+    tide_pack_name(&b, "Game.named", TIDE_PACK_MESHES, entries, index, CORNER_LAYOUT);
+    hash_of("table", h);
+    tide_pack_name(&b, "Game.table", TIDE_PACK_BYTES, tide_pack_bytes(&b, h, "\1\2\3\4", 4, &chars), 4, chars);
+    return tide_pack_end(&b, size);
+}
+
+// A mesh in the pack is two lists, which what reads a world's lists reads;
+// a glob's are a list and a map of those. Each list says what's in it, so a
+// draw tells a mesh by its file with no vertex read, and keeps it through a
+// pack loaded again with the same file in it.
+TIDE_TEST(pack_meshes_are_two_lists_told_by_whats_in_them)
+{
+    size_t size;
+    uint8_t *bytes = build_meshes(&size, false, 1.0f);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    // By its vertices' layout: a build whose vertex struct is another finds none
+    TIDE_CHECK(tide_pack_find_mesh("Game.tree", TIDE_PACK_MESH, CORNER_LAYOUT + 1u) == NULL);
+    const tide_pack_entry *e = tide_pack_find_mesh("Game.tree", TIDE_PACK_MESH, CORNER_LAYOUT);
+    TIDE_REQUIRE(e != NULL);
+    TIDE_CHECK(!tide_pack_mesh_of(e, 12u).vertices.at && !tide_pack_mesh_of(NULL, sizeof(corner)).vertices.at);
+    const tide_mesh_lists tree = tide_pack_mesh_of(e, sizeof(corner));
+    TIDE_REQUIRE(tide_list_count(tree.vertices) == 4 && tide_list_count(tree.indices) == 6);
+    const corner *third = tide_list_at(tree.vertices, 2, sizeof(corner));
+    TIDE_CHECK(third->position[0] == 1.0f && third->position[1] == 1.0f && third->normal[2] == 1.0f);
+    for (int32_t i = 0; i < 6; i++) TIDE_CHECK(*(const uint32_t *)tide_list_at(tree.indices, i, sizeof(uint32_t)) == tree_faces[i]);
+    TIDE_CHECK(tide_list_at(tree.vertices, 4, sizeof(corner)) == NULL);
+
+    // A list of them, in order, and a map by their paths
+    const tide_list props = {tide_pack_handle(tide_pack_find_mesh("Game.props", TIDE_PACK_MESH_LIST, CORNER_LAYOUT))};
+    TIDE_REQUIRE(tide_list_count(props) == 2);
+    const tide_mesh_lists *rock = tide_list_at(props, 0, sizeof(tide_mesh_lists));
+    const tide_mesh_lists *second = tide_list_at(props, 1, sizeof(tide_mesh_lists));
+    TIDE_CHECK(tide_list_count(rock->vertices) == 3 && tide_list_count(rock->indices) == 3);
+    TIDE_CHECK(second->vertices.at == tree.vertices.at && second->indices.at == tree.indices.at); // One file, in the pack once
+    const tide_map named = tide_pack_mesh_map_of(tide_pack_find_mesh("Game.named", TIDE_PACK_MESHES, CORNER_LAYOUT));
+    TIDE_REQUIRE(tide_map_count(named) == 2 && tide_map_entries(named) == 2);
+    const tide_str key = {"art/tree.glb", 12, 12}, missing = {"art/none.glb", 12, 12};
+    const int32_t found = tide_map_find(named, &text_mesh_kind, &key);
+    TIDE_REQUIRE(found == 1 && tide_map_find(named, &text_mesh_kind, &missing) == -1);
+    const prop_entry *entry = tide_map_entry(named, found, &text_mesh_kind);
+    TIDE_CHECK(entry->value.vertices.at == tree.vertices.at);
+    TIDE_CHECK(!tide_pack_mesh_map_of(NULL).entries.at);
+
+    // What's in each list, by its block: no other list of the pack says, and none says it of another element
+    uint64_t vertices = 0, indices = 0, other = 0;
+    TIDE_CHECK(tide_pack_list_version(tree.vertices, sizeof(corner), &vertices) && tide_pack_list_version(tree.indices, 4u, &indices));
+    TIDE_CHECK(vertices && indices && vertices != indices);
+    TIDE_CHECK(!tide_pack_list_version(tree.vertices, 12u, &other));
+    TIDE_CHECK(!tide_pack_list_version((tide_list){tide_pack_handle(tide_pack_find("Game.table", TIDE_PACK_BYTES))}, 1u, &other));
+    TIDE_CHECK(!tide_pack_list_version(props, sizeof(tide_mesh_lists), &other) && !tide_pack_list_version((tide_list){0}, 4u, &other));
+
+    // The fields no file fills: each mesh of an entry, to write, once
+    uint32_t count = 0;
+    corner *open = tide_pack_mesh_open(e, 0, sizeof(corner), &count);
+    TIDE_REQUIRE(open && count == 4);
+    for (uint32_t i = 0; i < count; i++) open[i].glow = 0.5f;
+    TIDE_CHECK(((const corner *)tide_list_at(tree.vertices, 3, sizeof(corner)))->glow == 0.5f);
+    TIDE_CHECK(tide_pack_mesh_open(e, 1, sizeof(corner), &count) == NULL && count == 0);
+    TIDE_CHECK(tide_pack_mesh_open(e, 0, 12u, &count) != NULL && count == 0); // Not vertices of that size: none to write
+    const tide_pack_entry *listed = tide_pack_find("Game.props", TIDE_PACK_MESH_LIST), *mapped = tide_pack_find("Game.named", TIDE_PACK_MESHES);
+    TIDE_CHECK(tide_pack_mesh_open(listed, 0, sizeof(corner), &count) && count == 3);
+    TIDE_CHECK(tide_pack_mesh_open(listed, 1, sizeof(corner), &count) == (void *)open && count == 4);
+    TIDE_CHECK(tide_pack_mesh_open(listed, 2, sizeof(corner), &count) == NULL);
+    TIDE_CHECK(tide_pack_mesh_open(mapped, 1, sizeof(corner), &count) == (void *)open && tide_pack_mesh_open(mapped, 2, sizeof(corner), &count) == NULL);
+    TIDE_CHECK(tide_pack_mesh_open(NULL, 0, sizeof(corner), &count) == NULL);
+    const tide_pack_entry elsewhere = *e; // Not an entry of the loaded pack's
+    TIDE_CHECK(tide_pack_mesh_open(&elsewhere, 0, sizeof(corner), &count) == NULL);
+
+    // Drawn: one mesh in the list however often, told by what its file had
+    static tide_draw_list draw;
+    const tide_mesh_lists plain = tide_pack_mesh_of(tide_pack_find("Game.plain", TIDE_PACK_MESH), sizeof(tide_vertex3));
+    tide_draw_reset(&draw);
+    tide_draw_mesh3_lists(&draw, plain.vertices, plain.indices, tide_identity_f4x4());
+    tide_draw_mesh3_lists(&draw, plain.vertices, plain.indices, tide_identity_f4x4());
+    TIDE_REQUIRE(draw.mesh_count == 1 && draw.meshes[0].vertex_count == 3 && draw.meshes[0].index_count == 3);
+    const uint64_t drawn = draw.meshes[0].version;
+
+    // The pack again, everything elsewhere in it: the same mesh to the list, which has it
+    free(bytes);
+    bytes = build_meshes(&size, true, 1.0f);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    const tide_mesh_lists moved = tide_pack_mesh_of(tide_pack_find("Game.plain", TIDE_PACK_MESH), sizeof(tide_vertex3));
+    TIDE_CHECK(moved.vertices.at != plain.vertices.at);
+    tide_draw_reset(&draw);
+    tide_draw_mesh3_lists(&draw, moved.vertices, moved.indices, tide_identity_f4x4());
+    TIDE_CHECK(draw.mesh_count == 1 && draw.meshes[0].version == drawn);
+    // ...and with a file edited, that mesh is another
+    uint64_t before = 0, after = 0;
+    const tide_mesh_lists same = tide_pack_mesh_of(tide_pack_find("Game.tree", TIDE_PACK_MESH), sizeof(corner));
+    TIDE_CHECK(tide_pack_list_version(same.vertices, sizeof(corner), &before) && before == vertices);
+    free(bytes);
+    bytes = build_meshes(&size, true, 2.0f);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    const tide_mesh_lists edited = tide_pack_mesh_of(tide_pack_find("Game.tree", TIDE_PACK_MESH), sizeof(corner));
+    TIDE_CHECK(tide_pack_list_version(edited.vertices, sizeof(corner), &after) && after != vertices);
+    tide_pack_unload();
+    tide_draw_free(&draw);
+    free(bytes);
+}
+
+// A pack whose mesh blocks aren't whole reads as empty meshes, alone and in
+// a list or a map: a file is only bytes, and nothing reads past them.
+TIDE_TEST(pack_meshes_cut_short_are_empty)
+{
+    size_t size;
+    uint8_t *bytes = build_meshes(&size, false, 1.0f);
+    tide_pack_header header;
+    memcpy(&header, bytes, sizeof header);
+    uint8_t *region = bytes + header.region_at;
+    tide_block had;
+    memcpy(&had, region + tree_blocks[0], sizeof had);
+
+    // More vertices said than the block has
+    tide_block wrong = had;
+    wrong.a = 1000000u;
+    memcpy(region + tree_blocks[0], &wrong, sizeof wrong);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    TIDE_CHECK(!tide_pack_mesh_of(tide_pack_find("Game.tree", TIDE_PACK_MESH), sizeof(corner)).vertices.at);
+    const tide_list props = {tide_pack_handle(tide_pack_find("Game.props", TIDE_PACK_MESH_LIST))};
+    TIDE_REQUIRE(tide_list_count(props) == 2);
+    const tide_mesh_lists *rock = tide_list_at(props, 0, sizeof(tide_mesh_lists)), *tree = tide_list_at(props, 1, sizeof(tide_mesh_lists));
+    TIDE_CHECK(tide_list_count(rock->vertices) == 3 && !tree->vertices.at && !tree->indices.at); // The one beside it is whole
+    const tide_map named = tide_pack_mesh_map_of(tide_pack_find("Game.named", TIDE_PACK_MESHES));
+    const prop_entry *entry = tide_map_entry(named, 1, &text_mesh_kind);
+    TIDE_CHECK(tide_map_count(named) == 2 && !entry->value.vertices.at);
+    uint32_t count = 7;
+    TIDE_CHECK(tide_pack_mesh_open(tide_pack_find("Game.tree", TIDE_PACK_MESH), 0, sizeof(corner), &count) != NULL && count == 0);
+
+    // What says what's in it, said to be past the region's end
+    wrong = had;
+    wrong.next = header.region_size;
+    memcpy(region + tree_blocks[0], &wrong, sizeof wrong);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    TIDE_CHECK(!tide_pack_mesh_of(tide_pack_find("Game.tree", TIDE_PACK_MESH), sizeof(corner)).vertices.at);
+
+    // Indices that aren't ints
+    memcpy(region + tree_blocks[0], &had, sizeof had);
+    tide_block faces;
+    memcpy(&faces, region + tree_blocks[1], sizeof faces);
+    const uint32_t two = 2u;
+    memcpy(region + tree_blocks[1] + faces.next + sizeof(uint64_t), &two, sizeof two);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    TIDE_CHECK(!tide_pack_mesh_of(tide_pack_find("Game.tree", TIDE_PACK_MESH), sizeof(corner)).vertices.at);
+
+    // An entry whose indices are no block of the region's
+    const uint32_t four = 4u;
+    memcpy(region + tree_blocks[1] + faces.next + sizeof(uint64_t), &four, sizeof four);
+    tide_pack_entry *entries = (tide_pack_entry *)(void *)(bytes + sizeof header);
+    for (uint32_t i = 0; i < header.entries; i++) {
+        if (entries[i].kind == TIDE_PACK_MESH && entries[i].extra == CORNER_LAYOUT) entries[i].size = header.region_size - 8u;
+    }
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    TIDE_CHECK(!tide_pack_mesh_of(tide_pack_find("Game.tree", TIDE_PACK_MESH), sizeof(corner)).vertices.at);
+    // ...and the list, whose meshes are whole, reads as it did
+    const tide_list whole = {tide_pack_handle(tide_pack_find("Game.props", TIDE_PACK_MESH_LIST))};
+    const tide_mesh_lists *still = tide_list_at(whole, 1, sizeof(tide_mesh_lists));
+    TIDE_CHECK(tide_list_count(whole) == 2 && tide_list_count(still->vertices) == 4 && tide_list_count(still->indices) == 6);
+    tide_pack_unload();
+    free(bytes);
+}

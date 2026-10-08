@@ -1,0 +1,12 @@
+// expect: '../e2e/assets/rules.txt' isn't a mesh file Tide reads
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+asset Mesh<Corner> rules = "../e2e/assets/rules.txt";
+
+scene Main
+{
+}
