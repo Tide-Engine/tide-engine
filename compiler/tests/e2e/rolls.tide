@@ -13,6 +13,7 @@ component Walker
     int helped;
     int pair;
     int method;
+    int added;
     int poked;
     int pokes;
 }
@@ -21,6 +22,17 @@ component Walker
 component Mood
 {
     int roll;
+}
+
+// An operator rolls with what the code that uses it rolls with
+struct Pips
+{
+    int count;
+
+    Pips operator +(Pips a, Pips b)
+    {
+        return Pips { count = a.count + b.count + Random.NextInt(1000) };
+    }
 }
 
 struct Bag
@@ -84,6 +96,7 @@ system Step(mut Walker walker)
     walker.pair = Deeper(1000) * 1000 + Deeper(1000) - Random.NextInt(1000) * Deeper(7);
     var bag = Bag { size = 1000000 };
     walker.method = bag.Draw();
+    walker.added = (Pips { count = 1000000 } + Pips { count = 2000000 }).count;
 }
 
 system Feel(mut Mood mood)

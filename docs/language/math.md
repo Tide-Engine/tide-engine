@@ -171,7 +171,7 @@ Rolls run in the order they're written, left to right: in `float2(Random.NextFlo
 
 - **Systems and the match's handlers** roll for the entity they run for, or for the match where they run once. Two systems that roll for the same entity in the same tick get different numbers, and so do two runs of a handler.
 - **[Views](../game/views.md) and local handlers** roll with this machine's own generator, for effects: sparks, shakes, anything the match doesn't see. It's no part of the match, and other machines roll otherwise.
-- **Functions and methods** they call roll too, with nothing passed:
+- **Functions, methods and operators** they call roll too, with nothing passed:
 
 ```csharp
 float2 Scatter(float spread)
@@ -200,9 +200,9 @@ system Scatter(mut Field field)
 A few places never roll, and the compiler says why:
 
 - **The input's `Sanitize`**, which has to repair an input the same way on every machine from the input alone.
-- **Operators and `Interpolate`**, whose result is their operands' alone: the engine calls them itself, to compare a list's elements or to blend between ticks.
+- **A type's `Interpolate`**, which the engine calls itself as a view blends between two ticks: the same two values have to blend the same every time.
 - **Code the GPU runs**, which keeps no state: a pixel's number is a hash of where it is (`Math.Hash`) or [noise](#noise).
-- **Constants and defaults**, which are worked out while compiling.
+- **Constants and defaults**, which are worked out with no code running.
 
 A system's rolls start over each tick, from that tick's number. What has to go on from where it was, like a deck that's dealt from over many ticks, or has to come from a seed the game picks, is a generator of your own.
 

@@ -36,6 +36,7 @@ typedef struct checker {
     VEC(expr *) spawns;       // Spawn calls, patched with archetype indices at the end.
     VEC(expr *) sends;        // Send calls, checked against the handlers at the end.
     VEC(struct call_site) calls; // Calls of functions and methods: which draw, and which read devices.
+    VEC(struct call_site) bare;  // Operators used where no code runs (a default, a constant): they can't roll there
     const expr *device_whole_ok; // A device record about to be checked that isn't read whole: a.b's a, or an argument
     const expr *colors_indexed;  // A 'target.colors' about to be checked that an index reads one of: target.colors[1]'s
     const expr *awaiting;     // The call an `await` is checking: an async call it waits for, not a task it starts
@@ -933,8 +934,12 @@ static bool note_task_side(const checker *c, const int side, const loc at)
 static void note_operator_call(checker *c, decl *op, const expr *e)
 {
     decl *from = reading_code(c);
-    if (!op || !from) return;
+    if (!op) return;
     const call_site site = {from, op, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize};
+    if (!from) {
+        vec_push(c->bare, site);
+        return;
+    }
     vec_push(c->calls, site);
 }
 
@@ -2816,12 +2821,12 @@ static bool check_random_use(checker *c, const loc at, const bool rolls)
         return false;
     }
     decl *code = reading_code(c);
-    const bool routine = code && (code->kind == DECL_FUNCTION || code->kind == DECL_METHOD) && !code->is_operator && !code->is_interpolate;
+    const bool routine = code && (code->kind == DECL_FUNCTION || code->kind == DECL_METHOD) && !code->is_interpolate;
     if (!code || (!routine && code->kind != DECL_SYSTEM && code->kind != DECL_INPUT)) {
-        if (code && (code->is_operator || code->is_interpolate)) {
-            // The engine calls these itself, where nothing rolls: comparing a list's elements, blending between ticks
-            diag_error(at, "%s can't %s", code->is_operator ? "an operator" : "Interpolate", what);
-            diag_note("its result is its operands' alone: roll before, and pass the number in the value");
+        if (code && code->is_interpolate) {
+            // The engine calls it itself, as a view blends between two ticks: the same two give the same every frame
+            diag_error(at, "Interpolate can't %s", what);
+            diag_note("it blends two values the same way each time it's asked: a view rolls, and keeps what it rolled in a local field");
         } else {
             diag_error(at, rolls ? "Random rolls in code that runs: systems, views, handlers, tasks, and the functions and methods they call"
                                  : "Random.seed is read in code that runs: systems, views, handlers, tasks, and the functions and methods they call");
@@ -15660,7 +15665,7 @@ static void check_roll_calls(const checker *c)
         const char *why = NULL;
         if (from->kind == DECL_SHADER) why = "the GPU can't";
         else if (site->sanitizing) why = "Sanitize repairs an input the same way on every machine, from the input alone";
-        else if (from->is_operator || from->is_interpolate) why = "an operator's and an Interpolate's result is their operands' alone";
+        else if (from->is_interpolate) why = "Interpolate blends two values the same way each time it's asked";
         else if (!to->rolls && from->is_audio) why = "the audio thread has no match";
         else if (from->kind != DECL_FUNCTION && from->kind != DECL_METHOD && from->kind != DECL_SYSTEM && from->kind != DECL_INPUT) {
             why = "only code that runs can: systems, views, handlers, tasks and functions";
@@ -15668,6 +15673,15 @@ static void check_roll_calls(const checker *c)
         if (!why) continue;
         diag_error(site->call->at, "'" STR_FMT "' %s, which this code can't", STR_ARG(to->name), does);
         diag_note_at(where, "it does on line %d, and %s", where.line, why);
+    }
+    // A default's or a constant's operator, worked out with no code running
+    for (int i = 0; i < c->bare.count; i++) {
+        const call_site *site = &c->bare.items[i];
+        if (!site->to->rolls && !site->to->reads_seed) continue;
+        const loc where = site->to->rolls ? site->to->rolls_at : site->to->reads_seed_at;
+        diag_error(site->call->at, "this operator %s, which a value worked out with no code running can't",
+                   site->to->rolls ? "rolls with Random" : "reads Random.seed");
+        diag_note_at(where, "it does on line %d: give the field its value in code, where a spawn or a system sets it", where.line);
     }
     // What generated code keeps for it: the match's seed in the world, and in local state this machine's
     // generator and the seed as the last frame's match had it. A task may be either world's.
