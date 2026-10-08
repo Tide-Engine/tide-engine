@@ -75,6 +75,8 @@ A package can use other packages, which its own `tide.packages` lists. The game'
 tide: added github.com/someone/tide-math 9f2c1e0..., which Physics needs
 ```
 
+If a package's metadata or dependencies are invalid, the command reports the problem and fails.
+
 When the game and one of its packages list another package at different commits, the game's line is the one it builds with.
 
 ## Packages in folders
