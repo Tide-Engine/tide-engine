@@ -270,12 +270,20 @@ int InHand(Kitchen kitchen, Me me)
 [Stage(Layers.Camera)]
 view Look(Kitchen kitchen, Devices devices, mut Fx fx, mut Room room, mut Layout layout, mut Pad pad, mut Scenery scenery, mut Shore shore, Lens lens, Lobby lobby)
 {
-    if (kitchen.laid && scenery.level != kitchen.level) MakeScenery(scenery, shore, kitchen.board, kitchen.level);
+    var shown = kitchen.travelling ? -2 : kitchen.level;
+    if (kitchen.laid && (scenery.level != shown || scenery.layout != kitchen.layout))
+    {
+        MakeScenery(scenery, shore, kitchen.board, shown);
+        scenery.layout = kitchen.layout;
+    }
+    room.travelling = kitchen.travelling;
+    room.region = kitchen.travelling ? 0 : Region(kitchen.level);
+    fx.sea.volume = kitchen.travelling || room.region == 0 ? 0.22 : room.region == 1 ? 0.12 : room.region == 2 ? 0.04 : 0;
 
     var screen = float2(Screen.width, Screen.height);
     var narrow = screen.x < 520;
-    layout.top = narrow ? 88 : 96;
-    layout.bottom = (pad.touched ? 150 : 70) + (narrow ? 22 : 0);
+    layout.top = narrow ? 104 : 108;
+    layout.bottom = kitchen.travelling ? (pad.touched ? 270 : 172) : (pad.touched ? 174 : 92);
     var tall = Math.Max(screen.y - layout.top - layout.bottom, 80);
     layout.reach = Math.Clamp(Math.Min(screen.x, screen.y) * 0.075, 26, 36);
     layout.pad = float2(screen.x - layout.reach * 2.2 - 10, screen.y - layout.reach * 2.2 - 14);
@@ -289,7 +297,7 @@ view Look(Kitchen kitchen, Devices devices, mut Fx fx, mut Room room, mut Layout
     var wide = Math.Max(size.x * 0.5 + 0.8, 3.4);
     var deep = Math.Max(size.y * 0.5 + 1.0, 2.9);
     var back = Math.Max(wide / (half * screen.x / screen.y), deep * Math.Sin(pitch) * 1.1 / half * (screen.y / tall));
-    if (fx.back <= 0 || fx.level < 0) fx.back = back;
+    if (fx.back <= 0 || fx.level != shown) fx.back = back;
     fx.back += (back - fx.back) * (1 - Math.Exp(-fx.dt * 4));
     // The board's middle is between what's written above it and below, not the window's
     var lift = (layout.top - layout.bottom) * 0.5 * (2 * half * fx.back / screen.y) / Math.Sin(pitch);
@@ -369,9 +377,10 @@ view Gather(Kitchen kitchen, mut Fx fx, mut Room room, Me me)
 {
     var size = kitchen.board.size;
     var up = float3(0, 1, 0);
-    var jump = fx.jump || fx.level != kitchen.level;
-    if (fx.level != kitchen.level) fx.hint = 0;
-    fx.level = kitchen.level;
+    var shown = kitchen.travelling ? -2 : kitchen.level;
+    var jump = fx.jump || fx.level != shown;
+    if (fx.level != shown) fx.hint = 0;
+    fx.level = shown;
     fx.jump = false;
     fx.hint += fx.dt;
     fx.cheer = kitchen.cleared != 0 ? fx.cheer + fx.dt : 0;
@@ -539,13 +548,13 @@ view Cast(Fx fx, Scenery scenery, Models models, mut Shadow shadow)
 
 // The frame starts here: the sky, the clouds, and the sea.
 [Stage(Layers.Scene)]
-view Sky(Fx fx, Models models, Scenery scenery, Lens lens)
+view Sky(Fx fx, Models models, Scenery scenery, Lens lens, Room room)
 {
-    lens.scene.Clear(Color(0.62, 0.72, 0.74));
+    lens.scene.Clear(RegionSky(room.region));
     lens.scene.Screen()
     {
         // An overcast sky, paler towards the sea
-        lens.scene.Shape(Shape { center = lens.size * 0.5, size = lens.size, color = Color(0.5, 0.63, 0.7), color2 = Color(0.66, 0.75, 0.76) });
+        lens.scene.Shape(Shape { center = lens.size * 0.5, size = lens.size, color = RegionSkyTop(room.region), color2 = RegionSky(room.region) });
     }
     lens.scene.Mesh(scenery.sea, scenery.seaFaces, float4x4.identity, SeaLook);
     lens.scene.Instanced(models.cloud, models.cloudFaces, fx.clouds, Snap, Plain);
@@ -670,6 +679,7 @@ view Pips(Kitchen kitchen, Fx fx, Me me, Lens lens, Lobby lobby)
             Draw.Text("YOU", tip + float2(0, -12), 13, Color.white, Anchor.LowerCenter, Font.Bold);
         }
     }
+    if (kitchen.travelling) return;
     var pip = Math.Clamp(Screen.width / 110, 4.5, 7);
     for (var i = 0; i < kitchen.board.count; i++)
     {
@@ -693,7 +703,7 @@ view Pips(Kitchen kitchen, Fx fx, Me me, Lens lens, Lobby lobby)
 // space nearest its middle, where the window is too narrow for one.
 void Caption(string line, float2 at, float size, Color tone, float room)
 {
-    var dark = Color(0.08, 0.1, 0.16, 0.74);
+    var dark = Color(0.09, 0.13, 0.14, 0.91);
     var whole = Draw.MeasureText(line, size, Font.Bold);
     mut var cut = -1;
     if (whole.x + 30 > room)
@@ -707,25 +717,20 @@ void Caption(string line, float2 at, float size, Color tone, float room)
     }
     if (cut < 0)
     {
-        Draw.Rect(at, float2(Math.Min(whole.x + 26, room), 28), dark);
+        Sign(at, float2(Math.Min(whole.x + 26, room), 28), UI_BRASS, dark);
         Draw.Text(line, at, size, tone, Anchor.MiddleCenter, Font.Bold);
         return;
     }
     var first = line.Substring(0, cut);
     var second = line.Substring(cut + 1);
     var wide = Math.Max(Draw.MeasureText(first, size, Font.Bold).x, Draw.MeasureText(second, size, Font.Bold).x);
-    Draw.Rect(at, float2(Math.Min(wide + 26, room), 46), dark);
+    Sign(at, float2(Math.Min(wide + 26, room), 46), UI_BRASS, dark);
     Draw.Text(first, at - float2(0, 9), size, tone, Anchor.MiddleCenter, Font.Bold);
     Draw.Text(second, at + float2(0, 9), size, tone, Anchor.MiddleCenter, Font.Bold);
 }
 
-bool Tapped(Devices devices, float2 at, float reach)
-{
-    return devices.pointer.press.down && Math.Distance(Screen.Flip(devices.pointer.position), at) < reach;
-}
-
-// What's written over the kitchen: the level and the levels there are, what
-// to do, the buttons, and when it's cooked or spoiled, that.
+// The kitchen's signs and controls. Camp selection is drawn by WorldMapUI;
+// the ordinary HUD never bypasses the routes the chefs are opening.
 [Stage(Layers.Hud, 1)]
 view Hud(Kitchen kitchen, Devices devices, Me me, Layout layout, mut Fx fx, Pad pad, Lobby lobby)
 {
@@ -733,35 +738,34 @@ view Hud(Kitchen kitchen, Devices devices, Me me, Layout layout, mut Fx fx, Pad 
     if (lobby.page != Page.Playing) return;
     var screen = float2(Screen.width, Screen.height);
     var center = screen.x * 0.5;
-    var ink = Color(0.08, 0.1, 0.16);
-    var gold = Color(0.99, 0.82, 0.3);
     var letters = Math.Min(1, screen.x / 420);
     var alone = kitchen.hands.count < 2;
     var inHand = InHand(kitchen, me);
+    var served = ServedCount(kitchen.done);
+    var region = kitchen.travelling ? TravelRegion(kitchen.board.chefs[Math.Max(inHand, 0)].at) : Region(kitchen.level);
 
-    // The level, and a dot for each there is: a click on one goes there
-    var title = $"{kitchen.level + 1}. {Name(kitchen.level)}";
-    var box = Draw.MeasureText(title, 20 * letters, Font.Bold);
-    var gap = screen.x < 520 ? 17.0 : 22.0;
-    var plate = Math.Max(box.x + 36, LEVELS * gap + 26);
-    Draw.Rect(float2(center, 36), float2(plate, 60), Color(ink.r, ink.g, ink.b, 0.8));
-    Draw.Text(title, float2(center, 23), 20 * letters, Color.white, Anchor.MiddleCenter, Font.Bold);
-    for (var i = 0; i < LEVELS; i++)
+    Sign(float2(center, 36), float2(screen.x - 16, 60), UI_BRASS, UI_INK);
+    var titleAt = float2((screen.x - 106) * 0.5, 42);
+    var title = kitchen.travelling ? "THE COOKOUT TRAIL" : Name(kitchen.level);
+    var room = screen.x - 130;
+    var titleSize = Math.Min(20 * letters, room / Math.Max(title.length * 0.61, 1));
+    Draw.Text(title, titleAt, titleSize, UI_CREAM, Anchor.MiddleCenter, Font.Bold);
+    var trail = kitchen.travelling ? $"{RegionName(region)}  /  {served} of {LEVELS} served"
+              : $"{RegionName(region)}  /  KITCHEN {kitchen.level + 1}  /  {served} served";
+    Draw.Text(trail, titleAt - float2(0, 22), 10.5 * letters, RegionTone(region), Anchor.MiddleCenter, Font.Bold);
+
+    ChefBadge(float2(21, 84), Math.Max(inHand, 0), 0.75);
+    var who = alone ? (pad.touched ? "Both chefs: tap the middle to swap" : "Both chefs: Space swaps hands")
+                   : $"You are the {ChefName(Math.Max(inHand, 0))} chef";
+    Draw.Text(who, float2(38, 82), 12 * letters, UI_CREAM, Anchor.MiddleLeft, Font.Bold);
+    if (screen.x > 600)
     {
-        var dot = float2(center + (i - (LEVELS - 1) * 0.5) * gap, 49);
-        var cooked = (kitchen.done >> i & 1) == 1;
-        if (i == kitchen.level) Draw.Circle(dot, 8.5, Color.white);
-        Draw.Circle(dot, 6.5, cooked ? gold : Color(0.36, 0.4, 0.5));
-        if (i != kitchen.level && Tapped(devices, dot, 11)) Send(Goto { level = i });
+        Draw.Text(kitchen.travelling ? "Walk together. Choose your route." : $"{kitchen.moves} moves", float2(screen.x - 14, 82),
+                  12, UI_CREAM, Anchor.MiddleRight, Font.Bold);
     }
 
-    // Whose chef is whose, under it
-    mut var who = alone ? "You have both chefs: Space changes hands" : (inHand >= 0 ? $"You're the {ChefName(inHand)} chef" : "");
-    if (alone && pad.touched) who = "You have both chefs: the middle button changes hands";
-    Draw.Text(who, float2(center + 1, 77), 12.5 * letters, Color(0, 0, 0, 0.5), Anchor.MiddleCenter, Font.Bold);
-    Draw.Text(who, float2(center, 76), 12.5 * letters, inHand >= 0 && !alone ? Tone(inHand) : Color.white, Anchor.MiddleCenter, Font.Bold);
-
-    // Undo and restart, as buttons and as keys. A key held goes on taking moves back.
+    // Taking moves back remains repeatable; one press of N skips once, and
+    // every skipped puzzle stays unserved on the trail.
     var undoKey = devices.keyboard.z.pressed || devices.keyboard.backspace.pressed || devices.gamepad.buttonEast.pressed;
     mut var undo = devices.keyboard.z.down || devices.keyboard.backspace.down || devices.gamepad.buttonEast.down;
     fx.undoHeld = undoKey ? fx.undoHeld + fx.dt : 0;
@@ -772,76 +776,75 @@ view Hud(Kitchen kitchen, Devices devices, Me me, Layout layout, mut Fx fx, Pad 
     }
     mut var restart = devices.keyboard.r.down || devices.gamepad.select.down;
     mut var skip = devices.keyboard.n.down;
-    if (GUI.Button(Rect(layout.buttons.x, layout.buttons.y, 84, 38), "Undo")) undo = true;
-    if (GUI.Button(Rect(layout.buttons.x + 90, layout.buttons.y, 84, 38), "Restart")) restart = true;
-    // Testing shortcut: no cooking credit. On touch screens it sits above
-    // Undo, clear of the movement pad; with keys it's the next button along.
-    var skipAt = pad.touched ? layout.buttons - float2(0, 44) : layout.buttons + float2(180, 0);
-    if (GUI.Button(Rect(skipAt.x, skipAt.y, 94, 38), "Skip (N)")) skip = true;
+    mut var map = !kitchen.travelling && devices.keyboard.m.down;
+    if (CookoutButton(Rect(layout.buttons.x, layout.buttons.y, 84, 38), "Undo", kitchen.past.count > 0 && kitchen.cleared == 0)) undo = true;
+    if (CookoutButton(Rect(layout.buttons.x + 90, layout.buttons.y, 84, 38), "Restart", !kitchen.travelling && kitchen.moves > 0 && kitchen.cleared == 0)) restart = true;
+    var secondRow = pad.touched ? layout.buttons - float2(0, 44) : layout.buttons + float2(180, 0);
+    if (!kitchen.travelling && CookoutButton(Rect(secondRow.x, secondRow.y, 84, 38), "Trail (M)")) map = true;
+    var skipAt = secondRow + float2(kitchen.travelling ? 0 : 90, 0);
+    if (CookoutButton(Rect(skipAt.x, skipAt.y, 94, 38), "Skip (N)")) skip = true;
     if (undo) Send(Undo { level = kitchen.level });
     if (restart) Send(Restart { level = kitchen.level });
+    if (map) Send(BackToMap { level = kitchen.level });
     if (skip) Send(Goto { level = (kitchen.level + 1) % LEVELS });
 
-    // What to do: the level's own line while it's new, and then the keys
-    var under = screen.y - layout.bottom + 6;
-    var hint = Hint(kitchen.level);
-    var spoiled = Spoiled(kitchen.board);
-    mut var line = hint != "" && (fx.hint < 14 || kitchen.moves == 0) ? hint : "Arrows or WASD move. Z takes a move back, R starts over.";
-    mut var tone = Color.white;
-    if (spoiled)
-    {
-        line = "Spoiled! Take a move back (Z), or start over (R).";
-        tone = Color(1, 0.5, 0.42);
-    }
-    if (pad.touched && !spoiled && line.StartsWith("Arrows")) line = "Undo takes a move back, and Restart starts over.";
-    Caption(line, float2(center, under), 13.5 * letters, tone, screen.x - 16);
-
-    // The arrows, once a finger has been used: the pad's ways, and the hands' change in its middle
+    // The arrows have the same hit areas as before, with square enamel keys
+    // and a chef portrait on the change-hands button.
     if (pad.touched)
     {
         var reach = layout.reach;
-        Draw.Circle(layout.pad, reach * 2.25, Color(ink.r, ink.g, ink.b, 0.4));
+        Sign(layout.pad, float2(reach * 4.5), UI_BRASS, Color(0.09, 0.13, 0.14, 0.86));
         for (var way = 0; way < 4; way++)
         {
             var step = Way(way);
             var at = layout.pad + float2(step.x, step.y) * (reach * 1.35);
             var held = pad.way == way + 1;
-            Draw.Circle(at, reach * 0.74, held ? Color.white : Color(ink.r, ink.g, ink.b, 0.8));
+            Draw.Rect(at, float2(reach * 1.42), held ? UI_CREAM : Color(0.23, 0.3, 0.27));
             var tip = at + float2(step.x, step.y) * (reach * 0.3);
             var side = float2(-step.y, step.x) * (reach * 0.3);
-            var arrow = held ? ink : Color.white;
+            var arrow = held ? UI_INK : UI_CREAM;
             Draw.Line(tip, at - float2(step.x, step.y) * (reach * 0.15) + side, 3, arrow);
             Draw.Line(tip, at - float2(step.x, step.y) * (reach * 0.15) - side, 3, arrow);
         }
         if (alone)
         {
-            Draw.Circle(layout.pad, reach * 0.5, Tone(1 - Math.Max(inHand, 0)));
-            Draw.Circle(layout.pad, reach * 0.5 - 3, Tone(Math.Max(inHand, 0)));
+            Draw.Rect(layout.pad, float2(reach * 0.95), Tone(Math.Max(inHand, 0)));
+            ChefBadge(layout.pad + float2(0, 3), Math.Max(inHand, 0), 0.85);
         }
     }
 
+    if (kitchen.travelling) return;
+    var under = screen.y - layout.bottom - (pad.touched ? 8 : -8);
+    var hint = Hint(kitchen.level);
+    var spoiled = Spoiled(kitchen.board);
+    mut var line = hint != "" && (fx.hint < 14 || kitchen.moves == 0) ? hint : "Arrows or WASD move. Z undoes. R restarts. M returns to the trail.";
+    mut var tone = UI_CREAM;
+    if (spoiled)
+    {
+        line = "Spoiled! Undo the move (Z), or start over (R).";
+        tone = Color(1, 0.5, 0.42);
+    }
+    if (pad.touched && !spoiled && line.StartsWith("Arrows")) line = "Undo takes a move back. Trail returns to the map.";
+    Caption(line, float2(center, under), 13 * letters, tone, screen.x - 16);
     if (kitchen.cleared == 0) return;
-    // Cooked: said across the kitchen, until the next one is laid
-    var last = kitchen.level == LEVELS - 1;
-    var word = last ? "ALL SERVED!" : "COOKED!";
+    var word = served == LEVELS ? "ALL SERVED!" : "SERVED!";
     var shown = Math.Saturate(fx.cheer * 4);
     var big = Math.Min(34, screen.x * 0.085);
-    var middle = float2(center, layout.top + 26);
-    var wordBox = Draw.MeasureText(word, big, Font.Bold);
-    Draw.Rect(middle + float2(0, 9), float2(Math.Max(wordBox.x + 36, 250 * letters), wordBox.y + 34), Color(ink.r, ink.g, ink.b, 0.88 * shown));
-    Draw.Text(word, middle, big, Color(gold.r, gold.g, gold.b, shown), Anchor.MiddleCenter, Font.Bold);
-    Draw.Text(last ? "That's every level. Back to the first in a moment" : $"In {kitchen.moves} moves. The next kitchen in a moment",
-              middle + float2(0, wordBox.y * 0.5 + 10), 11.5 * letters, Color(1, 1, 1, shown), Anchor.MiddleCenter);
+    var middle = float2(center, layout.top + 27);
+    Sign(middle + float2(0, 9), float2(Math.Min(screen.x - 20, 350), 72), UI_GOLD, UI_INK);
+    Draw.Text(word, middle - float2(0, 5), big, Color(UI_GOLD.r, UI_GOLD.g, UI_GOLD.b, shown), Anchor.MiddleCenter, Font.Bold);
+    Draw.Text($"{kitchen.moves} moves. Back to the trail in a moment.", middle + float2(0, 25), 11.5 * letters,
+              UI_CREAM, Anchor.MiddleCenter, Font.Bold);
 }
 
 // The menu's button goes in the top right corner here: the bottom of the
 // screen is the buttons' and the arrows'.
 override Rect Rooms.MenuButton(float2 screen)
 {
-    return Rect(screen.x - 92, 8, 84, 36);
+    return Rect(screen.x - 94, 18, 78, 34);
 }
 
 override string Rooms.Tagline()
 {
-    return "A cookout for two. Play both chefs, or bring a friend.";
+    return "Two chefs. One long cookout.";
 }

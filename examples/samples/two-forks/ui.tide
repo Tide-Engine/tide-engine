@@ -1,0 +1,231 @@
+// The cookout's signs and controls: square enamel plates, warm brass rims,
+// and the two chefs' colors. They share the islands' deliberately coarse look.
+const Color UI_INK = Color(0.09, 0.13, 0.14);
+const Color UI_CREAM = Color(0.97, 0.9, 0.72);
+const Color UI_BRASS = Color(0.76, 0.58, 0.3);
+const Color UI_GOLD = Color(0.99, 0.78, 0.34);
+const GUITheme COOKOUT_THEME = GUITheme {
+    text = UI_CREAM,
+    panel = Color(0.14, 0.19, 0.18, 0.98),
+    control = Color(0.35, 0.3, 0.23),
+    hot = Color(0.48, 0.39, 0.27),
+    pressed = Color(0.23, 0.23, 0.18),
+    field = Color(0.09, 0.13, 0.14),
+    fieldHot = Color(0.18, 0.24, 0.22),
+    accent = UI_GOLD,
+    radius = 0
+};
+
+// Rooms records its widgets before the game's drawing views. Set their look
+// first, so the title, room code and room seats use the cookout's palette too.
+[Stage(Layers.Camera, -2)]
+[Before(Rooms.Begin, Rooms.Pages)]
+view CookoutTheme()
+{
+    GUI.SetTheme(COOKOUT_THEME);
+}
+
+void Sign(float2 at, float2 size, Color rim, Color fill)
+{
+    var pixels = float2(Math.Floor(at.x), Math.Floor(at.y));
+    var square = float2(Math.Floor(size.x), Math.Floor(size.y));
+    Draw.Rect(pixels + float2(3, 4), square, Color(0.04, 0.07, 0.08, 0.65));
+    Draw.Rect(pixels, square, rim);
+    Draw.Rect(pixels, square - float2(4), fill);
+    Draw.Rect(pixels - float2(0, square.y * 0.5 - 3), float2(square.x - 6, 2), Color(0.98, 0.87, 0.62, 0.45));
+    for (var side = -1; side <= 1; side += 2)
+    {
+        Draw.Rect(pixels + float2(side * (square.x * 0.5 - 5), square.y * 0.5 - 5), float2(2), UI_BRASS);
+    }
+}
+
+void ForkBadge(float2 at, float scale, Color tone)
+{
+    Draw.Rect(at + float2(1, 2) * scale, float2(4, 22) * scale, UI_INK);
+    Draw.Rect(at, float2(3, 22) * scale, tone);
+    Draw.Rect(at - float2(0, 5) * scale, float2(13, 3) * scale, tone);
+    for (var tooth = -1; tooth <= 1; tooth++)
+    {
+        Draw.Rect(at + float2(tooth * 5, -9) * scale, float2(3, 10) * scale, tone);
+    }
+}
+
+void ChefBadge(float2 at, int who, float scale)
+{
+    Draw.Rect(at + float2(0, 5) * scale, float2(16, 10) * scale, Tone(who));
+    Draw.Rect(at - float2(0, 1) * scale, float2(12, 8) * scale, Color(0.96, 0.72, 0.5));
+    Draw.Rect(at - float2(0, 7) * scale, float2(20, 5) * scale, UI_CREAM);
+    Draw.Rect(at - float2(0, 11) * scale, float2(16, 5) * scale, UI_CREAM);
+    Draw.Rect(at - float2(3, 1) * scale, float2(2) * scale, UI_INK);
+    Draw.Rect(at + float2(3, -1) * scale, float2(2) * scale, UI_INK);
+}
+
+bool CookoutButton(Rect rect, string word, bool enabled = true, bool important = false)
+{
+    mut var clicked = false;
+    GUI.Disabled(!enabled)
+    {
+        var button = GUI.Control(rect);
+        var lit = button.hovered || button.focused;
+        var down = button.pressed && button.hovered;
+        var at = float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5 + (down ? 2 : 0));
+        var rim = !enabled ? Color(0.34, 0.38, 0.33) : lit || important ? UI_GOLD : UI_BRASS;
+        var fill = !enabled ? Color(0.14, 0.19, 0.18) : down ? Color(0.19, 0.23, 0.2)
+                 : lit ? Color(0.39, 0.33, 0.23) : Color(0.23, 0.27, 0.23);
+        Sign(at, float2(rect.width, rect.height), rim, fill);
+        Draw.Text(word, at, Math.Min(14, rect.width / Math.Max(word.length * 0.6, 1)),
+                  enabled ? UI_CREAM : Color(0.48, 0.52, 0.44), Anchor.MiddleCenter, Font.Bold);
+        clicked = button.clicked;
+    }
+    return clicked;
+}
+
+int ServedCount(int done)
+{
+    mut var count = 0;
+    for (var level = 0; level < LEVELS; level++)
+    {
+        if ((done & (1 << level)) != 0) count += 1;
+    }
+    return count;
+}
+
+Color RegionTone(int region)
+{
+    if (region == 1) return Color(0.74, 0.84, 0.45);
+    if (region == 2) return Color(0.68, 0.82, 0.94);
+    if (region == 3) return Color(1, 0.57, 0.34);
+    return Color(0.49, 0.88, 0.8);
+}
+
+[Stage(Layers.Hud, -1)]
+view RoomChefs(Kitchen kitchen, Me me, mut Rooms.Lobby lobby)
+{
+    lobby.seats = 2;
+    lobby.manned = kitchen.taken;
+    lobby.mine = me.seat;
+}
+
+// The package keeps its room flow and keyboard navigation; a game-specific
+// crest gives its pages the same hand-painted identity as the HUD.
+[Stage(Layers.Hud)]
+view MenuSigns(Rooms.Lobby lobby)
+{
+    if (lobby.page == Rooms.Page.Playing) return;
+    Draw.SetScreen();
+    var screen = float2(Screen.width, Screen.height);
+    var scale = Math.Clamp(screen.x / 620, 0.7, 1);
+    mut var at = float2(screen.x * 0.5, screen.y * 0.5 - (lobby.page == Rooms.Page.Room ? 198 : 160));
+    at.y = Math.Max(62, at.y);
+    Sign(at, float2(330, 78) * scale, UI_BRASS, UI_INK);
+    ForkBadge(at - float2(136, 1) * scale, 1.5 * scale, Tone(0));
+    ForkBadge(at + float2(136, -1) * scale, 1.5 * scale, Tone(1));
+    Draw.Text("TWO FORKS", at - float2(0, 8) * scale, 29 * scale, UI_CREAM, Anchor.MiddleCenter, Font.Bold);
+    Draw.Text("A COOKOUT FOR TWO", at + float2(0, 20) * scale, 11 * scale, UI_GOLD, Anchor.MiddleCenter, Font.Bold);
+    var footer = float2(screen.x * 0.5, Math.Min(screen.y - 35, screen.y * 0.5 + 190));
+    ChefBadge(footer - float2(26, 0), 0, 0.8);
+    ChefBadge(footer + float2(26, 0), 1, 0.8);
+}
+
+// Camps are signs on the ground, rather than a list of buttons that teleports
+// the chefs. Both players still have to find their way to the same kitchen.
+[Stage(Layers.Hud, 2)]
+view WorldMapUI(Kitchen kitchen, Lens lens, Me me, Devices devices, Layout layout, Rooms.Lobby lobby)
+{
+    if (!kitchen.travelling || lobby.page != Rooms.Page.Playing) return;
+    Draw.SetScreen();
+    var screen = float2(Screen.width, Screen.height);
+    var who = Math.Max(InHand(kitchen, me), 0);
+    var chef = kitchen.board.chefs[who].at;
+    var region = TravelRegion(chef);
+    var together = NearbyCamp(kitchen);
+    mut var selected = together;
+    if (selected < 0)
+    {
+        mut var nearest = 100;
+        for (var i = 0; i < LEVELS; i++)
+        {
+            var distance = StepsApart(chef, RouteCamp(i));
+            if (distance >= nearest) continue;
+            nearest = distance;
+            selected = i;
+        }
+    }
+
+    for (var level = 0; level < LEVELS; level++)
+    {
+        var camp = RouteCamp(level);
+        var place = lens.scene.WorldToScreen(Spot(kitchen.board.size, float2(camp.x, camp.y), 0.17));
+        var at = float2(Math.Floor(place.x * lens.scale.x), Math.Floor(place.y * lens.scale.y)) - float2(0, 7);
+        var open = RouteOpen(kitchen.done, level);
+        var served = (kitchen.done & (1 << level)) != 0;
+        var tone = served ? UI_GOLD : open ? RegionTone(Region(level)) : Color(0.36, 0.39, 0.34);
+        if (level == selected) Draw.Rect(at, float2(29), UI_CREAM);
+        Draw.Rect(at + float2(2, 3), float2(23), Color(0.04, 0.07, 0.08, 0.65));
+        Draw.Rect(at, float2(23), tone);
+        Draw.Rect(at, float2(19), UI_INK);
+        Draw.Text($"{level + 1}", at, 13, tone, Anchor.MiddleCenter, Font.Bold);
+        if (served)
+        {
+            Draw.Rect(at + float2(11, -11), float2(7), UI_GOLD);
+        }
+    }
+
+    // The plates' diamond markings remain visible over every regional floor.
+    for (var gate = 0; gate < 3; gate++)
+    {
+        if ((kitchen.bridges & (1 << gate)) != 0) continue;
+        var ready = RegionSolved(kitchen.done, gate) >= 2;
+        for (var which = 0; which < 2; which++)
+        {
+            var plate = GatePlate(gate, which);
+            var place = lens.scene.WorldToScreen(Spot(kitchen.board.size, float2(plate.x, plate.y), 0.1));
+            var at = float2(place.x * lens.scale.x, place.y * lens.scale.y);
+            var held = Same(kitchen.board.chefs[0].at, plate) || Same(kitchen.board.chefs[1].at, plate);
+            Draw.Rect(at, float2(9), held ? UI_CREAM : ready ? UI_GOLD : UI_BRASS);
+            Draw.Rect(at, float2(5), UI_INK);
+        }
+    }
+    for (var route = 0; route < 2; route++)
+    {
+        if (!TravelUnlocked(kitchen.done, route)) continue;
+        for (var end = 0; end < 2; end++)
+        {
+            var dock = end == 0 ? TravelDock(route) : TravelReturnDock(route);
+            var place = lens.scene.WorldToScreen(Spot(kitchen.board.size, float2(dock.x, dock.y), 0.1));
+            var at = float2(place.x * lens.scale.x, place.y * lens.scale.y) + float2(0, 12);
+            Sign(at, float2(47, 18), UI_GOLD, UI_INK);
+            Draw.Text(route == 0 ? "FERRY" : "ROPE", at, 9, UI_GOLD, Anchor.MiddleCenter, Font.Bold);
+        }
+    }
+
+    var solved = RegionSolved(kitchen.done, region);
+    var tip = region == 3 ? "The final cookout. Every kitchen stays open for a return visit."
+            : solved < 2 ? "Serve any 2 kitchens here. Then stand on both brass plates."
+            : (kitchen.bridges & (1 << region)) == 0 ? "The bridge is ready. Put one chef on each brass plate."
+            : solved < 3 ? "Bridge open! The third kitchen earns a shortcut." : "All three served! Meet at the marked shortcut together.";
+    Caption(tip, float2(screen.x * 0.5, screen.y - layout.bottom + 4), 12 * Math.Min(1, screen.x / 420), UI_CREAM, screen.x - 16);
+
+    var travel = NearbyTravel(kitchen);
+    var entering = CanEnter(kitchen, selected);
+    var width = Math.Min(screen.x - 16, 560);
+    var at = float2(screen.x * 0.5, screen.y - layout.bottom + 64);
+    var left = at.x - width * 0.5 + 13;
+    var title = travel >= 0 ? TravelName(travel) : $"{selected + 1}. {Name(selected)}";
+    var open = RouteOpen(kitchen.done, selected);
+    var outward = travel >= 0 && TogetherAt(kitchen.board, TravelDock(travel));
+    var status = travel >= 0 ? (travel == 0 ? (outward ? "Sail to the highlands" : "Sail back to the coast")
+                                                           : (outward ? "Cross to the crater" : "Cross back to the fields"))
+               : entering ? "Both chefs ready" : open ? "Bring both chefs to this camp" : "Open a route to this region";
+    var textRoom = width - 142;
+    Sign(at, float2(width, 66), travel >= 0 || entering ? UI_GOLD : UI_BRASS, UI_INK);
+    Draw.Text(title, float2(left, at.y - 12), Math.Min(15, textRoom / Math.Max(title.length * 0.6, 1)),
+              UI_CREAM, Anchor.MiddleLeft, Font.Bold);
+    Draw.Text(status, float2(left, at.y + 12), Math.Min(11.5, textRoom / Math.Max(status.length * 0.6, 1)),
+              travel >= 0 || entering ? UI_GOLD : UI_BRASS, Anchor.MiddleLeft, Font.Bold);
+    var go = CookoutButton(Rect(at.x + width * 0.5 - 121, at.y - 21, 108, 42), travel >= 0 ? "Take route" : "Enter (E)",
+                           travel >= 0 || entering, travel >= 0 || entering);
+    var key = devices.keyboard.enter.down || devices.keyboard.e.down || devices.gamepad.buttonSouth.down;
+    if (travel >= 0 && (go || key)) Send(Traverse { route = travel });
+    else if (entering && (go || key)) Send(EnterKitchen { level = selected });
+}
