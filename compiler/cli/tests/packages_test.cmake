@@ -119,6 +119,33 @@ file(WRITE "${games}/maths/main.tide" "struct Pair { float a; }\n")
 tide("${games}/game" ARGS schedule . FAILS EXPECT "what package Maths declares goes in its namespace, Maths")
 file(REMOVE "${games}/maths/main.tide")
 
+# Adding a package checks its metadata before changing the game's file.
+file(WRITE "${games}/invalid/tide.packages" "# Keep the game's file.\n")
+file(WRITE "${games}/bad-package/tide.packages" "package Broken\nthis has three words\n")
+tide("${games}/invalid" ARGS add ../bad-package FAILS
+    EXPECT "tide.packages:2: error: this line has more than two words" WITHOUT "tide: added")
+file(READ "${games}/invalid/tide.packages" unchanged)
+string(REPLACE "\r\n" "\n" unchanged "${unchanged}")
+if(NOT unchanged STREQUAL "# Keep the game's file.\n")
+    message(FATAL_ERROR "adding invalid package metadata changed tide.packages: ${unchanged}")
+endif()
+
+# Dependency lines are still added automatically, but an unusable package
+# graph must fail with its diagnostic, in add and in update alike.
+file(WRITE "${games}/dependencies/main.tide" "scene Main { }\n")
+file(WRITE "${games}/parent/tide.packages" "package Parent\n../child\n")
+tide("${games}/dependencies" ARGS add ../parent FAILS
+    EXPECT "added ../child, which Parent needs" "tide.packages:2: error: ../child isn't a folder")
+expect_file("${games}/dependencies/tide.packages" "../parent\n../child\n")
+tide("${games}/dependencies" ARGS add ../parent FAILS
+    EXPECT "Parent is in tide.packages already" "tide.packages:2: error: ../child isn't a folder")
+tide("${games}/dependencies" ARGS update FAILS EXPECT "tide.packages:2: error: ../child isn't a folder")
+file(WRITE "${games}/child/tide.packages" "package Child\nthis has three words\n")
+tide("${games}/dependencies" ARGS update FAILS EXPECT "tide.packages:2: error: this line has more than two words")
+file(WRITE "${games}/child/tide.packages" "package Child\n")
+tide("${games}/dependencies" ARGS update EXPECT "no packages from git to update")
+tide("${games}/dependencies" ARGS schedule . EXPECT "dependencies: 0 systems")
+
 # ---------------------------------------------------------------------------
 # Packages from git
 
@@ -216,7 +243,7 @@ tide("${game}" ARGS update nope FAILS EXPECT "tide.packages has no package calle
 # tide says so.
 file(WRITE "${game}/tide.packages" "github.com/test/physics//packages/physics@dev\ngithub.com/test/maths ${M1}\n")
 tide("${game}" ARGS schedule . FAILS EXPECT "has no commit to build with" "`tide update github.com/test/physics//packages/physics`")
-tide("${game}" ARGS update EXPECT "is at 4444444 (dev)")
+tide("${game}" ARGS update FAILS EXPECT "is at 4444444 (dev)" "Physics needs tide 99.0 or newer")
 tide("${game}" ARGS schedule . FAILS EXPECT "Physics needs tide 99.0 or newer")
 
 # A package from git that's gone from this machine comes back by itself.
