@@ -1,0 +1,7 @@
+// expect: a comparison runs again and again as the list sorts, so it can't roll
+singleton Deck { List<int> cards; }
+scene Main { }
+system Shuffle(mut Deck deck)
+{
+    deck.cards.Sort(a, b) { return Random.NextBool(); }
+}

@@ -2407,6 +2407,7 @@ static void ex_call(emit *em, const expr *e)
         ex_user_call(em, e);
         return;
     case CALL_RANDOM:
+    case CALL_ROLL:
         refuse(em, e->at, "the GPU can't roll random numbers: a Random keeps its state where the CPU steps it");
         diag_note("roll in the view or a system, and keep the number in a field the GPU reads");
         return;

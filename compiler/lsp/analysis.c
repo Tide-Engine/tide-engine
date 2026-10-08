@@ -886,9 +886,9 @@ static void walk_value(const expr *e)
             o.kind = OCC_METHOD;
             add_occ(o);
         } else if (e->call == CALL_BUILTIN || e->call == CALL_DRAW || e->call == CALL_AUDIO || e->call == CALL_GUI
-                   || e->call == CALL_TEXT || e->call == CALL_RANDOM) {
+                   || e->call == CALL_TEXT || e->call == CALL_RANDOM || e->call == CALL_ROLL) {
             o.kind = OCC_FUNCTION;
-            o.owner = e->call == CALL_TEXT ? str_from("string") : e->call == CALL_RANDOM ? str_from("Random")
+            o.owner = e->call == CALL_TEXT ? str_from("string") : e->call == CALL_RANDOM || e->call == CALL_ROLL ? str_from("Random")
                       : e->targeted ? target_owner(e) : e->object->name;
             o.c_name = e->c_callee;
             add_occ(o);
@@ -1789,10 +1789,7 @@ static const method_form session_calls[] = {
 #define RANDOM_SEEDED_DOC                                                                                              \
     "A generator for a seed: the same seed, the same numbers. Seeds next to each other (1, 2, 3) give sequences that " \
     "have nothing to do with each other."
-#define TIME_SEED_DOC                                                                                                  \
-    "The match's seed, from 0 to 2147483647: the machine that starts the match picks it, so no two matches go the "   \
-    "same, and every player has it with the world. The engine seeds the match's `Random`s from it. 0 where no host "  \
-    "picks one, as in tests."
+#define RANDOM_SEED_DOC     "The match's seed, from 0 to 2147483647: the machine that starts the match picks it, so no two matches go the "     "same, and every player has it with the world. `Random`'s rolls in the match come from it, and the engine "     "seeds the match's `Random` fields from it. 0 where no host picks one, as in tests."
 
 #define LIST_COUNT_DOC "How many elements the list has."
 #define ARRAY_COUNT_DOC "How many elements the array holds: its length, a constant."
@@ -1955,7 +1952,6 @@ static const char *builtin_field_doc(const decl *d, const str name)
                    "every frame. A float gets coarser as it grows: what has to be exact counts in `tick`.";
         }
         if (str_eq_c(name, "tickRate")) return "The ticks in a second: 1 / `dt` to the nearest whole number.";
-        if (str_eq_c(name, "seed")) return TIME_SEED_DOC;
     }
     if (d && d == A.prog->random && str_eq_c(name, "state")) {
         return "All there is to the generator: copy it to keep where a sequence is, and set it to go on from there. 0 "
@@ -5896,7 +5892,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
                    || t.kind == TY_STRUCT || t.kind == TY_EVENT)) {
         for (int i = 0; i < t.decl->fields.count; i++) {
             const field *f = &t.decl->fields.items[i];
-            if (f->hidden) continue;
+            if (f->hidden || f == A.prog->seed) continue; // The match's seed is Random.seed
             if (f->typed) { // What's typed is a frame's: views read it, and the functions they call
                 if (!sc->decl || !(sc->decl->is_view || sc->decl->kind == DECL_FUNCTION)) continue;
                 item(c, str_to_cstr(f->name), CK_FIELD, type_name(f->type), KEYBOARD_TEXT_DOC, NULL);
@@ -5905,8 +5901,6 @@ static void list_members(completion *c, const type t, const bool edges, const sc
             const char *doc = button_field_doc(t.decl, f->name);
             item(c, str_to_cstr(f->name), CK_FIELD, type_name(f->type), doc ? doc : builtin_field_doc(t.decl, f->name), NULL);
         }
-        // Time.seed, which is only among Time's fields once something uses it
-        if (t.decl == A.prog->time && !A.prog->uses_seed) item(c, "seed", CK_FIELD, "int", TIME_SEED_DOC, NULL);
         // A Random's methods: the code needs it mut, as each steps it
         if (t.kind == TY_STRUCT && t.decl == A.prog->random) {
             builtin_visit v = {c, false};
@@ -6153,6 +6147,14 @@ static void complete_members(completion *c, const int dot, const loc at, const o
                 continue;
             }
             list_members(c, d->return_type, false, &sc);
+            return;
+        }
+        // Random.: its rolls and the match's seed, where code rolls: systems, views, handlers and their functions
+        if (n == 1 && str_eq_c(base, "Random") && !gpu && sc.decl && !sc.in_input && !sc.decl->is_async
+            && (sc.decl->kind == DECL_SYSTEM || sc.decl->kind == DECL_FUNCTION || sc.decl->kind == DECL_METHOD)) {
+            builtin_visit v = {c, false};
+            builtin_list_members(base, add_builtin_member, &v);
+            item(c, "seed", CK_PROPERTY, "int", RANDOM_SEED_DOC, NULL);
             return;
         }
         if (n == 1 && builtin_owner(base)) {
@@ -9000,7 +9002,7 @@ static int call_param_names(const expr *call, str *names, const int max)
     }
     label_list list = {0};
     switch (call->call) {
-    case CALL_BUILTIN: case CALL_DRAW: case CALL_AUDIO: case CALL_GUI: case CALL_TEXT: case CALL_RANDOM: {
+    case CALL_BUILTIN: case CALL_DRAW: case CALL_AUDIO: case CALL_GUI: case CALL_TEXT: case CALL_RANDOM: case CALL_ROLL: {
         if (call->resource_operation) {
             if (call->object && call->object->type.kind == TY_RENDER_TARGET) {
                 const method_form *form = find_form(target_calls, sizeof target_calls / sizeof target_calls[0], call->name);
@@ -9035,7 +9037,7 @@ static int call_param_names(const expr *call, str *names, const int max)
             vec_push(list.labels, "Random(long seed)");
             break;
         }
-        const str owner = call->call == CALL_TEXT ? str_from("string") : call->call == CALL_RANDOM ? str_from("Random")
+        const str owner = call->call == CALL_TEXT ? str_from("string") : call->call == CALL_RANDOM || call->call == CALL_ROLL ? str_from("Random")
                           : call->targeted ? target_owner(call)
                           : call->object ? call->object->name : (str){"", 0};
         builtin_signatures(owner, call->name, collect_label, &list);
@@ -9232,7 +9234,7 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
             sb_printf(&label, STR_FMT "(DeclarationOrPhase, ...)", STR_ARG(name));
             add_signature(&s, label.data, "An enum member names the entire phase, including all its offsets.");
         }
-    } else if (owner.len > 0 && builtin_owner(owner)) { // Math.Clamp(, Draw.Circle(, quaternion.Euler(
+    } else if (owner.len > 0 && (builtin_owner(owner) || str_eq_c(owner, "Random"))) { // Math.Clamp(, Draw.Circle(, Random.NextInt(
         if (str_eq_c(owner, "Draw") && str_eq_c(name, "Blit")) add_signature(&s, BLIT_FORM, BLIT_DOC);
         else builtin_signatures(owner, name, visit_signature, &s);
     } else if (str_eq_c(owner, "Scene")) {

@@ -1,0 +1,15 @@
+rolls: 3 systems each tick, 1 stage deep; 3 can run alongside others.
+A system starts once everything it runs after is done.
+
+stage 1  Wander  (per entity)
+         writes Walker
+         alongside Feel, Count
+stage 1  Feel  (per entity)
+         writes Mood
+         alongside Wander, Count
+stage 1  Count  (once)
+         writes Board
+         alongside Wander, Feel
+
+Event handlers, at the end of the tick, as their events are sent:
+         Spawned: Setup

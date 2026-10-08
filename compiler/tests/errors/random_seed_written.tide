@@ -1,0 +1,8 @@
+// expect: can't assign
+singleton Deck { int top; }
+scene Main { }
+system Reseed(mut Deck deck)
+{
+    Random.seed = 5;
+    deck.top = 1;
+}
