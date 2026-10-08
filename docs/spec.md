@@ -1579,6 +1579,89 @@ Picks made as `Mesh` assets were built (2026-10-08), awaiting the owner. That a 
 - Pinning a URL to a hash of its contents, so a build is reproducible when the server changes the file.
 - Big media through the match: it goes player to server to everyone, so a host's upload is the file once per player. The docs say the number; a game with big files keeps a URL in the match and each machine fetches. Whether the engine should do more than say so.
 
+## Skinned meshes and animation
+
+### Decided
+
+Agreed 2026-10-08. This is the design for a feature not built yet. The current static `Mesh<V>` importer still ignores skins and animation; the examples in this section describe the planned language.
+
+- **A skinned model is a `SkinnedMesh<V>`.** It provides geometry over the game's vertex struct, its skeleton and its animations. A mesh is shared independently of playback: several characters can use the same model with different poses.
+- **A pose is separate from the mesh.** Animation produces a pose; game code can read and edit its bones, and drawing uses it to deform the mesh. Both match systems and views can sample and use poses, including for sockets, hitboxes and root motion. Sampling and blending are deterministic CPU operations using Tide's math. GPU deformation is for drawing and never supplies match results.
+- **Drawing has its own call, `Draw.SkinnedMesh`.** A pose is not another optional argument added to `Draw.Mesh`. The exact argument list and the other pose operations are proposed below.
+- **Contracts are optional.** `SkinnedMesh<V>` needs no empty contract. `SkinnedMesh<V, C>` declares required members through a contract `C`. A contract specifies a required subset of the model's content: extra clips and bones remain available for dynamic discovery and lookup. A known asset is checked during compilation; a runtime-loaded value with a contract is checked before that value is successfully made available.
+- **A known asset provides checked members without a written contract.** For an asset declared without a contract, the compiler reads its animation and bone names and exposes them as members, such as `hero.animations.idle` and `hero.skeleton.bones.head`. A missing member is a compile error. An `asset` URL is known this way too, since it is fetched during compilation as other asset URLs are. A contracted value guarantees its declared requirements; whether a known contracted asset also infers extra dot members remains open.
+- **Dynamic lookup remains available in every case.** `hero.animations.Find(name)` returns `Animation?`; bones can also be looked up dynamically, with an optional typed reference as the result. A runtime-loaded model with no contract uses lookup and enumeration. A model with inferred or declared members supports those operations as well. A clip obtained through a checked member and one found dynamically are ordinary animation values used by the same sampling and blending operations.
+- **A bone member produces a typed reference.** The reference identifies the bone within its skeleton and lets a pose reach that bone without looking up text at every edit. Name lookup resolves such a reference. The proposed type name is `Bone`, and the proposed indexing is `pose[head]`, below. Skeleton compatibility is distinct from the presence of names: two models both having an animation named `run` does not establish compatible skeletons.
+- **Inference retains known members.** `var character = hero;` keeps a known asset's inferred members. A general parameter written as `SkinnedMesh<V>` promises the common dynamic API; a helper requiring checked members declares a contract or receives the selected `Animation` or `Bone` directly. A declared contract keeps its guarantees when the model passes through helpers and collections.
+- **The editor understands these members.** Completion and hover expose inferred and contracted animations and bones, and member diagnostics agree with the compiler. Reading model metadata must keep editing responsive; ordinary completion must not wait for a full geometry import or a URL download. Cache and refresh details are proposed below.
+- **Runtime fetching follows the existing local/match boundary.** A URL fetched while playing is local, unlike an `asset` URL. Content that affects match bones or root motion must enter through synchronized match data, as other runtime files do; a system does not fetch its own copy independently.
+
+There are three forms of member access:
+
+| Model | Checked members | Dynamic access |
+|---|---|---|
+| Compile-time asset, no explicit contract | Inferred from the file | `Find` and enumeration |
+| Runtime-loaded model, no contract | None inferred from its unknown contents | `Find` and enumeration |
+| Model with an explicit contract | The declared requirements, validated before use | `Find` and enumeration, including extra content |
+
+These examples use `idle` and `run` as the model's exposed animation names and `head` as its exposed bone name. The rules for mapping exported names and aliases to these identifiers are still open.
+
+```csharp
+asset SkinnedMesh<Corner> hero = "art/hero.glb";
+
+// No written contract is needed for the known asset.
+var idle = hero.animations.idle;
+var head = hero.skeleton.bones.head;
+
+var character = hero;
+var run = character.animations.run;
+
+// Lookup is also available for names chosen while playing.
+Animation? emote = hero.animations.Find(emoteName);
+```
+
+### Open
+
+The following API is a proposal, not an implementation contract. Its exact signatures, defaults and failure behavior still need approval. An animation contract could use an ordinary struct to describe the clips a helper needs:
+
+```csharp
+struct Locomotion
+{
+    Animation idle;
+    Animation run;
+    Animation jump;
+}
+
+asset SkinnedMesh<Corner, Locomotion> hero = "art/hero.glb";
+```
+
+`Locomotion` requires those three clips; it does not exclude emotes or other clips in the model. The declaration rules for a contract that also requires bones remain open.
+
+Proposed pose use:
+
+```csharp
+mut var pose = hero.animations.idle.Sample(seconds, Playback.Loop);
+var running = hero.animations.run.Sample(runSeconds, Playback.Loop);
+pose.Blend(running, moving);
+
+var head = hero.skeleton.bones.head;
+pose[head].rotation = Math.Mul(pose[head].rotation, lookRotation);
+
+Draw.SkinnedMesh(hero, transform, pose);
+var weaponTransform = Math.Mul(transform, pose.Model(rightHand));
+Draw.Mesh(sword, weaponTransform);
+```
+
+- **Import and runtime loading.** glTF/GLB for skinned models; separate fetch and decode, as `Web.Fetch` and `grid.Decode` already do. Proposed runtime spelling: `SkinnedMesh<V>.Decode(bytes)` and `SkinnedMesh<V, C>.Decode(bytes)`, with failure for invalid data or an unmet contract. A self-contained GLB is a possible first runtime format; external-resource resolution, separate animation files and their skeleton binding, multiple skins in one file, influence counts and raw geometry access still need rules. Runtime values need persistent ownership; the current borrowed-pack lifetime of `Mesh<V>` cannot be assumed for them.
+- **Names and contracts.** How exported names become Tide identifiers, explicit aliases for punctuation or desired spelling, duplicate and unnamed clips or bones, collisions with `Find` and other operations, and whether bone lookup accepts a hierarchy path. Proposed dynamic bone spelling: `skeleton.Find(name)` returning `Bone?`. No path format or automatic name normalization has been agreed. The shape of contracts that include bones, assignment between contracted and uncontracted values, extra inferred members on a known contracted asset, and selection among several inferred catalogs remain to specify.
+- **Pose values.** Proposed names are `Skeleton`, `Animation`, `Pose`, `Bone` and a bone transform with parent-local position, rotation and scale. A pose owns its mutable transforms and can be temporary or stored in a match/local field. Sampling fills unanimated properties from the skeleton's authored defaults; blending works on local transforms, with quaternion rotation interpolation. In-place `pose.Sample(...)` reuses storage; `pose.Model(bone)` gives an accumulated model-space matrix without inverse-bind skinning offsets. Pose compatibility checks, copy behavior, derived matrix caching and incompatible hot reload still need rules.
+- **Playback and interpolation.** Explicit supplied time, clamp/loop behavior, reverse playback, transitions, masks, additive layers and whether a small optional playback value provides `Play` and `Update`. A wrapped float clock must not interpolate through the wrong part of a clip. Existing lists and arrays do not blend in views, so a persistent pose needs an explicit interpolation rule or the view must resample playback state. Long-running clock precision also needs a rule.
+- **Root motion and events.** An explicit root-motion delta over a time interval, including loop crossings, for a system to apply through its own movement rules; removal of extracted motion from the displayed pose. Root selection, translation/rotation/scale behavior and animation markers or event queries remain open. Sampling must not implicitly move entities or send events.
+- **Drawing and shaders.** Proposed order: `Draw.SkinnedMesh(mesh, transform, pose[, texture][, vert][, frag][, values])`, with the same call on a render target. A required pose and explicit `skeleton.RestPose()` are proposed. Skinning would run before the custom `vert`, producing mesh-local positions, normals and tangents before the draw transform and camera. The same pose and deformation should work in shadow passes. Nonuniform bone scale, tangent handedness, access to pre-skin vertices and an instanced call with an independent pose per instance still need rules; `Draw.SkinnedInstanced` is a suggested name.
+- **Match compatibility.** Imported skeleton and animation data used by simulation must be identical across peers. How it participates in build/content compatibility, admission of runtime content, and changing it while rollback history exists need a design before implementation.
+- **Responsive asset metadata in the editor.** A proposed dedicated reader extracts names and hierarchy from `.gltf` JSON or the JSON chunk of `.glb`, skipping binary geometry and animation sample buffers. Cache metadata by file identity/version, refresh after file changes in background work, coalesce obsolete requests and reuse the compiler's naming/contract validation. For URLs, completion uses an available cache and explicit or background refresh rather than initiating a blocking fetch. Pending or unavailable metadata must be distinguished from a known missing member. A very large JSON catalog can still cost time; verify cold reads and refreshes with large binary buffers and large name catalogs, alongside warm completion latency and cancellation behavior.
+- **Language/runtime boundary and verification.** No new generated-C runtime function has been agreed. Before implementation, agree that boundary, and pin compilation, editor behavior, runtime contract failures, skeleton compatibility, pose math and match hashes. Native and web drawing must cover custom shaders, shadow passes, independent poses and resource recreation. Retargeting between different skeletons, IK, morph targets and an automatic animation controller have not been agreed as part of this work.
+
 ## Tasks
 
 ### Decided
