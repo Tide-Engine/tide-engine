@@ -391,7 +391,8 @@ static const char *const native_libs[] = {"-lmingw32", "-lmingwex", "-lmoldname"
 // What GLFW, in the platform layer, links on macOS, and Security, for TLS to
 // the relay.
 static const char *const native_libs[] = {"-framework", "Cocoa", "-framework", "IOKit", "-framework", "CoreFoundation",
-                                          "-framework", "Security", "-framework", "AudioToolbox", NULL};
+                                          "-framework", "Security", "-framework", "AudioToolbox", "-framework", "CoreAudio",
+                                          NULL};
 #define EXE_SUFFIX ""
 #define LIBRARY_SUFFIX ".dylib"
 #else
