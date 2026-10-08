@@ -73,7 +73,7 @@ jobs:
       - name: Build the examples
         run: |
           cmake --preset web-release -DTIDE_DOC_EXAMPLES=ON
-          cmake --build --preset web-release --target sand duel towers sumo docs_examples sample_games
+          cmake --build --preset web-release --target sand duel towers sumo docs_examples sample_games private_games
           mkdir -p docs/static/sand docs/static/duel docs/static/towers docs/static/sumo
           cp build/web-release/bin/sand.html docs/static/sand/index.html
           cp build/web-release/bin/duel.html docs/static/duel/index.html

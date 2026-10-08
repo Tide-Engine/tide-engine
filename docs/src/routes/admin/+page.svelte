@@ -165,6 +165,11 @@
         </form>
     </div>
 
+    <nav class="admin-nav" aria-label="Admin sections">
+        <a href="/admin" aria-current="page">Analytics</a>
+        <a href="/admin/prototypes">Private prototypes</a>
+    </nav>
+
     <div class="toolbar">
         <div class="ranges" role="group" aria-label="Date range">
             {#each ranges as range}
@@ -324,6 +329,10 @@
     .quiet-button { padding: 8px 12px; border: 1px solid var(--divider); border-radius: 7px; color: var(--text-2); font-size: 13px; }
     .quiet-button span { margin-left: 8px; }
     .quiet-button:hover { color: var(--text-1); border-color: var(--border); }
+    .admin-nav { display: flex; gap: 24px; border-bottom: 1px solid var(--divider); margin: 0 0 28px; }
+    .admin-nav a { padding: 0 0 12px; color: var(--text-2); font-size: 13px; }
+    .admin-nav a:hover { color: var(--text-1); }
+    .admin-nav a[aria-current] { color: var(--brand-1); border-bottom: 2px solid var(--brand-1); }
     .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 24px; }
     .ranges { display: flex; gap: 3px; padding: 4px; border: 1px solid var(--divider); border-radius: 9px; background: var(--bg-alt); }
     .ranges button { padding: 6px 14px; border-radius: 5px; color: var(--text-2); font-size: 13px; font-weight: 550; white-space: nowrap; }

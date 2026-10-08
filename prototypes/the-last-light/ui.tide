@@ -1,0 +1,328 @@
+local singleton Me { PlayerID player; int seat = -1; }
+local singleton Guide { bool open; }
+
+const Color LETTER = Color(0.86, 0.8, 0.64);
+const Color FAINT = Color(0.57, 0.61, 0.56);
+const Color RED = Color(0.77, 0.34, 0.29);
+const GUITheme RITUAL_THEME = GUITheme {
+    text = LETTER, panel = Color(0.035, 0.047, 0.044, 0.98),
+    control = Color(0.14, 0.16, 0.13), hot = Color(0.22, 0.25, 0.19),
+    pressed = Color(0.08, 0.11, 0.09), field = Color(0.07, 0.09, 0.08),
+    fieldHot = Color(0.15, 0.18, 0.15), accent = LETTER, radius = 0
+};
+
+[Stage(Layers.Camera, -2)]
+[Before(Rooms.Begin, Rooms.Pages)]
+view Prepare(Session session, mut Me me)
+{
+    me.player = session.player;
+    GUI.SetTheme(RITUAL_THEME);
+}
+
+override string Rooms.Tagline() { return "For two. One goes below. One keeps the light."; }
+override Rect Rooms.MenuButton(float2 screen) { return Rect(screen.x - 76, 12, 64, 30); }
+
+string ActName(int act)
+{
+    if (act == 0) return "I  /  THE WAITING ROOM";
+    if (act == 1) return "II  /  THE EMPTY BEDS";
+    return "III  /  THE LAST WITNESS";
+}
+
+string PlaceName(int node)
+{
+    if (node == 0) return "The little chapel";
+    if (node == 1) return "Admission gallery";
+    if (node == 2) return "The drowned well";
+    if (node == 3) return "The broken belfry";
+    if (node == 4) return "The wax room";
+    if (node == 5) return "Faces without names";
+    if (node == 6) return "Water under the beds";
+    if (node == 7) return "The night bell";
+    if (node == 8) return "The final prayer";
+    if (node == 9) return "The visitor's book";
+    if (node == 10) return "A voice in the drain";
+    return "The ward that answers";
+}
+
+string SymbolName(int sigil)
+{
+    if (sigil == 0) return "SUN";
+    if (sigil == 1) return "KEY";
+    return "EYE";
+}
+
+string Memory(int index)
+{
+    switch (index)
+    {
+        case 0: return "Mara Vale. She always asked for the window bed.";
+        case 1: return "Elias Moss. There was a birthday card nobody collected.";
+        case 2: return "June Alder. Her bell rang after they took it away.";
+        case 3: return "Arthur Grey. He said the third chair was for his brother.";
+        case 4: return "Iris Wren. She drew the same door on every page.";
+        case 5: return "Ada Finch. The discharge paper has no date.";
+        case 6: return "Rowan Bell. His visitor signed the book in his own hand.";
+        case 7: return "Celia Hart. There were wet footprints under her bed.";
+        case 8: return "Noah Reed. His room number was painted over.";
+        case 9: return "Annie Thorne. She knew your name before you arrived.";
+        case 10: return "David Ash. His family photograph shows two empty chairs.";
+        case 11: return "Rose Penn. She was waiting for someone to remember.";
+        case 12: return "A missing page. Two sets of fingerprints.";
+        case 13: return "An admission form. The photograph has your eyes.";
+        case 14: return "A night-shift roster. Your partner's name is on it.";
+        case 15: return "A visitor's signature. It is your handwriting.";
+        case 16: return "An empty bed. You remember being cold.";
+    }
+    return "Two names. Yours. You were never the visitors.";
+}
+
+void Letter(string text, float2 at, float size, Color tone = LETTER, Anchor anchor = Anchor.MiddleCenter)
+{
+    Draw.Text(text, at + float2(1, 1), size, Color(0.015, 0.019, 0.018), anchor);
+    Draw.Text(text, at, size, tone, anchor);
+}
+
+void Wrapped(string words, float2 at, float width, float size, Color tone = LETTER)
+{
+    mut var rest = words;
+    mut var line = "";
+    mut var row = 0;
+    while (rest.length > 0)
+    {
+        var space = rest.IndexOf(' ');
+        var word = space < 0 ? rest : rest.Substring(0, space);
+        var next = line == "" ? word : $"{line} {word}";
+        if (line != "" && Draw.MeasureText(next, size).x > width)
+        {
+            Letter(line, at + float2(0, row * (size + 5)), size, tone);
+            line = word;
+            row++;
+        }
+        else line = next;
+        rest = space < 0 ? "" : rest.Substring(space + 1);
+    }
+    if (line != "") Letter(line, at + float2(0, row * (size + 5)), size, tone);
+}
+
+void Sigil(int which, float2 at, float size, Color tone)
+{
+    if (which == 0)
+    {
+        Draw.Circle(at, size * 0.28, tone);
+        for (var i = 0; i < 8; i++)
+        {
+            var way = float2(Math.Cos(i * Math.TAU / 8), Math.Sin(i * Math.TAU / 8));
+            Draw.Line(at + way * size * 0.42, at + way * size * 0.64, 2, tone);
+        }
+    }
+    else if (which == 1)
+    {
+        Draw.Circle(at + float2(0, -size * 0.3), size * 0.24, tone);
+        Draw.Circle(at + float2(0, -size * 0.3), size * 0.12, Color(0.04, 0.05, 0.04));
+        Draw.Line(at, at + float2(0, size * 0.58), 3, tone);
+        Draw.Line(at + float2(0, size * 0.34), at + float2(size * 0.25, size * 0.34), 3, tone);
+        Draw.Line(at + float2(0, size * 0.53), at + float2(size * 0.25, size * 0.53), 3, tone);
+    }
+    else
+    {
+        Draw.Line(at + float2(-size * 0.6, 0), at + float2(0, -size * 0.35), 2, tone);
+        Draw.Line(at + float2(0, -size * 0.35), at + float2(size * 0.6, 0), 2, tone);
+        Draw.Line(at + float2(size * 0.6, 0), at + float2(0, size * 0.35), 2, tone);
+        Draw.Line(at + float2(0, size * 0.35), at + float2(-size * 0.6, 0), 2, tone);
+        Draw.Circle(at, size * 0.15, tone);
+    }
+}
+
+bool Choice(string label, float2 at, float width, bool enabled = true)
+{
+    var rect = Rect(at.x - width * 0.5, at.y - 21, width, 42);
+    mut var clicked = false;
+    GUI.Disabled(!enabled)
+    {
+        var control = GUI.Control(rect);
+        Draw.Rect(at, float2(width, 42), Color(0.034, 0.047, 0.04, 0.94));
+        var tone = !enabled ? Color(0.29, 0.32, 0.27) : control.hovered ? Color.white : LETTER;
+        Draw.Line(at + float2(-width * 0.5, 20), at + float2(width * 0.5, 20), 1, tone);
+        Letter(label, at, 15, tone);
+        clicked = control.clicked;
+    }
+    return clicked;
+}
+
+bool Hold(string label, float2 at, float width, Color tone)
+{
+    var control = GUI.Control(Rect(at.x - width * 0.5, at.y - 23, width, 46));
+    Draw.Rect(at, float2(width, 46), control.pressed ? Color(0.21, 0.22, 0.16, 0.94) : Color(0.04, 0.055, 0.048, 0.94));
+    Draw.Line(at + float2(-width * 0.5, 22), at + float2(width * 0.5, 22), 1, tone);
+    Letter(label, at, 15, tone);
+    return control.pressed;
+}
+
+[Stage(Layers.Hud)]
+view Interface(Rite rite, Session session, Me me, Devices devices, Rooms.Lobby lobby, mut Hand hand, mut Guide guide)
+{
+    hand.playing = lobby.playing && !guide.open;
+    hand.channel = false;
+    hand.ward = -1;
+    hand.serial = rite.serial;
+    Draw.SetScreen();
+    if (lobby.page != Rooms.Page.Playing) return;
+    float width = Screen.width;
+    float height = Screen.height;
+    float middle = width * 0.5;
+    bool narrow = width < 650;
+    float inset = narrow ? 18.0 : 34.0;
+    float lower = height - 116;
+    int seat = SeatOf(rite, me.player);
+    bool pilgrim = seat == rite.active;
+    Letter("THE LAST LIGHT", float2(inset, 28), narrow ? 16.0 : 19.0, LETTER, Anchor.MiddleLeft);
+    Letter(ActName(rite.act), float2(inset, 54), 11, FAINT, Anchor.MiddleLeft);
+    var health = seat >= 0 ? rite.nerve[seat] : 0;
+    Letter($"LIGHT {rite.candle}   WAX {rite.wax}   NERVE {health}", float2(inset, 76), 11, FAINT, Anchor.MiddleLeft);
+    Letter($"{rite.fragments}/18 names remembered", float2(inset, 96), 11, LETTER, Anchor.MiddleLeft);
+    var unease = rite.dread < 25 ? "LOW" : rite.dread < 60 ? "RISING" : "HIGH";
+    Letter($"DREAD {unease}", float2(inset, 113), 10, rite.dread < 60 ? FAINT : RED, Anchor.MiddleLeft);
+    bool calm = rite.phase != Phase.Vigil && rite.phase != Phase.Finale;
+    if (Choice("?", float2(width - 28, 64), 34, calm) || calm && devices.keyboard.h.down) guide.open = !guide.open;
+    if (!calm) guide.open = false;
+    if (guide.open)
+    {
+        hand.playing = false;
+        GUILayout.Modal(Anchor.MiddleCenter, guide.open)
+        {
+            GUILayout.Label("THE RULES OF THE HOUSE");
+            GUILayout.Label("Two real players. Speak to each other.");
+            GUILayout.Label("Pilgrim: E / hold the offering button.");
+            GUILayout.Label("Read the SUN, KEY or EYE to your Keeper.");
+            GUILayout.Label("Release E when the visitor approaches.");
+            GUILayout.Label("In a Well: HOLD E instead.");
+            GUILayout.Space(8);
+            GUILayout.Label("Keeper: hold 1 SUN, 2 KEY, 3 EYE.");
+            GUILayout.Label("Every offering needs one correct seal.");
+            GUILayout.Label("A seal / rescue costs 3 wax.");
+            GUILayout.Label("Bank names: refill 4 wax and swap roles.");
+            GUILayout.Label("Linger: keep your role, risk what you carry.");
+            GUILayout.Label("Six banked names open each next act.");
+            GUILayout.Label("At eighteen, both hold E to leave.");
+            GUILayout.Space(8);
+            GUILayout.Label("The ritual continues while this is open.");
+            if (GUILayout.Button("I understand")) guide.open = false;
+        }
+        return;
+    }
+    if (rite.paused || rite.phase == Phase.Waiting)
+    {
+        Letter("THE OTHER CHAIR IS EMPTY", float2(middle, lower - 62), narrow ? 19.0 : 26.0);
+        Wrapped(rite.phase == Phase.Waiting ? "This house will only answer two people. Invite someone you trust." : "Your partner is gone. The house waits. The ritual is preserved.", float2(middle, lower - 27), width - 42, 14, FAINT);
+        if (session.server && !session.open)
+        {
+            if (Choice("OPEN A PRIVATE ROOM", float2(middle, height - 40), Math.Min(width - 40, 280))) Session.Open();
+        }
+        else if (session.room != "")
+        {
+            if (Choice($"ROOM {session.room}  /  COPY", float2(middle, height - 40), Math.Min(width - 40, 280))) Clipboard.Copy(session.room);
+        }
+        return;
+    }
+    if (rite.phase == Phase.Planning)
+    {
+        Letter(pilgrim ? "YOUR TURN TO GO BELOW" : "YOUR PARTNER TAKES THE RISK", float2(middle, lower - 58), narrow ? 18.0 : 24.0);
+        Letter($"The die reads {rite.die}.  Choose where it carries you.", float2(middle, lower - 25), 14, FAINT);
+        if (rite.turn == 1) Wrapped("18 names were erased here. Remember them, and the house will let you leave. H: learn its rules.", float2(middle, height * 0.33), Math.Min(width - 44, 530), 14, LETTER);
+        float gap = Math.Min(160, width * 0.25);
+        var walk = (rite.node + rite.die) % 12;
+        var cut = (rite.node + rite.die + 2) % 12;
+        Letter(PlaceName(walk), float2(middle - gap, height - 91), narrow ? 10.0 : 13.0, FAINT);
+        Letter(PlaceName(cut), float2(middle + gap, height - 91), narrow ? 10.0 : 13.0, FAINT);
+        if (Choice("1  /  WALK", float2(middle - gap, height - 60), gap * 1.8, pilgrim) || pilgrim && devices.keyboard.digit1.down)
+            Send(Plan { serial = rite.serial });
+        if (Choice("2  /  SHORTCUT", float2(middle + gap, height - 60), gap * 1.8, pilgrim) || pilgrim && devices.keyboard.digit2.down)
+            Send(Plan { serial = rite.serial, shortcut = true });
+        Letter("Both: -3 light. Chapel: +6 wax. Shortcut: +2 spaces, +10 dread.", float2(middle, height - 22), narrow ? 9.0 : 11.0, FAINT);
+        return;
+    }
+    if (rite.phase == Phase.Vigil)
+    {
+        Letter(PlaceName(rite.node).ToUpper(), float2(middle, 137), narrow ? 15.0 : 19.0, FAINT);
+        Letter(rite.safeHold ? "WELL RULE: HOLD WHEN IT APPROACHES" : "RELEASE WHEN IT APPROACHES", float2(middle, 159), narrow ? 10.0 : 12.0, rite.safeHold ? RelicColor(1) : FAINT);
+        Letter(pilgrim ? "PILGRIM" : "KEEPER", float2(middle, lower - 57), 13, FAINT);
+        if (pilgrim)
+        {
+            if (rite.threat > 0)
+            {
+                Letter(rite.safeHold ? "DO NOT LET GO" : "LET GO. DO NOT ANSWER IT.", float2(middle, height * 0.42), narrow ? 19.0 : 28.0, RED);
+            }
+            else Letter("Hold your offering. Tell them what you see.", float2(middle, lower - 30), 14);
+            var at = float2(middle, height * 0.55);
+            Sigil(rite.sigil, at, 25, RelicColor(rite.sigil));
+            Letter(SymbolName(rite.sigil), at + float2(0, 32), 15, RelicColor(rite.sigil));
+            if (rite.echo) Letter("IT ANSWERS AGAIN", at + float2(0, 52), 11, RED);
+            hand.channel = Hold("HOLD  /  E", float2(middle, height - 60), Math.Min(width - 40, 250), rite.threat > 0 ? RED : LETTER);
+        }
+        else
+        {
+            Wrapped(rite.threat > 0 ? "It is at the door. Hold the ward your partner names." : "Listen for their symbol. One seal is needed. Save wax when they dodge safely.", float2(middle, lower - 31), width - 38, 14);
+            float span = Math.Min(112, (width - 44) / 3);
+            for (var i = 0; i < 3; i++)
+            {
+                var at = float2(middle + (i - 1) * span, height - 60);
+                if (Hold($"{i + 1}  {SymbolName(i)}", at, span - 10, RelicColor(i))) hand.ward = i;
+            }
+        }
+        float progress = rite.charge / float(CHARGE_NEEDED);
+        float bar = Math.Min(width - 44, 320);
+        Draw.Rect(float2(middle, height - 22), float2(bar, 3), Color(0.17, 0.2, 0.17));
+        Draw.Rect(float2(middle - bar * 0.5 + bar * progress * 0.5, height - 22), float2(bar * progress, 3), LETTER);
+        Letter($"{rite.timer / RITE_RATE}s   /   {(rite.seals > 0 ? "SEALED" : "A SEAL IS STILL NEEDED")}", float2(middle, height - 10), 9, FAINT);
+        return;
+    }
+    if (rite.phase == Phase.Result)
+    {
+        var heading = rite.note == Note.Hurt ? "IT TOUCHED YOU" : rite.note == Note.Fragment ? "A NAME COMES BACK" : "THE HOUSE GIVES NOTHING";
+        Letter(heading, float2(middle, lower - 55), narrow ? 18.0 : 25.0, rite.note == Note.Hurt ? RED : LETTER);
+        if (rite.note == Note.Fragment) Wrapped(Memory(Math.Min(rite.fragments + rite.carried - 1, 17)), float2(middle, height * 0.45), Math.Min(width - 56, 560), 16, LETTER);
+        Letter($"{rite.carried} unbanked.  {rite.attempts}/3 offerings this turn.", float2(middle, lower - 23), 14, FAINT);
+        if (rite.note == Note.Unsealed) Letter("Your Keeper must seal one threat. Return restores wax.", float2(middle, lower + 1), narrow ? 11.0 : 13.0, RED);
+        if (rite.note == Note.EmptyHands) Letter("The offering was not held long enough. Return and try again.", float2(middle, lower + 1), narrow ? 10.0 : 13.0, FAINT);
+        float gap = Math.Min(150, width * 0.25);
+        if (Choice("1  /  RETURN", float2(middle - gap, height - 60), gap * 1.8, pilgrim) || pilgrim && devices.keyboard.digit1.down)
+            Send(Return { serial = rite.serial });
+        bool canLinger = pilgrim && rite.carried > 0 && rite.attempts < 3 && rite.fragments + rite.carried < FRAGMENTS_TO_ESCAPE;
+        if (Choice("2  /  LINGER", float2(middle + gap, height - 60), gap * 1.8, canLinger) || canLinger && devices.keyboard.digit2.down)
+            Send(Linger { serial = rite.serial });
+        Letter("Return: bank names, +4 wax, partner's turn. Linger: -2 light, +8 dread.", float2(middle, height - 22), narrow ? 9.0 : 11.0, FAINT);
+        return;
+    }
+    if (rite.phase == Phase.Interlude)
+    {
+        var story = rite.act == 1 ? "Six names. Six beds. One of them is still warm." : "The last six pages are in your own handwriting.";
+        Wrapped(story, float2(middle, height * 0.52), width - 56, narrow ? 20.0 : 27.0);
+        Wrapped(rite.act == 1 ? "It approaches faster now. Keep listening." : "The Belfry answers twice. Name its second symbol too.", float2(middle, height - 65), width - 44, 14, FAINT);
+        return;
+    }
+    if (rite.phase == Phase.Finale)
+    {
+        Letter("LEAVE TOGETHER", float2(middle, lower - 65), narrow ? 22.0 : 30.0);
+        Wrapped("Do not answer the person at the door. Both hold the offering until the light returns.", float2(middle, lower - 27), width - 44, 14);
+        hand.channel = Hold("HOLD  /  E", float2(middle, height - 55), Math.Min(width - 40, 270), LETTER);
+        Letter($"{rite.finaleCharge * 100 / FINALE_NEEDED}%  /  BOTH HANDS REQUIRED", float2(middle, height - 20), 11, FAINT);
+        return;
+    }
+    bool won = rite.phase == Phase.Won;
+    Letter(won ? "YOU REMEMBERED EACH OTHER" : "THE LIGHT GOES OUT", float2(middle, height * 0.43), narrow ? 21.0 : 32.0, won ? LETTER : RED);
+    Wrapped(won ? "Morning comes without birds. There are two chairs behind you. Leave them empty." : "Another two names for the visitor's book. The house can wait.", float2(middle, height * 0.43 + 46), width - 54, 15, FAINT);
+    if (Choice("BEGIN ANOTHER NIGHT", float2(middle, height - 60), Math.Min(width - 44, 300)) || devices.keyboard.enter.down)
+        Send(Restart { serial = rite.serial });
+}
+
+[Stage(Layers.Hud, -1)]
+view RoomRoster(Rite rite, mut Me me, mut Rooms.Lobby lobby)
+{
+    me.seat = SeatOf(rite, me.player);
+    lobby.seats = 2;
+    lobby.manned = (rite.present[0] ? 1 : 0) | (rite.present[1] ? 2 : 0);
+    lobby.mine = SeatOf(rite, me.player);
+    lobby.offersNewGame = false;
+    lobby.offersBots = false;
+}
