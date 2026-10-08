@@ -171,3 +171,78 @@ view Show(mut Counter counter, mut Seen seen)
     if (counter.shown == 2) seen.even++;
     else seen.odd++;
 }
+
+// ---------------------------------------------------------------------------
+// In steps that run at once: a step's own variable, its own cell and its own
+// element, with the value it gives checked in the step itself.
+
+singleton Field
+{
+    bool swept;
+    Grid2<int> locals = Grid2(8, 8);
+    Grid2<int> after = Grid2(8, 8);
+    Grid2<int> before = Grid2(8, 8);
+    Grid2<int> each = Grid2(8, 8);
+    List<int> values;
+    int localsRight;
+    int afterRight;
+    int beforeRight;
+    int eachRight;
+    int valuesRight;
+}
+
+system Sweep(mut Field field)
+{
+    if (field.swept) return;
+    field.swept = true;
+    for (var i = 0; i < 100; i++) field.values.Add(i * 2);
+    for (var y = 0; y < 8; y++)
+    {
+        for (var x = 0; x < 8; x++)
+        {
+            field.after[x, y] = x;
+            field.before[x, y] = y;
+        }
+    }
+
+    parallel (var at in field.locals)
+    {
+        mut var n = at.x;
+        field.locals[at] = n++ * 10 + n; // x, then x + 1
+    }
+    parallel (var at in field.after)
+    {
+        var got = ++field.after[at];
+        if (got != at.x + 1) field.after[at] = -1;
+    }
+    parallel (var at in field.before by int2(2, 1))
+    {
+        var got = field.before[at]-- + field.before[at + int2(1, 0)]--;
+        if (got != at.y * 2) field.before[at] = -100;
+    }
+    foreach (var at in field.each)
+    {
+        var got = field.each[at]++ + 5;
+        if (got != 5) field.each[at] = -1;
+    }
+    parallel (var i in field.values)
+    {
+        var got = field.values[i]++;
+        if (got != i * 2) field.values[i] = -1;
+    }
+
+    for (var y = 0; y < 8; y++)
+    {
+        for (var x = 0; x < 8; x++)
+        {
+            if (field.locals[x, y] == x * 11 + 1) field.localsRight += 1;
+            if (field.after[x, y] == x + 1) field.afterRight += 1;
+            if (field.before[x, y] == y - 1) field.beforeRight += 1;
+            if (field.each[x, y] == 1) field.eachRight += 1;
+        }
+    }
+    for (var i = 0; i < field.values.count; i++)
+    {
+        if (field.values[i] == i * 2 + 1) field.valuesRight += 1;
+    }
+}

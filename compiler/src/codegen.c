@@ -4605,21 +4605,33 @@ static void hoist_ordered(gen *g, const ordering *ordered)
             sb_printf(&name, "tide_called%d", g->call_temps++);
             gen_await(g, e, name.data); // Sets e->hoisted
             continue;
-        } else if (e->kind == E_STEP) { // ++i: the assignment, and the variable's value after it, or i++: before it
+        } else if (e->kind == E_STEP) {
+            // ++i or i++: the variable read once, what it becomes worked out from that, and the assignment
+            // of it. So its value never rests on reading the variable back, which a parallel loop's step
+            // would read as it was.
+            sb before = {0};
+            sb_printf(&before, "tide_was%d", g->call_temps);
             sb_printf(&name, "tide_stepped%d", g->call_temps++);
-            for (int pass = 0; pass < 2; pass++) {
-                if ((pass == 0) == e->postfix) {
-                    indent(g, &g->c);
-                    sb_printf(&g->c, "%s = ", const_decl(e->type, name.data));
-                    gen_expr(g, &g->c, e->lhs);
-                    sb_put(&g->c, ";\n");
-                } else {
-                    g->bare = e->step; // What its variable runs is in temporaries already
-                    gen_stmt(g, e->step);
-                    g->bare = NULL;
-                }
-            }
+            indent(g, &g->c);
+            sb_printf(&g->c, "%s = ", const_decl(e->type, before.data));
+            gen_expr(g, &g->c, e->lhs);
+            sb_put(&g->c, ";\n");
+            expr was = {.kind = E_NAME, .at = e->at, .type = e->type, .hoisted = before.data};
+            indent(g, &g->c);
+            sb_printf(&g->c, "%s = ", const_decl(e->type, name.data));
+            gen_binary(g, &g->c, compound_op(e->op), &was, e->step->value, e->type, NULL);
+            sb_put(&g->c, ";\n");
+            expr stepped = {.kind = E_NAME, .at = e->at, .type = e->type, .hoisted = name.data};
+            stmt set = *e->step;
+            set.op = T_ASSIGN;
+            set.value = &stepped;
+            g->bare = &set; // What its variable runs is in temporaries already
+            gen_stmt(g, &set);
+            g->bare = NULL;
+            task_declare(g, before.data, e->type);
             task_declare(g, name.data, e->type);
+            e->hoisted = e->postfix ? before.data : name.data;
+            continue;
         } else {
             sb_printf(&name, "tide_called%d", g->call_temps++);
             indent(g, &g->c);
