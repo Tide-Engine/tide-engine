@@ -15,9 +15,9 @@ local singleton Scenery
 }
 
 // A tile's top: turf, which the frag paints by where on the board it is.
-void PutTurf(mut Scenery scenery, int2 size, int2 at, int region)
+void PutTurf(mut Scenery scenery, int2 size, int2 at, int region, bool ice)
 {
-    var brush = Ink(Color.white, RegionGround(region), 0);
+    var brush = Ink(Color.white, ice ? ICE : RegionGround(region), ice ? 1.0 : 0.0);
     var a = Spot(size, float2(at.x - 0.5, at.y - 0.5), 0);
     var b = Spot(size, float2(at.x + 0.5, at.y - 0.5), 0);
     var c = Spot(size, float2(at.x + 0.5, at.y + 0.5), 0);
@@ -28,15 +28,15 @@ void PutTurf(mut Scenery scenery, int2 size, int2 at, int region)
 
 // A grill: a pit walled in stone, its bed of coals or of burners, and iron
 // bars over it for the sausages to lie on.
-void PutGrill(mut Scenery scenery, float3 middle, bool gas)
+void PutGrill(mut Scenery scenery, float3 middle, bool gas, bool bellows)
 {
-    var stone = Ink(gas ? Color(0.5, 0.56, 0.66) : Color(0.6, 0.58, 0.55), STONE, 0.1);
+    var stone = Ink(bellows ? Color(0.58, 0.39, 0.28) : gas ? Color(0.5, 0.56, 0.66) : Color(0.6, 0.58, 0.55), STONE, 0.1);
     var iron = Ink(Color(0.13, 0.13, 0.15), IRON, 1.3);
     PutBox(scenery.mesh, scenery.faces, stone, middle + float3(0, -0.03, 0.455), float3(1, 0.1, 0.09));
     PutBox(scenery.mesh, scenery.faces, stone, middle + float3(0, -0.03, -0.455), float3(1, 0.1, 0.09));
     PutBox(scenery.mesh, scenery.faces, stone, middle + float3(0.455, -0.03, 0), float3(0.09, 0.1, 0.82));
     PutBox(scenery.mesh, scenery.faces, stone, middle + float3(-0.455, -0.03, 0), float3(0.09, 0.1, 0.82));
-    var bed = Ink(Color.white, gas ? BURNER : EMBER, 0);
+    var bed = Ink(Color.white, gas ? BURNER : bellows ? BELLOWS : EMBER, 0);
     var low = middle + float3(0, -0.075, 0);
     PutQuad(scenery.mesh, scenery.faces, bed, low + float3(-0.41, 0, -0.41), low + float3(0.41, 0, -0.41), low + float3(0.41, 0, 0.41), low + float3(-0.41, 0, 0.41),
             float3(0, 1, 0), float2(0, 0), float2(1, 0), float2(1, 1), float2(0, 1));
@@ -44,11 +44,24 @@ void PutGrill(mut Scenery scenery, float3 middle, bool gas)
     {
         PutBox(scenery.mesh, scenery.faces, iron, middle + float3(0, -0.005, bar * 0.16), float3(0.84, 0.05, 0.055));
     }
+    if (bellows)
+    {
+        // Two brass air intakes mirror the pair of pressure plates. They sit
+        // in the rim, leaving a sausage's landing space entirely clear.
+        var brass = Ink(Color(0.66, 0.47, 0.23), IRON, 0.75);
+        for (var i = 0; i < 2; i++)
+        {
+            var at = middle + float3(i == 0 ? -0.31 : 0.31, 0.025, -0.43);
+            PutTube(scenery.mesh, scenery.faces, brass, at - float3(0, 0.035, 0), at + float3(0, 0.015, 0), 0.08, 0.075, 6);
+            PutTube(scenery.mesh, scenery.faces, Ink(Color(0.08, 0.07, 0.065), PLAIN, 0), at + float3(0, 0.015, 0),
+                    at + float3(0, 0.017, 0), 0.036, 0.036, 6);
+        }
+    }
 }
 
 // The islands of a board, the sea, and where the land is,
 // for the sea's frag.
-void MakeScenery(mut Scenery scenery, mut Shore shore, Board board, int level)
+void MakeScenery(mut Scenery scenery, mut Shore shore, Board board, int level, int region)
 {
     scenery.level = level;
     scenery.mesh.Clear();
@@ -63,7 +76,6 @@ void MakeScenery(mut Scenery scenery, mut Shore shore, Board board, int level)
     }
 
     var size = board.size;
-    var region = level >= 0 ? Region(level) : 0;
     for (var y = 0; y < size.y; y++)
     {
         for (var x = 0; x < size.x; x++)
@@ -71,15 +83,19 @@ void MakeScenery(mut Scenery scenery, mut Shore shore, Board board, int level)
             var at = int2(x, y);
             var tile = TileAt(board, at);
             if (tile == Tile.Water) continue;
-            var tileRegion = level == -2 ? TravelRegion(at) : region;
+            var tileRegion = region;
             var middle = Spot(size, float2(x, y), 0);
-            var grill = tile == Tile.Coal || tile == Tile.Gas;
-            if (grill) PutGrill(scenery, middle, tile == Tile.Gas);
-            else PutTurf(scenery, size, at, tileRegion);
+            var grill = tile == Tile.Coal || tile == Tile.Gas || tile == Tile.Ember;
+            if (grill) PutGrill(scenery, middle, tile == Tile.Gas, tile == Tile.Ember);
+            else PutTurf(scenery, size, at, tileRegion, tile == Tile.Ice);
             if (tile == Tile.Rock)
             {
-                PutBlob(scenery.mesh, scenery.faces, Ink(RegionStone(tileRegion), IRON, 0.1), middle + float3(0, 0.22, 0), float3(0.44, 0.42, 0.42),
-                        x * 3.7 + y * 1.9, 0.22, true, 3, 6);
+                var gate = level <= -2 && region < 3 && Same(at, int2(7, 4));
+                if (!gate)
+                {
+                    PutBlob(scenery.mesh, scenery.faces, Ink(RegionStone(tileRegion), IRON, 0.1), middle + float3(0, 0.22, 0), float3(0.44, 0.42, 0.42),
+                            x * 3.7 + y * 1.9, 0.22, true, 3, 6);
+                }
             }
             if (tile == Tile.Pedal)
             {
@@ -102,13 +118,23 @@ void MakeScenery(mut Scenery scenery, mut Shore shore, Board board, int level)
         }
     }
 
-    DressRegion(scenery, size, region, level);
-    if (level == -2)
+    DressRegion(scenery, size, region);
+    if (level <= -2)
     {
-        for (var camp = 0; camp < LEVELS; camp++)
+        for (var camp = 0; camp < 6; camp++)
         {
-            var at = RouteCamp(camp);
-            PutCampMarker(scenery, Spot(size, float2(at.x, at.y), 0));
+            var at = MapSlot(camp);
+            PutCampSocket(scenery, Spot(size, float2(at.x, at.y), 0), region);
+        }
+        if (region < 3)
+        {
+            var dock = int2(7, 4);
+            PutTravelArch(scenery, Spot(size, float2(dock.x, dock.y), 0), region, true, TileAt(board, dock) == Tile.Rock);
+        }
+        if (region > 0)
+        {
+            var dock = int2(1, 4);
+            PutTravelArch(scenery, Spot(size, float2(dock.x, dock.y), 0), region, false, false);
         }
     }
 
