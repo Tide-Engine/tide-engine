@@ -8277,6 +8277,90 @@ static const char *sent_with(const char *needle)
     return i >= 0 ? sent[i] : NULL;
 }
 
+// Closing a dependency discards its unsaved text. Its remaining consumers
+// get disk-based diagnostics again, without refreshing unrelated games or
+// reviving diagnostics for the document whose editor tab just closed.
+TIDE_TEST(lsp_close_refreshes_dependent_diagnostics)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_close");
+    make_folder("lsp_close/a");
+    make_folder("lsp_close/b");
+    static const char body[] = "singleton Body { int value; }\n";
+    static const char changed[] = "singleton Changed { int value; }\n";
+    static const char main[] = "scene Main { }\nsystem Tick(mut Body body) { body.value += 1; }\n";
+    write_file("lsp_close/a/body.tide", body);
+    write_file("lsp_close/a/main.tide", main);
+    write_file("lsp_close/b/main.tide", "scene Main { }\n");
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    char root_a[700], root_b[700], uri_main[700], uri_body[700], uri_encoded[700], uri_other[700];
+    snprintf(root_a, sizeof root_a, "file:///%s/lsp_close/a", dir);
+    snprintf(root_b, sizeof root_b, "file:///%s/lsp_close/b", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_close/a/main.tide", dir);
+    snprintf(uri_body, sizeof uri_body, "file:///%s/lsp_close/a/body.tide", dir);
+    snprintf(uri_encoded, sizeof uri_encoded, "file:///%s/lsp_close/a/body%%2Etide", dir);
+    snprintf(uri_other, sizeof uri_other, "file:///%s/lsp_close/b/main.tide", dir);
+    for (int deferred = 0; deferred < 2; deferred++) {
+        const char *closed = deferred ? uri_encoded : uri_body;
+        start_in_pair_with(root_a, root_b, "{}");
+        open_uri(uri_main, main);
+        TIDE_CHECK(has(sent_with(uri_main), "\"diagnostics\":[]"));
+        open_uri(uri_other, "scene Main { }\n");
+        open_uri(closed, body);
+        open_uri(closed, changed); // A second open updates the same buffer
+        TIDE_CHECK(server.doc_count == 3);
+        TIDE_CHECK(has(sent_with(uri_main), "unknown component or singleton 'Body'"));
+        server.defer = deferred != 0;
+        close_uri(closed);
+        if (deferred) {
+            TIDE_CHECK(sent_count == 1 && has(sent[0], closed) && has(sent[0], "\"diagnostics\":[]"));
+            TIDE_CHECK(server.unsettled_count == 2); // Consumer plus closed-file marker
+            lsp_settle(&server);
+        }
+        TIDE_CHECK(server.doc_count == 2 && server.unsettled_count == 0 && sent_count == 2);
+        TIDE_REQUIRE(sent_with(uri_main) != NULL);
+        TIDE_CHECK(has(sent_with(uri_main), "\"diagnostics\":[]"));
+        TIDE_CHECK(sent_with(uri_other) == NULL);
+        TIDE_CHECK(has(sent[0], closed) && has(sent[0], "\"diagnostics\":[]"));
+        TIDE_CHECK(has(request_at(uri_main, "textDocument/hover", 1, 16, ""), "singleton Body"));
+        const unsigned changes = server.changes;
+        close_uri(closed); // Duplicate closes don't reanalyse other files
+        TIDE_CHECK(server.changes == changes && sent_count == 1 && has(sent[0], "\"diagnostics\":[]"));
+        lsp_settle(&server);
+        TIDE_CHECK(sent_count == 1);
+    }
+    // Disk errors in the closed file mustn't resurrect its diagnostics.
+    write_file("lsp_close/a/body.tide", "singleton Body { int value = missing; }\n");
+    start_in_pair_with(root_a, root_b, "{}");
+    open_uri(uri_main, main);
+    open_uri(uri_body, body); // The unsaved buffer fixes the disk error
+    close_uri(uri_body);
+    TIDE_CHECK(sent_count == 2 && has(sent[0], uri_body) && has(sent[0], "\"diagnostics\":[]"));
+    TIDE_REQUIRE(sent_with(uri_main) != NULL);
+    TIDE_CHECK(has(sent_with(uri_main), "\"diagnostics\":[]"));
+    TIDE_CHECK(!has(sent[1], "missing") && !has(sent[1], uri_body));
+    // Another spelling of the file's URI can still have an open buffer.
+    write_file("lsp_close/a/body.tide", body);
+    open_uri(uri_body, body);
+    open_uri(uri_encoded, changed);
+    close_uri(uri_body);
+    TIDE_CHECK(server.doc_count == 2 && sent_count == 3);
+    TIDE_REQUIRE(sent_with(uri_main) != NULL && sent_with(uri_encoded) != NULL);
+    TIDE_CHECK(has(sent_with(uri_main), "unknown component or singleton 'Body'"));
+    TIDE_CHECK(has(sent_with(uri_encoded), "\"diagnostics\":[]"));
+    close_uri(uri_encoded);
+    TIDE_REQUIRE(sent_with(uri_main) != NULL);
+    TIDE_CHECK(has(sent_with(uri_main), "\"diagnostics\":[]"));
+    remove_game_file("lsp_close/a/body.tide");
+    remove_game_file("lsp_close/a/main.tide");
+    remove_game_file("lsp_close/b/main.tide");
+    remove_folder("lsp_close/a");
+    remove_folder("lsp_close/b");
+    remove_folder("lsp_close");
+    clear_sent();
+    lsp_free(&server);
+}
+
 // Asks the server what to rewrite before `old` is renamed to `now` (paths from
 // game_dir), and returns the reply.
 static const char *will_rename(const char *old, const char *now)
