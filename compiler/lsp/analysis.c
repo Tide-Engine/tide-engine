@@ -6159,9 +6159,10 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             list_members(c, d->return_type, false, &sc);
             return;
         }
-        // Random.: its rolls and the match's seed, where code rolls: systems, views, handlers and their functions
-        if (n == 1 && str_eq_c(base, "Random") && !gpu && sc.decl && !sc.in_input && !sc.decl->is_async
-            && (sc.decl->kind == DECL_SYSTEM || sc.decl->kind == DECL_FUNCTION || sc.decl->kind == DECL_METHOD)) {
+        // Random.: its rolls and the match's seed, where code rolls: systems, views, handlers, tasks, Sample and their functions
+        if (n == 1 && str_eq_c(base, "Random") && !gpu && sc.decl && !sc.in_sanitize
+            && (sc.decl->kind == DECL_SYSTEM || sc.decl->kind == DECL_FUNCTION || sc.decl->kind == DECL_METHOD
+                || sc.decl->kind == DECL_INPUT)) {
             builtin_visit v = {c, false};
             builtin_list_members(base, add_builtin_member, &v);
             item(c, "seed", CK_PROPERTY, "int", RANDOM_SEED_DOC, NULL);

@@ -1,9 +1,0 @@
-// expect: a local handler can't read Random.seed
-local event Resume { }
-local singleton Menu { int seed; }
-local scene Main { }
-view Buttons() { if (GUILayout.Button("Resume")) Send(Resume); }
-local event(Resume) Look(mut Menu menu)
-{
-    menu.seed = Random.seed;
-}
