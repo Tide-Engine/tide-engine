@@ -6253,8 +6253,11 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     // where the code can change it, and a frag's Pixel's.
     const bool local = sc->decl && sc->decl->kind == DECL_SYSTEM && (sc->decl->is_view || sc->decl->is_local);
     const bool match = sc->decl && sc->decl->kind == DECL_SYSTEM && !local;
+    // A function or a method changes an entity as the code that calls it could, of either world
+    const bool passed = sc->decl && (sc->decl->kind == DECL_FUNCTION || sc->decl->kind == DECL_METHOD) && !sc->decl->is_operator
+                     && !sc->decl->is_interpolate && !sc->decl->is_audio && (t.kind == TY_ENTITY || t.kind == TY_LOCAL_ENTITY);
     const bool changes = (t.kind == TY_ENTITY && match) || (t.kind == TY_LOCAL_ENTITY && local)
-                      || (t.kind == TY_SINGLETON && match && !t.decl->is_local);
+                      || (t.kind == TY_SINGLETON && match && !t.decl->is_local) || passed;
     if (t.kind == TY_ENTITY && local) {
         item(c, "Send", CK_METHOD, "Send(command)", "Submits a command to this match entity; its handler checks the authenticated sender and untrusted payload.", "Send($1)");
     }
@@ -6264,6 +6267,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         const method_form *forms = methods_of(t, &count);
         for (size_t i = 0; i < count; i++) {
             if (t.kind == TY_LOCAL_ENTITY && strcmp(forms[i].name, "Snap") == 0) continue; // Local state isn't blended
+            if (passed && strcmp(forms[i].name, "Snap") == 0) continue; // A system's or a handler's own to say
             if (t.kind == TY_GRID && strcmp(forms[i].name, "Sample") == 0) continue; // A frag's or vert's, above
             sb detail = {0};
             format_method(&forms[i], t, &detail);
@@ -6972,6 +6976,16 @@ static void complete_expression(completion *c, const loc at, const bool statemen
         complete_components_of(c, local);
         complete_events_of(c, local);
         item(c, "Scene", CK_MODULE, "Loads and unloads scenes", NULL, NULL);
+    }
+    // A function or a method sends and spawns as the code that calls it could, in either world
+    if (routine && !sc.decl->is_operator && !sc.decl->is_interpolate && !sc.decl->is_audio) {
+        item(c, "Spawn", CK_FUNCTION, "Spawn(components...) -> Entity",
+             "Creates an entity with these components, for the code that calls this: the match's components make an entity of "
+             "the match, and local ones a local entity.", "Spawn($1)");
+        item(c, "Send", CK_FUNCTION, "Send(event)", "Sends an event, for the code that calls this: only code that could send it itself can call this.",
+             "Send($1)");
+        complete_events_of(c, false);
+        complete_events_of(c, true);
     }
     // Session.Start and the like are statements of their own.
     if (statement && decides_session(&sc)) {

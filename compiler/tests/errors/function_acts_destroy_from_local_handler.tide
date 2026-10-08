@@ -1,0 +1,16 @@
+// expect: a local handler can't change the match, and 'Kill' destroys entities
+event Hit { int damage; }
+component Enemy { int hp; }
+scene Main { }
+void Kill(Entity target) { target.Destroy(); }
+event(Spawned) Setup(with Main)
+{
+    var e = Spawn(Enemy);
+    e.Send(Hit { damage = 1 });
+    Kill(e);
+}
+local singleton Seen { Entity last; }
+local event(Hit hit) Shown(Enemy enemy, mut Seen seen)
+{
+    if (enemy.hp < hit.damage) Kill(seen.last);
+}

@@ -1,0 +1,12 @@
+// expect: Interpolate blends a value between ticks, for views, so it can't spawn entities
+component Puff { int age; }
+component Body
+{
+    float2 position;
+    Body Interpolate(Body from, Body to, float t)
+    {
+        Spawn(Puff);
+        return t < 0.5 ? from : to;
+    }
+}
+scene Main { }
