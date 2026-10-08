@@ -65,6 +65,24 @@ enum {
     H_COUNT
 };
 
+// A list or a grid in code the GPU runs: which of the shader's textures of
+// numbers it is (data_of).
+typedef struct data_ref {
+    int texture; // -1 while checking, when no shader says
+    type element;
+    bool grid;
+} data_ref;
+
+typedef struct data_alias {
+    const stmt *local;
+    data_ref data;
+} data_alias;
+
+typedef struct shader_function {
+    const decl *fn;
+    const char *suffix;
+} shader_function;
+
 typedef struct emit {
     program *prog;
     lang l;
@@ -85,10 +103,12 @@ typedef struct emit {
     int grad_count;
     int lifting; // Writing one of those: a local is written as what it was declared as
     VEC(const decl *) structs; // The structs the code names, each after the ones it holds
-    VEC(const decl *) done;    // The functions written, callees first
+    VEC(shader_function) done; // The functions written, callees first, each for the lists and grids it's called with
     sb functions;
     bool helpers[H_COUNT];
-    bool lists[8]; // The shader's textures that are lists whose reader is written (need_list)
+    bool lists[8]; // The shader's textures that are lists or grids whose reader is written (need_data)
+    VEC(data_alias) aliases;   // The locals of the code being written that name a list or a grid (data_of)
+    const data_ref *spec;      // By the parameter of the function being written: the list or grid it's called with
     VEC(const decl *) arrays;  // The array types whose element reader is written (need_array)
     int raw; // Writing what an assignment stores into: an array's element is the element itself, in range already
     VEC(const field *) hoisted; // Arrays the engine supplies that the function being written made a variable of as it starts
@@ -97,7 +117,7 @@ typedef struct emit {
 static void ex(emit *em, const expr *e);
 static void ex_as(emit *em, const expr *e, type want);
 static void st(emit *em, const stmt *s);
-static void need_function(emit *em, decl *fn, loc at);
+static void need_function(emit *em, decl *fn, loc at, const data_ref *spec, const char *suffix);
 static bool is_const(const expr *e);
 static int packs(int words);
 
@@ -249,16 +269,19 @@ static bool type_fits(emit *em, const type t, const loc at)
     case TY_LONG: why = "the GPU's ints are 32 bits: convert it with int(x) before it gets there"; break;
     case TY_STRING: why = "text is the CPU's"; break;
     case TY_LIST:
-        refuse(em, at, "a list is read where the frag or vert takes it, an element at a time: it's not a value to keep or pass on");
-        diag_note("read it as a field of a component, a singleton or the draw's values: 'lights.items[i]', "
-                  "'lights.items.count', or 'foreach (var light in lights.items)'");
+        refuse(em, at, "a list in code the GPU runs is one the frag or vert was given, by a name: it can't be made, changed, "
+                       "returned, picked between or kept in a struct there");
+        diag_note("name a field of a component, a singleton or the draw's values, or an asset: 'var lights = scene.lights;', "
+                  "or pass it to a function that takes a 'List<Light>'");
         return false;
     case TY_MAP:
     case TY_SET: why = "the GPU has no maps or sets: keep what it reads in a list, which it reads by an element's place"; break;
     case TY_GRID:
-        why = "a grid is read where the frag or vert takes it, with 'grid.Sample(uv)' or a cell at a time, 'grid[x, y]': it's "
-              "not a value to keep or pass on";
-        break;
+        refuse(em, at, "a grid in code the GPU runs is one the frag or vert was given, by a name: it can't be made, changed, "
+                       "returned, picked between or kept in a struct there");
+        diag_note("name a field of a component or a singleton, or an asset: 'var cells = board.cells;', or pass it to a function "
+                  "that takes a 'Grid2<int>'");
+        return false;
     case TY_ARRAY:
         why = t.decl->fields.items[0].type.kind == TY_ARRAY
             ? "the GPU has no arrays of arrays: keep the rows side by side in one array, or each row in a struct"
@@ -1337,41 +1360,99 @@ static int param_index(const decl *d, const param *p)
 // words are anywhere (put_value). How many it has is a word of the uniforms'
 // ints. An element past the list's end is zeros, as on the CPU.
 
-// `e` as such a list: which parameter's field it is.
-static bool bound_list(const emit *em, const expr *e, const param **p, const field **f)
+// A list or a grid the code names is one of the shader's textures of numbers,
+// known as the shader is written: a field of what the engine supplies, an
+// asset by its name, a local that names one of those, or a parameter of a
+// function, which is written once for each set of textures it's called with
+// (need_function), as neither language passes a texture to a function on
+// every backend.
+static type data_element(const type t)
 {
-    if (!e || e->kind != E_MEMBER || !e->field || e->type.kind != TY_LIST) return false;
-    const expr *obj = e->object;
-    if (obj->kind != E_NAME || obj->bind != BIND_PARAM || !is_bound(em, obj->param) || !is_struct_like(obj->param->type)) return false;
-    *p = obj->param;
-    *f = e->field;
-    return true;
+    return t.decl->fields.items[0].type;
 }
 
-static type list_element(const field *f)
+// Notes that the code reads the numbers of an asset's list or grid, while
+// checking: the frag or vert itself, or a function, whose callers then do.
+static void note_asset(emit *em, const decl *asset)
 {
-    return f->type.decl->fields.items[0].type;
-}
-
-// Notes that the code reads the list, while checking, and says whether its elements are something the GPU has.
-static bool read_list(emit *em, const expr *list, const param *p, const field *f)
-{
-    if (em->checking && list->local_field) {
-        em->root->params.items[param_index(em->root, p)].local_reads[field_index(p->type.decl->local_part, f)] = true;
-    } else if (em->checking) {
-        em->root->params.items[param_index(em->root, p)].reads[field_index(p->type.decl, f)] = true;
+    if (!em->checking) return;
+    if (em->code != em->root) {
+        for (int i = 0; i < em->code->gpu_data.count; i++) {
+            if (em->code->gpu_data.items[i] == asset) return;
+        }
+        vec_push(em->code->gpu_data, asset);
+        return;
     }
-    return type_fits(em, list_element(f), list->at);
+    const shader_sample sample = {-1, -1, false, 0, asset, 0, READ_DATA, true, true};
+    for (int i = 0; i < em->root->samples.count; i++) {
+        const shader_sample *s = &em->root->samples.items[i];
+        if (s->param < 0 && s->asset == asset && s->read == READ_DATA) return;
+    }
+    vec_push(em->root->samples, sample);
 }
 
-// The shader's texture that's the list, or -1 (while checking, when there's no shader).
-static int list_texture(const emit *em, const param *p, const field *f)
+// `e` as such a list or grid: which of the shader's textures it is, -1 while
+// checking, when there's no shader, and for one that can't be read. False for
+// anything else: a list that was made, picked or returned.
+static bool data_of(emit *em, const expr *e, data_ref *d)
 {
-    for (int i = 0; em->sh && i < em->sh->textures.count; i++) {
+    if (!e || (e->type.kind != TY_LIST && e->type.kind != TY_GRID) || !e->type.decl) return false;
+    *d = (data_ref){.texture = -1, .element = data_element(e->type), .grid = e->type.kind == TY_GRID};
+    if (e->kind == E_NAME && e->bind == BIND_LOCAL) { // A local that names one
+        for (int i = em->aliases.count - 1; i >= 0; i--) {
+            if (em->aliases.items[i].local != e->local) continue;
+            *d = em->aliases.items[i].data;
+            return true;
+        }
+        return false;
+    }
+    if (e->kind == E_NAME && e->bind == BIND_PARAM && e->param->function_param && em->code != em->root) { // Its function's
+        if (em->spec) *d = em->spec[param_index(em->code, e->param)];
+        return true;
+    }
+    const decl *asset = NULL;
+    const param *p = NULL;
+    if (e->kind == E_NAME && e->bind == BIND_ASSET && e->constant) {
+        asset = e->constant;
+    } else if (e->kind == E_MEMBER && e->field && e->object->kind == E_NAME && e->object->bind == BIND_PARAM
+               && is_bound(em, e->object->param) && is_struct_like(e->object->param->type)) {
+        p = e->object->param;
+    } else {
+        return false;
+    }
+    if (d->grid && e->type.decl->dims != 2) {
+        refuse(em, e->at, "a Grid3's cells aren't read on the GPU yet: keep the layer it reads in a Grid2");
+        return true;
+    }
+    if (!type_fits(em, d->element, e->at)) return true;
+    if (em->checking) {
+        if (asset) {
+            note_asset(em, asset);
+        } else if (d->grid) {
+            const decl *holds = e->local_field ? p->type.decl->local_part : p->type.decl;
+            const shader_sample sample = {param_index(em->root, p), field_index(holds, e->field), e->local_field, 0, NULL, 0,
+                                          READ_DATA, true, true};
+            bool known = false;
+            for (int i = 0; i < em->root->samples.count; i++) {
+                const shader_sample *s = &em->root->samples.items[i];
+                known |= s->param == sample.param && s->field == sample.field && s->local == sample.local && !s->asset
+                      && s->read == READ_DATA;
+            }
+            if (!known) vec_push(em->root->samples, sample);
+        } else if (e->local_field) {
+            em->root->params.items[param_index(em->root, p)].local_reads[field_index(p->type.decl->local_part, e->field)] = true;
+        } else {
+            em->root->params.items[param_index(em->root, p)].reads[field_index(p->type.decl, e->field)] = true;
+        }
+        return true;
+    }
+    for (int i = 0; i < em->sh->textures.count; i++) {
         const shader_texture *t = &em->sh->textures.items[i];
-        if (t->read == READ_DATA && t->source == p->type.decl && t->field == f) return i;
+        if (t->read == READ_DATA && t->asset == asset && t->source == (p ? p->type.decl : NULL) && t->field == (p ? e->field : NULL)) {
+            d->texture = i;
+        }
     }
-    return -1;
+    return true;
 }
 
 // All of a value as zeros, whatever its fields' defaults are.
@@ -1460,73 +1541,6 @@ static void need_data(emit *em, const int texture, const type element, const boo
     sb_put(&text, ";\n}\n\n");
     em->o = out;
     sb_put(&em->functions, text.data);
-}
-
-static void need_list(emit *em, const int texture, const type element)
-{
-    need_data(em, texture, element, false);
-}
-
-// A grid whose cells the code reads by their place: a Grid2 that's a field of
-// what the engine supplies, or an asset's by its name.
-static bool bound_grid(const emit *em, const expr *e, const param **p, const field **f, const decl **asset)
-{
-    *p = NULL, *f = NULL, *asset = NULL;
-    if (!e || e->type.kind != TY_GRID) return false;
-    if (e->kind == E_NAME && e->bind == BIND_ASSET && e->constant) {
-        *asset = e->constant;
-        return true;
-    }
-    if (e->kind != E_MEMBER || !e->field) return false;
-    const expr *obj = e->object;
-    if (obj->kind != E_NAME || obj->bind != BIND_PARAM || !is_bound(em, obj->param) || !is_struct_like(obj->param->type)) return false;
-    *p = obj->param;
-    *f = e->field;
-    return true;
-}
-
-// Notes that the code reads the grid's cells, while checking; the shader's texture that's them otherwise, or -1.
-static int grid_texture_of(emit *em, const expr *grid, const param *p, const field *f, const decl *asset)
-{
-    if (grid->type.decl->dims != 2) {
-        refuse(em, grid->at, "a Grid3's cells aren't read on the GPU yet: keep the layer it reads in a Grid2");
-        return -1;
-    }
-    if (!type_fits(em, grid->type.decl->fields.items[0].type, grid->at)) return -1;
-    if (em->checking) {
-        if (em->code != em->root) {
-            refuse(em, grid->at, "a grid is read in the frag or vert that takes it, not in a function it calls");
-            diag_note("read the cell there, and pass it on");
-            return -1;
-        }
-        const decl *holds = asset ? NULL : grid->local_field ? p->type.decl->local_part : p->type.decl;
-        const shader_sample sample = {asset ? -1 : param_index(em->root, p), asset ? -1 : field_index(holds, f),
-                                      grid->local_field && !asset, 0, asset, 0, READ_DATA, true, true};
-        bool known = false;
-        for (int i = 0; i < em->root->samples.count; i++) {
-            const shader_sample *s = &em->root->samples.items[i];
-            known |= s->param == sample.param && s->field == sample.field && s->local == sample.local && s->asset == asset
-                  && s->read == READ_DATA;
-        }
-        if (!known) vec_push(em->root->samples, sample);
-        return -1;
-    }
-    for (int i = 0; i < em->sh->textures.count; i++) {
-        const shader_texture *t = &em->sh->textures.items[i];
-        if (t->read == READ_DATA && t->asset == asset && t->source == (p ? p->type.decl : NULL) && t->field == f) return i;
-    }
-    return -1;
-}
-
-// items[i]: an element of a list the engine supplies.
-static void ex_list_index(emit *em, const expr *e, const param *p, const field *f)
-{
-    if (!read_list(em, e->object, p, f)) return;
-    const int texture = list_texture(em, p, f);
-    need_list(em, texture, list_element(f));
-    sb_printf(em->o, "tide_list%d(", texture < 0 ? 0 : texture);
-    ex_as(em, e->lhs, (type){TY_INT, NULL});
-    sb_put(em->o, ")");
 }
 
 // ---------------------------------------------------------------------------
@@ -1706,6 +1720,10 @@ static void put_self(emit *em)
 
 static void ex_name(emit *em, const expr *e)
 {
+    if (e->type.kind == TY_LIST || e->type.kind == TY_GRID) { // A name for one, where a value goes
+        type_fits(em, e->type, e->at);
+        return;
+    }
     switch (e->bind) {
     case BIND_LOCAL:
         if (em->lifting) { // Before it's declared: its value, which nothing changed (liftable)
@@ -1834,17 +1852,14 @@ static void ex_member(emit *em, const expr *e)
         return;
     }
     const expr *obj = e->object;
-    const param *list_param;
-    const field *list_field;
-    const decl *grid_asset;
-    if (str_eq_c(e->member, "size") && bound_grid(em, obj, &list_param, &list_field, &grid_asset)) { // A grid's size
-        const int texture = grid_texture_of(em, obj, list_param, list_field, grid_asset);
-        if (texture < 0) sb_printf(em->o, "%s(0)", ty(em, (type){TY_INT2, NULL}));
-        else put_words(em, 'v', em->sh->textures.items[texture].count_at, 2, ty(em, (type){TY_INT2, NULL}));
+    data_ref data;
+    if (str_eq_c(e->member, "size") && obj->type.kind == TY_GRID && data_of(em, obj, &data)) { // A grid's size
+        if (data.texture < 0) sb_printf(em->o, "%s(0)", ty(em, (type){TY_INT2, NULL}));
+        else put_words(em, 'v', em->sh->textures.items[data.texture].count_at, 2, ty(em, (type){TY_INT2, NULL}));
         return;
     }
-    if (str_eq_c(e->member, "count") && bound_list(em, obj, &list_param, &list_field)) { // How many a list has
-        if (read_list(em, obj, list_param, list_field)) put_list_count(em, list_texture(em, list_param, list_field));
+    if (str_eq_c(e->member, "count") && obj->type.kind == TY_LIST && data_of(em, obj, &data)) { // How many a list has
+        put_list_count(em, data.texture);
         return;
     }
     if (obj->kind == E_THIS && obj->type.kind == TY_RECORD && obj->type.decl == em->prog->pixel) {
@@ -2737,6 +2752,12 @@ static void ex_sample(emit *em, const expr *e)
     sb_put(em->o, straight ? ", 0.0))" : read == READ_COLOR ? ", 0.0)" : em->l == WGSL ? ", 0)" : ", 0.0).r");
 }
 
+// Whether a function's parameter is a list or a grid, which it's written for and not handed.
+static bool takes_data(const param *p)
+{
+    return (p->type.kind == TY_LIST || p->type.kind == TY_GRID) && p->type.decl;
+}
+
 // A call of a function or method of the game's. A mut argument is the
 // caller's variable: GLSL takes it as it is (inout), and WGSL a pointer to a
 // whole variable, so what isn't one goes through a copy, which only a call
@@ -2744,10 +2765,21 @@ static void ex_sample(emit *em, const expr *e)
 static void ex_user_call(emit *em, const expr *e)
 {
     decl *fn = e->method;
-    need_function(em, fn, e->at);
+    // The lists and grids it's called with, which are no arguments: the function is written for them
+    data_ref *spec = arena_alloc((size_t)(fn->params.count + 1) * sizeof(data_ref));
+    sb suffix = {0};
+    for (int i = 0; i < fn->params.count; i++) {
+        if (!takes_data(&fn->params.items[i])) continue;
+        spec[i] = (data_ref){.texture = -1, .element = data_element(fn->params.items[i].type),
+                             .grid = fn->params.items[i].type.kind == TY_GRID};
+        const expr *arg = i < e->args.count ? e->args.items[i] : NULL;
+        if (arg && !data_of(em, arg, &spec[i])) type_fits(em, arg->type, arg->at);
+        sb_printf(&suffix, "%s%d", suffix.data ? "x" : "_4", spec[i].texture < 0 ? 0 : spec[i].texture);
+    }
+    need_function(em, fn, e->at, spec, suffix.data ? suffix.data : "");
     const bool method = fn->owner && !fn->is_operator && !fn->is_interpolate;
     const bool statement = em->statement == e;
-    sb_printf(em->o, "%s(", function_name(fn));
+    sb_printf(em->o, "%s%s(", function_name(fn), suffix.data ? suffix.data : "");
     bool first = true;
     if (method) {
         const expr *receiver = e->kind == E_METHOD ? e->object : NULL;
@@ -2777,6 +2809,7 @@ static void ex_user_call(emit *em, const expr *e)
     for (int i = 0; i < e->args.count; i++) {
         const param *p = i < fn->params.count ? &fn->params.items[i] : NULL;
         const expr *arg = e->args.items[i];
+        if (p && takes_data(p)) continue;
         if (!first) sb_put(em->o, ", ");
         first = false;
         if (!p || p->mode != PARAM_MUT) {
@@ -2982,31 +3015,19 @@ static void ex(emit *em, const expr *e)
         refuse(em, e->at, "text is the CPU's: code the GPU runs has none");
         return;
     case E_INDEX: {
-        const param *p;
-        const field *f;
-        if (bound_list(em, e->object, &p, &f)) {
-            ex_list_index(em, e, p, f);
+        data_ref data;
+        if (data_of(em, e->object, &data)) { // items[i], cells[x, y]: an element by its place
+            need_data(em, data.texture, data.element, data.grid);
+            sb_printf(em->o, "tide_list%d(", data.texture < 0 ? 0 : data.texture);
+            ex_as(em, e->lhs, (type){data.grid ? TY_INT2 : TY_INT, NULL});
+            sb_put(em->o, ")");
             return;
         }
         if (e->object->type.kind == TY_ARRAY) {
             ex_array_index(em, e);
             return;
         }
-        const decl *asset;
-        if (bound_grid(em, e->object, &p, &f, &asset)) { // cells[x, y]: a cell by its place
-            const int texture = grid_texture_of(em, e->object, p, f, asset);
-            if (texture >= 0) need_data(em, texture, e->object->type.decl->fields.items[0].type, true);
-            sb_printf(em->o, "tide_list%d(", texture < 0 ? 0 : texture);
-            ex_as(em, e->lhs, (type){TY_INT2, NULL});
-            sb_put(em->o, ")");
-            return;
-        }
-        if (e->object->type.kind == TY_GRID) {
-            refuse(em, e->at, "a grid's cells are read where the frag or vert takes it: a field of a component or a singleton, "
-                              "or an asset by its name");
-            return;
-        }
-        if (e->object->type.kind == TY_LIST) {
+        if (e->object->type.kind == TY_GRID || e->object->type.kind == TY_LIST) {
             type_fits(em, e->object->type, e->object->at);
             return;
         }
@@ -3116,6 +3137,22 @@ static void st_body(emit *em, const stmt *s)
 
 static void st_var(emit *em, const stmt *s)
 {
+    if (s->type.kind == TY_LIST || s->type.kind == TY_GRID) { // A name for one the code was given: nothing is written
+        const char *what = s->type.kind == TY_LIST ? "list" : "grid";
+        const loc at = s->name_at.line ? s->name_at : s->at;
+        data_alias alias = {.local = s};
+        alias.data = (data_ref){.texture = -1, .element = data_element(s->type), .grid = s->type.kind == TY_GRID};
+        if (s->is_mut) {
+            refuse(em, at, "a %s's local in code the GPU runs names one %s, for good: '" STR_FMT "' can't be 'mut'", what, what,
+                   STR_ARG(s->name));
+            diag_note("which %s it reads is settled as the shader is written, so nothing picks another as it runs: read each "
+                      "under its own name", what);
+        } else if (!s->value || !data_of(em, s->value, &alias.data)) {
+            type_fits(em, s->type, s->value ? s->value->at : at);
+        }
+        vec_push(em->aliases, alias); // Said once: what reads it says nothing more
+        return;
+    }
     if (!type_fits(em, s->type, s->name_at.line ? s->name_at : s->at)) return;
     if (em->l == WGSL) sb_printf(em->o, "var %s: %s = ", local_name(s->name), ty(em, s->type));
     else sb_printf(em->o, "%s %s = ", ty(em, s->type), local_name(s->name));
@@ -3571,11 +3608,11 @@ static void st_loop(emit *em, const stmt *s)
 
 // A foreach over a list the engine supplies: a loop that counts its elements,
 // each read as the loop comes to it.
-static void st_foreach(emit *em, const stmt *s, const param *p, const field *f)
+static void st_foreach(emit *em, const stmt *s, const data_ref *list)
 {
     const bool wgsl = em->l == WGSL;
     const int k = em->temps++;
-    if (!f) { // An array: each of its elements, by its place
+    if (!list) { // An array: each of its elements, by its place
         const type array = s->value->type, element = array.decl->fields.items[0].type;
         if (!type_fits(em, array, s->value->at)) return;
         const int reader = need_array(em, array.decl);
@@ -3588,10 +3625,9 @@ static void st_foreach(emit *em, const stmt *s, const param *p, const field *f)
         ex(em, s->value);
         sb_printf(em->o, ", tide_k%d);\n", k);
     } else {
-        if (!read_list(em, s->value, p, f)) return;
-        const int texture = list_texture(em, p, f);
-        const type element = list_element(f);
-        need_list(em, texture, element);
+        const int texture = list->texture;
+        const type element = list->element;
+        need_data(em, texture, element, false);
         sb_printf(em->o, wgsl ? "for (var tide_k%d: i32 = 0; tide_k%d < " : "for (int tide_k%d = 0; tide_k%d < ", k, k);
         put_list_count(em, texture);
         sb_printf(em->o, "; tide_k%d++) {\n", k);
@@ -3713,6 +3749,10 @@ static void st_one(emit *em, const stmt *s)
         st_outs(em, s->value);
         st_outs(em, s->target);
     }
+    if (s->kind == S_VAR && (s->type.kind == TY_LIST || s->type.kind == TY_GRID)) { // A name: no line of its own
+        st_var(em, s);
+        return;
+    }
     line(em);
     switch (s->kind) {
     case S_VAR:
@@ -3772,18 +3812,18 @@ static void st_one(emit *em, const stmt *s)
         sb_put(em->o, "\n");
         break;
     case S_FOREACH: {
-        const param *p;
-        const field *f;
-        if (s->value && bound_list(em, s->value, &p, &f)) {
-            st_foreach(em, s, p, f);
+        data_ref data;
+        if (s->value && s->value->type.kind == TY_LIST) {
+            if (data_of(em, s->value, &data)) st_foreach(em, s, &data);
+            else type_fits(em, s->value->type, s->value->at);
             break;
         }
         if (s->value && s->value->type.kind == TY_ARRAY) {
-            st_foreach(em, s, NULL, NULL);
+            st_foreach(em, s, NULL);
             break;
         }
-        refuse(em, s->at, "a foreach the GPU runs goes through an array, or a list that's a field of what the frag or vert "
-                          "takes, like 'foreach (var light in lights.items)': it has no maps, sets, queries or grids to go through");
+        refuse(em, s->at, "a foreach the GPU runs goes through an array or a list, like 'foreach (var light in lights.items)': "
+                          "it has no maps, sets, queries or grids to go through");
         break;
     }
     case S_PARALLEL:
@@ -3806,8 +3846,11 @@ static void st_one(emit *em, const stmt *s)
 // A function or method the code calls: written before its caller, once.
 // While checking, its body is checked once, whichever frag or vert reaches it
 // first, and a function that reaches itself is refused.
-static void need_function(emit *em, decl *fn, const loc at)
+static void need_function(emit *em, decl *fn, const loc at, const data_ref *spec, const char *suffix)
 {
+    if (em->checking && fn->gpu_state >= 2) { // What it reads of assets by their names, its caller reads
+        for (int i = 0; i < fn->gpu_data.count; i++) note_asset(em, fn->gpu_data.items[i]);
+    }
     if (em->checking) {
         if (fn->gpu_state == 1) {
             refuse(em, at, "'" STR_FMT "' calls itself, and the GPU has no recursion", STR_ARG(fn->name));
@@ -3818,9 +3861,10 @@ static void need_function(emit *em, decl *fn, const loc at)
         if (fn->gpu_state != 0) return;
     }
     for (int i = 0; i < em->done.count; i++) {
-        if (em->done.items[i] == fn) return;
+        if (em->done.items[i].fn == fn && !strcmp(em->done.items[i].suffix, suffix)) return;
     }
-    vec_push(em->done, fn);
+    const shader_function written = {fn, suffix};
+    vec_push(em->done, written);
     const char *why = fn->is_extern        ? "it's C, which runs on the CPU"
                       : fn->is_async       ? "it's a task, which the CPU runs between ticks"
                       : fn->takes_action   ? "it takes an Action, code of its caller's"
@@ -3840,9 +3884,11 @@ static void need_function(emit *em, decl *fn, const loc at)
     em->grads = (sb){0};
     em->grad_count = 0;
     em->hoisted.count = 0; // A function's own: only a frag or vert has any, and it gets its own back
-    const int indent = em->indent, defuse = em->defuse;
+    const int indent = em->indent, defuse = em->defuse, aliases = em->aliases.count;
     const expr *statement = em->statement;
     const bool failed = em->failed;
+    const data_ref *const outer_spec = em->spec;
+    em->spec = spec;
     em->o = &body;
     em->code = fn;
     em->indent = 1;
@@ -3858,8 +3904,8 @@ static void need_function(emit *em, decl *fn, const loc at)
     em->o = &head;
     const bool value = fn->return_type.kind != TY_VOID && fn->return_type.kind != TY_ERROR;
     if (value && !type_fits(em, fn->return_type, fn->at)) em->failed = true;
-    if (wgsl) sb_printf(&head, "fn %s(", function_name(fn));
-    else sb_printf(&head, "%s %s(", value ? ty(em, fn->return_type) : "void", function_name(fn));
+    if (wgsl) sb_printf(&head, "fn %s%s(", function_name(fn), suffix);
+    else sb_printf(&head, "%s %s%s(", value ? ty(em, fn->return_type) : "void", function_name(fn), suffix);
     bool first = true;
     if (method) {
         const type self = {fn->owner->kind == DECL_COMPONENT ? TY_COMPONENT : TY_STRUCT, fn->owner};
@@ -3872,6 +3918,13 @@ static void need_function(emit *em, decl *fn, const loc at)
     for (int i = 0; i < fn->params.count; i++) {
         const param *p = &fn->params.items[i];
         if (shader && !p->function_param && !handed_to(em->sh, p)) continue; // The engine supplies it
+        if (spec && takes_data(p)) { // Which of the shader's lists or grids it is, this is written for
+            if (p->mode == PARAM_MUT) {
+                refuse(em, p->at, "a %s a function takes in code the GPU runs is read there, never changed: '" STR_FMT "' can't be "
+                                  "'%s'", p->type.kind == TY_LIST ? "list" : "grid", STR_ARG(p->name), p->is_out ? "out" : "mut");
+            }
+            continue;
+        }
         if (!type_fits(em, p->type, p->type_at.line ? p->type_at : p->at)) continue;
         if (!first) sb_put(&head, ", ");
         first = false;
@@ -3897,6 +3950,11 @@ static void need_function(emit *em, decl *fn, const loc at)
     const bool bad = em->failed;
     em->o = out;
     em->code = code;
+    em->spec = outer_spec;
+    em->aliases.count = aliases;
+    if (em->checking) { // What it reads of assets by their names, its caller reads
+        for (int i = 0; i < fn->gpu_data.count; i++) note_asset(em, fn->gpu_data.items[i]);
+    }
     em->indent = indent;
     em->defuse = defuse;
     em->statement = statement;
@@ -4242,7 +4300,7 @@ static void write_stage(emit *em, decl *root, const int stage)
     if (!root) return;
     em->root = em->code = root;
     em->stage = stage;
-    need_function(em, root, root->at);
+    need_function(em, root, root->at, NULL, "");
 }
 
 static const char *attribute_type(emit *em, const type t)
@@ -4356,7 +4414,7 @@ static bool check_shader(program *prog, decl *d)
     em.root = em.code = d;
     sb scratch = {0};
     em.o = &scratch;
-    need_function(&em, d, d->at);
+    need_function(&em, d, d->at, NULL, "");
     return d->gpu_state == 2;
 }
 
@@ -4550,7 +4608,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         shader_texture *t = &sh->textures.items[i];
         if (t->read != READ_DATA) continue;
         t->count_at = sh->uniform_ints; // A list's count, or a grid's size across and down
-        sh->uniform_ints += t->asset || t->field->type.kind == TY_GRID ? 2 : 1;
+        sh->uniform_ints += (t->asset ? t->asset->return_type.kind : t->field->type.kind) == TY_GRID ? 2 : 1;
     }
     if (sh->instance_list) {
         diag_error(call->at, "this draw's instances each have a list, '" STR_FMT "', that its code reads, and a draw sends one "

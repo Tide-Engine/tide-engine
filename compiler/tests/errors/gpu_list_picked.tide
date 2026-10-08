@@ -1,0 +1,43 @@
+// expect: a list in code the GPU runs is one the frag or vert was given, by a name: it can't be made, changed, returned, picked between or kept in a struct there
+// expect: name a field of a component, a singleton or the draw's values, or an asset
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+component Box
+{
+    Color tint = Color.white;
+}
+
+singleton Sun
+{
+    float3 direction = float3(0, -1, 0);
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    List<int> spare;
+    Grid2<Color> wood = Grid2(4, 4);
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box);
+}
+
+frag Shade(V vertex, out Color color, Models models, Sun sun)
+{
+    var faces = sun.direction.y < 0 ? models.faces : models.spare;
+    color = Color.white * faces.count;
+}
+
+view Show(Box box, Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}

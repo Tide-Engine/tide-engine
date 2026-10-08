@@ -3008,6 +3008,89 @@ frag ArrayInList(Vertex vertex, out Color color, Tables tables)
     color = Color(strip.rgb[0], tables.strips[1].rgb[1], strip.rgb[2] + tables.strips[0].rgb[2] + tables.strips[2].rgb[0]);
 }
 
+// A list and a grid under another name: a local, and a function's parameter,
+// which is written for each list or grid it's called with
+frag ListNamed(Vertex vertex, out Color color, Tables tables)
+{
+    var colors = tables.colors;
+    var again = colors;
+    color = Color(again[2].r, colors.count / 8.0, again[2].b * 0.5);
+}
+
+float Green(List<Color> colors, int at)
+{
+    return colors[at].g * 0.5 + colors.count * 0.0625;
+}
+
+Color Greens(List<Color> first, List<Color> second)
+{
+    var kept = second;
+    mut var most = 0.0;
+    foreach (var each in first) most = Math.Max(most, each.g);
+    return Color(Green(first, 1), Green(kept, 1), Green(first, 9) * most);
+}
+
+frag ListPassed(Vertex vertex, out Color color, Tables tables, Palette palette)
+{
+    color = Greens(tables.colors, palette.colors);
+}
+
+frag ListPassedBack(Vertex vertex, out Color color, Tables tables, Palette palette)
+{
+    color = Greens(palette.colors, tables.colors);
+}
+
+int Tallied(Grid2<int> tallies, int2 at)
+{
+    var mine = tallies;
+    return mine[at.x, at.y] + mine.size.x;
+}
+
+float Shaded(Grid2<Color> cells, Grid2<int> tallies)
+{
+    return cells[66, 2].g + Tallied(tallies, int2(0, 0)) * 0.05;
+}
+
+frag GridPassed(Vertex vertex, out Color color, Tables tables)
+{
+    var cells = tables.cells;
+    color = Color(Tallied(tables.tallies, int2(3, 1)) / 20.0, Shaded(cells, tables.tallies), cells.size.y / 6.0);
+}
+
+// An asset's list and grid by their names, in functions a frag calls, and a list of bytes passed on
+asset List<byte> tableBytes = "../../compiler/tests/e2e/assets/table.bin";
+
+Color Brick(int x)
+{
+    return brickCells[x, 0];
+}
+
+float Ramp(int at)
+{
+    var bytes = tableBytes;
+    return bytes[at] / 255.0;
+}
+
+int Peek(List<byte> bytes, int at)
+{
+    return bytes[at];
+}
+
+frag AssetPassed(Vertex vertex, out Color color, Choice choice)
+{
+    color = Color(Ramp(choice.at), Brick(1).g * 0.5, tableBytes.count / 1200.0 + Peek(tableBytes, 300));
+}
+
+float Stride(List<int2> steps)
+{
+    return steps[1].y;
+}
+
+vert ListNudgedBack(mut Vertex vertex, Tables tables)
+{
+    vertex.position.y -= Stride(tables.steps);
+}
+
 [After(CubeReads)]
 view ListReads(Art art, mut Tables tables)
 {
@@ -3124,6 +3207,31 @@ view ListReads(Art art, mut Tables tables)
     Draw.Transform(float2(72, 88))
     {
         Draw.Mesh(tables.small, art.faces, Loops);
+    }
+    // Row 7: lists and grids by other names: locals, functions' parameters, and assets read in functions
+    Draw.Transform(float2(8, 104))
+    {
+        Draw.Mesh(tables.small, art.faces, ListNamed);
+    }
+    Draw.Transform(float2(24, 104))
+    {
+        Draw.Mesh(tables.small, art.faces, ListPassed, Palette { colors = [Color(0, 0.5, 0), Color(0, 1, 0)] });
+    }
+    Draw.Transform(float2(40, 104))
+    {
+        Draw.Mesh(tables.small, art.faces, ListPassedBack, Palette { colors = [Color(0, 0.5, 0), Color(0, 1, 0)] });
+    }
+    Draw.Transform(float2(56, 104))
+    {
+        Draw.Mesh(tables.small, art.faces, GridPassed);
+    }
+    Draw.Transform(float2(72, 104))
+    {
+        Draw.Mesh(tables.small, art.faces, AssetPassed, Choice { at = 18 });
+    }
+    Draw.Transform(float2(88, 104))
+    {
+        Draw.Mesh(tables.small, art.faces, ListNudgedBack);
     }
 }
 

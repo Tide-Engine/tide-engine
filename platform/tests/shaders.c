@@ -1047,6 +1047,13 @@ static void run_list_checks(const float turn, const char *when)
         {40, 88, {128, 128, 255}, "a grid's size, and a cell of a grid of ints"},
         {56, 88, {0, 255, 0}, "an asset's grid, a cell by its place"},
         {72, 88, {128, 191, 64}, "a while, a for that doubles, and a loop only a break ends"},
+        {8, 104, {0, 128, 128}, "a list under a local's name, and a local that names that one"},
+        {24, 104, {191, 159, 64}, "a function that takes two lists, which passes each on to another and goes through one"},
+        {40, 104, {159, 191, 32}, "the same functions called with the lists the other way round"},
+        {56, 104, {191, 191, 128}, "grids under locals' names and as functions' parameters, passed on"},
+        {72, 104, {126, 128, 64}, "an asset's list of bytes and an asset's grid, read in functions, with nothing past the list's end"},
+        {88, 104, {128, 128, 128}, "a vert that reads a list in a function moved its square away"},
+        {88, 88, {255, 255, 255}, "to where the list's element says, above"},
     };
     enum { COUNT = sizeof wanted / sizeof wanted[0] };
     local.Art.targetPass = 18;

@@ -1423,6 +1423,14 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(has(grid, "Grid2<Color>.Sample(float2 uv, Filter filter = the grid's, Wrap wrap = the grid's) -> Color"));
     const char *list = complete(IN_FRAG("var n = models.crate.$"));
     TIDE_CHECK(!offers(list, "Add") && offers(list, "count")); // The GPU reads a list, and changes none
+    // A local that names a list or a grid is read the same way
+    const char *named_list = complete(IN_FRAG("var crate = models.crate;\n    var n = crate.$"));
+    TIDE_CHECK(!offers(named_list, "Add") && offers(named_list, "count"));
+    const char *named_grid = complete(IN_FRAG("var wood = models.wood;\n    color = wood.$"));
+    TIDE_CHECK(!offers(named_grid, "Clear") && offers(named_grid, "size"));
+    // ...and so is a grid a function takes, which is the GPU's code too
+    const char *taken = complete(SHADER_TYPES "int Cell(Grid2<int> cells, int2 at)\n{\n    return cells.$\n}\n");
+    TIDE_CHECK(offers(taken, "size") && !offers(taken, "Clear") && !offers(taken, "Decode"));
     TIDE_CHECK(offers(complete(IN_FRAG("color = box.$")), "tint"));
     TIDE_CHECK(offers(complete(IN_FRAG("color = Color.$")), "white") && offers(complete(IN_FRAG("var s = Math.$")), "Sin"));
     TIDE_CHECK(!offers(complete(IN_FRAG("Draw.$")), "Circle") && !offers(complete(IN_FRAG("var k = Devices.$")), "keyboard"));
@@ -1804,8 +1812,8 @@ TIDE_TEST(lsp_shaders_diagnostics)
     TIDE_CHECK(diagnosed(43, 67, 5, 1, "view 'DrawBox' doesn't guarantee its entity has a 'Box', which frag 'Shade' reads"));
     // What the GPU can't hold, found once the rest of the game is right: on the index
     open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, Models models)\n{\n"
-                               "    var all = models.faces;\n    color = Color.white;\n}\n");
-    TIDE_CHECK(diagnosed(33, 8, 3, 1, "a list is read where the frag or vert takes it"));
+                               "    mut var all = models.faces;\n    color = Color.white;\n}\n");
+    TIDE_CHECK(diagnosed(33, 12, 3, 1, "a list's local in code the GPU runs names one list, for good: 'all' can't be 'mut'"));
 }
 
 // The type of what's at the cursor, and an event's or the input's code.
