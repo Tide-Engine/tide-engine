@@ -1,5 +1,5 @@
 ---
-description: "Declare images, textures, cubemaps, meshes from glTF and OBJ files, text and bytes as Tide assets, then load files or fetch URLs locally while the game runs."
+description: "Declare PNG and PSD images, textures, cubemaps, meshes from glTF and OBJ files, text and bytes as Tide assets, then load files or fetch URLs locally while the game runs."
 ---
 
 # Assets
@@ -11,8 +11,8 @@ An asset is a file a game is built with: an image, a model, a text, some bytes. 
 `asset` declares a file's contents under a name, at the top of a file like a constant. The type is what the file is read as:
 
 ```csharp
-asset Grid2<Color> hero = "art/hero.png";   // A PNG, decoded as the game is built: cells code reads
-asset Texture tiles = "art/tiles.png";      // A PNG that's only drawn
+asset Grid2<Color> hero = "art/hero.png";   // An image, decoded as the game is built: cells code reads
+asset Texture tiles = "art/tiles.psd";      // An image that's only drawn
 asset string rules = "rules.txt";           // UTF-8 text
 asset List<byte> table = "data/table.bin";  // Any file, as its bytes
 ```
@@ -89,6 +89,22 @@ view Show(mut Player player)
 - What a field keeps of `hero` or of `run[2]` is that image as the files have it now: under `tide run`, a saved picture shows through the copies a game kept, as it does through `hero` itself.
 - How it's sampled can be said once, on its declaration: `[Filter(Filter.Point), Wrap(Wrap.Repeat)]` before the asset (see [Saying it once, on the texture](./meshes-and-textures.md#saying-it-once-on-the-texture)). The `Texture` carries it: what a field keeps of `hero` is sampled as `hero` is.
 
+### Photoshop images
+
+An image asset can be a PNG or a `.psd`, whether it's a `Texture`, a `Grid2<Color>`, a list or map of either, or a cubemap face. PSD import needs no Photoshop installation, including when CI builds the game:
+
+```csharp
+asset Texture portrait = "art/portrait.psd";
+asset Grid2<Color> mask = "art/mask.psd";
+asset List<Texture> portraits = "art/portraits/*.psd";
+```
+
+Tide reads the composite image saved in the PSD: the visible layers combined into one picture. Save with Photoshop's **Maximize Compatibility** enabled so the file includes it. Tide doesn't read individual layers or render their effects, text or smart objects itself; their saved appearance is in that composite.
+
+The file must be an ordinary PSD (version 1) in RGB mode, with 8 or 16 bits per channel and at most 16,384 pixels per side. Uncompressed, RLE, ZIP and ZIP with prediction are supported. PSB files, other color modes such as CMYK, and 32-bit channels are errors at the asset's path, as is a missing or damaged composite. A `Texture` keeps a byte per channel, while a `Grid2<Color>` keeps each decoded channel as a float. Color profiles aren't applied; save RGB art as sRGB for matching display colors.
+
+Only the decoded pixels are packed, as with a PNG. The game needs no Photoshop files or decoder when it runs. [`grid.Decode(bytes)`](#decoding-a-png) still reads PNG only.
+
 ## Cubemaps
 
 A sky or a room's surroundings is six images, the faces of a cube, which a frag reads by a direction (see [Skybox and reflections](./shaders.md#skybox-and-reflections)). That's a `Cubemap`, and its path is a glob that matches the six files:
@@ -99,7 +115,7 @@ asset Cubemap sky = "art/sky_??.png";
 
 - **Each file is named for its face** by how its name ends before the extension: `px` and `nx` are the faces `+x` and `-x` point at, `py` and `ny` the ones above and below, `pz` and `nz` the ones ahead and behind. `sky_px.png`, `px.png` and `dusk-PX.png` are all the first.
 - **Each is a face as it's seen from the cube's middle,** the way a picture is: `+y` is up for the four around, with `+x` to the right of `+z`. The one above has `-z` at its top, and the one below `+z`.
-- Each is a PNG, a square, and all six are one size. A file that's none of the six, a face that's missing or there twice, and a size that differs are errors at the path, which name the file.
+- Each is a PNG or PSD, a square, and all six are one size. A file that's none of the six, a face that's missing or there twice, and a size that differs are errors at the path, which name the file.
 - A file is in the pack once, as any is: a face that's also an `asset Texture` shares its pixels.
 - It's a value, like a `Texture`: a field or a local holds one, a function takes one, and a frag samples one by its name, `sky.Sample(direction)`. It's this machine's, so match code can't name one.
 - No list or map of cubes yet, and no `[Filter]` on one: a cube's filter is said where it's sampled.
@@ -164,7 +180,7 @@ The rocket below is a `.glb` as a modelling tool exports one: five meshes with a
 
 - From a glTF: its meshes' positions, normals, tangents, two sets of uvs and vertex colors, its nodes' places, and each material's base color. Not its textures, nor the rest of a material; not skins, animation, morph targets, cameras or lights: a skinned model is the mesh as it stands. A file whose geometry is compressed (Draco, meshopt) is an error that says to export it without: Tide reads a mesh's numbers as they are.
 - From an OBJ: positions, uvs, normals and faces of any number of corners, with a color after a position where a tool wrote one. Not its materials file.
-- **A texture a model has is a file of its own**, a PNG beside it, declared like any: `asset Texture bark = "art/bark.png";`, and given to the draw.
+- **A texture a model has is a file of its own**, a PNG or PSD beside it, declared like any: `asset Texture bark = "art/bark.png";`, and given to the draw.
 - A mesh holds 16,777,216 vertices at the most.
 
 **It comes in as Tide has the world.** Mesh files are right-handed with their triangles' fronts counterclockwise, and Tide's world is left-handed with them [clockwise](./3d.md#which-side-draws), like Unity's. So a file's `x` is turned around and its triangles are wound the other way: `+y` stays up, a model that faces `+z` in its file faces `+z` here, and nothing is mirrored. A glTF's colors are light, and a `Color` is what the screen shows, so they're converted; an OBJ's are taken as written.
@@ -237,7 +253,7 @@ Anything wrong that can be known as the game is built is an error at the declara
 
 - A file that isn't there. The error says where a file with the same bytes is now, if the file was moved (the compiler keeps a hash of every named file in the game's `.tide/`), or else lists the files of that name, with a quick fix for each in the editor.
 - A glob that matches nothing.
-- Bytes that aren't what the type says: a `Grid2<Color>` or a `Texture` whose file isn't a PNG that decodes, a `string` whose file isn't UTF-8, a `Mesh` whose file isn't a glTF or an OBJ that reads, with what's wrong in it.
+- Bytes that aren't what the type says: a `Grid2<Color>` or a `Texture` whose file isn't a PNG or supported PSD that decodes, a `string` whose file isn't UTF-8, a `Mesh` whose file isn't a glTF or an OBJ that reads, with what's wrong in it.
 - A type an asset can't be, a path that isn't a constant, a `local` or `virtual` asset, a write to one.
 
 The editor keeps assets in step with their files: renaming a file or a folder rewrites the paths that name it, and a path's completion offers the files it can lead to. See [Editors](../tools/editors.md).
