@@ -8643,6 +8643,360 @@ static const char *sent_with(const char *needle)
     return i >= 0 ? sent[i] : NULL;
 }
 
+typedef struct editor_asset_registrations {
+    char *watchers;
+    char *filters;
+} editor_asset_registrations;
+
+// Apply the dynamic capability requests as a client does. Unchanged
+// registrations remain installed even when a request sends no new capability.
+static void receive_asset_registrations(editor_asset_registrations *editor)
+{
+    for (int i = 0; i < sent_count; i++) {
+        const json *message = json_parse(sent[i], strlen(sent[i]));
+        const char *method = json_str(json_get(message, "method"));
+        const bool registering = method && strcmp(method, "client/registerCapability") == 0;
+        const bool removing = method && strcmp(method, "client/unregisterCapability") == 0;
+        if (!registering && !removing) {
+            json_release();
+            continue;
+        }
+        const json *items = json_path(message, "params", registering ? "registrations" : "unregisterations", NULL);
+        for (int k = 0; items && k < items->count; k++) {
+            const char *id = json_str(json_get(items->items[k], "id"));
+            char **out = id && strcmp(id, "tide-assets") == 0 ? &editor->watchers
+                       : id && strcmp(id, "tide-rename") == 0 ? &editor->filters : NULL;
+            if (!out) continue;
+            free(*out);
+            *out = NULL;
+            if (registering) {
+                jbuf options = {0};
+                jb_json(&options, json_get(items->items[k], "registerOptions"));
+                *out = options.data;
+            }
+        }
+        json_release();
+    }
+}
+
+static void receive_document_diagnostics(char **last, const char *uri)
+{
+    for (int i = 0; i < sent_count; i++) {
+        const json *message = json_parse(sent[i], strlen(sent[i]));
+        const char *method = json_str(json_get(message, "method"));
+        const char *document = json_str(json_path(message, "params", "uri", NULL));
+        if (method && strcmp(method, "textDocument/publishDiagnostics") == 0 && document && strcmp(document, uri) == 0) {
+            jbuf diagnostics = {0};
+            jb_json(&diagnostics, json_path(message, "params", "diagnostics", NULL));
+            free(*last);
+            *last = diagnostics.data;
+        }
+        json_release();
+    }
+}
+
+TIDE_TEST(lsp_asset_registrations_cover_every_open_game)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_watch_games");
+    make_folder("lsp_watch_games/a");
+    make_folder("lsp_watch_games/b");
+    make_folder("lsp_watch_games/pk");
+    static const char game[] = "asset string rules = \"rules.txt\";\nscene Main { }\n";
+    static const char package[] = "namespace Pk;\nasset string shared = \"shared.txt\";\n";
+    write_file("lsp_watch_games/a/tide.packages", "../pk\n");
+    write_file("lsp_watch_games/b/tide.packages", "../pk\n");
+    write_file("lsp_watch_games/a/main.tide", game);
+    write_file("lsp_watch_games/b/main.tide", game);
+    write_file("lsp_watch_games/a/rules.txt", "a");
+    write_file("lsp_watch_games/b/rules.txt", "b");
+    write_file("lsp_watch_games/pk/tide.packages", "package Pk\n");
+    write_file("lsp_watch_games/pk/main.tide", package);
+    write_file("lsp_watch_games/pk/shared.txt", "shared");
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    char roots[2][700], uris[2][700], shared[700], asset[700];
+    for (int i = 0; i < 2; i++) {
+        snprintf(roots[i], sizeof roots[i], "file:///%s/lsp_watch_games/%c", dir, 'a' + i);
+        snprintf(uris[i], sizeof uris[i], "file:///%s/lsp_watch_games/%c/main.tide", dir, 'a' + i);
+    }
+    snprintf(shared, sizeof shared, "file:///%s/lsp_watch_games/pk", dir);
+    snprintf(asset, sizeof asset, "file:///%s/lsp_watch_games/a/rules.txt", dir);
+    char *canonical_watchers = NULL, *canonical_filters = NULL;
+    for (int reverse_roots = 0; reverse_roots < 2; reverse_roots++) {
+        for (int reverse_open = 0; reverse_open < 2; reverse_open++) {
+            editor_asset_registrations editor = {0};
+            start_in_pair_with(roots[reverse_roots], roots[!reverse_roots], ASSET_EDITOR_CAPABILITIES);
+            open_uri(uris[reverse_open], game);
+            receive_asset_registrations(&editor);
+            open_uri(uris[!reverse_open], game);
+            receive_asset_registrations(&editor);
+            TIDE_REQUIRE(editor.watchers && editor.filters);
+            TIDE_CHECK(count(editor.watchers, "\"globPattern\"") == 3);
+            TIDE_CHECK(count(editor.watchers, roots[0]) == 1 && count(editor.watchers, roots[1]) == 1);
+            TIDE_CHECK(count(editor.watchers, shared) == 1); // The shared package is watched once.
+            TIDE_CHECK(count(editor.filters, "/pk/shared.txt") == 1);
+            TIDE_CHECK(has(editor.filters, "/a/rules.txt") && has(editor.filters, "/b/rules.txt"));
+            if (!canonical_watchers) {
+                canonical_watchers = malloc(strlen(editor.watchers) + 1);
+                canonical_filters = malloc(strlen(editor.filters) + 1);
+                strcpy(canonical_watchers, editor.watchers);
+                strcpy(canonical_filters, editor.filters);
+            }
+            TIDE_CHECK(strcmp(editor.watchers, canonical_watchers) == 0);
+            TIDE_CHECK(strcmp(editor.filters, canonical_filters) == 0);
+            for (int i = 0; i < 2; i++) {
+                request_at(uris[i], "textDocument/hover", 0, 14, "");
+                TIDE_CHECK(sent_with("client/registerCapability") == NULL);
+                request_at(uris[i], "textDocument/codeLens", 0, 0, "");
+                TIDE_CHECK(sent_with("client/registerCapability") == NULL);
+            }
+            clear_sent();
+            handle("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"workspace/symbol\",\"params\":{\"query\":\"\"}}");
+            receive_asset_registrations(&editor);
+            TIDE_CHECK(strcmp(editor.watchers, canonical_watchers) == 0 && strcmp(editor.filters, canonical_filters) == 0);
+            char operation[1700];
+            snprintf(operation, sizeof operation, "{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"workspace/willRenameFiles\","
+                     "\"params\":{\"files\":[{\"oldUri\":\"%s\",\"newUri\":\"%s/moved.txt\"}]}}", asset, roots[0]);
+            clear_sent();
+            handle(operation);
+            receive_asset_registrations(&editor);
+            TIDE_CHECK(has(last_sent(), "moved.txt"));
+            TIDE_CHECK(strcmp(editor.watchers, canonical_watchers) == 0 && strcmp(editor.filters, canonical_filters) == 0);
+            // A still has a watch after B's requests. Its notification updates diagnostics.
+            write_bytes("lsp_watch_games/a/rules.txt", "\xff", 1);
+            snprintf(operation, sizeof operation, "{\"jsonrpc\":\"2.0\",\"method\":\"workspace/didChangeWatchedFiles\","
+                     "\"params\":{\"changes\":[{\"uri\":\"%s\",\"type\":2}]}}", asset);
+            clear_sent();
+            handle(operation);
+            TIDE_CHECK(sent_with("UTF-8") != NULL);
+            receive_asset_registrations(&editor);
+            TIDE_CHECK(strcmp(editor.watchers, canonical_watchers) == 0);
+            write_file("lsp_watch_games/a/rules.txt", "a");
+            clear_sent();
+            handle(operation);
+            close_uri(uris[0]);
+            receive_asset_registrations(&editor);
+            TIDE_REQUIRE(editor.watchers && editor.filters);
+            TIDE_CHECK(!has(editor.watchers, roots[0]) && has(editor.watchers, roots[1]) && count(editor.watchers, shared) == 1);
+            TIDE_CHECK(!has(editor.filters, "/a/rules.txt") && has(editor.filters, "/b/rules.txt"));
+            // Workspace searches of the closed consumer don't restore its filters.
+            clear_sent();
+            handle("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"workspace/symbol\",\"params\":{\"query\":\"\"}}");
+            receive_asset_registrations(&editor);
+            TIDE_CHECK(!has(editor.watchers, roots[0]));
+            open_uri(uris[0], game);
+            receive_asset_registrations(&editor);
+            TIDE_CHECK(strcmp(editor.watchers, canonical_watchers) == 0 && strcmp(editor.filters, canonical_filters) == 0);
+            open_uri(uris[1], "scene Main { }\n"); // Removing an asset also removes its watch.
+            receive_asset_registrations(&editor);
+            TIDE_CHECK(!has(editor.watchers, roots[1]) && has(editor.watchers, roots[0]) && count(editor.watchers, shared) == 1);
+            close_uri(uris[1]);
+            receive_asset_registrations(&editor);
+            snprintf(operation, sizeof operation, "{\"jsonrpc\":\"2.0\",\"method\":\"workspace/didChangeWorkspaceFolders\","
+                     "\"params\":{\"event\":{\"removed\":[{\"uri\":\"%s\",\"name\":\"b\"}],\"added\":[]}}}", roots[1]);
+            clear_sent();
+            handle(operation);
+            receive_asset_registrations(&editor);
+            TIDE_CHECK(!has(editor.watchers, roots[1]) && has(editor.watchers, roots[0]));
+            close_uri(uris[0]);
+            receive_asset_registrations(&editor);
+            TIDE_CHECK(editor.watchers == NULL && editor.filters == NULL);
+            clear_sent();
+            handle("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"workspace/symbol\",\"params\":{\"query\":\"\"}}");
+            receive_asset_registrations(&editor);
+            TIDE_CHECK(editor.watchers == NULL && editor.filters == NULL);
+        }
+    }
+    free(canonical_watchers);
+    free(canonical_filters);
+    // Clients without relative patterns receive each broader glob just once.
+    editor_asset_registrations broad = {0};
+    start_in_pair_with(roots[0], roots[1], "{\"workspace\":{\"fileOperations\":{\"dynamicRegistration\":true},"
+                                         "\"didChangeWatchedFiles\":{\"dynamicRegistration\":true}}}");
+    open_uri(uris[0], game);
+    receive_asset_registrations(&broad);
+    open_uri(uris[1], game);
+    receive_asset_registrations(&broad);
+    TIDE_REQUIRE(broad.watchers != NULL);
+    TIDE_CHECK(count(broad.watchers, "**/rules.txt") == 1 && count(broad.watchers, "**/shared.txt") == 1);
+    close_uri(uris[0]);
+    receive_asset_registrations(&broad);
+    close_uri(uris[1]);
+    receive_asset_registrations(&broad);
+    TIDE_CHECK(broad.watchers == NULL && broad.filters == NULL);
+    remove_game_file("lsp_watch_games/a/main.tide");
+    remove_game_file("lsp_watch_games/a/rules.txt");
+    remove_game_file("lsp_watch_games/a/tide.packages");
+    remove_game_file("lsp_watch_games/b/main.tide");
+    remove_game_file("lsp_watch_games/b/rules.txt");
+    remove_game_file("lsp_watch_games/b/tide.packages");
+    remove_game_file("lsp_watch_games/pk/main.tide");
+    remove_game_file("lsp_watch_games/pk/shared.txt");
+    remove_game_file("lsp_watch_games/pk/tide.packages");
+    remove_folder("lsp_watch_games/a");
+    remove_folder("lsp_watch_games/b");
+    remove_folder("lsp_watch_games/pk");
+    remove_folder("lsp_watch_games");
+    clear_sent();
+    lsp_free(&server);
+}
+
+// An explicit folder game can include a source whose document instead selects
+// a manifest subset. Closing its other document must keep that subset's watches.
+TIDE_TEST(lsp_asset_registrations_keep_manifest_and_folder_contexts)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_watch_manifest");
+    make_folder("lsp_watch_manifest/b");
+    make_folder("lsp_watch_manifest/extra");
+    make_folder("lsp_watch_manifest/build");
+    make_folder("lsp_watch_manifest/build/tools");
+    static const char a[] = "asset string alpha = \"a.txt\";\n";
+    char b[400];
+    write_file("lsp_watch_manifest/tide.packages", "./extra\n");
+    write_file("lsp_watch_manifest/extra/tide.packages", "package Extra\n");
+    write_file("lsp_watch_manifest/extra/main.tide", "namespace Extra;\nconst int Marker = 7;\n");
+    write_file("lsp_watch_manifest/a.tide", a);
+    write_file("lsp_watch_manifest/a.txt", "a");
+    write_file("lsp_watch_manifest/b/b.txt", "b");
+    write_file("lsp_watch_manifest/b/with.txt", "with");
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    char root[700], uris[2][700], manifest[1400];
+    snprintf(root, sizeof root, "file:///%s/lsp_watch_manifest", dir);
+    snprintf(uris[0], sizeof uris[0], "file:///%s/lsp_watch_manifest/a.tide", dir);
+    snprintf(uris[1], sizeof uris[1], "file:///%s/lsp_watch_manifest/b/b.tide", dir);
+    for (int variant = 0; variant < 4; variant++) {
+        const bool folder = (variant & 1) != 0;
+        const bool invalid_folder_branch = (variant & 2) != 0;
+        snprintf(b, sizeof b, "#if PACKAGE_EXTRA\nasset string beta = \"with.txt\";\nconst int Mode = %s;\n#else\n"
+                 "asset string beta = \"b.txt\";\nconst int Mode = 22;\n#endif\nscene Main { }\n",
+                 invalid_folder_branch ? "Missing" : "11");
+        write_file("lsp_watch_manifest/b/b.tide", b);
+        snprintf(manifest, sizeof manifest, "subset\t%s/lsp_watch_manifest/b/%s\n", game_dir, folder ? "" : "b.tide");
+        write_file("lsp_watch_manifest/build/tools/games.txt", manifest);
+        for (int scenario = 0; scenario < 4; scenario++) {
+            const int reverse_open = scenario & 1;
+            const bool deferred = (scenario & 2) != 0;
+            editor_asset_registrations editor = {0};
+            char *b_diagnostics = NULL;
+            start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+            server.defer = deferred;
+            open_uri(uris[reverse_open], reverse_open ? b : a);
+            if (!deferred) {
+                TIDE_REQUIRE(sent_for(uris[reverse_open]) >= 0);
+                TIDE_CHECK(has(sent[sent_for(uris[reverse_open])], "\"diagnostics\":[]"));
+                receive_asset_registrations(&editor);
+                receive_document_diagnostics(&b_diagnostics, uris[1]);
+            }
+            open_uri(uris[!reverse_open], reverse_open ? a : b);
+            if (deferred) lsp_settle(&server);
+            TIDE_REQUIRE(sent_for(uris[!reverse_open]) >= 0);
+            TIDE_CHECK(has(sent[sent_for(uris[!reverse_open])], "\"diagnostics\":[]"));
+            receive_asset_registrations(&editor);
+            receive_document_diagnostics(&b_diagnostics, uris[1]);
+            TIDE_REQUIRE(b_diagnostics != NULL);
+            TIDE_CHECK(strcmp(b_diagnostics, "[]") == 0); // Never replace B's valid branch with A's error.
+            TIDE_REQUIRE(editor.watchers && editor.filters);
+            TIDE_CHECK(count(editor.watchers, "\"globPattern\"") == 3);
+            TIDE_CHECK(count(editor.watchers, "a.txt") == 1 && count(editor.watchers, "b.txt") == 1);
+            TIDE_CHECK(count(editor.watchers, "with.txt") == 1);
+            if (!deferred) {
+                // Switching to the folder analysis includes b.tide too, but
+                // b's own requests must still use its manifest's #if branch.
+                TIDE_CHECK(has(request_at(uris[0], "textDocument/hover", 0, 14, ""), "alpha"));
+                TIDE_CHECK(has(request_at(uris[1], "textDocument/hover", 5, 11, ""), "Mode = 22"));
+                TIDE_CHECK(has(request_at(uris[0], "textDocument/hover", 0, 14, ""), "alpha"));
+                TIDE_CHECK(has(request_at(uris[1], "textDocument/hover", 5, 11, ""), "Mode = 22"));
+                clear_sent();
+                handle("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"workspace/symbol\",\"params\":{\"query\":\"\"}}");
+                TIDE_CHECK(count(last_sent(), "\"name\":\"alpha\"") == 1);
+                TIDE_CHECK(count(last_sent(), "\"name\":\"beta\"") == 2);
+                TIDE_CHECK(count(last_sent(), "\"name\":\"Mode\"") == 2);
+                receive_asset_registrations(&editor);
+            }
+            close_uri(uris[0]); // The manifest subset doesn't consume a.tide; no dependent refresh follows.
+            receive_asset_registrations(&editor);
+            TIDE_REQUIRE(editor.watchers && editor.filters);
+            TIDE_CHECK(count(editor.watchers, "\"globPattern\"") == 1);
+            TIDE_CHECK(!has(editor.watchers, "a.txt") && !has(editor.watchers, "with.txt") && has(editor.watchers, "b.txt"));
+            TIDE_CHECK(!has(editor.filters, "a.txt") && has(editor.filters, "b.txt"));
+            close_uri(uris[1]);
+            receive_asset_registrations(&editor);
+            TIDE_CHECK(editor.watchers == NULL && editor.filters == NULL);
+            free(b_diagnostics);
+        }
+    }
+    remove_game_file("lsp_watch_manifest/a.tide");
+    remove_game_file("lsp_watch_manifest/a.txt");
+    remove_game_file("lsp_watch_manifest/tide.packages");
+    remove_game_file("lsp_watch_manifest/b/b.tide");
+    remove_game_file("lsp_watch_manifest/b/b.txt");
+    remove_game_file("lsp_watch_manifest/b/with.txt");
+    remove_game_file("lsp_watch_manifest/extra/main.tide");
+    remove_game_file("lsp_watch_manifest/extra/tide.packages");
+    remove_game_file("lsp_watch_manifest/build/tools/games.txt");
+    remove_folder("lsp_watch_manifest/b");
+    remove_folder("lsp_watch_manifest/extra");
+    remove_folder("lsp_watch_manifest/build/tools");
+    remove_folder("lsp_watch_manifest/build");
+    remove_folder("lsp_watch_manifest");
+    clear_sent();
+    lsp_free(&server);
+}
+
+TIDE_TEST(lsp_open_contexts_keep_innermost_workspace_root)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_watch_nested");
+    make_folder("lsp_watch_nested/inner");
+    static const char parent[] = "asset string alpha = \"a.txt\";\nconst int ParentOnly = 17;\n";
+    static const char child[] = "asset string beta = \"b.txt\";\nint Read() { return ParentOnly; }\nscene Main { }\n";
+    write_file("lsp_watch_nested/a.tide", parent);
+    write_file("lsp_watch_nested/a.txt", "a");
+    write_file("lsp_watch_nested/inner/b.tide", child);
+    write_file("lsp_watch_nested/inner/b.txt", "b");
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    char roots[2][700], uris[2][700];
+    snprintf(roots[0], sizeof roots[0], "file:///%s/lsp_watch_nested", dir);
+    snprintf(roots[1], sizeof roots[1], "file:///%s/lsp_watch_nested/inner", dir);
+    snprintf(uris[0], sizeof uris[0], "file:///%s/lsp_watch_nested/a.tide", dir);
+    snprintf(uris[1], sizeof uris[1], "file:///%s/lsp_watch_nested/inner/b.tide", dir);
+    for (int scenario = 0; scenario < 4; scenario++) {
+        const int reverse_roots = scenario & 1;
+        const int reverse_open = (scenario >> 1) & 1;
+        editor_asset_registrations editor = {0};
+        char *child_diagnostics = NULL;
+        start_in_pair_with(roots[reverse_roots], roots[!reverse_roots], ASSET_EDITOR_CAPABILITIES);
+        open_uri(uris[reverse_open], reverse_open ? child : parent);
+        receive_asset_registrations(&editor);
+        receive_document_diagnostics(&child_diagnostics, uris[1]);
+        open_uri(uris[!reverse_open], reverse_open ? parent : child);
+        receive_asset_registrations(&editor);
+        receive_document_diagnostics(&child_diagnostics, uris[1]);
+        TIDE_REQUIRE(child_diagnostics != NULL && editor.watchers != NULL);
+        TIDE_CHECK(has(child_diagnostics, "ParentOnly") && strcmp(child_diagnostics, "[]") != 0);
+        TIDE_CHECK(count(editor.watchers, "\"globPattern\"") == 2);
+        TIDE_CHECK(has(request_at(uris[0], "textDocument/hover", 1, 12, ""), "ParentOnly = 17"));
+        TIDE_CHECK(has(request_at(uris[1], "textDocument/hover", 1, 22, ""), "\"result\":null"));
+        close_uri(uris[0]);
+        receive_asset_registrations(&editor);
+        TIDE_REQUIRE(editor.watchers != NULL);
+        TIDE_CHECK(count(editor.watchers, "\"globPattern\"") == 1 && has(editor.watchers, "b.txt"));
+        close_uri(uris[1]);
+        receive_asset_registrations(&editor);
+        TIDE_CHECK(editor.watchers == NULL && editor.filters == NULL);
+        free(child_diagnostics);
+    }
+    remove_game_file("lsp_watch_nested/a.tide");
+    remove_game_file("lsp_watch_nested/a.txt");
+    remove_game_file("lsp_watch_nested/inner/b.tide");
+    remove_game_file("lsp_watch_nested/inner/b.txt");
+    remove_folder("lsp_watch_nested/inner");
+    remove_folder("lsp_watch_nested");
+    clear_sent();
+    lsp_free(&server);
+}
+
 // Fixed whole-second metadata lets replacements exercise explicit watch
 // invalidation independently of the filesystem's timestamp resolution.
 static void pin_file_time(const char *name)
