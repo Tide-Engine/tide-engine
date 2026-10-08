@@ -37,7 +37,7 @@ tide <command> [folder] [options]
 | `--stats` | Shows the [stats](#stats) in the window's corner, as the game's `stats` setting does. `run` starts them open |
 | `--debug-views` | Turns the [debug views](debug-views.md) on, as the game's `debugViews` setting does: F7 shows the profiler, which says where a frame's time and a tick's go |
 | `--size <width> <height>` | `run` only: the window's size in pixels, 960 by 540 without it (not on the web or Android) |
-| `--capture`, `--frames`, `--script`, `--scale` | `run` only: plays the game [without a window](#without-a-window), to see what it draws |
+| `--capture`, `--frames`, `--script`, `--scale`, `--players` | `run` only: plays the game [without a window](#without-a-window), to see what it draws, with [several players](#several-players) if you like |
 | `--seed <n>` | `run` only: the seed of the matches the game starts, [`Random.seed`](../language/math.md#the-match-s-seed), from 0 to 2147483647. Without it, every match gets another one |
 | `-o <path>` | `build` only: where the program goes |
 | `--no-open` | `run --web` only: serves the page without opening a browser |
@@ -171,6 +171,8 @@ Hot reload is for `tide run`. `tide build` makes a plain program, or a page with
 | `--join <code>` | The match in the room with this code, like `K7QF2M` |
 | `--connect <address>` | The match at an address, like `192.168.1.5` or `localhost:7777` (not on the web) |
 
+To check a match with no window on screen, `--players` plays [several players](#several-players) at once and takes a picture from each.
+
 ### In a web page's address
 
 A game's web page takes the same from its address, so a link can say which match it's for:
@@ -206,6 +208,7 @@ tide run --frames 300 --capture menu.png
 | `--microphone <file>` | A WAV or Ogg Vorbis file the microphone plays in the run, looped, where a window's run would hear the capture device (`Clip.Microphone`). Without it a run's microphone is silent |
 | `--frames <n>` | Ends the run after `n` frames |
 | `--script <file>` | Input by frame from a file, which also says when to capture and when to quit (see [Scripts](#scripts)) |
+| `--players <n>` | Plays the game `n` times at once, as the `n` players of one match (see [Several players](#several-players)) |
 | `--scale <s>` | Draws as on a display scaled this much, like `1.5` or `2` (1 without it). Text and edges are fitted to the display's pixels, so they look different there, and [render targets](../game/render-targets.md) at the display's scale have that many more pixels |
 | `--size <width> <height>` | The window's size in pixels, 960 by 540 without it |
 | `--seed <n>` | The seed of the run's matches, 0 without it |
@@ -223,7 +226,7 @@ Nothing of the run depends on the machine it's on, or on what's happening there:
 - **The window's size and scale are what you asked for,** whatever the display is.
 - **The match's seed is 0.** In a window, [`Random.seed`](../language/math.md#the-match-s-seed) is another number every match. In a run like this it's 0 every time, so what the game rolls comes out the same. `--seed 7` picks another seed, to see the game roll otherwise: the same seed is the same run again.
 
-So a run repeats exactly: the match goes the same way on every machine, and the same machine writes the same pictures, byte for byte. Between machines, pixels a GPU blends (the edges of shapes, a shader's gradients) can differ a little. The stats' list and the profiler are the exception, while they're open: they show what this machine's clock measured, which no two runs agree on. The stats' one line doesn't. What the game reads from disk, like its saves, is still this machine's. Made-up time doesn't wait for anyone, so this is for a game on its own: a match it starts itself, not one it joins on another machine.
+So a run repeats exactly: the match goes the same way on every machine, and the same machine writes the same pictures, byte for byte. Between machines, pixels a GPU blends (the edges of shapes, a shader's gradients) can differ a little. The stats' list and the profiler are the exception, while they're open: they show what this machine's clock measured, which no two runs agree on. The stats' one line doesn't. What the game reads from disk, like its saves, is still this machine's. Made-up time doesn't wait for anyone, so a run like this isn't for a match with another machine, or with another run: neither would wait for the other. A match with [several players](#several-players) is one run, which plays them all.
 
 Something has to end a run nobody can close: `--frames`, or the script's `quit`. The run's exit code says how it went:
 
@@ -234,6 +237,39 @@ Something has to end a run nobody can close: `--frames`, or the script's `quit`.
 | 2 | An option or a line of the script is wrong, or the run would need a window [where nobody watches](#where-nobody-watches): nothing ran, and the message names what to fix |
 
 A game `tide build` made takes the same options itself, so a build server needs no `tide`: `build/mygame --frames 300 --capture menu.png`. These runs are for computers: on the web, drive the page with a headless browser instead, and take its screenshots.
+
+### Several players
+
+`--players <n>` plays the game `n` times at once, with no window, as the `n` players of one match, and takes a picture from each:
+
+```
+tide run --players 2 --script play.txt --size 640 360
+```
+
+Each player is a copy of the game, a program of its own, as on a machine of its own. The copies go a frame at a time, together, so frame 300 is the same moment for every player. Their network is made up, as the run's time and input are: what one sends in a frame, the others read in the next, in the same order every run. Nothing leaves the machine: no port opens, and no relay is asked. So a run of several repeats exactly, as a run of one does, and goes as fast as the machine plays it.
+
+- **Who's in the match.** If the game's `Main` scene is the match's, player 1 opens it, as with `--host`, and the others join it before the first frame: there's nothing to script. A game that starts in a menu opens and joins from its own code, as it does for its players, at the script's clicks and keys.
+- **Rooms.** A match that's open is in a room, and each player's room has a code of its own, six of one letter: `AAAAAA` is player 1's, `BBBBBB` player 2's, `CCCCCC` player 3's, and so on through the letters a code has (no `I` or `O`). [`Session.room`](../multiplayer/matches.md#where-this-machine-stands) reads it, and `Session.Join("AAAAAA")` joins player 1's match, so a script types it where a player would: `260 player 2 text AAAAAA`. A room nobody has open fails at once, with `Disconnected` and `Failed`, as a room that isn't one does.
+- **Addresses.** `Session.Connect` reaches the first player whose match is open on the address's port, 7777 unless `Session.Open(port)` picked another. The rest of the address says nothing here, and no name is looked up. A port nobody opened never answers, and the game times out, as on a network.
+- **One script for everyone.** A line says whose it is after its frame: `120 player 2 key d down`. Input that names no player is player 1's, so a script for one player plays as it did. `quit` and `--frames` end the run for everyone.
+- **Pictures from each.** A file gets its player's number before the extension: `capture fight.png` writes `fight-1.png` and `fight-2.png`, and `--capture`, `--capture-audio` and `capture-audio` go the same way. `400 player 2 capture hers.png` takes player 2's alone, as `hers-2.png`.
+- **A game that stops ends the run.** When one player's game ends before the run does (it stopped, or couldn't write a picture), the run says which player's and at which frame, the others end with it, and the exit code is that game's (1, when the system stopped it).
+
+```
+# Player 1 walks up while player 2 walks right, and each machine takes a picture of the match
+120 key w down
+120 player 2 key d down
+300 capture walk.png
+310 quit
+```
+
+A packet takes a frame each way, in every run, so a player's [ping](../multiplayer/matches.md#where-this-machine-stands) is a few frames long, and the same each time. A run has 32 players at most, and no more than the game's `maxPlayers`. It takes no `--host`, `--join` or `--connect`: who's in the match is the run's to say, or the game's. A match whose host leaves ends for the others: it can't [change hands](../multiplayer/matches.md#host-migration), which goes through the relay.
+
+`--players 1` is a run of one whose network is made up too: its match opens in room `AAAAAA` with nobody to join it, and its pictures have no number.
+
+::: info Provisional
+This is new, and its details may still change: the option's name, the rooms' codes, what an address reaches, and how a script and its files say whose they are.
+:::
 
 ### Where nobody watches
 
@@ -282,6 +318,7 @@ tide run --script play.txt --size 1280 720
 | `capture <file.png>` | Writes the frame, once it drew, as a PNG. A file a script names is beside the script |
 | `capture-audio <file.wav>` | Writes what played since the last such line, or since the run began, as a WAV beside the script |
 | `quit` | Ends the run once this frame drew |
+| `player <n>` before any of these but `quit` | In a run of [several players](#several-players), the line is player `n`'s: `120 player 2 key d down`. Without it, input is player 1's and a capture is every player's |
 
 What a line does is in the devices at its frame, as if a player had done it since the frame before. So it goes the way a player's input goes: the GUI takes a click on one of its widgets and the game doesn't get it, and a modal keeps the keys from the game.
 

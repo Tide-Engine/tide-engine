@@ -1,0 +1,83 @@
+// A game that starts in a menu, for a run of several players with no window
+// (platform/tests/players.mjs): Main is local, so nothing puts the players in
+// one match but the game's own code, which keys ask for. S starts a match and
+// O opens it; what's typed is a room's code, which Enter joins; C connects to
+// an address whose port is the one a match opens on, and V to one nobody has;
+// L leaves. The match has a block for each player in it, and a machine draws
+// a block for each thing its session says, and for why it was last
+// disconnected, which R forgets.
+
+local scene Main { }
+scene Play { }
+
+component Block
+{
+    int seat;
+}
+
+singleton Roster
+{
+    int arrivals;
+}
+
+event(PlayerJoined joined) Arrive(mut Roster roster)
+{
+    Spawn(Block { seat = roster.arrivals }, Owner { player = joined.player });
+    roster.arrivals += 1;
+}
+
+local singleton Menu
+{
+    string code;
+    bool failed;
+    bool timedOut;
+    bool serverLeft;
+}
+
+local event(Disconnected gone) Say(mut Menu menu)
+{
+    if (gone.reason == DisconnectReason.Failed) menu.failed = true;
+    if (gone.reason == DisconnectReason.TimedOut) menu.timedOut = true;
+    if (gone.reason == DisconnectReason.ServerLeft) menu.serverLeft = true;
+}
+
+view Keys(Devices devices, mut Menu menu)
+{
+    Draw.Clear(Color(0, 0, 1));
+    menu.code += devices.keyboard.text;
+    if (devices.keyboard.enter.down)
+    {
+        Session.Join(menu.code);
+        menu.code = "";
+    }
+    if (devices.keyboard.s.down) Session.Start(Play);
+    if (devices.keyboard.o.down) Session.Open();
+    if (devices.keyboard.c.down) Session.Connect("localhost");
+    if (devices.keyboard.v.down) Session.Connect("localhost:9999");
+    if (devices.keyboard.l.down) Session.Leave();
+    if (devices.keyboard.r.down)
+    {
+        menu.failed = false;
+        menu.timedOut = false;
+        menu.serverLeft = false;
+    }
+}
+
+view Stands(Session session, Menu menu)
+{
+    Draw.SetScreen();
+    if (session.state == SessionState.Connecting) Draw.Rect(float2(40, 40), float2(20, 20), Color(1, 1, 0));
+    if (session.state == SessionState.Connected) Draw.Rect(float2(40, 40), float2(20, 20), Color(0, 1, 0));
+    if (session.server) Draw.Rect(float2(100, 40), float2(20, 20), Color(1, 1, 1));
+    if (session.room == "AAAAAA") Draw.Rect(float2(160, 40), float2(20, 20), Color(0, 1, 1));
+    if (session.room == "BBBBBB") Draw.Rect(float2(160, 40), float2(20, 20), Color(1, 0, 1));
+    if (menu.failed) Draw.Rect(float2(40, 100), float2(20, 20), Color(1, 0, 0));
+    if (menu.timedOut) Draw.Rect(float2(100, 100), float2(20, 20), Color(1, 1, 0));
+    if (menu.serverLeft) Draw.Rect(float2(160, 100), float2(20, 20), Color(1, 1, 1));
+}
+
+view Blocks(Block block)
+{
+    Draw.SetScreen();
+    Draw.Rect(float2(40 + block.seat * 40, 160), float2(20, 20), Color(0, 0, 0));
+}

@@ -82,6 +82,10 @@ static void usage(void)
            "  --size <w> <h>        the window's size in pixels, for a run with a window too (960 by 540 without it)\n"
            "  --seed <n>            the seed of the matches the game starts, from 0 to 2147483647, for any run: without\n"
            "                        it, 0 with no window, and another one every match with one\n"
+           "  --players <n>         a run of this many players, each a copy of the game on a made-up network: the\n"
+           "                        first opens Main's match and the others join it. A script's line says whose it\n"
+           "                        is, like `120 player 2 key d down`, and a picture has its player's number\n"
+           "                        (fight-2.png)\n"
            "With TIDE_HIDDEN set (an agent's shell, a build server), games show no window: run takes one of\n"
            "these or says so, and run --web opens no browser.\n"
            "\n"
@@ -225,6 +229,7 @@ int main(const int argc, char **argv)
     int game_arg_count = 0;
     bool open_page = true; // run --web opens the page in a browser
     bool headless = false; // --capture, --frames or --script: the game runs with no window
+    bool players = false;  // --players: several players, which only such a run has
     bool sized = false;
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
@@ -256,6 +261,14 @@ int main(const int argc, char **argv)
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = argv[++i];
             if (a[2] == 'f') headless = true;
+        } else if (run && strcmp(a, "--players") == 0) {
+            if (left < 1) {
+                fprintf(stderr, "tide: --players takes how many players the run has, like `--players 2`\n");
+                return 2;
+            }
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = argv[++i];
+            players = true;
         } else if (run && strcmp(a, "--size") == 0) {
             if (left < 2) {
                 fprintf(stderr, "tide: --size takes the window's width and height, like `--size 1280 720`\n");
@@ -312,6 +325,11 @@ int main(const int argc, char **argv)
     if (!opts.release) opts.defines[opts.define_count++] = "DEBUG";
     if (opts.web && opts.android) {
         fprintf(stderr, "tide: a build is for the web or for Android, not both at once\n");
+        return 2;
+    }
+    if (players && !headless) {
+        // Said before anything is built: the game would refuse it too
+        fprintf(stderr, "tide: --players is for a run with no window: with --capture, --frames or --script\n");
         return 2;
     }
     if ((headless || sized) && (opts.web || opts.android)) {

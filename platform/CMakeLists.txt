@@ -457,6 +457,35 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         set_tests_properties(tide_platform_first_tick PROPERTIES LABELS gpu TIMEOUT 120)
     endif()
 
+    # Such a run of several players (tide/run.h's --players): each a process of
+    # its own, a frame at a time together on a made-up network. A game whose
+    # Main is the match's, where the first player opens it and the others join,
+    # and one that starts in a menu, where the script has them open and join by
+    # the rooms' codes: every player's pictures are read, and a run repeats byte
+    # for byte. What such a run refuses before it opens anything needs no GPU.
+    # Its network alone, with no window at all (tests/players_net.c): three
+    # processes that send text through it and check what arrives, frame by
+    # frame, and one that ends before the run does. It starts processes and
+    # listens on this machine, with no GPU, so every desktop's tests run it.
+    add_executable(tide_platform_players_net tests/players_net.c)
+    target_include_directories(tide_platform_players_net PRIVATE src)
+    target_link_libraries(tide_platform_players_net PRIVATE tide_platform)
+    add_test(NAME tide_platform_players_net COMMAND tide_platform_players_net)
+    add_test(NAME tide_platform_players_net_ended COMMAND tide_platform_players_net die)
+    set_tests_properties(tide_platform_players_net tide_platform_players_net_ended PROPERTIES TIMEOUT 60)
+
+    tide_add_game(tide_platform_players SOURCES tests/players.tide)
+    tide_add_game(tide_platform_players_menu SOURCES tests/players_menu.tide)
+    if(TIDE_NODE)
+        add_test(NAME tide_platform_players
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/players.mjs" $<TARGET_FILE:tide_platform_players>
+                $<TARGET_FILE:tide_platform_players_menu> "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_players-run")
+        set_tests_properties(tide_platform_players PROPERTIES LABELS gpu TIMEOUT 180)
+        add_test(NAME tide_platform_players_refused
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/players.mjs" $<TARGET_FILE:tide_platform_players>
+                $<TARGET_FILE:tide_platform_players_menu> "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_players-refused" refused)
+    endif()
+
     # A run nobody watches (TIDE_HIDDEN in the environment, as an agent's
     # shell and a build server have it): no window shows, a game or a host
     # that only its window's closing would end doesn't start, and a stop shows

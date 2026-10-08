@@ -24,6 +24,15 @@
 //
 // What a line does at a frame is in the devices at that frame's poll, as a
 // player's input since the frame before would be.
+//
+// In a run of several players (players.h) every player's process reads the
+// one script, and a line says whose it is after its frame:
+//
+//     120 player 2 key d down        the second player's key
+//     130 key a down                 with none said, input is the first player's
+//     400 capture fight.png          ...and a picture is everyone's: fight-1.png, fight-2.png
+//     410 player 2 capture hers.png  ...or the one player's: hers-2.png
+//     500 quit                       the run's end is every player's, so it takes none
 
 #include "script.h"
 
@@ -36,6 +45,7 @@
 
 #include "tide/page.h"
 #include "font.h" // tide_utf8_next
+#include "players.h"
 
 #define COUNT_OF(array) (sizeof(array) / sizeof((array)[0]))
 
@@ -166,6 +176,7 @@ enum { PRESS_DOWN, PRESS_UP, PRESS_TAP };
 
 typedef struct event {
     uint32_t frame, line; // A script's: when it happens, and where the file says so
+    uint32_t player;      // ...and whose it is in a run of several players, from 1: 0 when the line doesn't say
     event_kind kind;
     uint32_t which; // The key, button, stick, trigger or finger
     uint32_t press; // PRESS_*, or a touch's tide_touch_phase
@@ -556,6 +567,31 @@ static char *beside_script(const char *file)
     return path;
 }
 
+// `player <n>` after a line's frame, which says whose the line is in a run of
+// several players: moves `*at` past it, and leaves `*player` 0 for a line
+// with none. False, with why in `error`, for a player the run doesn't have.
+static bool player_of(const char **at, uint32_t *player, char *error, const size_t size)
+{
+    const char *p = *at;
+    char first[32], number[32];
+    if (!word(&p, first, sizeof first) || strcmp(first, "player") != 0) return true;
+    const uint32_t players = tide_platform_players() ? tide_platform_players() : 1u;
+    if (!word(&p, number, sizeof number) || !whole(number, player) || *player == 0) {
+        return fail(error, size, "`player` takes which player the line is for, counted from 1, then what happens: "
+                                 "`player 2 key d down`");
+    }
+    if (*player > players && players == 1u) {
+        return fail(error, size, "there's no player %u in a run of one: --players %u makes it a run of %u", (unsigned)*player,
+                    (unsigned)*player, (unsigned)*player);
+    }
+    if (*player > players) {
+        return fail(error, size, "there's no player %u in this run of %u players (--players %u)", (unsigned)*player,
+                    (unsigned)players, (unsigned)players);
+    }
+    *at = p;
+    return true;
+}
+
 bool tide_script_load(const char *path)
 {
     FILE *file = fopen(path, "rb");
@@ -603,8 +639,10 @@ bool tide_script_load(const char *path)
         } else if (e.frame < last) {
             snprintf(error, sizeof error, "frame %u comes after frame %u: a script's lines are in the order of their frames",
                      (unsigned)e.frame, (unsigned)last);
-        } else {
-            parse(p, &e, error, sizeof error);
+        } else if (player_of(&p, &e.player, error, sizeof error) && parse(p, &e, error, sizeof error)) {
+            if (e.kind == EVENT_QUIT && e.player) {
+                snprintf(error, sizeof error, "`quit` ends the run, which is every player's: it takes no player before it");
+            }
         }
         if (error[0]) {
             fprintf(stderr, "tide: %s:%u: %s\n", path, (unsigned)line, error);
@@ -613,6 +651,13 @@ bool tide_script_load(const char *path)
             break;
         }
         last = e.frame;
+        // In a run of several players, each one's process keeps its own lines: input is the first's unless
+        // the line says whose, and a picture is everyone's unless it does
+        const uint32_t own = tide_platform_player() ? tide_platform_player() : 1u;
+        if (e.kind != EVENT_QUIT && (e.player ? e.player != own : e.kind < EVENT_CAPTURE && own != 1u)) {
+            free(e.text);
+            continue;
+        }
         if (e.kind == EVENT_QUIT) script.quits = true;
         if (script.count == script.capacity) {
             const uint32_t grown = script.capacity ? script.capacity * 2u : 64u;
@@ -650,7 +695,9 @@ int tide_script_drawn(const uint32_t frame)
         const event *e = &script.events[script.next_drawn];
         if (e->kind == EVENT_QUIT) quit = true;
         if (e->kind != EVENT_CAPTURE && e->kind != EVENT_CAPTURE_AUDIO) continue;
-        char *path = beside_script(e->text);
+        char *beside = beside_script(e->text);
+        char *path = tide_platform_players_file(beside); // With the player's number, in a run of several
+        free(beside);
         const bool written = e->kind == EVENT_CAPTURE ? tide_platform_capture(path) : tide_platform_capture_audio(path);
         free(path);
         if (!written) return 1;
