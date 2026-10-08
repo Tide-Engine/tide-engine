@@ -2467,6 +2467,63 @@ static bool name_is(const char *text)
     return entry_name.bytes == (int32_t)strlen(text) && memcmp(entry_name.ptr, text, strlen(text)) == 0;
 }
 
+TIDE_TEST(gui_float_fields_keep_untouched_values)
+{
+    static const float values[] = {
+        1.23456776f, -1.23456776f, 0.123456791f, 1.0f + FLT_EPSILON,
+        FLT_MAX, -FLT_MAX, FLT_MIN, FLT_TRUE_MIN, 0.0f, -0.0f,
+    };
+    for (size_t i = 0; i < sizeof values / sizeof values[0]; i++) {
+        for (int leave = 0; leave < 3; leave++) {
+            entry_start();
+            entry_ratio = values[i];
+            mouse(ENTRY_X, RATIO_Y, false);
+            TIDE_CHECK(entries() == 0);
+            TIDE_CHECK(entry_click(ENTRY_X, RATIO_Y) == 0);
+            TIDE_REQUIRE(gui.editing == RATIO_ID);
+            if (leave == 0) TIDE_CHECK(entry_tap(&devices.keyboard.enter) == ENTRY_RATIO);
+            if (leave == 1) TIDE_CHECK(entry_tap(&devices.keyboard.tab) == 0);
+            if (leave == 2) TIDE_CHECK(entry_click(ENTRY_X, NAME_Y) == 0); // This field takes the buffer first.
+            TIDE_CHECK(memcmp(&entry_ratio, &values[i], sizeof entry_ratio) == 0);
+        }
+    }
+}
+
+TIDE_TEST(gui_float_fields_accept_full_precision_numbers)
+{
+    static const struct {
+        const char *text;
+        float value;
+    } cases[] = {
+        {"1.23456776", 1.23456776f},
+        {"3.40282347e+38", FLT_MAX},
+        {"-3.40282347e+38", -FLT_MAX},
+        {"1.40129846e-45", FLT_TRUE_MIN},
+        {"-1.40129846e-45", -FLT_TRUE_MIN},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        entry_start();
+        mouse(ENTRY_X, RATIO_Y, false);
+        entries();
+        entry_click(ENTRY_X, RATIO_Y);
+        type(cases[i].text);
+        TIDE_CHECK(entries() == 0 && entry_ratio == 0.5f);
+        TIDE_CHECK(entry_tap(&devices.keyboard.enter) == (ENTRY_RATIO | ENTRY_RATIO * ENTRY_CHANGED));
+        TIDE_CHECK(memcmp(&entry_ratio, &cases[i].value, sizeof entry_ratio) == 0);
+    }
+    static const char *const invalid[] = {"3.5e38", "-3.5e38", "1e999"};
+    for (size_t i = 0; i < sizeof invalid / sizeof invalid[0]; i++) {
+        entry_start();
+        mouse(ENTRY_X, RATIO_Y, false);
+        entries();
+        entry_click(ENTRY_X, RATIO_Y);
+        type(invalid[i]);
+        entries();
+        TIDE_CHECK(entry_tap(&devices.keyboard.enter) == ENTRY_RATIO);
+        TIDE_CHECK(entry_ratio == 0.5f); // Float overflow still rejects the edit.
+    }
+}
+
 TIDE_TEST(gui_a_field_says_when_its_typing_is_entered)
 {
     entry_start();
@@ -2912,6 +2969,29 @@ static int form_tap(tide_button *b)
 static bool form_name_is(const char *text)
 {
     return form_name.bytes == (int32_t)strlen(text) && memcmp(form_name.ptr, text, strlen(text)) == 0;
+}
+
+TIDE_TEST(gui_vector_and_color_fields_keep_untouched_values)
+{
+    const float original = 0.123456791f;
+    for (int field = FORM_SIZE; field <= FORM_TINT; field++) {
+        for (int earlier = 0; earlier < 2; earlier++) {
+            for (int enter = 0; enter < 2; enter++) {
+                if (earlier) FORM(FORM_NAME, field);
+                else FORM(field, FORM_NAME);
+                float *value = field == FORM_SIZE ? &form_size.y : &form_tint.b;
+                *value = original;
+                const float x = field == FORM_SIZE ? SIZE_X(1) : TINT_X(2);
+                mouse(x, FORM_Y(field), false);
+                form();
+                TIDE_CHECK(form_click(x, FORM_Y(field)) == 0);
+                TIDE_REQUIRE(gui.editing == (field == FORM_SIZE ? SIZE_ID(1) : TINT_ID(2)));
+                if (enter) TIDE_CHECK(form_tap(&devices.keyboard.enter) == 0);
+                else TIDE_CHECK(form_click(FORM_X, FORM_Y(FORM_NAME)) == 0);
+                TIDE_CHECK(memcmp(value, &original, sizeof original) == 0);
+            }
+        }
+    }
 }
 
 // The player types a number and clicks a text field: one the frame calls
