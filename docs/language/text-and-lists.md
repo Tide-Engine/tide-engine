@@ -366,7 +366,7 @@ Keys are `byte`, `int`, `long`, `char`, enums, `Entity`, `PlayerID` or `string`:
 - `count`.
 - A map: `scores[key]` to read, which gives the value type's zero when the key isn't there, and `scores[key] = value` or `scores[key] += x` to write. `Has(key)`, `Get(key)` (the value, or nothing, as a `V?`), `TryGet(key, out value)` (whether the key is there, and its value), `Remove(key)` (whether it was there) and `Clear()`.
 - A set: `Add(key)` (whether it was new), `Has(key)`, `Remove(key)` and `Clear()`.
-- `foreach (var e in scores)` goes through a map's entries in the order their keys were added, each with `key` and `value`; `foreach (var k in tagged)` goes through a set's keys the same way. The order is the same on every machine.
+- `foreach (var e in scores)` goes through a map's entries in the order their keys were added, each with `key` and `value`; `foreach (var k in tagged)` goes through a set's keys the same way. Entries added during the loop are reached too, and entries removed before their turn are skipped, including when the loop waits between entries. The order is the same on every machine.
 
 ```csharp
 foreach (var e in board.scores)

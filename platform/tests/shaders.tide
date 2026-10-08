@@ -4160,13 +4160,158 @@ view Models(Art art, mut Shelf shelf)
     Draw.Mesh(modelMap["no/such.glb"], ModelPlace(184, 56, true, quad));               // No such key: nothing drawn
 }
 
+// Places (pass 22): a vert that takes `out float4` puts its vertex itself, in
+// clip space, and `this.clip` is where the engine would have. Squares 16
+// pixels across under a camera that shows a unit to a pixel, each drawn
+// somewhere its transform alone wouldn't put it, and under a camera with
+// perspective, where a place has a `w` that isn't 1: one written back as it
+// was read, which lands where the same square with no vert does, mirrored,
+// and one moved onto a grid of 32 pixels, as a console that kept no
+// fractions of a pixel would have. shaders.c reads pixels inside and outside
+// where each has to be.
+struct Patch
+{
+    float3 position;
+}
+
+struct Wash
+{
+    Color color;
+}
+
+// An item of an Instanced draw's list: its own transform, and how far its vert moves it across the frame
+struct Marker
+{
+    float4x4 transform;
+    float push;
+}
+
+local singleton Places
+{
+    bool made;
+    List<Patch> square;
+    List<Vertex> card;
+    List<Marker> markers;
+    float2 grid = float2(8, 8); // The frame's pixels, for the vert that moves corners onto them: 32 of the window's each
+}
+
+frag Washed(Patch patch, out Color color, Wash wash)
+{
+    color = wash.color;
+}
+
+// Where the pixel is in the world, which is where its mesh is, wherever its vert put it in the frame
+frag WorldShown(Patch patch, out Color color)
+{
+    color = Color(this.world.x / 256 + 0.5, this.world.y / 256 + 0.5, 0);
+}
+
+// Written back as it was read: where the engine would have put it
+vert Kept(mut Patch patch, out float4 clip)
+{
+    clip = this.clip;
+}
+
+// An eighth of the frame to the right
+vert Shifted(mut Patch patch, out float4 clip)
+{
+    clip = this.clip;
+    clip.x += 0.25 * clip.w;
+}
+
+// this.clip follows the vertex as the vert has changed it
+vert Raised(mut Patch patch, out float4 clip)
+{
+    patch.position.y += 24;
+    clip = this.clip;
+}
+
+// Nearly at the near plane, whatever its place in the world: its depth is the place's too
+vert Fronted(mut Patch patch, out float4 clip)
+{
+    float4 at = this.clip;
+    clip = float4(at.xy, -0.9 * at.w, at.w);
+}
+
+// Onto the nearest pixel of a frame of `grid` pixels
+vert Snapped(mut Patch patch, out float4 clip, Places places)
+{
+    float4 at = this.clip;
+    float2 half = places.grid * 0.5;
+    clip = float4(Math.Round(at.xy / at.w * half) / half * at.w, at.z, at.w);
+}
+
+// Each instance by its own transform, and its own push
+vert Pushed(mut Patch patch, out float4 clip, Marker marker)
+{
+    clip = this.clip;
+    clip.x += marker.push * clip.w;
+}
+
+// A 2D mesh's place: through the 2D camera, with the draw's transform in it
+vert CardPushed(mut Vertex vertex, out float4 clip)
+{
+    clip = this.clip;
+    clip.x += 0.25 * clip.w;
+}
+
+// A square's transform under the unit-a-pixel camera, its middle at pixel (x, y) of the window
+float4x4 PatchAt(float x, float y, float z)
+{
+    return float4x4.Translate(float3(x - 128, 128 - y, z));
+}
+
+view Placing(Art art, mut Places places)
+{
+    if (art.targetPass != 22) return;
+    if (!places.made)
+    {
+        places.made = true;
+        places.square = [Patch { position = float3(-8, 8, 0) }, Patch { position = float3(8, 8, 0) },
+                         Patch { position = float3(8, -8, 0) }, Patch { position = float3(-8, -8, 0) }];
+        places.card = [Vertex { }, Vertex { position = float2(16, 0), uv = float2(1, 0) },
+                       Vertex { position = float2(16, 16), uv = float2(1, 1) }, Vertex { position = float2(0, 16), uv = float2(0, 1) }];
+        places.markers = [Marker { transform = PatchAt(24, 216, 0), push = 0.25 }, Marker { transform = PatchAt(120, 216, 0), push = -0.25 }];
+    }
+    var red = Wash { color = Color.red };
+    var green = Wash { color = Color.green };
+    var blue = Wash { color = Color.blue };
+    Draw.SetScreen();
+    Draw.SetClip();
+    Draw.Clear(Color.black);
+
+    // With perspective, from the world's middle: a unit 10 away is 22.17 pixels. Squares 2 units across
+    Draw.SetCamera(float3(0, 0, 0), quaternion.identity, 60);
+    Draw.Mesh(places.square, art.faces, float4x4.TRS(float3(-4, 4, 10), quaternion.identity, float3(0.125)), Washed, red);
+    Draw.Mesh(places.square, art.faces, float4x4.TRS(float3(4, 4, 10), quaternion.identity, float3(0.125)), Kept, Washed, green);
+    Draw.Mesh(places.square, art.faces, float4x4.TRS(float3(0.2, 1.5, 10), quaternion.identity, float3(0.125)), Snapped, Washed, blue);
+
+    // A unit to a pixel, the world's (0, 0) at the window's middle
+    Draw.SetCamera(float4x4.TRS(float3(0, 0, -10), quaternion.identity, float3(1)), float4x4.Ortho(256, 256, 0.1, 30));
+    Draw.Mesh(places.square, art.faces, PatchAt(24, 176, 0), Kept, Washed, red);
+    Draw.Mesh(places.square, art.faces, PatchAt(56, 176, 0), Shifted, WorldShown);   // Drawn 32 pixels to the right
+    Draw.Mesh(places.square, art.faces, PatchAt(120, 176, 0), Raised, Washed, blue); // Drawn 24 pixels up
+    // Behind a red square, a green one is hidden, unless its vert says its depth is nearer
+    Draw.Mesh(places.square, art.faces, PatchAt(168, 176, 0), Washed, red);
+    Draw.Mesh(places.square, art.faces, PatchAt(168, 176, 5), Fronted, Washed, green);
+    Draw.Mesh(places.square, art.faces, PatchAt(200, 176, 0), Washed, red);
+    Draw.Mesh(places.square, art.faces, PatchAt(200, 176, 5), Kept, Washed, green);
+    Draw.Instanced(places.square, art.faces, places.markers, Pushed, Washed, green); // 32 pixels right, and 32 left
+
+    Draw.SetScreen();
+    Draw.Transform(float2(160, 208))
+    {
+        Draw.Mesh(places.card, art.faces, CardPushed); // Its transform puts it at 160: drawn at 192
+    }
+}
+
 // shaders.c requests independent full-window checks after the existing grid.
 // Resource descriptors are supplied by C, without choosing a Tide lifetime API.
 [After(Manual)]
 view Targets(mut Art art)
 {
     // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images', 11 Outputs', 12 Values', 13 Heights', 14 Mipmaps',
-    // 15 Alphas', 16 Raws', 17 the cubes', 18 the lists', 19 the rolls', 20 the normals' and 21 the models'
+    // 15 Alphas', 16 Raws', 17 the cubes', 18 the lists', 19 the rolls', 20 the normals', 21 the models' and 22 the places'
     if (art.targetPass == 0 || art.targetPass >= 6) return;
     if (art.targetPass >= 4)
     {

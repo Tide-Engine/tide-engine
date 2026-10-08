@@ -1,0 +1,8 @@
+// expect: vert 'Snap' returns here without writing where its vertex goes, 'clip'
+scene Main { }
+
+vert Snap(mut Vertex3 vertex, out float4 clip)
+{
+    if (vertex.position.y > 0) return;
+    clip = this.clip;
+}

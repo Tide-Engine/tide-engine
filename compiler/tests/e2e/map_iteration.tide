@@ -1,0 +1,134 @@
+// Cursors follow insertion order through compaction, including across waits.
+singleton Iteration
+{
+    bool ran;
+    Map<int, int> values;
+    Set<int> keys;
+    List<int> mapSeen;
+    List<int> setSeen;
+    List<int> clearedSeen;
+    List<int> reinsertedSeen;
+    List<int> outerSeen;
+    List<int> innerSeen;
+}
+
+singleton Waiting
+{
+    bool started;
+    bool changed;
+    bool mapDone;
+    bool setDone;
+    Map<int, int> values;
+    Set<int> keys;
+    List<int> mapSeen;
+    List<int> setSeen;
+}
+
+scene Main { }
+
+Map<int, int> Twelve()
+{
+    mut Map<int, int> values = default;
+    for (mut var i = 0; i < 12; i++) values[i] = i;
+    return values;
+}
+
+system Run(mut Iteration state)
+{
+    if (state.ran) return;
+    state.ran = true;
+    state.values = Twelve();
+    for (mut var i = 0; i < 12; i++) state.keys.Add(i);
+    foreach (var entry in state.values)
+    {
+        state.mapSeen.Add(entry.key);
+        if (entry.key <= 8)
+        {
+            state.values.Remove(entry.key);
+            if (entry.key == 8) state.values[100] = 100;
+            continue;
+        }
+    }
+    foreach (var key in state.keys)
+    {
+        state.setSeen.Add(key);
+        if (key <= 8) state.keys.Remove(key);
+        if (key == 8) state.keys.Add(100);
+    }
+
+    mut var cleared = Twelve();
+    foreach (var entry in cleared)
+    {
+        state.clearedSeen.Add(entry.key);
+        if (entry.key == 0)
+        {
+            cleared.Clear();
+            cleared[99] = 99;
+        }
+    }
+
+    mut var reinserted = Twelve();
+    foreach (var entry in reinserted)
+    {
+        state.reinsertedSeen.Add(entry.key);
+        if (state.reinsertedSeen.count <= 9) reinserted.Remove(entry.key);
+        if (state.reinsertedSeen.count == 9) reinserted[8] = 8;
+    }
+
+    mut var nested = Twelve();
+    foreach (var outer in nested)
+    {
+        state.outerSeen.Add(outer.key);
+        if (outer.key != 0) continue;
+        foreach (var inner in nested)
+        {
+            state.innerSeen.Add(inner.key);
+            if (inner.key <= 8) nested.Remove(inner.key);
+            if (inner.key == 8) nested[100] = 100;
+        }
+    }
+}
+
+async void VisitMap(mut Waiting state)
+{
+    foreach (var entry in state.values)
+    {
+        state.mapSeen.Add(entry.key);
+        await Wait.Ticks(1);
+    }
+    state.mapDone = true;
+}
+
+async void VisitSet(mut Waiting state)
+{
+    foreach (var key in state.keys)
+    {
+        state.setSeen.Add(key);
+        await Wait.Ticks(1);
+    }
+    state.setDone = true;
+}
+
+system Begin(mut Waiting state)
+{
+    if (state.started) return;
+    state.started = true;
+    state.values = Twelve();
+    for (mut var i = 0; i < 12; i++) state.keys.Add(i);
+    VisitMap(state);
+    VisitSet(state);
+}
+
+[After(Begin)]
+system ChangeWhileWaiting(mut Waiting state)
+{
+    if (state.changed) return;
+    state.changed = true;
+    for (mut var i = 0; i <= 8; i++)
+    {
+        state.values.Remove(i);
+        state.keys.Remove(i);
+    }
+    state.values[100] = 100;
+    state.keys.Add(100);
+}

@@ -20,6 +20,22 @@ struct Point
     float3 position;
 }
 
+// Every default reads an asset declared after these meshes. The single mesh,
+// list and map must all see the current pack, including on their first load.
+struct DefaultCorner
+{
+    float3 position;
+    int textLength = laterRules.length;
+    int byteCount = laterTable.count;
+    int listCount = laterList.count;
+    int mapCount = laterMap.count;
+    int meshVertices = points.vertices.count;
+}
+
+asset Mesh<DefaultCorner> defaultOne = "assets/meshes/quad.glb";
+asset List<Mesh<DefaultCorner>> defaultMany = "assets/meshes/*.glb";
+asset Map<string, Mesh<DefaultCorner>> defaultNamed = "assets/meshes/*.gl*";
+
 asset Mesh<Corner> quad = "assets/meshes/quad.glb";
 asset Mesh<Corner> pair = "assets/meshes/pair.glb";
 asset Mesh<Corner> strip = "assets/meshes/strip.gltf";    // With a buffer in a file beside it
@@ -31,6 +47,11 @@ asset Mesh<Corner> again = "assets/meshes/quad.glb";      // Two names of one fi
 asset List<Mesh<Corner>> all = "assets/meshes/*.glb";            // pair.glb, quad.glb
 asset Map<string, Mesh<Corner>> named = "assets/meshes/*.gl*";   // inline.gltf, pair.glb, quad.glb, strip.gltf
 asset List<Mesh<Corner>> one = "assets/meshes/box.obj";          // One file where the type holds many
+
+asset string laterRules = "assets/rules.txt";
+asset List<byte> laterTable = "assets/table.bin";
+asset List<string> laterList = "assets/notes/*.txt";
+asset Map<string, string> laterMap = "assets/notes/*.txt";
 
 // What the match read of them: a mesh's lists are plain lists, which a field copies
 singleton Seen
@@ -51,6 +72,7 @@ singleton Seen
     int allCorners;
     int named;
     int namedCorners;
+    int defaultCorners;
     string keys;
     int picked;
     int missing;
@@ -96,6 +118,9 @@ system Read(mut Seen seen)
         seen.keys += entry.key + ";";
         seen.namedCorners += entry.value.vertices.count;
     }
+    seen.defaultCorners = defaultOne.vertices.count;
+    foreach (var mesh in defaultMany) seen.defaultCorners += mesh.vertices.count;
+    foreach (var entry in defaultNamed) seen.defaultCorners += entry.value.vertices.count;
     var held = all[1];
     Mesh<Corner> typed = held;
     seen.picked = Corners(Pick(1)) * 10 + Corners(typed);

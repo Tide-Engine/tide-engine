@@ -248,8 +248,10 @@ const browserSaid = test => {
 // Firefox's settings for a test: quiet, and like Chrome's flags below, with
 // WebRTC using this machine's real addresses (both players are on it),
 // unless it's to hide them behind .local names, as it does for players.
+// Its volume at 0 is its --mute-audio, which it has no flag for.
 const FIREFOX_PREFS = `
 user_pref("media.peerconnection.ice.loopback", true);
+user_pref("media.volume_scale", "0.0");
 user_pref("browser.shell.checkDefaultBrowser", false);
 user_pref("browser.aboutwelcome.enabled", false);
 user_pref("browser.startup.homepage_override.mstone", "ignore");
@@ -292,6 +294,7 @@ function openBrowser(which, query) {
             '--no-first-run',
             '--no-default-browser-check',
             '--disable-extensions',
+            '--mute-audio', // Headless, it still plays through the machine's device
             '--remote-debugging-pipe',
             `--user-data-dir=${profile}`,
             ...(which.hidden ? [] : ['--disable-features=WebRtcHideLocalIpsWithMdns']),

@@ -168,7 +168,7 @@ The rocket below is a `.glb` as a modelling tool exports one: five meshes with a
 | `tangent` | `float4` | Along the surface, for normal maps: `xyz`, and in `w` the side the bitangent is on, 1 or -1. Zero where the file has none. |
 
 - A struct has the ones it needs, in any order: `Corner` above takes no uvs, so the pack holds none.
-- **A field of any other name keeps its default.** So one struct serves the meshes a game makes in code and the ones it loads: `float glow = 1;` is 1 at every vertex of a file's.
+- **A field of any other name keeps its default.** So one struct serves the meshes a game makes in code and the ones it loads: `float glow = 1;` is 1 at every vertex of a file's. A default can read another asset, even one declared later; each pack load supplies its current value.
 - A field with one of those names and another type is an error at the declaration, which says the type the file's is.
 - The built-in [`Vertex3`](./3d.md) is a position, a uv and a color: `asset Mesh<Vertex3> crate = "art/crate.glb";` draws with no frag, `Draw.Mesh(crate, transform, wood)`.
 

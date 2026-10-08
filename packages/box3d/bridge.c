@@ -142,13 +142,24 @@ typedef struct physics {
     tide_list gone;
     tide_map owners;
     tide_list gone_shapes;
+    uint8_t unused_maps[4];
     tide_map parts;
     tide_map sensors;
 } physics;
 
 _Static_assert(sizeof(body) == 176 && sizeof(box) == 40 && sizeof(sphere) == 32 && sizeof(capsule) == 36 && sizeof(touch) == 40
-                   && sizeof(strike) == 48 && sizeof(found) == 48 && sizeof(physics) == 136 && offsetof(physics, moved) == 88,
+                   && sizeof(strike) == 48 && sizeof(found) == 48 && sizeof(physics) == 176 && offsetof(physics, moved) == 88,
                "box3d.tide's types changed: these are theirs");
+
+_Static_assert(offsetof(physics, gravity) == 0 && offsetof(physics, substeps) == 12
+                   && offsetof(physics, contact_stiffness) == 16 && offsetof(physics, contact_damping) == 20
+                   && offsetof(physics, contact_speed) == 24 && offsetof(physics, bounce_speed) == 28
+                   && offsetof(physics, hit_speed) == 32 && offsetof(physics, sleeping) == 36
+                   && offsetof(physics, bodies) == 40 && offsetof(physics, shapes) == 44 && offsetof(physics, stamp) == 48
+                   && offsetof(physics, state) == 56 && offsetof(physics, moved) == 88 && offsetof(physics, gone) == 92
+                   && offsetof(physics, owners) == 96 && offsetof(physics, gone_shapes) == 120
+                   && offsetof(physics, parts) == 128 && offsetof(physics, sensors) == 152,
+               "Physics's fields aren't where box3d.tide lays them out any more");
 
 // A body's place and speeds are 13 floats side by side in its component: its
 // position, its rotation, its velocity and its angular velocity. Where the
