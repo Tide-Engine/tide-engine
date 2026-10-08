@@ -841,6 +841,7 @@ struct Rest
     float4 perlins;   // Noise in each size, with a seed and without
     float4 simplexes;
     float4 cells;
+    float4 steps;     // ++ and -- as values: a variable's value after it changed, or before
 }
 
 local singleton Probe
@@ -1061,6 +1062,13 @@ Rest RestOf(Given given)
     rest.perlins = float4(Math.Perlin(n2), Math.Perlin(n2, given.one), Math.Perlin(n3), Math.Perlin(n3, given.big));
     rest.simplexes = float4(Math.Simplex(n2), Math.Simplex(n2, given.one), Math.Simplex(n3), Math.Simplex(n3, given.big));
     rest.cells = float4(Math.Cellular(n2), Math.Cellular(n3, given.one));
+
+    // ++ and -- where a value goes: run before their statement, on the GPU as on the CPU
+    mut var count = given.one;
+    mut var level = a;
+    float after = ++count * 2;
+    float before = level-- + 0.5;
+    rest.steps = float4(after, before, count, level);
     return rest;
 }
 
@@ -1071,7 +1079,7 @@ bool SameRest(Rest a, Rest b)
     same = same && Close4(a.saturated, b.saturated) && Close2(a.capped, b.capped) && Close4(a.bad, b.bad) && Close4(a.bad2, b.bad2) && Close3(a.badVector, b.badVector);
     same = same && Close4(a.none, b.none) && Close4(a.turnedPowers, b.turnedPowers) && Close4(a.corners, b.corners);
     same = same && Close4(a.edges, b.edges) && Close2(a.wrong, b.wrong);
-    same = same && Close4(a.perlins, b.perlins) && Close4(a.simplexes, b.simplexes) && Close4(a.cells, b.cells);
+    same = same && Close4(a.perlins, b.perlins) && Close4(a.simplexes, b.simplexes) && Close4(a.cells, b.cells) && Close4(a.steps, b.steps);
     return same && a.wrongInts.x == b.wrongInts.x && a.wrongInts.y == b.wrongInts.y;
 }
 
@@ -2822,12 +2830,41 @@ local singleton Tables
     List<Color> none;
     List<Swatch> swatches;  // Three pixels an element
     List<Swatch> many;      // 700 of them: more than a row of the list's texture, and one across two rows
-    List<float> big;        // 3000 floats: three rows
+    List<float> big;        // 9000 floats, four to a pixel: three rows
+    List<byte> bytes;       // 300 of them, four to a pixel
+    Grid2<Color> cells = Grid2(70, 3); // Wider than a chunk of it
+    Grid2<int> tallies = Grid2(5, 2);
     List<int2> steps;
     float[4] weights;       // Arrays of a fixed length: a quarter, a half, three quarters and one
     Swatch[2] pair;
     int[3] order;
     List<Band> strips;     // A list whose elements have an array each
+    float[2][3] rows;       // An array of arrays: a quarter, a half and three quarters, then one, a half and a quarter
+    Map<int, Color> hues;   // Six keys, of which the fourth was removed: its place is left where it was
+    Map<Ground, Tile> tiles; // Keyed by an enum, with structs for values
+    Map<int, float> far;    // 3000 of them: its entries and the index after them are rows of its texture
+    Map<byte, int> levels;
+    Map<int, Color> blank;
+    Set<int> marked;        // Three keys, of which the second was removed
+}
+
+enum Ground { Grass, Rock, Water }
+
+struct Tile
+{
+    Color tint = Color(0.75, 0, 0);
+    int height = 6;
+}
+
+struct Wanted
+{
+    Ground ground;
+}
+
+struct Lookup
+{
+    Map<int, Color> shades;
+    int pick;
 }
 
 component Tagged
@@ -2854,7 +2891,7 @@ frag ListPick(Vertex vertex, out Color color, Tables tables, Choice choice)
 
 frag ListCounts(Vertex vertex, out Color color, Tables tables)
 {
-    color = Color(tables.colors.count / 8.0, tables.none.count + 0.25, tables.big.count / 6000.0);
+    color = Color(tables.colors.count / 8.0, tables.none.count + 0.25, tables.big.count / 18000.0);
 }
 
 frag ListSum(Vertex vertex, out Color color, Tables tables)
@@ -2907,6 +2944,58 @@ frag ListGiven(Vertex vertex, out Color color, Palette palette)
     color = palette.colors[palette.pick];
 }
 
+// Bytes are ints from 0 to 255 there, and keep to that as they're added to
+frag ListBytes(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    var value = tables.bytes[choice.at];
+    mut byte more = value;
+    more += 100;
+    color = Color(value / 255.0, more / 255.0, tables.bytes.count / 600.0);
+}
+
+// A grid's cells by their place, in another chunk than its first, and past its edges, where there's nothing
+frag GridCell(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    color = tables.cells[choice.at, 2] + tables.cells[70, 0] + tables.cells[int2(-1, 0)];
+}
+
+frag GridSize(Vertex vertex, out Color color, Tables tables)
+{
+    color = Color(tables.cells.size.x / 140.0, tables.cells.size.y / 6.0, tables.tallies[3, 1] / 10.0);
+}
+
+// An asset's grid, by its name
+frag AssetCell(Vertex vertex, out Color color, Choice choice)
+{
+    color = brickCells[choice.at, 0];
+    if (brickCells.size.x != 2 || brickCells.size.y != 2) color = Color.black;
+}
+
+// Loops of every kind: a while, a for that doesn't count by ones, and one that only a break ends
+frag Loops(Vertex vertex, out Color color, Tables tables)
+{
+    mut var i = 0;
+    mut var sum = 0.0;
+    while (i < tables.colors.count)
+    {
+        sum += tables.colors[i].b;
+        i++;
+    }
+    mut var steps = 0;
+    for (mut var x = 1.0; x < 20; x *= 2)
+    {
+        if (steps == 3) continue;
+        steps++;
+    }
+    mut var turns = 0;
+    while (true)
+    {
+        turns++;
+        if (turns >= 4) break;
+    }
+    color = Color(sum * 0.5, steps / 4.0, turns / 16.0);
+}
+
 // Arrays: an element by a place that's only known as the code runs, one past the end, and how many
 frag ArrayRead(Vertex vertex, out Color color, Tables tables, Choice choice)
 {
@@ -2945,6 +3034,224 @@ frag ArrayInList(Vertex vertex, out Color color, Tables tables)
     color = Color(strip.rgb[0], tables.strips[1].rgb[1], strip.rgb[2] + tables.strips[0].rgb[2] + tables.strips[2].rgb[0]);
 }
 
+// An array of arrays: an element of a row by places only known as the code runs, past either's end, and how many
+frag RowsRead(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    color = Color(tables.rows[choice.at][0], tables.rows[1][choice.at + 1],
+                  tables.rows[choice.at + 5][0] + tables.rows[0][7] + tables.rows.count / 4.0 + tables.rows[0].count / 12.0);
+}
+
+float Total3(float[3] values)
+{
+    mut var sum = 0.0;
+    foreach (var value in values) sum += value;
+    return sum;
+}
+
+// A copy of one, written an element and a row at a time, inside it and past its ends; a row as a value of its own
+frag RowsLocal(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    mut var mine = tables.rows;
+    mine[choice.at][0] = 0.5;
+    mine[0][choice.at + 1] = 1;
+    mine[choice.at + 1][0] = 1;
+    mine[0][9] = 1;
+    mine[1][choice.at - 5] += 1;
+    mut var row = mine[0];
+    row[1] = 0;
+    mine[1] = row;
+    mine[choice.at + 3] = row;
+    mut float[2][2] made = [[1, 2], [3, 4]];
+    made[choice.at][choice.at] = 6;
+    mut var sum = 0.0;
+    foreach (var each in mine)
+    {
+        foreach (var value in each) sum += value;
+    }
+    color = Color(sum / 4, Total3(mine[choice.at]) / 5, (made[1][choice.at - 1] + made[1][1]) / 18.0);
+}
+
+// A for whose step writes an array's element, which a continue still comes to, and one that starts by writing one
+frag StepWrites(Vertex vertex, out Color color)
+{
+    mut int[3] tally = [0, 0, 0];
+    mut var i = 0;
+    for (mut var k = 0; k < 6; tally[i]++)
+    {
+        k++;
+        if (k == 2) continue;
+        i = k % 3;
+    }
+    mut var turns = 0;
+    for (tally[2] = 4; tally[2] < 6; tally[2] += 1) turns++;
+    color = Color(tally[0] / 4.0, tally[1] / 4.0, (tally[2] + turns) / 32.0);
+}
+
+// '?:' between structs, arrays, rows and matrices
+frag Picks(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    var on = choice.at == 1;
+    var swatch = on ? tables.pair[1] : tables.pair[0];
+    mut float[4] none = [0, 0, 0, 0];
+    var weights = on ? none : tables.weights;
+    var turn = on ? float2x2(0.25, 0, 0, 0.25) : float2x2.identity;
+    var moved = Math.Mul(turn, float2(1, 1));
+    var row = on ? tables.rows[1] : tables.rows[0];
+    color = Color(swatch.gain, weights[1] + moved.x, row[0]);
+}
+
+// A list and a grid under another name: a local, and a function's parameter,
+// which is written for each list or grid it's called with
+frag ListNamed(Vertex vertex, out Color color, Tables tables)
+{
+    var colors = tables.colors;
+    var again = colors;
+    color = Color(again[2].r, colors.count / 8.0, again[2].b * 0.5);
+}
+
+float Green(List<Color> colors, int at)
+{
+    return colors[at].g * 0.5 + colors.count * 0.0625;
+}
+
+Color Greens(List<Color> first, List<Color> second)
+{
+    var kept = second;
+    mut var most = 0.0;
+    foreach (var each in first) most = Math.Max(most, each.g);
+    return Color(Green(first, 1), Green(kept, 1), Green(first, 9) * most);
+}
+
+frag ListPassed(Vertex vertex, out Color color, Tables tables, Palette palette)
+{
+    color = Greens(tables.colors, palette.colors);
+}
+
+frag ListPassedBack(Vertex vertex, out Color color, Tables tables, Palette palette)
+{
+    color = Greens(palette.colors, tables.colors);
+}
+
+int Tallied(Grid2<int> tallies, int2 at)
+{
+    var mine = tallies;
+    return mine[at.x, at.y] + mine.size.x;
+}
+
+float Shaded(Grid2<Color> cells, Grid2<int> tallies)
+{
+    return cells[66, 2].g + Tallied(tallies, int2(0, 0)) * 0.05;
+}
+
+frag GridPassed(Vertex vertex, out Color color, Tables tables)
+{
+    var cells = tables.cells;
+    color = Color(Tallied(tables.tallies, int2(3, 1)) / 20.0, Shaded(cells, tables.tallies), cells.size.y / 6.0);
+}
+
+// An asset's list and grid by their names, in functions a frag calls, and a list of bytes passed on
+asset List<byte> tableBytes = "../../compiler/tests/e2e/assets/table.bin";
+
+Color Brick(int x)
+{
+    return brickCells[x, 0];
+}
+
+float Ramp(int at)
+{
+    var bytes = tableBytes;
+    return bytes[at] / 255.0;
+}
+
+int Peek(List<byte> bytes, int at)
+{
+    return bytes[at];
+}
+
+frag AssetPassed(Vertex vertex, out Color color, Choice choice)
+{
+    color = Color(Ramp(choice.at), Brick(1).g * 0.5, tableBytes.count / 1200.0 + Peek(tableBytes, 300));
+}
+
+float Stride(List<int2> steps)
+{
+    return steps[1].y;
+}
+
+vert ListNudgedBack(mut Vertex vertex, Tables tables)
+{
+    vertex.position.y -= Stride(tables.steps);
+}
+
+// Maps and sets: a value by its key, zeros for a key that isn't there or was removed
+frag MapPick(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    color = tables.hues[choice.at];
+}
+
+frag MapAsk(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    var there = tables.hues.TryGet(choice.at, out var hue);
+    color = Color(there ? 1 : 0, tables.hues.Has(choice.at) ? 0.5 : 0, there ? hue.b : 0.25);
+}
+
+// A key that isn't there: TryGet gives the value's default, and an index its zeros
+frag MapTiles(Vertex vertex, out Color color, Tables tables, Wanted wanted)
+{
+    var there = tables.tiles.TryGet(wanted.ground, out var tile);
+    color = Color(tile.tint.r, tile.height / 8.0, there ? 1 : tables.tiles[wanted.ground].height / 8.0 + 0.25);
+}
+
+frag MapFar(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    color = Color(tables.far[choice.at], tables.far[choice.at + 1], tables.far.count / 6000.0);
+}
+
+// In the order the keys were added, without the one removed
+frag MapOrder(Vertex vertex, out Color color, Tables tables)
+{
+    mut var code = 0;
+    mut var sum = 0.0;
+    foreach (var entry in tables.hues)
+    {
+        code = code * 2 + entry.key;
+        sum += entry.value.b;
+    }
+    color = Color(code / 86.0, tables.hues.count / 10.0, sum / 7);
+}
+
+frag SetAsk(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    mut var code = 0;
+    foreach (var key in tables.marked) code = code * 16 + key;
+    color = Color(tables.marked.Has(choice.at) ? 1 : 0, tables.marked.count / 4.0, code / 158.0);
+}
+
+frag MapNone(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    color = Color(tables.blank.Has(1) ? 1 : 0, tables.levels[byte(choice.at)] / 4.0, tables.blank[1].r + 0.5 + tables.blank.count);
+}
+
+frag MapGiven(Vertex vertex, out Color color, Lookup lookup)
+{
+    color = lookup.shades[lookup.pick];
+}
+
+// A map and a set under other names: a local, and a function's parameters
+float Blue(Map<int, Color> hues, Set<int> marked, int key)
+{
+    if (!marked.Has(key + 10)) return 0;
+    hues.TryGet(key, out var hue);
+    return hue.b + hues.count * 0.05;
+}
+
+frag MapNamed(Vertex vertex, out Color color, Tables tables)
+{
+    var hues = tables.hues;
+    var again = hues;
+    color = Color(again[2].r, Blue(hues, tables.marked, 5), Blue(again, tables.marked, 9));
+}
+
 [After(CubeReads)]
 view ListReads(Art art, mut Tables tables)
 {
@@ -2964,14 +3271,34 @@ view ListReads(Art art, mut Tables tables)
             tables.many.Add(Swatch { tint = Color((i & 255) / 255.0, 0.5, 0), gain = 1, extra = float3(0, 0, 0.25), shift = i,
                                      on = true, tone = Tone.Cool });
         }
-        for (int i = 0; i < 3000; i++) tables.big.Add((i & 255) / 255.0);
+        for (int i = 0; i < 9000; i++) tables.big.Add((i & 255) / 255.0);
+        for (int i = 0; i < 300; i++) tables.bytes.Add(byte(i));
+        tables.cells[66, 2] = Color(0.25, 0.5, 0.75);
+        tables.tallies[3, 1] = 10;
         tables.steps = [int2(0, 0), int2(3, 16)];
         tables.weights = [0.25, 0.5, 0.75, 1];
         tables.pair = [Swatch { gain = 0.25, on = true }, Swatch { gain = 0.5, on = true }];
         tables.order = [1, 0, 1];
         tables.strips = [Band { }, Band { rgb = [1, 0.5, 0.25] }];
+        tables.rows = [[0.25, 0.5, 0.75], [1, 0.5, 0.25]];
+        tables.hues[0] = Color.red;
+        tables.hues[9] = Color(0, 1, 0);
+        tables.hues[5] = Color(0.25, 0.5, 0.75);
+        tables.hues[3] = Color.white;
+        tables.hues[-4] = Color(0, 0, 1);
+        tables.hues[2] = Color(1, 1, 0);
+        tables.hues.Remove(3);
+        tables.tiles[Ground.Rock] = Tile { tint = Color(0.5, 0, 0), height = 4 };
+        tables.tiles[Ground.Water] = Tile { tint = Color(0.25, 0, 0), height = 2 };
+        for (int i = 0; i < 3000; i++) tables.far[i * 7] = (i & 255) / 255.0;
+        tables.levels[byte(200)] = 3;
+        tables.marked.Add(4);
+        tables.marked.Add(8);
+        tables.marked.Add(15);
+        tables.marked.Remove(8);
     }
     tables.colors[0] = Color(1, tables.turn, 0);
+    tables.hues[0] = Color(1, tables.turn, 0);
     Draw.Clear(Color(0.5, 0.5, 0.5));
     Draw.SetScreen();
     Draw.SetClip();
@@ -2994,7 +3321,7 @@ view ListReads(Art art, mut Tables tables)
     }
     Draw.Transform(float2(40, 24))
     {
-        Draw.Mesh(tables.small, art.faces, ListFar, Choice { at = 2500 });
+        Draw.Mesh(tables.small, art.faces, ListFar, Choice { at = 8500 });
     }
     Draw.Transform(float2(56, 24))
     {
@@ -3037,6 +3364,142 @@ view ListReads(Art art, mut Tables tables)
     Draw.Transform(float2(56, 72))
     {
         Draw.Mesh(tables.small, art.faces, ArrayInList);
+    }
+    // Row 6: bytes, a grid's cells and size, an asset's grid, and loops
+    Draw.Transform(float2(8, 88))
+    {
+        Draw.Mesh(tables.small, art.faces, ListBytes, Choice { at = 200 });
+    }
+    Draw.Transform(float2(24, 88))
+    {
+        Draw.Mesh(tables.small, art.faces, GridCell, Choice { at = 66 });
+    }
+    Draw.Transform(float2(40, 88))
+    {
+        Draw.Mesh(tables.small, art.faces, GridSize);
+    }
+    Draw.Transform(float2(56, 88))
+    {
+        Draw.Mesh(tables.small, art.faces, AssetCell, Choice { at = 1 });
+    }
+    Draw.Transform(float2(72, 88))
+    {
+        Draw.Mesh(tables.small, art.faces, Loops);
+    }
+    // Row 7: lists and grids by other names: locals, functions' parameters, and assets read in functions
+    Draw.Transform(float2(8, 104))
+    {
+        Draw.Mesh(tables.small, art.faces, ListNamed);
+    }
+    Draw.Transform(float2(24, 104))
+    {
+        Draw.Mesh(tables.small, art.faces, ListPassed, Palette { colors = [Color(0, 0.5, 0), Color(0, 1, 0)] });
+    }
+    Draw.Transform(float2(40, 104))
+    {
+        Draw.Mesh(tables.small, art.faces, ListPassedBack, Palette { colors = [Color(0, 0.5, 0), Color(0, 1, 0)] });
+    }
+    Draw.Transform(float2(56, 104))
+    {
+        Draw.Mesh(tables.small, art.faces, GridPassed);
+    }
+    Draw.Transform(float2(72, 104))
+    {
+        Draw.Mesh(tables.small, art.faces, AssetPassed, Choice { at = 18 });
+    }
+    Draw.Transform(float2(88, 104))
+    {
+        Draw.Mesh(tables.small, art.faces, ListNudgedBack);
+    }
+    // Row 8: a map's values by their keys: there, removed, never there, and under zero; and what it says of a key
+    Draw.Transform(float2(8, 120))
+    {
+        Draw.Mesh(tables.small, art.faces, MapPick, Choice { at = 0 });
+    }
+    Draw.Transform(float2(24, 120))
+    {
+        Draw.Mesh(tables.small, art.faces, MapPick, Choice { at = 5 });
+    }
+    Draw.Transform(float2(40, 120))
+    {
+        Draw.Mesh(tables.small, art.faces, MapPick, Choice { at = 3 });
+    }
+    Draw.Transform(float2(56, 120))
+    {
+        Draw.Mesh(tables.small, art.faces, MapPick, Choice { at = 77 });
+    }
+    Draw.Transform(float2(72, 120))
+    {
+        Draw.Mesh(tables.small, art.faces, MapPick, Choice { at = -4 });
+    }
+    Draw.Transform(float2(88, 120))
+    {
+        Draw.Mesh(tables.small, art.faces, MapAsk, Choice { at = 5 });
+    }
+    Draw.Transform(float2(104, 120))
+    {
+        Draw.Mesh(tables.small, art.faces, MapAsk, Choice { at = 3 });
+    }
+    // Row 9: enum keys and struct values, a map of rows, a map's order, a set, an empty map and one a draw gives
+    Draw.Transform(float2(8, 136))
+    {
+        Draw.Mesh(tables.small, art.faces, MapTiles, Wanted { ground = Ground.Rock });
+    }
+    Draw.Transform(float2(24, 136))
+    {
+        Draw.Mesh(tables.small, art.faces, MapTiles, Wanted { ground = Ground.Grass });
+    }
+    Draw.Transform(float2(40, 136))
+    {
+        Draw.Mesh(tables.small, art.faces, MapFar, Choice { at = 20993 });
+    }
+    Draw.Transform(float2(56, 136))
+    {
+        Draw.Mesh(tables.small, art.faces, MapOrder);
+    }
+    Draw.Transform(float2(72, 136))
+    {
+        Draw.Mesh(tables.small, art.faces, SetAsk, Choice { at = 15 });
+    }
+    Draw.Transform(float2(88, 136))
+    {
+        Draw.Mesh(tables.small, art.faces, SetAsk, Choice { at = 8 });
+    }
+    Draw.Transform(float2(104, 136))
+    {
+        Draw.Mesh(tables.small, art.faces, MapNone, Choice { at = 456 });
+    }
+    mut var lookup = Lookup { pick = 2 };
+    lookup.shades[1] = Color.red;
+    lookup.shades[2] = Color(0, 1, 1);
+    Draw.Transform(float2(120, 136))
+    {
+        Draw.Mesh(tables.small, art.faces, MapGiven, lookup);
+    }
+    Draw.Transform(float2(136, 136))
+    {
+        Draw.Mesh(tables.small, art.faces, MapNamed);
+    }
+    // Row 10: arrays of arrays, a for whose step writes an element, and '?:' between what isn't a number
+    Draw.Transform(float2(8, 152))
+    {
+        Draw.Mesh(tables.small, art.faces, RowsRead, Choice { at = 1 });
+    }
+    Draw.Transform(float2(24, 152))
+    {
+        Draw.Mesh(tables.small, art.faces, RowsLocal, Choice { at = 1 });
+    }
+    Draw.Transform(float2(40, 152))
+    {
+        Draw.Mesh(tables.small, art.faces, StepWrites);
+    }
+    Draw.Transform(float2(56, 152))
+    {
+        Draw.Mesh(tables.small, art.faces, Picks, Choice { at = 1 });
+    }
+    Draw.Transform(float2(72, 152))
+    {
+        Draw.Mesh(tables.small, art.faces, Picks, Choice { at = 0 });
     }
 }
 

@@ -5832,8 +5832,9 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         }
         return;
     }
-    // In a frag or vert: the GPU has no text, lists, maps or sets, and a grid there is a texture
-    const bool gpu = is_shader(sc->decl);
+    // In a frag or vert: the GPU has no text, reads lists, maps and sets and changes none, and a grid there is a texture
+    // ...and in a function that takes a grid, which only those call
+    const bool gpu = is_shader(sc->decl) || (sc->decl && sc->decl->gpu_only);
     if (t.kind == TY_RENDER_TARGET) {
         item(c, "color", CK_PROPERTY, "Texture",
              "The target's GPU color image, without CPU readback: its first, where it holds several.", NULL);
@@ -5860,7 +5861,21 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         item(c, "count", CK_PROPERTY, "int", LIST_COUNT_DOC, NULL);
         return;
     }
-    if (gpu && (t.kind == TY_STRING || t.kind == TY_MAP || t.kind == TY_SET)) return;
+    if (gpu && (t.kind == TY_MAP || t.kind == TY_SET)) { // Read by its keys there: nothing changes it, and no value is missing
+        item(c, "count", CK_PROPERTY, "int", MAP_COUNT_DOC, NULL);
+        size_t count;
+        const method_form *forms = methods_of(t, &count);
+        for (size_t i = 0; i < count; i++) {
+            if (strcmp(forms[i].name, "Has") != 0 && strcmp(forms[i].name, "TryGet") != 0) continue;
+            sb detail = {0};
+            format_method(&forms[i], t, &detail);
+            sb snippet = {0};
+            method_snippet(&forms[i], &snippet);
+            item(c, forms[i].name, CK_METHOD, detail.data, forms[i].doc, snippet.data);
+        }
+        return;
+    }
+    if (gpu && t.kind == TY_STRING) return;
     if (t.kind == TY_CUBEMAP) { // A frag reads it; a view draws into its faces, resizes it and lets it go
         static const char *const snippets[] = {"Sample($1)", "Resize($1)", "Dispose()"};
         for (size_t i = gpu ? 0 : 1; i < (gpu ? 1 : sizeof cube_calls / sizeof cube_calls[0]); i++) {
@@ -5886,7 +5901,10 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         return;
     }
     if (gpu && (t.kind == TY_GRID || t.kind == TY_TEXTURE)) {
-        if (t.kind == TY_GRID && (t.decl->dims != 2 || t.decl->fields.items[0].type.kind != TY_COLOR)) return;
+        // A Grid2's cells are read by their place there, with its size; one of colors or floats is sampled too
+        if (t.kind == TY_GRID && t.decl->dims == 2) item(c, "size", CK_PROPERTY, "int2", GRID_SIZE_FIELD_DOC, NULL);
+        if (t.kind == TY_GRID && (t.decl->dims != 2 || (t.decl->fields.items[0].type.kind != TY_COLOR
+                                                         && t.decl->fields.items[0].type.kind != TY_FLOAT))) return;
         const method_form *sample = t.kind == TY_TEXTURE ? &texture_calls[0]
             : find_form(grid_calls, sizeof grid_calls / sizeof grid_calls[0], str_from("Sample"));
         sb detail = {0};
@@ -6155,9 +6173,10 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             list_members(c, d->return_type, false, &sc);
             return;
         }
-        // Random.: its rolls and the match's seed, where code rolls: systems, views, handlers and their functions
-        if (n == 1 && str_eq_c(base, "Random") && !gpu && sc.decl && !sc.in_input && !sc.decl->is_async
-            && (sc.decl->kind == DECL_SYSTEM || sc.decl->kind == DECL_FUNCTION || sc.decl->kind == DECL_METHOD)) {
+        // Random.: its rolls and the match's seed, where code rolls: systems, views, handlers, tasks, Sample and their functions
+        if (n == 1 && str_eq_c(base, "Random") && !gpu && sc.decl && !sc.in_sanitize
+            && (sc.decl->kind == DECL_SYSTEM || sc.decl->kind == DECL_FUNCTION || sc.decl->kind == DECL_METHOD
+                || sc.decl->kind == DECL_INPUT)) {
             builtin_visit v = {c, false};
             builtin_list_members(base, add_builtin_member, &v);
             item(c, "seed", CK_PROPERTY, "int", RANDOM_SEED_DOC, NULL);
@@ -6335,14 +6354,14 @@ static void complete_constants(completion *c, const type_kind only)
     }
 }
 
-// Assets are values by name too. The GPU reads one image or cube; the CPU
+// Assets are values by name too. The GPU reads one image, cube or file's bytes; the CPU
 // can also read text, bytes and the lists and maps made from a glob.
 static void complete_assets(completion *c, const bool gpu)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
         if (d->kind != DECL_ASSET) continue;
-        if (gpu && (d->asset_many || (d->asset_kind != ASSET_GRID && d->asset_kind != ASSET_TEXTURE
+        if (gpu && (d->asset_many || (d->asset_kind != ASSET_GRID && d->asset_kind != ASSET_TEXTURE && d->asset_kind != ASSET_BYTES
                                      && d->asset_kind != ASSET_CUBEMAP))) continue;
         sb detail = {0};
         sb_printf(&detail, "asset " STR_FMT, STR_ARG(d->return_type_name));
@@ -6476,7 +6495,7 @@ static void complete_value_types(completion *c, const unsigned which)
                             : t.kind == TY_LOCAL_ENTITY   ? VT_LOCAL_ENTITY
                                                           : VT_VALUES;
         // Its ints are 32 bits, and it has no handles into the world, nor rects
-        if ((which & VT_GPU) && (t.kind == TY_BYTE || t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT || t.kind == TY_RENDER_TARGET
+        if ((which & VT_GPU) && (t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT || t.kind == TY_RENDER_TARGET
                                  || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP)) continue; // A depth and a cube are read where they're a field, never a parameter
         if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET)
             && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
@@ -6519,13 +6538,13 @@ static bool gpu_callable(const decl *d)
 
 // Names and keywords in a frag or vert, which the GPU runs: what it takes, its
 // locals, the game's functions and constants, Math, and the types the GPU has
-// values of. No while, which could go on forever; nothing of the world or the
+// values of. Nothing of the world or the
 // frame, like Spawn, Draw or Devices.
 static void complete_shader_code(completion *c, const scope *sc, const bool statement)
 {
     if (sc->decl->is_frag) item(c, "this", CK_KEYWORD, "Pixel", shader_record_doc(A.prog->pixel), NULL);
     if (statement) {
-        static const char *const keywords[] = {"if", "else", "return", "var", "mut", "for", "foreach", "switch", "case", "break",
+        static const char *const keywords[] = {"if", "else", "return", "var", "mut", "for", "while", "foreach", "switch", "case", "break",
                                                "continue"};
         for (size_t i = 0; i < sizeof keywords / sizeof keywords[0]; i++) item(c, keywords[i], CK_KEYWORD, NULL, NULL, NULL);
     }

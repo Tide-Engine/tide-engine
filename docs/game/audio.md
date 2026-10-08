@@ -152,8 +152,17 @@ view Engines(mut Engine engine, Throttle throttle)
 - **Its knobs** are a read-only struct of plain fields, one at most: a copy of what the frame last gave, `Lowpass(Knobs { ... })`. The value that call makes is an `Effect`, which a `Sound`'s `effect` takes, and a bus through `Audio.SetEffect(Bus.Master, Compress(knobs))`. An `audio` declaration with no knobs is `Square()`.
 - **A source** is an effect on a `Sound` with no clip: its block starts as silence, and what it leaves is what plays. That's a synth.
 - **It runs between nothing**: no world, no frame, no files, no C, no text, lists, maps, sets or grids, and no sounds or drawing of its own, itself or through the functions it calls. `Math` is all there, and ordinary functions of plain values are fine. The compiler says what's not.
+- **It rolls**, for noise: `samples.values[i] = Random.NextFloat(-1, 1);`. Each voice has a [sequence of its own](../language/math.md#where-rolls-work), which goes on from block to block.
 
 An effect's state starts over when a `Sound` is given another effect. Changing the knobs each frame is the way to move a filter: the state carries on.
+
+Both have a size. The mixer keeps 4,096 bytes of state for each voice and each bus, and an `Effect` carries 256 bytes of knobs, so a state struct is 4,096 bytes at the most and a knobs struct 256. A `float` or an `int` is 4 bytes, a `long` 8, a `bool` or a `byte` 1, and an array as many as its elements: `float[1024]` is all the state there is, about 10 milliseconds of stereo. A struct that's bigger is a compile error at the parameter:
+
+```
+error: an audio declaration's state is 4096 bytes at the most, and 'Tail' is 16388
+```
+
+Make the struct smaller: a shorter array, or fewer fields. Code that rolls keeps what it rolls with in the last 8 of a voice's bytes, so its state is 4,088 at the most.
 
 ## Hearing a run with no window
 

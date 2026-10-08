@@ -1,0 +1,17 @@
+// expect: 'Twice' reads a grid it's passed, which only code the GPU runs does: a frag, a vert and the functions they call
+// expect: it takes or passes the grid on line 12
+scene Main { }
+
+singleton Field
+{
+    Grid2<int> cells = Grid2(4, 4);
+    int sum;
+}
+
+int Cell(Grid2<int> cells, int x) { return cells[x, 0]; }
+int Twice(Field field) { return Cell(field.cells, 1) * 2; }
+
+system Count(mut Field field)
+{
+    field.sum = Twice(field);
+}

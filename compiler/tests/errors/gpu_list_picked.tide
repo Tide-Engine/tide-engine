@@ -1,4 +1,5 @@
-// expect: the GPU indexes arrays, and lists that are fields of what the frag or vert takes
+// expect: a list in code the GPU runs is one the frag or vert was given, by a name: it can't be made, changed, returned, picked between or kept in a struct there
+// expect: name a field of a component, a singleton or the draw's values, or an asset
 scene Main { }
 
 struct V
@@ -21,6 +22,7 @@ local singleton Models
 {
     List<V> crate;
     List<int> faces;
+    List<int> spare;
     Grid2<Color> wood = Grid2(4, 4);
 }
 
@@ -29,9 +31,10 @@ event(Spawned) Setup(with Main)
     Spawn(Box);
 }
 
-frag Shade(V vertex, out Color color, Models models)
+frag Shade(V vertex, out Color color, Models models, Sun sun)
 {
-    color = models.wood[0, 0];
+    var faces = sun.direction.y < 0 ? models.faces : models.spare;
+    color = Color.white * faces.count;
 }
 
 view Show(Box box, Models models)
