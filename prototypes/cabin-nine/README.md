@@ -4,7 +4,7 @@ Private, opt-in Tide horror prototype for **exactly two human players**. Both pl
 
 The current prototype has a complete playable route through boarding, four authored investigations, reversible containment, a final crew report and restart. It establishes the setting and deduction loop. **A 30–60 minute blind first playthrough is the design target, not a measured claim about this build.** The four cases need cooperative playtesting and further content before calling this a polished demo of that length.
 
-This folder is deliberately separate from the public demo, examples, docs and installed packages. Its CMake option is off by default. Do not publish screenshots, links or this source as a public example without an explicit decision to do so.
+This folder is deliberately separate from the public demo, examples and installed packages. Its CMake option is off by default. The browser version belongs to the authenticated **Admin → Private prototypes** catalog. Do not publish screenshots, links or this source as a public example without an explicit decision to do so.
 
 ## Build and run
 
@@ -26,7 +26,7 @@ cmake --build --preset web-debug --target cabin_nine cabin_nine_tests cabin_nine
 ctest --preset web-debug -R "^cabin_nine_"
 ```
 
-The generated browser game is `build/web-debug/bin/cabin_nine.html`; it is self-contained and can open directly from disk. For threaded execution, serve it with the repository's normal cross-origin-isolated web development workflow. Do not stage it into the docs site.
+The generated browser game is `build/web-debug/bin/cabin_nine.html`; it is self-contained and can open directly from disk. For threaded execution, serve it with the repository's normal cross-origin-isolated web development workflow. With the opt-in option enabled, `cmake --build --preset web-debug --target private_games` stages it under the protected admin catalog. Both players sign in before hosting and joining a room. This private staging does not make the game a public docs example.
 
 ## Controls
 
