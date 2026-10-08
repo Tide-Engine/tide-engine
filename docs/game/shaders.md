@@ -187,9 +187,37 @@ view DrawRoom(Models models)
 - **Only what the frag reads is carried.** A field no frag reads costs nothing between the two, and a vert drawn with no frag, or with one that takes none of its structs, just doesn't hand them on. A GPU carries 15 values from a mesh's corners to its pixels: each field read of the vertex or of such a struct is one.
 - A vert can write several structs, and a frag take any of them, each by its type. A frag can also take what its vert wrote beside an [instance's struct](#instances-from-a-list), as long as the two are different types.
 
+### Where a vertex lands
+
+After a vert, the engine places its vertex: the draw's transform, then the camera. A vert that wants a say in where its vertex lands in the frame takes that place as an `out` parameter, a `float4`, and writes it itself. `this.clip` is where the engine would have put it:
+
+```csharp
+local singleton Lens
+{
+    float2 size = float2(480, 270); // The frame's pixels, across and down
+}
+
+// Each corner moved onto the nearest pixel of a small frame, as a console that kept no fractions of a pixel drew
+vert Snap(mut Corner corner, out float4 clip, Lens lens)
+{
+    float4 at = this.clip;
+    float2 half = lens.size * 0.5;
+    clip = float4(Math.Round(at.xy / at.w * half) / half * at.w, at.z, at.w);
+}
+```
+
+- **`this.clip` is where the engine would put the vertex**, read-only. It follows the vertex: it's where the transform and the camera put `corner.position` as the vert has it at that line, so a vert that also moves its vertex does that first.
+- **`out float4` is where the vertex goes instead.** It starts with no value, as a frag's color does: the vert writes it on every path, and `clip = this.clip;` leaves the vertex where it was. A vert takes one, and a vert with none is placed by the engine.
+- **Both are in clip space**, where [`Draw.WorldToClip()`](./cameras.md#a-camera-as-matrices) ends: `x / w` and `y / w` go from -1 to 1 across what's drawn into, left to right and bottom to top, and `z / w` from -1 at the camera's near plane to 1 at its far limit. `w` is 1 under a camera with no perspective, and grows with distance under one that has it, which is why `Snap` divides by it and multiplies it back.
+- **Its depth goes with it:** a vert that writes another `z` is drawn in front of, or behind, what its place in the world says.
+- **The frag's `this.world` is still the vertex's own place in the world**, wherever its vert put it in the frame, so light and shadows worked out from it don't move with it. `this.position` and `this.depth` are where the pixel was drawn.
+- A 2D mesh's is through the 2D camera or the screen, with [`Draw.Transform`](./draw-settings.md) in it.
+
+`this` in a vert has that one field, and it can't be assigned: what a vert writes is `out`. An ordinary function a vert calls has no `this`: pass it `this.clip` as a value.
+
 ## What they read
 
-After the vertex, and what each writes (a frag's color, the structs a vert hands its frag), a frag or vert takes the game's state, as a view does:
+After the vertex, and what each writes (a frag's color, the structs a vert hands its frag, where a vert puts its vertex), a frag or vert takes the game's state, as a view does:
 
 - **Components** are those of the entity the view that draws runs for. `box.tint` in the frag above is the tint of the box being drawn: a view that runs for a thousand boxes draws them all at once, each with its own.
 - **Singletons**, the match's or [local](./local-state.md) ones, and `Time`. `time.t`, the match's seconds, is blended between ticks like every float a view sees, so what moves by it moves every frame.
@@ -713,7 +741,7 @@ The sphere below has a vertex of its own, with a normal, and a frag that lights 
   - `this.depth`: how far it is, from 0 at the camera's near side to 1.
   - `this.Discard()` leaves the pixel undrawn, and ends the frag there: for holes, and edges cut out of a texture. Nothing is written for it: no color, no depth and no [stencil](./draw-settings.md#stencil).
 
-`this` is context accessed through its fields and `Discard()`: it can't be copied, stored or passed whole. It belongs to the frag itself: a vert has no pixel yet, and an ordinary function a frag calls has no implicit `this`. Pass any pixel coordinates a helper needs as ordinary values. An old built-in `Pixel pixel` parameter is an error that says to remove it and use `this`; a game can still declare a type of its own named `Pixel`.
+`this` is context accessed through its fields and `Discard()`: it can't be copied, stored or passed whole. It belongs to the frag itself: a vert has no pixel yet (its `this` is its vertex, [as it's placed](#where-a-vertex-lands)), and an ordinary function a frag calls has no implicit `this`. Pass any pixel coordinates a helper needs as ordinary values. An old built-in `Pixel pixel` parameter is an error that says to remove it and use `this`; a game can still declare a type of its own named `Pixel`.
 
 ```csharp
 frag Leaves(BoxVertex vertex, out Color color, Models models)

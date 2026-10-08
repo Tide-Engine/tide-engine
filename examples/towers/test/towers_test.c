@@ -45,8 +45,8 @@ void b2t_images(int32_t *whole, int32_t *in_parts);
 // The server's world in the match below, on every platform and in every
 // configuration: Box2D's math, its image and the netcode, byte for byte.
 // Once in the middle of the first round, and once after a new game.
-#define RACING_HASH UINT64_C(0x85eb07ba5e721a2b)
-#define MATCH_HASH UINT64_C(0xf33f45f2887af54b)
+#define RACING_HASH UINT64_C(0x1329aefcb57c4cbe)
+#define MATCH_HASH UINT64_C(0x8a9ca9017e4b117a)
 
 static tide_world world;
 

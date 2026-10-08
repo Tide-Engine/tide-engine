@@ -294,9 +294,9 @@ uint32_t tide_pack_list(tide_pack_builder *b, const uint32_t *offsets, const uin
     return at;
 }
 
-// An entry of a map from text, as generated code lays it out: live, the key, the value.
+// An entry of a map from text, as generated code lays it out: order, the key, the value.
 typedef struct text_entry {
-    uint32_t live;
+    int64_t live;
     uint32_t key;
     uint32_t value;
 } text_entry;
@@ -328,14 +328,14 @@ uint32_t tide_pack_map(tide_pack_builder *b, const uint32_t *keys, const uint32_
     h->a = count;
     h->b = count;
     text_entry *entries = (text_entry *)(void *)(h + 1);
-    for (uint32_t i = 0; i < count; i++) entries[i] = (text_entry){1u, tagged(keys[i]), tagged(values[i])};
+    for (uint32_t i = 0; i < count; i++) entries[i] = (text_entry){(int64_t)i + 1, tagged(keys[i]), tagged(values[i])};
     *index = text_index(b, keys, count);
     return at;
 }
 
-// An entry of a map from text to meshes, as generated code lays it out: live, the key, the mesh.
+// An entry of a map from text to meshes, as generated code lays it out: order, the key, the mesh.
 typedef struct mesh_entry {
-    uint32_t live;
+    int64_t live;
     uint32_t key;
     tide_mesh_lists value;
 } mesh_entry;
@@ -348,7 +348,9 @@ uint32_t tide_pack_mesh_map(tide_pack_builder *b, const uint32_t *keys, const ui
     h->b = count;
     mesh_entry *entries = (mesh_entry *)(void *)(h + 1);
     for (uint32_t i = 0; i < count; i++) {
-        entries[i] = (mesh_entry){1u, tagged(keys[i]), {{tagged(offsets[2u * i])}, {tagged(offsets[2u * i + 1u])}}};
+        entries[i].live = (int64_t)i + 1;
+        entries[i].key = tagged(keys[i]);
+        entries[i].value = (tide_mesh_lists){{tagged(offsets[2u * i])}, {tagged(offsets[2u * i + 1u])}};
     }
     *index = text_index(b, keys, count);
     return at;
@@ -389,4 +391,3 @@ uint8_t *tide_pack_end(tide_pack_builder *b, size_t *size)
     *b = (tide_pack_builder){0};
     return out;
 }
-

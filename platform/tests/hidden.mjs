@@ -11,7 +11,8 @@
 // anything, and the variable changes nothing where it isn't set. With it, what
 // opens one, which needs a desktop session with OpenGL, though nothing shows:
 // a run with no window and a test's hidden window go as they do without the
-// variable, and a window asked to show doesn't.
+// variable, but that the window opens no audio device, and a window asked to
+// show doesn't.
 //
 // Whoever runs this may have the variable set (an agent has), so every run
 // here says which it's for: set, or taken out of the environment.
@@ -51,10 +52,22 @@ if (mode === 'runs') {
         check(readFileSync(join(scratch, 'set.png')).equals(readFileSync(join(scratch, 'unset.png'))), 'and draws the same picture, byte for byte');
     }
 
-    // A hidden window, as tests open theirs, does too
+    // A hidden window, as tests open theirs, draws as it does without it too
     const frames = run(host, ['frames'], '1'), watched = run(host, ['frames'], undefined);
     check(frames.status === 0 && frames.out.includes('drew 3 frames'), `a hidden window opens and draws with the variable set${frames.status === 0 ? '' : `: ${how(frames)}`}`);
     check(watched.status === 0 && watched.out === frames.out, `and the same without it${watched.status === 0 ? '' : `: ${how(watched)}`}`);
+
+    // Nobody listens to it either: handed a voice and frames that name the microphone, a hidden window asks
+    // for no device, where without the variable it opens the output with the window and the microphone while
+    // frames name it. The devices are the program's own, which open nothing and say what they're asked
+    const asked = ran => ran.out.split(/\r?\n/).filter(line => line.startsWith('audio: ')).join('; ');
+    const plays = 'audio: the mixer plays the frames\' voice';
+    const silent = run(host, ['audio'], '1'), heard = run(host, ['audio'], undefined);
+    check(silent.status === 0 && asked(silent) === plays,
+          `a hidden window opens no audio device with the variable set, and its mixer has its frames all the same: ${silent.status === 0 ? asked(silent) : how(silent)}`);
+    check(heard.status === 0 && asked(heard) === ['audio: the output device opens', 'audio: the microphone opens',
+              'audio: the microphone closes', plays, 'audio: the output device closes'].join('; '),
+          `and without it, it opens the output, and the microphone while frames name it: ${heard.status === 0 ? asked(heard) : how(heard)}`);
 
     // And a window that asks to show, past the platform's refusal, doesn't
     const shown = run(host, ['window'], '1');

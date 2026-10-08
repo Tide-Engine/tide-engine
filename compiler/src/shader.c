@@ -162,6 +162,7 @@ static void st(emit *em, const stmt *s);
 static void need_function(emit *em, decl *fn, loc at, const given *spec, const char *suffix);
 static bool is_const(const expr *e);
 static bool is_sampled(type t);
+static const field *field_called(const decl *d, const char *name);
 static int packs(int words);
 
 static const char *shader_word(const decl *d)
@@ -410,6 +411,11 @@ static bool type_fits(emit *em, const type t, const loc at)
         if (t.decl == em->prog->pixel) {
             refuse(em, at, "a frag's pixel is read through 'this.position', 'this.depth' and 'this.world': it's not a value "
                           "to keep or pass on");
+            return false;
+        }
+        if (t.decl == em->prog->placed) {
+            refuse(em, at, "where the engine would put a vert's vertex is read through 'this.clip': 'this' is not a value to "
+                          "keep or pass on");
             return false;
         }
         refuse(em, at, "a %s is read by its fields, where the frag or vert takes it: it's not a value to keep or pass on",
@@ -2511,6 +2517,31 @@ static void ex_pixel(emit *em, const expr *e)
     }
 }
 
+// this.clip in a vert: where the engine would put its vertex as the vert has
+// it at that line, in clip space. It's what the vertex stage's own code works
+// out after a vert that doesn't place its vertex itself (put_vertex_main),
+// written the same way, so a vert that writes it back unchanged draws where
+// it would have.
+static void ex_placed(emit *em)
+{
+    const param *vertex = em->root->params.count ? &em->root->params.items[0] : NULL;
+    const field *position = vertex && vertex->type.kind == TY_STRUCT ? field_called(vertex->type.decl, "position") : NULL;
+    if (!position) {
+        put_zero(em, (type){TY_FLOAT4, NULL});
+        return;
+    }
+    const bool flat = position->type.kind != TY_FLOAT3; // A 2D mesh: its camera has its transform in it
+    sb_printf(em->o, "(%stide_camera * ", em->l == WGSL ? "tide_block." : "");
+    if (!flat) {
+        sb_put(em->o, "(");
+        put_bound(em, NULL, NULL, (type){TY_FLOAT4X4, NULL});
+        sb_put(em->o, " * ");
+    }
+    sb_printf(em->o, is_pointer(em, vertex) ? "%s((*%s).%s, " : "%s(%s.%s, ", float_ty(em, 4), local_name(vertex->name),
+              field_name(position));
+    sb_put(em->o, flat ? "0.0, 1.0))" : "1.0)))");
+}
+
 static void ex_member(emit *em, const expr *e)
 {
     if (e->object->type.kind == TY_ARRAY && str_eq_c(e->member, "count")) { // How many an array has: its type says
@@ -2546,6 +2577,10 @@ static void ex_member(emit *em, const expr *e)
     if (obj->kind == E_THIS && obj->type.kind == TY_RECORD && obj->type.decl == em->prog->pixel) {
         if (em->checking && str_eq_c(e->member, "world")) em->root->pixel_world = true;
         ex_pixel(em, e);
+        return;
+    }
+    if (obj->kind == E_THIS && obj->type.kind == TY_RECORD && obj->type.decl == em->prog->placed) { // this.clip
+        ex_placed(em);
         return;
     }
     // A field of what the engine supplies
@@ -4061,6 +4096,11 @@ static void ex(emit *em, const expr *e)
         refuse(em, e->at, "the GPU makes no lists: it reads the ones that are fields of what the frag or vert takes");
         return;
     case E_THIS:
+        if (e->type.kind == TY_RECORD && e->type.decl == em->prog->placed) {
+            refuse(em, e->at, "where the engine would put a vert's vertex is read through 'this.clip': 'this' is not a value "
+                              "to keep or pass on");
+            return;
+        }
         refuse(em, e->at, "a frag's pixel is read through 'this.position', 'this.depth' and 'this.world': it's not a value "
                           "to keep or pass on");
         return;
@@ -5260,13 +5300,28 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
         put_zero(em, handed);
         sb_put(o, ";\n");
     }
-    if (sh->vert) {
+    // Where a vert that places its vertex itself puts it, its `out float4`: the engine's own placing is then
+    // only for what the pixels read of where they are in the world
+    const bool placed = sh->vert && sh->vert->place;
+    if (placed) {
+        sb_printf(o, wgsl ? "    var tide_moved: %s = " : "    %s tide_moved = ", f4);
+        put_zero(em, (type){TY_FLOAT4, NULL});
+        sb_put(o, ";\n");
+    }
+    if (sh->vert) { // Called with what it writes after its vertex, in the order it takes them
         sb_printf(o, "    %s(%stide_vertex", function_name(sh->vert), wgsl ? "&" : "");
-        for (int h = 0; h < sh->handed.count; h++) sb_printf(o, ", %stide_handed%d", wgsl ? "&" : "", h);
+        int h = 0;
+        for (int i = 1; i < sh->vert->params.count; i++) {
+            const param *p = &sh->vert->params.items[i];
+            if (p->place) sb_printf(o, ", %stide_moved", wgsl ? "&" : "");
+            else if (p->is_out && p->type.kind == TY_STRUCT) sb_printf(o, ", %stide_handed%d", wgsl ? "&" : "", h++);
+        }
         sb_put(o, ");\n");
     }
     const char *position = field_name(field_called(v, "position"));
-    if (sh->dims == 3) {
+    if (placed && !sh->frag_world) {
+        // Nothing reads where the engine would have put it
+    } else if (sh->dims == 3) {
         sb_printf(o, wgsl ? "    let tide_place = " : "    vec4 tide_place = ");
         put_bound(em, NULL, NULL, (type){TY_FLOAT4X4, NULL});
         sb_printf(o, " * %s(tide_vertex.%s, 1.0);\n", f4, position);
@@ -5275,10 +5330,11 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
                   f4, position);
     }
     if (wgsl) { // The camera's clip space is OpenGL's: depth from -1
-        sb_put(o, "    let tide_clip = tide_block.tide_camera * tide_place;\n    var out: tide_corner;\n"
-                  "    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);\n");
+        sb_printf(o, "    let tide_clip = %s;\n    var out: tide_corner;\n"
+                     "    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);\n",
+                  placed ? "tide_moved" : "tide_block.tide_camera * tide_place");
     } else {
-        sb_put(o, "    gl_Position = tide_camera * tide_place;\n");
+        sb_put(o, placed ? "    gl_Position = tide_moved;\n" : "    gl_Position = tide_camera * tide_place;\n");
     }
     for (int i = 0; i < v->fields.count; i++) {
         if (sh->frag_fields[i]) sb_printf(o, "    %stide_s%d = tide_vertex.%s;\n", out, i, field_name(&v->fields.items[i]));

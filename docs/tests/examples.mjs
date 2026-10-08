@@ -65,8 +65,9 @@ const origin = `http://127.0.0.1:${server.address().port}`;
 const gpuFlags = backend === 'webgl' ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']
     : ['--enable-unsafe-webgpu', '--use-webgpu-adapter=swiftshader',
         ...(process.platform === 'win32' ? ['--use-angle=d3d11-warp'] : [])];
+// --mute-audio: headless, it still plays through the machine's device once a page's AudioContext runs
 const child = spawn(browser, ['--headless', '--no-sandbox', '--no-first-run', '--no-default-browser-check',
-    '--disable-extensions', '--remote-debugging-port=0', `--user-data-dir=${profile}`, ...gpuFlags,
+    '--disable-extensions', '--mute-audio', '--remote-debugging-port=0', `--user-data-dir=${profile}`, ...gpuFlags,
     ...(process.env.TIDE_RELAY ? [] : ['--disable-features=WebRtcHideLocalIpsWithMdns', '--allow-loopback-in-peer-connection']),
     'about:blank'],
     { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
