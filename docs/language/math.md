@@ -97,7 +97,7 @@ Each button below plots a function of `Math` from 0 to 1. The white dot goes alo
 if (Math.Hash(int2(x, y)) % 4 == 0) field.cells[x, y] = Material.Sand;
 ```
 
-Put a seed in the value to get other numbers for the same cell: `Math.Hash(int3(x, y, seed))`. It's xxHash32, so every bit of the value changes every bit of the result. With the match's seed, [`Random.seed`](#the-match-s-seed), no two matches get the same: `Math.Hash(int3(x, y, Random.seed))`.
+Put a seed in the value to get other numbers for the same cell: `Math.Hash(int3(x, y, seed))`. It's xxHash32, so every bit of the value affects the result. With the match's seed, [`Random.seed`](#the-match-s-seed), matches can get different fields: `Math.Hash(int3(x, y, Random.seed))`. Reusing a seed repeats its field.
 
 It gives the same numbers in a [frag or vert](../game/shaders.md#math), so a pattern drawn from it is the same on every GPU. Only a `long`'s hash stays on the CPU.
 
@@ -165,7 +165,7 @@ In the match, a roll comes from the match's seed, the tick, the entity the code 
 
 They follow Unity.Mathematics' `Random`. A range with nothing in it gives its start: `NextInt(0)` is 0, and `NextFloat(2, 1)` is 2.
 
-Rolls run in the order they're written, left to right: in `float2(Random.NextFloat(), Random.NextFloat())`, x is rolled first, on every platform.
+In CPU code, rolls run in the order they're written, left to right: in `float2(Random.NextFloat(), Random.NextFloat())`, x is rolled first, on every platform. [GPU code](#rolls-on-the-gpu) has additional ordering limits.
 
 ### Where rolls work
 
@@ -272,7 +272,7 @@ A `Random` has one field, `long state`, which is all there is to it: copy it to 
 
 ### The match's seed
 
-`Random.seed` is an `int` from 0 to 2147483647 that the machine starting a match picks, so no two matches go the same (but in a game run [without a window](../tools/cli.md#without-a-window), where it's 0, so the run repeats). `tide run --seed 7` picks it, to play a match's rolls again or to try others. It's part of the match: a player who joins gets it with the world, and nobody sends it. The match's rolls come from it, the engine seeds the match's generators from it, and a game reads it, with no parameter, where it wants numbers by place:
+`Random.seed` is an `int` from 0 to 2147483647 that the machine starting a match picks, so matches can vary (but in a game run [without a window](../tools/cli.md#without-a-window), where it's 0, so the run repeats). `tide run --seed 7` picks it, to play a match's rolls again or to try others. It's part of the match: a player who joins gets it with the world, and players don't send a seed separately. The match's rolls come from it, the engine seeds the match's generators from it, and a game reads it, with no parameter, where it wants numbers by place:
 
 ```csharp
 // The same cave on every machine, and another one every match.
@@ -284,7 +284,7 @@ It's read wherever code rolls, but in an audio declaration, which has no match. 
 It's 0 where nothing picks one: tests, benchmarks, and a world a C host starts with `tide_world_init`. A run there repeats exactly.
 
 ::: warning Every player can read it
-The seed is in the world, and every player's machine has the whole world for now. A game whose players mustn't know what comes next, like the order of a deck, can't keep that from someone who reads their own machine's memory yet. Scenes only some players see are coming (see [Networking](../multiplayer/networking.md)).
+The seed is in the world, and every player's machine has the whole world for now. A game whose players mustn't know what comes next, like the order of a deck, can't keep that from someone who reads their own machine's memory yet. [Scene visibility filtering](../game/scenes.md#private-scenes) isn't built yet.
 :::
 
 ### Rolls on the GPU
@@ -303,6 +303,7 @@ What's different there:
 
 - **Each pixel and each vertex has a generator of its own**, made as its code starts: from where the pixel is, or which vertex it is, and from a number the frame rolls. So no two pixels roll alike, and a frame later they all roll something else. That's what grain, static and sparkle want. What should stay put from frame to frame is [`Math.Hash`](#functions) or [noise](#noise).
 - **They aren't the CPU's numbers.** A GPU's ints are 32 bits, so it rolls with a smaller generator than a system does. What a roll gives is the same: the table above holds, ranges and all.
+- **Give separate rolls separate statements when their order matters.** OpenGL doesn't promise the CPU's left-to-right order for several rolls in one expression. Also, a `?:` that rolls evaluates the rolls on both sides on the GPU; use an `if` when only the selected branch should roll.
 - **`Random.seed` is there too**, so a frag can draw noise from the match's seed.
 - **A `Random` of your own stays on the CPU.** Its state is 64 bits. A frag rolls on the type.
 

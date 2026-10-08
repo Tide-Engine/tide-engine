@@ -22,7 +22,7 @@ Shots drop as they fly, so aim over a target that's far away: the dots in front 
 
 **Menu**, in the top right corner, ends practice, and so does Escape.
 
-The bottom right corner shows the frame rate, and your ping in a friend's match. Click or tap it, or press `F8`, and it lists the rest of what the engine is doing: the tick, the entities, what goes over the network, and the systems that take longest. That's the game's [`stats`](../tools/cli.md#stats) setting.
+The bottom right corner shows the frame rate, and your ping in a friend's match. Click or tap it, or press `F8`, and it lists the rest of what the engine is doing: frame and tick timings, the entities, what goes over the network, and the systems that take longest. That's the game's [`stats`](../tools/cli.md#stats) setting.
 
 | Action | Mouse and keyboard | Gamepad |
 |---|---|---|
