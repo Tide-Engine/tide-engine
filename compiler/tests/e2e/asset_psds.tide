@@ -1,0 +1,119 @@
+// Photoshop's saved composite image is packed at build time. Grids preserve
+// straight colors for match reads; Texture bytes are premultiplied for draws.
+asset Grid2<Color> raw8 = "assets/psds/raw8.psd";
+asset Grid2<Color> raw8Again = "assets/psds/raw8.psd";
+asset Grid2<Color> raw16 = "assets/psds/raw16.psd";
+asset Grid2<Color> rle8 = "assets/psds/rle8.psd";
+asset Grid2<Color> lr16 = "assets/psds/lr16.psd";
+asset Grid2<Color> spot8 = "assets/psds/spot8.psd";
+asset List<Grid2<Color>> grids = "assets/psds/*.psd";
+asset Map<string, Grid2<Color>> gridsByName = "assets/psds/*.psd";
+asset List<Grid2<Color>> oneGrid = "assets/psds/raw16.psd";
+asset Map<string, Grid2<Color>> oneGridByName = "assets/psds/rle8.psd";
+
+asset Texture image = "assets/psds/rle8.psd";
+asset Texture imageAgain = "assets/psds/rle8.psd";
+[Raw] asset Texture numbers = "assets/psds/rle8.psd";
+asset List<Texture> images = "assets/psds/*.psd";
+asset Map<string, Texture> imagesByName = "assets/psds/*.psd";
+asset List<Texture> oneImage = "assets/psds/rle8.psd";
+asset Map<string, Texture> oneImageByName = "assets/psds/rle8.psd";
+
+singleton Probe
+{
+    int2 rawSize;
+    int2 rleSize;
+    Color red;
+    Color green;
+    Color blue;
+    Color mixed;
+    Color word;
+    Color lowBit;
+    Color partial;
+    Color transparent;
+    Color opaqueSpot;
+    Color layer16;
+    Color listed;
+    Color keyed;
+    Color solo;
+    Color soloKeyed;
+    int gridCount;
+    int mapCount;
+    int soloCount;
+    int soloMapCount;
+    bool hasRaw;
+    bool hasAbsent;
+    bool sameFile;
+}
+
+system Read(mut Probe probe)
+{
+    probe.rawSize = raw8.size;
+    probe.rleSize = rle8.size;
+    probe.red = raw8[0, 0];
+    probe.green = raw8[1, 0];
+    probe.blue = raw8[0, 1];
+    probe.mixed = raw8[1, 1];
+    probe.word = raw16[0, 1];
+    probe.lowBit = raw16[1, 0];
+    probe.partial = rle8[1, 0];
+    probe.transparent = rle8[2, 0];
+    probe.opaqueSpot = spot8[0, 0]; // Extra alpha/spot channels aren't merged transparency.
+    probe.layer16 = lr16[2, 1];
+    probe.listed = grids[6][1, 0]; // Sorted by written paths: rle8.psd is seventh.
+    probe.keyed = gridsByName["assets/psds/pred16.psd"][0, 1];
+    probe.solo = oneGrid[0][1, 0];
+    probe.soloKeyed = oneGridByName["assets/psds/rle8.psd"][0, 1];
+    probe.gridCount = grids.count;
+    probe.mapCount = gridsByName.count;
+    probe.soloCount = oneGrid.count;
+    probe.soloMapCount = oneGridByName.count;
+    probe.hasRaw = gridsByName.Has("assets/psds/raw8.psd");
+    probe.hasAbsent = gridsByName.Has("assets/psds/absent.psd");
+    probe.sameFile = raw8Again[1, 1].r == raw8[1, 1].r && raw8Again[1, 1].g == raw8[1, 1].g;
+}
+
+local singleton Art
+{
+    List<Vertex> vertices;
+    List<int> indices;
+    Texture kept;
+    Texture keyed;
+    Texture solo;
+    Texture soloKeyed;
+    int imageCount;
+    int imageMapCount;
+    int soloCount;
+    int soloMapCount;
+}
+
+frag Numbers(Vertex vertex, out Color color)
+{
+    color = numbers.Sample(vertex.uv);
+}
+
+view Show(mut Art art)
+{
+    art.vertices = [Vertex { }, Vertex { position = float2(1, 0), uv = float2(1, 0) },
+                    Vertex { position = float2(0, 1), uv = float2(0, 1) }];
+    art.indices = [0, 1, 2];
+    art.kept = images[6];
+    art.keyed = imagesByName["assets/psds/rle8.psd"];
+    art.solo = oneImage[0];
+    art.soloKeyed = oneImageByName["assets/psds/rle8.psd"];
+    art.imageCount = images.count;
+    art.imageMapCount = imagesByName.count;
+    art.soloCount = oneImage.count;
+    art.soloMapCount = oneImageByName.count;
+    Draw.Mesh(art.vertices, art.indices, image);
+    Draw.Mesh(art.vertices, art.indices, imageAgain);
+    Draw.Mesh(art.vertices, art.indices, art.kept);
+    Draw.Mesh(art.vertices, art.indices, art.keyed);
+    Draw.Mesh(art.vertices, art.indices, art.solo);
+    Draw.Mesh(art.vertices, art.indices, art.soloKeyed);
+    Draw.Mesh(art.vertices, art.indices, Numbers);
+    foreach (var picture in images) Draw.Mesh(art.vertices, art.indices, picture);
+    Draw.Mesh(art.vertices, art.indices, rle8); // The grid's drawn copy has the same premultiplied pixels.
+}
+
+scene Main { }

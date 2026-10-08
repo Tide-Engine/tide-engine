@@ -107,8 +107,8 @@ typedef struct asset_site {
     bool glob;
     bool url;
     bool many;          // A List or Map: a glob's matches, or the one file its path names
-    const char *format;
-    const char *format2; // A second kind of file the asset can be, or NULL // The files it takes: ".png" for a Grid2<Color> and a Texture; NULL for any
+    const char *format;  // The files it takes, or NULL for any
+    const char *format2; // A second kind of file the asset can be, or NULL
     const char *format3; // ...and a third: a Mesh is a .glb, a .gltf or an .obj
 } asset_site;
 
@@ -10120,7 +10120,8 @@ static void collect_assets(void)
         site.many = d->asset_many || d->asset_kind == ASSET_CUBEMAP; // A cube's path is a glob too: its six faces
         site.format = d->asset_kind == ASSET_GRID || d->asset_kind == ASSET_TEXTURE || d->asset_kind == ASSET_CUBEMAP ? ".png"
                     : d->asset_kind == ASSET_CLIP ? ".wav" : d->asset_kind == ASSET_MESH ? ".glb" : NULL;
-        site.format2 = d->asset_kind == ASSET_CLIP ? ".ogg" : d->asset_kind == ASSET_MESH ? ".gltf" : NULL; // A clip is either
+        site.format2 = d->asset_kind == ASSET_GRID || d->asset_kind == ASSET_TEXTURE || d->asset_kind == ASSET_CUBEMAP ? ".psd"
+                     : d->asset_kind == ASSET_CLIP ? ".ogg" : d->asset_kind == ASSET_MESH ? ".gltf" : NULL;
         site.format3 = d->asset_kind == ASSET_MESH ? ".obj" : NULL;
         site.glob = asset_path_is_glob(site.path.ptr, (size_t)site.path.len);
         site.url = asset_path_is_url(site.path.ptr, (size_t)site.path.len);
@@ -10450,12 +10451,16 @@ static void complete_asset_path(completion *c, const int tok, const loc at)
         asset_item(c, label.data, KIND_FOLDER, start, at, label.data, "A folder", '1');
     }
     if (site->many) {
-        sb any = {0};
-        sb all = {0};
-        sb_printf(&any, "*%s", site->format ? site->format : "");
-        sb_printf(&all, "**/*%s", site->format ? site->format : "");
-        asset_item(c, any.data, KIND_FILE, start, at, any.data, "Every matching file in this folder", '2');
-        asset_item(c, all.data, KIND_FILE, start, at, all.data, "Every matching file in this folder and its subfolders", '2');
+        const char *formats[] = {site->format, site->format2, site->format3};
+        for (int i = 0; i < 3; i++) {
+            if (i > 0 && !formats[i]) continue;
+            sb any = {0};
+            sb all = {0};
+            sb_printf(&any, "*%s", formats[i] ? formats[i] : "");
+            sb_printf(&all, "**/*%s", formats[i] ? formats[i] : "");
+            asset_item(c, any.data, KIND_FILE, start, at, any.data, "Every matching file in this folder", '2');
+            asset_item(c, all.data, KIND_FILE, start, at, all.data, "Every matching file in this folder and its subfolders", '2');
+        }
     }
     for (int i = 0; i < entries.files.count; i++) {
         const char *name = entries.files.items[i];
