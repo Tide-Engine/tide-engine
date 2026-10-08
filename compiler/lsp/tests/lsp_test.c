@@ -9853,4 +9853,7 @@ TIDE_TEST(lsp_skinned_static_decode_and_draw_forms)
     completion = complete("scene Main { }\nvert Shift(mut Vertex3 vertex)\n"
                           "{\n    BoneTransform offset = default;\n    vertex.position += offset.$\n}\n");
     TIDE_CHECK(offers(completion, "position") && offers(completion, "rotation") && offers(completion, "scale"));
+    open_document("scene Main { }\nstruct EmptyAlias { [Name(\"\")] Bone socket; }\n"
+                  "int Count(SkinnedMesh<Vertex3, EmptyAlias> model) { return model.skeleton.bones.count; }\n");
+    TIDE_CHECK(has(last_sent(), "a model contract's Name alias cannot be empty") && has(last_sent(), "\"severity\":1"));
 }

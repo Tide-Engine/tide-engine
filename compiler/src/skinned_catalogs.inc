@@ -63,6 +63,10 @@ static void skinned_contract_catalogs(program *prog, decl *mesh, const loc at)
         }
         bool exact;
         const str source = skinned_alias(f, &exact);
+        if (exact && !source.len) {
+            diag_error(f->at, "a model contract's Name alias cannot be empty");
+            continue;
+        }
         const skinned_member member = {f->name, source, -1, exact};
         decl *catalog = kind == SKIN_ANIMATION ? animations : bones;
         vec_push(catalog->skin_catalog, member);
@@ -80,7 +84,7 @@ static int skinned_source_find(const model_metadata *metadata, const bool bones,
     int found = -1;
     for (uint32_t i = 0; i < count; i++) {
         const char *source = skinned_source_name(metadata, bones, i);
-        if (!source) continue;
+        if (!source || !*source) continue; // Unnamed entries have no name lookup, only At.
         const str name = member->explicit_name ? str_from(source) : skinned_identifier(source);
         if (!str_eq(name, member->source_name)) continue;
         if (found != -1) return -2;
