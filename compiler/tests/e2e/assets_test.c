@@ -63,6 +63,14 @@ TIDE_TEST(assets_read_as_values_of_their_types)
     TIDE_CHECK(text_is(&world, p->nested, "alpha"));
     TIDE_CHECK(text_is(&world, p->copied, "R\xc3\xa8gles: be kind.\nLine two."));
     TIDE_CHECK(tide_list_read_count(&world.heap, p->kept) == 300);
+    // One file where the type holds many: a list of that one, and a map of it under its path as written
+    TIDE_CHECK(p->oneNoteCount == 1 && text_is(&world, p->oneNote, "beta\n"));
+    TIDE_CHECK(p->oneRunCount == 1 && p->oneRunKeyed && color_is(p->oneRunPixel, 100, 0, 100, 255)); // run[2]'s, by its own name
+    TIDE_CHECK(p->oneTableCount == 1 && p->oneTableBytes == 300);
+    TIDE_CHECK(text_is(&world, p->oneRules, "R\xc3\xa8gles: be kind.\nLine two.")); // Keyed by the path a constant says
+    TIDE_CHECK(p->noteLength == 5);
+    const tide_pack_entry *one = tide_pack_find("oneNote", TIDE_PACK_LIST);
+    TIDE_CHECK(one != NULL && one->size == 1 && one->extra == TIDE_PACK_TEXT);
 
     // What was copied into the world is the world's own: it comes back from its bytes
     const uint32_t size = tide_world_pack(&world, NULL, 0);
@@ -134,6 +142,7 @@ TIDE_TEST(assets_missing_from_the_pack_read_as_empty)
     tide_world_tick(&world);
     TIDE_CHECK(world.Probe.heroWidth == 0 && world.Probe.heroCells == 0 && world.Probe.rulesLength == 0 && world.Probe.tableCount == 0);
     TIDE_CHECK(world.Probe.runCount == 0 && !world.Probe.hasRunOne && world.Probe.noteCount == 0);
+    TIDE_CHECK(world.Probe.oneNoteCount == 0 && world.Probe.oneRunCount == 0 && !world.Probe.oneRunKeyed && world.Probe.oneTableCount == 0);
     TIDE_CHECK(!tide_assets_load((const uint8_t *)"nonsense", 8));
     tide_world_free(&world);
     tide_pack_unload();

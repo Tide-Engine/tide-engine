@@ -748,11 +748,6 @@ asset_value *asset_resolve(const char *declaring_as_given, const str path, const
         free(folder);
         return NULL;
     }
-    if (url && many) {
-        diag_error(at, "a URL is one file, and the type holds many: write the type as '%s'", kind_name(kind));
-        free(folder);
-        return NULL;
-    }
     if (glob && !many && kind != ASSET_CUBEMAP) {
         diag_error(at, "'%s' is a glob, which matches many files, and the type holds one", written);
         diag_note("write the type as a list of them, 'List<%s>', or as a map of their paths, 'Map<string, %s>', or name one file",
@@ -760,13 +755,8 @@ asset_value *asset_resolve(const char *declaring_as_given, const str path, const
         free(folder);
         return NULL;
     }
-    if (!glob && many) {
-        diag_error(at, "the type holds many files, and '%s' names one", written);
-        diag_note("write a glob, like \"art/*.png\" ('*' within a name, '**' across folders, '?' a character), or the type as '%s'",
-                  kind_name(kind));
-        free(folder);
-        return NULL;
-    }
+    // One file, or a URL, where the type holds many is a list or a map of that one, its key the path as written: a
+    // declaration's path can go from a file to a glob and back with its type, and the code that reads it, as they are
     bool ok = true;
     if (url) {
         const fetched *f = fetch_url(written, game_folder);

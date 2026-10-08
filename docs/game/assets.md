@@ -126,7 +126,16 @@ asset List<string> notes = "notes/*.txt";
 asset List<Texture> frames = "art/walk/*.png";              // Images to draw with, in order
 ```
 
-A map's keys are the paths as you'd have written them, `"art/tiles/grass.png"`, so a game finds a file by name: `tiles["art/tiles/grass.png"]`, `tiles.Has(name)`. A glob that matches nothing is an error, and so is a glob for a type that holds one file, or one file for a type that holds many.
+A map's keys are the paths as you'd have written them, `"art/tiles/grass.png"`, so a game finds a file by name: `tiles["art/tiles/grass.png"]`, `tiles.Has(name)`. A glob that matches nothing is an error, and so is a glob for a type that holds one file.
+
+A list or a map can name one file, and is then a list or a map of that one:
+
+```csharp
+asset List<Clip> shots = "sfx/shot.wav";             // shots.count is 1, and shots[0] is the file
+asset Map<string, Clip> named = "sfx/shot.wav";      // named["sfx/shot.wav"]
+```
+
+That's for a path that changes while the game is made. Start with the one file there is, widen the path to `"sfx/shot*.wav"` or `"sfx/*.wav"` when there are more, or narrow it again, and the type and the code that reads it stay as they are. A map's key for the one file is its path as written, which is the key a glob gives it. A URL in a list or a map is the same: one entry, keyed by the URL.
 
 A frag samples an asset by its own name: it can't index a list of them (`run[1].Sample(uv)` is an error), so declare the one it samples as an asset of its own, or for a `Texture`, give the draw that one as the frag's source: `Draw.Mesh(corners, faces, frames[1], Shade)`.
 

@@ -6960,6 +6960,7 @@ static void gen_map_helpers(gen *g, const bool bodies)
         const type value = set ? (type){TY_VOID, NULL} : m->fields.items[1].type;
         const char *kp = elem_vtype(key);
         const char *vv = set ? "void" : elem_vtype(value);
+        const char *vc = set ? "void" : elem_ctype(value); // As an entry keeps it, which a pointer at one is of: text as its handle
         const bool text_key = key.kind == TY_STRING;
         const bool entry_text = type_has_text(key) || (!set && type_has_text(value));
         const bool container = !set && (value.kind == TY_LIST || value.kind == TY_MAP || value.kind == TY_SET);
@@ -6989,8 +6990,8 @@ static void gen_map_helpers(gen *g, const bool bodies)
             sb_printf(o, "TIDE_HELPER void tide_map%d_assign(tide_map *to, tide_map value, uint32_t where);\n", k);
             sb_printf(o, "TIDE_HELPER void tide_map%d_own(tide_map *m, uint32_t where);\n", k);
             sb_printf(o, "TIDE_HELPER void tide_map%d_release(tide_map *m, uint32_t where);\n", k);
-            if (slotted) sb_printf(o, "TIDE_HELPER %s *tide_map%d_slot(tide_map *m, %s key, uint32_t where);\n", vv, k, kp);
-            if (paths) sb_printf(o, "TIDE_HELPER const %s *tide_map%d_at(tide_map m, %s key);\n", vv, k, kp);
+            if (slotted) sb_printf(o, "TIDE_HELPER %s *tide_map%d_slot(tide_map *m, %s key, uint32_t where);\n", vc, k, kp);
+            if (paths) sb_printf(o, "TIDE_HELPER const %s *tide_map%d_at(tide_map m, %s key);\n", vc, k, kp);
             sb_put(o, "\n");
             continue;
         }
@@ -7048,13 +7049,13 @@ static void gen_map_helpers(gen *g, const bool bodies)
             gen_map_slot(o, value, "&e->value", "value", "put");
             sb_put(o, "}\n\n");
             if (paths) { // A pointer at a value, to read a field of it where it is, or at a zero one for a key that isn't there
-                sb_printf(o, "static const %s tide_map%d_zero = {0};\n", vv, k);
-                sb_printf(o, "TIDE_HELPER const %s *tide_map%d_at(const tide_map m, const %s key)\n{\n", vv, k, kp);
+                sb_printf(o, "static const %s tide_map%d_zero = {0};\n", vc, k);
+                sb_printf(o, "TIDE_HELPER const %s *tide_map%d_at(const tide_map m, const %s key)\n{\n", vc, k, kp);
                 sb_printf(o, "    const int32_t i = tide_map_find(m, &tide_map%d_kind, &key);\n    if (i < 0) return &tide_map%d_zero;\n", k, k);
                 sb_printf(o, "    const %s *e = tide_map_entry(m, i, &tide_map%d_kind);\n    return &e->value;\n}\n\n", entry, k);
             }
             if (slotted) { // A value changed where it is, by its own helpers: its slot, added empty for a key that wasn't there
-                sb_printf(o, "TIDE_HELPER %s *tide_map%d_slot(tide_map *m, const %s key, const uint32_t where)\n{\n", vv, k, kp);
+                sb_printf(o, "TIDE_HELPER %s *tide_map%d_slot(tide_map *m, const %s key, const uint32_t where)\n{\n", vc, k, kp);
                 sb_printf(o, "    bool added;\n    %s *e = m ? tide_map_insert(m, &tide_map%d_kind, &key, where, &added) : NULL;\n    if (!e) return NULL;\n", entry, k);
                 sb_put(o, "    if (added) {\n    ");
                 gen_map_slot(o, key, "&e->key", "key", "put");

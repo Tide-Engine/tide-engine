@@ -1,6 +1,0 @@
-// expect: a URL is one file, and the type holds many
-asset List<string> credits = "https://example.com/credits.txt";
-
-scene Main
-{
-}

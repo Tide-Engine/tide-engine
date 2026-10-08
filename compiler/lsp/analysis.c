@@ -106,7 +106,7 @@ typedef struct asset_site {
     const char *abs;    // The path resolved from it, a glob as written where it's one; NULL for a URL
     bool glob;
     bool url;
-    bool many;          // A List or Map: a glob's matches
+    bool many;          // A List or Map: a glob's matches, or the one file its path names
     const char *format;
     const char *format2; // A second kind of file the asset can be, or NULL // The files it takes: ".png" for a Grid2<Color> and a Texture; NULL for any
 } asset_site;
