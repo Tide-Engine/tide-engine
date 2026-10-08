@@ -43,8 +43,10 @@ void analysis_prepare_call_hierarchy(int line, int character, jbuf *out);    // 
 void analysis_incoming_calls(int line, int character, jbuf *out);            // CallHierarchyIncomingCall[]
 void analysis_outgoing_calls(int line, int character, jbuf *out);            // CallHierarchyOutgoingCall[]
 void analysis_symbols(jbuf *out);                                            // DocumentSymbol[]
-// SymbolInformation items of the whole game, comma-separated after `written` others.
-void analysis_workspace_symbols(const char *query, jbuf *out, int *written);
+// Each SymbolInformation item of the whole game. Its JSON is valid only
+// during the callback; the server copies it when combining game contexts.
+typedef void (*workspace_symbol_fn)(void *user, const jbuf *symbol);
+void analysis_workspace_symbols(const char *query, workspace_symbol_fn symbol, void *user);
 void analysis_inlay_hints(int start_line, int end_line, jbuf *out);          // InlayHint[]
 void analysis_folding_ranges(jbuf *out);                                     // FoldingRange[]
 void analysis_selection_ranges(const json *positions, jbuf *out);            // SelectionRange[], one per Position

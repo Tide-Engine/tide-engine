@@ -810,12 +810,83 @@ bool tide_str_eq(const tide_str a, const tide_str b)
     return a.bytes == b.bytes && memcmp(a.ptr, b.ptr, (size_t)a.bytes) == 0;
 }
 
-// The byte where `b` first appears in `a`, or -1.
+// A maximal suffix in either byte order gives one candidate split for the
+// Two-Way search. `before` is the last byte before that suffix; -1 means none.
+static int32_t search_split(const unsigned char *bytes, const int32_t count, const bool reverse, int32_t *period)
+{
+    int32_t before = -1;
+    int32_t candidate = 0;
+    int32_t step = 1;
+    *period = 1;
+    while (step < count - candidate) {
+        const unsigned char a = bytes[candidate + step];
+        const unsigned char b = bytes[before + step];
+        if (a == b) {
+            if (step == *period) {
+                candidate += step;
+                step = 1;
+            } else step++;
+        } else if (reverse ? a > b : a < b) {
+            candidate += step;
+            step = 1;
+            *period = candidate - before;
+        } else {
+            before = candidate;
+            candidate++;
+            step = *period = 1;
+        }
+    }
+    return before + 1;
+}
+
+// Long patterns use Crochemore and Perrin's Two-Way algorithm: compare the
+// right half first, then the left backwards. A periodic pattern remembers
+// what a shift leaves matched, so repeated prefixes still take linear time.
+// All work stays inside the counted bytes and needs no allocation.
+static int32_t find_long(const tide_str a, const tide_str b)
+{
+    const unsigned char *needle = (const unsigned char *)b.ptr;
+    int32_t period, reverse_period;
+    int32_t split = search_split(needle, b.bytes, false, &period);
+    const int32_t reverse_split = search_split(needle, b.bytes, true, &reverse_period);
+    if (reverse_split > split) {
+        split = reverse_split;
+        period = reverse_period;
+    }
+    const bool periodic = period <= b.bytes - split && memcmp(needle, needle + period, (size_t)split) == 0;
+    if (!periodic) period = (split > b.bytes - split ? split : b.bytes - split) + 1;
+    int32_t remembered = 0;
+    const int32_t last = a.bytes - b.bytes;
+    for (int64_t at = 0; at <= last;) {
+        int32_t right = split > remembered ? split : remembered;
+        while (right < b.bytes && b.ptr[right] == a.ptr[at + right]) right++;
+        if (right < b.bytes) {
+            at += right - split + 1;
+            remembered = 0;
+            continue;
+        }
+        int32_t left = split;
+        while (left > remembered && b.ptr[left - 1] == a.ptr[at + left - 1]) left--;
+        if (left <= remembered) return (int32_t)at;
+        at += period;
+        remembered = periodic ? b.bytes - period : 0;
+    }
+    return -1;
+}
+
+// The byte where `b` first appears in `a`, or -1. Short patterns avoid the
+// setup above: skip to their first byte, then compare at most 31 bytes.
 static int32_t find(const tide_str a, const tide_str b)
 {
     if (b.bytes == 0) return 0;
-    for (int32_t i = 0; i + b.bytes <= a.bytes; i++) {
-        if (memcmp(a.ptr + i, b.ptr, (size_t)b.bytes) == 0) return i;
+    if (b.bytes > a.bytes) return -1;
+    if (b.bytes >= 32) return find_long(a, b);
+    const int32_t last = a.bytes - b.bytes;
+    for (int32_t i = 0; i <= last; i++) {
+        const char *p = memchr(a.ptr + i, (unsigned char)b.ptr[0], (size_t)(last - i) + 1u);
+        if (!p) return -1;
+        i = (int32_t)(p - a.ptr);
+        if (b.bytes == 1 || memcmp(p, b.ptr, (size_t)b.bytes) == 0) return i;
     }
     return -1;
 }
@@ -909,21 +980,19 @@ tide_str tide_str_trim(const tide_str a)
 
 tide_str tide_str_replace(const tide_str a, const tide_str from, const tide_str to)
 {
-    if (from.bytes == 0 || find(a, from) < 0) return a;
+    if (from.bytes == 0) return a;
+    int32_t at = find(a, from);
+    if (at < 0) return a;
     tide_str out = TIDE_STR_EMPTY;
     int32_t i = 0;
-    while (i < a.bytes) {
-        if (i + from.bytes <= a.bytes && memcmp(a.ptr + i, from.ptr, (size_t)from.bytes) == 0) {
-            out = tide_str_add(out, to);
-            i += from.bytes;
-            continue;
-        }
-        int32_t run = i + 1; // Up to the next place `from` could start
-        while (run < a.bytes && a.ptr[run] != from.ptr[0]) run++;
-        out = append(out, a.ptr + i, run - i, tide_utf8_chars(a.ptr + i, run - i));
-        i = run;
-    }
-    return out;
+    do {
+        out = append(out, a.ptr + i, at - i, tide_utf8_chars(a.ptr + i, at - i));
+        out = tide_str_add(out, to);
+        i = at + from.bytes;
+        at = find((tide_str){a.ptr + i, a.bytes - i, 0}, from);
+        if (at >= 0) at += i;
+    } while (at >= 0);
+    return append(out, a.ptr + i, a.bytes - i, tide_utf8_chars(a.ptr + i, a.bytes - i));
 }
 
 // ---------------------------------------------------------------------------
