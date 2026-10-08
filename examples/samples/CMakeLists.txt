@@ -13,7 +13,7 @@ file(GLOB two_forks_sources LIST_DIRECTORIES false CONFIGURE_DEPENDS "${CMAKE_CU
 list(SORT two_forks_sources)
 tide_add_game(two_forks_tests SOURCES ${two_forks_sources} NAME game ${SAMPLE_ROOMS}
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" two-forks/test/two_forks_test.c
-         two-forks/test/journey_test.c two-forks/test/map_routes_test.c)
+         two-forks/test/progression_test.c)
 target_include_directories(two_forks_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 add_test(NAME two_forks_tests COMMAND two_forks_tests)
 set_tests_properties(two_forks_tests PROPERTIES TIMEOUT 300)
