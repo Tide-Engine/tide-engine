@@ -1,6 +1,8 @@
 # Each sample is a self-contained tide run folder, whose tide.packages lists
 # rooms: the menu that comes with tide. tide_add_game reads no tide.packages,
-# so the package is named here, as tide builds a game that lists it.
+# so the package is named here, as tide builds a game that lists it. A
+# sample's Tide files are all of its folder's, in the order of their names, as
+# tide compiles a folder's: one file for most, and several for Tag.
 if(NOT TARGET tide_platform)
     return()
 endif()
@@ -9,7 +11,9 @@ add_custom_target(sample_games)
 foreach(id pong snake tanks bomberman connect-four asteroids sumo tower-defense marbles tag)
     string(REPLACE "-" "_" name "${id}")
     set(target "sample_${name}")
-    tide_add_game(${target} SOURCES "${id}/game.tide" PACKAGES Rooms "${PROJECT_SOURCE_DIR}/packages/rooms/rooms.tide")
+    file(GLOB sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${id}/*.tide")
+    list(SORT sources)
+    tide_add_game(${target} SOURCES ${sources} PACKAGES Rooms "${PROJECT_SOURCE_DIR}/packages/rooms/rooms.tide")
     if(TIDE_WEB)
         # Stage even an unchanged build, so clearing docs/static is recoverable.
         set(destination "${PROJECT_SOURCE_DIR}/docs/static/samples/${id}")
