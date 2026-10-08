@@ -118,7 +118,7 @@ async void Reveal(mut Banner banner)
 
 - **The match can't.** A frame's length is another on every machine, so a system or a match handler that reads it is an error, which says to take `Time time` and read `time.dt`, a tick's length. A function that reads it is local code, and the match can't call it.
 - **It needs no match.** It's there in a local scene and while connecting, and it's 0 only before the first frame, in a handler that runs as the program starts.
-- **It's the frame's real length**, never negative, and long after a stall, so clamp it where that would show. There's no clock of seconds beside it: a float of seconds gets coarser the longer a program runs, so add `Frame.dt` up into a field of your own and wrap it where it repeats (see [A frame's length](./views.md#a-frame-s-length)).
+- **It's the frame's real length**, never negative, and long after a stall, so clamp it where that would show. There's no clock of seconds beside it, no `Frame.time`: a float of seconds gets coarser the longer a program runs, so add `Frame.dt` up into a field of your own and wrap it where it repeats (see [A frame's length](./views.md#a-frame-s-length)). The match's seconds are `time.t`.
 
 ## Local fields
 
