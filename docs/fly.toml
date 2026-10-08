@@ -20,6 +20,10 @@ primary_region = 'fra'
   ADDRESS_HEADER = 'Fly-Client-IP'
   BODY_SIZE_LIMIT = '16K'
   TIDE_ACCESS_FILE = '/data/access-requests.jsonl'
+  TIDE_ANALYTICS_FILE = '/data/analytics.json'
+  TIDE_RELAY_STATS_URL = 'http://purrengine-relay.internal:8080/admin/stats'
+  # TIDE_ADMIN_PASSWORD protects /admin. TIDE_RELAY_STATS_TOKEN is shared
+  # with purrengine-relay; both are Fly secrets, never public client settings.
   # Whose releases /releases gives (releases.js). The token that reads them is
   # a secret: fly secrets set TIDE_RELEASES_TOKEN=<a token that can only read
   # that repository's contents>

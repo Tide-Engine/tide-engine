@@ -131,7 +131,7 @@ test('production HTTP serves previews to crawlers, keeps canonicals stable, and 
     });
     await Promise.all([
         cp(path.join(docs, 'build'), path.join(deployment, 'build'), { recursive: true }),
-        ...['package.json', 'headers.js', 'releases.js', 'server.js'].map((file) => copyFile(path.join(docs, file), path.join(deployment, file))),
+        ...['package.json', 'headers.js', 'releases.js', 'analytics.js', 'admin.js', 'server.js'].map((file) => copyFile(path.join(docs, file), path.join(deployment, file))),
     ]);
     const listener = net.createServer();
     listener.listen(0, '127.0.0.1');

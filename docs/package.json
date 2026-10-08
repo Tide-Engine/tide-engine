@@ -15,6 +15,8 @@
     "test:access": "node --test tests/access.test.mjs",
     "test:access-http": "node --test tests/access-http.test.mjs",
     "test:releases": "node --test tests/releases.test.mjs",
+    "test:analytics": "node --test tests/analytics.test.mjs tests/admin.test.mjs",
+    "test:admin-http": "node --test tests/admin-http.test.mjs",
     "test:examples": "node tests/examples.mjs",
     "test:seo": "node --test tests/seo.test.mjs"
   },
