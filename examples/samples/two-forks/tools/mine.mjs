@@ -1,6 +1,7 @@
 // Makes up small levels, keeps the ones two chefs can do and one can't, and
 // takes out of them whatever they don't need.
 //   node mine.mjs <seed> <count> <mode> <out> [minMoves] [maxMoves]
+// Modes can combine close (shared walking ground), one, gas and two (sausages).
 import { parse, search, handoffs, needs, step, start } from './solve.mjs';
 import fs from 'node:fs';
 
@@ -11,14 +12,15 @@ const count = Number(countArg);
 const gas = modeArg.includes('gas');
 const two = modeArg.includes('two');      // two sausages
 const one = modeArg.includes('one');      // one island
+const close = modeArg.includes('close');  // shared walking space and chefs clearing each other's way
 const LIMIT = 30000;
 const MIN = Number(minArg), MAX = Number(maxArg);
 
 function make() {
-    const w = 5 + rnd(5), h = 4 + rnd(3);
+    const w = close ? 4 + rnd(2) : 5 + rnd(5), h = close ? 3 + rnd(2) : 4 + rnd(3);
     const g = Array.from({ length: h }, () => Array(w).fill('~'));
     const rect = (ch) => {
-        const rw = 2 + rnd(3), rh = 2 + rnd(3);
+        const rw = 2 + rnd(Math.min(3, w - 1)), rh = 2 + rnd(Math.min(3, h - 1));
         const x0 = rnd(w - rw + 1), y0 = rnd(h - rh + 1);
         for (let y = y0; y < y0 + rh; y++) for (let x = x0; x < x0 + rw; x++) g[y][x] = ch;
     };
@@ -73,35 +75,65 @@ function along(L, moves) {
     let S = start(L);
     const pushes = [0, 0];
     let gasChanges = 0;
+    let clearances = 0;
+    const walked = [new Set(), new Set()];
+    const previous = [S.c.slice(0, 3), S.c.slice(3, 6)];
     const pedal = (x, y) => x >= 0 && y >= 0 && x < L.w && y < L.h && L.tiles[y * L.w + x] === 'o';
     const lit = T => !(pedal(T.c[0], T.c[1]) || pedal(T.c[3], T.c[4]));
     for (const move of moves) {
         const who = Number(move[0]), d = 'NESW'.indexOf(move[1]);
         const T = step(L, S, who, d);
+        // Would this move still be stopped by where the other chef last stood?
+        const ghost = { c: S.c.slice(), s: S.s };
+        ghost.c.splice((1 - who) * 3, 3, ...previous[1 - who]);
+        if (step(L, ghost, who, d) === null) clearances++;
+        previous[who] = S.c.slice(who * 3, who * 3 + 3);
+        walked[who].add(T.c[who * 3] + ',' + T.c[who * 3 + 1]);
         for (let i = 0; i < S.s.length; i += 7) if (S.s[i] !== T.s[i] || S.s[i + 1] !== T.s[i + 1]) { pushes[who]++; break; }
         if (lit(S) !== lit(T)) gasChanges++;
         S = T;
     }
-    return { pushes, gasChanges };
+    return { pushes, gasChanges, clearances, shared: [...walked[0]].filter(k => walked[1].has(k)).length };
+}
+
+function connected(L) {
+    const visited = new Set();
+    const queue = [[L.chefs[0][0], L.chefs[0][1]]];
+    for (let i = 0; i < queue.length; i++) {
+        const [x, y] = queue[i], k = y * L.w + x;
+        if (visited.has(k)) continue;
+        visited.add(k);
+        for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+            const nx = x + dx, ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= L.w || ny >= L.h) continue;
+            const tile = L.tiles[ny * L.w + nx];
+            if (tile === '.' || tile === 'o') queue.push([nx, ny]);
+        }
+    }
+    return visited.has(L.chefs[1][1] * L.w + L.chefs[1][0]);
 }
 
 function measure(text, wanted) {
     const L = parse(text);
     if (L.sausages.length !== wanted || !L.chefs[0] || !L.chefs[1]) return null;
+    if (close && !connected(L)) return null;
     const both = search(L, [0, 1], LIMIT);
     if (!both.moves || both.moves.length < MIN || both.moves.length > MAX) return null;
-    if (search(L, [0], LIMIT).moves) return null;
-    if (search(L, [1], LIMIT).moves) return null;
+    const first = search(L, [0], LIMIT), second = search(L, [1], LIMIT);
+    // A bounded search that stopped early has not proved a chef cannot cook it.
+    if (first.moves || first.gaveUp || second.moves || second.gaveUp) return null;
     if (gas) {
         // The pedal has to matter: with grass in its place, there's no way through
         const plain = parse(text.replaceAll('o', '.'));
-        if (search(plain, [0, 1], LIMIT).moves) return null;
+        const withoutPedal = search(plain, [0, 1], LIMIT);
+        if (withoutPedal.moves || withoutPedal.gaveUp) return null;
     }
     const seen = along(L, both.moves);
+    if (close && (seen.clearances < 1 || seen.shared < 1)) return null;
     if (seen.pushes[0] === 0 || seen.pushes[1] === 0) {
         if (!gas) return null;
     }
-    return { text, moves: both.moves.length, states: both.states, path: both.moves.join(' '), L, pushes: seen.pushes, gasChanges: seen.gasChanges };
+    return { text, moves: both.moves.length, states: both.states, path: both.moves.join(' '), L, ...seen };
 }
 
 function grade(m) {
@@ -109,6 +141,7 @@ function grade(m) {
     m.need0 = needs(m.L, 0, 600000);
     m.need1 = needs(m.L, 1, 600000);
     m.score = m.hand * 100 + Math.min(m.need0, m.need1) * 10 - m.states / 2000;
+    if (close) m.score += m.clearances * 80 + m.shared * 30;
     return m;
 }
 
@@ -168,6 +201,6 @@ for (const m of found.slice(0, 40)) {
     top.push(t);
 }
 top.sort((a, b) => a.moves - b.moves || b.hand - a.hand);
-const lines = top.map(f => `hand ${f.hand} needs ${f.need0}/${f.need1} pushes ${f.pushes.join('/')} gas ${f.gasChanges} moves ${f.moves} states ${f.states}\n${f.text.split('/').join('\n')}\n${f.path}\n`);
+const lines = top.map(f => `hand ${f.hand} needs ${f.need0}/${f.need1} pushes ${f.pushes.join('/')} gas ${f.gasChanges} clearances ${f.clearances} shared ${f.shared} moves ${f.moves} states ${f.states}\n${f.text.split('/').join('\n')}\n${f.path}\n`);
 fs.writeFileSync(outArg, `mode ${modeArg} seed ${seedArg}: tried ${tried}, kept ${found.length}\n\n` + lines.join('\n'));
 console.log(`${modeArg}: tried ${tried}, kept ${found.length}`);

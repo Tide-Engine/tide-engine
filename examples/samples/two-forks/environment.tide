@@ -1,0 +1,210 @@
+// The journey's four landscapes. These meshes live beyond the puzzle's
+// tiles: only the board describes where either chef can actually stand.
+// Handfuls of flat faces and painted texels keep the original console look.
+
+float RegionGround(int region)
+{
+    return region == 1 ? FIELD : region == 2 ? ALPINE : region == 3 ? BASALT : TURF;
+}
+
+float RegionWall(int region)
+{
+    return region == 1 ? LOAM : region == 2 ? CLIFF : region == 3 ? VOLCANIC : EARTH;
+}
+
+Color RegionStone(int region)
+{
+    if (region == 1) return Color(0.58, 0.56, 0.43);
+    if (region == 2) return Color(0.57, 0.65, 0.7);
+    if (region == 3) return Color(0.35, 0.33, 0.4);
+    return Color(0.56, 0.55, 0.53);
+}
+
+void PutBirch(mut Scenery scenery, float3 at, float scale, float seed)
+{
+    var wood = Ink(Color(0.62, 0.59, 0.43), WOOD, 0);
+    PutTube(scenery.mesh, scenery.faces, wood, at, at + float3(0.04, 1.5, 0.02) * scale, 0.1 * scale, 0.045 * scale, 5);
+    PutTube(scenery.mesh, scenery.faces, wood, at + float3(0, 0.75, 0) * scale, at + float3(-0.42, 1.6, 0.15) * scale, 0.05 * scale, 0.022 * scale, 4);
+    PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.49, 0.59, 0.25), LEAF, 0), at + float3(0, 1.65, 0) * scale,
+            float3(0.7, 0.7, 0.62) * scale, seed, 0.16, true, 3, 6);
+    PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.61, 0.66, 0.28), LEAF, 0), at + float3(-0.45, 1.35, 0.14) * scale,
+            float3(0.45, 0.48, 0.43) * scale, seed + 9, 0.2, true, 3, 5);
+}
+
+void PutPine(mut Scenery scenery, float3 at, float scale)
+{
+    PutTube(scenery.mesh, scenery.faces, Ink(Color(0.35, 0.3, 0.25), WOOD, 0), at, at + float3(0, 1.8, 0) * scale,
+            0.09 * scale, 0.025 * scale, 5);
+    for (var i = 0; i < 3; i++)
+    {
+        var h = 0.38 + i * 0.46;
+        var wide = 0.62 - i * 0.14;
+        var tint = i == 2 ? Color(0.63, 0.73, 0.7) : Color(0.3, 0.43, 0.42);
+        PutTube(scenery.mesh, scenery.faces, Ink(tint, LEAF, 0), at + float3(0, h, 0) * scale,
+                at + float3(0, h + 0.92, 0) * scale, wide * scale, 0, 6);
+    }
+}
+
+void PutPeak(mut Scenery scenery, float3 at, float scale, float seed)
+{
+    // A crag and its small pale cap are separate, deliberately angular forms.
+    PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.45, 0.52, 0.61), IRON, 0), at + float3(0, 0.65, 0) * scale,
+            float3(1.55, 1.8, 1.2) * scale, seed, 0.4, true, 3, 5);
+    PutTube(scenery.mesh, scenery.faces, Ink(Color(0.82, 0.89, 0.91), IRON, 0), at + float3(0.06, 1.75, 0) * scale,
+            at + float3(-0.12, 2.75, 0.05) * scale, 0.6 * scale, 0, 5);
+}
+
+void PutVolcano(mut Scenery scenery, float3 at, float scale)
+{
+    // An open crater, with its molten bowl sitting below the uneven rim.
+    List<float2> slope = [float2(3.2, -0.2), float2(2.7, 0.12), float2(2.05, 0.8),
+                         float2(1.45, 2.05), float2(0.8, 2.9), float2(0.56, 2.83), float2(0.38, 2.35)];
+    PutLathe(scenery.mesh, scenery.faces, Ink(Color(0.28, 0.25, 0.31), IRON, 0.12), at, slope, float2(scale), 7);
+    PutTube(scenery.mesh, scenery.faces, Ink(Color.white, LAVA, 0), at + float3(0, 2.37, 0) * scale,
+            at + float3(0, 2.38, 0) * scale, 0.39 * scale, 0.39 * scale, 7);
+    // A narrow exposed flow, away from any walkable terrain.
+    PutTube(scenery.mesh, scenery.faces, Ink(Color.white, LAVA, 0), at + float3(-0.08, 2.6, -0.64) * scale,
+            at + float3(-0.14, 0.1, -2.72) * scale, 0.045 * scale, 0.11 * scale, 4);
+    for (var i = 0; i < 5; i++)
+    {
+        PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.37 + i * 0.018, 0.34 + i * 0.018, 0.39 + i * 0.018), PLAIN, 0),
+                at + float3(i * 0.3, 3.15 + i * 0.3, i * 0.07) * scale,
+                float3(0.26 + i * 0.085, 0.31, 0.24 + i * 0.055) * scale, i * 3.2, 0.15, true, 3, 5);
+    }
+}
+
+void PutCoastScenery(mut Scenery scenery, float3 at, float scale)
+{
+    PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.46, 0.5, 0.44), IRON, 0), at + float3(0, -0.12, 0),
+            float3(1.55, 0.48, 1) * scale, 17, 0.26, true, 3, 7);
+    // A short wooden mooring with striped posts recalls the opening shore.
+    var timber = Ink(Color(0.53, 0.38, 0.24), WOOD, 0);
+    for (var i = 0; i < 5; i++)
+    {
+        PutBox(scenery.mesh, scenery.faces, timber, at + float3(0.38, 0.11, -0.3 - i * 0.22) * scale,
+                float3(0.66, 0.085, 0.19) * scale);
+    }
+    for (var i = 0; i < 2; i++)
+    {
+        var post = at + float3(0.05 + i * 0.65, 0.05, -1.3) * scale;
+        PutTube(scenery.mesh, scenery.faces, timber, post - float3(0, 0.65, 0) * scale,
+                post + float3(0, 0.5, 0) * scale, 0.07 * scale, 0.065 * scale, 5);
+        PutBox(scenery.mesh, scenery.faces, Ink(Color(0.8, 0.76, 0.58), PLAIN, 0), post + float3(0, 0.28, 0) * scale,
+                float3(0.13, 0.1, 0.13) * scale);
+    }
+}
+
+void PutCountryScenery(mut Scenery scenery, float3 at, float scale)
+{
+    PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.51, 0.57, 0.28), LEAF, 0), at + float3(0, -0.08, 0),
+            float3(2.2, 0.4, 1.6) * scale, 11, 0.14, true, 3, 8);
+    PutBirch(scenery, at + float3(-0.7, 0.17, 0.2) * scale, scale * 0.88, 4);
+    PutBirch(scenery, at + float3(1, 0.15, 0.55) * scale, scale * 0.68, 9);
+    var stone = Ink(Color(0.61, 0.59, 0.46), STONE, 0);
+    for (var i = 0; i < 5; i++)
+    {
+        PutBox(scenery.mesh, scenery.faces, stone, at + float3(-1.1 + i * 0.46, 0.28, -0.75) * scale,
+                float3(0.42, 0.38, 0.23) * scale);
+        PutBox(scenery.mesh, scenery.faces, stone, at + float3(-1.1 + i * 0.46, 0.5, -0.75) * scale,
+                float3(0.45, 0.12, 0.26) * scale);
+    }
+    // A few bundles of wheat bring gold into the inland greens.
+    for (var i = 0; i < 12; i++)
+    {
+        var x = -0.9 + Math.Frac(i * 0.618) * 1.8;
+        var z = -0.35 + Math.Frac(i * 0.417) * 0.9;
+        var root = at + float3(x, 0.19, z) * scale;
+        PutTube(scenery.mesh, scenery.faces, Ink(Color(0.76, 0.67, 0.37), PLAIN, 0), root,
+                root + float3(0.04, 0.26 + Math.Frac(i * 0.21) * 0.16, 0) * scale, 0.021 * scale, 0.008 * scale, 3);
+    }
+}
+
+void PutMountainScenery(mut Scenery scenery, float3 at, float scale)
+{
+    PutPeak(scenery, at + float3(-1.35, 0, 0.4) * scale, scale * 0.85, 8);
+    PutPeak(scenery, at + float3(0.6, 0, 0.8) * scale, scale * 1.15, 19);
+    PutPine(scenery, at + float3(-1.3, 0, -0.9) * scale, scale * 0.7);
+    PutPine(scenery, at + float3(1.2, 0, -0.7) * scale, scale * 0.6);
+}
+
+void DressRegion(mut Scenery scenery, int2 size, int region, int level)
+{
+    if (level == -2)
+    {
+        // The map's geography follows its camps: coast southwest,
+        // countryside northwest, mountains northeast, volcano southeast.
+        PutCoastScenery(scenery, float3(-size.x * 0.5 - 2, SEA, -1.8), 0.8);
+        PutCountryScenery(scenery, float3(-size.x * 0.5 - 2, SEA, 2.8), 0.9);
+        PutMountainScenery(scenery, float3(size.x * 0.5 + 2.7, SEA, 3), 0.9);
+        PutVolcano(scenery, float3(size.x * 0.5 + 3.8, SEA, -2.4), 0.75);
+        return;
+    }
+    var behind = size.y * 0.5 + 3.3;
+    if (region == 0)
+    {
+        PutCoastScenery(scenery, float3(-size.x * 0.5 - 2.4, SEA, 1.3), 1);
+    }
+    else if (region == 1)
+    {
+        PutCountryScenery(scenery, float3(-size.x * 0.5 - 2.5, SEA, 0.8), 1.1);
+        PutCountryScenery(scenery, float3(size.x * 0.5 + 3, SEA, behind - 1), 0.85);
+    }
+    else if (region == 2)
+    {
+        PutMountainScenery(scenery, float3(-size.x * 0.5 - 3.5, SEA, behind - 1), 1.25);
+        PutMountainScenery(scenery, float3(size.x * 0.5 + 3.7, SEA, behind - 0.5), 0.95);
+    }
+    else
+    {
+        PutVolcano(scenery, float3(size.x * 0.5 + 2.4, SEA, 0.75), 0.5);
+        for (var i = 0; i < 5; i++)
+        {
+            var at = float3(-size.x * 0.5 - 2.2 - i * 0.42, SEA, 0.7 + i * 0.7);
+            PutTube(scenery.mesh, scenery.faces, Ink(Color(0.3, 0.28, 0.35), IRON, 0), at, at + float3(0, 0.5 + i * 0.22, 0),
+                    0.3, 0.26, 5);
+        }
+    }
+}
+
+void PutCampMarker(mut Scenery scenery, float3 at)
+{
+    // An inset brass plaque is a destination, never an apparent obstacle.
+    var edge = Ink(Color(0.79, 0.61, 0.28), PLAIN, 0.15);
+    var middle = at + float3(0, 0.009, 0);
+    PutBox(scenery.mesh, scenery.faces, edge, middle + float3(0, 0, -0.34), float3(0.7, 0.012, 0.055));
+    PutBox(scenery.mesh, scenery.faces, edge, middle + float3(0, 0, 0.34), float3(0.7, 0.012, 0.055));
+    PutBox(scenery.mesh, scenery.faces, edge, middle + float3(-0.34, 0, 0), float3(0.055, 0.012, 0.7));
+    PutBox(scenery.mesh, scenery.faces, edge, middle + float3(0.34, 0, 0), float3(0.055, 0.012, 0.7));
+    PutBox(scenery.mesh, scenery.faces, Ink(Color(0.31, 0.26, 0.18), PLAIN, 0), middle,
+            float3(0.32, 0.015, 0.32));
+}
+
+local singleton Weather
+{
+    List<Mote> flakes;
+}
+
+// A little falling snow or rising ash belongs to the landscape, rather
+// than the puzzle. Sparse small flakes leave every tile and sausage clear.
+[Stage(Layers.Air, 1)]
+view Weatherfall(Kitchen kitchen, Room room, Models models, Lens lens, mut Weather weather)
+{
+    weather.flakes.Clear();
+    if (kitchen.travelling || !kitchen.laid || room.region < 2) return;
+    var size = kitchen.board.size;
+    var snow = room.region == 2;
+    for (var i = 0; i < 28; i++)
+    {
+        var phase = Math.Frac(i * 0.618 + room.time * (snow ? -0.065 : 0.045));
+        var x = (Math.Frac(i * 0.417) - 0.5) * (size.x + 5) + Math.Sin(room.time * 0.45 + i * 1.7) * 0.3;
+        var z = (Math.Frac(i * 0.713) - 0.5) * (size.y + 4);
+        var y = 0.12 + phase * 3.1;
+        var scale = snow ? 0.04 : 0.025;
+        var tint = snow ? Color(0.76, 0.84, 0.89) : Color(0.49, 0.4, 0.43);
+        weather.flakes.Add(Mote { transform = float4x4.TRS(float3(x, y, z), quaternion.identity, float3(scale)), tint = tint });
+    }
+    lens.scene.Depth(Depth.Read)
+    {
+        lens.scene.Instanced(models.cube, models.cubeFaces, weather.flakes, Snap, MoteLook);
+    }
+}
