@@ -37,8 +37,8 @@ typedef struct tide_run_desc {
     // --debug-views on the command line: F7 shows the profiler (tide/profiler.h)
     bool debug_views;
     // The command line: --host, --join and --connect, --debug-views, --size,
-    // and --capture, --frames, --script and --scale for a run with no window
-    // (see tide/run.h)
+    // and --capture, --frames, --script, --scale and --players for a run with
+    // no window (see tide/run.h)
     int argc;
     char **argv;
 } tide_run_desc;
@@ -360,7 +360,9 @@ static inline void tide_run_request(const tide_session_request *request, const v
         // Players join on a UDP port (not on the web), and in a room. A match
         // opened before opens again where it was.
         if (!tide_session_status_of(s).server || tide_session_open(s, (tide_transport){0})) break;
-        if (port_ok && tide_platform_host_open(port, &network)) {
+        // In a run of several players with no window, the network is made up (tide_platform_players)
+        if (port_ok && (tide_platform_players() ? tide_platform_players_open(port, &network)
+                                                : tide_platform_host_open(port, &network))) {
             tide_session_open(s, network);
             break;
         }
@@ -377,7 +379,8 @@ static inline void tide_run_request(const tide_session_request *request, const v
         break;
     case TIDE_REQUEST_JOIN:
         tide_run_discard_commands();
-        if (!tide_platform_room_join(request->text, &network, &server)) {
+        if (!(tide_platform_players() ? tide_platform_players_join(request->text, &network, &server)
+                                      : tide_platform_room_join(request->text, &network, &server))) {
             fprintf(stderr, "tide: can't join room '%s'\n", request->text);
             tide_session_leave(s);
             tide_session_fail(s, TIDE_DISCONNECT_FAILED);
@@ -387,7 +390,9 @@ static inline void tide_run_request(const tide_session_request *request, const v
         break;
     case TIDE_REQUEST_CONNECT:
         tide_run_discard_commands();
-        if (!port || !tide_platform_resolve(request->text, port, &server) || !tide_platform_udp_open(0, &network)) {
+        if (!port || !(tide_platform_players()
+                           ? tide_platform_players_connect(request->text, port, &network, &server)
+                           : tide_platform_resolve(request->text, port, &server) && tide_platform_udp_open(0, &network))) {
             fprintf(stderr, "tide: can't reach '%s'\n", request->text);
             tide_session_leave(s);
             tide_session_fail(s, TIDE_DISCONNECT_FAILED);
@@ -519,14 +524,46 @@ static inline void tide_run_configure(const tide_run_desc *desc)
             tide_run_headless_desc.microphone =
                 tide_run_value(&i, arg, "a WAV or Ogg Vorbis file the microphone plays in the run, like --microphone voice.wav");
             tide_run_headless = true;
+        } else if (strcmp(arg, "--players") == 0) {
+            const char *takes = "how many players the run has, from 1 to 32, like --players 2";
+            tide_run_headless_desc.players = tide_run_whole(&i, arg, 32u, takes);
+            if (!tide_run_headless_desc.players) {
+                fprintf(stderr, "tide: --players takes %s, not '0'\n", takes);
+                exit(2);
+            }
+        } else if (strcmp(arg, "--player") == 0) {
+            // What the first player of such a run starts the others with, after its own command line
+            const char *takes = "which player of a run this is and where its first listens: it's what --players starts the others with";
+            tide_run_headless_desc.player = tide_run_whole(&i, arg, 32u, takes);
+            tide_run_headless_desc.hub = tide_run_whole(&i, arg, 65535u, takes);
         }
     }
     if (scaled && !tide_run_headless) {
         fprintf(stderr, "tide: --scale is for a run with no window: with --capture, --frames or --script\n");
         exit(2);
     }
+    if (tide_run_headless_desc.players) {
+        const uint32_t players = tide_run_headless_desc.players;
+        tide_session_request asked;
+        if (!tide_run_headless) {
+            fprintf(stderr, "tide: --players is for a run with no window: with --capture, --frames or --script\n");
+            exit(2);
+        }
+        if (players > tide_game_players(tide_run_game->game)) {
+            fprintf(stderr, "tide: --players %u is more players than the game takes: its maxPlayers is %u\n", (unsigned)players,
+                    (unsigned)tide_game_players(tide_run_game->game));
+            exit(2);
+        }
+        if (tide_run_arguments(&asked)) {
+            fprintf(stderr, "tide: --players takes no --host, --join or --connect: its first player opens Main's match and the "
+                            "others join it, and where Main is local, the game's own code does, as its script has it\n");
+            exit(2);
+        }
+    }
     tide_run_headless_desc.width = tide_run_settings.width;
     tide_run_headless_desc.height = tide_run_settings.height;
+    tide_run_headless_desc.argc = tide_run_settings.argc;
+    tide_run_headless_desc.argv = tide_run_settings.argv;
 #if defined(__wasm__) || defined(__ANDROID__)
     if (tide_run_headless) {
         fprintf(stderr, "tide: --capture, --frames and --script run a game with no window, on desktop only\n");
@@ -643,7 +680,16 @@ static inline void tide_run_begin(void)
     game->local_init(tide_run_local);
     tide_run_session = tide_run_new_session();
     tide_session_request request = {0};
-    const bool asked = tide_run_arguments(&request);
+    bool asked = tide_run_arguments(&request);
+    if (tide_platform_players() && !game->main_is_local) {
+        // A run of several players: the first opens Main's match, as --host would, and the others join its room
+        asked = true;
+        request = (tide_session_request){.kind = TIDE_REQUEST_OPEN, .port = TIDE_DEFAULT_PORT};
+        if (tide_platform_player() != 1u) {
+            request.kind = TIDE_REQUEST_JOIN;
+            tide_platform_players_room(1u, request.text, sizeof request.text);
+        }
+    }
     const bool open = asked && request.kind == TIDE_REQUEST_OPEN;
     if (asked && !open) {
         tide_run_request(&request, NULL); // --join or --connect
@@ -753,7 +799,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     game->frame_time(tide_run_local, seconds);
     // A room joined that isn't one, or whose host can't be reached, fails now
     // rather than timing out.
-    if (tide_platform_room_failed()) tide_session_fail(s, TIDE_DISCONNECT_FAILED);
+    if (tide_platform_room_failed() || tide_platform_players_failed()) tide_session_fail(s, TIDE_DISCONNECT_FAILED);
     // What the match's ticks send, for the game's local handlers: asked for
     // before the update, so the session records from its first tick
     tide_event_log *heard = game->events ? tide_session_events(s) : NULL;
@@ -775,7 +821,10 @@ static inline int tide_run_frame(void *user, const float seconds)
     const bool in_match = !status.server && status.client.state == TIDE_SESSION_CONNECTED;
     tide_platform_room_ping(in_match ? (int32_t)status.client.ping_ms : -1, status.client.answer_ms);
     char room[TIDE_ROOM_CODE_LENGTH + 1] = "";
-    if (status.open || !status.server) tide_platform_room_code(room, sizeof room); // A closed room isn't one to join
+    if (status.open || !status.server) { // A closed room isn't one to join
+        if (tide_platform_players()) tide_platform_players_code(room, sizeof room);
+        else tide_platform_room_code(room, sizeof room);
+    }
     game->set_session(tide_run_local, status.client.state, status.client.player, status.client.ping_ms, status.server,
                       status.open, room);
     tide_profiler_mark(profiler, TIDE_FRAME_MATCH);

@@ -63,6 +63,7 @@ enum {
     H_NORMALIZE_Q, H_MUL_Q, H_ROTATE_Q, H_INVERSE_Q, H_CONJUGATE_Q, H_NLERP_Q, H_SLERP_Q, H_ANGLE_Q, H_AXISANGLE_Q, H_EULER_Q,
     H_Q_FROM_M3, H_LOOKROTATION_Q, H_M3_FROM_Q, H_M4_FROM_M3, H_TRS, H_PERSPECTIVE, H_ORTHO,
     H_INVERSE2, H_INVERSE3, H_INVERSE4,
+    H_NORMALS, // tide_normals(m): what a mesh's normals go through to the world, for instance.Normal
     H_STRAIGHT, // tide_straight(c): a texture's pixel, which has its alpha worked into its color, as the color it is
     // Random's rolls on the type: tide_roll(), the next 32 bits of the stage's own generator, and what's made of them
     H_ROLL, H_MUL_HIGH, H_ROLL_INT, H_ROLL_INT_BETWEEN, H_ROLL_INT_BELOW, H_ROLL_FLOAT, H_ROLL_FLOAT_BETWEEN, H_ROLL_FLOAT_BELOW,
@@ -1137,6 +1138,20 @@ static const char *const helper_texts[H_COUNT] = {
                    "(-a21 * s5 + a22 * s4 - a23 * s3) * d, (a20 * s5 - a22 * s2 + a23 * s1) * d, "
                    "(-a20 * s4 + a21 * s2 - a23 * s0) * d, (a20 * s3 - a21 * s1 + a22 * s0) * d);\n"
                    "}\n",
+    // What a mesh's normals go through on their way to the world (instance.Normal): the inverse of the transform's
+    // 3 by 3, transposed, but for its length, which the normalize after it takes away. That's the cross products of
+    // pairs of the columns, tide_inverse3's rows before they're divided by the determinant, and turned round where
+    // the determinant is under 0, which is a transform that mirrors its mesh. So nothing is divided: a transform
+    // that flattens a mesh has no inverse, and its normals are still along the axis it flattened
+    [H_NORMALS] = "mat3 tide_normals(mat4 m) {\n"
+                  "    vec3 a = cross(m[1].xyz, m[2].xyz);\n"
+                  "    vec3 b = cross(m[2].xyz, m[0].xyz);\n"
+                  "    vec3 c = cross(m[0].xyz, m[1].xyz);\n"
+                  "    if (dot(m[0].xyz, a) < 0.0) {\n"
+                  "        return mat3(-a, -b, -c);\n"
+                  "    }\n"
+                  "    return mat3(a, b, c);\n"
+                  "}\n",
     // What a frag or a vert rolls with (Random.NextInt and the rest, on the type): `tide_dice`, a generator of the
     // pixel's or the vertex's own, which its stage makes as it starts (put_dice). Its state is 32 bits, as these GPUs
     // have no 64-bit integers, so it isn't the CPU's (tide/random.h): PCG's RXS-M-XS (O'Neill), a linear
@@ -3760,10 +3775,40 @@ static void ex_user_call(emit *em, const expr *e)
     sb_put(em->o, ")");
 }
 
+// instance.Normal(normal): a normal of the mesh as it is in the world, of
+// length 1. A normal isn't turned as a direction is (Math.Rotate): it stays
+// square to its surface only through the inverse of the transform,
+// transposed, which differs wherever the transform scales the mesh more one
+// way than another (tide_normals). The vertex stage works that matrix out
+// from the instance's transform: where a vert calls this, and once a vertex
+// for a frag that does (shader.frag_normals), which gets its three columns as
+// values that don't blend, so a pixel multiplies and normalizes and no more.
+// A 2D mesh has no transform, so its normal is only normalized.
+static void ex_normal(emit *em, const expr *e)
+{
+    if (em->checking) em->root->world_normal = true;
+    need(em, H_NORMALIZE3);
+    sb_put(em->o, "tide_normalize3(");
+    if (em->sh && em->sh->dims == 3 && em->stage == STAGE_FRAG) {
+        sb_printf(em->o, "%s(tide_normals0, tide_normals1, tide_normals2) * ", ty(em, (type){TY_FLOAT3X3, NULL}));
+    } else if (em->sh && em->sh->dims == 3) {
+        need(em, H_NORMALS);
+        sb_put(em->o, "tide_normals(");
+        put_bound(em, NULL, NULL, (type){TY_FLOAT4X4, NULL});
+        sb_put(em->o, ") * ");
+    }
+    sb_put(em->o, "(");
+    ex(em, e->args.items[0]);
+    sb_put(em->o, "))");
+}
+
 static void ex_call(emit *em, const expr *e)
 {
     const char *what = NULL;
     switch (e->call) {
+    case CALL_NORMAL:
+        ex_normal(em, e);
+        return;
     case CALL_CONSTRUCT:
         ex_construct(em, e);
         return;
@@ -5153,6 +5198,10 @@ static void put_varyings(emit *em, sb *o, const char *direction)
         if (wgsl) sb_printf(o, "    @location(%d) tide_world: vec3f,\n", location++);
         else sb_printf(o, "%s vec3 tide_world;\n", direction);
     }
+    for (int i = 0; sh->frag_normals && i < 3; i++) { // The columns of what normals go through (ex_normal), an instance's own
+        if (wgsl) sb_printf(o, "    @location(%d) @interpolate(flat) tide_normals%d: vec3f,\n", location++, i);
+        else sb_printf(o, "flat %s vec3 tide_normals%d;\n", direction, i);
+    }
     for (int i = 0; i < packs(sh->frag_floats); i++) {
         if (wgsl) sb_printf(o, "    @location(%d) @interpolate(flat) tide_f%d: vec4f,\n", location++, i);
         else sb_printf(o, "flat %s vec4 tide_f%d;\n", direction, i);
@@ -5236,6 +5285,13 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
         }
     }
     if (sh->frag_world) sb_printf(o, "    %stide_world = tide_place.xyz;\n", out);
+    if (sh->frag_normals) { // What the frag's instance.Normal multiplies by, worked out here, once a vertex
+        need(em, H_NORMALS);
+        sb_put(o, wgsl ? "    let tide_turned = tide_normals(" : "    mat3 tide_turned = tide_normals(");
+        put_bound(em, NULL, NULL, (type){TY_FLOAT4X4, NULL});
+        sb_put(o, ");\n");
+        for (int i = 0; i < 3; i++) sb_printf(o, "    %stide_normals%d = tide_turned[%d];\n", out, i, i);
+    }
     for (int ints = 0; ints < 2; ints++) {
         const int words = ints ? sh->frag_ints : sh->frag_floats;
         for (int p = 0; p < packs(words); p++) {
@@ -5393,6 +5449,7 @@ static void put_wgsl_inputs(const shader *sh, sb *o)
     for (int i = 0; i < packs(sh->frag_floats); i++) sb_printf(o, "var<private> tide_f%d: vec4f;\n", i);
     for (int i = 0; i < packs(sh->frag_ints); i++) sb_printf(o, "var<private> tide_g%d: vec4i;\n", i);
     sb_put(o, "var<private> tide_at: vec4f;\nvar<private> tide_world: vec3f;\n");
+    for (int i = 0; sh->frag_normals && i < 3; i++) sb_printf(o, "var<private> tide_normals%d: vec3f;\n", i);
 }
 
 // The generator a stage's code rolls with (put_dice), where it has one: a
@@ -5508,6 +5565,7 @@ static void write_wgsl(program *prog, shader *sh)
         sb_put(&o, "}\n@fragment fn fragment(in: tide_corner) -> tide_colors {\n    tide_at = in.tide_at;\n");
     }
     if (sh->frag_world) sb_put(&o, "    tide_world = in.tide_world;\n");
+    for (int i = 0; sh->frag_normals && i < 3; i++) sb_printf(&o, "    tide_normals%d = in.tide_normals%d;\n", i, i);
     for (int i = 0; i < packs(sh->frag_floats); i++) sb_printf(&o, "    tide_f%d = in.tide_f%d;\n", i, i);
     for (int i = 0; i < packs(sh->frag_ints); i++) sb_printf(&o, "    tide_g%d = in.tide_g%d;\n", i, i);
     sb_printf(&o, "%s}\n", fragment.data);
@@ -5573,6 +5631,7 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
 {
     if (!code) return;
     if (code->is_frag && code->pixel_world) sh->frag_world = true;
+    if (code->is_frag && code->world_normal && sh->dims == 3) sh->frag_normals = true;
     for (int i = 1; i < code->params.count; i++) {
         const param *p = &code->params.items[i];
         if (p->type.decl == prog->instance && p->reads && p->reads[0] && sh->dims == 3) {
@@ -5746,7 +5805,8 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     }
     // What the vert writes for the frag, each struct it takes as `out`, and what
     // of it the frag's parameter of that type reads: only that goes on
-    int varyings = (sh->frag_world ? 1 : 0) + packs(sh->frag_floats) + packs(sh->frag_ints) + (stage_rolls(sh, STAGE_FRAG) ? 1 : 0);
+    int varyings = (sh->frag_world ? 1 : 0) + (sh->frag_normals ? 3 : 0) + packs(sh->frag_floats) + packs(sh->frag_ints)
+                 + (stage_rolls(sh, STAGE_FRAG) ? 1 : 0);
     for (int i = 1; sh->vert && i < sh->vert->params.count; i++) {
         const param *from = &sh->vert->params.items[i];
         if (!from->is_out || from->type.kind != TY_STRUCT) continue;
@@ -5799,6 +5859,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         if (stage_rolls(sh, STAGE_FRAG)) {
             diag_note("one of them is for its rolls: which instance of its draw a pixel is of, which its generator is made of");
         }
+        if (sh->frag_normals) diag_note("three of them are what its 'Normal' turns the mesh's normals into the world by");
         return NULL;
     }
     if (uniform_bytes > 3984) { // TIDE_SHADER_UNIFORM_BYTES

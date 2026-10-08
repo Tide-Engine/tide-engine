@@ -1,0 +1,14 @@
+// expect: 'Normal' has no parameter 'direction'
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+frag Shade(Corner corner, out Color color, Instance instance)
+{
+    float3 normal = instance.Normal(direction: corner.normal);
+    color = Color(normal.x, normal.y, normal.z, 1);
+}

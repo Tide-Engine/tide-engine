@@ -685,14 +685,14 @@ The engine supplies the draw's transform through `Instance instance`, and the pi
 ```csharp
 frag Lit(BoxVertex vertex, out Color color, Instance instance, Sun sun)
 {
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, vertex.normal));
+    float3 normal = instance.Normal(vertex.normal);
     float3 toLight = Math.Normalize(sun.position - this.world);
     color = Color.white * Math.Max(Math.Dot(normal, toLight), 0.1);
     color.a = 1;
 }
 ```
 
-The sphere below has a vertex of its own, with a normal, and a frag that lights each pixel from it: the normal turned into the world by `instance.transform`, against a light the slider moves. **Bands** rounds the light to steps, in the same frag.
+The sphere below has a vertex of its own, with a normal, and a frag that lights each pixel from it: the normal as it is in the world, from `instance.Normal`, against a light the slider moves. **Squash** flattens the sphere through the draw's transform, and its light stays right. **Bands** rounds the light to steps, in the same frag.
 
 ::: tide-example lighting Lighting, in a frag
 
@@ -700,7 +700,11 @@ The sphere below has a vertex of its own, with a normal, and a frag that lights 
 
 :::
 
-- `Instance instance`, in a frag or a vert: `instance.transform` is the `float4x4` the draw was given, so `Math.Rotate(instance.transform, vertex.normal)` is a normal in the world.
+- `Instance instance`, in a frag or a vert, is how the mesh was drawn:
+  - `instance.transform` is the `float4x4` the draw was given: `Math.Transform(instance.transform, vertex.position)` is a corner's place in the world.
+  - `instance.Normal(vertex.normal)` is a normal of the mesh as it is in the world, of length 1, however the transform scales the mesh. Nothing more is sent for it: the GPU works it out from the transform, once a vertex.
+  - **A normal isn't turned like a direction.** `Math.Rotate(instance.transform, vertex.normal)` is right only for a mesh scaled the same every way. On a ball drawn as an egg, or a cylinder drawn as a flat disc, it leans the normals the wrong way, and the lighting is subtly off with nothing to say why. `Normal` is right for those, for a mesh turned inside out by a scale under 0 (its normals still point out of it), and for one flattened to nothing along an axis (they're along that axis).
+  - A vert that moves its mesh's corners itself (a wave, a bend) changes its normals in ways only the game knows: `Normal` goes by the draw's transform.
 - In a frag, `this` is the pixel it runs for, as `this` in a system is its entity. It needs no parameter, and its fields are read-only:
   - `this.world`, a `float3`: where on the mesh the pixel is, in the world.
   - `this.position`, a `float2`: where it is in the destination's logical pixels from the top left, as [`Draw.Screen`](./views.md#on-the-screen)'s.

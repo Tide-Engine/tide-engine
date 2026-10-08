@@ -52,7 +52,6 @@ struct Corner
 struct Solid
 {
     float4x4 transform = float4x4.identity;
-    float3 size = float3(1);   // What the transform scales it by, which its frag needs for a squashed mesh's normals
     Color tint = Color.white;
     float gloss;
     float glow;
@@ -367,7 +366,7 @@ frag Baked(Corner corner, out Color color, Room room, Shadow shadow)
 // tint where a corner's paint isn't its own.
 frag Plain(Corner corner, out Color color, Solid solid, Instance instance, Room room, Shadow shadow)
 {
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal / (solid.size * solid.size)));
+    float3 normal = instance.Normal(corner.normal);
     if (Is(solid.kind, CLOUD))
     {
         // A cloud is lit by the sky more than by the sun, and has no shadow on it
@@ -392,7 +391,7 @@ frag Plain(Corner corner, out Color color, Solid solid, Instance instance, Room 
 // deck's own mesh, so it turns with it.
 frag DeckLook(Corner corner, out Color color, Solid solid, Instance instance, Room room, Shadow shadow)
 {
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal / (solid.size * solid.size)));
+    float3 normal = instance.Normal(corner.normal);
     float sun = Sunlight(shadow.depth, this.world, normal, shadow.toLamp) * CloudShade(float2(this.world.x, this.world.z), room.time);
     mut Color paint = solid.tint;
     float2 on = float2(corner.position.x, corner.position.z);

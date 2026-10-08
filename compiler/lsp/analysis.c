@@ -895,8 +895,9 @@ static void walk_value(const expr *e)
             add_occ(o);
         } else if (e->call == CALL_ADD || e->call == CALL_REMOVE || e->call == CALL_DESTROY || e->call == CALL_SEND
                    || e->call == CALL_LIST || e->call == CALL_MAP || e->call == CALL_GRID || e->call == CALL_SNAP
-                   || e->call == CALL_DISCARD) {
-            o.kind = OCC_METHOD; // e.Destroy(), items.Add(x), scores.TryGet(k, out v), cells.Clear(), this.Snap(), this.Discard()
+                   || e->call == CALL_DISCARD || e->call == CALL_NORMAL) {
+            // e.Destroy(), items.Add(x), scores.TryGet(k, out v), cells.Clear(), this.Snap(), this.Discard(), instance.Normal(n)
+            o.kind = OCC_METHOD;
             add_occ(o);
         } else if (e->call == CALL_LOAD || e->call == CALL_UNLOAD || e->call == CALL_SCENE_PLAYER) {
             add_occ((occurrence){.at = e->object->at, .len = 5, .kind = OCC_OWNER, .owner = str_from("Scene"),
@@ -1692,6 +1693,7 @@ static void format_data_decl(const decl *d, sb *out)
         sb_put(out, ";\n");
     }
     if (d == A.prog->pixel) sb_put(out, "\n    void Discard();\n"); // Its one method (pixel_calls)
+    if (d == A.prog->instance) sb_put(out, "\n    float3 Normal(float3 normal);\n"); // ...and an Instance's (instance_calls)
     sb_put(out, "}");
 }
 
@@ -1931,6 +1933,17 @@ static const method_form pixel_calls[] = {
      "itself."},
 };
 
+// An Instance's one method, in a frag or a vert.
+static const method_form instance_calls[] = {
+    {"Normal", "Normal(float3 normal) -> float3",
+     "A normal of the mesh as it is in the world, of length 1: `instance.Normal(vertex.normal)`. It's right however "
+     "the draw's transform scales the mesh, where `Math.Rotate(instance.transform, normal)` leans a normal over on "
+     "a mesh scaled more one way than another: a ball drawn as an egg, a cylinder as a flat disc. A mirrored mesh's "
+     "normals point out of it, and a mesh flattened along an axis has that axis for its normals. Nothing more is "
+     "sent for it: the GPU works it out from the transform, once a vertex. A 2D mesh has no transform, so its normal "
+     "comes back as it is, of length 1."},
+};
+
 // A frag's implicit pixel and a frag's or vert's Instance parameter.
 static const char *shader_record_doc(const decl *d)
 {
@@ -1940,7 +1953,7 @@ static const char *shader_record_doc(const decl *d)
     }
     if (d && d == A.prog->instance) {
         return "A frag's or vert's parameter: how the mesh was drawn. Its `transform` is sent to the GPU for each "
-               "instance.";
+               "instance, and `Normal(normal)` gives a normal of the mesh as it is in the world.";
     }
     return NULL;
 }
@@ -2076,9 +2089,13 @@ static const method_form *methods_of(const type t, size_t *count)
     case TY_SINGLETON: forms = singleton_calls; *count = sizeof singleton_calls / sizeof singleton_calls[0]; break;
     case TY_WORLD: forms = world_calls; *count = sizeof world_calls / sizeof world_calls[0]; break;
     case TY_RECORD:
-        if (t.decl != A.prog->pixel) break;
-        forms = pixel_calls;
-        *count = sizeof pixel_calls / sizeof pixel_calls[0];
+        if (t.decl == A.prog->instance) {
+            forms = instance_calls;
+            *count = sizeof instance_calls / sizeof instance_calls[0];
+        } else if (t.decl == A.prog->pixel) {
+            forms = pixel_calls;
+            *count = sizeof pixel_calls / sizeof pixel_calls[0];
+        }
         break;
     default: break;
     }
@@ -6031,7 +6048,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     if (t.kind == TY_ENTITY && local) {
         item(c, "Send", CK_METHOD, "Send(command)", "Submits a command to this match entity; its handler checks the authenticated sender and untrusted payload.", "Send($1)");
     }
-    const bool pixel = t.kind == TY_RECORD && t.decl == A.prog->pixel;
+    const bool pixel = t.kind == TY_RECORD && (t.decl == A.prog->pixel || t.decl == A.prog->instance); // ...and an Instance's
     if (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID || changes || pixel) {
         size_t count;
         const method_form *forms = methods_of(t, &count);

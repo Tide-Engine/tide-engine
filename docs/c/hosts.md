@@ -35,7 +35,7 @@ int main(int argc, char **argv)
 
 It opens a window and runs the game in a session (`tide/session.h`): it samples this machine's input once per tick, hands the game's [local handlers](../game/events.md#local-handlers) what the match sent, draws the views and the GUI every frame, drains their [commands](../game/commands.md) into the session, and takes `--host [port]`, `--join code` and `--connect address` from the command line. `--host` opens the match, in a room (see [Matches](../multiplayer/matches.md#rooms)), and a UDP port too, except on the web. `title` and `tick_rate` go over the game's settings (see [Settings](../language/basics.md#settings)): leave them out for those, and `game_name` stands in for a title the game doesn't set. `--seed 7` picks the [seed](../language/math.md#the-match-s-seed) of the matches it starts, where the system picks another one for each without it. `tide_run_desc` also has `width` and `height` (960 by 540 by default, and `--size 1280 720` on the command line goes over them), `stats`, which shows the stats whether or not the game's `stats` setting does, `stats_open`, which starts them open rather than as their one line, and `debug_views`, which turns the [debug views](../tools/debug-views.md) on as the game's `debugViews` setting and `--debug-views` on the command line do.
 
-It also takes `--capture`, `--frames`, `--script` and `--scale`, which run the game [with no window](#without-a-window) (see [the tide command](../tools/cli.md#without-a-window) for what they do). So every game `tide_add_game` builds without `HOST` has them, and so does one `tide build` made.
+It also takes `--capture`, `--frames`, `--script`, `--scale` and `--players`, which run the game [with no window](#without-a-window) (see [the tide command](../tools/cli.md#without-a-window) for what they do). So every game `tide_add_game` builds without `HOST` has them, and so does one `tide build` made.
 
 The stats are `tide/stats.h`, for a host of its own to show too: a drawer the host gives its numbers to (`tide_stats_values`) and draws over its frame (`tide_stats_draw`, into a list for `tide_platform_draw_over`). Right after polling the devices, the host says what the player did with it (`tide_stats_input`, with the key that opens it), and then hides the presses that are on it from the copies of the devices its game samples and its GUI reads (`tide_stats_hide`).
 
@@ -199,6 +199,8 @@ These names are new, and may still change.
   ```
 
 - `tide_platform_run` ends the program with exit code 0 after `frames` frames or at the script's `quit`, whichever is first, and with 1 when a picture couldn't be written. `tide_platform_open_headless` ends it with 2, having said why, when a line of the script is wrong or nothing ends the run.
+
+- With `.players` (and the program's `.argc` and `.argv`), the run is one of [several players](../tools/cli.md#several-players): the program starts itself again for each of the others, with `--player <number> <port>` after its own command line, which a host reads into `.player` and `.hub` there. The network between them is made up, so a host opens and joins matches through `tide_platform_players_open`, `tide_platform_players_join` and `tide_platform_players_connect` while `tide_platform_players()` isn't 0, as the standard host does (`tide_run_request` in `tide/host.h`).
 
 It's for desktops: there's no headless window on the web or Android. `tide_platform_read_pixels`, which tests use to check a few pixels of a draw list, works with any window.
 
