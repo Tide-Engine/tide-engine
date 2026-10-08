@@ -1,0 +1,397 @@
+// What stands still in Tag: the island, and everything on it but the kids
+// and what turns or swings. It's all added to two meshes as the game starts,
+// with the shapes of shapes.tide, and drawn from then on as it is: the land,
+// which the ground's frag paints, and what stands on it, each corner with its
+// own paint.
+
+local singleton Scenery
+{
+    List<Corner> land;
+    List<int> landFaces;
+    List<Corner> mesh;
+    List<int> faces;
+    List<Blade> grass;
+    bool made;
+}
+
+// How far out and how far down a ring of the rock under the island is: it
+// narrows to a point.
+float2 LandRing(int ring)
+{
+    switch (ring)
+    {
+        case 0: return float2(1, 0);
+        case 1: return float2(0.985, -0.6);
+        case 2: return float2(0.83, -2.0);
+        case 3: return float2(0.56, -3.7);
+        case 4: return float2(0.27, -5.4);
+    }
+    return float2(0, -6.8);
+}
+
+float3 LandPoint(int ring, int step, int around)
+{
+    float turn = (step % around) * Math.TAU / around;
+    var shape = LandRing(ring);
+    var rough = ring == 0 ? 0.0 : Math.Perlin(float2(Math.Cos(turn) * 2.3 + ring * 3.7, Math.Sin(turn) * 2.3 + ring * 1.3)) * (0.05 + ring * 0.035);
+    var far = ISLAND * shape.x * (1 + rough);
+    return float3(Math.Cos(turn) * far, shape.y * (1 + rough * 0.6), Math.Sin(turn) * far);
+}
+
+// The island: a flat top, and rock under it, cut in facets, down to a point.
+void PutLand(mut Scenery scenery)
+{
+    var plain = Ink(Color.white, PLAIN, 0);
+    var around = 56;
+    var none = float2(0);
+    for (var step = 0; step < around; step++)
+    {
+        PutTriangle(scenery.land, scenery.landFaces, plain, float3(0), LandPoint(0, step, around), LandPoint(0, step + 1, around), float3(0, 1, 0), none, none, none);
+        for (var ring = 0; ring < 4; ring++)
+        {
+            var a = LandPoint(ring, step, around);
+            var b = LandPoint(ring, step + 1, around);
+            var c = LandPoint(ring + 1, step + 1, around);
+            var d = LandPoint(ring + 1, step, around);
+            var out = float3(a.x + b.x, -2, a.z + b.z);
+            PutTriangle(scenery.land, scenery.landFaces, plain, a, b, c, out, none, none, none);
+            PutTriangle(scenery.land, scenery.landFaces, plain, a, c, d, out, none, none, none);
+        }
+        var low = LandPoint(4, step, around);
+        var next = LandPoint(4, step + 1, around);
+        PutTriangle(scenery.land, scenery.landFaces, plain, low, next, float3(0, -6.8, 0), float3(low.x + next.x, -1, low.z + next.z), none, none, none);
+    }
+}
+
+// A tree: a trunk that spreads at its foot, boughs, and leaves in lumps, or
+// for a fir a pole and four skirts.
+void PutTree(mut Scenery scenery, float3 at, float size, bool fir, int seed)
+{
+    mut var dice = Random(seed);
+    var bark = Ink(Color(0.46, 0.32, 0.22), WOOD, 0.1);
+    if (fir)
+    {
+        PutTube(scenery.mesh, scenery.faces, bark, at, at + float3(0, 1.0 * size, 0), 0.17 * size, 0.11 * size, 8);
+        List<float2> skirt = [float2(0, 0), float2(1.0, 0.03), float2(0.92, 0.12), float2(0.52, 0.5), float2(0.22, 0.95), float2(0, 1.15)];
+        for (var i = 0; i < 4; i++)
+        {
+            var shade = 0.82 + i * 0.08;
+            PutLathe(scenery.mesh, scenery.faces, Ink(Color(0.13 * shade, 0.42 * shade, 0.26 * shade), LEAF, 0.1),
+                     at + float3(0, (0.55 + i * 0.62) * size, 0), skirt, float2((1.05 - i * 0.2) * size, 1.05 * size), 11);
+        }
+        return;
+    }
+    List<float2> trunk = [float2(0.38, 0), float2(0.25, 0.14), float2(0.18, 0.55), float2(0.15, 1.4), float2(0.12, 1.95)];
+    PutLathe(scenery.mesh, scenery.faces, bark, at, trunk, float2(size, size), 9);
+    for (var i = 0; i < 3; i++)
+    {
+        var way = dice.NextFloat2Direction() * 0.62;
+        PutTube(scenery.mesh, scenery.faces, bark, at + float3(0, 1.3 * size, 0), at + float3(way.x, 2.05, way.y) * size, 0.09 * size, 0.05 * size, 6);
+    }
+    PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.24, 0.55, 0.27), LEAF, 0.15), at + float3(0, 2.3, 0) * size, float3(1.05, 0.9, 1.05) * size,
+            seed * 1.3, 0.2, false, 10, 14);
+    for (var i = 0; i < 5; i++)
+    {
+        var way = dice.NextFloat2Direction() * dice.NextFloat(0.5, 0.82);
+        var shade = dice.NextFloat(0.82, 1.22);
+        PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.24 * shade, 0.56 * shade, 0.27 * shade), LEAF, 0.15),
+                at + float3(way.x, 2.0 + dice.NextFloat(0, 0.95), way.y) * size, float3(dice.NextFloat(0.5, 0.75)) * size, seed + i * 2.7, 0.22, false, 8, 12);
+    }
+}
+
+// The picket fence round the yard: posts with a ball on each, two rails a
+// side, and pointed pickets between the posts.
+void PutFence(mut Scenery scenery)
+{
+    var white = Ink(Color(0.97, 0.95, 0.9), WOOD, 0.2);
+    var edge = YARD + 0.22;
+    for (var side = 0; side < 4; side++)
+    {
+        var alongX = side < 2;
+        float far = side % 2 == 0 ? edge : -edge;
+        for (var i = 0; i < 2; i++)
+        {
+            var height = 0.18 + i * 0.22;
+            PutBox(scenery.mesh, scenery.faces, white, alongX ? float3(0, height, far) : float3(far, height, 0),
+                   alongX ? float3(edge * 2, 0.07, 0.04) : float3(0.04, 0.07, edge * 2));
+        }
+        for (var i = -24; i <= 24; i++)
+        {
+            float along = i * edge / 24;
+            var at = alongX ? float3(along, 0, far) : float3(far, 0, along);
+            if (i % 4 == 0)
+            {
+                PutBox(scenery.mesh, scenery.faces, white, at + float3(0, 0.33, 0), float3(0.15, 0.66, 0.15));
+                PutBox(scenery.mesh, scenery.faces, white, at + float3(0, 0.67, 0), float3(0.2, 0.04, 0.2));
+                PutBlob(scenery.mesh, scenery.faces, white, at + float3(0, 0.77, 0), float3(0.085), 0, 0, false, 6, 8);
+                continue;
+            }
+            PutBox(scenery.mesh, scenery.faces, white, at + float3(0, 0.24, 0), alongX ? float3(0.11, 0.48, 0.04) : float3(0.04, 0.48, 0.11));
+            PutRoof(scenery.mesh, scenery.faces, white, at + float3(0, 0.48, 0), float3(0.04, 0.09, 0.11), alongX);
+        }
+    }
+}
+
+// The schoolhouse, behind the yard: brick walls, a tiled roof with a chimney,
+// a door under a porch, two windows with shutters, and on the ridge a tower
+// for the bell, which hangs in it (show.tide).
+void PutSchool(mut Scenery scenery)
+{
+    var up = float3(0, 1, 0);
+    var school = float3(0.8, 0, 8.9);
+    var brick = Ink(Color(0.74, 0.36, 0.29), BRICK, 0.05);
+    var tiles = Ink(Color(0.36, 0.4, 0.5), ROOF, 0.3);
+    var white = Ink(Color(0.97, 0.95, 0.9), WOOD, 0.2);
+    var stone = Ink(Color(0.72, 0.7, 0.66), STONE, 0.1);
+    var teal = Ink(Color(0.16, 0.5, 0.52), WOOD, 0.5);
+    PutBox(scenery.mesh, scenery.faces, stone, school + float3(0, 0.06, 0), float3(5.4, 0.12, 2.6));
+    PutBox(scenery.mesh, scenery.faces, brick, school + float3(0, 1.2, 0), float3(5.2, 2.4, 2.4));
+    PutRoof(scenery.mesh, scenery.faces, brick, school + float3(0, 2.4, 0), float3(5.2, 1.15, 2.4), false); // The walls' ends, up under the roof
+    // The roof: a slab of tiles down each side, and a ridge along the top
+    for (var side = -1; side <= 1; side += 2)
+    {
+        var down = Math.Normalize(float3(0, -1.25, 1.5 * side));
+        var slab = Placed(tiles, school + float3(0, 2.4 + 1.2 - 0.625, 0.75 * side), quaternion.LookRotation(down, up));
+        PutBox(scenery.mesh, scenery.faces, slab, float3(0), float3(5.7, 0.09, 2.0));
+    }
+    PutTube(scenery.mesh, scenery.faces, Ink(Color(0.28, 0.31, 0.4), PLAIN, 0.4), school + float3(-2.87, 3.64, 0), school + float3(2.87, 3.64, 0), 0.08, 0.08, 8);
+    PutBox(scenery.mesh, scenery.faces, brick, school + float3(-1.7, 3.35, 0.55), float3(0.5, 1.4, 0.5));
+    PutBox(scenery.mesh, scenery.faces, stone, school + float3(-1.7, 4.08, 0.55), float3(0.62, 0.1, 0.62));
+
+    // The door, its step, and the porch over it
+    var front = school + float3(0, 0, -1.2);
+    PutBox(scenery.mesh, scenery.faces, white, front + float3(0, 0.84, -0.02), float3(0.98, 1.68, 0.08));
+    PutBox(scenery.mesh, scenery.faces, teal, front + float3(0, 0.8, -0.05), float3(0.78, 1.54, 0.07));
+    PutBox(scenery.mesh, scenery.faces, Ink(Color(0.13, 0.42, 0.44), WOOD, 0.5), front + float3(0, 1.12, -0.09), float3(0.54, 0.62, 0.02));
+    PutBox(scenery.mesh, scenery.faces, Ink(Color(0.13, 0.42, 0.44), WOOD, 0.5), front + float3(0, 0.42, -0.09), float3(0.54, 0.5, 0.02));
+    PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.98, 0.78, 0.25), PLAIN, 2), front + float3(0.28, 0.8, -0.11), float3(0.045), 0, 0, false, 5, 8);
+    PutBox(scenery.mesh, scenery.faces, stone, front + float3(0, 0.07, -0.32), float3(1.4, 0.14, 0.6));
+    PutRoof(scenery.mesh, scenery.faces, tiles, front + float3(0, 1.8, -0.3), float3(0.7, 0.34, 1.4), true);
+    PutTube(scenery.mesh, scenery.faces, white, front + float3(-0.6, 1.8, -0.58), front + float3(-0.6, 1.3, -0.02), 0.03, 0.03, 6);
+    PutTube(scenery.mesh, scenery.faces, white, front + float3(0.6, 1.8, -0.58), front + float3(0.6, 1.3, -0.02), 0.03, 0.03, 6);
+    for (var i = 0; i < 2; i++)
+    {
+        var window = front + float3(i == 0 ? -1.6 : 1.6, 1.35, 0);
+        PutBox(scenery.mesh, scenery.faces, white, window - float3(0, 0, 0.02), float3(1.12, 1.0, 0.06));
+        PutBox(scenery.mesh, scenery.faces, Ink(Color(0.36, 0.52, 0.66), GLASS, 2), window - float3(0, 0, 0.04), float3(0.96, 0.84, 0.05));
+        PutBox(scenery.mesh, scenery.faces, white, window - float3(0, 0, 0.06), float3(0.05, 0.84, 0.04));
+        PutBox(scenery.mesh, scenery.faces, white, window - float3(0, 0, 0.06), float3(0.96, 0.05, 0.04));
+        PutBox(scenery.mesh, scenery.faces, white, window - float3(0, 0.56, 0.07), float3(1.24, 0.07, 0.16));
+        PutBox(scenery.mesh, scenery.faces, teal, window - float3(0.72, 0, 0.03), float3(0.28, 0.96, 0.05));
+        PutBox(scenery.mesh, scenery.faces, teal, window - float3(-0.72, 0, 0.03), float3(0.28, 0.96, 0.05));
+    }
+
+    // The bell's tower, astride the ridge: a box, four posts, and a pointed roof
+    var tower = school + float3(1.6, 3.55, 0);
+    PutBox(scenery.mesh, scenery.faces, white, tower + float3(0, 0.12, 0), float3(0.92, 0.56, 0.92));
+    for (var i = 0; i < 4; i++)
+    {
+        PutBox(scenery.mesh, scenery.faces, white, tower + float3(i % 2 == 0 ? 0.38 : -0.38, 0.78, i < 2 ? 0.38 : -0.38), float3(0.1, 0.76, 0.1));
+    }
+    PutBox(scenery.mesh, scenery.faces, white, tower + float3(0, 1.19, 0), float3(1.0, 0.08, 1.0));
+    PutPyramid(scenery.mesh, scenery.faces, tiles, tower + float3(0, 1.23, 0), 0.58, 0.75);
+    PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.98, 0.78, 0.25), PLAIN, 2.5), tower + float3(0, 2.04, 0), float3(0.08), 0, 0, false, 6, 8);
+    PutTube(scenery.mesh, scenery.faces, white, tower + float3(-0.4, 1.12, 0), tower + float3(0.4, 1.12, 0), 0.03, 0.03, 6);
+}
+
+// The slide, west of the yard: a tower with a pointed roof, a ladder up one side,
+// and a chute that curves down the other.
+void PutSlide(mut Scenery scenery)
+{
+    var up = float3(0, 1, 0);
+    var slide = float3(-8.9, 0, 1.3);
+    var blue = Ink(Color(0.22, 0.47, 0.9), PLAIN, 0.8);
+    var yellow = Ink(Color(0.98, 0.78, 0.2), PLAIN, 0.6);
+    var red = Ink(Color(0.9, 0.3, 0.27), PLAIN, 0.6);
+    PutBox(scenery.mesh, scenery.faces, Ink(Color(0.66, 0.47, 0.29), WOOD, 0.1), slide + float3(0, 1.35, 0), float3(1.1, 0.08, 1.1));
+    for (var i = 0; i < 4; i++)
+    {
+        var post = slide + float3(i % 2 == 0 ? 0.5 : -0.5, 0, i < 2 ? 0.5 : -0.5);
+        PutTube(scenery.mesh, scenery.faces, blue, post, post + float3(0, 2.35, 0), 0.05, 0.05, 8);
+    }
+    PutBox(scenery.mesh, scenery.faces, blue, slide + float3(0, 2.33, 0), float3(1.16, 0.06, 1.16));
+    PutPyramid(scenery.mesh, scenery.faces, red, slide + float3(0, 2.36, 0), 0.72, 0.62);
+    PutBlob(scenery.mesh, scenery.faces, yellow, slide + float3(0, 3.02, 0), float3(0.07), 0, 0, false, 5, 8);
+    PutTube(scenery.mesh, scenery.faces, blue, slide + float3(-0.5, 1.9, 0.5), slide + float3(0.5, 1.9, 0.5), 0.03, 0.03, 6);
+    // The chute: steep at the top, and it flattens out
+    mut var before = slide + float3(0, 1.36, -0.55);
+    for (var i = 1; i <= 9; i++)
+    {
+        float t = i / 9.0;
+        var next = slide + float3(0, 1.26 * Math.Pow(1 - t, 1.7) + 0.1, -0.55 - 3.3 * t);
+        var along = next - before;
+        var length = Math.Length(along);
+        var piece = Placed(yellow, (before + next) * 0.5, quaternion.LookRotation(along / length, up));
+        PutBox(scenery.mesh, scenery.faces, piece, float3(0), float3(0.8, 0.05, length + 0.03));
+        PutBox(scenery.mesh, scenery.faces, piece, float3(0.4, 0.11, 0), float3(0.05, 0.24, length + 0.03));
+        PutBox(scenery.mesh, scenery.faces, piece, float3(-0.4, 0.11, 0), float3(0.05, 0.24, length + 0.03));
+        before = next;
+    }
+    // The ladder
+    for (var side = -1; side <= 1; side += 2)
+    {
+        PutTube(scenery.mesh, scenery.faces, blue, slide + float3(0.3 * side, 0, 1.25), slide + float3(0.3 * side, 1.38, 0.6), 0.04, 0.04, 6);
+    }
+    for (var i = 1; i <= 4; i++)
+    {
+        float t = i / 5.0;
+        PutTube(scenery.mesh, scenery.faces, blue, slide + float3(-0.3, 1.38 * t, 1.25 - 0.65 * t), slide + float3(0.3, 1.38 * t, 1.25 - 0.65 * t), 0.03, 0.03, 6);
+    }
+}
+
+// The swings' frame, east of the yard: a bar on two pairs of legs. The swings
+// themselves move (show.tide).
+void PutSwings(mut Scenery scenery)
+{
+    var red = Ink(Color(0.9, 0.3, 0.27), PLAIN, 0.9);
+    var bar = float3(8.9, 2.3, 0);
+    PutTube(scenery.mesh, scenery.faces, red, bar - float3(0, 0, 1.6), bar + float3(0, 0, 1.6), 0.055, 0.055, 8);
+    for (var i = 0; i < 4; i++)
+    {
+        var top = bar + float3(0, 0, i < 2 ? 1.45 : -1.45);
+        var foot = float3(bar.x + (i % 2 == 0 ? 0.85 : -0.85), 0, top.z);
+        PutTube(scenery.mesh, scenery.faces, red, top, foot, 0.055, 0.055, 8);
+        PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.3, 0.3, 0.34), PLAIN, 0.3), foot, float3(0.11, 0.05, 0.11), 0, 0, false, 4, 8);
+    }
+    PutBlob(scenery.mesh, scenery.faces, red, bar + float3(0, 0, 1.6), float3(0.07), 0, 0, false, 5, 8);
+    PutBlob(scenery.mesh, scenery.faces, red, bar - float3(0, 0, 1.6), float3(0.07), 0, 0, false, 5, 8);
+}
+
+// A street lamp: an iron post, a globe that glows, and a cap over it.
+void PutLamp(mut Scenery scenery, float3 at)
+{
+    var iron = Ink(Color(0.2, 0.22, 0.26), PLAIN, 0.8);
+    List<float2> post = [float2(0.2, 0), float2(0.2, 0.06), float2(0.1, 0.14), float2(0.065, 0.32), float2(0.05, 2.36), float2(0.1, 2.44), float2(0.1, 2.5), float2(0, 2.5)];
+    PutLathe(scenery.mesh, scenery.faces, iron, at, post, float2(1, 1), 10);
+    mut var lit = Ink(Color(1, 0.93, 0.72), PLAIN, 1);
+    lit.glow = 0.9;
+    PutBlob(scenery.mesh, scenery.faces, lit, at + float3(0, 2.7, 0), float3(0.2), 0, 0, false, 8, 12);
+    List<float2> cap = [float2(0.27, 2.86), float2(0.25, 2.9), float2(0.08, 3.0), float2(0.03, 3.08), float2(0, 3.08)];
+    PutLathe(scenery.mesh, scenery.faces, iron, at, cap, float2(1, 1), 10);
+}
+
+// A flower: a stem, six petals in a point, and its middle.
+void PutFlower(mut Scenery scenery, float3 at, Color petal, float tall)
+{
+    PutTube(scenery.mesh, scenery.faces, Ink(Color(0.22, 0.5, 0.2), PLAIN, 0), at, at + float3(0, tall, 0), 0.012, 0.012, 3);
+    PutTube(scenery.mesh, scenery.faces, Ink(petal, PLAIN, 0.2), at + float3(0, tall, 0), at + float3(0, tall + 0.035, 0), 0.085, 0, 6);
+    PutTube(scenery.mesh, scenery.faces, Ink(Color(0.98, 0.78, 0.2), PLAIN, 0.2), at + float3(0, tall + 0.015, 0), at + float3(0, tall + 0.06, 0), 0.032, 0, 5);
+}
+
+// The island and what stands on it: the ground, the fence, the oak in its
+// planter, the boulder, the sandbox's timber, the schoolhouse, the slide and
+// the swings' frame, trees, lamps, a bench, bushes, stones, flowers, and grass.
+void MakeScenery(mut Scenery scenery)
+{
+    scenery.made = true;
+    var up = float3(0, 1, 0);
+    PutLand(scenery);
+    PutFence(scenery);
+    PutSchool(scenery);
+    PutSlide(scenery);
+    PutSwings(scenery);
+
+    // The oak: a stone planter the size of what stops a kid, earth in it, and the tree
+    var oak = Up(Oak(), 0);
+    List<float2> planter = [float2(0.62, 0), float2(TREE_RADIUS, 0.06), float2(TREE_RADIUS, 0.3), float2(0.68, 0.36), float2(0.58, 0.36), float2(0.56, 0.28)];
+    PutLathe(scenery.mesh, scenery.faces, Ink(Color(0.74, 0.72, 0.68), STONE, 0.2), oak, planter, float2(1, 1), 18);
+    List<float2> earth = [float2(0.57, 0.28), float2(0, 0.3)];
+    PutLathe(scenery.mesh, scenery.faces, Ink(Color(0.36, 0.26, 0.2), PLAIN, 0), oak, earth, float2(1, 1), 18);
+    PutTree(scenery, oak + float3(0, 0.25, 0), 1.0, false, 3);
+
+    // The boulder, and the smaller ones beside it: cut in facets, as rock breaks
+    var rock = Up(Rock(), 0);
+    PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.6, 0.6, 0.64), STONE, 0.2), rock + float3(0, 0.2, 0), float3(TREE_RADIUS * 0.98, 0.62, TREE_RADIUS * 0.9),
+            3.3, 0.3, true, 5, 8);
+    PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.54, 0.54, 0.59), STONE, 0.2), rock + float3(0.5, 0.1, -0.42), float3(0.32, 0.27, 0.3), 8.1, 0.3, true, 4, 6);
+    PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.66, 0.65, 0.68), STONE, 0.2), rock + float3(-0.5, 0.07, 0.4), float3(0.24, 0.18, 0.22), 5.4, 0.3, true, 4, 6);
+
+    // The sandbox: planks round it, and two heaps someone left
+    var sand = Up(Sand(), 0);
+    for (var i = 0; i < 16; i++)
+    {
+        float turn = (i + 0.5) * Math.TAU / 16;
+        var out = float3(Math.Cos(turn), 0, Math.Sin(turn));
+        var plank = Placed(Ink(i % 2 == 0 ? Color(0.72, 0.52, 0.32) : Color(0.66, 0.47, 0.29), WOOD, 0.1),
+                           sand + out * (SAND_RADIUS + 0.1) + float3(0, 0.1, 0), quaternion.LookRotation(float3(-out.z, 0, out.x), up));
+        PutBox(scenery.mesh, scenery.faces, plank, float3(0), float3(0.2, 0.24, (SAND_RADIUS + 0.2) * Math.TAU / 16 + 0.02));
+    }
+    var heap = Ink(Color(0.93, 0.82, 0.58), PLAIN, 0);
+    PutBlob(scenery.mesh, scenery.faces, heap, sand + float3(-0.55, -0.02, 0.5), float3(0.44, 0.2, 0.42), 2.2, 0.2, false, 6, 10);
+    PutBlob(scenery.mesh, scenery.faces, heap, sand + float3(0.5, -0.02, -0.45), float3(0.3, 0.14, 0.3), 6.1, 0.2, false, 6, 10);
+
+    // Trees round the yard, tall ones behind it, and lamps by the near corners
+    PutTree(scenery, float3(-8.2, 0, 5.2), 1.15, false, 11);
+    PutTree(scenery, float3(-8.5, 0, -4.4), 0.9, false, 12);
+    PutTree(scenery, float3(8.3, 0, 4.7), 1.05, false, 13);
+    PutTree(scenery, float3(8.6, 0, -4.2), 0.85, true, 14);
+    PutTree(scenery, float3(-4.7, 0, 8.6), 1.3, false, 15);
+    PutTree(scenery, float3(5.9, 0, 8.2), 1.2, true, 16);
+    PutTree(scenery, float3(-6.9, 0, 7.3), 1.1, true, 17);
+    PutTree(scenery, float3(-2.6, 0, 9.9), 0.95, true, 18);
+    PutTree(scenery, float3(4.4, 0, 9.7), 1.0, false, 19);
+    PutLamp(scenery, float3(-7.5, 0, -7.4));
+    PutLamp(scenery, float3(7.5, 0, -7.4));
+
+    // A bench, west of the school: slats on iron legs
+    var bench = float3(-4.6, 0, 6.95);
+    var slat = Ink(Color(0.62, 0.42, 0.26), WOOD, 0.2);
+    var iron = Ink(Color(0.25, 0.26, 0.3), PLAIN, 0.6);
+    for (var i = 0; i < 3; i++)
+    {
+        PutBox(scenery.mesh, scenery.faces, slat, bench + float3(0, 0.4, -0.14 + i * 0.14), float3(1.6, 0.04, 0.12));
+        if (i < 2) PutBox(scenery.mesh, scenery.faces, slat, bench + float3(0, 0.58 + i * 0.16, 0.24), float3(1.6, 0.12, 0.04));
+    }
+    for (var side = -1; side <= 1; side += 2)
+    {
+        PutBox(scenery.mesh, scenery.faces, iron, bench + float3(0.68 * side, 0.2, -0.16), float3(0.06, 0.4, 0.06));
+        PutBox(scenery.mesh, scenery.faces, iron, bench + float3(0.68 * side, 0.4, 0.24), float3(0.06, 0.8, 0.06));
+        PutBox(scenery.mesh, scenery.faces, iron, bench + float3(0.68 * side, 0.37, 0.04), float3(0.06, 0.05, 0.44));
+    }
+
+    // What grows outside the fence: bushes, stones and flowers
+    mut var dice = Random(7);
+    for (var i = 0; i < 30; i++)
+    {
+        var at = dice.NextFloat2Direction() * dice.NextFloat(8.9, ISLAND - 0.8);
+        if (at.y > 6.3 && Math.Abs(at.x - 0.8) < 3.6) continue;           // The school's
+        if (Math.Abs(at.y) < 3.4 && Math.Abs(at.x) > 7.4) continue;       // The slide's and the swings'
+        var shade = dice.NextFloat(0.85, 1.15);
+        if (dice.NextInt(3) == 0)
+        {
+            PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.6 * shade, 0.6 * shade, 0.64 * shade), STONE, 0.2), Up(at, 0.08),
+                    float3(dice.NextFloat(0.2, 0.42), dice.NextFloat(0.16, 0.28), dice.NextFloat(0.2, 0.4)), i * 1.9, 0.3, true, 4, 6);
+            continue;
+        }
+        var big = dice.NextFloat(0.32, 0.56);
+        PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.22 * shade, 0.52 * shade, 0.27 * shade), LEAF, 0.1), Up(at, big * 0.55), float3(big, big * 0.85, big),
+                i * 1.3, 0.24, false, 7, 10);
+        PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.27 * shade, 0.58 * shade, 0.29 * shade), LEAF, 0.1), Up(at + dice.NextFloat2Direction() * big * 0.8, big * 0.35),
+                float3(big * 0.7), i * 2.1, 0.24, false, 6, 9);
+    }
+    for (var i = 0; i < 170; i++)
+    {
+        var at = dice.NextFloat2Direction() * dice.NextFloat(6.6, ISLAND - 0.6);
+        if (Math.Max(Math.Abs(at.x), Math.Abs(at.y)) < YARD + 0.45) continue;
+        if (at.y > 7.2 && Math.Abs(at.x - 0.8) < 3.0) continue;
+        var kind = dice.NextInt(4);
+        var petal = kind == 0 ? Color(1, 1, 1) : kind == 1 ? Color(1, 0.85, 0.25) : kind == 2 ? Color(0.98, 0.5, 0.7) : Color(0.95, 0.35, 0.3);
+        PutFlower(scenery, Up(at, 0), petal, dice.NextFloat(0.16, 0.3));
+    }
+
+    // Grass: long outside the fence, and tufts in the yard where nothing's worn it away
+    for (var i = 0; i < 7000; i++)
+    {
+        var at = dice.NextFloat2Direction() * (Math.Sqrt(dice.NextFloat()) * (ISLAND - 0.3));
+        var inside = Math.Max(Math.Abs(at.x), Math.Abs(at.y)) < YARD + 0.1;
+        if (inside && dice.NextInt(7) != 0) continue;
+        if (inside && (Math.Length(at) < SPIN_RADIUS + 0.9 || Math.Distance(at, Sand()) < SAND_RADIUS + 0.3
+            || Math.Distance(at, Puddle()) < PUDDLE_RADIUS + 0.45 || Math.Distance(at, Oak()) < 0.8 || Math.Distance(at, Rock()) < 0.8)) continue;
+        if (at.y > 7.5 && at.y < 10.3 && Math.Abs(at.x - 0.8) < 2.8) continue; // Under the school
+        if (at.y > YARD && at.y < 7.8 && Math.Abs(at.x - 0.8) < 0.7) continue;  // Its path
+        var tall = inside ? dice.NextFloat(0.1, 0.19) : dice.NextFloat(0.22, 0.5);
+        var shade = dice.NextFloat(0.8, 1.25);
+        scenery.grass.Add(Blade { transform = float4x4.TRS(Up(at, 0), quaternion.AxisAngle(up, dice.NextFloat(0, Math.TAU)), float3(dice.NextFloat(0.07, 0.12), tall, 1)),
+                                  tint = Color(0.3 * shade, 0.6 * shade, 0.24 * shade), phase = at.x * 0.7 + at.y * 0.45 + dice.NextFloat(0, 1.5) });
+    }
+}

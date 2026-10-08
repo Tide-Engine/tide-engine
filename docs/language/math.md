@@ -51,7 +51,7 @@ And these build values:
 - `quaternion.LookRotation(forward, up)`
 - `float4x4.TRS(translation, rotation, scale)`
 - `float4x4.Translate(translation)`
-- `float4x4.PerspectiveFov(verticalFov, aspect, near, far)` and `float4x4.Ortho(width, height, near, far)`: projections for a 3D camera, as Unity.Mathematics' (see [Any projection](../game/views.md#any-projection))
+- `float4x4.PerspectiveFov(verticalFov, aspect, near, far)` and `float4x4.Ortho(width, height, near, far)`: projections for a 3D camera, as Unity.Mathematics' (see [Any projection](../game/cameras.md#any-projection))
 
 ## Operators
 
