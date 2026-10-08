@@ -1,0 +1,457 @@
+// How Tag's meshes are made. A game can't load a model yet, so each shape is
+// built here, once, as the game starts: turned on a lathe from a profile (a
+// tree's trunk, a bell, a kid's shirt), sculpted from a ball by noise (a
+// rock, a tree's leaves, a cloud), or put together from boxes, tubes and
+// roofs. What stands still is all added to one mesh (yard.tide); what moves
+// is a mesh of its own, drawn wherever it is (show.tide).
+
+// What a shape is added in: where, turned how, and its paint.
+struct Brush
+{
+    float4x4 place = float4x4.identity;  // Where what's added goes: moved and turned, never scaled
+    Color color = Color.white;
+    float own = 1;       // Its paint is its own. 0 is for what's tinted by whatever draws it: a kid's shirt
+    float kind;
+    float gloss;
+    float glow;
+}
+
+Brush Ink(Color color, float kind, float gloss)
+{
+    return Brush { color = color, kind = kind, gloss = gloss };
+}
+
+// Paint that takes the tint of whatever draws the mesh, this much darker.
+Brush Tinted(float shade, float gloss)
+{
+    return Brush { color = Color(shade, shade, shade), own = 0, gloss = gloss };
+}
+
+Brush Placed(Brush brush, float3 at, quaternion turn)
+{
+    mut var placed = brush;
+    placed.place = float4x4.TRS(at, turn, float3(1));
+    return placed;
+}
+
+void Emit(mut List<Corner> corners, Brush brush, float3 position, float3 normal, float2 grain)
+{
+    corners.Add(Corner { position = Math.Transform(brush.place, position), normal = Math.Normalize(Math.Rotate(brush.place, normal)),
+                         color = brush.color, own = brush.own, kind = brush.kind, grain = grain, gloss = brush.gloss, glow = brush.glow });
+}
+
+// A flat triangle that faces `toward`: its corners go whichever way round
+// shows it from that side.
+void PutTriangle(mut List<Corner> corners, mut List<int> faces, Brush brush, float3 a, float3 b, float3 c, float3 toward, float2 ga, float2 gb, float2 gc)
+{
+    mut var normal = Math.Cross(b - a, c - a);
+    var front = Math.Dot(normal, toward) > 0;
+    if (!front) normal = normal * -1.0;
+    if (Math.LengthSq(normal) < 0.0000000001) return;
+    normal = Math.Normalize(normal);
+    var first = corners.count;
+    Emit(corners, brush, a, normal, ga);
+    Emit(corners, brush, front ? b : c, normal, front ? gb : gc);
+    Emit(corners, brush, front ? c : b, normal, front ? gc : gb);
+    faces.Add(first);
+    faces.Add(first + 1);
+    faces.Add(first + 2);
+}
+
+// A flat four-sided face, its corners in order round it.
+void PutQuad(mut List<Corner> corners, mut List<int> faces, Brush brush, float3 a, float3 b, float3 c, float3 d, float3 toward, float2 ga, float2 gb, float2 gc, float2 gd)
+{
+    PutTriangle(corners, faces, brush, a, b, c, toward, ga, gb, gc);
+    PutTriangle(corners, faces, brush, a, c, d, toward, ga, gc, gd);
+}
+
+// A box. Its grain runs along its longest side.
+void PutBox(mut List<Corner> corners, mut List<int> faces, Brush brush, float3 center, float3 size)
+{
+    var longX = size.x >= size.y && size.x >= size.z;
+    var longY = !longX && size.y >= size.z;
+    for (var face = 0; face < 6; face++)
+    {
+        var axis = face / 2;
+        float way = face % 2 == 0 ? 1 : -1;
+        var normal = float3(axis == 0 ? way : 0, axis == 1 ? way : 0, axis == 2 ? way : 0);
+        var across = float3(axis == 1 ? 1 : 0, axis == 2 ? 1 : 0, axis == 0 ? 1 : 0);
+        var up = Math.Cross(normal, across);
+        var first = corners.count;
+        for (var i = 0; i < 4; i++)
+        {
+            float a = i == 0 || i == 3 ? -0.5 : 0.5;
+            float b = i < 2 ? -0.5 : 0.5;
+            var from = (normal * 0.5 + across * a + up * b) * size;
+            var along = longX ? from.x : longY ? from.y : from.z;
+            Emit(corners, brush, center + from, normal, float2(along, from.x + from.y + from.z - along));
+        }
+        faces.Add(first);
+        faces.Add(first + 1);
+        faces.Add(first + 2);
+        faces.Add(first);
+        faces.Add(first + 2);
+        faces.Add(first + 3);
+    }
+}
+
+// A tube from one place to another, as thick at each end as it's told: a
+// pole, a cone when one end has no radius, a pyramid with four sides. Its
+// ends are closed.
+void PutTube(mut List<Corner> corners, mut List<int> faces, Brush brush, float3 from, float3 to, float thickFrom, float thickTo, int sides)
+{
+    var length = Math.Distance(from, to);
+    if (length < 0.00001) return;
+    var axis = (to - from) / length;
+    var u = Math.Normalize(Math.Cross(axis, Math.Abs(axis.y) < 0.9 ? float3(0, 1, 0) : float3(1, 0, 0)));
+    var v = Math.Cross(u, axis);
+    var first = corners.count;
+    for (var step = 0; step <= sides; step++)
+    {
+        float turn = step * Math.TAU / sides;
+        var out = u * Math.Cos(turn) + v * Math.Sin(turn);
+        var normal = Math.Normalize(out * length + axis * (thickFrom - thickTo));
+        float around = step * Math.TAU / sides * Math.Max(thickFrom, thickTo);
+        Emit(corners, brush, from + out * thickFrom, normal, float2(0, around));
+        Emit(corners, brush, to + out * thickTo, normal, float2(length, around));
+        if (step == sides) continue;
+        int at = first + step * 2;
+        faces.Add(at);
+        faces.Add(at + 1);
+        faces.Add(at + 2);
+        faces.Add(at + 2);
+        faces.Add(at + 1);
+        faces.Add(at + 3);
+    }
+    for (var lid = 0; lid < 2; lid++)
+    {
+        float thick = lid == 0 ? thickTo : thickFrom;
+        if (thick <= 0) continue;
+        var middle = lid == 0 ? to : from;
+        var normal = lid == 0 ? axis : axis * -1.0;
+        var start = corners.count;
+        Emit(corners, brush, middle, normal, float2(0));
+        for (var step = 0; step <= sides; step++)
+        {
+            float turn = step * Math.TAU / sides;
+            var out = u * Math.Cos(turn) + v * Math.Sin(turn);
+            Emit(corners, brush, middle + out * thick, normal, float2(out.x, out.z) * thick);
+            if (step == sides) continue;
+            faces.Add(start);
+            faces.Add(start + 1 + step + (lid == 0 ? 1 : 0));
+            faces.Add(start + 1 + step + (lid == 0 ? 0 : 1));
+        }
+    }
+}
+
+// A shape turned on a lathe: a profile, each point how far out and how high,
+// swept round the brush's upright. The profile goes round the shape with its
+// outside on its right: up an outer wall, in across a top, down an inner wall.
+void PutLathe(mut List<Corner> corners, mut List<int> faces, Brush brush, float3 at, List<float2> profile, float2 scale, int sides)
+{
+    var first = corners.count;
+    var count = profile.count;
+    for (var i = 0; i < count; i++)
+    {
+        var here = profile[i] * scale;
+        var before = profile[Math.Max(i - 1, 0)] * scale;
+        var after = profile[Math.Min(i + 1, count - 1)] * scale;
+        var along = after - before;
+        var lean = Math.LengthSq(along) > 0.0000001 ? Math.Normalize(float2(along.y, -along.x)) : float2(1, 0);
+        for (var step = 0; step <= sides; step++)
+        {
+            float turn = step * Math.TAU / sides;
+            var out = float3(Math.Cos(turn), 0, Math.Sin(turn));
+            Emit(corners, brush, at + out * here.x + float3(0, here.y, 0), float3(out.x * lean.x, lean.y, out.z * lean.x),
+                 float2(here.y, turn * here.x));
+            if (i == count - 1 || step == sides) continue;
+            int corner = first + i * (sides + 1) + step;
+            faces.Add(corner);
+            faces.Add(corner + sides + 1);
+            faces.Add(corner + 1);
+            faces.Add(corner + 1);
+            faces.Add(corner + sides + 1);
+            faces.Add(corner + sides + 2);
+        }
+    }
+}
+
+// Where a blob's surface is, along a direction from its middle: a ball that
+// noise pushes in and out.
+float3 BlobPoint(float tilt, float turn, float3 radii, float seed, float lumps)
+{
+    var out = float3(Math.Sin(tilt) * Math.Cos(turn), -Math.Cos(tilt), Math.Sin(tilt) * Math.Sin(turn));
+    if (lumps <= 0) return out * radii;
+    var bump = Math.Perlin(out * 1.6 + float3(seed, seed * 1.7, seed * 0.3)) + Math.Perlin(out * 3.7 + float3(seed * 2.3)) * 0.5;
+    return out * radii * (1 + bump * lumps);
+}
+
+// A blob: a ball of these radii, sculpted by noise. Smooth, it's leaves or a
+// cloud, and with no lumps a plain ball; cut in facets, it's a rock.
+void PutBlob(mut List<Corner> corners, mut List<int> faces, Brush brush, float3 at, float3 radii, float seed, float lumps, bool facets, int rings, int around)
+{
+    if (facets)
+    {
+        for (var ring = 0; ring < rings; ring++)
+        {
+            for (var step = 0; step < around; step++)
+            {
+                var a = at + BlobPoint(ring * Math.PI / rings, step * Math.TAU / around, radii, seed, lumps);
+                var b = at + BlobPoint((ring + 1) * Math.PI / rings, step * Math.TAU / around, radii, seed, lumps);
+                var c = at + BlobPoint(ring * Math.PI / rings, (step + 1) * Math.TAU / around, radii, seed, lumps);
+                var d = at + BlobPoint((ring + 1) * Math.PI / rings, (step + 1) * Math.TAU / around, radii, seed, lumps);
+                PutTriangle(corners, faces, brush, a, b, c, (a + b + c) / 3 - at, float2(0), float2(0), float2(0));
+                PutTriangle(corners, faces, brush, c, b, d, (c + b + d) / 3 - at, float2(0), float2(0), float2(0));
+            }
+        }
+        return;
+    }
+    var first = corners.count;
+    for (var ring = 0; ring <= rings; ring++)
+    {
+        float tilt = ring * Math.PI / rings;
+        for (var step = 0; step <= around; step++)
+        {
+            float turn = step * Math.TAU / around;
+            var here = BlobPoint(tilt, turn, radii, seed, lumps);
+            var out = float3(Math.Sin(tilt) * Math.Cos(turn), -Math.Cos(tilt), Math.Sin(tilt) * Math.Sin(turn));
+            // Which way the surface faces: across two short steps over it, and a plain ball's where that says nothing
+            mut var normal = Math.Normalize(out / radii);
+            if (lumps > 0 && Math.Sin(tilt) > 0.08)
+            {
+                var down = BlobPoint(tilt + 0.03, turn, radii, seed, lumps) - BlobPoint(tilt - 0.03, turn, radii, seed, lumps);
+                var round = BlobPoint(tilt, turn + 0.03, radii, seed, lumps) - BlobPoint(tilt, turn - 0.03, radii, seed, lumps);
+                var across = Math.Cross(down, round);
+                if (Math.LengthSq(across) > 0.000000000001)
+                {
+                    var faced = Math.Normalize(across);
+                    normal = Math.Dot(faced, normal) < 0 ? faced * -1.0 : faced;
+                }
+            }
+            Emit(corners, brush, at + here, normal, float2(0));
+            if (ring == rings || step == around) continue;
+            int corner = first + ring * (around + 1) + step;
+            faces.Add(corner);
+            faces.Add(corner + around + 1);
+            faces.Add(corner + 1);
+            faces.Add(corner + 1);
+            faces.Add(corner + around + 1);
+            faces.Add(corner + around + 2);
+        }
+    }
+}
+
+// A roof: two slopes up to a ridge, the two ends under it, and its floor.
+// `size` is how long its ridge is, how high, and how wide it is across; the
+// ridge runs along x, or along z when it's `turned`. Its grain is along the
+// ridge and down the slope.
+void PutRoof(mut List<Corner> corners, mut List<int> faces, Brush brush, float3 base, float3 size, bool turned)
+{
+    var along = turned ? float3(0, 0, 1) : float3(1, 0, 0);
+    var across = turned ? float3(1, 0, 0) : float3(0, 0, 1);
+    var up = float3(0, size.y, 0);
+    var slope = Math.Sqrt(size.y * size.y + size.z * size.z * 0.25);
+    for (var side = -1; side <= 1; side += 2)
+    {
+        var eave = across * (size.z * 0.5 * side);
+        PutQuad(corners, faces, brush, base - along * (size.x * 0.5) + eave, base + along * (size.x * 0.5) + eave,
+                base + along * (size.x * 0.5) + up, base - along * (size.x * 0.5) + up, across * (side * 1.0) + float3(0, 1, 0),
+                float2(-size.x * 0.5, slope), float2(size.x * 0.5, slope), float2(size.x * 0.5, 0), float2(-size.x * 0.5, 0));
+        var end = along * (size.x * 0.5 * side);
+        PutTriangle(corners, faces, brush, base + end - across * (size.z * 0.5), base + end + across * (size.z * 0.5), base + end + up, along * (side * 1.0),
+                    float2(-size.z * 0.5, 0), float2(size.z * 0.5, 0), float2(0, size.y));
+    }
+    PutQuad(corners, faces, brush, base - along * (size.x * 0.5) - across * (size.z * 0.5), base + along * (size.x * 0.5) - across * (size.z * 0.5),
+            base + along * (size.x * 0.5) + across * (size.z * 0.5), base - along * (size.x * 0.5) + across * (size.z * 0.5), float3(0, -1, 0),
+            float2(0), float2(0), float2(0), float2(0));
+}
+
+// A pointed roof on a square: four flat sides up to a point. `half` is from
+// its middle to the middle of an eave. Its grain is across a side and down it.
+void PutPyramid(mut List<Corner> corners, mut List<int> faces, Brush brush, float3 eaves, float half, float height)
+{
+    var point = eaves + float3(0, height, 0);
+    var slope = Math.Sqrt(half * half + height * height);
+    for (var i = 0; i < 4; i++)
+    {
+        float a = i * Math.PI * 0.5 + Math.PI * 0.25;
+        float b = a + Math.PI * 0.5;
+        var one = eaves + float3(Math.Cos(a), 0, Math.Sin(a)) * (half * 1.41421356);
+        var two = eaves + float3(Math.Cos(b), 0, Math.Sin(b)) * (half * 1.41421356);
+        PutTriangle(corners, faces, brush, one, two, point, (one + two) * 0.5 - eaves + float3(0, half, 0), float2(-half, slope), float2(half, slope), float2(0, 0));
+    }
+    PutQuad(corners, faces, brush, eaves + float3(-half, 0, -half), eaves + float3(half, 0, -half), eaves + float3(half, 0, half), eaves + float3(-half, 0, half),
+            float3(0, -1, 0), float2(0), float2(0), float2(0), float2(0));
+}
+
+// --------------------------------------------- the meshes that are drawn
+
+// The meshes of what moves, each made once and drawn wherever it is: plain
+// shapes, a kid, the bell, a cloud, the roundabout's post and handles, a flat
+// square for what's painted on the ground, and a blade of grass.
+local singleton Models
+{
+    List<Corner> cube;
+    List<int> cubeFaces;
+    List<Corner> ball;
+    List<int> ballFaces;
+    List<Corner> roll;    // Upright, 1 high, of radius 1: the roundabout's deck
+    List<int> rollFaces;
+    List<Corner> rod;     // The same along z: an arm, a chain, drawn from one place to another
+    List<int> rodFaces;
+    List<Corner> kid;
+    List<int> kidFaces;
+    List<Corner> bell;
+    List<int> bellFaces;
+    List<Corner> cloud;
+    List<int> cloudFaces;
+    List<Corner> spinner;
+    List<int> spinnerFaces;
+    List<Corner> plate;
+    List<int> plateFaces;
+    List<Corner> blade;
+    List<int> bladeFaces;
+    bool made;
+}
+
+// A kid, a meter and a third tall before it's drawn bigger, standing at the
+// origin and facing +z: shorts, a shirt and a cap in whatever tint it's drawn
+// with, a satchel, a head with hair under the cap, ears, eyes and a nose. Its
+// arms, legs, hands and shoes move, so they're drawn apart (show.tide).
+void MakeKid(mut List<Corner> corners, mut List<int> faces)
+{
+    var shirt = Tinted(1, 0.35);
+    var cap = Tinted(0.66, 0.5);
+    var skin = Ink(Color(0.99, 0.81, 0.66), PLAIN, 0.4);
+    var dark = Ink(Color(0.17, 0.16, 0.22), PLAIN, 1.5);
+    var shorts = Ink(Color(0.2, 0.25, 0.4), PLAIN, 0.2);
+    var leather = Ink(Color(0.52, 0.34, 0.2), PLAIN, 0.4);
+    var hair = Ink(Color(0.33, 0.21, 0.13), PLAIN, 0.3);
+    var middle = float3(0);
+    List<float2> hips = [float2(0, 0.17), float2(0.17, 0.18), float2(0.27, 0.25), float2(0.305, 0.37), float2(0.3, 0.4)];
+    PutLathe(corners, faces, shorts, middle, hips, float2(1, 1), 18);
+    List<float2> chest = [float2(0.3, 0.38), float2(0.315, 0.5), float2(0.28, 0.63), float2(0.2, 0.73), float2(0.11, 0.79), float2(0, 0.8)];
+    PutLathe(corners, faces, shirt, middle, chest, float2(1, 1), 18);
+    List<float2> collar = [float2(0.13, 0.76), float2(0.15, 0.8), float2(0.12, 0.83), float2(0.08, 0.82)];
+    PutLathe(corners, faces, Ink(Color(0.96, 0.95, 0.92), PLAIN, 0.2), middle, collar, float2(1, 1), 14);
+    // The satchel on its back, and its strap
+    PutBox(corners, faces, leather, float3(0, 0.5, -0.3), float3(0.34, 0.28, 0.14));
+    PutBox(corners, faces, Ink(Color(0.42, 0.27, 0.16), PLAIN, 0.4), float3(0, 0.6, -0.375), float3(0.36, 0.1, 0.02));
+    PutBlob(corners, faces, Ink(Color(0.98, 0.78, 0.25), PLAIN, 2), float3(0, 0.56, -0.385), float3(0.025), 0, 0, false, 5, 6);
+
+    var head = float3(0, 1.03, 0);
+    PutBlob(corners, faces, skin, head, float3(0.27), 0, 0, false, 12, 18);
+    PutBlob(corners, faces, skin, head + float3(0.265, -0.02, 0), float3(0.05, 0.07, 0.05), 0, 0, false, 5, 6);
+    PutBlob(corners, faces, skin, head + float3(-0.265, -0.02, 0), float3(0.05, 0.07, 0.05), 0, 0, false, 5, 6);
+    PutBlob(corners, faces, skin, head + float3(0, -0.06, 0.265), float3(0.04), 0, 0, false, 5, 6);
+    PutBlob(corners, faces, hair, head + float3(0, -0.03, -0.07), float3(0.265, 0.25, 0.23), 0, 0, false, 8, 12);
+    PutBlob(corners, faces, dark, head + float3(0.1, -0.02, 0.245), float3(0.043, 0.05, 0.03), 0, 0, false, 5, 6);
+    PutBlob(corners, faces, dark, head + float3(-0.1, -0.02, 0.245), float3(0.043, 0.05, 0.03), 0, 0, false, 5, 6);
+    // The cap: a crown, a button on top, and a peak out the front
+    List<float2> crown = [float2(0.285, 1.07), float2(0.29, 1.13), float2(0.25, 1.24), float2(0.14, 1.31), float2(0, 1.33)];
+    PutLathe(corners, faces, cap, middle, crown, float2(1, 1), 18);
+    PutBlob(corners, faces, cap, float3(0, 1.335, 0), float3(0.04, 0.025, 0.04), 0, 0, false, 4, 6);
+    PutBlob(corners, faces, cap, float3(0, 1.1, 0.27), float3(0.19, 0.03, 0.17), 0, 0, false, 6, 12);
+}
+
+// The school's bell, hanging from the origin: its skirt, its crown, and the
+// clapper inside.
+void MakeBell(mut List<Corner> corners, mut List<int> faces)
+{
+    var gold = Ink(Color(0.98, 0.78, 0.25), PLAIN, 2.5);
+    List<float2> skirt = [float2(0.27, -0.42), float2(0.285, -0.4), float2(0.25, -0.34), float2(0.19, -0.25), float2(0.16, -0.14),
+                          float2(0.13, -0.07), float2(0.07, -0.03), float2(0, -0.02)];
+    PutLathe(corners, faces, gold, float3(0), skirt, float2(1, 1), 20);
+    PutTube(corners, faces, gold, float3(0, -0.03, 0), float3(0, 0.02, 0), 0.03, 0.03, 8);
+    PutTube(corners, faces, Ink(Color(0.3, 0.25, 0.15), PLAIN, 0.5), float3(0, -0.05, 0), float3(0, -0.38, 0), 0.012, 0.012, 5);
+    PutBlob(corners, faces, Ink(Color(0.5, 0.4, 0.2), PLAIN, 1), float3(0, -0.4, 0), float3(0.055), 0, 0, false, 5, 8);
+}
+
+// A cloud: five puffs run together, about three across.
+void MakeCloud(mut List<Corner> corners, mut List<int> faces)
+{
+    var white = Ink(Color.white, PLAIN, 0);
+    PutBlob(corners, faces, white, float3(0, 0, 0), float3(1.5, 0.8, 1.0), 1.3, 0.16, false, 10, 16);
+    PutBlob(corners, faces, white, float3(1.2, 0.1, 0.25), float3(1.0, 0.62, 0.8), 2.9, 0.16, false, 9, 14);
+    PutBlob(corners, faces, white, float3(-1.25, -0.08, -0.2), float3(0.95, 0.52, 0.75), 4.1, 0.16, false, 9, 14);
+    PutBlob(corners, faces, white, float3(0.25, 0.48, 0.1), float3(0.85, 0.62, 0.7), 5.6, 0.16, false, 9, 14);
+    PutBlob(corners, faces, white, float3(-0.5, 0.3, 0.4), float3(0.7, 0.5, 0.6), 7.7, 0.16, false, 8, 12);
+}
+
+// What stands on the roundabout's deck and turns with it: the post in its
+// middle, and three handles of bent pipe at its rim.
+void MakeSpinner(mut List<Corner> corners, mut List<int> faces)
+{
+    var steel = Ink(Color(0.72, 0.75, 0.8), PLAIN, 1.4);
+    List<float2> post = [float2(0.2, DECK), float2(0.2, DECK + 0.04), float2(0.12, DECK + 0.08), float2(0.09, DECK + 0.5), float2(0.13, DECK + 0.56),
+                         float2(0.13, DECK + 0.6), float2(0, DECK + 0.6)];
+    PutLathe(corners, faces, steel, float3(0), post, float2(1, 1), 14);
+    PutBlob(corners, faces, Ink(Color(0.93, 0.33, 0.3), PLAIN, 1.6), float3(0, DECK + 0.68, 0), float3(0.15), 0, 0, false, 8, 12);
+    for (var i = 0; i < 3; i++)
+    {
+        float turn = i * Math.TAU / 3;
+        var out = float3(Math.Cos(turn), 0, Math.Sin(turn));
+        var along = float3(-out.z, 0, out.x);
+        var rim = out * (SPIN_RADIUS - 0.12);
+        // Up, over in a curve, and down
+        mut var before = rim - along * 0.26 + float3(0, DECK, 0);
+        for (var bend = 0; bend <= 8; bend++)
+        {
+            float swept = bend * Math.PI / 8;
+            var next = rim - along * (Math.Cos(swept) * 0.26) + float3(0, DECK + 0.34 + Math.Sin(swept) * 0.2, 0);
+            PutTube(corners, faces, steel, before, next, 0.035, 0.035, 8);
+            PutBlob(corners, faces, steel, next, float3(0.035), 0, 0, false, 4, 8);
+            before = next;
+        }
+        PutTube(corners, faces, steel, before, rim + along * 0.26 + float3(0, DECK, 0), 0.035, 0.035, 8);
+    }
+}
+
+// The plain shapes: a box of side 1, a ball of radius 1, and a roll of radius
+// 1 that's 1 high.
+void MakeModels(mut Models models)
+{
+    models.made = true;
+    var plain = Tinted(1, 0);
+    PutBox(models.cube, models.cubeFaces, plain, float3(0), float3(1));
+    PutBlob(models.ball, models.ballFaces, plain, float3(0), float3(1), 0, 0, false, 14, 20);
+    PutTube(models.roll, models.rollFaces, plain, float3(0, -0.5, 0), float3(0, 0.5, 0), 1, 1, 36);
+    PutTube(models.rod, models.rodFaces, plain, float3(0, 0, -0.5), float3(0, 0, 0.5), 1, 1, 10);
+    MakeKid(models.kid, models.kidFaces);
+    MakeBell(models.bell, models.bellFaces);
+    MakeCloud(models.cloud, models.cloudFaces);
+    MakeSpinner(models.spinner, models.spinnerFaces);
+    models.plate = [Corner { position = float3(-0.5, 0, -0.5), normal = float3(0, 1, 0) },
+                    Corner { position = float3(0.5, 0, -0.5), normal = float3(0, 1, 0) },
+                    Corner { position = float3(0.5, 0, 0.5), normal = float3(0, 1, 0) },
+                    Corner { position = float3(-0.5, 0, 0.5), normal = float3(0, 1, 0) }];
+    models.plateFaces = [0, 2, 1, 0, 3, 2];
+    // A blade of grass: a foot 1 wide, and a tip 1 up
+    models.blade = [Corner { position = float3(-0.5, 0, 0), normal = float3(0, 1, 0) },
+                    Corner { position = float3(0.5, 0, 0), normal = float3(0, 1, 0) },
+                    Corner { position = float3(0, 1, 0), normal = float3(0, 1, 0) }];
+    models.bladeFaces = [0, 1, 2];
+}
+
+// A plain shape somewhere, for what moves: a ball's size is its radii, a
+// box's its sides, and a mesh's what it's scaled by.
+Solid Piece(float3 at, quaternion turn, float3 size, Color tint, float gloss)
+{
+    return Solid { transform = float4x4.TRS(at, turn, size), size = size, tint = tint, gloss = gloss };
+}
+
+// A rod from one place to another: an arm, a leg, a swing's chain.
+Solid Rod(float3 from, float3 to, float thick, Color tint, float gloss)
+{
+    var along = to - from;
+    var length = Math.Max(Math.Length(along), 0.0001);
+    var way = along / length;
+    var turn = quaternion.LookRotation(way, Math.Abs(way.y) > 0.95 ? float3(0, 0, 1) : float3(0, 1, 0));
+    return Piece((from + to) * 0.5, turn, float3(thick, thick, length), tint, gloss);
+}
+
+// Where a place in the yard is in the world: the yard's `y` is the world's `z`.
+float3 Up(float2 at, float height)
+{
+    return float3(at.x, height, at.y);
+}
