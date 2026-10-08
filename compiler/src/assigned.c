@@ -231,6 +231,9 @@ static void flow_read(flow *f, const expr *e, const field *part, uint8_t *st)
     if (gpu(f) && f->code->is_frag) {
         diag_note("a frag's 'out Color' starts with no value, where 'mut Color' started white: write it first, like '" STR_FMT
                   " = Color.white;'", STR_ARG(name->name));
+    } else if (gpu(f) && p->place) {
+        diag_note("where a vert puts its vertex starts with no value: 'this.clip' is where the engine would put it, so '"
+                  STR_FMT " = this.clip;' first", STR_ARG(name->name));
     } else if (gpu(f)) {
         diag_note("what a vert writes for its frag starts with no value: write it before reading it");
     } else {
@@ -412,6 +415,10 @@ static void flow_leave(const flow *f, const loc at, const uint8_t *st, const boo
             diag_error(at, "frag '" STR_FMT "' %s without writing its pixel's color, %s", STR_ARG(f->code->name), ends, what.data);
             diag_note("a frag writes its color on every path that ends; one that draws nothing leaves the pixel with "
                       "'this.Discard();'");
+        } else if (gpu(f) && p->place) {
+            diag_error(at, "vert '" STR_FMT "' %s without writing where its vertex goes, %s", STR_ARG(f->code->name), ends, what.data);
+            diag_note("a vert that takes 'out float4' puts its vertex itself, on every path: '" STR_FMT " = this.clip;' leaves "
+                      "it where the engine would put it", STR_ARG(p->name));
         } else if (gpu(f)) {
             diag_error(at, "vert '" STR_FMT "' %s without writing %s", STR_ARG(f->code->name), ends, what.data);
             diag_note("what a vert writes for its frag, it writes on every path, each field of it: '" STR_FMT " = default;' "
