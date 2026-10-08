@@ -1,10 +1,10 @@
-// expect: an audio declaration's state is 4088 bytes at the most where it rolls with Random, and 'Grain' is 4092
-// expect: each voice keeps what it rolls with in the last 8 of its state's 4096 bytes: make 'Grain' smaller
-// 4092 bytes fit a voice's 4096, but not beside the generator the code rolls
-// with, which is kept in the last 8: here it rolls through a function.
+// expect: an audio declaration's state is 1048568 bytes at the most where it rolls with Random, and 'Grain' is 1048572
+// expect: each voice keeps what it rolls with after its state, 8 of the 1048576 bytes there are: make 'Grain' smaller
+// Four bytes short of a megabyte fit a state, but not with the generator the
+// code rolls with after them: here it rolls through a function.
 struct Grain
 {
-    float[1023] taps;
+    float[262143] taps;
 }
 
 float Hiss()

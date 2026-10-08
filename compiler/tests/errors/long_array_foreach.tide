@@ -1,0 +1,16 @@
+// expect: float[96000] is never copied: an array of more than 4096 elements stays where it is, in its audio declaration's state
+// A foreach goes through a copy of its array
+struct Tail
+{
+    int at;
+    float[96000] line;
+}
+
+audio Echo(mut Samples samples, mut Tail tail)
+{
+    foreach (var sample in tail.line) samples.values[0] += sample;
+}
+
+scene Main
+{
+}

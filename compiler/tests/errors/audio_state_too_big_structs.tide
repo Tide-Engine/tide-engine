@@ -1,7 +1,7 @@
-// expect: an audio declaration's state is 4096 bytes at the most, and 'Bank' is 4104
+// expect: an audio declaration's state is 1048576 bytes at the most, and 'Bank' is 1048584
 // A struct's size is what its fields take with their padding: a Tap is a long
-// and a bool, 16 bytes, so 256 of them are all a voice has, and the count
-// after them is over.
+// and a bool, 16 bytes, so 65,536 of them are all a state has, and the count
+// after them is over, with its own padding.
 struct Tap
 {
     long at;
@@ -10,7 +10,7 @@ struct Tap
 
 struct Bank
 {
-    Tap[256] taps;
+    Tap[65536] taps;
     int count;
 }
 

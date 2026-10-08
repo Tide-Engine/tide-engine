@@ -1,0 +1,26 @@
+// expect: a list's element is a copy, so 'Sum' can't change it
+// expect: pass what holds the element as the 'mut' parameter, and which one it is
+struct Tail
+{
+    int at;
+    float[96000] line;
+}
+
+struct Hall
+{
+    Tail[2] sides;
+}
+
+float Sum(mut Tail tail)
+{
+    return tail.line[0];
+}
+
+audio Echo(mut Samples samples, mut Hall hall)
+{
+    samples.values[0] = Sum(hall.sides[0]);
+}
+
+scene Main
+{
+}
