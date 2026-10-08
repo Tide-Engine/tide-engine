@@ -176,6 +176,14 @@ static bool add_needed(const char *folder)
     }
     for (int i = 0; i < added_count; i++) free(added[i]);
     free(added);
+    if (ok) {
+        // No missing lines doesn't mean the graph is usable: a listed
+        // folder or its metadata can be invalid. Resolve once with reports
+        // after adding the dependencies, and keep its success or failure.
+        game_packages packages;
+        ok = packages_resolve(folder, &packages, fetch_package, report, NULL);
+        packages_free(&packages);
+    }
     return ok;
 }
 
@@ -255,7 +263,7 @@ int tide_add(const char *folder, const char *what)
         printf("tide: %s is in tide.packages already, on line %d\n", name, other->line);
         if (!other->local && !other->builtin) printf("  = note: `tide update %s` moves it to the newest commit\n", name);
         free(name);
-        return 0;
+        return add_needed(folder) ? 0 : 1;
     }
 
     git_refs refs = {0};
@@ -279,7 +287,15 @@ int tide_add(const char *folder, const char *what)
         return 1;
     }
     packages_file pf;
-    packages_read(dir, &pf, report, NULL);
+    if (!packages_read(dir, &pf, report, NULL)) {
+        packages_free_file(&pf);
+        git_refs_free(&refs);
+        packages_free_file(&game);
+        free(dir);
+        free(source);
+        free(ref);
+        return 1;
+    }
     if (!pf.name) {
         fprintf(stderr, "tide: %s isn't a package: %s\n", source,
                 pf.exists ? "its tide.packages has no `package` line" : "it has no tide.packages");

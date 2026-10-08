@@ -4595,7 +4595,9 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
     case E_DEFAULTED:
     case E_AWAIT: {
         if (e->kind == E_AWAIT) { // The call's arguments first, then the wait
-            for (int i = 0; i < e->lhs->args.count; i++) take(&ops, e->lhs->args.items[i]);
+            for (int n = 0; n < e->lhs->args.count; n++) {
+                take(&ops, e->lhs->args.items[arg_in_turn(e->lhs, n)]);
+            }
         } else {
             take(&ops, e->lhs);
         }

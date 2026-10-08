@@ -526,6 +526,54 @@ static void game_of(const lsp_server *s, const char *path, path_list *list)
     free_manifests(&m);
 }
 
+typedef void (*game_visit_fn)(lsp_server *s, void *user, path_list *list, char *alone);
+
+// Every game in the open folders: those their manifests list, and an open
+// folder that's a game itself; and the games of documents open elsewhere.
+// The visitor consumes the list and `alone`, as run_game does.
+static void visit_workspace_games(lsp_server *s, const game_visit_fn visit, void *user)
+{
+    manifests m = {0};
+    for (int i = 0; i < s->root_count; i++) {
+        jbuf source = {0};
+        jb_printf(&source, "%sbuild/tools/games.txt", s->roots[i]);
+        read_manifest(&m, source.data);
+        jb_free(&source);
+    }
+    if (s->manifest) read_manifest(&m, s->manifest);
+    for (int i = 0; i < m.line_count; i++) {
+        bool first = true;
+        for (int k = 0; k < i && first; k++) first = !same_game(&m.lines[k], &m.lines[i]);
+        bool open = false;
+        for (int k = i; k < m.line_count && first && !open; k++) {
+            for (int r = 0; r < s->root_count && same_game(&m.lines[k], &m.lines[i]) && !open; r++) {
+                open = under(m.lines[k].path, s->roots[r]);
+            }
+        }
+        if (!open) continue;
+        path_list list = {0};
+        add_manifest_game(s, &list, &m, &m.lines[i]);
+        if (list.count > 0) visit(s, user, &list, NULL);
+        else free_paths(&list);
+    }
+    for (int r = 0; r < s->root_count; r++) {
+        bool listed = false;
+        for (int i = 0; i < m.line_count && !listed; i++) listed = under(m.lines[i].path, s->roots[r]);
+        if (listed) continue;
+        path_list list = {0};
+        add_game(s, &list, s->roots[r]);
+        if (list.count > 0) visit(s, user, &list, NULL);
+        else free_paths(&list);
+    }
+    free_manifests(&m);
+    for (int i = 0; i < s->doc_count; i++) {
+        char *path = uri_to_path(s->docs[i].uri);
+        path_list list;
+        game_of(s, path, &list);
+        visit(s, user, &list, path);
+    }
+}
+
 static void free_kept(lsp_server *s)
 {
     for (int i = 0; i < s->kept_count; i++) free(s->kept[i]);
@@ -969,6 +1017,14 @@ typedef struct rename_edits {
     int count;
 } rename_edits;
 
+typedef struct rename_search {
+    const asset_rename *renames;
+    int count;
+    path_list *seen;
+    int seen_count;
+    rename_edits edits;
+} rename_search;
+
 // A shared file can have different active #if branches in different games.
 // Merge its edits, keeping each range and replacement only once. Everything
 // copied here must outlive the next analysis, which resets the arena.
@@ -1010,6 +1066,31 @@ static bool same_rename_game(const path_list *game, const char *alone, const pat
     return true;
 }
 
+static void rename_game(lsp_server *s, void *user, path_list *list, char *alone)
+{
+    rename_search *search = user;
+    for (int i = 0; i < search->seen_count; i++) {
+        if (!same_rename_game(list, alone, &search->seen[i])) continue;
+        free_paths(list);
+        free(alone);
+        return;
+    }
+    search->seen = realloc(search->seen, sizeof(path_list) * (size_t)(search->seen_count + 1));
+    if (!search->seen) abort();
+    path_list *game = &search->seen[search->seen_count++];
+    *game = (path_list){0};
+    if (list->game_folder) {
+        game->game_folder = copy_string(list->game_folder, strlen(list->game_folder));
+    } else {
+        if (list->count == 0) add_path(game, alone);
+        for (int file = 0; file < list->count; file++) {
+            add_path_in(game, list->items[file], list->packages[file]);
+        }
+    }
+    run_game(s, list, alone);
+    analysis_rename_files(search->renames, search->count, collect_rename_edit, &search->edits);
+}
+
 static void will_rename_files(lsp_server *s, const json *id, const json *params)
 {
     const json *files = json_get(params, "files");
@@ -1034,42 +1115,29 @@ static void will_rename_files(lsp_server *s, const json *id, const json *params)
         jb_put(&b, "null}");
     } else {
         jb_put(&b, "{\"changes\":{");
-        path_list *seen = NULL;
-        int seen_count = 0;
-        rename_edits edits = {0};
+        rename_search search = {.renames = renames, .count = count};
+        // Asset paths can lead outside their declaring game's folder, and
+        // a package can be consumed by several games. Discover those games
+        // from their sources instead of assigning the asset one owner.
+        visit_workspace_games(s, rename_game, &search);
         for (int i = 0; i < count; i++) {
-            // The game it's in, found as for a Tide file there. A batch can
-            // span games, whose shared package files must be edited once.
+            // Keep the usual lookup for a renamed file outside the known
+            // workspace games, including one with no open document.
             jbuf there = {0};
             jb_printf(&there, "%s/x.tide", renames[i].old_path);
             path_list list;
             game_of(s, there.data, &list);
-            bool found = false;
-            for (int k = 0; k < seen_count && !found; k++) found = same_rename_game(&list, there.data, &seen[k]);
-            if (found) {
+            if (list.count == 0) {
                 free_paths(&list);
                 jb_free(&there);
                 continue;
             }
-            seen = realloc(seen, sizeof(path_list) * (size_t)(seen_count + 1));
-            if (!seen) abort();
-            path_list *game = &seen[seen_count++];
-            *game = (path_list){0};
-            if (list.game_folder) {
-                game->game_folder = copy_string(list.game_folder, strlen(list.game_folder));
-            } else {
-                if (list.count == 0) add_path(game, there.data);
-                for (int file = 0; file < list.count; file++) {
-                    add_path_in(game, list.items[file], list.packages[file]);
-                }
-            }
-            run_game(s, &list, there.data);
-            analysis_rename_files(renames, count, collect_rename_edit, &edits);
+            rename_game(s, &search, &list, there.data);
         }
-        for (int i = 0; i < seen_count; i++) free_paths(&seen[i]);
-        free(seen);
-        for (int i = 0; i < edits.count; i++) {
-            renamed_document *document = &edits.documents[i];
+        for (int i = 0; i < search.seen_count; i++) free_paths(&search.seen[i]);
+        free(search.seen);
+        for (int i = 0; i < search.edits.count; i++) {
+            renamed_document *document = &search.edits.documents[i];
             if (i) jb_put(&b, ",");
             jb_string(&b, document->uri);
             jb_put(&b, ":[");
@@ -1083,7 +1151,7 @@ static void will_rename_files(lsp_server *s, const json *id, const json *params)
             free(document->path);
             free(document->edits);
         }
-        free(edits.documents);
+        free(search.edits.documents);
         jb_put(&b, "}}}");
     }
     send_buf(s, &b);
@@ -1261,8 +1329,9 @@ typedef struct symbol_search {
 
 // Searches a game's files (`list`, or `alone`, as run_game takes them),
 // unless they were all searched already.
-static void search_game(lsp_server *s, symbol_search *search, path_list *list, char *alone)
+static void search_game(lsp_server *s, void *user, path_list *list, char *alone)
 {
+    symbol_search *search = user;
     const int count = list->count;
     bool fresh = false;
     for (int i = 0; i < (count > 0 ? count : 1); i++) {
@@ -1281,9 +1350,6 @@ static void search_game(lsp_server *s, symbol_search *search, path_list *list, c
     analysis_workspace_symbols(search->query, search->out, &search->written);
 }
 
-// Every game in the open folders: those their manifests list, and an open
-// folder that's a game itself; and the games of the documents open in the
-// editor, wherever they are.
 static void workspace_symbols(lsp_server *s, const json *id, const char *query)
 {
     jbuf b = {0};
@@ -1291,45 +1357,7 @@ static void workspace_symbols(lsp_server *s, const json *id, const char *query)
     jb_put(&b, "[");
     symbol_search search = {query, &b, 0, {0}};
 
-    manifests m = {0};
-    for (int i = 0; i < s->root_count; i++) {
-        jbuf source = {0};
-        jb_printf(&source, "%sbuild/tools/games.txt", s->roots[i]);
-        read_manifest(&m, source.data);
-        jb_free(&source);
-    }
-    if (s->manifest) read_manifest(&m, s->manifest);
-    for (int i = 0; i < m.line_count; i++) {
-        bool first = true; // Each game at its first line
-        for (int k = 0; k < i && first; k++) first = !same_game(&m.lines[k], &m.lines[i]);
-        bool open = false;
-        for (int k = i; k < m.line_count && first && !open; k++) {
-            for (int r = 0; r < s->root_count && same_game(&m.lines[k], &m.lines[i]) && !open; r++) {
-                open = under(m.lines[k].path, s->roots[r]);
-            }
-        }
-        if (!open) continue;
-        path_list list = {0};
-        add_manifest_game(s, &list, &m, &m.lines[i]);
-        if (list.count > 0) search_game(s, &search, &list, NULL);
-        else free_paths(&list);
-    }
-    for (int r = 0; r < s->root_count; r++) {
-        bool listed = false;
-        for (int i = 0; i < m.line_count && !listed; i++) listed = under(m.lines[i].path, s->roots[r]);
-        if (listed) continue;
-        path_list list = {0};
-        add_game(s, &list, s->roots[r]);
-        if (list.count > 0) search_game(s, &search, &list, NULL);
-        else free_paths(&list);
-    }
-    free_manifests(&m);
-    for (int i = 0; i < s->doc_count; i++) {
-        char *path = uri_to_path(s->docs[i].uri);
-        path_list list;
-        game_of(s, path, &list);
-        search_game(s, &search, &list, path);
-    }
+    visit_workspace_games(s, search_game, &search);
 
     free_paths(&search.seen);
     jb_put(&b, "]}");

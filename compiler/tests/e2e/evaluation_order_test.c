@@ -268,3 +268,18 @@ TIDE_TEST(evaluation_order_out_arguments_keep_their_turn)
     TIDE_CHECK(outs.passed == 3719); // Pack3(seen, Count(out seen), seen): 36, then 7, then 49
     TIDE_CHECK(outs.looked == 1140); // score * 1000 + (TryGet(4, out score) ? 100 : 0) + score: 1, found, 40
 }
+
+TIDE_TEST(evaluation_order_awaited_named_arguments_keep_their_turn)
+{
+    one_tick();
+    const AwaitOrders a = world.AwaitOrders;
+    TIDE_CHECK(a.named == 210);
+    TIDE_CHECK(a.mixed == 132);
+    TIDE_CHECK(a.before == 870);
+    TIDE_CHECK(a.after == 880);
+    TIDE_CHECK(a.made == 930 && a.tally.n == 3);
+    TIDE_CHECK(a.delayed == 0 && a.count == 0);
+    tide_world_tick(&world);
+    TIDE_CHECK(world.AwaitOrders.delayed == 21);
+    TIDE_CHECK(world.AwaitOrders.count == 2); // Its arguments ran once, before the wait
+}
