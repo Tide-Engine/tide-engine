@@ -39,6 +39,11 @@ singleton Probe
     int oneTableBytes;
     string oneRules;
     int noteLength;
+    int textsCount;
+    int textsLength;
+    int oneRulesLength;
+    bool sameRules;
+    int rulesBytes;
 }
 
 system Read(mut Probe probe)

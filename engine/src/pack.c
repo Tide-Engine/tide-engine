@@ -92,11 +92,33 @@ uint32_t tide_pack_bytes(tide_pack_builder *b, const uint8_t content[32], const 
     }
     const uint32_t at = block(b, size + 1u); // The NUL after the bytes, so text reads as C text too
     tide_block *h = header(b, at);
-    h->a = size;
-    h->b = size;
+    h->a = size; // A list's count
+    h->b = size; // ...and its room
     memcpy(h + 1, data, size);
     *chars = utf8_chars(data, size);
     add_shared(b, content, TIDE_PACK_BYTES, at, size, *chars);
+    return at;
+}
+
+uint32_t tide_pack_string(tide_pack_builder *b, const uint8_t content[32], const void *data, const uint32_t size, uint32_t *chars)
+{
+    const tide_pack_shared *had = find_shared(b, content, TIDE_PACK_TEXT);
+    if (had) {
+        *chars = had->extra;
+        return had->offset;
+    }
+    // A byte a character: a list's block of the bytes says of them what a text's would, so they're one
+    const uint32_t count = utf8_chars(data, size);
+    if (count == size) return tide_pack_bytes(b, content, data, size, chars);
+    // Otherwise a block of the text's own: a text's header says its characters (tide_text_view), which a
+    // list's has no word for
+    const uint32_t at = block(b, size + 1u);
+    tide_block *h = header(b, at);
+    h->a = size;
+    h->b = count;
+    memcpy(h + 1, data, size);
+    *chars = count;
+    add_shared(b, content, TIDE_PACK_TEXT, at, size, count);
     return at;
 }
 

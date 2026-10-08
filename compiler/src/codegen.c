@@ -13968,6 +13968,8 @@ static uint32_t pack_item(tide_pack_builder *b, const asset_match *item, const a
         const tide_grid_shape shape = asset_grid_shape(grid);
         return tide_pack_grid(b, item->hash, (int32_t)item->image.width, (int32_t)item->image.height, item->image.pixels, &shape);
     }
+    // Text is a text's block, which says its characters wherever it's read: alone, or as a list's or a map's
+    if (kind == ASSET_TEXT) return tide_pack_string(b, item->hash, item->data, (uint32_t)item->size, extra);
     return tide_pack_bytes(b, item->hash, item->data, (uint32_t)item->size, extra);
 }
 
@@ -14026,10 +14028,10 @@ static bool write_pack(gen *g)
         for (int k = 0; k < v->count; k++) {
             uint32_t extra;
             offsets[k] = pack_item(&b, &v->items[k], v->kind, grid, false, &extra);
-            if (v->is_map) {
+            if (v->is_map) { // Its key: text, as code reads one
                 uint8_t hash[32];
                 tide_sha256_of(v->items[k].key, strlen(v->items[k].key), hash);
-                keys[k] = tide_pack_bytes(&b, hash, v->items[k].key, (uint32_t)strlen(v->items[k].key), &extra);
+                keys[k] = tide_pack_string(&b, hash, v->items[k].key, (uint32_t)strlen(v->items[k].key), &extra);
             }
         }
         const uint32_t element_kind = v->kind == ASSET_TEXT ? TIDE_PACK_TEXT : v->kind == ASSET_BYTES ? TIDE_PACK_BYTES
