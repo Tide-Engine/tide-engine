@@ -1,0 +1,67 @@
+// Random's rolls and Random.seed in frags and verts: what their draws send.
+// The numbers themselves are the GPU's to roll; what's the CPU's is the number
+// the frame rolled, which every draw of a frame sends alike, and the seed.
+scene Main { }
+
+local singleton Art
+{
+    List<Vertex> corners;
+    List<int> faces;
+    int own;
+    int seen;
+}
+
+// A function a frag reaches: it rolls and reads the seed, so the frag does both
+float Speck(float size)
+{
+    return Random.NextFloat(size) + float(Random.seed % 2);
+}
+
+frag Grain(Vertex vertex, out Color color)
+{
+    color = Color(Random.NextFloat(), vertex.uv.x, vertex.uv.y);
+}
+
+vert Shake(mut Vertex vertex)
+{
+    vertex.position += Random.NextFloat2Direction();
+}
+
+frag Seeded(Vertex vertex, out Color color)
+{
+    color = Color(float(Random.seed % 256) / 255, vertex.uv.x, vertex.uv.y);
+}
+
+frag Mixed(Vertex vertex, out Color color)
+{
+    color = Color(Speck(0.5), vertex.uv.x, vertex.uv.y);
+}
+
+frag Plain(Vertex vertex, out Color color)
+{
+    color = Color(vertex.uv.x, vertex.uv.y, 0);
+}
+
+view Show(mut Art art)
+{
+    if (art.corners.count == 0)
+    {
+        art.corners.Add(Vertex { position = float2(0, 0), uv = float2(0, 0) });
+        art.corners.Add(Vertex { position = float2(8, 0), uv = float2(1, 0) });
+        art.corners.Add(Vertex { position = float2(0, 8), uv = float2(0, 1) });
+        art.faces.Add(0);
+        art.faces.Add(1);
+        art.faces.Add(2);
+    }
+    // Three draws in a row through one frag that rolls: they send the same number, so they're one run
+    Draw.Mesh(art.corners, art.faces, Grain);
+    Draw.Mesh(art.corners, art.faces, Grain);
+    Draw.Mesh(art.corners, art.faces, Grain);
+    Draw.Mesh(art.corners, art.faces, Shake);
+    Draw.Mesh(art.corners, art.faces, Shake, Mixed);
+    Draw.Mesh(art.corners, art.faces, Seeded);
+    Draw.Mesh(art.corners, art.faces, Plain);
+    // The view's own rolls go on from the frame's, and the seed it reads is the one its draws sent
+    art.own = Random.NextInt(1000000);
+    art.seen = Random.seed;
+}

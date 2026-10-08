@@ -2869,10 +2869,14 @@ static bool names_random(const checker *c, const expr *e)
 static bool check_random_use(checker *c, const loc at, const bool rolls)
 {
     const char *what = rolls ? "roll random numbers" : "read Random.seed";
-    // The GPU has no generator: a pixel's number is a hash of where it is, or noise
-    if (gpu_refuses(c, at, what, rolls ? "hash the pixel's place, 'Math.Hash(int2(this.position))', or roll in the view and keep the number in a field the GPU reads"
-                                       : "the view puts what it needs of the seed in a field the GPU reads")) {
-        return false;
+    if (gpu_code(c)) { // A frag or a vert: a generator of the pixel's or the vertex's own, and the seed sent with the draw (shader.c)
+        decl *shader = c->method;
+        if (rolls && !shader->rolls) shader->rolls_at = at;
+        if (!rolls && !shader->reads_seed) shader->reads_seed_at = at;
+        if (rolls) shader->rolls = true;
+        else shader->reads_seed = c->prog->uses_seed = true; // The world has it for the draw that sends it
+        if (rolls && builds(c->prog)) c->prog->random->named = true; // The frame rolls their number with tide/random.h's
+        return true;
     }
     // Sanitize gives every machine the same input for the same bytes, and nothing else
     if (c->in_sanitize) {
@@ -4050,7 +4054,10 @@ static type check_call(checker *c, expr *e)
 static type check_random_seeded(checker *c, expr *e)
 {
     for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-    if (gpu_refuses(c, e->at, "make a Random", "the view rolls what it needs and keeps it in a field the GPU reads")) return T_ERR;
+    if (gpu_refuses(c, e->at, "make a Random", "its state is 64 bits, and the GPU's ints are 32: roll on the type, 'Random.NextInt(6)', "
+                                                "where each pixel and each vertex has a generator of its own")) {
+        return T_ERR;
+    }
     const type result = decl_type(c->prog->random);
     if (e->args.count != 1) {
         diag_error(e->at, "Random takes a seed, like 'Random(42)', not %d arguments", e->args.count);
@@ -6005,7 +6012,9 @@ static type check_method(checker *c, expr *e)
         for (int i = 0; i < e->args.count; i++) {
             if (e->args.items[i]->kind != E_DEFAULT) check_expr(c, e->args.items[i]);
         }
-        if (gpu_refuses(c, e->at, "roll random numbers", "the view rolls what it needs and keeps it in a field the GPU reads")) {
+        if (gpu_refuses(c, e->at, "roll with a Random the game keeps",
+                        "its state is 64 bits, and the GPU's ints are 32: roll on the type, 'Random.NextInt(6)', where each pixel "
+                        "and each vertex has a generator of its own")) {
             return T_ERR;
         }
         const type result = resolve_builtin_call(str_from("Random"), e);
@@ -15902,8 +15911,9 @@ static void check_roll_calls(const checker *c)
         const char *does = to->rolls ? "rolls with Random" : "reads Random.seed";
         const loc where = to->rolls ? to->rolls_at : to->reads_seed_at;
         const char *why = NULL;
-        if (from->kind == DECL_SHADER) why = "the GPU can't";
-        else if (site->sanitizing) why = "Sanitize repairs an input the same way on every machine, from the input alone";
+        // A frag or a vert rolls with its pixel's or its vertex's own generator, and reads the seed its draw sends (shader.c)
+        if (from->kind == DECL_SHADER) continue;
+        if (site->sanitizing) why = "Sanitize repairs an input the same way on every machine, from the input alone";
         else if (from->is_interpolate) why = "Interpolate blends two values the same way each time it's asked";
         else if (!to->rolls && from->is_audio) why = "the audio thread has no match";
         else if (from->kind != DECL_FUNCTION && from->kind != DECL_METHOD && from->kind != DECL_SYSTEM && from->kind != DECL_INPUT) {
@@ -15926,6 +15936,13 @@ static void check_roll_calls(const checker *c)
     // generator and the seed as the last frame's match had it. A task may be either world's.
     for (int i = 0; i < c->prog->decls.count; i++) {
         const decl *d = c->prog->decls.items[i];
+        if (d->kind == DECL_SHADER) {
+            // A frag's or a vert's generators are made of a number each frame rolls with this machine's own,
+            // and the seed it reads is the one the frame's world has: both go with its draws
+            if (d->rolls) c->prog->rolls_local = true;
+            if (d->reads_seed) c->prog->uses_seed = true;
+            continue;
+        }
         const bool local = is_local_code(d) || d->kind == DECL_INPUT || (d->is_async && d->kind == DECL_FUNCTION);
         const bool match = (d->kind == DECL_SYSTEM && !is_local_code(d)) || (d->is_async && d->kind == DECL_FUNCTION);
         if (d->rolls && local) c->prog->rolls_local = true;

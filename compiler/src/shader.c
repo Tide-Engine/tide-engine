@@ -19,7 +19,9 @@
 // builds its types: what a shader language has no function for, or has one
 // that does otherwise than tide/math.h's, is written out (helper_text).
 // Nothing of it is left out but for a reason, which its error says: a long's
-// hash, as these GPUs have no 64-bit integers.
+// hash, as these GPUs have no 64-bit integers. Random's rolls on the type are
+// there too, from a generator of 32 bits that each pixel and each vertex has
+// for itself (Rolls, below); a Random value, whose state is 64 bits, isn't.
 //
 // The same code that writes a shader checks it: a first pass over each frag
 // and vert, and the functions they reach, writes nothing and reports what
@@ -62,15 +64,20 @@ enum {
     H_Q_FROM_M3, H_LOOKROTATION_Q, H_M3_FROM_Q, H_M4_FROM_M3, H_TRS, H_PERSPECTIVE, H_ORTHO,
     H_INVERSE2, H_INVERSE3, H_INVERSE4,
     H_STRAIGHT, // tide_straight(c): a texture's pixel, which has its alpha worked into its color, as the color it is
+    // Random's rolls on the type: tide_roll(), the next 32 bits of the stage's own generator, and what's made of them
+    H_ROLL, H_MUL_HIGH, H_ROLL_INT, H_ROLL_INT_BETWEEN, H_ROLL_INT_BELOW, H_ROLL_FLOAT, H_ROLL_FLOAT_BETWEEN, H_ROLL_FLOAT_BELOW,
+    H_ROLL_BOOL, H_ROLL_FLOAT2, H_ROLL_FLOAT2_BETWEEN, H_ROLL_FLOAT3, H_ROLL_FLOAT3_BETWEEN, H_ROLL_FLOAT2_DIRECTION,
+    H_ROLL_FLOAT3_DIRECTION, H_ROLL_QUATERNION_ROTATION,
     H_COUNT
 };
 
-// A list or a grid in code the GPU runs: which of the shader's textures of
-// numbers it is (data_of).
+// A list, a grid, a map or a set in code the GPU runs: which of the shader's
+// textures of numbers it is (data_of).
 typedef struct data_ref {
     int texture; // -1 while checking, when no shader says
-    type element;
-    bool grid;
+    type element; // A list's element, a grid's cell, a map's entry (its key and its value) or a set's key
+    int grid;     // A grid's axes, 2 or 3: 0 for anything else
+    const decl *map; // The map's or the set's type, for one of those
 } data_ref;
 
 typedef struct data_alias {
@@ -102,20 +109,27 @@ typedef struct emit {
     sb grads;
     int grad_count;
     int lifting; // Writing one of those: a local is written as what it was declared as
-    VEC(const decl *) structs; // The structs the code names, each after the ones it holds
+    // The structs the code names, each after the ones it holds. An array type among them is a row: GLSL has no arrays
+    // of arrays, so there an array that's another's element is a struct of that one array (need_row)
+    VEC(const decl *) structs;
     VEC(shader_function) done; // The functions written, callees first, each for the lists and grids it's called with
     sb functions;
     bool helpers[H_COUNT];
     bool lists[8]; // The shader's textures that are lists or grids whose reader is written (need_data)
+    bool finds[8]; // ...that are maps or sets whose lookup is written (need_find)
+    bool tries[8]; // ...that are maps whose TryGet is written (need_try)
     VEC(data_alias) aliases;   // The locals of the code being written that name a list or a grid (data_of)
     const data_ref *spec;      // By the parameter of the function being written: the list or grid it's called with
     VEC(const decl *) arrays;  // The array types whose element reader is written (need_array)
+    VEC(type) picks;           // The types whose '?:' is a function (need_pick)
     int raw; // Writing what an assignment stores into: an array's element is the element itself, in range already
     VEC(const field *) hoisted; // Arrays the engine supplies that the function being written made a variable of as it starts
 } emit;
 
 static void ex(emit *em, const expr *e);
 static void ex_as(emit *em, const expr *e, type want);
+static bool is_whole_variable(const expr *e);
+static bool is_pointer(const emit *em, const param *p);
 static void st(emit *em, const stmt *s);
 static void need_function(emit *em, decl *fn, loc at, const data_ref *spec, const char *suffix);
 static bool is_const(const expr *e);
@@ -158,6 +172,10 @@ static const char *name_of(const char *prefix, const str name)
     for (int i = 0; i < name.len; i++) {
         if (name.ptr[i] == '_') sb_put(&b, "_0");
         else if (name.ptr[i] == '.') sb_put(&b, "_1");
+        else if (name.ptr[i] == '<') sb_put(&b, "_5"); // A map's entry, 'Entry<int, Stat>'
+        else if (name.ptr[i] == '>') sb_put(&b, "_6");
+        else if (name.ptr[i] == ',') sb_put(&b, "_7");
+        else if (name.ptr[i] == ' ') continue;
         else sb_putn(&b, &name.ptr[i], 1);
     }
     return b.data;
@@ -208,10 +226,10 @@ static bool type_words(const type t, int *floats, int *ints)
         *ints += 1;
         return true;
     }
-    if (t.kind == TY_ARRAY) { // Its elements, one after the other. Neither GLSL has arrays of arrays
+    if (t.kind == TY_ARRAY) { // Its elements, one after the other, an array's own among them
         const type element = t.decl->fields.items[0].type;
         int f = 0, i = 0;
-        if (element.kind == TY_ARRAY || !type_words(element, &f, &i)) return false;
+        if (!type_words(element, &f, &i)) return false;
         *floats += f * t.decl->array_length;
         *ints += i * t.decl->array_length;
         return true;
@@ -261,8 +279,9 @@ static bool type_fits(emit *em, const type t, const loc at)
     }
     const char *why = "the GPU runs on bools, ints, floats, vectors, matrices, colors and structs of those";
     if (t.kind == TY_STRUCT && t.decl == em->prog->random) { // Its state is a long, and the code that steps it the CPU's
-        refuse(em, at, "a Random can't go to the GPU: it keeps its state where the CPU steps it");
-        diag_note("roll in the view or a system, and keep the number in a field the GPU reads");
+        refuse(em, at, "a Random can't go to the GPU: its state is 64 bits, and the GPU's ints are 32");
+        diag_note("roll on the type, 'Random.NextInt(6)': a frag has a generator of its pixel's own there, and a vert of its "
+                  "vertex's");
         return false;
     }
     switch (t.kind) {
@@ -275,7 +294,15 @@ static bool type_fits(emit *em, const type t, const loc at)
                   "or pass it to a function that takes a 'List<Light>'");
         return false;
     case TY_MAP:
-    case TY_SET: why = "the GPU has no maps or sets: keep what it reads in a list, which it reads by an element's place"; break;
+    case TY_SET:
+        refuse(em, at, "a %s in code the GPU runs is one the frag or vert was given, by a name: it can't be made, changed, "
+                       "returned, picked between or kept in a struct there", t.kind == TY_MAP ? "map" : "set");
+        diag_note(t.kind == TY_MAP ? "name a field of a component, a singleton or the draw's values: 'tiles.kinds[key]', "
+                                     "'tiles.kinds.Has(key)', 'tiles.kinds.TryGet(key, out kind)', 'tiles.kinds.count', or "
+                                     "'foreach (var entry in tiles.kinds)'"
+                                   : "name a field of a component, a singleton or the draw's values: 'tiles.lit.Has(key)', "
+                                     "'tiles.lit.count', or 'foreach (var key in tiles.lit)'");
+        return false;
     case TY_GRID:
         refuse(em, at, "a grid in code the GPU runs is one the frag or vert was given, by a name: it can't be made, changed, "
                        "returned, picked between or kept in a struct there");
@@ -283,9 +310,7 @@ static bool type_fits(emit *em, const type t, const loc at)
                   "that takes a 'Grid2<int>'");
         return false;
     case TY_ARRAY:
-        why = t.decl->fields.items[0].type.kind == TY_ARRAY
-            ? "the GPU has no arrays of arrays: keep the rows side by side in one array, or each row in a struct"
-            : "an array the GPU has is of bools, ints, floats, vectors, matrices, colors or structs of those";
+        why = "an array the GPU has is of bools, ints, floats, vectors, matrices, colors, structs of those, or arrays of them";
         break;
     case TY_TEXTURE: why = "a texture is sampled with 'texture.Sample(uv)', not kept as a GPU value"; break;
     case TY_DEPTH_TEXTURE:
@@ -315,16 +340,61 @@ static bool type_fits(emit *em, const type t, const loc at)
     return false;
 }
 
+static void need_struct(emit *em, const decl *d);
+
+// Whether an array's elements of type `element` are rows: arrays, each in a
+// struct of its own, as GLSL has no arrays of arrays. WGSL has them as they are.
+static bool in_rows(const emit *em, const type element)
+{
+    return em->l == GLSL && element.kind == TY_ARRAY;
+}
+
+// The structs a value of type `t` is made of, before whatever holds it.
+static void need_held(emit *em, const type t)
+{
+    if (is_struct_like(t)) {
+        need_struct(em, t.decl);
+    } else if (t.kind == TY_ARRAY) {
+        const type element = t.decl->fields.items[0].type;
+        if (in_rows(em, element)) need_struct(em, element.decl);
+        else need_held(em, element);
+    }
+}
+
+// A struct, or an array type as a row.
 static void need_struct(emit *em, const decl *d)
 {
     for (int i = 0; i < em->structs.count; i++) {
         if (em->structs.items[i] == d) return;
     }
-    for (int i = 0; i < d->fields.count; i++) {
-        const field *f = &d->fields.items[i];
-        if (!f->hidden && is_struct_like(f->type)) need_struct(em, f->type.decl);
+    if (d->kind == DECL_ARRAY) {
+        need_held(em, (type){TY_ARRAY, (decl *)d});
+    } else {
+        for (int i = 0; i < d->fields.count; i++) {
+            const field *f = &d->fields.items[i];
+            if (!f->hidden) need_held(em, f->type);
+        }
     }
     vec_push(em->structs, d);
+}
+
+// The struct that holds one array of type `array`, where it's another's element in GLSL: its name.
+static const char *need_row(emit *em, const decl *array)
+{
+    need_struct(em, array);
+    int at = 0;
+    while (em->structs.items[at] != array) at++;
+    sb b = {0};
+    sb_printf(&b, "tide_row%d", at);
+    return b.data;
+}
+
+// "tide_row3(" before an element that's a row, which the caller closes: whether it was written.
+static bool put_row(emit *em, const type element)
+{
+    if (!in_rows(em, element)) return false;
+    sb_printf(em->o, "%s(", need_row(em, element.decl));
+    return true;
 }
 
 static const char *ty(emit *em, const type t)
@@ -345,7 +415,9 @@ static const char *ty(emit *em, const type t)
     if (t.kind == TY_ENUM) return wgsl ? "i32" : "int";
     if (t.kind == TY_ARRAY) {
         sb b = {0};
-        sb_printf(&b, wgsl ? "array<%s, %d>" : "%s[%d]", ty(em, t.decl->fields.items[0].type), t.decl->array_length);
+        const type element = t.decl->fields.items[0].type;
+        sb_printf(&b, wgsl ? "array<%s, %d>" : "%s[%d]", in_rows(em, element) ? need_row(em, element.decl) : ty(em, element),
+                  t.decl->array_length);
         return b.data;
     }
     if (is_struct_like(t)) {
@@ -440,7 +512,9 @@ static void put_zero(emit *em, const type t)
         sb_printf(em->o, "%s(", ty(em, t));
         for (int i = 0; i < t.decl->array_length; i++) {
             if (i) sb_put(em->o, ", ");
+            const bool row = put_row(em, t.decl->fields.items[0].type);
             put_zeros(em, t.decl->fields.items[0].type);
+            if (row) sb_put(em->o, ")");
         }
         sb_put(em->o, ")");
         return;
@@ -984,6 +1058,121 @@ static const char *const helper_texts[H_COUNT] = {
                    "(-a21 * s5 + a22 * s4 - a23 * s3) * d, (a20 * s5 - a22 * s2 + a23 * s1) * d, "
                    "(-a20 * s4 + a21 * s2 - a23 * s0) * d, (a20 * s3 - a21 * s1 + a22 * s0) * d);\n"
                    "}\n",
+    // What a frag or a vert rolls with (Random.NextInt and the rest, on the type): `tide_dice`, a generator of the
+    // pixel's or the vertex's own, which its stage makes as it starts (put_dice). Its state is 32 bits, as these GPUs
+    // have no 64-bit integers, so it isn't the CPU's (tide/random.h): PCG's RXS-M-XS (O'Neill), a linear
+    // congruential step, and the state out through a shift its own top bits pick. Whole numbers, so the same on
+    // every GPU. What's made of the 32 bits is the CPU's formulas, line for line
+    [H_ROLL] = "uint tide_roll() {\n"
+               "    tide_dice = tide_dice * 747796405u + 2891336453u;\n"
+               "    uint w = ((tide_dice >> ((tide_dice >> 28) + 4u)) ^ tide_dice) * 277803737u;\n"
+               "    return (w >> 22) ^ w;\n"
+               "}\n",
+    // The high 32 bits of a times b, a half at a time: there's no 64-bit product to shift down
+    [H_MUL_HIGH] = "uint tide_mul_high(uint a, uint b) {\n"
+                   "    uint p = (a & 0xFFFFu) * (b & 0xFFFFu);\n"
+                   "    uint q = (a >> 16) * (b & 0xFFFFu) + (p >> 16);\n"
+                   "    uint s = (a & 0xFFFFu) * (b >> 16) + (q & 0xFFFFu);\n"
+                   "    return (a >> 16) * (b >> 16) + (q >> 16) + (s >> 16);\n"
+                   "}\n",
+    // From 0 to 2147483647, so % never goes negative
+    [H_ROLL_INT] = "int tide_roll_int() {\n"
+                   "    return int(tide_roll() >> 1);\n"
+                   "}\n",
+    // From a up to b, b excluded, and a where there's nothing between them: the 32 bits scaled down to the range
+    [H_ROLL_INT_BETWEEN] = "int tide_roll_int_between(int a, int b) {\n"
+                           "    uint k = tide_roll();\n"
+                           "    if (b <= a) { return a; }\n"
+                           "    return int(uint(a) + tide_mul_high(k, uint(b) - uint(a)));\n"
+                           "}\n",
+    [H_ROLL_INT_BELOW] = "int tide_roll_int_below(int b) {\n"
+                         "    return tide_roll_int_between(0, b);\n"
+                         "}\n",
+    // From 0 up to 1, 1 excluded: 24 of the bits over 2^24, which a float holds exactly
+    [H_ROLL_FLOAT] = "float tide_roll_float() {\n"
+                     "    return float(tide_roll() >> 8) * (1.0 / 16777216.0);\n"
+                     "}\n",
+    // From a up to b, b excluded: a where there's nothing between them, or where rounding would give b
+    [H_ROLL_FLOAT_BETWEEN] = "float tide_roll_float_between(float a, float b) {\n"
+                             "    float v = a + (b - a) * tide_roll_float();\n"
+                             "    if (v < b) { return v; }\n"
+                             "    return a;\n"
+                             "}\n",
+    [H_ROLL_FLOAT_BELOW] = "float tide_roll_float_below(float b) {\n"
+                           "    return tide_roll_float_between(0.0, b);\n"
+                           "}\n",
+    [H_ROLL_BOOL] = "bool tide_roll_bool() {\n"
+                    "    return (tide_roll() >> 31) != 0u;\n"
+                    "}\n",
+    // A vector's components are rolled a statement each, x first, as the CPU rolls them
+    [H_ROLL_FLOAT2] = "vec2 tide_roll_float2() {\n"
+                      "    float x = tide_roll_float();\n"
+                      "    float y = tide_roll_float();\n"
+                      "    return vec2(x, y);\n"
+                      "}\n",
+    [H_ROLL_FLOAT2_BETWEEN] = "vec2 tide_roll_float2_between(vec2 a, vec2 b) {\n"
+                              "    float x = tide_roll_float_between(a.x, b.x);\n"
+                              "    float y = tide_roll_float_between(a.y, b.y);\n"
+                              "    return vec2(x, y);\n"
+                              "}\n",
+    [H_ROLL_FLOAT3] = "vec3 tide_roll_float3() {\n"
+                      "    float x = tide_roll_float();\n"
+                      "    float y = tide_roll_float();\n"
+                      "    float z = tide_roll_float();\n"
+                      "    return vec3(x, y, z);\n"
+                      "}\n",
+    [H_ROLL_FLOAT3_BETWEEN] = "vec3 tide_roll_float3_between(vec3 a, vec3 b) {\n"
+                              "    float x = tide_roll_float_between(a.x, b.x);\n"
+                              "    float y = tide_roll_float_between(a.y, b.y);\n"
+                              "    float z = tide_roll_float_between(a.z, b.z);\n"
+                              "    return vec3(x, y, z);\n"
+                              "}\n",
+    // A point on the unit circle, every angle as likely
+    [H_ROLL_FLOAT2_DIRECTION] = "vec2 tide_roll_float2_direction() {\n"
+                                "    float w = tide_roll_float() * 6.28318531;\n"
+                                "    return vec2(cos(w), sin(w));\n"
+                                "}\n",
+    // A point on the unit sphere, every direction as likely
+    [H_ROLL_FLOAT3_DIRECTION] = "vec3 tide_roll_float3_direction() {\n"
+                                "    float z = tide_roll_float() * 2.0 - 1.0;\n"
+                                "    float w = tide_roll_float() * 6.28318531;\n"
+                                "    float s = sqrt(max(1.0 - z * z, 0.0));\n"
+                                "    return vec3(cos(w) * s, sin(w) * s, z);\n"
+                                "}\n",
+    // A rotation, every one as likely, with w never negative
+    [H_ROLL_QUATERNION_ROTATION] = "vec4 tide_roll_quaternion_rotation() {\n"
+                                   "    float t = tide_roll_float() * 6.28318531;\n"
+                                   "    float p = tide_roll_float() * 6.28318531;\n"
+                                   "    float u = tide_roll_float();\n"
+                                   "    float i = sqrt(1.0 - u);\n"
+                                   "    float j = sqrt(u);\n"
+                                   "    vec4 q = vec4(i * sin(t), i * cos(t), j * sin(p), j * cos(p));\n"
+                                   "    if (q.w < 0.0) { return -q; }\n"
+                                   "    return q;\n"
+                                   "}\n",
+};
+
+// Random's rolls, by the function of tide/random.h's a call of one names (expr.c_callee): the function of the
+// engine's own that's it here, and the helper that is.
+static const struct {
+    const char *cpu;
+    int helper;
+    const char *call;
+} roll_calls[] = {
+    {"tide_random_next_int", H_ROLL_INT, "tide_roll_int"},
+    {"tide_random_next_int_below", H_ROLL_INT_BELOW, "tide_roll_int_below"},
+    {"tide_random_next_int_between", H_ROLL_INT_BETWEEN, "tide_roll_int_between"},
+    {"tide_random_next_float", H_ROLL_FLOAT, "tide_roll_float"},
+    {"tide_random_next_float_below", H_ROLL_FLOAT_BELOW, "tide_roll_float_below"},
+    {"tide_random_next_float_between", H_ROLL_FLOAT_BETWEEN, "tide_roll_float_between"},
+    {"tide_random_next_bool", H_ROLL_BOOL, "tide_roll_bool"},
+    {"tide_random_next_float2", H_ROLL_FLOAT2, "tide_roll_float2"},
+    {"tide_random_next_float2_between", H_ROLL_FLOAT2_BETWEEN, "tide_roll_float2_between"},
+    {"tide_random_next_float3", H_ROLL_FLOAT3, "tide_roll_float3"},
+    {"tide_random_next_float3_between", H_ROLL_FLOAT3_BETWEEN, "tide_roll_float3_between"},
+    {"tide_random_next_float2_direction", H_ROLL_FLOAT2_DIRECTION, "tide_roll_float2_direction"},
+    {"tide_random_next_float3_direction", H_ROLL_FLOAT3_DIRECTION, "tide_roll_float3_direction"},
+    {"tide_random_next_quaternion_rotation", H_ROLL_QUATERNION_ROTATION, "tide_roll_quaternion_rotation"},
 };
 
 static int family_helper(const int family, const int dim)
@@ -1092,6 +1281,31 @@ static void need(emit *em, const int h)
         break;
     case H_TRS:
         need(em, H_M3_FROM_Q);
+        break;
+    case H_ROLL_INT:
+    case H_ROLL_FLOAT:
+    case H_ROLL_BOOL:
+        need(em, H_ROLL);
+        break;
+    case H_ROLL_INT_BETWEEN:
+        need(em, H_ROLL);
+        need(em, H_MUL_HIGH);
+        break;
+    case H_ROLL_INT_BELOW:
+        need(em, H_ROLL_INT_BETWEEN);
+        break;
+    case H_ROLL_FLOAT_BETWEEN:
+    case H_ROLL_FLOAT2:
+    case H_ROLL_FLOAT3:
+    case H_ROLL_FLOAT2_DIRECTION:
+    case H_ROLL_FLOAT3_DIRECTION:
+    case H_ROLL_QUATERNION_ROTATION:
+        need(em, H_ROLL_FLOAT);
+        break;
+    case H_ROLL_FLOAT_BELOW:
+    case H_ROLL_FLOAT2_BETWEEN:
+    case H_ROLL_FLOAT3_BETWEEN:
+        need(em, H_ROLL_FLOAT_BETWEEN);
         break;
     default:
         break;
@@ -1269,7 +1483,9 @@ static void put_value(emit *em, const type t, const char floats, const char ints
         sb_printf(em->o, "%s(", ty(em, t));
         for (int k = 0; k < t.decl->array_length; k++) {
             if (k) sb_put(em->o, ", ");
+            const bool row = put_row(em, t.decl->fields.items[0].type);
             put_value(em, t.decl->fields.items[0].type, floats, ints, f, i);
+            if (row) sb_put(em->o, ")");
         }
         sb_put(em->o, ")");
     } else if (is_struct_like(t)) {
@@ -1368,7 +1584,45 @@ static int param_index(const decl *d, const param *p)
 // every backend.
 static type data_element(const type t)
 {
-    return t.decl->fields.items[0].type;
+    if (t.kind == TY_MAP) return (type){TY_STRUCT, t.decl->entry}; // A map's entries: each a key and a value
+    return t.decl->fields.items[0].type; // A list's elements, a grid's cells, or a set's keys
+}
+
+static bool is_data(const type t)
+{
+    return (t.kind == TY_LIST || t.kind == TY_GRID || t.kind == TY_MAP || t.kind == TY_SET) && t.decl;
+}
+
+static const char *data_word(const type t)
+{
+    return t.kind == TY_LIST ? "list" : t.kind == TY_GRID ? "grid" : t.kind == TY_MAP ? "map" : "set";
+}
+
+// A data_ref for a value of type `t`, which no texture is found for yet.
+static data_ref data_unknown(const type t)
+{
+    return (data_ref){.texture = -1, .element = data_element(t), .grid = t.kind == TY_GRID ? t.decl->dims : 0,
+                      .map = t.kind == TY_MAP || t.kind == TY_SET ? t.decl : NULL};
+}
+
+// Whether the GPU reads a map or a set of type `t`: its keys are ints there,
+// which it hashes and compares, and its values what it has values of.
+static bool map_fits(emit *em, const type t, const loc at)
+{
+    const type key = t.decl->fields.items[0].type;
+    const char *why = NULL;
+    switch (key.kind) {
+    case TY_INT: case TY_BYTE: case TY_ENUM: break;
+    case TY_STRING: why = "text is the CPU's"; break;
+    case TY_LONG: why = "the GPU's ints are 32 bits"; break;
+    default: why = "it's a handle into the world, which the GPU doesn't have"; break;
+    }
+    if (why) {
+        refuse(em, at, "a %s keyed by %s can't be read on the GPU: %s", data_word(t), type_name(key), why);
+        diag_note("the GPU reads a %s whose keys are ints, bytes or enums: keep one keyed that way for what it reads", data_word(t));
+        return false;
+    }
+    return t.kind == TY_SET || type_fits(em, t.decl->fields.items[1].type, at);
 }
 
 // Notes that the code reads the numbers of an asset's list or grid, while
@@ -1396,8 +1650,8 @@ static void note_asset(emit *em, const decl *asset)
 // anything else: a list that was made, picked or returned.
 static bool data_of(emit *em, const expr *e, data_ref *d)
 {
-    if (!e || (e->type.kind != TY_LIST && e->type.kind != TY_GRID) || !e->type.decl) return false;
-    *d = (data_ref){.texture = -1, .element = data_element(e->type), .grid = e->type.kind == TY_GRID};
+    if (!e || !is_data(e->type)) return false;
+    *d = data_unknown(e->type);
     if (e->kind == E_NAME && e->bind == BIND_LOCAL) { // A local that names one
         for (int i = em->aliases.count - 1; i >= 0; i--) {
             if (em->aliases.items[i].local != e->local) continue;
@@ -1420,11 +1674,7 @@ static bool data_of(emit *em, const expr *e, data_ref *d)
     } else {
         return false;
     }
-    if (d->grid && e->type.decl->dims != 2) {
-        refuse(em, e->at, "a Grid3's cells aren't read on the GPU yet: keep the layer it reads in a Grid2");
-        return true;
-    }
-    if (!type_fits(em, d->element, e->at)) return true;
+    if (d->map ? !map_fits(em, e->type, e->at) : !type_fits(em, d->element, e->at)) return true;
     if (em->checking) {
         if (asset) {
             note_asset(em, asset);
@@ -1488,10 +1738,22 @@ static int data_stride(const int words)
 }
 
 // The function that reads an element of the shader's list `texture`, or a
-// cell of its grid, written before the code that calls it: zeros outside it,
-// and otherwise the value made of its ints, floats by their bits.
-static void need_data(emit *em, const int texture, const type element, const bool grid)
+// cell of its grid of `dims` axes (0 for a list), written before the code
+// that calls it: zeros outside it, and otherwise the value made of its ints,
+// floats by their bits. A grid's texture is the box of cells its chunks take
+// up (tide_draw_grid_data): the uniforms' ints say, after the grid's size,
+// where the box starts and how many cells it is along each axis, and for a
+// Grid3 how many of its layers are side by side. A place is outside the box
+// when it's before its start or as far past it as the box is long, which is
+// asked with unsigned numbers: a place and the box's start can be further
+// apart than an int says. Those same unsigned numbers are where the cell is
+// in the box, and nothing subtracts the two again as ints: with a place
+// that's written as numbers ('cells[3, 1]'), OpenGL 3.3 on an NVIDIA driver
+// then read another pixel than the one asked for, past the texture's first
+// row (pass 18 of platform/tests/shaders.tide reads cells so).
+static void need_data(emit *em, const int texture, const type element, const int dims)
 {
+    const bool grid = dims > 0;
     if (texture < 0 || em->lists[texture]) return;
     em->lists[texture] = true;
     const bool wgsl = em->l == WGSL;
@@ -1504,12 +1766,24 @@ static void need_data(emit *em, const int texture, const type element, const boo
     em->o = &text;
     const char *t = ty(em, element);
     if (grid) {
-        if (wgsl) sb_printf(&text, "fn tide_list%d(tide_i: vec2i) -> %s {\n", texture, t);
-        else sb_printf(&text, "%s tide_list%d(ivec2 tide_i) {\n", t, texture);
-        sb_put(&text, "    if (tide_i.x < 0 || tide_i.y < 0 || tide_i.x >= ");
-        put_word(em, 'v', count_at);
-        sb_put(&text, " || tide_i.y >= ");
-        put_word(em, 'v', count_at + 1);
+        const char *vec = dims == 3 ? (wgsl ? "vec3i" : "ivec3") : (wgsl ? "vec2i" : "ivec2");
+        const char *whole = wgsl ? "u32" : "uint";
+        if (wgsl) sb_printf(&text, "fn tide_list%d(tide_i: %s) -> %s {\n    let tide_o = ", texture, vec, t);
+        else sb_printf(&text, "%s tide_list%d(%s tide_i) {\n    %s tide_o = ", t, texture, vec, vec);
+        put_words(em, 'v', count_at + dims, dims, vec);
+        if (wgsl) sb_put(&text, ";\n    let tide_e = ");
+        else sb_printf(&text, ";\n    %s tide_e = ", vec);
+        put_words(em, 'v', count_at + 2 * dims, dims, vec);
+        sb_put(&text, ";\n");
+        for (int a = 0; a < dims; a++) {
+            const char axis = "xyz"[a];
+            sb_printf(&text, "    %s tide_%c = %s(tide_i.%c) - %s(tide_o.%c);\n", wgsl ? "let" : "uint", axis, whole, axis, whole, axis);
+        }
+        sb_put(&text, "    if (");
+        for (int a = 0; a < dims; a++) {
+            const char axis = "xyz"[a];
+            sb_printf(&text, "%stide_i.%c < tide_o.%c || tide_%c >= %s(tide_e.%c)", a ? " || " : "", axis, axis, axis, whole, axis);
+        }
     } else {
         if (wgsl) sb_printf(&text, "fn tide_list%d(tide_i: i32) -> %s {\n    if (tide_i < 0 || tide_i >= ", texture, t);
         else sb_printf(&text, "%s tide_list%d(int tide_i) {\n    if (tide_i < 0 || tide_i >= ", t, texture);
@@ -1517,14 +1791,27 @@ static void need_data(emit *em, const int texture, const type element, const boo
     }
     sb_put(&text, ") {\n        return ");
     put_zeros(em, element);
-    sb_printf(&text, ";\n    }\n    %s tide_word = tide_i%s * %d;\n    %s tide_first = tide_word >> %s;\n", wgsl ? "let" : "int",
-              grid ? ".x" : "", stride, wgsl ? "let" : "int", wgsl ? "2u" : "2");
+    sb_put(&text, ";\n    }\n");
+    const char *number = wgsl ? "let" : "int";
+    const char *whole_int = wgsl ? "i32" : "int";
+    sb_printf(&text, "    %s tide_word = %s%s * %d;\n    %s tide_first = tide_word >> %s;\n", number, grid ? whole_int : "",
+              grid ? "(tide_x)" : "tide_i", stride, number, wgsl ? "2u" : "2");
+    if (dims == 3) { // Its layers side by side, then under each other
+        sb_printf(&text, "    %s tide_layer = %s(tide_z);\n    %s tide_across = ", number, whole_int, number);
+        put_word(em, 'v', count_at + 9);
+        sb_printf(&text, ";\n    %s tide_left = (tide_layer %% tide_across) * ((tide_e.x * %d + 3) >> %s);\n"
+                         "    %s tide_row = (tide_layer / tide_across) * tide_e.y + %s(tide_y);\n",
+                  number, stride, wgsl ? "2u" : "2", number, whole_int);
+    } else if (grid) {
+        sb_printf(&text, "    %s tide_row = %s(tide_y);\n", number, whole_int);
+    }
     for (int k = 0; k < pixels; k++) {
         char name[16], at[96];
         if (stride < 4) snprintf(name, sizeof name, "tide_r");
         else snprintf(name, sizeof name, "tide_q%d", k);
         // A list's rows are TIDE_LIST_DATA_ACROSS pixels; a grid's are its own
-        if (grid) snprintf(at, sizeof at, "tide_first + %d, tide_i.y", k);
+        if (dims == 3) snprintf(at, sizeof at, "tide_left + tide_first + %d, tide_row", k);
+        else if (grid) snprintf(at, sizeof at, "tide_first + %d, tide_row", k);
         else snprintf(at, sizeof at, "(tide_first + %d) & 1023, (tide_first + %d) >> %s", k, k, wgsl ? "10u" : "10");
         if (wgsl) sb_printf(&text, "    let %s = textureLoad(pixels%d, vec2i(%s), 0);\n", name, texture, at);
         else sb_printf(&text, "    ivec4 %s = texelFetch(pixels%d, ivec2(%s), 0);\n", name, texture, at);
@@ -1541,6 +1828,131 @@ static void need_data(emit *em, const int texture, const type element, const boo
     sb_put(&text, ";\n}\n\n");
     em->o = out;
     sb_put(&em->functions, text.data);
+}
+
+// ---------------------------------------------------------------------------
+// Maps and sets
+//
+// A map or a set the code names is read by its keys: `map[key]`, Has, TryGet,
+// `count` and foreach. It reaches the GPU as a list does, in one texture
+// (tide_draw_map_data): its live entries in the order their keys were added,
+// each as a list's element is (a map's as a struct of its key and its value,
+// a set's as its key), and after them, from the next pixel on, an index of
+// the GPU's own: a power of two of slots, an int each, 0 or an entry's number
+// plus one, by Math.Hash of the key with linear probing. The CPU's own index
+// is by a hash of 64 bits, which these GPUs can't work out. The draw's ints
+// say how many entries, and how many slots.
+
+// The function that finds a key's entry in the shader's map: its number, or -1.
+static void need_find(emit *em, const data_ref *d)
+{
+    const int texture = d->texture;
+    if (texture < 0) return;
+    need_data(em, texture, d->element, 0);
+    if (em->finds[texture]) return;
+    em->finds[texture] = true;
+    need(em, H_HASH1);
+    const bool wgsl = em->l == WGSL;
+    int floats = 0, ints = 0, value_floats = 0, value_ints = 0;
+    type_words(d->element, &floats, &ints);
+    // Where an entry's key is among its words: its ints come after its floats, and the key is the first of them
+    if (!d->map->is_set) type_words(d->map->fields.items[1].type, &value_floats, &value_ints);
+    const int stride = data_stride(floats + ints), key_word = value_floats;
+    const int count_at = em->sh->textures.items[texture].count_at;
+    sb text = {0};
+    sb *const out = em->o;
+    em->o = &text;
+    const char *let = wgsl ? "let" : "int", *var = wgsl ? "var" : "int", *two = wgsl ? "2u" : "2";
+    if (wgsl) sb_printf(&text, "fn tide_find%d(tide_key: i32) -> i32 {\n", texture);
+    else sb_printf(&text, "int tide_find%d(int tide_key) {\n", texture);
+    sb_printf(&text, "    %s tide_slots = ", let);
+    put_word(em, 'v', count_at + 1);
+    sb_printf(&text, ";\n    if (tide_slots <= 0) {\n        return -1;\n    }\n    %s tide_base = ((", let);
+    put_word(em, 'v', count_at);
+    sb_printf(&text, " * %d + 3) >> %s) << %s;\n", stride, two, two);
+    sb_printf(&text, "    %s tide_s = tide_hash1(tide_key) & (tide_slots - 1);\n", var);
+    sb_put(&text, wgsl ? "    for (var tide_n: i32 = 0; tide_n < tide_slots; tide_n++) {\n"
+                       : "    for (int tide_n = 0; tide_n < tide_slots; tide_n++) {\n");
+    const char *fetch = wgsl ? "        let %s = textureLoad(pixels%d, vec2i((%s >> 2u) & 1023, %s >> 12u), 0);\n"
+                             : "        ivec4 %s = texelFetch(pixels%d, ivec2((%s >> 2) & 1023, %s >> 12), 0);\n";
+    sb_printf(&text, "        %s tide_w = tide_base + tide_s;\n", let);
+    sb_printf(&text, fetch, "tide_slot", texture, "tide_w", "tide_w");
+    sb_printf(&text, "        %s tide_e = tide_slot[tide_w & 3];\n        if (tide_e == 0) {\n            return -1;\n        }\n", let);
+    sb_printf(&text, "        %s tide_k = (tide_e - 1) * %d + %d;\n", let, stride, key_word);
+    sb_printf(&text, fetch, "tide_held", texture, "tide_k", "tide_k");
+    sb_put(&text, "        if (tide_held[tide_k & 3] == tide_key) {\n            return tide_e - 1;\n        }\n"
+                  "        tide_s = (tide_s + 1) & (tide_slots - 1);\n    }\n    return -1;\n}\n\n");
+    em->o = out;
+    sb_put(&em->functions, text.data);
+}
+
+// The function that's the shader's map's TryGet: whether the key is there,
+// and into the caller's variable its value, or the value type's default.
+static void need_try(emit *em, const data_ref *d)
+{
+    const int texture = d->texture;
+    if (texture < 0) return;
+    need_find(em, d);
+    if (em->tries[texture]) return;
+    em->tries[texture] = true;
+    const bool wgsl = em->l == WGSL;
+    const type value = d->map->fields.items[1].type;
+    sb text = {0};
+    sb *const out = em->o;
+    em->o = &text;
+    const char *t = ty(em, value);
+    if (wgsl) sb_printf(&text, "fn tide_try%d(tide_key: i32, tide_value: ptr<function, %s>) -> bool {\n    let", texture, t);
+    else sb_printf(&text, "bool tide_try%d(int tide_key, inout %s tide_value) {\n    int", texture, t);
+    sb_printf(&text, " tide_e = tide_find%d(tide_key);\n    if (tide_e < 0) {\n        %stide_value = ", texture, wgsl ? "*" : "");
+    put_default(em, value);
+    sb_printf(&text, ";\n        return false;\n    }\n    %stide_value = tide_list%d(tide_e).%s;\n    return true;\n}\n\n",
+              wgsl ? "*" : "", texture, field_name(&d->map->entry->fields.items[1]));
+    em->o = out;
+    sb_put(&em->functions, text.data);
+}
+
+// Has and TryGet of a map or a set the code names. What changes one is the CPU's.
+static void ex_map_call(emit *em, const expr *e)
+{
+    const bool set = e->object->type.kind == TY_SET;
+    if (str_eq_c(e->name, "Add") || str_eq_c(e->name, "Remove") || str_eq_c(e->name, "Clear")) {
+        refuse(em, e->at, "the GPU can't change a %s: it reads the one a system or a view filled", set ? "set" : "map");
+        diag_note(set ? "code the GPU runs has 'Has(key)' and 'count', and goes through a set with foreach"
+                      : "code the GPU runs has 'map[key]', 'Has(key)', 'TryGet(key, out value)' and 'count', and goes through a "
+                        "map with foreach");
+        return;
+    }
+    if (str_eq_c(e->name, "Get")) {
+        refuse(em, e->at, "Get gives a value that may be missing, and the GPU has none of those");
+        diag_note("ask with 'TryGet(key, out value)', or read 'map[key]', which is zeros for a key that isn't there");
+        return;
+    }
+    data_ref data;
+    if (!data_of(em, e->object, &data)) {
+        type_fits(em, e->object->type, e->object->at);
+        return;
+    }
+    const int t = data.texture < 0 ? 0 : data.texture;
+    const type key = data.map->fields.items[0].type;
+    if (key.kind != TY_INT && key.kind != TY_BYTE && key.kind != TY_ENUM) return; // Said, where the map was named
+    if (str_eq_c(e->name, "Has")) {
+        need_find(em, &data);
+        sb_printf(em->o, "(tide_find%d(", t);
+        ex_as(em, e->args.items[0], key);
+        sb_put(em->o, ") >= 0)");
+        return;
+    }
+    // TryGet(key, out value): the variable itself, as a function's mut argument is handed over
+    const expr *to = e->args.items[1];
+    if (!is_whole_variable(to)) {
+        refuse(em, to->at, "TryGet's value goes into a local in code the GPU runs: 'TryGet(key, out var value)'");
+        return;
+    }
+    need_try(em, &data);
+    sb_printf(em->o, "tide_try%d(", t);
+    ex_as(em, e->args.items[0], key);
+    const bool address = em->l == WGSL && !(to->bind == BIND_PARAM && is_pointer(em, to->param));
+    sb_printf(em->o, ", %s%s)", address ? "&" : "", local_name(to->name));
 }
 
 // ---------------------------------------------------------------------------
@@ -1570,9 +1982,33 @@ static int need_array(emit *em, const decl *array)
         sb_printf(&text, "%s tide_el%d(%s tide_a, int tide_i) {\n    if (tide_i < 0 || tide_i >= %d) {\n        return ", t, n, a,
                   array->array_length);
         put_zeros(em, element);
-        sb_put(&text, ";\n    }\n    return tide_a[tide_i];\n}\n\n");
+        // The place is kept inside the array where it's read too: a compiler that puts the function where it's
+        // called, with a number for the place, refuses one past the ends though the line above keeps it from running
+        sb_printf(&text, ";\n    }\n    return tide_a[clamp(tide_i, 0, %d)]%s;\n}\n\n", array->array_length - 1,
+                  in_rows(em, element) ? ".v" : "");
     }
     em->o = out;
+    sb_put(&em->functions, text.data);
+    return n;
+}
+
+// The function that picks between two values of type `t`, a struct, a matrix
+// or an array, for '?:': written before the code that calls it.
+static int need_pick(emit *em, const type t)
+{
+    for (int i = 0; i < em->picks.count; i++) {
+        if (em->picks.items[i].kind == t.kind && em->picks.items[i].decl == t.decl) return i;
+    }
+    vec_push(em->picks, t);
+    const int n = em->picks.count - 1;
+    const char *name = ty(em, t);
+    sb text = {0};
+    if (em->l == WGSL) {
+        sb_printf(&text, "fn tide_pick%d(tide_c: bool, tide_a: %s, tide_b: %s) -> %s {\n", n, name, name, name);
+    } else {
+        sb_printf(&text, "%s tide_pick%d(bool tide_c, %s tide_a, %s tide_b) {\n", name, n, name, name);
+    }
+    sb_put(&text, "    if (tide_c) {\n        return tide_a;\n    }\n    return tide_b;\n}\n\n");
     sb_put(&em->functions, text.data);
     return n;
 }
@@ -1588,9 +2024,11 @@ static void ex_array_index(emit *em, const expr *e)
         em->raw = 0; // What says which element is read like anything else
         const bool folds = e->lhs->kind != E_INT && is_const(e->lhs);
         if (folds) em->defuse++;
-        sb_put(em->o, "[");
+        const bool kept = folds && em->l == GLSL; // A constant past the ends is refused there, in code that never runs too
+        sb_put(em->o, kept ? "[clamp(" : "[");
         ex_as(em, e->lhs, (type){TY_INT, NULL});
-        sb_put(em->o, "]");
+        if (kept) sb_printf(em->o, ", 0, %d)", array.decl->array_length - 1);
+        sb_put(em->o, in_rows(em, array.decl->fields.items[0].type) ? "].v" : "]");
         if (folds) em->defuse--;
         em->raw = raw;
         return;
@@ -1652,6 +2090,12 @@ static void put_in_range(emit *em, const expr *e)
 // ---------------------------------------------------------------------------
 // Expressions
 
+// Random.seed: the seed of the match the frame draws, which its draw sends.
+static bool is_seed(const expr *e)
+{
+    return e->kind == E_MEMBER && e->c_constant && e->object && e->object->kind == E_NAME && str_eq_c(e->object->name, "Random");
+}
+
 static bool is_const(const expr *e)
 {
     if (!e) return true;
@@ -1663,6 +2107,7 @@ static bool is_const(const expr *e)
     case E_NAME:
         return e->bind == BIND_CONST;
     case E_MEMBER:
+        if (is_seed(e)) return false; // A draw's, not the shader's text's
         return e->c_constant || e->enum_member || e->constant || (e->swizzle_len && is_const(e->object));
     case E_UNARY:
         return !e->method && is_const(e->lhs);
@@ -1720,7 +2165,7 @@ static void put_self(emit *em)
 
 static void ex_name(emit *em, const expr *e)
 {
-    if (e->type.kind == TY_LIST || e->type.kind == TY_GRID) { // A name for one, where a value goes
+    if (is_data(e->type)) { // A name for one, where a value goes
         type_fits(em, e->type, e->at);
         return;
     }
@@ -1783,6 +2228,11 @@ static void ex_static(emit *em, const expr *e)
                   {"magenta", 1, 0, 1, 1}, {"gray", 0.5f, 0.5f, 0.5f, 1}, {"clear", 0, 0, 0, 0},
                   {"none", 0, 0, 0, -1}};
     const str owner = e->object->name;
+    if (is_seed(e)) { // A word of the draw's ints (codegen fills it); 0 while checking, when there's no shader
+        if (em->sh && em->sh->seed_at >= 0) put_word(em, 'v', em->sh->seed_at);
+        else sb_put(em->o, "0");
+        return;
+    }
     if (str_eq_c(owner, "Math")) {
         put_float(em, str_eq_c(e->member, "PI") ? 3.14159265358979 : str_eq_c(e->member, "TAU") ? 6.28318530717959
                                                                                              : 2.71828182845905);
@@ -1854,11 +2304,14 @@ static void ex_member(emit *em, const expr *e)
     const expr *obj = e->object;
     data_ref data;
     if (str_eq_c(e->member, "size") && obj->type.kind == TY_GRID && data_of(em, obj, &data)) { // A grid's size
-        if (data.texture < 0) sb_printf(em->o, "%s(0)", ty(em, (type){TY_INT2, NULL}));
-        else put_words(em, 'v', em->sh->textures.items[data.texture].count_at, 2, ty(em, (type){TY_INT2, NULL}));
+        const int dims = obj->type.decl->dims;
+        const char *vector = ty(em, (type){dims == 3 ? TY_INT3 : TY_INT2, NULL});
+        if (data.texture < 0) sb_printf(em->o, "%s(0)", vector);
+        else put_words(em, 'v', em->sh->textures.items[data.texture].count_at, dims, vector);
         return;
     }
-    if (str_eq_c(e->member, "count") && obj->type.kind == TY_LIST && data_of(em, obj, &data)) { // How many a list has
+    if (str_eq_c(e->member, "count") && (obj->type.kind == TY_LIST || obj->type.kind == TY_MAP || obj->type.kind == TY_SET)
+        && data_of(em, obj, &data)) { // How many a list or a map has
         put_list_count(em, data.texture);
         return;
     }
@@ -2453,6 +2906,34 @@ static int known_filter(const expr *e)
     return filter == 0 || filter == 2 ? filter : 1;
 }
 
+// Whether working `e` out rolls with Random: a roll, or a call of what rolls. With `made`, a local made of one
+// counts too: what the expression is made of was rolled, though it rolls nothing itself.
+static bool rolls_in(const expr *e, const bool made, const int depth)
+{
+    if (!e || depth > 64) return false;
+    if (e->call == CALL_ROLL || (e->method && e->method->rolls)) return true;
+    if (made && e->kind == E_NAME && e->bind == BIND_LOCAL && e->local && e->local->kind == S_VAR
+        && rolls_in(e->local->value, made, depth + 1)) {
+        return true;
+    }
+    if (rolls_in(e->object, made, depth + 1) || rolls_in(e->lhs, made, depth + 1) || rolls_in(e->rhs, made, depth + 1)
+        || rolls_in(e->cond, made, depth + 1)) {
+        return true;
+    }
+    for (int i = 0; i < e->args.count; i++) {
+        if (rolls_in(e->args.items[i], made, depth + 1)) return true;
+    }
+    for (int i = 0; i < e->inits.count; i++) {
+        if (rolls_in(e->inits.items[i].value, made, depth + 1)) return true;
+    }
+    return false;
+}
+
+static bool has_roll(const expr *e, const int depth)
+{
+    return rolls_in(e, true, depth);
+}
+
 // Whether a frag can work an expression out as it starts, before any branch:
 // it's made of the frag's parameters, constants, locals that are never
 // assigned again and whose own values are so, and what changes nothing
@@ -2486,6 +2967,7 @@ static bool liftable(const emit *em, const expr *e, const int depth)
     case E_BINARY:
     case E_UNARY:
         if (e->method) {
+            if (e->method->rolls) return false; // Written twice, it would roll twice
             for (int i = 0; i < e->method->params.count; i++) {
                 if (e->method->params.items[i].mode == PARAM_MUT) return false;
             }
@@ -2510,7 +2992,7 @@ static bool liftable(const emit *em, const expr *e, const int depth)
         }
         if (e->call == CALL_FUNCTION || e->call == CALL_METHOD) {
             const decl *fn = e->method;
-            if (!fn || fn->is_extern || fn->is_mut_method) return false;
+            if (!fn || fn->is_extern || fn->is_mut_method || fn->rolls) return false; // One that rolls would roll twice
             for (int i = 0; i < fn->params.count; i++) { // One with the pixel could leave it undrawn
                 const param *p = &fn->params.items[i];
                 if (p->mode == PARAM_MUT || p->is_out || p->type.decl == em->prog->pixel) return false;
@@ -2541,11 +3023,18 @@ static void ex_cube_sample(emit *em, const expr *e, const decl *asset, const par
     const bool lifts = em->root->is_frag && em->code == em->root && !em->lifting && filter == 2;
     const bool grad = lifts && liftable(em, e->args.items[0], 0);
     if (lifts && !grad && em->checking) {
-        refuse(em, e->args.items[0]->at, "a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this "
-                                         "direction is made of a variable that changes, or of one a loop counts");
-        diag_note("the GPU picks between a cube's smaller images by how fast the direction changes from one pixel to the "
-                  "next, which it's asked before any branch or loop: make it of the frag's parameters, constants and "
-                  "variables declared with 'var' and never assigned again, or sample with Filter.Bilinear here");
+        refuse(em, e->args.items[0]->at, has_roll(e->args.items[0], 0)
+               ? "a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this direction is made of a roll"
+               : "a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this "
+                 "direction is made of a variable that changes, or of one a loop counts");
+        if (has_roll(e->args.items[0], 0)) {
+            diag_note("the GPU picks between a cube's smaller images by how fast the direction changes from one pixel to the "
+                      "next, and a roll is another number at every pixel: sample with Filter.Bilinear here");
+        } else {
+            diag_note("the GPU picks between a cube's smaller images by how fast the direction changes from one pixel to the "
+                      "next, which it's asked before any branch or loop: make it of the frag's parameters, constants and "
+                      "variables declared with 'var' and never assigned again, or sample with Filter.Bilinear here");
+        }
     }
     int slot = 0;
     if (em->checking) {
@@ -2648,11 +3137,18 @@ static void ex_sample(emit *em, const expr *e)
                     && (filter == 2 || (!filter_said && em->prog->names_trilinear));
     const bool grad = lifts && liftable(em, e->args.items[0], 0);
     if (lifts && !grad && filter == 2 && em->checking) {
-        refuse(em, e->args.items[0]->at, "a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this "
-                                         "uv is made of a variable that changes, or of one a loop counts");
-        diag_note("the GPU picks between a texture's smaller images by how fast the uv changes from one pixel to the next, "
-                  "which it's asked before any branch or loop: make the uv of the frag's parameters, constants and "
-                  "variables declared with 'var' and never assigned again, or sample with Filter.Bilinear here");
+        refuse(em, e->args.items[0]->at, has_roll(e->args.items[0], 0)
+               ? "a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this uv is made of a roll"
+               : "a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this "
+                 "uv is made of a variable that changes, or of one a loop counts");
+        if (has_roll(e->args.items[0], 0)) {
+            diag_note("the GPU picks between a texture's smaller images by how fast the uv changes from one pixel to the "
+                      "next, and a roll is another number at every pixel: sample with Filter.Bilinear here");
+        } else {
+            diag_note("the GPU picks between a texture's smaller images by how fast the uv changes from one pixel to the next, "
+                      "which it's asked before any branch or loop: make the uv of the frag's parameters, constants and "
+                      "variables declared with 'var' and never assigned again, or sample with Filter.Bilinear here");
+        }
     } else if (lifts && !grad && em->checking) {
         // The texture may say Trilinear, and this read can't: said, not left to be found in a shimmer
         const expr *named = direct ? of : of->object && of->object->kind == E_NAME ? of->object : NULL;
@@ -2660,8 +3156,11 @@ static void ex_sample(emit *em, const expr *e)
         if (direct) snprintf(which, sizeof which, "'" STR_FMT "'", STR_ARG(of->name));
         else if (named) snprintf(which, sizeof which, "'" STR_FMT "." STR_FMT "'", STR_ARG(named->name), STR_ARG(of->member));
         else snprintf(which, sizeof which, "this texture");
-        diag_warning(e->args.items[0]->at, "%s may say Filter.Trilinear, which this Sample can't read: its uv is made of a "
-                                           "variable that changes, or of one a loop counts, so it reads the texture's own pixels",
+        diag_warning(e->args.items[0]->at, has_roll(e->args.items[0], 0)
+                     ? "%s may say Filter.Trilinear, which this Sample can't read: its uv is made of a roll, so it reads the "
+                       "texture's own pixels"
+                     : "%s may say Filter.Trilinear, which this Sample can't read: its uv is made of a "
+                       "variable that changes, or of one a loop counts, so it reads the texture's own pixels",
                      which);
         diag_note("make the uv of the frag's parameters, constants and variables declared with 'var' and never assigned "
                   "again, so the GPU can be asked how fast it changes as the frag starts; or write the filter here, "
@@ -2755,7 +3254,7 @@ static void ex_sample(emit *em, const expr *e)
 // Whether a function's parameter is a list or a grid, which it's written for and not handed.
 static bool takes_data(const param *p)
 {
-    return (p->type.kind == TY_LIST || p->type.kind == TY_GRID) && p->type.decl;
+    return is_data(p->type);
 }
 
 // A call of a function or method of the game's. A mut argument is the
@@ -2770,8 +3269,7 @@ static void ex_user_call(emit *em, const expr *e)
     sb suffix = {0};
     for (int i = 0; i < fn->params.count; i++) {
         if (!takes_data(&fn->params.items[i])) continue;
-        spec[i] = (data_ref){.texture = -1, .element = data_element(fn->params.items[i].type),
-                             .grid = fn->params.items[i].type.kind == TY_GRID};
+        spec[i] = data_unknown(fn->params.items[i].type);
         const expr *arg = i < e->args.count ? e->args.items[i] : NULL;
         if (arg && !data_of(em, arg, &spec[i])) type_fits(em, arg->type, arg->at);
         sb_printf(&suffix, "%s%d", suffix.data ? "x" : "_4", spec[i].texture < 0 ? 0 : spec[i].texture);
@@ -2846,10 +3344,19 @@ static void ex_call(emit *em, const expr *e)
     case CALL_METHOD:
         ex_user_call(em, e);
         return;
+    case CALL_ROLL: // Random.NextInt(6), on the type: the stage's own generator steps, and the CPU's formula makes the number
+        for (size_t i = 0; i < sizeof roll_calls / sizeof roll_calls[0]; i++) {
+            if (!e->c_callee || strcmp(e->c_callee, roll_calls[i].cpu) != 0) continue;
+            put_helper_call(em, e, roll_calls[i].helper, roll_calls[i].call);
+            return;
+        }
+        refuse(em, e->at, "Random." STR_FMT " isn't on the GPU yet", STR_ARG(e->name)); // A roll Random gains goes in roll_calls
+        diag_note("roll it in the view, and keep the number in a field the GPU reads");
+        return;
     case CALL_RANDOM:
-    case CALL_ROLL:
-        refuse(em, e->at, "the GPU can't roll random numbers: a Random keeps its state where the CPU steps it");
-        diag_note("roll in the view or a system, and keep the number in a field the GPU reads");
+        refuse(em, e->at, "the GPU can't step a Random of the game's: its state is 64 bits, and the GPU's ints are 32");
+        diag_note("roll on the type, 'Random." STR_FMT "(...)': a frag has a generator of its pixel's own there, and a vert of "
+                  "its vertex's", STR_ARG(e->name));
         return;
     case CALL_BUILTIN:
         if (e->kind == E_METHOD && e->object->kind == E_NAME && str_eq_c(e->object->name, "Math")) {
@@ -2857,8 +3364,9 @@ static void ex_call(emit *em, const expr *e)
             return;
         }
         if (e->kind == E_CALL && e->type.kind == TY_STRUCT && e->type.decl == em->prog->random) { // Random(seed)
-            refuse(em, e->at, "the GPU can't make a Random: it keeps its state where the CPU steps it");
-            diag_note("roll in the view or a system, and keep the number in a field the GPU reads");
+            refuse(em, e->at, "the GPU can't make a Random: its state is 64 bits, and the GPU's ints are 32");
+            diag_note("roll on the type, 'Random.NextInt(6)': a frag has a generator of its pixel's own there, and a vert of "
+                      "its vertex's");
             return;
         }
         if (e->kind == E_METHOD && e->object->kind == E_NAME && ex_builder(em, e)) return;
@@ -2888,9 +3396,11 @@ static void ex_call(emit *em, const expr *e)
     case CALL_SEND: what = "send events: systems and views do, on the CPU"; break;
     case CALL_DRAW:
     case CALL_GUI: what = "draw: a view does, and names the frag at mesh draw"; break;
-    case CALL_LIST:
     case CALL_MAP:
-    case CALL_WORLD: what = "use lists, maps or the World: it reads fields of numbers, and samples grids of colors"; break;
+        ex_map_call(em, e);
+        return;
+    case CALL_LIST:
+    case CALL_WORLD: what = "change lists or use the World: it reads fields of numbers, lists and maps, and samples grids"; break;
     case CALL_TEXT: what = "work with text"; break;
     default: what = "do this"; break;
     }
@@ -2959,14 +3469,20 @@ static void ex(emit *em, const expr *e)
         return;
     case E_CONDITIONAL:
         if (!type_fits(em, e->type, e->at)) return;
-        if (em->l == WGSL || em->checking) {
-            // WGSL's select picks between numbers, vectors and bools, and works both sides out
-            if (is_struct_like(e->type) || matrix_dim(e->type) || e->type.kind == TY_ARRAY) {
-                refuse(em, e->at, "'?:' picks between numbers, vectors and colors in code the GPU runs, and this is %s",
-                       type_name(e->type));
-                diag_note("write it as 'if' and 'else', assigning a variable");
-                return;
-            }
+        // WGSL's select picks between numbers, vectors and bools, and GLSL's '?:' not between arrays everywhere: a
+        // struct, a matrix or an array is picked by a function of its type. Both sides are worked out either way
+        // ...and so is one with a roll in it, whatever its type: select works both sides out and GLSL's '?:' one, and
+        // each in an order of its own. A function's arguments are worked out left to right in both, so the rolls a
+        // pixel makes there are the same numbers on every backend
+        if (is_struct_like(e->type) || matrix_dim(e->type) || e->type.kind == TY_ARRAY || rolls_in(e, false, 0)) {
+            sb_printf(em->o, "tide_pick%d(", need_pick(em, e->type));
+            ex(em, e->cond);
+            sb_put(em->o, ", ");
+            ex_as(em, e->lhs, e->type);
+            sb_put(em->o, ", ");
+            ex_as(em, e->rhs, e->type);
+            sb_put(em->o, ")");
+            return;
         }
         if (em->l == WGSL) {
             sb_put(em->o, "select(");
@@ -3016,10 +3532,21 @@ static void ex(emit *em, const expr *e)
         return;
     case E_INDEX: {
         data_ref data;
-        if (data_of(em, e->object, &data)) { // items[i], cells[x, y]: an element by its place
+        const bool named = data_of(em, e->object, &data);
+        if (named && data.map) { // map[key]: its value, or zeros, as an entry past the end reads
+            const type key = data.map->fields.items[0].type;
+            if (data.map->is_set || (key.kind != TY_INT && key.kind != TY_BYTE && key.kind != TY_ENUM)) return; // Said already
+            need_find(em, &data);
+            const int t = data.texture < 0 ? 0 : data.texture;
+            sb_printf(em->o, "tide_list%d(tide_find%d(", t, t);
+            ex_as(em, e->lhs, key);
+            sb_printf(em->o, ")).%s", field_name(&data.map->entry->fields.items[1]));
+            return;
+        }
+        if (named) { // items[i], cells[x, y]: an element by its place
             need_data(em, data.texture, data.element, data.grid);
             sb_printf(em->o, "tide_list%d(", data.texture < 0 ? 0 : data.texture);
-            ex_as(em, e->lhs, (type){data.grid ? TY_INT2 : TY_INT, NULL});
+            ex_as(em, e->lhs, (type){data.grid == 3 ? TY_INT3 : data.grid ? TY_INT2 : TY_INT, NULL});
             sb_put(em->o, ")");
             return;
         }
@@ -3027,12 +3554,11 @@ static void ex(emit *em, const expr *e)
             ex_array_index(em, e);
             return;
         }
-        if (e->object->type.kind == TY_GRID || e->object->type.kind == TY_LIST) {
+        if (is_data(e->object->type)) {
             type_fits(em, e->object->type, e->object->at);
             return;
         }
-        refuse(em, e->at, "the GPU indexes arrays, and lists and grids that are fields of what the frag or vert takes: it "
-                          "has no maps");
+        refuse(em, e->at, "the GPU indexes arrays, and the lists, maps and grids the frag or vert was given");
         return;
     }
     case E_LIST:
@@ -3041,7 +3567,9 @@ static void ex(emit *em, const expr *e)
             sb_printf(em->o, "%s(", ty(em, e->type));
             for (int i = 0; i < e->args.count; i++) {
                 if (i) sb_put(em->o, ", ");
+                const bool row = put_row(em, e->type.decl->fields.items[0].type);
                 ex_as(em, e->args.items[i], e->type.decl->fields.items[0].type);
+                if (row) sb_put(em->o, ")");
             }
             sb_put(em->o, ")");
             return;
@@ -3137,11 +3665,11 @@ static void st_body(emit *em, const stmt *s)
 
 static void st_var(emit *em, const stmt *s)
 {
-    if (s->type.kind == TY_LIST || s->type.kind == TY_GRID) { // A name for one the code was given: nothing is written
-        const char *what = s->type.kind == TY_LIST ? "list" : "grid";
+    if (is_data(s->type)) { // A name for one the code was given: nothing is written
+        const char *what = data_word(s->type);
         const loc at = s->name_at.line ? s->name_at : s->at;
         data_alias alias = {.local = s};
-        alias.data = (data_ref){.texture = -1, .element = data_element(s->type), .grid = s->type.kind == TY_GRID};
+        alias.data = data_unknown(s->type);
         if (s->is_mut) {
             refuse(em, at, "a %s's local in code the GPU runs names one %s, for good: '" STR_FMT "' can't be 'mut'", what, what,
                    STR_ARG(s->name));
@@ -3543,6 +4071,22 @@ static void st_steps(emit *em, const stmt *s, expr *e, const bool sometimes, ste
 
 static void st_one(emit *em, const stmt *s);
 
+// Whether GLSL's for takes `s` on its line as it is: not a write into an
+// array, which is a statement there (st_assign), nor a call that changes
+// something in one, which goes through a copy (st_call).
+static bool on_a_line(const stmt *s)
+{
+    if (!s || s->kind == S_VAR) return true;
+    if (s->kind == S_ASSIGN) return !in_array(s->target);
+    if (s->kind != S_EXPR) return false;
+    const expr *e = s->value;
+    if (e->object && in_array(e->object)) return false;
+    for (int i = 0; i < e->args.count; i++) {
+        if (in_array(e->args.items[i])) return false;
+    }
+    return true;
+}
+
 // A for that isn't one that counts (st_for): whatever it starts with, goes on
 // while and steps by. GLSL's own for; in WGSL, whose for takes less on its
 // line, a loop with its step where a `continue` still reaches it.
@@ -3587,9 +4131,51 @@ static void st_loop(emit *em, const stmt *s)
         sb_put(em->o, "}\n");
         return;
     }
-    if (s->step && s->step->kind == S_ASSIGN && in_array(s->step->target)) {
-        refuse(em, s->step->at, "a for's step that writes an array's element is written at the end of the loop's body in code "
-                                "the GPU runs");
+    if (!on_a_line(s->init) || !on_a_line(s->step)) {
+        // What it starts with or steps by is more than GLSL's for takes on its line (a write of an array's element,
+        // which only happens for an element the array has): a loop that steps as each round but the first starts,
+        // which a `continue` comes round to
+        const int first = em->temps++;
+        sb_put(em->o, "{\n");
+        em->indent++;
+        if (s->init) st(em, s->init);
+        line(em);
+        sb_printf(em->o, "bool tide_first%d = true;\n", first);
+        line(em);
+        sb_put(em->o, "while (true) {\n");
+        em->indent++;
+        if (s->step) {
+            line(em);
+            sb_printf(em->o, "if (!tide_first%d) {\n", first);
+            em->indent++;
+            st(em, s->step);
+            em->indent--;
+            line(em);
+            sb_put(em->o, "}\n");
+        }
+        line(em);
+        sb_printf(em->o, "tide_first%d = false;\n", first);
+        if (s->cond) {
+            line(em);
+            sb_put(em->o, "if (!(");
+            ex(em, s->cond);
+            sb_put(em->o, ")) {\n");
+            em->indent++;
+            line(em);
+            sb_put(em->o, "break;\n");
+            em->indent--;
+            line(em);
+            sb_put(em->o, "}\n");
+        }
+        line(em);
+        st_body(em, s->then_stmt);
+        sb_put(em->o, "\n");
+        em->indent--;
+        line(em);
+        sb_put(em->o, "}\n");
+        em->indent--;
+        line(em);
+        sb_put(em->o, "}\n");
         return;
     }
     sb_put(em->o, "for (");
@@ -3627,7 +4213,7 @@ static void st_foreach(emit *em, const stmt *s, const data_ref *list)
     } else {
         const int texture = list->texture;
         const type element = list->element;
-        need_data(em, texture, element, false);
+        need_data(em, texture, element, 0);
         sb_printf(em->o, wgsl ? "for (var tide_k%d: i32 = 0; tide_k%d < " : "for (int tide_k%d = 0; tide_k%d < ", k, k);
         put_list_count(em, texture);
         sb_printf(em->o, "; tide_k%d++) {\n", k);
@@ -3749,7 +4335,7 @@ static void st_one(emit *em, const stmt *s)
         st_outs(em, s->value);
         st_outs(em, s->target);
     }
-    if (s->kind == S_VAR && (s->type.kind == TY_LIST || s->type.kind == TY_GRID)) { // A name: no line of its own
+    if (s->kind == S_VAR && is_data(s->type)) { // A name: no line of its own
         st_var(em, s);
         return;
     }
@@ -3813,7 +4399,7 @@ static void st_one(emit *em, const stmt *s)
         break;
     case S_FOREACH: {
         data_ref data;
-        if (s->value && s->value->type.kind == TY_LIST) {
+        if (s->value && (s->value->type.kind == TY_LIST || s->value->type.kind == TY_MAP || s->value->type.kind == TY_SET)) {
             if (data_of(em, s->value, &data)) st_foreach(em, s, &data);
             else type_fits(em, s->value->type, s->value->at);
             break;
@@ -3822,8 +4408,8 @@ static void st_one(emit *em, const stmt *s)
             st_foreach(em, s, NULL);
             break;
         }
-        refuse(em, s->at, "a foreach the GPU runs goes through an array or a list, like 'foreach (var light in lights.items)': "
-                          "it has no maps, sets, queries or grids to go through");
+        refuse(em, s->at, "a foreach the GPU runs goes through an array, a list, a map or a set, like 'foreach (var light in "
+                          "lights.items)': it has no queries or grids to go through");
         break;
     }
     case S_PARALLEL:
@@ -3921,7 +4507,7 @@ static void need_function(emit *em, decl *fn, const loc at, const data_ref *spec
         if (spec && takes_data(p)) { // Which of the shader's lists or grids it is, this is written for
             if (p->mode == PARAM_MUT) {
                 refuse(em, p->at, "a %s a function takes in code the GPU runs is read there, never changed: '" STR_FMT "' can't be "
-                                  "'%s'", p->type.kind == TY_LIST ? "list" : "grid", STR_ARG(p->name), p->is_out ? "out" : "mut");
+                                  "'%s'", data_word(p->type), STR_ARG(p->name), p->is_out ? "out" : "mut");
             }
             continue;
         }
@@ -3981,6 +4567,10 @@ static void put_structs(emit *em, sb *o)
     const bool wgsl = em->l == WGSL;
     for (int i = 0; i < em->structs.count; i++) {
         const decl *d = em->structs.items[i];
+        if (d->kind == DECL_ARRAY) { // A row
+            sb_printf(o, "struct tide_row%d {\n    %s v;\n};\n", i, ty(em, (type){TY_ARRAY, (decl *)d}));
+            continue;
+        }
         sb_printf(o, "struct %s {\n", struct_name(d));
         for (int k = 0; k < d->fields.count; k++) {
             const field *f = &d->fields.items[k];
@@ -4030,6 +4620,57 @@ static const field *field_called(const decl *d, const char *name)
     return NULL;
 }
 
+// ---------------------------------------------------------------------------
+// Rolls
+//
+// A frag or a vert that rolls with Random (the checker's decl.rolls: itself,
+// or through a function it calls) has a generator of its own each time it
+// runs, `tide_dice`, a variable of its stage's that tide_roll steps. The stage
+// makes it as it starts, of what tells one run from another: for a frag, its
+// pixel's place in the destination's own pixels and which instance of its
+// draw the pixel is of (which the vertex stage passes on, `tide_nth`); for a
+// vert, which vertex of the mesh and which instance; and for both, a number
+// the frame rolled (a word of the draw's ints, which codegen fills: the same
+// for every draw of a frame, so draws still join into runs) and which frag or
+// vert it is, so two that draw the same pixel roll apart. Math.Hash of those
+// is the state: whole numbers, the same on every backend.
+
+static bool stage_rolls(const shader *sh, const int stage)
+{
+    const decl *root = stage == STAGE_VERT ? sh->vert : sh->frag;
+    return root && root->rolls;
+}
+
+// A number for the frag or vert, as roll_site's is for a system (codegen.c): of its name, and an int's worth.
+static unsigned roll_site(const decl *root)
+{
+    unsigned hash = 2166136261u;
+    for (const char *s = function_name(root); *s; s++) hash = (hash ^ (unsigned char)*s) * 16777619u;
+    return hash & 0x7FFFFFFFu;
+}
+
+// The stage's generator, made as its main starts. `nth` is how the fragment stage names its instance.
+static void put_dice(emit *em, sb *o, const int stage, const char *nth)
+{
+    const shader *sh = em->sh;
+    if (!stage_rolls(sh, stage)) return;
+    const bool wgsl = em->l == WGSL;
+    sb *const out = em->o;
+    em->o = o;
+    need(em, stage == STAGE_VERT ? H_HASH3 : H_HASH4);
+    if (stage == STAGE_VERT) {
+        sb_put(o, wgsl ? "    tide_dice = u32(tide_hash3(vec3i(i32(tide_vertex_index), i32(tide_instance_index), "
+                       : "    tide_dice = uint(tide_hash3(ivec3(gl_VertexID, gl_InstanceID, ");
+    } else if (wgsl) {
+        sb_printf(o, "    tide_dice = u32(tide_hash4(vec4i(vec2i(tide_at.xy), %s, ", nth);
+    } else { // From the top left, as this.position counts: OpenGL counts from the bottom
+        sb_printf(o, "    tide_dice = uint(tide_hash4(ivec4(ivec2(gl_FragCoord.x, tide_screen.z - gl_FragCoord.y), %s, ", nth);
+    }
+    put_word(em, 'v', sh->rolled_at);
+    sb_printf(o, " ^ %u)));\n", roll_site(stage == STAGE_VERT ? sh->vert : sh->frag));
+    em->o = out;
+}
+
 // What the vertex stage passes on to the pixels, as each language declares
 // it: the vertex's fields the pixels read, the fields they read of what the
 // vert wrote for them, where they are in the world, and the instance's
@@ -4066,6 +4707,10 @@ static void put_varyings(emit *em, sb *o, const char *direction)
         if (wgsl) sb_printf(o, "    @location(%d) @interpolate(flat) tide_g%d: vec4i,\n", location++, i);
         else sb_printf(o, "flat %s ivec4 tide_g%d;\n", direction, i);
     }
+    if (stage_rolls(sh, STAGE_FRAG)) { // Which instance of its draw a pixel is of, for its generator (put_dice)
+        if (wgsl) sb_printf(o, "    @location(%d) @interpolate(flat) tide_nth: i32,\n", location++);
+        else sb_printf(o, "flat %s int tide_nth;\n", direction);
+    }
 }
 
 // Where word `word` of what the pixels get of the instance comes from in the
@@ -4094,6 +4739,7 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
     const char *f4 = float_ty(em, 4);
     em->stage = STAGE_VERT;
     em->o = o;
+    put_dice(em, o, STAGE_VERT, NULL);
     sb_printf(o, wgsl ? "    var tide_vertex: %s = %s(" : "    %s tide_vertex = %s(", ty(em, vertex), ty(em, vertex));
     for (int i = 0; i < v->fields.count; i++) sb_printf(o, "%s%stide_a%d", i ? ", " : "", in, i);
     sb_put(o, ");\n");
@@ -4149,6 +4795,9 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
             sb_put(o, ");\n");
         }
     }
+    if (stage_rolls(sh, STAGE_FRAG)) {
+        sb_printf(o, wgsl ? "    %stide_nth = i32(tide_instance_index);\n" : "    %stide_nth = gl_InstanceID;\n", out);
+    }
 }
 
 // How many colors a shader's fragment stage writes: its frag's `out Color`
@@ -4191,6 +4840,9 @@ static void put_fragment_main(emit *em, sb *o, const char *in, const char *resul
     const int outputs = shader_outputs(sh);
     em->stage = STAGE_FRAG;
     em->o = o;
+    sb nth = {0};
+    sb_printf(&nth, "%stide_nth", in);
+    put_dice(em, o, STAGE_FRAG, nth.data);
     for (int k = 0; k < outputs; k++) {
         sb_printf(o, wgsl ? "    var %s: vec4f = %s(1.0, 1.0, 1.0, 1.0);\n" : "    vec4 %s = %s(1.0, 1.0, 1.0, 1.0);\n",
                   output_name(false, k), f4);
@@ -4289,6 +4941,14 @@ static void put_wgsl_inputs(const shader *sh, sb *o)
     sb_put(o, "var<private> tide_at: vec4f;\nvar<private> tide_world: vec3f;\n");
 }
 
+// The generator a stage's code rolls with (put_dice), where it has one: a
+// variable of the stage's own, each run of it with its own.
+static void put_dice_variable(const emit *em, sb *o, const bool rolls)
+{
+    if (!rolls && !em->helpers[H_ROLL]) return;
+    sb_put(o, em->l == WGSL ? "var<private> tide_dice: u32;\n" : "uint tide_dice;\n");
+}
+
 static emit emitter(program *prog, const shader *sh, const lang l)
 {
     return (emit){.prog = prog, .sh = sh, .l = l};
@@ -4339,6 +4999,7 @@ static void write_glsl(program *prog, shader *sh)
                 sb_printf(&o, "layout(location = %d) out vec4 %s;\n", k, output_name(true, k));
             }
         }
+        put_dice_variable(&em, &o, stage_rolls(sh, stage));
         put_structs(&em, &o);
         put_helpers(&em, &o);
         if (em.functions.data) sb_put(&o, em.functions.data);
@@ -4357,9 +5018,11 @@ static void write_wgsl(program *prog, shader *sh)
     write_stage(&em, sh->frag, STAGE_FRAG);
     put_fragment_main(&em, &fragment, "in.", "return");
 
+    const bool rolls = stage_rolls(sh, STAGE_VERT) || stage_rolls(sh, STAGE_FRAG);
     sb o = {0};
     put_uniforms(sh, WGSL, &o);
     put_wgsl_inputs(sh, &o);
+    put_dice_variable(&em, &o, rolls);
     sb_put(&o, "struct tide_corner {\n    @builtin(position) tide_at: vec4f,\n");
     put_varyings(&em, &o, "");
     sb_put(&o, "}\n");
@@ -4375,6 +5038,8 @@ static void write_wgsl(program *prog, shader *sh)
     }
     for (int i = 0; i < packs(sh->instance_floats); i++, location++) sb_printf(&o, ", @location(%d) tide_in%d: vec4f", location, i);
     for (int i = 0; i < packs(sh->instance_ints); i++, location++) sb_printf(&o, ", @location(%d) tide_ij%d: vec4i", location, i);
+    // Which vertex of the mesh, and which instance of the draw: what tells a vert's runs, and an instance's pixels, apart
+    if (rolls) sb_put(&o, ", @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32");
     sb_put(&o, ") -> tide_corner {\n");
     for (int i = 0; i < packs(sh->instance_floats); i++) sb_printf(&o, "    tide_n%d = tide_in%d;\n", i, i);
     for (int i = 0; i < packs(sh->instance_ints); i++) sb_printf(&o, "    tide_j%d = tide_ij%d;\n", i, i);
@@ -4468,7 +5133,7 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         for (int k = 0; k < p->type.decl->fields.count; k++) {
             const field *f = &p->type.decl->fields.items[k];
             if (f->hidden || !(p->whole || (p->reads && p->reads[k]))) continue;
-            if (f->type.kind == TY_LIST) { // Its elements, as a texture of numbers
+            if (f->type.kind == TY_LIST || f->type.kind == TY_MAP || f->type.kind == TY_SET) { // Its elements, as a texture of numbers
                 if (explicit_instance) sh->instance_list = f;
                 else add_list(sh, p->type.decl, f, !given);
                 continue;
@@ -4484,7 +5149,7 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         const decl *part = p->type.decl->local_part;
         for (int k = 0; part && p->local_reads && k < part->fields.count; k++) {
             const field *f = &part->fields.items[k];
-            if (p->local_reads[k] && f->type.kind == TY_LIST) {
+            if (p->local_reads[k] && (f->type.kind == TY_LIST || f->type.kind == TY_MAP || f->type.kind == TY_SET)) {
                 add_list(sh, p->type.decl, f, true);
                 continue;
             }
@@ -4607,9 +5272,17 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     for (int i = 0; i < sh->textures.count; i++) {
         shader_texture *t = &sh->textures.items[i];
         if (t->read != READ_DATA) continue;
-        t->count_at = sh->uniform_ints; // A list's count, or a grid's size across and down
-        sh->uniform_ints += (t->asset ? t->asset->return_type.kind : t->field->type.kind) == TY_GRID ? 2 : 1;
+        // A list's count, a map's entries and its index's slots, or a grid's size and where its cells are in
+        // its texture (TIDE_GRID2_DATA_INTS, TIDE_GRID3_DATA_INTS)
+        t->count_at = sh->uniform_ints;
+        const type held = t->asset ? t->asset->return_type : t->field->type;
+        sh->uniform_ints += held.kind == TY_LIST ? 1 : held.kind != TY_GRID ? 2 : held.decl->dims == 3 ? 10 : 6;
     }
+    // The number the frame rolled, which the generators of code that rolls are made of, and the match's seed
+    // for code that reads it: a word each of the draw's ints, the same for every draw of a frame
+    sh->rolled_at = sh->seed_at = -1;
+    if (stage_rolls(sh, STAGE_VERT) || stage_rolls(sh, STAGE_FRAG)) sh->rolled_at = sh->uniform_ints++;
+    if ((sh->vert && sh->vert->reads_seed) || (sh->frag && sh->frag->reads_seed)) sh->seed_at = sh->uniform_ints++;
     if (sh->instance_list) {
         diag_error(call->at, "this draw's instances each have a list, '" STR_FMT "', that its code reads, and a draw sends one "
                    "list for all of them", STR_ARG(sh->instance_list->name));
@@ -4619,7 +5292,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     }
     // What the vert writes for the frag, each struct it takes as `out`, and what
     // of it the frag's parameter of that type reads: only that goes on
-    int varyings = (sh->frag_world ? 1 : 0) + packs(sh->frag_floats) + packs(sh->frag_ints);
+    int varyings = (sh->frag_world ? 1 : 0) + packs(sh->frag_floats) + packs(sh->frag_ints) + (stage_rolls(sh, STAGE_FRAG) ? 1 : 0);
     for (int i = 1; sh->vert && i < sh->vert->params.count; i++) {
         const param *from = &sh->vert->params.items[i];
         if (!from->is_out || from->type.kind != TY_STRUCT) continue;
@@ -4669,6 +5342,9 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         diag_note("each field of the vertex the frag reads is one, each it reads of what the vert wrote for it another, its "
                   "place in the world another, and every 4 floats or 4 ints it reads of the entity's components another: read "
                   "fewer, or keep what every entity shares in a singleton");
+        if (stage_rolls(sh, STAGE_FRAG)) {
+            diag_note("one of them is for its rolls: which instance of its draw a pixel is of, which its generator is made of");
+        }
         return NULL;
     }
     if (uniform_bytes > 3984) { // TIDE_SHADER_UNIFORM_BYTES

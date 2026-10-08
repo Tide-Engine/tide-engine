@@ -1423,6 +1423,15 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(has(grid, "Grid2<Color>.Sample(float2 uv, Filter filter = the grid's, Wrap wrap = the grid's) -> Color"));
     const char *list = complete(IN_FRAG("var n = models.crate.$"));
     TIDE_CHECK(!offers(list, "Add") && offers(list, "count")); // The GPU reads a list, and changes none
+#define IN_KEYED(code)                                                                                                \
+    SHADER_TYPES "local singleton Keyed\n{\n    Map<int, Color> hues;\n    Set<int> lit;\n}\n"                          \
+    "frag Shade(BoxVertex vertex, out Color color, Keyed keyed)\n{\n    " code "\n}\n"
+    const char *map = complete(IN_KEYED("var n = keyed.hues.$"));
+    TIDE_CHECK(offers(map, "count") && offers(map, "Has") && offers(map, "TryGet")); // ...and a map, by its keys
+    TIDE_CHECK(!offers(map, "Remove") && !offers(map, "Clear") && !offers(map, "Get"));
+    const char *set = complete(IN_KEYED("var n = keyed.lit.$"));
+    TIDE_CHECK(offers(set, "count") && offers(set, "Has") && !offers(set, "Add") && !offers(set, "TryGet"));
+#undef IN_KEYED
     // A local that names a list or a grid is read the same way
     const char *named_list = complete(IN_FRAG("var crate = models.crate;\n    var n = crate.$"));
     TIDE_CHECK(!offers(named_list, "Add") && offers(named_list, "count"));
@@ -1444,6 +1453,11 @@ TIDE_TEST(lsp_shaders_complete)
     // Outside a frag or vert, a grid has its own methods, and no Sample
     const char *cells = complete(SHADER_TYPES "view V(mut Models models)\n{\n    models.wood.$\n}\n");
     TIDE_CHECK(offers(cells, "Clear") && offers(cells, "size") && !offers(cells, "Sample"));
+    // A Grid3's cells are read by their place in a frag, with its size: nothing samples one
+    const char *solid = complete("scene Main { }\nstruct Corner { float2 position; }\nlocal singleton Land { Grid3<int> solid; }\n"
+                                 "frag Dig(Corner corner, out Color color, Land land)\n{\n    var s = land.solid.$\n}\n");
+    TIDE_CHECK(offers(solid, "size") && !offers(solid, "Sample") && !offers(solid, "Clear"));
+    TIDE_CHECK(has(solid, "int3"));
 
     // After a mesh's lists, at Draw.Mesh: the verts and frags that run on its vertex, by name
 #define IN_VIEW(code)                                                                                                 \
@@ -6690,6 +6704,27 @@ TIDE_TEST(lsp_random)
     // Rolling through a read-only parameter says why it can't
     open_document(DICE "system Roll(Dice dice)\n{\n    dice.random.NextInt(6);\n}\n");
     TIDE_CHECK(has(last_sent(), "'dice' is read-only") && has(last_sent(), "'NextInt' is a mut method"));
+
+    // In a frag and a vert too: each pixel and each vertex rolls with a generator of its own, and reads the seed
+#define GRAIN "scene Main { }\nlocal singleton Art { List<Vertex> corners; List<int> faces; }\n"
+#define GRAIN_DRAWN "view Show(Art art)\n{\n    Draw.Mesh(art.corners, art.faces, Grain);\n}\n"
+    const char *pixel = complete(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n    color = Color(Random.$\n}\n");
+    TIDE_CHECK(offers(pixel, "NextFloat") && offers(pixel, "NextFloat3Direction") && offers(pixel, "NextQuaternionRotation"));
+    TIDE_CHECK(offers(pixel, "seed") && !offers(pixel, "state"));
+    const char *corner = complete(GRAIN "vert Shake(mut Vertex vertex)\n{\n    vertex.position += Random.$\n}\n");
+    TIDE_CHECK(offers(corner, "NextFloat2") && offers(corner, "NextInt"));
+    TIDE_CHECK(offers(complete(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n    color = Color($\n}\n"), "Random"));
+    open_document(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n"
+                        "    color = Color(Random.NextFloat(), float(Random.seed % 2), 0);\n}\n" GRAIN_DRAWN);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    open_document(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n    color = Color(Random.Next$Float(2), 0, 0);\n}\n" GRAIN_DRAWN);
+    TIDE_CHECK(has(request("textDocument/hover"), "Random.NextFloat(float max) -> float"));
+    open_document(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n    color = Color(Random.NextInt($\n}\n" GRAIN_DRAWN);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Random.NextInt(int min, int max) -> int"));
+    // A Random the game keeps stays the CPU's: its state is 64 bits
+    open_document(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n    mut var mine = Random(7);\n"
+                        "    color = Color(mine.NextFloat(), 0, 0);\n}\n" GRAIN_DRAWN);
+    TIDE_CHECK(has(last_sent(), "so it can't make a Random") && has(last_sent(), "roll on the type, 'Random.NextInt(6)'"));
 }
 
 // Default values, arguments by name, and functions that share a name
