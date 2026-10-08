@@ -1,0 +1,23 @@
+// expect: 'tail' holds an array of more than 4096 elements, so a parameter of it is 'mut': 'mut Tail tail'
+// expect: and only a function's or a method's: it stays in its audio declaration's state, which the audio thread reads
+struct Tail
+{
+    int at;
+    float[96000] line;
+}
+
+struct Corner
+{
+    float2 position;
+    float2 uv;
+    Color color;
+}
+
+frag Shade(Corner corner, Tail tail, out Color color)
+{
+    color = Color.white * tail.line[0];
+}
+
+scene Main
+{
+}

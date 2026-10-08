@@ -5901,8 +5901,8 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         return;
     }
     if (gpu && (t.kind == TY_GRID || t.kind == TY_TEXTURE)) {
-        // A Grid2's cells are read by their place there, with its size; one of colors or floats is sampled too
-        if (t.kind == TY_GRID && t.decl->dims == 2) item(c, "size", CK_PROPERTY, "int2", GRID_SIZE_FIELD_DOC, NULL);
+        // A grid's cells are read by their place there, with its size; a Grid2 of colors or floats is sampled too
+        if (t.kind == TY_GRID) item(c, "size", CK_PROPERTY, t.decl->dims == 3 ? "int3" : "int2", GRID_SIZE_FIELD_DOC, NULL);
         if (t.kind == TY_GRID && (t.decl->dims != 2 || (t.decl->fields.items[0].type.kind != TY_COLOR
                                                          && t.decl->fields.items[0].type.kind != TY_FLOAT))) return;
         const method_form *sample = t.kind == TY_TEXTURE ? &texture_calls[0]
@@ -6173,10 +6173,11 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             list_members(c, d->return_type, false, &sc);
             return;
         }
-        // Random.: its rolls and the match's seed, where code rolls: systems, views, handlers, tasks, Sample and their functions
-        if (n == 1 && str_eq_c(base, "Random") && !gpu && sc.decl && !sc.in_sanitize
+        // Random.: its rolls and the match's seed, where code rolls: systems, views, handlers, tasks, Sample and their
+        // functions, and frags and verts, whose pixels and vertices each roll with a generator of their own
+        if (n == 1 && str_eq_c(base, "Random") && sc.decl && !sc.in_sanitize
             && (sc.decl->kind == DECL_SYSTEM || sc.decl->kind == DECL_FUNCTION || sc.decl->kind == DECL_METHOD
-                || sc.decl->kind == DECL_INPUT)) {
+                || sc.decl->kind == DECL_INPUT || gpu)) {
             builtin_visit v = {c, false};
             builtin_list_members(base, add_builtin_member, &v);
             item(c, "seed", CK_PROPERTY, "int", RANDOM_SEED_DOC, NULL);

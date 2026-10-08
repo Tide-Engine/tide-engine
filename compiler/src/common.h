@@ -110,6 +110,10 @@ void diag_note(const char *fmt, ...); // Attaches to the previous error or warni
 // gets `at`, where diag_note gives it none.
 void diag_note_at(loc at, const char *fmt, ...);
 int diag_error_count(void);
+// Whether what's printed to stderr is colored: it's a terminal that takes
+// escape sequences, and NO_COLOR isn't set. For what else writes there, like
+// a C compiler tide runs.
+bool diag_colored(void);
 
 // "did you mean ...?" for a misspelled name: offer every name that would have
 // been right, then suggest_note adds a note naming the closest one, if any is

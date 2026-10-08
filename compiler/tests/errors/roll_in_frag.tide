@@ -1,9 +1,17 @@
-// expect: a frag runs on the GPU, for each pixel, so it can't roll random numbers
-local component Glow { List<Vertex> corners; List<int> faces; }
-scene Main { }
-frag Glitter(Vertex vertex, out Color color)
+// expect: a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this uv is made of a roll
+// expect: the GPU picks between a texture's smaller images by how fast the uv changes from one pixel to the next, and a roll is another number at every pixel: sample with Filter.Bilinear here
+// A frag rolls with Random; what it can't do is read between a texture's smaller images at a place it rolled.
+local singleton Glow
 {
-    color = Color(Random.NextFloat(), 0, 0);
+    List<Vertex> corners;
+    List<int> faces;
+    Grid2<Color> wood = Grid2(64, 64);
+}
+scene Main { }
+frag Glitter(Vertex vertex, out Color color, Glow glow)
+{
+    var at = vertex.uv + Random.NextFloat2() * 0.01;
+    color = glow.wood.Sample(at, Filter.Trilinear);
 }
 view Show(Glow glow)
 {

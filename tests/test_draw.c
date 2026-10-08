@@ -937,6 +937,122 @@ TIDE_TEST(draw_textures_say_what_changed)
     tide_heap_free(&heap);
 }
 
+static void int_words(const void *element, int32_t *words)
+{
+    memcpy(words, element, sizeof(int32_t));
+}
+
+// A kept texture against the same thing packed from nothing: the same size
+// and the same pixels. And for a renderer that has `before`, the pixels the
+// texture had at `had` (NULL: it has none): the areas the list says changed
+// are all that differs.
+static bool as_made_anew(const tide_draw_texture *kept, const tide_draw_texture *anew, uint8_t *before, const uint64_t had)
+{
+    if (!kept || !anew) return !kept && !anew;
+    const size_t pixel = tide_texels_bytes(kept->format), row = (size_t)kept->width * pixel;
+    if (kept->width != anew->width || kept->height != anew->height || kept->format != anew->format) return false;
+    if (memcmp(kept->pixels, anew->pixels, row * (size_t)kept->height) != 0) return false;
+    const tide_draw_area *areas;
+    uint32_t count;
+    if (!before || !tide_draw_texture_since(kept, had, &areas, &count)) return true;
+    for (uint32_t i = 0; i < count; i++) {
+        for (int32_t y = areas[i].y; y < areas[i].y + areas[i].height; y++) {
+            const size_t at = (size_t)y * row + (size_t)areas[i].x * pixel;
+            memcpy(before + at, kept->pixels + at, (size_t)areas[i].width * pixel);
+        }
+    }
+    return memcmp(before, kept->pixels, row * (size_t)kept->height) == 0;
+}
+
+// Whatever a game does to a grid or a list between two frames, the texture
+// the list keeps and changes in place is the one it would make from nothing,
+// and what it says changed is all that did.
+TIDE_TEST(draw_textures_kept_are_the_textures_made_anew)
+{
+    static const tide_grid_shape colors = {sizeof(tide_color), 2u, {5u, 5u, 0u}};
+    static const tide_grid_shape ints = {sizeof(int32_t), 3u, {4u, 4u, 2u}};
+    tide_heap heap = {0};
+    tide_text_use(NULL, &heap);
+    const uint32_t mark = tide_scratch_mark();
+    tide_grid paint = {0}, blocks = {0};
+    tide_grid_set(&paint, tide_grid_new(2, 90, 70, 0), &colors, TIDE_IN_LOCAL);
+    tide_grid_set(&blocks, tide_grid_new(3, 40, 0, 9), &ints, TIDE_IN_LOCAL); // No size along y: its chunks say where it is
+    tide_list items = {0};
+    for (int32_t i = 0; i < 3000; i++) *(shown *)tide_list_add(&items, sizeof(shown), TIDE_IN_LOCAL) = (shown){{1.0f, 2.0f, 3.0f}, i};
+
+    tide_draw_list kept = {0};
+    uint32_t seed = 12345u;
+    uint8_t *before[3] = {NULL, NULL, NULL};
+    size_t room[3] = {0, 0, 0};
+    uint64_t had[3] = {0, 0, 0};
+    bool has[3] = {false, false, false};
+    int wrong = 0, parts = 0;
+    for (int step = 0; step < 240 && !wrong; step++) {
+        // A few changes, of which some change nothing, and now and then a lot
+        const int changes = step % 7 == 0 ? 0 : step % 31 == 0 ? 400 : 1 + (int)(seed >> 28);
+        for (int c = 0; c < changes; c++) {
+            seed = seed * 1664525u + 1013904223u;
+            const uint32_t pick = seed >> 8;
+            const int32_t value = pick % 5u == 0 ? 0 : (int32_t)(pick % 251u);
+            switch (pick % 3u) {
+            case 0:
+                *(tide_color *)tide_grid_poke(&paint, (int32_t)(pick / 3u % 90u), (int32_t)(pick / 270u % 70u), 0, &colors, true,
+                                              TIDE_IN_LOCAL) = (tide_color){(float)value / 251.0f, 0.5f, 0.25f, 1.0f};
+                break;
+            case 1:
+                *(int32_t *)tide_grid_poke(&blocks, (int32_t)(pick / 3u % 40u), (int32_t)(pick / 120u % 100u) - 40,
+                                           (int32_t)(pick / 12000u % 9u), &ints, true, TIDE_IN_LOCAL) = value;
+                break;
+            default:
+                ((shown *)tide_list_at_mut(items, (int32_t)(pick / 3u % (uint32_t)tide_list_count(items)), sizeof(shown)))->kind = value;
+                break;
+            }
+        }
+        if (step % 53 == 52) tide_grid_clear(&blocks, &ints, TIDE_IN_LOCAL);
+        if (step % 61 == 60) tide_grid_clear(&paint, &colors, TIDE_IN_LOCAL);
+        if (step % 17 == 16) tide_list_resize(&items, 2000 + (int32_t)(seed >> 22), sizeof(shown), TIDE_IN_LOCAL);
+
+        tide_draw_reset(&kept);
+        tide_draw_list anew = {0};
+        int32_t info[TIDE_GRID3_DATA_INTS], count;
+        const uint32_t now[3] = {tide_draw_grid_texture(&kept, paint, &colors),
+                                 tide_draw_grid_data(&kept, blocks, &ints, 1, 0, int_words, info),
+                                 tide_draw_list_data(&kept, items, sizeof(shown), 4, 0, shown_words, &count)};
+        const uint32_t made[3] = {tide_draw_grid_texture(&anew, paint, &colors),
+                                  tide_draw_grid_data(&anew, blocks, &ints, 1, 0, int_words, info),
+                                  tide_draw_list_data(&anew, items, sizeof(shown), 4, 0, shown_words, &count)};
+        for (int k = 0; k < 3; k++) {
+            const tide_draw_texture *t = now[k] ? &kept.textures[now[k] - 1u] : NULL;
+            const tide_draw_texture *other = made[k] ? &anew.textures[made[k] - 1u] : NULL;
+            const size_t bytes = t ? (size_t)t->width * (size_t)t->height * tide_texels_bytes(t->format) : 0;
+            // What a renderer that drew the last frame has only stands for this texture while it's the same size
+            const bool same = t && has[k] && bytes == room[k];
+            const tide_draw_area *areas;
+            uint32_t area_count;
+            parts += same && tide_draw_texture_since(t, had[k], &areas, &area_count);
+            if (!as_made_anew(t, other, same ? before[k] : NULL, had[k])) wrong = 1 + step * 3 + k;
+            has[k] = t != NULL;
+            if (!t) continue;
+            before[k] = tide_realloc(before[k], room[k], bytes);
+            memcpy(before[k], t->pixels, bytes);
+            room[k] = bytes;
+            had[k] = t->version;
+        }
+        tide_draw_free(&anew);
+    }
+    TIDE_CHECK(wrong == 0);
+    TIDE_CHECK(parts > 300); // Most frames, for most of the three, only the areas that changed were all it took
+
+    for (int k = 0; k < 3; k++) free(before[k]);
+    tide_draw_free(&kept);
+    tide_list_release(&items, TIDE_IN_LOCAL);
+    tide_grid_release(&paint, &colors, TIDE_IN_LOCAL);
+    tide_grid_release(&blocks, &ints, TIDE_IN_LOCAL);
+    tide_scratch_reset(mark);
+    tide_text_use(NULL, NULL);
+    tide_heap_free(&heap);
+}
+
 // ---------------------------------------------------------------------------
 // 3D
 

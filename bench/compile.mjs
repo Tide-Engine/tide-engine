@@ -160,7 +160,8 @@ async function metadata(opts) {
         git: { commit: commit.code === 0 ? commit.stdout.trim() : null, dirty: status.code === 0 ? Boolean(status.stdout.trim()) : null },
         environment: {
             TIDEC_TIMES: process.env.TIDEC_TIMES ?? null, TIDE_NO_UPDATE_CHECK: "1",
-            ...Object.fromEntries(["SDKROOT", "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "MACOSX_DEPLOYMENT_TARGET"]
+            // TIDE_JOBS: how many files tide compiles at once, a processor's worth without it
+            ...Object.fromEntries(["TIDE_JOBS", "SDKROOT", "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "MACOSX_DEPLOYMENT_TARGET"]
                 .map((name) => [name, process.env[name] ?? null])),
         },
     };

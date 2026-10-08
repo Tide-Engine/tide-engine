@@ -58,6 +58,7 @@ Some examples put two players side by side. Each frame is a machine of its own, 
 - [A sky, and a ball that reflects what's around it](../game/shaders.md#skybox-and-reflections): a `Cubemap` of six files, and one drawn into a face at a time.
 - [Three images from one frag](../game/shaders.md#several-outputs): a target of several colors, filled in one pass and lit in a second.
 - [A list of motes, in one draw](../game/shaders.md#instances-from-a-list): thousands of instances from a list.
+- [Grain and sparks, rolled by the GPU](../game/shaders.md#random-numbers): a frag that rolls for each pixel, and a hash that holds still.
 - [Local entities, and no match](../game/local-state.md#views-change-local-state): particles that are one machine's own.
 
 ## The GUI

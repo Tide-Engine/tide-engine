@@ -5,6 +5,7 @@ layout(std140) uniform uniforms {
     vec4 tide_tint;
     ivec4 tide_v0;
     ivec4 tide_v1;
+    ivec4 tide_v2;
 };
 uniform highp isampler2D pixels0;
 uniform highp isampler2D pixels1;
@@ -56,6 +57,7 @@ layout(std140) uniform uniforms {
     vec4 tide_tint;
     ivec4 tide_v0;
     ivec4 tide_v1;
+    ivec4 tide_v2;
 };
 uniform highp isampler2D pixels0;
 uniform highp isampler2D pixels1;
@@ -192,12 +194,17 @@ float tf_Mean_42(float t_least) {
 }
 
 int tide_list5(ivec2 tide_i) {
-    if (tide_i.x < 0 || tide_i.y < 0 || tide_i.x >= tide_v1.z || tide_i.y >= tide_v1.w) {
+    ivec2 tide_o = tide_v2.xy;
+    ivec2 tide_e = tide_v2.zw;
+    uint tide_x = uint(tide_i.x) - uint(tide_o.x);
+    uint tide_y = uint(tide_i.y) - uint(tide_o.y);
+    if (tide_i.x < tide_o.x || tide_x >= uint(tide_e.x) || tide_i.y < tide_o.y || tide_y >= uint(tide_e.y)) {
         return 0;
     }
-    int tide_word = tide_i.x * 1;
+    int tide_word = int(tide_x) * 1;
     int tide_first = tide_word >> 2;
-    ivec4 tide_r = texelFetch(pixels5, ivec2(tide_first + 0, tide_i.y), 0);
+    int tide_row = int(tide_y);
+    ivec4 tide_r = texelFetch(pixels5, ivec2(tide_first + 0, tide_row), 0);
     ivec4 tide_q0 = ivec4(tide_r[tide_word & 3], 0, 0, 0);
     return tide_q0.x;
 }
@@ -248,6 +255,7 @@ struct tide_uniforms {
     tide_tint: vec4f,
     tide_v0: vec4i,
     tide_v1: vec4i,
+    tide_v2: vec4i,
 }
 @group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
 @group(0) @binding(1) var pixels0: texture_2d<i32>;
@@ -399,12 +407,17 @@ fn tf_Mean_42(t_least: f32) -> f32 {
 }
 
 fn tide_list5(tide_i: vec2i) -> i32 {
-    if (tide_i.x < 0 || tide_i.y < 0 || tide_i.x >= tide_block.tide_v1.z || tide_i.y >= tide_block.tide_v1.w) {
+    let tide_o = tide_block.tide_v2.xy;
+    let tide_e = tide_block.tide_v2.zw;
+    let tide_x = u32(tide_i.x) - u32(tide_o.x);
+    let tide_y = u32(tide_i.y) - u32(tide_o.y);
+    if (tide_i.x < tide_o.x || tide_x >= u32(tide_e.x) || tide_i.y < tide_o.y || tide_y >= u32(tide_e.y)) {
         return i32();
     }
-    let tide_word = tide_i.x * 1;
+    let tide_word = i32(tide_x) * 1;
     let tide_first = tide_word >> 2u;
-    let tide_r = textureLoad(pixels5, vec2i(tide_first + 0, tide_i.y), 0);
+    let tide_row = i32(tide_y);
+    let tide_r = textureLoad(pixels5, vec2i(tide_first + 0, tide_row), 0);
     let tide_q0 = vec4i(tide_r[tide_word & 3], 0, 0, 0);
     return tide_q0.x;
 }

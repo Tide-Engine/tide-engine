@@ -1,17 +1,18 @@
 // expect: safety: effects kept to their state
-// ticks: 12
+// ticks: 6
 //
-// An audio declaration's state is its voice's own bytes in the mixer, and its
-// knobs the bytes an Effect carries: the biggest of each there can be, which
-// its code writes from end to end and indexes anywhere, and code that rolls,
-// whose generator is in the last of those bytes. The host runs what each frame
-// plays as the mixer would, with each block and each state between bytes that
-// have to stay as they were.
+// An audio declaration's state is memory its voice has for it, and its knobs
+// the bytes an Effect carries: the biggest of each there can be (a megabyte of
+// state, in arrays far longer than any other holds), which its code writes
+// from end to end and indexes anywhere, and code that rolls, whose generator
+// is right after its state. The host runs what each frame plays as the mixer
+// would, with each block and each state between bytes that have to stay as
+// they were.
 
 struct Tail
 {
     int at;
-    int[1023] taps; // With `at`, the 4096 bytes a voice has for it
+    int[262143] taps; // With `at`, the megabyte a state has at the most
 }
 
 struct Reach
@@ -28,7 +29,13 @@ struct Tap
 
 struct Bank
 {
-    Tap[256] taps; // 16 bytes each with their padding: 4096 again
+    Tap[65536] taps; // 16 bytes each with their padding: a megabyte again
+}
+
+struct Small
+{
+    int at;
+    int[1023] taps; // 4096 bytes, which a voice keeps in itself
 }
 
 // Every element, then places that are none of them: past the end after a few
@@ -42,28 +49,49 @@ audio Echo(mut Samples samples, mut Tail tail, Reach reach)
     tail.taps[2147483647] = 7;
     tail.taps[-2147483647 - 1] = 7;
     tail.taps[tail.at * 65536] += 1;
-    foreach (var tap in tail.taps) samples.values[0] += tap * 0.000001;
+    tail.taps[262143] = 7;
+    tail.taps[262142]++;
+    samples.values[0] += tail.taps[262142] * 0.000001;
     samples.values[tail.at] = reach.bands[tail.at];
     samples.values[-tail.at] = reach.bands[62] + reach.bands[63] + reach.bands[-1];
     samples.values[2147483647] = 1;
+    Stir(tail, reach.by);
+}
+
+// The state passed on, by its address
+void Stir(mut Tail tail, int by)
+{
+    tail.taps[tail.at + by] = by;
+    tail.taps[tail.taps.count] = by;
+    tail.taps[tail.taps.count - 1] = by;
 }
 
 // A state of structs, changed where they are
 audio Taps(mut Samples samples, mut Bank bank)
 {
-    for (var i = 0; i < 256; i++)
+    for (var i = 0; i < bank.taps.count; i++)
     {
         bank.taps[i].at += i;
         bank.taps[i].on = !bank.taps[i].on;
     }
-    bank.taps[256].on = true;
+    bank.taps[65536].on = true;
     bank.taps[-1].at = 9;
-    mut var last = bank.taps[255];
+    mut var last = bank.taps[65535];
     last.at = 0x7fffffffffffffff;
-    bank.taps[255] = last;
-    bank.taps[4096] = last;
-    samples.values[511] = bank.taps[255].on ? 1 : 0;
+    bank.taps[65535] = last;
+    bank.taps[1048576] = last;
+    samples.values[511] = bank.taps[65535].on ? 1 : 0;
     samples.values[512] = 1;
+}
+
+// One that fits in its voice, gone through as a foreach goes
+audio Short(mut Samples samples, mut Small small)
+{
+    for (var i = 0; i < small.taps.count; i++) small.taps[i] = small.at + i;
+    small.at += 700;
+    small.taps[small.at] = 7;
+    small.taps[1023] = 7;
+    foreach (var tap in small.taps) samples.values[0] += tap * 0.000001;
 }
 
 // One with nothing kept
@@ -74,7 +102,7 @@ audio Mute(mut Samples samples)
 
 struct Grain
 {
-    float[1022] taps; // 4088 bytes: all there is beside what the code rolls with, a voice's last 8
+    float[262142] taps; // 1,048,568 bytes: all there is beside what the code rolls with, which is after it
 }
 
 // Code that rolls, itself and through a function, with the biggest state it
@@ -84,7 +112,7 @@ audio Hiss(mut Samples samples, mut Grain grain)
     for (var i = 0; i < grain.taps.count; i++) grain.taps[i] = Random.NextFloat(-1, 1);
     grain.taps[Random.NextInt(1 << 30)] = Rolled();
     grain.taps[grain.taps.count] = Rolled();
-    samples.values[Random.NextInt(1024)] = grain.taps[1021];
+    samples.values[Random.NextInt(1024)] = grain.taps[262141];
 }
 
 float Rolled()
@@ -115,6 +143,7 @@ local singleton Mix
     Sound mute;
     Sound hiss;
     Sound noise;
+    Sound short;
     int frames;
 }
 
@@ -125,7 +154,7 @@ scene Main
 view Play(mut Mix mix)
 {
     mix.frames += 1;
-    mut var reach = Reach { by = 300 };
+    mut var reach = Reach { by = 90000 };
     for (var i = 0; i < 63; i++) reach.bands[i] = i * 0.01;
     mix.first.playing = true;
     mix.first.bus = Bus.Music;
@@ -141,6 +170,8 @@ view Play(mut Mix mix)
     mix.hiss.effect = Hiss();
     mix.noise.playing = true;
     mix.noise.effect = mix.frames % 4 < 2 ? Static() : Hiss();
+    mix.short.playing = true;
+    mix.short.effect = Short();
     reach.by = 2147483647;
     Audio.SetEffect(Bus.Music, Echo(reach));
     Audio.SetEffect(Bus.Effects, Taps());

@@ -278,6 +278,38 @@ if (pinged.status === 0) {
     const playedAgain = run(['--script', script('ping.txt', ['3 key p', '6 quit']), '--capture-audio', 'played2.wav', '--size', '64', '64']);
     check(playedAgain.status === 0 && readFileSync(join(scratch, 'played2.wav')).equals(b), 'and the same bytes again');
 }
+// An echo written in Tide, whose delay line is a second of stereo in memory
+// the mixer makes for the voice: E at frame 3 starts the ping through it, at
+// the same block as above, and the ping plays again 4000 frames later at half,
+// 5792 to 6192, the voice silent between and after (its clip ended, and its
+// effect goes on); the same bytes in a second run.
+const echoed = run(['--script', script('echo.txt', ['3 key e', '10 quit']), '--capture-audio', 'echoed.wav', '--size', '64', '64']);
+check(echoed.status === 0, `a run that plays through an echo ends with exit code 0 (${echoed.status})`);
+if (echoed.status === 0) {
+    const b = readFileSync(join(scratch, 'echoed.wav'));
+    const sample = (frame, channel) => b.readInt16LE(44 + frame * 4 + channel * 2);
+    check(sample(1791, 0) === 0 && sample(1792, 0) === 16384 && sample(2191, 1) === 16384 && sample(2192, 0) === 0,
+          `the clip plays from frame 1792 to 2192 (${sample(1791, 0)}, ${sample(1792, 0)}, ${sample(2191, 1)}, ${sample(2192, 0)})`);
+    check(sample(5791, 0) === 0 && sample(5792, 0) === 8192 && sample(5792, 1) === 8192 && sample(6191, 0) === 8192 && sample(6192, 0) === 0,
+          `and again at half, 4000 frames later (${sample(5791, 0)}, ${sample(5792, 0)}, ${sample(6191, 0)}, ${sample(6192, 0)})`);
+    let quiet = true;
+    for (let frame = 2192; frame < 10 * 800; frame++) if (frame < 5792 || frame >= 6192) quiet = quiet && sample(frame, 0) === 0 && sample(frame, 1) === 0;
+    check(quiet, 'with nothing between the two, and nothing after');
+    const echoedAgain = run(['--script', script('echo.txt', ['3 key e', '10 quit']), '--capture-audio', 'echoed2.wav', '--size', '64', '64']);
+    check(echoedAgain.status === 0 && readFileSync(join(scratch, 'echoed2.wav')).equals(b), 'and the same bytes again');
+    // Stopped before its echo is due (E again at frame 5: frames 1 to 4 are 3200 frames of audio), and started
+    // again at frame 10: the voice's line went with it, so the first ping's echo never plays, and the second
+    // ping (frames 1 to 9 are 7200 frames, 28.125 blocks: from the 30th, 7424) echoes from a line of zeros
+    const cut = run(['--script', script('cut.txt', ['3 key e', '5 key e', '10 key e', '16 quit']), '--capture-audio', 'cut.wav', '--size', '64', '64']);
+    check(cut.status === 0, `an echo stopped and started again ends with exit code 0 (${cut.status})`);
+    if (cut.status === 0) {
+        const c = readFileSync(join(scratch, 'cut.wav'));
+        const at = (frame, channel) => c.readInt16LE(44 + frame * 4 + channel * 2);
+        check(at(1792, 0) === 16384 && at(5792, 0) === 0 && at(6000, 0) === 0, `the first ping's echo is gone with its voice (${at(1792, 0)}, ${at(5792, 0)}, ${at(6000, 0)})`);
+        check(at(7423, 0) === 0 && at(7424, 0) === 16384 && at(7824, 0) === 0 && at(11423, 0) === 0 && at(11424, 0) === 8192 && at(11823, 0) === 8192
+              && at(11824, 0) === 0, `and the second plays and echoes from zeros (${at(7424, 0)}, ${at(11424, 0)}, ${at(11824, 0)})`);
+    }
+}
 // Without --capture-audio the run keeps only what a capture-audio line can still
 // ask for, and lets go of what the last one took: a line far from the one
 // before it still gets every frame between, with the clip where it played (P at

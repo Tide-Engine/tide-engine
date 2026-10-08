@@ -1,0 +1,422 @@
+// Flat on Vertex: GLSL, vertex
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+    ivec4 tide_v1;
+    ivec4 tide_v2;
+};
+uniform highp isampler2D pixels0;
+uniform highp isampler2D pixels1;
+layout(location = 0) in vec2 tide_a0;
+layout(location = 1) in vec2 tide_a1;
+layout(location = 2) in vec4 tide_a2;
+out vec2 tide_s1;
+struct tt_Vertex {
+    vec2 m_position;
+    vec2 m_uv;
+    vec4 m_color;
+};
+void main() {
+    tt_Vertex tide_vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    vec4 tide_place = vec4(tide_vertex.m_position, 0.0, 1.0);
+    gl_Position = tide_camera * tide_place;
+    tide_s1 = tide_vertex.m_uv;
+}
+
+// Flat on Vertex: GLSL, fragment
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+    ivec4 tide_v1;
+    ivec4 tide_v2;
+};
+uniform highp isampler2D pixels0;
+uniform highp isampler2D pixels1;
+in vec2 tide_s1;
+out vec4 tide_pixel;
+struct tt_Vertex {
+    vec2 m_position;
+    vec2 m_uv;
+    vec4 m_color;
+};
+struct tt_Voxel {
+    vec4 m_tint;
+    vec3 m_glow;
+    int m_kind;
+};
+float tide_f(float x) {
+    return x;
+}
+tt_Voxel tide_list0(ivec2 tide_i) {
+    ivec2 tide_o = tide_v0.zw;
+    ivec2 tide_e = tide_v1.xy;
+    uint tide_x = uint(tide_i.x) - uint(tide_o.x);
+    uint tide_y = uint(tide_i.y) - uint(tide_o.y);
+    if (tide_i.x < tide_o.x || tide_x >= uint(tide_e.x) || tide_i.y < tide_o.y || tide_y >= uint(tide_e.y)) {
+        return tt_Voxel(vec4(0.0), vec3(0.0), 0);
+    }
+    int tide_word = int(tide_x) * 8;
+    int tide_first = tide_word >> 2;
+    int tide_row = int(tide_y);
+    ivec4 tide_q0 = texelFetch(pixels0, ivec2(tide_first + 0, tide_row), 0);
+    vec4 tide_p0 = intBitsToFloat(tide_q0);
+    ivec4 tide_q1 = texelFetch(pixels0, ivec2(tide_first + 1, tide_row), 0);
+    vec4 tide_p1 = intBitsToFloat(tide_q1);
+    return tt_Voxel(tide_p0, tide_p1.xyz, tide_q1.w);
+}
+
+int tide_list1(ivec2 tide_i) {
+    ivec2 tide_o = tide_v2.xy;
+    ivec2 tide_e = tide_v2.zw;
+    uint tide_x = uint(tide_i.x) - uint(tide_o.x);
+    uint tide_y = uint(tide_i.y) - uint(tide_o.y);
+    if (tide_i.x < tide_o.x || tide_x >= uint(tide_e.x) || tide_i.y < tide_o.y || tide_y >= uint(tide_e.y)) {
+        return 0;
+    }
+    int tide_word = int(tide_x) * 1;
+    int tide_first = tide_word >> 2;
+    int tide_row = int(tide_y);
+    ivec4 tide_r = texelFetch(pixels1, ivec2(tide_first + 0, tide_row), 0);
+    ivec4 tide_q0 = ivec4(tide_r[tide_word & 3], 0, 0, 0);
+    return tide_q0.x;
+}
+
+void ts_Flat(tt_Vertex t_vertex, inout vec4 t_color) {
+    ivec2 t_at = ivec2(int((t_vertex.m_uv.x * 8.0)), int((t_vertex.m_uv.y * 8.0)));
+    tt_Voxel t_tile = tide_list0(t_at);
+    t_color = (t_tile.m_tint * (float(tide_list1(ivec2((t_at.x - 4), t_at.y))) / tide_f(8.0)));
+    if (((tide_v0.xy.x == 0) || (tide_v1.zw.y != 0))) {
+        t_color = vec4(0.0, 0.0, 0.0, 1.0);
+    }
+}
+
+void main() {
+    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
+    ts_Flat(tt_Vertex(vec2(0.0), tide_s1, vec4(0.0)), tide_color);
+    tide_color = tide_color * tide_tint;
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
+    tide_pixel = tide_color;
+}
+
+// Flat on Vertex: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_v0: vec4i,
+    tide_v1: vec4i,
+    tide_v2: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(1) var pixels0: texture_2d<i32>;
+@group(0) @binding(3) var pixels1: texture_2d<i32>;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s1: vec2f,
+}
+struct tt_Vertex {
+    m_position: vec2f,
+    m_uv: vec2f,
+    m_color: vec4f,
+}
+struct tt_Voxel {
+    m_tint: vec4f,
+    m_glow: vec3f,
+    m_kind: i32,
+}
+fn tide_f(x: f32) -> f32 {
+    return x;
+}
+fn tide_list0(tide_i: vec2i) -> tt_Voxel {
+    let tide_o = tide_block.tide_v0.zw;
+    let tide_e = tide_block.tide_v1.xy;
+    let tide_x = u32(tide_i.x) - u32(tide_o.x);
+    let tide_y = u32(tide_i.y) - u32(tide_o.y);
+    if (tide_i.x < tide_o.x || tide_x >= u32(tide_e.x) || tide_i.y < tide_o.y || tide_y >= u32(tide_e.y)) {
+        return tt_Voxel();
+    }
+    let tide_word = i32(tide_x) * 8;
+    let tide_first = tide_word >> 2u;
+    let tide_row = i32(tide_y);
+    let tide_q0 = textureLoad(pixels0, vec2i(tide_first + 0, tide_row), 0);
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    let tide_q1 = textureLoad(pixels0, vec2i(tide_first + 1, tide_row), 0);
+    let tide_p1 = bitcast<vec4f>(tide_q1);
+    return tt_Voxel(tide_p0, tide_p1.xyz, tide_q1.w);
+}
+
+fn tide_list1(tide_i: vec2i) -> i32 {
+    let tide_o = tide_block.tide_v2.xy;
+    let tide_e = tide_block.tide_v2.zw;
+    let tide_x = u32(tide_i.x) - u32(tide_o.x);
+    let tide_y = u32(tide_i.y) - u32(tide_o.y);
+    if (tide_i.x < tide_o.x || tide_x >= u32(tide_e.x) || tide_i.y < tide_o.y || tide_y >= u32(tide_e.y)) {
+        return i32();
+    }
+    let tide_word = i32(tide_x) * 1;
+    let tide_first = tide_word >> 2u;
+    let tide_row = i32(tide_y);
+    let tide_r = textureLoad(pixels1, vec2i(tide_first + 0, tide_row), 0);
+    let tide_q0 = vec4i(tide_r[tide_word & 3], 0, 0, 0);
+    return tide_q0.x;
+}
+
+fn ts_Flat(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
+    var t_at: vec2i = vec2i(i32((t_vertex.m_uv.x * 8.0)), i32((t_vertex.m_uv.y * 8.0)));
+    var t_tile: tt_Voxel = tide_list0(t_at);
+    (*t_color) = (t_tile.m_tint * (f32(tide_list1(vec2i((t_at.x - 4), t_at.y))) / tide_f(8.0)));
+    if (((tide_block.tide_v0.xy.x == 0) || (tide_block.tide_v1.zw.y != 0))) {
+        (*t_color) = vec4f(0.0, 0.0, 0.0, 1.0);
+    }
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f) -> tide_corner {
+    var tide_vertex: tt_Vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_uv;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Flat(tt_Vertex(vec2f(), in.tide_s1, vec4f()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+
+// Deep on Vertex: GLSL, vertex
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+    ivec4 tide_v1;
+    ivec4 tide_v2;
+    ivec4 tide_v3;
+    ivec4 tide_v4;
+};
+uniform highp isampler2D pixels0;
+uniform highp isampler2D pixels1;
+layout(location = 0) in vec2 tide_a0;
+layout(location = 1) in vec2 tide_a1;
+layout(location = 2) in vec4 tide_a2;
+out vec2 tide_s1;
+struct tt_Vertex {
+    vec2 m_position;
+    vec2 m_uv;
+    vec4 m_color;
+};
+void main() {
+    tt_Vertex tide_vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    vec4 tide_place = vec4(tide_vertex.m_position, 0.0, 1.0);
+    gl_Position = tide_camera * tide_place;
+    tide_s1 = tide_vertex.m_uv;
+}
+
+// Deep on Vertex: GLSL, fragment
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+    ivec4 tide_v0;
+    ivec4 tide_v1;
+    ivec4 tide_v2;
+    ivec4 tide_v3;
+    ivec4 tide_v4;
+};
+uniform highp isampler2D pixels0;
+uniform highp isampler2D pixels1;
+in vec2 tide_s1;
+out vec4 tide_pixel;
+struct tt_Vertex {
+    vec2 m_position;
+    vec2 m_uv;
+    vec4 m_color;
+};
+struct tt_Voxel {
+    vec4 m_tint;
+    vec3 m_glow;
+    int m_kind;
+};
+tt_Voxel tide_list1(ivec3 tide_i) {
+    ivec3 tide_o = tide_v3.yzw;
+    ivec3 tide_e = tide_v4.xyz;
+    uint tide_x = uint(tide_i.x) - uint(tide_o.x);
+    uint tide_y = uint(tide_i.y) - uint(tide_o.y);
+    uint tide_z = uint(tide_i.z) - uint(tide_o.z);
+    if (tide_i.x < tide_o.x || tide_x >= uint(tide_e.x) || tide_i.y < tide_o.y || tide_y >= uint(tide_e.y) || tide_i.z < tide_o.z || tide_z >= uint(tide_e.z)) {
+        return tt_Voxel(vec4(0.0), vec3(0.0), 0);
+    }
+    int tide_word = int(tide_x) * 8;
+    int tide_first = tide_word >> 2;
+    int tide_layer = int(tide_z);
+    int tide_across = tide_v4.w;
+    int tide_left = (tide_layer % tide_across) * ((tide_e.x * 8 + 3) >> 2);
+    int tide_row = (tide_layer / tide_across) * tide_e.y + int(tide_y);
+    ivec4 tide_q0 = texelFetch(pixels1, ivec2(tide_left + tide_first + 0, tide_row), 0);
+    vec4 tide_p0 = intBitsToFloat(tide_q0);
+    ivec4 tide_q1 = texelFetch(pixels1, ivec2(tide_left + tide_first + 1, tide_row), 0);
+    vec4 tide_p1 = intBitsToFloat(tide_q1);
+    return tt_Voxel(tide_p0, tide_p1.xyz, tide_q1.w);
+}
+
+int tide_list0(ivec3 tide_i) {
+    ivec3 tide_o = ivec3(tide_v0.w, tide_v1.x, tide_v1.y);
+    ivec3 tide_e = ivec3(tide_v1.z, tide_v1.w, tide_v2.x);
+    uint tide_x = uint(tide_i.x) - uint(tide_o.x);
+    uint tide_y = uint(tide_i.y) - uint(tide_o.y);
+    uint tide_z = uint(tide_i.z) - uint(tide_o.z);
+    if (tide_i.x < tide_o.x || tide_x >= uint(tide_e.x) || tide_i.y < tide_o.y || tide_y >= uint(tide_e.y) || tide_i.z < tide_o.z || tide_z >= uint(tide_e.z)) {
+        return 0;
+    }
+    int tide_word = int(tide_x) * 1;
+    int tide_first = tide_word >> 2;
+    int tide_layer = int(tide_z);
+    int tide_across = tide_v2.y;
+    int tide_left = (tide_layer % tide_across) * ((tide_e.x * 1 + 3) >> 2);
+    int tide_row = (tide_layer / tide_across) * tide_e.y + int(tide_y);
+    ivec4 tide_r = texelFetch(pixels0, ivec2(tide_left + tide_first + 0, tide_row), 0);
+    ivec4 tide_q0 = ivec4(tide_r[tide_word & 3], 0, 0, 0);
+    return tide_q0.x;
+}
+
+void ts_Deep(tt_Vertex t_vertex, inout vec4 t_color) {
+    ivec3 t_at = ivec3(int((t_vertex.m_uv.x * 16.0)), int((t_vertex.m_uv.y * 16.0)), (tide_v0.xyz.z - 1));
+    tt_Voxel t_voxel = tide_list1(ivec3(t_at.x, t_at.y, (-3)));
+    t_color = t_voxel.m_tint;
+    if ((tide_list0(t_at) == 0)) {
+        t_color = vec4(t_voxel.m_glow.x, t_voxel.m_glow.y, t_voxel.m_glow.z, 1.0);
+    }
+    if ((ivec3(tide_v2.z, tide_v2.w, tide_v3.x).z != 0)) {
+        t_color = vec4(0.0, 0.0, 0.0, 1.0);
+    }
+}
+
+void main() {
+    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
+    ts_Deep(tt_Vertex(vec2(0.0), tide_s1, vec4(0.0)), tide_color);
+    tide_color = tide_color * tide_tint;
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
+    tide_pixel = tide_color;
+}
+
+// Deep on Vertex: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+    tide_v0: vec4i,
+    tide_v1: vec4i,
+    tide_v2: vec4i,
+    tide_v3: vec4i,
+    tide_v4: vec4i,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+@group(0) @binding(1) var pixels0: texture_2d<i32>;
+@group(0) @binding(3) var pixels1: texture_2d<i32>;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s1: vec2f,
+}
+struct tt_Vertex {
+    m_position: vec2f,
+    m_uv: vec2f,
+    m_color: vec4f,
+}
+struct tt_Voxel {
+    m_tint: vec4f,
+    m_glow: vec3f,
+    m_kind: i32,
+}
+fn tide_list1(tide_i: vec3i) -> tt_Voxel {
+    let tide_o = tide_block.tide_v3.yzw;
+    let tide_e = tide_block.tide_v4.xyz;
+    let tide_x = u32(tide_i.x) - u32(tide_o.x);
+    let tide_y = u32(tide_i.y) - u32(tide_o.y);
+    let tide_z = u32(tide_i.z) - u32(tide_o.z);
+    if (tide_i.x < tide_o.x || tide_x >= u32(tide_e.x) || tide_i.y < tide_o.y || tide_y >= u32(tide_e.y) || tide_i.z < tide_o.z || tide_z >= u32(tide_e.z)) {
+        return tt_Voxel();
+    }
+    let tide_word = i32(tide_x) * 8;
+    let tide_first = tide_word >> 2u;
+    let tide_layer = i32(tide_z);
+    let tide_across = tide_block.tide_v4.w;
+    let tide_left = (tide_layer % tide_across) * ((tide_e.x * 8 + 3) >> 2u);
+    let tide_row = (tide_layer / tide_across) * tide_e.y + i32(tide_y);
+    let tide_q0 = textureLoad(pixels1, vec2i(tide_left + tide_first + 0, tide_row), 0);
+    let tide_p0 = bitcast<vec4f>(tide_q0);
+    let tide_q1 = textureLoad(pixels1, vec2i(tide_left + tide_first + 1, tide_row), 0);
+    let tide_p1 = bitcast<vec4f>(tide_q1);
+    return tt_Voxel(tide_p0, tide_p1.xyz, tide_q1.w);
+}
+
+fn tide_list0(tide_i: vec3i) -> i32 {
+    let tide_o = vec3i(tide_block.tide_v0.w, tide_block.tide_v1.x, tide_block.tide_v1.y);
+    let tide_e = vec3i(tide_block.tide_v1.z, tide_block.tide_v1.w, tide_block.tide_v2.x);
+    let tide_x = u32(tide_i.x) - u32(tide_o.x);
+    let tide_y = u32(tide_i.y) - u32(tide_o.y);
+    let tide_z = u32(tide_i.z) - u32(tide_o.z);
+    if (tide_i.x < tide_o.x || tide_x >= u32(tide_e.x) || tide_i.y < tide_o.y || tide_y >= u32(tide_e.y) || tide_i.z < tide_o.z || tide_z >= u32(tide_e.z)) {
+        return i32();
+    }
+    let tide_word = i32(tide_x) * 1;
+    let tide_first = tide_word >> 2u;
+    let tide_layer = i32(tide_z);
+    let tide_across = tide_block.tide_v2.y;
+    let tide_left = (tide_layer % tide_across) * ((tide_e.x * 1 + 3) >> 2u);
+    let tide_row = (tide_layer / tide_across) * tide_e.y + i32(tide_y);
+    let tide_r = textureLoad(pixels0, vec2i(tide_left + tide_first + 0, tide_row), 0);
+    let tide_q0 = vec4i(tide_r[tide_word & 3], 0, 0, 0);
+    return tide_q0.x;
+}
+
+fn ts_Deep(t_vertex: tt_Vertex, t_color: ptr<function, vec4f>) {
+    var t_at: vec3i = vec3i(i32((t_vertex.m_uv.x * 16.0)), i32((t_vertex.m_uv.y * 16.0)), (tide_block.tide_v0.xyz.z - 1));
+    var t_voxel: tt_Voxel = tide_list1(vec3i(t_at.x, t_at.y, (-3)));
+    (*t_color) = t_voxel.m_tint;
+    if ((tide_list0(t_at) == 0)) {
+        (*t_color) = vec4f(t_voxel.m_glow.x, t_voxel.m_glow.y, t_voxel.m_glow.z, 1.0);
+    }
+    if ((vec3i(tide_block.tide_v2.z, tide_block.tide_v2.w, tide_block.tide_v3.x).z != 0)) {
+        (*t_color) = vec4f(0.0, 0.0, 0.0, 1.0);
+    }
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f, @location(2) tide_a2: vec4f) -> tide_corner {
+    var tide_vertex: tt_Vertex = tt_Vertex(tide_a0, tide_a1, tide_a2);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_uv;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Deep(tt_Vertex(vec2f(), in.tide_s1, vec4f()), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+

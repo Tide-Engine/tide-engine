@@ -1,0 +1,15 @@
+// expect: a field can't be List<Tail>: it holds an array of more than 4096 elements, which only an audio declaration's state does
+struct Tail
+{
+    int at;
+    float[96000] line;
+}
+
+struct Bank
+{
+    List<Tail> tails;
+}
+
+scene Main
+{
+}

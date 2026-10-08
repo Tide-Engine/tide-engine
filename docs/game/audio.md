@@ -156,13 +156,59 @@ view Engines(mut Engine engine, Throttle throttle)
 
 An effect's state starts over when a `Sound` is given another effect. Changing the knobs each frame is the way to move a filter: the state carries on.
 
-Both have a size. The mixer keeps 4,096 bytes of state for each voice and each bus, and an `Effect` carries 256 bytes of knobs, so a state struct is 4,096 bytes at the most and a knobs struct 256. A `float` or an `int` is 4 bytes, a `long` 8, a `bool` or a `byte` 1, and an array as many as its elements: `float[1024]` is all the state there is, about 10 milliseconds of stereo. A struct that's bigger is a compile error at the parameter:
+### Echoes and reverbs
+
+An echo or a reverb remembers what played a while ago, in a delay line: an array of samples. An array holds 4,096 elements anywhere else, which is a hundredth of a second, so in an `audio` declaration's state it can be far longer, as long as the state has bytes:
+
+```csharp
+struct Tail
+{
+    int at;
+    float[96000] line; // A second of stereo
+}
+
+struct Delay
+{
+    int frames;
+    float wet;
+}
+
+audio Echo(mut Samples samples, mut Tail tail, Delay delay)
+{
+    for (var i = 0; i < samples.values.count; i += 2)
+    {
+        var from = (tail.at + 48000 - delay.frames) % 48000;
+        tail.line[2 * tail.at] = samples.values[i];
+        tail.line[2 * tail.at + 1] = samples.values[i + 1];
+        samples.values[i] += tail.line[2 * from] * delay.wet;
+        samples.values[i + 1] += tail.line[2 * from + 1] * delay.wet;
+        tail.at = (tail.at + 1) % 48000;
+    }
+}
+
+view Caves(mut Cave cave)
+{
+    cave.drip.effect = Echo(Delay { frames = 14400, wet = 0.4 });
+}
+```
+
+The mixer makes that memory for a sound while it plays through the effect, so only the sounds that echo pay for it, 384 KB each here. When the sound stops, its line goes with it, and the next time it plays the line starts from silence. A bus's is the same: `Audio.SetEffect(Bus.Music, Echo(delay))`, said each frame, keeps one line for everything on the bus, which is how a reverb is usually used.
+
+A struct with such an array is never copied, as a copy would be hundreds of kilobytes on the audio thread. It's only ever an `audio` declaration's state, and code reads and writes it where it is:
+
+- An element at a time, `tail.line[i]`, with `tail.line.count` for how many there are. A `foreach` goes through a copy of its array, so a long one is gone through by index.
+- Passed on to a function as a `mut` parameter: `void Push(mut Tail tail, float sample)`.
+- No local holds one (`var copy = tail;`), no function takes one by value or returns one, and it has no methods. The compiler says which of these a line is.
+
+### How big
+
+A state struct is 1,048,576 bytes at the most, a megabyte: 2.7 seconds of stereo. A knobs struct is 256, which is what an `Effect` carries. A `float` or an `int` is 4 bytes, a `long` 8, a `bool` or a `byte` 1, and an array as many as its elements. A struct that's bigger is a compile error at the parameter:
 
 ```
-error: an audio declaration's state is 4096 bytes at the most, and 'Tail' is 16388
+error: an audio declaration's state is 1048576 bytes at the most, and 'Tail' is 1048580
 ```
 
-Make the struct smaller: a shorter array, or fewer fields. Code that rolls keeps what it rolls with in the last 8 of a voice's bytes, so its state is 4,088 at the most.
+Make the struct smaller: a shorter array, or fewer fields. Code that rolls keeps what it rolls with after its state, so its state is 8 bytes less at the most.
 
 ## Hearing a run with no window
 

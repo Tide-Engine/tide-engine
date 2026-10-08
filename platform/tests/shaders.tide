@@ -2834,6 +2834,11 @@ local singleton Tables
     List<byte> bytes;       // 300 of them, four to a pixel
     Grid2<Color> cells = Grid2(70, 3); // Wider than a chunk of it
     Grid2<int> tallies = Grid2(5, 2);
+    Grid3<Color> block = Grid3(40, 9, 20); // Past a chunk of it along every axis
+    Grid3<int> counts = Grid3(3, 2, 70);
+    Grid2<Color> open;                     // No size: its cells are wherever they're set
+    Grid3<int> shaft = Grid3(4, 0, 4);     // Open up and down
+    Grid2<int> never;                      // Open, with nothing in it
     List<int2> steps;
     float[4] weights;       // Arrays of a fixed length: a quarter, a half, three quarters and one
     Swatch[2] pair;
@@ -2962,6 +2967,38 @@ frag GridCell(Vertex vertex, out Color color, Tables tables, Choice choice)
 frag GridSize(Vertex vertex, out Color color, Tables tables)
 {
     color = Color(tables.cells.size.x / 140.0, tables.cells.size.y / 6.0, tables.tallies[3, 1] / 10.0);
+}
+
+// A Grid3's cells, in other chunks and layers than its first, and past its edges
+frag Grid3Cell(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    color = tables.block[choice.at, 7, 17] + tables.block[40, 0, 0] + tables.block[int3(0, -1, 0)] + tables.block[33, 7, 20];
+}
+
+frag Grid3Size(Vertex vertex, out Color color, Tables tables)
+{
+    color = Color(tables.block.size.x / 80.0, tables.block.size.z / 40.0, tables.counts[2, 1, 69] / 10.0);
+    if (tables.block.size.y != 9 || tables.counts.size.x != 3 || tables.counts.size.y != 2 || tables.counts.size.z != 70)
+    {
+        color = Color.black;
+    }
+}
+
+// A grid with no size: cells before 0 and far from each other, nothing between them or as far off as an int goes
+frag OpenCells(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    color = tables.open[-70, 200] + tables.open[choice.at, -3] + tables.open[0, 0] + tables.open[-2000000000, 2000000000]
+          + tables.open[2000000000, -2000000000];
+    if (tables.open.size.x != 0 || tables.open.size.y != 0) color = Color.black;
+}
+
+// A Grid3 that's open along one axis, and a grid nothing was ever set in
+frag OpenShaft(Vertex vertex, out Color color, Tables tables)
+{
+    color = Color(tables.shaft[2, -100, 3] / 12.0, tables.shaft[1, 50, 0] / 8.0,
+                  (tables.shaft[2, -100, 4] + tables.shaft[2, 0, 3] + tables.never[3, 3] + 1) / 4.0);
+    if (tables.shaft.size.x != 4 || tables.shaft.size.y != 0 || tables.shaft.size.z != 4) color = Color.black;
+    if (tables.never.size.x != 0) color = Color.black;
 }
 
 // An asset's grid, by its name
@@ -3275,6 +3312,14 @@ view ListReads(Art art, mut Tables tables)
         for (int i = 0; i < 300; i++) tables.bytes.Add(byte(i));
         tables.cells[66, 2] = Color(0.25, 0.5, 0.75);
         tables.tallies[3, 1] = 10;
+        tables.block[33, 7, 17] = Color(0.25, 0.5, 0.75);
+        tables.block[1, 7, 17] = Color.white;
+        tables.counts[2, 1, 69] = 10;
+        tables.counts[2, 1, 68] = 3;
+        tables.open[-70, 200] = Color(0.5, 0.25, 0, 0.5);
+        tables.open[5, -3] = Color(0.25, 0.5, 0.75, 0.5);
+        tables.shaft[2, -100, 3] = 6;
+        tables.shaft[1, 50, 0] = 4;
         tables.steps = [int2(0, 0), int2(3, 16)];
         tables.weights = [0.25, 0.5, 0.75, 1];
         tables.pair = [Swatch { gain = 0.25, on = true }, Swatch { gain = 0.5, on = true }];
@@ -3501,6 +3546,23 @@ view ListReads(Art art, mut Tables tables)
     {
         Draw.Mesh(tables.small, art.faces, Picks, Choice { at = 0 });
     }
+    // Row 11: a Grid3's cells and size, and grids with no size
+    Draw.Transform(float2(8, 168))
+    {
+        Draw.Mesh(tables.small, art.faces, Grid3Cell, Choice { at = 33 });
+    }
+    Draw.Transform(float2(24, 168))
+    {
+        Draw.Mesh(tables.small, art.faces, Grid3Size);
+    }
+    Draw.Transform(float2(40, 168))
+    {
+        Draw.Mesh(tables.small, art.faces, OpenCells, Choice { at = 5 });
+    }
+    Draw.Transform(float2(56, 168))
+    {
+        Draw.Mesh(tables.small, art.faces, OpenShaft);
+    }
 }
 
 // Row 3: each entity's own list
@@ -3514,7 +3576,7 @@ view ListOwners(Art art, Tables tables, Tagged tagged)
     }
 }
 
-// Row 11: what's read of a list's elements is what's sent. A Gear is a dozen
+// Row 12: what's read of a list's elements is what's sent. A Gear is a dozen
 // numbers, of which each frag here reads a few, by a chain of fields, through
 // a foreach's variable, through locals that hold an element or a part of one,
 // and through a function: `skipped` is never read, and never sent. What isn't
@@ -3635,33 +3697,193 @@ view ListParts(Art art, Tables tables, mut Gearbox parts)
     }
     Draw.SetScreen();
     Draw.SetClip();
-    Draw.Transform(float2(8, 168))
+    Draw.Transform(float2(8, 184))
     {
         Draw.Mesh(tables.small, art.faces, PartChain);
     }
-    Draw.Transform(float2(24, 168))
+    Draw.Transform(float2(24, 184))
     {
         Draw.Mesh(tables.small, art.faces, PartLoop);
     }
-    Draw.Transform(float2(40, 168))
+    Draw.Transform(float2(40, 184))
     {
         Draw.Mesh(tables.small, art.faces, PartHeld);
     }
-    Draw.Transform(float2(56, 168))
+    Draw.Transform(float2(56, 184))
     {
         Draw.Mesh(tables.small, art.faces, PartPassed);
     }
-    Draw.Transform(float2(72, 168))
+    Draw.Transform(float2(72, 184))
     {
         Draw.Mesh(tables.small, art.faces, PartKeyed);
     }
-    Draw.Transform(float2(88, 168))
+    Draw.Transform(float2(88, 184))
     {
         Draw.Mesh(tables.small, art.faces, PartCell);
     }
-    Draw.Transform(float2(104, 168))
+    Draw.Transform(float2(104, 184))
     {
         Draw.Mesh(tables.small, art.faces, PartCounted);
+    }
+}
+
+// Rolls (pass 19): Random's rolls on the type in frags and verts, and
+// Random.seed. Each square is 8 pixels of the window. A pixel's rolls are its
+// own, an instance's pixels roll apart, a vertex's are its own, and all of them
+// are other numbers the next frame: shaders.c works out the same numbers.
+struct RollSpot
+{
+    float2 at;
+}
+
+local singleton Dice
+{
+    bool made;
+    List<Vertex> small;
+    List<RollSpot> spots;
+}
+
+// Reached by a vert and by a frag: it rolls with whichever's generator runs it
+int Dither(int below)
+{
+    return Random.NextInt(below);
+}
+
+// Three rolls, a statement each: whole numbers, so the same bytes on every GPU
+frag RollBytes(Vertex vertex, out Color color)
+{
+    var r = Random.NextInt(256);
+    var g = Random.NextInt(100, 200);
+    var b = Random.NextInt() % 256;
+    color = Color(r / 255.0, g / 255.0, b / 255.0);
+}
+
+vert SpotPlace(mut Vertex vertex, RollSpot spot)
+{
+    vertex.position += spot.at;
+}
+
+// Every roll there is, within what it says it gives: green where they all are
+frag RollRanges(Vertex vertex, out Color color)
+{
+    mut var ok = true;
+    mut var sum = 0.0;
+    mut var heads = 0;
+    for (int i = 0; i < 24; i++)
+    {
+        var part = Random.NextFloat();
+        sum += part;
+        if (part < 0 || part >= 1) ok = false;
+        var under = Random.NextFloat(3);
+        if (under < 0 || under >= 3) ok = false;
+        var between = Random.NextFloat(-2, 5);
+        if (between < -2 || between >= 5) ok = false;
+        var whole = Random.NextInt();
+        if (whole < 0) ok = false;
+        var die = Random.NextInt(7);
+        if (die < 0 || die > 6) ok = false;
+        var span = Random.NextInt(-5, 5);
+        if (span < -5 || span > 4) ok = false;
+        if (Random.NextBool()) heads += 1;
+        var spot = Random.NextFloat2();
+        if (Math.Cmin(spot) < 0 || Math.Cmax(spot) >= 1) ok = false;
+        var boxed = Random.NextFloat2(float2(1, 2), float2(2, 4));
+        if (boxed.x < 1 || boxed.x >= 2 || boxed.y < 2 || boxed.y >= 4) ok = false;
+        var place = Random.NextFloat3();
+        if (Math.Cmin(place) < 0 || Math.Cmax(place) >= 1) ok = false;
+        var room = Random.NextFloat3(float3(-1, -1, -1), float3(0, 1, 2));
+        if (room.x < -1 || room.x >= 0 || room.y < -1 || room.y >= 1 || room.z < -1 || room.z >= 2) ok = false;
+        if (Math.Abs(Math.Length(Random.NextFloat2Direction()) - 1) > 0.001) ok = false;
+        if (Math.Abs(Math.Length(Random.NextFloat3Direction()) - 1) > 0.001) ok = false;
+        var turn = Random.NextQuaternionRotation();
+        if (Math.Abs(Math.Length(turn.value) - 1) > 0.001 || turn.value.w < 0) ok = false;
+    }
+    // With nothing between the two, or with them the wrong way around: the first
+    if (Random.NextInt(5, 5) != 5) ok = false;
+    if (Random.NextInt(9, 2) != 9) ok = false;
+    if (Random.NextInt(0) != 0) ok = false;
+    if (Random.NextFloat(4, 4) != 4) ok = false;
+    var mean = sum / 24;
+    if (mean < 0.2 || mean > 0.8 || heads < 2 || heads > 22) ok = false;
+    color = ok ? Color(0, 1, 0) : Color(1, 0, 0);
+}
+
+// A vert's rolls are each vertex's own: a color a corner, which the pixels blend between
+vert RollTint(mut Vertex vertex)
+{
+    var r = Dither(256);
+    var g = Dither(256);
+    var b = Dither(256);
+    vertex.color = Color(r / 255.0, g / 255.0, b / 255.0);
+}
+
+// ...and behind one, a frag that rolls too: each stage with a generator of its own
+frag RollOver(Vertex vertex, out Color color)
+{
+    color = Color(Dither(256) / 255.0, vertex.color.g, 0);
+}
+
+// A blit's frag rolls for each pixel of its destination: grain over the image it reads
+frag RollFill(Vertex vertex, out Color color, Texture source)
+{
+    var r = Random.NextInt(256);
+    var g = Random.NextInt(100, 200);
+    color = Color(r / 255.0, g / 255.0, source.Sample(vertex.uv, Filter.Point).b);
+}
+
+// A '?:' with rolls in it makes both, the first side's first, whichever it picks: the roll after it is the pixel's third
+frag RollPick(Vertex vertex, out Color color)
+{
+    var picked = vertex.uv.x < 2 ? Random.NextInt(256) : Random.NextInt(256);
+    var after = Random.NextInt(256);
+    color = Color(picked / 255.0, after / 255.0, 0);
+}
+
+// The match's seed, a byte a channel
+frag RollSeed(Vertex vertex, out Color color)
+{
+    color = Color((Random.seed & 255) / 255.0, ((Random.seed >> 8) & 255) / 255.0, ((Random.seed >> 16) & 255) / 255.0);
+}
+
+view Rolls(Art art, mut Dice dice)
+{
+    if (art.targetPass != 19) return;
+    if (!dice.made)
+    {
+        dice.made = true;
+        dice.small = [Vertex { }, Vertex { position = float2(8, 0), uv = float2(1, 0) },
+                      Vertex { position = float2(8, 8), uv = float2(1, 1) }, Vertex { position = float2(0, 8), uv = float2(0, 1) }];
+        dice.spots = [RollSpot { at = float2(24, 8) }, RollSpot { at = float2(40, 8) }];
+    }
+    // The whole window first, through a blit: red, green, blue and white cells, whose blue it keeps
+    Draw.Blit(art.four, Draw.window, RollFill);
+    Draw.SetScreen();
+    Draw.SetClip();
+    Draw.Transform(float2(8, 8))
+    {
+        Draw.Mesh(dice.small, art.faces, RollBytes);
+    }
+    // Two instances of one draw
+    Draw.Instanced(dice.small, art.faces, dice.spots, SpotPlace, RollBytes);
+    Draw.Transform(float2(56, 8))
+    {
+        Draw.Mesh(dice.small, art.faces, RollRanges);
+    }
+    Draw.Transform(float2(72, 8))
+    {
+        Draw.Mesh(dice.small, art.faces, RollTint);
+    }
+    Draw.Transform(float2(88, 8))
+    {
+        Draw.Mesh(dice.small, art.faces, RollSeed);
+    }
+    Draw.Transform(float2(8, 24))
+    {
+        Draw.Mesh(dice.small, art.faces, RollTint, RollOver);
+    }
+    Draw.Transform(float2(24, 24))
+    {
+        Draw.Mesh(dice.small, art.faces, RollPick);
     }
 }
 
@@ -3671,7 +3893,7 @@ view ListParts(Art art, Tables tables, mut Gearbox parts)
 view Targets(mut Art art)
 {
     // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images', 11 Outputs', 12 Values', 13 Heights', 14 Mipmaps',
-    // 15 Alphas', 16 Raws', 17 the cubes' and 18 the lists'
+    // 15 Alphas', 16 Raws', 17 the cubes', 18 the lists' and 19 the rolls'
     if (art.targetPass == 0 || art.targetPass >= 6) return;
     if (art.targetPass >= 4)
     {

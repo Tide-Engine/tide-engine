@@ -1,0 +1,16 @@
+// expect: 'tail' holds an array of more than 4096 elements, so a parameter of it is 'mut': 'mut Tail tail'
+// expect: an audio declaration's knobs are a copy the frame gives: the delay line is its state's, the 'mut' struct
+struct Tail
+{
+    int at;
+    float[96000] line;
+}
+
+audio Echo(mut Samples samples, Tail tail)
+{
+    samples.values[0] = tail.line[0];
+}
+
+scene Main
+{
+}
