@@ -97,6 +97,118 @@ static const Players *players_in(const void *world)
     return &((const tide_world *)world)->Players;
 }
 
+// Damage snapshot metadata in an otherwise real transfer. A short chunk must
+// remain missing, and a malformed welcome must not hide the valid copy after it.
+static tide_transport damaged_inner;
+static tide_game damaged_game;
+static uint32_t damaged_mode;
+static uint32_t damaged_count;
+static uint32_t damaged_unpacks;
+static uint8_t damaged_pending[TIDE_NET_MTU];
+static uint32_t damaged_pending_size;
+static tide_address damaged_pending_from;
+
+static bool damaged_unpack(void *world, const void *base, const uint8_t *data, const uint32_t size)
+{
+    damaged_unpacks++;
+    return tide_game_api.unpack_delta(world, base, data, size);
+}
+
+static void damaged_send(void *self, const tide_address to, const void *data, const uint32_t size)
+{
+    (void)self;
+    damaged_inner.send(damaged_inner.self, to, data, size);
+}
+
+static uint32_t damaged_receive(void *self, tide_address *from, void *data, const uint32_t capacity)
+{
+    (void)self;
+    if (damaged_pending_size) {
+        const uint32_t size = damaged_pending_size;
+        damaged_pending_size = 0;
+        TIDE_CHECK(size <= capacity);
+        memcpy(data, damaged_pending, size);
+        *from = damaged_pending_from;
+        return size;
+    }
+    uint32_t size = damaged_inner.receive(damaged_inner.self, from, data, capacity);
+    uint8_t *bytes = data;
+    // Current wire header: magic, protocol and type. CHUNK is type 4, with
+    // uint32 number/index followed by uint16 byte count. WELCOME is type 2;
+    // its uint32 snapshot byte/chunk counts start at offsets 27 and 31.
+    if (damaged_mode == 1 && size >= 14u && bytes[3] == 4u) {
+        bytes[12] = bytes[13] = 0;
+        size = 14u;
+        damaged_count++;
+    } else if (damaged_mode == 2 && size >= 35u && bytes[3] == 2u) {
+        tide_reader r = {bytes + 27u, 8u, 0, false};
+        const uint32_t snapshot_size = tide_read_u32(&r);
+        const uint32_t chunks = tide_read_u32(&r);
+        if (snapshot_size) {
+            memcpy(damaged_pending, data, size);
+            damaged_pending_size = size;
+            damaged_pending_from = *from;
+            tide_writer w = {bytes + 31u, 4u, 0, false, false};
+            tide_write_u32(&w, chunks + 1u);
+            damaged_count++;
+        }
+    }
+    return size;
+}
+
+static void damaged_close(void *self)
+{
+    (void)self;
+    damaged_inner.close(damaged_inner.self);
+}
+
+static void join_damaged(const uint32_t mode)
+{
+    damaged_inner = tide_loopback_endpoint(net, 2);
+    damaged_game = tide_game_api;
+    damaged_game.pure_start = false;
+    damaged_game.unpack_delta = damaged_unpack;
+    damaged_mode = mode;
+    damaged_count = damaged_unpacks = damaged_pending_size = 0;
+    const tide_client_desc desc = {
+        .game = &damaged_game,
+        .transport = {.send = damaged_send, .receive = damaged_receive, .close = damaged_close},
+        .server = tide_loopback_address(1), .sample = sample, .user = &who[0], .lead = 2,
+    };
+    clients[0] = tide_client_create(&desc, now);
+}
+
+TIDE_TEST(net_short_snapshot_chunks_stay_missing)
+{
+    start((tide_net_conditions){0}, 13);
+    join_damaged(1);
+    run(0.5);
+    TIDE_CHECK(damaged_count > 0);
+    TIDE_CHECK(damaged_unpacks == 0);
+    TIDE_CHECK(tide_client_status_of(clients[0]).state != TIDE_SESSION_CONNECTED);
+    damaged_mode = 0;
+    run(2.0);
+    TIDE_CHECK(tide_client_status_of(clients[0]).state == TIDE_SESSION_CONNECTED);
+    TIDE_CHECK(tide_client_status_of(clients[0]).resyncs == 0);
+    const void *world = tide_client_verified_world(clients[0]);
+    TIDE_CHECK(world && players_in(world)->joined == 1);
+    finish();
+}
+
+TIDE_TEST(net_malformed_snapshot_counts_leave_valid_welcomes_usable)
+{
+    start((tide_net_conditions){0}, 17);
+    join_damaged(2);
+    run(2.0);
+    TIDE_CHECK(damaged_count > 0);
+    TIDE_CHECK(damaged_unpacks > 0);
+    TIDE_CHECK(tide_client_status_of(clients[0]).state == TIDE_SESSION_CONNECTED);
+    TIDE_CHECK(tide_client_status_of(clients[0]).resyncs == 0);
+    const void *world = tide_client_verified_world(clients[0]);
+    TIDE_CHECK(world && players_in(world)->joined == 1);
+    finish();
+}
+
 TIDE_TEST(net_players_keep_the_servers_world)
 {
     start((tide_net_conditions){.latency = 0.04, .jitter = 0.02, .loss = 0.1}, 12345);

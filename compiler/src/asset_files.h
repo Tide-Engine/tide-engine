@@ -88,3 +88,8 @@ void asset_files_save_hashes(const char *game_folder, const asset_named *named, 
 
 // Lets go of every file read so far: tests, or a process that goes on without them.
 void asset_files_forget(void);
+
+// A file or folder explicitly changed: read its cached files and dependent
+// static or skinned meshes again even if their size/time is unchanged.
+// Existing values stay valid until the next resolution, as when metadata changes.
+void asset_files_changed(const char *path);

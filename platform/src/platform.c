@@ -1540,6 +1540,8 @@ typedef struct gpu_texture {
 
 static gpu_texture *gpu_textures;
 static uint32_t gpu_texture_count, gpu_texture_capacity;
+static uint32_t *gpu_texture_index; // Texture places by space/id: 1 + a place, or 0 for none
+static uint32_t gpu_texture_index_capacity; // A power of two, or 0: at most half taken
 static uint32_t gpu_frame;
 
 // Render targets retain their attachments across passes and frames. Their
@@ -1766,6 +1768,7 @@ static bool gpu_ready(void)
     target_most = gpu->target_limit();
     if (gpu_meshes) memset(gpu_meshes, 0, gpu_mesh_count * sizeof(gpu_mesh));
     gpu_texture_count = 0;
+    if (gpu_texture_index) memset(gpu_texture_index, 0, (size_t)gpu_texture_index_capacity * sizeof(uint32_t));
     gpu_target_count = 0;
     gpu_cube_count = 0;
     forget_held();
@@ -2349,12 +2352,54 @@ static void upload_atlas(void)
     gpu_state.atlas_version = version;
 }
 
+static uint32_t gpu_texture_hash(const uint32_t space, const uint64_t id)
+{
+    uint64_t h = id * UINT64_C(0x9E3779B97F4A7C15) ^ space;
+    h ^= h >> 32;
+    h *= UINT64_C(0xD6E8FEB86659FD93);
+    h ^= h >> 32;
+    return (uint32_t)h;
+}
+
+static void index_gpu_texture(const uint32_t place)
+{
+    const gpu_texture *g = &gpu_textures[place];
+    const uint32_t mask = gpu_texture_index_capacity - 1u;
+    uint32_t i = gpu_texture_hash(g->space, g->id) & mask;
+    while (gpu_texture_index[i]) i = (i + 1u) & mask;
+    gpu_texture_index[i] = place + 1u;
+}
+
+static void reindex_gpu_textures(void)
+{
+    uint32_t capacity = gpu_texture_index_capacity ? gpu_texture_index_capacity : 64u;
+    while (capacity / 2u <= gpu_texture_count) {
+        if (capacity > UINT32_MAX / 2u / sizeof(uint32_t)) tide_out_of_memory();
+        capacity *= 2u;
+    }
+    if (capacity != gpu_texture_index_capacity) {
+        free(gpu_texture_index);
+        gpu_texture_index = tide_alloc_zeroed(capacity, sizeof(uint32_t));
+        gpu_texture_index_capacity = capacity;
+    } else {
+        memset(gpu_texture_index, 0, (size_t)capacity * sizeof(uint32_t));
+    }
+    for (uint32_t i = 0; i < gpu_texture_count; i++) index_gpu_texture(i);
+}
+
 // The GPU's copy of a list's texture, uploaded if it hasn't got these pixels.
 static gpu_texture *texture_for(const tide_draw_texture *t)
 {
     gpu_texture *g = NULL;
-    for (uint32_t i = 0; i < gpu_texture_count && !g; i++) {
-        if (gpu_textures[i].id == t->id && gpu_textures[i].space == t->space) g = &gpu_textures[i];
+    if (gpu_texture_index_capacity) {
+        const uint32_t mask = gpu_texture_index_capacity - 1u;
+        for (uint32_t i = gpu_texture_hash(t->space, t->id) & mask; gpu_texture_index[i]; i = (i + 1u) & mask) {
+            gpu_texture *found = &gpu_textures[gpu_texture_index[i] - 1u];
+            if (found->id == t->id && found->space == t->space) {
+                g = found;
+                break;
+            }
+        }
     }
     if (!g) {
         if (gpu_texture_count == gpu_texture_capacity) {
@@ -2365,6 +2410,8 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
         }
         g = &gpu_textures[gpu_texture_count++];
         *g = (gpu_texture){.id = t->id, .space = t->space};
+        if (gpu_texture_count >= gpu_texture_index_capacity / 2u) reindex_gpu_textures();
+        else index_gpu_texture(gpu_texture_count - 1u);
     }
     g->frame = gpu_frame;
     const bool shaped = g->texture && g->width == t->width && g->height == t->height && g->format == t->format;
@@ -2410,7 +2457,10 @@ static void forget_textures(void)
         }
         gpu_textures[kept++] = gpu_textures[i];
     }
-    gpu_texture_count = kept;
+    if (kept != gpu_texture_count) {
+        gpu_texture_count = kept;
+        reindex_gpu_textures();
+    }
     gpu_frame++;
 }
 

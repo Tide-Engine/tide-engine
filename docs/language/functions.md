@@ -304,6 +304,7 @@ system Count(mut Counter counter, mut Log log)
 - Arguments passed by name go in the order written too, whatever order the parameters are in: in `Pack(ones: Next(counter), tens: Next(counter))`, `ones` gets the first `Next`.
 - A value is read where it's written. A read-only argument is a copy made then, a list too.
 - A method reads the value it's called on as it runs, once its arguments are worked out: `stats.Plus(stats.Bump())` sees what `Bump` left. An element is read once its index is worked out.
+- A read-only method's receiver follows the same copy rules as a read-only argument: if a `mut` or `out` argument changes its lists or maps during the call, the method still reads its original copy.
 - The right of `&&` and `||` and the sides of `?:` still only run when they would.
 - A list's, map's or set's change that gives a value (`items.Remove(x)`, `seen.Add(key)`) counts as a call that changes it.
 

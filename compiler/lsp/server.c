@@ -1547,17 +1547,16 @@ void lsp_handle(lsp_server *s, const char *message, const size_t len)
         const json *changes = json_get(params, "changes");
         for (int i = 0; changes && changes->kind == JSON_ARRAY && i < changes->count; i++) {
             const char *uri = json_str(json_get(changes->items[i], "uri"));
-            if (uri) {
-                char *changed = uri_to_path(uri);
-                model_metadata_invalidate(changed);
-                free(changed);
-            }
-            if (!uri || json_int(json_get(changes->items[i], "type"), 0) != 3 || find_doc(s, uri)) continue;
-            publish_diagnostics(s, uri, -1);
+            if (!uri) continue;
             char *path = uri_to_path(uri);
-            char *ours = path_to_uri(path); // As this server spells it, if the editor spells it otherwise
-            if (strcmp(ours, uri) != 0) publish_diagnostics(s, ours, -1);
-            free(ours);
+            model_metadata_invalidate(path);
+            analysis_file_changed(path);
+            if (json_int(json_get(changes->items[i], "type"), 0) == 3 && !find_doc(s, uri)) {
+                publish_diagnostics(s, uri, -1);
+                char *ours = path_to_uri(path); // As this server spells it, if the editor spells it otherwise
+                if (strcmp(ours, uri) != 0) publish_diagnostics(s, ours, -1);
+                free(ours);
+            }
             free(path);
         }
         refresh(s);
@@ -1578,6 +1577,17 @@ void lsp_handle(lsp_server *s, const char *message, const size_t len)
     } else if (strcmp(method, "workspace/willRenameFiles") == 0) {
         will_rename_files(s, id, params);
     } else if (strcmp(method, "workspace/didRenameFiles") == 0) {
+        const json *files = json_get(params, "files");
+        for (int i = 0; files && files->kind == JSON_ARRAY && i < files->count; i++) {
+            const char *keys[] = {"oldUri", "newUri"};
+            for (int k = 0; k < 2; k++) {
+                const char *uri = json_str(json_get(files->items[i], keys[k]));
+                if (!uri) continue;
+                char *path = uri_to_path(uri);
+                analysis_file_changed(path);
+                free(path);
+            }
+        }
         model_metadata_invalidate(NULL);
         refresh(s); // The files moved: what's missing, and what's found, changed
     } else if (strcmp(method, "workspace/symbol") == 0) {
