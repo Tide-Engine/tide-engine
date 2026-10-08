@@ -1,0 +1,5 @@
+// expect: text doesn't change a character at a time: 'text[i]' reads one
+scene Main { }
+singleton Seen { int n; string name = "ab"; char mark; }
+void Upper(mut char c) { c = 'A'; }
+system S(mut Seen seen) { Upper(seen.name[0]); }

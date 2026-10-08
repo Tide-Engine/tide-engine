@@ -2621,6 +2621,38 @@ TIDE_TEST(lsp_byte_scalar_hover_and_completion)
     TIDE_CHECK(has(hover, "default: byte") && has(hover, "`0`"));
 }
 
+// char: the type's hover and completion, what a text's index and its foreach
+// give, its default, and a literal the formatter leaves as it's written, a
+// brace or a quote in it too.
+TIDE_TEST(lsp_char_hover_completion_and_format)
+{
+    start();
+    open_document("singleton Data { ch$ar mark = 'a'; string plan = \"ab\"; }\nscene Main { }\n"
+                  "system Read(mut Data data)\n{\n    var first = data.plan[0];\n"
+                  "    foreach (var each in data.plan) data.mark = each == first ? '{' : each;\n}\n");
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "One character: a Unicode code point"));
+    TIDE_CHECK(has(hover_at(4, 9), "char")); // first: what text[0] gives
+    TIDE_CHECK(has(hover_at(5, 18), "char")); // each: what a foreach over text gives
+    TIDE_CHECK(offers(complete("singleton Data { $ }\nscene Main { }\n"), "char"));
+    open_document("singleton Data { char mark; }\nscene Main { }\nsystem Reset(mut Data data) { data.mark = def$ault; }\n");
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "default: char") && has(hover, "which is no character"));
+
+    static const char messy[] =
+        "singleton Data { char mark; int n; }\nscene Main { }\nsystem S(mut Data data)\n{\n"
+        "if(data.mark=='{'||data.mark== '\\'' )data.n=data.mark-'0';\nswitch(data.mark)\n{\ncase '}' :\ndata.n=1;\nbreak;\n}\n}\n";
+    static const char expected[] =
+        "singleton Data { char mark; int n; }\nscene Main { }\nsystem S(mut Data data)\n{\n"
+        "    if (data.mark == '{' || data.mark == '\\'') data.n = data.mark - '0';\n    switch (data.mark)\n    {\n"
+        "        case '}':\n            data.n = 1;\n            break;\n    }\n}\n";
+    format_reply(messy);
+    const char *formatted = apply_reply(messy, NULL);
+    TIDE_CHECK(strcmp(formatted, expected) == 0);
+    if (strcmp(formatted, expected) != 0) printf("--- got:\n%s---\n", formatted);
+    TIDE_CHECK(has(format_reply(expected), "\"result\":[]"));
+}
+
 TIDE_TEST(lsp_format_switch)
 {
     start();

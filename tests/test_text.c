@@ -133,6 +133,137 @@ TIDE_TEST(text_characters)
     tide_scratch_reset(mark);
 }
 
+// A text's characters by index and in turn (Tide's `text[i]` and its foreach):
+// code points, counted as the text's length counts them, with 0, no
+// character, past either end.
+TIDE_TEST(text_chars_by_index_and_in_turn)
+{
+    const tide_str plain = tide_str_from_cstr("abc");
+    TIDE_CHECK(tide_str_char(plain, 0) == 'a' && tide_str_char(plain, 2) == 'c');
+    TIDE_CHECK(tide_str_char(plain, 3) == 0 && tide_str_char(plain, -1) == 0 && tide_str_char(plain, INT32_MAX) == 0
+               && tide_str_char(plain, INT32_MIN) == 0 && tide_str_char(TIDE_STR_EMPTY, 0) == 0);
+
+    // One, two, three and four bytes a character
+    const tide_str wide = tide_str_from_cstr("a\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80z"); // a é € 😀 z
+    static const int32_t codes[] = {'a', 0xE9, 0x20AC, 0x1F600, 'z'};
+    TIDE_REQUIRE(wide.chars == 5 && wide.bytes == 11);
+    int32_t at = 0;
+    for (int32_t k = 0; k < 5; k++) {
+        TIDE_CHECK(tide_str_char(wide, k) == codes[k]);
+        TIDE_CHECK(tide_str_next(wide, &at) == codes[k]);
+    }
+    TIDE_CHECK(at == wide.bytes && tide_str_next(wide, &at) == 0 && at == wide.bytes); // Done: no character, and it stays put
+    TIDE_CHECK(tide_str_char(wide, 5) == 0 && tide_str_char(wide, -1) == 0);
+
+    // Long text of both kinds, at every eighth place and its ends: the walk that counts eight bytes at a time
+    // lands where one that counts each byte does
+    char bytes[3 * 200 + 1];
+    int32_t expected[200];
+    int32_t n = 0;
+    for (int32_t k = 0; k < 200; k++) {
+        if (k % 5 == 2) {
+            bytes[n++] = (char)0xC3;
+            bytes[n++] = (char)(0x80 + k % 0x40);
+            expected[k] = 0xC0 + k % 0x40;
+        } else if (k % 7 == 3) {
+            bytes[n++] = (char)0xE2;
+            bytes[n++] = (char)0x82;
+            bytes[n++] = (char)(0x80 + k % 0x40);
+            expected[k] = 0x2080 + k % 0x40;
+        } else {
+            bytes[n++] = (char)('a' + k % 26);
+            expected[k] = 'a' + k % 26;
+        }
+    }
+    bytes[n] = '\0';
+    const tide_str mixed = {bytes, n, 200};
+    at = 0;
+    for (int32_t k = 0; k < 200; k++) {
+        TIDE_CHECK(tide_str_char(mixed, k) == expected[k]);
+        TIDE_CHECK(tide_str_next(mixed, &at) == expected[k]);
+    }
+    TIDE_CHECK(tide_str_char(mixed, 200) == 0);
+
+    // A piece's own ends are its ends, with its text going on behind it
+    const tide_str piece = tide_str_substring(wide, 1, 2); // é €
+    TIDE_CHECK(piece.ptr == wide.ptr + 1 && piece.bytes == 5 && piece.chars == 2);
+    TIDE_CHECK(tide_str_char(piece, 0) == 0xE9 && tide_str_char(piece, 1) == 0x20AC && tide_str_char(piece, 2) == 0);
+    const tide_str letters = tide_str_substring(plain, 0, 2);
+    TIDE_CHECK(letters.ptr == plain.ptr && tide_str_char(letters, 1) == 'b' && tide_str_char(letters, 2) == 0);
+    at = 2;
+    TIDE_CHECK(tide_str_next(letters, &at) == 0);
+}
+
+// Bytes that are no character's UTF-8 read as U+FFFD, and never past the
+// text: a byte that starts none, one cut short, a longer form than the
+// shortest, half of a UTF-16 pair, a number past the last character.
+TIDE_TEST(text_chars_of_bytes_that_are_none)
+{
+    static const struct {
+        const char *bytes;
+        int32_t count;
+    } wrong[] = {
+        {"\xFF", 1},             // Starts nothing
+        {"\xC3", 1},             // Cut short
+        {"\xE2\x82", 2},         // Cut short
+        {"\xC0\x80", 2},         // Zero, the long way
+        {"\xE0\x80\xA9", 3},     // An overlong three
+        {"\xED\xA0\x80", 3},     // U+D800
+        {"\xF4\x90\x80\x80", 4}, // Past U+10FFFF
+        {"a\x80", 2},            // A byte that continues nothing after one that needs none
+    };
+    for (size_t k = 0; k < sizeof wrong / sizeof wrong[0]; k++) {
+        const tide_str text = {wrong[k].bytes, wrong[k].count, tide_utf8_chars(wrong[k].bytes, wrong[k].count)};
+        TIDE_REQUIRE(text.chars == 1);
+        int32_t at = 0;
+        TIDE_CHECK(tide_str_char(text, 0) == 0xFFFD);
+        TIDE_CHECK(tide_str_next(text, &at) == 0xFFFD && at == text.bytes);
+        TIDE_CHECK(tide_str_char(text, 1) == 0);
+    }
+    // Bytes that continue nothing at a text's start are no character: its length counts none of them
+    const tide_str stray = {"\x80\x80z", 3, 1};
+    int32_t at = 0;
+    TIDE_CHECK(tide_str_char(stray, 0) == 'z' && tide_str_next(stray, &at) == 'z' && at == 3);
+    // Counts that say more than there is: the text's bytes are the limit
+    const tide_str lying = {"ab", 2, 9};
+    at = 0;
+    TIDE_CHECK(tide_str_char(lying, 5) == 0 && tide_str_next(lying, &at) == 'a' && tide_str_next(lying, &at) == 'b'
+               && tide_str_next(lying, &at) == 0 && at == 2);
+}
+
+// A char in text, and text's members that take one.
+TIDE_TEST(text_chars_joined_and_searched)
+{
+    const uint32_t mark = tide_scratch_mark();
+    TIDE_CHECK(tide_char_of('a') == 'a' && tide_char_of(0x10FFFF) == 0x10FFFF && tide_char_of(0xD7FF) == 0xD7FF && tide_char_of(0xE000) == 0xE000);
+    TIDE_CHECK(tide_char_of(-1) == 0 && tide_char_of(0x110000) == 0 && tide_char_of(0xD800) == 0 && tide_char_of(0xDFFF) == 0
+               && tide_char_of(INT32_MIN) == 0 && tide_char_of(INT32_MAX) == 0);
+
+    tide_str s = tide_str_add_char(TIDE_STR_EMPTY, 'h');
+    s = tide_str_add_char(s, 0xE9);
+    s = tide_str_add_char(s, 0); // No character: nothing
+    s = tide_str_add_char(s, -5);
+    s = tide_str_add_char(s, 0xD800);
+    s = tide_str_add_char(s, 0x1F600);
+    TIDE_CHECK(is(s, "h\xC3\xA9\xF0\x9F\x98\x80") && s.chars == 3);
+    TIDE_CHECK(is(tide_str_add_char_quoted(TIDE_STR_EMPTY, 'a'), "'a'"));
+    TIDE_CHECK(is(tide_str_add_char_quoted(TIDE_STR_EMPTY, 0), "'\\0'"));
+    TIDE_CHECK(is(tide_str_add_char_quoted(TIDE_STR_EMPTY, 0x20AC), "'\xE2\x82\xAC'"));
+
+    const tide_str word = tide_str_from_cstr("h\xC3\xA9llo");
+    TIDE_CHECK(tide_str_index_of_char(word, 'l') == 2 && tide_str_index_of_char(word, 0xE9) == 1 && tide_str_index_of_char(word, 'z') == -1);
+    TIDE_CHECK(tide_str_index_of_char(word, 0) == -1 && tide_str_index_of_char(word, -1) == -1 && tide_str_index_of_char(word, 0x110000) == -1);
+    TIDE_CHECK(tide_str_contains_char(word, 'o') && !tide_str_contains_char(word, 'x') && !tide_str_contains_char(word, 0)
+               && !tide_str_contains_char(TIDE_STR_EMPTY, 'a'));
+    TIDE_CHECK(tide_str_starts_with_char(word, 'h') && !tide_str_starts_with_char(word, 0xE9) && !tide_str_starts_with_char(TIDE_STR_EMPTY, 'h'));
+    TIDE_CHECK(tide_str_ends_with_char(word, 'o') && !tide_str_ends_with_char(word, 'l') && !tide_str_ends_with_char(word, 0));
+    TIDE_CHECK(is(tide_str_replace_char(word, 'l', 'L'), "h\xC3\xA9LLo"));
+    TIDE_CHECK(is(tide_str_replace_char(word, 0xE9, 'e'), "hello"));
+    TIDE_CHECK(is(tide_str_replace_char(word, 'l', 0), "h\xC3\xA9o")); // Nothing in its place
+    TIDE_CHECK(is(tide_str_replace_char(word, 'z', 'y'), "h\xC3\xA9llo") && is(tide_str_replace_char(word, -1, 'y'), "h\xC3\xA9llo"));
+    tide_scratch_reset(mark);
+}
+
 static int32_t plain_find(const tide_str text, const tide_str needle)
 {
     for (int32_t at = 0; at <= text.bytes - needle.bytes; at++) {

@@ -1,0 +1,5 @@
+// expect: char(...) converts an int, a character's code point, not float
+// expect: convert it to an int first, which drops its fraction: 'char(int(x))'
+scene Main { }
+singleton Seen { int n; string name = "ab"; char mark; }
+system S(mut Seen seen) { seen.mark = char(1.5); }

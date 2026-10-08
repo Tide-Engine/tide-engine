@@ -88,6 +88,7 @@ static const type T_ERR = {TY_ERROR, NULL};
 static const type T_VOID_ = {TY_VOID, NULL};
 static const type T_BOOL_ = {TY_BOOL, NULL};
 static const type T_INT_ = {TY_INT, NULL};
+static const type T_CHAR_ = {TY_CHAR, NULL};
 static const type T_LONG_ = {TY_LONG, NULL};
 static const type T_FLOAT_ = {TY_FLOAT, NULL};
 static const type T_ENTITY_ = {TY_ENTITY, NULL};
@@ -164,6 +165,12 @@ static void note_conversion(const type want, const type have)
         diag_note("%s(x) makes an int the %s with that number", type_name(want), type_name(want));
     } else if (have.kind == TY_ENUM && (want.kind == TY_INT || want.kind == TY_LONG)) {
         diag_note("%s(x) makes it its number", type_name(want));
+    } else if (want.kind == TY_CHAR && type_is_integer(have)) {
+        diag_note("char(x) makes an int the character with that code point");
+    } else if (want.kind == TY_CHAR && have.kind == TY_STRING) {
+        diag_note("a char is one character in single quotes, like 'a', and a text's is 'text[i]'");
+    } else if (want.kind == TY_STRING && have.kind == TY_CHAR) {
+        diag_note("text is written in double quotes, and a char joins it with '+': '\"\" + c'");
     }
 }
 
@@ -1254,15 +1261,15 @@ static bool map_key_ok(const type t, const loc at, const bool set)
 {
     switch (t.kind) {
     case TY_ERROR: return false;
-    case TY_BYTE: case TY_INT: case TY_LONG: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_STRING:
+    case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_STRING:
         return true;
     case TY_LIST: case TY_MAP: case TY_SET: case TY_GRID: case TY_ARRAY:
-        diag_error(at, "a %s's key is an int, a long, an enum, an Entity, a PlayerID or text, not a%s %s", set ? "set" : "map",
+        diag_error(at, "a %s's key is an int, a long, a char, an enum, an Entity, a PlayerID or text, not a%s %s", set ? "set" : "map",
                    t.kind == TY_ARRAY ? "n" : "",
                    t.kind == TY_LIST ? "list" : t.kind == TY_MAP ? "map" : t.kind == TY_SET ? "set" : t.kind == TY_ARRAY ? "array" : "grid");
         return false;
     default:
-        diag_error(at, "a %s's key is an int, a long, an enum, an Entity, a PlayerID or text, not %s", set ? "set" : "map",
+        diag_error(at, "a %s's key is an int, a long, a char, an enum, an Entity, a PlayerID or text, not %s", set ? "set" : "map",
                    type_name(t));
         if (t.kind == TY_FLOAT) diag_note("floats that look equal can differ in a bit; key by an int, like 'int(x * 100)'");
         else if (t.kind == TY_STRUCT) diag_note("key by one of its fields");
@@ -1464,7 +1471,7 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
 {
     switch (t.kind) {
     case TY_ERROR: return false;
-    case TY_BOOL: case TY_BYTE: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
+    case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
     case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_STRING: case TY_ENUM:
     case TY_LIST: case TY_MAP: case TY_SET: case TY_ARRAY:
@@ -1541,7 +1548,7 @@ static bool grid_cell_ok(const type t, const loc at)
 {
     switch (t.kind) {
     case TY_ERROR: return false;
-    case TY_BOOL: case TY_BYTE: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
+    case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
     case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_ENUM: case TY_ARRAY:
         return true;
@@ -1908,7 +1915,7 @@ static bool array_element_ok(const type t, const loc at)
 {
     switch (t.kind) {
     case TY_ERROR: return false;
-    case TY_BOOL: case TY_BYTE: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
+    case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2: case TY_FLOAT3:
     case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4: case TY_ENTITY:
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_ENUM: case TY_ARRAY:
         return true;
@@ -2032,7 +2039,7 @@ static bool element_path_in_place(const expr *target)
 static bool equatable(const type t)
 {
     switch (t.kind) {
-    case TY_BYTE: case TY_INT: case TY_LONG: case TY_FLOAT: case TY_BOOL: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER:
+    case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_FLOAT: case TY_BOOL: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY: case TY_PLAYER:
     case TY_STRING:
         return true;
     default:
@@ -2571,9 +2578,28 @@ static type check_construct(checker *c, expr *e, const type target)
         return target;
     }
 
-    // float(x), int(x), long(x): conversions between the number types.
+    // char(n): the character with that code point, or '\0' for a number none has.
+    if (target.kind == TY_CHAR) {
+        if (argc == 1 && type_assignable(T_INT_, first)) {
+            e->ctor = CTOR_CHAR;
+            return target;
+        }
+        if (argc != 1) {
+            diag_error(e->at, "char(...) converts one int, a character's code point");
+            return T_ERR;
+        }
+        diag_error(e->args.items[0]->at, "char(...) converts an int, a character's code point, not %s", type_name(first));
+        if (first.kind == TY_STRING) diag_note("a text's character is 'text[i]', counting from 0");
+        else if (first.kind == TY_FLOAT) diag_note("convert it to an int first, which drops its fraction: 'char(int(x))'");
+        else if (first.kind == TY_LONG) diag_note("convert it to an int first, which keeps its low 32 bits: 'char(int(x))'");
+        else if (first.kind == TY_ENUM) diag_note("go through its number: 'char(int(x))'");
+        return T_ERR;
+    }
+
+    // float(x), int(x), long(x): conversions between the number types, and of a
+    // char, which is its code point.
     if (is_scalar_number(target) || target.kind == TY_LONG) {
-        if (argc == 1 && (is_scalar_number(first) || first.kind == TY_LONG)) {
+        if (argc == 1 && (is_scalar_number(first) || first.kind == TY_LONG || first.kind == TY_CHAR)) {
             e->ctor = CTOR_SCALAR;
             return target;
         }
@@ -6631,7 +6657,7 @@ static void note_missing_operator(const tok_kind op, const type l, const type r,
 static bool text_shows_value(const type t)
 {
     switch (t.kind) {
-    case TY_STRING: case TY_BYTE: case TY_INT: case TY_LONG: case TY_FLOAT: case TY_BOOL: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY:
+    case TY_STRING: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_FLOAT: case TY_BOOL: case TY_ENUM: case TY_ENTITY: case TY_LOCAL_ENTITY:
     case TY_PLAYER: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4:
     case TY_QUATERNION: case TY_COLOR: case TY_RECT: case TY_ERROR:
         return true;
@@ -6736,6 +6762,7 @@ static int32_t text_format(const expr *value, const str format)
     if (t.kind == TY_ERROR) return 0;
     diag_error(value->at, "'" STR_FMT "' isn't a format for %s", STR_ARG(format), type_name(t));
     if (floats) diag_note("floats take F and how many decimals, like '{x:F2}', up to F9");
+    else if (t.kind == TY_CHAR) diag_note("a char shows as the character it is; its code point is a number, which has formats: '{int(c):X4}'");
     else if (ints) diag_note("ints and longs take D and how many digits ('{n:D3}' shows 007), X for hex, or F for decimals");
     else diag_note("only numbers have formats; %s shows as it is", type_name(t));
     return 0;
@@ -6754,7 +6781,11 @@ static type binary_result(const program *prog, const tok_kind op, const type l, 
             text_cant_show(at, other);
         } else {
             diag_error(at, "operator %s can't be used with %s and %s", op_str(op), type_name(l), type_name(r));
-            diag_note("text joins with '+' and compares with '==' and '!='");
+            if (other.kind == TY_CHAR) {
+                diag_note("a char compares with a char, which is one character in single quotes: 'a', not \"a\"");
+            } else {
+                diag_note("text joins with '+' and compares with '==' and '!='");
+            }
         }
         return T_ERR;
     }
@@ -6765,6 +6796,11 @@ static type binary_result(const program *prog, const tok_kind op, const type l, 
     // Byte operands promote before built-in arithmetic, comparison and bitwise work.
     if (l.kind == TY_BYTE || r.kind == TY_BYTE) {
         return binary_result(prog, op, l.kind == TY_BYTE ? T_INT_ : l, r.kind == TY_BYTE ? T_INT_ : r, at, overload);
+    }
+    // A char is its code point to an operator, as in C#: 'a' < 'b', c - '0', c == 65. What it gives is an int
+    // (or a bool), never a char: char(c + 1) is the next one.
+    if (l.kind == TY_CHAR || r.kind == TY_CHAR) {
+        return binary_result(prog, op, l.kind == TY_CHAR ? T_INT_ : l, r.kind == TY_CHAR ? T_INT_ : r, at, overload);
     }
 
     // Longs: with ints and longs, which widen to long. Never with floats by
@@ -7844,6 +7880,7 @@ static type check_index(checker *c, expr *e)
         const type key = check_expr_want(c, e->lhs, map_key(obj));
         if (key.kind != TY_ERROR && !type_assignable(map_key(obj), key)) {
             diag_error(e->lhs->at, "%s is keyed by %s, not %s", type_name(obj), type_name(map_key(obj)), type_name(key));
+            note_conversion(map_key(obj), key);
         }
         return map_value(obj);
     }
@@ -7856,13 +7893,14 @@ static type check_index(checker *c, expr *e)
     const type index = check_expr(c, e->lhs);
     if (obj.kind == TY_ERROR) return T_ERR;
     if (index.kind != TY_ERROR && !type_assignable(T_INT_, index)) {
-        diag_error(e->lhs->at, "%s index is an int, not %s", obj.kind == TY_ARRAY ? "an array's" : "a list's", type_name(index));
+        diag_error(e->lhs->at, "%s index is an int, not %s", obj.kind == TY_ARRAY ? "an array's" : obj.kind == TY_STRING ? "a text's" : "a list's",
+                   type_name(index));
     }
     if (obj.kind == TY_RECORD && obj.decl->array_of) return (type){TY_RECORD, obj.decl->array_of}; // touches[i]
     if (obj.kind == TY_ARRAY) return array_element(obj); // cells[i], or the element's zero past the end
+    if (obj.kind == TY_STRING) return T_CHAR_; // name[i]: its character there, counting characters, or '\0' past either end
     if (obj.kind != TY_LIST) {
-        diag_error(e->at, "only lists and maps have elements to index, and this is %s", type_name(obj));
-        if (obj.kind == TY_STRING) diag_note("a piece of text is 'text.Substring(start, length)'");
+        diag_error(e->at, "only lists, arrays, maps and text have elements to index, and this is %s", type_name(obj));
         return T_ERR;
     }
     return list_element(obj);
@@ -8864,7 +8902,7 @@ static type check_expr_any(checker *c, expr *e)
     if (e->is_out && !out_ok) return e->type = refuse_out_arg(c, e);
     type t = T_ERR;
     switch (e->kind) {
-    case E_INT: t = e->is_long ? T_LONG_ : T_INT_; break;
+    case E_INT: t = e->is_char ? T_CHAR_ : e->is_long ? T_LONG_ : T_INT_; break;
     case E_FLOAT: t = T_FLOAT_; break;
     case E_BOOL: t = T_BOOL_; break;
     case E_STRING: t = (type){TY_STRING, NULL}; break;
@@ -8987,6 +9025,7 @@ static type check_expr_any(checker *c, expr *e)
                 note_missing_operator(e->op, operand, T_ERR, true);
             }
         } else if (e->op == T_NOT && operand.kind == TY_BOOL) t = T_BOOL_;
+        else if ((e->op == T_TILDE || e->op == T_MINUS) && operand.kind == TY_CHAR) t = T_INT_; // Its code point's
         else if (e->op == T_TILDE && type_is_integer(operand)) t = operand.kind == TY_BYTE ? T_INT_ : operand;
         else if (e->op == T_MINUS && (type_is_numeric(operand) || operand.kind == TY_LONG || matrix_dim(operand))) t = operand.kind == TY_BYTE ? T_INT_ : operand;
         else diag_error(e->at, "operator %s can't be used with %s", op_str(e->op), type_name(operand));
@@ -9136,6 +9175,12 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
         return false;
     }
     for (const expr *part = target; part->kind == E_MEMBER || part->kind == E_INDEX; part = part->object) {
+        // name[0]: a character read out of the text, which only changes whole
+        if (part->kind == E_INDEX && part->object->type.kind == TY_STRING) {
+            diag_error(target->at, "text doesn't change a character at a time: 'text[i]' reads one");
+            diag_note("make the new text of its pieces, like 'name = name.Substring(0, i) + c + name.Substring(i + 1);'");
+            return false;
+        }
         if (part->kind == E_MEMBER && part->object->type.kind == TY_STRUCT
             && part->object->type.decl->skin_kind && part->object->type.decl->skin_kind != SKIN_TRANSFORM) {
             diag_error(target->at, "model members are read-only; edit a Pose's local transforms through a Bone");
@@ -9896,6 +9941,11 @@ static void check_assign(checker *c, const stmt *s)
                   STR_FMT ".Set<" STR_FMT ">(e, c);'", STR_ARG(world), STR_ARG(component), STR_ARG(world), STR_ARG(component));
         return;
     }
+    // name[0] = 'x': said by check_writable, as for a mut argument
+    if (s->target->kind == E_INDEX && s->target->object->type.kind == TY_STRING) {
+        check_writable(c, s->target, NULL, NULL);
+        return;
+    }
     // rows[i][j] = v: a container that's an element, changed where it is; rings[b].cells[j] = v and rows[i].x = v: an
     // element's fields and arrays, through the element's slot
     if (s->target->kind == E_INDEX && s->target->object->type.kind != TY_ARRAY) {
@@ -9938,7 +9988,12 @@ static void check_assign(checker *c, const stmt *s)
 
     if ((s->op == T_PLUS_PLUS || s->op == T_MINUS_MINUS) && !type_is_integer(target) && target.kind != TY_FLOAT) {
         diag_error(s->at, "'%s' works on ints, longs and floats, not %s", s->op == T_PLUS_PLUS ? "++" : "--", type_name(target));
-        diag_note("write '%s= 1' instead", s->op == T_PLUS_PLUS ? "+" : "-");
+        if (target.kind == TY_CHAR) {
+            diag_note("the character %s it is 'c = char(c %s 1);': to an operator a char is its code point, an int",
+                      s->op == T_PLUS_PLUS ? "after" : "before", s->op == T_PLUS_PLUS ? "+" : "-");
+        } else {
+            diag_note("write '%s= 1' instead", s->op == T_PLUS_PLUS ? "+" : "-");
+        }
         return;
     }
     type result = value;
@@ -9999,14 +10054,14 @@ static bool fold_int(const expr *e, int64_t *out)
         *out = e->int_value; // Within int's range unless it's a long
         return true;
     case E_DEFAULT:
-        if (!type_is_integer(e->type) && e->type.kind != TY_ENUM) return false;
+        if (!type_is_integer(e->type) && e->type.kind != TY_ENUM && e->type.kind != TY_CHAR) return false;
         *out = 0;
         return true;
     case E_NAME:
     case E_MEMBER:
         if (e->bind == BIND_CONST) {
             const decl *k = e->constant;
-            return k->index == 2 && (type_is_integer(k->return_type) || k->return_type.kind == TY_ENUM)
+            return k->index == 2 && (type_is_integer(k->return_type) || k->return_type.kind == TY_ENUM || k->return_type.kind == TY_CHAR)
                 && fold_int(k->value, out);
         }
         if (e->kind == E_MEMBER && e->enum_member) {
@@ -10015,12 +10070,17 @@ static bool fold_int(const expr *e, int64_t *out)
         }
         return false;
     case E_CONDITIONAL: {
-        if (!type_is_integer(e->type) && e->type.kind != TY_ENUM) return false;
+        if (!type_is_integer(e->type) && e->type.kind != TY_ENUM && e->type.kind != TY_CHAR) return false;
         bool cond;
         return fold_bool(e->cond, &cond) && fold_int(cond ? e->lhs : e->rhs, out);
     }
     case E_CALL:
         if (e->call == CALL_CONSTRUCT && e->ctor == CTOR_ENUM) return fold_enum(e, out);
+        if (e->call == CALL_CONSTRUCT && e->ctor == CTOR_CHAR) { // char(65): as tide_char_of gives it (tide/text.h)
+            if (e->args.count != 1 || !fold_int(e->args.items[0], &l)) return false;
+            *out = l < 0 || l > 0x10FFFF || (l >= 0xD800 && l < 0xE000) ? 0 : l;
+            return true;
+        }
         if (e->call != CALL_CONSTRUCT || e->ctor != CTOR_SCALAR || !type_is_integer(e->type)
             || e->args.count != 1 || !fold_int(e->args.items[0], &l)) return false;
         *out = e->type.kind == TY_LONG ? l : e->type.kind == TY_BYTE ? (uint8_t)l : tide_i_from_l(l);
@@ -10213,10 +10273,11 @@ static bool always_exits(const stmt *s)
 static void check_switch(checker *c, stmt *s)
 {
     const type value = check_expr(c, s->cond);
-    const bool switchable = type_is_integer(value) || value.kind == TY_ENUM;
+    const bool switchable = type_is_integer(value) || value.kind == TY_ENUM || value.kind == TY_CHAR;
     if (value.kind != TY_ERROR && !switchable) {
-        diag_error(s->cond->at, "switch works on ints, longs and enums, not %s", type_name(value));
+        diag_error(s->cond->at, "switch works on ints, longs, chars and enums, not %s", type_name(value));
         if (value.kind == TY_BOOL) diag_note("use if/else for a bool");
+        if (value.kind == TY_STRING) diag_note("a text's characters are chars: 'switch (text[i])' with cases like 'case 'a':'");
     }
     bool has_default = false;
     VEC(int64_t) seen = {0};
@@ -10234,16 +10295,18 @@ static void check_switch(checker *c, stmt *s)
             if (t.kind == TY_ERROR || !switchable) continue;
             int64_t number;
             if (!fold_int(label, &number)) {
-                diag_error(label->at, "a case is an int or one of an enum's members, like 'case %s:'",
-                           value.kind == TY_ENUM ? "Page.Title" : "3");
+                diag_error(label->at, "a case is an int, a char or one of an enum's members, like 'case %s:'",
+                           value.kind == TY_ENUM ? "Page.Title" : value.kind == TY_CHAR ? "'a'" : "3");
                 diag_note("constants work too, and operators on them, like 'case MAX_LEVEL + 1:'");
                 continue;
             }
             label->int_value = number; // What codegen writes, unless it's a literal or a member
-            if (!same_type(value, t) && !(value.kind == TY_LONG && (t.kind == TY_INT || t.kind == TY_BYTE))
-                && !(value.kind == TY_INT && t.kind == TY_BYTE)
+            // A char is a case of an int's or a long's switch, its code point, as it goes where an int does
+            if (!same_type(value, t) && !(value.kind == TY_LONG && (t.kind == TY_INT || t.kind == TY_BYTE || t.kind == TY_CHAR))
+                && !(value.kind == TY_INT && (t.kind == TY_BYTE || t.kind == TY_CHAR))
                 && !(value.kind == TY_BYTE && t.kind == TY_INT && number >= 0 && number <= 255)) {
                 diag_error(label->at, "the switch is on %s, so its cases are too, not %s", type_name(value), type_name(t));
+                if (value.kind == TY_CHAR && type_is_integer(t)) diag_note("write the character, like 'case 'a':', or 'case char(%lld):'", (long long)number);
                 continue;
             }
             for (int j = 0; j < seen.count; j++) {
@@ -10628,8 +10691,10 @@ static void check_stmt(checker *c, stmt *s)
             element = (type){TY_RECORD, list.decl->array_of};
         } else if (list.kind == TY_ARRAY) { // Its elements, each a copy
             element = array_element(list);
+        } else if (list.kind == TY_STRING) { // Its characters, in order, of the text as the loop found it
+            element = T_CHAR_;
         } else if (list.kind != TY_ERROR) {
-            diag_error(s->value->at, "foreach goes through a list, an array, a map, a set, a grid or an entity query, and this is %s", type_name(list));
+            diag_error(s->value->at, "foreach goes through a list, an array, a map, a set, a grid, text or an entity query, and this is %s", type_name(list));
         }
         if (s->type_name.len > 0) {
             if (s->query) {
@@ -10637,7 +10702,7 @@ static void check_stmt(checker *c, stmt *s)
             }
             const type declared = s->query ? T_ERR : local_type(c, s);
             if (declared.kind != TY_ERROR && element.kind != TY_ERROR && !same_type(declared, element)) {
-                diag_error(s->type_at, "the list holds %s, not %s", type_name(element), type_name(declared));
+                diag_error(s->type_at, "the %s holds %s, not %s", list.kind == TY_STRING ? "text" : "list", type_name(element), type_name(declared));
                 diag_note("write 'foreach (var " STR_FMT " in ...)' to take the elements as they are", STR_ARG(s->name));
             }
         }

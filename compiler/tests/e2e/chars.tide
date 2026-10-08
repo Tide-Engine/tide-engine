@@ -1,0 +1,330 @@
+// Chars: their literals, a text's characters by index and by foreach, what
+// they compare and convert to, switch, keys, where they're kept, and text.
+
+enum Tile
+{
+    Grass,
+    Water,
+    Coal,
+}
+
+struct Glyph
+{
+    char mark = '?';
+    int count;
+}
+
+component Results
+{
+    int checks;
+    int passed;
+    int firstFailure; // 1-based; 0 if every check passed
+}
+
+component Board
+{
+    char first; // '\0', which is no character, until it's set
+    char[4] row;
+    List<char> seen;
+    Map<char, int> counts;
+    Set<char> marks;
+    Glyph glyph;
+    Grid2<char> cells = Grid2(8, 8);
+    string plan = "~~#/e.";
+}
+
+singleton Typed
+{
+    char last;
+    int presses;
+}
+
+input Keys
+{
+    char key = 'k';
+    char[2] pair;
+}
+
+command Type
+{
+    char key = '?';
+    string word;
+}
+
+local singleton UI
+{
+    bool send;
+    char pending = 'w';
+    char seen;
+}
+
+singleton Spelled
+{
+    string word;
+}
+
+struct Cell
+{
+    char mark;
+    int hits;
+}
+
+singleton Field
+{
+    List<Cell> cells;
+}
+
+event Marked
+{
+    char mark;
+}
+
+const char SEP = '/';
+const char NONE = char(0);
+const int LETTERS = 'z' - 'a' + 1;
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Results, Board);
+}
+
+void Expect(mut Results r, bool ok)
+{
+    r.checks += 1;
+    if (ok) r.passed += 1;
+    else if (r.firstFailure == 0) r.firstFailure = r.checks;
+}
+
+// A digit's number, or -1: what a char's order and arithmetic are for.
+int Digit(char c)
+{
+    return c >= '0' && c <= '9' ? c - '0' : -1;
+}
+
+Tile TileOf(char mark)
+{
+    switch (mark)
+    {
+        case '~':
+            return Tile.Water;
+        case '#':
+            return Tile.Coal;
+        case SEP:
+        case ' ':
+            return Tile.Grass;
+        default:
+            return Tile.Grass;
+    }
+}
+
+// An int's switch takes chars as its cases: their code points.
+int Vowel(int code)
+{
+    switch (code)
+    {
+        case 'a':
+        case 'e':
+            return 1;
+        case 105:
+            return 2;
+        default:
+            return 0;
+    }
+}
+
+string Reverse(string text)
+{
+    mut var turned = "";
+    for (var i = text.length - 1; i >= 0; i--) turned += text[i];
+    return turned;
+}
+
+// One of each: a call picks by what it's given.
+string Kind(char c) { return "char"; }
+string Kind(int n) { return "int"; }
+string Kind(string s) { return "string"; }
+
+void Upper(mut char c)
+{
+    if (c >= 'a' && c <= 'z') c = char(c - 'a' + 'A');
+}
+
+bool First(string text, out char found)
+{
+    found = text[0];
+    return text.length > 0;
+}
+
+system Check(mut Results r, mut Board board)
+{
+    // Literals, and what they compare to
+    Expect(r, 'a' == 'a' && 'a' != 'b' && 'a' < 'b' && 'z' >= 'a' && !('a' > 'b'));
+    Expect(r, int('A') == 65 && char(65) == 'A' && long('A') == 65L && float('A') == 65.0);
+    Expect(r, int('\n') == 10 && int('\t') == 9 && int('\r') == 13 && int('\0') == 0);
+    Expect(r, int('\'') == 39 && int('"') == 34 && int('\"') == 34 && int('\\') == 92 && int(' ') == 32);
+    Expect(r, int('é') == 233 && int('€') == 0x20AC && int('😀') == 0x1F600);
+
+    // A number no character has is the one that's none
+    Expect(r, char(-1) == '\0' && char(0x110000) == '\0' && char(0xD800) == '\0' && char(0xDFFF) == '\0');
+    Expect(r, char(0x10FFFF) != '\0' && int(char(0xD7FF)) == 0xD7FF && int(char(0xE000)) == 0xE000 && char('b') == 'b');
+
+    // To an operator a char is its code point, and what comes of it an int
+    var sum = 'a' + 1;
+    int widened = 'b';
+    long wide = 'c';
+    float real = 'd';
+    Expect(r, sum == 98 && widened == 98 && wide == 99L && real == 100.0 && char(sum) == 'b');
+    Expect(r, '9' - '0' == 9 && Digit('7') == 7 && Digit('x') == -1 && LETTERS == 26 && -'a' == -97 && ('a' & 1) == 1);
+    Expect(r, 'a' == 97 && 97 == 'a' && 'a' < 98 && 'a' * 2 == 194 && 'a' + 0.5 == 97.5 && Math.Max('a', 'b') == 98);
+
+    // A text's characters, counted as its length counts them
+    var text = "héllo€";
+    Expect(r, text.length == 6 && text[0] == 'h' && text[1] == 'é' && text[4] == 'o' && text[5] == '€');
+    Expect(r, text[-1] == '\0' && text[6] == '\0' && text[1000000] == '\0' && text[-2147483647] == '\0' && ""[0] == '\0');
+    Expect(r, "abc"[1] == 'b' && board.plan[2] == '#' && board.plan[board.plan.length - 1] == '.' && "😀!"[1] == '!');
+
+    // Every one of them, in order
+    mut var joined = "";
+    mut var count = 0;
+    foreach (var c in text)
+    {
+        joined += c;
+        count++;
+    }
+    Expect(r, joined == text && count == 6);
+    foreach (char c in "") count += int(c);
+    Expect(r, count == 6);
+    mut var until = "";
+    foreach (var c in "ab/cd")
+    {
+        if (c == SEP) break;
+        if (c == 'a') continue;
+        until += c;
+    }
+    Expect(r, until == "b");
+
+    // The text as the loop found it, whatever its variable becomes
+    mut var grown = "ab";
+    mut var rounds = 0;
+    foreach (var c in grown)
+    {
+        grown += c;
+        rounds++;
+    }
+    Expect(r, rounds == 2 && grown == "abab");
+
+    // In text: the character, and nothing for the one that's none
+    Expect(r, "a" + 'b' == "ab" && 'a' + "b" == "ab" && $"{'x'}{text[1]}" == "xé" && "" + '\0' == "" && ("a" + text[99]).length == 1);
+    Expect(r, Reverse("héllo") == "olléh" && Reverse("") == "");
+
+    // Text's members take one
+    Expect(r, "nesw".IndexOf('s') == 2 && "nesw".IndexOf('x') == -1 && "héllo".IndexOf('l') == 2 && "héllo€".IndexOf('€') == 5);
+    Expect(r, "cat".Contains('a') && !"cat".Contains('x') && "cat".StartsWith('c') && "cat".EndsWith('t') && !"".StartsWith('c'));
+    Expect(r, !"cat".Contains('\0') && "cat".IndexOf('\0') == -1 && !"cat".EndsWith('\0'));
+    Expect(r, "a-b-c".Replace('-', '+') == "a+b+c" && "a-b-c".Replace('-', '\0') == "abc" && "añb".Replace('ñ', 'n') == "anb");
+
+    // Substring is where it was, whatever its ends
+    Expect(r, text.Substring(1, 4) == "éllo" && text.Substring(5) == "€" && text.Substring(1, 4).length == 4 && text.Substring(1, 4)[0] == 'é');
+    Expect(r, text.Substring(1, 4) + "!" == "éllo!" && text == "héllo€" && text.Substring(2, 2).Substring(1) == "l");
+
+    // switch
+    Expect(r, TileOf('~') == Tile.Water && TileOf('#') == Tile.Coal && TileOf('/') == Tile.Grass && TileOf('x') == Tile.Grass);
+    Expect(r, Vowel('a') == 1 && Vowel('e') == 1 && Vowel('i') == 2 && Vowel('z') == 0);
+
+    // Overloads, mut and out
+    Expect(r, Kind('a') == "char" && Kind(97) == "int" && Kind("a") == "string" && Kind('a' + 0) == "int" && Kind(text[0]) == "char");
+    mut var letter = 'q';
+    Upper(letter);
+    Expect(r, letter == 'Q' && First("xyz", out var found) && found == 'x' && !First("", out var none) && none == NONE);
+
+    // Kept: fields, arrays, lists, maps, sets, a grid's cells
+    Expect(r, board.first == '\0' && board.glyph.mark == '?' && board.row[0] == '\0');
+    board.first = text[1];
+    board.row[0] = 'a';
+    board.row[3] = 'd';
+    board.row[9] = 'x';
+    board.glyph.mark = '!';
+    Expect(r, board.first == 'é' && board.row[0] == 'a' && board.row[3] == 'd' && board.row[9] == '\0' && board.glyph.mark == '!');
+    board.seen.Add('x');
+    board.seen.Add(text[5]);
+    Expect(r, board.seen.count == 2 && board.seen.Contains('€') && board.seen.IndexOf('x') == 0 && board.seen[9] == '\0');
+    Expect(r, board.seen.Remove('x') && !board.seen.Remove('x') && board.seen.count == 1 && board.seen[0] == '€');
+    foreach (var c in "hello") board.counts[c] += 1;
+    Expect(r, board.counts['l'] == 2 && board.counts['z'] == 0 && board.counts.count == 4 && board.counts.Has('h'));
+    Expect(r, board.counts.TryGet('o', out var times) && times == 1 && board.counts.Remove('h') && !board.counts.Has('h'));
+    Expect(r, board.marks.Add('~') && !board.marks.Add('~') && board.marks.Has('~') && !board.marks.Has('#'));
+    board.cells[1, 2] = '#';
+    Expect(r, board.cells[1, 2] == '#' && board.cells[0, 0] == '\0' && board.cells[99, 99] == '\0');
+
+    // Shown inside a value, a char is in its quotes
+    Expect(r, $"{board.glyph}" == "Glyph { mark = '!', count = 0 }" && $"{board.seen}" == "['€']");
+    Expect(r, $"{board.row}" == "['a', '\\0', '\\0', 'd']" && $"{board.marks}" == "{'~'}");
+
+    // default, a constant, ?:
+    char unset = default;
+    Expect(r, unset == NONE && unset == '\0' && (count > 0 ? 'y' : 'n') == 'y' && (count > 0 ? 'y' : 1) == 121);
+
+    // A list of them sorts by their order
+    mut List<char> letters = ['d', 'a', 'c', 'b'];
+    letters.Sort(a, b) { return a < b; }
+    mut var sorted = "";
+    foreach (var c in letters) sorted += c;
+    Expect(r, sorted == "abcd");
+}
+
+// An input and a command carry them, and so does an event. A number that's no
+// character's, which only another machine could send, is the field's default
+system Press(mut Typed typed, Keys keys)
+{
+    if (keys.key == 'k' && keys.pair[0] == '\0' && keys.pair[1] == 'p') typed.presses += 1;
+}
+
+view Submit(mut UI ui, Typed typed)
+{
+    ui.seen = typed.last; // A view sees one as the latest tick left it
+    if (!ui.send) return;
+    ui.send = false;
+    Send(Type { key = ui.pending, word = "wide" });
+}
+
+// A task keeps a text's loop, and a char, across its waits
+async event(Spawned) Spell(with Main, mut Spelled spelled)
+{
+    foreach (var c in "héy")
+    {
+        await Wait.Ticks(1);
+        spelled.word += c;
+    }
+    var last = "héy!"[3];
+    await Wait.Ticks(1);
+    spelled.word += last;
+}
+
+// Steps on threads read and write them as the plain values they are
+system Mark(mut Field field)
+{
+    if (field.cells.count == 0)
+    {
+        foreach (var c in "abcdefgh") field.cells.Add(Cell { mark = c });
+    }
+    parallel (var i in field.cells)
+    {
+        mut var cell = field.cells[i];
+        if (cell.mark >= 'f') cell.hits += 1;
+        cell.mark = char(cell.mark + 1);
+        field.cells[i] = cell;
+    }
+}
+
+command(Type type, PlayerID sender) OnType(mut Typed typed)
+{
+    typed.last = type.key;
+    if (type.word[0] == type.key) Send(Marked { mark = type.key });
+}
+
+event(Marked marked) OnMarked(mut Typed typed)
+{
+    typed.presses += marked.mark == 'w' ? 100 : 0;
+}

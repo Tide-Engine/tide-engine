@@ -43,11 +43,79 @@ Matrices can't be shown yet, so neither can a value that holds one.
 ### Members
 
 - `length` counts characters (Unicode code points), not bytes.
-- `Contains`, `StartsWith`, `EndsWith` and `IndexOf`, which gives -1 when it's not there.
+- `text[i]` is the character at `i`, a [`char`](#characters), counting from 0.
+- `Contains`, `StartsWith`, `EndsWith` and `IndexOf`, which gives -1 when it's not there. Each takes text or a char: `name.Contains("ob")`, `name.IndexOf('b')`.
 - `Substring(start)` and `Substring(start, length)`.
 - `ToUpper` and `ToLower`, for ASCII letters for now.
-- `Trim` and `Replace(from, to)`.
+- `Trim` and `Replace(from, to)`, of text or of chars.
 - `==` and `!=` compare text byte by byte. There's no `<` for text.
+
+### Characters
+
+`char` is one character of text, written in single quotes: `'a'`. `text[i]` reads a text's character at `i`, and `foreach` goes through them in order. That's what reading text a piece at a time is made of: a level drawn in characters, a line to cut at a space, a number typed by a player.
+
+```csharp
+enum Tile { Grass, Water, Rock }
+
+singleton Board
+{
+    Tile[64] tiles;
+    int2 size;
+}
+
+// A level's plan: a character a tile, with '/' between its rows
+void LayOut(mut Board board, string plan)
+{
+    mut var x = 0;
+    mut var y = 0;
+    foreach (var mark in plan)
+    {
+        if (mark == '/')
+        {
+            x = 0;
+            y += 1;
+            continue;
+        }
+        switch (mark)
+        {
+            case '~':
+                board.tiles[y * 8 + x] = Tile.Water;
+                break;
+            case '^':
+                board.tiles[y * 8 + x] = Tile.Rock;
+                break;
+            default:
+                break;
+        }
+        board.size = int2(Math.Max(board.size.x, x + 1), y + 1);
+        x += 1;
+    }
+}
+
+// A whole number at the start of some text, or -1
+int Leading(string text)
+{
+    mut var number = -1;
+    foreach (var c in text)
+    {
+        if (c < '0' || c > '9') break;
+        number = Math.Max(number, 0) * 10 + (c - '0');
+    }
+    return number;
+}
+```
+
+- A literal is one character, any of Unicode's (`'é'`, `'€'`), or one of the escapes `\'`, `\"`, `\\`, `\n`, `\r`, `\t` and `\0`.
+- `text[i]` counts characters the way `length` does. Before the start and past the end it gives `'\0'`, which is no character: text shows it as nothing, so `"a" + name[99]` is `"a"`. It's a char's zero, and its `default`.
+- Text only changes whole, so `name[0] = 'x'` is an error. Make the new text of its pieces: `name.Substring(0, i) + c + name.Substring(i + 1)`.
+- A `foreach` goes through the text as it was when the loop started, whatever its variable becomes on the way.
+- Chars compare with `==`, `!=`, `<`, `<=`, `>` and `>=`, in Unicode's order: `c >= 'a' && c <= 'z'` is a small letter.
+- A char goes where an int goes, as its number in Unicode (its code point): `int code = c;`, `var digit = c - '0';`. What an operator gives of one is an int, never a char: `char(n)` makes an int the character, so `char(c + 1)` is the one after `c`. A number no character has (under 0, past `0x10FFFF`, or from `0xD800` to `0xDFFF`) gives `'\0'`.
+- `switch` works on a char, with chars as its cases, and a char is a map's or a set's key: `Map<char, int> counts;`.
+- Text joins a char as its character: `"a" + 'b'` is `"ab"`, and `$"{c}"` shows it. Inside a value it's in its quotes, like text: `Glyph { mark = 'a' }`, `['a', 'b']`.
+- A char is a plain value of four bytes, so it goes where an int does: components, structs, arrays (`char[16]`), lists, a grid's cells, inputs, commands and events.
+
+To go through a text, use `foreach`: it reads each character once. `text[i]` is as quick where every character is one byte (English letters, digits, punctuation); in text with accents, other alphabets or emoji it has to count its way to `i` each time, so a `for` over a long one gets slow.
 
 ## Lists
 
@@ -72,7 +140,7 @@ system Collect(mut Inventory inventory, Pickup pickup)
 - `count`, `items[i]` to read, and `items[i] = x` or `items[i] += x` to write.
 - `Add(item)`, `Insert(index, item)`, `RemoveAt(index)` and `Clear()`.
 - `Resize(count)` makes the list `count` elements long in one go. New elements are the element type's zero, empty for text. With fewer, the rest go. A count under 0 is 0.
-- For elements that `==` compares (numbers, bools, enums, text, entities and players): `Contains(item)`, `IndexOf(item)` (-1 if it's not there) and `Remove(item)`, which returns whether it found one.
+- For elements that `==` compares (numbers, bools, chars, enums, text, entities and players): `Contains(item)`, `IndexOf(item)` (-1 if it's not there) and `Remove(item)`, which returns whether it found one.
 
 Past the end, a read gives the element type's zero and a write does nothing.
 
@@ -145,7 +213,7 @@ system Record(mut Trail trail, Body body)
 }
 ```
 
-Elements are plain values: numbers, bools, enums, vectors, quaternions, matrices, `Color`, `Rect`, `Entity`, `PlayerID`, structs of those, and arrays. Not text, lists, maps or grids, which need the heap. An array goes where a plain value goes, inputs included: a fixed number of values a player sends, which `[Clamp]`, `[Min]` and `[Max]` bound element by element.
+Elements are plain values: numbers, bools, chars, enums, vectors, quaternions, matrices, `Color`, `Rect`, `Entity`, `PlayerID`, structs of those, and arrays. Not text, lists, maps or grids, which need the heap. An array goes where a plain value goes, inputs included: a fixed number of values a player sends, which `[Clamp]`, `[Min]` and `[Max]` bound element by element.
 
 `a[i]` reads an element, or zero past the end; `a[i] = v` and `a[i] += v` write one, and do nothing past the end. `a.count` is the length, `foreach` goes through the elements (each a copy), `a = b` copies the whole array, and `a = [1, 2, 3]` sets it from a literal of exactly `count` values. Text shows one as it shows a list: `[1, 2, 3]`.
 
@@ -291,7 +359,7 @@ system Score(mut Scoreboard board, Hit hit)
 }
 ```
 
-Keys are `byte`, `int`, `long`, enums, `Entity`, `PlayerID` or `string`: values with a hash and `==`. Floats aren't keys, since two that look equal can differ in a bit; key by an int instead. Values are what a list's elements can be.
+Keys are `byte`, `int`, `long`, `char`, enums, `Entity`, `PlayerID` or `string`: values with a hash and `==`. Floats aren't keys, since two that look equal can differ in a bit; key by an int instead. Values are what a list's elements can be.
 
 ### Members
 
