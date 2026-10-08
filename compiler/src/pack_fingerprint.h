@@ -12,6 +12,23 @@ typedef struct tide_asset_fingerprint_desc {
 } tide_asset_fingerprint_desc;
 #endif
 
+// Names are unique within a batch. The requests and expected hashes remain
+// caller-owned; the helper releases its lookup scratch before returning.
+#ifndef TIDE_ASSET_FINGERPRINT_REQUEST_DEFINED
+#define TIDE_ASSET_FINGERPRINT_REQUEST_DEFINED
+typedef struct tide_asset_fingerprint_request {
+    const char *qualified;
+    tide_asset_fingerprint_desc desc;
+} tide_asset_fingerprint_request;
+#endif
+
+// With a nonempty batch, give exactly one of out or expected: produce hashes
+// in request order, or compare them before loading. failed is optional and
+// receives the first failing request, or UINT32_MAX for a pack/header error.
+// A zero-count batch only validates the pack header and needs neither array.
+bool pack_fingerprints(const uint8_t *bytes, size_t size, const tide_asset_fingerprint_request *requests,
+                       uint32_t count, uint8_t (*out)[32], const uint8_t (*expected)[32], uint32_t *failed);
+
 // Hash one declaration's reachable logical content before loading a pack.
 // Physical offsets, block padding and cached versions do not contribute.
 bool pack_fingerprint(const uint8_t *bytes, size_t size, const char *qualified,
