@@ -1212,6 +1212,8 @@ typedef struct tide_draw_list {
     tide_draw_texture *textures; // What the meshes draw with, kept from frame to frame while they do
     uint32_t texture_count;
     uint32_t texture_capacity;
+    uint32_t *texture_index;         // Textures by space and id: 1 + a place, or 0 for none
+    uint32_t texture_index_capacity; // A power of two, or 0
     tide_draw_target_data *targets;
     uint32_t target_count, target_capacity;
     uint32_t target; // Current destination, 1 + its place above; 0 is the window

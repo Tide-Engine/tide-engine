@@ -295,6 +295,11 @@ tide_map tide_pack_mesh_map_of(const tide_pack_entry *e);
 // the loaded pack's.
 void *tide_pack_mesh_open(const tide_pack_entry *e, uint32_t k, uint32_t vertex, uint32_t *count);
 
+// After filling defaults through tide_pack_mesh_open or tide_pack_skinned_open,
+// refresh that block's stored version from its final vertex bytes before a draw;
+// unchanged values keep the same version, including in shared mesh blocks.
+void tide_pack_mesh_updated(void *vertices, uint32_t vertex);
+
 // Skinned equivalents: invalid model bytes or geometry give three empty
 // lists. Loading checks the complete blob and matching geometry counts.
 // Maps and default-field writes follow the Mesh contracts above.

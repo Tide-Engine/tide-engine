@@ -1,0 +1,29 @@
+// Final typed vertex versions include defaults that read the current pack,
+// including assets declared after singleton, list and map models.
+struct SkinCorner
+{
+    float3 position;
+    int textLength = laterRules.length;
+    float glow = laterRules.length;
+}
+
+asset SkinnedMesh<SkinCorner> skinOne = "skinned/models/a.gltf";
+asset List<SkinnedMesh<SkinCorner>> skinMany = "skinned/models/*.gltf";
+asset Map<string, SkinnedMesh<SkinCorner>> skinNamed = "skinned/models/*.gltf";
+asset string laterRules = "assets/rules.txt";
+
+frag Paint(SkinCorner corner, out Color color)
+{
+    color = Color(corner.glow, 0, 0);
+}
+
+view Show()
+{
+    Draw.SkinnedMesh(skinOne, float4x4.identity, skinOne.skeleton.RestPose(), Paint);
+    foreach (var model in skinMany)
+        Draw.SkinnedMesh(model, float4x4.identity, model.skeleton.RestPose(), Paint);
+    foreach (var entry in skinNamed)
+        Draw.SkinnedMesh(entry.value, float4x4.identity, entry.value.skeleton.RestPose(), Paint);
+}
+
+scene Main { }
