@@ -5832,7 +5832,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         }
         return;
     }
-    // In a frag or vert: the GPU has no text, lists, maps or sets, and a grid there is a texture
+    // In a frag or vert: the GPU has no text, reads lists, maps and sets and changes none, and a grid there is a texture
     // ...and in a function that takes a grid, which only those call
     const bool gpu = is_shader(sc->decl) || (sc->decl && sc->decl->gpu_only);
     if (t.kind == TY_RENDER_TARGET) {
@@ -5861,7 +5861,21 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         item(c, "count", CK_PROPERTY, "int", LIST_COUNT_DOC, NULL);
         return;
     }
-    if (gpu && (t.kind == TY_STRING || t.kind == TY_MAP || t.kind == TY_SET)) return;
+    if (gpu && (t.kind == TY_MAP || t.kind == TY_SET)) { // Read by its keys there: nothing changes it, and no value is missing
+        item(c, "count", CK_PROPERTY, "int", MAP_COUNT_DOC, NULL);
+        size_t count;
+        const method_form *forms = methods_of(t, &count);
+        for (size_t i = 0; i < count; i++) {
+            if (strcmp(forms[i].name, "Has") != 0 && strcmp(forms[i].name, "TryGet") != 0) continue;
+            sb detail = {0};
+            format_method(&forms[i], t, &detail);
+            sb snippet = {0};
+            method_snippet(&forms[i], &snippet);
+            item(c, forms[i].name, CK_METHOD, detail.data, forms[i].doc, snippet.data);
+        }
+        return;
+    }
+    if (gpu && t.kind == TY_STRING) return;
     if (t.kind == TY_CUBEMAP) { // A frag reads it; a view draws into its faces, resizes it and lets it go
         static const char *const snippets[] = {"Sample($1)", "Resize($1)", "Dispose()"};
         for (size_t i = gpu ? 0 : 1; i < (gpu ? 1 : sizeof cube_calls / sizeof cube_calls[0]); i++) {
@@ -5887,8 +5901,8 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         return;
     }
     if (gpu && (t.kind == TY_GRID || t.kind == TY_TEXTURE)) {
-        // A Grid2's cells are read by their place there, with its size; one of colors or floats is sampled too
-        if (t.kind == TY_GRID && t.decl->dims == 2) item(c, "size", CK_PROPERTY, "int2", GRID_SIZE_FIELD_DOC, NULL);
+        // A grid's cells are read by their place there, with its size; a Grid2 of colors or floats is sampled too
+        if (t.kind == TY_GRID) item(c, "size", CK_PROPERTY, t.decl->dims == 3 ? "int3" : "int2", GRID_SIZE_FIELD_DOC, NULL);
         if (t.kind == TY_GRID && (t.decl->dims != 2 || (t.decl->fields.items[0].type.kind != TY_COLOR
                                                          && t.decl->fields.items[0].type.kind != TY_FLOAT))) return;
         const method_form *sample = t.kind == TY_TEXTURE ? &texture_calls[0]
@@ -6159,10 +6173,11 @@ static void complete_members(completion *c, const int dot, const loc at, const o
             list_members(c, d->return_type, false, &sc);
             return;
         }
-        // Random.: its rolls and the match's seed, where code rolls: systems, views, handlers, tasks, Sample and their functions
-        if (n == 1 && str_eq_c(base, "Random") && !gpu && sc.decl && !sc.in_sanitize
+        // Random.: its rolls and the match's seed, where code rolls: systems, views, handlers, tasks, Sample and their
+        // functions, and frags and verts, whose pixels and vertices each roll with a generator of their own
+        if (n == 1 && str_eq_c(base, "Random") && sc.decl && !sc.in_sanitize
             && (sc.decl->kind == DECL_SYSTEM || sc.decl->kind == DECL_FUNCTION || sc.decl->kind == DECL_METHOD
-                || sc.decl->kind == DECL_INPUT)) {
+                || sc.decl->kind == DECL_INPUT || gpu)) {
             builtin_visit v = {c, false};
             builtin_list_members(base, add_builtin_member, &v);
             item(c, "seed", CK_PROPERTY, "int", RANDOM_SEED_DOC, NULL);

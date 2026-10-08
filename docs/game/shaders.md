@@ -305,7 +305,7 @@ frag Lit(BoxVertex vertex, out Color color, Lights lights)
 
 ### A grid's cells
 
-A `Grid2` is read the same way, a cell by its place, beside [sampling it](#textures) as a picture: `cells[x, y]`, `cells[at]` for an `int2`, and `cells.size`. It's the cell as the grid has it, exactly, of any type the GPU has values of, where `Sample` gives a color blended between cells.
+A grid is read the same way, a cell by its place, beside [sampling it](#textures) as a picture: `cells[x, y]`, `cells[at]` for an `int2`, and `cells.size`; for a `Grid3`, `cells[x, y, z]`, `cells[at]` for an `int3`, and a `size` of three. It's the cell as the grid has it, exactly, of any type the GPU has values of, where `Sample` gives a color blended between cells.
 
 ```csharp
 local singleton Board
@@ -322,7 +322,42 @@ frag Tiles(BoxVertex vertex, out Color color, Board board)
 
 - A cell outside the grid is zeros. The grid is a field of what the frag or vert takes, or an [asset](./assets.md) by its name, and counts as one of the draw's 8 textures, once more if it's also sampled.
 - An asset's grid, and an asset's list, are read by name in the functions a frag or vert calls too.
-- A grid with no size on an axis isn't sent, and reads as zeros everywhere. A `Grid3` isn't read there yet.
+- A grid with no size on an axis is read like any other: its cells are wherever they were set, before 0 too, `size` is 0 on that axis as it is on the CPU, and a cell nothing set is zeros.
+- What's sent is the box around the cells that were set, never the whole space a grid spans. (A grid keeps its cells in chunks, 64 by 64 or 16 by 16 by 16 of them for a cell of one number, and the box is the chunks that have something in them, within the grid's size.) It travels as one image of numbers, a `Grid3`'s layers side by side in it.
+- So how big a grid the GPU reads goes by that box. One of 256 by 256 by 256 cells of one number each (an int, a float, a byte, an enum), or 128 by 128 by 128 colors, fits an image 2,048 pixels a side, which every GPU has. The most is an image of 16,777,216 pixels and 16,384 a side, on a GPU that has textures so big: 256 by 256 by 256 colors, or a `Grid2` of 16,384 by 4,096 numbers. A box past that isn't sent, the code reads zeros, and the game says so once in its output; two cells set a million apart in a grid with no size are such a box.
+- `foreach` over a grid's cells isn't there yet: write the loop over the places you read, `for (int y = 0; y < cells.size.y; y++)`.
+
+### Maps and sets
+
+A `Map<K, V>` or a `Set<K>` that's such a field is read by its keys, as it is anywhere:
+
+```csharp
+local singleton Land
+{
+    Grid2<int> ground = Grid2(64, 64);
+    Map<int, Color> paint;      // By a tile's number
+    Set<int> lit;
+}
+
+frag Tiles(BoxVertex vertex, out Color color, Land land)
+{
+    var at = int2(int(vertex.uv.x * land.ground.size.x), int(vertex.uv.y * land.ground.size.y));
+    var tile = land.ground[at];
+    var known = land.paint.TryGet(tile, out var paint);
+    var shown = known ? paint : Color.gray;
+    color = land.lit.Has(tile) ? shown : shown * 0.5;
+    color.a = 1;
+}
+```
+
+- `map[key]` is the key's value, or zeros when the key isn't there. `map.Has(key)` and `set.Has(key)` say whether it is, and `map.TryGet(key, out var value)` says so and gives the value, or the value type's default. `count` is how many keys there are.
+- `foreach (var entry in map)` goes through a map's entries, each with its `key` and its `value`, and `foreach (var key in set)` through a set's keys: in the order the keys were added, without the ones removed since, as on the CPU.
+- Keys are ints, bytes or enums. A map keyed by text, a `long`, an `Entity` or a `PlayerID` stays on the CPU, and reading one in a frag is an error that says why: keep a second map keyed by a number for what the GPU reads.
+- Values are what the GPU has values of, as a list's elements are.
+- Read-only, as lists are: a view or a system fills the map. There's no `Get` there either, as it gives a value that may be missing: `TryGet` asks the same.
+- `TryGet`'s `out` argument is a local, `out var value` or a variable declared before.
+- A lookup reads a pixel or two of an index the engine sends beside the entries, however many keys the map has, so it costs about what reading two list elements does.
+- A map or a set is one of the draw's 8 textures, and isn't sent again while it doesn't change. The other rules are a list's: a local can name one and a function can take one ([below](#naming-a-list-and-passing-it-on)), a component's is its entity's own, and none in an instance's struct.
 
 ### Naming a list and passing it on
 
@@ -379,7 +414,9 @@ frag Shade(BoxVertex vertex, out Color color, Ramp ramp)
 
 - `a[i]` reads an element, zeros past the ends; `a[i] = v` writes one, and does nothing past the ends; `a.count` is its length; `foreach` goes through it.
 - An array is sent whole, with a draw's other values: those hold 3,984 bytes, about 249 float4s, for everything a draw reads of singletons. Past a few dozen elements, a list is the better fit.
-- No arrays of arrays there: keep the rows side by side in one array.
+- An array of arrays is one too: `float[4][8] rows`, with `rows[i][j]` read and written by the same rules at each index, and `rows[i]` a row to keep, pass on, assign or `foreach` through.
+- `?:` picks between arrays, as between structs and matrices: `var stops = night ? ramp.dark : ramp.light;`. Both sides are worked out, as everywhere on the GPU.
+- A `for`'s step can write an element (`for (var k = 0; k < 6; counts[k % 3]++)`), and a `continue` still comes to it.
 
 ## Textures
 
@@ -636,8 +673,8 @@ The camera isn't given: keep where yours is in a singleton, where the view that 
 
 Code for the GPU is ordinary Tide, less what a GPU doesn't have:
 
-- **It has** bools, bytes, ints, floats, vectors, quaternions, matrices, colors, enums, structs of those and [arrays](#arrays) of them; locals, `if`, `?:`, `switch` on an int or an enum, `for`, `while` and `foreach`, with `break` and `continue`; [lists and grids](#lists-and-arrays) that are fields of what it takes, read by an element, a count or `foreach`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; and sampling a grid, a texture or a target's depth, 8 of them to a draw, anywhere in the code: in a branch, in a loop, in a vert.
-- **It doesn't have** maps, sets, text, entities, spawning and sending, `Draw`, the GUI, `Devices`, `Debug`, C, tasks, errors, or recursion. It makes and changes no list. A frag's `this` is its pixel; verts and ordinary functions have no `this`. A `long` has no place there, as a GPU's ints are 32 bits.
+- **It has** bools, bytes, ints, floats, vectors, quaternions, matrices, colors, enums, structs of those and [arrays](#arrays) of them; locals, `if`, `?:`, `switch` on an int or an enum, `for`, `while` and `foreach`, with `break` and `continue`; [lists and grids](#lists-and-arrays) that are fields of what it takes, read by an element, a count or `foreach`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; [`Random`'s rolls](#random-numbers); and sampling a grid, a texture or a target's depth, 8 of them to a draw, anywhere in the code: in a branch, in a loop, in a vert.
+- **It doesn't have** text, entities, spawning and sending, `Draw`, the GUI, `Devices`, `Debug`, C, tasks, errors, or recursion. It makes and changes no list, map or set. A frag's `this` is its pixel; verts and ordinary functions have no `this`. A `long` has no place there, as a GPU's ints are 32 bits.
 
 Each of those is an error where it's written, which says what to do instead. A function a frag calls has to fit too, and the error says which frag reaches it; the same function still runs on the CPU for the code that calls it there.
 
@@ -674,11 +711,50 @@ What's left out is left out for a reason, and its error says what to write inste
 |---|---|---|
 | `Math.Hash` of a `long` | A GPU's ints are 32 bits, so no `long` gets there | `Math.Hash(int2(low, high))` is the same number, for the long's halves: `int(x)` and `int(x >> 32)`, split on the CPU and kept in fields the frag reads |
 
-A [`Random`](../language/math.md#not-on-the-gpu) isn't there either: its state is the CPU's, so a frag reads a number the view rolled, or hashes.
+A `Random` of your own isn't there either: its state is 64 bits. [Rolls on the type](#random-numbers) are.
 
 ::: warning The GPU's numbers aren't the match's
 Every machine's GPU rounds a little differently, so what a frag or a vert works out never reaches the match: they're local code, as views are, and what `Math` makes of floats there is that GPU's own. Only its integers, `Math.Hash`, are the same everywhere. Anything the match depends on is worked out in a system.
 :::
+
+### Random numbers
+
+[`Random`'s rolls](../language/math.md#random-numbers) work in a frag and in a vert, with the same calls as anywhere: `Random.NextFloat()`, `Random.NextInt(6)`, `Random.NextFloat2Direction()` and the rest.
+
+```csharp
+// Film grain over the frame: a blit's frag, which rolls for each pixel
+frag Grain(Vertex vertex, out Color color, Texture source)
+{
+    var seen = source.Sample(vertex.uv);
+    var speck = (Random.NextFloat() - 0.5) * 0.08;
+    color = Color(seen.r + speck, seen.g + speck, seen.b + speck);
+}
+```
+
+There's nothing to set up and nothing to pass: a function a frag calls rolls too.
+
+- **A pixel rolls its own numbers, and so does a vertex.** Each time a frag runs, it has a generator made for that pixel: from where the pixel is in what's drawn into (the window's own pixels, or a target's), and which instance of its draw it belongs to. A vert's is made from which vertex of the mesh it is, and which instance. Rolls in the same run follow each other, as in a system.
+- **Every frame is other numbers.** The frame rolls one number with this machine's generator, the one [views roll with](../language/math.md#where-rolls-work), and every pixel's and vertex's generator is made with it. So grain moves, static flickers, and a sparkle is somewhere else the next frame.
+- **To hold still, hash.** `Math.Hash(int2(this.position))` is the same number for a pixel every frame, and `Math.Hash` of a cell is the same for the cell wherever it's drawn. [Noise](../language/math.md#noise) is that, smoothed.
+- **Two frags roll apart.** Which frag or vert is rolling goes into the generator too, so two that draw over the same pixel don't roll the same there.
+- **Draws still join.** The frame's number is the same for every draw of the frame, so rolling doesn't split [instances drawn in a row](#many-at-once) into draws of their own. Two draws that don't join each count their instances from the first, so where they cover the same pixel through the same frag, they roll the same there.
+- **`Random.seed` is the match's seed**, as in a view: 0 with no match. With it a frag draws what the match made from its seed, like `Math.Perlin(cell, Random.seed)`.
+
+::: tide-example grain Grain and sparks, rolled by the GPU
+
+<<< @/examples/grain.tide
+
+:::
+
+What's different from rolling on the CPU:
+
+- **They aren't the CPU's numbers.** A GPU's ints are 32 bits, so its generator is a smaller one than a system's. What each roll gives is the same: `NextInt(6)` is 0 to 5, `NextFloat()` never gives 1, and a range with nothing in it gives its start.
+- **Order is a statement's.** Rolls on separate lines come in that order. Two rolls in one expression come in whichever order that GPU works the expression out, so where it matters which is which, give each a line. (`NextFloat2()` and the other vectors always roll x first.) A `?:` with a roll in it makes the rolls of both its sides, whichever it picks.
+- **A `Random` you keep doesn't go there.** A field, a local or a parameter of type `Random` is the CPU's: its state is 64 bits. On the GPU, roll on the type.
+- **`Filter.Trilinear` can't sample at a place a roll made.** The frag works such a place out once more as it starts, to ask the GPU how fast it changes, and a roll made twice is two numbers. Sample there with `Filter.Bilinear`.
+- **A frag that rolls carries one more value** from the mesh's corners to its pixels, of the 15 a draw has: which instance.
+
+The generator is whole numbers, so `Random.NextInt` gives a pixel the same number on every GPU, for the same frame. Like everything a frag works out, it never reaches the match.
 
 ## Many at once
 

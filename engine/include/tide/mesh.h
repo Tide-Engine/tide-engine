@@ -5,6 +5,7 @@
 #include "tide/draw.h"
 #include "tide/grid.h"
 #include "tide/list.h"
+#include "tide/map.h"
 
 // Tide's Draw.Mesh, as generated code calls it: lists of `Vertex` and of int,
 // and a `Texture` to draw with, sampled as the texture says (its filter and
@@ -108,12 +109,34 @@ static inline uint32_t tide_data_stride(const uint32_t words)
 uint32_t tide_draw_list_data(tide_draw_list *d, tide_list list, uint32_t element_size, uint32_t words,
                              tide_list_words_fn *write, int32_t *count);
 
-// A Grid2's cells the same way, a row of cells a row of pixels: cell (x, y)
-// starts at int x * tide_data_stride(words) of row y. `size` gets the grid's
-// (two ints): zeros, and no texture, for a grid with no size on an axis or
-// one wider than a texture is.
+// A grid's cells the same way, a row of cells a row of pixels. What's sent is
+// the box its chunks take up, within its size: outside it every cell is zero,
+// as where it has no chunk. Cell (x, y, z) of the box starts at int
+// x * tide_data_stride(words) of its row, and a Grid3's layers are side by
+// side, `across` of them, and then under each other: layer z's rows start
+// (z % across) * wide pixels along and (z / across) * (the box's rows) down,
+// `wide` the pixels a row of the box's cells takes. `info` gets the grid's
+// size (0 on an axis where it's open), then where the box starts, then how
+// many cells it is along each axis, and for a Grid3 `across`:
+// TIDE_GRID2_DATA_INTS or TIDE_GRID3_DATA_INTS ints. No texture, and a box of
+// no cells, for a grid with nothing in it and for one whose box is more than
+// TIDE_GRID_TEXTURE_MOST pixels a side or TIDE_GRID_DATA_PIXELS in all, which
+// is said once on stderr.
+enum { TIDE_GRID2_DATA_INTS = 6, TIDE_GRID3_DATA_INTS = 10, TIDE_GRID_DATA_PIXELS = 4096 * 4096 };
 uint32_t tide_draw_grid_data(tide_draw_list *d, tide_grid grid, const tide_grid_shape *shape, uint32_t words,
-                             tide_list_words_fn *write, int32_t *size);
+                             tide_list_words_fn *write, int32_t *info);
+
+// A map's or a set's live entries the same way, in the order their keys were
+// added, and after them, from the next pixel on, an index a shader finds a key
+// through: a power of two of slots, an int each, 0 or an entry's number plus
+// one, by tide_hash_i of the key with linear probing, under half full. `write`
+// is given an entry as the map stores it (tide/map.h) and writes its numbers,
+// of which the one at `key_word` is its key, an int. The CPU's own index isn't
+// sent: its hash is of 64 bits, which these GPUs have none of. `count` gets
+// two ints: how many entries the texture holds (the map's, or as many as
+// fit), and how many slots. Zeros, and no texture, for an empty map.
+uint32_t tide_draw_map_data(tide_draw_list *d, tide_map map, uint32_t entry_size, uint32_t words, uint32_t key_word,
+                            tide_list_words_fn *write, int32_t *count);
 
 // A float as the 16 bits a TIDE_TEXELS_HALF pixel is, to the nearest, ties to
 // even: past the greatest a half holds it's that (65504, either way), and 0
