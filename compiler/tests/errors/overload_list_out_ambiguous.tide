@@ -1,0 +1,7 @@
+// expect: 'Pick([...], int)' could be more than one 'Pick'
+scene Main { }
+singleton Log { int value; }
+int Make(out int made) { made = 7; return 3; }
+int Pick(List<int> values, int made) { return values[0] + made; }
+int Pick(List<float> values, int made) { return int(values[0]) + made; }
+system Run(mut Log log) { log.value = Pick([Make(out var made)], made); }
