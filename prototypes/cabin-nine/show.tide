@@ -1,0 +1,503 @@
+// The private cabin's scenery and sound are authored here. No external art.
+enum Shot { Setup, Camera, Cabin, People, Present, Hud }
+
+struct CabinVertex
+{
+    float3 position;
+    float3 normal;
+    Color paint;
+    float material;
+    float glow;
+}
+
+struct CabinMesh
+{
+    List<CabinVertex> vertices;
+    List<int> indices;
+}
+
+local singleton CabinArt
+{
+    CabinMesh shell;
+    CabinMesh collar;
+    List<CabinMesh> seated;
+    List<CabinMesh> standing;
+    RenderTarget scene;
+    bool made;
+    float3 eye = float3(0, 1.6, 1);
+    float time;
+    float light = 1;
+    float emergency;
+    float dawn;
+    int heardPhase = -1;
+    Sound engines;
+    Sound electricity;
+}
+
+asset Clip engineRoom = "sfx/engine.wav";
+asset Clip cabinChime = "sfx/chime.wav";
+asset Clip powerLoss = "sfx/power-loss.wav";
+asset Clip electricRoom = "sfx/electric.wav";
+asset Clip arrivalTone = "sfx/arrival.wav";
+
+void CabinTriangle(mut CabinMesh mesh, float3 a, float3 b, float3 c, float3 toward, Color paint, float material = 0, float glow = 0)
+{
+    mut var normal = Math.Cross(b - a, c - a);
+    if (Math.LengthSq(normal) < 0.000000001) return;
+    bool front = Math.Dot(normal, toward) > 0;
+    if (!front) normal = normal * -1;
+    normal = Math.Normalize(normal);
+    int first = mesh.vertices.count;
+    mesh.vertices.Add(CabinVertex { position = a, normal = normal, paint = paint, material = material, glow = glow });
+    mesh.vertices.Add(CabinVertex { position = front ? b : c, normal = normal, paint = paint, material = material, glow = glow });
+    mesh.vertices.Add(CabinVertex { position = front ? c : b, normal = normal, paint = paint, material = material, glow = glow });
+    mesh.indices.Add(first);
+    mesh.indices.Add(first + 1);
+    mesh.indices.Add(first + 2);
+}
+
+void CabinQuad(mut CabinMesh mesh, float3 a, float3 b, float3 c, float3 d, float3 toward, Color paint, float material = 0, float glow = 0)
+{
+    CabinTriangle(mesh, a, b, c, toward, paint, material, glow);
+    CabinTriangle(mesh, a, c, d, toward, paint, material, glow);
+}
+
+void CabinBox(mut CabinMesh mesh, float3 center, float3 size, Color paint, float material = 0, float glow = 0)
+{
+    for (var face = 0; face < 6; face++)
+    {
+        int axis = face / 2;
+        float way = face % 2 == 0 ? 1 : -1;
+        var normal = float3(axis == 0 ? way : 0, axis == 1 ? way : 0, axis == 2 ? way : 0);
+        var across = float3(axis == 1 ? 1 : 0, axis == 2 ? 1 : 0, axis == 0 ? 1 : 0);
+        var up = Math.Cross(normal, across);
+        CabinQuad(mesh,
+            center + (normal - across - up) * size * 0.5,
+            center + (normal + across - up) * size * 0.5,
+            center + (normal + across + up) * size * 0.5,
+            center + (normal - across + up) * size * 0.5,
+            normal, paint, material, glow);
+    }
+}
+
+void CabinTube(mut CabinMesh mesh, float3 from, float3 to, float fromRadius, float toRadius, Color paint, int sides = 6)
+{
+    var axis = Math.Normalize(to - from);
+    var u = Math.Normalize(Math.Cross(axis, Math.Abs(axis.y) < 0.9 ? float3(0, 1, 0) : float3(1, 0, 0)));
+    var v = Math.Cross(u, axis);
+    for (var i = 0; i < sides; i++)
+    {
+        float angle = i * Math.TAU / sides;
+        float next = (i + 1) * Math.TAU / sides;
+        var a = u * Math.Cos(angle) + v * Math.Sin(angle);
+        var b = u * Math.Cos(next) + v * Math.Sin(next);
+        CabinQuad(mesh, from + a * fromRadius, to + a * toRadius, to + b * toRadius, from + b * fromRadius, a + b, paint);
+        CabinTriangle(mesh, from, from + b * fromRadius, from + a * fromRadius, axis * -1, paint);
+        CabinTriangle(mesh, to, to + a * toRadius, to + b * toRadius, axis, paint);
+    }
+}
+
+float3 CabinSpherePoint(float tilt, float turn, float3 radius)
+{
+    return float3(Math.Sin(tilt) * Math.Cos(turn), Math.Cos(tilt), Math.Sin(tilt) * Math.Sin(turn)) * radius;
+}
+
+void CabinOval(mut CabinMesh mesh, float3 at, float3 radius, Color paint, int rings = 4, int sides = 8)
+{
+    for (var ring = 0; ring < rings; ring++)
+    {
+        for (var side = 0; side < sides; side++)
+        {
+            float tilt = ring * Math.PI / rings;
+            float next = (ring + 1) * Math.PI / rings;
+            float angle = side * Math.TAU / sides;
+            float after = (side + 1) * Math.TAU / sides;
+            var a = at + CabinSpherePoint(tilt, angle, radius);
+            var b = at + CabinSpherePoint(next, angle, radius);
+            var c = at + CabinSpherePoint(tilt, after, radius);
+            var d = at + CabinSpherePoint(next, after, radius);
+            CabinTriangle(mesh, a, b, c, (a + b + c) / 3 - at, paint);
+            CabinTriangle(mesh, c, b, d, (c + b + d) / 3 - at, paint);
+        }
+    }
+}
+
+Color PassengerCoat(int identity)
+{
+    if (identity == 0) return Color(0.20, 0.28, 0.39);
+    if (identity == 1) return Color(0.58, 0.32, 0.23);
+    if (identity == 2) return Color(0.20, 0.46, 0.43);
+    if (identity == 3) return Color(0.35, 0.42, 0.28);
+    if (identity == 4) return Color(0.43, 0.25, 0.36);
+    if (identity == 5) return Color(0.72, 0.54, 0.22);
+    if (identity == 6) return Color(0.26, 0.28, 0.31);
+    return Color(0.77, 0.70, 0.56);
+}
+
+void CabinPerson(mut CabinMesh mesh, int identity, bool upright)
+{
+    var coat = PassengerCoat(identity);
+    mut var skin = identity == 2 || identity == 4 ? Color(0.59, 0.39, 0.29) : Color(0.79, 0.62, 0.47);
+    if (identity == 3) skin = Color(0.67, 0.50, 0.34);
+    var hair = identity == 1 ? Color(0.59, 0.58, 0.53) : identity == 7 ? Color(0.37, 0.19, 0.13) : Color(0.13, 0.11, 0.11);
+    float lift = upright ? 0.34 : 0;
+    float shoulders = 1.0 + lift;
+    float head = 1.23 + lift;
+    var trousers = Color(0.22, 0.23, 0.25);
+    var shoe = Color(0.09, 0.09, 0.10);
+    CabinTube(mesh, float3(0, 0.59 + lift, 0), float3(0, shoulders, 0), 0.18, 0.25, coat);
+    CabinTube(mesh, float3(0, shoulders, 0), float3(0, head - 0.16, 0), 0.095, 0.075, skin);
+    CabinOval(mesh, float3(0, head, -0.012), float3(0.14, 0.19, 0.135), skin);
+    CabinOval(mesh, float3(0, head + 0.105, 0.022), float3(0.15, 0.115, 0.14), hair, 3, 8);
+    if (identity == 2 || identity == 7)
+    {
+        CabinTube(mesh, float3(-0.12, head + 0.10, 0.06), float3(-0.12, shoulders - 0.01, 0.07), 0.08, 0.06, hair);
+        CabinTube(mesh, float3(0.12, head + 0.10, 0.06), float3(0.12, shoulders - 0.01, 0.07), 0.08, 0.06, hair);
+    }
+    if (identity == 3)
+    {
+        CabinTube(mesh, float3(0, head + 0.13, 0), float3(0, head + 0.20, 0), 0.17, 0.13, Color(0.17, 0.23, 0.17), 8);
+        CabinBox(mesh, float3(0, head + 0.13, -0.10), float3(0.28, 0.035, 0.25), Color(0.17, 0.23, 0.17));
+    }
+    var ink = Color(0.10, 0.08, 0.075);
+    for (var side = 0; side < 2; side++)
+    {
+        float x = side == 0 ? -0.06 : 0.06;
+        CabinBox(mesh, float3(x, head + 0.025, -0.128), float3(0.039, 0.027, 0.018), ink);
+        CabinBox(mesh, float3(x, head + 0.064, -0.119), float3(0.055, 0.015, 0.020), hair);
+        if (identity == 5)
+        {
+            CabinOval(mesh, float3(x, head + 0.025, -0.14), float3(0.055, 0.045, 0.009), Color(0.12, 0.12, 0.12), 2, 8);
+            CabinOval(mesh, float3(x, head + 0.025, -0.15), float3(0.039, 0.03, 0.008), Color(0.47, 0.52, 0.52), 2, 8);
+        }
+        float arm = side == 0 ? -0.23 : 0.23;
+        var elbow = float3(arm, shoulders - 0.26, upright ? 0.015 : -0.13);
+        var hand = float3(arm, shoulders - 0.45, upright ? -0.025 : -0.29);
+        CabinTube(mesh, float3(arm * 0.88, shoulders - 0.01, 0), elbow, 0.085, 0.067, coat);
+        CabinTube(mesh, elbow, hand, 0.065, 0.045, coat);
+        CabinOval(mesh, hand, float3(0.048, 0.06, 0.045), skin, 3, 6);
+        float leg = side == 0 ? -0.10 : 0.10;
+        var knee = float3(leg, upright ? 0.45 : 0.53, upright ? 0 : -0.40);
+        var ankle = float3(leg, 0.16, upright ? 0 : -0.40);
+        CabinTube(mesh, float3(leg, 0.61 + lift, -0.04), knee, 0.12, 0.09, trousers);
+        CabinTube(mesh, knee, ankle, 0.095, 0.075, trousers);
+        CabinOval(mesh, ankle + float3(0, -0.07, -0.05), float3(0.09, 0.08, 0.17), shoe, 3, 6);
+    }
+    CabinTriangle(mesh, float3(-0.025, head - 0.013, -0.13), float3(0.025, head - 0.013, -0.13), float3(0, head - 0.057, -0.182), float3(0, 0, -1), skin);
+    CabinBox(mesh, float3(0, head - 0.097, -0.11), float3(0.056, 0.014, 0.018), Color(0.37, 0.20, 0.17));
+    if (identity == 6)
+    {
+        CabinTriangle(mesh, float3(-0.032, shoulders + 0.018, -0.22), float3(0.032, shoulders + 0.018, -0.22), float3(0, shoulders - 0.31, -0.21), float3(0, 0, -1), Color(0.60, 0.19, 0.17));
+    }
+    if (identity == 4)
+    {
+        CabinTube(mesh, float3(-0.12, shoulders, -0.17), float3(0.12, shoulders, -0.17), 0.065, 0.065, Color(0.72, 0.59, 0.45));
+    }
+}
+
+void CabinSeat(mut CabinMesh mesh, float x, float z)
+{
+    var fabric = Color(0.23, 0.35, 0.37);
+    var edge = Color(0.12, 0.19, 0.21);
+    var plastic = Color(0.62, 0.59, 0.50);
+    CabinBox(mesh, float3(x, 0.34, z + 0.06), float3(0.57, 0.49, 0.45), edge);
+    CabinBox(mesh, float3(x, 0.57, z - 0.08), float3(0.76, 0.15, 0.65), fabric, 1);
+    CabinBox(mesh, float3(x, 0.95, z + 0.30), float3(0.78, 0.84, 0.18), plastic);
+    CabinBox(mesh, float3(x, 0.98, z + 0.195), float3(0.70, 0.74, 0.07), fabric, 1);
+    CabinBox(mesh, float3(x, 1.35, z + 0.23), float3(0.60, 0.16, 0.19), fabric, 1);
+    CabinBox(mesh, float3(x, 1.32, z + 0.125), float3(0.45, 0.18, 0.018), Color(0.82, 0.79, 0.68), 2);
+    for (var side = 0; side < 2; side++)
+    {
+        float arm = side == 0 ? -0.42 : 0.42;
+        CabinBox(mesh, float3(x + arm, 0.71, z - 0.02), float3(0.085, 0.09, 0.59), plastic);
+        CabinBox(mesh, float3(x + arm, 0.46, z + 0.12), float3(0.04, 0.44, 0.035), edge);
+    }
+    // Tray and seat pocket are visible as one approaches the row from behind.
+    CabinBox(mesh, float3(x, 0.99, z + 0.405), float3(0.54, 0.31, 0.025), Color(0.74, 0.70, 0.60));
+    CabinBox(mesh, float3(x, 0.72, z + 0.413), float3(0.52, 0.16, 0.028), edge);
+    CabinBox(mesh, float3(x + 0.12, 0.80, z + 0.427), float3(0.20, 0.18, 0.015), Color(0.72, 0.48, 0.28));
+}
+
+void CabinWindow(mut CabinMesh mesh, float side, float z)
+{
+    var center = float3(side * 2.135, 1.39, z);
+    var normal = float3(-side, 0, 0);
+    for (var i = 0; i < 12; i++)
+    {
+        float a = i * Math.TAU / 12;
+        float b = (i + 1) * Math.TAU / 12;
+        var innerA = center + float3(0, Math.Cos(a) * 0.265, Math.Sin(a) * 0.215);
+        var innerB = center + float3(0, Math.Cos(b) * 0.265, Math.Sin(b) * 0.215);
+        var outerA = center + float3(0, Math.Cos(a) * 0.34, Math.Sin(a) * 0.285);
+        var outerB = center + float3(0, Math.Cos(b) * 0.34, Math.Sin(b) * 0.285);
+        CabinQuad(mesh, innerA, innerB, outerB, outerA, normal, Color(0.50, 0.52, 0.45));
+        CabinTriangle(mesh, center, innerA, innerB, normal, Color(0.031, 0.061, 0.083), 3);
+    }
+}
+
+void MakeCabin(mut CabinMesh mesh)
+{
+    var wall = Color(0.71, 0.69, 0.58);
+    var trim = Color(0.29, 0.33, 0.32);
+    var brass = Color(0.55, 0.49, 0.33);
+    CabinBox(mesh, float3(0, -0.06, 7.6), float3(4.6, 0.12, 15.6), Color(0.19, 0.24, 0.24), 1);
+    CabinBox(mesh, float3(0, 0.007, 7.5), float3(0.90, 0.014, 15), Color(0.31, 0.29, 0.24), 1);
+    for (var side = 0; side < 2; side++)
+    {
+        float x = side == 0 ? -1 : 1;
+        CabinBox(mesh, float3(x * 0.47, 0.02, 7.5), float3(0.025, 0.025, 15), Color(0.53, 0.49, 0.32), 0, 0.08);
+        CabinQuad(mesh, float3(x * 2.2, 0, 0), float3(x * 2.2, 1.76, 0), float3(x * 2.2, 1.76, 15.4), float3(x * 2.2, 0, 15.4), float3(-x, 0, 0), wall, 2);
+        CabinQuad(mesh, float3(x * 2.2, 1.76, 0), float3(x * 1.88, 2.40, 0), float3(x * 1.88, 2.40, 15.4), float3(x * 2.2, 1.76, 15.4), float3(-x, -0.5, 0), wall, 2);
+        CabinQuad(mesh, float3(x * 1.88, 2.40, 0), float3(x * 0.85, 2.82, 0), float3(x * 0.85, 2.82, 15.4), float3(x * 1.88, 2.40, 15.4), float3(-x * 0.3, -1, 0), wall, 2);
+        CabinBox(mesh, float3(x * 1.50, 2.37, 7.7), float3(1.04, 0.34, 15.3), Color(0.60, 0.59, 0.49), 2);
+        CabinBox(mesh, float3(x * 1.34, 2.18, 7.7), float3(0.025, 0.025, 15.3), brass);
+        for (var row = 0; row < 6; row++)
+        {
+            float z = 2.8 + row * 1.8;
+            CabinBox(mesh, float3(x * 1.50, 2.195, z), float3(0.68, 0.02, 0.024), trim);
+            CabinWindow(mesh, x, z + 0.10);
+            CabinBox(mesh, float3(x * 2.115, 1.76, z + 0.10), float3(0.035, 0.025, 0.29), Color(0.76, 0.70, 0.55));
+            CabinBox(mesh, float3(x * 2.186, 0.76, z), float3(0.012, 1.5, 0.018), Color(0.56, 0.56, 0.48));
+        }
+    }
+    CabinQuad(mesh, float3(-0.85, 2.82, 0), float3(0.85, 2.82, 0), float3(0.85, 2.82, 15.4), float3(-0.85, 2.82, 15.4), float3(0, -1, 0), wall, 2);
+    for (var row = 0; row < 6; row++)
+    {
+        float z = 2.85 + row * 1.8;
+        CabinBox(mesh, float3(0, 2.78, z), float3(0.62, 0.025, 0.15), Color(0.82, 0.80, 0.64), 0, 0.8);
+        CabinBox(mesh, float3(0, 2.795, z), float3(0.79, 0.018, 0.20), trim);
+        CabinSeat(mesh, -1.3, 3.2 + row * 1.8);
+        CabinSeat(mesh, 1.3, 3.2 + row * 1.8);
+    }
+    // Cockpit end and the crew station: a compact galley with visible equipment.
+    CabinBox(mesh, float3(0, 1.42, -0.18), float3(4.5, 2.84, 0.22), wall, 2);
+    CabinBox(mesh, float3(0, 1.16, -0.045), float3(0.82, 2.30, 0.04), Color(0.30, 0.35, 0.35), 2);
+    CabinBox(mesh, float3(0.29, 1.14, -0.01), float3(0.045, 0.035, 0.04), brass);
+    CabinBox(mesh, float3(0, 2.46, -0.018), float3(0.61, 0.10, 0.035), Color(0.44, 0.64, 0.45), 0, 0.45);
+    for (var side = 0; side < 2; side++)
+    {
+        float x = side == 0 ? -1.5 : 1.5;
+        CabinBox(mesh, float3(x, 0.63, 0.61), float3(0.9, 1.26, 1.0), Color(0.41, 0.43, 0.39), 2);
+        CabinBox(mesh, float3(x, 1.28, 0.59), float3(0.99, 0.06, 1.09), Color(0.62, 0.63, 0.57));
+        CabinBox(mesh, float3(x, 0.84, 1.12), float3(0.74, 0.38, 0.024), Color(0.55, 0.56, 0.49), 2);
+        CabinBox(mesh, float3(x, 0.91, 1.15), float3(0.32, 0.018, 0.04), brass);
+        CabinBox(mesh, float3(x, 0.35, 1.12), float3(0.74, 0.48, 0.024), Color(0.31, 0.35, 0.32));
+    }
+    CabinBox(mesh, float3(-1.54, 1.53, 0.35), float3(0.36, 0.40, 0.34), Color(0.25, 0.27, 0.26));
+    CabinBox(mesh, float3(-1.54, 1.69, 0.54), float3(0.19, 0.12, 0.016), Color(0.45, 0.58, 0.36), 0, 0.25);
+    CabinTube(mesh, float3(-1.54, 1.32, 0.66), float3(-1.54, 1.47, 0.66), 0.09, 0.085, Color(0.82, 0.78, 0.64), 8);
+    CabinBox(mesh, float3(1.52, 1.40, 0.58), float3(0.53, 0.18, 0.27), Color(0.15, 0.20, 0.21));
+    CabinBox(mesh, float3(1.52, 1.50, 0.58), float3(0.35, 0.02, 0.17), Color(0.36, 0.53, 0.38), 0, 0.35);
+    // Rear vestibule. The central hatch is the secure crew area, with a lavatory beside it.
+    CabinBox(mesh, float3(-1.58, 1.35, 13.46), float3(1.27, 2.70, 0.17), wall, 2);
+    CabinBox(mesh, float3(1.58, 1.35, 13.46), float3(1.27, 2.70, 0.17), wall, 2);
+    CabinBox(mesh, float3(0, 2.39, 13.46), float3(1.90, 0.64, 0.17), wall, 2);
+    CabinBox(mesh, float3(-1.50, 1.15, 13.34), float3(0.90, 2.28, 0.035), Color(0.46, 0.49, 0.44));
+    CabinBox(mesh, float3(-1.50, 1.88, 13.30), float3(0.25, 0.19, 0.035), Color(0.71, 0.71, 0.57));
+    CabinBox(mesh, float3(-1.19, 1.1, 13.28), float3(0.035, 0.03, 0.04), brass);
+    CabinBox(mesh, float3(0, 1.16, 15.42), float3(4.42, 2.32, 0.1), Color(0.35, 0.38, 0.34), 2);
+    CabinBox(mesh, float3(0, 2.49, 13.35), float3(0.52, 0.16, 0.04), Color(0.52, 0.72, 0.51), 0, 0.65);
+    CabinBox(mesh, float3(1.41, 1.00, 13.31), float3(0.55, 1.84, 0.12), Color(0.39, 0.16, 0.13));
+    CabinTube(mesh, float3(1.41, 0.30, 13.19), float3(1.41, 0.90, 13.19), 0.11, 0.11, Color(0.65, 0.23, 0.16), 8);
+}
+
+frag CabinSurface(CabinVertex vertex, out Color color, Instance instance, CabinArt art)
+{
+    var normal = instance.Normal(vertex.normal);
+    float direction = 0.64 + Math.Max(Math.Dot(normal, Math.Normalize(float3(-0.35, 0.72, -0.31))), 0) * 0.36;
+    float overhead = 1 - Math.Saturate(Math.Abs(this.world.x) / 3) * 0.13;
+    mut var base = float3(vertex.paint.r, vertex.paint.g, vertex.paint.b);
+    if (vertex.material > 0.5 && vertex.material < 1.5)
+    {
+        float weave = Math.Frac((Math.Floor(this.world.x * 55) + Math.Floor(this.world.z * 48) + Math.Floor(this.world.y * 52)) * 0.5) * 0.055;
+        float thread = Math.Hash(int3(Math.Floor(this.world * 48))) % 9 * 0.009;
+        base = base * (0.91 + weave + thread);
+    }
+    if (vertex.material > 1.5 && vertex.material < 2.5)
+    {
+        float grime = Math.Saturate(Math.Perlin(float2(this.world.z * 1.5, this.world.y * 3.1)) * 0.09);
+        base = base * (1 - grime);
+    }
+    if (vertex.material > 2.5)
+    {
+        float reflection = Math.Pow(1 - Math.Abs(Math.Dot(normal, Math.Normalize(art.eye - this.world))), 2);
+        base += float3(0.06, 0.10, 0.10) * reflection;
+        base += float3(0.47, 0.40, 0.29) * art.dawn * (1.15 - Math.Saturate(this.world.y / 2.5) * 0.4);
+    }
+    float light = (0.13 + art.light * 0.87) * direction * overhead;
+    var warm = float3(1, 0.96, 0.81);
+    var emergency = float3(0.38, 0.22, 0.17) * art.emergency;
+    float distance = Math.Distance(art.eye, this.world);
+    float fog = Math.Saturate((distance - 2.0) / 22) * (0.31 + art.emergency * 0.28);
+    mut var paint = base * (warm * light + emergency) + base * vertex.glow * (art.light * 0.88 + 0.12);
+    paint = paint * (1 - fog) + float3(0.029, 0.040, 0.043) * fog;
+    color = Color(paint.x, paint.y, paint.z, 1);
+}
+
+// The deduction is complete before a contained imitation loses its shape.
+// This reads the public result, so no visual tell gives away a live case.
+vert CabinUnmask(mut CabinVertex vertex, Passenger passenger, Flight flight, CabinArt art)
+{
+    bool revealed = passenger.id == 8 && passenger.held && (flight.phase == 4 || (flight.phase == 5 && flight.outcome > 0));
+    if (!revealed || vertex.position.y < 1.22) return;
+    var pivot = float3(0, 1.22, 0);
+    mut var offset = vertex.position - pivot;
+    offset.y *= 1.53;
+    var twist = quaternion.AxisAngle(float3(0, 0, 1), 0.46 + Math.Sin(art.time * 0.6) * 0.05);
+    vertex.position = pivot + Math.Rotate(twist, offset);
+    vertex.normal = Math.Rotate(twist, vertex.normal);
+    vertex.paint = Color(vertex.paint.r * 0.62, vertex.paint.g * 0.68, vertex.paint.b * 0.62);
+}
+
+frag CabinVideo(Vertex vertex, out Color color, Texture source, CabinArt art)
+{
+    var pixel = Math.Floor(vertex.uv * float2(480, 270));
+    var uv = (pixel + float2(0.5)) / float2(480, 270);
+    var seen = source.Sample(uv, Filter.Point);
+    float2 center = vertex.uv - float2(0.5);
+    float vignette = 1 - Math.Saturate(Math.Dot(center, center) * 1.0) * 0.31;
+    int2 grid = int2(pixel);
+    float dither = ((grid.x & 1) * 2 + (grid.y & 1)) / 4.0 - 0.375;
+    float grain = (Math.Hash(int3(grid.x, grid.y, int(art.time * 12))) % 17 - 8) * 0.0007;
+    mut var paint = float3(seen.r, seen.g, seen.b) * vignette;
+    paint = Math.Floor(paint * 31 + float3(dither * 0.35 + grain * 31)) / 31;
+    color = Color(paint.x, paint.y, paint.z, 1);
+}
+
+[Stage(Shot.Setup)]
+view PrepareCabin(mut CabinArt art, Flight flight)
+{
+    if (!art.made)
+    {
+        art.made = true;
+        art.scene = RenderTarget(480, 270);
+        MakeCabin(art.shell);
+        CabinTriangle(art.collar, float3(0.187, 1.05, -0.202), float3(0.093, 1.05, -0.202), float3(0.14, 0.958, -0.202), float3(0, 0, -1), Color(0.84, 0.83, 0.74));
+        for (var identity = 0; identity < 8; identity++)
+        {
+            mut CabinMesh sitting = default;
+            mut CabinMesh standing = default;
+            CabinPerson(sitting, identity, false);
+            CabinPerson(standing, identity, true);
+            art.seated.Add(sitting);
+            art.standing.Add(standing);
+        }
+    }
+    art.time += Math.Min(Frame.dt, 0.1);
+    mut float target = flight.phase == 2 ? 0.11 : flight.phase == 3 ? 0.47 : 0.94;
+    if (flight.phase == 5) target = flight.outcome > 0 ? 0.97 : 0.14;
+    if (flight.phase == 2 && Math.Sin(art.time * 13) > 0.96) target = 0.29;
+    art.light += (target - art.light) * Math.Min(Frame.dt * 4, 1);
+    art.emergency = flight.phase == 2 || flight.phase == 3 || (flight.phase == 5 && flight.outcome == 0) ? 1 : 0;
+    art.dawn += ((flight.phase == 5 && flight.outcome > 0 ? 1 : 0) - art.dawn) * Math.Min(Frame.dt * 0.4, 1);
+    art.scene.Clear(Color(0.028, 0.039, 0.042));
+    art.scene.SetCamera(art.eye, quaternion.identity, 74);
+    art.engines.clip = engineRoom;
+    art.engines.loop = true;
+    art.engines.playing = true;
+    art.engines.volume = flight.phase == 5 ? 0.22 : 0.39;
+    art.engines.pitch = flight.phase == 3 ? 0.90 : 1;
+    art.electricity.clip = electricRoom;
+    art.electricity.loop = true;
+    art.electricity.playing = true;
+    art.electricity.volume = 0.09 * art.light;
+    if (art.heardPhase != flight.phase)
+    {
+        if (flight.phase == 2) Audio.Play(powerLoss, 0.55);
+        if (flight.phase == 3 || flight.phase == 1) Audio.Play(cabinChime, 0.34);
+        if (flight.phase == 4) Audio.Play(powerLoss, 0.19);
+        if (flight.phase == 5 && flight.outcome > 0) Audio.Play(arrivalTone, 0.4);
+        if (flight.phase == 5 && flight.outcome == 0) Audio.Play(powerLoss, 0.33);
+        art.heardPhase = flight.phase;
+    }
+}
+
+[Stage(Shot.Camera)]
+view CrewCamera(Crew crew, Owner owner, Session session, mut CabinArt art)
+{
+    if (owner.player != session.player) return;
+    float sway = Math.Sin(art.time * 0.63) * 0.006;
+    art.eye = crew.position + float3(0, 1.6 + sway, 0);
+    var rotation = quaternion.Euler(float3(crew.pitch, crew.yaw, 0));
+    art.scene.SetCamera(art.eye, rotation, 74);
+    Audio.SetListener(art.eye, rotation);
+}
+
+[Stage(Shot.Cabin)]
+view CabinScenery(CabinArt art, Flight flight)
+{
+    art.scene.Mesh(art.shell.vertices, art.shell.indices, float4x4.identity, CabinSurface);
+    if (flight.phase == 2 || flight.phase == 3)
+    {
+        for (var side = 0; side < 2; side++)
+        {
+            float x = side == 0 ? -0.47 : 0.47;
+            for (var i = 0; i < 13; i++)
+                art.scene.Cube(float3(x, 0.047, 0.6 + i), float3(0.055, 0.012, 0.17), Color(0.69, 0.28, 0.13));
+        }
+    }
+    // Folded leaves leave a real aisle into the secure rear compartment.
+    art.scene.Cube(float3(-0.86, 1.16, 13.66), float3(0.16, 2.28, 0.43), Color(0.24, 0.29, 0.26));
+    art.scene.Cube(float3(0.86, 1.16, 13.66), float3(0.16, 2.28, 0.43), Color(0.24, 0.29, 0.26));
+    art.scene.Cube(float3(0.72, 1.10, 13.40), float3(0.035, 0.15, 0.03), Color(0.57, 0.53, 0.37));
+}
+
+[Stage(Shot.People)]
+view CabinPassengers(Passenger passenger, CabinArt art, Flight flight)
+{
+    int identity = Math.Clamp(passenger.identity, 0, 7);
+    var mesh = passenger.held ? art.standing[identity] : art.seated[identity];
+    // The subtle breath affects everyone equally and cannot identify a suspect.
+    float breath = Math.Sin(art.time * 1.2 + passenger.id * 0.7) * 0.002;
+    art.scene.Mesh(mesh.vertices, mesh.indices, float4x4.Translate(passenger.position + float3(0, breath, 0)), CabinUnmask, CabinSurface);
+    if (passenger.held)
+    {
+        art.scene.Cube(float3(0.83, 1.94, 13.31), float3(0.09, 0.05, 0.035), Color(0.72, 0.47, 0.22));
+    }
+    if (passenger.id == 8 && passenger.held && (flight.phase == 4 || (flight.phase == 5 && flight.outcome > 0))) return;
+    float lift = passenger.held ? 0.34 : 0;
+    var at = passenger.position + float3(0, lift + breath, 0);
+    bool copy = passenger.id == 8;
+    if (identity == 0)
+    {
+        float wrist = copy || flight.phase < 2 ? 0.23 : -0.23;
+        art.scene.Cube(at + float3(wrist, 0.59, -0.27), float3(0.10, 0.085, 0.08), Color(0.22, 0.42, 0.64));
+    }
+    if (identity == 3)
+    {
+        bool taped = flight.caseIndex > 1 || (flight.caseIndex == 1 && flight.phase >= 2);
+        for (var strip = 0; strip < (!copy && taped ? 2 : 1); strip++)
+            art.scene.Cube(at + float3(-0.06 + strip * 0.11, 1.385, -0.17), float3(0.065, 0.012, 0.12), Color(0.68, 0.20, 0.16));
+    }
+    if (identity == 5 && (flight.caseIndex > 2 || (flight.caseIndex == 2 && flight.phase >= 2)))
+    {
+        art.scene.Cube(at + float3(0, 1.255, -0.158), float3(0.064, 0.032, 0.021), Color(0.90, 0.87, 0.74));
+        if (!copy) art.scene.Cube(at + float3(0, 1.257, -0.171), float3(0.008, 0.028, 0.005), quaternion.AxisAngle(float3(0, 0, 1), 0.4), Color(0.12, 0.11, 0.10));
+    }
+    if (identity == 2 && (flight.caseIndex > 3 || (flight.caseIndex == 3 && flight.phase >= 2)))
+    {
+        art.scene.Mesh(art.collar.vertices, art.collar.indices, float4x4.Translate(at), CabinSurface);
+        if (copy) art.scene.Cube(at + float3(0.14, 1.01, -0.208), float3(0.031, 0.031, 0.004), Color(0.18, 0.23, 0.23));
+        else art.scene.Sphere(at + float3(0.14, 1.01, -0.207), 0.017, Color(0.18, 0.23, 0.23));
+    }
+}
+
+[Stage(Shot.People, 1)]
+view OtherCrew(Crew crew, Owner owner, Session session, CabinArt art)
+{
+    if (owner.player == session.player) return;
+    var mesh = art.standing[0];
+    art.scene.Mesh(mesh.vertices, mesh.indices, float4x4.TRS(crew.position, quaternion.Euler(float3(0, crew.yaw + Math.PI, 0)), float3(1)), CabinSurface);
+}
+
+[Stage(Shot.Present)]
+view ShowCabin(CabinArt art)
+{
+    Draw.SetScreen();
+    Draw.Clear(Color(0.02, 0.026, 0.029));
+    if (!art.made) return;
+    Draw.Blit(art.scene.color, Draw.window, CabinVideo);
+    // Quiet edge treatment leaves the notebook and readable HUD at native size.
+    Draw.Rect(float2(Screen.width * 0.5, 1), float2(Screen.width, 2), Color(0.03, 0.04, 0.04));
+    Draw.Rect(float2(Screen.width * 0.5, Screen.height - 1), float2(Screen.width, 2), Color(0.03, 0.04, 0.04));
+}
