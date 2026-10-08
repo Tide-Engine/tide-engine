@@ -1,0 +1,212 @@
+// Authored observations describe what was seen, not a passenger's verdict.
+// Actor IDs are private implementation details; copied faces use real names.
+string PassengerName(int identity)
+{
+    switch (identity)
+    {
+        case 0: return "Rowan Hale";
+        case 1: return "Ada Finch";
+        case 2: return "Evelyn Park";
+        case 3: return "Gabriel Moss";
+        case 4: return "Nisha Rao";
+        case 5: return "Ivo Bell";
+        case 6: return "Daniel Voss";
+        case 7: return "Leila Soto";
+    }
+    return "Passenger";
+}
+
+int CaseCopyIdentity(int caseIndex)
+{
+    switch (caseIndex)
+    {
+        case 0: return 0;
+        case 1: return 3;
+        case 2: return 5;
+        case 3: return 2;
+    }
+    return 0;
+}
+
+string CasePassengerName(int actorID, int caseIndex)
+{
+    if (actorID == 8) return PassengerName(CaseCopyIdentity(caseIndex));
+    return PassengerName(actorID);
+}
+
+string BoardingReply(int identity)
+{
+    switch (identity)
+    {
+        case 0: return "Rowan Hale. I am going home to fix my daughter's toy. The left wrist? Just an old scrape. I put that blue dressing on before I came to the airport.";
+        case 1: return "Ada Finch. A window would be lovely, but please let someone else have it if they need it. I was a nurse. I am much less brave about flying than I was about night shifts.";
+        case 2: return "Evelyn Park. I teach art. My son says I bring paper everywhere; he is right. If anyone gets nervous, there are little things we can make while we wait.";
+        case 3: return "Gabriel Moss. I am seeing my brother. Please face me when you speak; I miss words over the engines. The red strip on my cap? It is holding the brim together.";
+        case 4: return "Nisha Rao. My sister left her phone with me and I am taking it home. That is why I have two. If you need a pen, I have a marker somewhere in this coat.";
+        case 5: return "Ivo Bell. We kept the tickets in the front pocket. Sorry. I kept the tickets. My wife used to organize our trips. This is the first one I have taken without her.";
+        case 6: return "Daniel Voss. Just travelling home. It has been a long week. Is there a signal up here? I keep trying to work out what to say when I call my daughter.";
+        case 7: return "Leila Soto. The jar is bread starter. My father kept it alive for thirty years. I have promised to bring it back. You can look inside; it is supposed to have bubbles.";
+    }
+    return "I have my boarding pass here.";
+}
+
+string BoardingInspectReply(int identity)
+{
+    switch (identity)
+    {
+        case 0: return "Navy jacket. A worn BLUE dressing covers the LEFT wrist. The RIGHT wrist is bare and uninjured. A toy screwdriver sticks out of his bag.";
+        case 1: return "Rust cardigan, grey hair. A folded crossword has several answers rubbed out. An old nurse's watch is pinned to the cardigan.";
+        case 2: return "Teal sweater and dark bob. A small stack of paper sits in her lap. Neither collar has a paper tag attached.";
+        case 3: return "Olive jacket and dark cap. ONE RED tape strip crosses the cracked cap brim. A folded music sheet is tucked inside his bag.";
+        case 4: return "Plum coat. Two phones are tucked into different pockets. A black marker cap clips onto the left pocket.";
+        case 5: return "Mustard sweater and round glasses. The glasses bridge is loose. There is no repair tape on it yet.";
+        case 6: return "Charcoal suit, red tie. A folded envelope is creased at every corner. He keeps smoothing it flat.";
+        case 7: return "Cream jacket, long auburn hair. A glass jar is packed in cloth. The brown mixture has small bubbles.";
+    }
+    return "The view is too brief to record detail.";
+}
+
+int CorrectSuspect(int caseIndex)
+{
+    if (caseIndex >= 0 && caseIndex < 4) return 8;
+    return -1;
+}
+
+string CaseTitle(int caseIndex)
+{
+    switch (caseIndex)
+    {
+        case 0: return "01 / THE SECOND ROWAN";
+        case 1: return "02 / A BETTER ANSWER";
+        case 2: return "03 / SOMETHING IT MISSED";
+        case 3: return "04 / THE LAST COUNT";
+    }
+    return "CABIN NINE";
+}
+
+string CaseBrief(int caseIndex)
+{
+    switch (caseIndex)
+    {
+        case 0: return "Eight boarded. Nine are sitting here. Both Rowans know his name. Compare the boarding record, the rear witness and what you can actually see. A nervous answer is not proof.";
+        case 1: return "The extra face is Gabriel's now. It heard your questions and has learned to sound helpful. Earlier photographs still happened. Find what changed aboard before deciding.";
+        case 2: return "Both Ivos remember the bridge repair. Knowing about a repair is not the same as carrying its final state. Ask your partner what the witness added after the photograph.";
+        case 3: return "Approach lights are ahead. Something wearing Evelyn's face wants to join the landing count. Compare the original tag, its later change and the person wearing it. Protect the eight who boarded.";
+    }
+    return "Check the count together.";
+}
+
+string EvidenceText(int caseIndex, int slot)
+{
+    if (caseIndex == 0)
+    {
+        switch (slot)
+        {
+            case 0: return "BOARDING / 00:02: Rowan's navy jacket has a BLUE dressing on the LEFT wrist. The right wrist is bare. Eight different people were checked aboard before the cabin door closed.";
+            case 1: return "REAR SERVICE / 00:07: Rowan scraped his RIGHT wrist on the trolley. Ada helped remove the old left dressing and apply a fresh BLUE one on the RIGHT. Ada kept the discarded dressing.";
+            case 2: return "The current Rowan should have the new RIGHT-wrist dressing. The LEFT-wrist dressing belongs to an earlier appearance. Compare both faces; the seat itself proves nothing.";
+        }
+    }
+    else if (caseIndex == 1)
+    {
+        switch (slot)
+        {
+            case 0: return "BOARDING / 00:03: Gabriel's olive cap has ONE RED tape strip across its cracked brim. His delayed replies are noted as a hearing difficulty, not an identity discrepancy.";
+            case 1: return "REAR SERVICE / 00:16: The brim split again. Leila replaced the single red strip with TWO separate RED strips. The removed strip is attached to the repair card; Gabriel wore the cap afterwards.";
+            case 2: return "The repair is later than the boarding photograph. The current cap has TWO red strips. A perfectly accurate description of the old repair does not explain a cap still carrying ONE.";
+        }
+    }
+    else if (caseIndex == 2)
+    {
+        switch (slot)
+        {
+            case 0: return "FRONT REPAIR / 00:24: Ivo's round glasses received WHITE bridge tape. The photograph was taken before the repair was checked. It shows no ink on the new tape.";
+            case 1: return "REAR CHECK / 00:25: Ivo chose the fit and Nisha drew a BLACK DIAGONAL line on the white bridge tape to record it. He put the glasses on and stayed with her through the next flicker.";
+            case 2: return "Both pairs have the white repair. Only the later pair carries the BLACK DIAGONAL check mark. The missing mark matters because the photograph predates the witnessed final check.";
+        }
+    }
+    else if (caseIndex == 3)
+    {
+        switch (slot)
+        {
+            case 0: return "FRONT COUNT / 00:34: Evelyn made a WHITE TRIANGLE paper tag for her LEFT collar. Its first mounting hole was a small SQUARE. The count photograph records this first version.";
+            case 1: return "REAR COUNT / 00:36: The string tore. Leila punched a larger ROUND hole around the square and retied Evelyn's triangle. The round offcut remains with the landing card. Her left collar kept the tag.";
+            case 2: return "Both tags are white triangles on the left collar. The current tag has a ROUND hole; the SQUARE hole is an earlier state. Complete the landing count with the person carrying the later change.";
+        }
+    }
+    return "No observation recorded.";
+}
+
+string PassengerReply(int actorID, int caseIndex)
+{
+    if (actorID == 8)
+    {
+        switch (caseIndex)
+        {
+            case 0: return "Rowan Hale. Navy jacket, blue dressing. You already checked me. It is on the left, where it was when I got on. May I sit down?";
+            case 1: return "Gabriel. Yes, the red tape. You repaired my cap. I remember everything you asked the other one. We should stop upsetting people and finish the count.";
+            case 2: return "Ivo Bell. White tape on the glasses. I even thanked you. A repair is a repair. Tell your partner that I answered correctly.";
+            case 3: return "Evelyn Park. The white triangle, left collar. You gave us something to count. I have kept mine. Let me go forward and I will help you with the others.";
+        }
+    }
+    if (actorID == 2 && caseIndex < 3) return "I teach children to make things out of scraps. If counting seats gets confusing, we could make a paper tag for each person. We should keep everyone together.";
+    if (actorID == 3 && caseIndex < 1) return "I cannot always hear you over the engines. Face me when you speak. That old red strip is all that is holding my cap together. I am going to see my brother.";
+    if (actorID == 5 && caseIndex < 2) return "My wife used to keep our tickets. I still say 'we' sometimes. That is all. Could you help with the glasses if the bridge finally gives out?";
+    if (actorID == 4 && caseIndex < 2) return "I keep checking two phones. One is my sister's; she asked me to bring it home. If the engines make it hard to hear I can write things down. I have a marker.";
+    if (actorID == 7 && caseIndex < 1) return "The jar is bread starter, honestly. My dad kept it alive for thirty years. You can look. I am keeping the trolley aisle clear in case anyone needs help.";
+    if (actorID == 7 && caseIndex < 3) return "The jar is bread starter. My dad kept it alive for thirty years. You can look. I kept the old cap tape with the repair card, exactly as you asked.";
+    switch (actorID)
+    {
+        case 0: return "My daughter asked me to fix her toy before I come home. I still have the little screwdriver. The trolley got my right wrist. Ada helped; please thank her if I forget.";
+        case 1: return "I used to do night shifts. Counting breaths helps me stay calm. Rowan was hurt on the trolley; I kept the old dressing because you said to keep anything that changed.";
+        case 2: return "I teach children to make things out of scraps. A little paper triangle is easier to remember than a seat number. Leila retied it after the string tore. Please keep us together.";
+        case 3: return "I cannot always hear you over the engines. Face me when you speak. Leila fixed the brim a second time. Two pieces now. I am going to see my brother; we have a lot to talk about.";
+        case 4: return "I know I keep checking two phones. One is my sister's; she asked me to bring it home. I checked Ivo's glasses after the repair. That black line was my idea, so we would remember the fit.";
+        case 5: return "My wife used to keep our tickets. I still say 'we' sometimes. That is all. Nisha marked the glasses after I tried them on. I am sorry I have needed so much help tonight.";
+        case 6: return "The tie is for a conversation I do not want to have. I lost the job last week. I have not told my family. If I seem distracted, that is why. Can I still call them when we land?";
+        case 7: return "The jar is bread starter. My dad kept it alive for thirty years; I promised to bring it back. You can look. I also kept the tape and the paper offcut, exactly as you asked.";
+    }
+    return "Please speak to me where I can hear you.";
+}
+
+string PassengerSpeech(int actorID, int identity, int caseIndex)
+{
+    if (actorID >= 0 && actorID <= 8) return PassengerReply(actorID, caseIndex);
+    return PassengerName(identity) + ": I did not hear the question.";
+}
+
+string InspectReply(int actorID, int caseIndex)
+{
+    if (actorID == 8)
+    {
+        switch (caseIndex)
+        {
+            case 0: return "Navy jacket. BLUE dressing on the LEFT wrist. The RIGHT wrist is bare, with no scrape visible. The dressing is worn at its edges.";
+            case 1: return "Olive jacket and dark cap. ONE RED tape strip crosses the cracked cap brim. The strip is creased in the middle.";
+            case 2: return "Mustard sweater and round glasses. The bridge has WHITE tape. Its surface is plain; there is no black ink line.";
+            case 3: return "Teal sweater. A WHITE TRIANGLE paper tag is tied at the LEFT collar. A small SQUARE hole holds the string.";
+        }
+    }
+    if (actorID == 2 && caseIndex < 3) return "Teal sweater and dark bob. A small stack of paper sits in her lap. Neither collar has a paper tag attached.";
+    if (actorID == 3 && caseIndex < 1) return "Olive jacket and dark cap. ONE RED tape strip crosses the cracked cap brim. The old strip is creased in the middle.";
+    if (actorID == 5 && caseIndex < 2) return "Mustard sweater and round glasses. The loose glasses bridge has no white repair tape on it yet.";
+    if (actorID == 7 && caseIndex < 1) return "Cream jacket, long auburn hair. A glass jar is packed in cloth. The brown mixture has small bubbles. A folded paper bag lies beside it.";
+    if (actorID == 7 && caseIndex < 3) return "Cream jacket, long auburn hair. A glass jar is packed in cloth. A paper bag holds a creased red tape strip from a cap repair.";
+    switch (actorID)
+    {
+        case 0: return "Navy jacket. Fresh BLUE dressing on the RIGHT wrist; a red scrape is visible at its edge. The LEFT wrist is bare, with a pale outline where an old dressing sat.";
+        case 1: return "Rust cardigan, grey hair. A folded crossword has several answers rubbed out. An old nurse's watch is pinned to the cardigan; its second hand still moves.";
+        case 2: return "Teal sweater. A WHITE TRIANGLE paper tag is tied at the LEFT collar. A larger ROUND hole holds the string; the loose end was knotted twice.";
+        case 3: return "Olive jacket and dark cap. TWO separate RED tape strips cross the repaired cap brim. A short loose edge catches the light.";
+        case 4: return "Plum coat. Two phones are tucked into different pockets. A black marker cap clips onto the left pocket; a small ink stain marks her thumb.";
+        case 5: return "Mustard sweater and round glasses. WHITE tape repairs the bridge. A BLACK DIAGONAL ink line crosses the white tape.";
+        case 6: return "Charcoal suit, red tie. The tie knot has been loosened and retied. A folded envelope is creased at every corner. His hands are empty.";
+        case 7: return "Cream jacket, long auburn hair. A glass jar is packed in cloth. The brown mixture has small bubbles. A paper bag holds removed tape and a round paper offcut.";
+    }
+    return "You cannot see enough detail from here.";
+}
+
+string InspectionText(int actorID, int caseIndex)
+{
+    return InspectReply(actorID, caseIndex);
+}
