@@ -1,0 +1,7 @@
+// expect: this list holds byte, not int
+scene Main { }
+singleton Log { int value; }
+int Make(out int made) { made = 7; return 300; }
+int Pick(List<byte> values, int made) { return values[0] + made; }
+int Pick(float values, float made) { return int(values + made); }
+system Run(mut Log log) { log.value = Pick([Make(out var made)], made); }
