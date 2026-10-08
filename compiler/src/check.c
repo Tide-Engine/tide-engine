@@ -15626,8 +15626,8 @@ static void check_audio_sizes(const checker *c)
             const int rolled = d->rolls ? decl_layout(c->prog->random).size : 0;
             const int most = (int)TIDE_AUDIO_STATE_BYTES - rolled;
             if (size > most) {
-                diag_error(p->at, "an audio declaration's state is %d bytes at the most%s, and '%s' is %d", most,
-                           rolled ? " where it rolls with Random" : "", type_name(p->type), size);
+                diag_error(p->at, "an audio declaration's state is %d bytes at the most%s, and '%s' is %s%d", most,
+                           rolled ? " where it rolls with Random" : "", type_name(p->type), size == LAYOUT_MOST ? "over " : "", size);
                 if (rolled) {
                     diag_note_at(d->rolls_at, "'" STR_FMT "' rolls on line %d, and each voice keeps what it rolls with in the last %d of its state's %d "
                                  "bytes: make '%s' smaller, with a shorter array or fewer fields",
@@ -15642,8 +15642,8 @@ static void check_audio_sizes(const checker *c)
             const param *p = &d->params.items[d->audio_knobs];
             const int size = decl_layout(p->type.decl).size;
             if (size > (int)TIDE_AUDIO_KNOBS_BYTES) {
-                diag_error(p->at, "an audio declaration's knobs are %d bytes at the most, and '%s' is %d", (int)TIDE_AUDIO_KNOBS_BYTES,
-                           type_name(p->type), size);
+                diag_error(p->at, "an audio declaration's knobs are %d bytes at the most, and '%s' is %s%d", (int)TIDE_AUDIO_KNOBS_BYTES,
+                           type_name(p->type), size == LAYOUT_MOST ? "over " : "", size);
                 diag_note("an Effect carries a copy of them, which a frame gives the mixer: make '%s' smaller, and keep what's big in "
                           "the state, which has %d bytes", type_name(p->type), (int)TIDE_AUDIO_STATE_BYTES);
             }

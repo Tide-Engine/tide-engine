@@ -123,6 +123,14 @@ int matrix_dim(const type t)
     }
 }
 
+// A size that's more than an int says is LAYOUT_MOST, never what the int
+// would wrap to: structs of arrays of structs of arrays say gigabytes in a few
+// lines, and what reads a size to refuse one that's too big has to find it so.
+static int saturated(const int64_t size)
+{
+    return size > LAYOUT_MOST ? LAYOUT_MOST : (int)size;
+}
+
 layout type_layout(const type t)
 {
     if (t.kind == TY_BOOL || t.kind == TY_BYTE) return (layout){1, 1};
@@ -138,7 +146,7 @@ layout type_layout(const type t)
     if (t.kind == TY_MAP || t.kind == TY_SET) return (layout){12, 4}; // tide_map: two lists and a count
     if (t.kind == TY_ARRAY) {
         const layout e = type_layout(t.decl->fields.items[0].type);
-        return (layout){e.size * t.decl->array_length, e.align};
+        return (layout){saturated((int64_t)e.size * t.decl->array_length), e.align};
     }
     if (type_dim(t) > 0) return (layout){4 * type_dim(t), 4};
     if (matrix_dim(t) > 0) return (layout){4 * matrix_dim(t) * matrix_dim(t), 4};
@@ -154,26 +162,27 @@ layout type_layout(const type t)
     }
 }
 
-static int round_up(const int n, const int align)
+static int64_t round_up(const int64_t n, const int align)
 {
     return (n + align - 1) / align * align;
 }
 
 layout decl_layout_padded(const decl *d, int *pad)
 {
-    layout l = {0, 1};
+    int64_t size = 0;
+    int align = 1;
     for (int i = 0; i < d->fields.count; i++) {
         const layout f = type_layout(d->fields.items[i].type);
-        const int before = round_up(l.size, f.align) - l.size;
+        const int before = (int)(round_up(size, f.align) - size);
         if (pad) pad[i] = before;
-        l.size += before + f.size;
-        if (f.align > l.align) l.align = f.align;
+        size += before + f.size;
+        if (f.align > align) align = f.align;
     }
-    const int after = round_up(l.size, l.align) - l.size;
+    const int after = (int)(round_up(size, align) - size);
     if (pad) pad[d->fields.count] = after;
-    l.size += after;
-    if (d->fields.count == 0) l.size = 1; // tide_empty
-    return l;
+    size += after;
+    if (d->fields.count == 0) size = 1; // tide_empty
+    return (layout){saturated(size), align};
 }
 
 layout decl_layout(const decl *d)

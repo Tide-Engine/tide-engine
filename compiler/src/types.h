@@ -62,9 +62,11 @@ int matrix_dim(type t);
 // aligned with a size that's a multiple of 4, except bool and byte; long is
 // 8-byte aligned.
 typedef struct layout {
-    int size;
+    int size; // LAYOUT_MOST for anything bigger
     int align;
 } layout;
+
+#define LAYOUT_MOST 2147483647
 
 layout type_layout(type t);
 
