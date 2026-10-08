@@ -58,6 +58,7 @@ tide_e2e_test(input)
 tide_e2e_test(crossplatform)
 tide_e2e_test(evaluation_order SOURCES e2e/evaluation_order.tide e2e/evaluation_order_c.c) # Left to right, whatever order C would pick
 tide_e2e_test(random) # Random's state in the world, and the match's seed: the same bits on every platform
+tide_e2e_test(rolls) # Random.NextInt and the like on the type, and Random.seed: a system's rolls for its entity, with no state
 tide_e2e_test(views)
 tide_e2e_test(shapes) # The shapes with smooth edges: each Draw call, the general Shape, and target receivers
 tide_e2e_test(draw_settings) # Blend, tint, transform, clip and cameras: around blocks, listed with commas, and set

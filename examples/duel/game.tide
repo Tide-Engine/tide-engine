@@ -476,7 +476,7 @@ system Drive(Controls input, Duel duel, Time time, World world, mut Body body, m
         // A bot has moods, a few a second: how near it likes to be, how well
         // it aims and whether it holds its fire. Each side has its own, so
         // two bots never mirror each other, and each match its own, from its seed.
-        var mood = Math.Hash(int4(time.seed, time.tick / 22, fighter.side, duel.round));
+        var mood = Math.Hash(int4(Random.seed, time.tick / 22, fighter.side, duel.round));
         var near = 130 + mood % 4 * 30;
         move = Math.Abs(distance) > near + 130 ? Math.Sign(distance) : Math.Abs(distance) < near ? -Math.Sign(distance) : 0;
         var lead = Math.Normalize(Lead(body.position, target.position, fighter.build.bulletSpeed, fighter.build.gravity));

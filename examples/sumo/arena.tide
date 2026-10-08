@@ -209,7 +209,7 @@ void Plan(mut List<Brick> plan, int round, int seed, int stacked)
 // so that a rim crumbles. A function can't spawn, so the plan is a list, and
 // this spawns what's on it.
 [After(PhysicsStages.Step), Before(Rounds)]
-system Raise(Ring ring, Time time)
+system Raise(Ring ring)
 {
     if (ring.phase != Phase.Clear) return;
     for (var i = -TILES; i <= TILES; i++)
@@ -223,7 +223,7 @@ system Raise(Ring ring, Time time)
                   Tile { at = at, reach = reach, fuse = 1 + Math.Hash(int3(i, j, 7)) % 110 });
         }
     mut List<Brick> plan = [];
-    Plan(plan, ring.round + 1, time.seed, ring.stacked);
+    Plan(plan, ring.round + 1, Random.seed, ring.stacked);
     var quarter = quaternion.AxisAngle(float3(0, 1, 0), Math.PI / 2);
     foreach (var brick in plan)
     {

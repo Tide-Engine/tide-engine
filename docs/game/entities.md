@@ -59,11 +59,10 @@ Singletons start with their defaults when the world is created. Systems take the
 | `int tick` | The tick, which counts from 0 |
 | `float t` | The seconds since the match started: `tick * dt` |
 | `int tickRate` | The ticks in a second: 1 / `dt` to the nearest whole number |
-| `int seed` | The match's seed, from 0 to 2147483647: another one every match |
 
 `t` is worked out from the tick each time, so it never drifts, and [views](./views.md#smooth-at-any-tick-rate) see it move every frame. A float holds about 7 digits, so it gets coarser as the match goes on (after a day, its steps are about 8 milliseconds): a timer that has to be exact counts in `tick`.
 
-`seed` is what makes one match unlike another: the machine that starts the match picks it, and every player has it with the world. The engine seeds the match's [random numbers](../language/math.md#random-numbers) from it.
+What makes one match unlike another is its seed, [`Random.seed`](../language/math.md#the-match-s-seed), which the match's [random numbers](../language/math.md#random-numbers) come from.
 
 ## Spawning entities
 

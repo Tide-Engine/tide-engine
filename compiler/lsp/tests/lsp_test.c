@@ -6576,7 +6576,7 @@ TIDE_TEST(lsp_entity_query_unused_bindings)
 }
 
 // Random: a generator's methods where one is, what they and the type say,
-// Random(seed), and Time.seed.
+// Random(seed), and its rolls and the match's seed on the type.
 TIDE_TEST(lsp_random)
 {
     start();
@@ -6608,16 +6608,19 @@ TIDE_TEST(lsp_random)
     open_document(DICE "system Roll(mut Dice dice)\n{\n    dice.random.sta$te = 5;\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "All there is to the generator"));
 
-    // Time.seed: offered though no code reads it yet, and described where it's read
+    // Random on the type: its rolls and the match's seed, which Time no longer has
+#define DECK "singleton Deck { int top; }\nscene Main { }\n"
+    const char *rolls = complete(DECK "system Roll(mut Deck deck)\n{\n    deck.top = Random.$\n}\n");
+    TIDE_CHECK(offers(rolls, "NextInt") && offers(rolls, "NextFloat2Direction") && offers(rolls, "seed"));
+    TIDE_CHECK(has(rolls, "The match's seed") && !offers(rolls, "state"));
+    open_document(DECK "system Roll(mut Deck deck)\n{\n    deck.top = Random.Next$Int(6);\n}\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "Random.NextInt(int max) -> int"));
+    open_document(DECK "system Roll(mut Deck deck)\n{\n    deck.top = Random.NextInt($\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Random.NextInt(int min, int max) -> int"));
     const char *time = complete("scene Main { }\nsystem Roll(Time time)\n{\n    var seed = time.$\n}\n");
-    TIDE_CHECK(offers(time, "seed") && offers(time, "tick") && has(time, "The match's seed"));
-    TIDE_CHECK(count(time, "\"label\":\"seed\"") == 1);
-    open_document("singleton Deck { int seed; }\nscene Main { }\nsystem Roll(Time time, mut Deck deck)\n{\n    deck.seed = time.se$ed;\n}\n");
-    const char *seed = request("textDocument/hover");
-    TIDE_CHECK(has(seed, "int seed") && has(seed, "The match's seed"));
-    const char *read = complete("singleton Deck { int seed; }\nscene Main { }\nsystem Roll(Time time, mut Deck deck)\n{\n"
-                                "    deck.seed = time.seed;\n    deck.seed = time.$\n}\n");
-    TIDE_CHECK(count(read, "\"label\":\"seed\"") == 1); // Once, now that it's among Time's fields
+    TIDE_CHECK(!offers(time, "seed") && offers(time, "tick"));
+    open_document(DECK "system Roll(Time time, mut Deck deck)\n{\n    deck.top = time.seed;\n}\n");
+    TIDE_CHECK(has(last_sent(), "the match's seed is 'Random.seed' now"));
 
     // Rolling through a read-only parameter says why it can't
     open_document(DICE "system Roll(Dice dice)\n{\n    dice.random.NextInt(6);\n}\n");

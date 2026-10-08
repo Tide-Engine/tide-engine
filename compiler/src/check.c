@@ -2787,6 +2787,86 @@ static bool check_frame_time_use(checker *c, const loc at)
     return true;
 }
 
+// `Random.NextInt(6)` and `Random.seed`, on the type. A roll steps a generator
+// its code is handed: one made for the entity the match's code runs for, from
+// the match's seed and the tick, or this machine's own in local code. Nothing
+// of the world is written, so no system waits for another over it. The code is
+// a system, a view, a handler, or a function or method they call.
+static bool names_random(const checker *c, const expr *e)
+{
+    decl *other = NULL;
+    return e->kind == E_NAME && str_eq_c(e->name, "Random") && !find_local(c, e->name) && !find_param(c, e->name)
+        && lookup(c->prog, c->unit, e->name, NAME_TYPE, &other) == c->prog->random;
+}
+
+static bool check_random_use(checker *c, const loc at, const bool rolls)
+{
+    const char *what = rolls ? "roll random numbers" : "read Random.seed";
+    if (gpu_refuses(c, at, what, rolls ? "the view rolls what it needs and keeps it in a field the GPU reads"
+                                       : "the view puts what it needs of the seed in a field the GPU reads")) {
+        return false;
+    }
+    if (c->in_input) {
+        diag_error(at, "%s can't %s", input_code(c), what);
+        diag_note("a system rolls for the entity it runs for, and a view for this machine: the input sends what the player did");
+        return false;
+    }
+    decl *code = reading_code(c);
+    const bool routine = code && (code->kind == DECL_FUNCTION || code->kind == DECL_METHOD) && !code->is_operator
+                      && !code->is_interpolate && !code->is_audio;
+    if (!code || (!routine && code->kind != DECL_SYSTEM)) {
+        diag_error(at, rolls ? "Random's rolls are for systems, views and handlers, and the functions and methods they call"
+                             : "Random.seed is read in systems, views and the match's handlers, and the functions and methods they call");
+        if (code && code->is_audio) diag_note("an audio declaration runs on the audio thread: keep a 'Random' in its state, and roll with that");
+        else if (rolls) diag_note("anywhere else, keep a generator of your own: 'mut var random = Random(seed);' and 'random.NextInt(6)'");
+        return false;
+    }
+    if (async_code(c)) {
+        diag_error(at, "a task can't %s yet", what);
+        diag_note(rolls ? "it waits across ticks: keep a 'Random' in a component the task takes as 'mut', and roll with that"
+                        : "read it before the task starts, and pass it in");
+        return false;
+    }
+    if (rolls && c->parallel) {
+        diag_error(at, "a parallel loop's steps run at once, so they can't roll with Random");
+        diag_note("roll before the loop, or get a step's number from its place: 'Math.Hash(int3(at, Random.seed))'");
+        return false;
+    }
+    if (rolls && c->compare) {
+        diag_error(at, "a comparison runs again and again as the list sorts, so it can't roll");
+        diag_note("roll before the sort, and compare what was rolled");
+        return false;
+    }
+    if (!rolls && is_local_code(code) && !code->is_view) {
+        diag_error(at, "%s can't read Random.seed", local_code_what(code));
+        diag_note("the seed is the match's: a view reads it, and a handler of the match's events is sent what it needs of it");
+        return false;
+    }
+    if (rolls) {
+        if (!code->rolls) code->rolls_at = at;
+        code->rolls = true;
+        if (builds(c->prog)) c->prog->random->named = true; // Its functions are tide/random.h's
+    } else {
+        if (!code->reads_seed) code->reads_seed_at = at;
+        code->reads_seed = true;
+        c->prog->uses_seed = true; // The world has it for the code that reads it
+    }
+    return true;
+}
+
+static type check_roll(checker *c, expr *e)
+{
+    for (int i = 0; i < e->args.count; i++) {
+        if (e->args.items[i]->kind != E_DEFAULT) check_expr(c, e->args.items[i]);
+    }
+    if (!check_random_use(c, e->at, true)) return T_ERR;
+    const type result = resolve_builtin_call(str_from("Random"), e);
+    if (result.kind == TY_ERROR) return result;
+    check_default_args(c, e);
+    e->call = CALL_ROLL;
+    return result;
+}
+
 // `devices.keyboard.text`: what was typed since the last frame. It's a
 // frame's, as this frame's Devices are, so views read it, and the functions
 // they call. The input never sends it: Sample runs once per tick, not once per
@@ -5585,6 +5665,8 @@ static type check_method(checker *c, expr *e)
         return check_clipboard_call(c, e);
     }
 
+    if (names_random(c, e->object)) return check_roll(c, e); // Random.NextInt(6): a roll, with no generator of the game's
+
     // Math.Dot(a, b), quaternion.AxisAngle(axis, angle), Draw.Circle(center,
     // radius, color), GUILayout.Button(text)
     if (names_builtin_owner(c, e->object)) {
@@ -6620,6 +6702,19 @@ static type check_local_field(const checker *c, expr *e, field *f, const type ob
 
 static type check_member(checker *c, expr *e)
 {
+    // Random.seed: the match's seed
+    if (names_random(c, e->object)) {
+        if (!str_eq_c(e->member, "seed")) {
+            diag_error(e->at, "Random has no member '" STR_FMT "'", STR_ARG(e->member));
+            diag_note("it has 'seed', the match's seed, and its rolls are called: 'Random.NextInt(6)'");
+            return T_ERR;
+        }
+        if (!check_random_use(c, e->at, false)) return T_ERR;
+        const decl *code = reading_code(c);
+        e->c_constant = code->kind != DECL_SYSTEM ? "tide_match_seed"
+                      : code->is_view ? "(tide_w ? tide_w->Time.seed : 0)" : "tide_w->Time.seed";
+        return T_INT_;
+    }
     // quaternion.identity, Math.PI
     if (names_builtin_owner(c, e->object)) {
         if (str_eq_c(e->object->name, "Application") && !str_eq_c(e->member, "title")
@@ -6924,8 +7019,13 @@ static type check_member(checker *c, expr *e)
                     diag_note("it goes to C as the argument of an extern function's 'in Resident' or 'mut Resident' parameter, and nowhere else");
                     return T_ERR;
                 }
+                if (f == c->prog->seed) { // It was Time's until the rolls were Random's
+                    diag_error(e->at, "the match's seed is 'Random.seed' now");
+                    diag_note("it's read with no parameter: 'Math.Hash(int3(x, y, Random.seed))'");
+                    if (e->object->kind == E_NAME) suggest_replacement(e->object->name, "Random");
+                    return T_ERR;
+                }
                 e->field = f;
-                if (f == c->prog->seed) c->prog->uses_seed = true; // Time.seed: the world has it for the code that reads it
                 if (obj.decl->query_row && e->object->bind == BIND_LOCAL && e->object->local->query) {
                     param *query = e->object->local->query;
                     for (int k = 0; k < query->query.count; k++) {
@@ -7069,8 +7169,8 @@ static type check_name(checker *c, expr *e)
             diag_note("singletons are parameters: '(" STR_FMT " %s)'", STR_ARG(d->name), lower);
         }
         if (d == c->prog->random) { // Random.NextInt(6), as an engine with one generator for everything has it
-            diag_note("a Random is a generator's state, which lives where the game puts it: keep one in a component "
-                      "or a singleton, 'Random random;', and roll with it, 'dice.random.NextInt(6)'");
+            diag_note("its rolls are called, 'Random.NextInt(6)', and 'Random.seed' is the match's seed; a generator of "
+                      "the game's own is a value, 'Random(seed)'");
         }
         return T_ERR;
     }
@@ -8883,7 +8983,7 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
     case CALL_NONE: case CALL_BUILTIN: case CALL_CONSTRUCT: case CALL_TEXT:
         break;
     case CALL_FUNCTION:
-        if (e->method && (e->method->calls_c || e->method->is_async || e->method->draws)) return false;
+        if (e->method && (e->method->calls_c || e->method->is_async || e->method->draws || e->method->rolls)) return false;
         // What it changes, its mut arguments and the value a mut method is called on, is the step's own
         for (int i = 0; e->method && i < e->args.count && i < e->method->params.count; i++) {
             if (e->method->params.items[i].mode == PARAM_MUT && !step_own(e->args.items[i], loop)) return false;
@@ -13162,7 +13262,7 @@ static bool call_acts(const expr *e)
     switch (e->call) {
     case CALL_SPAWN: case CALL_LOAD: case CALL_UNLOAD: case CALL_SCENE_PLAYER: case CALL_SEND: case CALL_ADD:
     case CALL_REMOVE: case CALL_DESTROY: case CALL_GUI: case CALL_ACTION: case CALL_SESSION:
-    case CALL_CLIPBOARD: case CALL_AUDIO: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM:
+    case CALL_CLIPBOARD: case CALL_AUDIO: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM: case CALL_ROLL:
         return true;
     case CALL_DRAW: return e->type.kind == TY_VOID; // Draw.MeasureText and the conversions only give a value
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
@@ -13172,7 +13272,7 @@ static bool call_acts(const expr *e)
     case CALL_METHOD: {
         const decl *m = e->method;
         if (!m) return false;
-        if (m->is_extern || m->calls_c || m->draws || m->is_async || m->is_mut_method || m->takes_action) return true;
+        if (m->is_extern || m->calls_c || m->draws || m->rolls || m->is_async || m->is_mut_method || m->takes_action) return true;
         for (int i = 0; i < m->params.count; i++) {
             if (m->params.items[i].mode == PARAM_MUT) return true; // It changes the caller's variable
         }
@@ -15472,7 +15572,7 @@ static void check_audio_bodies(const checker *c)
         const decl *d = c->prog->decls.items[i];
         if (d->kind != DECL_FUNCTION || !d->is_audio) continue;
         const char *what = d->draws ? "draw or use the GUI" : d->plays ? "play sounds" : d->uses_io ? "reach files or the network"
-                         : d->frame_time ? "read Frame.dt" : (d->world_local || d->world_match) ? "reach the world"
+                         : d->frame_time ? "read Frame.dt" : d->rolls ? "roll with Random" : (d->world_local || d->world_match) ? "reach the world"
                          : d->calls_c ? "call C" : d->is_async ? "be a task" : d->makes_text ? "make text, lists, maps, sets or read grids" : NULL;
         if (!what) continue;
         const loc at = d->draws ? d->draws_at : d->plays ? d->plays_at : d->uses_io ? d->io_at : d->frame_time ? d->frame_time_at
@@ -15508,6 +15608,60 @@ static void check_frame_time_calls(const checker *c)
     for (int i = 0; i < c->prog->decls.count; i++) {
         decl *d = c->prog->decls.items[i];
         if (d->kind == DECL_FUNCTION && d->is_async && d->frame_time) note_side(d, TASK_LOCAL, d->frame_time_at);
+    }
+}
+
+// A function that rolls with Random, or reads Random.seed, is handed what it
+// rolls with or the seed by the code that calls it, so that code does too.
+static void mark_roll_callers(const checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            if (site->to->rolls && !site->from->rolls) {
+                site->from->rolls = true;
+                site->from->rolls_at = site->call->at;
+                changed = true;
+            }
+            if (site->to->reads_seed && !site->from->reads_seed) {
+                site->from->reads_seed = true;
+                site->from->reads_seed_at = site->call->at;
+                changed = true;
+            }
+        }
+    }
+}
+
+static void check_roll_calls(const checker *c)
+{
+    mark_roll_callers(c);
+    for (int i = 0; i < c->calls.count; i++) {
+        const call_site *site = &c->calls.items[i];
+        const decl *to = site->to;
+        const decl *from = site->from;
+        if (!to->rolls && !to->reads_seed) continue;
+        const char *does = to->rolls ? "rolls with Random" : "reads Random.seed";
+        const loc where = to->rolls ? to->rolls_at : to->reads_seed_at;
+        const char *why = NULL;
+        if (from->kind == DECL_INPUT) why = "the input's code can't";
+        else if (from->kind == DECL_SHADER) why = "the GPU can't";
+        else if (from->is_async) why = "a task can't yet";
+        else if (from->is_audio) why = "the audio thread can't";
+        else if (from->is_operator || from->is_interpolate) why = "an operator and an Interpolate can't";
+        else if (from->kind != DECL_FUNCTION && from->kind != DECL_METHOD && from->kind != DECL_SYSTEM) why = "only systems, views, handlers and functions can";
+        else if (to->rolls && site->parallel) why = "a parallel loop's steps run at once, so they can't";
+        else if (to->rolls && site->comparing) why = "a comparison runs again and again as the list sorts, so it can't";
+        else if (!to->rolls && is_local_code(from) && !from->is_view) why = "the seed is the match's, which a view reads";
+        if (!why) continue;
+        diag_error(site->call->at, "'" STR_FMT "' %s, which this code can't", STR_ARG(to->name), does);
+        diag_note_at(where, "it does on line %d, and %s", where.line, why);
+    }
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        const decl *d = c->prog->decls.items[i];
+        if (d->kind != DECL_SYSTEM || !d->rolls) continue;
+        if (is_local_code(d)) c->prog->rolls_local = true;
+        else c->prog->rolls_match = c->prog->uses_seed = true; // Its generator is made from the match's seed
     }
 }
 
@@ -16531,6 +16685,7 @@ bool check(program *prog)
     // Every helper body is known before systems and views are checked. Their
     // filesystem effects must already exclude automatic foreach threading.
     mark_io_callers(&c);
+    mark_roll_callers(&c);
 
     // Overrides of systems, views and handlers take their places before any of
     // their bodies is checked, which needs every one's parameters first. A game
@@ -16569,6 +16724,7 @@ bool check(program *prog)
     for (int i = replaced_before; i < prog->replaced.count; i++) check_replaced(&c, prog->replaced.items[i]);
     check_shared_names(&c, DECL_SYSTEM);
     diag_phase("checking code");
+    check_roll_calls(&c);
     drop_unused_seed(prog);
     if (prog->random->named) order_struct(prog, prog->random);
     check_sends(&c);

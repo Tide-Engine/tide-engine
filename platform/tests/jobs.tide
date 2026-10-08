@@ -158,6 +158,8 @@ system Turn(Time time, mut Wheel wheel)
 {
     for (var i = 0; i < 8; i++)
         wheel.angle = Math.Sin(wheel.angle + time.dt * float(i)) * 3;
+    // A roll is the entity's and the tick's, whichever thread runs it
+    wheel.angle += Random.NextFloat(-0.01, 0.01);
 }
 
 // Changes recorded on every thread: some rocks get a fuse

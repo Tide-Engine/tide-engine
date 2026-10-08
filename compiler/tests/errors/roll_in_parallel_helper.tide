@@ -1,0 +1,12 @@
+// expect: 'Die' rolls with Random, which this code can't
+// expect: it does on line 4, and a parallel loop's steps run at once, so they can't
+singleton Field { Grid2<int> cells = Grid2(8, 8); }
+int Die() { return Random.NextInt(6); }
+scene Main { }
+system Scatter(mut Field field)
+{
+    parallel (var at in field.cells)
+    {
+        field.cells[at] = Die();
+    }
+}

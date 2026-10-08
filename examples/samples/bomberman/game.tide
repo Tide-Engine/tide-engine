@@ -257,7 +257,7 @@ event(PlayerLeft left) Depart(mut Arena arena)
 }
 
 // Once a tick: rounds, bombs and fire.
-system Burn(mut Arena arena, Time time)
+system Burn(mut Arena arena)
 {
     if (arena.pause > 0)
     {
@@ -288,7 +288,7 @@ system Burn(mut Arena arena, Time time)
                         var home = Home(seat);
                         if (Math.Abs(home.x - x) + Math.Abs(home.y - y) <= ROOM) clear = true;
                     }
-                    if (!clear && Math.Hash(int3(x, y, time.seed + arena.round * 131)) % 100 < 80) tile = Tile.Crate;
+                    if (!clear && Math.Hash(int3(x, y, Random.seed + arena.round * 131)) % 100 < 80) tile = Tile.Crate;
                 }
                 arena.tiles[x, y] = tile;
                 arena.loot[x, y] = Loot.None;

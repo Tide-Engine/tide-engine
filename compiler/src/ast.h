@@ -600,6 +600,10 @@ typedef struct decl {
     bool uses_fetch;      // Awaits Web.Fetch itself: its task's frame keeps the fetch's ticket
     bool frame_time;      // Reads Frame.dt, directly or through helpers: this machine's local state has it
     loc frame_time_at;
+    bool rolls;           // Rolls with Random.NextInt and the like, directly or through helpers: it's handed a generator
+    loc rolls_at;
+    bool reads_seed;      // Reads Random.seed, directly or through helpers: a function is handed the match's seed
+    loc reads_seed_at;
     bool frame_devices;  // ...and whether that's reading this frame's Devices, not drawing
     bool frame_cursor;   // ...or using its cursor: Cursor.Lock and Cursor.locked
     bool takes_action;   // A function whose last parameter is an Action: inlined where it's called
@@ -746,6 +750,7 @@ typedef enum builtin_call {
     CALL_NEW_GRID,  // Grid2(1024, 1024) or Grid3(...): a grid with that size (0: open), whose type comes from where it goes
     CALL_DISCARD,   // this.Discard(), in a frag: the pixel isn't drawn
     CALL_RANDOM,    // random.NextInt(6), a Random's methods: calls c_callee with the generator's address first
+    CALL_ROLL,      // Random.NextInt(6), on the type: calls c_callee with the generator its code was handed
 } builtin_call;
 
 // What a GUI call needs besides its arguments, and which form of a draw
@@ -1196,6 +1201,9 @@ typedef struct program {
     // or a Random in the match's state, which the engine seeds from it.
     field *seed;
     bool uses_seed;
+    // Random.NextInt(6) and the like, on the type: whether the match's code rolls so, and local code
+    bool rolls_match;
+    bool rolls_local;
     // Application.title is read: generated C has the game's title as text
     // (its title setting, or the program's name), and no other game's does.
     bool uses_title;
