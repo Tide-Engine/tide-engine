@@ -1010,6 +1010,63 @@ static void run_cube_checks(const float lit, const char *when)
     if (runs != 12) failures++;
 }
 
+// Lists (pass 18, `ListReads` and `ListOwners` in shaders.tide): frags and a
+// vert read lists by an element, a count and foreach. Squares of 8 pixels, 16
+// apart. `turn` is what the first color's green is that frame.
+static void run_list_checks(const float turn, const char *when)
+{
+    const struct {
+        float x, y;
+        int want[3];
+        const char *what;
+    } wanted[] = {
+        {8, 8, {128, 128, 128}, "an element before a list's start is nothing"},
+        {24, 8, {255, (int)(turn * 255.0f), 0}, "a list's first element, as the view left it this frame"},
+        {40, 8, {0, 255, 0}, "its second"},
+        {56, 8, {0, 0, 255}, "its third"},
+        {72, 8, {255, 255, 0}, "its last"},
+        {88, 8, {128, 128, 128}, "an element past a list's end is nothing"},
+        {8, 24, {128, 64, 128}, "how many each list has, an empty one's none"},
+        {24, 24, {128, 128, 64}, "a foreach over structs of three pixels each, with a switch on an enum"},
+        {40, 24, {196, 197, 0}, "a list of floats longer than two rows of its texture"},
+        {56, 24, {85, 64, 255}, "an element that's across two rows of its list's texture"},
+        {72, 24, {187, 64, 255}, "a list's last element, in its third row"},
+        {88, 24, {128, 128, 128}, "a vert that reads a list moved its square away"},
+        {88, 40, {255, 255, 255}, "to where the list's element says"},
+        {8, 40, {255, 0, 0}, "an entity's own list"},
+        {24, 40, {0, 0, 255}, "another entity's, in the same frame"},
+        {8, 56, {0, 0, 255}, "a list the draw gives, made along the way"},
+        {24, 56, {0, 255, 0}, "another draw's, of the same frag"},
+        {40, 56, {128, 128, 128}, "a draw that gives no list reads nothing"},
+        {8, 72, {128, 191, 128}, "an array's elements, by a place the draw gives, and how many another has"},
+        {24, 72, {255, 0, 128}, "an array's last element, and nothing past it"},
+        {40, 72, {207, 191, 64}, "a copy of an array written at places inside it and past its ends, and arrays through foreach and a function"},
+        {56, 72, {255, 128, 64}, "an array that's in each element of a list"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    local.Art.targetPass = 18;
+    local.Tables.turn = turn;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    tide_float2 points[COUNT];
+    uint32_t got[COUNT];
+    for (int i = 0; i < COUNT; i++) points[i] = tide_f2(wanted[i].x + 4.5f, wanted[i].y + 4.5f);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
+    for (int i = 0; i < COUNT; i++) {
+        bool ok = true;
+        for (int k = 0; k < 3; k++) {
+            const int d = (int)(got[i] >> (24 - 8 * k) & 0xFFu) - wanted[i].want[k];
+            ok = ok && d >= -3 && d <= 3;
+        }
+        printf("%s: %s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, when, (unsigned)got[i],
+               (unsigned)wanted[i].want[0], (unsigned)wanted[i].want[1], (unsigned)wanted[i].want[2]);
+        if (!ok) failures++;
+    }
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -1041,6 +1098,7 @@ static int frame(void *user, const float seconds)
         run_alpha_checks(", on another device");
         run_raw_checks(", on another device");
         run_cube_checks(2, ", on another device");
+        run_list_checks(0, ", on another device");
         return failures;
     }
 #endif
@@ -1069,6 +1127,10 @@ static int frame(void *user, const float seconds)
     run_cube_checks(2, "");
     run_cube_checks(2, ", again");
     run_cube_checks(6, ", with other pixels drawn into the cube");
+    run_list_checks(0, "");
+    run_list_checks(0, ", again");
+    run_list_checks(1, ", with another element written");
+    run_list_checks(0, ", and written back");
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");
