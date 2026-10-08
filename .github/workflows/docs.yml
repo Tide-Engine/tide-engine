@@ -1,11 +1,19 @@
 # Builds the docs site (docs/, SvelteKit), with its playable web examples, and
-# deploys it to Fly.io (docs/fly.toml) when run manually on dev. Other refs only
+# deploys it to Fly.io (docs/fly.toml) when it runs on dev. Other refs only
 # build it, which also checks its links. It tests the editors' grammar first,
 # through the Shiki the site highlights Tide with.
+#
+# Every run of the Build workflow runs it (build.yml's Docs job), so one
+# request does both. It still runs alone when asked to, for a change to the
+# docs only: gh workflow run docs.yml --ref dev.
 name: Docs
 
 on:
   workflow_dispatch:
+  workflow_call:
+    secrets:
+      FLY_API_TOKEN:
+        required: false
 
 permissions:
   contents: read
@@ -13,9 +21,11 @@ permissions:
 env:
   TIDE_HIDDEN: '1'
 
+# One at a time for a ref, whichever workflow asked: a request made while the
+# site deploys waits for it, and never stops a job of a release's run.
 concurrency:
   group: docs-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -80,9 +90,9 @@ jobs:
       # The image takes what the build made (docs/Dockerfile). The token is
       # a deploy token for the app: fly tokens create deploy -a tide-website
       - uses: superfly/flyctl-actions/setup-flyctl@master
-        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'
+        if: github.ref == 'refs/heads/dev'
       - name: Deploy
-        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev'
+        if: github.ref == 'refs/heads/dev'
         working-directory: docs
         run: flyctl deploy --remote-only --ha=false
         env:
