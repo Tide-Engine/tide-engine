@@ -54,6 +54,13 @@ singleton Log
     int counted;
     int picked;
     int later;
+    int listedOut;
+    int namedListedOut;
+    int nestedListedOut;
+    int arrayListedOut;
+    int setListedOut;
+    int contextualList;
+    int listCalls;
 }
 
 // A default is a constant, like a field's: a literal, a constant, an enum's
@@ -149,6 +156,28 @@ int Kind(int value) { return 1; }
 int Kind(float value) { return 2; }
 int Kind(long value) { return 3; }
 
+int MakeListItem(mut int calls, out int made)
+{
+    calls += 1;
+    made = calls * 10;
+    return calls;
+}
+
+// A list waits for the selected overload's type, but its calls declare their
+// out locals before later elements and arguments are checked.
+int ListOut(List<int> values, int made) { return values[0] * 100 + values[1] * 10 + made; }
+int ListOut(float values, float made) { return int(values + made); }
+int NamedListOut(int made, List<int> values) { return ListOut(values, made); }
+int NamedListOut(float made, float values) { return int(values + made); }
+int NestedListOut(List<List<int>> values, int made) { return ListOut(values[0], made) + values[1][0]; }
+int NestedListOut(float values, float made) { return int(values + made); }
+int ArrayOut(int[2] values, int made) { return values[0] * 100 + values[1] * 10 + made; }
+int ArrayOut(float values, float made) { return int(values + made); }
+int SetOut(Set<int> values, int made) { return values.Has(made) ? values.count * 100 + made : -1; }
+int SetOut(float values, float made) { return int(values + made); }
+int ByteList(List<byte> values, int made) { return values[0] * 100 + values[1] * 10 + made; }
+int ByteList(float values, float made) { return int(values + made); }
+
 // Two systems of one name. Where nothing calls, as in [Before] and [After], a
 // shared name is written with its parameters' types.
 system Move(mut Position position, Velocity velocity, with Player)
@@ -200,6 +229,17 @@ system Run(mut Log log)
     byte b = 3;
     log.byte_or_float = Kind(b);
     log.exact = Kind(1) * 100 + Kind(1.5) * 10 + Kind(1L);
+
+    mut int listCalls = 0;
+    log.listedOut = ListOut([MakeListItem(listCalls, out var first), first], first);
+    // Written order also applies when the list goes to the second parameter.
+    log.namedListedOut = NamedListOut(values: [MakeListItem(listCalls, out int named), named], made: named);
+    log.nestedListedOut = NestedListOut([[MakeListItem(listCalls, out var nested), nested], [nested]], nested);
+    log.arrayListedOut = ArrayOut([MakeListItem(listCalls, out var array), array], array);
+    log.setListedOut = SetOut([MakeListItem(listCalls, out var set), set], set);
+    // Deferred contextual values and constant-to-byte conversion still apply.
+    log.contextualList = ByteList([default, 255], first);
+    log.listCalls = listCalls;
 
     log.blocks = 0;
     Repeat()
