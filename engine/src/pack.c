@@ -309,9 +309,9 @@ uint32_t tide_pack_list(tide_pack_builder *b, const uint32_t *offsets, const uin
     return at;
 }
 
-// An entry of a map from text, as generated code lays it out: live, the key, the value.
+// An entry of a map from text, as generated code lays it out: order, the key, the value.
 typedef struct text_entry {
-    uint32_t live;
+    int64_t live;
     uint32_t key;
     uint32_t value;
 } text_entry;
@@ -343,14 +343,14 @@ uint32_t tide_pack_map(tide_pack_builder *b, const uint32_t *keys, const uint32_
     h->a = count;
     h->b = count;
     text_entry *entries = (text_entry *)(void *)(h + 1);
-    for (uint32_t i = 0; i < count; i++) entries[i] = (text_entry){1u, tagged(keys[i]), tagged(values[i])};
+    for (uint32_t i = 0; i < count; i++) entries[i] = (text_entry){(int64_t)i + 1, tagged(keys[i]), tagged(values[i])};
     *index = text_index(b, keys, count);
     return at;
 }
 
-// An entry of a map from text to meshes, as generated code lays it out: live, the key, the mesh.
+// An entry of a map from text to meshes, as generated code lays it out: order, the key, the mesh.
 typedef struct mesh_entry {
-    uint32_t live;
+    int64_t live;
     uint32_t key;
     tide_mesh_lists value;
 } mesh_entry;
@@ -363,16 +363,22 @@ uint32_t tide_pack_mesh_map(tide_pack_builder *b, const uint32_t *keys, const ui
     h->b = count;
     mesh_entry *entries = (mesh_entry *)(void *)(h + 1);
     for (uint32_t i = 0; i < count; i++) {
-        entries[i] = (mesh_entry){1u, tagged(keys[i]), {{tagged(offsets[2u * i])}, {tagged(offsets[2u * i + 1u])}}};
+        entries[i].live = (int64_t)i + 1;
+        entries[i].key = tagged(keys[i]);
+        entries[i].value = (tide_mesh_lists){{tagged(offsets[2u * i])}, {tagged(offsets[2u * i + 1u])}};
     }
     *index = text_index(b, keys, count);
     return at;
 }
 
 typedef struct skinned_entry {
-    uint32_t live, key;
+    int64_t live;
+    uint32_t key;
     tide_skinned_lists value;
 } skinned_entry;
+
+_Static_assert(sizeof(skinned_entry) == 24u && offsetof(skinned_entry, key) == 8u && offsetof(skinned_entry, value) == 12u,
+               "packed skinned map entries must match the generated map layout");
 
 uint32_t tide_pack_skinned_map(tide_pack_builder *b, const uint32_t *keys, const uint32_t *offsets, const uint32_t count,
                               uint32_t *index)
@@ -385,7 +391,7 @@ uint32_t tide_pack_skinned_map(tide_pack_builder *b, const uint32_t *keys, const
     h->b = count;
     skinned_entry *entries = (skinned_entry *)(void *)(h + 1);
     for (uint32_t i = 0; i < count; i++) {
-        entries[i] = (skinned_entry){1u, tagged(keys[i]), {{tagged(offsets[3u * i])}, {tagged(offsets[3u * i + 1u])},
+        entries[i] = (skinned_entry){(int64_t)i + 1, tagged(keys[i]), {{tagged(offsets[3u * i])}, {tagged(offsets[3u * i + 1u])},
                                                         {tagged(offsets[3u * i + 2u])}}};
     }
     *index = text_index(b, keys, count);

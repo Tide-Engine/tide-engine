@@ -139,13 +139,23 @@ typedef struct physics {
     tide_map owners;
     tide_map parts;
     tide_map sensors;
-    uint8_t unused3[4];
 } physics;
 
 _Static_assert(sizeof(body) == 96 && offsetof(body, sleep_speed) == 60 && offsetof(body, fixed_rotation) == 88 && sizeof(box) == 32
                    && sizeof(circle) == 28 && sizeof(touch) == 40 && sizeof(blow) == 56 && sizeof(met) == 40
-                   && sizeof(physics) == 120 && offsetof(physics, moved) == 60,
+                   && sizeof(physics) == 152 && offsetof(physics, moved) == 60,
                "box2d.tide's types changed: these are theirs");
+
+_Static_assert(offsetof(physics, gravity) == 0 && offsetof(physics, substeps) == 8
+                   && offsetof(physics, contact_stiffness) == 12 && offsetof(physics, contact_damping) == 16
+                   && offsetof(physics, contact_speed) == 20 && offsetof(physics, bounce_speed) == 24
+                   && offsetof(physics, hit_speed) == 28 && offsetof(physics, sleeping) == 32
+                   && offsetof(physics, bodies) == 36 && offsetof(physics, shapes) == 40
+                   && offsetof(physics, stamp) == 48 && offsetof(physics, size) == 56
+                   && offsetof(physics, moved) == 60 && offsetof(physics, dropped) == 64
+                   && offsetof(physics, image) == 68 && offsetof(physics, gone) == 72 && offsetof(physics, shed) == 76
+                   && offsetof(physics, owners) == 80 && offsetof(physics, parts) == 104 && offsetof(physics, sensors) == 128,
+               "Physics's fields aren't where box2d.tide lays them out any more");
 
 // A body's four bools are side by side in its component: one field of four
 // bytes to the systems written in C (tide/rows.h), which read whether it's

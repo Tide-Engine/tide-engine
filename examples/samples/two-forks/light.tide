@@ -97,9 +97,7 @@ local singleton Room
     float time;
     float gas = 1;        // How lit the gas grills are, from 0 to 1
     float heat = 1;       // How hot the coals look: they flare when something lands on them
-    float4x4 toClip = float4x4.identity;    // From the world to the frame, and back:
-    float4x4 fromClip = float4x4.identity;  // what moves a corner onto a pixel
-    float2 grid = float2(240, 135);         // Half the frame's pixels, each way
+    float2 grid = float2(240, 135);         // Half the frame's pixels, each way: what moves a corner onto one
 }
 
 // Where the land is, as an image the sea's frag reads: 1 on a tile, 0 out at
@@ -280,15 +278,14 @@ float2 TexelOf(float3 world, float3 normal, float2 grain)
 
 // A corner is moved onto the nearest of the frame's pixels, as it would have
 // been by a console that kept no fractions of one: what moves wobbles a
-// little as it goes.
-vert Snap(mut Corner corner, Instance instance, Room room)
+// little as it goes. `this.clip` is where the engine would put the corner,
+// and `clip` where it goes.
+vert Snap(mut Corner corner, out float4 clip, Room room)
 {
-    float3 world = Math.Transform(instance.transform, corner.position);
-    float4 clip = Math.Mul(room.toClip, float4(world, 1));
-    float depth = Math.Max(clip.w, 0.0001);
-    float2 seen = float2(Math.Floor(clip.x / depth * room.grid.x + 0.5) / room.grid.x, Math.Floor(clip.y / depth * room.grid.y + 0.5) / room.grid.y);
-    float4 moved = Math.Mul(room.fromClip, float4(seen.x * depth, seen.y * depth, clip.z, clip.w));
-    corner.position = Math.Transform(Math.Inverse(instance.transform), float3(moved.x, moved.y, moved.z) / moved.w);
+    float4 at = this.clip;
+    float depth = Math.Max(at.w, 0.0001);
+    float2 seen = Math.Floor(at.xy / depth * room.grid + float2(0.5)) / room.grid;
+    clip = float4(seen * depth, at.z, at.w);
 }
 
 // Everything that stands still, which is one mesh: each corner has its own

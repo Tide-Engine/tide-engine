@@ -40,6 +40,23 @@ frag SkinColor(SkinCorner corner, out Color color)
     color = corner.color;
 }
 
+struct SkinPlacement { float posed; }
+
+vert SkinPlaced(mut Vertex3 corner, out SkinPlacement info, out float4 clip)
+{
+    corner.position += float3(8, 0, 0);
+    info.posed = corner.position.x;
+    clip = this.clip;
+    // This affects this.world, while the explicit clip position stays where it was captured.
+    corner.position += float3(64, 0, 0);
+}
+
+frag SkinPlacedColor(Vertex3 corner, SkinPlacement info, out Color color)
+{
+    color = info.posed > 24 && info.posed < 40 && this.world.x > 44 && this.world.x < 60
+          ? Color.cyan : Color.red;
+}
+
 frag SkinShadow(Vertex3 corner, out Color color, SkinView state)
 {
     float depth = state.depth.Sample(float2(this.position.x / 128, this.position.y / 128));
@@ -70,5 +87,6 @@ view Skins(mut SkinView state)
         // Later independent poses of the same asset cannot overwrite earlier palette captures.
         Draw.SkinnedMesh(model, Place(84, 52), rest);
         Draw.SkinnedMesh(model, Place(84, 84), moving);
+        Draw.SkinnedMesh(model, Place(20, 116), moving, SkinPlaced, SkinPlacedColor);
     }
 }

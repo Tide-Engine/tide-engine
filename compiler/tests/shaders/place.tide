@@ -1,0 +1,108 @@
+// What tidec writes for a vert that puts its vertex itself: an `out float4`
+// of the vert's, where the vertex goes in clip space, which the stage's own
+// code uses in the place of the transform and the camera. The vert's function
+// takes it as it takes its vertex (inout, or a pointer in WGSL), among the
+// structs it writes for its frag, in the order it takes them. `this.clip` is
+// where the engine would put the vertex as the vert has it at that line: the
+// camera times the instance's transform times its position, and for a 2D
+// mesh the camera alone. A vert that only reads it is placed by the engine.
+// The engine's own placing stays where the frag reads `this.world`.
+
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+struct Flat
+{
+    float2 position;
+    float2 uv;
+}
+
+struct FromLamp
+{
+    float3 place;
+}
+
+struct Seen
+{
+    float near;
+}
+
+struct Rock
+{
+    float4x4 transform;
+    float lift;
+}
+
+local singleton Lens
+{
+    float2 size = float2(480, 270);
+}
+
+local singleton Models
+{
+    List<Corner> ball;
+    List<int> faces;
+    List<Flat> card;
+    List<Rock> rocks;
+}
+
+// Onto the nearest pixel of a frame: read where the engine would put it, write where it goes
+vert Snap(mut Corner corner, out float4 clip, Lens lens)
+{
+    float4 at = this.clip;
+    float2 half = lens.size * 0.5;
+    clip = float4(Math.Round(at.xy / at.w * half) / half * at.w, at.z, at.w);
+}
+
+// Its place before the struct for its frag, after a change to the vertex, and written a part at a time
+vert Far(mut Corner corner, out float4 clip, out FromLamp lamp)
+{
+    corner.position.y += 1;
+    lamp.place = corner.position;
+    clip = this.clip;
+    clip.z = clip.w;
+}
+
+frag Look(Corner corner, FromLamp lamp, out Color color)
+{
+    color = Color(lamp.place.x, this.world.y, 0, 1);
+}
+
+// Only read: the engine places it
+vert Depths(mut Corner corner, out Seen seen)
+{
+    seen.near = this.clip.z / this.clip.w;
+}
+
+frag Shown(Corner corner, Seen seen, out Color color)
+{
+    color = Color(seen.near, seen.near, seen.near, 1);
+}
+
+// An instance's struct beside it
+vert Lifted(mut Corner corner, out float4 clip, Rock rock)
+{
+    clip = this.clip;
+    clip.y += rock.lift * clip.w;
+}
+
+// A 2D mesh: no transform of its own
+vert Card(mut Flat flat, out float4 clip)
+{
+    clip = this.clip;
+    clip.xy += float2(0.5, 0);
+}
+
+view Show(Models models)
+{
+    Draw.Mesh(models.ball, models.faces, float4x4.identity, Snap);
+    Draw.Mesh(models.ball, models.faces, float4x4.identity, Far, Look);
+    Draw.Mesh(models.ball, models.faces, float4x4.identity, Depths, Shown);
+    Draw.Instanced(models.ball, models.faces, models.rocks, Lifted);
+    Draw.Mesh(models.card, models.faces, Card);
+}

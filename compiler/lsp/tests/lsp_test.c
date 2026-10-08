@@ -1448,8 +1448,10 @@ TIDE_TEST(lsp_shaders_complete)
 #undef IN_FRAG
     const char *instance = complete(SHADER_TYPES "vert Wave(mut BoxVertex vertex, Instance instance)\n{\n    var m = instance.$\n}\n");
     TIDE_CHECK(offers(instance, "transform") && !offers(instance, "Discard"));
-    TIDE_CHECK(!offers(complete(SHADER_TYPES "vert Wave(mut BoxVertex vertex)\n{\n    $\n}\n"), "this"));
-    TIDE_CHECK(!offers(complete(SHADER_TYPES "vert Wave(mut BoxVertex vertex)\n{\n    this.$\n}\n"), "Discard"));
+    // A vert's `this` is its vertex as it's placed: `clip`, and none of a pixel's
+    TIDE_CHECK(offers(complete(SHADER_TYPES "vert Wave(mut BoxVertex vertex)\n{\n    $\n}\n"), "this"));
+    const char *placed = complete(SHADER_TYPES "vert Wave(mut BoxVertex vertex)\n{\n    this.$\n}\n");
+    TIDE_CHECK(offers(placed, "clip") && !offers(placed, "Discard") && !offers(placed, "position"));
     TIDE_CHECK(!offers(complete(SHADER_TYPES "void Helper()\n{\n    this.$\n}\n"), "Discard"));
     // Outside a frag or vert, a grid has its own methods, and no Sample
     const char *cells = complete(SHADER_TYPES "view V(mut Models models)\n{\n    models.wood.$\n}\n");
@@ -4210,7 +4212,7 @@ TIDE_TEST(lsp_shader_this)
                   "    this.depth = 0.5;\n    color = Color.white;\n}\n");
     TIDE_CHECK(has(last_sent(), "a frag's pixel can only be read"));
     open_document("scene Main { }\nvert Place(mut Vertex3 vertex)\n{\n    this.Discard();\n}\n");
-    TIDE_CHECK(has(last_sent(), "a vert runs for a vertex, so it has no pixel 'this'"));
+    TIDE_CHECK(has(last_sent(), "a vert's 'this' has no methods: 'this.clip' is where the engine would put its vertex"));
     open_document("scene Main { }\nvoid Helper()\n{\n    this.Discard();\n}\n");
     TIDE_CHECK(has(last_sent(), "functions don't run for an entity, so they have no 'this'"));
 }
@@ -4338,6 +4340,90 @@ TIDE_TEST(lsp_shader_outputs)
     TIDE_CHECK(offers(named, "Place") && offers(named, "Look"));
 #undef OUTPUTS
 #undef OUTPUT_TYPES
+}
+
+// A vert that puts its vertex itself: `out float4`, and `this.clip`, where
+// the engine would put it. The spelling as a change, a path that writes
+// nothing and a read before the write as `clip = this.clip;`, the hovers, and
+// what's offered after `this.` and after `out`.
+TIDE_TEST(lsp_vert_place)
+{
+    start();
+#define PLACE_TYPES                                                                                                   \
+    "scene Main { }\n"                                                                                                \
+    "struct Corner { float3 position; float2 uv; }\n"                                                                 \
+    "local singleton Lens { float2 size = float2(480, 270); }\n"                                                      \
+    "local singleton Models { List<Corner> crate; List<int> faces; }\n"
+    // `mut float4 clip`: the word changes
+    static const char old[] = PLACE_TYPES "vert Snap(mut Corner corner, mut float4 clip)\n{\n    clip = this.clip;\n}\n";
+    open_document(old);
+    TIDE_CHECK(has(last_sent(), "where a vert puts its vertex is an 'out' parameter: 'out float4 clip'"));
+    actions_at(4);
+    const char *respelled = apply_fix(old, "Change to 'out'");
+    TIDE_REQUIRE(respelled != NULL);
+    TIDE_CHECK(has(respelled, "vert Snap(mut Corner corner, out float4 clip)\n"));
+    open_document(respelled);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    // A path that writes no place: where the engine would have put it
+    static const char unwritten[] = PLACE_TYPES "vert Snap(mut Corner corner, out float4 clip)\n{\n"
+                                                "    if (corner.uv.x > 0.5) clip = float4(0, 0, 0, 1);\n}\n";
+    open_document(unwritten);
+    TIDE_CHECK(has(last_sent(), "vert 'Snap' can end without writing where its vertex goes, 'clip'"));
+    TIDE_CHECK(has(actions_at(4), "\"title\":\"Write 'clip = this.clip;'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+    const char *left = apply_fix(unwritten, "Write 'clip = this.clip;'");
+    TIDE_REQUIRE(left != NULL);
+    TIDE_CHECK(has(left, "    if (corner.uv.x > 0.5) clip = float4(0, 0, 0, 1);\n    clip = this.clip;\n}\n"));
+    open_document(left);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    // Read before it's written: the engine's place first, and no `mut` to take it as
+    static const char early[] = PLACE_TYPES "vert Snap(mut Corner corner, out float4 clip)\n{\n    clip.z = clip.w;\n}\n";
+    open_document(early);
+    TIDE_CHECK(has(last_sent(), "'clip' is read before it's written"));
+    const char *reads = actions_at(6);
+    TIDE_CHECK(has(reads, "Write 'clip = this.clip;' first") && !has(reads, "as 'mut'"));
+    const char *started = apply_fix(early, "Write 'clip = this.clip;' first");
+    TIDE_REQUIRE(started != NULL);
+    TIDE_CHECK(has(started, "{\n    clip = this.clip;\n    clip.z = clip.w;\n}\n"));
+    open_document(started);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    // Hovers: the place, `this` and its field
+    static const char whole[] = PLACE_TYPES "vert Snap(mut Corner corner, out float4 clip, Lens lens)\n{\n"
+                                            "    float2 half = lens.size * 0.5;\n"
+                                            "    clip = this.clip;\n"
+                                            "    clip.xy = Math.Round(clip.xy / clip.w * half) / half * clip.w;\n}\n"
+                                            "view Show(Models models)\n{\n"
+                                            "    Draw.Mesh(models.crate, models.faces, float4x4.identity, Snap);\n}\n";
+    open_document(whole);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(hover_at(4, 6), "It puts its vertex itself, where it writes `clip`"));
+    const char *place = hover_at(4, 40);
+    TIDE_CHECK(has(place, "out float4 clip") && has(place, "Where the vert puts its vertex, in clip space"));
+    TIDE_CHECK(has(place, "`clip = this.clip;` leaves it there"));
+    const char *self = hover_at(7, 12);
+    TIDE_CHECK(has(self, "The vertex `Snap` runs for") && has(self, "Its one read-only field is `clip`"));
+    const char *field = hover_at(7, 17);
+    TIDE_CHECK(has(field, "Where the engine would put the vertex, in clip space"));
+    // After `this.`, its one field, and nothing of a frag's pixel
+    const char *fields = complete(PLACE_TYPES "vert Snap(mut Corner corner, out float4 clip)\n{\n    clip = this.$\n}\n");
+    TIDE_CHECK(offers(fields, "clip") && !offers(fields, "Discard") && !offers(fields, "depth") && !offers(fields, "world"));
+    const char *names = complete(PLACE_TYPES "vert Snap(mut Corner corner, out float4 clip)\n{\n    clip = $\n}\n");
+    TIDE_CHECK(offers(names, "this"));
+    // After a vert's `out`: where it goes, once, and the structs it can hand its frag
+    const char *written = complete(PLACE_TYPES "vert Snap(mut Corner corner, out $)\n{\n}\n");
+    TIDE_CHECK(offers(written, "float4") && offers(written, "Corner"));
+    const char *again = complete(PLACE_TYPES "vert Snap(mut Corner corner, out float4 clip, out $)\n{\n}\n");
+    TIDE_CHECK(!offers(again, "float4") && offers(again, "Corner"));
+    const char *colors = complete(PLACE_TYPES "frag Shade(Corner corner, out $)\n{\n}\n");
+    TIDE_CHECK(offers(colors, "Color") && !offers(colors, "float4"));
+
+    // What a vert's `this` hasn't got says what it has
+    open_document(PLACE_TYPES "vert Snap(mut Corner corner)\n{\n    corner.position.x = this.world.x;\n}\n");
+    TIDE_CHECK(has(last_sent(), "a vert's 'this' has no 'world': it has 'clip', where the engine would put its vertex"));
+    open_document(PLACE_TYPES "vert Snap(mut Corner corner)\n{\n    this.clip.z = 1;\n}\n");
+    TIDE_CHECK(has(last_sent(), "where the engine would put a vert's vertex can only be read"));
+#undef PLACE_TYPES
 }
 
 // A local nothing reads: a warning that editors fade, with a fix that removes
@@ -8276,6 +8362,90 @@ static const char *sent_with(const char *needle)
 {
     const int i = sent_for(needle);
     return i >= 0 ? sent[i] : NULL;
+}
+
+// Closing a dependency discards its unsaved text. Its remaining consumers
+// get disk-based diagnostics again, without refreshing unrelated games or
+// reviving diagnostics for the document whose editor tab just closed.
+TIDE_TEST(lsp_close_refreshes_dependent_diagnostics)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_close");
+    make_folder("lsp_close/a");
+    make_folder("lsp_close/b");
+    static const char body[] = "singleton Body { int value; }\n";
+    static const char changed[] = "singleton Changed { int value; }\n";
+    static const char main[] = "scene Main { }\nsystem Tick(mut Body body) { body.value += 1; }\n";
+    write_file("lsp_close/a/body.tide", body);
+    write_file("lsp_close/a/main.tide", main);
+    write_file("lsp_close/b/main.tide", "scene Main { }\n");
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    char root_a[700], root_b[700], uri_main[700], uri_body[700], uri_encoded[700], uri_other[700];
+    snprintf(root_a, sizeof root_a, "file:///%s/lsp_close/a", dir);
+    snprintf(root_b, sizeof root_b, "file:///%s/lsp_close/b", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_close/a/main.tide", dir);
+    snprintf(uri_body, sizeof uri_body, "file:///%s/lsp_close/a/body.tide", dir);
+    snprintf(uri_encoded, sizeof uri_encoded, "file:///%s/lsp_close/a/body%%2Etide", dir);
+    snprintf(uri_other, sizeof uri_other, "file:///%s/lsp_close/b/main.tide", dir);
+    for (int deferred = 0; deferred < 2; deferred++) {
+        const char *closed = deferred ? uri_encoded : uri_body;
+        start_in_pair_with(root_a, root_b, "{}");
+        open_uri(uri_main, main);
+        TIDE_CHECK(has(sent_with(uri_main), "\"diagnostics\":[]"));
+        open_uri(uri_other, "scene Main { }\n");
+        open_uri(closed, body);
+        open_uri(closed, changed); // A second open updates the same buffer
+        TIDE_CHECK(server.doc_count == 3);
+        TIDE_CHECK(has(sent_with(uri_main), "unknown component or singleton 'Body'"));
+        server.defer = deferred != 0;
+        close_uri(closed);
+        if (deferred) {
+            TIDE_CHECK(sent_count == 1 && has(sent[0], closed) && has(sent[0], "\"diagnostics\":[]"));
+            TIDE_CHECK(server.unsettled_count == 2); // Consumer plus closed-file marker
+            lsp_settle(&server);
+        }
+        TIDE_CHECK(server.doc_count == 2 && server.unsettled_count == 0 && sent_count == 2);
+        TIDE_REQUIRE(sent_with(uri_main) != NULL);
+        TIDE_CHECK(has(sent_with(uri_main), "\"diagnostics\":[]"));
+        TIDE_CHECK(sent_with(uri_other) == NULL);
+        TIDE_CHECK(has(sent[0], closed) && has(sent[0], "\"diagnostics\":[]"));
+        TIDE_CHECK(has(request_at(uri_main, "textDocument/hover", 1, 16, ""), "singleton Body"));
+        const unsigned changes = server.changes;
+        close_uri(closed); // Duplicate closes don't reanalyse other files
+        TIDE_CHECK(server.changes == changes && sent_count == 1 && has(sent[0], "\"diagnostics\":[]"));
+        lsp_settle(&server);
+        TIDE_CHECK(sent_count == 1);
+    }
+    // Disk errors in the closed file mustn't resurrect its diagnostics.
+    write_file("lsp_close/a/body.tide", "singleton Body { int value = missing; }\n");
+    start_in_pair_with(root_a, root_b, "{}");
+    open_uri(uri_main, main);
+    open_uri(uri_body, body); // The unsaved buffer fixes the disk error
+    close_uri(uri_body);
+    TIDE_CHECK(sent_count == 2 && has(sent[0], uri_body) && has(sent[0], "\"diagnostics\":[]"));
+    TIDE_REQUIRE(sent_with(uri_main) != NULL);
+    TIDE_CHECK(has(sent_with(uri_main), "\"diagnostics\":[]"));
+    TIDE_CHECK(!has(sent[1], "missing") && !has(sent[1], uri_body));
+    // Another spelling of the file's URI can still have an open buffer.
+    write_file("lsp_close/a/body.tide", body);
+    open_uri(uri_body, body);
+    open_uri(uri_encoded, changed);
+    close_uri(uri_body);
+    TIDE_CHECK(server.doc_count == 2 && sent_count == 3);
+    TIDE_REQUIRE(sent_with(uri_main) != NULL && sent_with(uri_encoded) != NULL);
+    TIDE_CHECK(has(sent_with(uri_main), "unknown component or singleton 'Body'"));
+    TIDE_CHECK(has(sent_with(uri_encoded), "\"diagnostics\":[]"));
+    close_uri(uri_encoded);
+    TIDE_REQUIRE(sent_with(uri_main) != NULL);
+    TIDE_CHECK(has(sent_with(uri_main), "\"diagnostics\":[]"));
+    remove_game_file("lsp_close/a/body.tide");
+    remove_game_file("lsp_close/a/main.tide");
+    remove_game_file("lsp_close/b/main.tide");
+    remove_folder("lsp_close/a");
+    remove_folder("lsp_close/b");
+    remove_folder("lsp_close");
+    clear_sent();
+    lsp_free(&server);
 }
 
 // Asks the server what to rewrite before `old` is renamed to `now` (paths from

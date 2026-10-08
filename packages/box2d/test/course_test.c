@@ -291,8 +291,8 @@ TIDE_TEST(box2d_gravity_that_changes_wakes_the_world)
 
 // The match of sensors after its 330 ticks, on every platform and in every
 // configuration: what a sensor holds of its visitors is in Box2D's image.
-#define SENSORS_HASH UINT64_C(0xa815af9a032885e4)
-#define SENSORS_IMAGES_HASH UINT64_C(0x15b910ec4ec269e5)
+#define SENSORS_HASH UINT64_C(0x97cd3a721ce7b6ea)
+#define SENSORS_IMAGES_HASH UINT64_C(0x2415171d9228ac93)
 
 enum { SENSOR_TICKS = 330, LOOK = 150, SPRING = 250, RELEASE = 280 };
 

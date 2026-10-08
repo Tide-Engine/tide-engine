@@ -35,7 +35,7 @@ typedef struct packed_texture {
 
 // An entry of a map from text to clips, as generated code lays it out.
 typedef struct clip_entry {
-    uint32_t live;
+    int64_t live;
     uint32_t key;
     tide_clip_ref value;
 } clip_entry;
@@ -43,13 +43,13 @@ typedef struct clip_entry {
 // An entry of a map from text to textures, as generated code lays it out:
 // live, the key, the value (the builder's has a handle where the value is).
 typedef struct texture_entry {
-    uint32_t live;
+    int64_t live;
     uint32_t key;
     tide_texture_ref value;
 } texture_entry;
 
 typedef struct handle_entry {
-    uint32_t live;
+    int64_t live;
     uint32_t key;
     uint32_t value;
 } handle_entry;
@@ -194,7 +194,7 @@ static bool mesh_at(const uint8_t *region, const uint32_t size, const uint32_t v
 
 // An entry of a map from text to meshes, as generated code lays it out.
 typedef struct mesh_entry {
-    uint32_t live;
+    int64_t live;
     uint32_t key;
     tide_mesh_lists value;
 } mesh_entry;
@@ -235,9 +235,13 @@ static void check_meshes(void)
 }
 
 typedef struct skinned_entry {
-    uint32_t live, key;
+    int64_t live;
+    uint32_t key;
     tide_skinned_lists value;
 } skinned_entry;
+
+_Static_assert(sizeof(skinned_entry) == 24u && offsetof(skinned_entry, key) == 8u && offsetof(skinned_entry, value) == 12u,
+               "packed skinned map entries must match the generated map layout");
 
 // Skinned records, byte data and map indices are flat immutable lists. Their
 // block headers must agree with the storage, including the room and alignment.
@@ -282,16 +286,47 @@ static bool skinned_at(const tide_skinned_lists *model, const bool full, uint32_
     return true;
 }
 
-static bool skinned_map_index(const tide_pack_entry *e, const uint32_t count)
+static bool skinned_map_index_in(const uint8_t *region, const uint32_t size, const tide_pack_entry *e, const uint32_t count)
 {
-    uint32_t slots;
-    if (!flat_at(e->size, sizeof(uint32_t), &slots) || !slots || (slots & (slots - 1u))) return false;
+    uint32_t slots, records;
+    if (!flat_in(region, size, e->offset, sizeof(skinned_entry), &records) || records != count
+        || !flat_in(region, size, e->size, sizeof(uint32_t), &slots) || slots < 8u || (slots & (slots - 1u))
+        || (uint64_t)count * 2u > slots) return false;
+    const uint8_t *index = region + e->size + sizeof(tide_block);
+    uint32_t live = 0;
     for (uint32_t i = 0; i < slots; i++) {
         uint32_t at;
-        memcpy(&at, pack.region + e->size + sizeof(tide_block) + (size_t)i * sizeof at, sizeof at);
+        memcpy(&at, index + (size_t)i * sizeof at, sizeof at);
         if (at > count) return false;
+        if (at) live++;
+    }
+    if (live != count) return false;
+    for (uint32_t i = 0; i < count; i++) {
+        const uint8_t *row = region + e->offset + sizeof(tide_block) + (size_t)i * sizeof(skinned_entry);
+        int64_t order;
+        uint32_t key, length;
+        memcpy(&order, row, sizeof order);
+        memcpy(&key, row + offsetof(skinned_entry, key), sizeof key);
+        const uint32_t at = place_of(key, size);
+        const uint8_t *text = (at & 15u) ? NULL : text_at(region, size, at, &length);
+        if (order != (int64_t)i + 1 || !text) return false;
+        // Every key must reach its own row before an empty slot. Together
+        // with the live-slot count this also refuses duplicates and omissions.
+        uint32_t slot = tide_map_hash_bytes(text, length) & (slots - 1u);
+        for (;;) {
+            uint32_t number;
+            memcpy(&number, index + (size_t)slot * sizeof number, sizeof number);
+            if (!number) return false;
+            if (number == i + 1u) break;
+            slot = (slot + 1u) & (slots - 1u);
+        }
     }
     return true;
+}
+
+static bool skinned_map_index(const tide_pack_entry *e, const uint32_t count)
+{
+    return skinned_map_index_in(pack.region, pack.size, e, count);
 }
 
 static void check_skinned(void)
@@ -308,17 +343,10 @@ static void check_skinned(void)
             if (!map) e->size = 0;
             continue;
         }
-        bool keys_whole = true;
         for (uint32_t k = 0; k < count; k++) {
             uint8_t *row = pack.region + e->offset + sizeof(tide_block) + (size_t)k * each;
             tide_skinned_lists model;
-            const uint32_t value_at = map ? 2u * (uint32_t)sizeof(uint32_t) : 0u;
-            if (map) {
-                uint32_t key, bytes;
-                memcpy(&key, row + sizeof(uint32_t), sizeof key);
-                const uint32_t offset = place_of(key, pack.size);
-                if ((offset & 15u) || !text_at(pack.region, pack.size, offset, &bytes)) keys_whole = false;
-            }
+            const uint32_t value_at = map ? (uint32_t)offsetof(skinned_entry, value) : 0u;
             memcpy(&model, row + value_at, sizeof model);
             uint32_t vertex, vertices;
             if (!skinned_at(&model, true, &vertex, &vertices)) {
@@ -326,7 +354,6 @@ static void check_skinned(void)
                 memcpy(row + value_at, &model, sizeof model);
             }
         }
-        if (!keys_whole) e->offset = UINT32_MAX;
         if (!map) e->size = count;
     }
 }
@@ -607,7 +634,8 @@ const tide_pack_entry *tide_pack_find_mesh(const char *qualified, const uint32_t
 tide_map tide_pack_mesh_map_of(const tide_pack_entry *e)
 {
     if (!e || e->kind != TIDE_PACK_MESHES || e->offset == UINT32_MAX) return (tide_map){0};
-    return (tide_map){{tagged(e->offset)}, {tagged(e->size)}, count_at(pack.region, pack.size, e->offset, sizeof(mesh_entry))};
+    const uint32_t count = count_at(pack.region, pack.size, e->offset, sizeof(mesh_entry));
+    return (tide_map){.entries = {tagged(e->offset)}, .index = {tagged(e->size)}, .live = count, .last_order = count};
 }
 
 tide_mesh_lists tide_pack_mesh_of(const tide_pack_entry *e, const uint32_t vertex)
@@ -658,7 +686,7 @@ static bool skinned_record(const tide_pack_entry *e, const uint32_t k, tide_skin
     uint32_t count;
     if (!flat_at(e->offset, each, &count) || k >= count) return false;
     const uint8_t *row = pack.region + e->offset + sizeof(tide_block) + (size_t)k * each;
-    memcpy(model, row + (map ? 2u * sizeof(uint32_t) : 0u), sizeof *model);
+    memcpy(model, row + (map ? offsetof(skinned_entry, value) : 0u), sizeof *model);
     return true;
 }
 
@@ -677,7 +705,7 @@ tide_map tide_pack_skinned_map_of(const tide_pack_entry *e)
     uint32_t count;
     if (!e || e->kind != TIDE_PACK_SKINNED_MAP || !flat_at(e->offset, sizeof(skinned_entry), &count)
         || (count && !skinned_record(e, 0u, &unused)) || !skinned_map_index(e, count)) return (tide_map){0};
-    return (tide_map){{tagged(e->offset)}, {tagged(e->size)}, count};
+    return (tide_map){.entries = {tagged(e->offset)}, .index = {tagged(e->size)}, .live = count, .last_order = count};
 }
 
 void *tide_pack_skinned_open(const tide_pack_entry *e, const uint32_t k, const uint32_t vertex, uint32_t *count)
@@ -723,29 +751,21 @@ bool tide_pack_skinned_content(const uint8_t *bytes, const size_t size, const ch
     uint32_t records;
     if (!flat_in(region, header.region_size, found.offset, each, &records) || records != count
         || (!map && found.size != count)) return false;
-    if (map) {
-        uint32_t slots;
-        if (!flat_in(region, header.region_size, found.size, sizeof(uint32_t), &slots) || !slots || (slots & (slots - 1u))) return false;
-        for (uint32_t i = 0; i < slots; i++) {
-            uint32_t index;
-            memcpy(&index, region + found.size + sizeof(tide_block) + (size_t)i * sizeof index, sizeof index);
-            if (index > count) return false;
-        }
-    }
+    if (map && !skinned_map_index_in(region, header.region_size, &found, count)) return false;
     for (uint32_t i = 0; i < count; i++) {
         const uint8_t *row = region + found.offset + sizeof(tide_block) + (size_t)i * each;
         tide_sha256 content;
         tide_sha256_init(&content);
         if (map) {
             uint32_t key, length;
-            memcpy(&key, row + sizeof(uint32_t), sizeof key);
+            memcpy(&key, row + offsetof(skinned_entry, key), sizeof key);
             const uint32_t at = place_of(key, header.region_size);
             const uint8_t *text = (at & 15u) ? NULL : text_at(region, header.region_size, at, &length);
             if (!text) return false;
             tide_sha256_add(&content, text, length);
         }
         tide_skinned_lists model;
-        memcpy(&model, row + (map ? 2u * sizeof(uint32_t) : 0u), sizeof model);
+        memcpy(&model, row + (map ? offsetof(skinned_entry, value) : 0u), sizeof model);
         const uint32_t at = place_of(model.data.at, header.region_size);
         uint32_t length;
         tide_skinned_data_view view;
@@ -776,7 +796,7 @@ tide_str tide_pack_text(const tide_pack_entry *e)
 tide_map tide_pack_map_of(const tide_pack_entry *e)
 {
     if (!e) return (tide_map){0};
-    return (tide_map){{tagged(e->offset)}, {tagged(e->size)}, e->extra};
+    return (tide_map){.entries = {tagged(e->offset)}, .index = {tagged(e->size)}, .live = e->extra, .last_order = e->extra};
 }
 
 tide_clip_ref tide_pack_clip_of(const tide_pack_entry *e)

@@ -35,7 +35,7 @@
 // a stale one is found by its kind), and the region.
 
 #define TIDE_PACK_MAGIC "TIDEPACK"
-#define TIDE_PACK_VERSION 1u
+#define TIDE_PACK_VERSION 2u
 
 // What a name's entry is: the kind the declaration's type resolves to.
 enum {
