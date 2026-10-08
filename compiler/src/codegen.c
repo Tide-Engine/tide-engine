@@ -113,6 +113,7 @@ typedef struct gen {
     int labels;          // Names made up so far (inlined calls, containers, switches), numbered per program
     int sites;           // GUI calls so far: each one's place in the program, for its widget ID
     int call_temps;      // Temporaries for hoisted GUI calls, per function
+    const stmt *bare;    // The assignment of a `++i` whose value is taken, generated as it is: hoist_ordered ran what it holds
     const expr *raw_place; // A text field being generated as the tide_text it is, not read as text
     uint64_t game_hash;    // Of the header: tells builds of different games apart
     bool reserved_send;   // A pure one-Send system fills a queue item reserved by its entity loop.
@@ -1363,6 +1364,12 @@ static void gen_as(gen *g, sb *o, expr *e, const type want)
             gen_expr(g, o, e);
             sb_put(o, ")");
         }
+        return;
+    }
+    if (want.kind == TY_COLOR && type_dim(have) == 1) { // A number beside colors in Math: that in each channel
+        sb_put(o, "tide_c_splat(");
+        gen_as(g, o, e, (type){TY_FLOAT, NULL});
+        sb_put(o, ")");
         return;
     }
     const int dim = type_dim(want);
@@ -2915,6 +2922,7 @@ static void gen_expr(gen *g, sb *o, const expr *e)
     case E_TRY:
     case E_DEFAULTED:
     case E_AWAIT:
+    case E_STEP:
         sb_put(o, e->hoisted ? e->hoisted : "tide_not_hoisted"); // Ran before the statement (see hoist_unwrap and gen_await)
         break;
     case E_NAME:
@@ -4092,6 +4100,7 @@ static bool routine_writes(const decl *m)
 // it can read.
 static bool writes(const expr *e)
 {
+    if (e->kind == E_STEP) return true; // ++i
     if (e->kind == E_BINARY || e->kind == E_UNARY) return routine_writes(e->method);
     if (e->kind != E_CALL && e->kind != E_METHOD) return false;
     switch (e->call) {
@@ -4205,6 +4214,7 @@ static bool settled(const expr *e)
     switch (e->kind) {
     case E_INT: case E_FLOAT: case E_BOOL: case E_STRING: case E_DEFAULT: case E_NULL: case E_THIS:
     case E_COALESCE: case E_IS: case E_TRY: case E_DEFAULTED: case E_AWAIT: // These run before their statement
+    case E_STEP:
         return true;
     case E_NAME:
         // A local that isn't mut never changes, but one an `out` argument declares, which its call makes. A
@@ -4470,6 +4480,13 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
         for (int i = 0; i < e->args.count; i++) take(&ops, e->args.items[i]);
         collect_operands(out, &ops, false);
         break;
+    case E_STEP: { // ++i: its variable by address, then the step, whose value waits in a temporary
+        operand_push(&ops, e->lhs, PLACE);
+        collect_operands(out, &ops, false);
+        const ordered_item item = {e, false};
+        vec_push(out->items, item);
+        break;
+    }
     case E_INDEX: // The element is read once its index is worked out
         operand_push(&ops, e->object, use_of(e->object));
         take(&ops, e->lhs);
@@ -4527,7 +4544,7 @@ static bool must_hoist(const ordering *ordered)
     if (ordered->forced || ordered->items.count > 1) return true;
     for (int i = 0; i < ordered->items.count; i++) {
         expr *e = ordered->items.items[i].e;
-        if (is_spawn(e) || is_unwrap(e) || e->kind == E_AWAIT) return true;
+        if (is_spawn(e) || is_unwrap(e) || e->kind == E_AWAIT || e->kind == E_STEP) return true;
         if (!is_unit(e)) continue;
         if (e->kind == E_BINARY ? part_must_hoist(e->rhs) : part_must_hoist(e->lhs) || part_must_hoist(e->rhs)) {
             return true;
@@ -4546,6 +4563,7 @@ static bool needs_hoisting(expr *e)
 static void hoist_unit(gen *g, expr *e, const char *name);
 static void hoist_unwrap(gen *g, expr *e);
 static bool wrapped_in_parens(const char *text);
+static void gen_stmt(gen *g, const stmt *s);
 
 // Runs what keeps its order (in the order given) before its statement, into
 // temporaries the statement then reads.
@@ -4587,6 +4605,21 @@ static void hoist_ordered(gen *g, const ordering *ordered)
             sb_printf(&name, "tide_called%d", g->call_temps++);
             gen_await(g, e, name.data); // Sets e->hoisted
             continue;
+        } else if (e->kind == E_STEP) { // ++i: the assignment, and the variable's value after it, or i++: before it
+            sb_printf(&name, "tide_stepped%d", g->call_temps++);
+            for (int pass = 0; pass < 2; pass++) {
+                if ((pass == 0) == e->postfix) {
+                    indent(g, &g->c);
+                    sb_printf(&g->c, "%s = ", const_decl(e->type, name.data));
+                    gen_expr(g, &g->c, e->lhs);
+                    sb_put(&g->c, ";\n");
+                } else {
+                    g->bare = e->step; // What its variable runs is in temporaries already
+                    gen_stmt(g, e->step);
+                    g->bare = NULL;
+                }
+            }
+            task_declare(g, name.data, e->type);
         } else {
             sb_printf(&name, "tide_called%d", g->call_temps++);
             indent(g, &g->c);
@@ -5171,12 +5204,13 @@ static void gen_block_run(gen *g)
 static void gen_stmt(gen *g, const stmt *s)
 {
     sb *o = &g->c;
-    if (s->kind != S_BLOCK) line_directive(g, s->at);
+    const bool bare = g->bare == s;
+    if (s->kind != S_BLOCK && !bare) line_directive(g, s->at);
 
     // The locals `out` arguments declare in the statement: the enclosing
     // block's, as in C#, so they're declared here, before it. A loop's
     // condition's are the loop's own (below).
-    if (g->prog->out_args && s->kind != S_WHILE && s->kind != S_FOR) {
+    if (g->prog->out_args && s->kind != S_WHILE && s->kind != S_FOR && !bare) {
         declare_outs(g, s->cond);
         declare_outs(g, s->value);
         declare_outs(g, s->target);
@@ -5195,7 +5229,9 @@ static void gen_stmt(gen *g, const stmt *s)
     case S_EXPR:
         if (!task_start(s->value)) hoist_spawns(g, s->value);
         break;
-    case S_ASSIGN: hoist_assign(g, s); break;
+    case S_ASSIGN:
+        if (!bare) hoist_assign(g, s);
+        break;
     case S_IF:
     case S_SWITCH: hoist_spawns(g, s->cond); break;
     case S_RETURN:

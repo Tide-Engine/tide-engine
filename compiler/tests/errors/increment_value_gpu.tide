@@ -1,0 +1,19 @@
+// expect: '++' and '--' are statements in code the GPU runs: write 'i += 1;' before the expression that reads it
+scene Main { }
+
+local singleton Models
+{
+    List<Vertex> corners;
+}
+
+frag Shade(Vertex vertex, out Color color)
+{
+    mut var i = 0;
+    float shade = ++i * 0.5;
+    color = Color(shade, shade, shade);
+}
+
+view Show(Models models)
+{
+    Draw.Mesh(models.corners, [0, 1, 2], Shade);
+}

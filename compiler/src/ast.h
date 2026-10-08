@@ -707,6 +707,7 @@ typedef enum expr_kind {
     E_TRY,       // try lhs: lhs's value, or its error passed on to the caller
     E_DEFAULTED, // lhs!: lhs's value, or its type's default when it failed or is nothing
     E_AWAIT,     // await lhs: an async call's value once it's done, or Wait.Ticks(n) and the like
+    E_STEP,      // ++lhs, lhs++, --lhs, lhs--: lhs goes up or down by 1, and its value after (or, `postfix`, before) is the expression's
 } expr_kind;
 
 // What `x is ...` looks for.
@@ -864,6 +865,8 @@ struct expr {
     int spawn_archetype;  // CALL_SPAWN: index into the archetype list.
     bool local_world;     // CALL_SPAWN, CALL_ADD, CALL_REMOVE, CALL_DESTROY and CALL_SEND: in the local world
     struct stmt *compare[2]; // CALL_LIST Sort: the two elements its block compares, as read-only locals of the block
+    struct stmt *step;    // E_STEP: the assignment it makes, `lhs += 1`, which is all of it when it's a statement
+    bool postfix;         // ...written after its variable: the value is what the variable held before
     const char *hoisted;  // Spawns, and calls, units and operators that keep their order: the temporary codegen ran it into, before the statement
     bool kept;            // ...or any value read before a call that writes: `hoisted` is its copy, as it was then
     unsigned arg_mut;     // CALL_GUI: a bit per argument the call changes, which it takes by address
