@@ -8119,6 +8119,19 @@ static void start_in_with(const char *folder, const char *capabilities)
     handle(message);
 }
 
+static void start_in_pair_with(const char *first, const char *second, const char *capabilities)
+{
+    clear_sent();
+    lsp_free(&server);
+    lsp_init(&server, capture, NULL);
+    jbuf initialize = {0};
+    jb_printf(&initialize, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{"
+                           "\"workspaceFolders\":[{\"uri\":\"%s\",\"name\":\"a\"},{\"uri\":\"%s\",\"name\":\"b\"}],"
+                           "\"capabilities\":%s}}", first, second, capabilities);
+    handle(initialize.data);
+    jb_free(&initialize);
+}
+
 static void write_bytes(const char *name, const char *bytes, const size_t len)
 {
     char path[640];
@@ -8398,15 +8411,7 @@ TIDE_TEST(lsp_asset_rename_multiple_games)
     snprintf(uri_a, sizeof uri_a, "file:///%s/lsp_batch_games/a/main.tide", dir);
     snprintf(uri_b, sizeof uri_b, "file:///%s/lsp_batch_games/b/main.tide", dir);
     snprintf(uri_pk, sizeof uri_pk, "file:///%s/lsp_batch_games/pk/main.tide", dir);
-    clear_sent();
-    lsp_free(&server);
-    lsp_init(&server, capture, NULL);
-    jbuf initialize = {0};
-    jb_printf(&initialize, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{"
-                           "\"workspaceFolders\":[{\"uri\":\"%s\",\"name\":\"a\"},{\"uri\":\"%s\",\"name\":\"b\"}],"
-                           "\"capabilities\":%s}}", root_a, root_b, ASSET_EDITOR_CAPABILITIES);
-    handle(initialize.data);
-    jb_free(&initialize);
+    start_in_pair_with(root_a, root_b, ASSET_EDITOR_CAPABILITIES);
     open_uri(uri_a, game);
     TIDE_REQUIRE(sent_with(uri_a) != NULL);
     TIDE_CHECK(has(sent_with(uri_a), "\"diagnostics\":[]"));
@@ -8443,6 +8448,24 @@ TIDE_TEST(lsp_asset_rename_multiple_games)
         jb_free(&request);
     }
 
+    // The request can name only the shared package's asset. All consuming
+    // games still need their paths changed, in either workspace-root order.
+    for (int reverse = 0; reverse < 2; reverse++) {
+        start_in_pair_with(reverse ? root_b : root_a, reverse ? root_a : root_b, ASSET_EDITOR_CAPABILITIES);
+        open_uri(uri_a, game);
+        open_uri(uri_b, game);
+        const char *reply = will_rename("lsp_batch_games/pk/old.bin", "lsp_batch_games/pk/new.bin");
+        TIDE_CHECK(count(reply, uri_a) == 1 && count(reply, uri_b) == 1 && count(reply, uri_pk) == 1);
+        TIDE_CHECK(count(reply, "\"newText\"") == 3);
+        const char *edited = apply_reply(game, uri_a);
+        TIDE_CHECK(has(edited, "bytes = \"art/old.bin\";") && has(edited, "shared = \"../pk/new.bin\";"));
+        edited = apply_reply(game, uri_b);
+        TIDE_CHECK(has(edited, "bytes = \"art/old.bin\";") && has(edited, "shared = \"../pk/new.bin\";"));
+        edited = apply_reply(package, uri_pk);
+        TIDE_CHECK(has(edited, "data = \"new.bin\";") && has(edited, "fromA = \"../a/art/old.bin\";")
+                   && has(edited, "fromB = \"../b/art/old.bin\";"));
+    }
+
     remove_game_file("lsp_batch_games/a/tide.packages");
     remove_game_file("lsp_batch_games/b/tide.packages");
     remove_game_file("lsp_batch_games/pk/tide.packages");
@@ -8468,6 +8491,74 @@ TIDE_TEST(lsp_asset_rename_multiple_games)
     remove_folder("lsp_batch_games/pk");
     remove_folder("lsp_batch_games/extra");
     remove_folder("lsp_batch_games");
+    clear_sent();
+    lsp_free(&server);
+}
+
+// Assets aren't source entries in a CMake game's manifest. Refactoring
+// discovers the game through those entries, whether they list individual
+// SOURCES or a folder, without treating the asset itself as a Tide file.
+TIDE_TEST(lsp_asset_rename_manifest_games)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_batch_manifest");
+    make_folder("lsp_batch_manifest/a");
+    make_folder("lsp_batch_manifest/a/art");
+    make_folder("lsp_batch_manifest/a/src");
+    make_folder("lsp_batch_manifest/b");
+    make_folder("lsp_batch_manifest/b/art");
+    make_folder("lsp_batch_manifest/build");
+    make_folder("lsp_batch_manifest/build/tools");
+    static const char game[] = "asset List<byte> bytes = \"art/old.bin\";\nscene Main { }\n";
+    write_file("lsp_batch_manifest/a/main.tide", game);
+    write_file("lsp_batch_manifest/b/main.tide", game);
+    write_bytes("lsp_batch_manifest/a/art/old.bin", "a", 1);
+    write_bytes("lsp_batch_manifest/b/art/old.bin", "b", 1);
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    char root[700], uri_a[700], uri_b[700];
+    snprintf(root, sizeof root, "file:///%s/lsp_batch_manifest", dir);
+    snprintf(uri_a, sizeof uri_a, "file:///%s/lsp_batch_manifest/a/main.tide", dir);
+    snprintf(uri_b, sizeof uri_b, "file:///%s/lsp_batch_manifest/b/main.tide", dir);
+    for (int folders = 0; folders < 2; folders++) {
+        jbuf manifest = {0};
+        jb_printf(&manifest, "a\t%s/lsp_batch_manifest/a/%s\nb\t%s/lsp_batch_manifest/b/%s\n",
+                  game_dir, folders ? "" : "main.tide", game_dir, folders ? "" : "main.tide");
+        write_file("lsp_batch_manifest/build/tools/games.txt", manifest.data);
+        jb_free(&manifest);
+        start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+        // Discovery must work from the manifest before any file is open.
+        const char *reply = will_rename("lsp_batch_manifest/a/art/old.bin", "lsp_batch_manifest/a/art/new.bin");
+        TIDE_CHECK(count(reply, uri_a) == 1 && !has(reply, uri_b) && count(reply, "\"newText\"") == 1);
+        TIDE_CHECK(has(apply_reply(game, uri_a), "bytes = \"art/new.bin\";"));
+        open_uri(uri_a, game);
+        TIDE_REQUIRE(sent_with(uri_a) != NULL);
+        TIDE_CHECK(has(sent_with(uri_a), "\"diagnostics\":[]"));
+        open_uri(uri_b, game);
+        TIDE_REQUIRE(sent_with(uri_b) != NULL);
+        TIDE_CHECK(has(sent_with(uri_b), "\"diagnostics\":[]"));
+
+        reply = will_rename("lsp_batch_manifest/a/art/old.bin", "lsp_batch_manifest/a/art/new.bin");
+        TIDE_CHECK(count(reply, uri_a) == 1 && !has(reply, uri_b) && count(reply, "\"newText\"") == 1);
+        TIDE_CHECK(has(apply_reply(game, uri_a), "bytes = \"art/new.bin\";"));
+
+        // Moving a listed source file rewrites its own relative asset path.
+        reply = will_rename("lsp_batch_manifest/a/main.tide", "lsp_batch_manifest/a/src/main.tide");
+        TIDE_CHECK(count(reply, uri_a) == 1 && !has(reply, uri_b) && count(reply, "\"newText\"") == 1);
+        TIDE_CHECK(has(apply_reply(game, uri_a), "bytes = \"../art/old.bin\";"));
+    }
+    remove_game_file("lsp_batch_manifest/a/main.tide");
+    remove_game_file("lsp_batch_manifest/b/main.tide");
+    remove_game_file("lsp_batch_manifest/a/art/old.bin");
+    remove_game_file("lsp_batch_manifest/b/art/old.bin");
+    remove_game_file("lsp_batch_manifest/build/tools/games.txt");
+    remove_folder("lsp_batch_manifest/a/art");
+    remove_folder("lsp_batch_manifest/a/src");
+    remove_folder("lsp_batch_manifest/b/art");
+    remove_folder("lsp_batch_manifest/a");
+    remove_folder("lsp_batch_manifest/b");
+    remove_folder("lsp_batch_manifest/build/tools");
+    remove_folder("lsp_batch_manifest/build");
+    remove_folder("lsp_batch_manifest");
     clear_sent();
     lsp_free(&server);
 }
