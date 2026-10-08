@@ -6,7 +6,7 @@ if(NOT TARGET tide_platform)
 endif()
 
 add_custom_target(sample_games)
-foreach(id pong snake tanks bomberman connect-four asteroids sumo tower-defense marbles)
+foreach(id pong snake tanks bomberman connect-four asteroids sumo tower-defense marbles tag)
     string(REPLACE "-" "_" name "${id}")
     set(target "sample_${name}")
     tide_add_game(${target} SOURCES "${id}/game.tide" PACKAGES Rooms "${PROJECT_SOURCE_DIR}/packages/rooms/rooms.tide")
