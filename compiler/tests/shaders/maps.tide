@@ -1,0 +1,83 @@
+// Maps and sets the GPU reads: fields of a singleton, a component's local
+// part and a draw's values, under a local's name and as a function's parameter, by a key, by whether a key is there, by how many
+// there are and with foreach. Each is a texture of numbers: its live entries
+// in the order their keys were added, as a list's elements are, then an index
+// of slots by Math.Hash of the key. The draw's ints say how many of each.
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float2 uv;
+}
+enum Ground { Grass, Rock, Water }
+struct Tile
+{
+    Color tint = Color(0.5, 0.5, 0.5);
+    float height;
+    int cost = 1;
+}
+struct Legend
+{
+    Map<byte, float> weights;
+    int pick;
+}
+singleton Land
+{
+    Map<Ground, Tile> tiles;
+    Map<int, Color> hues;
+    Set<int> lit;
+}
+component Body
+{
+    float3 position;
+    local Set<Ground> seen;
+}
+local singleton Stage
+{
+    List<Corner> corners;
+    List<int> faces;
+}
+
+float Height(Map<Ground, Tile> tiles, Ground ground)
+{
+    return tiles[ground].height;
+}
+
+vert Raise(mut Corner corner, Land land)
+{
+    if (land.lit.Has(3)) corner.position.y += land.tiles[Ground.Rock].height;
+}
+
+frag Lit(Corner corner, out Color color, Land land, Body body, Legend legend)
+{
+    mut var sum = land.hues[legend.pick];
+    if (land.tiles.TryGet(Ground.Water, out var water)) sum += water.tint * water.cost;
+    foreach (var entry in land.tiles)
+    {
+        if (entry.key == Ground.Grass) continue;
+        sum.g += entry.value.height;
+    }
+    foreach (var ground in body.seen)
+    {
+        if (ground == Ground.Rock) sum.r += 0.25;
+    }
+    var tiles = land.tiles;
+    sum.g += Height(tiles, Ground.Rock);
+    mut var found = Tile { };
+    var there = land.tiles.TryGet(Ground.Grass, out found);
+    sum.b += legend.weights[byte(legend.pick)] * land.hues.count + land.lit.count + body.seen.count;
+    color = there && land.hues.Has(7) ? sum : sum * found.height;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Body);
+}
+
+view Show(Stage scene, with Body)
+{
+    mut var legend = Legend { pick = 2 };
+    legend.weights[byte(2)] = 0.5;
+    Draw.Mesh(scene.corners, scene.faces, float4x4.identity, Raise, Lit, legend);
+}

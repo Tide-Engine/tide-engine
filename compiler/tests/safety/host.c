@@ -8,6 +8,9 @@
 // the screen that's dragged far off it, then keys and typing, so widgets under
 // it are pressed, dragged, focused and typed into.
 //
+// What a game's frames play goes through the code they name, its `audio`
+// declarations, as the mixer would run it (run_effect).
+//
 //     tidec_safety_<name> [ticks] [gpu]
 //
 // With `gpu`, on desktop, each frame's list also goes through the renderer, in
@@ -24,6 +27,7 @@
 #endif
 
 #include "game.h"
+#include "tide/audio.h"
 #include "tide/draw.h"
 #include "tide/events.h"
 #include "tide/gui.h"
@@ -59,6 +63,89 @@ static uint32_t frames;
 
 #define WIDTH 640.0f
 #define HEIGHT 360.0f
+
+#ifdef TIDE_HAS_AUDIO
+// What a frame plays, the host runs as the mixer would (tide/audio.h): each
+// voice's and each bus's effect on a block, with state of the bytes the mixer
+// has for one, zeros as the code starts and kept from frame to frame, and a
+// copy of the knobs the frame gave, in the bytes the mixer has for those. The
+// block and each state are between bytes that have to stay as they were made:
+// in the mixer, what's past a voice's state is the next voice. The knobs are
+// only read, so theirs is an allocation of its own, which a sanitizer watches.
+#define GUARD 256u
+#define GUARDED 0xA5u
+#define KEPT 16u
+#define BLOCK_BYTES (TIDE_AUDIO_SAMPLES * (uint32_t)sizeof(float))
+
+typedef struct kept_state {
+    uint64_t voice;  // The voice's id, or for a bus, its number from the last id down
+    uint64_t code;   // The effect's id: other code starts the state over
+    uint32_t played; // The frame it last played in: a voice that stopped starts over too
+    _Alignas(16) uint8_t bytes[GUARD + TIDE_AUDIO_STATE_BYTES + GUARD]; // Aligned for whatever a state holds
+} kept_state;
+
+static tide_audio_frame audio;
+static kept_state kept[KEPT];
+static uint32_t kept_count;
+static uint32_t effects_run;
+
+static void guard(uint8_t *bytes, const uint32_t size)
+{
+    memset(bytes, GUARDED, GUARD);
+    memset(bytes + GUARD + size, GUARDED, GUARD);
+}
+
+static void guarded(const uint8_t *bytes, const uint32_t size, const char *what)
+{
+    for (uint32_t i = 0; i < GUARD; i++) {
+        if (bytes[i] == GUARDED && bytes[GUARD + size + i] == GUARDED) continue;
+        fprintf(stderr, "safety: an effect wrote outside its %s\n", what);
+        exit(1);
+    }
+}
+
+static void run_effect(const uint64_t voice, const tide_audio_effect *effect, const uint32_t knobs_at)
+{
+    if (!effect->fn) return;
+    kept_state *k = NULL;
+    for (uint32_t i = 0; i < kept_count && !k; i++) {
+        if (kept[i].voice == voice) k = &kept[i];
+    }
+    if (!k) {
+        if (kept_count == KEPT) return;
+        k = &kept[kept_count++];
+        k->voice = voice;
+        k->code = 0;
+    }
+    if (k->code != effect->id || k->played + 1u != audio.frame) {
+        guard(k->bytes, TIDE_AUDIO_STATE_BYTES);
+        memset(k->bytes + GUARD, 0, TIDE_AUDIO_STATE_BYTES);
+        k->code = effect->id;
+    }
+    k->played = audio.frame;
+    uint8_t *knobs = calloc(1, TIDE_AUDIO_KNOBS_BYTES);
+    static _Alignas(16) uint8_t block[GUARD + BLOCK_BYTES + GUARD];
+    if (!knobs) exit(1);
+    if (effect->knobs_size) memcpy(knobs, tide_audio_knobs(&audio, knobs_at, effect->knobs_size), effect->knobs_size);
+    guard(block, BLOCK_BYTES);
+    float *samples = (float *)(void *)(block + GUARD);
+    for (uint32_t i = 0; i < TIDE_AUDIO_SAMPLES; i++) samples[i] = 0.25f;
+    effect->fn(samples, k->bytes + GUARD, knobs);
+    guarded(block, BLOCK_BYTES, "block");
+    guarded(k->bytes, TIDE_AUDIO_STATE_BYTES, "state");
+    free(knobs);
+    effects_run++;
+}
+
+static void play(void)
+{
+    for (uint32_t i = 0; i < audio.voice_count; i++) {
+        const tide_voice *v = &audio.voices[i];
+        if (v->id && v->playing) run_effect(v->id, &v->effect, v->knobs_at);
+    }
+    for (uint32_t b = 0; b < TIDE_AUDIO_BUSES; b++) run_effect(UINT64_MAX - b, &audio.bus_effect[b], audio.bus_knobs_at[b]);
+}
+#endif
 
 // What the player's hand does on frame `n`, round and round
 static void hand(const uint32_t n)
@@ -112,8 +199,15 @@ static void frame(const float alpha)
     tide_gui_begin(&gui, &devices, tide_f2(WIDTH, HEIGHT), measure);
     tide_local_frame_time(&local, 1.0f / 60.0f);
     tide_local_events(&local, &events);
+#ifdef TIDE_HAS_AUDIO
+    tide_audio_reset(&audio);
+    tide_local_audio(&local, &audio);
+#endif
     tide_frame(in_match ? &world : NULL, in_match ? &before : NULL, alpha, in_match ? &verified : NULL, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
+#ifdef TIDE_HAS_AUDIO
+    play();
+#endif
 #ifdef TIDE_SAFETY_RENDERER
     if (renders) {
         uint32_t pixel = 0;
@@ -203,6 +297,10 @@ int main(const int argc, char **argv)
     tide_local_free(&local);
     tide_draw_free(&draw);
     tide_event_log_free(&events);
+#ifdef TIDE_HAS_AUDIO
+    tide_audio_free(&audio);
+    if (effects_run) fprintf(stderr, "safety: effects kept to their state\n");
+#endif
     fprintf(stderr, "safety: ran to the end\n");
     return 0;
 }

@@ -5,6 +5,7 @@
 #include "tide/draw.h"
 #include "tide/grid.h"
 #include "tide/list.h"
+#include "tide/map.h"
 
 // Tide's Draw.Mesh, as generated code calls it: lists of `Vertex` and of int,
 // and a `Texture` to draw with, sampled as the texture says (its filter and
@@ -114,6 +115,18 @@ uint32_t tide_draw_list_data(tide_draw_list *d, tide_list list, uint32_t element
 // one wider than a texture is.
 uint32_t tide_draw_grid_data(tide_draw_list *d, tide_grid grid, const tide_grid_shape *shape, uint32_t words,
                              tide_list_words_fn *write, int32_t *size);
+
+// A map's or a set's live entries the same way, in the order their keys were
+// added, and after them, from the next pixel on, an index a shader finds a key
+// through: a power of two of slots, an int each, 0 or an entry's number plus
+// one, by tide_hash_i of the key with linear probing, under half full. `write`
+// is given an entry as the map stores it (tide/map.h) and writes its numbers,
+// of which the one at `key_word` is its key, an int. The CPU's own index isn't
+// sent: its hash is of 64 bits, which these GPUs have none of. `count` gets
+// two ints: how many entries the texture holds (the map's, or as many as
+// fit), and how many slots. Zeros, and no texture, for an empty map.
+uint32_t tide_draw_map_data(tide_draw_list *d, tide_map map, uint32_t entry_size, uint32_t words, uint32_t key_word,
+                            tide_list_words_fn *write, int32_t *count);
 
 // A float as the 16 bits a TIDE_TEXELS_HALF pixel is, to the nearest, ties to
 // even: past the greatest a half holds it's that (65504, either way), and 0
