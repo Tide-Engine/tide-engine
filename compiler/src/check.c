@@ -40,6 +40,7 @@ typedef struct checker {
     VEC(struct call_site) bare;  // Operators used where no code runs (a default, a constant): they can't roll there
     const expr *device_whole_ok; // A device record about to be checked that isn't read whole: a.b's a, or an argument
     const expr *colors_indexed;  // A 'target.colors' about to be checked that an index reads one of: target.colors[1]'s
+    const expr *in_place_ok;     // What's about to be checked is read where it is, never copied: a.b's a, a[i]'s a, a 'mut' argument (holds_long_array)
     const expr *awaiting;     // The call an `await` is checking: an async call it waits for, not a task it starts
     const expr *statement_call; // The call a statement makes: an async one starts a task
     int block_depth;          // Inside a block written after a call, which runs where the function runs it
@@ -1580,6 +1581,39 @@ static type resolve_generic(const checker *c, const type_ref *r, const loc at, c
 static type resolve_named(const checker *c, const type_ref *r, type_place place, loc at);
 static type array_type(checker *c, type element, expr *size, loc at);
 
+// An array holds TIDE_ARRAY_MOST elements at the most (types.h), all of its lengths together, but in an audio
+// declaration's state, where one is a delay line: as many as a state has bytes
+#define TIDE_ARRAY_LONGEST ((int)TIDE_AUDIO_STATE_BYTES)
+
+// A long array, or what holds one (types.h): only an audio declaration's state does, and nothing copies it
+static bool holds_long_array(const type t)
+{
+    return type_holds_long_array(t);
+}
+
+// A type with a long array in it, written where a value of it would be a
+// copy: `what` is what's there. A long array itself is the error an array
+// that's too long always was, with where a longer one goes.
+static void long_array_misplaced(const loc at, const type t, const char *what)
+{
+    if (t.kind == TY_ARRAY) {
+        int64_t elements = 1;
+        type element = t;
+        for (; element.kind == TY_ARRAY; element = element.decl->fields.items[0].type) elements *= element.decl->array_length;
+        if (elements > TIDE_ARRAY_MOST) {
+            diag_error(at, "an array holds from 1 to %d elements, all of its lengths together, and this one would hold %lld", TIDE_ARRAY_MOST,
+                       (long long)elements);
+            diag_note("an array is its holder's own bytes: for more, a list, 'List<%s>'; only an audio declaration's state holds a longer one, "
+                      "a delay line", type_name(element));
+            return;
+        }
+    }
+    diag_error(at, "%s can't be %s%s%s: it holds an array of more than %d elements, which only an audio declaration's state does", what,
+               t.kind == TY_STRUCT ? "'" : "", type_name(t), t.kind == TY_STRUCT ? "'" : "", TIDE_ARRAY_MOST);
+    diag_note("nothing copies such a value: it's the audio declaration's 'mut' parameter, read and written an element at a time; "
+              "for as many values as you like anywhere else, a list");
+}
+
 static type resolve_type(const checker *c, const type_ref *r, const type_place place, const loc at)
 {
     // int?: the places that take a T? resolve what it holds first (without_question), and wrap that
@@ -1587,6 +1621,14 @@ static type resolve_type(const checker *c, const type_ref *r, const type_place p
     type t = resolve_named(c, r, place, at);
     // int[4][8]: 4 arrays of 8, so the last length wraps first
     for (int i = r->sizes.count - 1; i >= 0; i--) t = array_type((checker *)c, t, r->sizes.items[i], at);
+    // A long array is a field's, and a 'mut' parameter's: which fields and which parameters, check_long_arrays
+    // says once every signature is known. Here, before every struct's fields are, nothing can be asked.
+    if (c->fields_ordered && place != PLACE_FIELD && place != PLACE_FUNCTION && holds_long_array(t)) {
+        long_array_misplaced(at, t, place == PLACE_LOCAL ? "a local" : place == PLACE_LOOP ? "a loop's variable" : place == PLACE_RETURN ? "what a function returns"
+                                    : place == PLACE_CONST ? "a constant" : place == ARG_ELEMENT || place == ARG_KEY || place == ARG_CELL ? "what a list, a map, a set or a grid holds"
+                                    : "a value here");
+        return T_ERR;
+    }
     return t;
 }
 
@@ -1659,7 +1701,6 @@ static type array_element(const type t)
     return t.decl->fields.items[0].type;
 }
 
-#define TIDE_ARRAY_MOST 4096 // Elements an array holds at most, and all of one's lengths together
 
 // T[N] for element type `element` and length `n`: one declaration for each,
 // so two int[32]s are the same type.
@@ -1692,6 +1733,20 @@ static int array_elements(const type t)
     int n = 1;
     for (type a = t; a.kind == TY_ARRAY; a = array_element(a)) n *= a.decl->array_length;
     return n;
+}
+
+// A long array (holds_long_array), or one in what a list, a map, a set, a grid, a T? or a failable
+// call's value holds: nowhere a long array can be, as each keeps values by copy.
+static bool reaches_long_array(const type t)
+{
+    switch (t.kind) {
+    case TY_LIST: case TY_MAP: case TY_SET: case TY_GRID: case TY_OPTIONAL: case TY_FAILABLE:
+        for (int i = 0; t.decl && i < t.decl->fields.count; i++) {
+            if (reaches_long_array(t.decl->fields.items[i].type)) return true;
+        }
+        return false;
+    default: return holds_long_array(t);
+    }
 }
 
 // What an array's elements can be: plain values, which an array keeps side by
@@ -1728,7 +1783,9 @@ static bool array_element_ok(const type t, const loc at)
 }
 
 // `t[N]`, from what's written between the brackets: a constant from 1 to
-// TIDE_ARRAY_MOST, with every length of a nested array counted together.
+// TIDE_ARRAY_MOST, with every length of a nested array counted together, or
+// up to TIDE_ARRAY_LONGEST for one in an audio declaration's state, which is
+// checked once it's known where the type is (holds_long_array).
 static type array_type(checker *c, const type element, expr *size, const loc at)
 {
     if (element.kind == TY_ERROR) return T_ERR;
@@ -1740,10 +1797,11 @@ static type array_type(checker *c, const type element, expr *size, const loc at)
         if (!is_constant(c, size)) diag_note("it's part of the type, so it can't change: a list grows as it needs, 'List<int>'");
         return T_ERR;
     }
-    if (n < 1 || n > TIDE_ARRAY_MOST || (int64_t)array_elements(element) * n > TIDE_ARRAY_MOST) {
+    if (n < 1 || n > TIDE_ARRAY_LONGEST || (int64_t)array_elements(element) * n > TIDE_ARRAY_LONGEST) {
         diag_error(size->at, "an array holds from 1 to %d elements, all of its lengths together, and this one would hold %lld",
                    TIDE_ARRAY_MOST, (long long)((int64_t)array_elements(element) * n));
-        diag_note("an array is its holder's own bytes: for more, a list, 'List<%s>'", type_name(element));
+        diag_note("an array is its holder's own bytes: for more, a list, 'List<%s>'; an audio declaration's state holds one of up to %d, "
+                  "a delay line", type_name(element), TIDE_ARRAY_LONGEST);
         return T_ERR;
     }
     // A forward struct's fields may not be known yet, or still contain a
@@ -3451,6 +3509,7 @@ static void check_method_args(checker *c, expr *e, decl *m)
         // Devices passed on are read where they go: the callee's reads count. So does what's reached through the World.
         c->device_whole_ok = arg;
         c->world_arg = arg;
+        c->in_place_ok = p && p->mode == PARAM_MUT && !p->is_out ? arg : NULL; // By its address: nothing is copied
         c->resident_arg = p && p->type.kind == TY_RESIDENT && m->is_extern ? arg : NULL;
         check_expr_want(c, arg, p ? p->type : T_ERR);
         c->resident_arg = NULL;
@@ -3544,7 +3603,12 @@ static void check_arg_types(checker *c, expr *e, decl *m)
         } else if (p->mode == PARAM_MUT) {
             if (through_element(arg)) {
                 diag_error(arg->at, "a list's element is a copy, so '" STR_FMT "' can't change it", STR_ARG(m->name));
-                diag_note("take it out, change it, and put it back: 'var e = items[i]; ...; items[i] = e;'");
+                if (c->fields_ordered && holds_long_array(arg->type)) { // Nothing takes one out to put it back
+                    diag_note("pass what holds the element as the 'mut' parameter, and which one it is: an element's own fields are "
+                              "read and written where they are, 'sides[i].line[k]'");
+                } else {
+                    diag_note("take it out, change it, and put it back: 'var e = items[i]; ...; items[i] = e;'");
+                }
             } else if (through_swizzle(arg)) {
                 diag_error(arg->at, "a swizzle of several components is a copy, so '" STR_FMT "' can't change it", STR_ARG(m->name));
                 diag_note("take it out, change it, and put it back: 'mut var part = v.xy; ...; v.xy = part;'");
@@ -3675,6 +3739,7 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
         if (untyped_arg(arg)) continue;
         c->device_whole_ok = arg;
         c->world_arg = arg;
+        c->in_place_ok = arg; // Which parameter takes it isn't known yet: a long array's is 'mut', or it's said below
         check_expr_any(c, arg);
     }
     int **param_of = arena_alloc(sizeof(int *) * (size_t)same.count);
@@ -3753,6 +3818,12 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
         if (untyped_arg(arg)) {
             check_expr_want(c, arg, want);
             continue;
+        }
+        const param *taken_by = &m->params.items[param_of[best][i]];
+        if ((arg->type.kind == TY_STRUCT || arg->type.kind == TY_ARRAY) && holds_long_array(arg->type)
+            && (taken_by->mode != PARAM_MUT || taken_by->is_out)) {
+            diag_error(arg->at, "'%s' is never copied: it holds an array of more than %d elements, so the parameter that takes it is 'mut'",
+                       type_name(arg->type), TIDE_ARRAY_MOST);
         }
         int64_t value; // An int constant where a byte goes is one (as check_expr_want_any)
         const type inner = want.kind == TY_OPTIONAL ? wrapped_value(want) : want;
@@ -6783,6 +6854,7 @@ static type check_member(checker *c, expr *e)
     }
 
     c->device_whole_ok = e->object; // devices.gamepad reads what it names, not all of devices
+    c->in_place_ok = e->object;     // state.tail reads its field where the state is
     c->member_object = e->object;
     const type obj = check_expr(c, e->object);
     if (obj.kind == TY_ERROR) return T_ERR;
@@ -7308,6 +7380,7 @@ static type check_conditional(checker *c, expr *e)
 static type check_index(checker *c, expr *e)
 {
     c->device_whole_ok = e->object; // devices.touchscreen.touches[0] reads the one it names
+    c->in_place_ok = e->object;     // tail[i] reads its element where the array is
     c->colors_indexed = e->object;  // target.colors[1] reads the one it names
     const type obj = check_expr(c, e->object);
     c->colors_indexed = NULL;
@@ -8331,6 +8404,8 @@ static type check_expr_any(checker *c, expr *e)
 {
     const bool whole_ok = c->device_whole_ok == e;
     c->device_whole_ok = NULL;
+    const bool in_place = c->in_place_ok == e;
+    c->in_place_ok = NULL;
     const bool out_ok = c->out_arg == e;
     c->out_arg = NULL;
     c->world_value_ok = c->world_arg == e;
@@ -8483,6 +8558,19 @@ static type check_expr_any(checker *c, expr *e)
                 t = T_ERR;
             }
         }
+    }
+    // A value with a long array in it is only ever read where it is: anything else here would copy it
+    if (!in_place && c->fields_ordered && (t.kind == TY_STRUCT || t.kind == TY_ARRAY) && holds_long_array(t)) {
+        if (t.kind == TY_ARRAY) {
+            diag_error(e->at, "%s is never copied: an array of more than %d elements stays where it is, in its audio declaration's state",
+                       type_name(t), TIDE_ARRAY_MOST);
+        } else {
+            diag_error(e->at, "'%s' is never copied: it holds an array of more than %d elements, which stays where it is, in its audio "
+                       "declaration's state", type_name(t), TIDE_ARRAY_MOST);
+        }
+        diag_note("read or write an element, like 'tail[i]', go through it with 'for (var i = 0; i < tail.count; i++)', or pass the "
+                  "state to a function as a 'mut' parameter");
+        t = T_ERR;
     }
     e->type = t;
     // Text and lists that code makes go in the scratch area.
@@ -15633,6 +15721,56 @@ static void check_audio_calls(const checker *c)
     }
 }
 
+// Where a long array is (holds_long_array): a struct's field, and through
+// structs an audio declaration's state, which a function takes as a 'mut'
+// parameter. Everything else would hold it by copy, or by value on the stack:
+// the fields of whatever isn't a struct, what a list, a map, a set, a grid or
+// a T? holds, a parameter that isn't 'mut', what a function returns, and a
+// struct's methods, whose `this` is a copy. Once every signature is known.
+static void check_long_arrays(const checker *c)
+{
+    const program *prog = c->prog;
+    for (int i = 0; i < prog->decls.count + prog->local_parts.count; i++) {
+        const decl *d = i < prog->decls.count ? prog->decls.items[i] : prog->local_parts.items[i - prog->decls.count];
+        const bool is_struct = d->kind == DECL_STRUCT;
+        if (d->kind != DECL_SYSTEM && d->kind != DECL_FUNCTION && d->kind != DECL_METHOD && d->kind != DECL_SHADER) {
+            for (int k = 0; k < d->fields.count; k++) {
+                const field *f = &d->fields.items[k];
+                const bool direct = f->type.kind == TY_STRUCT || f->type.kind == TY_ARRAY;
+                if ((is_struct && direct) || !reaches_long_array(f->type)) continue;
+                long_array_misplaced(f->type_at.line ? f->type_at : d->at, f->type,
+                                     !direct ? "a field" : d->kind == DECL_COMPONENT ? "a component's field" : d->kind == DECL_SINGLETON ? "a singleton's field"
+                                     : d->kind == DECL_EVENT ? "an event's field" : d->kind == DECL_INPUT ? "the input's field" : "a field here");
+            }
+        }
+        if (is_struct && d->methods.count && holds_long_array((type){TY_STRUCT, (decl *)d})) {
+            diag_error(d->methods.items[0]->at, "'" STR_FMT "' holds an array of more than %d elements, so it has no methods: 'this' would be a copy of it",
+                       STR_ARG(d->name), TIDE_ARRAY_MOST);
+            diag_note("write a function that takes it as a 'mut' parameter, like 'void Push(mut " STR_FMT " state, float sample)'", STR_ARG(d->name));
+        }
+        for (int m = -1; m < d->methods.count; m++) {
+            const decl *code = m < 0 ? d : d->methods.items[m];
+            if (code->kind != DECL_FUNCTION && code->kind != DECL_METHOD && code->kind != DECL_SHADER) continue;
+            for (int k = 0; k < code->params.count; k++) {
+                const param *q = &code->params.items[k];
+                if (!reaches_long_array(q->type)) continue;
+                const bool by_address = q->mode == PARAM_MUT && !q->is_out && code->kind != DECL_SHADER && !code->is_operator && !code->is_extern
+                                     && !code->is_async && holds_long_array(q->type);
+                if (by_address) continue;
+                diag_error(q->at, "'" STR_FMT "' holds an array of more than %d elements, so a parameter of it is 'mut': 'mut %s " STR_FMT "'",
+                           STR_ARG(q->name), TIDE_ARRAY_MOST, type_name(q->type), STR_ARG(q->name));
+                diag_note(code->is_audio ? "an audio declaration's knobs are a copy the frame gives: the delay line is its state's, the 'mut' struct"
+                          : code->kind == DECL_SHADER || code->is_extern || code->is_operator || code->is_async
+                              ? "and only a function's or a method's: it stays in its audio declaration's state, which the audio thread reads"
+                              : "any other would be a copy of it: it stays in its audio declaration's state, and is read and written there");
+            }
+            if (reaches_long_array(code->return_type) || reaches_long_array(code->fails)) {
+                long_array_misplaced(code->at, reaches_long_array(code->return_type) ? code->return_type : code->fails, "what a function returns");
+            }
+        }
+    }
+}
+
 // An `audio` declaration runs on the audio thread, between nothing: no world,
 // no frame, no files, no C, and no scratch memory (text, lists, maps, sets,
 // grids), itself or through the functions it calls.
@@ -15668,13 +15806,13 @@ static void check_audio_bodies(const checker *c)
 }
 
 // What an audio declaration keeps between blocks is its voice's, or its bus's,
-// own bytes in the mixer (tide/audio.h): TIDE_AUDIO_STATE_BYTES of them, of
-// which the last are what it rolls with when its code rolls with Random, a
-// generator for each voice. Its knobs are the bytes an Effect value carries,
-// TIDE_AUDIO_KNOBS_BYTES. The code reads and writes them as its structs, so a
-// struct that's bigger would reach past them, into the next voice's. Sizes are
-// the generated C's (types.h); which declarations roll is known once every
-// call is (check_roll_calls).
+// own bytes in the mixer (tide/audio.h): TIDE_AUDIO_STATE_BYTES at the most,
+// its own state and, when its code rolls with Random, a generator for each
+// voice after it, on the next 8 bytes. Its knobs are the bytes an Effect value
+// carries, TIDE_AUDIO_KNOBS_BYTES. The code reads and writes them as its
+// structs, so a struct that's bigger would reach past them. Sizes are the
+// generated C's (types.h); which declarations roll is known once every call
+// is (check_roll_calls).
 static void check_audio_sizes(const checker *c)
 {
     for (int i = 0; i < c->prog->decls.count; i++) {
@@ -15683,14 +15821,14 @@ static void check_audio_sizes(const checker *c)
         if (d->audio_state >= 0) {
             const param *p = &d->params.items[d->audio_state];
             const int size = decl_layout(p->type.decl).size;
-            const int rolled = d->rolls ? decl_layout(c->prog->random).size : 0;
-            const int most = (int)TIDE_AUDIO_STATE_BYTES - rolled;
+            const int rolled = d->rolls ? decl_layout(c->prog->random).size : 0; // After the state, on 8 bytes (gen_effects)
+            const int most = rolled ? ((int)TIDE_AUDIO_STATE_BYTES - rolled) / rolled * rolled : (int)TIDE_AUDIO_STATE_BYTES;
             if (size > most) {
                 diag_error(p->at, "an audio declaration's state is %d bytes at the most%s, and '%s' is %s%d", most,
                            rolled ? " where it rolls with Random" : "", type_name(p->type), size == LAYOUT_MOST ? "over " : "", size);
                 if (rolled) {
-                    diag_note_at(d->rolls_at, "'" STR_FMT "' rolls on line %d, and each voice keeps what it rolls with in the last %d of its state's %d "
-                                 "bytes: make '%s' smaller, with a shorter array or fewer fields",
+                    diag_note_at(d->rolls_at, "'" STR_FMT "' rolls on line %d, and each voice keeps what it rolls with after its state, %d of "
+                                 "the %d bytes there are: make '%s' smaller, with a shorter array or fewer fields",
                                  STR_ARG(d->name), d->rolls_at.line, rolled, (int)TIDE_AUDIO_STATE_BYTES, type_name(p->type));
                 } else {
                     diag_note("each voice and bus '" STR_FMT "' plays on keeps its own: make '%s' smaller, with a shorter array or fewer "
@@ -16809,6 +16947,7 @@ bool check(program *prog)
     }
     // Overrides of functions, methods, frags and verts take their places before any body names one
     place_overrides(&c, false);
+    check_long_arrays(&c);
     check_shared_names(&c, DECL_FUNCTION);
     check_shared_names(&c, DECL_SHADER);
     check_correction_interpolates(prog);

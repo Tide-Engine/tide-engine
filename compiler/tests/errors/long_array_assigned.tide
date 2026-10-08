@@ -1,0 +1,22 @@
+// expect: 'Tail' is never copied: it holds an array of more than 4096 elements, which stays where it is, in its audio declaration's state
+struct Tail
+{
+    int at;
+    float[96000] line;
+}
+
+struct Pair
+{
+    Tail a;
+    Tail b;
+}
+
+audio Echo(mut Samples samples, mut Pair pair)
+{
+    pair.a = pair.b;
+    samples.values[0] = pair.a.line[0];
+}
+
+scene Main
+{
+}

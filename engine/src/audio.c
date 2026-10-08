@@ -30,14 +30,14 @@ static tide_voice *add_voice(tide_audio_frame *f)
 }
 
 // Copies an effect's knobs into the frame and says where they went. An effect
-// with no code has no knobs, whatever it says.
+// with no code has no knobs, whatever it says, and one whose state is more
+// than there can be is no effect: its code would write past what it's given.
 static uint32_t copy_knobs(tide_audio_frame *f, tide_audio_effect *e)
 {
-    if (!e->fn) {
+    if (!e->fn || e->state_size > TIDE_AUDIO_STATE_BYTES) {
         *e = (tide_audio_effect){0};
         return 0;
     }
-    if (e->state_size > TIDE_AUDIO_STATE_BYTES) e->state_size = TIDE_AUDIO_STATE_BYTES;
     if (!e->knobs) e->knobs_size = 0;
     if (e->knobs_size > TIDE_AUDIO_KNOBS_BYTES) e->knobs_size = TIDE_AUDIO_KNOBS_BYTES;
     const uint32_t at = f->knobs_used;

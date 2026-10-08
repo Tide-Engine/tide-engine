@@ -7302,8 +7302,12 @@ static void gen_array_helpers(gen *g)
         const type e = a->fields.items[0].type;
         const char *name = array_cname(a);
         const char *ec = c_type(e);
-        sb_printf(o, "TIDE_HELPER %s tide_array%d_get(const %s a, const int32_t i)\n{\n"
-                     "    return (uint32_t)i < %du ? a.at[i] : (%s){0};\n}\n\n", ec, k, name, a->array_length, ec);
+        // A long array (types.h) is only ever read where it is, through tide_array%d_ref: with no reader that
+        // takes one by value, code that would copy it, hundreds of kilobytes on the audio thread's stack, doesn't compile
+        if (!type_holds_long_array((type){TY_ARRAY, (decl *)a})) {
+            sb_printf(o, "TIDE_HELPER %s tide_array%d_get(const %s a, const int32_t i)\n{\n"
+                         "    return (uint32_t)i < %du ? a.at[i] : (%s){0};\n}\n\n", ec, k, name, a->array_length, ec);
+        }
         sb_printf(o, "TIDE_HELPER void tide_array%d_set(%s *a, const int32_t i, const %s v)\n{\n"
                      "    if (a && (uint32_t)i < %du) a->at[i] = v;\n}\n\n", k, name, ec, a->array_length);
         sb_printf(o, "TIDE_HELPER %s *tide_array%d_slot(%s *a, const int32_t i)\n{\n"
@@ -15528,6 +15532,16 @@ static void gen_sound_fields(gen *g, const decl *d, const char *path, const char
     }
 }
 
+// Where an audio declaration that rolls keeps its generator in its voice's
+// state, in C: after its own state, on the next 8 bytes.
+static const char *rolled_at(const decl *d)
+{
+    if (d->audio_state < 0) return "0u";
+    sb at = {0};
+    sb_printf(&at, "((sizeof(%s) + 7u) & ~(size_t)7u)", type_cname(d->params.items[d->audio_state].type.decl));
+    return at.data;
+}
+
 // The `audio` declarations: each as the function tide/audio.h's mixer calls
 // once a block (its block, state and knobs cast to what the declaration
 // takes), in a table by the id its name hashes to, which an Effect value
@@ -15542,8 +15556,9 @@ static void gen_effects(gen *g)
     int count = 0;
     bool rolls = false;
     for (int i = 0; i < prog->decls.count; i++) rolls |= prog->decls.items[i]->kind == DECL_FUNCTION && prog->decls.items[i]->is_audio && prog->decls.items[i]->rolls;
-    // An audio declaration that rolls keeps its generator in the last bytes of its voice's state, which start
-    // as zeros: each voice's is seeded as it first runs, by how many were before it. One thread renders.
+    // An audio declaration that rolls keeps its generator right after its own state, on 8 bytes, in what the
+    // mixer keeps for its voice (the effect's state is both), which starts as zeros: each voice's is seeded as
+    // it first runs, by how many were before it. One thread renders.
     if (rolls) sb_put(o, "static uint32_t tide_audio_rolled;\n\n");
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
@@ -15553,13 +15568,11 @@ static void gen_effects(gen *g)
         if (d->audio_state < 0 && !d->rolls) sb_put(o, "    (void)state;\n");
         if (d->audio_knobs < 0) sb_put(o, "    (void)knobs;\n");
         if (d->rolls) {
-            if (d->audio_state >= 0) {
-                sb_printf(o, "    _Static_assert(sizeof(%s) <= TIDE_AUDIO_STATE_BYTES - sizeof(tide_random), \"the state leaves room for what it rolls with\");\n",
-                          type_cname(d->params.items[d->audio_state].type.decl));
-            }
-            sb_put(o, "    uint8_t *const tide_kept = (uint8_t *)state + (TIDE_AUDIO_STATE_BYTES - sizeof(tide_random));\n"
-                      "    tide_random tide_rolled;\n    memcpy(&tide_rolled, tide_kept, sizeof tide_rolled);\n"
-                      "    if (tide_rolled.state == 0) tide_rolled = tide_random_seeded((int64_t)++tide_audio_rolled);\n");
+            sb_printf(o, "    _Static_assert(%s + sizeof(tide_random) <= TIDE_AUDIO_STATE_BYTES, \"the state leaves room for what it rolls with\");\n"
+                         "    uint8_t *const tide_kept = (uint8_t *)state + %s;\n"
+                         "    tide_random tide_rolled;\n    memcpy(&tide_rolled, tide_kept, sizeof tide_rolled);\n"
+                         "    if (tide_rolled.state == 0) tide_rolled = tide_random_seeded((int64_t)++tide_audio_rolled);\n",
+                      rolled_at(d), rolled_at(d));
         }
         sb_printf(o, "    %s(%s", routine_cname(d), d->rolls ? "&tide_rolled, " : "");
         for (int k = 0; k < d->params.count; k++) {
@@ -15590,7 +15603,7 @@ static void gen_effects(gen *g)
         const decl *d = prog->decls.items[i];
         if (d->kind != DECL_FUNCTION || !d->is_audio) continue;
         sb state = {0}, knobs = {0};
-        if (d->rolls) sb_put(&state, "TIDE_AUDIO_STATE_BYTES"); // With its generator at the end
+        if (d->rolls) sb_printf(&state, "%s + sizeof(tide_random)", rolled_at(d)); // With its generator after it
         else if (d->audio_state >= 0) sb_printf(&state, "sizeof(%s)", type_cname(d->params.items[d->audio_state].type.decl));
         else sb_put(&state, "0");
         if (d->audio_knobs >= 0) sb_printf(&knobs, "sizeof(%s)", type_cname(d->params.items[d->audio_knobs].type.decl));

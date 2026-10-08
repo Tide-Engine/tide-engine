@@ -1,0 +1,10 @@
+// expect: an array holds from 1 to 4096 elements, all of its lengths together, and this one would hold 2000000
+// expect: an audio declaration's state holds one of up to 1048576, a delay line
+struct Tail
+{
+    float[2000000] line;
+}
+
+scene Main
+{
+}
