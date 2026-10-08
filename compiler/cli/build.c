@@ -469,6 +469,7 @@ typedef struct build {
     char *wasm_ld; // Web builds with an installed clang
     char *cache;   // <folder>/.tide/<configuration>
     uint64_t headers; // The installed headers, which every compiled file can include
+    int jobs;         // How many files compile at once
     bool engine_built;
     game_info info; // Its settings, from its last generate
     sb externs;     // ...and the C function of each of its extern functions, a line each
@@ -558,8 +559,8 @@ static char *stamp_of(const build *b)
 
 // ---------------------------------------------------------------------------
 // C++ with no runtime: what the compiler or the linker said for want of one,
-// explained. clang's own words go to the terminal as they are; a build that
-// failed runs once more for them as text.
+// explained. clang's own words go to the terminal as they are; a link that
+// failed runs once more for them as text, and a compile's are kept as it runs.
 
 // What the program `argv` says, errors too. To free().
 static char *said(const char *const *argv)
@@ -598,11 +599,11 @@ static bool standard_header(const char *name, const size_t len)
     return len > 0;
 }
 
-// A C++ file that didn't compile: a header of the standard library, which
-// isn't there, or exceptions or RTTI, which are off.
-static void explain_cpp_compile(const char *const *argv)
+// A C++ file that didn't compile, by what the compiler said (`text`): a header
+// of the standard library, which isn't there, or exceptions or RTTI, which
+// are off.
+static void explain_cpp_compile(const char *text)
 {
-    char *text = said(argv);
     bool note = false;
     static const char not_found[] = "' file not found";
     for (const char *at = text; (at = strstr(at, not_found)); at += sizeof not_found - 1) {
@@ -629,7 +630,6 @@ static void explain_cpp_compile(const char *const *argv)
         note = true;
     }
     if (note) fprintf(stderr, "  = note: " NO_RUNTIME "\n");
-    free(text);
 }
 
 // A link that failed for want of the C++ runtime: new and delete, which the
@@ -660,28 +660,210 @@ static void explain_cpp_link(const char *text)
     }
 }
 
-// Compiles one C or C++ file; `gen`, the generated files' folder, may be NULL.
-static bool compile_c(const build *b, const char *source, const char *object, const char *gen)
+// ---------------------------------------------------------------------------
+// Compiling: a build's files, several at a time
+//
+// The files a build has to compile are listed first, in the order tide
+// compiles them (the engine's, the game's generated C, its own C, then each
+// package's), and then compiled as many at once as the machine has
+// processors. What that leaves is what compiling them one after another in
+// that order leaves:
+// - What the compilers say is kept, and said a file at a time in the files'
+//   order, up to the first file that didn't compile. Nothing is said for the
+//   files after that one.
+// - No file after that one is started once it's known, and the files before
+//   it all compile. The ones already on their way finish, and keep what they
+//   made: an object is good for its source whatever else failed.
+// So a build that fails says the same thing every time, whichever compiler
+// was the quicker.
+
+typedef struct compile_job {
+    args a;           // The compiler's command line
+    char *made[4];    // ...and the parts of it made for this file
+    bool cpp;
+    bool first;       // Started ahead of its turn: the game's own code, which takes the longest
+    bool engine;      // One of the engine's files, which have one stamp for them all (compiles.engine_stamp)
+    char *stamp_path; // The file that says what the object was made of, NULL for a file with none of its own:
+    char *stamp;      // gone while the file compiles, so a compile that's cut short leaves no object that passes, and written once it has
+    bool started;
+    bool done;
+    int code;   // The compiler's exit code; -1 if it couldn't start
+    char *said; // What it said
+} compile_job;
+
+typedef struct compiles {
+    compile_job *items;
+    int count;
+    int cap;
+    char *engine_stamp_path; // Written once each of the engine's files listed here has compiled; NULL when none is
+    char *engine_stamp;
+} compiles;
+
+static char *copy_text(const char *text)
 {
-    const bool cpp = is_cpp(source);
-    args a = {0};
-    arg_compiler(&a, b->compiler);
-    arg(&a, "-c");
-    arg(&a, source);
-    arg(&a, "-o");
-    arg(&a, object);
-    char *include_flag = format("-I%s", b->include, NULL);
-    char *gen_flag = gen ? format("-I%s", gen, NULL) : NULL;
-    arg(&a, include_flag);
-    if (gen_flag) arg(&a, gen_flag);
-    config_flags(&a, b, cpp);
-    const int code = sys_run(a.items, NULL, false);
-    if (cpp && code > 0) explain_cpp_compile(a.items);
-    free(include_flag);
-    free(gen_flag);
-    free(a.items);
-    if (code == -1) fprintf(stderr, "tide: couldn't start %s\n", b->compiler);
-    return code == 0;
+    return format("%s", text, NULL);
+}
+
+// Lists one C or C++ file to compile; `gen`, the generated files' folder, may
+// be NULL.
+static compile_job *queue_compile(compiles *list, const build *b, const char *source, const char *object, const char *gen)
+{
+    if (list->count == list->cap) {
+        list->cap = list->cap * 2 + 64;
+        list->items = realloc(list->items, sizeof(compile_job) * (size_t)list->cap);
+        if (!list->items) abort();
+    }
+    compile_job *job = &list->items[list->count++];
+    *job = (compile_job){.cpp = is_cpp(source)};
+    job->made[0] = copy_text(source);
+    job->made[1] = copy_text(object);
+    job->made[2] = format("-I%s", b->include, NULL);
+    job->made[3] = gen ? format("-I%s", gen, NULL) : NULL;
+    arg_compiler(&job->a, b->compiler);
+    arg(&job->a, "-c");
+    arg(&job->a, job->made[0]);
+    arg(&job->a, "-o");
+    arg(&job->a, job->made[1]);
+    arg(&job->a, job->made[2]);
+    if (job->made[3]) arg(&job->a, job->made[3]);
+    config_flags(&job->a, b, job->cpp);
+    // The compiler's words are kept until its file's turn, so it can't see
+    // that they're for a terminal: it's told. No part of an object's stamp.
+    if (diag_colored()) {
+        arg(&job->a, "-fcolor-diagnostics");
+#ifdef _WIN32
+        arg(&job->a, "-fansi-escape-codes"); // As escape sequences, which a pipe carries, not calls to the console
+#endif
+    }
+    return job;
+}
+
+static void free_compiles(compiles *list)
+{
+    for (int i = 0; i < list->count; i++) {
+        compile_job *job = &list->items[i];
+        for (size_t m = 0; m < sizeof job->made / sizeof job->made[0]; m++) free(job->made[m]);
+        free(job->a.items);
+        free(job->stamp_path);
+        free(job->stamp);
+        free(job->said);
+    }
+    free(list->items);
+    free(list->engine_stamp_path);
+    free(list->engine_stamp);
+    *list = (compiles){0};
+}
+
+// The next file to start among those before `stop`: one that goes ahead of
+// its turn, or else the first in order. -1 when none is left.
+static int next_compile(const compiles *list, const int stop)
+{
+    int next = -1;
+    for (int i = 0; i < stop; i++) {
+        const compile_job *job = &list->items[i];
+        if (job->started) continue;
+        if (job->first) return i;
+        if (next < 0) next = i;
+    }
+    return next;
+}
+
+// Says what the compilers of the files that are done said, in the files'
+// order: `shown` is how many have had their turn, which stops at the first
+// that didn't compile.
+static void show_compiles(const build *b, compiles *list, int *shown)
+{
+    while (*shown < list->count && list->items[*shown].done) {
+        compile_job *job = &list->items[*shown];
+        if (job->said) {
+            // As the compiler would have printed it: a line ends once, and
+            // stderr ends each as the system does.
+            char *to = job->said;
+            for (const char *from = job->said; *from; from++) {
+                if (from[0] != '\r' || from[1] != '\n') *to++ = *from;
+            }
+            *to = '\0';
+            fputs(job->said, stderr);
+        }
+        if (job->code == -1) fprintf(stderr, "tide: couldn't start %s\n", b->compiler);
+        else if (job->code > 0 && job->cpp) explain_cpp_compile(job->said ? job->said : "");
+        if (job->code != 0) {
+            *shown = list->count; // Nothing after it has a turn
+            return;
+        }
+        (*shown)++;
+    }
+}
+
+// Compiles the files listed, and empties the list. False once it has said
+// what's wrong with the first that didn't compile.
+static bool run_compiles(build *b, compiles *list)
+{
+    sys_process *running[SYS_AT_ONCE];
+    int job_of[SYS_AT_ONCE];
+    int count = 0;
+    int stop = list->count; // Files from here on aren't started: the first that failed
+    int shown = 0;
+    int engine_left = 0;
+    for (int i = 0; i < list->count; i++) engine_left += list->items[i].engine;
+    const int at_once = b->jobs > 0 ? b->jobs : 1;
+    for (;;) {
+        while (count < at_once) {
+            const int next = next_compile(list, stop);
+            if (next < 0) break;
+            compile_job *job = &list->items[next];
+            job->started = true;
+            if (job->stamp_path) sys_remove(job->stamp_path);
+            sys_process *process = sys_start_kept(job->a.items);
+            if (!process) {
+                job->done = true;
+                job->code = -1;
+                stop = next;
+                continue;
+            }
+            running[count] = process;
+            job_of[count++] = next;
+        }
+        show_compiles(b, list, &shown);
+        if (count == 0) break;
+        int code = 1;
+        char *text = NULL;
+        const int ended = sys_wait_any(running, count, &code, &text);
+        if (ended < 0) {
+            fprintf(stderr, "tide: the system couldn't wait for the compiler\n");
+            for (int i = 0; i < count; i++) sys_kill(running[i]);
+            stop = -1;
+            break;
+        }
+        const int which = job_of[ended];
+        compile_job *job = &list->items[which];
+        running[ended] = running[count - 1];
+        job_of[ended] = job_of[count - 1];
+        count--;
+        job->done = true;
+        job->code = code;
+        job->said = text;
+        if (code != 0) {
+            if (which < stop) stop = which;
+            continue;
+        }
+        if (job->stamp_path) sys_write_text(job->stamp_path, job->stamp);
+        if (job->engine && --engine_left == 0) {
+            sys_write_text(list->engine_stamp_path, list->engine_stamp);
+            b->engine_built = true;
+        }
+    }
+    const bool ok = stop == list->count;
+    free_compiles(list);
+    return ok;
+}
+
+// Compiles one C or C++ file; `gen`, the generated files' folder, may be NULL.
+static bool compile_c(build *b, const char *source, const char *object, const char *gen)
+{
+    compiles list = {0};
+    queue_compile(&list, b, source, object, gen);
+    return run_compiles(b, &list);
 }
 
 // Finds the compiler and makes the game's .tide folder. False after saying
@@ -743,6 +925,22 @@ static bool build_setup(build *b, const char *root, const build_options *opts, c
 #endif
     if (!find_target(root, opts)) return false;
     b->headers = header_stamp(b->include);
+    // Files compile as many at once as the machine has processors, or as
+    // TIDE_JOBS says: for a machine short of memory, and for measuring.
+    b->jobs = sys_processors();
+    const char *asked = sys_env("TIDE_JOBS");
+    if (asked) {
+        char *end = NULL;
+        const long jobs = strtol(asked, &end, 10);
+        if (end == asked || *end || jobs < 1) {
+            fprintf(stderr, "tide: TIDE_JOBS is '%s', which isn't how many files to compile at once\n", asked);
+            fprintf(stderr, "  = note: set it to a whole number from 1 up, or leave it unset for as many as the machine has "
+                            "processors\n");
+            return false;
+        }
+        b->jobs = jobs > SYS_AT_ONCE ? SYS_AT_ONCE : (int)jobs;
+    }
+    if (b->jobs > SYS_AT_ONCE) b->jobs = SYS_AT_ONCE;
 
     // Everything tide makes goes in <folder>/.tide/<configuration>.
     char *tide_dir = tide_work_folder(b->folder);
@@ -762,27 +960,29 @@ typedef struct engine_build {
     const build *b;
     const char *out_dir;
     bool rebuild;
-    bool ok;
+    compiles *list;
     file_list objects;
 } engine_build;
 
-static void compile_engine_file(void *user, const char *source)
+static void queue_engine_file(void *user, const char *source)
 {
     engine_build *e = user;
     char name[512];
     snprintf(name, sizeof name, "%s.o", path_base(source));
     char *object = path_join(e->out_dir, name);
-    if (e->ok && (e->rebuild || sys_mtime(object) < sys_mtime(source))) {
-        e->ok = compile_c(e->b, source, object, NULL);
+    if (e->rebuild || sys_mtime(object) < sys_mtime(source)) {
+        queue_compile(e->list, e->b, source, object, NULL)->engine = true;
     }
     add_file(&e->objects, object);
     free(object);
 }
 
-// Rebuilt when tide, the compiler or the flags change.
-static bool build_engine(build *b)
+// Lists the engine's files that have to compile: all of them when tide, the
+// compiler or the flags changed, and otherwise those changed since their
+// objects were made. Once for a list.
+static void queue_engine(build *b, compiles *list)
 {
-    if (b->engine_built) return true;
+    if (b->engine_built) return;
 #if !defined(_WIN32) && !defined(__APPLE__)
     // Objects for a library have flags of their own (config_flags): kept apart,
     // so running and building don't rebuild each other's.
@@ -794,21 +994,26 @@ static bool build_engine(build *b)
     char *stamp_path = path_join(engine_dir, "stamp");
     char *stamp = stamp_of(b);
     char *old_stamp = sys_read_file(stamp_path, NULL);
-    engine_build engine = {b, engine_dir, !old_stamp || strcmp(old_stamp, stamp) != 0, true, {0}};
-    // Some objects may be replaced before a later compile fails. Reverting
-    // sources, headers or flags must not make that partial rebuild look complete.
-    sys_remove(stamp_path);
+    engine_build engine = {b, engine_dir, !old_stamp || strcmp(old_stamp, stamp) != 0, list, {0}};
+    const int listed = list->count;
     char *engine_src = path_join(b->root, "src/engine/");
-    folder_find(engine_src, ".c", compile_engine_file, &engine);
+    folder_find(engine_src, ".c", queue_engine_file, &engine);
     free(engine_src);
-    if (engine.ok) sys_write_text(stamp_path, stamp);
-    free(stamp_path);
-    free(stamp);
+    b->engine = engine.objects;
+    if (list->count == listed) {
+        b->engine_built = true; // Nothing of it to compile: its stamp stands
+        free(stamp_path);
+        free(stamp);
+    } else {
+        // Some objects may be replaced before a later compile fails. Reverting
+        // sources, headers or flags must not make that partial rebuild look
+        // complete: the stamp is back once every file listed has compiled.
+        sys_remove(stamp_path);
+        list->engine_stamp_path = stamp_path;
+        list->engine_stamp = stamp;
+    }
     free(old_stamp);
     free(engine_dir);
-    b->engine = engine.objects;
-    b->engine_built = engine.ok;
-    return engine.ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -887,7 +1092,11 @@ static uint64_t header_stamp(const char *folder)
 // when their contents haven't changed. Keep generated objects by contents,
 // not modification times: a C-only edit needn't compile the game or launcher.
 // The generated header is shared by both, so a layout change rebuilds both.
-static bool compile_generated(const build *b, const char *source, const char *object, const char *gen)
+// Lists `source` when its object isn't what it would compile to, `first` for
+// the one to start ahead of its turn. False when the generated files aren't
+// there to read.
+static bool queue_generated(const build *b, compiles *list, const char *source, const char *object, const char *gen,
+                            const bool first)
 {
     char *text = sys_read_file(source, NULL);
     char *header_path = path_join(gen, "game.h");
@@ -909,28 +1118,30 @@ static bool compile_generated(const build *b, const char *source, const char *ob
     snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)h);
     char *stamp_path = format("%s.stamp", object, NULL);
     char *old = sys_read_file(stamp_path, NULL);
-    bool ok = true;
     if (!old || strcmp(old, stamp) != 0 || !sys_exists(object)) {
         // A failed compile may leave a partial object: never reuse it, even
         // if the source is then put back exactly as it was before the failure.
-        sys_remove(stamp_path);
-        ok = compile_c(b, source, object, gen);
-        if (ok) sys_write_text(stamp_path, stamp);
+        // The stamp goes as the compile starts (run_compiles).
+        compile_job *job = queue_compile(list, b, source, object, gen);
+        job->stamp_path = stamp_path;
+        job->stamp = copy_text(stamp);
+        job->first = first;
+    } else {
+        free(stamp_path);
     }
     free(old);
-    free(stamp_path);
-    return ok;
+    return true;
 }
 
-// Compiles the .c and .cpp files of the game, or of one of its packages
-// (`package`, its name), in `folder_path` into a folder of the cache, each one
-// again only when it, a header in that folder, or the flags changed: each
-// object has a stamp of what made it. Objects for a library are kept apart on
-// Linux, as the engine's are.
-static bool compile_c_files(const build *b, const char *folder_path, const char *package, c_side *out)
+// Lists the .c and .cpp files of the game, or of one of its packages
+// (`package`, its name), in `folder_path` to compile into a folder of the
+// cache, each one again only when it, a header in that folder, or the flags
+// changed: each object has a stamp of what made it. Objects for a library are
+// kept apart on Linux, as the engine's are.
+static void queue_c_files(const build *b, compiles *list, const char *folder_path, const char *package, c_side *out)
 {
     file_list sources = own_files_of(folder_path, source_extensions);
-    if (sources.count == 0) return true;
+    if (sources.count == 0) return;
 #if !defined(_WIN32) && !defined(__APPLE__)
     char *dir = path_join(b->cache, b->library ? "c-pic" : "c");
 #else
@@ -953,8 +1164,7 @@ static bool compile_c_files(const build *b, const char *folder_path, const char 
     char *folder = path_join(folder_path, "");
     const size_t prefix = strlen(folder);
     free(folder);
-    bool ok = true;
-    for (int i = 0; i < sources.count && ok; i++) {
+    for (int i = 0; i < sources.count; i++) {
         char name[512]; // lib/noise.c: lib_noise.c.o
         snprintf(name, sizeof name, "%s.o", sources.items[i] + prefix);
         for (char *p = name; *p; p++) {
@@ -966,28 +1176,45 @@ static bool compile_c_files(const build *b, const char *folder_path, const char 
         snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)hash_file(common, sources.items[i]));
         char *old = sys_read_file(stamp_path, NULL);
         if (!old || strcmp(old, stamp) != 0 || !sys_exists(object)) {
-            ok = compile_c(b, sources.items[i], object, NULL);
-            if (ok) sys_write_text(stamp_path, stamp);
-            else sys_remove(stamp_path);
+            compile_job *job = queue_compile(list, b, sources.items[i], object, NULL);
+            job->stamp_path = stamp_path;
+            job->stamp = copy_text(stamp);
+        } else {
+            free(stamp_path);
         }
         add_file(&out->objects, object);
         free(old);
-        free(stamp_path);
         free(object);
     }
     free(dir);
     free_files(&sources);
-    return ok;
 }
 
 // The game's C, and its packages'.
-static bool compile_game_c(const build *b, c_side *out)
+static void queue_game_c(const build *b, compiles *list, c_side *out)
 {
-    bool ok = compile_c_files(b, b->folder, NULL, out);
-    for (int p = 0; p < b->packages.count && ok; p++) {
-        ok = compile_c_files(b, b->packages.items[p].folder, b->packages.items[p].name, out);
+    queue_c_files(b, list, b->folder, NULL, out);
+    for (int p = 0; p < b->packages.count; p++) {
+        queue_c_files(b, list, b->packages.items[p].folder, b->packages.items[p].name, out);
     }
-    return ok;
+}
+
+// Compiles what a build of the game is made of and isn't compiled yet: the
+// engine, the game's generated C (`game_c`) and what starts it (`start_c`: its
+// launcher, or its library's side of a host) into `objects`, and the game's
+// own C and its packages', whose objects go in `c`.
+static bool compile_game(build *b, const char *gen, const char *game_c, const char *start_c, const file_list *objects,
+                         c_side *c)
+{
+    compiles list = {0};
+    queue_engine(b, &list);
+    if (!queue_generated(b, &list, game_c, objects->items[0], gen, true)
+        || !queue_generated(b, &list, start_c, objects->items[1], gen, false)) {
+        free_compiles(&list);
+        return false;
+    }
+    queue_game_c(b, &list, c);
+    return run_compiles(b, &list);
 }
 
 // Links to the ELF shared library at `path` by its name, so the program asks
@@ -1464,16 +1691,13 @@ static char *build_game(const char *root, const build_options *opts, const char 
     if (!generate(&b, gen, false)) return NULL;
     char *main_c = path_join(gen, "main.c");
     write_main(main_c, opts, b.name);
-    if (!build_engine(&b)) return NULL;
 
     char *game_c = path_join(gen, "game.c");
     file_list objects = {0};
     add_file(&objects, path_join(b.cache, "game.o"));
     add_file(&objects, path_join(b.cache, "main.o"));
-    if (!compile_generated(&b, game_c, objects.items[0], gen)) return NULL;
-    if (!compile_generated(&b, main_c, objects.items[1], gen)) return NULL;
     c_side c = {0};
-    if (!compile_game_c(&b, &c) || !find_libraries(&b, &c)) return NULL;
+    if (!compile_game(&b, gen, game_c, main_c, &objects, &c) || !find_libraries(&b, &c)) return NULL;
 
     char *output;
     const char *suffix = opts->web ? ".html" : EXE_SUFFIX;
@@ -1596,7 +1820,7 @@ static char *build_path(const run *r, const uint32_t n, const char *suffix)
 // what's wrong.
 static bool build_library(run *r)
 {
-    if (!generate(&r->b, r->gen, true) || !build_engine(&r->b)) return false;
+    if (!generate(&r->b, r->gen, true)) return false;
     const char *suffix = r->web ? ".wasm" : LIBRARY_SUFFIX;
     char *game_c = path_join(r->gen, "game.c");
     char *library_c = path_join(r->gen, r->web ? "main.c" : "library.c");
@@ -1604,9 +1828,7 @@ static bool build_library(run *r)
     add_file(&objects, path_join(r->dir, "game.o"));
     add_file(&objects, path_join(r->dir, r->web ? "main.o" : "library.o"));
     c_side c = {0};
-    bool ok = compile_generated(&r->b, game_c, objects.items[0], r->gen)
-           && compile_generated(&r->b, library_c, objects.items[1], r->gen) && compile_game_c(&r->b, &c)
-           && find_libraries(&r->b, &c);
+    bool ok = compile_game(&r->b, r->gen, game_c, library_c, &objects, &c) && find_libraries(&r->b, &c);
     if (ok) copy_dynamic(&c, r->dir); // Next to the host, which loads the game's library
     const uint32_t n = r->builds + 1u;
     char *linked = build_path(r, n, ".tmp");
@@ -2173,13 +2395,10 @@ static char *build_android(const char *root, const build_options *opts, char *pa
         sys_mkdirs(b.cache);
         b.engine_built = false;
         b.engine = (file_list){0};
-        if (!build_engine(&b)) return NULL;
         file_list objects = {0};
         add_file(&objects, path_join(b.cache, "game.o"));
         add_file(&objects, path_join(b.cache, "main.o"));
-        if (!compile_generated(&b, game_c, objects.items[0], gen)
-            || !compile_generated(&b, main_c, objects.items[1], gen)) return NULL;
-        if (!compile_game_c(&b, &c[abi]) || !find_libraries(&b, &c[abi])) return NULL;
+        if (!compile_game(&b, gen, game_c, main_c, &objects, &c[abi]) || !find_libraries(&b, &c[abi])) return NULL;
         char *lib = path_join(b.cache, "libgame.so");
         if (!link_android(&b, &objects, &c[abi], lib)) return NULL;
         desc.abis[desc.lib_count] = android_abis[abi];

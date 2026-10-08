@@ -1,0 +1,21 @@
+// expect: a singleton's field can't be 'Hall': it holds an array of more than 4096 elements, which only an audio declaration's state does
+// Through a struct that holds two of them
+struct Tail
+{
+    int at;
+    float[96000] line;
+}
+
+struct Hall
+{
+    Tail[2] sides;
+}
+
+local singleton Room
+{
+    Hall hall;
+}
+
+scene Main
+{
+}

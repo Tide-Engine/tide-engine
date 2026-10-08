@@ -60,6 +60,7 @@ tide_e2e_test(evaluation_order SOURCES e2e/evaluation_order.tide e2e/evaluation_
 tide_e2e_test(increments) # ++i and i++ as values, in their turn
 tide_e2e_test(random) # Random's state in the world, and the match's seed: the same bits on every platform
 tide_e2e_test(rolls) # Random.NextInt and the like on the type, and Random.seed: a system's rolls for its entity, with no state
+tide_e2e_test(gpu_rolls) # ...and in frags and verts: the frame's number and the seed their draws send, alike for a frame's draws
 tide_e2e_test(views)
 tide_e2e_test(shapes) # The shapes with smooth edges: each Draw call, the general Shape, and target receivers
 tide_e2e_test(draw_settings) # Blend, tint, transform, clip and cameras: around blocks, listed with commas, and set
@@ -76,6 +77,9 @@ tide_e2e_test(audio) # Clip assets, and Audio.Play from views, local handlers an
 tide_e2e_test(sound) # Sound fields the frame names to the mixer while they play, and the listener
 tide_e2e_test(buses) # A game's [Bus] enum, a Sound's bus and Audio.SetVolume
 tide_e2e_test(effects) # Audio declarations: code the audio thread runs, with state and knobs, on a Sound and a bus
+# Its echo keeps a delay line of 384 KB, which nothing may copy: a function of the generated C that had one on
+# its stack, on the audio thread's, doesn't build
+target_compile_options(tidec_e2e_effects PRIVATE -Wframe-larger-than=65536)
 tide_e2e_test(textures) # Texture as the one type a draw and a Sample take: grids of colors and of floats as textures, and the sampling a Texture carries
 tide_e2e_test(stages) # Enum phases, local offsets and whole-phase ordering in every schedule
 tide_e2e_test(render_targets) # Target receivers, explicit Texture sources and distributed rendering phases

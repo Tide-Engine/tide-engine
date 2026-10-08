@@ -1,4 +1,6 @@
-// expect: the GPU can't roll random numbers: a Random keeps its state where the CPU steps it
+// expect: a Random can't go to the GPU: its state is 64 bits, and the GPU's ints are 32
+// expect: frag 'Glitter' runs on the GPU, and 'Noise' with it, as it calls it
+// expect: roll on the type, 'Random.NextInt(6)': a frag has a generator of its pixel's own there, and a vert of its vertex's
 local component Glow { float seed; List<Vertex> corners; List<int> faces; }
 scene Main { }
 float Noise(float seed)

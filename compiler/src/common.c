@@ -226,7 +226,7 @@ static void to_sink(const diag_severity severity, const loc at, const char *fmt,
 // Whether diagnostics are colored: stderr is a terminal that takes escape
 // sequences, and NO_COLOR isn't set (no-color.org). Never for a file or a
 // pipe, so what tools and tests read is plain text.
-static bool colored(void)
+bool diag_colored(void)
 {
     static int enabled = -1;
     if (enabled >= 0) return enabled;
@@ -254,7 +254,7 @@ static bool colored(void)
 
 static const char *paint(const char *color)
 {
-    return colored() ? color : "";
+    return diag_colored() ? color : "";
 }
 
 // An error's red, a warning's yellow.

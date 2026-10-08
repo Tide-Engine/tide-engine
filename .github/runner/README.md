@@ -1,12 +1,10 @@
 # The former runners on the owner's machines
 
-The workflows now use GitHub-hosted runners: `windows-latest`, `ubuntu-latest`
-and `macos-latest`. Normal pushes and pull requests build the three packages
-with their existing package checks; full test suites still run only by hand
-or for stable releases, on Windows and Linux. Docs runs on `ubuntu-latest`.
+The workflows run on Blacksmith's runners, when asked to (see AGENTS.md,
+Packaging and releases).
 
 The setup below records the two self-hosted runners used while the account
-had no hosted minutes. Neither workflow currently selects them.
+had no hosted minutes. Neither workflow selects them.
 
 ## Windows (the PC)
 
@@ -53,5 +51,4 @@ had no hosted minutes. Neither workflow currently selects them.
   `_work/tide-engine/tide-engine/build`.
 - One runner an OS runs one job at a time, and both workflows share a checkout.
 - The hosted workflows install their tools and restore caches on fresh
-  checkouts. Their test selection is the Version job's Checks step in
-  `build.yml`; macOS has a package row only.
+  checkouts.

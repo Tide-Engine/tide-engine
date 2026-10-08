@@ -49,6 +49,20 @@ bool sys_wait(sys_process *p, int ms, int *code);
 // Ends it, and frees it.
 void sys_kill(sys_process *p);
 
+// Several programs at once, as a build's compiles are. sys_start_kept starts
+// one like sys_start, with what it prints and its errors kept for whoever
+// waits for it rather than on the terminal, so what two of them say never
+// mixes. NULL if it couldn't start.
+sys_process *sys_start_kept(const char *const *argv);
+// Waits until one of the `count` programs sys_start_kept started has ended and
+// says which: its exit code in `code` (-1 for one that turned out not to be
+// there to run), and what it said in `said`, to free(). That process is freed.
+// SYS_AT_ONCE programs at the most. -1 if the system can't wait for them.
+int sys_wait_any(sys_process *const *processes, int count, int *code, char **said);
+#define SYS_AT_ONCE 64 // What Windows waits for in one call
+// How many programs are worth running at once: the machine's processors.
+int sys_processors(void);
+
 // Runs a program like sys_run, and puts what it prints (not its errors) in
 // `out`, `size` bytes with the zero that ends it, cut there if it's longer.
 int sys_capture(const char *const *argv, char *out, size_t size);

@@ -1,0 +1,16 @@
+// expect: what a list, a map, a set or a grid holds can't be 'Tail': it holds an array of more than 4096 elements
+struct Tail
+{
+    int at;
+    float[96000] line;
+}
+
+void Keep()
+{
+    List<Tail> tails = [];
+    tails.Clear();
+}
+
+scene Main
+{
+}

@@ -33,9 +33,9 @@ function check(condition, message) {
     if (!condition) throw new Error(message);
 }
 
-async function run(executable, args, cwd) {
+async function run(executable, args, cwd, extra = {}) {
     return await new Promise((accept, reject) => {
-        const child = spawn(executable, args, { cwd, env, shell: false, windowsHide: true });
+        const child = spawn(executable, args, { cwd, env: { ...env, ...extra }, shell: false, windowsHide: true });
         let said = "";
         child.stdout.on("data", (data) => { said += data; });
         child.stderr.on("data", (data) => { said += data; });
@@ -304,6 +304,102 @@ async function targetTests(tide, installation, root, target, embedded) {
     console.log("  failed source-only engine compile and exact revert: rebuilt successfully");
 }
 
+// What a build leaves in its cache: every object, generated file and stamp,
+// by its contents. A Windows object says when it was made in its header's
+// second field, which is no part of what it is.
+function contents(cache) {
+    const found = new Map();
+    function visit(folder) {
+        for (const entry of readdirSync(folder, { withFileTypes: true })) {
+            const path = join(folder, entry.name);
+            if (entry.isDirectory()) visit(path);
+            else if (/\.(o|c|h|stamp)$/.test(entry.name) || entry.name === "stamp") {
+                const bytes = readFileSync(path);
+                if (entry.name.endsWith(".o") && bytes.length > 8 && bytes.readUInt16LE(0) === 0x8664) bytes.fill(0, 4, 8);
+                found.set(relative(cache, path).replaceAll("\\", "/"), bytes.toString("base64"));
+            }
+        }
+    }
+    visit(cache);
+    return found;
+}
+
+// tide compiles a build's files several at a time: what's left, and what a
+// build that fails says, have to be what one file at a time leaves and says.
+async function atOnceTests(tide, root, target) {
+    console.log(`Several compiles at once: ${target}`);
+    const game = join(root, `at-once-${target}`);
+    mkdirSync(game);
+    const count = 24;
+    const name = (i) => `part${String(i).padStart(2, "0")}`;
+    put(join(game, "game.tide"), "scene Main { }\nsingleton State { int value; }\n"
+        + Array.from({ length: count }, (_, i) => `extern int Part${i}(int value);\n`).join("")
+        + "system Update(mut State state)\n{\n"
+        + Array.from({ length: count }, (_, i) => `    state.value = Part${i}(state.value);\n`).join("") + "}\n");
+    const text = (i) => `int Part${i}(int value) { return value + ${i}; }\n`;
+    // Each at a time of its own, which an object's stamp has: a file put back is the file it was.
+    for (let i = 0; i < count; i++) put(join(game, `${name(i)}.c`), text(i), headerTime);
+    const args = ["build", game, ...(target === "web" ? ["--web"] : [])];
+    const cache = join(game, ".tide", `${target}-debug`);
+    const clean = () => { removeOwned(root, join(game, ".tide")); removeOwned(root, join(game, "build")); };
+    async function build(jobs) {
+        return await run(tide, args, game, jobs ? { TIDE_JOBS: String(jobs) } : {});
+    }
+
+    // The same cache whatever ran at once
+    const built = [];
+    for (const jobs of [1, 0, 3]) {
+        const result = await build(jobs);
+        check(result.code === 0, `tide build failed with ${jobs || "a processor's worth of"} compiles at once:\n${result.said}`);
+        built.push({ jobs, files: contents(cache) });
+        clean();
+    }
+    for (const other of built.slice(1)) {
+        const differ = [...built[0].files].filter(([path, bytes]) => other.files.get(path) !== bytes).map(([path]) => path);
+        const more = [...other.files.keys()].filter((path) => !built[0].files.has(path));
+        check(!differ.length && !more.length, `${other.jobs || "many"} compiles at once left other files than one at a time: ${[...differ, ...more]}`);
+    }
+    console.log(`  one, three and a processor's worth at once leave the same ${built[0].files.size} files`);
+
+    // Two files that don't compile: one at a time, only the first of them in
+    // tide's order is reached. Whatever runs at once says that one's errors,
+    // whole, and nothing of the other's, every time.
+    put(join(game, `${name(5)}.c`), `#error broken_five\n${text(5)}`, changedTime);
+    put(join(game, `${name(17)}.c`), `#error broken_seventeen\n${text(17)}`, changedTime);
+    const alone = await build(1);
+    check(alone.code !== 0, "a file that doesn't compile fails the build");
+    const five = alone.said.includes("broken_five"), seventeen = alone.said.includes("broken_seventeen");
+    check(five !== seventeen, `one file at a time says one file's errors:\n${alone.said}`);
+    clean();
+    for (let round = 0; round < 4; round++) {
+        const result = await build(round === 3 ? 2 : 0);
+        check(result.code !== 0, "a file that doesn't compile fails the build, whatever runs at once");
+        check(result.said === alone.said, `several compiles at once said something else than one at a time:\n${result.said}\n--- one at a time:\n${alone.said}`);
+        if (round < 3) clean();
+    }
+    console.log(`  two files that don't compile: the errors of ${five ? name(5) : name(17)}.c alone, as one at a time says them`);
+
+    // What compiled before the failure is kept: the engine and the generated
+    // C come before a game's own C, so once the files are right again only C
+    // of the game's is compiled.
+    let before = mark(cache);
+    check([...before.keys()].some((file) => file.startsWith("engine/")) && before.has("game.o") && before.has("main.o"),
+        "a build that failed in the game's C still compiled the engine and the generated C");
+    put(join(game, `${name(5)}.c`), text(5), headerTime);
+    put(join(game, `${name(17)}.c`), text(17), headerTime);
+    const fixed = await build(0);
+    check(fixed.code === 0, `the build after the fix failed:\n${fixed.said}`);
+    const again = written(cache, before);
+    check(!again.some((file) => !file.startsWith("c/")), `the build after the fix compiled more than the game's C: ${again}`);
+    check(JSON.stringify([...contents(cache)].sort()) === JSON.stringify([...built[0].files].sort()), "the build after the fix left other files than a clean build");
+    console.log("  a build that failed keeps what compiled, and the next one finishes it");
+
+    // A count that's no count
+    const refused = await run(tide, args, game, { TIDE_JOBS: "many" });
+    check(refused.code !== 0 && refused.said.includes("TIDE_JOBS is 'many'"), `TIDE_JOBS=many should be refused:\n${refused.said}`);
+    console.log("  TIDE_JOBS that's no number is refused");
+}
+
 async function main() {
     check(existsSync(opts.tide), `${opts.tide} doesn't exist`);
     const root = resolve(mkdtempSync(join(tmpdir(), "tide-cache-test-")));
@@ -323,6 +419,7 @@ async function main() {
         check(version.code === 0, `private installation's tide version failed:\n${version.said}`);
         const embedded = /clang:\s+built in/.test(version.said);
         if (!embedded) console.log("External compiler is unchanged; installed-header and configuration invalidation are still exercised.");
+        for (const target of opts.web ? ["native", "web"] : ["native"]) await atOnceTests(tide, root, target);
         for (const target of opts.web ? ["native", "web"] : ["native"]) await targetTests(tide, installation, root, target, embedded);
         if (opts.web) await webRunTest(tide, root);
         if (opts.gpu) await nativeRunTest(tide, root);
