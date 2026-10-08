@@ -14,9 +14,9 @@
 // see tide/text.h for `where`), so it's chunked, shared with snapshots, hashed,
 // packed and carried over as lists are:
 //
-// - `entries`: each entry is a uint32_t that says it's live, then its key and
-//   its value, with the padding tidec writes out, so an entry's bytes depend on
-//   nothing but what's in it. An entry removed is dead: zeros, still in its
+// - `entries`: each entry is an int64_t insertion order, then its key and
+//   its value, with the padding tidec writes out. A positive order is live;
+//   removing an entry negates its order and zeroes the rest, still in its
 //   place, so the others keep theirs. Going through a map is going through its
 //   entries in order, skipping the dead ones, which is the order keys were added
 //   in. Once more than half the entries are dead (and at least 8), adding a key
@@ -33,6 +33,8 @@ typedef struct tide_map {
     tide_list entries;
     tide_list index;
     uint32_t live; // Entries that are live: the count
+    uint32_t reserved; // Explicit padding, kept zero
+    int64_t last_order; // Last insertion's order; clearing retains it
 } tide_map;
 
 // How generated code lays an entry out, and compares and hashes its keys. A
@@ -58,8 +60,8 @@ static inline int32_t tide_map_entries(const tide_map m)
     return tide_list_count(m.entries);
 }
 
-// Entry `i`, to read, or NULL past the end; whether it's live is its first
-// word. tide_map_entry_mut is to change its key or value in place.
+// Entry `i`, to read, or NULL past the end; its first word is its signed
+// insertion order. tide_map_entry_mut is to change its key or value in place.
 static inline const void *tide_map_entry(const tide_map m, const int32_t i, const tide_map_kind *k)
 {
     return tide_list_at(m.entries, i, k->entry_size);
@@ -72,8 +74,15 @@ static inline void *tide_map_entry_mut(const tide_map m, const int32_t i, const 
 
 static inline bool tide_map_live(const void *entry)
 {
-    return entry && *(const uint32_t *)entry != 0u;
+    return entry && *(const int64_t *)entry > 0;
 }
+
+// The next live entry after `*order`, or -1. Begin with both locals zero.
+// `*next` is a hint checked against the previous entry's retained order, so
+// compaction, removals and clearing never skip a later insertion. Both locals
+// are updated before returning an entry and can be kept across a task's wait.
+// Reading through this cursor changes no map and allocates nothing.
+int32_t tide_map_next(tide_map m, const tide_map_kind *k, int64_t *order, int32_t *next);
 
 // A well-mixed hash of a key's bytes, the same on every machine. Here, so the
 // pack's builder (tide/pack.h) hashes a map's keys as the game's lookups do.
@@ -91,7 +100,8 @@ int32_t tide_map_find(tide_map m, const tide_map_kind *k, const void *probe);
 // which). NULL when the map is as big as one gets.
 void *tide_map_insert(tide_map *m, const tide_map_kind *k, const void *probe, uint32_t where, bool *added);
 
-// Removes entry `i`: out of the index, then zeroed. Release its text first.
+// Removes entry `i`: out of the index, then zeroed but for its negated order.
+// Release its text first.
 void tide_map_erase(tide_map *m, const tide_map_kind *k, int32_t i, uint32_t where);
 
 // Removes every entry. Release their text first.

@@ -5,6 +5,7 @@
 
 #include "lookup.h"
 #include "tide/list.h"
+#include "tide/map.h"
 #include "tide/page.h"
 #include "versus.h"
 
@@ -33,17 +34,22 @@ static void tick(void *world, const tide_jobs *jobs)
     tide_world_tick_on(world, jobs);
 }
 
-// Primitive-key entries have the live word followed by the key and value.
+// Primitive-key entries have a signed insertion order followed by the key and value.
 // Read directly from this world's heap, as the other versus hosts do for lists.
 typedef struct map_entry {
-    uint32_t live;
+    int64_t order;
     int32_t key, value;
 } map_entry;
 
 typedef struct set_entry {
-    uint32_t live;
+    int64_t order;
     int32_t key;
+    uint8_t unused[4];
 } set_entry;
+
+_Static_assert(sizeof(map_entry) == 16 && offsetof(map_entry, key) == 8 && offsetof(map_entry, value) == 12
+                   && sizeof(set_entry) == 16 && offsetof(set_entry, key) == 8,
+               "lookup's entries must match tidec's map and set layout");
 
 static uint64_t digest(const void *world)
 {
@@ -55,14 +61,14 @@ static uint64_t digest(const void *world)
     int32_t order = 0;
     for (int32_t i = 0; i < tide_list_read_count(&w->heap, r->scores.entries); i++) {
         const map_entry *entry = tide_list_read(&w->heap, r->scores.entries, i, sizeof *entry);
-        if (!entry->live) continue;
+        if (!tide_map_live(entry)) continue;
         const int32_t item[4] = {0, order++, entry->key, entry->value};
         sum += versus_item(item, sizeof item);
     }
     order = 0;
     for (int32_t i = 0; i < tide_list_read_count(&w->heap, r->seen.entries); i++) {
         const set_entry *entry = tide_list_read(&w->heap, r->seen.entries, i, sizeof *entry);
-        if (!entry->live) continue;
+        if (!tide_map_live(entry)) continue;
         const int32_t item[4] = {1, order++, entry->key, 0};
         sum += versus_item(item, sizeof item);
     }
