@@ -80,6 +80,7 @@ TIDE_TEST(rolls_are_an_entitys_a_systems_and_a_ticks)
         const Mood m = tide_get_Mood(&world, all[a]);
         before[a] = w;
         TIDE_CHECK(w.first != w.second && w.first != m.roll && w.first != w.method);
+        TIDE_CHECK(w.added >= 3000000 && w.added < 3001000);
         TIDE_CHECK(w.first >= 0 && w.first < 1000000 && w.looped >= 0 && w.looped < 10000 && w.helped >= 0 && w.helped < 1000000);
         const float length = w.direction.x * w.direction.x + w.direction.y * w.direction.y;
         TIDE_CHECK(length > 0.999f && length < 1.001f);
@@ -255,7 +256,7 @@ TIDE_TEST(rolls_crossplatform_match)
 {
     tide_world_start_seeded(&world, DT, NULL, 20261008u);
     const uint64_t h = hash_after(&world, 120);
-    const uint64_t expected = 0xBBF6BA5AC82F4EEEull;
+    const uint64_t expected = 0xD998A530CE8BE107ull;
     if (h != expected) printf("    rolls match: hash is 0x%016" PRIX64 ", expected 0x%016" PRIX64 "\n", h, expected);
     TIDE_CHECK(h == expected);
 }

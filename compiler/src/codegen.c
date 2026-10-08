@@ -1219,6 +1219,8 @@ static void gen_value_of(gen *g, sb *o, expr *e, type want);
 static void gen_operator_call(gen *g, sb *o, const decl *m, expr *l, expr *r)
 {
     sb_printf(o, "%s(", routine_cname(m));
+    if (m->rolls) sb_put(o, "tide_dice, "); // What the code around it rolls with, and the match's seed, as a function is handed them
+    if (m->reads_seed) sb_printf(o, "%s, ", match_seed(g));
     gen_as(g, o, l, m->params.items[0].type);
     if (r) {
         sb_put(o, ", ");
