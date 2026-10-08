@@ -16396,7 +16396,7 @@ static void gen_sounds(gen *g)
     sb_printf(o, "// A Sound as tide/audio.h's voice, named by its field (and its entity)\n"
                  "TIDE_HELPER uint64_t tide_sound_entity(const tide_entity e)\n{\n"
                  "    return ((uint64_t)e.index << 32 | e.generation) * UINT64_C(0x9E3779B97F4A7C15);\n}\n\n"
-                 "static void tide_sound_voice(tide_audio_frame *f, const %s *s, const uint64_t id)\n{\n"
+                 "TIDE_HELPER void tide_sound_voice(tide_audio_frame *f, const %s *s, const uint64_t id)\n{\n"
                  "    tide_audio_voice(f, &(tide_voice){.id = id, .clip = tide_clip_of(s->clip), .position = s->position,\n"
                  "                                      .spatial = s->spatial, .loop = s->loop, .playing = true,\n"
                  "                                      .volume = s->volume, .pitch = s->pitch, .bus = (uint32_t)s->bus,\n"

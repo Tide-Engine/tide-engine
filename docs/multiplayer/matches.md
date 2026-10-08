@@ -87,6 +87,8 @@ rooms
 
 The game then opens on a title page, with its name over **Play**, **Host a room** and **Join a room**; a page to type a friend's code into, which Enter joins from; and the room's page, with the code to copy, who's in it, **Resume** and **Leave the room**. In the match, **Menu** in the bottom left corner, or Escape, brings the room's page back. It's drawn over a live match: `Main` stays the match's, so the game runs behind the title, and **Play** closes the menu. A game started with `--host` or `--join`, or a page opened with `?host` or `?join=`, has no menu in its way. A match that ends, or a room that can't be joined, puts the machine back on the title with a line that says why.
 
+**Settings** on the title or room's page opens a **Volume** slider, from mute to full volume, for this machine's audio. Changes apply at once; **Back** or Escape returns to the page that opened it. The local `Lobby.volume` goes from `0` to `1` and starts at `1`. It stays through starting, joining and leaving matches while the game is open, and resets to full volume when the game restarts. The settings page has `Lobby.page == Page.Settings`, so the same HUD and input checks below cover it.
+
 The pages are the GUI's own widgets, in whatever [theme](../game/gui.md#themes) the game sets, and the devices are theirs while a page is up. What the game reads of it is one local singleton, `Lobby`, through `using Rooms;`:
 
 ```csharp

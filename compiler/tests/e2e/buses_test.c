@@ -39,9 +39,10 @@ TIDE_TEST(buses_a_sounds_bus_and_the_frames_volumes)
     TIDE_CHECK(audio.voices[0].bus == 1); // Bus.Music
     TIDE_CHECK(audio.bus_volume[0] == 1.0f && audio.bus_volume[1] == 0.5f && audio.bus_volume[2] == 1.0f);
     local.Mix.quiet = true;
+    local.Mix.volume = 0.75f;
     local.Mix.music = 0.25f;
     frame();
-    TIDE_CHECK(audio.bus_volume[1] == 0.25f && audio.bus_volume[2] == 0.0f);
+    TIDE_CHECK(audio.bus_volume[0] == 0.75f && audio.bus_volume[1] == 0.25f && audio.bus_volume[2] == 0.0f);
     tide_local_free(&local);
     tide_world_free(&world);
     tide_draw_free(&draw);
