@@ -6,7 +6,7 @@
     const external = (link: string) => /^https?:/.test(link);
 </script>
 
-<Seo title={`${data.hero.name}: ${data.hero.text.toLowerCase()}`} description={data.description} path="/" />
+<Seo title={data.title} description={data.description} path="/" />
 
 <main id="content">
     <section class="hero">
