@@ -124,12 +124,15 @@ function glb(json, bin) {
 }
 
 // strip.gltf with strip.bin beside it: positions and normals side by side in
-// one view (a stride), a triangle strip, indices of 32 bits, and a node that
-// mirrors, which turns its triangles around once more.
+// one view (a stride), a triangle strip, indices of 32 bits with sparse
+// replacements over dense data, and a node that mirrors, which turns its
+// triangles around once more.
 {
     const b = buffer();
     const vertices = b.add(floats([0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1]), 24);
-    const indices = b.add(Buffer.from(new Uint32Array([0, 1, 2, 3]).buffer));
+    const indices = b.add(Buffer.from(new Uint32Array([0, 1, 3, 2]).buffer));
+    const sparseIndices = b.add(Buffer.from(new Uint16Array([2, 3]).buffer));
+    const sparseValues = b.add(Buffer.from(new Uint32Array([2, 3]).buffer));
     const bin = b.bytes();
     fs.writeFileSync(path.join(out, 'strip.bin'), bin);
     fs.writeFileSync(path.join(out, 'strip.gltf'), JSON.stringify({
@@ -141,16 +144,17 @@ function glb(json, bin) {
         accessors: [
             { bufferView: vertices, byteOffset: 0, componentType: FLOAT, count: 4, type: 'VEC3' },
             { bufferView: vertices, byteOffset: 12, componentType: FLOAT, count: 4, type: 'VEC3' },
-            { bufferView: indices, componentType: UINT, count: 4, type: 'SCALAR' },
+            { bufferView: indices, componentType: UINT, count: 4, type: 'SCALAR',
+              sparse: { count: 2, indices: { bufferView: sparseIndices, componentType: USHORT }, values: { bufferView: sparseValues } } },
         ],
         bufferViews: b.views,
         buffers: [{ uri: 'strip.bin', byteLength: bin.length }],
     }, null, 2) + '\n');
 }
 
-// inline.gltf: its buffer inside it as base64, positions that are a sparse
-// accessor's (zeros, and three given apart), colors of three floats, uvs of 16
-// bits, a fan with no indices, a node turned a quarter around z, and no scene.
+// inline.gltf: its buffer inside it as base64, positions and indices that
+// start as zeros and have three sparse replacements, colors of three floats,
+// uvs of 16 bits, a fan, a node turned a quarter around z, and no scene.
 {
     const b = buffer();
     const sparseIndices = b.add(Buffer.from([1, 2, 3]));
@@ -158,18 +162,21 @@ function glb(json, bin) {
     const normals = b.add(floats([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]));
     const colors = b.add(floats([0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]));
     const uvs = b.add(Buffer.from(new Uint16Array([0, 0, 65535, 0, 65535, 65535, 0, 65535]).buffer));
+    const indexValues = b.add(Buffer.from(new Uint16Array([1, 2, 3]).buffer));
     const bin = b.bytes();
     const half = Math.SQRT1_2;
     fs.writeFileSync(path.join(out, 'inline.gltf'), JSON.stringify({
         asset: { version: '2.0' },
         nodes: [{ mesh: 0, rotation: [0, 0, half, half] }],
-        meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1, COLOR_0: 2, TEXCOORD_0: 3 }, mode: 6 }] }],
+        meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1, COLOR_0: 2, TEXCOORD_0: 3 }, indices: 4, mode: 6 }] }],
         accessors: [
             { componentType: FLOAT, count: 4, type: 'VEC3',
               sparse: { count: 3, indices: { bufferView: sparseIndices, componentType: UBYTE }, values: { bufferView: sparseValues } } },
             { bufferView: normals, componentType: FLOAT, count: 4, type: 'VEC3' },
             { bufferView: colors, componentType: FLOAT, count: 4, type: 'VEC3' },
             { bufferView: uvs, componentType: USHORT, normalized: true, count: 4, type: 'VEC2' },
+            { componentType: USHORT, count: 4, type: 'SCALAR',
+              sparse: { count: 3, indices: { bufferView: sparseIndices, componentType: UBYTE }, values: { bufferView: indexValues } } },
         ],
         bufferViews: b.views,
         buffers: [{ uri: 'data:application/octet-stream;base64,' + bin.toString('base64'), byteLength: bin.length }],

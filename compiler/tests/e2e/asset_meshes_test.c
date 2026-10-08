@@ -140,8 +140,9 @@ TIDE_TEST(mesh_assets_merge_a_files_parts_where_its_nodes_place_them)
 }
 
 // A .gltf whose buffer is a file beside it: vertices with a stride, a strip,
-// and a node that mirrors, whose triangles keep the file's order. And one
-// with its buffer inside it: a sparse accessor, a fan, a node that turns.
+// sparse index replacements, and a node that mirrors, whose triangles keep
+// the file's order. And one with its buffer inside it: sparse positions and
+// indices starting from zeros, a fan, and a node that turns.
 TIDE_TEST(mesh_assets_read_gltf_with_its_buffers_beside_it_and_inside_it)
 {
     start();

@@ -93,6 +93,40 @@ static const triangle_bytes triangle = {{0, 0, 0, 1, 0, 0, 0, 1, 0}, {0, 0, 1, 0
 static const char *const triangle_json = "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],\"nodes\":[{\"mesh\":0}],"
                                          TRIANGLE_MESH TRIANGLE_ACCESSORS TRIANGLE_VIEWS "}";
 
+// The same triangle, whose index accessor starts with zeros or dense data,
+// and has its last two values replaced by a sparse accessor. Sparse selector
+// types and the accessor's value type are independent: each can have 1, 2 or
+// 4 bytes. Both sparse views also have an offset within them.
+static uint8_t *make_sparse_triangle(const uint32_t type, const uint32_t selector_type, const bool dense,
+                                     const char *sparse_as_given, const uint32_t first_selector, size_t *size)
+{
+    uint8_t bytes[112] = {0};
+    memcpy(bytes, triangle.positions, sizeof triangle.positions);
+    memcpy(bytes + 36u, triangle.normals, sizeof triangle.normals);
+    const uint32_t each = type == 5121u ? 1u : type == 5123u ? 2u : 4u;
+    const uint32_t selector_bytes = selector_type == 5121u ? 1u : selector_type == 5123u ? 2u : 4u;
+    static const uint32_t initial[3] = {0u, 2u, 1u}, values[2] = {1u, 2u};
+    const uint32_t selectors[2] = {first_selector, 2u};
+    for (uint32_t i = 0; i < 3u; i++) memcpy(bytes + 72u + i * each, &initial[i], each);
+    for (uint32_t i = 0; i < 2u; i++) {
+        memcpy(bytes + 88u + i * selector_bytes, &selectors[i], selector_bytes);
+        memcpy(bytes + 100u + i * each, &values[i], each);
+    }
+    char sparse[256];
+    snprintf(sparse, sizeof sparse, "{\"count\":2,\"indices\":{\"bufferView\":3,\"byteOffset\":4,\"componentType\":%u},"
+                                   "\"values\":{\"bufferView\":4,\"byteOffset\":4}}", (unsigned)selector_type);
+    char json[2048];
+    snprintf(json, sizeof json, "{\"asset\":{\"version\":\"2.0\"}," TRIANGLE_MESH
+                                "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+                                "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+                                "{%s\"componentType\":%u,\"count\":3,\"type\":\"SCALAR\",\"sparse\":%s}],"
+                                "\"bufferViews\":[{\"buffer\":0,\"byteLength\":36},{\"buffer\":0,\"byteOffset\":36,\"byteLength\":36},"
+                                "{\"buffer\":0,\"byteOffset\":72,\"byteLength\":12},{\"buffer\":0,\"byteOffset\":84,\"byteLength\":12},"
+                                "{\"buffer\":0,\"byteOffset\":96,\"byteLength\":16}],\"buffers\":[{\"byteLength\":112}]}",
+             dense ? "\"bufferView\":2," : "", (unsigned)type, sparse_as_given ? sparse_as_given : sparse);
+    return make_glb(json, bytes, sizeof bytes, size);
+}
+
 // Reads `size` bytes kept in memory of exactly that size, so a read past them is one past an allocation.
 static bool read_exactly(const uint8_t *data, const size_t size, const char *name, mesh_file *mesh, char why[256])
 {
@@ -145,6 +179,68 @@ TIDE_TEST(mesh_glb_reads_and_is_never_read_past_its_bytes)
     mesh_file_free(&mesh);
     cut_and_spoil(glb, size, "triangle.glb");
     free(glb);
+}
+
+TIDE_TEST(mesh_gltf_reads_sparse_index_accessors)
+{
+    mesh_file expected;
+    char why[256];
+    size_t size;
+    uint8_t *glb = make_glb(triangle_json, &triangle, sizeof triangle, &size);
+    TIDE_REQUIRE(read_exactly(glb, size, "triangle.glb", &expected, why));
+    free(glb);
+    static const uint32_t types[3] = {5121u, 5123u, 5125u};
+    for (uint32_t value = 0; value < 3u; value++) {
+        for (uint32_t selector = 0; selector < 3u; selector++) {
+            for (int dense = 0; dense < 2; dense++) {
+                glb = make_sparse_triangle(types[value], types[selector], dense != 0, NULL, 1u, &size);
+                mesh_file mesh;
+                TIDE_REQUIRE(read_exactly(glb, size, "sparse.glb", &mesh, why));
+                TIDE_CHECK(mesh.vertices == 3u && mesh.indices == 3u);
+                TIDE_CHECK(mesh.index[0] == 0u && mesh.index[1] == 2u && mesh.index[2] == 1u);
+                // Only how the data was stored changed: the mesh is identical.
+                TIDE_CHECK(memcmp(mesh.hash, expected.hash, sizeof mesh.hash) == 0);
+                mesh_file_free(&mesh);
+                free(glb);
+            }
+        }
+    }
+    mesh_file_free(&expected);
+    glb = make_sparse_triangle(5125u, 5121u, false, NULL, 1u, &size);
+    cut_and_spoil(glb, size, "sparse.glb");
+    free(glb);
+}
+
+TIDE_TEST(mesh_gltf_refuses_invalid_sparse_index_accessors)
+{
+    static const struct {
+        const char *sparse;
+        uint32_t first;
+        const char *why;
+    } cases[] = {
+        {NULL, 3u, "for an element it hasn't got"},
+        {"{\"count\":4,\"indices\":{\"bufferView\":3,\"componentType\":5123},\"values\":{\"bufferView\":4}}", 1u,
+         "run past their buffer view's end"},
+        {"{\"count\":2,\"indices\":{\"bufferView\":3,\"byteOffset\":11,\"componentType\":5123},\"values\":{\"bufferView\":4}}", 1u,
+         "run past their buffer view's end"},
+        {"{\"count\":2,\"indices\":{\"bufferView\":3,\"componentType\":5123},\"values\":{\"bufferView\":4,\"byteOffset\":15}}", 1u,
+         "run past their buffer view's end"},
+        {"{\"count\":2,\"indices\":{\"bufferView\":3,\"componentType\":5122},\"values\":{\"bufferView\":4}}", 1u,
+         "don't say where their numbers are"},
+        {"{\"count\":2,\"indices\":{\"bufferView\":3,\"componentType\":5123},\"values\":{}}", 1u,
+         "don't say where their numbers are"},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        size_t size;
+        uint8_t *glb = make_sparse_triangle(5123u, 5123u, false, cases[i].sparse, cases[i].first, &size);
+        mesh_file mesh;
+        char why[256];
+        const bool ok = read_exactly(glb, size, "sparse.glb", &mesh, why);
+        free(glb);
+        TIDE_CHECK(!ok);
+        if (ok) mesh_file_free(&mesh);
+        else TIDE_CHECK(strstr(why, cases[i].why) != NULL);
+    }
 }
 
 TIDE_TEST(mesh_gltf_text_is_never_read_past_its_bytes)
