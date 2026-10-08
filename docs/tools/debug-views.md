@@ -21,7 +21,7 @@ They're off until the game, or whoever starts it, asks for them:
 
 - Whoever starts it asks with `--debug-views`: `tide run --debug-views`, or a built game's own command line, like `mygame --debug-views`. On a web page, it's `debug-views` in the page's address: `https://example.com/game.html?debug-views`. This works whatever the setting says, so a build made to ship can be looked into without building it again.
 
-With either, **F7** shows the profiler, and F7 again hides it. Nothing is measured while it's hidden, so having debug views on costs a game nothing until the key is pressed. The game sees the key too.
+With either, **F7** shows the profiler, and F7 again hides it. The profiler measures while it is visible; the [stats](cli.md#stats) also measure while their drawer is open. With the profiler hidden and the stats closed, neither asks for timings. The game sees the key too.
 
 Under `tide run`, changing the setting takes effect at the next reload. A setting is part of the build, so `tide build` keeps it: take `debugViews` out before players get the game, unless they may see the profiler too.
 
@@ -56,7 +56,7 @@ Memory  162 MB in RAM, 12 MB on the GPU
 | Netcode | What the match took beside its ticks: packets, snapshots, and hashing and packing worlds |
 | Views | Every view, then the six that took longest, by name, and the others together |
 | GUI, tasks | What the frame's views took beside the views themselves: the GUI, local tasks, and applying local changes |
-| Render | Drawing what the views recorded, as far as the CPU does it. What the GPU takes shows in the last row |
+| Render | Drawing what the views recorded, as far as the CPU does it. GPU drawing time appears in the [stats](cli.md#stats) on backends with a GPU timer |
 | Other | The rest of what the frame did |
 | Swap, idle | The rest of the frame: waiting for the display, the GPU or the browser |
 | Memory | What the program has, as the system counts it, and what its drawing has on the GPU by the engine's own count (every texture, mesh and render target, by what each holds; not the window's framebuffer or the driver's own). No time, so no bar |
@@ -74,6 +74,6 @@ Memory  162 MB in RAM, 12 MB on the GPU
 - A view that didn't run, like one that reads the match while there's none, has no row.
 - When `Ticks` is most of a frame and many of them run again, clients are paying for prediction: see [Input delay](../multiplayer/matches.md#input-delay).
 
-The [stats](cli.md#stats) are separate: a line in a corner once they're asked for, which a click or F8 opens to a few numbers and the three systems that took longest in the last tick.
+The [stats](cli.md#stats) are separate: a line in a corner once they're asked for, which a click or F8 opens to a few numbers and the three systems that took longest on average per measured run over the last half second.
 
 A C host shows the profiler itself with `tide/profiler.h` (see [C hosts](../c/hosts.md#the-standard-host)).

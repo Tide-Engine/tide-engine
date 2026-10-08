@@ -59,7 +59,7 @@ Data isn't replaced: components, singletons, structs, events, commands, enums, s
 An override has the name of what it replaces, written as any reference to it is: with its namespace, or alone where the file imports the namespace with `using`.
 
 ```csharp
-override system Combat.Move(mut Combat.Position position, Combat.Velocity velocity, Combat.Time time) { ... }
+override system Combat.Move(mut Combat.Position position, Combat.Velocity velocity, Time time) { ... }
 ```
 
 A method's override is written outside its type, in the package that replaces it, with the type before the method's name. The type's fields are in scope, as they are in the type's body:
@@ -126,10 +126,10 @@ Nothing calls the code that was replaced: an override is the whole of it.
 
 It's still checked for errors, as the code it is: its developer reads it and changes it, and a game is built without its packages too. It warns about nothing, and nothing of it is built: what it spawned, sent or drew counts for nothing.
 
-A virtual declaration's parameters are what its overrides get, and an override's are those of what it replaces, so neither is warned about a parameter it doesn't use. That makes a hook possible: a virtual system that does nothing, for a package to fill in.
+A virtual declaration's parameters are what its overrides get, and an override's are those of what it replaces, so neither is warned about a parameter it doesn't use. A `mut` parameter that's never written is still a warning. A hook can take read-only parameters until an override needs to write them:
 
 ```csharp
-virtual system OnRoundStart(mut Score score, Time time)
+virtual system OnRoundStart(Score score, Time time)
 {
 }
 ```

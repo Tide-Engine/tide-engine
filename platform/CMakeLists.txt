@@ -490,8 +490,10 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     # shell and a build server have it): no window shows, a game or a host
     # that only its window's closing would end doesn't start, and a stop shows
     # no dialog. None of that needs a window. That a run with no window and a
-    # test's hidden window go as they do without the variable does, as
-    # tide_platform_draw does.
+    # test's hidden window go as they do without the variable, but that the
+    # window opens no audio device, does, as tide_platform_draw does. The
+    # program's audio devices are its own (tests/hidden.c), in the place of
+    # desktop/audio.c's.
     add_executable(tide_platform_hidden tests/hidden.c)
     target_include_directories(tide_platform_hidden PRIVATE src)
     target_link_libraries(tide_platform_hidden PRIVATE tide_platform)

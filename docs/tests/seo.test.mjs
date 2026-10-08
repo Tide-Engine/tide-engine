@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { copyFile, cp, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { appendFile, copyFile, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { get as httpGet } from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { pages } from '../src/lib/nav.ts';
+import { headers as sharedHeaders } from '../headers.js';
 
 const docs = fileURLToPath(new URL('..', import.meta.url));
 const origin = 'https://tide-engine.dev';
@@ -64,17 +66,24 @@ function metadata(html, route) {
         .filter(([, tag]) => attributes(tag).type === 'application/ld+json')
         .map(([, , json]) => JSON.parse(json));
     const objects = schemas.flatMap((schema) => Array.isArray(schema) ? schema : schema['@graph'] ?? [schema]);
-    const page = objects.find((item) => item['@type'] === 'WebPage' || (route === '/' && item['@type'] === 'WebSite'));
-    assert.ok(page, `${route}: structured page or site data`);
-    assert.equal(page.url, `${origin}${route}`);
-    assert.ok(page.name?.trim(), `${route}: schema names the page`);
-    assert.equal(page.description, description);
-    const webPage = objects.find((item) => item['@type'] === 'WebPage');
-    if (webPage) {
-        assert.equal(webPage.name, title);
-        assert.equal(webPage.primaryImageOfPage.url, meta('og:image'));
-        assert.equal(webPage.primaryImageOfPage.width, 1200);
-        assert.equal(webPage.primaryImageOfPage.height, 630);
+    const webPages = objects.filter((item) => item['@type'] === 'WebPage');
+    assert.equal(webPages.length, 1, `${route}: one structured WebPage`);
+    const [webPage] = webPages;
+    assert.equal(webPage.url, `${origin}${route}`);
+    assert.equal(webPage.name, title);
+    assert.equal(webPage.description, description);
+    assert.equal(webPage.primaryImageOfPage.url, meta('og:image'));
+    assert.equal(webPage.primaryImageOfPage.width, 1200);
+    assert.equal(webPage.primaryImageOfPage.height, 630);
+    if (route === '/') {
+        const websites = objects.filter((item) => item['@type'] === 'WebSite');
+        assert.equal(websites.length, 1, 'home: exactly one WebSite names the site for search engines');
+        const [website] = websites;
+        assert.equal(website.name, 'Tide Engine');
+        assert.equal(website.alternateName, 'Tide');
+        assert.equal(website.url, `${origin}/`);
+        assert.equal(website.description, description);
+        assert.equal(title, 'Tide Engine | Deterministic Multiplayer Game Engine');
     }
     for (const schema of schemas) assert.doesNotMatch(JSON.stringify(schema), /"(?:aggregateRating|review|offers)"\s*:/, `${route}: no unsupported commercial claims`);
     return { title, description };
@@ -93,6 +102,21 @@ function png(bytes, label) {
     assert.equal(bytes.subarray(12, 16).toString('ascii'), 'IHDR', `${label}: PNG header`);
     assert.equal(bytes.readUInt32BE(16), 1200, `${label}: width`);
     assert.equal(bytes.readUInt32BE(20), 630, `${label}: height`);
+}
+
+// Node's fetch derives Host from the URL even when headers specifies it.
+// Direct HTTP lets these probes reach the local server as production hosts.
+function requestWithHost(url, headers) {
+    return new Promise((resolve, reject) => {
+        const request = httpGet(url, { headers }, (response) => {
+            let body = '';
+            response.setEncoding('utf8');
+            response.on('data', (chunk) => { body += chunk; });
+            response.on('end', () => resolve({ status: response.statusCode, headers: response.headers, body }));
+            response.on('error', reject);
+        });
+        request.on('error', reject);
+    });
 }
 
 test('every public prerendered page exposes unique crawlable metadata and a full-size social image', async () => {
@@ -121,7 +145,7 @@ test('sitemap and robots make all public pages and social images discoverable', 
     assert.doesNotMatch(robots, /^Disallow:\s*(?:\/\s*$|\/social|\/_app|\/assets)/im);
 });
 
-test('production HTTP serves previews to crawlers, keeps canonicals stable, and excludes errors', { timeout: 30_000 }, async (t) => {
+test('production HTTP canonicalizes hosts, serves crawlable docs, and excludes raw games and errors', { timeout: 30_000 }, async (t) => {
     // Match Dockerfile's deployed files, outside the checkout and its node_modules.
     const deployment = await mkdtemp(path.join(os.tmpdir(), 'tide-seo-site-'));
     let child;
@@ -133,6 +157,38 @@ test('production HTTP serves previews to crawlers, keeps canonicals stable, and 
         cp(path.join(docs, 'build'), path.join(deployment, 'build'), { recursive: true }),
         ...['package.json', 'headers.js', 'releases.js', 'analytics.js', 'admin.js', 'server.js'].map((file) => copyFile(path.join(docs, file), path.join(deployment, file))),
     ]);
+    // Tiny static fixtures keep this check independent of compiled web games.
+    const rawPages = ['/examples/seo-probe', '/samples/seo-probe', '/sand', '/duel', '/towers', '/sumo'];
+    const fixtureEntries = [];
+    const fixtureAliases = [];
+    async function fixture(url, contents) {
+        const file = url.slice(1);
+        const bytes = Buffer.from(contents);
+        const target = path.join(deployment, 'build/client', file);
+        await mkdir(path.dirname(target), { recursive: true });
+        await writeFile(target, bytes);
+        fixtureEntries.push([url, { file, size: bytes.length, etag: `seo-fixture-${fixtureEntries.length}` }]);
+    }
+    for (const route of rawPages) {
+        const document = `${route}/index.html`;
+        await fixture(document, '<!doctype html><title>SEO game fixture</title><canvas></canvas>');
+        fixtureAliases.push([route, document], [`${route}/`, document]);
+        await fixture(`${route}/game.wasm`, Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
+    }
+    await fixture('/samples/thumbnails/seo-probe.svg', '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>');
+    // Adapter-node 6 serves a closed build-time table rather than scanning
+    // client/. Register fixtures in this temporary copy before it boots,
+    // replacing old entries and compressed sizes if games were already built.
+    await appendFile(path.join(deployment, 'build/adapter-node.js'), `
+const seoFixtureEntries = ${JSON.stringify(fixtureEntries)};
+const seoFixtureAliases = ${JSON.stringify(fixtureAliases)};
+const seoFixtureUrls = new Set([...seoFixtureEntries, ...seoFixtureAliases].map(([url]) => url));
+assets.entries = assets.entries.filter(([url]) => !seoFixtureUrls.has(url));
+assets.aliases = assets.aliases.filter(([url]) => !seoFixtureUrls.has(url));
+assets.entries.push(...seoFixtureEntries);
+assets.aliases.push(...seoFixtureAliases);
+Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm' });
+`);
     const listener = net.createServer();
     listener.listen(0, '127.0.0.1');
     await once(listener, 'listening');
@@ -141,7 +197,7 @@ test('production HTTP serves previews to crawlers, keeps canonicals stable, and 
     const local = `http://127.0.0.1:${port}`;
     child = spawn(process.execPath, ['server.js', String(port)], {
         cwd: deployment,
-        env: { ...process.env, NODE_ENV: 'production', NODE_PATH: '', TIDE_HIDDEN: '1', TIDE_RELEASES_TOKEN: '', TIDE_RELEASES_REPO: '' },
+        env: { ...process.env, NODE_ENV: 'production', NODE_PATH: '', PROTOCOL_HEADER: 'x-forwarded-proto', TIDE_HIDDEN: '1', TIDE_RELEASES_TOKEN: '', TIDE_RELEASES_REPO: '' },
         stdio: ['ignore', 'pipe', 'pipe'],
     });
     await new Promise((resolve, reject) => {
@@ -151,15 +207,54 @@ test('production HTTP serves previews to crawlers, keeps canonicals stable, and 
         child.on('error', reject);
         child.on('exit', (code) => reject(new Error(`Site exited before listening (${code}): ${output}`)));
     });
+    const redirectedPath = '/guide/install?utm_source=redirect&ref=a%2Fb';
+    for (const [host, protocol] of [
+        ['www.tide-engine.dev', 'https'],
+        ['WWW.TIDE-ENGINE.DEV:443', 'https'],
+        ['tide-website.fly.dev', 'https'],
+        ['TIDE-WEBSITE.FLY.DEV:443', 'https'],
+        ['tide-engine.dev', 'http'],
+        ['TIDE-ENGINE.DEV:80', 'http'],
+    ]) {
+        const response = await requestWithHost(`${local}${redirectedPath}`, { host, 'x-forwarded-proto': protocol });
+        assert.ok([301, 308].includes(response.status), `${host} (${protocol}): permanent canonical redirect`);
+        assert.equal(response.headers.location, `${origin}${redirectedPath}`, `${host}: preserve path and query`);
+        for (const [name, value] of Object.entries(sharedHeaders)) {
+            assert.equal(response.headers[name.toLowerCase()], value, `${host}: ${name} on redirect`);
+        }
+    }
+    for (const host of ['tide-engine.dev', 'TIDE-ENGINE.DEV:443']) {
+        const response = await requestWithHost(`${local}/`, { host, 'x-forwarded-proto': 'https', accept: 'text/html' });
+        assert.equal(response.status, 200, `${host}: canonical HTTPS host does not redirect`);
+        metadata(response.body, '/');
+    }
     for (const route of ['/', '/game/views', '/request-access']) {
         const response = await fetch(`${local}${route}?utm_source=share&ref=preview`, { headers: { accept: 'text/html' } });
         assert.equal(response.status, 200, route);
+        assert.doesNotMatch(response.headers.get('x-robots-tag') ?? '', /noindex/i, `${route}: docs remain indexable`);
         metadata(await response.text(), route);
         const image = await fetch(`${local}${imagePath(route)}`);
         assert.equal(image.status, 200, imagePath(route));
+        assert.doesNotMatch(image.headers.get('x-robots-tag') ?? '', /noindex/i, `${route}: social image remains indexable`);
         assert.match(image.headers.get('content-type'), /^image\/png(?:;|$)/);
         png(Buffer.from(await image.arrayBuffer()), imagePath(route));
     }
+    for (const route of rawPages) {
+        for (const document of [route, `${route}/`, `${route}/index.html`]) {
+            const response = await fetch(`${local}${document}?embedded&backend=webgpu`);
+            assert.equal(response.status, 200, document);
+            assert.match(response.headers.get('x-robots-tag') ?? '', /\bnoindex\b/i, `${document}: raw game is not a search result`);
+            assert.match(await response.text(), /SEO game fixture/);
+        }
+        const asset = await fetch(`${local}${route}/game.wasm?version=1`);
+        assert.equal(asset.status, 200, `${route}: game asset still served`);
+        assert.doesNotMatch(asset.headers.get('x-robots-tag') ?? '', /noindex/i, `${route}: assets are not excluded`);
+        assert.equal((await asset.arrayBuffer()).byteLength, 8);
+    }
+    const thumbnail = await fetch(`${local}/samples/thumbnails/seo-probe.svg`);
+    assert.equal(thumbnail.status, 200);
+    assert.doesNotMatch(thumbnail.headers.get('x-robots-tag') ?? '', /noindex/i, 'sample thumbnails remain indexable');
+    await thumbnail.text();
     const missing = await fetch(`${local}/this-page-does-not-exist`, { headers: { accept: 'text/html' } });
     assert.equal(missing.status, 404);
     const html = await missing.text();
