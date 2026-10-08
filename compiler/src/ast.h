@@ -506,6 +506,7 @@ typedef struct decl {
     VEC(int) instances; // ...where each place it has in the devices starts in program.device_leaves
     struct decl *array_of; // Records that are arrays of another, like Touchscreen.touches: the element
     int array_length;      // ...and how many
+    int long_arrays;       // A struct: whether it holds an array of more than 4,096 elements (0 not worked out, 1 no, 2 yes: check.c, holds_long_array)
 
     // Components, singletons, inputs, records, structs and events
     VEC(field) fields;
@@ -1108,6 +1109,9 @@ typedef struct shader {
     int instance_floats, instance_ints; // Words
     int uniform_floats, uniform_ints;
     int frag_floats, frag_ints; // Words of the instance the vertex stage passes on to the pixels
+    // Its vert or its frag rolls with Random (rolled_at: the word of the uniforms' ints that's the frame's
+    // number, which its generators are made of), or reads Random.seed (seed_at: the word that's the seed); -1 for neither
+    int rolled_at, seed_at;
     bool *frag_fields;          // By the vertex's field: whether its pixels read it
     bool frag_world;            // ...and whether they read where they are in the world
     const char *name;           // For messages: "Wave and Shade on BoxVertex"

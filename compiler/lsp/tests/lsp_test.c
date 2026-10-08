@@ -4400,23 +4400,30 @@ TIDE_TEST(lsp_diagnostic_notes_and_tags)
     TIDE_CHECK(count(last_sent(), "\"tags\":[1]") == 2); // mut never written, and never used
 }
 
-// An audio declaration's state and knobs that are more than the mixer has
-// room for are errors as they're typed, each at its parameter: the checker
-// knows a struct's size as generated C will have it.
+// An audio declaration's state and knobs that are more than there's room for
+// are errors as they're typed, each at its parameter: the checker knows a
+// struct's size as generated C will have it. A state's delay line is an array
+// far longer than any other, which nothing copies.
 TIDE_TEST(lsp_audio_state_and_knobs_sizes)
 {
     start();
-    open_document("struct Tail { int at; float[4096] taps; }\nstruct Curve { float[65] bands; }\n"
+    open_document("struct Tail { int at; float[262144] line; }\nstruct Curve { float[65] bands; }\n"
                   "audio Echo(mut Samples samples, mut Tail tail, Curve curve)\n{\n    tail.at += 1;\n"
                   "    samples.values[0] = curve.bands[0];\n}\nscene Main { }\n");
-    TIDE_CHECK(diagnosed(2, 32, 3, 1, "an audio declaration's state is 4096 bytes at the most, and 'Tail' is 16388"));
+    TIDE_CHECK(diagnosed(2, 32, 3, 1, "an audio declaration's state is 1048576 bytes at the most, and 'Tail' is 1048580"));
     TIDE_CHECK(diagnosed(2, 47, 5, 1, "an audio declaration's knobs are 256 bytes at the most, and 'Curve' is 260"));
     TIDE_CHECK(has(last_sent(), "make 'Tail' smaller, with a shorter array or fewer fields"));
     // All the bytes there are of each, and nothing is said
-    open_document("struct Tail { int at; float[1023] taps; }\nstruct Curve { float[64] bands; }\n"
+    open_document("struct Tail { int at; float[262143] line; }\nstruct Curve { float[64] bands; }\n"
                   "audio Echo(mut Samples samples, mut Tail tail, Curve curve)\n{\n    tail.at += 1;\n"
-                  "    samples.values[0] = curve.bands[0];\n}\nscene Main { }\n");
+                  "    samples.values[0] = curve.bands[0] + tail.line[tail.at];\n}\nscene Main { }\n");
     TIDE_CHECK(!has(last_sent(), "bytes at the most") && !has(last_sent(), "\"severity\":1"));
+    // A copy of the state, where it's made; and such a struct anywhere but a state
+    open_document("struct Tail { int at; float[96000] line; }\n"
+                  "audio Echo(mut Samples samples, mut Tail tail)\n{\n    var copy = tail;\n"
+                  "    samples.values[0] = copy.line[0];\n}\ncomponent Body { Tail tail; }\nscene Main { }\n");
+    TIDE_CHECK(diagnosed(3, 15, 4, 1, "'Tail' is never copied: it holds an array of more than 4096 elements"));
+    TIDE_CHECK(diagnosed(6, 17, 4, 1, "a component's field can't be 'Tail'"));
 }
 
 TIDE_TEST(lsp_move_to_file)
@@ -6697,6 +6704,27 @@ TIDE_TEST(lsp_random)
     // Rolling through a read-only parameter says why it can't
     open_document(DICE "system Roll(Dice dice)\n{\n    dice.random.NextInt(6);\n}\n");
     TIDE_CHECK(has(last_sent(), "'dice' is read-only") && has(last_sent(), "'NextInt' is a mut method"));
+
+    // In a frag and a vert too: each pixel and each vertex rolls with a generator of its own, and reads the seed
+#define GRAIN "scene Main { }\nlocal singleton Art { List<Vertex> corners; List<int> faces; }\n"
+#define GRAIN_DRAWN "view Show(Art art)\n{\n    Draw.Mesh(art.corners, art.faces, Grain);\n}\n"
+    const char *pixel = complete(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n    color = Color(Random.$\n}\n");
+    TIDE_CHECK(offers(pixel, "NextFloat") && offers(pixel, "NextFloat3Direction") && offers(pixel, "NextQuaternionRotation"));
+    TIDE_CHECK(offers(pixel, "seed") && !offers(pixel, "state"));
+    const char *corner = complete(GRAIN "vert Shake(mut Vertex vertex)\n{\n    vertex.position += Random.$\n}\n");
+    TIDE_CHECK(offers(corner, "NextFloat2") && offers(corner, "NextInt"));
+    TIDE_CHECK(offers(complete(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n    color = Color($\n}\n"), "Random"));
+    open_document(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n"
+                        "    color = Color(Random.NextFloat(), float(Random.seed % 2), 0);\n}\n" GRAIN_DRAWN);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    open_document(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n    color = Color(Random.Next$Float(2), 0, 0);\n}\n" GRAIN_DRAWN);
+    TIDE_CHECK(has(request("textDocument/hover"), "Random.NextFloat(float max) -> float"));
+    open_document(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n    color = Color(Random.NextInt($\n}\n" GRAIN_DRAWN);
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Random.NextInt(int min, int max) -> int"));
+    // A Random the game keeps stays the CPU's: its state is 64 bits
+    open_document(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n    mut var mine = Random(7);\n"
+                        "    color = Color(mine.NextFloat(), 0, 0);\n}\n" GRAIN_DRAWN);
+    TIDE_CHECK(has(last_sent(), "so it can't make a Random") && has(last_sent(), "roll on the type, 'Random.NextInt(6)'"));
 }
 
 // Default values, arguments by name, and functions that share a name

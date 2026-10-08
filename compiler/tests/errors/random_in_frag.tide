@@ -1,4 +1,5 @@
-// expect: a frag runs on the GPU, for each pixel, so it can't roll random numbers
+// expect: a frag runs on the GPU, for each pixel, so it can't roll with a Random the game keeps
+// expect: its state is 64 bits, and the GPU's ints are 32: roll on the type, 'Random.NextInt(6)', where each pixel and each vertex has a generator of its own
 local component Glow { Random random; List<Vertex> corners; List<int> faces; }
 scene Main { }
 frag Glitter(Vertex vertex, out Color color, Glow glow)

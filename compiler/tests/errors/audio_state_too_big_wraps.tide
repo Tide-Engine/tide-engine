@@ -1,4 +1,4 @@
-// expect: an audio declaration's state is 4096 bytes at the most, and 'Hall' is over 2147483647
+// expect: an audio declaration's state is 1048576 bytes at the most, and 'Hall' is over 2147483647
 // A size that's more than an int says is still too big: four gigabytes, which
 // an int would wrap to 0, and 0 fits anything.
 struct Room

@@ -56,6 +56,46 @@ view Listen(Devices devices, mut Mic mic)
     if (devices.keyboard.m.down) mic.ear.playing = !mic.ear.playing;
 }
 
+// E starts the ping through an echo, which plays it again 4000 frames later at
+// half: its delay line is a second of stereo, 384 KB, an array far longer than
+// any other holds, in memory the mixer makes for the voice while it plays.
+struct Tail
+{
+    int at;
+    float[96000] line;
+}
+
+struct Delay
+{
+    int frames;
+    float wet;
+}
+
+audio Echo(mut Samples samples, mut Tail tail, Delay delay)
+{
+    for (var i = 0; i < samples.values.count; i += 2)
+    {
+        var from = (tail.at + 48000 - delay.frames) % 48000;
+        tail.line[2 * tail.at] = samples.values[i];
+        tail.line[2 * tail.at + 1] = samples.values[i + 1];
+        samples.values[i] += tail.line[2 * from] * delay.wet;
+        samples.values[i + 1] += tail.line[2 * from + 1] * delay.wet;
+        tail.at = (tail.at + 1) % 48000;
+    }
+}
+
+local singleton Far
+{
+    Sound voice;
+}
+
+view Echoes(Devices devices, mut Far far)
+{
+    far.voice.clip = ping;
+    far.voice.effect = Echo(Delay { frames = 4000, wet = 0.5 });
+    if (devices.keyboard.e.down) far.voice.playing = !far.voice.playing;
+}
+
 local singleton Seen
 {
     bool pressed;   // The button was

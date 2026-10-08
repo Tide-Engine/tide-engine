@@ -1,0 +1,61 @@
+settings { title = "Grain"; }
+
+local scene Main { }
+
+struct FilmVertex
+{
+    float2 position;
+    float2 uv;
+}
+
+local singleton Film
+{
+    List<FilmVertex> corners;
+    List<int> faces;
+    float grain = 0.35;
+    float sparks = 0.02;
+    bool still;
+}
+
+// Every pixel of the quad: a sky in the site's colors, with grain and sparks rolled for the pixel.
+frag Develop(FilmVertex vertex, out Color color, Film film)
+{
+    float3 dark = float3(0.086, 0.086, 0.094);
+    float3 warm = float3(0.98, 0.75, 0.14);
+    mut float3 rgb = Math.Lerp(dark, warm, vertex.uv.y * vertex.uv.y * 0.6);
+
+    // A roll is another number at each pixel, and at each frame. A hash of the pixel's place is the same
+    // number every frame: it holds still.
+    float rolled = Random.NextFloat();
+    float hashed = float(Math.Hash(int2(this.position)) % 4096) / 4095;
+    float speck = film.still ? hashed : rolled;
+    rgb += (speck - 0.5) * film.grain;
+
+    // About one pixel in fifty lights up, another fifty the next frame
+    if (!film.still && Random.NextFloat() < film.sparks) rgb = float3(0.18, 0.83, 0.75);
+    color = Color(rgb.x, rgb.y, rgb.z, 1);
+}
+
+view Show(mut Film film)
+{
+    if (film.corners.count == 0)
+    {
+        film.corners = [FilmVertex { position = float2(-1, -1.55), uv = float2(0, 0) },
+                        FilmVertex { position = float2(1, -1.55), uv = float2(1, 0) },
+                        FilmVertex { position = float2(1, -0.1), uv = float2(1, 1) },
+                        FilmVertex { position = float2(-1, -0.1), uv = float2(0, 1) }];
+        film.faces = [0, 1, 2, 0, 2, 3];
+    }
+
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetCamera(float2(0, -0.6), 1.25);
+    Draw.Mesh(film.corners, film.faces, Develop);
+
+    GUI.SetTheme(GUITheme { radius = 6 });
+    GUILayout.Area(Anchor.UpperLeft)
+    {
+        GUILayout.Slider("Grain", film.grain, 0, 1);
+        GUILayout.Slider("Sparks", film.sparks, 0, 0.2);
+        GUILayout.Toggle("Hold still (a hash)", film.still);
+    }
+}

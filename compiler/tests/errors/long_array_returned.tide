@@ -1,0 +1,15 @@
+// expect: what a function returns can't be 'Tail': it holds an array of more than 4096 elements, which only an audio declaration's state does
+struct Tail
+{
+    int at;
+    float[96000] line;
+}
+
+Tail Make()
+{
+    return default;
+}
+
+scene Main
+{
+}

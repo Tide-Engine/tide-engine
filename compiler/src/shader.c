@@ -19,7 +19,9 @@
 // builds its types: what a shader language has no function for, or has one
 // that does otherwise than tide/math.h's, is written out (helper_text).
 // Nothing of it is left out but for a reason, which its error says: a long's
-// hash, as these GPUs have no 64-bit integers.
+// hash, as these GPUs have no 64-bit integers. Random's rolls on the type are
+// there too, from a generator of 32 bits that each pixel and each vertex has
+// for itself (Rolls, below); a Random value, whose state is 64 bits, isn't.
 //
 // The same code that writes a shader checks it: a first pass over each frag
 // and vert, and the functions they reach, writes nothing and reports what
@@ -62,6 +64,10 @@ enum {
     H_Q_FROM_M3, H_LOOKROTATION_Q, H_M3_FROM_Q, H_M4_FROM_M3, H_TRS, H_PERSPECTIVE, H_ORTHO,
     H_INVERSE2, H_INVERSE3, H_INVERSE4,
     H_STRAIGHT, // tide_straight(c): a texture's pixel, which has its alpha worked into its color, as the color it is
+    // Random's rolls on the type: tide_roll(), the next 32 bits of the stage's own generator, and what's made of them
+    H_ROLL, H_MUL_HIGH, H_ROLL_INT, H_ROLL_INT_BETWEEN, H_ROLL_INT_BELOW, H_ROLL_FLOAT, H_ROLL_FLOAT_BETWEEN, H_ROLL_FLOAT_BELOW,
+    H_ROLL_BOOL, H_ROLL_FLOAT2, H_ROLL_FLOAT2_BETWEEN, H_ROLL_FLOAT3, H_ROLL_FLOAT3_BETWEEN, H_ROLL_FLOAT2_DIRECTION,
+    H_ROLL_FLOAT3_DIRECTION, H_ROLL_QUATERNION_ROTATION,
     H_COUNT
 };
 
@@ -273,8 +279,9 @@ static bool type_fits(emit *em, const type t, const loc at)
     }
     const char *why = "the GPU runs on bools, ints, floats, vectors, matrices, colors and structs of those";
     if (t.kind == TY_STRUCT && t.decl == em->prog->random) { // Its state is a long, and the code that steps it the CPU's
-        refuse(em, at, "a Random can't go to the GPU: it keeps its state where the CPU steps it");
-        diag_note("roll in the view or a system, and keep the number in a field the GPU reads");
+        refuse(em, at, "a Random can't go to the GPU: its state is 64 bits, and the GPU's ints are 32");
+        diag_note("roll on the type, 'Random.NextInt(6)': a frag has a generator of its pixel's own there, and a vert of its "
+                  "vertex's");
         return false;
     }
     switch (t.kind) {
@@ -1051,6 +1058,121 @@ static const char *const helper_texts[H_COUNT] = {
                    "(-a21 * s5 + a22 * s4 - a23 * s3) * d, (a20 * s5 - a22 * s2 + a23 * s1) * d, "
                    "(-a20 * s4 + a21 * s2 - a23 * s0) * d, (a20 * s3 - a21 * s1 + a22 * s0) * d);\n"
                    "}\n",
+    // What a frag or a vert rolls with (Random.NextInt and the rest, on the type): `tide_dice`, a generator of the
+    // pixel's or the vertex's own, which its stage makes as it starts (put_dice). Its state is 32 bits, as these GPUs
+    // have no 64-bit integers, so it isn't the CPU's (tide/random.h): PCG's RXS-M-XS (O'Neill), a linear
+    // congruential step, and the state out through a shift its own top bits pick. Whole numbers, so the same on
+    // every GPU. What's made of the 32 bits is the CPU's formulas, line for line
+    [H_ROLL] = "uint tide_roll() {\n"
+               "    tide_dice = tide_dice * 747796405u + 2891336453u;\n"
+               "    uint w = ((tide_dice >> ((tide_dice >> 28) + 4u)) ^ tide_dice) * 277803737u;\n"
+               "    return (w >> 22) ^ w;\n"
+               "}\n",
+    // The high 32 bits of a times b, a half at a time: there's no 64-bit product to shift down
+    [H_MUL_HIGH] = "uint tide_mul_high(uint a, uint b) {\n"
+                   "    uint p = (a & 0xFFFFu) * (b & 0xFFFFu);\n"
+                   "    uint q = (a >> 16) * (b & 0xFFFFu) + (p >> 16);\n"
+                   "    uint s = (a & 0xFFFFu) * (b >> 16) + (q & 0xFFFFu);\n"
+                   "    return (a >> 16) * (b >> 16) + (q >> 16) + (s >> 16);\n"
+                   "}\n",
+    // From 0 to 2147483647, so % never goes negative
+    [H_ROLL_INT] = "int tide_roll_int() {\n"
+                   "    return int(tide_roll() >> 1);\n"
+                   "}\n",
+    // From a up to b, b excluded, and a where there's nothing between them: the 32 bits scaled down to the range
+    [H_ROLL_INT_BETWEEN] = "int tide_roll_int_between(int a, int b) {\n"
+                           "    uint k = tide_roll();\n"
+                           "    if (b <= a) { return a; }\n"
+                           "    return int(uint(a) + tide_mul_high(k, uint(b) - uint(a)));\n"
+                           "}\n",
+    [H_ROLL_INT_BELOW] = "int tide_roll_int_below(int b) {\n"
+                         "    return tide_roll_int_between(0, b);\n"
+                         "}\n",
+    // From 0 up to 1, 1 excluded: 24 of the bits over 2^24, which a float holds exactly
+    [H_ROLL_FLOAT] = "float tide_roll_float() {\n"
+                     "    return float(tide_roll() >> 8) * (1.0 / 16777216.0);\n"
+                     "}\n",
+    // From a up to b, b excluded: a where there's nothing between them, or where rounding would give b
+    [H_ROLL_FLOAT_BETWEEN] = "float tide_roll_float_between(float a, float b) {\n"
+                             "    float v = a + (b - a) * tide_roll_float();\n"
+                             "    if (v < b) { return v; }\n"
+                             "    return a;\n"
+                             "}\n",
+    [H_ROLL_FLOAT_BELOW] = "float tide_roll_float_below(float b) {\n"
+                           "    return tide_roll_float_between(0.0, b);\n"
+                           "}\n",
+    [H_ROLL_BOOL] = "bool tide_roll_bool() {\n"
+                    "    return (tide_roll() >> 31) != 0u;\n"
+                    "}\n",
+    // A vector's components are rolled a statement each, x first, as the CPU rolls them
+    [H_ROLL_FLOAT2] = "vec2 tide_roll_float2() {\n"
+                      "    float x = tide_roll_float();\n"
+                      "    float y = tide_roll_float();\n"
+                      "    return vec2(x, y);\n"
+                      "}\n",
+    [H_ROLL_FLOAT2_BETWEEN] = "vec2 tide_roll_float2_between(vec2 a, vec2 b) {\n"
+                              "    float x = tide_roll_float_between(a.x, b.x);\n"
+                              "    float y = tide_roll_float_between(a.y, b.y);\n"
+                              "    return vec2(x, y);\n"
+                              "}\n",
+    [H_ROLL_FLOAT3] = "vec3 tide_roll_float3() {\n"
+                      "    float x = tide_roll_float();\n"
+                      "    float y = tide_roll_float();\n"
+                      "    float z = tide_roll_float();\n"
+                      "    return vec3(x, y, z);\n"
+                      "}\n",
+    [H_ROLL_FLOAT3_BETWEEN] = "vec3 tide_roll_float3_between(vec3 a, vec3 b) {\n"
+                              "    float x = tide_roll_float_between(a.x, b.x);\n"
+                              "    float y = tide_roll_float_between(a.y, b.y);\n"
+                              "    float z = tide_roll_float_between(a.z, b.z);\n"
+                              "    return vec3(x, y, z);\n"
+                              "}\n",
+    // A point on the unit circle, every angle as likely
+    [H_ROLL_FLOAT2_DIRECTION] = "vec2 tide_roll_float2_direction() {\n"
+                                "    float w = tide_roll_float() * 6.28318531;\n"
+                                "    return vec2(cos(w), sin(w));\n"
+                                "}\n",
+    // A point on the unit sphere, every direction as likely
+    [H_ROLL_FLOAT3_DIRECTION] = "vec3 tide_roll_float3_direction() {\n"
+                                "    float z = tide_roll_float() * 2.0 - 1.0;\n"
+                                "    float w = tide_roll_float() * 6.28318531;\n"
+                                "    float s = sqrt(max(1.0 - z * z, 0.0));\n"
+                                "    return vec3(cos(w) * s, sin(w) * s, z);\n"
+                                "}\n",
+    // A rotation, every one as likely, with w never negative
+    [H_ROLL_QUATERNION_ROTATION] = "vec4 tide_roll_quaternion_rotation() {\n"
+                                   "    float t = tide_roll_float() * 6.28318531;\n"
+                                   "    float p = tide_roll_float() * 6.28318531;\n"
+                                   "    float u = tide_roll_float();\n"
+                                   "    float i = sqrt(1.0 - u);\n"
+                                   "    float j = sqrt(u);\n"
+                                   "    vec4 q = vec4(i * sin(t), i * cos(t), j * sin(p), j * cos(p));\n"
+                                   "    if (q.w < 0.0) { return -q; }\n"
+                                   "    return q;\n"
+                                   "}\n",
+};
+
+// Random's rolls, by the function of tide/random.h's a call of one names (expr.c_callee): the function of the
+// engine's own that's it here, and the helper that is.
+static const struct {
+    const char *cpu;
+    int helper;
+    const char *call;
+} roll_calls[] = {
+    {"tide_random_next_int", H_ROLL_INT, "tide_roll_int"},
+    {"tide_random_next_int_below", H_ROLL_INT_BELOW, "tide_roll_int_below"},
+    {"tide_random_next_int_between", H_ROLL_INT_BETWEEN, "tide_roll_int_between"},
+    {"tide_random_next_float", H_ROLL_FLOAT, "tide_roll_float"},
+    {"tide_random_next_float_below", H_ROLL_FLOAT_BELOW, "tide_roll_float_below"},
+    {"tide_random_next_float_between", H_ROLL_FLOAT_BETWEEN, "tide_roll_float_between"},
+    {"tide_random_next_bool", H_ROLL_BOOL, "tide_roll_bool"},
+    {"tide_random_next_float2", H_ROLL_FLOAT2, "tide_roll_float2"},
+    {"tide_random_next_float2_between", H_ROLL_FLOAT2_BETWEEN, "tide_roll_float2_between"},
+    {"tide_random_next_float3", H_ROLL_FLOAT3, "tide_roll_float3"},
+    {"tide_random_next_float3_between", H_ROLL_FLOAT3_BETWEEN, "tide_roll_float3_between"},
+    {"tide_random_next_float2_direction", H_ROLL_FLOAT2_DIRECTION, "tide_roll_float2_direction"},
+    {"tide_random_next_float3_direction", H_ROLL_FLOAT3_DIRECTION, "tide_roll_float3_direction"},
+    {"tide_random_next_quaternion_rotation", H_ROLL_QUATERNION_ROTATION, "tide_roll_quaternion_rotation"},
 };
 
 static int family_helper(const int family, const int dim)
@@ -1159,6 +1281,31 @@ static void need(emit *em, const int h)
         break;
     case H_TRS:
         need(em, H_M3_FROM_Q);
+        break;
+    case H_ROLL_INT:
+    case H_ROLL_FLOAT:
+    case H_ROLL_BOOL:
+        need(em, H_ROLL);
+        break;
+    case H_ROLL_INT_BETWEEN:
+        need(em, H_ROLL);
+        need(em, H_MUL_HIGH);
+        break;
+    case H_ROLL_INT_BELOW:
+        need(em, H_ROLL_INT_BETWEEN);
+        break;
+    case H_ROLL_FLOAT_BETWEEN:
+    case H_ROLL_FLOAT2:
+    case H_ROLL_FLOAT3:
+    case H_ROLL_FLOAT2_DIRECTION:
+    case H_ROLL_FLOAT3_DIRECTION:
+    case H_ROLL_QUATERNION_ROTATION:
+        need(em, H_ROLL_FLOAT);
+        break;
+    case H_ROLL_FLOAT_BELOW:
+    case H_ROLL_FLOAT2_BETWEEN:
+    case H_ROLL_FLOAT3_BETWEEN:
+        need(em, H_ROLL_FLOAT_BETWEEN);
         break;
     default:
         break;
@@ -1943,6 +2090,12 @@ static void put_in_range(emit *em, const expr *e)
 // ---------------------------------------------------------------------------
 // Expressions
 
+// Random.seed: the seed of the match the frame draws, which its draw sends.
+static bool is_seed(const expr *e)
+{
+    return e->kind == E_MEMBER && e->c_constant && e->object && e->object->kind == E_NAME && str_eq_c(e->object->name, "Random");
+}
+
 static bool is_const(const expr *e)
 {
     if (!e) return true;
@@ -1954,6 +2107,7 @@ static bool is_const(const expr *e)
     case E_NAME:
         return e->bind == BIND_CONST;
     case E_MEMBER:
+        if (is_seed(e)) return false; // A draw's, not the shader's text's
         return e->c_constant || e->enum_member || e->constant || (e->swizzle_len && is_const(e->object));
     case E_UNARY:
         return !e->method && is_const(e->lhs);
@@ -2074,6 +2228,11 @@ static void ex_static(emit *em, const expr *e)
                   {"magenta", 1, 0, 1, 1}, {"gray", 0.5f, 0.5f, 0.5f, 1}, {"clear", 0, 0, 0, 0},
                   {"none", 0, 0, 0, -1}};
     const str owner = e->object->name;
+    if (is_seed(e)) { // A word of the draw's ints (codegen fills it); 0 while checking, when there's no shader
+        if (em->sh && em->sh->seed_at >= 0) put_word(em, 'v', em->sh->seed_at);
+        else sb_put(em->o, "0");
+        return;
+    }
     if (str_eq_c(owner, "Math")) {
         put_float(em, str_eq_c(e->member, "PI") ? 3.14159265358979 : str_eq_c(e->member, "TAU") ? 6.28318530717959
                                                                                              : 2.71828182845905);
@@ -2747,6 +2906,34 @@ static int known_filter(const expr *e)
     return filter == 0 || filter == 2 ? filter : 1;
 }
 
+// Whether working `e` out rolls with Random: a roll, or a call of what rolls. With `made`, a local made of one
+// counts too: what the expression is made of was rolled, though it rolls nothing itself.
+static bool rolls_in(const expr *e, const bool made, const int depth)
+{
+    if (!e || depth > 64) return false;
+    if (e->call == CALL_ROLL || (e->method && e->method->rolls)) return true;
+    if (made && e->kind == E_NAME && e->bind == BIND_LOCAL && e->local && e->local->kind == S_VAR
+        && rolls_in(e->local->value, made, depth + 1)) {
+        return true;
+    }
+    if (rolls_in(e->object, made, depth + 1) || rolls_in(e->lhs, made, depth + 1) || rolls_in(e->rhs, made, depth + 1)
+        || rolls_in(e->cond, made, depth + 1)) {
+        return true;
+    }
+    for (int i = 0; i < e->args.count; i++) {
+        if (rolls_in(e->args.items[i], made, depth + 1)) return true;
+    }
+    for (int i = 0; i < e->inits.count; i++) {
+        if (rolls_in(e->inits.items[i].value, made, depth + 1)) return true;
+    }
+    return false;
+}
+
+static bool has_roll(const expr *e, const int depth)
+{
+    return rolls_in(e, true, depth);
+}
+
 // Whether a frag can work an expression out as it starts, before any branch:
 // it's made of the frag's parameters, constants, locals that are never
 // assigned again and whose own values are so, and what changes nothing
@@ -2780,6 +2967,7 @@ static bool liftable(const emit *em, const expr *e, const int depth)
     case E_BINARY:
     case E_UNARY:
         if (e->method) {
+            if (e->method->rolls) return false; // Written twice, it would roll twice
             for (int i = 0; i < e->method->params.count; i++) {
                 if (e->method->params.items[i].mode == PARAM_MUT) return false;
             }
@@ -2804,7 +2992,7 @@ static bool liftable(const emit *em, const expr *e, const int depth)
         }
         if (e->call == CALL_FUNCTION || e->call == CALL_METHOD) {
             const decl *fn = e->method;
-            if (!fn || fn->is_extern || fn->is_mut_method) return false;
+            if (!fn || fn->is_extern || fn->is_mut_method || fn->rolls) return false; // One that rolls would roll twice
             for (int i = 0; i < fn->params.count; i++) { // One with the pixel could leave it undrawn
                 const param *p = &fn->params.items[i];
                 if (p->mode == PARAM_MUT || p->is_out || p->type.decl == em->prog->pixel) return false;
@@ -2835,11 +3023,18 @@ static void ex_cube_sample(emit *em, const expr *e, const decl *asset, const par
     const bool lifts = em->root->is_frag && em->code == em->root && !em->lifting && filter == 2;
     const bool grad = lifts && liftable(em, e->args.items[0], 0);
     if (lifts && !grad && em->checking) {
-        refuse(em, e->args.items[0]->at, "a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this "
-                                         "direction is made of a variable that changes, or of one a loop counts");
-        diag_note("the GPU picks between a cube's smaller images by how fast the direction changes from one pixel to the "
-                  "next, which it's asked before any branch or loop: make it of the frag's parameters, constants and "
-                  "variables declared with 'var' and never assigned again, or sample with Filter.Bilinear here");
+        refuse(em, e->args.items[0]->at, has_roll(e->args.items[0], 0)
+               ? "a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this direction is made of a roll"
+               : "a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this "
+                 "direction is made of a variable that changes, or of one a loop counts");
+        if (has_roll(e->args.items[0], 0)) {
+            diag_note("the GPU picks between a cube's smaller images by how fast the direction changes from one pixel to the "
+                      "next, and a roll is another number at every pixel: sample with Filter.Bilinear here");
+        } else {
+            diag_note("the GPU picks between a cube's smaller images by how fast the direction changes from one pixel to the "
+                      "next, which it's asked before any branch or loop: make it of the frag's parameters, constants and "
+                      "variables declared with 'var' and never assigned again, or sample with Filter.Bilinear here");
+        }
     }
     int slot = 0;
     if (em->checking) {
@@ -2942,11 +3137,18 @@ static void ex_sample(emit *em, const expr *e)
                     && (filter == 2 || (!filter_said && em->prog->names_trilinear));
     const bool grad = lifts && liftable(em, e->args.items[0], 0);
     if (lifts && !grad && filter == 2 && em->checking) {
-        refuse(em, e->args.items[0]->at, "a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this "
-                                         "uv is made of a variable that changes, or of one a loop counts");
-        diag_note("the GPU picks between a texture's smaller images by how fast the uv changes from one pixel to the next, "
-                  "which it's asked before any branch or loop: make the uv of the frag's parameters, constants and "
-                  "variables declared with 'var' and never assigned again, or sample with Filter.Bilinear here");
+        refuse(em, e->args.items[0]->at, has_roll(e->args.items[0], 0)
+               ? "a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this uv is made of a roll"
+               : "a Sample that's Filter.Trilinear reads where the frag can work out as it starts: this "
+                 "uv is made of a variable that changes, or of one a loop counts");
+        if (has_roll(e->args.items[0], 0)) {
+            diag_note("the GPU picks between a texture's smaller images by how fast the uv changes from one pixel to the "
+                      "next, and a roll is another number at every pixel: sample with Filter.Bilinear here");
+        } else {
+            diag_note("the GPU picks between a texture's smaller images by how fast the uv changes from one pixel to the next, "
+                      "which it's asked before any branch or loop: make the uv of the frag's parameters, constants and "
+                      "variables declared with 'var' and never assigned again, or sample with Filter.Bilinear here");
+        }
     } else if (lifts && !grad && em->checking) {
         // The texture may say Trilinear, and this read can't: said, not left to be found in a shimmer
         const expr *named = direct ? of : of->object && of->object->kind == E_NAME ? of->object : NULL;
@@ -2954,8 +3156,11 @@ static void ex_sample(emit *em, const expr *e)
         if (direct) snprintf(which, sizeof which, "'" STR_FMT "'", STR_ARG(of->name));
         else if (named) snprintf(which, sizeof which, "'" STR_FMT "." STR_FMT "'", STR_ARG(named->name), STR_ARG(of->member));
         else snprintf(which, sizeof which, "this texture");
-        diag_warning(e->args.items[0]->at, "%s may say Filter.Trilinear, which this Sample can't read: its uv is made of a "
-                                           "variable that changes, or of one a loop counts, so it reads the texture's own pixels",
+        diag_warning(e->args.items[0]->at, has_roll(e->args.items[0], 0)
+                     ? "%s may say Filter.Trilinear, which this Sample can't read: its uv is made of a roll, so it reads the "
+                       "texture's own pixels"
+                     : "%s may say Filter.Trilinear, which this Sample can't read: its uv is made of a "
+                       "variable that changes, or of one a loop counts, so it reads the texture's own pixels",
                      which);
         diag_note("make the uv of the frag's parameters, constants and variables declared with 'var' and never assigned "
                   "again, so the GPU can be asked how fast it changes as the frag starts; or write the filter here, "
@@ -3139,10 +3344,19 @@ static void ex_call(emit *em, const expr *e)
     case CALL_METHOD:
         ex_user_call(em, e);
         return;
+    case CALL_ROLL: // Random.NextInt(6), on the type: the stage's own generator steps, and the CPU's formula makes the number
+        for (size_t i = 0; i < sizeof roll_calls / sizeof roll_calls[0]; i++) {
+            if (!e->c_callee || strcmp(e->c_callee, roll_calls[i].cpu) != 0) continue;
+            put_helper_call(em, e, roll_calls[i].helper, roll_calls[i].call);
+            return;
+        }
+        refuse(em, e->at, "Random." STR_FMT " isn't on the GPU yet", STR_ARG(e->name)); // A roll Random gains goes in roll_calls
+        diag_note("roll it in the view, and keep the number in a field the GPU reads");
+        return;
     case CALL_RANDOM:
-    case CALL_ROLL:
-        refuse(em, e->at, "the GPU can't roll random numbers: a Random keeps its state where the CPU steps it");
-        diag_note("roll in the view or a system, and keep the number in a field the GPU reads");
+        refuse(em, e->at, "the GPU can't step a Random of the game's: its state is 64 bits, and the GPU's ints are 32");
+        diag_note("roll on the type, 'Random." STR_FMT "(...)': a frag has a generator of its pixel's own there, and a vert of "
+                  "its vertex's", STR_ARG(e->name));
         return;
     case CALL_BUILTIN:
         if (e->kind == E_METHOD && e->object->kind == E_NAME && str_eq_c(e->object->name, "Math")) {
@@ -3150,8 +3364,9 @@ static void ex_call(emit *em, const expr *e)
             return;
         }
         if (e->kind == E_CALL && e->type.kind == TY_STRUCT && e->type.decl == em->prog->random) { // Random(seed)
-            refuse(em, e->at, "the GPU can't make a Random: it keeps its state where the CPU steps it");
-            diag_note("roll in the view or a system, and keep the number in a field the GPU reads");
+            refuse(em, e->at, "the GPU can't make a Random: its state is 64 bits, and the GPU's ints are 32");
+            diag_note("roll on the type, 'Random.NextInt(6)': a frag has a generator of its pixel's own there, and a vert of "
+                      "its vertex's");
             return;
         }
         if (e->kind == E_METHOD && e->object->kind == E_NAME && ex_builder(em, e)) return;
@@ -3256,7 +3471,10 @@ static void ex(emit *em, const expr *e)
         if (!type_fits(em, e->type, e->at)) return;
         // WGSL's select picks between numbers, vectors and bools, and GLSL's '?:' not between arrays everywhere: a
         // struct, a matrix or an array is picked by a function of its type. Both sides are worked out either way
-        if (is_struct_like(e->type) || matrix_dim(e->type) || e->type.kind == TY_ARRAY) {
+        // ...and so is one with a roll in it, whatever its type: select works both sides out and GLSL's '?:' one, and
+        // each in an order of its own. A function's arguments are worked out left to right in both, so the rolls a
+        // pixel makes there are the same numbers on every backend
+        if (is_struct_like(e->type) || matrix_dim(e->type) || e->type.kind == TY_ARRAY || rolls_in(e, false, 0)) {
             sb_printf(em->o, "tide_pick%d(", need_pick(em, e->type));
             ex(em, e->cond);
             sb_put(em->o, ", ");
@@ -4402,6 +4620,57 @@ static const field *field_called(const decl *d, const char *name)
     return NULL;
 }
 
+// ---------------------------------------------------------------------------
+// Rolls
+//
+// A frag or a vert that rolls with Random (the checker's decl.rolls: itself,
+// or through a function it calls) has a generator of its own each time it
+// runs, `tide_dice`, a variable of its stage's that tide_roll steps. The stage
+// makes it as it starts, of what tells one run from another: for a frag, its
+// pixel's place in the destination's own pixels and which instance of its
+// draw the pixel is of (which the vertex stage passes on, `tide_nth`); for a
+// vert, which vertex of the mesh and which instance; and for both, a number
+// the frame rolled (a word of the draw's ints, which codegen fills: the same
+// for every draw of a frame, so draws still join into runs) and which frag or
+// vert it is, so two that draw the same pixel roll apart. Math.Hash of those
+// is the state: whole numbers, the same on every backend.
+
+static bool stage_rolls(const shader *sh, const int stage)
+{
+    const decl *root = stage == STAGE_VERT ? sh->vert : sh->frag;
+    return root && root->rolls;
+}
+
+// A number for the frag or vert, as roll_site's is for a system (codegen.c): of its name, and an int's worth.
+static unsigned roll_site(const decl *root)
+{
+    unsigned hash = 2166136261u;
+    for (const char *s = function_name(root); *s; s++) hash = (hash ^ (unsigned char)*s) * 16777619u;
+    return hash & 0x7FFFFFFFu;
+}
+
+// The stage's generator, made as its main starts. `nth` is how the fragment stage names its instance.
+static void put_dice(emit *em, sb *o, const int stage, const char *nth)
+{
+    const shader *sh = em->sh;
+    if (!stage_rolls(sh, stage)) return;
+    const bool wgsl = em->l == WGSL;
+    sb *const out = em->o;
+    em->o = o;
+    need(em, stage == STAGE_VERT ? H_HASH3 : H_HASH4);
+    if (stage == STAGE_VERT) {
+        sb_put(o, wgsl ? "    tide_dice = u32(tide_hash3(vec3i(i32(tide_vertex_index), i32(tide_instance_index), "
+                       : "    tide_dice = uint(tide_hash3(ivec3(gl_VertexID, gl_InstanceID, ");
+    } else if (wgsl) {
+        sb_printf(o, "    tide_dice = u32(tide_hash4(vec4i(vec2i(tide_at.xy), %s, ", nth);
+    } else { // From the top left, as this.position counts: OpenGL counts from the bottom
+        sb_printf(o, "    tide_dice = uint(tide_hash4(ivec4(ivec2(gl_FragCoord.x, tide_screen.z - gl_FragCoord.y), %s, ", nth);
+    }
+    put_word(em, 'v', sh->rolled_at);
+    sb_printf(o, " ^ %u)));\n", roll_site(stage == STAGE_VERT ? sh->vert : sh->frag));
+    em->o = out;
+}
+
 // What the vertex stage passes on to the pixels, as each language declares
 // it: the vertex's fields the pixels read, the fields they read of what the
 // vert wrote for them, where they are in the world, and the instance's
@@ -4438,6 +4707,10 @@ static void put_varyings(emit *em, sb *o, const char *direction)
         if (wgsl) sb_printf(o, "    @location(%d) @interpolate(flat) tide_g%d: vec4i,\n", location++, i);
         else sb_printf(o, "flat %s ivec4 tide_g%d;\n", direction, i);
     }
+    if (stage_rolls(sh, STAGE_FRAG)) { // Which instance of its draw a pixel is of, for its generator (put_dice)
+        if (wgsl) sb_printf(o, "    @location(%d) @interpolate(flat) tide_nth: i32,\n", location++);
+        else sb_printf(o, "flat %s int tide_nth;\n", direction);
+    }
 }
 
 // Where word `word` of what the pixels get of the instance comes from in the
@@ -4466,6 +4739,7 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
     const char *f4 = float_ty(em, 4);
     em->stage = STAGE_VERT;
     em->o = o;
+    put_dice(em, o, STAGE_VERT, NULL);
     sb_printf(o, wgsl ? "    var tide_vertex: %s = %s(" : "    %s tide_vertex = %s(", ty(em, vertex), ty(em, vertex));
     for (int i = 0; i < v->fields.count; i++) sb_printf(o, "%s%stide_a%d", i ? ", " : "", in, i);
     sb_put(o, ");\n");
@@ -4521,6 +4795,9 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
             sb_put(o, ");\n");
         }
     }
+    if (stage_rolls(sh, STAGE_FRAG)) {
+        sb_printf(o, wgsl ? "    %stide_nth = i32(tide_instance_index);\n" : "    %stide_nth = gl_InstanceID;\n", out);
+    }
 }
 
 // How many colors a shader's fragment stage writes: its frag's `out Color`
@@ -4563,6 +4840,9 @@ static void put_fragment_main(emit *em, sb *o, const char *in, const char *resul
     const int outputs = shader_outputs(sh);
     em->stage = STAGE_FRAG;
     em->o = o;
+    sb nth = {0};
+    sb_printf(&nth, "%stide_nth", in);
+    put_dice(em, o, STAGE_FRAG, nth.data);
     for (int k = 0; k < outputs; k++) {
         sb_printf(o, wgsl ? "    var %s: vec4f = %s(1.0, 1.0, 1.0, 1.0);\n" : "    vec4 %s = %s(1.0, 1.0, 1.0, 1.0);\n",
                   output_name(false, k), f4);
@@ -4661,6 +4941,14 @@ static void put_wgsl_inputs(const shader *sh, sb *o)
     sb_put(o, "var<private> tide_at: vec4f;\nvar<private> tide_world: vec3f;\n");
 }
 
+// The generator a stage's code rolls with (put_dice), where it has one: a
+// variable of the stage's own, each run of it with its own.
+static void put_dice_variable(const emit *em, sb *o, const bool rolls)
+{
+    if (!rolls && !em->helpers[H_ROLL]) return;
+    sb_put(o, em->l == WGSL ? "var<private> tide_dice: u32;\n" : "uint tide_dice;\n");
+}
+
 static emit emitter(program *prog, const shader *sh, const lang l)
 {
     return (emit){.prog = prog, .sh = sh, .l = l};
@@ -4711,6 +4999,7 @@ static void write_glsl(program *prog, shader *sh)
                 sb_printf(&o, "layout(location = %d) out vec4 %s;\n", k, output_name(true, k));
             }
         }
+        put_dice_variable(&em, &o, stage_rolls(sh, stage));
         put_structs(&em, &o);
         put_helpers(&em, &o);
         if (em.functions.data) sb_put(&o, em.functions.data);
@@ -4729,9 +5018,11 @@ static void write_wgsl(program *prog, shader *sh)
     write_stage(&em, sh->frag, STAGE_FRAG);
     put_fragment_main(&em, &fragment, "in.", "return");
 
+    const bool rolls = stage_rolls(sh, STAGE_VERT) || stage_rolls(sh, STAGE_FRAG);
     sb o = {0};
     put_uniforms(sh, WGSL, &o);
     put_wgsl_inputs(sh, &o);
+    put_dice_variable(&em, &o, rolls);
     sb_put(&o, "struct tide_corner {\n    @builtin(position) tide_at: vec4f,\n");
     put_varyings(&em, &o, "");
     sb_put(&o, "}\n");
@@ -4747,6 +5038,8 @@ static void write_wgsl(program *prog, shader *sh)
     }
     for (int i = 0; i < packs(sh->instance_floats); i++, location++) sb_printf(&o, ", @location(%d) tide_in%d: vec4f", location, i);
     for (int i = 0; i < packs(sh->instance_ints); i++, location++) sb_printf(&o, ", @location(%d) tide_ij%d: vec4i", location, i);
+    // Which vertex of the mesh, and which instance of the draw: what tells a vert's runs, and an instance's pixels, apart
+    if (rolls) sb_put(&o, ", @builtin(vertex_index) tide_vertex_index: u32, @builtin(instance_index) tide_instance_index: u32");
     sb_put(&o, ") -> tide_corner {\n");
     for (int i = 0; i < packs(sh->instance_floats); i++) sb_printf(&o, "    tide_n%d = tide_in%d;\n", i, i);
     for (int i = 0; i < packs(sh->instance_ints); i++) sb_printf(&o, "    tide_j%d = tide_ij%d;\n", i, i);
@@ -4985,6 +5278,11 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         const type held = t->asset ? t->asset->return_type : t->field->type;
         sh->uniform_ints += held.kind == TY_LIST ? 1 : held.kind != TY_GRID ? 2 : held.decl->dims == 3 ? 10 : 6;
     }
+    // The number the frame rolled, which the generators of code that rolls are made of, and the match's seed
+    // for code that reads it: a word each of the draw's ints, the same for every draw of a frame
+    sh->rolled_at = sh->seed_at = -1;
+    if (stage_rolls(sh, STAGE_VERT) || stage_rolls(sh, STAGE_FRAG)) sh->rolled_at = sh->uniform_ints++;
+    if ((sh->vert && sh->vert->reads_seed) || (sh->frag && sh->frag->reads_seed)) sh->seed_at = sh->uniform_ints++;
     if (sh->instance_list) {
         diag_error(call->at, "this draw's instances each have a list, '" STR_FMT "', that its code reads, and a draw sends one "
                    "list for all of them", STR_ARG(sh->instance_list->name));
@@ -4994,7 +5292,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     }
     // What the vert writes for the frag, each struct it takes as `out`, and what
     // of it the frag's parameter of that type reads: only that goes on
-    int varyings = (sh->frag_world ? 1 : 0) + packs(sh->frag_floats) + packs(sh->frag_ints);
+    int varyings = (sh->frag_world ? 1 : 0) + packs(sh->frag_floats) + packs(sh->frag_ints) + (stage_rolls(sh, STAGE_FRAG) ? 1 : 0);
     for (int i = 1; sh->vert && i < sh->vert->params.count; i++) {
         const param *from = &sh->vert->params.items[i];
         if (!from->is_out || from->type.kind != TY_STRUCT) continue;
@@ -5044,6 +5342,9 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         diag_note("each field of the vertex the frag reads is one, each it reads of what the vert wrote for it another, its "
                   "place in the world another, and every 4 floats or 4 ints it reads of the entity's components another: read "
                   "fewer, or keep what every entity shares in a singleton");
+        if (stage_rolls(sh, STAGE_FRAG)) {
+            diag_note("one of them is for its rolls: which instance of its draw a pixel is of, which its generator is made of");
+        }
         return NULL;
     }
     if (uniform_bytes > 3984) { // TIDE_SHADER_UNIFORM_BYTES

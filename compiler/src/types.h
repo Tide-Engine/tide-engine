@@ -76,6 +76,18 @@ layout type_layout(type t);
 layout decl_layout_padded(const decl *d, int *pad);
 layout decl_layout(const decl *d);
 
+// Elements an array holds at the most, all of its lengths together...
+#define TIDE_ARRAY_MOST 4096
+
+// ...but for a long array: one of more than that, which only an audio
+// declaration's state holds (a delay line: an echo's, a reverb's). Whether a
+// value of type `t` is one, or has one in it through arrays and structs. Such
+// a value is never copied, as a copy would be hundreds of kilobytes on the
+// audio thread's stack: it's read and written where it is, an element at a
+// time, or passed on by its address. Asked once every struct's fields are
+// resolved, with no struct that holds itself: a struct remembers its answer.
+bool type_holds_long_array(type t);
+
 // Whether views see values of type `t` blended between the last two ticks:
 // floats, and what's made of them. A struct blends if any of its fields do.
 bool type_blends(type t);

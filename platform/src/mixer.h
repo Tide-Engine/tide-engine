@@ -14,10 +14,12 @@
 // at its next block, the newest winning; its one-shots go through a queue, so
 // none is lost when two frames come between two blocks.
 //
-// Everything the renderer reads is the mixer's own: it allocates nothing and
-// blocks on nothing, so it's fit for a system's audio thread. What it plays is
-// the engine's own float arithmetic and nothing of a clock's, so a run with
-// no device renders the same bytes on every machine.
+// Everything the renderer reads is the mixer's own, or memory the frame's
+// thread made for it (an effect's state of more than TIDE_AUDIO_STATE_SMALL
+// bytes, which that thread frees once the renderer is done with it): it
+// allocates nothing and blocks on nothing, so it's fit for a system's audio
+// thread. What it plays is the engine's own float arithmetic and nothing of a
+// clock's, so a run with no device renders the same bytes on every machine.
 
 #define TIDE_MIXER_VOICES 256u    // Voices and one-shots at once; past it, a new one takes the quietest's place
 #define TIDE_MIXER_ONE_SHOTS 1024u // One-shots waiting for the next block; past it, they're dropped
@@ -41,6 +43,12 @@ uint32_t tide_mixer_voices(void);
 
 // How many one-shots were dropped for want of room since the mixer was made.
 uint32_t tide_mixer_dropped(void);
+
+// The frame's: how many effects' big states the mixer holds (states of more
+// than TIDE_AUDIO_STATE_SMALL bytes, each memory of its own): the ones frames
+// play, and the ones it waits for the renderer to be done with before it
+// frees them.
+uint32_t tide_mixer_states(void);
 
 // For tests and a run with no device, where the frame's thread renders: has
 // the renderer take what's submitted now. A device's callback does this

@@ -190,6 +190,24 @@ layout decl_layout(const decl *d)
     return decl_layout_padded(d, NULL);
 }
 
+bool type_holds_long_array(const type t)
+{
+    if (t.kind == TY_ARRAY) {
+        int64_t elements = 1;
+        type element = t;
+        for (; element.kind == TY_ARRAY; element = element.decl->fields.items[0].type) elements *= element.decl->array_length;
+        return elements > TIDE_ARRAY_MOST || type_holds_long_array(element);
+    }
+    if (t.kind != TY_STRUCT) return false;
+    if (t.decl->long_arrays == 0) {
+        t.decl->long_arrays = 1;
+        for (int i = 0; i < t.decl->fields.count && t.decl->long_arrays == 1; i++) {
+            if (type_holds_long_array(t.decl->fields.items[i].type)) t.decl->long_arrays = 2;
+        }
+    }
+    return t.decl->long_arrays == 2;
+}
+
 bool type_blends(const type t)
 {
     if (t.kind == TY_FLOAT || t.kind == TY_QUATERNION || t.kind == TY_COLOR || t.kind == TY_RECT) return true;
