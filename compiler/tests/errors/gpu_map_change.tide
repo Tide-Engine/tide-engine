@@ -1,0 +1,27 @@
+// expect: 'models' is read-only
+// expect: 'Map.Remove' is a mut method: it changes what it's called on
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    Map<int, Color> hues;
+}
+
+frag Shade(V vertex, out Color color, Models models)
+{
+    models.hues.Remove(1);
+    color = Color.white;
+}
+
+view Show(Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}

@@ -1,0 +1,17 @@
+// expect: an audio declaration's state is 4096 bytes at the most, and 'Tail' is 16388
+// expect: each voice and bus 'Echo' plays on keeps its own: make 'Tail' smaller, with a shorter array or fewer fields
+struct Tail
+{
+    int at;
+    float[4096] taps;
+}
+
+audio Echo(mut Samples samples, mut Tail tail)
+{
+    tail.at += 1;
+    tail.taps[tail.at] = samples.values[0];
+}
+
+scene Main
+{
+}

@@ -1,0 +1,25 @@
+// expect: the GPU has no values that may be missing, and nothing fails there: handle it on the CPU
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    Map<int, Color> hues;
+}
+
+frag Shade(V vertex, out Color color, Models models)
+{
+    color = models.hues.Get(1) ?? Color.white;
+}
+
+view Show(Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}

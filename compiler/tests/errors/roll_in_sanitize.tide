@@ -1,0 +1,17 @@
+// expect: Sanitize can't roll random numbers
+// expect: it repairs an input the same way on every machine, from the input alone; Sample rolls, on the machine that sends it
+input Keys
+{
+    int luck;
+
+    Sample(Devices devices)
+    {
+        luck = devices.keyboard.space.pressed ? 1 : 0;
+    }
+
+    Sanitize()
+    {
+        luck = Random.NextInt(6);
+    }
+}
+scene Main { }
