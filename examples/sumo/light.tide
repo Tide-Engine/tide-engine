@@ -227,7 +227,7 @@ frag CrateLook(Corner corner, out Color color, Solid solid, Instance instance, R
         tone = 1;
     }
     Color paint = Color(solid.tint.r * tone, solid.tint.g * tone, solid.tint.b * tone, 1);
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 normal = instance.Normal(corner.normal);
     float3 seen = FromLamp(this.world, normal, shadow.toLamp);
     float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
                + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
@@ -244,7 +244,7 @@ frag BallLook(Corner corner, out Color color, Instance instance, Room room, Ball
     mut Color paint = band < 0.2 ? Color.white : band > 0.82 ? Shade(seat, 0.45) : seat;
     if (ball.heavy > 0) paint = band < 0.2 ? seat : band > 0.82 ? Color(0.5, 0.52, 0.58) : Color(0.16, 0.17, 0.2);
     paint = Mix(paint, Color.white, Math.Saturate(ball.flash + ball.charge * (0.35 + 0.25 * Math.Sin(room.beat * 14))));
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 normal = instance.Normal(corner.normal);
     float3 seen = FromLamp(this.world, normal, shadow.toLamp);
     float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
                + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
@@ -254,7 +254,7 @@ frag BallLook(Corner corner, out Color color, Instance instance, Room room, Ball
 // Anything of one color, lit: a pickup.
 frag Plain(Corner corner, out Color color, Solid solid, Instance instance, Room room, Shadow shadow)
 {
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 normal = instance.Normal(corner.normal);
     float3 seen = FromLamp(this.world, normal, shadow.toLamp);
     float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
                + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;

@@ -206,7 +206,7 @@ That view comes before anything is drawn to the window, the window's own clear t
 frag CrateLook(Corner corner, out Color color, Solid solid, Instance instance, Room room, Shadow shadow)
 {
     ...
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 normal = instance.Normal(corner.normal);
     float3 seen = FromLamp(this.world, normal, shadow.toLamp);
     float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
                + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;

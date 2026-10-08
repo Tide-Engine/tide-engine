@@ -575,7 +575,7 @@ local singleton Models
 struct Solid
 {
     float4x4 transform = float4x4.identity;
-    float3 size = float3(1);   // What the transform scales it by, which its frag needs for a squashed ball's normals
+    float3 size = float3(1);   // What the transform scales it by: wood's grain and a roof's tiles are laid by it
     Color tint = Color.white;
     float gloss;               // How much it shines
     float glow;                // How much of its paint is its own light
@@ -914,7 +914,7 @@ frag GroundLook(Corner corner, out Color color, Solid solid, Room room, Shadow s
 // Anything that stands: lit, and painted as what it's made of.
 frag Plain(Corner corner, out Color color, Solid solid, Instance instance, Room room, Shadow shadow)
 {
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal / (solid.size * solid.size)));
+    float3 normal = instance.Normal(corner.normal);
     float3 seen = FromLamp(this.world, normal, shadow.toLamp);
     float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
                + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25
@@ -991,7 +991,7 @@ frag Plain(Corner corner, out Color color, Solid solid, Instance instance, Room 
 // deck's own mesh, so it turns with it.
 frag DeckLook(Corner corner, out Color color, Solid solid, Instance instance, Room room, Shadow shadow)
 {
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal / (solid.size * solid.size)));
+    float3 normal = instance.Normal(corner.normal);
     float3 seen = FromLamp(this.world, normal, shadow.toLamp);
     float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
                + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25

@@ -3887,13 +3887,127 @@ view Rolls(Art art, mut Dice dice)
     }
 }
 
+// Normals (pass 20): instance.Normal gives a mesh's normal as it is in the
+// world, which isn't the way Math.Rotate turns it where the draw's transform
+// scales the mesh more one way than another. Each square is flat, with one
+// normal at all its corners, drawn under a transform its singleton keeps, and
+// its color is the normal its frag or its vert was given, a half for 0:
+// shaders.c works the same normals out from the transforms, by their inverse.
+struct Facet
+{
+    float3 position;
+    float3 normal;
+}
+
+// An item of an Instanced draw's list, placed by its own transform
+struct Slab
+{
+    float4x4 transform;
+}
+
+local singleton Facets
+{
+    bool made;
+    List<Facet> square;
+    List<Vertex> card;
+    float4x4 even;      // Scaled as much every way, where Math.Rotate is right too
+    float4x4 squashed;
+    float4x4 mirrored;  // Squashed, and turned inside out
+    float4x4 flat;      // No depth left: it has no inverse
+    float4x4 outer;     // Draw.Transform's, around `inner`
+    float4x4 inner;
+    float4x4 turned;    // Its vert's
+    float4x4 rotated;   // Through Math.Rotate: another direction
+    float4x4 first;     // The list's items'
+    float4x4 second;
+    List<Slab> slabs;
+}
+
+Color NormalColor(float3 normal)
+{
+    return Color(normal.x * 0.5 + 0.5, normal.y * 0.5 + 0.5, normal.z * 0.5 + 0.5);
+}
+
+frag NormalShown(Facet facet, out Color color, Instance instance)
+{
+    color = NormalColor(instance.Normal(facet.normal));
+}
+
+vert NormalTurned(mut Facet facet, Instance instance)
+{
+    facet.normal = instance.Normal(facet.normal);
+}
+
+frag NormalPassed(Facet facet, out Color color)
+{
+    color = NormalColor(facet.normal);
+}
+
+frag NormalRotated(Facet facet, out Color color, Instance instance)
+{
+    color = NormalColor(Math.Normalize(Math.Rotate(instance.transform, facet.normal)));
+}
+
+// A 2D mesh has no transform: its normal comes back of length 1
+frag NormalCard(Vertex vertex, out Color color, Instance instance)
+{
+    color = NormalColor(instance.Normal(float3(3, 0, 4)));
+}
+
+view Normals(Art art, mut Facets facets)
+{
+    if (art.targetPass != 20) return;
+    if (!facets.made)
+    {
+        facets.made = true;
+        var normal = float3(1, 2, 2); // Of any length
+        facets.square = [Facet { position = float3(-8, 8, 0), normal = normal }, Facet { position = float3(8, 8, 0), normal = normal },
+                         Facet { position = float3(8, -8, 0), normal = normal }, Facet { position = float3(-8, -8, 0), normal = normal }];
+        facets.card = [Vertex { }, Vertex { position = float2(16, 0), uv = float2(1, 0) },
+                       Vertex { position = float2(16, 16), uv = float2(1, 1) }, Vertex { position = float2(0, 16), uv = float2(0, 1) }];
+        var turn = quaternion.Euler(float3(0.3, 0.4, 0.5));
+        facets.even = float4x4.TRS(Cell(0, 0), turn, float3(1.5));
+        facets.squashed = float4x4.TRS(Cell(2, 0), turn, float3(2, 0.5, 3));
+        facets.mirrored = float4x4.TRS(Cell(4, 0), turn, float3(-2, 0.5, 3));
+        facets.flat = float4x4.TRS(Cell(6, 0), turn, float3(2, 0.5, 0));
+        facets.outer = float4x4.TRS(Cell(0, 2), quaternion.Euler(float3(0, 0, 0.7)), float3(1, 3, 1));
+        facets.inner = float4x4.TRS(float3(0), quaternion.Euler(float3(0.2, 0, 0.4)), float3(2, 1, 1));
+        facets.turned = float4x4.TRS(Cell(2, 2), turn, float3(2, 0.5, 3));
+        facets.rotated = float4x4.TRS(Cell(4, 2), turn, float3(2, 0.5, 3));
+        facets.first = float4x4.TRS(Cell(0, 4), turn, float3(0.5, 2, 1));
+        facets.second = float4x4.TRS(Cell(2, 4), turn, float3(2, -0.5, 1));
+        facets.slabs = [Slab { transform = facets.first }, Slab { transform = facets.second }];
+    }
+    Draw.SetScreen();
+    Draw.SetClip();
+    Draw.Clear(Color.black); // The grid's cells, and their depth
+    Draw.SetCamera(float4x4.TRS(float3(0, 0, -10), quaternion.identity, float3(1)), float4x4.Ortho(256, 256, 0.1, 30));
+    Draw.Mesh(facets.square, art.faces, facets.even, NormalShown);
+    Draw.Mesh(facets.square, art.faces, facets.squashed, NormalShown);
+    Draw.Mesh(facets.square, art.faces, facets.mirrored, NormalShown);
+    Draw.Mesh(facets.square, art.faces, facets.flat, NormalShown);
+    Draw.Transform(facets.outer)
+    {
+        Draw.Mesh(facets.square, art.faces, facets.inner, NormalShown);
+    }
+    Draw.Mesh(facets.square, art.faces, facets.turned, NormalTurned, NormalPassed);
+    Draw.Mesh(facets.square, art.faces, facets.rotated, NormalRotated);
+    Draw.Instanced(facets.square, art.faces, facets.slabs, NormalShown);
+    Draw.SetScreen();
+    Draw.SetClip();
+    Draw.Transform(float2(200, 200))
+    {
+        Draw.Mesh(facets.card, art.faces, NormalCard);
+    }
+}
+
 // shaders.c requests independent full-window checks after the existing grid.
 // Resource descriptors are supplied by C, without choosing a Tide lifetime API.
 [After(Manual)]
 view Targets(mut Art art)
 {
     // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images', 11 Outputs', 12 Values', 13 Heights', 14 Mipmaps',
-    // 15 Alphas', 16 Raws', 17 the cubes', 18 the lists' and 19 the rolls'
+    // 15 Alphas', 16 Raws', 17 the cubes', 18 the lists', 19 the rolls' and 20 the normals'
     if (art.targetPass == 0 || art.targetPass >= 6) return;
     if (art.targetPass >= 4)
     {

@@ -1830,6 +1830,37 @@ TIDE_TEST(lsp_shaders_diagnostics)
     TIDE_CHECK(diagnosed(33, 12, 3, 1, "a list's local in code the GPU runs names one list, for good: 'all' can't be 'mut'"));
 }
 
+// instance.Normal(normal): an Instance's one method, in a frag and in a vert.
+// The frag is on line 31, after SHADER_TYPES, and its code on line 33.
+TIDE_TEST(lsp_instance_normal)
+{
+    start();
+#define LIT(code)                                                                                                     \
+    SHADER_TYPES "frag Glow(BoxVertex vertex, out Color color, Instance instance)\n{\n    " code "\n    color = Color.white;\n}\n"
+    const char *members = complete(LIT("var normal = instance.$"));
+    TIDE_CHECK(offers(members, "transform") && offers(members, "Normal") && !offers(members, "Discard"));
+    TIDE_CHECK(has(members, "Instance.Normal(float3 normal) -> float3") && has(members, "as it is in the world, of length 1"));
+    const char *in_vert = complete(SHADER_TYPES "vert Turn(mut BoxVertex vertex, Instance instance)\n{\n    vertex.normal = instance.$\n}\n");
+    TIDE_CHECK(offers(in_vert, "Normal"));
+
+    open_document(LIT("color = Color.white * instance.Normal(vertex.normal).y;"));
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = hover_at(33, 37);
+    TIDE_CHECK(has(hover, "Instance.Normal(float3 normal) -> float3") && has(hover, "A normal of the mesh as it is in the world"));
+    TIDE_CHECK(has(hover, "Nothing more is sent for it"));
+    TIDE_CHECK(has(hover_at(31, 46), "float3 Normal(float3 normal);")); // The record, with its method
+    open_document(LIT("color = Color.white * instance.Normal($"));
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "\"label\":\"Instance.Normal(float3 normal) -> float3\"") && has(help, "\"activeParameter\":0"));
+
+    // What it isn't: another method, or a normal that's no float3
+    open_document(LIT("color = Color.white * instance.Rotate(vertex.normal).y;"));
+    TIDE_CHECK(diagnosed(33, 35, 6, 1, "an Instance has one method, 'Normal(normal)'"));
+    open_document(LIT("color = Color.white * instance.Normal(vertex.uv).y;"));
+    TIDE_CHECK(diagnosed(33, 35, 6, 1, "Normal takes a normal of the mesh, a float3 of any length"));
+#undef LIT
+}
+
 // The type of what's at the cursor, and an event's or the input's code.
 TIDE_TEST(lsp_type_definition_and_implementation)
 {

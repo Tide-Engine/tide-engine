@@ -22,7 +22,7 @@ local singleton Globe
 // Once for each pixel: its normal, blended across the triangle, against a light.
 frag Lit(Corner corner, out Color color, Instance instance, Globe globe)
 {
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 normal = instance.Normal(corner.normal);
     float3 toLight = Math.Normalize(float3(Math.Cos(globe.lightAngle), 0.6, -Math.Sin(globe.lightAngle)));
     mut float diffuse = Math.Max(Math.Dot(normal, toLight), 0);
     if (globe.bands) diffuse = Math.Floor(diffuse * 4) / 4; // Steps, as a cartoon's
