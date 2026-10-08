@@ -78,7 +78,13 @@ tide_e2e_test(asset_psds) # Photoshop's saved composite images, packed as Textur
 tide_e2e_test(asset_defaults) # A field's default that names an asset: the match's text and bytes, this machine's images and clips
 tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct of the game's, drawn and read by the match
 tide_e2e_test(skinned) # Checked catalogs, contracts, CPU pose edits, GLB decoding and match snapshots
-tide_e2e_test(skinned_defaults) # Current-pack defaults refresh final typed geometry versions and draw copies
+tide_e2e_test(skinned_defaults) # Model defaults retain dependency identity while unrelated visual assets reload
+if(TIDE_NODE)
+    add_test(NAME tidec_skinned_default_identity
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/skinned_default_identity.mjs"
+            "${TIDEC_PATH}" "${CMAKE_CURRENT_BINARY_DIR}/skinned-default-identity" "${PROJECT_SOURCE_DIR}")
+    set_tests_properties(tidec_skinned_default_identity PROPERTIES TIMEOUT 120)
+endif()
 target_compile_definitions(tidec_e2e_skinned PRIVATE SKINNED_HASH=7267824136268331061ull)
 tide_e2e_test(audio) # Clip assets, and Audio.Play from views, local handlers and the functions they call
 tide_e2e_test(sound) # Sound fields the frame names to the mixer while they play, and the listener
@@ -417,6 +423,12 @@ if(TARGET tidec_core)
     target_compile_definitions(tidec_asset_files_tests PRIVATE ASSET_FILES_WORK="${CMAKE_CURRENT_BINARY_DIR}/asset_files")
     target_link_libraries(tidec_asset_files_tests PRIVATE tide tidec_core)
     add_test(NAME tidec_asset_files COMMAND tidec_asset_files_tests)
+    add_executable(tidec_pack_fingerprint_tests pack_fingerprint_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_pack_fingerprint_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_compile_definitions(tidec_pack_fingerprint_tests PRIVATE
+        PACK_FINGERPRINT_MODEL="${CMAKE_CURRENT_SOURCE_DIR}/e2e/skinned/model.glb")
+    target_link_libraries(tidec_pack_fingerprint_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_pack_fingerprint COMMAND tidec_pack_fingerprint_tests)
     add_executable(tidec_psd_files_tests psd_files_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
     target_include_directories(tidec_psd_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     target_compile_definitions(tidec_psd_files_tests PRIVATE PSD_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/e2e/assets/psds")

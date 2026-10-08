@@ -1,16 +1,48 @@
-// Final typed vertex versions include defaults that read the current pack,
-// including assets declared after singleton, list and map models.
+// Imported model defaults can reach assets through constants, implicit
+// struct defaults, operators, helper calls and another mesh's defaults.
+struct RuleValue { int count = laterRules.length; }
+struct RuleBox { RuleValue inner; }
+const RuleValue RULE_DEFAULT = default;
+
+int ReadRuleValue(RuleValue value = default) { return value.count; }
+int ReadRules() { return ReadRuleValue(); }
+struct Measure
+{
+    int extra;
+    int operator +(Measure value, int amount) { return ReadRules() + value.extra + amount; }
+}
+
+struct OtherCorner { float3 position; int weight = laterRules.length; }
+asset Mesh<OtherCorner> helperMesh = "assets/meshes/quad.glb";
+int MeshWeight() { return helperMesh.vertices[0].weight; }
+struct Geometry
+{
+    int extra;
+    int operator +(Geometry value, int amount) { return MeshWeight() + value.extra + amount; }
+}
+
 struct SkinCorner
 {
     float3 position;
     int textLength = laterRules.length;
     float glow = laterRules.length;
+    int fromConstant = RULE_DEFAULT.count;
+    int fromNested = RuleBox { }.inner.count;
+    int fromOperator = Measure { } + 1;
+    int fromMesh = Geometry { } + 0;
+    int byteCount = laterTable.count;
+    int noteCount = laterNotes.count;
 }
 
 asset SkinnedMesh<SkinCorner> skinOne = "skinned/models/a.gltf";
 asset List<SkinnedMesh<SkinCorner>> skinMany = "skinned/models/*.gltf";
 asset Map<string, SkinnedMesh<SkinCorner>> skinNamed = "skinned/models/*.gltf";
 asset string laterRules = "assets/rules.txt";
+asset List<byte> laterTable = "assets/table.bin";
+asset Map<string, string> laterNotes = "assets/notes/*.txt";
+asset Texture logo = "assets/hero.png";
+
+singleton Saved { SkinnedMesh<SkinCorner> model = skinOne; }
 
 frag Paint(SkinCorner corner, out Color color)
 {
@@ -19,6 +51,7 @@ frag Paint(SkinCorner corner, out Color color)
 
 view Show()
 {
+    Draw.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], logo);
     Draw.SkinnedMesh(skinOne, float4x4.identity, skinOne.skeleton.RestPose(), Paint);
     foreach (var model in skinMany)
         Draw.SkinnedMesh(model, float4x4.identity, model.skeleton.RestPose(), Paint);

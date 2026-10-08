@@ -1,6 +1,7 @@
 #include "codegen.h"
 
 #include "asset_files.h"
+#include "pack_fingerprint.h"
 #include "tide/pack.h"
 #include "tide/sha256.h"
 
@@ -92,6 +93,12 @@ typedef struct gen_task {
     int points;           // Places it waits, so far
 } gen_task;
 
+typedef struct asset_dependency {
+    const decl *asset;
+    tide_asset_fingerprint_desc shape;
+    uint8_t hash[32];
+} asset_dependency;
+
 typedef struct gen {
     program *prog;
     const codegen_options *opts;
@@ -147,6 +154,9 @@ typedef struct gen {
     const char **taken;   // A hash set, open addressing, NULL where empty
     uint32_t taken_mask;  // Its capacity less one, a power of two
     const char **arch_names;
+    VEC(asset_dependency) asset_dependencies; // Assets reached by skinned vertex defaults, including Decode's.
+    uint8_t *pack_bytes; // Built once, before the dependency hashes enter the generated header.
+    size_t pack_size;
 } gen;
 
 // A task's locals are written again as it goes on after a wait, so none is const.
@@ -6549,6 +6559,15 @@ static void gen_header(gen *g)
             sb_put(o, "\n");
         }
     }
+    for (int i = 0; i < g->asset_dependencies.count; i++) {
+        const asset_dependency *dep = &g->asset_dependencies.items[i];
+        const tide_asset_fingerprint_desc *d = &dep->shape;
+        sb_printf(o, "// Skinned default asset " STR_FMT " (%u,%u,%u;%u,%u,%u,%u,%u): ",
+                  STR_ARG(dep->asset->qualified), d->kind, d->leaf_kind, d->vertex_size, d->grid_shape.cell,
+                  d->grid_shape.dims, d->grid_shape.shift[0], d->grid_shape.shift[1], d->grid_shape.shift[2]);
+        for (int byte = 0; byte < 32; byte++) sb_printf(o, "%02x", dep->hash[byte]);
+        sb_put(o, "\n");
+    }
     if (prog->uses_audio) sb_put(o, "#define TIDE_HAS_AUDIO 1\n\n");
     sb_put(o, "#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n\n");
     if (program_has_clips(prog) || prog->sound->named || prog->uses_microphone) sb_put(o, "#include \"tide/audio.h\"\n");
@@ -12261,7 +12280,33 @@ static void gen_tasks(gen *g)
     }
 }
 
-// Every method and function, declared first so they can call each other.
+// Ordinary routines can also be called by asset, container and Decode defaults,
+// before their bodies. Result types must be declared before these signatures.
+static void gen_routine_prototypes(gen *g)
+{
+    sb *o = &g->c;
+    bool any = false;
+    for (int i = 0; i < g->prog->decls.count; i++) {
+        const decl *d = g->prog->decls.items[i];
+        if (d->kind == DECL_FUNCTION && !d->takes_action && !d->is_extern && !d->is_async && !d->gpu_only) {
+            if (!any) sb_put(o, "// Methods and functions: declarations for defaults and calls\n\n");
+            any = true;
+            gen_routine_signature(g, o, d);
+            sb_put(o, ";\n");
+        }
+        for (int k = 0; k < d->methods.count; k++) {
+            const decl *m = d->methods.items[k];
+            if (m->gpu_only) continue;
+            if (!any) sb_put(o, "// Methods and functions: declarations for defaults and calls\n\n");
+            any = true;
+            gen_routine_signature(g, o, m);
+            sb_put(o, ";\n");
+        }
+    }
+    if (any) sb_put(o, "\n");
+}
+
+// Every method and function, after the helpers its body uses.
 // Extern functions are only declared: their code is in C, which the game's C
 // files or libraries define. The declaration comes from the extern alone, so
 // the C library's header, with names that could clash with the game's, stays
@@ -12331,11 +12376,6 @@ static void gen_routines(gen *g)
     }
     if (all.count == 0) return;
     sb_put(o, "// Methods and functions\n\n");
-    for (int i = 0; i < all.count; i++) {
-        gen_routine_signature(g, o, all.items[i]);
-        sb_put(o, ";\n");
-    }
-    sb_put(o, "\n");
     for (int i = 0; i < all.count; i++) gen_routine(g, all.items[i]);
 }
 
@@ -14344,6 +14384,219 @@ static const char *asset_ctype(const type t)
          : t.kind == TY_MESH ? "tide_mesh_lists" : t.kind == TY_STRUCT ? c_type(t) : "tide_list";
 }
 
+// Follow checked defaults, including the code of operators and helpers they
+// call. Pointer sets keep shared expressions and recursive helper/default
+// graphs from being traversed again for every skinned model.
+typedef struct asset_dependency_walk {
+    const void **seen;
+    uint32_t mask, count;
+    VEC(const decl *) assets;
+} asset_dependency_walk;
+
+static uint32_t dependency_place(const void *p, const uint32_t mask)
+{
+    uint64_t n = (uint64_t)(uintptr_t)p;
+    n ^= n >> 33;
+    n *= UINT64_C(0xff51afd7ed558ccd);
+    n ^= n >> 33;
+    return (uint32_t)n & mask;
+}
+
+static bool dependency_visit(asset_dependency_walk *w, const void *p)
+{
+    if (!p) return false;
+    if (!w->seen || (uint64_t)(w->count + 1u) * 2u > w->mask) {
+        const uint32_t mask = w->seen ? w->mask * 2u + 1u : 63u;
+        const void **seen = arena_alloc(((size_t)mask + 1u) * sizeof *seen);
+        for (uint32_t i = 0; w->seen && i <= w->mask; i++) {
+            const void *had = w->seen[i];
+            if (!had) continue;
+            uint32_t at = dependency_place(had, mask);
+            while (seen[at]) at = (at + 1u) & mask;
+            seen[at] = had;
+        }
+        w->seen = seen;
+        w->mask = mask;
+    }
+    uint32_t at = dependency_place(p, w->mask);
+    while (w->seen[at] && w->seen[at] != p) at = (at + 1u) & w->mask;
+    if (w->seen[at]) return false;
+    w->seen[at] = p;
+    w->count++;
+    return true;
+}
+
+static void dependency_expr(asset_dependency_walk *w, const expr *e);
+static void dependency_stmt(asset_dependency_walk *w, const stmt *s);
+
+static void dependency_defaults(asset_dependency_walk *w, const type t)
+{
+    switch (t.kind) {
+    case TY_STRUCT: case TY_COMPONENT: case TY_SINGLETON: case TY_INPUT: case TY_EVENT: break;
+    default: return; // gen_default's other types have no declared defaults to evaluate.
+    }
+    if (!dependency_visit(w, t.decl)) return;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        const field *f = &t.decl->fields.items[i];
+        const expr *value = declared_default(f);
+        if (value) dependency_expr(w, value);
+        else if (f->type.kind == TY_STRUCT) dependency_defaults(w, f->type);
+    }
+}
+
+static void dependency_vertex(asset_dependency_walk *w, const decl *vertex)
+{
+    for (int i = 0; vertex && i < vertex->fields.count; i++) {
+        const field *f = &vertex->fields.items[i];
+        if (mesh_fills(f) == FILL_NONE) dependency_expr(w, declared_default(f));
+    }
+}
+
+static void dependency_routine(asset_dependency_walk *w, const decl *m)
+{
+    if (!dependency_visit(w, m)) return;
+    dependency_stmt(w, m->body);
+    for (int i = 0; m->result.kind == TY_FAILABLE && i < m->params.count; i++) {
+        if (m->params.items[i].is_out) dependency_defaults(w, m->params.items[i].type);
+    }
+}
+
+static void dependency_expr(asset_dependency_walk *w, const expr *e)
+{
+    if (!dependency_visit(w, e)) return;
+    if (e->bind == BIND_ASSET && dependency_visit(w, e->constant)) {
+        vec_push(w->assets, e->constant);
+        dependency_vertex(w, asset_vertex(e->constant->return_type));
+    } else if (e->bind == BIND_CONST && dependency_visit(w, e->constant)) {
+        dependency_expr(w, e->constant->value);
+    }
+    if (e->kind == E_DEFAULT || e->kind == E_DEFAULTED) dependency_defaults(w, e->type);
+    // TryGet emits the value's declared default for a missing key/entity;
+    // that initializer is in the generated helper rather than this call AST.
+    if (str_eq_c(e->name, "TryGet")) {
+        if (e->call == CALL_MAP) dependency_defaults(w, e->type_decl->fields.items[1].type);
+        else if (e->call == CALL_WORLD) dependency_defaults(w, (type){TY_COMPONENT, e->type_decl});
+    }
+    if (e->kind == E_LITERAL && e->type_decl) {
+        // Explicit initializers replace defaults. Match gen_value rather than
+        // pulling in an unrelated asset of an overridden field.
+        const decl *d = e->type_decl;
+        bool *given = arena_alloc((size_t)d->fields.count * sizeof *given);
+        for (int i = 0; i < e->inits.count; i++) {
+            const field *f = e->inits.items[i].field;
+            if (f) given[f - d->fields.items] = true;
+        }
+        for (int i = 0; i < d->fields.count; i++) {
+            if (given[i]) continue;
+            const field *f = &d->fields.items[i];
+            const expr *value = declared_default(f);
+            if (value) dependency_expr(w, value);
+            else if (f->type.kind == TY_STRUCT) dependency_defaults(w, f->type);
+        }
+    }
+    dependency_routine(w, e->method);
+    dependency_expr(w, e->object);
+    dependency_expr(w, e->lhs);
+    dependency_expr(w, e->rhs);
+    dependency_expr(w, e->cond);
+    dependency_expr(w, e->skin_mesh);
+    dependency_expr(w, e->skin_pose);
+    dependency_expr(w, e->values);
+    for (int i = 0; i < e->args.count; i++) dependency_expr(w, e->args.items[i]);
+    for (int i = 0; i < e->inits.count; i++) dependency_expr(w, e->inits.items[i].value);
+    dependency_stmt(w, e->binding);
+    dependency_stmt(w, e->out_local);
+    dependency_stmt(w, e->step);
+    dependency_stmt(w, e->block);
+}
+
+static void dependency_stmt(asset_dependency_walk *w, const stmt *s)
+{
+    if (!dependency_visit(w, s)) return;
+    dependency_expr(w, s->cond);
+    dependency_expr(w, s->value);
+    dependency_expr(w, s->target);
+    dependency_expr(w, s->by);
+    dependency_expr(w, s->offset);
+    dependency_routine(w, s->operator_decl);
+    dependency_stmt(w, s->then_stmt);
+    dependency_stmt(w, s->else_stmt);
+    dependency_stmt(w, s->init);
+    dependency_stmt(w, s->step);
+    for (int i = 0; i < s->stmts.count; i++) dependency_stmt(w, s->stmts.items[i]);
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int k = 0; k < s->cases.items[i].labels.count; k++) dependency_expr(w, s->cases.items[i].labels.items[k]);
+        for (int k = 0; k < s->cases.items[i].body.count; k++) dependency_stmt(w, s->cases.items[i].body.items[k]);
+    }
+    if (s->kind == S_VAR && !s->value) dependency_defaults(w, s->type);
+}
+
+static int dependency_order(const void *a, const void *b)
+{
+    const decl *left = *(const decl *const *)a, *right = *(const decl *const *)b;
+    const int common = left->qualified.len < right->qualified.len ? left->qualified.len : right->qualified.len;
+    const int order = memcmp(left->qualified.ptr, right->qualified.ptr, (size_t)common);
+    return order ? order : left->qualified.len < right->qualified.len ? -1 : left->qualified.len > right->qualified.len;
+}
+
+static void collect_asset_dependencies(gen *g)
+{
+    // C-definition navigation can generate names from JSON-only editor
+    // metadata. It has no executable pack to fingerprint or validate.
+    if (g->prog->asset_metadata_only) return;
+    asset_dependency_walk w = {0};
+    for (int i = 0; i < g->prog->assets.count; i++) {
+        const decl *d = g->prog->assets.items[i];
+        if (d->asset_kind == ASSET_SKINNED) dependency_vertex(&w, asset_vertex(d->return_type));
+    }
+    // Decode uses the same vertex defaults without requiring an imported
+    // skinned asset, and can put its resulting geometry in match state too.
+    for (int i = 0; i < g->prog->results.count; i++) {
+        const decl *r = g->prog->results.items[i];
+        const type t = r->fields.items[0].type;
+        if (r->fields.count == 2 && t.kind == TY_STRUCT && t.decl->skin_kind == SKIN_MESH)
+            dependency_vertex(&w, t.decl->skin_vertex.decl);
+    }
+    if (w.assets.count > 1) qsort(w.assets.items, (size_t)w.assets.count, sizeof *w.assets.items, dependency_order);
+    for (int i = 0; i < w.assets.count; i++) {
+        const decl *d = w.assets.items[i];
+        const decl *vertex = asset_vertex(d->return_type);
+        asset_dependency dep = {.asset = d, .shape = {.kind = asset_pack_kind(d->return_type)}};
+        dep.shape.leaf_kind = d->asset_kind == ASSET_TEXT ? TIDE_PACK_TEXT : d->asset_kind == ASSET_BYTES ? TIDE_PACK_BYTES
+                           : d->asset_kind == ASSET_GRID ? TIDE_PACK_GRID : d->asset_kind == ASSET_TEXTURE ? TIDE_PACK_TEXTURE
+                           : d->asset_kind == ASSET_CLIP ? TIDE_PACK_CLIP : 0u;
+        if (vertex) dep.shape.vertex_size = (uint32_t)type_layout((type){TY_STRUCT, (decl *)vertex}).size;
+        if (d->asset_kind == ASSET_GRID) {
+            const type t = d->return_type.kind == TY_LIST ? list_elem(d->return_type.decl)
+                         : d->return_type.kind == TY_MAP ? d->return_type.decl->fields.items[1].type : d->return_type;
+            int cell, shift[3];
+            grid_shape(t.decl, &cell, shift);
+            dep.shape.grid_shape = (tide_grid_shape){(uint32_t)cell, (uint32_t)t.decl->dims,
+                                                   {(uint32_t)shift[0], (uint32_t)shift[1], (uint32_t)shift[2]}};
+        }
+        vec_push(g->asset_dependencies, dep);
+    }
+}
+
+static bool fingerprint_asset_dependencies(gen *g)
+{
+    for (int i = 0; i < g->asset_dependencies.count; i++) {
+        asset_dependency *dep = &g->asset_dependencies.items[i];
+        if (!pack_fingerprint(g->pack_bytes, g->pack_size, str_to_cstr(dep->asset->qualified), &dep->shape, dep->hash)) {
+            diag_error(dep->asset->at, "couldn't fingerprint asset '" STR_FMT "' used by skinned vertex defaults", STR_ARG(dep->asset->qualified));
+            return false;
+        }
+    }
+    return true;
+}
+
+static void dependency_descriptor(sb *o, const tide_asset_fingerprint_desc *d)
+{
+    sb_printf(o, "{.kind = %uu, .leaf_kind = %uu, .vertex_size = %uu, .grid_shape = {%uu, %uu, {%uu, %uu, %uu}}}",
+              d->kind, d->leaf_kind, d->vertex_size, d->grid_shape.cell, d->grid_shape.dims,
+              d->grid_shape.shift[0], d->grid_shape.shift[1], d->grid_shape.shift[2]);
+}
+
 static void gen_assets(gen *g)
 {
     const program *prog = g->prog;
@@ -14354,9 +14607,29 @@ static void gen_assets(gen *g)
         const decl *d = prog->assets.items[i];
         sb_printf(o, "static %s %s; // " STR_FMT "\n", asset_ctype(d->return_type), asset_cname(d), STR_ARG(d->qualified));
     }
+    if (g->asset_dependencies.count) {
+        sb_put(o, "\n");
+        sb_putn(o, (const char *)tide_pack_fingerprint_source, tide_pack_fingerprint_source_size);
+        sb_put(o, "\n");
+    }
     sb_put(o, "\nstatic void tide_asset_missing(const char *name)\n{\n"
               "    fprintf(stderr, \"tide: the pack has no '%s', so the game reads it as empty: it was made for another build\\n\", name);\n}\n\n"
               "bool tide_assets_load(const uint8_t *pack, const size_t size)\n{\n");
+    // Check actual dependency payloads before loading changes any pack state,
+    // asset global or vertex default. A stale layout label alone proves none
+    // of the values that a default will read from this candidate pack.
+    for (int i = 0; i < g->asset_dependencies.count; i++) {
+        const asset_dependency *dep = &g->asset_dependencies.items[i];
+        sb_put(o, "    { static const tide_asset_fingerprint_desc shape = ");
+        dependency_descriptor(o, &dep->shape);
+        sb_put(o, ";\n      static const uint8_t expected[32] = {");
+        for (int n = 0; n < 32; n++) sb_printf(o, "%s0x%02x", n ? "," : "", (unsigned)dep->hash[n]);
+        sb_printf(o, "};\n      uint8_t actual[32];\n"
+                     "      if (!tide_asset_fingerprint(pack, size, \"" STR_FMT "\", &shape, actual)\n"
+                     "          || memcmp(actual, expected, sizeof actual)) {\n"
+                     "          fprintf(stderr, \"tide: asset '" STR_FMT "' used by skinned vertex defaults requires its matching game build\\n\");\n"
+                     "          return false;\n      } }\n", STR_ARG(dep->asset->qualified), STR_ARG(dep->asset->qualified));
+    }
     // Match code can sample these bytes, so a pack-only reload must retain
     // the content this build checked and included in its compatibility hash.
     for (int i = 0; i < prog->assets.count; i++) {
@@ -14557,7 +14830,7 @@ static void note_watched(void *user, const char *path)
 // The pack of the game's assets, as the files `opts` asks for: the file the
 // program loads (`pack`), and the same as a C array (`pack_c`) for a host that
 // embeds it. A game with no assets gets no pack file, and an empty array.
-static bool write_pack(gen *g)
+static void build_pack(gen *g)
 {
     const program *prog = g->prog;
     const codegen_options *opts = g->opts;
@@ -14573,7 +14846,7 @@ static bool write_pack(gen *g)
             }
         }
     }
-    if (!opts->pack && !opts->pack_c) return true;
+    if (!opts->pack && !opts->pack_c && !g->asset_dependencies.count) return;
     tide_pack_builder b = {0};
     for (int i = 0; i < prog->assets.count; i++) {
         const decl *d = prog->assets.items[i];
@@ -14669,8 +14942,16 @@ static bool write_pack(gen *g)
         free(offsets);
         free(keys);
     }
-    size_t size;
-    uint8_t *bytes = tide_pack_end(&b, &size);
+    g->pack_bytes = tide_pack_end(&b, &g->pack_size);
+}
+
+static bool write_pack(gen *g)
+{
+    const program *prog = g->prog;
+    const codegen_options *opts = g->opts;
+    if (!opts->pack && !opts->pack_c) return true;
+    const uint8_t *bytes = g->pack_bytes;
+    const size_t size = g->pack_size;
     bool ok = true;
     if (opts->pack && prog->assets.count) {
         FILE *f = fopen(opts->pack, "wb");
@@ -14689,7 +14970,6 @@ static bool write_pack(gen *g)
         sb_printf(&c, "\n};\nconst size_t tide_game_pack_size = %zu;\n", size);
         ok = write_file(opts->pack_c, &c);
     }
-    free(bytes);
     return ok;
 }
 
@@ -17333,6 +17613,15 @@ bool codegen(program *prog, const codegen_options *opts)
     name_program(&g);
     collect_tasks(&g);
     collect_heard_rows(&g);
+    collect_asset_dependencies(&g);
+    if (opts->info && g.asset_dependencies.count) opts->info->assets_affect_match = true;
+    if (g.asset_dependencies.count) {
+        build_pack(&g);
+        if (!fingerprint_asset_dependencies(&g)) {
+            free(g.pack_bytes);
+            return false;
+        }
+    }
     gen_header(&g);
     // The game's hash: its header, but for the first line, which names files.
     const char *types = strchr(g.h.data, '\n');
@@ -17340,9 +17629,10 @@ bool codegen(program *prog, const codegen_options *opts)
     for (const char *p = types ? types : g.h.data; *p; p++) g.game_hash = (g.game_hash ^ (uint8_t)*p) * 0x100000001B3ull;
 
     gen_prelude(&g);
+    gen_result_types(&g); // Before routine signatures and maps' Get helpers.
+    gen_routine_prototypes(&g);
     gen_assets(&g);
     gen_session_helpers(&g);
-    gen_result_types(&g); // Before the maps' helpers, whose Get gives a V?
     gen_io_adapters(&g);
     gen_array_helpers(&g);
     gen_text_helpers(&g);
@@ -17392,6 +17682,8 @@ bool codegen(program *prog, const codegen_options *opts)
 
     sb h_path = {0};
     sb_printf(&h_path, "%s/%s.h", opts->out_dir, opts->name);
-    if (!write_file(h_path.data, &g.h) || !write_file(path.data, &g.c)) return false;
-    return write_pack(&g);
+    if (!g.asset_dependencies.count) build_pack(&g);
+    const bool ok = write_file(h_path.data, &g.h) && write_file(path.data, &g.c) && write_pack(&g);
+    free(g.pack_bytes);
+    return ok;
 }
