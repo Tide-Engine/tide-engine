@@ -130,6 +130,8 @@ Use `--tidec build/release/bin/tidec.exe` to measure the frontend and code gener
 
 Every run appends individual samples, median and p95 wall times to `bench/results/compile.jsonl`, with the CPU, OS, Node and compiler versions, executable identity, Git commit and dirty state. `metadata.compilers.native` and `.web` identify each target's compiler, including macOS installations with Apple clang for native builds and Homebrew LLVM for web builds. `--results <path>` selects another destination, and `--keep` retains the temporary fixture for inspection. p95 uses the nearest rank; with five samples it is the slowest sample. Repeat runs on an otherwise idle machine and compare matching targets, configurations, source sizes and toolchains. Timings have no machine-dependent pass/fail threshold. Requested unavailable toolchains fail visibly.
 
+The `status-1008-*` runs (2026-10-08) were taken while other sessions built on the machine, with the package's tide (clang built in) and with one that runs an installed clang, as the earlier runs did. Their [record](results/compile-status-metadata.json) has the load, the same builds of Duel, Towers, Sumo and a sample, where a cold build's time goes file by file, and Sumo's compiles replayed several at a time: compare those rows by the least of a cell's samples.
+
 The harness never edits a game in the repository or a supplied installation. `--tide` must point to the installed CLI; a bare build-tree executable without the installation's headers, sources and platform libraries cannot build games.
 
 ## Drawing

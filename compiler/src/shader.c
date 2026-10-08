@@ -76,7 +76,7 @@ enum {
 typedef struct data_ref {
     int texture; // -1 while checking, when no shader says
     type element; // A list's element, a grid's cell, a map's entry (its key and its value) or a set's key
-    bool grid;
+    int grid;     // A grid's axes, 2 or 3: 0 for anything else
     const decl *map; // The map's or the set's type, for one of those
 } data_ref;
 
@@ -1601,7 +1601,7 @@ static const char *data_word(const type t)
 // A data_ref for a value of type `t`, which no texture is found for yet.
 static data_ref data_unknown(const type t)
 {
-    return (data_ref){.texture = -1, .element = data_element(t), .grid = t.kind == TY_GRID,
+    return (data_ref){.texture = -1, .element = data_element(t), .grid = t.kind == TY_GRID ? t.decl->dims : 0,
                       .map = t.kind == TY_MAP || t.kind == TY_SET ? t.decl : NULL};
 }
 
@@ -1674,10 +1674,6 @@ static bool data_of(emit *em, const expr *e, data_ref *d)
     } else {
         return false;
     }
-    if (d->grid && e->type.decl->dims != 2) {
-        refuse(em, e->at, "a Grid3's cells aren't read on the GPU yet: keep the layer it reads in a Grid2");
-        return true;
-    }
     if (d->map ? !map_fits(em, e->type, e->at) : !type_fits(em, d->element, e->at)) return true;
     if (em->checking) {
         if (asset) {
@@ -1742,10 +1738,22 @@ static int data_stride(const int words)
 }
 
 // The function that reads an element of the shader's list `texture`, or a
-// cell of its grid, written before the code that calls it: zeros outside it,
-// and otherwise the value made of its ints, floats by their bits.
-static void need_data(emit *em, const int texture, const type element, const bool grid)
+// cell of its grid of `dims` axes (0 for a list), written before the code
+// that calls it: zeros outside it, and otherwise the value made of its ints,
+// floats by their bits. A grid's texture is the box of cells its chunks take
+// up (tide_draw_grid_data): the uniforms' ints say, after the grid's size,
+// where the box starts and how many cells it is along each axis, and for a
+// Grid3 how many of its layers are side by side. A place is outside the box
+// when it's before its start or as far past it as the box is long, which is
+// asked with unsigned numbers: a place and the box's start can be further
+// apart than an int says. Those same unsigned numbers are where the cell is
+// in the box, and nothing subtracts the two again as ints: with a place
+// that's written as numbers ('cells[3, 1]'), OpenGL 3.3 on an NVIDIA driver
+// then read another pixel than the one asked for, past the texture's first
+// row (pass 18 of platform/tests/shaders.tide reads cells so).
+static void need_data(emit *em, const int texture, const type element, const int dims)
 {
+    const bool grid = dims > 0;
     if (texture < 0 || em->lists[texture]) return;
     em->lists[texture] = true;
     const bool wgsl = em->l == WGSL;
@@ -1758,12 +1766,24 @@ static void need_data(emit *em, const int texture, const type element, const boo
     em->o = &text;
     const char *t = ty(em, element);
     if (grid) {
-        if (wgsl) sb_printf(&text, "fn tide_list%d(tide_i: vec2i) -> %s {\n", texture, t);
-        else sb_printf(&text, "%s tide_list%d(ivec2 tide_i) {\n", t, texture);
-        sb_put(&text, "    if (tide_i.x < 0 || tide_i.y < 0 || tide_i.x >= ");
-        put_word(em, 'v', count_at);
-        sb_put(&text, " || tide_i.y >= ");
-        put_word(em, 'v', count_at + 1);
+        const char *vec = dims == 3 ? (wgsl ? "vec3i" : "ivec3") : (wgsl ? "vec2i" : "ivec2");
+        const char *whole = wgsl ? "u32" : "uint";
+        if (wgsl) sb_printf(&text, "fn tide_list%d(tide_i: %s) -> %s {\n    let tide_o = ", texture, vec, t);
+        else sb_printf(&text, "%s tide_list%d(%s tide_i) {\n    %s tide_o = ", t, texture, vec, vec);
+        put_words(em, 'v', count_at + dims, dims, vec);
+        if (wgsl) sb_put(&text, ";\n    let tide_e = ");
+        else sb_printf(&text, ";\n    %s tide_e = ", vec);
+        put_words(em, 'v', count_at + 2 * dims, dims, vec);
+        sb_put(&text, ";\n");
+        for (int a = 0; a < dims; a++) {
+            const char axis = "xyz"[a];
+            sb_printf(&text, "    %s tide_%c = %s(tide_i.%c) - %s(tide_o.%c);\n", wgsl ? "let" : "uint", axis, whole, axis, whole, axis);
+        }
+        sb_put(&text, "    if (");
+        for (int a = 0; a < dims; a++) {
+            const char axis = "xyz"[a];
+            sb_printf(&text, "%stide_i.%c < tide_o.%c || tide_%c >= %s(tide_e.%c)", a ? " || " : "", axis, axis, axis, whole, axis);
+        }
     } else {
         if (wgsl) sb_printf(&text, "fn tide_list%d(tide_i: i32) -> %s {\n    if (tide_i < 0 || tide_i >= ", texture, t);
         else sb_printf(&text, "%s tide_list%d(int tide_i) {\n    if (tide_i < 0 || tide_i >= ", t, texture);
@@ -1771,14 +1791,27 @@ static void need_data(emit *em, const int texture, const type element, const boo
     }
     sb_put(&text, ") {\n        return ");
     put_zeros(em, element);
-    sb_printf(&text, ";\n    }\n    %s tide_word = tide_i%s * %d;\n    %s tide_first = tide_word >> %s;\n", wgsl ? "let" : "int",
-              grid ? ".x" : "", stride, wgsl ? "let" : "int", wgsl ? "2u" : "2");
+    sb_put(&text, ";\n    }\n");
+    const char *number = wgsl ? "let" : "int";
+    const char *whole_int = wgsl ? "i32" : "int";
+    sb_printf(&text, "    %s tide_word = %s%s * %d;\n    %s tide_first = tide_word >> %s;\n", number, grid ? whole_int : "",
+              grid ? "(tide_x)" : "tide_i", stride, number, wgsl ? "2u" : "2");
+    if (dims == 3) { // Its layers side by side, then under each other
+        sb_printf(&text, "    %s tide_layer = %s(tide_z);\n    %s tide_across = ", number, whole_int, number);
+        put_word(em, 'v', count_at + 9);
+        sb_printf(&text, ";\n    %s tide_left = (tide_layer %% tide_across) * ((tide_e.x * %d + 3) >> %s);\n"
+                         "    %s tide_row = (tide_layer / tide_across) * tide_e.y + %s(tide_y);\n",
+                  number, stride, wgsl ? "2u" : "2", number, whole_int);
+    } else if (grid) {
+        sb_printf(&text, "    %s tide_row = %s(tide_y);\n", number, whole_int);
+    }
     for (int k = 0; k < pixels; k++) {
         char name[16], at[96];
         if (stride < 4) snprintf(name, sizeof name, "tide_r");
         else snprintf(name, sizeof name, "tide_q%d", k);
         // A list's rows are TIDE_LIST_DATA_ACROSS pixels; a grid's are its own
-        if (grid) snprintf(at, sizeof at, "tide_first + %d, tide_i.y", k);
+        if (dims == 3) snprintf(at, sizeof at, "tide_left + tide_first + %d, tide_row", k);
+        else if (grid) snprintf(at, sizeof at, "tide_first + %d, tide_row", k);
         else snprintf(at, sizeof at, "(tide_first + %d) & 1023, (tide_first + %d) >> %s", k, k, wgsl ? "10u" : "10");
         if (wgsl) sb_printf(&text, "    let %s = textureLoad(pixels%d, vec2i(%s), 0);\n", name, texture, at);
         else sb_printf(&text, "    ivec4 %s = texelFetch(pixels%d, ivec2(%s), 0);\n", name, texture, at);
@@ -1815,7 +1848,7 @@ static void need_find(emit *em, const data_ref *d)
 {
     const int texture = d->texture;
     if (texture < 0) return;
-    need_data(em, texture, d->element, false);
+    need_data(em, texture, d->element, 0);
     if (em->finds[texture]) return;
     em->finds[texture] = true;
     need(em, H_HASH1);
@@ -2271,8 +2304,10 @@ static void ex_member(emit *em, const expr *e)
     const expr *obj = e->object;
     data_ref data;
     if (str_eq_c(e->member, "size") && obj->type.kind == TY_GRID && data_of(em, obj, &data)) { // A grid's size
-        if (data.texture < 0) sb_printf(em->o, "%s(0)", ty(em, (type){TY_INT2, NULL}));
-        else put_words(em, 'v', em->sh->textures.items[data.texture].count_at, 2, ty(em, (type){TY_INT2, NULL}));
+        const int dims = obj->type.decl->dims;
+        const char *vector = ty(em, (type){dims == 3 ? TY_INT3 : TY_INT2, NULL});
+        if (data.texture < 0) sb_printf(em->o, "%s(0)", vector);
+        else put_words(em, 'v', em->sh->textures.items[data.texture].count_at, dims, vector);
         return;
     }
     if (str_eq_c(e->member, "count") && (obj->type.kind == TY_LIST || obj->type.kind == TY_MAP || obj->type.kind == TY_SET)
@@ -3511,7 +3546,7 @@ static void ex(emit *em, const expr *e)
         if (named) { // items[i], cells[x, y]: an element by its place
             need_data(em, data.texture, data.element, data.grid);
             sb_printf(em->o, "tide_list%d(", data.texture < 0 ? 0 : data.texture);
-            ex_as(em, e->lhs, (type){data.grid ? TY_INT2 : TY_INT, NULL});
+            ex_as(em, e->lhs, (type){data.grid == 3 ? TY_INT3 : data.grid ? TY_INT2 : TY_INT, NULL});
             sb_put(em->o, ")");
             return;
         }
@@ -4178,7 +4213,7 @@ static void st_foreach(emit *em, const stmt *s, const data_ref *list)
     } else {
         const int texture = list->texture;
         const type element = list->element;
-        need_data(em, texture, element, false);
+        need_data(em, texture, element, 0);
         sb_printf(em->o, wgsl ? "for (var tide_k%d: i32 = 0; tide_k%d < " : "for (int tide_k%d = 0; tide_k%d < ", k, k);
         put_list_count(em, texture);
         sb_printf(em->o, "; tide_k%d++) {\n", k);
@@ -5237,8 +5272,11 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     for (int i = 0; i < sh->textures.count; i++) {
         shader_texture *t = &sh->textures.items[i];
         if (t->read != READ_DATA) continue;
-        t->count_at = sh->uniform_ints; // A list's count, a grid's size across and down, or a map's entries and its index's slots
-        sh->uniform_ints += (t->asset ? t->asset->return_type.kind : t->field->type.kind) != TY_LIST ? 2 : 1;
+        // A list's count, a map's entries and its index's slots, or a grid's size and where its cells are in
+        // its texture (TIDE_GRID2_DATA_INTS, TIDE_GRID3_DATA_INTS)
+        t->count_at = sh->uniform_ints;
+        const type held = t->asset ? t->asset->return_type : t->field->type;
+        sh->uniform_ints += held.kind == TY_LIST ? 1 : held.kind != TY_GRID ? 2 : held.decl->dims == 3 ? 10 : 6;
     }
     // The number the frame rolled, which the generators of code that rolls are made of, and the match's seed
     // for code that reads it: a word each of the draw's ints, the same for every draw of a frame
