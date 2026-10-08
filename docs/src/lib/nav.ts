@@ -52,6 +52,12 @@ export const sidebar: Group[] = [
         text: 'Presentation',
         items: [
             { text: 'Views and drawing', link: '/game/views' },
+            { text: 'Views and the match', link: '/game/views-and-the-match' },
+            { text: 'Draw settings', link: '/game/draw-settings' },
+            { text: 'Meshes and textures', link: '/game/meshes-and-textures' },
+            { text: 'Drawing in 3D', link: '/game/3d' },
+            { text: 'Cameras and coordinates', link: '/game/cameras' },
+            { text: 'Render targets', link: '/game/render-targets' },
             { text: 'Frags and verts', link: '/game/shaders' },
             { text: 'Audio', link: '/game/audio' },
             { text: 'Local state', link: '/game/local-state' },
