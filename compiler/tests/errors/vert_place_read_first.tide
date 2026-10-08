@@ -1,0 +1,8 @@
+// expect: 'clip' is read before it's written
+// expect: where a vert puts its vertex starts with no value: 'this.clip' is where the engine would put it, so 'clip = this.clip;' first
+scene Main { }
+
+vert Snap(mut Vertex3 vertex, out float4 clip)
+{
+    clip.z = clip.w;
+}

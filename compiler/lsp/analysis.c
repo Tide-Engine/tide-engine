@@ -1954,6 +1954,11 @@ static const char *shader_record_doc(const decl *d)
         return "A frag's `this`: where its pixel is, on the screen and in the world, and `this.Discard()`, which leaves "
                "it undrawn. Its read-only fields are `position`, `depth` and `world`. The GPU says them, so nothing is sent for it.";
     }
+    if (d && d == A.prog->placed) {
+        return "A vert's `this`: its vertex as the engine would place it. Its one read-only field is `clip`, where the "
+               "draw's transform and the camera put the vertex's `position` as the vert has it at that line, in clip "
+               "space. A vert that puts its vertex somewhere else takes `out float4 clip` and writes that.";
+    }
     if (d && d == A.prog->instance) {
         return "A frag's or vert's parameter: how the mesh was drawn. Its `transform` is sent to the GPU for each "
                "instance, and `Normal(normal)` gives a normal of the mesh as it is in the world.";
@@ -1983,6 +1988,12 @@ static const char *builtin_field_doc(const decl *d, const str name)
             return "How deep the pixel is, as the depth test has it: from 0, the nearest the camera draws, to 1, the farthest.";
         }
         if (str_eq_c(name, "world")) return "Where the pixel is in the world.";
+    }
+    if (d && d == A.prog->placed && str_eq_c(name, "clip")) {
+        return "Where the engine would put the vertex, in clip space: the camera's `WorldToClip()` times the draw's "
+               "transform times the vertex's `position` as the vert has it at this line, and for a 2D mesh the 2D camera "
+               "alone. `x / w` and `y / w` go from -1 to 1 across the destination, y up, and `z / w` from -1 at the near "
+               "plane to 1 at the far limit.";
     }
     if (d && d == A.prog->instance && str_eq_c(name, "transform")) {
         return "The transform `Draw.Mesh` was given, which places the mesh in the world.";
@@ -2317,6 +2328,10 @@ static void describe_shader(const decl *d, sb *out)
                                 STR_FMT ")`, a %s one. It changes the vertex in place, before its triangles are drawn.",
               instanced ? "Instanced" : "Mesh", STR_ARG(d->name), three_d ? "3D" : "2D");
     if (hands) sb_put(out, " What it writes to a struct it takes as `out`, the frag it's drawn with reads, blended across the triangle.");
+    if (d->place) {
+        sb_printf(out, " It puts its vertex itself, where it writes `" STR_FMT "`, in the place of the draw's transform and "
+                       "the camera.", STR_ARG(d->place->name));
+    }
     if (!shader_planned(d)) {
         sb_put(out, "\n\nWhat it reads is worked out once the game has no errors.");
         return;
@@ -2393,6 +2408,13 @@ static void describe_shader_param(const decl *d, const param *p, sb *out)
                     "path that ends, before it reads it, and a path that ends in `this.Discard()` draws no pixel. It "
                     "isn't what's on the screen already, which a GPU doesn't let a frag read. What the frag wrote is "
                     "blended over what's behind it by its alpha.");
+        return;
+    }
+    if (p->place) {
+        sb_put(out, "\n\nWhere the vert puts its vertex, in clip space, in the place of the draw's transform and the "
+                    "camera. It starts with no value: the vert writes it on every path. `this.clip` is where the engine "
+                    "would put the vertex, so `clip = this.clip;` leaves it there. What a frag reads as `this.world` is "
+                    "still the vertex's own place in the world.");
         return;
     }
     if (p->is_out && p->type.kind == TY_STRUCT) {
@@ -2937,6 +2959,8 @@ static void describe(const occurrence *o, sb *out)
         code_block(out, code.data);
         if (is_shader(d) && d->is_frag) {
             sb_printf(out, "\n\nThe pixel `" STR_FMT "` runs for. %s", STR_ARG(d->name), shader_record_doc(A.prog->pixel));
+        } else if (is_shader(d)) {
+            sb_printf(out, "\n\nThe vertex `" STR_FMT "` runs for. %s", STR_ARG(d->name), shader_record_doc(A.prog->placed));
         } else if (d->kind == DECL_METHOD) {
             sb_printf(out, "\n\nThe entity whose `" STR_FMT "` this is.", STR_ARG(d->owner->name));
         } else if (d->is_handler && d->event) {
@@ -3957,8 +3981,10 @@ static void namespace_actions(const int start_line, const int end_line, jbuf *ou
 // variable there (`out var x`, `out _`), which a `mut` parameter can't take.
 // What fills an `out` parameter where the code has nothing to give: its type's
 // default, or for a frag's color white, which is what `mut Color color` started as.
+// A vert's place is where the engine would have put its vertex.
 static const char *filler(const decl *code, const param *p)
 {
+    if (is_shader(code) && p->place) return "this.clip";
     return is_shader(code) && code->is_frag && p->type.kind == TY_COLOR ? "Color.white" : "default";
 }
 
@@ -5311,7 +5337,7 @@ static void classify(const occurrence *o, int *type, int *mods)
     case OCC_FIELD:
         *type = ST_PROPERTY;
         if (o->decl && o->decl->builtin) *mods |= SM_DEFAULT_LIBRARY;
-        if (o->decl == A.prog->pixel) *mods |= SM_READONLY;
+        if (o->decl == A.prog->pixel || o->decl == A.prog->placed) *mods |= SM_READONLY;
         if (o->field && o->field->is_local) *mods |= SM_LOCAL;
         break;
     case OCC_PARAM:
@@ -5683,13 +5709,14 @@ static scope scope_at(const loc at)
     return sc;
 }
 
-// The type of `this` in scope: a frag's pixel, the entity the code runs for,
-// or a component method's. TY_ERROR where there's none.
+// The type of `this` in scope: a frag's pixel, a vert's vertex as it's placed,
+// the entity the code runs for, or a component method's. TY_ERROR where
+// there's none.
 static type this_type(const scope *sc)
 {
     const decl *d = sc->decl;
     if (!d || sc->in_input) return (type){TY_ERROR, NULL};
-    if (is_shader(d) && d->is_frag) return (type){TY_RECORD, A.prog->pixel};
+    if (is_shader(d)) return (type){TY_RECORD, d->is_frag ? A.prog->pixel : A.prog->placed};
     if (d->kind == DECL_METHOD && !d->is_operator && !d->is_interpolate && d->owner && d->owner->kind == DECL_COMPONENT) {
         return (type){d->owner->is_local ? TY_LOCAL_ENTITY : TY_ENTITY, NULL};
     }
@@ -6621,6 +6648,7 @@ static bool gpu_callable(const decl *d)
 static void complete_shader_code(completion *c, const scope *sc, const bool statement)
 {
     if (sc->decl->is_frag) item(c, "this", CK_KEYWORD, "Pixel", shader_record_doc(A.prog->pixel), NULL);
+    else item(c, "this", CK_KEYWORD, "Its vertex, as it's placed", shader_record_doc(A.prog->placed), NULL);
     if (statement) {
         static const char *const keywords[] = {"if", "else", "return", "var", "mut", "for", "while", "foreach", "switch", "case", "break",
                                                "continue"};
@@ -6738,7 +6766,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
     const type self = this_type(&sc);
     if (self.kind != TY_ERROR) {
         item(c, "this", CK_KEYWORD, type_name(self),
-             is_shader(sc.decl) && sc.decl->is_frag ? shader_record_doc(A.prog->pixel)
+             is_shader(sc.decl) ? shader_record_doc(sc.decl->is_frag ? A.prog->pixel : A.prog->placed)
              : sc.decl->kind == DECL_METHOD ? "The entity whose component this is." : "The entity the code runs for.", NULL);
     }
 
@@ -7092,6 +7120,15 @@ static void complete_shader_header(completion *c, const int open, const int last
                  "A color the frag writes: the pixel's, then one for each color image after its target's first", NULL, NULL);
             return;
         }
+        bool places = false; // It has its `out float4` already
+        for (int k = open + 2; k + 1 < last; k++) {
+            places |= toks[k].kind == T_IDENT && str_eq_c(toks[k].text, "out") && str_eq_c(toks[k + 1].text, "float4");
+        }
+        if (!places) {
+            item(c, "float4", CK_STRUCT, "Where the vert puts its vertex, in clip space, in the engine's place",
+                 "`out float4 clip`: a vert that takes it places its vertex itself, and `this.clip` is where the engine "
+                 "would have.", NULL);
+        }
         for (int i = 0; i < A.prog->decls.count; i++) { // What a vert can hand its frag: a struct
             const decl *d = A.prog->decls.items[i];
             if (d->kind == DECL_STRUCT && has_name(d)) {
@@ -7110,7 +7147,10 @@ static void complete_shader_header(completion *c, const int open, const int last
         item(c, "out", CK_KEYWORD, "out Color glow: one more color the frag writes, into the next color image of its target",
              NULL, NULL);
     }
-    if (!frag) item(c, "out", CK_KEYWORD, "out FromLamp lamp: a struct the vert writes for its frag, which reads it blended", NULL, NULL);
+    if (!frag) {
+        item(c, "out", CK_KEYWORD, "out FromLamp lamp: a struct the vert writes for its frag, which reads it blended; "
+                                   "out float4 clip: where it puts its vertex itself", NULL, NULL);
+    }
     complete_types(c, true, true, false);
     item(c, "Texture", CK_STRUCT, "Read-only image supplied by the draw", builtin_type_doc(TY_TEXTURE), NULL);
     if (!game_type_named("Instance")) item(c, "Instance", CK_CLASS, "built-in", shader_record_doc(A.prog->instance), NULL);

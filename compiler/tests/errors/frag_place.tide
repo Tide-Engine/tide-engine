@@ -1,0 +1,8 @@
+// expect: a frag's outputs are colors: 'out Color clip'
+scene Main { }
+
+frag Shade(Vertex3 vertex, out Color color, out float4 clip)
+{
+    color = Color.white;
+    clip = float4(0);
+}
