@@ -49,6 +49,18 @@ TIDE_TEST(overloads_named_arguments_run_in_the_order_written)
     TIDE_CHECK(world.Log.order == 231);
 }
 
+TIDE_TEST(overloads_context_typed_lists_keep_nested_out_locals_in_written_order)
+{
+    one_tick();
+    TIDE_CHECK(world.Log.listedOut == 210);
+    TIDE_CHECK(world.Log.namedListedOut == 420);
+    TIDE_CHECK(world.Log.nestedListedOut == 660);
+    TIDE_CHECK(world.Log.arrayListedOut == 840);
+    TIDE_CHECK(world.Log.setListedOut == 250);
+    TIDE_CHECK(world.Log.contextualList == 2560);
+    TIDE_CHECK(world.Log.listCalls == 5);
+}
+
 TIDE_TEST(overloads_a_call_picks_by_its_arguments)
 {
     one_tick();
