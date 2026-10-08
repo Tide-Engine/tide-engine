@@ -199,7 +199,7 @@ Then, when the machine running a room's match leaves or stops answering, another
 - `Session.End()` ends the match for everyone instead: every player gets `Disconnected` with `Ended`, even one who missed the goodbye, as the relay keeps the room as ended for a while. So does a match whose last scene unloads.
 - Only matches in a room change hands, as the room is where the players meet again. A closed match stays closed: its players come back, but no one new joins.
 
-The new host only has what its machine could see: [private scenes](../game/scenes.md#private-scenes) it wasn't in are lost. A game that uses host migration shouldn't keep secrets. Players can't pass for each other: they only ever get each other's cookies hashed (see [Coming back](#players-in-the-match)).
+The new host takes over the world its machine received. Every player currently receives the whole world, including [private scenes](../game/scenes.md#private-scenes); selective state visibility is not built yet. Players can't pass for each other: they only ever get each other's cookies hashed (see [Coming back](#players-in-the-match)).
 
 ## Players in the match
 

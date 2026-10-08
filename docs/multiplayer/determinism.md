@@ -4,7 +4,7 @@ description: "Learn how Tide keeps ordinary float simulations bit-identical acro
 
 # Determinism
 
-Given the same build and the same inputs, Tide's simulation gives bit-identical results on every supported platform: Windows, Linux, macOS and the web, on Intel, AMD and ARM. That's what lets players send only their inputs, and lets desktop and web players share one match.
+Given the same build and the same inputs and commands, Tide's simulation gives bit-identical results on every supported platform: Windows, Linux, macOS, Android and the web, on Intel, AMD and ARM. That's what lets desktop, phone and web players share one match.
 
 It uses ordinary 32-bit floats, not fixed point. Tide code gets this for free: there's nothing to avoid, and no special types to use. This page is about how the engine keeps it, for the curious, and for anyone writing C that touches the simulation.
 
@@ -38,7 +38,7 @@ A match that rolls dice still has to roll the same ones on every machine. [`Rand
   - **The same numbers everywhere.** The generator is integer arithmetic (PCG32), and its floats are made from integers with exact operations, so every platform gives the same bits.
   - **In every snapshot.** A generator in a component or a singleton is part of the world's state and of its hash. A client that predicted a tick wrong goes back to the last world the server confirmed and runs the ticks again: the generators are back where they were then, and roll the same numbers.
   - **One for each entity.** A system that rolls with its entities' own generators can run them on several threads, and no thread's rolls depend on another's.
-  - **Seeded by the match.** The machine that starts a match picks its seed, `Random.seed`, from the system's random number generator, so no two matches go the same. The seed is in the world: a player who joins gets it with everything else, snapshots and host migration carry it, and nothing sends it separately. An entity's generator is seeded as the entity spawns, from the seed, the tick and the entity, which every machine has the same.
+  - **Seeded by the match.** The machine that starts a match picks its seed, `Random.seed`, from the system's random number generator. The seed is in the world: a player who joins gets it with everything else, snapshots and host migration carry it, and nothing sends it separately. An entity's generator is seeded as the entity spawns, from the seed, the tick and the entity, which every machine has the same.
 
 Where nothing picks a seed (tests, benchmarks, a world a C host starts itself, a game run [without a window](../tools/cli.md#without-a-window)) it's 0, so a run repeats exactly. `tide run --seed 7` picks the seed, with or without a window: the same seed and the same input are the same match.
 

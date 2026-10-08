@@ -27,7 +27,7 @@ view Options(Devices devices, mut Settings settings)
 }
 ```
 
-The GUI is local: widgets change this machine's state, never the match. To act on the match, put it in the [input](./input.md).
+The GUI is local: widgets change this machine's state, never the match. To act on the match, put continuous controls in the [input](./input.md), or send a [command](./commands.md) for a button's action.
 
 ## Widgets change what you pass them
 

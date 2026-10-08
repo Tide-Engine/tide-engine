@@ -1,0 +1,64 @@
+settings { title = "Pointer and touch"; }
+
+local scene Main { } // Device inspection needs no match
+
+local singleton Trace
+{
+    int presses;
+    float flash;
+    float2 last;
+    string edge = "Move the pointer, then press";
+}
+
+view Inspect(Devices devices, mut Trace trace)
+{
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetScreen();
+    var quiet = Color(0.64, 0.64, 0.68);
+    var amber = Color(0.98, 0.75, 0.14);
+    var teal = Color(0.18, 0.83, 0.75);
+    var pointer = devices.pointer;
+    var at = Screen.Flip(pointer.position); // Devices count from the bottom left
+
+    trace.flash = Math.Max(0, trace.flash - Frame.dt);
+    if (pointer.press.down)
+    {
+        trace.presses += 1;
+        trace.last = at;
+        trace.flash = 0.7;
+        trace.edge = "down: the press began";
+    }
+    if (pointer.press.up) trace.edge = "up: the press ended";
+
+    Draw.Text("Pointer and touch", float2(16, 14), 20, Color.white);
+    Draw.Text($"held: {pointer.press.pressed}    presses: {trace.presses}",
+        float2(16, 44), 14, amber);
+    Draw.Text(trace.edge, float2(16, 68), 13, quiet);
+
+    // A touch never moves the mouse. Its outline stays at the mouse's position.
+    Draw.WireCircle(Screen.Flip(devices.mouse.position), 9, 2, quiet);
+    mut var held = 0;
+    for (var i = 0; i < devices.touchscreen.touches.count; i++)
+    {
+        var touch = devices.touchscreen.touches[i];
+        var center = float2(16 + (i + 0.5) * (Screen.width - 32) / 10, Screen.height - 88);
+        Draw.Circle(center, 10, touch.press.pressed ? teal : Color(0.24, 0.25, 0.27));
+        Draw.Text($"{i}", center, 12, Color.white, Anchor.MiddleCenter);
+        if (!touch.press.pressed) continue;
+
+        held += 1;
+        var finger = Screen.Flip(touch.position);
+        Draw.Line(Screen.Flip(touch.startPosition), finger, 2, teal);
+        Draw.Circle(finger, 12, Color(teal.r, teal.g, teal.b, 0.3));
+        Draw.Text($"id {touch.id}", finger + float2(16, 0), 13, teal);
+    }
+
+    Draw.WireCircle(at, pointer.press.pressed ? 20 : 15, 3, amber);
+    if (trace.flash > 0)
+        Draw.WireCircle(trace.last, 20 + (0.7 - trace.flash) * 60, 2,
+            Color(amber.r, amber.g, amber.b, trace.flash / 0.7));
+
+    Draw.Text($"{held} fingers held; slots 0 to 9", float2(16, Screen.height - 62), 13, quiet);
+    Draw.Text("Amber: pointer   Teal: touch   Gray: mouse\nTap here first, then try dragging several fingers.",
+        float2(16, Screen.height - 40), 12, quiet);
+}

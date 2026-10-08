@@ -35,7 +35,7 @@ component Turret
 }
 ```
 
-Fields without a default start at zero. `Entity` fields always start as the null entity, and can't have another default.
+Fields without a written default take their type's default: zero for numbers, `false` for bools, empty text and collections, and a struct's own field defaults for a struct. `Entity` fields always start as the null entity, and can't have another default. [Default values](../language/basics.md#default-values) explains the `default` expression.
 
 ## Singletons
 
