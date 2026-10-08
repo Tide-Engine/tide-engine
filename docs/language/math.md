@@ -171,7 +171,7 @@ Rolls run in the order they're written, left to right: in `float2(Random.NextFlo
 
 - **Systems and the match's handlers** roll for the entity they run for, or for the match where they run once. Two systems that roll for the same entity in the same tick get different numbers, and so do two runs of a handler.
 - **[Views](../game/views.md) and local handlers** roll with this machine's own generator, for effects: sparks, shakes, anything the match doesn't see. It's no part of the match, and other machines roll otherwise.
-- **Functions and methods** they call roll too, with nothing passed:
+- **Functions, methods and operators** they call roll too, with nothing passed:
 
 ```csharp
 float2 Scatter(float spread)
@@ -180,7 +180,29 @@ float2 Scatter(float spread)
 }
 ```
 
-Some code can't, and the compiler says what to do instead: a [parallel loop's](./grids.md) steps and a sort's comparison (roll before, or hash the step's place), a [task](../game/tasks.md) and the [input](../game/input.md), and code the GPU runs.
+- **A [parallel loop's](./grids.md) steps** roll each for their own cell or element, so the loop gives the same numbers however many threads run it. A `foreach` over a grid that rolls for each cell still runs its steps at once.
+
+```csharp
+system Scatter(mut Field field)
+{
+    parallel (var at in field.cells)
+    {
+        if (Random.NextInt(100) == 0) field.cells[at] = Material.Rock;
+    }
+}
+```
+
+- **A [task](../game/tasks.md)** has a sequence of its own, which goes on across its waits and into the tasks it awaits. Two tasks started alike in the same tick roll differently.
+- **The [input's](../game/input.md) `Sample`** rolls on the machine that sends the input, with that machine's generator, as a view does.
+- **An [audio declaration](../game/audio.md)** rolls for noise, each voice from a sequence of its own.
+- **A sort's comparison** can roll, which shuffles: `cards.Sort(a, b) { return Random.NextBool(); }`.
+
+A few places never roll, and the compiler says why:
+
+- **The input's `Sanitize`**, which has to repair an input the same way on every machine from the input alone.
+- **A type's `Interpolate`**, which the engine calls itself as a view blends between two ticks: the same two values have to blend the same every time.
+- **Code the GPU runs**, which keeps no state: a pixel's number is a hash of where it is (`Math.Hash`) or [noise](#noise).
+- **Constants and defaults**, which are worked out with no code running.
 
 A system's rolls start over each tick, from that tick's number. What has to go on from where it was, like a deck that's dealt from over many ticks, or has to come from a seed the game picks, is a generator of your own.
 
@@ -257,7 +279,7 @@ A `Random` has one field, `long state`, which is all there is to it: copy it to 
 if (Math.Hash(int3(x, y, Random.seed)) % 4 == 0) field.cells[x, y] = Material.Rock;
 ```
 
-Systems, the match's handlers and views read it, and the functions they call. In a view with no match it's 0.
+It's read wherever code rolls, but in an audio declaration, which has no match. Local code reads the seed of the match its last frame drew, and 0 with no match.
 
 It's 0 where nothing picks one: tests, benchmarks, and a world a C host starts with `tide_world_init`. A run there repeats exactly.
 
