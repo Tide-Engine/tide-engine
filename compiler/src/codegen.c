@@ -1162,6 +1162,16 @@ static bool handlers_roll(const program *prog)
     return false;
 }
 
+// Whether a shader a draw draws through rolls with Random (`seed` false), or reads Random.seed (true):
+// its draws send the frame's number, or the seed, with their uniforms (gen_shaders).
+static bool shaders_roll(const program *prog, const bool seed)
+{
+    for (int s = 0; s < prog->shaders.count; s++) {
+        if ((seed ? prog->shaders.items[s]->seed_at : prog->shaders.items[s]->rolled_at) >= 0) return true;
+    }
+    return false;
+}
+
 // tide_method_Stats_IsDead for Stats.IsDead, tide_function_Combat_Heal for
 // Combat.Heal, and tide_operator_Money_add_2 for Money's + (numbered, as a
 // struct can have several).
@@ -14380,6 +14390,10 @@ static void gen_api(gen *g)
     sb_put(o, "void tide_frame(const tide_world *w, const tide_world *previous, float alpha, const tide_world *verified,\n"
               "                tide_local *local, tide_draw_list *draw, tide_gui *gui)\n{\n");
     sb_put(o, "    (void)previous;\n    (void)alpha;\n    (void)verified;\n");
+    // What the frame's draws send for code the GPU runs that rolls or reads the seed: one roll of this
+    // machine's generator, which every draw of the frame has (so they still join), and the drawn world's seed
+    if (shaders_roll(prog, false)) sb_put(o, "    tide_gpu_rolled = tide_random_next(&local->tide_dice);\n");
+    if (shaders_roll(prog, true)) sb_put(o, "    tide_gpu_seed = w ? w->Time.seed : 0;\n");
     if (prog->uses_heap) {
         // Views only read the match, so its heap is theirs to read, not change.
         if (prog->assets.count) sb_put(o, "    tide_pack_use();\n");
@@ -16311,6 +16325,15 @@ static void gen_shaders(gen *g)
     sb *o = &g->c;
     if (prog->shaders.count == 0) return;
     sb_put(o, "// Shaders: what Draw.Mesh draws a vertex struct of the game's through, with its vert and frag\n\n");
+    if (shaders_roll(prog, false)) {
+        sb_put(o, "// What the generators of frags and verts that roll with Random are made of this frame: a number tide_frame\n"
+                  "// rolls as it starts, the same for every draw of the frame, so draws still join into runs\n"
+                  "static TIDE_THREAD_LOCAL uint32_t tide_gpu_rolled;\n\n");
+    }
+    if (shaders_roll(prog, true)) {
+        sb_put(o, "// The seed of the match the frame draws, for frags and verts that read Random.seed: 0 with no match\n"
+                  "static TIDE_THREAD_LOCAL int32_t tide_gpu_seed;\n\n");
+    }
     for (int s = 0; s < prog->shaders.count; s++) {
         const shader *sh = prog->shaders.items[s];
         const char *vertex = type_cname(sh->vertex);
@@ -16409,6 +16432,9 @@ static void gen_shaders(gen *g)
         for (int b = 0; b < sh->bound.count; b++) sb_printf(o, "    (void)tide_b%d;\n", b);
         const bool instance = gen_shader_words(o, "tide_instance", sh->instance_floats, sh->instance_ints);
         const bool uniforms = gen_shader_words(o, "tide_uniforms", sh->uniform_floats, sh->uniform_ints);
+        // What its code's rolls are made of this frame, and the seed it reads: the frame's (tide_frame)
+        if (sh->rolled_at >= 0) sb_printf(o, "    tide_uniforms.i[%d] = (int32_t)tide_gpu_rolled;\n", sh->rolled_at);
+        if (sh->seed_at >= 0) sb_printf(o, "    tide_uniforms.i[%d] = tide_gpu_seed;\n", sh->seed_at);
         unsigned blended = 0; // How its textures are sampled, but the draw's own: tide_draw_run's `sampling`
         for (int v = 0; v < sh->values.count; v++) {
             const shader_value *value = &sh->values.items[v];

@@ -22,6 +22,11 @@
 // The generator is PCG-XSH-RR 64/32 (O'Neill): a 64-bit linear congruential
 // state, and 32 bits of it out each step, rotated by its top bits. Any state
 // works, zero included, and the sequence comes back after 2^64 numbers.
+//
+// Code the GPU runs (a frag or a vert that rolls) has no 64-bit integers, so it
+// rolls with a 32-bit generator of the compiler's own. What it makes of each
+// 32 bits is what these functions make of theirs: its ranges and its floats
+// follow the formulas here.
 
 typedef struct tide_random {
     int64_t state;

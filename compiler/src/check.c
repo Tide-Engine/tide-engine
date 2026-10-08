@@ -2803,9 +2803,14 @@ static bool names_random(const checker *c, const expr *e)
 static bool check_random_use(checker *c, const loc at, const bool rolls)
 {
     const char *what = rolls ? "roll random numbers" : "read Random.seed";
-    if (gpu_refuses(c, at, what, rolls ? "the view rolls what it needs and keeps it in a field the GPU reads"
-                                       : "the view puts what it needs of the seed in a field the GPU reads")) {
-        return false;
+    if (gpu_code(c)) { // A frag or a vert: a generator of the pixel's or the vertex's own, and the seed sent with the draw (shader.c)
+        decl *shader = c->method;
+        if (rolls && !shader->rolls) shader->rolls_at = at;
+        if (!rolls && !shader->reads_seed) shader->reads_seed_at = at;
+        if (rolls) shader->rolls = true;
+        else shader->reads_seed = c->prog->uses_seed = true; // The world has it for the draw that sends it
+        if (rolls && builds(c->prog)) c->prog->random->named = true; // The frame rolls their number with tide/random.h's
+        return true;
     }
     if (c->in_input) {
         diag_error(at, "%s can't %s", input_code(c), what);
@@ -3981,7 +3986,10 @@ static type check_call(checker *c, expr *e)
 static type check_random_seeded(checker *c, expr *e)
 {
     for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-    if (gpu_refuses(c, e->at, "make a Random", "the view rolls what it needs and keeps it in a field the GPU reads")) return T_ERR;
+    if (gpu_refuses(c, e->at, "make a Random", "its state is 64 bits, and the GPU's ints are 32: roll on the type, 'Random.NextInt(6)', "
+                                                "where each pixel and each vertex has a generator of its own")) {
+        return T_ERR;
+    }
     const type result = decl_type(c->prog->random);
     if (e->args.count != 1) {
         diag_error(e->at, "Random takes a seed, like 'Random(42)', not %d arguments", e->args.count);
@@ -5936,7 +5944,9 @@ static type check_method(checker *c, expr *e)
         for (int i = 0; i < e->args.count; i++) {
             if (e->args.items[i]->kind != E_DEFAULT) check_expr(c, e->args.items[i]);
         }
-        if (gpu_refuses(c, e->at, "roll random numbers", "the view rolls what it needs and keeps it in a field the GPU reads")) {
+        if (gpu_refuses(c, e->at, "roll with a Random the game keeps",
+                        "its state is 64 bits, and the GPU's ints are 32: roll on the type, 'Random.NextInt(6)', where each pixel "
+                        "and each vertex has a generator of its own")) {
             return T_ERR;
         }
         const type result = resolve_builtin_call(str_from("Random"), e);
@@ -15669,7 +15679,7 @@ static void check_roll_calls(const checker *c)
         const loc where = to->rolls ? to->rolls_at : to->reads_seed_at;
         const char *why = NULL;
         if (from->kind == DECL_INPUT) why = "the input's code can't";
-        else if (from->kind == DECL_SHADER) why = "the GPU can't";
+        else if (from->kind == DECL_SHADER) continue; // On the GPU it rolls with the pixel's or the vertex's own, and reads the seed its draw sends
         else if (from->is_async) why = "a task can't yet";
         else if (from->is_audio) why = "the audio thread can't";
         else if (from->is_operator || from->is_interpolate) why = "an operator and an Interpolate can't";
@@ -15683,6 +15693,13 @@ static void check_roll_calls(const checker *c)
     }
     for (int i = 0; i < c->prog->decls.count; i++) {
         const decl *d = c->prog->decls.items[i];
+        if (d->kind == DECL_SHADER) {
+            // A frag's or a vert's generators are made of a number each frame rolls with this machine's own,
+            // and the seed it reads is the one the frame's world has: both go with its draws
+            if (d->rolls) c->prog->rolls_local = true;
+            if (d->reads_seed) c->prog->uses_seed = true;
+            continue;
+        }
         if (d->kind != DECL_SYSTEM || !d->rolls) continue;
         if (is_local_code(d)) c->prog->rolls_local = true;
         else c->prog->rolls_match = c->prog->uses_seed = true; // Its generator is made from the match's seed

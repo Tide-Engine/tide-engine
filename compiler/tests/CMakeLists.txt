@@ -60,6 +60,7 @@ tide_e2e_test(evaluation_order SOURCES e2e/evaluation_order.tide e2e/evaluation_
 tide_e2e_test(increments) # ++i and i++ as values, in their turn
 tide_e2e_test(random) # Random's state in the world, and the match's seed: the same bits on every platform
 tide_e2e_test(rolls) # Random.NextInt and the like on the type, and Random.seed: a system's rolls for its entity, with no state
+tide_e2e_test(gpu_rolls) # ...and in frags and verts: the frame's number and the seed their draws send, alike for a frame's draws
 tide_e2e_test(views)
 tide_e2e_test(shapes) # The shapes with smooth edges: each Draw call, the general Shape, and target receivers
 tide_e2e_test(draw_settings) # Blend, tint, transform, clip and cameras: around blocks, listed with commas, and set

@@ -180,7 +180,9 @@ float2 Scatter(float spread)
 }
 ```
 
-Some code can't, and the compiler says what to do instead: a [parallel loop's](./grids.md) steps and a sort's comparison (roll before, or hash the step's place), a [task](../game/tasks.md) and the [input](../game/input.md), and code the GPU runs.
+- **[Frags and verts](../game/shaders.md#random-numbers)** roll on the GPU: each pixel and each vertex with a generator of its own, and other numbers every frame. Those aren't the CPU's numbers ([below](#rolls-on-the-gpu)).
+
+Some code can't, and the compiler says what to do instead: a [parallel loop's](./grids.md) steps and a sort's comparison (roll before, or hash the step's place), a [task](../game/tasks.md) and the [input](../game/input.md).
 
 A system's rolls start over each tick, from that tick's number. What has to go on from where it was, like a deck that's dealt from over many ticks, or has to come from a seed the game picks, is a generator of your own.
 
@@ -265,9 +267,26 @@ It's 0 where nothing picks one: tests, benchmarks, and a world a C host starts w
 The seed is in the world, and every player's machine has the whole world for now. A game whose players mustn't know what comes next, like the order of a deck, can't keep that from someone who reads their own machine's memory yet. Scenes only some players see are coming (see [Networking](../multiplayer/networking.md)).
 :::
 
-### Not on the GPU
+### Rolls on the GPU
 
-A [frag or vert](../game/shaders.md) can't roll: a generator's state is the CPU's. Roll in the view and keep the number in a field the shader reads.
+A [frag or vert](../game/shaders.md) rolls too, with the same calls: `Random.NextFloat()` in a frag is another number at every pixel, and in a vert at every vertex.
+
+```csharp
+frag Static(Vertex vertex, out Color color)
+{
+    var gray = Random.NextFloat();
+    color = Color(gray, gray, gray);
+}
+```
+
+What's different there:
+
+- **Each pixel and each vertex has a generator of its own**, made as its code starts: from where the pixel is, or which vertex it is, and from a number the frame rolls. So no two pixels roll alike, and a frame later they all roll something else. That's what grain, static and sparkle want. What should stay put from frame to frame is [`Math.Hash`](#functions) or [noise](#noise).
+- **They aren't the CPU's numbers.** A GPU's ints are 32 bits, so it rolls with a smaller generator than a system does. What a roll gives is the same: the table above holds, ranges and all.
+- **`Random.seed` is there too**, so a frag can draw noise from the match's seed.
+- **A `Random` of your own stays on the CPU.** Its state is 64 bits. A frag rolls on the type.
+
+[Frags and verts](../game/shaders.md#random-numbers) has the details.
 
 ## Forgiving with bad values
 
