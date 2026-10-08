@@ -77,6 +77,12 @@ TIDE_TEST(increments_in_systems_and_views)
     tide_world_tick(&world);
     TIDE_CHECK(world.Out.ticks == 2);
     TIDE_CHECK(world.Out.ticked == 2);
+    // A parallel loop's steps, and a foreach's that run at once
+    TIDE_CHECK(world.Field.localsRight == 64);
+    TIDE_CHECK(world.Field.afterRight == 64);
+    TIDE_CHECK(world.Field.beforeRight == 64);
+    TIDE_CHECK(world.Field.eachRight == 64);
+    TIDE_CHECK(world.Field.valuesRight == 100);
 
     tide_local_init(&local);
     for (int frame = 0; frame < 3; frame++) {

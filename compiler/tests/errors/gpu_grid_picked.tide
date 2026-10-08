@@ -1,0 +1,43 @@
+// expect: a grid in code the GPU runs is one the frag or vert was given, by a name: it can't be made, changed, returned, picked between or kept in a struct there
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+component Box
+{
+    Color tint = Color.white;
+}
+
+singleton Sun
+{
+    float3 direction = float3(0, -1, 0);
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    Grid2<Color> wood = Grid2(4, 4);
+    Grid2<Color> bark = Grid2(4, 4);
+    bool dark;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Box);
+}
+
+frag Shade(V vertex, out Color color, Models models)
+{
+    var wood = models.dark ? models.wood : models.bark;
+    color = wood[0, 0];
+}
+
+view Show(Box box, Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}

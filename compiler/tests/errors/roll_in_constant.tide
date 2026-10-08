@@ -1,0 +1,3 @@
+// expect: default values must be constant expressions
+component Die { int face = Random.NextInt(6); }
+scene Main { }

@@ -1,0 +1,26 @@
+// expect: a map keyed by string can't be read on the GPU: text is the CPU's
+// expect: the GPU reads a map whose keys are ints, bytes or enums
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    Map<string, Color> named;
+}
+
+frag Shade(V vertex, out Color color, Models models)
+{
+    color = models.named["sky"];
+}
+
+view Show(Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}

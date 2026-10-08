@@ -1,0 +1,25 @@
+// expect: a map keyed by Entity can't be read on the GPU: it's a handle into the world, which the GPU doesn't have
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    Map<Entity, Color> owned;
+}
+
+frag Shade(V vertex, out Color color, Models models)
+{
+    color = Color(models.owned.count, 0, 0);
+}
+
+view Show(Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}

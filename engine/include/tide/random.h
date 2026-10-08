@@ -80,6 +80,25 @@ static inline uint32_t tide_random_next(tide_random *r)
     return (mixed >> turn) | (mixed << ((32u - turn) & 31u));
 }
 
+// A generator of its own for something a generator's code starts: a task, or a
+// loop whose steps run at once. It steps `r` twice, and what it gives has
+// nothing to do with what `r` rolls next.
+static inline tide_random tide_random_fork(tide_random *r)
+{
+    const uint64_t high = tide_random_next(r);
+    const uint64_t low = tide_random_next(r);
+    return (tide_random){(int64_t)tide_random_mix((high << 32) | low)};
+}
+
+// One of those for each step of such a loop, from the loop's and the step's
+// place: a grid's cell or a list's index, whichever thread runs it.
+static inline tide_random tide_random_step(const tide_random loop, const int32_t x, const int32_t y, const int32_t z)
+{
+    uint64_t state = tide_random_mix((uint64_t)loop.state ^ (((uint64_t)(uint32_t)x << 32) | (uint32_t)y));
+    state = tide_random_mix(state + ((uint64_t)(uint32_t)z + 1u) * TIDE_RANDOM_GOLDEN);
+    return (tide_random){(int64_t)state};
+}
+
 // NextInt(): from 0 to 2147483647, like Math.Hash, so % never goes negative.
 static inline int32_t tide_random_next_int(tide_random *r)
 {

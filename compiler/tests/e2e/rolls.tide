@@ -1,6 +1,7 @@
 // Random's rolls on the type, with no generator of the game's: a system's for
 // the entity it runs for, a handler's, code that runs once, functions and
-// methods they call, and a view's, which are this machine's.
+// methods they call, a parallel loop's steps, a comparison, tasks, the input's
+// Sample, and a view's and a local handler's, which are this machine's.
 
 component Walker
 {
@@ -12,6 +13,7 @@ component Walker
     int helped;
     int pair;
     int method;
+    int added;
     int poked;
     int pokes;
 }
@@ -20,6 +22,17 @@ component Walker
 component Mood
 {
     int roll;
+}
+
+// An operator rolls with what the code that uses it rolls with
+struct Pips
+{
+    int count;
+
+    Pips operator +(Pips a, Pips b)
+    {
+        return Pips { count = a.count + b.count + Random.NextInt(1000) };
+    }
 }
 
 struct Bag
@@ -83,6 +96,7 @@ system Step(mut Walker walker)
     walker.pair = Deeper(1000) * 1000 + Deeper(1000) - Random.NextInt(1000) * Deeper(7);
     var bag = Bag { size = 1000000 };
     walker.method = bag.Draw();
+    walker.added = (Pips { count = 1000000 } + Pips { count = 2000000 }).count;
 }
 
 system Feel(mut Mood mood)
@@ -112,6 +126,131 @@ event(Poke poke) Poked(mut Walker walker)
     walker.pokes += 1;
 }
 
+// Steps that run at once roll each for its own place, whichever thread runs them
+singleton Field
+{
+    Grid2<int> cells = Grid2(16, 16);
+    Grid2<int> through = Grid2(16, 16);
+    Grid2<int> blocks = Grid2(16, 16);
+    List<int> row;
+    List<int> order;
+}
+
+event(Spawned) Fill(with Main, mut Field field)
+{
+    field.row.Resize(48);
+    for (var i = 0; i < 12; i++) field.order.Add(i);
+}
+
+int Die()
+{
+    return 1 + Random.NextInt(999);
+}
+
+system Scatter(mut Field field)
+{
+    parallel (var at in field.cells)
+    {
+        field.cells[at] = 1 + Random.NextInt(999) * 1000 + Random.NextInt(1000);
+    }
+    // A foreach whose steps touch their own cell runs them at once too, through a function
+    foreach (var at in field.through) field.through[at] = Die();
+    // Blocks of 2 by 2: a step's rolls go through its block in order
+    parallel (var at in field.blocks by 2)
+    {
+        field.blocks[at] = Die();
+        field.blocks[at + int2(1, 0)] = Die();
+        field.blocks[at + int2(0, 1)] = Die();
+        field.blocks[at + int2(1, 1)] = Die();
+    }
+    parallel (var i in field.row) field.row[i] = 1 + Random.NextInt(1000000);
+    // A comparison that rolls: a shuffle, the same on every machine
+    field.order.Sort(a, b) { return Random.NextBool(); }
+}
+
+// A task rolls from a sequence of its own, which goes on across its waits and into what it awaits
+component Chest
+{
+    int id;
+    bool opened;
+    int first;
+    int second;
+    int later;
+    int seed;
+    int knocked;
+    int knocks;
+}
+
+event Knock { }
+
+event(Spawned) Chests(with Main)
+{
+    Spawn(Chest { id = 0 });
+    Spawn(Chest { id = 1 });
+}
+
+async int Later()
+{
+    await Wait.Ticks(1);
+    return Random.NextInt(1000000);
+}
+
+async void Open(mut Chest chest)
+{
+    chest.first = Random.NextInt(1000000);
+    await Wait.Ticks(2);
+    chest.second = Random.NextInt(1000000);
+    chest.later = await Later();
+    chest.seed = Random.seed;
+}
+
+system Opens(mut Chest chest, Time time)
+{
+    if (!chest.opened)
+    {
+        chest.opened = true;
+        Open(chest);
+    }
+    if (time.tick == 12 && chest.id == 0)
+    {
+        this.Send(Knock { });
+        this.Send(Knock { });
+    }
+}
+
+// The same event twice in a tick, to a handler that's a task: each has its own sequence
+async event(Knock knock) Answer(mut Chest chest)
+{
+    await Wait.Ticks(1);
+    chest.knocked = chest.knocked * 1000 + Random.NextInt(1000);
+    chest.knocks += 1;
+}
+
+// Sample rolls on the machine that sends the input
+input Controls
+{
+    int luck;
+    int seed;
+    bool held;
+
+    Sample(Devices devices)
+    {
+        held = devices.keyboard.space.pressed;
+        luck = Random.NextInt(1000000);
+        seed = Random.seed;
+    }
+}
+
+singleton Luck
+{
+    int last;
+}
+
+system Lucky(Controls controls, mut Luck luck)
+{
+    luck.last = controls.luck;
+}
+
 // Local code rolls with this machine's own generator, and reads the match's seed
 local singleton Fx
 {
@@ -119,6 +258,29 @@ local singleton Fx
     float helped;
     int frames;
     int seed;
+    float flash;
+    int flashSeed;
+    int flashes;
+    float twinkle;
+    float twinkled;
+    int twinkleSeed;
+}
+
+local event Flash { }
+
+local event(Flash flash) Flashed(mut Fx fx)
+{
+    fx.flash = Random.NextFloat(5, 6);
+    fx.flashSeed = Random.seed;
+    fx.flashes += 1;
+}
+
+async void Twinkle(mut Fx fx)
+{
+    fx.twinkle = Random.NextFloat(1, 2);
+    await Wait.Frames(2);
+    fx.twinkled = Random.NextFloat(2, 3);
+    fx.twinkleSeed = Random.seed;
 }
 
 float Flicker()
@@ -132,6 +294,8 @@ view Glow(mut Fx fx)
     fx.helped = Flicker();
     fx.seed = Random.seed;
     fx.frames += 1;
+    if (fx.frames == 2) Send(Flash { });
+    if (fx.frames == 3) Twinkle(fx);
 }
 
 component Glint

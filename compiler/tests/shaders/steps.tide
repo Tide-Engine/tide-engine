@@ -1,0 +1,27 @@
+scene Main { }
+
+local singleton Models
+{
+    List<Vertex> corners;
+}
+
+float Climb(mut int at)
+{
+    return at++ * 0.25;
+}
+
+frag Shade(Vertex vertex, out Color color)
+{
+    mut var i = 1;
+    mut var level = 0.5;
+    float shade = ++i * 0.5;
+    var was = level--;
+    color = Color(shade, was, Climb(i), 1);
+    color.a = i++ > 2 ? 1.0 : 0.5;
+    if (--i > 1) color.r = level;
+}
+
+view Show(Models models)
+{
+    Draw.Mesh(models.corners, [0, 1, 2], Shade);
+}
