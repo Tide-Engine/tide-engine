@@ -211,6 +211,13 @@ vec4 tide_roll_quaternion_rotation() {
     if (q.w < 0.0) { return -q; }
     return q;
 }
+float tide_pick0(bool tide_c, float tide_a, float tide_b) {
+    if (tide_c) {
+        return tide_a;
+    }
+    return tide_b;
+}
+
 float tf_Jitter(float t_by) {
     return (tide_roll_float_between((-t_by), t_by) + float((tide_hash1(tide_v0.y) % tide_i(2))));
 }
@@ -221,7 +228,8 @@ void ts_Grain(tt_Corner t_corner, inout vec4 t_color) {
     vec2 t_spot = ((tide_roll_float2() + tide_roll_float2_between(vec2(0.0, 0.0), t_corner.m_uv)) + tide_roll_float2_direction());
     vec3 t_place = ((tide_roll_float3() + tide_roll_float3_between(vec3(0.0, 0.0, 0.0), t_corner.m_position)) + tide_roll_float3_direction());
     vec4 t_turn = tide_roll_quaternion_rotation();
-    if (tide_roll_bool()) {
+    float t_either = tide_pick0((t_corner.m_uv.x > 0.5), tide_roll_float(), 0.25);
+    if ((tide_roll_bool() || (t_either > 2.0))) {
         discard;
     }
     t_color = vec4((t_part + tf_Jitter(tide_u0.x)), (t_spot.x + t_place.y), tide_rotate_q(t_turn, t_place).z, float((t_whole % tide_i(2))));
@@ -385,13 +393,21 @@ fn ts_Shake(t_corner: ptr<function, tt_Corner>) {
     (*t_corner).m_position = ((*t_corner).m_position + (tide_roll_float3_direction() * tf_Jitter(0.1)));
 }
 
+fn tide_pick0(tide_c: bool, tide_a: f32, tide_b: f32) -> f32 {
+    if (tide_c) {
+        return tide_a;
+    }
+    return tide_b;
+}
+
 fn ts_Grain(t_corner: tt_Corner, t_color: ptr<function, vec4f>) {
     var t_whole: i32 = ((tide_roll_int() + tide_roll_int_below(6)) + tide_roll_int_between((-3), 3));
     var t_part: f32 = ((tide_roll_float() + tide_roll_float_below(2.0)) + tide_roll_float_between(1.0, 2.0));
     var t_spot: vec2f = ((tide_roll_float2() + tide_roll_float2_between(vec2f(0.0, 0.0), t_corner.m_uv)) + tide_roll_float2_direction());
     var t_place: vec3f = ((tide_roll_float3() + tide_roll_float3_between(vec3f(0.0, 0.0, 0.0), t_corner.m_position)) + tide_roll_float3_direction());
     var t_turn: vec4f = tide_roll_quaternion_rotation();
-    if (tide_roll_bool()) {
+    var t_either: f32 = tide_pick0((t_corner.m_uv.x > 0.5), tide_roll_float(), 0.25);
+    if ((tide_roll_bool() || (t_either > 2.0))) {
         discard;
         return;
     }
