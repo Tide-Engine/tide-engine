@@ -69,7 +69,19 @@ enum {
     // Map<string, Mesh<V>> of a glob: its entries' block, each a key and a mesh's two handles, all live; `size`
     // is its index block's offset, as TIDE_PACK_MAP's
     TIDE_PACK_MESHES = 13,
+    // SkinnedMesh<V>: a one-element block of tide_skinned_lists. Its immutable
+    // model bytes and typed geometry are separate list blocks; `size` is 1.
+    // All three kinds use `extra` for the same vertex layout as Mesh<V>.
+    TIDE_PACK_SKINNED = 14,
+    TIDE_PACK_SKINNEDS = 15, // List<SkinnedMesh<V>>: three handles per element; `size` is its count
+    TIDE_PACK_SKINNED_MAP = 16, // Map<string, SkinnedMesh<V>>: live, key, three handles; `size` is its index offset
 };
+
+// The hidden portable model bytes followed by ordinary typed geometry lists.
+// These handles have the same layout in generated structs on every platform.
+typedef struct tide_skinned_lists {
+    tide_list data, vertices, indices;
+} tide_skinned_lists;
 
 typedef struct tide_pack_entry {
     uint8_t name[32];  // SHA-256 of the declaration's qualified name
@@ -164,6 +176,11 @@ uint32_t tide_pack_mesh_list(tide_pack_builder *b, const uint32_t *offsets, uint
 // `offsets` two a mesh. Its entries' block, with its index's in *index, as
 // tide_pack_map's.
 uint32_t tide_pack_mesh_map(tide_pack_builder *b, const uint32_t *keys, const uint32_t *offsets, uint32_t count, uint32_t *index);
+
+// Three offsets per model: bytes (tide_pack_bytes), vertices and indices
+// (tide_pack_mesh). A singleton uses this builder with count 1 too.
+uint32_t tide_pack_skinned_list(tide_pack_builder *b, const uint32_t *offsets, uint32_t count);
+uint32_t tide_pack_skinned_map(tide_pack_builder *b, const uint32_t *keys, const uint32_t *offsets, uint32_t count, uint32_t *index);
 
 // A list of `count` handles (offsets of blocks in this pack, which it tags):
 // its block's offset. Not shared: a declaration's own.
@@ -277,6 +294,21 @@ tide_map tide_pack_mesh_map_of(const tide_pack_entry *e);
 // has none (*count is 0, and what's returned isn't NULL). `e` is an entry of
 // the loaded pack's.
 void *tide_pack_mesh_open(const tide_pack_entry *e, uint32_t k, uint32_t vertex, uint32_t *count);
+
+// Skinned equivalents: invalid model bytes or geometry give three empty
+// lists. Loading checks the complete blob and matching geometry counts.
+// Maps and default-field writes follow the Mesh contracts above.
+tide_skinned_lists tide_pack_skinned_of(const tide_pack_entry *e, uint32_t vertex);
+tide_map tide_pack_skinned_map_of(const tide_pack_entry *e);
+void *tide_pack_skinned_open(const tide_pack_entry *e, uint32_t k, uint32_t vertex, uint32_t *count);
+
+// Check a raw pack before loading it: this declaration's models must have
+// the build's layout, count and content SHA-256s, in source order. Singleton
+// and list hashes cover canonical bytes; map hashes cover key bytes followed
+// by canonical bytes, so changing a gameplay lookup key changes its identity.
+// Nothing changes the loaded pack, so rejection preserves its old assets.
+bool tide_pack_skinned_content(const uint8_t *bytes, size_t size, const char *qualified, uint32_t kind, uint32_t layout,
+                               const uint8_t *hashes, uint32_t count);
 
 // What's in a list of the pack's whose block says (a mesh's vertices or its
 // indices, tide_pack_mesh), for the draw list: false for any other list, and

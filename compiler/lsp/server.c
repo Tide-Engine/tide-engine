@@ -9,6 +9,7 @@
 #include "common.h"
 #include "folders.h"
 #include "json.h"
+#include "model_metadata.h"
 #include "packages.h"
 
 enum {
@@ -802,7 +803,9 @@ static void register_watchers(lsp_server *s)
     jb_put(&b, "{\"jsonrpc\":\"2.0\",\"id\":\"" WATCH_REQUEST "\",\"method\":\"client/registerCapability\","
                "\"params\":{\"registrations\":[{\"id\":\"tide-files\",\"method\":\"workspace/didChangeWatchedFiles\","
                "\"registerOptions\":{\"watchers\":[{\"globPattern\":\"**/*.tide\"},"
-               "{\"globPattern\":\"**/build/tools/games.txt\"},{\"globPattern\":\"**/tide.packages\"}");
+               "{\"globPattern\":\"**/build/tools/games.txt\"},{\"globPattern\":\"**/tide.packages\"},"
+               "{\"globPattern\":\"**/*.gltf\"},{\"globPattern\":\"**/*.glb\"},"
+               "{\"globPattern\":\"**/.tide/assets/urls/*\"}");
     bool outside = s->manifest != NULL;
     for (int i = 0; outside && i < s->root_count; i++) outside = !under(s->manifest, s->roots[i]);
     const char *slash = outside ? strrchr(s->manifest, '/') : NULL;
@@ -1499,12 +1502,18 @@ void lsp_handle(lsp_server *s, const char *message, const size_t len)
         const char *uri = json_str(json_path(params, "textDocument", "uri", NULL));
         const json *text = json_get(params, "text");
         if (uri && text && text->kind == JSON_STRING && find_doc(s, uri)) set_doc(s, uri, text);
+        if (!s->watch_files) model_metadata_invalidate(NULL);
         refresh(s);
     } else if (strcmp(method, "workspace/didChangeWatchedFiles") == 0) {
         // A deleted file's diagnostics go with it, unless the editor still has it open.
         const json *changes = json_get(params, "changes");
         for (int i = 0; changes && changes->kind == JSON_ARRAY && i < changes->count; i++) {
             const char *uri = json_str(json_get(changes->items[i], "uri"));
+            if (uri) {
+                char *changed = uri_to_path(uri);
+                model_metadata_invalidate(changed);
+                free(changed);
+            }
             if (!uri || json_int(json_get(changes->items[i], "type"), 0) != 3 || find_doc(s, uri)) continue;
             publish_diagnostics(s, uri, -1);
             char *path = uri_to_path(uri);
@@ -1531,6 +1540,7 @@ void lsp_handle(lsp_server *s, const char *message, const size_t len)
     } else if (strcmp(method, "workspace/willRenameFiles") == 0) {
         will_rename_files(s, id, params);
     } else if (strcmp(method, "workspace/didRenameFiles") == 0) {
+        model_metadata_invalidate(NULL);
         refresh(s); // The files moved: what's missing, and what's found, changed
     } else if (strcmp(method, "workspace/symbol") == 0) {
         const char *query = json_str(json_get(params, "query"));

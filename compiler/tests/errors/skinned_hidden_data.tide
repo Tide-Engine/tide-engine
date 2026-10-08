@@ -1,0 +1,3 @@
+// expect: Pose has no member 'data'
+scene Main { }
+int Read(Pose pose) { return pose.data.count; }

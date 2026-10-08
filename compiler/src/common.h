@@ -86,6 +86,7 @@ typedef enum diag_severity {
     DIAG_ERROR,
     DIAG_WARNING,
     DIAG_NOTE, // Belongs to the previous error or warning; `at` is zero, or where it points.
+    DIAG_INFO, // A standalone informational diagnostic, without affecting compilation.
 } diag_severity;
 
 // Receives diagnostics instead of stderr, for tools such as the language server.
@@ -105,6 +106,7 @@ int diag_source_count(void);
 void diag_set_sink(diag_sink sink, void *user); // NULL prints to stderr again.
 void diag_error(loc at, const char *fmt, ...);
 void diag_warning(loc at, const char *fmt, ...);
+void diag_info(loc at, const char *fmt, ...);
 void diag_note(const char *fmt, ...); // Attaches to the previous error or warning.
 // A note about another place in the code, which its text names too: a sink
 // gets `at`, where diag_note gives it none.

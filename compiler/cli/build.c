@@ -1650,13 +1650,21 @@ static bool generate(build *b, const char *gen, const bool layout)
     if (!inputs) return false;
     arena_reset(); // What an earlier build compiled, when a run rebuilds the game
     b->externs = (sb){0};
-    free_asset_paths(&b->info);
+    game_info next_info = {0};
     char *pack = pack_of(gen);
     // The game's folder is where its .tide/ is: the hashes of the files its assets name, and fetched URLs, are kept there
     const codegen_options codegen = {.name = "game", .out_dir = gen, .line_directives = true, .layout = layout, .externs = &b->externs,
-                                     .info = &b->info, .game_folder = b->folder, .pack = pack,
+                                     .info = &next_info, .game_folder = b->folder, .pack = pack,
                                      .defines = b->opts->defines, .define_count = b->opts->define_count};
     const bool ok = compile_inputs(inputs, count, &codegen, NULL);
+    if (ok) {
+        free_asset_paths(&b->info);
+        b->info = next_info;
+    } else {
+        // A bad asset can be fixed without editing code: keep watching the
+        // paths and rebuild policy of the last successful generation.
+        free_asset_paths(&next_info);
+    }
     free(pack);
     free(inputs);
     free_files(&paths);
@@ -2075,7 +2083,11 @@ int tide_run_reloading(const char *root, const build_options *opts, const char *
             if (!build_library(&r)) fprintf(stderr, "tide: the game keeps running its last build\n");
         } else if (assets_changed_at >= 0 && sys_now_ms() - assets_changed_at >= SETTLE_MS) {
             assets_changed_at = -1;
-            repack(&r); // Data, not code: no build
+            if (r.b.info.assets_affect_match) {
+                if (!build_library(&r)) fprintf(stderr, "tide: the game keeps running its last build\n");
+            } else {
+                repack(&r);
+            }
         }
     }
     sys_remove_tree(r.dir);
@@ -2256,7 +2268,13 @@ int tide_run_web(const char *root, const build_options *opts, const bool open_pa
             fflush(stdout);
         } else if (assets_changed_at >= 0 && sys_now_ms() - assets_changed_at >= SETTLE_MS) {
             assets_changed_at = -1;
-            repack(r); // The page fetches the new pack, and the game loads it
+            if (r->b.info.assets_affect_match) {
+                if (build_library(r)) printf("tide: built it again; the page reloads it\n");
+                else fprintf(stderr, "tide: the page keeps running its last build\n");
+                fflush(stdout);
+            } else {
+                repack(r);
+            }
         }
     }
 }
