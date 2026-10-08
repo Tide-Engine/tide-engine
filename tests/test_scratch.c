@@ -115,7 +115,12 @@ TIDE_TEST(scratch_big_text_is_whole)
     TIDE_CHECK(is_pattern(s, n, "end"));
     TIDE_CHECK(is(b, "12345"));
     TIDE_CHECK(tide_str_ends_with(s, tide_str_from_cstr("fend")));
-    TIDE_CHECK(is(tide_str_substring(s, (int32_t)TIDE_SCRATCH_BYTES - 6, 12), "abcdef012345")); // Across the first slot's end
+    // A piece of it, across the first slot's end: where the text is, so what follows it is the text's next byte,
+    // and as C text it's a copy that ends
+    const tide_str piece = tide_str_substring(s, (int32_t)TIDE_SCRATCH_BYTES - 6, 12);
+    TIDE_CHECK(piece.ptr == s.ptr + TIDE_SCRATCH_BYTES - 6 && piece.bytes == 12 && piece.chars == 12);
+    TIDE_CHECK(memcmp(piece.ptr, "abcdef012345", 12) == 0 && piece.ptr[12] == '6');
+    TIDE_CHECK(strcmp(tide_str_c(piece), "abcdef012345") == 0);
 
     // A field's copy of it (a struct literal's), read back
     const tide_text temp = tide_text_temp(s);

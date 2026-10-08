@@ -1,0 +1,68 @@
+// Chars the GPU reads: an int there, its code point. Fields of a singleton
+// and of a draw's values, an array's and a list's elements, a map's keys,
+// literals, a switch, what they compare and convert to, and char(n).
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float2 uv;
+}
+struct Legend
+{
+    char mark = '#';
+    char[2] pair;
+    int code;
+}
+singleton Glyphs
+{
+    char first = 'a';
+    List<char> line;
+    Map<char, float> widths;
+}
+local singleton Stage
+{
+    List<Corner> corners;
+    List<int> faces;
+}
+
+const char SPACE = ' ';
+
+float Width(char c)
+{
+    switch (c)
+    {
+        case 'i':
+            return 0.25;
+        case SPACE:
+            return 0.5;
+        default:
+            return 1.0;
+    }
+}
+
+vert Raise(mut Corner corner, Glyphs glyphs)
+{
+    if (glyphs.first >= 'a' && glyphs.first <= 'z') corner.position.y += glyphs.first - 'a';
+}
+
+frag Lit(Corner corner, out Color color, Glyphs glyphs, Legend legend)
+{
+    mut var wide = Width(legend.mark) + Width(glyphs.line[1]) + glyphs.widths['w'];
+    foreach (var c in glyphs.line)
+    {
+        if (c == legend.pair[0] || c == '\n') continue;
+        wide += Width(c);
+    }
+    char next = char(legend.code + 1);
+    float shade = next;
+    var none = char(-1) == '\0' ? 0.5 : 1.0;
+    color = Color(wide, shade * none, int(legend.pair[1]) * 0.5 + (glyphs.widths.Has(next) ? 1 : 0), 1);
+}
+
+view Show(Stage scene)
+{
+    mut var legend = Legend { code = 64 };
+    legend.pair[0] = 'x';
+    Draw.Mesh(scene.corners, scene.faces, float4x4.identity, Raise, Lit, legend);
+}

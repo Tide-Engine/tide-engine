@@ -1,0 +1,90 @@
+// expect: ends 0 0 0 0 0 0 104 100
+// expect: wide 233 246 0 0 108
+// expect: each 11 héllo wörld
+// expect: none "" 0 "ab" 2
+// expect: codes 0 0 0 0 1114111 55295 57344 0
+// expect: long 1441792 100 0 246 1048576 104 0
+// expect: counts 262144
+// expect: finds -1 false -1 7 "héo wörd" ""
+// expect: piece "éllo" 233 0 0 "lo" "élloéllo" "héllo wörld"
+// expect: grown "abcd" "cd" "cdef" "bc" "bcx" 0
+// expect: kept "wörld" 246 5
+
+// A text's characters read anywhere: before its start, past its end and at
+// the ints' limits, of text that's empty and of text that's megabytes, a byte
+// a character and more. Chars made of any number, and pieces of text, which
+// are where the text is, read past their own ends and joined to.
+
+singleton Words
+{
+    string line = "héllo wörld";
+    string empty;
+    int most = 2147483647;
+    int least = 0x80000000;
+    bool done;
+}
+
+scene Main { }
+
+system Run(mut Words w)
+{
+    if (w.done) return;
+    w.done = true;
+    var s = w.line;
+
+    Debug.Log($"ends {int(s[-1])} {int(s[w.least])} {int(s[w.most])} {int(s[11])} {int(w.empty[0])} {int(w.empty[w.least])} "
+        + $"{int(s[0])} {int(s[10])}");
+    Debug.Log($"wide {int(s[1])} {int(s[7])} {int(s[s.length])} {int(s[s.length + w.most])} {int(s[2])}");
+
+    mut var each = "";
+    mut var count = 0;
+    foreach (var c in s)
+    {
+        each += c;
+        count += 1;
+    }
+    Debug.Log($"each {count} {each}");
+
+    // The character that's none joins as nothing, and no text has any to go through
+    mut var none = "";
+    foreach (var c in w.empty) none += c;
+    none += s[99];
+    var ab = "a" + s[-5] + "b";
+    Debug.Log($"none \"{none}\" {none.length} \"{ab}\" {ab.length}");
+
+    Debug.Log($"codes {int(char(-1))} {int(char(w.least))} {int(char(w.most))} {int(char(0x110000))} {int(char(0x10FFFF))} "
+        + $"{int(char(0xD7FF))} {int(char(0xE000))} {int(char(0xDFFF))}");
+
+    // Megabytes, read at their far end: text that's walked to it, and text of a byte a character
+    mut var long = s;
+    for (var i = 0; i < 17; i++) long = long + long;
+    mut var plain = "abcdefgh";
+    for (var i = 0; i < 17; i++) plain = plain + plain;
+    Debug.Log($"long {long.length} {int(long[long.length - 1])} {int(long[long.length])} {int(long[long.length - 4])} "
+        + $"{plain.length} {int(plain[plain.length - 1])} {int(plain[plain.length])}");
+    mut var wide = 0;
+    foreach (var c in long)
+    {
+        if (c > 127) wide += 1;
+    }
+    Debug.Log($"counts {wide}");
+
+    // Text's members, with numbers no character has
+    Debug.Log($"finds {s.IndexOf(char(-1))} {s.Contains(char(w.most))} {w.empty.IndexOf('h')} {s.IndexOf('ö')} "
+        + $"\"{s.Replace('l', char(-9))}\" \"{w.empty.Replace('a', 'b')}\"");
+
+    // A piece is where its text is: its own ends are its ends, and joining to it changes neither
+    var piece = s.Substring(1, 4);
+    Debug.Log($"piece \"{piece}\" {int(piece[0])} {int(piece[4])} {int(piece[-1])} \"{piece.Substring(2, w.most)}\" "
+        + $"\"{piece + piece}\" \"{s}\"");
+    var built = "ab" + w.empty + "cd";
+    var tail = built.Substring(2);
+    var more = tail + "ef";
+    var middle = built.Substring(1, 2);
+    var further = middle + "x";
+    Debug.Log($"grown \"{built}\" \"{tail}\" \"{more}\" \"{middle}\" \"{further}\" {int(middle[2])}");
+
+    // ...and kept in a field, it's the world's own copy
+    w.line = s.Substring(6);
+    Debug.Log($"kept \"{w.line}\" {int(w.line[1])} {w.line.length}");
+}

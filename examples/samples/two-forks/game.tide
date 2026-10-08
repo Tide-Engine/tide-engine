@@ -282,10 +282,9 @@ void LayOut(mut Board board, string plan)
     board = Board { };
     mut var x = 0;
     mut var y = 0;
-    for (var i = 0; i < plan.length; i++)
+    foreach (var mark in plan)
     {
-        var mark = plan.Substring(i, 1);
-        if (mark == "/")
+        if (mark == '/')
         {
             x = 0;
             y += 1;
@@ -298,11 +297,11 @@ void LayOut(mut Board board, string plan)
         }
         var at = int2(x, y);
         mut var tile = Tile.Grass;
-        if (mark == "~") tile = Tile.Water;
-        else if (mark == "#") tile = Tile.Coal;
-        else if (mark == "=") tile = Tile.Gas;
-        else if (mark == "o") tile = Tile.Pedal;
-        else if (mark == "^") tile = Tile.Rock;
+        if (mark == '~') tile = Tile.Water;
+        else if (mark == '#') tile = Tile.Coal;
+        else if (mark == '=') tile = Tile.Gas;
+        else if (mark == 'o') tile = Tile.Pedal;
+        else if (mark == '^') tile = Tile.Rock;
         board.tiles[y * W + x] = tile;
         board.size = int2(Math.Max(board.size.x, x + 1), y + 1);
 
@@ -313,7 +312,7 @@ void LayOut(mut Board board, string plan)
         if (second >= 0) board.chefs[1] = Chef { at = at, facing = second, spin = second };
 
         // A sausage is two of its mark: the second belongs to the one before it
-        if ((mark == "-" || mark == "|") && board.count < SAUSAGES)
+        if ((mark == '-' || mark == '|') && board.count < SAUSAGES)
         {
             mut var begun = false;
             for (var j = 0; j < board.count; j++)
@@ -322,7 +321,7 @@ void LayOut(mut Board board, string plan)
             }
             if (!begun)
             {
-                board.sausages[board.count] = Sausage { at = at, upright = mark == "|" };
+                board.sausages[board.count] = Sausage { at = at, upright = mark == '|' };
                 board.count += 1;
             }
         }
