@@ -12052,8 +12052,11 @@ static void gen_routines(gen *g)
     VEC(const decl *) all = {0};
     for (int i = 0; i < g->prog->decls.count; i++) {
         const decl *d = g->prog->decls.items[i];
-        if (d->kind == DECL_FUNCTION && !d->takes_action && !d->is_extern && !d->is_async) vec_push(all, d); // Those are copied into each call
-        for (int k = 0; k < d->methods.count; k++) vec_push(all, d->methods.items[k]);
+        // Those are copied into each call. One that takes a grid is the GPU's alone (shader.c writes it)
+        if (d->kind == DECL_FUNCTION && !d->takes_action && !d->is_extern && !d->is_async && !d->gpu_only) vec_push(all, d);
+        for (int k = 0; k < d->methods.count; k++) {
+            if (!d->methods.items[k]->gpu_only) vec_push(all, d->methods.items[k]);
+        }
     }
     if (all.count == 0) return;
     sb_put(o, "// Methods and functions\n\n");
@@ -16512,7 +16515,7 @@ static void gen_shaders(gen *g)
                     while (sh->bound.items[b] != texture->source) b++;
                     sb_printf(&list, "tide_%sb%d->%s", texture->field->is_local ? "l" : "", b, field_cname(texture->field));
                 }
-                if (holds->kind == DECL_GRID || texture->asset || texture->field->type.kind == TY_GRID) { // A grid: its cells, and its size
+                if (holds->kind == DECL_GRID) { // A grid: its cells, and its size
                     sb_printf(o, "    tide_textures[%d] = tide_draw_grid_data(tide_draw, %s, &%s, %du, tide_shader_%d_words_%d, "
                                  "&tide_uniforms.i[%d]);\n", t, list.data, grid_shape_name(holds), (unsigned)(floats + ints), s, t,
                               texture->count_at);

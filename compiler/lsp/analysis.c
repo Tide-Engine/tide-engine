@@ -5833,7 +5833,8 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         return;
     }
     // In a frag or vert: the GPU has no text, lists, maps or sets, and a grid there is a texture
-    const bool gpu = is_shader(sc->decl);
+    // ...and in a function that takes a grid, which only those call
+    const bool gpu = is_shader(sc->decl) || (sc->decl && sc->decl->gpu_only);
     if (t.kind == TY_RENDER_TARGET) {
         item(c, "color", CK_PROPERTY, "Texture",
              "The target's GPU color image, without CPU readback: its first, where it holds several.", NULL);
@@ -6338,14 +6339,14 @@ static void complete_constants(completion *c, const type_kind only)
     }
 }
 
-// Assets are values by name too. The GPU reads one image or cube; the CPU
+// Assets are values by name too. The GPU reads one image, cube or file's bytes; the CPU
 // can also read text, bytes and the lists and maps made from a glob.
 static void complete_assets(completion *c, const bool gpu)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
         if (d->kind != DECL_ASSET) continue;
-        if (gpu && (d->asset_many || (d->asset_kind != ASSET_GRID && d->asset_kind != ASSET_TEXTURE
+        if (gpu && (d->asset_many || (d->asset_kind != ASSET_GRID && d->asset_kind != ASSET_TEXTURE && d->asset_kind != ASSET_BYTES
                                      && d->asset_kind != ASSET_CUBEMAP))) continue;
         sb detail = {0};
         sb_printf(&detail, "asset " STR_FMT, STR_ARG(d->return_type_name));
