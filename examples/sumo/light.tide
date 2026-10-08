@@ -234,7 +234,7 @@ frag CrateLook(Corner corner, out Color color, Solid solid, Instance instance, R
         tone = 1;
     }
     Color paint = Color(solid.tint.r * tone, solid.tint.g * tone, solid.tint.b * tone, 1);
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 normal = instance.Normal(corner.normal);
     float sun = Sunlight(shadow.depth, this.world, normal, shadow.toLamp);
     color = Lit(paint, normal, this.world, room, 0.25, sun);
 }
@@ -249,7 +249,7 @@ frag BallLook(Corner corner, out Color color, Instance instance, Room room, Ball
     mut Color paint = band < 0.2 ? Color.white : band > 0.82 ? Shade(seat, 0.45) : seat;
     if (ball.heavy > 0) paint = band < 0.2 ? seat : band > 0.82 ? Color(0.5, 0.52, 0.58) : Color(0.16, 0.17, 0.2);
     paint = Mix(paint, Color.white, Math.Saturate(ball.flash + ball.charge * (0.35 + 0.25 * Math.Sin(room.beat * 14))));
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 normal = instance.Normal(corner.normal);
     float sun = Sunlight(shadow.depth, this.world, normal, shadow.toLamp);
     color = Lit(paint, normal, this.world, room, ball.heavy > 0 ? 1.6 : 1.0, sun);
 }
@@ -257,7 +257,7 @@ frag BallLook(Corner corner, out Color color, Instance instance, Room room, Ball
 // Anything of one color, lit: a pickup.
 frag Plain(Corner corner, out Color color, Solid solid, Instance instance, Room room, Shadow shadow)
 {
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 normal = instance.Normal(corner.normal);
     float sun = Sunlight(shadow.depth, this.world, normal, shadow.toLamp);
     color = Lit(solid.tint, normal, this.world, room, 0.9, sun);
 }

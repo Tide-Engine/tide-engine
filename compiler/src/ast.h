@@ -696,6 +696,7 @@ typedef struct decl {
     // Frags and verts (DECL_SHADER), and the functions they call
     bool is_frag;                 // A frag; else a vert
     bool pixel_world;             // A frag reads this.world: pass the world position from its vertices
+    bool world_normal;            // A frag or a vert calls instance.Normal: a frag's is handed the matrix normals go through
     int outputs;                  // A frag: the colors it writes, its `out Color` parameters, which go to a target's color images in that order
     VEC(shader_sample) samples;   // The grids it samples, once each
     int gpu_state;                // Code checked for the GPU: 1 while it is, 2 once it fits, 3 if it doesn't
@@ -776,6 +777,7 @@ typedef enum builtin_call {
     CALL_GRID,      // cells.Clear(), a grid's methods: `name` says which; type_decl is the grid
     CALL_NEW_GRID,  // Grid2(1024, 1024) or Grid3(...): a grid with that size (0: open), whose type comes from where it goes
     CALL_DISCARD,   // this.Discard(), in a frag: the pixel isn't drawn
+    CALL_NORMAL,    // instance.Normal(normal), in a frag or a vert: the mesh's normal as it is in the world
     CALL_RANDOM,    // random.NextInt(6), a Random's methods: calls c_callee with the generator's address first
     CALL_ROLL,      // Random.NextInt(6), on the type: calls c_callee with the generator its code was handed
 } builtin_call;
@@ -1135,6 +1137,7 @@ typedef struct shader {
     int rolled_at, seed_at;
     bool *frag_fields;          // By the vertex's field: whether its pixels read it
     bool frag_world;            // ...and whether they read where they are in the world
+    bool frag_normals;          // ...and whether they call instance.Normal: the vertex stage passes on what normals go through
     const char *name;           // For messages: "Wave and Shade on BoxVertex"
     const char *glsl_vertex, *glsl_fragment, *wgsl;
 } shader;

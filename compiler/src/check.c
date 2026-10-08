@@ -1894,6 +1894,7 @@ static bool always_returns(const stmt *s);
 static void check_stmt(checker *c, stmt *s);
 static type check_grid_method(checker *c, expr *e, type grid);
 static type check_grid_sample(const checker *c, expr *e, type grid);
+static type check_instance_call(expr *e);
 static type check_depth_read(const checker *c, expr *e);
 static type check_cube_sample(const checker *c, expr *e);
 static type check_new_grid(checker *c, expr *e, type want);
@@ -5952,6 +5953,10 @@ static type check_method(checker *c, expr *e)
         e->call = CALL_DISCARD;
         return T_VOID_;
     }
+    if (obj.kind == TY_RECORD && obj.decl == c->prog->instance) { // instance.Normal(vertex.normal)
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return check_instance_call(e);
+    }
     if (obj.kind == TY_LIST) return check_list_method(c, e, obj);
     if (obj.kind == TY_MAP || obj.kind == TY_SET) return check_map_method(c, e, obj);
     if (obj.kind == TY_GRID) return check_grid_method(c, e, obj);
@@ -8016,6 +8021,31 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
     e->call = CALL_GRID;
     e->type_decl = grid.decl;
     return (type){TY_COLOR, NULL};
+}
+
+// instance.Normal(normal), in a frag or a vert: a normal of the mesh as it is
+// in the world, of length 1. It goes through the draw's transform as a normal
+// has to, which Math.Rotate doesn't where the transform scales the mesh more
+// one way than another (ex_normal in shader.c).
+static type check_instance_call(expr *e)
+{
+    const str instance = e->object->kind == E_NAME ? e->object->name : str_from("instance");
+    if (!str_eq_c(e->name, "Normal")) {
+        diag_error(e->at, "an Instance has one method, 'Normal(normal)', which gives a normal of the mesh as it is in the "
+                          "world; the rest is its 'transform'");
+        return T_ERR;
+    }
+    if (!order_named_args(e, "normal", 0)) return T_ERR;
+    for (int i = 0; i < e->args.count; i++) {
+        if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR; // Said already
+    }
+    if (e->args.count != 1 || e->args.items[0]->type.kind != TY_FLOAT3) {
+        diag_error(e->at, "Normal takes a normal of the mesh, a float3 of any length, and gives it as it is in the world, of "
+                          "length 1: '" STR_FMT ".Normal(vertex.normal)'", STR_ARG(instance));
+        return T_ERR;
+    }
+    e->call = CALL_NORMAL;
+    return (type){TY_FLOAT3, NULL};
 }
 
 // shadow.Sample(uv) and shadow.Compare(uv, value): a render target's depth,

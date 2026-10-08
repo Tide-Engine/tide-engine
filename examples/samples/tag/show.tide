@@ -354,7 +354,7 @@ void AddKid(mut Fx fx, Kid kid, bool mine, bool it, float counted)
     var head = root + Math.Mul(lean, float3(0, 1.03, 0)) * big;
     var gem = Piece(head + up * (0.72 + Math.Sin(fx.beat * 2) * 0.06), quaternion.Euler(float3(0.62, fx.beat * 2, 0.79)), float3(0.26),
                     Color(1, 0.25, 0.2), 0.8);
-    fx.boxes.Add(Solid { transform = gem.transform, size = gem.size, tint = gem.tint, gloss = gem.gloss, glow = 0.7 });
+    fx.boxes.Add(Solid { transform = gem.transform, tint = gem.tint, gloss = gem.gloss, glow = 0.7 });
 }
 
 [Stage(Layers.Gather)]
@@ -416,7 +416,7 @@ view Turning(Time time, Recess recess, mut Fx fx)
         var far = 15.5 + Math.Frac(i * 0.37) * 5;
         var at = float3(Math.Cos(around) * far, -2.2 + Math.Frac(i * 0.61) * 3.4, Math.Sin(around) * far);
         var big = 1.1 + Math.Frac(i * 0.83) * 0.9;
-        fx.clouds.Add(Solid { transform = float4x4.TRS(at, quaternion.AxisAngle(up, i * 1.3), float3(big)), size = float3(big), kind = CLOUD });
+        fx.clouds.Add(Solid { transform = float4x4.TRS(at, quaternion.AxisAngle(up, i * 1.3), float3(big)), kind = CLOUD });
     }
 }
 

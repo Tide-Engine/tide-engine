@@ -213,7 +213,7 @@ float Sunlight(DepthTexture depth, float3 world, float3 normal, float4x4 toLamp)
 frag CrateLook(Corner corner, out Color color, Solid solid, Instance instance, Room room, Shadow shadow)
 {
     ...
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 normal = instance.Normal(corner.normal);
     float sun = Sunlight(shadow.depth, this.world, normal, shadow.toLamp);
     color = Lit(paint, normal, this.world, room, 0.25, sun);
 }

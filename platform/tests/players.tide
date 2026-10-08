@@ -1,0 +1,72 @@
+// A game for a run of several players with no window (platform/tests/players.mjs):
+// Main is the match's, so the run's first player opens it and the others join.
+// Each player has a block, in a row and a color of the order it arrived in,
+// which its own D key moves, 40 steps at most. A machine marks its own
+// player's row, and draws a block for where it stands in the session, so the
+// test reads off each player's pictures whose they are and what match they're of.
+
+settings { maxPlayers = 4; }
+
+scene Main { }
+
+component Block
+{
+    int seat; // The order its player arrived in
+    int steps;
+}
+
+singleton Roster
+{
+    int arrivals;
+}
+
+input Keys
+{
+    bool right;
+
+    Sample(Devices devices)
+    {
+        right = devices.keyboard.d.pressed;
+    }
+}
+
+event(PlayerJoined joined) Arrive(mut Roster roster)
+{
+    Spawn(Block { seat = roster.arrivals }, Owner { player = joined.player });
+    roster.arrivals += 1;
+}
+
+system Step(Keys keys, mut Block block)
+{
+    if (keys.right && block.steps < 40) block.steps += 1;
+}
+
+// X stops the program of the machine it's pressed on, as a game that breaks would
+view Background(Devices devices)
+{
+    Draw.Clear(Color(0, 0, 1));
+    if (devices.keyboard.x.down) Debug.Assert(false, "stopped, as the test asked");
+}
+
+view Blocks(Block block)
+{
+    Draw.SetScreen();
+    var color = block.seat == 0 ? Color(1, 0, 0) : block.seat == 1 ? Color(0, 1, 0) : Color(1, 1, 0);
+    Draw.Rect(float2(40 + block.steps * 4, 30 + block.seat * 40), float2(20, 20), color);
+}
+
+view Mine(Block block, with ownership)
+{
+    Draw.SetScreen();
+    Draw.Rect(float2(10, 30 + block.seat * 40), float2(10, 10), Color(1, 1, 1));
+}
+
+// Where this machine stands: it runs the server, its match is in the first
+// player's room, and its ping is a network's, neither nothing nor long
+view Where(Session session)
+{
+    Draw.SetScreen();
+    if (session.server) Draw.Rect(float2(300, 20), float2(20, 20), Color(1, 1, 1));
+    if (session.room == "AAAAAA") Draw.Rect(float2(300, 60), float2(20, 20), Color(0, 1, 1));
+    if (!session.server && session.ping > 0 && session.ping < 100) Draw.Rect(float2(300, 100), float2(20, 20), Color(1, 0, 1));
+}

@@ -437,7 +437,7 @@ void MakeModels(mut Models models)
 // box's its sides, and a mesh's what it's scaled by.
 Solid Piece(float3 at, quaternion turn, float3 size, Color tint, float gloss)
 {
-    return Solid { transform = float4x4.TRS(at, turn, size), size = size, tint = tint, gloss = gloss };
+    return Solid { transform = float4x4.TRS(at, turn, size), tint = tint, gloss = gloss };
 }
 
 // A rod from one place to another: an arm, a leg, a swing's chain.
