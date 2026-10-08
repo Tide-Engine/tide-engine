@@ -118,7 +118,7 @@ async void Reveal(mut Banner banner)
 
 - **The match can't.** A frame's length is another on every machine, so a system or a match handler that reads it is an error, which says to take `Time time` and read `time.dt`, a tick's length. A function that reads it is local code, and the match can't call it.
 - **It needs no match.** It's there in a local scene and while connecting, and it's 0 only before the first frame, in a handler that runs as the program starts.
-- **It's the frame's real length**, never negative, and long after a stall, so clamp it where that would show. There's no clock of seconds beside it: a float of seconds gets coarser the longer a program runs, so add `Frame.dt` up into a field of your own and wrap it where it repeats (see [A frame's length](./views.md#a-frame-s-length)).
+- **It's the frame's real length**, never negative, and long after a stall, so clamp it where that would show. There's no clock of seconds beside it, no `Frame.time`: a float of seconds gets coarser the longer a program runs, so add `Frame.dt` up into a field of your own and wrap it where it repeats (see [A frame's length](./views.md#a-frame-s-length)). The match's seconds are `time.t`.
 
 ## Local fields
 
@@ -204,7 +204,7 @@ It takes the one component or singleton whose local fields are going, and local 
 No mistake here can reach a running game, because the compiler enforces the boundary:
 
 - **Match code** (systems, match event handlers, match scenes) can't read or write anything local, a component's [local fields](#local-fields) included, and can't read this machine's `Devices`: it takes a `Devices` parameter, the owner's, which the input sends.
-- **Local code** (views, local event handlers, local scenes) can read the match, but never change it directly: `mut` on one of the match's components or singletons only writes its local fields. It can send [commands](./commands.md) for a match handler to check and act on; it cannot spawn match entities or send match events. Views read the match as it's drawn, or as the server [confirmed](./views.md#confirmed-state) it, and a local handler [hears its events](./events.md#local-handlers).
+- **Local code** (views, local event handlers, local scenes) can read the match, but never change it directly: `mut` on one of the match's components or singletons only writes its local fields. It can send [commands](./commands.md) for a match handler to check and act on; it cannot spawn match entities or send match events. Views read the match as it's drawn, or as the server [confirmed](./views-and-the-match.md#confirmed-state) it, and a local handler [hears its events](./events.md#local-handlers).
 - The input's `Sample` reads this machine's devices and local singletons, and writes only the input.
 
 Input and commands carry local actions into the match. Starting, joining and leaving a match are session calls, which never touch a running match (see [Matches](../multiplayer/matches.md)). The errors say where to go instead:
