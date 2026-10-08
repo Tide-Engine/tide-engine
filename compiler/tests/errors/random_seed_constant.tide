@@ -1,3 +1,3 @@
-// expect: Random.seed is read in systems, views and the match's handlers, and the functions and methods they call
+// expect: Random.seed is read in code that runs: systems, views, handlers, tasks, and the functions and methods they call
 const int LUCK = Random.seed;
 scene Main { }

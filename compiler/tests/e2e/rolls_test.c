@@ -17,6 +17,19 @@ static tide_gui gui;
 
 #define DT (1.0f / 60.0f)
 
+static void frame(tide_local *l, const float seconds)
+{
+    tide_local_frame_time(l, seconds);
+    tide_draw_reset(&draw);
+    tide_frame(&world, NULL, 1.0f, NULL, l, &draw, &gui);
+}
+
+static int32_t cell(const tide_world *w, const tide_grid grid, const int x, const int y)
+{
+    const int32_t *c = tide_grid_read(&w->heap, grid, x, y, 0, &tide_shape_Grid2_int);
+    return c ? *c : 0;
+}
+
 static int walkers(const tide_world *w, tide_entity *out, const int room)
 {
     int count = 0;
@@ -118,6 +131,123 @@ TIDE_TEST(rolls_differ_between_a_handlers_runs)
     TIDE_CHECK(tide_get_Walker(&other, all[0]).poked == poked.poked);
 }
 
+// A parallel loop's steps, a foreach whose steps run at once, and a list's:
+// each place rolls for itself, and otherwise the tick after.
+TIDE_TEST(rolls_in_steps_are_each_places)
+{
+    tide_world_start_seeded(&world, DT, NULL, 8u);
+    for (int i = 0; i < 3; i++) tide_world_tick(&world);
+    static int32_t cells[256], through[256], blocks[256], row[48];
+    for (int pass = 0; pass < 2; pass++) {
+        int same = 0, same_through = 0, same_blocks = 0, same_row = 0;
+        for (int y = 0; y < 16; y++) {
+            for (int x = 0; x < 16; x++) {
+                const int32_t value = cell(&world, world.Field.cells, x, y);
+                const int32_t other = cell(&world, world.Field.through, x, y);
+                const int32_t block = cell(&world, world.Field.blocks, x, y);
+                TIDE_CHECK(value >= 1 && value <= 999000 && other >= 1 && other <= 999 && block >= 1 && block <= 999);
+                if (pass) same += cells[y * 16 + x] == value;
+                if (pass) same_through += through[y * 16 + x] == other;
+                if (pass) same_blocks += blocks[y * 16 + x] == block;
+                cells[y * 16 + x] = value;
+                through[y * 16 + x] = other;
+                blocks[y * 16 + x] = block;
+            }
+        }
+        TIDE_REQUIRE(tide_list_count(world.Field.row) == 48);
+        for (int i = 0; i < 48; i++) {
+            const int32_t value = *(const int32_t *)tide_list_at(world.Field.row, sizeof(int32_t), (uint32_t)i);
+            if (pass) same_row += row[i] == value;
+            row[i] = value;
+        }
+        // No two alike but by chance: of 256 six-digit numbers, a few pairs at the most
+        int alike = 0, alike_through = 0, alike_blocks = 0;
+        for (int a = 0; a < 256; a++) {
+            for (int b = a + 1; b < 256; b++) {
+                alike += cells[a] == cells[b];
+                alike_through += through[a] == through[b];
+                alike_blocks += blocks[a] == blocks[b];
+            }
+        }
+        TIDE_CHECK(alike < 4 && alike_through < 120 && alike_blocks < 120);
+        TIDE_CHECK(same < 4 && same_through < 12 && same_blocks < 12 && same_row < 3);
+        tide_world_tick(&world);
+    }
+    // The shuffle: the same twelve numbers, in another order than they went in
+    TIDE_REQUIRE(tide_list_count(world.Field.order) == 12);
+    int sum = 0, moved = 0;
+    for (int i = 0; i < 12; i++) {
+        const int32_t value = *(const int32_t *)tide_list_at(world.Field.order, sizeof(int32_t), (uint32_t)i);
+        sum += value;
+        moved += value != i;
+    }
+    TIDE_CHECK(sum == 66 && moved > 0);
+}
+
+static int chests(const tide_world *w, Chest *out)
+{
+    int count = 0;
+    for (uint32_t i = 0; i < w->entities.next_unused; i++) {
+        const tide_entity e = tide_entity_in_slot(&w->entities, i);
+        if (tide_has_Chest(w, e) && count < 2) out[count++] = tide_get_Chest(w, e);
+    }
+    return count;
+}
+
+// A task's rolls are a sequence of its own, across its waits and through what
+// it awaits; two tasks started alike in one tick roll differently, and so do
+// two of a handler's for one event sent twice.
+TIDE_TEST(rolls_in_tasks_go_on_across_their_waits)
+{
+    tide_world_start_seeded(&world, DT, NULL, 21u);
+    for (int i = 0; i < 20; i++) tide_world_tick(&world);
+    Chest all[2];
+    TIDE_REQUIRE(chests(&world, all) == 2);
+    for (int i = 0; i < 2; i++) {
+        TIDE_CHECK(all[i].first != all[i].second && all[i].second != all[i].later && all[i].first != all[i].later);
+        TIDE_CHECK(all[i].seed == 21);
+    }
+    TIDE_CHECK(all[0].first != all[1].first && all[0].second != all[1].second && all[0].later != all[1].later);
+    const Chest knocked = all[0].id == 0 ? all[0] : all[1];
+    TIDE_CHECK(knocked.knocks == 2 && knocked.knocked / 1000 != knocked.knocked % 1000);
+    // The same match again, and from a snapshot taken while the tasks wait
+    tide_world_start_seeded(&other, DT, NULL, 21u);
+    for (int i = 0; i < 2; i++) tide_world_tick(&other);
+    tide_world scratch = {0};
+    tide_world_copy(&scratch, &other);
+    for (int i = 0; i < 18; i++) tide_world_tick(&other);
+    for (int i = 0; i < 18; i++) tide_world_tick(&scratch);
+    Chest again[2], kept[2];
+    TIDE_REQUIRE(chests(&other, again) == 2 && chests(&scratch, kept) == 2);
+    for (int i = 0; i < 2; i++) {
+        TIDE_CHECK(again[i].first == all[i].first && again[i].later == all[i].later && again[i].knocked == all[i].knocked);
+        TIDE_CHECK(kept[i].second == all[i].second && kept[i].later == all[i].later && kept[i].knocked == all[i].knocked);
+    }
+    TIDE_CHECK(tide_world_hash(&other) == tide_world_hash(&world) && tide_world_hash(&scratch) == tide_world_hash(&world));
+    tide_world_free(&scratch);
+}
+
+// Sample rolls with the generator of the machine that samples, and reads the
+// seed its last frame's match had; with no local state it still rolls.
+TIDE_TEST(rolls_in_sample_are_the_machines_that_sends)
+{
+    static tide_devices devices;
+    tide_world_start_seeded(&world, DT, NULL, 77u);
+    tide_local_init(&local);
+    frame(&local, DT);
+    const tide_input a = tide_input_sample(&devices, &local);
+    const tide_input b = tide_input_sample(&devices, &local);
+    TIDE_CHECK(a.luck != b.luck && a.luck >= 0 && a.luck < 1000000 && a.seed == 77 && b.seed == 77);
+    const tide_input alone = tide_input_sample(&devices, NULL);
+    const tide_input alone_again = tide_input_sample(&devices, NULL);
+    TIDE_CHECK(alone.seed == 0 && alone.luck != alone_again.luck);
+    // What the match reads is what was sent
+    tide_world_set_server_input(&world, a);
+    tide_world_tick(&world);
+    TIDE_CHECK(world.Luck.last == a.luck);
+    tide_local_free(&local);
+}
+
 // The bits, on every platform: native, WebAssembly and Android have to give
 // this hash. If the rolls change on purpose, update it from one platform and
 // check the others agree.
@@ -125,16 +255,9 @@ TIDE_TEST(rolls_crossplatform_match)
 {
     tide_world_start_seeded(&world, DT, NULL, 20261008u);
     const uint64_t h = hash_after(&world, 120);
-    const uint64_t expected = 0x22D7734DCF1C61CFull;
+    const uint64_t expected = 0xBBF6BA5AC82F4EEEull;
     if (h != expected) printf("    rolls match: hash is 0x%016" PRIX64 ", expected 0x%016" PRIX64 "\n", h, expected);
     TIDE_CHECK(h == expected);
-}
-
-static void frame(tide_local *l, const float seconds)
-{
-    tide_local_frame_time(l, seconds);
-    tide_draw_reset(&draw);
-    tide_frame(&world, NULL, 1.0f, NULL, l, &draw, &gui);
 }
 
 // Local code rolls with this machine's generator: nothing of the match, the
@@ -159,6 +282,10 @@ TIDE_TEST(rolls_in_views_are_this_machines)
         last = local.Fx.last;
     }
     TIDE_CHECK(local.Fx.frames == 20);
+    // A local handler and a local task roll too, and read the seed
+    TIDE_CHECK(local.Fx.flashes == 1 && local.Fx.flash >= 5.0f && local.Fx.flash < 6.0f && local.Fx.flashSeed == 555);
+    TIDE_CHECK(local.Fx.twinkle >= 1.0f && local.Fx.twinkle < 2.0f && local.Fx.twinkled >= 2.0f && local.Fx.twinkled < 3.0f);
+    TIDE_CHECK(local.Fx.twinkleSeed == 555 && local.Fx.flash == twin.Fx.flash && local.Fx.twinkled == twin.Fx.twinkled);
     TIDE_CHECK(tide_world_hash(&world) == match);
     // Each entity a view runs for gets its own number
     int32_t shines[8];
