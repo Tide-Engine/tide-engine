@@ -29,6 +29,10 @@ To play together, open a room with the game's **Host** or **Invite** button and 
 <img src="/samples/thumbnails/tag.png" alt="" width="960" height="540" loading="lazy" decoding="async">
 <span class="sample-copy"><span class="sample-kind">3D · Party</span><strong class="sample-name">Tag<span class="visually-hidden"> (opens in a new tab)</span></strong><span class="sample-description">Playground tag for up to eight: whoever's it the least by the bell wins.</span><span class="sample-play">Play game <span aria-hidden="true">↗</span></span></span>
 </a></li>
+<li><a class="sample-card" data-sample="two-forks" href="/samples/two-forks/" target="_blank" rel="noopener">
+<img src="/samples/thumbnails/two-forks.png" alt="" width="960" height="540" loading="lazy" decoding="async">
+<span class="sample-copy"><span class="sample-kind">3D · Co-op puzzle</span><strong class="sample-name">Two Forks<span class="visually-hidden"> (opens in a new tab)</span></strong><span class="sample-description">Grill every sausage on both sides. No kitchen can be cooked by one chef alone.</span><span class="sample-play">Play game <span aria-hidden="true">↗</span></span></span>
+</a></li>
 <li><a class="sample-card" data-sample="pong" href="/samples/pong/" target="_blank" rel="noopener">
 <img src="/samples/thumbnails/pong.png" alt="" width="960" height="540" loading="lazy" decoding="async">
 <span class="sample-copy"><span class="sample-kind">2D · Arcade</span><strong class="sample-name">Pong<span class="visually-hidden"> (opens in a new tab)</span></strong><span class="sample-description">Keep the ball in play and send it past your opponent's paddle.</span><span class="sample-play">Play game <span aria-hidden="true">↗</span></span></span>
