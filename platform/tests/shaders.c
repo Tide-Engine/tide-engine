@@ -1028,7 +1028,7 @@ static void run_list_checks(const float turn, const char *when)
         {88, 8, {128, 128, 128}, "an element past a list's end is nothing"},
         {8, 24, {128, 64, 128}, "how many each list has, an empty one's none"},
         {24, 24, {128, 128, 64}, "a foreach over structs of three pixels each, with a switch on an enum"},
-        {40, 24, {196, 197, 0}, "a list of floats longer than two rows of its texture"},
+        {40, 24, {52, 53, 0}, "a list of floats, four to a pixel, longer than two rows of its texture"},
         {56, 24, {85, 64, 255}, "an element that's across two rows of its list's texture"},
         {72, 24, {187, 64, 255}, "a list's last element, in its third row"},
         {88, 24, {128, 128, 128}, "a vert that reads a list moved its square away"},
@@ -1042,6 +1042,11 @@ static void run_list_checks(const float turn, const char *when)
         {24, 72, {255, 0, 128}, "an array's last element, and nothing past it"},
         {40, 72, {207, 191, 64}, "a copy of an array written at places inside it and past its ends, and arrays through foreach and a function"},
         {56, 72, {255, 128, 64}, "an array that's in each element of a list"},
+        {8, 88, {200, 44, 128}, "a list of bytes, and a byte that keeps to 255 as it's added to"},
+        {24, 88, {64, 128, 191}, "a grid's cell by its place, past its first chunk, with nothing past its edges"},
+        {40, 88, {128, 128, 255}, "a grid's size, and a cell of a grid of ints"},
+        {56, 88, {0, 255, 0}, "an asset's grid, a cell by its place"},
+        {72, 88, {128, 191, 64}, "a while, a for that doubles, and a loop only a break ends"},
     };
     enum { COUNT = sizeof wanted / sizeof wanted[0] };
     local.Art.targetPass = 18;
