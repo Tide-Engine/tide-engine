@@ -5175,8 +5175,8 @@ void analysis_inlay_hints(const int start_line, const int end_line, jbuf *out)
     for (int i = 0; i < A.calls.count; i++) { // Heal(unit.stats, amount: 2), Draw.Circle(p, radius: 3, color)
         const expr *call = A.calls.items[i];
         if (call->at.file != A.doc || call->at.line - 1 < start_line || call->at.line - 1 > end_line) continue;
-        str names[16];
-        const int count = call_param_names(call, names, 16);
+        str *names = arena_alloc(sizeof(str) * (size_t)call->args.count);
+        const int count = call_param_names(call, names, call->args.count);
         for (int n = 0; n < written_count(call); n++) {
             const int k = written_param(call, n);
             const expr *arg = written_arg(call, n);
@@ -5204,10 +5204,11 @@ static bool fuzzy_match(const str name, const char *query)
     return true;
 }
 
-static void workspace_symbol(jbuf *out, int *written, const str name, const int kind, const loc at, const int len,
-                             const str container)
+static void workspace_symbol(const workspace_symbol_fn symbol, void *user, const str name, const int kind, const loc at,
+                             const int len, const str container)
 {
-    if ((*written)++) jb_put(out, ",");
+    jbuf buffer = {0};
+    jbuf *out = &buffer;
     jb_put(out, "{\"name\":");
     jb_string_n(out, name.ptr, (size_t)name.len);
     jb_printf(out, ",\"kind\":%d,\"location\":{\"uri\":", kind);
@@ -5220,20 +5221,22 @@ static void workspace_symbol(jbuf *out, int *written, const str name, const int 
         jb_string_n(out, container.ptr, (size_t)container.len);
     }
     jb_put(out, "}");
+    symbol(user, out);
+    jb_free(out);
 }
 
-void analysis_workspace_symbols(const char *query, jbuf *out, int *written)
+void analysis_workspace_symbols(const char *query, const workspace_symbol_fn symbol, void *user)
 {
     for (int i = 0; A.prog && i < A.written.count; i++) {
         const decl *d = A.written.items[i];
         if (d->builtin) continue;
         const int kind = symbol_kind(d);
         const str ns = decl_home(d) ? decl_home(d)->ns : (str){"", 0};
-        if (fuzzy_match(d->name, query)) workspace_symbol(out, written, d->name, kind, d->at, d->name.len, ns);
+        if (fuzzy_match(d->name, query)) workspace_symbol(symbol, user, d->name, kind, d->at, d->name.len, ns);
         for (int k = 0; k < d->methods.count; k++) {
             const decl *m = method_written(d->methods.items[k]);
             if (m->is_operator || !fuzzy_match(m->name, query)) continue;
-            workspace_symbol(out, written, m->name, SYMBOL_METHOD, m->at, m->name.len, d->qualified);
+            workspace_symbol(symbol, user, m->name, SYMBOL_METHOD, m->at, m->name.len, d->qualified);
         }
     }
 }
@@ -5851,27 +5854,34 @@ static void add_target_member(void *user, const builtin_member *m)
     item(c, m->name, CK_METHOD, m->detail, m->doc, m->snippet);
 }
 
-static int label_split(const char *label, int starts[16], int ends[16]);
+typedef struct label_span {
+    int start;
+    int end;
+} label_span;
+
+typedef VEC(label_span) label_spans;
+
+static label_spans label_split(const char *label);
 
 // What a built-in method's call starts as: its name and parentheses, with the
 // cursor inside when it takes arguments. One with an `out` parameter has its
 // arguments laid out, as that one's says `out`: TryGet(key, out var value).
 static void method_snippet(const method_form *form, sb *out)
 {
-    int starts[16];
-    int ends[16];
-    const int params = strstr(form->form, "out ") ? label_split(form->form, starts, ends) : 0;
+    const label_spans spans = strstr(form->form, "out ") ? label_split(form->form) : (label_spans){0};
+    const int params = spans.count;
     if (params <= 0) {
         sb_printf(out, "%s(%s)", form->name, strstr(form->form, "()") ? "" : "$1");
         return;
     }
     sb_printf(out, "%s(", form->name);
     for (int i = 0; i < params; i++) {
-        const char *text = form->form + starts[i];
-        const char *name = form->form + ends[i]; // Its name: the last word
+        const char *text = form->form + spans.items[i].start;
+        const char *name = form->form + spans.items[i].end; // Its name: the last word
         while (name > text && name[-1] != ' ') name--;
         const bool makes = strncmp(text, "out ", 4) == 0;
-        sb_printf(out, "%s%s${%d:%.*s}", i ? ", " : "", makes ? "out var " : "", i + 1, (int)(form->form + ends[i] - name), name);
+        sb_printf(out, "%s%s${%d:%.*s}", i ? ", " : "", makes ? "out var " : "", i + 1,
+                  (int)(form->form + spans.items[i].end - name), name);
     }
     sb_put(out, ")");
 }
@@ -7527,12 +7537,11 @@ static void visit_builtin_out(void *user, const char *label, const char *doc)
 {
     (void)doc;
     builtin_out *v = user;
-    int starts[16];
-    int ends[16];
-    const int params = label_split(label, starts, ends);
+    const label_spans spans = label_split(label);
+    const int params = spans.count;
     for (int p = 0; p < params; p++) {
-        const char *text = label + starts[p];
-        const char *end = label + ends[p];
+        const char *text = label + spans.items[p].start;
+        const char *end = label + spans.items[p].end;
         const char *word = end; // Its name: the last word
         while (word > text && word[-1] != ' ') word--;
         const str param_name = {word, (int)(end - word)};
@@ -7634,14 +7643,13 @@ static out_argument out_argument_at(const int open, const int last, const loc at
             if (str_eq(A.prog->components.items[i]->name, in_brackets)) component = A.prog->components.items[i];
         }
         sb label = {0};
-        int starts[16];
-        int ends[16];
         if (form && t.kind == TY_WORLD) format_world_method(form, component, &label);
         else if (form) format_method(form, t, &label);
-        const int params = form ? label_split(label.data, starts, ends) : 0;
+        const label_spans spans = form ? label_split(label.data) : (label_spans){0};
+        const int params = spans.count;
         for (int p = 0; p < params; p++) {
-            const char *text = label.data + starts[p];
-            const char *end = label.data + ends[p];
+            const char *text = label.data + spans.items[p].start;
+            const char *end = label.data + spans.items[p].end;
             const char *word = end; // Its name: the last word
             while (word > text && word[-1] != ' ') word--;
             const str param_name = {word, (int)(end - word)};
@@ -8756,13 +8764,13 @@ typedef struct signature_list {
 
 // The parameters in a signature's label, "Name(float2 center, float radius = 1)":
 // where each starts and ends, apart from the commas and parentheses of a
-// default's own, a generic type's, and text's. Returns how many (16 at most),
-// or -1 for a label with no parameter list.
-static int label_split(const char *label, int starts[16], int ends[16])
+// default's own, a generic type's, and text's. The spans grow with the label;
+// a count of -1 says it has no complete parameter list.
+static label_spans label_split(const char *label)
 {
+    label_spans spans = {0};
     const char *open = strchr(label, '(');
-    if (!open) return -1;
-    int count = 0;
+    if (!open) return (label_spans){.count = -1};
     int depth = 0;
     int angle = 0;
     bool in_default = false;
@@ -8773,7 +8781,7 @@ static int label_split(const char *label, int starts[16], int ends[16])
             for (p++; *p && *p != '"'; p++) {
                 if (*p == '\\' && p[1]) p++;
             }
-            if (!*p) return -1;
+            if (!*p) return (label_spans){.count = -1};
         } else if (ch == '(' || ch == '[' || ch == '{') {
             depth++;
         } else if ((ch == ')' || ch == ']' || ch == '}') && depth > 0) {
@@ -8785,26 +8793,24 @@ static int label_split(const char *label, int starts[16], int ends[16])
         } else if (ch == '=' && depth == 0) {
             in_default = true;
         } else if ((ch == ',' || ch == ')') && depth == 0 && angle == 0) {
-            if (p > start && count < 16) {
-                starts[count] = (int)(start - label);
-                ends[count] = (int)(p - label);
-                count++;
+            if (p > start) {
+                const label_span span = {(int)(start - label), (int)(p - label)};
+                vec_push(spans, span);
             }
-            if (ch == ')') return count;
+            if (ch == ')') return spans;
             start = p + 1;
             while (*start == ' ') start++;
             in_default = false;
         }
     }
-    return -1;
+    return (label_spans){.count = -1};
 }
 
 // Adds a signature, finding its parameters in the label: "Name(float2 center, float radius)".
 static void add_signature(signature_list *s, const char *label, const char *doc)
 {
-    int starts[16];
-    int ends[16];
-    const int params = label_split(label, starts, ends);
+    const label_spans spans = label_split(label);
+    const int params = spans.count;
     if (params < 0) return;
     const bool variadic = strstr(label, "...") != NULL;
     // The parameter the cursor's argument goes to: by its place, or by the name it's written with
@@ -8813,11 +8819,11 @@ static void add_signature(signature_list *s, const char *label, const char *doc)
     if (s->named.len > 0) {
         takes = false;
         for (int i = 0; i < params && !takes; i++) {
-            const char *end = label + ends[i];
-            const char *value = strstr(label + starts[i], " = ");
+            const char *end = label + spans.items[i].end;
+            const char *value = strstr(label + spans.items[i].start, " = ");
             if (value && value < end) end = value;
             const char *name = end;
-            while (name > label + starts[i] && name[-1] != ' ') name--;
+            while (name > label + spans.items[i].start && name[-1] != ' ') name--;
             if (end - name == s->named.len && memcmp(name, s->named.ptr, (size_t)s->named.len) == 0) {
                 takes = true;
                 at = i;
@@ -8839,7 +8845,9 @@ static void add_signature(signature_list *s, const char *label, const char *doc)
         jb_put(s->out, "}");
     }
     jb_put(s->out, ",\"parameters\":[");
-    for (int i = 0; i < params; i++) jb_printf(s->out, "%s{\"label\":[%d,%d]}", i ? "," : "", starts[i], ends[i]);
+    for (int i = 0; i < params; i++) {
+        jb_printf(s->out, "%s{\"label\":[%d,%d]}", i ? "," : "", spans.items[i].start, spans.items[i].end);
+    }
     jb_put(s->out, "]}");
 }
 
@@ -8965,25 +8973,26 @@ static const decl *component_written(const int open, const int close)
 // A signature's parameters, from its label as add_signature reads them: each
 // a type and a name ("float2 center"), or only a name ("x" in Math.Clamp).
 typedef struct label_params {
-    str types[16];
-    str names[16];
+    str *types;
+    str *names;
     int count; // -1 for a label that takes any number, like "Spawn(components...)"
 } label_params;
 
 static void parse_label(const char *label, label_params *out)
 {
     out->count = 0;
-    int starts[16];
-    int ends[16];
-    const int count = label_split(label, starts, ends);
+    const label_spans spans = label_split(label);
+    const int count = spans.count;
     if (count < 0) return;
     if (strstr(label, "...")) {
         out->count = -1;
         return;
     }
+    out->types = arena_alloc(sizeof(str) * (size_t)count);
+    out->names = arena_alloc(sizeof(str) * (size_t)count);
     for (int i = 0; i < count; i++) {
-        const char *p = label + starts[i];
-        const char *end = label + ends[i];
+        const char *p = label + spans.items[i].start;
+        const char *end = label + spans.items[i].end;
         const char *value = strstr(p, " = "); // "bool overwrite = false": the default isn't the name
         if (value && value < end) end = value;
         const char *name = end; // The last word, and the one before it: "mut float value"
