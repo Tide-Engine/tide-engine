@@ -17,6 +17,12 @@ const prototypes = [
         image: '/admin/prototypes/the-last-light/thumbnail.png',
         horror: true,
     },
+    {
+        id: 'cabin-nine', title: 'Cabin Nine', kind: 'PSX horror · Deduction', players: '2 players',
+        description: 'A night charter. Eight familiar passengers. Compare records with your partner and find the visitor who should never have boarded.',
+        image: '/admin/prototypes/cabin-nine/thumbnail.png',
+        horror: true,
+    },
 ];
 
 export function load() {

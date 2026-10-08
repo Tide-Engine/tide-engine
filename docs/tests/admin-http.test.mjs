@@ -29,7 +29,7 @@ test('production website protects analytics, prototype files and retired address
     const entries = [];
     const aliases = [];
     const files = new Map();
-    for (const id of ['two-forks', 'the-last-light']) {
+    for (const id of ['two-forks', 'the-last-light', 'cabin-nine']) {
         const root = `/admin/prototypes/${id}`;
         // When CMake staged the real games, check those exact bytes too.
         // Standalone docs builds retain the small fixtures below.
@@ -44,7 +44,8 @@ test('production website protects analytics, prototype files and retired address
         aliases.push([root, `${root}/index.html`], [`${root}/`, `${root}/index.html`]);
     }
     // Even a stale deployment that contains these bytes must not serve them.
-    for (const name of ['/samples/two-forks/index.html', '/samples/two-forks/game.wasm', '/samples/thumbnails/two-forks.png', '/sample_two_forks.html', '/two-forks/index.html']) {
+    for (const name of ['/samples/two-forks/index.html', '/samples/two-forks/game.wasm', '/samples/thumbnails/two-forks.png', '/sample_two_forks.html', '/two-forks/index.html',
+        '/samples/cabin-nine/index.html', '/samples/cabin-nine/game.wasm', '/samples/thumbnails/cabin-nine.png', '/cabin_nine.html']) {
         files.set(name, Buffer.from('STALE PUBLIC PRIVATE GAME'));
     }
     aliases.push(['/samples/two-forks', '/samples/two-forks/index.html'], ['/samples/two-forks/', '/samples/two-forks/index.html']);
@@ -110,7 +111,9 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     const catalogHtml = await catalog.text();
     assert.match(catalogHtml, /Two Forks/);
     assert.match(catalogHtml, /The Last Light/);
+    assert.match(catalogHtml, /Cabin Nine/);
     assert.match(catalogHtml, /href="\/admin\/prototypes\/the-last-light\/"/);
+    assert.match(catalogHtml, /href="\/admin\/prototypes\/cabin-nine\/"/);
     for (const [route, bytes] of files) {
         if (!route.startsWith('/admin/')) {
             for (const session of [undefined, cookie]) {
@@ -130,7 +133,8 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
         assert.equal(response.headers.get('cross-origin-embedder-policy'), 'require-corp');
         assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
     }
-    for (const route of ['/adm%69n/prototypes/two-forks/index.html', '/admin/prototypes/__data.json', '/samples/two%2dforks/index.html']) {
+    for (const route of ['/adm%69n/prototypes/two-forks/index.html', '/admin/prototypes/__data.json', '/samples/two%2dforks/index.html',
+        '/adm%69n/prototypes/cabin-nine/index.html', '/samples/cabin%2dnine/index.html']) {
         const response = await fetch(`${origin}${route}`, { redirect: 'manual' });
         assert.ok([303, 404].includes(response.status), route);
     }
@@ -151,9 +155,9 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     assert.equal(data.relay.latest, null);
     assert.doesNotMatch(await readFile(file, 'utf8'), /private\/path|Mozilla|127\.0\.0\.1/);
     assert.equal((await fetch(`${origin}/data/analytics.json`)).status, 404);
-    assert.doesNotMatch(await (await fetch(`${origin}/sitemap.xml`)).text(), /\/admin|two-forks|the-last-light/);
+    assert.doesNotMatch(await (await fetch(`${origin}/sitemap.xml`)).text(), /\/admin|two-forks|the-last-light|cabin-nine/);
     for (const route of ['/guide/samples', '/search.json']) {
-        assert.doesNotMatch(await (await fetch(`${origin}${route}`)).text(), /Two Forks|two-forks|The Last Light|the-last-light/);
+        assert.doesNotMatch(await (await fetch(`${origin}${route}`)).text(), /Two Forks|two-forks|The Last Light|the-last-light|Cabin Nine|cabin-nine/);
     }
     const logout = await fetch(`${origin}/admin/logout`, { method: 'POST', redirect: 'manual', headers: { cookie, origin } });
     assert.match(logout.headers.get('set-cookie'), /Max-Age=0/);

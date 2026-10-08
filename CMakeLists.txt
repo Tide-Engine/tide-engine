@@ -62,7 +62,7 @@ find_program(TIDE_NODE NAMES node) # Tests that run Node: web builds need it any
 
 option(TIDE_PLATFORM "Build the platform layer and the demo. Desktop builds download GLFW." ON)
 option(TIDE_TOOLS_ONLY "Build only tidec, as web builds do for their host (cmake/HostTidec.cmake)" OFF)
-option(TIDE_PRIVATE_PROTOTYPES "Build private work-in-progress games (never staged into the docs or package)" OFF)
+option(TIDE_PRIVATE_PROTOTYPES "Build opt-in private games (admin-only browser staging; no package install)" OFF)
 
 # What the tide command says it is, and where it looks for updates. Release
 # builds get the version semantic-release picked (.github/workflows/build.yml);

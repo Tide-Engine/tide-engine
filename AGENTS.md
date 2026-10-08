@@ -55,7 +55,8 @@ This file is the rules and the agreed decisions every session needs. What was bu
 | `notes/tide-programs.md` | `tide_add_game`, and the generated header: the API between a game and its host | `cmake/Tide.cmake`, `run_tidec.cmake`, what `compiler/src/codegen.c` writes into a game's header |
 | `notes/docs-site.md` | The docs site: its pages and folders, SEO, hosting, live examples, the samples | `docs/` but `spec.md`, `.github/workflows/docs.yml` |
 | `notes/physics-games.md` | Towers and Sumo: their folders, seats, rules, look, shadows, tests and what they cost | `examples/towers/`, `examples/sumo/` |
-| `notes/private-prototypes.md` | Private games: The Last Light's ritual, roles, look, audio and tests; private staging for it and Two Forks | `prototypes/`, private-game build and staging |
+| `notes/private-prototypes.md` | The Last Light's ritual, roles, look, audio and tests; private catalog staging | `prototypes/the-last-light/`, private-game build and staging |
+| `notes/cabin-nine.md` | Cabin Nine's opt-in private build, deduction, crew, scene and tests | `prototypes/cabin-nine/` |
 | `notes/cli-and-packages.md` | `tide`: its commands, the built-in clang and tide's size, packages and `tide.packages`, a game's C and libraries, what the package holds, `tide build --android` | `compiler/cli/`, `compiler/lsp/packages.c`, `cmake/LLVM.cmake`, `cmake/package.cmake` |
 | `notes/releases-and-ci.md` | Installing and upgrading, releases through the site, the Build workflow, its runners, nightlies | `.github/`, `install.ps1`, `install.sh`, `docs/releases.js`, `compiler/cli/upgrade.c`, `install.c`, `release.c` |
 | `notes/box2d.md` | The Box2D package: its state in the match, its stage, sleep, sensors, images in parts, parts, queries, tuning, pins and costs | `packages/box2d/` |

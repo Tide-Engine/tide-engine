@@ -98,6 +98,7 @@ test('missing admin password refuses both page and API instead of exposing count
     assert.equal((await login('')).status, 503);
     assert.equal((await get('/admin/prototypes/two-forks/index.html')).status, 503);
     assert.equal((await get('/admin/prototypes/the-last-light/game.wasm')).status, 503);
+    assert.equal((await get('/admin/prototypes/cabin-nine/index.html')).status, 503);
 });
 
 test('prototype files share the admin gate and retired public copies are always refused', async (t) => {
@@ -106,7 +107,8 @@ test('prototype files share the admin gate and retired public copies are always 
     for (const route of ['/admin/prototypes', '/admin/prototypes/__data.json', '/admin/prototypes/two-forks/',
         '/admin/prototypes/the-last-light/index.html', '/admin/prototypes/the-last-light/game.wasm',
         '/admin/prototypes/the-last-light/game.pack', '/admin/prototypes/the-last-light/sfx/steps.ogg',
-        '/adm%69n/prototypes/two-forks/thumbnail.png', '/admin%2fprototypes%2ftwo-forks%2findex.html']) {
+        '/adm%69n/prototypes/two-forks/thumbnail.png', '/admin%2fprototypes%2ftwo-forks%2findex.html',
+        '/admin/prototypes/cabin-nine/', '/admin/prototypes/cabin-nine/game.wasm', '/adm%69n/prototypes/cabin-nine/game.pack']) {
         const anonymous = await get(route);
         assert.equal(anonymous.status, 303, route);
         assert.match(anonymous.headers.get('location'), /^\/admin\/login\?next=/);
@@ -115,7 +117,8 @@ test('prototype files share the admin gate and retired public copies are always 
     }
     for (const route of ['/samples/two-forks/', '/samples/two-forks/index.html', '/samples/two-forks/game.wasm',
         '/samples/thumbnails/two-forks.png', '/samples/two%2dforks/index.html', '/two-forks/',
-        '/examples/the-last-light/', '/sample_two_forks.html', '/samples/the-last-light/']) {
+        '/examples/the-last-light/', '/sample_two_forks.html', '/samples/the-last-light/',
+        '/samples/cabin-nine/', '/samples/thumbnails/cabin-nine.png', '/prototypes/cabin-nine/game.wasm', '/cabin_nine.html', '/samples/cabin%2dnine/index.html']) {
         for (const session of [undefined, cookie]) {
             const response = await get(route, session);
             assert.equal(response.status, 404, route);

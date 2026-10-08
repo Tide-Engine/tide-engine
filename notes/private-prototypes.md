@@ -58,7 +58,12 @@ are not a shared pause. `heard.tide` plays original WAVs regenerated from
 test host as playable game code. CMake compiles the simulation test separately
 and stages browser pages only at `docs/static/admin/prototypes/<id>/index.html`.
 `private_games` builds/stages The Last Light and Two Forks; the public sample
-build also stages Two Forks privately. Pages are self-contained; any future
+build also stages Two Forks privately. Cabin Nine arrived through `origin/dev`
+during integration and joins the same catalog. When its existing opt-in
+`TIDE_PRIVATE_PROTOTYPES` option is enabled, `private_games` stages it under
+the protected root too; the manual docs workflow explicitly enables this
+option. Its independent game contract is in `notes/cabin-nine.md`.
+Pages are self-contained; any future
 external game assets must stay under that protected root. The site's auth,
 retired public URLs, static build gate and catalog are in `notes/docs-site.md`.
 
@@ -67,6 +72,8 @@ retired public URLs, static build gate and catalog are in `notes/docs-site.md`.
 The native suite passed 2,010/2,010 tests and the web suite 1,982/1,982 before
 the additional game browser checks were registered. The final scoped web run
 passed the simulation, two-player WebGL and two-player WebGPU checks (3/3).
+After merging Cabin Nine and adding its protected staging, scoped native
+checks passed 3/3 and scoped web checks passed 6/6 for both games.
 Fourteen game tests
 include authorization and stale-input rejection, exactly two players,
 disconnect/reconnect safety, Well and Belfry rules, resource bounds, cargo

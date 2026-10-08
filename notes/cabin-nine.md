@@ -4,7 +4,9 @@ Built 2026-10-09 at the owner's request: a private PSX horror prototype with at 
 
 ## Source and build boundary
 
-`prototypes/cabin-nine/` is separate from `demo/`, `examples/`, `docs/` and `packages/`. `TIDE_PRIVATE_PROTOTYPES` defaults to OFF in the root CMake configuration. Turning it on builds `cabin_nine`, `cabin_nine_tests` and `cabin_nine_render` when the platform layer is enabled, on native and web builds. It neither stages a docs page nor installs the game into Tide's package. The engine repository was verified private before merging this work. No publishing or workflow dispatch is part of this task.
+`prototypes/cabin-nine/` is separate from `demo/`, `examples/` and `packages/`. `TIDE_PRIVATE_PROTOTYPES` defaults to OFF in the root CMake configuration. Turning it on builds `cabin_nine`, `cabin_nine_tests` and `cabin_nine_render` when the platform layer is enabled, on native and web builds. It does not install the game into Tide's package. The engine repository was verified private before merging this work. No publishing or workflow dispatch is part of this task.
+
+The owner's same-day request for an admin section for private prototypes adds `cabin_nine_page` and includes it in `private_games` when the opt-in game is enabled. Browser builds stage only at `docs/static/admin/prototypes/cabin-nine/index.html`, behind the existing password/session guard. The private catalog and retired public URL protection are described in `notes/docs-site.md`. The docs workflow explicitly enables the option; deployment still requires a separate manual run.
 
 `DESIGN.md` records the proposed fuller experience and its unresolved production risks. `README.md` records actual launch instructions and controls. Neither the working title nor the proposed language of the fiction changes a shared engine rule.
 

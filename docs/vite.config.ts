@@ -54,7 +54,7 @@ const privatePrototypes: Plugin = {
             for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
                 const name = `${directory}/${entry.name}`;
                 if (name === 'static/admin') continue;
-                if (/(?:^|[\/._-])(?:two[-_]forks|the[-_]last[-_]light)(?:[\/._-]|$)/i.test(name)) {
+                if (/(?:^|[\/._-])(?:two[-_]forks|the[-_]last[-_]light|cabin[-_]nine)(?:[\/._-]|$)/i.test(name)) {
                     throw new Error(`Private prototype asset must live under static/admin/prototypes/: ${name}`);
                 }
                 if (entry.isDirectory()) check(name);
