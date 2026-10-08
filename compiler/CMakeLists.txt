@@ -20,6 +20,14 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         "${PROJECT_SOURCE_DIR}/engine/src/math.c" "${PROJECT_SOURCE_DIR}/engine/src/skinned_data.c"
         "${PROJECT_SOURCE_DIR}/engine/src/skinned_decode.c")
     add_library(tidec_core STATIC ${TIDEC_SOURCES} ${TIDEC_ENGINE_SOURCES})
+    # Expected asset digests and emitted loaders share this exact private walker.
+    set(TIDEC_PACK_FINGERPRINT_C "${CMAKE_CURRENT_BINARY_DIR}/pack_fingerprint_source.c")
+    add_custom_command(OUTPUT "${TIDEC_PACK_FINGERPRINT_C}"
+        COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/src/pack_fingerprint.inc"
+            "-DOUTPUT=${TIDEC_PACK_FINGERPRINT_C}" "-DNAME=tide_pack_fingerprint_source"
+            -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+        DEPENDS src/pack_fingerprint.inc "${PROJECT_SOURCE_DIR}/cmake/embed.cmake" VERBATIM)
+    target_sources(tidec_core PRIVATE "${TIDEC_PACK_FINGERPRINT_C}")
     # `#if TIDE_0_3_OR_NEWER` and packages' `tide 0.3` compare with it (version.h).
     set_source_files_properties(src/version.c PROPERTIES COMPILE_DEFINITIONS "TIDE_VERSION=\"${TIDE_VERSION}\"")
     target_link_libraries(tidec_core PUBLIC tide_flags)

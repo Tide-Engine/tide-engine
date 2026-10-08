@@ -262,7 +262,7 @@ The editor keeps assets in step with their files: renaming a file or a folder re
 
 `tide build` packs the closure of the game's `asset` declarations, and nothing else in the folder. A file is in the pack once however many declarations name it, and they all read the same value: a `Grid2<Color>` of the pack lives in a read-only region every world can name, outside every world's heap, so no world copies, hashes or sends it. A file declared as a `Grid2<Color>` and as a `Texture` is in it once as each, and so is a text file with characters past ASCII that's declared as a `string` and as a `List<byte>`.
 
-Where the pack is: beside the program as `<name>.pack` on desktop, inside the self-contained page on the web, and in the APK on Android. Under `tide run` there's no build step for it: tide watches the files assets name, and a saved image or model is in the running game at once, with no rebuild, as it's data; a hot reload keeps it. A C host of its own (`tide_add_game` with `HOST`) gets the pack as a C array, `tide_game_pack`, to hand `tide_assets_load`.
+Where the pack is: beside the program as `<name>.pack` on desktop, inside the self-contained page on the web, and in the APK on Android. Under `tide run`, tide watches the files assets name. Ordinary images and static models reload as data. [Skinned models](./animation.md) and assets their vertex defaults read require a matching game build because their values can become match state; the running game refuses a mismatched pack and keeps the current one. This also applies to asset dependencies of vertex defaults used by runtime skinned decoding. A C host of its own (`tide_add_game` with `HOST`) gets the pack as a C array, `tide_game_pack`, to hand `tide_assets_load`.
 
 ## Loading at runtime
 
