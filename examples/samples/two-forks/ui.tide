@@ -181,7 +181,7 @@ view FieldGuide(Kitchen kitchen, Devices devices, Pad pad, mut Guide guide, Room
         {
             GUILayout.Label("Push the meatball into a pan.");
             GUILayout.Label("Bring both chefs with it.");
-            GUILayout.Label("Four meals + two chefs open a trail.");
+            GUILayout.Label("Four meals, then stand on both plates.");
         }
         else if (Hint(kitchen.level) != "")
         {
