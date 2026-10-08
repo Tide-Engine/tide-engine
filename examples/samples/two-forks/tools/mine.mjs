@@ -1,7 +1,7 @@
 // Makes up small levels, keeps the ones two chefs can do and one can't, and
 // takes out of them whatever they don't need.
 //   node mine.mjs <seed> <count> <mode> <out> [minMoves] [maxMoves]
-// Modes can combine close (shared walking ground), one, gas and two (sausages).
+// Modes can combine close (shared walking ground), one, gas, ice, ember and two (sausages).
 import { parse, search, handoffs, needs, step, start } from './solve.mjs';
 import fs from 'node:fs';
 
@@ -10,6 +10,8 @@ let seed = Number(seedArg) >>> 0;
 const rnd = n => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return Math.floor(seed / 4294967296 * n); };
 const count = Number(countArg);
 const gas = modeArg.includes('gas');
+const ice = modeArg.includes('ice');
+const ember = modeArg.includes('ember');
 const two = modeArg.includes('two');      // two sausages
 const one = modeArg.includes('one');      // one island
 const close = modeArg.includes('close');  // shared walking space and chefs clearing each other's way
@@ -17,7 +19,8 @@ const LIMIT = 30000;
 const MIN = Number(minArg), MAX = Number(maxArg);
 
 function make() {
-    const w = close ? 4 + rnd(2) : 5 + rnd(5), h = close ? 3 + rnd(2) : 4 + rnd(3);
+    const compact = close || ice || ember;
+    const w = compact ? 4 + rnd(3) : 5 + rnd(5), h = compact ? 3 + rnd(2) : 4 + rnd(3);
     const g = Array.from({ length: h }, () => Array(w).fill('~'));
     const rect = (ch) => {
         const rw = 2 + rnd(Math.min(3, w - 1)), rh = 2 + rnd(Math.min(3, h - 1));
@@ -30,11 +33,15 @@ function make() {
     const grills = 1 + rnd(4);
     for (let i = 0; i < grills; i++) {
         const x = rnd(w), y = rnd(h);
-        g[y][x] = gas && rnd(2) ? '=' : '#';
+        g[y][x] = ember ? '+' : gas && rnd(2) ? '=' : '#';
         if (rnd(2)) { const x2 = Math.min(w - 1, x + rnd(2)), y2 = Math.min(h - 1, y + (x2 === x ? 1 : 0)); g[y2][x2] = g[y][x]; }
     }
+    if (gas || ember) {
+        for (let pedal = 0; pedal < (ember ? 2 + rnd(2) : 1); pedal++) {
+            for (let tries = 0; tries < 20; tries++) { const x = rnd(w), y = rnd(h); if (g[y][x] === '.') { g[y][x] = 'o'; break; } }
+        }
+    }
     if (gas) {
-        for (let tries = 0; tries < 20; tries++) { const x = rnd(w), y = rnd(h); if (g[y][x] === '.') { g[y][x] = 'o'; break; } }
         if (!g.flat().includes('=')) return null;
         if (!g.flat().includes('o')) return null;
     }
@@ -60,13 +67,25 @@ function make() {
             const fx = x + DX[d], fy = y + DY[d];
             if (!free(x, y)) continue;
             const ahead = fx < 0 || fy < 0 || fx >= w || fy >= h ? '~' : g[fy][fx];
-            if (ahead !== '.' && ahead !== '~' && ahead !== '#' && ahead !== '=') continue;
+            if (ahead !== '.' && ahead !== '~' && ahead !== '#' && ahead !== '=' && ahead !== '+' && ahead !== 'o') continue;
             g[y][x] = (c ? 'NESW' : 'nesw')[d];
             if (ahead === '.') g[fy][fx] = '!';
             ok = true;
         }
         if (!ok) return null;
     }
+    if (ice) {
+        // Leave the original body, fork and sausage cells alone; grow one or
+        // two frozen patches through the remaining walking ground.
+        for (let patch = 0; patch < 1 + rnd(2); patch++) {
+            const x0 = rnd(w), y0 = rnd(h), rw = 2 + rnd(3), rh = 2 + rnd(2);
+            for (let y = y0; y < Math.min(h, y0 + rh); y++) for (let x = x0; x < Math.min(w, x0 + rw); x++) {
+                if (g[y][x] === '.') g[y][x] = 'i';
+            }
+        }
+        if (g.flat().filter(c => c === 'i').length < 2) return null;
+    }
+    if (ember && (g.flat().filter(c => c === 'o').length < 2 || !g.flat().includes('+'))) return null;
     return g.map(r => r.join('').replaceAll('!', '.')).join('/');
 }
 
@@ -76,10 +95,13 @@ function along(L, moves) {
     const pushes = [0, 0];
     let gasChanges = 0;
     let clearances = 0;
+    let glides = 0, stoppedByPartner = 0, bellowsChanges = 0;
     const walked = [new Set(), new Set()];
     const previous = [S.c.slice(0, 3), S.c.slice(3, 6)];
     const pedal = (x, y) => x >= 0 && y >= 0 && x < L.w && y < L.h && L.tiles[y * L.w + x] === 'o';
     const lit = T => !(pedal(T.c[0], T.c[1]) || pedal(T.c[3], T.c[4]));
+    const pumped = T => pedal(T.c[0], T.c[1]) && pedal(T.c[3], T.c[4]);
+    const unfrozen = ice ? parse(L.text.replaceAll('i', '.')) : null;
     for (const move of moves) {
         const who = Number(move[0]), d = 'NESW'.indexOf(move[1]);
         const T = step(L, S, who, d);
@@ -89,11 +111,22 @@ function along(L, moves) {
         if (step(L, ghost, who, d) === null) clearances++;
         previous[who] = S.c.slice(who * 3, who * 3 + 3);
         walked[who].add(T.c[who * 3] + ',' + T.c[who * 3 + 1]);
+        if (unfrozen) {
+            const plain = step(unfrozen, S, who, d);
+            if (!plain || plain === 'dead' || plain.s.some((v, i) => i % 7 < 2 && v !== T.s[i])) glides++;
+        }
+        if (ice && T.s.some((v, i) => i % 7 < 2 && v !== S.s[i])) {
+            const withoutPartner = { c: S.c.slice(), s: S.s };
+            withoutPartner.c.splice((1 - who) * 3, 3, -9, -9, 0);
+            const clear = step(L, withoutPartner, who, d);
+            if (clear === 'dead' || (clear && clear.s.some((v, i) => i % 7 < 2 && v !== T.s[i]))) stoppedByPartner++;
+        }
         for (let i = 0; i < S.s.length; i += 7) if (S.s[i] !== T.s[i] || S.s[i + 1] !== T.s[i + 1]) { pushes[who]++; break; }
         if (lit(S) !== lit(T)) gasChanges++;
+        if (pumped(S) !== pumped(T)) bellowsChanges++;
         S = T;
     }
-    return { pushes, gasChanges, clearances, shared: [...walked[0]].filter(k => walked[1].has(k)).length };
+    return { pushes, gasChanges, clearances, glides, stoppedByPartner, bellowsChanges, shared: [...walked[0]].filter(k => walked[1].has(k)).length };
 }
 
 function connected(L) {
@@ -107,7 +140,7 @@ function connected(L) {
             const nx = x + dx, ny = y + dy;
             if (nx < 0 || ny < 0 || nx >= L.w || ny >= L.h) continue;
             const tile = L.tiles[ny * L.w + nx];
-            if (tile === '.' || tile === 'o') queue.push([nx, ny]);
+            if (tile === '.' || tile === 'o' || tile === 'i') queue.push([nx, ny]);
         }
     }
     return visited.has(L.chefs[1][1] * L.w + L.chefs[1][0]);
@@ -129,9 +162,11 @@ function measure(text, wanted) {
         if (withoutPedal.moves || withoutPedal.gaveUp) return null;
     }
     const seen = along(L, both.moves);
+    if (ice && seen.glides < 1) return null;
+    if (ember && seen.bellowsChanges < 2) return null;
     if (close && (seen.clearances < 1 || seen.shared < 1)) return null;
     if (seen.pushes[0] === 0 || seen.pushes[1] === 0) {
-        if (!gas) return null;
+        if (!gas && !ember) return null;
     }
     return { text, moves: both.moves.length, states: both.states, path: both.moves.join(' '), L, ...seen };
 }
@@ -142,6 +177,8 @@ function grade(m) {
     m.need1 = needs(m.L, 1, 600000);
     m.score = m.hand * 100 + Math.min(m.need0, m.need1) * 10 - m.states / 2000;
     if (close) m.score += m.clearances * 80 + m.shared * 30;
+    if (ice) m.score += m.glides * 20 + m.stoppedByPartner * 200;
+    if (ember) m.score += m.bellowsChanges * 50;
     return m;
 }
 
@@ -156,7 +193,7 @@ function trim(m, wanted) {
         for (let y = 0; y < rows.length; y++) {
             for (let x = 0; x < rows[y].length; x++) {
                 const c = rows[y][x];
-                if (c !== '.' && c !== '#' && c !== '=' && c !== '^') continue;
+                if (c !== '.' && c !== '#' && c !== '=' && c !== '^' && c !== 'i' && c !== '+') continue;
                 rows[y][x] = '~';
                 const t = measure(rows.map(r => r.join('')).join('/'), wanted);
                 if (t) {
@@ -201,6 +238,6 @@ for (const m of found.slice(0, 40)) {
     top.push(t);
 }
 top.sort((a, b) => a.moves - b.moves || b.hand - a.hand);
-const lines = top.map(f => `hand ${f.hand} needs ${f.need0}/${f.need1} pushes ${f.pushes.join('/')} gas ${f.gasChanges} clearances ${f.clearances} shared ${f.shared} moves ${f.moves} states ${f.states}\n${f.text.split('/').join('\n')}\n${f.path}\n`);
+const lines = top.map(f => `hand ${f.hand} needs ${f.need0}/${f.need1} pushes ${f.pushes.join('/')} gas ${f.gasChanges} bellows ${f.bellowsChanges} glides ${f.glides} stopper ${f.stoppedByPartner} clearances ${f.clearances} shared ${f.shared} moves ${f.moves} states ${f.states}\n${f.text.split('/').join('\n')}\n${f.path}\n`);
 fs.writeFileSync(outArg, `mode ${modeArg} seed ${seedArg}: tried ${tried}, kept ${found.length}\n\n` + lines.join('\n'));
 console.log(`${modeArg}: tried ${tried}, kept ${found.length}`);

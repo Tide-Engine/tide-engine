@@ -1,14 +1,36 @@
-// The shared journey. A camp is a kitchen; bridges need any two kitchens
-// in their region and both chefs on the brass plates. Third kitchens earn
-// optional travel routes. Neither travel nor testing skips count as cooking.
+// Each region is a little kitchen yard. Roll the shared meatball into a
+// serving pan and bring both chefs there to choose a puzzle. Cooking opens
+// the trail; map moves, travel and testing skips never give cooking credit.
+
+const int KITCHENS_PER_REGION = 6;
 
 int Region(int level)
 {
-    if (level < 3) return 0;
-    if (level == 3 || level == 4 || level == 8) return 1;
-    if (level == 5 || level == 6 || level == 9) return 2;
+    if (level < 3 || level >= 11 && level <= 13) return 0;
+    if (level == 3 || level == 4 || level == 8 || level >= 14 && level <= 16) return 1;
+    if (level == 5 || level == 6 || level == 9 || level >= 17 && level <= 19) return 2;
     return 3;
 }
+
+int RegionLevel(int region, int index)
+{
+    if (region < 0 || region > 3 || index < 0 || index >= KITCHENS_PER_REGION) return -1;
+    int[24] levels = [0, 1, 2, 11, 12, 13, 3, 4, 8, 14, 15, 16,
+                      5, 6, 9, 17, 18, 19, 7, 10, 20, 21, 22, 23];
+    return levels[region * KITCHENS_PER_REGION + index];
+}
+
+int RegionIndex(int level)
+{
+    for (var i = 0; i < KITCHENS_PER_REGION; i++)
+    {
+        if (RegionLevel(Region(level), i) == level) return i;
+    }
+    return -1;
+}
+
+int RouteTotal(int region) { return region >= 0 && region < 4 ? KITCHENS_PER_REGION : 0; }
+int GateNeed(int region) { return region >= 0 && region < 3 ? 4 : 0; }
 
 string RegionName(int region)
 {
@@ -21,47 +43,41 @@ string RegionName(int region)
     return "Ember Crater";
 }
 
-int TravelRegion(int2 tile)
-{
-    return tile.y < 4 ? (tile.x < 6 ? 1 : 2) : (tile.x < 6 ? 0 : 3);
-}
-
 int RegionSolved(int done, int region)
 {
     mut var count = 0;
-    for (var i = 0; i < LEVELS; i++)
+    for (var i = 0; i < KITCHENS_PER_REGION; i++)
     {
-        if (Region(i) == region && (done & (1 << i)) != 0) count += 1;
+        var level = RegionLevel(region, i);
+        if (level >= 0 && (done & (1 << level)) != 0) count += 1;
     }
     return count;
 }
 
-int2 RouteCamp(int level)
+int2 MapSlot(int index)
 {
-    switch (level)
-    {
-        case 0: return int2(1, 8);
-        case 1: return int2(3, 6);
-        case 2: return int2(5, 8);
-        case 3: return int2(1, 1);
-        case 4: return int2(3, 2);
-        case 5: return int2(7, 1);
-        case 6: return int2(9, 2);
-        case 7: return int2(8, 7);
-        case 8: return int2(5, 1);
-        case 9: return int2(11, 1);
-    }
-    return int2(11, 7);
+    return int2(index < 3 ? 2 : 6, 1 + (index % 3) * 2);
 }
+
+int BallSlot(int2 ball)
+{
+    for (var i = 0; i < KITCHENS_PER_REGION; i++)
+    {
+        if (Same(ball, MapSlot(i))) return i;
+    }
+    return -1;
+}
+
+int2 RouteCamp(int level) { return MapSlot(RegionIndex(level)); }
 
 bool RouteOpen(int done, int level)
 {
     if (level < 0 || level >= LEVELS) return false;
     var region = Region(level);
     if (region == 0) return true;
-    if (region == 1) return RegionSolved(done, 0) >= 2;
-    if (region == 2) return RegionSolved(done, 1) >= 2 || RegionSolved(done, 0) == 3;
-    return RegionSolved(done, 2) >= 2 || RegionSolved(done, 1) == 3;
+    if (region == 1) return RegionSolved(done, 0) >= 4;
+    if (region == 2) return RegionSolved(done, 1) >= 4 || RegionSolved(done, 0) == 6;
+    return RegionSolved(done, 2) >= 4 || RegionSolved(done, 1) == 6;
 }
 
 int StepsApart(int2 a, int2 b)
@@ -76,98 +92,100 @@ bool TogetherAt(Board board, int2 at)
     return first <= 2 && second <= 2 && Math.Min(first, second) <= 1;
 }
 
-int CampAt(Board board, int who)
-{
-    for (var i = 0; i < LEVELS; i++)
-    {
-        if (Same(board.chefs[who].at, RouteCamp(i))) return i;
-    }
-    return -1;
-}
-
 bool CanEnter(Kitchen kitchen, int level)
 {
-    return kitchen.travelling && RouteOpen(kitchen.done, level) && TogetherAt(kitchen.board, RouteCamp(level));
+    if (!kitchen.travelling || level < 0 || level >= LEVELS || Region(level) != kitchen.routeRegion) return false;
+    return kitchen.selection == RegionIndex(level) && Same(kitchen.meatball, RouteCamp(level))
+        && RouteOpen(kitchen.done, level) && TogetherAt(kitchen.board, RouteCamp(level));
 }
 
 int NearbyCamp(Kitchen kitchen)
 {
-    mut var chosen = -1;
-    mut var nearest = 100;
-    for (var i = 0; i < LEVELS; i++)
-    {
-        if (!CanEnter(kitchen, i)) continue;
-        var distance = StepsApart(kitchen.board.chefs[0].at, RouteCamp(i)) + StepsApart(kitchen.board.chefs[1].at, RouteCamp(i));
-        if (distance >= nearest) continue;
-        nearest = distance;
-        chosen = i;
-    }
-    return chosen;
+    if (kitchen.selection < 0) return -1;
+    var level = RegionLevel(kitchen.routeRegion, kitchen.selection);
+    return CanEnter(kitchen, level) ? level : -1;
 }
 
 int GateRegion(int gate) { return gate; }
 
 int2 GatePlate(int gate, int which)
 {
-    if (gate == 0) return int2(which == 0 ? 1 : 5, 5);
-    if (gate == 1) return int2(which == 0 ? 1 : 5, 0);
-    return int2(which == 0 ? 7 : 11, 3);
+    if (gate < 0 || gate >= 3) return int2(-1);
+    return int2(which == 0 ? 1 : 7, 2);
 }
 
 int2 GateBridge(int gate)
 {
-    if (gate == 0) return int2(3, 4);
-    if (gate == 1) return int2(6, 2);
-    return int2(9, 4);
+    return gate >= 0 && gate < 3 ? int2(7, 4) : int2(-1);
 }
 
 int2 TravelDock(int route)
 {
-    return route == 0 ? int2(5, 6) : int2(5, 2);
-}
-
-int2 TravelReturnDock(int route)
-{
-    return route == 0 ? int2(7, 2) : int2(8, 5);
+    if (route == 0) return int2(7, 4);
+    if (route == 1) return int2(1, 4);
+    return int2(4, 3);
 }
 
 string TravelName(int route)
 {
-    return route == 0 ? "Coastal ferry" : "Cliffside rope";
+    if (route == 0) return "Onward";
+    return route == 1 ? "Back trail" : "Shortcut";
 }
 
-bool TravelUnlocked(int done, int route)
+int TargetRegion(Kitchen kitchen, int route)
 {
-    return route >= 0 && route < 2 && RegionSolved(done, route) == 3;
+    if (route == 0) return kitchen.routeRegion + 1;
+    if (route == 1) return kitchen.routeRegion - 1;
+    return kitchen.routeRegion < 2 ? kitchen.routeRegion + 2 : kitchen.routeRegion - 2;
+}
+
+bool TravelUnlocked(Kitchen kitchen, int route)
+{
+    if (!kitchen.travelling || route < 0 || route > 2) return false;
+    var target = TargetRegion(kitchen, route);
+    if (target < 0 || target > 3 || !RouteOpen(kitchen.done, RegionLevel(target, 0))) return false;
+    if (route == 0) return (kitchen.bridges & (1 << kitchen.routeRegion)) != 0;
+    if (route == 1) return true;
+    return RegionSolved(kitchen.done, Math.Min(kitchen.routeRegion, target)) == KITCHENS_PER_REGION;
 }
 
 int NearbyTravel(Kitchen kitchen)
 {
-    if (!kitchen.travelling) return -1;
-    for (var route = 0; route < 2; route++)
+    for (var route = 0; route < 3; route++)
     {
-        if (TravelUnlocked(kitchen.done, route) && (TogetherAt(kitchen.board, TravelDock(route)) || TogetherAt(kitchen.board, TravelReturnDock(route)))) return route;
+        if (TravelUnlocked(kitchen, route) && TogetherAt(kitchen.board, TravelDock(route))) return route;
     }
     return -1;
 }
 
+string MapPlan(int region)
+{
+    switch (region)
+    {
+        case 0: return "~~~~~~~~~/~...~...~/~...~...~/~.......~/~...~...~/~...~...~/~~~~~~~~~";
+        case 1: return "~~~~~~~~~/~.......~/~.^...^.~/~.......~/~.^...^.~/~.......~/~~~~~~~~~";
+        case 2: return "~~~~~~~~~/~.......~/~..iii..~/~..iii..~/~..iii..~/~.......~/~~~~~~~~~";
+    }
+    return "~~~~~~~~~/~.......~/~..^^^..~/~.......~/~..^^^..~/~.......~/~~~~~~~~~";
+}
+
+void StartTrail(mut Kitchen kitchen, int region)
+{
+    kitchen.routeRegion = Math.Clamp(region, 0, 3);
+    kitchen.campers[0] = Chef { at = int2(1, 3), facing = EAST, spin = EAST };
+    kitchen.campers[1] = Chef { at = int2(7, 3), facing = WEST, spin = WEST };
+    kitchen.meatball = int2(4, 3);
+    kitchen.ballRolling = 0;
+    kitchen.selection = -1;
+    kitchen.journeyStarted = true;
+}
+
 void LayRoute(mut Kitchen kitchen)
 {
-    kitchen.board = Board { size = int2(W, H), chefs = kitchen.campers };
-    for (var y = 0; y < H; y++)
-    {
-        for (var x = 0; x < W; x++)
-        {
-            if (x == 6 || y == 4) continue;
-            kitchen.board.tiles[y * W + x] = Tile.Grass;
-        }
-    }
-    // Trim a few outside corners; the paths inside each region have room
-    // to sidestep a partner and park the two forks.
-    int2[8] rocks = [int2(0, 0), int2(0, 3), int2(0, 8), int2(5, 3),
-                     int2(7, 0), int2(11, 0), int2(7, 8), int2(11, 8)];
-    foreach (var at in rocks) kitchen.board.tiles[at.y * W + at.x] = Tile.Rock;
-    for (var gate = 0; gate < 3; gate++)
+    LayOut(kitchen.board, MapPlan(kitchen.routeRegion));
+    kitchen.board.chefs = kitchen.campers;
+    var gate = kitchen.routeRegion;
+    if (gate < 3)
     {
         for (var which = 0; which < 2; which++)
         {
@@ -182,17 +200,13 @@ void LayRoute(mut Kitchen kitchen)
 
 void ReturnToMap(mut Kitchen kitchen)
 {
-    if (!kitchen.journeyStarted)
-    {
-        kitchen.campers[0] = Chef { at = int2(1, 7), facing = EAST, spin = EAST };
-        kitchen.campers[1] = Chef { at = int2(4, 7), facing = WEST, spin = WEST };
-        kitchen.journeyStarted = true;
-    }
+    if (!kitchen.journeyStarted) StartTrail(kitchen, Region(kitchen.level));
     kitchen.travelling = true;
     LayRoute(kitchen);
     kitchen.laid = true;
     kitchen.moves = 0;
     kitchen.cleared = 0;
+    kitchen.selection = -1;
     kitchen.past.Clear();
     kitchen.grips[0] = Grip { };
     kitchen.grips[1] = Grip { };
@@ -200,20 +214,68 @@ void ReturnToMap(mut Kitchen kitchen)
 
 bool OpenBridges(mut Kitchen kitchen)
 {
-    mut var changed = false;
-    for (var gate = 0; gate < 3; gate++)
+    var gate = kitchen.routeRegion;
+    if (gate >= 3 || (kitchen.bridges & (1 << gate)) != 0 || RegionSolved(kitchen.done, gate) < GateNeed(gate)) return false;
+    var first = GatePlate(gate, 0);
+    var second = GatePlate(gate, 1);
+    var a = kitchen.board.chefs[0].at;
+    var b = kitchen.board.chefs[1].at;
+    if (!(Same(a, first) && Same(b, second) || Same(a, second) && Same(b, first))) return false;
+    kitchen.bridges |= 1 << gate;
+    LayRoute(kitchen);
+    return true;
+}
+
+// A ball occupies one tile. Bodies and forks can roll it; rocks, shoreline,
+// and either chef stop it. Ice carries it until dry ground or a stopper.
+bool RollMapBall(Board board, mut int2 ball, mut int rolling, int2 at, int way)
+{
+    if (!Same(ball, at)) return true;
+    var step = Way(way);
+    mut var to = ball + step;
+    if (!Standing(board, to) || Holds(board.chefs[0], to) || Holds(board.chefs[1], to)) return false;
+    ball = to;
+    rolling += way == EAST || way == SOUTH ? 1 : -1;
+    for (var slide = 0; slide < W + H; slide++)
     {
-        if ((kitchen.bridges & (1 << gate)) != 0 || RegionSolved(kitchen.done, GateRegion(gate)) < 2) continue;
-        var first = GatePlate(gate, 0);
-        var second = GatePlate(gate, 1);
-        var a = kitchen.board.chefs[0].at;
-        var b = kitchen.board.chefs[1].at;
-        if (!(Same(a, first) && Same(b, second) || Same(a, second) && Same(b, first))) continue;
-        kitchen.bridges |= 1 << gate;
-        changed = true;
+        if (TileAt(board, ball) != Tile.Ice) break;
+        to = ball + step;
+        if (!Standing(board, to) || Holds(board.chefs[0], to) || Holds(board.chefs[1], to)) break;
+        ball = to;
+        rolling += way == EAST || way == SOUTH ? 1 : -1;
     }
-    if (changed) LayRoute(kitchen);
-    return changed;
+    return true;
+}
+
+bool StepRoute(mut Kitchen kitchen, int who, int way)
+{
+    mut var board = kitchen.board;
+    mut var ball = kitchen.meatball;
+    mut var rolling = kitchen.ballRolling;
+    var chef = board.chefs[who];
+    var ahead = Way(chef.facing);
+    var to = Way(way);
+    var back = (chef.facing + 2) & 3;
+    if (way == chef.facing)
+    {
+        if (Same(ball, chef.at + ahead)) return false;
+        if (!RollMapBall(board, ball, rolling, chef.at + ahead * 2, way)) return false;
+    }
+    else if (way == back)
+    {
+        if (!RollMapBall(board, ball, rolling, chef.at + to, way)) return false;
+    }
+    else
+    {
+        if (!RollMapBall(board, ball, rolling, chef.at + ahead + to, way)) return false;
+        if (!RollMapBall(board, ball, rolling, chef.at + to, back)) return false;
+    }
+    if (!Step(board, who, way) || Holds(board.chefs[0], ball) || Holds(board.chefs[1], ball)) return false;
+    if (!Same(ball, kitchen.meatball)) kitchen.selection = BallSlot(ball);
+    kitchen.board = board;
+    kitchen.meatball = ball;
+    kitchen.ballRolling = rolling;
+    return true;
 }
 
 command(EnterKitchen enter, PlayerID sender) EnterCamp(mut Kitchen kitchen)
@@ -233,19 +295,8 @@ command(BackToMap back, PlayerID sender) LeaveCamp(mut Kitchen kitchen)
 
 command(Traverse travel, PlayerID sender) TakeRoute(mut Kitchen kitchen)
 {
-    if (!kitchen.hands.Has(sender) || NearbyTravel(kitchen) != travel.route || travel.route < 0 || travel.route > 1) return;
-    var ferry = travel.route == 0;
-    var returning = TogetherAt(kitchen.board, TravelReturnDock(travel.route));
-    if (returning)
-    {
-        kitchen.campers[0] = Chef { at = ferry ? int2(5, 6) : int2(5, 2), facing = NORTH, spin = NORTH };
-        kitchen.campers[1] = Chef { at = ferry ? int2(4, 7) : int2(4, 3), facing = WEST, spin = WEST };
-    }
-    else
-    {
-        kitchen.campers[0] = Chef { at = ferry ? int2(7, 2) : int2(8, 5), facing = NORTH, spin = NORTH };
-        kitchen.campers[1] = Chef { at = ferry ? int2(9, 3) : int2(10, 5), facing = NORTH, spin = NORTH };
-    }
+    if (!kitchen.hands.Has(sender) || NearbyTravel(kitchen) != travel.route || travel.route < 0 || travel.route > 2) return;
+    StartTrail(kitchen, TargetRegion(kitchen, travel.route));
     ReturnToMap(kitchen);
     Send(Laid { });
 }

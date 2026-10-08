@@ -35,7 +35,9 @@ enum Tile : byte
     Coal,    // A grill that's always lit
     Gas,     // A grill that's lit unless a chef stands on a pedal
     Pedal,
-    Rock
+    Rock,
+    Ice,     // A sausage wholly on ice glides until its first non-ice tile or obstruction
+    Ember    // Bellows heat it only while both chefs stand on pedals
 }
 
 struct Chef
@@ -68,6 +70,9 @@ struct Past
 {
     Chef[2] chefs;
     Sausage[SAUSAGES] sausages;
+    int2 meatball;
+    int ballRolling;
+    int selection;
 }
 
 int2 Way(int facing)
@@ -106,13 +111,69 @@ bool Holds(Chef chef, int2 at)
 bool Standing(Board board, int2 at)
 {
     var tile = TileAt(board, at);
-    return tile == Tile.Grass || tile == Tile.Pedal;
+    return tile == Tile.Grass || tile == Tile.Pedal || tile == Tile.Ice;
 }
 
 // The gas is on unless a chef stands on a pedal.
 bool GasOn(Board board)
 {
     return TileAt(board, board.chefs[0].at) != Tile.Pedal && TileAt(board, board.chefs[1].at) != Tile.Pedal;
+}
+
+bool BellowsOn(Board board)
+{
+    return TileAt(board, board.chefs[0].at) == Tile.Pedal && TileAt(board, board.chefs[1].at) == Tile.Pedal;
+}
+
+// The forced shove is a whole chain. Its parts wholly on ice then coast
+// together, stopping before a rock, the other chef or a sausage at rest.
+// Removing blocked parts until no more stop makes the result independent of
+// the sausages' order in the board. Every coast step is atomic too.
+void Glide(mut Board board, int moving, int way, int pusher)
+{
+    var direction = Way(way);
+    var other = board.chefs[1 - pusher];
+    var along = way == NORTH || way == SOUTH;
+    var forward = way == EAST || way == SOUTH;
+    for (var distance = 0; distance < W + H; distance++)
+    {
+        mut var sliding = 0;
+        for (var i = 0; i < board.count; i++)
+        {
+            var sausage = board.sausages[i];
+            if ((moving & (1 << i)) != 0 && TileAt(board, sausage.at) == Tile.Ice && TileAt(board, Tail(sausage)) == Tile.Ice) sliding |= 1 << i;
+        }
+        if (sliding == 0) return;
+        mut var before = -1;
+        while (before != sliding)
+        {
+            before = sliding;
+            for (var i = 0; i < board.count; i++)
+            {
+                var bit = 1 << i;
+                if ((sliding & bit) == 0) continue;
+                var sausage = board.sausages[i];
+                for (var half = 0; half < 2; half++)
+                {
+                    var to = (half == 0 ? sausage.at : Tail(sausage)) + direction;
+                    if (TileAt(board, to) == Tile.Rock || Holds(other, to)) sliding &= ~bit;
+                    for (var j = 0; j < board.count; j++)
+                    {
+                        if (i == j || (sliding & (1 << j)) != 0) continue;
+                        var next = board.sausages[j];
+                        if (!next.sunk && (Same(next.at, to) || Same(Tail(next), to))) sliding &= ~bit;
+                    }
+                }
+            }
+        }
+        if (sliding == 0) return;
+        for (var i = 0; i < board.count; i++)
+        {
+            if ((sliding & (1 << i)) == 0) continue;
+            board.sausages[i].at += direction;
+            if (board.sausages[i].upright != along) board.sausages[i].rolled += forward ? 1 : -1;
+        }
+    }
 }
 
 // Whichever sausage is on a tile is pushed one tile along, and with it every
@@ -164,6 +225,7 @@ int Shove(mut Board board, int2 at, int way, int pusher)
         // Along its length it slides, and across it it rolls onto its other side
         if (board.sausages[i].upright != along) board.sausages[i].rolled += forward ? 1 : -1;
     }
+    Glide(board, moving, way, pusher);
     return moving;
 }
 
@@ -222,8 +284,10 @@ bool Step(mut Board board, int who, int way)
     }
 
     var lit = GasOn(board);
+    var pumped = BellowsOn(board);
     board.chefs[who] = next;
     var burns = GasOn(board);
+    var flames = BellowsOn(board);
     for (var i = 0; i < board.count; i++)
     {
         var sausage = board.sausages[i];
@@ -239,8 +303,9 @@ bool Step(mut Board board, int who, int way)
         // Coal cooks what lands on it. So does gas, and when it's lit again, what was lying on it.
         var side = sausage.rolled & 1;
         var gas = burns && (arrived || !lit);
-        if (head == Tile.Coal && arrived || head == Tile.Gas && gas) board.sausages[i].cooked[side] += 1;
-        if (tail == Tile.Coal && arrived || tail == Tile.Gas && gas) board.sausages[i].cooked[2 + side] += 1;
+        var ember = flames && (arrived || !pumped);
+        if (head == Tile.Coal && arrived || head == Tile.Gas && gas || head == Tile.Ember && ember) board.sausages[i].cooked[side] += 1;
+        if (tail == Tile.Coal && arrived || tail == Tile.Gas && gas || tail == Tile.Ember && ember) board.sausages[i].cooked[2 + side] += 1;
     }
     return true;
 }
@@ -302,6 +367,8 @@ void LayOut(mut Board board, string plan)
         else if (mark == '=') tile = Tile.Gas;
         else if (mark == 'o') tile = Tile.Pedal;
         else if (mark == '^') tile = Tile.Rock;
+        else if (mark == 'i') tile = Tile.Ice;
+        else if (mark == '+') tile = Tile.Ember;
         board.tiles[y * W + x] = tile;
         board.size = int2(Math.Max(board.size.x, x + 1), y + 1);
 
@@ -355,6 +422,10 @@ singleton Kitchen
     int level;
     bool travelling = true;
     bool journeyStarted;
+    int routeRegion;
+    int2 meatball;
+    int ballRolling;
+    int selection = -1;
     Chef[2] campers;     // Where both chefs left the shared world map
     int bridges;        // Bridges opened by standing on both of their plates
     int layout;         // Revision of the displayed board, including map gates
@@ -443,6 +514,8 @@ event(Destroyed) FreeSeat(Hand hand, mut Kitchen kitchen)
 
 void Open(mut Kitchen kitchen, int level)
 {
+    var region = Region(level);
+    if (!kitchen.journeyStarted || kitchen.routeRegion != region) StartTrail(kitchen, region);
     kitchen.travelling = false;
     kitchen.layout += 1;
     kitchen.level = Math.Clamp(level, 0, LEVELS - 1);
@@ -526,14 +599,16 @@ system Serve(mut Kitchen kitchen, Time time)
         }
         if (way != 0)
         {
-            var before = Past { chefs = kitchen.board.chefs, sausages = kitchen.board.sausages };
+            var before = Past { chefs = kitchen.board.chefs, sausages = kitchen.board.sausages,
+                                meatball = kitchen.meatball, ballRolling = kitchen.ballRolling, selection = kitchen.selection };
             var lit = GasOn(kitchen.board);
-            if (Step(kitchen.board, who, way - 1))
+            var moved = kitchen.travelling ? StepRoute(kitchen, who, way - 1) : Step(kitchen.board, who, way - 1);
+            if (moved)
             {
                 grip.wait = STEP;
                 Remember(kitchen, before);
                 kitchen.moves += 1;
-                mut var pushed = false;
+                mut var pushed = kitchen.travelling && !Same(before.meatball, kitchen.meatball);
                 for (var i = 0; i < kitchen.board.count; i++)
                 {
                     var was = before.sausages[i];
@@ -561,6 +636,12 @@ system Serve(mut Kitchen kitchen, Time time)
     {
         kitchen.campers = kitchen.board.chefs;
         if (OpenBridges(kitchen)) Send(Laid { });
+        var chosen = NearbyCamp(kitchen);
+        if (chosen >= 0)
+        {
+            Open(kitchen, chosen);
+            Send(Laid { });
+        }
     }
     else if (Cooked(kitchen.board))
     {
@@ -579,6 +660,9 @@ command(Undo undo, PlayerID sender) TakeBack(mut Kitchen kitchen)
     kitchen.past.RemoveAt(kitchen.past.count - 1);
     kitchen.board.chefs = last.chefs;
     kitchen.board.sausages = last.sausages;
+    kitchen.meatball = last.meatball;
+    kitchen.ballRolling = last.ballRolling;
+    kitchen.selection = last.selection;
     kitchen.moves -= 1;
     Send(Rewound { });
 }
@@ -586,9 +670,17 @@ command(Undo undo, PlayerID sender) TakeBack(mut Kitchen kitchen)
 // The level starts over. That's a move too, so it can be taken back.
 command(Restart restart, PlayerID sender) StartOver(mut Kitchen kitchen)
 {
-    if (!kitchen.hands.Has(sender) || kitchen.travelling || restart.level != kitchen.level) return;
+    if (!kitchen.hands.Has(sender) || restart.level != kitchen.level) return;
+    if (kitchen.travelling)
+    {
+        StartTrail(kitchen, kitchen.routeRegion);
+        ReturnToMap(kitchen);
+        Send(Laid { });
+        return;
+    }
     if (kitchen.cleared != 0 || kitchen.moves == 0) return;
-    var before = Past { chefs = kitchen.board.chefs, sausages = kitchen.board.sausages };
+    var before = Past { chefs = kitchen.board.chefs, sausages = kitchen.board.sausages,
+                        meatball = kitchen.meatball, ballRolling = kitchen.ballRolling, selection = kitchen.selection };
     var moves = kitchen.moves;
     LayOut(kitchen.board, Plan(kitchen.level));
     Remember(kitchen, before);

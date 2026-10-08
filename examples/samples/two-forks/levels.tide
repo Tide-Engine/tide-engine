@@ -1,7 +1,8 @@
 // The levels. A plan is a character a tile, rows from the north:
 //
 //   ~  water            .  grass
-//   #  a coal grill     =  a gas grill     o  the gas pedal     ^  a rock
+//   #  a coal grill     =  a gas grill     o  a pedal     ^  a rock
+//   i  ice              +  embers: hot while both chefs stand on pedals
 //   n e s w             the first chef, by the way they face (the fork is on the next tile that way)
 //   N E S W             the second chef
 //   --                  a sausage lying west to east
@@ -13,10 +14,12 @@
 // were found: tools/mine.mjs makes up small boards by the thousand, keeps the
 // ones that take both chefs, and takes away every tile they can do without,
 // and these are the ones picked from what it kept.
-// The last three share walking ground: the chefs clear each other's body
+// The first added three share walking ground: the chefs clear each other's body
 // and fork, change places, and take turns at the same grill.
+// Later kitchens develop the coast's handoffs, the fields' gas valves, the
+// mountains' ice and partner stoppers, and the crater's shared bellows.
 
-const int LEVELS = 11;
+const int LEVELS = 24;
 
 string Plan(int level)
 {
@@ -74,6 +77,62 @@ string Plan(int level)
             return "###~/"
                  + "||e~/"
                  + "||.W";
+        case 11:
+            return "~~E/"
+                 + "#n./"
+                 + "#--";
+        case 12:
+            return "~#--/"
+                 + "#W../"
+                 + "~~n~";
+        case 13:
+            return "n.--/"
+                 + "--##/"
+                 + "E~.#/"
+                 + "~~~#";
+        case 14:
+            return "o.=s/"
+                 + "#--./"
+                 + "~~S~";
+        case 15:
+            return "~~#--/"
+                 + "~^==./"
+                 + "=Wo.n";
+        case 16:
+            return "o.S~#/"
+                 + "|=~=#/"
+                 + "|n~~~";
+        case 17:
+            return "|.e~/"
+                 + "|~~~/"
+                 + "##iN/"
+                 + "##i~";
+        case 18:
+            return "~~W.~/"
+                 + "~##--/"
+                 + "#~ii~/"
+                 + "~~e~~";
+        case 19:
+            return "~#i~~/"
+                 + "iiie#/"
+                 + "--~S~";
+        case 20:
+            return "e.|++~/"
+                 + "~o|++~/"
+                 + "~~~~oW";
+        case 21:
+            return "~wo+/"
+                 + "--+~/"
+                 + "Soo~";
+        case 22:
+            return "~S++/"
+                 + "|oon/"
+                 + "|o~~";
+        case 23:
+            return "~~^~/"
+                 + "~~o~/"
+                 + "o--+/"
+                 + "sS~+";
     }
     return "";
 }
@@ -93,6 +152,19 @@ string Name(int level)
         case 8: return "Passing place";
         case 9: return "Fork etiquette";
         case 10: return "Shared table";
+        case 11: return "The landing";
+        case 12: return "Around the pier";
+        case 13: return "Double delivery";
+        case 14: return "Cold storage";
+        case 15: return "Valve courtyard";
+        case 16: return "Trading shifts";
+        case 17: return "First frost";
+        case 18: return "The chute";
+        case 19: return "Human brake";
+        case 20: return "Two bellows";
+        case 21: return "Hot corners";
+        case 22: return "Pressure dance";
+        case 23: return "Chimney work";
     }
     return "";
 }
@@ -110,6 +182,19 @@ string Hint(int level)
         case 8: return "Share the walking space. Let your partner through before you take their place.";
         case 9: return "Your fork needs room to turn. Park it out of your partner's way.";
         case 10: return "Two sausages share one grill. Make room for the next cook.";
+        case 11: return "Clear the landing for your partner, then trade places.";
+        case 12: return "The two halves reach the coals at different times. Find a way around.";
+        case 13: return "Two deliveries share a kitchen. Leave your partner room to work.";
+        case 14: return "Park on the valve to keep the gas cold. Light it only when dinner is ready.";
+        case 15: return "Each half needs a turn at the burner. Keep the valve and the corners clear.";
+        case 16: return "Trade the valve and the fork. Neither cook can do every job at once.";
+        case 17: return "With both halves on ice, a sausage glides until a non-ice tile or something stops it.";
+        case 18: return "A glide still rolls the sausage on every tile it crosses. Plan which side lands.";
+        case 19: return "Your partner's body or fork can stop a sliding sausage. Put the brake in place.";
+        case 20: return "Embers heat only while BOTH cooks stand on pedals. Stepping on lights what's already there.";
+        case 21: return "Heat both halves one at a time. Step off a pedal before moving a cooked side.";
+        case 22: return "Share the pedals and the walking space. Keep the heat off while you change places.";
+        case 23: return "The upper pedal is a job of its own. Take turns delivering and firing the grill.";
     }
     return "";
 }

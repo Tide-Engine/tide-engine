@@ -88,6 +88,8 @@ static void lay(const char *plan)
         if (*c == '=') tile = Tile_Gas;
         if (*c == 'o') tile = Tile_Pedal;
         if (*c == '^') tile = Tile_Rock;
+        if (*c == 'i') tile = Tile_Ice;
+        if (*c == '+') tile = Tile_Ember;
         board->tiles.at[y * W + x] = tile;
         if (x + 1 > board->size.x) board->size.x = x + 1;
         board->size.y = y + 1;
@@ -305,6 +307,82 @@ TIDE_TEST(two_forks_the_pedal_cuts_the_gas)
     move(1, EAST);
     TIDE_CHECK(cooked(0, 1) == 2); // Lit again under it: burnt
 
+    tide_world_free(&world);
+}
+
+TIDE_TEST(two_forks_ice_glides_and_a_partner_stops_it)
+{
+    start(2);
+    // Each whole ice footprint adds another roll; the first grass tile stops it.
+    lay("e.|iii../..|iii.E");
+    move(0, EAST);
+    TIDE_CHECK(sausage_at(0, 6, 0) && sausage(0)->rolled == 4);
+    TIDE_CHECK(chef_at(0, 1, 0, EAST) && world.Kitchen.moves == 1);
+    move(0, EAST);
+    move(0, EAST);
+    TIDE_CHECK(chef_at(0, 3, 0, EAST)); // Ice is ordinary walking ground for chefs.
+
+    // The other body or fork can stop a sausage on the ice before it falls off.
+    lay("e.|iiiiE/..|iiii.");
+    move(0, EAST);
+    TIDE_CHECK(sausage_at(0, 6, 0) && sausage(0)->rolled == 4 && !sausage(0)->sunk);
+    lay("e.|iiii.W/..|iiii..");
+    move(0, EAST);
+    TIDE_CHECK(sausage_at(0, 6, 0) && sausage(0)->rolled == 4);
+
+    // A sausage at rest is an obstruction to a glide; it is not pushed by inertia.
+    lay("e.|i|ii../..|i|ii.E");
+    move(0, EAST);
+    TIDE_CHECK(sausage_at(0, 3, 0) && sausage_at(1, 4, 0));
+
+    // A blocked second sweep restores the entire first sweep, including its glide.
+    lay(".|iii./.|iii./n--..E/.^....");
+    move(0, EAST);
+    TIDE_CHECK(chef_at(0, 0, 2, NORTH) && world.Kitchen.moves == 0);
+    TIDE_CHECK(sausage_at(0, 1, 0) && sausage(0)->rolled == 0 && sausage_at(1, 1, 2));
+    tide_world_free(&world);
+}
+
+TIDE_TEST(two_forks_an_ice_chain_glides_together_and_stops_in_order)
+{
+    start(2);
+    lay("e.||iiii.E/..||iiii..");
+    // This position could have been reached by an earlier slide: the second
+    // sausage already rests on ice when the first one is pushed into it.
+    world.Kitchen.board.tiles.at[3] = Tile_Ice;
+    world.Kitchen.board.tiles.at[W + 3] = Tile_Ice;
+    move(0, EAST);
+    TIDE_CHECK(sausage_at(0, 7, 0) && sausage_at(1, 8, 0));
+    TIDE_CHECK(sausage(0)->rolled == 5 && sausage(1)->rolled == 5);
+    TIDE_CHECK(world.Kitchen.moves == 1);
+    tide_world_free(&world);
+}
+
+TIDE_TEST(two_forks_embers_need_both_pedals_and_cook_on_ignition)
+{
+    start(2);
+    lay("e.|++./..|++./.o..oW");
+    move(0, EAST);
+    TIDE_CHECK(sausage_at(0, 3, 0) && cooked(0, 1) == 0 && cooked(0, 3) == 0);
+    move(1, WEST);
+    TIDE_CHECK(cooked(0, 1) == 0); // One pedal does not heat the embers.
+    move(0, SOUTH);
+    move(0, SOUTH);
+    move(0, SOUTH);
+    TIDE_CHECK(chef_at(0, 1, 2, SOUTH) && chef_at(1, 4, 2, WEST));
+    TIDE_CHECK(cooked(0, 1) == 1 && cooked(0, 3) == 1);
+    tick(200);
+    TIDE_CHECK(cooked(0, 1) == 1); // Holding both down does not cook again.
+    move(0, NORTH);
+    move(0, SOUTH);
+    TIDE_CHECK(cooked(0, 1) == 2 && cooked(0, 3) == 2); // A second ignition burns it.
+
+    // Moving between adjacent pedals keeps the heat on and cooks a fresh arrival.
+    lay("eo|++./.o|++./....oW");
+    world.Kitchen.board.tiles.at[0] = Tile_Pedal;
+    move(1, WEST);
+    move(0, EAST);
+    TIDE_CHECK(chef_at(0, 1, 0, EAST) && cooked(0, 1) == 1 && cooked(0, 3) == 1);
     tide_world_free(&world);
 }
 
@@ -673,6 +751,19 @@ static const expected LEVEL[] = {
     {23, 14532, 39, 155},  // 9. Passing place
     {16, 885, 6, 17},      // 10. Fork etiquette
     {19, 5226, 16, 137},   // 11. Shared table
+    {11, 914, 20, 39},     // 12. The landing
+    {14, 2805, 40, 3},     // 13. Around the pier
+    {19, 22061, 255, 9},   // 14. Double delivery
+    {15, 6841, 56, 12},    // 15. Cold storage
+    {16, 1327, 88, 10},    // 16. Valve courtyard
+    {20, 1378, 1, 23},     // 17. Trading shifts
+    {12, 1626, 62, 12},    // 18. First frost
+    {16, 3899, 47, 99},    // 19. The chute
+    {19, 11348, 224, 3},   // 20. Human brake
+    {7, 8021, 173, 8},     // 21. Two bellows
+    {17, 18474, 25, 69},   // 22. Hot corners
+    {23, 22920, 7, 140},   // 23. Pressure dance
+    {29, 8466, 53, 27},    // 24. Chimney work
 };
 
 TIDE_TEST(two_forks_every_level_takes_both_chefs)
