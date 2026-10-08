@@ -1,4 +1,5 @@
-// expect: Random's rolls are for systems, views and handlers, and the functions and methods they call
+// expect: an operator can't roll random numbers
+// expect: its result is its operands' alone: roll before, and pass the number in the value
 struct Money
 {
     int cents;

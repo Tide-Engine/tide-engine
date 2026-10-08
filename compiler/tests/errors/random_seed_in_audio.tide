@@ -1,0 +1,12 @@
+// expect: an audio declaration runs on the audio thread, which has no match, so it can't read Random.seed
+audio Hum(mut Samples samples)
+{
+    for (var i = 0; i < samples.values.count; i++) samples.values[i] = Random.seed % 2;
+}
+local singleton Mix { Sound hum; }
+scene Main { }
+view Play(mut Mix mix)
+{
+    mix.hum.playing = true;
+    mix.hum.effect = Hum();
+}
