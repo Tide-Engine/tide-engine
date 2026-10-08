@@ -1,0 +1,7 @@
+// expect: Random has no member 'state'
+singleton Deck { int top; }
+scene Main { }
+system Shuffle(mut Deck deck)
+{
+    deck.top = Random.state;
+}

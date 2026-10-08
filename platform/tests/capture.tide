@@ -80,10 +80,10 @@ view Movers(Mover mover)
 // (black for seed 0), and a roll, which is how far right a small block is. A
 // run with no window starts its match with seed 0, so both are the same in
 // every run.
-view Rolled(Dice dice, Time time)
+view Rolled(Dice dice)
 {
     Draw.SetScreen();
-    var seed = time.seed;
+    var seed = Random.seed;
     Draw.Rect(float2(280, 100), float2(20, 20),
                 Color(float(seed & 255) / 255, float((seed >> 8) & 255) / 255, float((seed >> 16) & 255) / 255));
     Draw.Rect(float2(20 + dice.spot * 20, 130), float2(10, 10), Color(1, 0, 1));
