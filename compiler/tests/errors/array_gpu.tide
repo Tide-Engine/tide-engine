@@ -1,5 +1,5 @@
-// expect: the GPU has no arrays of arrays
+// expect: an array the GPU has is of bools, ints, floats, vectors, matrices, colors, structs of those, or arrays of them
 struct Corner { float3 position; }
-component Weights { float[2][2] w; }
+component Weights { Entity[2][2] w; }
 scene Main { }
-frag Shade(Corner vertex, out Color color, Weights weights) { color = Color(weights.w[0][1], 0, 0); }
+frag Shade(Corner vertex, out Color color, Weights weights) { color = weights.w[0][1] == weights.w[1][0] ? Color.white : Color.black; }

@@ -6,6 +6,7 @@
 #include "asset_files.h"
 #include "ast.h"
 #include "builtins.h"
+#include "tide/audio.h" // How many bytes an audio declaration's state and knobs have
 #include "tide/devices.h"
 #include "tide/player.h" // How many players a game can take
 #include "types.h"
@@ -36,6 +37,7 @@ typedef struct checker {
     VEC(expr *) spawns;       // Spawn calls, patched with archetype indices at the end.
     VEC(expr *) sends;        // Send calls, checked against the handlers at the end.
     VEC(struct call_site) calls; // Calls of functions and methods: which draw, and which read devices.
+    VEC(struct call_site) bare;  // Operators used where no code runs (a default, a constant): they can't roll there
     const expr *device_whole_ok; // A device record about to be checked that isn't read whole: a.b's a, or an argument
     const expr *colors_indexed;  // A 'target.colors' about to be checked that an index reads one of: target.colors[1]'s
     const expr *awaiting;     // The call an `await` is checking: an async call it waits for, not a task it starts
@@ -55,6 +57,7 @@ typedef struct checker {
     const expr *resident_arg; // ...and one an extern function's Resident parameter takes: the one place a Resident field is read
     bool world_value_ok;     // ...and the name being checked is it
     bool constants_only;     // A constant expression is being checked (check_constant_expr)
+    bool grid_param;         // Resolving a function's parameter, which can be a grid: one code the GPU runs passes it
     bool assets_constant;    // ...a field's default, where an asset's name is read as a constant is
 } checker;
 
@@ -75,6 +78,7 @@ typedef struct call_site {
     const expr *call;
     bool parallel;
     bool comparing;
+    bool sanitizing; // In the input's Sanitize
 } call_site;
 
 static const type T_ERR = {TY_ERROR, NULL};
@@ -932,8 +936,12 @@ static bool note_task_side(const checker *c, const int side, const loc at)
 static void note_operator_call(checker *c, decl *op, const expr *e)
 {
     decl *from = reading_code(c);
-    if (!op || !from) return;
-    const call_site site = {from, op, e, c->parallel != NULL, c->compare != NULL};
+    if (!op) return;
+    const call_site site = {from, op, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize};
+    if (!from) {
+        vec_push(c->bare, site);
+        return;
+    }
     vec_push(c->calls, site);
 }
 
@@ -2803,44 +2811,34 @@ static bool names_random(const checker *c, const expr *e)
 static bool check_random_use(checker *c, const loc at, const bool rolls)
 {
     const char *what = rolls ? "roll random numbers" : "read Random.seed";
-    if (gpu_refuses(c, at, what, rolls ? "the view rolls what it needs and keeps it in a field the GPU reads"
+    // The GPU has no generator: a pixel's number is a hash of where it is, or noise
+    if (gpu_refuses(c, at, what, rolls ? "hash the pixel's place, 'Math.Hash(int2(this.position))', or roll in the view and keep the number in a field the GPU reads"
                                        : "the view puts what it needs of the seed in a field the GPU reads")) {
         return false;
     }
-    if (c->in_input) {
-        diag_error(at, "%s can't %s", input_code(c), what);
-        diag_note("a system rolls for the entity it runs for, and a view for this machine: the input sends what the player did");
+    // Sanitize gives every machine the same input for the same bytes, and nothing else
+    if (c->in_sanitize) {
+        diag_error(at, "Sanitize can't %s", what);
+        diag_note("it repairs an input the same way on every machine, from the input alone; Sample rolls, on the machine that sends it");
         return false;
     }
     decl *code = reading_code(c);
-    const bool routine = code && (code->kind == DECL_FUNCTION || code->kind == DECL_METHOD) && !code->is_operator
-                      && !code->is_interpolate && !code->is_audio;
-    if (!code || (!routine && code->kind != DECL_SYSTEM)) {
-        diag_error(at, rolls ? "Random's rolls are for systems, views and handlers, and the functions and methods they call"
-                             : "Random.seed is read in systems, views and the match's handlers, and the functions and methods they call");
-        if (code && code->is_audio) diag_note("an audio declaration runs on the audio thread: keep a 'Random' in its state, and roll with that");
-        else if (rolls) diag_note("anywhere else, keep a generator of your own: 'mut var random = Random(seed);' and 'random.NextInt(6)'");
+    const bool routine = code && (code->kind == DECL_FUNCTION || code->kind == DECL_METHOD) && !code->is_interpolate;
+    if (!code || (!routine && code->kind != DECL_SYSTEM && code->kind != DECL_INPUT)) {
+        if (code && code->is_interpolate) {
+            // The engine calls it itself, as a view blends between two ticks: the same two give the same every frame
+            diag_error(at, "Interpolate can't %s", what);
+            diag_note("it blends two values the same way each time it's asked: a view rolls, and keeps what it rolled in a local field");
+        } else {
+            diag_error(at, rolls ? "Random rolls in code that runs: systems, views, handlers, tasks, and the functions and methods they call"
+                                 : "Random.seed is read in code that runs: systems, views, handlers, tasks, and the functions and methods they call");
+            if (rolls) diag_note("a constant's and a default's value is worked out once, while compiling");
+        }
         return false;
     }
-    if (async_code(c)) {
-        diag_error(at, "a task can't %s yet", what);
-        diag_note(rolls ? "it waits across ticks: keep a 'Random' in a component the task takes as 'mut', and roll with that"
-                        : "read it before the task starts, and pass it in");
-        return false;
-    }
-    if (rolls && c->parallel) {
-        diag_error(at, "a parallel loop's steps run at once, so they can't roll with Random");
-        diag_note("roll before the loop, or get a step's number from its place: 'Math.Hash(int3(at, Random.seed))'");
-        return false;
-    }
-    if (rolls && c->compare) {
-        diag_error(at, "a comparison runs again and again as the list sorts, so it can't roll");
-        diag_note("roll before the sort, and compare what was rolled");
-        return false;
-    }
-    if (!rolls && is_local_code(code) && !code->is_view) {
-        diag_error(at, "%s can't read Random.seed", local_code_what(code));
-        diag_note("the seed is the match's: a view reads it, and a handler of the match's events is sent what it needs of it");
+    if (!rolls && code->is_audio) {
+        diag_error(at, "an audio declaration runs on the audio thread, which has no match, so it can't read Random.seed");
+        diag_note("a view puts what the sound needs of it in the effect's knobs");
         return false;
     }
     if (rolls) {
@@ -3433,7 +3431,7 @@ static void check_method_args(checker *c, expr *e, decl *m)
     e->names_taken = true;
     decl *from = reading_code(c);
     if (from) {
-        const call_site site = {from, m, e, c->parallel != NULL, c->compare != NULL};
+        const call_site site = {from, m, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize};
         vec_push(c->calls, site);
     }
     int *param_of = arena_alloc(sizeof(int) * (size_t)(e->args.count ? e->args.count : 1));
@@ -3738,7 +3736,7 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
     e->method = m;
     decl *from = reading_code(c);
     if (from) {
-        const call_site site = {from, m, e, c->parallel != NULL, c->compare != NULL};
+        const call_site site = {from, m, e, c->parallel != NULL, c->compare != NULL, c->in_sanitize};
         vec_push(c->calls, site);
     }
     for (int i = 0; i < written; i++) {
@@ -6711,9 +6709,7 @@ static type check_member(checker *c, expr *e)
             return T_ERR;
         }
         if (!check_random_use(c, e->at, false)) return T_ERR;
-        const decl *code = reading_code(c);
-        e->c_constant = code->kind != DECL_SYSTEM ? "tide_match_seed"
-                      : code->is_view ? "(tide_w ? tide_w->Time.seed : 0)" : "tide_w->Time.seed";
+        e->c_constant = "tide_match_seed"; // Where the code has it, which codegen knows (match_seed)
         return T_INT_;
     }
     // quaternion.identity, Math.PI
@@ -8983,9 +8979,10 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
     if (e->resource_operation) return false;
     switch (e->call) {
     case CALL_NONE: case CALL_BUILTIN: case CALL_CONSTRUCT: case CALL_TEXT:
+    case CALL_ROLL: // A step rolls for its own cell, whichever thread runs it
         break;
     case CALL_FUNCTION:
-        if (e->method && (e->method->calls_c || e->method->is_async || e->method->draws || e->method->rolls)) return false;
+        if (e->method && (e->method->calls_c || e->method->is_async || e->method->draws)) return false;
         // What it changes, its mut arguments and the value a mut method is called on, is the step's own
         for (int i = 0; e->method && i < e->args.count && i < e->method->params.count; i++) {
             if (e->method->params.items[i].mode == PARAM_MUT && !step_own(e->args.items[i], loop)) return false;
@@ -8996,7 +8993,7 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
         return false; // Spawns, sends, draws, the GUI, list and grid changes, C: in order
     }
     if (e->kind == E_AWAIT || e->kind == E_TRY || e->type.kind == TY_DRAW_LIST) return false;
-    if (e->kind == E_STEP) return false; // It writes, in the middle of an expression: in order
+    if (e->kind == E_STEP) return own_cell_only(e->step, loop, 0); // The assignment it makes, checked as one
     if (e->kind == E_INDEX && e->object->type.kind == TY_GRID && same_place(e->object, loop->value)) {
         int64_t at[3];
         if (!own_offset(e->lhs, loop, e->object->type.decl->dims, at) || at[0] || at[1] || at[2]) return false;
@@ -9019,6 +9016,7 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
 #define WINDOW_REACH 64
 
 static void window_stmt(stmt *s, stmt *loop);
+static void window_assign(stmt *s, stmt *loop);
 
 // The cells of the loop's grid a step reads or writes at its place plus
 // constants, which go through its window, and how far that window reaches.
@@ -9046,6 +9044,7 @@ static void window_expr(expr *e, stmt *loop)
     for (int i = 0; i < e->args.count; i++) window_expr(e->args.items[i], loop);
     for (int i = 0; i < e->inits.count; i++) window_expr(e->inits.items[i].value, loop);
     window_stmt(e->block, loop);
+    if (e->kind == E_STEP) window_assign(e->step, loop); // After its variable's own cells were marked
 }
 
 static void window_stmt(stmt *s, stmt *loop)
@@ -9059,6 +9058,17 @@ static void window_stmt(stmt *s, stmt *loop)
     window_expr(s->cond, loop);
     window_expr(s->value, loop);
     window_expr(s->target, loop);
+    window_assign(s, loop);
+    window_stmt(s->init, loop);
+    window_stmt(s->step, loop);
+    window_stmt(s->then_stmt, loop);
+    window_stmt(s->else_stmt, loop);
+}
+
+// What a step writes of the loop's list or grid, by an assignment or by the
+// one a `++` in an expression makes: into its window, or the loop has none.
+static void window_assign(stmt *s, stmt *loop)
+{
     if (s->kind == S_ASSIGN && s->target->kind == E_INDEX && s->target->object->type.kind == TY_LIST
         && same_place(s->target->object, loop->value)) { // Its own element, in its task's copy
         int64_t at = 0;
@@ -9073,10 +9083,6 @@ static void window_stmt(stmt *s, stmt *loop)
         && same_place(s->target->object, loop->value) && !s->target->window) {
         loop->windowed = false; // A step only writes its own cells, but a write the window can't take goes the slow way
     }
-    window_stmt(s->init, loop);
-    window_stmt(s->step, loop);
-    window_stmt(s->then_stmt, loop);
-    window_stmt(s->else_stmt, loop);
 }
 
 // A parallel loop's steps go through a window when they can: its block, and
@@ -9383,12 +9389,6 @@ static void check_assign(checker *c, const stmt *s)
 // and the variable's value after it, or before.
 static type check_step_value(checker *c, expr *e)
 {
-    const char *op = e->op == T_PLUS_PLUS ? "++" : "--";
-    if (c->parallel) {
-        diag_error(e->at, "'%s' can't be part of an expression in a parallel loop's step", op);
-        diag_note("write it as a statement of its own: 'i %s= 1;'", e->op == T_PLUS_PLUS ? "+" : "-");
-        return T_ERR;
-    }
     const int errors = diag_error_count();
     check_assign(c, e->step);
     // Its value is read, where a statement's isn't
@@ -9873,7 +9873,10 @@ static void check_var(checker *c, stmt *s)
     }
 
     // A grid stays where it's made: a local would be a copy of every chunk
-    if (holds_grid(s->type)) {
+    // In code the GPU runs, a grid's local is a name for the grid, which shader.c follows: a frag, a vert, and a
+    // function that takes a grid, which only those call
+    const bool names_grid = s->type.kind == TY_GRID && s->value && (gpu_code(c) || (c->method && c->method->gpu_only));
+    if (holds_grid(s->type) && !names_grid) {
         const loc at = s->type_at.line ? s->type_at : s->value->at;
         if (s->type.kind == TY_GRID) diag_error(at, "a local can't hold a grid");
         else diag_error(at, "a local can't hold '" STR_FMT "': it has a grid in it", STR_ARG(s->type.decl->name));
@@ -11364,8 +11367,15 @@ static type method_type(const checker *c, const type_ref *r, const loc at, const
     const type t = resolve_type(c, r, is_return ? PLACE_RETURN : PLACE_FUNCTION, at);
     switch (t.kind) {
     case TY_GRID:
-        diag_error(at, "functions can't %s grids yet", is_return ? "return" : "take");
-        diag_note("change a grid's cells in the system that has its component or singleton");
+        if (!is_return && c->grid_param) return t;
+        if (is_return) {
+            diag_error(at, "functions can't return grids");
+            diag_note("a function takes a grid to read its cells, in code the GPU runs: change a grid's cells in the system "
+                      "that has its component or singleton");
+        } else {
+            diag_error(at, "this can't take a grid");
+            diag_note("a function or a method takes one to read its cells, in code the GPU runs");
+        }
         return T_ERR;
     case TY_ACTION:
         if (!is_return) return t;
@@ -11528,8 +11538,24 @@ static void check_signature(checker *c, decl *m)
         // `World world`: its caller's World, to read any entity's components through (a game's own type of
         // that name comes first, as for a system's)
         const bool world = str_eq_c(p->type_name, "World") && !find_type(c, p->type_name, p->type_at);
+        c->grid_param = !m->is_extern && !m->is_async && !m->is_operator && !m->is_interpolate && !m->is_audio && !m->takes_action;
         p->type = world ? (type){TY_WORLD, NULL} : method_type(c, type_ref_or_text(p->type_ref, p->type_name), p->type_qual_at, false);
+        c->grid_param = false;
         if (world) check_world_param(m, p, k);
+        if (p->type.kind == TY_GRID) { // Which grid it is, the GPU's code is written for: the CPU has no call that passes one
+            if (p->mode == PARAM_MUT) {
+                diag_error(p->type_at, "a function reads the cells of a grid it takes, and never changes them: '" STR_FMT "' can't be '%s'",
+                           STR_ARG(p->name), p->is_out ? "out" : "mut");
+                diag_note("change a grid's cells in the system that has its component or singleton");
+                p->type = T_ERR;
+            } else if (p->default_value) {
+                diag_error(p->name_at, "a grid a function takes has no default: the call names the one it reads");
+                p->type = T_ERR;
+            } else if (!m->gpu_only) {
+                m->gpu_only = true;
+                m->gpu_only_at = p->type_at;
+            }
+        }
         if (holds_render_resource(p->type)) {
             if (!m->render_resources) m->render_resources_at = p->type_at;
             m->render_resources = true;
@@ -15546,6 +15572,32 @@ static void check_io_calls(const checker *c)
 // can.
 // A function that plays sounds is local code's to call, as one that reads
 // Frame.dt is.
+// A function that takes a grid is written for the grid each call names, which
+// only the GPU's code is: a frag, a vert and the functions they call. So are
+// the functions that call one.
+static void check_gpu_only_calls(const checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            if (!site->to->gpu_only || site->from->gpu_only) continue;
+            if (site->from->kind != DECL_FUNCTION && site->from->kind != DECL_METHOD) continue;
+            site->from->gpu_only = true;
+            site->from->gpu_only_at = site->call->at;
+            changed = true;
+        }
+    }
+    for (int i = 0; i < c->calls.count; i++) {
+        const call_site *site = &c->calls.items[i];
+        if (!site->to->gpu_only || site->from->gpu_only || site->from->kind == DECL_SHADER) continue;
+        diag_error(site->call->at, "'" STR_FMT "' reads a grid it's passed, which only code the GPU runs does: a frag, a vert "
+                   "and the functions they call", STR_ARG(site->to->name));
+        diag_note_at(site->to->gpu_only_at, "it takes or passes the grid on line %d; here, read the cells through the grid's "
+                     "component or singleton, like 'board.cells[x, y]'", site->to->gpu_only_at.line);
+    }
+}
+
 static void check_audio_calls(const checker *c)
 {
     for (bool changed = true; changed;) {
@@ -15596,13 +15648,57 @@ static void check_audio_bodies(const checker *c)
         const decl *d = c->prog->decls.items[i];
         if (d->kind != DECL_FUNCTION || !d->is_audio) continue;
         const char *what = d->draws ? "draw or use the GUI" : d->plays ? "play sounds" : d->uses_io ? "reach files or the network"
-                         : d->frame_time ? "read Frame.dt" : d->rolls ? "roll with Random" : (d->world_local || d->world_match) ? "reach the world"
+                         : d->frame_time ? "read Frame.dt" : (d->world_local || d->world_match) ? "reach the world"
                          : d->calls_c ? "call C" : d->is_async ? "be a task" : d->makes_text ? "make text, lists, maps, sets or read grids" : NULL;
         if (!what) continue;
         const loc at = d->draws ? d->draws_at : d->plays ? d->plays_at : d->uses_io ? d->io_at : d->frame_time ? d->frame_time_at
                      : d->makes_text ? d->makes_text_at : d->at;
         diag_error(at, "'" STR_FMT "' runs on the audio thread, so it can't %s", STR_ARG(d->name), what);
         diag_note("an audio declaration reads and writes its block, its state and its knobs, and calls functions that do no more");
+    }
+}
+
+// What an audio declaration keeps between blocks is its voice's, or its bus's,
+// own bytes in the mixer (tide/audio.h): TIDE_AUDIO_STATE_BYTES of them, of
+// which the last are what it rolls with when its code rolls with Random, a
+// generator for each voice. Its knobs are the bytes an Effect value carries,
+// TIDE_AUDIO_KNOBS_BYTES. The code reads and writes them as its structs, so a
+// struct that's bigger would reach past them, into the next voice's. Sizes are
+// the generated C's (types.h); which declarations roll is known once every
+// call is (check_roll_calls).
+static void check_audio_sizes(const checker *c)
+{
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        const decl *d = c->prog->decls.items[i];
+        if (d->kind != DECL_FUNCTION || !d->is_audio) continue;
+        if (d->audio_state >= 0) {
+            const param *p = &d->params.items[d->audio_state];
+            const int size = decl_layout(p->type.decl).size;
+            const int rolled = d->rolls ? decl_layout(c->prog->random).size : 0;
+            const int most = (int)TIDE_AUDIO_STATE_BYTES - rolled;
+            if (size > most) {
+                diag_error(p->at, "an audio declaration's state is %d bytes at the most%s, and '%s' is %s%d", most,
+                           rolled ? " where it rolls with Random" : "", type_name(p->type), size == LAYOUT_MOST ? "over " : "", size);
+                if (rolled) {
+                    diag_note_at(d->rolls_at, "'" STR_FMT "' rolls on line %d, and each voice keeps what it rolls with in the last %d of its state's %d "
+                                 "bytes: make '%s' smaller, with a shorter array or fewer fields",
+                                 STR_ARG(d->name), d->rolls_at.line, rolled, (int)TIDE_AUDIO_STATE_BYTES, type_name(p->type));
+                } else {
+                    diag_note("each voice and bus '" STR_FMT "' plays on keeps its own: make '%s' smaller, with a shorter array or fewer "
+                              "fields (a float or an int is 4 bytes)", STR_ARG(d->name), type_name(p->type));
+                }
+            }
+        }
+        if (d->audio_knobs >= 0) {
+            const param *p = &d->params.items[d->audio_knobs];
+            const int size = decl_layout(p->type.decl).size;
+            if (size > (int)TIDE_AUDIO_KNOBS_BYTES) {
+                diag_error(p->at, "an audio declaration's knobs are %d bytes at the most, and '%s' is %s%d", (int)TIDE_AUDIO_KNOBS_BYTES,
+                           type_name(p->type), size == LAYOUT_MOST ? "over " : "", size);
+                diag_note("an Effect carries a copy of them, which a frame gives the mixer: make '%s' smaller, and keep what's big in "
+                          "the state, which has %d bytes", type_name(p->type), (int)TIDE_AUDIO_STATE_BYTES);
+            }
+        }
     }
 }
 
@@ -15668,24 +15764,35 @@ static void check_roll_calls(const checker *c)
         const char *does = to->rolls ? "rolls with Random" : "reads Random.seed";
         const loc where = to->rolls ? to->rolls_at : to->reads_seed_at;
         const char *why = NULL;
-        if (from->kind == DECL_INPUT) why = "the input's code can't";
-        else if (from->kind == DECL_SHADER) why = "the GPU can't";
-        else if (from->is_async) why = "a task can't yet";
-        else if (from->is_audio) why = "the audio thread can't";
-        else if (from->is_operator || from->is_interpolate) why = "an operator and an Interpolate can't";
-        else if (from->kind != DECL_FUNCTION && from->kind != DECL_METHOD && from->kind != DECL_SYSTEM) why = "only systems, views, handlers and functions can";
-        else if (to->rolls && site->parallel) why = "a parallel loop's steps run at once, so they can't";
-        else if (to->rolls && site->comparing) why = "a comparison runs again and again as the list sorts, so it can't";
-        else if (!to->rolls && is_local_code(from) && !from->is_view) why = "the seed is the match's, which a view reads";
+        if (from->kind == DECL_SHADER) why = "the GPU can't";
+        else if (site->sanitizing) why = "Sanitize repairs an input the same way on every machine, from the input alone";
+        else if (from->is_interpolate) why = "Interpolate blends two values the same way each time it's asked";
+        else if (!to->rolls && from->is_audio) why = "the audio thread has no match";
+        else if (from->kind != DECL_FUNCTION && from->kind != DECL_METHOD && from->kind != DECL_SYSTEM && from->kind != DECL_INPUT) {
+            why = "only code that runs can: systems, views, handlers, tasks and functions";
+        }
         if (!why) continue;
         diag_error(site->call->at, "'" STR_FMT "' %s, which this code can't", STR_ARG(to->name), does);
         diag_note_at(where, "it does on line %d, and %s", where.line, why);
     }
+    // A default's or a constant's operator, worked out with no code running
+    for (int i = 0; i < c->bare.count; i++) {
+        const call_site *site = &c->bare.items[i];
+        if (!site->to->rolls && !site->to->reads_seed) continue;
+        const loc where = site->to->rolls ? site->to->rolls_at : site->to->reads_seed_at;
+        diag_error(site->call->at, "this operator %s, which a value worked out with no code running can't",
+                   site->to->rolls ? "rolls with Random" : "reads Random.seed");
+        diag_note_at(where, "it does on line %d: give the field its value in code, where a spawn or a system sets it", where.line);
+    }
+    // What generated code keeps for it: the match's seed in the world, and in local state this machine's
+    // generator and the seed as the last frame's match had it. A task may be either world's.
     for (int i = 0; i < c->prog->decls.count; i++) {
         const decl *d = c->prog->decls.items[i];
-        if (d->kind != DECL_SYSTEM || !d->rolls) continue;
-        if (is_local_code(d)) c->prog->rolls_local = true;
-        else c->prog->rolls_match = c->prog->uses_seed = true; // Its generator is made from the match's seed
+        const bool local = is_local_code(d) || d->kind == DECL_INPUT || (d->is_async && d->kind == DECL_FUNCTION);
+        const bool match = (d->kind == DECL_SYSTEM && !is_local_code(d)) || (d->is_async && d->kind == DECL_FUNCTION);
+        if (d->rolls && local) c->prog->rolls_local = true;
+        if (d->rolls && match) c->prog->rolls_match = c->prog->uses_seed = true; // Its generator is made from the match's seed
+        if (d->reads_seed && local) c->prog->seed_local = true;
     }
 }
 
@@ -16755,8 +16862,10 @@ bool check(program *prog)
     check_render_resource_calls(&c);
     check_io_calls(&c);
     check_frame_time_calls(&c);
+    check_gpu_only_calls(&c);
     check_audio_calls(&c);
     check_audio_bodies(&c);
+    check_audio_sizes(&c);
     resolve_tasks(&c);
     check_this_calls(&c);
     check_drawing_calls(&c);

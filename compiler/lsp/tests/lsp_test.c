@@ -1403,8 +1403,8 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(offers(code, "if") && offers(code, "for") && offers(code, "var"));
     TIDE_CHECK(!offers(code, "Draw") && !offers(code, "GUI") && !offers(code, "Spawn") && !offers(code, "Send"));
     TIDE_CHECK(!offers(code, "Devices") && !offers(code, "Scene") && !offers(code, "Debug") && !offers(code, "Cursor"));
-    TIDE_CHECK(!offers(code, "while") && offers(code, "foreach") && offers(code, "switch"));
-    TIDE_CHECK(!offers(code, "byte") && !offers(code, "long") && !offers(code, "Entity") && !offers(code, "string") && !offers(code, "List"));
+    TIDE_CHECK(offers(code, "while") && offers(code, "foreach") && offers(code, "switch"));
+    TIDE_CHECK(offers(code, "byte") && !offers(code, "long") && !offers(code, "Entity") && !offers(code, "string") && !offers(code, "List"));
     TIDE_CHECK(!offers(code, "Noise") && !offers(code, "Box")); // C runs on the CPU, and nothing spawns here
     const char *value = complete(IN_FRAG("color = $"));
     TIDE_CHECK(offers(value, "box") && offers(value, "Math") && offers(value, "Lit") && !offers(value, "Draw") && !offers(value, "null"));
@@ -1419,10 +1419,27 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(offers(world, "x") && offers(world, "y") && offers(world, "z"));
     TIDE_CHECK(offers(complete(IN_FRAG("var x = this.world.xy.$")), "x"));
     const char *grid = complete(IN_FRAG("color = models.wood.$"));
-    TIDE_CHECK(offers(grid, "Sample") && !offers(grid, "Clear") && !offers(grid, "size"));
+    TIDE_CHECK(offers(grid, "Sample") && !offers(grid, "Clear") && offers(grid, "size"));
     TIDE_CHECK(has(grid, "Grid2<Color>.Sample(float2 uv, Filter filter = the grid's, Wrap wrap = the grid's) -> Color"));
     const char *list = complete(IN_FRAG("var n = models.crate.$"));
     TIDE_CHECK(!offers(list, "Add") && offers(list, "count")); // The GPU reads a list, and changes none
+#define IN_KEYED(code)                                                                                                \
+    SHADER_TYPES "local singleton Keyed\n{\n    Map<int, Color> hues;\n    Set<int> lit;\n}\n"                          \
+    "frag Shade(BoxVertex vertex, out Color color, Keyed keyed)\n{\n    " code "\n}\n"
+    const char *map = complete(IN_KEYED("var n = keyed.hues.$"));
+    TIDE_CHECK(offers(map, "count") && offers(map, "Has") && offers(map, "TryGet")); // ...and a map, by its keys
+    TIDE_CHECK(!offers(map, "Remove") && !offers(map, "Clear") && !offers(map, "Get"));
+    const char *set = complete(IN_KEYED("var n = keyed.lit.$"));
+    TIDE_CHECK(offers(set, "count") && offers(set, "Has") && !offers(set, "Add") && !offers(set, "TryGet"));
+#undef IN_KEYED
+    // A local that names a list or a grid is read the same way
+    const char *named_list = complete(IN_FRAG("var crate = models.crate;\n    var n = crate.$"));
+    TIDE_CHECK(!offers(named_list, "Add") && offers(named_list, "count"));
+    const char *named_grid = complete(IN_FRAG("var wood = models.wood;\n    color = wood.$"));
+    TIDE_CHECK(!offers(named_grid, "Clear") && offers(named_grid, "size"));
+    // ...and so is a grid a function takes, which is the GPU's code too
+    const char *taken = complete(SHADER_TYPES "int Cell(Grid2<int> cells, int2 at)\n{\n    return cells.$\n}\n");
+    TIDE_CHECK(offers(taken, "size") && !offers(taken, "Clear") && !offers(taken, "Decode"));
     TIDE_CHECK(offers(complete(IN_FRAG("color = box.$")), "tint"));
     TIDE_CHECK(offers(complete(IN_FRAG("color = Color.$")), "white") && offers(complete(IN_FRAG("var s = Math.$")), "Sin"));
     TIDE_CHECK(!offers(complete(IN_FRAG("Draw.$")), "Circle") && !offers(complete(IN_FRAG("var k = Devices.$")), "keyboard"));
@@ -1783,10 +1800,10 @@ TIDE_TEST(lsp_shaders_diagnostics)
                                "    color = Color.red;\n}\n");
     TIDE_CHECK(diagnosed(33, 9, 5, 1, "a frag runs on the GPU, for each pixel, so it can't draw"));
     // In a function a frag calls: where it is, with the frag that reaches it as a note there
-    open_document(SHADER_TYPES "float Count(float to)\n{\n    mut float x = 0;\n    while (x < to) x += 1;\n    return x;\n}\n"
+    open_document(SHADER_TYPES "float Count(float to)\n{\n    mut float x = 0;\n    string label = \"far\";\n    return x + to;\n}\n"
                                "frag Shade(BoxVertex vertex, out Color color)\n{\n"
                                "    color = Color.white * Count(vertex.uv.x);\n}\n");
-    TIDE_CHECK(diagnosed(34, 4, 5, 1, "a loop the GPU runs counts"));
+    TIDE_CHECK(diagnosed(34, 11, 5, 1, "string can't go to the GPU"));
     TIDE_CHECK(has(last_sent(), "\"relatedInformation\":[{\"location\":{\"uri\":\"file:///test.tide\",\"range\":{\"start\":{\"line\":37,"
                                 "\"character\":5},\"end\":{\"line\":37,\"character\":10}}},\"message\":\"frag 'Shade' runs on the GPU, "
                                 "and 'Count' with it, as it calls it\"}]"));
@@ -1804,8 +1821,8 @@ TIDE_TEST(lsp_shaders_diagnostics)
     TIDE_CHECK(diagnosed(43, 67, 5, 1, "view 'DrawBox' doesn't guarantee its entity has a 'Box', which frag 'Shade' reads"));
     // What the GPU can't hold, found once the rest of the game is right: on the index
     open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, Models models)\n{\n"
-                               "    color = models.wood[0, 0];\n}\n");
-    TIDE_CHECK(diagnosed(33, 23, 1, 1, "the GPU indexes arrays, and lists that are fields of what the frag or vert takes"));
+                               "    mut var all = models.faces;\n    color = Color.white;\n}\n");
+    TIDE_CHECK(diagnosed(33, 12, 3, 1, "a list's local in code the GPU runs names one list, for good: 'all' can't be 'mut'"));
 }
 
 // The type of what's at the cursor, and an event's or the input's code.
@@ -4378,6 +4395,25 @@ TIDE_TEST(lsp_diagnostic_notes_and_tags)
     TIDE_CHECK(count(last_sent(), "\"tags\":[1]") == 2); // mut never written, and never used
 }
 
+// An audio declaration's state and knobs that are more than the mixer has
+// room for are errors as they're typed, each at its parameter: the checker
+// knows a struct's size as generated C will have it.
+TIDE_TEST(lsp_audio_state_and_knobs_sizes)
+{
+    start();
+    open_document("struct Tail { int at; float[4096] taps; }\nstruct Curve { float[65] bands; }\n"
+                  "audio Echo(mut Samples samples, mut Tail tail, Curve curve)\n{\n    tail.at += 1;\n"
+                  "    samples.values[0] = curve.bands[0];\n}\nscene Main { }\n");
+    TIDE_CHECK(diagnosed(2, 32, 3, 1, "an audio declaration's state is 4096 bytes at the most, and 'Tail' is 16388"));
+    TIDE_CHECK(diagnosed(2, 47, 5, 1, "an audio declaration's knobs are 256 bytes at the most, and 'Curve' is 260"));
+    TIDE_CHECK(has(last_sent(), "make 'Tail' smaller, with a shorter array or fewer fields"));
+    // All the bytes there are of each, and nothing is said
+    open_document("struct Tail { int at; float[1023] taps; }\nstruct Curve { float[64] bands; }\n"
+                  "audio Echo(mut Samples samples, mut Tail tail, Curve curve)\n{\n    tail.at += 1;\n"
+                  "    samples.values[0] = curve.bands[0];\n}\nscene Main { }\n");
+    TIDE_CHECK(!has(last_sent(), "bytes at the most") && !has(last_sent(), "\"severity\":1"));
+}
+
 TIDE_TEST(lsp_move_to_file)
 {
     start();
@@ -6637,6 +6673,13 @@ TIDE_TEST(lsp_random)
     const char *rolls = complete(DECK "system Roll(mut Deck deck)\n{\n    deck.top = Random.$\n}\n");
     TIDE_CHECK(offers(rolls, "NextInt") && offers(rolls, "NextFloat2Direction") && offers(rolls, "seed"));
     TIDE_CHECK(has(rolls, "The match's seed") && !offers(rolls, "state"));
+    // ...in a task and in Sample too, and not in Sanitize
+    const char *task = complete(DECK "async void Deal(mut Deck deck)\n{\n    await Wait.Ticks(1);\n    deck.top = Random.$\n}\n");
+    TIDE_CHECK(offers(task, "NextInt") && offers(task, "seed"));
+    const char *sample = complete("input Keys\n{\n    int luck;\n    Sample(Devices devices)\n    {\n        luck = Random.$\n    }\n}\nscene Main { }\n");
+    TIDE_CHECK(offers(sample, "NextInt"));
+    const char *sanitize = complete("input Keys\n{\n    int luck;\n    Sanitize()\n    {\n        luck = Random.$\n    }\n}\nscene Main { }\n");
+    TIDE_CHECK(!offers(sanitize, "NextInt"));
     open_document(DECK "system Roll(mut Deck deck)\n{\n    deck.top = Random.Next$Int(6);\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Random.NextInt(int max) -> int"));
     open_document(DECK "system Roll(mut Deck deck)\n{\n    deck.top = Random.NextInt($\n}\n");

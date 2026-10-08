@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "tide/math.h"
 #include "tide/net.h"
 #include "tide/pack.h"
 
@@ -242,11 +243,11 @@ uint32_t tide_draw_list_data(tide_draw_list *d, const tide_list list, const uint
     *count = 0;
     const int32_t held = tide_list_count(list);
     if (held <= 0 || words == 0 || element_size == 0) return 0;
-    const uint32_t each = (words + 3u) / 4u; // Pixels an element
-    const uint32_t most = (uint32_t)TIDE_LIST_DATA_MOST / each;
+    const uint32_t stride = tide_data_stride(words); // Ints from an element to the next
+    const uint64_t most = (uint64_t)TIDE_LIST_DATA_MOST * 4u / stride;
     if (most == 0) return 0;
-    const uint32_t elements = (uint32_t)held < most ? (uint32_t)held : most;
-    const uint32_t pixels = elements * each;
+    const uint32_t elements = (uint64_t)held < most ? (uint32_t)held : (uint32_t)most;
+    const uint32_t pixels = (uint32_t)(((uint64_t)elements * stride + 3u) / 4u);
     const int32_t width = pixels < (uint32_t)TIDE_LIST_DATA_ACROSS ? (int32_t)pixels : TIDE_LIST_DATA_ACROSS;
     const int32_t height = (int32_t)((pixels + (uint32_t)TIDE_LIST_DATA_ACROSS - 1u) / (uint32_t)TIDE_LIST_DATA_ACROSS);
     // What its elements are, and what they're read as: another kind of list at the same place is other numbers
@@ -262,10 +263,124 @@ uint32_t tide_draw_list_data(tide_draw_list *d, const tide_list list, const uint
         bool copied;
         const uint8_t *flat = tide_list_flatten(list, element_size, false, &copied);
         int32_t *to = (int32_t *)(void *)out;
-        for (uint32_t i = 0; i < elements; i++) write(flat + (size_t)i * element_size, to + (size_t)i * each * 4u);
+        for (uint32_t i = 0; i < elements; i++) write(flat + (size_t)i * element_size, to + (size_t)i * stride);
         tide_list_unflatten(list, (void *)(uintptr_t)flat, element_size, false, copied);
     }
     *count = (int32_t)elements;
+    return slot;
+}
+
+uint32_t tide_draw_map_data(tide_draw_list *d, const tide_map map, const uint32_t entry_size, const uint32_t words,
+                            const uint32_t key_word, tide_list_words_fn *write, int32_t *count)
+{
+    count[0] = count[1] = 0;
+    const int32_t held = tide_list_count(map.entries);
+    if (map.live == 0 || held <= 0 || words == 0 || key_word >= words || entry_size < sizeof(uint32_t)) return 0;
+    const uint32_t stride = tide_data_stride(words);
+    // Entries and their slots, under four an entry, have to fit
+    const uint64_t most = ((uint64_t)TIDE_LIST_DATA_MOST * 4u - 16u) / (stride + 4u);
+    const uint32_t entries = (uint64_t)map.live < most ? map.live : (uint32_t)most;
+    uint32_t slots = 8u;
+    while (slots < entries * 2u) slots *= 2u;
+    const uint32_t index_at = (entries * stride + 3u) / 4u; // The index's first pixel
+    const uint32_t pixels = index_at + slots / 4u;
+    const int32_t width = pixels < (uint32_t)TIDE_LIST_DATA_ACROSS ? (int32_t)pixels : TIDE_LIST_DATA_ACROSS;
+    const int32_t height = (int32_t)((pixels + (uint32_t)TIDE_LIST_DATA_ACROSS - 1u) / (uint32_t)TIDE_LIST_DATA_ACROSS);
+    // Its entries say all of it: the CPU's index only follows from them
+    uint64_t version = list_version(map.entries, entry_size);
+    const uint32_t shape[4] = {entry_size, words, key_word, 0x4D415053u}; // As a map's numbers, and no list's
+    version = tide_hash_end(tide_hash_more(version, shape, sizeof shape));
+    const uint64_t id = map.entries.at >> 30 == TIDE_IN_SCRATCH ? UINT64_C(1) << 63 | version >> 1 : map.entries.at;
+    uint8_t *out;
+    const uint32_t slot = tide_draw_texture_slot_as(d, TIDE_PIXELS_LIST, id, version, width, height, TIDE_TEXELS_INTS, &out);
+    if (out) {
+        memset(out, 0, (size_t)width * (size_t)height * 16u);
+        bool copied;
+        const uint8_t *flat = tide_list_flatten(map.entries, entry_size, false, &copied);
+        int32_t *to = (int32_t *)(void *)out;
+        int32_t *index = to + (size_t)index_at * 4u;
+        uint32_t made = 0;
+        for (int32_t i = 0; i < held && made < entries; i++) {
+            const uint8_t *entry = flat + (size_t)i * entry_size;
+            if (!tide_map_live(entry)) continue; // A removed key's place: the GPU's entries have none
+            int32_t *at = to + (size_t)made * stride;
+            write(entry, at);
+            uint32_t s = (uint32_t)tide_hash_i(at[key_word]) & (slots - 1u);
+            while (index[s]) s = (s + 1u) & (slots - 1u);
+            index[s] = (int32_t)++made;
+        }
+        tide_list_unflatten(map.entries, (void *)(uintptr_t)flat, entry_size, false, copied);
+    }
+    count[0] = (int32_t)entries;
+    count[1] = (int32_t)slots;
+    return slot;
+}
+
+uint32_t tide_draw_grid_data(tide_draw_list *d, const tide_grid g, const tide_grid_shape *s, const uint32_t words,
+                             tide_list_words_fn *write, int32_t *size)
+{
+    size[0] = size[1] = 0;
+    if (!g.at || s->dims != 2u || s->cell == 0 || words == 0 || s->shift[0] + s->shift[1] > TIDE_HEAP_PAGE_SHIFT
+        || s->shift[2] != 0u || tide_grid_chunk_bytes(s) > 1u << TIDE_HEAP_PAGE_SHIFT) {
+        return 0;
+    }
+    // As a grid that's sampled is read (grid_texture): nothing a handle names is trusted
+    tide_heap *heap = (tide_heap *)(uintptr_t)tide_heap_read(g.at >> 30);
+    const bool packed = !heap && tide_pack_holds(g.at);
+    if (!heap && !packed) return 0;
+    const uint32_t at = g.at & 0x3FFFFFFFu;
+    const uint8_t *block = span(heap, at, sizeof(tide_block) + sizeof(tide_grid_dir));
+    if (!block) return 0;
+    tide_grid_dir dir;
+    memcpy(&dir, block + sizeof(tide_block), sizeof dir);
+    if (dir.dims != 2u || dir.size[0] <= 0 || dir.size[1] <= 0 || dir.records > dir.room) return 0;
+    const uint32_t stride = tide_data_stride(words);
+    const uint64_t wide = ((uint64_t)dir.size[0] * stride + 3u) / 4u; // Pixels a row
+    if (wide > TIDE_GRID_TEXTURE_MOST || dir.size[1] > TIDE_GRID_TEXTURE_MOST) return 0;
+    const uint64_t across = ((uint64_t)dir.size[0] + (1u << s->shift[0]) - 1u) >> s->shift[0];
+    const uint64_t down = ((uint64_t)dir.size[1] + (1u << s->shift[1]) - 1u) >> s->shift[1];
+    if (dir.records > across * down) return 0;
+    if (dir.flat && ((uint64_t)dir.chunks[0] != across || (uint64_t)dir.chunks[1] != down)) return 0;
+    const tide_grid_record *records = (const tide_grid_record *)(const void *)
+        span(heap, at + (uint32_t)(sizeof(tide_block) + sizeof(tide_grid_dir)), (uint64_t)dir.records * sizeof(tide_grid_record));
+    if (dir.records && !records) return 0;
+    uint64_t version;
+    if (packed) {
+        version = tide_pack_grid_version(g);
+    } else {
+        const bool whole_pages = tide_grid_chunk_bytes(s) == 1u << TIDE_HEAP_PAGE_SHIFT;
+        version = tide_hash_more(TIDE_HASH_START, dir.size, sizeof dir.size);
+        for (uint32_t r = 0; r < dir.records; r++) {
+            const uint8_t *chunk = span(heap, records[r].block, tide_grid_chunk_bytes(s));
+            const uint64_t cells = !chunk ? 0u : whole_pages ? tide_heap_block_hash(heap, records[r].block)
+                                                             : tide_hash(chunk, tide_grid_chunk_bytes(s));
+            version = tide_hash_more(version, records[r].chunk, sizeof records[r].chunk);
+            version = tide_hash_more(version, &cells, sizeof cells);
+        }
+    }
+    const uint32_t shape[3] = {s->cell, words, 0x47524944u}; // Its cells as these numbers, and no list's
+    version = tide_hash_end(tide_hash_more(version, shape, sizeof shape));
+    uint8_t *out;
+    const uint32_t slot = tide_draw_texture_slot_as(d, TIDE_PIXELS_LIST, g.at, version, (int32_t)wide, dir.size[1],
+                                                    TIDE_TEXELS_INTS, &out);
+    if (out) {
+        memset(out, 0, (size_t)wide * (size_t)dir.size[1] * 16u);
+        const int32_t chunk_across = 1 << s->shift[0], chunk_down = 1 << s->shift[1];
+        for (uint32_t r = 0; r < dir.records; r++) {
+            int32_t x0, y0;
+            const uint8_t *cells = span(packed ? NULL : heap, records[r].block, tide_grid_chunk_bytes(s));
+            if (!cells || !chunk_place(&records[r], s, dir.size[0], dir.size[1], &x0, &y0)) continue;
+            for (int32_t y = 0; y < chunk_down && y0 + y < dir.size[1]; y++) {
+                int32_t *row = (int32_t *)(void *)(out + (size_t)(y0 + y) * (size_t)wide * 16u);
+                const uint8_t *in = cells + (size_t)y * (size_t)chunk_across * s->cell;
+                for (int32_t x = 0; x < chunk_across && x0 + x < dir.size[0]; x++) {
+                    write(in + (size_t)x * s->cell, row + (size_t)(x0 + x) * stride);
+                }
+            }
+        }
+    }
+    size[0] = dir.size[0];
+    size[1] = dir.size[1];
     return slot;
 }
 

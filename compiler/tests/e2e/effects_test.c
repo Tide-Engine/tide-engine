@@ -68,7 +68,23 @@ TIDE_TEST(effects_run_tide_code_on_a_block_with_state_and_knobs)
     TIDE_REQUIRE(audio.bus_effect[1].fn == track->effect.fn);
     const Knobs *bus_knobs = tide_audio_knobs(&audio, audio.bus_knobs_at[1], audio.bus_effect[1].knobs_size);
     TIDE_CHECK(bus_knobs->gain == 2.0f && bus_knobs->add == 0.0f);
-    TIDE_CHECK(audio.bus_effect[0].fn == NULL);
+    // The master's: noise, which rolls. Its generator is in the last bytes of the state the mixer keeps, so
+    // each voice has a sequence of its own, which goes on from block to block
+    TIDE_REQUIRE(audio.bus_effect[0].fn != NULL && audio.bus_effect[0].state_size == TIDE_AUDIO_STATE_BYTES);
+    static _Alignas(8) uint8_t voice_a[TIDE_AUDIO_STATE_BYTES], voice_b[TIDE_AUDIO_STATE_BYTES];
+    static float first[TIDE_AUDIO_SAMPLES], second[TIDE_AUDIO_SAMPLES], beside[TIDE_AUDIO_SAMPLES];
+    audio.bus_effect[0].fn(first, voice_a, NULL);
+    audio.bus_effect[0].fn(beside, voice_b, NULL);
+    audio.bus_effect[0].fn(second, voice_a, NULL);
+    int loud = 0, same_voice = 0, same_block = 0;
+    for (uint32_t i = 0; i < TIDE_AUDIO_SAMPLES; i++) {
+        TIDE_CHECK(first[i] >= -0.5f && first[i] < 0.5f);
+        loud += first[i] != 0.0f;
+        same_voice += first[i] == beside[i];
+        same_block += first[i] == second[i];
+    }
+    TIDE_CHECK(loud > (int)TIDE_AUDIO_SAMPLES - 4 && same_voice < 4 && same_block < 4);
+    TIDE_CHECK(((const Counter *)(const void *)voice_a)->blocks == 2 && ((const Counter *)(const void *)voice_b)->blocks == 1);
     // The frame after: the same effect, other knobs
     local.Mix.gain = 0.5f;
     frame();
