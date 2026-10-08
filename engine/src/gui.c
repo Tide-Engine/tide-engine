@@ -1265,18 +1265,28 @@ bool tide_gui_layout_toggle(tide_gui *g, const uint32_t id, const char *text, bo
 }
 
 // A slider's track and thumb. `t` is where the value is, 0 to 1; returns
-// where the player moved it, or -1.
-static float slider(tide_gui *g, const uint32_t id, const tide_rect r, const float t, const float steps)
+// where the player moved it, or -1. An int slider also takes the direction
+// of a key's step, which it applies to the integer rather than its fraction.
+static double slider(tide_gui *g, const uint32_t id, const tide_rect r, const double t, const double steps, int *step)
 {
     const bool hover = hovered(g, id, r);
     const bool down = held_down(g, id, hover);
     const bool focused = focusable(g, id, true);
-    float moved = -1.0f;
+    double moved = -1.0;
+    if (step) *step = 0;
     if (down && g->mouse_held && r.width > 0.0f) moved = clamp_f((g->mouse.x - r.x) / r.width, 0.0f, 1.0f);
-    if (focused && pressed(g, KEY_LEFT | PAD_LEFT)) moved = clamp_f(t - 1.0f / steps, 0.0f, 1.0f);
-    if (focused && pressed(g, KEY_RIGHT | PAD_RIGHT)) moved = clamp_f(t + 1.0f / steps, 0.0f, 1.0f);
+    if (focused && pressed(g, KEY_LEFT | PAD_LEFT)) {
+        moved = t - 1.0 / steps;
+        if (moved < 0.0) moved = 0.0;
+        if (step) *step = -1;
+    }
+    if (focused && pressed(g, KEY_RIGHT | PAD_RIGHT)) {
+        moved = t + 1.0 / steps;
+        if (moved > 1.0) moved = 1.0;
+        if (step) *step = 1;
+    }
 
-    const float at = moved >= 0.0f ? moved : t;
+    const float at = (float)(moved >= 0.0 ? moved : t);
     const float middle = r.y + r.height * 0.5f;
     const tide_rect rail = {r.x, middle - 3.0f, r.width, 6.0f};
     if (focused) fill_around(g, rail, BORDER, g->theme.accent);
@@ -1287,11 +1297,11 @@ static float slider(tide_gui *g, const uint32_t id, const tide_rect r, const flo
 }
 
 // Where `v` is between `min` and `max`, 0 to 1; a reversed range works too.
-static float fraction(const float v, const float min, const float max)
+static double fraction(const double v, const double min, const double max)
 {
-    if (max == min) return 0.0f;
-    const float t = (v - min) / (max - min);
-    return t >= 0.0f ? min_f(t, 1.0f) : 0.0f; // Also NaN
+    if (max == min) return 0.0;
+    const double t = (v - min) / (max - min);
+    return t >= 0.0 ? t > 1.0 ? 1.0 : t : 0.0; // Also NaN
 }
 
 // The track's rect: the rest of the widget after its label, minus the value on the right.
@@ -1308,9 +1318,9 @@ bool tide_gui_slider(tide_gui *g, const uint32_t id, const tide_rect rect, const
 {
     char text[32];
     snprintf(text, sizeof text, "%.2f", (double)*value);
-    const float moved = slider(g, id, track(g, rect, label, text), fraction(*value, min, max), 20.0f);
-    if (moved < 0.0f) return false;
-    const float v = moved >= 1.0f ? max : min + (max - min) * moved;
+    const double moved = slider(g, id, track(g, rect, label, text), fraction(*value, min, max), 20.0, NULL);
+    if (!(moved >= 0.0)) return false; // Not moved, or by a rect that isn't one (NaN).
+    const float v = moved <= 0.0 ? min : moved >= 1.0 ? max : (float)((double)min + ((double)max - (double)min) * moved);
     if (v == *value) return false;
     *value = v;
     return true;
@@ -1328,11 +1338,20 @@ bool tide_gui_int_slider(tide_gui *g, const uint32_t id, const tide_rect rect, c
 {
     char text[32];
     snprintf(text, sizeof text, "%d", (int)*value);
-    const float range = (float)max - (float)min;
-    const float steps = range < 0.0f ? -range : range;
-    const float moved =
-        slider(g, id, track(g, rect, label, text), fraction((float)*value, (float)min, (float)max), steps > 0.0f ? steps : 1.0f);
-    if (!(moved >= 0.0f)) return false; // Not moved, or by a rect that isn't one (NaN)
+    const double range = (double)max - (double)min;
+    const double steps = range < 0.0 ? -range : range;
+    int step;
+    const double moved = slider(g, id, track(g, rect, label, text), fraction(*value, min, max), steps > 0.0 ? steps : 1.0, &step);
+    if (!(moved >= 0.0)) return false; // Not moved, or by a rect that isn't one (NaN)
+    if (step) {
+        const int32_t low = min < max ? min : max, high = min > max ? min : max;
+        int64_t next = *value < low ? low : *value > high ? high : *value;
+        next += min <= max ? step : -step;
+        const int32_t v = next < low ? low : next > high ? high : (int32_t)next;
+        if (v == *value) return false;
+        *value = v;
+        return true;
+    }
     // A range can be all the ints, which a float doesn't tell apart at its
     // ends: worked out in doubles, and no further than an int goes
     const double exact = (double)min + ((double)max - (double)min) * (double)moved;

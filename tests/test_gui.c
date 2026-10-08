@@ -1,3 +1,4 @@
+#include <float.h>
 #include <string.h>
 
 #include "tide/gui.h"
@@ -152,6 +153,152 @@ TIDE_TEST(gui_toggle_and_slider_change_values)
         end();
     }
     TIDE_CHECK(volume == 0.25f);
+}
+
+static bool int_slider_frame(int32_t *value, const int32_t min, const int32_t max)
+{
+    begin();
+    const bool changed = tide_gui_int_slider(&gui, 10, (tide_rect){0, 0, 300, 28}, "", value, min, max);
+    end();
+    return changed;
+}
+
+TIDE_TEST(gui_int_sliders_step_by_one_across_the_int_range)
+{
+    static const struct {
+        int32_t min, max, initial, right, left;
+    } cases[] = {
+        {2000000000, 2000000010, 2000000005, 2000000006, 2000000005},
+        {-2000000010, -2000000000, -2000000005, -2000000004, -2000000005},
+        {INT32_MIN, INT32_MAX, 0, 1, 0},
+        {0, INT32_MAX, 1073741823, 1073741824, 1073741823},
+        {INT32_MIN, INT32_MAX, INT32_MAX, INT32_MAX, INT32_MAX - 1},
+        {INT32_MIN, INT32_MAX, INT32_MIN, INT32_MIN + 1, INT32_MIN},
+        {INT32_MAX, INT32_MIN, 0, -1, 0},
+        {2000000010, 2000000000, 2000000005, 2000000004, 2000000005},
+        {7, 7, 7, 7, 7},
+        {7, 7, 0, 7, 7},
+        {10, 20, 0, 11, 10},
+        {10, 20, 30, 20, 19},
+    };
+    for (int pad = 0; pad < 2; pad++) {
+        for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+            start();
+            gui.focus = 10;
+            devices.gamepad.connected = pad != 0;
+            int32_t value = cases[i].initial;
+            TIDE_CHECK(!int_slider_frame(&value, cases[i].min, cases[i].max));
+            TIDE_CHECK(value == cases[i].initial); // An interaction is what clamps it.
+            tide_button *right = pad ? &devices.gamepad.dpad.right : &devices.keyboard.rightArrow;
+            tide_button *left = pad ? &devices.gamepad.dpad.left : &devices.keyboard.leftArrow;
+            key(right, true);
+            TIDE_CHECK(int_slider_frame(&value, cases[i].min, cases[i].max) == (cases[i].right != cases[i].initial));
+            TIDE_CHECK(value == cases[i].right);
+            key(right, false);
+            int_slider_frame(&value, cases[i].min, cases[i].max);
+            key(left, true);
+            TIDE_CHECK(int_slider_frame(&value, cases[i].min, cases[i].max) == (cases[i].left != cases[i].right));
+            TIDE_CHECK(value == cases[i].left);
+            TIDE_CHECK(gui.focus == 10);
+        }
+    }
+}
+
+TIDE_TEST(gui_int_sliders_place_large_values_on_the_track)
+{
+    for (int reversed = 0; reversed < 2; reversed++) {
+        start();
+        const int32_t min = reversed ? 2000000010 : 2000000000;
+        const int32_t max = reversed ? 2000000000 : 2000000010;
+        int32_t value = 2000000005;
+        TIDE_CHECK(!int_slider_frame(&value, min, max));
+        TIDE_REQUIRE(draw.count > 0);
+        TIDE_CHECK(draw.commands[draw.count - 1u].a.x == 122.0f); // The thumb is halfway along the track.
+        mouse(6.0f, 14.0f, true);
+        TIDE_CHECK(int_slider_frame(&value, min, max));
+        TIDE_CHECK(value == min);
+        mouse(238.0f, 14.0f, true);
+        TIDE_CHECK(int_slider_frame(&value, min, max));
+        TIDE_CHECK(value == max);
+        mouse(122.0f, 14.0f, true);
+        TIDE_CHECK(int_slider_frame(&value, min, max));
+        TIDE_CHECK(value == 2000000005);
+    }
+}
+
+static bool float_slider_frame(float *value, const float min, const float max)
+{
+    begin();
+    const bool changed = tide_gui_slider(&gui, 10, (tide_rect){0, 0, 300, 28}, "", value, min, max);
+    end();
+    return changed;
+}
+
+TIDE_TEST(gui_float_sliders_keep_finite_ranges_finite)
+{
+    for (int reversed = 0; reversed < 2; reversed++) {
+        start();
+        const float min = reversed ? FLT_MAX : -FLT_MAX;
+        const float max = -min;
+        float value = 0.0f;
+        TIDE_CHECK(!float_slider_frame(&value, min, max));
+        TIDE_REQUIRE(draw.count > 0);
+        TIDE_CHECK(draw.commands[draw.count - 1u].a.x == 122.0f);
+        mouse(6.0f, 14.0f, true);
+        TIDE_CHECK(float_slider_frame(&value, min, max));
+        TIDE_CHECK(value == min);
+        mouse(238.0f, 14.0f, true);
+        TIDE_CHECK(float_slider_frame(&value, min, max));
+        TIDE_CHECK(value == max);
+        mouse(122.0f, 14.0f, true);
+        TIDE_CHECK(float_slider_frame(&value, min, max));
+        TIDE_CHECK(value == 0.0f);
+        mouse(64.0f, 14.0f, true);
+        TIDE_CHECK(float_slider_frame(&value, min, max));
+        TIDE_CHECK(value == min * 0.5f);
+        mouse(180.0f, 14.0f, true);
+        TIDE_CHECK(float_slider_frame(&value, min, max));
+        TIDE_CHECK(value == max * 0.5f);
+    }
+}
+
+TIDE_TEST(gui_float_sliders_step_with_extreme_finite_bounds)
+{
+    for (int reversed = 0; reversed < 2; reversed++) {
+        start();
+        gui.focus = 10;
+        const float min = reversed ? FLT_MAX : -FLT_MAX;
+        const float max = -min;
+        float value = 0.0f;
+        TIDE_CHECK(!float_slider_frame(&value, min, max));
+        key(&devices.keyboard.rightArrow, true);
+        TIDE_CHECK(float_slider_frame(&value, min, max));
+        TIDE_CHECK(value >= -FLT_MAX && value <= FLT_MAX);
+        TIDE_CHECK(reversed ? value < 0.0f : value > 0.0f);
+        key(&devices.keyboard.rightArrow, false);
+        float_slider_frame(&value, min, max);
+        key(&devices.keyboard.leftArrow, true);
+        TIDE_CHECK(float_slider_frame(&value, min, max));
+        TIDE_CHECK(value >= -FLT_MAX && value <= FLT_MAX);
+        TIDE_CHECK(value > -FLT_MAX * 0.000001f && value < FLT_MAX * 0.000001f);
+    }
+}
+
+TIDE_TEST(gui_int_slider_steps_keep_their_input_precedence)
+{
+    start();
+    int32_t value = 2000000005;
+    gui.focus = 10;
+    int_slider_frame(&value, 2000000000, 2000000010);
+    // A pointer already held before the keys go down; their step wins over its position.
+    mouse(6.0f, 14.0f, true);
+    int_slider_frame(&value, 2000000000, 2000000010);
+    value = 2000000005;
+    gui.focus = 10;
+    key(&devices.keyboard.leftArrow, true);
+    key(&devices.keyboard.rightArrow, true);
+    TIDE_CHECK(int_slider_frame(&value, 2000000000, 2000000010));
+    TIDE_CHECK(value == 2000000006); // Right wins when both keys went down.
 }
 
 TIDE_TEST(gui_ids_tell_loops_apart)
