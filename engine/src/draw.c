@@ -353,6 +353,10 @@ void tide_render_targets_free(void)
 static void free_pixels(const tide_draw_texture *t)
 {
     if (t->capacity) free(t->pixels);
+    if (t->changes) {
+        free(t->changes->parts);
+        free(t->changes);
+    }
 }
 
 void tide_draw_reset(tide_draw_list *d)
@@ -1377,28 +1381,60 @@ uint32_t tide_draw_texture_slot(tide_draw_list *d, const uint32_t space, const u
     return tide_draw_texture_slot_as(d, space, id, version, width, height, TIDE_TEXELS_BYTES, pixels);
 }
 
-uint32_t tide_draw_texture_slot_as(tide_draw_list *d, const uint32_t space, const uint64_t id, const uint64_t version,
-                                   const int32_t width, const int32_t height, const uint32_t format, uint8_t **pixels)
+static tide_draw_texture *find_texture(const tide_draw_list *d, const uint32_t space, const uint64_t id)
+{
+    for (uint32_t i = 0; i < d->texture_count; i++) {
+        if (d->textures[i].id == id && d->textures[i].space == space) return &d->textures[i];
+    }
+    return NULL;
+}
+
+// The texture `id` of `space` at `version`, with its pixels to write unless
+// the list has them so. `kept`, where a writer of `kind` asks, says they're
+// the ones it wrote at another version, whose changes it then says: anything
+// else leaves nothing known of what changed.
+static uint32_t texture_place(tide_draw_list *d, const uint32_t space, const uint64_t id, const uint64_t version,
+                              const int32_t width, const int32_t height, const uint32_t format, const uint64_t kind,
+                              uint8_t **pixels, bool *kept)
 {
     *pixels = NULL;
+    if (kept) *kept = false;
     if (width <= 0 || height <= 0) return 0;
     const uint64_t bytes = (uint64_t)width * (uint64_t)height * tide_texels_bytes(format);
     if (bytes > UINT32_MAX) tide_out_of_memory();
-    tide_draw_texture *t = NULL;
-    for (uint32_t i = 0; i < d->texture_count && !t; i++) {
-        if (d->textures[i].id == id && d->textures[i].space == space) t = &d->textures[i];
-    }
+    tide_draw_texture *t = find_texture(d, space, id);
+    bool same = false; // Its pixels are there, in this shape
     if (!t) {
         d->textures = grow(d->textures, d->texture_count, &d->texture_capacity, 1, sizeof(tide_draw_texture), 8u);
         t = &d->textures[d->texture_count++];
         *t = (tide_draw_texture){.id = id, .space = space, .epoch = d->epoch};
-    } else if (t->version == version && t->width == width && t->height == height && t->format == format) {
-        t->frame = d->frame;
-        return (uint32_t)(t - d->textures) + 1u;
+    } else if (t->width == width && t->height == height && t->format == format) {
+        if (t->version == version) { // The same pixels, whoever wrote them
+            t->frame = d->frame;
+            return (uint32_t)(t - d->textures) + 1u;
+        }
+        same = t->capacity != 0;
     }
     if (bytes > t->capacity) {
         t->pixels = tide_realloc(t->pixels, t->capacity, (size_t)bytes);
         t->capacity = (uint32_t)bytes;
+    }
+    tide_draw_texture_changes *c = t->changes;
+    if (kind && !c) c = t->changes = tide_alloc_zeroed(1, sizeof *c);
+    if (kind && same && c->kind == kind) {
+        // What a frame changed is counted from the version the frame found: a renderer draws between two frames
+        if (!c->known || c->frame != d->frame) {
+            c->was = t->version;
+            c->frame = d->frame;
+            c->count = 0;
+            c->known = true;
+        }
+        if (kept) *kept = true;
+    } else if (c) { // All of it is written again, or by another writer
+        c->known = false;
+        c->kind = kind;
+        c->used = 0;
+        if (c->part_count) memset(c->parts, 0, (size_t)c->part_count * sizeof *c->parts);
     }
     t->version = version;
     t->format = format;
@@ -1407,6 +1443,104 @@ uint32_t tide_draw_texture_slot_as(tide_draw_list *d, const uint32_t space, cons
     t->frame = d->frame;
     *pixels = t->pixels;
     return (uint32_t)(t - d->textures) + 1u;
+}
+
+uint32_t tide_draw_texture_slot_as(tide_draw_list *d, const uint32_t space, const uint64_t id, const uint64_t version,
+                                   const int32_t width, const int32_t height, const uint32_t format, uint8_t **pixels)
+{
+    return texture_place(d, space, id, version, width, height, format, 0, pixels, NULL);
+}
+
+uint32_t tide_draw_texture_edit(tide_draw_list *d, const uint32_t space, const uint64_t id, const uint64_t version,
+                                const int32_t width, const int32_t height, const uint32_t format, const uint64_t kind,
+                                uint8_t **pixels, bool *kept)
+{
+    return texture_place(d, space, id, version, width, height, format, kind ? kind : 1u, pixels, kept);
+}
+
+static tide_draw_texture_changes *changes_of(tide_draw_list *d, const uint32_t texture)
+{
+    if (texture == 0 || texture > d->texture_count) return NULL;
+    tide_draw_texture *t = &d->textures[texture - 1u];
+    if (!t->capacity) return NULL; // Not the list's own pixels
+    if (!t->changes) t->changes = tide_alloc_zeroed(1, sizeof *t->changes);
+    return t->changes;
+}
+
+void tide_draw_texture_changed(tide_draw_list *d, const uint32_t texture, int32_t x, int32_t y, int32_t width, int32_t height)
+{
+    if (texture == 0 || texture > d->texture_count) return;
+    const tide_draw_texture *t = &d->textures[texture - 1u];
+    tide_draw_texture_changes *c = t->changes;
+    if (!c || !c->known) return; // Nothing is known of it: a renderer takes it whole
+    if (x < 0) width += x, x = 0;
+    if (y < 0) height += y, y = 0;
+    if (width > t->width - x) width = t->width - x;
+    if (height > t->height - y) height = t->height - y;
+    if (width <= 0 || height <= 0) return;
+    if (c->count) { // More of the last one, where it's against it: rows under rows, or pixels beside pixels
+        tide_draw_area *last = &c->areas[c->count - 1u];
+        if (last->x == x && last->width == width && y <= last->y + last->height && y + height >= last->y) {
+            const int32_t top = y < last->y ? y : last->y;
+            const int32_t bottom = y + height > last->y + last->height ? y + height : last->y + last->height;
+            last->y = top;
+            last->height = bottom - top;
+            return;
+        }
+        if (last->y == y && last->height == height && x <= last->x + last->width && x + width >= last->x) {
+            const int32_t left = x < last->x ? x : last->x;
+            const int32_t right = x + width > last->x + last->width ? x + width : last->x + last->width;
+            last->x = left;
+            last->width = right - left;
+            return;
+        }
+    }
+    if (c->count < TIDE_DRAW_TEXTURE_AREAS) {
+        c->areas[c->count++] = (tide_draw_area){x, y, width, height};
+        return;
+    }
+    // More areas than it keeps: one around them all
+    int32_t left = x, top = y, right = x + width, bottom = y + height;
+    for (uint32_t i = 0; i < c->count; i++) {
+        const tide_draw_area *a = &c->areas[i];
+        if (a->x < left) left = a->x;
+        if (a->y < top) top = a->y;
+        if (a->x + a->width > right) right = a->x + a->width;
+        if (a->y + a->height > bottom) bottom = a->y + a->height;
+    }
+    c->areas[0] = (tide_draw_area){left, top, right - left, bottom - top};
+    c->count = 1;
+}
+
+uint64_t *tide_draw_texture_parts(tide_draw_list *d, const uint32_t texture, const uint32_t count)
+{
+    tide_draw_texture_changes *c = changes_of(d, texture);
+    if (!c) return NULL;
+    if (c->part_count != count) { // The numbers it had stay, and the ones past them are zeros
+        uint64_t *parts = count ? tide_alloc_zeroed(count, sizeof *parts) : NULL;
+        const uint32_t had = c->part_count < count ? c->part_count : count;
+        if (had) memcpy(parts, c->parts, (size_t)had * sizeof *parts);
+        free(c->parts);
+        c->parts = parts;
+        c->part_count = count;
+    }
+    return c->parts;
+}
+
+uint64_t *tide_draw_texture_used(tide_draw_list *d, const uint32_t texture)
+{
+    tide_draw_texture_changes *c = changes_of(d, texture);
+    return c ? &c->used : NULL;
+}
+
+bool tide_draw_texture_since(const tide_draw_texture *texture, const uint64_t had, const tide_draw_area **areas,
+                             uint32_t *count)
+{
+    const tide_draw_texture_changes *c = texture->changes;
+    if (!c || !c->known || c->was != had) return false;
+    *areas = c->areas;
+    *count = c->count;
+    return true;
 }
 
 uint64_t tide_texture_version(const void *pixels, const int32_t width, const int32_t height)
@@ -2139,9 +2273,33 @@ static uint32_t append_texture(tide_draw_list *d, const tide_draw_list *from, co
     }
     if (t->space == TIDE_PIXELS_PACK) return pack_texture(d, t->id, t->width, t->height, t->pixels);
     if (t->space == TIDE_PIXELS_PACK_CUBE) return pack_cube(d, t->id, t->width, (const uint8_t *const *)(uintptr_t)t->pixels);
+    // What `from` knows changed since the pixels `d` has is all that's copied, and `d` knows it of its own then.
+    // The kind is a copy's, of that writer's: the writer itself, on `d`, would find none of its own numbers here
+    const tide_draw_texture *mine = find_texture(d, t->space, t->id);
+    const uint64_t had = mine ? mine->version : 0;
+    const uint64_t kind = t->changes && t->changes->kind ? ~t->changes->kind : 0;
     uint8_t *pixels;
-    const uint32_t slot = tide_draw_texture_slot_as(d, t->space, t->id, t->version, t->width, t->height, t->format, &pixels);
-    if (pixels) memcpy(pixels, t->pixels, (size_t)t->width * (size_t)t->height * tide_texels_bytes(t->format));
+    bool kept;
+    const uint32_t slot = kind ? tide_draw_texture_edit(d, t->space, t->id, t->version, t->width, t->height, t->format, kind,
+                                                        &pixels, &kept)
+                               : texture_place(d, t->space, t->id, t->version, t->width, t->height, t->format, 0, &pixels, &kept);
+    if (!pixels) return slot;
+    const size_t pixel = tide_texels_bytes(t->format), row = (size_t)t->width * pixel;
+    const tide_draw_area *areas;
+    uint32_t count;
+    if (!kept || !tide_draw_texture_since(t, had, &areas, &count)) {
+        memcpy(pixels, t->pixels, row * (size_t)t->height);
+        tide_draw_texture_changed(d, slot, 0, 0, t->width, t->height);
+        return slot;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        const tide_draw_area *a = &areas[i];
+        for (int32_t y = a->y; y < a->y + a->height; y++) {
+            const size_t at = (size_t)y * row + (size_t)a->x * pixel;
+            memcpy(pixels + at, t->pixels + at, (size_t)a->width * pixel);
+        }
+        tide_draw_texture_changed(d, slot, a->x, a->y, a->width, a->height);
+    }
     return slot;
 }
 

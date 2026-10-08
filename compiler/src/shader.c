@@ -72,12 +72,24 @@ typedef struct data_ref {
     type element; // A list's element, a grid's cell, a map's entry (its key and its value) or a set's key
     bool grid;
     const decl *map; // The map's or the set's type, for one of those
+    // Where the code notes which parts of an element it reads (shader_leaves), while checking: the field's own, or
+    // inside a function, its parameter's, which each call hands on. NULL for an asset's, which is sent whole
+    bool *leaves;
 } data_ref;
 
 typedef struct data_alias {
     const stmt *local;
     data_ref data;
 } data_alias;
+
+// A local that holds an element of a list the code was given, or a part of
+// one: a foreach's variable, or `var light = lights[i];`. What the code reads
+// of the local is what it reads of the element.
+typedef struct element_alias {
+    const stmt *local;
+    bool *leaves;     // The element's (data_ref.leaves)
+    int first, count; // The parts of it the local holds
+} element_alias;
 
 typedef struct shader_function {
     const decl *fn;
@@ -118,6 +130,12 @@ typedef struct emit {
     VEC(type) picks;           // The types whose '?:' is a function (need_pick)
     int raw; // Writing what an assignment stores into: an array's element is the element itself, in range already
     VEC(const field *) hoisted; // Arrays the engine supplies that the function being written made a variable of as it starts
+    // Which parts of a list's elements the code reads (read_element): only those are sent
+    VEC(element_alias) elements; // The locals of the code being written that hold an element
+    const expr *part_root;       // The element a chain of fields being written reads a part of (note_part)...
+    int part_first, part_count;  // ...and which part
+    const expr *held_root;       // The element, or the part of one, that the local being declared holds (st_var)...
+    const stmt *held_by;         // ...and the local
 } emit;
 
 static void ex(emit *em, const expr *e);
@@ -258,6 +276,57 @@ static bool type_words(const type t, int *floats, int *ints)
     default:
         return false;
     }
+}
+
+int shader_leaves(const type t)
+{
+    if (!is_struct_like(t)) return 1;
+    int n = 0;
+    for (int i = 0; i < t.decl->fields.count; i++) {
+        if (!t.decl->fields.items[i].hidden) n += shader_leaves(t.decl->fields.items[i].type);
+    }
+    return n;
+}
+
+void shader_part_words(const type t, const bool *leaves, int *leaf, int *floats, int *ints)
+{
+    if (is_struct_like(t)) {
+        for (int i = 0; i < t.decl->fields.count; i++) {
+            const field *f = &t.decl->fields.items[i];
+            if (!f->hidden) shader_part_words(f->type, leaves, leaf, floats, ints);
+        }
+        return;
+    }
+    if (!leaves || leaves[*leaf]) type_words(t, floats, ints);
+    *leaf += 1;
+}
+
+unsigned shader_layout(const type t, const bool *leaves)
+{
+    const int n = shader_leaves(t);
+    bool all = true;
+    unsigned h = 0x811C9DC5u;
+    for (int i = 0; i < n; i++) {
+        const bool read = !leaves || leaves[i];
+        all &= read;
+        h = (h ^ (read ? 1u : 2u)) * 0x01000193u;
+    }
+    return all ? 0u : (h & 0x7FFFFFFFu) | 1u;
+}
+
+const bool *shader_texture_leaves(const shader_texture *t)
+{
+    return t->field && !t->asset ? t->field->gpu_leaves : NULL;
+}
+
+// Where the parts of field `f` start among those of a value of the struct `d`.
+static int leaf_offset(const decl *d, const field *f)
+{
+    int n = 0;
+    for (int i = 0; i < d->fields.count && &d->fields.items[i] != f; i++) {
+        if (!d->fields.items[i].hidden) n += shader_leaves(d->fields.items[i].type);
+    }
+    return n;
 }
 
 // Whether the GPU has values of type `t`; says why not, at `at`.
@@ -1355,6 +1424,34 @@ static void put_value(emit *em, const type t, const char floats, const char ints
     }
 }
 
+static void put_zeros(emit *em, type t);
+
+// The same for an element of a list, of which only the parts `leaves` says
+// are read are in the streams (shader_leaves, from *leaf on, which moves past
+// it): the others are zeros, which nothing reads.
+static void put_part(emit *em, const type t, const char floats, const char ints, int *f, int *i, const bool *leaves, int *leaf)
+{
+    if (!leaves) {
+        put_value(em, t, floats, ints, f, i);
+        return;
+    }
+    if (!is_struct_like(t)) {
+        if (leaves[(*leaf)++]) put_value(em, t, floats, ints, f, i);
+        else put_zeros(em, t);
+        return;
+    }
+    sb_printf(em->o, "%s(", ty(em, t));
+    bool first = true;
+    for (int k = 0; k < t.decl->fields.count; k++) {
+        const field *fl = &t.decl->fields.items[k];
+        if (fl->hidden) continue;
+        if (!first) sb_put(em->o, ", ");
+        first = false;
+        put_part(em, fl->type, floats, ints, f, i, leaves, leaf);
+    }
+    sb_put(em->o, ")");
+}
+
 static const shader_value *find_value(const shader *sh, const decl *source, const field *f)
 {
     for (int i = 0; i < sh->values.count; i++) {
@@ -1478,6 +1575,80 @@ static bool map_fits(emit *em, const type t, const loc at)
     return t.kind == TY_SET || type_fits(em, t.decl->fields.items[1].type, at);
 }
 
+// Where the code notes the parts it reads of an element of a list of type
+// `t`: made the first time the list is read. A map's key is always read: its
+// entries are found by it.
+static bool *leaves_room(bool **held, const type t)
+{
+    if (!*held) {
+        *held = arena_alloc((size_t)(shader_leaves(data_element(t)) + 1) * sizeof(bool));
+        if (t.kind == TY_MAP || t.kind == TY_SET) (*held)[0] = true;
+    }
+    return *held;
+}
+
+// The expression a chain of struct fields starts from, `a` in `a.b.c`, and in
+// *first, where the parts of the chain's last field start among a's.
+static const expr *chain_root(const expr *e, int *first)
+{
+    *first = 0;
+    while (e->kind == E_MEMBER && e->field && !e->local_field && !e->swizzle_len && !e->constant && !e->enum_member
+           && !e->c_constant && is_struct_like(e->object->type) && e->object->type.decl
+           && e->field >= e->object->type.decl->fields.items
+           && e->field < e->object->type.decl->fields.items + e->object->type.decl->fields.count) {
+        *first += leaf_offset(e->object->type.decl, e->field);
+        e = e->object;
+    }
+    return e;
+}
+
+static bool may_be_element(const expr *e)
+{
+    return e->kind == E_INDEX || (e->kind == E_NAME && e->bind == BIND_LOCAL);
+}
+
+// `e` reads a field of a struct. Where that's a field of an element of a list
+// the code was given (`lights[i].color`, or `light.color` of a local that
+// holds one), only that part of the element is read, which the element is
+// told as it's written (read_element): the whole chain's, the first time one
+// of its links comes here.
+static void note_part(emit *em, const expr *e)
+{
+    int first;
+    const expr *root = chain_root(e, &first);
+    if (root == e || !may_be_element(root) || em->part_root == root) return;
+    em->part_root = root;
+    em->part_first = first;
+    em->part_count = shader_leaves(e->type);
+}
+
+// The code reads an element of a list it was given where `e` is written, an
+// index or a local that holds one: its parts from `base` on, `count` of them.
+// All of those, unless `e` starts a chain of fields, which reads a part of
+// them, or is what a local being declared holds, whose own reads then say.
+static void read_element(emit *em, const expr *e, bool *leaves, int base, int count)
+{
+    if (em->part_root == e) {
+        em->part_root = NULL;
+        base += em->part_first;
+        count = em->part_count;
+    }
+    if (em->held_root == e) {
+        em->held_root = NULL;
+        const element_alias alias = {em->held_by, leaves, base, count};
+        vec_push(em->elements, alias);
+        return;
+    }
+    for (int i = 0; em->checking && leaves && i < count; i++) leaves[base + i] = true;
+}
+
+// `e` isn't an element after all: nothing waits for it to be written.
+static void no_element(emit *em, const expr *e)
+{
+    if (em->part_root == e) em->part_root = NULL;
+    if (em->held_root == e) em->held_root = NULL;
+}
+
 // Notes that the code reads the numbers of an asset's list or grid, while
 // checking: the frag or vert itself, or a function, whose callers then do.
 static void note_asset(emit *em, const decl *asset)
@@ -1515,6 +1686,8 @@ static bool data_of(emit *em, const expr *e, data_ref *d)
     }
     if (e->kind == E_NAME && e->bind == BIND_PARAM && e->param->function_param && em->code != em->root) { // Its function's
         if (em->spec) *d = em->spec[param_index(em->code, e->param)];
+        // What the function reads of an element is its parameter's to say, for each of its calls (ex_user_call)
+        if (em->checking) d->leaves = leaves_room(&em->code->params.items[param_index(em->code, e->param)].gpu_leaves, e->type);
         return true;
     }
     const decl *asset = NULL;
@@ -1532,6 +1705,10 @@ static bool data_of(emit *em, const expr *e, data_ref *d)
         return true;
     }
     if (d->map ? !map_fits(em, e->type, e->at) : !type_fits(em, d->element, e->at)) return true;
+    if (p) { // A field's elements: what's read of them is noted on the field, for every frag and vert that reads it
+        field *held = (field *)(uintptr_t)e->field;
+        d->leaves = em->checking ? leaves_room(&held->gpu_leaves, e->type) : held->gpu_leaves;
+    }
     if (em->checking) {
         if (asset) {
             note_asset(em, asset);
@@ -1602,9 +1779,12 @@ static void need_data(emit *em, const int texture, const type element, const boo
     if (texture < 0 || em->lists[texture]) return;
     em->lists[texture] = true;
     const bool wgsl = em->l == WGSL;
-    int floats = 0, ints = 0;
-    type_words(element, &floats, &ints);
-    const int stride = data_stride(floats + ints), pixels = stride < 4 ? 1 : stride / 4;
+    // Only the parts of an element that the game's code reads are in the texture (shader_leaves)
+    const bool *leaves = shader_texture_leaves(&em->sh->textures.items[texture]);
+    int floats = 0, ints = 0, leaf = 0;
+    shader_part_words(element, leaves, &leaf, &floats, &ints);
+    const int words = floats + ints;
+    const int stride = data_stride(words), pixels = words == 0 ? 0 : stride < 4 ? 1 : stride / 4;
     const int count_at = em->sh->textures.items[texture].count_at;
     sb text = {0};
     sb *const out = em->o;
@@ -1624,8 +1804,11 @@ static void need_data(emit *em, const int texture, const type element, const boo
     }
     sb_put(&text, ") {\n        return ");
     put_zeros(em, element);
-    sb_printf(&text, ";\n    }\n    %s tide_word = tide_i%s * %d;\n    %s tide_first = tide_word >> %s;\n", wgsl ? "let" : "int",
-              grid ? ".x" : "", stride, wgsl ? "let" : "int", wgsl ? "2u" : "2");
+    sb_put(&text, ";\n    }\n");
+    if (pixels) { // Nothing of it is read, where the code only counts its elements
+        sb_printf(&text, "    %s tide_word = tide_i%s * %d;\n    %s tide_first = tide_word >> %s;\n", wgsl ? "let" : "int",
+                  grid ? ".x" : "", stride, wgsl ? "let" : "int", wgsl ? "2u" : "2");
+    }
     for (int k = 0; k < pixels; k++) {
         char name[16], at[96];
         if (stride < 4) snprintf(name, sizeof name, "tide_r");
@@ -1644,7 +1827,8 @@ static void need_data(emit *em, const int texture, const type element, const boo
     }
     sb_put(&text, "    return ");
     int f = 0, n = floats;
-    put_value(em, element, 'p', 'q', &f, &n);
+    leaf = 0;
+    put_part(em, element, 'p', 'q', &f, &n, leaves, &leaf);
     sb_put(&text, ";\n}\n\n");
     em->o = out;
     sb_put(&em->functions, text.data);
@@ -1673,11 +1857,11 @@ static void need_find(emit *em, const data_ref *d)
     em->finds[texture] = true;
     need(em, H_HASH1);
     const bool wgsl = em->l == WGSL;
-    int floats = 0, ints = 0, value_floats = 0, value_ints = 0;
-    type_words(d->element, &floats, &ints);
-    // Where an entry's key is among its words: its ints come after its floats, and the key is the first of them
-    if (!d->map->is_set) type_words(d->map->fields.items[1].type, &value_floats, &value_ints);
-    const int stride = data_stride(floats + ints), key_word = value_floats;
+    // Where an entry's key is among its words: its ints come after its floats, which are all its value's, and the
+    // key is the first of them. Of the value, only the parts that are read are there (need_data)
+    int floats = 0, ints = 0, leaf = 0;
+    shader_part_words(d->element, shader_texture_leaves(&em->sh->textures.items[texture]), &leaf, &floats, &ints);
+    const int stride = data_stride(floats + ints), key_word = floats;
     const int count_at = em->sh->textures.items[texture].count_at;
     sb text = {0};
     sb *const out = em->o;
@@ -1768,6 +1952,8 @@ static void ex_map_call(emit *em, const expr *e)
         refuse(em, to->at, "TryGet's value goes into a local in code the GPU runs: 'TryGet(key, out var value)'");
         return;
     }
+    // All of the value goes into the variable: every part of it is read
+    for (int k = 0; em->checking && data.leaves && k < shader_leaves(data.map->fields.items[1].type); k++) data.leaves[1 + k] = true;
     need_try(em, &data);
     sb_printf(em->o, "tide_try%d(", t);
     ex_as(em, e->args.items[0], key);
@@ -1985,11 +2171,19 @@ static void ex_name(emit *em, const expr *e)
     switch (e->bind) {
     case BIND_LOCAL:
         if (em->lifting) { // Before it's declared: its value, which nothing changed (liftable)
+            no_element(em, e); // What that value reads of a list's element, it says itself
             sb_put(em->o, "(");
             ex_as(em, e->local->value, e->local->type);
             sb_put(em->o, ")");
             return;
         }
+        for (int i = em->elements.count - 1; i >= 0; i--) { // One that holds an element of a list: what's read of it
+            const element_alias *held = &em->elements.items[i];
+            if (held->local != e->local) continue;
+            read_element(em, e, held->leaves, held->first, held->count);
+            break;
+        }
+        no_element(em, e);
         sb_put(em->o, local_name(e->local->name));
         return;
     case BIND_PARAM: {
@@ -2187,6 +2381,7 @@ static void ex_member(emit *em, const expr *e)
         ex(em, obj);
         sb_printf(em->o, "[%c]", e->member.ptr[1]);
     } else if (e->field && is_struct_like(ot)) {
+        note_part(em, e); // Of a list's element, only this field is read
         ex(em, obj);
         sb_printf(em->o, ".%s", field_name(e->field));
     } else if (type_fits(em, ot, obj->at)) {
@@ -3035,6 +3230,13 @@ static void ex_user_call(emit *em, const expr *e)
         sb_printf(&suffix, "%s%d", suffix.data ? "x" : "_4", spec[i].texture < 0 ? 0 : spec[i].texture);
     }
     need_function(em, fn, e->at, spec, suffix.data ? suffix.data : "");
+    // What the function reads of the elements of a list it takes, the code that hands it the list reads
+    for (int i = 0; em->checking && i < fn->params.count; i++) {
+        const bool *read = fn->params.items[i].gpu_leaves;
+        if (!takes_data(&fn->params.items[i]) || !read || !spec[i].leaves) continue;
+        const int parts = shader_leaves(spec[i].element);
+        for (int k = 0; k < parts; k++) spec[i].leaves[k] |= read[k];
+    }
     const bool method = fn->owner && !fn->is_operator && !fn->is_interpolate;
     const bool statement = em->statement == e;
     sb_printf(em->o, "%s%s(", function_name(fn), suffix.data ? suffix.data : "");
@@ -3282,7 +3484,11 @@ static void ex(emit *em, const expr *e)
         const bool named = data_of(em, e->object, &data);
         if (named && data.map) { // map[key]: its value, or zeros, as an entry past the end reads
             const type key = data.map->fields.items[0].type;
-            if (data.map->is_set || (key.kind != TY_INT && key.kind != TY_BYTE && key.kind != TY_ENUM)) return; // Said already
+            if (data.map->is_set || (key.kind != TY_INT && key.kind != TY_BYTE && key.kind != TY_ENUM)) { // Said already
+                no_element(em, e);
+                return;
+            }
+            read_element(em, e, data.leaves, 1, shader_leaves(data.map->fields.items[1].type)); // An entry's value, after its key
             need_find(em, &data);
             const int t = data.texture < 0 ? 0 : data.texture;
             sb_printf(em->o, "tide_list%d(tide_find%d(", t, t);
@@ -3290,7 +3496,9 @@ static void ex(emit *em, const expr *e)
             sb_printf(em->o, ")).%s", field_name(&data.map->entry->fields.items[1]));
             return;
         }
+        no_element(em, named ? NULL : e);
         if (named) { // items[i], cells[x, y]: an element by its place
+            read_element(em, e, data.leaves, 0, shader_leaves(data.element));
             need_data(em, data.texture, data.element, data.grid);
             sb_printf(em->o, "tide_list%d(", data.texture < 0 ? 0 : data.texture);
             ex_as(em, e->lhs, (type){data.grid ? TY_INT2 : TY_INT, NULL});
@@ -3431,8 +3639,20 @@ static void st_var(emit *em, const stmt *s)
     if (!type_fits(em, s->type, s->name_at.line ? s->name_at : s->at)) return;
     if (em->l == WGSL) sb_printf(em->o, "var %s: %s = ", local_name(s->name), ty(em, s->type));
     else sb_printf(em->o, "%s %s = ", ty(em, s->type), local_name(s->name));
-    if (s->value) ex_as(em, s->value, s->type);
-    else put_default(em, s->type);
+    if (!s->value) {
+        put_default(em, s->type);
+        return;
+    }
+    // A local that holds an element of a list, or a part of one, and never anything else: what the code reads of
+    // the local is what it reads of the element (read_element)
+    int first;
+    const expr *root = chain_root(s->value, &first);
+    if (!s->is_mut && may_be_element(root)) {
+        em->held_root = root;
+        em->held_by = s;
+    }
+    ex_as(em, s->value, s->type);
+    em->held_root = NULL;
 }
 
 static tok_kind plain_op(const tok_kind op)
@@ -3960,6 +4180,9 @@ static void st_foreach(emit *em, const stmt *s, const data_ref *list)
     } else {
         const int texture = list->texture;
         const type element = list->element;
+        // What the loop's code reads of its variable is what it reads of each element
+        const element_alias each = {s, list->leaves, 0, shader_leaves(element)};
+        vec_push(em->elements, each);
         need_data(em, texture, element, false);
         sb_printf(em->o, wgsl ? "for (var tide_k%d: i32 = 0; tide_k%d < " : "for (int tide_k%d = 0; tide_k%d < ", k, k);
         put_list_count(em, texture);
@@ -4217,10 +4440,12 @@ static void need_function(emit *em, decl *fn, const loc at, const data_ref *spec
     em->grads = (sb){0};
     em->grad_count = 0;
     em->hoisted.count = 0; // A function's own: only a frag or vert has any, and it gets its own back
-    const int indent = em->indent, defuse = em->defuse, aliases = em->aliases.count;
+    const int indent = em->indent, defuse = em->defuse, aliases = em->aliases.count, elements = em->elements.count;
     const expr *statement = em->statement;
     const bool failed = em->failed;
     const data_ref *const outer_spec = em->spec;
+    const expr *const part_root = em->part_root, *const held_root = em->held_root; // What its caller is in the middle of
+    em->part_root = em->held_root = NULL;
     em->spec = spec;
     em->o = &body;
     em->code = fn;
@@ -4285,6 +4510,9 @@ static void need_function(emit *em, decl *fn, const loc at, const data_ref *spec
     em->code = code;
     em->spec = outer_spec;
     em->aliases.count = aliases;
+    em->elements.count = elements;
+    em->part_root = part_root;
+    em->held_root = held_root;
     if (em->checking) { // What it reads of assets by their names, its caller reads
         for (int i = 0; i < fn->gpu_data.count; i++) note_asset(em, fn->gpu_data.items[i]);
     }

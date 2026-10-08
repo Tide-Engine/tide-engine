@@ -1331,6 +1331,7 @@ typedef struct gpu_held {
 static gpu_held *held_buffers, *held_textures, *held_targets; // By the backend's id
 static uint32_t held_buffer_count, held_texture_count, held_target_count;
 static uint64_t gpu_memory;
+static uint64_t gpu_written; // Bytes of textures' pixels sent to the GPU (tide_platform_gpu_written)
 
 static gpu_held *held(gpu_held **table, uint32_t *count, const tide_gpu_id id)
 {
@@ -1467,6 +1468,11 @@ static void forget_held(void)
 uint64_t tide_platform_gpu_memory(void)
 {
     return gpu_memory;
+}
+
+uint64_t tide_platform_gpu_written(void)
+{
+    return gpu_written;
 }
 
 // The GPU's copy of a list's 3D mesh, kept in the place the list keeps it.
@@ -2341,22 +2347,30 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
         *g = (gpu_texture){.id = t->id, .space = t->space};
     }
     g->frame = gpu_frame;
-    if (g->texture && g->version == t->version && g->width == t->width && g->height == t->height
-        && g->format == t->format && g->epoch == t->epoch) {
-        return g;
-    }
-    g->mipped = false;
+    const bool shaped = g->texture && g->width == t->width && g->height == t->height && g->format == t->format;
+    if (shaped && g->version == t->version && g->epoch == t->epoch) return g;
+    const tide_draw_area *areas;
+    uint32_t count = 1;
     if (t->space == TIDE_PIXELS_PACK_CUBE) { // A cube of the pack's: its six faces' pixels, where the pack has them
         if (g->texture) free_texture(g->texture);
         g->texture = made_cube(TIDE_GPU_COLOR_BYTES, t->width, (const void *const *)(uintptr_t)t->pixels);
-    } else if (g->texture && g->width == t->width && g->height == t->height && g->format == t->format) {
+    } else if (shaped && g->epoch == t->epoch && tide_draw_texture_since(t, g->version, &areas, &count)) {
+        // The list says all that changed since the pixels the GPU has: those go, and nothing else
+        for (uint32_t i = 0; i < count; i++) {
+            gpu->texture_write_part(g->texture, t->pixels, areas[i].x, areas[i].y, areas[i].width, areas[i].height);
+            gpu_written += (uint64_t)areas[i].width * (uint64_t)areas[i].height * tide_texels_bytes(t->format);
+        }
+    } else if (shaped) {
         gpu->texture_write(g->texture, t->pixels);
+        gpu_written += (uint64_t)t->width * (uint64_t)t->height * tide_texels_bytes(t->format);
     } else {
         if (g->texture) free_texture(g->texture);
         // A grid of floats' cells are one float of 16 bits a pixel
         g->texture = made_texture(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F :
                                   t->format == TIDE_TEXELS_INTS ? TIDE_GPU_RGBA32I : TIDE_GPU_RGBA8, t->width, t->height, t->pixels);
+        gpu_written += (uint64_t)t->width * (uint64_t)t->height * tide_texels_bytes(t->format);
     }
+    if (count) g->mipped = false; // Its smaller images are of other pixels
     g->format = t->format;
     g->version = t->version;
     g->width = t->width;

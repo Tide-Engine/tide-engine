@@ -1075,6 +1075,13 @@ static void run_list_checks(const float turn, const char *when)
         {40, 152, {128, 191, 64}, "a for whose step writes an array's element, through a continue, and one that starts by writing one"},
         {56, 152, {128, 64, 255}, "'?:' between structs, arrays, rows and matrices, its first side"},
         {72, 152, {64, 255, 64}, "and its second"},
+        {8, 168, {191, 64, 64}, "fields of a list's elements, of which only what's read is sent: by a chain of fields"},
+        {24, 168, {159, 128, 0}, "what a foreach reads of its variable, an array among it"},
+        {40, 168, {191, 128, 191}, "what locals that hold an element, and a part of one, are read of"},
+        {56, 168, {128, 255, 64}, "a list only a function reads, a float of each, four elements to a pixel"},
+        {72, 168, {128, 223, 64}, "parts of a map's values, by a key and through a foreach, with its keys"},
+        {88, 168, {64, 191, 128}, "a part of a grid's cells, and its size"},
+        {104, 168, {191, 96, 0}, "a list that's only counted, of which nothing is sent"},
     };
     enum { COUNT = sizeof wanted / sizeof wanted[0] };
     local.Art.targetPass = 18;

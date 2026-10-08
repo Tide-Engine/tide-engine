@@ -250,6 +250,9 @@ typedef struct field {
     bool is_local; // `local List<Vertex3> verts;` in a match component or singleton: this machine's, outside the match
     loc local_at;  // ...the `local` keyword
     const type_ref *type_ref; // The type as written; NULL for the engine's own fields and a container's
+    // A list, a grid, a map or a set that code the GPU runs reads: for each part of an element (shader_leaves),
+    // whether any frag or vert of the game reads it. Only those are sent. NULL: nothing reads its elements there
+    bool *gpu_leaves;
 } field;
 
 typedef enum param_mode {
@@ -304,6 +307,7 @@ typedef struct param {
     bool *reads;         // A frag's or vert's: for each field of its type, whether the code reads it
     bool *local_reads;   // ...and for each of its type's local fields (its local_part's)
     bool whole;          // ...or reads it as a value, all its fields at once
+    bool *gpu_leaves;    // A function's list, grid, map or set, in code the GPU runs: the parts of an element it reads (field.gpu_leaves)
     bool task_ref;       // An async function's component or singleton: its task gets it again each time it goes on
     // A match component or singleton with local fields (its type's local_part):
     bool local_use;      // The code reads or writes its local fields, itself or through a function it passes it to
@@ -1405,6 +1409,20 @@ bool field_is_raw(const field *f);
 // Whether a shader reads a local field of the match's component or singleton
 // `d`: its draws are handed d's local part too.
 bool shader_reads_local(const shader *sh, const decl *d);
+
+// What's sent of the elements of a list, a grid, a map or a set that code the
+// GPU runs reads: an element's parts are a struct's fields, each its own
+// parts, and anything else one (an array whole). `leaves` says, part by part,
+// which the game's frags and verts read (field.gpu_leaves; NULL: all of
+// them), and only those go: their floats, then their ints, each in the
+// element's order, as a value's words are anywhere.
+int shader_leaves(type t);
+// The floats and ints of the parts of `t` that `leaves` says are read, from part *leaf on, which moves past it.
+void shader_part_words(type t, const bool *leaves, int *leaf, int *floats, int *ints);
+// A number for which parts those are, for the draw list to tell two layouts of one list apart: 0 for all of them.
+unsigned shader_layout(type t, const bool *leaves);
+// The parts read of what the shader's texture `t` holds, a list's elements or a grid's cells: NULL for all.
+const bool *shader_texture_leaves(const shader_texture *t);
 
 // Every shader's sources as text, for `tidec --shaders`.
 void print_shaders(const program *prog, sb *out);

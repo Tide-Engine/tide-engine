@@ -1903,6 +1903,14 @@
             device.queue.writeTexture({ texture: t.texture }, data, { offset, bytesPerRow: t.row, rowsPerImage: t.height },
                 [t.width, t.height]);
         },
+        // Some of its pixels, read where they are among all of them: rows the texture's own width apart
+        gpu_texture_write_part(id, ptr, x, y, width, height) {
+            const t = gpuTables.texture[id];
+            const pixel = t.row / t.width;
+            const [data, offset] = memoryBytes(ptr + y * t.row + x * pixel, t.row * (height - 1) + width * pixel);
+            device.queue.writeTexture({ texture: t.texture, origin: [x, y] }, data,
+                { offset, bytesPerRow: t.row, rowsPerImage: height }, [width, height]);
+        },
         gpu_cube(color, size, facesPtr) {
             // Six layers, with a view of them as a cube, which is what's sampled, and one of each layer's every
             // image, which a pass on a face draws into and its smaller images are made through. It has room for
