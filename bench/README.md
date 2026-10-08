@@ -132,6 +132,8 @@ Every run appends individual samples, median and p95 wall times to `bench/result
 
 The `status-1008-*` runs (2026-10-08) were taken while other sessions built on the machine, with the package's tide (clang built in) and with one that runs an installed clang, as the earlier runs did. Their [record](results/compile-status-metadata.json) has the load, the same builds of Duel, Towers, Sumo and a sample, where a cold build's time goes file by file, and Sumo's compiles replayed several at a time: compare those rows by the least of a cell's samples.
 
+tide compiles a build's C files several at a time since (as many as the machine has processors, or what `TIDE_JOBS` says, which a record's `metadata.environment` has). The `parallel-compiles` rows are that against `parallel-compiles-one-at-a-time`, the same tide with `TIDE_JOBS=1`, in turn on a quiet machine; their [record](results/parallel-compiles-metadata.json) has the same for the real games. Cold builds before that change compiled one file at a time: compare across it with `TIDE_JOBS=1`.
+
 The harness never edits a game in the repository or a supplied installation. `--tide` must point to the installed CLI; a bare build-tree executable without the installation's headers, sources and platform libraries cannot build games.
 
 ## Drawing

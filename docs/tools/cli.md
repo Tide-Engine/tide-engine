@@ -325,3 +325,5 @@ Both add the lines of the packages the game's packages need that it doesn't list
 ## Files
 
 `tide` keeps its work in a hidden `.tide` folder in the game's folder. You can delete it any time, and git ignores it. Packages from git are kept for every game, once each commit: in `%LOCALAPPDATA%\Tide\packages` on Windows and `~/.tide/packages` elsewhere, or where `TIDE_PACKAGES` says. `tide build` puts what it makes in `build/`, with the game's `.dll`, `.so` or `.dylib` libraries next to the program. C files and libraries in hidden folders or in `build/` aren't part of the game.
+
+A game's first build compiles the engine's C with it, and its packages'; the builds after that compile only what changed. `tide` compiles those files as many at once as the machine has processors, and what a build says and makes is the same however many that is. On a machine short of memory, set the `TIDE_JOBS` environment variable to how many to compile at once.
