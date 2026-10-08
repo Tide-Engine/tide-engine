@@ -1423,6 +1423,15 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(has(grid, "Grid2<Color>.Sample(float2 uv, Filter filter = the grid's, Wrap wrap = the grid's) -> Color"));
     const char *list = complete(IN_FRAG("var n = models.crate.$"));
     TIDE_CHECK(!offers(list, "Add") && offers(list, "count")); // The GPU reads a list, and changes none
+#define IN_KEYED(code)                                                                                                \
+    SHADER_TYPES "local singleton Keyed\n{\n    Map<int, Color> hues;\n    Set<int> lit;\n}\n"                          \
+    "frag Shade(BoxVertex vertex, out Color color, Keyed keyed)\n{\n    " code "\n}\n"
+    const char *map = complete(IN_KEYED("var n = keyed.hues.$"));
+    TIDE_CHECK(offers(map, "count") && offers(map, "Has") && offers(map, "TryGet")); // ...and a map, by its keys
+    TIDE_CHECK(!offers(map, "Remove") && !offers(map, "Clear") && !offers(map, "Get"));
+    const char *set = complete(IN_KEYED("var n = keyed.lit.$"));
+    TIDE_CHECK(offers(set, "count") && offers(set, "Has") && !offers(set, "Add") && !offers(set, "TryGet"));
+#undef IN_KEYED
     TIDE_CHECK(offers(complete(IN_FRAG("color = box.$")), "tint"));
     TIDE_CHECK(offers(complete(IN_FRAG("color = Color.$")), "white") && offers(complete(IN_FRAG("var s = Math.$")), "Sin"));
     TIDE_CHECK(!offers(complete(IN_FRAG("Draw.$")), "Circle") && !offers(complete(IN_FRAG("var k = Devices.$")), "keyboard"));

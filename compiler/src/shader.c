@@ -89,6 +89,8 @@ typedef struct emit {
     sb functions;
     bool helpers[H_COUNT];
     bool lists[8]; // The shader's textures that are lists whose reader is written (need_list)
+    bool finds[8]; // ...that are maps or sets whose lookup is written (need_find)
+    bool tries[8]; // ...that are maps whose TryGet is written (need_try)
     VEC(const decl *) arrays;  // The array types whose element reader is written (need_array)
     int raw; // Writing what an assignment stores into: an array's element is the element itself, in range already
     VEC(const field *) hoisted; // Arrays the engine supplies that the function being written made a variable of as it starts
@@ -96,6 +98,8 @@ typedef struct emit {
 
 static void ex(emit *em, const expr *e);
 static void ex_as(emit *em, const expr *e, type want);
+static bool is_whole_variable(const expr *e);
+static bool is_pointer(const emit *em, const param *p);
 static void st(emit *em, const stmt *s);
 static void need_function(emit *em, decl *fn, loc at);
 static bool is_const(const expr *e);
@@ -138,6 +142,10 @@ static const char *name_of(const char *prefix, const str name)
     for (int i = 0; i < name.len; i++) {
         if (name.ptr[i] == '_') sb_put(&b, "_0");
         else if (name.ptr[i] == '.') sb_put(&b, "_1");
+        else if (name.ptr[i] == '<') sb_put(&b, "_4"); // A map's entry, 'Entry<int, Stat>'
+        else if (name.ptr[i] == '>') sb_put(&b, "_5");
+        else if (name.ptr[i] == ',') sb_put(&b, "_6");
+        else if (name.ptr[i] == ' ') continue;
         else sb_putn(&b, &name.ptr[i], 1);
     }
     return b.data;
@@ -254,7 +262,15 @@ static bool type_fits(emit *em, const type t, const loc at)
                   "'lights.items.count', or 'foreach (var light in lights.items)'");
         return false;
     case TY_MAP:
-    case TY_SET: why = "the GPU has no maps or sets: keep what it reads in a list, which it reads by an element's place"; break;
+    case TY_SET:
+        refuse(em, at, "a %s is read where the frag or vert takes it, a key at a time: it's not a value to keep or pass on",
+               t.kind == TY_MAP ? "map" : "set");
+        diag_note(t.kind == TY_MAP ? "read it as a field of a component, a singleton or the draw's values: 'tiles.kinds[key]', "
+                                     "'tiles.kinds.Has(key)', 'tiles.kinds.TryGet(key, out kind)', 'tiles.kinds.count', or "
+                                     "'foreach (var entry in tiles.kinds)'"
+                                   : "read it as a field of a component, a singleton or the draw's values: 'tiles.lit.Has(key)', "
+                                     "'tiles.lit.count', or 'foreach (var key in tiles.lit)'");
+        return false;
     case TY_GRID:
         why = "a grid is read where the frag or vert takes it, with 'grid.Sample(uv)' or a cell at a time, 'grid[x, y]': it's "
               "not a value to keep or pass on";
@@ -1350,7 +1366,19 @@ static bool bound_list(const emit *em, const expr *e, const param **p, const fie
 
 static type list_element(const field *f)
 {
-    return f->type.decl->fields.items[0].type;
+    if (f->type.kind == TY_MAP) return (type){TY_STRUCT, f->type.decl->entry}; // A map's entries: each a key and a value
+    return f->type.decl->fields.items[0].type; // A list's elements, or a set's keys
+}
+
+// `e` as a map or a set that's a field of what the engine supplies, as a list is.
+static bool bound_map(const emit *em, const expr *e, const param **p, const field **f)
+{
+    if (!e || e->kind != E_MEMBER || !e->field || (e->type.kind != TY_MAP && e->type.kind != TY_SET)) return false;
+    const expr *obj = e->object;
+    if (obj->kind != E_NAME || obj->bind != BIND_PARAM || !is_bound(em, obj->param) || !is_struct_like(obj->param->type)) return false;
+    *p = obj->param;
+    *f = e->field;
+    return true;
 }
 
 // Notes that the code reads the list, while checking, and says whether its elements are something the GPU has.
@@ -1360,6 +1388,24 @@ static bool read_list(emit *em, const expr *list, const param *p, const field *f
         em->root->params.items[param_index(em->root, p)].local_reads[field_index(p->type.decl->local_part, f)] = true;
     } else if (em->checking) {
         em->root->params.items[param_index(em->root, p)].reads[field_index(p->type.decl, f)] = true;
+    }
+    if (f->type.kind == TY_MAP || f->type.kind == TY_SET) { // Its keys are ints there, which it hashes and compares
+        const type key = f->type.decl->fields.items[0].type;
+        const char *what = f->type.kind == TY_MAP ? "map" : "set";
+        const char *why = NULL;
+        switch (key.kind) {
+        case TY_INT: case TY_BYTE: case TY_ENUM: break;
+        case TY_STRING: why = "text is the CPU's"; break;
+        case TY_LONG: why = "the GPU's ints are 32 bits"; break;
+        default: why = "it's a handle into the world, which the GPU doesn't have"; break;
+        }
+        if (why) {
+            refuse(em, list->at, "a %s keyed by %s can't be read on the GPU: %s", what, type_name(key), why);
+            diag_note("the GPU reads a %s whose keys are ints, bytes or enums: keep one keyed that way for what it reads", what);
+            return false;
+        }
+        if (f->type.kind == TY_MAP) return type_fits(em, f->type.decl->fields.items[1].type, list->at);
+        return true;
     }
     return type_fits(em, list_element(f), list->at);
 }
@@ -1465,6 +1511,144 @@ static void need_data(emit *em, const int texture, const type element, const boo
 static void need_list(emit *em, const int texture, const type element)
 {
     need_data(em, texture, element, false);
+}
+
+// ---------------------------------------------------------------------------
+// Maps and sets
+//
+// A map or a set that's a field of what the engine supplies is read by its
+// keys: `map[key]`, Has, TryGet, `count` and foreach. It reaches the GPU as a
+// list does, in one texture (tide_draw_map_data): its live entries in the
+// order their keys were added, each as a list's element is (a map's as a
+// struct of its key and its value, a set's as its key), and after them, from
+// the next pixel on, an index of the GPU's own: a power of two of slots, an
+// int each, 0 or an entry's number plus one, by Math.Hash of the key with
+// linear probing. The CPU's own index is by a hash of 64 bits, which these
+// GPUs can't work out. The draw's ints say how many entries, and how many slots.
+
+// The function that finds a key's entry in the shader's map `texture`: its number, or -1.
+static void need_find(emit *em, const int texture, const field *f)
+{
+    if (texture < 0) return;
+    const type element = list_element(f);
+    need_list(em, texture, element);
+    if (em->finds[texture]) return;
+    em->finds[texture] = true;
+    need(em, H_HASH1);
+    const bool wgsl = em->l == WGSL;
+    int floats = 0, ints = 0, value_floats = 0, value_ints = 0;
+    type_words(element, &floats, &ints);
+    // Where an entry's key is among its words: its ints come after its floats, and the key is the first of them
+    if (f->type.kind == TY_MAP) type_words(f->type.decl->fields.items[1].type, &value_floats, &value_ints);
+    const int stride = data_stride(floats + ints), key_word = value_floats;
+    const int count_at = em->sh->textures.items[texture].count_at;
+    sb text = {0};
+    sb *const out = em->o;
+    em->o = &text;
+    const char *let = wgsl ? "let" : "int", *var = wgsl ? "var" : "int", *two = wgsl ? "2u" : "2";
+    if (wgsl) sb_printf(&text, "fn tide_find%d(tide_key: i32) -> i32 {\n", texture);
+    else sb_printf(&text, "int tide_find%d(int tide_key) {\n", texture);
+    sb_printf(&text, "    %s tide_slots = ", let);
+    put_word(em, 'v', count_at + 1);
+    sb_printf(&text, ";\n    if (tide_slots <= 0) {\n        return -1;\n    }\n    %s tide_base = ((", let);
+    put_word(em, 'v', count_at);
+    sb_printf(&text, " * %d + 3) >> %s) << %s;\n", stride, two, two);
+    sb_printf(&text, "    %s tide_s = tide_hash1(tide_key) & (tide_slots - 1);\n", var);
+    sb_put(&text, wgsl ? "    for (var tide_n: i32 = 0; tide_n < tide_slots; tide_n++) {\n"
+                       : "    for (int tide_n = 0; tide_n < tide_slots; tide_n++) {\n");
+    const char *fetch = wgsl ? "        let %s = textureLoad(pixels%d, vec2i((%s >> 2u) & 1023, %s >> 12u), 0);\n"
+                             : "        ivec4 %s = texelFetch(pixels%d, ivec2((%s >> 2) & 1023, %s >> 12), 0);\n";
+    sb_printf(&text, "        %s tide_w = tide_base + tide_s;\n", let);
+    sb_printf(&text, fetch, "tide_slot", texture, "tide_w", "tide_w");
+    sb_printf(&text, "        %s tide_e = tide_slot[tide_w & 3];\n        if (tide_e == 0) {\n            return -1;\n        }\n", let);
+    sb_printf(&text, "        %s tide_k = (tide_e - 1) * %d + %d;\n", let, stride, key_word);
+    sb_printf(&text, fetch, "tide_held", texture, "tide_k", "tide_k");
+    sb_put(&text, "        if (tide_held[tide_k & 3] == tide_key) {\n            return tide_e - 1;\n        }\n"
+                  "        tide_s = (tide_s + 1) & (tide_slots - 1);\n    }\n    return -1;\n}\n\n");
+    em->o = out;
+    sb_put(&em->functions, text.data);
+}
+
+// The function that's the shader's map's TryGet: whether the key is there,
+// and into the caller's variable its value, or the value type's default.
+static void need_try(emit *em, const int texture, const field *f)
+{
+    if (texture < 0) return;
+    need_find(em, texture, f);
+    if (em->tries[texture]) return;
+    em->tries[texture] = true;
+    const bool wgsl = em->l == WGSL;
+    const type value = f->type.decl->fields.items[1].type;
+    sb text = {0};
+    sb *const out = em->o;
+    em->o = &text;
+    const char *t = ty(em, value);
+    if (wgsl) sb_printf(&text, "fn tide_try%d(tide_key: i32, tide_value: ptr<function, %s>) -> bool {\n    let", texture, t);
+    else sb_printf(&text, "bool tide_try%d(int tide_key, inout %s tide_value) {\n    int", texture, t);
+    sb_printf(&text, " tide_e = tide_find%d(tide_key);\n    if (tide_e < 0) {\n        %stide_value = ", texture, wgsl ? "*" : "");
+    put_default(em, value);
+    sb_printf(&text, ";\n        return false;\n    }\n    %stide_value = tide_list%d(tide_e).%s;\n    return true;\n}\n\n",
+              wgsl ? "*" : "", texture, field_name(&f->type.decl->entry->fields.items[1]));
+    em->o = out;
+    sb_put(&em->functions, text.data);
+}
+
+// map[key]: its value, or zeros where the key isn't there, as an entry past the list's end reads.
+static void ex_map_index(emit *em, const expr *e, const param *p, const field *f)
+{
+    if (!read_list(em, e->object, p, f)) return;
+    const int texture = list_texture(em, p, f);
+    need_find(em, texture, f);
+    const int t = texture < 0 ? 0 : texture;
+    sb_printf(em->o, "tide_list%d(tide_find%d(", t, t);
+    ex_as(em, e->lhs, f->type.decl->fields.items[0].type);
+    sb_printf(em->o, ")).%s", field_name(&f->type.decl->entry->fields.items[1]));
+}
+
+// Has and TryGet of a map or a set the engine supplies. What changes one is the CPU's.
+static void ex_map_call(emit *em, const expr *e)
+{
+    const param *p;
+    const field *f;
+    const bool set = e->object->type.kind == TY_SET;
+    if (str_eq_c(e->name, "Add") || str_eq_c(e->name, "Remove") || str_eq_c(e->name, "Clear")) {
+        refuse(em, e->at, "the GPU can't change a %s: it reads the one a system or a view filled", set ? "set" : "map");
+        diag_note(set ? "code the GPU runs has 'Has(key)' and 'count', and goes through a set with foreach"
+                      : "code the GPU runs has 'map[key]', 'Has(key)', 'TryGet(key, out value)' and 'count', and goes through a "
+                        "map with foreach");
+        return;
+    }
+    if (str_eq_c(e->name, "Get")) {
+        refuse(em, e->at, "Get gives a value that may be missing, and the GPU has none of those");
+        diag_note("ask with 'TryGet(key, out value)', or read 'map[key]', which is zeros for a key that isn't there");
+        return;
+    }
+    if (!bound_map(em, e->object, &p, &f)) {
+        type_fits(em, e->object->type, e->object->at);
+        return;
+    }
+    if (!read_list(em, e->object, p, f)) return;
+    const int texture = list_texture(em, p, f);
+    const int t = texture < 0 ? 0 : texture;
+    const type key = f->type.decl->fields.items[0].type;
+    if (str_eq_c(e->name, "Has")) {
+        need_find(em, texture, f);
+        sb_printf(em->o, "(tide_find%d(", t);
+        ex_as(em, e->args.items[0], key);
+        sb_put(em->o, ") >= 0)");
+        return;
+    }
+    // TryGet(key, out value): the variable itself, as a function's mut argument is handed over
+    const expr *to = e->args.items[1];
+    if (!is_whole_variable(to)) {
+        refuse(em, to->at, "TryGet's value goes into a local in code the GPU runs: 'TryGet(key, out var value)'");
+        return;
+    }
+    need_try(em, texture, f);
+    sb_printf(em->o, "tide_try%d(", t);
+    ex_as(em, e->args.items[0], key);
+    const bool address = em->l == WGSL && !(to->bind == BIND_PARAM && is_pointer(em, to->param));
+    sb_printf(em->o, ", %s%s)", address ? "&" : "", local_name(to->name));
 }
 
 // A grid whose cells the code reads by their place: a Grid2 that's a field of
@@ -1843,7 +2027,8 @@ static void ex_member(emit *em, const expr *e)
         else put_words(em, 'v', em->sh->textures.items[texture].count_at, 2, ty(em, (type){TY_INT2, NULL}));
         return;
     }
-    if (str_eq_c(e->member, "count") && bound_list(em, obj, &list_param, &list_field)) { // How many a list has
+    if (str_eq_c(e->member, "count")
+        && (bound_list(em, obj, &list_param, &list_field) || bound_map(em, obj, &list_param, &list_field))) { // How many a list or a map has
         if (read_list(em, obj, list_param, list_field)) put_list_count(em, list_texture(em, list_param, list_field));
         return;
     }
@@ -2855,9 +3040,11 @@ static void ex_call(emit *em, const expr *e)
     case CALL_SEND: what = "send events: systems and views do, on the CPU"; break;
     case CALL_DRAW:
     case CALL_GUI: what = "draw: a view does, and names the frag at mesh draw"; break;
-    case CALL_LIST:
     case CALL_MAP:
-    case CALL_WORLD: what = "use lists, maps or the World: it reads fields of numbers, and samples grids of colors"; break;
+        ex_map_call(em, e);
+        return;
+    case CALL_LIST:
+    case CALL_WORLD: what = "change lists or use the World: it reads fields of numbers, lists and maps, and samples grids"; break;
     case CALL_TEXT: what = "work with text"; break;
     default: what = "do this"; break;
     }
@@ -2992,6 +3179,10 @@ static void ex(emit *em, const expr *e)
             ex_array_index(em, e);
             return;
         }
+        if (bound_map(em, e->object, &p, &f)) {
+            ex_map_index(em, e, p, f);
+            return;
+        }
         const decl *asset;
         if (bound_grid(em, e->object, &p, &f, &asset)) { // cells[x, y]: a cell by its place
             const int texture = grid_texture_of(em, e->object, p, f, asset);
@@ -3010,8 +3201,11 @@ static void ex(emit *em, const expr *e)
             type_fits(em, e->object->type, e->object->at);
             return;
         }
-        refuse(em, e->at, "the GPU indexes arrays, and lists and grids that are fields of what the frag or vert takes: it "
-                          "has no maps");
+        if (e->object->type.kind == TY_MAP) {
+            type_fits(em, e->object->type, e->object->at);
+            return;
+        }
+        refuse(em, e->at, "the GPU indexes arrays, and lists, maps and grids that are fields of what the frag or vert takes");
         return;
     }
     case E_LIST:
@@ -3774,7 +3968,7 @@ static void st_one(emit *em, const stmt *s)
     case S_FOREACH: {
         const param *p;
         const field *f;
-        if (s->value && bound_list(em, s->value, &p, &f)) {
+        if (s->value && (bound_list(em, s->value, &p, &f) || bound_map(em, s->value, &p, &f))) {
             st_foreach(em, s, p, f);
             break;
         }
@@ -3782,8 +3976,8 @@ static void st_one(emit *em, const stmt *s)
             st_foreach(em, s, NULL, NULL);
             break;
         }
-        refuse(em, s->at, "a foreach the GPU runs goes through an array, or a list that's a field of what the frag or vert "
-                          "takes, like 'foreach (var light in lights.items)': it has no maps, sets, queries or grids to go through");
+        refuse(em, s->at, "a foreach the GPU runs goes through an array, or a list, a map or a set that's a field of what the "
+                          "frag or vert takes, like 'foreach (var light in lights.items)': it has no queries or grids to go through");
         break;
     }
     case S_PARALLEL:
@@ -4410,7 +4604,7 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         for (int k = 0; k < p->type.decl->fields.count; k++) {
             const field *f = &p->type.decl->fields.items[k];
             if (f->hidden || !(p->whole || (p->reads && p->reads[k]))) continue;
-            if (f->type.kind == TY_LIST) { // Its elements, as a texture of numbers
+            if (f->type.kind == TY_LIST || f->type.kind == TY_MAP || f->type.kind == TY_SET) { // Its elements, as a texture of numbers
                 if (explicit_instance) sh->instance_list = f;
                 else add_list(sh, p->type.decl, f, !given);
                 continue;
@@ -4426,7 +4620,7 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         const decl *part = p->type.decl->local_part;
         for (int k = 0; part && p->local_reads && k < part->fields.count; k++) {
             const field *f = &part->fields.items[k];
-            if (p->local_reads[k] && f->type.kind == TY_LIST) {
+            if (p->local_reads[k] && (f->type.kind == TY_LIST || f->type.kind == TY_MAP || f->type.kind == TY_SET)) {
                 add_list(sh, p->type.decl, f, true);
                 continue;
             }
@@ -4549,8 +4743,8 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     for (int i = 0; i < sh->textures.count; i++) {
         shader_texture *t = &sh->textures.items[i];
         if (t->read != READ_DATA) continue;
-        t->count_at = sh->uniform_ints; // A list's count, or a grid's size across and down
-        sh->uniform_ints += t->asset || t->field->type.kind == TY_GRID ? 2 : 1;
+        t->count_at = sh->uniform_ints; // A list's count, a grid's size across and down, or a map's entries and its index's slots
+        sh->uniform_ints += t->asset || t->field->type.kind != TY_LIST ? 2 : 1;
     }
     if (sh->instance_list) {
         diag_error(call->at, "this draw's instances each have a list, '" STR_FMT "', that its code reads, and a draw sends one "

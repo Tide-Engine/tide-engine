@@ -5832,7 +5832,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         }
         return;
     }
-    // In a frag or vert: the GPU has no text, lists, maps or sets, and a grid there is a texture
+    // In a frag or vert: the GPU has no text, reads lists, maps and sets and changes none, and a grid there is a texture
     const bool gpu = is_shader(sc->decl);
     if (t.kind == TY_RENDER_TARGET) {
         item(c, "color", CK_PROPERTY, "Texture",
@@ -5860,7 +5860,21 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         item(c, "count", CK_PROPERTY, "int", LIST_COUNT_DOC, NULL);
         return;
     }
-    if (gpu && (t.kind == TY_STRING || t.kind == TY_MAP || t.kind == TY_SET)) return;
+    if (gpu && (t.kind == TY_MAP || t.kind == TY_SET)) { // Read by its keys there: nothing changes it, and no value is missing
+        item(c, "count", CK_PROPERTY, "int", MAP_COUNT_DOC, NULL);
+        size_t count;
+        const method_form *forms = methods_of(t, &count);
+        for (size_t i = 0; i < count; i++) {
+            if (strcmp(forms[i].name, "Has") != 0 && strcmp(forms[i].name, "TryGet") != 0) continue;
+            sb detail = {0};
+            format_method(&forms[i], t, &detail);
+            sb snippet = {0};
+            method_snippet(&forms[i], &snippet);
+            item(c, forms[i].name, CK_METHOD, detail.data, forms[i].doc, snippet.data);
+        }
+        return;
+    }
+    if (gpu && t.kind == TY_STRING) return;
     if (t.kind == TY_CUBEMAP) { // A frag reads it; a view draws into its faces, resizes it and lets it go
         static const char *const snippets[] = {"Sample($1)", "Resize($1)", "Dispose()"};
         for (size_t i = gpu ? 0 : 1; i < (gpu ? 1 : sizeof cube_calls / sizeof cube_calls[0]); i++) {

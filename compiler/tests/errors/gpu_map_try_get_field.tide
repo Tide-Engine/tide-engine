@@ -1,0 +1,32 @@
+// expect: TryGet's value goes into a local in code the GPU runs: 'TryGet(key, out var value)'
+scene Main { }
+
+struct V
+{
+    float3 position;
+    float2 uv;
+}
+
+struct Kept
+{
+    Color tint;
+}
+
+local singleton Models
+{
+    List<V> crate;
+    List<int> faces;
+    Map<int, Color> hues;
+}
+
+frag Shade(V vertex, out Color color, Models models)
+{
+    mut var kept = Kept { };
+    models.hues.TryGet(1, out kept.tint);
+    color = kept.tint;
+}
+
+view Show(Models models)
+{
+    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade);
+}

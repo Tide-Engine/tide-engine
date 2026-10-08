@@ -323,6 +323,38 @@ frag Tiles(BoxVertex vertex, out Color color, Board board)
 - A cell outside the grid is zeros. The grid is a field of what the frag or vert takes, or an [asset](./assets.md) by its name, and counts as one of the draw's 8 textures, once more if it's also sampled.
 - A grid with no size on an axis isn't sent, and reads as zeros everywhere. A `Grid3` isn't read there yet.
 
+### Maps and sets
+
+A `Map<K, V>` or a `Set<K>` that's such a field is read by its keys, as it is anywhere:
+
+```csharp
+local singleton Land
+{
+    Grid2<int> ground = Grid2(64, 64);
+    Map<int, Color> paint;      // By a tile's number
+    Set<int> lit;
+}
+
+frag Tiles(BoxVertex vertex, out Color color, Land land)
+{
+    var at = int2(int(vertex.uv.x * land.ground.size.x), int(vertex.uv.y * land.ground.size.y));
+    var tile = land.ground[at];
+    var known = land.paint.TryGet(tile, out var paint);
+    var shown = known ? paint : Color.gray;
+    color = land.lit.Has(tile) ? shown : shown * 0.5;
+    color.a = 1;
+}
+```
+
+- `map[key]` is the key's value, or zeros when the key isn't there. `map.Has(key)` and `set.Has(key)` say whether it is, and `map.TryGet(key, out var value)` says so and gives the value, or the value type's default. `count` is how many keys there are.
+- `foreach (var entry in map)` goes through a map's entries, each with its `key` and its `value`, and `foreach (var key in set)` through a set's keys: in the order the keys were added, without the ones removed since, as on the CPU.
+- Keys are ints, bytes or enums. A map keyed by text, a `long`, an `Entity` or a `PlayerID` stays on the CPU, and reading one in a frag is an error that says why: keep a second map keyed by a number for what the GPU reads.
+- Values are what the GPU has values of, as a list's elements are.
+- Read-only, as lists are: a view or a system fills the map. There's no `Get` there either, as it gives a value that may be missing: `TryGet` asks the same.
+- `TryGet`'s `out` argument is a local, `out var value` or a variable declared before.
+- A lookup reads a pixel or two of an index the engine sends beside the entries, however many keys the map has, so it costs about what reading two list elements does.
+- A map or a set is one of the draw's 8 textures, and isn't sent again while it doesn't change. The other rules are a list's: read where the frag or vert takes it, a component's is its entity's own, and none in an instance's struct.
+
 ### Arrays
 
 An [array of a fixed length](../language/text-and-lists.md#arrays) is a value like a vector: `float[8]`, `Stop[4]`. As a field of a component, a singleton or a draw's values it's sent with the other fields the code reads, and in code it's a local, a parameter or a function's result like any other value:
@@ -601,7 +633,7 @@ The camera isn't given: keep where yours is in a singleton, where the view that 
 Code for the GPU is ordinary Tide, less what a GPU doesn't have:
 
 - **It has** bools, bytes, ints, floats, vectors, quaternions, matrices, colors, enums, structs of those and [arrays](#arrays) of them; locals, `if`, `?:`, `switch` on an int or an enum, `for`, `while` and `foreach`, with `break` and `continue`; [lists and grids](#lists-and-arrays) that are fields of what it takes, read by an element, a count or `foreach`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; and sampling a grid, a texture or a target's depth, 8 of them to a draw, anywhere in the code: in a branch, in a loop, in a vert.
-- **It doesn't have** maps, sets, text, entities, spawning and sending, `Draw`, the GUI, `Devices`, `Debug`, C, tasks, errors, or recursion. It makes and changes no list. A frag's `this` is its pixel; verts and ordinary functions have no `this`. A `long` has no place there, as a GPU's ints are 32 bits.
+- **It doesn't have** text, entities, spawning and sending, `Draw`, the GUI, `Devices`, `Debug`, C, tasks, errors, or recursion. It makes and changes no list, map or set. A frag's `this` is its pixel; verts and ordinary functions have no `this`. A `long` has no place there, as a GPU's ints are 32 bits.
 
 Each of those is an error where it's written, which says what to do instead. A function a frag calls has to fit too, and the error says which frag reaches it; the same function still runs on the CPU for the code that calls it there.
 
