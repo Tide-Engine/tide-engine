@@ -45,8 +45,9 @@ _Noreturn void tide_out_of_memory(void);
 
 // Whether this is a run nobody watches: TIDE_HIDDEN is set in the environment
 // to anything but nothing or 0, as in the shell of an agent or a build server,
-// which mustn't put anything on somebody's screen. The platform layer shows no
-// window then (tide/platform.h). A program that stops shows no dialog either,
+// which mustn't put anything on somebody's screen, or in their ears. The
+// platform layer shows no window then, and opens no audio device
+// (tide/platform.h). A program that stops shows no dialog either,
 // whether it stopped as above or crashed: on Windows, the C runtime's (a debug
 // build's abort() shows one that waits for a click) and the system's are off
 // from the program's start, so what it said on stderr is all there is.
