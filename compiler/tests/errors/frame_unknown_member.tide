@@ -1,7 +1,8 @@
-// expect: Frame has no member 'time'
+// expect: Frame has no member 'rate'
+// expect: 'Frame.dt' is the seconds since this machine's previous frame started
 local scene Main { }
 local singleton Clock { float now; }
 view Tick(mut Clock clock)
 {
-    clock.now = Frame.time;
+    clock.now = Frame.rate;
 }

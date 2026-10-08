@@ -1,0 +1,499 @@
+// How Tag is lit and painted.
+//
+// The match is flat: a kid is a place in the yard. What's drawn of it is 3D,
+// with the yard's `y` as the world's `z`: an island in the sky, with the yard
+// on it and a schoolhouse behind. The engine has no lighting built in, so
+// everything is a mesh whose corners have a normal, drawn through a frag that
+// lights each pixel from it and paints it: grass, water, wood, brick, stone
+// and leaves are all worked out a pixel at a time, from noise. Shadows are a
+// shadow map, the frame is drawn with four samples a pixel, and it reaches
+// the window through a few passes that add the glow around what's bright and
+// blur its top and its bottom, as a photograph of a model would be.
+
+enum Layers { Camera, Gather, Lamp, Scene, Pieces, Marks, Air, Show, Hud }
+
+const float LAMP_SPAN = 31;                  // Meters across what the sun's image sees
+const int LAMP_PIXELS = 2048;                // Pixels across it
+const float LAMP_AWAY = 40;                  // How far from the yard's middle it looks from,
+const float LAMP_FAR = 80;                   // and how far it sees
+const float LAMP_SOFT = 1.3 / LAMP_PIXELS;   // How far apart a pixel's four looks at it are: they blend a shadow's edge
+const float ON_FLOOR = 0.03;                 // How far over the grass what's flat on it is drawn
+const float DECK = 0.16;                     // How high the roundabout's deck is
+const float ISLAND = 11.2;                   // The island's radius
+const float KID = 1.3;                       // How much bigger than life a kid is drawn
+const float GLOW_FROM = 0.8;                 // How bright a pixel is before it glows
+
+// What something is made of, which its frag paints it by.
+const float PLAIN = 0;
+const float WOOD = 1;
+const float STONE = 2;
+const float LEAF = 3;
+const float BRICK = 4;
+const float ROOF = 5;
+const float GLASS = 6;
+const float CLOUD = 7;
+
+// A corner of a mesh: where it is, which way its face looks, and its paint.
+struct Corner
+{
+    float3 position;
+    float3 normal;
+    Color color = Color.white;   // Its paint...
+    float own;                   // ...which is its own above 0, and its instance's tint times it otherwise: a kid's skin, and its shirt
+    float kind;                  // What it's made of, when that's not its instance's to say
+    float2 grain;                // Along and across what it's made of: a plank's length, a roof's slope
+    float gloss;                 // How much it shines
+    float glow;                  // How much of its paint is its own light
+}
+
+// Something that moves, drawn where it is now: a mesh at a place, with a
+// tint. One of a list, all drawn at once, and once more into the sun's image,
+// for their shadows.
+struct Solid
+{
+    float4x4 transform = float4x4.identity;
+    float3 size = float3(1);   // What the transform scales it by, which its frag needs for a squashed mesh's normals
+    Color tint = Color.white;
+    float gloss;
+    float glow;
+    float kind;
+}
+
+// A blade of grass. There are thousands, drawn at once, and the wind bends
+// each on the GPU.
+struct Blade
+{
+    float4x4 transform = float4x4.identity;
+    Color tint = Color.green;
+    float phase;
+}
+
+// Something flat on the ground: a ring round a kid, the red under whoever's it.
+struct Decal
+{
+    float4x4 transform = float4x4.identity;
+    Color tint = Color.black;
+    float ring;       // Only its rim, this much of its radius wide, above 0, and under 0 a soft blot
+    float arc = 1;    // How much of the way round it goes, from 0 to 1
+}
+
+// A spark: a small cube that glows.
+struct Mote
+{
+    float4x4 transform = float4x4.identity;
+    Color tint = Color.white;
+}
+
+// What the frags read of the camera and the hour.
+local singleton Room
+{
+    float3 eye;
+    float beat;
+    float time;
+}
+
+// What the sun sees: how far, along each pixel of its image.
+local singleton Shadow
+{
+    RenderTarget map;
+    DepthTexture depth;
+    float4x4 toLamp;
+    bool made;
+}
+
+// The frame, drawn with four samples a pixel, and what it goes through on its
+// way to the window.
+local singleton Lens
+{
+    RenderTarget scene;   // The yard
+    RenderTarget half;    // ...at half the size, blurred: what's out of focus
+    RenderTarget halfB;
+    RenderTarget bright;  // Its bright parts at a quarter of the size, blurred: the glow
+    RenderTarget spread;
+    Texture soft;
+    Texture glow;
+    float2 pixel;         // A logical pixel, as a part of the screen
+    bool made;
+}
+
+// One pass of a blur: which way it goes, and how far.
+struct BlurStep
+{
+    float2 along;
+}
+
+// Where the sun is, from anywhere: over the camera's left shoulder, so that
+// shadows fall away from it and to the right.
+float3 Lamp()
+{
+    return Math.Normalize(float3(-0.55, 0.72, -0.42));
+}
+
+// Where a pixel is in the sun's image, a uv from its top left corner, and how
+// far from the sun it is there, from 0 to 1: what a frag compares with what
+// the sun saw. A pixel looks from a little off its surface, along its normal,
+// the more the more the surface slants from the sun: compared as it is, a
+// surface is in its own shadow, in stripes. What's outside the image is lit.
+float3 FromLamp(float3 world, float3 normal, float4x4 toLamp)
+{
+    float facing = Math.Dot(normal, Lamp());
+    float slant = Math.Sqrt(Math.Saturate(1 - facing * facing));
+    float step = LAMP_SPAN / LAMP_PIXELS;
+    float4 clip = Math.Mul(toLamp, float4(world + normal * (step * (1.2 + 3.0 * slant)), 1));
+    if (Math.Max(Math.Abs(clip.x), Math.Abs(clip.y)) > 1) return float3(0.5, 0.5, 0);
+    return float3(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5, clip.z * 0.5 + 0.5);
+}
+
+// How much of the sun gets to a place on a surface, from 0, in shadow, to 1:
+// looks at the sun's image around where the place is in it, a little apart,
+// which blend a shadow's edge. `depth` is the sun's image, which the frag that
+// calls this names: 'Sunlight(shadow.depth, ...)'. Two looks, across one
+// diagonal, are enough for a blade of grass; everything else takes four.
+float SunlightAcross(DepthTexture depth, float3 seen, float2 way)
+{
+    return depth.Compare(seen.xy - way * LAMP_SOFT, seen.z) + depth.Compare(seen.xy + way * LAMP_SOFT, seen.z);
+}
+
+float Sunlight(DepthTexture depth, float3 world, float3 normal, float4x4 toLamp)
+{
+    float3 seen = FromLamp(world, normal, toLamp);
+    return (SunlightAcross(depth, seen, float2(1, 1)) + SunlightAcross(depth, seen, float2(-1, 1))) * 0.25;
+}
+
+// How much of the sun the clouds overhead let through at a place: they drift.
+float CloudShade(float2 at, float time)
+{
+    float cover = Math.Perlin(at * 0.085 + float2(time * 0.035, time * 0.02));
+    return 1 - Math.Saturate((cover - 0.12) * 2.4) * 0.42;
+}
+
+// A surface's paint in the yard's light. `sun` is how much of the sun gets to
+// it, from 0, in shadow, to 1: what `Sunlight` says, under the clouds.
+Color Lit(Color paint, float3 normal, float3 world, float3 eye, float gloss, float sun)
+{
+    float3 lamp = Lamp();
+    float3 toEye = Math.Normalize(eye - world);
+    float direct = Math.Max(Math.Dot(normal, lamp), 0);
+    float fill = Math.Max(Math.Dot(normal, Math.Normalize(float3(0.6, 0.3, 0.7))), 0);
+    float sky = 0.38 + 0.16 * normal.y;
+    float shine = Math.Pow(Math.Max(Math.Dot(normal, Math.Normalize(lamp + toEye)), 0), 30) * gloss * sun;
+    float rim = Math.Pow(1 - Math.Max(Math.Dot(normal, toEye), 0), 3) * 0.08;
+    float3 base = float3(paint.r, paint.g, paint.b);
+    float3 warm = float3(1.0, 0.94, 0.82);    // The sun's own color,
+    float3 cool = float3(0.62, 0.77, 1.0);    // the sky's, which is what the shade is lit by,
+    float3 grass = float3(0.42, 0.62, 0.34);  // and the light the grass sends back up
+    float under = Math.Max(-normal.y, 0) * 0.22;
+    float3 lit = base * cool * sky + base * warm * (direct * sun * 0.86) + base * cool * (fill * 0.13) + base * grass * under
+               + float3(shine) + cool * rim;
+    return Color(lit.x, lit.y, lit.z, paint.a);
+}
+
+bool Is(float kind, float which)
+{
+    return Math.Abs(kind - which) < 0.5;
+}
+
+// What a pixel of something is painted as, from its plain paint and what
+// it's made of: its color, and in its alpha how much of that is its own light.
+Color Material(float3 base, float kind, float2 grain, float3 world, float3 normal, float3 toEye)
+{
+    mut float3 paint = base;
+    mut float glow = 0;
+    if (Is(kind, WOOD))
+    {
+        // Its grain runs along it
+        float lines = Math.Perlin(float2(grain.x * 1.6, grain.y * 28));
+        float knots = Math.Perlin(float2(grain.x * 0.7 + 3.1, grain.y * 6 + 9.7));
+        paint = paint * (0.9 + lines * 0.1 + knots * 0.08);
+    }
+    else if (Is(kind, STONE))
+    {
+        float2 specks = Math.Cellular(float2(world.x + world.y * 0.7, world.z - world.y * 0.4) * 4.5);
+        float mottle = Math.Perlin(world * 1.7) * 0.6 + Math.Perlin(world * 5.1) * 0.4;
+        paint = paint * (0.9 + mottle * 0.12) + float3(0.05) * Math.Saturate(1 - specks.x * 3);
+    }
+    else if (Is(kind, LEAF))
+    {
+        float mottle = Math.Perlin(world * 3.4) * 0.6 + Math.Perlin(world * 9) * 0.4;
+        paint = paint * (1 + mottle * 0.24);
+        // Light comes through leaves: the side away from the sun isn't as dark
+        glow = Math.Max(-Math.Dot(normal, Lamp()), 0) * 0.2;
+    }
+    else if (Is(kind, BRICK))
+    {
+        float across = Math.Abs(normal.x) > 0.5 ? world.z : world.x;
+        float row = Math.Floor(world.y / 0.2);
+        float shift = row - Math.Floor(row * 0.5) * 2 > 0.5 ? 0.5 : 0.0;
+        float2 brick = float2(across / 0.5 + shift, world.y / 0.2);
+        float tone = 0.84 + (Math.Hash(int2(int(Math.Floor(brick.x)), int(row))) % 16) * 0.02;
+        paint = paint * tone * (0.95 + Math.Perlin(float2(across, world.y) * 14) * 0.05);
+        if (Math.Frac(brick.x) < 0.06 || Math.Frac(brick.y) < 0.15) paint = float3(0.86, 0.82, 0.76);
+    }
+    else if (Is(kind, ROOF))
+    {
+        // Tiles, in rows down the slope
+        float row = Math.Floor(grain.y / 0.24);
+        float shift = row - Math.Floor(row * 0.5) * 2 > 0.5 ? 0.5 : 0.0;
+        float2 tile = float2(grain.x / 0.3 + shift, grain.y / 0.24);
+        float tone = 0.82 + (Math.Hash(int2(int(Math.Floor(tile.x)), int(row))) % 16) * 0.022;
+        paint = paint * tone * (1 - 0.3 * Math.Frac(tile.y));
+        if (Math.Frac(tile.x) < 0.06) paint = paint * 0.78;
+    }
+    else if (Is(kind, GLASS))
+    {
+        float mirror = Math.Pow(1 - Math.Max(Math.Dot(normal, toEye), 0), 3);
+        paint = paint + (float3(0.75, 0.88, 1) - paint) * (0.25 + mirror * 0.6);
+    }
+    return Color(paint.x, paint.y, paint.z, glow);
+}
+
+// The ground's paint at a place: grass mown in stripes and worn to earth where
+// feet turn, the path to the school's door, the sand, the mud round the
+// puddle, what's chalked, and the rock at the island's rim. `past` is how far
+// past the puddle's edge the place is. Its alpha is how much it shines.
+Color GroundPaint(float2 at, float past)
+{
+    float far = Math.Length(at);
+    float reach = Math.Max(Math.Abs(at.x), Math.Abs(at.y));
+    float wide = Math.Perlin(at * 0.55);
+    float mid = Math.Perlin(at * 2.3 + float2(7.7, 1.3));
+    float fine = Math.Perlin(at * 9.0);
+    float stripe = Math.Frac((at.x + YARD) / 3.0) < 0.5 ? 0.0 : 1.0;
+    mut float3 paint = float3(0.31, 0.58, 0.25) + float3(0.05, 0.06, 0.03) * stripe;
+    if (reach > YARD + 0.2) paint = float3(0.25, 0.5, 0.22); // Past the fence, it's left long
+    paint = paint * (1 + wide * 0.1 + mid * 0.08 + fine * 0.06);
+    paint = paint + float3(0.08, 0.06, -0.02) * Math.Saturate(wide * 1.6); // Where the sun has bleached it
+    mut float gloss = 0;
+
+    float3 earth = float3(0.55, 0.42, 0.29) * (0.92 + fine * 0.08);
+    if (reach < YARD)
+    {
+        // Worn bare round the roundabout, where everyone pushes off
+        float worn = Math.Saturate(1 - Math.Abs(far - (SPIN_RADIUS + 0.3)) / 0.36 + mid * 0.5);
+        paint = paint + (earth - paint) * (worn * 0.85);
+    }
+    if (at.y > YARD + 0.3 && at.y < 7.8 && Math.Abs(at.x - 0.8 + mid * 0.14) < 0.55)
+    {
+        float2 pebbles = Math.Cellular(at * 6);
+        paint = float3(0.72, 0.68, 0.62) * (0.78 + pebbles.x * 0.38);
+    }
+
+    float sand = Math.Distance(at, Sand());
+    if (sand < SAND_RADIUS + 0.05)
+    {
+        float dune = Math.Perlin(float2(at.x * 1.2 + at.y * 2.6, at.y * 0.8));
+        paint = float3(0.95, 0.84, 0.6) * (0.93 + dune * 0.06 + Math.Perlin(at * 30) * 0.035);
+    }
+    if (past < 0.34)
+    {
+        float mud = Math.Saturate(1 - past / 0.34);
+        paint = paint + (float3(0.36, 0.28, 0.2) - paint) * (mud * 0.85);
+        gloss = mud * 0.9;
+    }
+
+    // Chalk: a ring round the roundabout, and a hopscotch
+    mut float chalk = 0;
+    if (Math.Abs(far - (SPIN_RADIUS + 0.62)) < 0.035) chalk = 0.6;
+    float2 hop = float2(at.x + 2.0, at.y + 5.3) / 0.8;
+    if (hop.x > 0 && hop.x < 5 && hop.y > 0 && hop.y < 1)
+    {
+        float across = Math.Frac(hop.x);
+        float line = Math.Min(Math.Min(across, 1 - across), Math.Min(hop.y, 1 - hop.y)) * 0.8;
+        if (line < 0.035) chalk = 0.6;
+    }
+    paint = paint + (float3(1) - paint) * (chalk * (0.75 + fine * 0.25));
+
+    float rim = Math.Saturate((far - (ISLAND - 0.75) + mid * 0.4) / 0.5);
+    paint = paint + (float3(0.5, 0.46, 0.42) * (0.9 + fine * 0.1) - paint) * rim;
+    return Color(paint.x, paint.y, paint.z, gloss);
+}
+
+// The island: its top is the ground's paint and the puddle's water, and
+// under its turf it's rock, in layers, cut in facets.
+frag GroundLook(Corner corner, out Color color, Room room, Shadow shadow)
+{
+    float3 normal = Math.Normalize(corner.normal);
+    float2 at = float2(this.world.x, this.world.z);
+    float sun = Sunlight(shadow.depth, this.world, normal, shadow.toLamp) * CloudShade(at, room.time);
+    if (normal.y < 0.5)
+    {
+        float layers = Math.Perlin(float2(this.world.y * 2.2 + Math.Perlin(at * 0.4) * 0.9, 0.5));
+        float deep = Math.Saturate(-this.world.y / 6);
+        float tone = (0.86 + layers * 0.16) * (1 - deep * 0.5);
+        mut Color side = Color(0.54 * tone, 0.45 * tone, 0.38 * tone);
+        if (this.world.y > -0.2 + Math.Perlin(at * 3) * 0.07) side = Color(0.28, 0.52, 0.24);
+        color = Lit(side, normal, this.world, room.eye, 0, sun);
+        return;
+    }
+
+    float wet = Math.Distance(at, Puddle()) - Math.Perlin(at * 1.3) * 0.13;
+    if (wet < PUDDLE_RADIUS)
+    {
+        // Water: the sky in it, the sun's glint off its ripples, and rings that move out from its middle
+        float2 flow = at * 2.4 + float2(room.time * 0.33, room.time * 0.21);
+        float tiltX = Math.Perlin(flow + float2(0.12, 0)) - Math.Perlin(flow - float2(0.12, 0));
+        float tiltZ = Math.Perlin(flow + float2(0, 0.12)) - Math.Perlin(flow - float2(0, 0.12));
+        float shallow = Math.Saturate(wet / PUDDLE_RADIUS);
+        float ring = Math.Sin(wet * 13 - room.time * 2.4) * shallow * 0.1;
+        float2 out = (at - Puddle()) / Math.Max(Math.Distance(at, Puddle()), 0.001);
+        float3 ripple = Math.Normalize(float3(-tiltX * 0.8 - out.x * ring, 1, -tiltZ * 0.8 - out.y * ring));
+        float3 toEye = Math.Normalize(room.eye - this.world);
+        float mirror = 0.1 + 0.9 * Math.Pow(1 - Math.Max(Math.Dot(ripple, toEye), 0), 4);
+        float3 body = float3(0.4, 0.56, 0.5) + (float3(0.13, 0.36, 0.52) - float3(0.4, 0.56, 0.5)) * (1 - shallow * shallow);
+        float3 above = float3(0.5, 0.72, 0.96) + float3(0.3, 0.2, 0.04) * Math.Saturate(ripple.x * 3 + 0.3);
+        float glint = Math.Pow(Math.Max(Math.Dot(ripple, Math.Normalize(Lamp() + toEye)), 0), 160) * 3 * sun;
+        float3 water = body * (0.42 + 0.58 * sun) * (1 - mirror) + above * (mirror * (0.7 + 0.3 * sun)) + float3(glint);
+        color = Color(water.x, water.y, water.z, 1);
+        return;
+    }
+    Color paint = GroundPaint(at, wet - PUDDLE_RADIUS);
+    color = Lit(Color(paint.r, paint.g, paint.b, 1), normal, this.world, room.eye, paint.a, sun);
+}
+
+// Everything that stands still, which is one mesh: each corner has its own
+// paint and says what it's made of.
+frag Baked(Corner corner, out Color color, Room room, Shadow shadow)
+{
+    float3 normal = Math.Normalize(corner.normal);
+    float sun = Sunlight(shadow.depth, this.world, normal, shadow.toLamp) * CloudShade(float2(this.world.x, this.world.z), room.time);
+    float3 toEye = Math.Normalize(room.eye - this.world);
+    Color made = Material(float3(corner.color.r, corner.color.g, corner.color.b), corner.kind, corner.grain, this.world, normal, toEye);
+    Color lit = Lit(Color(made.r, made.g, made.b, 1), normal, this.world, room.eye, Is(corner.kind, GLASS) ? 3.0 : corner.gloss, sun);
+    float glow = corner.glow + made.a;
+    color = Color(lit.r + made.r * glow, lit.g + made.g * glow, lit.b + made.b * glow, 1);
+}
+
+// Everything that moves: a mesh at its instance's place, in its instance's
+// tint where a corner's paint isn't its own.
+frag Plain(Corner corner, out Color color, Solid solid, Instance instance, Room room, Shadow shadow)
+{
+    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal / (solid.size * solid.size)));
+    if (Is(solid.kind, CLOUD))
+    {
+        // A cloud is lit by the sky more than by the sun, and has no shadow on it
+        float top = 0.78 + 0.22 * normal.y;
+        float3 puff = float3(0.82, 0.88, 0.98) + (float3(1, 1, 1) - float3(0.82, 0.88, 0.98)) * Math.Saturate(Math.Dot(normal, Lamp()) * 0.7 + 0.45);
+        color = Color(puff.x * top, puff.y * top, puff.z * top, 1);
+        return;
+    }
+    float sun = Sunlight(shadow.depth, this.world, normal, shadow.toLamp) * CloudShade(float2(this.world.x, this.world.z), room.time);
+    float3 toEye = Math.Normalize(room.eye - this.world);
+    mut float3 base = float3(corner.color.r, corner.color.g, corner.color.b);
+    if (corner.own < 0.5) base = base * float3(solid.tint.r, solid.tint.g, solid.tint.b);
+    float kind = corner.kind > 0.5 ? corner.kind : solid.kind;
+    Color made = Material(base, kind, corner.grain, this.world, normal, toEye);
+    Color lit = Lit(Color(made.r, made.g, made.b, 1), normal, this.world, room.eye, solid.gloss + corner.gloss, sun);
+    float glow = solid.glow + corner.glow + made.a;
+    color = Color(lit.r + made.r * glow, lit.g + made.g * glow, lit.b + made.b * glow, 1);
+}
+
+// The roundabout's deck: six slices in two colors, inside a steel rim, with
+// its paint worn off where feet go. It's painted by where the pixel is on the
+// deck's own mesh, so it turns with it.
+frag DeckLook(Corner corner, out Color color, Solid solid, Instance instance, Room room, Shadow shadow)
+{
+    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal / (solid.size * solid.size)));
+    float sun = Sunlight(shadow.depth, this.world, normal, shadow.toLamp) * CloudShade(float2(this.world.x, this.world.z), room.time);
+    mut Color paint = solid.tint;
+    float2 on = float2(corner.position.x, corner.position.z);
+    float far = Math.Length(on);
+    if (corner.normal.y > 0.5 && far < 0.92)
+    {
+        float around = Math.Atan2(on.y, on.x) / Math.TAU + 0.5;
+        float slice = Math.Floor(around * 6);
+        bool odd = slice - Math.Floor(slice * 0.5) * 2 > 0.5;
+        paint = odd ? Color(0.93, 0.33, 0.3) : Color(0.98, 0.8, 0.25);
+        float worn = Math.Saturate(Math.Perlin(on * 5) * 1.6 - 0.25 + (1 - Math.Abs(far - 0.6) * 4) * 0.3);
+        paint = Color(paint.r + (0.56 - paint.r) * worn * 0.5, paint.g + (0.58 - paint.g) * worn * 0.5, paint.b + (0.62 - paint.b) * worn * 0.5);
+        if (Math.Abs(far - 0.55) < 0.012) paint = Color(paint.r * 0.8, paint.g * 0.8, paint.b * 0.8);
+    }
+    color = Lit(paint, normal, this.world, room.eye, 0.6, sun);
+}
+
+// The wind bends a blade from its foot, more the higher up it, each in its own time.
+vert Sway(mut Corner corner, Blade blade, Room room)
+{
+    float gust = Math.Sin(room.time * 1.7 + blade.phase) * 0.2 + Math.Sin(room.time * 3.3 + blade.phase * 1.7) * 0.07;
+    corner.position.x += corner.position.y * corner.position.y * gust;
+}
+
+// A blade: darker at its foot, in the yard's light and its shadows.
+frag BladeLook(Corner corner, out Color color, Blade blade, Room room, Shadow shadow)
+{
+    float3 up = float3(0, 1, 0);
+    float sun = SunlightAcross(shadow.depth, FromLamp(this.world, up, shadow.toLamp), float2(1, 1)) * 0.5
+              * CloudShade(float2(this.world.x, this.world.z), room.time);
+    float tall = 0.6 + 0.55 * corner.position.y;
+    color = Lit(Color(blade.tint.r * tall, blade.tint.g * tall, blade.tint.b * tall, 1), up, this.world, room.eye, 0, sun);
+}
+
+// What's flat on the ground: a disc that fades at its edge, a ring, part of
+// one, going round from the top, or a soft blot.
+frag DecalLook(Corner corner, out Color color, Decal decal)
+{
+    float2 at = float2(corner.position.x, corner.position.z) * 2;
+    float far = Math.Length(at);
+    mut float shown = Math.Saturate((1 - far) * 8);
+    if (decal.ring > 0) shown = shown * Math.Saturate((far - (1 - decal.ring)) * 8);
+    if (decal.ring < 0) shown = Math.Saturate(1 - far) * Math.Saturate(1 - far); // The dark under a kid
+    if (decal.arc < 1)
+    {
+        mut float around = Math.Atan2(at.x, at.y) / Math.TAU;
+        if (around < 0) around += 1;
+        if (around > decal.arc) shown = 0;
+    }
+    color = Color(decal.tint.r, decal.tint.g, decal.tint.b, decal.tint.a * shown);
+}
+
+frag MoteLook(Corner corner, out Color color, Mote mote)
+{
+    color = mote.tint;
+}
+
+// The frame at half the size: each pixel is four of the frame's.
+frag Halve(Vertex vertex, out Color color, Texture source, Lens lens)
+{
+    Color sum = source.Sample(vertex.uv + float2(-0.5, -0.5) * lens.pixel) + source.Sample(vertex.uv + float2(0.5, -0.5) * lens.pixel)
+              + source.Sample(vertex.uv + float2(-0.5, 0.5) * lens.pixel) + source.Sample(vertex.uv + float2(0.5, 0.5) * lens.pixel);
+    color = Color(sum.r * 0.25, sum.g * 0.25, sum.b * 0.25, 1);
+}
+
+// What's bright in it, and nothing else: what glows.
+frag Brights(Vertex vertex, out Color color, Texture source)
+{
+    Color seen = source.Sample(vertex.uv);
+    float light = Math.Max(seen.r, Math.Max(seen.g, seen.b)) * 0.5 + (seen.r * 0.3 + seen.g * 0.5 + seen.b * 0.2) * 0.5;
+    float kept = Math.Saturate((light - GLOW_FROM) / (1 - GLOW_FROM));
+    color = Color(seen.r * kept, seen.g * kept, seen.b * kept, 1);
+}
+
+// One pass of a blur, along a line: five looks, weighted as a bell.
+frag Blur(Vertex vertex, out Color color, Texture source, BlurStep step)
+{
+    float2 near = step.along * 1.3846;
+    float2 far = step.along * 3.2308;
+    Color sum = source.Sample(vertex.uv) * 0.227
+              + (source.Sample(vertex.uv + near) + source.Sample(vertex.uv - near)) * 0.3162
+              + (source.Sample(vertex.uv + far) + source.Sample(vertex.uv - far)) * 0.0703;
+    color = Color(sum.r, sum.g, sum.b, 1);
+}
+
+// The frame, to the window: sharp across the yard and blurred at its top and
+// its bottom, as a camera close to a model sees it, with the glow around
+// what's bright, a little more color, and darker corners.
+frag Finish(Vertex vertex, out Color color, Texture source, Lens lens)
+{
+    Color sharp = source.Sample(vertex.uv);
+    Color soft = lens.soft.Sample(vertex.uv);
+    Color glow = lens.glow.Sample(vertex.uv);
+    float away = Math.Saturate(Math.Max((0.17 - vertex.uv.y) / 0.17, (vertex.uv.y - 0.86) / 0.14));
+    float blur = away * away * (3 - 2 * away) * 0.92;
+    mut float3 seen = float3(sharp.r + (soft.r - sharp.r) * blur, sharp.g + (soft.g - sharp.g) * blur, sharp.b + (soft.b - sharp.b) * blur);
+    seen = seen + float3(glow.r, glow.g, glow.b) * 0.5;
+    float gray = seen.x * 0.3 + seen.y * 0.55 + seen.z * 0.15;
+    seen = float3(gray) + (seen - float3(gray)) * 1.16;
+    seen = seen * 1.05 - float3(0.018);
+    float2 off = vertex.uv - float2(0.5);
+    float edge = 1 - Math.Dot(off, off) * 0.6;
+    color = Color(seen.x * edge, seen.y * edge, seen.z * edge, 1);
+}
