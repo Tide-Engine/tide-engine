@@ -82,12 +82,12 @@ view Show(mut Player player)
 }
 ```
 
-- A `Texture` is a value (see [A Texture is a value](./views.md#a-texture-is-a-value)): a draw's texture in 2D and 3D, the source a [frag's `Texture` parameter](./shaders.md#textures) is given, a [`Draw.Blit`](./views.md#targets-and-post-processing)'s source, something a field or a local holds and a function takes. A frag samples one by its name too: `hero.Sample(uv)`.
+- A `Texture` is a value (see [A Texture is a value](./meshes-and-textures.md#a-texture-is-a-value)): a draw's texture in 2D and 3D, the source a [frag's `Texture` parameter](./shaders.md#textures) is given, a [`Draw.Blit`](./render-targets.md#post-processing)'s source, something a field or a local holds and a function takes. A frag samples one by its name too: `hero.Sample(uv)`.
 - It's a byte a channel, as the GPU keeps it: a quarter of what the same image takes as a `Grid2<Color>`, and nothing copies it on its way to the GPU.
 - No code reads it. It has no cells and no size to ask. An image whose pixels or size the game needs is a `Grid2<Color>`, which draws as a `Texture` too, and one file can be declared both ways.
 - It's this machine's, like everything that's drawn: views, local handlers and frags use it, and match code can't name one. The match reads a `Grid2<Color>`.
 - What a field keeps of `hero` or of `run[2]` is that image as the files have it now: under `tide run`, a saved picture shows through the copies a game kept, as it does through `hero` itself.
-- How it's sampled can be said once, on its declaration: `[Filter(Filter.Point), Wrap(Wrap.Repeat)]` before the asset (see [Saying it once, on the texture](./views.md#saying-it-once-on-the-texture)). The `Texture` carries it: what a field keeps of `hero` is sampled as `hero` is.
+- How it's sampled can be said once, on its declaration: `[Filter(Filter.Point), Wrap(Wrap.Repeat)]` before the asset (see [Saying it once, on the texture](./meshes-and-textures.md#saying-it-once-on-the-texture)). The `Texture` carries it: what a field keeps of `hero` is sampled as `hero` is.
 
 ## Cubemaps
 
@@ -179,7 +179,7 @@ Bytes that every player should see go into the match through a [command](./comma
 
 `grid.Decode(bytes)` reads a PNG into a `Grid2<Color>` field of a component, singleton or scene, sizing the grid as the image is and writing every pixel. It fails with `IOError.InvalidData` for bytes that aren't a PNG, or are wrong anywhere, and then the grid is as it was.
 
-It's pure, so it runs in match code as well as local code: a handler that decodes gives every machine the same pixels, bit for bit, because the engine's own reader does the decoding, with no system library in the way. The grid then draws as a texture like any `Grid2<Color>` (see [Views and drawing](./views.md)).
+It's pure, so it runs in match code as well as local code: a handler that decodes gives every machine the same pixels, bit for bit, because the engine's own reader does the decoding, with no system library in the way. The grid then draws as a texture like any `Grid2<Color>` (see [Meshes and textures](./meshes-and-textures.md#textures)).
 
 A player's own picture, decoded for this machine alone:
 

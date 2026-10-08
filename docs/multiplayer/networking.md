@@ -75,7 +75,7 @@ Views draw the predicted world, blended between its last two ticks (see [Views](
 
 Local code tells what's predicted from what the server has confirmed with one word, `verified`. The match can't say it: it's the same on every machine, and has no "confirmed".
 
-- **Before a view's parameter or filter**, it reads the world as of the verified tick: `view HealthBar(Health health, verified Health confirmed)` gets the health this machine predicts, and the one the server confirmed. See [Confirmed state](../game/views.md#confirmed-state).
+- **Before a view's parameter or filter**, it reads the world as of the verified tick: `view HealthBar(Health health, verified Health confirmed)` gets the health this machine predicts, and the one the server confirmed. See [Confirmed state](../game/views-and-the-match.md#confirmed-state).
 - **Before a local handler's event**, it hears the event once its tick is verified: `local event(verified Died died) ShowDeath(...)` runs once, late by as far as this machine runs ahead, and is never wrong. See [`verified` handlers](../game/events.md#verified-handlers).
 
 Without it, a view draws the world as this machine predicts it, and a [local handler](../game/events.md#local-handlers) hears each tick as this machine first ran it.

@@ -187,7 +187,7 @@ An event sent to an entity that's gone by its turn isn't heard, as it isn't hand
 
 ### Other entities
 
-A local handler takes `query` parameters, as a [view](./views.md#other-entities) does, to go through entities other than the one its event was sent to:
+A local handler takes `query` parameters, as a [view](./views-and-the-match.md#other-entities) does, to go through entities other than the one its event was sent to:
 
 ```csharp
 event Blast
@@ -252,7 +252,7 @@ local event(verified Died) ShowDeath(Body body, mut Fx fx)
 - **What it takes of the match is that confirmed tick's**, as the event's turn left it, so nothing else in it is marked `verified`.
 - **Both kinds can hear one event**: a handler of `Hit` for the spark, at once, and one of `verified Hit` for the damage number, once it's certain.
 
-`verified` is local code's word. On a match handler it's an error, as the match is the same on every machine and has no "confirmed". Views take it on what they read: see [Confirmed state](./views.md#confirmed-state).
+`verified` is local code's word. On a match handler it's an error, as the match is the same on every machine and has no "confirmed". Views take it on what they read: see [Confirmed state](./views-and-the-match.md#confirmed-state).
 
 ### Events only local code handles
 
