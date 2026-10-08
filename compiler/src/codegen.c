@@ -1135,6 +1135,33 @@ static bool takes_world(const decl *m)
     return m->world_match;
 }
 
+// The match's seed, as the code being generated has it: a function is handed
+// it (Random.seed), a view may run with no match, and the match's code reads its world's.
+static const char *match_seed(const gen *g)
+{
+    return g->routine ? "tide_match_seed" : g->code && g->code->is_view ? "(tide_w ? tide_w->Time.seed : 0)" : "tide_w->Time.seed";
+}
+
+// A number for a system, a view or a handler that rolls with Random: what its
+// generator is made with, beside the seed, the tick and its entity, so two
+// systems that roll for one entity in one tick roll differently.
+static uint32_t roll_site(const decl *code)
+{
+    uint32_t hash = 2166136261u;
+    for (const char *s = decl_cname(code); *s; s++) hash = (hash ^ (uint8_t)*s) * 16777619u;
+    return hash;
+}
+
+// Whether a handler of the match's rolls with Random: each run of one in a tick has its turn's number
+static bool handlers_roll(const program *prog)
+{
+    for (int i = 0; i < prog->decls.count; i++) {
+        const decl *d = prog->decls.items[i];
+        if (d->kind == DECL_SYSTEM && d->is_handler && !d->is_local && d->rolls) return true;
+    }
+    return false;
+}
+
 // tide_method_Stats_IsDead for Stats.IsDead, tide_function_Combat_Heal for
 // Combat.Heal, and tide_operator_Money_add_2 for Money's + (numbered, as a
 // struct can have several).
@@ -2577,6 +2604,8 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
         sb_printf(o, "%stide_l", args++ ? ", " : "");
     }
     if (takes_world(m)) sb_printf(o, "%stide_w", args++ ? ", " : ""); // What its World argument stands for
+    if (m->rolls) sb_printf(o, "%stide_dice", args++ ? ", " : ""); // The generator this code rolls with
+    if (m->reads_seed) sb_printf(o, "%s%s", args++ ? ", " : "", match_seed(g));
     if (m->owner && args > 0) sb_put(o, ", "); // After what it's handed, its value
     if (m->owner && e->kind == E_CALL) { // IsDead() inside another method: the same value
         const bool have_address = g->routine->is_mut_method;
@@ -3216,6 +3245,13 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_printf(o, "%s(&(", e->c_callee);
             gen_expr(g, o, e->object);
             sb_put(o, ")");
+            for (int i = 0; i < e->args.count; i++) {
+                sb_put(o, ", ");
+                gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
+            }
+            sb_put(o, ")");
+        } else if (e->call == CALL_ROLL) { // Random.NextInt(6): with the generator the code was handed
+            sb_printf(o, "%s(tide_dice", e->c_callee);
             for (int i = 0; i < e->args.count; i++) {
                 sb_put(o, ", ");
                 gen_as(g, o, e->args.items[i], e->arg_want.items[i]);
@@ -4110,7 +4146,7 @@ static bool writes(const expr *e)
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get"); // TryGet writes its `out` argument
     case CALL_GRID: return true; // Clear
-    case CALL_RANDOM: return true; // Each of a Random's methods steps it
+    case CALL_RANDOM: case CALL_ROLL: return true; // Each of a Random's methods steps it
     case CALL_WORLD: return str_eq_c(e->name, "TryGet"); // Its `out` argument
     default: return false;
     }
@@ -4149,7 +4185,7 @@ static bool call_keeps_order(const expr *e)
     if (is_spawn(e)) return true;
     if (e->type.kind == TY_VOID) return false;
     if (e->call == CALL_GUI || e->call == CALL_DRAW || e->call == CALL_AUDIO || e->resource_operation || e->io_operation) return true;
-    if ((e->call == CALL_FUNCTION || e->call == CALL_METHOD) && (e->method->draws || e->method->is_extern || e->method->calls_c)) {
+    if ((e->call == CALL_FUNCTION || e->call == CALL_METHOD) && (e->method->draws || e->method->is_extern || e->method->calls_c || e->method->rolls)) {
         return true;
     }
     return writes(e);
@@ -4158,7 +4194,7 @@ static bool call_keeps_order(const expr *e)
 // A struct's operator that keeps its order: it calls C, or writes.
 static bool operator_keeps_order(const expr *e)
 {
-    return e->method && (e->method->calls_c || routine_writes(e->method));
+    return e->method && (e->method->calls_c || e->method->rolls || routine_writes(e->method)); // A roll steps what it's handed
 }
 
 static bool settled(const expr *e);
@@ -5138,6 +5174,11 @@ static void gen_inline(gen *g, const expr *e)
 
     line(g, o, "{ // " STR_FMT, STR_ARG(fn->qualified));
     g->indent++;
+    // The match's seed, under the name a function has it by (Random.seed), for its code and its block's
+    if (strcmp(match_seed(g), "tide_match_seed") != 0 && (fn->reads_seed || (g->code && g->code->reads_seed))) {
+        line(g, o, "const int32_t tide_match_seed = %s;", match_seed(g));
+        line(g, o, "(void)tide_match_seed;");
+    }
     // The arguments, in the caller's code
     const char **names = arena_alloc(sizeof(char *) * (size_t)(fn->params.count + 1));
     for (int i = 0; i < fn->params.count; i++) {
@@ -5849,7 +5890,7 @@ static void gen_stmt(gen *g, const stmt *s)
             indent(g, o);
             gen_expr(g, o, s->value);
             sb_put(o, ";\n");
-        } else if (s->value->call == CALL_RANDOM) { // random.NextInt();: a number nobody reads, which still steps it
+        } else if (s->value->call == CALL_RANDOM || s->value->call == CALL_ROLL) { // random.NextInt();: a number nobody reads, which still steps it
             indent(g, o);
             sb_put(o, "(void)");
             gen_expr(g, o, s->value);
@@ -6550,6 +6591,7 @@ static void gen_header(gen *g)
     gen_task_tables(g, true);
     if (world_has_tasks(g, true)) sb_put(o, "    int32_t tide_frames;       // Frames so far, which local tasks count\n");
     sb_put(o, "    float tide_frame_seconds;  // This frame's length (tide_local_frame_time): Frame.dt, which local tasks count down\n");
+    if (prog->rolls_local) sb_put(o, "    tide_random tide_dice;     // What local code rolls with (Random.NextInt and the like)\n");
     if (prog->uses_resident) sb_put(o, "    tide_residents tide_residents; // The arenas of resident state (tide/resident.h), which the host keeps across reloads\n");
     if (world_heap(prog, true)) sb_put(o, "    tide_heap heap;\n");
     sb_put(o, "    tide_session_request tide_request; // What local code asked of the session: Session.Start and the like\n");
@@ -8272,6 +8314,11 @@ static void gen_command_recorders(gen *g)
                   "static uint32_t tide_listeners;\n\n");
     }
 
+    // A handler that rolls with Random makes its generator from which of the tick's runs of handlers it is,
+    // beside its entity: two of one event to one entity roll differently. Handlers run one at a time, on the
+    // thread that runs the tick, in the same order on every machine.
+    if (handlers_roll(prog)) sb_put(o, "static TIDE_THREAD_LOCAL uint32_t tide_turn;\n\n");
+
     // A chain of events that never ends (handlers that send events whose
     // handlers send more) would run until memory runs out: past a depth no
     // game needs, the program stops, naming where the chain was.
@@ -9566,6 +9613,7 @@ static capture_list sort_captures(gen *g, const expr *sort)
     } else if (fn) {
         if (takes_local(fn)) capture(&out, "tide_local *", "tide_l");
         if (takes_world(fn)) capture(&out, fn->world_sets ? "tide_world *" : "const tide_world *", "tide_w");
+        if (fn->reads_seed) capture(&out, "int32_t", "tide_match_seed");
         if (fn->draws) {
             capture(&out, "tide_draw_list *", "tide_draw");
             capture(&out, "tide_gui *", "tide_ui");
@@ -10375,6 +10423,21 @@ static void gen_system_body(gen *g, const decl *sys)
         if (p->type.kind == TY_QUERY && p->query_rows) line(g, o, "(void)tide_q%d; (void)tide_q%dn;", i, i);
         if (p->type.kind == TY_INPUT) line(g, o, "(void)%s;", prev_input_name(g, p->name));
         if (has_fields_ptr(p)) line(g, o, "(void)%s;", fields_name(g, p->name));
+    }
+    if (sys->rolls && (sys->is_view || sys->is_local)) {
+        // Random's rolls, in local code: this machine's generator
+        line(g, o, "tide_random *const tide_dice = &tide_l->tide_dice;");
+        line(g, o, "(void)tide_dice;");
+    } else if (sys->rolls) {
+        // ...and in the match's: one for this run, from the seed, the tick, the entity and which code this is,
+        // so nothing of the world is written and a tick run again rolls the same
+        sb place = {0};
+        sb_printf(&place, "%uu", roll_site(sys));
+        if (sys->is_handler) sb_put(&place, " ^ (tide_turn++ * 2654435769u)"); // And which of the tick's handlers' runs
+        line(g, o, "tide_random tide_rolled = tide_random_place((uint32_t)tide_w->Time.seed, (uint32_t)tide_w->Time.tick, %s, %s);",
+             sys->per_entity ? "tide_this" : "(tide_entity){0}", place.data);
+        line(g, o, "tide_random *const tide_dice = &tide_rolled;");
+        line(g, o, "(void)tide_dice;");
     }
     gen_grid_caches(g);
     for (int i = 0; i < sys->body->stmts.count; i++) gen_stmt(g, sys->body->stmts.items[i]);
@@ -11446,6 +11509,8 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
         sb_printf(o, "%stide_local *tide_l", n++ ? ", " : "");
     }
     if (takes_world(m)) sb_printf(o, "%s%stide_world *tide_w", n++ ? ", " : "", m->world_sets ? "" : "const ");
+    if (m->rolls) sb_printf(o, "%stide_random *tide_dice", n++ ? ", " : "");
+    if (m->reads_seed) sb_printf(o, "%sconst int32_t tide_match_seed", n++ ? ", " : "");
     if (m->owner && !m->is_operator && !m->is_interpolate) {
         if (n > 0) sb_put(o, ", "); // After what it's handed
         sb_printf(o, m->is_mut_method ? "%s *tide_self, const uint32_t tide_self_where" : "const %s tide_self", type_cname(m->owner));
@@ -11492,6 +11557,8 @@ static void gen_routine(gen *g, const decl *m)
     if (m->draws) line(g, o, "(void)tide_draw; (void)tide_ui; (void)tide_seed;");
     if (takes_local(m)) line(g, o, "(void)tide_l;");
     if (takes_world(m)) line(g, o, "(void)tide_w;");
+    if (m->rolls) line(g, o, "(void)tide_dice;");
+    if (m->reads_seed) line(g, o, "(void)tide_match_seed;");
     for (int i = 0; i < m->params.count; i++) {
         if (m->params.items[i].type.kind == TY_WORLD) continue;
         line(g, o, "(void)%s;", local_cname(g, m->params.items[i].name));
@@ -14140,6 +14207,7 @@ static void gen_api(gen *g)
                  "    w->Time.dt = dt;\n"
                  "    w->Time.tickRate = dt >= 1e-9f ? (int32_t)(1.0f / dt + 0.5f) : 0;\n",
               prog->uses_seed ? "tide_world_start_seeded" : "tide_world_start", prog->uses_seed ? ", uint32_t seed" : "", use_match);
+    if (handlers_roll(prog)) sb_put(o, "    tide_turn = 0u;\n");
     // From 0 to 2147483647, like Math.Hash's, so % of it never goes negative
     if (prog->uses_seed) sb_put(o, "    w->Time.seed = (int32_t)(seed & 0x7FFFFFFFu);\n");
     for (int i = 0; i < prog->singletons.count; i++) {
@@ -14248,6 +14316,7 @@ static void gen_api(gen *g)
     sb_put(o, "    tide_profile *tide_p = jobs ? jobs->profile : NULL;\n"
               "    const uint64_t tide_began = tide_profile_now(tide_p);\n");
     if (prog->match_devices) sb_put(o, "    tide_device_edges(w);\n");
+    if (handlers_roll(prog)) sb_put(o, "    tide_turn = 0u;\n");
     if (prog->systems.count) {
         sb_printf(o, "    const tide_tick_systems tide_tick = {tide_systems, %du, tide_prepare, &w->commands, &w->entities, %s};\n",
                   prog->systems.count, any_settles ? "tide_settle_item" : "NULL");
@@ -14371,6 +14440,12 @@ static void gen_api(gen *g)
     sb_put(o, "    tide_event_log_clear(events);\n}\n\n");
     sb_put(o, "void tide_local_frame_time(tide_local *local, float seconds)\n{\n");
     if (program_corrects(prog)) sb_put(o, "    tide_corrections_decay(local, seconds);\n");
+    if (prog->rolls_local) {
+        // What local code rolls with takes in each frame's length: the same every run where frames are
+        // made up (a run with no window), and no two runs alike where they're measured
+        sb_put(o, "    uint32_t tide_bits;\n    memcpy(&tide_bits, &seconds, sizeof tide_bits);\n"
+                  "    local->tide_dice.state = (int64_t)tide_random_mix((uint64_t)local->tide_dice.state ^ tide_bits);\n");
+    }
     sb_put(o, "    local->tide_frame_seconds = seconds == seconds && seconds > 0.0f ? seconds : 0.0f;\n}\n\n");
 
     const char *joined = type_cname(prog->player_joined);
@@ -16173,7 +16248,9 @@ static void gen_shader_value(sb *o, const char *to, const type t, const char *ac
     const int dim = type_dim(t);
     const int n = matrix_dim(t);
     const int floats = dim > 0 && type_is_float_based(t) ? dim : t.kind == TY_COLOR || t.kind == TY_QUATERNION ? 4 : n * n;
-    if (floats > 0) {
+    if (t.kind == TY_BYTE) {
+        sb_printf(o, "    %s.i[%d] = (int32_t)%s;\n", to, (*i)++, access);
+    } else if (floats > 0) {
         sb_printf(o, "    memcpy(&%s.f[%d], &%s, %d * sizeof(float));\n", to, *f, access, floats);
         *f += floats;
     } else if (dim > 0) {
@@ -16183,6 +16260,12 @@ static void gen_shader_value(sb *o, const char *to, const type t, const char *ac
         sb_printf(o, "    %s.i[%d] = %s ? 1 : 0;\n", to, (*i)++, access);
     } else if (t.kind == TY_ENUM) {
         sb_printf(o, "    %s.i[%d] = (int32_t)%s;\n", to, (*i)++, access);
+    } else if (t.kind == TY_ARRAY) {
+        for (int k = 0; k < t.decl->array_length; k++) {
+            sb inner = {0};
+            sb_printf(&inner, "%s.at[%d]", access, k);
+            gen_shader_value(o, to, t.decl->fields.items[0].type, inner.data, f, i);
+        }
     } else {
         for (int k = 0; k < t.decl->fields.count; k++) {
             const field *fl = &t.decl->fields.items[k];
@@ -16190,6 +16273,28 @@ static void gen_shader_value(sb *o, const char *to, const type t, const char *ac
             sb inner = {0};
             sb_printf(&inner, "%s.%s", access, field_cname(fl));
             gen_shader_value(o, to, fl->type, inner.data, f, i);
+        }
+    }
+}
+
+// How many floats and ints a value is, as a shader is sent it (shader.c's type_words).
+static void shader_words(const type t, int *floats, int *ints)
+{
+    const int dim = type_dim(t);
+    const int n = matrix_dim(t);
+    if (t.kind == TY_BYTE) *ints += 1;
+    else if (dim > 0) *(type_is_float_based(t) ? floats : ints) += dim;
+    else if (n > 0) *floats += n * n;
+    else if (t.kind == TY_COLOR || t.kind == TY_QUATERNION) *floats += 4;
+    else if (t.kind == TY_BOOL || t.kind == TY_ENUM) *ints += 1;
+    else if (t.kind == TY_ARRAY) {
+        int f = 0, i = 0;
+        shader_words(t.decl->fields.items[0].type, &f, &i);
+        *floats += f * t.decl->array_length;
+        *ints += i * t.decl->array_length;
+    } else {
+        for (int k = 0; k < t.decl->fields.count; k++) {
+            if (!t.decl->fields.items[k].hidden) shader_words(t.decl->fields.items[k].type, floats, ints);
         }
     }
 }
@@ -16263,13 +16368,31 @@ static void gen_shaders(gen *g)
             for (int t = 0; t < sh->textures.count; t++) {
                 const shader_read read = sh->textures.items[t].read;
                 sb_printf(o, "%sTIDE_SHADER_READ_%s", t ? ", " : "", read == READ_COMPARE ? "COMPARE" : read == READ_DEPTH ? "DEPTH" :
-                                                                  read == READ_CUBE ? "CUBE" : "COLOR");
+                                                                  read == READ_CUBE ? "CUBE" : read == READ_DATA ? "DATA" : "COLOR");
             }
             sb_put(o, "},\n");
         }
         // The colors its frag writes, where that's more than the pixel's: one for each color image of a target
         if (sh->frag && sh->frag->outputs > 1) sb_printf(o, "    .outputs = %d,\n", sh->frag->outputs);
         sb_put(o, "};\n\n");
+
+        // A list its code reads goes as a texture of numbers: what writes an element's, floats then ints,
+        // as shader.c reads them back (need_list)
+        for (int t = 0; t < sh->textures.count; t++) {
+            const shader_texture *texture = &sh->textures.items[t];
+            if (texture->read != READ_DATA) continue;
+            const type element = list_elem(texture->asset ? texture->asset->return_type.decl : texture->field->type.decl);
+            int floats = 0, ints = 0;
+            shader_words(element, &floats, &ints);
+            sb_printf(o, "static void tide_shader_%d_words_%d(const void *tide_in, int32_t *tide_out)\n{\n"
+                         "    const %s *tide_e = tide_in;\n    struct {", s, t, elem_ctype(element));
+            if (floats) sb_printf(o, " float f[%d];", floats);
+            if (ints) sb_printf(o, " int32_t i[%d];", ints);
+            sb_put(o, " } tide_w;\n");
+            int f = 0, i = 0;
+            gen_shader_value(o, "tide_w", element, "(*tide_e)", &f, &i);
+            sb_put(o, "    memcpy(tide_out, &tide_w, sizeof tide_w);\n}\n\n");
+        }
 
         // Draws a mesh through it: what its frag and vert read goes with the instance and the draw
         sb_printf(o, "TIDE_HELPER void tide_shade_%d(tide_draw_list *tide_draw", s);
@@ -16373,6 +16496,32 @@ static void gen_shaders(gen *g)
             } else if (texture->filter) {
                 blended |= 1u << t;
                 if (texture->filter == 2) blended |= 1u << (24 + t); // TIDE_SAMPLING_MIPS
+            }
+            if (texture->read == READ_DATA) { // A list: its elements as numbers, and how many, for the draw
+                const decl *holds = texture->asset ? texture->asset->return_type.decl : texture->field->type.decl;
+                const type element = list_elem(holds);
+                int floats = 0, ints = 0;
+                shader_words(element, &floats, &ints);
+                sb list = {0};
+                if (texture->asset) {
+                    sb_put(&list, asset_cname(texture->asset));
+                } else if (sh->values_type && texture->source == sh->values_type) {
+                    sb_printf(&list, "tide_values.%s", field_cname(texture->field));
+                } else {
+                    int b = 0;
+                    while (sh->bound.items[b] != texture->source) b++;
+                    sb_printf(&list, "tide_%sb%d->%s", texture->field->is_local ? "l" : "", b, field_cname(texture->field));
+                }
+                if (holds->kind == DECL_GRID || texture->asset || texture->field->type.kind == TY_GRID) { // A grid: its cells, and its size
+                    sb_printf(o, "    tide_textures[%d] = tide_draw_grid_data(tide_draw, %s, &%s, %du, tide_shader_%d_words_%d, "
+                                 "&tide_uniforms.i[%d]);\n", t, list.data, grid_shape_name(holds), (unsigned)(floats + ints), s, t,
+                              texture->count_at);
+                    continue;
+                }
+                sb_printf(o, "    tide_textures[%d] = tide_draw_list_data(tide_draw, %s, sizeof(%s), %du, tide_shader_%d_words_%d, "
+                             "&tide_uniforms.i[%d]);\n", t, list.data, elem_ctype(element), (unsigned)(floats + ints), s, t,
+                          texture->count_at);
+                continue;
             }
             if (texture->read == READ_CUBE) { // A Cubemap: an asset's by name, or a field's
                 if (texture->asset) {

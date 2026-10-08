@@ -1182,6 +1182,7 @@ static const tide_gpu_depth gpu_depths[DEPTHS] = {
 static struct {
     tide_gpu_id far; // A target of depth alone that's 1 everywhere: what a shader reads for a depth it wasn't given
     tide_gpu_id dark; // A cube of one black pixel a face: what a shader reads for a cube it wasn't given
+    tide_gpu_id nothing; // A pixel of four zeros: what a shader that reads a list's numbers is bound for a list with none
     tide_gpu_id corners; // The shapes' quad
     tide_gpu_id shape_instances;
     uint32_t shape_capacity; // Shapes the instance buffer holds
@@ -1366,7 +1367,7 @@ static void hold_mipmaps(gpu_held *h, const uint64_t image_bytes, const uint32_t
 
 static uint64_t format_bytes(const tide_gpu_format format)
 {
-    return format == TIDE_GPU_RGBA8 ? 4u : format == TIDE_GPU_R16F ? 2u : 1u;
+    return format == TIDE_GPU_RGBA8 ? 4u : format == TIDE_GPU_R16F ? 2u : format == TIDE_GPU_RGBA32I ? 16u : 1u;
 }
 
 static uint64_t color_bytes(const tide_gpu_color color)
@@ -1540,7 +1541,8 @@ static tide_gpu_read gpu_read(const tide_shader *shader, const uint32_t i)
     const uint8_t read = i < TIDE_SHADER_TEXTURES ? shader->texture_reads[i] : TIDE_SHADER_READ_COLOR;
     return read == TIDE_SHADER_READ_DEPTH ? TIDE_GPU_READ_DEPTH :
            read == TIDE_SHADER_READ_COMPARE ? TIDE_GPU_READ_COMPARE :
-           read == TIDE_SHADER_READ_CUBE ? TIDE_GPU_READ_CUBE : TIDE_GPU_READ_COLOR;
+           read == TIDE_SHADER_READ_CUBE ? TIDE_GPU_READ_CUBE :
+           read == TIDE_SHADER_READ_DATA ? TIDE_GPU_READ_DATA : TIDE_GPU_READ_COLOR;
 }
 static uint32_t target_epoch; // A hot reload discards the old build's target identities
 
@@ -2268,7 +2270,10 @@ static bool upload_shaded(const tide_draw_list *list)
                 static const void *const faces[TIDE_GPU_CUBE_FACES] = {black, black, black, black, black, black};
                 gpu_state.dark = made_cube(TIDE_GPU_COLOR_BYTES, 1, faces);
             }
-            if (read == TIDE_GPU_READ_COLOR || read == TIDE_GPU_READ_CUBE || gpu_state.far) continue;
+            if (read == TIDE_GPU_READ_DATA && !gpu_state.nothing) { // ...and one that reads a list, no numbers
+                gpu_state.nothing = made_texture(TIDE_GPU_RGBA32I, 1, 1, (const int32_t[4]){0, 0, 0, 0});
+            }
+            if (read == TIDE_GPU_READ_COLOR || read == TIDE_GPU_READ_CUBE || read == TIDE_GPU_READ_DATA || gpu_state.far) continue;
             gpu_state.far = made_target(TIDE_GPU_TARGET_DEPTH, 1, 1);
             gpu->begin(gpu_state.far, true);
             gpu->end();
@@ -2349,7 +2354,8 @@ static gpu_texture *texture_for(const tide_draw_texture *t)
     } else {
         if (g->texture) free_texture(g->texture);
         // A grid of floats' cells are one float of 16 bits a pixel
-        g->texture = made_texture(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F : TIDE_GPU_RGBA8, t->width, t->height, t->pixels);
+        g->texture = made_texture(t->format == TIDE_TEXELS_HALF ? TIDE_GPU_R16F :
+                                  t->format == TIDE_TEXELS_INTS ? TIDE_GPU_RGBA32I : TIDE_GPU_RGBA8, t->width, t->height, t->pixels);
     }
     g->format = t->format;
     g->version = t->version;
@@ -2402,9 +2408,12 @@ static bool of_destination(const tide_draw_texture *t, const uint64_t id)
 static tide_gpu_id texture_to_read(const tide_draw_list *list, const uint32_t texture, const tide_gpu_read read)
 {
     const bool depth = read == TIDE_GPU_READ_DEPTH || read == TIDE_GPU_READ_COMPARE, cube = read == TIDE_GPU_READ_CUBE;
-    const tide_gpu_id none = cube ? gpu_state.dark : depth ? gpu->target_depth(gpu_state.far) : gpu_state.white;
+    const bool data = read == TIDE_GPU_READ_DATA; // A list's numbers, and nothing else is read so
+    const tide_gpu_id none = data ? gpu_state.nothing : cube ? gpu_state.dark : depth ? gpu->target_depth(gpu_state.far)
+                           : gpu_state.white;
     if (texture == 0 || texture > list->texture_count) return none;
     const tide_draw_texture *t = &list->textures[texture - 1u];
+    if (data != (t->space == TIDE_PIXELS_LIST && t->format == TIDE_TEXELS_INTS)) return none;
     if (cube != of_cube(t)) return none;
     if (t->space == TIDE_PIXELS_TARGET_CUBE) {
         const gpu_cube *c = find_cube(t->id);

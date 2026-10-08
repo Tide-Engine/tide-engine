@@ -1,5 +1,5 @@
-// expect: a loop the GPU runs counts on its own line, which has no '++' or '--' but its step
-// expect: change the other variable in the loop's body
+// expect: a loop's own line has no '++' or '--' inside an expression in code the GPU runs
+// expect: a for's step can be 'i++'; change any other variable in the loop's body
 scene Main { }
 
 local singleton Models

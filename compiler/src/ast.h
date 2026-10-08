@@ -406,7 +406,8 @@ typedef enum decl_kind {
 // number (depth.Sample) or compared with one of its own (depth.Compare). The
 // values are tide/draw.h's tide_shader_read's.
 // READ_CUBE is a Cubemap's color, read by a direction.
-typedef enum shader_read { READ_COLOR, READ_DEPTH, READ_COMPARE, READ_CUBE } shader_read;
+// READ_DATA is a list's elements, as numbers: read by their place (shader.c, Lists).
+typedef enum shader_read { READ_COLOR, READ_DEPTH, READ_COMPARE, READ_CUBE, READ_DATA } shader_read;
 
 // A grid a frag or vert samples: a field of one of its parameters, and how.
 typedef struct shader_sample {
@@ -600,6 +601,10 @@ typedef struct decl {
     bool uses_fetch;      // Awaits Web.Fetch itself: its task's frame keeps the fetch's ticket
     bool frame_time;      // Reads Frame.dt, directly or through helpers: this machine's local state has it
     loc frame_time_at;
+    bool rolls;           // Rolls with Random.NextInt and the like, directly or through helpers: it's handed a generator
+    loc rolls_at;
+    bool reads_seed;      // Reads Random.seed, directly or through helpers: a function is handed the match's seed
+    loc reads_seed_at;
     bool frame_devices;  // ...and whether that's reading this frame's Devices, not drawing
     bool frame_cursor;   // ...or using its cursor: Cursor.Lock and Cursor.locked
     bool takes_action;   // A function whose last parameter is an Action: inlined where it's called
@@ -747,6 +752,7 @@ typedef enum builtin_call {
     CALL_NEW_GRID,  // Grid2(1024, 1024) or Grid3(...): a grid with that size (0: open), whose type comes from where it goes
     CALL_DISCARD,   // this.Discard(), in a frag: the pixel isn't drawn
     CALL_RANDOM,    // random.NextInt(6), a Random's methods: calls c_callee with the generator's address first
+    CALL_ROLL,      // Random.NextInt(6), on the type: calls c_callee with the generator its code was handed
 } builtin_call;
 
 // What a GUI call needs besides its arguments, and which form of a draw
@@ -1063,6 +1069,7 @@ typedef struct shader_texture {
     int wrap;    // Its Wrap's number, tide_wrap's: 0 where the draw says (a `textured` shader's own)
     shader_read read; // A DepthTexture field's: as a number, or compared, each a texture of its own
     bool filter_said, wrap_said; // As its samples' (shader_sample): false for what's left to the Texture it's given
+    int count_at; // A list's (READ_DATA): the word of the uniforms' ints that says how many elements it has
 } shader_texture;
 
 // A struct a vert writes for its frag, an `out` parameter of the vert's: the
@@ -1090,6 +1097,7 @@ typedef struct shader {
     struct decl *instance_type; // Explicit instance data, or NULL for transforms only
     struct decl *values_type;   // The struct its draws give after their vert and frag, sent once for each draw, or NULL
     const field *instance_transform; // The instance struct's optional float4x4 transform
+    const field *instance_list;      // A list its code reads of the instance struct, which no draw can send
     VEC(shader_value) values;
     VEC(shader_texture) textures;
     VEC(struct decl *) bound; // The components and singletons it reads, in the order its draws pass them
@@ -1199,6 +1207,9 @@ typedef struct program {
     // or a Random in the match's state, which the engine seeds from it.
     field *seed;
     bool uses_seed;
+    // Random.NextInt(6) and the like, on the type: whether the match's code rolls so, and local code
+    bool rolls_match;
+    bool rolls_local;
     // Application.title is read: generated C has the game's title as text
     // (its title setting, or the program's name), and no other game's does.
     bool uses_title;

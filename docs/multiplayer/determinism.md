@@ -30,12 +30,15 @@ NaN in the simulation is a bug: NaN's bit patterns aren't the same everywhere. T
 
 ## Random numbers
 
-A match that rolls dice still has to roll the same ones on every machine. In Tide a random number generator is data, a [`Random`](../language/math.md#random-numbers), and its state is in the world like any other field:
+A match that rolls dice still has to roll the same ones on every machine. [`Random`](../language/math.md#random-numbers) does, both ways it rolls:
 
-- **The same numbers everywhere.** The generator is integer arithmetic (PCG32), and its floats are made from integers with exact operations, so every platform gives the same bits.
-- **In every snapshot.** A generator in a component or a singleton is part of the world's state and of its hash. A client that predicted a tick wrong goes back to the last world the server confirmed and runs the ticks again: the generators are back where they were then, and roll the same numbers.
-- **One for each entity.** A system that rolls with its entities' own generators can run them on several threads, and no thread's rolls depend on another's.
-- **Seeded by the match.** The machine that starts a match picks its seed, `Time.seed`, from the system's random number generator, so no two matches go the same. The seed is in the world: a player who joins gets it with everything else, snapshots and host migration carry it, and nothing sends it separately. An entity's generator is seeded as the entity spawns, from the seed, the tick and the entity, which every machine has the same.
+- **A roll with nothing kept** (`Random.NextInt(6)` in a system or a handler) is worked out from the match's seed, the tick, the entity and which code rolls. Every machine has those the same, a tick run again has them the same, and no system writes anything to roll, so nothing waits and nothing depends on a thread.
+- **A generator of the game's own** (a `Random` field) is data, and its state is in the world like any other field:
+
+  - **The same numbers everywhere.** The generator is integer arithmetic (PCG32), and its floats are made from integers with exact operations, so every platform gives the same bits.
+  - **In every snapshot.** A generator in a component or a singleton is part of the world's state and of its hash. A client that predicted a tick wrong goes back to the last world the server confirmed and runs the ticks again: the generators are back where they were then, and roll the same numbers.
+  - **One for each entity.** A system that rolls with its entities' own generators can run them on several threads, and no thread's rolls depend on another's.
+  - **Seeded by the match.** The machine that starts a match picks its seed, `Random.seed`, from the system's random number generator, so no two matches go the same. The seed is in the world: a player who joins gets it with everything else, snapshots and host migration carry it, and nothing sends it separately. An entity's generator is seeded as the entity spawns, from the seed, the tick and the entity, which every machine has the same.
 
 Where nothing picks a seed (tests, benchmarks, a world a C host starts itself, a game run [without a window](../tools/cli.md#without-a-window)) it's 0, so a run repeats exactly. `tide run --seed 7` picks the seed, with or without a window: the same seed and the same input are the same match.
 

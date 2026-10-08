@@ -1232,6 +1232,8 @@ event(Spawned) Setup(with Main)
     Spawn(Lamp { pos = Cell(1, 3), at = Spot(1, 6), glow = Color.green, on = true, mode = Mode.Bright,
                  finish = Finish { shine = 0.5, layers = 2 } });
     Spawn(Lamp { pos = Cell(2, 3), at = Spot(2, 6), glow = Color.blue });
+    Spawn(Tagged { shades = [Color.red] });
+    Spawn(Tagged { which = 1, shades = [Color.red, Color(0, 0, 1)] });
 }
 
 view Start(mut Art art, mut Probe probe)
@@ -2799,13 +2801,350 @@ view CubeReads(Art art, Cubes cubes)
     }
 }
 
+// Lists (pass 18): a frag and a vert read a list that's a field of what they
+// take, by an element, by how many it has and with foreach. Each square is 8
+// pixels of the window.
+enum Tone { Plain, Warm, Cool }
+
+struct Swatch
+{
+    Color tint;
+    float gain;
+    float3 extra;
+    int shift;
+    bool on;
+    Tone tone;
+}
+
+struct Band
+{
+    float[3] rgb;
+}
+
+local singleton Tables
+{
+    bool made;
+    float turn;             // What the first color's green is this frame: shaders.c says
+    List<Vertex> small;
+    List<Color> colors;     // Four of them
+    List<Color> none;
+    List<Swatch> swatches;  // Three pixels an element
+    List<Swatch> many;      // 700 of them: more than a row of the list's texture, and one across two rows
+    List<float> big;        // 9000 floats, four to a pixel: three rows
+    List<byte> bytes;       // 300 of them, four to a pixel
+    Grid2<Color> cells = Grid2(70, 3); // Wider than a chunk of it
+    Grid2<int> tallies = Grid2(5, 2);
+    List<int2> steps;
+    float[4] weights;       // Arrays of a fixed length: a quarter, a half, three quarters and one
+    Swatch[2] pair;
+    int[3] order;
+    List<Band> strips;     // A list whose elements have an array each
+}
+
+component Tagged
+{
+    int which;
+    List<Color> shades;
+}
+
+struct Choice
+{
+    int at;
+}
+
+struct Palette
+{
+    List<Color> colors;
+    int pick;
+}
+
+frag ListPick(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    color = tables.colors[choice.at];
+}
+
+frag ListCounts(Vertex vertex, out Color color, Tables tables)
+{
+    color = Color(tables.colors.count / 8.0, tables.none.count + 0.25, tables.big.count / 18000.0);
+}
+
+frag ListSum(Vertex vertex, out Color color, Tables tables)
+{
+    mut var sum = Color(0, 0, 0, 1);
+    foreach (var swatch in tables.swatches)
+    {
+        if (!swatch.on) continue;
+        switch (swatch.tone)
+        {
+            case Tone.Warm:
+                sum.r += swatch.gain;
+                break;
+            case Tone.Cool:
+                sum.b += swatch.gain;
+                break;
+            default:
+                sum.g += swatch.extra.y;
+                break;
+        }
+        sum.g += swatch.shift * 0.125;
+    }
+    foreach (var nothing in tables.none) sum.r = 1;
+    color = sum;
+}
+
+frag ListFar(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    color = Color(tables.big[choice.at], tables.big[choice.at + 1], 0);
+}
+
+frag ListAcross(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    var swatch = tables.many[choice.at];
+    color = Color(swatch.tint.r, swatch.extra.z, swatch.shift == choice.at && swatch.on && swatch.tone == Tone.Cool ? 1 : 0);
+}
+
+vert ListNudge(mut Vertex vertex, Tables tables)
+{
+    vertex.position.y += tables.steps[1].y;
+}
+
+frag ListOwn(Vertex vertex, out Color color, Tagged tagged)
+{
+    color = tagged.shades[tagged.shades.count - 1];
+}
+
+frag ListGiven(Vertex vertex, out Color color, Palette palette)
+{
+    color = palette.colors[palette.pick];
+}
+
+// Bytes are ints from 0 to 255 there, and keep to that as they're added to
+frag ListBytes(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    var value = tables.bytes[choice.at];
+    mut byte more = value;
+    more += 100;
+    color = Color(value / 255.0, more / 255.0, tables.bytes.count / 600.0);
+}
+
+// A grid's cells by their place, in another chunk than its first, and past its edges, where there's nothing
+frag GridCell(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    color = tables.cells[choice.at, 2] + tables.cells[70, 0] + tables.cells[int2(-1, 0)];
+}
+
+frag GridSize(Vertex vertex, out Color color, Tables tables)
+{
+    color = Color(tables.cells.size.x / 140.0, tables.cells.size.y / 6.0, tables.tallies[3, 1] / 10.0);
+}
+
+// An asset's grid, by its name
+frag AssetCell(Vertex vertex, out Color color, Choice choice)
+{
+    color = brickCells[choice.at, 0];
+    if (brickCells.size.x != 2 || brickCells.size.y != 2) color = Color.black;
+}
+
+// Loops of every kind: a while, a for that doesn't count by ones, and one that only a break ends
+frag Loops(Vertex vertex, out Color color, Tables tables)
+{
+    mut var i = 0;
+    mut var sum = 0.0;
+    while (i < tables.colors.count)
+    {
+        sum += tables.colors[i].b;
+        i++;
+    }
+    mut var steps = 0;
+    for (mut var x = 1.0; x < 20; x *= 2)
+    {
+        if (steps == 3) continue;
+        steps++;
+    }
+    mut var turns = 0;
+    while (true)
+    {
+        turns++;
+        if (turns >= 4) break;
+    }
+    color = Color(sum * 0.5, steps / 4.0, turns / 16.0);
+}
+
+// Arrays: an element by a place that's only known as the code runs, one past the end, and how many
+frag ArrayRead(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    color = Color(tables.weights[choice.at], tables.weights[choice.at + 1], tables.order.count / 6.0);
+}
+
+float Sum3(int[3] values)
+{
+    mut var sum = 0.0;
+    for (var i = 0; i < values.count; i++) sum += values[i];
+    return sum;
+}
+
+// A copy that's written, at places known here and not, some past its ends; arrays made in the code; foreach
+frag ArrayLocal(Vertex vertex, out Color color, Tables tables, Choice choice)
+{
+    mut var mine = tables.weights;
+    mine[0] = 1;
+    mine[choice.at] = 0.5;
+    mine[9] = 1;
+    mine[choice.at + 9] = 1;
+    mine[choice.at - 9] += 1;
+    mut float[3] sums = [0, 0, 0];
+    foreach (var weight in mine) sums[0] += weight * 0.25;
+    foreach (var swatch in tables.pair)
+    {
+        if (swatch.on) sums[1] += swatch.gain;
+    }
+    sums[2] = Sum3(tables.order) / 8;
+    color = Color(sums[0], sums[1], sums[2]);
+}
+
+frag ArrayInList(Vertex vertex, out Color color, Tables tables)
+{
+    var strip = tables.strips[1];
+    color = Color(strip.rgb[0], tables.strips[1].rgb[1], strip.rgb[2] + tables.strips[0].rgb[2] + tables.strips[2].rgb[0]);
+}
+
+[After(CubeReads)]
+view ListReads(Art art, mut Tables tables)
+{
+    if (art.targetPass != 18) return;
+    if (!tables.made)
+    {
+        tables.made = true;
+        tables.small = [Vertex { }, Vertex { position = float2(8, 0), uv = float2(1, 0) },
+                        Vertex { position = float2(8, 8), uv = float2(1, 1) }, Vertex { position = float2(0, 8), uv = float2(0, 1) }];
+        tables.colors = [Color.red, Color(0, 1, 0), Color(0, 0, 1), Color(1, 1, 0)];
+        tables.swatches = [Swatch { tone = Tone.Warm, gain = 0.5, on = true, shift = 1 },
+                           Swatch { tone = Tone.Cool, gain = 0.25, on = true },
+                           Swatch { tone = Tone.Warm, gain = 1 },
+                           Swatch { extra = float3(0, 0.25, 0), on = true, shift = 1 }];
+        for (int i = 0; i < 700; i++)
+        {
+            tables.many.Add(Swatch { tint = Color((i & 255) / 255.0, 0.5, 0), gain = 1, extra = float3(0, 0, 0.25), shift = i,
+                                     on = true, tone = Tone.Cool });
+        }
+        for (int i = 0; i < 9000; i++) tables.big.Add((i & 255) / 255.0);
+        for (int i = 0; i < 300; i++) tables.bytes.Add(byte(i));
+        tables.cells[66, 2] = Color(0.25, 0.5, 0.75);
+        tables.tallies[3, 1] = 10;
+        tables.steps = [int2(0, 0), int2(3, 16)];
+        tables.weights = [0.25, 0.5, 0.75, 1];
+        tables.pair = [Swatch { gain = 0.25, on = true }, Swatch { gain = 0.5, on = true }];
+        tables.order = [1, 0, 1];
+        tables.strips = [Band { }, Band { rgb = [1, 0.5, 0.25] }];
+    }
+    tables.colors[0] = Color(1, tables.turn, 0);
+    Draw.Clear(Color(0.5, 0.5, 0.5));
+    Draw.SetScreen();
+    Draw.SetClip();
+    // Row 1: each color by its place, then past the end and before the start, which are nothing
+    for (int i = -1; i < 5; i++)
+    {
+        Draw.Transform(float2(24 + i * 16, 8))
+        {
+            Draw.Mesh(tables.small, art.faces, ListPick, Choice { at = i });
+        }
+    }
+    // Row 2: counts; a foreach with a switch; a list of three rows; an element across two rows; a vert's read
+    Draw.Transform(float2(8, 24))
+    {
+        Draw.Mesh(tables.small, art.faces, ListCounts);
+    }
+    Draw.Transform(float2(24, 24))
+    {
+        Draw.Mesh(tables.small, art.faces, ListSum);
+    }
+    Draw.Transform(float2(40, 24))
+    {
+        Draw.Mesh(tables.small, art.faces, ListFar, Choice { at = 8500 });
+    }
+    Draw.Transform(float2(56, 24))
+    {
+        Draw.Mesh(tables.small, art.faces, ListAcross, Choice { at = 341 });
+    }
+    Draw.Transform(float2(72, 24))
+    {
+        Draw.Mesh(tables.small, art.faces, ListAcross, Choice { at = 699 });
+    }
+    Draw.Transform(float2(88, 24))
+    {
+        Draw.Mesh(tables.small, art.faces, ListNudge);
+    }
+    // Row 4: lists the draws give, made along the way
+    Draw.Transform(float2(8, 56))
+    {
+        Draw.Mesh(tables.small, art.faces, ListGiven, Palette { colors = [Color.red, Color(0, 0, 1)], pick = 1 });
+    }
+    Draw.Transform(float2(24, 56))
+    {
+        Draw.Mesh(tables.small, art.faces, ListGiven, Palette { colors = [Color(0, 1, 0)] });
+    }
+    Draw.Transform(float2(40, 56))
+    {
+        Draw.Mesh(tables.small, art.faces, ListGiven, Palette { pick = 2 });
+    }
+    // Row 5: arrays
+    Draw.Transform(float2(8, 72))
+    {
+        Draw.Mesh(tables.small, art.faces, ArrayRead, Choice { at = 1 });
+    }
+    Draw.Transform(float2(24, 72))
+    {
+        Draw.Mesh(tables.small, art.faces, ArrayRead, Choice { at = 3 });
+    }
+    Draw.Transform(float2(40, 72))
+    {
+        Draw.Mesh(tables.small, art.faces, ArrayLocal, Choice { at = 1 });
+    }
+    Draw.Transform(float2(56, 72))
+    {
+        Draw.Mesh(tables.small, art.faces, ArrayInList);
+    }
+    // Row 6: bytes, a grid's cells and size, an asset's grid, and loops
+    Draw.Transform(float2(8, 88))
+    {
+        Draw.Mesh(tables.small, art.faces, ListBytes, Choice { at = 200 });
+    }
+    Draw.Transform(float2(24, 88))
+    {
+        Draw.Mesh(tables.small, art.faces, GridCell, Choice { at = 66 });
+    }
+    Draw.Transform(float2(40, 88))
+    {
+        Draw.Mesh(tables.small, art.faces, GridSize);
+    }
+    Draw.Transform(float2(56, 88))
+    {
+        Draw.Mesh(tables.small, art.faces, AssetCell, Choice { at = 1 });
+    }
+    Draw.Transform(float2(72, 88))
+    {
+        Draw.Mesh(tables.small, art.faces, Loops);
+    }
+}
+
+// Row 3: each entity's own list
+[After(ListReads)]
+view ListOwners(Art art, Tables tables, Tagged tagged)
+{
+    if (art.targetPass != 18) return;
+    Draw.Transform(float2(8 + tagged.which * 16, 40))
+    {
+        Draw.Mesh(tables.small, art.faces, ListOwn);
+    }
+}
+
 // shaders.c requests independent full-window checks after the existing grid.
 // Resource descriptors are supplied by C, without choosing a Tide lifetime API.
 [After(Manual)]
 view Targets(mut Art art)
 {
     // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images', 11 Outputs', 12 Values', 13 Heights', 14 Mipmaps',
-    // 15 Alphas', 16 Raws' and 17 the cubes'
+    // 15 Alphas', 16 Raws', 17 the cubes' and 18 the lists'
     if (art.targetPass == 0 || art.targetPass >= 6) return;
     if (art.targetPass >= 4)
     {

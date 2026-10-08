@@ -1,0 +1,75 @@
+// Arrays of a fixed length on the GPU: fields of a singleton, a component and
+// a struct, sent as their elements' words; locals, elements read and
+// written, a count, foreach, and an array handed to a function.
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float2 uv;
+}
+struct Stop
+{
+    Color color;
+    float at;
+}
+singleton Ramp
+{
+    Stop[3] stops;
+    float[4] weights;
+    int[2] picks;
+}
+component Bones
+{
+    float3[2] offsets;
+}
+local singleton Stage
+{
+    List<Corner> corners;
+    List<int> faces;
+}
+
+float Total(float[4] values)
+{
+    mut var sum = 0.0;
+    foreach (var value in values) sum += value;
+    return sum;
+}
+
+void Double(mut float value)
+{
+    value *= 2;
+}
+
+vert Bend(mut Corner corner, Bones bones)
+{
+    for (var i = 0; i < bones.offsets.count; i++) corner.position += bones.offsets[i];
+}
+
+frag Shade(Corner corner, out Color color, Ramp ramp)
+{
+    mut var local = ramp.weights;
+    local[1] = 0.5;
+    local[ramp.picks[0]] += local[7];
+    mut var third = local[2];
+    Double(third);
+    local[2] = third;
+    mut float[2] pair = [1, 2];
+    pair[1] = Total(local);
+    mut var sum = Color(0, 0, 0, pair[0]);
+    foreach (var stop in ramp.stops)
+    {
+        if (stop.at > corner.uv.x) sum += stop.color * ramp.weights[ramp.picks[1]];
+    }
+    color = sum * pair[1] * ramp.stops[2].at;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Bones);
+}
+
+view Show(Stage stage, with Bones)
+{
+    Draw.Mesh(stage.corners, stage.faces, float4x4.identity, Bend, Shade);
+}

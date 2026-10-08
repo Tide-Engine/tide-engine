@@ -1,0 +1,33 @@
+// Systems that roll with Random write nothing to roll, so they wait for
+// nobody over it, and split their entities across threads as ever.
+
+component Walker { float2 direction; }
+component Mood { int roll; }
+singleton Board { int once; }
+
+int Die()
+{
+    return Random.NextInt(6);
+}
+
+system Wander(mut Walker walker)
+{
+    walker.direction = Random.NextFloat2Direction();
+}
+
+system Feel(mut Mood mood)
+{
+    mood.roll = Die();
+}
+
+system Count(mut Board board)
+{
+    board.once = Random.NextInt(100) + Random.seed;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Walker { }, Mood { });
+}
