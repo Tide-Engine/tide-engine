@@ -11,6 +11,7 @@
 #include "tide/page.h"
 
 static void reindex_meshes(tide_draw_list *d);
+static void reindex_textures(tide_draw_list *d);
 
 static tide_render_target_state *render_targets;
 
@@ -387,7 +388,10 @@ void tide_draw_reset(tide_draw_list *d)
         }
         d->textures[kept++] = *t;
     }
-    d->texture_count = kept;
+    if (kept != d->texture_count) {
+        d->texture_count = kept;
+        reindex_textures(d);
+    }
     // ...and so do its 3D meshes, each in its place
     bool freed = false;
     for (uint32_t i = 0; i < d->mesh_count; i++) {
@@ -426,6 +430,7 @@ void tide_draw_free(tide_draw_list *d)
     free(d->vertices);
     free(d->indices);
     free(d->textures);
+    free(d->texture_index);
     free(d->targets);
     free(d->cameras);
     free(d->cameras_3d);
@@ -453,6 +458,65 @@ static void *grow(void *items, const uint32_t count, uint32_t *capacity, const u
     items = tide_realloc(items, *capacity * size, (size_t)room * size);
     *capacity = (uint32_t)room;
     return items;
+}
+
+// A texture's place stays in the array; the index only finds it. Targets can
+// have several places for one id, at different sizes or versions.
+static uint32_t texture_hash(const uint32_t space, const uint64_t id)
+{
+    uint64_t h = id * 0x9E3779B97F4A7C15ull ^ space;
+    h ^= h >> 32;
+    h *= 0xD6E8FEB86659FD93ull;
+    h ^= h >> 32;
+    return (uint32_t)h;
+}
+
+static void index_texture(tide_draw_list *d, const uint32_t place)
+{
+    const tide_draw_texture *t = &d->textures[place];
+    const uint32_t mask = d->texture_index_capacity - 1u;
+    uint32_t i = texture_hash(t->space, t->id) & mask;
+    while (d->texture_index[i]) i = (i + 1u) & mask;
+    d->texture_index[i] = place + 1u;
+}
+
+static void reindex_textures(tide_draw_list *d)
+{
+    uint32_t capacity = d->texture_index_capacity ? d->texture_index_capacity : 64u;
+    while (capacity / 2u <= d->texture_count) {
+        if (capacity > UINT32_MAX / 2u / sizeof(uint32_t)) tide_out_of_memory();
+        capacity *= 2u;
+    }
+    if (capacity != d->texture_index_capacity) {
+        free(d->texture_index);
+        d->texture_index = tide_alloc_zeroed(capacity, sizeof(uint32_t));
+        d->texture_index_capacity = capacity;
+    } else {
+        memset(d->texture_index, 0, (size_t)capacity * sizeof(uint32_t));
+    }
+    // In array order, so looking for only space/id still finds its first place.
+    for (uint32_t i = 0; i < d->texture_count; i++) index_texture(d, i);
+}
+
+static tide_draw_texture *find_texture(const tide_draw_list *d, const uint32_t space, const uint64_t id)
+{
+    if (!d->texture_index_capacity) return NULL;
+    const uint32_t mask = d->texture_index_capacity - 1u;
+    for (uint32_t i = texture_hash(space, id) & mask; d->texture_index[i]; i = (i + 1u) & mask) {
+        tide_draw_texture *t = &d->textures[d->texture_index[i] - 1u];
+        if (t->space == space && t->id == id) return t;
+    }
+    return NULL;
+}
+
+static tide_draw_texture *add_texture(tide_draw_list *d, const tide_draw_texture texture)
+{
+    d->textures = grow(d->textures, d->texture_count, &d->texture_capacity, 1, sizeof(tide_draw_texture), 8u);
+    const uint32_t place = d->texture_count++;
+    d->textures[place] = texture;
+    if (d->texture_count >= d->texture_index_capacity / 2u) reindex_textures(d);
+    else index_texture(d, place);
+    return &d->textures[place];
 }
 
 static void reserve(tide_draw_list *d, const uint32_t more)
@@ -957,6 +1021,7 @@ void tide_draw_forget(tide_draw_list *d)
     const bool had_targets = d->target_count != 0;
     for (uint32_t i = 0; i < d->texture_count; i++) free_pixels(&d->textures[i]);
     d->texture_count = 0;
+    if (d->texture_index_capacity) memset(d->texture_index, 0, (size_t)d->texture_index_capacity * sizeof(uint32_t));
     // The window's cameras stay. Its clip goes, and what blocks saved, as
     // none is open between two frames.
     if (d->target) d->place = d->window;
@@ -1017,17 +1082,19 @@ static uint32_t target_texture_version(tide_draw_list *d, const uint32_t space, 
                                        const uint64_t version)
 {
     if (!id) return 0;
-    for (uint32_t i = 0; i < d->texture_count; i++) {
-        tide_draw_texture *t = &d->textures[i];
-        if (t->space == space && t->id == id && tide_target_size_same(t->target, size) && t->version == version) {
-            t->frame = d->frame;
-            return i + 1u;
+    if (d->texture_index_capacity) {
+        const uint32_t mask = d->texture_index_capacity - 1u;
+        for (uint32_t i = texture_hash(space, id) & mask; d->texture_index[i]; i = (i + 1u) & mask) {
+            tide_draw_texture *t = &d->textures[d->texture_index[i] - 1u];
+            if (t->space == space && t->id == id && tide_target_size_same(t->target, size) && t->version == version) {
+                t->frame = d->frame;
+                return d->texture_index[i];
+            }
         }
     }
-    d->textures = grow(d->textures, d->texture_count, &d->texture_capacity, 1, sizeof(tide_draw_texture), 8u);
-    d->textures[d->texture_count] = (tide_draw_texture){
-        .id = id, .version = version, .space = space, .target = size, .frame = d->frame, .epoch = d->epoch};
-    return ++d->texture_count;
+    add_texture(d, (tide_draw_texture){
+        .id = id, .version = version, .space = space, .target = size, .frame = d->frame, .epoch = d->epoch});
+    return d->texture_count;
 }
 
 uint32_t tide_draw_target_texture_sized(tide_draw_list *d, const uint64_t id, const tide_target_size size)
@@ -1381,14 +1448,6 @@ uint32_t tide_draw_texture_slot(tide_draw_list *d, const uint32_t space, const u
     return tide_draw_texture_slot_as(d, space, id, version, width, height, TIDE_TEXELS_BYTES, pixels);
 }
 
-static tide_draw_texture *find_texture(const tide_draw_list *d, const uint32_t space, const uint64_t id)
-{
-    for (uint32_t i = 0; i < d->texture_count; i++) {
-        if (d->textures[i].id == id && d->textures[i].space == space) return &d->textures[i];
-    }
-    return NULL;
-}
-
 // The texture `id` of `space` at `version`, with its pixels to write unless
 // the list has them so. `kept`, where a writer of `kind` asks, says they're
 // the ones it wrote at another version, whose changes it then says: anything
@@ -1405,9 +1464,7 @@ static uint32_t texture_place(tide_draw_list *d, const uint32_t space, const uin
     tide_draw_texture *t = find_texture(d, space, id);
     bool same = false; // Its pixels are there, in this shape
     if (!t) {
-        d->textures = grow(d->textures, d->texture_count, &d->texture_capacity, 1, sizeof(tide_draw_texture), 8u);
-        t = &d->textures[d->texture_count++];
-        *t = (tide_draw_texture){.id = id, .space = space, .epoch = d->epoch};
+        t = add_texture(d, (tide_draw_texture){.id = id, .space = space, .epoch = d->epoch});
     } else if (t->width == width && t->height == height && t->format == format) {
         if (t->version == version) { // The same pixels, whoever wrote them
             t->frame = d->frame;
@@ -1576,14 +1633,9 @@ static uint32_t texture_slot(tide_draw_list *d, const tide_texture *texture)
 static uint32_t pack_texture(tide_draw_list *d, const uint64_t version, const int32_t width, const int32_t height,
                              const uint8_t *pixels)
 {
-    tide_draw_texture *t = NULL;
-    for (uint32_t i = 0; i < d->texture_count && !t; i++) {
-        if (d->textures[i].id == version && d->textures[i].space == TIDE_PIXELS_PACK) t = &d->textures[i];
-    }
+    tide_draw_texture *t = find_texture(d, TIDE_PIXELS_PACK, version);
     if (!t) {
-        d->textures = grow(d->textures, d->texture_count, &d->texture_capacity, 1, sizeof(tide_draw_texture), 8u);
-        t = &d->textures[d->texture_count++];
-        *t = (tide_draw_texture){.id = version, .space = TIDE_PIXELS_PACK, .epoch = d->epoch};
+        t = add_texture(d, (tide_draw_texture){.id = version, .space = TIDE_PIXELS_PACK, .epoch = d->epoch});
     }
     t->version = version;
     t->format = TIDE_TEXELS_BYTES;
@@ -1630,14 +1682,9 @@ uint32_t tide_draw_depth_source(tide_draw_list *d, const tide_depth_ref depth)
 // The list's texture for a cube of the pack's, whose faces' pixels are where the pack has them, as an image's are.
 static uint32_t pack_cube(tide_draw_list *d, const uint64_t version, const int32_t size, const uint8_t *const *faces)
 {
-    tide_draw_texture *t = NULL;
-    for (uint32_t i = 0; i < d->texture_count && !t; i++) {
-        if (d->textures[i].id == version && d->textures[i].space == TIDE_PIXELS_PACK_CUBE) t = &d->textures[i];
-    }
+    tide_draw_texture *t = find_texture(d, TIDE_PIXELS_PACK_CUBE, version);
     if (!t) {
-        d->textures = grow(d->textures, d->texture_count, &d->texture_capacity, 1, sizeof(tide_draw_texture), 8u);
-        t = &d->textures[d->texture_count++];
-        *t = (tide_draw_texture){.id = version, .space = TIDE_PIXELS_PACK_CUBE, .epoch = d->epoch};
+        t = add_texture(d, (tide_draw_texture){.id = version, .space = TIDE_PIXELS_PACK_CUBE, .epoch = d->epoch});
     }
     t->version = version;
     t->format = TIDE_TEXELS_BYTES;

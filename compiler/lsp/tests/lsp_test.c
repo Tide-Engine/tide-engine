@@ -7,9 +7,11 @@
 
 #ifdef _WIN32
 #include <direct.h>
+#include <sys/utime.h>
 #else
 #include <sys/stat.h>
 #include <unistd.h>
+#include <utime.h>
 #endif
 
 #include "assets.h"
@@ -343,6 +345,23 @@ TIDE_TEST(lsp_sanitize)
 
 static const char *format_reply(const char *text);
 static const char *request_at(const char *uri, const char *method, int line, int character, const char *extra);
+
+// Response builders are temporary; repeated requests keep the same JSON,
+// and later requests must still be able to read the existing analysis.
+static void check_repeat_at(const char *uri, const char *method, const int line, const int character, const char *extra)
+{
+    jbuf expected = {0};
+    jb_put(&expected, request_at(uri, method, line, character, extra));
+    for (int i = 0; i < 3; i++) {
+        TIDE_CHECK(strcmp(expected.data, request_at(uri, method, line, character, extra)) == 0);
+    }
+    jb_free(&expected);
+}
+
+static void check_repeat_lenses(const char *uri)
+{
+    check_repeat_at(uri, "textDocument/codeLens", 0, 0, "");
+}
 static const char *actions_at(int line);
 
 // [Clamp], [Min] and [Max] on input fields: completion, and formatting.
@@ -630,6 +649,8 @@ TIDE_TEST(lsp_hover)
     const char *type = request("textDocument/hover");
     TIDE_CHECK(has(type, "component Body"));
     TIDE_CHECK(has(type, "float radius = 10;"));
+    check_repeat_at("file:///test.tide", "textDocument/hover", cursor_line, cursor_character, "");
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
 
     open_document(GAME_TYPES "view V(Body body)\n{\n    Draw.Cir$cle(body.position, 1, Color.red);\n}\n");
     const char *function = request("textDocument/hover");
@@ -1929,6 +1950,14 @@ TIDE_TEST(lsp_call_hierarchy)
            "{\"line\":12,\"character\":12}}}}}");
     TIDE_CHECK(has(last_sent(), "{\"to\":{\"name\":\"Heal\"") && has(last_sent(), "{\"to\":{\"name\":\"Hurt\",\"kind\":6"));
     TIDE_CHECK(count(last_sent(), "\"to\":") == 2);
+    check_repeat_at("file:///test.tide", "textDocument/prepareCallHierarchy", 15, 5, "");
+    check_repeat_at("file:///test.tide", "callHierarchy/incomingCalls", 6, 6,
+                    "\"item\":{\"uri\":\"file:///test.tide\",\"selectionRange\":{\"start\":{\"line\":6,\"character\":6}}}");
+    check_repeat_at("file:///test.tide", "callHierarchy/outgoingCalls", 12, 7,
+                    "\"item\":{\"uri\":\"file:///test.tide\",\"selectionRange\":{\"start\":{\"line\":12,\"character\":7}}}");
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 6, 6, ""), "float Heal(mut Stats stats, float amount)"));
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 6, 6,
+                                "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
 
     // The input's Sample calls too
     open_document("float Twice(float x) { return x * 2; }\ninput Keys\n{\n    float aim;\n    Sample() { aim = Twice(1); }\n}\n"
@@ -1988,6 +2017,10 @@ TIDE_TEST(lsp_symbols)
     TIDE_CHECK(has(reply, "\"name\":\"Body\""));
     TIDE_CHECK(has(reply, "\"name\":\"radius\""));
     TIDE_CHECK(has(reply, "\"name\":\"DrawBodies\",\"detail\":\"view\""));
+    check_repeat_at("file:///test.tide", "textDocument/documentSymbol", 0, 0, "");
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 0, 10, ""), "component Body"));
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 0, 10,
+                                "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
 }
 
 TIDE_TEST(lsp_semantic_tokens)
@@ -1997,6 +2030,10 @@ TIDE_TEST(lsp_semantic_tokens)
     const char *reply = request("textDocument/semanticTokens/full");
     // `Body` on line 0, column 10: a struct (2), declared (1).
     TIDE_CHECK(has(reply, "\"data\":[0,10,4,2,1,"));
+    check_repeat_at("file:///test.tide", "textDocument/semanticTokens/full", 0, 0, "");
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 0, 10, ""), "component Body"));
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 0, 10,
+                                "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 2);
 
     // Columns count UTF-16 units: `é` is two bytes but one unit.
     open_document("/* \xC3\xA9 */ component Body { float x; }\nscene Main { }\n");
@@ -3761,6 +3798,10 @@ TIDE_TEST(lsp_folding)
     TIDE_CHECK(has(folds, "{\"startLine\":0,\"endLine\":2,\"kind\":\"comment\"}"));
     TIDE_CHECK(has(folds, "{\"startLine\":3,\"endLine\":5}")); // From `component Body`, keeping `}` in sight
     TIDE_CHECK(has(folds, "{\"startLine\":7,\"endLine\":9}"));
+    check_repeat_at("file:///test.tide", "textDocument/foldingRange", 0, 0, "");
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 3, 10, ""), "component Body"));
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 3, 10,
+                                "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 2);
 
     // Comments in /* */, lists of arguments and elements, and using lines
     open_document("using A;\nusing B;\n/* One\n   two */\nnamespace C;\nvoid Draw(int x,\n          int y)\n{\n}\n"
@@ -3828,6 +3869,11 @@ TIDE_TEST(lsp_quick_fixes)
     TIDE_CHECK(has(main, "Create function 'Grow'") && has(main, "\"newText\":\"\\nvoid Grow(int x, float value)\\n{\\n}\\n\""));
     TIDE_CHECK(has(main, "\"start\":{\"line\":10,\"character\":0}")); // At the end of the file
     TIDE_CHECK(has(actions_at(8), "Create component 'Velocity'"));
+    check_repeat_at("file:///test.tide", "textDocument/codeAction", 7, 0,
+                    "\"range\":{\"start\":{\"line\":7,\"character\":0},\"end\":{\"line\":7,\"character\":0}}");
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 0, 8, ""), "struct Stats"));
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 0, 8,
+                                "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 2);
 }
 
 // The checker's "did you mean" is a quick fix, from where the name is, not
@@ -4112,6 +4158,8 @@ TIDE_TEST(lsp_local_handlers_of_match_events)
     TIDE_CHECK(has(lenses, "\"title\":\"hears Rang at the start of a frame\""));
     TIDE_CHECK(has(lenses, "\"title\":\"hears Spawned at the start of a frame\""));
     TIDE_CHECK(count(lenses, "\"title\":\"hears ") == 4); // None for the match's handlers
+    check_repeat_lenses("file:///test.tide");
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 27, 24, ""), "Runs 1st of 2 local handlers"));
 
     // An event's implementations are all its handlers, and its uses their triggers too
     const char *handlers = request_at("file:///test.tide", "textDocument/implementation", 22, 7, "");
@@ -4644,12 +4692,15 @@ TIDE_TEST(lsp_rename)
     open_document(USES_RADIUS "view V(Body body)\n{\n    Draw.Circle(body.position, body.rad$ius, Color.red);\n}\n");
     TIDE_CHECK(has(request("textDocument/prepareRename"), "\"result\":{\"start\""));
     request_with("textDocument/rename", "\"newName\":\"size\"");
+    check_repeat_at("file:///test.tide", "textDocument/rename", cursor_line, cursor_character, "\"newName\":\"size\"");
     const char *renamed = apply_reply(program, "file:///test.tide");
     TIDE_CHECK(has(renamed, "float size = 10;"));
     TIDE_CHECK(has(renamed, "body.size += 1;"));
     TIDE_CHECK(has(renamed, "Body { size = 2 }"));
     TIDE_CHECK(has(renamed, "body.position, body.size,"));
     TIDE_CHECK(!has(renamed, "radius"));
+    TIDE_CHECK(has(request("textDocument/hover"), "float radius = 10"));
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 4);
     // The result still compiles cleanly.
     char copy[8192];
     snprintf(copy, sizeof copy, "%s", renamed);
@@ -4823,6 +4874,12 @@ TIDE_TEST(lsp_rename_refusals)
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"return\""), "keyword"));
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"float3\""), "built into the language"));
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"2fast\""), "start with a letter"));
+    const char *const errors[] = {"\"newName\":\"position\"", "\"newName\":\"return\"", "\"newName\":\"float3\"", "\"newName\":\"2fast\""};
+    for (size_t i = 0; i < sizeof errors / sizeof errors[0]; i++) {
+        check_repeat_at("file:///test.tide", "textDocument/rename", cursor_line, cursor_character, errors[i]);
+    }
+    TIDE_CHECK(has(request("textDocument/hover"), "float radius = 10"));
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 4);
 
     open_document(USES_RADIUS "view V(Body body)\n{\n    Draw.Cir$cle(body.position, body.radius, Color.red);\n}\n");
     TIDE_CHECK(has(request("textDocument/prepareRename"), "Built-in names can't be renamed"));
@@ -5099,6 +5156,7 @@ TIDE_TEST(lsp_many_function_parameters)
         TIDE_CHECK(to - from == (int)strlen("int value39"));
         TIDE_CHECK(strncmp(label + from, "int value39", strlen("int value39")) == 0);
         json_release();
+        check_repeat_at("file:///test.tide", "textDocument/signatureHelp", cursor_line, cursor_character, "");
         const char *hints = request_with("textDocument/inlayHint",
                                          "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":10,\"character\":0}}");
         if (named) {
@@ -5106,6 +5164,11 @@ TIDE_TEST(lsp_many_function_parameters)
         } else {
             TIDE_CHECK(count(hints, "\"kind\":2") == 40 && has(hints, "\"label\":\"value39:\""));
         }
+        check_repeat_at("file:///test.tide", "textDocument/inlayHint", cursor_line, cursor_character,
+                        "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":10,\"character\":0}}");
+        TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 0, 5, ""), "int value39"));
+        TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 0, 5,
+                                    "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 2);
         jb_free(&source);
     }
 }
@@ -5138,9 +5201,14 @@ TIDE_TEST(lsp_format)
         "/* a\n   block */\n"
         "system Main() { }\n";
     format_reply(messy);
+    check_repeat_at("file:///test.tide", "textDocument/formatting", 0, 0,
+                    "\"options\":{\"tabSize\":4,\"insertSpaces\":true}");
     const char *formatted = apply_reply(messy, NULL);
     TIDE_CHECK(strcmp(formatted, expected) == 0);
     if (strcmp(formatted, expected) != 0) printf("--- got:\n%s---\n", formatted);
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 2, 11, ""), "component Body"));
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 2, 11,
+                                "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
 
     // Formatting what's formatted changes nothing.
     TIDE_CHECK(has(format_reply(expected), "\"result\":[]"));
@@ -5174,6 +5242,10 @@ TIDE_TEST(lsp_selection_ranges)
     // Every position gets one, even outside the code
     const char *two = request_with("textDocument/selectionRange", "\"positions\":[{\"line\":0,\"character\":0},{\"line\":30,\"character\":0}]");
     TIDE_CHECK(count(two, "{\"range\":") == 3); // `component` in its declaration, and the empty end
+    check_repeat_at("file:///test.tide", "textDocument/selectionRange", cursor_line, cursor_character,
+                    "\"positions\":[{\"line\":26,\"character\":38}]");
+    TIDE_CHECK(has(request("textDocument/hover"), "float radius"));
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 4);
 }
 
 // Formatting a range changes its lines only, as formatting everything would.
@@ -6423,6 +6495,9 @@ TIDE_TEST(lsp_schedule_lenses_and_fixes)
                            "\"range\":{\"start\":{\"line\":2,\"character\":40},\"end\":{\"line\":2,\"character\":44}}},"));
     TIDE_CHECK(has(lenses, "\"title\":\"2 references\"") && has(lenses, "\"title\":\"1 reference\""));
     TIDE_CHECK(count(lenses, " reference") == 3); // Body, Score and Main: no system or handler is named
+    check_repeat_lenses("file:///test.tide");
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 0, 11,
+                                "\"context\":{\"includeDeclaration\":false}"), "\"uri\"") == 4);
 
     const char *hover = request_at("file:///test.tide", "textDocument/hover", 5, 8, "");
     TIDE_CHECK(has(hover, "**Stage 3.**") && has(hover, "`Move`: it writes `Body`, which this reads"));
@@ -6442,6 +6517,139 @@ TIDE_TEST(lsp_schedule_lenses_and_fixes)
                                      "\"range\":{\"start\":{\"line\":2,\"character\":25},\"end\":{\"line\":2,\"character\":29}}");
     TIDE_CHECK(has(add_mut, "Declare 'body' as mut") && has(add_mut, "\"newText\":\"mut \""));
     TIDE_CHECK(has(add_mut, "\"start\":{\"line\":2,\"character\":12}"));
+}
+
+// Every reference lens must list exactly what find-usages returns, in the
+// same order. Copy its expectations before requests release the JSON tree.
+static void check_reference_lenses(const char *uri)
+{
+    typedef struct lens_check {
+        int line, character, count;
+        char *locations;
+    } lens_check;
+    lens_check *checks = NULL;
+    int check_count = 0;
+    const char *reply = request_at(uri, "textDocument/codeLens", 0, 0, "");
+    const json *lenses = json_get(json_parse(reply, strlen(reply)), "result");
+    TIDE_REQUIRE(lenses && lenses->kind == JSON_ARRAY);
+    for (int i = 0; i < lenses->count; i++) {
+        const json *command = json_get(lenses->items[i], "command");
+        const char *name = json_str(json_get(command, "command"));
+        if (!name || strcmp(name, "editor.action.showReferences") != 0) continue;
+        const json *args = json_get(command, "arguments");
+        TIDE_REQUIRE(args && args->kind == JSON_ARRAY && args->count == 3);
+        checks = realloc(checks, sizeof(*checks) * (size_t)(check_count + 1));
+        if (!checks) abort();
+        jbuf locations = {0};
+        jb_json(&locations, args->items[2]);
+        checks[check_count++] = (lens_check){json_int(json_get(args->items[1], "line"), -1),
+                                           json_int(json_get(args->items[1], "character"), -1),
+                                           args->items[2]->count, locations.data};
+        char title[64];
+        snprintf(title, sizeof title, "%d reference%s", args->items[2]->count, args->items[2]->count == 1 ? "" : "s");
+        TIDE_CHECK(strcmp(json_str(json_get(command, "title")), title) == 0);
+    }
+    json_release();
+    for (int i = 0; i < check_count; i++) {
+        const char *references = request_at(uri, "textDocument/references", checks[i].line, checks[i].character,
+                                            "\"context\":{\"includeDeclaration\":false}");
+        const json *result = json_get(json_parse(references, strlen(references)), "result");
+        TIDE_CHECK(result && result->kind == JSON_ARRAY && result->count == checks[i].count);
+        jbuf actual = {0};
+        jb_json(&actual, result);
+        TIDE_CHECK(strcmp(actual.data, checks[i].locations) == 0);
+        jb_free(&actual);
+        free(checks[i].locations);
+        json_release();
+    }
+    free(checks);
+}
+
+TIDE_TEST(lsp_completion_keeps_complete_member_chains)
+{
+    start();
+    jbuf ns = {0}, source = {0};
+    for (int i = 0; i < 40; i++) jb_printf(&ns, "%sN%d", i ? "." : "", i);
+    static const char before[] = "view Show() { Debug.Log(\"\" + ";
+    jb_printf(&source, "namespace %s { const int Marker = 1; }\nscene Main { }\n%s%s.Marker); }\n", ns.data, before, ns.data);
+    open_uri("file:///test.tide", source.data);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *completion = request_at("file:///test.tide", "textDocument/completion", 2, (int)(strlen(before) + ns.len + 1), "");
+    TIDE_CHECK(offers(completion, "Marker"));
+    check_repeat_at("file:///test.tide", "textDocument/completion", 2, (int)(strlen(before) + ns.len + 1), "");
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 2, (int)(strlen(before) + ns.len + 1), ""), "const int Marker"));
+    jb_free(&ns);
+    jb_free(&source);
+
+    // A deeply nested value still resolves from its first identifier, through
+    // every field, to the final struct's own members.
+    jb_put(&source, "struct Link39 { int leaf; }\n");
+    for (int i = 38; i >= 0; i--) jb_printf(&source, "struct Link%d { Link%d child; }\n", i, i + 1);
+    jb_put(&source, "singleton Root { Link0 tree; }\nscene Main { }\n");
+    static const char value_before[] = "view Show(Root root) { Debug.Log(\"\" + ";
+    jb_put(&ns, "root.tree");
+    for (int i = 0; i < 39; i++) jb_put(&ns, ".child");
+    jb_printf(&source, "%s%s.leaf); }\n", value_before, ns.data);
+    open_uri("file:///test.tide", source.data);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    completion = request_at("file:///test.tide", "textDocument/completion", 42, (int)(strlen(value_before) + ns.len + 1), "");
+    TIDE_CHECK(offers(completion, "leaf") && !offers(completion, "child") && !offers(completion, "tree"));
+    check_repeat_at("file:///test.tide", "textDocument/completion", 42, (int)(strlen(value_before) + ns.len + 1), "");
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 42, (int)(strlen(value_before) + ns.len + 1), ""), "int leaf"));
+    jb_free(&ns);
+    jb_free(&source);
+}
+
+TIDE_TEST(lsp_completion_keeps_deep_block_context)
+{
+    start();
+    jbuf source = {0};
+    jb_put(&source, "int Read(int seed)\n{\n    mut int kept = seed;\n");
+    for (int i = 0; i < 70; i++) jb_put(&source, "    if (seed > 0) {\n");
+    for (int i = 0; i < 65; i++) jb_put(&source, "    }\n");
+    jb_put(&source, "    $kept += seed;\n");
+    for (int i = 0; i < 5; i++) jb_put(&source, "    }\n");
+    jb_put(&source, "    return kept;\n}\nscene Main { }\n");
+    open_document(source.data);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *completion = request("textDocument/completion");
+    TIDE_CHECK(offers(completion, "kept") && offers(completion, "seed") && offers(completion, "return"));
+    TIDE_CHECK(!offers(completion, "component") && !offers(completion, "system"));
+    check_repeat_at("file:///test.tide", "textDocument/completion", cursor_line, cursor_character, "");
+    TIDE_CHECK(has(request("textDocument/hover"), "mut int kept"));
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
+    jb_free(&source);
+}
+
+TIDE_TEST(lsp_reference_lenses_keep_symbol_groups_and_order)
+{
+    start();
+    open_document("component Body { int left; int right; }\n"
+                  "namespace Catalog { const int Low = 2; }\nnamespace Catalog { const int High = 4; }\n"
+                  "struct Part\n{\n    int Read() { return 1; }\n    int Read(int value) { return value; }\n}\n"
+                  "const int CAP = 5;\nconst int UNUSED = 0;\n"
+                  "int Pick(int value) { return value; }\nfloat Pick(float value) { return value; }\n"
+                  "scene Main { }\nevent(Spawned) Setup(with Main) { Spawn(Body); }\nsystem Tick(mut Body body)\n{\n"
+                  "    body.left = Pick(CAP) + Catalog.Low;\n    body.right = Pick(7) + Catalog.High;\n    var part = Part { };\n"
+                  "    body.left += part.Read();\n    body.right += part.Read(2);\n"
+                  "    var result = Pick(0.5);\n    Debug.Log(\"\" + result);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    check_reference_lenses("file:///test.tide");
+
+    // Thousands of declarations with only a few uses also exercise absent
+    // symbol groups and the first/middle/last groups of the sorted index.
+    jbuf source = {0};
+    for (int i = 0; i < 1200; i++) jb_printf(&source, "const int Value%d = %d;\n", i, i);
+    jb_put(&source, "singleton Total { int value; }\nscene Main { }\n"
+                    "system Tick(mut Total total) { total.value = Value0 + Value600 + Value1199 + Value600; }\n");
+    open_uri("file:///test.tide", source.data);
+    jb_free(&source);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *lenses = request_at("file:///test.tide", "textDocument/codeLens", 0, 0, "");
+    TIDE_CHECK(count(lenses, "\"title\":\"0 references\"") == 1197);
+    TIDE_CHECK(count(lenses, "\"title\":\"1 reference\"") == 3); // Two constants and Total
+    TIDE_CHECK(count(lenses, "\"title\":\"2 references\"") == 1);
+    check_reference_lenses("file:///test.tide");
 }
 
 #define WORLD_GAME                                                                                      \
@@ -7279,6 +7487,7 @@ TIDE_TEST(lsp_out_arguments)
     open_document(OUT_RUN "    if (TryHalf(8, out var half)) tally.total = half;\n    tally.total += ha$lf;\n}\n");
     TIDE_CHECK(has(request("textDocument/prepareRename"), "\"result\":{\"start\":{\"line\":23,\"character\":19}"));
     request_with("textDocument/rename", "\"newName\":\"part\"");
+    check_repeat_at("file:///test.tide", "textDocument/rename", cursor_line, cursor_character, "\"newName\":\"part\"");
     const char *renamed = apply_reply(program, "file:///test.tide");
     TIDE_CHECK(has(renamed, "if (TryHalf(8, out var part)) tally.total = part;\n    tally.total += part;\n"));
     TIDE_CHECK(has(renamed, "bool TryHalf(int value, out int half)\n{\n    half = value / 2;"));
@@ -8142,6 +8351,11 @@ TIDE_TEST(lsp_virtual_and_override)
     const char *fast_lenses = request_at(uri_fast, "textDocument/codeLens", 0, 0, "");
     TIDE_CHECK(has(fast_lenses, "replaces Combat.Move of the game") && has(fast_lenses, "replaces Combat.Stats.IsDead of the game"));
     TIDE_CHECK(has(fast_lenses, "stage 1"));
+    check_repeat_lenses(uri_main);
+    check_repeat_lenses(uri_fast);
+    TIDE_CHECK(has(request_at(uri_fast, "textDocument/hover", 7, 21, ""), "Overrides `Combat.Stats.IsDead` of the game"));
+    check_reference_lenses(uri_main);
+    check_reference_lenses(uri_fast);
 
     // The outline: each file's own, the replaced method in its type and its override where it's written
     const char *outline = request_at(uri_main, "textDocument/documentSymbol", 0, 0, "");
@@ -8427,6 +8641,122 @@ static const char *sent_with(const char *needle)
 {
     const int i = sent_for(needle);
     return i >= 0 ? sent[i] : NULL;
+}
+
+// Fixed whole-second metadata lets replacements exercise explicit watch
+// invalidation independently of the filesystem's timestamp resolution.
+static void pin_file_time(const char *name)
+{
+    char path[640];
+    game_path(path, sizeof path, name);
+#ifdef _WIN32
+    struct _utimbuf time = {1700000000, 1700000000};
+    TIDE_CHECK(_utime(path, &time) == 0);
+#else
+    struct utimbuf time = {1700000000, 1700000000};
+    TIDE_CHECK(utime(path, &time) == 0);
+#endif
+}
+
+static void notify_file(const char *uri, const int type)
+{
+    char message[1024];
+    snprintf(message, sizeof message,
+             "{\"jsonrpc\":\"2.0\",\"method\":\"workspace/didChangeWatchedFiles\",\"params\":{\"changes\":"
+             "[{\"uri\":\"%s\",\"type\":%d}]}}", uri, type);
+    clear_sent();
+    handle(message);
+}
+
+TIDE_TEST(lsp_asset_notifications_override_unchanged_metadata)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_asset_watch");
+    static const char main[] = "asset string words = \"words.txt\";\n"
+                               "struct Corner { float3 position; }\n"
+                               "asset Mesh<Corner> triangle = \"shape.gltf\";\nscene Main { }\n";
+    static const char gltf[] = "{\"asset\":{\"version\":\"2.0\"},\"buffers\":[{\"uri\":\"shape.bin\",\"byteLength\":42}],"
+                               "\"bufferViews\":[{\"buffer\":0,\"byteLength\":36},{\"buffer\":0,\"byteOffset\":36,\"byteLength\":6}],"
+                               "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+                               "{\"bufferView\":1,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}],"
+                               "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"indices\":1}]}]}";
+    unsigned char buffer[42] = {0};
+    buffer[14] = buffer[30] = 0x80; // (0,0,0), (1,0,0), (0,1,0), as little-endian floats
+    buffer[15] = buffer[31] = 0x3f;
+    buffer[38] = 1;
+    buffer[40] = 2;
+    write_file("lsp_asset_watch/main.tide", main);
+    write_file("lsp_asset_watch/words.txt", "one\n");
+    write_file("lsp_asset_watch/shape.gltf", gltf);
+    write_bytes("lsp_asset_watch/shape.bin", (const char *)buffer, sizeof buffer);
+    pin_file_time("lsp_asset_watch/words.txt");
+    pin_file_time("lsp_asset_watch/shape.bin");
+    char root[700], uri_main[700], uri_words[700], uri_buffer[700], uri_spare[700], message[2048];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_asset_watch", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_asset_watch/main.tide", dir);
+    snprintf(uri_words, sizeof uri_words, "file:///%s/lsp_asset_watch/words.txt", dir);
+    snprintf(uri_buffer, sizeof uri_buffer, "file:///%s/lsp_asset_watch/shape.bin", dir);
+    snprintf(uri_spare, sizeof uri_spare, "file:///%s/lsp_asset_watch/spare.txt", dir);
+    start_in(root);
+    open_uri(uri_main, main);
+    TIDE_CHECK(has(sent_with(uri_main), "\"diagnostics\":[]"));
+
+    // Changed bytes of the same size and time override a cached successful decode.
+    write_bytes("lsp_asset_watch/words.txt", "\xffne\n", 4);
+    pin_file_time("lsp_asset_watch/words.txt");
+    notify_file(uri_words, 2);
+    TIDE_CHECK(has(sent_with(uri_main), "'words.txt' isn't UTF-8 text"));
+    write_file("lsp_asset_watch/words.txt", "one\n");
+    pin_file_time("lsp_asset_watch/words.txt");
+    notify_file(uri_words, 2);
+    TIDE_CHECK(has(sent_with(uri_main), "\"diagnostics\":[]"));
+
+    // The .gltf itself is unchanged; its external buffer's notification invalidates it too.
+    buffer[40] = 3;
+    write_bytes("lsp_asset_watch/shape.bin", (const char *)buffer, sizeof buffer);
+    pin_file_time("lsp_asset_watch/shape.bin");
+    notify_file(uri_buffer, 2);
+    TIDE_CHECK(has(sent_with(uri_main), "\"severity\":1") && has(sent_with(uri_main), "shape.gltf"));
+    buffer[40] = 2;
+    write_bytes("lsp_asset_watch/shape.bin", (const char *)buffer, sizeof buffer);
+    pin_file_time("lsp_asset_watch/shape.bin");
+    notify_file(uri_buffer, 2);
+    TIDE_CHECK(has(sent_with(uri_main), "\"diagnostics\":[]"));
+
+    // A deletion can't leave a valid old read for a later replacement with identical metadata.
+    remove_game_file("lsp_asset_watch/words.txt");
+    notify_file(uri_words, 3);
+    TIDE_CHECK(has(sent_with(uri_main), "there's no file at 'words.txt'"));
+    write_bytes("lsp_asset_watch/words.txt", "\xffne\n", 4);
+    pin_file_time("lsp_asset_watch/words.txt");
+    notify_file(uri_words, 1);
+    TIDE_CHECK(has(sent_with(uri_main), "'words.txt' isn't UTF-8 text"));
+
+    // Renaming over a path that was already cached invalidates the destination's old bytes.
+    write_file("lsp_asset_watch/spare.txt", "two\n");
+    pin_file_time("lsp_asset_watch/spare.txt");
+    open_uri(uri_main, "asset string spare = \"spare.txt\";\nscene Main { }\n");
+    TIDE_CHECK(has(sent_with(uri_main), "\"diagnostics\":[]"));
+    remove_game_file("lsp_asset_watch/spare.txt");
+    move_game_file("lsp_asset_watch/words.txt", "lsp_asset_watch/spare.txt");
+    snprintf(message, sizeof message,
+             "{\"jsonrpc\":\"2.0\",\"method\":\"workspace/didRenameFiles\",\"params\":{\"files\":"
+             "[{\"oldUri\":\"%s\",\"newUri\":\"%s\"}]}}", uri_words, uri_spare);
+    clear_sent();
+    handle(message);
+    TIDE_CHECK(has(sent_with(uri_main), "'spare.txt' isn't UTF-8 text"));
+
+    remove_game_file("lsp_asset_watch/main.tide");
+    remove_game_file("lsp_asset_watch/spare.txt");
+    remove_game_file("lsp_asset_watch/shape.gltf");
+    remove_game_file("lsp_asset_watch/shape.bin");
+    remove_game_file("lsp_asset_watch/.tide/assets.sha256");
+    remove_game_file("lsp_asset_watch/.tide/.gitignore");
+    remove_folder("lsp_asset_watch/.tide");
+    remove_folder("lsp_asset_watch");
+    clear_sent();
+    lsp_free(&server);
 }
 
 // Closing a dependency discards its unsaved text. Its remaining consumers
@@ -9153,6 +9483,8 @@ TIDE_TEST(lsp_asset_path_completion)
     TIDE_CHECK(offers(completion, "hero.png"));
     TIDE_CHECK(offers(completion, "hero.psd"));
     TIDE_CHECK(has(completion, "\"range\":{\"start\":{\"line\":0,\"character\":31},\"end\":{\"line\":0,\"character\":33}},\"newText\":\"hero.png\""));
+    check_repeat_at(uri_main, "textDocument/completion", 0, 33, "");
+    TIDE_CHECK(has(request_at(uri_main, "textDocument/hover", 1, 8, ""), "scene Main"));
 
     remove_game_file("lsp_cp/main.tide");
     remove_game_file("lsp_cp/art/hero.png");

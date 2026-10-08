@@ -39,7 +39,7 @@ typedef void (*folder_entry_fn)(void *user, const char *name, bool is_folder);
 void folder_list(const char *folder, folder_entry_fn found, void *user);
 
 // Whether a file is at `path`, how big it is, and when it was last written
-// (a number that changes when it is; the system's units).
+// (a number that changes when it is, retaining the system's last-write precision).
 bool folder_file_info(const char *path, unsigned long long *size, unsigned long long *modified);
 
 // Makes the folder at `path`, and every missing one on the way. True when
