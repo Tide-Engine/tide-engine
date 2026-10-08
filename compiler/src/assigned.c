@@ -358,6 +358,7 @@ static void flow_expr(flow *f, const expr *e, uint8_t *st)
     case E_TRY: // Where it fails, the code ends there, with nothing owed
     case E_DEFAULTED:
     case E_AWAIT:
+    case E_STEP: // It has a value first
         flow_expr(f, e->lhs, st);
         break;
     case E_CONDITIONAL: {

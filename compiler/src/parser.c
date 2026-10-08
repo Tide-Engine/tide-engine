@@ -494,10 +494,33 @@ static bool at_type_argument(const parser *p)
     return peek_at(p, i)->kind == T_GT && peek_at(p, i + 1)->kind == T_LPAREN;
 }
 
+static stmt *new_stmt(stmt_kind kind, loc at);
+
+// ++i, i++, --i or i--, as a value: with the assignment it makes, `i += 1`,
+// which is the whole of it where it's a statement (parse_simple).
+static expr *new_step(const token *op, expr *target, const bool postfix)
+{
+    expr *e = new_expr(E_STEP, op->at);
+    e->op = op->kind;
+    e->lhs = target;
+    e->postfix = postfix;
+    stmt *s = new_stmt(S_ASSIGN, op->at);
+    s->target = target;
+    s->op = op->kind;
+    s->value = new_expr(E_INT, op->at);
+    s->value->int_value = 1;
+    e->step = s;
+    return e;
+}
+
 static expr *parse_postfix(parser *p)
 {
     expr *e = parse_primary(p);
-    while (at(p, T_DOT) || at(p, T_LBRACKET) || at(p, T_NOT)) {
+    while (at(p, T_DOT) || at(p, T_LBRACKET) || at(p, T_NOT) || at(p, T_PLUS_PLUS) || at(p, T_MINUS_MINUS)) {
+        if (at(p, T_PLUS_PLUS) || at(p, T_MINUS_MINUS)) { // i++: i's value, which then goes up by 1
+            e = new_step(advance(p), e, true);
+            continue;
+        }
         if (at(p, T_NOT)) { // Parse(text)!: its value, or the default when it fails
             const token *bang = advance(p);
             expr *value = new_expr(E_DEFAULTED, bang->at);
@@ -597,6 +620,10 @@ static expr *parse_unary(parser *p)
         e->lhs = outer->lhs;
         outer->lhs = e;
         return top;
+    }
+    if (at(p, T_PLUS_PLUS) || at(p, T_MINUS_MINUS)) { // ++i: i goes up by 1, and that's the value
+        const token *op = advance(p);
+        return new_step(op, parse_unary(p), false);
     }
     if (at(p, T_NOT) || at(p, T_MINUS) || at(p, T_TILDE)) {
         const token *op = advance(p);
@@ -1054,28 +1081,14 @@ static bool at_local_decl(const parser *p)
 // step and as the start of most statements.
 static stmt *parse_simple(parser *p)
 {
-    const token *t = peek(p);
-    if (t->kind == T_PLUS_PLUS || t->kind == T_MINUS_MINUS) { // ++i
-        advance(p);
-        stmt *s = new_stmt(S_ASSIGN, t->at);
-        s->target = parse_expr(p);
-        s->op = t->kind;
-        s->value = new_expr(E_INT, t->at);
-        s->value->int_value = 1;
-        return s;
-    }
     expr *e = parse_expr(p);
-    if (is_assign_op(peek(p)->kind) || at(p, T_PLUS_PLUS) || at(p, T_MINUS_MINUS)) {
+    if (e->kind == E_STEP) return e->step; // ++i or i++ alone: its assignment, as nothing takes its value
+    if (is_assign_op(peek(p)->kind)) {
         const token *op = advance(p);
         stmt *s = new_stmt(S_ASSIGN, op->at);
         s->target = e;
         s->op = op->kind;
-        if (op->kind == T_PLUS_PLUS || op->kind == T_MINUS_MINUS) {
-            s->value = new_expr(E_INT, op->at);
-            s->value->int_value = 1;
-        } else {
-            s->value = parse_expr(p);
-        }
+        s->value = parse_expr(p);
         return s;
     }
     stmt *s = new_stmt(S_EXPR, e->at);

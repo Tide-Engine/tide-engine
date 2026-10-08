@@ -1281,6 +1281,7 @@
         case 0x1406: return [f32(), ptr >> 2]; // FLOAT
         case 0x1403: // UNSIGNED_SHORT
         case 0x140B: return [new Uint16Array(memory.buffer), ptr >> 1]; // HALF_FLOAT
+        case 0x1404: return [new Int32Array(memory.buffer), ptr >> 2]; // INT
         case 0x1405: return [new Uint32Array(memory.buffer), ptr >> 2]; // UNSIGNED_INT
         default: return [u8(), ptr];
         }
@@ -1597,6 +1598,7 @@
     const MAX_TEXTURES = 8;     // TIDE_GPU_MAX_TEXTURES
     const READ_COMPARE = 2;     // TIDE_GPU_READ_COMPARE, after a color's 0 and a depth's 1
     const READ_CUBE = 3;        // TIDE_GPU_READ_CUBE: a cube's color, read by a direction
+    const READ_DATA = 4;        // TIDE_GPU_READ_DATA: ints, each pixel by its place
     const readsDepth = read => read === 1 || read === READ_COMPARE;
     // Samplers: the nearest pixel past no edge first, and after the nine of colors, a depth compared
     const NEAREST = 0, LINEAR = 1, MIPMAPS = 2, COMPARED = 9;
@@ -1628,10 +1630,12 @@
             const entries = [{ binding: 0, visibility: stages, buffer: { type: 'uniform', hasDynamicOffset: true } }];
             reads.forEach((read, i) => {
                 entries.push({ binding: 1 + 2 * i, visibility: stages, texture: read === READ_CUBE
-                    ? { sampleType: 'float', viewDimension: 'cube' } : { sampleType: readsDepth(read) ? 'depth' : 'float' } });
-                // A depth is whole only at its nearest pixel, which a sampler that blends none reads
-                entries.push({ binding: 2 + 2 * i, visibility: stages,
-                    sampler: { type: read === READ_COMPARE ? 'comparison' : readsDepth(read) ? 'non-filtering' : 'filtering' } });
+                    ? { sampleType: 'float', viewDimension: 'cube' }
+                    : { sampleType: read === READ_DATA ? 'sint' : readsDepth(read) ? 'depth' : 'float' } });
+                // A depth is whole only at its nearest pixel, which a sampler that blends none reads. Ints are
+                // loaded, through no sampler: theirs is there so every texture's bindings are two
+                entries.push({ binding: 2 + 2 * i, visibility: stages, sampler: { type: read === READ_COMPARE ? 'comparison'
+                    : readsDepth(read) || read === READ_DATA ? 'non-filtering' : 'filtering' } });
             });
             const group = device.createBindGroupLayout({ entries });
             layout = { key, group, pipeline: device.createPipelineLayout({ bindGroupLayouts: [group] }) };
@@ -1885,8 +1889,8 @@
         gpu_texture(format, width, height, ptr) {
             // By tide_gpu_format's numbers: a change to the enum goes here
             const usage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC;
-            const row = width * [4, 1, 2][format];
-            format = ['rgba8unorm', 'r8unorm', 'r16float'][format];
+            const row = width * [4, 1, 2, 16][format];
+            format = ['rgba8unorm', 'r8unorm', 'r16float', 'rgba32sint'][format];
             const texture = device.createTexture({ size: [width, height], format, usage });
             const id = gpuAdd('texture', { texture, view: texture.createView(), width, height, row, format, usage,
                 groups: new Set() }); // The bind groups it's in, by their keys
@@ -2007,7 +2011,7 @@
             stencilOp) {
             building = { name: string(namePtr), code: string(codePtr), textures, blend, depth, cull, slots: [], attributes: [],
                 stencil: { compare: stencilTests[stencilTest] || 'always', passOp: stencilOps[stencilOp] || 'keep' },
-                reads: Array.from({ length: textures }, (unused, i) => reads >> 2 * i & 3), // 2 bits each: tide_gpu_read
+                reads: Array.from({ length: textures }, (unused, i) => reads >> 3 * i & 7), // 3 bits each: tide_gpu_read
                 // What the targets it draws into hold (none: depth alone), and how many of those colors it writes
                 into: colorFormats(into), outputs, samples: samplesOf(into) };
         },

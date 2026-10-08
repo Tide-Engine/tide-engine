@@ -21,7 +21,7 @@ TIDE_WEB_IMPORT(gpu_texture_free) void tide_web_gpu_texture_free(tide_gpu_id tex
 TIDE_WEB_IMPORT(gpu_cube) tide_gpu_id tide_web_gpu_cube(tide_gpu_color color, int size, const void *const *faces);
 TIDE_WEB_IMPORT(gpu_cube_face) tide_gpu_id tide_web_gpu_cube_face(tide_gpu_id cube, uint32_t face);
 // A pipeline, piece by piece: its slots and attributes in order, between begin and end
-// ...with how it reads its textures, 2 bits each from the lowest: tide_gpu_read
+// ...with how it reads its textures, 3 bits each from the lowest: tide_gpu_read
 TIDE_WEB_IMPORT(gpu_pipeline_begin) void tide_web_gpu_pipeline_begin(const char *name, const char *wgsl, uint32_t uniform_size,
                                                              uint32_t texture_count, uint32_t reads, tide_gpu_blend blend,
                                                              tide_gpu_depth depth, tide_gpu_cull cull,
@@ -55,7 +55,7 @@ TIDE_WEB_IMPORT(gpu_draw_indexed) void tide_web_gpu_draw_indexed(uint32_t count,
 static tide_gpu_id tide_web_gpu_pipeline(const tide_gpu_pipeline_desc *desc)
 {
     uint32_t reads = 0;
-    for (uint32_t i = 0; i < desc->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) reads |= (uint32_t)desc->reads[i] << (2u * i);
+    for (uint32_t i = 0; i < desc->texture_count && i < TIDE_GPU_MAX_TEXTURES; i++) reads |= (uint32_t)desc->reads[i] << (3u * i);
     tide_web_gpu_pipeline_begin(desc->name, desc->wgsl, desc->uniform_size, desc->texture_count, reads, desc->blend, desc->depth,
                                 desc->cull, desc->into, desc->outputs ? desc->outputs : 1u, desc->stencil_test,
                                 desc->stencil_op);

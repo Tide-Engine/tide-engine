@@ -231,6 +231,11 @@ static void texture_pixels(const gl_texture *t, const void *pixels, const bool a
     const bool red = t->format != TIDE_GPU_RGBA8, halves = t->format == TIDE_GPU_R16F;
     const GLenum type = halves ? GL_HALF_FLOAT : GL_UNSIGNED_BYTE;
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1); // Rows of any width, one after the other
+    if (t->format == TIDE_GPU_RGBA32I) { // Four ints a pixel, as they are
+        if (again) glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, t->width, t->height, GL_RGBA_INTEGER, GL_INT, pixels);
+        else glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32I, t->width, t->height, 0, GL_RGBA_INTEGER, GL_INT, pixels);
+        return;
+    }
     if (again) {
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, t->width, t->height, red ? GL_RED : GL_RGBA, type, pixels);
     } else {
@@ -863,8 +868,9 @@ static void gl_sample(const uint32_t slot, const tide_gpu_id texture, tide_gpu_f
         return;
     }
     glBindTexture(GL_TEXTURE_2D, texture);
+    // ...and ints are never blended: a texture of them read through a sampler that blends is no texture at all
     glBindSampler(slot, read == TIDE_GPU_READ_COMPARE ? samplers[SAMPLE_COMPARED] :
-                        read == TIDE_GPU_READ_DEPTH ? sampler_for(TIDE_GPU_FILTER_NEAREST, TIDE_GPU_WRAP_CLAMP) : sampler_for(filter, wrap));
+                        read == TIDE_GPU_READ_DEPTH || read == TIDE_GPU_READ_DATA ? sampler_for(TIDE_GPU_FILTER_NEAREST, TIDE_GPU_WRAP_CLAMP) : sampler_for(filter, wrap));
 }
 
 static void gl_vertices(const uint32_t slot, const tide_gpu_id buffer, const size_t offset)

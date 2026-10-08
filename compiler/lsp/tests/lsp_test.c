@@ -1403,7 +1403,7 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(offers(code, "if") && offers(code, "for") && offers(code, "var"));
     TIDE_CHECK(!offers(code, "Draw") && !offers(code, "GUI") && !offers(code, "Spawn") && !offers(code, "Send"));
     TIDE_CHECK(!offers(code, "Devices") && !offers(code, "Scene") && !offers(code, "Debug") && !offers(code, "Cursor"));
-    TIDE_CHECK(!offers(code, "while") && !offers(code, "foreach") && !offers(code, "switch"));
+    TIDE_CHECK(!offers(code, "while") && offers(code, "foreach") && offers(code, "switch"));
     TIDE_CHECK(!offers(code, "byte") && !offers(code, "long") && !offers(code, "Entity") && !offers(code, "string") && !offers(code, "List"));
     TIDE_CHECK(!offers(code, "Noise") && !offers(code, "Box")); // C runs on the CPU, and nothing spawns here
     const char *value = complete(IN_FRAG("color = $"));
@@ -1422,7 +1422,7 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(offers(grid, "Sample") && !offers(grid, "Clear") && !offers(grid, "size"));
     TIDE_CHECK(has(grid, "Grid2<Color>.Sample(float2 uv, Filter filter = the grid's, Wrap wrap = the grid's) -> Color"));
     const char *list = complete(IN_FRAG("var n = models.crate.$"));
-    TIDE_CHECK(!offers(list, "Add") && !offers(list, "count")); // The GPU has no lists
+    TIDE_CHECK(!offers(list, "Add") && offers(list, "count")); // The GPU reads a list, and changes none
     TIDE_CHECK(offers(complete(IN_FRAG("color = box.$")), "tint"));
     TIDE_CHECK(offers(complete(IN_FRAG("color = Color.$")), "white") && offers(complete(IN_FRAG("var s = Math.$")), "Sin"));
     TIDE_CHECK(!offers(complete(IN_FRAG("Draw.$")), "Circle") && !offers(complete(IN_FRAG("var k = Devices.$")), "keyboard"));
@@ -1805,7 +1805,7 @@ TIDE_TEST(lsp_shaders_diagnostics)
     // What the GPU can't hold, found once the rest of the game is right: on the index
     open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, Models models)\n{\n"
                                "    color = models.wood[0, 0];\n}\n");
-    TIDE_CHECK(diagnosed(33, 23, 1, 1, "the GPU has no lists, maps, arrays or grids to index or make"));
+    TIDE_CHECK(diagnosed(33, 23, 1, 1, "the GPU indexes arrays, and lists that are fields of what the frag or vert takes"));
 }
 
 // The type of what's at the cursor, and an event's or the input's code.
@@ -3563,6 +3563,30 @@ TIDE_TEST(lsp_operators)
 
 // #if and the rest: the formatter leaves directives and what they leave out as
 // they are, which reads as comments, and each branch folds.
+// ++i and i++ where a value goes: no diagnostic, and the formatter leaves them against their variable.
+TIDE_TEST(lsp_increments_as_values)
+{
+    start();
+    static const char messy[] = "scene Main { }\n"
+                                "singleton Count { int n; int picked; }\n"
+                                "system S(mut Count c)\n"
+                                "{\n"
+                                "c.picked=(++c.n%2==0)?c.n++:1;\n"
+                                "}\n";
+    static const char expected[] = "scene Main { }\n"
+                                   "singleton Count { int n; int picked; }\n"
+                                   "system S(mut Count c)\n"
+                                   "{\n"
+                                   "    c.picked = (++c.n % 2 == 0) ? c.n++ : 1;\n"
+                                   "}\n";
+    open_document(messy);
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    format_reply(messy);
+    const char *formatted = apply_reply(messy, NULL);
+    TIDE_CHECK(strcmp(formatted, expected) == 0);
+    if (strcmp(formatted, expected) != 0) printf("--- got:\n%s---\n", formatted);
+}
+
 TIDE_TEST(lsp_directives)
 {
     start();

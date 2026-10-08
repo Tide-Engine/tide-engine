@@ -89,6 +89,20 @@ uint32_t tide_draw_grid_texture_raw(tide_draw_list *d, tide_grid texture, const 
 // The most cells a side a grid that's a texture has: a bigger one is none.
 #define TIDE_GRID_TEXTURE_MOST 16384
 
+// A list's elements as numbers a shader reads by their place: the list's
+// texture of four ints a pixel (TIDE_TEXELS_INTS), an element taking the
+// pixels its `words` need, one element after the other in rows of
+// TIDE_LIST_DATA_ACROSS pixels. `words` writes an element's numbers, floats by
+// their bits, into as many ints, and what's left of its last pixel is zeros.
+// The texture is the list's at its version (its heap's page hashes), so a
+// list that didn't change is written once. `count` gets how many elements it
+// holds: the list's, or as many as TIDE_LIST_DATA_MOST pixels take. 0, and no
+// elements, for an empty list.
+enum { TIDE_LIST_DATA_ACROSS = 1024, TIDE_LIST_DATA_MOST = 1024 * 2048 };
+typedef void tide_list_words_fn(const void *element, int32_t *words);
+uint32_t tide_draw_list_data(tide_draw_list *d, tide_list list, uint32_t element_size, uint32_t words,
+                             tide_list_words_fn *write, int32_t *count);
+
 // A float as the 16 bits a TIDE_TEXELS_HALF pixel is, to the nearest, ties to
 // even: past the greatest a half holds it's that (65504, either way), and 0
 // for NaN, so no texture has a pixel a filter makes NaN of.

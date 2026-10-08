@@ -71,6 +71,11 @@ component Results
     Color integerColor;
     Color integerRgbaColor;
     Color scalarColor;
+    Color lerpedColor;      // Math on colors: channel by channel, alpha too
+    Color perChannelColor;
+    Color clampedColor;
+    Color saturatedColor;
+    Color brighterColor;
 }
 
 scene Main { }
@@ -151,4 +156,13 @@ system Compute(mut Body body, mut Results r)
     r.integerColor = Color(int2(1, 0), 1);
     r.integerRgbaColor = Color(int4(1, 0, 1, 0));
     r.scalarColor = Color(0.25, 0.5, 0.75, 0.5);
+
+    // Math takes colors as it takes vectors; a number beside one is that number in every channel.
+    Color from = Color(0, 0.5, 1, 0);
+    Color to = Color(1, 0.5, 0, 1);
+    r.lerpedColor = Math.Lerp(from, to, 0.25);
+    r.perChannelColor = Math.Lerp(from, to, Color(0, 1, 0.5, 0.5));
+    r.clampedColor = Math.Clamp(Color(-1, 0.5, 2, 0.75), 0, Color(1, 0.25, 1, 1));
+    r.saturatedColor = Math.Saturate(Color(-1, 0.5, 2, 3));
+    r.brighterColor = Math.Max(from, 0.25);
 }

@@ -31,12 +31,15 @@ typedef enum tide_gpu_buffer_kind { TIDE_GPU_VERTICES, TIDE_GPU_INDICES } tide_g
 // bits is what every backend samples blended between pixels with nothing
 // asked of the device (OpenGL 3.3, OpenGL ES 3, WebGL 2 and WebGPU alike),
 // where one of 32 needs an extension or a feature a device may lack.
-typedef enum tide_gpu_format { TIDE_GPU_RGBA8, TIDE_GPU_R8, TIDE_GPU_R16F } tide_gpu_format;
+// TIDE_GPU_RGBA32I is four ints of 32 bits, which a pipeline reads as they
+// are, each pixel by its place (TIDE_GPU_READ_DATA) and never blended: numbers
+// of any kind, a float's as its bits. Every backend has it with nothing asked.
+typedef enum tide_gpu_format { TIDE_GPU_RGBA8, TIDE_GPU_R8, TIDE_GPU_R16F, TIDE_GPU_RGBA32I } tide_gpu_format;
 
 // The bytes a pixel of a texture takes, as texture and texture_write are given them.
 static inline int tide_gpu_format_bytes(const tide_gpu_format format)
 {
-    return format == TIDE_GPU_RGBA8 ? 4 : format == TIDE_GPU_R16F ? 2 : 1;
+    return format == TIDE_GPU_RGBA8 ? 4 : format == TIDE_GPU_R16F ? 2 : format == TIDE_GPU_RGBA32I ? 16 : 1;
 }
 
 // What one of a target's color images holds for each pixel: 4 bytes (red,
@@ -103,7 +106,12 @@ static inline tide_gpu_target_format tide_gpu_target_with(const tide_gpu_target_
 // which gives how much of the depth stored around there isn't nearer than it,
 // from 0 to 1, as the GPU filters it.
 // A cube (tide_gpu.cube) is read by a direction, as a color.
-typedef enum tide_gpu_read { TIDE_GPU_READ_COLOR, TIDE_GPU_READ_DEPTH, TIDE_GPU_READ_COMPARE, TIDE_GPU_READ_CUBE } tide_gpu_read;
+// TIDE_GPU_READ_DATA reads a texture of ints (TIDE_GPU_RGBA32I) a pixel at a
+// time, by its place: GLSL's `isampler2D` with texelFetch, and WGSL's
+// `texture_2d<i32>` with textureLoad, whose sampler binding nothing names.
+typedef enum tide_gpu_read {
+    TIDE_GPU_READ_COLOR, TIDE_GPU_READ_DEPTH, TIDE_GPU_READ_COMPARE, TIDE_GPU_READ_CUBE, TIDE_GPU_READ_DATA
+} tide_gpu_read;
 
 // A cube's six faces, in the order it has them: the one each axis points at,
 // +x, -x, +y, -y, +z, -z.
