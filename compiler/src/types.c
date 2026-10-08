@@ -12,6 +12,7 @@ static const struct {
 } builtins[] = {
     {"bool", TY_BOOL, "b", "bool"},
     {"byte", TY_BYTE, "i", "uint8_t"},
+    {"char", TY_CHAR, "ch", "int32_t"},
     {"int", TY_INT, "i", "int32_t"},
     {"long", TY_LONG, "l", "int64_t"},
     {"int2", TY_INT2, "i2", "tide_int2"},
@@ -257,6 +258,8 @@ bool type_assignable(const type to, const type from)
         return type_assignable(to.decl->fields.items[0].type, from);
     }
     if (from.kind == TY_BYTE && (to.kind == TY_INT || to.kind == TY_LONG || to.kind == TY_FLOAT)) return true;
+    // A char goes where an int does, as its code point; an int becomes a char only with char(n)
+    if (from.kind == TY_CHAR && (to.kind == TY_INT || to.kind == TY_LONG || to.kind == TY_FLOAT)) return true;
     if (to.kind == TY_TEXTURE) return type_is_texture_grid(from); // A grid of colors or of floats is a texture
     if (to.kind == TY_LONG) return from.kind == TY_INT; // An int fits a long; floats convert explicitly, both ways
     return type_is_float_based(to) && type_is_int_based(from) && type_dim(to) == type_dim(from);

@@ -1,0 +1,13 @@
+// expect: switch works on ints, longs, chars and enums, not string
+// expect: a text's characters are chars: 'switch (text[i])' with cases like 'case 'a':'
+scene Main { }
+singleton Seen { int n; string name = "ab"; char mark; }
+system S(mut Seen seen)
+{
+    switch (seen.name)
+    {
+        default:
+            seen.n = 1;
+            break;
+    }
+}

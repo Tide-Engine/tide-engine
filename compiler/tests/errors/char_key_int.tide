@@ -1,0 +1,5 @@
+// expect: Map<char, int> is keyed by char, not int
+// expect: char(x) makes an int the character with that code point
+scene Main { }
+singleton Bag { Map<char, int> counts; }
+system S(mut Bag bag) { bag.counts[65] += 1; }

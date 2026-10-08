@@ -1,0 +1,5 @@
+// expect: this character is missing its closing quote
+// expect: a char is one character in single quotes, like 'a'
+scene Main { }
+singleton Seen { int n; string name = "ab"; char mark; }
+system S(mut Seen seen) { seen.mark = 'a; }

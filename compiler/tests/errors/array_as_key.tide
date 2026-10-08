@@ -1,3 +1,3 @@
-// expect: a set's key is an int, a long, an enum, an Entity, a PlayerID or text, not an array
+// expect: a set's key is an int, a long, a char, an enum, an Entity, a PlayerID or text, not an array
 scene Main { }
 singleton Seen { Set<int[2]> pairs; }

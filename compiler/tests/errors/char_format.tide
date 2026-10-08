@@ -1,0 +1,5 @@
+// expect: 'X' isn't a format for char
+// expect: a char shows as the character it is
+scene Main { }
+singleton Seen { int n; string name = "ab"; char mark; }
+system S(mut Seen seen) { seen.name = $"{seen.mark:X}"; }

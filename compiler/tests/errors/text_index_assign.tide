@@ -1,0 +1,5 @@
+// expect: text doesn't change a character at a time: 'text[i]' reads one
+// expect: make the new text of its pieces, like 'name = name.Substring(0, i) + c + name.Substring(i + 1)
+scene Main { }
+singleton Seen { int n; string name = "ab"; char mark; }
+system S(mut Seen seen) { seen.name[0] = 'x'; }

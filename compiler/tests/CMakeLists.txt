@@ -138,6 +138,9 @@ tide_e2e_test(tasks_flow)
 tide_e2e_test(loops)
 tide_e2e_test(constant_flow) # Known bool conditions agree for returns, switch exits, loops and out assignment
 tide_e2e_test(strings)
+# char: literals, a text's characters by index and by foreach, switch, keys, where they're kept, inputs and commands
+tide_e2e_test(chars)
+target_compile_definitions(tidec_e2e_chars PRIVATE CHARS_HASH=7764008413886263917ull)
 tide_e2e_test(show_values)
 tide_e2e_test(text_fields)
 tide_e2e_test(lists)

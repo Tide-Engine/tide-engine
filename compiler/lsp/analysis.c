@@ -1460,6 +1460,9 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_BOOL: return "true or false.";
     case TY_BYTE: return "An unsigned 8-bit integer, from 0 to 255. Stored as one byte; arithmetic promotes to int. "
                          "byte(x) keeps the low 8 bits. Converts to int, long and float by itself.";
+    case TY_CHAR: return "One character: a Unicode code point, written in single quotes like `'a'`. It's what `text[i]` and a "
+                         "foreach over text give, and `'\\0'`, its zero, is no character. It goes where an int does, as its "
+                         "code point, so `c >= '0'` and `c - '0'` work; `char(n)` makes an int the character.";
     case TY_INT: return "A 32-bit integer. Arithmetic wraps on overflow; dividing by zero gives 0.";
     case TY_LONG: return "A 64-bit integer. Arithmetic wraps on overflow; dividing by zero gives 0. An int converts to it "
                          "by itself; floats convert with long(x) and float(x), and int(x) keeps its low 32 bits.";
@@ -2166,6 +2169,7 @@ static void describe_default(const type t, sb *out)
     switch (t.kind) {
     case TY_BOOL: sb_put(out, "`false`"); break;
     case TY_BYTE: case TY_INT: case TY_LONG: case TY_FLOAT: sb_put(out, "`0`"); break;
+    case TY_CHAR: sb_put(out, "`'\\0'`, which is no character"); break;
     case TY_ENTITY: case TY_LOCAL_ENTITY: sb_put(out, "The null entity"); break;
     case TY_PLAYER: sb_put(out, "No player"); break;
     case TY_STRING: sb_put(out, "Empty text"); break;
@@ -5255,7 +5259,7 @@ enum { ST_NAMESPACE, ST_TYPE, ST_STRUCT, ST_CLASS, ST_INTERFACE, ST_PARAMETER, S
 static bool is_keyword_type(const type t)
 {
     switch (t.kind) {
-    case TY_BOOL: case TY_BYTE: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2:
+    case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2:
     case TY_FLOAT3: case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4:
         return true;
     default:
@@ -6545,7 +6549,7 @@ static bool complete_in_namespace(completion *c, const str ns, const order_compl
 }
 
 static const char *const value_types[] = {
-    "bool", "byte", "int", "long", "int2", "int3", "int4", "float", "float2", "float3", "float4", "quaternion",
+    "bool", "byte", "char", "int", "long", "int2", "int3", "int4", "float", "float2", "float3", "float4", "quaternion",
     "float2x2", "float3x3", "float4x4", "Entity", "LocalEntity", "PlayerID", "Color", "Rect",
     "Texture", "DepthTexture", "Cubemap", "RenderTarget", "Clip",
 };
@@ -7784,6 +7788,7 @@ void analysis_completion(const int line, const int character, jbuf *out)
             complete_asset_path(&c, last, at);
             goto done;
         }
+        if (t->kind == T_CHAR && t->at.line == at.line && at.col < t->at.col + token_len(t)) goto done; // Nor in a character
         // In text with values: not in its text, but in its values.
         const bool text_end = at.col == t->at.col + token_len(t) && t->text.ptr[t->text.len - 1] == '"';
         if ((t->kind == T_INTERP || t->kind == T_INTERP_PART) && t->at.line == at.line
@@ -8864,8 +8869,11 @@ static const struct {
 } call_forms[] = {
     {"byte", {"byte(int value)", "byte(long value)", "byte(float value)"}, "Keeps an integer's low 8 bits. "
                                                                        "A float first converts with int(x), then keeps its low 8 bits."},
-    {"int", {"int(float value)", "int(long value)"}, "From a float: truncates toward zero and saturates at the int range; NaN gives 0. "
-                                                   "From a long: its low 32 bits."},
+    {"char", {"char(int code)"}, "The character with that code point, or `'\\0'`, which is no character, for a number none has: "
+                                 "under 0, past 0x10FFFF, or half of a UTF-16 pair."},
+    {"int", {"int(float value)", "int(long value)", "int(char character)"},
+     "From a float: truncates toward zero and saturates at the int range; NaN gives 0. From a long: its low 32 bits. From a char: "
+     "its code point."},
     {"long", {"long(float value)", "long(int value)"}, "From a float: truncates toward zero and saturates at the long range; NaN gives 0. "
                                                      "An int converts by itself."},
     {"float", {"float(int value)", "float(long value)"}, "A long rounds to the nearest float."},
@@ -9501,7 +9509,7 @@ static const char *token_start(const token *t)
 
 static bool ends_operand(const tok_kind k)
 {
-    return k == T_IDENT || k == T_INT || k == T_FLOAT || k == T_STRING || k == T_RPAREN || k == T_RBRACKET
+    return k == T_IDENT || k == T_INT || k == T_FLOAT || k == T_STRING || k == T_CHAR || k == T_RPAREN || k == T_RBRACKET
         || k == T_TRUE || k == T_FALSE || k == T_THIS || k == T_DEFAULT || k == T_NULL || k == T_INTERP
         || k == T_INTERP_PART;
 }

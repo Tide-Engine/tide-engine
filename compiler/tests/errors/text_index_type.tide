@@ -1,0 +1,4 @@
+// expect: a text's index is an int, not float
+scene Main { }
+singleton Seen { int n; string name = "ab"; char mark; }
+system S(mut Seen seen) { seen.mark = seen.name[1.5]; }

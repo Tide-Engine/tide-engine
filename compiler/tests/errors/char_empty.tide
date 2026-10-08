@@ -1,0 +1,5 @@
+// expect: a char is one character, and there's none between these quotes
+// expect: no character is '\0', and empty text is ""
+scene Main { }
+singleton Seen { char mark; }
+system S(mut Seen seen) { seen.mark = ''; }

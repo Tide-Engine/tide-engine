@@ -411,6 +411,28 @@ static expr *parse_primary(parser *p)
         e->text = t->text;
         return e;
     }
+    case T_CHAR: {
+        // 'a': a number that's a char, its code point, so what reads an int literal reads it
+        advance(p);
+        expr *e = new_expr(E_INT, t->at);
+        e->text = t->text;
+        e->is_char = true;
+        const unsigned char *s = (const unsigned char *)t->text.ptr + 1; // Past the quote; the lexer checked what's between
+        const int bytes = t->text.len - 2;
+        if (s[0] == '\\') {
+            const char esc = (char)s[1];
+            e->int_value = esc == 'n' ? '\n' : esc == 'r' ? '\r' : esc == 't' ? '\t' : esc == '0' ? 0 : esc;
+        } else if (bytes == 1) {
+            e->int_value = s[0];
+        } else if (bytes == 2) {
+            e->int_value = (s[0] & 0x1F) << 6 | (s[1] & 0x3F);
+        } else if (bytes == 3) {
+            e->int_value = (s[0] & 0x0F) << 12 | (s[1] & 0x3F) << 6 | (s[2] & 0x3F);
+        } else {
+            e->int_value = (s[0] & 0x07) << 18 | (s[1] & 0x3F) << 12 | (s[2] & 0x3F) << 6 | (s[3] & 0x3F);
+        }
+        return e;
+    }
     case T_THIS:
         advance(p);
         return new_expr(E_THIS, t->at);
