@@ -1,0 +1,3 @@
+// expect: Animations has no checked member 'idle'
+scene Main { }
+Animation Read(SkinnedMesh<Vertex3> model) { return model.animations.idle; }

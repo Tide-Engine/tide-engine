@@ -95,7 +95,7 @@ For now:
 
 A task belongs to a world, like the code that starts it. A system's or a match handler's tasks are the match's: they're part of it, in snapshots, state hashes and rollback, they go to players who join, and they carry on when the match changes hands. A view's or a local handler's tasks are this machine's, in its local state.
 
-An async function's world comes from what it does: changing the match (spawning its entities, changing its components through `mut`, sending its events) makes it match code, and using local state, or reading [`Frame.dt`](./local-state.md#time), makes it local. One that does neither runs in whichever world starts it. Doing both is an error, as a task runs in one world.
+An async function's world comes from what it does: changing the match (spawning its entities, changing its components through `mut`, sending its events) makes it match code, and using local state, or reading [`Frame.dt`](./local-state.md#time), makes it local. A [function it calls](../language/functions.md#sending-and-spawning) that sends or spawns counts as its own doing. One that does neither runs in whichever world starts it. Doing both is an error, as a task runs in one world.
 
 ## What a task keeps
 

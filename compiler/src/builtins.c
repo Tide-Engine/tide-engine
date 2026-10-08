@@ -796,6 +796,10 @@ static void build_signatures(void)
              "vertices, indices, instances", instanced_doc);
     describe(add("Draw", "Instanced", T_NONE, "tide_draw_mesh_shaded_instances", 3, T_VERTICES3, T_INDICES, T_INSTANCES),
              "vertices, indices, instances", instanced_doc);
+    // The checker resolves model and Pose types itself; this entry gives editors the public call's order.
+    describe(add("Draw", "SkinnedMesh", T_NONE, "tide_draw_mesh_shaded", 3, T_NONE, T_F4X4, T_NONE),
+             "model, transform, pose", "Draws a SkinnedMesh<V> at transform, deformed by pose before its vert runs. "
+             "Optional texture, vert, frag and draw values follow the pose. Reuse the same pose for color and shadow passes.");
     add_setting("Draw", "Clip", "tide_draw_push_clip", "tide_draw_set_clip", NULL, "rect",
                 "Only what's inside `rect` draws: from (x, y) to (x + width, y + height), in the units the 2D draws "
                 "are in. In a block, it's what of `rect` is inside the clip there is.",
@@ -1282,7 +1286,8 @@ static int param_named(const signature *s, const str name)
 // take. Mesh and Instanced go by what each argument is, so theirs stay in order.
 static bool names_args(const expr *e)
 {
-    return e->arg_names.count > 0 && !str_eq_c(e->name, "Mesh") && !str_eq_c(e->name, "Instanced");
+    return e->arg_names.count > 0 && !str_eq_c(e->name, "Mesh") && !str_eq_c(e->name, "Instanced")
+        && !str_eq_c(e->name, "SkinnedMesh");
 }
 
 // Which parameter of `s` each argument of a call is for, as in C#: in order,

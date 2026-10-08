@@ -36,6 +36,19 @@ The sender isn't recorded. When handlers need it, put it in a field: the entity 
 
 An event is a value, so a local can hold one, and a handler can send its event on: `other.Send(hit)`. Fields and parameters can't hold events. The engine's own events, below, are only the engine's to send.
 
+A [function](../language/functions.md#sending-and-spawning) can send too, for the code that calls it:
+
+```csharp
+// Called from a system or a handler, which could send Hit themselves
+void Splash(Entity target, int damage)
+{
+    target.Send(Hit { damage = damage });
+    Send(Splashed { });
+}
+```
+
+A view that calls it gets an error, as a view can't send the match's events.
+
 ## Handling
 
 A handler is code that runs when an event is sent. It's declared with `event` too: the first parentheses hold the event that triggers it, and the second hold the same parameters as a system's. A match handler takes no [query](./systems.md#another-set-of-entities) yet; a [local handler](#other-entities) does.

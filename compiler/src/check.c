@@ -4,6 +4,8 @@
 #include <string.h>
 
 #include "asset_files.h"
+#include "assets.h"
+#include "model_metadata.h"
 #include "ast.h"
 #include "builtins.h"
 #include "tide/audio.h" // How many bytes an audio declaration's state and knobs have
@@ -910,6 +912,45 @@ static bool in_routine(const checker *c)
     return c->method && !c->method->is_async;
 }
 
+// A plain function or method sends, spawns and changes entities as the code
+// that calls it would: whether that's allowed is each call's to say
+// (check_acts). Not code the GPU runs, nor a component's Interpolate, which the
+// engine calls as views blend, nor an operator, which is handed its operands
+// and nothing else. An async function's world is what it does (note_side).
+static bool passes_acts(const decl *m)
+{
+    return !m->is_async && (m->kind == DECL_FUNCTION || m->kind == DECL_METHOD) && !m->is_interpolate && !m->is_operator;
+}
+
+// Whether the code being checked is such a function or method.
+static bool inherits(const checker *c)
+{
+    return c->method && passes_acts(c->method);
+}
+
+// The function or method being checked sends, spawns or changes an entity at
+// `at`: the match's, or this machine's when `local`. `text` when what it
+// records holds text or lists, which go into the world's heap.
+static void note_act(const checker *c, const bool local, const loc at, const char *what, const bool spawn, const bool text)
+{
+    decl *m = c->method;
+    if (!m->acts[local]) {
+        m->acts[local] = true;
+        m->acts_at[local] = at;
+        m->acts_what[local] = what;
+    }
+    m->acts_spawn[local] |= spawn;
+    m->acts_text |= text;
+}
+
+// "sends 'Hit'": what a function does to a world, for the messages at its calls.
+static const char *act_what(const char *does, const decl *d)
+{
+    sb b = {0};
+    sb_printf(&b, "%s '" STR_FMT "'", does, STR_ARG(d->name));
+    return b.data;
+}
+
 // Async code, which can wait: an async function, or an async handler.
 static bool async_code(const checker *c)
 {
@@ -1635,6 +1676,33 @@ static type resolve_generic(const checker *c, const type_ref *r, const loc at, c
 // glob's list or map, and the type of what passes one on within a frame: a
 // local, a loop's variable, a function's parameter or what it returns.
 // Nothing keeps one, so it's no field's type, and no constant's.
+#include "skinned_types.inc"
+
+static void skinned_contract_catalogs(program *prog, decl *mesh, loc at);
+
+static type resolve_skinned_mesh(const checker *c, const type_ref *r, const loc at)
+{
+    const type vertex = resolve_type(c, r->args.items[0], ARG_ELEMENT, at);
+    if (vertex.kind == TY_ERROR) return T_ERR;
+    if (vertex.kind != TY_STRUCT) {
+        diag_error(at, "a SkinnedMesh's vertices are a struct with a 'float3 position', like 'SkinnedMesh<Vertex3>'");
+        return T_ERR;
+    }
+    decl *contract = NULL;
+    if (r->args.count == 2) {
+        const type required = resolve_type(c, r->args.items[1], ARG_ELEMENT, at);
+        if (required.kind == TY_ERROR) return T_ERR;
+        if (required.kind != TY_STRUCT || required.decl->skin_kind) {
+            diag_error(at, "a SkinnedMesh's contract is a struct of required Animation and Bone fields");
+            return T_ERR;
+        }
+        contract = required.decl;
+    }
+    const type model = skinned_mesh_of(c->prog, vertex, contract);
+    if (c->fields_ordered) skinned_contract_catalogs(c->prog, model.decl, at);
+    return model;
+}
+
 static type resolve_mesh(const checker *c, const type_ref *r, const type_place place, const loc at)
 {
     const type vertex = resolve_type(c, r->args.items[0], ARG_ELEMENT, at);
@@ -1720,6 +1788,7 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
 {
     const str name = r->name;
     type t;
+    if (r->args.count > 0 && str_eq_c(name, "SkinnedMesh")) return resolve_skinned_mesh(c, r, at);
     if (r->args.count > 0 && str_eq_c(name, "Mesh")) return resolve_mesh(c, r, place, at);
     if (r->args.count > 0) return resolve_generic(c, r, at, place == PLACE_ASSET);
     if (builtin_type_named(name, &t)) {
@@ -1730,6 +1799,10 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
         return t;
     }
     if (str_eq_c(name, "string")) return (type){TY_STRING, NULL};
+    // Existing user types keep their names; the model value types are supplied
+    // only when ordinary type lookup has no declaration for that name.
+    decl *const d = find_type(c, name, at);
+    if (!d && skinned_type_named(c->prog, name, &t)) return t;
     if (routine_place(place) || place == PLACE_FIELD || place == PLACE_LOCAL) {
         if (str_eq_c(name, "Action")) return (type){TY_ACTION, NULL};
         if (str_eq_c(name, "DrawList")) return (type){TY_DRAW_LIST, NULL};
@@ -1740,7 +1813,6 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
             if (str_eq(c->prog->records.items[i]->name, name)) return (type){TY_RECORD, c->prog->records.items[i]};
         }
     }
-    decl *const d = find_type(c, name, at);
     if (d) return decl_type(d);
     // The engine's World where a value's type goes: the place says where it belongs (world_misplaced)
     if ((routine_place(place) || place == PLACE_FIELD || place == PLACE_LOCAL) && str_eq_c(name, "World")) return (type){TY_WORLD, NULL};
@@ -2135,6 +2207,8 @@ static comp_mask bit(const decl *component)
 static type check_literal(checker *c, expr *e)
 {
     decl *d = find_type(c, e->name, e->at);
+    type builtin;
+    if (!d && skinned_type_named(c->prog, e->name, &builtin)) d = builtin.decl;
     if (!d || (d->kind != DECL_COMPONENT && d->kind != DECL_STRUCT && d->kind != DECL_EVENT)) {
         if (d) {
             diag_error(e->at, "'" STR_FMT "' isn't a component, struct or event; only those have values like this",
@@ -2716,6 +2790,7 @@ static bool local_code(const checker *c)
 static bool check_component_side(const checker *c, const expr *arg, const decl *d)
 {
     if (in_async_function(c)) return note_task_side(c, d->is_local ? TASK_LOCAL : TASK_MATCH, arg->at);
+    if (inherits(c)) return true; // Its world is the entity's (same_world), and whether the caller may is its call's to say
     if (d->is_local == local_code(c)) return true;
     if (d->is_local) {
         diag_error(arg->at, "'" STR_FMT "' is local, and the match can't use local state", STR_ARG(d->name));
@@ -2729,6 +2804,41 @@ static bool check_component_side(const checker *c, const expr *arg, const decl *
 }
 
 static const char *routines(const checker *c);
+
+// Code that never sends, spawns or changes entities, whoever calls it: what the
+// GPU runs, a struct's operators, a component's Interpolate, and the input's
+// own. Says so, as it can't `does`, and returns true. A function or a method
+// does it as its caller would (inherits).
+static bool refuse_act(const checker *c, const loc at, const char *does, const char *who)
+{
+    if (in_routine(c) && !inherits(c)) {
+        if (c->method->is_interpolate) diag_error(at, "Interpolate blends a value between ticks, for views, so it can't %s", does);
+        else if (c->method->is_operator) diag_error(at, "an operator works a value out of its operands, so it can't %s", does);
+        else diag_error(at, "%s can't %s; %s", routines(c), does, who);
+        return true;
+    }
+    if (c->in_input) {
+        diag_error(at, "%s runs outside the simulation, so it can't %s", input_code(c), does);
+        return true;
+    }
+    return false;
+}
+
+// In a function or method, a Spawn's, an Add's or a Remove's components are all
+// of one world, `local` or the match's: an entity belongs to one. A system's
+// and a view's are checked against the code's own world instead.
+static bool same_world(const expr *call, const bool local, const char *whose)
+{
+    for (int i = 0; i < call->args.count; i++) {
+        const decl *d = call->args.items[i]->type_decl;
+        if (!d || d->kind != DECL_COMPONENT || d->is_local == local) continue;
+        diag_error(call->args.items[i]->at, "'" STR_FMT "' is %s, and %s is %s", STR_ARG(d->name),
+                   d->is_local ? "local" : "the match's", whose, local ? "local" : "the match's");
+        diag_note("an entity belongs to one world: the match's components go on its entities, and local ones on this machine's");
+        return false;
+    }
+    return true;
+}
 
 // The frag or vert being checked, which the GPU runs, or NULL.
 static const decl *gpu_code(const checker *c)
@@ -3227,6 +3337,7 @@ static bool check_entity_side(const checker *c, const expr *e)
     const type_kind kind = e->object->type.kind;
     if (kind == TY_ERROR) return false;
     if (in_async_function(c)) return note_task_side(c, kind == TY_LOCAL_ENTITY ? TASK_LOCAL : TASK_MATCH, e->at);
+    if (inherits(c)) return true; // The entity's world is the change's, and each call says whether its caller may
     if (local_code(c) && kind == TY_ENTITY) {
         diag_error(e->at, "%s can't change the match, and this entity belongs to it", local_code_what(c->system));
         diag_note("put what it wants in the input, and change the match in a system");
@@ -3244,11 +3355,7 @@ static bool check_entity_side(const checker *c, const expr *e)
 // are checked against them once every handler is known (see check_sends).
 static type check_send(checker *c, expr *e)
 {
-    const char *error = NULL;
-    if (in_routine(c)) error = "%s can't send events; systems and event handlers do";
-    else if (c->in_input) error = "%s runs outside the simulation, so it can't send events";
-    if (error) {
-        diag_error(e->at, error, c->method ? routines(c) : input_code(c));
+    if (refuse_act(c, e->at, "send events", "systems and event handlers do")) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return T_ERR;
     }
@@ -3262,7 +3369,7 @@ static type check_send(checker *c, expr *e)
     decl *event = check_event_arg(c, e->args.items[0]);
     if (!event) return T_ERR;
     if (event->is_command) {
-        if (!local_code(c)) {
+        if (!local_code(c) && !inherits(c)) {
             diag_error(e->at, "commands are sent from views and local handlers to the match");
             diag_note("match systems and handlers send events; a command carries a player's untrusted request");
             return T_ERR;
@@ -3273,6 +3380,7 @@ static type check_send(checker *c, expr *e)
         }
         e->type_decl = event;
         e->local_world = true;
+        if (inherits(c)) note_act(c, true, e->at, act_what("sends the command", event), false, false);
         vec_push(c->sends, e);
         return T_VOID_;
     }
@@ -3289,6 +3397,18 @@ static type check_send(checker *c, expr *e)
     if (in_async_function(c)) {
         if (!note_task_side(c, event->is_local ? TASK_LOCAL : TASK_MATCH, e->args.items[0]->at)) return T_ERR;
         e->local_world = event->is_local;
+    }
+    if (inherits(c)) {
+        // Its world is the event's, and an entity it's sent to is of that world
+        if (e->kind == E_METHOD && (e->object->type.kind == TY_LOCAL_ENTITY) != event->is_local) {
+            diag_error(e->args.items[0]->at, "'" STR_FMT "' is %s, and this entity is %s", STR_ARG(event->name),
+                       event->is_local ? "a local event" : "a match event", event->is_local ? "the match's" : "local");
+            diag_note("an event goes to an entity of its own world: a match event to an Entity, a local one to a LocalEntity");
+            return T_ERR;
+        }
+        e->local_world = event->is_local;
+        note_act(c, event->is_local, e->at, act_what(event->is_local ? "sends the local event" : "sends", event), false,
+                 decl_holds_text(event));
     }
     if (event->is_local != e->local_world) {
         if (event->is_local) {
@@ -4163,14 +4283,7 @@ static type check_call(checker *c, expr *e)
     if (str_eq_c(e->name, "Send")) return check_send(c, e);
 
     if (str_eq_c(e->name, "Spawn")) {
-        if (in_routine(c)) {
-            diag_error(e->at, "%s can't spawn entities; systems do", routines(c));
-            return T_ERR;
-        }
-        if (c->in_input) {
-            diag_error(e->at, "%s runs outside the simulation, so it can't spawn entities", input_code(c));
-            return T_ERR;
-        }
+        if (refuse_act(c, e->at, "spawn entities", "systems do")) return T_ERR;
         // Expressions evaluate left to right, so codegen runs a statement's spawns
         // first, in order. On the right of && or ||, or in a side of ?:, that would
         // spawn even when that part is skipped.
@@ -4188,6 +4301,19 @@ static type check_call(checker *c, expr *e)
         e->local_world = local_code(c);
         e->spawn_mask = check_component_list(c, e, "Spawn");
         if (in_async_function(c)) e->local_world = c->method->task_side == TASK_LOCAL;
+        if (inherits(c)) {
+            // Its world is its components': a local one makes it this machine's, and with none it's the match's
+            for (int i = 0; i < e->args.count && !e->local_world; i++) {
+                const decl *d = e->args.items[i]->type_decl;
+                e->local_world = d && d->kind == DECL_COMPONENT && d->is_local;
+            }
+            same_world(e, e->local_world, "this entity");
+            bool text = false;
+            for (int i = 0; i < c->prog->components.count; i++) {
+                text |= mask_has(e->spawn_mask, i) && decl_holds_text(c->prog->components.items[i]);
+            }
+            note_act(c, e->local_world, e->at, e->local_world ? "spawns local entities" : "spawns entities", true, text);
+        }
         for (int i = 0; i < c->prog->components.count; i++) {
             if (mask_has(e->spawn_mask, i)) note_text_write(c, decl_holds_text(c->prog->components.items[i]));
         }
@@ -5179,8 +5305,9 @@ static type check_mesh_draw(checker *c, expr *e)
 {
     program *prog = c->prog;
     const bool instanced = e->instanced = str_eq_c(e->name, "Instanced");
-    const char *draw_name = e->targeted ? (instanced ? "target.Instanced" : "target.Mesh")
-                                        : (instanced ? "Draw.Instanced" : "Draw.Mesh");
+    const bool skinned = e->skinned = str_eq_c(e->name, "SkinnedMesh");
+    const char *draw_name = e->targeted ? (skinned ? "target.SkinnedMesh" : instanced ? "target.Instanced" : "target.Mesh")
+                                        : (skinned ? "Draw.SkinnedMesh" : instanced ? "Draw.Instanced" : "Draw.Mesh");
     // The vert and the frag it names come last, the vert first, and after
     // them a struct of values they read, the same for the whole draw
     int count = e->args.count;
@@ -5220,7 +5347,18 @@ static type check_mesh_draw(checker *c, expr *e)
         expr *mesh = e->args.items[0];
         const type whole = check_expr(c, mesh);
         checked = 1;
-        if (whole.kind == TY_MESH) {
+        if (skinned && (whole.kind != TY_STRUCT || whole.decl->skin_kind != SKIN_MESH)) {
+            for (int i = 1; i < count; i++) check_expr(c, e->args.items[i]);
+            if (whole.kind != TY_ERROR) diag_error(mesh->at, "%s takes a SkinnedMesh<V> first, and this is %s", draw_name,
+                                                  type_name(whole));
+            return T_ERR;
+        }
+        if (skinned && count < 3) {
+            for (int i = 1; i < count; i++) check_expr(c, e->args.items[i]);
+            diag_error(e->at, "%s takes a skinned mesh, its float4x4 transform, and a Pose first", draw_name);
+            return T_ERR;
+        }
+        if (whole.kind == TY_MESH || skinned) {
             const int had = e->args.count;
             expr **given = e->args.items;
             e->written.items = given;
@@ -5234,14 +5372,33 @@ static type check_mesh_draw(checker *c, expr *e)
                 of->at = mesh->at;
                 of->object = mesh;
                 of->member = str_from(part == 1 ? "vertices" : "indices");
-                of->type = part == 1 ? list_of(prog, mesh_vertex(whole)) : list_of(prog, T_INT_);
+                of->type = part == 1 ? list_of(prog, skinned ? whole.decl->skin_vertex : mesh_vertex(whole)) : list_of(prog, T_INT_);
+                if (skinned) of->field = (field *)field_called(whole.decl, part == 1 ? "vertices" : "indices");
                 of->mesh_part = part;
                 vec_push(e->args, of);
             }
-            for (int i = 1; i < had; i++) vec_push(e->args, given[i]);
-            count++;
+            for (int i = 1; i < had; i++) {
+                if (skinned && i == 2) {
+                    const type pose = check_expr(c, given[i]);
+                    if (pose.kind != TY_STRUCT || pose.decl->skin_kind != SKIN_POSE) {
+                        if (pose.kind != TY_ERROR) diag_error(given[i]->at, "%s takes a Pose after its transform, and this is %s",
+                                                             draw_name, type_name(pose));
+                        return T_ERR;
+                    }
+                    e->skin_mesh = mesh;
+                    e->skin_pose = given[i];
+                    continue;
+                }
+                vec_push(e->args, given[i]);
+            }
+            count += skinned ? 0 : 1;
             checked = 2;
         }
+    }
+    if (skinned && !e->skin_mesh) {
+        for (int i = checked; i < count; i++) check_expr(c, e->args.items[i]);
+        diag_error(e->at, "%s takes a skinned mesh, its float4x4 transform, and a Pose first", draw_name);
+        return T_ERR;
     }
     const int named_end = e->args.count - (values ? 1 : 0); // Past the vert and the frag
     const bool values_ok = !values || check_draw_values(c, e, values);
@@ -5375,7 +5532,7 @@ static type check_mesh_draw(checker *c, expr *e)
         return T_ERR;
     }
 
-    if ((vertex == prog->vertex || vertex == prog->vertex3) && !shaded && !instanced) {
+    if ((vertex == prog->vertex || vertex == prog->vertex3) && !shaded && !instanced && !skinned) {
         use_mesh_types(c);
         const type result = resolve_builtin_call(str_from("Draw"), e);
         if (result.kind == TY_ERROR) return result;
@@ -5937,8 +6094,14 @@ static type check_window_target(checker *c, expr *e)
     return (type){TY_RENDER_TARGET, NULL};
 }
 
+static bool mesh_vertex_ok(const decl *vertex, loc at);
+#include "skinned_ops.inc"
+
 static type check_method(checker *c, expr *e)
 {
+    bool static_skin_handled = false;
+    const type static_skin = check_skinned_static(c, e, &static_skin_handled);
+    if (static_skin_handled) return static_skin;
     // world.Get<Health>(e): the World parameter's methods
     if (e->object->kind == E_NAME && !find_local(c, e->object->name)) {
         param *world = find_param(c, e->object->name);
@@ -5998,7 +6161,7 @@ static type check_method(checker *c, expr *e)
         if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Blit")) return check_blit(c, e);
         // Draw is the window's drawing: what a render target has as its methods
         const bool draws = builtin_draw_owner(owner);
-        if (draws && (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced"))) return check_mesh_draw(c, e);
+        if (draws && (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced") || str_eq_c(e->name, "SkinnedMesh"))) return check_mesh_draw(c, e);
         // `default` takes its type from the version of the function the other arguments pick,
         // and [a, b, c] is the list the function takes there. An `out` argument is the variable
         // a version with an `out` parameter makes (check_gui_call): of the others, nothing takes one,
@@ -6127,6 +6290,9 @@ static type check_method(checker *c, expr *e)
         return check_instance_call(e);
     }
     if (obj.kind == TY_LIST) return check_list_method(c, e, obj);
+    bool skin_handled;
+    const type skin_result = check_skinned_method(c, e, obj, &skin_handled);
+    if (skin_handled) return skin_result;
     if (obj.kind == TY_MAP || obj.kind == TY_SET) return check_map_method(c, e, obj);
     if (obj.kind == TY_GRID) return check_grid_method(c, e, obj);
     if (obj.kind == TY_TEXTURE) {
@@ -6211,7 +6377,7 @@ static type check_method(checker *c, expr *e)
         }
         // A target's methods are Draw's, told apart by the receiver alone: the window is a target too
         e->targeted = true;
-        if (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced")) return check_mesh_draw(c, e);
+        if (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced") || str_eq_c(e->name, "SkinnedMesh")) return check_mesh_draw(c, e);
         if (str_eq_c(e->name, "Blit")) {
             for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
             diag_error(e->at, "a render target has no Blit: a blit names the target it goes into, 'Draw.Blit(source, target, frag)'");
@@ -6307,29 +6473,29 @@ static type check_method(checker *c, expr *e)
         return T_ERR;
     }
     if (str_eq_c(e->name, "Send")) return check_send(c, e);
-    if (in_routine(c)) {
-        diag_error(e->at, "%s can't change entities; systems do", routines(c));
-        return T_ERR;
-    }
-    if (c->in_input) {
-        diag_error(e->at, "%s runs outside the simulation, so it can't change entities", input_code(c));
-        return T_ERR;
-    }
+    if (refuse_act(c, e->at, "change entities", "systems do")) return T_ERR;
     if (!check_entity_side(c, e)) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return T_ERR;
     }
-    e->local_world = in_async_function(c) ? obj.kind == TY_LOCAL_ENTITY : local_code(c);
+    // A function's or a method's change is of the entity's world, which its callers answer for
+    const bool passed = inherits(c);
+    e->local_world = in_async_function(c) || passed ? obj.kind == TY_LOCAL_ENTITY : local_code(c);
 
     if (str_eq_c(e->name, "Add")) {
         e->call = CALL_ADD;
         if (e->args.count == 0) diag_error(e->at, "Add needs at least one component");
         const comp_mask added = check_component_list(c, e, "Add");
+        if (passed && !same_world(e, e->local_world, "this entity")) return T_ERR;
         c->prog->added_mask = mask_or(c->prog->added_mask, added);
         record_change(c, e, added, &c->prog->adds);
+        bool text = false;
         for (int i = 0; i < c->prog->components.count; i++) {
-            if (mask_has(added, i)) note_text_write(c, decl_holds_text(c->prog->components.items[i]));
+            if (!mask_has(added, i)) continue;
+            note_text_write(c, decl_holds_text(c->prog->components.items[i]));
+            text |= decl_holds_text(c->prog->components.items[i]);
         }
+        if (passed) note_act(c, e->local_world, e->at, e->local_world ? "adds local components" : "adds components", false, text);
         return T_VOID_;
     }
 
@@ -6348,8 +6514,10 @@ static type check_method(checker *c, expr *e)
             if (mask_has(mask, d->index)) diag_error(arg->at, "'" STR_FMT "' appears twice", STR_ARG(d->name));
             mask = mask_or(mask, bit(d));
         }
+        if (passed && !same_world(e, e->local_world, "this entity")) return T_ERR;
         c->prog->removed_mask = mask_or(c->prog->removed_mask, mask);
         record_change(c, e, mask, &c->prog->removes);
+        if (passed) note_act(c, e->local_world, e->at, e->local_world ? "removes local components" : "removes components", false, false);
         return T_VOID_;
     }
 
@@ -6357,6 +6525,7 @@ static type check_method(checker *c, expr *e)
         e->call = CALL_DESTROY;
         if (e->args.count != 0) diag_error(e->at, "Destroy takes no arguments");
         c->prog->uses_destroy = true;
+        if (passed) note_act(c, e->local_world, e->at, e->local_world ? "destroys local entities" : "destroys entities", false, false);
         return T_VOID_;
     }
 
@@ -6883,6 +7052,10 @@ static decl *named_enum(const checker *c, const expr *e)
         return NULL;
     }
     decl *d = find_type(c, text, e->at);
+    if (!d && str_eq_c(text, "Playback")) {
+        skinned_builtins(c->prog);
+        d = c->prog->playback;
+    }
     return d && d->kind == DECL_ENUM ? d : NULL;
 }
 
@@ -7105,6 +7278,10 @@ static type check_member(checker *c, expr *e)
     c->member_object = e->object;
     const type obj = check_expr(c, e->object);
     if (obj.kind == TY_ERROR) return T_ERR;
+
+    bool skin_handled;
+    const type skin_result = check_skinned_member(c, e, obj, &skin_handled);
+    if (skin_handled) return skin_result;
 
     if (obj.kind == TY_RENDER_TARGET) {
         if (gpu_code(c)) {
@@ -7652,6 +7829,9 @@ static type check_index(checker *c, expr *e)
     c->colors_indexed = e->object;  // target.colors[1] reads the one it names
     const type obj = check_expr(c, e->object);
     c->colors_indexed = NULL;
+    bool skin_handled;
+    const type skin_result = check_skinned_index(c, e, obj, &skin_handled);
+    if (skin_handled) return skin_result;
     if (obj.kind == TY_RENDER_TARGET && e->object->kind == E_MEMBER && e->object->target_colors) {
         // target.colors[1]: one of its color images, as a Texture. Which ones it has is the target's to say, when
         // it's made, so one it hasn't got is found out as it's sampled: that draw is passed by, and says so
@@ -9001,6 +9181,11 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
             diag_note("make the new text of its pieces, like 'name = name.Substring(0, i) + c + name.Substring(i + 1);'");
             return false;
         }
+        if (part->kind == E_MEMBER && part->object->type.kind == TY_STRUCT
+            && part->object->type.decl->skin_kind && part->object->type.decl->skin_kind != SKIN_TRANSFORM) {
+            diag_error(target->at, "model members are read-only; edit a Pose's local transforms through a Bone");
+            return false;
+        }
         // mesh.vertices and mesh.indices, whatever holds the Mesh: a local's too, which only names the pack's
         if (part->kind == E_MEMBER && part->object->type.kind == TY_MESH) {
             diag_error(target->at, "a Mesh's vertices and indices are read-only: they're the file it names, as the game was built");
@@ -9406,8 +9591,13 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
     case CALL_NONE: case CALL_BUILTIN: case CALL_CONSTRUCT: case CALL_TEXT:
     case CALL_ROLL: // A step rolls for its own cell, whichever thread runs it
         break;
+    case CALL_SKINNED:
+        if ((e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND)
+            && (!e->object || !step_own(e->object, loop))) return false;
+        break; // Read-only sampling and step-local poses use the executing thread's scratch area.
     case CALL_FUNCTION:
         if (e->method && (e->method->calls_c || e->method->is_async || e->method->draws)) return false;
+        if (e->method && (e->method->acts[0] || e->method->acts[1])) return false; // What it sends and spawns is recorded in order
         // What it changes, its mut arguments and the value a mut method is called on, is the step's own
         for (int i = 0; e->method && i < e->args.count && i < e->method->params.count; i++) {
             if (e->method->params.items[i].mode == PARAM_MUT && !step_own(e->args.items[i], loop)) return false;
@@ -10408,6 +10598,7 @@ static bool stands_alone(const expr *e)
         || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD || call == CALL_SCENE_PLAYER
         || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD || call == CALL_AUDIO
         || call == CALL_SNAP || call == CALL_DISCARD
+        || (call == CALL_SKINNED && (called->skin_operation == SKIN_OP_POSE_SAMPLE || called->skin_operation == SKIN_OP_POSE_BLEND))
         || called->io_operation
         || (call == CALL_LIST && !str_eq_c(called->name, "Contains") && !str_eq_c(called->name, "IndexOf"))
         || (call == CALL_MAP && !str_eq_c(called->name, "Has") && !str_eq_c(called->name, "Get"))
@@ -11093,6 +11284,7 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     else if (str_eq_c(inner->text, "Texture")) *kind = ASSET_TEXTURE;
     else if (str_eq_c(inner->text, "Clip")) *kind = ASSET_CLIP;
     else if (str_eq_c(inner->name, "Mesh") && inner->args.count == 1 && !inner->optional) *kind = ASSET_MESH;
+    else if (str_eq_c(inner->name, "SkinnedMesh") && inner->args.count >= 1 && !inner->optional) *kind = ASSET_SKINNED;
     else if (str_eq_c(inner->text, "Mesh")) {
         diag_error(at, "a Mesh says what its vertices are: 'Mesh<Vertex3>', or 'Mesh<...>' of a struct of the game's with a "
                        "'float3 position'");
@@ -11250,8 +11442,11 @@ static bool mesh_vertex_ok(const decl *vertex, const loc at)
 static decl *asset_mesh_vertex(const type t)
 {
     const type inner = t.kind == TY_LIST ? list_element(t) : t.kind == TY_MAP ? map_value(t) : t;
-    return inner.kind == TY_MESH ? mesh_vertex(inner).decl : NULL;
+    return inner.kind == TY_MESH ? mesh_vertex(inner).decl
+         : inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_MESH ? inner.decl->skin_vertex.decl : NULL;
 }
+
+#include "skinned_catalogs.inc"
 
 // Checks an asset declaration: its type, its path (a constant text) and the
 // files the path resolves to, read and decoded (asset_files.h), which codegen
@@ -11268,7 +11463,7 @@ static void check_asset_decl(checker *c, decl *k)
     if (!typed) k->return_type = T_ERR;
     // A Mesh's vertex has to be one a file can fill: with one that isn't, the name still reads as its type, and
     // nothing is packed for it
-    const bool fills = !typed || kind != ASSET_MESH
+    const bool fills = !typed || (kind != ASSET_MESH && kind != ASSET_SKINNED)
                     || mesh_vertex_ok(asset_mesh_vertex(k->return_type), k->return_type_qual_at.line ? k->return_type_qual_at : k->return_type_at);
     k->asset_kind = kind;
     k->asset_many = many;
@@ -11290,7 +11485,10 @@ static void check_asset_decl(checker *c, decl *k)
         diag_note("the dependency tree is static: the compiler reads every file an asset names as the game is built");
     }
     if (typed && fills && path) {
-        k->asset = asset_resolve(k->unit->src->path, path->text, kind, many, is_map, path->at, c->prog->game_folder);
+        if (!c->prog->asset_metadata_only || kind != ASSET_SKINNED) {
+            k->asset = asset_resolve(k->unit->src->path, path->text, kind, many, is_map, path->at, c->prog->game_folder);
+        }
+        if (kind == ASSET_SKINNED) skinned_asset_catalogs(c, k, path);
     }
     k->index = 2;
     vec_push(c->prog->assets, k);
@@ -11487,6 +11685,15 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
     for (int i = 0; i < f->attributes.count; i++) has_snap |= str_eq_c(f->attributes.items[i].name, "Snap");
     for (int i = 0; i < f->attributes.count; i++) {
         attribute *a = &f->attributes.items[i];
+        if (str_eq_c(a->name, "Name")) {
+            if (d->kind != DECL_STRUCT || f->type.kind != TY_STRUCT
+                || (f->type.decl->skin_kind != SKIN_ANIMATION && f->type.decl->skin_kind != SKIN_BONE)) {
+                diag_error(a->at, "[Name] names an Animation or Bone field of a model contract");
+            } else if (a->args.count || a->values.count != 1 || !text_literal(a->values.items[0])) {
+                diag_error(a->at, "Name takes the exported name in quotes: [Name(\"Idle\")]");
+            }
+            continue;
+        }
         const bool clamp = str_eq_c(a->name, "Clamp");
         const bool min = str_eq_c(a->name, "Min");
         const bool max = str_eq_c(a->name, "Max");
@@ -13878,6 +14085,7 @@ static bool call_acts(const expr *e)
     case CALL_CLIPBOARD: case CALL_AUDIO: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM: case CALL_ROLL:
         return true;
     case CALL_DRAW: return e->type.kind == TY_VOID; // Draw.MeasureText and the conversions only give a value
+    case CALL_SKINNED: return e->skin_operation == SKIN_OP_POSE_SAMPLE || e->skin_operation == SKIN_OP_POSE_BLEND;
     case CALL_LIST: return !str_eq_c(e->name, "Contains") && !str_eq_c(e->name, "IndexOf");
     case CALL_MAP: return !str_eq_c(e->name, "Has") && !str_eq_c(e->name, "Get");
     case CALL_WORLD: return str_eq_c(e->name, "Set") || str_eq_c(e->name, "TryGet");
@@ -13886,6 +14094,7 @@ static bool call_acts(const expr *e)
         const decl *m = e->method;
         if (!m) return false;
         if (m->is_extern || m->calls_c || m->draws || m->rolls || m->is_async || m->is_mut_method || m->takes_action) return true;
+        if (m->acts[0] || m->acts[1]) return true; // It sends, spawns or changes entities, as its caller would
         for (int i = 0; i < m->params.count; i++) {
             if (m->params.items[i].mode == PARAM_MUT) return true; // It changes the caller's variable
         }
@@ -16289,11 +16498,14 @@ static void check_audio_bodies(const checker *c)
     for (int i = 0; i < c->prog->decls.count; i++) {
         const decl *d = c->prog->decls.items[i];
         if (d->kind != DECL_FUNCTION || !d->is_audio) continue;
+        const bool acts = d->acts[0] || d->acts[1];
         const char *what = d->draws ? "draw or use the GUI" : d->plays ? "play sounds" : d->uses_io ? "reach files or the network"
                          : d->frame_time ? "read Frame.dt" : (d->world_local || d->world_match) ? "reach the world"
+                         : acts ? "send events, spawn or change entities"
                          : d->calls_c ? "call C" : d->is_async ? "be a task" : d->makes_text ? "make text, lists, maps, sets or read grids" : NULL;
         if (!what) continue;
         const loc at = d->draws ? d->draws_at : d->plays ? d->plays_at : d->uses_io ? d->io_at : d->frame_time ? d->frame_time_at
+                     : acts && !d->world_local && !d->world_match ? d->acts_at[d->acts[0] ? 0 : 1]
                      : d->makes_text ? d->makes_text_at : d->at;
         diag_error(at, "'" STR_FMT "' runs on the audio thread, so it can't %s", STR_ARG(d->name), what);
         diag_note("an audio declaration reads and writes its block, its state and its knobs, and calls functions that do no more");
@@ -16540,6 +16752,116 @@ static void check_local_field_calls(const checker *c)
                 arg->param->local_written |= q->local_written;
             }
         }
+    }
+}
+
+// A function or method that sends, spawns or changes entities does it as the
+// code that calls it would (inherits), and so does one that calls it, through
+// however many of them: what a function does is what the ones it calls do too.
+// Once every function's and method's body is checked.
+static void mark_act_callers(const checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            decl *from = site->from;
+            const decl *to = site->to;
+            if (!passes_acts(from)) continue;
+            for (int w = 0; w < 2; w++) {
+                if (to->acts[w] && !from->acts[w]) {
+                    from->acts[w] = true;
+                    from->acts_at[w] = site->call->at;
+                    from->acts_what[w] = to->acts_what[w];
+                    changed = true;
+                }
+                if (to->acts_spawn[w] && !from->acts_spawn[w]) from->acts_spawn[w] = changed = true;
+            }
+            if (to->acts_text && !from->acts_text) from->acts_text = changed = true;
+        }
+    }
+}
+
+// Nothing is wrong with a function that sends, spawns or changes entities:
+// what's checked is each call of one from code that has abilities of its own,
+// a system, a view, a handler, a task, the input's code or the GPU's, and those
+// in a parallel loop's step or a comparison. A function's own callers answer
+// for it. A system that calls one hands out entity IDs when it spawns, and
+// changes its world's heap when what it records holds text, as if the Spawn or
+// the Send were written in the system.
+static void check_acts(checker *c)
+{
+    bool any = false;
+    for (int i = 0; i < c->calls.count && !any; i++) any = c->calls.items[i].to->acts[0] || c->calls.items[i].to->acts[1];
+    if (!any) return;
+    mark_act_callers(c);
+    for (int i = 0; i < c->calls.count; i++) {
+        const call_site *site = &c->calls.items[i];
+        decl *from = site->from;
+        const decl *to = site->to;
+        if (!to->acts[0] && !to->acts[1]) continue;
+        const int w = to->acts[0] ? 0 : 1; // What the messages name: the match's first
+        const loc at = site->call->at;
+        const loc where = to->acts_at[w];
+        const char *what = to->acts_what[w];
+        if (site->parallel) {
+            diag_error(at, "a parallel loop's steps run at once, and '" STR_FMT "' %s", STR_ARG(to->name), what);
+            diag_note_at(where, "it does on line %d", where.line);
+            diag_note("call it before or after the loop, or in a 'for' loop, which goes in order");
+            continue;
+        }
+        if (site->comparing) {
+            diag_error(at, "a comparison runs again and again as the list sorts, in an order nothing promises, and '" STR_FMT "' %s",
+                       STR_ARG(to->name), what);
+            diag_note_at(where, "it does on line %d", where.line);
+            diag_note("a comparison only compares its two elements: call it before the sort, or after");
+            continue;
+        }
+        if (from->kind == DECL_FUNCTION && from->is_async) { // Its world is what it does, and this is part of it
+            for (int k = 0; k < 2; k++) {
+                if (to->acts[k]) note_side(from, k ? TASK_LOCAL : TASK_MATCH, at);
+            }
+            continue;
+        }
+        if (passes_acts(from)) continue; // Its own callers answer for it
+        if (from->kind == DECL_METHOD) {
+            diag_error(at, "%s, so it can't call '" STR_FMT "', which %s",
+                       from->is_interpolate ? "Interpolate blends a value between ticks, for views"
+                                            : "an operator works a value out of its operands", STR_ARG(to->name), what);
+            diag_note_at(where, "it does on line %d", where.line);
+            continue;
+        }
+        if (from->kind == DECL_INPUT) {
+            diag_error(at, "%s runs outside the simulation, and '" STR_FMT "' %s", site->sanitizing ? "Sanitize" : "Sample",
+                       STR_ARG(to->name), what);
+            diag_note_at(where, "it does on line %d", where.line);
+            continue;
+        }
+        if (from->kind == DECL_SHADER) {
+            diag_error(at, "the GPU runs a %s, and '" STR_FMT "' %s, which only code in a world does", shader_word(from),
+                       STR_ARG(to->name), what);
+            diag_note_at(where, "it does on line %d", where.line);
+            continue;
+        }
+        if (from->kind != DECL_SYSTEM) continue;
+        const bool local = is_local_code(from);
+        if (to->acts[0] && local) {
+            diag_error(at, "%s can't change the match, and '" STR_FMT "' %s", local_code_what(from), STR_ARG(to->name), to->acts_what[0]);
+            diag_note_at(to->acts_at[0], "it does on line %d", to->acts_at[0].line);
+            diag_note("put what it wants in the input, or send a command, and change the match in a system or a handler");
+            continue;
+        }
+        if (to->acts[1] && !local) {
+            const bool command = strncmp(to->acts_what[1], "sends the command", 17) == 0;
+            diag_error(at, "'" STR_FMT "' %s, and %s", STR_ARG(to->name), to->acts_what[1],
+                       command ? "commands are sent from views and local handlers to the match" : "the match can't use local state");
+            diag_note_at(to->acts_at[1], "it does on line %d", to->acts_at[1].line);
+            if (command) diag_note("match systems and handlers send events; a command carries a player's untrusted request");
+            else diag_note("local state belongs to one machine, and the match runs the same on every one");
+            continue;
+        }
+        from->spawns |= to->acts_spawn[0] || to->acts_spawn[1];
+        from->writes_text |= to->acts_text;
     }
 }
 
@@ -17375,6 +17697,12 @@ bool check(program *prog)
         c.unit = prog->local_parts.items[i]->unit;
         resolve_field_types(&c, prog->local_parts.items[i]);
     }
+    // Field references can instantiate a model before a later contract's
+    // fields resolve. Build their checked catalogs once all field types exist.
+    for (int i = 0; i < prog->skinned_types.count; i++) {
+        decl *mesh = prog->skinned_types.items[i];
+        if (mesh->skin_kind == SKIN_MESH) skinned_contract_catalogs(prog, mesh, mesh->at);
+    }
     int residents = 0;
     for (int i = 0; i < prog->singletons.count; i++) {
         const decl *d = prog->singletons.items[i];
@@ -17468,6 +17796,7 @@ bool check(program *prog)
     // filesystem effects must already exclude automatic foreach threading.
     mark_io_callers(&c);
     mark_roll_callers(&c);
+    mark_act_callers(&c); // A foreach over a grid goes in order when a function its step calls sends or spawns
 
     // Overrides of systems, views and handlers take their places before any of
     // their bodies is checked, which needs every one's parameters first. A game
@@ -17510,6 +17839,7 @@ bool check(program *prog)
     drop_unused_seed(prog);
     if (prog->random->named) order_struct(prog, prog->random);
     check_sends(&c);
+    check_acts(&c);
     check_render_resource_calls(&c);
     check_io_calls(&c);
     check_frame_time_calls(&c);

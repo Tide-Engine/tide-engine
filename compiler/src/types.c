@@ -50,6 +50,9 @@ static const generic_form generic_forms[] = {
     {"Grid2", 1, {GENERIC_CELL}, {"the grid's cell type, like 'Grid2<int>'"}, NULL, "'>' after the grid's cell type"},
     {"Grid3", 1, {GENERIC_CELL}, {"the grid's cell type, like 'Grid2<int>'"}, NULL, "'>' after the grid's cell type"},
     {"Mesh", 1, {GENERIC_VERTEX}, {"the mesh's vertex type, like 'Mesh<Vertex3>'"}, NULL, "'>' after the mesh's vertex type"},
+    {"SkinnedMesh", 2, {GENERIC_VERTEX, GENERIC_ELEMENT},
+     {"the mesh's vertex type, like 'SkinnedMesh<Vertex3>'", "an optional animation and bone contract struct"},
+     "',' before the contract type", "'>' after the skinned mesh's types"},
 };
 
 const generic_form generic_optional = {"?", 1, {GENERIC_VALUE}, {"the type a T? holds"}, NULL, NULL};
@@ -249,10 +252,39 @@ bool type_is_texture_grid(const type t)
     return cell == TY_COLOR || cell == TY_FLOAT;
 }
 
+static bool skin_catalog_guarantees(const decl *wanted, const decl *known)
+{
+    if (known->skin_metadata_status != 1) return false;
+    for (int i = 0; i < wanted->skin_catalog.count; i++) {
+        const skinned_member *member = &wanted->skin_catalog.items[i];
+        int matches = 0;
+        for (int j = 0; j < known->skin_sources.count; j++) {
+            const str source = known->skin_sources.items[j];
+            bool equal = source.len == member->source_name.len;
+            for (int k = 0; equal && k < source.len; k++) {
+                char ch = source.ptr[k];
+                if (!member->explicit_name && k == 0 && ch >= 'A' && ch <= 'Z') ch += 'a' - 'A';
+                equal = ch == member->source_name.ptr[k];
+            }
+            matches += equal;
+        }
+        if (matches != 1) return false;
+    }
+    return true;
+}
+
 bool type_assignable(const type to, const type from)
 {
     if (to.kind == TY_ERROR || from.kind == TY_ERROR) return true;
     if (to.kind == from.kind && to.decl == from.decl) return true;
+    if (to.kind == TY_STRUCT && from.kind == TY_STRUCT && to.decl->skin_kind == SKIN_MESH
+        && from.decl->skin_kind == SKIN_MESH) {
+        if (to.decl->skin_vertex.decl != from.decl->skin_vertex.decl) return false;
+        if (!to.decl->skin_contract || to.decl->skin_contract == from.decl->skin_contract) return true;
+        return from.decl->skin_inferred
+            && skin_catalog_guarantees(to.decl->skin_animations, from.decl->skin_animations)
+            && skin_catalog_guarantees(to.decl->skin_skeleton->skin_bones, from.decl->skin_skeleton->skin_bones);
+    }
     // A value goes where a T? goes: int? best = 5.
     if (to.kind == TY_OPTIONAL && from.kind != TY_OPTIONAL && from.kind != TY_FAILABLE) {
         return type_assignable(to.decl->fields.items[0].type, from);
