@@ -65,12 +65,6 @@ void PutVolcano(mut Scenery scenery, float3 at, float scale)
     // A narrow exposed flow, away from any walkable terrain.
     PutTube(scenery.mesh, scenery.faces, Ink(Color.white, LAVA, 0), at + float3(-0.08, 2.6, -0.64) * scale,
             at + float3(-0.14, 0.1, -2.72) * scale, 0.045 * scale, 0.11 * scale, 4);
-    for (var i = 0; i < 5; i++)
-    {
-        PutBlob(scenery.mesh, scenery.faces, Ink(Color(0.37 + i * 0.018, 0.34 + i * 0.018, 0.39 + i * 0.018), PLAIN, 0),
-                at + float3(i * 0.3, 3.15 + i * 0.3, i * 0.07) * scale,
-                float3(0.26 + i * 0.085, 0.31, 0.24 + i * 0.055) * scale, i * 3.2, 0.15, true, 3, 5);
-    }
 }
 
 void PutCoastScenery(mut Scenery scenery, float3 at, float scale)
@@ -127,18 +121,8 @@ void PutMountainScenery(mut Scenery scenery, float3 at, float scale)
     PutPine(scenery, at + float3(1.2, 0, -0.7) * scale, scale * 0.6);
 }
 
-void DressRegion(mut Scenery scenery, int2 size, int region, int level)
+void DressRegion(mut Scenery scenery, int2 size, int region)
 {
-    if (level == -2)
-    {
-        // The map's geography follows its camps: coast southwest,
-        // countryside northwest, mountains northeast, volcano southeast.
-        PutCoastScenery(scenery, float3(-size.x * 0.5 - 2, SEA, -1.8), 0.8);
-        PutCountryScenery(scenery, float3(-size.x * 0.5 - 2, SEA, 2.8), 0.9);
-        PutMountainScenery(scenery, float3(size.x * 0.5 + 2.7, SEA, 3), 0.9);
-        PutVolcano(scenery, float3(size.x * 0.5 + 3.8, SEA, -2.4), 0.75);
-        return;
-    }
     var behind = size.y * 0.5 + 3.3;
     if (region == 0)
     {
@@ -166,22 +150,58 @@ void DressRegion(mut Scenery scenery, int2 size, int region, int level)
     }
 }
 
-void PutCampMarker(mut Scenery scenery, float3 at)
+void PutCampSocket(mut Scenery scenery, float3 at, int region)
 {
-    // An inset brass plaque is a destination, never an apparent obstacle.
-    var edge = Ink(Color(0.79, 0.61, 0.28), PLAIN, 0.15);
-    var middle = at + float3(0, 0.009, 0);
-    PutBox(scenery.mesh, scenery.faces, edge, middle + float3(0, 0, -0.34), float3(0.7, 0.012, 0.055));
-    PutBox(scenery.mesh, scenery.faces, edge, middle + float3(0, 0, 0.34), float3(0.7, 0.012, 0.055));
-    PutBox(scenery.mesh, scenery.faces, edge, middle + float3(-0.34, 0, 0), float3(0.055, 0.012, 0.7));
-    PutBox(scenery.mesh, scenery.faces, edge, middle + float3(0.34, 0, 0), float3(0.055, 0.012, 0.7));
-    PutBox(scenery.mesh, scenery.faces, Ink(Color(0.31, 0.26, 0.18), PLAIN, 0), middle,
-            float3(0.32, 0.015, 0.32));
+    // A shallow cooking pan lets the selector meatball roll into its socket.
+    // The low carved rim belongs to the floor, rather than a blocking prop.
+    List<float2> rim = [float2(0.42, -0.012), float2(0.44, 0.02), float2(0.39, 0.055),
+                        float2(0.34, 0.035), float2(0.33, 0.008)];
+    PutLathe(scenery.mesh, scenery.faces, Ink(RegionStone(region), IRON, 0.15), at, rim, float2(1), 8);
+    PutTube(scenery.mesh, scenery.faces, Ink(Color(0.1, 0.1, 0.12), IRON, 0), at,
+            at + float3(0, 0.007, 0), 0.335, 0.335, 8);
+    var bars = Ink(Color(0.3, 0.31, 0.32), IRON, 0.5);
+    for (var i = -1; i <= 1; i++)
+    {
+        PutBox(scenery.mesh, scenery.faces, bars, at + float3(0, 0.013, i * 0.13), float3(0.52, 0.022, 0.035));
+    }
+}
+
+void PutTravelArch(mut Scenery scenery, float3 at, int region, bool onward, bool closed)
+{
+    // The poles stand on the tile rims, with the beam above a chef's hat.
+    // Opening the real map gate removes its slats, leaving a clear doorway.
+    var frame = Ink(region >= 2 ? RegionStone(region) : Color(0.53, 0.39, 0.25), region == 2 ? STONE : region == 3 ? IRON : WOOD, 0.1);
+    for (var side = -1; side <= 1; side += 2)
+    {
+        PutBox(scenery.mesh, scenery.faces, frame, at + float3(side * 0.455, 0.74, 0), float3(0.07, 1.48, 0.09));
+    }
+    PutBox(scenery.mesh, scenery.faces, frame, at + float3(0, 1.54, 0), float3(1.01, 0.1, 0.12));
+    var paint = Ink(region == 3 ? Color(0.95, 0.68, 0.37) : Color(0.85, 0.85, 0.68), PLAIN, 0);
+    var direction = onward ? 1.0 : -1.0;
+    var mark = at + float3(0, 0.007, -0.3);
+    PutTriangle(scenery.mesh, scenery.faces, paint, mark + float3(direction * 0.22, 0, 0),
+                mark + float3(-direction * 0.15, 0, 0.14), mark + float3(-direction * 0.15, 0, -0.14), float3(0, 1, 0), float2(0), float2(0), float2(0));
+    // A small painted arrow under the lintel is visible from a distance.
+    var sign = at + float3(0, 1.53, -0.065);
+    PutTriangle(scenery.mesh, scenery.faces, paint, sign + float3(direction * 0.22, 0, 0),
+                sign + float3(-direction * 0.12, 0.07, 0), sign + float3(-direction * 0.12, -0.07, 0),
+                float3(0, 0, -1), float2(0), float2(0), float2(0));
+    if (!closed) return;
+    var bars = Ink(region == 3 ? Color(0.39, 0.32, 0.27) : Color(0.38, 0.31, 0.23), region >= 2 ? IRON : WOOD, 0.2);
+    for (var i = -2; i <= 2; i++)
+    {
+        PutBox(scenery.mesh, scenery.faces, bars, at + float3(i * 0.16, 0.58, 0), float3(0.09, 1.04, 0.07));
+    }
+    for (var i = 0; i < 2; i++)
+    {
+        PutBox(scenery.mesh, scenery.faces, frame, at + float3(0, 0.28 + i * 0.61, -0.055), float3(0.79, 0.065, 0.055));
+    }
 }
 
 local singleton Weather
 {
     List<Mote> flakes;
+    List<Mote> plumes;
 }
 
 // A little falling snow or rising ash belongs to the landscape, rather
@@ -190,7 +210,8 @@ local singleton Weather
 view Weatherfall(Kitchen kitchen, Room room, Models models, Lens lens, mut Weather weather)
 {
     weather.flakes.Clear();
-    if (kitchen.travelling || !kitchen.laid || room.region < 2) return;
+    weather.plumes.Clear();
+    if (!kitchen.laid || room.region < 2) return;
     var size = kitchen.board.size;
     var snow = room.region == 2;
     for (var i = 0; i < 28; i++)
@@ -203,8 +224,38 @@ view Weatherfall(Kitchen kitchen, Room room, Models models, Lens lens, mut Weath
         var tint = snow ? Color(0.76, 0.84, 0.89) : Color(0.49, 0.4, 0.43);
         weather.flakes.Add(Mote { transform = float4x4.TRS(float3(x, y, z), quaternion.identity, float3(scale)), tint = tint });
     }
+    if (!snow)
+    {
+        // Heat escapes from a handful of vents beyond the puzzle, and from
+        // the distant crater. Slow dithered wisps never veil a playable tile.
+        for (var vent = 0; vent < 3; vent++)
+        {
+            var source = vent == 2 ? float3(size.x * 0.5 + 2.4, 1.18, 0.75)
+                                   : float3((vent == 0 ? -1.0 : 1.0) * (size.x * 0.5 + 0.9), SEA, -0.4 + vent * 1.6);
+            for (var puff = 0; puff < 5; puff++)
+            {
+                var rise = Math.Frac(puff * 0.2 + room.time * 0.075 + vent * 0.23);
+                var x = Math.Sin(rise * 3.2 + vent * 2.3) * 0.16 + rise * 0.5;
+                var at = source + float3(x, rise * 1.7, rise * 0.14);
+                var scale = 0.14 + rise * 0.34;
+                weather.plumes.Add(Mote { transform = float4x4.TRS(at, quaternion.identity, float3(scale, scale * 1.35, scale)),
+                                          tint = Color(0.49, 0.36, 0.33, (1 - rise) * (vent == 2 ? 0.22 : 0.11)) });
+            }
+        }
+        for (var spark = 0; spark < 12; spark++)
+        {
+            var rise = Math.Frac(spark * 0.618 + room.time * 0.11);
+            var side = spark % 2 == 0 ? -1.0 : 1.0;
+            var x = side * (size.x * 0.5 + 0.55 + Math.Frac(spark * 0.417) * 1.5);
+            var z = (Math.Frac(spark * 0.713) - 0.5) * (size.y + 2);
+            var at = float3(x + rise * 0.2, SEA + rise * 0.8, z);
+            weather.flakes.Add(Mote { transform = float4x4.TRS(at, quaternion.identity, float3(0.026)),
+                                      tint = Color(0.83, 0.26 + (1 - rise) * 0.18, 0.07) });
+        }
+    }
     lens.scene.Depth(Depth.Read)
     {
         lens.scene.Instanced(models.cube, models.cubeFaces, weather.flakes, Snap, MoteLook);
+        lens.scene.Instanced(models.ball, models.ballFaces, weather.plumes, PuffLook);
     }
 }

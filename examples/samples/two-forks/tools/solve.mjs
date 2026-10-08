@@ -61,7 +61,7 @@ export function step(L, S, who, dir) {
     const ox = S.c[p], oy = S.c[p + 1], of = S.c[p + 2];
     const fx = ox + DX[of], fy = oy + DY[of];
     const other = (cx, cy) => (cx === ox && cy === oy) || (cx === fx && cy === fy);
-    const walk = (cx, cy) => { const t = tileAt(L, cx, cy); return t === '.' || t === 'o'; };
+    const walk = (cx, cy) => { const t = tileAt(L, cx, cy); return t === '.' || t === 'o' || t === 'i'; };
     const rock = (cx, cy) => tileAt(L, cx, cy) === '^';
     let nx = x, ny = y, nf = f;
     const pushes = [];
@@ -85,6 +85,7 @@ export function step(L, S, who, dir) {
     const s = S.s.slice();
     const n = s.length / SS;
     const moved = new Array(n).fill(false);
+    let pushed = new Set();
     const vert = i => L.sausages[i].v;
     const at = (cx, cy) => {
         for (let i = 0; i < n; i++) {
@@ -110,15 +111,52 @@ export function step(L, S, who, dir) {
         const along = vert(i) ? (d === 0 || d === 2) : (d === 1 || d === 3);
         if (!along) s[i * SS + 2] ^= 1;
         moved[i] = true;
+        pushed.add(i);
         return true;
+    };
+    const glide = d => {
+        for (let distance = 0; distance < L.w + L.h; distance++) {
+            const sliding = new Set([...pushed].filter(i => {
+                const sx = s[i * SS], sy = s[i * SS + 1];
+                return tileAt(L, sx, sy) === 'i' && tileAt(L, sx + (vert(i) ? 0 : 1), sy + (vert(i) ? 1 : 0)) === 'i';
+            }));
+            if (!sliding.size) return;
+            let before = -1;
+            while (before !== sliding.size) {
+                before = sliding.size;
+                for (const i of [...sliding]) {
+                    const sx = s[i * SS] + DX[d], sy = s[i * SS + 1] + DY[d];
+                    const cells = [[sx, sy], [sx + (vert(i) ? 0 : 1), sy + (vert(i) ? 1 : 0)]];
+                    for (const [cx, cy] of cells) {
+                        if (rock(cx, cy) || other(cx, cy)) sliding.delete(i);
+                        for (let j = 0; j < n; j++) {
+                            if (i === j || sliding.has(j)) continue;
+                            const xj = s[j * SS], yj = s[j * SS + 1];
+                            if ((xj === cx && yj === cy) || (xj + (vert(j) ? 0 : 1) === cx && yj + (vert(j) ? 1 : 0) === cy)) sliding.delete(i);
+                        }
+                    }
+                }
+            }
+            if (!sliding.size) return;
+            for (const i of sliding) {
+                s[i * SS] += DX[d]; s[i * SS + 1] += DY[d];
+                if (vert(i) !== (d === 0 || d === 2 ? 1 : 0)) s[i * SS + 2] ^= 1;
+            }
+        }
     };
     for (const [cx, cy, d] of pushes) {
         const i = at(cx, cy);
-        if (i >= 0 && !shove(i, d, 0)) return null;
+        pushed = new Set();
+        if (i >= 0) {
+            if (!shove(i, d, 0)) return null;
+            glide(d);
+        }
     }
     const pedal = (cx, cy) => tileAt(L, cx, cy) === 'o';
     const gasBefore = !(pedal(x, y) || pedal(ox, oy));
     const gasAfter = !(pedal(nx, ny) || pedal(ox, oy));
+    const bellowsBefore = pedal(x, y) && pedal(ox, oy);
+    const bellowsAfter = pedal(nx, ny) && pedal(ox, oy);
     let dead = false;
     for (let i = 0; i < n; i++) {
         const sx = s[i * SS], sy = s[i * SS + 1];
@@ -127,7 +165,8 @@ export function step(L, S, who, dir) {
         if (moved[i] && tileAt(L, sx, sy) === '~' && tileAt(L, bx, by) === '~') dead = true;
         for (let h = 0; h < 2; h++) {
             const t = tileAt(L, cells[h][0], cells[h][1]);
-            const hot = (t === '#' && moved[i]) || (t === '=' && gasAfter && (moved[i] || !gasBefore));
+            const hot = (t === '#' && moved[i]) || (t === '=' && gasAfter && (moved[i] || !gasBefore))
+                || (t === '+' && bellowsAfter && (moved[i] || !bellowsBefore));
             if (!hot) continue;
             const k = i * SS + 3 + h * 2 + s[i * SS + 2];
             s[k] += 1;
@@ -296,9 +335,9 @@ export function report(name, text) {
     const a = search(L, [0]);
     const b = search(L, [1]);
     const line = [`${name}:`];
-    line.push(both.moves ? `two chefs ${both.moves.length} moves (${both.states} states)` : `NO WAY for two (${both.states} states${both.gaveUp ? ', gave up' : ''})`);
-    line.push(a.moves ? `chef 1 ALONE in ${a.moves.length}` : `chef 1 alone: no (${a.states})`);
-    line.push(b.moves ? `chef 2 ALONE in ${b.moves.length}` : `chef 2 alone: no (${b.states})`);
+    line.push(both.moves ? `two chefs ${both.moves.length} moves (${both.states} states)` : `${both.gaveUp ? 'UNKNOWN for two: search limit' : 'NO WAY for two'} (${both.states} states)`);
+    line.push(a.moves ? `chef 1 ALONE in ${a.moves.length}` : `chef 1 alone: ${a.gaveUp ? 'unknown, search limit' : 'no'} (${a.states})`);
+    line.push(b.moves ? `chef 2 ALONE in ${b.moves.length}` : `chef 2 alone: ${b.gaveUp ? 'unknown, search limit' : 'no'} (${b.states})`);
     if (both.moves) line.push(`handoffs ${handoffs(L)}`);
     console.log(line.join('  |  '));
     if (both.moves) console.log('   ' + both.moves.join(' '));
