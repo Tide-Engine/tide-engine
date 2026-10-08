@@ -8289,6 +8289,71 @@ TIDE_TEST(lsp_asset_rename_rewrites_paths)
     lsp_free(&server);
 }
 
+// A batch rename keeps every named file's path, including the ones past the
+// server's old limit of 64 files in one request.
+TIDE_TEST(lsp_asset_rename_large_batch)
+{
+    if (!find_game_dir()) return;
+    enum { FILES = 70 };
+    make_folder("lsp_batch");
+    make_folder("lsp_batch/before");
+    make_folder("lsp_batch/after");
+    jbuf source = {0};
+    for (int i = 0; i < FILES; i++) {
+        char file[128];
+        snprintf(file, sizeof file, "lsp_batch/before/file%d.bin", i);
+        write_bytes(file, "data", 4);
+        jb_printf(&source, "asset List<byte> file%d = \"before/file%d.bin\";\n", i, i);
+    }
+    jb_put(&source, "scene Main { }\n");
+    write_file("lsp_batch/main.tide", source.data);
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    char root[700], uri_main[700];
+    snprintf(root, sizeof root, "file:///%s/lsp_batch", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_batch/main.tide", dir);
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    open_uri(uri_main, source.data);
+    const char *diagnostics = sent_with(uri_main);
+    TIDE_REQUIRE(diagnostics != NULL);
+    TIDE_CHECK(has(diagnostics, "\"diagnostics\":[]"));
+
+    jbuf request = {0};
+    jb_put(&request, "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"workspace/willRenameFiles\",\"params\":{\"files\":[");
+    for (int i = 0; i < FILES; i++) {
+        if (i) jb_put(&request, ",");
+        jb_printf(&request, "{\"oldUri\":\"file:///%s/lsp_batch/before/file%d.bin\","
+                            "\"newUri\":\"file:///%s/lsp_batch/after/file%d.bin\"}", dir, i, dir, i);
+    }
+    jb_put(&request, "]}}");
+    clear_sent();
+    handle(request.data);
+    TIDE_CHECK(count(last_sent(), "\"newText\"") == FILES);
+    const char *edited = apply_reply(source.data, uri_main);
+    for (int i = 0; i < FILES; i++) {
+        char expected[128];
+        snprintf(expected, sizeof expected, "asset List<byte> file%d = \"after/file%d.bin\";", i, i);
+        TIDE_CHECK(has(edited, expected));
+    }
+    TIDE_CHECK(!has(edited, "before/"));
+
+    for (int i = 0; i < FILES; i++) {
+        char file[128];
+        snprintf(file, sizeof file, "lsp_batch/before/file%d.bin", i);
+        remove_game_file(file);
+    }
+    remove_game_file("lsp_batch/main.tide");
+    remove_game_file("lsp_batch/.tide/assets.sha256");
+    remove_game_file("lsp_batch/.tide/.gitignore");
+    remove_folder("lsp_batch/.tide");
+    remove_folder("lsp_batch/before");
+    remove_folder("lsp_batch/after");
+    remove_folder("lsp_batch");
+    jb_free(&source);
+    jb_free(&request);
+    clear_sent();
+    lsp_free(&server);
+}
+
 // The hashes of the named files go in the game's .tide/ when it's checked. A
 // file that's gone from its path is found again by its bytes, with a fix that
 // writes where it is; one nothing has the bytes of lists the files of its
