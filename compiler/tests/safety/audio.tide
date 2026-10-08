@@ -3,9 +3,10 @@
 //
 // An audio declaration's state is its voice's own bytes in the mixer, and its
 // knobs the bytes an Effect carries: the biggest of each there can be, which
-// its code writes from end to end and indexes anywhere. The host runs what
-// each frame plays as the mixer would, with each state and each copy of the
-// knobs between bytes that have to stay as they were.
+// its code writes from end to end and indexes anywhere, and code that rolls,
+// whose generator is in the last of those bytes. The host runs what each frame
+// plays as the mixer would, with each block and each state between bytes that
+// have to stay as they were.
 
 struct Tail
 {
@@ -71,12 +72,39 @@ audio Mute(mut Samples samples)
     for (var i = -8; i < samples.values.count + 8; i++) samples.values[i] = 0;
 }
 
+struct Grain
+{
+    float[1022] taps; // 4088 bytes: all there is beside what the code rolls with, a voice's last 8
+}
+
+// Code that rolls, itself and through a function, with the biggest state it
+// can have: its generator is kept right after it
+audio Hiss(mut Samples samples, mut Grain grain)
+{
+    for (var i = 0; i < grain.taps.count; i++) grain.taps[i] = Random.NextFloat(-1, 1);
+    grain.taps[Random.NextInt(1 << 30)] = Rolled();
+    grain.taps[grain.taps.count] = Rolled();
+    samples.values[Random.NextInt(1024)] = grain.taps[1021];
+}
+
+float Rolled()
+{
+    return Random.NextFloat();
+}
+
+// ...and with none of its own
+audio Static(mut Samples samples)
+{
+    for (var i = 0; i < samples.values.count; i++) samples.values[i] = Random.NextFloat(-1, 1);
+}
+
 [Bus]
 enum Bus
 {
     Master,
     Music,
     Effects,
+    Wind,
 }
 
 local singleton Mix
@@ -85,6 +113,8 @@ local singleton Mix
     Sound second;
     Sound bank;
     Sound mute;
+    Sound hiss;
+    Sound noise;
     int frames;
 }
 
@@ -107,7 +137,12 @@ view Play(mut Mix mix)
     mix.bank.effect = mix.frames % 7 < 4 ? Taps() : Mute(); // Other code on the same voice: its state starts over
     mix.mute.playing = true;
     mix.mute.effect = Mute();
+    mix.hiss.playing = mix.frames % 3 != 0; // Its generator starts over with its state
+    mix.hiss.effect = Hiss();
+    mix.noise.playing = true;
+    mix.noise.effect = mix.frames % 4 < 2 ? Static() : Hiss();
     reach.by = 2147483647;
     Audio.SetEffect(Bus.Music, Echo(reach));
     Audio.SetEffect(Bus.Effects, Taps());
+    Audio.SetEffect(Bus.Wind, Hiss());
 }

@@ -162,7 +162,7 @@ Both have a size. The mixer keeps 4,096 bytes of state for each voice and each b
 error: an audio declaration's state is 4096 bytes at the most, and 'Tail' is 16388
 ```
 
-Make the struct smaller: a shorter array, or fewer fields.
+Make the struct smaller: a shorter array, or fewer fields. Code that rolls keeps what it rolls with in the last 8 of a voice's bytes, so its state is 4,088 at the most.
 
 ## Hearing a run with no window
 
