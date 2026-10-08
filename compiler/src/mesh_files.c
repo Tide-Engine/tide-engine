@@ -6,6 +6,8 @@
 
 #include "mesh_files.h"
 
+#include "assets.h"
+
 #include <float.h>
 #include <math.h>
 #include <stdarg.h>
@@ -1516,7 +1518,16 @@ static bool read_obj(reader *r, builder *b, const char *text, const size_t lengt
 
 static bool ends_with(const char *name, const char *extension)
 {
-    const size_t n = strlen(name), e = strlen(extension);
+    size_t n = strlen(name);
+    if (asset_path_is_url(name, n)) {
+        // Only the URL's path names its format. Its query and fragment still
+        // belong to the complete URL used for fetching, caching and map keys.
+        const char *authority = strstr(name, "://") + 3;
+        const char *path = authority + strcspn(authority, "/?#");
+        if (*path != '/') return false;
+        n = (size_t)(path - name) + strcspn(path, "?#");
+    }
+    const size_t e = strlen(extension);
     if (n < e) return false;
     for (size_t i = 0; i < e; i++) {
         const char c = name[n - e + i];

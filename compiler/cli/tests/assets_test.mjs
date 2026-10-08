@@ -8,6 +8,7 @@
 //   node compiler/cli/tests/assets_test.mjs --tidec <tidec> --work <folder>
 
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -34,7 +35,27 @@ writeFileSync(join(opts.work, "game", "rules.txt"), "Be kind.\n");
 // A server that counts, says an ETag, and answers 304 to a matching If-None-Match
 let requests = [];
 let body = "Credits: everyone.\n";
+const models = new Map([
+    ["/triangle.obj", Buffer.from("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n")],
+    ["/triangle.gltf", readFileSync(new URL("../../tests/e2e/assets/meshes/inline.gltf", import.meta.url))],
+    ["/triangle.glb", readFileSync(new URL("../../tests/e2e/assets/meshes/quad.glb", import.meta.url))],
+]);
+const modelRequests = [];
 const server = createServer((request, response) => {
+    const pathname = new URL(request.url, "http://localhost").pathname;
+    const model = models.get(pathname);
+    if (model) {
+        const tag = `"${pathname}"`;
+        modelRequests.push({ url: request.url, tag: request.headers["if-none-match"] || "" });
+        if (request.headers["if-none-match"] === tag) {
+            response.writeHead(304, { ETag: tag });
+            response.end();
+        } else {
+            response.writeHead(200, { ETag: tag, "Content-Type": "application/octet-stream" });
+            response.end(model);
+        }
+        return;
+    }
     requests.push(request.headers["if-none-match"] || "");
     if (request.url !== "/credits.txt") {
         response.writeHead(404);
@@ -122,8 +143,43 @@ try {
     check(requests.length === 3, "the third build asks again");
     check(readFileSync(join(r.out, "game.pack")).includes(Buffer.from("and you")), "the pack has the new text");
 
+    // Textual model formats come from the URL's path before its query or
+    // fragment. The complete URL still identifies a fetch, a cache file and
+    // a map key. GLB continues to be recognized by its bytes.
+    const modelUrls = [];
+    const declarations = [];
+    for (const format of ["obj", "gltf", "glb"]) {
+        for (const [name, suffix] of [["plain", ""], ["query", "?revision=1"], ["fragment", "#model"]]) {
+            const url = `http://127.0.0.1:${port}/triangle.${format}${suffix}`;
+            modelUrls.push(url);
+            declarations.push(`asset Mesh<Vertex3> ${format}_${name} = "${url}";`,
+                              `asset Map<string, Mesh<Vertex3>> ${format}_${name}_map = "${url}";`);
+        }
+    }
+    writeFileSync(join(opts.work, "game", "game.tide"), declarations.join("\n") + "\nscene Main { }\n");
+    r = await build();
+    check(r.code === 0, `model URLs with queries and fragments failed:\n${r.said}`);
+    check(modelRequests.length === modelUrls.length, "each complete model URL is fetched once, despite its two declarations");
+    const modelPack = readFileSync(join(r.out, "game.pack"));
+    for (const url of modelUrls) {
+        const parsed = new URL(url);
+        check(modelRequests.some(request => request.url === parsed.pathname + parsed.search), `the model URL was fetched as written: ${url}`);
+        check(modelPack.includes(Buffer.from(url)), `the model map keeps its complete URL key: ${url}`);
+        const hash = createHash("sha256").update(url).digest("hex");
+        check(existsSync(join(cache, hash)), `the model cache is keyed by the complete URL: ${url}`);
+    }
+    r = await build();
+    check(r.code === 0, `cached model URLs failed:\n${r.said}`);
+    check(modelRequests.length === modelUrls.length * 2 && modelRequests.slice(modelUrls.length).every(request => request.tag),
+          "the next build asks with every model URL's ETag");
+    check(readFileSync(join(r.out, "game.pack")).equals(modelPack), "unchanged model URLs produce the same pack");
+
     // The server gone: the build goes on from the cache
     await new Promise((accept) => server.close(accept));
+    r = await build();
+    check(r.code === 0, `the offline model build failed:\n${r.said}`);
+    check(readFileSync(join(r.out, "game.pack")).equals(modelPack), "offline model URLs use the same complete cache keys");
+    game(`http://127.0.0.1:${port}/credits.txt`);
     r = await build();
     check(r.code === 0, `the offline build failed:\n${r.said}`);
     check(readFileSync(join(r.out, "game.pack")).includes(Buffer.from("and you")), "the offline build packs what was cached");

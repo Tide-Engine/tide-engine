@@ -283,6 +283,38 @@ TIDE_TEST(mesh_obj_text_is_never_read_past_its_bytes)
     cut_and_spoil((const uint8_t *)obj, sizeof obj - 1u, "square.obj");
 }
 
+// URL queries and fragments don't name a format. In a local name those
+// characters are literal, and in a URL's host they name no file at all.
+TIDE_TEST(mesh_file_names_use_url_paths_and_keep_local_suffixes)
+{
+    static const char obj[] = "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+    static const struct {
+        const char *name;
+        bool reads;
+    } cases[] = {
+        {"tree.obj", true},
+        {"tree#old.obj", true},
+        {"tree?old.obj", true},
+        {"tree.obj?revision=1", false},
+        {"tree.obj#model", false},
+        {"http://example.com/tree.obj?revision=1", true},
+        {"https://example.com/tree.OBJ#model", true},
+        {"https://example.com/tree.obj?revision=1#model", true},
+        {"https://tree.obj?revision=1", false},
+        {"https://example.com?model=/tree.obj", false},
+        {"https://example.com/tree?format=.obj", false},
+        {"https://example.com/tree#.obj", false},
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        mesh_file mesh;
+        char why[256];
+        const bool read = read_exactly((const uint8_t *)obj, sizeof obj - 1u, cases[i].name, &mesh, why);
+        TIDE_CHECK(read == cases[i].reads);
+        if (read) mesh_file_free(&mesh);
+        else TIDE_CHECK(strstr(why, "isn't a mesh file Tide reads") != NULL);
+    }
+}
+
 static bool refused(const char *json, const char *with)
 {
     mesh_file mesh;
