@@ -8354,6 +8354,124 @@ TIDE_TEST(lsp_asset_rename_large_batch)
     lsp_free(&server);
 }
 
+// One rename request can include separate games. Their shared package's
+// document gets one edit array, containing the paths affected by the whole
+// batch, regardless of which game's rename comes first.
+TIDE_TEST(lsp_asset_rename_multiple_games)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_batch_games");
+    make_folder("lsp_batch_games/a");
+    make_folder("lsp_batch_games/a/art");
+    make_folder("lsp_batch_games/a/sprites");
+    make_folder("lsp_batch_games/b");
+    make_folder("lsp_batch_games/b/art");
+    make_folder("lsp_batch_games/pk");
+    make_folder("lsp_batch_games/extra");
+    static const char game[] = "asset List<byte> bytes = \"art/old.bin\";\n"
+                               "asset List<byte> shared = \"../pk/old.bin\";\n"
+                               "scene Main { }\n";
+    static const char package[] = "namespace Pk;\n"
+                                  "asset List<byte> data = \"old.bin\";\n"
+                                  "asset List<byte> fromA = \"../a/art/old.bin\";\n"
+                                  "asset List<byte> fromB = \"../b/art/old.bin\";\n"
+                                  "#if PACKAGE_EXTRA\n"
+                                  "asset List<byte> extra = \"../b/art/old.bin\";\n"
+                                  "#else\n"
+                                  "asset List<byte> base = \"../a/art/old.bin\";\n"
+                                  "#endif\n";
+    write_file("lsp_batch_games/a/tide.packages", "../pk\n");
+    write_file("lsp_batch_games/b/tide.packages", "../pk\n../extra\n");
+    write_file("lsp_batch_games/pk/tide.packages", "package Pk\n");
+    write_file("lsp_batch_games/extra/tide.packages", "package Extra\n");
+    write_file("lsp_batch_games/extra/main.tide", "namespace Extra;\n");
+    write_file("lsp_batch_games/a/main.tide", game);
+    write_file("lsp_batch_games/b/main.tide", game);
+    write_file("lsp_batch_games/pk/main.tide", package);
+    write_bytes("lsp_batch_games/a/art/old.bin", "a", 1);
+    write_bytes("lsp_batch_games/b/art/old.bin", "b", 1);
+    write_bytes("lsp_batch_games/pk/old.bin", "pk", 2);
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    char root_a[700], root_b[700], uri_a[700], uri_b[700], uri_pk[700];
+    snprintf(root_a, sizeof root_a, "file:///%s/lsp_batch_games/a", dir);
+    snprintf(root_b, sizeof root_b, "file:///%s/lsp_batch_games/b", dir);
+    snprintf(uri_a, sizeof uri_a, "file:///%s/lsp_batch_games/a/main.tide", dir);
+    snprintf(uri_b, sizeof uri_b, "file:///%s/lsp_batch_games/b/main.tide", dir);
+    snprintf(uri_pk, sizeof uri_pk, "file:///%s/lsp_batch_games/pk/main.tide", dir);
+    clear_sent();
+    lsp_free(&server);
+    lsp_init(&server, capture, NULL);
+    jbuf initialize = {0};
+    jb_printf(&initialize, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{"
+                           "\"workspaceFolders\":[{\"uri\":\"%s\",\"name\":\"a\"},{\"uri\":\"%s\",\"name\":\"b\"}],"
+                           "\"capabilities\":%s}}", root_a, root_b, ASSET_EDITOR_CAPABILITIES);
+    handle(initialize.data);
+    jb_free(&initialize);
+    open_uri(uri_a, game);
+    TIDE_REQUIRE(sent_with(uri_a) != NULL);
+    TIDE_CHECK(has(sent_with(uri_a), "\"diagnostics\":[]"));
+    open_uri(uri_b, game);
+    TIDE_REQUIRE(sent_with(uri_b) != NULL);
+    TIDE_CHECK(has(sent_with(uri_b), "\"diagnostics\":[]"));
+
+    static const char *const old[] = {"a/art", "b/art/old.bin", "pk/old.bin"};
+    static const char *const moved[] = {"a/sprites", "b/art/new.bin", "pk/new.bin"};
+    for (int reverse = 0; reverse < 2; reverse++) {
+        jbuf request = {0};
+        jb_put(&request, "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"workspace/willRenameFiles\",\"params\":{\"files\":[");
+        for (int i = 0; i < 3; i++) {
+            const int rename = reverse && i < 2 ? 1 - i : i;
+            if (i) jb_put(&request, ",");
+            jb_printf(&request, "{\"oldUri\":\"file:///%s/lsp_batch_games/%s\","
+                                "\"newUri\":\"file:///%s/lsp_batch_games/%s\"}",
+                      dir, old[rename], dir, moved[rename]);
+        }
+        jb_put(&request, "]}}");
+        clear_sent();
+        handle(request.data);
+        const char *reply = last_sent();
+        TIDE_CHECK(count(reply, uri_a) == 1 && count(reply, uri_b) == 1 && count(reply, uri_pk) == 1);
+        TIDE_CHECK(count(reply, "\"newText\"") == 9);
+        const char *edited = apply_reply(game, uri_a);
+        TIDE_CHECK(has(edited, "bytes = \"sprites/old.bin\";") && has(edited, "shared = \"../pk/new.bin\";"));
+        edited = apply_reply(game, uri_b);
+        TIDE_CHECK(has(edited, "bytes = \"art/new.bin\";") && has(edited, "shared = \"../pk/new.bin\";"));
+        edited = apply_reply(package, uri_pk);
+        TIDE_CHECK(has(edited, "data = \"new.bin\";") && has(edited, "fromA = \"../a/sprites/old.bin\";")
+                   && has(edited, "fromB = \"../b/art/new.bin\";"));
+        TIDE_CHECK(has(edited, "extra = \"../b/art/new.bin\";") && has(edited, "base = \"../a/sprites/old.bin\";"));
+        jb_free(&request);
+    }
+
+    remove_game_file("lsp_batch_games/a/tide.packages");
+    remove_game_file("lsp_batch_games/b/tide.packages");
+    remove_game_file("lsp_batch_games/pk/tide.packages");
+    remove_game_file("lsp_batch_games/extra/tide.packages");
+    remove_game_file("lsp_batch_games/extra/main.tide");
+    remove_game_file("lsp_batch_games/a/main.tide");
+    remove_game_file("lsp_batch_games/b/main.tide");
+    remove_game_file("lsp_batch_games/pk/main.tide");
+    remove_game_file("lsp_batch_games/a/art/old.bin");
+    remove_game_file("lsp_batch_games/b/art/old.bin");
+    remove_game_file("lsp_batch_games/pk/old.bin");
+    remove_game_file("lsp_batch_games/a/.tide/assets.sha256");
+    remove_game_file("lsp_batch_games/a/.tide/.gitignore");
+    remove_game_file("lsp_batch_games/b/.tide/assets.sha256");
+    remove_game_file("lsp_batch_games/b/.tide/.gitignore");
+    remove_folder("lsp_batch_games/a/.tide");
+    remove_folder("lsp_batch_games/b/.tide");
+    remove_folder("lsp_batch_games/a/art");
+    remove_folder("lsp_batch_games/a/sprites");
+    remove_folder("lsp_batch_games/b/art");
+    remove_folder("lsp_batch_games/a");
+    remove_folder("lsp_batch_games/b");
+    remove_folder("lsp_batch_games/pk");
+    remove_folder("lsp_batch_games/extra");
+    remove_folder("lsp_batch_games");
+    clear_sent();
+    lsp_free(&server);
+}
+
 // The hashes of the named files go in the game's .tide/ when it's checked. A
 // file that's gone from its path is found again by its bytes, with a fix that
 // writes where it is; one nothing has the bytes of lists the files of its
