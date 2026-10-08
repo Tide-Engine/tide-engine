@@ -14,7 +14,7 @@ typedef struct build_options {
     bool stats_open;    // ...which starts open: tide run's, for whoever typed --stats to read them
     bool debug_views;   // The debug views are on, whatever the game's debugViews setting says: F7 shows the profiler
     // The symbols every file's #if conditions read as defined: --define's, and DEBUG without --release
-    const char *defines[64];
+    const char *const *defines; // Kept by the caller for the build and every watched rebuild
     int define_count;
 } build_options;
 

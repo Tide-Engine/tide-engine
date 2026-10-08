@@ -13,6 +13,17 @@
 void *arena_alloc(size_t size); // Zeroed.
 void arena_reset(void);         // Frees everything arena_alloc returned.
 
+// A temporary allocation scope. Rewind invalidates everything allocated
+// after the checkpoint: none of it may be kept in an object that survives.
+// A checkpoint cannot outlive arena_reset or a rewind past its position.
+typedef struct arena_mark {
+    void *block;
+    size_t used;
+} arena_mark;
+
+arena_mark arena_checkpoint(void);
+void arena_rewind(arena_mark mark);
+
 #define NEW(T) ((T *)arena_alloc(sizeof(T)))
 
 // Growable array. Declare with `VEC(T) name;` zero-initialized.

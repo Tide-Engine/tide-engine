@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/net.h"
 #include "tide/page.h"
 #include "tide/sha256.h"
 #include "tide/skinned_data.h"
@@ -671,6 +672,25 @@ void *tide_pack_mesh_open(const tide_pack_entry *e, const uint32_t k, const uint
     if (!mesh_at(pack.region, pack.size, vertices, indices, &said, &there) || said != vertex) return &none;
     *count = there;
     return pack.region + vertices + sizeof(tide_block);
+}
+
+void tide_pack_mesh_updated(void *vertices, const uint32_t vertex)
+{
+    if (!pack.region || !vertices) return;
+    const uintptr_t begin = (uintptr_t)pack.region, at = (uintptr_t)vertices;
+    if (at < begin || at - begin < sizeof(tide_block) || at - begin > pack.size) return;
+    const uint32_t offset = (uint32_t)(at - begin - sizeof(tide_block));
+    uint32_t count, said;
+    uint64_t version;
+    if (!versioned_at(pack.region, pack.size, offset, &count, &said, &version) || said != vertex) return;
+    // Defaults can read other assets: their resulting bytes, rather than the
+    // unchanged model's file hash, tell a draw whether its cached copy is current.
+    // Hash once after filling, never while drawing; shared blocks and repeated
+    // loads of the same values keep the same version.
+    version = tide_hash(vertices, (size_t)count * vertex);
+    if (!version) version = 1;
+    const tide_block *b = (const tide_block *)(const void *)(pack.region + offset);
+    memcpy(pack.region + offset + b->next, &version, sizeof version);
 }
 
 // Locate a record only through an entry of the current pack. Comparisons use

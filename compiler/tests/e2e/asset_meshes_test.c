@@ -93,7 +93,7 @@ static bool defaults_are(const char *name, const uint32_t kind, const uint32_t m
         total += count;
         for (uint32_t i = 0; i < count; i++) {
             if (v[i].textLength != text_length || v[i].byteCount != 300 || v[i].listCount != 2 || v[i].mapCount != 2
-                || v[i].meshVertices != 4) return false;
+                || v[i].meshVertices != 4 || v[i].glow != (float)text_length) return false;
         }
     }
     return k == meshes && total == vertices;
@@ -106,13 +106,12 @@ static void check_defaults(const int32_t text_length)
     TIDE_CHECK(defaults_are("defaultNamed", TIDE_PACK_MESHES, 4, 18, text_length));
 }
 
-// Mesh defaults can read later assets: every global must name the current
-// pack first. Replacing its text catches defaults reading the previous load,
-// even if another test already initialized those globals.
-TIDE_TEST(mesh_assets_defaults_read_forward_assets_of_the_current_pack)
+// Replace only the text dependency: mesh source/layout/version bytes stay as
+// they were in the file, so defaults must refresh both values and draw caches.
+static uint8_t *pack_with_rules(const char *changed)
 {
     uint8_t *other = malloc(tide_game_pack_size);
-    TIDE_REQUIRE(other);
+    if (!other) return NULL;
     memcpy(other, tide_game_pack, tide_game_pack_size);
     const tide_pack_header *h = (const tide_pack_header *)(const void *)other;
     tide_pack_entry *entries = (tide_pack_entry *)(void *)(other + sizeof *h);
@@ -122,30 +121,98 @@ TIDE_TEST(mesh_assets_defaults_read_forward_assets_of_the_current_pack)
     for (uint32_t i = 0; i < h->entries; i++) {
         if (entries[i].kind == TIDE_PACK_TEXT && memcmp(entries[i].name, name, sizeof name) == 0) rules = &entries[i];
     }
-    if (!rules) {
+    const size_t size = strlen(changed);
+    if (!rules || size > rules->size) {
         free(other);
-        TIDE_REQUIRE(rules);
+        return NULL;
     }
-    static const char changed[] = "updated";
-    const uint32_t size = sizeof changed - 1u;
-    TIDE_REQUIRE(size <= rules->size);
     tide_block *block = (tide_block *)(void *)(other + h->region_at + rules->offset);
-    block->a = block->b = size;
-    memcpy(block + 1, changed, sizeof changed);
-    rules->size = rules->extra = size;
+    block->a = block->b = (uint32_t)size;
+    memcpy(block + 1, changed, size + 1u);
+    rules->size = rules->extra = (uint32_t)size;
+    return other;
+}
 
+// Mesh defaults can read later assets: every global must name the current
+// pack first. Replacing its text catches defaults reading the previous load,
+// even if another test already initialized those globals.
+TIDE_TEST(mesh_assets_defaults_read_forward_assets_of_the_current_pack)
+{
+    uint8_t *other = pack_with_rules("updated");
+    TIDE_REQUIRE(other);
     TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
     check_defaults(26); // The UTF-8 text has 27 bytes and 26 characters
     TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
     check_defaults(26);
     TIDE_REQUIRE(tide_assets_load(other, tide_game_pack_size));
-    check_defaults((int32_t)size);
+    check_defaults(7);
     TIDE_REQUIRE(tide_assets_load(other, tide_game_pack_size));
-    check_defaults((int32_t)size);
+    check_defaults(7);
     TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
     check_defaults(26);
     free(other);
     tide_pack_unload();
+}
+
+static uint64_t check_drawn_defaults(const int32_t text_length)
+{
+    uint64_t version = 0;
+    uint32_t drawn = 0;
+    for (uint32_t i = 0; i < draw.count; i++) {
+        const tide_draw_command *c = &draw.commands[i];
+        if (c->kind != TIDE_DRAW_SHADED) continue;
+        const tide_draw_run *r = &draw.runs[c->shaded.run];
+        const tide_draw_mesh_data *m = &draw.meshes[r->mesh - 1u];
+        if (m->vertex_size != sizeof(DefaultCorner)) continue;
+        drawn += r->count;
+        const DefaultCorner *vertices = m->bytes;
+        for (uint32_t k = 0; k < m->vertex_count; k++) {
+            TIDE_CHECK(vertices[k].textLength == text_length);
+            TIDE_CHECK(vertices[k].glow == (float)text_length);
+            TIDE_CHECK(vertices[k].byteCount == 300 && vertices[k].listCount == 2 && vertices[k].mapCount == 2
+                       && vertices[k].meshVertices == 4);
+        }
+        // The first default draw is the single mesh; the same quad in the
+        // list and map is shared and must not cumulatively change its version.
+        if (!version) version = m->version;
+    }
+    TIDE_CHECK(drawn == 7); // One mesh, two list items and four map entries
+    return version;
+}
+
+TIDE_TEST(mesh_assets_refresh_drawn_defaults_when_another_asset_changes)
+{
+    uint8_t *other = pack_with_rules("updated");
+    uint8_t *same_length = pack_with_rules("another");
+    TIDE_REQUIRE(other && same_length);
+    start();
+    local.Art.showDefaults = true;
+    frame();
+    const uint64_t original = check_drawn_defaults(26);
+    const uint32_t meshes = draw.mesh_count;
+    TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
+    frame();
+    TIDE_CHECK(check_drawn_defaults(26) == original && draw.mesh_count == meshes);
+    TIDE_REQUIRE(tide_assets_load(other, tide_game_pack_size));
+    check_defaults(7);
+    frame();
+    const uint64_t changed = check_drawn_defaults(7);
+    TIDE_CHECK(changed != original);
+    const uint32_t changed_meshes = draw.mesh_count;
+    TIDE_REQUIRE(tide_assets_load(other, tide_game_pack_size));
+    frame();
+    TIDE_CHECK(check_drawn_defaults(7) == changed && draw.mesh_count == changed_meshes);
+    // Different dependency bytes with the same computed defaults reuse the
+    // copy too: the actual vertex values decide the version.
+    TIDE_REQUIRE(tide_assets_load(same_length, tide_game_pack_size));
+    frame();
+    TIDE_CHECK(check_drawn_defaults(7) == changed && draw.mesh_count == changed_meshes);
+    TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
+    frame();
+    TIDE_CHECK(check_drawn_defaults(26) == original);
+    free(other);
+    free(same_length);
+    finish();
 }
 
 // A .glb with everything a vertex has: each field by its name, with x turned

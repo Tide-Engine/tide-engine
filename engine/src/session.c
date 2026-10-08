@@ -443,7 +443,7 @@ static bool command_done(const tide_game *g, const void *world, const tide_playe
 // Chunks of a big command: as a world's, CHUNK bytes each
 static uint32_t chunks_of(const uint32_t size)
 {
-    return (size + CHUNK - 1u) / CHUNK;
+    return size / CHUNK + (size % CHUNK != 0u);
 }
 
 // A transfer's bitmap of chunks: which it has from the first (`ack`), and of
@@ -830,7 +830,7 @@ static void send_in_chunks(tide_server *s, connection *c, const uint8_t kind, ui
     c->snapshot_number++;
     c->snapshot_kind = kind;
     c->snapshot_size = size;
-    c->chunk_count = (size + CHUNK - 1u) / CHUNK;
+    c->chunk_count = chunks_of(size);
     c->chunk_sent = calloc(c->chunk_count ? c->chunk_count : 1u, sizeof *c->chunk_sent);
     if (!c->chunk_sent) tide_out_of_memory();
     c->chunk_ack = 0;
@@ -2734,7 +2734,8 @@ static void on_welcome(tide_client *c, tide_reader *r)
     const uint16_t echo = tide_read_u16(r);
     const uint16_t held = tide_read_u16(r);
     const uint64_t cookie = tide_read_u64(r);
-    if (r->failed || nonce != c->nonce || player >= c->players || tick_rate == 0 || kind > SEND_HASHES) return;
+    if (r->failed || nonce != c->nonce || player >= c->players || tick_rate == 0 || kind > SEND_HASHES
+        || chunks != chunks_of(size)) return;
     if (!c->frames) { // Its windows, now that it knows the tick rate
         c->w = windows_for(tick_rate);
         c->frames = calloc(c->w.history, sizeof *c->frames);
@@ -2789,7 +2790,8 @@ static void on_chunk(tide_client *c, tide_reader *r)
     const uint8_t *bytes = tide_read_bytes(r, size);
     if (!bytes || !c->receiving || number != c->snapshot_number || index >= c->chunk_count || c->chunk_have[index]) return;
     const uint32_t from = index * CHUNK;
-    if (from + size > c->snapshot_size) return;
+    const uint32_t remaining = c->snapshot_size - from;
+    if (size != (remaining < CHUNK ? remaining : CHUNK)) return;
     memcpy(c->snapshot + from, bytes, size);
     c->chunk_have[index] = 1;
     c->world_bytes += size;

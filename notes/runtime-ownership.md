@@ -4,6 +4,8 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ## Layout
 
+`tide_draw_list` owns a retained texture lookup index alongside its texture array (`texture_index`, `texture_index_capacity`). `tide_draw_reset` rebuilds it when textures are pruned and compacted, `tide_draw_forget` clears it, and `tide_draw_free` releases it. No generated runtime call changes; the C structure layout does, so hosts, libraries and generated games rebuild together.
+
 ### Runtime written by Claude for now
 
 - `engine/include/tide/entity.h` and `engine/src/entity.c` (the entity table) are a temporary implementation Claude wrote so generated code could run. The owner takes them over later. Until then Claude maintains them. Generated code depends on the functions declared in `entity.h`.
@@ -29,3 +31,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - What the platform layer does with input devices and pixels is in `notes/input-devices.md`.
 
 Map iteration calls `tide_map_next` with a last insertion order and an index hint, both ordinary locals that tasks save across waits. Reading a cursor changes no map and allocates nothing. Entry headers are signed 64-bit orders: positive live, negative removed, with the same magnitude retained until compaction. `tide_map` keeps the last order across `Clear`; copies and assignment keep it too. Its explicit reserved word stays zero. `tests/test_map.c` checks compaction after the cursor's entry is removed, removals without compaction, clear/copy/assignment, orders beyond 32 bits and at the signed limit, and unchanged heap/map/scratch state during traversal.
+
+Static and skinned mesh vertex defaults finish with `tide_pack_mesh_updated(vertices, vertexSize)` (`tide/pack.h`, `engine/src/pack_load.c`). Generated asset loading calls it after filling a mesh's defaults and before drawing; it refreshes the stored nonzero version from final vertex bytes once per fill. The renderer keeps its constant-time packed-list version lookup. Repeated loads and shared blocks with the same final values retain the same version.
+
+Clip preparation in `engine/src/audio.c` queues stable indices into its decoded cache. Gathering may reallocate that cache; it finishes before jobs resolve the indices and decode into the final allocation. Decoded WAV samples and opened Vorbis packets own their bytes until `tide_clips_free`, so pack replacement or unload leaves active voices' data valid. `tests/test_audio.c` checks preparation across cache growth and replacement, aliases, repeated preparation and retained samples.

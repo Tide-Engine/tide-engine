@@ -3512,34 +3512,77 @@ static bool unused_is_said(const occurrence *o)
     }
 }
 
+static bool reference_lens_kind(const occ_kind kind)
+{
+    return kind == OCC_TYPE || kind == OCC_SYSTEM || kind == OCC_FUNCTION || kind == OCC_METHOD || kind == OCC_CONST;
+}
+
+// Reference lenses have declaration-backed symbols. Routines and systems
+// share their virtual declaration's identity, as same_symbol does.
+static const decl *reference_lens_symbol(const occurrence *o)
+{
+    return o->kind == OCC_SYSTEM || o->kind == OCC_FUNCTION || o->kind == OCC_METHOD ? replaced_or_self(o->decl) : o->decl;
+}
+
+static int reference_lens_key_order(const occurrence *a, const occurrence *b)
+{
+    if (a->kind != b->kind) return a->kind < b->kind ? -1 : 1;
+    const uintptr_t x = (uintptr_t)reference_lens_symbol(a), y = (uintptr_t)reference_lens_symbol(b);
+    return x < y ? -1 : x > y;
+}
+
+static int reference_lens_order(const void *left, const void *right)
+{
+    const occurrence *const *a = left, *const *b = right;
+    const int order = reference_lens_key_order(*a, *b);
+    // Occurrences are in source order in one stable array: keep locations in
+    // their existing order within each symbol's group.
+    return order ? order : *a < *b ? -1 : *a > *b;
+}
+
 // "3 references" above each declaration of the document, which lists them when clicked.
 static void write_reference_lenses(jbuf *out, int *written)
 {
+    const occurrence **uses = A.occs.count ? malloc(sizeof(*uses) * (size_t)A.occs.count) : NULL;
+    if (A.occs.count && !uses) abort();
+    int use_count = 0;
+    for (int i = 0; i < A.occs.count; i++) {
+        const occurrence *o = &A.occs.items[i];
+        if (!o->declaration && o->decl && reference_lens_kind(o->kind)) uses[use_count++] = o;
+    }
+    if (use_count > 1) qsort(uses, (size_t)use_count, sizeof(*uses), reference_lens_order);
     for (int i = 0; i < A.occs.count; i++) {
         const occurrence *o = &A.occs.items[i];
         if (!o->declaration || o->at.file != A.doc || !o->decl || o->decl->builtin) continue;
-        if (o->kind != OCC_TYPE && o->kind != OCC_SYSTEM && o->kind != OCC_FUNCTION && o->kind != OCC_METHOD &&
-            o->kind != OCC_CONST) continue;
+        if (!reference_lens_kind(o->kind)) continue;
+        int first = 0, end = use_count;
+        while (first < end) {
+            const int middle = first + (end - first) / 2;
+            if (reference_lens_key_order(uses[middle], o) < 0) first = middle + 1;
+            else end = middle;
+        }
+        end = first;
         int count = 0;
-        for (int k = 0; k < A.occs.count; k++) count += !A.occs.items[k].declaration && same_symbol(o, &A.occs.items[k]);
+        while (end < use_count && reference_lens_key_order(uses[end], o) == 0) count += same_symbol(o, uses[end++]);
         if (count == 0 && !unused_is_said(o)) continue;
-        sb title = {0};
-        sb_printf(&title, "%d reference%s", count, count == 1 ? "" : "s");
-        open_lens(out, written, o->at, o->len, title.data);
+        char title[32]; // An int's decimal count and " references", including the NUL
+        snprintf(title, sizeof title, "%d reference%s", count, count == 1 ? "" : "s");
+        open_lens(out, written, o->at, o->len, title);
         if (count == 0) {
             jb_put(out, ",\"command\":\"\"}}");
             continue;
         }
         open_lens_command(out, "editor.action.showReferences", o->at);
         int listed = 0;
-        for (int k = 0; k < A.occs.count; k++) {
-            const occurrence *use = &A.occs.items[k];
-            if (use->declaration || !same_symbol(o, use)) continue;
+        for (int k = first; k < end; k++) {
+            const occurrence *use = uses[k];
+            if (!same_symbol(o, use)) continue;
             if (listed++) jb_put(out, ",");
             write_location(out, use->at, use->len);
         }
         jb_put(out, "]]}}");
     }
+    free(uses);
 }
 
 // What code reads and writes of every entity's through its World and its
@@ -3567,6 +3610,9 @@ static bool put_world_lens(sb *title, const decl *d, const char *before)
 
 void analysis_code_lenses(jbuf *out)
 {
+    // Lens builders only read the analysis. Their strings are copied into
+    // the heap-owned JSON buffer before these temporary allocations go away.
+    const arena_mark temporary = arena_checkpoint();
     jb_put(out, "[");
     int written = 0;
     for (int i = 0; i < A.prog->systems.count; i++) {
@@ -3636,6 +3682,7 @@ void analysis_code_lenses(jbuf *out)
     }
     write_reference_lenses(out, &written);
     jb_put(out, "]");
+    arena_rewind(temporary);
 }
 
 // ---------------------------------------------------------------------------
@@ -4160,6 +4207,7 @@ static void asset_fix_actions(int start_line, int end_line, jbuf *out, int *writ
 
 void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
 {
+    const arena_mark temporary = arena_checkpoint();
     jb_put(out, "[");
     int written = 0;
     suggestion_actions(start_line, end_line, out, &written);
@@ -4348,6 +4396,7 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
     }
     move_to_file_action(start_line, out, &written);
     jb_put(out, "]");
+    arena_rewind(temporary);
 }
 
 static const occurrence *occurrence_at(const loc at)
@@ -4363,22 +4412,26 @@ static const occurrence *occurrence_at(const loc at)
 
 void analysis_hover(const int line, const int character, jbuf *out)
 {
+    // Descriptions are temporary; jbuf copies their bytes before the rewind.
+    const arena_mark temporary = arena_checkpoint();
     const occurrence *o = occurrence_at(from_lsp(line, character));
     if (!o) {
         jb_put(out, "null");
-        return;
+        goto done;
     }
     sb text = {0};
     describe(o, &text);
     if (!text.data) {
         jb_put(out, "null");
-        return;
+        goto done;
     }
     jb_put(out, "{\"contents\":{\"kind\":\"markdown\",\"value\":");
     jb_string(out, text.data);
     jb_put(out, "},\"range\":");
     write_range(out, o->at, o->len);
     jb_put(out, "}");
+done:
+    arena_rewind(temporary);
 }
 
 // Built-ins defined in C, in the engine headers: their definition is there.
@@ -4504,6 +4557,7 @@ static int symbol_kind(const decl *d)
 
 void analysis_symbols(jbuf *out)
 {
+    const arena_mark temporary = arena_checkpoint();
     jb_put(out, "[");
     int written = 0;
     for (int i = 0; i < A.written.count; i++) {
@@ -4622,6 +4676,7 @@ void analysis_symbols(jbuf *out)
         jb_put(out, "]}");
     }
     jb_put(out, "]");
+    arena_rewind(temporary);
 }
 
 // ---------------------------------------------------------------------------
@@ -4784,9 +4839,11 @@ void analysis_prepare_call_hierarchy(const int line, const int character, jbuf *
         jb_put(out, "null");
         return;
     }
+    const arena_mark temporary = arena_checkpoint();
     jb_put(out, "[");
     write_call_item(out, &target);
     jb_put(out, "]");
+    arena_rewind(temporary);
 }
 
 // A call of a game's function or method, by name or by operator, or a frag's
@@ -4800,6 +4857,7 @@ static bool is_call(const occurrence *o)
 // Who calls the item at the cursor: each caller once, with where it does.
 void analysis_incoming_calls(const int line, const int character, jbuf *out)
 {
+    const arena_mark temporary = arena_checkpoint();
     const caller target = hierarchy_target(line, character);
     jb_put(out, "[");
     int written = 0;
@@ -4825,12 +4883,14 @@ void analysis_incoming_calls(const int line, const int character, jbuf *out)
         jb_put(out, "]}");
     }
     jb_put(out, "]");
+    arena_rewind(temporary);
 }
 
 // What the item at the cursor calls: each function or method once, with
 // where it does.
 void analysis_outgoing_calls(const int line, const int character, jbuf *out)
 {
+    const arena_mark temporary = arena_checkpoint();
     const caller source = hierarchy_target(line, character);
     jb_put(out, "[");
     int written = 0;
@@ -4856,6 +4916,7 @@ void analysis_outgoing_calls(const int line, const int character, jbuf *out)
         jb_put(out, "]}");
     }
     jb_put(out, "]");
+    arena_rewind(temporary);
 }
 
 // ---------------------------------------------------------------------------
@@ -4979,6 +5040,7 @@ static void selection_spans(const loc at, span_list *spans)
 
 void analysis_selection_ranges(const json *positions, jbuf *out)
 {
+    const arena_mark temporary = arena_checkpoint();
     jb_put(out, "[");
     for (int p = 0; positions && positions->kind == JSON_ARRAY && p < positions->count; p++) {
         if (p) jb_put(out, ",");
@@ -4996,6 +5058,7 @@ void analysis_selection_ranges(const json *positions, jbuf *out)
         for (int i = 0; i < spans.count; i++) jb_put(out, "}");
     }
     jb_put(out, "]");
+    arena_rewind(temporary);
 }
 
 // ---------------------------------------------------------------------------
@@ -5026,6 +5089,7 @@ static const char *past_inactive(const char *p, const char *limit)
 
 void analysis_folding_ranges(jbuf *out)
 {
+    const arena_mark temporary = arena_checkpoint();
     jb_put(out, "[");
     int written = 0;
     // A block folds from the line that introduces it, even when its `{` is on
@@ -5105,6 +5169,7 @@ void analysis_folding_ranges(jbuf *out)
         k = last + 1;
     }
     jb_put(out, "]");
+    arena_rewind(temporary);
 }
 
 // ---------------------------------------------------------------------------
@@ -5274,6 +5339,7 @@ static int call_param_names(const expr *call, str *names, int max);
 
 void analysis_inlay_hints(const int start_line, const int end_line, jbuf *out)
 {
+    const arena_mark temporary = arena_checkpoint();
     enum { HINT_TYPE = 1, HINT_PARAMETER = 2 };
     jb_put(out, "[");
     int written = 0;
@@ -5302,6 +5368,7 @@ void analysis_inlay_hints(const int start_line, const int end_line, jbuf *out)
         }
     }
     jb_put(out, "]");
+    arena_rewind(temporary);
 }
 
 // Whether `name` holds the letters of `query` in order, ignoring case, as
@@ -5546,6 +5613,7 @@ static int semantic_order(const void *a, const void *b)
 
 void analysis_semantic_tokens(jbuf *out)
 {
+    const arena_mark temporary = arena_checkpoint();
     semantic_tokens toks = {0};
     for (int i = 0; i < A.occs.count; i++) {
         const occurrence *o = &A.occs.items[i];
@@ -5586,6 +5654,7 @@ void analysis_semantic_tokens(jbuf *out)
         prev_col = t->col;
     }
     jb_put(out, "]}");
+    arena_rewind(temporary);
 }
 
 // ---------------------------------------------------------------------------
@@ -6325,14 +6394,15 @@ static void complete_members(completion *c, const int dot, const loc at, const o
         if (t.kind != TY_ERROR) list_members(c, t, false, &sc);
         return;
     }
-    int ids[16];
     int n = 0;
-    for (int i = dot - 1; i >= 0 && DOC->toks[i].kind == T_IDENT && n < 16;) {
-        ids[n++] = i;
+    for (int i = dot - 1; i >= 0 && DOC->toks[i].kind == T_IDENT;) {
+        n++;
         if (i >= 2 && DOC->toks[i - 1].kind == T_DOT) i -= 2;
         else break;
     }
     if (n == 0) return;
+    int *ids = arena_alloc(sizeof(*ids) * (size_t)n);
+    for (int k = 0; k < n; k++) ids[k] = dot - 1 - k * 2;
     if (ids[n - 1] >= 2 && DOC->toks[ids[n - 1] - 1].kind == T_DOT
         && DOC->toks[ids[n - 1] - 2].kind == T_THIS) { // this.position. or this.world.xy.
         const scope sc = scope_at(at);
@@ -7986,9 +8056,11 @@ static void complete_out_argument(completion *c, const out_argument *arg, const 
 
 void analysis_completion(const int line, const int character, jbuf *out)
 {
+    const arena_mark temporary = arena_checkpoint();
     const loc at = from_lsp(line, character);
     A.from = at;
     completion c = {out, 0, {0}};
+    frame *stack = NULL;
     jb_put(out, "{\"isIncomplete\":false,\"items\":[");
     if (at.line >= 1 && at.line <= DOC->lines.count && DOC->inactive[at.line]) goto done; // A directive, or no code
 
@@ -8013,7 +8085,10 @@ void analysis_completion(const int line, const int character, jbuf *out)
         if (inside && is_word(t)) last--;
     }
 
-    frame stack[64] = {{CTX_TOP, -1, HEADER_NONE}};
+    // Every consumed token can open at most one frame, plus the top level.
+    stack = malloc(((size_t)(last + 1) + 1) * sizeof *stack);
+    if (!stack) abort();
+    stack[0] = (frame){CTX_TOP, -1, HEADER_NONE};
     int depth = 0;
     for (int i = 0; i <= last; i++) {
         // A namespace block's braces hold declarations, as a file does: inside them is the top still
@@ -8029,31 +8104,31 @@ void analysis_completion(const int line, const int character, jbuf *out)
         const context_kind top = stack[depth].kind;
         const tok_kind kind = DOC->toks[i].kind;
         const tok_kind before = i > 0 ? DOC->toks[i - 1].kind : T_EOF;
-        if (kind == T_LBRACKET && top == CTX_TOP && depth < 63) {
+        if (kind == T_LBRACKET && top == CTX_TOP) {
             stack[++depth] = (frame){CTX_ATTRIBUTE, i, HEADER_NONE};
         } else if (kind == T_RBRACKET && top == CTX_ATTRIBUTE) {
             depth--;
-        } else if (kind == T_LPAREN && (top == CTX_ATTRIBUTE || top == CTX_ATTRIBUTE_ARGS) && depth < 63) {
+        } else if (kind == T_LPAREN && (top == CTX_ATTRIBUTE || top == CTX_ATTRIBUTE_ARGS)) {
             const int open = top == CTX_ATTRIBUTE_ARGS ? stack[depth].open : i;
             stack[++depth] = (frame){CTX_ATTRIBUTE_ARGS, open, HEADER_NONE};
         } else if (kind == T_RPAREN && top == CTX_ATTRIBUTE_ARGS) {
             depth--;
-        } else if (kind == T_LBRACKET && top == CTX_DATA && depth < 63) {
+        } else if (kind == T_LBRACKET && top == CTX_DATA) {
             stack[++depth] = (frame){CTX_FIELD_ATTRIBUTE, i, HEADER_NONE};
         } else if (kind == T_RBRACKET && top == CTX_FIELD_ATTRIBUTE) {
             depth--;
-        } else if (kind == T_LPAREN && (top == CTX_FIELD_ATTRIBUTE || top == CTX_FIELD_ATTRIBUTE_ARGS) && depth < 63) {
+        } else if (kind == T_LPAREN && (top == CTX_FIELD_ATTRIBUTE || top == CTX_FIELD_ATTRIBUTE_ARGS)) {
             stack[++depth] = (frame){CTX_FIELD_ATTRIBUTE_ARGS, i, HEADER_NONE}; // One frame per parenthesis: float2(0, 1)
         } else if (kind == T_RPAREN && top == CTX_FIELD_ATTRIBUTE_ARGS) {
             depth--;
-        } else if (kind == T_LBRACE && depth < 63) {
+        } else if (kind == T_LBRACE) {
             context_kind next = CTX_CODE;
             if (top == CTX_TOP && before == T_IDENT && !after_fails(i)) next = CTX_DATA;
             else if ((top == CTX_CODE || top == CTX_LITERAL) && before == T_IDENT) next = CTX_LITERAL;
             stack[++depth] = (frame){next, i, HEADER_NONE};
         } else if (kind == T_RBRACE && depth > 0) {
             depth--;
-        } else if (kind == T_LPAREN && depth < 63) {
+        } else if (kind == T_LPAREN) {
             const bool query = top == CTX_HEADER && stack[depth].header == HEADER_SYSTEM && before == T_IDENT
                             && str_eq_c(DOC->toks[i - 1].text, "query");
             const header_kind header = query ? HEADER_QUERY
@@ -8581,8 +8656,10 @@ void analysis_completion(const int line, const int character, jbuf *out)
     }
 
 done:
+    free(stack);
     jb_put(out, "]}");
     A.from = (loc){0};
+    arena_rewind(temporary);
 }
 
 // ---------------------------------------------------------------------------
@@ -8940,8 +9017,9 @@ const char *analysis_rename(const char *uri, const int line, const int character
     const occurrence *target;
     const char *error = rename_target(line, character, &target);
     if (error) return error;
+    const arena_mark temporary = arena_checkpoint();
     error = check_new_name(target, str_from(new_name));
-    if (error) return error;
+    if (error) goto done; // Name checks return only literals or their static message buffer.
 
     // Edits grouped by file: every file of the game that uses the name.
     (void)uri;
@@ -8968,7 +9046,9 @@ const char *analysis_rename(const char *uri, const int line, const int character
         if (written) jb_put(out, "]");
     }
     jb_put(out, "}}");
-    return NULL;
+done:
+    arena_rewind(temporary);
+    return error;
 }
 
 // ---------------------------------------------------------------------------
@@ -9563,6 +9643,7 @@ static void mesh_signature_help(const int open, const int commas, const loc at, 
 
 void analysis_signature_help(const int line, const int character, jbuf *out)
 {
+    const arena_mark temporary = arena_checkpoint();
     const loc at = from_lsp(line, character);
     int last = -1;
     for (int i = 0; i < DOC->tok_count && loc_cmp(DOC->toks[i].at, at) < 0; i++) last = i;
@@ -9575,11 +9656,11 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
     const int callee = type_open >= 0 ? type_open - 1 : open - 1;
     if (callee < 0 || DOC->toks[callee].kind != T_IDENT) {
         jb_put(out, "null");
-        return;
+        goto done;
     }
     if (opens_mesh_draw(open)) {
         mesh_signature_help(open, commas, at, out);
-        return;
+        goto done;
     }
     const str name = DOC->toks[callee].text;
     const bool method = callee >= 1 && DOC->toks[callee - 1].kind == T_DOT;
@@ -9708,6 +9789,8 @@ void analysis_signature_help(const int line, const int character, jbuf *out)
         jb_printf(out, "],\"activeSignature\":%d,\"activeParameter\":%d}", s.active < 0 ? 0 : s.active, s.active_param);
     }
     jb_free(&list);
+done:
+    arena_rewind(temporary);
 }
 
 // ---------------------------------------------------------------------------
@@ -10047,6 +10130,7 @@ static void write_edit(line_edits *edits, const loc start, const loc end, const 
 const char *analysis_format(int tab_size, const bool insert_spaces, const int first_line, const int last_line, jbuf *out)
 {
     if (DOC->lex_errors > 0) return "The file has text Tide can't read. Fix that first.";
+    const arena_mark temporary = arena_checkpoint();
     if (tab_size <= 0) tab_size = 4;
     // Each line's indentation depends on the lines before it, so the whole
     // document is formatted, and only the range's lines are changed.
@@ -10254,6 +10338,7 @@ const char *analysis_format(int tab_size, const bool insert_spaces, const int fi
         write_edit(&edits, end, end, newline, strlen(newline));
     }
     jb_put(out, "]");
+    arena_rewind(temporary);
     return NULL;
 }
 
@@ -10297,6 +10382,7 @@ typedef struct hashed_file {
     char *path;
     unsigned long long size;
     unsigned long long modified;
+    bool changed;
     char hex[65];
 } hashed_file;
 
@@ -10305,6 +10391,14 @@ static struct {
     int count;
     int cap;
 } hashed;
+
+void analysis_file_changed(const char *path)
+{
+    asset_files_changed(path);
+    for (int i = 0; i < hashed.count; i++) {
+        if (asset_path_same(hashed.items[i].path, path) || asset_path_under(hashed.items[i].path, path)) hashed.items[i].changed = true;
+    }
+}
 
 static char *arena_copy(const char *text)
 {
@@ -10333,7 +10427,7 @@ static bool file_hash(const char *path, const unsigned long long size, const uns
     for (int i = 0; i < hashed.count && !known; i++) {
         if (asset_path_same(hashed.items[i].path, path)) known = &hashed.items[i];
     }
-    if (known && known->size == size && known->modified == modified) {
+    if (known && !known->changed && known->size == size && known->modified == modified) {
         memcpy(hex, known->hex, 65);
         return true;
     }
@@ -10351,6 +10445,7 @@ static bool file_hash(const char *path, const unsigned long long size, const uns
     }
     known->size = size;
     known->modified = modified;
+    known->changed = false;
     memcpy(known->hex, hex, 65);
     return true;
 }
