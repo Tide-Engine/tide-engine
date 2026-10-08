@@ -104,5 +104,6 @@ char *path_join(const char *a, const char *b);
 char *path_dir(const char *path);
 // The last part of a path: "a/b/c.tide" -> "c.tide".
 const char *path_base(const char *path);
-// The absolute form of a path, with forward slashes.
+// The absolute form of a path, with forward slashes: of a file that isn't
+// there yet too, which has the path it will have once it's written.
 char *path_absolute(const char *path);

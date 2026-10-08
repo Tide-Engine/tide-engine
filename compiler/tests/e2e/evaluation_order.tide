@@ -679,3 +679,53 @@ system OutsInOrder(mut Outs o)
     mut var score = 1;
     o.looked = score * 1000 + (o.scores.TryGet(4, out score) ? 100 : 0) + score;
 }
+
+// Awaited calls keep named arguments in their written order too, before
+// their values go into the child task's frame in parameter order.
+singleton AwaitOrders
+{
+    bool started;
+    Tally tally;
+    int named;
+    int mixed;
+    int before;
+    int after;
+    int made;
+    int delayed;
+    int count;
+}
+
+async int AwaitPack(int first, int second, int third = 0)
+{
+    return Pack3(first, second, third);
+}
+
+async int AwaitPair(int first, int second)
+{
+    await Wait.Ticks(1);
+    return Pack(first, second);
+}
+
+async void AwaitInOrder(mut AwaitOrders a)
+{
+    mut var i = 0;
+    a.named = await AwaitPack(second: ++i, first: ++i); // 2, 1, default 0
+    i = 1;
+    a.mixed = await AwaitPack(i++, third: i++, second: i++); // 1, 3, 2
+    i = 7;
+    a.before = await AwaitPack(second: i, first: ++i); // 8, 7, 0
+    i = 7;
+    a.after = await AwaitPack(second: ++i, first: i); // 8, 8, 0
+    a.tally = Tally { n = 2 };
+    a.made = await AwaitPack(second: Count(a.tally, out var squared), first: squared); // 9, 3, 0
+    i = 0;
+    a.delayed = await AwaitPair(second: ++i, first: ++i); // 2, 1, even after waiting
+    a.count = i;
+}
+
+system StartAwaiting(mut AwaitOrders a)
+{
+    if (a.started) return;
+    a.started = true;
+    AwaitInOrder(a);
+}

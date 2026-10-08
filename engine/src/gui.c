@@ -1,5 +1,6 @@
 #include "tide/gui.h"
 
+#include <float.h>
 #include <stdio.h>
 
 #include "tide/text.h"
@@ -1427,11 +1428,12 @@ static bool parse_number(tide_gui *g, const number_kind kind, double *out)
     if (kind == NUMBER_INT) {
         const long long n = strtoll(g->edit, &end, 10);
         v = n < INT32_MIN ? INT32_MIN : n > INT32_MAX ? INT32_MAX : (double)n;
+    } else if (kind == NUMBER_FLOAT) {
+        v = strtof(g->edit, &end); // Round to the field's float, including text for FLT_MAX.
     } else {
         v = strtod(g->edit, &end);
     }
     if (end == g->edit || *end != '\0' || v - v != 0.0) return false; // Empty, junk after it, infinite or NaN
-    if (kind == NUMBER_FLOAT && (v > 3.4028234663852886e38 || v < -3.4028234663852886e38)) return false;
     if (kind == NUMBER_UNIT) v = v < 0.0 ? 0.0 : v > 1.0 ? 1.0 : v;
     *out = v;
     return true;
@@ -1461,7 +1463,8 @@ static void start_typing(tide_gui *g, const uint32_t id, const double value, con
     g->editing = id;
     g->editing_seen = true;
     g->edit_kind = (uint8_t)kind;
-    format_number(g->edit, sizeof g->edit, value, kind);
+    if (kind == NUMBER_INT) format_number(g->edit, sizeof g->edit, value, kind);
+    else snprintf(g->edit, sizeof g->edit, "%.*g", FLT_DECIMAL_DIG, value); // Editing keeps every bit of a float.
     g->edit_len = (uint32_t)strlen(g->edit);
     g->edit_fresh = true;
 }
