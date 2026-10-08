@@ -645,7 +645,7 @@ frag Lit(BoxVertex vertex, out Color color, Instance instance, Sun sun)
 }
 ```
 
-The sphere below has a vertex of its own, with a normal, and a frag that lights each pixel from it: the normal as it is in the world, from `instance.Normal`, against a light the slider moves. **Bands** rounds the light to steps, in the same frag.
+The sphere below has a vertex of its own, with a normal, and a frag that lights each pixel from it: the normal as it is in the world, from `instance.Normal`, against a light the slider moves. **Squash** flattens the sphere through the draw's transform, and its light stays right. **Bands** rounds the light to steps, in the same frag.
 
 ::: tide-example lighting Lighting, in a frag
 
