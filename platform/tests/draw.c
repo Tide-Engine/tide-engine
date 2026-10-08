@@ -280,6 +280,73 @@ static void check_pixels(const check *checks, const int count)
     }
 }
 
+// Many independent images grow both texture caches, then leave holes in them.
+// The retained images must keep their pixels through compaction and reinsertion.
+static void many_cached_textures(void)
+{
+    enum { images = 128, columns = 16 };
+    static uint8_t pixels[images][8];
+    tide_float2 points[images];
+    uint32_t got[images];
+    for (uint32_t i = 0; i < images; i++) {
+        pixels[i][0] = (uint8_t)(16u + i);
+        pixels[i][1] = (uint8_t)(255u - i);
+        pixels[i][2] = (uint8_t)(i * 37u);
+        pixels[i][3] = 255;
+        memcpy(pixels[i] + 4, pixels[i], 4);
+    }
+    const char *const phases[] = {
+        "many textures, first uploaded", "the same textures, found in reverse order",
+        "half retained, with one new version and one new size", "retained textures after cache compaction",
+        "removed textures drawn again", "the same ids and versions after forgetting the list",
+    };
+    uint64_t memory = 0;
+    for (uint32_t phase = 0; phase < 6; phase++) {
+        if (phase == 2) pixels[5][0] = 255, pixels[5][1] = 0, pixels[5][2] = 255;
+        if (phase == 5) {
+            for (uint32_t i = 0; i < images; i++) pixels[i][0] = (uint8_t)(255u - pixels[i][0]);
+            tide_draw_forget(&list); // Same addresses and versions, other pixels of the new build
+        }
+        tide_draw_reset(&list);
+        tide_draw_set_screen(&list);
+        tide_draw_clear(&list, background);
+        for (uint32_t place = 0; place < images; place++) {
+            const uint32_t i = phase & 1u ? images - 1u - place : place;
+            if ((phase == 2 || phase == 3) && !(i & 1u)) continue;
+            const float x = (float)(i % columns) * 8.0f, y = (float)(i / columns) * 8.0f;
+            const tide_texture image = {pixels[i], phase >= 2 && phase < 5 && i == 37 ? 2 : 1, 1,
+                                         phase >= 2 && phase < 5 && i == 5 ? 2 : 1};
+            quad(tide_f2(x, y), tide_f2(x + 8.0f, y + 8.0f), white, white, &image, TIDE_FILTER_POINT, true);
+        }
+        for (uint32_t i = 0; i < images; i++) {
+            points[i] = tide_f2((float)(i % columns) * 8.0f + 4.5f, (float)(i / columns) * 8.0f + 4.5f);
+        }
+        const uint64_t before = tide_platform_gpu_written();
+        tide_platform_read_pixels(&list, points, images, got);
+        uint32_t different = 0;
+        for (uint32_t i = 0; i < images; i++) {
+            const tide_color color = (phase == 2 || phase == 3) && !(i & 1u) ? background
+                : (tide_color){pixels[i][0] / 255.0f, pixels[i][1] / 255.0f, pixels[i][2] / 255.0f, 1.0f};
+            different += !near(got[i], rgba(color), 8);
+        }
+        char what[180];
+        snprintf(what, sizeof what, "%s: every image keeps its own pixels (%u differ)", phases[phase], different);
+        expect(different == 0, what);
+        const uint64_t sent = phase == 0 || phase == 5 ? images * 4u : phase == 2 ? 12u : phase == 4 ? images * 2u : 0u;
+        snprintf(what, sizeof what, "%s: only changed images are uploaded (%llu bytes, expected %llu)", phases[phase],
+                 (unsigned long long)(tide_platform_gpu_written() - before), (unsigned long long)sent);
+        expect(tide_platform_gpu_written() - before == sent, what);
+        if (phase == 0) memory = tide_platform_gpu_memory();
+        const uint64_t wanted = memory + (phase >= 2 && phase < 5 ? 4u : 0u)
+                                - (phase == 2 || phase == 3 ? images * 2u : 0u);
+        expect(tide_platform_gpu_memory() == wanted, "texture cache growth and pruning preserve GPU memory accounting");
+    }
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_platform_read_pixels(&list, points, 1, got);
+    expect(tide_platform_gpu_memory() == memory - images * 4u, "an empty frame releases all those images");
+}
+
 static void meshes(void)
 {
     const tide_color dim = {0.5f, 0.0f, 0.0f, 1.0f}, pale = {0.5f, 1.0f, 1.0f, 1.0f};
@@ -3396,6 +3463,7 @@ static int frame(void *user, const float seconds)
         lost = 2;
     }
     if (lost == 2) {
+        many_cached_textures();
         changed_textures();
         meshes_3d();
         primitives();
@@ -3413,6 +3481,7 @@ static int frame(void *user, const float seconds)
     }
 #endif
     meshes();
+    many_cached_textures();
     changed_textures();
     meshes_3d();
     primitives();

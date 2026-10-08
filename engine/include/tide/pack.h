@@ -278,6 +278,11 @@ tide_map tide_pack_mesh_map_of(const tide_pack_entry *e);
 // the loaded pack's.
 void *tide_pack_mesh_open(const tide_pack_entry *e, uint32_t k, uint32_t vertex, uint32_t *count);
 
+// After filling defaults through tide_pack_mesh_open, refresh that block's
+// stored version from its final vertex bytes. Call before any draw reads it;
+// unchanged values keep the same version, including in shared mesh blocks.
+void tide_pack_mesh_updated(void *vertices, uint32_t vertex);
+
 // What's in a list of the pack's whose block says (a mesh's vertices or its
 // indices, tide_pack_mesh), for the draw list: false for any other list, and
 // for one whose elements aren't `element` bytes each.

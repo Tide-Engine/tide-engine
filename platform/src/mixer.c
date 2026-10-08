@@ -28,7 +28,8 @@ typedef struct handed {
     tide_audio_effect bus_effect[TIDE_AUDIO_BUSES];
     uint32_t bus_knobs_at[TIDE_AUDIO_BUSES];
     bool forget;
-    uint32_t forget_serial; // Which forget it is, for the ask that waits for it
+    uint32_t forget_serial; // Last forget requested, carried until the renderer acknowledges it
+    uint32_t forget_shots;  // The one-shots queued before that forget
     uint8_t **states;       // Each voice's big state (below), or NULL: as many as `voices` has room for
     uint8_t *bus_state[TIDE_AUDIO_BUSES];
     uint32_t serial;        // Which frame it is, counted from 1
@@ -124,6 +125,7 @@ static struct {
     _Atomic uint32_t playing;
     _Atomic bool elsewhere;       // A device's thread renders
     uint32_t forget_asked;        // The frame's: forgets asked so far
+    uint32_t forget_shots;        // The shot head at the last forget, before later frames' one-shots
     _Atomic uint32_t forget_done; // The renderer's: the last it applied
     big_state *states;            // The frame's: the big states there are
     uint32_t state_count, state_capacity;
@@ -262,7 +264,8 @@ void tide_mixer_submit(const tide_audio_frame *f)
     h->falloff_near = f->falloff_near;
     h->falloff_far = f->falloff_far;
     h->forget = f->forget;
-    h->forget_serial = f->forget ? m.forget_asked : 0;
+    if (f->forget) m.forget_asked++;
+    h->forget_serial = m.forget_asked;
     for (uint32_t b = 0; b < TIDE_AUDIO_BUSES; b++) {
         h->bus_volume[b] = f->bus_volume[b];
         h->bus_effect[b] = f->bus_effect[b];
@@ -288,6 +291,8 @@ void tide_mixer_submit(const tide_audio_frame *f)
         if (v->effect.knobs_size) memcpy(s->knobs, tide_audio_knobs(f, v->knobs_at, v->effect.knobs_size), v->effect.knobs_size);
         atomic_store_explicit(&m.shot_head, head + 1, memory_order_release);
     }
+    if (f->forget) m.forget_shots = atomic_load_explicit(&m.shot_head, memory_order_relaxed);
+    h->forget_shots = m.forget_shots;
     // Publish: take back whatever was pending, which is free either way (a
     // frame the renderer never took, or the slot it let go of)
     const uint32_t was = atomic_exchange_explicit(&m.pending, m.writer | PENDING_NEW, memory_order_acq_rel);
@@ -427,23 +432,30 @@ static void update_voice(voice *slot, const tide_voice *v, const uint8_t *knobs,
 
 static void apply_handed(const handed *h)
 {
-    if (h->forget) {
+    if (h->forget || h->forget_serial != atomic_load_explicit(&m.forget_done, memory_order_acquire)) {
         for (uint32_t i = 0; i < TIDE_MIXER_VOICES; i++) clear_voice(&m.voices[i]);
         for (uint32_t b = 0; b < TIDE_AUDIO_BUSES; b++) {
             m.buses[b].effect = (tide_audio_effect){0};
             m.buses[b].big = NULL;
             memset(m.buses[b].state, 0, sizeof m.buses[b].state);
         }
-        // What's queued names clips the host let go of, and what was captured is nobody's
-        atomic_store_explicit(&m.shot_tail, atomic_load_explicit(&m.shot_head, memory_order_acquire), memory_order_release);
+        // Drop only the shots that preceded the forget: replacement frames may have new ones.
+        // The renderer may already have consumed the cutoff, so never move its tail back.
+        const uint32_t tail = atomic_load_explicit(&m.shot_tail, memory_order_relaxed);
+        if (h->forget_shots - tail <= TIDE_MIXER_ONE_SHOTS)
+            atomic_store_explicit(&m.shot_tail, h->forget_shots, memory_order_release);
         atomic_store_explicit(&m.capture_tail, atomic_load_explicit(&m.capture_head, memory_order_acquire), memory_order_release);
         m.capture_primed = false;
         memset(m.mic, 0, sizeof m.mic);
-        // Nothing plays any more, so no state is read: settled as it's applied, with no block to wait for
-        m.applied = h->serial;
-        atomic_store_explicit(&m.settled, h->serial, memory_order_release);
         atomic_store_explicit(&m.forget_done, h->forget_serial, memory_order_release);
-        return;
+        if (h->forget) {
+            // Nothing plays any more, so no state is read: settled with no block to wait for.
+            m.applied = h->serial;
+            atomic_store_explicit(&m.settled, h->serial, memory_order_release);
+            return;
+        }
+        // A timed-out request can have been replaced by this normal frame. Its new
+        // voices and states apply after the clear, and settle only after their block.
     }
     m.applied = h->serial;
     // Every frame starts from the defaults, as a frame's draw settings do
@@ -716,8 +728,8 @@ void tide_mixer_forget(void)
     tide_audio_frame f = {0};
     tide_audio_reset(&f);
     f.forget = true;
-    const uint32_t serial = ++m.forget_asked;
     tide_mixer_submit(&f);
+    const uint32_t serial = m.forget_asked;
     tide_audio_free(&f);
     if (!atomic_load_explicit(&m.elsewhere, memory_order_acquire)) {
         tide_mixer_take(); // The frame's thread is the renderer: it takes it now

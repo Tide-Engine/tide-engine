@@ -1057,6 +1057,59 @@ TIDE_TEST(gui_horizontal_groups_sit_side_by_side)
     TIDE_CHECK(c->a.y == a->a.y + 28.0f + 5.0f);
 }
 
+TIDE_TEST(gui_colliding_containers_keep_their_layout_sizes)
+{
+    start();
+    const uint32_t first = 17, second = first + TIDE_GUI_MAX_SIZES;
+    const float first_width = tide_draw_guess_text("XXXXXXXXXX", 16.0f, NULL, TIDE_FONT_REGULAR).x + 20.0f;
+    const float second_width = tide_draw_guess_text("YYYYYYYYYYYYYYYY", 16.0f, NULL, TIDE_FONT_REGULAR).x + 20.0f;
+    for (int frame = 0; frame < 4; frame++) {
+        begin();
+        int depth = tide_gui_begin_vertical(&gui, first);
+        if (frame) TIDE_CHECK(gui.groups[gui.depth].stretch == first_width);
+        tide_gui_layout_button(&gui, 10, "A");
+        tide_gui_layout_button(&gui, 20, "XXXXXXXXXX");
+        tide_gui_close(&gui, depth);
+        depth = tide_gui_begin_vertical(&gui, second);
+        if (frame) TIDE_CHECK(gui.groups[gui.depth].stretch == second_width);
+        tide_gui_layout_button(&gui, 30, "B");
+        tide_gui_layout_button(&gui, 40, "YYYYYYYYYYYYYYYY");
+        tide_gui_close(&gui, depth);
+        end();
+        if (frame) {
+            float left, right;
+            rect_edges(0, &left, &right);
+            TIDE_CHECK(right - left == first_width);
+            rect_edges(2, &left, &right);
+            TIDE_CHECK(right - left == second_width);
+        }
+    }
+}
+
+TIDE_TEST(gui_size_cache_reuses_old_containers_when_full)
+{
+    start();
+    begin();
+    for (uint32_t i = 0; i < TIDE_GUI_MAX_SIZES - 1; i++) {
+        const int depth = tide_gui_begin_vertical(&gui, 2 + i);
+        tide_gui_layout_button(&gui, 1000 + i, "Old");
+        tide_gui_close(&gui, depth);
+    }
+    end(); // These groups and the root fill the cache.
+    for (int frame = 0; frame < 3; frame++) {
+        begin();
+        const int depth = tide_gui_begin_vertical(&gui, 1 + TIDE_GUI_MAX_SIZES);
+        if (frame) TIDE_CHECK(gui.groups[gui.depth].stretch > 0.0f);
+        tide_gui_layout_button(&gui, 10, "New");
+        tide_gui_close(&gui, depth);
+        end();
+    }
+    // The root remains in use, and no longer shares one overwrite slot with a group.
+    begin();
+    TIDE_CHECK(gui.groups[0].stretch > 0.0f);
+    end();
+}
+
 // A frame with Play, Quit in a Disabled block, then Back; returns which were
 // pressed (bits 0 to 2).
 static int quit_disabled(const bool disabled)

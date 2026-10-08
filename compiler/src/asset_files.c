@@ -33,6 +33,7 @@
 typedef struct read_file {
     char *path;
     unsigned long long size, modified;
+    bool changed; // A file notification overrides matching size/time metadata
     uint8_t *data;
     size_t len;
     uint8_t hash[32];
@@ -96,6 +97,17 @@ void asset_files_forget(void)
     files.count = files.cap = 0;
 }
 
+void asset_files_changed(const char *path)
+{
+    for (int i = 0; i < files.count; i++) {
+        read_file *f = &files.items[i];
+        if (asset_path_same(f->path, path) || asset_path_under(f->path, path)) f->changed = true;
+        for (int k = 0; k < f->side_count && !f->changed; k++) {
+            if (asset_path_same(f->sides[k].path, path) || asset_path_under(f->sides[k].path, path)) f->changed = true;
+        }
+    }
+}
+
 // The file at `path`, read: NULL when there's none. Its bytes stay until the
 // file changes or asset_files_forget.
 static read_file *read_at(const char *path)
@@ -106,7 +118,7 @@ static read_file *read_at(const char *path)
     for (int i = 0; i < files.count && !f; i++) {
         if (asset_path_same(files.items[i].path, path)) f = &files.items[i];
     }
-    if (f && f->size == size && f->modified == modified) return f;
+    if (f && !f->changed && f->size == size && f->modified == modified) return f;
     if (!f) {
         if (files.count == files.cap) {
             files.cap = files.cap ? files.cap * 2 : 16;

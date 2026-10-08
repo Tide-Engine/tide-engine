@@ -57,6 +57,27 @@ function(expect_file path)
 endfunction()
 
 # ---------------------------------------------------------------------------
+# Symbols on the command line: every accepted repeat reaches the compiler,
+# including the last one past the old 63-symbol cap. DEBUG still follows mode.
+
+file(WRITE "${WORK}/defines/main.tide" "
+#if FLAG0 && FLAG34 && FLAG69
+scene Main { }
+#else
+singleton MissingFlag { int value = missing_late_symbol; }
+#endif
+#if EXPECT_DEBUG && !DEBUG || EXPECT_RELEASE && DEBUG
+singleton WrongMode { int value = wrong_debug_symbol; }
+#endif
+")
+set(define_args)
+foreach(i RANGE 0 69)
+    list(APPEND define_args --define "FLAG${i}")
+endforeach()
+tide("${WORK}/defines" ARGS schedule . ${define_args} --define EXPECT_DEBUG EXPECT "defines: 0 systems")
+tide("${WORK}/defines" ARGS schedule . --release ${define_args} --define EXPECT_RELEASE EXPECT "defines: 0 systems")
+
+# ---------------------------------------------------------------------------
 # Packages in folders
 
 set(games "${WORK}/games")
@@ -102,6 +123,20 @@ tide("${games}/game" ARGS add ../physics EXPECT "Physics is in tide.packages alr
 tide("${games}/game" ARGS schedule . EXPECT "stage 1  Physics.Integrate" "stage 2  Fall")
 tide("${games}/physics/example" ARGS schedule . EXPECT "example: 1 system")
 tide("${games}/physics" ARGS schedule . FAILS EXPECT "is package Physics, not a game")
+
+# Accepted package paths are preserved in full, beyond the old 1024-byte
+# command formatter. Redundant parts keep this portable to short OS paths.
+file(WRITE "${games}/long-source/main.tide" "scene Main { }\n")
+string(REPEAT "./" 600 repeated)
+set(long_source "../${repeated}maths")
+tide("${games}/long-source" ARGS add "${long_source}" EXPECT "added Maths")
+file(READ "${games}/long-source/tide.packages" written)
+string(REPLACE "\r\n" "\n" written "${written}")
+if(NOT written STREQUAL "${long_source}\n")
+    message(FATAL_ERROR "adding a long package source didn't preserve it: ${written}")
+endif()
+tide("${games}/long-source" ARGS schedule . EXPECT "long-source: 0 systems")
+tide("${games}/long-source" ARGS add "${long_source}" EXPECT "Maths is in tide.packages already")
 
 # What's wrong with a game's packages.
 file(WRITE "${games}/game/tide.packages" "../physics\n")

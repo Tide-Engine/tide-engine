@@ -228,3 +228,5 @@ view Floor(mut Art art)
 ### Six of them, as a cube
 
 A `Cubemap` is six images that are read by a direction where a `Texture` is read by a `uv`: a sky, or what a mirror sees. It isn't a mesh's texture; a frag reads it, `sky.Sample(direction)`. An asset's is six files, and `Cubemap(size)` is one whose six faces are render targets, `cube.faces[0]` to `cube.faces[5]`. See [Skybox and reflections](./shaders.md#skybox-and-reflections).
+
+`cube.Resize(size)` changes all six faces. Hot reload keeps their current size, including after a resize, and copies of the cube still share the same images. Their rendered contents are cleared on the web when the images are recreated.

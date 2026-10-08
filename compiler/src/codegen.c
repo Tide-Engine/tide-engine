@@ -2635,6 +2635,17 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
         gen_extern_call(g, o, e);
         return;
     }
+    // Read-only lists, including the receiver's, need their own copies when
+    // a mut argument or receiver could change them during the call.
+    bool mut_list = false;
+    for (int i = 0; m->is_mut_method && i < m->owner->fields.count; i++) {
+        mut_list |= type_has_list(m->owner->fields.items[i].type);
+    }
+    for (int i = 0; i < e->args.count && i < m->params.count; i++) {
+        mut_list |= m->params.items[i].mode == PARAM_MUT && type_has_list(m->params.items[i].type);
+    }
+    const type self = {m->owner && m->owner->kind == DECL_COMPONENT ? TY_COMPONENT : TY_STRUCT, m->owner};
+    const bool copy_self = m->owner && !m->is_mut_method && mut_list && type_has_list(self);
     sb_printf(o, "%s(", routine_cname(m));
     int args = 0;
     // A function that draws gets the frame: the draw list, the GUI, and a seed
@@ -2652,11 +2663,14 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
     if (m->owner && args > 0) sb_put(o, ", "); // After what it's handed, its value
     if (m->owner && e->kind == E_CALL) { // IsDead() inside another method: the same value
         const bool have_address = g->routine->is_mut_method;
+        if (copy_self) sb_put(o, element_copy_open(self));
         sb_put(o, m->is_mut_method ? "tide_self, tide_self_where" : have_address ? "*tide_self" : "tide_self");
+        if (copy_self) sb_put(o, ")");
         args++;
     } else if (m->owner) {
         if (m->is_mut_method) sb_put(o, "&(");
-        gen_expr(g, o, e->object);
+        if (copy_self) gen_value_of(g, o, e->object, self);
+        else gen_expr(g, o, e->object);
         if (m->is_mut_method) sb_printf(o, "), %s", place_where(g, e->object));
         args++;
     }
@@ -2669,13 +2683,6 @@ static void gen_routine_call(gen *g, sb *o, const expr *e)
     // A read-only list argument is passed as it is, unless a mut argument, or
     // the value a mut method is called on, could change it during the call:
     // then it's a copy.
-    bool mut_list = false;
-    for (int i = 0; m->is_mut_method && i < m->owner->fields.count; i++) {
-        mut_list |= type_has_list(m->owner->fields.items[i].type);
-    }
-    for (int i = 0; i < e->args.count && i < m->params.count; i++) {
-        mut_list |= m->params.items[i].mode == PARAM_MUT && type_has_list(m->params.items[i].type);
-    }
     for (int i = 0; i < e->args.count; i++) {
         if (m->params.items[i].type.kind == TY_WORLD) continue; // The worlds it's handed, above
         if (args++) sb_put(o, ", ");
@@ -14201,7 +14208,8 @@ static void gen_assets(gen *g)
             if (mesh_fills(f) != FILL_NONE || !declared_default(f)) continue;
             sb_printf(o, "                tide_v[tide_i].%s = tide_d.%s;\n", field_cname(f), field_cname(f));
         }
-        sb_put(o, "            }\n        }\n    }\n");
+        sb_printf(o, "            }\n            tide_pack_mesh_updated(tide_v, (uint32_t)sizeof(%s));\n        }\n    }\n",
+                  type_cname(vertex));
     }
     sb_put(o, "    return true;\n}\n\n");
 }
@@ -15667,8 +15675,10 @@ static void gen_resource_fields(gen *g, const decl *d, const char *path, const c
         sb_printf(&at, "%s.%s", path, field_cname(f));
         if (f->type.kind == TY_CUBEMAP) { // One that's drawn into: the pack's is a name, the same in every build
             sb_printf(o, "%sif (tide_render_target_managed(%s.target.id)) {\n", pad, at.data);
-            sb_printf(o, "%s    if (same_memory) tide_render_target_adopt(%s.target);\n", pad, at.data);
-            sb_printf(o, "%s    else %s = tide_cubemap_recreate(%s);\n%s}\n", pad, at.data, at.data, pad);
+            sb_printf(o, "%s    if (same_memory) {\n%s        tide_render_target_adopt(%s.target);\n", pad, pad, at.data);
+            sb_printf(o, "%s        %s.target = tide_render_target_resolve(%s.target);\n%s    } else %s = tide_cubemap_recreate(%s);\n",
+                      pad, at.data, at.data, pad, at.data, at.data);
+            sb_printf(o, "%s}\n", pad);
             continue;
         }
         if (f->type.kind == TY_TEXTURE || f->type.kind == TY_DEPTH_TEXTURE || f->type.kind == TY_RENDER_TARGET) {
