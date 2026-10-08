@@ -24,7 +24,7 @@ local singleton Stand
 // The engine has no lighting, so this is ours: the file's normal against a light.
 frag Lit(Corner corner, out Color color, Instance instance, Stand stand)
 {
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 normal = instance.Normal(corner.normal);
     float3 toLight = Math.Normalize(float3(Math.Cos(stand.lightAngle), 0.6, -Math.Sin(stand.lightAngle)));
     color = corner.color * (0.25 + 0.75 * Math.Max(Math.Dot(normal, toLight), 0));
     color.a = 1;

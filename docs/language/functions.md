@@ -289,7 +289,7 @@ view Options(mut Menu menu, mut Settings settings, Session session)
 }
 ```
 
-Anything that takes a block can be in the list: the GUI's containers, [draw settings](../game/views.md#draw-settings) like `Draw.Blend(Blend.Add)`, and functions of your own. The first call is set up first and finished last. A call that takes no block doesn't belong in one, and the compiler says so; and since it's the comma that makes a list, a call that's only missing its `;` is still reported as that.
+Anything that takes a block can be in the list: the GUI's containers, [draw settings](../game/draw-settings.md) like `Draw.Blend(Blend.Add)`, and functions of your own. The first call is set up first and finished last. A call that takes no block doesn't belong in one, and the compiler says so; and since it's the comma that makes a list, a call that's only missing its `;` is still reported as that.
 
 ## Operators
 

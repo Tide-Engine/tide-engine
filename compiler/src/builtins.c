@@ -1120,7 +1120,8 @@ static const char *member_doc(const size_t i)
         return "The seconds since this machine's previous frame started, as its host gave them: what moves things "
                "that aren't the match's, like particles and menus, at the same speed whatever the display's rate. "
                "It's there with no match too. Local code reads it: views, local handlers and tasks, and the "
-               "functions they call. The match's is `Time.dt`, a tick's length.";
+               "functions they call. The match's is `Time.dt`, a tick's length. It's all `Frame` has: for a clock, add "
+               "it up in a field of local state and wrap it where it repeats.";
     }
     return NULL;
 }
@@ -1135,6 +1136,23 @@ bool builtin_draw_owner(const str name)
 bool builtin_old_draw_owner(const str name)
 {
     return str_eq_c(name, "Draw2D") || str_eq_c(name, "Draw3D");
+}
+
+bool builtin_frame_clock(const str name)
+{
+    // In lower case: a clock is asked for as a field ('time') and as a function ('Time()')
+    static const char *const clocks[] = {
+        "t", "time", "now", "clock", "seconds", "elapsed", "elapsedtime", "elapsedseconds", "totaltime", "totalseconds",
+        "sincestart", "timesincestart", "timesincestartup", "realtimesincestartup", "realtime", "unscaledtime",
+        "timeasdouble", "timestamp", "uptime", "runtime",
+    };
+    for (size_t i = 0; i < sizeof clocks / sizeof clocks[0]; i++) {
+        if (strlen(clocks[i]) != (size_t)name.len) continue;
+        bool same = true;
+        for (int k = 0; k < name.len && same; k++) same = tolower((unsigned char)name.ptr[k]) == clocks[i][k];
+        if (same) return true;
+    }
+    return false;
 }
 
 bool builtin_owner(const str name)

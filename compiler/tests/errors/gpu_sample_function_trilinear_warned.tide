@@ -1,0 +1,14 @@
+// expect: this Sample reads its texture as it says, and 'look.far' says Filter.Trilinear, which only a frag's own Sample reads
+// expect: frag 'Shade' samples it through 'Tile', here
+// The same Sample warned for the Texture before it, which only may say Trilinear: this one does, and is refused all the same
+scene Main { }
+local singleton Look
+{
+    [Filter(Filter.Trilinear)]
+    Grid2<Color> far = Grid2(4, 4);
+    Texture atlas;
+    List<Vertex3> mesh;
+}
+Color Tile(Texture atlas, float2 uv) { return atlas.Sample(uv); }
+frag Shade(Vertex3 vertex, out Color color, Look look) { color = Tile(look.atlas, vertex.uv) + Tile(look.far, vertex.uv); }
+view Show(Look look) { Draw.Mesh(look.mesh, [0, 1, 2], float4x4.identity, Shade); }

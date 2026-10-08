@@ -1656,6 +1656,30 @@ frag Shadowed(Vertex3 vertex, out Color color, Shadow shadow)
     color = Color(vertex.color.r * shade, vertex.color.g * shade, vertex.color.b * shade);
 }
 
+// The same in a function, which is written for the depth it's called with:
+// a depth is no argument a shader language hands on.
+float Sunlit(DepthTexture depth, float3 at)
+{
+    return depth.Compare(at.xy, at.z - 0.01);
+}
+
+// ...which another passes on
+float LampShade(DepthTexture depth, float3 world, float4x4 toLamp)
+{
+    return 0.25 + 0.75 * Sunlit(depth, FromLamp(world, toLamp));
+}
+
+frag ShadowedThrough(Vertex3 vertex, out Color color, Shadow shadow)
+{
+    float shade = LampShade(shadow.depth, this.world, shadow.toLamp);
+    color = Color(vertex.color.r * shade, vertex.color.g * shade, vertex.color.b * shade);
+}
+
+float Far(DepthTexture depth, float2 uv)
+{
+    return depth.Sample(uv);
+}
+
 // What a caster with holes in it is: its color goes nowhere in the lamp's
 // target, and the pixels it leaves out cast nothing.
 frag Grate(Vertex3 vertex, out Color color)
@@ -1664,9 +1688,11 @@ frag Grate(Vertex3 vertex, out Color color)
     color = Color.magenta;
 }
 
+// Its left half read here, and its right half in a function
 frag LampDepth(Vertex vertex, out Color color, Shadow shadow)
 {
-    float depth = shadow.depth.Sample(vertex.uv);
+    mut float depth = shadow.depth.Sample(vertex.uv);
+    if (vertex.uv.x >= 0.5) depth = Far(shadow.depth, vertex.uv);
     color = Color(depth, depth, depth);
 }
 
@@ -1711,7 +1737,8 @@ view Shadows(Art art, mut Shadow shadow)
     Draw.SetClip();
     Draw.Clear(Color.black);
     Draw.SetCamera(float4x4.TRS(float3(0, 10, 0), down, float3(1)), float4x4.Ortho(8, 8, 0.1, 30));
-    Draw.Mesh(shadow.floor, art.faces, float4x4.identity, Shadowed);
+    // The floor's frag compares in a function, the slab's itself
+    Draw.Mesh(shadow.floor, art.faces, float4x4.identity, ShadowedThrough);
     Draw.Mesh(shadow.slab, art.faces, float4x4.identity, Shadowed);
     // ...and what the lamp's target holds, as a picture
     Draw.SetScreen();
@@ -1859,9 +1886,30 @@ asset List<Texture> brickFrames = "four*.png";
 [Filter(Filter.Point), Wrap(Wrap.Mirror)]
 asset Grid2<Color> brickCells = "four.png";
 
+// A function samples as a frag does: an asset by its name, and a texture it
+// takes, which is the one its call names. Each frag below reads its left half
+// itself and its right half through one.
+Color BrickAt(float2 uv)
+{
+    return bricks.Sample(uv);
+}
+
+// The filter is said: the wrap is left to the Texture the frag was given
+Color Bricked(Texture image, float2 uv)
+{
+    return image.Sample(uv, Filter.Point);
+}
+
+// A grid is a Texture too, read as its own declaration says
+Color PaintAt(Texture image, float2 uv)
+{
+    return image.Sample(uv);
+}
+
 frag BricksByName(Vertex vertex, out Color color)
 {
     color = bricks.Sample(vertex.uv);
+    if (vertex.uv.x >= 1) color = BrickAt(vertex.uv);
 }
 
 frag BrickCellsByName(Vertex vertex, out Color color)
@@ -1873,11 +1921,13 @@ frag BrickCellsByName(Vertex vertex, out Color color)
 frag BrickSource(Vertex vertex, out Color color, Texture source)
 {
     color = source.Sample(vertex.uv);
+    if (vertex.uv.x >= 1) color = Bricked(source, vertex.uv);
 }
 
 frag PaintedByName(Vertex vertex, out Color color, Art art)
 {
     color = art.painted.Sample(vertex.uv);
+    if (vertex.uv.x >= 1) color = PaintAt(art.painted, vertex.uv);
 }
 
 [After(ScreenTargets)]
@@ -2590,16 +2640,27 @@ frag SkyLook(Vertex vertex, out Color color, Way way)
     color = skyFaces.Sample(way.to, Filter.Point);
 }
 
-// The asset through a field, in a branch, blended
+// A function reads the cube it's called with
+Color CubeAt(Cubemap cube, float3 way)
+{
+    return cube.Sample(way);
+}
+
+Color CubeNear(Cubemap cube, float3 way)
+{
+    return cube.Sample(way, Filter.Point);
+}
+
+// The asset through a field, in a branch, blended, in a function
 frag KeptLook(Vertex vertex, out Color color, Way way, Cubes cubes)
 {
     color = Color.black;
-    if (vertex.uv.x >= 0) color = cubes.kept.Sample(way.to);
+    if (vertex.uv.x >= 0) color = CubeAt(cubes.kept, way.to);
 }
 
 frag PaintedLook(Vertex vertex, out Color color, Way way, Cubes cubes)
 {
-    color = cubes.painted.Sample(way.to, Filter.Point);
+    color = CubeNear(cubes.painted, way.to);
 }
 
 // All of the first face across the square: a pixel covers 8 by 8 of the face's
@@ -3887,7 +3948,121 @@ view Rolls(Art art, mut Dice dice)
     }
 }
 
-// Meshes from files (pass 20): a .glb and an .obj, each a square whose corners
+// Normals (pass 20): instance.Normal gives a mesh's normal as it is in the
+// world, which isn't the way Math.Rotate turns it where the draw's transform
+// scales the mesh more one way than another. Each square is flat, with one
+// normal at all its corners, drawn under a transform its singleton keeps, and
+// its color is the normal its frag or its vert was given, a half for 0:
+// shaders.c works the same normals out from the transforms, by their inverse.
+struct Facet
+{
+    float3 position;
+    float3 normal;
+}
+
+// An item of an Instanced draw's list, placed by its own transform
+struct Slab
+{
+    float4x4 transform;
+}
+
+local singleton Facets
+{
+    bool made;
+    List<Facet> square;
+    List<Vertex> card;
+    float4x4 even;      // Scaled as much every way, where Math.Rotate is right too
+    float4x4 squashed;
+    float4x4 mirrored;  // Squashed, and turned inside out
+    float4x4 flat;      // No depth left: it has no inverse
+    float4x4 outer;     // Draw.Transform's, around `inner`
+    float4x4 inner;
+    float4x4 turned;    // Its vert's
+    float4x4 rotated;   // Through Math.Rotate: another direction
+    float4x4 first;     // The list's items'
+    float4x4 second;
+    List<Slab> slabs;
+}
+
+Color NormalColor(float3 normal)
+{
+    return Color(normal.x * 0.5 + 0.5, normal.y * 0.5 + 0.5, normal.z * 0.5 + 0.5);
+}
+
+frag NormalShown(Facet facet, out Color color, Instance instance)
+{
+    color = NormalColor(instance.Normal(facet.normal));
+}
+
+vert NormalTurned(mut Facet facet, Instance instance)
+{
+    facet.normal = instance.Normal(facet.normal);
+}
+
+frag NormalPassed(Facet facet, out Color color)
+{
+    color = NormalColor(facet.normal);
+}
+
+frag NormalRotated(Facet facet, out Color color, Instance instance)
+{
+    color = NormalColor(Math.Normalize(Math.Rotate(instance.transform, facet.normal)));
+}
+
+// A 2D mesh has no transform: its normal comes back of length 1
+frag NormalCard(Vertex vertex, out Color color, Instance instance)
+{
+    color = NormalColor(instance.Normal(float3(3, 0, 4)));
+}
+
+view Normals(Art art, mut Facets facets)
+{
+    if (art.targetPass != 20) return;
+    if (!facets.made)
+    {
+        facets.made = true;
+        var normal = float3(1, 2, 2); // Of any length
+        facets.square = [Facet { position = float3(-8, 8, 0), normal = normal }, Facet { position = float3(8, 8, 0), normal = normal },
+                         Facet { position = float3(8, -8, 0), normal = normal }, Facet { position = float3(-8, -8, 0), normal = normal }];
+        facets.card = [Vertex { }, Vertex { position = float2(16, 0), uv = float2(1, 0) },
+                       Vertex { position = float2(16, 16), uv = float2(1, 1) }, Vertex { position = float2(0, 16), uv = float2(0, 1) }];
+        var turn = quaternion.Euler(float3(0.3, 0.4, 0.5));
+        facets.even = float4x4.TRS(Cell(0, 0), turn, float3(1.5));
+        facets.squashed = float4x4.TRS(Cell(2, 0), turn, float3(2, 0.5, 3));
+        facets.mirrored = float4x4.TRS(Cell(4, 0), turn, float3(-2, 0.5, 3));
+        facets.flat = float4x4.TRS(Cell(6, 0), turn, float3(2, 0.5, 0));
+        facets.outer = float4x4.TRS(Cell(0, 2), quaternion.Euler(float3(0, 0, 0.7)), float3(1, 3, 1));
+        facets.inner = float4x4.TRS(float3(0), quaternion.Euler(float3(0.2, 0, 0.4)), float3(2, 1, 1));
+        facets.turned = float4x4.TRS(Cell(2, 2), turn, float3(2, 0.5, 3));
+        facets.rotated = float4x4.TRS(Cell(4, 2), turn, float3(2, 0.5, 3));
+        facets.first = float4x4.TRS(Cell(0, 4), turn, float3(0.5, 2, 1));
+        facets.second = float4x4.TRS(Cell(2, 4), turn, float3(2, -0.5, 1));
+        facets.slabs = [Slab { transform = facets.first }, Slab { transform = facets.second }];
+    }
+    Draw.SetScreen();
+    Draw.SetClip();
+    Draw.Clear(Color.black); // The grid's cells, and their depth
+    Draw.SetCamera(float4x4.TRS(float3(0, 0, -10), quaternion.identity, float3(1)), float4x4.Ortho(256, 256, 0.1, 30));
+    Draw.Mesh(facets.square, art.faces, facets.even, NormalShown);
+    Draw.Mesh(facets.square, art.faces, facets.squashed, NormalShown);
+    Draw.Mesh(facets.square, art.faces, facets.mirrored, NormalShown);
+    Draw.Mesh(facets.square, art.faces, facets.flat, NormalShown);
+    Draw.Transform(facets.outer)
+    {
+        Draw.Mesh(facets.square, art.faces, facets.inner, NormalShown);
+    }
+    Draw.Mesh(facets.square, art.faces, facets.turned, NormalTurned, NormalPassed);
+    Draw.Mesh(facets.square, art.faces, facets.rotated, NormalRotated);
+    Draw.Instanced(facets.square, art.faces, facets.slabs, NormalShown);
+    Draw.SetScreen();
+    Draw.SetClip();
+    Draw.Transform(float2(200, 200))
+    {
+        Draw.Mesh(facets.card, art.faces, NormalCard);
+    }
+}
+
+// Meshes from files (pass 21): a .glb and an .obj, each a square whose corners
 // are red, green, blue and white, as the built-in vertex, as vertex structs of
 // the game's, alone and as a glob's list and map. The files are right-handed,
 // their fronts wound the other way than Tide's: drawn with nothing said, a
@@ -3936,7 +4111,7 @@ float4x4 ModelPlace(float x, float y, bool facing, float3 middle)
 
 view Models(Art art, mut Shelf shelf)
 {
-    if (art.targetPass != 20) return;
+    if (art.targetPass != 21) return;
     var quad = float3(-10.5, 20.5, 30); // The middle of quad.glb's square, where its node puts it
     var box = float3(-0.5, 0.5, 0);     // ...and of box.obj's
     Draw.Clear(Color.black);
@@ -3968,7 +4143,7 @@ view Models(Art art, mut Shelf shelf)
 view Targets(mut Art art)
 {
     // 6 is ScreenTargets', 7 Wraps', 8 Shadows', 9 Masks', 10 Images', 11 Outputs', 12 Values', 13 Heights', 14 Mipmaps',
-    // 15 Alphas', 16 Raws', 17 the cubes', 18 the lists', 19 the rolls' and 20 the models'
+    // 15 Alphas', 16 Raws', 17 the cubes', 18 the lists', 19 the rolls', 20 the normals' and 21 the models'
     if (art.targetPass == 0 || art.targetPass >= 6) return;
     if (art.targetPass >= 4)
     {
