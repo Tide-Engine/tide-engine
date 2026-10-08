@@ -1,0 +1,21 @@
+// expect: a loop the GPU runs counts on its own line, which has no '++' or '--' but its step
+// expect: change the other variable in the loop's body
+scene Main { }
+
+local singleton Models
+{
+    List<Vertex> corners;
+}
+
+frag Shade(Vertex vertex, out Color color)
+{
+    mut var i = 0;
+    mut var shade = 0.0;
+    for (int k = 0; k < i++; k++) shade += 0.1;
+    color = Color(shade, shade, shade);
+}
+
+view Show(Models models)
+{
+    Draw.Mesh(models.corners, [0, 1, 2], Shade);
+}

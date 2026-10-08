@@ -8896,7 +8896,7 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
         return false; // Spawns, sends, draws, the GUI, list and grid changes, C: in order
     }
     if (e->kind == E_AWAIT || e->kind == E_TRY || e->type.kind == TY_DRAW_LIST) return false;
-    if (e->kind == E_STEP) return false; // It writes, in the middle of an expression: in order
+    if (e->kind == E_STEP) return own_cell_only(e->step, loop, 0); // The assignment it makes, checked as one
     if (e->kind == E_INDEX && e->object->type.kind == TY_GRID && same_place(e->object, loop->value)) {
         int64_t at[3];
         if (!own_offset(e->lhs, loop, e->object->type.decl->dims, at) || at[0] || at[1] || at[2]) return false;
@@ -8919,6 +8919,7 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
 #define WINDOW_REACH 64
 
 static void window_stmt(stmt *s, stmt *loop);
+static void window_assign(stmt *s, stmt *loop);
 
 // The cells of the loop's grid a step reads or writes at its place plus
 // constants, which go through its window, and how far that window reaches.
@@ -8946,6 +8947,7 @@ static void window_expr(expr *e, stmt *loop)
     for (int i = 0; i < e->args.count; i++) window_expr(e->args.items[i], loop);
     for (int i = 0; i < e->inits.count; i++) window_expr(e->inits.items[i].value, loop);
     window_stmt(e->block, loop);
+    if (e->kind == E_STEP) window_assign(e->step, loop); // After its variable's own cells were marked
 }
 
 static void window_stmt(stmt *s, stmt *loop)
@@ -8959,6 +8961,17 @@ static void window_stmt(stmt *s, stmt *loop)
     window_expr(s->cond, loop);
     window_expr(s->value, loop);
     window_expr(s->target, loop);
+    window_assign(s, loop);
+    window_stmt(s->init, loop);
+    window_stmt(s->step, loop);
+    window_stmt(s->then_stmt, loop);
+    window_stmt(s->else_stmt, loop);
+}
+
+// What a step writes of the loop's list or grid, by an assignment or by the
+// one a `++` in an expression makes: into its window, or the loop has none.
+static void window_assign(stmt *s, stmt *loop)
+{
     if (s->kind == S_ASSIGN && s->target->kind == E_INDEX && s->target->object->type.kind == TY_LIST
         && same_place(s->target->object, loop->value)) { // Its own element, in its task's copy
         int64_t at = 0;
@@ -8973,10 +8986,6 @@ static void window_stmt(stmt *s, stmt *loop)
         && same_place(s->target->object, loop->value) && !s->target->window) {
         loop->windowed = false; // A step only writes its own cells, but a write the window can't take goes the slow way
     }
-    window_stmt(s->init, loop);
-    window_stmt(s->step, loop);
-    window_stmt(s->then_stmt, loop);
-    window_stmt(s->else_stmt, loop);
 }
 
 // A parallel loop's steps go through a window when they can: its block, and
@@ -9283,12 +9292,6 @@ static void check_assign(checker *c, const stmt *s)
 // and the variable's value after it, or before.
 static type check_step_value(checker *c, expr *e)
 {
-    const char *op = e->op == T_PLUS_PLUS ? "++" : "--";
-    if (c->parallel) {
-        diag_error(e->at, "'%s' can't be part of an expression in a parallel loop's step", op);
-        diag_note("write it as a statement of its own: 'i %s= 1;'", e->op == T_PLUS_PLUS ? "+" : "-");
-        return T_ERR;
-    }
     const int errors = diag_error_count();
     check_assign(c, e->step);
     // Its value is read, where a statement's isn't
