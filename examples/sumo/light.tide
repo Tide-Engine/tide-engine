@@ -56,8 +56,8 @@ local singleton Room
 }
 
 // What the lamp sees: how far, along each pixel of its image. A frag takes
-// this itself to ask whether its pixel is in shadow, as only a frag reads a
-// target's depth.
+// this itself, and hands its depth to `Sunlight` to ask whether its pixel is
+// in shadow.
 local singleton Shadow
 {
     RenderTarget map;      // Depth alone, LAMP_PIXELS a side on any display
@@ -129,9 +129,19 @@ float3 FromLamp(float3 world, float3 normal, float4x4 toLamp)
     return float3(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5, clip.z * 0.5 + 0.5);
 }
 
+// How much of the lamp's light gets to a place on a surface, from 0, in
+// shadow, to 1: four looks at the lamp's image around where the place is in
+// it, a little apart, which blend a shadow's edge. `depth` is the lamp's
+// image, which the frag that calls this names: 'Sunlight(shadow.depth, ...)'.
+float Sunlight(DepthTexture depth, float3 world, float3 normal, float4x4 toLamp)
+{
+    float3 seen = FromLamp(world, normal, toLamp);
+    return (depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
+          + depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
+}
+
 // A surface's paint in the ring's light. `sun` is how much of the lamp's
-// light gets to it, from 0, in shadow, to 1: its frag asks the lamp's image,
-// as only a frag reads it.
+// light gets to it, from 0, in shadow, to 1: what `Sunlight` says.
 Color Lit(Color paint, float3 normal, float3 world, Room room, float gloss, float sun)
 {
     float3 lamp = Lamp();
@@ -156,8 +166,8 @@ Color Lit(Color paint, float3 normal, float3 world, Room room, float gloss, floa
 // tile, a line of light along an edge with nothing past it, and the rose a
 // tile turns before it falls. Its alpha is whether there's a floor there.
 // `here` is the floor's grid at that place, and `sides` whether there's a
-// tile to its left, its right, below it and above it: a frag reads those,
-// as only a frag samples a grid.
+// tile to its left, its right, below it and above it: the tile's frag reads
+// those from the grid.
 Color FloorPaint(float3 world, Color here, float4 sides, float beat)
 {
     float2 cell = float2(world.x, world.z) / TILE + float2(7.5);
@@ -190,10 +200,7 @@ Color FloorPaint(float3 world, Color here, float4 sides, float beat)
 // edge's light along their top.
 frag TileLook(Corner corner, out Color color, Solid solid, Room room, Ground ground, Shadow shadow)
 {
-    // How much of the lamp's light gets here: four looks at its image around where this pixel is in it
-    float3 seen = FromLamp(this.world, corner.normal, shadow.toLamp);
-    float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
-               + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
+    float sun = Sunlight(shadow.depth, this.world, corner.normal, shadow.toLamp);
     if (corner.normal.y > 0.5)
     {
         float2 uv = (float2(this.world.x, this.world.z) / TILE + float2(7.5)) / 15;
@@ -228,9 +235,7 @@ frag CrateLook(Corner corner, out Color color, Solid solid, Instance instance, R
     }
     Color paint = Color(solid.tint.r * tone, solid.tint.g * tone, solid.tint.b * tone, 1);
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
-    float3 seen = FromLamp(this.world, normal, shadow.toLamp);
-    float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
-               + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
+    float sun = Sunlight(shadow.depth, this.world, normal, shadow.toLamp);
     color = Lit(paint, normal, this.world, room, 0.25, sun);
 }
 
@@ -245,9 +250,7 @@ frag BallLook(Corner corner, out Color color, Instance instance, Room room, Ball
     if (ball.heavy > 0) paint = band < 0.2 ? seat : band > 0.82 ? Color(0.5, 0.52, 0.58) : Color(0.16, 0.17, 0.2);
     paint = Mix(paint, Color.white, Math.Saturate(ball.flash + ball.charge * (0.35 + 0.25 * Math.Sin(room.beat * 14))));
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
-    float3 seen = FromLamp(this.world, normal, shadow.toLamp);
-    float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
-               + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
+    float sun = Sunlight(shadow.depth, this.world, normal, shadow.toLamp);
     color = Lit(paint, normal, this.world, room, ball.heavy > 0 ? 1.6 : 1.0, sun);
 }
 
@@ -255,9 +258,7 @@ frag BallLook(Corner corner, out Color color, Instance instance, Room room, Ball
 frag Plain(Corner corner, out Color color, Solid solid, Instance instance, Room room, Shadow shadow)
 {
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
-    float3 seen = FromLamp(this.world, normal, shadow.toLamp);
-    float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
-               + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25;
+    float sun = Sunlight(shadow.depth, this.world, normal, shadow.toLamp);
     color = Lit(solid.tint, normal, this.world, room, 0.9, sun);
 }
 

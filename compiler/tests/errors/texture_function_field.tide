@@ -1,0 +1,5 @@
+// expect: a function samples a Texture it takes as a parameter of its own, or a Texture asset by its name
+// expect: the frag or vert that calls it passes the one to read, a field of a component or singleton it takes: 'Color Tile(Texture image, ...)', called as 'Tile(look.image, ...)'
+scene Main { }
+local singleton Look { Texture atlas; }
+Color Tile(Look look, float2 uv) { return look.atlas.Sample(uv); }

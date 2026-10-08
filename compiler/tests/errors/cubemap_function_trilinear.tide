@@ -1,0 +1,7 @@
+// expect: a Sample in a function can't be Filter.Trilinear: only a frag's own Sample reads between a cube's smaller images
+// expect: the GPU picks between a cube's smaller images by how fast the direction changes from one pixel to the next, which a frag asks as it starts, and a function's direction is its call's: sample in the frag itself, or with Filter.Bilinear here
+scene Main { }
+local singleton Room { Cubemap sky; List<Vertex3> ball; }
+Color Sky(Cubemap sky, float3 way) { return sky.Sample(way, Filter.Trilinear); }
+frag Look(Vertex3 vertex, out Color color, Room room) { color = Sky(room.sky, vertex.position); }
+view Show(Room room) { Draw.Mesh(room.ball, [0, 1, 2], float4x4.identity, Look); }

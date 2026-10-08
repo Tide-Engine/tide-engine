@@ -772,6 +772,22 @@ float3 FromLamp(float3 world, float3 normal, float4x4 toLamp)
     return float3(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5, clip.z * 0.5 + 0.5);
 }
 
+// How much of the sun gets to a place on a surface, from 0, in shadow, to 1:
+// looks at the sun's image around where the place is in it, a little apart,
+// which blend a shadow's edge. `depth` is the sun's image, which the frag that
+// calls this names: 'Sunlight(shadow.depth, ...)'. Two looks, across one
+// diagonal, are enough for a blade of grass; everything else takes four.
+float SunlightAcross(DepthTexture depth, float3 seen, float2 way)
+{
+    return depth.Compare(seen.xy - way * LAMP_SOFT, seen.z) + depth.Compare(seen.xy + way * LAMP_SOFT, seen.z);
+}
+
+float Sunlight(DepthTexture depth, float3 world, float3 normal, float4x4 toLamp)
+{
+    float3 seen = FromLamp(world, normal, toLamp);
+    return (SunlightAcross(depth, seen, float2(1, 1)) + SunlightAcross(depth, seen, float2(-1, 1))) * 0.25;
+}
+
 // How much of the sun the clouds overhead let through at a place: they drift.
 float CloudShade(float2 at, float time)
 {
@@ -780,7 +796,7 @@ float CloudShade(float2 at, float time)
 }
 
 // A surface's paint in the yard's light. `sun` is how much of the sun gets to
-// it, from 0, in shadow, to 1: its frag asks the sun's image.
+// it, from 0, in shadow, to 1: what `Sunlight` says, under the clouds.
 Color Lit(Color paint, float3 normal, float3 world, float3 eye, float gloss, float sun)
 {
     float3 lamp = Lamp();
@@ -870,11 +886,8 @@ Color GroundPaint(float2 at, float past)
 // side is rock in layers, with the turf's edge along its top.
 frag GroundLook(Corner corner, out Color color, Solid solid, Room room, Shadow shadow)
 {
-    float3 seen = FromLamp(this.world, corner.normal, shadow.toLamp);
     float2 at = float2(this.world.x, this.world.z);
-    float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
-               + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25
-              * CloudShade(at, room.time);
+    float sun = Sunlight(shadow.depth, this.world, corner.normal, shadow.toLamp) * CloudShade(at, room.time);
     if (corner.normal.y < 0.5)
     {
         float layers = Math.Perlin(float2(this.world.y * 2.4 + Math.Perlin(at * 0.4) * 0.9, 0.5));
@@ -915,10 +928,7 @@ frag GroundLook(Corner corner, out Color color, Solid solid, Room room, Shadow s
 frag Plain(Corner corner, out Color color, Solid solid, Instance instance, Room room, Shadow shadow)
 {
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal / (solid.size * solid.size)));
-    float3 seen = FromLamp(this.world, normal, shadow.toLamp);
-    float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
-               + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25
-              * CloudShade(float2(this.world.x, this.world.z), room.time);
+    float sun = Sunlight(shadow.depth, this.world, normal, shadow.toLamp) * CloudShade(float2(this.world.x, this.world.z), room.time);
     float3 local = corner.position * solid.size;
     mut float3 paint = float3(solid.tint.r, solid.tint.g, solid.tint.b);
     mut float gloss = solid.gloss;
@@ -992,10 +1002,7 @@ frag Plain(Corner corner, out Color color, Solid solid, Instance instance, Room 
 frag DeckLook(Corner corner, out Color color, Solid solid, Instance instance, Room room, Shadow shadow)
 {
     float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal / (solid.size * solid.size)));
-    float3 seen = FromLamp(this.world, normal, shadow.toLamp);
-    float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, -LAMP_SOFT), seen.z)
-               + shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.25
-              * CloudShade(float2(this.world.x, this.world.z), room.time);
+    float sun = Sunlight(shadow.depth, this.world, normal, shadow.toLamp) * CloudShade(float2(this.world.x, this.world.z), room.time);
     mut Color paint = solid.tint;
     float2 on = float2(corner.position.x, corner.position.z);
     float far = Math.Length(on);
@@ -1023,8 +1030,7 @@ vert Sway(mut Corner corner, Blade blade, Room room)
 frag BladeLook(Corner corner, out Color color, Blade blade, Room room, Shadow shadow)
 {
     float3 up = float3(0, 1, 0);
-    float3 seen = FromLamp(this.world, up, shadow.toLamp);
-    float sun = (shadow.depth.Compare(seen.xy + float2(-LAMP_SOFT, -LAMP_SOFT), seen.z) + shadow.depth.Compare(seen.xy + float2(LAMP_SOFT, LAMP_SOFT), seen.z)) * 0.5
+    float sun = SunlightAcross(shadow.depth, FromLamp(this.world, up, shadow.toLamp), float2(1, 1)) * 0.5
               * CloudShade(float2(this.world.x, this.world.z), room.time);
     float tall = 0.6 + 0.55 * corner.position.y;
     color = Lit(Color(blade.tint.r * tall, blade.tint.g * tall, blade.tint.b * tall, 1), up, this.world, room.eye, 0, sun);

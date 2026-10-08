@@ -1,0 +1,6 @@
+// expect: 'Sky' samples a Cubemap, which only code the GPU runs does: a frag, a vert and the functions they call
+// expect: it does on line 5, itself or through what it calls there: a cube's pixels stay on the GPU, where a frag or a vert that calls 'Sky' reads them
+scene Main { }
+local singleton Room { Cubemap sky; }
+Color Sky(Cubemap sky, float3 way) { return sky.Sample(way); }
+view Show(Room room) { Draw.Clear(Sky(room.sky, float3(0, 1, 0))); }

@@ -1,0 +1,8 @@
+// expect: a Sample in a function can't be Filter.Trilinear: only a frag's own Sample reads between a texture's smaller images
+// expect: the GPU picks between a texture's smaller images by how fast the uv changes from one pixel to the next, which a frag asks as it starts, and a function's uv is its call's: sample in the frag itself, or with Filter.Bilinear here
+// expect: frag 'Shade' samples it through 'Tile', here
+scene Main { }
+local singleton Look { Texture atlas; List<Vertex3> mesh; }
+Color Tile(Texture atlas, float2 uv) { return atlas.Sample(uv, Filter.Trilinear); }
+frag Shade(Vertex3 vertex, out Color color, Look look) { color = Tile(look.atlas, vertex.uv); }
+view Show(Look look) { Draw.Mesh(look.mesh, [0, 1, 2], float4x4.identity, Shade); }

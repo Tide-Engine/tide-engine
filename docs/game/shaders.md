@@ -395,7 +395,7 @@ frag Lit(BoxVertex vertex, out Color color, Lights lights, Board board)
   - A list's or a grid's local isn't `mut`, and it's given a list by its name: a field of what the frag or vert takes, an asset, another such local, or a parameter. Not one picked as the code runs, like `flag ? a.items : b.items`: read each under its own name, and pick between what was read.
   - A function reads the list or grid it takes: no `mut` or `out`, and none is returned, made, or kept in a struct.
 - A function that takes a grid is the GPU's alone: frags, verts and the functions they call call it. On the CPU a grid's cells are read through its component or singleton, `board.owner[x, y]`. A grid's local is in a frag, a vert or such a function.
-- `Sample` still reads a grid or a texture where the frag or vert takes it, or an asset by its name, in the frag or vert itself.
+- A function samples the texture it takes too, a grid among them: see [In a function](#in-a-function).
 
 ### Arrays
 
@@ -484,6 +484,34 @@ The GPU picks which copies to read by how fast the `uv` changes from one pixel t
 - Where the filter is the texture's to say (a frag's `Texture` parameter, a `Texture` field) and the `uv` can't be worked out as the frag starts, the `Sample` reads the texture's own pixels, as `Filter.Bilinear` would, whatever the texture says, and tidec warns about it: write `Filter.Bilinear` there to say that's what you want, or make the `uv` one the frag can work out as it starts.
 - A vert has no pixels to compare, so there `Filter.Trilinear` reads the texture's own pixels.
 
+### In a function
+
+A function a frag or a vert calls samples too: a texture it takes as a parameter, which is the one its call names, or an asset by its name. So a lookup that several frags share is written once:
+
+```csharp
+// Four reads around a place, a pixel apart: a blur
+Color Soft(Texture image, float2 uv, float2 pixel)
+{
+    return (image.Sample(uv + float2(-pixel.x, -pixel.y)) + image.Sample(uv + float2(pixel.x, -pixel.y))
+          + image.Sample(uv + float2(-pixel.x, pixel.y)) + image.Sample(uv + float2(pixel.x, pixel.y))) * 0.25;
+}
+
+frag Shade(Corner corner, out Color color, Models models, Texture source)
+{
+    color = Soft(models.wood, corner.uv, models.pixel)   // A field of what the frag takes
+          * Soft(tiles, corner.uv, models.pixel)         // An asset
+          * Soft(source, corner.uv, models.pixel);       // The texture its draw gave it
+}
+```
+
+- **The parameter is a `Texture`**, which a `Grid2<Color>` and a `Grid2<float>` are too, a [`DepthTexture`](#a-target-s-depth) or a [`Cubemap`](#skybox-and-reflections), and the function reads it as a frag would: `Sample`, with a filter and a wrap or without, a depth's `Compare`, a cube's `Sample(direction)`.
+- **The call names the texture**: a field of a component or a singleton the frag or vert takes, its own `Texture`, an asset, or in a function, a parameter of its own, passed on. Not one picked as the code runs, like `flag ? models.wood : models.stone`: sample each under its own name, and pick between the colors.
+- **It isn't handed over as the code runs.** No GPU passes a texture to a function, so which texture a name stands for is settled as the shader is written, and the function is written once for each texture it's called with, as it is for [a list](#naming-a-list-and-passing-it-on). It costs nothing while it runs. A function reads the texture it takes: no `mut` or `out`, and none is returned, kept in a local or in a struct.
+- **What a `Sample` there leaves out is still the texture's**: `Soft(tiles, ...)` reads `tiles` as its declaration says, and `Soft(source, ...)` as the texture the draw gave says. Each way each texture is read counts among the draw's 8.
+- **A function that samples is the GPU's alone**: frags, verts and the functions they call call it. A view or a system that calls one is an error that says so, as nothing on the CPU reads a texture's pixels. A function that only takes a texture and passes it to C, say, is still everyone's.
+- **A function's `Sample` reads the texture's own pixels, never between its smaller copies.** `Filter.Trilinear` is for a frag's own `Sample`, of a `uv` the frag can work out as it starts, and a function's `uv` is its call's. In a function a frag reaches, it's an error where the `Sample` says `Filter.Trilinear` or leaves its filter to a texture that says it, and a warning where it leaves it to a `Texture` that may (a field, the frag's own): write `Filter.Bilinear` there, or sample in the frag.
+- **A [`[Raw]`](#textures-that-are-numbers) texture is read by its name** in a function as in a frag, and isn't passed to one as a `Texture`.
+
 ### Textures that are numbers
 
 A texture is colors, each with how much of it there is: where a pixel's alpha is 0 it has no color, and a `Sample` there gives `Color(0, 0, 0, 0)` (see [Alpha](./views.md#alpha)). That's wrong for an image whose channels are four numbers of their own: a mask in alpha beside a roughness in red, a lookup table, a flow map. `[Raw]` says so where the texture is declared:
@@ -505,7 +533,7 @@ frag Ground(Vertex vertex, out Color color, Terrain terrain)
 ```
 
 - It goes before an asset that's one `Texture` or one `Grid2<Color>`, and on a field that's a `Grid2<Color>`. A `Grid2<float>` needs none: it has no alpha.
-- A frag or a vert reads it **by its name**, as above. It isn't a texture to draw with, to give a draw for its frag's `Texture` parameter, or to keep in a `Texture` field: each is an error that says so, as everything that draws a texture takes it for colors, and a `Texture` handed on doesn't say which kind it is.
+- A frag or a vert reads it **by its name**, as above, and so does a function they call. It isn't a texture to draw with, to give a draw for its frag's `Texture` parameter, to pass to a function as a `Texture`, or to keep in a `Texture` field: each is an error that says so, as everything that draws a texture takes it for colors, and a `Texture` handed on doesn't say which kind it is.
 - The same file can be declared twice, once `[Raw]` and once not: they're two textures.
 - `[Filter]` and `[Wrap]` go beside it as on any texture, and code reads a `[Raw]` grid's cells as it reads any grid's.
 
@@ -534,6 +562,25 @@ float lit = lamp.shadow.Compare(uv, depth);   // How much of what's stored there
 - **`Compare(uv, value)`** compares what's stored with a number of yours, and gives a number from 0 to 1: 1 where what's stored isn't nearer than `value`, 0 where it is, and in between along an edge, as the GPU compares the pixels around `uv` and blends what that gives. `value` is kept between 0 and 1, so what's past the far limit counts as at it.
 
 `uv` is a color's: (0, 0) is the target's top left corner. Past the target's edges, both read the pixels at the edge: a depth takes no `Wrap`. Verts read a depth too. Each way a frag reads one is one of its draw's [8 textures](#what-the-gpu-runs).
+
+A function reads a depth it takes as a parameter the same two ways, so every frag that's lit shares one lookup. The frag names the depth where it calls:
+
+```csharp
+// How much of the lamp's light gets to a place in its image: four looks around it, which soften a shadow's edge
+float Sunlight(DepthTexture depth, float2 uv, float far)
+{
+    return (depth.Compare(uv + float2(-SOFT, -SOFT), far) + depth.Compare(uv + float2(SOFT, -SOFT), far)
+          + depth.Compare(uv + float2(-SOFT, SOFT), far) + depth.Compare(uv + float2(SOFT, SOFT), far)) * 0.25;
+}
+
+frag Wall(Corner corner, out Color color, Lamp lamp)
+{
+    float sun = Sunlight(lamp.shadow, uv, depth);   // `uv` and `depth`: where the pixel is in the lamp's image, below
+    ...
+}
+```
+
+It's written for the depth each call names, as a function that samples [a texture](#in-a-function) is, and the same rules hold: the call names a field of a component or a singleton the frag takes, a function passes its own parameter on, and one that reads a depth is the GPU's alone.
 
 ### A shadow map
 
@@ -584,7 +631,7 @@ frag Sky(Corner corner, out Color color)
 
 - **`Sample(direction)`** takes a `float3` of any length, in the world's axes. One face goes on in the next, so there's no edge, and nothing to [wrap](./views.md#past-the-edges).
 - **`Sample(direction, filter)`** says how it's read between its pixels, written there like a texture's: `Filter.Bilinear` when left out, `Filter.Point` for the nearest pixel, and `Filter.Trilinear` between its [smaller images](#textures) too, in a frag, of a direction the frag can work out as it starts.
-- **The cube is an asset by its name,** or a field of a component or a singleton the frag takes, where a view put one. Verts read one too. Each way a frag reads one is one of its draw's [8 textures](#what-the-gpu-runs).
+- **The cube is an asset by its name,** or a field of a component or a singleton the frag takes, where a view put one. Verts read one too, and so does a function that takes a `Cubemap`, which reads the one its call names (see [In a function](#in-a-function)). Each way a frag reads one is one of its draw's [8 textures](#what-the-gpu-runs).
 - A cube that was never set reads as black.
 
 There are two kinds, and a frag reads both the same way.

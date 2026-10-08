@@ -1,0 +1,15 @@
+// expect: this Sample reads its texture as it says, and 'look.far' says Filter.Trilinear, which only a frag's own Sample reads
+// expect: the GPU picks between a texture's smaller images by how fast the uv changes from one pixel to the next, which a frag asks as it starts, and a function's uv is its call's: sample in the frag itself, or with Filter.Bilinear here
+// expect: frag 'Shade' samples it through 'Twice', here
+// The grid says how it's read where it's declared, and the Sample two functions down leaves it to it
+scene Main { }
+local singleton Look
+{
+    [Filter(Filter.Trilinear)]
+    Grid2<Color> far = Grid2(4, 4);
+    List<Vertex3> mesh;
+}
+Color Tile(Texture atlas, float2 uv) { return atlas.Sample(uv); }
+Color Twice(Texture atlas, float2 uv) { return Tile(atlas, uv) * 2; }
+frag Shade(Vertex3 vertex, out Color color, Look look) { color = Twice(look.far, vertex.uv); }
+view Show(Look look) { Draw.Mesh(look.mesh, [0, 1, 2], float4x4.identity, Shade); }

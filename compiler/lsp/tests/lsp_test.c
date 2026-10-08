@@ -5291,6 +5291,63 @@ TIDE_TEST(lsp_render_target_formats_and_depth)
     TIDE_CHECK(has(last_sent(), "a field of a component or singleton it takes"));
 }
 
+// A function a frag calls samples the textures it takes as parameters: a
+// depth, a Texture and a cube, and an asset by its name.
+TIDE_TEST(lsp_textures_in_functions)
+{
+    start();
+    static const char types[] = "scene Main { }\n"
+                                "local singleton Lamp { RenderTarget map; DepthTexture shadow; Texture image; Cubemap sky; }\n";
+    char program[4096];
+    snprintf(program, sizeof program, "%sfloat Sunlit(DepthTexture depth, float3 at) { return depth.Compare(at.xy, at.z) * depth.Sample(at.xy); }\n"
+                                      "float Twice(DepthTexture depth, float3 at) { return Sunlit(depth, at) * 2; }\n"
+                                      "Color Tile(Texture image, float2 uv) { return image.Sample(uv, Filter.Point, Wrap.Repeat); }\n"
+                                      "Color Above(Cubemap sky, float3 way) { return sky.Sample(way); }\n"
+                                      "frag Lit(Vertex3 vertex, out Color color, Lamp lamp)\n{\n"
+                                      "    float lit = Twice(lamp.shadow, this.world);\n"
+                                      "    color = Tile(lamp.image, vertex.uv) * Above(lamp.sky, this.world) * lit;\n}\n"
+                                      "view V(mut Lamp lamp)\n{\n"
+                                      "    lamp.shadow = lamp.map.depth;\n"
+                                      "    Draw.Mesh([Vertex3 { }], [0, 0, 0], float4x4.identity, Lit);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    // What each has to read it with, in a function that reads nothing yet
+    snprintf(program, sizeof program, "%sfloat Sunlit(DepthTexture depth, float3 at)\n{\n    return depth.$\n}\n", types);
+    const char *reads = complete(program);
+    TIDE_CHECK(offers(reads, "Sample") && offers(reads, "Compare"));
+    TIDE_CHECK(has(reads, "DepthTexture.Compare(float2 uv, float value) -> float"));
+    snprintf(program, sizeof program, "%sColor Tile(Texture image, float2 uv)\n{\n    return image.$\n}\n", types);
+    TIDE_CHECK(offers(complete(program), "Sample"));
+    snprintf(program, sizeof program, "%sColor Above(Cubemap sky, float3 way)\n{\n    return sky.$\n}\n", types);
+    TIDE_CHECK(offers(complete(program), "Sample"));
+    // ...and in one that does, which is the GPU's alone
+    snprintf(program, sizeof program, "%sfloat Sunlit(DepthTexture depth, float3 at)\n{\n    float near = depth.Sample(at.xy);\n"
+                                      "    return near * depth.$\n}\n", types);
+    TIDE_CHECK(offers(complete(program), "Compare"));
+    // In a view, a depth has nothing to read it with
+    snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.shadow.$\n}\n", types);
+    TIDE_CHECK(!offers(complete(program), "Compare"));
+
+    // The hovers say a function takes one
+    snprintf(program, sizeof program, "%sfloat Sunlit(Depth$Texture depth, float3 at) { return depth.Compare(at.xy, at.z); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "reads the depth its call names"));
+    snprintf(program, sizeof program, "%sfloat Sunlit(DepthTexture depth, float3 at) { return depth.Com$pare(at.xy, at.z); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "A function they call compares the depth it takes"));
+
+    // A function that reads one is the GPU's: a view's call says so, and so does a Sample of what's no parameter
+    snprintf(program, sizeof program, "%sfloat Sunlit(DepthTexture depth, float3 at) { return depth.Compare(at.xy, at.z); }\n"
+                                      "view V(mut Lamp lamp)\n{\n    lamp.shadow = lamp.map.depth;\n"
+                                      "    Debug.Log(Sunlit(lamp.shadow, float3(0)));\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "reads a render target's depth, which only code the GPU runs does"));
+    snprintf(program, sizeof program, "%sfloat Sunlit(Lamp lamp, float3 at) { return lamp.shadow.Compare(at.xy, at.z); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "a function samples a DepthTexture it takes as a parameter of its own"));
+}
+
 // A target of several color images, a format each; its `colors`, read one at
 // a time; and a frag's outputs after the pixel's color.
 TIDE_TEST(lsp_render_target_samples)
