@@ -1,0 +1,12 @@
+// expect: where the engine would put a vert's vertex can only be read
+scene Main { }
+
+void Nudge(mut float4 place)
+{
+    place.x += 1;
+}
+
+vert Raise(mut Vertex3 vertex)
+{
+    Nudge(this.clip);
+}

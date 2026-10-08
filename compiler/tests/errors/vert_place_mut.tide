@@ -1,0 +1,8 @@
+// expect: where a vert puts its vertex is an 'out' parameter: 'out float4 clip'
+// expect: it starts with no value, and the vert writes it on every path: 'this.clip' is where the engine would put the vertex
+scene Main { }
+
+vert Snap(mut Vertex3 vertex, mut float4 clip)
+{
+    clip = this.clip;
+}

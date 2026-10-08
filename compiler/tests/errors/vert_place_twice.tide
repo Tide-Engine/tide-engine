@@ -1,0 +1,9 @@
+// expect: a vert puts its vertex in one place, and 'clip' is that already
+// expect: one 'out float4' is where the vertex goes, in clip space; what a vert works out for its frag goes in a struct, 'out FromLamp lamp'
+scene Main { }
+
+vert Snap(mut Vertex3 vertex, out float4 clip, out float4 glow)
+{
+    clip = this.clip;
+    glow = clip;
+}

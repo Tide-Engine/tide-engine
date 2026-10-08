@@ -16,6 +16,7 @@ function(tide_e2e_test name)
 endfunction()
 
 tide_e2e_test(move_clamp)
+tide_e2e_test(map_iteration)
 tide_e2e_test(structural)
 tide_e2e_test(reach)
 tide_e2e_test(sparse)
@@ -42,9 +43,9 @@ tide_e2e_test(io)
 tide_e2e_test(byte)
 tide_e2e_test(maps)
 tide_e2e_test(nested) # Lists of lists, maps of lists, lists of maps and sets, structs with lists as elements
-target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=6375947640992776174ull)
+target_compile_definitions(tidec_e2e_nested PRIVATE NESTED_HASH=15321220430701081947ull)
 tide_e2e_test(arrays) # T[N]: fixed-length arrays in components, structs, lists, maps, events, inputs and locals
-target_compile_definitions(tidec_e2e_arrays PRIVATE ARRAYS_HASH=9835394150231905810ull)
+target_compile_definitions(tidec_e2e_arrays PRIVATE ARRAYS_HASH=9624744844104527802ull)
 tide_e2e_test(arrays_plain_input) # Bounds and padding inside integer-only array input
 tide_e2e_test(arrays_forward) # Arrays of structs whose fields and types are declared later
 tide_e2e_test(sort)
@@ -115,6 +116,10 @@ add_test(NAME tidec_command_schema
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}"
         "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/command_schema"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/command_schema.cmake")
+add_test(NAME tidec_map_layout
+    COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}"
+        "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/map_layout"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/map_layout.cmake")
 tide_e2e_test(local)
 # `local` fields of the match's components and singletons: this machine's, outside the match
 tide_e2e_test(local_fields WARNINGS "'box' is declared mut but never written")

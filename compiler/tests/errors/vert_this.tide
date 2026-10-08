@@ -1,4 +1,5 @@
-// expect: a vert runs for a vertex, so it has no pixel 'this'
+// expect: a vert's 'this' has no 'position': it has 'clip', where the engine would put its vertex
+// expect: 'this.position' is a frag's, of the pixel it runs for; a vert runs before there are pixels
 scene Main { }
 
 vert Raise(mut Vertex vertex)
