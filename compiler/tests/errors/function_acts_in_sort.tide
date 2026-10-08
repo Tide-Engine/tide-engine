@@ -1,0 +1,15 @@
+// expect: a comparison runs again and again as the list sorts, in an order nothing promises, and 'Before' sends 'Ping'
+// expect: a comparison only compares its two elements: call it before the sort, or after
+event Ping { int n; }
+singleton Tally { List<int> scores; }
+scene Main { }
+bool Before(int a, int b)
+{
+    Send(Ping { n = a });
+    return a < b;
+}
+system Rank(mut Tally tally)
+{
+    tally.scores.Sort(a, b) { return Before(a, b); }
+}
+event(Ping ping) Heard() { }

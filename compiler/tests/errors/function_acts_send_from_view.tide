@@ -1,0 +1,10 @@
+// expect: a view can't change the match, and 'Chain' sends 'Ping'
+// expect: it does on line 7
+event Ping { int n; }
+component Enemy { int hp; }
+scene Main { }
+void Notify(int n) { Send(Ping { n = n }); }
+void Chain(int n) { Notify(n); }
+event(Spawned) Setup(with Main) { Spawn(Enemy); Chain(1); }
+event(Ping ping) Heard() { }
+view Show(Enemy enemy) { Chain(enemy.hp); }

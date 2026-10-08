@@ -1,0 +1,7 @@
+// expect: a view can't change the match, and 'Wave' spawns entities
+// expect: put what it wants in the input, or send a command, and change the match in a system or a handler
+component Enemy { int hp; }
+scene Main { }
+Entity Wave() { return Spawn(Enemy); }
+event(Spawned) Setup(with Main) { Wave(); }
+view Show(Enemy enemy) { if (enemy.hp < 0) Wave(); }
