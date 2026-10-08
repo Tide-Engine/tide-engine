@@ -256,6 +256,13 @@ uint64_t tide_platform_memory(void);
 // cost. 0 before anything drew, and again when the device was lost.
 uint64_t tide_platform_gpu_memory(void);
 
+// How many bytes of textures' pixels the renderer has sent the GPU since the
+// program started, by its own count: all of a texture that's new, or whose
+// writer says nothing of what changed, and of one that says, the pixels that
+// did (tide_draw_texture_edit). For tools and tests: what a frame adds to it
+// is what the frame's textures cost to keep up to date.
+uint64_t tide_platform_gpu_written(void);
+
 // The game's pack of assets (tide/pack.h), as its build left it with the
 // program: beside it as <program>.pack on desktop, in its page on the web and
 // in its APK on Android. malloc'd bytes, the caller's to free, or NULL for

@@ -1,0 +1,83 @@
+// What a frag reads of the elements of a list is what's sent of them: a
+// texture of numbers has an element's parts that some frag or vert of the
+// game reads, its floats then its ints, and the rest of an element is zeros
+// in the shader, which nothing reads. A part is a struct's field, a struct's
+// own each apart, and an array whole.
+//
+// Read by a chain of fields, through a foreach's variable, through locals
+// that hold an element or a part of one, and through a function, which says
+// for each list it's called with. A map's key is always there; a list that's
+// only counted has nothing sent, and its reader gives zeros.
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+}
+struct Notch
+{
+    float deep;
+    int teeth;
+}
+struct Gear
+{
+    Color paint;
+    float3 at;
+    float3 skipped;
+    Notch notch;
+    int kind;
+    float[2] span;
+    bool lit;
+}
+singleton Works
+{
+    List<Gear> gears;
+    List<Gear> spare;
+    List<Gear> counted;
+    Map<int, Gear> byKey;
+    Grid2<Gear> field = Grid2(4, 4);
+}
+local singleton Stage
+{
+    List<Corner> corners;
+    List<int> faces;
+}
+
+float Deepest(List<Gear> gears)
+{
+    mut var deep = 0.0;
+    foreach (var gear in gears) deep = Math.Max(deep, gear.notch.deep);
+    return deep;
+}
+
+// A chain of fields, a foreach's variable, and locals that hold an element and a part of one: `paint`, `at`,
+// `notch.teeth`, `span` and `lit` of a gear, and never `skipped`, `notch.deep` or `kind`
+frag Read(Corner corner, out Color color, Works works)
+{
+    mut var reach = 0.0;
+    foreach (var gear in works.gears)
+    {
+        if (gear.lit) reach += gear.span[0];
+    }
+    var held = works.gears[2];
+    var notch = held.notch;
+    color = Color(works.gears[1].at.y, notch.teeth / 8.0, held.paint.g + reach);
+}
+
+// A list only a function reads, of each element one float: four elements a pixel. A map's values by a key and
+// through a foreach, with its keys. A grid's cells. And a list that's only counted
+frag Rest(Corner corner, out Color color, Works works)
+{
+    mut var kinds = 0;
+    foreach (var entry in works.byKey) kinds += entry.value.kind + entry.key;
+    mut var seen = 0;
+    foreach (var gear in works.counted) seen++;
+    var cell = works.field[2, 1];
+    color = Color(Deepest(works.spare) + works.byKey[7].at.z, kinds / 16.0 + cell.at.x, seen / 8.0 + works.counted.count);
+}
+
+view Show(Stage stage)
+{
+    Draw.Mesh(stage.corners, stage.faces, float4x4.identity, Read);
+    Draw.Mesh(stage.corners, stage.faces, float4x4.identity, Rest);
+}

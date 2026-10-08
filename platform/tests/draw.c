@@ -21,8 +21,10 @@
 #include <time.h>
 
 #include "tide/gui.h"
+#include "tide/mesh.h"
 #include "tide/net.h" // tide_hash
 #include "tide/platform.h"
+#include "tide/text.h"
 #include "tide/time.h"
 
 #ifdef __wasm__
@@ -2843,6 +2845,157 @@ static void cull_settings(void)
 }
 
 // ---------------------------------------------------------------------------
+// Grids that are textures, of which a frame changes a cell: the GPU is sent
+// the pixels that changed and no others (tide_platform_gpu_written), and
+// shows what the grid holds. A cell a pixel, 80 by 48 of them, in chunks.
+
+static tide_grid changing_colors, changing_floats;
+static const tide_grid_shape changing_color_cells = {sizeof(tide_color), 2u, {5u, 5u, 0u}}; // As tidec makes them
+static const tide_grid_shape changing_float_cells = {sizeof(float), 2u, {6u, 6u, 0u}};
+
+static void changing_scene(void)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_draw_set_screen(&list);
+    const tide_vertex colors[4] = {{{16, 16}, {0, 0}, white}, {{96, 16}, {1, 0}, white}, {{96, 64}, {1, 1}, white}, {{16, 64}, {0, 1}, white}};
+    const tide_vertex floats[4] = {{{16, 96}, {0, 0}, white}, {{96, 96}, {1, 0}, white}, {{96, 144}, {1, 1}, white}, {{16, 144}, {0, 1}, white}};
+    static const int32_t triangles[6] = {0, 1, 2, 0, 2, 3};
+    const tide_list indices = tide_list_from(triangles, 6, sizeof(int32_t));
+    tide_draw_mesh_texture(&list, tide_list_from(colors, 4, sizeof(tide_vertex)), indices,
+                           tide_texture_of_grid(changing_colors, &changing_color_cells, 1u)); // Each pixel its nearest cell
+    tide_draw_mesh_texture(&list, tide_list_from(floats, 4, sizeof(tide_vertex)), indices,
+                           tide_texture_of_grid(changing_floats, &changing_float_cells, 1u));
+}
+
+static void changed_textures(void)
+{
+    tide_heap heap = {0};
+    tide_text_use(NULL, &heap);
+    const uint32_t mark = tide_scratch_mark();
+    tide_grid_set(&changing_colors, tide_grid_new(2, 80, 48, 0), &changing_color_cells, TIDE_IN_LOCAL);
+    tide_grid_set(&changing_floats, tide_grid_new(2, 80, 48, 0), &changing_float_cells, TIDE_IN_LOCAL);
+    for (int32_t y = 0; y < 48; y++) {
+        for (int32_t x = 0; x < 80; x++) {
+            *(tide_color *)tide_grid_poke(&changing_colors, x, y, 0, &changing_color_cells, true, TIDE_IN_LOCAL) = blue;
+            *(float *)tide_grid_poke(&changing_floats, x, y, 0, &changing_float_cells, true, TIDE_IN_LOCAL) = 0.25f;
+        }
+    }
+    const tide_color quarter = {0.25f, 0.0f, 0.0f, 1.0f}, most = {0.75f, 0.0f, 0.0f, 1.0f}; // A float is a texture's red
+    const uint64_t whole = 80u * 48u * 4u + 80u * 48u * 2u;
+    char what[160];
+
+    uint64_t before = tide_platform_gpu_written();
+    changing_scene();
+    const check fresh[] = {
+        {56.5f, 36.5f, blue, "a grid of colors as a texture, a cell a pixel"},
+        {57.5f, 117.5f, quarter, "a grid of floats as one"},
+    };
+    check_pixels(fresh, 2);
+    snprintf(what, sizeof what, "both are sent whole the first time (%llu bytes, of %llu)",
+             (unsigned long long)(tide_platform_gpu_written() - before), (unsigned long long)whole);
+    expect(tide_platform_gpu_written() - before == whole, what);
+
+    // Nothing changed: nothing is sent
+    before = tide_platform_gpu_written();
+    changing_scene();
+    check_pixels(fresh, 2);
+    expect(tide_platform_gpu_written() == before, "a frame that changes neither sends nothing");
+
+    // A cell of each: those pixels, and no others
+    *(tide_color *)tide_grid_poke(&changing_colors, 40, 20, 0, &changing_color_cells, true, TIDE_IN_LOCAL) = orange;
+    *(float *)tide_grid_poke(&changing_floats, 41, 21, 0, &changing_float_cells, true, TIDE_IN_LOCAL) = 0.75f;
+    before = tide_platform_gpu_written();
+    changing_scene();
+    const check one[] = {
+        {56.5f, 36.5f, orange, "a cell that changed is the pixel that's sent"},
+        {57.5f, 36.5f, blue, "the cell beside it is as it was"},
+        {56.5f, 37.5f, blue, "and the one under it"},
+        {16.5f, 16.5f, blue, "the grid's first cell is as it was"},
+        {95.5f, 63.5f, blue, "and its last"},
+        {57.5f, 117.5f, most, "a float that changed"},
+        {56.5f, 117.5f, quarter, "the float beside it is as it was"},
+    };
+    check_pixels(one, 7);
+    snprintf(what, sizeof what, "a cell of each changed, and a pixel of each was sent (%llu bytes)",
+             (unsigned long long)(tide_platform_gpu_written() - before));
+    expect(tide_platform_gpu_written() - before == 4u + 2u, what);
+
+    // Cells of other chunks, and a row across two of them
+    *(tide_color *)tide_grid_poke(&changing_colors, 0, 0, 0, &changing_color_cells, true, TIDE_IN_LOCAL) = green;
+    *(tide_color *)tide_grid_poke(&changing_colors, 79, 47, 0, &changing_color_cells, true, TIDE_IN_LOCAL) = red;
+    for (int32_t x = 30; x < 34; x++) {
+        *(tide_color *)tide_grid_poke(&changing_colors, x, 40, 0, &changing_color_cells, true, TIDE_IN_LOCAL) = white;
+    }
+    before = tide_platform_gpu_written();
+    changing_scene();
+    const check more[] = {
+        {16.5f, 16.5f, green, "a cell of the first chunk"},
+        {95.5f, 63.5f, red, "one of the last"},
+        {46.5f, 56.5f, white, "a run of cells that ends one chunk"},
+        {49.5f, 56.5f, white, "and starts the next"},
+        {50.5f, 56.5f, blue, "with what's after it as it was"},
+        {56.5f, 36.5f, orange, "the cell changed the frame before stays"},
+    };
+    check_pixels(more, 6);
+    snprintf(what, sizeof what, "six cells of four chunks changed, and six pixels were sent (%llu bytes)",
+             (unsigned long long)(tide_platform_gpu_written() - before));
+    expect(tide_platform_gpu_written() - before == 6u * 4u, what);
+
+    // A block of cells in the middle of a chunk: rows of a few pixels, each read where it is among the grid's
+    for (int32_t y = 5; y < 8; y++) {
+        for (int32_t x = 50; x < 53; x++) {
+            *(tide_color *)tide_grid_poke(&changing_colors, x, y, 0, &changing_color_cells, true, TIDE_IN_LOCAL) = green;
+        }
+    }
+    for (int32_t y = 30; y < 33; y++) {
+        for (int32_t x = 10; x < 12; x++) {
+            *(float *)tide_grid_poke(&changing_floats, x, y, 0, &changing_float_cells, true, TIDE_IN_LOCAL) = 0.75f;
+        }
+    }
+    before = tide_platform_gpu_written();
+    changing_scene();
+    const check block[] = {
+        {66.5f, 21.5f, green, "a block of cells: its first"},
+        {68.5f, 23.5f, green, "its last"},
+        {67.5f, 22.5f, green, "its middle"},
+        {65.5f, 22.5f, blue, "the cell left of it is as it was"},
+        {69.5f, 22.5f, blue, "the one right of it"},
+        {67.5f, 20.5f, blue, "the one over it"},
+        {67.5f, 24.5f, blue, "the one under it"},
+        {26.5f, 126.5f, most, "a block of floats: its first"},
+        {27.5f, 128.5f, most, "its last"},
+        {28.5f, 127.5f, quarter, "the float right of it is as it was"},
+        {25.5f, 127.5f, quarter, "the one left of it"},
+    };
+    check_pixels(block, 11);
+    snprintf(what, sizeof what, "nine cells and six floats changed, and as many pixels were sent (%llu bytes)",
+             (unsigned long long)(tide_platform_gpu_written() - before));
+    expect(tide_platform_gpu_written() - before == 9u * 4u + 6u * 2u, what);
+
+    // A frame the renderer never drew: it has pixels from two frames back, so it takes the grid whole
+    *(tide_color *)tide_grid_poke(&changing_colors, 10, 10, 0, &changing_color_cells, true, TIDE_IN_LOCAL) = white;
+    changing_scene();
+    *(tide_color *)tide_grid_poke(&changing_colors, 11, 10, 0, &changing_color_cells, true, TIDE_IN_LOCAL) = white;
+    before = tide_platform_gpu_written();
+    changing_scene();
+    const check skipped[] = {
+        {26.5f, 26.5f, white, "a cell changed in a frame that wasn't drawn"},
+        {27.5f, 26.5f, white, "and one changed in the next"},
+        {28.5f, 26.5f, blue, "with the one after them as it was"},
+    };
+    check_pixels(skipped, 3);
+    expect(tide_platform_gpu_written() - before == 80u * 48u * 4u, "after a frame that wasn't drawn, the grid is sent whole");
+
+    tide_draw_reset(&list);
+    tide_grid_release(&changing_colors, &changing_color_cells, TIDE_IN_LOCAL);
+    tide_grid_release(&changing_floats, &changing_float_cells, TIDE_IN_LOCAL);
+    tide_scratch_reset(mark);
+    tide_text_use(NULL, NULL);
+    tide_heap_free(&heap);
+}
+
+// ---------------------------------------------------------------------------
 // --bench: frames of many shapes, rendered offscreen and read back, so it
 // works in a hidden window or page, where tide_platform_draw draws nothing.
 // Recording is timed separately. Rendering includes CPU submission, the GPU
@@ -2853,12 +3006,18 @@ static void cull_settings(void)
 
 static const char *bench_names[] = {"nothing", "65536 rects", "65536 circles", "65536 rects, text every 1024",
                                    "65536 textured quads", "65536 instances of a cube", "65536 round rects",
-                                   "65536 rects, a round rect every 1024"};
+                                   "65536 rects, a round rect every 1024",
+                                   "a 1024 by 1024 grid of colors as a texture, 64 cells painted a frame",
+                                   "a list of 65536 lights a shader reads whole, 16 written a frame",
+                                   "a list of 65536 lights a shader reads 7 of 25 numbers of, 16 written a frame",
+                                   "a list of 1024 lights made again each frame",
+                                   "a 3D mesh of 16384 corners, every one moved each frame"};
 enum { BENCH_KINDS = sizeof bench_names / sizeof bench_names[0] };
 
 // 0: nothing (what reading back costs), 1: rects, 2: circles, 3: rects with text between, 4: quads of one mesh,
 // 5: instances of a 3D cube, 6: smooth shapes, 7: rects in one run with a few smooth shapes, which all go
-// through the smooth shapes' pipeline then
+// through the smooth shapes' pipeline then, 8 to 12: what a game keeps and the GPU reads, of which a frame
+// changes a little or all (bench_kept)
 static int bench_kind;
 static int bench_frame;
 static const char *bench_label;
@@ -2972,9 +3131,186 @@ static const uint32_t cube_indices[36] = {0, 3, 2, 0, 2, 1, 4, 5, 6, 4, 6, 7, 0,
                                           3, 7, 6, 3, 6, 2, 0, 4, 7, 0, 7, 3, 1, 2, 6, 1, 6, 5};
 static const tide_mesh cube = {cube_corners, 8, cube_indices, 36, 1};
 
+// What a game keeps and the GPU reads: a grid that's a texture, a list a
+// shader reads by its elements, and a mesh that's a list of corners. A frame
+// changes a little of the first two, as a brush or a few entities do, and all
+// of the rest.
+typedef struct bench_light {
+    tide_float3 position;
+    float radius;
+    tide_color color;
+    tide_float4x4 shadow;
+    int32_t kind;
+} bench_light;
+
+enum { BENCH_GRID = 1024, BENCH_LIGHTS = 65536, BENCH_FEW = 1024, BENCH_CORNERS = 16384 };
+
+static const tide_grid_shape bench_colors = {sizeof(tide_color), 2u, {5u, 5u, 0u}}; // As tidec makes Grid2<Color>'s
+static tide_heap bench_heap;
+static tide_grid bench_grid;
+static tide_list bench_lights, bench_corners, bench_triangles;
+static bench_light bench_few[BENCH_FEW];
+static uint32_t bench_turn;
+
+// A light's numbers as a shader is sent them: its floats by their bits, then its ints.
+static void bench_light_whole(const void *element, int32_t *words)
+{
+    const bench_light *light = element;
+    memcpy(words, light, 24 * sizeof(float));
+    words[24] = light->kind;
+}
+
+// ...and only its place and its color, as a shader that reads no more of it is.
+static void bench_light_read(const void *element, int32_t *words)
+{
+    const bench_light *light = element;
+    memcpy(words, &light->position, 3 * sizeof(float));
+    memcpy(words + 3, &light->color, 4 * sizeof(float));
+}
+
+// A pixel in the color of one of a list's lights, by where the pixel is: the
+// draw's ints say how many lights there are, how many pixels of the list's
+// texture each takes, and which of an element's numbers its color starts at.
+static const tide_shader lights_shader = {
+    .name = "lights",
+    .glsl_vertex = "layout(location = 0) in vec2 position;\n"
+                   GLSL_UNIFORMS("ivec4 lights; ")
+                   "void main() {\n"
+                   "    gl_Position = tide_camera * vec4(position, 0.0, 1.0);\n"
+                   "}\n",
+    .glsl_fragment = GLSL_UNIFORMS("ivec4 lights; ")
+                     "uniform highp isampler2D pixels0;\n"
+                     "out vec4 pixel;\n"
+                     "void main() {\n"
+                     "    int light = (int(gl_FragCoord.x) + int(gl_FragCoord.y) * 256) % max(lights.x, 1);\n"
+                     "    int word = light * lights.y + lights.z;\n"
+                     "    int first = word >> 2;\n"
+                     "    ivec4 a = texelFetch(pixels0, ivec2(first & 1023, first >> 10), 0);\n"
+                     "    ivec4 b = texelFetch(pixels0, ivec2((first + 1) & 1023, (first + 1) >> 10), 0);\n"
+                     "    int at = word & 3;\n"
+                     "    ivec3 color = at == 0 ? a.xyz : at == 1 ? a.yzw : at == 2 ? ivec3(a.zw, b.x) : ivec3(a.w, b.xy);\n"
+                     "    pixel = vec4(intBitsToFloat(color), 1.0);\n"
+                     "}\n",
+    .wgsl = WGSL(WGSL_UNIFORMS("lights: vec4i, ")
+        "@group(0) @binding(1) var pixels0: texture_2d<i32>;\n"
+        "@vertex fn vertex(@location(0) position: vec2f) -> @builtin(position) vec4f {\n"
+        "    let p = u.tide_camera * vec4f(position, 0.0, 1.0);\n"
+        "    return vec4f(p.xy, (p.z + p.w) * 0.5, p.w);\n"
+        "}\n"
+        "@fragment fn fragment(@builtin(position) place: vec4f) -> @location(0) vec4f {\n"
+        "    let light = (i32(place.x) + i32(place.y) * 256) % max(u.lights.x, 1);\n"
+        "    let word = light * u.lights.y + u.lights.z;\n"
+        "    let first = word >> 2u;\n"
+        "    let a = textureLoad(pixels0, vec2i(first & 1023, first >> 10u), 0);\n"
+        "    let b = textureLoad(pixels0, vec2i((first + 1) & 1023, (first + 1) >> 10u), 0);\n"
+        "    var color = a.xyz;\n"
+        "    switch word & 3 {\n"
+        "        case 1 { color = a.yzw; }\n"
+        "        case 2 { color = vec3i(a.zw, b.x); }\n"
+        "        case 3 { color = vec3i(a.w, b.xy); }\n"
+        "        default {}\n"
+        "    }\n"
+        "    return vec4f(bitcast<vec3f>(color), 1.0);\n"
+        "}\n"),
+    .id = 0x7E570B01,
+    .dims = 2,
+    .vertex_size = 2 * sizeof(float),
+    .attribute_count = 1,
+    .attributes = {{TIDE_SHADER_FLOAT2, 0}},
+    .uniform_ints = 1,
+    .texture_count = 1,
+    .texture_reads = {TIDE_SHADER_READ_DATA},
+};
+
+static void bench_keep(void)
+{
+    if (bench_heap.pages) return;
+    tide_text_use(NULL, &bench_heap);
+    tide_grid_set(&bench_grid, tide_grid_new(2, BENCH_GRID, BENCH_GRID, 0), &bench_colors, TIDE_IN_LOCAL);
+    tide_grid_cache cache = {0};
+    for (int32_t y = 0; y < BENCH_GRID; y++) {
+        for (int32_t x = 0; x < BENCH_GRID; x++) {
+            *(tide_color *)tide_grid_cached_poke(&cache, &bench_grid, x, y, 0, &bench_colors, true, TIDE_IN_LOCAL) =
+                (tide_color){(float)x / BENCH_GRID, (float)y / BENCH_GRID, 0.5f, 1.0f};
+        }
+    }
+    for (int32_t i = 0; i < BENCH_LIGHTS; i++) {
+        bench_light *light = tide_list_add(&bench_lights, sizeof(bench_light), TIDE_IN_LOCAL);
+        *light = (bench_light){.position = {(float)(i % 256), (float)(i / 256), 1.0f}, .radius = 4.0f,
+                               .color = {(float)(i % 256) / 256.0f, (float)(i / 256) / 256.0f, 0.25f, 1.0f},
+                               .shadow = tide_identity_f4x4(), .kind = i % 3};
+    }
+    for (int32_t i = 0; i < BENCH_FEW; i++) bench_few[i] = *(const bench_light *)tide_list_at(bench_lights, i, sizeof(bench_light));
+    // A sheet of corners, 128 a side, and its triangles
+    for (int32_t i = 0; i < BENCH_CORNERS; i++) {
+        tide_vertex3 *corner = tide_list_add(&bench_corners, sizeof(tide_vertex3), TIDE_IN_LOCAL);
+        *corner = (tide_vertex3){{(float)(i % 128), 0.0f, (float)(i / 128)}, {0, 0}, {(float)(i % 128) / 128.0f, 0.5f, 0.25f, 1.0f}};
+    }
+    for (int32_t y = 0; y + 1 < 128; y++) {
+        for (int32_t x = 0; x + 1 < 128; x++) {
+            const int32_t corner = y * 128 + x, six[6] = {corner, corner + 128, corner + 1, corner + 1, corner + 128, corner + 129};
+            for (int k = 0; k < 6; k++) *(int32_t *)tide_list_add(&bench_triangles, sizeof(int32_t), TIDE_IN_LOCAL) = six[k];
+        }
+    }
+}
+
+// A list's lights through the shader that colors pixels by them, whole or what's read of them.
+static void bench_lights_drawn(const tide_list lights, const bool whole)
+{
+    const uint32_t words = whole ? 25u : 7u;
+    int32_t uniforms[4] = {0, (int32_t)tide_data_stride(words), whole ? 4 : 3, 0};
+    const uint32_t textures[1] = {tide_draw_list_data(&list, lights, sizeof(bench_light), words, whole ? 0u : 1u,
+                                                      whole ? bench_light_whole : bench_light_read, &uniforms[0])};
+    tide_draw_shaded(&list, &lights_shader, quad_2d(77, at(0, 0), at(WIDTH, HEIGHT)), NULL, uniforms, textures, 0);
+}
+
+static void bench_kept(void)
+{
+    bench_keep();
+    const uint32_t mark = tide_scratch_mark();
+    const uint32_t turn = bench_turn++;
+    if (bench_kind == 8) { // A brush of 8 by 8 cells, somewhere else each frame
+        tide_grid_cache cache = {0};
+        const int32_t left = (int32_t)(turn * 37u % (BENCH_GRID - 8)), top = (int32_t)(turn * 101u % (BENCH_GRID - 8));
+        for (int32_t y = 0; y < 8; y++) {
+            for (int32_t x = 0; x < 8; x++) {
+                *(tide_color *)tide_grid_cached_poke(&cache, &bench_grid, left + x, top + y, 0, &bench_colors, true,
+                                                     TIDE_IN_LOCAL) = (turn & 1u) ? white : orange;
+            }
+        }
+        static const tide_vertex corners[4] = {{{-128, 176}, {0, 0}, {1, 1, 1, 1}}, {{128, 176}, {1, 0}, {1, 1, 1, 1}},
+                                               {{128, -176}, {1, 1}, {1, 1, 1, 1}}, {{-128, -176}, {0, 1}, {1, 1, 1, 1}}};
+        static const int32_t triangles[6] = {0, 1, 2, 0, 2, 3};
+        tide_draw_mesh_texture(&list, tide_list_from(corners, 4, sizeof(tide_vertex)), tide_list_from(triangles, 6, sizeof(int32_t)),
+                               tide_texture_of_grid(bench_grid, &bench_colors, 0u));
+    } else if (bench_kind == 9 || bench_kind == 10) { // A few lights move, each somewhere else in the list
+        for (uint32_t k = 0; k < 16u; k++) {
+            bench_light *light = tide_list_at_mut(bench_lights, (int32_t)((turn * 977u + k * 4099u) % BENCH_LIGHTS), sizeof(bench_light));
+            light->position.x += 1.0f;
+            light->color.b = light->color.b > 0.5f ? 0.25f : 0.75f;
+        }
+        bench_lights_drawn(bench_lights, bench_kind == 9);
+    } else if (bench_kind == 11) { // A list a view makes each frame, with other numbers
+        for (int32_t i = 0; i < BENCH_FEW; i++) bench_few[i].color.b = (float)((turn + (uint32_t)i) % 256u) / 256.0f;
+        bench_lights_drawn(tide_list_from(bench_few, BENCH_FEW, sizeof(bench_light)), true);
+    } else { // A sheet that waves
+        for (int32_t i = 0; i < BENCH_CORNERS; i++) {
+            ((tide_vertex3 *)tide_list_at_mut(bench_corners, i, sizeof(tide_vertex3)))->position.y =
+                (float)((turn + (uint32_t)i) % 16u) * 0.25f;
+        }
+        tide_draw_set_camera_3d(&list, tide_f3(64, 60, -40), tide_axisangle_q(tide_f3(1, 0, 0), 0.6f), 70.0f);
+        tide_draw_mesh3_lists(&list, bench_corners, bench_triangles, tide_identity_f4x4());
+    }
+    tide_scratch_reset(mark);
+}
+
 static void bench_scene(void)
 {
     tide_draw_reset(&list);
+    if (bench_kind >= 8) {
+        bench_kept();
+        return;
+    }
     if (bench_kind == 5) {
         tide_draw_set_camera_3d(&list, tide_f3(128, 60, -40), tide_axisangle_q(tide_f3(1, 0, 0), 0.6f), 70.0f);
         for (uint32_t i = 0; i < WIDTH * 256u; i++) {
@@ -3060,6 +3396,7 @@ static int frame(void *user, const float seconds)
         lost = 2;
     }
     if (lost == 2) {
+        changed_textures();
         meshes_3d();
         primitives();
         shaded();
@@ -3076,6 +3413,7 @@ static int frame(void *user, const float seconds)
     }
 #endif
     meshes();
+    changed_textures();
     meshes_3d();
     primitives();
     shaded();

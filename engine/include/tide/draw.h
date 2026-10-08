@@ -805,6 +805,31 @@ void tide_cubemap_resize(tide_cubemap_ref cube, float size); // Another size, an
 void tide_cubemap_dispose(tide_cubemap_ref cube);
 tide_cubemap_ref tide_cubemap_recreate(tide_cubemap_ref previous); // Web reload: as tide_render_target_recreate
 
+// Some of a texture's pixels: `width` by `height` of them, from (x, y).
+typedef struct tide_draw_area {
+    int32_t x, y, width, height;
+} tide_draw_area;
+
+enum { TIDE_DRAW_TEXTURE_AREAS = 32 }; // The most areas a texture is said to have changed in: past them, it's one around them all
+
+// What the list knows of a texture whose writer only writes the pixels that
+// changed (tide_draw_texture_edit): where its pixels differ from what they
+// were as the frame started, so a renderer that has those sends the GPU the
+// rest and nothing more (tide_draw_texture_since).
+typedef struct tide_draw_texture_changes {
+    uint64_t was;   // Its version as the frame it last changed in started
+    uint32_t frame; // ...which is this one
+    bool known;     // `areas` are all that differs from `was`: false once anything rewrote it whole
+    uint32_t count; // 0: only its version differs, and not a pixel
+    tide_draw_area areas[TIDE_DRAW_TEXTURE_AREAS];
+    uint64_t kind;  // Which writer wrote its pixels, and as what: 0 for one that says nothing of them
+    // The writer's own, for pixels it copies part by part: a number for each part, what the part was when it
+    // was last copied (a chunk's hash), and one for the whole. Zeros once another writer wrote the texture.
+    uint64_t *parts;
+    uint32_t part_count;
+    uint64_t used;
+} tide_draw_texture_changes;
+
 // A texture the list has, for the commands that draw with it: a copy of the
 // pixels as they were when a mesh last named them. One no command of a frame
 // named is let go when the next frame starts.
@@ -821,6 +846,7 @@ typedef struct tide_draw_texture {
     // or for TIDE_PIXELS_PACK the pack's, where the pack has them, noted again by each frame that draws with them
     uint8_t *pixels;
     tide_target_size target; // A target's: the rendered image's size, where the others have a width and a height
+    tide_draw_texture_changes *changes; // What changed of its pixels, where its writer says: NULL for the others
 } tide_draw_texture;
 
 // TIDE_PIXELS_TARGET is one of a render target's color images, the one its id
@@ -1569,6 +1595,38 @@ uint32_t tide_draw_texture_slot(tide_draw_list *d, uint32_t space, uint64_t id, 
 // ...whose pixels are `format` (TIDE_TEXELS_*): width * height of them to write.
 uint32_t tide_draw_texture_slot_as(tide_draw_list *d, uint32_t space, uint64_t id, uint64_t version, int32_t width,
                                    int32_t height, uint32_t format, uint8_t **pixels);
+
+// The same, for a writer that can tell what changed, so that a big texture a
+// frame changes a little of costs what changed: a few pixels written here,
+// and those alone sent to the GPU. `kind` is the writer's own number, never
+// 0, for what it writes and how. Where the list has the texture at another
+// version, with the same size and format, last written by a writer of that
+// kind, *kept is true and *pixels are the ones it had: the writer changes
+// those that differ and says where (tide_draw_texture_changed). Otherwise
+// *kept is false and all of them are to write, as tide_draw_texture_slot_as's
+// are, whatever is in them.
+uint32_t tide_draw_texture_edit(tide_draw_list *d, uint32_t space, uint64_t id, uint64_t version, int32_t width,
+                                int32_t height, uint32_t format, uint64_t kind, uint8_t **pixels, bool *kept);
+
+// The pixels of the texture tide_draw_texture_edit gave from (x, y), `width`
+// by `height` of them, aren't what they were. What's outside the texture is
+// left out.
+void tide_draw_texture_changed(tide_draw_list *d, uint32_t texture, int32_t x, int32_t y, int32_t width, int32_t height);
+
+// `count` numbers the writer keeps with that texture, one for each part it
+// copies (a chunk's hash, to tell the chunks that changed without reading
+// them), as it left them: zeros for a texture whose pixels weren't kept, and
+// for the numbers past those it had.
+uint64_t *tide_draw_texture_parts(tide_draw_list *d, uint32_t texture, uint32_t count);
+
+// ...and one number more, the same way (how much of the texture is in use).
+uint64_t *tide_draw_texture_used(tide_draw_list *d, uint32_t texture);
+
+// For a renderer that has the texture's pixels as they were at version `had`:
+// whether the list knows all that differs since, and if so, where, in
+// *areas, *count of them (none, where only the version differs). False: the
+// renderer takes all of the pixels.
+bool tide_draw_texture_since(const tide_draw_texture *texture, uint64_t had, const tide_draw_area **areas, uint32_t *count);
 
 // tide_draw_triangles_wrapped, with what tide_draw_texture_slot gave as the
 // texture. Triangles after others with the same texture, filter and wrap are

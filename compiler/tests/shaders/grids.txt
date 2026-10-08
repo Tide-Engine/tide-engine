@@ -59,14 +59,12 @@ tt_Voxel tide_list0(ivec2 tide_i) {
     if (tide_i.x < tide_o.x || tide_x >= uint(tide_e.x) || tide_i.y < tide_o.y || tide_y >= uint(tide_e.y)) {
         return tt_Voxel(vec4(0.0), vec3(0.0), 0);
     }
-    int tide_word = int(tide_x) * 8;
+    int tide_word = int(tide_x) * 4;
     int tide_first = tide_word >> 2;
     int tide_row = int(tide_y);
     ivec4 tide_q0 = texelFetch(pixels0, ivec2(tide_first + 0, tide_row), 0);
     vec4 tide_p0 = intBitsToFloat(tide_q0);
-    ivec4 tide_q1 = texelFetch(pixels0, ivec2(tide_first + 1, tide_row), 0);
-    vec4 tide_p1 = intBitsToFloat(tide_q1);
-    return tt_Voxel(tide_p0, tide_p1.xyz, tide_q1.w);
+    return tt_Voxel(tide_p0, vec3(0.0), 0);
 }
 
 int tide_list1(ivec2 tide_i) {
@@ -142,14 +140,12 @@ fn tide_list0(tide_i: vec2i) -> tt_Voxel {
     if (tide_i.x < tide_o.x || tide_x >= u32(tide_e.x) || tide_i.y < tide_o.y || tide_y >= u32(tide_e.y)) {
         return tt_Voxel();
     }
-    let tide_word = i32(tide_x) * 8;
+    let tide_word = i32(tide_x) * 4;
     let tide_first = tide_word >> 2u;
     let tide_row = i32(tide_y);
     let tide_q0 = textureLoad(pixels0, vec2i(tide_first + 0, tide_row), 0);
     let tide_p0 = bitcast<vec4f>(tide_q0);
-    let tide_q1 = textureLoad(pixels0, vec2i(tide_first + 1, tide_row), 0);
-    let tide_p1 = bitcast<vec4f>(tide_q1);
-    return tt_Voxel(tide_p0, tide_p1.xyz, tide_q1.w);
+    return tt_Voxel(tide_p0, vec3f(), i32());
 }
 
 fn tide_list1(tide_i: vec2i) -> i32 {
@@ -271,7 +267,7 @@ tt_Voxel tide_list1(ivec3 tide_i) {
     vec4 tide_p0 = intBitsToFloat(tide_q0);
     ivec4 tide_q1 = texelFetch(pixels1, ivec2(tide_left + tide_first + 1, tide_row), 0);
     vec4 tide_p1 = intBitsToFloat(tide_q1);
-    return tt_Voxel(tide_p0, tide_p1.xyz, tide_q1.w);
+    return tt_Voxel(tide_p0, tide_p1.xyz, 0);
 }
 
 int tide_list0(ivec3 tide_i) {
@@ -364,7 +360,7 @@ fn tide_list1(tide_i: vec3i) -> tt_Voxel {
     let tide_p0 = bitcast<vec4f>(tide_q0);
     let tide_q1 = textureLoad(pixels1, vec2i(tide_left + tide_first + 1, tide_row), 0);
     let tide_p1 = bitcast<vec4f>(tide_q1);
-    return tt_Voxel(tide_p0, tide_p1.xyz, tide_q1.w);
+    return tt_Voxel(tide_p0, tide_p1.xyz, i32());
 }
 
 fn tide_list0(tide_i: vec3i) -> i32 {
