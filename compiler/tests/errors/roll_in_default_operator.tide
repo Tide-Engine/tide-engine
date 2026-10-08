@@ -1,0 +1,15 @@
+// expect: this operator rolls with Random, which a value worked out with no code running can't
+struct Money
+{
+    int cents;
+
+    Money operator +(Money a, Money b)
+    {
+        return Money { cents = a.cents + b.cents + Random.NextInt(2) };
+    }
+}
+component Purse
+{
+    Money coins = Money { cents = 5 } + Money { cents = 7 };
+}
+scene Main { }

@@ -3038,8 +3038,10 @@ static void ex(emit *em, const expr *e)
     case E_DEFAULTED:
         refuse(em, e->at, "the GPU has no values that may be missing, and nothing fails there: handle it on the CPU");
         return;
-    case E_STEP:
-        refuse(em, e->at, "'++' and '--' are statements in code the GPU runs: write 'i += 1;' before the expression that reads it");
+    case E_STEP: // Ran before its statement, into a variable (st_steps)
+        if (e->hoisted) sb_put(em->o, e->hoisted);
+        else refuse(em, e->at, "'%s' can't be part of this expression in code the GPU runs: write it as a statement of its own before it",
+                    e->op == T_PLUS_PLUS ? "++" : "--");
         return;
     case E_AWAIT:
         refuse(em, e->at, "the GPU doesn't wait: tasks are the CPU's");
@@ -3401,6 +3403,109 @@ static void st_outs(emit *em, const expr *e)
     for (int i = 0; i < e->args.count; i++) st_outs(em, e->args.items[i]);
 }
 
+// The variable a step changes: the local or parameter its target is, or is a part of.
+static const expr *step_variable(const expr *e)
+{
+    while (e->kind == E_MEMBER) e = e->object;
+    return e->kind == E_NAME && (e->bind == BIND_LOCAL || e->bind == BIND_PARAM) ? e : NULL;
+}
+
+// Whether `e` names the variable `var` is, anywhere but in `own`.
+static bool names_variable(const expr *e, const expr *var, const expr *own)
+{
+    if (!e || e == own) return false;
+    if (e->kind == E_NAME && e->bind == var->bind && (var->bind == BIND_LOCAL ? e->local == var->local : e->param == var->param)) {
+        return true;
+    }
+    if (names_variable(e->object, var, own) || names_variable(e->lhs, var, own) || names_variable(e->rhs, var, own)
+        || names_variable(e->cond, var, own)) return true;
+    for (int i = 0; i < e->args.count; i++) {
+        if (names_variable(e->args.items[i], var, own)) return true;
+    }
+    for (int i = 0; i < e->inits.count; i++) {
+        if (names_variable(e->inits.items[i].value, var, own)) return true;
+    }
+    return false;
+}
+
+static bool has_steps(const expr *e)
+{
+    if (!e) return false;
+    if (e->kind == E_STEP) return true;
+    if (has_steps(e->object) || has_steps(e->lhs) || has_steps(e->rhs) || has_steps(e->cond)) return true;
+    for (int i = 0; i < e->args.count; i++) {
+        if (has_steps(e->args.items[i])) return true;
+    }
+    for (int i = 0; i < e->inits.count; i++) {
+        if (has_steps(e->inits.items[i].value)) return true;
+    }
+    return false;
+}
+
+typedef VEC(expr *) step_list;
+
+// `++i` and `i++` in a statement's expression `e`, each run before the
+// statement, in the order written, into a variable the statement then reads:
+// WGSL has neither as a value, and GLSL leaves open which operand is worked
+// out first. So that the value is the CPU's, the statement names the variable
+// nowhere else, and the step isn't in a part that only runs sometimes.
+// `sometimes`: `e` is one.
+static void st_steps(emit *em, const stmt *s, expr *e, const bool sometimes, step_list *made)
+{
+    if (!e) return;
+    if (e->kind == E_STEP) {
+        const char *op = e->op == T_PLUS_PLUS ? "++" : "--";
+        const expr *var = step_variable(e->lhs);
+        if (sometimes) {
+            refuse(em, e->at, "'%s' is in a part of its expression that only runs sometimes, which code the GPU runs can't "
+                              "keep it to", op);
+            diag_note("write it as an 'if' with the '%s' inside", op);
+            e->hoisted = "0"; // Said already
+            vec_push(*made, e);
+            return;
+        }
+        if (!var || has_steps(e->lhs)) {
+            refuse(em, e->at, "'%s' changes a local or a parameter in code the GPU runs", op);
+            e->hoisted = "0"; // Said already
+            vec_push(*made, e);
+            return;
+        }
+        if (names_variable(s->cond, var, e->lhs) || names_variable(s->value, var, e->lhs) || names_variable(s->target, var, e->lhs)) {
+            refuse(em, e->at, "in code the GPU runs, a statement with '%s' on '" STR_FMT "' reads it nowhere else", op,
+                   STR_ARG(var->name));
+            diag_note("write the '%s' as a statement of its own, before or after this one", op);
+            e->hoisted = "0"; // Said already
+            vec_push(*made, e);
+            return;
+        }
+        sb name = {0};
+        sb_printf(&name, "tide_step%d", em->temps++);
+        for (int pass = 0; pass < 2; pass++) {
+            line(em);
+            if ((pass == 0) == e->postfix) {
+                if (em->l == WGSL) sb_printf(em->o, "var %s: %s = ", name.data, ty(em, e->type));
+                else sb_printf(em->o, "%s %s = ", ty(em, e->type), name.data);
+                ex(em, e->lhs);
+                sb_put(em->o, ";\n");
+            } else {
+                st_assign(em, e->step, true);
+            }
+        }
+        e->hoisted = name.data;
+        vec_push(*made, e);
+        return;
+    }
+    const bool unit = e->kind == E_CONDITIONAL || (e->kind == E_BINARY && !e->method && (e->op == T_AND || e->op == T_OR));
+    st_steps(em, s, e->object, sometimes, made);
+    st_steps(em, s, e->cond, sometimes, made);
+    st_steps(em, s, e->lhs, sometimes || e->kind == E_CONDITIONAL, made);
+    st_steps(em, s, e->rhs, sometimes || unit, made);
+    for (int i = 0; i < e->args.count; i++) st_steps(em, s, e->args.items[i], sometimes, made);
+    for (int i = 0; i < e->inits.count; i++) st_steps(em, s, e->inits.items[i].value, sometimes, made);
+}
+
+static void st_one(emit *em, const stmt *s);
+
 // A for that isn't one that counts (st_for): whatever it starts with, goes on
 // while and steps by. GLSL's own for; in WGSL, whose for takes less on its
 // line, a loop with its step where a `continue` still reaches it.
@@ -3568,6 +3673,26 @@ static void st_switch(emit *em, const stmt *s)
 }
 
 static void st(emit *em, const stmt *s)
+{
+    step_list made = {0};
+    if (s->kind == S_FOR || s->kind == S_WHILE) { // Its line runs again each round, where a statement before it runs once
+        const stmt *v = s->init;
+        if (has_steps(s->cond) || (v && (has_steps(v->value) || has_steps(v->target)))
+            || (s->step && (has_steps(s->step->value) || has_steps(s->step->target)))) {
+            refuse(em, s->at, "a loop's own line has no '++' or '--' inside an expression in code the GPU runs");
+            diag_note("a for's step can be 'i++'; change any other variable in the loop's body");
+            return;
+        }
+    } else if (s->kind != S_BLOCK && (has_steps(s->target) || has_steps(s->value) || has_steps(s->cond))) {
+        st_steps(em, s, s->target, false, &made);
+        st_steps(em, s, s->cond, false, &made);
+        st_steps(em, s, s->value, false, &made);
+    }
+    st_one(em, s);
+    for (int i = 0; i < made.count; i++) made.items[i]->hoisted = NULL; // The CPU's code makes its own
+}
+
+static void st_one(emit *em, const stmt *s)
 {
     if (s->kind == S_BLOCK) {
         line(em);

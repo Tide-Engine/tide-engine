@@ -6656,6 +6656,13 @@ TIDE_TEST(lsp_random)
     const char *rolls = complete(DECK "system Roll(mut Deck deck)\n{\n    deck.top = Random.$\n}\n");
     TIDE_CHECK(offers(rolls, "NextInt") && offers(rolls, "NextFloat2Direction") && offers(rolls, "seed"));
     TIDE_CHECK(has(rolls, "The match's seed") && !offers(rolls, "state"));
+    // ...in a task and in Sample too, and not in Sanitize
+    const char *task = complete(DECK "async void Deal(mut Deck deck)\n{\n    await Wait.Ticks(1);\n    deck.top = Random.$\n}\n");
+    TIDE_CHECK(offers(task, "NextInt") && offers(task, "seed"));
+    const char *sample = complete("input Keys\n{\n    int luck;\n    Sample(Devices devices)\n    {\n        luck = Random.$\n    }\n}\nscene Main { }\n");
+    TIDE_CHECK(offers(sample, "NextInt"));
+    const char *sanitize = complete("input Keys\n{\n    int luck;\n    Sanitize()\n    {\n        luck = Random.$\n    }\n}\nscene Main { }\n");
+    TIDE_CHECK(!offers(sanitize, "NextInt"));
     open_document(DECK "system Roll(mut Deck deck)\n{\n    deck.top = Random.Next$Int(6);\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Random.NextInt(int max) -> int"));
     open_document(DECK "system Roll(mut Deck deck)\n{\n    deck.top = Random.NextInt($\n}\n");

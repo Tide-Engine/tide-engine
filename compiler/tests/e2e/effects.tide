@@ -38,6 +38,18 @@ audio Square(mut Samples samples, mut Counter counter)
     Halve(samples);
 }
 
+// Noise: an audio declaration rolls, each voice from a sequence of its own, kept with its state
+audio Hiss(mut Samples samples, mut Counter counter)
+{
+    counter.blocks += 1;
+    for (var i = 0; i < samples.values.count; i++) samples.values[i] += Grain() * 0.5;
+}
+
+float Grain()
+{
+    return Random.NextFloat(-1, 1);
+}
+
 void Halve(mut Samples samples)
 {
     for (var i = 0; i < samples.values.count; i++) samples.values[i] = samples.values[i] * 0.5;
@@ -68,4 +80,5 @@ view Levels(mut Mix mix)
     mix.synth.playing = true; // No clip: a source
     mix.synth.effect = Square();
     Audio.SetEffect(Bus.Music, Scale(Knobs { gain = 2, add = 0 }));
+    Audio.SetEffect(Bus.Master, Hiss());
 }
