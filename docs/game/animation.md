@@ -45,7 +45,7 @@ if (model.animations.Find("Victory Dance") is Animation celebration)
 }
 ```
 
-`Find` uses the exact original name and returns an optional value; a duplicate original name is ambiguous and returns null. Both `animations` and `skeleton.bones` provide `count` and `At(index)` for enumeration, including unnamed entries. `skeleton.Find(name)` also finds a bone. An animation has its original `name` and its `duration` in seconds.
+`Find` uses the exact original name and returns an optional value; a duplicate original name is ambiguous and returns null. Both `animations` and `skeleton.bones` provide `count` and `At(index)` for enumeration. Unnamed entries are available through `At`; `Find("")` returns null, and contract aliases must be nonempty. `skeleton.Find(name)` also finds a bone. An animation has its original `name` and its `duration` in seconds.
 
 A plain `SkinnedMesh<Vertex3>` helper parameter has dynamic lookup. Declare an optional contract when a helper needs checked names:
 

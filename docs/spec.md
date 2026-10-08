@@ -1641,7 +1641,7 @@ struct Locomotion
 asset SkinnedMesh<Corner, Locomotion> hero = "art/hero.glb";
 ```
 
-`Locomotion` requires animations whose normalized identifiers are `idle` and `run`, and a bone whose exact source name is `Right Hand`. Extra content remains available through dynamic lookup and enumeration. Checked contract catalogs expose the required fields; they do not additionally infer other dot members. `count`, `Find` and `At` are reserved catalog operation names. A duplicate exact source name makes `Find` return null and cannot satisfy an exact contract alias.
+`Locomotion` requires animations whose normalized identifiers are `idle` and `run`, and a bone whose exact source name is `Right Hand`. Extra content remains available through dynamic lookup and enumeration. Checked contract catalogs expose the required fields; they do not additionally infer other dot members. `count`, `Find` and `At` are reserved catalog operation names. A duplicate exact source name makes `Find` return null and cannot satisfy an exact contract alias. A `Name` alias cannot be empty, including on a contract used only by a helper parameter. Unnamed entries are accessible through `At`; `Find("")` returns null.
 
 The CPU operations are:
 

@@ -1,0 +1,3 @@
+// expect: a model contract's Name alias cannot be empty
+struct EmptyAlias { [Name("")] Animation clip; }
+int Count(SkinnedMesh<Vertex3, EmptyAlias> model) { return model.animations.count; }
