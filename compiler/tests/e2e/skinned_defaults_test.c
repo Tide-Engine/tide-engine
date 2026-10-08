@@ -116,21 +116,62 @@ static uint8_t *pack_with_logo(void)
     return NULL;
 }
 
+// Keep the canonical model, indices, layout and dependency bytes intact, but
+// change a source-filled typed attribute that match code can own and read.
+static uint8_t *pack_with_source_position(void)
+{
+    uint8_t *bytes = malloc(tide_game_pack_size);
+    if (!bytes) return NULL;
+    memcpy(bytes, tide_game_pack, tide_game_pack_size);
+    const tide_pack_header *h = (const tide_pack_header *)(const void *)bytes;
+    const tide_pack_entry *entries = (const tide_pack_entry *)(const void *)(bytes + sizeof *h);
+    uint8_t named[32];
+    tide_sha256_of("skinOne", strlen("skinOne"), named);
+    for (uint32_t i = 0; i < h->entries; i++) {
+        const tide_pack_entry *e = &entries[i];
+        if (e->kind != TIDE_PACK_SKINNED || memcmp(e->name, named, sizeof named)) continue;
+        tide_skinned_lists model;
+        memcpy(&model, bytes + h->region_at + e->offset + sizeof(tide_block), sizeof model);
+        const uint32_t at = (model.vertices.at & 0x3fffffffu) - TIDE_PACK_BASE;
+        SkinCorner *vertices = (SkinCorner *)(void *)(bytes + h->region_at + at + sizeof(tide_block));
+        vertices[0].position.x += 17.0f;
+        return bytes;
+    }
+    free(bytes);
+    return NULL;
+}
+
+static void drawn_vertices_hash(uint8_t hash[32])
+{
+    tide_sha256 content;
+    tide_sha256_init(&content);
+    for (uint32_t i = 0; i < draw.mesh_count; i++) {
+        const tide_draw_mesh_data *m = &draw.meshes[i];
+        tide_sha256_add(&content, m->bytes, (size_t)m->vertex_count * m->vertex_size);
+    }
+    tide_sha256_end(&content, hash);
+}
+
 static void check_owned(void)
 {
     tide_text_use(&world.heap, &local.heap);
+    uint32_t count;
+    const SkinCorner *loaded = tide_pack_skinned_open(tide_pack_find("skinOne", TIDE_PACK_SKINNED), 0u, sizeof *loaded, &count);
+    TIDE_REQUIRE(loaded && count == 4u);
     const tide_list vertices = world.Saved.model.vertices;
     TIDE_CHECK(!tide_pack_holds(vertices.at) && tide_list_count(vertices) == 4);
     for (int32_t i = 0; i < tide_list_count(vertices); i++) {
         const SkinCorner *v = tide_list_at(vertices, i, sizeof *v);
         TIDE_CHECK(v && default_is(v, 26));
+        TIDE_CHECK(v && !memcmp(&v->position, &loaded[i].position, sizeof v->position));
     }
 }
 
 TIDE_TEST(skinned_defaults_reject_changed_dependencies_and_keep_the_loaded_pack)
 {
     uint8_t *changed = pack_with_rules("updated"), *same = pack_with_rules("zyxwvutsrqponmlkjihgfedcba");
-    TIDE_REQUIRE(changed && same);
+    uint8_t *geometry = pack_with_source_position();
+    TIDE_REQUIRE(changed && same && geometry);
     TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
     const uint64_t original = check_defaults(26);
     tide_world_init(&world, 1.0f);
@@ -145,7 +186,9 @@ TIDE_TEST(skinned_defaults_reject_changed_dependencies_and_keep_the_loaded_pack)
     TIDE_CHECK(draw.mesh_count == meshes);
     const tide_pack_entry *before = tide_pack_find("skinOne", TIDE_PACK_SKINNED);
     TIDE_REQUIRE(before != NULL);
-    const uint8_t *rejected[] = {changed, changed, same};
+    uint8_t drawn_before[32];
+    drawn_vertices_hash(drawn_before);
+    const uint8_t *rejected[] = {changed, changed, same, geometry};
     for (size_t i = 0; i < sizeof rejected / sizeof rejected[0]; i++) {
         TIDE_CHECK(!tide_assets_load(rejected[i], tide_game_pack_size));
         TIDE_CHECK(tide_pack_find("skinOne", TIDE_PACK_SKINNED) == before);
@@ -153,6 +196,9 @@ TIDE_TEST(skinned_defaults_reject_changed_dependencies_and_keep_the_loaded_pack)
         check_owned();
         frame(26);
         TIDE_CHECK(draw.mesh_count == meshes);
+        uint8_t drawn_after[32];
+        drawn_vertices_hash(drawn_after);
+        TIDE_CHECK(!memcmp(drawn_before, drawn_after, sizeof drawn_before));
     }
     // Ordinary visual assets outside the defaults' dependency tree still reload.
     uint8_t *visual = pack_with_logo();
@@ -173,6 +219,7 @@ TIDE_TEST(skinned_defaults_reject_changed_dependencies_and_keep_the_loaded_pack)
     frame(26);
     free(changed);
     free(same);
+    free(geometry);
     free(visual);
     tide_local_free(&local);
     tide_world_free(&world);
