@@ -1,0 +1,773 @@
+{
+  "date": "2026-10-08",
+  "source_commit": "f40e29afd0199152f294dcb1d0f923026b379082+parallel-compiles",
+  "change": "tide compiles a build's C files as many at once as the machine has processors, where it compiled them one after another (compiler/cli/build.c, run_compiles).",
+  "machine": {
+    "os": "Windows 11",
+    "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
+    "physical_cores": 12,
+    "logical_cpus": 24
+  },
+  "installation": {
+    "what": "The package as users get it, with the change: clang and lld 23.1.2 built into tide (package preset with LLVM's release libraries, mingw-release, web-package and the two Android trees, cmake/package.cmake).",
+    "cli": {
+      "bytes": 105267200,
+      "sha256": "e80df0ba7b94efa12524508e4bfdf092dc4473be5a5399f58acef6812b3af2c4"
+    }
+  },
+  "protocol": {
+    "ways": "The same tide both ways: TIDE_JOBS=1, one file at a time as it was before, and unset, which is 24 at once on this machine. In turn, a round of each.",
+    "ledger": "bench/results/compile.jsonl, labels parallel-compiles-one-at-a-time and parallel-compiles (three rounds of the native/web, debug/release matrix), and the same with -a4 (two rounds with --loops 100 --archetypes 4). Each record's metadata.environment says its TIDE_JOBS.",
+    "gate": "Local\\TideClaudeContinuationBenchmark, held for every batch",
+    "cpu_percent_at_batch_boundaries": {
+      "least": 2.2,
+      "median": 5.8,
+      "most": 49.2,
+      "samples": 31
+    }
+  },
+  "same_results": "Sumo, Duel and Towers built cold with one, two and 24 compiles at once leave the same objects, generated files and stamps, byte for byte but for the time in a Windows object's header (native debug and release, web debug and release); compiler/cli/tests/cache_test.mjs checks that and what a failing build says on every package CI makes.",
+  "real_games": {
+    "what": "tide build on copies of the repo's games in a temporary folder: cold (no .tide), unchanged, and after changing a number in the body of a system added to the copy for it. Two rounds of each way, in turn. Measured by a script outside the repository, with the harness's method.",
+    "sizes": {
+      "duel": {
+        "tide_files": 8,
+        "tide_lines": 2926
+      },
+      "towers": {
+        "tide_files": 5,
+        "tide_lines": 2135
+      },
+      "sumo": {
+        "tide_files": 6,
+        "tide_lines": 2643
+      },
+      "tower-defense": {
+        "tide_files": 1,
+        "tide_lines": 1213
+      }
+    },
+    "cells": [
+      {
+        "game": "duel",
+        "target": "native",
+        "config": "debug",
+        "scenario": "cold",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          3393,
+          3152
+        ],
+        "at_once_ms": [
+          763,
+          642
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "native",
+        "config": "debug",
+        "scenario": "unchanged",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          120,
+          113
+        ],
+        "at_once_ms": [
+          112,
+          113
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "native",
+        "config": "debug",
+        "scenario": "tide-body",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          428,
+          456
+        ],
+        "at_once_ms": [
+          388,
+          388
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "native",
+        "config": "release",
+        "scenario": "cold",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          8071,
+          7714
+        ],
+        "at_once_ms": [
+          1784,
+          1810
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "native",
+        "config": "release",
+        "scenario": "unchanged",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          108,
+          100
+        ],
+        "at_once_ms": [
+          99,
+          100
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "native",
+        "config": "release",
+        "scenario": "tide-body",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          1729,
+          1578
+        ],
+        "at_once_ms": [
+          1590,
+          1627
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "web",
+        "config": "debug",
+        "scenario": "cold",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          3245,
+          3175
+        ],
+        "at_once_ms": [
+          687,
+          699
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "web",
+        "config": "debug",
+        "scenario": "unchanged",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          237,
+          220
+        ],
+        "at_once_ms": [
+          235,
+          235
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "web",
+        "config": "debug",
+        "scenario": "tide-body",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          647,
+          619
+        ],
+        "at_once_ms": [
+          620,
+          615
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "web",
+        "config": "release",
+        "scenario": "cold",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          7082,
+          6806
+        ],
+        "at_once_ms": [
+          1745,
+          1783
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "web",
+        "config": "release",
+        "scenario": "unchanged",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          234,
+          298
+        ],
+        "at_once_ms": [
+          217,
+          279
+        ]
+      },
+      {
+        "game": "duel",
+        "target": "web",
+        "config": "release",
+        "scenario": "tide-body",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          1683,
+          1833
+        ],
+        "at_once_ms": [
+          1590,
+          1603
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "native",
+        "config": "debug",
+        "scenario": "cold",
+        "objects": 84,
+        "one_at_a_time_ms": [
+          6859,
+          7070
+        ],
+        "at_once_ms": [
+          1167,
+          1047
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "native",
+        "config": "debug",
+        "scenario": "unchanged",
+        "objects": 84,
+        "one_at_a_time_ms": [
+          201,
+          138
+        ],
+        "at_once_ms": [
+          138,
+          135
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "native",
+        "config": "debug",
+        "scenario": "tide-body",
+        "objects": 84,
+        "one_at_a_time_ms": [
+          571,
+          557
+        ],
+        "at_once_ms": [
+          560,
+          561
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "native",
+        "config": "release",
+        "scenario": "cold",
+        "objects": 84,
+        "one_at_a_time_ms": [
+          14992,
+          14029
+        ],
+        "at_once_ms": [
+          2993,
+          3074
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "native",
+        "config": "release",
+        "scenario": "unchanged",
+        "objects": 84,
+        "one_at_a_time_ms": [
+          183,
+          115
+        ],
+        "at_once_ms": [
+          115,
+          118
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "native",
+        "config": "release",
+        "scenario": "tide-body",
+        "objects": 84,
+        "one_at_a_time_ms": [
+          2663,
+          2572
+        ],
+        "at_once_ms": [
+          2558,
+          2584
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "web",
+        "config": "debug",
+        "scenario": "cold",
+        "objects": 84,
+        "one_at_a_time_ms": [
+          7642,
+          6190
+        ],
+        "at_once_ms": [
+          1182,
+          1123
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "web",
+        "config": "debug",
+        "scenario": "unchanged",
+        "objects": 84,
+        "one_at_a_time_ms": [
+          269,
+          257
+        ],
+        "at_once_ms": [
+          269,
+          269
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "web",
+        "config": "debug",
+        "scenario": "tide-body",
+        "objects": 84,
+        "one_at_a_time_ms": [
+          869,
+          874
+        ],
+        "at_once_ms": [
+          857,
+          859
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "web",
+        "config": "release",
+        "scenario": "cold",
+        "objects": 84,
+        "one_at_a_time_ms": [
+          12177,
+          11881
+        ],
+        "at_once_ms": [
+          2702,
+          2676
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "web",
+        "config": "release",
+        "scenario": "unchanged",
+        "objects": 84,
+        "one_at_a_time_ms": [
+          236,
+          228
+        ],
+        "at_once_ms": [
+          233,
+          262
+        ]
+      },
+      {
+        "game": "towers",
+        "target": "web",
+        "config": "release",
+        "scenario": "tide-body",
+        "objects": 84,
+        "one_at_a_time_ms": [
+          2367,
+          2312
+        ],
+        "at_once_ms": [
+          2321,
+          2363
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "native",
+        "config": "debug",
+        "scenario": "cold",
+        "objects": 93,
+        "one_at_a_time_ms": [
+          7750,
+          7508
+        ],
+        "at_once_ms": [
+          1309,
+          1216
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "native",
+        "config": "debug",
+        "scenario": "unchanged",
+        "objects": 93,
+        "one_at_a_time_ms": [
+          152,
+          146
+        ],
+        "at_once_ms": [
+          142,
+          146
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "native",
+        "config": "debug",
+        "scenario": "tide-body",
+        "objects": 93,
+        "one_at_a_time_ms": [
+          551,
+          514
+        ],
+        "at_once_ms": [
+          524,
+          514
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "native",
+        "config": "release",
+        "scenario": "cold",
+        "objects": 93,
+        "one_at_a_time_ms": [
+          17603,
+          17091
+        ],
+        "at_once_ms": [
+          2563,
+          2540
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "native",
+        "config": "release",
+        "scenario": "unchanged",
+        "objects": 93,
+        "one_at_a_time_ms": [
+          124,
+          124
+        ],
+        "at_once_ms": [
+          120,
+          119
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "native",
+        "config": "release",
+        "scenario": "tide-body",
+        "objects": 93,
+        "one_at_a_time_ms": [
+          2083,
+          2020
+        ],
+        "at_once_ms": [
+          2006,
+          2010
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "web",
+        "config": "debug",
+        "scenario": "cold",
+        "objects": 93,
+        "one_at_a_time_ms": [
+          7554,
+          7366
+        ],
+        "at_once_ms": [
+          1366,
+          1262
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "web",
+        "config": "debug",
+        "scenario": "unchanged",
+        "objects": 93,
+        "one_at_a_time_ms": [
+          279,
+          282
+        ],
+        "at_once_ms": [
+          273,
+          291
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "web",
+        "config": "debug",
+        "scenario": "tide-body",
+        "objects": 93,
+        "one_at_a_time_ms": [
+          804,
+          781
+        ],
+        "at_once_ms": [
+          796,
+          808
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "web",
+        "config": "release",
+        "scenario": "cold",
+        "objects": 93,
+        "one_at_a_time_ms": [
+          15879,
+          15562
+        ],
+        "at_once_ms": [
+          2438,
+          2523
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "web",
+        "config": "release",
+        "scenario": "unchanged",
+        "objects": 93,
+        "one_at_a_time_ms": [
+          238,
+          239
+        ],
+        "at_once_ms": [
+          235,
+          232
+        ]
+      },
+      {
+        "game": "sumo",
+        "target": "web",
+        "config": "release",
+        "scenario": "tide-body",
+        "objects": 93,
+        "one_at_a_time_ms": [
+          1925,
+          1925
+        ],
+        "at_once_ms": [
+          1920,
+          1921
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "native",
+        "config": "debug",
+        "scenario": "cold",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          3015,
+          2922
+        ],
+        "at_once_ms": [
+          670,
+          671
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "native",
+        "config": "debug",
+        "scenario": "unchanged",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          166,
+          106
+        ],
+        "at_once_ms": [
+          174,
+          101
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "native",
+        "config": "debug",
+        "scenario": "tide-body",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          288,
+          286
+        ],
+        "at_once_ms": [
+          299,
+          292
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "native",
+        "config": "release",
+        "scenario": "cold",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          6946,
+          6776
+        ],
+        "at_once_ms": [
+          1220,
+          1090
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "native",
+        "config": "release",
+        "scenario": "unchanged",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          90,
+          89
+        ],
+        "at_once_ms": [
+          91,
+          87
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "native",
+        "config": "release",
+        "scenario": "tide-body",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          914,
+          837
+        ],
+        "at_once_ms": [
+          832,
+          827
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "web",
+        "config": "debug",
+        "scenario": "cold",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          2890,
+          2875
+        ],
+        "at_once_ms": [
+          675,
+          637
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "web",
+        "config": "debug",
+        "scenario": "unchanged",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          207,
+          209
+        ],
+        "at_once_ms": [
+          209,
+          206
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "web",
+        "config": "debug",
+        "scenario": "tide-body",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          445,
+          445
+        ],
+        "at_once_ms": [
+          514,
+          448
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "web",
+        "config": "release",
+        "scenario": "cold",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          6034,
+          5895
+        ],
+        "at_once_ms": [
+          1151,
+          1083
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "web",
+        "config": "release",
+        "scenario": "unchanged",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          196,
+          197
+        ],
+        "at_once_ms": [
+          262,
+          196
+        ]
+      },
+      {
+        "game": "tower-defense",
+        "target": "web",
+        "config": "release",
+        "scenario": "tide-body",
+        "objects": 40,
+        "one_at_a_time_ms": [
+          896,
+          900
+        ],
+        "at_once_ms": [
+          891,
+          896
+        ]
+      }
+    ]
+  }
+}
