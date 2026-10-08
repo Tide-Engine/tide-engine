@@ -1,3 +1,4 @@
-// expect: functions can't take grids yet
+// expect: a function reads the cells of a grid it takes, and never changes them: 'cells' can't be 'mut'
+// expect: change a grid's cells in the system that has its component or singleton
 void Fill(mut Grid2<int> cells) { }
 scene Main { }
