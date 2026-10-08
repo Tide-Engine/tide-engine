@@ -73,6 +73,40 @@ const char *path_base(const char *path)
     return base;
 }
 
+#ifndef _WIN32
+// The whole path of what isn't there, as a file a run is about to write isn't:
+// realpath answers only for what exists. So it's asked for as much of the path
+// as is there, a name less at a time from the end, down to the current folder
+// for a path that isn't from the root, and the names left follow as they were
+// typed: a file has the path it will have once it's written. NULL for no path
+// at all, and when nothing answers (the current folder is gone).
+static char *absolute_missing(const char *path)
+{
+    size_t end = strlen(path);
+    while (end > 1 && path[end - 1] == '/') end--;
+    if (end == 0) return NULL;
+    char *typed = copy(path); // Without the slashes at its end
+    typed[end] = '\0';
+    char *head = copy(typed); // Room for "." too, which a path of one character has
+    char *out = NULL;
+    for (size_t at = end; !out;) {
+        while (at > 0 && typed[at - 1] != '/') at--; // Before a name that isn't there
+        const size_t rest = at;
+        while (at > 1 && typed[at - 1] == '/') at--;
+        const size_t n = at > 0 ? at : 1; // With nothing before the name, the current folder
+        memcpy(head, at > 0 ? typed : ".", n);
+        head[n] = '\0';
+        char *resolved = realpath(head, NULL);
+        if (resolved) out = path_join(resolved, typed + rest);
+        free(resolved);
+        if (at == 0 || (at == 1 && typed[0] == '/')) break; // The current folder was the last to ask, or the root
+    }
+    free(head);
+    free(typed);
+    return out;
+}
+#endif
+
 char *path_absolute(const char *path)
 {
 #ifdef _WIN32
@@ -81,6 +115,7 @@ char *path_absolute(const char *path)
     char *out = copy(n > 0 && n < sizeof buffer ? buffer : path);
 #else
     char *resolved = realpath(path, NULL);
+    if (!resolved) resolved = absolute_missing(path);
     char *out = resolved ? resolved : copy(path);
 #endif
     to_forward_slashes(out);
