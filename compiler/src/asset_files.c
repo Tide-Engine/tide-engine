@@ -40,7 +40,19 @@ typedef struct read_file {
     bool utf8_known, utf8; // Whether its bytes are UTF-8 text
     bool sound_tried, sound; // Whether it's a WAV or an Ogg Vorbis file that decodes
     const char *vorbis_why;  // What's wrong with it as Ogg Vorbis, for a file that starts as one
+    // Tried as a mesh, and what it gave: the mesh, or why not. A .gltf's buffers can be files beside it, so
+    // what was read holds while those are as they were (`sides`)
+    bool mesh_tried, mesh_ok;
+    mesh_file mesh;
+    char mesh_why[256], mesh_note[256];
+    struct mesh_side *sides;
+    int side_count;
 } read_file;
+
+typedef struct mesh_side {
+    char *path;
+    unsigned long long size, modified;
+} mesh_side;
 
 static struct {
     read_file *items;
@@ -55,8 +67,19 @@ static char *copy_cstr(const char *s)
     return out;
 }
 
+static void forget_mesh(read_file *f)
+{
+    if (f->mesh_ok) mesh_file_free(&f->mesh);
+    for (int i = 0; i < f->side_count; i++) free(f->sides[i].path);
+    free(f->sides);
+    f->sides = NULL;
+    f->side_count = 0;
+    f->mesh_tried = f->mesh_ok = false;
+}
+
 static void forget_file(read_file *f)
 {
+    forget_mesh(f);
     free(f->path);
     free(f->data);
     free(f->image.pixels);
@@ -508,7 +531,40 @@ static char *written_path(const str text)
 static const char *kind_name(const asset_kind kind)
 {
     return kind == ASSET_TEXT ? "string" : kind == ASSET_BYTES ? "List<byte>" : kind == ASSET_TEXTURE ? "Texture"
-         : kind == ASSET_CUBEMAP ? "Cubemap" : kind == ASSET_CLIP ? "Clip" : "Grid2<Color>";
+         : kind == ASSET_CUBEMAP ? "Cubemap" : kind == ASSET_CLIP ? "Clip" : kind == ASSET_MESH ? "Mesh<...>" : "Grid2<Color>";
+}
+
+// A file a .gltf names beside it: read like any, and noted, so the mesh is
+// read again when it changes. The files' list can move as one is read, so the
+// .gltf's own entry is found again by its path afterwards.
+typedef struct side_reader {
+    const char *folder; // The .gltf's
+    mesh_side *sides;
+    int count;
+} side_reader;
+
+static const uint8_t *read_side(void *user, const char *path, size_t *size)
+{
+    side_reader *s = user;
+    char *abs = asset_path_join(s->folder, path, strlen(path));
+    const read_file *f = read_at(abs);
+    s->sides = realloc(s->sides, sizeof *s->sides * (size_t)(s->count + 1));
+    if (!s->sides) abort();
+    s->sides[s->count++] = (mesh_side){abs, f ? f->size : 0, f ? f->modified : 0}; // One that's missing is noted too: it may come
+    if (!f) return NULL;
+    *size = f->len;
+    return f->data;
+}
+
+// Whether the files a mesh was read with are as they were then.
+static bool sides_same(const read_file *f)
+{
+    for (int i = 0; i < f->side_count; i++) {
+        unsigned long long size = 0, modified = 0;
+        if (!folder_file_info(f->sides[i].path, &size, &modified)) size = modified = 0;
+        if (size != f->sides[i].size || modified != f->sides[i].modified) return false;
+    }
+    return true;
 }
 
 // Where a missing file might be: one with the same bytes, by the hashes the
@@ -629,6 +685,38 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             if (f->vorbis_why) diag_note("as Ogg Vorbis, %s", f->vorbis_why);
             return false;
         }
+    } else if (kind == ASSET_MESH) {
+        if (f->mesh_tried && !sides_same(f)) forget_mesh(f);
+        if (!f->mesh_tried) {
+            char *folder = asset_path_folder(path);
+            side_reader sides = {folder, NULL, 0};
+            mesh_file mesh = {0};
+            char why[256], note[256];
+            // What it is where its first bytes don't say is its name's to say: as written, as a fetched URL's file has another
+            const bool ok = mesh_file_read(f->data, f->len, key, read_side, &sides, &mesh, why, note);
+            free(folder);
+            f = read_at(path); // Where it is now: reading a file beside it may have moved the list
+            if (!f) {
+                diag_error(at, "'%s' can't be read (%s)", written, path);
+                return false;
+            }
+            f->mesh_tried = true;
+            f->mesh_ok = ok;
+            f->mesh = mesh;
+            f->sides = sides.sides;
+            f->side_count = sides.count;
+            memcpy(f->mesh_why, why, sizeof why);
+            memcpy(f->mesh_note, note, sizeof note);
+        }
+        if (!f->mesh_ok) {
+            diag_error(at, "'%s' %s", key, f->mesh_why);
+            if (f->mesh_note[0]) diag_note("%s", f->mesh_note);
+            return false;
+        }
+        item->mesh = f->mesh;
+        item->side_count = f->side_count;
+        item->sides = arena_alloc(sizeof(char *) * (size_t)(f->side_count ? f->side_count : 1));
+        for (int i = 0; i < f->side_count; i++) item->sides[i] = str_to_cstr(str_from(f->sides[i].path));
     } else if (kind == ASSET_TEXT) {
         if (!f->utf8_known) {
             f->utf8_known = true;

@@ -10,6 +10,7 @@
 #include "tide/grid.h"
 #include "tide/list.h"
 #include "tide/map.h"
+#include "tide/mesh.h"
 #include "tide/text.h"
 
 // The pack: a game's assets as the values `asset` declarations resolve to,
@@ -57,6 +58,17 @@ enum {
     // (tide_clip_of). A list's elements' kind too (`extra`)
     TIDE_PACK_CLIP = 9,
     TIDE_PACK_CLIPS = 10, // Map<string, Clip> of a glob: as TIDE_PACK_MAP, its values' blocks clips
+    // Mesh<V>: its vertices' block, a list's, of the game's vertex struct as the build that packed it lays one
+    // out (tide_pack_mesh); `size` is its indices' block's offset, a list of ints. `extra`, for this kind and
+    // the two after it, is its vertices' layout: a number the build made of the vertex struct, its fields' names,
+    // types and places and their defaults, which the build that reads the pack asks for (tide_pack_find_mesh)
+    TIDE_PACK_MESH = 11,
+    // List<Mesh<V>> of a glob: a block of its meshes, each its vertices' handle then its indices'
+    // (tide_mesh_lists, which is the same bytes on every platform); `size` is how many
+    TIDE_PACK_MESH_LIST = 12,
+    // Map<string, Mesh<V>> of a glob: its entries' block, each a key and a mesh's two handles, all live; `size`
+    // is its index block's offset, as TIDE_PACK_MAP's
+    TIDE_PACK_MESHES = 13,
 };
 
 typedef struct tide_pack_entry {
@@ -129,6 +141,29 @@ uint32_t tide_pack_texture(tide_pack_builder *b, const uint8_t content[32], int3
 // block's offset: the version it's told by in its header (the content's
 // first bytes, never 0), then its size, then the bytes.
 uint32_t tide_pack_clip(tide_pack_builder *b, const uint8_t content[32], const void *data, uint32_t size);
+
+// A mesh: `count` vertices of `vertex` bytes each, as the game's vertex
+// struct lays one out, and `index_count` ints, three a triangle. Two blocks,
+// each a list's, which code reads as it reads any list: offsets[0] is the
+// vertices' and offsets[1] the indices'. Shared by `content`, the SHA-256 of
+// what's in both (so of the file and of how the struct lays it out).
+//
+// Each block says what's in it after its elements, where a list's header has
+// no word to spare: its header's `next`, which only a heap's free blocks use,
+// is how far from the block's start that is, and there are 8 bytes of version
+// (`content`'s, never 0), then an element's bytes. A draw tells a mesh of the
+// pack's by those (tide_pack_list_version), with none of its elements read.
+void tide_pack_mesh(tide_pack_builder *b, const uint8_t content[32], const void *vertices, uint32_t vertex, uint32_t count,
+                    const uint32_t *indices, uint32_t index_count, uint32_t offsets[2]);
+
+// A list of `count` meshes, whose `offsets` are two each (tide_pack_mesh's):
+// its block's offset. Not shared: a declaration's own.
+uint32_t tide_pack_mesh_list(tide_pack_builder *b, const uint32_t *offsets, uint32_t count);
+
+// A map from text to meshes: `keys` are offsets of text blocks, and
+// `offsets` two a mesh. Its entries' block, with its index's in *index, as
+// tide_pack_map's.
+uint32_t tide_pack_mesh_map(tide_pack_builder *b, const uint32_t *keys, const uint32_t *offsets, uint32_t count, uint32_t *index);
 
 // A list of `count` handles (offsets of blocks in this pack, which it tags):
 // its block's offset. Not shared: a declaration's own.
@@ -217,6 +252,36 @@ bool tide_pack_clip_find(uint64_t named, const uint8_t **bytes, uint32_t *size, 
 // Calls `fn` for each clip the loaded pack has, with its file's bytes and
 // version (two declarations of one file are two calls with one version).
 void tide_pack_clips_each(void (*fn)(const uint8_t *bytes, uint32_t size, uint64_t version, void *context), void *context);
+
+// The entry a Mesh declaration's name has in the loaded pack, of `kind`
+// (TIDE_PACK_MESH, _MESH_LIST or _MESHES), whose vertices are laid out as
+// `layout` says: NULL for none, and for one of another layout, which a pack
+// another build made has where the vertex struct changed since. So code never
+// reads vertices as a struct they weren't packed as.
+const tide_pack_entry *tide_pack_find_mesh(const char *qualified, uint32_t kind, uint32_t layout);
+
+// A mesh's entry as the value the game reads: its two lists, where both
+// blocks are whole in the pack and its vertices are `vertex` bytes each, which
+// is what the code that reads them takes them to be. An empty mesh otherwise,
+// and for no entry.
+tide_mesh_lists tide_pack_mesh_of(const tide_pack_entry *e, uint32_t vertex);
+
+// A map of meshes' entry as the value the game reads (TIDE_PACK_MESHES): an empty map for no entry.
+tide_map tide_pack_mesh_map_of(const tide_pack_entry *e);
+
+// The vertices of an entry's mesh number `k` (a Mesh alone has one, number 0;
+// a list's are in its order, a map's in its entries'), to write: generated
+// code gives the fields no file fills their defaults with it, after each
+// load, before anything reads the pack. *count gets how many there are. NULL
+// past the entry's last mesh; a mesh whose vertices aren't `vertex` bytes each
+// has none (*count is 0, and what's returned isn't NULL). `e` is an entry of
+// the loaded pack's.
+void *tide_pack_mesh_open(const tide_pack_entry *e, uint32_t k, uint32_t vertex, uint32_t *count);
+
+// What's in a list of the pack's whose block says (a mesh's vertices or its
+// indices, tide_pack_mesh), for the draw list: false for any other list, and
+// for one whose elements aren't `element` bytes each.
+bool tide_pack_list_version(tide_list list, uint32_t element, uint64_t *version);
 
 // Maps the loaded region into this thread's scratch slots, if it hasn't since
 // the last load: generated code calls it wherever it sets the thread's heaps

@@ -3034,6 +3034,12 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, ")");
             break;
         }
+        if (e->object->type.kind == TY_MESH) { // tree.vertices, tree.indices: the pack's lists, by their handles
+            sb_put(o, "(");
+            gen_expr(g, o, e->object);
+            sb_printf(o, ")." STR_FMT, STR_ARG(e->member));
+            break;
+        }
         if (e->object->type.kind == TY_LIST) { // items.count
             sb_put(o, "tide_list_count(");
             gen_expr(g, o, e->object);
@@ -4504,6 +4510,12 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
     operand_list ops = {0};
     switch (e->kind) {
     case E_MEMBER: {
+        // Draw.Mesh(tree, ...): the Mesh is written out again for its indices, so what it runs waits in the
+        // temporaries its vertices' turn made
+        if (e->mesh_part == 2) {
+            if (holds_ordered(e->object)) out->forced = true;
+            break;
+        }
         const int had = out->items.count;
         collect_ordered(e->object, out, later);
         // A swizzle reads each component from its vector, which is written out again for each
@@ -14008,8 +14020,62 @@ static bool program_has_clips(const program *prog)
     return false;
 }
 
+// The vertex struct of an asset's type that's a Mesh, alone or as a glob's list or map: NULL for any other.
+static const decl *asset_vertex(const type t)
+{
+    const type inner = t.kind == TY_LIST ? list_elem(t.decl) : t.kind == TY_MAP ? t.decl->fields.items[1].type : t;
+    return inner.kind == TY_MESH ? inner.decl->fields.items[0].type.decl : NULL;
+}
+
+// Which of a mesh file's values a vertex's field is filled from, by its name: 0 for a field no file fills.
+enum { FILL_NONE, FILL_POSITION, FILL_NORMAL, FILL_UV, FILL_UV2, FILL_COLOR, FILL_TANGENT };
+
+static int mesh_fills(const field *f)
+{
+    static const char *const names[] = {"", "position", "normal", "uv", "uv2", "color", "tangent"};
+    for (int i = FILL_POSITION; i <= FILL_TANGENT; i++) {
+        if (str_eq_c(f->name, names[i])) return i;
+    }
+    return FILL_NONE;
+}
+
+// How a Mesh asset's vertices are laid out in the pack, as text: the
+// struct's size, each field's name, type and place, and the struct's
+// defaults, which the fields no file fills are given as the pack is loaded.
+// Its hash is what the asset's entry in the pack says (mesh_layout_number),
+// so a pack another build made, of vertices laid out otherwise, hasn't got
+// the mesh and it reads as empty; and it's in what a mesh's blocks are shared
+// by and told by, so a default that changed is another mesh to the draw list.
+static const char *mesh_layout(gen *g, const decl *vertex)
+{
+    sb text = {0};
+    int *pad = arena_alloc(sizeof(int) * (size_t)(vertex->fields.count + 1));
+    const layout whole = decl_layout_padded(vertex, pad);
+    sb_printf(&text, "%d:%d", whole.size, whole.align);
+    int at = 0;
+    for (int i = 0; i < vertex->fields.count; i++) {
+        const field *f = &vertex->fields.items[i];
+        at += pad[i];
+        sb_printf(&text, ";" STR_FMT ":%s@%d", STR_ARG(f->name), type_name(f->type), at);
+        at += type_layout(f->type).size;
+    }
+    sb_put(&text, ";");
+    gen_value(g, &text, vertex, NULL, 0);
+    return text.data;
+}
+
+// A Mesh asset's vertices' layout as a number, which its entry in the pack says and the build that loads it asks for.
+static uint32_t mesh_layout_number(gen *g, const decl *vertex)
+{
+    const char *described = mesh_layout(g, vertex);
+    uint8_t hash[32];
+    tide_sha256_of(described, strlen(described), hash);
+    return (uint32_t)hash[0] | (uint32_t)hash[1] << 8 | (uint32_t)hash[2] << 16 | (uint32_t)hash[3] << 24;
+}
+
 static uint32_t asset_pack_kind(const type t)
 {
+    if (asset_vertex(t)) return t.kind == TY_MESH ? TIDE_PACK_MESH : t.kind == TY_LIST ? TIDE_PACK_MESH_LIST : TIDE_PACK_MESHES;
     if (t.kind == TY_STRING) return TIDE_PACK_TEXT;
     if (t.kind == TY_GRID) return TIDE_PACK_GRID;
     if (t.kind == TY_TEXTURE) return TIDE_PACK_TEXTURE;
@@ -14027,7 +14093,7 @@ static const char *asset_ctype(const type t)
 {
     return t.kind == TY_STRING ? "tide_str" : t.kind == TY_GRID ? "tide_grid" : t.kind == TY_TEXTURE ? "tide_texture_ref"
          : t.kind == TY_CUBEMAP ? "tide_cubemap_ref" : t.kind == TY_CLIP ? "tide_clip_ref" : t.kind == TY_MAP ? "tide_map"
-         : "tide_list";
+         : t.kind == TY_MESH ? "tide_mesh_lists" : "tide_list";
 }
 
 static void gen_assets(gen *g)
@@ -14048,6 +14114,39 @@ static void gen_assets(gen *g)
     for (int i = 0; i < prog->assets.count; i++) {
         const decl *d = prog->assets.items[i];
         const uint32_t kind = asset_pack_kind(d->return_type);
+        const decl *vertex = asset_vertex(d->return_type);
+        if (vertex) { // A Mesh, or a glob's: under its name and its vertices' layout, read where the pack has it
+            sb_printf(o, "    e = tide_pack_find_mesh(\"" STR_FMT "\", %uu, 0x%08xu);\n    if (!e) tide_asset_missing(\"" STR_FMT "\");\n",
+                      STR_ARG(d->qualified), (unsigned)kind, (unsigned)mesh_layout_number(g, vertex), STR_ARG(d->qualified));
+            if (d->return_type.kind == TY_MESH) {
+                sb_printf(o, "    %s = tide_pack_mesh_of(e, (uint32_t)sizeof(%s));\n", asset_cname(d), type_cname(vertex));
+            } else if (d->return_type.kind == TY_MAP) {
+                sb_printf(o, "    %s = tide_pack_mesh_map_of(e);\n", asset_cname(d));
+            } else {
+                sb_printf(o, "    %s = (tide_list){tide_pack_handle(e)};\n", asset_cname(d));
+            }
+            // What no file fills starts as the struct says, as a vertex made in code does
+            bool defaults = false;
+            for (int k = 0; k < vertex->fields.count; k++) {
+                const field *f = &vertex->fields.items[k];
+                defaults |= mesh_fills(f) == FILL_NONE && declared_default(f);
+            }
+            if (defaults) {
+                sb_printf(o, "    {\n        const %s tide_d = ", type_cname(vertex));
+                gen_value(g, o, vertex, NULL, 0);
+                sb_printf(o, ";\n        for (uint32_t tide_k = 0;; tide_k++) {\n            uint32_t tide_n;\n"
+                             "            %s *tide_v = tide_pack_mesh_open(e, tide_k, (uint32_t)sizeof(%s), &tide_n);\n"
+                             "            if (!tide_v) break;\n            for (uint32_t tide_i = 0; tide_i < tide_n; tide_i++) {\n",
+                          type_cname(vertex), type_cname(vertex));
+                for (int k = 0; k < vertex->fields.count; k++) {
+                    const field *f = &vertex->fields.items[k];
+                    if (mesh_fills(f) != FILL_NONE || !declared_default(f)) continue;
+                    sb_printf(o, "                tide_v[tide_i].%s = tide_d.%s;\n", field_cname(f), field_cname(f));
+                }
+                sb_put(o, "            }\n        }\n    }\n");
+            }
+            continue;
+        }
         sb_printf(o, "    e = tide_pack_find(\"" STR_FMT "\", %uu);\n    if (!e) tide_asset_missing(\"" STR_FMT "\");\n",
                   STR_ARG(d->qualified), (unsigned)kind, STR_ARG(d->qualified));
         if (d->return_type.kind == TY_STRING) sb_printf(o, "    %s = tide_pack_text(e);\n", asset_cname(d));
@@ -14118,6 +14217,49 @@ static uint32_t pack_item(tide_pack_builder *b, const asset_match *item, const a
     return tide_pack_bytes(b, item->hash, item->data, (uint32_t)item->size, extra);
 }
 
+// A mesh file into the pack as the asset's vertex struct lays a vertex out,
+// with its triangles: its two blocks' offsets. A field a file has something
+// for, by its name, is filled from it. Any other is zeros here, and the
+// struct's own default once the pack is loaded (gen_assets).
+static void pack_mesh(gen *g, tide_pack_builder *b, const asset_match *item, const decl *vertex, uint32_t offsets[2])
+{
+    const mesh_file *m = &item->mesh;
+    int *pad = arena_alloc(sizeof(int) * (size_t)(vertex->fields.count + 1));
+    const layout whole = decl_layout_padded(vertex, pad);
+    uint8_t *bytes = calloc(m->vertices ? m->vertices : 1u, (size_t)whole.size);
+    if (!bytes) abort();
+    int at = 0;
+    for (int i = 0; i < vertex->fields.count; i++) {
+        const field *f = &vertex->fields.items[i];
+        at += pad[i];
+        const int size = type_layout(f->type).size;
+        const float *from = NULL;
+        uint32_t each = 0; // Floats a vertex in the file's
+        switch (mesh_fills(f)) {
+        case FILL_POSITION: from = m->position, each = 3u; break;
+        case FILL_NORMAL: from = m->normal, each = 3u; break;
+        case FILL_UV: from = m->uv, each = 2u; break;
+        case FILL_UV2: from = m->uv2, each = 2u; break;
+        case FILL_COLOR: from = m->color, each = 4u; break;
+        case FILL_TANGENT: from = m->tangent, each = 4u; break;
+        default: break;
+        }
+        const size_t take = (size_t)size < each * sizeof(float) ? (size_t)size : each * sizeof(float); // A float3 tangent: its xyz
+        for (uint32_t v = 0; from && v < m->vertices; v++) memcpy(bytes + (size_t)v * (size_t)whole.size + (size_t)at, from + (size_t)v * each, take);
+        at += size;
+    }
+    // Shared, and told by the draw list, by what's in the file and how this struct lays it out
+    const char *described = mesh_layout(g, vertex);
+    tide_sha256 s;
+    uint8_t content[32];
+    tide_sha256_init(&s);
+    tide_sha256_add(&s, m->hash, sizeof m->hash);
+    tide_sha256_add(&s, described, strlen(described));
+    tide_sha256_end(&s, content);
+    tide_pack_mesh(b, content, bytes, (uint32_t)whole.size, m->vertices, m->index, m->indices, offsets);
+    free(bytes);
+}
+
 static void note_watched(void *user, const char *path)
 {
     game_info *info = user;
@@ -14142,6 +14284,10 @@ static bool write_pack(gen *g)
             const expr *path = d->value;
             while (path->bind == BIND_CONST) path = path->constant->value;
             if (path->kind == E_STRING) asset_watched(d->unit->src->path, path->text, note_watched, opts->info);
+            // A .gltf's buffers in files beside it: saved, the mesh is another
+            for (int k = 0; d->asset && k < d->asset->count; k++) {
+                for (int s = 0; s < d->asset->items[k].side_count; s++) note_watched(opts->info, d->asset->items[k].sides[s]);
+            }
         }
     }
     if (!opts->pack && !opts->pack_c) return true;
@@ -14155,6 +14301,37 @@ static bool write_pack(gen *g)
                          : t.kind == TY_MAP && t.decl->fields.items[1].type.kind == TY_GRID ? t.decl->fields.items[1].type.decl : NULL;
         const char *qualified = str_to_cstr(d->qualified);
         const uint32_t kind = asset_pack_kind(t);
+        const decl *vertex = asset_vertex(t);
+        if (v->kind == ASSET_MESH && vertex) { // Its vertices and its triangles, as lists; a glob's, a list or a map of those
+            const uint32_t laid = mesh_layout_number(g, vertex);
+            if (!v->many) {
+                uint32_t at[2];
+                pack_mesh(g, &b, &v->items[0], vertex, at);
+                tide_pack_name(&b, qualified, kind, at[0], at[1], laid);
+                continue;
+            }
+            uint32_t *meshes = malloc(sizeof(uint32_t) * 2u * (size_t)(v->count ? v->count : 1));
+            uint32_t *names = malloc(sizeof(uint32_t) * (size_t)(v->count ? v->count : 1));
+            if (!meshes || !names) abort();
+            for (int k = 0; k < v->count; k++) {
+                pack_mesh(g, &b, &v->items[k], vertex, meshes + 2 * k);
+                if (!v->is_map) continue;
+                uint8_t hash[32];
+                uint32_t chars;
+                tide_sha256_of(v->items[k].key, strlen(v->items[k].key), hash);
+                names[k] = tide_pack_string(&b, hash, v->items[k].key, (uint32_t)strlen(v->items[k].key), &chars);
+            }
+            if (v->is_map) {
+                uint32_t index;
+                const uint32_t at = tide_pack_mesh_map(&b, names, meshes, (uint32_t)v->count, &index);
+                tide_pack_name(&b, qualified, kind, at, index, laid);
+            } else {
+                tide_pack_name(&b, qualified, kind, tide_pack_mesh_list(&b, meshes, (uint32_t)v->count), (uint32_t)v->count, laid);
+            }
+            free(meshes);
+            free(names);
+            continue;
+        }
         if (v->kind == ASSET_CUBEMAP) { // Its six faces' images, each in the pack once, and a block that names them in order
             uint32_t faces[6], extra;
             for (int k = 0; k < 6; k++) faces[k] = pack_item(&b, &v->items[k], ASSET_TEXTURE, NULL, false, &extra);

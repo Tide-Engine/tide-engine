@@ -46,6 +46,7 @@ Some examples put two players side by side. Each frame is a machine of its own, 
 - [Five ticks a second, drawn every frame](../game/views.md#smooth-at-any-tick-rate): what views see between ticks.
 - [Smooth shapes](../game/views.md#smooth-shapes): round rects, ellipses, arcs, outlines and soft edges.
 - [A sprite from a file](../game/assets.md#declaring-an-asset): a PNG packed with the game, drawn as a texture and read by the match.
+- [A model from a file](../game/assets.md#meshes): a glTF as one mesh of a vertex struct, lit by a frag.
 - [Anchors, sizes and weights](../game/views.md#measuring-text): text, where it's placed and how big it is.
 - [A grid, drawn as a texture](../game/views.md#textures): a `Grid2<Color>` to paint on.
 - [A texture, past its edges](../game/views.md#past-the-edges): clamped, repeated and mirrored.

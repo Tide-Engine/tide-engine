@@ -1277,6 +1277,7 @@ view Crates(Crate crate, Scenery scenery)
 - A triangle is drawn from its front, the side its corners go clockwise on, and not from its back: see [Which side draws](#which-side-draws). A face that's missing is usually a triangle wound the other way.
 - Textures, filters and [wraps](#past-the-edges) work as a mesh's do: `Draw.Mesh(vertices, indices, transform, texture, filter, wrap)`.
 - There's no lighting built in: a pixel is its corners' colors times its texture's. A [`frag`](./shaders.md) lights it your way, with normals in a vertex struct of your own.
+- A mesh needn't be made in code: `asset Mesh<Vertex3> crate = "art/crate.glb";` is a model from a glTF or an OBJ file, and `Draw.Mesh(crate, transform)` draws it, the mesh where its two lists would go. See [Meshes](./assets.md#meshes).
 - Each frame starts with the 3D camera at the origin, looking along `+z`, with a field of view of 60 degrees.
 
 ### Primitives
@@ -1304,7 +1305,7 @@ Everything below is a primitive: a plane, 81 cubes, a sphere and a cylinder, dra
 
 ### Big scenes
 
-`Draw.Instanced(vertices, indices, transforms)` draws the mesh at every `float4x4` in a list, without an entity for each placement. It can also take a list of your own instance struct, with per-item fields read by a vert or frag: see [Instances from a list](./shaders.md#instances-from-a-list).
+`Draw.Instanced(vertices, indices, transforms)` draws the mesh at every `float4x4` in a list, without an entity for each placement; a [mesh from a file](./assets.md#meshes) goes where the two lists do, `Draw.Instanced(tree, transforms)`. It can also take a list of your own instance struct, with per-item fields read by a vert or frag: see [Instances from a list](./shaders.md#instances-from-a-list).
 
 The lists a 3D mesh is drawn from are kept on the GPU while frames draw them. A list that didn't change costs next to nothing to draw again, however big it is, so keep meshes in fields rather than making them each frame. A list that changed is sent again the next frame.
 

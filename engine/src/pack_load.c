@@ -160,6 +160,79 @@ static bool clip_at(const uint8_t *region, const uint32_t size, const uint32_t o
     return bytes <= 0x7FFFFFFFu;
 }
 
+// A list block at `offset` that says what's in it after its elements (the
+// builder's versioned_list: a mesh's vertices, or its indices): how many
+// elements, of how many bytes each, and its version. False for a block that
+// isn't one, or isn't whole in the region's `size` bytes.
+static bool versioned_at(const uint8_t *region, const uint32_t size, const uint32_t offset, uint32_t *count, uint32_t *element,
+                         uint64_t *version)
+{
+    if (offset == UINT32_MAX || (uint64_t)offset + sizeof(tide_block) > size) return false;
+    tide_block b;
+    memcpy(&b, region + offset, sizeof b);
+    if (b.next < sizeof b || (b.b & TIDE_LIST_CHUNKED) || (uint64_t)offset + b.next + 16u > size) return false;
+    uint32_t said[2];
+    memcpy(version, region + offset + b.next, sizeof *version);
+    memcpy(said, region + offset + b.next + sizeof *version, sizeof said);
+    if (!*version || (uint64_t)b.a * said[0] > b.next - sizeof b) return false;
+    *count = b.a;
+    *element = said[0];
+    return true;
+}
+
+// Whether the two blocks a mesh names are a mesh's: its vertices' and its
+// indices', each whole, the indices ints. *vertex gets a vertex's bytes.
+static bool mesh_at(const uint8_t *region, const uint32_t size, const uint32_t vertices, const uint32_t indices, uint32_t *vertex,
+                    uint32_t *count)
+{
+    uint32_t index_count, index_bytes;
+    uint64_t version;
+    return versioned_at(region, size, vertices, count, vertex, &version)
+        && versioned_at(region, size, indices, &index_count, &index_bytes, &version) && index_bytes == sizeof(uint32_t);
+}
+
+// An entry of a map from text to meshes, as generated code lays it out.
+typedef struct mesh_entry {
+    uint32_t live;
+    uint32_t key;
+    tide_mesh_lists value;
+} mesh_entry;
+
+// The lists and maps of meshes the entries name are read where the file has
+// them, as their handles are the same bytes on every platform. A mesh in one
+// whose blocks aren't whole is made an empty one, here, once: what reads a
+// list's element takes its two lists as they are.
+static void check_meshes(void)
+{
+    for (uint32_t i = 0; i < pack.entry_count; i++) {
+        tide_pack_entry *e = &pack.entries[i];
+        const bool list = e->kind == TIDE_PACK_MESH_LIST;
+        if (!list && e->kind != TIDE_PACK_MESHES) continue;
+        const uint32_t each = list ? (uint32_t)sizeof(tide_mesh_lists) : (uint32_t)sizeof(mesh_entry);
+        const uint32_t count = count_at(pack.region, pack.size, e->offset, each);
+        uint8_t *elements = pack.region + e->offset + sizeof(tide_block);
+        for (uint32_t k = 0; k < count; k++) {
+            tide_mesh_lists *m = list ? &((tide_mesh_lists *)(void *)elements)[k] : &((mesh_entry *)(void *)elements)[k].value;
+            uint32_t vertex, vertices;
+            if (!mesh_at(pack.region, pack.size, place_of(m->vertices.at, pack.size), place_of(m->indices.at, pack.size), &vertex,
+                         &vertices)) {
+                *m = (tide_mesh_lists){{0}, {0}};
+            }
+        }
+        if (!count && e->offset < pack.size) { // A block that isn't whole: a list of none
+            tide_block empty = {0};
+            if ((uint64_t)e->offset + sizeof empty <= pack.size) {
+                memcpy(&empty, pack.region + e->offset, sizeof empty);
+                empty.a = 0;
+                memcpy(pack.region + e->offset, &empty, sizeof empty);
+            } else {
+                e->offset = UINT32_MAX;
+            }
+        }
+        if (list) e->size = count;
+    }
+}
+
 // A block's bytes with its header, as the builder pads them.
 static uint64_t padded(const uint64_t bytes)
 {
@@ -372,6 +445,7 @@ bool tide_pack_load(const uint8_t *bytes, const size_t size)
     memcpy(pack.entries, entries, (size_t)h.entries * sizeof(tide_pack_entry));
     pack.entry_count = h.entries;
     lay_textures(h.region_size);
+    check_meshes();
     note_cubes(); // Once nothing more is laid out: the region is where it stays
     pack.epoch++;
     tide_pack_region_slots = slots;
@@ -422,7 +496,61 @@ const tide_pack_entry *tide_pack_find(const char *qualified, const uint32_t kind
 
 uint32_t tide_pack_handle(const tide_pack_entry *e)
 {
-    return e ? tagged(e->offset) : 0u;
+    return e && e->offset != UINT32_MAX ? tagged(e->offset) : 0u;
+}
+
+const tide_pack_entry *tide_pack_find_mesh(const char *qualified, const uint32_t kind, const uint32_t layout)
+{
+    const tide_pack_entry *e = tide_pack_find(qualified, kind);
+    return e && e->extra == layout ? e : NULL;
+}
+
+tide_map tide_pack_mesh_map_of(const tide_pack_entry *e)
+{
+    if (!e || e->kind != TIDE_PACK_MESHES || e->offset == UINT32_MAX) return (tide_map){0};
+    return (tide_map){{tagged(e->offset)}, {tagged(e->size)}, count_at(pack.region, pack.size, e->offset, sizeof(mesh_entry))};
+}
+
+tide_mesh_lists tide_pack_mesh_of(const tide_pack_entry *e, const uint32_t vertex)
+{
+    uint32_t said, count;
+    if (!e || e->kind != TIDE_PACK_MESH || !mesh_at(pack.region, pack.size, e->offset, e->size, &said, &count) || said != vertex) {
+        return (tide_mesh_lists){{0}, {0}};
+    }
+    return (tide_mesh_lists){{tagged(e->offset)}, {tagged(e->size)}};
+}
+
+void *tide_pack_mesh_open(const tide_pack_entry *e, const uint32_t k, const uint32_t vertex, uint32_t *count)
+{
+    static uint8_t none;
+    *count = 0;
+    if (!e || e < pack.entries || e >= pack.entries + pack.entry_count) return NULL;
+    uint32_t vertices = UINT32_MAX, indices = UINT32_MAX;
+    if (e->kind == TIDE_PACK_MESH) {
+        if (k > 0) return NULL;
+        vertices = e->offset, indices = e->size;
+    } else if (e->kind == TIDE_PACK_MESH_LIST || e->kind == TIDE_PACK_MESHES) {
+        const bool list = e->kind == TIDE_PACK_MESH_LIST;
+        const uint32_t each = list ? (uint32_t)sizeof(tide_mesh_lists) : (uint32_t)sizeof(mesh_entry);
+        if (e->offset == UINT32_MAX || k >= count_at(pack.region, pack.size, e->offset, each)) return NULL;
+        const uint8_t *elements = pack.region + e->offset + sizeof(tide_block);
+        const tide_mesh_lists *m = list ? &((const tide_mesh_lists *)(const void *)elements)[k]
+                                        : &((const mesh_entry *)(const void *)elements)[k].value;
+        vertices = place_of(m->vertices.at, pack.size), indices = place_of(m->indices.at, pack.size);
+    } else {
+        return NULL;
+    }
+    uint32_t said, there;
+    if (!mesh_at(pack.region, pack.size, vertices, indices, &said, &there) || said != vertex) return &none;
+    *count = there;
+    return pack.region + vertices + sizeof(tide_block);
+}
+
+bool tide_pack_list_version(const tide_list list, const uint32_t element, uint64_t *version)
+{
+    if (!pack.region || !tide_pack_holds(list.at)) return false;
+    uint32_t count, said;
+    return versioned_at(pack.region, pack.size, (list.at & 0x3FFFFFFFu) - TIDE_PACK_BASE, &count, &said, version) && said == element;
 }
 
 tide_str tide_pack_text(const tide_pack_entry *e)

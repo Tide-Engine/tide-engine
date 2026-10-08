@@ -1,0 +1,12 @@
+// expect: '../e2e/assets/meshes/bad/face.obj' isn't an OBJ that reads: the face on line 3 names '3', and there's no such vertex, uv or normal before it
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+asset Mesh<Corner> tree = "../e2e/assets/meshes/bad/face.obj";
+
+scene Main
+{
+}

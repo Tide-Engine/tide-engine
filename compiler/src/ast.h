@@ -130,6 +130,7 @@ typedef enum type_kind {
     TY_SET,        // Set<K>: decl is the set type, whose one field is its key
     TY_GRID,       // Grid2<T> and Grid3<T>: decl is the grid type, whose one field is its cell
     TY_ARRAY,      // T[N]: decl is the array type (DECL_ARRAY), whose one field is its element and array_length N
+    TY_MESH,       // Mesh<V>: decl is the mesh type (DECL_MESH), whose one field is its vertex. An asset's vertices and indices, the pack's own
     TY_WORLD,      // World: a system's, view's or handler's parameter, which reads (or with mut, changes) any entity's components by handle
     TY_QUERY,      // A system's read-only second entity set; decl is its compiler-only row struct
     TY_COMPONENT,
@@ -399,6 +400,7 @@ typedef enum decl_kind {
     DECL_MAP,      // Map<K, V> or Set<K>, one per key and value type: fields key and (maps) value; in program.maps
     DECL_GRID,     // Grid2<T> or Grid3<T>, one per cell type and dimensions: its one field is the cell; in program.grids
     DECL_ARRAY,    // T[N], one per element type and length: its one field is the element, array_length N; in program.arrays
+    DECL_MESH,     // Mesh<V>, one per vertex struct: its one field is the vertex; in program.meshes
     DECL_RESULT,   // T? or `T fails E`, one per combination: field 0 is the value, field 1 the error; in program.results
     DECL_CONST,    // const int MAX_HEALTH = 100;: a value code reads by name, the same on every machine
     DECL_SETTINGS, // settings { tickRate = 30; }: the engine's settings, as fields; in program.settings
@@ -890,6 +892,10 @@ struct expr {
                           // call after it, and the last one's the block itself
     struct decl *vert;    // mesh draw: the vert and the frag it names, or NULL
     bool instanced;      // Instanced: its third argument supplies the instances
+    // E_MEMBER the checker made of a mesh draw's Mesh, 'Draw.Mesh(tree, ...)': 1 for its vertices and 2 for its
+    // indices, in the two arguments' places. Both have the Mesh's expression as their object, the same one: it's
+    // worked out for the first, and what's written of it again for the second reads what the first left
+    int mesh_part;
     bool blit;           // Draw.Blit: source texture, destination target and a frag
     bool targeted;       // A RenderTarget receiver supplies this draw's destination
     bool resource_operation; // RenderTarget creation, resize or disposal: ordered local side effects
@@ -1244,6 +1250,7 @@ typedef struct program {
     VEC(decl *) maps;    // Every Map<K, V> and Set<K> type, one per key and value type
     VEC(decl *) grids;   // Every Grid2<T> and Grid3<T> type, one per cell type and dimensions
     VEC(decl *) arrays;  // Every T[N] type, one per element type and length
+    VEC(decl *) meshes;  // Every Mesh<V> type, one per vertex struct
     VEC(decl *) results; // Every T? and `T fails E` it uses, one per combination
     decl *owner;         // The built-in Owner component.
     decl *devices;       // The built-in Devices record.

@@ -63,6 +63,8 @@ Draw.Mesh(vertices, indices, transform, Wave, Shade);   // Both: the vert first
 
 With no frag, a pixel is its vertex's `color` times the draw's texture at its `uv`, as the built-in `Vertex` and `Vertex3` draw: a struct with no `Color color` draws white, and a texture needs a `float2 uv` to be read at. With no vert, the vertices are used as they are.
 
+A model from a file fills a struct of yours the same way, by those names and a few more (`normal`, `tangent`, `uv2`): `asset Mesh<BoxVertex> crate = "art/crate.glb";`, then `Draw.Mesh(crate, transform, Wave, Shade)`. See [Meshes](./assets.md#meshes).
+
 Frags and verts can share a name when their parameters differ. A draw then names the one it means with its parameters' types, as [`[After]` names a system](./systems.md#order): `Draw.Mesh(vertices, indices, Tint(Vertex, Color, Sun))`.
 
 ## A frag

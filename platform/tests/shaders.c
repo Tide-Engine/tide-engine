@@ -1296,6 +1296,86 @@ static void run_roll_checks(const int64_t state, const char *when)
     rolled_before = true;
 }
 
+// Meshes from files (pass 20): squares 16 pixels across, each with its middle
+// at a pixel, whose corners are red (bottom left, seen from its front), green
+// (bottom right), blue (top right) and white (top left), in two triangles
+// that meet along the line from red to blue. Seen from the front, the file's
+// picture is as the file has it; a square seen from behind isn't drawn.
+static void run_model_checks(const char *when)
+{
+    enum { NEAR_RED, NEAR_GREEN, NEAR_BLUE, MIDDLE, TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT };
+    // A spot's pixel from the square's middle, and what the corners' colors blend to there
+    static const float spots[][2] = {{-4.5f, 5.5f}, {4.5f, 5.5f}, {4.5f, -2.5f}, {0.5f, 0.5f},
+                                     {-4.5f, -4.5f}, {4.5f, -4.5f}, {-4.5f, 4.5f}, {4.5f, 4.5f}};
+    static const float red[3] = {0.78125f, 0.0625f, 0.15625f}, green[3] = {0.21875f, 0.625f, 0.15625f};
+    static const float blue[3] = {0.21875f, 0.125f, 0.65625f}, none[3] = {0, 0, 0};
+    static const float lit_first[3] = {0.5f, 1.0f, 0.15625f}, lit_third[3] = {0.5f, 1.0f, 0.65625f};
+    static const float pure_red[3] = {1, 0, 0}, pure_green[3] = {0, 1, 0}, pure_blue[3] = {0, 0, 1}, white[3] = {1, 1, 1};
+    static const struct {
+        float x, y; // The square's middle
+        int spot;
+        const float *is;
+        const char *what;
+    } wanted[] = {
+        {24, 24, NEAR_RED, red, "a mesh from a .glb, seen from its front: the color of its first corner"},
+        {24, 24, NEAR_GREEN, green, "its second, to the right, as the file has it"},
+        {24, 24, NEAR_BLUE, blue, "its third, above that"},
+        {56, 24, MIDDLE, none, "the same mesh from behind isn't drawn"},
+        {88, 24, NEAR_RED, green, "but with both sides drawn: mirrored"},
+        {88, 24, NEAR_GREEN, red, "its first corner to the right"},
+        {120, 24, NEAR_RED, lit_first, "a vertex of the game's through a frag: its default, its normal, its color"},
+        {120, 24, NEAR_BLUE, lit_third, "across the square"},
+        {152, 24, TOP_LEFT, pure_red, "its uvs: the texture's first pixel at its top left"},
+        {152, 24, TOP_RIGHT, pure_green, "its second to the right"},
+        {152, 24, BOTTOM_LEFT, pure_blue, "its third below"},
+        {152, 24, BOTTOM_RIGHT, white, "and its last"},
+        {184, 24, NEAR_RED, red, "a mesh from an .obj: the same square"},
+        {184, 24, NEAR_GREEN, green, "the same way round"},
+        {184, 24, NEAR_BLUE, blue, "and up"},
+        {24, 56, NEAR_RED, red, "an instance of a mesh from a file"},
+        {56, 56, NEAR_GREEN, green, "and a second"},
+        {88, 56, NEAR_BLUE, blue, "one of a glob's list"},
+        {120, 56, NEAR_RED, red, "one of a glob's map, by its path"},
+        {152, 56, NEAR_GREEN, green, "a mesh by its two lists"},
+        {184, 56, MIDDLE, none, "a key the map hasn't got draws nothing"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    local.Art.targetPass = 20;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+    // The quad by its name, in an instanced draw, from the list, from the map and by its lists: one mesh in the list
+    uint32_t first = 0, drawn[8] = {0}, plain = 0;
+    for (uint32_t i = 0; i < list.count; i++) {
+        if (list.commands[i].kind == TIDE_DRAW_CLEAR) first = i; // The pass's own draws come after its clear
+    }
+    for (uint32_t i = first; i < list.count; i++) {
+        const tide_draw_command *c = &list.commands[i];
+        if (c->kind != TIDE_DRAW_MESH_3D) continue;
+        bool known = false;
+        for (uint32_t k = 0; k < plain; k++) known = known || drawn[k] == c->mesh3.mesh;
+        if (!known && plain < 8) drawn[plain++] = c->mesh3.mesh;
+    }
+    expect(plain == 2, "a file drawn by its name, from a list, from a map and by its lists is one mesh, and the .obj another");
+    tide_float2 points[COUNT];
+    uint32_t got[COUNT];
+    for (int i = 0; i < COUNT; i++) points[i] = tide_f2(wanted[i].x + spots[wanted[i].spot][0], wanted[i].y + spots[wanted[i].spot][1]);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
+    for (int i = 0; i < COUNT; i++) {
+        const uint8_t want[3] = {byte(wanted[i].is[0]), byte(wanted[i].is[1]), byte(wanted[i].is[2])};
+        bool ok = true;
+        for (int c = 0; c < 3; c++) {
+            const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - (int)want[c];
+            ok = ok && d >= -8 && d <= 8;
+        }
+        printf("%s: %s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, when, (unsigned)got[i],
+               want[0], want[1], want[2]);
+        if (!ok) failures++;
+    }
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -1329,6 +1409,7 @@ static int frame(void *user, const float seconds)
         run_cube_checks(2, ", on another device");
         run_list_checks(0, ", on another device");
         run_roll_checks(555, ", on another device");
+        run_model_checks(", on another device");
         return failures;
     }
 #endif
@@ -1363,6 +1444,8 @@ static int frame(void *user, const float seconds)
     run_list_checks(0, ", and written back");
     run_roll_checks(1234, "");
     run_roll_checks(987654321, ", the next frame");
+    run_model_checks("");
+    run_model_checks(", again");
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");

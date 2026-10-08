@@ -237,6 +237,52 @@ uint32_t tide_pack_clip(tide_pack_builder *b, const uint8_t content[32], const v
     return at;
 }
 
+// A list's block of `count` elements of `element` bytes each, with what's in it said after them (tide/pack.h).
+static uint32_t versioned_list(tide_pack_builder *b, const void *elements, const uint32_t element, const uint32_t count,
+                               uint64_t version)
+{
+    const uint64_t bytes = ((uint64_t)element * count + 7u) & ~7ull;
+    if (bytes + 16u + sizeof(tide_block) > TIDE_PACK_BASE) tide_out_of_memory(); // Past what a handle can say
+    const uint32_t at = block(b, (uint32_t)bytes + 16u);
+    tide_block *h = header(b, at);
+    h->a = count;
+    h->b = count;
+    h->next = (uint32_t)(sizeof(tide_block) + bytes);
+    if (count) memcpy(h + 1, elements, (size_t)element * count);
+    if (!version) version = 1u; // 0 is no list's
+    const uint32_t said[2] = {element, 0u};
+    memcpy((uint8_t *)(h + 1) + bytes, &version, sizeof version);
+    memcpy((uint8_t *)(h + 1) + bytes + sizeof version, said, sizeof said);
+    return at;
+}
+
+void tide_pack_mesh(tide_pack_builder *b, const uint8_t content[32], const void *vertices, const uint32_t vertex, const uint32_t count,
+                    const uint32_t *indices, const uint32_t index_count, uint32_t offsets[2])
+{
+    const tide_pack_shared *had = find_shared(b, content, TIDE_PACK_MESH);
+    if (had) {
+        offsets[0] = had->offset;
+        offsets[1] = had->size;
+        return;
+    }
+    uint64_t versions[2];
+    memcpy(versions, content, sizeof versions);
+    offsets[0] = versioned_list(b, vertices, vertex, count, versions[0]);
+    offsets[1] = versioned_list(b, indices, (uint32_t)sizeof(uint32_t), index_count, versions[1]);
+    add_shared(b, content, TIDE_PACK_MESH, offsets[0], offsets[1], vertex);
+}
+
+uint32_t tide_pack_mesh_list(tide_pack_builder *b, const uint32_t *offsets, const uint32_t count)
+{
+    const uint32_t at = block(b, count * (uint32_t)sizeof(tide_mesh_lists));
+    tide_block *h = header(b, at);
+    h->a = count;
+    h->b = count;
+    tide_mesh_lists *meshes = (tide_mesh_lists *)(void *)(h + 1);
+    for (uint32_t i = 0; i < count; i++) meshes[i] = (tide_mesh_lists){{tagged(offsets[2u * i])}, {tagged(offsets[2u * i + 1u])}};
+    return at;
+}
+
 uint32_t tide_pack_list(tide_pack_builder *b, const uint32_t *offsets, const uint32_t count)
 {
     const uint32_t at = block(b, count * (uint32_t)sizeof(uint32_t));
@@ -255,15 +301,10 @@ typedef struct text_entry {
     uint32_t value;
 } text_entry;
 
-uint32_t tide_pack_map(tide_pack_builder *b, const uint32_t *keys, const uint32_t *values, const uint32_t count, uint32_t *index)
+// A map's index for `count` entries whose keys are the text blocks at `keys`: its block's offset.
+static uint32_t text_index(tide_pack_builder *b, const uint32_t *keys, const uint32_t count)
 {
-    const uint32_t at = block(b, count * (uint32_t)sizeof(text_entry));
-    tide_block *h = header(b, at);
-    h->a = count;
-    h->b = count;
-    text_entry *entries = (text_entry *)(void *)(h + 1);
-    for (uint32_t i = 0; i < count; i++) entries[i] = (text_entry){1u, tagged(keys[i]), tagged(values[i])};
-    // The index: a power of two of slots, under half full, as map.c keeps it
+    // A power of two of slots, under half full, as map.c keeps it
     uint32_t slots = 8u;
     while (count * 2u > slots) slots *= 2u;
     const uint32_t ix = block(b, slots * (uint32_t)sizeof(uint32_t));
@@ -277,7 +318,39 @@ uint32_t tide_pack_map(tide_pack_builder *b, const uint32_t *keys, const uint32_
         while (table[slot]) slot = (slot + 1u) & (slots - 1u);
         table[slot] = i + 1u;
     }
-    *index = ix;
+    return ix;
+}
+
+uint32_t tide_pack_map(tide_pack_builder *b, const uint32_t *keys, const uint32_t *values, const uint32_t count, uint32_t *index)
+{
+    const uint32_t at = block(b, count * (uint32_t)sizeof(text_entry));
+    tide_block *h = header(b, at);
+    h->a = count;
+    h->b = count;
+    text_entry *entries = (text_entry *)(void *)(h + 1);
+    for (uint32_t i = 0; i < count; i++) entries[i] = (text_entry){1u, tagged(keys[i]), tagged(values[i])};
+    *index = text_index(b, keys, count);
+    return at;
+}
+
+// An entry of a map from text to meshes, as generated code lays it out: live, the key, the mesh.
+typedef struct mesh_entry {
+    uint32_t live;
+    uint32_t key;
+    tide_mesh_lists value;
+} mesh_entry;
+
+uint32_t tide_pack_mesh_map(tide_pack_builder *b, const uint32_t *keys, const uint32_t *offsets, const uint32_t count, uint32_t *index)
+{
+    const uint32_t at = block(b, count * (uint32_t)sizeof(mesh_entry));
+    tide_block *h = header(b, at);
+    h->a = count;
+    h->b = count;
+    mesh_entry *entries = (mesh_entry *)(void *)(h + 1);
+    for (uint32_t i = 0; i < count; i++) {
+        entries[i] = (mesh_entry){1u, tagged(keys[i]), {{tagged(offsets[2u * i])}, {tagged(offsets[2u * i + 1u])}}};
+    }
+    *index = text_index(b, keys, count);
     return at;
 }
 

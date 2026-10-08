@@ -1,10 +1,10 @@
 ---
-description: "Declare images, textures, cubemaps, text and bytes as Tide assets, then load files or fetch URLs locally while the game runs."
+description: "Declare images, textures, cubemaps, meshes from glTF and OBJ files, text and bytes as Tide assets, then load files or fetch URLs locally while the game runs."
 ---
 
 # Assets
 
-An asset is a file a game is built with: an image, a text, some bytes. The language names it, the compiler checks it, and the build packs what's named and nothing else. The second half of this page covers what a machine loads while the game runs instead: a file of the player's, or a URL, which is local to that machine until the match is told about it.
+An asset is a file a game is built with: an image, a model, a text, some bytes. The language names it, the compiler checks it, and the build packs what's named and nothing else. The second half of this page covers what a machine loads while the game runs instead: a file of the player's, or a URL, which is local to that machine until the match is told about it.
 
 ## Declaring an asset
 
@@ -17,7 +17,7 @@ asset string rules = "rules.txt";           // UTF-8 text
 asset List<byte> table = "data/table.bin";  // Any file, as its bytes
 ```
 
-Code reads `hero` wherever it reads a `Grid2<Color>`: a system indexes its cells, a view draws it as a texture with `Draw.Mesh`, and a frag samples it by name, `hero.Sample(uv)`, as it samples a singleton's grid. The four types are the ones there are for now: `string`, `List<byte>`, `Grid2<Color>` and `Texture`.
+Code reads `hero` wherever it reads a `Grid2<Color>`: a system indexes its cells, a view draws it as a texture with `Draw.Mesh`, and a frag samples it by name, `hero.Sample(uv)`, as it samples a singleton's grid. Those four are the plain ones: `string`, `List<byte>`, `Grid2<Color>` and `Texture`. A sky is a [`Cubemap`](#cubemaps), a model a [`Mesh`](#meshes), and a sound a [`Clip`](./audio.md#clips).
 
 ::: tide-example assets A sprite from a file
 <<< @/examples/assets.tide
@@ -104,6 +104,88 @@ asset Cubemap sky = "art/sky_??.png";
 - It's a value, like a `Texture`: a field or a local holds one, a function takes one, and a frag samples one by its name, `sky.Sample(direction)`. It's this machine's, so match code can't name one.
 - No list or map of cubes yet, and no `[Filter]` on one: a cube's filter is said where it's sampled.
 
+## Meshes
+
+A model an artist made, or one a tool generated, is a mesh file: glTF (a `.glb`, or a `.gltf` with its buffers) or a Wavefront `.obj`. `asset Mesh<V>` declares one as vertices of a struct of yours, `V`, which the file fills by its fields' names:
+
+```csharp
+struct Corner
+{
+    float3 position;
+    float3 normal;
+    Color color = Color.white;
+}
+
+asset Mesh<Corner> tree = "art/tree.glb";
+asset List<Mesh<Corner>> rocks = "art/rocks/*.glb";         // In order of their paths
+asset Map<string, Mesh<Corner>> props = "art/props/*.glb";  // By them: props["art/props/bench.glb"]
+
+frag Look(Corner corner, out Color color, Sun sun)
+{
+    color = corner.color * Math.Max(Math.Dot(Math.Normalize(corner.normal), -sun.direction), 0.2);
+    color.a = 1;
+}
+
+view Trees(Tree at)
+{
+    Draw.Mesh(tree, float4x4.Translate(at.position), Look);
+}
+```
+
+The rocket below is a `.glb` as a modelling tool exports one: five meshes with a material's color each, placed by the file's nodes, and no normals. Here it's one mesh, and a frag lights it from the normal each triangle was given.
+
+::: tide-example model A model from a file
+<<< @/examples/model.tide
+:::
+
+**A draw takes it where its vertices and its indices go.** `Draw.Mesh(tree, transform, ...)` and `Draw.Instanced(tree, instances, ...)`, a render target's too, with whatever follows a mesh's lists after it: a texture, a vert, a frag, [values](./shaders.md#values-for-one-draw). A view that runs for each of a thousand trees draws them [all at once](./shaders.md#many-at-once), and the mesh is sent to the GPU once, however often it's drawn.
+
+**The file fills the struct by its fields' names**, each a type the file's values are:
+
+| Field | Type | What the file gives it |
+| --- | --- | --- |
+| `position` | `float3` | Where the vertex is. Every mesh's vertex has one. |
+| `normal` | `float3` | Which way the surface faces there. A file with none gets each triangle's own, so it's lit flat. |
+| `uv` | `float2` | Where in a texture the vertex is, (0, 0) at its top left. (0, 0) where the file has none. |
+| `uv2` | `float2` | The file's second set of those, which a lightmap uses. |
+| `color` | `Color` | The vertex's color times its material's. White where the file has neither. |
+| `tangent` | `float4` | Along the surface, for normal maps: `xyz`, and in `w` the side the bitangent is on, 1 or -1. Zero where the file has none. |
+
+- A struct has the ones it needs, in any order: `Corner` above takes no uvs, so the pack holds none.
+- **A field of any other name keeps its default.** So one struct serves the meshes a game makes in code and the ones it loads: `float glow = 1;` is 1 at every vertex of a file's.
+- A field with one of those names and another type is an error at the declaration, which says the type the file's is.
+- The built-in [`Vertex3`](./views.md#_3d) is a position, a uv and a color: `asset Mesh<Vertex3> crate = "art/crate.glb";` draws with no frag, `Draw.Mesh(crate, transform, wood)`.
+
+**It's two lists.** `tree.vertices` is a `List<Corner>` and `tree.indices` a `List<int>`, three for each triangle, and `Draw.Mesh(tree.vertices, tree.indices, transform, Look)` is the same draw. Any code reads them, the match too, since every machine has the same pack, to the bit: a system can build a collider from a rock's own triangles. They're read-only, like every asset; copy one to change it, `mut var mine = tree.vertices;`.
+
+**One file is one mesh.** Everything the file's scene places is in it, where its nodes place it, as one list of vertices and one of triangles, with each part's material color in its vertices' `color`. That's all a model in flat colors needs. What a game moves apart, a car's wheels from its body, is a file each, and a glob names them: `asset Map<string, Mesh<Corner>> car = "art/car/*.glb";`.
+
+**What's read, and what isn't:**
+
+- From a glTF: its meshes' positions, normals, tangents, two sets of uvs and vertex colors, its nodes' places, and each material's base color. Not its textures, nor the rest of a material; not skins, animation, morph targets, cameras or lights: a skinned model is the mesh as it stands. A file whose geometry is compressed (Draco, meshopt) is an error that says to export it without: Tide reads a mesh's numbers as they are.
+- From an OBJ: positions, uvs, normals and faces of any number of corners, with a color after a position where a tool wrote one. Not its materials file.
+- **A texture a model has is a file of its own**, a PNG beside it, declared like any: `asset Texture bark = "art/bark.png";`, and given to the draw.
+- A mesh holds 16,777,216 vertices at the most.
+
+**It comes in as Tide has the world.** Mesh files are right-handed with their triangles' fronts counterclockwise, and Tide's world is left-handed with them [clockwise](./views.md#which-side-draws), like Unity's. So a file's `x` is turned around and its triangles are wound the other way: `+y` stays up, a model that faces `+z` in its file faces `+z` here, and nothing is mirrored. A glTF's colors are light, and a `Color` is what the screen shows, so they're converted; an OBJ's are taken as written.
+
+**Nothing keeps one.** A `Mesh` is the pack's own memory, which code reads by the asset's name: a local, a function's parameter and what a function returns pass one on, and no field holds one, nor a task while it waits. What says which model a thing has is a number or a key of yours:
+
+```csharp
+component Prop
+{
+    float3 position;
+    int model; // Its place in `rocks`
+}
+
+view Props(Prop prop)
+{
+    Draw.Mesh(rocks[prop.model], float4x4.Translate(prop.position), Look);
+}
+```
+
+A frag and a vert don't read a mesh's two lists: the draw sends them to the GPU as the mesh they are.
+
 ## Paths
 
 A path is relative to the `.tide` file that names it, whatever that file's namespace: there's no assets folder and no root. A package's files name files beside its own code the same way. Forward slashes, on every platform.
@@ -155,7 +237,7 @@ Anything wrong that can be known as the game is built is an error at the declara
 
 - A file that isn't there. The error says where a file with the same bytes is now, if the file was moved (the compiler keeps a hash of every named file in the game's `.tide/`), or else lists the files of that name, with a quick fix for each in the editor.
 - A glob that matches nothing.
-- Bytes that aren't what the type says: a `Grid2<Color>` or a `Texture` whose file isn't a PNG that decodes, a `string` whose file isn't UTF-8.
+- Bytes that aren't what the type says: a `Grid2<Color>` or a `Texture` whose file isn't a PNG that decodes, a `string` whose file isn't UTF-8, a `Mesh` whose file isn't a glTF or an OBJ that reads, with what's wrong in it.
 - A type an asset can't be, a path that isn't a constant, a `local` or `virtual` asset, a write to one.
 
 The editor keeps assets in step with their files: renaming a file or a folder rewrites the paths that name it, and a path's completion offers the files it can lead to. See [Editors](../tools/editors.md).
@@ -164,7 +246,7 @@ The editor keeps assets in step with their files: renaming a file or a folder re
 
 `tide build` packs the closure of the game's `asset` declarations, and nothing else in the folder. A file is in the pack once however many declarations name it, and they all read the same value: a `Grid2<Color>` of the pack lives in a read-only region every world can name, outside every world's heap, so no world copies, hashes or sends it. A file declared as a `Grid2<Color>` and as a `Texture` is in it once as each, and so is a text file with characters past ASCII that's declared as a `string` and as a `List<byte>`.
 
-Where the pack is: beside the program as `<name>.pack` on desktop, inside the self-contained page on the web, and in the APK on Android. Under `tide run` there's no build step for it: tide watches the files assets name, and a saved image is in the running game at once, with no rebuild, as it's data; a hot reload keeps it. A C host of its own (`tide_add_game` with `HOST`) gets the pack as a C array, `tide_game_pack`, to hand `tide_assets_load`.
+Where the pack is: beside the program as `<name>.pack` on desktop, inside the self-contained page on the web, and in the APK on Android. Under `tide run` there's no build step for it: tide watches the files assets name, and a saved image or model is in the running game at once, with no rebuild, as it's data; a hot reload keeps it. A C host of its own (`tide_add_game` with `HOST`) gets the pack as a C array, `tide_game_pack`, to hand `tide_assets_load`.
 
 ## Loading at runtime
 
