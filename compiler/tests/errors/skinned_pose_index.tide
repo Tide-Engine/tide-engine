@@ -1,0 +1,3 @@
+// expect: a Pose is indexed by a Bone, not int
+scene Main { }
+BoneTransform Read(Pose pose) { return pose[0]; }

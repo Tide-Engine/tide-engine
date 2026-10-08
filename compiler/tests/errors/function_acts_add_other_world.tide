@@ -1,0 +1,5 @@
+// expect: 'Puff' is local, and this entity is the match's
+component Enemy { int hp; }
+local component Puff { int age; }
+scene Main { }
+void Dust(Entity target) { target.Add(Puff); }

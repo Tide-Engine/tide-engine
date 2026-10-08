@@ -1,0 +1,6 @@
+// expect: 'Enemy' is the match's, and this entity is local
+// expect: an entity belongs to one world
+component Enemy { int hp; }
+local component Puff { int age; }
+scene Main { }
+void Both() { Spawn(Puff, Enemy); }

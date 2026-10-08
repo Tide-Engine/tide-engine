@@ -1,0 +1,244 @@
+// Functions and methods send, spawn and change entities as the code that calls
+// them would: in the match from systems, handlers and tasks, and on this
+// machine from views.
+
+event Ping { int n; }
+event Hit { int damage; }
+event Note { string text; }
+
+struct Bell
+{
+    int tone;
+
+    // A struct's method sends, for whatever calls it
+    void Ring() { Send(Ping { n = tone }); }
+}
+
+component Enemy
+{
+    int hp = 5;
+    int hits;
+    Bell bell;
+
+    // A component's method has `this`, the entity it's called for
+    void Shout(int damage) { this.Send(Hit { damage = damage }); }
+}
+
+component Mark { int left; }
+component Crate { int from; }
+
+// There are many scouts, so the system that runs them splits them across threads
+component Scout
+{
+    int id;
+    int steps;
+    Entity made;
+}
+
+scene Arena
+{
+    int round;
+}
+
+singleton Tally
+{
+    List<int> order; // Each Ping's n, in the order the handler heard them
+    bool ordered;
+    int hits;
+    int dents;
+    int matched;
+    int marked;
+    int cheers;
+    string last;
+    Entity arena;
+    Entity first;
+}
+
+scene Main { }
+
+void Notify(int n) { Send(Ping { n = n }); }
+void Poke(Entity target, int damage) { target.Send(Hit { damage = damage }); }
+Entity Crated(int from) { return Spawn(Crate { from = from }); }
+void Tag(Entity target, int left) { target.Add(Mark { left = left }); }
+void Untag(Entity target) { target.Remove(Mark); }
+void End(Entity target) { target.Destroy(); }
+void Say(string text) { Send(Note { text = text }); }
+
+// Through other functions, however many
+int Volley(Entity target, int shots)
+{
+    for (var i = 0; i < shots; i++) Poke(target, i + 1);
+    Notify(100 + shots);
+    return shots;
+}
+
+// It gives a value and sends: its calls keep their order in an expression
+int Counted(int n)
+{
+    Notify(n);
+    return n;
+}
+
+// A function that takes a block sends in its own code too, around the block's
+void Twice(int n, Action each)
+{
+    Notify(n);
+    each();
+    Notify(n + 1);
+    each();
+}
+
+// A task of the match's calls it, as a system would
+async void Later(int n)
+{
+    await Wait.Ticks(2);
+    Notify(n);
+}
+
+event(Spawned) Setup(with Main, mut Tally tally)
+{
+    tally.arena = Scene.Load(Arena);
+    tally.first = Spawn(Enemy { bell = Bell { tone = 7 } });
+    for (var i = 0; i < 300; i++) Spawn(Scout { id = i });
+    Later(900);
+}
+
+// What an arena's handler spawns through a function joins that arena, and goes with it
+event(Spawned) Stock(with Arena)
+{
+    Crated(-1);
+    Crated(-2);
+}
+
+system Rounds(mut Arena arena)
+{
+    arena.round += 1;
+    if (arena.round == 7) Scene.Unload(this);
+}
+
+// One thread: its own sends and its functions' are recorded in the order written
+system Order(mut Tally tally)
+{
+    if (tally.ordered) return;
+    tally.ordered = true;
+    Send(Ping { n = 10 });
+    Notify(11);
+    Send(Ping { n = 12 });
+    var sum = Counted(1) + Counted(2) * Counted(3);
+    Notify(sum);
+    Twice(20)
+    {
+        Notify(30);
+    }
+    Say("said");
+}
+
+// Methods, functions through functions, and an entity changed and destroyed
+[After(Order)]
+system Fight(mut Enemy enemy)
+{
+    enemy.hp -= 1;
+    if (enemy.hp == 3)
+    {
+        enemy.Shout(2);
+        enemy.bell.Ring();
+    }
+    if (enemy.hp == 2)
+    {
+        Volley(this, 2);
+        Tag(this, 4);
+    }
+    if (enemy.hp == 1) Untag(this);
+    if (enemy.hp == 0) End(this);
+}
+
+// Each scout sends and spawns through functions, on whichever thread runs it
+[After(Fight)]
+system Patrol(mut Scout scout)
+{
+    scout.steps += 1;
+    if (scout.steps == 2 && scout.id % 3 == 0)
+    {
+        scout.made = Crated(scout.id); // A temporary handle there, the real one once the system is done
+        Poke(scout.made, 1);
+    }
+    if (scout.steps == 3 && scout.id % 50 == 0) Notify(1000 + scout.id);
+}
+
+// Every third scout's crate is the one its function spawned, dented once
+[After(Patrol)]
+system Audit(Scout scout, World world, mut Tally tally)
+{
+    if (scout.steps != 3 || scout.id % 3 != 0) return;
+    if (world.Get<Crate>(scout.made).from == scout.id + 5000) tally.matched += 1;
+}
+
+[After(Audit)]
+system Marked(Mark mark, mut Tally tally)
+{
+    tally.marked += mark.left;
+}
+
+event(Ping ping) Heard(mut Tally tally)
+{
+    tally.order.Add(ping.n);
+}
+
+event(Hit hit) Take(mut Enemy enemy, mut Tally tally)
+{
+    enemy.hits += hit.damage;
+    tally.hits += hit.damage;
+}
+
+event(Hit hit) Dent(mut Crate crate, mut Tally tally)
+{
+    crate.from += 5000 * hit.damage;
+    tally.dents += 1;
+}
+
+event(Note note) Noted(mut Tally tally)
+{
+    tally.last = note.text;
+}
+
+command Cheer { int n; }
+
+command(Cheer cheer, PlayerID sender) Cheered(mut Tally tally)
+{
+    tally.cheers += cheer.n;
+    Notify(-cheer.n); // A command's handler calls it too
+}
+
+// On this machine: a view's functions send local events and commands, and
+// spawn and destroy local entities
+
+local event Blink { int n; }
+
+local component Puff { int age; }
+
+local singleton Seen
+{
+    bool once;
+    int blinks;
+}
+
+void Flash(int n) { Send(Blink { n = n }); }
+LocalEntity Puffed() { return Spawn(Puff); }
+void Pop(LocalEntity puff) { puff.Destroy(); }
+void Ask(int n) { Send(Cheer { n = n }); }
+
+view Show(mut Seen seen)
+{
+    if (seen.once) return;
+    seen.once = true;
+    Flash(4);
+    var puff = Puffed();
+    Puffed();
+    Pop(puff);
+    Ask(9);
+}
+
+local event(Blink blink) Blinked(mut Seen seen)
+{
+    seen.blinks += blink.n;
+}

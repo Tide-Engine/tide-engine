@@ -250,6 +250,7 @@ static type_ref *parse_type(parser *p, const char *what)
     if (form) {
         advance(p);
         for (int i = 0; i < form->arity; i++) {
+            if (i == 1 && str_eq_c(q.text, "SkinnedMesh") && !at(p, T_COMMA)) break;
             if (i) expect(p, T_COMMA, form->comma);
             vec_push(r->args, parse_type(p, form->hints[i]));
         }
@@ -480,6 +481,13 @@ static expr *parse_primary(parser *p)
         return e;
     }
     case T_IDENT: {
+        if (str_eq_c(t->text, "SkinnedMesh") && peek_at(p, 1)->kind == T_LT) {
+            const type_ref *model = parse_type(p, "a skinned mesh type");
+            expr *e = new_expr(E_NAME, t->at);
+            e->name = model->text;
+            e->type_arg_ref = model;
+            return e;
+        }
         advance(p);
         if (at(p, T_LPAREN)) {
             expr *e = new_expr(E_CALL, t->at);
@@ -1086,7 +1094,10 @@ static bool at_local_decl(const parser *p)
 {
     const token *t = peek(p);
     if (t->kind != T_IDENT) return false;
-    if (generic_name(t->text) && peek_at(p, 1)->kind == T_LT) return true;
+    if (generic_name(t->text) && peek_at(p, 1)->kind == T_LT) {
+        const int end = skip_type(p, 0);
+        return end > 0 && peek_at(p, end)->kind == T_IDENT;
+    }
     int next = 1;
     while (peek_at(p, next)->kind == T_DOT && peek_at(p, next + 1)->kind == T_IDENT) next += 2;
     if (peek_at(p, next)->kind == T_IDENT) return true;

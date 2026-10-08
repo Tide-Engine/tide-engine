@@ -333,6 +333,19 @@ static bool reserved_symbol(const str name)
     return (name.len >= 5 && memcmp(name.ptr, "TIDE_", 5) == 0) || (name.len >= 8 && memcmp(name.ptr, "PACKAGE_", 8) == 0);
 }
 
+bool lex_identifier_ok(const str name)
+{
+    if (!name.len || str_starts_with_c(name, "tide_")) return false;
+    for (int i = 0; i < name.len; i++) {
+        const unsigned char ch = (unsigned char)name.ptr[i];
+        if (!(ch == '_' || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (i && ch >= '0' && ch <= '9'))) return false;
+    }
+    for (size_t i = 0; i < sizeof keywords / sizeof keywords[0]; i++) {
+        if (str_eq_c(name, keywords[i].text)) return false;
+    }
+    return true;
+}
+
 bool lex_symbol_ok(const char *name)
 {
     if (!is_ident_start(name[0])) return false;

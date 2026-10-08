@@ -1,0 +1,13 @@
+// expect: Sample runs outside the simulation, and 'Notify' sends 'Ping'
+event Ping { int n; }
+void Notify(int n) { Send(Ping { n = n }); }
+input PlayerInput
+{
+    bool jump;
+    Sample()
+    {
+        Notify(1);
+    }
+}
+scene Main { }
+event(Ping ping) Heard() { }

@@ -10,6 +10,7 @@
 #include "tide/mesh.h"
 #include "tide/pack.h"
 #include "tide/sha256.h"
+#include "tide/skinned_data.h"
 #include "tide_test.h"
 
 // Grid2<Color>, as tidec shapes it: cells of 16 bytes, chunks of 32 by 32.
@@ -972,5 +973,321 @@ TIDE_TEST(pack_meshes_cut_short_are_empty)
     const tide_mesh_lists *still = tide_list_at(whole, 1, sizeof(tide_mesh_lists));
     TIDE_CHECK(tide_list_count(whole) == 2 && tide_list_count(still->vertices) == 4 && tide_list_count(still->indices) == 6);
     tide_pack_unload();
+    free(bytes);
+}
+
+// Skinned meshes retain typed geometry while carrying portable model bytes.
+typedef struct skinned_prop_entry {
+    int64_t live;
+    tide_text key;
+    tide_skinned_lists value;
+} skinned_prop_entry;
+
+static const tide_map_kind text_skinned_kind = {sizeof(skinned_prop_entry), offsetof(skinned_prop_entry, key), hash_key,
+                                               hash_probe, equal_key};
+
+static void skin_word(uint8_t *data, const uint32_t at, const uint32_t value)
+{
+    data[at] = (uint8_t)value;
+    data[at + 1u] = (uint8_t)(value >> 8);
+    data[at + 2u] = (uint8_t)(value >> 16);
+    data[at + 3u] = (uint8_t)(value >> 24);
+}
+
+static void skin_float(uint8_t *data, const uint32_t at, const float value)
+{
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof bits);
+    skin_word(data, at, bits);
+}
+
+// One identity root and palette, three influenced vertices, and one triangle.
+// Written in the public portable format so the loader's validation is tested
+// independently from the importer.
+#define PACK_SKIN_BYTES 524u
+static void pack_skin_blob(uint8_t data[PACK_SKIN_BYTES], const float height)
+{
+    memset(data, 0, PACK_SKIN_BYTES);
+    skin_word(data, 0, TIDE_SKINNED_DATA_MAGIC);
+    skin_word(data, 4, TIDE_SKINNED_DATA_VERSION);
+    skin_word(data, 8, PACK_SKIN_BYTES);
+    skin_word(data, 12, TIDE_SKINNED_HAS_NORMALS);
+    const uint32_t tables[14] = {1u, 120u, 1u, 176u, 3u, 244u, 3u, 484u, 0u, 496u, 0u, 496u, 3u, 496u};
+    for (uint32_t i = 0; i < 14u; i++) skin_word(data, 16u + i * 4u, tables[i]);
+    skin_word(data, 72, 520u);
+    skin_word(data, 76, 1u); // Empty names still have a NUL in the string table.
+    skin_word(data, 80, PACK_SKIN_BYTES);
+    skin_word(data, 120, UINT32_MAX);
+    skin_word(data, 124, UINT32_MAX);
+    skin_word(data, 128, 520u);
+    skin_float(data, 160, 1.0f);
+    for (uint32_t i = 0; i < 3; i++) skin_float(data, 164u + i * 4u, 1.0f);
+    for (uint32_t i = 0; i < 4; i++) skin_float(data, 180u + i * 20u, 1.0f);
+    for (uint32_t i = 0; i < 3; i++) {
+        const uint32_t vertex = 244u + i * TIDE_SKINNED_VERTEX_SIZE;
+        skin_float(data, vertex, i == 1u ? 1.0f : 0.0f);
+        skin_float(data, vertex + 4u, i == 2u ? height : 0.0f);
+        skin_float(data, vertex + 20u, 1.0f);
+        skin_word(data, vertex + 72u, i);
+        skin_word(data, vertex + 76u, 1u);
+        skin_float(data, 500u + i * TIDE_SKINNED_INFLUENCE_SIZE, 1.0f);
+    }
+    skin_word(data, 484, 0u);
+    skin_word(data, 488, 2u);
+    skin_word(data, 492, 1u);
+    TIDE_CHECK(tide_skinned_data_validate(data, PACK_SKIN_BYTES));
+}
+
+static uint32_t skinned_blocks[2][3], skinned_single, skinned_list, skinned_map, skinned_index;
+
+// Keep all slots in range and the live count unchanged, but move the first
+// key behind an empty slot so a lookup starting at its hash cannot find it.
+static void misplace_skinned_index(uint8_t *bytes, const tide_pack_header *header)
+{
+    uint32_t *slots = (uint32_t *)(void *)(bytes + header->region_at + skinned_index + sizeof(tide_block));
+    uint32_t first = UINT32_MAX, empty = UINT32_MAX;
+    for (uint32_t i = 0; i < 8u; i++) {
+        if (slots[i] == 1u) first = i;
+        if (!slots[i]) empty = i;
+    }
+    TIDE_REQUIRE(first != UINT32_MAX && empty != UINT32_MAX);
+    slots[first] = 0u;
+    slots[empty] = 1u;
+}
+
+static uint8_t *build_skinned_pack(size_t *size)
+{
+    tide_pack_builder b = {0};
+    for (uint32_t i = 0; i < 2; i++) {
+        uint8_t data[PACK_SKIN_BYTES], h[32];
+        const float height = (float)i + 1.0f;
+        pack_skin_blob(data, height);
+        tide_sha256_of(data, sizeof data, h);
+        uint32_t chars;
+        skinned_blocks[i][0] = tide_pack_bytes(&b, h, data, sizeof data, &chars);
+        const corner vertices[3] = {{{0, 0, 0}, {0, 0, 1}, 0}, {{1, 0, 0}, {0, 0, 1}, 0}, {{0, height, 0}, {0, 0, 1}, 0}};
+        tide_sha256_of(vertices, sizeof vertices, h);
+        const uint32_t indices[3] = {0, 2, 1};
+        tide_pack_mesh(&b, h, vertices, sizeof(corner), 3, indices, 3, &skinned_blocks[i][1]);
+    }
+    skinned_single = tide_pack_skinned_list(&b, skinned_blocks[0], 1);
+    tide_pack_name(&b, "Game.actor", TIDE_PACK_SKINNED, skinned_single, 1, CORNER_LAYOUT);
+    skinned_list = tide_pack_skinned_list(&b, &skinned_blocks[0][0], 2);
+    tide_pack_name(&b, "Game.actors", TIDE_PACK_SKINNEDS, skinned_list, 2, CORNER_LAYOUT);
+    uint32_t keys[2], chars;
+    uint8_t h[32];
+    hash_of("first", h);
+    keys[0] = tide_pack_string(&b, h, "first", 5, &chars);
+    hash_of("second", h);
+    keys[1] = tide_pack_string(&b, h, "second", 6, &chars);
+    skinned_map = tide_pack_skinned_map(&b, keys, &skinned_blocks[0][0], 2, &skinned_index);
+    tide_pack_name(&b, "Game.namedActors", TIDE_PACK_SKINNED_MAP, skinned_map, skinned_index, CORNER_LAYOUT);
+    return tide_pack_end(&b, size);
+}
+
+TIDE_TEST(pack_skinned_lists_maps_and_vertex_defaults)
+{
+    size_t size;
+    uint8_t *bytes = build_skinned_pack(&size);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    const tide_pack_entry *e = tide_pack_find_mesh("Game.actor", TIDE_PACK_SKINNED, CORNER_LAYOUT);
+    TIDE_REQUIRE(e != NULL);
+    TIDE_CHECK(tide_pack_find_mesh("Game.actor", TIDE_PACK_SKINNED, CORNER_LAYOUT + 1u) == NULL);
+    const tide_skinned_lists model = tide_pack_skinned_of(e, sizeof(corner));
+    TIDE_CHECK(tide_list_count(model.data) == PACK_SKIN_BYTES && tide_list_count(model.vertices) == 3
+               && tide_list_count(model.indices) == 3);
+    TIDE_CHECK(!tide_pack_skinned_of(e, 12u).data.at && !tide_pack_skinned_of(NULL, sizeof(corner)).data.at);
+    const tide_pack_entry *listed = tide_pack_find("Game.actors", TIDE_PACK_SKINNEDS);
+    const tide_list models = {tide_pack_handle(listed)};
+    TIDE_REQUIRE(tide_list_count(models) == 2);
+    const tide_skinned_lists *first = tide_list_at(models, 0, sizeof *first), *second = tide_list_at(models, 1, sizeof *second);
+    TIDE_CHECK(first->data.at == model.data.at && first->vertices.at == model.vertices.at && second->data.at != first->data.at);
+    const tide_pack_entry *mapped = tide_pack_find("Game.namedActors", TIDE_PACK_SKINNED_MAP);
+    const tide_map named = tide_pack_skinned_map_of(mapped);
+    TIDE_CHECK(tide_map_count(named) == 2 && tide_map_entries(named) == 2 && named.last_order == 2 && named.reserved == 0);
+    int64_t order = 0;
+    int32_t next = 0;
+    TIDE_CHECK(tide_map_next(named, &text_skinned_kind, &order, &next) == 0 && order == 1);
+    TIDE_CHECK(tide_map_next(named, &text_skinned_kind, &order, &next) == 1 && order == 2);
+    TIDE_CHECK(tide_map_next(named, &text_skinned_kind, &order, &next) == -1);
+    const tide_str key = {"second", 6, 6};
+    TIDE_REQUIRE(tide_map_find(named, &text_skinned_kind, &key) == 1);
+    const skinned_prop_entry *entry = tide_map_entry(named, 1, &text_skinned_kind);
+    TIDE_CHECK(entry->value.data.at == second->data.at && entry->value.indices.at == second->indices.at);
+    tide_map copy = tide_map_copy(named, &text_skinned_kind);
+    const tide_str third = tide_str_from_cstr("third");
+    bool added;
+    skinned_prop_entry *new_entry = tide_map_insert(&copy, &text_skinned_kind, &third, TIDE_IN_SCRATCH, &added);
+    TIDE_REQUIRE(added && new_entry != NULL);
+    new_entry->key = tide_text_temp(third);
+    new_entry->value = model;
+    TIDE_CHECK(copy.last_order == 3 && tide_map_next(copy, &text_skinned_kind, &order, &next) == 2 && order == 3);
+    TIDE_CHECK(tide_map_next(copy, &text_skinned_kind, &order, &next) == -1);
+    uint32_t count;
+    corner *vertices = tide_pack_skinned_open(e, 0, sizeof(corner), &count);
+    TIDE_REQUIRE(vertices && count == 3);
+    for (uint32_t i = 0; i < count; i++) vertices[i].glow = 0.25f;
+    TIDE_CHECK(((const corner *)tide_list_at(first->vertices, 2, sizeof(corner)))->glow == 0.25f);
+    TIDE_CHECK(tide_pack_skinned_open(listed, 0, sizeof(corner), &count) == vertices && count == 3);
+    TIDE_CHECK(tide_pack_skinned_open(mapped, 1, sizeof(corner), &count) && count == 3);
+    TIDE_CHECK(tide_pack_skinned_open(e, 1, sizeof(corner), &count) == NULL && count == 0);
+    TIDE_CHECK(tide_pack_skinned_open(e, 0, 12u, &count) != NULL && count == 0);
+    TIDE_CHECK(tide_pack_skinned_open(listed, 2, sizeof(corner), &count) == NULL);
+    TIDE_CHECK(tide_pack_skinned_open(mapped, 2, sizeof(corner), &count) == NULL);
+    const tide_pack_entry copied = *e;
+    TIDE_CHECK(tide_pack_skinned_open(&copied, 0, sizeof(corner), &count) == NULL);
+    TIDE_CHECK(!tide_pack_skinned_map_of(NULL).entries.at);
+    tide_pack_unload();
+    tide_scratch_free();
+    free(bytes);
+}
+
+TIDE_TEST(pack_skinned_spoiled_models_and_counts_clear_all_handles)
+{
+    size_t size;
+    uint8_t *bytes = build_skinned_pack(&size);
+    tide_pack_header header;
+    memcpy(&header, bytes, sizeof header);
+    uint8_t *region = bytes + header.region_at;
+    // Invalid node parent: a geometry block alone is insufficient to load.
+    const uint32_t parent = 0u;
+    memcpy(region + skinned_blocks[0][0] + sizeof(tide_block) + 120u, &parent, sizeof parent);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    TIDE_CHECK(!tide_pack_skinned_of(tide_pack_find("Game.actor", TIDE_PACK_SKINNED), sizeof(corner)).data.at);
+    const tide_list models = {tide_pack_handle(tide_pack_find("Game.actors", TIDE_PACK_SKINNEDS))};
+    const tide_skinned_lists *first = tide_list_at(models, 0, sizeof *first), *second = tide_list_at(models, 1, sizeof *second);
+    TIDE_REQUIRE(first && second);
+    TIDE_CHECK(!first->data.at && !first->vertices.at && !first->indices.at && tide_list_count(second->vertices) == 3);
+    const tide_map named = tide_pack_skinned_map_of(tide_pack_find("Game.namedActors", TIDE_PACK_SKINNED_MAP));
+    const skinned_prop_entry *entry = tide_map_entry(named, 0, &text_skinned_kind);
+    TIDE_CHECK(entry && !entry->value.data.at && !entry->value.vertices.at && !entry->value.indices.at);
+    tide_pack_unload();
+    free(bytes);
+
+    bytes = build_skinned_pack(&size);
+    memcpy(&header, bytes, sizeof header);
+    region = bytes + header.region_at;
+    tide_block vertices;
+    memcpy(&vertices, region + skinned_blocks[0][1], sizeof vertices);
+    vertices.a = vertices.b = 2u; // Whole geometry, wrong count for the influences.
+    memcpy(region + skinned_blocks[0][1], &vertices, sizeof vertices);
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    TIDE_CHECK(!tide_pack_skinned_of(tide_pack_find("Game.actor", TIDE_PACK_SKINNED), sizeof(corner)).vertices.at);
+    tide_pack_unload();
+    free(bytes);
+}
+
+TIDE_TEST(pack_skinned_spans_handles_indices_and_maps_are_checked)
+{
+    size_t size;
+    uint8_t *bytes = build_skinned_pack(&size), *copy = malloc(size);
+    TIDE_REQUIRE(copy != NULL);
+    tide_pack_header header;
+    memcpy(&header, bytes, sizeof header);
+    uint32_t first_slot;
+    memcpy(&first_slot, bytes + header.region_at + skinned_index + sizeof(tide_block), sizeof first_slot);
+    const uint32_t changes[][2] = {
+        {skinned_blocks[0][0] + offsetof(tide_block, a), UINT32_MAX}, // Byte count past the region.
+        {skinned_blocks[0][1] + offsetof(tide_block, next), header.region_size}, // Vertex metadata outside the region.
+        {skinned_blocks[0][2] + sizeof(tide_block), 2u}, // Valid vertex ID, different canonical index.
+        {skinned_single + sizeof(tide_block), TIDE_IN_SCRATCH << 30 | (TIDE_PACK_BASE + header.region_size - 8u)},
+        {skinned_single + sizeof(tide_block), TIDE_IN_MATCH << 30 | skinned_blocks[0][0]}, // A non-pack handle.
+        {skinned_single + offsetof(tide_block, a), UINT32_MAX}, // Record block count exceeds its bytes.
+        {skinned_index + sizeof(tide_block), 3u}, // Index points past the map's rows.
+        {skinned_map + sizeof(tide_block) + offsetof(skinned_prop_entry, key), UINT32_MAX}, // Key points nowhere.
+        {skinned_map + sizeof(tide_block), 0u}, // An insertion order must be positive and match source order.
+        {skinned_map + sizeof(tide_block) + sizeof(uint32_t), UINT32_MAX}, // Invalid high bits of the signed order.
+        {skinned_index + sizeof(tide_block), first_slot == 1u ? 2u : 1u}, // An in-range slot cannot duplicate or omit a row.
+    };
+    for (uint32_t i = 0; i < sizeof changes / sizeof changes[0]; i++) {
+        memcpy(copy, bytes, size);
+        memcpy(copy + header.region_at + changes[i][0], &changes[i][1], sizeof(uint32_t));
+        TIDE_REQUIRE(tide_pack_load(copy, size));
+        if (i < 6u) TIDE_CHECK(!tide_pack_skinned_of(tide_pack_find("Game.actor", TIDE_PACK_SKINNED), sizeof(corner)).data.at);
+        else TIDE_CHECK(!tide_pack_skinned_map_of(tide_pack_find("Game.namedActors", TIDE_PACK_SKINNED_MAP)).entries.at);
+        tide_pack_unload();
+    }
+    memcpy(copy, bytes, size);
+    misplace_skinned_index(copy, &header);
+    TIDE_REQUIRE(tide_pack_load(copy, size));
+    TIDE_CHECK(!tide_pack_skinned_map_of(tide_pack_find("Game.namedActors", TIDE_PACK_SKINNED_MAP)).entries.at);
+    tide_pack_unload();
+    free(copy);
+    free(bytes);
+}
+
+TIDE_TEST(pack_skinned_content_preflight_keeps_the_loaded_pack)
+{
+    size_t size;
+    uint8_t *bytes = build_skinned_pack(&size);
+    tide_pack_header header;
+    memcpy(&header, bytes, sizeof header);
+    uint8_t hashes[64], map_hashes[64];
+    for (uint32_t i = 0; i < 2; i++) {
+        const uint8_t *data = bytes + header.region_at + skinned_blocks[i][0] + sizeof(tide_block);
+        tide_sha256_of(data, PACK_SKIN_BYTES, hashes + i * 32u);
+        tide_sha256 content;
+        tide_sha256_init(&content);
+        tide_sha256_add(&content, i ? "second" : "first", i ? 6u : 5u);
+        tide_sha256_add(&content, data, PACK_SKIN_BYTES);
+        tide_sha256_end(&content, map_hashes + i * 32u);
+    }
+    TIDE_CHECK(tide_pack_skinned_content(bytes, size, "Game.actor", TIDE_PACK_SKINNED, CORNER_LAYOUT, hashes, 1));
+    TIDE_CHECK(tide_pack_skinned_content(bytes, size, "Game.actors", TIDE_PACK_SKINNEDS, CORNER_LAYOUT, hashes, 2));
+    TIDE_CHECK(tide_pack_skinned_content(bytes, size, "Game.namedActors", TIDE_PACK_SKINNED_MAP, CORNER_LAYOUT, map_hashes, 2));
+    TIDE_CHECK(!tide_pack_skinned_content(bytes, size, "Game.actor", TIDE_PACK_SKINNED, CORNER_LAYOUT + 1u, hashes, 1));
+    TIDE_CHECK(!tide_pack_skinned_content(bytes, size, "Game.actor", TIDE_PACK_SKINNEDS, CORNER_LAYOUT, hashes, 1));
+    TIDE_CHECK(!tide_pack_skinned_content(bytes, size, "Game.actors", TIDE_PACK_SKINNEDS, CORNER_LAYOUT, hashes, 1));
+    TIDE_CHECK(!tide_pack_skinned_content(bytes, size, "Game.unknown", TIDE_PACK_SKINNED, CORNER_LAYOUT, hashes, 1));
+    TIDE_CHECK(!tide_pack_skinned_content(bytes, size, "Game.actor", TIDE_PACK_SKINNED, CORNER_LAYOUT, hashes + 32u, 1));
+    TIDE_REQUIRE(tide_pack_load(bytes, size));
+    const tide_skinned_lists original = tide_pack_skinned_of(tide_pack_find("Game.actor", TIDE_PACK_SKINNED), sizeof(corner));
+    TIDE_REQUIRE(original.data.at != 0u);
+    uint8_t *copy = malloc(size);
+    TIDE_REQUIRE(copy != NULL);
+    memcpy(copy, bytes, size);
+    // Still valid portable data, but authored for another build.
+    skin_float(copy + header.region_at + skinned_blocks[0][0] + sizeof(tide_block), 244u, 2.0f);
+    TIDE_CHECK(!tide_pack_skinned_content(copy, size, "Game.actor", TIDE_PACK_SKINNED, CORNER_LAYOUT, hashes, 1));
+    const tide_skinned_lists kept = tide_pack_skinned_of(tide_pack_find("Game.actor", TIDE_PACK_SKINNED), sizeof(corner));
+    TIDE_CHECK(kept.data.at == original.data.at && kept.vertices.at == original.vertices.at && tide_list_count(kept.vertices) == 3);
+    memcpy(copy, bytes, size);
+    uint32_t key;
+    memcpy(&key, copy + header.region_at + skinned_map + sizeof(tide_block) + offsetof(skinned_prop_entry, key), sizeof key);
+    const uint32_t key_at = (key & 0x3fffffffu) - TIDE_PACK_BASE;
+    memcpy(copy + header.region_at + key_at + sizeof(tide_block), "third", 5u);
+    TIDE_CHECK(!tide_pack_skinned_content(copy, size, "Game.namedActors", TIDE_PACK_SKINNED_MAP, CORNER_LAYOUT, map_hashes, 2));
+    memcpy(copy, bytes, size);
+    misplace_skinned_index(copy, &header);
+    TIDE_CHECK(!tide_pack_skinned_content(copy, size, "Game.namedActors", TIDE_PACK_SKINNED_MAP, CORNER_LAYOUT, map_hashes, 2));
+    for (size_t n = 0; n < size; n++) {
+        uint8_t *cut = malloc(n ? n : 1u);
+        TIDE_REQUIRE(cut != NULL);
+        if (n) memcpy(cut, bytes, n);
+        TIDE_CHECK(!tide_pack_skinned_content(cut, n, "Game.actors", TIDE_PACK_SKINNEDS, CORNER_LAYOUT, hashes, 2));
+        free(cut);
+    }
+    // An entry, record or byte handle cannot redirect the hash read outside
+    // the supplied region, even when the rest of the pack is whole.
+    uint32_t first_slot;
+    memcpy(&first_slot, bytes + header.region_at + skinned_index + sizeof(tide_block), sizeof first_slot);
+    const uint32_t changes[][2] = {
+        {header.region_at + skinned_list + offsetof(tide_block, a), UINT32_MAX},
+        {header.region_at + skinned_list + sizeof(tide_block), UINT32_MAX},
+        {header.region_at + skinned_blocks[0][0] + offsetof(tide_block, a), UINT32_MAX},
+        {header.region_at + skinned_index + sizeof(tide_block), 3u},
+        {header.region_at + skinned_map + sizeof(tide_block), 0u},
+        {header.region_at + skinned_map + sizeof(tide_block) + sizeof(uint32_t), UINT32_MAX},
+        {header.region_at + skinned_index + sizeof(tide_block), first_slot == 1u ? 2u : 1u},
+    };
+    for (uint32_t i = 0; i < sizeof changes / sizeof changes[0]; i++) {
+        memcpy(copy, bytes, size);
+        memcpy(copy + changes[i][0], &changes[i][1], sizeof(uint32_t));
+        const bool map = i >= 3u;
+        TIDE_CHECK(!tide_pack_skinned_content(copy, size, map ? "Game.namedActors" : "Game.actors",
+                                             map ? TIDE_PACK_SKINNED_MAP : TIDE_PACK_SKINNEDS, CORNER_LAYOUT, map ? map_hashes : hashes, 2));
+    }
+    tide_pack_unload();
+    free(copy);
     free(bytes);
 }
