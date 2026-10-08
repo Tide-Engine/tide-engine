@@ -1213,6 +1213,7 @@ typedef struct program {
     // Random.NextInt(6) and the like, on the type: whether the match's code rolls so, and local code
     bool rolls_match;
     bool rolls_local;
+    bool seed_local; // Local code reads Random.seed: this machine's local state has the match's, as the last frame had it
     // Application.title is read: generated C has the game's title as text
     // (its title setting, or the program's name), and no other game's does.
     bool uses_title;
