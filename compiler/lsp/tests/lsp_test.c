@@ -4378,6 +4378,25 @@ TIDE_TEST(lsp_diagnostic_notes_and_tags)
     TIDE_CHECK(count(last_sent(), "\"tags\":[1]") == 2); // mut never written, and never used
 }
 
+// An audio declaration's state and knobs that are more than the mixer has
+// room for are errors as they're typed, each at its parameter: the checker
+// knows a struct's size as generated C will have it.
+TIDE_TEST(lsp_audio_state_and_knobs_sizes)
+{
+    start();
+    open_document("struct Tail { int at; float[4096] taps; }\nstruct Curve { float[65] bands; }\n"
+                  "audio Echo(mut Samples samples, mut Tail tail, Curve curve)\n{\n    tail.at += 1;\n"
+                  "    samples.values[0] = curve.bands[0];\n}\nscene Main { }\n");
+    TIDE_CHECK(diagnosed(2, 32, 3, 1, "an audio declaration's state is 4096 bytes at the most, and 'Tail' is 16388"));
+    TIDE_CHECK(diagnosed(2, 47, 5, 1, "an audio declaration's knobs are 256 bytes at the most, and 'Curve' is 260"));
+    TIDE_CHECK(has(last_sent(), "make 'Tail' smaller, with a shorter array or fewer fields"));
+    // All the bytes there are of each, and nothing is said
+    open_document("struct Tail { int at; float[1023] taps; }\nstruct Curve { float[64] bands; }\n"
+                  "audio Echo(mut Samples samples, mut Tail tail, Curve curve)\n{\n    tail.at += 1;\n"
+                  "    samples.values[0] = curve.bands[0];\n}\nscene Main { }\n");
+    TIDE_CHECK(!has(last_sent(), "bytes at the most") && !has(last_sent(), "\"severity\":1"));
+}
+
 TIDE_TEST(lsp_move_to_file)
 {
     start();

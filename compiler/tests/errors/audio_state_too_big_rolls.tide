@@ -1,0 +1,23 @@
+// expect: an audio declaration's state is 4088 bytes at the most where it rolls with Random, and 'Grain' is 4092
+// expect: each voice keeps what it rolls with in the last 8 of its state's 4096 bytes: make 'Grain' smaller
+// 4092 bytes fit a voice's 4096, but not beside the generator the code rolls
+// with, which it reaches through a function here.
+struct Grain
+{
+    float[1023] taps;
+}
+
+float Hiss()
+{
+    return Random.NextFloat() - 0.5;
+}
+
+audio Noise(mut Samples samples, mut Grain grain)
+{
+    grain.taps[0] = Hiss();
+    samples.values[0] = grain.taps[0];
+}
+
+scene Main
+{
+}

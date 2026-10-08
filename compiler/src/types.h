@@ -55,6 +55,25 @@ bool type_is_integer(type t);
 // 2, 3 or 4 for float2x2, float3x3, float4x4; 0 otherwise.
 int matrix_dim(type t);
 
+// A type's bytes and alignment in generated C. Generated types have no padding
+// the compiler adds: tidec writes it out as members, so a struct's layout is
+// its fields' in order, each on its own alignment, and the checker knows a
+// value's size as the C compiler will have it. Every built-in type is 4-byte
+// aligned with a size that's a multiple of 4, except bool and byte; long is
+// 8-byte aligned.
+typedef struct layout {
+    int size;
+    int align;
+} layout;
+
+layout type_layout(type t);
+
+// The layout of a declaration's fields together: a struct's, a component's.
+// With `pad`, room for an int a field and one more, it's also given the
+// padding before each field (pad[i] before field i) and after the last.
+layout decl_layout_padded(const decl *d, int *pad);
+layout decl_layout(const decl *d);
+
 // Whether views see values of type `t` blended between the last two ticks:
 // floats, and what's made of them. A struct blends if any of its fields do.
 bool type_blends(type t);
