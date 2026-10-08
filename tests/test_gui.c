@@ -526,6 +526,112 @@ TIDE_TEST(gui_a_finger_on_an_area_or_a_disabled_widget_is_never_the_games)
     TIDE_CHECK(!area_frame(true));
 }
 
+// A frame's GUI after a sample: a menu in the middle of the screen, a title
+// over two buttons. Returns which were pressed (bits 0 and 1).
+static int titled_frame(void)
+{
+    tide_gui_begin(&gui, &devices, tide_f2(1920.0f, 1080.0f), NULL);
+    const int area = tide_gui_begin_area_at(&gui, 99, TIDE_ANCHOR_MIDDLE_CENTER);
+    tide_gui_layout_label(&gui, "Tag");
+    const bool a = tide_gui_layout_button(&gui, 10, "Play");
+    const bool b = tide_gui_layout_button(&gui, 20, "Quit");
+    tide_gui_close(&gui, area);
+    end();
+    return (a ? 1 : 0) | (b ? 2 : 0);
+}
+
+// A finger presses the button it touches, whatever the mouse rests on: a
+// laptop with a touchscreen has both. Here the mouse is on the menu's own
+// panel, over its title, so the panel was on top where the last frame saw the
+// pointer, and the button is where the pointer is now.
+TIDE_TEST(gui_a_finger_presses_a_button_of_the_menu_the_mouse_rests_on)
+{
+    start();
+    // The menu is 118 tall, around the screen's middle: the title's middle is
+    // at 507, Play's at 540 and Quit's at 573.
+    for (int frame = 0; frame < 3; frame++) {
+        TIDE_CHECK(!mouse_sample(960.0f, 507.0f, false));
+        TIDE_CHECK(titled_frame() == 0);
+    }
+    TIDE_CHECK(gui.hot == 99); // The panel: the title is no widget
+    TIDE_CHECK(!finger_sample(TIDE_TOUCH_BEGAN, NONE, 960.0f, 540.0f));
+    TIDE_CHECK(titled_frame() == 0);
+    TIDE_CHECK(gui.active == 10);
+    TIDE_CHECK(!finger_sample(TIDE_TOUCH_ENDED, NONE, 960.0f, 540.0f));
+    TIDE_CHECK(titled_frame() == 1);
+    TIDE_CHECK(!finger_sample(NONE, NONE, 0.0f, 0.0f));
+    TIDE_CHECK(titled_frame() == 0);
+
+    // A tap between two frames, too, once the mouse has moved, and is the pointer again.
+    TIDE_CHECK(!mouse_sample(960.0f, 510.0f, false));
+    TIDE_CHECK(titled_frame() == 0);
+    TIDE_CHECK(gui.hot == 99);
+    TIDE_CHECK(!finger_sample(TIDE_TOUCH_BEGAN, TIDE_TOUCH_ENDED, 960.0f, 573.0f));
+    TIDE_CHECK(titled_frame() == 0);
+    TIDE_CHECK(gui.active == 20);
+    TIDE_CHECK(!finger_sample(NONE, NONE, 0.0f, 0.0f));
+    TIDE_CHECK(titled_frame() == 2);
+
+    // And the mouse itself, which goes from the title to Quit and presses
+    // between two frames: the GUI never saw it on Quit.
+    TIDE_CHECK(!mouse_sample(960.0f, 507.0f, false));
+    TIDE_CHECK(titled_frame() == 0);
+    TIDE_CHECK(gui.hot == 99);
+    TIDE_CHECK(!mouse_sample(960.0f, 573.0f, true));
+    TIDE_CHECK(titled_frame() == 0);
+    TIDE_CHECK(gui.active == 20);
+    TIDE_CHECK(!mouse_sample(960.0f, 573.0f, false));
+    TIDE_CHECK(titled_frame() == 2);
+}
+
+// A frame's GUI after a sample, with widgets over one another: a view's
+// control with a button on it, and a button with an area's panel over it,
+// which has a button of its own.
+static void stacked_frame(void)
+{
+    tide_gui_begin(&gui, &devices, tide_f2(1920.0f, 1080.0f), NULL);
+    tide_gui_control(&gui, 1, (tide_rect){0.0f, 0.0f, 400.0f, 400.0f});
+    tide_gui_button(&gui, 2, (tide_rect){100.0f, 100.0f, 200.0f, 40.0f}, "On the control");
+    tide_gui_button(&gui, 3, (tide_rect){900.0f, 600.0f, 200.0f, 40.0f}, "Under the panel");
+    const int area = tide_gui_begin_area(&gui, 99, (tide_rect){800.0f, 400.0f, 400.0f, 300.0f});
+    tide_gui_layout_button(&gui, 4, "On the panel");
+    tide_gui_close(&gui, area);
+    end();
+}
+
+// Where widgets are over one another, a press is the one's on top from the
+// frame it lands in, with nothing before it: a finger hovers nothing first.
+TIDE_TEST(gui_a_finger_presses_the_widget_on_top)
+{
+    start();
+    for (int frame = 0; frame < 2; frame++) {
+        finger_sample(NONE, NONE, 0.0f, 0.0f);
+        stacked_frame();
+    }
+    // The button on the control, not the control under it.
+    TIDE_CHECK(!finger_sample(TIDE_TOUCH_BEGAN, NONE, 150.0f, 120.0f));
+    stacked_frame();
+    TIDE_CHECK(gui.active == 2);
+    finger_sample(TIDE_TOUCH_ENDED, NONE, 150.0f, 120.0f);
+    stacked_frame();
+    // The control, beside its button.
+    TIDE_CHECK(!finger_sample(TIDE_TOUCH_BEGAN, NONE, 50.0f, 50.0f));
+    stacked_frame();
+    TIDE_CHECK(gui.active == 1);
+    finger_sample(TIDE_TOUCH_ENDED, NONE, 50.0f, 50.0f);
+    stacked_frame();
+    // The panel hides the button under it: nothing is pressed, and it's still the GUI's.
+    TIDE_CHECK(!finger_sample(TIDE_TOUCH_BEGAN, NONE, 950.0f, 620.0f));
+    stacked_frame();
+    TIDE_CHECK(gui.active == 0);
+    finger_sample(TIDE_TOUCH_ENDED, NONE, 950.0f, 620.0f);
+    stacked_frame();
+    // The panel's own button is over the panel.
+    TIDE_CHECK(!finger_sample(TIDE_TOUCH_BEGAN, NONE, 820.0f, 420.0f));
+    stacked_frame();
+    TIDE_CHECK(gui.active == 4);
+}
+
 // A frame's GUI after a sample: the Play button, and two views, the first with
 // a widget of its own at `rect`, which it says each frame. Returns whether the
 // first view read a press (bit 0), and the second (bit 1).
@@ -630,6 +736,33 @@ TIDE_TEST(gui_widgets_past_those_remembered_hide_a_frame_late)
     many_buttons();
     TIDE_CHECK(gui.over && gui.active == 0);
     TIDE_CHECK(!mouse_sample(x, y, true));
+}
+
+// A frame of a big button, as many small ones as a frame remembers the places
+// of, and one more on the big one, whose place isn't remembered.
+static void button_past_those_remembered(void)
+{
+    tide_gui_begin(&gui, &devices, tide_f2(1920.0f, 1080.0f), NULL);
+    tide_gui_button(&gui, 5000, (tide_rect){0.0f, 600.0f, 400.0f, 300.0f}, "");
+    for (uint32_t i = 0; i + 1 < TIDE_GUI_MAX_RECTS; i++) {
+        tide_gui_button(&gui, i + 1, (tide_rect){(float)(i % 64) * 30.0f, (float)(i / 64) * 30.0f, 28.0f, 28.0f}, "");
+    }
+    tide_gui_button(&gui, 6000, (tide_rect){100.0f, 700.0f, 100.0f, 40.0f}, "");
+    end();
+}
+
+// Which widget is on top goes by the places a frame remembers. Past those,
+// it's as the last frame saw the pointer, as it was for every widget before:
+// one that's over a widget whose place is remembered still takes the press.
+TIDE_TEST(gui_a_widget_past_those_remembered_is_on_top_a_frame_late)
+{
+    start();
+    mouse_sample(150.0f, 720.0f, false);
+    button_past_those_remembered();
+    TIDE_CHECK(gui.rects_full && gui.hot == 6000);
+    TIDE_CHECK(!mouse_sample(150.0f, 720.0f, true));
+    button_past_those_remembered();
+    TIDE_CHECK(gui.active == 6000);
 }
 
 TIDE_TEST(gui_mouse_over_the_gui_is_hidden)

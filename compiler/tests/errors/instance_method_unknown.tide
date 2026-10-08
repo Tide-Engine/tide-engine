@@ -1,0 +1,14 @@
+// expect: an Instance has one method, 'Normal(normal)', which gives a normal of the mesh as it is in the world; the rest is its 'transform'
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+frag Shade(Corner corner, out Color color, Instance instance)
+{
+    float3 normal = instance.Rotate(corner.normal);
+    color = Color(normal.x, normal.y, normal.z, 1);
+}

@@ -37,7 +37,7 @@ local singleton Stage
 // that's its place among them. The last two aren't colors: their images are floats.
 frag Fill(Corner corner, out Color paint, out Color normal, out Color place, Instance instance, Block block)
 {
-    float3 facing = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 facing = instance.Normal(corner.normal);
     paint = block.paint;
     normal = Color(facing.x, facing.y, facing.z);
     place = Color(this.world.x, this.world.y, this.world.z);

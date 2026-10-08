@@ -1830,6 +1830,37 @@ TIDE_TEST(lsp_shaders_diagnostics)
     TIDE_CHECK(diagnosed(33, 12, 3, 1, "a list's local in code the GPU runs names one list, for good: 'all' can't be 'mut'"));
 }
 
+// instance.Normal(normal): an Instance's one method, in a frag and in a vert.
+// The frag is on line 31, after SHADER_TYPES, and its code on line 33.
+TIDE_TEST(lsp_instance_normal)
+{
+    start();
+#define LIT(code)                                                                                                     \
+    SHADER_TYPES "frag Glow(BoxVertex vertex, out Color color, Instance instance)\n{\n    " code "\n    color = Color.white;\n}\n"
+    const char *members = complete(LIT("var normal = instance.$"));
+    TIDE_CHECK(offers(members, "transform") && offers(members, "Normal") && !offers(members, "Discard"));
+    TIDE_CHECK(has(members, "Instance.Normal(float3 normal) -> float3") && has(members, "as it is in the world, of length 1"));
+    const char *in_vert = complete(SHADER_TYPES "vert Turn(mut BoxVertex vertex, Instance instance)\n{\n    vertex.normal = instance.$\n}\n");
+    TIDE_CHECK(offers(in_vert, "Normal"));
+
+    open_document(LIT("color = Color.white * instance.Normal(vertex.normal).y;"));
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = hover_at(33, 37);
+    TIDE_CHECK(has(hover, "Instance.Normal(float3 normal) -> float3") && has(hover, "A normal of the mesh as it is in the world"));
+    TIDE_CHECK(has(hover, "Nothing more is sent for it"));
+    TIDE_CHECK(has(hover_at(31, 46), "float3 Normal(float3 normal);")); // The record, with its method
+    open_document(LIT("color = Color.white * instance.Normal($"));
+    const char *help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "\"label\":\"Instance.Normal(float3 normal) -> float3\"") && has(help, "\"activeParameter\":0"));
+
+    // What it isn't: another method, or a normal that's no float3
+    open_document(LIT("color = Color.white * instance.Rotate(vertex.normal).y;"));
+    TIDE_CHECK(diagnosed(33, 35, 6, 1, "an Instance has one method, 'Normal(normal)'"));
+    open_document(LIT("color = Color.white * instance.Normal(vertex.uv).y;"));
+    TIDE_CHECK(diagnosed(33, 35, 6, 1, "Normal takes a normal of the mesh, a float3 of any length"));
+#undef LIT
+}
+
 // The type of what's at the cursor, and an event's or the input's code.
 TIDE_TEST(lsp_type_definition_and_implementation)
 {
@@ -2745,12 +2776,21 @@ TIDE_TEST(lsp_gui)
     const char *frame = request("textDocument/hover");
     TIDE_CHECK(has(frame, "Frame.dt: float"));
     TIDE_CHECK(has(frame, "The seconds since this machine's previous frame started"));
+    TIDE_CHECK(has(frame, "for a clock, add it up in a field of local state"));
     open_document("local singleton Fx { float age; }\nscene Main { }\nview V(mut Fx fx) { fx.age += Fra$me.dt; }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "This machine's frame"));
+    TIDE_CHECK(has(last_sent(), "There's no clock beside it"));
     TIDE_CHECK(has(request("textDocument/prepareRename"), "Built-in names can't be renamed"));
     open_document("singleton Clock { float age; }\nscene Main { }\nsystem S(mut Clock clock)\n{\n    clock.age += Frame.dt;\n}\n");
     TIDE_CHECK(has(last_sent(), "so it can't read Frame.dt"));
     TIDE_CHECK(has(last_sent(), "time.dt"));
+    // Asked for a clock, which it hasn't: the error says what to write, and 't' isn't taken for 'dt' misspelled
+    open_document("local singleton Fx { float age; }\nscene Main { }\nview V(mut Fx fx)\n{\n    fx.age = Frame.t;\n}\n");
+    TIDE_CHECK(has(last_sent(), "Frame has no member 't'") && has(last_sent(), "add 'Frame.dt' up in a field of local state"));
+    TIDE_CHECK(has(last_sent(), "read 'time.t'") && !has(last_sent(), "did you mean"));
+    TIDE_CHECK(!has(actions_at(4), "Change to 'dt'"));
+    open_document("local singleton Fx { float age; }\nscene Main { }\nview V(mut Fx fx)\n{\n    fx.age = Frame.DT;\n}\n");
+    TIDE_CHECK(has(last_sent(), "did you mean 'dt'?") && has(actions_at(4), "Change to 'dt'"));
 
     // What an Action's caller writes is the caller's code: its names are the caller's.
     open_document("local singleton M { bool on; }\nscene Main { }\nvoid Twice(Action content) { content(); content(); }\n"
@@ -5289,6 +5329,63 @@ TIDE_TEST(lsp_render_target_formats_and_depth)
     snprintf(program, sizeof program, "%sfrag Lit(Vertex3 vertex, out Color color, DepthTexture shadow)\n{\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(last_sent(), "a field of a component or singleton it takes"));
+}
+
+// A function a frag calls samples the textures it takes as parameters: a
+// depth, a Texture and a cube, and an asset by its name.
+TIDE_TEST(lsp_textures_in_functions)
+{
+    start();
+    static const char types[] = "scene Main { }\n"
+                                "local singleton Lamp { RenderTarget map; DepthTexture shadow; Texture image; Cubemap sky; }\n";
+    char program[4096];
+    snprintf(program, sizeof program, "%sfloat Sunlit(DepthTexture depth, float3 at) { return depth.Compare(at.xy, at.z) * depth.Sample(at.xy); }\n"
+                                      "float Twice(DepthTexture depth, float3 at) { return Sunlit(depth, at) * 2; }\n"
+                                      "Color Tile(Texture image, float2 uv) { return image.Sample(uv, Filter.Point, Wrap.Repeat); }\n"
+                                      "Color Above(Cubemap sky, float3 way) { return sky.Sample(way); }\n"
+                                      "frag Lit(Vertex3 vertex, out Color color, Lamp lamp)\n{\n"
+                                      "    float lit = Twice(lamp.shadow, this.world);\n"
+                                      "    color = Tile(lamp.image, vertex.uv) * Above(lamp.sky, this.world) * lit;\n}\n"
+                                      "view V(mut Lamp lamp)\n{\n"
+                                      "    lamp.shadow = lamp.map.depth;\n"
+                                      "    Draw.Mesh([Vertex3 { }], [0, 0, 0], float4x4.identity, Lit);\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+
+    // What each has to read it with, in a function that reads nothing yet
+    snprintf(program, sizeof program, "%sfloat Sunlit(DepthTexture depth, float3 at)\n{\n    return depth.$\n}\n", types);
+    const char *reads = complete(program);
+    TIDE_CHECK(offers(reads, "Sample") && offers(reads, "Compare"));
+    TIDE_CHECK(has(reads, "DepthTexture.Compare(float2 uv, float value) -> float"));
+    snprintf(program, sizeof program, "%sColor Tile(Texture image, float2 uv)\n{\n    return image.$\n}\n", types);
+    TIDE_CHECK(offers(complete(program), "Sample"));
+    snprintf(program, sizeof program, "%sColor Above(Cubemap sky, float3 way)\n{\n    return sky.$\n}\n", types);
+    TIDE_CHECK(offers(complete(program), "Sample"));
+    // ...and in one that does, which is the GPU's alone
+    snprintf(program, sizeof program, "%sfloat Sunlit(DepthTexture depth, float3 at)\n{\n    float near = depth.Sample(at.xy);\n"
+                                      "    return near * depth.$\n}\n", types);
+    TIDE_CHECK(offers(complete(program), "Compare"));
+    // In a view, a depth has nothing to read it with
+    snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.shadow.$\n}\n", types);
+    TIDE_CHECK(!offers(complete(program), "Compare"));
+
+    // The hovers say a function takes one
+    snprintf(program, sizeof program, "%sfloat Sunlit(Depth$Texture depth, float3 at) { return depth.Compare(at.xy, at.z); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "reads the depth its call names"));
+    snprintf(program, sizeof program, "%sfloat Sunlit(DepthTexture depth, float3 at) { return depth.Com$pare(at.xy, at.z); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "A function they call compares the depth it takes"));
+
+    // A function that reads one is the GPU's: a view's call says so, and so does a Sample of what's no parameter
+    snprintf(program, sizeof program, "%sfloat Sunlit(DepthTexture depth, float3 at) { return depth.Compare(at.xy, at.z); }\n"
+                                      "view V(mut Lamp lamp)\n{\n    lamp.shadow = lamp.map.depth;\n"
+                                      "    Debug.Log(Sunlit(lamp.shadow, float3(0)));\n}\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "reads a render target's depth, which only code the GPU runs does"));
+    snprintf(program, sizeof program, "%sfloat Sunlit(Lamp lamp, float3 at) { return lamp.shadow.Compare(at.xy, at.z); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "a function samples a DepthTexture it takes as a parameter of its own"));
 }
 
 // A target of several color images, a format each; its `colors`, read one at

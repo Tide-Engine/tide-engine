@@ -1,0 +1,9 @@
+// expect: Frame has no member 'time'
+// expect: Frame has no clock, because a float of seconds gets coarser as it grows: add 'Frame.dt' up in a field of local state and wrap it where it repeats, like 'spinner.turn += Frame.dt * 4;'
+// expect: for the match's time, take 'Time time' and read 'time.t', the seconds since the match started
+local scene Main { }
+local singleton Clock { float now; }
+view Tick(mut Clock clock)
+{
+    clock.now = Frame.time;
+}

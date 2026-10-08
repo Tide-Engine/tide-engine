@@ -1296,7 +1296,89 @@ static void run_roll_checks(const int64_t state, const char *when)
     rolled_before = true;
 }
 
-// Meshes from files (pass 20): squares 16 pixels across, each with its middle
+static tide_float3 linear_column(const tide_float4 c)
+{
+    return tide_f3(c.x, c.y, c.z);
+}
+
+// `normal` through `m` as a normal goes: the inverse of its 3 by 3,
+// transposed. The shader works it out another way (cross products of the
+// columns, and nothing divided), so each checks the other.
+static tide_float3 normal_through(const tide_float4x4 m, const tide_float3 normal)
+{
+    const tide_float3x3 linear = {linear_column(m.c0), linear_column(m.c1), linear_column(m.c2)};
+    return tide_normalize_f3(tide_mul_f3x3_f3(tide_transpose_f3x3(tide_inverse_f3x3(linear)), normal));
+}
+
+// Normals (pass 20): instance.Normal in a frag and in a vert, under the
+// transforms the game keeps in its Facets. A square's color is the normal it
+// was given, a half for 0, read at its middle, which is where its transform
+// puts the mesh's.
+static void run_normal_checks(const char *when)
+{
+    local.Art.targetPass = 20;
+    tide_draw_reset(&list);
+    tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
+    tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
+    tide_gui_end(&gui, &list);
+    local.Art.targetPass = 0;
+
+    const tide_float3 normal = tide_f3(1.0f, 2.0f, 2.0f); // The squares' corners', as the game made them
+    const tide_float4x4 flat = local.Facets.flat;
+    const tide_float4x4 through = tide_mul_f4x4(local.Facets.outer, local.Facets.inner);
+    const tide_float4x4 rotated = local.Facets.rotated;
+    // With no depth left there's no inverse, and the normals are along the axis that went, the way they leaned
+    const tide_float3 flattened = tide_normalize_f3(tide_cross_f3(linear_column(flat.c0), linear_column(flat.c1)));
+    const tide_float3 leaned = tide_normalize_f3(tide_rotate_f4x4(rotated, normal));
+    const tide_float3 right = normal_through(rotated, normal);
+    const struct {
+        float x, y; // The pixel
+        tide_float3 normal;
+        const char *what;
+    } wanted[] = {
+        {local.Facets.even.c3.x, local.Facets.even.c3.y, normal_through(local.Facets.even, normal),
+         "a mesh scaled as much every way"},
+        {local.Facets.squashed.c3.x, local.Facets.squashed.c3.y, normal_through(local.Facets.squashed, normal),
+         "a mesh scaled more one way than another"},
+        {local.Facets.mirrored.c3.x, local.Facets.mirrored.c3.y, normal_through(local.Facets.mirrored, normal),
+         "a mesh turned inside out as well: its normal still points out of it"},
+        {flat.c3.x, flat.c3.y, flattened, "a mesh with no depth left, whose transform has no inverse"},
+        {through.c3.x, through.c3.y, normal_through(through, normal), "a mesh under Draw.Transform, through both"},
+        {local.Facets.turned.c3.x, local.Facets.turned.c3.y, normal_through(local.Facets.turned, normal),
+         "a vert's, which its frag gets from the corners"},
+        {rotated.c3.x, rotated.c3.y, leaned, "what Math.Rotate makes of the same normal"},
+        {local.Facets.first.c3.x, local.Facets.first.c3.y, normal_through(local.Facets.first, normal),
+         "an item of an Instanced draw's list, by its own transform"},
+        {local.Facets.second.c3.x, local.Facets.second.c3.y, normal_through(local.Facets.second, normal),
+         "the next item, by its own, which mirrors it"},
+        {208.0f - 128.0f, 128.0f - 208.0f, tide_f3(0.6f, 0.0f, 0.8f), "a 2D mesh's, which has no transform: of length 1"},
+    };
+    enum { COUNT = sizeof wanted / sizeof wanted[0] };
+    tide_float2 points[COUNT];
+    uint32_t got[COUNT];
+    // The camera has the world's (0, 0) at the window's middle, a pixel a unit, y up
+    for (int i = 0; i < COUNT; i++) points[i] = tide_f2(SIZE / 2 + wanted[i].x + 0.5f, SIZE / 2 - wanted[i].y + 0.5f);
+    tide_platform_read_pixels_as(&list, SIZE, SIZE, 1.0f, points, COUNT, got);
+    for (int i = 0; i < COUNT; i++) {
+        const float channels[3] = {wanted[i].normal.x, wanted[i].normal.y, wanted[i].normal.z};
+        int want[3];
+        bool ok = true;
+        for (int c = 0; c < 3; c++) {
+            want[c] = byte(channels[c] * 0.5f + 0.5f);
+            const int d = (int)(got[i] >> (24 - 8 * c) & 0xFFu) - want[c];
+            ok = ok && d >= -3 && d <= 3;
+        }
+        printf("%s: the normal of %s%s (0x%08X, expected 0x%02X%02X%02XFF)\n", ok ? "ok" : "FAIL", wanted[i].what, when,
+               (unsigned)got[i], (unsigned)want[0], (unsigned)want[1], (unsigned)want[2]);
+        if (!ok) failures++;
+    }
+    // ...which is far from where the normal goes, or these checks would pass a Normal that only rotated
+    const bool apart = tide_dot_f3(leaned, right) < 0.7f;
+    printf("%s: and that's another direction than the normal's%s\n", apart ? "ok" : "FAIL", when);
+    if (!apart) failures++;
+}
+
+// Meshes from files (pass 21): squares 16 pixels across, each with its middle
 // at a pixel, whose corners are red (bottom left, seen from its front), green
 // (bottom right), blue (top right) and white (top left), in two triangles
 // that meet along the line from red to blue. Seen from the front, the file's
@@ -1340,7 +1422,7 @@ static void run_model_checks(const char *when)
         {184, 56, MIDDLE, none, "a key the map hasn't got draws nothing"},
     };
     enum { COUNT = sizeof wanted / sizeof wanted[0] };
-    local.Art.targetPass = 20;
+    local.Art.targetPass = 21;
     tide_draw_reset(&list);
     tide_gui_begin(&gui, &devices, tide_f2(SIZE, SIZE), tide_platform_measure_text);
     tide_frame(&world, NULL, 1.0f, NULL, &local, &list, &gui);
@@ -1409,6 +1491,7 @@ static int frame(void *user, const float seconds)
         run_cube_checks(2, ", on another device");
         run_list_checks(0, ", on another device");
         run_roll_checks(555, ", on another device");
+        run_normal_checks(", on another device");
         run_model_checks(", on another device");
         return failures;
     }
@@ -1444,6 +1527,7 @@ static int frame(void *user, const float seconds)
     run_list_checks(0, ", and written back");
     run_roll_checks(1234, "");
     run_roll_checks(987654321, ", the next frame");
+    run_normal_checks("");
     run_model_checks("");
     run_model_checks(", again");
 #ifdef __wasm__

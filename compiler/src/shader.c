@@ -63,6 +63,7 @@ enum {
     H_NORMALIZE_Q, H_MUL_Q, H_ROTATE_Q, H_INVERSE_Q, H_CONJUGATE_Q, H_NLERP_Q, H_SLERP_Q, H_ANGLE_Q, H_AXISANGLE_Q, H_EULER_Q,
     H_Q_FROM_M3, H_LOOKROTATION_Q, H_M3_FROM_Q, H_M4_FROM_M3, H_TRS, H_PERSPECTIVE, H_ORTHO,
     H_INVERSE2, H_INVERSE3, H_INVERSE4,
+    H_NORMALS, // tide_normals(m): what a mesh's normals go through to the world, for instance.Normal
     H_STRAIGHT, // tide_straight(c): a texture's pixel, which has its alpha worked into its color, as the color it is
     // Random's rolls on the type: tide_roll(), the next 32 bits of the stage's own generator, and what's made of them
     H_ROLL, H_MUL_HIGH, H_ROLL_INT, H_ROLL_INT_BETWEEN, H_ROLL_INT_BELOW, H_ROLL_FLOAT, H_ROLL_FLOAT_BETWEEN, H_ROLL_FLOAT_BELOW,
@@ -86,7 +87,16 @@ typedef struct data_ref {
 typedef struct data_alias {
     const stmt *local;
     data_ref data;
+    const expr *names; // What the local was declared as: a grid that's sampled is found through it (texture_of)
 } data_alias;
+
+// What a function is written for, by its parameter: the list or grid it's
+// called with, and the texture it samples. Neither is handed to it, as
+// neither language passes a texture to a function on every backend.
+typedef struct given {
+    data_ref data;       // A list, a grid, a map or a set: which of the shader's textures of numbers it is
+    const expr *sampled; // A texture that's sampled: where the frag or vert names the one it was given (texture_of)
+} given;
 
 // A local that holds an element of a list the code was given, or a part of
 // one: a foreach's variable, or `var light = lights[i];`. What the code reads
@@ -131,7 +141,7 @@ typedef struct emit {
     bool finds[8]; // ...that are maps or sets whose lookup is written (need_find)
     bool tries[8]; // ...that are maps whose TryGet is written (need_try)
     VEC(data_alias) aliases;   // The locals of the code being written that name a list or a grid (data_of)
-    const data_ref *spec;      // By the parameter of the function being written: the list or grid it's called with
+    const given *spec;         // By the parameter of the function being written: the list, grid or texture it's called with
     VEC(const decl *) arrays;  // The array types whose element reader is written (need_array)
     VEC(type) picks;           // The types whose '?:' is a function (need_pick)
     int raw; // Writing what an assignment stores into: an array's element is the element itself, in range already
@@ -149,8 +159,9 @@ static void ex_as(emit *em, const expr *e, type want);
 static bool is_whole_variable(const expr *e);
 static bool is_pointer(const emit *em, const param *p);
 static void st(emit *em, const stmt *s);
-static void need_function(emit *em, decl *fn, loc at, const data_ref *spec, const char *suffix);
+static void need_function(emit *em, decl *fn, loc at, const given *spec, const char *suffix);
 static bool is_const(const expr *e);
+static bool is_sampled(type t);
 static int packs(int words);
 
 static const char *shader_word(const decl *d)
@@ -1128,6 +1139,20 @@ static const char *const helper_texts[H_COUNT] = {
                    "(-a21 * s5 + a22 * s4 - a23 * s3) * d, (a20 * s5 - a22 * s2 + a23 * s1) * d, "
                    "(-a20 * s4 + a21 * s2 - a23 * s0) * d, (a20 * s3 - a21 * s1 + a22 * s0) * d);\n"
                    "}\n",
+    // What a mesh's normals go through on their way to the world (instance.Normal): the inverse of the transform's
+    // 3 by 3, transposed, but for its length, which the normalize after it takes away. That's the cross products of
+    // pairs of the columns, tide_inverse3's rows before they're divided by the determinant, and turned round where
+    // the determinant is under 0, which is a transform that mirrors its mesh. So nothing is divided: a transform
+    // that flattens a mesh has no inverse, and its normals are still along the axis it flattened
+    [H_NORMALS] = "mat3 tide_normals(mat4 m) {\n"
+                  "    vec3 a = cross(m[1].xyz, m[2].xyz);\n"
+                  "    vec3 b = cross(m[2].xyz, m[0].xyz);\n"
+                  "    vec3 c = cross(m[0].xyz, m[1].xyz);\n"
+                  "    if (dot(m[0].xyz, a) < 0.0) {\n"
+                  "        return mat3(-a, -b, -c);\n"
+                  "    }\n"
+                  "    return mat3(a, b, c);\n"
+                  "}\n",
     // What a frag or a vert rolls with (Random.NextInt and the rest, on the type): `tide_dice`, a generator of the
     // pixel's or the vertex's own, which its stage makes as it starts (put_dice). Its state is 32 bits, as these GPUs
     // have no 64-bit integers, so it isn't the CPU's (tide/random.h): PCG's RXS-M-XS (O'Neill), a linear
@@ -1833,7 +1858,7 @@ static bool data_of(emit *em, const expr *e, data_ref *d)
         return false;
     }
     if (e->kind == E_NAME && e->bind == BIND_PARAM && e->param->function_param && em->code != em->root) { // Its function's
-        if (em->spec) *d = em->spec[param_index(em->code, e->param)];
+        if (em->spec) *d = em->spec[param_index(em->code, e->param)].data;
         // What the function reads of an element is its parameter's to say, for each of its calls (ex_user_call)
         if (em->checking) d->leaves = leaves_room(&em->code->params.items[param_index(em->code, e->param)].gpu_leaves, e->type);
         return true;
@@ -2401,6 +2426,10 @@ static void ex_name(emit *em, const expr *e)
             return;
         }
         if (em->checking && em->code == em->root) em->root->params.items[param_index(em->root, p)].whole = true;
+        if (is_sampled(p->type)) { // A function's texture is sampled, or passed on: it's no value, and nothing is written for it
+            type_fits(em, p->type, e->at);
+            return;
+        }
         sb_printf(em->o, is_pointer(em, p) ? "(*%s)" : "%s", local_name(p->name));
         return;
     }
@@ -3211,15 +3240,255 @@ static bool liftable(const emit *em, const expr *e, const int depth)
     }
 }
 
+// ---------------------------------------------------------------------------
+// Textures that are sampled
+//
+// A texture the code samples is one the frag or vert was given, by a name: a
+// field of a component or a singleton it takes, its own Texture, or an asset.
+// A function samples its own parameter's, which is whichever of those its
+// call names: like a list, it's no argument, and the function is written once
+// for each set of textures it's called with (need_function). Its body is
+// checked once, though, whichever frag or vert reaches it first, so what it
+// samples is kept on it (decl.gpu_samples), by its parameter and by how the
+// Sample is written, and each call notes that of the texture it names
+// (pass_samples).
+
+// Whether a value of type `t` is a texture to sample: a Texture, a target's
+// depth, a cube, or a grid of colors or of floats.
+static bool is_sampled(const type t)
+{
+    return t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || type_is_texture_grid(t);
+}
+
+// How a Sample reads its texture: which kind of read it is, and its filter
+// and its wrap where they're known as the game is compiled (shader_sample).
+typedef struct sampling {
+    shader_read read;
+    int filter, wrap;
+    bool filter_said, wrap_said;
+} sampling;
+
+// How a Sample that says `filter` and `wrap`, -1 for one it leaves out, reads
+// the texture `of` names.
+static sampling sampling_of(const expr *of, const shader_read read, const int filter, const int wrap)
+{
+    if (read == READ_CUBE) return (sampling){read, filter == 0 ? 0 : filter == 2 ? 2 : 1, 0, true, true}; // One that says none is read blended
+    // A depth's nearest pixel is read, the pixels at its edge past them, and what its comparisons give, the
+    // GPU blends: none of it is the draw's to say
+    if (read != READ_COLOR) return (sampling){read, 0, 0, true, true};
+    // A Sample that doesn't say its filter or its wrap has its texture's own. A grid field's and an asset's
+    // by name are their declaration's ([Filter], [Wrap]), and without one, blended and the cells at the edge:
+    // known here. A Texture's that's no asset's (the frag's own Texture parameter, a Texture field) is
+    // whichever texture it's given, which says how it's sampled: that's each draw's run's to carry
+    int declared_filter, declared_wrap;
+    declared_sampling(of, &declared_filter, &declared_wrap);
+    const bool carried = !(of->bind == BIND_ASSET && of->constant) && of->type.kind == TY_TEXTURE;
+    const int said = filter >= 0 ? filter : declared_filter;
+    return (sampling){read, said == 0 ? 0 : said == 2 ? 2 : 1, wrap >= 0 ? wrap : declared_wrap > 0 ? declared_wrap : 0,
+                      !carried || filter >= 0, !carried || wrap >= 0};
+}
+
+// The texture `of` names in the frag or vert, read as `how` says: noted among
+// what the frag or vert samples, while checking, and otherwise which of the
+// shader's textures it is. One sampled with another filter or another wrap is
+// another binding, as a backend's sampler is how a binding is read, and a
+// DepthTexture is one for each way it's read, as a number (Sample) and
+// compared (Compare): the GPU reads each through a sampler of another kind.
+static int sample_slot(emit *em, const expr *of, const sampling how)
+{
+    const decl *asset = of->bind == BIND_ASSET ? of->constant : NULL; // A Grid2<Color>, Texture or Cubemap asset, by name
+    const bool direct = of->kind == E_NAME && !asset;
+    const param *p = asset ? NULL : direct ? of->param : of->object->param;
+    if (em->checking) {
+        const decl *holds = direct || asset ? NULL : of->local_field ? p->type.decl->local_part : p->type.decl;
+        const shader_sample sample = {asset ? -1 : param_index(em->root, p), direct || asset ? -1 : field_index(holds, of->field),
+                                      of->local_field && !asset, how.filter, asset, how.wrap, how.read, how.filter_said,
+                                      how.wrap_said};
+        bool known = false;
+        for (int i = 0; i < em->root->samples.count; i++) {
+            const shader_sample *s = &em->root->samples.items[i];
+            known |= s->param == sample.param && s->field == sample.field && s->local == sample.local && s->filter == sample.filter
+                  && s->asset == sample.asset && s->wrap == sample.wrap && s->read == sample.read
+                  && s->filter_said == sample.filter_said && s->wrap_said == sample.wrap_said;
+        }
+        if (!known) vec_push(em->root->samples, sample);
+        return 0;
+    }
+    int slot = 0;
+    while (slot < em->sh->textures.count) {
+        const shader_texture *t = &em->sh->textures.items[slot];
+        if (t->asset == asset && t->direct == direct && t->source == (p ? p->type.decl : NULL) && t->field == (asset ? NULL : of->field)
+            && t->filter == how.filter && t->wrap == how.wrap && t->read == how.read && t->filter_said == how.filter_said
+            && t->wrap_said == how.wrap_said) {
+            break;
+        }
+        slot++;
+    }
+    return slot;
+}
+
+// A number for the texture `of` names that no other the shader samples has:
+// the first of the shader's textures that's a way it's read. -1 for one
+// that's read no way, which nothing then tells from another.
+static int texture_number(const emit *em, const expr *of)
+{
+    if (!of || !em->sh) return -1;
+    const decl *asset = of->bind == BIND_ASSET ? of->constant : NULL;
+    const bool direct = of->kind == E_NAME && !asset;
+    const param *p = asset ? NULL : direct ? of->param : of->object->param;
+    for (int slot = 0; slot < em->sh->textures.count; slot++) {
+        const shader_texture *t = &em->sh->textures.items[slot];
+        if (t->read != READ_DATA && t->asset == asset && t->direct == direct && t->source == (p ? p->type.decl : NULL)
+            && t->field == (asset ? NULL : of->field)) {
+            return slot;
+        }
+    }
+    return -1;
+}
+
+// `e` as a texture the code samples: the expression that names it in the frag
+// or vert, which says which of the shader's textures each Sample of it is. An
+// asset by its name, anywhere; in the frag or vert, its own Texture or a field
+// of a component or singleton it takes; in a function, its own parameter,
+// which is what its call named: *own is then which parameter, and the result
+// NULL while checking, when no one call says. A grid's local is what it
+// names. NULL for anything else: a texture that's made, picked or returned.
+static const expr *texture_of(emit *em, const expr *e, int *own)
+{
+    *own = -1;
+    if (!e) return NULL;
+    if (e->kind == E_NAME && e->bind == BIND_ASSET && e->constant) return e;
+    if (e->kind == E_NAME && e->bind == BIND_LOCAL) {
+        for (int i = em->aliases.count - 1; i >= 0; i--) {
+            if (em->aliases.items[i].local == e->local) return texture_of(em, em->aliases.items[i].names, own);
+        }
+        return NULL;
+    }
+    if (em->code != em->root) {
+        if (e->kind != E_NAME || e->bind != BIND_PARAM || !e->param->function_param) return NULL;
+        *own = param_index(em->code, e->param);
+        return em->checking || !em->spec ? NULL : em->spec[*own].sampled;
+    }
+    if (e->kind == E_NAME && e->bind == BIND_PARAM && e->param->type.kind == TY_TEXTURE && is_bound(em, e->param)) return e;
+    if (e->kind == E_MEMBER && e->field && e->object->kind == E_NAME && e->object->bind == BIND_PARAM && is_bound(em, e->object->param)
+        && (e->object->param->type.kind == TY_COMPONENT || e->object->param->type.kind == TY_SINGLETON)) {
+        return e;
+    }
+    return NULL;
+}
+
+// A texture a function is passed, or samples, that texture_of finds no name for.
+static void refuse_texture(emit *em, const expr *e)
+{
+    refuse(em, e->at, "a texture a function samples is one the frag or vert was given, by a name: it can't be made, returned, "
+                      "picked between or kept in a struct in code the GPU runs");
+    if (em->checking) {
+        diag_note("pass a field of a component or a singleton the frag or vert takes, its own Texture, or an asset: "
+                  "'Lit(lamp.shadow, at)'; a function passes on a parameter of its own");
+    }
+}
+
+// Notes on a function being checked that it samples its parameter `param`,
+// or with -1 the asset `asset` names, as the Sample at `at` says.
+static void note_function_sample(decl *fn, const int param, const expr *asset, const shader_read read, const int filter,
+                                 const int wrap, const loc at)
+{
+    for (int i = 0; i < fn->gpu_samples.count; i++) {
+        const function_sample *s = &fn->gpu_samples.items[i];
+        if (s->param == param && (param >= 0 || s->asset->constant == asset->constant) && s->read == read && s->filter == filter
+            && s->wrap == wrap) {
+            return;
+        }
+    }
+    const function_sample sample = {.param = param, .asset = param >= 0 ? NULL : asset, .read = read, .filter = filter,
+                                    .wrap = wrap, .at = at};
+    vec_push(fn->gpu_samples, sample);
+}
+
+// What a texture is called where it's named, for a message.
+static const char *texture_called(const expr *of)
+{
+    sb name = {0};
+    if (of->kind == E_MEMBER && of->object && of->object->kind == E_NAME) {
+        sb_printf(&name, "'" STR_FMT "." STR_FMT "'", STR_ARG(of->object->name), STR_ARG(of->member));
+    } else if (of->kind == E_NAME) {
+        sb_printf(&name, "'" STR_FMT "'", STR_ARG(of->name));
+    } else {
+        sb_put(&name, "this texture");
+    }
+    return name.data;
+}
+
+// The code calls `fn`, which was checked: it samples what `fn` does. The
+// textures the call names for fn's parameters, and the assets fn names
+// itself, go into the frag's or vert's own samples; from a function, into
+// that function's, by its own parameters, for its callers in turn.
+//
+// A function's Sample never reads between a texture's smaller images
+// (Filter.Trilinear): a GPU picks between them by how fast the uv changes
+// from one pixel to the next, which a frag asks as it starts, of a uv it can
+// work out there (ex_sample), and a function's uv is its call's. So one that
+// says Trilinear, or leaves its filter to a texture that says it, is an
+// error in what a frag reaches, and one that leaves it to a Texture that may
+// is a warning, as in a frag whose uv can't be worked out as it starts. A
+// vert has no pixels to compare, and reads the texture's own.
+static void pass_samples(emit *em, decl *fn, const expr *call, const given *spec, const int *own)
+{
+    for (int i = 0; i < fn->gpu_samples.count; i++) {
+        const function_sample s = fn->gpu_samples.items[i];
+        const expr *arg = s.param >= 0 && s.param < call->args.count ? call->args.items[s.param] : NULL;
+        const expr *of = s.param < 0 ? s.asset : arg ? spec[s.param].sampled : NULL;
+        const int mine = arg ? own[s.param] : -1;
+        if (em->code != em->root && (mine >= 0 || of)) {
+            note_function_sample(em->code, mine, of, s.read, s.filter, s.wrap, s.at);
+            continue;
+        }
+        if (!of) { // A grid with no name a Sample could go by: one that isn't a grid was refused where it's passed
+            if (arg && is_data(fn->params.items[s.param].type)) refuse_texture(em, arg);
+            continue;
+        }
+        const sampling how = sampling_of(of, s.read, s.filter, s.wrap);
+        sample_slot(em, of, how);
+        if (!em->root->is_frag || (how.read != READ_COLOR && how.read != READ_CUBE)) continue;
+        const char *where = how.read == READ_CUBE ? "direction" : "uv";
+        const char *what = how.read == READ_CUBE ? "cube" : "texture";
+        if (how.filter == 2) {
+            em->failed = true;
+            if (s.refused) continue;
+            fn->gpu_samples.items[i].refused = true;
+            if (s.filter == 2) {
+                refuse(em, s.at, "a Sample in a function can't be Filter.Trilinear: only a frag's own Sample reads between a "
+                                 "%s's smaller images", what);
+            } else {
+                refuse(em, s.at, "this Sample reads its %s as it says, and %s says Filter.Trilinear, which only a frag's own "
+                                 "Sample reads", what, texture_called(of));
+            }
+            diag_note("the GPU picks between a %s's smaller images by how fast the %s changes from one pixel to the next, which "
+                      "a frag asks as it starts, and a function's %s is its call's: sample in the frag itself, or with "
+                      "Filter.Bilinear here", what, where, where);
+        } else if (how.read == READ_COLOR && !how.filter_said && em->prog->names_trilinear && !s.warned) {
+            // The texture may say Trilinear, and this read can't: said, not left to be found in a shimmer
+            fn->gpu_samples.items[i].warned = true;
+            diag_warning(s.at, "%s may say Filter.Trilinear, which a function's Sample can't read: it reads the texture's own "
+                               "pixels", texture_called(of));
+            diag_note("write the filter here, 'Sample(uv, Filter.Bilinear)', which is what's read anyway; or sample in the frag "
+                      "itself, of a uv made of its parameters, constants and variables declared with 'var' and never assigned "
+                      "again");
+        } else {
+            continue;
+        }
+        diag_note_at(call->at, "%s '" STR_FMT "' samples it through '" STR_FMT "', here", shader_word(em->root),
+                     STR_ARG(em->root->name), STR_ARG(fn->name));
+    }
+}
+
 // A Cubemap's Sample: an asset's by name, or a field's, read by a direction.
 // One sampled with another filter is another binding, as a texture's is, and
 // one read between its smaller images has its direction worked out as the
 // frag starts, with how fast it changes, as a uv is (ex_sample).
-static void ex_cube_sample(emit *em, const expr *e, const decl *asset, const param *p)
+static void ex_cube_sample(emit *em, const expr *e, const expr *of, const sampling how)
 {
-    const expr *of = e->object;
-    const int said = e->args.count >= 2 ? (int)e->args.items[1]->enum_member->number : 1;
-    const int filter = said == 0 ? 0 : said == 2 ? 2 : 1;
+    const int filter = how.filter;
     const bool lifts = em->root->is_frag && em->code == em->root && !em->lifting && filter == 2;
     const bool grad = lifts && liftable(em, e->args.items[0], 0);
     if (lifts && !grad && em->checking) {
@@ -3236,32 +3505,8 @@ static void ex_cube_sample(emit *em, const expr *e, const decl *asset, const par
                       "variables declared with 'var' and never assigned again, or sample with Filter.Bilinear here");
         }
     }
-    int slot = 0;
-    if (em->checking) {
-        if (em->code != em->root) {
-            refuse(em, e->at, "a texture is sampled in the frag or vert that takes it, not in a function it calls");
-            return;
-        }
-        const decl *holds = asset ? NULL : of->local_field ? p->type.decl->local_part : p->type.decl;
-        const shader_sample sample = {asset ? -1 : param_index(em->root, p), asset ? -1 : field_index(holds, of->field),
-                                      of->local_field && !asset, filter, asset, 0, READ_CUBE, true, true};
-        bool known = false;
-        for (int i = 0; i < em->root->samples.count; i++) {
-            const shader_sample *s = &em->root->samples.items[i];
-            known |= s->param == sample.param && s->field == sample.field && s->local == sample.local && s->filter == sample.filter
-                  && s->asset == sample.asset && s->read == READ_CUBE;
-        }
-        if (!known) vec_push(em->root->samples, sample);
-    } else {
-        while (slot < em->sh->textures.count) {
-            const shader_texture *t = &em->sh->textures.items[slot];
-            if (t->asset == asset && !t->direct && t->source == (p ? p->type.decl : NULL) && t->field == (asset ? NULL : of->field)
-                && t->filter == filter && t->read == READ_CUBE) {
-                break;
-            }
-            slot++;
-        }
-    }
+    // In a function that's being checked, the cube is noted on the function, for each frag and vert that reaches it
+    const int slot = em->checking && em->code != em->root ? 0 : sample_slot(em, of, how);
     const type way = {TY_FLOAT3, NULL};
     need(em, H_STRAIGHT); // The color itself, where the cube has it times its alpha
     sb_put(em->o, "tide_straight(");
@@ -3297,42 +3542,50 @@ static void ex_cube_sample(emit *em, const expr *e, const decl *asset, const par
     sb_put(em->o, ", 0.0))");
 }
 
-// A texture parameter, or a grid or texture field: which binding reads it.
-// One sampled with another filter or another wrap is another binding, as a
-// backend's sampler is how a binding is read. A DepthTexture field is a
-// binding for each way it's read, as a number (Sample) and compared
-// (Compare): the GPU reads each through a sampler of another kind.
+// A Sample, or a depth's Compare: of a texture parameter, a grid or texture
+// field or an asset, where the frag or vert names it, and in a function, of
+// its own parameter, which is the texture its call named, or of an asset.
 static void ex_sample(emit *em, const expr *e)
 {
+    const type held = e->object->type;
+    const bool cube = held.kind == TY_CUBEMAP;
+    const shader_read read = cube ? READ_CUBE : held.kind != TY_DEPTH_TEXTURE ? READ_COLOR
+                           : str_eq_c(e->name, "Compare") ? READ_COMPARE : READ_DEPTH;
+    // What the Sample says of how it reads: -1 for what it leaves to its texture
+    const int said_filter = (cube || read == READ_COLOR) && e->args.count >= 2 ? (int)e->args.items[1]->enum_member->number : -1;
+    const int said_wrap = read == READ_COLOR && e->args.count >= 3 ? (int)e->args.items[2]->enum_member->number : -1;
     const expr *of = e->object;
-    const decl *asset = of->bind == BIND_ASSET ? of->constant : NULL; // A Grid2<Color> or Texture asset, by name
-    const bool direct = of->kind == E_NAME && !asset;
-    const param *p = asset ? NULL : direct ? of->param : of->object->param;
-    if (of->type.kind == TY_CUBEMAP) {
-        ex_cube_sample(em, e, asset, p);
+    if (em->code != em->root) { // A function's: its own parameter's, which each call names, or an asset's
+        int own;
+        of = texture_of(em, e->object, &own);
+        if (em->checking && (own >= 0 || of)) note_function_sample(em->code, own, of, read, said_filter, said_wrap, e->at);
+        if (!of) {
+            if (own < 0) refuse_texture(em, e->object);
+            if (!em->checking) { // Nothing named it: refused as it was checked
+                put_zero(em, e->type);
+                return;
+            }
+            // Which texture it is, each call says: where it's read is checked all the same
+            ex_as(em, e->args.items[0], (type){cube ? TY_FLOAT3 : TY_FLOAT2, NULL});
+            if (read == READ_COMPARE) ex_as(em, e->args.items[1], (type){TY_FLOAT, NULL});
+            return;
+        }
+    }
+    const sampling how = sampling_of(of, read, said_filter, said_wrap);
+    if (cube) {
+        ex_cube_sample(em, e, of, how);
         return;
     }
-    const shader_read read = of->type.kind != TY_DEPTH_TEXTURE ? READ_COLOR : str_eq_c(e->name, "Compare") ? READ_COMPARE : READ_DEPTH;
-    // A depth's nearest pixel is read, the pixels at its edge past them, and what its comparisons give, the
-    // GPU blends: none of it is the draw's to say
-    // A Sample that doesn't say its filter or its wrap has its texture's own. A grid field's and an asset's
-    // by name are their declaration's ([Filter], [Wrap]), and without one, blended and the cells at the edge:
-    // known here. A Texture's that's no asset's (the frag's own Texture parameter, a Texture field) is
-    // whichever texture it's given, which says how it's sampled: that's each draw's run's to carry
-    int declared_filter, declared_wrap;
-    declared_sampling(of, &declared_filter, &declared_wrap);
-    const bool says_filter = e->args.count >= 2, says_wrap = e->args.count >= 3;
-    const bool carried = read == READ_COLOR && !asset && of->type.kind == TY_TEXTURE;
-    const bool filter_said = !carried || says_filter, wrap_said = !carried || says_wrap;
-    const int said = read != READ_COLOR ? 0 : says_filter ? (int)e->args.items[1]->enum_member->number : declared_filter;
-    const int filter = read != READ_COLOR || said == 0 ? 0 : said == 2 ? 2 : 1;
+    const int filter = how.filter;
+    const bool filter_said = how.filter_said;
     // Between a texture's smaller images (Filter.Trilinear), a GPU reads by how fast the uv changes from one
     // pixel to the next, which it only answers for outside branches and loops, where code here samples. So a
     // frag works the uv out a first time as it starts, asks there, and reads with the answer wherever the
     // Sample is: for one that says Trilinear, and for one that leaves its filter to the Texture it's given in a
     // game that names Trilinear at all. A uv that can't be worked out there (it reads a variable that changes)
     // is an error where the Sample says Trilinear, and reads the texture's own pixels where a Texture might.
-    // A vert has no pixels to compare: it reads the texture's own.
+    // A vert has no pixels to compare: it reads the texture's own. So does a function, whose uv is its
+    // call's (pass_samples).
     const bool lifts = read == READ_COLOR && em->root->is_frag && em->code == em->root && !em->lifting
                     && (filter == 2 || (!filter_said && em->prog->names_trilinear));
     const bool grad = lifts && liftable(em, e->args.items[0], 0);
@@ -3351,54 +3604,18 @@ static void ex_sample(emit *em, const expr *e)
         }
     } else if (lifts && !grad && em->checking) {
         // The texture may say Trilinear, and this read can't: said, not left to be found in a shimmer
-        const expr *named = direct ? of : of->object && of->object->kind == E_NAME ? of->object : NULL;
-        char which[160];
-        if (direct) snprintf(which, sizeof which, "'" STR_FMT "'", STR_ARG(of->name));
-        else if (named) snprintf(which, sizeof which, "'" STR_FMT "." STR_FMT "'", STR_ARG(named->name), STR_ARG(of->member));
-        else snprintf(which, sizeof which, "this texture");
         diag_warning(e->args.items[0]->at, has_roll(e->args.items[0], 0)
                      ? "%s may say Filter.Trilinear, which this Sample can't read: its uv is made of a roll, so it reads the "
                        "texture's own pixels"
                      : "%s may say Filter.Trilinear, which this Sample can't read: its uv is made of a "
                        "variable that changes, or of one a loop counts, so it reads the texture's own pixels",
-                     which);
+                     texture_called(of));
         diag_note("make the uv of the frag's parameters, constants and variables declared with 'var' and never assigned "
                   "again, so the GPU can be asked how fast it changes as the frag starts; or write the filter here, "
                   "'Sample(uv, Filter.Bilinear)', which is what's read anyway");
-        if (em->code != em->root) {
-            diag_note_at(em->root->at, "%s '" STR_FMT "' runs on the GPU, and '" STR_FMT "' with it, as it calls it",
-                         shader_word(em->root), STR_ARG(em->root->name), STR_ARG(em->code->name));
-        }
     }
-    const int wrap = read != READ_COLOR ? 0 : says_wrap ? (int)e->args.items[2]->enum_member->number : declared_wrap > 0 ? declared_wrap : 0;
-    int slot = 0;
-    if (em->checking) {
-        if (em->code != em->root) {
-            refuse(em, e->at, "a texture is sampled in the frag or vert that takes it, not in a function it calls");
-            return;
-        }
-        const decl *holds = direct || asset ? NULL : of->local_field ? p->type.decl->local_part : p->type.decl;
-        const shader_sample sample = {asset ? -1 : param_index(em->root, p), direct || asset ? -1 : field_index(holds, of->field),
-                                      of->local_field && !asset, filter, asset, wrap, read, filter_said, wrap_said};
-        bool known = false;
-        for (int i = 0; i < em->root->samples.count; i++) {
-            const shader_sample *s = &em->root->samples.items[i];
-            known |= s->param == sample.param && s->field == sample.field && s->local == sample.local && s->filter == sample.filter
-                  && s->asset == sample.asset && s->wrap == sample.wrap && s->read == sample.read
-                  && s->filter_said == sample.filter_said && s->wrap_said == sample.wrap_said;
-        }
-        if (!known) vec_push(em->root->samples, sample);
-    } else {
-        while (slot < em->sh->textures.count) {
-            const shader_texture *t = &em->sh->textures.items[slot];
-            if (t->asset == asset && t->direct == direct && t->source == (p ? p->type.decl : NULL) && t->field == of->field
-                && t->filter == filter && t->wrap == wrap && t->read == read && t->filter_said == filter_said
-                && t->wrap_said == wrap_said) {
-                break;
-            }
-            slot++;
-        }
-    }
+    // In a function that's being checked, an asset is noted on the function, for each frag and vert that reaches it
+    const int slot = em->checking && em->code != em->root ? 0 : sample_slot(em, of, how);
     // No pixel's neighbors are asked about, so it can be sampled anywhere, in a branch or a vertex
     if (read == READ_COMPARE) {
         // What it's compared with is between the near plane and the far limit, as what's stored is:
@@ -3457,6 +3674,12 @@ static bool takes_data(const param *p)
     return is_data(p->type);
 }
 
+// ...or that, or a texture it samples: neither is an argument.
+static bool is_given(const param *p)
+{
+    return takes_data(p) || is_sampled(p->type);
+}
+
 // A call of a function or method of the game's. A mut argument is the
 // caller's variable: GLSL takes it as it is (inout), and WGSL a pointer to a
 // whole variable, so what isn't one goes through a copy, which only a call
@@ -3464,24 +3687,42 @@ static bool takes_data(const param *p)
 static void ex_user_call(emit *em, const expr *e)
 {
     decl *fn = e->method;
-    // The lists and grids it's called with, which are no arguments: the function is written for them
-    data_ref *spec = arena_alloc((size_t)(fn->params.count + 1) * sizeof(data_ref));
+    // The lists, grids and textures it's called with, which are no arguments: the function is written for them
+    given *spec = arena_alloc((size_t)(fn->params.count + 1) * sizeof(given));
+    int *own = arena_alloc((size_t)(fn->params.count + 1) * sizeof(int)); // In a function: which of its own parameters each is
     sb suffix = {0};
     for (int i = 0; i < fn->params.count; i++) {
-        if (!takes_data(&fn->params.items[i])) continue;
-        spec[i] = data_unknown(fn->params.items[i].type);
+        const param *p = &fn->params.items[i];
+        own[i] = -1;
+        if (!is_given(p)) continue;
         const expr *arg = i < e->args.count ? e->args.items[i] : NULL;
-        if (arg && !data_of(em, arg, &spec[i])) type_fits(em, arg->type, arg->at);
-        sb_printf(&suffix, "%s%d", suffix.data ? "x" : "_4", spec[i].texture < 0 ? 0 : spec[i].texture);
+        int number = -1;
+        bool named = arg != NULL;
+        if (takes_data(p)) {
+            spec[i].data = data_unknown(p->type);
+            if (arg && !data_of(em, arg, &spec[i].data)) {
+                type_fits(em, arg->type, arg->at);
+                named = false;
+            }
+            number = spec[i].data.texture;
+        }
+        if (named && is_sampled(p->type)) {
+            spec[i].sampled = texture_of(em, arg, &own[i]);
+            // A grid that's only read by its cells needs no name a Sample could go by: one that's sampled says (pass_samples)
+            if (!spec[i].sampled && own[i] < 0 && !takes_data(p)) refuse_texture(em, arg);
+            if (number < 0) number = texture_number(em, spec[i].sampled);
+        }
+        sb_printf(&suffix, "%s%d", suffix.data ? "x" : "_4", number < 0 ? 0 : number);
     }
     need_function(em, fn, e->at, spec, suffix.data ? suffix.data : "");
     // What the function reads of the elements of a list it takes, the code that hands it the list reads
     for (int i = 0; em->checking && i < fn->params.count; i++) {
         const bool *read = fn->params.items[i].gpu_leaves;
-        if (!takes_data(&fn->params.items[i]) || !read || !spec[i].leaves) continue;
-        const int parts = shader_leaves(spec[i].element);
-        for (int k = 0; k < parts; k++) spec[i].leaves[k] |= read[k];
+        if (!takes_data(&fn->params.items[i]) || !read || !spec[i].data.leaves) continue;
+        const int parts = shader_leaves(spec[i].data.element);
+        for (int k = 0; k < parts; k++) spec[i].data.leaves[k] |= read[k];
     }
+    if (em->checking) pass_samples(em, fn, e, spec, own); // ...and the textures it samples, the code samples
     const bool method = fn->owner && !fn->is_operator && !fn->is_interpolate;
     const bool statement = em->statement == e;
     sb_printf(em->o, "%s%s(", function_name(fn), suffix.data ? suffix.data : "");
@@ -3514,7 +3755,7 @@ static void ex_user_call(emit *em, const expr *e)
     for (int i = 0; i < e->args.count; i++) {
         const param *p = i < fn->params.count ? &fn->params.items[i] : NULL;
         const expr *arg = e->args.items[i];
-        if (p && takes_data(p)) continue;
+        if (p && is_given(p)) continue;
         if (!first) sb_put(em->o, ", ");
         first = false;
         if (!p || p->mode != PARAM_MUT) {
@@ -3540,10 +3781,40 @@ static void ex_user_call(emit *em, const expr *e)
     sb_put(em->o, ")");
 }
 
+// instance.Normal(normal): a normal of the mesh as it is in the world, of
+// length 1. A normal isn't turned as a direction is (Math.Rotate): it stays
+// square to its surface only through the inverse of the transform,
+// transposed, which differs wherever the transform scales the mesh more one
+// way than another (tide_normals). The vertex stage works that matrix out
+// from the instance's transform: where a vert calls this, and once a vertex
+// for a frag that does (shader.frag_normals), which gets its three columns as
+// values that don't blend, so a pixel multiplies and normalizes and no more.
+// A 2D mesh has no transform, so its normal is only normalized.
+static void ex_normal(emit *em, const expr *e)
+{
+    if (em->checking) em->root->world_normal = true;
+    need(em, H_NORMALIZE3);
+    sb_put(em->o, "tide_normalize3(");
+    if (em->sh && em->sh->dims == 3 && em->stage == STAGE_FRAG) {
+        sb_printf(em->o, "%s(tide_normals0, tide_normals1, tide_normals2) * ", ty(em, (type){TY_FLOAT3X3, NULL}));
+    } else if (em->sh && em->sh->dims == 3) {
+        need(em, H_NORMALS);
+        sb_put(em->o, "tide_normals(");
+        put_bound(em, NULL, NULL, (type){TY_FLOAT4X4, NULL});
+        sb_put(em->o, ") * ");
+    }
+    sb_put(em->o, "(");
+    ex(em, e->args.items[0]);
+    sb_put(em->o, "))");
+}
+
 static void ex_call(emit *em, const expr *e)
 {
     const char *what = NULL;
     switch (e->call) {
+    case CALL_NORMAL:
+        ex_normal(em, e);
+        return;
     case CALL_CONSTRUCT:
         ex_construct(em, e);
         return;
@@ -3881,7 +4152,7 @@ static void st_var(emit *em, const stmt *s)
     if (is_data(s->type)) { // A name for one the code was given: nothing is written
         const char *what = data_word(s->type);
         const loc at = s->name_at.line ? s->name_at : s->at;
-        data_alias alias = {.local = s};
+        data_alias alias = {.local = s, .names = s->is_mut ? NULL : s->value};
         alias.data = data_unknown(s->type);
         if (s->is_mut) {
             refuse(em, at, "a %s's local in code the GPU runs names one %s, for good: '" STR_FMT "' can't be 'mut'", what, what,
@@ -4660,7 +4931,7 @@ static void st_one(emit *em, const stmt *s)
 // A function or method the code calls: written before its caller, once.
 // While checking, its body is checked once, whichever frag or vert reaches it
 // first, and a function that reaches itself is refused.
-static void need_function(emit *em, decl *fn, const loc at, const data_ref *spec, const char *suffix)
+static void need_function(emit *em, decl *fn, const loc at, const given *spec, const char *suffix)
 {
     if (em->checking && fn->gpu_state >= 2) { // What it reads of assets by their names, its caller reads
         for (int i = 0; i < fn->gpu_data.count; i++) note_asset(em, fn->gpu_data.items[i]);
@@ -4701,7 +4972,7 @@ static void need_function(emit *em, decl *fn, const loc at, const data_ref *spec
     const int indent = em->indent, defuse = em->defuse, aliases = em->aliases.count, elements = em->elements.count;
     const expr *statement = em->statement;
     const bool failed = em->failed;
-    const data_ref *const outer_spec = em->spec;
+    const given *const outer_spec = em->spec;
     const expr *const part_root = em->part_root, *const held_root = em->held_root; // What its caller is in the middle of
     em->part_root = em->held_root = NULL;
     em->spec = spec;
@@ -4734,10 +5005,11 @@ static void need_function(emit *em, decl *fn, const loc at, const data_ref *spec
     for (int i = 0; i < fn->params.count; i++) {
         const param *p = &fn->params.items[i];
         if (shader && !p->function_param && !handed_to(em->sh, p)) continue; // The engine supplies it
-        if (spec && takes_data(p)) { // Which of the shader's lists or grids it is, this is written for
+        if (spec && is_given(p)) { // Which of the shader's lists, grids or textures it is, this is written for
             if (p->mode == PARAM_MUT) {
                 refuse(em, p->at, "a %s a function takes in code the GPU runs is read there, never changed: '" STR_FMT "' can't be "
-                                  "'%s'", data_word(p->type), STR_ARG(p->name), p->is_out ? "out" : "mut");
+                                  "'%s'", takes_data(p) ? data_word(p->type) : type_name(p->type), STR_ARG(p->name),
+                       p->is_out ? "out" : "mut");
             }
             continue;
         }
@@ -4932,6 +5204,10 @@ static void put_varyings(emit *em, sb *o, const char *direction)
         if (wgsl) sb_printf(o, "    @location(%d) tide_world: vec3f,\n", location++);
         else sb_printf(o, "%s vec3 tide_world;\n", direction);
     }
+    for (int i = 0; sh->frag_normals && i < 3; i++) { // The columns of what normals go through (ex_normal), an instance's own
+        if (wgsl) sb_printf(o, "    @location(%d) @interpolate(flat) tide_normals%d: vec3f,\n", location++, i);
+        else sb_printf(o, "flat %s vec3 tide_normals%d;\n", direction, i);
+    }
     for (int i = 0; i < packs(sh->frag_floats); i++) {
         if (wgsl) sb_printf(o, "    @location(%d) @interpolate(flat) tide_f%d: vec4f,\n", location++, i);
         else sb_printf(o, "flat %s vec4 tide_f%d;\n", direction, i);
@@ -5015,6 +5291,13 @@ static void put_vertex_main(emit *em, sb *o, const char *in, const char *out)
         }
     }
     if (sh->frag_world) sb_printf(o, "    %stide_world = tide_place.xyz;\n", out);
+    if (sh->frag_normals) { // What the frag's instance.Normal multiplies by, worked out here, once a vertex
+        need(em, H_NORMALS);
+        sb_put(o, wgsl ? "    let tide_turned = tide_normals(" : "    mat3 tide_turned = tide_normals(");
+        put_bound(em, NULL, NULL, (type){TY_FLOAT4X4, NULL});
+        sb_put(o, ");\n");
+        for (int i = 0; i < 3; i++) sb_printf(o, "    %stide_normals%d = tide_turned[%d];\n", out, i, i);
+    }
     for (int ints = 0; ints < 2; ints++) {
         const int words = ints ? sh->frag_ints : sh->frag_floats;
         for (int p = 0; p < packs(words); p++) {
@@ -5172,6 +5455,7 @@ static void put_wgsl_inputs(const shader *sh, sb *o)
     for (int i = 0; i < packs(sh->frag_floats); i++) sb_printf(o, "var<private> tide_f%d: vec4f;\n", i);
     for (int i = 0; i < packs(sh->frag_ints); i++) sb_printf(o, "var<private> tide_g%d: vec4i;\n", i);
     sb_put(o, "var<private> tide_at: vec4f;\nvar<private> tide_world: vec3f;\n");
+    for (int i = 0; sh->frag_normals && i < 3; i++) sb_printf(o, "var<private> tide_normals%d: vec3f;\n", i);
 }
 
 // The generator a stage's code rolls with (put_dice), where it has one: a
@@ -5287,6 +5571,7 @@ static void write_wgsl(program *prog, shader *sh)
         sb_put(&o, "}\n@fragment fn fragment(in: tide_corner) -> tide_colors {\n    tide_at = in.tide_at;\n");
     }
     if (sh->frag_world) sb_put(&o, "    tide_world = in.tide_world;\n");
+    for (int i = 0; sh->frag_normals && i < 3; i++) sb_printf(&o, "    tide_normals%d = in.tide_normals%d;\n", i, i);
     for (int i = 0; i < packs(sh->frag_floats); i++) sb_printf(&o, "    tide_f%d = in.tide_f%d;\n", i, i);
     for (int i = 0; i < packs(sh->frag_ints); i++) sb_printf(&o, "    tide_g%d = in.tide_g%d;\n", i, i);
     sb_printf(&o, "%s}\n", fragment.data);
@@ -5352,6 +5637,7 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
 {
     if (!code) return;
     if (code->is_frag && code->pixel_world) sh->frag_world = true;
+    if (code->is_frag && code->world_normal && sh->dims == 3) sh->frag_normals = true;
     for (int i = 1; i < code->params.count; i++) {
         const param *p = &code->params.items[i];
         if (p->type.decl == prog->instance && p->reads && p->reads[0] && sh->dims == 3) {
@@ -5525,7 +5811,8 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     }
     // What the vert writes for the frag, each struct it takes as `out`, and what
     // of it the frag's parameter of that type reads: only that goes on
-    int varyings = (sh->frag_world ? 1 : 0) + packs(sh->frag_floats) + packs(sh->frag_ints) + (stage_rolls(sh, STAGE_FRAG) ? 1 : 0);
+    int varyings = (sh->frag_world ? 1 : 0) + (sh->frag_normals ? 3 : 0) + packs(sh->frag_floats) + packs(sh->frag_ints)
+                 + (stage_rolls(sh, STAGE_FRAG) ? 1 : 0);
     for (int i = 1; sh->vert && i < sh->vert->params.count; i++) {
         const param *from = &sh->vert->params.items[i];
         if (!from->is_out || from->type.kind != TY_STRUCT) continue;
@@ -5578,6 +5865,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         if (stage_rolls(sh, STAGE_FRAG)) {
             diag_note("one of them is for its rolls: which instance of its draw a pixel is of, which its generator is made of");
         }
+        if (sh->frag_normals) diag_note("three of them are what its 'Normal' turns the mesh's normals into the world by");
         return NULL;
     }
     if (uniform_bytes > 3984) { // TIDE_SHADER_UNIFORM_BYTES

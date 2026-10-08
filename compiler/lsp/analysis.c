@@ -896,8 +896,9 @@ static void walk_value(const expr *e)
             add_occ(o);
         } else if (e->call == CALL_ADD || e->call == CALL_REMOVE || e->call == CALL_DESTROY || e->call == CALL_SEND
                    || e->call == CALL_LIST || e->call == CALL_MAP || e->call == CALL_GRID || e->call == CALL_SNAP
-                   || e->call == CALL_DISCARD) {
-            o.kind = OCC_METHOD; // e.Destroy(), items.Add(x), scores.TryGet(k, out v), cells.Clear(), this.Snap(), this.Discard()
+                   || e->call == CALL_DISCARD || e->call == CALL_NORMAL) {
+            // e.Destroy(), items.Add(x), scores.TryGet(k, out v), cells.Clear(), this.Snap(), this.Discard(), instance.Normal(n)
+            o.kind = OCC_METHOD;
             add_occ(o);
         } else if (e->call == CALL_LOAD || e->call == CALL_UNLOAD || e->call == CALL_SCENE_PLAYER) {
             add_occ((occurrence){.at = e->object->at, .len = 5, .kind = OCC_OWNER, .owner = str_from("Scene"),
@@ -1471,9 +1472,9 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_LOCAL_ENTITY: return "A handle to an entity of the local world: this machine's own, which only local code holds.";
     case TY_PLAYER: return "A player, independent of connections. `PlayerID(0)` names a player by index.";
     case TY_COLOR: return "A color: r, g, b and a from 0 to 1. Its constructor takes numbers and vectors totaling 3 or 4 channels, in order: `Color(uv.xy, 0)` or `Color(rgb)` has alpha 1; `Color(rgb, a)` or `Color(rgba)` supplies it. Ints and int vectors widen to floats.";
-    case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter[, wrap]])`. A Blit supplies its source to a read-only Texture shader parameter.";
-    case TY_DEPTH_TEXTURE: return "A local reference to a render target's depth, `target.depth`, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow wants.";
-    case TY_CUBEMAP: return "A local reference to a cube of six images, which a frag or vert reads by a direction from its middle, `Sample(direction)`, where it's an asset by its name or a field of a component or singleton it takes. An asset's is six files a glob matches, named for their faces: `asset Cubemap sky = \"art/sky_??.png\";`. `Cubemap(size)` is one a view draws into, a face at a time: `cube.faces[0]` to `cube.faces[5]` are RenderTargets, in the order +x, -x, +y, -y, +z, -z.";
+    case TY_TEXTURE: return "A local image reference, sampled on the GPU with `Sample(uv[, filter[, wrap]])`. A Blit supplies its source to a read-only Texture shader parameter. A function a frag or vert calls takes one as a parameter, and samples the texture its call names.";
+    case TY_DEPTH_TEXTURE: return "A local reference to a render target's depth, `target.depth`, which a frag or vert reads where it's a field of a component or singleton it takes: `Sample(uv)` gives how far the nearest thing drawn there is, 0 at the near plane to 1 at the far limit, and `Compare(uv, value)` how much of what's stored around there isn't nearer than `value`, 0 to 1, as a shadow wants. A function they call takes one as a parameter, `float Lit(DepthTexture shadow, float3 at)`, and reads the depth its call names, `Lit(lamp.shadow, at)`.";
+    case TY_CUBEMAP: return "A local reference to a cube of six images, which a frag or vert reads by a direction from its middle, `Sample(direction)`, where it's an asset by its name or a field of a component or singleton it takes; a function they call takes one as a parameter, and reads the cube its call names. An asset's is six files a glob matches, named for their faces: `asset Cubemap sky = \"art/sky_??.png\";`. `Cubemap(size)` is one a view draws into, a face at a time: `cube.faces[0]` to `cube.faces[5]` are RenderTargets, in the order +x, -x, +y, -y, +z, -z.";
     case TY_RENDER_TARGET: return "A local drawing destination. `RenderTarget(width, height)` is one of that size in logical pixels, like the window's, at the display's full resolution; `RenderTarget(width, height, 1)` has exactly that many pixels, whatever the display; `RenderTarget.Window()` is always the window's size. `samples: 4`, after everything else, draws each of its pixels with that many samples, which smooths the edges of the triangles drawn into it. Each says last what it holds when that isn't one color image: `Format.Depth` is depth alone, and a format for each makes several, `RenderTarget(width, height, Format.Rgba8, Format.Rgba16f)`, which a frag's `out Color` parameters go to in order. Drawing into one is as drawing into the window. Copies share the image; `Resize(width, height)` discards its contents and `Dispose()` releases it. Color and depth persist across frames. `target.color` is its Texture, `target.colors[1]` its second color image's, and `target.depth` its DepthTexture; `Draw.window` is the window destination.";
     case TY_RECT: return "A rectangle on the screen, for the GUI: x and y from the top left, y down, then width and height.";
     case TY_MESH: return "An asset's mesh: `asset Mesh<Corner> tree = \"art/tree.glb\";` is a glTF or an OBJ file as vertices of the struct in its `<>`, which the file fills by its fields' names (`position`, `normal`, `uv`, `uv2`, `color`, `tangent`). `Draw.Mesh(tree, transform, ...)` and `Draw.Instanced(tree, instances, ...)` draw it; `tree.vertices` and `tree.indices` are its lists, read-only, which any code reads. A local, a parameter and a result pass one on; no field keeps one.";
@@ -1695,6 +1696,7 @@ static void format_data_decl(const decl *d, sb *out)
         sb_put(out, ";\n");
     }
     if (d == A.prog->pixel) sb_put(out, "\n    void Discard();\n"); // Its one method (pixel_calls)
+    if (d == A.prog->instance) sb_put(out, "\n    float3 Normal(float3 normal);\n"); // ...and an Instance's (instance_calls)
     sb_put(out, "}");
 }
 
@@ -1874,7 +1876,8 @@ static const method_form texture_calls[] = {
      "neither. Written here, they're fixed for the draw. `Filter.Trilinear` also reads the texture's smaller "
      "images (its mipmaps) where it's drawn smaller than it is, so it doesn't shimmer: in a frag, of a `uv` made of "
      "the frag's parameters, constants and variables that are never assigned again. A vert reads the texture's own "
-     "pixels."},
+     "pixels, and so does a function they call, which samples a texture it takes as a parameter, the one its call "
+     "names, or an asset by its name."},
 };
 
 static const method_form depth_calls[] = {
@@ -1882,11 +1885,12 @@ static const method_form depth_calls[] = {
      "Reads a render target's depth in a frag or vert: how far the nearest thing drawn at `uv` is, from 0 at the "
      "camera's near plane to 1 at its far limit, as `this.depth` in a frag is, and 1 where nothing was drawn since the target "
      "was cleared. `uv` is from (0, 0) at the top left to (1, 1). It's the nearest pixel's: a depth blended between "
-     "two would be neither's."},
+     "two would be neither's. A function they call reads the depth it takes as a parameter the same way."},
     {"Compare", "Compare(float2 uv, float value) -> float",
      "Compares a render target's depth with `value` in a frag or vert: how much of what's stored around `uv` isn't "
      "nearer than `value`, from 0 to 1, which the GPU blends between pixels. For a shadow map, `value` is how far "
-     "the pixel is from the lamp, a little less, so what the lamp sees isn't in its own shadow: 1 is lit, 0 in shadow."},
+     "the pixel is from the lamp, a little less, so what the lamp sees isn't in its own shadow: 1 is lit, 0 in shadow. "
+     "A function they call compares the depth it takes as a parameter the same way."},
 };
 
 static const method_form cube_calls[] = {
@@ -1895,7 +1899,8 @@ static const method_form cube_calls[] = {
      "way, or what a reflection sees. One face goes on in the next, so there's no edge and no wrap. "
      "`Filter.Trilinear` also reads its smaller images, where a pixel covers many of its own, in a frag, of a "
      "direction made of the frag's parameters, constants and variables that are never assigned again. The cube "
-     "is an asset by its name, or a field of a component or singleton the frag or vert takes."},
+     "is an asset by its name, or a field of a component or singleton the frag or vert takes; in a function "
+     "they call, a parameter of its own, which is the cube its call names."},
     {"Resize", "Resize(float size)",
      "Another side for all six faces of a cube made with `Cubemap(size)`, in pixels, and empty images."},
     {"Dispose", "Dispose()",
@@ -1931,6 +1936,17 @@ static const method_form pixel_calls[] = {
      "itself."},
 };
 
+// An Instance's one method, in a frag or a vert.
+static const method_form instance_calls[] = {
+    {"Normal", "Normal(float3 normal) -> float3",
+     "A normal of the mesh as it is in the world, of length 1: `instance.Normal(vertex.normal)`. It's right however "
+     "the draw's transform scales the mesh, where `Math.Rotate(instance.transform, normal)` leans a normal over on "
+     "a mesh scaled more one way than another: a ball drawn as an egg, a cylinder as a flat disc. A mirrored mesh's "
+     "normals point out of it, and a mesh flattened along an axis has that axis for its normals. Nothing more is "
+     "sent for it: the GPU works it out from the transform, once a vertex. A 2D mesh has no transform, so its normal "
+     "comes back as it is, of length 1."},
+};
+
 // A frag's implicit pixel and a frag's or vert's Instance parameter.
 static const char *shader_record_doc(const decl *d)
 {
@@ -1940,7 +1956,7 @@ static const char *shader_record_doc(const decl *d)
     }
     if (d && d == A.prog->instance) {
         return "A frag's or vert's parameter: how the mesh was drawn. Its `transform` is sent to the GPU for each "
-               "instance.";
+               "instance, and `Normal(normal)` gives a normal of the mesh as it is in the world.";
     }
     return NULL;
 }
@@ -2076,9 +2092,13 @@ static const method_form *methods_of(const type t, size_t *count)
     case TY_SINGLETON: forms = singleton_calls; *count = sizeof singleton_calls / sizeof singleton_calls[0]; break;
     case TY_WORLD: forms = world_calls; *count = sizeof world_calls / sizeof world_calls[0]; break;
     case TY_RECORD:
-        if (t.decl != A.prog->pixel) break;
-        forms = pixel_calls;
-        *count = sizeof pixel_calls / sizeof pixel_calls[0];
+        if (t.decl == A.prog->instance) {
+            forms = instance_calls;
+            *count = sizeof instance_calls / sizeof instance_calls[0];
+        } else if (t.decl == A.prog->pixel) {
+            forms = pixel_calls;
+            *count = sizeof pixel_calls / sizeof pixel_calls[0];
+        }
         break;
     default: break;
     }
@@ -2958,7 +2978,10 @@ static void describe(const occurrence *o, sb *out)
                       : str_eq_c(o->name, "Frame")     ? "\n\nThis machine's frame. `Frame.dt` is the seconds since the "
                                                          "previous one started, for what isn't the match's: particles, "
                                                          "menus, a camera's shake. Local code reads it, and the "
-                                                         "functions it calls. The match's is `Time.dt`."
+                                                         "functions it calls. The match's is `Time.dt`. There's no "
+                                                         "clock beside it: add `Frame.dt` up in a field of local "
+                                                         "state, wrapped where it repeats, or read `Time.t`, the "
+                                                         "match's seconds."
                       : str_eq_c(o->name, "File") || str_eq_c(o->name, "Directory") ? "\n\nThis machine's filesystem, accessible from local code and its helpers. Fallible operations use IOError."
                       : str_eq_c(o->name, "Application") ? "\n\nPersistent save and temporary cache directories, selected by the game's stable appId."
                       : str_eq_c(o->name, "Storage") ? "\n\nAwait Storage.Flush() to confirm that preceding changes reached persistent storage."
@@ -5865,8 +5888,10 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         return;
     }
     // In a frag or vert: the GPU has no text, reads lists, maps and sets and changes none, and a grid there is a texture
-    // ...and in a function that takes a grid, which only those call
+    // ...and in a function that takes a grid or samples a texture, which only those call
     const bool gpu = is_shader(sc->decl) || (sc->decl && sc->decl->gpu_only);
+    // A function samples a texture it takes: one that doesn't yet is offered what it would write
+    const bool samples = gpu || (sc->decl && (sc->decl->kind == DECL_FUNCTION || sc->decl->kind == DECL_METHOD));
     if (t.kind == TY_RENDER_TARGET) {
         item(c, "color", CK_PROPERTY, "Texture",
              "The target's GPU color image, without CPU readback: its first, where it holds several.", NULL);
@@ -5920,7 +5945,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     }
     if (t.kind == TY_CUBEMAP) { // A frag reads it; a view draws into its faces, resizes it and lets it go
         static const char *const snippets[] = {"Sample($1)", "Resize($1)", "Dispose()"};
-        for (size_t i = gpu ? 0 : 1; i < (gpu ? 1 : sizeof cube_calls / sizeof cube_calls[0]); i++) {
+        for (size_t i = samples ? 0 : 1; i < (gpu ? 1 : sizeof cube_calls / sizeof cube_calls[0]); i++) {
             sb detail = {0};
             format_method(&cube_calls[i], t, &detail);
             item(c, cube_calls[i].name, CK_METHOD, detail.data, cube_calls[i].doc, snippets[i]);
@@ -5934,7 +5959,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         }
         return;
     }
-    if (gpu && t.kind == TY_DEPTH_TEXTURE) {
+    if (samples && t.kind == TY_DEPTH_TEXTURE) {
         for (size_t i = 0; i < sizeof depth_calls / sizeof depth_calls[0]; i++) {
             sb detail = {0};
             format_method(&depth_calls[i], t, &detail);
@@ -5942,7 +5967,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         }
         return;
     }
-    if (gpu && (t.kind == TY_GRID || t.kind == TY_TEXTURE)) {
+    if ((gpu && t.kind == TY_GRID) || (samples && t.kind == TY_TEXTURE)) {
         // A grid's cells are read by their place there, with its size; a Grid2 of colors or floats is sampled too
         if (t.kind == TY_GRID) item(c, "size", CK_PROPERTY, t.decl->dims == 3 ? "int3" : "int2", GRID_SIZE_FIELD_DOC, NULL);
         if (t.kind == TY_GRID && (t.decl->dims != 2 || (t.decl->fields.items[0].type.kind != TY_COLOR
@@ -6065,7 +6090,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     if (t.kind == TY_ENTITY && local) {
         item(c, "Send", CK_METHOD, "Send(command)", "Submits a command to this match entity; its handler checks the authenticated sender and untrusted payload.", "Send($1)");
     }
-    const bool pixel = t.kind == TY_RECORD && t.decl == A.prog->pixel;
+    const bool pixel = t.kind == TY_RECORD && (t.decl == A.prog->pixel || t.decl == A.prog->instance); // ...and an Instance's
     if (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID || changes || pixel) {
         size_t count;
         const method_form *forms = methods_of(t, &count);

@@ -595,7 +595,7 @@ frag Ground(Corner corner, out Color color)
 // A marble in its player's color, with a white band and a spot that show it rolling.
 frag Glass(Corner corner, out Color color, Instance instance, Marble marble, Look look)
 {
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 normal = instance.Normal(corner.normal);
     float diffuse = Math.Max(Math.Dot(normal, SUN), 0);
     float3 toEye = Math.Normalize(look.eye - this.world);
     float glint = Math.Pow(Math.Max(Math.Dot(normal, Math.Normalize(SUN + toEye)), 0), 40);
@@ -608,7 +608,7 @@ frag Glass(Corner corner, out Color color, Instance instance, Marble marble, Loo
 
 frag Gold(Corner corner, out Color color, Instance instance, Look look)
 {
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 normal = instance.Normal(corner.normal);
     float diffuse = Math.Abs(Math.Dot(normal, SUN));
     float3 toEye = Math.Normalize(look.eye - this.world);
     float glint = Math.Pow(Math.Abs(Math.Dot(normal, Math.Normalize(SUN + toEye))), 20);
@@ -621,7 +621,7 @@ frag Gold(Corner corner, out Color color, Instance instance, Look look)
 
 frag Bump(Corner corner, out Color color, Dome dome, Instance instance)
 {
-    float3 normal = Math.Normalize(Math.Rotate(instance.transform, corner.normal));
+    float3 normal = instance.Normal(corner.normal);
     float light = 0.45 + 0.55 * Math.Max(Math.Dot(normal, SUN), 0);
     Color paint = Math.Frac(corner.position.y * 2.5 + 0.25) < 0.5 ? Color(0.95, 0.33, 0.4) : Color(0.98, 0.94, 0.9);
     color = paint * light + Color(1, 0.85, 0.5, 0) * dome.glow * 0.6;

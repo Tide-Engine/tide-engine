@@ -1975,6 +1975,7 @@ static bool always_returns(const stmt *s);
 static void check_stmt(checker *c, stmt *s);
 static type check_grid_method(checker *c, expr *e, type grid);
 static type check_grid_sample(const checker *c, expr *e, type grid);
+static type check_instance_call(expr *e);
 static type check_depth_read(const checker *c, expr *e);
 static type check_cube_sample(const checker *c, expr *e);
 static type check_new_grid(checker *c, expr *e, type want);
@@ -2705,6 +2706,45 @@ static const char *shader_word(const decl *d)
     return d->is_frag ? "frag" : "vert";
 }
 
+// The function or method being checked, where it's one code the GPU runs can
+// call, or NULL. A frag and a vert sample textures, and so does a function
+// they call: its own parameter's, which is the texture its call names, or an
+// asset's. That makes the function the GPU's alone (check_gpu_only_calls):
+// nothing on the CPU reads a texture's pixels.
+static decl *gpu_function(const checker *c)
+{
+    decl *m = c->method;
+    if (!m || (m->kind != DECL_FUNCTION && m->kind != DECL_METHOD)) return NULL;
+    return m->is_extern || m->is_async || m->is_operator || m->is_interpolate || m->is_audio || m->takes_action ? NULL : m;
+}
+
+// A function's Sample or Compare of `of`, a texture: its own parameter by its
+// name, or with `assets`, an asset by its name. Anything else is said, and
+// false. The function is then the GPU's alone.
+static bool function_samples(decl *fn, const expr *call, const expr *of, const type_kind reads, const bool assets)
+{
+    const bool own = of->kind == E_NAME && of->bind == BIND_PARAM && of->param->function_param;
+    if (!own && !(assets && of->bind == BIND_ASSET)) {
+        const char *what = reads == TY_DEPTH_TEXTURE ? "DepthTexture" : reads == TY_CUBEMAP ? "Cubemap" : reads == TY_GRID ? "grid" : "Texture";
+        diag_error(of->at, "a function samples a %s it takes as a parameter of its own%s", what,
+                   !assets ? "" : reads == TY_GRID ? ", or a Grid2<Color> asset by its name" : reads == TY_CUBEMAP
+                   ? ", or a Cubemap asset by its name" : ", or a Texture asset by its name");
+        diag_note("the frag or vert that calls it passes the one to read, a field of a component or singleton it takes: "
+                  "'%s " STR_FMT "(%s %s, ...)', called as '" STR_FMT "(%s, ...)'",
+                  reads == TY_DEPTH_TEXTURE ? "float" : "Color", STR_ARG(fn->name),
+                  reads == TY_DEPTH_TEXTURE ? "DepthTexture" : reads == TY_CUBEMAP ? "Cubemap" : reads == TY_GRID ? "Grid2<Color>" : "Texture",
+                  reads == TY_DEPTH_TEXTURE ? "shadow" : reads == TY_CUBEMAP ? "sky" : "image", STR_ARG(fn->name),
+                  reads == TY_DEPTH_TEXTURE ? "lamp.shadow" : reads == TY_CUBEMAP ? "room.sky" : "look.image");
+        return false;
+    }
+    if (!fn->gpu_only) {
+        fn->gpu_only = true;
+        fn->gpu_only_at = call->at;
+        fn->gpu_only_reads = reads == TY_GRID ? TY_TEXTURE : reads; // A grid that's sampled is read as a texture is
+    }
+    return true;
+}
+
 // Something only the CPU does, in a frag or vert: reports it, with what to
 // write instead, and returns true. False in any other code.
 static bool gpu_refuses(const checker *c, const loc at, const char *what, const char *instead)
@@ -2932,6 +2972,28 @@ static bool check_frame_time_use(checker *c, const loc at)
     if (!code->frame_time) code->frame_time_at = at;
     code->frame_time = true;
     if (code->is_async && code->kind == DECL_FUNCTION) return note_side(code, TASK_LOCAL, at);
+    return true;
+}
+
+// Frame.time, Frame.elapsed, Frame.Now(): code that asks the frame for a clock.
+// It has none on purpose, as a float of seconds gets coarser as it grows, so
+// the error says what to write where the code is: the match has Time's, and
+// anything else a clock of its own in local state, or Time's. No "did you
+// mean 'dt'" for 't': it's another thing. False, saying nothing, for a name
+// that's no clock's.
+static bool refuse_frame_clock(const checker *c, const loc at, const str name, const bool call)
+{
+    if (!builtin_frame_clock(name)) return false;
+    diag_error(at, "Frame has no %s '" STR_FMT "'", call ? "function" : "member", STR_ARG(name));
+    const decl *code = c->method ? c->method : c->system;
+    if (code && code->kind == DECL_SYSTEM && !is_local_code(code)) {
+        diag_note("Frame is this machine's, and has no clock: the match takes 'Time time' and reads 'time.t', the "
+                  "seconds since it started");
+        return true;
+    }
+    diag_note("Frame has no clock, because a float of seconds gets coarser as it grows: add 'Frame.dt' up in a field of "
+              "local state and wrap it where it repeats, like 'spinner.turn += Frame.dt * 4;'");
+    diag_note("for the match's time, take 'Time time' and read 'time.t', the seconds since the match started");
     return true;
 }
 
@@ -5913,6 +5975,7 @@ static type check_method(checker *c, expr *e)
         if (plays && str_eq_c(e->name, "SetVolume")) return check_audio_volume(c, e);
         if (plays && str_eq_c(e->name, "SetEffect")) return check_audio_bus_effect(c, e);
         if (str_eq_c(owner, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR; // Screen.Flip: the frame's window
+        if (str_eq_c(owner, "Frame") && refuse_frame_clock(c, e->at, e->name, true)) return T_ERR; // Frame.Now()
         if (draws && old_setting(e)) return T_ERR;
         const type result = resolve_builtin_call(owner, e);
         if (result.kind == TY_ERROR) return result;
@@ -6001,6 +6064,10 @@ static type check_method(checker *c, expr *e)
         }
         e->call = CALL_DISCARD;
         return T_VOID_;
+    }
+    if (obj.kind == TY_RECORD && obj.decl == c->prog->instance) { // instance.Normal(vertex.normal)
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        return check_instance_call(e);
     }
     if (obj.kind == TY_LIST) return check_list_method(c, e, obj);
     if (obj.kind == TY_MAP || obj.kind == TY_SET) return check_map_method(c, e, obj);
@@ -6927,6 +6994,7 @@ static type check_member(checker *c, expr *e)
         }
         if (str_eq_c(e->object->name, "Screen") && !check_frame_use(c, e->at, "Screen")) return T_ERR;
         if (builtin_draw_owner(e->object->name) && !check_frame_use(c, e->at, str_to_cstr(e->object->name))) return T_ERR;
+        if (str_eq_c(e->object->name, "Frame") && refuse_frame_clock(c, e->at, e->member, false)) return T_ERR;
         const type member = resolve_builtin_member(e->object->name, e);
         if (str_eq_c(e->object->name, "Frame") && member.kind == TY_ERROR) {
             diag_note("'Frame.dt' is the seconds since this machine's previous frame started");
@@ -7998,10 +8066,13 @@ static type check_new_grid(checker *c, expr *e, const type want)
 // Filter.Point, Wrap.Repeat): a grid of colors read as a texture, in a frag or
 // vert. The grid is a field of one of its parameters, and the filter and the
 // wrap are written there: the GPU is told all three before any pixel runs.
+// A function they call samples too: a texture or a grid that's a parameter of
+// its own, which its call names, or an asset (function_samples).
 static type check_grid_sample(const checker *c, expr *e, const type grid)
 {
     const decl *shader = gpu_code(c);
-    if (!shader) {
+    decl *function = shader ? NULL : gpu_function(c); // ...or in a function they call
+    if (!shader && !function) {
         diag_error(e->at, grid.kind == TY_TEXTURE ? "Sample reads a Texture on the GPU: in a frag or a vert"
                                                : "Sample reads a grid as a texture, which the GPU does: in a frag or a vert");
         if (grid.kind == TY_GRID) diag_note("here, read a cell by its place: 'grid[x, y]'");
@@ -8017,7 +8088,9 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
                         && of->param->type.kind == TY_TEXTURE;
     // A Grid2<Color> or a Texture asset, by its name (docs/spec.md, Assets)
     const bool asset = (grid.kind == TY_GRID || grid.kind == TY_TEXTURE) && of->bind == BIND_ASSET;
-    if (!direct && !asset && (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
+    if (function) {
+        if (!function_samples(function, e, of, grid.kind, true)) return T_ERR;
+    } else if (!direct && !asset && (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
                               || of->object->param->function_param)) {
         diag_error(of->at, "a %s samples a %s that's a field of a component or singleton it takes, like 'models.wood.Sample(uv)'%s",
                    shader_word(shader), grid.kind == TY_TEXTURE ? "Texture" : "grid",
@@ -8030,7 +8103,7 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
         }
         return T_ERR;
     }
-    if (!direct && !asset && of->object->param->type.kind == TY_STRUCT) {
+    if (!function && !direct && !asset && of->object->param->type.kind == TY_STRUCT) {
         diag_error(of->at, "a struct a draw supplies, its instances' or its values', carries no texture: keep the sampled "
                    "%s in a component or singleton", grid.kind == TY_TEXTURE ? "Texture" : "grid");
         return T_ERR;
@@ -8072,6 +8145,31 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
     return (type){TY_COLOR, NULL};
 }
 
+// instance.Normal(normal), in a frag or a vert: a normal of the mesh as it is
+// in the world, of length 1. It goes through the draw's transform as a normal
+// has to, which Math.Rotate doesn't where the transform scales the mesh more
+// one way than another (ex_normal in shader.c).
+static type check_instance_call(expr *e)
+{
+    const str instance = e->object->kind == E_NAME ? e->object->name : str_from("instance");
+    if (!str_eq_c(e->name, "Normal")) {
+        diag_error(e->at, "an Instance has one method, 'Normal(normal)', which gives a normal of the mesh as it is in the "
+                          "world; the rest is its 'transform'");
+        return T_ERR;
+    }
+    if (!order_named_args(e, "normal", 0)) return T_ERR;
+    for (int i = 0; i < e->args.count; i++) {
+        if (e->args.items[i]->type.kind == TY_ERROR) return T_ERR; // Said already
+    }
+    if (e->args.count != 1 || e->args.items[0]->type.kind != TY_FLOAT3) {
+        diag_error(e->at, "Normal takes a normal of the mesh, a float3 of any length, and gives it as it is in the world, of "
+                          "length 1: '" STR_FMT ".Normal(vertex.normal)'", STR_ARG(instance));
+        return T_ERR;
+    }
+    e->call = CALL_NORMAL;
+    return (type){TY_FLOAT3, NULL};
+}
+
 // shadow.Sample(uv) and shadow.Compare(uv, value): a render target's depth,
 // read in a frag or a vert. Sample gives how far the nearest thing drawn at
 // `uv` is, from 0 at the camera's near plane to 1 at its far limit, as
@@ -8079,25 +8177,30 @@ static type check_grid_sample(const checker *c, expr *e, const type grid)
 // is neither's. Compare gives how much of what's stored around `uv` isn't
 // nearer than `value`, from 0 to 1, which the GPU works out between pixels:
 // what a shadow's edge wants. The DepthTexture is a field of a component or a
-// singleton the frag takes, where a view put a target's `depth`.
+// singleton the frag takes, where a view put a target's `depth`; in a
+// function a frag or a vert calls, it's the function's own parameter, which
+// the call names that field for.
 static type check_depth_read(const checker *c, expr *e)
 {
     const bool compare = str_eq_c(e->name, "Compare");
     const char *form = compare ? "Compare(uv, value)" : "Sample(uv)";
     const decl *shader = gpu_code(c);
-    if (!shader) {
+    decl *function = shader ? NULL : gpu_function(c);
+    if (!shader && !function) {
         diag_error(e->at, "%s reads a render target's depth on the GPU: in a frag or a vert", compare ? "Compare" : "Sample");
         return T_ERR;
     }
     const expr *of = e->object;
-    if (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
+    if (function) {
+        if (!function_samples(function, e, of, TY_DEPTH_TEXTURE, false)) return T_ERR;
+    } else if (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
         || of->object->param->function_param) {
         diag_error(of->at, "a %s reads a DepthTexture that's a field of a component or singleton it takes, like 'lamp.shadow.%s'",
                    shader_word(shader), form);
         diag_note("a view puts a target's depth there: 'lamp.shadow = lamp.map.depth;'");
         return T_ERR;
     }
-    if (of->object->param->type.kind == TY_STRUCT) {
+    if (!function && of->object->param->type.kind == TY_STRUCT) {
         diag_error(of->at, "a struct a draw supplies, its instances' or its values', carries no texture: keep the sampled "
                    "DepthTexture in a component or singleton");
         return T_ERR;
@@ -8131,25 +8234,29 @@ static type check_depth_read(const checker *c, expr *e)
 // sky.Sample(direction) and sky.Sample(direction, Filter.Trilinear): a
 // Cubemap read in a frag or a vert, by the direction from its middle, of any
 // length. The cube is an asset by its name, or a field of a component or a
-// singleton the code takes, where a view put one. The filter is written
-// there, as a texture's is; a cube has no edge, so no wrap.
+// singleton the code takes, where a view put one; in a function they call, a
+// parameter of its own. The filter is written there, as a texture's is; a
+// cube has no edge, so no wrap.
 static type check_cube_sample(const checker *c, expr *e)
 {
     const decl *shader = gpu_code(c);
-    if (!shader) {
+    decl *function = shader ? NULL : gpu_function(c); // ...or in a function they call, of its own parameter
+    if (!shader && !function) {
         diag_error(e->at, "Sample reads a Cubemap on the GPU: in a frag or a vert");
         return T_ERR;
     }
     const expr *of = e->object;
     const bool asset = of->bind == BIND_ASSET;
-    if (!asset && (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
+    if (function) {
+        if (!function_samples(function, e, of, TY_CUBEMAP, true)) return T_ERR;
+    } else if (!asset && (of->kind != E_MEMBER || !of->field || of->object->kind != E_NAME || of->object->bind != BIND_PARAM
                    || of->object->param->function_param)) {
         diag_error(of->at, "a %s samples a Cubemap that's an asset by its name, or a field of a component or singleton it takes, "
                            "like 'room.reflection.Sample(direction)'", shader_word(shader));
         diag_note("a view puts a cube there: 'room.reflection = Cubemap(256);'");
         return T_ERR;
     }
-    if (!asset && of->object->param->type.kind == TY_STRUCT) {
+    if (!function && !asset && of->object->param->type.kind == TY_STRUCT) {
         diag_error(of->at, "a struct a draw supplies, its instances' or its values', carries no texture: keep the sampled "
                            "Cubemap in a component or singleton");
         return T_ERR;
@@ -11844,6 +11951,7 @@ static void check_signature(checker *c, decl *m)
             } else if (!m->gpu_only) {
                 m->gpu_only = true;
                 m->gpu_only_at = p->type_at;
+                m->gpu_only_reads = TY_GRID;
             }
         }
         if (holds_render_resource(p->type)) {
@@ -15884,6 +15992,9 @@ static void check_io_calls(const checker *c)
 // A function that takes a grid is written for the grid each call names, which
 // only the GPU's code is: a frag, a vert and the functions they call. So are
 // the functions that call one.
+// A function that samples a texture is the GPU's alone too, written for the
+// texture each call names: nothing on the CPU reads a texture's pixels, a
+// target's depth or a cube.
 static void check_gpu_only_calls(const checker *c)
 {
     for (bool changed = true; changed;) {
@@ -15894,16 +16005,29 @@ static void check_gpu_only_calls(const checker *c)
             if (site->from->kind != DECL_FUNCTION && site->from->kind != DECL_METHOD) continue;
             site->from->gpu_only = true;
             site->from->gpu_only_at = site->call->at;
+            site->from->gpu_only_reads = site->to->gpu_only_reads;
             changed = true;
         }
     }
     for (int i = 0; i < c->calls.count; i++) {
         const call_site *site = &c->calls.items[i];
         if (!site->to->gpu_only || site->from->gpu_only || site->from->kind == DECL_SHADER) continue;
-        diag_error(site->call->at, "'" STR_FMT "' reads a grid it's passed, which only code the GPU runs does: a frag, a vert "
-                   "and the functions they call", STR_ARG(site->to->name));
-        diag_note_at(site->to->gpu_only_at, "it takes or passes the grid on line %d; here, read the cells through the grid's "
-                     "component or singleton, like 'board.cells[x, y]'", site->to->gpu_only_at.line);
+        const type_kind reads = site->to->gpu_only_reads;
+        if (reads != TY_TEXTURE && reads != TY_DEPTH_TEXTURE && reads != TY_CUBEMAP) {
+            diag_error(site->call->at, "'" STR_FMT "' reads a grid it's passed, which only code the GPU runs does: a frag, a vert "
+                       "and the functions they call", STR_ARG(site->to->name));
+            diag_note_at(site->to->gpu_only_at, "it takes or passes the grid on line %d; here, read the cells through the grid's "
+                         "component or singleton, like 'board.cells[x, y]'", site->to->gpu_only_at.line);
+            continue;
+        }
+        diag_error(site->call->at, "'" STR_FMT "' %s, which only code the GPU runs does: a frag, a vert and the functions they call",
+                   STR_ARG(site->to->name), reads == TY_DEPTH_TEXTURE ? "reads a render target's depth"
+                                            : reads == TY_CUBEMAP ? "samples a Cubemap" : "samples a texture");
+        diag_note_at(site->to->gpu_only_at, "it does on line %d, itself or through what it calls there: %s on the GPU, where a "
+                     "frag or a vert that calls '" STR_FMT "' reads %s", site->to->gpu_only_at.line,
+                     reads == TY_DEPTH_TEXTURE ? "a target's depth stays" : reads == TY_CUBEMAP ? "a cube's pixels stay"
+                                                                                                : "a texture's pixels stay",
+                     STR_ARG(site->to->name), reads == TY_DEPTH_TEXTURE ? "it" : "them");
     }
 }
 

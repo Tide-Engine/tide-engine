@@ -28,6 +28,8 @@ export interface Rendered {
     html: string;
     headings: Heading[];
     sections: Section[];
+    /** Every heading's anchor, the title's among them. */
+    ids: string[];
 }
 
 interface Env extends MarkdownEnv {
@@ -253,6 +255,7 @@ export function render(source: string, file: string, isPage: (path: string) => b
     let title = '';
     const headings: Heading[] = [];
     const sections: Section[] = [{ id: '', titles: [], text: '' }];
+    const ids: string[] = [];
     const trail: string[] = [];
     const used = new Map<string, number>();
     for (let i = 0; i < tokens.length; i++) {
@@ -266,6 +269,7 @@ export function render(source: string, file: string, isPage: (path: string) => b
             used.set(base, count + 1);
             const id = count ? `${base}-${count}` : base;
             token.attrSet('id', id);
+            ids.push(id);
             if (level === 1 && !title) {
                 title = text;
                 sections[0].titles = [text];
@@ -283,5 +287,5 @@ export function render(source: string, file: string, isPage: (path: string) => b
         }
     }
 
-    return { title, html: md.renderer.render(tokens, md.options, env), headings, sections };
+    return { title, html: md.renderer.render(tokens, md.options, env), headings, sections, ids };
 }

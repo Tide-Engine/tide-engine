@@ -431,6 +431,19 @@ typedef struct shader_sample {
     bool filter_said, wrap_said;
 } shader_sample;
 
+// A texture a function or method samples, in code the GPU runs: its own
+// parameter's, which each call names, or an asset's by its name, and how the
+// Sample is written. A frag or vert that reaches the function samples the
+// texture it's called with that way (shader.c, pass_samples).
+typedef struct function_sample {
+    int param;                // Which of the function's parameters it samples: -1 for an asset...
+    const struct expr *asset; // ...whose name this is, where the function samples it
+    shader_read read;
+    int filter, wrap;         // As the Sample says them: -1 for what it leaves to the texture
+    loc at;                   // The Sample
+    bool warned, refused;     // That it can't read between a texture's smaller images there was said, once each way
+} function_sample;
+
 // One of an enum's members: `Options`, or `Options = 3`.
 typedef struct enum_member {
     str name;
@@ -575,7 +588,7 @@ typedef struct decl {
     // names it doesn't say: 1 + the enum member's number, or 0 for none (declared_sampling)
     int sample_filter, sample_wrap;
     // [Raw] before it: its pixels are numbers as the file has them, with no alpha worked into them, which
-    // only a frag or a vert reads, by its name (declared_raw)
+    // only code the GPU runs reads, by its name (declared_raw)
     bool sample_raw;
     bool asset_many; // A List or Map: a glob's matches, or the one file its path names
 
@@ -685,12 +698,17 @@ typedef struct decl {
     // Frags and verts (DECL_SHADER), and the functions they call
     bool is_frag;                 // A frag; else a vert
     bool pixel_world;             // A frag reads this.world: pass the world position from its vertices
+    bool world_normal;            // A frag or a vert calls instance.Normal: a frag's is handed the matrix normals go through
     int outputs;                  // A frag: the colors it writes, its `out Color` parameters, which go to a target's color images in that order
     VEC(shader_sample) samples;   // The grids it samples, once each
     int gpu_state;                // Code checked for the GPU: 1 while it is, 2 once it fits, 3 if it doesn't
-    bool gpu_only;                // A function or method that takes a grid, or calls one that does: only code the GPU runs calls it, and no C is written for it
+    // A function or method that takes a grid or samples a texture, or calls one that does: only code the GPU runs
+    // calls it, and no C is written for it
+    bool gpu_only;
     loc gpu_only_at;
+    type_kind gpu_only_reads;     // ...what it reads there: TY_GRID for a grid it takes, or the type it samples
     VEC(const struct decl *) gpu_data; // A function the GPU runs: the assets whose list or grid it reads the numbers of by name, in what it calls too
+    VEC(function_sample) gpu_samples;  // ...and the textures it samples, its parameters' and assets', in what it calls too
     VEC(struct decl *) bound;     // Views: components and singletons the frags and verts of its mesh draw calls read, which it doesn't take itself
 } decl;
 
@@ -761,6 +779,7 @@ typedef enum builtin_call {
     CALL_GRID,      // cells.Clear(), a grid's methods: `name` says which; type_decl is the grid
     CALL_NEW_GRID,  // Grid2(1024, 1024) or Grid3(...): a grid with that size (0: open), whose type comes from where it goes
     CALL_DISCARD,   // this.Discard(), in a frag: the pixel isn't drawn
+    CALL_NORMAL,    // instance.Normal(normal), in a frag or a vert: the mesh's normal as it is in the world
     CALL_RANDOM,    // random.NextInt(6), a Random's methods: calls c_callee with the generator's address first
     CALL_ROLL,      // Random.NextInt(6), on the type: calls c_callee with the generator its code was handed
 } builtin_call;
@@ -1124,6 +1143,7 @@ typedef struct shader {
     int rolled_at, seed_at;
     bool *frag_fields;          // By the vertex's field: whether its pixels read it
     bool frag_world;            // ...and whether they read where they are in the world
+    bool frag_normals;          // ...and whether they call instance.Normal: the vertex stage passes on what normals go through
     const char *name;           // For messages: "Wave and Shade on BoxVertex"
     const char *glsl_vertex, *glsl_fragment, *wgsl;
 } shader;

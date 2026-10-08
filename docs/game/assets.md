@@ -82,12 +82,12 @@ view Show(mut Player player)
 }
 ```
 
-- A `Texture` is a value (see [A Texture is a value](./views.md#a-texture-is-a-value)): a draw's texture in 2D and 3D, the source a [frag's `Texture` parameter](./shaders.md#textures) is given, a [`Draw.Blit`](./views.md#targets-and-post-processing)'s source, something a field or a local holds and a function takes. A frag samples one by its name too: `hero.Sample(uv)`.
+- A `Texture` is a value (see [A Texture is a value](./meshes-and-textures.md#a-texture-is-a-value)): a draw's texture in 2D and 3D, the source a [frag's `Texture` parameter](./shaders.md#textures) is given, a [`Draw.Blit`](./render-targets.md#post-processing)'s source, something a field or a local holds and a function takes. A frag samples one by its name too: `hero.Sample(uv)`.
 - It's a byte a channel, as the GPU keeps it: a quarter of what the same image takes as a `Grid2<Color>`, and nothing copies it on its way to the GPU.
 - No code reads it. It has no cells and no size to ask. An image whose pixels or size the game needs is a `Grid2<Color>`, which draws as a `Texture` too, and one file can be declared both ways.
 - It's this machine's, like everything that's drawn: views, local handlers and frags use it, and match code can't name one. The match reads a `Grid2<Color>`.
 - What a field keeps of `hero` or of `run[2]` is that image as the files have it now: under `tide run`, a saved picture shows through the copies a game kept, as it does through `hero` itself.
-- How it's sampled can be said once, on its declaration: `[Filter(Filter.Point), Wrap(Wrap.Repeat)]` before the asset (see [Saying it once, on the texture](./views.md#saying-it-once-on-the-texture)). The `Texture` carries it: what a field keeps of `hero` is sampled as `hero` is.
+- How it's sampled can be said once, on its declaration: `[Filter(Filter.Point), Wrap(Wrap.Repeat)]` before the asset (see [Saying it once, on the texture](./meshes-and-textures.md#saying-it-once-on-the-texture)). The `Texture` carries it: what a field keeps of `hero` is sampled as `hero` is.
 
 ## Cubemaps
 
@@ -120,9 +120,9 @@ asset Mesh<Corner> tree = "art/tree.glb";
 asset List<Mesh<Corner>> rocks = "art/rocks/*.glb";         // In order of their paths
 asset Map<string, Mesh<Corner>> props = "art/props/*.glb";  // By them: props["art/props/bench.glb"]
 
-frag Look(Corner corner, out Color color, Sun sun)
+frag Look(Corner corner, out Color color, Instance instance, Sun sun)
 {
-    color = corner.color * Math.Max(Math.Dot(Math.Normalize(corner.normal), -sun.direction), 0.2);
+    color = corner.color * Math.Max(Math.Dot(instance.Normal(corner.normal), -sun.direction), 0.2);
     color.a = 1;
 }
 
@@ -154,7 +154,7 @@ The rocket below is a `.glb` as a modelling tool exports one: five meshes with a
 - A struct has the ones it needs, in any order: `Corner` above takes no uvs, so the pack holds none.
 - **A field of any other name keeps its default.** So one struct serves the meshes a game makes in code and the ones it loads: `float glow = 1;` is 1 at every vertex of a file's.
 - A field with one of those names and another type is an error at the declaration, which says the type the file's is.
-- The built-in [`Vertex3`](./views.md#_3d) is a position, a uv and a color: `asset Mesh<Vertex3> crate = "art/crate.glb";` draws with no frag, `Draw.Mesh(crate, transform, wood)`.
+- The built-in [`Vertex3`](./3d.md) is a position, a uv and a color: `asset Mesh<Vertex3> crate = "art/crate.glb";` draws with no frag, `Draw.Mesh(crate, transform, wood)`.
 
 **It's two lists.** `tree.vertices` is a `List<Corner>` and `tree.indices` a `List<int>`, three for each triangle, and `Draw.Mesh(tree.vertices, tree.indices, transform, Look)` is the same draw. Any code reads them, the match too, since every machine has the same pack, to the bit: a system can build a collider from a rock's own triangles. They're read-only, like every asset; copy one to change it, `mut var mine = tree.vertices;`.
 
@@ -167,7 +167,7 @@ The rocket below is a `.glb` as a modelling tool exports one: five meshes with a
 - **A texture a model has is a file of its own**, a PNG beside it, declared like any: `asset Texture bark = "art/bark.png";`, and given to the draw.
 - A mesh holds 16,777,216 vertices at the most.
 
-**It comes in as Tide has the world.** Mesh files are right-handed with their triangles' fronts counterclockwise, and Tide's world is left-handed with them [clockwise](./views.md#which-side-draws), like Unity's. So a file's `x` is turned around and its triangles are wound the other way: `+y` stays up, a model that faces `+z` in its file faces `+z` here, and nothing is mirrored. A glTF's colors are light, and a `Color` is what the screen shows, so they're converted; an OBJ's are taken as written.
+**It comes in as Tide has the world.** Mesh files are right-handed with their triangles' fronts counterclockwise, and Tide's world is left-handed with them [clockwise](./3d.md#which-side-draws), like Unity's. So a file's `x` is turned around and its triangles are wound the other way: `+y` stays up, a model that faces `+z` in its file faces `+z` here, and nothing is mirrored. A glTF's colors are light, and a `Color` is what the screen shows, so they're converted; an OBJ's are taken as written.
 
 **Nothing keeps one.** A `Mesh` is the pack's own memory, which code reads by the asset's name: a local, a function's parameter and what a function returns pass one on, and no field holds one, nor a task while it waits. What says which model a thing has is a number or a key of yours:
 
@@ -261,7 +261,7 @@ Bytes that every player should see go into the match through a [command](./comma
 
 `grid.Decode(bytes)` reads a PNG into a `Grid2<Color>` field of a component, singleton or scene, sizing the grid as the image is and writing every pixel. It fails with `IOError.InvalidData` for bytes that aren't a PNG, or are wrong anywhere, and then the grid is as it was.
 
-It's pure, so it runs in match code as well as local code: a handler that decodes gives every machine the same pixels, bit for bit, because the engine's own reader does the decoding, with no system library in the way. The grid then draws as a texture like any `Grid2<Color>` (see [Views and drawing](./views.md)).
+It's pure, so it runs in match code as well as local code: a handler that decodes gives every machine the same pixels, bit for bit, because the engine's own reader does the decoding, with no system library in the way. The grid then draws as a texture like any `Grid2<Color>` (see [Meshes and textures](./meshes-and-textures.md#textures)).
 
 A player's own picture, decoded for this machine alone:
 
