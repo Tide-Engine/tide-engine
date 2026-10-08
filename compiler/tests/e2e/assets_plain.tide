@@ -30,6 +30,15 @@ singleton Probe
     string nested;
     string copied;
     List<byte> kept;
+    int oneNoteCount;
+    string oneNote;
+    int oneRunCount;
+    bool oneRunKeyed;
+    Color oneRunPixel;
+    int oneTableCount;
+    int oneTableBytes;
+    string oneRules;
+    int noteLength;
 }
 
 system Read(mut Probe probe)

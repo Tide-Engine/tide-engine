@@ -24,7 +24,7 @@ function check(condition, message) {
     if (!condition) throw new Error(message);
 }
 
-// The game: a PNG beside it, text, and a URL
+// The game: a PNG beside it, text, and a URL, which a list and a map of one name too
 rmSync(opts.work, { recursive: true, force: true });
 mkdirSync(join(opts.work, "game", "art"), { recursive: true });
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEElEQVR42mP4z8DwHwohFABFzAf5jspQtgAAAABJRU5ErkJggg==", "base64");
@@ -57,6 +57,8 @@ function game(credits) {
     writeFileSync(join(opts.work, "game", "game.tide"), `asset Grid2<Color> dot = "art/dot.png";
 asset string rules = "rules.txt";
 asset string credits = "${credits}";
+asset List<string> everyCredit = "${credits}";
+asset Map<string, string> creditsByUrl = "${credits}";
 
 scene Main
 {
@@ -71,7 +73,7 @@ singleton Seen
 system Note(mut Seen seen)
 {
     seen.width = dot.size.x;
-    seen.chars = rules.length + credits.length;
+    seen.chars = rules.length + credits.length + everyCredit[0].length + creditsByUrl.count;
 }
 `);
 }
@@ -96,10 +98,12 @@ try {
     game(`http://127.0.0.1:${port}/credits.txt`);
     let r = await build(["--pack-c"]);
     check(r.code === 0, `the first build failed:\n${r.said}`);
-    check(requests.length === 1 && requests[0] === "", "the first build should fetch the URL once, with no ETag");
+    check(requests.length === 1 && requests[0] === "", "the first build should fetch the URL once, with no ETag, however many declarations name it");
     const pack = readFileSync(join(r.out, "game.pack"));
     check(pack.subarray(0, 8).toString() === "TIDEPACK", "the pack starts with its magic");
     check(pack.includes(Buffer.from("Credits: everyone.")) && pack.includes(Buffer.from("Be kind.")), "the pack holds the text");
+    check(pack.indexOf("Credits: everyone.") === pack.lastIndexOf("Credits: everyone."), "...once, for the three declarations that name it");
+    check(pack.includes(Buffer.from(`http://127.0.0.1:${port}/credits.txt`)), "a map of one URL is keyed by the URL");
     const c = readFileSync(join(r.out, "game_pack.c"), "utf8");
     check(c.includes("const unsigned char tide_game_pack[]") && c.includes(`tide_game_pack_size = ${pack.length};`), "the pack as C");
     const cache = join(opts.work, "game", ".tide", "assets", "urls");

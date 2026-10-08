@@ -10,6 +10,8 @@ asset Texture heroAgain = "assets/hero.png";
 asset Grid2<Color> heroCells = "assets/hero.png"; // The same file as cells code reads: a value of its own
 asset List<Texture> run = "assets/run/*.png";
 asset Map<string, Texture> runByName = "assets/run/*.png";
+asset List<Texture> solo = "assets/hero.png";              // One file where the type holds many: a list of that one
+asset Map<string, Texture> soloByName = "assets/run/1.png"; // ...and a map of it, under its path
 
 [Filter(Filter.Point), Wrap(Wrap.Repeat)]
 asset Texture tiles = "assets/run/0.png";
@@ -39,6 +41,10 @@ local singleton Art
     List<float4x4> places;
     Texture kept;      // Whichever image it's given
     Texture keptTiles;
+    Texture keptSolo;
+    Texture keptByName;
+    int soloCount;
+    int soloByNameCount;
     [Filter(Filter.Point), Wrap(Wrap.Mirror)]
     Grid2<Color> paint = Grid2(2, 2);
     Grid2<Color> bare = Grid2(2, 2);
@@ -66,6 +72,10 @@ view Fill(mut Art art)
     // A Texture is a value: copied into fields like any other
     art.kept = run[1];
     art.keptTiles = tiles;
+    art.keptSolo = solo[0];
+    art.keptByName = soloByName["assets/run/1.png"];
+    art.soloCount = solo.count;
+    art.soloByNameCount = soloByName.count;
     art.runCount = run.count;
     art.crispCount = crisp.count;
     art.byNameCount = runByName.count;

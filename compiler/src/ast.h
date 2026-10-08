@@ -569,7 +569,7 @@ typedef struct decl {
     // [Raw] before it: its pixels are numbers as the file has them, with no alpha worked into them, which
     // only a frag or a vert reads, by its name (declared_raw)
     bool sample_raw;
-    bool asset_many; // A List or Map of a glob's matches
+    bool asset_many; // A List or Map: a glob's matches, or the one file its path names
 
     // Systems, views, methods, functions, and an input's Sample
     VEC(param) params;

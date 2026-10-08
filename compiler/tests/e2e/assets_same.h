@@ -2,4 +2,4 @@
 // without (assets_plain.tide): the same, as nothing of an asset is in a world.
 // Both tests check it, on every platform; a change to how worlds are kept
 // updates it from one platform, and every other has to agree.
-#define ASSETS_EMPTY_WORLD_HASH 0x36d7ccaee381e1deull
+#define ASSETS_EMPTY_WORLD_HASH 0xc4b369d36aeba099ull

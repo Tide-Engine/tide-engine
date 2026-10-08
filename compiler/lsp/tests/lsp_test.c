@@ -8195,6 +8195,68 @@ TIDE_TEST(lsp_asset_moved_file_is_found_by_its_bytes)
     lsp_free(&server);
 }
 
+// One file where an asset's type holds many is a list or a map of that one,
+// so it's a single file's path to the editor: nothing is said of it, a rename
+// rewrites it, and a file that's gone is found by its bytes.
+TIDE_TEST(lsp_asset_one_file_for_a_list_or_a_map)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_one");
+    make_folder("lsp_one/data");
+    make_folder("lsp_one/moved");
+    static const char main_file[] = "asset List<string> notes = \"data/a.txt\";\n"
+                                    "asset Map<string, List<byte>> tables = \"data/t.bin\";\n"
+                                    "scene Main { }\n"
+                                    "singleton Seen { int notes; bool table; }\n"
+                                    "system Look(mut Seen seen)\n{\n"
+                                    "    seen.notes = notes.count;\n"
+                                    "    seen.table = tables.Has(\"data/t.bin\");\n}\n";
+    static const char bytes[] = {9, 8, 7, 6, 5, 0, 3};
+    write_file("lsp_one/main.tide", main_file);
+    write_file("lsp_one/data/a.txt", "alpha");
+    write_bytes("lsp_one/data/t.bin", bytes, sizeof bytes);
+    char root[700], uri_main[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_one", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_one/main.tide", dir);
+
+    start_in_with(root, ASSET_EDITOR_CAPABILITIES);
+    open_uri(uri_main, main_file);
+    const char *diagnostics = sent_with(uri_main);
+    TIDE_REQUIRE(diagnostics != NULL);
+    TIDE_CHECK(has(diagnostics, "\"diagnostics\":[]"));
+
+    // The file renamed, and its folder: the paths follow, as any single file's do
+    const char *reply = will_rename("lsp_one/data/a.txt", "lsp_one/moved/a.txt");
+    TIDE_CHECK(has(reply, "\"newText\":\"moved/a.txt\"") && count(reply, "\"newText\"") == 1);
+    reply = will_rename("lsp_one/data", "lsp_one/moved");
+    TIDE_CHECK(has(reply, "\"newText\":\"moved/a.txt\"") && has(reply, "\"newText\":\"moved/t.bin\""));
+    TIDE_CHECK(count(reply, "\"newText\"") == 2);
+
+    // Moved outside the editor: found by its bytes, with the fix
+    move_game_file("lsp_one/data/t.bin", "lsp_one/moved/t.bin");
+    open_uri(uri_main, main_file);
+    diagnostics = sent_with(uri_main);
+    TIDE_REQUIRE(diagnostics != NULL);
+    TIDE_CHECK(has(diagnostics, "there's no file at 'data/t.bin' ("));
+    TIDE_CHECK(has(diagnostics, "note: a file with the same bytes is at 'moved/t.bin'"));
+    const char *actions = request_at(uri_main, "textDocument/codeAction", 1, 0,
+                                     "\"range\":{\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":0}},\"context\":{\"diagnostics\":[]}");
+    TIDE_CHECK(has(actions, "\"title\":\"Change to 'moved/t.bin'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
+
+    remove_game_file("lsp_one/main.tide");
+    remove_game_file("lsp_one/data/a.txt");
+    remove_game_file("lsp_one/moved/t.bin");
+    remove_game_file("lsp_one/.tide/assets.sha256");
+    remove_game_file("lsp_one/.tide/.gitignore");
+    remove_folder("lsp_one/.tide");
+    remove_folder("lsp_one/data");
+    remove_folder("lsp_one/moved");
+    remove_folder("lsp_one");
+    clear_sent();
+    lsp_free(&server);
+}
+
 // Inside an asset's path, completion offers the folders and files where the
 // path so far leads, from the declaring file: the type's files (a PNG for a
 // Grid2<Color>), and globs for a list or a map.

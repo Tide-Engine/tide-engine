@@ -35,7 +35,7 @@ typedef struct asset_match {
 
 typedef struct asset_value {
     asset_kind kind;
-    bool many;   // A glob: a List<T> or Map<string, T> of its matches
+    bool many;   // A List<T> or Map<string, T>: a glob's matches, or the one file a path or a URL names
     bool is_map; // ...a Map<string, T>
     asset_match *items;
     int count;
