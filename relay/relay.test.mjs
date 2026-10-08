@@ -15,7 +15,7 @@ import { cloudflareTurn, createRelay, DEFAULT_ICE } from './relay.mjs';
 // until a time must have passed, which goes wrong both ways on a busy machine:
 // less of it had by the clock the relay read (WSL sets its time of day back
 // by seconds under load), or far more. Nothing here goes by the machine's time.
-const clock = (() => {
+function createClock() {
     let now = 0;
     const waits = new Set(); // What the relay asked to have called, and when
     return {
@@ -39,7 +39,8 @@ const clock = (() => {
             now = end;
         },
     };
-})();
+}
+const clock = createClock();
 
 const LIMITS = { loneSeconds: 0.5, messageBurst: 20, messagesPerSecond: 1, probeSeconds: 0.3, endedSeconds: 0.5, pingSeconds: 5 };
 const LONE = LIMITS.loneSeconds * 1000, PROBE = LIMITS.probeSeconds * 1000, ENDED = LIMITS.endedSeconds * 1000,
@@ -75,8 +76,8 @@ async function until(there) {
 const waitingOn = code => relay.rooms.get(code)?.claims?.length ?? 0;
 
 // A connection, with its messages in order and how it closed.
-async function connect() {
-    const ws = new WebSocket(url);
+async function connect(at = url) {
+    const ws = new WebSocket(at);
     const queue = [], waiting = [];
     ws.onmessage = event => {
         const message = JSON.parse(event.data);
@@ -148,8 +149,8 @@ test('signals go between the host and each joiner', async () => {
 
 // A host that never answers pings, like one whose machine went away without
 // its connection closing: a WebSocket by hand, which only talks.
-async function deafHost() {
-    const socket = tcpConnect(relay.address().port, '127.0.0.1');
+async function deafHost(server = relay) {
+    const socket = tcpConnect(server.address().port, '127.0.0.1');
     socket.on('error', () => {}); // The relay hanging up on it is no error of the test's
     await new Promise(resolve => socket.once('connect', resolve));
     socket.write(`GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n`
@@ -359,6 +360,158 @@ test('answers plain HTTP, for health checks', async () => {
     const response = await fetch(url.replace('ws:', 'http:'));
     assert.equal(response.status, 200);
     assert.match(await response.text(), /Tide relay/);
+});
+
+const STATS_TOKEN = 'test-relay-statistics-token';
+async function statisticsRelay(t, options = {}) {
+    const statsClock = createClock();
+    const server = createRelay({ clock: statsClock, statsToken: STATS_TOKEN, ...options });
+    const sockets = new Set();
+    server.on('connection', socket => {
+        sockets.add(socket);
+        socket.on('close', () => sockets.delete(socket));
+    });
+    t.after(() => {
+        server.close();
+        for (const socket of sockets) socket.destroy();
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const stats = async () => {
+        const response = await fetch(`${base}/admin/stats`, { headers: { authorization: `Bearer ${STATS_TOKEN}` } });
+        assert.equal(response.status, 200);
+        return response.json();
+    };
+    return { server, clock: statsClock, base, connect: () => connect(base.replace('http:', 'ws:')), stats };
+}
+
+test('aggregate statistics require the configured bearer token and GET', async t => {
+    const r = await statisticsRelay(t);
+    for (const authorization of ['', `Bearer ${'x'.repeat(STATS_TOKEN.length)}`, 'Bearer short']) {
+        const response = await fetch(`${r.base}/admin/stats?ignored=1`, { headers: { authorization } });
+        assert.equal(response.status, 401);
+        assert.equal(response.headers.get('cache-control'), 'no-store');
+        assert.deepEqual(await response.json(), { error: 'Unauthorized' });
+    }
+    const response = await fetch(`${r.base}/admin/stats`, {
+        method: 'POST', headers: { authorization: `Bearer ${STATS_TOKEN}` },
+    });
+    assert.equal(response.status, 405);
+    assert.equal(response.headers.get('allow'), 'GET');
+    const upgrade = new WebSocket(`${r.base.replace('http:', 'ws:')}/admin/stats`);
+    await new Promise((resolve, reject) => {
+        upgrade.onopen = () => { upgrade.close(); reject(new Error('statistics accepted a WebSocket upgrade')); };
+        upgrade.onerror = resolve;
+    });
+    const initial = await r.stats();
+    assert.equal(initial.connections, 0);
+    assert.match(initial.instance, /^[0-9a-f-]{36}$/);
+    assert.deepEqual(Object.keys(initial).sort(), ['connections', 'instance', 'pendingJoins', 'rooms', 'totals', 'uptimeSeconds']);
+    assert.deepEqual(initial.totals, { roomsCreated: 0, joinsAccepted: 0, joinsMissing: 0, joinsFull: 0,
+        migrationsRequested: 0, migrationsRejected: 0 });
+    assert.equal(initial.uptimeSeconds, 0);
+    const disabled = await statisticsRelay(t, { statsToken: '' });
+    const closed = await fetch(`${disabled.base}/admin/stats`, { headers: { authorization: `Bearer ${STATS_TOKEN}` } });
+    assert.equal(closed.status, 401);
+    const restarted = await statisticsRelay(t);
+    assert.notEqual(initial.instance, (await restarted.stats()).instance);
+});
+
+test('statistics count registered rooms and signaling connections through joins and closes', async t => {
+    const r = await statisticsRelay(t, { limits: { joining: 1 } });
+    const host = await r.connect();
+    host.send({ host: 'STAT22', key: 'private-key' });
+    assert.deepEqual(await host.next(), { hosting: 'STAT22' });
+    const first = await r.stats();
+    assert.equal(first.rooms, 1);
+    assert.equal(first.connections, 1);
+    assert.equal(first.pendingJoins, 0);
+    const a = await r.connect();
+    a.send({ join: 'STAT22' });
+    assert.deepEqual(await a.next(), { joined: 'STAT22' });
+    await host.next();
+    const full = await r.connect();
+    full.send({ join: 'STAT22' });
+    assert.deepEqual(await full.next(), { full: 'STAT22' });
+    const missing = await r.connect();
+    missing.send({ join: 'ABSENT' });
+    assert.deepEqual(await missing.next(), { missing: 'ABSENT' });
+    r.clock.pass(3000);
+    const joining = await r.stats();
+    assert.equal(joining.instance, first.instance);
+    assert.equal(joining.uptimeSeconds, 3);
+    assert.equal(joining.connections, 4);
+    assert.equal(joining.pendingJoins, 1);
+    assert.deepEqual(joining.totals, { roomsCreated: 1, joinsAccepted: 1, joinsMissing: 1, joinsFull: 1,
+        migrationsRequested: 0, migrationsRejected: 0 });
+    assert.equal(JSON.stringify(joining).includes('STAT22'), false);
+    assert.equal(JSON.stringify(joining).includes('private-key'), false);
+    assert.equal(JSON.stringify(joining).includes('127.0.0.1'), false);
+    a.ws.close();
+    assert.deepEqual(await host.next(), { left: 1 });
+    const left = await r.stats();
+    assert.equal(left.pendingJoins, 0);
+    assert.equal(left.connections, 3);
+    host.ws.close();
+    await until(() => !r.server.rooms.has('STAT22'));
+    const gone = await r.stats();
+    assert.equal(gone.rooms, 0);
+    assert.equal(gone.connections, 2);
+    assert.deepEqual(gone.totals, joining.totals);
+});
+
+test('statistics distinguish migration requests, rejections and ended rooms', async t => {
+    const r = await statisticsRelay(t);
+    const host = await r.connect();
+    host.send({ host: 'STAT22', key: 'right' });
+    await host.next();
+    const a = await r.connect();
+    a.send({ migrate: 'STAT22', key: 'right' });
+    assert.deepEqual(await a.next(), { joined: 'STAT22' });
+    await host.next();
+    a.ws.close();
+    await host.next();
+    const wrong = await r.connect();
+    wrong.send({ migrate: 'STAT22', key: 'wrong' });
+    assert.deepEqual(await wrong.next(), { taken: 'STAT22' });
+    host.send({ end: 'STAT22' });
+    await until(() => !r.server.rooms.has('STAT22'));
+    const ended = await r.connect();
+    ended.send({ migrate: 'STAT22', key: 'right' });
+    assert.deepEqual(await ended.next(), { ended: 'STAT22' });
+    const finished = await r.stats();
+    assert.equal(finished.rooms, 0);
+    assert.equal(finished.pendingJoins, 0);
+    assert.equal(r.server.ended.size, 1);
+    assert.deepEqual(finished.totals, { roomsCreated: 1, joinsAccepted: 1, joinsMissing: 0, joinsFull: 0,
+        migrationsRequested: 3, migrationsRejected: 2 });
+    const next = await r.connect();
+    next.send({ migrate: 'STAT23', key: 'other' });
+    assert.deepEqual(await next.next(), { hosting: 'STAT23' });
+    const reopened = await r.stats();
+    assert.equal(reopened.totals.roomsCreated, 2);
+    assert.equal(reopened.totals.migrationsRequested, 4);
+});
+
+test('statistics include pending migration claims without counting internal retries', async t => {
+    const r = await statisticsRelay(t);
+    const host = await deafHost(r.server);
+    host.send({ host: 'STAT22', key: 'right' });
+    await host.next();
+    r.clock.pass(3000);
+    const a = await r.connect();
+    a.send({ migrate: 'STAT22', key: 'right' });
+    await until(() => r.server.rooms.get('STAT22')?.claims?.length === 1);
+    assert.equal((await r.stats()).pendingJoins, 1);
+    r.clock.pass(3000);
+    assert.deepEqual(await a.next(), { hosting: 'STAT22' });
+    assert.deepEqual(await host.next(), { lost: 'STAT22' });
+    const changed = await r.stats();
+    assert.equal(changed.rooms, 1);
+    assert.equal(changed.pendingJoins, 0);
+    assert.equal(changed.totals.roomsCreated, 2);
+    assert.equal(changed.totals.migrationsRequested, 1);
+    assert.equal(changed.totals.migrationsRejected, 0);
 });
 
 // Cloudflare's answer, as its docs show it, port 53 and all.

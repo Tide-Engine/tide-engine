@@ -6,7 +6,8 @@ list(REMOVE_ITEM TIDEC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/main.c")
 # Web and Android builds use a native tidec instead (cmake/HostTidec.cmake),
 # and the language server and tide run natively, so only native builds have them.
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
-    # Assets: tidec reads a game's PNGs with the engine's own reader and writes
+    # Assets: tidec reads a game's PNGs with the engine's own reader, PSD
+    # composites with src/psd_files.c, and writes
     # its pack with the engine's own builder (tide/png.h, tide/pack.h), so what
     # it packs is what the game reads; those files bring the engine's pages and
     # hashes. The same objects are in the engine's library, so a program that

@@ -42,7 +42,7 @@
 //                                                room (on this connection) sends {host} first, at
 //                                                once: messages are read in order, hello or not
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 
 // Codes are 6 characters without look-alikes (no 0, O, 1 or I): about a billion.
@@ -126,21 +126,52 @@ export function cloudflareTurn(keyId, token, options = {}) {
 // `iceServers`: what players are told to use, or a function that gives it (a
 // promise will do). `trustProxy`: take the client's address from Fly's
 // Fly-Client-IP header. `clock`: where all its time comes from (SYSTEM_CLOCK's
-// `now` and `wait`), for tests.
-export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limits = {}, clock = SYSTEM_CLOCK } = {}) {
+// `now` and `wait`), for tests. `statsToken`: the bearer token for the website's
+// aggregate snapshots; without one, /admin/stats refuses every request.
+export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limits = {}, clock = SYSTEM_CLOCK,
+    statsToken = process.env.TIDE_RELAY_STATS_TOKEN || '' } = {}) {
     const limit = { ...LIMITS, ...limits };
     const rooms = new Map(); // Code -> room
     const ended = new Map(); // Code -> {key, until}: rooms whose match ended, which no one takes over
     const perAddress = new Map();
     const sockets = new Set();
     let connections = 0;
+    const instance = randomUUID();
+    const started = clock.now();
+    const authorization = statsToken ? Buffer.from(`Bearer ${statsToken}`) : null;
+    const totals = { roomsCreated: 0, joinsAccepted: 0, joinsMissing: 0, joinsFull: 0,
+        migrationsRequested: 0, migrationsRejected: 0 };
 
     const server = createServer((request, response) => {
+        if ((request.url || '').split('?')[0] === '/admin/stats') {
+            response.setHeader('content-type', 'application/json; charset=utf-8');
+            response.setHeader('cache-control', 'no-store');
+            const supplied = Buffer.from(request.headers.authorization || '');
+            if (!authorization || supplied.length !== authorization.length || !timingSafeEqual(supplied, authorization)) {
+                response.writeHead(401, { 'www-authenticate': 'Bearer' });
+                response.end(JSON.stringify({ error: 'Unauthorized' }));
+                return;
+            }
+            if (request.method !== 'GET') {
+                response.writeHead(405, { allow: 'GET' });
+                response.end(JSON.stringify({ error: 'Method not allowed' }));
+                return;
+            }
+            let pendingJoins = 0;
+            for (const room of rooms.values()) pendingJoins += room.joining.size + (room.claims?.length || 0);
+            response.end(JSON.stringify({ instance, uptimeSeconds: (clock.now() - started) / 1000,
+                rooms: rooms.size, connections, pendingJoins, totals }));
+            return;
+        }
         response.writeHead(200, { 'content-type': 'text/plain' });
         response.end(`Tide relay: ${rooms.size} room${rooms.size === 1 ? '' : 's'}\n`);
     });
 
     server.on('upgrade', (request, socket) => {
+        if ((request.url || '').split('?')[0] === '/admin/stats') {
+            socket.end('HTTP/1.1 400 Bad Request\r\nCache-Control: no-store\r\n\r\n');
+            return;
+        }
         const address = (trustProxy && request.headers['fly-client-ip']) || socket.remoteAddress || '?';
         const count = perAddress.get(address) || 0;
         if (connections >= limit.connections || count >= limit.perAddress) {
@@ -198,13 +229,17 @@ export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limi
             const code = message.join;
             const joined = rooms.get(code);
             if (!CODE.test(code)) peer.ws.close(1008, 'not a room code');
-            else if (!joined) peer.ws.send({ missing: code });
+            else if (!joined) {
+                totals.joinsMissing++;
+                peer.ws.send({ missing: code });
+            }
             else join(peer, joined);
         } else if (typeof message.migrate === 'string' && !room && !peer.claiming) {
             const code = message.migrate;
             if (!CODE.test(code) || typeof message.key !== 'string' || !KEY.test(message.key)) {
                 peer.ws.close(1008, 'not a room code and key');
             } else {
+                totals.migrationsRequested++;
                 migrate(peer, code, message.key);
             }
         } else if ('signal' in message && room) {
@@ -218,6 +253,7 @@ export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limi
     }
 
     function host(peer, code, key) {
+        totals.roomsCreated++;
         peer.room = { code, host: peer, joining: new Map(), next: 1, key, since: clock.now(), claims: null };
         rooms.set(code, peer.room);
         peer.ws.send({ hosting: code });
@@ -225,10 +261,12 @@ export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limi
 
     function join(peer, room) {
         if (room.joining.size >= limit.joining) {
+            totals.joinsFull++;
             peer.ws.send({ full: room.code });
             return;
         }
         peer.room = room;
+        totals.joinsAccepted++;
         peer.id = room.next++;
         room.joining.set(peer.id, peer);
         peer.ws.send({ joined: room.code });
@@ -244,12 +282,15 @@ export function createRelay({ iceServers = DEFAULT_ICE, trustProxy = false, limi
         const room = rooms.get(code);
         const gone = endedRoom(code);
         if (gone && gone.key === key) {
+            totals.migrationsRejected++;
             peer.ws.send({ ended: code });
         } else if (gone) {
+            totals.migrationsRejected++;
             peer.ws.send({ taken: code });
         } else if (!room) {
             host(peer, code, key);
         } else if (room.key !== key) {
+            totals.migrationsRejected++;
             peer.ws.send({ taken: code });
         } else if (room.claims) { // Its host was pinged already
             room.claims.push(peer);
