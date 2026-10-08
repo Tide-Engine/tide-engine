@@ -406,7 +406,8 @@ typedef enum decl_kind {
 // number (depth.Sample) or compared with one of its own (depth.Compare). The
 // values are tide/draw.h's tide_shader_read's.
 // READ_CUBE is a Cubemap's color, read by a direction.
-typedef enum shader_read { READ_COLOR, READ_DEPTH, READ_COMPARE, READ_CUBE } shader_read;
+// READ_DATA is a list's elements, as numbers: read by their place (shader.c, Lists).
+typedef enum shader_read { READ_COLOR, READ_DEPTH, READ_COMPARE, READ_CUBE, READ_DATA } shader_read;
 
 // A grid a frag or vert samples: a field of one of its parameters, and how.
 typedef struct shader_sample {
@@ -710,6 +711,7 @@ typedef enum expr_kind {
     E_TRY,       // try lhs: lhs's value, or its error passed on to the caller
     E_DEFAULTED, // lhs!: lhs's value, or its type's default when it failed or is nothing
     E_AWAIT,     // await lhs: an async call's value once it's done, or Wait.Ticks(n) and the like
+    E_STEP,      // ++lhs, lhs++, --lhs, lhs--: lhs goes up or down by 1, and its value after (or, `postfix`, before) is the expression's
 } expr_kind;
 
 // What `x is ...` looks for.
@@ -868,6 +870,8 @@ struct expr {
     int spawn_archetype;  // CALL_SPAWN: index into the archetype list.
     bool local_world;     // CALL_SPAWN, CALL_ADD, CALL_REMOVE, CALL_DESTROY and CALL_SEND: in the local world
     struct stmt *compare[2]; // CALL_LIST Sort: the two elements its block compares, as read-only locals of the block
+    struct stmt *step;    // E_STEP: the assignment it makes, `lhs += 1`, which is all of it when it's a statement
+    bool postfix;         // ...written after its variable: the value is what the variable held before
     const char *hoisted;  // Spawns, and calls, units and operators that keep their order: the temporary codegen ran it into, before the statement
     bool kept;            // ...or any value read before a call that writes: `hoisted` is its copy, as it was then
     unsigned arg_mut;     // CALL_GUI: a bit per argument the call changes, which it takes by address
@@ -1065,6 +1069,7 @@ typedef struct shader_texture {
     int wrap;    // Its Wrap's number, tide_wrap's: 0 where the draw says (a `textured` shader's own)
     shader_read read; // A DepthTexture field's: as a number, or compared, each a texture of its own
     bool filter_said, wrap_said; // As its samples' (shader_sample): false for what's left to the Texture it's given
+    int count_at; // A list's (READ_DATA): the word of the uniforms' ints that says how many elements it has
 } shader_texture;
 
 // A struct a vert writes for its frag, an `out` parameter of the vert's: the
@@ -1092,6 +1097,7 @@ typedef struct shader {
     struct decl *instance_type; // Explicit instance data, or NULL for transforms only
     struct decl *values_type;   // The struct its draws give after their vert and frag, sent once for each draw, or NULL
     const field *instance_transform; // The instance struct's optional float4x4 transform
+    const field *instance_list;      // A list its code reads of the instance struct, which no draw can send
     VEC(shader_value) values;
     VEC(shader_texture) textures;
     VEC(struct decl *) bound; // The components and singletons it reads, in the order its draws pass them

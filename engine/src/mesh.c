@@ -236,6 +236,39 @@ static uint64_t list_version(const tide_list l, const uint32_t size)
     return tide_hash_end(h);
 }
 
+uint32_t tide_draw_list_data(tide_draw_list *d, const tide_list list, const uint32_t element_size, const uint32_t words,
+                             tide_list_words_fn *write, int32_t *count)
+{
+    *count = 0;
+    const int32_t held = tide_list_count(list);
+    if (held <= 0 || words == 0 || element_size == 0) return 0;
+    const uint32_t each = (words + 3u) / 4u; // Pixels an element
+    const uint32_t most = (uint32_t)TIDE_LIST_DATA_MOST / each;
+    if (most == 0) return 0;
+    const uint32_t elements = (uint32_t)held < most ? (uint32_t)held : most;
+    const uint32_t pixels = elements * each;
+    const int32_t width = pixels < (uint32_t)TIDE_LIST_DATA_ACROSS ? (int32_t)pixels : TIDE_LIST_DATA_ACROSS;
+    const int32_t height = (int32_t)((pixels + (uint32_t)TIDE_LIST_DATA_ACROSS - 1u) / (uint32_t)TIDE_LIST_DATA_ACROSS);
+    // What its elements are, and what they're read as: another kind of list at the same place is other numbers
+    uint64_t version = list_version(list, element_size);
+    const uint32_t shape[2] = {element_size, words};
+    version = tide_hash_end(tide_hash_more(version, shape, sizeof shape));
+    // One made along the way is what's in it, wherever it is in the scratch area
+    const uint64_t id = list.at >> 30 == TIDE_IN_SCRATCH ? UINT64_C(1) << 63 | version >> 1 : list.at;
+    uint8_t *out;
+    const uint32_t slot = tide_draw_texture_slot_as(d, TIDE_PIXELS_LIST, id, version, width, height, TIDE_TEXELS_INTS, &out);
+    if (out) {
+        memset(out, 0, (size_t)width * (size_t)height * 16u);
+        bool copied;
+        const uint8_t *flat = tide_list_flatten(list, element_size, false, &copied);
+        int32_t *to = (int32_t *)(void *)out;
+        for (uint32_t i = 0; i < elements; i++) write(flat + (size_t)i * element_size, to + (size_t)i * each * 4u);
+        tide_list_unflatten(list, (void *)(uintptr_t)flat, element_size, false, copied);
+    }
+    *count = (int32_t)elements;
+    return slot;
+}
+
 static uint32_t mesh3_slot(tide_draw_list *d, const tide_list vertices, const tide_list indices)
 {
     const int32_t vertex_count = tide_list_count(vertices);

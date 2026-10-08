@@ -63,6 +63,9 @@ TIDE_TEST(defaults_hex_and_binary_literals)
     TIDE_CHECK(world.Literals.separatedMask == 240);
     TIDE_CHECK(world.Literals.separatedHex == 0xFFFF);
     TIDE_CHECK(world.Literals.separatedFloat == 1000.25f);
+    TIDE_CHECK(world.Literals.pointFirst == 0.5f);
+    TIDE_CHECK(world.Literals.pointFirstPlain == 0.625f);
+    TIDE_CHECK(world.Literals.pointFirstExponent == -5.0f);
 }
 
 TIDE_TEST(defaults_bitwise_operators)

@@ -1,5 +1,5 @@
-// expect: the GPU has no lists, maps, arrays or grids to index or make
+// expect: the GPU has no arrays of arrays
 struct Corner { float3 position; }
-component Weights { float[4] w; }
+component Weights { float[2][2] w; }
 scene Main { }
-frag Shade(Corner vertex, out Color color, Weights weights) { color = Color(weights.w[0], 0, 0); }
+frag Shade(Corner vertex, out Color color, Weights weights) { color = Color(weights.w[0][1], 0, 0); }

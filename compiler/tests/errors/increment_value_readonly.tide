@@ -1,0 +1,13 @@
+// expect: 'steps' is read-only
+scene Main { }
+
+singleton Walk
+{
+    int taken;
+}
+
+system Step(mut Walk walk)
+{
+    var steps = 3;
+    walk.taken = steps++ + 1;
+}

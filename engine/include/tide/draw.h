@@ -841,16 +841,20 @@ enum {
     TIDE_PIXELS_PACK,
     TIDE_PIXELS_TARGET_CUBE,
     TIDE_PIXELS_PACK_CUBE,
+    TIDE_PIXELS_LIST, // A list's elements as numbers (TIDE_TEXELS_INTS), which only a TIDE_SHADER_READ_DATA read is given
 };
 
 // What a list's texture holds for each pixel: red, green, blue and alpha, a
 // byte each, or one float of 16 bits (IEEE 754's half), which a shader reads
 // as red, with green and blue 0 and alpha 1: a Grid2<float>'s cells.
-enum { TIDE_TEXELS_BYTES, TIDE_TEXELS_HALF };
+// TIDE_TEXELS_INTS is four ints of 32 bits, which a shader reads as they are,
+// by a pixel's place and never between two: a list's elements, as numbers
+// (tide_draw_list_data).
+enum { TIDE_TEXELS_BYTES, TIDE_TEXELS_HALF, TIDE_TEXELS_INTS };
 
 static inline uint32_t tide_texels_bytes(const uint32_t format)
 {
-    return format == TIDE_TEXELS_HALF ? 2u : 4u;
+    return format == TIDE_TEXELS_HALF ? 2u : format == TIDE_TEXELS_INTS ? 16u : 4u;
 }
 
 // A 2D transform: where it puts the point (x, y) is `offset` + x * `x` + y * `y`.
@@ -1068,6 +1072,9 @@ typedef enum tide_shader_read {
     TIDE_SHADER_READ_DEPTH,
     TIDE_SHADER_READ_COMPARE,
     TIDE_SHADER_READ_CUBE, // A cube's color, by a direction: a `samplerCube`, and a `texture_cube<f32>` with a `sampler`
+    // A list's elements, four ints a pixel, each pixel by its place: an `isampler2D` read with texelFetch, and a
+    // `texture_2d<i32>` read with textureLoad
+    TIDE_SHADER_READ_DATA,
 } tide_shader_read;
 
 // The most bytes of the game's a shader's uniforms hold, after the engine's

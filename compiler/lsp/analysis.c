@@ -715,6 +715,7 @@ static void walk_value(const expr *e)
     case E_TRY:
     case E_DEFAULTED:
     case E_AWAIT:
+    case E_STEP:
         walk_expr(e->lhs);
         walk_expr(e->rhs);
         break;
@@ -5029,6 +5030,7 @@ static loc expr_end(const expr *e)
     case E_MEMBER: return (loc){e->at.line, e->at.col + e->member.len, e->at.file};
     case E_BINARY: case E_COALESCE: case E_CONDITIONAL: return expr_end(e->rhs);
     case E_UNARY: case E_TRY: case E_AWAIT: return expr_end(e->lhs);
+    case E_STEP: return e->postfix ? (loc){e->at.line, e->at.col + 2, e->at.file} : expr_end(e->lhs);
     case E_IS: { // x is int score: to the name, or to the type
         const stmt *b = e->binding;
         if (b) return (loc){b->name_at.line, b->name_at.col + b->name.len, e->at.file};
@@ -5854,7 +5856,11 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         }
         return;
     }
-    if (gpu && (t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET)) return;
+    if (gpu && t.kind == TY_LIST) { // Read by its elements there, and how many: nothing changes it
+        item(c, "count", CK_PROPERTY, "int", LIST_COUNT_DOC, NULL);
+        return;
+    }
+    if (gpu && (t.kind == TY_STRING || t.kind == TY_MAP || t.kind == TY_SET)) return;
     if (t.kind == TY_CUBEMAP) { // A frag reads it; a view draws into its faces, resizes it and lets it go
         static const char *const snippets[] = {"Sample($1)", "Resize($1)", "Dispose()"};
         for (size_t i = gpu ? 0 : 1; i < (gpu ? 1 : sizeof cube_calls / sizeof cube_calls[0]); i++) {
@@ -6513,13 +6519,14 @@ static bool gpu_callable(const decl *d)
 
 // Names and keywords in a frag or vert, which the GPU runs: what it takes, its
 // locals, the game's functions and constants, Math, and the types the GPU has
-// values of. No loop but a for, which counts; nothing of the world or the
+// values of. No while, which could go on forever; nothing of the world or the
 // frame, like Spawn, Draw or Devices.
 static void complete_shader_code(completion *c, const scope *sc, const bool statement)
 {
     if (sc->decl->is_frag) item(c, "this", CK_KEYWORD, "Pixel", shader_record_doc(A.prog->pixel), NULL);
     if (statement) {
-        static const char *const keywords[] = {"if", "else", "return", "var", "mut", "for", "break", "continue"};
+        static const char *const keywords[] = {"if", "else", "return", "var", "mut", "for", "foreach", "switch", "case", "break",
+                                               "continue"};
         for (size_t i = 0; i < sizeof keywords / sizeof keywords[0]; i++) item(c, keywords[i], CK_KEYWORD, NULL, NULL, NULL);
     }
     item(c, "true", CK_KEYWORD, NULL, NULL, NULL);

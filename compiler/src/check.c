@@ -1959,6 +1959,7 @@ static void check_default_args(checker *c, expr *e)
 
 static bool check_component_side(const checker *c, const expr *arg, const decl *d);
 static bool check_writable(checker *c, expr *target, const decl *called, const param *arg_of);
+static type check_step_value(checker *c, expr *e);
 static type check_random_seeded(checker *c, expr *e);
 
 static comp_mask bit(const decl *component)
@@ -8441,6 +8442,7 @@ static type check_expr_any(checker *c, expr *e)
     case E_TRY: t = check_try(c, e); break;
     case E_DEFAULTED: t = check_defaulted(c, e); break;
     case E_AWAIT: t = check_await(c, e); break;
+    case E_STEP: t = check_step_value(c, e); break;
     case E_UNARY: {
         const type operand = check_expr(c, e->lhs);
         if (operand.kind == TY_ERROR) break;
@@ -8994,6 +8996,7 @@ static bool own_cell_only_expr(const expr *e, const stmt *loop)
         return false; // Spawns, sends, draws, the GUI, list and grid changes, C: in order
     }
     if (e->kind == E_AWAIT || e->kind == E_TRY || e->type.kind == TY_DRAW_LIST) return false;
+    if (e->kind == E_STEP) return false; // It writes, in the middle of an expression: in order
     if (e->kind == E_INDEX && e->object->type.kind == TY_GRID && same_place(e->object, loop->value)) {
         int64_t at[3];
         if (!own_offset(e->lhs, loop, e->object->type.decl->dims, at) || at[0] || at[1] || at[2]) return false;
@@ -9374,6 +9377,27 @@ static void check_assign(checker *c, const stmt *s)
         diag_error(s->value->at, "can't assign %s to %s", type_name(result), type_name(target));
         note_conversion(target, result);
     }
+}
+
+// ++i or i++ where its value is taken: the assignment a statement of it makes,
+// and the variable's value after it, or before.
+static type check_step_value(checker *c, expr *e)
+{
+    const char *op = e->op == T_PLUS_PLUS ? "++" : "--";
+    if (c->parallel) {
+        diag_error(e->at, "'%s' can't be part of an expression in a parallel loop's step", op);
+        diag_note("write it as a statement of its own: 'i %s= 1;'", e->op == T_PLUS_PLUS ? "+" : "-");
+        return T_ERR;
+    }
+    const int errors = diag_error_count();
+    check_assign(c, e->step);
+    // Its value is read, where a statement's isn't
+    const expr *root = e->lhs;
+    while (root->kind == E_MEMBER || root->kind == E_INDEX) root = root->object;
+    if (root->kind == E_NAME && root->bind == BIND_LOCAL && root->local) root->local->read = true;
+    const type target = e->lhs->type;
+    if (diag_error_count() != errors || (!type_is_integer(target) && target.kind != TY_FLOAT)) return T_ERR;
+    return target;
 }
 
 static void check_stmt(checker *c, stmt *s);

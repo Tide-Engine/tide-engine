@@ -1,4 +1,4 @@
-// expect: the GPU has no lists, maps, arrays or grids to index or make
+// expect: the GPU indexes arrays, and lists that are fields of what the frag or vert takes
 scene Main { }
 
 struct V
