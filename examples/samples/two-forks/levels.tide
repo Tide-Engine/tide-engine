@@ -1,0 +1,96 @@
+// The levels. A plan is a character a tile, rows from the north:
+//
+//   ~  water            .  grass
+//   #  a coal grill     =  a gas grill     o  the gas pedal     ^  a rock
+//   n e s w             the first chef, by the way they face (the fork is on the next tile that way)
+//   N E S W             the second chef
+//   --                  a sausage lying west to east
+//   |  over  |          a sausage lying north to south
+//
+// Each is checked by the game's test (test/two_forks_test.c), with the game's
+// own rules: two chefs can cook it, and neither can alone, whatever they do.
+// The first three were laid out by hand, each to show one thing. The others
+// were found: tools/mine.mjs makes up small boards by the thousand, keeps the
+// ones that take both chefs, and takes away every tile they can do without,
+// and these are the ones picked from what it kept.
+
+const int LEVELS = 8;
+
+string Plan(int level)
+{
+    switch (level)
+    {
+        case 0:
+            return "~~~~~##~/"
+                 + "~~~~~##~/"
+                 + "e.--~.../"
+                 + "~~~~~.../"
+                 + "~~~~~N..";
+        case 1:
+            return "~~~~S/"
+                 + "~~~~./"
+                 + "e.|#./"
+                 + "..|#./"
+                 + "~~~~#/"
+                 + "~~~~.";
+        case 2:
+            return "~~~~==/"
+                 + "e.--==/"
+                 + "~~~~oW/"
+                 + "~~~~~.";
+        case 3:
+            return "|n/"
+                 + "|E/"
+                 + "##";
+        case 4:
+            return ".N~=/"
+                 + "--==/"
+                 + "~~on";
+        case 5:
+            return "n^~~~/"
+                 + "--~.#/"
+                 + "~#N.~";
+        case 6:
+            return "e~~~/"
+                 + ".--~/"
+                 + "~#~~/"
+                 + "~#--/"
+                 + "~##W/"
+                 + "~~#~";
+        case 7:
+            return "~~.~~/"
+                 + "#.w|~/"
+                 + "N#.|#";
+    }
+    return "";
+}
+
+string Name(int level)
+{
+    switch (level)
+    {
+        case 0: return "Pass it over";
+        case 1: return "Over the coals";
+        case 2: return "Hold the gas";
+        case 3: return "Too many cooks";
+        case 4: return "One burner";
+        case 5: return "Neighbours";
+        case 6: return "Two for dinner";
+        case 7: return "The narrows";
+    }
+    return "";
+}
+
+// What a level is there to show, said while it's new.
+string Hint(int level)
+{
+    switch (level)
+    {
+        case 0: return "Push it along its length and it slides: over the water it goes. Across it, it rolls.";
+        case 1: return "Whatever lands on a grill is cooked on the side that's down. Twice burns it!";
+        case 2: return "A chef on the pedal cuts the gas. Step off, and what's lying on it is cooked.";
+        case 3: return "A turn sweeps the fork round: it pushes at the corner, and again beside you.";
+        case 4: return "One burner can do a whole side, a half at a time.";
+    }
+    return "";
+}
