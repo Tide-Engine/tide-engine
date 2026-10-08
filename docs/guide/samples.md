@@ -25,6 +25,10 @@ To play together, open a room with the game's **Host** or **Invite** button and 
 <img src="/samples/thumbnails/sumo-arena.png" alt="" width="960" height="540" loading="lazy" decoding="async">
 <span class="sample-copy"><span class="sample-kind">3D · Physics</span><strong class="sample-name">Sumo arena<span class="visually-hidden"> (opens in a new tab)</span></strong><span class="sample-description">Ram heavy balls through crates and off a collapsing arena.</span><span class="sample-play">Play game <span aria-hidden="true">↗</span></span></span>
 </a></li>
+<li><a class="sample-card" data-sample="tag" href="/samples/tag/" target="_blank" rel="noopener">
+<img src="/samples/thumbnails/tag.png" alt="" width="960" height="540" loading="lazy" decoding="async">
+<span class="sample-copy"><span class="sample-kind">3D · Party</span><strong class="sample-name">Tag<span class="visually-hidden"> (opens in a new tab)</span></strong><span class="sample-description">Playground tag for up to eight: whoever's it the least by the bell wins.</span><span class="sample-play">Play game <span aria-hidden="true">↗</span></span></span>
+</a></li>
 <li><a class="sample-card" data-sample="pong" href="/samples/pong/" target="_blank" rel="noopener">
 <img src="/samples/thumbnails/pong.png" alt="" width="960" height="540" loading="lazy" decoding="async">
 <span class="sample-copy"><span class="sample-kind">2D · Arcade</span><strong class="sample-name">Pong<span class="visually-hidden"> (opens in a new tab)</span></strong><span class="sample-description">Keep the ball in play and send it past your opponent's paddle.</span><span class="sample-play">Play game <span aria-hidden="true">↗</span></span></span>
