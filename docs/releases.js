@@ -25,7 +25,7 @@ const linkAge = 180_000;
 const tagsKept = 256;
 const movesFollowed = 3;
 
-export function createReleases({ token, repo, fetch = globalThis.fetch, now = Date.now } = {}) {
+export function createReleases({ token, repo, fetch = globalThis.fetch, now = Date.now, onDownload } = {}) {
     const headers = { authorization: `Bearer ${token}`, 'user-agent': 'tide-releases', 'x-github-api-version': '2022-11-28' };
     let list = null; // { at, releases }
     let asking = null;
@@ -140,6 +140,16 @@ export function createReleases({ token, repo, fetch = globalThis.fetch, now = Da
             const asset = found?.assets.find((a) => a.name === file);
             if (!asset) { text(res, 404, 'There is no such file.\n'); return true; }
             res.writeHead(302, { location: await link(asset.id), 'cache-control': 'no-store' }).end();
+            // This counts archive redirect requests, including installers and
+            // `tide upgrade`. A redirect does not prove a completed download.
+            const archive = /^tide-((?:windows|linux|macos)-(?:x64|arm64))\.(?:zip|tar\.gz)$/.exec(file);
+            if (req.method === 'GET' && archive && onDownload) {
+                const event = { version: found.tag, platform: archive[1],
+                    channel: found.tag.includes('-nightly.') ? 'nightly' : found.prerelease ? 'prerelease' : 'stable' };
+                Promise.resolve().then(() => onDownload(event)).catch(() => {
+                    console.error('analytics: a download request could not be recorded');
+                });
+            }
         } catch (error) {
             console.error(`releases: ${error.message}`);
             text(res, 502, 'The releases could not be reached. Try again in a moment.\n');

@@ -166,3 +166,39 @@ test('a site with no token gives none, and GitHub away at first says so', async 
     assert.equal(answer.status, 502);
     assert.doesNotMatch(answer.body, /someone|secret-repo|github/i);
 });
+
+test('analytics counts only successful GET archive redirects, including cached links', async () => {
+    const hub = github();
+    const events = [];
+    const handle = createReleases({ token: 'the-token', repo, fetch: hub.fetch,
+        onDownload: (event) => { events.push(event); } });
+    await get(handle, '/releases.json');
+    await get(handle, '/releases/v0.3.0-nightly.2.json');
+    await get(handle, '/releases/v0.3.0-nightly.2/SHA256SUMS');
+    await get(handle, '/releases/v0.3.0-nightly.2/tide-windows-x64.zip', 'HEAD');
+    await get(handle, '/releases/v0.3.0-nightly.2/tide-linux-x64.tar.gz');
+    assert.equal(events.length, 0);
+    await get(handle, '/releases/v0.3.0-nightly.2/tide-windows-x64.zip');
+    await get(handle, '/releases/v0.3.0-nightly.2/tide-windows-x64.zip');
+    await get(handle, '/releases/v0.2.0/tide-linux-x64.tar.gz');
+    assert.deepEqual(events, [
+        { version: 'v0.3.0-nightly.2', platform: 'windows-x64', channel: 'nightly' },
+        { version: 'v0.3.0-nightly.2', platform: 'windows-x64', channel: 'nightly' },
+        { version: 'v0.2.0', platform: 'linux-x64', channel: 'stable' },
+    ]);
+    hub.down = true;
+    assert.equal((await get(handle, '/releases/v0.1.0/tide-macos-arm64.tar.gz')).status, 502);
+    assert.equal(events.length, 3);
+});
+
+test('a slow or failing analytics callback cannot delay or break a download redirect', async () => {
+    const hub = github();
+    let finish;
+    const slow = new Promise((resolve) => { finish = resolve; });
+    const handle = createReleases({ token: 'the-token', repo, fetch: hub.fetch, onDownload: () => slow });
+    assert.equal((await get(handle, '/releases/v0.3.0-nightly.2/tide-windows-x64.zip')).status, 302);
+    finish();
+    const failure = createReleases({ token: 'the-token', repo, fetch: hub.fetch,
+        onDownload: () => { throw new Error('analytics disk is away'); } });
+    assert.equal((await get(failure, '/releases/v0.3.0-nightly.2/tide-windows-x64.zip')).status, 302);
+});

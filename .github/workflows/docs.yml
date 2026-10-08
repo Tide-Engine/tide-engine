@@ -53,6 +53,7 @@ jobs:
           npm run test:grammar
           npm run test:access
           npm run test:releases
+          npm run test:analytics
       - name: Install tools
         run: |
           sudo apt-get update
@@ -85,6 +86,7 @@ jobs:
           npm run build
           npm run test:seo
           npm run test:access-http
+          npm run test:admin-http
           npm run test:examples
 
       # The image takes what the build made (docs/Dockerfile). The token is
