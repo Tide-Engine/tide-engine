@@ -243,6 +243,128 @@ TIDE_TEST(mesh_gltf_refuses_invalid_sparse_index_accessors)
     }
 }
 
+// Two material primitives share an accessor but use only vertices 2, 4 and 6,
+// repeatedly and out of order. Every attribute is strided. Sparse positions
+// replace a used vertex and an unused one. The compact control describes the
+// same triangles with only those three vertices, and the override baked in.
+static uint8_t *make_shared_vertices(const bool compact, const bool normals, size_t *size)
+{
+    uint8_t bytes[640] = {0};
+    const uint32_t count = compact ? 3u : 8u, vertex_bytes = count * 72u;
+    static const uint32_t kept[3] = {2u, 4u, 6u};
+    static const float replacement[6] = {90, 90, 90, 13, 7, 5};
+    for (uint32_t i = 0; i < count; i++) {
+        const uint32_t from = compact ? kept[i] : i;
+        float attributes[18] = {(float)from, (float)(from % 3u), (float)(from / 3u),
+                                1, 2, 3, 2, -1, 0, -1, // normal, tangent
+                                (float)from / 8.0f, 0.25f, 0.75f, (float)from / 8.0f, // both uvs
+                                0.25f, 0.5f, 0.75f, 0.5f};
+        if (compact && from == 4u) memcpy(attributes, replacement + 3u, 3u * sizeof(float));
+        memcpy(bytes + i * 72u, attributes, sizeof attributes);
+    }
+    static const uint16_t original[12] = {6, 2, 4, 6, 4, 2, 4, 6, 2, 2, 6, 4};
+    static const uint16_t remapped[12] = {2, 0, 1, 2, 1, 0, 1, 2, 0, 0, 2, 1};
+    memcpy(bytes + vertex_bytes, compact ? remapped : original, sizeof original);
+    memcpy(bytes + vertex_bytes + 24u, replacement, sizeof replacement);
+    bytes[vertex_bytes + 48u] = 0u;
+    bytes[vertex_bytes + 49u] = 4u;
+    const uint32_t byte_count = vertex_bytes + 52u;
+    char json[4096];
+    snprintf(json, sizeof json, "{\"asset\":{\"version\":\"2.0\"},\"nodes\":[{\"mesh\":0,\"scale\":[-2,3,4],"
+                                "\"translation\":[10,20,30]}],\"meshes\":[{\"primitives\":["
+                                "{\"attributes\":{\"POSITION\":0,%s\"TANGENT\":2,\"TEXCOORD_0\":3,\"TEXCOORD_1\":4,\"COLOR_0\":5},"
+                                "\"indices\":6,\"material\":0},"
+                                "{\"attributes\":{\"POSITION\":0,%s\"TANGENT\":2,\"TEXCOORD_0\":3,\"TEXCOORD_1\":4,\"COLOR_0\":5},"
+                                "\"indices\":7,\"material\":1}]}],"
+                                "\"materials\":[{\"pbrMetallicRoughness\":{\"baseColorFactor\":[0.25,0.5,1,0.5]}},"
+                                "{\"pbrMetallicRoughness\":{\"baseColorFactor\":[1,0.25,0.5,1]}}],"
+                                "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":%u,\"type\":\"VEC3\"%s},"
+                                "{\"bufferView\":0,\"byteOffset\":12,\"componentType\":5126,\"count\":%u,\"type\":\"VEC3\"},"
+                                "{\"bufferView\":0,\"byteOffset\":24,\"componentType\":5126,\"count\":%u,\"type\":\"VEC4\"},"
+                                "{\"bufferView\":0,\"byteOffset\":40,\"componentType\":5126,\"count\":%u,\"type\":\"VEC2\"},"
+                                "{\"bufferView\":0,\"byteOffset\":48,\"componentType\":5126,\"count\":%u,\"type\":\"VEC2\"},"
+                                "{\"bufferView\":0,\"byteOffset\":56,\"componentType\":5126,\"count\":%u,\"type\":\"VEC4\"},"
+                                "{\"bufferView\":1,\"componentType\":5123,\"count\":6,\"type\":\"SCALAR\"},"
+                                "{\"bufferView\":1,\"byteOffset\":12,\"componentType\":5123,\"count\":6,\"type\":\"SCALAR\"}],"
+                                "\"bufferViews\":[{\"buffer\":0,\"byteStride\":72,\"byteLength\":%u},"
+                                "{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":24},"
+                                "{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":24},"
+                                "{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":2}],\"buffers\":[{\"byteLength\":%u}]}",
+             normals ? "\"NORMAL\":1," : "", normals ? "\"NORMAL\":1," : "", (unsigned)count,
+             compact ? "" : ",\"sparse\":{\"count\":2,\"indices\":{\"bufferView\":3,\"componentType\":5121},\"values\":{\"bufferView\":2}}",
+             (unsigned)count, (unsigned)count, (unsigned)count, (unsigned)count, (unsigned)count,
+             (unsigned)vertex_bytes, (unsigned)vertex_bytes, (unsigned)(vertex_bytes + 24u), (unsigned)(vertex_bytes + 48u),
+             (unsigned)byte_count);
+    return make_glb(json, bytes, byte_count, size);
+}
+
+TIDE_TEST(mesh_gltf_keeps_only_referenced_vertices_of_each_primitive)
+{
+    for (int normals = 0; normals < 2; normals++) {
+        size_t size;
+        uint8_t *glb = make_shared_vertices(false, normals != 0, &size);
+        mesh_file mesh, control;
+        char why[256];
+        TIDE_REQUIRE(read_exactly(glb, size, "shared.glb", &mesh, why));
+        free(glb);
+        glb = make_shared_vertices(true, normals != 0, &size);
+        TIDE_REQUIRE(read_exactly(glb, size, "compact.glb", &control, why));
+        free(glb);
+        TIDE_CHECK(mesh.vertices == (normals ? 6u : 12u) && mesh.indices == 12u && mesh.parts == 2u);
+        TIDE_CHECK(mesh.has_normals == (normals != 0) && mesh.has_uvs && mesh.has_uvs2 && mesh.has_colors && mesh.has_tangents);
+        // All streams, indices, transforms, normals and material colors agree,
+        // including repeated corners' sharing within each normal-bearing part.
+        TIDE_CHECK(mesh.vertices == control.vertices);
+        if (mesh.vertices == control.vertices) {
+            TIDE_CHECK(memcmp(mesh.position, control.position, (size_t)mesh.vertices * 3u * sizeof(float)) == 0);
+            TIDE_CHECK(memcmp(mesh.normal, control.normal, (size_t)mesh.vertices * 3u * sizeof(float)) == 0);
+            TIDE_CHECK(memcmp(mesh.uv, control.uv, (size_t)mesh.vertices * 2u * sizeof(float)) == 0);
+            TIDE_CHECK(memcmp(mesh.uv2, control.uv2, (size_t)mesh.vertices * 2u * sizeof(float)) == 0);
+            TIDE_CHECK(memcmp(mesh.color, control.color, (size_t)mesh.vertices * 4u * sizeof(float)) == 0);
+            TIDE_CHECK(memcmp(mesh.tangent, control.tangent, (size_t)mesh.vertices * 4u * sizeof(float)) == 0);
+            TIDE_CHECK(memcmp(mesh.index, control.index, (size_t)mesh.indices * sizeof(uint32_t)) == 0);
+            TIDE_CHECK(memcmp(mesh.hash, control.hash, sizeof mesh.hash) == 0);
+        }
+        if (normals) {
+            static const uint32_t indices[12] = {2, 0, 1, 2, 1, 0, 4, 5, 3, 3, 5, 4};
+            TIDE_CHECK(memcmp(mesh.index, indices, sizeof indices) == 0);
+            TIDE_CHECK(mesh.color[3] == 0.25f && mesh.color[15] == 0.5f); // The materials stay separate
+            TIDE_CHECK(mesh.position[3] == 16.0f && mesh.position[4] == 41.0f && mesh.position[5] == 50.0f);
+        }
+        mesh_file_free(&control);
+        mesh_file_free(&mesh);
+    }
+}
+
+TIDE_TEST(mesh_gltf_drops_vertices_outside_complete_triangles)
+{
+    static const struct {
+        float position[12], normal[12];
+        uint16_t index[4];
+    } bytes = {{0, 0, 0, 1, 0, 0, 0, 1, 0, 10, 10, 10}, {0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1}, {2, 0, 1, 3}};
+    for (int indexed = 0; indexed < 2; indexed++) {
+        char json[1024];
+        snprintf(json, sizeof json, "{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":[{"
+                                    "\"attributes\":{\"POSITION\":0,\"NORMAL\":1}%s}]}],"
+                                    "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":4,\"type\":\"VEC3\"},"
+                                    "{\"bufferView\":1,\"componentType\":5126,\"count\":4,\"type\":\"VEC3\"},"
+                                    "{\"bufferView\":2,\"componentType\":5123,\"count\":4,\"type\":\"SCALAR\"}],"
+                                    "\"bufferViews\":[{\"buffer\":0,\"byteLength\":48},{\"buffer\":0,\"byteOffset\":48,\"byteLength\":48},"
+                                    "{\"buffer\":0,\"byteOffset\":96,\"byteLength\":8}],\"buffers\":[{\"byteLength\":104}]}",
+                 indexed ? ",\"indices\":2" : "");
+        size_t size;
+        uint8_t *glb = make_glb(json, &bytes, sizeof bytes, &size);
+        mesh_file mesh;
+        char why[256];
+        TIDE_REQUIRE(read_exactly(glb, size, "incomplete.glb", &mesh, why));
+        free(glb);
+        TIDE_CHECK(mesh.vertices == 3u && mesh.indices == 3u);
+        TIDE_CHECK(mesh.position[3] == -1.0f && mesh.position[7] == 1.0f);
+        TIDE_CHECK(mesh.index[0] == (indexed ? 2u : 0u) && mesh.index[1] == (indexed ? 1u : 2u) && mesh.index[2] == (indexed ? 0u : 1u));
+        mesh_file_free(&mesh);
+    }
+}
+
 TIDE_TEST(mesh_gltf_text_is_never_read_past_its_bytes)
 {
     // The same triangle, its buffer inside the text: 80 bytes as base64

@@ -1049,7 +1049,7 @@ static void collect_rename_edit(void *user, const char *uri, const char *path, c
     document->edits[document->count++] = copy_string(edit->data, edit->len);
 }
 
-static bool same_rename_game(const path_list *game, const char *alone, const path_list *seen)
+static bool same_game_context(const path_list *game, const char *alone, const path_list *seen)
 {
     if (game->game_folder || seen->game_folder) {
         return game->game_folder && seen->game_folder && same_path(game->game_folder, seen->game_folder);
@@ -1066,18 +1066,16 @@ static bool same_rename_game(const path_list *game, const char *alone, const pat
     return true;
 }
 
-static void rename_game(lsp_server *s, void *user, path_list *list, char *alone)
+// Remember the whole context before analysis consumes its paths. Merely
+// having seen its files in another game doesn't imply the same #if symbols.
+static bool first_game_context(path_list **seen, int *seen_count, const path_list *list, const char *alone)
 {
-    rename_search *search = user;
-    for (int i = 0; i < search->seen_count; i++) {
-        if (!same_rename_game(list, alone, &search->seen[i])) continue;
-        free_paths(list);
-        free(alone);
-        return;
+    for (int i = 0; i < *seen_count; i++) {
+        if (same_game_context(list, alone, &(*seen)[i])) return false;
     }
-    search->seen = realloc(search->seen, sizeof(path_list) * (size_t)(search->seen_count + 1));
-    if (!search->seen) abort();
-    path_list *game = &search->seen[search->seen_count++];
+    *seen = realloc(*seen, sizeof(path_list) * (size_t)(*seen_count + 1));
+    if (!*seen) abort();
+    path_list *game = &(*seen)[(*seen_count)++];
     *game = (path_list){0};
     if (list->game_folder) {
         game->game_folder = copy_string(list->game_folder, strlen(list->game_folder));
@@ -1086,6 +1084,17 @@ static void rename_game(lsp_server *s, void *user, path_list *list, char *alone)
         for (int file = 0; file < list->count; file++) {
             add_path_in(game, list->items[file], list->packages[file]);
         }
+    }
+    return true;
+}
+
+static void rename_game(lsp_server *s, void *user, path_list *list, char *alone)
+{
+    rename_search *search = user;
+    if (!first_game_context(&search->seen, &search->seen_count, list, alone)) {
+        free_paths(list);
+        free(alone);
+        return;
     }
     run_game(s, list, alone);
     analysis_rename_files(search->renames, search->count, collect_rename_edit, &search->edits);
@@ -1319,35 +1328,51 @@ static void document_request(lsp_server *s, const char *method, const json *id, 
     jb_free(&b);
 }
 
-// workspace/symbol: the declarations of every game, each searched once.
+// workspace/symbol: every compilation context, with shared symbols once.
+typedef struct workspace_symbol_record {
+    char *data; // Copied before the next analysis resets the arena
+} workspace_symbol_record;
+
 typedef struct symbol_search {
     const char *query;
-    jbuf *out;
-    int written;
-    path_list seen; // Files searched already, with their games
+    path_list *seen;
+    int seen_count;
+    workspace_symbol_record *symbols;
+    int count;
+    int cap;
 } symbol_search;
 
-// Searches a game's files (`list`, or `alone`, as run_game takes them),
-// unless they were all searched already.
+static void collect_workspace_symbol(void *user, const jbuf *symbol)
+{
+    symbol_search *search = user;
+    if (search->count == search->cap) {
+        search->cap = search->cap ? search->cap * 2 : 64;
+        search->symbols = realloc(search->symbols, sizeof(workspace_symbol_record) * (size_t)search->cap);
+        if (!search->symbols) abort();
+    }
+    search->symbols[search->count++].data = copy_string(symbol->data, symbol->len);
+}
+
+static int workspace_symbol_order(const void *a, const void *b)
+{
+    const workspace_symbol_record *const *left = a;
+    const workspace_symbol_record *const *right = b;
+    const int order = strcmp((*left)->data, (*right)->data);
+    return order ? order : *left < *right ? -1 : *left > *right;
+}
+
+// Searches a whole game's context (`list`, or `alone`, as run_game takes
+// them), even when another game previously searched every one of its files.
 static void search_game(lsp_server *s, void *user, path_list *list, char *alone)
 {
     symbol_search *search = user;
-    const int count = list->count;
-    bool fresh = false;
-    for (int i = 0; i < (count > 0 ? count : 1); i++) {
-        const char *path = count > 0 ? list->items[i] : alone;
-        bool seen = false;
-        for (int k = 0; k < search->seen.count && !seen; k++) seen = same_path(search->seen.items[k], path);
-        fresh |= !seen;
-        if (!seen) add_path(&search->seen, path);
-    }
-    if (!fresh) {
+    if (!first_game_context(&search->seen, &search->seen_count, list, alone)) {
         free_paths(list);
         free(alone);
         return;
     }
     run_game(s, list, alone);
-    analysis_workspace_symbols(search->query, search->out, &search->written);
+    analysis_workspace_symbols(search->query, collect_workspace_symbol, search);
 }
 
 static void workspace_symbols(lsp_server *s, const json *id, const char *query)
@@ -1355,11 +1380,36 @@ static void workspace_symbols(lsp_server *s, const json *id, const char *query)
     jbuf b = {0};
     reply_start(&b, id);
     jb_put(&b, "[");
-    symbol_search search = {query, &b, 0, {0}};
+    symbol_search search = {.query = query};
 
     visit_workspace_games(s, search_game, &search);
 
-    free_paths(&search.seen);
+    for (int i = 0; i < search.seen_count; i++) free_paths(&search.seen[i]);
+    free(search.seen);
+    // Compare complete serialized items, including location and container.
+    // Sorting pointers avoids a quadratic scan and preserves traversal order.
+    workspace_symbol_record **sorted = search.count > 0 ? malloc(sizeof(*sorted) * (size_t)search.count) : NULL;
+    if (search.count > 0 && !sorted) abort();
+    for (int i = 0; i < search.count; i++) sorted[i] = &search.symbols[i];
+    if (search.count > 1) qsort(sorted, (size_t)search.count, sizeof(*sorted), workspace_symbol_order);
+    const char *previous = NULL;
+    for (int i = 0; i < search.count; i++) {
+        if (previous && strcmp(previous, sorted[i]->data) == 0) {
+            free(sorted[i]->data);
+            sorted[i]->data = NULL;
+        } else {
+            previous = sorted[i]->data;
+        }
+    }
+    free(sorted);
+    int written = 0;
+    for (int i = 0; i < search.count; i++) {
+        if (!search.symbols[i].data) continue;
+        if (written++) jb_put(&b, ",");
+        jb_put(&b, search.symbols[i].data);
+        free(search.symbols[i].data);
+    }
+    free(search.symbols);
     jb_put(&b, "]}");
     send_buf(s, &b);
     jb_free(&b);

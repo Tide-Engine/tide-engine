@@ -4,7 +4,7 @@ description: "Sample keyboard, mouse, touch and gamepad devices into Tide player
 
 # Input
 
-A player's **input** is what they do in one tick, and it's what the network sends. Each game declares one `input`, and systems read it.
+A player's **input** is what they do in one tick, and it's what the network sends. A game can declare one `input`, whose fields systems read, or read [devices directly in the match](#devices-in-the-match).
 
 ```csharp
 input PlayerInput
@@ -148,8 +148,8 @@ A finger is never the mouse, as in Unity's Input System: the mouse only sees mic
 ```csharp
 input Brush
 {
-    int x;
-    int y;
+    [Absolute] int x;
+    [Absolute] int y;
     bool paint;
 
     // Cells of 16 pixels, under the mouse or a finger
@@ -163,7 +163,17 @@ input Brush
 }
 ```
 
-Touches come from the web, on phones and desktops alike, and from touchscreens on Windows. Android and iOS come next. Elsewhere, `connected` is false and no finger ever touches.
+Touches come from Android, the web on phones and desktops, and touchscreens on Windows. Native iOS support isn't built yet; other native desktops have no touch support yet. A browser on those desktops can still report touches. Where no touchscreen is available, `connected` is false and no finger ever touches.
+
+The cell coordinates above are `[Absolute]` because a prediction should keep the last cell the player pointed at, even after it guesses they stopped painting.
+
+Try a mouse, then a finger in the example below. The amber ring is the pointer; teal circles are individual touches, with lines back to where each started. A touch leaves the mouse where it was, and lifting it leaves the pointer where it ended. The ten slots show which fingers are still held. Click or tap the frame first so swipes go to the example.
+
+::: tide-example pointer The pointer and individual fingers
+
+<<< @/examples/pointer.tide
+
+:::
 
 ### Locking the cursor
 

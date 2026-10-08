@@ -15,6 +15,7 @@
 
 #include "assets.h"
 #include "folders.h"
+#include "psd_files.h"
 #include "sha256.h"
 #include "tide/vorbis.h"
 #include "tide/wav.h"
@@ -35,8 +36,9 @@ typedef struct read_file {
     uint8_t *data;
     size_t len;
     uint8_t hash[32];
-    bool decoded;          // Tried as a PNG...
-    tide_png_image image;  // ...and what it gave (pixels NULL when it isn't one)
+    bool decoded;          // Tried as a PNG or PSD...
+    tide_png_image image;  // ...and what it gave (pixels NULL when neither decodes)
+    char psd_why[256];     // What's wrong with bytes that start as a PSD
     bool utf8_known, utf8; // Whether its bytes are UTF-8 text
     bool sound_tried, sound; // Whether it's a WAV or an Ogg Vorbis file that decodes
     const char *vorbis_why;  // What's wrong with it as Ogg Vorbis, for a file that starts as one
@@ -655,11 +657,15 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
     if (kind == ASSET_GRID || kind == ASSET_TEXTURE || kind == ASSET_CUBEMAP) {
         if (!f->decoded) {
             f->decoded = true;
-            if (!tide_png_decode(f->data, f->len, &f->image)) f->image = (tide_png_image){0};
+            if (f->len >= 4 && memcmp(f->data, "8BPS", 4) == 0) {
+                psd_file_read(f->data, f->len, &f->image, f->psd_why);
+            } else if (!tide_png_decode(f->data, f->len, &f->image)) f->image = (tide_png_image){0};
         }
         if (!f->image.pixels) {
-            diag_error(at, "'%s' isn't a PNG that decodes", key);
-            diag_note("a %s asset is a PNG; for the file's bytes as they are, read it as a List<byte>", kind_name(kind));
+            diag_error(at, "'%s' isn't a PNG or a PSD that decodes", key);
+            diag_note("a %s asset is a PNG or an RGB PSD's saved composite image; for the file's bytes as they are, "
+                      "read it as a List<byte>", kind_name(kind));
+            if (f->psd_why[0]) diag_note("as PSD, %s", f->psd_why);
             return false;
         }
         item->image = f->image;

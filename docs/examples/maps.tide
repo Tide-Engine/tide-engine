@@ -1,0 +1,87 @@
+settings { title = "Maps and sets"; }
+
+local scene Main { }
+
+local singleton Board
+{
+    Map<string, int> scores;
+    Set<string> tagged;
+    string selected = "Amber";
+    string result = "Choose a name, then change its entry.";
+}
+
+local event(Spawned) Setup(mut Board board, with Main)
+{
+    board.scores["Amber"] = 2;
+    board.scores["Teal"] = 1;
+}
+
+view Show(mut Board board)
+{
+    Draw.Clear(Color(0.086, 0.086, 0.094));
+    Draw.SetScreen();
+    GUI.SetTheme(GUITheme { radius = 6 });
+
+    GUILayout.Area(Rect(12, 12, Screen.width - 24, 40))
+    {
+        GUILayout.Horizontal()
+        {
+            if (GUILayout.Button("Amber")) board.selected = "Amber";
+            if (GUILayout.Button("Teal")) board.selected = "Teal";
+            if (GUILayout.Button("Rose")) board.selected = "Rose";
+        }
+    }
+
+    GUILayout.Area(Rect(12, Screen.height - 150, Screen.width - 24, 76))
+    {
+        GUILayout.Horizontal()
+        {
+            // An indexed write adds a missing key; an existing score grows.
+            if (GUILayout.Button("Score +1"))
+            {
+                board.scores[board.selected] += 1;
+                board.result = $"{board.selected}: score added.";
+            }
+            // Add returns false when the set already holds the key.
+            if (GUILayout.Button("Tag once"))
+            {
+                var added = board.tagged.Add(board.selected);
+                board.result = added ? "Set.Add: true, a new tag." : "Set.Add: false, already tagged.";
+            }
+        }
+        GUILayout.Horizontal()
+        {
+            if (GUILayout.Button("Remove"))
+            {
+                board.scores.Remove(board.selected);
+                board.tagged.Remove(board.selected);
+                board.result = $"{board.selected}: score and tag removed.";
+            }
+            if (GUILayout.Button("Clear"))
+            {
+                board.scores.Clear();
+                board.tagged.Clear();
+                board.result = "Both collections are empty.";
+            }
+        }
+    }
+
+    Draw.Text($"Selected: {board.selected}", float2(16, 62), 15, Color.white);
+    Draw.Text("Scores, in insertion order", float2(16, 88), 12, Color(0.64, 0.64, 0.68));
+    mut var row = 0;
+    foreach (var entry in board.scores)
+    {
+        var y = 112 + row * 36;
+        var color = entry.key == "Amber" ? Color(0.98, 0.75, 0.14)
+                  : entry.key == "Teal" ? Color(0.18, 0.83, 0.75) : Color(0.98, 0.44, 0.52);
+        Draw.Text($"{entry.key}: {entry.value}", float2(16, y), 15, color);
+        if (board.tagged.Has(entry.key)) Draw.Text("tagged", float2(Screen.width - 16, y), 12, color, Anchor.UpperRight);
+        row += 1;
+    }
+
+    // One lookup returns both presence and the score, or zero if absent.
+    var found = board.scores.TryGet(board.selected, out var score);
+    Draw.Text($"TryGet: {found}, out score = {score}", float2(16, Screen.height - 65), 13, Color.white);
+    Draw.Text($"Tags: {board.tagged}", float2(16, Screen.height - 44), 12, Color(0.64, 0.64, 0.68));
+    Draw.Text(board.result, float2(16, Screen.height - 23), 12, Color(0.64, 0.64, 0.68));
+}
