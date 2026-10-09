@@ -78,6 +78,7 @@ This file is the rules and the agreed decisions every session needs. What was bu
 | `notes/verified-and-local-handlers.md` | `verified`, local handlers of the match's events, and the contract for what they hear | `engine/src/events.c`, listeners and `verified` in `check.c` and `codegen.c` |
 | `notes/webrtc-and-rooms.md` | Desktop WebRTC (ICE, DTLS, SCTP), and the rooms' tests on desktop and the web | `platform/src/rtc/`, `rooms.c`, `relay/`, `platform/tests/rooms*`, `rtc*` |
 | `notes/build-service.md` | The build service for mods, on hold | `builds/`, `compiler/cli/publish.c` |
+| `notes/mockup-games.md` | The mockup.games service: shared projects, agent iterations, social playtests, captured feedback, owner accounting and the Tide starter | `mockup/` |
 
 Where each section of this file went, by the name it had:
 

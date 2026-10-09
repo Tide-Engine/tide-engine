@@ -1,0 +1,418 @@
+// Moonwake: a tiny, complete Tide game used by the first mockup.games workspace.
+// The garden is deterministic; presentation is procedural and needs no assets.
+settings { title = "Moonwake"; maxPlayers = 1; }
+
+const int SEEDS = 12;
+const Color MINT = Color(0.53, 1, 0.83);
+const Color PAPER = Color(0.9, 0.96, 0.94);
+const Color LAVENDER = Color(0.73, 0.64, 1);
+
+enum Steps { Reset, Move, Collect }
+enum Paint { Background, Garden, Seeds, Courier, Hud }
+scene Main { }
+
+singleton Garden
+{
+    int round = 1;
+    int collected;
+    float elapsed;
+    float bloom;
+}
+
+component Courier
+{
+    [Position] float2 position = float2(0, -215);
+    float2 velocity;
+    float2 facing = float2(0, 1);
+    float dash;
+    float recharge;
+}
+
+component Seed
+{
+    int index;
+    int round;
+    bool gathered;
+}
+
+local singleton Canvas
+{
+    float scale = 1;
+    float2 half;
+    bool touched;
+}
+
+struct Spark
+{
+    float2 position;
+    float2 velocity;
+    float life;
+    float duration;
+    float size;
+    Color color;
+}
+
+local singleton Effects
+{
+    int collected;
+    int round;
+    float trail;
+    float clock;
+    List<Spark> sparks;
+}
+
+input Controls
+{
+    [Clamp(-1, 1)] float2 move;
+    bool dash;
+    bool restart;
+
+    Sample(Devices devices, Canvas canvas)
+    {
+        var keys = devices.keyboard;
+        move.x = (keys.d.pressed || keys.rightArrow.pressed ? 1 : 0)
+               - (keys.a.pressed || keys.leftArrow.pressed ? 1 : 0);
+        move.y = (keys.w.pressed || keys.upArrow.pressed ? 1 : 0)
+               - (keys.s.pressed || keys.downArrow.pressed ? 1 : 0);
+        dash = keys.space.pressed || keys.leftShift.pressed || devices.gamepad.buttonSouth.pressed;
+        restart = keys.r.pressed || devices.gamepad.buttonNorth.pressed;
+        if (devices.mouse.left.pressed && devices.mouse.position.x > canvas.half.x * 2 - 100
+            && devices.mouse.position.y > canvas.half.y * 2 - 42) restart = true;
+        if (Math.LengthSq(devices.gamepad.leftStick) > 0.04) move = devices.gamepad.leftStick;
+        foreach (var touch in devices.touchscreen.touches)
+        {
+            if (!touch.press.pressed) continue;
+            if (touch.startPosition.x > canvas.half.x * 2 - 100 && touch.startPosition.y > canvas.half.y * 2 - 42)
+            {
+                restart = true;
+                continue;
+            }
+            if (touch.startPosition.x > canvas.half.x * 2 - 112 && touch.startPosition.y < 112) dash = true;
+            else move = Math.Clamp((touch.position - touch.startPosition) / 45, -1, 1);
+        }
+    }
+}
+
+float2 SeedAt(int i)
+{
+    // A route around the four flower beds, with the last lights near the shrine.
+    if (i == 0) return float2(-100, -210);
+    if (i == 1) return float2(-265, -190);
+    if (i == 2) return float2(-375, -70);
+    if (i == 3) return float2(-320, 90);
+    if (i == 4) return float2(-185, 205);
+    if (i == 5) return float2(0, 245);
+    if (i == 6) return float2(185, 205);
+    if (i == 7) return float2(320, 90);
+    if (i == 8) return float2(375, -70);
+    if (i == 9) return float2(265, -190);
+    if (i == 10) return float2(100, -210);
+    return float2(0, -75);
+}
+
+float2 BedAt(int i)
+{
+    return float2(i % 2 == 0 ? -170 : 170, i < 2 ? -55 : 105);
+}
+
+event(Spawned) Plant(with Main)
+{
+    for (var i = 0; i < SEEDS; i++) Spawn(Seed { index = i });
+}
+
+event(PlayerJoined joined) Arrive()
+{
+    Spawn(Courier, Owner { player = joined.player });
+}
+
+[Stage(Steps.Reset)]
+system Replant(Controls input, mut Courier courier, mut Garden garden, with Owner)
+{
+    if (!input.restart.down) return;
+    garden.round += 1;
+    garden.collected = 0;
+    garden.elapsed = 0;
+    garden.bloom = 0;
+    courier = default;
+    this.Snap();
+}
+
+[Stage(Steps.Reset)]
+system ResetLights(Garden garden, mut Seed seed)
+{
+    if (seed.round == garden.round) return;
+    seed.gathered = false;
+    seed.round = garden.round;
+}
+
+[Stage(Steps.Move)]
+system Walk(Controls input, Time time, mut Courier courier, with Owner)
+{
+    var direction = Math.LengthSq(input.move) > 1 ? Math.Normalize(input.move) : input.move;
+    if (Math.LengthSq(direction) > 0.01) courier.facing = Math.Normalize(direction);
+    courier.recharge = Math.Max(0, courier.recharge - time.dt);
+    courier.dash = Math.Max(0, courier.dash - time.dt);
+    if (input.dash.down && courier.recharge <= 0)
+    {
+        courier.dash = 0.17;
+        courier.recharge = 0.8;
+    }
+    var target = courier.dash > 0 ? courier.facing * 670 : direction * 235;
+    courier.velocity = Math.Lerp(courier.velocity, target, Math.Min(1, time.dt * (courier.dash > 0 ? 50 : 18)));
+    courier.position += courier.velocity * time.dt;
+    // Garden boundaries and raised, circular flower beds: slide along them.
+    var edge = courier.position / float2(410, 270);
+    if (Math.LengthSq(edge) > 1) courier.position /= Math.Length(edge);
+    for (var i = 0; i < 4; i++)
+    {
+        var offset = courier.position - BedAt(i);
+        if (Math.LengthSq(offset) < 63 * 63)
+            courier.position = BedAt(i) + (Math.LengthSq(offset) > 0.01 ? Math.Normalize(offset) : float2(0, -1)) * 63;
+    }
+}
+
+[Stage(Steps.Collect)]
+system Gather(mut Garden garden, mut Seed seed, query (Courier courier) couriers)
+{
+    if (seed.gathered) return;
+    foreach (var row in couriers)
+    {
+        if (Math.LengthSq(row.courier.position - SeedAt(seed.index)) > 29 * 29) continue;
+        seed.gathered = true;
+        garden.collected += 1;
+        break;
+    }
+}
+
+[Stage(Steps.Collect, 1)]
+system TimeGarden(Time time, mut Garden garden)
+{
+    if (garden.collected < SEEDS) garden.elapsed += time.dt;
+    else garden.bloom = Math.Min(1, garden.bloom + time.dt * 0.8);
+}
+
+void Glow(float2 at, float radius, Color color)
+{
+    Draw.Shape(Shape { center = at, size = float2(radius * 2), ellipse = true,
+                      color = color, soft = radius * 0.9 });
+}
+
+void Gem(float2 at, float size, Color color, float turn)
+{
+    Draw.Rect(at, float2(size, size), turn, color);
+}
+
+[Stage(Paint.Background)]
+view Background(mut Canvas canvas, Devices devices)
+{
+    Draw.Clear(Color(0.025, 0.042, 0.065));
+    canvas.half = float2(Screen.width, Screen.height) * 0.5;
+    canvas.scale = Math.Max(0.1, Math.Min(Screen.width / 1030, Screen.height / 760));
+    foreach (var touch in devices.touchscreen.touches)
+        if (touch.press.pressed) canvas.touched = true;
+    Draw.SetCamera(float2(0), canvas.half.y / canvas.scale);
+    Draw.Shape(Shape { center = float2(0, 0), size = float2(1100, 790), ellipse = true,
+                      color = Color(0.038, 0.075, 0.1), color2 = Color(0.017, 0.03, 0.055), soft = 80 });
+}
+
+[Stage(Paint.Garden)]
+view PaintGarden(Garden garden, Time time)
+{
+    // Floating midnight garden, stone terraces, waterways and a quiet shrine.
+    Draw.Ellipse(float2(0, -18), float2(452, 307), Color(0.012, 0.024, 0.041));
+    Draw.Ellipse(float2(0, 0), float2(450, 300), Color(0.10, 0.19, 0.22));
+    Draw.Ellipse(float2(0, 4), float2(440, 289), Color(0.055, 0.125, 0.15));
+    Draw.WireEllipse(float2(0, 4), float2(432, 282), 1.2, Color(0.21, 0.39, 0.39));
+    Draw.Ellipse(float2(0, 4), float2(424, 274), Color(0.07, 0.155, 0.17));
+    Draw.Shape(Shape { center = float2(0, 0), size = float2(780, 490), ellipse = true,
+                      color = Color(0.115, 0.235, 0.225), color2 = Color(0.06, 0.14, 0.16), soft = -24 });
+
+    // Sparse paving and bioluminescent grass. Integer patterns stay identical.
+    for (var i = 0; i < 94; i++)
+    {
+        var x = float(i * 137 % 780) - 390;
+        var y = float(i * 83 % 490) - 245;
+        if (x * x / (405 * 405) + y * y / (260 * 260) > 0.94) continue;
+        var at = float2(x, y);
+        var light = 0.6 + 0.4 * Math.Sin(time.t * 1.2 + i * 0.7);
+        Draw.Line(at, at + float2(-3, 7 + i % 6), 1, Color(0.15, 0.33, 0.29, 0.7));
+        Draw.Line(at + float2(3, 0), at + float2(5, 6), 1, Color(0.12, 0.29, 0.27, 0.6));
+        if (i % 7 == 0) Draw.Circle(at + float2(-3, 9), 1.5, Color(0.45, 0.85, 0.64, light * 0.8));
+    }
+    for (var i = 0; i < 13; i++)
+    {
+        var at = float2(0, -246 + i * 39);
+        Draw.Ellipse(at + float2(1, -2), float2(23, 13), Color(0.025, 0.09, 0.115, 0.7));
+        Draw.Ellipse(at, float2(22, 12), Color(0.15, 0.27, 0.27));
+        Draw.WireEllipse(at, float2(21, 11), 0.8, Color(0.22, 0.36, 0.33));
+    }
+    for (var bed = 0; bed < 4; bed++)
+    {
+        var at = BedAt(bed);
+        Draw.Ellipse(at + float2(0, -6), float2(61, 56), Color(0.018, 0.06, 0.085, 0.8));
+        Draw.Circle(at, 56, Color(0.14, 0.26, 0.25));
+        Draw.Circle(at + float2(0, 3), 51, Color(0.035, 0.095, 0.11));
+        Draw.WireCircle(at, 55, 1.5, Color(0.27, 0.42, 0.36));
+        for (var flower = 0; flower < 8; flower++)
+        {
+            var angle = flower * 2.399 + bed * 0.8;
+            var radius = 13 + flower * 4;
+            var center = at + float2(Math.Cos(angle), Math.Sin(angle)) * radius;
+            var ink = flower % 3 == 0 ? LAVENDER : MINT;
+            Glow(center, 12, Color(ink.r, ink.g, ink.b, 0.09));
+            for (var petal = 0; petal < 5; petal++)
+            {
+                var a = petal * 1.256 + Math.Sin(time.t + bed) * 0.05;
+                Draw.Ellipse(center + float2(Math.Cos(a), Math.Sin(a)) * 4, float2(3, 5), a, Color(ink.r, ink.g, ink.b, 0.5));
+            }
+            Draw.Circle(center, 2, Color(0.92, 0.92, 0.72));
+        }
+    }
+
+    var shrine = float2(0, 44);
+    Glow(shrine, 80 + garden.bloom * 70, Color(0.42, 0.95, 0.75, 0.045 + garden.bloom * 0.09));
+    Draw.Ellipse(shrine + float2(0, -8), float2(56, 35), Color(0.02, 0.08, 0.1, 0.7));
+    Draw.Circle(shrine, 39, Color(0.08, 0.17, 0.185));
+    Draw.WireCircle(shrine, 37, 1, Color(0.25, 0.42, 0.4));
+    Draw.Circle(shrine, 27, Color(0.025, 0.09, 0.12));
+    Draw.Arc(shrine, 30, 1.57, -6.283 * float(garden.collected) / SEEDS, 2.5, MINT);
+    for (var i = 0; i < SEEDS; i++)
+    {
+        var angle = i * 6.283 / SEEDS + 1.57;
+        var at = shrine + float2(Math.Cos(angle), Math.Sin(angle)) * 46;
+        Draw.Circle(at, 2.5, i < garden.collected ? MINT : Color(0.17, 0.29, 0.29));
+    }
+    var hover = Math.Sin(time.t * 1.8) * 4;
+    Glow(shrine + float2(0, 7 + hover), 27, Color(0.56, 0.9, 0.85, 0.16));
+    Gem(shrine + float2(0, 7 + hover), 17, LAVENDER, 0.785);
+    Gem(shrine + float2(0, 10 + hover), 10, PAPER, 0.785);
+
+    // Fireflies beyond the island, with slow, independent floating paths.
+    for (var i = 0; i < 26; i++)
+    {
+        var angle = i * 2.399;
+        var at = float2(Math.Cos(angle) * (450 + i % 4 * 18), Math.Sin(angle) * (300 + i % 3 * 17));
+        var p = at + float2(Math.Sin(time.t * 0.5 + i), Math.Cos(time.t * 0.7 + i)) * 7;
+        Glow(p, 9, Color(0.47, 0.85, 0.72, 0.06));
+        Draw.Circle(p, 1.3, Color(0.65, 1, 0.81, 0.55 + Math.Sin(time.t * 1.5 + i) * 0.3));
+    }
+}
+
+[Stage(Paint.Seeds)]
+view PaintSeeds(Seed seed, Time time)
+{
+    if (seed.gathered) return;
+    var ground = SeedAt(seed.index);
+    var at = ground + float2(0, 5 + Math.Sin(time.t * 2.4 + seed.index) * 3);
+    Draw.Ellipse(ground + float2(0, -6), float2(9, 4), Color(0.01, 0.06, 0.08, 0.5));
+    Glow(at, 28, Color(0.47, 1, 0.78, 0.14));
+    Draw.WireCircle(at, 13 + Math.Sin(time.t * 2 + seed.index) * 2, 0.8, Color(0.53, 1, 0.83, 0.24));
+    Gem(at, 9, MINT, 0.785 + Math.Sin(time.t + seed.index) * 0.15);
+    Gem(at + float2(-1, 2), 4, PAPER, 0.785);
+}
+
+[Stage(Paint.Courier)]
+view PaintCourier(Courier courier, Garden garden, mut Effects effects)
+{
+    effects.clock += Frame.dt;
+    if (effects.round != garden.round)
+    {
+        effects.sparks.Clear();
+        effects.collected = 0;
+        effects.round = garden.round;
+    }
+    if (effects.collected != garden.collected)
+    {
+        effects.collected = garden.collected;
+        for (var i = 0; i < 16; i++)
+        {
+            var angle = i * 2.399;
+            effects.sparks.Add(Spark { position = courier.position, velocity = float2(Math.Cos(angle), Math.Sin(angle)) * (45 + i % 5 * 16),
+                                      life = 0.7, duration = 0.7, size = 1.5 + i % 3, color = i % 3 == 0 ? PAPER : MINT });
+        }
+    }
+    effects.trail -= Frame.dt;
+    if (Math.LengthSq(courier.velocity) > 400 && effects.trail <= 0)
+    {
+        effects.trail = courier.dash > 0 ? 0.012 : 0.045;
+        effects.sparks.Add(Spark { position = courier.position, velocity = courier.velocity * -0.03,
+                                  life = 0.4, duration = 0.4, size = courier.dash > 0 ? 7 : 3, color = LAVENDER });
+    }
+    for (mut var i = effects.sparks.count - 1; i >= 0; i--)
+    {
+        mut var spark = effects.sparks[i];
+        spark.life -= Frame.dt;
+        if (spark.life <= 0) { effects.sparks.RemoveAt(i); continue; }
+        spark.position += spark.velocity * Frame.dt;
+        effects.sparks[i] = spark;
+        var fade = spark.life / spark.duration;
+        Draw.Circle(spark.position, spark.size * fade, Color(spark.color.r, spark.color.g, spark.color.b, fade * 0.75));
+    }
+
+    var at = courier.position;
+    var speed = Math.Min(1, Math.Length(courier.velocity) / 235);
+    var bob = Math.Sin(effects.clock * 16) * speed * 1.5;
+    Draw.Ellipse(at + float2(0, -10), float2(16, 7), Color(0.012, 0.04, 0.065, 0.6));
+    Glow(at, 34, Color(0.6, 0.57, 1, 0.16));
+    // A little hooded moon courier, with an expressive face and flowing scarf.
+    var scarf = at - courier.facing * (11 + speed * 6) + float2(Math.Sin(effects.clock * 9) * 2, 0);
+    Draw.Line(at, scarf, 6, Color(0.52, 0.46, 0.81));
+    Draw.Line(scarf, scarf - courier.facing * 7 + float2(0, -3), 4, LAVENDER);
+    Draw.Ellipse(at + float2(0, bob), float2(12, 15), Color(0.66, 0.61, 0.91));
+    Draw.Ellipse(at + float2(-2, 3 + bob), float2(9, 12), Color(0.82, 0.8, 1));
+    var face = at + courier.facing * 3 + float2(0, 3 + bob);
+    Draw.Ellipse(face, float2(8, 6), Color(0.09, 0.15, 0.23));
+    Draw.Circle(face + float2(-3, 1), 1.5, MINT);
+    Draw.Circle(face + float2(3, 1), 1.5, MINT);
+    if (courier.recharge <= 0)
+        Draw.Arc(at, 20, -0.5, 1, 1.4, Color(0.72, 0.65, 1, 0.55));
+}
+
+[Stage(Paint.Hud)]
+view PaintHud(Garden garden, Canvas canvas, Devices devices)
+{
+    Draw.SetScreen();
+    var compact = Screen.width < 600;
+    var center = Screen.width * 0.5;
+    Draw.Text("M O O N W A K E", float2(compact ? 18 : center, compact ? 21 : 33), compact ? 15 : 22, PAPER,
+              compact ? Anchor.MiddleLeft : Anchor.MiddleCenter);
+    Draw.RoundRect(float2(Screen.width - 54, 21), float2(76, 28), 7, Color(0.08, 0.16, 0.19, 0.85));
+    Draw.Text("REPLANT", float2(Screen.width - 54, 21), 10, Color(0.58, 0.77, 0.72), Anchor.MiddleCenter);
+    if (!compact)
+        Draw.Text("bring a little light back to the garden", float2(center, 61), 13, Color(0.51, 0.66, 0.66), Anchor.MiddleCenter);
+    Draw.Text($"{garden.collected} / {SEEDS}  MOONSEEDS", float2(18, compact ? 46 : Screen.height - 25), 12, MINT, Anchor.MiddleLeft);
+    var seconds = int(garden.elapsed);
+    Draw.Text($"{seconds}s", float2(Screen.width - 18, compact ? 46 : Screen.height - 25), 13, PAPER, Anchor.MiddleRight);
+    if (!compact && !canvas.touched)
+        Draw.Text("WASD / arrows  move     SPACE  dash     R  replant", float2(center, Screen.height - 25), 12, Color(0.44, 0.59, 0.62), Anchor.MiddleCenter);
+    if (compact || canvas.touched)
+    {
+        var stick = float2(58, Screen.height - 56);
+        mut var thumb = stick;
+        foreach (var touch in devices.touchscreen.touches)
+        {
+            if (!touch.press.pressed) continue;
+            if (touch.startPosition.x > Screen.width - 112 && touch.startPosition.y < 112) continue;
+            mut var delta = Screen.Flip(touch.position) - Screen.Flip(touch.startPosition);
+            if (Math.LengthSq(delta) > 30 * 30) delta = Math.Normalize(delta) * 30;
+            thumb += delta;
+            break;
+        }
+        Draw.Circle(stick, 38, Color(0.02, 0.06, 0.09, 0.65));
+        Draw.WireCircle(stick, 37, 1.2, Color(0.56, 0.82, 0.76, 0.35));
+        Draw.Circle(thumb, 14, Color(0.62, 0.86, 0.78, 0.45));
+        var dash = float2(Screen.width - 57, Screen.height - 56);
+        Draw.Circle(dash, 35, Color(0.065, 0.08, 0.14, 0.85));
+        Draw.WireCircle(dash, 34, 1.3, Color(0.73, 0.64, 1, 0.7));
+        Draw.Text("DASH", dash, 12, LAVENDER, Anchor.MiddleCenter);
+        if (Screen.height > 340)
+            Draw.Text("drag to move", float2(center, Screen.height - 20), 11, Color(0.44, 0.64, 0.62), Anchor.MiddleCenter);
+    }
+    if (garden.collected >= SEEDS)
+    {
+        var at = float2(center, Screen.height * 0.5 + 62);
+        Draw.RoundRect(at, float2(Math.Min(350, Screen.width - 32), 92), 16, Color(0.025, 0.065, 0.095, 0.95));
+        Draw.Text("The garden is awake.", at + float2(0, -16), 21, PAPER, Anchor.MiddleCenter);
+        Draw.Text($"12 lights home in {seconds}s", at + float2(0, 14), 13, MINT, Anchor.MiddleCenter);
+    }
+}
