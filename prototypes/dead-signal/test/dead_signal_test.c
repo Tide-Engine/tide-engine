@@ -14,7 +14,7 @@
 #include "tide_test.h"
 
 #define DT (1.0f / 60.0f)
-#define SCRIPTED_HASH UINT64_C(0xad7fa39bcd1e4ee3)
+#define SCRIPTED_HASH UINT64_C(0x1fe52c6bf4f307fe)
 
 static tide_world world;
 
@@ -38,6 +38,15 @@ static int enemies(const tide_world *w)
     for (uint32_t i = 0; i < w->entities.next_unused; i++) {
         const tide_entity e = tide_entity_in_slot(&w->entities, i);
         if (tide_has_Enemy(w, e) && tide_get_Enemy(w, e).health > 0) count++;
+    }
+    return count;
+}
+
+static int projectiles(const tide_world *w)
+{
+    int count = 0;
+    for (uint32_t i = 0; i < w->entities.next_unused; i++) {
+        if (tide_has_Projectile(w, tide_entity_in_slot(&w->entities, i))) count++;
     }
     return count;
 }
@@ -941,7 +950,21 @@ static Controls script(const uint32_t at, const int seat)
 static void scripted_ticks(tide_world *w, const uint32_t from, const uint32_t through)
 {
     for (uint32_t at = from; at < through; at++) {
-        for (int seat = 0; seat < 2; seat++) tide_world_set_input(w, player(seat), script(at, seat));
+        for (int seat = 0; seat < 2; seat++) {
+            Controls controls = script(at, seat);
+            const tide_float3 origin = tide_get_Pose(w, marine(w, seat)).position;
+            const tide_entity target = nearest_enemy(w, origin, true);
+            if (at % 240 < 160 && tide_has_Enemy(w, target)) {
+                const tide_float3 victim = tide_get_Pose(w, target).position;
+                const float gap = tide_sqrt_f(distance_sq(origin, victim));
+                const float height = tide_get_Enemy(w, target).kind == EnemyKind_Warden ? 1.7f : 1.0f;
+                controls.yaw = tide_atan2_f(victim.x - origin.x, victim.z - origin.z);
+                controls.pitch = -tide_atan2_f(height - 1.55f, gap);
+                controls.weapon = Weapon_Nailgun;
+                controls.fire = true;
+            }
+            tide_world_set_input(w, player(seat), controls);
+        }
         tide_world_tick(w);
     }
 }
@@ -950,15 +973,37 @@ TIDE_TEST(dead_signal_combat_snapshot_replay_is_identical)
 {
     start(2);
     TIDE_REQUIRE(ready(2));
-    scripted_ticks(&world, 0, 300);
+    // Begin in the first live encounter so the snapshot contains its actual
+    // AI, bullets, damage queues and ammunition, rather than an idle lobby.
+    const tide_float3 arena = floor_point(world.GeometryAudit.encounters.at[0]);
+    for (int seat = 0; seat < 2; seat++) {
+        put_marine(seat, tide_f3(arena.x + (seat == 0 ? -0.8f : 0.8f), 0, arena.z));
+        invulnerable(seat);
+    }
+    tick(2);
+    TIDE_REQUIRE((world.Expedition.triggered & 1) != 0 && enemies(&world) > 0);
+    scripted_ticks(&world, 0, 60);
+    uint32_t snapshot_at = 60;
+    // Save while a real enemy bolt is in flight, rather than relying on an
+    // arbitrary tick that can fall between two volleys.
+    while (projectiles(&world) == 0 && snapshot_at < 600) {
+        scripted_ticks(&world, snapshot_at, snapshot_at + 1);
+        snapshot_at++;
+    }
     tide_world saved = {0};
     tide_world replay = {0};
     tide_world_copy(&saved, &world);
     const uint64_t snapshot = tide_world_hash(&saved);
-    scripted_ticks(&world, 300, 1200);
+    TIDE_CHECK(enemies(&saved) > 0);
+    TIDE_CHECK(projectiles(&saved) > 0);
+    scripted_ticks(&world, snapshot_at, 1200);
     const uint64_t final = tide_world_hash(&world);
+    TIDE_CHECK(world.Expedition.kills > 0);
+    TIDE_CHECK(tide_get_Marine(&world, marine(&world, 0)).kills > 0);
+    printf("    replay fixture: %d enemies and %d bullets at snapshot, %d kills after replay\n",
+        enemies(&saved), projectiles(&saved), world.Expedition.kills);
     tide_world_copy(&replay, &saved);
-    scripted_ticks(&replay, 300, 1200);
+    scripted_ticks(&replay, snapshot_at, 1200);
     TIDE_CHECK(tide_world_hash(&replay) == final);
     TIDE_CHECK(tide_world_hash(&saved) == snapshot);
     // Exact match bits, checked on Windows clang and WASI together.
@@ -982,13 +1027,24 @@ struct network_match {
     tide_client *clients[2];
     network_player players[2];
     double now;
+    bool saw_enemies;
+    bool saw_firing;
     uint64_t hashes[1901];
 };
 
 static void sample_network(void *user, const uint32_t at, void *input)
 {
     const network_player *me = user;
-    const Controls controls = script(at, me->seat);
+    Controls controls = script(at, me->seat);
+    if (at < 900) {
+        const tide_world *mine = tide_client_world(me->match->clients[me->seat]);
+        if (mine != NULL && mine->GeometryAudit.done) {
+            const tide_float2 from = mine->GeometryAudit.starts.at[me->seat];
+            const tide_float2 arena = mine->GeometryAudit.encounters.at[0];
+            controls = (Controls){.move = {0, 1}, .fire = true, .weapon = Weapon_Nailgun,
+                .yaw = tide_atan2_f(arena.x - from.x, arena.y - from.y), .pitch = 0.08f};
+        }
+    }
     memcpy(input, &controls, sizeof controls);
 }
 
@@ -998,8 +1054,15 @@ static void network_advance(network_match *m)
     tide_loopback_set_time(m->net, m->now);
     for (int seat = 0; seat < 2; seat++) tide_client_update(m->clients[seat], m->now);
     tide_server_update(m->server, m->now);
+    const tide_world *authority = tide_server_world(m->server);
+    m->saw_enemies |= enemies(authority) > 0;
+    for (int seat = 0; seat < 2; seat++) {
+        const tide_entity e = marine(authority, seat);
+        if (tide_has_Marine(authority, e))
+            m->saw_firing |= tide_get_Marine(authority, e).nails < 160;
+    }
     const uint32_t at = tide_server_tick(m->server);
-    if (at <= 1900) m->hashes[at] = tide_world_hash(tide_server_world(m->server));
+    if (at <= 1900) m->hashes[at] = tide_world_hash(authority);
 }
 
 static bool network_ready(network_match *m, const int seat)
@@ -1034,6 +1097,9 @@ TIDE_TEST(dead_signal_two_clients_confirm_the_same_world_on_a_bad_network)
     while (tide_server_tick(m.server) < 1800) network_advance(&m);
     authority = tide_server_world(m.server);
     TIDE_CHECK(authority->Expedition.players == 2);
+    TIDE_CHECK(authority->Expedition.triggered != 0 && m.saw_enemies && m.saw_firing);
+    printf("    network combat: encounter mask %x, %d kills, saw live enemies and consumed ammunition\n",
+        authority->Expedition.triggered, authority->Expedition.kills);
     for (int seat = 0; seat < 2; seat++) {
         const tide_client_status status = tide_client_status_of(m.clients[seat]);
         const tide_world *confirmed = tide_client_verified_world(m.clients[seat]);

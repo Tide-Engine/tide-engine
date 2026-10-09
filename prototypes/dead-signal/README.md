@@ -70,7 +70,8 @@ cache discoveries replenish resources.
 Keep moving and split firing angles. A second player's hit on a recently hit
 enemy earns crossfire damage and breaks frontal armor. Hold Use near a downed
 ally to revive them. Two living players charge a cleared relay together, and
-both must reach the exit. After a sector, each player chooses one relic.
+at least two must hold Use together at the exit. After a sector, each player
+chooses one relic.
 
 A team wipe retries the current sector with its relic build intact. Losing the
 second player suspends the expedition until another joins. After victory,
@@ -99,7 +100,7 @@ standard host.
 
 Validated on Windows clang and WASI: all 16 simulation checks pass, including a
 normal-health opening fight with 30 kills and no downs or retries. Both targets
-match the scripted simulation hash `ad7fa39bcd1e4ee3`. The full-route structural
+match the active-combat simulation hash `1fe52c6bf4f307fe`. The full-route structural
 run reaches victory through all six sectors with 1,647 kills. Normal difficulty
 and the intended human session duration still require a two-person playtest.
 
