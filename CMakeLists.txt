@@ -137,6 +137,13 @@ add_subdirectory(examples/towers)
 add_subdirectory(examples/sumo)
 add_subdirectory(examples/samples)
 
+# Internal games stay separate from examples, documentation staging and the
+# installed package. Opt in explicitly on a developer's own build tree.
+option(TIDE_PRIVATE_PROTOTYPES "Build the unpublished game prototypes" OFF)
+if(TIDE_PRIVATE_PROTOTYPES AND TIDE_PLATFORM)
+    add_subdirectory(prototypes/deadbell)
+endif()
+
 # The docs' live examples open a window, so they need the platform layer, and
 # come after the packages: the physics examples are built with one each.
 if(TIDE_PLATFORM)
