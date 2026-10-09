@@ -15,7 +15,7 @@ if(NOT TARGET tide_platform)
 endif()
 tide_add_game(last_light SOURCES ${sources} ${rooms})
 if(TIDE_WEB)
-    set(destination "${PROJECT_SOURCE_DIR}/docs/static/admin/prototypes/the-last-light")
+    set(destination "${PROJECT_SOURCE_DIR}/docs/static/prototypes/the-last-light")
     add_custom_target(last_light_page
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${destination}"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different

@@ -10,8 +10,9 @@ const sessionAge = 12 * 60 * 60 * 1000;
 const cookieName = 'tide_admin';
 const bot = /bot|crawler|spider|headless|lighthouse|curl|wget|healthcheck/i;
 
-// Retired public addresses must never serve a stale copy of a private game.
+// Keep retired aliases from serving stale builds; games have one public root.
 const retiredPrototype = /(?:^|[\/._-])(?:two[-_]forks|the[-_]last[-_]light|cabin[-_]nine)(?:[\/._-]|$)/i;
+const prototypePath = /^\/(admin\/)?prototypes\/(two-forks|the-last-light|cabin-nine)(\/.*)?$/;
 
 /** @param {string | null} value */
 function destination(value) {
@@ -60,7 +61,7 @@ function client(req) {
 function loginPage(failed, next) {
     return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><title>Admin · Tide Engine</title><style>
     :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;min-height:100svh;display:grid;place-items:center;background:#1b1b1f;color:#e6e6e1;font-family:system-ui,sans-serif;padding:24px}main{width:100%;max-width:390px;background:#202127;border:1px solid #3c3f44;border-radius:16px;padding:32px}.brand{color:#fbbf24;font-size:12px;font-weight:700;letter-spacing:.15em}h1{font-size:28px;margin:20px 0 8px}p{color:#a3a3ad;line-height:1.6}label{display:block;margin:24px 0 8px;font-size:14px}input,button{width:100%;font:inherit;border-radius:8px;padding:12px}input{background:#161618;color:inherit;border:1px solid #3c3f44}input:focus{outline:2px solid #fbbf24;outline-offset:2px}button{margin-top:18px;background:#fbbf24;color:#1b1b1f;border:0;font-weight:650;cursor:pointer}.error{color:#fb7185;font-size:14px}a{color:#a3a3ad;font-size:13px}footer{margin-top:24px}
-    </style></head><body><main><div class="brand">TIDE ENGINE / PRIVATE</div><h1>Behind the scenes.</h1><p>Sign in for analytics and private prototypes.</p><form method="post" action="/admin/login"><input type="hidden" name="next" value="${escape(next)}"><label for="password">Admin password</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="256">${failed ? '<p class="error" role="alert">The password was not accepted.</p>' : ''}<button type="submit">Sign in</button></form><footer><a href="/">Back to the website</a></footer></main></body></html>`;
+    </style></head><body><main><div class="brand">TIDE ENGINE / PRIVATE</div><h1>Behind the scenes.</h1><p>Sign in for analytics and the prototype catalog.</p><form method="post" action="/admin/login"><input type="hidden" name="next" value="${escape(next)}"><label for="password">Admin password</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="256">${failed ? '<p class="error" role="alert">The password was not accepted.</p>' : ''}<button type="submit">Sign in</button></form><footer><a href="/">Back to the website</a></footer></main></body></html>`;
 }
 
 /**
@@ -158,6 +159,17 @@ export function createAdmin({ analytics, password = '', relayUrl = '', relayToke
         let pathname;
         try { pathname = decodeURIComponent(url.pathname).replace(/\\/g, '/').replace(/\/+/g, '/'); }
         catch { text(res, 400, 'Invalid path.'); return true; }
+        const prototype = pathname.match(prototypePath);
+        if (prototype) {
+            const [, legacy, id, file = '/'] = prototype;
+            if (!prototype[3] || file === '/' || file === '/index.html') res.setHeader('x-robots-tag', 'noindex');
+            if (legacy) {
+                // Old shared links still reach the game, including room codes.
+                res.writeHead(308, { location: `/prototypes/${id}${file.split('/').map(encodeURIComponent).join('/')}${url.search}` }).end();
+                return true;
+            }
+            return false; // Public playable files never require an admin session.
+        }
         // SvelteKit decodes route names. Apply the gate to the same path,
         // including encoded spellings such as /adm%69n and its data route.
         const isAdmin = pathname === '/admin' || pathname.startsWith('/admin/');

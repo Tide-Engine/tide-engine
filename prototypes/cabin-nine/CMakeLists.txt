@@ -1,10 +1,10 @@
-# Opt-in private game. Browser staging stays behind the site's admin guard.
+# Opt-in prototype. Browser staging uses a public address for sharing.
 set(CABIN_NINE_SOURCES game.tide hud.tide show.tide story.tide)
 set(CABIN_NINE_ROOMS PACKAGES Rooms "${PROJECT_SOURCE_DIR}/packages/rooms/rooms.tide")
 
 tide_add_game(cabin_nine SOURCES ${CABIN_NINE_SOURCES} ${CABIN_NINE_ROOMS})
 if(TIDE_WEB)
-    set(destination "${PROJECT_SOURCE_DIR}/docs/static/admin/prototypes/cabin-nine")
+    set(destination "${PROJECT_SOURCE_DIR}/docs/static/prototypes/cabin-nine")
     add_custom_target(cabin_nine_page
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${destination}"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different

@@ -96,29 +96,39 @@ test('missing admin password refuses both page and API instead of exposing count
     assert.equal((await get('/admin')).status, 503);
     assert.equal((await get('/admin/api')).status, 503);
     assert.equal((await login('')).status, 503);
-    assert.equal((await get('/admin/prototypes/two-forks/index.html')).status, 503);
-    assert.equal((await get('/admin/prototypes/the-last-light/game.wasm')).status, 503);
-    assert.equal((await get('/admin/prototypes/cabin-nine/index.html')).status, 503);
+    assert.equal((await get('/admin/prototypes')).status, 503);
+    assert.equal((await get('/admin/prototypes/__data.json')).status, 503);
+    for (const id of ['two-forks', 'the-last-light', 'cabin-nine']) {
+        assert.equal((await get(`/prototypes/${id}/`)).status, 200);
+        assert.equal((await get(`/prototypes/${id}/game.wasm`)).status, 200);
+    }
 });
 
-test('prototype files share the admin gate and retired public copies are always refused', async (t) => {
+test('prototype files are public while the catalog and retired copies remain protected', async (t) => {
     const { get, login } = await site(t);
     const cookie = (await login()).headers.get('set-cookie').split(';')[0];
-    for (const route of ['/admin/prototypes', '/admin/prototypes/__data.json', '/admin/prototypes/two-forks/',
-        '/admin/prototypes/the-last-light/index.html', '/admin/prototypes/the-last-light/game.wasm',
-        '/admin/prototypes/the-last-light/game.pack', '/admin/prototypes/the-last-light/sfx/steps.ogg',
-        '/adm%69n/prototypes/two-forks/thumbnail.png', '/admin%2fprototypes%2ftwo-forks%2findex.html',
-        '/admin/prototypes/cabin-nine/', '/admin/prototypes/cabin-nine/game.wasm', '/adm%69n/prototypes/cabin-nine/game.pack']) {
+    for (const route of ['/admin/prototypes', '/admin/prototypes/', '/admin/prototypes/__data.json',
+        '/adm%69n/prototypes', '/admin/prototypes/not-a-game/']) {
         const anonymous = await get(route);
         assert.equal(anonymous.status, 303, route);
         assert.match(anonymous.headers.get('location'), /^\/admin\/login\?next=/);
         assert.equal(anonymous.headers.get('cache-control'), 'private, no-store');
         assert.equal((await get(route, cookie)).status, 200);
     }
+    for (const id of ['two-forks', 'the-last-light', 'cabin-nine']) {
+        for (const file of ['', 'index.html', 'game.wasm', 'game.pack', 'sfx/steps.ogg', 'thumbnail.png']) {
+            const route = `/prototypes/${id}/${file}`;
+            const response = await get(route);
+            assert.equal(response.status, 200, route);
+            assert.equal(response.headers.get('location'), null);
+            assert.equal(response.headers.get('set-cookie'), null);
+            assert.notEqual(response.headers.get('cache-control'), 'private, no-store');
+        }
+    }
     for (const route of ['/samples/two-forks/', '/samples/two-forks/index.html', '/samples/two-forks/game.wasm',
         '/samples/thumbnails/two-forks.png', '/samples/two%2dforks/index.html', '/two-forks/',
         '/examples/the-last-light/', '/sample_two_forks.html', '/samples/the-last-light/',
-        '/samples/cabin-nine/', '/samples/thumbnails/cabin-nine.png', '/prototypes/cabin-nine/game.wasm', '/cabin_nine.html', '/samples/cabin%2dnine/index.html']) {
+        '/samples/cabin-nine/', '/samples/thumbnails/cabin-nine.png', '/cabin_nine.html', '/samples/cabin%2dnine/index.html']) {
         for (const session of [undefined, cookie]) {
             const response = await get(route, session);
             assert.equal(response.status, 404, route);
@@ -127,11 +137,28 @@ test('prototype files share the admin gate and retired public copies are always 
     }
 });
 
-test('sign-in returns to a private game while refusing external or malformed destinations', async (t) => {
+test('old admin game links redirect to public URLs without requiring a session', async (t) => {
+    for (const password of ['a-test-password', '']) {
+        const { get } = await site(t, { password });
+        for (const id of ['two-forks', 'the-last-light', 'cabin-nine']) {
+            for (const suffix of ['', '/', '/index.html', '/game.wasm', '/sfx/steps.ogg']) {
+                const response = await get(`/admin/prototypes/${id}${suffix}?join=TEST&backend=webgpu`);
+                assert.equal(response.status, 308);
+                assert.equal(response.headers.get('location'), `/prototypes/${id}${suffix || '/'}?join=TEST&backend=webgpu`);
+                assert.equal(response.headers.get('set-cookie'), null);
+            }
+        }
+        const encoded = await get('/adm%69n%2fprototypes%2ftwo-forks%2findex.html?join=TEST');
+        assert.equal(encoded.status, 308);
+        assert.equal(encoded.headers.get('location'), '/prototypes/two-forks/index.html?join=TEST');
+    }
+});
+
+test('sign-in returns to the catalog while refusing external or malformed destinations', async (t) => {
     const { get, origin } = await site(t);
-    const next = '/admin/prototypes/the-last-light/?join=TEST';
+    const next = '/admin/prototypes?from=link';
     const form = await (await get(`/admin/login?next=${encodeURIComponent(next)}`)).text();
-    assert.match(form, /name="next" value="\/admin\/prototypes\/the-last-light\/\?join=TEST"/);
+    assert.match(form, /name="next" value="\/admin\/prototypes\?from=link"/);
     const signIn = (value) => fetch(`${origin}/admin/login`, {
         method: 'POST', redirect: 'manual', headers: { origin, 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ password: 'a-test-password', next: value }),
@@ -141,7 +168,7 @@ test('sign-in returns to a private game while refusing external or malformed des
     for (const value of ['https://other.example/', '//other.example/', '/admin/prototypes/../logout', '/admin\\prototypes\\game', '/admin/prototypes/game/\r\nX-Test: evil']) {
         assert.equal((await signIn(value)).headers.get('location'), '/admin');
     }
-    const html = await (await get('/admin/login?next=' + encodeURIComponent('/admin/prototypes/game/?join="<script>'))).text();
+    const html = await (await get('/admin/login?next=' + encodeURIComponent('/admin/prototypes?query="<script>'))).text();
     assert.doesNotMatch(html, /<script>/);
     assert.match(html, /&quot;&lt;script&gt;/);
 });
