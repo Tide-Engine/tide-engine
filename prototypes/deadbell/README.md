@@ -23,7 +23,7 @@ cmake --preset web-release -DTIDE_PRIVATE_PROTOTYPES=ON
 cmake --build --preset web-release --target deadbell
 ```
 
-This produces `build/web-release/bin/deadbell.html`. Serve the build directory through HTTP before opening the page. The prototype is excluded from public examples, docs staging, and package installation.
+This produces `build/web-release/bin/deadbell.html`. Serve the build directory through HTTP before opening the page. To stage it for the site's signed-in private prototype grid, build `deadbell_page` (or `private_games` for the whole catalog). Its protected address is `/admin/prototypes/deadbell/`; both players sign in before hosting or joining. The prototype is excluded from public examples and package installation.
 
 ## The run
 

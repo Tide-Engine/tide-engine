@@ -11,7 +11,7 @@ const cookieName = 'tide_admin';
 const bot = /bot|crawler|spider|headless|lighthouse|curl|wget|healthcheck/i;
 
 // Retired public addresses must never serve a stale copy of a private game.
-const retiredPrototype = /(?:^|[\/._-])(?:two[-_]forks|the[-_]last[-_]light|cabin[-_]nine|dead[-_]signal)(?:[\/._-]|$)/i;
+const retiredPrototype = /(?:^|[\/._-])(?:two[-_]forks|the[-_]last[-_]light|cabin[-_]nine|dead[-_]signal|deadbell)(?:[\/._-]|$)/i;
 
 /** @param {string | null} value */
 function destination(value) {

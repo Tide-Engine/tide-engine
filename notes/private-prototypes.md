@@ -63,6 +63,10 @@ during integration and joins the same catalog. When its existing opt-in
 `TIDE_PRIVATE_PROTOTYPES` option is enabled, `private_games` stages it under
 the protected root too; the manual docs workflow explicitly enables this
 option. Its independent game contract is in `notes/cabin-nine.md`.
+Deadbell uses the same opt-in option and joins this grid through
+`deadbell_page` and `private_games`, with its actual combat thumbnail and
+self-contained page under `/admin/prototypes/deadbell/`. Its independent
+co-op roguelike contract and validation are in `notes/deadbell.md`.
 Pages are self-contained; any future
 external game assets must stay under that protected root. The site's auth,
 retired public URLs, static build gate and catalog are in `notes/docs-site.md`.
