@@ -1,0 +1,412 @@
+using Rooms;
+
+settings { title = "Cabin Nine"; maxPlayers = 2; hostMigration = true; }
+
+scene Main { }
+
+component Crew
+{
+    [Position] float3 position;
+    float yaw;
+    float pitch;
+    int seat;
+    bool ready;
+}
+
+component Passenger
+{
+    int id;
+    int identity;
+    [Position] float3 position;
+    bool held;
+}
+
+singleton Roster
+{
+    Map<PlayerID, Entity> bodies;
+    Entity[2] crew;
+    List<Entity> passengers;
+    int occupied;
+    int ready;
+}
+
+singleton Flight
+{
+    int phase;
+    int caseIndex;
+    float elapsed;
+    float phaseSeconds;
+    int clues;
+    int readers;
+    int votes;
+    int suspect = -1;
+    int trust = 3;
+    int resolved;
+    int outcome;
+    int served;
+    string announcement = "Two crew members are required. Invite your partner, then both press ENTER.";
+    bool initialized;
+    int interviewed;
+    int inspected;
+    int wrongTargets;
+}
+
+command Ready { }
+command Interact { int target; int action; }
+command ReadEvidence { int slot; }
+command Propose { int target; }
+command Confirm { }
+command NextCase { }
+command Restart { }
+
+input Controls
+{
+    [Clamp(-1, 1)] float2 move;
+    [Clamp(-0.35, 0.35)] float2 look;
+
+    Sample(Devices devices, Lobby lobby, Me me)
+    {
+        if (!lobby.playing || me.notebook) return;
+        var keys = devices.keyboard;
+        if (keys.d.pressed) move.x += 1;
+        if (keys.a.pressed) move.x -= 1;
+        if (keys.w.pressed) move.y += 1;
+        if (keys.s.pressed) move.y -= 1;
+        move += devices.gamepad.leftStick;
+        if (Cursor.locked) look = devices.mouse.delta * 0.003;
+        if (keys.rightArrow.pressed) look.x += 0.035;
+        if (keys.leftArrow.pressed) look.x -= 0.035;
+        if (keys.upArrow.pressed) look.y += 0.025;
+        if (keys.downArrow.pressed) look.y -= 0.025;
+        look += devices.gamepad.rightStick * 0.035;
+    }
+}
+
+float3 CabinSeat(int slot)
+{
+    return float3(slot % 2 == 0 ? -1.3 : 1.3, 0, 3.2 + (slot / 2) * 1.8);
+}
+
+float3 PassengerSeat(int id, int caseIndex)
+{
+    return CabinSeat((id * 4 + caseIndex * 2) % 9);
+}
+
+bool BothReady(Roster roster)
+{
+    return roster.bodies.count == 2 && roster.ready == 3;
+}
+
+int SenderSeat(World world, Roster roster, PlayerID sender)
+{
+    if (!world.TryGet<Crew>(roster.bodies[sender], out var crew)) return -1;
+    return crew.seat;
+}
+
+bool NearPassenger(Crew crew, Passenger passenger)
+{
+    return Math.Distance(crew.position, passenger.position) <= 2.2;
+}
+
+event(PlayerJoined joined) Enter(mut Roster roster)
+{
+    if (roster.bodies.count >= 2) return;
+    var seat = (roster.occupied & 1) == 0 ? 0 : 1;
+    roster.occupied |= 1 << seat;
+    var body = Spawn(Crew { position = float3(seat == 0 ? -0.25 : 0.25, 0, 1.1), seat = seat }, Owner { player = joined.player });
+    roster.bodies[joined.player] = body;
+    roster.crew[seat] = body;
+}
+
+event(PlayerLeft left) Leave(mut Roster roster, mut Flight flight, mut World world)
+{
+    var departed = roster.bodies[left.player];
+    for (var seat = 0; seat < 2; seat++)
+    {
+        var body = roster.crew[seat];
+        if (!world.TryGet<Crew>(body, out mut var crew)) continue;
+        crew.ready = false;
+        world.Set<Crew>(body, crew);
+        if (body == departed)
+        {
+            roster.occupied &= ~(1 << seat);
+            roster.crew[seat] = default;
+        }
+    }
+    departed.Destroy();
+    roster.bodies.Remove(left.player);
+    roster.ready = 0;
+    flight.votes = 0;
+    flight.readers = 0;
+    if (flight.phase > 0 && flight.phase < 5)
+        flight.announcement = "CREW CONNECTION LOST. The flight is paused. Invite a replacement, then both press ENTER to resume.";
+}
+
+system Begin(mut Flight flight, mut Roster roster)
+{
+    if (flight.initialized) return;
+    flight.initialized = true;
+    for (var id = 0; id < 8; id++)
+        roster.passengers.Add(Spawn(Passenger { id = id, identity = id, position = CabinSeat(id) }));
+}
+
+system Walk(Controls input, mut Crew crew, Time time)
+{
+    crew.yaw += input.look.x;
+    if (crew.yaw > Math.PI) crew.yaw -= Math.TAU;
+    if (crew.yaw < -Math.PI) crew.yaw += Math.TAU;
+    crew.pitch = Math.Clamp(crew.pitch - input.look.y, -1.2, 1.2);
+    mut var move = input.move;
+    var length = Math.Length(move);
+    if (length > 1) move /= length;
+    var forward = float3(Math.Sin(crew.yaw), 0, Math.Cos(crew.yaw));
+    var right = float3(forward.z, 0, -forward.x);
+    crew.position += (right * move.x + forward * move.y) * (2.2 * time.dt);
+    crew.position.x = Math.Clamp(crew.position.x, -0.5, 0.5);
+    crew.position.y = 0;
+    crew.position.z = Math.Clamp(crew.position.z, 0.5, 15.0);
+}
+
+system Progress(mut Roster roster, mut Flight flight, Time time)
+{
+    if (!BothReady(roster)) return;
+    if (flight.phase == 0)
+    {
+        flight.phase = 1;
+        flight.phaseSeconds = 0;
+        flight.announcement = "BOARDING COMPLETE. Introduce yourselves and serve all eight passengers. Remember their faces and belongings.";
+    }
+    if (flight.phase >= 5) return;
+    flight.elapsed += time.dt;
+    flight.phaseSeconds += time.dt;
+    if (flight.phase == 1 && flight.served == 255)
+    {
+        flight.phase = 2;
+        flight.phaseSeconds = 0;
+        flight.announcement = "CABIN POWER LOST. Stay together. An unscheduled transmission is reaching both galleys.";
+    }
+    if (flight.phase == 2 && flight.phaseSeconds >= 8)
+    {
+        flight.phase = 3;
+        flight.phaseSeconds = 0;
+        flight.announcement = CaseBrief(flight.caseIndex);
+        roster.passengers.Add(Spawn(Passenger { id = 8, identity = CaseCopyIdentity(flight.caseIndex), position = PassengerSeat(8, flight.caseIndex) }));
+    }
+}
+
+system Places(mut Passenger passenger, Flight flight)
+{
+    if (passenger.held)
+    {
+        passenger.position = float3(0.9, 0, 14.5);
+        return;
+    }
+    passenger.identity = passenger.id == 8 ? CaseCopyIdentity(flight.caseIndex) : passenger.id;
+    passenger.position = flight.phase >= 3 ? PassengerSeat(passenger.id, flight.caseIndex) : CabinSeat(passenger.id);
+}
+
+command(Ready ready, PlayerID sender) ReadyCrew(mut Roster roster, mut Flight flight, mut World world)
+{
+    if (flight.phase == 5 || !world.TryGet<Crew>(roster.bodies[sender], out mut var crew)) return;
+    crew.ready = true;
+    world.Set<Crew>(roster.bodies[sender], crew);
+    roster.ready |= 1 << crew.seat;
+    flight.announcement = BothReady(roster) ? "BOTH CREW READY. Proceed with the current assignment." : "CREW READY. Waiting for your partner to press ENTER.";
+}
+
+command(Interact interaction, PlayerID sender) PassengerInteraction(Roster roster, mut Flight flight, mut World world)
+{
+    if (!BothReady(roster) || (flight.phase != 1 && flight.phase != 3)) return;
+    if (!world.TryGet<Crew>(roster.bodies[sender], out var crew)) return;
+    if (interaction.target < 0 || interaction.target > 8 || interaction.action < 0 || interaction.action > 2) return;
+    mut var occupied = -1;
+    foreach (var entity in roster.passengers)
+    {
+        if (world.TryGet<Passenger>(entity, out var passenger) && passenger.held) occupied = passenger.id;
+    }
+    foreach (var entity in roster.passengers)
+    {
+        if (!world.TryGet<Passenger>(entity, out mut var passenger)) continue;
+        if (passenger.id != interaction.target || !NearPassenger(crew, passenger)) continue;
+        var bit = 1 << passenger.id;
+        if (interaction.action == 0)
+        {
+            if (flight.phase == 1) flight.served |= bit;
+            else flight.interviewed |= bit;
+            flight.announcement = flight.phase == 1 ? BoardingReply(passenger.identity) : PassengerReply(passenger.id, flight.caseIndex);
+        }
+        else if (interaction.action == 1)
+        {
+            if (flight.phase == 3) flight.inspected |= bit;
+            flight.announcement = flight.phase == 1 ? BoardingInspectReply(passenger.identity) : InspectionText(passenger.id, flight.caseIndex);
+        }
+        else if (flight.phase == 3)
+        {
+            if (!passenger.held && occupied >= 0)
+            {
+                flight.announcement = "The rear compartment is occupied. Release its passenger before escorting another.";
+                return;
+            }
+            passenger.held = !passenger.held;
+            passenger.position = passenger.held ? float3(0.9, 0, 14.5) : PassengerSeat(passenger.id, flight.caseIndex);
+            world.Set<Passenger>(entity, passenger);
+            flight.votes = 0;
+            flight.announcement = passenger.held ? "PASSENGER ESCORTED. The rear compartment is secure. Both crew must confirm the recorded suspect." : "PASSENGER RELEASED. Review the evidence before making another decision.";
+        }
+        return;
+    }
+}
+
+command(ReadEvidence record, PlayerID sender) ReadRecord(Roster roster, mut Flight flight, World world)
+{
+    if (!BothReady(roster) || flight.phase != 3 || record.slot < 0 || record.slot > 1) return;
+    if (!world.TryGet<Crew>(roster.bodies[sender], out var crew)) return;
+    var station = record.slot == 0 ? float3(-0.75, 0, 0.8) : float3(0.75, 0, 12.8);
+    if (Math.Distance(crew.position, station) > 1.8) return;
+    flight.clues |= 1 << record.slot;
+    flight.readers |= 1 << crew.seat;
+    flight.announcement = EvidenceText(flight.caseIndex, record.slot);
+}
+
+command(Propose proposal, PlayerID sender) RecordSuspect(Roster roster, mut Flight flight, World world)
+{
+    if (!BothReady(roster) || flight.phase != 3 || flight.clues != 3 || flight.readers != 3) return;
+    if (!world.TryGet<Crew>(roster.bodies[sender], out var crew)) return;
+    if (proposal.target < 0 || proposal.target > 8 || (flight.wrongTargets & (1 << proposal.target)) != 0) return;
+    foreach (var entity in roster.passengers)
+    {
+        if (!world.TryGet<Passenger>(entity, out var passenger)) continue;
+        if (passenger.id != proposal.target || !NearPassenger(crew, passenger)) continue;
+        var bit = 1 << proposal.target;
+        if ((flight.interviewed & bit) == 0 || (flight.inspected & bit) == 0)
+        {
+            flight.announcement = "An accusation needs a personal interview and physical inspection. Talk and inspect this passenger first.";
+            return;
+        }
+        if (flight.suspect != proposal.target) flight.votes = 0;
+        flight.suspect = proposal.target;
+        flight.announcement = "SUSPECT RECORDED. Escort this passenger to the rear compartment, then each crew member confirms with C.";
+        return;
+    }
+}
+
+command(Confirm confirm, PlayerID sender) ConfirmDecision(Roster roster, mut Flight flight, mut World world)
+{
+    if (!BothReady(roster) || flight.phase != 3 || flight.clues != 3 || flight.readers != 3 || flight.suspect < 0) return;
+    var seat = SenderSeat(world, roster, sender);
+    if (seat < 0 || (flight.votes & (1 << seat)) != 0) return;
+    mut var secured = false;
+    foreach (var entity in roster.passengers)
+        if (world.TryGet<Passenger>(entity, out var passenger) && passenger.id == flight.suspect && passenger.held) secured = true;
+    if (!secured)
+    {
+        flight.announcement = "The recorded suspect is still in the cabin. Escort them with H before confirming.";
+        return;
+    }
+    flight.votes |= 1 << seat;
+    if (flight.votes != 3)
+    {
+        flight.announcement = "ONE CREW SIGNATURE RECORDED. Your partner must independently confirm with C.";
+        return;
+    }
+    if (flight.suspect == CorrectSuspect(flight.caseIndex))
+    {
+        flight.resolved += 1;
+        flight.phaseSeconds = 0;
+        flight.phase = flight.resolved == 4 ? 5 : 4;
+        flight.outcome = flight.resolved == 4 ? (flight.trust == 3 ? 1 : 2) : 0;
+        flight.announcement = flight.resolved == 4 ? "DAWN APPROACH. Four signals severed. The cabin is quiet. Read your flight report." : "THE COPY HAS BEEN CONTAINED. Compare the crew's records, then press N for the next transmission.";
+        return;
+    }
+    flight.wrongTargets |= 1 << flight.suspect;
+    flight.trust = Math.Max(0, flight.trust - 1);
+    foreach (var entity in roster.passengers)
+    {
+        if (!world.TryGet<Passenger>(entity, out mut var passenger) || passenger.id != flight.suspect) continue;
+        passenger.held = false;
+        passenger.position = PassengerSeat(passenger.id, flight.caseIndex);
+        world.Set<Passenger>(entity, passenger);
+    }
+    flight.suspect = -1;
+    flight.votes = 0;
+    if (flight.trust == 0)
+    {
+        flight.phase = 5;
+        flight.outcome = 3;
+        flight.announcement = "CREW AUTHORITY REVOKED. Three innocent passengers were detained. The transmission reaches the cockpit.";
+    }
+    else flight.announcement = "INNOCENT PASSENGER RELEASED. Cabin trust fell. This passenger is cleared; reassess the two records.";
+}
+
+command(NextCase next, PlayerID sender) NextTransmission(mut Roster roster, mut Flight flight, mut World world)
+{
+    if (!BothReady(roster) || flight.phase != 4 || SenderSeat(world, roster, sender) < 0) return;
+    flight.caseIndex += 1;
+    flight.phase = 2;
+    flight.phaseSeconds = 0;
+    flight.clues = 0;
+    flight.readers = 0;
+    flight.votes = 0;
+    flight.suspect = -1;
+    flight.interviewed = 0;
+    flight.inspected = 0;
+    flight.wrongTargets = 0;
+    flight.announcement = CaseBrief(flight.caseIndex);
+    foreach (var entity in roster.passengers)
+    {
+        if (!world.TryGet<Passenger>(entity, out mut var passenger)) continue;
+        if (passenger.id == 8) entity.Destroy();
+        else
+        {
+            passenger.held = false;
+            passenger.position = CabinSeat(passenger.id);
+            world.Set<Passenger>(entity, passenger);
+        }
+    }
+    roster.passengers.RemoveAt(8);
+}
+
+command(Restart restart, PlayerID sender) RestartFlight(mut Roster roster, mut Flight flight, mut World world)
+{
+    if (flight.phase != 5 || SenderSeat(world, roster, sender) < 0) return;
+    flight.phase = 0;
+    flight.caseIndex = 0;
+    flight.elapsed = 0;
+    flight.phaseSeconds = 0;
+    flight.clues = 0;
+    flight.readers = 0;
+    flight.votes = 0;
+    flight.suspect = -1;
+    flight.trust = 3;
+    flight.resolved = 0;
+    flight.outcome = 0;
+    flight.served = 0;
+    flight.interviewed = 0;
+    flight.inspected = 0;
+    flight.wrongTargets = 0;
+    flight.announcement = "A NEW FLIGHT. Both crew press ENTER when ready.";
+    roster.ready = 0;
+    for (var seat = 0; seat < 2; seat++)
+    {
+        var body = roster.crew[seat];
+        if (!world.TryGet<Crew>(body, out mut var crew)) continue;
+        crew.ready = false;
+        crew.position = float3(seat == 0 ? -0.25 : 0.25, 0, 1.1);
+        crew.yaw = 0;
+        crew.pitch = 0;
+        world.Set<Crew>(body, crew);
+    }
+    foreach (var entity in roster.passengers)
+    {
+        if (!world.TryGet<Passenger>(entity, out mut var passenger)) continue;
+        if (passenger.id == 8) entity.Destroy();
+        else
+        {
+            passenger.held = false;
+            passenger.identity = passenger.id;
+            passenger.position = CabinSeat(passenger.id);
+            world.Set<Passenger>(entity, passenger);
+        }
+    }
+    if (roster.passengers.count == 9) roster.passengers.RemoveAt(8);
+}

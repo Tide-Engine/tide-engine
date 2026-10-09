@@ -45,12 +45,32 @@ const installers: Plugin = {
     },
 };
 
+// A mistaken staging destination must fail the build before it can publish
+// a private game's HTML, binary or thumbnail at an unprotected address.
+const privatePrototypes: Plugin = {
+    name: 'private-prototypes',
+    buildStart() {
+        function check(directory: string) {
+            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+                const name = `${directory}/${entry.name}`;
+                if (name === 'static/admin') continue;
+                if (/(?:^|[\/._-])(?:two[-_]forks|the[-_]last[-_]light|cabin[-_]nine)(?:[\/._-]|$)/i.test(name)) {
+                    throw new Error(`Private prototype asset must live under static/admin/prototypes/: ${name}`);
+                }
+                if (entry.isDirectory()) check(name);
+            }
+        }
+        check('static');
+    },
+};
+
 export default defineConfig(({ command }) => ({
     // Only prerendering uses the native PNG renderer; Vite must load its
     // platform binding from node_modules rather than bundle the binary.
     ssr: { external: ['@resvg/resvg-js'] },
     plugins: [
         asInProduction,
+        privatePrototypes,
         installers,
         sveltekit({
             adapter: adapter(),
@@ -71,5 +91,5 @@ export default defineConfig(({ command }) => ({
     ],
     // Pages show code from the rest of the repo (`<<<`), and the grammar
     // comes from tools/tide-syntax.
-    server: { fs: { allow: ['..'] } },
+    server: { fs: { allow: ['..'], deny: ['.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/static/admin/**'] } },
 }));
