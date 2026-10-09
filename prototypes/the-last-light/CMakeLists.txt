@@ -27,7 +27,9 @@ if(TIDE_WEB)
                 "${CMAKE_CURRENT_SOURCE_DIR}/test/web-play.mjs"
                 "$<TARGET_FILE_DIR:last_light>/last_light.html"
                 "${CMAKE_CURRENT_BINARY_DIR}/captures/${backend}" "${backend}")
-        set_tests_properties(last_light_play_${backend} PROPERTIES TIMEOUT 180
+        # Each playtest already renders two players in software and needs
+        # the runner's CPU/GPU budget for timely frames and match packets.
+        set_tests_properties(last_light_play_${backend} PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE
             SKIP_REGULAR_EXPRESSION "SKIPPED:")
     endforeach()
     set_tests_properties(last_light_play_webgpu PROPERTIES LABELS webgpu)
