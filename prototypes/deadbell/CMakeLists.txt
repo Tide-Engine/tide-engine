@@ -3,6 +3,14 @@ set(DEADBELL_SOURCES audio.tide environment.tide game.tide input.tide light.tide
     play.tide shapes.tide show.tide ui.tide)
 set(DEADBELL_ROOMS PACKAGES Rooms "${PROJECT_SOURCE_DIR}/packages/rooms/rooms.tide")
 tide_add_game(deadbell SOURCES ${DEADBELL_SOURCES} ${DEADBELL_ROOMS})
+if(TIDE_WEB)
+    set(destination "${PROJECT_SOURCE_DIR}/docs/static/prototypes/deadbell")
+    add_custom_target(deadbell_page
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${destination}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "$<TARGET_FILE_DIR:deadbell>/deadbell.html" "${destination}/index.html"
+        DEPENDS deadbell VERBATIM)
+endif()
 
 tide_add_game(deadbell_tests SOURCES ${DEADBELL_SOURCES} ${DEADBELL_ROOMS} NAME game
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" test/deadbell_test.c)

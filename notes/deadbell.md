@@ -1,6 +1,6 @@
 # Deadbell: private co-op prototype
 
-Built 2026-10-09 under `prototypes/deadbell/`. The owner requested a private PSX roguelike prototype with massive enemy crowds, at least two players, and a demo-sized 30–60-minute experience, then authorized finishing it and merging into `dev`. The current repository is private. No public page, docs example, deployment, or package entry was added.
+Built 2026-10-09 under `prototypes/deadbell/`. The owner requested a private PSX roguelike prototype with massive enemy crowds, at least two players, and a demo-sized 30–60-minute experience, then authorized finishing it and merging into `dev`. The current repository is private. A follow-up added it to the signed-in admin prototype grid. The owner's later public-sharing request makes its playable URL and thumbnail public so partners need no admin access; the catalog stays signed in. It remains outside public Samples, docs examples and package installation. No deployment was dispatched.
 
 ## Building and files
 
@@ -13,9 +13,9 @@ Built 2026-10-09 under `prototypes/deadbell/`. The owner requested a private PSX
 - `ui.tide` is the title, loadout, personal relic draft, objectives, guide, touch controls, and result screen around Rooms.
 - `audio.tide` and `sfx/` provide original procedural WAV cues, with `sfx/make_sounds.py` as their reproducible source.
 - `test/deadbell_test.c` is a generated-game C harness using `tests/tide_test.h` and `tests/test_main.c`; `test/smoke.tide` and its host exercise rendering on the actual platform backends.
-- `README.md` is the private build's player guide.
+- `README.md` is the prototype's player guide.
 
-The public example glob, docs staging, and install rules do not collect this folder. Native direct connections use the standard `--host` / `--connect` flags; room codes use Rooms. The web target emits `deadbell.html` and uses the same simulation.
+The public example glob and install rules do not collect this folder. Native direct connections use the standard `--host` / `--connect` flags; room codes use Rooms. The web target emits `deadbell.html` and uses the same simulation. `deadbell_page` stages its self-contained page at `docs/static/prototypes/deadbell/index.html`, served publicly as `https://tide-engine.dev/prototypes/deadbell/`; `private_games` includes that target when enabled, or the native game on desktop. The existing manual docs workflow enables private prototypes and builds this catalog. The checked-in thumbnail is an actual first-seal combat capture and lives beside the public page. Any external game assets also belong in that game's public directory. Admin auth, former game addresses and the build-time asset guard follow `notes/docs-site.md`; the catalog data remains server-only.
 
 ## The run
 
@@ -77,4 +77,8 @@ The existing native suite passed 2,009/2,009 tests and the existing web suite 1,
 
 A complete normal-pace controller soak (seed 123, `pace=1`, two actually joined owners) reached Victory after 116,323 ticks, or 32:18.7 of simulated gameplay. It used normal inputs and validated command packets for movement, weapons, warning dodges, lures, rescue and all nine personal drafts; no health, position, clock, objective, spawn or boss state was changed by the harness. Peak population was 8,000, with 302,527 kills and 51,921 rupture kills. The final fight lasted 3:38.4; seat 1 fell once and was rescued 3.1 seconds later. Final HP was 115/63 and world hash `2f31e3fb2aa1b267`. This proves full native progression within the requested duration, while the human pacing target remains open to playtesting.
 
-Integration with the concurrent Cabin Nine and The Last Light changes preserves their builds and private catalog. Deadbell uses the existing root opt-in option and adds no catalog staging or website assets. After merging those changes, the three games' scoped checks passed 5/5 natively and 9/9 on the web, including browser play checks and both graphics backends. Deadbell's optimized web build also passes all three checks with the same simulation hash. Native and web debug/release builds have no compiler diagnostics. No CI workflow or deployment was dispatched.
+Integration with the concurrent Cabin Nine and The Last Light changes preserves their builds and private catalog. Deadbell uses the existing root opt-in option. After merging those changes, the three games' scoped checks passed 5/5 natively and 9/9 on the web, including browser play checks and both graphics backends. Deadbell's optimized web build also passes all three checks with the same simulation hash. Native and web debug/release builds have no compiler diagnostics. No CI workflow or deployment was dispatched.
+
+The original follow-up catalog integration built `private_games` on native debug and web release; staged Deadbell HTML had the same SHA-256 as the compiled page. Its own native tests passed 2/2 and optimized web tests 3/3. Site check reported zero errors/warnings, the production site built, all 18 analytics/admin unit tests and three SEO tests passed. The original production admin HTTP regression checked the actual compiled Deadbell page and thumbnail bytes, the catalog link, authenticated access, encoded paths, ranges and stale public aliases. The owner's public-sharing request supersedes those authentication rules; current serving validation is in `notes/docs-site.md`. These changes do not dispatch CI or deploy the website.
+
+The original muted production Chrome checks at 1280 x 900 and 390 x 844 showed four cards with loaded screenshots and no horizontal overflow. Deadbell opened the then-protected page in a new tab and drew through WebGL with cross-origin isolation and `checkGL` enabled, without JavaScript exceptions or GL errors. The latest `dev` merged cleanly, retaining the other prototypes; native/web catalog builds and Deadbell's 2/2 native and 3/3 web tests passed again for the shared build-file overlap.

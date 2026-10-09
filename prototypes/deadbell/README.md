@@ -1,8 +1,10 @@
 # Deadbell
 
-An internal, unpublished co-op roguelike prototype for **two players**. Two lamplighters enter a dead city to recover its bell seals, wake the tower, and survive the thing that answers. Its identity is an elevated 3D PSX look and a crowd large enough that cutting a passage matters as much as killing an enemy.
+A co-op roguelike prototype for **two players**. Two lamplighters enter a dead city to recover its bell seals, wake the tower, and survive the thing that answers. Its identity is an elevated 3D PSX look and a crowd large enough that cutting a passage matters as much as killing an enemy.
 
-## Play the private build
+## Play and share
+
+After a docs deployment, share [Deadbell](https://tide-engine.dev/prototypes/deadbell/) with your partner. Both players can open that public URL without admin access, then host or join through the room menu.
 
 From the repository root:
 
@@ -23,7 +25,7 @@ cmake --preset web-release -DTIDE_PRIVATE_PROTOTYPES=ON
 cmake --build --preset web-release --target deadbell
 ```
 
-This produces `build/web-release/bin/deadbell.html`. Serve the build directory through HTTP before opening the page. The prototype is excluded from public examples, docs staging, and package installation.
+This produces `build/web-release/bin/deadbell.html`. Serve the build directory through HTTP before opening the page. To stage it for the site's admin prototype grid and public share URL, build `deadbell_page` (or `private_games` for the whole catalog). Its page and thumbnail live beneath `docs/static/prototypes/deadbell/`, served at `/prototypes/deadbell/`. The prototype is excluded from public Samples, docs examples and package installation.
 
 ## The run
 

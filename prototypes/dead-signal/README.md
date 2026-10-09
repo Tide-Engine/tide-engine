@@ -1,4 +1,4 @@
-# Dead Signal — private prototype
+# Dead Signal — cooperative prototype
 
 A fast first-person cooperative expedition for **two to four players**, with PSX
 visual cues and an in-run relic build. Descend through six authored sectors,
@@ -9,12 +9,14 @@ The campaign targets **30–60 minutes for a first human session**. Human pacing
 and balance have not been measured yet; this is a playable prototype with a
 complete start-to-ending route, rather than a verified duration claim.
 
-## Keep it private
+## Play and share
 
-This folder belongs to the private source repository. The build option defaults
-off. It is outside the public examples, docs galleries and staging lists, and is
-not installed in the Tide package. No website or release publication is needed
-to run it.
+After a docs deployment, share
+[Dead Signal](https://tide-engine.dev/prototypes/dead-signal/) with your crew.
+The game opens without admin access; use its room menu to host or join.
+The catalog remains behind admin sign-in. The source repository stays private,
+the build option defaults off, and the game remains outside public Samples,
+docs examples and the Tide package. Local builds use the same room flow.
 
 ## Build and play
 
@@ -48,7 +50,11 @@ cmake --build --preset web-debug --target dead_signal dead_signal_tests dead_sig
 ```
 
 Open `build/web-debug/bin/dead_signal.html` locally. Host and join through the
-room menu. It is a self-contained page; it is not copied to the docs site.
+room menu. It is a self-contained page. With the opt-in option enabled,
+`cmake --build --preset web-debug --target private_games` stages it at
+`docs/static/prototypes/dead-signal/index.html`. After a docs deployment,
+players open `/prototypes/dead-signal/` before hosting or joining a room.
+The screenshot and playable page share that public prototype directory.
 
 ## Controls and rules
 
