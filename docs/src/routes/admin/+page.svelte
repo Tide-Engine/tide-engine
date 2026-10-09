@@ -167,7 +167,7 @@
 
     <nav class="admin-nav" aria-label="Admin sections">
         <a href="/admin" aria-current="page">Analytics</a>
-        <a href="/admin/prototypes">Private prototypes</a>
+        <a href="/admin/prototypes">Prototypes</a>
     </nav>
 
     <div class="toolbar">

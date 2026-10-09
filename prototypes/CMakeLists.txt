@@ -1,5 +1,5 @@
-# Private prototypes have the same native/web game path as the public demos.
-# Catalog pages are staged beneath the existing server-side admin guard.
+# Prototypes have the same native/web game path as the public demos.
+# Catalog games are staged at public addresses that can be shared.
 add_subdirectory(the-last-light)
 # Dead Signal remains a local opt-in prototype, outside catalog staging.
 if(TIDE_PRIVATE_PROTOTYPES)

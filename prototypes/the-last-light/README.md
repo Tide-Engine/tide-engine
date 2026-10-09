@@ -1,6 +1,6 @@
 # The Last Light
 
-A private, original two-player horror prototype built in Tide. Two attendants
+An original two-player horror prototype built in Tide. Two attendants
 sit at a ritual table in a shuttered sanatorium. Eighteen names have been
 erased from its records. Remember them together, and the house will let you
 leave.
@@ -30,10 +30,12 @@ Use voice chat or sit within speaking distance; voice chat is not built into
 this prototype.
 
 With an installed Tide, `tide run prototypes/the-last-light` runs the folder.
-The private browser build is staged by `cmake --build --preset web-debug
---target private_games`. After a website deployment, both players sign into
-**Admin → Private prototypes** and open the game. All its files are beneath
-the existing password guard. Two Forks lives in the same section.
+The browser build is staged by `cmake --build --preset web-debug
+--target private_games` at `docs/static/prototypes/the-last-light/index.html`.
+After a website deployment, anyone can open and share
+[tide-engine.dev/prototypes/the-last-light/](https://tide-engine.dev/prototypes/the-last-light/)
+without admin sign-in. The **Admin → Prototypes** catalog still requires
+sign-in and also lists Two Forks and Cabin Nine.
 
 | Role / moment | Controls |
 |---|---|

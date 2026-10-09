@@ -4,7 +4,7 @@
 </script>
 
 <svelte:head>
-    <title>Private prototypes | Tide Engine</title>
+    <title>Prototypes | Tide Engine</title>
     <meta name="robots" content="noindex,nofollow" />
 </svelte:head>
 
@@ -12,17 +12,17 @@
     <div class="heading">
         <div>
             <p class="eyebrow">Tide Engine / Admin</p>
-            <h1>Private prototypes</h1>
-            <p class="subtitle">A place to try what is taking shape.</p>
+            <h1>Prototypes</h1>
+            <p class="subtitle">Try what is taking shape and share a game with anyone.</p>
         </div>
         <form method="POST" action="/admin/logout"><button class="quiet-button" type="submit">Sign out ↗</button></form>
     </div>
     <nav class="admin-nav" aria-label="Admin sections">
         <a href="/admin">Analytics</a>
-        <a href="/admin/prototypes" aria-current="page">Private prototypes</a>
+        <a href="/admin/prototypes" aria-current="page">Prototypes</a>
     </nav>
 
-    <ul class="prototypes" aria-label="Private games">
+    <ul class="prototypes" aria-label="Prototype games">
         {#each data.prototypes as prototype}
             <li class="prototype">
                 <div class="picture" class:horror={prototype.horror}>
@@ -32,7 +32,7 @@
                         <div class="candle" aria-hidden="true"><span class="flame"></span><span class="wick"></span><span class="wax"></span></div>
                         <span class="picture-label">Keep the light.</span>
                     {/if}
-                    <span class="private-label">Private</span>
+                    <span class="prototype-label">Prototype</span>
                 </div>
                 <div class="copy">
                     <p class="kind">{prototype.kind}</p>
@@ -50,7 +50,7 @@
             </li>
         {/each}
     </ul>
-    <p class="note">To play together, each player signs in here and opens the same prototype. Host a room, then share its code.</p>
+    <p class="note">Game links are public: share a prototype's Play link with anyone, with no admin sign-in needed. To play together, host a room and share its code.</p>
 </main>
 
 <style>
@@ -69,7 +69,7 @@
     .prototype { border: 1px solid var(--divider); border-radius: 12px; overflow: hidden; background: var(--bg-alt); }
     .picture { position: relative; aspect-ratio: 16 / 9; background: #171922; overflow: hidden; }
     .picture img { display: block; width: 100%; height: 100%; object-fit: cover; }
-    .private-label { position: absolute; top: 16px; left: 16px; padding: 4px 9px; border: 1px solid #ffffff2b; border-radius: 4px; background: #101114d9; color: #e6e6e1; font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+    .prototype-label { position: absolute; top: 16px; left: 16px; padding: 4px 9px; border: 1px solid #ffffff2b; border-radius: 4px; background: #101114d9; color: #e6e6e1; font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
     .horror { display: grid; place-items: center; background: radial-gradient(ellipse at 50% 58%, #5b3b2638, transparent 58%), #111013; }
     .candle { position: relative; width: 26px; height: 84px; margin-top: 16px; filter: drop-shadow(0 0 24px #d99c5940); }
     .wax { position: absolute; bottom: 0; left: 2px; width: 22px; height: 45px; background: linear-gradient(90deg, #8e775d, #c1aa85 45%, #a18a67); }

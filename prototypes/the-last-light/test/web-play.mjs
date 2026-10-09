@@ -35,7 +35,7 @@ const server = createServer((request, response) => {
     response.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
     response.setHeader('Cache-Control', 'no-store');
     const pathname = new URL(request.url, 'http://localhost').pathname;
-    if (pathname === '/admin/prototypes/the-last-light/') {
+    if (pathname === '/prototypes/the-last-light/') {
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(game);
     } else if (pathname === '/favicon.ico') response.writeHead(204).end();
     else response.writeHead(404).end();
@@ -177,7 +177,7 @@ try {
 
     const host = await player('host');
     const navigate = async (client, query = '') => {
-        await client.command('Page.navigate', { url: `${origin}/admin/prototypes/the-last-light/?backend=${backend}${query}` });
+        await client.command('Page.navigate', { url: `${origin}/prototypes/the-last-light/?backend=${backend}${query}` });
         await client.until('window.__draws > 30 && window.crossOriginIsolated && document.readyState === "complete"', 'isolated game rendering', 60_000);
     };
     stage = 'title and waiting room';

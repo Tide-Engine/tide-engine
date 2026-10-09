@@ -45,17 +45,17 @@ const installers: Plugin = {
     },
 };
 
-// A mistaken staging destination must fail the build before it can publish
-// a private game's HTML, binary or thumbnail at an unprotected address.
-const privatePrototypes: Plugin = {
-    name: 'private-prototypes',
+// Stage prototype files at their shareable URLs, keeping retired aliases out
+// of new deployments. The catalog itself still belongs under /admin.
+const prototypeAssets: Plugin = {
+    name: 'prototype-assets',
     buildStart() {
         function check(directory: string) {
             for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
                 const name = `${directory}/${entry.name}`;
-                if (name === 'static/admin') continue;
+                if (name === 'static/admin' || name === 'static/prototypes') continue;
                 if (/(?:^|[\/._-])(?:two[-_]forks|the[-_]last[-_]light|cabin[-_]nine)(?:[\/._-]|$)/i.test(name)) {
-                    throw new Error(`Private prototype asset must live under static/admin/prototypes/: ${name}`);
+                    throw new Error(`Prototype asset must live under static/prototypes/: ${name}`);
                 }
                 if (entry.isDirectory()) check(name);
             }
@@ -70,7 +70,7 @@ export default defineConfig(({ command }) => ({
     ssr: { external: ['@resvg/resvg-js'] },
     plugins: [
         asInProduction,
-        privatePrototypes,
+        prototypeAssets,
         installers,
         sveltekit({
             adapter: adapter(),

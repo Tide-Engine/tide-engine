@@ -1,9 +1,10 @@
 # Private prototypes
 
 The owner requested a private PSX horror game with board-game mechanics on
-2026-10-09, and an admin section that also keeps Two Forks private. The Last
-Light (`prototypes/the-last-light/`) is the original two-player game built for
-that request. Its title, fiction, roles, mechanics and tuning are agent design
+2026-10-09, and an admin section that also kept Two Forks private. Later that
+day, the owner requested public game URLs so invited players need no admin
+access. The Last Light (`prototypes/the-last-light/`) is the original two-player
+game built for that request. Its title, fiction, roles, mechanics and tuning are agent design
 choices under the owner's free-reign instruction. Its researched design and
 primary citations are in the game's `DESIGN.md`; play instructions are in its
 `README.md`.
@@ -56,16 +57,21 @@ are not a shared pause. `heard.tide` plays original WAVs regenerated from
 
 `test/tide.packages` is a folder boundary: the CLI must not compile the C
 test host as playable game code. CMake compiles the simulation test separately
-and stages browser pages only at `docs/static/admin/prototypes/<id>/index.html`.
-`private_games` builds/stages The Last Light and Two Forks; the public sample
-build also stages Two Forks privately. Cabin Nine arrived through `origin/dev`
-during integration and joins the same catalog. When its existing opt-in
+and stages browser pages at `docs/static/prototypes/<id>/index.html`, served
+publicly as `/prototypes/<id>/` without an admin session. HTML, thumbnails and
+any future external game assets belong under that game's public directory.
+The admin catalog still lists the games; they remain outside the public
+Samples gallery, search and sitemap.
+
+`private_games` keeps its name and builds/stages The Last Light and Two Forks;
+the public sample build also stages Two Forks at its prototype address.
+Cabin Nine arrived through `origin/dev` during integration and joins the same
+catalog. When its existing opt-in
 `TIDE_PRIVATE_PROTOTYPES` option is enabled, `private_games` stages it under
-the protected root too; the manual docs workflow explicitly enables this
+the public prototype root too; the manual docs workflow explicitly enables this
 option. Its independent game contract is in `notes/cabin-nine.md`.
-Pages are self-contained; any future
-external game assets must stay under that protected root. The site's auth,
-retired public URLs, static build gate and catalog are in `notes/docs-site.md`.
+Pages are self-contained. The site's admin auth, former game addresses,
+static build gate and catalog are in `notes/docs-site.md`.
 
 Dead Signal (`notes/dead-signal.md`) also uses `TIDE_PRIVATE_PROTOTYPES`, but
 remains local to native/web build outputs. It has no page-staging target and is
@@ -90,8 +96,10 @@ active ritual; discussion and decisions are not timed by these tests.
 
 Native two-process captures and muted browser WebGL/WebGPU play checks cover
 desktop and phone layouts, title/waiting, both roles and keyboard/touch input.
-Docs check/build and private asset HTTP tests cover authenticated raw HTML,
-wasm, pack, audio and images, former public aliases, encoded paths, ranges,
-conditional requests and no-store/noindex headers. No CI or deployment was
-requested or dispatched. Physical phone hardware, a human pair's fear/voice
+The original docs check/build and private asset HTTP tests covered authenticated
+raw HTML, wasm, pack, audio and images, former public aliases, encoded paths,
+ranges, conditional requests and no-store/noindex headers. Those access rules
+were superseded by the owner's public-sharing request; the current serving
+contract and its validation are recorded in `notes/docs-site.md`.
+No CI or deployment was requested or dispatched. Physical phone hardware, a human pair's fear/voice
 communication and complete two-machine playthroughs remain untested.
