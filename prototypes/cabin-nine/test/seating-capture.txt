@@ -1,0 +1,27 @@
+# Front, knees/feet, opposite row and rear of the first seat pair.
+# Use --players 2 --size 1280 720. Captures remain in the run's scratch folder.
+100 key enter
+100 player 2 key enter
+150 key w down
+190 key w up
+195 key leftArrow down
+221 key leftArrow up
+225 key downArrow down
+244 key downArrow up
+250 player 1 capture seated-front.png
+260 key downArrow down
+278 key downArrow up
+285 player 1 capture seated-legs.png
+295 key rightArrow down
+347 key rightArrow up
+350 key upArrow down
+368 key upArrow up
+375 player 1 capture seated-opposite.png
+385 key leftArrow down
+411 key leftArrow up
+415 key w down
+460 key w up
+465 key leftArrow down
+529 key leftArrow up
+540 player 1 capture seated-rear.png
+550 quit
