@@ -88,6 +88,33 @@ static build gate and catalog are in `notes/docs-site.md`.
 
 ## Verification and limits
 
+The 2026-10-09 Build run (37994581083) exposed browser-playtest contention:
+Windows timed out in DevTools during startup/capture, and macOS lost the host
+after a long gap in match traffic. Both backends passed on the same Windows
+machine in isolation; limiting the test process to one CPU while running the
+demo and Sumo checks reproduced both startup timeouts. The two Last Light
+playtests now use CTest `RUN_SERIAL`, since each already renders two software
+players. They keep their 180-second test and 20-second command deadlines.
+
+`test/web-play.mjs` observes completed draws through the existing `Tide.netcode`
+callback instead of polling `Runtime.evaluate` behind cold shader compilation.
+Reports are limited to ten per second so diagnostics do not delay input and
+capture commands on small runners. Navigation waits for the exact new URL;
+keyboard/resize/capture steps wait for completed frames. Connected play waits
+for verified ticks and fresh packets from both players, replacing wall-clock
+sleeps. Runtime/shader errors, host loss and stale traffic still fail the test.
+Failures record recent commands, frame/packet timing and browser logs; recovery
+captures and browser shutdown have short bounds and force-stop only the test's
+own browser tree when necessary.
+
+Fix validation (2026-10-10): native simulation passed 1/1 (fourteen inner
+cases), scoped web-debug passed 3/3, and web-release passed 6/6 with the test
+process restricted to one CPU and CTest parallelism four (both play backends,
+simulation, demo on both backends and Sumo). Fault-injected browser signal
+termination and a hung browser both failed promptly, removed their profiles
+and left no browser process. macOS confirmation requires a requested CI run;
+no workflow was dispatched for this fix.
+
 Public-sharing validation (2026-10-09): the native/web builds and full suites
 passed 2,016/2,016 and 1,993/1,993. After integrating the five-game catalog,
 scoped prototype checks passed 8/8 native and 13/13 web. All five staged public
