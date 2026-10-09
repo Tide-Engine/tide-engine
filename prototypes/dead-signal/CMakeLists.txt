@@ -1,4 +1,4 @@
-set(DEAD_SIGNAL_SOURCES game.tide render.tide world.tide)
+set(DEAD_SIGNAL_SOURCES game.tide render.tide world.tide models.tide weapons.tide environment.tide)
 set(DEAD_SIGNAL_ROOMS PACKAGES Rooms "${PROJECT_SOURCE_DIR}/packages/rooms/rooms.tide")
 
 if(TARGET tide_platform)
