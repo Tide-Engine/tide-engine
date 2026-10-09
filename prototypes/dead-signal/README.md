@@ -12,9 +12,9 @@ complete start-to-ending route, rather than a verified duration claim.
 ## Keep it private
 
 This folder belongs to the private source repository. The build option defaults
-off. It is outside the public examples, docs galleries and staging lists, and is
-not installed in the Tide package. No website or release publication is needed
-to run it.
+off. It is outside the public examples and docs galleries and is not installed
+in the Tide package. The admin's private prototype grid links it behind the
+existing sign-in. No website or release publication is needed to run locally.
 
 ## Build and play
 
@@ -48,7 +48,12 @@ cmake --build --preset web-debug --target dead_signal dead_signal_tests dead_sig
 ```
 
 Open `build/web-debug/bin/dead_signal.html` locally. Host and join through the
-room menu. It is a self-contained page; it is not copied to the docs site.
+room menu. It is a self-contained page. With the opt-in option enabled,
+`cmake --build --preset web-debug --target private_games` stages it at
+`docs/static/admin/prototypes/dead-signal/index.html`. After a docs deployment,
+both players sign into `/admin/prototypes` and choose **Dead Signal** before
+hosting or joining a room. The screenshot and playable page share the protected
+admin root.
 
 ## Controls and rules
 

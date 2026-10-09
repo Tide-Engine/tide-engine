@@ -29,7 +29,7 @@ test('production website protects analytics, prototype files and retired address
     const entries = [];
     const aliases = [];
     const files = new Map();
-    for (const id of ['two-forks', 'the-last-light', 'cabin-nine']) {
+    for (const id of ['two-forks', 'the-last-light', 'cabin-nine', 'dead-signal']) {
         const root = `/admin/prototypes/${id}`;
         // When CMake staged the real games, check those exact bytes too.
         // Standalone docs builds retain the small fixtures below.
@@ -45,7 +45,9 @@ test('production website protects analytics, prototype files and retired address
     }
     // Even a stale deployment that contains these bytes must not serve them.
     for (const name of ['/samples/two-forks/index.html', '/samples/two-forks/game.wasm', '/samples/thumbnails/two-forks.png', '/sample_two_forks.html', '/two-forks/index.html',
-        '/samples/cabin-nine/index.html', '/samples/cabin-nine/game.wasm', '/samples/thumbnails/cabin-nine.png', '/cabin_nine.html']) {
+        '/samples/cabin-nine/index.html', '/samples/cabin-nine/game.wasm', '/samples/thumbnails/cabin-nine.png', '/cabin_nine.html',
+        '/samples/dead-signal/index.html', '/samples/dead-signal/game.wasm', '/samples/thumbnails/dead-signal.png',
+        '/dead_signal.html', '/sample_dead_signal.html', '/dead-signal/index.html', '/prototypes/dead-signal/game.pack', '/examples/dead-signal/sfx/radio.ogg']) {
         files.set(name, Buffer.from('STALE PUBLIC PRIVATE GAME'));
     }
     aliases.push(['/samples/two-forks', '/samples/two-forks/index.html'], ['/samples/two-forks/', '/samples/two-forks/index.html']);
@@ -112,8 +114,11 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     assert.match(catalogHtml, /Two Forks/);
     assert.match(catalogHtml, /The Last Light/);
     assert.match(catalogHtml, /Cabin Nine/);
+    assert.match(catalogHtml, /Dead Signal/);
     assert.match(catalogHtml, /href="\/admin\/prototypes\/the-last-light\/"/);
     assert.match(catalogHtml, /href="\/admin\/prototypes\/cabin-nine\/"/);
+    assert.match(catalogHtml, /href="\/admin\/prototypes\/dead-signal\/"/);
+    assert.match(catalogHtml, /src="\/admin\/prototypes\/dead-signal\/thumbnail\.png"/);
     for (const [route, bytes] of files) {
         if (!route.startsWith('/admin/')) {
             for (const session of [undefined, cookie]) {
@@ -125,6 +130,8 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
         }
         const signedOut = await fetch(`${origin}${route}`, { redirect: 'manual' });
         assert.equal(signedOut.status, 303, route);
+        assert.equal(signedOut.headers.get('cache-control'), 'private, no-store');
+        assert.equal(signedOut.headers.get('x-robots-tag'), 'noindex, nofollow');
         assert.doesNotMatch(await signedOut.text(), /Private|private game|private sound/);
         const response = await fetch(`${origin}${route}`, { headers: { cookie } });
         assert.equal(response.status, 200, route);
@@ -138,14 +145,31 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
         const response = await fetch(`${origin}${route}`, { redirect: 'manual' });
         assert.ok([303, 404].includes(response.status), route);
     }
-    const wasmPath = `${origin}/admin/prototypes/the-last-light/game.wasm`;
-    for (const options of [{ method: 'HEAD' }, { headers: { range: 'bytes=0-3' } }, { headers: { 'if-none-match': '*' } }]) {
-        assert.equal((await fetch(wasmPath, { ...options, redirect: 'manual' })).status, 303);
+    for (const route of ['/adm%69n/prototypes/dead%2dsignal/index.html', '/admin%2fprototypes%2fdead-signal%2fgame.wasm']) {
+        const response = await fetch(`${origin}${route}`, { redirect: 'manual' });
+        assert.equal(response.status, 303, route);
+        assert.equal(response.headers.get('cache-control'), 'private, no-store');
+        assert.equal(response.headers.get('x-robots-tag'), 'noindex, nofollow');
     }
-    const range = await fetch(wasmPath, { headers: { cookie, range: 'bytes=0-3' } });
-    assert.equal(range.status, 206);
-    assert.equal(range.headers.get('cache-control'), 'private, no-store');
-    assert.deepEqual(Buffer.from(await range.arrayBuffer()), Buffer.from([0, 97, 115, 109]));
+    for (const route of ['/samples/dead%2dsignal/index.html', '/prototypes%2fdead-signal%2fgame.pack', '/dead%5fsignal.html']) {
+        for (const session of [undefined, cookie]) {
+            const response = await fetch(`${origin}${route}`, { redirect: 'manual', headers: session ? { cookie: session } : {} });
+            assert.equal(response.status, 404, route);
+            assert.doesNotMatch(await response.text(), /STALE PUBLIC/);
+        }
+    }
+    for (const id of ['the-last-light', 'dead-signal']) {
+        const wasmPath = `${origin}/admin/prototypes/${id}/game.wasm`;
+        for (const options of [{ method: 'HEAD' }, { headers: { range: 'bytes=0-3' } }, { headers: { 'if-none-match': '*' } }]) {
+            const response = await fetch(wasmPath, { ...options, redirect: 'manual' });
+            assert.equal(response.status, 303);
+            assert.equal(response.headers.get('cache-control'), 'private, no-store');
+        }
+        const range = await fetch(wasmPath, { headers: { cookie, range: 'bytes=0-3' } });
+        assert.equal(range.status, 206);
+        assert.equal(range.headers.get('cache-control'), 'private, no-store');
+        assert.deepEqual(Buffer.from(await range.arrayBuffer()), Buffer.from([0, 97, 115, 109]));
+    }
     const beacon = await fetch(`${origin}/analytics/pageview`, { method: 'POST', headers: { origin, 'content-type': 'application/json', 'user-agent': 'Mozilla/5.0 Test browser' },
         body: JSON.stringify({ path: '/guide', referrer: 'https://example.org/private/path' }) });
     assert.equal(beacon.status, 204);
@@ -155,11 +179,11 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     assert.equal(data.relay.latest, null);
     assert.doesNotMatch(await readFile(file, 'utf8'), /private\/path|Mozilla|127\.0\.0\.1/);
     assert.equal((await fetch(`${origin}/data/analytics.json`)).status, 404);
-    assert.doesNotMatch(await (await fetch(`${origin}/sitemap.xml`)).text(), /\/admin|two-forks|the-last-light|cabin-nine/);
+    assert.doesNotMatch(await (await fetch(`${origin}/sitemap.xml`)).text(), /\/admin|two-forks|the-last-light|cabin-nine|dead-signal/);
     for (const route of ['/guide/samples', '/search.json']) {
-        assert.doesNotMatch(await (await fetch(`${origin}${route}`)).text(), /Two Forks|two-forks|The Last Light|the-last-light|Cabin Nine|cabin-nine/);
+        assert.doesNotMatch(await (await fetch(`${origin}${route}`)).text(), /Two Forks|two-forks|The Last Light|the-last-light|Cabin Nine|cabin-nine|Dead Signal|dead-signal/);
     }
     const logout = await fetch(`${origin}/admin/logout`, { method: 'POST', redirect: 'manual', headers: { cookie, origin } });
     assert.match(logout.headers.get('set-cookie'), /Max-Age=0/);
-    assert.equal((await fetch(wasmPath, { redirect: 'manual' })).status, 303);
+    assert.equal((await fetch(`${origin}/admin/prototypes/dead-signal/game.wasm`, { redirect: 'manual' })).status, 303);
 });

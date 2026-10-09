@@ -67,10 +67,15 @@ Pages are self-contained; any future
 external game assets must stay under that protected root. The site's auth,
 retired public URLs, static build gate and catalog are in `notes/docs-site.md`.
 
-Dead Signal (`notes/dead-signal.md`) also uses `TIDE_PRIVATE_PROTOTYPES`, but
-remains local to native/web build outputs. It has no page-staging target and is
-not a dependency of `private_games`; adding catalog publication was outside its
-owner-requested design-and-build task.
+Dead Signal (`notes/dead-signal.md`) also uses `TIDE_PRIVATE_PROTOTYPES`. At the
+owner's follow-up request it joins the admin grid, with a combat screenshot,
+2–4-player label and the same availability check as the other games.
+`dead_signal_page` and `private_games` stage its self-contained browser page
+only beneath the protected `admin/prototypes/dead-signal/` root. Its game and
+thumbnail receive the same authentication, no-store/noindex and public-alias
+protections; admin unit/production HTTP tests include the new ID. The site build
+also rejects unprotected dead-signal/dead_signal assets. Existing manual docs
+workflow staging covers it with no workflow change or deployment.
 
 ## Verification and limits
 

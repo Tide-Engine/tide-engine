@@ -23,6 +23,12 @@ const prototypes = [
         image: '/admin/prototypes/cabin-nine/thumbnail.png',
         horror: true,
     },
+    {
+        id: 'dead-signal', title: 'Dead Signal', kind: 'PSX shooter · Cooperative roguelike', players: '2–4 players',
+        description: 'Descend into a remade communications blacksite. Split firing angles, rescue your crew, and build an arsenal through six sectors before extracting together.',
+        image: '/admin/prototypes/dead-signal/thumbnail.png',
+        horror: true,
+    },
 ];
 
 export function load() {

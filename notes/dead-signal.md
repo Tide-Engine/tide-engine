@@ -12,9 +12,13 @@ its `README.md` gives build/play instructions and implementation boundaries.
 The repository was verified private. `TIDE_PRIVATE_PROTOTYPES`, OFF by default,
 opts into the game and its test hosts via `prototypes/CMakeLists.txt`. The game
 needs the platform layer; simulation tests also work without it. Native and web
-use the same six game sources and the existing Rooms package. There is no
-catalog page target or dependency from `private_games`, no documentation
-staging and no package installation. No CI, hosting or release was dispatched.
+use the same six game sources and the existing Rooms package. At the owner's
+follow-up request, the admin prototype grid links Dead Signal with a protected
+combat screenshot and the existing availability check. `dead_signal_page`
+stages its self-contained browser page only under
+`docs/static/admin/prototypes/dead-signal/index.html`; `private_games` depends
+on that target (or the native game). The build remains opt-in and is not
+installed in the Tide package. No CI, hosting or release was dispatched.
 The test folder's nested manifest excludes its C hosts and GeometryAudit Tide
 fixture from a standalone `tide run` of the game.
 
@@ -94,6 +98,18 @@ the same live-combat world hash. Captures of the two-player opening and the
 full arsenal/cast were reviewed. A scratch audit of the built model buffers
 also found valid indices, nondegenerate triangles, unit normals matching their
 winding, consistent per-triangle animation tags and finite bounded vertices.
+
+Catalog integration was checked by building `private_games` on the web and
+the native game, checking the site types/build, and running the admin unit and
+production HTTP regressions. They cover the catalog link, protected screenshot
+and compiled HTML, raw/nested assets, encoded paths, expired sessions and
+retired public aliases. Dead Signal is excluded from public search and sitemap;
+the site build rejects accidental unprotected copies. The existing manual docs
+workflow already enables the opt-in build and stages `private_games`.
+Muted headless Chrome checked the fourth card at 1280×900 and 390×844, loaded
+its screenshot without horizontal overflow and opened the actual staged game
+in a separate authenticated tab. The game rendered the minimum-two-player
+lobby without runtime/console errors. No deployment was made.
 
 Human pacing, enjoyment, later-sector balance and two-machine end-to-end room
 play still need a real pair's playtest. There is no procedural map generation,
