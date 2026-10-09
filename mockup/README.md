@@ -27,11 +27,28 @@ npm run dev
 
 The provisioning command prompts for a hidden password and creates or updates that account. The data directory has one writer, so do not run this command beside a running service. `MOCKUP_ADMIN_EMAILS`, when set, further restricts provisioned owner accounts; adding an email there alone does not grant administration.
 
+### Google and Discord sign-in
+
+Create a web OAuth client in [Google Cloud](https://console.cloud.google.com/apis/credentials), or an application in the [Discord Developer Portal](https://discord.com/developers/applications). Set the matching client ID and client secret in `.env`. Complete credentials enable that provider's button; incomplete configurations stay hidden. Client secrets and provider tokens never go to the client.
+
+Register the exact redirect URL for each enabled provider:
+
+- Local Google: `http://127.0.0.1:4173/api/auth/google/callback`
+- Local Discord: `http://127.0.0.1:4173/api/auth/discord/callback`
+- Public Google: `https://mockup.games/api/auth/google/callback`
+- Public Discord: `https://mockup.games/api/auth/discord/callback`
+
+Use the same hostname and port as the application, including locally. Set `MOCKUP_PUBLIC_ORIGIN` and `MOCKUP_SECURE_COOKIES=1` behind an HTTPS proxy. The callback origin is configured by the operator, not taken from request headers. Return destinations are limited to the home page and invitation paths.
+
+Existing email/password users sign in first, then connect a provider from their account. Social identities use the provider's permanent account ID and require a verified email; matching email addresses alone never merge accounts or grant administration. Tokens are used for the sign-in exchange and are not retained. The owner account stays explicitly provisioned.
+
+Implementation references: [Google OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect), [Discord OAuth2](https://docs.discord.com/developers/topics/oauth2). The Google button uses the [official branding asset](https://developers.google.com/identity/branding-guidelines).
+
 Open [http://127.0.0.1:4173](http://127.0.0.1:4173). The preview server uses port `4174`. `HOST`, `PORT`, `PREVIEW_PORT` and `MOCKUP_DATA_DIR` are configurable. `npm start` runs already-built client files; `npm run dev` refreshes the client bundle first.
 
 ## What works
 
-- Local email/password accounts, cookie sessions, shared projects and invitation links.
+- Google and Discord sign-in when configured, local email/password fallback, cookie sessions, shared projects and invitation links.
 - Concurrent editing of the shared game brief through Yjs, with live teammate cursors and typing/editing presence.
 - A shared playtest: one browser runs the Tide game and streams its canvas to spectators through WebRTC. Anyone in the room can take control immediately; held input is cleared at each handoff. Taking control does not move the simulation into another browser.
 - Responsive phone layouts, touch movement and dash in Moonwake, and touch forwarding for shared control. Spectator streaming currently carries video only.

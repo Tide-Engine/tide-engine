@@ -10,7 +10,7 @@ import { resolveTideBinary, starterDirectory } from './scripts/prepare-starter.m
 const root = fileURLToPath(new URL('.', import.meta.url));
 const [major, minor] = process.versions.node.split('.').map(Number);
 if (major < 24 || major === 24 && minor < 16) throw new Error('mockup.games needs Node 24.16 or newer. Earlier Node builds can crash on Windows networking.');
-const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
+const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 
 async function loadStarter() {
@@ -31,15 +31,18 @@ async function loadStarter() {
 
 export async function start({ port = Number(process.env.PORT || 4173), previewPort = Number(process.env.PREVIEW_PORT || 4174),
     host = process.env.HOST || '127.0.0.1', dataDir = resolve(process.env.MOCKUP_DATA_DIR || join(root, '.data')),
-    starter, pipeline, adminEmails = (process.env.MOCKUP_ADMIN_EMAILS || '').split(',').map(email => email.trim()).filter(Boolean) } = {}) {
+    starter, pipeline, oauth, adminEmails = (process.env.MOCKUP_ADMIN_EMAILS || '').split(',').map(email => email.trim()).filter(Boolean) } = {}) {
     let app;
+    let appOrigin, previewOrigin;
     const priceKeys = { input: 'OPENAI_INPUT_USD_PER_MILLION', cachedInput: 'OPENAI_CACHED_INPUT_USD_PER_MILLION', output: 'OPENAI_OUTPUT_USD_PER_MILLION' };
     const rates = Object.fromEntries(Object.entries(priceKeys).map(([key, name]) => [key, process.env[name]?.trim() ? Number(process.env[name]) : null]));
     const providers = pipeline || await createPipeline({ dataDir, tideBin: await resolveTideBinary(), rates,
         recordUsage: (jobId, usage) => app.recordUsage(jobId, usage), recordResource: (jobId, usage) => app.recordResource(jobId, usage) });
     app = await createApp({ dataDir, ...providers, starter: starter === undefined ? await loadStarter() : starter,
-        adminEmails, secureCookies: process.env.MOCKUP_SECURE_COOKIES === '1' });
-    let appOrigin, previewOrigin;
+        adminEmails, secureCookies: process.env.MOCKUP_SECURE_COOKIES === '1',
+        oauth: oauth || { publicOrigin: () => appOrigin,
+            google: { clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET },
+            discord: { clientId: process.env.DISCORD_CLIENT_ID, clientSecret: process.env.DISCORD_CLIENT_SECRET } } });
     const previewServer = createServer(async (req, res) => {
         try {
             const url = new URL(req.url, 'http://preview.local');
