@@ -62,6 +62,7 @@ find_program(TIDE_NODE NAMES node) # Tests that run Node: web builds need it any
 
 option(TIDE_PLATFORM "Build the platform layer and the demo. Desktop builds download GLFW." ON)
 option(TIDE_TOOLS_ONLY "Build only tidec, as web builds do for their host (cmake/HostTidec.cmake)" OFF)
+option(TIDE_PRIVATE_PROTOTYPES "Build opt-in private games (admin-only browser staging; no package install)" OFF)
 
 # What the tide command says it is, and where it looks for updates. Release
 # builds get the version semantic-release picked (.github/workflows/build.yml);
@@ -126,6 +127,10 @@ if(TIDE_PLATFORM)
     add_subdirectory(platform)
     add_subdirectory(demo)
     add_subdirectory(sandbox) # Opens a window, so it needs the platform layer
+    if(TIDE_PRIVATE_PROTOTYPES)
+        add_subdirectory(prototypes/cabin-nine)
+        add_subdirectory(prototypes/deadbell)
+    endif()
     add_subdirectory(examples/duel)
     add_subdirectory(bench)   # Ticks on the platform layer's threads
 endif()
@@ -136,13 +141,7 @@ add_subdirectory(packages) # The packages that come with tide, and their tests
 add_subdirectory(examples/towers)
 add_subdirectory(examples/sumo)
 add_subdirectory(examples/samples)
-
-# Internal games stay separate from examples, documentation staging and the
-# installed package. Opt in explicitly on a developer's own build tree.
-option(TIDE_PRIVATE_PROTOTYPES "Build the unpublished game prototypes" OFF)
-if(TIDE_PRIVATE_PROTOTYPES AND TIDE_PLATFORM)
-    add_subdirectory(prototypes/deadbell)
-endif()
+add_subdirectory(prototypes) # Private games, served only through the site's admin area
 
 # The docs' live examples open a window, so they need the platform layer, and
 # come after the packages: the physics examples are built with one each.

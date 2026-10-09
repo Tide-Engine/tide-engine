@@ -1,0 +1,213 @@
+const Color TIMBER = Color(0.29, 0.19, 0.11);
+const Color PLASTER = Color(0.39, 0.42, 0.38);
+const Color IRON = Color(0.15, 0.2, 0.2);
+const Color PAPER = Color(0.74, 0.67, 0.48);
+
+[Stage(Layers.Camera)]
+view Camera(Rite rite, Me me, mut Cinema cinema)
+{
+    cinema.time += Math.Min(Frame.dt, 0.1);
+    if (cinema.time >= 600) cinema.time -= 600;
+    if (!cinema.made)
+    {
+        cinema.made = true;
+        MakeCube(cinema);
+        MakeFigure(cinema);
+        PrintBoard(cinema);
+    }
+    float width = Math.Max(Screen.width, 1);
+    float height = Math.Max(Screen.height, 1);
+    float2 pixels = float2(Math.Floor(Math.Clamp(width / height, 0.7, 2.4) * 270), 270);
+    if (cinema.size.x != pixels.x || cinema.size.y != pixels.y)
+    {
+        if (cinema.size.x > 0) cinema.image.Resize(int(pixels.x), int(pixels.y));
+        else cinema.image = RenderTarget(int(pixels.x), int(pixels.y), 1);
+        cinema.size = pixels;
+    }
+    cinema.grid = pixels * 0.5;
+    int seat = SeatOf(rite, me.player);
+    bool pilgrim = seat == rite.active;
+    bool away = pilgrim && (rite.phase == Phase.Vigil || rite.phase == Phase.Result);
+    float target = away ? 1.0 : 0.0;
+    cinema.travel += (target - cinema.travel) * Math.Min(Frame.dt * 2, 1);
+    if (rite.strikes != cinema.lastStrikes)
+    {
+        cinema.lastStrikes = rite.strikes;
+        cinema.shock = 1;
+    }
+    cinema.shock = Math.Max(0, cinema.shock - Frame.dt * 1.5);
+    float sway = Math.Sin(cinema.time * 0.71) * 0.009;
+    var atTable = float3(seat == 1 ? 0.16 : -0.16, 2.08, -3.25);
+    var atDoor = float3(sway, 1.55, 3.8);
+    cinema.eye = atTable + (atDoor - atTable) * cinema.travel;
+    cinema.eye.x += Math.Sin(cinema.time * 37) * cinema.shock * 0.028;
+    var focus = float3(0, 0.75, 0.32) + (float3(0, 1.35, 10.7) - float3(0, 0.75, 0.32)) * cinema.travel;
+    var turn = quaternion.LookRotation(Math.Normalize(focus - cinema.eye), float3(0, 1, 0));
+    cinema.image.SetCamera(cinema.eye, turn, 53);
+    cinema.lantern = float3(-0.95, 1.53, -0.6) + (float3(-0.45, 1.6, 5.0) - float3(-0.95, 1.53, -0.6)) * cinema.travel;
+    cinema.threat = rite.threat;
+    cinema.act = rite.act;
+    cinema.candle = rite.candle / 100.0;
+    cinema.exposure = rite.phase == Phase.Lost ? 0.45 : 1;
+    cinema.daylight += ((rite.phase == Phase.Won ? 1.0 : 0.0) - cinema.daylight) * Math.Min(Frame.dt * 0.7, 1);
+    Audio.SetListener(cinema.eye, turn);
+}
+
+void Chair(mut Cinema cinema, float3 at, float facing)
+{
+    var turn = quaternion.AxisAngle(float3(0, 1, 0), facing);
+    Slant(cinema, at + float3(0, 0.5, 0), float3(0.7, 0.09, 0.65), turn, TIMBER);
+    Slant(cinema, at + float3(0, 0.94, Math.Cos(facing) * 0.27), float3(0.7, 0.7, 0.08), turn, TIMBER);
+    for (var x = -1; x <= 1; x += 2)
+        for (var z = -1; z <= 1; z += 2)
+            Block(cinema, at + float3(x * 0.27, 0.24, z * 0.23), float3(0.07, 0.48, 0.07), TIMBER);
+}
+
+void Visitor(mut Cinema cinema, float3 at, float near)
+{
+    var cloth = Color(0.07, 0.083, 0.077);
+    var bone = Color(0.6, 0.6, 0.49);
+    cinema.robes.Add(Piece { transform = float4x4.TRS(at + float3(0, 0.08, 0), quaternion.AxisAngle(float3(0, 0, 1), 0.045), float3(1)), tint = cloth, material = 4 });
+    var tilt = quaternion.AxisAngle(float3(0, 0, 1), -0.14);
+    Rounded(cinema, at + float3(0, 1.7, -0.05), float3(0.155, 0.25, 0.13), bone, tilt);
+    Rounded(cinema, at + float3(0.05, 1.68, -0.168), float3(0.037, 0.07, 0.025), Color(0.018, 0.023, 0.022));
+    Rounded(cinema, at + float3(-0.06, 1.695, -0.168), float3(0.034, 0.074, 0.025), Color(0.018, 0.023, 0.022));
+    Rounded(cinema, at + float3(0, 1.58, -0.167), float3(0.06, 0.015, 0.014), Color(0.045, 0.04, 0.035));
+    for (var side = -1; side <= 1; side += 2)
+    {
+        var reach = side * (0.34 + near * 0.045);
+        Rounded(cinema, at + float3(side * 0.28, 1.1, -0.01), float3(0.06, 0.32, 0.058), cloth, quaternion.AxisAngle(float3(0, 0, 1), side * 0.12));
+        Rounded(cinema, at + float3(reach, 0.58, -0.06), float3(0.046, 0.3, 0.046), cloth, quaternion.AxisAngle(float3(0, 0, 1), side * 0.03));
+        Rounded(cinema, at + float3(reach, 0.24, -0.07), float3(0.058, 0.11, 0.032), bone);
+        for (var finger = 0; finger < 4; finger++)
+            Slant(cinema, at + float3(reach - 0.04 + finger * 0.023, 0.105, -0.1), float3(0.014, 0.14, 0.02), quaternion.AxisAngle(float3(1, 0, 0), -0.2), bone, 4);
+        Rounded(cinema, at + float3(side * 0.13, 0.03, -0.1), float3(0.09, 0.07, 0.2), Color(0.028, 0.035, 0.035));
+    }
+}
+
+[Stage(Layers.Geometry)]
+view Furnish(Rite rite, Me me, mut Cinema cinema)
+{
+    cinema.pieces.Clear();
+    cinema.rounded.Clear();
+    cinema.robes.Clear();
+    // The table is the only place in the room that feels warm.
+    Block(cinema, float3(0, -0.12, 4), float3(11, 0.24, 18), Color(0.29, 0.33, 0.3), 2);
+    Block(cinema, float3(0, 3.45, 4), float3(11, 0.22, 18), Color(0.21, 0.23, 0.22), 1);
+    Block(cinema, float3(-4.6, 1.7, 2), float3(0.2, 3.4, 15), PLASTER, 1);
+    Block(cinema, float3(4.6, 1.7, 2), float3(0.2, 3.4, 15), PLASTER, 1);
+    Block(cinema, float3(-2.85, 1.7, 3.6), float3(3.5, 3.4, 0.22), PLASTER, 1);
+    Block(cinema, float3(2.85, 1.7, 3.6), float3(3.5, 3.4, 0.22), PLASTER, 1);
+    Block(cinema, float3(0, 3, 3.6), float3(2.25, 0.9, 0.26), PLASTER, 1);
+    Block(cinema, float3(-2.95, 1.7, 11.5), float3(3.1, 3.4, 0.2), PLASTER, 1);
+    Block(cinema, float3(2.95, 1.7, 11.5), float3(3.1, 3.4, 0.2), PLASTER, 1);
+    Block(cinema, float3(0, 3.07, 11.5), float3(2.8, 0.66, 0.2), PLASTER, 1);
+    if (rite.phase == Phase.Won) Block(cinema, float3(0, 1.35, 11.68), float3(2.7, 2.7, 0.08), Color(0.68, 0.8, 0.64), 5, 0.9);
+    else Block(cinema, float3(0, 1.35, 11.5), float3(2.7, 2.7, 0.18), Color(0.13, 0.19, 0.17), 0);
+    // Door casings, cold pipes, boarded windows and peeling wall panels.
+    for (var side = -1; side <= 1; side += 2)
+    {
+        Block(cinema, float3(side * 1.16, 1.25, 3.45), float3(0.14, 2.5, 0.24), TIMBER);
+        Block(cinema, float3(side * 4.43, 0.78, 2), float3(0.03, 0.055, 14), IRON, 3);
+        Block(cinema, float3(side * 4.4, 2.75, 3), float3(0.06, 0.06, 14), IRON, 3);
+        for (var z = -2; z <= 10; z += 3)
+        {
+            Block(cinema, float3(side * 4.44, 1.3, z), float3(0.03, 0.58, 0.75), Color(0.26, 0.32, 0.3), 1);
+            Block(cinema, float3(side * 4.43, 2.1, z), float3(0.02, 0.92, 0.64), Color(0.025, 0.045, 0.048), 3);
+            Block(cinema, float3(side * 4.38, 1.83, z), float3(0.11, 0.15, 0.87), TIMBER);
+            Block(cinema, float3(side * 4.38, 2.27, z), float3(0.11, 0.12, 0.87), TIMBER);
+        }
+    }
+    for (var z = 5; z < 11; z += 2)
+    {
+        Block(cinema, float3(-1.65, 1.35, z), float3(0.12, 2.7, 0.16), TIMBER);
+        Block(cinema, float3(1.65, 1.35, z), float3(0.12, 2.7, 0.16), TIMBER);
+        Block(cinema, float3(0, 2.7, z), float3(3.4, 0.14, 0.16), TIMBER);
+    }
+    // The abandoned wards are tangible beyond the ritual's small pool of light.
+    for (var side = -1; side <= 1; side += 2)
+    {
+        Block(cinema, float3(side * 2.55, 0.45, 5.6), float3(1.3, 0.1, 2.1), IRON, 3);
+        Block(cinema, float3(side * 2.55, 0.56, 5.6), float3(1.22, 0.14, 1.94), Color(0.44, 0.47, 0.38), 4);
+        Block(cinema, float3(side * 2.55, 0.94, 6.6), float3(1.3, 1.05, 0.065), IRON, 3);
+        for (var bar = 0; bar < 5; bar++)
+            Block(cinema, float3(side * 2.55 - 0.55 + bar * 0.27, 0.92, 6.54), float3(0.025, 0.7, 0.025), Color(0.36, 0.39, 0.32), 3);
+        Block(cinema, float3(side * 3.47, 1.2, 4.9), float3(0.025, 2.4, 0.025), IRON, 3);
+        Block(cinema, float3(side * 3.42, 2.31, 4.9), float3(0.32, 0.025, 0.025), IRON, 3);
+        Block(cinema, float3(side * 3.33, 2.04, 4.9), float3(0.15, 0.25, 0.09), Color(0.35, 0.46, 0.39), 4);
+    }
+    for (var page = 0; page < 9; page++)
+    {
+        float x = Math.Sin(page * 7.3) * 2.8;
+        float z = 2.7 + page * 0.7;
+        Slant(cinema, float3(x, 0.008, z), float3(0.22, 0.005, 0.34), quaternion.AxisAngle(float3(0, 1, 0), page * 1.3), PAPER, 6);
+    }
+    Block(cinema, float3(0, 0.81, 0), float3(3.1, 0.18, 2.35), TIMBER);
+    for (var x = -1; x <= 1; x += 2)
+        for (var z = -1; z <= 1; z += 2)
+            Block(cinema, float3(x * 1.26, 0.39, z * 0.91), float3(0.14, 0.78, 0.14), TIMBER);
+    Chair(cinema, float3(-1.9, 0, 0.1), Math.PI * 0.5);
+    Chair(cinema, float3(1.9, 0, 0.1), -Math.PI * 0.5);
+    Chair(cinema, float3(0, 0, 2.1), Math.PI);
+    Block(cinema, float3(0, 0.915, 0), float3(2.68, 0.028, 1.86), Color(0.45, 0.39, 0.25), 6);
+    Block(cinema, float3(0, 0.933, 0), float3(2.54, 0.008, 1.72), Color(0.17, 0.2, 0.17), 6);
+    for (var i = 0; i < 12; i++)
+    {
+        var at = BoardPlace(i);
+        Block(cinema, at, float3(0.32, 0.014, 0.25), i == rite.node ? Color(0.82, 0.67, 0.38) : PAPER, 6);
+        var next = BoardPlace((i + 1) % 12);
+        var mid = (at + next) * 0.5;
+        var along = next - at;
+        Slant(cinema, mid - float3(0, 0.007, 0), float3(0.018, 0.009, Math.Length(along)), quaternion.LookRotation(Math.Normalize(along), float3(0, 1, 0)), PAPER, 6);
+    }
+    var pawn = BoardPlace(rite.node);
+    Block(cinema, pawn + float3(0, 0.095, 0), float3(0.065, 0.17, 0.065), RelicColor(rite.active), 3);
+    Block(cinema, pawn + float3(0, 0.035, 0), float3(0.13, 0.04, 0.13), RelicColor(rite.active), 3);
+    // The three wards have physical toggles before the Keeper's chair.
+    for (var i = 0; i < 3; i++)
+    {
+        var at = float3(-0.4 + i * 0.4, 0.955, -0.99);
+        Block(cinema, at, float3(0.3, 0.06, 0.18), IRON, 3);
+        Block(cinema, at + float3(0, 0.07, 0), float3(0.045, rite.ward == i ? 0.07 : 0.13, 0.045), RelicColor(i), 3, rite.ward == i ? 0.45 : 0);
+    }
+    Block(cinema, float3(0.76, 0.96, -0.76), float3(0.18), PAPER, 4);
+    Block(cinema, float3(0.76, 1.053, -0.76), float3(0.032, 0.006, 0.032), Color.black, 7);
+    for (var i = 0; i < Math.Min(rite.fragments, 18); i++)
+        Block(cinema, float3(-0.34 + (i % 6) * 0.13, 0.958, -0.2 + (i / 6) * 0.17), float3(0.08, 0.025, 0.1), RelicColor(i / 6), 3);
+    Candle(cinema, float3(-1.34, 0.92, -0.72), 0.28 + rite.candle * 0.003);
+    Candle(cinema, float3(1.32, 0.92, 0.75), 0.29);
+    Candle(cinema, float3(1.3, 0.92, -0.62), 0.19);
+    Block(cinema, float3(-1.1, 1.23, -0.66), float3(0.28, 0.48, 0.28), IRON, 3);
+    Block(cinema, float3(-1.1, 1.23, -0.81), float3(0.18, 0.29, 0.014), Color(0.96, 0.53, 0.14), 5, 0.5);
+    // The room remembers progress: missing-person sheets, then chairs, then the visitor.
+    for (var i = 0; i < 4 + rite.act * 2; i++)
+        Block(cinema, float3(-2.3 + i * 0.64, 1.95 - (i % 2) * 0.16, 3.44), float3(0.35, 0.52, 0.018), PAPER, 6);
+    bool pilgrim = SeatOf(rite, me.player) == rite.active;
+    if (rite.phase == Phase.Vigil && rite.threat > 0)
+    {
+        float near = rite.threat == 2 ? 1 : 0;
+        float closer = rite.act > 1 ? 5.7 : 7.0;
+        Visitor(cinema, float3(0.07, 0, near > 0 ? closer : 8.6), near);
+        if (!pilgrim && rite.act > 0) Visitor(cinema, float3(3.0, 0, 2.1), 0);
+    }
+    if (rite.phase == Phase.Finale) Visitor(cinema, float3(0, 0, 5.3), 1);
+    if (rite.phase == Phase.Lost) Visitor(cinema, float3(0, 0, 0.72), 1);
+}
+
+[Stage(Layers.Scene)]
+view RenderRoom(Cinema cinema)
+{
+    if (!cinema.made) return;
+    cinema.image.Clear(Color(0.03, 0.04, 0.04));
+    cinema.image.Instanced(cinema.cube, cinema.faces, cinema.pieces, Unsteady, Worn);
+    cinema.image.Instanced(cinema.robe, cinema.robeFaces, cinema.robes, Unsteady, Worn);
+    cinema.image.Instanced(cinema.round, cinema.roundFaces, cinema.rounded, Unsteady, Worn);
+    cinema.image.Mesh(cinema.board, cinema.boardFaces, float4x4.TRS(float3(0, 0.968, 0), quaternion.identity, float3(2.54, 1, 1.72)), cinema.boardPrint.color, Unsteady, Printed);
+}
+
+[Stage(Layers.Film)]
+view Project(Cinema cinema)
+{
+    if (!cinema.made) return;
+    Draw.Blit(cinema.image.color, Draw.window, OldFilm);
+}

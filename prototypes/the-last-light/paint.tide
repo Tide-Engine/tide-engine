@@ -1,0 +1,255 @@
+// A small render target, snapped vertices and dithered 15-bit color give the
+// room its console-era character. All lighting belongs to the local view.
+enum Layers { Camera, Geometry, Scene, Lettering, Film, Hud }
+
+struct Corner { float3 position; float3 normal; float2 uv; }
+struct Piece
+{
+    float4x4 transform = float4x4.identity;
+    Color tint = Color.white;
+    float material;
+    float glow;
+}
+
+local singleton Cinema
+{
+    RenderTarget image;
+    float2 size;
+    bool made;
+    List<Corner> cube;
+    List<int> faces;
+    List<Piece> pieces;
+    List<Corner> round;
+    List<int> roundFaces;
+    List<Piece> rounded;
+    List<Corner> robe;
+    List<int> robeFaces;
+    List<Piece> robes;
+    RenderTarget boardPrint;
+    List<Corner> board;
+    List<int> boardFaces;
+    float time;
+    float travel;
+    float shock;
+    int lastStrikes;
+    float3 eye;
+    float3 lantern;
+    float2 grid;
+    float threat;
+    float act;
+    float candle = 1;
+    float exposure = 1;
+    float daylight;
+}
+
+float Grain(float2 at)
+{
+    return Math.Frac(Math.Sin(Math.Dot(at, float2(127.1, 311.7))) * 43758.5453);
+}
+
+vert Unsteady(mut Corner corner, out float4 clip, Cinema cinema)
+{
+    float4 at = this.clip;
+    float w = Math.Max(at.w, 0.0001);
+    float2 snap = Math.Floor(at.xy / w * cinema.grid + float2(0.5)) / cinema.grid;
+    clip = float4(snap * w, at.z, at.w);
+}
+
+frag Worn(Corner corner, Piece piece, Instance instance, out Color color, Cinema cinema)
+{
+    float3 n = Math.Normalize(instance.Normal(corner.normal));
+    float3 at = this.world;
+    mut float2 texel = Math.Floor(float2(at.x + at.z, at.y) * 24);
+    if (Math.Abs(n.y) > 0.8) texel = Math.Floor(at.xz * 24);
+    float grain = Grain(texel);
+    mut float3 base = float3(piece.tint.r, piece.tint.g, piece.tint.b);
+    mut float rough = 0.79 + grain * 0.3;
+    if (piece.material < 0.5)
+    {
+        rough = 0.72 + Grain(float2(Math.Floor(texel.x / 7), texel.y)) * 0.3;
+        if (Math.Frac((at.x + at.z * 0.13) * 7) < 0.035) rough *= 0.57;
+    }
+    else if (piece.material < 1.5)
+    {
+        float stain = Grain(Math.Floor(texel / 9));
+        rough *= 0.75 + stain * 0.35;
+        if (at.y < 0.55) rough *= 0.6;
+    }
+    else if (piece.material < 2.5)
+    {
+        float2 seam = Math.Frac(at.xz * 1.5);
+        if (Math.Min(seam.x, seam.y) < 0.04) rough *= 0.35;
+    }
+    else if (piece.material < 3.5)
+    {
+        if (grain > 0.83) base *= float3(1.15, 0.68, 0.45);
+    }
+    float3 toward = cinema.lantern - at;
+    float distance = Math.Length(toward);
+    float lamp = Math.Max(0.15, Math.Dot(n, Math.Normalize(toward))) / (1 + distance * distance * 0.43);
+    float flutter = 0.94 + Math.Sin(cinema.time * 7.7) * 0.035 + Math.Sin(cinema.time * 19.3) * 0.02;
+    float cold = Math.Max(0, Math.Dot(n, Math.Normalize(float3(0, 1.9, 7.5) - at)))
+               / (1 + Math.LengthSq(float3(0, 1.9, 7.5) - at) * 0.13);
+    mut float3 light = float3(0.13, 0.15, 0.16) + float3(1.52, 1.13, 0.67) * lamp * flutter * (0.65 + cinema.candle * 0.35)
+                 + float3(0.12, 0.27, 0.26) * cold;
+    light += float3(0.77, 0.85, 0.7) * cinema.daylight * (0.5 + Math.Max(n.y, 0) * 0.5);
+    mut float3 lit = base * rough * light * cinema.exposure + base * piece.glow;
+    float fog = Math.Saturate((Math.Distance(cinema.eye, at) - 3.2) / 12);
+    float3 dark = float3(0.027, 0.035, 0.037) + float3(0.32, 0.37, 0.29) * cinema.daylight;
+    lit = lit + (dark - lit) * fog;
+    color = Color(lit.x, lit.y, lit.z, 1);
+}
+
+frag OldFilm(Vertex vertex, Texture source, out Color color, Cinema cinema)
+{
+    float2 pixel = Math.Floor(vertex.uv * cinema.size);
+    Color seen = source.Sample((pixel + float2(0.5)) / cinema.size, Filter.Point);
+    float2 block = pixel - Math.Floor(pixel / 4) * 4;
+    float dither = Math.Frac(block.x * 0.5 + block.y * 0.75) * 0.75;
+    float2 uv = vertex.uv - float2(0.5);
+    float vignette = Math.Saturate(1.14 - Math.LengthSq(uv * float2(1.45, 1.7)) * 0.8);
+    float grain = (Grain(pixel + Math.Floor(cinema.time * 12)) - 0.5) * 0.018;
+    float line = (pixel.y - Math.Floor(pixel.y / 2) * 2) * 0.015;
+    mut float3 rgb = float3(seen.r, seen.g, seen.b) * vignette + float3(grain - line);
+    rgb = Math.Floor(rgb * 31 + float3(dither)) / 31;
+    color = Color(rgb.x, rgb.y, rgb.z, 1);
+}
+
+frag Printed(Corner corner, Texture print, out Color color, Cinema cinema)
+{
+    var ink = print.Sample(corner.uv, Filter.Point);
+    var toward = cinema.lantern - this.world;
+    float lamp = Math.Max(0.15, Math.Dot(float3(0, 1, 0), Math.Normalize(toward))) / (1 + Math.LengthSq(toward) * 0.43);
+    var light = float3(0.13, 0.15, 0.16) + float3(1.52, 1.13, 0.67) * lamp + float3(0.77, 0.85, 0.7) * cinema.daylight;
+    color = Color(ink.r * light.x, ink.g * light.y, ink.b * light.z, 1);
+}
+
+void PrintBoard(mut Cinema cinema)
+{
+    cinema.boardPrint = RenderTarget(384, 256, 1);
+    cinema.boardPrint.Clear(Color(0.2, 0.24, 0.19));
+    cinema.boardPrint.Screen()
+    {
+        cinema.boardPrint.Rect(float2(192, 128), float2(378, 250), Color(0.49, 0.44, 0.29));
+        cinema.boardPrint.Rect(float2(192, 128), float2(368, 240), Color(0.19, 0.23, 0.18));
+        for (var i = 0; i < 12; i++)
+        {
+            var world = BoardPlace(i);
+            var next = BoardPlace((i + 1) % 12);
+            var at = float2(192 + world.x / 2.54 * 384, 128 - world.z / 1.72 * 256);
+            var to = float2(192 + next.x / 2.54 * 384, 128 - next.z / 1.72 * 256);
+            cinema.boardPrint.Line(at, to, 2, Color(0.62, 0.57, 0.4));
+        }
+        for (var i = 0; i < 12; i++)
+        {
+            var world = BoardPlace(i);
+            var at = float2(192 + world.x / 2.54 * 384, 128 - world.z / 1.72 * 256);
+            cinema.boardPrint.Rect(at, float2(43, 28), Color(0.72, 0.67, 0.48));
+            string symbol = i % 4 == 0 ? "+" : i % 4 == 1 ? "G" : i % 4 == 2 ? "O" : "B";
+            cinema.boardPrint.Text($"{i + 1} {symbol}", at, 12, Color(0.13, 0.18, 0.13), Anchor.MiddleCenter);
+        }
+        cinema.boardPrint.Text("THE LAST LIGHT", float2(192, 107), 18, Color(0.79, 0.72, 0.48), Anchor.MiddleCenter);
+        cinema.boardPrint.Text("A RITUAL FOR TWO", float2(192, 130), 9, Color(0.58, 0.59, 0.4), Anchor.MiddleCenter);
+        cinema.boardPrint.Text("REMEMBER THE EIGHTEEN", float2(192, 159), 9, Color(0.72, 0.65, 0.43), Anchor.MiddleCenter);
+    }
+    cinema.board = [Corner { position = float3(-0.5, 0, -0.5), normal = float3(0, 1, 0), uv = float2(0, 1) },
+                    Corner { position = float3(-0.5, 0, 0.5), normal = float3(0, 1, 0), uv = float2(0, 0) },
+                    Corner { position = float3(0.5, 0, 0.5), normal = float3(0, 1, 0), uv = float2(1, 0) },
+                    Corner { position = float3(0.5, 0, -0.5), normal = float3(0, 1, 0), uv = float2(1, 1) }];
+    cinema.boardFaces = [0, 1, 2, 0, 2, 3];
+}
+
+void MakeCube(mut Cinema cinema)
+{
+    for (var face = 0; face < 6; face++)
+    {
+        var axis = face / 2;
+        float way = face % 2 == 0 ? 1 : -1;
+        var normal = float3(axis == 0 ? way : 0, axis == 1 ? way : 0, axis == 2 ? way : 0);
+        var across = float3(axis == 1 ? 1 : 0, axis == 2 ? 1 : 0, axis == 0 ? 1 : 0);
+        var up = Math.Cross(normal, across);
+        var first = cinema.cube.count;
+        for (var i = 0; i < 4; i++)
+        {
+            float a = i == 0 || i == 3 ? -0.5 : 0.5;
+            float b = i < 2 ? -0.5 : 0.5;
+            cinema.cube.Add(Corner { position = normal * 0.5 + across * a + up * b, normal = normal });
+        }
+        cinema.faces.Add(first); cinema.faces.Add(first + 1); cinema.faces.Add(first + 2);
+        cinema.faces.Add(first); cinema.faces.Add(first + 2); cinema.faces.Add(first + 3);
+    }
+}
+
+void MakeFigure(mut Cinema cinema)
+{
+    int sides = 8;
+    int rings = 6;
+    for (var ring = 0; ring <= rings; ring++)
+    {
+        float latitude = ring * Math.PI / rings - Math.PI * 0.5;
+        for (var side = 0; side <= sides; side++)
+        {
+            float longitude = side * Math.TAU / sides;
+            var normal = float3(Math.Cos(latitude) * Math.Cos(longitude), Math.Sin(latitude), Math.Cos(latitude) * Math.Sin(longitude));
+            cinema.round.Add(Corner { position = normal, normal = normal });
+            if (ring == rings || side == sides) continue;
+            var at = ring * (sides + 1) + side;
+            cinema.roundFaces.Add(at); cinema.roundFaces.Add(at + sides + 1); cinema.roundFaces.Add(at + 1);
+            cinema.roundFaces.Add(at + 1); cinema.roundFaces.Add(at + sides + 1); cinema.roundFaces.Add(at + sides + 2);
+        }
+    }
+    List<float2> profile = [float2(0.38, 0), float2(0.35, 0.2), float2(0.2, 0.95), float2(0.27, 1.27), float2(0.1, 1.45)];
+    for (var ring = 0; ring < profile.count; ring++)
+    {
+        var here = profile[ring];
+        var before = profile[Math.Max(ring - 1, 0)];
+        var after = profile[Math.Min(ring + 1, profile.count - 1)];
+        var lean = Math.Normalize(float2(after.y - before.y, before.x - after.x));
+        for (var side = 0; side <= sides; side++)
+        {
+            var angle = side * Math.TAU / sides;
+            var out = float3(Math.Cos(angle), 0, Math.Sin(angle));
+            cinema.robe.Add(Corner { position = out * here.x + float3(0, here.y, 0), normal = float3(out.x * lean.x, lean.y, out.z * lean.x) });
+            if (ring == profile.count - 1 || side == sides) continue;
+            var at = ring * (sides + 1) + side;
+            cinema.robeFaces.Add(at); cinema.robeFaces.Add(at + sides + 1); cinema.robeFaces.Add(at + 1);
+            cinema.robeFaces.Add(at + 1); cinema.robeFaces.Add(at + sides + 1); cinema.robeFaces.Add(at + sides + 2);
+        }
+    }
+}
+
+void Rounded(mut Cinema cinema, float3 at, float3 radii, Color tint, quaternion turn = quaternion.identity)
+{
+    cinema.rounded.Add(Piece { transform = float4x4.TRS(at, turn, radii), tint = tint, material = 4 });
+}
+
+void Block(mut Cinema cinema, float3 at, float3 size, Color tint, float material = 0, float glow = 0)
+{
+    cinema.pieces.Add(Piece { transform = float4x4.TRS(at, quaternion.identity, size), tint = tint, material = material, glow = glow });
+}
+
+void Slant(mut Cinema cinema, float3 at, float3 size, quaternion rotation, Color tint, float material = 0)
+{
+    cinema.pieces.Add(Piece { transform = float4x4.TRS(at, rotation, size), tint = tint, material = material });
+}
+
+float3 BoardPlace(int node)
+{
+    float angle = node * Math.TAU / 12 - Math.PI * 0.5;
+    return float3(Math.Cos(angle) * 1.08, 0.955, Math.Sin(angle) * 0.69);
+}
+
+Color RelicColor(int sigil)
+{
+    if (sigil == 0) return Color(0.78, 0.58, 0.3);
+    if (sigil == 1) return Color(0.36, 0.6, 0.58);
+    return Color(0.61, 0.37, 0.38);
+}
+
+void Candle(mut Cinema cinema, float3 at, float height)
+{
+    Block(cinema, at + float3(0, height * 0.5, 0), float3(0.12, height, 0.12), Color(0.68, 0.61, 0.43), 4);
+    Block(cinema, at + float3(0, 0.014, 0), float3(0.24, 0.028, 0.22), Color(0.39, 0.3, 0.13), 3);
+    float flicker = 0.9 + Math.Sin(cinema.time * 13 + at.x * 11) * 0.13;
+    Block(cinema, at + float3(0, height + 0.045, 0), float3(0.035, 0.11 * flicker, 0.035), Color(1, 0.55, 0.15), 5, 1);
+}
